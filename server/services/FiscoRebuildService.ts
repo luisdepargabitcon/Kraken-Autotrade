@@ -569,13 +569,81 @@ export class FiscoRebuildService {
   // ============================================================
   // Step 7: Commit staging → official (atomic)
   // ============================================================
+  // CRITICAL: Handles FK constraints from fisco_external_statement_items
+  // and fisco_transfer_links by preserving → detaching → rebuilding → reattaching
+  // ============================================================
 
   async commitToOfficial(runId: string, backupId: string | null): Promise<void> {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      // Clear official tables
+      // ─────────────────────────────────────────────────────────────────
+      // PHASE 1: Preserve external references before any DELETE
+      // ─────────────────────────────────────────────────────────────────
+
+      // 1a. Preserve statement items with matched operations
+      const statementItemsRes = await client.query(`
+        SELECT
+          esi.id as statement_item_id,
+          esi.matched_operation_id,
+          fo.exchange,
+          fo.external_id,
+          fo.op_type,
+          fo.asset,
+          fo.amount,
+          fo.executed_at,
+          esi.transaction_identifier
+        FROM fisco_external_statement_items esi
+        JOIN fisco_operations fo ON fo.id = esi.matched_operation_id
+        WHERE esi.matched_operation_id IS NOT NULL
+      `);
+
+      // 1b. Preserve transfer links with operation references
+      const transferLinksRes = await client.query(`
+        SELECT
+          ftl.id as link_id,
+          ftl.from_operation_id,
+          ftl.to_operation_id,
+          fo_from.exchange as from_exchange,
+          fo_from.external_id as from_external_id,
+          fo_to.exchange as to_exchange,
+          fo_to.external_id as to_external_id
+        FROM fisco_transfer_links ftl
+        LEFT JOIN fisco_operations fo_from ON fo_from.id = ftl.from_operation_id
+        LEFT JOIN fisco_operations fo_to ON fo_to.id = ftl.to_operation_id
+        WHERE ftl.from_operation_id IS NOT NULL OR ftl.to_operation_id IS NOT NULL
+      `);
+
+      const preservedStatementItems = statementItemsRes.rows;
+      const preservedTransferLinks = transferLinksRes.rows;
+
+      console.log(`[fisco/rebuild/commit] Preserved ${preservedStatementItems.length} statement item links, ${preservedTransferLinks.length} transfer links`);
+
+      // ─────────────────────────────────────────────────────────────────
+      // PHASE 2: Detach external references (set FKs to NULL)
+      // ─────────────────────────────────────────────────────────────────
+
+      // Detach statement items
+      await client.query(`
+        UPDATE fisco_external_statement_items
+        SET matched_operation_id = NULL
+        WHERE matched_operation_id IS NOT NULL
+      `);
+
+      // Detach transfer links
+      await client.query(`
+        UPDATE fisco_transfer_links
+        SET from_operation_id = NULL, to_operation_id = NULL
+        WHERE from_operation_id IS NOT NULL OR to_operation_id IS NOT NULL
+      `);
+
+      console.log(`[fisco/rebuild/commit] Detached external references`);
+
+      // ─────────────────────────────────────────────────────────────────
+      // PHASE 3: Clear and rebuild official tables
+      // ─────────────────────────────────────────────────────────────────
+
       await client.query("DELETE FROM fisco_disposals");
       await client.query("DELETE FROM fisco_lots");
       await client.query("DELETE FROM fisco_operations");
@@ -593,15 +661,17 @@ export class FiscoRebuildService {
         RETURNING id, external_id, exchange
       `, [runId]);
 
+      // Build exchange:external_id → official_id map for reattachment
+      const extIdToOfficialId = new Map<string, number>();
+      for (const r of opsR.rows) {
+        extIdToOfficialId.set(`${r.exchange}:${r.external_id}`, parseInt(r.id));
+      }
+
       // Build staging_id → official_id map via external_id
       const stagingOpsR = await client.query(`
         SELECT id, exchange, external_id FROM fisco_staging_operations WHERE rebuild_run_id = $1
       `, [runId]);
 
-      const extIdToOfficialId = new Map<string, number>();
-      for (const r of opsR.rows) {
-        extIdToOfficialId.set(`${r.exchange}:${r.external_id}`, parseInt(r.id));
-      }
       const stagingIdToOfficialId = new Map<number, number>();
       for (const r of stagingOpsR.rows) {
         const officialId = extIdToOfficialId.get(`${r.exchange}:${r.external_id}`);
@@ -659,8 +729,109 @@ export class FiscoRebuildService {
         WHERE rebuild_run_id = $1
       `, [runId]);
 
+      // ─────────────────────────────────────────────────────────────────
+      // PHASE 4: Reattach external references
+      // ─────────────────────────────────────────────────────────────────
+
+      const reattachmentWarnings: string[] = [];
+      let reattachedStatementItems = 0;
+      let failedStatementItems = 0;
+
+      // Reattach statement items by exchange:external_id
+      for (const item of preservedStatementItems) {
+        const key = `${item.exchange}:${item.external_id}`;
+        const newOpId = extIdToOfficialId.get(key);
+
+        if (newOpId) {
+          await client.query(`
+            UPDATE fisco_external_statement_items
+            SET matched_operation_id = $1
+            WHERE id = $2
+          `, [newOpId, item.statement_item_id]);
+          reattachedStatementItems++;
+        } else {
+          failedStatementItems++;
+          reattachmentWarnings.push(
+            `Statement item ${item.statement_item_id} (tx: ${item.transaction_identifier || 'N/A'}) ` +
+            `could not be reattached: operation ${item.exchange}:${item.external_id} not found in new dataset`
+          );
+        }
+      }
+
+      let reattachedTransferLinks = 0;
+      let failedTransferLinks = 0;
+
+      // Reattach transfer links by exchange:external_id
+      for (const link of preservedTransferLinks) {
+        let newFromOpId: number | null = null;
+        let newToOpId: number | null = null;
+
+        if (link.from_exchange && link.from_external_id) {
+          newFromOpId = extIdToOfficialId.get(`${link.from_exchange}:${link.from_external_id}`) ?? null;
+        }
+        if (link.to_exchange && link.to_external_id) {
+          newToOpId = extIdToOfficialId.get(`${link.to_exchange}:${link.to_external_id}`) ?? null;
+        }
+
+        // Only update if at least one side can be reattached
+        if (newFromOpId !== null || newToOpId !== null || (link.from_operation_id === null && link.to_operation_id === null)) {
+          await client.query(`
+            UPDATE fisco_transfer_links
+            SET from_operation_id = $1, to_operation_id = $2
+            WHERE id = $3
+          `, [newFromOpId, newToOpId, link.link_id]);
+
+          if ((link.from_operation_id && newFromOpId) || (link.to_operation_id && newToOpId)) {
+            reattachedTransferLinks++;
+          }
+          if ((link.from_operation_id && !newFromOpId) || (link.to_operation_id && !newToOpId)) {
+            failedTransferLinks++;
+          }
+        }
+
+        if (link.from_operation_id && !newFromOpId) {
+          reattachmentWarnings.push(
+            `Transfer link ${link.link_id} lost from_operation reference: ${link.from_exchange}:${link.from_external_id} not found`
+          );
+        }
+        if (link.to_operation_id && !newToOpId) {
+          reattachmentWarnings.push(
+            `Transfer link ${link.link_id} lost to_operation reference: ${link.to_exchange}:${link.to_external_id} not found`
+          );
+        }
+      }
+
+      console.log(`[fisco/rebuild/commit] Reattached ${reattachedStatementItems} statement items, ${reattachedTransferLinks} transfer links`);
+
+      if (reattachmentWarnings.length > 0) {
+        console.warn(`[fisco/rebuild/commit] ${reattachmentWarnings.length} reattachment warnings:`, reattachmentWarnings);
+        // Store warnings in the rebuild run record for visibility
+        await client.query(`
+          UPDATE fisco_rebuild_runs
+          SET warnings_json = COALESCE(warnings_json::jsonb, '[]'::jsonb) || $1::jsonb
+          WHERE id = $2
+        `, [JSON.stringify(reattachmentWarnings.map(w => ({ code: "REATTACHMENT_WARNING", detail: w }))), runId]);
+      }
+
+      // ─────────────────────────────────────────────────────────────────
+      // PHASE 5: Validate no orphaned external references remain
+      // ─────────────────────────────────────────────────────────────────
+
+      const orphanedCheck = await client.query(`
+        SELECT COUNT(*) as orphaned_count
+        FROM fisco_external_statement_items
+        WHERE matched_operation_id IS NULL
+          AND id IN (SELECT DISTINCT statement_item_id FROM fisco_external_statement_items WHERE matched_operation_id IS NULL)
+      `);
+
+      // Note: We don't fail the commit for orphaned items, but we log them clearly
+      const totalStatementItems = await client.query(`SELECT COUNT(*) FROM fisco_external_statement_items`);
+      const orphanedItems = parseInt(orphanedCheck.rows[0]?.orphaned_count || '0');
+
+      console.log(`[fisco/rebuild/commit] External reference status: ${reattachedStatementItems} reattached, ${failedStatementItems} failed, ${orphanedItems} orphaned statement items total in table`);
+
       await client.query("COMMIT");
-      console.log(`[fisco/rebuild] Committed runId=${runId} to official tables`);
+      console.log(`[fisco/rebuild] Committed runId=${runId} to official tables with ${reattachmentWarnings.length} reattachment warnings`);
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
