@@ -814,21 +814,11 @@ export class FiscoRebuildService {
       }
 
       // ─────────────────────────────────────────────────────────────────
-      // PHASE 5: Validate no orphaned external references remain
+      // PHASE 5: Log final external reference status
       // ─────────────────────────────────────────────────────────────────
 
-      const orphanedCheck = await client.query(`
-        SELECT COUNT(*) as orphaned_count
-        FROM fisco_external_statement_items
-        WHERE matched_operation_id IS NULL
-          AND id IN (SELECT DISTINCT statement_item_id FROM fisco_external_statement_items WHERE matched_operation_id IS NULL)
-      `);
-
       // Note: We don't fail the commit for orphaned items, but we log them clearly
-      const totalStatementItems = await client.query(`SELECT COUNT(*) FROM fisco_external_statement_items`);
-      const orphanedItems = parseInt(orphanedCheck.rows[0]?.orphaned_count || '0');
-
-      console.log(`[fisco/rebuild/commit] External reference status: ${reattachedStatementItems} reattached, ${failedStatementItems} failed, ${orphanedItems} orphaned statement items total in table`);
+      console.log(`[fisco/rebuild/commit] External reference status: ${reattachedStatementItems} reattached, ${failedStatementItems} failed (previously matched statement items that lost their operation in new dataset)`);
 
       await client.query("COMMIT");
       console.log(`[fisco/rebuild] Committed runId=${runId} to official tables with ${reattachmentWarnings.length} reattachment warnings`);

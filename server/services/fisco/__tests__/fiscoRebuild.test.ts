@@ -31,23 +31,23 @@ async function createTestOperation(exchange: string, externalId: string, asset: 
 async function createTestStatementItem(transactionId: string, matchedOpId: number | null = null): Promise<number> {
   const result = await pool.query(
     `INSERT INTO fisco_external_statement_items (
-      statement_type, source_file, source_line, raw_data,
-      transaction_date, transaction_identifier, external_reference,
-      description, asset, amount, fee, cost_basis_eur, matched_operation_id, match_status
+      exchange, year, asset, statement_type, event_at,
+      amount_sent, transaction_identifier, source_document,
+      reconciliation_status, matched_operation_id
     ) VALUES (
-      'bank', 'test.csv', 1, '{}',
-      NOW(), $1, $1,
-      'Test transaction', 'BTC', 1.0, 0, 50000, $2, $3
+      'kraken', 2026, 'BTC', 'withdrawal_crypto', NOW(),
+      1.0, $1, 'test',
+      $3, $2
     ) RETURNING id`,
-    [transactionId, matchedOpId, matchedOpId ? 'matched' : 'pending']
+    [transactionId, matchedOpId, matchedOpId ? 'matched_internal_transfer' : 'unmatched']
   );
   return result.rows[0].id;
 }
 
 async function createTestTransferLink(fromOpId: number | null, toOpId: number | null): Promise<number> {
   const result = await pool.query(
-    `INSERT INTO fisco_transfer_links (from_operation_id, to_operation_id, amount_sent, from_asset, to_asset, status)
-     VALUES ($1, $2, 1.0, 'BTC', 'BTC', 'confirmed')
+    `INSERT INTO fisco_transfer_links (asset, from_exchange, amount_sent, confidence, status, from_operation_id, to_operation_id)
+     VALUES ('BTC', 'kraken', 1.0, 'high', 'matched', $1, $2)
      RETURNING id`,
     [fromOpId, toOpId]
   );
@@ -55,8 +55,8 @@ async function createTestTransferLink(fromOpId: number | null, toOpId: number | 
 }
 
 async function cleanupTestData(): Promise<void> {
-  await pool.query("DELETE FROM fisco_transfer_links WHERE id IN (SELECT id FROM fisco_transfer_links WHERE from_operation_id IS NULL OR to_operation_id IS NULL)");
-  await pool.query("DELETE FROM fisco_external_statement_items WHERE source_file = 'test.csv'");
+  await pool.query("DELETE FROM fisco_transfer_links WHERE from_operation_id IN (SELECT id FROM fisco_operations WHERE external_id LIKE 'test-%') OR to_operation_id IN (SELECT id FROM fisco_operations WHERE external_id LIKE 'test-%')");
+  await pool.query("DELETE FROM fisco_external_statement_items WHERE source_document = 'test'");
   await pool.query("DELETE FROM fisco_disposals WHERE sell_operation_id IN (SELECT id FROM fisco_operations WHERE external_id LIKE 'test-%')");
   await pool.query("DELETE FROM fisco_lots WHERE operation_id IN (SELECT id FROM fisco_operations WHERE external_id LIKE 'test-%')");
   await pool.query("DELETE FROM fisco_operations WHERE external_id LIKE 'test-%'");
@@ -330,5 +330,41 @@ describe("FiscoRebuildService.commitToOfficial FK handling", () => {
 
     // Test passes if we get here without unhandled exceptions
     expect(true).toBe(true);
+  });
+});
+
+// ============================================================
+// Static sanity tests — no DB required
+// ============================================================
+
+describe("FiscoRebuildService.commitToOfficial — static SQL sanity", () => {
+  it("SANITY-01: commitToOfficial source does not use statement_item_id as a SQL column reference (only as row alias)", async () => {
+    const { readFileSync } = await import("fs");
+    const { join } = await import("path");
+    const src = readFileSync(
+      join(__dirname, "../../FiscoRebuildService.ts"),
+      "utf-8"
+    );
+
+    // These patterns indicate wrong use of statement_item_id as a physical SQL column
+    // e.g. the bug: "SELECT DISTINCT statement_item_id FROM fisco_external_statement_items"
+    expect(src).not.toMatch(/DISTINCT\s+statement_item_id/);
+    expect(src).not.toMatch(/SELECT\s+statement_item_id\s+FROM/);
+    expect(src).not.toMatch(/WHERE\s+statement_item_id\s*=/);
+  });
+
+  it("SANITY-02: commitToOfficial phase preserve query uses id alias correctly", async () => {
+    const { readFileSync } = await import("fs");
+    const { join } = await import("path");
+    const src = readFileSync(
+      join(__dirname, "../../FiscoRebuildService.ts"),
+      "utf-8"
+    );
+
+    // The preserve query must select "esi.id as statement_item_id"
+    expect(src).toContain("esi.id as statement_item_id");
+
+    // The reattach UPDATE must use "WHERE id = $" (not WHERE statement_item_id)
+    expect(src).toContain("WHERE id = $2");
   });
 });
