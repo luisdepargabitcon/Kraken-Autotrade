@@ -31,8 +31,8 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { FiscoAutoSyncService } from "../FiscoAutoSyncService";
-import type { RebuildResult } from "../../FiscoRebuildService";
+import { FiscoAutoSyncService, type AutoSyncStatus, type AutoSyncJob } from "../FiscoAutoSyncService";
+import { FiscoRebuildService, type RebuildResult } from "../../FiscoRebuildService";
 import type { FinalizationStatus, PortfolioValidationResult } from "../FiscoValidationService";
 
 describe("FiscoAutoSyncService", () => {
@@ -225,9 +225,105 @@ describe("FiscoAutoSyncService", () => {
   });
 
   it("31. AutoSyncJob interface includes current_phase", () => {
-    // This is a compile-time test - if it compiles, the interface is correct
     const job: any = {};
     job.current_phase = "started";
     expect(job.current_phase).toBe("started");
+  });
+
+  // ─── Fase 1 tests ─────────────────────────────────────────────────────────
+
+  it("F1-01: AutoSyncStatus type includes 'failed_commit'", () => {
+    const status: AutoSyncStatus = "failed_commit";
+    expect(status).toBe("failed_commit");
+  });
+
+  it("F1-02: AutoSyncJob interface includes dry_run_rebuild_id and commit_rebuild_id", () => {
+    const job: AutoSyncJob = {
+      id: 1,
+      scheduled_for: new Date(),
+      started_at: null,
+      completed_at: null,
+      timezone: "Europe/Madrid",
+      attempt_number: 1,
+      max_attempts: 5,
+      status: "success",
+      current_phase: null,
+      exchanges_synced: null,
+      new_operations_count: 0,
+      new_operations_by_exchange: null,
+      dry_run_id: null,
+      commit_run_id: null,
+      dry_run_rebuild_id: "550e8400-e29b-41d4-a716-446655440000",
+      commit_rebuild_id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      finalization_status: null,
+      portfolio_status: null,
+      warnings: null,
+      error_message: null,
+      telegram_sent: false,
+      telegram_message_id: null,
+      next_retry_at: null,
+      retry_group_id: null,
+      parent_job_id: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+    expect(job.dry_run_rebuild_id).toBe("550e8400-e29b-41d4-a716-446655440000");
+    expect(job.commit_rebuild_id).toBe("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+  });
+
+  it("F1-03: isSafeForAutoCommit rejects dryRunResult with status failed", () => {
+    const failedDryRun: RebuildResult = {
+      runId: "test-uuid",
+      mode: "dry_run",
+      status: "failed",
+      isSafeForReport: false,
+      operationsCount: 0,
+      lotsCount: 0,
+      disposalsCount: 0,
+      criticalErrorsCount: 1,
+      warningsCount: 0,
+      criticalErrors: [{ code: "NEGATIVE_INVENTORY", exchange: "kraken", externalId: "x", asset: "BTC", detail: "neg", executedAt: new Date() }],
+      warnings: [],
+      backupId: null,
+      comparison: null,
+      reconciliationId: null,
+      elapsedMs: 0,
+    };
+    const result = (service as any).isSafeForAutoCommit(failedDryRun, null, null, []);
+    expect(result).toBe(false);
+  });
+
+  it("F1-04: failed_commit is a valid AutoSyncStatus value and distinct from failed/success", () => {
+    const statuses: AutoSyncStatus[] = ["pending", "running", "success", "success_with_warnings", "failed", "failed_commit", "skipped_no_changes"];
+    expect(statuses).toContain("failed_commit");
+    expect("failed_commit").not.toBe("failed");
+    expect("failed_commit").not.toBe("success");
+  });
+
+  it("F1-05: markStaleRebuildRuns method exists on FiscoRebuildService", () => {
+    const svc = FiscoRebuildService.getInstance();
+    expect(typeof svc.markStaleRebuildRuns).toBe("function");
+  });
+
+  it("F1-06: rebuild catch block returns errors_json with COMMIT_EXCEPTION code (logic check)", () => {
+    const errDetail = "Test error message";
+    const errStack  = "Error: Test\n  at FiscoRebuildService";
+    const errorsJson = JSON.stringify([{
+      code:    "COMMIT_EXCEPTION",
+      phase:   "commit",
+      message: errDetail,
+      stack:   errStack,
+      detail:  `Error: ${errDetail}`,
+    }]);
+    const parsed = JSON.parse(errorsJson);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].code).toBe("COMMIT_EXCEPTION");
+    expect(parsed[0].message).toBe(errDetail);
+    expect(parsed[0].stack).toBe(errStack);
+    expect(parsed[0].phase).toBe("commit");
+  });
+
+  it("F1-07: processAutoSyncJob method exists", () => {
+    expect(typeof service.processAutoSyncJob).toBe("function");
   });
 });

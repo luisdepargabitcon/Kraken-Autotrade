@@ -54,7 +54,7 @@ import {
 // Types
 // ============================================================
 
-export type AutoSyncStatus = "pending" | "running" | "success" | "success_with_warnings" | "failed" | "skipped_no_changes";
+export type AutoSyncStatus = "pending" | "running" | "success" | "success_with_warnings" | "failed" | "failed_commit" | "skipped_no_changes";
 
 export interface AutoSyncJob {
   id: number;
@@ -71,6 +71,8 @@ export interface AutoSyncJob {
   new_operations_by_exchange: Record<string, { total: number; buys: number; sells: number; others: number }> | null;
   dry_run_id: number | null;
   commit_run_id: number | null;
+  dry_run_rebuild_id: string | null;
+  commit_rebuild_id: string | null;
   finalization_status: FinalizationStatus | null;
   portfolio_status: PortfolioValidationResult | null;
   warnings: any[] | null;
@@ -163,6 +165,17 @@ export class FiscoAutoSyncService {
     const now = new Date();
 
     console.log(`[fisco/auto-sync] Processing job ${jobId} for year=${year} timezone=${timezone}`);
+
+    // Watchdog: mark any stale running rebuild runs before starting
+    try {
+      const rebuildSvc = FiscoRebuildService.getInstance();
+      const staleCount = await rebuildSvc.markStaleRebuildRuns();
+      if (staleCount > 0) {
+        console.warn(`[fisco/auto-sync] job=${jobId} Watchdog cleared ${staleCount} stale rebuild run(s)`);
+      }
+    } catch (watchdogErr) {
+      console.warn(`[fisco/auto-sync] job=${jobId} Watchdog check failed (non-critical):`, watchdogErr);
+    }
 
     // Get job to get scheduled_for
     const job = await this.getJobById(jobId);
@@ -284,6 +297,7 @@ export class FiscoAutoSyncService {
 
       await this.updateJob(jobId, {
         dry_run_id: dryRunResult.runId ? parseInt(dryRunResult.runId.replace(/-/g, "").substring(0, 8), 16) : null,
+        dry_run_rebuild_id: dryRunResult.runId ?? null,
         new_operations_count: newOpsCount,
         new_operations_by_exchange: newOpsByExchange,
         warnings: dryRunResult.warnings as any[],
@@ -361,9 +375,34 @@ export class FiscoAutoSyncService {
 
       await this.updateJob(jobId, {
         commit_run_id: commitResult.runId ? parseInt(commitResult.runId.replace(/-/g, "").substring(0, 8), 16) : null,
+        commit_rebuild_id: commitResult.runId ?? null,
       });
 
-      console.log(`[fisco/auto-sync] job=${jobId} phase=commit completed`);
+      console.log(`[fisco/auto-sync] job=${jobId} phase=commit completed status=${commitResult.status}`);
+
+      // Guard: commit must have status === 'committed' — never mark success if it failed
+      if (commitResult.status !== "committed") {
+        const commitErrMsg = commitResult.error ?? `Commit ended with status '${commitResult.status}' instead of 'committed'`;
+        console.error(`[fisco/auto-sync] job=${jobId} COMMIT FAILED: ${commitErrMsg}`);
+        await this.updateJob(jobId, {
+          status: "failed_commit",
+          completed_at: new Date(),
+          current_phase: "failed_commit",
+          error_message: commitErrMsg,
+        });
+        const nextRetryAt = this.calculateNextRetry(scheduledFor, 1, timezone);
+        await this.sendTelegramError(year, 1, 5, `Dry-run OK pero commit FIFO falló: ${commitErrMsg}. Resultado anterior conservado. Operaciones pendientes de contabilizar.`, nextRetryAt, jobId);
+        await this.updateJob(jobId, { telegram_sent: true, next_retry_at: nextRetryAt });
+        return {
+          jobId, status: "failed_commit",
+          newOperationsCount: newOpsCount,
+          dryRunResult, commitResult,
+          finalizationStatus: null, portfolioStatus: null,
+          warnings: dryRunResult.warnings,
+          error: commitErrMsg,
+          telegramSent: true, nextRetryAt,
+        };
+      }
 
       // Step 5: Run full validation again after commit
       const postCommitValidation = await this.runFullValidation(year);
@@ -486,6 +525,7 @@ export class FiscoAutoSyncService {
 
       await this.updateJob(newJobId, {
         dry_run_id: dryRunResult.runId ? parseInt(dryRunResult.runId.replace(/-/g, "").substring(0, 8), 16) : null,
+        dry_run_rebuild_id: dryRunResult.runId ?? null,
         warnings: dryRunResult.warnings,
       });
 
@@ -545,7 +585,32 @@ export class FiscoAutoSyncService {
 
       await this.updateJob(newJobId, {
         commit_run_id: commitResult.runId ? parseInt(commitResult.runId.replace(/-/g, "").substring(0, 8), 16) : null,
+        commit_rebuild_id: commitResult.runId ?? null,
       });
+
+      // Guard: commit must be committed — never mark success if it failed
+      if (commitResult.status !== "committed") {
+        const commitErrMsg = commitResult.error ?? `Commit ended with status '${commitResult.status}' instead of 'committed'`;
+        console.error(`[fisco/auto-sync] retry job=${newJobId} COMMIT FAILED: ${commitErrMsg}`);
+        await this.updateJob(newJobId, {
+          status: "failed_commit",
+          completed_at: new Date(),
+          current_phase: "failed_commit",
+          error_message: commitErrMsg,
+        });
+        const nextRetryAt = this.calculateNextRetry(job.scheduled_for, nextAttempt, job.timezone);
+        await this.sendTelegramError(year, nextAttempt, job.max_attempts, `Dry-run OK pero commit FIFO falló: ${commitErrMsg}. Resultado anterior conservado.`, nextRetryAt, newJobId);
+        await this.updateJob(newJobId, { telegram_sent: true, next_retry_at: nextRetryAt });
+        return {
+          jobId: newJobId, status: "failed_commit",
+          newOperationsCount: 0,
+          dryRunResult, commitResult,
+          finalizationStatus: null, portfolioStatus: null,
+          warnings: dryRunResult.warnings,
+          error: commitErrMsg,
+          telegramSent: true, nextRetryAt,
+        };
+      }
 
       // Run validation again after commit
       const postCommitValidation = await this.runFullValidation(year);
@@ -754,6 +819,8 @@ export class FiscoAutoSyncService {
       new_operations_by_exchange: row.new_operations_by_exchange,
       dry_run_id: row.dry_run_id,
       commit_run_id: row.commit_run_id,
+      dry_run_rebuild_id: row.dry_run_rebuild_id ?? null,
+      commit_rebuild_id: row.commit_rebuild_id ?? null,
       finalization_status: row.finalization_status,
       portfolio_status: row.portfolio_status,
       warnings: row.warnings,

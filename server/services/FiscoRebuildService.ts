@@ -188,10 +188,19 @@ export class FiscoRebuildService {
     } catch (err: any) {
       console.error(`[fisco/rebuild] FAILED runId=${runId}:`, err);
       setFiscoRebuildMode(false);
+      const _errDetail = err?.message || "Unknown error";
+      const _errStack  = err?.stack   || null;
       await this.updateRun(runId, {
         status: "failed",
         completed_at: new Date().toISOString(),
-        notes: err.message,
+        notes: _errDetail,
+        errors_json: JSON.stringify([{
+          code:    "COMMIT_EXCEPTION",
+          phase:   mode,
+          message: _errDetail,
+          stack:   _errStack,
+          detail:  String(err),
+        }]),
       });
       return {
         runId, mode,
@@ -835,6 +844,35 @@ export class FiscoRebuildService {
       `UPDATE fisco_rebuild_runs SET ${setClauses} WHERE id = $1`,
       [runId, ...values]
     );
+  }
+
+  /**
+   * Watchdog: mark rebuild runs that have been stuck in 'running' for > 15 minutes.
+   * Returns the count of runs marked as failed_stale.
+   */
+  async markStaleRebuildRuns(): Promise<number> {
+    const result = await pool.query(`
+      UPDATE fisco_rebuild_runs
+      SET
+        status       = 'failed_stale',
+        completed_at = NOW(),
+        errors_json  = jsonb_build_array(
+          jsonb_build_object(
+            'code',    'STALE_REBUILD_TIMEOUT',
+            'phase',   'unknown',
+            'message', 'Rebuild run exceeded 15-minute timeout without completing',
+            'detail',  CONCAT('started_at=', started_at::text)
+          )
+        )
+      WHERE status = 'running'
+        AND started_at < NOW() - INTERVAL '15 minutes'
+      RETURNING id
+    `);
+    const count = result.rowCount ?? 0;
+    if (count > 0) {
+      console.warn(`[fisco/rebuild] Watchdog: marked ${count} stale rebuild run(s) as failed_stale`);
+    }
+    return count;
   }
 }
 
