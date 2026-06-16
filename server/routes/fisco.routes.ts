@@ -17,6 +17,7 @@ import { FiscoHtmlRenderer } from "../services/fisco/FiscoHtmlRenderer";
 import JSZip from "jszip";
 import { pool } from "../db";
 import { FiscoAutoSyncService } from "../services/fisco/FiscoAutoSyncService";
+import { FiscoPendingDetector } from "../services/fisco/FiscoPendingDetector";
 
 /**
  * FISCO (Fiscal Control) routes.
@@ -3329,6 +3330,23 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       console.error("[fisco/auto-sync/run-now]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/pending-changes
+   * Detects operations pending FIFO rebuild and orphan sells for the given year.
+   * Safe read-only endpoint used by the manual rebuild UI to warn before commit.
+   */
+  app.get("/api/fisco/pending-changes", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const detector = FiscoPendingDetector.getInstance();
+      const result = await detector.detectPendingFiscalChanges(year);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/pending-changes]", e);
       res.status(500).json({ error: e.message });
     }
   });

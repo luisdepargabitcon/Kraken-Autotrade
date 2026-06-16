@@ -214,6 +214,15 @@ interface AuditSummary {
   recommendation: string[];
 }
 
+// ─── Pending Fiscal Changes ────────────────────────────────────────────────────
+
+interface PendingFiscalChanges {
+  lastCommittedRun: { id: string; completed_at: string; operations_count: number } | null;
+  pending_operations_count: number;
+  orphan_sells_count: number;
+  has_pending: boolean;
+}
+
 // ─── RevolutX reconciliation types (for PDF page 5) ──────────────────────────
 
 interface RevolutTxCheck {
@@ -542,6 +551,20 @@ export default function Fisco() {
     refetchOnWindowFocus: false,
     retry: false,
     enabled: !!selectedYear,
+  });
+
+  // --- Pending FIFO changes ---
+  const pendingChangesQ = useQuery<PendingFiscalChanges>({
+    queryKey: [`/api/fisco/pending-changes?year=${selectedYear}`],
+    queryFn: async () => {
+      const r = await fetch(`/api/fisco/pending-changes?year=${selectedYear}`);
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      return r.json();
+    },
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: activeTab === "rebuild",
+    staleTime: 30_000,
   });
 
   // --- Rebuild runs history ---
@@ -1554,6 +1577,69 @@ export default function Fisco() {
                 </CardContent>
               )}
             </Card>
+
+            {/* Pending fiscal changes panel */}
+            {pendingChangesQ.data && (
+              <Card className={pendingChangesQ.data.has_pending
+                ? "border-amber-500/40 bg-amber-500/5"
+                : "border-green-500/20 bg-green-500/5"}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    {pendingChangesQ.data.has_pending
+                      ? <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+                      : <span className="text-green-400">✓</span>}
+                    <span className={pendingChangesQ.data.has_pending ? "text-amber-300" : "text-green-300"}>
+                      {pendingChangesQ.data.has_pending ? "Cambios fiscales pendientes de recalcular" : "FIFO al día"}
+                    </span>
+                    <button
+                      className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => pendingChangesQ.refetch()}
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                    </button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-2">
+                  <div className="flex flex-wrap gap-3 text-xs">
+                    <span className={`px-2 py-1 rounded font-mono border ${
+                      pendingChangesQ.data.pending_operations_count > 0
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                        : "border-border text-muted-foreground"
+                    }`}>
+                      ⏳ {pendingChangesQ.data.pending_operations_count} ops pendientes desde último commit
+                    </span>
+                    <span className={`px-2 py-1 rounded font-mono border ${
+                      pendingChangesQ.data.orphan_sells_count > 0
+                        ? "border-red-500/40 bg-red-500/10 text-red-300"
+                        : "border-border text-muted-foreground"
+                    }`}>
+                      🔍 {pendingChangesQ.data.orphan_sells_count} ventas sin FIFO ({selectedYear})
+                    </span>
+                    {pendingChangesQ.data.lastCommittedRun && (
+                      <span className="px-2 py-1 rounded font-mono border border-border text-muted-foreground">
+                        Último commit: {new Date(pendingChangesQ.data.lastCommittedRun.completed_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}
+                      </span>
+                    )}
+                    {!pendingChangesQ.data.lastCommittedRun && (
+                      <span className="px-2 py-1 rounded font-mono border border-red-500/40 bg-red-500/10 text-red-300">
+                        ❌ Sin commit FIFO en la base de datos
+                      </span>
+                    )}
+                  </div>
+                  {pendingChangesQ.data.has_pending && (
+                    <p className="text-xs text-amber-400/80 mt-1">
+                      ⚠️ Se recomienda ejecutar un <strong>dry_run</strong> seguido de <strong>commit</strong> para aplicar el recálculo FIFO completo.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+            {pendingChangesQ.isLoading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground p-3">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Comprobando cambios fiscales pendientes…
+              </div>
+            )}
 
             {/* Rebuild controls */}
             <Card className="border-border">
