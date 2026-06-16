@@ -41,6 +41,7 @@ import {
   buildFiscoAutoSyncWarningsHTML,
   buildFiscoAutoSyncErrorHTML,
   buildFiscoAutoSyncAllFailedHTML,
+  buildFiscoAutoSyncFailedCommitHTML,
 } from "../telegram/templates";
 import {
   validateContext,
@@ -49,6 +50,7 @@ import {
   FiscoAutoSyncWarningsContextSchema,
   FiscoAutoSyncErrorContextSchema,
   FiscoAutoSyncAllFailedContextSchema,
+  FiscoAutoSyncFailedCommitContextSchema,
 } from "../telegram/types";
 
 // ============================================================
@@ -996,7 +998,8 @@ export class FiscoAutoSyncService {
     newOpsCount: number,
     newOpsByExchange: Record<string, { total: number; buys: number; sells: number; others: number }>,
     finalization: FinalizationStatus,
-    jobId: number
+    jobId: number,
+    pendingCounts?: { pendingOperationsCount: number; orphanSellsCount: number; previousFinalTaxableGainLossEur?: string }
   ): Promise<void> {
     try {
       const context = validateContext(FiscoAutoSyncSuccessContextSchema, {
@@ -1004,9 +1007,12 @@ export class FiscoAutoSyncService {
         year,
         scheduledTime: new Date(),
         newOperationsCount: newOpsCount,
+        pendingOperationsCount: pendingCounts?.pendingOperationsCount !== undefined ? pendingCounts.pendingOperationsCount : 0,
+        orphanSellsCount: pendingCounts?.orphanSellsCount !== undefined ? pendingCounts.orphanSellsCount : 0,
         newOperationsByExchange: newOpsByExchange,
         fifoStatus: finalization.fifo_status,
         portfolioStatus: finalization.portfolio_status,
+        previousFinalTaxableGainLossEur: pendingCounts?.previousFinalTaxableGainLossEur,
         finalTaxableGainLossEur: finalization.final_taxable_gain_loss_eur.toFixed(2) + " €",
         warningsCount: finalization.warnings.length,
         reportCanBeFinalized: finalization.report_can_be_finalized,
@@ -1027,7 +1033,8 @@ export class FiscoAutoSyncService {
     portfolio: PortfolioValidationResult,
     jobId: number,
     syncExecuted: boolean = true,
-    syncErrors: string[] = []
+    syncErrors: string[] = [],
+    pendingCounts?: { pendingOperationsCount: number; orphanSellsCount: number }
   ): Promise<void> {
     try {
       const context = validateContext(FiscoAutoSyncNoChangesContextSchema, {
@@ -1036,6 +1043,8 @@ export class FiscoAutoSyncService {
         scheduledTime: new Date(),
         syncExecuted,
         syncErrors: syncErrors.length > 0 ? syncErrors : undefined,
+        pendingOperationsCount: pendingCounts?.pendingOperationsCount !== undefined ? pendingCounts.pendingOperationsCount : 0,
+        orphanSellsCount: pendingCounts?.orphanSellsCount !== undefined ? pendingCounts.orphanSellsCount : 0,
         fifoStatus: finalization.fifo_status,
         portfolioStatus: finalization.portfolio_status,
         finalTaxableGainLossEur: finalization.final_taxable_gain_loss_eur.toFixed(2) + " €",

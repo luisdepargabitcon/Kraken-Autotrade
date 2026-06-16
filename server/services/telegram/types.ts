@@ -322,6 +322,8 @@ export const FiscoAutoSyncSuccessContextSchema = z.object({
   year: z.number().int(),
   scheduledTime: z.date(),
   newOperationsCount: z.number().int().min(0),
+  pendingOperationsCount: z.number().int().min(0),
+  orphanSellsCount: z.number().int().min(0),
   newOperationsByExchange: z.record(z.object({
     total: z.number().int().min(0),
     buys: z.number().int().min(0),
@@ -330,6 +332,7 @@ export const FiscoAutoSyncSuccessContextSchema = z.object({
   })),
   fifoStatus: safeString,
   portfolioStatus: safeString,
+  previousFinalTaxableGainLossEur: z.string().optional(),
   finalTaxableGainLossEur: safeString,
   warningsCount: z.number().int().min(0),
   reportCanBeFinalized: z.boolean(),
@@ -341,8 +344,10 @@ export const FiscoAutoSyncNoChangesContextSchema = z.object({
   env: safeString,
   year: z.number().int(),
   scheduledTime: z.date(),
-  syncExecuted: z.boolean(), // Indica si se ejecutó el import incremental
-  syncErrors: z.array(z.string()).optional(), // Errores de importación si los hubo
+  syncExecuted: z.boolean(),
+  syncErrors: z.array(z.string()).optional(),
+  pendingOperationsCount: z.number().int().min(0),
+  orphanSellsCount: z.number().int().min(0),
   fifoStatus: safeString,
   portfolioStatus: safeString,
   finalTaxableGainLossEur: safeString,
@@ -376,6 +381,21 @@ export const FiscoAutoSyncErrorContextSchema = z.object({
   nextRetryAt: z.date().nullable(),
 });
 export type FiscoAutoSyncErrorContext = z.infer<typeof FiscoAutoSyncErrorContextSchema>;
+
+export const FiscoAutoSyncFailedCommitContextSchema = z.object({
+  env: safeString,
+  year: z.number().int(),
+  attempt: z.number().int().min(1),
+  maxAttempts: z.number().int().min(1),
+  newOperationsCount: z.number().int().min(0),
+  pendingOperationsCount: z.number().int().min(0),
+  orphanSellsCount: z.number().int().min(0),
+  dryRunStatus: safeString,
+  commitError: safeString,
+  previousFinalTaxableGainLossEur: z.string().optional(),
+  nextRetryAt: z.date().nullable(),
+});
+export type FiscoAutoSyncFailedCommitContext = z.infer<typeof FiscoAutoSyncFailedCommitContextSchema>;
 
 export const FiscoAutoSyncAllFailedContextSchema = z.object({
   env: safeString,

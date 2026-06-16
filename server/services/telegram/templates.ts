@@ -17,6 +17,7 @@ import {
   FiscoAutoSyncWarningsContext,
   FiscoAutoSyncErrorContext,
   FiscoAutoSyncAllFailedContext,
+  FiscoAutoSyncFailedCommitContext,
 } from "./types";
 import { environment } from "../environment";
 
@@ -747,11 +748,24 @@ export function buildTradePendingHTML(type: "BUY" | "SELL", pair: string, exchan
 // ============================================================
 
 export function buildFiscoAutoSyncSuccessHTML(context: FiscoAutoSyncSuccessContext): string {
-  const { env, year, scheduledTime, newOperationsCount, newOperationsByExchange, fifoStatus, portfolioStatus, finalTaxableGainLossEur, warningsCount, reportCanBeFinalized } = context;
+  const { year, newOperationsCount, pendingOperationsCount, orphanSellsCount, newOperationsByExchange,
+    fifoStatus, portfolioStatus, previousFinalTaxableGainLossEur, finalTaxableGainLossEur,
+    warningsCount, reportCanBeFinalized } = context;
 
   const exchangeLines = Object.entries(newOperationsByExchange).map(([exchange, data]) => {
-    return `🏦 <b>${escapeHtml(exchange)}</b>: ${data.total} operaciones (${data.buys} compras, ${data.sells} ventas, ${data.others} otros)`;
+    return `🏦 <b>${escapeHtml(exchange)}</b>: ${data.total} ops (${data.buys} compras, ${data.sells} ventas, ${data.others} otros)`;
   }).join("\n");
+
+  const deltaLine = previousFinalTaxableGainLossEur
+    ? (() => {
+        const prev = parseFloat(previousFinalTaxableGainLossEur.replace(" €", "").replace(",", "."));
+        const curr = parseFloat(finalTaxableGainLossEur.replace(" €", "").replace(",", "."));
+        const diff = isNaN(prev) || isNaN(curr) ? null : (curr - prev);
+        const sign = diff !== null && diff >= 0 ? "+" : "";
+        const diffStr = diff !== null ? `${sign}${diff.toFixed(2)} €` : "N/D";
+        return `📊 Anterior: <b>${escapeHtml(previousFinalTaxableGainLossEur)}</b> → Nuevo: <b>${escapeHtml(finalTaxableGainLossEur)}</b> (Δ ${escapeHtml(diffStr)})`;
+      })()
+    : `💰 Resultado fiscal final: <b>${escapeHtml(finalTaxableGainLossEur)}</b>`;
 
   return [
     `✅✅✅ <b>FISCO ACTUALIZADO CORRECTAMENTE</b> ✅✅✅`,
@@ -759,13 +773,20 @@ export function buildFiscoAutoSyncSuccessHTML(context: FiscoAutoSyncSuccessConte
     ``,
     `📅 Año fiscal: <b>${year}</b>`,
     `⏰ Horario: 00:00 Europe/Madrid`,
-    `🆕 Operaciones nuevas: <b>${newOperationsCount}</b>`,
     ``,
-    exchangeLines || "Sin operaciones nuevas",
+    `📥 <b>Operaciones importadas esta sync:</b> ${newOperationsCount}`,
+    `⏳ <b>Pendientes desde último commit:</b> ${pendingOperationsCount}`,
+    `🔍 <b>Ventas sin FIFO antes del commit:</b> ${orphanSellsCount}`,
     ``,
+    exchangeLines || "<i>Sin desglose por exchange</i>",
+    ``,
+    `🔄 Dry-run: <code>OK</code>`,
+    `✅ Commit FIFO: <code>OK</code>`,
     `📊 FIFO: <code>${escapeHtml(fifoStatus)}</code>`,
     `📦 Portfolio: <code>${escapeHtml(portfolioStatus)}</code>`,
-    `💰 Resultado fiscal final: <b>${escapeHtml(finalTaxableGainLossEur)}</b>`,
+    ``,
+    deltaLine,
+    ``,
     `⚠️ Avisos: <b>${warningsCount}</b>`,
     `✅ Informe finalizable: <b>${reportCanBeFinalized ? "Sí" : "No"}</b>`,
     ``,
@@ -775,7 +796,8 @@ export function buildFiscoAutoSyncSuccessHTML(context: FiscoAutoSyncSuccessConte
 }
 
 export function buildFiscoAutoSyncNoChangesHTML(context: FiscoAutoSyncNoChangesContext): string {
-  const { env, year, scheduledTime, syncExecuted, syncErrors, fifoStatus, portfolioStatus, finalTaxableGainLossEur, reportCanBeFinalized } = context;
+  const { year, syncExecuted, syncErrors, pendingOperationsCount, orphanSellsCount,
+    fifoStatus, portfolioStatus, finalTaxableGainLossEur, reportCanBeFinalized } = context;
 
   const syncStatusLine = syncExecuted
     ? `✅ Importación incremental ejecutada: <b>Sí</b>`
@@ -794,7 +816,11 @@ export function buildFiscoAutoSyncNoChangesHTML(context: FiscoAutoSyncNoChangesC
     ``,
     syncStatusLine,
     ``,
-    `ℹ️ No se han detectado nuevas operaciones desde la última sincronización.`,
+    `📥 <b>Operaciones importadas esta sync:</b> 0`,
+    `⏳ <b>Pendientes desde último commit FIFO:</b> ${pendingOperationsCount}`,
+    `🔍 <b>Ventas sin FIFO:</b> ${orphanSellsCount}`,
+    ``,
+    `🔄 Rebuild FIFO: <code>no necesario</code>`,
     ``,
     syncErrorsLines ? `⚠️ <b>Errores de importación:</b>\n${syncErrorsLines}\n` : "",
     `📊 FIFO: <code>${escapeHtml(fifoStatus)}</code>`,
@@ -830,6 +856,46 @@ export function buildFiscoAutoSyncWarningsHTML(context: FiscoAutoSyncWarningsCon
     warningLines || "Sin avisos",
     ``,
     `✅ Informe finalizable: <b>${reportCanBeFinalized ? "Sí" : "No"}</b>`,
+    ``,
+    `━━━━━━━━━━━━━━━━━━━`,
+    `🕐 ${formatSpanishDate()}`,
+  ].join("\n");
+}
+
+export function buildFiscoAutoSyncFailedCommitHTML(context: FiscoAutoSyncFailedCommitContext): string {
+  const { year, attempt, maxAttempts, newOperationsCount, pendingOperationsCount, orphanSellsCount,
+    dryRunStatus, commitError, previousFinalTaxableGainLossEur, nextRetryAt } = context;
+
+  const retryLine = nextRetryAt
+    ? `🔄 Se reintentará automáticamente a las <b>${formatSpanishDate(nextRetryAt)}</b>`
+    : `❌ No hay más reintentos programados`;
+
+  const prevResultLine = previousFinalTaxableGainLossEur
+    ? `💰 Resultado anterior conservado: <b>${escapeHtml(previousFinalTaxableGainLossEur)}</b>`
+    : `💰 Resultado anterior conservado: <b>N/D (no disponible)</b>`;
+
+  return [
+    `❌❌❌ <b>FISCO: COMMIT FIFO FALLIDO</b> ❌❌❌`,
+    `━━━━━━━━━━━━━━━━━━━`,
+    ``,
+    `📅 Año fiscal: <b>${year}</b>`,
+    `🔄 Intento: <b>${attempt}/${maxAttempts}</b>`,
+    ``,
+    `📥 <b>Operaciones importadas esta sync:</b> ${newOperationsCount}`,
+    `⏳ <b>Pendientes desde último commit FIFO:</b> ${pendingOperationsCount}`,
+    `🔍 <b>Ventas sin FIFO:</b> ${orphanSellsCount}`,
+    ``,
+    `🔄 Dry-run: <code>${escapeHtml(dryRunStatus)}</code>`,
+    `❌ Commit FIFO: <code>ERROR</code>`,
+    ``,
+    `❌ <b>Error:</b> ${escapeHtml(commitError)}`,
+    ``,
+    prevResultLine,
+    `💸 Resultado nuevo: <b>NO APLICADO</b>`,
+    ``,
+    retryLine,
+    ``,
+    `🔧 <b>Acción requerida:</b> revisar logs o usar Fiscal → Avanzado → Mantenimiento FIFO`,
     ``,
     `━━━━━━━━━━━━━━━━━━━`,
     `🕐 ${formatSpanishDate()}`,

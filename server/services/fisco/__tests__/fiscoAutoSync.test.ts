@@ -34,6 +34,12 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { FiscoAutoSyncService, type AutoSyncStatus, type AutoSyncJob } from "../FiscoAutoSyncService";
 import { FiscoRebuildService, type RebuildResult } from "../../FiscoRebuildService";
 import type { FinalizationStatus, PortfolioValidationResult } from "../FiscoValidationService";
+import {
+  buildFiscoAutoSyncSuccessHTML,
+  buildFiscoAutoSyncNoChangesHTML,
+  buildFiscoAutoSyncFailedCommitHTML,
+} from "../../telegram/templates";
+import { FiscoAutoSyncFailedCommitContextSchema } from "../../telegram/types";
 
 describe("FiscoAutoSyncService", () => {
   let service: FiscoAutoSyncService;
@@ -325,5 +331,98 @@ describe("FiscoAutoSyncService", () => {
 
   it("F1-07: processAutoSyncJob method exists", () => {
     expect(typeof service.processAutoSyncJob).toBe("function");
+  });
+
+  // ─── Fase 3 tests — Telegram templates ────────────────────────────────────
+
+  it("F3-01: buildFiscoAutoSyncSuccessHTML includes pending counts and commit status", () => {
+    const ctx = {
+      env: "STG",
+      year: 2026,
+      scheduledTime: new Date(),
+      newOperationsCount: 2,
+      pendingOperationsCount: 2,
+      orphanSellsCount: 1,
+      newOperationsByExchange: { kraken: { total: 2, buys: 1, sells: 1, others: 0 } },
+      fifoStatus: "OK",
+      portfolioStatus: "OK",
+      previousFinalTaxableGainLossEur: "361.48 €",
+      finalTaxableGainLossEur: "369.83 €",
+      warningsCount: 0,
+      reportCanBeFinalized: true,
+      timestamp: new Date(),
+    };
+    const html = buildFiscoAutoSyncSuccessHTML(ctx);
+    expect(html).toContain("FISCO ACTUALIZADO CORRECTAMENTE");
+    expect(html).toContain("Operaciones importadas esta sync:");
+    expect(html).toContain("Pendientes desde");
+    expect(html).toContain("Ventas sin FIFO");
+    expect(html).toContain("Dry-run:");
+    expect(html).toContain("Commit FIFO:");
+    expect(html).not.toContain("NO APLICADO");
+  });
+
+  it("F3-02: buildFiscoAutoSyncNoChangesHTML shows pending=0, orphan=0 when no changes", () => {
+    const ctx = {
+      env: "STG",
+      year: 2026,
+      scheduledTime: new Date(),
+      syncExecuted: true,
+      pendingOperationsCount: 0,
+      orphanSellsCount: 0,
+      fifoStatus: "OK",
+      portfolioStatus: "OK",
+      finalTaxableGainLossEur: "361.48 €",
+      reportCanBeFinalized: true,
+    };
+    const html = buildFiscoAutoSyncNoChangesHTML(ctx);
+    expect(html).toContain("FISCO SINCRONIZADO SIN CAMBIOS");
+    expect(html).toContain("Rebuild FIFO: <code>no necesario</code>");
+    expect(html).not.toContain("COMMIT FIFO FALLIDO");
+    expect(html).not.toContain("actualizado correctamente");
+  });
+
+  it("F3-03: buildFiscoAutoSyncFailedCommitHTML exists and shows NO APLICADO + error", () => {
+    const ctx = {
+      env: "STG",
+      year: 2026,
+      attempt: 1,
+      maxAttempts: 5,
+      newOperationsCount: 2,
+      pendingOperationsCount: 2,
+      orphanSellsCount: 1,
+      dryRunStatus: "OK",
+      commitError: "DB connection lost during commit",
+      previousFinalTaxableGainLossEur: "361.48 €",
+      nextRetryAt: new Date("2026-06-17T00:15:00+02:00"),
+    };
+    const html = buildFiscoAutoSyncFailedCommitHTML(ctx);
+    expect(html).toContain("COMMIT FIFO FALLIDO");
+    expect(html).toContain("NO APLICADO");
+    expect(html).toContain("DB connection lost during commit");
+    expect(html).toContain("361.48");
+    expect(html).not.toContain("actualizado correctamente");
+    expect(html).not.toContain("Resultado nuevo: <b>OK</b>");
+  });
+
+  it("F3-04: buildFiscoAutoSyncFailedCommitHTML does NOT say 'actualizado correctamente'", () => {
+    const html = buildFiscoAutoSyncFailedCommitHTML({
+      env: "STG", year: 2026, attempt: 1, maxAttempts: 5,
+      newOperationsCount: 0, pendingOperationsCount: 0, orphanSellsCount: 0,
+      dryRunStatus: "OK", commitError: "some error", nextRetryAt: null,
+    });
+    expect(html).not.toContain("ACTUALIZADO CORRECTAMENTE");
+    expect(html).not.toContain("actualizado correctamente");
+    expect(html).toContain("Resultado anterior conservado");
+  });
+
+  it("F3-05: FiscoAutoSyncFailedCommitContextSchema is exported from types", () => {
+    expect(FiscoAutoSyncFailedCommitContextSchema).toBeDefined();
+    const result = FiscoAutoSyncFailedCommitContextSchema.safeParse({
+      env: "STG", year: 2026, attempt: 1, maxAttempts: 5,
+      newOperationsCount: 2, pendingOperationsCount: 2, orphanSellsCount: 1,
+      dryRunStatus: "OK", commitError: "error test", nextRetryAt: null,
+    });
+    expect(result.success).toBe(true);
   });
 });
