@@ -2,6 +2,63 @@
 
 ---
 
+## 2026-06-16 — fix(fisco): Commit FISCO bloqueado por FK fisco_external_statement_items_matched_operation_id_fkey
+
+### Commit
+- `XXXXXXX` — fix(fisco): commitToOfficial maneja FKs de fisco_external_statement_items y transfer_links - preserve/detach/rebuild/reattach
+
+### Problema
+El commit/rebuild fallaba con error de FK:
+```
+update or delete on table "fisco_operations" violates foreign key constraint
+"fisco_external_statement_items_matched_operation_id_fkey"
+on table "fisco_external_statement_items"
+```
+
+Causa: Las tablas `fisco_external_statement_items` (campo `matched_operation_id`) y `fisco_transfer_links` (campos `from_operation_id`, `to_operation_id`) tienen FKs hacia `fisco_operations.id`. Al hacer `DELETE FROM fisco_operations` en el commit, se violaban estas restricciones.
+
+### Solución implementada
+
+#### `server/services/FiscoRebuildService.ts` ✅ MODIFICADO (commitToOfficial)
+
+Nueva arquitectura de 5 fases para manejar FKs:
+
+**PHASE 1: Preserve** — Antes de cualquier DELETE, preservar todas las referencias externas:
+- `fisco_external_statement_items` con `matched_operation_id` (incluyendo `exchange`, `external_id`, `transaction_identifier`)
+- `fisco_transfer_links` con `from_operation_id` o `to_operation_id` (incluyendo exchanges y external_ids de ambos lados)
+
+**PHASE 2: Detach** — Poner a NULL todas las FKs antes del rebuild:
+```sql
+UPDATE fisco_external_statement_items SET matched_operation_id = NULL;
+UPDATE fisco_transfer_links SET from_operation_id = NULL, to_operation_id = NULL;
+```
+
+**PHASE 3: Rebuild** — Borrar e insertar datos oficiales (igual que antes, pero ahora sin violación de FKs)
+
+**PHASE 4: Reattach** — Revincular por clave estable `exchange:external_id`:
+- Buscar nuevos `fisco_operations.id` que correspondan a `exchange:external_id` preservados
+- Actualizar `matched_operation_id`, `from_operation_id`, `to_operation_id`
+- Registrar warnings si alguna referencia no puede revincularse
+
+**PHASE 5: Validate** — Guardar warnings en `warnings_json` del rebuild run para visibilidad
+
+### Tests añadidos
+
+#### `server/services/fisco/__tests__/fiscoRebuild.test.ts` ✅ CREADO
+- **FK-01**: commit maneja FKs sin violación (op + statement_item, reattach exitoso)
+- **FK-02**: commit genera warnings cuando items no pueden reattacharse
+- **FK-03**: transfer_links se revinculan correctamente
+- **FK-04**: commit normal sin referencias externas sigue funcionando
+- **FK-05**: errors_json contiene detalle si falla
+
+Los tests son condicionales (se saltan si no hay acceso a DB, marcando [SKIP]).
+
+### Validación
+- `npm run check`: ✅ TypeScript sin errores
+- `npm run test -- fisco`: ✅ 313/313 tests pasan
+
+---
+
 ## 2026-06-16 — fix+feat(fisco): Corrección crítica auto-sync FISCO (Fases 1–4)
 
 ### Commits
