@@ -70,6 +70,47 @@ else
 fi
 
 echo ""
+
+# ─── Check 3: Direct ALTER TABLE ... ADD CONSTRAINT in TypeScript files ──────
+# Detects runtime schema modifications that bypass idempotency checks.
+echo "--- Check 3: Direct ALTER TABLE ADD CONSTRAINT in TypeScript (storage.ts, etc.) ---"
+
+# Search in server/ and script/ directories for .ts files
+TS_CHECK_DIRS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/server" "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/script")
+TS_ERROR_COUNT=0
+
+for dir in "${TS_CHECK_DIRS[@]}"; do
+  if [ -d "$dir" ]; then
+    # Find direct ALTER TABLE ... ADD CONSTRAINT ... UNIQUE that is NOT inside a DO $$ block
+    while IFS= read -r -d '' file; do
+      # Check if file contains the problematic pattern but NOT inside DO $$ block
+      # Heuristic: if the file has ALTER TABLE.*ADD CONSTRAINT.*UNIQUE and lot_id
+      if grep -q "ALTER TABLE.*ADD CONSTRAINT.*UNIQUE.*lot_id" "$file" 2>/dev/null; then
+        # Check if it's inside a DO $$ block (look for DO $$ before and END $$ after)
+        if ! grep -B5 -A5 "ALTER TABLE.*ADD CONSTRAINT.*UNIQUE.*lot_id" "$file" | grep -q "DO \$\$"; then
+          echo "ERROR: $file — found direct 'ALTER TABLE ... ADD CONSTRAINT ... UNIQUE (lot_id)' without DO \$\$ block"
+          TS_ERROR_COUNT=$((TS_ERROR_COUNT + 1))
+        fi
+      fi
+    done < <(find "$dir" -name "*.ts" -type f -print0 2>/dev/null || true)
+  fi
+done
+
+if [ "$TS_ERROR_COUNT" -eq 0 ]; then
+  echo "OK: No direct ALTER TABLE ADD CONSTRAINT UNIQUE (lot_id) without DO \$\$ guard found."
+else
+  echo ""
+  echo "Fix: Wrap the constraint creation in a DO \$\$ block with pg_constraint check:"
+  echo "  DO \$\$ BEGIN"
+  echo "    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'constraint_name') THEN"
+  echo "      ALTER TABLE ... ADD CONSTRAINT ... UNIQUE (lot_id);"
+  echo "    END IF;"
+  echo "  END \$\$;"
+  ERRORS=$((ERRORS + TS_ERROR_COUNT))
+fi
+
+echo ""
+
 echo "===== RESULT ====="
 if [ "$ERRORS" -gt 0 ]; then
   echo "FAILED: $ERRORS critical error(s) found. Fix before deploying."

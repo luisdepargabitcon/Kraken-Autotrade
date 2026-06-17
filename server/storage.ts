@@ -2035,12 +2035,21 @@ export class DatabaseStorage implements IStorage {
           SELECT lot_id, COUNT(*) FROM open_positions WHERE lot_id IS NOT NULL GROUP BY lot_id HAVING COUNT(*) > 1
         `);
         if (duplicates.rows.length === 0) {
+          // Use DO $$ block for idempotency (PostgreSQL does not support ADD CONSTRAINT IF NOT EXISTS)
           try {
-            await db.execute(sql`
-              ALTER TABLE open_positions ADD CONSTRAINT open_positions_lot_id_unique UNIQUE (lot_id)
-            `);
+            await db.execute(sql.raw(`
+              DO $$
+              BEGIN
+                IF NOT EXISTS (
+                  SELECT 1 FROM pg_constraint WHERE conname = 'open_positions_lot_id_unique'
+                ) THEN
+                  ALTER TABLE open_positions ADD CONSTRAINT open_positions_lot_id_unique UNIQUE (lot_id);
+                END IF;
+              END $$;
+            `));
           } catch (e) {
-            // Constraint may already exist
+            // Constraint may already exist or other error — log but don't fail
+            console.log('[schema] lot_id unique constraint note:', e);
           }
         }
       } catch (e) {
