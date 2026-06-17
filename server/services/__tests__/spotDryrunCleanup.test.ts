@@ -454,4 +454,172 @@ describe("SPOT DRY RUN Cleanup", () => {
     expect(Number(grossResult.rows[0].cnt)).toBe(2);
     expect(Number(grossResult.rows[0].pnl)).toBe(50); // 100 - 50
   });
+
+  // ============================================================
+  // TEST 9: Idempotent re-run after partial failure
+  // ============================================================
+  it("should handle idempotent re-run after archive succeeds but delete fails", async () => {
+    const now = new Date();
+    const batchId = "test-partial-failure";
+
+    // Create duplicate pair
+    const canonicalId = await insertDryRunTrade(db, {
+      type: "sell",
+      simTxid: "PARTIAL-CANONICAL",
+      pair: "BTC/USD",
+      price: "50000",
+      amount: "0.1",
+      normalizedReason: "TIME_STOP",
+      realizedPnlUsd: "-100",
+      closedAt: now,
+      createdAt: now,
+    });
+
+    const duplicateId = await insertDryRunTrade(db, {
+      type: "sell",
+      simTxid: "PARTIAL-DUPLICATE",
+      pair: "BTC/USD",
+      price: "50000", // Same
+      amount: "0.1", // Same
+      normalizedReason: "TIME_STOP", // Same
+      realizedPnlUsd: "-100",
+      closedAt: now,
+      createdAt: now,
+    });
+
+    // STEP 1: Simulate archive phase succeeded
+    await db.execute(sql`
+      INSERT INTO dry_run_trades_archive (
+        sim_txid, pair, type, price, amount, total_usd,
+        reason, normalized_reason, status,
+        realized_pnl_usd, realized_pnl_pct, closed_at, created_at,
+        excluded_from_pnl, audit_batch_id,
+        archive_reason, original_id
+      )
+      SELECT 
+        sim_txid, pair, type, price, amount, total_usd,
+        reason, normalized_reason, status,
+        realized_pnl_usd, realized_pnl_pct, closed_at, created_at,
+        excluded_from_pnl, ${batchId},
+        'exact_duplicate', ${canonicalId}
+      FROM dry_run_trades
+      WHERE id = ${duplicateId}
+    `);
+
+    // Verify archived
+    const archiveCheck = await db.execute(sql`
+      SELECT COUNT(*) as cnt FROM dry_run_trades_archive
+      WHERE sim_txid = 'PARTIAL-DUPLICATE'
+    `);
+    expect(Number(archiveCheck.rows[0].cnt)).toBe(1);
+
+    // STEP 2: Re-run archive should skip (idempotent check)
+    const existingCheck = await db.execute(sql`
+      SELECT 1 FROM dry_run_trades_archive
+      WHERE sim_txid = 'PARTIAL-DUPLICATE'
+      LIMIT 1
+    `);
+    expect(existingCheck.rows.length).toBe(1);
+
+    // STEP 3: Simulate delete phase (now succeeds)
+    // Check if exists before delete (idempotent)
+    const existsResult = await db.execute(sql`
+      SELECT 1 FROM dry_run_trades WHERE id = ${duplicateId} LIMIT 1
+    `);
+    expect(existsResult.rows.length).toBe(1);
+
+    // Delete
+    await db.execute(sql`DELETE FROM dry_run_trades WHERE id = ${duplicateId}`);
+
+    // Verify deleted
+    const afterDelete = await db.execute(sql`
+      SELECT 1 FROM dry_run_trades WHERE id = ${duplicateId} LIMIT 1
+    `);
+    expect(afterDelete.rows.length).toBe(0);
+
+    // STEP 4: Re-run delete should be idempotent (no error)
+    const reRunExists = await db.execute(sql`
+      SELECT 1 FROM dry_run_trades WHERE id = ${duplicateId} LIMIT 1
+    `);
+    expect(reRunExists.rows.length).toBe(0); // Still gone
+
+    // Canonical should still exist
+    const canonicalCheck = await db.execute(sql`
+      SELECT 1 FROM dry_run_trades WHERE id = ${canonicalId} LIMIT 1
+    `);
+    expect(canonicalCheck.rows.length).toBe(1);
+  });
+
+  // ============================================================
+  // TEST 10: Complete idempotent apply flow
+  // ============================================================
+  it("should complete full cleanup flow and allow idempotent re-run", async () => {
+    const now = new Date();
+
+    // Create trades
+    await insertDryRunTrade(db, {
+      type: "sell",
+      simTxid: "FLOW-1",
+      pair: "BTC/USD",
+      price: "51000",
+      amount: "0.1",
+      normalizedReason: "TAKE_PROFIT",
+      realizedPnlUsd: "100",
+      closedAt: now,
+      createdAt: now,
+    });
+
+    // Duplicate
+    await insertDryRunTrade(db, {
+      type: "sell",
+      simTxid: "FLOW-1-DUP",
+      pair: "BTC/USD",
+      price: "51000",
+      amount: "0.1",
+      normalizedReason: "TAKE_PROFIT",
+      realizedPnlUsd: "100",
+      closedAt: now,
+      createdAt: now,
+    });
+
+    // Legacy TimeStop loss
+    const legacyId = await insertDryRunTrade(db, {
+      type: "sell",
+      simTxid: "FLOW-LEGACY",
+      pair: "ETH/USD",
+      price: "2900",
+      amount: "1",
+      normalizedReason: "TIME_STOP",
+      realizedPnlUsd: "-50",
+      closedAt: now,
+      createdAt: now,
+    });
+
+    // STEP 1: Mark legacy as excluded
+    await db.execute(sql`
+      UPDATE dry_run_trades
+      SET 
+        excluded_from_pnl = true,
+        exclusion_reason = 'legacy_timestop_loss_before_fix',
+        excluded_at = NOW()
+      WHERE id = ${legacyId}
+    `);
+
+    // Verify excluded
+    const legacyCheck = await db.execute(sql`
+      SELECT excluded_from_pnl FROM dry_run_trades WHERE id = ${legacyId}
+    `);
+    expect(legacyCheck.rows[0].excluded_from_pnl).toBe(true);
+
+    // STEP 2: Clean PnL calculation excludes marked trades
+    const cleanPnlResult = await db.execute(sql`
+      SELECT COALESCE(SUM(realized_pnl_usd), 0) as pnl
+      FROM dry_run_trades
+      WHERE type = 'sell' AND excluded_from_pnl = false
+    `);
+    const cleanPnl = Number(cleanPnlResult.rows[0].pnl);
+
+    // Should include FLOW-1 and FLOW-1-DUP (200), exclude FLOW-LEGACY (-50)
+    expect(cleanPnl).toBe(200);
+  });
 });

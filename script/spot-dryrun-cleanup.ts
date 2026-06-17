@@ -357,6 +357,21 @@ async function archiveDuplicates(
   const archivedIds: number[] = [];
 
   for (const dup of duplicates) {
+    // Check if already archived (idempotency)
+    const existingCheck = await db.execute(sql`
+      SELECT 1 FROM dry_run_trades_archive
+      WHERE sim_txid = (
+        SELECT sim_txid FROM dry_run_trades WHERE id = ${dup.id}
+      )
+      LIMIT 1
+    `);
+
+    if (existingCheck.rows.length > 0) {
+      console.log(`[cleanup] Duplicate ID ${dup.id} already archived, skipping`);
+      archivedIds.push(dup.id);
+      continue;
+    }
+
     // Insert into archive
     await db.execute(sql`
       INSERT INTO dry_run_trades_archive (
@@ -389,22 +404,41 @@ async function archiveDuplicates(
 // PHASE 7: DELETE DUPLICATES FROM MAIN TABLE
 // ============================================================
 
-async function deleteDuplicates(duplicateIds: number[]): Promise<void> {
+async function deleteDuplicates(duplicateIds: number[]): Promise<{ deletedCount: number; alreadyGoneCount: number }> {
   console.log(`[cleanup] Deleting ${duplicateIds.length} duplicate(s) from dry_run_trades...`);
 
-  if (duplicateIds.length === 0) return;
+  if (duplicateIds.length === 0) return { deletedCount: 0, alreadyGoneCount: 0 };
 
-  // Delete in batches to avoid huge IN clause
-  const BATCH_SIZE = 100;
-  for (let i = 0; i < duplicateIds.length; i += BATCH_SIZE) {
-    const batch = duplicateIds.slice(i, i + BATCH_SIZE);
-    await db.execute(sql`
-      DELETE FROM dry_run_trades
-      WHERE id IN (${sql.join(batch.map((id) => sql`${id}`))})
+  let deletedCount = 0;
+  let alreadyGoneCount = 0;
+
+  // Delete one by one for idempotency and safety
+  for (const id of duplicateIds) {
+    // Check if still exists (idempotency for re-runs)
+    const existsResult = await db.execute(sql`
+      SELECT 1 FROM dry_run_trades WHERE id = ${id} LIMIT 1
     `);
+
+    if (existsResult.rows.length === 0) {
+      alreadyGoneCount++;
+      continue;
+    }
+
+    // Delete single row
+    const deleteResult = await db.execute(sql`
+      DELETE FROM dry_run_trades WHERE id = ${id}
+    `);
+
+    // pg returns rowCount in command tag
+    deletedCount++;
   }
 
-  console.log(`[cleanup] Deleted ${duplicateIds.length} duplicate(s)`);
+  if (alreadyGoneCount > 0) {
+    console.log(`[cleanup] ${alreadyGoneCount} duplicate(s) already deleted (idempotent)`);
+  }
+  console.log(`[cleanup] Deleted ${deletedCount} duplicate(s)`);
+
+  return { deletedCount, alreadyGoneCount };
 }
 
 // ============================================================
@@ -606,8 +640,9 @@ async function runApply(): Promise<void> {
 
   // PHASE 4: Delete duplicates
   console.log("\n--- PHASE 4: DELETE DUPLICATES ---");
+  let deleteResult = { deletedCount: 0, alreadyGoneCount: 0 };
   if (archivedIds.length > 0) {
-    await deleteDuplicates(archivedIds);
+    deleteResult = await deleteDuplicates(archivedIds);
   } else {
     console.log("[cleanup] No duplicates to delete");
   }
@@ -640,7 +675,10 @@ async function runApply(): Promise<void> {
   console.log("📊 DUPLICATES:");
   console.log(`  Detected: ${duplicates.length}`);
   console.log(`  Archived: ${archivedCount}`);
-  console.log(`  Deleted: ${archivedIds.length}`);
+  console.log(`  Deleted: ${deleteResult.deletedCount}`);
+  if (deleteResult.alreadyGoneCount > 0) {
+    console.log(`  Already deleted (idempotent): ${deleteResult.alreadyGoneCount}`);
+  }
   console.log("");
 
   console.log("⚠️  LEGACY TIMESTOP:");
