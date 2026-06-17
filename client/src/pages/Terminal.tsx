@@ -33,7 +33,11 @@ import {
   Trash2,
   AlertTriangle,
   Timer,
-  TimerOff
+  TimerOff,
+  Sparkles,
+  CheckCircle2,
+  HelpCircle,
+  Info
 } from "lucide-react";
 import {
   AlertDialog,
@@ -154,7 +158,14 @@ interface DryRunTrade {
   auditBatchId?: string | null;
 }
 
+interface PnLByReason {
+  reason: string;
+  count: number;
+  pnl: number;
+}
+
 interface DryRunSummary {
+  // Legacy fields (backward compatibility)
   openCount: number;
   totalOpenValue: number;
   closedCount: number;
@@ -162,7 +173,8 @@ interface DryRunSummary {
   wins: number;
   losses: number;
   winRate: number;
-  // New fields for clean/excluded breakdown
+
+  // Clean breakdown
   grossSellPnl: number;
   cleanSellPnl: number;
   excludedSellPnl: number;
@@ -170,6 +182,35 @@ interface DryRunSummary {
   includedSells: number;
   excludedSells: number;
   archivedDuplicates: number;
+
+  // New advanced metrics
+  unrealizedPnl: number | null;
+  totalSimulatedPnl: number;
+  cleanWins: number;
+  cleanLosses: number;
+  cleanWinRate: number;
+  grossProfit: number;
+  grossLoss: number;
+  profitFactor: number | string;
+  avgWin: number;
+  avgLoss: number;
+  avgWinLossRatio: number;
+  expectancy: number;
+
+  // PnL by reason
+  pnlByReason: PnLByReason[];
+
+  // Smart Strategy Score
+  strategyScore: number;
+  strategyStatus: string;
+  strategyRiskLevel: "Bajo" | "Medio" | "Alto" | "Crítico";
+  strategySummary: string;
+  strategyColor: "red" | "yellow" | "blue" | "green" | "gold";
+  strategyPros: string[];
+  strategyCons: string[];
+
+  // Legend
+  legend: Record<string, string>;
 }
 
 interface DryRunHistoryResponse {
@@ -1627,64 +1668,292 @@ export default function Terminal() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
-                  {dryRunSummary && dryRunSummary.closedCount > 0 && (
-                    <div className="border-b border-amber-500/10 bg-amber-500/5">
-                      {/* Primary: Clean PnL */}
+                  {/* ==================== SMART STRATEGY SCORE ==================== */}
+                  {dryRunSummary && (
+                    <div className="border-b border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-card/50 to-amber-500/5">
+                      {/* Row 1: Smart Strategy Score Header */}
                       <div className="p-4 border-b border-amber-500/10">
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-[10px] font-mono text-amber-400">P&L LIMPIO (INCLUIDO EN PnL)</p>
-                          <span className="text-[10px] font-mono text-muted-foreground">
-                            {dryRunSummary.includedSells} de {dryRunSummary.totalSells} operaciones
-                          </span>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="h-4 w-4 text-amber-400" />
+                            <h3 className="text-sm font-mono font-bold text-amber-400">
+                              SMART STRATEGY SCORE — SPOT DRY RUN
+                            </h3>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono text-muted-foreground">MODO SIMULACIÓN</span>
+                            <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-300">
+                              BETA
+                            </Badge>
+                          </div>
                         </div>
-                        <p className={`font-mono text-2xl font-bold ${dryRunSummary.cleanSellPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {dryRunSummary.cleanSellPnl >= 0 ? '+' : ''}${dryRunSummary.cleanSellPnl.toFixed(2)}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-mono text-muted-foreground">
-                            Win Rate: <span className={dryRunSummary.winRate >= 50 ? 'text-green-400' : 'text-red-400'}>{dryRunSummary.winRate.toFixed(1)}%</span>
-                          </span>
-                          <span className="text-muted-foreground">|</span>
-                          <span className="text-[10px] font-mono">
-                            <span className="text-green-400">{dryRunSummary.wins}W</span>
-                            <span className="text-muted-foreground"> / </span>
-                            <span className="text-red-400">{dryRunSummary.losses}L</span>
-                          </span>
+
+                        {/* Score Display */}
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                          {/* Score Number */}
+                          <div className="flex items-baseline gap-2">
+                            <span className={`font-mono text-5xl font-bold ${
+                              dryRunSummary.strategyScore <= 40 ? 'text-red-500' :
+                              dryRunSummary.strategyScore <= 60 ? 'text-yellow-500' :
+                              dryRunSummary.strategyScore <= 75 ? 'text-blue-400' :
+                              dryRunSummary.strategyScore <= 90 ? 'text-green-400' :
+                              'text-yellow-400'
+                            }`}>
+                              {dryRunSummary.strategyScore}
+                            </span>
+                            <span className="text-lg text-muted-foreground">/100</span>
+                          </div>
+
+                          {/* Status */}
+                          <div className="flex-1">
+                            <p className={`text-sm font-bold mb-1 ${
+                              dryRunSummary.strategyScore <= 40 ? 'text-red-400' :
+                              dryRunSummary.strategyScore <= 60 ? 'text-yellow-400' :
+                              dryRunSummary.strategyScore <= 75 ? 'text-blue-400' :
+                              dryRunSummary.strategyScore <= 90 ? 'text-green-400' :
+                              'text-yellow-400'
+                            }`}>
+                              {dryRunSummary.strategyStatus}
+                            </p>
+                            <p className="text-xs text-muted-foreground leading-relaxed max-w-md">
+                              {dryRunSummary.strategySummary}
+                            </p>
+                          </div>
+
+                          {/* Risk Badge */}
+                          <Badge className={`text-[10px] font-mono ${
+                            dryRunSummary.strategyRiskLevel === 'Bajo' ? 'bg-green-500/20 text-green-400 border-green-500/50' :
+                            dryRunSummary.strategyRiskLevel === 'Medio' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50' :
+                            dryRunSummary.strategyRiskLevel === 'Alto' ? 'bg-orange-500/20 text-orange-400 border-orange-500/50' :
+                            'bg-red-500/20 text-red-400 border-red-500/50'
+                          }`}>
+                            RIESGO: {dryRunSummary.strategyRiskLevel.toUpperCase()}
+                          </Badge>
+                        </div>
+
+                        {/* Score Bar */}
+                        <div className="mt-4">
+                          <div className="relative h-3 bg-muted rounded-full overflow-hidden">
+                            {/* Segments */}
+                            <div className="absolute inset-0 flex">
+                              <div className="w-[20%] bg-red-500/30" title="PARAR (0-20)" />
+                              <div className="w-[20%] bg-red-500/50" title="MALA (21-40)" />
+                              <div className="w-[20%] bg-yellow-500/50" title="NEUTRA (41-60)" />
+                              <div className="w-[15%] bg-blue-400/50" title="VIGILAR (61-75)" />
+                              <div className="w-[15%] bg-green-400/50" title="BUENA (76-90)" />
+                              <div className="w-[10%] bg-yellow-400/50" title="EXCELENTE (91-100)" />
+                            </div>
+                            {/* Marker */}
+                            <div
+                              className="absolute top-0 bottom-0 w-1 bg-white shadow-lg transition-all duration-500"
+                              style={{ left: `${dryRunSummary.strategyScore}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[9px] font-mono text-muted-foreground mt-1">
+                            <span>0</span>
+                            <span>20</span>
+                            <span>40</span>
+                            <span>60</span>
+                            <span>75</span>
+                            <span>90</span>
+                            <span>100</span>
+                          </div>
+                        </div>
+
+                        {/* Pros & Cons */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                          {dryRunSummary.strategyPros.length > 0 && (
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-mono text-green-400">A FAVOR:</p>
+                              {dryRunSummary.strategyPros.map((pro, i) => (
+                                <div key={i} className="flex items-center gap-1.5">
+                                  <CheckCircle2 className="h-3 w-3 text-green-400" />
+                                  <span className="text-xs text-muted-foreground">{pro}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {dryRunSummary.strategyCons.length > 0 && (
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-mono text-red-400">A VIGILAR:</p>
+                              {dryRunSummary.strategyCons.map((con, i) => (
+                                <div key={i} className="flex items-center gap-1.5">
+                                  <AlertTriangle className="h-3 w-3 text-red-400" />
+                                  <span className="text-xs text-muted-foreground">{con}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      {/* Secondary: Detailed Breakdown */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4">
-                        <div className="text-center">
-                          <p className="text-[10px] font-mono text-muted-foreground">P&L BRUTO HISTÓRICO</p>
-                          <p className={`font-mono text-sm font-bold ${dryRunSummary.grossSellPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70'}`}>
-                            {dryRunSummary.grossSellPnl >= 0 ? '+' : ''}${dryRunSummary.grossSellPnl.toFixed(2)}
+                      {/* Row 2: Primary Metrics */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-px border-b border-amber-500/10 bg-amber-500/10">
+                        {/* Clean PnL Realized */}
+                        <div className="bg-card/50 p-3">
+                          <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL LIMPIO REALIZADO</p>
+                          <p className={`font-mono text-lg font-bold ${dryRunSummary.cleanSellPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {dryRunSummary.cleanSellPnl >= 0 ? '+' : ''}${dryRunSummary.cleanSellPnl.toFixed(2)}
+                          </p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {dryRunSummary.includedSells} operaciones incluidas
                           </p>
                         </div>
-                        <div className="text-center">
-                          <p className="text-[10px] font-mono text-muted-foreground">P&L EXCLUIDO</p>
-                          <p className="font-mono text-sm font-bold text-red-400/70">
-                            {dryRunSummary.excludedSellPnl >= 0 ? '+' : ''}${dryRunSummary.excludedSellPnl.toFixed(2)}
+
+                        {/* Floating PnL */}
+                        <div className="bg-card/50 p-3">
+                          <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL FLOTANTE ABIERTO</p>
+                          <p className={`font-mono text-lg font-bold ${
+                            dryRunSummary.unrealizedPnl === null ? 'text-muted-foreground' :
+                            dryRunSummary.unrealizedPnl >= 0 ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {dryRunSummary.unrealizedPnl === null
+                              ? 'N/A'
+                              : `${dryRunSummary.unrealizedPnl >= 0 ? '+' : ''}$${dryRunSummary.unrealizedPnl.toFixed(2)}`
+                            }
                           </p>
-                          <p className="text-[10px] font-mono text-muted-foreground">
-                            {dryRunSummary.excludedSells} ops
-                          </p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-[10px] font-mono text-muted-foreground">DUPLICADOS ARCHIVADOS</p>
-                          <p className="font-mono text-sm font-bold text-blue-400">
-                            {dryRunSummary.archivedDuplicates || 0}
-                          </p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-[10px] font-mono text-muted-foreground">ABIERTAS SIM</p>
-                          <p className="font-mono text-sm font-bold text-amber-400">
-                            {dryRunSummary.openCount}
-                          </p>
-                          <p className="text-[10px] font-mono text-muted-foreground">
-                            ${dryRunSummary.totalOpenValue.toFixed(0)}
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {dryRunSummary.openCount} posiciones abiertas
                           </p>
                         </div>
+
+                        {/* Total Simulated PnL */}
+                        <div className="bg-card/50 p-3">
+                          <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL TOTAL SIMULADO</p>
+                          <p className={`font-mono text-lg font-bold ${dryRunSummary.totalSimulatedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {dryRunSummary.totalSimulatedPnl >= 0 ? '+' : ''}${dryRunSummary.totalSimulatedPnl.toFixed(2)}
+                          </p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            Cerrado + Flotante
+                          </p>
+                        </div>
+
+                        {/* Open Capital */}
+                        <div className="bg-card/50 p-3">
+                          <p className="text-[10px] font-mono text-muted-foreground mb-1">CAPITAL ABIERTO</p>
+                          <p className="font-mono text-lg font-bold text-amber-400">
+                            ${dryRunSummary.totalOpenValue.toFixed(2)}
+                          </p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            Invertido en simulación
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Row 3: Quality Metrics */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-px border-b border-amber-500/10 bg-amber-500/10">
+                        {/* Clean Win Rate */}
+                        <div className="bg-card/50 p-3">
+                          <p className="text-[10px] font-mono text-muted-foreground mb-1">WIN RATE LIMPIO</p>
+                          <p className={`font-mono text-lg font-bold ${dryRunSummary.cleanWinRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                            {dryRunSummary.cleanWinRate.toFixed(1)}%
+                          </p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {dryRunSummary.cleanWins}W / {dryRunSummary.cleanLosses}L
+                          </p>
+                        </div>
+
+                        {/* Profit Factor */}
+                        <div className="bg-card/50 p-3">
+                          <p className="text-[10px] font-mono text-muted-foreground mb-1">PROFIT FACTOR</p>
+                          <p className={`font-mono text-lg font-bold ${
+                            typeof dryRunSummary.profitFactor === 'number' && dryRunSummary.profitFactor > 1
+                              ? 'text-green-400'
+                              : typeof dryRunSummary.profitFactor === 'number' && dryRunSummary.profitFactor < 1
+                                ? 'text-red-400'
+                                : 'text-amber-400'
+                          }`}>
+                            {dryRunSummary.profitFactor}
+                          </p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {typeof dryRunSummary.profitFactor === 'number' && dryRunSummary.profitFactor > 1.5
+                              ? 'Muy bueno (>1.5)'
+                              : typeof dryRunSummary.profitFactor === 'number' && dryRunSummary.profitFactor > 1
+                                ? 'Positivo (>1)'
+                                : 'Necesita mejora'
+                            }
+                          </p>
+                        </div>
+
+                        {/* Expectancy */}
+                        <div className="bg-card/50 p-3">
+                          <p className="text-[10px] font-mono text-muted-foreground mb-1">EXPECTANCY</p>
+                          <p className={`font-mono text-lg font-bold ${dryRunSummary.expectancy >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {dryRunSummary.expectancy >= 0 ? '+' : ''}${dryRunSummary.expectancy.toFixed(2)}
+                          </p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            Media por operación
+                          </p>
+                        </div>
+
+                        {/* Avg Win/Loss */}
+                        <div className="bg-card/50 p-3">
+                          <p className="text-[10px] font-mono text-muted-foreground mb-1">AVG WIN / LOSS</p>
+                          <div className="flex items-center gap-1">
+                            <span className="font-mono text-sm font-bold text-green-400">+${dryRunSummary.avgWin.toFixed(0)}</span>
+                            <span className="text-muted-foreground">/</span>
+                            <span className="font-mono text-sm font-bold text-red-400">${dryRunSummary.avgLoss.toFixed(0)}</span>
+                          </div>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            Ratio: {dryRunSummary.avgWinLossRatio.toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Row 4: Audit Metrics */}
+                      <div className="p-3 bg-amber-500/5">
+                        <p className="text-[10px] font-mono text-muted-foreground mb-2">AUDITORÍA Y DATOS LEGACY</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
+                          <div className="p-2 rounded bg-card/50">
+                            <p className="text-[9px] text-muted-foreground">BRUTO HISTÓRICO</p>
+                            <p className={`font-mono text-sm ${dryRunSummary.grossSellPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70'}`}>
+                              ${dryRunSummary.grossSellPnl.toFixed(0)}
+                            </p>
+                          </div>
+                          <div className="p-2 rounded bg-card/50">
+                            <p className="text-[9px] text-muted-foreground">EXCLUIDO LEGACY</p>
+                            <p className="font-mono text-sm text-red-400/70">
+                              ${dryRunSummary.excludedSellPnl.toFixed(0)}
+                            </p>
+                          </div>
+                          <div className="p-2 rounded bg-card/50">
+                            <p className="text-[9px] text-muted-foreground">INCLUIDAS</p>
+                            <p className="font-mono text-sm text-green-400">
+                              {dryRunSummary.includedSells}
+                            </p>
+                          </div>
+                          <div className="p-2 rounded bg-card/50">
+                            <p className="text-[9px] text-muted-foreground">EXCLUIDAS</p>
+                            <p className="font-mono text-sm text-red-400/70">
+                              {dryRunSummary.excludedSells}
+                            </p>
+                          </div>
+                          <div className="p-2 rounded bg-card/50">
+                            <p className="text-[9px] text-muted-foreground">DUPLICADOS</p>
+                            <p className="font-mono text-sm text-blue-400">
+                              {dryRunSummary.archivedDuplicates}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Legend */}
+                      <div className="p-3 border-t border-amber-500/10">
+                        <details className="group">
+                          <summary className="flex items-center gap-2 cursor-pointer text-[10px] font-mono text-muted-foreground hover:text-amber-400 transition-colors">
+                            <HelpCircle className="h-3 w-3" />
+                            <span>¿Qué significa cada métrica?</span>
+                            <span className="text-[9px] opacity-50 group-open:hidden">(click para expandir)</span>
+                          </summary>
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+                            {dryRunSummary.legend && Object.entries(dryRunSummary.legend).map(([key, desc]) => (
+                              <div key={key} className="p-2 rounded bg-card/30 border border-amber-500/10">
+                                <p className="font-mono text-[10px] text-amber-400 mb-0.5">{key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}</p>
+                                <p className="text-[10px] text-muted-foreground leading-tight">{desc}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
                       </div>
                     </div>
                   )}

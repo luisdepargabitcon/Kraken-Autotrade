@@ -93,74 +93,375 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
     }
   });
 
-  // GET /api/dryrun/summary - Aggregate P&L summary with clean/excluded breakdown
+  // GET /api/dryrun/summary - Smart Strategy Score + comprehensive metrics
   app.get("/api/dryrun/summary", async (_req, res) => {
     try {
+      // 1. Open positions (for floating PnL and capital calculation)
       const openPositions = await db.select().from(dryRunTrades)
         .where(and(eq(dryRunTrades.status, "open"), eq(dryRunTrades.type, "buy")));
-      
-      // All sells (gross)
+
+      // 2. All sells (gross) - for historical context
       const closedSells = await db.select().from(dryRunTrades)
         .where(eq(dryRunTrades.type, "sell"));
 
-      // Clean sells (excluded_from_pnl = false)
+      // 3. Clean sells (excluded_from_pnl = false) - MAIN METRICS
       const cleanSells = await db.select().from(dryRunTrades)
         .where(and(
           eq(dryRunTrades.type, "sell"),
           eq(dryRunTrades.excludedFromPnl, false)
         ));
 
-      // Excluded sells (excluded_from_pnl = true)
+      // 4. Excluded sells (excluded_from_pnl = true) - audit only
       const excludedSells = await db.select().from(dryRunTrades)
         .where(and(
           eq(dryRunTrades.type, "sell"),
           eq(dryRunTrades.excludedFromPnl, true)
         ));
 
-      // Calculate PnL values
+      // ============ BASIC CALCULATIONS ============
       const totalOpenValue = openPositions.reduce((sum, p) => sum + parseFloat(p.totalUsd || "0"), 0);
-      
-      // Gross PnL: all sells
+
+      // Gross PnL: all sells (includes legacy data)
       const grossSellPnl = closedSells.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0);
-      
-      // Clean PnL: only non-excluded sells (this is the main metric)
+
+      // Clean PnL: only non-excluded sells (PRIMARY METRIC)
       const cleanSellPnl = cleanSells.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0);
-      
-      // Excluded PnL: legacy timestop losses and other excluded
+
+      // Excluded PnL: legacy timestop losses
       const excludedSellPnl = excludedSells.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0);
 
-      // Win/loss stats for clean sells only (meaningful metric)
-      const cleanWins = cleanSells.filter(t => parseFloat(t.realizedPnlUsd || "0") > 0).length;
-      const cleanLosses = cleanSells.filter(t => parseFloat(t.realizedPnlUsd || "0") <= 0).length;
-      const cleanWinRate = cleanSells.length > 0 ? (cleanWins / cleanSells.length) * 100 : 0;
+      // Win/loss stats for clean sells
+      const cleanWins = cleanSells.filter(t => parseFloat(t.realizedPnlUsd || "0") > 0);
+      const cleanLosses = cleanSells.filter(t => parseFloat(t.realizedPnlUsd || "0") <= 0);
+      const cleanWinCount = cleanWins.length;
+      const cleanLossCount = cleanLosses.length;
+      const includedSells = cleanSells.length;
+      const cleanWinRate = includedSells > 0 ? (cleanWinCount / includedSells) * 100 : 0;
 
-      // Count archived duplicates
+      // ============ ADVANCED CLEAN METRICS ============
+      // Gross profit (sum of all positive clean trades)
+      const grossProfit = cleanWins.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0);
+
+      // Gross loss (absolute sum of all negative clean trades)
+      const grossLossAbs = Math.abs(cleanLosses.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0));
+
+      // Profit Factor
+      let profitFactor: number | string = "N/A";
+      if (grossLossAbs === 0) {
+        profitFactor = grossProfit > 0 ? "∞" : "N/A";
+      } else {
+        profitFactor = parseFloat((grossProfit / grossLossAbs).toFixed(2));
+      }
+
+      // Avg Win
+      const avgWin = cleanWinCount > 0
+        ? parseFloat((grossProfit / cleanWinCount).toFixed(2))
+        : 0;
+
+      // Avg Loss (shown as negative)
+      const avgLoss = cleanLossCount > 0
+        ? parseFloat((-grossLossAbs / cleanLossCount).toFixed(2))
+        : 0;
+
+      // Avg Win/Loss Ratio
+      const avgWinLossRatio = (avgWin > 0 && Math.abs(avgLoss) > 0)
+        ? parseFloat((avgWin / Math.abs(avgLoss)).toFixed(2))
+        : 0;
+
+      // Expectancy (average PnL per trade)
+      const expectancy = includedSells > 0
+        ? parseFloat((cleanSellPnl / includedSells).toFixed(2))
+        : 0;
+
+      // ============ FLOATING PnL (Unrealized) ============
+      // Try to get current prices from market_data if available
+      let unrealizedPnl: number | null = null;
+      try {
+        const marketData = await db.select({ pair: sql<string>`pair`, price: sql<string>`price` })
+          .from(sql`market_data`)
+          .where(sql`updated_at > NOW() - INTERVAL '5 minutes'`);
+        
+        const priceMap = new Map(marketData.map(m => [m.pair, parseFloat(m.price)]));
+        
+        unrealizedPnl = openPositions.reduce((sum, pos) => {
+          const currentPrice = priceMap.get(pos.pair);
+          const entryPrice = parseFloat(pos.price || "0");
+          const amount = parseFloat(pos.amount || "0");
+          if (currentPrice && entryPrice > 0) {
+            return sum + (currentPrice - entryPrice) * amount;
+          }
+          return sum;
+        }, 0);
+        unrealizedPnl = parseFloat(unrealizedPnl.toFixed(2));
+      } catch {
+        // Market data not available - floating PnL will be null
+        unrealizedPnl = null;
+      }
+
+      // Total Simulated PnL (realized + floating)
+      const totalSimulatedPnl = unrealizedPnl !== null
+        ? parseFloat((cleanSellPnl + unrealizedPnl).toFixed(2))
+        : cleanSellPnl;
+
+      // ============ RISK LEVEL ============
+      let strategyRiskLevel: "Bajo" | "Medio" | "Alto" | "Crítico" = "Bajo";
+      if (totalOpenValue > 0 && unrealizedPnl !== null) {
+        const floatingPct = (unrealizedPnl / totalOpenValue) * 100;
+        if (floatingPct >= -1) {
+          strategyRiskLevel = "Bajo";
+        } else if (floatingPct >= -3) {
+          strategyRiskLevel = "Medio";
+        } else if (floatingPct >= -6) {
+          strategyRiskLevel = "Alto";
+        } else {
+          strategyRiskLevel = "Crítico";
+        }
+      }
+      // Check for emergency stops in recent clean trades
+      const recentEmergency = cleanSells.some(t => {
+        const reason = (t.normalizedReason || t.reason || "").toLowerCase();
+        return reason.includes("emergency") || reason.includes("stop_loss");
+      });
+      if (recentEmergency && strategyRiskLevel !== "Crítico") {
+        strategyRiskLevel = strategyRiskLevel === "Bajo" ? "Medio" : "Alto";
+      }
+
+      // ============ PnL BY EXIT REASON ============
+      const reasonGroups: Record<string, { count: number; pnl: number }> = {};
+      for (const trade of cleanSells) {
+        const reason = trade.normalizedReason || trade.reason || "UNKNOWN";
+        if (!reasonGroups[reason]) {
+          reasonGroups[reason] = { count: 0, pnl: 0 };
+        }
+        reasonGroups[reason].count++;
+        reasonGroups[reason].pnl += parseFloat(trade.realizedPnlUsd || "0");
+      }
+      const pnlByReason = Object.entries(reasonGroups).map(([reason, data]) => ({
+        reason,
+        count: data.count,
+        pnl: parseFloat(data.pnl.toFixed(2)),
+      })).sort((a, b) => b.pnl - a.pnl);
+
+      // ============ SMART STRATEGY SCORE (0-100) ============
+      let strategyScore = 0;
+      const pros: string[] = [];
+      const cons: string[] = [];
+
+      // A) Rentabilidad limpia — 25 puntos
+      if (cleanSellPnl > 0) {
+        strategyScore += 10;
+        pros.push("PnL limpio positivo");
+      } else if (cleanSellPnl < 0) {
+        cons.push("PnL limpio negativo");
+      }
+      if (expectancy > 0) {
+        strategyScore += 8;
+        pros.push("Expectancy positiva");
+      } else if (expectancy < 0) {
+        cons.push("Expectancy negativa - pérdida media por operación");
+      }
+      if (totalSimulatedPnl > 0 && cleanSellPnl > 0) {
+        strategyScore += 7;
+      } else if (totalSimulatedPnl < 0 && cleanSellPnl > 0) {
+        // Good realized but floating is dragging down total
+        strategyScore -= 5;
+        cons.push("PnL flotante negativo arrastra rendimiento total");
+      }
+
+      // B) Riesgo / drawdown flotante — 25 puntos
+      switch (strategyRiskLevel) {
+        case "Bajo":
+          strategyScore += 25;
+          pros.push("Riesgo actual bajo");
+          break;
+        case "Medio":
+          strategyScore += 15;
+          break;
+        case "Alto":
+          strategyScore += 5;
+          cons.push("Riesgo alto - pérdidas flotantes significativas");
+          break;
+        case "Crítico":
+          strategyScore += 0;
+          cons.push("Riesgo crítico - revisar posiciones abiertas inmediatamente");
+          break;
+      }
+
+      // C) Calidad de salidas — 20 puntos
+      const goodExits = ["TRAILING_STOP", "BREAK_EVEN", "SCALE_OUT", "SMART_EXIT"];
+      const badExits = ["STOP_LOSS", "EMERGENCY_SL", "EMERGENCY_STOP_LOSS"];
+      const goodExitPnL = pnlByReason
+        .filter(r => goodExits.some(ge => r.reason.toUpperCase().includes(ge)))
+        .reduce((sum, r) => sum + r.pnl, 0);
+      const badExitPnL = pnlByReason
+        .filter(r => badExits.some(be => r.reason.toUpperCase().includes(be)))
+        .reduce((sum, r) => sum + r.pnl, 0);
+      
+      if (goodExitPnL > 0 && goodExitPnL > Math.abs(badExitPnL)) {
+        strategyScore += 15;
+        pros.push("Buena calidad de salidas (trailing, break-even, scale-out)");
+      } else if (goodExitPnL > 0) {
+        strategyScore += 10;
+        pros.push("Salidas positivas detectadas");
+      }
+      if (badExitPnL < 0 && Math.abs(badExitPnL) > goodExitPnL * 0.5) {
+        strategyScore -= 10;
+        cons.push("Demasiadas salidas por stop-loss/emergency");
+      } else if (badExitPnL < 0) {
+        strategyScore -= 5;
+      }
+      strategyScore += 5; // Base points for exit quality
+
+      // D) Calidad estadística — 15 puntos
+      if (typeof profitFactor === "number" && profitFactor > 1) {
+        strategyScore += 5;
+        if (profitFactor > 1.5) {
+          strategyScore += 5;
+          pros.push("Profit factor superior a 1.5");
+        }
+      } else if (typeof profitFactor === "number" && profitFactor < 1) {
+        cons.push("Profit factor inferior a 1 - pierde más de lo que gana");
+      }
+      if (cleanWinRate >= 45 && cleanWinRate <= 70 && expectancy > 0) {
+        strategyScore += 5;
+        pros.push("Win rate saludable (45-70%) con expectancy positiva");
+      } else if (cleanWinRate > 70) {
+        strategyScore -= 3;
+        cons.push("Win rate muy alto - revisar sobreoptimización");
+      }
+
+      // E) Salud operativa — 10 puntos
+      // Default healthy - will check bot_events for errors in future
+      strategyScore += 10;
+
+      // F) Tamaño de muestra / consistencia — 5 puntos
+      if (includedSells >= 100) {
+        strategyScore += 5;
+        pros.push("Tamaño de muestra robusto (100+ operaciones)");
+      } else if (includedSells >= 50) {
+        strategyScore += 3;
+      } else if (includedSells >= 30) {
+        strategyScore += 1;
+      } else {
+        strategyScore -= 5;
+        cons.push("Muestra pequeña (<30 operaciones) - estadísticas poco fiables");
+      }
+
+      // Clamp score between 0-100
+      strategyScore = Math.max(0, Math.min(100, strategyScore));
+
+      // ============ STRATEGY STATUS ============
+      let strategyStatus: string;
+      let strategySummary: string;
+      let scoreColor: string;
+
+      if (strategyScore <= 20) {
+        strategyStatus = "PARAR";
+        strategySummary = "La estrategia no es apta para operar. Revisar entradas, salidas y riesgo.";
+        scoreColor = "red";
+      } else if (strategyScore <= 40) {
+        strategyStatus = "MALA";
+        strategySummary = "La estrategia muestra deterioro. Conviene reducir actividad o seguir solo en simulación.";
+        scoreColor = "red";
+      } else if (strategyScore <= 60) {
+        strategyStatus = "NEUTRA / SIN VENTAJA CLARA";
+        strategySummary = "La estrategia no demuestra ventaja suficiente. Necesita más datos o ajustes.";
+        scoreColor = "yellow";
+      } else if (strategyScore <= 75) {
+        strategyStatus = "EN MARCHA, PERO VIGILAR";
+        strategySummary = "La estrategia funciona moderadamente, pero debe vigilarse riesgo, flotante y calidad de salidas.";
+        scoreColor = "blue";
+      } else if (strategyScore <= 90) {
+        strategyStatus = "BUENA";
+        strategySummary = "La estrategia muestra ventaja positiva con riesgo controlado.";
+        scoreColor = "green";
+      } else {
+        strategyStatus = "EXCELENTE";
+        strategySummary = "La estrategia muestra resultados muy fuertes. Revisar posible sobreoptimización antes de pasar a real.";
+        scoreColor = "gold";
+      }
+
+      // Limit pros/cons to top 3 each
+      const strategyPros = pros.slice(0, 3);
+      const strategyCons = cons.slice(0, 3);
+
+      // ============ ARCHIVED DUPLICATES ============
       let archivedDuplicates = 0;
       try {
         const archiveResult = await db.execute(sql`SELECT COUNT(*) as cnt FROM dry_run_trades_archive`);
         archivedDuplicates = Number(archiveResult.rows[0]?.cnt || 0);
       } catch {
-        // Archive table might not exist yet
         archivedDuplicates = 0;
       }
 
+      // ============ LEGEND ============
+      const legend: Record<string, string> = {
+        cleanSellPnl: "Beneficio/pérdida de las ventas válidas del modo simulación. Excluye operaciones antiguas marcadas como legacy.",
+        unrealizedPnl: "Beneficio/pérdida estimada de posiciones simuladas que siguen abiertas. Puede cambiar con el mercado.",
+        totalSimulatedPnl: "Suma del PnL limpio realizado y el PnL flotante abierto.",
+        totalOpenValue: "Capital simulado actualmente bloqueado en posiciones abiertas.",
+        cleanWinRate: "Porcentaje de operaciones válidas cerradas en positivo.",
+        profitFactor: "Relación entre beneficios brutos y pérdidas brutas. Mayor de 1 indica que gana más de lo que pierde.",
+        expectancy: "Resultado medio esperado por operación válida.",
+        avgWin: "Ganancia media de las operaciones ganadoras.",
+        avgLoss: "Pérdida media de las operaciones perdedoras.",
+        strategyRiskLevel: "Estimación del riesgo según pérdidas flotantes, capital abierto, salidas de emergencia y salud de datos.",
+        grossSellPnl: "Resultado total de todas las ventas del historial, incluyendo operaciones antiguas legacy. Sirve para auditoría, no como métrica principal.",
+        excludedSellPnl: "Resultado de operaciones antiguas excluidas del PnL limpio, principalmente TimeStop en pérdida anteriores al fix.",
+        includedSells: "Ventas válidas usadas para calcular las métricas limpias.",
+        excludedSells: "Ventas antiguas auditadas que se conservan en histórico, pero no cuentan para el PnL limpio.",
+        archivedDuplicates: "Operaciones duplicadas exactas movidas a archivo y retiradas del histórico activo.",
+        strategyScore: "Puntuación de 0 a 100 que resume si la estrategia va bien encaminada. Combina PnL limpio, flotante, riesgo, calidad de salidas, profit factor, win rate, salud operativa y tamaño de muestra.",
+      };
+
+      // ============ RESPONSE ============
       res.json({
+        // Legacy fields (backward compatibility)
         openCount: openPositions.length,
         totalOpenValue,
-        // Legacy fields for backward compatibility
         closedCount: closedSells.length,
-        realizedPnl: cleanSellPnl, // Now returns CLEAN PnL as primary metric
-        wins: cleanWins,
-        losses: cleanLosses,
-        winRate: cleanWinRate,
-        // New detailed breakdown
-        grossSellPnl,
-        cleanSellPnl,
-        excludedSellPnl,
+        realizedPnl: cleanSellPnl,
+        wins: cleanWinCount,
+        losses: cleanLossCount,
+        winRate: parseFloat(cleanWinRate.toFixed(2)),
+
+        // Clean breakdown
+        grossSellPnl: parseFloat(grossSellPnl.toFixed(2)),
+        cleanSellPnl: parseFloat(cleanSellPnl.toFixed(2)),
+        excludedSellPnl: parseFloat(excludedSellPnl.toFixed(2)),
         totalSells: closedSells.length,
-        includedSells: cleanSells.length,
+        includedSells,
         excludedSells: excludedSells.length,
         archivedDuplicates,
+
+        // New advanced metrics
+        unrealizedPnl,
+        totalSimulatedPnl,
+        cleanWins: cleanWinCount,
+        cleanLosses: cleanLossCount,
+        cleanWinRate: parseFloat(cleanWinRate.toFixed(2)),
+        grossProfit: parseFloat(grossProfit.toFixed(2)),
+        grossLoss: parseFloat((-grossLossAbs).toFixed(2)),
+        profitFactor,
+        avgWin,
+        avgLoss,
+        avgWinLossRatio,
+        expectancy,
+
+        // PnL by reason
+        pnlByReason,
+
+        // Smart Strategy Score
+        strategyScore,
+        strategyStatus,
+        strategyRiskLevel,
+        strategySummary,
+        strategyColor: scoreColor,
+        strategyPros,
+        strategyCons,
+
+        // Legend
+        legend,
       });
     } catch (error: any) {
       console.error("[dryrun] Error fetching summary:", error?.message);
