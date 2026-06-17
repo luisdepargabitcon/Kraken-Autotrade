@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatSmallUsd } from "@/lib/utils";
 import { 
   ArrowUpRight, 
   ArrowDownRight, 
@@ -1563,8 +1564,8 @@ export default function Terminal() {
                                   </td>
                                   <td className="py-3 px-3 text-right">
                                     {pnlUsd !== null ? (
-                                      <span className={`font-mono font-bold text-sm ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                                        {isProfit ? '+' : ''}${pnlUsd.toFixed(2)}
+                                      <span className={`font-mono font-bold text-sm ${isProfit ? 'text-green-400' : 'text-red-400'}`} title={Math.abs(pnlUsd) < 0.01 ? "PnL real menor de 1 céntimo; se muestra con 4 decimales" : undefined}>
+                                        {formatSmallUsd(pnlUsd, { signed: true })}
                                         <span className="text-xs opacity-75 ml-1">
                                           ({pnlPct !== null ? (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(1) : '0'}%)
                                         </span>
@@ -1940,9 +1941,9 @@ export default function Terminal() {
                         <div className="bg-card/50 p-3">
                           <p className="text-[10px] font-mono text-muted-foreground mb-1">AVG WIN / LOSS</p>
                           <div className="flex items-center gap-1">
-                            <span className="font-mono text-sm font-bold text-green-400">+${dryRunSummary.avgWin.toFixed(0)}</span>
+                            <span className="font-mono text-sm font-bold text-green-400">{formatSmallUsd(dryRunSummary.avgWin, { signed: true })}</span>
                             <span className="text-muted-foreground">/</span>
-                            <span className="font-mono text-sm font-bold text-red-400">${dryRunSummary.avgLoss.toFixed(0)}</span>
+                            <span className="font-mono text-sm font-bold text-red-400">{formatSmallUsd(dryRunSummary.avgLoss, { signed: true })}</span>
                           </div>
                           <p className="text-[9px] text-muted-foreground mt-0.5">
                             Ratio: {dryRunSummary.avgWinLossRatio.toFixed(2)}
@@ -2333,9 +2334,9 @@ export default function Terminal() {
                         <div className="bg-card/50 p-3">
                           <p className="text-[10px] font-mono text-muted-foreground mb-1">AVG WIN / LOSS</p>
                           <div className="flex items-center gap-1">
-                            <span className="font-mono text-sm font-bold text-green-400">+${dryRunSummary.avgWin.toFixed(0)}</span>
+                            <span className="font-mono text-sm font-bold text-green-400">{formatSmallUsd(dryRunSummary.avgWin, { signed: true })}</span>
                             <span className="text-muted-foreground">/</span>
-                            <span className="font-mono text-sm font-bold text-red-400">${dryRunSummary.avgLoss.toFixed(0)}</span>
+                            <span className="font-mono text-sm font-bold text-red-400">{formatSmallUsd(dryRunSummary.avgLoss, { signed: true })}</span>
                           </div>
                           <p className="text-[9px] text-muted-foreground mt-0.5">Ratio: {dryRunSummary.avgWinLossRatio.toFixed(2)}</p>
                         </div>
