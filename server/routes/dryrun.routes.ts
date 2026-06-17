@@ -6,6 +6,7 @@ import { eq, desc, and, sql } from "drizzle-orm";
 import { classifyExitReason, type NormalizedExitReason } from "../utils/exitReasonClassifier";
 import { MarketDataService } from "../services/MarketDataService";
 import { getCandlesSince } from "../services/marketData/MarketCandleRepository";
+import { ExchangeFactory } from "../services/exchanges/ExchangeFactory";
 
 export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
@@ -817,6 +818,9 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
   // ============================================================
   app.get("/api/dryrun/timestop-audit", async (_req, res) => {
     try {
+      // Helper: normalize Kraken time (seconds) or DB time (ms) → always ms
+      const toMs = (t: number) => t < 1e11 ? t * 1000 : t;
+
       // ── 1. Fetch all included TIME_STOP sells with positive PnL ────────────
       const timeStopSells = await db.select().from(dryRunTrades)
         .where(and(
@@ -833,12 +837,22 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
         | "NEUTRAL_TIME_STOP"
         | "UNKNOWN_INSUFFICIENT_DATA";
 
+      type ClassificationCode =
+        | "NO_CANDLES_DB"
+        | "NO_CANDLES_DB_OR_KRAKEN"
+        | "MISSING_PRICE_DATA"
+        | "POST_EXIT_PRICE_ROSE"
+        | "POST_EXIT_PRICE_DROPPED"
+        | "LOW_MOVEMENT_NEUTRAL"
+        | "MIXED_UPSIDE_DOMINANT"
+        | "MIXED_DOWNSIDE_DOMINANT";
+
       interface WindowResult {
         hours: number;
         maxHigh: number | null;
         minLow: number | null;
-        mfePct: number | null;  // max upside after exit %
-        maePct: number | null;  // max downside after exit %
+        mfePct: number | null;
+        maePct: number | null;
         candlesCovered: number;
       }
 
@@ -858,17 +872,14 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
         strategyId: string | null;
         regime: string | null;
         confidence: number | null;
-        // SmartGuard fields — not stored in dry_run_trades schema
         sgTrailingActivated: null;
         sgCurrentStopPrice: null;
         sgBreakEvenActivated: null;
-        // Post-exit candle analysis
         windows: WindowResult[];
-        dataSource: "market_candles_db" | "none";
-        // Classification
+        dataSource: "market_candles_db" | "kraken_live" | "none";
         classification: Classification;
+        classificationCode: ClassificationCode;
         classificationReason: string;
-        // Contrafactual metrics (24h window primary)
         missedUpsidePct: number | null;
         missedUpsideUsd: number | null;
         savedProfitPct: number | null;
@@ -876,6 +887,28 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
       }
 
       const AUDIT_WINDOWS_H = [1, 4, 12, 24, 48];
+
+      // ── 2. Pre-fetch Kraken 1h candles per unique pair (one call per pair) ─
+      const uniquePairs = [...new Set(timeStopSells.map(t => t.pair))];
+      const krakenCandleCache = new Map<string, { timeMs: number; high: number; low: number }[]>();
+
+      for (const pair of uniquePairs) {
+        try {
+          const exchange = ExchangeFactory.getDataExchange();
+          const raw = await exchange.getOHLC(pair, 60); // 1h = last 720 candles (~30 days)
+          if (raw && raw.length > 0) {
+            krakenCandleCache.set(pair, raw.map(c => ({
+              timeMs: toMs(c.time),
+              high: c.high,
+              low: c.low,
+            })));
+          }
+        } catch {
+          // Kraken unavailable for this pair — trades will be UNKNOWN
+        }
+      }
+
+      // ── 3. Process each trade ─────────────────────────────────────────────
       const results: TradeAuditRow[] = [];
 
       for (const trade of timeStopSells) {
@@ -890,7 +923,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
             ? `+${(((exitPrice - entryPrice) / entryPrice) * 100).toFixed(2)}%`
             : "N/A";
 
-        const baseRow: Omit<TradeAuditRow, "windows" | "dataSource" | "classification" | "classificationReason" | "missedUpsidePct" | "missedUpsideUsd" | "savedProfitPct" | "savedProfitUsd"> = {
+        const baseRow: Omit<TradeAuditRow, "windows" | "dataSource" | "classification" | "classificationCode" | "classificationReason" | "missedUpsidePct" | "missedUpsideUsd" | "savedProfitPct" | "savedProfitUsd"> = {
           id: trade.id,
           pair: trade.pair,
           simTxid: trade.simTxid,
@@ -917,87 +950,116 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
             windows: [],
             dataSource: "none",
             classification: "UNKNOWN_INSUFFICIENT_DATA",
+            classificationCode: "MISSING_PRICE_DATA",
             classificationReason: "Datos de precio o fecha de cierre ausentes.",
-            missedUpsidePct: null,
-            missedUpsideUsd: null,
-            savedProfitPct: null,
-            savedProfitUsd: null,
+            missedUpsidePct: null, missedUpsideUsd: null, savedProfitPct: null, savedProfitUsd: null,
           });
           continue;
         }
 
-        // ── Fetch 1h candles from closedAt onwards ──────────────────────────
-        const candlesSince = await getCandlesSince(trade.pair, "1h", closedAt.getTime());
+        // ── Try DB candles first ────────────────────────────────────────────
+        let postExitCandles: { timeMs: number; high: number; low: number }[] = [];
+        let dataSource: TradeAuditRow["dataSource"] = "none";
 
-        // ── Calculate window analyses ───────────────────────────────────────
+        const dbCandles = await getCandlesSince(trade.pair, "1h", closedAt.getTime());
+        if (dbCandles.length > 0) {
+          postExitCandles = dbCandles
+            .filter(c => c.time >= closedAt.getTime())
+            .map(c => ({ timeMs: c.time, high: c.high, low: c.low }));
+          if (postExitCandles.length > 0) dataSource = "market_candles_db";
+        }
+
+        // ── Fallback: Kraken live candles ──────────────────────────────────
+        if (postExitCandles.length === 0) {
+          const krakenCandles = krakenCandleCache.get(trade.pair) ?? [];
+          const filtered = krakenCandles.filter(c => c.timeMs >= closedAt.getTime());
+          if (filtered.length > 0) {
+            postExitCandles = filtered;
+            dataSource = "kraken_live";
+          }
+        }
+
+        // ── Window analyses ────────────────────────────────────────────────
         const windows: WindowResult[] = AUDIT_WINDOWS_H.map(h => {
           const cutoffMs = closedAt.getTime() + h * 3_600_000;
-          const slice = candlesSince.filter(c => c.time >= closedAt.getTime() && c.time <= cutoffMs);
+          const slice = postExitCandles.filter(c => c.timeMs <= cutoffMs);
           if (slice.length === 0) {
             return { hours: h, maxHigh: null, minLow: null, mfePct: null, maePct: null, candlesCovered: 0 };
           }
           const maxHigh = Math.max(...slice.map(c => c.high));
-          const minLow = Math.min(...slice.map(c => c.low));
-          const mfePct = parseFloat((((maxHigh - exitPrice) / exitPrice) * 100).toFixed(4));
-          const maePct = parseFloat((((exitPrice - minLow) / exitPrice) * 100).toFixed(4));
+          const minLow  = Math.min(...slice.map(c => c.low));
+          const mfePct  = parseFloat((((maxHigh - exitPrice) / exitPrice) * 100).toFixed(4));
+          const maePct  = parseFloat((((exitPrice - minLow)  / exitPrice) * 100).toFixed(4));
           return { hours: h, maxHigh, minLow, mfePct, maePct, candlesCovered: slice.length };
         });
 
         const hasData = windows.some(w => w.candlesCovered > 0);
-        const dataSource: TradeAuditRow["dataSource"] = hasData ? "market_candles_db" : "none";
 
-        // ── Classify ────────────────────────────────────────────────────────
-        // Use 24h window as primary; fall back to best available window
-        let primaryW = windows.find(w => w.hours === 24 && w.candlesCovered > 0)
+        // ── Classify ───────────────────────────────────────────────────────
+        const primaryW = windows.find(w => w.hours === 24 && w.candlesCovered > 0)
           ?? windows.find(w => w.hours === 12 && w.candlesCovered > 0)
-          ?? windows.find(w => w.hours === 4 && w.candlesCovered > 0)
-          ?? windows.find(w => w.hours === 1 && w.candlesCovered > 0)
+          ?? windows.find(w => w.hours === 4  && w.candlesCovered > 0)
+          ?? windows.find(w => w.hours === 1  && w.candlesCovered > 0)
           ?? null;
 
         let classification: Classification;
+        let classificationCode: ClassificationCode;
         let classificationReason: string;
         let missedUpsidePct: number | null = null;
         let missedUpsideUsd: number | null = null;
         let savedProfitPct: number | null = null;
         let savedProfitUsd: number | null = null;
 
-        if (!primaryW || primaryW.mfePct === null || primaryW.maePct === null) {
+        if (!hasData) {
+          const noDB = dbCandles.length === 0;
+          const noKraken = (krakenCandleCache.get(trade.pair) ?? []).length === 0;
           classification = "UNKNOWN_INSUFFICIENT_DATA";
-          classificationReason = "Sin velas históricas en market_candles para este par/periodo.";
+          classificationCode = (noDB && noKraken) ? "NO_CANDLES_DB_OR_KRAKEN" : "NO_CANDLES_DB";
+          classificationReason = (noDB && noKraken)
+            ? "Sin velas en market_candles ni en Kraken live para este par/periodo."
+            : "Sin velas en market_candles para este periodo. Kraken live no cubre la fecha de cierre (>30 días).";
+        } else if (!primaryW || primaryW.mfePct === null || primaryW.maePct === null) {
+          classification = "UNKNOWN_INSUFFICIENT_DATA";
+          classificationCode = "NO_CANDLES_DB";
+          classificationReason = "Velas insuficientes en ventana primaria para clasificar.";
         } else {
           missedUpsidePct = Math.max(0, primaryW.mfePct);
           missedUpsideUsd = parseFloat((exitPrice * missedUpsidePct / 100 * amount).toFixed(2));
-          savedProfitPct = Math.max(0, primaryW.maePct);
-          savedProfitUsd = parseFloat((exitPrice * savedProfitPct / 100 * amount).toFixed(2));
+          savedProfitPct  = Math.max(0, primaryW.maePct);
+          savedProfitUsd  = parseFloat((exitPrice * savedProfitPct / 100 * amount).toFixed(2));
+          const wLabel = `ventana ${primaryW.hours}h`;
 
-          const windowLabel = `(ventana ${primaryW.hours}h)`;
-
-          if (missedUpsidePct > 1.0 && savedProfitPct < missedUpsidePct * 0.6) {
+          if (Math.max(missedUpsidePct, savedProfitPct) < 0.5) {
+            classification = "NEUTRAL_TIME_STOP";
+            classificationCode = "LOW_MOVEMENT_NEUTRAL";
+            classificationReason = `Movimiento posterior <0.5% (${wLabel}). Sin diferencia relevante entre cerrar o esperar.`;
+          } else if (missedUpsidePct > 1.0 && savedProfitPct < missedUpsidePct * 0.6) {
             classification = "BAD_TIME_STOP_CUT_WINNER";
-            classificationReason = `Precio subió ${missedUpsidePct.toFixed(2)}% tras cierre ${windowLabel}. TimeStop cortó una operación ganadora.`;
+            classificationCode = "POST_EXIT_PRICE_ROSE";
+            classificationReason = `Precio subió +${missedUpsidePct.toFixed(2)}% tras cierre (${wLabel}). TimeStop cortó una operación ganadora.`;
           } else if (savedProfitPct > 1.0 && missedUpsidePct < savedProfitPct * 0.6) {
             classification = "GOOD_TIME_STOP_PROFIT_LOCK";
-            classificationReason = `Precio cayó ${savedProfitPct.toFixed(2)}% tras cierre ${windowLabel}. TimeStop protegió beneficio.`;
-          } else if (Math.max(missedUpsidePct, savedProfitPct) < 0.5) {
-            classification = "NEUTRAL_TIME_STOP";
-            classificationReason = `Movimiento posterior pequeño (<0.5%) ${windowLabel}. Sin diferencia relevante.`;
+            classificationCode = "POST_EXIT_PRICE_DROPPED";
+            classificationReason = `Precio cayó -${savedProfitPct.toFixed(2)}% tras cierre (${wLabel}). TimeStop protegió beneficio correctamente.`;
           } else if (missedUpsidePct > savedProfitPct) {
-            // Mixed but upside won
             if (missedUpsidePct - savedProfitPct < 0.25) {
               classification = "NEUTRAL_TIME_STOP";
-              classificationReason = `Subida (${missedUpsidePct.toFixed(2)}%) y caída (${savedProfitPct.toFixed(2)}%) similares ${windowLabel}.`;
+              classificationCode = "LOW_MOVEMENT_NEUTRAL";
+              classificationReason = `Subida (${missedUpsidePct.toFixed(2)}%) y caída (${savedProfitPct.toFixed(2)}%) similares (${wLabel}).`;
             } else {
               classification = "BAD_TIME_STOP_CUT_WINNER";
-              classificationReason = `Subida posterior (${missedUpsidePct.toFixed(2)}%) > caída posterior (${savedProfitPct.toFixed(2)}%) ${windowLabel}.`;
+              classificationCode = "MIXED_UPSIDE_DOMINANT";
+              classificationReason = `Subida posterior (${missedUpsidePct.toFixed(2)}%) > caída posterior (${savedProfitPct.toFixed(2)}%) (${wLabel}).`;
             }
           } else {
-            // Mixed but downside won
             if (savedProfitPct - missedUpsidePct < 0.25) {
               classification = "NEUTRAL_TIME_STOP";
-              classificationReason = `Caída (${savedProfitPct.toFixed(2)}%) y subida (${missedUpsidePct.toFixed(2)}%) similares ${windowLabel}.`;
+              classificationCode = "LOW_MOVEMENT_NEUTRAL";
+              classificationReason = `Caída (${savedProfitPct.toFixed(2)}%) y subida (${missedUpsidePct.toFixed(2)}%) similares (${wLabel}).`;
             } else {
               classification = "GOOD_TIME_STOP_PROFIT_LOCK";
-              classificationReason = `Caída posterior (${savedProfitPct.toFixed(2)}%) > subida posterior (${missedUpsidePct.toFixed(2)}%) ${windowLabel}.`;
+              classificationCode = "MIXED_DOWNSIDE_DOMINANT";
+              classificationReason = `Caída posterior (${savedProfitPct.toFixed(2)}%) > subida posterior (${missedUpsidePct.toFixed(2)}%) (${wLabel}).`;
             }
           }
         }
@@ -1007,6 +1069,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
           windows,
           dataSource,
           classification,
+          classificationCode,
           classificationReason,
           missedUpsidePct,
           missedUpsideUsd,
@@ -1015,37 +1078,58 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
         });
       }
 
-      // ── 2. Aggregate summary ─────────────────────────────────────────────
+      // ── 4. Aggregate summary ─────────────────────────────────────────────
       const totalTimeStopPositive = results.length;
       const goodProfitLocks = results.filter(r => r.classification === "GOOD_TIME_STOP_PROFIT_LOCK").length;
       const badCutWinners   = results.filter(r => r.classification === "BAD_TIME_STOP_CUT_WINNER").length;
       const neutral         = results.filter(r => r.classification === "NEUTRAL_TIME_STOP").length;
       const unknown         = results.filter(r => r.classification === "UNKNOWN_INSUFFICIENT_DATA").length;
+      const unknownPct      = totalTimeStopPositive > 0 ? parseFloat(((unknown / totalTimeStopPositive) * 100).toFixed(1)) : 0;
+      const hasPostExitCandles    = results.filter(r => r.dataSource !== "none").length;
+      const missingPostExitCandles = results.filter(r => r.dataSource === "none").length;
 
-      const actualPnlUsd       = parseFloat(results.reduce((s, r) => s + r.realizedPnlUsd, 0).toFixed(2));
-      const missedUpsideTotal  = parseFloat(results.reduce((s, r) => s + (r.missedUpsideUsd ?? 0), 0).toFixed(2));
-      const savedProfitTotal   = parseFloat(results.reduce((s, r) => s + (r.savedProfitUsd ?? 0), 0).toFixed(2));
+      const actualTimeStopPnlUsd = parseFloat(results.reduce((s, r) => s + r.realizedPnlUsd, 0).toFixed(2));
+      const missedUpsideTotal    = parseFloat(results.reduce((s, r) => s + (r.missedUpsideUsd ?? 0), 0).toFixed(2));
+      const savedProfitTotal     = parseFloat(results.reduce((s, r) => s + (r.savedProfitUsd ?? 0), 0).toFixed(2));
+      // comparativeNetBenefitUsd only meaningful if we have enough classified data
+      const comparativeNetBenefitUsd = unknownPct >= 80
+        ? null
+        : parseFloat((actualTimeStopPnlUsd - missedUpsideTotal + savedProfitTotal).toFixed(2));
 
-      // ── 3. By pair ────────────────────────────────────────────────────────
+      // Verdict
+      let verdict: string;
+      if (unknownPct >= 80) {
+        verdict = "INSUFFICIENT_DATA: no hay velas posteriores suficientes para evaluar TimeStop vs trailing. Acumular más histórico en market_candles.";
+      } else if (badCutWinners > goodProfitLocks) {
+        verdict = "BAD_DOMINANT: TimeStop probablemente corta ganadoras. Evaluar handoff_to_trailing.";
+      } else if (goodProfitLocks > badCutWinners) {
+        verdict = "GOOD_DOMINANT: TimeStop probablemente protege beneficio. Mantener lógica actual.";
+      } else {
+        verdict = "MIXED: resultado equilibrado. Revisar byPair y byRegime para decidir por par/régimen.";
+      }
+
+      // ── 5. By pair ────────────────────────────────────────────────────────
       const byPairMap = new Map<string, { pair: string; count: number; pnlUsd: number; good: number; bad: number; neutral: number; unknown: number }>();
       for (const r of results) {
         if (!byPairMap.has(r.pair)) byPairMap.set(r.pair, { pair: r.pair, count: 0, pnlUsd: 0, good: 0, bad: 0, neutral: 0, unknown: 0 });
         const e = byPairMap.get(r.pair)!;
-        e.count++; e.pnlUsd = parseFloat((e.pnlUsd + r.realizedPnlUsd).toFixed(2));
-        if (r.classification === "GOOD_TIME_STOP_PROFIT_LOCK") e.good++;
+        e.count++;
+        e.pnlUsd = parseFloat((e.pnlUsd + r.realizedPnlUsd).toFixed(2));
+        if (r.classification === "GOOD_TIME_STOP_PROFIT_LOCK")   e.good++;
         else if (r.classification === "BAD_TIME_STOP_CUT_WINNER") e.bad++;
-        else if (r.classification === "NEUTRAL_TIME_STOP") e.neutral++;
+        else if (r.classification === "NEUTRAL_TIME_STOP")        e.neutral++;
         else e.unknown++;
       }
 
-      // ── 4. By PnL range ───────────────────────────────────────────────────
+      // ── 6. By PnL range (4 buckets covering 0%→∞) ────────────────────────
       const bucketPct = (r: TradeAuditRow) =>
         r.entryPrice > 0 ? ((r.exitPrice - r.entryPrice) / r.entryPrice) * 100 : 0;
 
       const pnlRangeBuckets = [
+        { label: "0%→+0.25%",   min: 0,    max: 0.25 },
         { label: "+0.25%→+1%",  min: 0.25, max: 1.0  },
-        { label: "+1%→+3%",    min: 1.0,  max: 3.0  },
-        { label: ">+3%",       min: 3.0,  max: Infinity },
+        { label: "+1%→+3%",     min: 1.0,  max: 3.0  },
+        { label: ">+3%",        min: 3.0,  max: Infinity },
       ];
       const byPnlRange = pnlRangeBuckets.map(bucket => {
         const group = results.filter(r => { const p = bucketPct(r); return p >= bucket.min && p < bucket.max; });
@@ -1053,14 +1137,14 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
           label: bucket.label,
           count: group.length,
           pnlUsd: parseFloat(group.reduce((s, r) => s + r.realizedPnlUsd, 0).toFixed(2)),
-          good: group.filter(r => r.classification === "GOOD_TIME_STOP_PROFIT_LOCK").length,
-          bad: group.filter(r => r.classification === "BAD_TIME_STOP_CUT_WINNER").length,
+          good:    group.filter(r => r.classification === "GOOD_TIME_STOP_PROFIT_LOCK").length,
+          bad:     group.filter(r => r.classification === "BAD_TIME_STOP_CUT_WINNER").length,
           neutral: group.filter(r => r.classification === "NEUTRAL_TIME_STOP").length,
           unknown: group.filter(r => r.classification === "UNKNOWN_INSUFFICIENT_DATA").length,
         };
       });
 
-      // ── 5. By regime ──────────────────────────────────────────────────────
+      // ── 7. By regime ──────────────────────────────────────────────────────
       const regimeKeys = [...new Set(results.map(r => r.regime ?? "UNKNOWN"))];
       const byRegime = regimeKeys.map(regime => {
         const group = results.filter(r => (r.regime ?? "UNKNOWN") === regime);
@@ -1069,33 +1153,31 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
           count: group.length,
           pnlUsd: parseFloat(group.reduce((s, r) => s + r.realizedPnlUsd, 0).toFixed(2)),
           good: group.filter(r => r.classification === "GOOD_TIME_STOP_PROFIT_LOCK").length,
-          bad: group.filter(r => r.classification === "BAD_TIME_STOP_CUT_WINNER").length,
+          bad:  group.filter(r => r.classification === "BAD_TIME_STOP_CUT_WINNER").length,
         };
       });
 
-      // ── 6. Response ────────────────────────────────────────────────────────
+      // ── 8. Response ───────────────────────────────────────────────────────
       res.json({
         auditDate: new Date().toISOString(),
-        auditVersion: "1.0",
+        auditVersion: "1.1",
         note: "Auditoría de cierres TimeStop positivos. SOLO LECTURA. No modifica lógica de trading, BD ni histórico.",
-        sgDataNote: "SmartGuard fields (sg_trailing_activated, sg_current_stop_price, sg_break_even_activated) NO están almacenados en dry_run_trades. Clasificación basada exclusivamente en acción de precio posterior según velas 1h en market_candles.",
-        candleDataNote: "Velas obtenidas de market_candles (tabla BD). Si la tabla no contiene datos para el periodo de la operación, classification=UNKNOWN_INSUFFICIENT_DATA.",
+        sgDataNote: "SmartGuard fields (sg_trailing_activated, sg_current_stop_price, sg_break_even_activated) NO están almacenados en dry_run_trades. Clasificación basada exclusivamente en acción de precio posterior (velas 1h).",
+        candleDataNote: "Fuente primaria: market_candles (BD). Fallback: Kraken live getOHLC 1h (~últimos 30 días). Si ambas fallan: UNKNOWN_INSUFFICIENT_DATA.",
         summary: {
           totalTimeStopPositive,
           goodProfitLocks,
           badCutWinners,
           neutral,
           unknown,
-          unknownPct: totalTimeStopPositive > 0 ? parseFloat(((unknown / totalTimeStopPositive) * 100).toFixed(1)) : 0,
-          actualTimeStopPnlUsd: actualPnlUsd,
-          missedUpsideTotalUsd: missedUpsideTotal,
-          savedProfitTotalUsd: savedProfitTotal,
-          netBenefitOfTimeStopUsd: parseFloat((actualPnlUsd - missedUpsideTotal + savedProfitTotal).toFixed(2)),
-          verdict: badCutWinners > goodProfitLocks
-            ? "⚠️ Mayoría BAD: TimeStop parece cortar ganancias antes de tiempo. Revisar lógica."
-            : goodProfitLocks > badCutWinners
-              ? "✅ Mayoría GOOD: TimeStop protege beneficio eficazmente."
-              : "➡️ Resultado mixto o neutro. Se recomienda análisis por par y régimen.",
+          unknownPct,
+          hasPostExitCandles,
+          missingPostExitCandles,
+          actualTimeStopPnlUsd,
+          comparativeNetBenefitUsd,
+          missedUpsideTotalUsd: unknownPct >= 80 ? null : missedUpsideTotal,
+          savedProfitTotalUsd:  unknownPct >= 80 ? null : savedProfitTotal,
+          verdict,
         },
         byPair: [...byPairMap.values()],
         byPnlRange,
