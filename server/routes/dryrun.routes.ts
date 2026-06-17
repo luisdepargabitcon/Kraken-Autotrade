@@ -5,6 +5,7 @@ import { dryRunTrades, botEvents } from "@shared/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { classifyExitReason, type NormalizedExitReason } from "../utils/exitReasonClassifier";
 import { MarketDataService } from "../services/MarketDataService";
+import { getCandlesSince } from "../services/marketData/MarketCandleRepository";
 
 export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
@@ -808,4 +809,304 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
       res.status(500).json({ error: "Failed to compute exit audit" });
     }
   });
+
+  // ============================================================
+  // GET /api/dryrun/timestop-audit
+  // Audit profitable TimeStop exits: contrafactual vs trailing
+  // READ-ONLY. No changes to trading logic, DB, or history.
+  // ============================================================
+  app.get("/api/dryrun/timestop-audit", async (_req, res) => {
+    try {
+      // ── 1. Fetch all included TIME_STOP sells with positive PnL ────────────
+      const timeStopSells = await db.select().from(dryRunTrades)
+        .where(and(
+          eq(dryRunTrades.type, "sell"),
+          eq(dryRunTrades.normalizedReason, "TIME_STOP"),
+          eq(dryRunTrades.excludedFromPnl, false),
+          sql`${dryRunTrades.realizedPnlUsd} > 0`
+        ))
+        .orderBy(desc(dryRunTrades.closedAt));
+
+      type Classification =
+        | "GOOD_TIME_STOP_PROFIT_LOCK"
+        | "BAD_TIME_STOP_CUT_WINNER"
+        | "NEUTRAL_TIME_STOP"
+        | "UNKNOWN_INSUFFICIENT_DATA";
+
+      interface WindowResult {
+        hours: number;
+        maxHigh: number | null;
+        minLow: number | null;
+        mfePct: number | null;  // max upside after exit %
+        maePct: number | null;  // max downside after exit %
+        candlesCovered: number;
+      }
+
+      interface TradeAuditRow {
+        id: number;
+        pair: string;
+        simTxid: string;
+        entrySimTxid: string | null;
+        entryPrice: number;
+        exitPrice: number;
+        amount: number;
+        realizedPnlUsd: number;
+        realizedPnlPct: string;
+        closedAt: string;
+        reason: string | null;
+        normalizedReason: string | null;
+        strategyId: string | null;
+        regime: string | null;
+        confidence: number | null;
+        // SmartGuard fields — not stored in dry_run_trades schema
+        sgTrailingActivated: null;
+        sgCurrentStopPrice: null;
+        sgBreakEvenActivated: null;
+        // Post-exit candle analysis
+        windows: WindowResult[];
+        dataSource: "market_candles_db" | "none";
+        // Classification
+        classification: Classification;
+        classificationReason: string;
+        // Contrafactual metrics (24h window primary)
+        missedUpsidePct: number | null;
+        missedUpsideUsd: number | null;
+        savedProfitPct: number | null;
+        savedProfitUsd: number | null;
+      }
+
+      const AUDIT_WINDOWS_H = [1, 4, 12, 24, 48];
+      const results: TradeAuditRow[] = [];
+
+      for (const trade of timeStopSells) {
+        const exitPrice = parseFloat(trade.price || "0");
+        const entryPrice = parseFloat(trade.entryPrice || "0");
+        const amount = parseFloat(trade.amount || "0");
+        const realizedPnlUsd = parseFloat(trade.realizedPnlUsd || "0");
+        const closedAt = trade.closedAt ? new Date(trade.closedAt) : null;
+        const realizedPnlPct = trade.realizedPnlPct
+          ? `+${parseFloat(trade.realizedPnlPct).toFixed(2)}%`
+          : entryPrice > 0
+            ? `+${(((exitPrice - entryPrice) / entryPrice) * 100).toFixed(2)}%`
+            : "N/A";
+
+        const baseRow: Omit<TradeAuditRow, "windows" | "dataSource" | "classification" | "classificationReason" | "missedUpsidePct" | "missedUpsideUsd" | "savedProfitPct" | "savedProfitUsd"> = {
+          id: trade.id,
+          pair: trade.pair,
+          simTxid: trade.simTxid,
+          entrySimTxid: trade.entrySimTxid ?? null,
+          entryPrice,
+          exitPrice,
+          amount,
+          realizedPnlUsd,
+          realizedPnlPct,
+          closedAt: closedAt?.toISOString() ?? "unknown",
+          reason: trade.reason ?? null,
+          normalizedReason: trade.normalizedReason ?? null,
+          strategyId: trade.strategyId ?? null,
+          regime: trade.regime ?? null,
+          confidence: trade.confidence ? parseFloat(trade.confidence) : null,
+          sgTrailingActivated: null,
+          sgCurrentStopPrice: null,
+          sgBreakEvenActivated: null,
+        };
+
+        if (!closedAt || exitPrice <= 0 || entryPrice <= 0) {
+          results.push({
+            ...baseRow,
+            windows: [],
+            dataSource: "none",
+            classification: "UNKNOWN_INSUFFICIENT_DATA",
+            classificationReason: "Datos de precio o fecha de cierre ausentes.",
+            missedUpsidePct: null,
+            missedUpsideUsd: null,
+            savedProfitPct: null,
+            savedProfitUsd: null,
+          });
+          continue;
+        }
+
+        // ── Fetch 1h candles from closedAt onwards ──────────────────────────
+        const candlesSince = await getCandlesSince(trade.pair, "1h", closedAt.getTime());
+
+        // ── Calculate window analyses ───────────────────────────────────────
+        const windows: WindowResult[] = AUDIT_WINDOWS_H.map(h => {
+          const cutoffMs = closedAt.getTime() + h * 3_600_000;
+          const slice = candlesSince.filter(c => c.time >= closedAt.getTime() && c.time <= cutoffMs);
+          if (slice.length === 0) {
+            return { hours: h, maxHigh: null, minLow: null, mfePct: null, maePct: null, candlesCovered: 0 };
+          }
+          const maxHigh = Math.max(...slice.map(c => c.high));
+          const minLow = Math.min(...slice.map(c => c.low));
+          const mfePct = parseFloat((((maxHigh - exitPrice) / exitPrice) * 100).toFixed(4));
+          const maePct = parseFloat((((exitPrice - minLow) / exitPrice) * 100).toFixed(4));
+          return { hours: h, maxHigh, minLow, mfePct, maePct, candlesCovered: slice.length };
+        });
+
+        const hasData = windows.some(w => w.candlesCovered > 0);
+        const dataSource: TradeAuditRow["dataSource"] = hasData ? "market_candles_db" : "none";
+
+        // ── Classify ────────────────────────────────────────────────────────
+        // Use 24h window as primary; fall back to best available window
+        let primaryW = windows.find(w => w.hours === 24 && w.candlesCovered > 0)
+          ?? windows.find(w => w.hours === 12 && w.candlesCovered > 0)
+          ?? windows.find(w => w.hours === 4 && w.candlesCovered > 0)
+          ?? windows.find(w => w.hours === 1 && w.candlesCovered > 0)
+          ?? null;
+
+        let classification: Classification;
+        let classificationReason: string;
+        let missedUpsidePct: number | null = null;
+        let missedUpsideUsd: number | null = null;
+        let savedProfitPct: number | null = null;
+        let savedProfitUsd: number | null = null;
+
+        if (!primaryW || primaryW.mfePct === null || primaryW.maePct === null) {
+          classification = "UNKNOWN_INSUFFICIENT_DATA";
+          classificationReason = "Sin velas históricas en market_candles para este par/periodo.";
+        } else {
+          missedUpsidePct = Math.max(0, primaryW.mfePct);
+          missedUpsideUsd = parseFloat((exitPrice * missedUpsidePct / 100 * amount).toFixed(2));
+          savedProfitPct = Math.max(0, primaryW.maePct);
+          savedProfitUsd = parseFloat((exitPrice * savedProfitPct / 100 * amount).toFixed(2));
+
+          const windowLabel = `(ventana ${primaryW.hours}h)`;
+
+          if (missedUpsidePct > 1.0 && savedProfitPct < missedUpsidePct * 0.6) {
+            classification = "BAD_TIME_STOP_CUT_WINNER";
+            classificationReason = `Precio subió ${missedUpsidePct.toFixed(2)}% tras cierre ${windowLabel}. TimeStop cortó una operación ganadora.`;
+          } else if (savedProfitPct > 1.0 && missedUpsidePct < savedProfitPct * 0.6) {
+            classification = "GOOD_TIME_STOP_PROFIT_LOCK";
+            classificationReason = `Precio cayó ${savedProfitPct.toFixed(2)}% tras cierre ${windowLabel}. TimeStop protegió beneficio.`;
+          } else if (Math.max(missedUpsidePct, savedProfitPct) < 0.5) {
+            classification = "NEUTRAL_TIME_STOP";
+            classificationReason = `Movimiento posterior pequeño (<0.5%) ${windowLabel}. Sin diferencia relevante.`;
+          } else if (missedUpsidePct > savedProfitPct) {
+            // Mixed but upside won
+            if (missedUpsidePct - savedProfitPct < 0.25) {
+              classification = "NEUTRAL_TIME_STOP";
+              classificationReason = `Subida (${missedUpsidePct.toFixed(2)}%) y caída (${savedProfitPct.toFixed(2)}%) similares ${windowLabel}.`;
+            } else {
+              classification = "BAD_TIME_STOP_CUT_WINNER";
+              classificationReason = `Subida posterior (${missedUpsidePct.toFixed(2)}%) > caída posterior (${savedProfitPct.toFixed(2)}%) ${windowLabel}.`;
+            }
+          } else {
+            // Mixed but downside won
+            if (savedProfitPct - missedUpsidePct < 0.25) {
+              classification = "NEUTRAL_TIME_STOP";
+              classificationReason = `Caída (${savedProfitPct.toFixed(2)}%) y subida (${missedUpsidePct.toFixed(2)}%) similares ${windowLabel}.`;
+            } else {
+              classification = "GOOD_TIME_STOP_PROFIT_LOCK";
+              classificationReason = `Caída posterior (${savedProfitPct.toFixed(2)}%) > subida posterior (${missedUpsidePct.toFixed(2)}%) ${windowLabel}.`;
+            }
+          }
+        }
+
+        results.push({
+          ...baseRow,
+          windows,
+          dataSource,
+          classification,
+          classificationReason,
+          missedUpsidePct,
+          missedUpsideUsd,
+          savedProfitPct,
+          savedProfitUsd,
+        });
+      }
+
+      // ── 2. Aggregate summary ─────────────────────────────────────────────
+      const totalTimeStopPositive = results.length;
+      const goodProfitLocks = results.filter(r => r.classification === "GOOD_TIME_STOP_PROFIT_LOCK").length;
+      const badCutWinners   = results.filter(r => r.classification === "BAD_TIME_STOP_CUT_WINNER").length;
+      const neutral         = results.filter(r => r.classification === "NEUTRAL_TIME_STOP").length;
+      const unknown         = results.filter(r => r.classification === "UNKNOWN_INSUFFICIENT_DATA").length;
+
+      const actualPnlUsd       = parseFloat(results.reduce((s, r) => s + r.realizedPnlUsd, 0).toFixed(2));
+      const missedUpsideTotal  = parseFloat(results.reduce((s, r) => s + (r.missedUpsideUsd ?? 0), 0).toFixed(2));
+      const savedProfitTotal   = parseFloat(results.reduce((s, r) => s + (r.savedProfitUsd ?? 0), 0).toFixed(2));
+
+      // ── 3. By pair ────────────────────────────────────────────────────────
+      const byPairMap = new Map<string, { pair: string; count: number; pnlUsd: number; good: number; bad: number; neutral: number; unknown: number }>();
+      for (const r of results) {
+        if (!byPairMap.has(r.pair)) byPairMap.set(r.pair, { pair: r.pair, count: 0, pnlUsd: 0, good: 0, bad: 0, neutral: 0, unknown: 0 });
+        const e = byPairMap.get(r.pair)!;
+        e.count++; e.pnlUsd = parseFloat((e.pnlUsd + r.realizedPnlUsd).toFixed(2));
+        if (r.classification === "GOOD_TIME_STOP_PROFIT_LOCK") e.good++;
+        else if (r.classification === "BAD_TIME_STOP_CUT_WINNER") e.bad++;
+        else if (r.classification === "NEUTRAL_TIME_STOP") e.neutral++;
+        else e.unknown++;
+      }
+
+      // ── 4. By PnL range ───────────────────────────────────────────────────
+      const bucketPct = (r: TradeAuditRow) =>
+        r.entryPrice > 0 ? ((r.exitPrice - r.entryPrice) / r.entryPrice) * 100 : 0;
+
+      const pnlRangeBuckets = [
+        { label: "+0.25%→+1%",  min: 0.25, max: 1.0  },
+        { label: "+1%→+3%",    min: 1.0,  max: 3.0  },
+        { label: ">+3%",       min: 3.0,  max: Infinity },
+      ];
+      const byPnlRange = pnlRangeBuckets.map(bucket => {
+        const group = results.filter(r => { const p = bucketPct(r); return p >= bucket.min && p < bucket.max; });
+        return {
+          label: bucket.label,
+          count: group.length,
+          pnlUsd: parseFloat(group.reduce((s, r) => s + r.realizedPnlUsd, 0).toFixed(2)),
+          good: group.filter(r => r.classification === "GOOD_TIME_STOP_PROFIT_LOCK").length,
+          bad: group.filter(r => r.classification === "BAD_TIME_STOP_CUT_WINNER").length,
+          neutral: group.filter(r => r.classification === "NEUTRAL_TIME_STOP").length,
+          unknown: group.filter(r => r.classification === "UNKNOWN_INSUFFICIENT_DATA").length,
+        };
+      });
+
+      // ── 5. By regime ──────────────────────────────────────────────────────
+      const regimeKeys = [...new Set(results.map(r => r.regime ?? "UNKNOWN"))];
+      const byRegime = regimeKeys.map(regime => {
+        const group = results.filter(r => (r.regime ?? "UNKNOWN") === regime);
+        return {
+          regime,
+          count: group.length,
+          pnlUsd: parseFloat(group.reduce((s, r) => s + r.realizedPnlUsd, 0).toFixed(2)),
+          good: group.filter(r => r.classification === "GOOD_TIME_STOP_PROFIT_LOCK").length,
+          bad: group.filter(r => r.classification === "BAD_TIME_STOP_CUT_WINNER").length,
+        };
+      });
+
+      // ── 6. Response ────────────────────────────────────────────────────────
+      res.json({
+        auditDate: new Date().toISOString(),
+        auditVersion: "1.0",
+        note: "Auditoría de cierres TimeStop positivos. SOLO LECTURA. No modifica lógica de trading, BD ni histórico.",
+        sgDataNote: "SmartGuard fields (sg_trailing_activated, sg_current_stop_price, sg_break_even_activated) NO están almacenados en dry_run_trades. Clasificación basada exclusivamente en acción de precio posterior según velas 1h en market_candles.",
+        candleDataNote: "Velas obtenidas de market_candles (tabla BD). Si la tabla no contiene datos para el periodo de la operación, classification=UNKNOWN_INSUFFICIENT_DATA.",
+        summary: {
+          totalTimeStopPositive,
+          goodProfitLocks,
+          badCutWinners,
+          neutral,
+          unknown,
+          unknownPct: totalTimeStopPositive > 0 ? parseFloat(((unknown / totalTimeStopPositive) * 100).toFixed(1)) : 0,
+          actualTimeStopPnlUsd: actualPnlUsd,
+          missedUpsideTotalUsd: missedUpsideTotal,
+          savedProfitTotalUsd: savedProfitTotal,
+          netBenefitOfTimeStopUsd: parseFloat((actualPnlUsd - missedUpsideTotal + savedProfitTotal).toFixed(2)),
+          verdict: badCutWinners > goodProfitLocks
+            ? "⚠️ Mayoría BAD: TimeStop parece cortar ganancias antes de tiempo. Revisar lógica."
+            : goodProfitLocks > badCutWinners
+              ? "✅ Mayoría GOOD: TimeStop protege beneficio eficazmente."
+              : "➡️ Resultado mixto o neutro. Se recomienda análisis por par y régimen.",
+        },
+        byPair: [...byPairMap.values()],
+        byPnlRange,
+        byRegime,
+        trades: results,
+      });
+
+    } catch (error: any) {
+      console.error("[dryrun/timestop-audit] Error:", error?.message);
+      res.status(500).json({ error: "Failed to run timestop audit", details: error?.message });
+    }
+  });
+
 };
