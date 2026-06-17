@@ -426,6 +426,9 @@ export const dryRunTrades = pgTable("dry_run_trades", {
   amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
   totalUsd: decimal("total_usd", { precision: 18, scale: 2 }).notNull(),
   reason: text("reason"),
+  // Normalized exit reason for audit grouping (populated on insert for sells)
+  // Values: TIME_STOP | BREAK_EVEN | TRAILING_STOP | SCALE_OUT | SMART_EXIT | STOP_LOSS | EMERGENCY_SL | TAKE_PROFIT | UNKNOWN
+  normalizedReason: text("normalized_reason"),
   status: text("status").notNull().default("open"), // open | closed
   // For sells: link to original buy
   entrySimTxid: text("entry_sim_txid"),
@@ -761,9 +764,15 @@ export const timeStopConfig = pgTable("time_stop_config", {
   telegramAlertEnabled: boolean("telegram_alert_enabled").notNull().default(true),
   logExpiryEvenIfDisabled: boolean("log_expiry_even_if_disabled").notNull().default(true),
 
-  // FASE 4 — Soft mode: when true, only close on expiry if net P&L > roundTripFeePct.
+  // FASE 4 — Soft mode: when true, only close on expiry if net P&L >= minProfitPctToExit.
   // Replaces the decorative bot_config.timeStopMode="soft" that never gated behavior.
-  softMode: boolean("soft_mode").notNull().default(false),
+  // Default is NOW true (migration 048 enables it for all rows).
+  softMode: boolean("soft_mode").notNull().default(true),
+
+  // FASE 4 — Minimum net PnL (after round-trip fees) required before TimeStop closes.
+  // e.g. 0.25 means position must be at least +0.25% net before TimeStop fires.
+  // Only evaluated when softMode=true.
+  minProfitPctToExit: decimal("min_profit_pct_to_exit", { precision: 6, scale: 3 }).notNull().default("0.25"),
 
   // Priority (lower = higher priority)
   priority: integer("priority").notNull().default(100),

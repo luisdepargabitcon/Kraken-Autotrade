@@ -31,8 +31,9 @@ export interface SmartTTLResult {
   limitFallbackSeconds: number;
   telegramAlertEnabled: boolean;
   logExpiryEvenIfDisabled: boolean;
-  softMode: boolean;         // FASE 4 — if true, only close if net P&L > roundTripFeePct
-  configSource: string;      // 'BTC/USD:spot' or '*:spot'
+  softMode: boolean;              // FASE 4 — if true, only close if net P&L >= minProfitPctToExit
+  minProfitPctToExit: number;    // FASE 4 — minimum net PnL% required to close (default 0.25)
+  configSource: string;          // 'BTC/USD:spot' or '*:spot'
 }
 
 export interface TimeStopCheckResult {
@@ -47,6 +48,8 @@ export interface TimeStopCheckResult {
   logExpiryEvenIfDisabled: boolean;
   softMode: boolean;                // FASE 4 — effective softMode for the resolved config row
   softModeBlocked: boolean;         // FASE 4 — true iff expiry occurred but close was suppressed by softMode
+  minProfitPctToExit: number;       // FASE 4 — threshold used in the softMode gate
+  netPnlPct?: number;               // FASE 4 — computed net PnL when softMode evaluated
   configSource: string;
   // FASE 4.1 — true when TimeStop is explicitly opted-out for this pair
   // (specific row exists with isActive=false) OR globally disabled (no rows / wildcard inactive).
@@ -206,7 +209,8 @@ export async function calculateSmartTTL(
     limitFallbackSeconds: config.limitFallbackSeconds ?? 30,
     telegramAlertEnabled: config.telegramAlertEnabled ?? true,
     logExpiryEvenIfDisabled: config.logExpiryEvenIfDisabled ?? true,
-    softMode: (config as any).softMode ?? false,
+    softMode: config.softMode ?? true,
+    minProfitPctToExit: parseFloat(String(config.minProfitPctToExit ?? "0.25")),
     configSource: `${config.pair}:${config.market}`,
   };
 }
@@ -259,6 +263,7 @@ export async function checkSmartTimeStop(
       logExpiryEvenIfDisabled: false,
       softMode: false,
       softModeBlocked: false,
+      minProfitPctToExit: 0.25,
       configSource: `${pair}:${market} (disabled)`,
       explicitlyDisabled: true,
     };
@@ -280,6 +285,7 @@ export async function checkSmartTimeStop(
       logExpiryEvenIfDisabled: false,
       softMode: false,
       softModeBlocked: false,
+      minProfitPctToExit: 0.25,
       configSource: "no_config",
       explicitlyDisabled: true,
     };
@@ -303,12 +309,13 @@ export async function checkSmartTimeStop(
       logExpiryEvenIfDisabled: false,
       softMode: false,
       softModeBlocked: false,
+      minProfitPctToExit: 0.25,
       configSource: "error:inconsistent",
       explicitlyDisabled: true,
     };
   }
 
-  const { ttlHours, closeOrderType, limitFallbackSeconds, telegramAlertEnabled, logExpiryEvenIfDisabled, softMode, configSource } = smartTTL;
+  const { ttlHours, closeOrderType, limitFallbackSeconds, telegramAlertEnabled, logExpiryEvenIfDisabled, softMode, minProfitPctToExit, configSource } = smartTTL;
   const expired = ageHours >= ttlHours;
 
   if (!expired) {
@@ -324,6 +331,7 @@ export async function checkSmartTimeStop(
       logExpiryEvenIfDisabled,
       softMode,
       softModeBlocked: false,
+      minProfitPctToExit,
       configSource,
     };
   }
@@ -346,19 +354,20 @@ export async function checkSmartTimeStop(
       logExpiryEvenIfDisabled,
       softMode,
       softModeBlocked: false,
+      minProfitPctToExit,
       configSource,
     };
   }
 
-  // FASE 4 — softMode gate: if expired + enabled but softMode active and net P&L <= 0,
-  // suppress close. Caller is responsible for providing priceChangePct and roundTripFeePct
-  // (feeRoundTripPct ≈ 2 × takerFeePct). If the caller doesn't provide them, softMode is
-  // a no-op to preserve backward compatibility.
+  // FASE 4 — softMode gate: if expired + enabled + softMode=true, only close when
+  // net P&L (priceChangePct − roundTripFeePct) >= minProfitPctToExit.
+  // This prevents TimeStop from closing positions in loss due to simple time expiry.
+  // If priceChangePct is not provided, softMode is a no-op (backward compatibility).
   if (softMode && typeof priceChangePct === "number") {
     const fee = typeof roundTripFeePct === "number" ? roundTripFeePct : 0;
     const netPnlPct = priceChangePct - fee;
-    if (netPnlPct <= 0) {
-      log(`[TIME_STOP_SOFT_BLOCK] pair=${pair} ageHours=${ageHours.toFixed(1)} ttl=${ttlHours.toFixed(1)}h regime=${regime} netPnl=${netPnlPct.toFixed(2)}% (price=${priceChangePct.toFixed(2)}% fee=${fee.toFixed(2)}%) — cierre suprimido por softMode`, "trading");
+    if (netPnlPct < minProfitPctToExit) {
+      log(`[TIME_STOP_DEFERRED] pair=${pair} ageHours=${ageHours.toFixed(1)}h ttl=${ttlHours.toFixed(1)}h regime=${regime} netPnl=${netPnlPct.toFixed(3)}% < minProfit=${minProfitPctToExit.toFixed(3)}% (price=${priceChangePct.toFixed(2)}% fee=${fee.toFixed(2)}%) — DEFER (no venta por expiración en pérdida)`, "trading");
       return {
         expired: true,
         shouldClose: false,
@@ -366,18 +375,20 @@ export async function checkSmartTimeStop(
         ttlHours,
         closeOrderType,
         limitFallbackSeconds,
-        reason: `TimeStop expirado pero softMode bloquea cierre (P&L neto ${netPnlPct.toFixed(2)}% <= 0, price=${priceChangePct.toFixed(2)}%, fee=${fee.toFixed(2)}%) [${regime}] config=${configSource}`,
+        reason: `TimeStop DIFERIDO — P&L neto ${netPnlPct.toFixed(3)}% < mínimo ${minProfitPctToExit.toFixed(3)}% (price=${priceChangePct.toFixed(2)}%, fee=${fee.toFixed(2)}%) [${regime}] config=${configSource}`,
         telegramAlertEnabled,
         logExpiryEvenIfDisabled,
         softMode,
         softModeBlocked: true,
+        minProfitPctToExit,
+        netPnlPct,
         configSource,
       };
     }
   }
 
-  // Expired AND enabled AND (softMode off OR net gain) → should close
-  log(`[TIME_STOP_EXPIRED] pair=${pair} ageHours=${ageHours.toFixed(1)} ttl=${ttlHours.toFixed(1)}h (base=${smartTTL.ttlBaseHours}h * ${smartTTL.regimeFactor} [${regime}]) closeType=${closeOrderType} softMode=${softMode} config=${configSource}`, "trading");
+  // Expired AND enabled AND (softMode off OR netPnl >= minProfitPctToExit) → should close
+  log(`[TIME_STOP_EXPIRED] pair=${pair} ageHours=${ageHours.toFixed(1)}h ttl=${ttlHours.toFixed(1)}h (base=${smartTTL.ttlBaseHours}h * ${smartTTL.regimeFactor} [${regime}]) closeType=${closeOrderType} softMode=${softMode} minProfit=${minProfitPctToExit.toFixed(3)}% config=${configSource}`, "trading");
 
   return {
     expired: true,
@@ -391,6 +402,8 @@ export async function checkSmartTimeStop(
     logExpiryEvenIfDisabled,
     softMode,
     softModeBlocked: false,
+    minProfitPctToExit,
+    netPnlPct: typeof priceChangePct === "number" ? priceChangePct - (typeof roundTripFeePct === "number" ? roundTripFeePct : 0) : undefined,
     configSource,
   };
 }

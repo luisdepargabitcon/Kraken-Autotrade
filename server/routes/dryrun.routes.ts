@@ -3,6 +3,7 @@ import type { RegisterRoutes } from "./types";
 import { db } from "../db";
 import { dryRunTrades, botEvents } from "@shared/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
+import { classifyExitReason, type NormalizedExitReason } from "../utils/exitReasonClassifier";
 
 export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
@@ -243,6 +244,164 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
     } catch (error: any) {
       console.error("[dryrun] Error backfilling:", error?.message);
       res.status(500).json({ error: "Failed to backfill dry run trades" });
+    }
+  });
+
+  // GET /api/dryrun/exit-audit - Exit audit: stats grouped by reason, pair, duplicates
+  // FASE 2/3/8 — Provides data for the SmartGuard exit audit dashboard
+  app.get("/api/dryrun/exit-audit", async (_req, res) => {
+    try {
+      // Fetch all sell records
+      const sells = await db.select().from(dryRunTrades)
+        .where(eq(dryRunTrades.type, "sell"))
+        .orderBy(desc(dryRunTrades.createdAt));
+
+      if (sells.length === 0) {
+        return res.json({
+          totalSells: 0,
+          byReason: [],
+          byPair: [],
+          duplicates: [],
+          summary: { totalPnlUsd: 0, wins: 0, losses: 0, winRate: 0, worstLoss: 0, bestGain: 0 },
+        });
+      }
+
+      // ── Classify reasons (use stored normalizedReason if present, else classify on-the-fly)
+      interface EnrichedSell {
+        id: number;
+        pair: string;
+        normalizedReason: NormalizedExitReason;
+        reason: string | null;
+        pnlUsd: number;
+        pnlPct: number;
+        entrySimTxid: string | null;
+        closedAt: Date | null;
+        createdAt: Date;
+      }
+
+      const enriched: EnrichedSell[] = sells.map(s => ({
+        id: s.id,
+        pair: s.pair,
+        normalizedReason: (s.normalizedReason as NormalizedExitReason | null) ?? classifyExitReason(s.reason),
+        reason: s.reason ?? null,
+        pnlUsd: parseFloat(s.realizedPnlUsd ?? "0"),
+        pnlPct: parseFloat(s.realizedPnlPct ?? "0"),
+        entrySimTxid: s.entrySimTxid ?? null,
+        closedAt: s.closedAt ?? null,
+        createdAt: s.createdAt,
+      }));
+
+      // ── Stats by normalized reason ──────────────────────────────────────────
+      const reasonMap = new Map<NormalizedExitReason, EnrichedSell[]>();
+      for (const s of enriched) {
+        const arr = reasonMap.get(s.normalizedReason) ?? [];
+        arr.push(s);
+        reasonMap.set(s.normalizedReason, arr);
+      }
+
+      const byReason = Array.from(reasonMap.entries()).map(([reason, trades]) => {
+        const pnls = trades.map(t => t.pnlUsd);
+        const wins = pnls.filter(p => p > 0).length;
+        const losses = pnls.filter(p => p <= 0).length;
+        const total = pnls.reduce((a, b) => a + b, 0);
+        const avg = total / pnls.length;
+        const sorted = [...pnls].sort((a, b) => a - b);
+        const median = pnls.length % 2 === 0
+          ? (sorted[pnls.length / 2 - 1] + sorted[pnls.length / 2]) / 2
+          : sorted[Math.floor(pnls.length / 2)];
+        const pnlPcts = trades.map(t => t.pnlPct);
+        const avgPct = pnlPcts.reduce((a, b) => a + b, 0) / pnlPcts.length;
+        return {
+          reason,
+          count: trades.length,
+          totalPnlUsd: parseFloat(total.toFixed(2)),
+          avgPnlUsd: parseFloat(avg.toFixed(2)),
+          medianPnlUsd: parseFloat(median.toFixed(2)),
+          winRate: parseFloat(((wins / trades.length) * 100).toFixed(1)),
+          wins,
+          losses,
+          worstLossUsd: parseFloat(Math.min(...pnls).toFixed(2)),
+          bestGainUsd: parseFloat(Math.max(...pnls).toFixed(2)),
+          avgPnlPct: parseFloat(avgPct.toFixed(3)),
+          isProblematic: total < 0 && losses > wins,
+        };
+      }).sort((a, b) => a.totalPnlUsd - b.totalPnlUsd); // worst first
+
+      // ── Stats by pair ───────────────────────────────────────────────────────
+      const pairMap = new Map<string, EnrichedSell[]>();
+      for (const s of enriched) {
+        const arr = pairMap.get(s.pair) ?? [];
+        arr.push(s);
+        pairMap.set(s.pair, arr);
+      }
+
+      const byPair = Array.from(pairMap.entries()).map(([pair, trades]) => {
+        const pnls = trades.map(t => t.pnlUsd);
+        const wins = pnls.filter(p => p > 0).length;
+        const total = pnls.reduce((a, b) => a + b, 0);
+        // Find most common reason and worst reason
+        const reasonCounts = new Map<string, number>();
+        trades.forEach(t => reasonCounts.set(t.normalizedReason, (reasonCounts.get(t.normalizedReason) ?? 0) + 1));
+        const topReason = [...reasonCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "UNKNOWN";
+        const worstReason = trades.filter(t => t.pnlUsd <= 0)
+          .reduce<{ reason: string; pnl: number } | null>((acc, t) => (!acc || t.pnlUsd < acc.pnl) ? { reason: t.normalizedReason, pnl: t.pnlUsd } : acc, null);
+        return {
+          pair,
+          count: trades.length,
+          totalPnlUsd: parseFloat(total.toFixed(2)),
+          winRate: parseFloat(((wins / trades.length) * 100).toFixed(1)),
+          worstLossUsd: parseFloat(Math.min(...pnls).toFixed(2)),
+          bestGainUsd: parseFloat(Math.max(...pnls).toFixed(2)),
+          topExitReason: topReason,
+          worstExitReason: worstReason?.reason ?? null,
+        };
+      }).sort((a, b) => a.totalPnlUsd - b.totalPnlUsd);
+
+      // ── Duplicate detection ─────────────────────────────────────────────────
+      // FASE 3 — same entrySimTxid appearing in multiple sell rows = potential duplicate
+      const entryTxidCount = new Map<string, number>();
+      for (const s of enriched) {
+        if (s.entrySimTxid) {
+          entryTxidCount.set(s.entrySimTxid, (entryTxidCount.get(s.entrySimTxid) ?? 0) + 1);
+        }
+      }
+      const duplicates = Array.from(entryTxidCount.entries())
+        .filter(([, count]) => count > 1)
+        .map(([entrySimTxid, count]) => {
+          const dupeRows = enriched.filter(s => s.entrySimTxid === entrySimTxid);
+          const totalPnl = dupeRows.reduce((a, s) => a + s.pnlUsd, 0);
+          return { entrySimTxid, count, pairs: [...new Set(dupeRows.map(s => s.pair))], totalPnlUsd: parseFloat(totalPnl.toFixed(2)) };
+        });
+
+      // ── Global summary ──────────────────────────────────────────────────────
+      const allPnls = enriched.map(s => s.pnlUsd);
+      const totalPnlUsd = allPnls.reduce((a, b) => a + b, 0);
+      const wins = allPnls.filter(p => p > 0).length;
+      const losses = allPnls.filter(p => p <= 0).length;
+
+      res.json({
+        totalSells: enriched.length,
+        byReason,
+        byPair,
+        duplicates,
+        duplicateCount: duplicates.length,
+        summary: {
+          totalPnlUsd: parseFloat(totalPnlUsd.toFixed(2)),
+          wins,
+          losses,
+          winRate: parseFloat(((wins / enriched.length) * 100).toFixed(1)),
+          worstLoss: parseFloat(Math.min(...allPnls).toFixed(2)),
+          bestGain: parseFloat(Math.max(...allPnls).toFixed(2)),
+        },
+        alerts: {
+          timeStopNegative: (byReason.find(r => r.reason === "TIME_STOP")?.totalPnlUsd ?? 0) < 0,
+          emergencySlExcessive: (byReason.find(r => r.reason === "EMERGENCY_SL")?.count ?? 0) > 5,
+          duplicatesDetected: duplicates.length > 0,
+        },
+      });
+    } catch (error: any) {
+      console.error("[dryrun] Error in exit-audit:", error?.message);
+      res.status(500).json({ error: "Failed to compute exit audit" });
     }
   });
 };

@@ -1322,18 +1322,54 @@ export class ExitManager {
           }
           return; // Position closed, skip rest of SmartGuard logic
         } else {
-          // TIMESTOP EXPIRED but DISABLED by toggle → log + notify only
+          // TIMESTOP EXPIRED but NOT closing → either toggle-disabled or softMode DEFERRED
+          const isDeferredBySoftMode = tsResult.softModeBlocked;
           const now = Date.now();
           const lastNotify = this.timeStopNotified.get(lotId) || 0;
           const shouldNotify = now - lastNotify > this.TIME_STOP_NOTIFY_THROTTLE_MS;
 
-          if (shouldNotify && !position.timeStopExpiredAt) {
+          if (isDeferredBySoftMode) {
+            // FASE 4 — TIME_STOP_DEFERRED: expired but PnL < minProfitPctToExit → hold position
+            const netPnlPct = tsResult.netPnlPct;
+            const minProfit = tsResult.minProfitPctToExit;
+            log(`[TIME_STOP_DEFERRED_SG] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)}h ttl=${ttlHours.toFixed(1)}h netPnl=${netPnlPct != null ? netPnlPct.toFixed(3) : 'N/A'}% minProfit=${minProfit.toFixed(3)}% — POSICIÓN DIFERIDA (no venta en pérdida)`, "trading");
+
+            await botLogger.info("TIME_STOP_DEFERRED", `TimeStop DIFERIDO en ${pair} [SMART_GUARD]: P&L insuficiente`, {
+              pair, lotId, ageHours, ttlHours, regime, configSource,
+              netPnlPct, minProfitPctToExit: minProfit, priceChangePct: priceChange,
+            });
+
+            if (shouldNotify && telegramAlertEnabled) {
+              this.timeStopNotified.set(lotId, now);
+              this.persistThrottle("ts:", lotId, now);
+              const telegram = this.host.getTelegramService();
+              if (telegram.isInitialized()) {
+                await telegram.sendAlertWithSubtype(`🤖 <b>KRAKEN BOT</b> 🇪🇸
+━━━━━━━━━━━━━━━━━━━
+⏳ <b>Time-Stop DIFERIDO — Esperando recuperación</b>
+
+📦 <b>Detalles:</b>
+   • Par: <code>${pair}</code>
+   • Tiempo abierta: <code>${ageHours.toFixed(0)}h</code> / TTL: <code>${ttlHours.toFixed(1)}h</code>
+   • Régimen: <code>${regime}</code>
+
+📊 <b>Estado P&L:</b>
+   • Neto actual: <code>${netPnlPct != null ? (netPnlPct >= 0 ? '+' : '') + netPnlPct.toFixed(3) : priceChange.toFixed(2)}%</code>
+   • Mínimo para cerrar: <code>+${minProfit.toFixed(3)}%</code>
+
+✋ <b>NO se cierra</b> — P&L < mínimo requerido
+💡 SmartGuard sigue gestionando (Trailing/BE activos)
+━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
+              }
+            }
+          } else if (shouldNotify && !position.timeStopExpiredAt) {
+            // Toggle-disabled or no config — log only
             this.timeStopNotified.set(lotId, now);
             this.persistThrottle("ts:", lotId, now);
             position.timeStopExpiredAt = now;
             this.host.setPosition(lotId, position);
             await this.host.savePositionToDB(pair, position);
-            log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)} ttl=${ttlHours.toFixed(1)}h DISABLED_BY_TOGGLE — LOG_ONLY`, "trading");
+            log(`[TIME_STOP_SG] pair=${pair} lotId=${lotId} ageHours=${ageHours.toFixed(1)}h ttl=${ttlHours.toFixed(1)}h DISABLED_BY_TOGGLE — LOG_ONLY`, "trading");
 
             await botLogger.info("TIME_STOP_EXPIRED_DISABLED", `TimeStop expirado pero DESACTIVADO en ${pair} [SMART_GUARD]`, {
               pair, lotId, ageHours, ttlHours, regime, configSource,
@@ -1348,16 +1384,13 @@ export class ExitManager {
 
 📦 <b>Detalles:</b>
    • Par: <code>${pair}</code>
-   • Modo: <code>SMART_GUARD</code>
    • Tiempo abierta: <code>${ageHours.toFixed(0)} horas</code>
-   • TTL inteligente: <code>${ttlHours.toFixed(1)} horas</code>
+   • TTL: <code>${ttlHours.toFixed(1)} horas</code>
    • Régimen: <code>${regime}</code>
 
-📊 <b>Estado:</b>
-   • P&L actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
+📊 P&L actual: <code>${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%</code>
 
 ⚠️ <b>TimeStop DESACTIVADO — NO se ejecutará venta</b>
-💡 SmartGuard sigue gestionando la posición
 ━━━━━━━━━━━━━━━━━━━`, "trades", "trade_timestop");
               }
             }

@@ -12,6 +12,7 @@ import { type InsertTrade, type Trade, dryRunTrades } from "@shared/schema";
 import { db } from "../db";
 import { eq, and, desc, lt } from "drizzle-orm";
 import { buildTradeId } from "../utils/tradeId";
+import { classifyExitReason } from "../utils/exitReasonClassifier";
 import { ExchangeFactory, type ExchangeType } from "./exchanges/ExchangeFactory";
 import type { IExchangeService, OHLC } from "./exchanges/IExchangeService";
 import { MarketDataService, type Timeframe } from "./MarketDataService";
@@ -6198,6 +6199,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
               amount: volumeNum.toFixed(8),
               totalUsd: totalUSD.toFixed(2),
               reason,
+              normalizedReason: classifyExitReason(reason),
               status: "closed",
               entrySimTxid: matchedBuy?.simTxid || null,
               entryPrice: entryPriceNum.toFixed(8),

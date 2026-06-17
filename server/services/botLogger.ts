@@ -131,6 +131,7 @@ export type EventType =
   | "D1_ENTRY_COST"
   // Smart TimeStop events
   | "TIME_STOP_EXPIRED_DISABLED"
+  | "TIME_STOP_DEFERRED"
   | "TIME_STOP_CLOSE"
   | "TIME_STOP_DUST_CLEANUP"
   | "TIME_STOP_ORPHAN_CLEANUP"

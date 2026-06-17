@@ -15,8 +15,9 @@ import {
   Download, Copy, Search, X, ChevronDown, ChevronRight,
   AlertCircle, AlertTriangle, Info, Terminal, Activity,
   Eye, TrendingUp, TrendingDown, Minus, Database, CheckCircle, BarChart3,
-  Gauge, AlertOctagon, Zap, Clock, HelpCircle
+  Gauge, AlertOctagon, Zap, Clock, HelpCircle, Shield
 } from "lucide-react";
+import { ExitAuditPanel } from "@/components/trading/ExitAuditPanel";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
@@ -90,6 +91,10 @@ export default function Monitor() {
                 <BarChart3 className="h-4 w-4" />
                 Market Data
               </TabsTrigger>
+              <TabsTrigger value="exitaudit" className="gap-1" data-testid="tab-exitaudit">
+                <Shield className="h-4 w-4" />
+                Auditoría Salidas
+              </TabsTrigger>
             </TabsList>
           </div>
           
@@ -107,6 +112,10 @@ export default function Monitor() {
           
           <TabsContent value="marketdata" className="mt-0">
             <MarketDataTab />
+          </TabsContent>
+
+          <TabsContent value="exitaudit" className="mt-0">
+            <ExitAuditPanel />
           </TabsContent>
         </Tabs>
       </div>
