@@ -6,7 +6,6 @@ import { eq, desc, and, sql } from "drizzle-orm";
 import { classifyExitReason, type NormalizedExitReason } from "../utils/exitReasonClassifier";
 import { MarketDataService } from "../services/MarketDataService";
 import { getCandlesSince } from "../services/marketData/MarketCandleRepository";
-import { ExchangeFactory } from "../services/exchanges/ExchangeFactory";
 
 export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
@@ -888,14 +887,14 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
       const AUDIT_WINDOWS_H = [1, 4, 12, 24, 48];
 
-      // ── 2. Pre-fetch Kraken 1h candles per unique pair (one call per pair) ─
+      // ── 2. Pre-fetch 1h candles per unique pair via MarketDataService cache ─
+      // Uses 90-min TTL + single-flight — avoids direct Kraken burst per pair.
       const uniquePairs = [...new Set(timeStopSells.map(t => t.pair))];
       const krakenCandleCache = new Map<string, { timeMs: number; high: number; low: number }[]>();
 
       for (const pair of uniquePairs) {
         try {
-          const exchange = ExchangeFactory.getDataExchange();
-          const raw = await exchange.getOHLC(pair, 60); // 1h = last 720 candles (~30 days)
+          const raw = await MarketDataService.getCandles(pair, '1h');
           if (raw && raw.length > 0) {
             krakenCandleCache.set(pair, raw.map(c => ({
               timeMs: toMs(c.time),
@@ -904,7 +903,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
             })));
           }
         } catch {
-          // Kraken unavailable for this pair — trades will be UNKNOWN
+          // MarketDataService unavailable for this pair — trades will be UNKNOWN
         }
       }
 
