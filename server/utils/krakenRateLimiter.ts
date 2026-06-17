@@ -12,9 +12,19 @@
  *   OFF: queue < DEGRADED_QUEUE_OFF && lastWaitedMs < DEGRADED_WAIT_MS_OFF  && erroresConsecutivos === 0  (histéresis)
  */
 
-const KRAKEN_MIN_TIME_MS   = parseInt(process.env.KRAKEN_MIN_TIME_MS   || '500', 10);
-const KRAKEN_CONCURRENCY   = parseInt(process.env.KRAKEN_CONCURRENCY   || '1',   10);
-const KRAKEN_MAX_QUEUE_SIZE = parseInt(process.env.KRAKEN_MAX_QUEUE_SIZE || '60',  10);
+const KRAKEN_MIN_TIME_MS    = parseInt(process.env.KRAKEN_MIN_TIME_MS    || '500', 10);
+const KRAKEN_CONCURRENCY    = parseInt(process.env.KRAKEN_CONCURRENCY    || '1',   10);
+const KRAKEN_MAX_QUEUE_SIZE  = parseInt(process.env.KRAKEN_MAX_QUEUE_SIZE  || '60',  10);
+const KRAKEN_HISTORY_SIZE    = parseInt(process.env.KRAKEN_HISTORY_SIZE    || '200', 10);
+
+export interface RLEvent {
+  at: number;        // epoch ms
+  origin: string;
+  type: 'call' | 'error' | 'ratelimit';
+  waitedMs: number;
+  durationMs: number;
+  errorMsg?: string;
+}
 
 // Degraded thresholds (entrada)
 const DEGRADED_QUEUE_ON        = 30;
@@ -42,6 +52,12 @@ export class KrakenRateLimiter {
   private readonly maxQueueSize: number;
   private totalCalls = 0;
   private totalErrors = 0;
+
+  // Event history
+  private history: RLEvent[] = [];
+  private callsByOrigin  = new Map<string, number>();
+  private errorsByOrigin = new Map<string, number>();
+  private lastErrorAt: number | null = null;
 
   // Degraded state
   private degraded = false;
@@ -90,8 +106,10 @@ export class KrakenRateLimiter {
     try {
       const result = await task.fn();
       const durationMs = Date.now() - startMs;
+      const origin = task.origin || '?';
+      this._recordEvent({ at: startMs, origin, type: 'call', waitedMs, durationMs });
       if (durationMs > 2000 || waitedMs > 2000) {
-        console.log(`[KrakenRL] origin=${task.origin || '?'} waited=${waitedMs}ms duration=${durationMs}ms queue=${this.queue.length}`);
+        console.log(`[KrakenRL] origin=${origin} waited=${waitedMs}ms duration=${durationMs}ms queue=${this.queue.length}`);
       }
       if (this.consecutiveErrors > 0) this.consecutiveErrors = 0;
       this._updateDegradedState();
@@ -99,12 +117,16 @@ export class KrakenRateLimiter {
     } catch (err: any) {
       this.totalErrors++;
       const durationMs = Date.now() - startMs;
+      const origin = task.origin || '?';
       const isRateLimit =
         err?.message?.includes('EAPI:Rate limit') ||
         err?.message?.includes('Rate limit exceed') ||
         err?.message?.includes('Too many requests');
       if (isRateLimit) this.consecutiveErrors++;
-      console.log(`[KrakenRL] ERROR origin=${task.origin || '?'} waited=${waitedMs}ms duration=${durationMs}ms err=${err?.message?.slice(0, 80)} consecutiveErrors=${this.consecutiveErrors}`);
+      this.lastErrorAt = Date.now();
+      const evtType = isRateLimit ? 'ratelimit' : 'error';
+      this._recordEvent({ at: startMs, origin, type: evtType, waitedMs, durationMs, errorMsg: err?.message?.slice(0, 120) });
+      console.log(`[KrakenRL] ERROR origin=${origin} waited=${waitedMs}ms duration=${durationMs}ms err=${err?.message?.slice(0, 80)} consecutiveErrors=${this.consecutiveErrors}`);
       this._updateDegradedState();
       if (isRateLimit) {
         const typed = new Error(err.message) as any;
@@ -162,6 +184,33 @@ export class KrakenRateLimiter {
 
   /** Compat alias */
   getStats() { return this.getState(); }
+
+  private _recordEvent(evt: RLEvent): void {
+    const origin = evt.origin;
+    if (evt.type === 'call') {
+      this.callsByOrigin.set(origin, (this.callsByOrigin.get(origin) ?? 0) + 1);
+    } else {
+      this.errorsByOrigin.set(origin, (this.errorsByOrigin.get(origin) ?? 0) + 1);
+    }
+    this.history.push(evt);
+    if (this.history.length > KRAKEN_HISTORY_SIZE) this.history.shift();
+  }
+
+  getHistory(limit = 50): RLEvent[] {
+    return this.history.slice(-limit);
+  }
+
+  getOriginStats(): {
+    callsByOrigin: Record<string, number>;
+    errorsByOrigin: Record<string, number>;
+    lastErrorAt: number | null;
+  } {
+    return {
+      callsByOrigin:  Object.fromEntries(this.callsByOrigin),
+      errorsByOrigin: Object.fromEntries(this.errorsByOrigin),
+      lastErrorAt: this.lastErrorAt,
+    };
+  }
 }
 
 export const krakenRateLimiter = new KrakenRateLimiter(KRAKEN_MIN_TIME_MS, KRAKEN_CONCURRENCY, KRAKEN_MAX_QUEUE_SIZE);

@@ -122,20 +122,21 @@ export class KrakenService implements IExchangeService {
     return this.client !== null;
   }
 
-  private callKraken<T>(fn: () => Promise<T>): Promise<T> {
-    return krakenRateLimiter.schedule(fn);
+  private callKraken<T>(fn: () => Promise<T>, origin?: string): Promise<T> {
+    return krakenRateLimiter.schedule(fn, origin);
   }
 
   private async executeWithNonceRetry<T>(
     endpoint: string,
-    operation: () => Promise<T>
+    operation: () => Promise<T>,
+    origin?: string
   ): Promise<T> {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         if (attempt > 1) {
           await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt - 2]));
         }
-        return await this.callKraken(operation);
+        return await this.callKraken(operation, origin);
       } catch (error: any) {
         const isNonceError = error.message?.includes("EAPI:Invalid nonce") || 
                             error.message?.includes("Invalid nonce");
@@ -191,7 +192,7 @@ export class KrakenService implements IExchangeService {
     if (cached) {
       return cached;
     }
-    const rawBalance = await this.executeWithNonceRetry("getBalance", () => this.client.balance());
+    const rawBalance = await this.executeWithNonceRetry("getBalance", () => this.client.balance(), "kraken.getBalance");
     const result: Record<string, number> = {};
     for (const [asset, value] of Object.entries(rawBalance as Record<string, string>)) {
       result[asset] = parseFloat(value);
@@ -202,12 +203,12 @@ export class KrakenService implements IExchangeService {
 
   async getBalanceRaw(): Promise<Record<string, string>> {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.executeWithNonceRetry("getBalance", () => this.client.balance());
+    return await this.executeWithNonceRetry("getBalance", () => this.client.balance(), "kraken.getBalanceRaw");
   }
 
   async getTicker(pair: string): Promise<Ticker> {
     const krakenPair = this.formatPair(pair);
-    const response = await this.callKraken(() => this.publicClient.ticker({ pair: krakenPair })) as any;
+    const response = await this.callKraken(() => this.publicClient.ticker({ pair: krakenPair }), `kraken.getTicker:${pair}`) as any;
     const tickerData = response[krakenPair] || Object.values(response)[0];
     return {
       bid: parseFloat(tickerData?.b?.[0] || '0'),
@@ -219,12 +220,12 @@ export class KrakenService implements IExchangeService {
 
   async getTickerRaw(pair: string): Promise<any> {
     const krakenPair = this.formatPair(pair);
-    const response = await this.callKraken(() => this.publicClient.ticker({ pair: krakenPair })) as any;
+    const response = await this.callKraken(() => this.publicClient.ticker({ pair: krakenPair }), `kraken.getTickerRaw:${pair}`) as any;
     return response;
   }
 
   async getAssetPairs() {
-    return await this.callKraken(() => this.publicClient.assetPairs());
+    return await this.callKraken(() => this.publicClient.assetPairs(), "kraken.assetPairs");
   }
 
   async placeOrder(params: {
@@ -250,7 +251,7 @@ export class KrakenService implements IExchangeService {
 
     try {
       balanceCache.invalidate('kraken');
-      const result = await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams)) as { txid?: string[] };
+      const result = await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams), `kraken.placeOrder:${params.pair}:${params.type}`) as { txid?: string[] };
       const txids = result?.txid || [];
       return {
         success: txids.length > 0,
@@ -289,14 +290,14 @@ export class KrakenService implements IExchangeService {
     }
 
     balanceCache.invalidate('kraken');
-    return await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams));
+    return await this.executeWithNonceRetry("addOrder", () => this.client.addOrder(orderParams), `kraken.placeOrderRaw:${params.pair}:${params.type}`);
   }
 
   async cancelOrder(txid: string): Promise<boolean> {
     if (!this.client) throw new Error("Kraken client not initialized");
     try {
       balanceCache.invalidate('kraken');
-      await this.executeWithNonceRetry("cancelOrder", () => this.client.cancelOrder({ txid }));
+      await this.executeWithNonceRetry("cancelOrder", () => this.client.cancelOrder({ txid }), `kraken.cancelOrder:${txid.slice(0, 8)}`);
       return true;
     } catch {
       return false;
@@ -305,12 +306,12 @@ export class KrakenService implements IExchangeService {
 
   async getOpenOrders() {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.executeWithNonceRetry("openOrders", () => this.client.openOrders());
+    return await this.executeWithNonceRetry("openOrders", () => this.client.openOrders(), "kraken.openOrders");
   }
 
   async getClosedOrders(limit: number = 50) {
     if (!this.client) throw new Error("Kraken client not initialized");
-    return await this.executeWithNonceRetry("closedOrders", () => this.client.closedOrders({ ofs: 0 }));
+    return await this.executeWithNonceRetry("closedOrders", () => this.client.closedOrders({ ofs: 0 }), "kraken.closedOrders");
   }
 
   async getTradesHistory(options?: { start?: number; end?: number; fetchAll?: boolean }): Promise<any> {
@@ -322,7 +323,7 @@ export class KrakenService implements IExchangeService {
     
     // Si no se pide todo el historial, devolver solo la primera página
     if (!options?.fetchAll) {
-      return await this.executeWithNonceRetry("tradesHistory", () => this.client.tradesHistory(params));
+      return await this.executeWithNonceRetry("tradesHistory", () => this.client.tradesHistory(params), "kraken.tradesHistory");
     }
     
     // Fetch all trades with pagination
@@ -342,7 +343,7 @@ export class KrakenService implements IExchangeService {
           try {
             response = await this.executeWithNonceRetry("tradesHistory", () =>
               this.client.tradesHistory(paginatedParams)
-            );
+            , "kraken.tradesHistory.page");
             break;
           } catch (err: any) {
             const isRL = err.message?.includes("EAPI:Rate limit") ||
@@ -440,7 +441,7 @@ export class KrakenService implements IExchangeService {
     if (options?.asset) params.asset = options.asset;
 
     if (!options?.fetchAll) {
-      const response: any = await this.executeWithNonceRetry("ledgers", () => this.client.ledgers(params));
+      const response: any = await this.executeWithNonceRetry("ledgers", () => this.client.ledgers(params), "kraken.ledgers");
       const ledger = response?.ledger || {};
       return { ledger, count: response?.count || Object.keys(ledger).length };
     }
@@ -462,7 +463,7 @@ export class KrakenService implements IExchangeService {
           try {
             response = await this.executeWithNonceRetry("ledgers", () =>
               this.client.ledgers(paginatedParams)
-            );
+            , "kraken.ledgers.page");
             break;
           } catch (err: any) {
             const isRL = err.message?.includes("EAPI:Rate limit") ||
@@ -540,7 +541,7 @@ export class KrakenService implements IExchangeService {
     volume: number;
   }[]> {
     const krakenPair = this.formatPair(pair);
-    const response = await this.callKraken(() => this.publicClient.ohlc({ pair: krakenPair, interval })) as any;
+    const response = await this.callKraken(() => this.publicClient.ohlc({ pair: krakenPair, interval }), `kraken.getOHLC:${pair}:${interval}m`) as any;
     
     const pairData = Object.values(response).find(Array.isArray) as any[];
     if (!pairData) return [];

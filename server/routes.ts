@@ -113,6 +113,28 @@ export async function registerRoutes(
     }
   });
 
+  // Full KrakenRL diagnostics — origin breakdown, event history, error summary
+  app.get("/api/diagnostics/kraken-rate-limit", (_req, res) => {
+    try {
+      const state = krakenRateLimiter.getState();
+      const origins = krakenRateLimiter.getOriginStats();
+      const limitParam = Math.min(parseInt((_req.query.limit as string) || '50', 10), 200);
+      const recentEvents = krakenRateLimiter.getHistory(limitParam);
+      const recentErrors = recentEvents.filter(e => e.type === 'error' || e.type === 'ratelimit');
+
+      res.json({
+        timestamp: new Date().toISOString(),
+        state,
+        ...origins,
+        recentErrors,
+        recentEvents,
+        note: "read-only diagnostic endpoint — no state mutation",
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
   // Register IDCA routes eagerly — must happen before DB-auth check so routes
   // are available even when API credentials load fails (e.g. local dev DB mismatch)
   try {
