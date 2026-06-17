@@ -80,7 +80,7 @@ const DEFAULT_TTL_MS: Record<string, number> = {
   "15d": 24 * 60 * 60 * 1000,     // 24 hours
 };
 
-let PRICE_TTL_MS = 30 * 1000; // 30 seconds (overridable via setPriceTtl)
+let PRICE_TTL_MS = 45 * 1000; // 45 seconds (overridable via setPriceTtl) — staggered from UI 30s polling
 
 // ─── Service ──────────────────────────────────────────────────────
 
