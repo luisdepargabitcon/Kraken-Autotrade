@@ -2,6 +2,31 @@
 
 ---
 
+## Flujo correcto de deploy en VPS (staging)
+
+**Siempre ejecutar en este orden:**
+
+### 1. Sincronización segura (limpia working tree y hace pull)
+```bash
+bash scripts/vps-predeploy-clean-sync.sh
+```
+Este script:
+- Restaura `package.json` y `package-lock.json` si fueron modificados localmente
+- Elimina archivos basura conocidos (comandos mal pegados en la shell)
+- Hace `git fetch origin --prune` + `git pull origin main`
+- Verifica que `HEAD` quede en `origin/main`
+- **NO ejecuta docker compose**
+
+### 2. Deploy (ejecutar solo después del script anterior)
+```bash
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+> ⚠️ Si el working tree del VPS está sucio, el `git pull` fallará.
+> Ejecutar siempre el script primero para evitar conflictos manuales.
+
+---
+
 ## 2026-06-16 — fix(fisco): Commit FISCO bloqueado por FK fisco_external_statement_items_matched_operation_id_fkey
 
 ### Commit
