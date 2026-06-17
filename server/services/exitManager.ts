@@ -17,6 +17,7 @@ import { toConfidencePct } from "../utils/confidence";
 import { ExchangeFactory } from "./exchanges/ExchangeFactory";
 import { errorAlertService, ErrorAlertService } from "./ErrorAlertService";
 import { checkSmartTimeStop, type MarketRegime, type TimeStopCheckResult } from "./TimeStopService";
+import { evaluateSmartTimeStopV2 } from "./SmartTimeStopV2";
 import type { IExchangeService } from "./exchanges/IExchangeService";
 import type { TelegramService } from "./telegram";
 
@@ -1260,6 +1261,44 @@ export class ExitManager {
             }
           }
 
+          // ── Smart TimeStop V2 — DRY RUN ONLY ─────────────────────────────
+          let tsV2SellReason: string | null = null;
+          if (this.host.isDryRunMode()) {
+            const takerFeeForV2 = getTakerFeePct();
+            const v2 = await evaluateSmartTimeStopV2({
+              pair, lotId, ageHours, ttlHours, regime,
+              currentPrice,
+              entryPrice: position.entryPrice,
+              amount: position.amount,
+              netPnlPct: priceChange - takerFeeForV2 * 2,
+              rawPnlPct: priceChange,
+              sgTrailingActivated: position.sgTrailingActivated ?? false,
+              sgCurrentStopPrice: position.sgCurrentStopPrice,
+              sgBreakEvenActivated: position.sgBreakEvenActivated ?? false,
+            });
+
+            await botLogger.info("SMART_TIME_STOP_V2", `SmartTimeStop V2 DRY RUN: ${v2.decision} para ${pair}`, {
+              pair, lotId, dryRun: true, ageHours, ttlHours, regime,
+              entryPrice: position.entryPrice, currentPrice,
+              netPnlPct: v2.netPnlPct, rawPnlPct: priceChange,
+              sgBreakEvenActivated: position.sgBreakEvenActivated ?? false,
+              sgTrailingActivated:  position.sgTrailingActivated  ?? false,
+              sgCurrentStopPrice:   position.sgCurrentStopPrice   ?? null,
+              distanceToStopPct:    v2.distanceToStopPct,
+              trendScore:           v2.trendScore,
+              momentumScore:        v2.momentumScore,
+              riskScore:            v2.riskScore,
+              decision:             v2.decision,
+              reasonCode:           v2.reasonCode,
+            });
+
+            if (!v2.shouldSell) {
+              log(`[SMART_TIME_STOP_V2] ${pair} ${lotId} OVERRIDING legacy close → decision=${v2.decision} reasonCode=${v2.reasonCode}`, "trading");
+              return;
+            }
+            tsV2SellReason = v2.sellReason;
+          }
+
           // Execute sell via safeSell (FASE 0 HOTFIX: lock + circuit breaker + cleanup)
           const minVolume = this.host.getOrderMin(pair);
           if (position.amount < minVolume) {
@@ -1292,7 +1331,7 @@ export class ExitManager {
               // FASE 0 HOTFIX: Use safeSell which handles lock, circuit breaker, cap, and cleanup
               const sellSuccess = await this.safeSell(
                 pair, lotId, sellAmount, currentPrice,
-                `TimeStop expirado (${ageHours.toFixed(0)}h >= ${ttlHours.toFixed(1)}h) [SMART_GUARD, ${regime}, ${configSource}]`,
+                tsV2SellReason ?? `TimeStop expirado (${ageHours.toFixed(0)}h >= ${ttlHours.toFixed(1)}h) [SMART_GUARD, ${regime}, ${configSource}]`,
                 position, sellContext
               );
 

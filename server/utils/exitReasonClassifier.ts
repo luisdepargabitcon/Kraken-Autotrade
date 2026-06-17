@@ -10,6 +10,13 @@
 
 export type NormalizedExitReason =
   | "TIME_STOP"
+  | "TIME_STOP_HANDOFF_TO_TRAILING"
+  | "TIME_STOP_ARMED_TRAILING"
+  | "TIME_STOP_TIGHTEN_TRAILING"
+  | "TIME_STOP_PROFIT_LOCK_PARTIAL"
+  | "TIME_STOP_PROFIT_EXIT_WEAK_MOMENTUM"
+  | "TIME_STOP_DEFERRED"
+  | "TIME_STOP_DEFENSIVE_EXIT"
   | "BREAK_EVEN"
   | "TRAILING_STOP"
   | "SCALE_OUT"
@@ -40,6 +47,15 @@ export function classifyExitReason(reason: string | null | undefined): Normalize
 
   // Smart Exit
   if (r.includes("smart exit") || r.includes("smart_exit")) return "SMART_EXIT";
+
+  // Smart TimeStop V2 decisions — must come before generic TIME_STOP
+  if (r.includes("handoff_to_trailing") || r.includes("handoff to trailing")) return "TIME_STOP_HANDOFF_TO_TRAILING";
+  if (r.includes("arm_trailing")   || r.includes("arm trailing"))   return "TIME_STOP_ARMED_TRAILING";
+  if (r.includes("tighten_trailing") || r.includes("tighten trailing")) return "TIME_STOP_TIGHTEN_TRAILING";
+  if (r.includes("profit_lock_partial") || r.includes("profit lock partial")) return "TIME_STOP_PROFIT_LOCK_PARTIAL";
+  if (r.includes("profit_exit_weak_momentum") || r.includes("profit exit weak momentum")) return "TIME_STOP_PROFIT_EXIT_WEAK_MOMENTUM";
+  if (r.includes("defer_negative")  || r.includes("defer negative"))  return "TIME_STOP_DEFERRED";
+  if (r.includes("defensive_exit")  || r.includes("defensive exit"))  return "TIME_STOP_DEFENSIVE_EXIT";
 
   // TimeStop (various spellings in reason text)
   if (

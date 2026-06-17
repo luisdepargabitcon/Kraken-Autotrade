@@ -136,6 +136,8 @@ export type EventType =
   | "TIME_STOP_DUST_CLEANUP"
   | "TIME_STOP_ORPHAN_CLEANUP"
   | "TIME_STOP_LIMIT_FALLBACK"
+  // Smart TimeStop V2 (DRY RUN)
+  | "SMART_TIME_STOP_V2"
   // Adaptive Momentum Engine
   | "FEATURE_FLAGS_UPDATED"
   // FASE 0 HOTFIX: Exit safety events
