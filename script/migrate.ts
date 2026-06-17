@@ -725,36 +725,35 @@ async function runMigration() {
       "open_positions.exchange set NOT NULL when safe"
     );
 
-    // training_trades: add unique constraint on buy_txid if safe
+    // training_trades: add unique constraint on buy_txid if safe (idempotent via pg_constraint)
     console.log("[migrate] Checking training_trades.buy_txid uniqueness...");
     try {
-      const constraintExists = await db.execute(sql`
-        SELECT constraint_name FROM information_schema.table_constraints
-        WHERE table_name = 'training_trades' AND constraint_type = 'UNIQUE'
-          AND constraint_name IN ('training_trades_buy_txid_unique', 'training_trades_buy_txid_key')
+      const duplicates = await db.execute(sql`
+        SELECT buy_txid, COUNT(*)::int AS cnt
+        FROM training_trades
+        WHERE buy_txid IS NOT NULL
+        GROUP BY buy_txid
+        HAVING COUNT(*) > 1
+        LIMIT 1
       `);
 
-      if (constraintExists.rows.length === 0) {
-        const duplicates = await db.execute(sql`
-          SELECT buy_txid, COUNT(*)::int AS cnt
-          FROM training_trades
-          WHERE buy_txid IS NOT NULL
-          GROUP BY buy_txid
-          HAVING COUNT(*) > 1
-          LIMIT 1
-        `);
-
-        if (duplicates.rows.length === 0) {
-          console.log("[migrate] Adding unique constraint on training_trades.buy_txid...");
-          await db.execute(sql`
-            ALTER TABLE training_trades
-            ADD CONSTRAINT training_trades_buy_txid_unique UNIQUE (buy_txid)
-          `);
-        } else {
-          console.log("[migrate] WARNING: Duplicate buy_txid found, skipping unique constraint");
-        }
+      if (duplicates.rows.length === 0) {
+        await db.execute(sql.raw(`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_constraint
+              WHERE conname = 'training_trades_buy_txid_unique'
+            ) THEN
+              ALTER TABLE training_trades
+                ADD CONSTRAINT training_trades_buy_txid_unique UNIQUE (buy_txid);
+            END IF;
+          END $$;
+        `));
+        console.log("[migrate] training_trades buy_txid unique constraint ensured");
       } else {
-        console.log("[migrate] training_trades buy_txid unique constraint already exists");
+        console.log("[migrate] WARNING: Duplicate buy_txid found, skipping unique constraint");
       }
     } catch (e) {
       console.log("[migrate] training_trades constraint note:", e);
@@ -772,7 +771,7 @@ async function runMigration() {
       console.log("[migrate] lot_id backfill note:", e);
     }
     
-    // Add unique constraint if safe
+    // Add unique constraint on lot_id if safe (idempotent via pg_constraint)
     console.log("[migrate] Checking lot_id uniqueness...");
     try {
       const duplicates = await db.execute(sql`
@@ -783,25 +782,26 @@ async function runMigration() {
       `);
       
       if (duplicates.rows.length === 0) {
-        // Check if constraint already exists
-        const constraintExists = await db.execute(sql`
-          SELECT constraint_name FROM information_schema.table_constraints 
-          WHERE table_name = 'open_positions' AND constraint_name = 'open_positions_lot_id_unique'
-        `);
-        
-        if (constraintExists.rows.length === 0) {
-          console.log("[migrate] Adding unique constraint on lot_id...");
-          await db.execute(sql`
-            ALTER TABLE open_positions ADD CONSTRAINT open_positions_lot_id_unique UNIQUE (lot_id)
-          `);
-        } else {
-          console.log("[migrate] lot_id unique constraint already exists");
-        }
+        // Use pg_constraint (more reliable than information_schema — catches auto-named constraints)
+        await db.execute(sql.raw(`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_constraint
+              WHERE conname = 'open_positions_lot_id_unique'
+            ) THEN
+              ALTER TABLE open_positions
+                ADD CONSTRAINT open_positions_lot_id_unique UNIQUE (lot_id);
+            END IF;
+          END $$;
+        `));
+        console.log("[migrate] lot_id unique constraint ensured");
       } else {
         console.log("[migrate] WARNING: Duplicate lot_ids found, skipping unique constraint");
       }
     } catch (e) {
-      console.log("[migrate] Constraint note:", e);
+      console.log("[migrate] lot_id constraint note:", e);
     }
     
     // ============================================================
@@ -1264,6 +1264,18 @@ END $$;
     const fiscoConservativePath = path.resolve(process.cwd(), "db", "migrations", "046_fisco_conservative_disposal.sql");
     await tryExecuteFile(db, fiscoConservativePath, "fisco_conservative_disposal");
     console.log("[migrate] 046_fisco_conservative_disposal OK");
+
+    // ============================================================
+    // TIMESTOP SMART DEFERRAL (048)
+    // - soft_mode=true for ALL time_stop_config rows
+    // - adds min_profit_pct_to_exit (default 0.25%)
+    // - adds normalized_reason to dry_run_trades
+    // - backfills normalized_reason for existing sell rows
+    // ============================================================
+    console.log("[migrate] Applying 048_timestop_smart_deferral...");
+    const timestopDeferralPath = path.resolve(process.cwd(), "db", "migrations", "048_timestop_smart_deferral.sql");
+    await tryExecuteFile(db, timestopDeferralPath, "timestop_smart_deferral");
+    console.log("[migrate] 048_timestop_smart_deferral OK");
 
     console.log("[migrate] Migration completed successfully!");
     await pool.end();

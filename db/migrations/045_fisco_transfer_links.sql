@@ -98,9 +98,19 @@ CREATE TABLE IF NOT EXISTS fisco_transfer_links (
 );
 
 -- Add FK from statement_items to transfer_links now that both tables exist
-ALTER TABLE fisco_external_statement_items
-  ADD CONSTRAINT IF NOT EXISTS fk_stmt_item_transfer_link
-    FOREIGN KEY (matched_transfer_link_id) REFERENCES fisco_transfer_links(id);
+-- NOTE: PostgreSQL does NOT support ADD CONSTRAINT IF NOT EXISTS — use DO $$ block instead.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'fk_stmt_item_transfer_link'
+  ) THEN
+    ALTER TABLE fisco_external_statement_items
+      ADD CONSTRAINT fk_stmt_item_transfer_link
+        FOREIGN KEY (matched_transfer_link_id) REFERENCES fisco_transfer_links(id);
+  END IF;
+END $$;
 
 -- ============================================================
 -- Indexes
