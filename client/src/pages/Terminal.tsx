@@ -185,6 +185,8 @@ interface DryRunSummary {
 
   // New advanced metrics
   unrealizedPnl: number | null;
+  unrealizedPnlStatus: "ok" | "partial" | "unavailable";
+  unrealizedPnlWarnings: string[];
   totalSimulatedPnl: number;
   cleanWins: number;
   cleanLosses: number;
@@ -1859,7 +1861,9 @@ export default function Terminal() {
                             }
                           </p>
                           <p className="text-[9px] text-muted-foreground mt-0.5">
-                            {dryRunSummary.openCount} posiciones abiertas
+                            {dryRunSummary.openCount} abiertas
+                            {dryRunSummary.unrealizedPnlStatus === 'partial' && <span className="text-yellow-400/70 ml-1">(parcial)</span>}
+                            {dryRunSummary.unrealizedPnlStatus === 'unavailable' && dryRunSummary.openCount > 0 && <span className="text-orange-400/70 ml-1">(sin precios)</span>}
                           </p>
                         </div>
 
@@ -2275,7 +2279,11 @@ export default function Terminal() {
                           }`}>
                             {dryRunSummary.unrealizedPnl === null ? 'N/A' : `${dryRunSummary.unrealizedPnl >= 0 ? '+' : ''}$${dryRunSummary.unrealizedPnl.toFixed(2)}`}
                           </p>
-                          <p className="text-[9px] text-muted-foreground mt-0.5">{dryRunSummary.openCount} abiertas</p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {dryRunSummary.openCount} abiertas
+                            {dryRunSummary.unrealizedPnlStatus === 'partial' && <span className="text-yellow-400/70 ml-1">(parcial)</span>}
+                            {dryRunSummary.unrealizedPnlStatus === 'unavailable' && dryRunSummary.openCount > 0 && <span className="text-orange-400/70 ml-1">(sin precios)</span>}
+                          </p>
                         </div>
                         <div className="bg-card/50 p-3">
                           <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL TOTAL SIMULADO</p>

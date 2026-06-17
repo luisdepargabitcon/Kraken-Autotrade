@@ -4,6 +4,7 @@ import { db } from "../db";
 import { dryRunTrades, botEvents } from "@shared/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { classifyExitReason, type NormalizedExitReason } from "../utils/exitReasonClassifier";
+import { MarketDataService } from "../services/MarketDataService";
 
 export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
@@ -174,28 +175,42 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
         : 0;
 
       // ============ FLOATING PnL (Unrealized) ============
-      // Try to get current prices from market_data if available
+      // Use MarketDataService.getPrice() — the correct in-memory price cache
       let unrealizedPnl: number | null = null;
-      try {
-        const marketData = await db.select({ pair: sql<string>`pair`, price: sql<string>`price` })
-          .from(sql`market_data`)
-          .where(sql`updated_at > NOW() - INTERVAL '5 minutes'`);
-        
-        const priceMap = new Map(marketData.map(m => [m.pair, parseFloat(m.price)]));
-        
-        unrealizedPnl = openPositions.reduce((sum, pos) => {
-          const currentPrice = priceMap.get(pos.pair);
-          const entryPrice = parseFloat(pos.price || "0");
-          const amount = parseFloat(pos.amount || "0");
-          if (currentPrice && entryPrice > 0) {
-            return sum + (currentPrice - entryPrice) * amount;
+      let unrealizedPnlStatus: "ok" | "partial" | "unavailable" = "unavailable";
+      const unrealizedPnlWarnings: string[] = [];
+
+      if (openPositions.length > 0) {
+        let runningPnl = 0;
+        let positionsWithPrice = 0;
+
+        for (const pos of openPositions) {
+          try {
+            const currentPrice = await MarketDataService.getPrice(pos.pair);
+            const entryPrice = parseFloat(pos.price || "0");
+            const amount = parseFloat(pos.amount || "0");
+
+            if (currentPrice > 0 && entryPrice > 0 && amount > 0) {
+              runningPnl += (currentPrice - entryPrice) * amount;
+              positionsWithPrice++;
+            } else {
+              unrealizedPnlWarnings.push(`${pos.pair}: sin precio actual`);
+            }
+          } catch {
+            unrealizedPnlWarnings.push(`${pos.pair}: error obteniendo precio`);
           }
-          return sum;
-        }, 0);
-        unrealizedPnl = parseFloat(unrealizedPnl.toFixed(2));
-      } catch {
-        // Market data not available - floating PnL will be null
-        unrealizedPnl = null;
+        }
+
+        if (positionsWithPrice === openPositions.length) {
+          unrealizedPnlStatus = "ok";
+          unrealizedPnl = parseFloat(runningPnl.toFixed(2));
+        } else if (positionsWithPrice > 0) {
+          unrealizedPnlStatus = "partial";
+          unrealizedPnl = parseFloat(runningPnl.toFixed(2));
+        } else {
+          unrealizedPnlStatus = "unavailable";
+          unrealizedPnl = null;
+        }
       }
 
       // Total Simulated PnL (realized + floating)
@@ -436,6 +451,8 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
         // New advanced metrics
         unrealizedPnl,
+        unrealizedPnlStatus,
+        unrealizedPnlWarnings,
         totalSimulatedPnl,
         cleanWins: cleanWinCount,
         cleanLosses: cleanLossCount,
