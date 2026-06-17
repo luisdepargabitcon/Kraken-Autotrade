@@ -1617,8 +1617,7 @@ export class TradingEngine {
     }
     try {
       const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
-      // Direct call justified: getClosedCandle needs the absolute last closed candle, bypassing any stale cache
-      const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
+      const candles = await this.getCachedOHLC(pair, intervalMinutes);
       if (!candles || candles.length < 2) return null;
       this.candleFetchBackoff.delete(key); // limpiar backoff al tener éxito
       return candles[candles.length - 2];
@@ -1706,7 +1705,7 @@ export class TradingEngine {
     adx?: number
   ): Promise<TradeSignal> {
     const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
-    const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
+    const candles = await this.getCachedOHLC(pair, intervalMinutes);
     if (!candles || candles.length < 20) {
       return { action: "hold", pair, confidence: 0, reason: "Datos insuficientes para análisis de velas", signalsCount: 0, minSignalsRequired: 4 };
     }
@@ -2142,7 +2141,7 @@ export class TradingEngine {
   private async buildAiFeatures(pair: string, timeframe: string, confidence: number, spreadPct: number): Promise<AiFeatures> {
     try {
       const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
-      const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
+      const candles = await this.getCachedOHLC(pair, intervalMinutes);
       if (!candles || candles.length < 27) {
         return aiService.extractFeatures({ confidence: confidence * 100, spreadPct });
       }
@@ -4545,7 +4544,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
       
       if (routerEnabled && regimeEnabledEarly && earlyRegime) {
         const intervalMinutes = this.getTimeframeIntervalMinutes(timeframe);
-        const candles = await this.getDataExchange().getOHLC(pair, intervalMinutes);
+        const candles = await this.getCachedOHLC(pair, intervalMinutes);
         const closedCandles = candles ? candles.slice(0, -1) : [];
         const currentPrice = candle.close;
         
@@ -6841,7 +6840,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                 let entryCandles: OHLCCandle[] | undefined;
                 try {
                   const tfMinutes = entrySignalTf !== "cycle" ? this.getTimeframeIntervalMinutes(entrySignalTf) : 5;
-                  const rawCandles = await this.getDataExchange().getOHLC(pair, tfMinutes);
+                  const rawCandles = await this.getCachedOHLC(pair, tfMinutes);
                   entryCandles = rawCandles ? rawCandles.slice(0, -1) : undefined;
                 } catch { entryCandles = undefined; }
 
