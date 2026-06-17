@@ -136,6 +136,7 @@ interface DryRunTrade {
   amount: string;
   totalUsd: string;
   reason: string | null;
+  normalizedReason?: string | null;
   status: string;
   entrySimTxid: string | null;
   entryPrice: string | null;
@@ -146,16 +147,29 @@ interface DryRunTrade {
   regime: string | null;
   confidence: string | null;
   createdAt: string;
+  // Audit fields
+  excludedFromPnl?: boolean;
+  exclusionReason?: string | null;
+  excludedAt?: string | null;
+  auditBatchId?: string | null;
 }
 
 interface DryRunSummary {
   openCount: number;
   totalOpenValue: number;
   closedCount: number;
-  realizedPnl: number;
+  realizedPnl: number; // Clean PnL (excluded_from_pnl = false)
   wins: number;
   losses: number;
   winRate: number;
+  // New fields for clean/excluded breakdown
+  grossSellPnl: number;
+  cleanSellPnl: number;
+  excludedSellPnl: number;
+  totalSells: number;
+  includedSells: number;
+  excludedSells: number;
+  archivedDuplicates: number;
 }
 
 interface DryRunHistoryResponse {
@@ -163,6 +177,12 @@ interface DryRunHistoryResponse {
   total: number;
   limit: number;
   offset: number;
+  filter: string;
+  counts: {
+    included: number;
+    excluded: number;
+    total: number;
+  };
 }
 
 export default function Terminal() {
@@ -305,6 +325,8 @@ export default function Terminal() {
   const [expandedDryRunHist, setExpandedDryRunHist] = useState<Set<number>>(new Set());
   const toggleDryRunPosRow = (id: number) => setExpandedDryRunPos(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
   const toggleDryRunHistRow = (id: number) => setExpandedDryRunHist(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  // Filter for DRY RUN history: 'included' | 'excluded' | 'all'
+  const [dryRunExcludedFilter, setDryRunExcludedFilter] = useState<'included' | 'excluded' | 'all'>('included');
 
   const { data: dryRunPositions, isLoading: loadingDryRun, refetch: refetchDryRun, isFetching: fetchingDryRun } = useQuery<DryRunTrade[]>({
     queryKey: ["dryRunPositions"],
@@ -317,9 +339,13 @@ export default function Terminal() {
   });
 
   const { data: dryRunHistory, refetch: refetchDryRunHistory, isFetching: fetchingDryRunHistory } = useQuery<DryRunHistoryResponse>({
-    queryKey: ["dryRunHistory", dryRunLimit, dryRunOffset],
+    queryKey: ["dryRunHistory", dryRunLimit, dryRunOffset, dryRunExcludedFilter],
     queryFn: async () => {
-      const params = new URLSearchParams({ limit: dryRunLimit.toString(), offset: dryRunOffset.toString() });
+      const params = new URLSearchParams({ 
+        limit: dryRunLimit.toString(), 
+        offset: dryRunOffset.toString(),
+        excludedFilter: dryRunExcludedFilter
+      });
       const res = await fetch(`/api/dryrun/history?${params}`);
       if (!res.ok) throw new Error("Failed to fetch dry run history");
       return res.json();
@@ -1602,30 +1628,63 @@ export default function Terminal() {
                 </CardHeader>
                 <CardContent className="p-0">
                   {dryRunSummary && dryRunSummary.closedCount > 0 && (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 border-b border-amber-500/10 bg-amber-500/5">
-                      <div className="text-center">
-                        <p className="text-[10px] font-mono text-muted-foreground">P&L REALIZADO</p>
-                        <p className={`font-mono text-sm font-bold ${dryRunSummary.realizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {dryRunSummary.realizedPnl >= 0 ? '+' : ''}${dryRunSummary.realizedPnl.toFixed(2)}
+                    <div className="border-b border-amber-500/10 bg-amber-500/5">
+                      {/* Primary: Clean PnL */}
+                      <div className="p-4 border-b border-amber-500/10">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[10px] font-mono text-amber-400">P&L LIMPIO (INCLUIDO EN PnL)</p>
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            {dryRunSummary.includedSells} de {dryRunSummary.totalSells} operaciones
+                          </span>
+                        </div>
+                        <p className={`font-mono text-2xl font-bold ${dryRunSummary.cleanSellPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {dryRunSummary.cleanSellPnl >= 0 ? '+' : ''}${dryRunSummary.cleanSellPnl.toFixed(2)}
                         </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            Win Rate: <span className={dryRunSummary.winRate >= 50 ? 'text-green-400' : 'text-red-400'}>{dryRunSummary.winRate.toFixed(1)}%</span>
+                          </span>
+                          <span className="text-muted-foreground">|</span>
+                          <span className="text-[10px] font-mono">
+                            <span className="text-green-400">{dryRunSummary.wins}W</span>
+                            <span className="text-muted-foreground"> / </span>
+                            <span className="text-red-400">{dryRunSummary.losses}L</span>
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-center">
-                        <p className="text-[10px] font-mono text-muted-foreground">TRADES CERRADOS</p>
-                        <p className="font-mono text-sm font-bold text-amber-400">{dryRunSummary.closedCount}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-[10px] font-mono text-muted-foreground">WIN RATE</p>
-                        <p className={`font-mono text-sm font-bold ${dryRunSummary.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-                          {dryRunSummary.winRate.toFixed(1)}%
-                        </p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-[10px] font-mono text-muted-foreground">W / L</p>
-                        <p className="font-mono text-sm">
-                          <span className="text-green-400">{dryRunSummary.wins}</span>
-                          <span className="text-muted-foreground"> / </span>
-                          <span className="text-red-400">{dryRunSummary.losses}</span>
-                        </p>
+
+                      {/* Secondary: Detailed Breakdown */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4">
+                        <div className="text-center">
+                          <p className="text-[10px] font-mono text-muted-foreground">P&L BRUTO HISTÓRICO</p>
+                          <p className={`font-mono text-sm font-bold ${dryRunSummary.grossSellPnl >= 0 ? 'text-green-400/70' : 'text-red-400/70'}`}>
+                            {dryRunSummary.grossSellPnl >= 0 ? '+' : ''}${dryRunSummary.grossSellPnl.toFixed(2)}
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[10px] font-mono text-muted-foreground">P&L EXCLUIDO</p>
+                          <p className="font-mono text-sm font-bold text-red-400/70">
+                            {dryRunSummary.excludedSellPnl >= 0 ? '+' : ''}${dryRunSummary.excludedSellPnl.toFixed(2)}
+                          </p>
+                          <p className="text-[10px] font-mono text-muted-foreground">
+                            {dryRunSummary.excludedSells} ops
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[10px] font-mono text-muted-foreground">DUPLICADOS ARCHIVADOS</p>
+                          <p className="font-mono text-sm font-bold text-blue-400">
+                            {dryRunSummary.archivedDuplicates || 0}
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[10px] font-mono text-muted-foreground">ABIERTAS SIM</p>
+                          <p className="font-mono text-sm font-bold text-amber-400">
+                            {dryRunSummary.openCount}
+                          </p>
+                          <p className="text-[10px] font-mono text-muted-foreground">
+                            ${dryRunSummary.totalOpenValue.toFixed(0)}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1770,6 +1829,40 @@ export default function Terminal() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
+                  {/* Filter tabs for included/excluded trades */}
+                  <div className="flex items-center gap-2 p-3 border-b border-amber-500/10 bg-amber-500/5">
+                    <span className="text-[10px] font-mono text-muted-foreground">MOSTRAR:</span>
+                    <div className="flex gap-1">
+                      <Button
+                        variant={dryRunExcludedFilter === 'included' ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => { setDryRunExcludedFilter('included'); setDryRunOffset(0); }}
+                        className={`text-[10px] font-mono h-6 ${dryRunExcludedFilter === 'included' ? 'bg-green-600 hover:bg-green-700' : 'border-amber-500/30'}`}
+                      >
+                        INCLUIDAS ({dryRunHistory?.counts?.included ?? '-'})
+                      </Button>
+                      <Button
+                        variant={dryRunExcludedFilter === 'excluded' ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => { setDryRunExcludedFilter('excluded'); setDryRunOffset(0); }}
+                        className={`text-[10px] font-mono h-6 ${dryRunExcludedFilter === 'excluded' ? 'bg-red-600 hover:bg-red-700' : 'border-amber-500/30'}`}
+                      >
+                        EXCLUIDAS ({dryRunHistory?.counts?.excluded ?? '-'})
+                      </Button>
+                      <Button
+                        variant={dryRunExcludedFilter === 'all' ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => { setDryRunExcludedFilter('all'); setDryRunOffset(0); }}
+                        className={`text-[10px] font-mono h-6 ${dryRunExcludedFilter === 'all' ? 'bg-amber-600 hover:bg-amber-700' : 'border-amber-500/30'}`}
+                      >
+                        TODAS ({dryRunHistory?.counts?.total ?? '-'})
+                      </Button>
+                    </div>
+                    <span className="text-[10px] font-mono text-muted-foreground ml-auto">
+                      Filtro: {dryRunExcludedFilter === 'included' ? 'Solo incluidas en PnL' : dryRunExcludedFilter === 'excluded' ? 'Solo excluidas' : 'Todas las ventas'}
+                    </span>
+                  </div>
+
                   {dryRunHistory && dryRunHistory.trades.length > 0 ? (
                     <>
                       <div className="overflow-x-auto">
@@ -1792,17 +1885,23 @@ export default function Terminal() {
                               const pnlPct = parseFloat(trade.realizedPnlPct || "0");
                               const isProfit = pnl > 0;
                               const isExpHist = expandedDryRunHist.has(trade.id);
+                              const isExcluded = trade.excludedFromPnl === true;
                               return (
                                 <>
                                   <tr
                                     key={trade.id}
-                                    className="border-b border-border/10 hover:bg-amber-500/5 transition-colors cursor-pointer"
+                                    className={`border-b border-border/10 hover:bg-amber-500/5 transition-colors cursor-pointer ${isExcluded ? 'bg-red-500/5' : ''}`}
                                     onClick={() => toggleDryRunHistRow(trade.id)}
                                   >
                                     <td className="p-3">
-                                      <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-2 flex-wrap">
                                         <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform ${isExpHist ? 'rotate-180' : ''}`} />
                                         <Badge variant="outline" className="text-[10px] border-red-500/50 text-red-400">SELL</Badge>
+                                        {isExcluded && (
+                                          <Badge variant="outline" className="text-[10px] border-red-500/50 bg-red-500/10 text-red-400">
+                                            EXCLUIDA
+                                          </Badge>
+                                        )}
                                         <span className="font-mono text-xs font-medium">{trade.pair}</span>
                                       </div>
                                     </td>
@@ -1811,10 +1910,10 @@ export default function Terminal() {
                                     </td>
                                     <td className="text-right p-3 font-mono text-xs">${parseFloat(trade.price).toFixed(2)}</td>
                                     <td className="text-right p-3 font-mono text-xs">{parseFloat(trade.amount).toFixed(6)}</td>
-                                    <td className={`text-right p-3 font-mono text-xs font-bold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                    <td className={`text-right p-3 font-mono text-xs font-bold ${isProfit ? 'text-green-400' : 'text-red-400'} ${isExcluded ? 'opacity-50' : ''}`}>
                                       {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
                                     </td>
-                                    <td className={`text-right p-3 font-mono text-xs ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                                    <td className={`text-right p-3 font-mono text-xs ${isProfit ? 'text-green-400' : 'text-red-400'} ${isExcluded ? 'opacity-50' : ''}`}>
                                       {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
                                     </td>
                                     <td className="p-3 text-xs text-muted-foreground max-w-[120px] truncate" title={trade.reason || ''}>
@@ -1832,30 +1931,55 @@ export default function Terminal() {
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
                                           <div className="space-y-1">
                                             <div className="flex gap-2">
-                                              <span className="text-muted-foreground min-w-[100px]">SELL TXID:</span>
+                                              <span className="text-muted-foreground min-w-[120px]">SELL TXID:</span>
                                               <span className="text-amber-300 break-all">{trade.simTxid}</span>
                                             </div>
                                             <div className="flex gap-2">
-                                              <span className="text-muted-foreground min-w-[100px]">BUY TXID:</span>
+                                              <span className="text-muted-foreground min-w-[120px]">BUY TXID:</span>
                                               <span className="text-green-400 break-all">{trade.entrySimTxid || '—'}</span>
                                             </div>
                                             <div className="flex gap-2">
-                                              <span className="text-muted-foreground min-w-[100px]">ESTRATEGIA:</span>
+                                              <span className="text-muted-foreground min-w-[120px]">ESTRATEGIA:</span>
                                               <span className="text-foreground">{trade.strategyId || '—'}</span>
                                             </div>
+                                            {/* Audit fields */}
+                                            {isExcluded && (
+                                              <>
+                                                <div className="flex gap-2 mt-2 pt-2 border-t border-red-500/20">
+                                                  <span className="text-muted-foreground min-w-[120px] text-red-400">EXCLUIDA DEL PnL:</span>
+                                                  <span className="text-red-400 font-bold">SÍ</span>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                  <span className="text-muted-foreground min-w-[120px]">RAZÓN EXCLUSIÓN:</span>
+                                                  <span className="text-red-300 break-all">{trade.exclusionReason || '—'}</span>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                  <span className="text-muted-foreground min-w-[120px]">BATCH ID:</span>
+                                                  <span className="text-foreground break-all">{trade.auditBatchId || '—'}</span>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                  <span className="text-muted-foreground min-w-[120px]">EXCLUIDA EN:</span>
+                                                  <span className="text-foreground">{trade.excludedAt ? new Date(trade.excludedAt).toLocaleString('es-ES') : '—'}</span>
+                                                </div>
+                                              </>
+                                            )}
                                           </div>
                                           <div className="space-y-1">
                                             <div className="flex gap-2">
-                                              <span className="text-muted-foreground min-w-[100px]">RÉGIMEN:</span>
+                                              <span className="text-muted-foreground min-w-[120px]">RÉGIMEN:</span>
                                               <span className="text-foreground">{trade.regime || '—'}</span>
                                             </div>
                                             <div className="flex gap-2">
-                                              <span className="text-muted-foreground min-w-[100px]">CONFIANZA:</span>
+                                              <span className="text-muted-foreground min-w-[120px]">CONFIANZA:</span>
                                               <span className="text-foreground">{trade.confidence ? `${(parseFloat(trade.confidence) * 100).toFixed(1)}%` : '—'}</span>
                                             </div>
                                             <div className="flex gap-2">
-                                              <span className="text-muted-foreground min-w-[100px]">RAZÓN COMPLETA:</span>
+                                              <span className="text-muted-foreground min-w-[120px]">RAZÓN COMPLETA:</span>
                                               <span className="text-foreground break-all">{trade.reason || '—'}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <span className="text-muted-foreground min-w-[120px]">NORMALIZED:</span>
+                                              <span className="text-foreground">{trade.normalizedReason || '—'}</span>
                                             </div>
                                           </div>
                                         </div>

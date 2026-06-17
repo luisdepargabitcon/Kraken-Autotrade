@@ -21,16 +21,29 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
     }
   });
 
-  // GET /api/dryrun/history - Closed dry run trades (sells + closed buys)
+  // GET /api/dryrun/history - Closed dry run trades (sells with optional excluded filter)
   app.get("/api/dryrun/history", async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
       const offset = parseInt(req.query.offset as string) || 0;
       const pair = req.query.pair as string | undefined;
+      const excludedFilter = req.query.excludedFilter as string | undefined; // 'included' | 'excluded' | 'all'
 
-      const conditions = [eq(dryRunTrades.type, "sell")];
+      const conditions: any[] = [eq(dryRunTrades.type, "sell")];
+      
+      // Filter by pair
       if (pair && pair !== "all") {
         conditions.push(eq(dryRunTrades.pair, pair));
+      }
+
+      // Filter by excluded status (default: 'included' = only non-excluded trades)
+      if (excludedFilter === "excluded") {
+        conditions.push(eq(dryRunTrades.excludedFromPnl, true));
+      } else if (excludedFilter === "all") {
+        // No additional filter - show all sells
+      } else {
+        // Default: 'included' - only trades included in PnL calculation
+        conditions.push(eq(dryRunTrades.excludedFromPnl, false));
       }
 
       const trades = await db.select().from(dryRunTrades)
@@ -45,36 +58,109 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
       const total = Number(countResult[0]?.count || 0);
 
-      res.json({ trades, total, limit, offset });
+      // Also return counts by category for the filter UI
+      const includedConditions = [eq(dryRunTrades.type, "sell"), eq(dryRunTrades.excludedFromPnl, false)];
+      if (pair && pair !== "all") {
+        includedConditions.push(eq(dryRunTrades.pair, pair));
+      }
+      const includedCountResult = await db.select({ count: sql<number>`count(*)` })
+        .from(dryRunTrades)
+        .where(and(...includedConditions));
+
+      const excludedConditions = [eq(dryRunTrades.type, "sell"), eq(dryRunTrades.excludedFromPnl, true)];
+      if (pair && pair !== "all") {
+        excludedConditions.push(eq(dryRunTrades.pair, pair));
+      }
+      const excludedCountResult = await db.select({ count: sql<number>`count(*)` })
+        .from(dryRunTrades)
+        .where(and(...excludedConditions));
+
+      res.json({ 
+        trades, 
+        total, 
+        limit, 
+        offset,
+        filter: excludedFilter || "included",
+        counts: {
+          included: Number(includedCountResult[0]?.count || 0),
+          excluded: Number(excludedCountResult[0]?.count || 0),
+          total: Number(includedCountResult[0]?.count || 0) + Number(excludedCountResult[0]?.count || 0),
+        }
+      });
     } catch (error: any) {
       console.error("[dryrun] Error fetching history:", error?.message);
       res.status(500).json({ error: "Failed to fetch dry run history" });
     }
   });
 
-  // GET /api/dryrun/summary - Aggregate P&L summary
+  // GET /api/dryrun/summary - Aggregate P&L summary with clean/excluded breakdown
   app.get("/api/dryrun/summary", async (_req, res) => {
     try {
       const openPositions = await db.select().from(dryRunTrades)
         .where(and(eq(dryRunTrades.status, "open"), eq(dryRunTrades.type, "buy")));
       
+      // All sells (gross)
       const closedSells = await db.select().from(dryRunTrades)
         .where(eq(dryRunTrades.type, "sell"));
 
+      // Clean sells (excluded_from_pnl = false)
+      const cleanSells = await db.select().from(dryRunTrades)
+        .where(and(
+          eq(dryRunTrades.type, "sell"),
+          eq(dryRunTrades.excludedFromPnl, false)
+        ));
+
+      // Excluded sells (excluded_from_pnl = true)
+      const excludedSells = await db.select().from(dryRunTrades)
+        .where(and(
+          eq(dryRunTrades.type, "sell"),
+          eq(dryRunTrades.excludedFromPnl, true)
+        ));
+
+      // Calculate PnL values
       const totalOpenValue = openPositions.reduce((sum, p) => sum + parseFloat(p.totalUsd || "0"), 0);
-      const realizedPnl = closedSells.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0);
-      const wins = closedSells.filter(t => parseFloat(t.realizedPnlUsd || "0") > 0).length;
-      const losses = closedSells.filter(t => parseFloat(t.realizedPnlUsd || "0") <= 0).length;
-      const winRate = closedSells.length > 0 ? (wins / closedSells.length) * 100 : 0;
+      
+      // Gross PnL: all sells
+      const grossSellPnl = closedSells.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0);
+      
+      // Clean PnL: only non-excluded sells (this is the main metric)
+      const cleanSellPnl = cleanSells.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0);
+      
+      // Excluded PnL: legacy timestop losses and other excluded
+      const excludedSellPnl = excludedSells.reduce((sum, t) => sum + parseFloat(t.realizedPnlUsd || "0"), 0);
+
+      // Win/loss stats for clean sells only (meaningful metric)
+      const cleanWins = cleanSells.filter(t => parseFloat(t.realizedPnlUsd || "0") > 0).length;
+      const cleanLosses = cleanSells.filter(t => parseFloat(t.realizedPnlUsd || "0") <= 0).length;
+      const cleanWinRate = cleanSells.length > 0 ? (cleanWins / cleanSells.length) * 100 : 0;
+
+      // Count archived duplicates
+      let archivedDuplicates = 0;
+      try {
+        const archiveResult = await db.execute(sql`SELECT COUNT(*) as cnt FROM dry_run_trades_archive`);
+        archivedDuplicates = Number(archiveResult.rows[0]?.cnt || 0);
+      } catch {
+        // Archive table might not exist yet
+        archivedDuplicates = 0;
+      }
 
       res.json({
         openCount: openPositions.length,
         totalOpenValue,
+        // Legacy fields for backward compatibility
         closedCount: closedSells.length,
-        realizedPnl,
-        wins,
-        losses,
-        winRate,
+        realizedPnl: cleanSellPnl, // Now returns CLEAN PnL as primary metric
+        wins: cleanWins,
+        losses: cleanLosses,
+        winRate: cleanWinRate,
+        // New detailed breakdown
+        grossSellPnl,
+        cleanSellPnl,
+        excludedSellPnl,
+        totalSells: closedSells.length,
+        includedSells: cleanSells.length,
+        excludedSells: excludedSells.length,
+        archivedDuplicates,
       });
     } catch (error: any) {
       console.error("[dryrun] Error fetching summary:", error?.message);
