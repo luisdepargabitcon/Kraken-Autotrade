@@ -441,6 +441,42 @@ export const dryRunTrades = pgTable("dry_run_trades", {
   regime: text("regime"),
   confidence: decimal("confidence", { precision: 5, scale: 2 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // Audit columns for SPOT DRY RUN cleanup (migration 049)
+  excludedFromPnl: boolean("excluded_from_pnl").notNull().default(false),
+  exclusionReason: text("exclusion_reason"),
+  excludedAt: timestamp("excluded_at"),
+  auditBatchId: text("audit_batch_id"),
+});
+
+// Archive table for exact duplicate dry-run trades removed during cleanup (migration 049)
+export const dryRunTradesArchive = pgTable("dry_run_trades_archive", {
+  id: serial("id").primaryKey(),
+  simTxid: text("sim_txid").notNull(),
+  pair: text("pair").notNull(),
+  type: text("type").notNull(),
+  price: decimal("price", { precision: 18, scale: 8 }).notNull(),
+  amount: decimal("amount", { precision: 18, scale: 8 }).notNull(),
+  totalUsd: decimal("total_usd", { precision: 18, scale: 2 }).notNull(),
+  reason: text("reason"),
+  normalizedReason: text("normalized_reason"),
+  status: text("status").notNull().default("open"),
+  entrySimTxid: text("entry_sim_txid"),
+  entryPrice: decimal("entry_price", { precision: 18, scale: 8 }),
+  realizedPnlUsd: decimal("realized_pnl_usd", { precision: 18, scale: 2 }),
+  realizedPnlPct: decimal("realized_pnl_pct", { precision: 10, scale: 4 }),
+  closedAt: timestamp("closed_at"),
+  strategyId: text("strategy_id"),
+  regime: text("regime"),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  excludedFromPnl: boolean("excluded_from_pnl").notNull().default(false),
+  exclusionReason: text("exclusion_reason"),
+  excludedAt: timestamp("excluded_at"),
+  auditBatchId: text("audit_batch_id"),
+  // Archive-specific metadata
+  archivedAt: timestamp("archived_at").notNull().defaultNow(),
+  archiveReason: text("archive_reason").notNull().default("exact_duplicate"),
+  originalId: integer("original_id"), // Reference to canonical row kept
 });
 
 export const botEvents = pgTable("bot_events", {

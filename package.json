@@ -10,7 +10,9 @@
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "test": "vitest run",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "spot-dryrun:cleanup:audit": "tsx script/spot-dryrun-cleanup.ts --audit",
+    "spot-dryrun:cleanup:apply": "tsx script/spot-dryrun-cleanup.ts --apply"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -1277,6 +1277,17 @@ END $$;
     await tryExecuteFile(db, timestopDeferralPath, "timestop_smart_deferral");
     console.log("[migrate] 048_timestop_smart_deferral OK");
 
+    // ============================================================
+    // DRY RUN AUDIT COLUMNS (049)
+    // - adds excluded_from_pnl, exclusion_reason, excluded_at, audit_batch_id
+    // - creates dry_run_trades_archive table for duplicate storage
+    // - enables SPOT DRY RUN cleanup without deleting history
+    // ============================================================
+    console.log("[migrate] Applying 049_dryrun_audit_columns...");
+    const dryrunAuditPath = path.resolve(process.cwd(), "db", "migrations", "049_dryrun_audit_columns.sql");
+    await tryExecuteFile(db, dryrunAuditPath, "dryrun_audit_columns");
+    console.log("[migrate] 049_dryrun_audit_columns OK");
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);
