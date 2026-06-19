@@ -1251,6 +1251,59 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Performance Debug (temporal para auditar grossProfit) ──────────────────────────────────
+
+  app.get(`${PREFIX}/performance-debug`, async (req, res) => {
+    try {
+      const config = await repo.getIdcaConfig();
+      const schedulerMode = config.mode;
+      const effectiveMode = schedulerMode === "disabled" ? "simulation" : schedulerMode;
+      const rawMode = (req.query.mode as string) || undefined;
+      const mode = rawMode === "disabled" ? effectiveMode : (rawMode ?? effectiveMode);
+
+      const closed = await repo.getCycles({
+        status: "closed",
+        mode,
+        limit: 2000,
+        offset: 0,
+      });
+
+      const sorted = closed
+        .filter(c => c.closedAt && c.realizedPnlUsd != null)
+        .sort((a, b) => new Date(a.closedAt!).getTime() - new Date(b.closedAt!).getTime());
+
+      const closedCyclePnlsForScore = sorted.map(c => ({
+        id: c.id,
+        pair: c.pair,
+        status: c.status,
+        closedAt: c.closedAt,
+        realizedPnlUsd: c.realizedPnlUsd,
+        capitalUsedUsd: c.capitalUsedUsd,
+        capitalReservedUsd: c.capitalReservedUsd,
+        isImported: c.isImported,
+        isManualCycle: c.isManualCycle,
+        managedBy: c.managedBy,
+        sourceType: c.sourceType,
+        cycleType: c.cycleType,
+      }));
+
+      const winPnls = sorted.map(c => parseFloat(String(c.realizedPnlUsd))).filter(p => isFinite(p) && p > 0);
+      const lossPnls = sorted.map(c => parseFloat(String(c.realizedPnlUsd))).filter(p => isFinite(p) && p < 0);
+      const grossProfit = winPnls.reduce((s, v) => s + v, 0);
+      const grossLoss = Math.abs(lossPnls.reduce((s, v) => s + v, 0));
+
+      res.json({
+        mode,
+        totalCycles: sorted.length,
+        grossProfit,
+        grossLoss,
+        closedCyclePnlsForScore,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ─── Price Context (debug/UI) ──────────────────────────────────
 
   app.get(`${PREFIX}/price-context/:pair`, async (req, res) => {
