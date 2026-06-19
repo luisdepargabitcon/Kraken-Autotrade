@@ -176,6 +176,8 @@ export const botConfig = pgTable("bot_config", {
   marketMetricsConfig: jsonb("market_metrics_config"),
   // Smart Exit Engine config (JSONB) — experimental dynamic exit system
   smartExitConfig: jsonb("smart_exit_config"),
+  // Telegram Alert Deduplication config (JSONB) — controls spam prevention
+  telegramAlertConfig: jsonb("telegram_alert_config"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

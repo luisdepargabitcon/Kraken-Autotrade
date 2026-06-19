@@ -27,6 +27,86 @@ docker compose -f docker-compose.staging.yml up -d --build
 
 ---
 
+## 2026-06-19 — fix(telegram): Deduplicación persistente para alertas SMART EXIT (tormenta de mensajes)
+
+### Problema
+Telegram recibía decenas de mensajes repetidos por minuto tipo:
+```
+🤖 SMART EXIT 🧪
+🚫 Salida suprimida (fee-band)
+Par: ETH/USD
+Entrada: 1703.51
+PnL: +0.00% / +0.03% / +0.04%
+Régimen: CHOP
+Score: 8/9
+Confirmación: 0/10
+Señales:
+- EMA_REVERSAL
+- MACD_REVERSAL
+- MTF_ALIGNMENT_LOSS
+- ENTRY_SIGNAL_DETERIORATION
+```
+
+Esto ocurría varias veces por minuto y generaba spam. El problema era que pequeños cambios en PnL (0.00% → 0.03% → 0.04%) rompían la deduplicación basada en hash exacto del mensaje.
+
+### Solución implementada
+
+**Nuevos archivos:**
+- `db/migrations/049_telegram_alert_dedupe.sql` — Tabla persistente para deduplicación con fingerprint lógico
+- `server/services/__tests__/telegramDeduplication.test.ts` — Tests unitarios para fingerprint lógico
+
+**Archivos modificados:**
+- `server/services/telegram/deduplication.ts` — Añadido sistema de deduplicación persistente en DB con fingerprint lógico
+- `shared/schema.ts` — Añadido `telegramAlertConfig` (JSONB) en `botConfig`
+- `server/services/tradingEngine.ts` — Integración de deduplicación en alertas `smart_exit_suppressed`
+
+### Características técnicas
+
+**Fingerprint lógico:**
+- Usa `module|pair|positionId|decision|suppressionReason|regime|score|confirmation|signals|pnlBand`
+- Excluye timestamp y PnL exacto
+- PnL redondeado a bandas de 0.10% (ej: 0.00-0.10, 0.10-0.20)
+- Señales ordenadas alfabéticamente para consistencia
+- Score redondeado a entero
+
+**TTL por tipo de evento:**
+- `SMART_EXIT_SUPPRESSED_FEE_BAND`: 30 minutos
+- `SMART_EXIT_SUPPRESSED_OTHER`: 15 minutos
+- `SMART_EXIT_ARMED`: 10 minutos
+- `SMART_EXIT_EXECUTED`: 5 minutos
+- `SMART_EXIT_THRESHOLD_HIT`: 5 minutos
+- `SMART_EXIT_REGIME_CHANGE`: 10 minutos
+- `TRADE_BUY/SELL`: 1 minuto (casi sin dedupe para trades reales)
+- `CRITICAL_ERROR`: 5 minutos
+
+**Persistencia en DB:**
+- Tabla `telegram_alert_dedupe` con índices por fingerprint, last_sent_at, module/pair
+- Función `cleanup_old_telegram_alert_dedupe()` para limpieza automática (7 días)
+- Atomicidad con `FOR UPDATE` para evitar race conditions entre workers
+- Contador `suppressed_count` para métricas
+
+**Comportamiento:**
+- Antes de enviar Telegram, se calcula fingerprint lógico
+- Si existe y está dentro de TTL: NO enviar, incrementar contador
+- Si TTL expiró: enviar y resetear contador
+- Si es nuevo: insertar y permitir envío
+- Fail-open: si falla la deduplicación, permite envío (no bloquea alertas críticas)
+
+### Validación
+- npm run check: ✅
+- npm run build: ✅ (3801 módulos)
+- Tests unitarios: ✅ (10 tests para fingerprint lógico)
+
+### Deploy VPS required
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+Migration 049 se ejecuta automáticamente al iniciar.
+
+---
+
 ## 2026-06-16 — fix(fisco): Commit FISCO bloqueado por FK fisco_external_statement_items_matched_operation_id_fkey
 
 ### Commit
