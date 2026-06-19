@@ -190,6 +190,40 @@ Migration 050 se ejecuta automáticamente al iniciar.
 
 ---
 
+## 2026-06-20 — fix(db): Añadir migration faltante para telegram_alert_config en bot_config
+
+### Problema
+El commit b2e4c1d añadió `telegramAlertConfig: jsonb("telegram_alert_config")` en `shared/schema.ts` pero no creó la migration correspondiente para añadir la columna en la tabla `bot_config`.
+
+Resultado en VPS:
+```
+PostgreSQL error: column "telegram_alert_config" does not exist
+```
+al hacer SELECT desde bot_config.
+
+### Solución implementada
+
+**Nuevo archivo:**
+- `db/migrations/051_add_telegram_alert_config_to_bot_config.sql` — Añade columna faltante
+
+**Cambios:**
+- `ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS telegram_alert_config jsonb DEFAULT '{}'::jsonb`
+- `UPDATE bot_config SET telegram_alert_config = '{}'::jsonb WHERE telegram_alert_config IS NULL`
+
+### Validación
+- npm run check: ✅
+- npm run build: ✅
+
+### Deploy VPS required
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+Migration 051 se ejecuta automáticamente al iniciar.
+
+---
+
 ## 2026-06-16 — fix(fisco): Commit FISCO bloqueado por FK fisco_external_statement_items_matched_operation_id_fkey
 
 ### Commit
