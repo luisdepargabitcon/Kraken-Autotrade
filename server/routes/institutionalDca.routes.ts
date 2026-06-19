@@ -1150,6 +1150,62 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const totalCycles = wins + losses;
       const winRate = totalCycles > 0 ? (wins / totalCycles) * 100 : 0;
 
+      // Advanced quality metrics
+      const winPnls  = sorted.map(c => parseFloat(String(c.realizedPnlUsd))).filter(p => isFinite(p) && p > 0);
+      const lossPnls = sorted.map(c => parseFloat(String(c.realizedPnlUsd))).filter(p => isFinite(p) && p < 0);
+      const grossProfit = winPnls.reduce((s, v) => s + v, 0);
+      const grossLoss   = Math.abs(lossPnls.reduce((s, v) => s + v, 0));
+      const profitFactor: number | string = grossLoss > 0
+        ? parseFloat((grossProfit / grossLoss).toFixed(2))
+        : grossProfit > 0 ? "∞" : 0;
+      const avgWin = winPnls.length > 0 ? parseFloat((grossProfit / winPnls.length).toFixed(4)) : 0;
+      const avgLoss = lossPnls.length > 0 ? parseFloat((-(grossLoss / lossPnls.length)).toFixed(4)) : 0;
+      const avgWinLossRatio = avgLoss !== 0 ? parseFloat((Math.abs(avgWin) / Math.abs(avgLoss)).toFixed(2)) : 0;
+      const expectancy = totalCycles > 0
+        ? parseFloat(((winRate / 100) * avgWin + (1 - winRate / 100) * avgLoss).toFixed(4))
+        : 0;
+
+      // Smart Strategy Score for IDCA
+      let strategyScore = 50;
+      const pfNum = typeof profitFactor === 'number' ? profitFactor : Infinity;
+      if (winRate >= 70) strategyScore += 15;
+      else if (winRate >= 55) strategyScore += 8;
+      else if (winRate < 40) strategyScore -= 12;
+      if (pfNum >= 2) strategyScore += 15;
+      else if (pfNum >= 1.5) strategyScore += 10;
+      else if (pfNum >= 1) strategyScore += 4;
+      else strategyScore -= 15;
+      if (expectancy > 2) strategyScore += 10;
+      else if (expectancy > 0) strategyScore += 5;
+      else if (expectancy < 0) strategyScore -= 10;
+      if (totalCycles < 5) strategyScore -= 10;
+      else if (totalCycles >= 20) strategyScore += 5;
+      strategyScore = Math.max(0, Math.min(100, Math.round(strategyScore)));
+
+      const strategyStatus =
+        strategyScore <= 20  ? "⛔ Detener — resultados negativos"  :
+        strategyScore <= 40  ? "🔴 Crítico — revisar configuración"  :
+        strategyScore <= 60  ? "🟡 Mejorable — optimizar parámetros" :
+        strategyScore <= 75  ? "🔵 Aceptable — estrategia funciona"  :
+        strategyScore <= 90  ? "🟢 Bueno — resultados sólidos"       :
+                               "🏆 Excelente — top performance";
+
+      const strategyRiskLevel: "Bajo" | "Medio" | "Alto" | "Crítico" =
+        strategyScore > 75 ? "Bajo" :
+        strategyScore > 55 ? "Medio" :
+        strategyScore > 35 ? "Alto" : "Crítico";
+
+      const strategyPros: string[] = [];
+      const strategyCons: string[] = [];
+      if (winRate >= 60) strategyPros.push(`Win rate sólido: ${winRate.toFixed(1)}%`);
+      if (typeof pfNum === 'number' && pfNum >= 1.5) strategyPros.push(`Profit factor saludable: ${pfNum}`);
+      if (expectancy > 0) strategyPros.push(`Expectancy positiva: +$${expectancy.toFixed(2)}/ciclo`);
+      if (totalCycles >= 20) strategyPros.push(`Muestra estadística suficiente: ${totalCycles} ciclos`);
+      if (winRate < 45) strategyCons.push(`Win rate bajo: ${winRate.toFixed(1)}%`);
+      if (typeof pfNum === 'number' && pfNum < 1) strategyCons.push(`Profit factor negativo: ${pfNum}`);
+      if (expectancy < 0) strategyCons.push(`Expectancy negativa: $${expectancy.toFixed(2)}/ciclo`);
+      if (totalCycles < 10) strategyCons.push(`Muestra pequeña: ${totalCycles} ciclos (poca estadística)`);
+
       // Active cycles summary
       const active = await repo.getAllActiveCycles(mode);
       const unrealizedPnl = active.reduce((sum, c) => sum + parseFloat(String(c.unrealizedPnlUsd || "0")), 0);
@@ -1164,6 +1220,18 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
           activeCycles: active.length,
           wins,
           losses,
+          grossProfit: parseFloat(grossProfit.toFixed(2)),
+          grossLoss: parseFloat(grossLoss.toFixed(2)),
+          profitFactor,
+          avgWin,
+          avgLoss,
+          avgWinLossRatio,
+          expectancy,
+          strategyScore,
+          strategyStatus,
+          strategyRiskLevel,
+          strategyPros,
+          strategyCons,
         },
       });
     } catch (e: any) {

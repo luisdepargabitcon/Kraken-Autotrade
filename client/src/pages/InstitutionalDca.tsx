@@ -60,6 +60,7 @@ import {
   useAllMarketContextPreviews,
   useAllMarketDataHealth,
   useIdcaEntryDiagnostics,
+  useIdcaPerformance,
   type MarketContextPreview,
 } from "@/hooks/useInstitutionalDca";
 import {
@@ -104,8 +105,9 @@ import {
   Edit3,
   XCircle,
   Filter,
+  CheckCircle2,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatSmallUsd } from "@/lib/utils";
 import { IdcaEventsList, IdcaLiveEventsFeed, EVENT_TYPE_LABELS } from "@/components/idca/IdcaEventCards";
 import { EditImportedCycleModal } from "@/components/idca/EditImportedCycleModal";
 import { IdcaCycleExitModal } from "@/components/idca/IdcaCycleExitModal";
@@ -427,6 +429,7 @@ function SummaryTab() {
   const marketCtx = useAllMarketContextPreviews();
   const marketHealth = useAllMarketDataHealth();
   const { data: assetConfigs } = useIdcaAssetConfigs();
+  const { data: perfData } = useIdcaPerformance(config?.mode);
 
   if (isLoading) {
     return <div className="text-center py-8 text-muted-foreground">Cargando resumen...</div>;
@@ -483,6 +486,187 @@ function SummaryTab() {
         <KpiCard icon={BarChart3} label="PnL Realizado" value={fmtUsd(summary.realizedPnlUsd)} color={realizedColor} />
         <KpiCard icon={Activity} label="Ciclos Activos" value={String(summary.activeCyclesCount)} />
       </div>
+
+      {/* ══════════ SMART STRATEGY SCORE — IDCA ══════════ */}
+      {perfData && perfData.summary.totalCycles > 0 && (
+        <div className="rounded-lg border border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-card/50 to-amber-500/5 overflow-hidden">
+          {/* Header */}
+          <div className="p-4 border-b border-amber-500/10">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-amber-400" />
+                <h3 className="text-sm font-mono font-bold text-amber-400">
+                  SMART STRATEGY SCORE — IDCA
+                </h3>
+                <Badge variant="outline" className="text-[9px] border-amber-500/30 text-amber-500/70">
+                  IDCA METRICS V2
+                </Badge>
+              </div>
+              <span className="text-[10px] font-mono text-muted-foreground">
+                {perfData.summary.totalCycles} CICLOS CERRADOS
+              </span>
+            </div>
+
+            {/* Score + status */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <div className="flex items-baseline gap-2">
+                <span className={`font-mono text-5xl font-bold ${
+                  perfData.summary.strategyScore <= 40 ? 'text-red-500' :
+                  perfData.summary.strategyScore <= 60 ? 'text-yellow-500' :
+                  perfData.summary.strategyScore <= 75 ? 'text-blue-400' :
+                  perfData.summary.strategyScore <= 90 ? 'text-green-400' :
+                  'text-yellow-400'
+                }`}>
+                  {perfData.summary.strategyScore}
+                </span>
+                <span className="text-lg text-muted-foreground">/100</span>
+              </div>
+              <div className="flex-1">
+                <p className={`text-sm font-bold mb-1 ${
+                  perfData.summary.strategyScore <= 40 ? 'text-red-400' :
+                  perfData.summary.strategyScore <= 60 ? 'text-yellow-400' :
+                  perfData.summary.strategyScore <= 75 ? 'text-blue-400' :
+                  perfData.summary.strategyScore <= 90 ? 'text-green-400' :
+                  'text-yellow-400'
+                }`}>
+                  {perfData.summary.strategyStatus}
+                </p>
+              </div>
+              <Badge className={`text-[10px] font-mono ${
+                perfData.summary.strategyRiskLevel === 'Bajo'    ? 'bg-green-500/20 text-green-400 border-green-500/50' :
+                perfData.summary.strategyRiskLevel === 'Medio'   ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50' :
+                perfData.summary.strategyRiskLevel === 'Alto'    ? 'bg-orange-500/20 text-orange-400 border-orange-500/50' :
+                'bg-red-500/20 text-red-400 border-red-500/50'
+              }`}>
+                RIESGO: {perfData.summary.strategyRiskLevel.toUpperCase()}
+              </Badge>
+            </div>
+
+            {/* Score bar */}
+            <div className="mt-4">
+              <div className="relative h-3 bg-muted rounded-full overflow-hidden">
+                <div className="absolute inset-0 flex">
+                  <div className="w-[20%] bg-red-500/30" />
+                  <div className="w-[20%] bg-red-500/50" />
+                  <div className="w-[20%] bg-yellow-500/50" />
+                  <div className="w-[15%] bg-blue-400/50" />
+                  <div className="w-[15%] bg-green-400/50" />
+                  <div className="w-[10%] bg-yellow-400/50" />
+                </div>
+                <div
+                  className="absolute top-0 bottom-0 w-1 bg-white shadow-lg transition-all duration-500"
+                  style={{ left: `${perfData.summary.strategyScore}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[9px] font-mono text-muted-foreground mt-1">
+                <span>PARAR</span><span>20</span><span>40</span><span>60</span><span>75</span><span>90</span><span>EXCEL.</span>
+              </div>
+            </div>
+
+            {/* Pros & Cons */}
+            {(perfData.summary.strategyPros.length > 0 || perfData.summary.strategyCons.length > 0) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                {perfData.summary.strategyPros.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-mono text-green-400">A FAVOR:</p>
+                    {perfData.summary.strategyPros.map((pro, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3 w-3 text-green-400 flex-shrink-0" />
+                        <span className="text-xs text-muted-foreground">{pro}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {perfData.summary.strategyCons.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-mono text-red-400">A VIGILAR:</p>
+                    {perfData.summary.strategyCons.map((con, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <AlertTriangle className="h-3 w-3 text-red-400 flex-shrink-0" />
+                        <span className="text-xs text-muted-foreground">{con}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Primary metrics */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-px border-b border-amber-500/10 bg-amber-500/10">
+            <div className="bg-card/50 p-3">
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL REALIZADO</p>
+              <p className={`font-mono text-lg font-bold ${perfData.summary.totalPnlUsd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {perfData.summary.totalPnlUsd >= 0 ? '+' : ''}${perfData.summary.totalPnlUsd.toFixed(2)}
+              </p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">{perfData.summary.wins}W / {perfData.summary.losses}L ciclos</p>
+            </div>
+            <div className="bg-card/50 p-3">
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL FLOTANTE</p>
+              <p className={`font-mono text-lg font-bold ${perfData.summary.unrealizedPnlUsd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {perfData.summary.unrealizedPnlUsd >= 0 ? '+' : ''}${perfData.summary.unrealizedPnlUsd.toFixed(2)}
+              </p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">{perfData.summary.activeCycles} ciclos abiertos</p>
+            </div>
+            <div className="bg-card/50 p-3">
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL TOTAL</p>
+              <p className={`font-mono text-lg font-bold ${(perfData.summary.totalPnlUsd + perfData.summary.unrealizedPnlUsd) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {(perfData.summary.totalPnlUsd + perfData.summary.unrealizedPnlUsd) >= 0 ? '+' : ''}${(perfData.summary.totalPnlUsd + perfData.summary.unrealizedPnlUsd).toFixed(2)}
+              </p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">Cerrado + Flotante</p>
+            </div>
+            <div className="bg-card/50 p-3">
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">WIN RATE</p>
+              <p className={`font-mono text-lg font-bold ${perfData.summary.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                {perfData.summary.winRate.toFixed(1)}%
+              </p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">{perfData.summary.totalCycles} ciclos total</p>
+            </div>
+          </div>
+
+          {/* Quality metrics */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-amber-500/10">
+            <div className="bg-card/50 p-3">
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">PROFIT FACTOR</p>
+              <p className={`font-mono text-lg font-bold ${
+                typeof perfData.summary.profitFactor === 'number' && perfData.summary.profitFactor > 1 ? 'text-green-400' :
+                typeof perfData.summary.profitFactor === 'number' && perfData.summary.profitFactor < 1 ? 'text-red-400' : 'text-amber-400'
+              }`}>
+                {perfData.summary.profitFactor}
+              </p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">
+                {typeof perfData.summary.profitFactor === 'number' && perfData.summary.profitFactor > 1.5 ? 'Muy bueno (>1.5)' :
+                 typeof perfData.summary.profitFactor === 'number' && perfData.summary.profitFactor > 1  ? 'Positivo (>1)' : 'Necesita mejora'}
+              </p>
+            </div>
+            <div className="bg-card/50 p-3">
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">EXPECTANCY</p>
+              <p className={`font-mono text-lg font-bold ${perfData.summary.expectancy >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {perfData.summary.expectancy >= 0 ? '+' : ''}${perfData.summary.expectancy.toFixed(2)}
+              </p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">Media por ciclo</p>
+            </div>
+            <div className="bg-card/50 p-3">
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">AVG WIN / LOSS</p>
+              <div className="flex items-center gap-1">
+                <span className="font-mono text-sm font-bold text-green-400">{formatSmallUsd(perfData.summary.avgWin, { signed: true })}</span>
+                <span className="text-muted-foreground">/</span>
+                <span className="font-mono text-sm font-bold text-red-400">{formatSmallUsd(perfData.summary.avgLoss, { signed: true })}</span>
+              </div>
+              <p className="text-[9px] text-muted-foreground mt-0.5">Ratio: {perfData.summary.avgWinLossRatio.toFixed(2)}</p>
+            </div>
+            <div className="bg-card/50 p-3">
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">BRUTO G / P</p>
+              <div className="flex items-center gap-1">
+                <span className="font-mono text-sm font-bold text-green-400">+${perfData.summary.grossProfit.toFixed(2)}</span>
+                <span className="text-muted-foreground">/</span>
+                <span className="font-mono text-sm font-bold text-red-400">-${perfData.summary.grossLoss.toFixed(2)}</span>
+              </div>
+              <p className="text-[9px] text-muted-foreground mt-0.5">Ganancia bruta / Pérdida bruta</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Estado operativo por par */}
       {assetConfigs && assetConfigs.length > 0 && (

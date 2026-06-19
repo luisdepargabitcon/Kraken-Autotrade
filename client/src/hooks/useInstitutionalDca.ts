@@ -1554,3 +1554,47 @@ export function useIdcaEntryDiagnostics() {
     staleTime: 20000,
   });
 }
+
+// ─── IDCA Performance / Smart Strategy Score ──────────────────────
+
+export interface IdcaPerformanceSummary {
+  totalPnlUsd: number;
+  unrealizedPnlUsd: number;
+  winRate: number;
+  totalCycles: number;
+  activeCycles: number;
+  wins: number;
+  losses: number;
+  grossProfit: number;
+  grossLoss: number;
+  profitFactor: number | string;
+  avgWin: number;
+  avgLoss: number;
+  avgWinLossRatio: number;
+  expectancy: number;
+  strategyScore: number;
+  strategyStatus: string;
+  strategyRiskLevel: "Bajo" | "Medio" | "Alto" | "Crítico";
+  strategyPros: string[];
+  strategyCons: string[];
+}
+
+export interface IdcaPerformanceResponse {
+  curve: { time: string; pnl: number; cumPnl: number; pair: string }[];
+  summary: IdcaPerformanceSummary;
+}
+
+export function useIdcaPerformance(mode?: string) {
+  return useQuery<IdcaPerformanceResponse>({
+    queryKey: ["idca", "performance", mode],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (mode) params.set("mode", mode);
+      const res = await fetch(`${PREFIX}/performance?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch IDCA performance");
+      return res.json();
+    },
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+}
