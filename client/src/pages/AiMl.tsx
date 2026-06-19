@@ -635,7 +635,75 @@ export default function AiMl() {
           </CardContent>
         </Card>
 
+        {/* Phase 7 — sourceMode breakdown */}
+        <SourceModeBreakdown />
+
       </main>
     </div>
+  );
+}
+
+function SourceModeBreakdown() {
+  const metrics = useQuery({
+    queryKey: ["/api/autotuning/metrics"],
+    queryFn: () => fetch("/api/autotuning/metrics").then(r => r.json()),
+    refetchInterval: 60_000,
+  });
+  const counts = useQuery({
+    queryKey: ["/api/autotuning/dataset/counts"],
+    queryFn: () => fetch("/api/autotuning/dataset/counts").then(r => r.json()),
+    refetchInterval: 60_000,
+  });
+
+  const m = metrics.data  as any;
+  const c = counts.data   as any;
+  if (!m && !c) return null;
+
+  const SOURCE_INFO: Record<string, { label: string; weight: string; cls: string }> = {
+    REAL:    { label: "REAL",    weight: "×1.0", cls: "text-emerald-400" },
+    DRY_RUN: { label: "DRY RUN", weight: "×0.5", cls: "text-blue-400" },
+    SHADOW:  { label: "SHADOW",  weight: "×0.3", cls: "text-purple-400" },
+  };
+
+  return (
+    <Card className="border-white/[0.08] bg-white/[0.02]">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Database className="h-4 w-4 text-blue-400" />
+          Dataset Multi-Fuente
+          <a href="/autotuning" className="ml-auto text-xs text-violet-400 hover:text-violet-300 font-normal flex items-center gap-1">
+            <BarChart3 className="h-3 w-3" /> Auto-Tuning →
+          </a>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-3 gap-3">
+          {Object.entries(SOURCE_INFO).map(([mode, meta]) => {
+            const modeData = m?.bySourceMode?.[mode];
+            const countVal = mode === 'REAL' ? (c?.real ?? 0) : mode === 'DRY_RUN' ? (c?.dryRun ?? 0) : (c?.shadow ?? 0);
+            return (
+              <div key={mode} className="p-3 rounded-lg bg-white/5 border border-white/10">
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`text-xs font-mono font-bold ${meta.cls}`}>{meta.label}</span>
+                  <span className="text-xs text-muted-foreground">{meta.weight}</span>
+                </div>
+                <div className="text-xl font-bold font-mono">{countVal}</div>
+                {modeData && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    WR: {(modeData.winRate * 100).toFixed(0)}%
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {m?.timeStopCount > 0 && (
+          <div className="mt-3 p-2 rounded bg-white/[0.03] border border-white/[0.06] text-xs text-muted-foreground">
+            <Timer className="inline h-3 w-3 mr-1 text-amber-400" />
+            Time-Stops: {m.timeStopCount} · PnL promedio: {m.timeStopPnlAvg != null ? `$${m.timeStopPnlAvg.toFixed(2)}` : "—"}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

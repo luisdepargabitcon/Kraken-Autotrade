@@ -58,7 +58,21 @@ import {
   alertThrottle as alertThrottleTable,
   // FISCO tables
   fiscoAlertConfig,
-  fiscoSyncHistory
+  fiscoSyncHistory,
+  // Autotuning tables
+  dryRunTrades as dryRunTradesTable,
+  tradeSnapshots as tradeSnapshotsTable,
+  tradeMetrics as tradeMetricsTable,
+  strategyProfiles as strategyProfilesTable,
+  tuningProposals as tuningProposalsTable,
+  type TradeSnapshot,
+  type InsertTradeSnapshot,
+  type TradeMetric,
+  type InsertTradeMetric,
+  type StrategyProfile,
+  type InsertStrategyProfile,
+  type TuningProposal,
+  type InsertTuningProposal,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull, ne, or, inArray } from "drizzle-orm";
@@ -193,8 +207,37 @@ export interface IStorage {
   getTrainingTradesCount(options?: { closed?: boolean; labeled?: boolean; hasOpenLots?: boolean }): Promise<number>;
   getDiscardReasonsDataset(): Promise<Record<string, number>>;
   getAllTradesForBackfill(): Promise<Trade[]>;
-  runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number> }>;
-  
+  runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number>; dryRunCreated: number; dryRunSkipped: number }>;
+  runDryRunTradesBackfill(): Promise<{ created: number; skipped: number; errors: number }>;
+
+  // Autotuning: TradeSnapshots
+  saveTradeSnapshot(snapshot: InsertTradeSnapshot): Promise<TradeSnapshot>;
+  getTradeSnapshotsBySource(sourceTradeId: string, sourceMode: string): Promise<TradeSnapshot[]>;
+  getTradeSnapshotCount(options?: { sourceMode?: string; strategyType?: string }): Promise<number>;
+
+  // Autotuning: TradeMetrics
+  saveTradeMetric(metric: InsertTradeMetric): Promise<TradeMetric>;
+  getTradeMetricsBySource(sourceTradeId: string, sourceMode: string, limit?: number): Promise<TradeMetric[]>;
+  cleanupTradeMetrics(retentionDays?: number): Promise<number>;
+
+  // Autotuning: StrategyProfiles
+  getStrategyProfiles(options?: { strategyType?: string; mode?: string; isActive?: boolean }): Promise<StrategyProfile[]>;
+  getActiveStrategyProfile(strategyType: string, pair?: string): Promise<StrategyProfile | undefined>;
+  saveStrategyProfile(profile: InsertStrategyProfile): Promise<StrategyProfile>;
+  updateStrategyProfile(id: number, updates: Partial<InsertStrategyProfile>): Promise<StrategyProfile | undefined>;
+
+  // Autotuning: TuningProposals
+  getTuningProposals(options?: { status?: string; strategyType?: string; pair?: string }): Promise<TuningProposal[]>;
+  saveTuningProposal(proposal: InsertTuningProposal): Promise<TuningProposal>;
+  updateTuningProposalStatus(id: number, status: string, updates?: Partial<InsertTuningProposal>): Promise<TuningProposal | undefined>;
+
+  // Autotuning: Aggregated metrics
+  getAutotuningMetrics(options?: { sourceMode?: string; strategyType?: string; pair?: string; regime?: string }): Promise<{
+    totalTrades: number; realTrades: number; dryRunTrades: number; shadowTrades: number;
+    winRate: number; avgPnlNet: number; profitFactor: number; avgHoldMinutes: number;
+    timeStopCount: number; timeStopPnlAvg: number; bySourceMode: Record<string, { count: number; winRate: number; avgPnl: number }>;
+  }>;
+
   // Schema health check and auto-migration
   checkSchemaHealth(): Promise<{ healthy: boolean; missingColumns: string[]; migrationRan: boolean }>;
   runSchemaMigration(): Promise<{ success: boolean; columnsAdded: string[]; error?: string }>;
@@ -1496,7 +1539,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(sql`COALESCE(${tradesTable.executedAt}, ${tradesTable.createdAt})`);
   }
 
-  async runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number> }> {
+  async runTrainingTradesBackfill(): Promise<{ created: number; closed: number; labeled: number; discardReasons: Record<string, number>; dryRunCreated: number; dryRunSkipped: number }> {
     const allTrades = await this.getAllTradesForBackfill();
     const discardReasons: Record<string, number> = {};
     let created = 0;
@@ -1755,7 +1798,10 @@ export class DatabaseStorage implements IStorage {
       }
     }
     
-    return { created, closed, labeled, discardReasons };
+    // Also run dry-run backfill (Phase 2)
+    const dryRunStats = await this.runDryRunTradesBackfill();
+
+    return { created, closed, labeled, discardReasons, dryRunCreated: dryRunStats.created, dryRunSkipped: dryRunStats.skipped };
   }
 
   async checkSchemaHealth(): Promise<{ healthy: boolean; missingColumns: string[]; migrationRan: boolean }> {
@@ -3039,6 +3085,334 @@ export class DatabaseStorage implements IStorage {
          ${record.riskLevel}, ${record.bias}, ${record.action}, ${record.mode},
          ${record.reasons}::text[], ${JSON.stringify(record.snapshot)}::jsonb)
     `);
+  }
+
+  // ============================================================
+  // PHASE 2 — DRY-RUN BACKFILL
+  // Each closed SELL in dry_run_trades becomes a DRY_RUN training_trade.
+  // No FIFO needed: entry_price, realized_pnl_usd already stored in sell row.
+  // ============================================================
+  async runDryRunTradesBackfill(): Promise<{ created: number; skipped: number; errors: number }> {
+    let created = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    const DRY_EVIDENCE_WEIGHT = "0.500";
+    const TIME_STOP_REASONS = new Set([
+      'TIME_STOP', 'SMART_TIME_STOP', 'MAX_HOLD_TIME', 'HOLD_EXCESSIVE',
+    ]);
+
+    const determineExitCategory = (reason: string | null): string => {
+      if (!reason) return 'UNKNOWN';
+      if (TIME_STOP_REASONS.has(reason)) return 'TIME_BASED_EXIT';
+      if (reason === 'TRAILING_STOP') return 'TRAILING_EXIT';
+      if (reason === 'TAKE_PROFIT' || reason === 'SCALE_OUT' || reason === 'BREAK_EVEN') return 'PROFIT_EXIT';
+      if (reason === 'STOP_LOSS' || reason === 'EMERGENCY_SL') return 'RISK_EXIT';
+      if (reason === 'SMART_EXIT') return 'SMART_EXIT';
+      return 'UNKNOWN';
+    };
+
+    // Get all eligible closed SELL rows
+    const sellRows = await db.execute(sql`
+      SELECT
+        s.id, s.sim_txid, s.entry_sim_txid, s.pair,
+        s.price AS exit_price, s.amount, s.total_usd,
+        s.entry_price, s.realized_pnl_usd, s.realized_pnl_pct,
+        s.normalized_reason, s.regime, s.strategy_id, s.confidence,
+        s.closed_at, s.created_at AS sell_created_at,
+        b.created_at AS buy_created_at
+      FROM dry_run_trades s
+      LEFT JOIN dry_run_trades b ON b.sim_txid = s.entry_sim_txid
+      WHERE s.type = 'sell'
+        AND s.status = 'closed'
+        AND s.excluded_from_pnl = false
+        AND s.entry_price IS NOT NULL
+        AND s.price IS NOT NULL
+        AND s.amount IS NOT NULL
+    `);
+
+    for (const row of sellRows.rows as any[]) {
+      try {
+        const syntheticBuyTxid = `DRY-${row.sim_txid}`;
+
+        // Skip if already backfilled (idempotent)
+        const existing = await this.getTrainingTradeByBuyTxid(syntheticBuyTxid);
+        if (existing) { skipped++; continue; }
+
+        const exitPrice  = parseFloat(row.exit_price  || '0');
+        const entryPrice = parseFloat(row.entry_price || '0');
+        const amount     = parseFloat(row.amount       || '0');
+
+        if (exitPrice <= 0 || entryPrice <= 0 || amount <= 0) { skipped++; continue; }
+
+        const entryTs = row.buy_created_at ? new Date(row.buy_created_at) : new Date(row.sell_created_at);
+        const exitTs  = row.closed_at       ? new Date(row.closed_at)      : new Date(row.sell_created_at);
+        const holdTimeMinutes = Math.max(0, Math.round((exitTs.getTime() - entryTs.getTime()) / 60000));
+
+        const pnlNet  = parseFloat(row.realized_pnl_usd || '0');
+        const pnlPct  = parseFloat(row.realized_pnl_pct  || '0');
+        const costUsd = entryPrice * amount;
+
+        const normalizedReason = row.normalized_reason as string | null;
+        const wasTimeStop      = normalizedReason ? TIME_STOP_REASONS.has(normalizedReason) : false;
+        const exitCategory     = determineExitCategory(normalizedReason);
+
+        const trainingTrade: InsertTrainingTrade & {
+          sourceMode?: string; sourceTable?: string; evidenceWeight?: string;
+          exitReason?: string | null; exitCategory?: string | null;
+          wasTimeStop?: boolean; regime?: string | null;
+        } = {
+          pair:          row.pair,
+          buyTxid:       syntheticBuyTxid,
+          entryPrice:    row.entry_price,
+          entryAmount:   row.amount,
+          qtyRemaining:  '0',
+          exitPrice:     row.exit_price,
+          exitAmount:    row.amount,
+          costUsd:       costUsd.toFixed(8),
+          entryFee:      '0',
+          exitFee:       '0',
+          revenueUsd:    (exitPrice * amount).toFixed(8),
+          pnlGross:      (pnlNet).toFixed(8),
+          pnlNet:        pnlNet.toFixed(8),
+          pnlPct:        pnlPct.toFixed(4),
+          holdTimeMinutes,
+          labelWin:      pnlNet > 0 ? 1 : 0,
+          entryTs,
+          exitTs,
+          sellTxidsJson: [row.sim_txid],
+          isClosed:      true,
+          isLabeled:     true,
+          // Autotuning fields (Phase 1 extension)
+          sourceMode:     'DRY_RUN',
+          sourceTable:    'dry_run_trades',
+          evidenceWeight: DRY_EVIDENCE_WEIGHT,
+          exitReason:     normalizedReason,
+          exitCategory:   exitCategory,
+          wasTimeStop,
+          regime:         row.regime ?? null,
+        };
+
+        await db.insert(trainingTradesTable).values(trainingTrade as any);
+        created++;
+      } catch (e: any) {
+        console.error(`[dryrun-backfill] Error processing sell ${row.sim_txid}: ${e.message}`);
+        errors++;
+      }
+    }
+
+    return { created, skipped, errors };
+  }
+
+  // ============================================================
+  // PHASE 3 — TRADE SNAPSHOTS
+  // ============================================================
+  async saveTradeSnapshot(snapshot: InsertTradeSnapshot): Promise<TradeSnapshot> {
+    const rows = await db.insert(tradeSnapshotsTable)
+      .values(snapshot)
+      .onConflictDoUpdate({
+        target: [tradeSnapshotsTable.sourceTradeId, tradeSnapshotsTable.sourceMode, tradeSnapshotsTable.snapshotType],
+        set: {
+          exitTsUtc:          snapshot.exitTsUtc,
+          exitPrice:          snapshot.exitPrice,
+          exitFeeUsd:         snapshot.exitFeeUsd,
+          exitReason:         snapshot.exitReason,
+          exitCategory:       snapshot.exitCategory,
+          wasTimeStop:        snapshot.wasTimeStop,
+          pnlGrossUsd:        snapshot.pnlGrossUsd,
+          pnlNetUsd:          snapshot.pnlNetUsd,
+          pnlPct:             snapshot.pnlPct,
+          mfePct:             snapshot.mfePct,
+          maePct:             snapshot.maePct,
+          maxDrawdownPct:     snapshot.maxDrawdownPct,
+          holdTimeMinutes:    snapshot.holdTimeMinutes,
+          tradeQualityScore:  snapshot.tradeQualityScore,
+        },
+      })
+      .returning();
+    return rows[0];
+  }
+
+  async getTradeSnapshotsBySource(sourceTradeId: string, sourceMode: string): Promise<TradeSnapshot[]> {
+    return await db.select().from(tradeSnapshotsTable)
+      .where(and(
+        eq(tradeSnapshotsTable.sourceTradeId, sourceTradeId),
+        eq(tradeSnapshotsTable.sourceMode, sourceMode),
+      ))
+      .orderBy(desc(tradeSnapshotsTable.createdAt));
+  }
+
+  async getTradeSnapshotCount(options?: { sourceMode?: string; strategyType?: string }): Promise<number> {
+    const conditions = [];
+    if (options?.sourceMode)    conditions.push(eq(tradeSnapshotsTable.sourceMode, options.sourceMode));
+    if (options?.strategyType)  conditions.push(eq(tradeSnapshotsTable.strategyType, options.strategyType));
+    const rows = await db.execute(sql`
+      SELECT COUNT(*)::int AS cnt FROM trade_snapshots
+      ${conditions.length ? sql`WHERE source_mode = ${options?.sourceMode ?? sql`source_mode`}` : sql``}
+    `);
+    return (rows.rows[0] as any)?.cnt ?? 0;
+  }
+
+  // ============================================================
+  // PHASE 5 — TRADE METRICS
+  // ============================================================
+  async saveTradeMetric(metric: InsertTradeMetric): Promise<TradeMetric> {
+    const rows = await db.insert(tradeMetricsTable).values(metric).returning();
+    return rows[0];
+  }
+
+  async getTradeMetricsBySource(sourceTradeId: string, sourceMode: string, limit = 100): Promise<TradeMetric[]> {
+    return await db.select().from(tradeMetricsTable)
+      .where(and(
+        eq(tradeMetricsTable.sourceTradeId, sourceTradeId),
+        eq(tradeMetricsTable.sourceMode, sourceMode),
+      ))
+      .orderBy(desc(tradeMetricsTable.sampledAt))
+      .limit(limit);
+  }
+
+  async cleanupTradeMetrics(retentionDays = 30): Promise<number> {
+    const result = await db.execute(sql`
+      DELETE FROM trade_metrics
+      WHERE sampled_at < NOW() - (${retentionDays} || ' days')::interval
+    `);
+    return (result as any).rowCount ?? 0;
+  }
+
+  // ============================================================
+  // PHASE 10 — STRATEGY PROFILES
+  // ============================================================
+  async getStrategyProfiles(options?: { strategyType?: string; mode?: string; isActive?: boolean }): Promise<StrategyProfile[]> {
+    const conditions = [];
+    if (options?.strategyType !== undefined) conditions.push(eq(strategyProfilesTable.strategyType, options.strategyType));
+    if (options?.mode !== undefined)         conditions.push(eq(strategyProfilesTable.mode, options.mode));
+    if (options?.isActive !== undefined)     conditions.push(eq(strategyProfilesTable.isActive, options.isActive));
+    const q = conditions.length ? and(...conditions) : undefined;
+    return await db.select().from(strategyProfilesTable)
+      .where(q)
+      .orderBy(desc(strategyProfilesTable.createdAt));
+  }
+
+  async getActiveStrategyProfile(strategyType: string, pair?: string): Promise<StrategyProfile | undefined> {
+    const conditions = [
+      eq(strategyProfilesTable.strategyType, strategyType),
+      eq(strategyProfilesTable.isActive, true),
+      eq(strategyProfilesTable.mode, 'ACTIVE'),
+    ];
+    if (pair) conditions.push(eq(strategyProfilesTable.pair, pair));
+    const rows = await db.select().from(strategyProfilesTable)
+      .where(and(...conditions))
+      .limit(1);
+    return rows[0];
+  }
+
+  async saveStrategyProfile(profile: InsertStrategyProfile): Promise<StrategyProfile> {
+    const rows = await db.insert(strategyProfilesTable).values(profile).returning();
+    return rows[0];
+  }
+
+  async updateStrategyProfile(id: number, updates: Partial<InsertStrategyProfile>): Promise<StrategyProfile | undefined> {
+    const rows = await db.update(strategyProfilesTable)
+      .set(updates)
+      .where(eq(strategyProfilesTable.id, id))
+      .returning();
+    return rows[0];
+  }
+
+  // ============================================================
+  // PHASE 10 — TUNING PROPOSALS
+  // ============================================================
+  async getTuningProposals(options?: { status?: string; strategyType?: string; pair?: string }): Promise<TuningProposal[]> {
+    const conditions = [];
+    if (options?.status)       conditions.push(eq(tuningProposalsTable.status, options.status));
+    if (options?.strategyType) conditions.push(eq(tuningProposalsTable.strategyType, options.strategyType));
+    if (options?.pair)         conditions.push(eq(tuningProposalsTable.pair, options.pair));
+    const q = conditions.length ? and(...conditions) : undefined;
+    return await db.select().from(tuningProposalsTable)
+      .where(q)
+      .orderBy(desc(tuningProposalsTable.createdAt));
+  }
+
+  async saveTuningProposal(proposal: InsertTuningProposal): Promise<TuningProposal> {
+    const rows = await db.insert(tuningProposalsTable).values(proposal).returning();
+    return rows[0];
+  }
+
+  async updateTuningProposalStatus(id: number, status: string, updates?: Partial<InsertTuningProposal>): Promise<TuningProposal | undefined> {
+    const rows = await db.update(tuningProposalsTable)
+      .set({ status, ...updates })
+      .where(eq(tuningProposalsTable.id, id))
+      .returning();
+    return rows[0];
+  }
+
+  // ============================================================
+  // PHASE 6 — AGGREGATED AUTOTUNING METRICS
+  // ============================================================
+  async getAutotuningMetrics(options?: { sourceMode?: string; strategyType?: string; pair?: string; regime?: string }): Promise<{
+    totalTrades: number; realTrades: number; dryRunTrades: number; shadowTrades: number;
+    winRate: number; avgPnlNet: number; profitFactor: number; avgHoldMinutes: number;
+    timeStopCount: number; timeStopPnlAvg: number;
+    bySourceMode: Record<string, { count: number; winRate: number; avgPnl: number }>;
+  }> {
+    const conditions: string[] = ['is_closed = true', 'is_labeled = true'];
+    if (options?.strategyType) {} // training_trades doesn't have strategy_type directly
+    if (options?.pair) conditions.push(`pair = '${options.pair.replace("'", "''")}'`);
+    if (options?.regime) conditions.push(`regime = '${options.regime.replace("'", "''")}'`);
+    if (options?.sourceMode) conditions.push(`source_mode = '${options.sourceMode.replace("'", "''")}'`);
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : 'WHERE is_closed = true AND is_labeled = true';
+
+    const rows = await db.execute(sql.raw(`
+      SELECT
+        source_mode,
+        COUNT(*)::int                                        AS total,
+        SUM(CASE WHEN label_win = 1 THEN 1 ELSE 0 END)::int AS wins,
+        AVG(pnl_net::numeric)                               AS avg_pnl,
+        COALESCE(SUM(CASE WHEN pnl_net::numeric > 0 THEN pnl_net::numeric ELSE 0 END), 0) AS gross_profit,
+        COALESCE(ABS(SUM(CASE WHEN pnl_net::numeric < 0 THEN pnl_net::numeric ELSE 0 END)), 0) AS gross_loss,
+        AVG(hold_time_minutes)                              AS avg_hold,
+        SUM(CASE WHEN was_time_stop = true THEN 1 ELSE 0 END)::int          AS time_stop_count,
+        AVG(CASE WHEN was_time_stop = true THEN pnl_net::numeric ELSE NULL END) AS time_stop_pnl_avg,
+        AVG(evidence_weight::numeric)                       AS avg_weight
+      FROM training_trades
+      ${whereClause}
+      GROUP BY source_mode
+    `));
+
+    const bySourceMode: Record<string, { count: number; winRate: number; avgPnl: number }> = {};
+    let totalTrades = 0, realTrades = 0, dryRunTradesCount = 0, shadowTrades = 0;
+    let totalWins = 0, totalGrossProfit = 0, totalGrossLoss = 0;
+    let sumHold = 0, sumTimeStop = 0, sumTimeStopPnl = 0, nTimeStop = 0;
+
+    for (const row of rows.rows as any[]) {
+      const mode  = row.source_mode ?? 'REAL';
+      const count = parseInt(row.total ?? 0);
+      const wins  = parseInt(row.wins ?? 0);
+      const avgPnl = parseFloat(row.avg_pnl ?? 0);
+      bySourceMode[mode] = { count, winRate: count > 0 ? wins / count : 0, avgPnl };
+      totalTrades += count;
+      totalWins   += wins;
+      totalGrossProfit += parseFloat(row.gross_profit ?? 0);
+      totalGrossLoss   += parseFloat(row.gross_loss ?? 0);
+      sumHold          += (parseFloat(row.avg_hold ?? 0)) * count;
+      sumTimeStop      += parseInt(row.time_stop_count ?? 0);
+      if (row.time_stop_pnl_avg) { sumTimeStopPnl += parseFloat(row.time_stop_pnl_avg); nTimeStop++; }
+      if (mode === 'REAL')    realTrades    = count;
+      if (mode === 'DRY_RUN') dryRunTradesCount = count;
+      if (mode === 'SHADOW')  shadowTrades  = count;
+    }
+
+    return {
+      totalTrades, realTrades, dryRunTrades: dryRunTradesCount, shadowTrades,
+      winRate:          totalTrades > 0 ? totalWins / totalTrades : 0,
+      avgPnlNet:        totalTrades > 0 ? (totalGrossProfit - totalGrossLoss) / totalTrades : 0,
+      profitFactor:     totalGrossLoss > 0 ? totalGrossProfit / totalGrossLoss : totalGrossProfit > 0 ? 999 : 0,
+      avgHoldMinutes:   totalTrades > 0 ? sumHold / totalTrades : 0,
+      timeStopCount:    sumTimeStop,
+      timeStopPnlAvg:   nTimeStop > 0 ? sumTimeStopPnl / nTimeStop : 0,
+      bySourceMode,
+    };
   }
 }
 

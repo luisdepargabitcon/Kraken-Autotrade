@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, timestamp, decimal, boolean, integer, bigint, jsonb, unique, date } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, bigserial, timestamp, decimal, boolean, integer, bigint, jsonb, unique, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { tradingConfigSchema, configChangeSchema, type TradingConfig, type ConfigChange } from "./config-schema";
@@ -1445,3 +1445,135 @@ export const idcaVwapAnchors = pgTable("idca_vwap_anchors", {
 
 export type IdcaVwapAnchorRow    = typeof idcaVwapAnchors.$inferSelect;
 export type InsertIdcaVwapAnchor = typeof idcaVwapAnchors.$inferInsert;
+
+// ============================================================
+// AUTOTUNING MODULE (Phase 1 — data model)
+// ============================================================
+
+export const tradeSnapshots = pgTable("trade_snapshots", {
+  id:                    bigserial("id", { mode: "number" }).primaryKey(),
+  sourceMode:            text("source_mode").notNull(),       // REAL | DRY_RUN | SHADOW | IDCA_SIMULATION
+  strategyType:          text("strategy_type").notNull(),     // BOT_SPOT | IDCA
+  sourceTradeId:         text("source_trade_id").notNull(),
+  sourceTable:           text("source_table").notNull(),
+  snapshotType:          text("snapshot_type").notNull(),     // ENTRY | EXIT | CYCLE_START | SAFETY_BUY | TP | BREAKEVEN
+  evidenceWeight:        decimal("evidence_weight", { precision: 4, scale: 3 }).notNull().default("1.000"),
+  pair:                  text("pair").notNull(),
+  entryTsUtc:            timestamp("entry_ts_utc", { withTimezone: true }),
+  exitTsUtc:             timestamp("exit_ts_utc", { withTimezone: true }),
+  sessionLabel:          text("session_label"),
+  entryPrice:            decimal("entry_price", { precision: 18, scale: 8 }),
+  exitPrice:             decimal("exit_price", { precision: 18, scale: 8 }),
+  executedAmount:        decimal("executed_amount", { precision: 18, scale: 8 }),
+  entryFeeUsd:           decimal("entry_fee_usd", { precision: 18, scale: 8 }),
+  exitFeeUsd:            decimal("exit_fee_usd", { precision: 18, scale: 8 }),
+  slippageEntryPct:      decimal("slippage_entry_pct", { precision: 10, scale: 6 }),
+  slippageExitPct:       decimal("slippage_exit_pct", { precision: 10, scale: 6 }),
+  signalScore:           decimal("signal_score", { precision: 6, scale: 3 }),
+  spreadPct:             decimal("spread_pct", { precision: 8, scale: 4 }),
+  regime:                text("regime"),
+  trend1h:               text("trend_1h"),
+  trend4h:               text("trend_4h"),
+  trend1d:               text("trend_1d"),
+  ema10:                 decimal("ema10", { precision: 18, scale: 8 }),
+  ema20:                 decimal("ema20", { precision: 18, scale: 8 }),
+  atrPct:                decimal("atr_pct", { precision: 8, scale: 4 }),
+  rsi14:                 decimal("rsi14", { precision: 6, scale: 2 }),
+  macdHist:              decimal("macd_hist", { precision: 18, scale: 8 }),
+  volumeRatio:           decimal("volume_ratio", { precision: 8, scale: 4 }),
+  distanceToVwapPct:     decimal("distance_to_vwap_pct", { precision: 8, scale: 4 }),
+  distanceToAnchorPct:   decimal("distance_to_anchor_pct", { precision: 8, scale: 4 }),
+  capitalAvailableUsd:   decimal("capital_available_usd", { precision: 18, scale: 2 }),
+  totalExposureUsd:      decimal("total_exposure_usd", { precision: 18, scale: 2 }),
+  pairExposureUsd:       decimal("pair_exposure_usd", { precision: 18, scale: 2 }),
+  configSnapshotJson:    jsonb("config_snapshot_json"),
+  entryRulesMetJson:     jsonb("entry_rules_met_json"),
+  entryRulesBlockedJson: jsonb("entry_rules_blocked_json"),
+  exitReason:            text("exit_reason"),
+  exitCategory:          text("exit_category"),
+  wasTimeStop:           boolean("was_time_stop").notNull().default(false),
+  pnlGrossUsd:           decimal("pnl_gross_usd", { precision: 18, scale: 8 }),
+  pnlNetUsd:             decimal("pnl_net_usd", { precision: 18, scale: 8 }),
+  pnlPct:                decimal("pnl_pct", { precision: 10, scale: 4 }),
+  mfePct:                decimal("mfe_pct", { precision: 8, scale: 4 }),
+  maePct:                decimal("mae_pct", { precision: 8, scale: 4 }),
+  maxDrawdownPct:        decimal("max_drawdown_pct", { precision: 8, scale: 4 }),
+  holdTimeMinutes:       integer("hold_time_minutes"),
+  tradeQualityScore:     integer("trade_quality_score"),
+  createdAt:             timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  sourceEventUnique: unique().on(table.sourceTradeId, table.sourceMode, table.snapshotType),
+}));
+
+export type TradeSnapshot = typeof tradeSnapshots.$inferSelect;
+export type InsertTradeSnapshot = typeof tradeSnapshots.$inferInsert;
+
+export const tradeMetrics = pgTable("trade_metrics", {
+  id:                   bigserial("id", { mode: "number" }).primaryKey(),
+  sourceMode:           text("source_mode").notNull(),
+  strategyType:         text("strategy_type").notNull(),
+  sourceTradeId:        text("source_trade_id").notNull(),
+  pair:                 text("pair").notNull(),
+  sampledAt:            timestamp("sampled_at", { withTimezone: true }).notNull().defaultNow(),
+  currentPrice:         decimal("current_price", { precision: 18, scale: 8 }),
+  entryPrice:           decimal("entry_price", { precision: 18, scale: 8 }),
+  floatingPnlUsd:       decimal("floating_pnl_usd", { precision: 18, scale: 8 }),
+  floatingPnlPct:       decimal("floating_pnl_pct", { precision: 10, scale: 4 }),
+  mfePct:               decimal("mfe_pct", { precision: 8, scale: 4 }),
+  maePct:               decimal("mae_pct", { precision: 8, scale: 4 }),
+  maxDrawdownPct:       decimal("max_drawdown_pct", { precision: 8, scale: 4 }),
+  highPriceSeen:        decimal("high_price_seen", { precision: 18, scale: 8 }),
+  lowPriceSeen:         decimal("low_price_seen", { precision: 18, scale: 8 }),
+  trailingActivated:    boolean("trailing_activated").default(false),
+  timePositiveMinutes:  integer("time_positive_minutes").default(0),
+  timeNegativeMinutes:  integer("time_negative_minutes").default(0),
+});
+
+export type TradeMetric = typeof tradeMetrics.$inferSelect;
+export type InsertTradeMetric = typeof tradeMetrics.$inferInsert;
+
+export const strategyProfiles = pgTable("strategy_profiles", {
+  id:                   serial("id").primaryKey(),
+  strategyType:         text("strategy_type").notNull(),  // BOT_SPOT | IDCA
+  pair:                 text("pair"),                     // NULL = all pairs
+  profileName:          text("profile_name").notNull(),
+  mode:                 text("mode").notNull().default("ACTIVE"), // ACTIVE | SHADOW | ARCHIVED
+  configJson:           jsonb("config_json").notNull().default({}),
+  parentProfileId:      integer("parent_profile_id"),
+  rollbackOfProfileId:  integer("rollback_of_profile_id"),
+  isActive:             boolean("is_active").notNull().default(false),
+  notes:                text("notes"),
+  approvedBy:           text("approved_by"),
+  createdAt:            timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  appliedAt:            timestamp("applied_at", { withTimezone: true }),
+  archivedAt:           timestamp("archived_at", { withTimezone: true }),
+});
+
+export type StrategyProfile = typeof strategyProfiles.$inferSelect;
+export type InsertStrategyProfile = typeof strategyProfiles.$inferInsert;
+
+export const tuningProposals = pgTable("tuning_proposals", {
+  id:                    serial("id").primaryKey(),
+  strategyType:          text("strategy_type").notNull(),
+  pair:                  text("pair"),
+  profileId:             integer("profile_id"),
+  proposedProfileId:     integer("proposed_profile_id"),
+  parameterChangesJson:  jsonb("parameter_changes_json"),
+  metricsBeforeJson:     jsonb("metrics_before_json"),
+  metricsAfterJson:      jsonb("metrics_after_json"),
+  confidenceScore:       decimal("confidence_score", { precision: 5, scale: 2 }),
+  riskScore:             decimal("risk_score", { precision: 5, scale: 2 }),
+  recommendation:        text("recommendation"),
+  // OBSERVING | TESTING | READY | APPROVED | ACTIVE | REJECTED | ROLLBACK
+  status:                text("status").notNull().default("OBSERVING"),
+  rejectionReason:       text("rejection_reason"),
+  approvedBy:            text("approved_by"),
+  sampleCountAtDecision: integer("sample_count_at_decision"),
+  createdAt:             timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  approvedAt:            timestamp("approved_at", { withTimezone: true }),
+  appliedAt:             timestamp("applied_at", { withTimezone: true }),
+  rolledBackAt:          timestamp("rolled_back_at", { withTimezone: true }),
+});
+
+export type TuningProposal = typeof tuningProposals.$inferSelect;
+export type InsertTuningProposal = typeof tuningProposals.$inferInsert;

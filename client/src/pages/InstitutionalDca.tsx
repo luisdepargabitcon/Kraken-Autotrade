@@ -599,28 +599,28 @@ function SummaryTab() {
               <p className={`font-mono text-lg font-bold ${perfData.summary.totalPnlUsd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {perfData.summary.totalPnlUsd >= 0 ? '+' : ''}${perfData.summary.totalPnlUsd.toFixed(2)}
               </p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">{perfData.summary.wins}W / {perfData.summary.losses}L ciclos</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">= KPI principal · {perfData.summary.wins}W / {perfData.summary.losses}L</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL FLOTANTE</p>
               <p className={`font-mono text-lg font-bold ${perfData.summary.unrealizedPnlUsd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {perfData.summary.unrealizedPnlUsd >= 0 ? '+' : ''}${perfData.summary.unrealizedPnlUsd.toFixed(2)}
               </p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">{perfData.summary.activeCycles} ciclos abiertos</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">= KPI principal · {perfData.summary.activeCycles} abiertos</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-[10px] font-mono text-muted-foreground mb-1">PnL TOTAL</p>
               <p className={`font-mono text-lg font-bold ${(perfData.summary.totalPnlUsd + perfData.summary.unrealizedPnlUsd) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {(perfData.summary.totalPnlUsd + perfData.summary.unrealizedPnlUsd) >= 0 ? '+' : ''}${(perfData.summary.totalPnlUsd + perfData.summary.unrealizedPnlUsd).toFixed(2)}
               </p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">Cerrado + Flotante</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">Realizado + Flotante</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-[10px] font-mono text-muted-foreground mb-1">WIN RATE</p>
               <p className={`font-mono text-lg font-bold ${perfData.summary.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
                 {perfData.summary.winRate.toFixed(1)}%
               </p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">{perfData.summary.totalCycles} ciclos total</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">{perfData.summary.totalCycles} ciclos cerrados</p>
             </div>
           </div>
 

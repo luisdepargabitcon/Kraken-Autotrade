@@ -18,6 +18,7 @@ import Monitor from "@/pages/Monitor";
 import Backups from "@/pages/Backups";
 import Fisco from "@/pages/Fisco";
 import AiMl from "@/pages/AiMl";
+import Autotuning from "@/pages/Autotuning";
 import InstitutionalDca from "@/pages/InstitutionalDca";
 import NotFound from "@/pages/not-found";
 
@@ -52,6 +53,7 @@ function Router() {
       <Route path="/monitor" component={Monitor} />
       <Route path="/backups" component={Backups} />
       <Route path="/ai" component={AiMl} />
+      <Route path="/autotuning" component={Autotuning} />
       
       <Route component={NotFound} />
     </Switch>

@@ -1116,7 +1116,19 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
   // ─── IDCA P&L Performance Curve ────────────────────────────────
   app.get(`${PREFIX}/performance`, async (req, res) => {
     try {
-      const mode = (req.query.mode as string) || undefined;
+      // Resolve effective mode the same way /summary does (disabled → simulation)
+      const config = await repo.getIdcaConfig();
+      const schedulerMode = config.mode;
+      const effectiveMode = schedulerMode === "disabled" ? "simulation" : schedulerMode;
+      // Allow override from query param (but never pass "disabled")
+      const rawMode = (req.query.mode as string) || undefined;
+      const mode = rawMode === "disabled" ? effectiveMode : (rawMode ?? effectiveMode);
+
+      // ── Canonical PnL from the same source as KPI summary ──────
+      const canonicalSummary = await repo.getModuleSummary(mode);
+      const canonicalRealizedPnl = canonicalSummary.realizedPnlUsd;
+      const canonicalUnrealizedPnl = canonicalSummary.unrealizedPnlUsd;
+
       const closed = await repo.getCycles({
         status: "closed",
         mode,
@@ -1206,18 +1218,18 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       if (expectancy < 0) strategyCons.push(`Expectancy negativa: $${expectancy.toFixed(2)}/ciclo`);
       if (totalCycles < 10) strategyCons.push(`Muestra pequeña: ${totalCycles} ciclos (poca estadística)`);
 
-      // Active cycles summary
-      const active = await repo.getAllActiveCycles(mode);
-      const unrealizedPnl = active.reduce((sum, c) => sum + parseFloat(String(c.unrealizedPnlUsd || "0")), 0);
+      // Use canonical PnL from getModuleSummary (same source as KPI summary panel)
+      const totalPnlUsd = parseFloat(canonicalRealizedPnl.toFixed(2));
+      const unrealizedPnlUsd = parseFloat(canonicalUnrealizedPnl.toFixed(2));
 
       res.json({
         curve,
         summary: {
-          totalPnlUsd: parseFloat(cumPnl.toFixed(2)),
-          unrealizedPnlUsd: parseFloat(unrealizedPnl.toFixed(2)),
+          totalPnlUsd,
+          unrealizedPnlUsd,
           winRate: parseFloat(winRate.toFixed(1)),
           totalCycles,
-          activeCycles: active.length,
+          activeCycles: canonicalSummary.activeCyclesCount,
           wins,
           losses,
           grossProfit: parseFloat(grossProfit.toFixed(2)),

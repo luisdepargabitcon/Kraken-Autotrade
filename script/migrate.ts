@@ -1288,6 +1288,26 @@ END $$;
     await tryExecuteFile(db, dryrunAuditPath, "dryrun_audit_columns");
     console.log("[migrate] 049_dryrun_audit_columns OK");
 
+    // ============================================================
+    // AUTOTUNING TRACKED MIGRATIONS (051+)
+    // Uses AutoMigrationRunner: advisory lock + transactions + schema_migrations table.
+    // These migrations throw on failure — the app will NOT start if they fail.
+    // ============================================================
+    console.log("[migrate] Running autotuning tracked migrations...");
+    const { AutoMigrationRunner } = await import("../server/services/AutoMigrationRunner");
+    const autoRunner = new AutoMigrationRunner(pool);
+    const trackedMigrations = [
+      "051_autotuning_training_trades_extension",
+      "052_autotuning_trade_snapshots",
+      "053_autotuning_trade_metrics",
+      "054_autotuning_strategy_profiles",
+      "055_autotuning_tuning_proposals",
+    ].map((name) => ({
+      id: name,
+      filePath: path.resolve(process.cwd(), "db", "migrations", `${name}.sql`),
+    }));
+    await autoRunner.run(trackedMigrations);
+
     console.log("[migrate] Migration completed successfully!");
     await pool.end();
     process.exit(0);

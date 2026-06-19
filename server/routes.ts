@@ -991,6 +991,12 @@ export async function registerRoutes(
   }
 
   // ============================================================
+  // AUTOTUNING ENDPOINTS (Phases 6-12)
+  // ============================================================
+  const { registerAutotuningRoutes } = await import('./routes/autotuning.routes');
+  registerAutotuningRoutes(app, routerDeps);
+
+  // ============================================================
   // MARKET METRICS ENDPOINTS
   // ============================================================
   const { registerMarketMetricsRoutes } = await import('./routes/marketMetrics.routes');
@@ -1026,6 +1032,33 @@ export async function registerRoutes(
     }, 30_000);
   } catch (e: any) {
     console.error('[startup] Failed to initialize Market Metrics scheduler:', e?.message ?? e);
+  }
+
+  // ============================================================
+  // TRADE METRICS TRACKER (Phase 5 — MFE/MAE scheduler, 5min)
+  // ============================================================
+  try {
+    const { tradeMetricsTracker } = await import('./services/TradeMetricsTracker');
+    const { storage: st } = await import('./storage');
+    tradeMetricsTracker.startScheduler(async () => {
+      try {
+        const positions = await st.getOpenPositions();
+        return positions.map((p: any) => ({
+          sourceMode:    'REAL',
+          strategyType:  'BOT_SPOT',
+          sourceTradeId: p.lotId ?? p.id?.toString() ?? 'unknown',
+          pair:          p.pair,
+          entryPrice:    parseFloat(p.entryPrice ?? '0'),
+          currentPrice:  parseFloat(p.highestPrice ?? p.entryPrice ?? '0'),
+          trailingActivated: p.sgTrailingActivated ?? false,
+        }));
+      } catch {
+        return [];
+      }
+    });
+    console.log('[startup] TradeMetricsTracker scheduler initialized');
+  } catch (e: any) {
+    console.warn(`[startup] TradeMetricsTracker init failed (non-critical): ${e?.message}`);
   }
 
   // === AUTO-REBUILD P&L ON STARTUP (background, non-blocking) ===
