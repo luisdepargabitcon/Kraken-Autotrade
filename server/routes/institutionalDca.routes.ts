@@ -1272,31 +1272,53 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
         .filter(c => c.closedAt && c.realizedPnlUsd != null)
         .sort((a, b) => new Date(a.closedAt!).getTime() - new Date(b.closedAt!).getTime());
 
-      const closedCyclePnlsForScore = sorted.map(c => ({
-        id: c.id,
-        pair: c.pair,
-        status: c.status,
-        closedAt: c.closedAt,
-        realizedPnlUsd: c.realizedPnlUsd,
-        capitalUsedUsd: c.capitalUsedUsd,
-        capitalReservedUsd: c.capitalReservedUsd,
-        isImported: c.isImported,
-        isManualCycle: c.isManualCycle,
-        managedBy: c.managedBy,
-        sourceType: c.sourceType,
-        cycleType: c.cycleType,
-      }));
+      // Para cada ciclo, detectar si realizedPnlUsd parece ser un valor bruto en lugar de PnL neto
+      const closedCyclePnlsForScore = sorted.map(c => {
+        const realizedPnl = parseFloat(String(c.realizedPnlUsd));
+        const capitalUsed = parseFloat(String(c.capitalUsedUsd || "0"));
+        const capitalReserved = parseFloat(String(c.capitalReservedUsd || "0"));
+
+        // Criterio de sospecha: si realizedPnlUsd es muy similar a capitalUsedUsd o capitalReservedUsd,
+        // probablemente es un valor bruto (proceeds) en lugar de PnL neto
+        const suspectGrossValue = (
+          (realizedPnl > 0 && Math.abs(realizedPnl - capitalUsed) / Math.max(capitalUsed, 1) < 0.1) ||
+          (realizedPnl > 0 && Math.abs(realizedPnl - capitalReserved) / Math.max(capitalReserved, 1) < 0.1) ||
+          (realizedPnl > 0 && capitalUsed > 0 && realizedPnl / capitalUsed > 0.9)
+        );
+
+        return {
+          id: c.id,
+          pair: c.pair,
+          status: c.status,
+          closedAt: c.closedAt,
+          realizedPnlUsd: c.realizedPnlUsd,
+          capitalUsedUsd: c.capitalUsedUsd,
+          capitalReservedUsd: c.capitalReservedUsd,
+          isImported: c.isImported,
+          isManualCycle: c.isManualCycle,
+          managedBy: c.managedBy,
+          sourceType: c.sourceType,
+          cycleType: c.cycleType,
+          suspectGrossValue,
+          suspectReason: suspectGrossValue ? "realizedPnlUsd ~ capital (proceeds, not net PnL)" : null,
+        };
+      });
 
       const winPnls = sorted.map(c => parseFloat(String(c.realizedPnlUsd))).filter(p => isFinite(p) && p > 0);
       const lossPnls = sorted.map(c => parseFloat(String(c.realizedPnlUsd))).filter(p => isFinite(p) && p < 0);
       const grossProfit = winPnls.reduce((s, v) => s + v, 0);
       const grossLoss = Math.abs(lossPnls.reduce((s, v) => s + v, 0));
 
+      // Identificar ciclos sospechosos
+      const suspiciousCycles = closedCyclePnlsForScore.filter(c => c.suspectGrossValue);
+
       res.json({
         mode,
         totalCycles: sorted.length,
         grossProfit,
         grossLoss,
+        suspiciousCyclesCount: suspiciousCycles.length,
+        suspiciousCycles,
         closedCyclePnlsForScore,
       });
     } catch (e: any) {
