@@ -74,6 +74,21 @@ function pct(n: number | null | undefined) {
   return (n * 100).toFixed(1) + "%";
 }
 
+function humanizeDiscardReason(reason: string): string {
+  const map: Record<string, string> = {
+    hold_excesivo: "Duración excesiva de operación",
+    venta_sin_compra_previa: "Venta sin compra previa asociada",
+    datos_incompletos: "Datos incompletos",
+    operacion_abierta: "Operación abierta",
+    duplicado: "Duplicado",
+    pnl_outlier: "PnL atípico",
+    fee_invalid: "Fee inválido",
+    precio_invalido: "Precio inválido",
+    amount_invalid: "Cantidad inválida",
+  };
+  return map[reason] || reason;
+}
+
 export default function AiMl() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -153,6 +168,35 @@ export default function AiMl() {
       <Nav />
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-6">
 
+        {/* ── ALERTAS DE SEGURIDAD ── */}
+        {diag?.dryRunTradesCount === 0 && diag?.realTradesCount > 0 && (
+          <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-400" />
+              <span className="text-sm font-semibold text-red-400">Atención: el dataset no separa correctamente REAL y DRY_RUN.</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">No entrenes hasta corregirlo. Ejecuta el script de limpieza y reejecuta el backfill.</p>
+          </div>
+        )}
+        {status?.filterEnabled && !status?.modelLoaded && (
+          <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-400" />
+              <span className="text-sm font-semibold text-red-400">Peligro: el filtro real no puede estar activo sin modelo entrenado.</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Desactiva el filtro inmediatamente o entrena un modelo.</p>
+          </div>
+        )}
+        {labeled < minSamples && (
+          <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-yellow-400" />
+              <span className="text-sm font-semibold text-yellow-400">Todavía faltan muestras para activar la IA con seguridad.</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Necesitas {minSamples - labeled} muestras más antes de entrenar.</p>
+          </div>
+        )}
+
         {/* ── HEADER ── */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -160,8 +204,8 @@ export default function AiMl() {
               <Brain className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-bold font-mono">Motor IA / ML</h1>
-              <p className="text-xs text-muted-foreground">Filtro predictivo RandomForest — observabilidad en tiempo real</p>
+              <h1 className="text-xl font-bold font-mono">Centro de Inteligencia del Bot</h1>
+              <p className="text-xs text-muted-foreground">Aprende de operaciones reales, simuladas y sombra para proponer mejoras sin bloquear el bot.</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -175,6 +219,55 @@ export default function AiMl() {
             </Button>
           </div>
         </div>
+
+        {/* ── ESTADO GENERAL ── */}
+        <Card className="border-white/[0.08] bg-white/[0.02]">
+          <CardContent className="p-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Estado actual</span>
+                <span className="text-sm font-bold font-mono text-blue-400">
+                  {status?.phaseLabel || "Cargando..."}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Modo seguro</span>
+                <span className="text-sm font-bold font-mono text-green-400">
+                  Activado
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Muestras válidas</span>
+                <span className="text-sm font-bold font-mono">
+                  {labeled} / {minSamples}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Dataset</span>
+                <span className="text-sm font-bold font-mono">
+                  REAL {diag?.realTradesCount ?? 0} · DRY_RUN {diag?.dryRunTradesCount ?? 0} · SHADOW {shadowTotal}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Último entrenamiento</span>
+                <span className="text-sm font-bold font-mono">
+                  {formatDate(diag?.lastTrainRun)}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Riesgo actual</span>
+                <span className="text-sm font-bold font-mono text-green-400">
+                  Bajo
+                </span>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-white/10">
+              <p className="text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">Recomendación:</span> Puedes entrenar el modelo, pero todavía no actives el filtro real.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* ── ROW 1: Dataset + Controls ── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -220,6 +313,27 @@ export default function AiMl() {
                   sub="por trade cerrado"
                 />
               </div>
+              <Separator />
+              <div className="p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                <p className="text-xs text-muted-foreground font-semibold mb-2">Leyenda de fuentes:</p>
+                <div className="space-y-1 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <span className="text-muted-foreground">REAL — datos de operaciones reales. Peso 100%.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                    <span className="text-muted-foreground">DRY_RUN — simulación del bot. Peso 50%.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-purple-400"></span>
+                    <span className="text-muted-foreground">SHADOW — predicciones sin ejecutar. Peso 30%.</span>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2 italic">
+                  Las operaciones reales tienen más peso. Las simuladas ayudan a aprender, pero no bastan para activar el filtro real por sí solas.
+                </p>
+              </div>
             </CardContent>
           </Card>
 
@@ -238,8 +352,8 @@ export default function AiMl() {
                 <div className="flex items-center gap-2">
                   <Eye className="h-4 w-4 text-purple-400" />
                   <div>
-                    <p className="text-sm font-medium">Shadow Mode</p>
-                    <p className="text-xs text-muted-foreground">Registra predicciones sin bloquear</p>
+                    <p className="text-sm font-medium">Modo observador</p>
+                    <p className="text-xs text-muted-foreground">La IA evalúa señales y aprende sin bloquear operaciones reales.</p>
                   </div>
                 </div>
                 <Switch
@@ -258,16 +372,21 @@ export default function AiMl() {
                     <ShieldX className="h-4 w-4 text-muted-foreground" />
                   )}
                   <div>
-                    <p className="text-sm font-medium">Filtro Activo</p>
+                    <p className="text-sm font-medium">Filtro real de compras</p>
                     <p className="text-xs text-muted-foreground">
-                      {status?.canActivate ? "Bloquea BUYs de baja prob." : "Requiere modelo entrenado"}
+                      {status?.canActivate ? "Permite que la IA bloquee compras con baja probabilidad de éxito." : "Bloqueado: primero entrena un modelo y valida resultados en modo observador."}
                     </p>
                   </div>
                 </div>
                 <Switch
                   checked={status?.filterEnabled ?? false}
                   disabled={!status?.canActivate || toggleMut.isPending}
-                  onCheckedChange={(v) => toggleMut.mutate({ filterEnabled: v })}
+                  onCheckedChange={(v) => {
+                    if (v && !window.confirm("¿Activar el filtro real de compras? Esto permitirá que la IA bloquee operaciones reales. Asegúrate de haber validado el modelo en modo observador primero.")) {
+                      return;
+                    }
+                    toggleMut.mutate({ filterEnabled: v });
+                  }}
                 />
               </div>
 
@@ -276,7 +395,7 @@ export default function AiMl() {
                 <div className="flex justify-between items-center">
                   <span className="text-sm font-medium flex items-center gap-2">
                     <Target className="h-4 w-4 text-orange-400" />
-                    Threshold
+                    Exigencia mínima de confianza
                   </span>
                   <span className="text-sm font-mono font-bold text-orange-400">
                     {((status?.threshold ?? 0.6) * 100).toFixed(0)}%
@@ -289,7 +408,9 @@ export default function AiMl() {
                   onChange={(e) => toggleMut.mutate({ threshold: parseInt(e.target.value) / 100 })}
                   className="w-full accent-orange-400"
                 />
-                <p className="text-xs text-muted-foreground">Score mínimo para aprobar un BUY</p>
+                <p className="text-xs text-muted-foreground">
+                  {((status?.threshold ?? 0.6) * 100).toFixed(0)}% — {(status?.threshold ?? 0.6) >= 0.75 ? "muy conservador" : (status?.threshold ?? 0.6) >= 0.65 ? "equilibrio entre seguridad y oportunidades" : "más agresivo"}
+                </p>
               </div>
 
               <Separator />
@@ -306,20 +427,25 @@ export default function AiMl() {
                 ) : (
                   <Database className="h-3.5 w-3.5 mr-2" />
                 )}
-                Ejecutar Backfill
+                Reconstruir dataset histórico
               </Button>
 
               <Button
                 className="w-full font-mono text-xs"
                 disabled={!status?.canTrain || trainMut.isPending}
-                onClick={() => trainMut.mutate()}
+                onClick={() => {
+                  if (!window.confirm("¿Entrenar la IA ahora? Esto creará un nuevo modelo predictivo. Asegúrate de que el dataset esté limpio y separado correctamente (REAL y DRY_RUN).")) {
+                    return;
+                  }
+                  trainMut.mutate();
+                }}
               >
                 {trainMut.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
                 ) : (
                   <FlaskConical className="h-3.5 w-3.5 mr-2" />
                 )}
-                {status?.canTrain ? "Entrenar Modelo" : `Faltan ${Math.max(0, minSamples - labeled)} samples`}
+                Entrenar IA ahora
               </Button>
             </CardContent>
           </Card>
@@ -345,10 +471,10 @@ export default function AiMl() {
               {metrics ? (
                 <>
                   <div className="grid grid-cols-2 gap-3">
-                    <MetricBox label="Accuracy" value={pct(metrics.accuracy)} sub="walk-forward CV" />
-                    <MetricBox label="Precision" value={pct(metrics.precision)} sub="true positives" />
+                    <MetricBox label="Precisión" value={pct(metrics.accuracy)} sub="de las operaciones que la IA habría aprobado, cuántas acabaron bien" />
                     <MetricBox label="Recall" value={pct(metrics.recall)} sub="sensibilidad" />
                     <MetricBox label="F1 Score" value={pct(metrics.f1)} sub="harmónico" />
+                    <MetricBox label="Precision" value={pct(metrics.precision)} sub="true positives" />
                   </div>
                   {(metrics.trainSize || metrics.valSize) && (
                     <div className="grid grid-cols-2 gap-3">
@@ -356,6 +482,13 @@ export default function AiMl() {
                       <MetricBox label="Val set" value={metrics.valSize ?? "—"} sub="muestras validación" />
                     </div>
                   )}
+                  <Separator />
+                  <div className="p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-xs text-muted-foreground">
+                    <p className="font-semibold mb-1">Interpretación:</p>
+                    <p>Precisión: de las operaciones que la IA habría aprobado, cuántas acabaron bien.</p>
+                    <p>Falsos positivos: compras que la IA habría aprobado pero salieron mal.</p>
+                    <p>Falsos negativos: compras que la IA habría bloqueado pero salieron bien.</p>
+                  </div>
                   <Separator />
                   <div className="flex flex-col gap-1 text-xs text-muted-foreground font-mono">
                     <span>Versión: {diag?.modelVersion ?? "—"}</span>
@@ -368,11 +501,9 @@ export default function AiMl() {
               ) : (
                 <div className="flex flex-col items-center justify-center py-8 gap-3 text-muted-foreground">
                   <FlaskConical className="h-10 w-10 opacity-30" />
-                  <p className="text-sm">Modelo no entrenado aún</p>
+                  <p className="text-sm">Aún no hay modelo entrenado.</p>
                   <p className="text-xs text-center">
-                    {status?.canTrain
-                      ? "Hay suficientes datos — pulsa \"Entrenar Modelo\""
-                      : `Necesitas ${Math.max(0, minSamples - labeled)} samples más`}
+                    Entrena la IA cuando el dataset esté limpio y tenga suficientes muestras.
                   </p>
                 </div>
               )}
@@ -384,7 +515,7 @@ export default function AiMl() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-mono flex items-center gap-2">
                 <Eye className="h-4 w-4 text-purple-400" />
-                Shadow Mode — Informe
+                Prueba en modo observador
                 {status?.shadowEnabled ? (
                   <Badge className="ml-auto text-xs bg-purple-500/15 text-purple-400 border-purple-500/30">Activo</Badge>
                 ) : (
@@ -393,12 +524,16 @@ export default function AiMl() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                Aquí verás qué habría hecho la IA sin tocar operaciones reales.
+                Sirve para validar el modelo antes de permitirle bloquear compras.
+              </p>
               {shadowTotal > 0 ? (
                 <>
                   <div className="grid grid-cols-2 gap-3">
-                    <MetricBox label="Total predicciones" value={shadowTotal} sub="ai_shadow_decisions" />
+                    <MetricBox label="Predicciones registradas" value={shadowTotal} sub="ai_shadow_decisions" />
                     <MetricBox
-                      label="Habrían bloqueado"
+                      label="Compras que habría bloqueado"
                       value={shadowBlocked}
                       sub={shadowTotal > 0 ? ((shadowBlocked / shadowTotal) * 100).toFixed(1) + "%" : "0%"}
                     />
@@ -411,7 +546,7 @@ export default function AiMl() {
                         <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
                           <div className="flex items-center gap-2 mb-1">
                             <CheckCircle2 className="h-4 w-4 text-green-400" />
-                            <span className="text-xs font-mono text-green-400">Bloqueados = Perdedores</span>
+                            <span className="text-xs font-mono text-green-400">Aciertos</span>
                           </div>
                           <p className="text-2xl font-bold font-mono text-green-400">{shadowBlockedLosers}</p>
                           <p className="text-xs text-muted-foreground">Pérdidas evitadas</p>
@@ -419,7 +554,7 @@ export default function AiMl() {
                         <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
                           <div className="flex items-center gap-2 mb-1">
                             <XCircle className="h-4 w-4 text-red-400" />
-                            <span className="text-xs font-mono text-red-400">Permitidos = Perdedores</span>
+                            <span className="text-xs font-mono text-red-400">Fallos</span>
                           </div>
                           <p className="text-2xl font-bold font-mono text-red-400">{shadowPassedLosers}</p>
                           <p className="text-xs text-muted-foreground">Pérdidas no detectadas</p>
@@ -433,7 +568,7 @@ export default function AiMl() {
                   <EyeOff className="h-10 w-10 opacity-30" />
                   <p className="text-sm">Sin predicciones shadow registradas</p>
                   <p className="text-xs text-center">
-                    Activa Shadow Mode y entrena el modelo para empezar a registrar predicciones
+                    Activa Modo observador y entrena el modelo para empezar a registrar predicciones
                   </p>
                 </div>
               )}
@@ -449,51 +584,56 @@ export default function AiMl() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-mono flex items-center gap-2">
                 <Activity className="h-4 w-4 text-blue-400" />
-                Estado del Pipeline
+                Flujo Guiado
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {[
                   {
-                    step: "1. Backfill",
-                    desc: "BUY→SELL matching FIFO desde tabla trades",
+                    step: "1. Recoger datos",
+                    desc: "Revisa operaciones antiguas reales y simuladas para preparar datos de entrenamiento. No compra ni vende.",
                     done: (diag?.closedTradesCount ?? 0) > 0,
                     info: diag?.lastBackfillRun ? `Último: ${formatDate(diag.lastBackfillRun)}` : "Nunca ejecutado",
                     error: diag?.lastBackfillError,
+                    action: "Ejecuta 'Reconstruir dataset histórico' en Controles.",
                   },
                   {
-                    step: "2. Labeling",
-                    desc: "labelWin = pnlNet > 0 (automático en backfill)",
+                    step: "2. Preparar dataset",
+                    desc: "Separa operaciones reales, simuladas y sombra. Etiqueta ganadores y perdedores automáticamente.",
                     done: (diag?.labeledTradesCount ?? 0) > 0,
                     info: `${diag?.labeledTradesCount ?? 0} etiquetados / ${diag?.closedTradesCount ?? 0} cerrados`,
+                    action: "Verifica que REAL y DRY_RUN estén separados en Dataset Multi-Fuente.",
                   },
                   {
-                    step: "3. Training",
-                    desc: `RandomForest con TimeSeriesSplit (mín. ${minSamples} samples)`,
+                    step: "3. Entrenar modelo",
+                    desc: "Crea un modelo predictivo con los datos disponibles. No activa el filtro real automáticamente.",
                     done: !!diag?.lastTrainRun && !diag?.lastTrainError,
                     info: diag?.lastTrainRun ? `Último: ${formatDate(diag.lastTrainRun)}` : "Nunca entrenado",
                     error: diag?.lastTrainError,
                     blocked: (diag?.labeledTradesCount ?? 0) < minSamples,
-                    blockedMsg: `Faltan ${Math.max(0, minSamples - (diag?.labeledTradesCount ?? 0))} samples`,
+                    blockedMsg: `Faltan ${Math.max(0, minSamples - (diag?.labeledTradesCount ?? 0))} muestras`,
+                    action: status?.canTrain ? "Pulsa 'Entrenar IA ahora' en Controles." : "Necesitas más muestras.",
                   },
                   {
-                    step: "4. Shadow Mode",
-                    desc: "Predice en BUYs reales, registra en ai_shadow_decisions",
+                    step: "4. Probar en sombra",
+                    desc: "Aquí verás qué habría hecho la IA sin tocar operaciones reales. Sirve para validar el modelo.",
                     done: shadowTotal > 0,
                     info: status?.shadowEnabled ? `Activo — ${shadowTotal} predicciones` : "Desactivado",
+                    action: "Activa 'Modo observador' en Controles.",
                   },
                   {
-                    step: "5. Filtro Activo",
-                    desc: "Bloquea BUYs con score < threshold antes de executeTrade",
+                    step: "5. Activar filtro real",
+                    desc: "Permite que la IA bloquee compras con baja probabilidad de éxito. Solo si el modelo está validado.",
                     done: status?.filterEnabled ?? false,
                     info: status?.filterEnabled
                       ? `Activo — threshold ${((status?.threshold ?? 0.6) * 100).toFixed(0)}%`
                       : "Desactivado",
                     blocked: !status?.canActivate,
-                    blockedMsg: "Requiere modelo entrenado",
+                    blockedMsg: "Requiere modelo entrenado y validado en sombra",
+                    action: status?.canActivate ? "Activa 'Filtro real de compras' con precaución." : "Primero entrena y valida en sombra.",
                   },
-                ].map(({ step, desc, done, info, error, blocked, blockedMsg }) => (
+                ].map(({ step, desc, done, info, error, blocked, blockedMsg, action }) => (
                   <div key={step} className="flex gap-3 items-start">
                     <div className="mt-0.5 flex-shrink-0">
                       {blocked ? (
@@ -504,11 +644,14 @@ export default function AiMl() {
                         <XCircle className="h-4 w-4 text-muted-foreground" />
                       )}
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-mono font-medium">{step}</p>
-                      <p className="text-xs text-muted-foreground">{desc}</p>
-                      <p className={`text-xs font-mono mt-0.5 ${error ? "text-red-400" : "text-blue-400"}`}>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold">{step}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+                      <p className={`text-xs font-mono mt-1 ${error ? "text-red-400" : "text-blue-400"}`}>
                         {error ? `Error: ${error.slice(0, 80)}` : blocked ? blockedMsg : info}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1 italic">
+                        {action}
                       </p>
                     </div>
                   </div>
@@ -522,7 +665,7 @@ export default function AiMl() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-mono flex items-center gap-2">
                 <Timer className="h-4 w-4 text-orange-400" />
-                Razones de Exclusión del Dataset
+                Razones de Exclusión
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -536,9 +679,9 @@ export default function AiMl() {
                       .sort(([, a], [, b]) => b - a)
                       .map(([reason, count]) => (
                         <div key={reason} className="space-y-1">
-                          <div className="flex justify-between text-xs font-mono">
-                            <span className="text-muted-foreground">{reason}</span>
-                            <span>{count}</span>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">{humanizeDiscardReason(reason)}</span>
+                            <span className="font-mono">{count}</span>
                           </div>
                           <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
                             <div
@@ -546,10 +689,16 @@ export default function AiMl() {
                               style={{ width: `${Math.min(100, (count / totalDiscard) * 100)}%` }}
                             />
                           </div>
+                          <p className="text-xs text-muted-foreground font-mono opacity-50">
+                            Código técnico: {reason}
+                          </p>
                         </div>
                       ))}
                   </div>
                   <Separator />
+                  <p className="text-xs text-muted-foreground">
+                    Estas operaciones no se usan para entrenar porque podrían enseñar patrones incorrectos.
+                  </p>
                   <p className="text-xs text-muted-foreground font-semibold">Último backfill:</p>
                   <div className="space-y-2">
                     {Object.entries(lastBackfillDiscard).length > 0 ? (
@@ -586,35 +735,47 @@ export default function AiMl() {
           <CardContent>
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
               <div className="flex flex-col gap-1 p-3 rounded-lg bg-white/5 border border-white/10">
-                <span className="text-xs text-muted-foreground font-mono">sklearn</span>
+                <span className="text-xs text-muted-foreground font-mono">Modelo</span>
                 <span className="text-sm font-mono flex items-center gap-1.5">
                   {status?.modelLoaded || diag?.lastTrainRun ? (
                     <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
                   ) : (
                     <AlertTriangle className="h-3.5 w-3.5 text-yellow-400" />
                   )}
-                  {status?.modelLoaded ? "OK" : "Sin modelo"}
+                  {status?.modelLoaded ? "Cargado" : "Sin modelo"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {status?.modelLoaded ? "Modelo listo para usar" : "Entrena cuando el dataset esté corregido"}
                 </span>
               </div>
               <div className="flex flex-col gap-1 p-3 rounded-lg bg-white/5 border border-white/10">
-                <span className="text-xs text-muted-foreground font-mono">DB training_trades</span>
+                <span className="text-xs text-muted-foreground font-mono">Dataset</span>
                 <span className="text-sm font-mono flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
                   {diag?.trainingTradesTotal ?? "—"} rows
                 </span>
+                <span className="text-xs text-muted-foreground">
+                  {diag?.dryRunTradesCount > 0 && diag?.realTradesCount > 0 ? "REAL y DRY_RUN separados" : "Verificar separación"}
+                </span>
               </div>
               <div className="flex flex-col gap-1 p-3 rounded-lg bg-white/5 border border-white/10">
-                <span className="text-xs text-muted-foreground font-mono">DB ai_shadow</span>
+                <span className="text-xs text-muted-foreground font-mono">Shadow</span>
                 <span className="text-sm font-mono flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
                   {shadowTotal} rows
                 </span>
+                <span className="text-xs text-muted-foreground">
+                  {status?.shadowEnabled ? "Modo observador activo" : "Desactivado"}
+                </span>
               </div>
               <div className="flex flex-col gap-1 p-3 rounded-lg bg-white/5 border border-white/10">
-                <span className="text-xs text-muted-foreground font-mono">Filtro pipeline</span>
+                <span className="text-xs text-muted-foreground font-mono">Pipeline</span>
                 <span className="text-sm font-mono flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
                   Conectado
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Filtro integrado en executeTrade
                 </span>
               </div>
               <div className="flex flex-col gap-1 p-3 rounded-lg bg-white/5 border border-white/10">
@@ -623,12 +784,18 @@ export default function AiMl() {
                   <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
                   RSI/MACD/BB real
                 </span>
+                <span className="text-xs text-muted-foreground">
+                  Indicadores técnicos en tiempo real
+                </span>
               </div>
               <div className="flex flex-col gap-1 p-3 rounded-lg bg-white/5 border border-white/10">
-                <span className="text-xs text-muted-foreground font-mono">Modelo path</span>
-                <span className="text-sm font-mono flex items-center gap-1.5 truncate">
+                <span className="text-xs text-muted-foreground font-mono">Volumen Docker</span>
+                <span className="text-sm font-mono flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
-                  Volumen Docker
+                  Montado
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Modelo persistido en volumen
                 </span>
               </div>
             </div>
@@ -672,11 +839,14 @@ function SourceModeBreakdown() {
           <Database className="h-4 w-4 text-blue-400" />
           Dataset Multi-Fuente
           <a href="/autotuning" className="ml-auto text-xs text-violet-400 hover:text-violet-300 font-normal flex items-center gap-1">
-            <BarChart3 className="h-3 w-3" /> Auto-Tuning →
+            <BarChart3 className="h-3 w-3" /> Abrir Autoafinación IA →
           </a>
         </CardTitle>
       </CardHeader>
       <CardContent>
+        <p className="text-xs text-muted-foreground mb-3">
+          La autoafinación analiza el rendimiento y propone mejoras de configuración. El Motor IA entrena el modelo predictivo.
+        </p>
         <div className="grid grid-cols-3 gap-3">
           {Object.entries(SOURCE_INFO).map(([mode, meta]) => {
             const modeData = m?.bySourceMode?.[mode];
