@@ -151,7 +151,8 @@ export default function AiMl() {
   const loading = statusLoading || diagLoading;
   const minSamples = status?.minSamplesForActivate ?? 300;
   const labeled = status?.completeSamples ?? 0;
-  const progress = Math.min(100, (labeled / minSamples) * 100);
+  const validSamples = status?.validSamples ?? 0;
+  const progress = Math.min(100, (validSamples / minSamples) * 100);
 
   const discardReasons: Record<string, number> = diag?.discardReasonsDataset ?? {};
   const lastBackfillDiscard: Record<string, number> = diag?.lastBackfillDiscardReasons ?? {};
@@ -187,13 +188,13 @@ export default function AiMl() {
             <p className="text-xs text-muted-foreground mt-1">Desactiva el filtro inmediatamente o entrena un modelo.</p>
           </div>
         )}
-        {labeled < minSamples && (
+        {validSamples < minSamples && (
           <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-yellow-400" />
-              <span className="text-sm font-semibold text-yellow-400">Todavía faltan muestras para activar la IA con seguridad.</span>
+              <span className="text-sm font-semibold text-yellow-400">Todavía faltan muestras válidas para entrenar.</span>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Necesitas {minSamples - labeled} muestras más antes de entrenar.</p>
+            <p className="text-xs text-muted-foreground mt-1">Se han recogido {labeled} muestras, pero solo {validSamples} han superado la validación. Necesitas {minSamples - validSamples} más.</p>
           </div>
         )}
 
@@ -239,7 +240,7 @@ export default function AiMl() {
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">Muestras válidas</span>
                 <span className="text-sm font-bold font-mono">
-                  {labeled} / {minSamples}
+                  {validSamples} / {minSamples}
                 </span>
               </div>
               <div className="flex flex-col gap-1">

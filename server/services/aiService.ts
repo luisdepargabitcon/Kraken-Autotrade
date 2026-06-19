@@ -32,6 +32,7 @@ export interface AiStatus {
   phase: "red" | "yellow" | "green";
   phaseLabel: string;
   completeSamples: number;
+  validSamples: number;
   minSamplesForTrain: number;
   minSamplesForActivate: number;
   canTrain: boolean;
@@ -78,6 +79,23 @@ const STATUS_PATH = `${MODEL_DIR}/ai_status.json`;
 
 const MIN_SAMPLES_TRAIN = 300;
 const MIN_SAMPLES_ACTIVATE = 300;
+
+function validateTrades(trades: any[]): any[] {
+  return trades.filter(trade => {
+    const entryTime = trade.entryTs ? new Date(trade.entryTs).getTime() : 0;
+    const exitTime = trade.exitTs ? new Date(trade.exitTs).getTime() : 0;
+    const entryPrice = parseFloat(trade.entryPrice || '0');
+    const exitPrice = parseFloat(trade.exitPrice || '0');
+    const amount = parseFloat(trade.entryAmount || '0');
+
+    if (exitTime <= entryTime) return false;
+    if (entryPrice <= 0 || exitPrice <= 0) return false;
+    if (amount <= 0) return false;
+    if (trade.holdTimeMinutes !== null && trade.holdTimeMinutes < 0) return false;
+
+    return true;
+  });
+}
 
 const LEGACY_KEY_MAP: Record<string, string> = {
   'no_matching_sell': 'venta_sin_compra_previa',
@@ -139,21 +157,26 @@ class AiService {
 
   async getStatus(): Promise<AiStatus> {
     const aiConfig = await storage.getAiConfig();
-    const labeledCount = await storage.getTrainingTradesCount({ labeled: true });
-    
+    const labeledTrades = await storage.getTrainingTrades({ labeled: true });
+    const labeledCount = labeledTrades.length;
+
+    // Apply same validation as runTraining
+    const validTrades = validateTrades(labeledTrades);
+    const validCount = validTrades.length;
+
     let phase: "red" | "yellow" | "green" = "red";
     let phaseLabel = "Recolectando datos";
-    
-    if (labeledCount >= MIN_SAMPLES_ACTIVATE && aiConfig?.filterEnabled) {
+
+    if (validCount >= MIN_SAMPLES_ACTIVATE && aiConfig?.filterEnabled) {
       phase = "green";
       phaseLabel = "Filtro activo";
-    } else if (labeledCount >= MIN_SAMPLES_TRAIN) {
+    } else if (validCount >= MIN_SAMPLES_TRAIN) {
       phase = "yellow";
       phaseLabel = "Listo para entrenar";
     }
 
     const modelExists = fs.existsSync(MODEL_PATH);
-    
+
     let metrics = null;
     if (fs.existsSync(STATUS_PATH)) {
       try {
@@ -169,10 +192,11 @@ class AiService {
       phase,
       phaseLabel,
       completeSamples: labeledCount,
+      validSamples: validCount,
       minSamplesForTrain: MIN_SAMPLES_TRAIN,
       minSamplesForActivate: MIN_SAMPLES_ACTIVATE,
-      canTrain: labeledCount >= MIN_SAMPLES_TRAIN,
-      canActivate: labeledCount >= MIN_SAMPLES_ACTIVATE && modelExists,
+      canTrain: validCount >= MIN_SAMPLES_TRAIN,
+      canActivate: validCount >= MIN_SAMPLES_ACTIVATE && modelExists,
       filterEnabled: aiConfig?.filterEnabled ?? false,
       shadowEnabled: aiConfig?.shadowEnabled ?? false,
       modelLoaded: modelExists && this.modelLoaded,
@@ -301,19 +325,19 @@ class AiService {
     });
   }
 
-  async runTraining(): Promise<{ 
-    success: boolean; 
-    message: string; 
+  async runTraining(): Promise<{
+    success: boolean;
+    message: string;
     errorCode?: string;
     required?: number;
     current?: number;
-    metrics?: { accuracy: number; precision: number; recall: number; f1: number; trainSize: number; valSize: number } 
+    metrics?: { accuracy: number; precision: number; recall: number; f1: number; trainSize: number; valSize: number }
   }> {
     const labeledTrades = await storage.getTrainingTrades({ labeled: true });
-    
+
     if (labeledTrades.length < MIN_SAMPLES_TRAIN) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         errorCode: "INSUFFICIENT_DATA",
         message: `Datos insuficientes para entrenar el modelo. Necesitas ${MIN_SAMPLES_TRAIN} trades cerrados etiquetados. Actualmente hay ${labeledTrades.length}.`,
         required: MIN_SAMPLES_TRAIN,
@@ -331,24 +355,11 @@ class AiService {
       return timeA - timeB;
     });
 
-    const validTrades = sortedTrades.filter(trade => {
-      const entryTime = trade.entryTs ? new Date(trade.entryTs).getTime() : 0;
-      const exitTime = trade.exitTs ? new Date(trade.exitTs).getTime() : 0;
-      const entryPrice = parseFloat(trade.entryPrice || '0');
-      const exitPrice = parseFloat(trade.exitPrice || '0');
-      const amount = parseFloat(trade.entryAmount || '0');
-      
-      if (exitTime <= entryTime) return false;
-      if (entryPrice <= 0 || exitPrice <= 0) return false;
-      if (amount <= 0) return false;
-      if (trade.holdTimeMinutes !== null && trade.holdTimeMinutes < 0) return false;
-      
-      return true;
-    });
+    const validTrades = validateTrades(sortedTrades);
 
     if (validTrades.length < MIN_SAMPLES_TRAIN) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         errorCode: "INSUFFICIENT_DATA",
         message: `Datos insuficientes para entrenar el modelo. Solo hay ${validTrades.length} trades válidos después de validación. Necesitas ${MIN_SAMPLES_TRAIN}.`,
         required: MIN_SAMPLES_TRAIN,
