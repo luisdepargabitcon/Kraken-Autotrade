@@ -24,7 +24,7 @@ import { errorAlertService, ErrorAlertService } from "./ErrorAlertService";
 import { markupTracker } from "./MarkupTracker";
 import { ExitManager, type IExitManagerHost, type OpenPosition as ExitOpenPosition, type ConfigSnapshot as ExitConfigSnapshot, type ExitReason as ExitExitReason, type FeeGatingResult as ExitFeeGatingResult } from "./exitManager";
 import { smartExitEngine, type SmartExitConfig, type SmartExitMarketData, type SmartExitPosition, type SmartExitDecision, type EntryContext } from "./SmartExitEngine";
-import { shouldSendAlertWithDedupe, pnlToBand } from "./telegram/deduplication";
+import { smartExitStateManager, type StateTransition } from "./SmartExitStateManager";
 import {
   calculateEMA as _calculateEMA,
   calculateRSI as _calculateRSI,
@@ -2797,28 +2797,31 @@ ${positionsList}
         // Fee-band suppression: position is flat, exit would cost more than gain
         if (decision.suppressedByFeeBand) {
           log(`[SMART_EXIT_FEE_BAND_SUPPRESS] ${position.pair} (${lotId}): score=${decision.score} feeBandThreshold=${decision.threshold} pnl=${pnlPct.toFixed(2)}% reasons=[${decision.reasons.join(',')}] — exit suppressed, flat position would be net loss after fees`, "trading");
-          if (this.telegramService.isInitialized()) {
-            // Check deduplication before sending
-            const dedupeResult = await shouldSendAlertWithDedupe({
-              module: "SMART_EXIT_SUPPRESSED_FEE_BAND",
-              pair: position.pair,
-              positionId: lotId,
-              decision: "SUPPRESSED",
-              suppressionReason: "fee-band",
-              signals: decision.reasons,
-              score: decision.score,
-              regime: decision.regime,
-              confirmation: `${decision.confirmationProgress}/${decision.confirmationRequired}`,
-              pnlBand: pnlToBand(decision.pnlPct),
-            });
 
-            if (dedupeResult.allowed) {
-              const msg = smartExitEngine.buildTelegramSnapshot(decision, sePosition, "SUPPRESSED");
-              this.telegramService.sendAlertWithSubtype(msg, "trades", "smart_exit_suppressed")
-                .catch((e: any) => log(`[ALERT_ERR] smart_exit_suppressed: ${e?.message ?? String(e)}`, 'trading'));
-            } else {
-              log(`[SMART_EXIT_TELEGRAM_DEDUPE] Suppressed alert for ${position.pair} (${lotId}): ${dedupeResult.reason}`, "trading");
-            }
+          // Use state manager to determine if we should notify
+          const transition = await smartExitStateManager.evaluateTransition({
+            pair: position.pair,
+            positionId: lotId,
+            decision: {
+              shouldExit: decision.shouldExit,
+              suppressedByFeeBand: decision.suppressedByFeeBand,
+              score: decision.score,
+              threshold: decision.threshold,
+              regime: decision.regime,
+              confirmationProgress: decision.confirmationProgress,
+              confirmationRequired: decision.confirmationRequired,
+              reasons: decision.reasons,
+              pnlPct: decision.pnlPct,
+            },
+            isPositionOpen: true,
+          });
+
+          if (transition.shouldNotify && transition.notifyMessage && this.telegramService.isInitialized()) {
+            this.telegramService.sendAlertWithSubtype(transition.notifyMessage, "trades", "smart_exit_suppressed")
+              .catch((e: any) => log(`[ALERT_ERR] smart_exit_suppressed: ${e?.message ?? String(e)}`, 'trading'));
+            log(`[SMART_EXIT_TELEGRAM] State transition notified: ${transition.previousState} → ${transition.newState} for ${position.pair} (${lotId})`, "trading");
+          } else {
+            log(`[SMART_EXIT_STATE] No notification: ${transition.previousState} → ${transition.newState} for ${position.pair} (${lotId})`, "trading");
           }
         }
 
@@ -2912,6 +2915,7 @@ ${positionsList}
                 await this.deletePositionFromDBByLotId(lotId);
                 smartExitEngine.resetConfirmation(lotId);
                 this.smartExitDecisions.delete(lotId);
+                await smartExitStateManager.resetState(position.pair, lotId);
                 this.lastTradeTime.set(position.pair, Date.now());
               }
             } finally {

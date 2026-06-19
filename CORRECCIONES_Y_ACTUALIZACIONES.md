@@ -107,6 +107,89 @@ Migration 049 se ejecuta automáticamente al iniciar.
 
 ---
 
+## 2026-06-19 — refactor(smart-exit): Máquina de estados persistente para alertas (cambio de estado, no por evaluación)
+
+### Problema
+El sistema anterior de deduplicación por TTL no era suficiente. Las alertas se disparaban por cada evaluación/tick, generando spam incluso con pequeñas variaciones de PnL (0.00% → 0.03% → 0.04%).
+
+Requisito: Las alertas deben funcionar por CAMBIO DE ESTADO, no por cada evaluación.
+
+### Solución implementada
+
+**Nuevos archivos:**
+- `db/migrations/050_smart_exit_state.sql` — Tabla persistente para estado por par + positionId
+- `server/services/SmartExitStateManager.ts` — Máquina de estados con lógica de transiciones
+- `server/services/__tests__/smartExitStateManager.test.ts` — Tests unitarios para transiciones de estado
+
+**Archivos modificados:**
+- `server/services/tradingEngine.ts` — Reemplazado sistema de deduplicación TTL por SmartExitStateManager
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` — Documentación completa
+
+### Estados definidos
+
+- **NORMAL**: Estado por defecto, sin señal de salida
+- **BLOCKED_BY_FEE_BAND**: SMART EXIT detectado pero salida suprimida por fee-band
+- **UNBLOCKED**: Fee-band desapareció, salida vuelve a estar disponible
+- **EXECUTED**: Venta ejecutada (posición cerrada)
+- **CANCELLED_BY_SIGNAL_DISAPPEAR**: Señal de salida desapareció antes de poder vender
+
+### Reglas de Telegram
+
+1. **Entrar en BLOCKED_BY_FEE_BAND** (primera vez):
+   - Enviar 1 único mensaje: "SMART EXIT detectado, pero salida suprimida por fee-band. No se ejecuta venta."
+
+2. **Mientras siga en BLOCKED_BY_FEE_BAND**:
+   - NO enviar más mensajes
+   - Guardar evaluaciones solo en logs/UI
+   - PnL puede variar sin generar nuevas alertas
+
+3. **Salir de BLOCKED_BY_FEE_BAND** (fee-band desaparece):
+   - Enviar 1 único mensaje: "Fee-band desaparecido para ETH/USD. La salida vuelve a estar disponible."
+   - Si se ejecuta venta en el mismo momento, NO enviar mensaje de fee-band desaparecido; enviar solo "VENTA EJECUTADA"
+
+4. **Señal desaparece mientras está bloqueado**:
+   - Enviar 1 único mensaje: "SMART EXIT cancelado: la señal de salida desapareció antes de poder vender por fee-band."
+
+5. **Nunca enviar alertas repetidas de**:
+   - Salida suprimida fee-band
+   - min-profit
+   - no-confirmation
+   - below-threshold
+   - dry-run evaluation
+
+### Características técnicas
+
+**Persistencia en DB:**
+- Tabla `smart_exit_state` con unique constraint (pair, position_id)
+- Campos: current_state, previous_state, state_changed_at, last_evaluation_at, last_score, last_regime, last_pnl_pct, last_suppression_reason, last_signals
+- Función `cleanup_old_smart_exit_state()` para limpieza automática (30 días)
+
+**Lógica de transiciones:**
+- Solo dispara Telegram si `previousState != newState`
+- PnL exacto NO causa cambio de estado
+- Fail-closed para eventos suppressed: si falla DB, NO enviar Telegram
+- Fail-open para eventos reales (compra/venta/error crítico): sí enviar siempre
+
+**Atomicidad:**
+- Upsert con ON CONFLICT para evitar race conditions
+- Evaluaciones actualizan timestamp sin cambiar estado
+- Reset automático al cerrar posición
+
+### Validación
+- npm run check: ✅
+- npm run build: ✅ (3801 módulos)
+- Tests unitarios: ✅ (8 tests para transiciones de estado)
+
+### Deploy VPS required
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+Migration 050 se ejecuta automáticamente al iniciar.
+
+---
+
 ## 2026-06-16 — fix(fisco): Commit FISCO bloqueado por FK fisco_external_statement_items_matched_operation_id_fkey
 
 ### Commit
