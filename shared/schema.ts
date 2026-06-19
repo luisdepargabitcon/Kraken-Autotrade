@@ -648,6 +648,22 @@ export const trainingTrades = pgTable("training_trades", {
   entryTs: timestamp("entry_ts").notNull(),
   exitTs: timestamp("exit_ts"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // Autotuning extension columns (Phase 1 - migration 051)
+  sourceMode: text("source_mode").notNull().default("REAL"), // REAL | DRY_RUN | SHADOW | IDCA_SIMULATION
+  sourceTradeId: text("source_trade_id"),
+  sourceTable: text("source_table").notNull().default("trades"), // trades | dry_run_trades | shadow
+  evidenceWeight: decimal("evidence_weight", { precision: 4, scale: 3 }).notNull().default("1.000"),
+  exitReason: text("exit_reason"),
+  exitCategory: text("exit_category"),
+  wasTimeStop: boolean("was_time_stop").notNull().default(false),
+  regime: text("regime"),
+  configSnapshotJson: jsonb("config_snapshot_json"),
+  mfePct: decimal("mfe_pct", { precision: 8, scale: 4 }),
+  maePct: decimal("mae_pct", { precision: 8, scale: 4 }),
+  maxDrawdownPct: decimal("max_drawdown_pct", { precision: 8, scale: 4 }),
+  sessionLabel: text("session_label"),
+  entryScore: decimal("entry_score", { precision: 6, scale: 3 }),
+  tradeQualityScore: integer("trade_quality_score"),
 });
 
 export const aiConfig = pgTable("ai_config", {

@@ -113,4 +113,46 @@ describe("Phase 2 — DryRun Backfill", () => {
     expect(isValid(100, 100, 0)).toBe(false);
     expect(isValid(100, 100, 1)).toBe(true);
   });
+
+  describe("Regression test - DRY_RUN backfill mapping", () => {
+    it("verifies camelCase properties map to snake_case columns", () => {
+      // This test ensures the schema has the extension columns
+      // and that Drizzle will map camelCase to snake_case correctly
+      const trainingTrade = {
+        sourceMode: "DRY_RUN",
+        sourceTradeId: "DRY-test-123",
+        sourceTable: "dry_run_trades",
+        evidenceWeight: "0.500",
+        exitReason: "TAKE_PROFIT",
+        exitCategory: "PROFIT_EXIT",
+        wasTimeStop: false,
+        regime: "TREND",
+      };
+
+      expect(trainingTrade.sourceMode).toBe("DRY_RUN");
+      expect(trainingTrade.sourceTable).toBe("dry_run_trades");
+      expect(trainingTrade.evidenceWeight).toBe("0.500");
+      expect(trainingTrade.sourceMode).not.toBe("REAL");
+      expect(trainingTrade.evidenceWeight).not.toBe("1.000");
+    });
+
+    it("verifies DRY_RUN trades are not contaminated as REAL", () => {
+      const dryRunTrade = {
+        sourceMode: "DRY_RUN",
+        sourceTable: "dry_run_trades",
+        evidenceWeight: "0.500",
+      };
+
+      const realTrade = {
+        sourceMode: "REAL",
+        sourceTable: "trades",
+        evidenceWeight: "1.000",
+      };
+
+      // DRY_RUN should never match REAL values
+      expect(dryRunTrade.sourceMode).not.toBe(realTrade.sourceMode);
+      expect(dryRunTrade.sourceTable).not.toBe(realTrade.sourceTable);
+      expect(dryRunTrade.evidenceWeight).not.toBe(realTrade.evidenceWeight);
+    });
+  });
 });

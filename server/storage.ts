@@ -3157,11 +3157,7 @@ export class DatabaseStorage implements IStorage {
         const wasTimeStop      = normalizedReason ? TIME_STOP_REASONS.has(normalizedReason) : false;
         const exitCategory     = determineExitCategory(normalizedReason);
 
-        const trainingTrade: InsertTrainingTrade & {
-          sourceMode?: string; sourceTable?: string; evidenceWeight?: string;
-          exitReason?: string | null; exitCategory?: string | null;
-          wasTimeStop?: boolean; regime?: string | null;
-        } = {
+        const trainingTrade: InsertTrainingTrade = {
           pair:          row.pair,
           buyTxid:       syntheticBuyTxid,
           entryPrice:    row.entry_price,
@@ -3183,8 +3179,9 @@ export class DatabaseStorage implements IStorage {
           sellTxidsJson: [row.sim_txid],
           isClosed:      true,
           isLabeled:     true,
-          // Autotuning fields (Phase 1 extension)
+          // Autotuning fields (Phase 1 extension) - camelCase for Drizzle mapping
           sourceMode:     'DRY_RUN',
+          sourceTradeId:  syntheticBuyTxid,
           sourceTable:    'dry_run_trades',
           evidenceWeight: DRY_EVIDENCE_WEIGHT,
           exitReason:     normalizedReason,
