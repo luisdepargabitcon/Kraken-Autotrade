@@ -1138,19 +1138,51 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
 
       // Sort by closedAt ascending
       const sorted = closed
-        .filter(c => c.closedAt && c.realizedPnlUsd != null)
+        .filter(c => c.closedAt)
         .sort((a, b) => new Date(a.closedAt!).getTime() - new Date(b.closedAt!).getTime());
+
+      // Import canonical PnL calculator (same as history view)
+      const { calculateIdcaCycleRealizedPnl } = await import("@shared/idcaCyclePnl");
 
       let cumPnl = 0;
       let wins = 0;
       let losses = 0;
       const curve: { time: string; pnl: number; cumPnl: number; pair: string }[] = [];
+      const validPnls: number[] = [];
 
       for (const c of sorted) {
-        const pnl = parseFloat(String(c.realizedPnlUsd));
+        // Get orders for this cycle to calculate canonical PnL
+        const orders = await repo.getOrdersByCycle(c.id);
+        // Map cycle to IdcaCyclePnlInput (handle null -> undefined conversion)
+        const cycleInput = {
+          id: c.id,
+          capitalUsedUsd: c.capitalUsedUsd,
+          totalQuantity: c.totalQuantity,
+          avgEntryPrice: c.avgEntryPrice,
+          realizedPnlUsd: c.realizedPnlUsd,
+          pair: c.pair,
+          status: c.status,
+          isImported: c.isImported,
+          isManualCycle: c.isManualCycle,
+          managedBy: c.managedBy ?? undefined,
+          sourceType: c.sourceType ?? undefined,
+          basePrice: c.basePrice ?? undefined,
+          basePriceType: c.basePriceType ?? undefined,
+          importSnapshotJson: c.importSnapshotJson ?? undefined,
+        };
+        const pnlResult = calculateIdcaCycleRealizedPnl(cycleInput, orders);
+
+        // Only include cycles with calculable PnL (exclude cost_basis_missing, insufficient)
+        if (pnlResult.pnlSource === "cost_basis_missing" || pnlResult.pnlSource === "insufficient") {
+          continue;
+        }
+
+        const pnl = pnlResult.realizedNetUsd;
         if (!isFinite(pnl)) continue;
+
         cumPnl += pnl;
         if (pnl > 0) wins++; else if (pnl < 0) losses++;
+        validPnls.push(pnl);
         curve.push({
           time: new Date(c.closedAt!).toISOString(),
           pnl: parseFloat(pnl.toFixed(2)),
@@ -1162,9 +1194,9 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
       const totalCycles = wins + losses;
       const winRate = totalCycles > 0 ? (wins / totalCycles) * 100 : 0;
 
-      // Advanced quality metrics
-      const winPnls  = sorted.map(c => parseFloat(String(c.realizedPnlUsd))).filter(p => isFinite(p) && p > 0);
-      const lossPnls = sorted.map(c => parseFloat(String(c.realizedPnlUsd))).filter(p => isFinite(p) && p < 0);
+      // Advanced quality metrics - use canonical PnL from calculateIdcaCycleRealizedPnl
+      const winPnls  = validPnls.filter(p => p > 0);
+      const lossPnls = validPnls.filter(p => p < 0);
       const grossProfit = winPnls.reduce((s, v) => s + v, 0);
       const grossLoss   = Math.abs(lossPnls.reduce((s, v) => s + v, 0));
       const profitFactor: number | string = grossLoss > 0
