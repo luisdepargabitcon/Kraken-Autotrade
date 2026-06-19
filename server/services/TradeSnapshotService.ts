@@ -69,7 +69,7 @@ export interface BotSpotExitContext {
 export interface IdcaCycleContext {
   sourceMode:    "IDCA_SIMULATION" | "REAL";
   cycleId:       string;
-  snapshotType:  "CYCLE_START" | "SAFETY_BUY" | "TP" | "BREAKEVEN" | "CYCLE_CLOSED";
+  snapshotType:  "CYCLE_START" | "BASE_BUY" | "SAFETY_BUY" | "TP" | "TRAILING_ACTIVATED" | "BREAKEVEN_ARMED" | "TRAILING_EXIT" | "BREAKEVEN_EXIT" | "FAIL_SAFE_EXIT" | "CYCLE_CLOSED";
   pair:          string;
   eventTs:       Date;
   entryPrice?:   number;

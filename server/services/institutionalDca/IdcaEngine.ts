@@ -54,8 +54,59 @@ import { MarketDataService } from "../MarketDataService";
 import { resolveDynamicAnchor, type DynamicAnchorResult } from "./IdcaDynamicAnchorService";
 import * as liveGuard from "./IdcaLiveExecutionGuard";
 import { runStartupReconciliation, isSafeToStartAfterReconciliation } from "./IdcaStartupReconciliationService";
+import { tradeSnapshotService, type IdcaCycleContext } from "../TradeSnapshotService";
+import { tradeMetricsTracker } from "../TradeMetricsTracker";
 
 const TAG = "[IDCA]";
+
+// ─── FASE 4: Autotuning snapshot hooks — NON-BLOCKING, write-only to new tables
+// These helpers NEVER modify active cycles, basePrice, avgEntryPrice, VWAP anchors, or FISCO.
+function emitIdcaSnapshot(ctx: {
+  sourceMode:    "IDCA_SIMULATION" | "REAL";
+  cycleId:       number;
+  snapshotType:  IdcaCycleContext["snapshotType"];
+  pair:          string;
+  eventTs?:      Date;
+  entryPrice?:   number;
+  exitPrice?:    number;
+  executedAmount?: number;
+  pnlNetUsd?:    number;
+  pnlPct?:       number;
+  regime?:       string;
+  signalScore?:  number;
+  holdTimeMinutes?: number;
+  exitReason?:   string;
+}): void {
+  tradeSnapshotService.onIdcaEvent({
+    sourceMode:     ctx.sourceMode,
+    cycleId:        ctx.cycleId.toString(),
+    snapshotType:   ctx.snapshotType,
+    pair:           ctx.pair,
+    eventTs:        ctx.eventTs ?? new Date(),
+    entryPrice:     ctx.entryPrice,
+    exitPrice:      ctx.exitPrice,
+    executedAmount: ctx.executedAmount,
+    pnlNetUsd:      ctx.pnlNetUsd,
+    pnlPct:         ctx.pnlPct,
+    regime:         ctx.regime,
+    signalScore:    ctx.signalScore,
+    holdTimeMinutes: ctx.holdTimeMinutes,
+    exitReason:     ctx.exitReason,
+  });
+}
+
+function emitIdcaMetric(cycle: InstitutionalDcaCycle, sourceMode: "IDCA_SIMULATION" | "REAL", currentPrice: number): void {
+  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+  if (avgEntry <= 0 || currentPrice <= 0) return;
+  tradeMetricsTracker.onIdcaSample({
+    sourceMode,
+    sourceTradeId: cycle.id.toString(),
+    pair: cycle.pair,
+    entryPrice: avgEntry,
+    currentPrice,
+    trailingActivated: cycle.status === "trailing_active" || !!cycle.trailingActiveAt,
+  });
+}
 
 /** HOTFIX: Lock por ciclo para evitar compras simultáneas */
 const cycleExecutionLocks = new Map<number, boolean>();
@@ -291,6 +342,31 @@ async function executeExit(
       `orderId=${sellOrder.orderId || sellOrder.txid || "n/a"} ` +
       `(${signal.metadata.currentState.unrealizedPnlPct?.toFixed(2)}% PnL)`
     );
+
+    // ─── FASE 4: Exit snapshot — non-blocking, write-only
+    const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+    const capitalUsed = parseFloat(String(cycle.capitalUsedUsd || "0"));
+    const pnlNetUsd = netValueUsd - capitalUsed;
+    const pnlPct = capitalUsed > 0 ? (pnlNetUsd / capitalUsed) * 100 : 0;
+    const closedAt = new Date();
+    const startedAt = cycle.startedAt ? new Date(cycle.startedAt) : closedAt;
+    const durMs = closedAt.getTime() - startedAt.getTime();
+
+    const snapshotType = signal.exitType === "fail_safe" ? "FAIL_SAFE_EXIT" : "CYCLE_CLOSED";
+    emitIdcaSnapshot({
+      sourceMode: mode === "simulation" ? "IDCA_SIMULATION" : "REAL",
+      cycleId: cycle.id,
+      snapshotType,
+      pair,
+      eventTs: new Date(),
+      entryPrice: avgEntry,
+      exitPrice: signal.exitPrice,
+      executedAmount: totalQty,
+      pnlNetUsd,
+      pnlPct,
+      holdTimeMinutes: durMs / 60000,
+      exitReason: signal.exitType,
+    });
 
   } catch (error) {
     const errMsg = (error as Error).message || "unknown";
@@ -2098,6 +2174,18 @@ async function checkEntry(
     entryDipPct: (check.entryDipPct || 0).toFixed(4),
   });
 
+  // ─── FASE 4: CYCLE_START snapshot — non-blocking, write-only
+  emitIdcaSnapshot({
+    sourceMode: mode === "simulation" ? "IDCA_SIMULATION" : "REAL",
+    cycleId: cycle.id,
+    snapshotType: "CYCLE_START",
+    pair,
+    eventTs: new Date(),
+    entryPrice: avgFillPrice,
+    executedAmount: mode === "live" ? netBaseQty : executedQty,
+    signalScore: check.marketScore ?? undefined,
+  });
+
   // Create order record with execution tracking
   const order = await repo.createOrder({
     cycleId: cycle.id,
@@ -2172,6 +2260,17 @@ async function checkEntry(
   await telegram.alertCycleStarted(cycle, check.entryDipPct || 0, check.marketScore || 0);
   await telegram.alertBuyExecuted(cycle, order, "base_buy");
 
+  // ─── FASE 4: BASE_BUY snapshot — non-blocking, write-only
+  emitIdcaSnapshot({
+    sourceMode: mode === "simulation" ? "IDCA_SIMULATION" : "REAL",
+    cycleId: cycle.id,
+    snapshotType: "BASE_BUY",
+    pair,
+    eventTs: new Date(),
+    entryPrice: avgFillPrice,
+    executedAmount: mode === "live" ? netBaseQty : executedQty,
+  });
+
   // Si esta compra vino de trailing buy, notificar específicamente
   if (trailingBuyContext) {
     telegram.alertTrailingBuyExecuted(
@@ -2245,6 +2344,9 @@ async function manageCycle(
     unrealizedPnlPct: unrealizedPnlPct.toFixed(4),
     maxDrawdownPct: maxDD.toFixed(2),
   });
+
+  // ─── FASE 4: Autotuning sample — non-blocking MFE/MAE for open IDCA cycle
+  emitIdcaMetric(cycle, mode === "simulation" ? "IDCA_SIMULATION" : "REAL", currentPrice);
 
   // ─── TimeStop Check (max cycle duration) ──────────────────────
   // Only applies to main cycles (recovery has its own check in manageRecoveryCycle)
@@ -2627,6 +2729,18 @@ async function handleActiveState(
     });
 
     await telegram.alertProtectionArmed(cycle, currentPrice, netStopPrice, pnlPct);
+
+    // ─── FASE 4: BREAKEVEN_ARMED snapshot — non-blocking, write-only
+    emitIdcaSnapshot({
+      sourceMode: mode === "simulation" ? "IDCA_SIMULATION" : "REAL",
+      cycleId: cycle.id,
+      snapshotType: "BREAKEVEN_ARMED",
+      pair,
+      eventTs: new Date(),
+      entryPrice: avgEntry,
+      pnlPct,
+    });
+
     // Don't return — continue checking trailing activation in same tick
   }
 
@@ -2669,6 +2783,18 @@ async function handleActiveState(
     });
 
     await telegram.alertTrailingActivated(cycle, currentPrice, pnlPct, effectiveTrailingPct);
+
+    // ─── FASE 4: TRAILING_ACTIVATED snapshot — non-blocking, write-only
+    emitIdcaSnapshot({
+      sourceMode: mode === "simulation" ? "IDCA_SIMULATION" : "REAL",
+      cycleId: cycle.id,
+      snapshotType: "TRAILING_ACTIVATED",
+      pair,
+      eventTs: new Date(),
+      entryPrice: avgEntry,
+      pnlPct,
+    });
+
     return; // Transition done, next tick will be handleTrailingState
   }
 
@@ -3003,6 +3129,17 @@ async function checkSafetyBuy(
   if (updatedCycle) {
     await telegram.alertBuyExecuted(updatedCycle, order, "safety_buy", prevAvg);
   }
+
+  // ─── FASE 4: SAFETY_BUY snapshot — non-blocking, write-only
+  emitIdcaSnapshot({
+    sourceMode: mode === "simulation" ? "IDCA_SIMULATION" : "REAL",
+    cycleId: cycle.id,
+    snapshotType: "SAFETY_BUY",
+    pair,
+    eventTs: new Date(),
+    entryPrice: avgFillPrice,
+    executedAmount: mode === "live" ? netBaseQty : executedQty,
+  });
 }
 
 // ─── Take Profit Arm ───────────────────────────────────────────────
@@ -3327,6 +3464,23 @@ async function executeTrailingExit(
   if (updatedCycle) {
     await telegram.alertTrailingExit(updatedCycle);
   }
+
+  // ─── FASE 4: TRAILING_EXIT snapshot — non-blocking, write-only
+  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+  emitIdcaSnapshot({
+    sourceMode: mode === "simulation" ? "IDCA_SIMULATION" : "REAL",
+    cycleId: cycle.id,
+    snapshotType: "TRAILING_EXIT",
+    pair,
+    eventTs: new Date(),
+    entryPrice: avgEntry,
+    exitPrice: currentPrice,
+    executedAmount: actualSellQty,
+    pnlNetUsd: trailingNetProfitUsd,
+    pnlPct: pnlPctTrailing,
+    holdTimeMinutes: durMs / 60000,
+    exitReason: "trailing_exit",
+  });
 }
 
 // ─── Breakeven Exit ────────────────────────────────────────────────
@@ -3488,6 +3642,26 @@ async function executeBreakevenExit(
   if (updatedCycle) {
     await telegram.alertBreakevenExit(updatedCycle);
   }
+
+  // ─── FASE 4: BREAKEVEN_EXIT snapshot — non-blocking, write-only
+  const avgEntry = parseFloat(String(cycle.avgEntryPrice || "0"));
+  const closedAt = new Date();
+  const startedAt = cycle.startedAt ? new Date(cycle.startedAt) : closedAt;
+  const durMs = closedAt.getTime() - startedAt.getTime();
+  emitIdcaSnapshot({
+    sourceMode: mode === "simulation" ? "IDCA_SIMULATION" : "REAL",
+    cycleId: cycle.id,
+    snapshotType: "BREAKEVEN_EXIT",
+    pair,
+    eventTs: new Date(),
+    entryPrice: avgEntry,
+    exitPrice: currentPrice,
+    executedAmount: actualSellQty,
+    pnlNetUsd: beNetProfitUsd,
+    pnlPct: capitalUsedForBe > 0 ? (beNetProfitUsd / capitalUsedForBe) * 100 : 0,
+    holdTimeMinutes: durMs / 60000,
+    exitReason: "breakeven_exit",
+  });
 }
 
 // ─── Entry Check Logic ─────────────────────────────────────────────
