@@ -19,6 +19,10 @@ import cron from "node-cron";
 import http from "http";
 import type { RouterDeps } from "./routes/types";
 import { runIdcaHistoricalDuplicateCleanupOnce } from "./services/institutionalDca/IdcaHistoricalDuplicateCleanupService";
+import { AutoMigrationRunner } from "./services/AutoMigrationRunner";
+import { db } from "./db";
+import path from "path";
+import { fileURLToPath } from "url";
 
 let tradingEngine: TradingEngine | null = null;
 
@@ -153,6 +157,26 @@ export async function registerRoutes(
     }
   } catch (e: any) {
     console.error('[startup] Auto-migration error (non-fatal):', e?.message || e);
+  }
+
+  // AutoMigrationRunner — execute SQL migrations from db/migrations
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const migrationsDir = path.join(__dirname, '..', 'db', 'migrations');
+
+    const runner = new AutoMigrationRunner(db.$client);
+    const migrations = [
+      { id: '049_telegram_alert_dedupe', filePath: path.join(migrationsDir, '049_telegram_alert_dedupe.sql') },
+      { id: '052_smart_exit_state', filePath: path.join(migrationsDir, '052_smart_exit_state.sql') },
+      { id: '053_add_telegram_alert_config_to_bot_config', filePath: path.join(migrationsDir, '053_add_telegram_alert_config_to_bot_config.sql') },
+    ];
+
+    console.log('[startup] Running AutoMigrationRunner...');
+    await runner.run(migrations);
+    console.log('[startup] AutoMigrationRunner completed');
+  } catch (e: any) {
+    console.error('[startup] AutoMigrationRunner error (non-fatal):', e?.message || e);
   }
 
   // Load saved API credentials on startup

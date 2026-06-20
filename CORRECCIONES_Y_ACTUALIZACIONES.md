@@ -297,6 +297,77 @@ No requiere migración DB.
 
 ---
 
+## 2026-06-20 — fix(migration): Integrar AutoMigrationRunner en startup para migraciones 049, 052, 053
+
+### Problema
+Las migraciones 049_telegram_alert_dedupe.sql, 050_smart_exit_state.sql y 051_add_telegram_alert_config_to_bot_config.sql no se ejecutaban automáticamente en startup. Esto causó:
+- `telegram_alert_config` no existía y rompió el arranque.
+- `smart_exit_state` no existía tras deploy.
+- `telegram_alert_dedupe` tampoco existía hasta aplicarla manualmente.
+
+El runner `runSchemaMigration()` en storage.ts solo maneja migraciones de columnas (ADD COLUMN IF NOT EXISTS), no tablas nuevas ni funciones SQL complejas. Existía `AutoMigrationRunner` pero no se usaba en startup.
+
+### Solución implementada
+
+**Archivos renombrados (resolución de conflicto de numeración):**
+- `db/migrations/050_smart_exit_state.sql` → `052_smart_exit_state.sql`
+- `db/migrations/051_add_telegram_alert_config_to_bot_config.sql` → `053_add_telegram_alert_config_to_bot_config.sql`
+
+**Archivos modificados:**
+- `server/routes.ts` — Integrar AutoMigrationRunner en startup, añadir imports y ejecución de migraciones
+
+**Nueva lógica en startup:**
+1. Importar `AutoMigrationRunner`, `db`, `path`, `fileURLToPath`
+2. Crear instancia de AutoMigrationRunner con `db.$client`
+3. Definir lista de migraciones a ejecutar:
+   - 049_telegram_alert_dedupe.sql
+   - 052_smart_exit_state.sql
+   - 053_add_telegram_alert_config_to_bot_config.sql
+4. Ejecutar migraciones con logs explícitos:
+   - `[startup] Running AutoMigrationRunner...`
+   - `[auto-migrate] PENDING  {id}`
+   - `[auto-migrate] APPLIED  {id}`
+   - `[auto-migrate] SKIPPED  {id}`
+   - `[startup] AutoMigrationRunner completed`
+
+**Logs en startup:**
+- AutoMigrationRunner usa prefijos `[auto-migrate]` para cada migración
+- Error no fatal: si falla, loggea error pero no aborta startup
+
+### Validación
+- npm run check: ✅
+- npm run build: ✅ (3801 módulos)
+
+### Deploy VPS required
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+### Validación esperada en VPS tras deploy:
+```sql
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+AND table_name IN ('telegram_alert_dedupe','smart_exit_state')
+ORDER BY table_name;
+```
+Debe devolver:
+- smart_exit_state
+- telegram_alert_dedupe
+
+```sql
+SELECT column_name
+FROM information_schema.columns
+WHERE table_name = 'bot_config'
+AND column_name = 'telegram_alert_config';
+```
+Debe devolver:
+- telegram_alert_config
+
+---
+
 ## 2026-06-16 — fix(fisco): Commit FISCO bloqueado por FK fisco_external_statement_items_matched_operation_id_fkey
 
 ### Commit
