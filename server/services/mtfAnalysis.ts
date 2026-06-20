@@ -14,6 +14,7 @@ export interface MultiTimeframeData {
   tf1h: OHLCCandle[];
   tf4h: OHLCCandle[];
   lastUpdate: number;
+  isValid: boolean; // Fail-safe flag: if false, MTF signals should be ignored
 }
 
 export interface TrendAnalysis {
@@ -108,7 +109,46 @@ export function analyzeMultiTimeframe(mtfData: MultiTimeframeData): TrendAnalysi
   return { shortTerm, mediumTerm, longTerm, alignment, confidence, summary };
 }
 
-export function emitMTFDiagnostic(pair: string, tf5m: OHLCCandle[], tf1h: OHLCCandle[], tf4h: OHLCCandle[]): void {
+// MTF diagnostic rate-limiting cache
+const mtfDedupeCache: Map<string, { lastLogged: number; count: number }> = new Map();
+const MTF_DEDUPE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+function shouldLogMTFDiagnostic(pair: string, isCritical: boolean): boolean {
+  const key = `${pair}:${isCritical ? 'CRITICAL' : 'INFO'}`;
+  const now = Date.now();
+  const cached = mtfDedupeCache.get(key);
+
+  if (cached && now - cached.lastLogged < MTF_DEDUPE_TTL_MS) {
+    cached.count++;
+    // Only log if critical and count is multiple of 10 (every ~2.5 hours if spamming)
+    if (isCritical && cached.count % 10 === 0) {
+      log(`[MTF_DIAG] ${pair}: ${cached.count} repeticiones desde último log (rate-limited)`, "trading");
+    }
+    return false;
+  }
+
+  mtfDedupeCache.set(key, { lastLogged: now, count: 0 });
+  return true;
+}
+
+// Helper to calculate average step between consecutive candles
+function calcAverageStep(candles: OHLCCandle[]): number {
+  if (candles.length < 2) return 0;
+  let totalStep = 0;
+  for (let i = 1; i < candles.length; i++) {
+    totalStep += candles[i].time - candles[i - 1].time;
+  }
+  return totalStep / (candles.length - 1);
+}
+
+// Expected steps in seconds
+const EXPECTED_STEPS = {
+  '5m': 300,
+  '1h': 3600,
+  '4h': 14400,
+};
+
+export function emitMTFDiagnostic(pair: string, tf5m: OHLCCandle[], tf1h: OHLCCandle[], tf4h: OHLCCandle[]): boolean {
   const formatTs = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 16);
   const calcSpanHours = (candles: OHLCCandle[]) => {
     if (candles.length < 2) return 0;
@@ -126,30 +166,47 @@ export function emitMTFDiagnostic(pair: string, tf5m: OHLCCandle[], tf1h: OHLCCa
   const last1h = tf1h[tf1h.length - 1]?.time || 0;
   const last4h = tf4h[tf4h.length - 1]?.time || 0;
 
-  // Detectar duplicación real (más restrictivo para evitar falsos positivos)
-  // Solo alertar si hay evidencia clara de datos incorrectos
-  const exactFirstMatch = (first5m === first1h && first1h === first4h && first5m > 0);
-  const exactLastMatch = (last5m === last1h && last1h === last4h && last5m > 0);
+  // Calculate actual steps to validate intervals
+  const step5m = calcAverageStep(tf5m);
+  const step1h = calcAverageStep(tf1h);
+  const step4h = calcAverageStep(tf4h);
+
+  // Detect CRITICAL issues (real data corruption)
+  const sameArrayReference = (tf5m === tf1h || tf1h === tf4h || tf5m === tf4h);
   const identicalSpans = (span5m === span1h && span1h === span4h && parseFloat(String(span5m)) > 0);
+  // exactFirstMatch is only critical if we have enough candles (more than 1)
+  const exactFirstMatch = (first5m === first1h && first1h === first4h && first5m > 0) &&
+    (tf5m.length > 1 && tf1h.length > 1 && tf4h.length > 1);
+  const sameStepWrongTimeframe = (
+    (step5m > 0 && Math.abs(step5m - EXPECTED_STEPS['5m']) > 60) ||
+    (step1h > 0 && Math.abs(step1h - EXPECTED_STEPS['1h']) > 300) ||
+    (step4h > 0 && Math.abs(step4h - EXPECTED_STEPS['4h']) > 600)
+  );
 
-  // Detectar casos sospechosos pero menos críticos
-  const suspiciousOverlap = (
-    (Math.abs(last5m - last1h) < 3600) || // Menos de 1h de diferencia entre 5m y 1h
-    (Math.abs(last1h - last4h) < 7200)    // Menos de 2h de diferencia entre 1h y 4h
-  ) && tf5m.length > 10 && tf1h.length > 10 && tf4h.length > 10;
+  // exactLastMatch alone is NOT critical - it's normal for different timeframes to share the last candle timestamp
+  const exactLastMatch = (last5m === last1h && last1h === last4h && last5m > 0);
 
-  log(`[MTF_DIAG] ${pair}: ` +
-    `5m: ${tf5m.length} velas [${formatTs(first5m)} -> ${formatTs(last5m)}] span=${span5m}h | ` +
-    `1h: ${tf1h.length} velas [${formatTs(first1h)} -> ${formatTs(last1h)}] span=${span1h}h | ` +
-    `4h: ${tf4h.length} velas [${formatTs(first4h)} -> ${formatTs(last4h)}] span=${span4h}h`, "trading");
+  // Determine if truly critical
+  const isCritical = sameArrayReference || identicalSpans || exactFirstMatch || sameStepWrongTimeframe;
 
-  // Solo alertar en casos realmente problemáticos
-  if (exactFirstMatch || exactLastMatch || identicalSpans) {
-    log(`[MTF_DIAG] \u{1F6A8} ERROR ${pair}: Duplicación MTF CRÍTICA detectada! ` +
-      `exactFirst=${exactFirstMatch}, exactLast=${exactLastMatch}, identicalSpans=${identicalSpans}`, "trading");
-  } else if (suspiciousOverlap) {
-    log(`[MTF_DIAG] \u26A0\uFE0F INFO ${pair}: Solapamiento temporal detectado (puede ser normal en mercados activos)`, "trading");
+  // Log basic info (rate-limited)
+  if (shouldLogMTFDiagnostic(pair, isCritical)) {
+    log(`[MTF_DIAG] ${pair}: ` +
+      `5m: ${tf5m.length} velas [${formatTs(first5m)} -> ${formatTs(last5m)}] span=${span5m}h step=${step5m}s | ` +
+      `1h: ${tf1h.length} velas [${formatTs(first1h)} -> ${formatTs(last1h)}] span=${span1h}h step=${step1h}s | ` +
+      `4h: ${tf4h.length} velas [${formatTs(first4h)} -> ${formatTs(last4h)}] span=${span4h}h step=${step4h}s`, "trading");
+
+    if (isCritical) {
+      log(`[MTF_DIAG] \u{1F6A8} ERROR ${pair}: Duplicación MTF CRÍTICA detectada! ` +
+        `sameArrayRef=${sameArrayReference}, identicalSpans=${identicalSpans}, exactFirst=${exactFirstMatch}, ` +
+        `sameStepWrongTimeframe=${sameStepWrongTimeframe}, exactLast=${exactLastMatch} (normal)`, "trading");
+    } else if (exactLastMatch) {
+      // exactLast alone is not critical, just informational
+      log(`[MTF_DIAG] \u{1F4C1} INFO ${pair}: exactLast=true (normal - timeframes comparten última vela alineada)`, "trading");
+    }
   }
+
+  return isCritical;
 }
 
 // === MtfAnalyzer class (stateful: cache) ===
@@ -190,21 +247,23 @@ export class MtfAnalyzer {
         this.host.getOHLC(pair, 240),
       ]);
 
+      // MTF Diagnostic: Verificar rangos temporales y validar datos
+      let isValid = true;
+      if (MTF_DIAG_ENABLED && tf5m.length > 0 && tf1h.length > 0 && tf4h.length > 0) {
+        isValid = !emitMTFDiagnostic(pair, tf5m, tf1h, tf4h);
+      }
+
       const data: MultiTimeframeData = {
         tf5m: tf5m.slice(-100),
         tf1h: tf1h.slice(-50),
         tf4h: tf4h.slice(-50),
         lastUpdate: Date.now(),
+        isValid,
       };
 
       this.mtfCache.set(pair, data);
       this.rateLimitBackoff.delete(pair); // limpiar backoff al tener éxito
-      log(`MTF datos actualizados para ${pair}: 5m=${tf5m.length}, 1h=${tf1h.length}, 4h=${tf4h.length}`, "trading");
-
-      // MTF Diagnostic: Verificar rangos temporales
-      if (MTF_DIAG_ENABLED && tf5m.length > 0 && tf1h.length > 0 && tf4h.length > 0) {
-        emitMTFDiagnostic(pair, tf5m, tf1h, tf4h);
-      }
+      log(`MTF datos actualizados para ${pair}: 5m=${tf5m.length}, 1h=${tf1h.length}, 4h=${tf4h.length}, valid=${isValid}`, "trading");
 
       return data;
     } catch (error: any) {

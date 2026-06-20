@@ -142,6 +142,7 @@ export interface SmartExitMarketData {
   priceHistory: PriceData[];
   candles?: OHLCCandle[];
   mtfTrend?: string | null;
+  mtfValid?: boolean; // Fail-safe: if false, MTF signals should be ignored
   volumeRatio?: number;
   orderbookBias?: number | null; // -1 to 1 (sell to buy pressure)
   exchangeNetflow?: number | null;
@@ -320,7 +321,9 @@ export class SmartExitEngine {
     return null;
   }
 
-  evaluateMtfAlignmentLoss(mtfTrend?: string | null): SignalContribution | null {
+  evaluateMtfAlignmentLoss(mtfTrend?: string | null, mtfValid?: boolean): SignalContribution | null {
+    // Fail-safe: if MTF data is invalid, don't emit MTF signals
+    if (mtfValid === false) return null;
     if (!mtfTrend) return null;
     // For LONG positions: if MTF trend is no longer bullish, alignment is lost
     if (mtfTrend === "bearish" || mtfTrend === "neutral") {
@@ -513,7 +516,7 @@ export class SmartExitEngine {
     }
 
     if (config.signals.mtfAlignmentLoss) {
-      const r = this.evaluateMtfAlignmentLoss(market.mtfTrend);
+      const r = this.evaluateMtfAlignmentLoss(market.mtfTrend, market.mtfValid);
       if (r) contributions.push(r);
     }
 

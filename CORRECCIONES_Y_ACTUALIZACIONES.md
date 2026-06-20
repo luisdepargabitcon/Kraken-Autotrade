@@ -224,6 +224,79 @@ Migration 051 se ejecuta automáticamente al iniciar.
 
 ---
 
+## 2026-06-20 — fix(mtf): Corregir diagnóstico MTF CRÍTICA y añadir fail-safe
+
+### Problema
+El sistema MTF estaba detectando duplicación crítica con `exactLast=true` (todos los timeframes comparten la última vela), lo cual es normal en mercados alineados. Esto generaba logs repetitivos de "Duplicación MTF CRÍTICA detectada!" para BTC/USD, XRP/USD, SOL/USD, TON/USD.
+
+El diagnóstico original marcaba como CRÍTICO si:
+- `exactFirst=true` OR
+- `exactLast=true` OR
+- `identicalSpans=true`
+
+Pero `exactLast=true` es normal cuando los timeframes están alineados (misma hora de cierre).
+
+### Solución implementada
+
+**Archivos modificados:**
+- `server/services/mtfAnalysis.ts` — Corregir clasificación de diagnóstico, añadir validación de intervalos, rate-limiting, fail-safe
+- `server/services/SmartExitEngine.ts` — Añadir flag `mtfValid` a SmartExitMarketData y respetarlo en evaluateMtfAlignmentLoss
+- `server/services/tradingEngine.ts` — Pasar flag `mtfValid` desde MtfAnalyzer a SmartExitEngine
+- `server/services/__tests__/mtfAnalysis.test.ts` — Tests unitarios para diagnóstico MTF (9 tests)
+- `server/services/__tests__/smartExitStateManager.test.ts` — Marcar como skip (requiere DB real)
+
+**Nueva clasificación CRÍTICA:**
+Solo marca como CRÍTICO si:
+- `sameArrayReference === true` (mismo array para distintos timeframes)
+- `identicalSpans === true` (mismo span temporal)
+- `exactFirstMatch === true` (misma primera vela, solo si hay >1 vela)
+- `sameStepWrongTimeframe === true` (step real no coincide con expected step)
+
+**NO es CRÍTICO si:**
+- `exactLast=true` solo (normal - timeframes comparten última vela alineada)
+- Datos insuficientes (<2 velas)
+- Intervalos correctos
+
+**Validación de intervalos:**
+- Calcula step promedio entre velas consecutivas
+- Valida contra expected steps: 5m=300s, 1h=3600s, 4h=14400s
+- Tolerancia: 60s para 5m, 300s para 1h, 600s para 4h
+
+**Rate-limiting:**
+- Deduplicación de logs por pair + tipo (CRITICAL/INFO) durante 15 minutos
+- Contador de repeticiones
+- Log cada ~2.5 horas si hay spam (cada 10 repeticiones)
+
+**Fail-safe:**
+- `MultiTimeframeData.isValid` flag indica si datos MTF son válidos
+- Si `isValid=false`, SmartExitEngine NO emite señales MTF_ALIGNMENT_LOSS
+- `emitMTFDiagnostic` retorna `boolean` indicando si es crítico
+- `MtfAnalyzer` usa resultado para setear `isValid`
+
+**Tests unitarios:**
+- Test A: exactLast=true con intervalos correctos → NO crítico
+- Test B: mismo array para distintos timeframes → CRÍTICO
+- Test C: spans idénticos → CRÍTICO
+- Test D: step incorrecto para timeframe → CRÍTICO
+- Test E: exactFirstMatch → CRÍTICO
+- Test F: datos válidos → NO crítico
+- Test G: datos mínimos → NO crítico
+
+### Validación
+- npm run check: ✅
+- npm run build: ✅ (3801 módulos)
+- npm test (MTF): ✅ 9/9 tests
+
+### Deploy VPS required
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+No requiere migración DB.
+
+---
+
 ## 2026-06-16 — fix(fisco): Commit FISCO bloqueado por FK fisco_external_statement_items_matched_operation_id_fkey
 
 ### Commit

@@ -2723,16 +2723,19 @@ ${positionsList}
 
         // Get MTF trend (cached per pair)
         let mtfTrend = pairMtfCache.get(pair);
+        let mtfValid = true;
         if (mtfTrend === undefined && !pairMtfCache.has(pair)) {
           try {
             const mtfData = await this.mtfAnalyzer.getMultiTimeframeData(pair);
             if (mtfData) {
               const mtfAnalysis = _analyzeMultiTimeframe(mtfData);
               mtfTrend = mtfAnalysis.shortTerm;
+              mtfValid = mtfData.isValid;
             } else {
               mtfTrend = null;
+              mtfValid = false;
             }
-          } catch { mtfTrend = null; }
+          } catch { mtfTrend = null; mtfValid = false; }
           pairMtfCache.set(pair, mtfTrend!);
         }
 
@@ -2753,6 +2756,7 @@ ${positionsList}
           priceHistory: this.priceHistory.get(position.pair) || [],
           candles,
           mtfTrend,
+          mtfValid,
           volumeRatio,
           orderbookBias: null,
           exchangeNetflow: null,
