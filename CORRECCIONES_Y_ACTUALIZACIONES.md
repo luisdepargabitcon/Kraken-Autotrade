@@ -297,6 +297,50 @@ No requiere migración DB.
 
 ---
 
+## 2026-06-25 — fix(ai-shadow): Corregir Shadow Mode — migración, endpoint, modelLoaded y UI
+
+### Problema
+1. `/api/ai/shadow/report` devolvía 500 porque la tabla `ai_shadow_decisions` no existía en DB (no había migración).
+2. `modelLoaded` era siempre `false` tras reinicio del servidor aunque el archivo `.joblib` existiese en disco — sólo se ponía `true` si el entrenamiento ocurrió en la misma sesión.
+3. La UI en `AiMl.tsx > ObservacionTab` no mostraba ningún mensaje claro cuando `shadowEnabled=true` pero `modelLoaded=false`.
+
+### Solución implementada
+
+**Archivos nuevos:**
+- `db/migrations/056_ai_shadow_decisions.sql` — `CREATE TABLE IF NOT EXISTS ai_shadow_decisions` con columnas base (alineadas con schema Drizzle) + columnas extendidas via `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Incluye 4 índices.
+- `server/services/__tests__/aiShadowReport.test.ts` — 12 tests unitarios que cubren: respuesta limpia sin tabla, mensaje correcto por estado (OFF / sin modelo / sin predicciones / con datos), lógica UI amber warning, y restricción filtro real.
+
+**Archivos modificados:**
+- `server/routes.ts` — Añade `056_ai_shadow_decisions` al listado del `AutoMigrationRunner` en startup.
+- `server/storage.ts` — `getAiShadowReport()`: primero comprueba existencia de la tabla via `information_schema`; si no existe devuelve `{ total:0, …, tableExists:false }` sin lanzar error; añade campo `tableExists` al tipo de retorno.
+- `server/routes/ai.routes.ts` — `GET /api/ai/shadow/report`: nunca devuelve 500; añade campos `enabled`, `modelLoaded`, `totalPredictions`, `tableExists`, `message` con contexto semántico.
+- `server/services/aiService.ts` — `getStatus()`: si `fs.existsSync(MODEL_PATH)` es `true`, fuerza `this.modelLoaded = true` (fix reinicio); `modelLoaded` en respuesta usa `modelExists` directamente (fuente de verdad = fichero en disco).
+- `client/src/pages/AiMl.tsx` — `ObservacionTab`: añade 3 tarjetas de estado (observador/modelo/predicciones), banner amber `shadowEnabled=true+modelLoaded=false` con próximo paso, banner azul cuando todo listo pero sin predicciones aún; empty state diferenciado según estado.
+
+### Tests
+- npm run check: ✅
+- npm run build: ✅ (3801 módulos)
+- vitest aiShadowReport: ✅ 12/12
+
+### Deploy VPS required
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+### Validación esperada en VPS tras deploy:
+```bash
+# Tabla creada
+docker exec krakenbot-staging-db psql -U krakenstaging -d krakenbot_staging \
+  -c "\d ai_shadow_decisions"
+
+# Endpoint no devuelve 500
+curl http://5.250.184.18:3020/api/ai/shadow/report | jq '{enabled,modelLoaded,tableExists,message}'
+```
+
+---
+
 ## 2026-06-20 — fix(migration): Integrar AutoMigrationRunner en startup para migraciones 049, 052, 053
 
 ### Problema

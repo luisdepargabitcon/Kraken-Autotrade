@@ -315,8 +315,13 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowBlocked, shad
     onError: () => toast({ variant: "destructive", title: "Error al cambiar configuración" }),
   });
 
+  const shadowEnabled = status?.shadowEnabled ?? false;
+  const modelLoaded = status?.modelLoaded ?? false;
+  const reportMessage = shadowReport?.message ?? null;
+
   return (
     <div className="space-y-4">
+      {/* Estado del observador */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-mono flex items-center gap-2">
@@ -334,11 +339,58 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowBlocked, shad
               </div>
             </div>
             <Switch
-              checked={status?.shadowEnabled ?? false}
+              checked={shadowEnabled}
               disabled={toggleMut.isPending}
               onCheckedChange={(v) => toggleMut.mutate({ shadowEnabled: v })}
             />
           </div>
+
+          {/* Estado resumido: modelo + observador */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className={`p-3 rounded-lg border ${shadowEnabled ? "bg-purple-500/10 border-purple-500/30" : "bg-white/5 border-white/10"}`}>
+              <p className="text-xs text-muted-foreground mb-1">Modo observador</p>
+              <p className={`text-sm font-mono font-bold ${shadowEnabled ? "text-purple-400" : "text-muted-foreground"}`}>
+                {shadowEnabled ? "Encendido" : "Apagado"}
+              </p>
+            </div>
+            <div className={`p-3 rounded-lg border ${modelLoaded ? "bg-green-500/10 border-green-500/30" : "bg-amber-500/10 border-amber-500/30"}`}>
+              <p className="text-xs text-muted-foreground mb-1">Modelo</p>
+              <p className={`text-sm font-mono font-bold ${modelLoaded ? "text-green-400" : "text-amber-400"}`}>
+                {modelLoaded ? "Cargado" : "Sin entrenar"}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg border border-white/10 bg-white/5">
+              <p className="text-xs text-muted-foreground mb-1">Predicciones</p>
+              <p className="text-sm font-mono font-bold">{shadowTotal}</p>
+            </div>
+          </div>
+
+          {/* Próximo paso claro */}
+          {shadowEnabled && !modelLoaded && (
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-500/[0.08] border border-amber-500/30">
+              <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-400">Modo observador activado — esperando modelo</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  El observador está ON pero no puede registrar predicciones porque no hay modelo entrenado.
+                  <strong className="text-amber-300"> Próximo paso: ve a la pestaña Aprendizaje y entrena el modelo.</strong>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {shadowEnabled && modelLoaded && shadowTotal === 0 && (
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-blue-500/[0.08] border border-blue-500/30">
+              <Activity className="h-4 w-4 text-blue-400 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-muted-foreground">
+                Modo observador activo y modelo listo. Las predicciones se registrarán automáticamente con las próximas señales BUY evaluadas por el bot.
+              </p>
+            </div>
+          )}
+
+          {reportMessage && shadowEnabled && modelLoaded && shadowTotal === 0 && (
+            <p className="text-xs text-muted-foreground/70 italic">{reportMessage}</p>
+          )}
         </CardContent>
       </Card>
 
@@ -388,8 +440,22 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowBlocked, shad
           ) : (
             <div className="flex flex-col items-center justify-center py-8 gap-3 text-muted-foreground">
               <EyeOff className="h-10 w-10 opacity-30" />
-              <p className="text-sm">Sin predicciones shadow registradas</p>
-              <p className="text-xs text-center">Activa Modo observador y entrena el modelo para empezar a registrar predicciones</p>
+              {!shadowEnabled ? (
+                <>
+                  <p className="text-sm">Modo observador desactivado</p>
+                  <p className="text-xs text-center">Actívalo arriba para que el sistema empiece a registrar predicciones.</p>
+                </>
+              ) : !modelLoaded ? (
+                <>
+                  <p className="text-sm font-semibold text-amber-400">Sin modelo entrenado</p>
+                  <p className="text-xs text-center text-amber-300/70">El observador está ON pero necesita un modelo para generar predicciones.<br/>Ve a <strong>Aprendizaje → Entrenar IA ahora</strong>.</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm">Sin predicciones shadow todavía</p>
+                  <p className="text-xs text-center">El observador y el modelo están listos. Las predicciones aparecerán con las próximas señales BUY.</p>
+                </>
+              )}
             </div>
           )}
         </CardContent>

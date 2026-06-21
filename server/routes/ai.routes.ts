@@ -305,11 +305,48 @@ export const registerAiRoutes: RegisterRoutes = (app, _deps) => {
 
   app.get("/api/ai/shadow/report", async (req, res) => {
     try {
+      const status = await aiService.getStatus();
       const report = await storage.getAiShadowReport();
-      res.json(report);
+
+      const enabled = status.shadowEnabled;
+      const modelLoaded = status.modelLoaded;
+      const totalPredictions = report.total;
+
+      let message: string | null = null;
+      if (!enabled) {
+        message = "Modo observador desactivado. Actívalo para que la IA registre predicciones sin afectar operaciones reales.";
+      } else if (!modelLoaded) {
+        message = "Modo observador activado, pero todavía no puede registrar predicciones porque no hay modelo entrenado. Entrena el modelo primero.";
+      } else if (totalPredictions === 0) {
+        message = "Modo observador activo y modelo cargado. Todavía no hay predicciones registradas — se registrarán con las próximas señales BUY evaluadas.";
+      }
+
+      res.json({
+        enabled,
+        modelLoaded,
+        totalPredictions,
+        tableExists: report.tableExists,
+        total: report.total,
+        blocked: report.blocked,
+        blockedLosers: report.blockedLosers,
+        passedLosers: report.passedLosers,
+        message,
+      });
     } catch (error: any) {
       console.error("[api/ai/shadow/report] Error:", error.message);
-      res.status(500).json({ errorCode: "SHADOW_REPORT_ERROR", message: "Error al obtener el informe de shadow" });
+      // Never 500 — return graceful empty response
+      res.json({
+        enabled: false,
+        modelLoaded: false,
+        totalPredictions: 0,
+        tableExists: false,
+        total: 0,
+        blocked: 0,
+        blockedLosers: 0,
+        passedLosers: 0,
+        message: "No se pudo obtener el informe de shadow. El sistema está en estado inicial.",
+        _error: error.message,
+      });
     }
   });
 

@@ -177,6 +177,12 @@ class AiService {
 
     const modelExists = fs.existsSync(MODEL_PATH);
 
+    // If the model file exists on disk, treat it as loaded — in-memory flag may be false
+    // after a restart since Python subprocess doesn't keep state between predictions.
+    if (modelExists && !this.modelLoaded) {
+      this.modelLoaded = true;
+    }
+
     let metrics = null;
     if (fs.existsSync(STATUS_PATH)) {
       try {
@@ -199,7 +205,7 @@ class AiService {
       canActivate: validCount >= MIN_SAMPLES_ACTIVATE && modelExists,
       filterEnabled: aiConfig?.filterEnabled ?? false,
       shadowEnabled: aiConfig?.shadowEnabled ?? false,
-      modelLoaded: modelExists && this.modelLoaded,
+      modelLoaded: modelExists,
       lastTrainTs: aiConfig?.lastTrainTs ?? null,
       threshold: parseFloat(aiConfig?.threshold ?? "0.60"),
       metrics,

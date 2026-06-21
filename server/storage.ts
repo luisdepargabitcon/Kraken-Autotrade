@@ -193,7 +193,7 @@ export interface IStorage {
   
   saveAiShadowDecision(decision: InsertAiShadowDecision): Promise<AiShadowDecision>;
   updateAiShadowFinalPnl(tradeId: string, pnl: string): Promise<void>;
-  getAiShadowReport(): Promise<{ total: number; blocked: number; blockedLosers: number; passedLosers: number }>;
+  getAiShadowReport(): Promise<{ total: number; blocked: number; blockedLosers: number; passedLosers: number; tableExists: boolean }>;
   
   getAiConfig(): Promise<AiConfig | undefined>;
   updateAiConfig(config: Partial<InsertAiConfig>): Promise<AiConfig>;
@@ -1385,16 +1385,37 @@ export class DatabaseStorage implements IStorage {
       .where(eq(aiShadowDecisionsTable.tradeId, tradeId));
   }
 
-  async getAiShadowReport(): Promise<{ total: number; blocked: number; blockedLosers: number; passedLosers: number }> {
-    const allDecisions = await db.select().from(aiShadowDecisionsTable)
-      .where(sql`${aiShadowDecisionsTable.finalPnlNet} IS NOT NULL`);
-    
-    const total = allDecisions.length;
-    const blocked = allDecisions.filter(d => d.wouldBlock).length;
-    const blockedLosers = allDecisions.filter(d => d.wouldBlock && parseFloat(d.finalPnlNet || '0') < 0).length;
-    const passedLosers = allDecisions.filter(d => !d.wouldBlock && parseFloat(d.finalPnlNet || '0') < 0).length;
-    
-    return { total, blocked, blockedLosers, passedLosers };
+  async getAiShadowReport(): Promise<{ total: number; blocked: number; blockedLosers: number; passedLosers: number; tableExists: boolean }> {
+    // Check table existence first — table may not exist yet (migration pending)
+    try {
+      const tableCheck = await db.execute(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'ai_shadow_decisions'
+        ) AS exists
+      `);
+      const tableExists = (tableCheck.rows?.[0] as any)?.exists === true;
+
+      if (!tableExists) {
+        return { total: 0, blocked: 0, blockedLosers: 0, passedLosers: 0, tableExists: false };
+      }
+
+      const allDecisions = await db.select().from(aiShadowDecisionsTable)
+        .where(sql`${aiShadowDecisionsTable.finalPnlNet} IS NOT NULL`);
+
+      const total = allDecisions.length;
+      const blocked = allDecisions.filter(d => d.wouldBlock).length;
+      const blockedLosers = allDecisions.filter(d => d.wouldBlock && parseFloat(d.finalPnlNet || '0') < 0).length;
+      const passedLosers = allDecisions.filter(d => !d.wouldBlock && parseFloat(d.finalPnlNet || '0') < 0).length;
+
+      return { total, blocked, blockedLosers, passedLosers, tableExists: true };
+    } catch (e: any) {
+      // If table doesn't exist or any other DB error, return empty report gracefully
+      if (e?.message?.includes('does not exist') || e?.code === '42P01') {
+        return { total: 0, blocked: 0, blockedLosers: 0, passedLosers: 0, tableExists: false };
+      }
+      throw e;
+    }
   }
 
   async getAiConfig(): Promise<AiConfig | undefined> {

@@ -170,6 +170,7 @@ export async function registerRoutes(
       { id: '049_telegram_alert_dedupe', filePath: path.join(migrationsDir, '049_telegram_alert_dedupe.sql') },
       { id: '052_smart_exit_state', filePath: path.join(migrationsDir, '052_smart_exit_state.sql') },
       { id: '053_add_telegram_alert_config_to_bot_config', filePath: path.join(migrationsDir, '053_add_telegram_alert_config_to_bot_config.sql') },
+      { id: '056_ai_shadow_decisions', filePath: path.join(migrationsDir, '056_ai_shadow_decisions.sql') },
     ];
 
     console.log('[startup] Running AutoMigrationRunner...');
