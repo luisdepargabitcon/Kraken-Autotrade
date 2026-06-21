@@ -297,25 +297,40 @@ No requiere migración DB.
 
 ---
 
-## 2026-06-25 — fix(ai): Añadir runtime Python para entrenamiento ML en contenedor Docker
+## 2026-06-25 — fix(ai): Cambiar base Docker a Debian slim para dependencias ML Python
 
-### Problema
-El contenedor de la app (`krakenbot-staging-app`) está basado en `node:20-alpine` y no tenía Python instalado. El entrenamiento ML fallaba con:
-```json
-{ "errorCode": "TRAINING_ERROR", "message": "Error: spawn python3 ENOENT" }
+### Problema (2 fases)
+**Fase 1 (commit 9f8217c):** El contenedor `krakenbot-staging-app` basado en `node:20-alpine` no tenía Python. El entrenamiento ML fallaba: `"Error: spawn python3 ENOENT"`.
+
+**Fase 2 (este commit):** La corrección anterior (pip install en Alpine) también falló en el build del VPS:
+```text
+ERROR: Unknown compiler(s): [['cc'], ['gcc'], ['clang']]
+Running `cc --version` gave No such file or directory
 ```
-El script `mlTrainer.py` sí estaba copiado en `/app/server/services/mlTrainer.py` pero no había runtime Python.
+`scikit-learn` no tiene wheels precompilados para Alpine/musl y necesita compilar desde source — Alpine no tiene `gcc` ni `cc` en la imagen base de Node.
 
 ### Causa raíz
-`Dockerfile` línea 8: `apk add` no incluía `python3` ni `py3-pip`.
+`node:20-alpine` usa musl libc. Los wheels de `scikit-learn` en PyPI son `manylinux` (glibc). Sin compilador, no se puede instalar en Alpine. Solución: cambiar la base a Debian (glibc nativo).
 
 ### Solución implementada
 
-**`Dockerfile`** — Añadir Python y dependencias ML:
+**`Dockerfile`** — Cambiar base a `node:20-bookworm-slim` + venv Python:
 ```dockerfile
-RUN apk add --no-cache libc6-compat docker-cli python3 py3-pip \
-  && pip3 install --no-cache-dir scikit-learn numpy joblib --break-system-packages
+FROM node:20-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv ca-certificates docker.io \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/ai-venv
+ENV PATH="/opt/ai-venv/bin:$PATH"
+
+RUN pip install --no-cache-dir --upgrade pip \
+  && pip install --no-cache-dir scikit-learn numpy joblib
 ```
+- `libc6-compat` eliminado (era un shim de glibc para Alpine, innecesario en Debian)
+- Venv aísla las dependencias ML del sistema Debian
 
 **`server/services/aiService.ts`** — 6 cambios:
 1. Constante `PYTHON_BIN = process.env.AI_PYTHON_BIN || "python3"` — configurable sin hardcode
