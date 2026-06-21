@@ -297,6 +297,68 @@ No requiere migración DB.
 
 ---
 
+## 2026-06-25 — fix(ai): Añadir runtime Python para entrenamiento ML en contenedor Docker
+
+### Problema
+El contenedor de la app (`krakenbot-staging-app`) está basado en `node:20-alpine` y no tenía Python instalado. El entrenamiento ML fallaba con:
+```json
+{ "errorCode": "TRAINING_ERROR", "message": "Error: spawn python3 ENOENT" }
+```
+El script `mlTrainer.py` sí estaba copiado en `/app/server/services/mlTrainer.py` pero no había runtime Python.
+
+### Causa raíz
+`Dockerfile` línea 8: `apk add` no incluía `python3` ni `py3-pip`.
+
+### Solución implementada
+
+**`Dockerfile`** — Añadir Python y dependencias ML:
+```dockerfile
+RUN apk add --no-cache libc6-compat docker-cli python3 py3-pip \
+  && pip3 install --no-cache-dir scikit-learn numpy joblib --break-system-packages
+```
+
+**`server/services/aiService.ts`** — 6 cambios:
+1. Constante `PYTHON_BIN = process.env.AI_PYTHON_BIN || "python3"` — configurable sin hardcode
+2. Ambos `spawn("python3", ...)` → `spawn(PYTHON_BIN, ...)` (líneas ~344 y ~466)
+3. Nuevo método privado `checkPythonRuntime()` — ejecuta `python3 -c "import sys, sklearn, numpy; print(sys.version)"`, cachea resultado en memoria
+4. Interfaz `AiStatus` extendida con: `pythonAvailable`, `pythonBin`, `pythonVersion`, `mlDependenciesOk`, `modelFileExists`, `modelPath`
+5. `getStatus()` llama `checkPythonRuntime()` e incluye los campos de diagnóstico en la respuesta
+6. `proc.on("error")` en training: si `err.code === "ENOENT"` → `errorCode: "PYTHON_RUNTIME_MISSING"` con mensaje claro en español en lugar del críptico "spawn python3 ENOENT"
+
+### Persistencia del modelo
+El volumen Docker `ai_models_staging:/app/ml_models` ya estaba configurado en `docker-compose.staging.yml`.
+El modelo `.joblib` se guarda en `/app/ml_models/ai_filter.joblib` → **persiste entre rebuilds y reinicios** ✅.
+
+### Validación
+- npm run check: ✅
+- npm run build: ✅ (3801 módulos)
+
+### Deploy VPS required (rebuild imagen)
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+### Verificación post-deploy
+```bash
+# Python y ML deps disponibles en el contenedor
+docker compose -f docker-compose.staging.yml exec krakenbot-staging-app \
+  python3 -c "import sklearn, numpy, joblib; print('OK', __import__('sklearn').__version__)"
+
+# Endpoint de estado incluye diagnóstico Python
+curl http://5.250.184.18:3020/api/ai/status | jq '{pythonAvailable,pythonBin,pythonVersion,mlDependenciesOk,modelFileExists}'
+```
+
+### Confirmaciones de seguridad
+- ✅ Filtro real sigue OFF (no se modificó `filterEnabled`)
+- ✅ Autoapply sigue OFF
+- ✅ FISCO no se tocó
+- ✅ IDCA activo no se tocó
+- ✅ No se ejecutaron órdenes reales
+
+---
+
 ## 2026-06-25 — fix(ai-shadow): Corregir Shadow Mode — migración, endpoint, modelLoaded y UI
 
 ### Problema

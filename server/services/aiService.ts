@@ -50,6 +50,12 @@ export interface AiStatus {
     tradesBlocked?: number;
     lossesAvoided?: number;
   } | null;
+  pythonAvailable: boolean;
+  pythonBin: string;
+  pythonVersion: string;
+  mlDependenciesOk: boolean;
+  modelFileExists: boolean;
+  modelPath: string;
 }
 
 export interface AiDiagnostic {
@@ -76,6 +82,7 @@ export interface AiDiagnostic {
 const MODEL_DIR = process.env.AI_MODEL_DIR || "/tmp/models";
 const MODEL_PATH = `${MODEL_DIR}/ai_filter.joblib`;
 const STATUS_PATH = `${MODEL_DIR}/ai_status.json`;
+const PYTHON_BIN = process.env.AI_PYTHON_BIN || "python3";
 
 const MIN_SAMPLES_TRAIN = 300;
 const MIN_SAMPLES_ACTIVATE = 300;
@@ -120,6 +127,32 @@ function translateDiscardReasons(reasons: Record<string, number>): Record<string
 class AiService {
   private modelLoaded: boolean = false;
   private cachedMetrics: any = null;
+  private pythonCheckCache: { available: boolean; version: string; mlOk: boolean } | null = null;
+
+  private checkPythonRuntime(): Promise<{ available: boolean; version: string; mlOk: boolean }> {
+    if (this.pythonCheckCache) return Promise.resolve(this.pythonCheckCache);
+    return new Promise((resolve) => {
+      const proc = spawn(PYTHON_BIN, ["-c", "import sys, sklearn, numpy; print(sys.version)"], {
+        cwd: process.cwd(),
+      });
+      let stdout = "";
+      proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
+      proc.on("close", (code: number | null) => {
+        const result = {
+          available: code === 0,
+          version: stdout.trim().split("\n")[0] || "",
+          mlOk: code === 0,
+        };
+        this.pythonCheckCache = result;
+        resolve(result);
+      });
+      proc.on("error", () => {
+        const result = { available: false, version: "", mlOk: false };
+        this.pythonCheckCache = result;
+        resolve(result);
+      });
+    });
+  }
 
   extractFeatures(indicators: {
     rsi?: number;
@@ -194,6 +227,8 @@ class AiService {
       }
     }
 
+    const pyRuntime = await this.checkPythonRuntime();
+
     return {
       phase,
       phaseLabel,
@@ -206,6 +241,12 @@ class AiService {
       filterEnabled: aiConfig?.filterEnabled ?? false,
       shadowEnabled: aiConfig?.shadowEnabled ?? false,
       modelLoaded: modelExists,
+      pythonAvailable: pyRuntime.available,
+      pythonBin: PYTHON_BIN,
+      pythonVersion: pyRuntime.version,
+      mlDependenciesOk: pyRuntime.mlOk,
+      modelFileExists: modelExists,
+      modelPath: MODEL_PATH,
       lastTrainTs: aiConfig?.lastTrainTs ?? null,
       threshold: parseFloat(aiConfig?.threshold ?? "0.60"),
       metrics,
@@ -300,7 +341,7 @@ class AiService {
         return;
       }
 
-      const proc = spawn("python3", [pythonScript, "predict", featuresJson], {
+      const proc = spawn(PYTHON_BIN, [pythonScript, "predict", featuresJson], {
         cwd: process.cwd(),
       });
 
@@ -324,8 +365,12 @@ class AiService {
         }
       });
 
-      proc.on("error", (err) => {
-        console.error("[AI] Python spawn error:", err);
+      proc.on("error", (err: any) => {
+        if (err.code === "ENOENT") {
+          console.warn(`[AI] Python runtime not found ('${PYTHON_BIN}'). Prediction unavailable — using fallback score.`);
+        } else {
+          console.error("[AI] Python spawn error:", err);
+        }
         resolve({ score: "0.5" });
       });
     });
@@ -418,7 +463,7 @@ class AiService {
         return;
       }
 
-      const proc = spawn("python3", [pythonScript, "train", samplesPath], {
+      const proc = spawn(PYTHON_BIN, [pythonScript, "train", samplesPath], {
         cwd: process.cwd(),
       });
 
@@ -474,10 +519,17 @@ class AiService {
         }
       });
 
-      proc.on("error", async (err) => {
-        console.error("[AI] Training spawn error:", err);
-        await storage.updateAiConfig({ lastTrainError: err.message });
-        resolve({ success: false, message: `Error: ${err.message}` });
+      proc.on("error", async (err: any) => {
+        if (err.code === "ENOENT") {
+          const message = `No se encontró '${PYTHON_BIN}' dentro del contenedor. Revisa el Dockerfile o establece la variable AI_PYTHON_BIN.`;
+          console.error("[AI] Training spawn error — Python runtime missing:", message);
+          await storage.updateAiConfig({ lastTrainError: message });
+          resolve({ success: false, errorCode: "PYTHON_RUNTIME_MISSING", message });
+        } else {
+          console.error("[AI] Training spawn error:", err);
+          await storage.updateAiConfig({ lastTrainError: err.message });
+          resolve({ success: false, message: `Error: ${err.message}` });
+        }
       });
     });
   }
