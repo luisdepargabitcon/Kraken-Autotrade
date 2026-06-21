@@ -27,6 +27,52 @@ docker compose -f docker-compose.staging.yml up -d --build
 
 ---
 
+## 2026-06-22 — fix(spot): prevent duplicate same-tick/same-signal entries per pair
+
+### Problema
+Con `maxOpenLotsPerPair = 3` en SMART_GUARD, el bot abría 3 posiciones casi simultáneas del mismo par (SOL, BTC, TON) con precios casi idénticos y timestamps separados por ~120s. El maxOpenLotsPerPair actuaba como **objetivo** en vez de **límite**.
+
+### Causa raíz (3 bugs combinados)
+1. **Anti-burst cooldown demasiado bajo**: 120s permitía 3 entradas en ~4 minutos con la misma señal persistente
+2. **Sin distancia mínima de precio**: no había protección contra abrir lotes al mismo precio
+3. **Sin deduplicación por vela**: la misma vela/señal podía disparar múltiples entradas en ticks intermedios
+4. **Bug crítico candle-mode**: `lastTradeTime.set()` no se llamaba tras BUY exitoso en `analyzePairAndTradeWithCandles`, haciendo que el cooldown de 120s no funcionara en absoluto en modo velas
+
+### Corrección
+- **Nuevo método unificado** `checkMultiLotEntryGate()` con 4 gates:
+  1. Max lots per pair (cap)
+  2. Anti-burst cooldown: **120s → 600s** (10 min)
+  3. Distancia mínima de precio: **1.5%** desde el lote más cercano
+  4. Dedup por vela: misma `candle.time` no puede abrir >1 lote
+- Ambos pipelines (cycle y candles) usan el mismo gate
+- Añadido `lastTradeTime.set()` + `recordEntryCandle()` tras BUY exitoso en candle-mode
+- Nuevos `BlockReasonCode`: `ENTRY_COOLDOWN`, `TOO_CLOSE_TO_EXISTING`, `SAME_CANDLE_DEDUP`, `SMART_GUARD_MAX_LOTS_REACHED`, `SINGLE_MODE_POSITION_EXISTS`
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` — nuevo gate unificado, reemplazo de gates inline duplicados, fix `lastTradeTime` en candle BUY
+
+### Tests
+- `server/services/__tests__/multiLotEntryGate.test.ts` — 12 tests (Cases A-E + edge cases)
+
+### Validación
+- `npm run check`: ✅ 0 errores
+- `vitest multiLotEntryGate`: ✅ 12/12
+
+### Deploy VPS
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+No requiere migración DB.
+
+### Logs de verificación
+```bash
+docker compose -f docker-compose.staging.yml logs -f --tail=100 | grep -E "ENTRY_BLOCKED_TOO_CLOSE|ENTRY_BLOCKED_SAME_CANDLE|ENTRY_BLOCKED_COOLDOWN|ENTRY_ALLOWED_ADDITIONAL"
+```
+
+---
+
 ## 2026-06-19 — fix(telegram): Deduplicación persistente para alertas SMART EXIT (tormenta de mensajes)
 
 ### Problema

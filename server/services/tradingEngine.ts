@@ -187,6 +187,11 @@ type BlockReasonCode =
   | "CHASE_BLOCK"             // Precio se alejó del cierre de vela (chase gate)
   | "AI_FILTER_BLOCK"         // Bloqueado por filtro ML predictivo
   | "HARD_GUARD"              // Bloqueado por unified entry gate (runUnifiedEntryGate)
+  | "ENTRY_COOLDOWN"          // Anti-burst cooldown between entries
+  | "TOO_CLOSE_TO_EXISTING"   // Price too close to nearest open lot
+  | "SAME_CANDLE_DEDUP"       // Same candle already used for entry
+  | "SMART_GUARD_MAX_LOTS_REACHED" // Max open lots per pair (SMART_GUARD)
+  | "SINGLE_MODE_POSITION_EXISTS"  // Single mode, position already open
   | "ALLOWED";                // Señal permitida (no bloqueada)
 
 type SmartGuardDecision = "ALLOW" | "BLOCK" | "SKIP" | "NOOP";
@@ -570,6 +575,14 @@ export class TradingEngine {
   // Rate-limit para ejecución intermedia: evitar re-intentar cada 5s cuando ya se intentó
   private lastIntermediateExecAttempt: Map<string, number> = new Map();
   private readonly INTERMEDIATE_EXEC_COOLDOWN_SEC = 120; // Mín 120s entre intentos intermedios
+
+  // ── Anti-burst multi-lot guards ────────────────────────────────
+  // Minimum seconds between BUY entries for the SAME pair (anti-burst)
+  private readonly SG_MIN_SECONDS_BETWEEN_ENTRIES = 600; // 10 min
+  // Minimum price distance (%) from nearest open lot to allow a new lot
+  private readonly SG_MIN_ENTRY_DISTANCE_PCT = 1.5;
+  // Track the candle timestamp used for last entry per pair (signal dedup)
+  private lastEntryCandleTs: Map<string, number> = new Map();
   
   // Throttle para logs INTERMEDIATE_DIAG: evitar spam cada 5s
   private lastIntermediateDiagLog: Map<string, number> = new Map();
@@ -1017,6 +1030,90 @@ export class TradingEngine {
       return lastTs ? new Date(lastTs) : null;
     }
     return storage.getLastOrderTimeForPair(exchange, pair);
+  }
+
+  /**
+   * Shared multi-lot entry gate.  Returns { allowed, reason } after checking:
+   *   1. Max lots per pair
+   *   2. Anti-burst cooldown (SG_MIN_SECONDS_BETWEEN_ENTRIES)
+   *   3. Minimum price distance from nearest open lot
+   *   4. Per-candle signal dedup (same candle can't open >1 lot)
+   * Both analyzePairAndTrade (cycle) and analyzePairAndTradeWithCandles (candles)
+   * must call this ONCE to avoid duplicated logic.
+   */
+  private async checkMultiLotEntryGate(pair: string, currentPrice: number, candleTs?: number): Promise<{
+    allowed: boolean;
+    reason: string;
+    currentOpenLots: number;
+    maxLotsForMode: number;
+    positionMode: string;
+  }> {
+    const botConfigCheck = await storage.getBotConfig();
+    const positionMode = botConfigCheck?.positionMode || "SINGLE";
+    const sgMaxLotsPerPair = botConfigCheck?.sgMaxOpenLotsPerPair ?? 1;
+    const exchangeForGate = this.getTradingExchangeType();
+    const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
+
+    const { occupiedSlots, currentOpenLots } = await this.getOccupiedLotsForGate(exchangeForGate, pair);
+
+    // Gate 1: Max lots reached
+    if (currentOpenLots >= maxLotsForMode) {
+      const code = positionMode === "SMART_GUARD" ? "SMART_GUARD_MAX_LOTS_REACHED" : "SINGLE_MODE_POSITION_EXISTS";
+      log(`[ENTRY_BLOCKED_SLOTS] ${pair}: slots=${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
+      return { allowed: false, reason: code, currentOpenLots, maxLotsForMode, positionMode };
+    }
+
+    // Gate 2: Anti-burst cooldown
+    const lastOrderTime = await this.getLastEntryTimeForGate(exchangeForGate, pair);
+    if (lastOrderTime) {
+      const secSince = (Date.now() - lastOrderTime.getTime()) / 1000;
+      if (secSince < this.SG_MIN_SECONDS_BETWEEN_ENTRIES) {
+        const remaining = Math.ceil(this.SG_MIN_SECONDS_BETWEEN_ENTRIES - secSince);
+        log(`[ENTRY_BLOCKED_COOLDOWN] ${pair}: anti-burst cooldown=${remaining}s (min=${this.SG_MIN_SECONDS_BETWEEN_ENTRIES}s)`, "trading");
+        return { allowed: false, reason: `ENTRY_COOLDOWN:${remaining}s`, currentOpenLots, maxLotsForMode, positionMode };
+      }
+    }
+
+    // Gate 3: Price distance from nearest open lot (only when already ≥1 lot open)
+    if (currentOpenLots > 0 && currentPrice > 0) {
+      const existingPositions = this.getPositionsByPair(pair);
+      let minDistancePct = Infinity;
+      for (const pos of existingPositions) {
+        const entryPx = pos.entryPrice || 0;
+        if (entryPx > 0) {
+          const dist = Math.abs((currentPrice - entryPx) / entryPx) * 100;
+          if (dist < minDistancePct) minDistancePct = dist;
+        }
+      }
+      if (minDistancePct < this.SG_MIN_ENTRY_DISTANCE_PCT) {
+        log(`[ENTRY_BLOCKED_TOO_CLOSE] ${pair}: minDistancePct=${minDistancePct.toFixed(2)}% < ${this.SG_MIN_ENTRY_DISTANCE_PCT}% from nearest lot`, "trading");
+        return { allowed: false, reason: `TOO_CLOSE_TO_EXISTING:${minDistancePct.toFixed(2)}%`, currentOpenLots, maxLotsForMode, positionMode };
+      }
+    }
+
+    // Gate 4: Per-candle signal dedup (candles mode only)
+    if (candleTs && candleTs > 0) {
+      const lastCandleUsed = this.lastEntryCandleTs.get(pair) || 0;
+      if (lastCandleUsed === candleTs) {
+        log(`[ENTRY_BLOCKED_SAME_CANDLE] ${pair}: candle=${new Date(candleTs * 1000).toISOString()} already used for entry`, "trading");
+        return { allowed: false, reason: "SAME_CANDLE_DEDUP", currentOpenLots, maxLotsForMode, positionMode };
+      }
+    }
+
+    if (currentOpenLots > 0) {
+      log(`[ENTRY_ALLOWED_ADDITIONAL_LOT] ${pair}: activeLots=${currentOpenLots} maxLots=${maxLotsForMode} cooldownOk=true distanceOk=true`, "trading");
+    }
+    return { allowed: true, reason: "ALLOWED", currentOpenLots, maxLotsForMode, positionMode };
+  }
+
+  /**
+   * Record that a successful entry used a particular candle timestamp.
+   * Called after executeTrade succeeds.
+   */
+  private recordEntryCandle(pair: string, candleTs?: number): void {
+    if (candleTs && candleTs > 0) {
+      this.lastEntryCandleTs.set(pair, candleTs);
+    }
   }
 
   private async emitOrderTrackingAlert(
@@ -3584,71 +3681,22 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           return;
         }
 
-        // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
-        // CRITICAL FIX: Use DB query to count OPEN + PENDING_FILL + pending intents
-        const botConfigCheck = await storage.getBotConfig();
-        const positionMode = botConfigCheck?.positionMode || "SINGLE";
-        const sgMaxLotsPerPair = botConfigCheck?.sgMaxOpenLotsPerPair ?? 1;
-        const exchangeForGate = this.getTradingExchangeType();
-        
-        // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
-        const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
-        
-        // ROBUST GATE: fuente de verdad de slots — paridad LIVE (BD) vs DRY_RUN (memoria)
-        const { occupiedSlots, currentOpenLots } = await this.getOccupiedLotsForGate(exchangeForGate, pair);
-        
-        // Anti-burst cooldown: minimum 120s between entries per pair
-        // Paridad LIVE (orderIntentsTable) vs DRY_RUN (lastTradeTime en memoria)
-        const sgMinSecondsBetweenEntries = 120;
-        const lastOrderTime = await this.getLastEntryTimeForGate(exchangeForGate, pair);
-        if (lastOrderTime) {
-          const secondsSinceLastOrder = (Date.now() - lastOrderTime.getTime()) / 1000;
-          if (secondsSinceLastOrder < sgMinSecondsBetweenEntries) {
-            const remainingSec = Math.ceil(sgMinSecondsBetweenEntries - secondsSinceLastOrder);
-            log(`[ENTRY_BLOCKED_COOLDOWN] ${pair}: anti-burst cooldown=${remainingSec}s`, "trading");
-            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown anti-ráfaga`, {
-              pair, signal: "BUY", reason: "ENTRY_COOLDOWN",
-              secondsSinceLastOrder, cooldownSeconds: sgMinSecondsBetweenEntries, remainingSeconds: remainingSec,
-            });
-            this.updatePairTrace(pair, {
-              openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode,
-              smartGuardDecision: "BLOCK", blockReasonCode: "COOLDOWN",
-              blockDetails: { cooldownRemainingSec: remainingSec, type: "ENTRY_COOLDOWN" },
-              finalSignal: "NONE", finalReason: `Cooldown anti-ráfaga: ${remainingSec}s`,
-            });
-            return;
-          }
-        }
-        
-        if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && currentOpenLots >= maxLotsForMode) {
-          const reasonCode = positionMode === "SMART_GUARD" 
-            ? "SMART_GUARD_MAX_LOTS_REACHED" 
-            : "SINGLE_MODE_POSITION_EXISTS";
-          
-          log(`[ENTRY_BLOCKED_SLOTS] ${pair}: slots=${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de slots ocupados`, {
-            pair,
-            signal: "BUY",
-            reason: reasonCode,
-            currentOpenLots,
-            maxOpenLots: maxLotsForMode,
-            occupiedSlots,
-            existingAmount: existingPosition?.amount || 0,
-            signalReason: signal.reason,
+        // ── UNIFIED MULTI-LOT ENTRY GATE (cycle mode, no candle dedup) ──
+        const gate = await this.checkMultiLotEntryGate(pair, currentPrice);
+        const { positionMode } = gate;
+        const currentOpenLots = gate.currentOpenLots;
+        const maxLotsForMode = gate.maxLotsForMode;
+        if (!gate.allowed) {
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - ${gate.reason}`, {
+            pair, signal: "BUY", reason: gate.reason,
+            currentOpenLots, maxLotsForMode, positionMode,
           });
-          this.lastScanResults.set(pair, {
-            signal: "BUY",
-            reason: reasonCode,
-            exposureAvailable: 0,
-          });
+          this.lastScanResults.set(pair, { signal: "BUY", reason: gate.reason, exposureAvailable: 0 });
           this.updatePairTrace(pair, {
-            openLotsThisPair: currentOpenLots,
-            maxLotsPerPair: maxLotsForMode,
-            smartGuardDecision: "BLOCK",
-            blockReasonCode: "MAX_LOTS_PER_PAIR",
-            blockDetails: { currentOpenLots, maxLotsForMode, occupiedSlots },
-            finalSignal: "NONE",
-            finalReason: `Max slots: ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions})`,
+            openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode,
+            smartGuardDecision: "BLOCK", blockReasonCode: (gate.reason.split(":")[0]) as BlockReasonCode,
+            blockDetails: { currentOpenLots, maxLotsForMode, reason: gate.reason },
+            finalSignal: "NONE", finalReason: gate.reason,
           });
           return;
         }
@@ -3658,6 +3706,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
         // Store current regime for sizing override and Telegram notifications
         let currentRegimeForSizing: string | null = null;
         let currentRegimeReasonForTelegram: string | null = null;
+        const botConfigCheck = await storage.getBotConfig();
         const routerEnabledForSizing = (botConfigCheck as any)?.regimeRouterEnabled ?? false;
         
         if (positionMode === "SMART_GUARD") {
@@ -4755,71 +4804,22 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           return;
         }
 
-        // MODO SINGLE o SMART_GUARD: Bloquear compras si ya hay posición abierta
-        // CRITICAL FIX: Use DB query to count OPEN + PENDING_FILL + pending intents
-        const botConfigCheck = await storage.getBotConfig();
-        const positionMode = botConfigCheck?.positionMode || "SINGLE";
-        const sgMaxLotsPerPair = botConfigCheck?.sgMaxOpenLotsPerPair ?? 1;
-        const exchangeForGateCandles = this.getTradingExchangeType();
-        
-        // En SINGLE siempre 1 slot. En SMART_GUARD respetamos sgMaxOpenLotsPerPair.
-        const maxLotsForMode = positionMode === "SMART_GUARD" ? sgMaxLotsPerPair : 1;
-        
-        // ROBUST GATE: fuente de verdad de slots — paridad LIVE (BD) vs DRY_RUN (memoria)
-        const { occupiedSlots, currentOpenLots } = await this.getOccupiedLotsForGate(exchangeForGateCandles, pair);
-        
-        // Anti-burst cooldown: minimum 120s between entries per pair
-        // Paridad LIVE (orderIntentsTable) vs DRY_RUN (lastTradeTime en memoria)
-        const sgMinSecondsBetweenEntriesCandles = 120;
-        const lastOrderTimeCandles = await this.getLastEntryTimeForGate(exchangeForGateCandles, pair);
-        if (lastOrderTimeCandles) {
-          const secondsSinceLastOrder = (Date.now() - lastOrderTimeCandles.getTime()) / 1000;
-          if (secondsSinceLastOrder < sgMinSecondsBetweenEntriesCandles) {
-            const remainingSec = Math.ceil(sgMinSecondsBetweenEntriesCandles - secondsSinceLastOrder);
-            log(`[ENTRY_BLOCKED_COOLDOWN] ${pair}: anti-burst cooldown=${remainingSec}s`, "trading");
-            await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - cooldown anti-ráfaga`, {
-              pair, signal: "BUY", reason: "ENTRY_COOLDOWN",
-              secondsSinceLastOrder, cooldownSeconds: sgMinSecondsBetweenEntriesCandles, remainingSeconds: remainingSec,
-            });
-            this.updatePairTrace(pair, {
-              openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode,
-              smartGuardDecision: "BLOCK", blockReasonCode: "COOLDOWN",
-              blockDetails: { cooldownRemainingSec: remainingSec, type: "ENTRY_COOLDOWN" },
-              finalSignal: "NONE", finalReason: `Cooldown anti-ráfaga: ${remainingSec}s`,
-            });
-            return;
-          }
-        }
-        
-        if ((positionMode === "SINGLE" || positionMode === "SMART_GUARD") && currentOpenLots >= maxLotsForMode) {
-          const reasonCode = positionMode === "SMART_GUARD" 
-            ? "SMART_GUARD_MAX_LOTS_REACHED" 
-            : "SINGLE_MODE_POSITION_EXISTS";
-          
-          log(`[ENTRY_BLOCKED_SLOTS] ${pair}: slots=${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions}, intents=${occupiedSlots.pendingIntents})`, "trading");
-          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - máximo de slots ocupados`, {
-            pair,
-            signal: "BUY",
-            reason: reasonCode,
-            currentOpenLots,
-            maxOpenLots: maxLotsForMode,
-            occupiedSlots,
-            existingAmount: existingPosition?.amount || 0,
-            signalReason: signal.reason,
+        // ── UNIFIED MULTI-LOT ENTRY GATE (candles mode, with candle dedup) ──
+        const gate = await this.checkMultiLotEntryGate(pair, currentPrice, candle.time);
+        const { positionMode } = gate;
+        const currentOpenLots = gate.currentOpenLots;
+        const maxLotsForMode = gate.maxLotsForMode;
+        if (!gate.allowed) {
+          await botLogger.info("TRADE_SKIPPED", `Señal BUY ignorada - ${gate.reason}`, {
+            pair, signal: "BUY", reason: gate.reason,
+            currentOpenLots, maxLotsForMode, positionMode,
           });
-          this.lastScanResults.set(pair, {
-            signal: "BUY",
-            reason: reasonCode,
-            exposureAvailable: 0,
-          });
+          this.lastScanResults.set(pair, { signal: "BUY", reason: gate.reason, exposureAvailable: 0 });
           this.updatePairTrace(pair, {
-            openLotsThisPair: currentOpenLots,
-            maxLotsPerPair: maxLotsForMode,
-            smartGuardDecision: "BLOCK",
-            blockReasonCode: "MAX_LOTS_PER_PAIR",
-            blockDetails: { currentOpenLots, maxLotsForMode, occupiedSlots },
-            finalSignal: "NONE",
-            finalReason: `Max slots: ${currentOpenLots}/${maxLotsForMode} (OPEN=${occupiedSlots.openPositions}, PENDING=${occupiedSlots.pendingFillPositions})`,
+            openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode,
+            smartGuardDecision: "BLOCK", blockReasonCode: (gate.reason.split(":")[0]) as BlockReasonCode,
+            blockDetails: { currentOpenLots, maxLotsForMode, reason: gate.reason },
+            finalSignal: "NONE", finalReason: gate.reason,
           });
           return;
         }
@@ -4829,6 +4829,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
         // Store current regime for sizing override and Telegram notifications
         let currentRegimeForSizing: string | null = null;
         let currentRegimeReasonForTelegram: string | null = null;
+        const botConfigCheck = await storage.getBotConfig();
         const routerEnabledForSizing = (botConfigCheck as any)?.regimeRouterEnabled ?? false;
         
         if (positionMode === "SMART_GUARD") {
@@ -5415,6 +5416,12 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
             antiCrestaStatus,
             watchId: hgInfo?.watchId,
           }).catch((e: any) => log(`[ALERT_ERR] sendBuyExecutedSnapshot: ${e?.message ?? String(e)}`, 'trading'));
+        }
+
+        // Record entry time and candle for anti-burst gate (was missing in candles BUY path)
+        if (success) {
+          this.lastTradeTime.set(pair, Date.now());
+          this.recordEntryCandle(pair, candle.time);
         }
 
       } else if (signal.action === "sell") {
