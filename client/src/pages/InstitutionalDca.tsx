@@ -117,6 +117,7 @@ import { EjecucionTab } from "@/components/idca/EjecucionTab";
 import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
+import { IdcaHybridPanel } from "@/components/idca/IdcaHybridPanel";
 import { IdcaMarketContextSummary } from "@/components/idca/IdcaMarketContextCard";
 import { IdcaMarketPriceHeader } from "@/components/idca/IdcaMarketPriceHeader";
 import { useIdcaNavigation, type IdcaConfigTarget } from "@/hooks/useIdcaNavigation";
@@ -197,7 +198,7 @@ export default function InstitutionalDca() {
           <IdcaMarketPriceHeader className="border border-border/30 rounded-lg p-3 bg-card/30" />
 
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid grid-cols-5 md:grid-cols-10 gap-1 h-auto p-1">
+            <TabsList className="grid grid-cols-5 md:grid-cols-11 gap-1 h-auto p-1">
               <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Resumen</TabsTrigger>
               <TabsTrigger value="config" className="text-xs gap-1"><Settings2 className="h-3 w-3" /> Config</TabsTrigger>
               <TabsTrigger value="adaptive" className="text-xs gap-1" data-testid="tab-adaptive"><Sparkles className="h-3 w-3" /> Adaptativo</TabsTrigger>
@@ -208,6 +209,7 @@ export default function InstitutionalDca() {
               <TabsTrigger value="events" className="text-xs gap-1"><Clock className="h-3 w-3" /> Eventos</TabsTrigger>
               <TabsTrigger value="telegram" className="text-xs gap-1"><Send className="h-3 w-3" /> Telegram</TabsTrigger>
               <TabsTrigger value="guide" className="text-xs gap-1"><BookOpen className="h-3 w-3" /> Guía</TabsTrigger>
+              <TabsTrigger value="hybrid" className="text-xs gap-1"><Brain className="h-3 w-3" /> Mejoras</TabsTrigger>
             </TabsList>
 
             <TabsContent value="summary"><SummaryTab /></TabsContent>
@@ -225,6 +227,7 @@ export default function InstitutionalDca() {
             <TabsContent value="events"><EventsTab /></TabsContent>
             <TabsContent value="telegram"><TelegramTab /></TabsContent>
             <TabsContent value="guide"><GuideTab /></TabsContent>
+            <TabsContent value="hybrid"><IdcaHybridPanel /></TabsContent>
           </Tabs>
         </div>
       </div>

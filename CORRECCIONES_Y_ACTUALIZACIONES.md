@@ -2,6 +2,69 @@
 
 ---
 
+## feat(idca-hybrid): IDCA Hybrid Intelligent Layers — FASE 1-13
+
+**Commit:** feat(idca-hybrid)  
+**Fecha:** 2026-06-22
+
+### Resumen
+Implementación completa del módulo IDCA Híbrido Inteligente: auditoría autónoma + 5 servicios nuevos + UI + tests.
+
+### Nuevos archivos
+- `docs/audits/idca_hybrid_autonomous_audit.md` — Auditoría completa del codebase
+- `db/migrations/057_idca_hybrid_intelligent_layers.sql` — Tablas idca_hybrid_state, idca_grid_legs, columnas bot_config
+- `server/services/institutionalDca/IdcaRegimeAdapter.ts` — Clasificador de régimen para IDCA (lateral/bullish/bearish/high_volatility)
+- `server/services/institutionalDca/IdcaMeanReversionOverlay.ts` — Filtro de reversión a la media (z-score + ATR)
+- `server/services/institutionalDca/IdcaGridOverlay.ts` — Grid inteligente lateral (solo observer por defecto)
+- `server/services/institutionalDca/IdcaHybridDecisionService.ts` — Coordinador: off/observer/real
+- `server/services/institutionalDca/IdcaHybridAlertService.ts` — Alertas Telegram para eventos híbridos
+- `server/routes/idcaHybrid.routes.ts` — API GET/POST /api/idca/hybrid/*
+- `client/src/components/idca/IdcaHybridPanel.tsx` — Panel UI con interruptor Off/Observador/Real
+- `server/services/__tests__/idcaHybrid.test.ts` — 17 tests unitarios
+
+### Archivos modificados
+- `shared/schema.ts` — idcaHybridMode, idcaHybridConfig, idcaHybridAlertConfig en botConfig
+- `server/services/institutionalDca/IdcaEngine.ts` — Inyección antes de checkEntry
+- `server/routes.ts` — Migración 057 + rutas híbridas registradas
+- `client/src/pages/InstitutionalDca.tsx` — Pestaña "Mejoras" con IdcaHybridPanel
+
+### Reglas de seguridad implementadas
+- Default: `idca_hybrid_mode='off'` — sin cambios en comportamiento existente
+- `gridEnabled=false` por defecto — grid solo en observer hasta validar
+- `executionScope='observer'` — grid legs marcadas como observer_only hasta activar explícitamente
+- En modo `off`: zero overhead (retorna `legacy` sin evaluación)
+- En modo `observer`: evalúa + persiste, NUNCA bloquea checkEntry
+- En modo `real`: puede bloquear IDCA buys por bear_trend, high_volatility, data_quality; NUNCA modifica anchor/basePrice/avgEntryPrice
+- Toda inyección en IdcaEngine.ts está en try/catch no-fatal (fail-open)
+
+### Endpoints API
+- `GET  /api/idca/hybrid/config` — modo + config + alertConfig
+- `POST /api/idca/hybrid/mode` — cambiar modo
+- `POST /api/idca/hybrid/config` — patch hybridConfig
+- `POST /api/idca/hybrid/alert-config` — patch alertConfig
+- `POST /api/idca/hybrid/apply-recommended` — preset conservador (observer)
+- `GET  /api/idca/hybrid/status?pair=X` — estado por par
+- `GET  /api/idca/hybrid/grid-legs?pair=X` — patas de grid planificadas
+- `GET  /api/idca/hybrid/regime/:pair` — snapshot de régimen on-demand
+
+### Migración 057 (idempotente)
+```sql
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS idca_hybrid_mode text DEFAULT 'off';
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS idca_hybrid_config jsonb DEFAULT '...';
+ALTER TABLE bot_config ADD COLUMN IF NOT EXISTS idca_hybrid_alert_config jsonb DEFAULT '...';
+CREATE TABLE IF NOT EXISTS idca_hybrid_state (...);
+CREATE TABLE IF NOT EXISTS idca_grid_legs (...);
+```
+
+### Deploy VPS
+```bash
+bash scripts/vps-predeploy-clean-sync.sh
+docker compose -f docker-compose.staging.yml up -d --build
+```
+AutoMigrationRunner ejecuta 057 al inicio automáticamente.
+
+---
+
 ## Flujo correcto de deploy en VPS (staging)
 
 **Siempre ejecutar en este orden:**

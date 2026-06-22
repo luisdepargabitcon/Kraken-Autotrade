@@ -149,6 +149,15 @@ export async function registerRoutes(
     console.error('[startup] Failed to register Institutional DCA routes:', e?.message || e);
   }
 
+  // Register IDCA Hybrid Intelligent Layers routes
+  try {
+    const { registerIdcaHybridRoutes } = await import('./routes/idcaHybrid.routes');
+    registerIdcaHybridRoutes(app);
+    console.log('[startup] IDCA Hybrid routes registered');
+  } catch (e: any) {
+    console.error('[startup] Failed to register IDCA Hybrid routes:', e?.message || e);
+  }
+
   // Proactive schema migration — ensure new columns exist before IDCA queries
   try {
     const migrationResult = await storage.runSchemaMigration();
@@ -171,6 +180,7 @@ export async function registerRoutes(
       { id: '052_smart_exit_state', filePath: path.join(migrationsDir, '052_smart_exit_state.sql') },
       { id: '053_add_telegram_alert_config_to_bot_config', filePath: path.join(migrationsDir, '053_add_telegram_alert_config_to_bot_config.sql') },
       { id: '056_ai_shadow_decisions', filePath: path.join(migrationsDir, '056_ai_shadow_decisions.sql') },
+      { id: '057_idca_hybrid_intelligent_layers', filePath: path.join(migrationsDir, '057_idca_hybrid_intelligent_layers.sql') },
     ];
 
     console.log('[startup] Running AutoMigrationRunner...');

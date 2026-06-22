@@ -178,6 +178,12 @@ export const botConfig = pgTable("bot_config", {
   smartExitConfig: jsonb("smart_exit_config"),
   // Telegram Alert Deduplication config (JSONB) — controls spam prevention
   telegramAlertConfig: jsonb("telegram_alert_config"),
+  // IDCA Hybrid Intelligent Layers — off | observer | real
+  idcaHybridMode: text("idca_hybrid_mode").default("off"),
+  // IDCA Hybrid config (JSONB) — profile, layers, grid policy
+  idcaHybridConfig: jsonb("idca_hybrid_config"),
+  // IDCA Hybrid alert config (JSONB) — verbosity, dedupe, event toggles
+  idcaHybridAlertConfig: jsonb("idca_hybrid_alert_config"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

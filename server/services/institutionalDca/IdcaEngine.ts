@@ -56,6 +56,7 @@ import * as liveGuard from "./IdcaLiveExecutionGuard";
 import { runStartupReconciliation, isSafeToStartAfterReconciliation } from "./IdcaStartupReconciliationService";
 import { tradeSnapshotService, type IdcaCycleContext } from "../TradeSnapshotService";
 import { tradeMetricsTracker } from "../TradeMetricsTracker";
+import { idcaHybridDecisionService } from "./IdcaHybridDecisionService";
 
 const TAG = "[IDCA]";
 
@@ -1265,6 +1266,26 @@ async function evaluatePair(
     }
     if (!hasAny && !hasImported && !pairDisabled) {
       // No cycle active (bot or manual/imported) — look for new autonomous entry
+
+      // ── IDCA Hybrid Intelligent Layers ─────────────────────────────
+      // mode=off → idcaAction='legacy' (zero overhead, falls through immediately)
+      // mode=observer → evaluates + persists, never blocks
+      // mode=real → can return 'block_buy', 'reduce_size', 'allow_buy'
+      try {
+        const hybridDecision = await idcaHybridDecisionService.evaluate({
+          pair,
+          cycleId: null,
+          currentPrice,
+          cycleCapitalUsd: 0,
+          frozenAnchorPrice: vwapAnchorMemory.get(pair)?.anchorPrice,
+        });
+        if (hybridDecision.mode === "real" && hybridDecision.idcaAction === "block_buy") {
+          console.log(`${TAG}[HYBRID_BLOCK] ${pair}: ${hybridDecision.naturalReason}`);
+          return; // skip checkEntry — hybrid blocks this buy in real mode
+        }
+      } catch (hybridErr: any) {
+        console.warn(`${TAG}[HYBRID] evaluate failed (non-fatal): ${hybridErr?.message}`);
+      }
 
       // ── Entry check with VWAP logic ────────────────────────────────
       if (assetConfig.vwapEnabled) {
