@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Brain, ChevronDown, Eye, Grid3X3, RefreshCw, Settings2, TrendingDown,
-  Zap, Activity, AlertTriangle, CheckCircle2, Info, Play,
+  Zap, Activity, AlertTriangle, CheckCircle2, Info, Play, ShieldOff, Package,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -87,6 +87,25 @@ const MR_STATE_LABELS: Record<string, string> = {
   blocked_by_high_volatility: "Bloqueada (alta vol.)",
   blocked_by_data_quality: "Datos insuficientes",
   neutral: "Neutral",
+};
+
+const CYCLE_KIND_LABELS: Record<string, string> = {
+  normal: "Normal",
+  imported: "Importado",
+  manual: "Manual",
+};
+
+const OBSERVER_STATE_LABELS: Record<string, string> = {
+  OBSERVING_ACTIVE_CYCLE: "Observando ciclo activo",
+  OBSERVING_IMPORTED_CYCLE: "Observando ciclo importado",
+  OBSERVING_MANUAL_CYCLE: "Observando ciclo manual",
+  GRID_PLAN_SIMULATED: "Grid simulado ✓",
+  GRID_BLOCKED_BEAR_TREND: "Grid bloqueado (bajista)",
+  GRID_BLOCKED_DATA_QUALITY: "Grid bloqueado (datos)",
+  GRID_BLOCKED_CAPITAL_LIMIT: "Grid bloqueado (capital)",
+  GRID_BLOCKED_IMPORTED_CYCLE: "Grid bloqueado (importado)",
+  GRID_BLOCKED_MANUAL_CYCLE: "Grid bloqueado (manual)",
+  ASSISTED_PROPOSAL_READY: "Propuesta asistida lista ✓",
 };
 
 const GRID_STATE_LABELS: Record<string, string> = {
@@ -172,7 +191,10 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
   }
 
   const statusRows = Array.isArray(status?.data) ? status.data : [];
-  const latestState = statusRows[0];
+  // Split: active cycle observations (cycleId != null) vs new-entry evaluations (cycleId = null)
+  const activeCycleRows = statusRows.filter((r: any) => r.cycle_id !== null && r.cycle_id !== undefined);
+  const newEntryRow = statusRows.find((r: any) => r.cycle_id === null || r.cycle_id === undefined);
+  const latestState = newEntryRow ?? statusRows[0];
 
   if (configLoading) {
     return (
@@ -326,6 +348,125 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
                 Sin datos aún. El estado se actualizará en el próximo ciclo del motor IDCA.
               </p>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Active / Imported / Manual cycle diagnostics */}
+      {currentMode !== "off" && activeCycleRows.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Package className="h-3.5 w-3.5 text-blue-400" />
+              Ciclos abiertos — Diagnóstico Observador
+              <Badge variant="outline" className="ml-auto text-xs bg-blue-500/10 text-blue-400 border-blue-500/30">
+                {activeCycleRows.length} ciclo{activeCycleRows.length !== 1 ? "s" : ""}
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Alert className="border-blue-500/30 bg-blue-500/5 py-2">
+              <ShieldOff className="h-3.5 w-3.5 text-blue-400" />
+              <AlertDescription className="text-xs text-blue-300">
+                <strong>observer_only=true</strong> — No se ha ejecutado ninguna orden.
+                Hybrid/Grid solo genera diagnóstico y propuestas simuladas.
+              </AlertDescription>
+            </Alert>
+
+            {activeCycleRows.map((row: any) => {
+              const raw = typeof row.raw_json === "object" ? row.raw_json : {};
+              const cycleKind: string = raw.cycleKind ?? "normal";
+              const observerState: string = row.grid_state ?? "OBSERVING_ACTIVE_CYCLE";
+              const isImportedOrManual = cycleKind === "imported" || cycleKind === "manual";
+              const hasProposal = observerState === "ASSISTED_PROPOSAL_READY" || observerState === "GRID_PLAN_SIMULATED";
+              const isBlocked = observerState.startsWith("GRID_BLOCKED");
+
+              return (
+                <div key={row.id ?? row.cycle_id} className="border border-border/30 rounded-lg p-3 space-y-2">
+                  {/* Header */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-xs text-foreground">{row.pair}</span>
+                    <Badge variant="outline" className="text-xs px-1.5 py-0 h-5">
+                      #{row.cycle_id}
+                    </Badge>
+                    <Badge variant="outline" className={`text-xs px-1.5 py-0 h-5 ${
+                      cycleKind === "imported" ? "bg-orange-500/10 text-orange-400 border-orange-500/30" :
+                      cycleKind === "manual"   ? "bg-purple-500/10 text-purple-400 border-purple-500/30" :
+                                                 "bg-gray-500/10 text-gray-400 border-gray-500/30"
+                    }`}>
+                      {CYCLE_KIND_LABELS[cycleKind] ?? cycleKind}
+                    </Badge>
+                    <Badge variant="outline" className={`text-xs px-1.5 py-0 h-5 ml-auto ${
+                      hasProposal ? "bg-green-500/10 text-green-400 border-green-500/30" :
+                      isBlocked   ? "bg-red-500/10 text-red-400 border-red-500/30" :
+                                    "bg-blue-500/10 text-blue-400 border-blue-500/30"
+                    }`}>
+                      {OBSERVER_STATE_LABELS[observerState] ?? observerState}
+                    </Badge>
+                  </div>
+
+                  {/* Cycle references (read-only display) */}
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    {raw.avgEntryPrice != null && (
+                      <div>
+                        <span className="text-muted-foreground">Precio medio</span>
+                        <div className="font-medium">${Number(raw.avgEntryPrice).toLocaleString("en-US", { maximumFractionDigits: 2 })}</div>
+                      </div>
+                    )}
+                    {raw.nextBuyPrice != null && raw.nextBuyPrice > 0 && (
+                      <div>
+                        <span className="text-muted-foreground">Next buy</span>
+                        <div className="font-medium">${Number(raw.nextBuyPrice).toLocaleString("en-US", { maximumFractionDigits: 2 })}</div>
+                      </div>
+                    )}
+                    {raw.tpTargetPrice != null && raw.tpTargetPrice > 0 && (
+                      <div>
+                        <span className="text-muted-foreground">TP objetivo</span>
+                        <div className="font-medium">${Number(raw.tpTargetPrice).toLocaleString("en-US", { maximumFractionDigits: 2 })}</div>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-muted-foreground">Régimen</span>
+                      <div className="font-medium">
+                        <Badge variant="outline" className={`text-xs ${regimeBadge(row.regime)}`}>
+                          {REGIME_LABELS[row.regime] ?? row.regime}
+                        </Badge>
+                      </div>
+                    </div>
+                    {raw.mrAction && (
+                      <div>
+                        <span className="text-muted-foreground">MR decisión</span>
+                        <div className="font-medium">{raw.mrAction}</div>
+                      </div>
+                    )}
+                    {raw.gridLevels != null && (
+                      <div>
+                        <span className="text-muted-foreground">Grid niveles</span>
+                        <div className="font-medium">{raw.gridLevels}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Imported/manual warning */}
+                  {isImportedOrManual && (
+                    <Alert className="border-orange-500/30 bg-orange-500/5 py-1.5">
+                      <AlertTriangle className="h-3 w-3 text-orange-400" />
+                      <AlertDescription className="text-xs text-orange-300">
+                        Este ciclo fue {cycleKind === "imported" ? "importado" : "editado manualmente"}.
+                        Hybrid/Grid solo propone acciones; no modifica referencias ni ejecuta órdenes sin confirmación.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {/* Natural reason */}
+                  {row.natural_reason && (
+                    <p className="text-xs text-muted-foreground leading-relaxed border-t border-border/20 pt-2">
+                      {row.natural_reason}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       )}

@@ -1182,6 +1182,25 @@ async function evaluatePair(
   const importedCycles = await repo.getActiveImportedCycles(pair, mode);
   for (const ic of importedCycles) {
     await manageCycle(ic, currentPrice, config, assetConfig, mode, pairDisabled);
+    // ── Hybrid observer for imported/manual cycle (non-blocking, read-only) ──
+    idcaHybridDecisionService.evaluateActiveCycle({
+      pair,
+      cycleId: ic.id,
+      cycleKind: ic.isManualCycle ? "manual" : "imported",
+      currentPrice,
+      avgEntryPrice: parseFloat(String(ic.avgEntryPrice || "0")) || null,
+      basePrice: parseFloat(String(ic.basePrice || "0")) || null,
+      nextBuyPrice: parseFloat(String(ic.nextBuyPrice || "0")) || null,
+      tpTargetPrice: parseFloat(String(ic.tpTargetPrice || "0")) || null,
+      capitalUsedUsd: parseFloat(String(ic.capitalUsedUsd || "0")),
+      capitalReservedUsd: parseFloat(String(ic.capitalReservedUsd || "0")),
+      buyCount: ic.buyCount ?? 0,
+      sourceType: ic.sourceType ?? null,
+      managedBy: ic.managedBy ?? null,
+      isImported: ic.isImported ?? false,
+      isManualCycle: ic.isManualCycle ?? false,
+      frozenAnchorPrice: vwapAnchorMemory.get(pair)?.anchorPrice,
+    }).catch(() => {});
     if (!ic.soloSalida && !pairDisabled) {
       const plusCfgImp = getPlusConfig(config);
       if (plusCfgImp.enabled) {
@@ -1230,6 +1249,25 @@ async function evaluatePair(
 
     // Manage existing autonomous main cycle (exits always allowed)
     await manageCycle(activeCycle, currentPrice, config, assetConfig, mode, pairDisabled);
+    // ── Hybrid observer for active bot cycle (non-blocking, read-only) ──
+    idcaHybridDecisionService.evaluateActiveCycle({
+      pair,
+      cycleId: activeCycle.id,
+      cycleKind: activeCycle.isManualCycle ? "manual" : activeCycle.isImported ? "imported" : "normal",
+      currentPrice,
+      avgEntryPrice: parseFloat(String(activeCycle.avgEntryPrice || "0")) || null,
+      basePrice: parseFloat(String(activeCycle.basePrice || "0")) || null,
+      nextBuyPrice: parseFloat(String(activeCycle.nextBuyPrice || "0")) || null,
+      tpTargetPrice: parseFloat(String(activeCycle.tpTargetPrice || "0")) || null,
+      capitalUsedUsd: parseFloat(String(activeCycle.capitalUsedUsd || "0")),
+      capitalReservedUsd: parseFloat(String(activeCycle.capitalReservedUsd || "0")),
+      buyCount: activeCycle.buyCount ?? 0,
+      sourceType: activeCycle.sourceType ?? null,
+      managedBy: activeCycle.managedBy ?? null,
+      isImported: activeCycle.isImported ?? false,
+      isManualCycle: activeCycle.isManualCycle ?? false,
+      frozenAnchorPrice: vwapAnchorMemory.get(pair)?.anchorPrice,
+    }).catch(() => {});
 
     // Plus/Recovery: solo si par activo
     if (!pairDisabled) {

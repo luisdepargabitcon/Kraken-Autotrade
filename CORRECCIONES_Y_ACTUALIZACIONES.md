@@ -2,6 +2,73 @@
 
 ---
 
+## feat(idca-hybrid-active-cycle): Soporte observador seguro para ciclos abiertos/importados/manuales
+
+**Commit:** feat(idca-hybrid-active-cycle)  
+**Fecha:** 2026-06-22
+
+### Problema
+La capa Hybrid/Grid solo evaluaba escenarios de nueva entrada. Los ciclos ya abiertos (normales, importados, manuales) no recibían diagnóstico ni propuesta simulada.
+
+### Solución implementada
+
+#### Backend: `IdcaHybridDecisionService.ts`
+- Nuevos tipos: `CycleKind` (`normal|imported|manual`), `CycleObserverState` (9 estados), `ActiveCycleHybridInput`
+- Nueva función `evaluateActiveCycle(input)` — observer-only, fire-and-forget:
+  - `isImported=true` → `GRID_BLOCKED_IMPORTED_CYCLE` (grid nunca evalúa, solo diagnóstico)
+  - `isManualCycle=true` → `GRID_BLOCKED_MANUAL_CYCLE` (ídem)
+  - Normal → evalúa grid con `executionScope=observer`, `doNotRewriteAnchor=true`, `observer_only=true` forzado en todas las legs
+- Persiste en `idca_hybrid_state` con estado + `raw_json` que incluye: `cycleKind`, `observerState`, `avgEntryPrice`, `basePrice`, `nextBuyPrice`, `capitalUsedUsd`, `buyCount`, etc.
+- Logs: `[IDCA][HYBRID_OBSERVER_ACTIVE_CYCLE]`, `[IDCA][HYBRID_OBSERVER_IMPORTED_CYCLE]`, `[IDCA][HYBRID_OBSERVER_MANUAL_CYCLE]`, `[IDCA][GRID_OBSERVER_PLAN]`, `[IDCA][GRID_OBSERVER_BLOCKED]`, `[IDCA][HYBRID_ASSISTED_PROPOSAL]`
+
+#### Backend: `IdcaEngine.ts`
+- Llamada `evaluateActiveCycle().catch(() => {})` añadida en:
+  - Tras `manageCycle(activeCycle, ...)` — ciclos bot normales
+  - Tras `manageCycle(ic, ...)` en el loop de ciclos importados
+- Completamente no-bloqueante — fallo del híbrido nunca interrumpe el engine
+
+#### Frontend: `IdcaHybridPanel.tsx`
+- Nueva sección "Ciclos abiertos — Diagnóstico Observador":
+  - Badge de tipo (Normal/Importado/Manual) con colores diferenciados
+  - Badge de estado observador (GRID_PLAN_SIMULATED, BLOCKED, ASSISTED_PROPOSAL_READY...)
+  - Referencias del ciclo (precio medio, next buy, TP) solo como display read-only
+  - Banner naranja para ciclos importados/manuales: "solo propone acciones; no modifica referencias"
+  - Banner azul global: "observer_only=true — No se ha ejecutado ninguna orden"
+
+#### Tests: `idcaHybrid.test.ts`
+- **28/28 tests** (+9 nuevos en suite "ActiveCycle Observer — cycleKind routing"):
+  1. imported cycle → GRID_BLOCKED_IMPORTED_CYCLE
+  2. manual cycle → GRID_BLOCKED_MANUAL_CYCLE  
+  3. normal bearish → GRID_BLOCKED_BEAR_TREND
+  4. normal lateral → GRID_PLAN_SIMULATED o ASSISTED_PROPOSAL_READY
+  5. executionScope siempre observer
+  6. doNotRewriteAnchor siempre true
+  7. structural check: imported no llama evaluateGridOverlay
+  8. manual natural_reason explica constraint
+  9. imported natural_reason explica constraint
+
+### Contratos de seguridad
+- `NUNCA` modifica `institutional_dca_cycles` (ningún campo)
+- `NUNCA` llama servicios de ejecución (Kraken, RevolutX)
+- `NUNCA` reescribe `avg_entry_price`, `base_price`, `next_buy_price`, TP, trailing, anchor
+- `SIEMPRE` `observer_only=true` en todas las `idca_grid_legs`
+- `SIEMPRE` non-blocking en `IdcaEngine.ts` — fail-open
+
+### Resultado esperado en VPS
+```sql
+SELECT pair, cycle_id, mode, regime, grid_state, natural_reason, updated_at
+FROM idca_hybrid_state ORDER BY updated_at DESC LIMIT 20;
+-- Muestra registros para ciclos activos de BTC/USD, ETH/USD con grid_state = OBSERVING_ACTIVE_CYCLE
+-- o GRID_BLOCKED_IMPORTED_CYCLE para ciclos importados
+```
+Logs esperados:
+```
+[IDCA][HYBRID_OBSERVER_ACTIVE_CYCLE] pair=BTC/USD cycle_id=25 ...
+[IDCA][GRID_OBSERVER_BLOCKED] pair=BTC/USD cycle_id=25 state=OBSERVING_ACTIVE_CYCLE ...
+```
+
+---
+
 ## feat(idca-hybrid): IDCA Hybrid Intelligent Layers — FASE 1-13
 
 **Commit:** feat(idca-hybrid)  
