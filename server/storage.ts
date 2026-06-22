@@ -193,7 +193,17 @@ export interface IStorage {
   
   saveAiShadowDecision(decision: InsertAiShadowDecision): Promise<AiShadowDecision>;
   updateAiShadowFinalPnl(tradeId: string, pnl: string): Promise<void>;
-  getAiShadowReport(): Promise<{ total: number; blocked: number; blockedLosers: number; passedLosers: number; tableExists: boolean }>;
+  getAiShadowReport(): Promise<{
+    total: number;
+    pending: number;
+    evaluated: number;
+    blocked: number;
+    allowed: number;
+    blockedLosers: number;
+    passedLosers: number;
+    tableExists: boolean;
+    recent: AiShadowDecision[];
+  }>;
   
   getAiConfig(): Promise<AiConfig | undefined>;
   updateAiConfig(config: Partial<InsertAiConfig>): Promise<AiConfig>;
@@ -1385,7 +1395,18 @@ export class DatabaseStorage implements IStorage {
       .where(eq(aiShadowDecisionsTable.tradeId, tradeId));
   }
 
-  async getAiShadowReport(): Promise<{ total: number; blocked: number; blockedLosers: number; passedLosers: number; tableExists: boolean }> {
+  async getAiShadowReport(): Promise<{
+    total: number;
+    pending: number;
+    evaluated: number;
+    blocked: number;
+    allowed: number;
+    blockedLosers: number;
+    passedLosers: number;
+    tableExists: boolean;
+    recent: AiShadowDecision[];
+  }> {
+    const empty = { total: 0, pending: 0, evaluated: 0, blocked: 0, allowed: 0, blockedLosers: 0, passedLosers: 0, tableExists: false, recent: [] as AiShadowDecision[] };
     // Check table existence first — table may not exist yet (migration pending)
     try {
       const tableCheck = await db.execute(sql`
@@ -1397,22 +1418,28 @@ export class DatabaseStorage implements IStorage {
       const tableExists = (tableCheck.rows?.[0] as any)?.exists === true;
 
       if (!tableExists) {
-        return { total: 0, blocked: 0, blockedLosers: 0, passedLosers: 0, tableExists: false };
+        return empty;
       }
 
+      // COUNT all rows — do NOT filter by finalPnlNet (pending predictions matter too)
       const allDecisions = await db.select().from(aiShadowDecisionsTable)
-        .where(sql`${aiShadowDecisionsTable.finalPnlNet} IS NOT NULL`);
+        .orderBy(desc(aiShadowDecisionsTable.ts))
+        .limit(500);
 
       const total = allDecisions.length;
+      const pending = allDecisions.filter(d => d.finalPnlNet === null).length;
+      const evaluated = total - pending;
       const blocked = allDecisions.filter(d => d.wouldBlock).length;
-      const blockedLosers = allDecisions.filter(d => d.wouldBlock && parseFloat(d.finalPnlNet || '0') < 0).length;
-      const passedLosers = allDecisions.filter(d => !d.wouldBlock && parseFloat(d.finalPnlNet || '0') < 0).length;
+      const allowed = total - blocked;
+      const blockedLosers = allDecisions.filter(d => d.wouldBlock && d.finalPnlNet !== null && parseFloat(d.finalPnlNet) < 0).length;
+      const passedLosers = allDecisions.filter(d => !d.wouldBlock && d.finalPnlNet !== null && parseFloat(d.finalPnlNet) < 0).length;
+      const recent = allDecisions.slice(0, 10);
 
-      return { total, blocked, blockedLosers, passedLosers, tableExists: true };
+      return { total, pending, evaluated, blocked, allowed, blockedLosers, passedLosers, tableExists: true, recent };
     } catch (e: any) {
       // If table doesn't exist or any other DB error, return empty report gracefully
       if (e?.message?.includes('does not exist') || e?.code === '42P01') {
-        return { total: 0, blocked: 0, blockedLosers: 0, passedLosers: 0, tableExists: false };
+        return empty;
       }
       throw e;
     }

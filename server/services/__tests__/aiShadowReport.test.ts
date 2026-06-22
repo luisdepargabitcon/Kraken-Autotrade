@@ -16,14 +16,17 @@ interface ShadowReportInput {
   shadowEnabled: boolean;
   modelLoaded: boolean;
   total: number;
+  pending: number;
+  evaluated: number;
   blocked: number;
+  allowed: number;
   blockedLosers: number;
   passedLosers: number;
   tableExists: boolean;
 }
 
 function buildShadowResponse(input: ShadowReportInput) {
-  const { shadowEnabled, modelLoaded, total, blocked, blockedLosers, passedLosers, tableExists } = input;
+  const { shadowEnabled, modelLoaded, total, pending, evaluated, blocked, allowed, blockedLosers, passedLosers, tableExists } = input;
 
   let message: string | null = null;
   if (!shadowEnabled) {
@@ -32,12 +35,17 @@ function buildShadowResponse(input: ShadowReportInput) {
     message = "Modo observador activado, pero todavía no puede registrar predicciones porque no hay modelo entrenado. Entrena el modelo primero.";
   } else if (total === 0) {
     message = "Modo observador activo y modelo cargado. Todavía no hay predicciones registradas — se registrarán con las próximas señales BUY evaluadas.";
+  } else if (pending > 0 && evaluated === 0) {
+    message = `${total} predicción${total !== 1 ? "es" : ""} registrada${total !== 1 ? "s" : ""}. Todas pendientes de resultado (operaciones aún abiertas).`;
   }
 
   return {
     enabled: shadowEnabled,
     modelLoaded,
     totalPredictions: total,
+    pendingPredictions: pending,
+    evaluatedPredictions: evaluated,
+    allowedPredictions: allowed,
     tableExists,
     total,
     blocked,
@@ -56,7 +64,10 @@ describe("aiShadowReport — /api/ai/shadow/report", () => {
       shadowEnabled: true,
       modelLoaded: false,
       total: 0,
+      pending: 0,
+      evaluated: 0,
       blocked: 0,
+      allowed: 0,
       blockedLosers: 0,
       passedLosers: 0,
       tableExists: false,
@@ -74,7 +85,10 @@ describe("aiShadowReport — /api/ai/shadow/report", () => {
       shadowEnabled: true,
       modelLoaded: false,
       total: 0,
+      pending: 0,
+      evaluated: 0,
       blocked: 0,
+      allowed: 0,
       blockedLosers: 0,
       passedLosers: 0,
       tableExists: true,
@@ -91,7 +105,10 @@ describe("aiShadowReport — /api/ai/shadow/report", () => {
       shadowEnabled: false,
       modelLoaded: false,
       total: 0,
+      pending: 0,
+      evaluated: 0,
       blocked: 0,
+      allowed: 0,
       blockedLosers: 0,
       passedLosers: 0,
       tableExists: true,
@@ -106,7 +123,10 @@ describe("aiShadowReport — /api/ai/shadow/report", () => {
       shadowEnabled: true,
       modelLoaded: true,
       total: 0,
+      pending: 0,
+      evaluated: 0,
       blocked: 0,
+      allowed: 0,
       blockedLosers: 0,
       passedLosers: 0,
       tableExists: true,
@@ -118,12 +138,78 @@ describe("aiShadowReport — /api/ai/shadow/report", () => {
     expect(resp.message).toContain("no hay predicciones registradas");
   });
 
-  it("with predictions recorded: returns correct counts and no message", () => {
+  it("with predictions recorded (all pending): totalPredictions=3, message about pending", () => {
+    const resp = buildShadowResponse({
+      shadowEnabled: true,
+      modelLoaded: true,
+      total: 3,
+      pending: 3,
+      evaluated: 0,
+      blocked: 3,
+      allowed: 0,
+      blockedLosers: 0,
+      passedLosers: 0,
+      tableExists: true,
+    });
+
+    expect(resp.totalPredictions).toBe(3);
+    expect(resp.pendingPredictions).toBe(3);
+    expect(resp.evaluatedPredictions).toBe(0);
+    expect(resp.blocked).toBe(3);
+    expect(resp.message).toContain("pendientes de resultado");
+  });
+
+  it("with mix of pending and evaluated: no pending message", () => {
     const resp = buildShadowResponse({
       shadowEnabled: true,
       modelLoaded: true,
       total: 50,
+      pending: 20,
+      evaluated: 30,
       blocked: 15,
+      allowed: 35,
+      blockedLosers: 10,
+      passedLosers: 8,
+      tableExists: true,
+    });
+
+    expect(resp.totalPredictions).toBe(50);
+    expect(resp.pendingPredictions).toBe(20);
+    expect(resp.evaluatedPredictions).toBe(30);
+    expect(resp.blocked).toBe(15);
+    expect(resp.blockedLosers).toBe(10);
+    expect(resp.passedLosers).toBe(8);
+    expect(resp.message).toBeNull();
+  });
+
+  it("blockedLosers and passedLosers are 0 when all predictions are pending", () => {
+    const resp = buildShadowResponse({
+      shadowEnabled: true,
+      modelLoaded: true,
+      total: 5,
+      pending: 5,
+      evaluated: 0,
+      blocked: 4,
+      allowed: 1,
+      blockedLosers: 0,
+      passedLosers: 0,
+      tableExists: true,
+    });
+
+    expect(resp.blockedLosers).toBe(0);
+    expect(resp.passedLosers).toBe(0);
+    expect(resp.pendingPredictions).toBe(5);
+  });
+
+  it("with evaluated predictions: returns correct counts and no override message", () => {
+    const resp = buildShadowResponse({
+      shadowEnabled: true,
+      modelLoaded: true,
+      total: 50,
+      pending: 0,
+      evaluated: 50,
+      blocked: 15,
+      allowed: 35,
       blockedLosers: 10,
       passedLosers: 8,
       tableExists: true,
@@ -136,12 +222,15 @@ describe("aiShadowReport — /api/ai/shadow/report", () => {
     expect(resp.message).toBeNull();
   });
 
-  it("response always contains required fields", () => {
+  it("response always contains required fields including new pending/evaluated", () => {
     const resp = buildShadowResponse({
       shadowEnabled: false,
       modelLoaded: false,
       total: 0,
+      pending: 0,
+      evaluated: 0,
       blocked: 0,
+      allowed: 0,
       blockedLosers: 0,
       passedLosers: 0,
       tableExists: false,
@@ -150,6 +239,9 @@ describe("aiShadowReport — /api/ai/shadow/report", () => {
     expect("enabled" in resp).toBe(true);
     expect("modelLoaded" in resp).toBe(true);
     expect("totalPredictions" in resp).toBe(true);
+    expect("pendingPredictions" in resp).toBe(true);
+    expect("evaluatedPredictions" in resp).toBe(true);
+    expect("allowedPredictions" in resp).toBe(true);
     expect("tableExists" in resp).toBe(true);
     expect("total" in resp).toBe(true);
     expect("blocked" in resp).toBe(true);

@@ -319,17 +319,23 @@ export const registerAiRoutes: RegisterRoutes = (app, _deps) => {
         message = "Modo observador activado, pero todavía no puede registrar predicciones porque no hay modelo entrenado. Entrena el modelo primero.";
       } else if (totalPredictions === 0) {
         message = "Modo observador activo y modelo cargado. Todavía no hay predicciones registradas — se registrarán con las próximas señales BUY evaluadas.";
+      } else if (report.pending > 0 && report.evaluated === 0) {
+        message = `${totalPredictions} predicción${totalPredictions !== 1 ? "es" : ""} registrada${totalPredictions !== 1 ? "s" : ""}. Todas pendientes de resultado (operaciones aún abiertas).`;
       }
 
       res.json({
         enabled,
         modelLoaded,
         totalPredictions,
+        pendingPredictions: report.pending,
+        evaluatedPredictions: report.evaluated,
         tableExists: report.tableExists,
         total: report.total,
         blocked: report.blocked,
+        allowedPredictions: report.allowed,
         blockedLosers: report.blockedLosers,
         passedLosers: report.passedLosers,
+        recent: report.recent,
         message,
       });
     } catch (error: any) {

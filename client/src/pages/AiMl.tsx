@@ -304,7 +304,7 @@ function AprendizajeTab({ status, diag, validSamples, minSamples, labeled, progr
   );
 }
 
-function ObservacionTab({ status, shadowReport, shadowTotal, shadowBlocked, shadowBlockedLosers, shadowPassedLosers }: any) {
+function ObservacionTab({ status, shadowReport, shadowTotal, shadowPending, shadowEvaluated, shadowBlocked, shadowAllowed, shadowBlockedLosers, shadowPassedLosers, shadowRecent }: any) {
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -408,9 +408,22 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowBlocked, shad
           </p>
           {shadowTotal > 0 ? (
             <>
+              <div className="grid grid-cols-3 gap-3">
+                <MetricBox label="Registradas" value={shadowTotal} sub="total" />
+                <MetricBox label="Habría bloqueado" value={shadowBlocked} sub={shadowTotal > 0 ? ((shadowBlocked / shadowTotal) * 100).toFixed(1) + "%" : "0%"} />
+                <MetricBox label="Habría permitido" value={shadowAllowed} sub={shadowTotal > 0 ? ((shadowAllowed / shadowTotal) * 100).toFixed(1) + "%" : "0%"} />
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                <MetricBox label="Predicciones registradas" value={shadowTotal} sub="ai_shadow_decisions" />
-                <MetricBox label="Compras que habría bloqueado" value={shadowBlocked} sub={shadowTotal > 0 ? ((shadowBlocked / shadowTotal) * 100).toFixed(1) + "%" : "0%"} />
+                <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                  <p className="text-xs text-muted-foreground mb-1">Pendientes de resultado</p>
+                  <p className="text-xl font-bold font-mono text-purple-400">{shadowPending}</p>
+                  <p className="text-xs text-muted-foreground">operaciones aún abiertas</p>
+                </div>
+                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                  <p className="text-xs text-muted-foreground mb-1">Evaluadas / cerradas</p>
+                  <p className="text-xl font-bold font-mono text-blue-400">{shadowEvaluated}</p>
+                  <p className="text-xs text-muted-foreground">con resultado final</p>
+                </div>
               </div>
               {(shadowBlockedLosers > 0 || shadowPassedLosers > 0) && (
                 <>
@@ -433,6 +446,35 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowBlocked, shad
                       <p className="text-2xl font-bold font-mono text-red-400">{shadowPassedLosers}</p>
                       <p className="text-xs text-muted-foreground">Pérdidas no detectadas</p>
                     </div>
+                  </div>
+                </>
+              )}
+              {shadowRecent.length > 0 && (
+                <>
+                  <Separator />
+                  <p className="text-xs font-mono text-muted-foreground">Últimas predicciones</p>
+                  <div className="space-y-1">
+                    {shadowRecent.map((d: any) => {
+                      const pairLabel = d.pair ?? d.tradeId?.split('-').slice(2).join('-') ?? '?';
+                      const scorePct = (parseFloat(d.score) * 100).toFixed(1);
+                      const thrPct = (parseFloat(d.threshold) * 100).toFixed(0);
+                      const decision = d.wouldBlock
+                        ? <span className="text-red-400 font-mono">BLOQUEARÍA</span>
+                        : <span className="text-green-400 font-mono">PERMITIRÍA</span>;
+                      const result = d.finalPnlNet !== null
+                        ? <span className={parseFloat(d.finalPnlNet) >= 0 ? 'text-green-400' : 'text-red-400'}>{parseFloat(d.finalPnlNet) >= 0 ? '+' : ''}{parseFloat(d.finalPnlNet).toFixed(2)}$</span>
+                        : <span className="text-muted-foreground">pendiente</span>;
+                      const tsStr = d.ts ? new Date(d.ts).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '';
+                      return (
+                        <div key={d.id} className="flex items-center gap-2 text-xs p-2 rounded bg-white/5 border border-white/[0.06]">
+                          <span className="text-muted-foreground w-10 flex-shrink-0">{tsStr}</span>
+                          <span className="font-mono font-semibold w-20 flex-shrink-0">{pairLabel}</span>
+                          <span className="text-blue-300">{scorePct}% / {thrPct}%</span>
+                          <span className="flex-1">{decision}</span>
+                          <span>{result}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               )}
@@ -750,10 +792,14 @@ export default function AiMl() {
   const totalDiscard = Object.values(discardReasons).reduce((s, n) => s + n, 0);
 
   const metrics = status?.metrics;
-  const shadowTotal = shadowReport?.total ?? 0;
+  const shadowTotal = shadowReport?.totalPredictions ?? shadowReport?.total ?? 0;
+  const shadowPending = shadowReport?.pendingPredictions ?? 0;
+  const shadowEvaluated = shadowReport?.evaluatedPredictions ?? 0;
   const shadowBlocked = shadowReport?.blocked ?? 0;
+  const shadowAllowed = shadowReport?.allowedPredictions ?? 0;
   const shadowBlockedLosers = shadowReport?.blockedLosers ?? 0;
   const shadowPassedLosers = shadowReport?.passedLosers ?? 0;
+  const shadowRecent: any[] = shadowReport?.recent ?? [];
 
   const tabs = [
     { id: "resumen" as const, label: "Resumen", icon: Activity },
@@ -845,7 +891,7 @@ export default function AiMl() {
         {/* ── CONTENIDO POR PESTAÑA ── */}
         {activeTab === "resumen" && <ResumenTab status={status} diag={diag} validSamples={validSamples} minSamples={minSamples} labeled={labeled} progress={progress} />}
         {activeTab === "aprendizaje" && <AprendizajeTab status={status} diag={diag} validSamples={validSamples} minSamples={minSamples} labeled={labeled} progress={progress} discardReasons={discardReasons} lastBackfillDiscard={lastBackfillDiscard} totalDiscard={totalDiscard} />}
-        {activeTab === "observacion" && <ObservacionTab status={status} shadowReport={shadowReport} shadowTotal={shadowTotal} shadowBlocked={shadowBlocked} shadowBlockedLosers={shadowBlockedLosers} shadowPassedLosers={shadowPassedLosers} />}
+        {activeTab === "observacion" && <ObservacionTab status={status} shadowReport={shadowReport} shadowTotal={shadowTotal} shadowPending={shadowPending} shadowEvaluated={shadowEvaluated} shadowBlocked={shadowBlocked} shadowAllowed={shadowAllowed} shadowBlockedLosers={shadowBlockedLosers} shadowPassedLosers={shadowPassedLosers} shadowRecent={shadowRecent} />}
         {activeTab === "seguridad" && <SeguridadTab status={status} diag={diag} />}
         {activeTab === "ayuda" && <AyudaTab />}
 

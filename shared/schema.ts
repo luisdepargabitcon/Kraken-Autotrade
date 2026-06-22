@@ -620,6 +620,12 @@ export const aiShadowDecisions = pgTable("ai_shadow_decisions", {
   threshold: decimal("threshold", { precision: 5, scale: 4 }).notNull(),
   wouldBlock: boolean("would_block").notNull(),
   finalPnlNet: decimal("final_pnl_net", { precision: 18, scale: 8 }),
+  pair: text("pair"),
+  action: text("action"),
+  confidence: decimal("confidence", { precision: 6, scale: 4 }),
+  reason: text("reason"),
+  modelVersion: text("model_version"),
+  metadataJson: jsonb("metadata_json"),
 });
 
 export const trainingTrades = pgTable("training_trades", {

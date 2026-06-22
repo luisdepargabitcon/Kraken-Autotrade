@@ -5381,6 +5381,10 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
                 score: prediction.score.toFixed(4),
                 threshold: prediction.threshold.toFixed(4),
                 wouldBlock: !prediction.approve,
+                pair,
+                action: prediction.approve ? "WOULD_ALLOW" : "WOULD_BLOCK",
+                confidence: prediction.score.toFixed(4),
+                reason: !prediction.approve ? `AI score ${prediction.score.toFixed(3)} below threshold ${prediction.threshold}` : null,
               }).catch((e: any) => log(`[AI] shadow save error: ${e.message}`, "trading"));
             }
             if (aiFilterOn && !prediction.approve) {
