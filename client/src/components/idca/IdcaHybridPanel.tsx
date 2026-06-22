@@ -24,8 +24,10 @@ import {
 import {
   Brain, ChevronDown, Eye, Grid3X3, RefreshCw, Settings2, TrendingDown,
   Zap, Activity, AlertTriangle, CheckCircle2, Info, Play, ShieldOff, Package,
+  Clock,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { IdcaHybridEventsPanel } from "./IdcaHybridEventsPanel";
 
 const API_BASE = "/api/idca/hybrid";
 
@@ -471,6 +473,21 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
                 </div>
               );
             })}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Hybrid/Grid Events */}
+      {currentMode !== "off" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Clock className="h-3.5 w-3.5 text-blue-400" />
+              Eventos Hybrid/Grid
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <IdcaHybridEventsPanel pair={pair} />
           </CardContent>
         </Card>
       )}

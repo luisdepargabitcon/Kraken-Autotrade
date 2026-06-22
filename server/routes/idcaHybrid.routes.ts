@@ -14,6 +14,7 @@
 import type { Express } from "express";
 import { idcaHybridDecisionService } from "../services/institutionalDca/IdcaHybridDecisionService";
 import { getIdcaRegimeSnapshot } from "../services/institutionalDca/IdcaRegimeAdapter";
+import { mapHybridStateToEvent } from "../services/institutionalDca/idcaHybridEventMapper";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 
@@ -106,6 +107,63 @@ export function registerIdcaHybridRoutes(app: Express): void {
         rows = await db.execute(sql`SELECT * FROM idca_grid_legs ORDER BY updated_at DESC LIMIT 100`);
       }
       res.json({ success: true, data: rows.rows ?? [] });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e?.message });
+    }
+  });
+
+  // GET /api/idca/hybrid/events?pair=BTC%2FUSD&limit=100
+  app.get("/api/idca/hybrid/events", async (req, res) => {
+    try {
+      const pair = req.query.pair as string | undefined;
+      const limit = Math.min(parseInt((req.query.limit as string) || "100", 10), 200);
+
+      let stateResult;
+      if (pair) {
+        stateResult = await db.execute(sql`
+          SELECT id, pair, cycle_id, mode, regime, mean_reversion_state, grid_state,
+                 last_price, score, reason, natural_reason, raw_json, updated_at
+          FROM idca_hybrid_state
+          WHERE pair = ${pair}
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `);
+      } else {
+        stateResult = await db.execute(sql`
+          SELECT id, pair, cycle_id, mode, regime, mean_reversion_state, grid_state,
+                 last_price, score, reason, natural_reason, raw_json, updated_at
+          FROM idca_hybrid_state
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `);
+      }
+
+      const rows = stateResult.rows ?? [];
+
+      // Fetch planned grid legs for the relevant pairs
+      let legRows: any[] = [];
+      if (rows.length > 0) {
+        const legResult = await db.execute(sql`
+          SELECT pair, cycle_id, leg_index, side, planned_price, quantity,
+                 reason, natural_reason, observer_only
+          FROM idca_grid_legs
+          WHERE status = 'planned'
+          ORDER BY pair, cycle_id, leg_index
+        `);
+        legRows = legResult.rows ?? [];
+      }
+
+      // Map each state row to a normalized event
+      const events = rows.map((row: any) => {
+        const legs = legRows.filter(
+          (leg: any) =>
+            leg.pair === row.pair &&
+            String(leg.cycle_id ?? "null") === String(row.cycle_id ?? "null")
+        );
+        return mapHybridStateToEvent(row, legs);
+      });
+
+      res.json({ success: true, data: events, total: events.length });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e?.message });
     }
