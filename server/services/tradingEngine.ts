@@ -5396,7 +5396,19 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
                 pair,
                 action: prediction.approve ? "WOULD_ALLOW" : "WOULD_BLOCK",
                 confidence: prediction.score.toFixed(4),
-                reason: !prediction.approve ? `AI score ${prediction.score.toFixed(3)} below threshold ${prediction.threshold}` : null,
+                reason: !prediction.approve
+                  ? `Confianza insuficiente: ${(prediction.score * 100).toFixed(1)}% calculado, mínimo ${(prediction.threshold * 100).toFixed(0)}% exigido.`
+                  : null,
+                modelVersion: aiService.getModelVersion(),
+                metadataJson: {
+                  signal: "BUY",
+                  strategy: selectedStrategyId ?? null,
+                  botConfidence: typeof signal?.confidence === "number" ? signal.confidence : null,
+                  aiDecision: prediction.approve ? "ALLOW" : "BLOCK",
+                  naturalReason: !prediction.approve
+                    ? `La IA detectó que la compra no supera la confianza mínima exigida del ${(prediction.threshold * 100).toFixed(0)}%.`
+                    : `La IA permite la compra con confianza del ${(prediction.score * 100).toFixed(1)}%.`,
+                },
               }).catch((e: any) => log(`[AI] shadow save error: ${e.message}`, "trading"));
             }
             if (aiFilterOn && !prediction.approve) {

@@ -127,7 +127,12 @@ function translateDiscardReasons(reasons: Record<string, number>): Record<string
 class AiService {
   private modelLoaded: boolean = false;
   private cachedMetrics: any = null;
+  private cachedModelVersion: string | null = null;
   private pythonCheckCache: { available: boolean; version: string; mlOk: boolean } | null = null;
+
+  getModelVersion(): string | null {
+    return this.cachedModelVersion;
+  }
 
   private checkPythonRuntime(): Promise<{ available: boolean; version: string; mlOk: boolean }> {
     if (this.pythonCheckCache) return Promise.resolve(this.pythonCheckCache);
@@ -493,6 +498,7 @@ class AiService {
             valSize: valTrades.length,
           };
           
+          this.cachedModelVersion = modelVersion;
           await storage.updateAiConfig({
             lastTrainTs: new Date(),
             lastTrainError: null,
@@ -510,6 +516,7 @@ class AiService {
             metrics,
           });
         } catch (e: any) {
+          this.cachedModelVersion = modelVersion;
           await storage.updateAiConfig({
             lastTrainTs: new Date(),
             lastTrainError: null,

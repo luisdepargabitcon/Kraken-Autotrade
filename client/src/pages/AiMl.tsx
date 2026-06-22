@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   Brain,
@@ -307,21 +308,61 @@ function AprendizajeTab({ status, diag, validSamples, minSamples, labeled, progr
 function ObservacionTab({ status, shadowReport, shadowTotal, shadowPending, shadowEvaluated, shadowBlocked, shadowAllowed, shadowBlockedLosers, shadowPassedLosers, shadowRecent }: any) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [showApplyModal, setShowApplyModal] = useState(false);
 
   const toggleMut = useMutation({
     mutationFn: (body: { filterEnabled?: boolean; shadowEnabled?: boolean; threshold?: number }) =>
       postAPI("/api/ai/toggle", body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/ai/status"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/ai/status"] });
+      qc.invalidateQueries({ queryKey: ["/api/ai/shadow/report"] });
+      toast({ title: "Configuración actualizada" });
+    },
     onError: () => toast({ variant: "destructive", title: "Error al cambiar configuración" }),
   });
 
-  const shadowEnabled = status?.shadowEnabled ?? false;
-  const modelLoaded = status?.modelLoaded ?? false;
-  const reportMessage = shadowReport?.message ?? null;
+  const shadowEnabled   = status?.shadowEnabled ?? false;
+  const modelLoaded     = status?.modelLoaded   ?? false;
+  const filterEnabled   = status?.filterEnabled ?? false;
+  const metrics         = status?.metrics       ?? null;
+  const currentThreshold = status?.threshold    ?? 0.8;
+  const precision = metrics?.precision ?? null;
+  const accuracy  = metrics?.accuracy  ?? null;
+
+  const avgScore = shadowRecent.length > 0
+    ? shadowRecent.reduce((s: number, d: any) => s + parseFloat(d.score), 0) / shadowRecent.length
+    : null;
+
+  const canActivateRealFilter =
+    shadowEvaluated >= 30 &&
+    precision !== null && precision >= 0.60 &&
+    accuracy  !== null && accuracy  >= 0.55;
+
+  const recThreshold = (!precision || precision < 0.60 || shadowEvaluated < 30)
+    ? 0.80 : precision >= 0.70 ? 0.70 : 0.75;
+
+  const safeProposal = { shadowEnabled: true, filterEnabled: false, threshold: recThreshold };
+
+  const getNaturalReason = (d: any) => {
+    const sc = parseFloat(d.score), th = parseFloat(d.threshold);
+    return d.wouldBlock
+      ? `Confianza insuficiente: ${(sc * 100).toFixed(1)}% calculado, mínimo ${(th * 100).toFixed(0)}% exigido.`
+      : `Supera el mínimo: ${(sc * 100).toFixed(1)}% calculado, umbral ${(th * 100).toFixed(0)}%.`;
+  };
+
+  const getNaturalDetail = (d: any) => {
+    const sc = parseFloat(d.score), th = parseFloat(d.threshold);
+    const pl = d.pair ?? d.tradeId?.split('-').slice(2).join('-') ?? '?';
+    return d.wouldBlock
+      ? `El bot detectó una señal de compra en ${pl}. La IA la evaluó y calculó una confianza del ${(sc * 100).toFixed(1)}%. Como el umbral mínimo configurado es ${(th * 100).toFixed(0)}%, habría bloqueado esta compra. Al tener el filtro real apagado, no intervino — la operación siguió su curso normal.`
+      : `El bot detectó una señal de compra en ${pl}. La IA calculó una confianza del ${(sc * 100).toFixed(1)}%, superando el umbral del ${(th * 100).toFixed(0)}%. Habría permitido la compra.`;
+  };
 
   return (
     <div className="space-y-4">
-      {/* Estado del observador */}
+
+      {/* ── 1. ESTADO DEL OBSERVADOR ── */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-mono flex items-center gap-2">
@@ -338,26 +379,17 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowPending, shad
                 <p className="text-xs text-muted-foreground">La IA evalúa señales y aprende sin bloquear operaciones reales.</p>
               </div>
             </div>
-            <Switch
-              checked={shadowEnabled}
-              disabled={toggleMut.isPending}
-              onCheckedChange={(v) => toggleMut.mutate({ shadowEnabled: v })}
-            />
+            <Switch checked={shadowEnabled} disabled={toggleMut.isPending} onCheckedChange={(v) => toggleMut.mutate({ shadowEnabled: v })} />
           </div>
 
-          {/* Estado resumido: modelo + observador */}
           <div className="grid grid-cols-3 gap-3">
             <div className={`p-3 rounded-lg border ${shadowEnabled ? "bg-purple-500/10 border-purple-500/30" : "bg-white/5 border-white/10"}`}>
               <p className="text-xs text-muted-foreground mb-1">Modo observador</p>
-              <p className={`text-sm font-mono font-bold ${shadowEnabled ? "text-purple-400" : "text-muted-foreground"}`}>
-                {shadowEnabled ? "Encendido" : "Apagado"}
-              </p>
+              <p className={`text-sm font-mono font-bold ${shadowEnabled ? "text-purple-400" : "text-muted-foreground"}`}>{shadowEnabled ? "Encendido" : "Apagado"}</p>
             </div>
             <div className={`p-3 rounded-lg border ${modelLoaded ? "bg-green-500/10 border-green-500/30" : "bg-amber-500/10 border-amber-500/30"}`}>
               <p className="text-xs text-muted-foreground mb-1">Modelo</p>
-              <p className={`text-sm font-mono font-bold ${modelLoaded ? "text-green-400" : "text-amber-400"}`}>
-                {modelLoaded ? "Cargado" : "Sin entrenar"}
-              </p>
+              <p className={`text-sm font-mono font-bold ${modelLoaded ? "text-green-400" : "text-amber-400"}`}>{modelLoaded ? "Cargado" : "Sin entrenar"}</p>
             </div>
             <div className="p-3 rounded-lg border border-white/10 bg-white/5">
               <p className="text-xs text-muted-foreground mb-1">Predicciones</p>
@@ -365,35 +397,36 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowPending, shad
             </div>
           </div>
 
-          {/* Próximo paso claro */}
           {shadowEnabled && !modelLoaded && (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-500/[0.08] border border-amber-500/30">
               <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-amber-400">Modo observador activado — esperando modelo</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  El observador está ON pero no puede registrar predicciones porque no hay modelo entrenado.
-                  <strong className="text-amber-300"> Próximo paso: ve a la pestaña Aprendizaje y entrena el modelo.</strong>
-                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">El observador está ON pero no puede registrar predicciones porque no hay modelo entrenado.<strong className="text-amber-300"> Próximo paso: ve a la pestaña Aprendizaje y entrena el modelo.</strong></p>
               </div>
             </div>
           )}
-
           {shadowEnabled && modelLoaded && shadowTotal === 0 && (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-blue-500/[0.08] border border-blue-500/30">
               <Activity className="h-4 w-4 text-blue-400 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-muted-foreground">
-                Modo observador activo y modelo listo. Las predicciones se registrarán automáticamente con las próximas señales BUY evaluadas por el bot.
-              </p>
+              <p className="text-xs text-muted-foreground">Modo observador activo y modelo listo. Las predicciones se registrarán automáticamente con las próximas señales BUY evaluadas.</p>
             </div>
           )}
 
-          {reportMessage && shadowEnabled && modelLoaded && shadowTotal === 0 && (
-            <p className="text-xs text-muted-foreground/70 italic">{reportMessage}</p>
-          )}
+          {/* J: Aviso modo observador vs filtro real */}
+          <div className={`flex items-center gap-2 p-3 rounded-lg text-xs border ${filterEnabled ? "bg-amber-500/[0.06] border-amber-500/30" : "bg-white/[0.03] border-white/10"}`}>
+            <Info className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+            <span className="text-muted-foreground">
+              <strong className="text-white">Modo observador</strong> no bloquea compras reales. Solo registra qué habría hecho la IA.{" "}
+              {filterEnabled
+                ? <span className="text-amber-400">⚠ El filtro real está activo — la IA sí puede bloquear compras.</span>
+                : <span className="text-green-400">Estado seguro: la IA solo observa, no puede bloquear.</span>}
+            </span>
+          </div>
         </CardContent>
       </Card>
 
+      {/* ── 2. RESULTADOS ── */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-mono flex items-center gap-2">
@@ -402,10 +435,7 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowPending, shad
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-xs text-muted-foreground">
-            Aquí verás qué habría hecho la IA sin tocar operaciones reales.
-            Sirve para validar el modelo antes de permitirle bloquear compras.
-          </p>
+          <p className="text-xs text-muted-foreground">Aquí verás qué habría hecho la IA sin tocar operaciones reales. Sirve para validar el modelo antes de permitirle bloquear compras.</p>
           {shadowTotal > 0 ? (
             <>
               <div className="grid grid-cols-3 gap-3">
@@ -431,47 +461,98 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowPending, shad
                   <p className="text-xs text-muted-foreground">Con resultado conocido (finalPnlNet):</p>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-                      <div className="flex items-center gap-2 mb-1">
-                        <CheckCircle2 className="h-4 w-4 text-green-400" />
-                        <span className="text-xs font-mono text-green-400">Aciertos</span>
-                      </div>
+                      <div className="flex items-center gap-2 mb-1"><CheckCircle2 className="h-4 w-4 text-green-400" /><span className="text-xs font-mono text-green-400">Aciertos</span></div>
                       <p className="text-2xl font-bold font-mono text-green-400">{shadowBlockedLosers}</p>
                       <p className="text-xs text-muted-foreground">Pérdidas evitadas</p>
                     </div>
                     <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                      <div className="flex items-center gap-2 mb-1">
-                        <XCircle className="h-4 w-4 text-red-400" />
-                        <span className="text-xs font-mono text-red-400">Fallos</span>
-                      </div>
+                      <div className="flex items-center gap-2 mb-1"><XCircle className="h-4 w-4 text-red-400" /><span className="text-xs font-mono text-red-400">Fallos</span></div>
                       <p className="text-2xl font-bold font-mono text-red-400">{shadowPassedLosers}</p>
                       <p className="text-xs text-muted-foreground">Pérdidas no detectadas</p>
                     </div>
                   </div>
                 </>
               )}
+
+              {/* C: Resumen agregado con interpretación */}
+              {avgScore !== null && (
+                <>
+                  <Separator />
+                  <div className="p-3 rounded-lg bg-white/[0.03] border border-white/10 space-y-2">
+                    <p className="text-xs font-semibold text-purple-300">Resumen del observador</p>
+                    <p className="text-xs text-muted-foreground">
+                      La IA ha revisado <strong className="text-white">{shadowTotal} compra{shadowTotal !== 1 ? "s" : ""}</strong> simulada{shadowTotal !== 1 ? "s" : ""} recientes.{" "}
+                      {shadowBlocked === shadowTotal
+                        ? `En las ${shadowTotal} habría recomendado bloquear la entrada.`
+                        : `En ${shadowBlocked} habría bloqueado y en ${shadowAllowed} habría permitido.`}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      <strong className="text-white">Motivo principal:</strong> La confianza media de la IA fue{" "}
+                      <strong className={avgScore < currentThreshold ? "text-amber-300" : "text-green-300"}>{(avgScore * 100).toFixed(1)}%</strong>,{" "}
+                      {avgScore < currentThreshold
+                        ? `muy por debajo del umbral actual del ${(currentThreshold * 100).toFixed(0)}%.`
+                        : `por encima del umbral del ${(currentThreshold * 100).toFixed(0)}%.`}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      <strong className="text-white">Interpretación:</strong> El bot técnico está generando compras en DRY RUN, pero la IA todavía no las considera suficientemente fiables.
+                    </p>
+                    {shadowPending > 0 && shadowEvaluated === 0 && (
+                      <p className="text-xs text-purple-300/80">
+                        <strong>Estado:</strong> Las {shadowTotal} operaciones siguen abiertas, por lo que todavía no sabemos si la IA habría acertado o no.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* H: Tabla predicciones con motivo en lenguaje natural y filas expandibles */}
               {shadowRecent.length > 0 && (
                 <>
                   <Separator />
-                  <p className="text-xs font-mono text-muted-foreground">Últimas predicciones</p>
+                  <p className="text-xs font-mono text-muted-foreground">Últimas predicciones — pulsa para ver el motivo</p>
                   <div className="space-y-1">
                     {shadowRecent.map((d: any) => {
                       const pairLabel = d.pair ?? d.tradeId?.split('-').slice(2).join('-') ?? '?';
-                      const scorePct = (parseFloat(d.score) * 100).toFixed(1);
-                      const thrPct = (parseFloat(d.threshold) * 100).toFixed(0);
-                      const decision = d.wouldBlock
-                        ? <span className="text-red-400 font-mono">BLOQUEARÍA</span>
-                        : <span className="text-green-400 font-mono">PERMITIRÍA</span>;
-                      const result = d.finalPnlNet !== null
-                        ? <span className={parseFloat(d.finalPnlNet) >= 0 ? 'text-green-400' : 'text-red-400'}>{parseFloat(d.finalPnlNet) >= 0 ? '+' : ''}{parseFloat(d.finalPnlNet).toFixed(2)}$</span>
-                        : <span className="text-muted-foreground">pendiente</span>;
-                      const tsStr = d.ts ? new Date(d.ts).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '';
+                      const scorePct  = (parseFloat(d.score) * 100).toFixed(1);
+                      const thrPct    = (parseFloat(d.threshold) * 100).toFixed(0);
+                      const isOpen    = expandedRow === d.id;
+                      const resultEl  = d.finalPnlNet !== null
+                        ? <span className={parseFloat(d.finalPnlNet) >= 0 ? "text-green-400" : "text-red-400"}>{parseFloat(d.finalPnlNet) >= 0 ? "+" : ""}{parseFloat(d.finalPnlNet).toFixed(2)}$</span>
+                        : <span className="text-purple-300">pendiente</span>;
+                      const tsStr = d.ts ? new Date(d.ts).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "";
                       return (
-                        <div key={d.id} className="flex items-center gap-2 text-xs p-2 rounded bg-white/5 border border-white/[0.06]">
-                          <span className="text-muted-foreground w-10 flex-shrink-0">{tsStr}</span>
-                          <span className="font-mono font-semibold w-20 flex-shrink-0">{pairLabel}</span>
-                          <span className="text-blue-300">{scorePct}% / {thrPct}%</span>
-                          <span className="flex-1">{decision}</span>
-                          <span>{result}</span>
+                        <div key={d.id}>
+                          <div
+                            className="flex items-center gap-2 text-xs p-2 rounded bg-white/5 border border-white/[0.06] cursor-pointer hover:bg-white/[0.08] transition-colors"
+                            onClick={() => setExpandedRow(isOpen ? null : d.id)}
+                          >
+                            <span className="text-muted-foreground w-9 flex-shrink-0">{tsStr}</span>
+                            <span className="font-mono font-semibold w-16 flex-shrink-0 truncate">{pairLabel}</span>
+                            <span className="text-blue-300 w-24 flex-shrink-0">{scorePct}% / {thrPct}%</span>
+                            <span className="flex-1">
+                              {d.wouldBlock
+                                ? <span className="text-red-400">Bloquearía</span>
+                                : <span className="text-green-400">Permitiría</span>}
+                            </span>
+                            <span className="hidden sm:block text-[10px] text-muted-foreground/60 truncate max-w-[110px]">
+                              {d.wouldBlock ? "Confianza insuficiente" : "Supera el umbral"}
+                            </span>
+                            <span className="w-16 text-right">{resultEl}</span>
+                            {isOpen ? <ChevronDown className="h-3 w-3 flex-shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 flex-shrink-0 text-muted-foreground" />}
+                          </div>
+                          {isOpen && (
+                            <div className="mb-1 p-3 rounded-b bg-white/[0.03] border border-t-0 border-white/[0.06] space-y-2">
+                              <div className="flex flex-wrap gap-1">
+                                {d.wouldBlock   && <Badge variant="outline" className="text-[10px] border-red-500/40 text-red-400">Confianza baja</Badge>}
+                                {d.wouldBlock   && <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-400">Por debajo del umbral</Badge>}
+                                {!d.wouldBlock  && <Badge variant="outline" className="text-[10px] border-green-500/40 text-green-400">Supera el umbral</Badge>}
+                                <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-400">Compra simulada</Badge>
+                                {d.finalPnlNet === null && <Badge variant="outline" className="text-[10px] border-purple-500/40 text-purple-400">Pendiente de resultado</Badge>}
+                              </div>
+                              <p className="text-xs text-muted-foreground leading-relaxed">{getNaturalDetail(d)}</p>
+                              <p className="text-xs font-medium text-white/80">{getNaturalReason(d)}</p>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -483,25 +564,149 @@ function ObservacionTab({ status, shadowReport, shadowTotal, shadowPending, shad
             <div className="flex flex-col items-center justify-center py-8 gap-3 text-muted-foreground">
               <EyeOff className="h-10 w-10 opacity-30" />
               {!shadowEnabled ? (
-                <>
-                  <p className="text-sm">Modo observador desactivado</p>
-                  <p className="text-xs text-center">Actívalo arriba para que el sistema empiece a registrar predicciones.</p>
-                </>
+                <><p className="text-sm">Modo observador desactivado</p><p className="text-xs text-center">Actívalo arriba para que el sistema empiece a registrar predicciones.</p></>
               ) : !modelLoaded ? (
-                <>
-                  <p className="text-sm font-semibold text-amber-400">Sin modelo entrenado</p>
-                  <p className="text-xs text-center text-amber-300/70">El observador está ON pero necesita un modelo para generar predicciones.<br/>Ve a <strong>Aprendizaje → Entrenar IA ahora</strong>.</p>
-                </>
+                <><p className="text-sm font-semibold text-amber-400">Sin modelo entrenado</p><p className="text-xs text-center text-amber-300/70">El observador está ON pero necesita un modelo para generar predicciones.<br/>Ve a <strong>Aprendizaje → Entrenar IA ahora</strong>.</p></>
               ) : (
-                <>
-                  <p className="text-sm">Sin predicciones shadow todavía</p>
-                  <p className="text-xs text-center">El observador y el modelo están listos. Las predicciones aparecerán con las próximas señales BUY.</p>
-                </>
+                <><p className="text-sm">Sin predicciones shadow todavía</p><p className="text-xs text-center">El observador y el modelo están listos. Las predicciones aparecerán con las próximas señales BUY.</p></>
               )}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* ── I: QUÉ SIGNIFICA ESTO ── */}
+      {shadowTotal > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-mono flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-blue-400" />
+              Qué significa esto
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs text-muted-foreground leading-relaxed">
+            <p>El bot técnico puede seguir comprando en DRY RUN, pero la IA está actuando como <strong className="text-white">auditor silencioso</strong>.</p>
+            <p>Si más adelante estas compras terminan mal, la IA habrá demostrado que bloquearlas era útil. Si terminan bien, habrá que revisar si el umbral está demasiado alto o si el modelo es demasiado conservador.</p>
+            <p className="text-purple-300/80">Sigue acumulando predicciones Shadow con resultado cerrado para tener una base estadística sólida antes de activar el filtro real.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── D/E/F/G: PROPUESTA DE CONFIGURACIÓN ── */}
+      {modelLoaded && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-mono flex items-center gap-2">
+              <Target className="h-4 w-4 text-amber-400" />
+              Propuesta de configuración IA
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* D: Recomendación principal */}
+            <div className="p-3 rounded-lg bg-blue-500/[0.06] border border-blue-500/20 space-y-2">
+              <p className="text-xs font-semibold text-blue-300">Recomendación actual</p>
+              <ul className="text-xs text-muted-foreground space-y-1.5">
+                <li className="flex items-center gap-2"><CheckCircle2 className="h-3 w-3 text-green-400 flex-shrink-0" />Mantener <strong className="text-white">Modo observador</strong> activado</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="h-3 w-3 text-green-400 flex-shrink-0" />Mantener <strong className="text-white">Filtro real</strong> apagado</li>
+                <li className="flex items-center gap-2"><CheckCircle2 className="h-3 w-3 text-green-400 flex-shrink-0" />Umbral recomendado: <strong className="text-amber-300">{(recThreshold * 100).toFixed(0)}%</strong></li>
+              </ul>
+              <p className="text-xs text-muted-foreground">
+                {!canActivateRealFilter
+                  ? `Todavía no hay evidencia suficiente para activar el filtro real. Se necesitan al menos 30 predicciones cerradas${precision !== null ? ` (precisión actual: ${(precision * 100).toFixed(1)}%, se requiere >60%)` : ""}.`
+                  : "El modelo tiene métricas suficientes. Puedes considerar activar el filtro real desde la pestaña Seguridad."}
+              </p>
+            </div>
+
+            {/* G: Umbral recomendado */}
+            <div className="p-3 rounded-lg bg-white/[0.03] border border-white/10 space-y-1">
+              <p className="text-xs font-semibold text-amber-300">Umbral recomendado: {(recThreshold * 100).toFixed(0)}%</p>
+              <p className="text-xs text-muted-foreground">
+                {!precision || shadowEvaluated < 30
+                  ? "Con pocas predicciones evaluadas, conviene mantener un criterio exigente y seguir observando."
+                  : precision >= 0.70
+                  ? "Con buena precisión se puede reducir el umbral a 70% para permitir más compras válidas."
+                  : "Con precisión moderada se recomienda un umbral del 75% para equilibrar bloqueos y permisos."}
+              </p>
+              {Math.abs(currentThreshold - recThreshold) > 0.01 && (
+                <p className="text-xs text-amber-400">Umbral actual: {(currentThreshold * 100).toFixed(0)}% → propuesto: {(recThreshold * 100).toFixed(0)}%</p>
+              )}
+            </div>
+
+            {/* E: Botón Aplicar propuesta segura */}
+            <div className="space-y-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full border-green-500/40 text-green-400 hover:bg-green-500/10 hover:text-green-300"
+                onClick={() => setShowApplyModal(true)}
+                disabled={toggleMut.isPending}
+              >
+                <ShieldCheck className="h-4 w-4 mr-2" />
+                Aplicar propuesta segura
+              </Button>
+              <p className="text-[11px] text-muted-foreground/70 text-center">No activa compras, no vende, no bloquea operaciones reales. Solo deja la IA en modo observador seguro.</p>
+            </div>
+
+            {/* F: Filtro real bloqueado */}
+            <div className={`p-3 rounded-lg border space-y-2 ${canActivateRealFilter ? "bg-amber-500/[0.06] border-amber-500/30" : "bg-white/[0.02] border-white/[0.08]"}`}>
+              <div className="flex items-center gap-2">
+                <ShieldX className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                <p className="text-xs font-semibold text-muted-foreground">
+                  {canActivateRealFilter ? "Filtro real disponible (zona avanzada)" : "Filtro real no recomendado todavía"}
+                </p>
+              </div>
+              {!canActivateRealFilter ? (
+                <>
+                  <p className="text-xs text-muted-foreground">Necesitas más predicciones cerradas en modo observador antes de permitir que la IA bloquee compras reales.</p>
+                  <div className="flex flex-wrap gap-2 text-[10px]">
+                    <span className={`px-2 py-0.5 rounded ${shadowEvaluated >= 30 ? "bg-green-500/15 text-green-400" : "bg-white/10 text-muted-foreground"}`}>Cerradas: {shadowEvaluated}/30</span>
+                    {precision !== null && <span className={`px-2 py-0.5 rounded ${precision >= 0.60 ? "bg-green-500/15 text-green-400" : "bg-white/10 text-muted-foreground"}`}>Precisión: {(precision * 100).toFixed(1)}%/60%</span>}
+                    {accuracy  !== null && <span className={`px-2 py-0.5 rounded ${accuracy  >= 0.55 ? "bg-green-500/15 text-green-400" : "bg-white/10 text-muted-foreground"}`}>Accuracy: {(accuracy * 100).toFixed(1)}%/55%</span>}
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">El modelo cumple los requisitos mínimos. Actívalo en <strong>Seguridad → Filtro Real</strong> si quieres proceder.</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── MODAL — Aplicar propuesta segura ── */}
+      <Dialog open={showApplyModal} onOpenChange={setShowApplyModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <ShieldCheck className="h-4 w-4 text-green-400" />
+              Aplicar propuesta segura
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-xs">
+            <p className="text-muted-foreground">Se aplicará la siguiente configuración:</p>
+            <ul className="space-y-1.5">
+              <li className="flex items-center gap-2"><CheckCircle2 className="h-3 w-3 text-green-400 flex-shrink-0" /><span>Modo observador: <strong className="text-green-400">Activado</strong></span></li>
+              <li className="flex items-center gap-2"><CheckCircle2 className="h-3 w-3 text-green-400 flex-shrink-0" /><span>Filtro real de compras: <strong className="text-green-400">Apagado</strong></span></li>
+              <li className="flex items-center gap-2"><CheckCircle2 className="h-3 w-3 text-green-400 flex-shrink-0" /><span>Umbral de confianza: <strong className="text-amber-300">{(recThreshold * 100).toFixed(0)}%</strong></span></li>
+            </ul>
+            <div className="p-2 rounded bg-white/[0.04] border border-white/10 text-muted-foreground/80">
+              No se ejecutarán órdenes. No se tocará FISCO. No se tocará IDCA activo.
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end pt-2">
+            <Button size="sm" variant="outline" onClick={() => setShowApplyModal(false)}>Cancelar</Button>
+            <Button
+              size="sm"
+              className="bg-green-600 hover:bg-green-700 text-white"
+              disabled={toggleMut.isPending}
+              onClick={() => { toggleMut.mutate(safeProposal); setShowApplyModal(false); }}
+            >
+              {toggleMut.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+              Aplicar cambios seguros
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

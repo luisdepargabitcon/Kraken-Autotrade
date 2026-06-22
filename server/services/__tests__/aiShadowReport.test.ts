@@ -252,6 +252,183 @@ describe("aiShadowReport — /api/ai/shadow/report", () => {
 
 });
 
+// ── K: Natural language + safe proposal + filter lock tests ───────────────────
+
+describe("getNaturalReason — lenguaje natural", () => {
+
+  function getNaturalReason(score: number, threshold: number, wouldBlock: boolean): string {
+    return wouldBlock
+      ? `Confianza insuficiente: ${(score * 100).toFixed(1)}% calculado, mínimo ${(threshold * 100).toFixed(0)}% exigido.`
+      : `Supera el mínimo: ${(score * 100).toFixed(1)}% calculado, umbral ${(threshold * 100).toFixed(0)}%.`;
+  }
+
+  it("score < threshold → 'Confianza insuficiente'", () => {
+    const msg = getNaturalReason(0.499, 0.8, true);
+    expect(msg).toContain("Confianza insuficiente");
+    expect(msg).toContain("49.9%");
+    expect(msg).toContain("mínimo 80% exigido");
+  });
+
+  it("score >= threshold → 'Supera el mínimo'", () => {
+    const msg = getNaturalReason(0.85, 0.8, false);
+    expect(msg).toContain("Supera el mínimo");
+    expect(msg).toContain("85.0%");
+    expect(msg).toContain("umbral 80%");
+  });
+
+  it("wouldBlock=true always uses block message regardless of score label", () => {
+    const msg = getNaturalReason(0.9, 0.8, true);
+    expect(msg).toContain("Confianza insuficiente");
+  });
+
+});
+
+describe("safeProposal — nunca activa filterEnabled", () => {
+
+  function buildSafeProposal(precision: number | null, shadowEvaluated: number, currentThreshold: number) {
+    const recThreshold = (!precision || precision < 0.60 || shadowEvaluated < 30)
+      ? 0.80 : precision >= 0.70 ? 0.70 : 0.75;
+    return { shadowEnabled: true, filterEnabled: false, threshold: recThreshold };
+  }
+
+  it("safe proposal always has filterEnabled=false", () => {
+    const cases = [
+      { precision: null,  evaluated: 0,  threshold: 0.8 },
+      { precision: 0.40,  evaluated: 5,  threshold: 0.8 },
+      { precision: 0.65,  evaluated: 35, threshold: 0.75 },
+      { precision: 0.75,  evaluated: 50, threshold: 0.8 },
+    ];
+    cases.forEach(({ precision, evaluated, threshold }) => {
+      const p = buildSafeProposal(precision, evaluated, threshold);
+      expect(p.filterEnabled).toBe(false);
+    });
+  });
+
+  it("safe proposal always has shadowEnabled=true", () => {
+    const p = buildSafeProposal(null, 0, 0.8);
+    expect(p.shadowEnabled).toBe(true);
+  });
+
+  it("recThreshold=80% when precision<60% or evaluated<30", () => {
+    expect(buildSafeProposal(null,  0,  0.8).threshold).toBe(0.80);
+    expect(buildSafeProposal(0.50, 10, 0.8).threshold).toBe(0.80);
+    expect(buildSafeProposal(0.65, 10, 0.8).threshold).toBe(0.80);
+  });
+
+  it("recThreshold=70% when precision>=70% and evaluated>=30", () => {
+    expect(buildSafeProposal(0.72, 40, 0.8).threshold).toBe(0.70);
+  });
+
+  it("recThreshold=75% when 60%<=precision<70% and evaluated>=30", () => {
+    expect(buildSafeProposal(0.62, 35, 0.8).threshold).toBe(0.75);
+  });
+
+});
+
+describe("canActivateRealFilter — requisitos mínimos", () => {
+
+  function canActivate(evaluated: number, precision: number | null, accuracy: number | null): boolean {
+    return evaluated >= 30 &&
+      precision !== null && precision >= 0.60 &&
+      accuracy  !== null && accuracy  >= 0.55;
+  }
+
+  it("blocked when evaluatedPredictions < 30", () => {
+    expect(canActivate(29, 0.70, 0.60)).toBe(false);
+    expect(canActivate(0,  0.80, 0.80)).toBe(false);
+  });
+
+  it("blocked when precision < 0.60", () => {
+    expect(canActivate(50, 0.59, 0.60)).toBe(false);
+    expect(canActivate(50, null, 0.60)).toBe(false);
+  });
+
+  it("blocked when accuracy < 0.55", () => {
+    expect(canActivate(50, 0.65, 0.54)).toBe(false);
+    expect(canActivate(50, 0.65, null)).toBe(false);
+  });
+
+  it("unlocked only when all three conditions met", () => {
+    expect(canActivate(30, 0.60, 0.55)).toBe(true);
+    expect(canActivate(50, 0.75, 0.70)).toBe(true);
+  });
+
+  it("state current (3 pending, 0 evaluated) → locked", () => {
+    expect(canActivate(0, null, null)).toBe(false);
+  });
+
+});
+
+describe("newPrediction metadata — campos obligatorios", () => {
+
+  function buildShadowSave(score: number, threshold: number, pair: string, approve: boolean, selectedStrategyId: string | null) {
+    return {
+      tradeId: `CANDLES-${Date.now()}-${pair}`,
+      score: score.toFixed(4),
+      threshold: threshold.toFixed(4),
+      wouldBlock: !approve,
+      pair,
+      action: approve ? "WOULD_ALLOW" : "WOULD_BLOCK",
+      confidence: score.toFixed(4),
+      reason: !approve
+        ? `Confianza insuficiente: ${(score * 100).toFixed(1)}% calculado, mínimo ${(threshold * 100).toFixed(0)}% exigido.`
+        : null,
+      metadataJson: {
+        signal: "BUY",
+        strategy: selectedStrategyId ?? null,
+        aiDecision: approve ? "ALLOW" : "BLOCK",
+        naturalReason: !approve
+          ? `La IA detectó que la compra no supera la confianza mínima exigida del ${(threshold * 100).toFixed(0)}%.`
+          : `La IA permite la compra con confianza del ${(score * 100).toFixed(1)}%.`,
+      },
+    };
+  }
+
+  it("saves pair field", () => {
+    const s = buildShadowSave(0.499, 0.8, "TON/USD", false, null);
+    expect(s.pair).toBe("TON/USD");
+  });
+
+  it("saves action=WOULD_BLOCK when not approved", () => {
+    const s = buildShadowSave(0.499, 0.8, "TON/USD", false, null);
+    expect(s.action).toBe("WOULD_BLOCK");
+    expect(s.wouldBlock).toBe(true);
+  });
+
+  it("saves action=WOULD_ALLOW when approved", () => {
+    const s = buildShadowSave(0.85, 0.8, "BTC/USD", true, "momentum");
+    expect(s.action).toBe("WOULD_ALLOW");
+    expect(s.wouldBlock).toBe(false);
+  });
+
+  it("reason in Spanish when blocked", () => {
+    const s = buildShadowSave(0.499, 0.8, "TON/USD", false, null);
+    expect(s.reason).toContain("Confianza insuficiente");
+  });
+
+  it("reason is null when allowed", () => {
+    const s = buildShadowSave(0.85, 0.8, "BTC/USD", true, null);
+    expect(s.reason).toBeNull();
+  });
+
+  it("metadataJson has signal=BUY always", () => {
+    const s = buildShadowSave(0.499, 0.8, "TON/USD", false, "momentum");
+    expect(s.metadataJson.signal).toBe("BUY");
+  });
+
+  it("metadataJson naturalReason mentions threshold percentage", () => {
+    const s = buildShadowSave(0.499, 0.8, "TON/USD", false, null);
+    expect(s.metadataJson.naturalReason).toContain("80%");
+  });
+
+  it("FISCO not touched — no fisco fields in shadow save", () => {
+    const s = buildShadowSave(0.499, 0.8, "TON/USD", false, null);
+    expect("fisco" in s).toBe(false);
+    expect("idca" in s).toBe(false);
+  });
+
+});
+
 // ── UI state logic tests ───────────────────────────────────────────────────────
 
 describe("ObservacionTab — UI state logic", () => {
