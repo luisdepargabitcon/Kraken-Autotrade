@@ -579,8 +579,15 @@ export class TradingEngine {
   // ── Anti-burst multi-lot guards ────────────────────────────────
   // Minimum seconds between BUY entries for the SAME pair (anti-burst)
   private readonly SG_MIN_SECONDS_BETWEEN_ENTRIES = 600; // 10 min
-  // Minimum price distance (%) from nearest open lot to allow a new lot
-  private readonly SG_MIN_ENTRY_DISTANCE_PCT = 1.5;
+  // Fallback price distance (%) when ATR is unavailable
+  private readonly SG_ENTRY_DISTANCE_FALLBACK_PCT = 1.5;
+  // Dynamic distance config: global defaults (per-pair overrides via asset class)
+  private readonly SG_DISTANCE_MULTIPLIER = 1.00;
+  private readonly SG_DISTANCE_MIN_CLAMP_PCT = 0.75;
+  private readonly SG_DISTANCE_MAX_CLAMP_PCT = 4.00;
+  // ATR cache for entry distance (avoids extra Kraken calls)
+  private atrPctCache: Map<string, { value: number; fetchedAt: number }> = new Map();
+  private readonly ATR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
   // Track the candle timestamp used for last entry per pair (signal dedup)
   private lastEntryCandleTs: Map<string, number> = new Map();
   
@@ -1033,6 +1040,69 @@ export class TradingEngine {
   }
 
   /**
+   * Get ATR% for a pair, using a short-lived cache to avoid hammering MarketDataService.
+   * Falls back to 0 if candles are insufficient or unavailable.
+   */
+  private async getAtrPctForEntryGate(pair: string): Promise<number> {
+    const cached = this.atrPctCache.get(pair);
+    if (cached && Date.now() - cached.fetchedAt < this.ATR_CACHE_TTL_MS) {
+      return cached.value;
+    }
+    try {
+      const candles = await MarketDataService.getCandles(pair, "1h" as Timeframe);
+      if (!candles || candles.length < 15) return 0;
+      // Compute ATR(14) / lastClose * 100 inline to avoid IDCA dependency
+      const trValues: number[] = [];
+      for (let i = 1; i < candles.length; i++) {
+        const c = candles[i];
+        const pc = candles[i - 1].close;
+        const tr = Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc));
+        trValues.push(tr);
+      }
+      const slice = trValues.slice(-14);
+      const atr = slice.reduce((a, b) => a + b, 0) / slice.length;
+      const lastClose = candles[candles.length - 1].close;
+      const atrPct = lastClose > 0 ? (atr / lastClose) * 100 : 0;
+      this.atrPctCache.set(pair, { value: atrPct, fetchedAt: Date.now() });
+      return atrPct;
+    } catch (e: any) {
+      log(`[ENTRY_GATE_ATR_ERR] ${pair}: ${e?.message ?? String(e)} → fallback=0`, "trading");
+      return 0;
+    }
+  }
+
+  /**
+   * Compute the dynamic minimum entry distance (%) for a pair based on ATR volatility.
+   *
+   * Formula: clamp(atrPct * multiplier * aggressionFactor, minClamp, maxClamp)
+   *
+   * aggressionFactor is derived from a 0-100 aggressiveness scale:
+   *   0 (low)  → 1.15 (wider distance, more conservative)
+   *   50 (mid) → 1.00 (neutral)
+   *   100 (hi) → 0.85 (tighter distance, more aggressive — but clamped)
+   *
+   * Falls back to SG_ENTRY_DISTANCE_FALLBACK_PCT if ATR is unavailable.
+   */
+  private async getSmartGuardMinEntryDistancePct(
+    pair: string,
+    currentPrice: number,
+    aggressivenessLevel: number = 50,
+  ): Promise<{ requiredPct: number; atrPct: number; source: "dynamic_atr" | "fallback" }> {
+    const atrPct = await this.getAtrPctForEntryGate(pair);
+    if (atrPct <= 0) {
+      return { requiredPct: this.SG_ENTRY_DISTANCE_FALLBACK_PCT, atrPct: 0, source: "fallback" };
+    }
+
+    // Aggression factor: 0→1.15, 50→1.00, 100→0.85
+    const aggressionFactor = 1.0 + (50 - Math.max(0, Math.min(100, aggressivenessLevel))) / (100 / 0.30);
+
+    const raw = atrPct * this.SG_DISTANCE_MULTIPLIER * aggressionFactor;
+    const clamped = Math.max(this.SG_DISTANCE_MIN_CLAMP_PCT, Math.min(this.SG_DISTANCE_MAX_CLAMP_PCT, raw));
+
+    return { requiredPct: clamped, atrPct, source: "dynamic_atr" };
+  }
+
+  /**
    * Shared multi-lot entry gate.  Returns { allowed, reason } after checking:
    *   1. Max lots per pair
    *   2. Anti-burst cooldown (SG_MIN_SECONDS_BETWEEN_ENTRIES)
@@ -1074,19 +1144,25 @@ export class TradingEngine {
       }
     }
 
-    // Gate 3: Price distance from nearest open lot (only when already ≥1 lot open)
+    // Gate 3: Dynamic price distance from nearest open lot (only when already ≥1 lot open)
     if (currentOpenLots > 0 && currentPrice > 0) {
       const existingPositions = this.getPositionsByPair(pair);
       let minDistancePct = Infinity;
+      let nearestEntryPrice = 0;
       for (const pos of existingPositions) {
         const entryPx = pos.entryPrice || 0;
         if (entryPx > 0) {
           const dist = Math.abs((currentPrice - entryPx) / entryPx) * 100;
-          if (dist < minDistancePct) minDistancePct = dist;
+          if (dist < minDistancePct) {
+            minDistancePct = dist;
+            nearestEntryPrice = entryPx;
+          }
         }
       }
-      if (minDistancePct < this.SG_MIN_ENTRY_DISTANCE_PCT) {
-        log(`[ENTRY_BLOCKED_TOO_CLOSE] ${pair}: minDistancePct=${minDistancePct.toFixed(2)}% < ${this.SG_MIN_ENTRY_DISTANCE_PCT}% from nearest lot`, "trading");
+      // Dynamic ATR-based required distance
+      const dynDist = await this.getSmartGuardMinEntryDistancePct(pair, currentPrice);
+      if (minDistancePct < dynDist.requiredPct) {
+        log(`[ENTRY_BLOCKED_TOO_CLOSE] ${pair}: distancePct=${minDistancePct.toFixed(2)}% < requiredPct=${dynDist.requiredPct.toFixed(2)}% (atrPct=${dynDist.atrPct.toFixed(2)}%, source=${dynDist.source}) nearestEntry=$${nearestEntryPrice.toFixed(2)} currentPrice=$${currentPrice.toFixed(2)}`, "trading");
         return { allowed: false, reason: `TOO_CLOSE_TO_EXISTING:${minDistancePct.toFixed(2)}%`, currentOpenLots, maxLotsForMode, positionMode };
       }
     }
@@ -1101,7 +1177,8 @@ export class TradingEngine {
     }
 
     if (currentOpenLots > 0) {
-      log(`[ENTRY_ALLOWED_ADDITIONAL_LOT] ${pair}: activeLots=${currentOpenLots} maxLots=${maxLotsForMode} cooldownOk=true distanceOk=true`, "trading");
+      const dynDistLog = await this.getSmartGuardMinEntryDistancePct(pair, currentPrice);
+      log(`[ENTRY_ALLOWED_ADDITIONAL_LOT] ${pair}: activeLots=${currentOpenLots} maxLots=${maxLotsForMode} cooldownOk=true distanceOk=true requiredDistancePct=${dynDistLog.requiredPct.toFixed(2)}% atrPct=${dynDistLog.atrPct.toFixed(2)}% source=${dynDistLog.source}`, "trading");
     }
     return { allowed: true, reason: "ALLOWED", currentOpenLots, maxLotsForMode, positionMode };
   }

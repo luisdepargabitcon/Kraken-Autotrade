@@ -27,6 +27,56 @@ docker compose -f docker-compose.staging.yml up -d --build
 
 ---
 
+## 2026-06-22 — fix(spot): use dynamic ATR distance for smart guard lot spacing
+
+### Problema
+La distancia mínima fija de 1.5% (`SG_MIN_ENTRY_DISTANCE_PCT`) no se adapta a la volatilidad real de cada par. BTC y SOL no deberían tener la misma distancia. En mercado tranquilo puede ser demasiado restrictivo; en mercado volátil puede ser insuficiente.
+
+### Corrección
+- **Nuevo método** `getSmartGuardMinEntryDistancePct(pair, currentPrice, aggressivenessLevel)`:
+  - Obtiene ATR(14) vía `MarketDataService.getCandles(pair, "1h")` con caché de 5 min
+  - Formula: `clamp(atrPct × multiplier × aggressionFactor, minClamp, maxClamp)`
+  - `aggressionFactor`: 0→1.15, 50→1.00, 100→0.85
+  - Fallback 1.5% si ATR no disponible
+- **Nuevo helper** `getAtrPctForEntryGate(pair)`: caché TTL 5 min para evitar hammering a Kraken
+- **Parámetros globales**: multiplier=1.00, minClamp=0.75%, maxClamp=4.00%, fallback=1.50%
+- Gate 3 en `checkMultiLotEntryGate` ahora usa distancia dinámica
+- Logs mejorados con `atrPct`, `requiredPct`, `source`, `nearestEntry`, `currentPrice`
+
+### Ejemplos de distancia calculada
+| Par | ATR% | Aggression | Required | vs fijo 1.5% |
+|-----|------|------------|----------|------------|
+| BTC/USD | 1.2% | 50 | 1.20% | más flexible |
+| BTC/USD | 1.2% | 91 | ~0.95% | más flexible |
+| SOL/USD | 2.5% | 50 | 2.50% | más protección |
+| SOL/USD | 2.5% | 91 | ~2.19% | más protección |
+| Sin ATR | 0% | any | 1.50% | igual (fallback) |
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` — nuevos métodos, Gate 3 dinámico, logs mejorados
+
+### Tests
+- `server/services/__tests__/multiLotEntryGate.test.ts` — 22 tests (Cases A-F + gate + edge cases)
+
+### Validación
+- `npm run check`: ✅ 0 errores
+- `vitest multiLotEntryGate`: ✅ 22/22
+
+### Deploy VPS
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+No requiere migración DB.
+
+### Logs de verificación
+```bash
+docker compose -f docker-compose.staging.yml logs -f --tail=100 | grep -E "ENTRY_BLOCKED_TOO_CLOSE|ENTRY_ALLOWED_ADDITIONAL|ENTRY_GATE_ATR"
+```
+
+---
+
 ## 2026-06-22 — fix(spot): prevent duplicate same-tick/same-signal entries per pair
 
 ### Problema
