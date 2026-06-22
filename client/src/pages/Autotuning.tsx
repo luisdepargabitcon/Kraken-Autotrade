@@ -74,8 +74,10 @@ export default function Autotuning() {
   const qc = useQueryClient();
   const [showProposalForm, setShowProposalForm] = useState(false);
   const [expandedProposal, setExpandedProposal] = useState<number | null>(null);
+  const [expandedShadowCtx, setExpandedShadowCtx] = useState<string | null>(null);
 
   const metrics = useQuery({ queryKey: ["/api/autotuning/metrics"], queryFn: () => API("/api/autotuning/metrics"), refetchInterval: 30_000 });
+  const shadowReport = useQuery({ queryKey: ["/api/ai/shadow/report"], queryFn: () => API("/api/ai/shadow/report"), refetchInterval: 30_000 });
   const counts  = useQuery({ queryKey: ["/api/autotuning/dataset/counts"], queryFn: () => API("/api/autotuning/dataset/counts"), refetchInterval: 30_000 });
   const profiles = useQuery({ queryKey: ["/api/autotuning/profiles"], queryFn: () => API("/api/autotuning/profiles"), refetchInterval: 60_000 });
   const proposals = useQuery({ queryKey: ["/api/autotuning/proposals"], queryFn: () => API("/api/autotuning/proposals"), refetchInterval: 30_000 });
@@ -101,6 +103,7 @@ export default function Autotuning() {
   });
 
   const m  = metrics.data  as any;
+  const sr = shadowReport.data as any;
   const c  = counts.data   as any;
   const ps = proposals.data as any[] ?? [];
   const pf = profiles.data  as any[] ?? [];
@@ -373,6 +376,129 @@ export default function Autotuning() {
             )}
           </CardContent>
         </Card>
+
+        {/* Shadow Decisions — recent predictions with effective decision context */}
+        {sr?.recent && sr.recent.length > 0 && (
+          <Card className="border-white/[0.08] bg-white/[0.02]">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Brain className="w-4 h-4 text-purple-400" />
+                Últimas Predicciones Shadow
+                <Badge variant="outline" className="ml-auto text-xs bg-purple-500/10 text-purple-400 border-purple-500/30">
+                  {sr.recent.length} registros
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 p-3">
+              {(sr.recent as any[]).map((d: any) => {
+                const id = d.id?.toString() ?? d.tradeId;
+                const isExpanded = expandedShadowCtx === id;
+                const ctx = d.effectiveDecisionContextJson;
+                const wouldBlock = d.wouldBlock === true || d.wouldBlock === 1;
+                return (
+                  <div key={id} className="rounded-lg border border-white/[0.07] bg-white/[0.02] overflow-hidden">
+                    <button
+                      className="w-full flex items-center justify-between p-3 hover:bg-white/[0.03] transition-colors text-left"
+                      onClick={() => setExpandedShadowCtx(isExpanded ? null : id)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {wouldBlock
+                          ? <ShieldX className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                          : <ShieldCheck className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />}
+                        <span className="text-xs font-mono text-muted-foreground truncate">{d.pair ?? "—"}</span>
+                        <Badge variant="outline" className={`text-xs px-1.5 py-0 ${wouldBlock ? "border-red-500/40 text-red-400" : "border-green-500/40 text-green-400"}`}>
+                          {wouldBlock ? "BLOCK" : "ALLOW"}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground/60 font-mono">s={parseFloat(d.score ?? "0").toFixed(3)}</span>
+                        {ctx && <span className="text-xs text-purple-400/60">· ctx ✓</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground/50">
+                          {d.ts ? new Date(d.ts).toLocaleTimeString() : ""}
+                        </span>
+                        {isExpanded
+                          ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                          : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />}
+                      </div>
+                    </button>
+                    {isExpanded && (
+                      <div className="border-t border-white/[0.06] p-3 space-y-2">
+                        {ctx ? (
+                          <>
+                            <p className="text-xs text-purple-400 font-medium uppercase tracking-wider">Contexto usado por la IA</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                              {ctx.regime?.detectedRegime && (
+                                <div className="bg-white/[0.03] rounded p-2">
+                                  <span className="text-muted-foreground">Régimen</span>
+                                  <div className="font-mono text-cyan-400">{ctx.regime.detectedRegime}</div>
+                                </div>
+                              )}
+                              {ctx.entryPolicy?.requiredSignals != null && (
+                                <div className="bg-white/[0.03] rounded p-2">
+                                  <span className="text-muted-foreground">Señales</span>
+                                  <div className="font-mono">{ctx.entryPolicy.detectedSignals ?? "?"} / {ctx.entryPolicy.requiredSignals}</div>
+                                </div>
+                              )}
+                              {ctx.entryFilters?.spreadPct != null && (
+                                <div className="bg-white/[0.03] rounded p-2">
+                                  <span className="text-muted-foreground">Spread</span>
+                                  <div className="font-mono">{parseFloat(ctx.entryFilters.spreadPct).toFixed(3)}%</div>
+                                </div>
+                              )}
+                              {ctx.botState?.positionMode && (
+                                <div className="bg-white/[0.03] rounded p-2">
+                                  <span className="text-muted-foreground">Modo</span>
+                                  <div className="font-mono text-blue-400">{ctx.botState.positionMode}</div>
+                                </div>
+                              )}
+                              {ctx.hybridGuard?.enabled != null && (
+                                <div className="bg-white/[0.03] rounded p-2">
+                                  <span className="text-muted-foreground">HybridGuard</span>
+                                  <div className="font-mono">{ctx.hybridGuard.enabled ? "ON" : "OFF"}</div>
+                                </div>
+                              )}
+                              {ctx.smartGuard?.minEntryUsd != null && (
+                                <div className="bg-white/[0.03] rounded p-2">
+                                  <span className="text-muted-foreground">Min entry</span>
+                                  <div className="font-mono">${ctx.smartGuard.minEntryUsd}</div>
+                                </div>
+                              )}
+                              {ctx.market?.price != null && (
+                                <div className="bg-white/[0.03] rounded p-2">
+                                  <span className="text-muted-foreground">Precio</span>
+                                  <div className="font-mono">${parseFloat(ctx.market.price).toFixed(2)}</div>
+                                </div>
+                              )}
+                              {ctx.decision?.aiProbability != null && (
+                                <div className="bg-white/[0.03] rounded p-2">
+                                  <span className="text-muted-foreground">AI prob</span>
+                                  <div className={`font-mono ${parseFloat(ctx.decision.aiProbability) >= parseFloat(ctx.decision?.aiThreshold ?? "0.6") ? "text-green-400" : "text-red-400"}`}>
+                                    {(parseFloat(ctx.decision.aiProbability) * 100).toFixed(1)}%
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            <details className="mt-1">
+                              <summary className="text-xs text-muted-foreground/60 cursor-pointer hover:text-muted-foreground">JSON completo</summary>
+                              <pre className="mt-1 text-xs bg-black/30 rounded-lg p-2 overflow-auto max-h-48 font-mono text-slate-400">
+                                {JSON.stringify(ctx, null, 2)}
+                              </pre>
+                            </details>
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground/50 italic">Sin contexto capturado (decisión anterior a la v1)</p>
+                        )}
+                        {d.reason && (
+                          <p className="text-xs text-red-400/80 border-t border-white/[0.06] pt-2">{d.reason}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Shadow Executor info */}
         <Card className="border-white/[0.08] bg-white/[0.02]">

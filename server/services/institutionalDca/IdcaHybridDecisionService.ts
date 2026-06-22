@@ -461,9 +461,9 @@ async function evaluateActiveCycle(input: ActiveCycleHybridInput): Promise<void>
   // ── Build natural_reason ─────────────────────────────────────────────────
   let naturalReason: string;
   if (cycleKind === "imported") {
-    naturalReason = `Ciclo importado: no se modifica precio medio, ancla ni capital. Solo se genera diagnóstico. Régimen: ${regimeSnapshot.regime}. Reversión a la media: ${meanReversionDecision.action}.`;
+    naturalReason = `Ciclo importado: Hybrid/Grid permanece en observación por seguridad. No modifica parámetros, ancla ni referencias históricas, y no ejecuta Grid automáticamente. Régimen: ${regimeSnapshot.regime}. Reversión a la media: ${meanReversionDecision.action}.`;
   } else if (cycleKind === "manual") {
-    naturalReason = `Ciclo manual: se respetan decisiones del usuario. No se sobrescriben parámetros. Grid bloqueado hasta confirmación. Régimen: ${regimeSnapshot.regime}.`;
+    naturalReason = `Ciclo marcado como manual/importado: Hybrid/Grid permanece en observación por seguridad. No modifica parámetros, ancla ni referencias históricas, y no ejecuta Grid automáticamente. Régimen: ${regimeSnapshot.regime}.`;
   } else if (gridSimulated) {
     naturalReason = `Modo observador: ciclo activo detectado; grid simulado (observer_only=true). ${gridDecision?.levels.length ?? 0} niveles calculados. ${meanReversionDecision.naturalReason}`;
   } else if (observerState === "GRID_BLOCKED_BEAR_TREND") {

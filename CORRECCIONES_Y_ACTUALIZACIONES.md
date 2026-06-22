@@ -2,6 +2,70 @@
 
 ---
 
+## feat(ai-shadow): captura completa de contexto efectivo de decisión IA/Shadow
+
+**Fecha**: 2025-01  
+**Commit**: `feat(ai-shadow): capture full effective entry and exit decision context`
+
+### Problema
+Las decisiones del AI Shadow Mode solo capturaban `features_json` (indicadores técnicos: RSI, MACD, etc.) 
+pero NO la configuración efectiva del bot en el momento de la decisión: régimen, cooldowns, HybridGuard, 
+SmartGuard, filtros de entrada, spreads, estrategia activa, etc. Esto impedía al modelo aprender el 
+contexto completo de cada señal.
+
+### Solución — Archivos creados/modificados
+
+**Nuevos:**
+- `server/services/ai/EffectiveDecisionContextBuilder.ts` — Builder puro (sin DB) que construye un JSON 
+  versionado (v1) con 13 grupos: botState, entryPolicy, cooldowns, hybridGuard, smartGuard, entryFilters, 
+  regime, risk, market, exitPolicy, exitState, idcaHybrid, decision, outcome.
+- `db/migrations/058_ai_effective_decision_context.sql` — Migración idempotente: añade columna 
+  `effective_decision_context_json JSONB` a: `ai_shadow_decisions`, `trade_snapshots`, `dry_run_trades`, 
+  `training_trades`. Crea índices GIN para búsquedas JSONB.
+- `server/services/__tests__/effectiveDecisionContext.test.ts` — 16 tests unitarios: identidad, null 
+  coercion, grupos completos, IDCA hybrid context, seguridad (nunca lanza).
+
+**Modificados:**
+- `shared/schema.ts` — Añadido `effectiveDecisionContextJson: jsonb(...)` a las 4 tablas Drizzle.
+- `server/routes.ts` — Registrada migración `058_ai_effective_decision_context` en AutoMigrationRunner.
+- `server/services/tradingEngine.ts` — Inyectado `buildEffectiveDecisionContext()` en el punto de 
+  guardado shadow (`saveAiShadowDecision`) capturando: botState, entryPolicy, hybridGuard, smartGuard, 
+  entryFilters, regime, market, decision.
+- `client/src/pages/Autotuning.tsx` — Nueva sección "Últimas Predicciones Shadow" con visor colapsable 
+  del contexto efectivo por predicción: régimen, señales, spread, positionMode, hybridGuard, precio, AI%.
+- `client/src/components/idca/IdcaHybridPanel.tsx` — Fix textos: 
+  `GRID_BLOCKED_MANUAL_CYCLE` → "Grid no aplicado por seguridad" (con tooltip explicativo).
+  `GRID_BLOCKED_IMPORTED_CYCLE` → "Grid no aplicado (ciclo importado)".
+- `server/services/institutionalDca/IdcaHybridDecisionService.ts` — Fix naturalReason para ciclos 
+  manual/importado: más descriptivo, sin la palabra "bloqueado" que confundía al usuario.
+
+### Contrato de seguridad
+- ✅ No toca lógica de órdenes reales
+- ✅ No activa modo real
+- ✅ No modifica configuración actual
+- ✅ `buildEffectiveDecisionContext` es función pura: sin DB, sin side-effects
+- ✅ La inyección en tradingEngine usa `.catch()` — nunca bloquea el flujo real
+- ✅ La migración usa `ADD COLUMN IF NOT EXISTS` — idempotente y no-destructiva
+
+### Verificación VPS post-deploy
+```sql
+-- Confirmar columna añadida a ai_shadow_decisions
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'ai_shadow_decisions' AND column_name = 'effective_decision_context_json';
+
+-- Ver contexto en últimas predicciones shadow
+SELECT id, pair, score, would_block, effective_decision_context_json->>'version' AS ctx_version,
+       effective_decision_context_json->'regime'->>'detectedRegime' AS regime
+FROM ai_shadow_decisions ORDER BY ts DESC LIMIT 5;
+```
+
+### Tests
+- `vitest run effectiveDecisionContext` → 16/16 ✅
+- `npx tsc --noEmit` → 0 errores ✅
+
+---
+
 ## feat(idca-hybrid-active-cycle): Soporte observador seguro para ciclos abiertos/importados/manuales
 
 **Commit:** feat(idca-hybrid-active-cycle)  

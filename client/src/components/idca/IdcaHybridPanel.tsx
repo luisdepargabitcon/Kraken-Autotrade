@@ -103,8 +103,8 @@ const OBSERVER_STATE_LABELS: Record<string, string> = {
   GRID_BLOCKED_BEAR_TREND: "Grid bloqueado (bajista)",
   GRID_BLOCKED_DATA_QUALITY: "Grid bloqueado (datos)",
   GRID_BLOCKED_CAPITAL_LIMIT: "Grid bloqueado (capital)",
-  GRID_BLOCKED_IMPORTED_CYCLE: "Grid bloqueado (importado)",
-  GRID_BLOCKED_MANUAL_CYCLE: "Grid bloqueado (manual)",
+  GRID_BLOCKED_IMPORTED_CYCLE: "Grid no aplicado (ciclo importado)",
+  GRID_BLOCKED_MANUAL_CYCLE: "Grid no aplicado por seguridad",
   ASSISTED_PROPOSAL_READY: "Propuesta asistida lista ✓",
 };
 
@@ -452,8 +452,12 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
                     <Alert className="border-orange-500/30 bg-orange-500/5 py-1.5">
                       <AlertTriangle className="h-3 w-3 text-orange-400" />
                       <AlertDescription className="text-xs text-orange-300">
-                        Este ciclo fue {cycleKind === "imported" ? "importado" : "editado manualmente"}.
-                        Hybrid/Grid solo propone acciones; no modifica referencias ni ejecuta órdenes sin confirmación.
+                        Este ciclo fue {cycleKind === "imported" ? "importado" : "creado o editado manualmente"}.
+                        <br />
+                        <span className="text-orange-400/70">
+                          “Grid no aplicado” no significa que tú hayas bloqueado el Grid. Significa que el sistema
+                          detecta que este ciclo requiere protección especial para no modificar sus parámetros automáticamente.
+                        </span>
                       </AlertDescription>
                     </Alert>
                   )}

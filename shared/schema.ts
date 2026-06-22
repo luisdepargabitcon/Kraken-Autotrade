@@ -454,6 +454,7 @@ export const dryRunTrades = pgTable("dry_run_trades", {
   exclusionReason: text("exclusion_reason"),
   excludedAt: timestamp("excluded_at"),
   auditBatchId: text("audit_batch_id"),
+  effectiveDecisionContextJson: jsonb("effective_decision_context_json"),
 });
 
 // Archive table for exact duplicate dry-run trades removed during cleanup (migration 049)
@@ -632,6 +633,7 @@ export const aiShadowDecisions = pgTable("ai_shadow_decisions", {
   reason: text("reason"),
   modelVersion: text("model_version"),
   metadataJson: jsonb("metadata_json"),
+  effectiveDecisionContextJson: jsonb("effective_decision_context_json"),
 });
 
 export const trainingTrades = pgTable("training_trades", {
@@ -678,6 +680,7 @@ export const trainingTrades = pgTable("training_trades", {
   sessionLabel: text("session_label"),
   entryScore: decimal("entry_score", { precision: 6, scale: 3 }),
   tradeQualityScore: integer("trade_quality_score"),
+  effectiveDecisionContextJson: jsonb("effective_decision_context_json"),
 });
 
 export const aiConfig = pgTable("ai_config", {
@@ -1530,6 +1533,7 @@ export const tradeSnapshots = pgTable("trade_snapshots", {
   maxDrawdownPct:        decimal("max_drawdown_pct", { precision: 8, scale: 4 }),
   holdTimeMinutes:       integer("hold_time_minutes"),
   tradeQualityScore:     integer("trade_quality_score"),
+  effectiveDecisionContextJson: jsonb("effective_decision_context_json"),
   createdAt:             timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   sourceEventUnique: unique().on(table.sourceTradeId, table.sourceMode, table.snapshotType),

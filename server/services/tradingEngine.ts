@@ -91,6 +91,7 @@ import {
   type AlertExitConfig,
 } from "./alertBuilder";
 import { marketMetricsService, marketMetricsEngine } from "./marketMetrics";
+import { buildEffectiveDecisionContext } from "./ai/EffectiveDecisionContextBuilder";
 
 // TradeSignal imported from ./strategies
 
@@ -5388,6 +5389,77 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
             const prediction = await aiService.predict(aiFeatures);
             log(`[AI] ${pair}: score=${prediction.score.toFixed(3)} thr=${prediction.threshold} approve=${prediction.approve} filter=${aiFilterOn} shadow=${aiShadowOn}`, "trading");
             if (aiShadowOn) {
+              const _effectiveCtx = buildEffectiveDecisionContext({
+                pair,
+                source: "shadow",
+                mode: this.dryRunMode ? "dry_run" : "live",
+                decisionPhase: "entry",
+                botState: {
+                  botActive: true,
+                  dryRunMode: this.dryRunMode,
+                  strategy: selectedStrategyId ?? undefined,
+                  signalTimeframe: timeframe,
+                  positionMode,
+                  riskLevel: (cfgAny as any)?.riskLevel ?? undefined,
+                },
+                entryPolicy: {
+                  detectedSignals: signal.signalsCount ?? null,
+                  requiredSignals: adjustedMinSignals ?? null,
+                  finalSignalScore: typeof signal.confidence === "number" ? signal.confidence : null,
+                  entryAllowedBeforeGuards: prediction.approve,
+                  naturalSignalReason: !prediction.approve
+                    ? `La IA detectó que la compra no supera la confianza mínima exigida del ${(prediction.threshold * 100).toFixed(0)}%.`
+                    : `La IA permite la compra con confianza del ${(prediction.score * 100).toFixed(1)}%.`,
+                },
+                hybridGuard: {
+                  enabled: (cfgAny as any)?.global?.hybridGuard?.enabled ?? null,
+                  antiCrestEnabled: (cfgAny as any)?.global?.hybridGuard?.antiCresta?.enabled ?? null,
+                  blocked: false,
+                  watchId: (signal as any)?.hybridGuard?.watchId ?? null,
+                  reason: (signal as any)?.hybridGuard?.reason ?? null,
+                },
+                smartGuard: {
+                  enabled: positionMode === "SMART_GUARD",
+                  minEntryUsd: sgMinEntryUsd ?? null,
+                  allowUnderMin: sgAllowUnderMin ?? null,
+                },
+                entryFilters: {
+                  spreadFilterEnabled: (cfgAny as any)?.spreadFilterEnabled ?? null,
+                  spreadPct: sd2ForTrace.spreadEffectivePct ?? null,
+                  spreadThresholdPct: sd2ForTrace.thresholdPct ?? null,
+                  blockedBySpread: false,
+                  stalenessGateEnabled: (cfgAny as any)?.stalenessGateEnabled ?? null,
+                  stalenessSec: candleAge > 0 ? candleAge : null,
+                  stalenessMaxSec: (cfgAny as any)?.stalenessMaxSec ?? null,
+                  blockedByStaleness: false,
+                  chaseGateEnabled: (cfgAny as any)?.chaseGateEnabled ?? null,
+                  chasePct: chaseDelta,
+                  chaseMaxPct: (cfgAny as any)?.chaseMaxPct ?? null,
+                  blockedByChase: false,
+                },
+                regime: {
+                  regimeDetectionEnabled: (cfgAny as any)?.regimeDetectionEnabled ?? null,
+                  regimeRouterEnabled: (cfgAny as any)?.regimeRouterEnabled ?? null,
+                  detectedRegime: earlyRegime ?? null,
+                  confidence: typeof signal.confidence === "number" ? signal.confidence : null,
+                },
+                market: {
+                  price: currentPrice,
+                  spreadPct: sd2ForTrace.spreadEffectivePct ?? null,
+                  candlesTimeframe: timeframe,
+                },
+                decision: {
+                  allowed: prediction.approve,
+                  blocked: !prediction.approve,
+                  action: prediction.approve ? "WOULD_ALLOW" : "WOULD_BLOCK",
+                  naturalReason: !prediction.approve
+                    ? `La IA detectó que la compra no supera la confianza mínima exigida del ${(prediction.threshold * 100).toFixed(0)}%.`
+                    : `La IA permite la compra con confianza del ${(prediction.score * 100).toFixed(1)}%.`,
+                  aiProbability: prediction.score,
+                  aiThreshold: prediction.threshold,
+                  aiRecommendation: prediction.approve ? "ALLOW" : "BLOCK",
+                },
+              });
               storage.saveAiShadowDecision({
                 tradeId: `CANDLES-${Date.now()}-${pair}`,
                 score: prediction.score.toFixed(4),
@@ -5409,7 +5481,8 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
                     ? `La IA detectó que la compra no supera la confianza mínima exigida del ${(prediction.threshold * 100).toFixed(0)}%.`
                     : `La IA permite la compra con confianza del ${(prediction.score * 100).toFixed(1)}%.`,
                 },
-              }).catch((e: any) => log(`[AI] shadow save error: ${e.message}`, "trading"));
+                effectiveDecisionContextJson: _effectiveCtx,
+              } as any).catch((e: any) => log(`[AI] shadow save error: ${e.message}`, "trading"));
             }
             if (aiFilterOn && !prediction.approve) {
               log(`[AI_FILTER_BLOCK] ${pair}: BUY bloqueado por ML (score=${prediction.score.toFixed(3)} < thr=${prediction.threshold})`, "trading");
