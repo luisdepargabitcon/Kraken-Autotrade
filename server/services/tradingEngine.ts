@@ -590,6 +590,9 @@ export class TradingEngine {
   private readonly ATR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
   // Track the candle timestamp used for last entry per pair (signal dedup)
   private lastEntryCandleTs: Map<string, number> = new Map();
+  // Cached effective max lots per pair (updated at scan start from bot_config canonical source)
+  private cachedEffectiveMaxLots: number = 1;
+  private cachedPositionMode: string = "SINGLE";
   
   // Throttle para logs INTERMEDIATE_DIAG: evitar spam cada 5s
   private lastIntermediateDiagLog: Map<string, number> = new Map();
@@ -3117,6 +3120,11 @@ ${positionsList}
         return;
       }
 
+      // ── Canonical Smart Guard config resolution (single source of truth) ──
+      this.cachedPositionMode = config.positionMode || "SINGLE";
+      const sgGlobalMaxLots = config.sgMaxOpenLotsPerPair ?? 1;
+      this.cachedEffectiveMaxLots = this.cachedPositionMode === "SMART_GUARD" ? sgGlobalMaxLots : 1;
+
       // Kill-switch: environment can disable all BUY entries (sells/SL/TP still run)
       const tradingEnabled = String(process.env.TRADING_ENABLED ?? 'true').toLowerCase() === 'true';
 
@@ -3777,6 +3785,8 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           });
           return;
         }
+        // Gate passed: update trace with canonical maxLots from DB
+        this.updatePairTrace(pair, { openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode });
 
         // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
         // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
@@ -4900,6 +4910,8 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           });
           return;
         }
+        // Gate passed: update trace with canonical maxLots from DB
+        this.updatePairTrace(pair, { openLotsThisPair: currentOpenLots, maxLotsPerPair: maxLotsForMode });
 
         // B3: SMART_GUARD requiere ≥5 señales para BUY (umbral más estricto)
         // + Market Regime: 6 señales en RANGE, pausa en TRANSITION (unless Router enabled)
@@ -5836,7 +5848,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
       minOrderUsd: 100,
       allowSmallerEntries: false,
       openLotsThisPair: this.getOpenLotsForPair(pair),
-      maxLotsPerPair: 2,
+      maxLotsPerPair: this.cachedEffectiveMaxLots,
       smartGuardDecision: "NOOP",
       blockReasonCode: "NO_SIGNAL",
       blockDetails: null,

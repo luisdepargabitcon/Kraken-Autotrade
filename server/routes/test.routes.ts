@@ -68,7 +68,7 @@ export const registerTestRoutes: RegisterRoutes = (app, deps) => {
       const positionMode = botConfig?.positionMode || "SINGLE";
       const sgMinEntryUsd = parseFloat(botConfig?.sgMinEntryUsd?.toString() || "100");
       const sgAllowUnderMin = botConfig?.sgAllowUnderMin ?? true;
-      const sgMaxOpenLotsPerPair = 1; // Por defecto 1, se implementará en paso 3
+      const sgMaxOpenLotsPerPair = botConfig?.sgMaxOpenLotsPerPair ?? 1;
       const SG_ABSOLUTE_MIN_USD = 20;
       
       // Obtener balance USD

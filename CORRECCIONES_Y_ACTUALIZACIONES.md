@@ -27,6 +27,62 @@ docker compose -f docker-compose.staging.yml up -d --build
 
 ---
 
+## 2026-06-22 — fix(spot): unify smart guard config source for dry run and live
+
+### Problema
+Los logs `PAIR_DECISION_TRACE` mostraban `maxLotsPerPair: 2` pese a que la DB tenía `sg_max_open_lots_per_pair = 3`. Esto generaba confusión y falsos positivos en auditorías, aunque la gate real de entrada sí usaba el valor correcto.
+
+### Causa raíz
+**Hardcode `maxLotsPerPair: 2`** en `initPairTrace()` (línea 5839 original). Esta función inicializa el objeto de trace para cada par y usaba un valor fijo `2` como placeholder. El trace solo se actualizaba al valor real de DB cuando el gate **bloqueaba** una entrada, pero en ciclos intermedios, sin señal, o cuando el gate pasaba exitosamente, el trace mantenía el `2` hardcodeado.
+
+La gate real (`checkMultiLotEntryGate`) siempre leía correctamente de `storage.getBotConfig().sgMaxOpenLotsPerPair`. Por lo tanto, **el trading no estaba afectado** — solo la observabilidad/traza.
+
+### Corrección
+1. **Nuevas propiedades de clase** `cachedEffectiveMaxLots` y `cachedPositionMode`: se actualizan al inicio de cada `runTradingCycle()` desde `bot_config` (fuente canónica única).
+2. **`initPairTrace()`** ahora usa `this.cachedEffectiveMaxLots` en lugar de `2`.
+3. **Gate success path**: tras pasar el gate (cycle mode y candle mode), se ejecuta `updatePairTrace({openLotsThisPair, maxLotsPerPair: maxLotsForMode})` para que el trace refleje el valor real.
+4. **`test.routes.ts`**: corregido `sgMaxOpenLotsPerPair = 1` hardcodeado → lee de `botConfig?.sgMaxOpenLotsPerPair ?? 1`.
+
+### Fuente canónica confirmada
+| Campo | Fuente | Tabla |
+|-------|--------|-------|
+| `sgMaxOpenLotsPerPair` | `bot_config.sg_max_open_lots_per_pair` | bot_config |
+| `sgPairOverrides` | `bot_config.sg_pair_overrides` (JSONB) | bot_config |
+| Resolución | `effectiveMaxLots = override ?? global ?? 1` | — |
+
+### Configuraciones NO canónicas (no afectan al motor)
+- `dynamicConfig` / TradingConfig profiles: NO contienen maxLots, solo signals/exchanges/featureFlags
+- `ConfigService` presets/active: NO afectan maxLots
+- `test.routes.ts` endpoint `/api/test/sg-sizing`: corregido
+
+### Archivos modificados
+- `server/services/tradingEngine.ts` — cached props, initPairTrace fix, gate success trace
+- `server/routes/test.routes.ts` — elimina hardcode 1
+
+### Tests nuevos
+- `server/services/__tests__/smartGuardConfigResolution.test.ts` — 9 tests (Cases A-G + no hardcoded 2 + openLots independence)
+
+### Validación
+- `npm run check`: ✅ 0 errores
+- `vitest multiLotEntryGate`: ✅ 22/22
+- `vitest smartGuardConfigResolution`: ✅ 9/9
+
+### Deploy VPS
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+No requiere migración DB.
+
+### Verificación post-deploy
+```bash
+docker compose -f docker-compose.staging.yml logs -f --tail=100 | grep -E "PAIR_DECISION_TRACE.*maxLotsPerPair"
+```
+Debe mostrar `maxLotsPerPair: 3` en lugar de `2`.
+
+---
+
 ## 2026-06-22 — fix(spot): use dynamic ATR distance for smart guard lot spacing
 
 ### Problema
