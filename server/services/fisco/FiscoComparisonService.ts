@@ -23,7 +23,9 @@ export interface ComparisonResult {
     gains_eur: number;
     losses_eur: number;
     disposals_count: number;
-    engine: "v2_shadow";
+    engine: "v2_shadow_basic";
+    is_full_v2_engine: false;
+    limitations: string[];
   };
   diff_eur: number;
   diff_pct: number | null;
@@ -44,21 +46,25 @@ export interface AssetDiff {
 }
 
 export async function runComparison(year: number): Promise<ComparisonResult> {
-  // Get baseline (legacy) result from fisco_annual_reports
-  const baselineResult = await pool.query(
-    "SELECT * FROM fisco_annual_reports WHERE year = $1",
-    [year]
+  // Get baseline (legacy) result from fisco_disposals instead of fisco_annual_reports
+  const disposalsResult = await pool.query(
+    "SELECT * FROM fisco_disposals WHERE executed_at >= $1 AND executed_at < $2 ORDER BY executed_at",
+    [`${year}-01-01`, `${year + 1}-01-01`]
   );
 
-  const baseline = baselineResult.rows[0];
-  if (!baseline) {
-    throw new Error(`No baseline report found for year ${year}`);
-  }
+  // Calculate baseline from disposals
+  const baselineGainLoss = disposalsResult.rows.reduce((sum: number, d: any) => sum + (d.gain_loss_eur || 0), 0);
+  const baselineGains = disposalsResult.rows.reduce((sum: number, d: any) => sum + (d.gain_loss_eur > 0 ? d.gain_loss_eur : 0), 0);
+  const baselineLosses = Math.abs(disposalsResult.rows.reduce((sum: number, d: any) => sum + (d.gain_loss_eur < 0 ? d.gain_loss_eur : 0), 0));
+  const baselineDisposals = disposalsResult.rows.length;
 
-  const baselineGainLoss = baseline.section_a?.final_taxable_gain_loss_eur ?? baseline.section_a?.total_eur ?? 0;
-  const baselineGains = baseline.section_a?.ganancias_eur ?? 0;
-  const baselineLosses = baseline.section_a?.perdidas_eur ?? 0;
-  const baselineDisposals = baseline.counters?.total_operations ?? 0;
+  // Build baseline by asset
+  const baselineByAsset = new Map<string, number>();
+  for (const d of disposalsResult.rows) {
+    const asset = d.asset;
+    const gainLoss = d.gain_loss_eur || 0;
+    baselineByAsset.set(asset, (baselineByAsset.get(asset) ?? 0) + gainLoss);
+  }
 
   // Get V2 (shadow) result by running FIFO on current operations
   const opsResult = await pool.query(
@@ -94,17 +100,7 @@ export async function runComparison(year: number): Promise<ComparisonResult> {
 
   // Build asset-level diffs
   const byAsset: AssetDiff[] = [];
-  const baselineByAsset = new Map<string, number>();
   const v2ByAsset = new Map<string, number>();
-
-  // Parse baseline by asset (from section_b if available)
-  if (baseline.section_b) {
-    for (const row of baseline.section_b) {
-      const asset = row.asset;
-      const gainLoss = row.ganancia_perdida_eur ?? 0;
-      baselineByAsset.set(asset, (baselineByAsset.get(asset) ?? 0) + gainLoss);
-    }
-  }
 
   // Parse V2 by asset
   for (const summary of fifoResult.summary) {
@@ -177,7 +173,13 @@ export async function runComparison(year: number): Promise<ComparisonResult> {
       gains_eur: v2Gains,
       losses_eur: v2Losses,
       disposals_count: v2Disposals,
-      engine: "v2_shadow",
+      engine: "v2_shadow_basic",
+      is_full_v2_engine: false,
+      limitations: [
+        "Baseline calculated from fisco_disposals (legacy)",
+        "V2 uses same FIFO engine as legacy, no independent implementation",
+        "Comparison is for validation only, not production use",
+      ],
     },
     diff_eur: diffEur,
     diff_pct: diffPct,

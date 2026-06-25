@@ -32,51 +32,68 @@ const DEFAULT_CONFIG: FiscoConfig = {
 };
 
 export async function getFiscoConfig(): Promise<FiscoConfig> {
-  const result = await pool.query("SELECT key, value FROM fisco_config");
-  const config: Partial<FiscoConfig> = { ...DEFAULT_CONFIG };
+  try {
+    const result = await pool.query("SELECT key, value FROM fisco_config");
+    const config: Partial<FiscoConfig> = { ...DEFAULT_CONFIG };
 
-  for (const row of result.rows) {
-    const { key, value } = row;
-    switch (key) {
-      case "fisco_engine_mode":
-        config.fiscoEngineMode = value as FiscoEngineMode;
-        break;
-      case "transfer_matching_time_window_days":
-        config.transferMatchingTimeWindowDays = parseInt(value);
-        break;
-      case "transfer_matching_amount_tolerance_pct":
-        config.transferMatchingAmountTolerancePct = parseInt(value);
-        break;
-      case "dust_threshold_default":
-        config.dustThresholdDefault = parseFloat(value);
-        break;
-      case "crypto_fee_treatment":
-        config.cryptoFeeTreatment = value as "inventory_reduction" | "explicit_disposal";
-        break;
-      case "block_if_reward_without_price":
-        config.blockIfRewardWithoutPrice = value === "true";
-        break;
-      case "block_if_sell_without_cost_basis":
-        config.blockIfSellWithoutCostBasis = value === "true";
-        break;
-      case "block_if_transfer_mismatch":
-        config.blockIfTransferMismatch = value === "true";
-        break;
-      case "block_if_balance_mismatch_critical":
-        config.blockIfBalanceMismatchCritical = value === "true";
-        break;
+    for (const row of result.rows) {
+      const { key, value } = row;
+      switch (key) {
+        case "fisco_engine_mode":
+          config.fiscoEngineMode = value as FiscoEngineMode;
+          break;
+        case "transfer_matching_time_window_days":
+          config.transferMatchingTimeWindowDays = parseInt(value);
+          break;
+        case "transfer_matching_amount_tolerance_pct":
+          config.transferMatchingAmountTolerancePct = parseInt(value);
+          break;
+        case "dust_threshold_default":
+          config.dustThresholdDefault = parseFloat(value);
+          break;
+        case "crypto_fee_treatment":
+          config.cryptoFeeTreatment = value as "inventory_reduction" | "explicit_disposal";
+          break;
+        case "block_if_reward_without_price":
+          config.blockIfRewardWithoutPrice = value === "true";
+          break;
+        case "block_if_sell_without_cost_basis":
+          config.blockIfSellWithoutCostBasis = value === "true";
+          break;
+        case "block_if_transfer_mismatch":
+          config.blockIfTransferMismatch = value === "true";
+          break;
+        case "block_if_balance_mismatch_critical":
+          config.blockIfBalanceMismatchCritical = value === "true";
+          break;
+      }
     }
-  }
 
-  return config as FiscoConfig;
+    return config as FiscoConfig;
+  } catch (e: any) {
+    if (e.code === "42P01" || e.message?.includes("does not exist")) {
+      // Table does not exist - return defaults
+      return DEFAULT_CONFIG;
+    }
+    throw e;
+  }
 }
 
 export async function setFiscoConfigKey(key: string, value: string): Promise<void> {
-  await pool.query(`
-    INSERT INTO fisco_config (key, value, updated_at)
-    VALUES ($1, $2, NOW())
-    ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-  `, [key, value]);
+  try {
+    await pool.query(`
+      INSERT INTO fisco_config (key, value, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+    `, [key, value]);
+  } catch (e: any) {
+    if (e.code === "42P01" || e.message?.includes("does not exist")) {
+      const error = new Error("FISCO_CONFIG_SCHEMA_MISSING: fisco_config table does not exist. Run migration 059_fisco_v2_import_config.sql") as any;
+      error.code = "FISCO_CONFIG_SCHEMA_MISSING";
+      throw error;
+    }
+    throw e;
+  }
 }
 
 export async function setFiscoConfig(config: Partial<FiscoConfig>): Promise<void> {

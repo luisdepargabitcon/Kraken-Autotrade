@@ -332,16 +332,33 @@ export async function confirmImport(
 }
 
 export async function getImportBatches(year?: number): Promise<any[]> {
-  const query = year
-    ? "SELECT * FROM fisco_import_batches WHERE year = $1 ORDER BY created_at DESC"
-    : "SELECT * FROM fisco_import_batches ORDER BY created_at DESC";
-  const params = year ? [year] : [];
-  const result = await pool.query(query, params);
-  return result.rows;
+  try {
+    const query = year
+      ? "SELECT * FROM fisco_import_batches WHERE year = $1 ORDER BY created_at DESC"
+      : "SELECT * FROM fisco_import_batches ORDER BY created_at DESC";
+    const params = year ? [year] : [];
+    const result = await pool.query(query, params);
+    return result.rows;
+  } catch (e: any) {
+    if (e.code === "42P01" || e.message?.includes("does not exist")) {
+      // Table does not exist - return empty array
+      return [];
+    }
+    throw e;
+  }
 }
 
 export async function getImportBatch(batchId: string): Promise<any> {
-  const result = await pool.query("SELECT * FROM fisco_import_batches WHERE import_batch_id = $1", [batchId]);
-  if (result.rows.length === 0) throw new Error("Batch not found");
-  return result.rows[0];
+  try {
+    const result = await pool.query("SELECT * FROM fisco_import_batches WHERE import_batch_id = $1", [batchId]);
+    if (result.rows.length === 0) throw new Error("Batch not found");
+    return result.rows[0];
+  } catch (e: any) {
+    if (e.code === "42P01" || e.message?.includes("does not exist")) {
+      const error = new Error("FISCO_IMPORT_SCHEMA_MISSING: fisco_import_batches table does not exist. Run migration 059_fisco_v2_import_config.sql") as any;
+      error.code = "FISCO_IMPORT_SCHEMA_MISSING";
+      throw error;
+    }
+    throw e;
+  }
 }

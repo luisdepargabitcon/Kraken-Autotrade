@@ -22,6 +22,10 @@ import { FiscoInventorySnapshotService } from "../services/fisco/FiscoInventoryS
 import { createImportPreview, confirmImport, getImportBatches, getImportBatch, type ImportOptions } from "../services/fisco/FiscoImportService";
 import { getFiscoConfig, setFiscoConfig, getFinalizationStatus } from "../services/fisco/FiscoConfigService";
 import { runComparison } from "../services/fisco/FiscoComparisonService";
+import multer from "multer";
+
+// Configure multer for memory storage (no disk writes)
+const upload = multer({ storage: multer.memoryStorage() });
 
 /**
  * FISCO (Fiscal Control) routes.
@@ -2609,13 +2613,41 @@ export function registerFiscoRebuildRoutes(app: Express): void {
 
   // ============================================================
   // GET /api/fisco/finalization-status
-  // Composite finalization check: FIFO + portfolio + withdrawals + conservative
+  // Composite finalization check: FIFO + portfolio + withdrawals + conservative + pending-changes
   // ============================================================
   app.get("/api/fisco/finalization-status", async (req, res) => {
     try {
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
       const svc = new FiscoValidationService(pool);
       const result = await svc.getFinalizationStatus(year);
+
+      // Include pending-changes check
+      const detector = FiscoPendingDetector.getInstance();
+      const pendingChanges = await detector.detectPendingFiscalChanges(year);
+
+      // If there are pending operations or orphan sells, mark as not finalizable
+      if (pendingChanges.pending_operations_count > 0) {
+        result.report_can_be_finalized = false;
+        result.warnings.push({
+          code: "PENDING_OPERATIONS",
+          asset: "multiple",
+          detail: `${pendingChanges.pending_operations_count} operaciones pendientes de rebuild FIFO`,
+          severity: "WARNING",
+        } as any);
+      }
+      if (pendingChanges.orphan_sells_count > 0) {
+        result.report_can_be_finalized = false;
+        result.blockers.push({
+          code: "ORPHAN_SELLS",
+          asset: "multiple",
+          detail: `${pendingChanges.orphan_sells_count} ventas huérfanas (sin base de coste)`,
+          severity: "CRITICAL",
+        } as any);
+      }
+
+      // Add pending-changes to result
+      (result as any).pending_changes = pendingChanges;
+
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -3406,8 +3438,10 @@ export function registerFiscoRebuildRoutes(app: Express): void {
   });
 
   /**
-   * GET /api/fisco/transfer-links?year=YYYY
+   * GET /api/fisco/transfer-links?year=YYYY&dateBasis=economic|created
    * Lista transfer links del año con columnas reales de fisco_transfer_links.
+   * dateBasis=economic (default): filtra por from_executed_at o to_executed_at
+   * dateBasis=created: filtra por created_at/matched_at
    * Schema-safe: no usa columna "amount" (no existe), usa amount_sent/amount_received/fee_amount.
    */
   app.get("/api/fisco/transfer-links", async (req, res) => {
@@ -3416,8 +3450,35 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       if (isNaN(year) || year < 2020 || year > 2100) {
         return res.status(400).json({ error: "year inválido" });
       }
+      const dateBasis = (req.query.dateBasis as string) || "economic";
+      if (dateBasis !== "economic" && dateBasis !== "created") {
+        return res.status(400).json({ error: "dateBasis must be 'economic' or 'created'" });
+      }
       const yearStart = `${year}-01-01`;
       const yearEnd   = `${year + 1}-01-01`;
+
+      let whereClause = "";
+      if (dateBasis === "economic") {
+        // Filter by economic dates (from_executed_at or to_executed_at)
+        whereClause = `
+          WHERE (
+            fo_from.executed_at >= $1::date AND fo_from.executed_at < $2::date
+            OR
+            fo_to.executed_at   >= $1::date AND fo_to.executed_at   < $2::date
+            OR
+            (fo_from.executed_at IS NULL AND ftl.created_at >= $1::date AND ftl.created_at < $2::date)
+          )
+        `;
+      } else {
+        // Filter by created/matched dates
+        whereClause = `
+          WHERE (
+            ftl.matched_at >= $1::date AND ftl.matched_at < $2::date
+            OR
+            (ftl.matched_at IS NULL AND ftl.created_at >= $1::date AND ftl.created_at < $2::date)
+          )
+        `;
+      }
 
       const result = await pool.query(`
         SELECT
@@ -3445,18 +3506,13 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         FROM fisco_transfer_links ftl
         LEFT JOIN fisco_operations fo_from ON fo_from.id = ftl.from_operation_id
         LEFT JOIN fisco_operations fo_to   ON fo_to.id   = ftl.to_operation_id
-        WHERE (
-          fo_from.executed_at >= $1::date AND fo_from.executed_at < $2::date
-          OR
-          fo_to.executed_at   >= $1::date AND fo_to.executed_at   < $2::date
-          OR
-          (fo_from.executed_at IS NULL AND ftl.created_at >= $1::date AND ftl.created_at < $2::date)
-        )
+        ${whereClause}
         ORDER BY ftl.created_at DESC
       `, [yearStart, yearEnd]);
 
       return res.json({
         year,
+        dateBasisUsed: dateBasis,
         count: result.rows.length,
         links: result.rows,
       });
@@ -3492,18 +3548,27 @@ export function registerFiscoRebuildRoutes(app: Express): void {
    * POST /api/fisco/import-preview
    * Parse CSV (Kraken Ledger or RevolutX orders), normalize, dedupe, and preview.
    * Dry-run: stores in fisco_import_batches with status='preview'.
+   * Accepts multipart/form-data with 'file' field.
    */
-  app.post("/api/fisco/import-preview", async (req, res) => {
+  app.post("/api/fisco/import-preview", upload.single("file"), async (req, res) => {
     try {
-      const { exchange, file, options, dry_run } = req.body;
-      if (!exchange || !file) {
-        return res.status(400).json({ error: "exchange and file are required" });
+      const { exchange, options, dry_run } = req.body;
+      const file = req.file;
+
+      if (!exchange) {
+        return res.status(400).json({ error: "exchange is required" });
+      }
+      if (!file) {
+        return res.status(400).json({ error: "file is required (multipart/form-data)" });
       }
       if (exchange !== "kraken" && exchange !== "revolutx") {
         return res.status(400).json({ error: "exchange must be 'kraken' or 'revolutx'" });
       }
 
-      const importOptions: ImportOptions = options || {
+      // Convert buffer to string
+      const csvContent = file.buffer.toString("utf-8");
+
+      const importOptions: ImportOptions = options ? JSON.parse(options) : {
         includeNormal: true,
         includeThirdFees: true,
         includeStaking: true,
@@ -3514,7 +3579,7 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         reconcileTransfers: true,
       };
 
-      const result = await createImportPreview(exchange, file, importOptions, dry_run !== false);
+      const result = await createImportPreview(exchange, csvContent, importOptions, dry_run !== false);
       res.json(result);
     } catch (e: any) {
       console.error("[fisco/import-preview]", e);
@@ -3614,24 +3679,9 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       res.json(updated);
     } catch (e: any) {
       console.error("[fisco/config PUT]", e);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  /**
-   * GET /api/fisco/finalization-status?year=YYYY
-   * Get finalization status for a year (FINALIZABLE / FINALIZABLE_WITH_WARNINGS / NOT_FINALIZABLE).
-   */
-  app.get("/api/fisco/finalization-status", async (req, res) => {
-    try {
-      const year = parseInt(req.query.year as string) || new Date().getFullYear();
-      if (isNaN(year) || year < 2020 || year > 2100) {
-        return res.status(400).json({ error: "year inválido" });
+      if (e.code === "FISCO_CONFIG_SCHEMA_MISSING") {
+        return res.status(503).json({ error: e.message, code: "FISCO_CONFIG_SCHEMA_MISSING" });
       }
-      const status = await getFinalizationStatus(year);
-      res.json(status);
-    } catch (e: any) {
-      console.error("[fisco/finalization-status]", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -3684,6 +3734,62 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       console.error("[fisco/rebuild-v2]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/withdrawal-review?year=YYYY
+   * List withdrawals without transfer_link for manual review.
+   */
+  app.get("/api/fisco/withdrawal-review", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+
+      // Get withdrawals without transfer_link
+      const withdrawalsResult = await pool.query(`
+        SELECT
+          id as operation_id,
+          exchange,
+          asset,
+          amount,
+          fee_eur,
+          total_eur,
+          executed_at,
+          external_id
+        FROM fisco_operations
+        WHERE op_type = 'withdrawal'
+          AND executed_at >= $1
+          AND executed_at < $2
+          AND id NOT IN (SELECT from_operation_id FROM fisco_transfer_links WHERE from_operation_id IS NOT NULL)
+        ORDER BY executed_at DESC
+      `, [`${year}-01-01`, `${year + 1}-01-01`]);
+
+      const withdrawals = withdrawalsResult.rows.map((w: any) => ({
+        operation_id: w.operation_id,
+        exchange: w.exchange,
+        asset: w.asset,
+        amount: parseFloat(w.amount),
+        fee_eur: w.fee_eur ? parseFloat(w.fee_eur) : 0,
+        total_eur: w.total_eur ? parseFloat(w.total_eur) : null,
+        executed_at: w.executed_at,
+        external_id: w.external_id,
+        compatible_deposit_candidates: [], // TODO: Find compatible deposits
+        classification: "unknown",
+        recommended_action: "review_required",
+      }));
+
+      res.json({
+        year,
+        withdrawals,
+        count: withdrawals.length,
+        generated_at: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.error("[fisco/withdrawal-review]", e);
       res.status(500).json({ error: e.message });
     }
   });
