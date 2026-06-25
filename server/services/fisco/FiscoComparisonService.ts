@@ -9,6 +9,13 @@ import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort } from "./
 import { krakenService } from "../kraken";
 import { revolutXService } from "../exchanges/RevolutXService";
 
+export interface ComparisonQuality {
+  baseline_valid: boolean;
+  v2_valid: boolean;
+  diff_valid: boolean;
+  numeric_fields_valid: boolean;
+}
+
 export interface ComparisonResult {
   year: number;
   baseline: {
@@ -33,6 +40,7 @@ export interface ComparisonResult {
   blockers: string[];
   warnings: string[];
   is_safe_for_report: boolean;
+  comparison_quality: ComparisonQuality;
   generated_at: string;
 }
 
@@ -46,34 +54,41 @@ export interface AssetDiff {
 }
 
 export async function runComparison(year: number): Promise<ComparisonResult> {
-  // Get baseline (legacy) result from fisco_disposals joined with fisco_operations for executed_at
-  const disposalsResult = await pool.query(`
+  // Baseline aggregate via SQL — avoids PG numeric string concatenation in JS reduce
+  const baselineAgg = await pool.query(`
     SELECT
-      fd.*,
-      fo.asset,
-      fo.exchange,
-      fo.executed_at,
-      fo.external_id,
-      fo.pair
+      COALESCE(SUM(CASE WHEN fd.gain_loss_eur::numeric > 0 THEN fd.gain_loss_eur::numeric ELSE 0 END), 0)::float8 AS gains_eur,
+      COALESCE(ABS(SUM(CASE WHEN fd.gain_loss_eur::numeric < 0 THEN fd.gain_loss_eur::numeric ELSE 0 END)), 0)::float8 AS losses_eur,
+      COALESCE(SUM(fd.gain_loss_eur::numeric), 0)::float8 AS net_gain_loss_eur,
+      COUNT(*)::int AS disposals_count
     FROM fisco_disposals fd
     JOIN fisco_operations fo ON fo.id = fd.sell_operation_id
     WHERE fo.executed_at >= $1::date
       AND fo.executed_at < $2::date
-    ORDER BY fo.executed_at
   `, [`${year}-01-01`, `${year + 1}-01-01`]);
 
-  // Calculate baseline from disposals
-  const baselineGainLoss = disposalsResult.rows.reduce((sum: number, d: any) => sum + (d.gain_loss_eur || 0), 0);
-  const baselineGains = disposalsResult.rows.reduce((sum: number, d: any) => sum + (d.gain_loss_eur > 0 ? d.gain_loss_eur : 0), 0);
-  const baselineLosses = Math.abs(disposalsResult.rows.reduce((sum: number, d: any) => sum + (d.gain_loss_eur < 0 ? d.gain_loss_eur : 0), 0));
-  const baselineDisposals = disposalsResult.rows.length;
+  const baselineGainLoss = parseFloat(baselineAgg.rows[0].net_gain_loss_eur) || 0;
+  const baselineGains = parseFloat(baselineAgg.rows[0].gains_eur) || 0;
+  const baselineLosses = parseFloat(baselineAgg.rows[0].losses_eur) || 0;
+  const baselineDisposals = parseInt(baselineAgg.rows[0].disposals_count, 10) || 0;
 
-  // Build baseline by asset
+  // Baseline by asset via SQL aggregate
+  const baselineByAssetResult = await pool.query(`
+    SELECT
+      fo.asset,
+      COALESCE(SUM(fd.gain_loss_eur::numeric), 0)::float8 AS gain_loss_eur,
+      COUNT(*)::int AS disposals_count
+    FROM fisco_disposals fd
+    JOIN fisco_operations fo ON fo.id = fd.sell_operation_id
+    WHERE fo.executed_at >= $1::date
+      AND fo.executed_at < $2::date
+    GROUP BY fo.asset
+    ORDER BY fo.asset
+  `, [`${year}-01-01`, `${year + 1}-01-01`]);
+
   const baselineByAsset = new Map<string, number>();
-  for (const d of disposalsResult.rows) {
-    const asset = d.asset;
-    const gainLoss = d.gain_loss_eur || 0;
-    baselineByAsset.set(asset, (baselineByAsset.get(asset) ?? 0) + gainLoss);
+  for (const row of baselineByAssetResult.rows) {
+    baselineByAsset.set(row.asset, parseFloat(row.gain_loss_eur) || 0);
   }
 
   // Get V2 (shadow) result by running FIFO on current operations
@@ -100,13 +115,15 @@ export async function runComparison(year: number): Promise<ComparisonResult> {
 
   const fifoResult: FifoResult = runFifo(operations);
 
-  const v2GainLoss = fifoResult.summary.reduce((sum, s) => sum + s.totalGainLossEur, 0);
-  const v2Gains = fifoResult.summary.reduce((sum, s) => sum + (s.totalGainLossEur > 0 ? s.totalGainLossEur : 0), 0);
-  const v2Losses = Math.abs(fifoResult.summary.reduce((sum, s) => sum + (s.totalGainLossEur < 0 ? s.totalGainLossEur : 0), 0));
+  const v2GainLoss = fifoResult.summary.reduce((sum, s) => sum + (typeof s.totalGainLossEur === 'number' ? s.totalGainLossEur : 0), 0);
+  const v2Gains = fifoResult.summary.reduce((sum, s) => sum + (typeof s.totalGainLossEur === 'number' && s.totalGainLossEur > 0 ? s.totalGainLossEur : 0), 0);
+  const v2Losses = Math.abs(fifoResult.summary.reduce((sum, s) => sum + (typeof s.totalGainLossEur === 'number' && s.totalGainLossEur < 0 ? s.totalGainLossEur : 0), 0));
   const v2Disposals = fifoResult.disposals.length;
 
-  const diffEur = v2GainLoss - baselineGainLoss;
-  const diffPct = baselineGainLoss !== 0 ? (diffEur / Math.abs(baselineGainLoss)) * 100 : null;
+  const diffEur = typeof v2GainLoss === 'number' && typeof baselineGainLoss === 'number' ? v2GainLoss - baselineGainLoss : NaN;
+  const diffPct = (typeof baselineGainLoss === 'number' && baselineGainLoss !== 0 && !isNaN(diffEur))
+    ? (diffEur / Math.abs(baselineGainLoss)) * 100
+    : null;
 
   // Build asset-level diffs
   const byAsset: AssetDiff[] = [];
@@ -161,7 +178,23 @@ export async function runComparison(year: number): Promise<ComparisonResult> {
     }
   }
 
-  if (Math.abs(diffEur) > 100) {
+  // Validate numeric fields
+  const numericFieldsValid =
+    typeof baselineGainLoss === 'number' && !isNaN(baselineGainLoss) &&
+    typeof baselineGains === 'number' && !isNaN(baselineGains) &&
+    typeof baselineLosses === 'number' && !isNaN(baselineLosses) &&
+    typeof v2GainLoss === 'number' && !isNaN(v2GainLoss) &&
+    typeof diffEur === 'number' && !isNaN(diffEur);
+
+  const baselineValid = typeof baselineGainLoss === 'number' && !isNaN(baselineGainLoss) && baselineDisposals > 0;
+  const v2Valid = typeof v2GainLoss === 'number' && !isNaN(v2GainLoss);
+  const diffValid = typeof diffEur === 'number' && !isNaN(diffEur);
+
+  if (!numericFieldsValid) {
+    blockers.push('COMPARISON_NUMERIC_INVALID');
+  }
+
+  if (Math.abs(diffEur) > 100 && !isNaN(diffEur)) {
     warnings.push(`Diferencia significativa entre baseline y V2: ${diffEur.toFixed(2)} EUR (${diffPct?.toFixed(1)}%)`);
   }
 
@@ -196,7 +229,13 @@ export async function runComparison(year: number): Promise<ComparisonResult> {
     by_asset: byAsset.sort((a, b) => Math.abs(b.diff_eur) - Math.abs(a.diff_eur)),
     blockers,
     warnings,
-    is_safe_for_report: blockers.length === 0,
+    is_safe_for_report: blockers.length === 0 && numericFieldsValid,
+    comparison_quality: {
+      baseline_valid: baselineValid,
+      v2_valid: v2Valid,
+      diff_valid: diffValid,
+      numeric_fields_valid: numericFieldsValid,
+    },
     generated_at: new Date().toISOString(),
   };
 }

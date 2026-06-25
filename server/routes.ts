@@ -20,6 +20,7 @@ import http from "http";
 import type { RouterDeps } from "./routes/types";
 import { runIdcaHistoricalDuplicateCleanupOnce } from "./services/institutionalDca/IdcaHistoricalDuplicateCleanupService";
 import { AutoMigrationRunner } from "./services/AutoMigrationRunner";
+import { ensureFiscoV2Schema } from "./services/fisco/FiscoV2SchemaEnsureService";
 import { db } from "./db";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -190,6 +191,15 @@ export async function registerRoutes(
     console.log('[startup] AutoMigrationRunner completed');
   } catch (e: any) {
     console.error('[startup] AutoMigrationRunner error (non-fatal):', e?.message || e);
+  }
+
+  // FISCO V2 Schema Ensure — inline SQL, no file dependency
+  // This runs AFTER AutoMigrationRunner as a belt-and-suspenders approach.
+  // Even if the .sql file isn't in the container, this inline SQL will create the tables.
+  try {
+    await ensureFiscoV2Schema();
+  } catch (e: any) {
+    console.error('[startup] FISCO V2 schema ensure error (non-fatal):', e?.message || e);
   }
 
   // Load saved API credentials on startup
