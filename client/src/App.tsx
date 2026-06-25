@@ -16,7 +16,7 @@ import Notifications from "@/pages/Notifications";
 import Guide from "@/pages/Guide";
 import Monitor from "@/pages/Monitor";
 import Backups from "@/pages/Backups";
-import Fisco from "@/pages/Fisco";
+import FiscoDashboard from "@/pages/FiscoDashboard";
 import AiMl from "@/pages/AiMl";
 import Autotuning from "@/pages/Autotuning";
 import InstitutionalDca from "@/pages/InstitutionalDca";
@@ -37,7 +37,7 @@ function Router() {
       <Route path="/strategies"><Redirect to="/trading" /></Route>
 
       {/* Fiscal Crypto */}
-      <Route path="/fiscal" component={Fisco} />
+      <Route path="/fiscal" component={FiscoDashboard} />
       <Route path="/fisco"><Redirect to="/fiscal" /></Route>
 
       {/* Dashboard legacy */}

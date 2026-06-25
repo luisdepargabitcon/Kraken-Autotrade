@@ -19,6 +19,9 @@ import { pool } from "../db";
 import { FiscoAutoSyncService } from "../services/fisco/FiscoAutoSyncService";
 import { FiscoPendingDetector } from "../services/fisco/FiscoPendingDetector";
 import { FiscoInventorySnapshotService } from "../services/fisco/FiscoInventorySnapshotService";
+import { createImportPreview, confirmImport, getImportBatches, getImportBatch, type ImportOptions } from "../services/fisco/FiscoImportService";
+import { getFiscoConfig, setFiscoConfig, getFinalizationStatus } from "../services/fisco/FiscoConfigService";
+import { runComparison } from "../services/fisco/FiscoComparisonService";
 
 /**
  * FISCO (Fiscal Control) routes.
@@ -3477,6 +3480,210 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       res.json(result);
     } catch (e: any) {
       console.error("[fisco/auto-sync/retry-failed]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // FISCO V2: Import Preview / Confirm
+  // ============================================================
+
+  /**
+   * POST /api/fisco/import-preview
+   * Parse CSV (Kraken Ledger or RevolutX orders), normalize, dedupe, and preview.
+   * Dry-run: stores in fisco_import_batches with status='preview'.
+   */
+  app.post("/api/fisco/import-preview", async (req, res) => {
+    try {
+      const { exchange, file, options, dry_run } = req.body;
+      if (!exchange || !file) {
+        return res.status(400).json({ error: "exchange and file are required" });
+      }
+      if (exchange !== "kraken" && exchange !== "revolutx") {
+        return res.status(400).json({ error: "exchange must be 'kraken' or 'revolutx'" });
+      }
+
+      const importOptions: ImportOptions = options || {
+        includeNormal: true,
+        includeThirdFees: true,
+        includeStaking: true,
+        includeDeposits: true,
+        includeWithdrawals: true,
+        skipFiatDepositsWithdrawals: true,
+        detectDuplicates: true,
+        reconcileTransfers: true,
+      };
+
+      const result = await createImportPreview(exchange, file, importOptions, dry_run !== false);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/import-preview]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/import-confirm
+   * Confirm a preview batch: insert normalized operations into fisco_operations.
+   */
+  app.post("/api/fisco/import-confirm", async (req, res) => {
+    try {
+      const { import_batch_id, exchange, options } = req.body;
+      if (!import_batch_id || !exchange) {
+        return res.status(400).json({ error: "import_batch_id and exchange are required" });
+      }
+
+      const importOptions: ImportOptions = options || {
+        includeNormal: true,
+        includeThirdFees: true,
+        includeStaking: true,
+        includeDeposits: true,
+        includeWithdrawals: true,
+        skipFiatDepositsWithdrawals: true,
+        detectDuplicates: true,
+        reconcileTransfers: true,
+      };
+
+      const result = await confirmImport(import_batch_id, exchange, importOptions);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/import-confirm]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/import-batches?year=YYYY
+   * List import batches for a year.
+   */
+  app.get("/api/fisco/import-batches", async (req, res) => {
+    try {
+      const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+      const batches = await getImportBatches(year);
+      res.json({ batches });
+    } catch (e: any) {
+      console.error("[fisco/import-batches]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/import-batches/:id
+   * Get a single import batch with rows.
+   */
+  app.get("/api/fisco/import-batches/:id", async (req, res) => {
+    try {
+      const batch = await getImportBatch(req.params.id);
+      const rowsResult = await pool.query(
+        "SELECT * FROM fisco_import_rows WHERE import_batch_id = $1 ORDER BY row_number",
+        [req.params.id]
+      );
+      res.json({ batch, rows: rowsResult.rows });
+    } catch (e: any) {
+      console.error("[fisco/import-batches/:id]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // FISCO V2: Config & Finalization Status
+  // ============================================================
+
+  /**
+   * GET /api/fisco/config
+   * Get current FISCO V2 configuration.
+   */
+  app.get("/api/fisco/config", async (req, res) => {
+    try {
+      const config = await getFiscoConfig();
+      res.json(config);
+    } catch (e: any) {
+      console.error("[fisco/config]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * PUT /api/fisco/config
+   * Update FISCO V2 configuration (partial update).
+   */
+  app.put("/api/fisco/config", async (req, res) => {
+    try {
+      await setFiscoConfig(req.body);
+      const updated = await getFiscoConfig();
+      res.json(updated);
+    } catch (e: any) {
+      console.error("[fisco/config PUT]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/finalization-status?year=YYYY
+   * Get finalization status for a year (FINALIZABLE / FINALIZABLE_WITH_WARNINGS / NOT_FINALIZABLE).
+   */
+  app.get("/api/fisco/finalization-status", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const status = await getFinalizationStatus(year);
+      res.json(status);
+    } catch (e: any) {
+      console.error("[fisco/finalization-status]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/comparison?year=YYYY
+   * Compare baseline (legacy) vs V2 (shadow) results.
+   */
+  app.get("/api/fisco/comparison", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const comparison = await runComparison(year);
+      res.json(comparison);
+    } catch (e: any) {
+      console.error("[fisco/comparison]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/rebuild-v2
+   * Run FIFO V2 shadow rebuild (dry-run, does not modify official data).
+   */
+  app.post("/api/fisco/rebuild-v2", async (req, res) => {
+    try {
+      const { year, mode } = req.body;
+      const targetYear = year ? parseInt(year) : new Date().getFullYear();
+      if (isNaN(targetYear) || targetYear < 2020 || targetYear > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+
+      const rebuildMode = mode || "dry_run";
+      if (rebuildMode !== "dry_run" && rebuildMode !== "shadow") {
+        return res.status(400).json({ error: "mode must be 'dry_run' or 'shadow'" });
+      }
+
+      // Run comparison (which executes FIFO V2)
+      const comparison = await runComparison(targetYear);
+
+      res.json({
+        year: targetYear,
+        mode: rebuildMode,
+        engine: "v2_shadow",
+        result: comparison,
+        is_safe_for_report: comparison.is_safe_for_report,
+        generated_at: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.error("[fisco/rebuild-v2]", e);
       res.status(500).json({ error: e.message });
     }
   });
