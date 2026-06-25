@@ -257,27 +257,36 @@ export async function createImportPreview(
   }
 
   // Store in DB
-  await pool.query(`
-    INSERT INTO fisco_import_batches (import_batch_id, exchange, year, status, dry_run, options_json, summary_json)
-    VALUES ($1, $2, $3, 'preview', $4, $5, $6)
-  `, [batchId, exchange, year, dryRun, JSON.stringify(options), JSON.stringify({
-    total_rows: ops.length,
-    normalized,
-    duplicates: duplicateRows.size,
-    skipped,
-    date_errors: dateErrors,
-    value_warnings: valueWarnings,
-    errors,
-  })]);
-
-  for (const row of previewRows) {
+  try {
     await pool.query(`
-      INSERT INTO fisco_import_rows (import_batch_id, row_number, exchange, raw_type, normalized_type,
-        buy_amount, buy_asset, sell_amount, sell_asset, fee_amount, fee_asset, executed_at, external_id, status, message)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-    `, [batchId, row.row_number, row.exchange, row.raw_type, row.normalized_type,
-      row.buy_amount, row.buy_asset, row.sell_amount, row.sell_asset,
-      row.fee_amount, row.fee_asset, row.executed_at, row.external_id, row.status, row.message]);
+      INSERT INTO fisco_import_batches (import_batch_id, exchange, year, status, dry_run, options_json, summary_json)
+      VALUES ($1, $2, $3, 'preview', $4, $5, $6)
+    `, [batchId, exchange, year, dryRun, JSON.stringify(options), JSON.stringify({
+      total_rows: ops.length,
+      normalized,
+      duplicates: duplicateRows.size,
+      skipped,
+      date_errors: dateErrors,
+      value_warnings: valueWarnings,
+      errors,
+    })]);
+
+    for (const row of previewRows) {
+      await pool.query(`
+        INSERT INTO fisco_import_rows (import_batch_id, row_number, exchange, raw_type, normalized_type,
+          buy_amount, buy_asset, sell_amount, sell_asset, fee_amount, fee_asset, executed_at, external_id, status, message)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      `, [batchId, row.row_number, row.exchange, row.raw_type, row.normalized_type,
+        row.buy_amount, row.buy_asset, row.sell_amount, row.sell_asset,
+        row.fee_amount, row.fee_asset, row.executed_at, row.external_id, row.status, row.message]);
+    }
+  } catch (e: any) {
+    if (e.code === "42P01" || e.message?.includes("does not exist")) {
+      const error = new Error("FISCO_IMPORT_SCHEMA_MISSING: fisco_import_batches or fisco_import_rows table does not exist. Run migration 059_fisco_v2_import_config.sql") as any;
+      error.code = "FISCO_IMPORT_SCHEMA_MISSING";
+      throw error;
+    }
+    throw e;
   }
 
   return {

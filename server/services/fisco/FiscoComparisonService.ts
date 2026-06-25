@@ -46,11 +46,21 @@ export interface AssetDiff {
 }
 
 export async function runComparison(year: number): Promise<ComparisonResult> {
-  // Get baseline (legacy) result from fisco_disposals instead of fisco_annual_reports
-  const disposalsResult = await pool.query(
-    "SELECT * FROM fisco_disposals WHERE executed_at >= $1 AND executed_at < $2 ORDER BY executed_at",
-    [`${year}-01-01`, `${year + 1}-01-01`]
-  );
+  // Get baseline (legacy) result from fisco_disposals joined with fisco_operations for executed_at
+  const disposalsResult = await pool.query(`
+    SELECT
+      fd.*,
+      fo.asset,
+      fo.exchange,
+      fo.executed_at,
+      fo.external_id,
+      fo.pair
+    FROM fisco_disposals fd
+    JOIN fisco_operations fo ON fo.id = fd.sell_operation_id
+    WHERE fo.executed_at >= $1::date
+      AND fo.executed_at < $2::date
+    ORDER BY fo.executed_at
+  `, [`${year}-01-01`, `${year + 1}-01-01`]);
 
   // Calculate baseline from disposals
   const baselineGainLoss = disposalsResult.rows.reduce((sum: number, d: any) => sum + (d.gain_loss_eur || 0), 0);

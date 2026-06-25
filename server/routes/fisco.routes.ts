@@ -3459,15 +3459,23 @@ export function registerFiscoRebuildRoutes(app: Express): void {
 
       let whereClause = "";
       if (dateBasis === "economic") {
-        // Filter by economic dates (from_executed_at or to_executed_at)
+        // Filter by economic dates (COALESCE of from_executed_at or to_executed_at)
+        // Only use created_at as fallback if BOTH from_executed_at and to_executed_at are NULL
         whereClause = `
           WHERE (
-            fo_from.executed_at >= $1::date AND fo_from.executed_at < $2::date
-            OR
-            fo_to.executed_at   >= $1::date AND fo_to.executed_at   < $2::date
-            OR
-            (fo_from.executed_at IS NULL AND ftl.created_at >= $1::date AND ftl.created_at < $2::date)
-          )
+            CASE
+              WHEN fo_from.executed_at IS NOT NULL THEN fo_from.executed_at
+              WHEN fo_to.executed_at IS NOT NULL THEN fo_to.executed_at
+              ELSE NULL
+            END
+          ) >= $1::date
+          AND (
+            CASE
+              WHEN fo_from.executed_at IS NOT NULL THEN fo_from.executed_at
+              WHEN fo_to.executed_at IS NOT NULL THEN fo_to.executed_at
+              ELSE NULL
+            END
+          ) < $2::date
         `;
       } else {
         // Filter by created/matched dates
@@ -3583,6 +3591,9 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       res.json(result);
     } catch (e: any) {
       console.error("[fisco/import-preview]", e);
+      if (e.code === "FISCO_IMPORT_SCHEMA_MISSING") {
+        return res.status(503).json({ error: e.message, code: "FISCO_IMPORT_SCHEMA_MISSING" });
+      }
       res.status(500).json({ error: e.message });
     }
   });
@@ -3777,9 +3788,9 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         total_eur: w.total_eur ? parseFloat(w.total_eur) : null,
         executed_at: w.executed_at,
         external_id: w.external_id,
-        compatible_deposit_candidates: [], // TODO: Find compatible deposits
-        classification: "unknown",
-        recommended_action: "review_required",
+        compatible_deposit_candidates: [], // TODO: Find compatible deposits (async query)
+        classification: "EXTERNAL_WITHDRAWAL_REVIEW",
+        recommended_action: "Revisar destino externo; documentar si fue wallet propia, gasto, pérdida o transferencia a exchange no importado.",
       }));
 
       res.json({
@@ -3790,6 +3801,46 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       console.error("[fisco/withdrawal-review]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/schema-health
+   * Verifica que las tablas FISCO V2 existan.
+   */
+  app.get("/api/fisco/schema-health", async (req, res) => {
+    try {
+      const tables = [
+        "fisco_import_batches",
+        "fisco_import_rows",
+        "fisco_config",
+        "fisco_operations",
+        "fisco_disposals",
+        "fisco_transfer_links",
+      ];
+
+      const results: Record<string, boolean> = {};
+      for (const table of tables) {
+        const result = await pool.query(
+          "SELECT to_regclass($1) as exists",
+          [`public.${table}`]
+        );
+        results[table] = result.rows[0].exists !== null;
+      }
+
+      const allExist = Object.values(results).every(v => v);
+
+      res.json({
+        healthy: allExist,
+        tables: results,
+        missing_tables: Object.entries(results)
+          .filter(([_, exists]) => !exists)
+          .map(([table]) => table),
+        generated_at: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.error("[fisco/schema-health]", e);
       res.status(500).json({ error: e.message });
     }
   });
