@@ -2,6 +2,129 @@
 
 ---
 
+## feat(fisco): diagnóstico inventario anual y balance check estilo CoinTracking
+
+**Fecha**: 2026-06-23  
+**Commit**: `feat(fisco): diagnostico inventario anual y balance check estilo CoinTracking`  
+**Lote**: FISCO V2 — Lote 1
+
+### Problema identificado
+El cálculo de inventario a cierre de año en `FiscoHtmlRenderer` usaba `fl.quantity` (tamaño original del lote, sin descontar ventas) en lugar de la fórmula correcta. `fl.remaining_qty` tampoco es válido para años históricos porque descuenta ventas de todos los años posteriores (2026+), falsificando el inventario de 2025.
+
+**Fórmula correcta** (implementada en este lote):  
+`closingQtyAsOfYearEnd = opening_qty + acquired_in_year - disposed_in_year`
+
+### Archivos nuevos
+
+- **`server/services/fisco/FiscoInventorySnapshotService.ts`** — Servicio principal con:
+  - `getInventorySnapshot(year)` → `InventorySnapshotResult` (solo lectura, sin modificar datos)
+  - `_computeInventoryRows()` — calcula opening/acquired/disposed/closing por activo con cost basis correcto
+  - `_computeBalanceCheck()` — 6 detecciones: rewards sin precio, deposits sin coste, sells sin cost_basis (CRITICAL), withdrawals sin transfer_link, crypto fees zero, dust positions
+  - Status por activo: OK / DUST / NEGATIVE / NO_DATA / NEEDS_REVIEW
+
+- **`server/services/fisco/__tests__/fiscoInventorySnapshot.test.ts`** — 14 tests:
+  - SNAP-01 a SNAP-07: cálculo correcto de closing_qty en múltiples escenarios
+  - BC-01 a BC-05: detección de issues en Balance Check
+  - STRUCT-01 a STRUCT-02: estructura de respuesta y cost basis
+
+### Archivos modificados
+
+- **`server/routes/fisco.routes.ts`** — 2 nuevos endpoints:
+  - `GET /api/fisco/inventory-snapshot?year=YYYY` — inventario histórico completo
+  - `GET /api/fisco/balance-check?year=YYYY` — solo diagnóstico de coherencia
+
+- **`client/src/pages/Fisco.tsx`** — Nueva pestaña "Diagnóstico" (6ª pestaña):
+  - Cards resumen: activos, G/P año, valor inventario 31/12, balance check status, assets a revisar
+  - Lista de issues con severity (CRITICAL/WARNING/INFO), código y impacto estimado
+  - Tabla por activo: opening, adquirido, vendido, closing 31/12, coste basis €, remaining actual, diff, G/P año, estado
+  - Nota metodológica y timestamp de generación
+  - Badge rojo/amarillo en tab si hay CRITICAL/WARNINGS
+
+### Invariantes mantenidos
+
+- No modifica ninguna tabla de producción
+- No cambia el resultado fiscal oficial (-72.25 € baseline)
+- No bloquea por diferencias en baseline — solo informa
+- Solo lectura: 6 queries SELECT sin side-effects
+
+### Tests resultado
+
+```
+Tests: 329 passed (329)  
+fiscoInventorySnapshot: 14/14 ✅
+npm run check: ✅ (0 errores TypeScript)
+```
+
+### Comandos de validación en VPS
+
+```bash
+# Inventario a 31/12/2025
+curl http://5.250.184.18:3020/api/fisco/inventory-snapshot?year=2025 | jq '{year, summary, rows: [.rows[] | {asset, closingQtyAsOfYearEnd, status}]}'
+
+# Balance Check
+curl http://5.250.184.18:3020/api/fisco/balance-check?year=2025 | jq '{overallStatus, issues: [.issues[] | {severity, code, asset}]}'
+```
+
+---
+
+## feat(idca-hybrid): eventos en lenguaje natural para Hybrid/Grid Observer
+
+**Fecha**: 2026-06-22  
+**Commit**: `feat(idca-hybrid): eventos en lenguaje natural para Hybrid/Grid Observer`
+
+### Problema
+Los eventos de IDCA Hybrid/Grid (ciclos activos, importados, manuales, grid simulado, grid bloqueado, propuestas asistidas) se registraban en `idca_hybrid_state` y `idca_grid_legs` con claves técnicas (`GRID_BLOCKED_IMPORTED_CYCLE`, `HYBRID_OBSERVER_ACTIVE_CYCLE`, etc.) pero la UI no los mostraba en lenguaje natural. El usuario necesitaba ver diagnósticos claros y entendibles, no logs de consola.
+
+### Solución — Archivos creados/modificados
+
+**Nuevos:**
+- `server/services/institutionalDca/idcaHybridEventMapper.ts` — Mapper puro (sin DB) con catálogo de 12 tipos de evento. Cada tipo tiene: título, mensaje natural, detalle, severidad, safetyFlags, filterTags. Funciones: `deriveEventType()`, `mapHybridStateToEvent()`, `filterHybridEvents()`.
+- `client/src/components/idca/IdcaHybridEventsPanel.tsx` — UI de eventos con filtros (Todos, Ciclos activos, Importados, Manuales, Grid simulado, Grid bloqueado, Propuestas, Advertencias, Seguridad), filas expandibles, badges visuales (OBSERVADOR, SIN ORDEN REAL, ANCLA NO MODIFICADA, etc.), display de grid legs con precio/lado/estado.
+- `server/services/__tests__/idcaHybridEventMapper.test.ts` — 21 tests unitarios: deriveEventType (7 casos), mapHybridStateToEvent (7 eventos principales), safety guarantees, filterHybridEvents, catalog completeness.
+
+**Modificados:**
+- `server/routes/idcaHybrid.routes.ts` — Añadido `GET /api/idca/hybrid/events?pair=X&limit=N`. JOIN `idca_hybrid_state` + `idca_grid_legs` (status=planned), mapea a eventos normalizados.
+- `client/src/components/idca/IdcaHybridPanel.tsx` — Integrada nueva sección "Eventos Hybrid/Grid" después de "Ciclos abiertos — Diagnóstico Observador". Solo visible cuando `mode !== off`. Añadido import de `Clock` icon.
+
+### Catálogo de eventos (12 tipos)
+- `HYBRID_OBSERVER_ACTIVE_CYCLE` / `OBSERVING_ACTIVE_CYCLE` — Ciclo activo observado
+- `HYBRID_OBSERVER_IMPORTED_CYCLE` — Ciclo importado analizado
+- `HYBRID_OBSERVER_MANUAL_CYCLE` — Ciclo manual detectado
+- `GRID_PLAN_SIMULATED` — Grid simulado
+- `GRID_OBSERVER_BLOCKED` — Grid bloqueado (análisis desfavorable)
+- `GRID_BLOCKED_BEAR_TREND` — Grid bloqueado por tendencia bajista
+- `GRID_BLOCKED_DATA_QUALITY` — Grid bloqueado por calidad de datos insuficiente
+- `GRID_BLOCKED_CAPITAL_LIMIT` — Grid bloqueado por límite de capital
+- `GRID_BLOCKED_IMPORTED_CYCLE` — Grid bloqueado (ciclo importado)
+- `GRID_BLOCKED_MANUAL_CYCLE` — Grid no aplicado (ciclo manual)
+- `ASSISTED_PROPOSAL_READY` — Propuesta asistida disponible
+
+### Contrato de seguridad
+- ✅ `observerOnly=true` SIEMPRE en todos los eventos
+- ✅ No hay botones peligrosos (aplicar propuesta, ejecutar grid, comprar ahora, vender ahora)
+- ✅ Textos claros: "Grid simulado", "Nivel informativo", "Sin orden real", "Pendiente de confirmación"
+- ✅ NO toca ejecución real, Kraken, Revolut X, FISCO, IDCA activo
+- ✅ El mapper es función pura: sin DB, sin side-effects
+- ✅ La UI muestra banner: "Modo observador activo: estos eventos son diagnósticos. No ejecutan compras ni ventas."
+
+### Verificación VPS post-deploy
+```sql
+-- Verificar eventos en DB
+SELECT pair, cycle_id, grid_state, natural_reason, updated_at
+FROM idca_hybrid_state ORDER BY updated_at DESC LIMIT 10;
+
+-- Verificar grid legs asociados
+SELECT pair, cycle_id, leg_index, side, planned_price, observer_only
+FROM idca_grid_legs WHERE status = 'planned' ORDER BY updated_at DESC LIMIT 20;
+```
+
+### Tests
+- `vitest run idcaHybridEventMapper` → 21/21 ✅
+- `npm run check` → 0 errores ✅
+- `npm run build` → OK ✅
+
+---
+
 ## feat(ai-shadow): captura completa de contexto efectivo de decisión IA/Shadow
 
 **Fecha**: 2025-01  

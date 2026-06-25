@@ -18,6 +18,7 @@ import JSZip from "jszip";
 import { pool } from "../db";
 import { FiscoAutoSyncService } from "../services/fisco/FiscoAutoSyncService";
 import { FiscoPendingDetector } from "../services/fisco/FiscoPendingDetector";
+import { FiscoInventorySnapshotService } from "../services/fisco/FiscoInventorySnapshotService";
 
 /**
  * FISCO (Fiscal Control) routes.
@@ -3348,6 +3349,56 @@ export function registerFiscoRebuildRoutes(app: Express): void {
     } catch (e: any) {
       console.error("[fisco/pending-changes]", e);
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // LOTE 1 — DIAGNÓSTICO: Inventory Snapshot + Balance Check
+  // ============================================================
+
+  /**
+   * GET /api/fisco/inventory-snapshot?year=2025
+   * Calcula inventario histórico correcto a cierre de año.
+   * closing_qty = opening + acquired_in_year - disposed_in_year
+   * (no usa fl.remaining_qty que incluye disposals de años futuros)
+   */
+  app.get("/api/fisco/inventory-snapshot", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const svc = new FiscoInventorySnapshotService(pool);
+      const result = await svc.getInventorySnapshot(year);
+      return res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/inventory-snapshot]", e);
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/balance-check?year=2025
+   * Diagnóstico de coherencia fiscal:
+   *   - rewards sin precio EUR
+   *   - deposits sin cost basis
+   *   - ventas sin base de coste (CRITICAL)
+   *   - withdrawals sin transfer_link
+   *   - crypto fees no descontadas
+   *   - dust positions
+   */
+  app.get("/api/fisco/balance-check", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const svc = new FiscoInventorySnapshotService(pool);
+      const result = await svc.getInventorySnapshot(year);
+      return res.json(result.balanceCheck);
+    } catch (e: any) {
+      console.error("[fisco/balance-check]", e);
+      return res.status(500).json({ error: e.message });
     }
   });
 

@@ -214,6 +214,64 @@ interface AuditSummary {
   recommendation: string[];
 }
 
+// ─── Inventory Snapshot (Lote 1) ─────────────────────────────────────────────
+
+export type SnapshotStatus = "OK" | "DUST" | "NEGATIVE" | "NO_DATA" | "NEEDS_REVIEW";
+
+interface InventorySnapshotRow {
+  asset: string;
+  exchanges: string[];
+  openingQty: number;
+  acquiredQtyInYear: number;
+  disposedQtyInYear: number;
+  closingQtyAsOfYearEnd: number;
+  closingCostBasisEurAsOfYearEnd: number;
+  closingUnitCostEurAsOfYearEnd: number;
+  currentRemainingQty: number;
+  currentVsYearEndDiff: number;
+  proceedsEurInYear: number;
+  costBasisUsedEurInYear: number;
+  gainLossEurInYear: number;
+  status: SnapshotStatus;
+  warnings: string[];
+}
+
+interface BalanceCheckIssue {
+  severity: "CRITICAL" | "WARNING" | "INFO";
+  code: string;
+  asset: string;
+  detail: string;
+  estimatedImpactEur?: number;
+}
+
+interface BalanceCheckResult {
+  year: number;
+  checkedAt: string;
+  overallStatus: "OK" | "WARNINGS" | "CRITICAL";
+  issues: BalanceCheckIssue[];
+  rewards_without_price: Array<{ asset: string; count: number; total_amount: number }>;
+  deposits_without_cost: Array<{ asset: string; exchange: string; count: number; total_amount: number }>;
+  suspected_duplicate_transfers: Array<{ asset: string; from_exchange: string; to_exchange: string | null; detail: string }>;
+  sells_without_cost_basis: Array<{ asset: string; count: number; total_proceeds_eur: number }>;
+  dust_positions: Array<{ asset: string; closing_qty: number; threshold: number }>;
+}
+
+interface InventorySnapshotResult {
+  year: number;
+  generatedAt: string;
+  rows: InventorySnapshotRow[];
+  balanceCheck: BalanceCheckResult;
+  summary: {
+    totalAssets: number;
+    okAssets: number;
+    dustAssets: number;
+    negativeAssets: number;
+    needsReviewAssets: number;
+    totalClosingValueEur: number;
+    totalGainLossEurInYear: number;
+  };
+}
+
 // ─── Pending Fiscal Changes ────────────────────────────────────────────────────
 
 interface PendingFiscalChanges {
@@ -553,6 +611,20 @@ export default function Fisco() {
     enabled: !!selectedYear,
   });
 
+  // --- Inventory Snapshot (Lote 1 — Diagnóstico) ---
+  const inventorySnapshotQ = useQuery<InventorySnapshotResult>({
+    queryKey: [`/api/fisco/inventory-snapshot?year=${selectedYear}`],
+    queryFn: async () => {
+      const r = await fetch(`/api/fisco/inventory-snapshot?year=${selectedYear}`);
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      return r.json();
+    },
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: activeTab === "diagnostico",
+    staleTime: 60_000,
+  });
+
   // --- Pending FIFO changes ---
   const pendingChangesQ = useQuery<PendingFiscalChanges>({
     queryKey: [`/api/fisco/pending-changes?year=${selectedYear}`],
@@ -860,10 +932,19 @@ export default function Fisco() {
 
         {/* ========== TABS STRUCTURE ========== */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="resumen" className="gap-1.5"><TrendingUp className="h-3.5 w-3.5" /> Resumen Fiscal</TabsTrigger>
             <TabsTrigger value="anexo" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Transacciones</TabsTrigger>
             <TabsTrigger value="informes" className="gap-1.5"><Download className="h-3.5 w-3.5" /> Informes</TabsTrigger>
+            <TabsTrigger value="diagnostico" className="gap-1.5 relative">
+              <Filter className="h-3.5 w-3.5" /> Diagnóstico
+              {inventorySnapshotQ.data?.balanceCheck.overallStatus === "CRITICAL" && (
+                <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-red-500" />
+              )}
+              {inventorySnapshotQ.data?.balanceCheck.overallStatus === "WARNINGS" && (
+                <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-yellow-500" />
+              )}
+            </TabsTrigger>
             <TabsTrigger value="alertas" className="gap-1.5"><Bell className="h-3.5 w-3.5" /> Alertas Telegram</TabsTrigger>
             <TabsTrigger value="rebuild" className="gap-1.5 relative">
               <Settings2 className="h-3.5 w-3.5" /> Avanzado
@@ -876,6 +957,7 @@ export default function Fisco() {
             {activeTab === "resumen" && "Informe FIFO completo: sección A (transmisiones), B (activos), C (rendimientos), D (saldos)."}
             {activeTab === "anexo" && "Detalle filtrable de todas las transacciones importadas con fechas, activos y tipo."}
             {activeTab === "informes" && "Centro de informes, exportaciones CSV/ZIP y auditoría fiscal multi-año."}
+            {activeTab === "diagnostico" && "Diagnóstico estilo CoinTracking: inventario histórico correcto a 31/12, balance check y avisos fiscales."}
             {activeTab === "alertas" && "Configuración de alertas fiscales automáticas vía Telegram."}
             {activeTab === "rebuild" && "Herramientas avanzadas: mantenimiento FIFO, reconstrucción con backup, validación de errores críticos."}
           </div>
@@ -1238,6 +1320,185 @@ export default function Fisco() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* ==================== TAB: DIAGNÓSTICO (Lote 1) ==================== */}
+          <TabsContent value="diagnostico" className="space-y-5">
+
+            {/* Loading */}
+            {inventorySnapshotQ.isLoading && (
+              <div className="flex items-center gap-3 py-8 justify-center text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm">Calculando inventario histórico a 31/12/{selectedYear}…</span>
+              </div>
+            )}
+
+            {inventorySnapshotQ.isError && (
+              <Card className="border-red-500/30 bg-red-500/5">
+                <CardContent className="py-3 text-red-400 text-sm flex gap-2">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  Error al calcular inventario: {(inventorySnapshotQ.error as Error)?.message}
+                </CardContent>
+              </Card>
+            )}
+
+            {inventorySnapshotQ.data && (() => {
+              const snap = inventorySnapshotQ.data;
+              const bc = snap.balanceCheck;
+              const statusColor = (s: SnapshotStatus) =>
+                s === "OK" ? "text-green-400" :
+                s === "DUST" ? "text-yellow-400" :
+                s === "NEGATIVE" ? "text-red-400" :
+                s === "NEEDS_REVIEW" ? "text-orange-400" :
+                "text-muted-foreground";
+              return (<>
+                {/* ── Cards resumen ── */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                  <div className="bg-card border border-border rounded-lg p-3 space-y-1">
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Activos</div>
+                    <div className="text-xl font-bold">{snap.summary.totalAssets}</div>
+                    <div className="text-[10px] text-muted-foreground">{snap.summary.okAssets} OK · {snap.summary.dustAssets} dust · {snap.summary.negativeAssets} neg.</div>
+                  </div>
+                  <div className="bg-card border border-border rounded-lg p-3 space-y-1">
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">G/P en {selectedYear}</div>
+                    <div className={`text-lg font-bold font-mono ${snap.summary.totalGainLossEurInYear >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {snap.summary.totalGainLossEurInYear >= 0 ? "+" : ""}{snap.summary.totalGainLossEurInYear.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                    </div>
+                  </div>
+                  <div className="bg-card border border-border rounded-lg p-3 space-y-1">
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Valor inventario 31/12</div>
+                    <div className="text-lg font-bold font-mono text-blue-400">
+                      {snap.summary.totalClosingValueEur.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                    </div>
+                  </div>
+                  <div className={`border rounded-lg p-3 space-y-1 ${bc.overallStatus === "CRITICAL" ? "bg-red-500/10 border-red-500/40" : bc.overallStatus === "WARNINGS" ? "bg-yellow-500/10 border-yellow-500/30" : "bg-green-500/5 border-green-500/20"}`}>
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Balance Check</div>
+                    <div className={`text-sm font-bold ${bc.overallStatus === "CRITICAL" ? "text-red-400" : bc.overallStatus === "WARNINGS" ? "text-yellow-400" : "text-green-400"}`}>
+                      {bc.overallStatus === "CRITICAL" ? "⛔ CRÍTICO" : bc.overallStatus === "WARNINGS" ? "⚠️ AVISOS" : "✓ OK"}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">{bc.issues.length} issue{bc.issues.length !== 1 ? "s" : ""}</div>
+                  </div>
+                  <div className="bg-card border border-border rounded-lg p-3 space-y-1">
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Necesita revisión</div>
+                    <div className={`text-lg font-bold ${snap.summary.needsReviewAssets > 0 ? "text-orange-400" : "text-green-400"}`}>
+                      {snap.summary.needsReviewAssets}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">activos con diff</div>
+                  </div>
+                </div>
+
+                {/* ── Balance Check issues ── */}
+                {bc.issues.length > 0 && (
+                  <Card className={bc.overallStatus === "CRITICAL" ? "border-red-500/40" : "border-yellow-500/30"}>
+                    <CardHeader className="pb-2 pt-4 px-4">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <AlertTriangle className={`h-4 w-4 ${bc.overallStatus === "CRITICAL" ? "text-red-400" : "text-yellow-400"}`} />
+                        Balance Check — {bc.issues.length} issue{bc.issues.length !== 1 ? "s" : ""} detectados
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-4 pb-4 space-y-2">
+                      {bc.issues.map((issue, i) => (
+                        <div key={i} className={`flex gap-3 p-2 rounded-lg text-xs ${issue.severity === "CRITICAL" ? "bg-red-500/10" : issue.severity === "WARNING" ? "bg-yellow-500/10" : "bg-muted/20"}`}>
+                          <Badge variant="outline" className={`shrink-0 text-[10px] ${issue.severity === "CRITICAL" ? "border-red-500/50 text-red-400" : issue.severity === "WARNING" ? "border-yellow-500/50 text-yellow-400" : "border-border text-muted-foreground"}`}>
+                            {issue.severity}
+                          </Badge>
+                          <div className="space-y-0.5">
+                            <div className="font-mono text-[10px] text-muted-foreground">{issue.code} · <span className="font-bold text-foreground">{issue.asset}</span></div>
+                            <div className="text-muted-foreground leading-tight">{issue.detail}</div>
+                            {issue.estimatedImpactEur !== undefined && (
+                              <div className="text-red-400 font-mono">Impacto estimado: {issue.estimatedImpactEur.toFixed(2)} €</div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* ── Tabla inventario por activo ── */}
+                <Card>
+                  <CardHeader className="pb-2 pt-4 px-4">
+                    <CardTitle className="text-sm">
+                      Inventario histórico a 31/12/{selectedYear}
+                      <span className="ml-2 text-[10px] font-normal text-muted-foreground font-mono">
+                        closing = opening + adquirido - vendido (NO usa remaining_qty global)
+                      </span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-0 pb-0">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-muted/30 border-b border-border">
+                            <th className="text-left py-2 px-3 text-muted-foreground font-semibold">Activo</th>
+                            <th className="text-right py-2 px-3 text-muted-foreground font-semibold">Opening</th>
+                            <th className="text-right py-2 px-3 text-muted-foreground font-semibold">Adquirido</th>
+                            <th className="text-right py-2 px-3 text-muted-foreground font-semibold">Vendido</th>
+                            <th className="text-right py-2 px-3 text-blue-400 font-semibold">Closing 31/12</th>
+                            <th className="text-right py-2 px-3 text-muted-foreground font-semibold">Coste basis €</th>
+                            <th className="text-right py-2 px-3 text-muted-foreground font-semibold">Remaining actual</th>
+                            <th className="text-right py-2 px-3 text-muted-foreground font-semibold">Diff</th>
+                            <th className="text-right py-2 px-3 text-muted-foreground font-semibold">G/P año €</th>
+                            <th className="text-center py-2 px-3 text-muted-foreground font-semibold">Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {snap.rows.filter(r => r.status !== "NO_DATA").map((r, i) => (
+                            <tr key={r.asset} className={`border-b border-border/50 ${i % 2 === 0 ? "" : "bg-muted/5"}`}>
+                              <td className="py-2 px-3 font-bold font-mono">{r.asset}</td>
+                              <td className="py-2 px-3 text-right font-mono text-muted-foreground">{r.openingQty.toFixed(6)}</td>
+                              <td className="py-2 px-3 text-right font-mono text-green-400">{r.acquiredQtyInYear > 0 ? `+${r.acquiredQtyInYear.toFixed(6)}` : "—"}</td>
+                              <td className="py-2 px-3 text-right font-mono text-red-400">{r.disposedQtyInYear > 0 ? `-${r.disposedQtyInYear.toFixed(6)}` : "—"}</td>
+                              <td className="py-2 px-3 text-right font-mono font-bold text-blue-400">{r.closingQtyAsOfYearEnd.toFixed(6)}</td>
+                              <td className="py-2 px-3 text-right font-mono text-muted-foreground">
+                                {r.closingCostBasisEurAsOfYearEnd > 0 ? `${r.closingCostBasisEurAsOfYearEnd.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €` : "—"}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono text-muted-foreground">{r.currentRemainingQty.toFixed(6)}</td>
+                              <td className={`py-2 px-3 text-right font-mono ${Math.abs(r.currentVsYearEndDiff) > 0.000001 ? "text-orange-400" : "text-muted-foreground"}`}>
+                                {r.currentVsYearEndDiff !== 0 ? (r.currentVsYearEndDiff > 0 ? "+" : "") + r.currentVsYearEndDiff.toFixed(6) : "—"}
+                              </td>
+                              <td className={`py-2 px-3 text-right font-mono ${r.gainLossEurInYear > 0 ? "text-green-400" : r.gainLossEurInYear < 0 ? "text-red-400" : "text-muted-foreground"}`}>
+                                {r.gainLossEurInYear !== 0 ? `${r.gainLossEurInYear >= 0 ? "+" : ""}${r.gainLossEurInYear.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €` : "—"}
+                              </td>
+                              <td className="py-2 px-3 text-center">
+                                <span className={`text-[10px] font-mono font-bold ${statusColor(r.status)}`}>{r.status}</span>
+                                {r.warnings.length > 0 && (
+                                  <div className="text-[9px] text-orange-400 mt-0.5 leading-tight">{r.warnings[0].slice(0, 60)}{r.warnings[0].length > 60 ? "…" : ""}</div>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Footer con nota metodológica */}
+                    <div className="px-4 py-3 border-t border-border bg-muted/5">
+                      <p className="text-[10px] text-muted-foreground font-mono">
+                        <span className="text-blue-400 font-bold">Nota metodológica:</span>{" "}
+                        "Closing 31/12" = opening + adquirido_en_{selectedYear} - vendido_en_{selectedYear}.
+                        No usa <code>remaining_qty</code> actual (que descuenta ventas de {parseInt(selectedYear) + 1}+).
+                        "Diff" muestra operaciones en años posteriores que han consumido este inventario.
+                      </p>
+                      <p className="text-[10px] text-muted-foreground font-mono mt-1">
+                        Generado: {new Date(snap.generatedAt).toLocaleString("es-ES")}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </>);
+            })()}
+
+            {/* Sin datos */}
+            {!inventorySnapshotQ.isLoading && !inventorySnapshotQ.data && !inventorySnapshotQ.isError && (
+              <Card className="border-dashed">
+                <CardContent className="py-10 text-center text-muted-foreground">
+                  <Filter className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">Cargando datos de diagnóstico para {selectedYear}…</p>
+                </CardContent>
+              </Card>
+            )}
+
           </TabsContent>
 
           {/* ==================== TAB: ALERTAS TELEGRAM ==================== */}
