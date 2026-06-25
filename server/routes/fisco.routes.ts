@@ -3587,7 +3587,8 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         reconcileTransfers: true,
       };
 
-      const result = await createImportPreview(exchange, csvContent, importOptions, dry_run !== false);
+      const explicitYear = req.body.year ? parseInt(req.body.year) : undefined;
+      const result = await createImportPreview(exchange, csvContent, importOptions, dry_run !== false, explicitYear);
       res.json(result);
     } catch (e: any) {
       console.error("[fisco/import-preview]", e);
@@ -3741,6 +3742,9 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         engine: "v2_shadow",
         result: comparison,
         is_safe_for_report: comparison.is_safe_for_report,
+        is_safe_for_shadow_report: comparison.is_safe_for_shadow_report,
+        safe_for_official_switch: comparison.safe_for_official_switch,
+        official_switch_blockers: comparison.official_switch_blockers,
         generated_at: new Date().toISOString(),
       });
     } catch (e: any) {

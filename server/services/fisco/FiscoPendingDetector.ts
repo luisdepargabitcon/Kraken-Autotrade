@@ -82,7 +82,9 @@ export class FiscoPendingDetector {
     `);
     const lastCommittedRun: LastCommittedRun | null = lastRunResult.rows[0] ?? null;
 
-    // Step 2: pending operations (created after last committed run)
+    // Step 2: pending operations (created after last committed run, filtered by year)
+    const yearStart = `${year}-01-01`;
+    const yearEnd = `${year + 1}-01-01`;
     let pendingOps: PendingOperation[] = [];
     if (lastCommittedRun) {
       const pendingResult = await pool.query<PendingOperation>(`
@@ -91,19 +93,23 @@ export class FiscoPendingDetector {
                executed_at, created_at
         FROM fisco_operations
         WHERE created_at > $1
+          AND executed_at >= $2::date
+          AND executed_at < $3::date
         ORDER BY created_at ASC
-      `, [lastCommittedRun.completed_at]);
+      `, [lastCommittedRun.completed_at, yearStart, yearEnd]);
       pendingOps = pendingResult.rows;
     } else {
-      // No committed run ever: all operations are pending
+      // No committed run ever: all operations in the requested year are pending
       const allOpsResult = await pool.query<PendingOperation>(`
         SELECT id, exchange, op_type, asset, pair,
                amount::text, total_eur::text, fee_eur::text,
                executed_at, created_at
         FROM fisco_operations
+        WHERE executed_at >= $1::date
+          AND executed_at < $2::date
         ORDER BY created_at ASC
         LIMIT 500
-      `);
+      `, [yearStart, yearEnd]);
       pendingOps = allOpsResult.rows;
     }
 

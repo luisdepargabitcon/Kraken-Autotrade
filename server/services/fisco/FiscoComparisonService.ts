@@ -36,10 +36,16 @@ export interface ComparisonResult {
   };
   diff_eur: number;
   diff_pct: number | null;
+  gross_gains_diff_eur: number;
+  gross_losses_diff_eur: number;
+  disposals_count_diff: number;
   by_asset: AssetDiff[];
   blockers: string[];
   warnings: string[];
+  official_switch_blockers: string[];
   is_safe_for_report: boolean;
+  is_safe_for_shadow_report: boolean;
+  safe_for_official_switch: boolean;
   comparison_quality: ComparisonQuality;
   generated_at: string;
 }
@@ -125,6 +131,10 @@ export async function runComparison(year: number): Promise<ComparisonResult> {
     ? (diffEur / Math.abs(baselineGainLoss)) * 100
     : null;
 
+  const grossGainsDiffEur = typeof v2Gains === 'number' && typeof baselineGains === 'number' ? v2Gains - baselineGains : NaN;
+  const grossLossesDiffEur = typeof v2Losses === 'number' && typeof baselineLosses === 'number' ? v2Losses - baselineLosses : NaN;
+  const disposalsCountDiff = typeof v2Disposals === 'number' && typeof baselineDisposals === 'number' ? v2Disposals - baselineDisposals : NaN;
+
   // Build asset-level diffs
   const byAsset: AssetDiff[] = [];
   const v2ByAsset = new Map<string, number>();
@@ -198,8 +208,35 @@ export async function runComparison(year: number): Promise<ComparisonResult> {
     warnings.push(`Diferencia significativa entre baseline y V2: ${diffEur.toFixed(2)} EUR (${diffPct?.toFixed(1)}%)`);
   }
 
+  // Gross gains/losses diff warnings
+  if (!isNaN(grossGainsDiffEur) && Math.abs(grossGainsDiffEur) > 1) {
+    warnings.push(`GROSS_GAINS_LOSSES_DIFF: gains brutas difieren ${grossGainsDiffEur.toFixed(2)} EUR`);
+  }
+  if (!isNaN(grossLossesDiffEur) && Math.abs(grossLossesDiffEur) > 1) {
+    warnings.push(`GROSS_GAINS_LOSSES_DIFF: losses brutas difieren ${grossLossesDiffEur.toFixed(2)} EUR`);
+  }
+
+  // Gross diff > 10€ blocks safe_for_report
+  const grossDiffExcessive =
+    (!isNaN(grossGainsDiffEur) && Math.abs(grossGainsDiffEur) > 10) ||
+    (!isNaN(grossLossesDiffEur) && Math.abs(grossLossesDiffEur) > 10);
+
+  if (grossDiffExcessive) {
+    blockers.push('GROSS_GAINS_LOSSES_DIFF_EXCESSIVE');
+  }
+
   if (fifoResult.warnings.length > 0) {
     warnings.push(`${fifoResult.warnings.length} advertencias en FIFO V2`);
+  }
+
+  // Official switch blockers — always blocked while engine is not full
+  const officialSwitchBlockers: string[] = [];
+  officialSwitchBlockers.push('ENGINE_NOT_FULL_V2');
+  if (blockers.length > 0) {
+    officialSwitchBlockers.push(...blockers);
+  }
+  if (!isNaN(disposalsCountDiff) && disposalsCountDiff !== 0) {
+    officialSwitchBlockers.push(`DISPOSALS_COUNT_DIFF: ${disposalsCountDiff}`);
   }
 
   return {
@@ -229,7 +266,13 @@ export async function runComparison(year: number): Promise<ComparisonResult> {
     by_asset: byAsset.sort((a, b) => Math.abs(b.diff_eur) - Math.abs(a.diff_eur)),
     blockers,
     warnings,
-    is_safe_for_report: blockers.length === 0 && numericFieldsValid,
+    gross_gains_diff_eur: isNaN(grossGainsDiffEur) ? 0 : grossGainsDiffEur,
+    gross_losses_diff_eur: isNaN(grossLossesDiffEur) ? 0 : grossLossesDiffEur,
+    disposals_count_diff: isNaN(disposalsCountDiff) ? 0 : disposalsCountDiff,
+    is_safe_for_report: blockers.length === 0 && numericFieldsValid && !grossDiffExcessive,
+    is_safe_for_shadow_report: blockers.length === 0 && numericFieldsValid,
+    safe_for_official_switch: false,
+    official_switch_blockers: officialSwitchBlockers,
     comparison_quality: {
       baseline_valid: baselineValid,
       v2_valid: v2Valid,

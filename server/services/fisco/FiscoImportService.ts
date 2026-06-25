@@ -45,6 +45,14 @@ export interface ImportPreviewResult {
   import_batch_id: string;
   exchange: string;
   year: number;
+  fiscal_year_detected: number;
+  raw_rows: number;
+  parsed_rows: number;
+  normalized_rows: number;
+  skipped_rows: number;
+  duplicate_rows: number;
+  warning_rows: number;
+  error_rows: number;
   total_rows: number;
   normalized: number;
   duplicates: number;
@@ -55,6 +63,7 @@ export interface ImportPreviewResult {
   rows: ImportPreviewRow[];
   dry_run: boolean;
   options: ImportOptions;
+  warnings: string[];
 }
 
 // ============================================================
@@ -143,17 +152,20 @@ export async function createImportPreview(
   exchange: "kraken" | "revolutx",
   csvContent: string,
   options: ImportOptions,
-  dryRun: boolean = true
+  dryRun: boolean = true,
+  explicitYear?: number
 ): Promise<ImportPreviewResult> {
   const batchId = generateBatchId();
-  const year = new Date().getFullYear();
+  const warnings: string[] = [];
 
   let ops: NormalizedOperation[] = [];
   let rawRows: any[] = [];
+  let parsedRows = 0;
 
   if (exchange === "kraken") {
     const ledgerRows = parseKrakenCsv(csvContent);
     rawRows = ledgerRows;
+    parsedRows = ledgerRows.length;
     // Convert CSV rows to KrakenLedgerEntry format
     const ledgerEntries = ledgerRows.map(r => ({
       id: r.txid,
@@ -170,6 +182,7 @@ export async function createImportPreview(
   } else if (exchange === "revolutx") {
     const orderRows = parseRevolutXCsv(csvContent);
     rawRows = orderRows;
+    parsedRows = orderRows.length;
     // Convert CSV rows to RevolutXOrder format
     const orders = orderRows.map(r => ({
       id: r.id,
@@ -187,6 +200,45 @@ export async function createImportPreview(
     ops = await normalizeRevolutXOrders(orders);
   }
 
+  // Detect fiscal year from parsed operations
+  const yearsInOps = new Set<number>();
+  for (const op of ops) {
+    yearsInOps.add(op.executedAt.getUTCFullYear());
+  }
+  // Also detect years from raw rows (for skipped rows)
+  if (rawRows.length > 0 && yearsInOps.size === 0) {
+    for (const r of rawRows) {
+      try {
+        const dateStr = r.time || r.created_date || r.filled_date;
+        if (dateStr) {
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) {
+            yearsInOps.add(d.getUTCFullYear());
+          }
+        }
+      } catch { /* ignore parse errors */ }
+    }
+  }
+
+  let fiscalYearDetected: number;
+  if (explicitYear) {
+    fiscalYearDetected = explicitYear;
+  } else if (yearsInOps.size > 0) {
+    const sortedYears = [...yearsInOps].sort((a, b) => a - b);
+    fiscalYearDetected = sortedYears[0];
+    if (sortedYears.length > 1) {
+      warnings.push(`MULTI_YEAR_CSV: se detectaron múltiples años: ${sortedYears.join(', ')}`);
+    }
+  } else {
+    fiscalYearDetected = new Date().getFullYear();
+  }
+
+  const year = fiscalYearDetected;
+
+  // Track skipped rows (fiat deposits/withdrawals filtered out)
+  const skippedOps: NormalizedOperation[] = [];
+  const beforeFilter = ops.length;
+
   // Apply options filters
   if (!options.includeNormal) ops = ops.filter(o => o.opType !== "trade_buy" && o.opType !== "trade_sell");
   if (!options.includeStaking) ops = ops.filter(o => o.opType !== "staking");
@@ -196,11 +248,16 @@ export async function createImportPreview(
     const fiat = new Set(["USD", "EUR", "GBP", "JPY", "CHF"]);
     ops = ops.filter(o => {
       if (o.opType === "deposit" || o.opType === "withdrawal") {
-        return !fiat.has(o.asset);
+        if (fiat.has(o.asset)) {
+          skippedOps.push(o);
+          return false;
+        }
       }
       return true;
     });
   }
+
+  const skippedCount = beforeFilter - ops.length;
 
   // Hash dedupe
   const hashes = new Set<string>();
@@ -221,13 +278,35 @@ export async function createImportPreview(
     dedupedOps.push(...ops);
   }
 
-  // Build preview rows
+  // Build preview rows — include ALL ops (before filter) for raw_rows count
   const previewRows: ImportPreviewRow[] = [];
-  let normalized = 0;
-  let skipped = 0;
+  let normalizedCount = 0;
+  let skippedRowCount = 0;
+  let warningCount = 0;
+  let errorCount = 0;
   const dateErrors = 0;
   const valueWarnings = 0;
-  const errors = 0;
+
+  // Add skipped rows first (fiat deposits/withdrawals)
+  for (const op of skippedOps) {
+    previewRows.push({
+      row_number: previewRows.length + 1,
+      exchange: op.exchange,
+      raw_type: op.rawData?.type || op.rawData?.side || "unknown",
+      normalized_type: null,
+      buy_amount: null,
+      buy_asset: null,
+      sell_amount: null,
+      sell_asset: null,
+      fee_amount: null,
+      fee_asset: null,
+      executed_at: op.executedAt.toISOString(),
+      external_id: op.externalId,
+      status: "skipped",
+      message: `Saltado: ${op.opType} fiat ${op.asset} (skipFiatDepositsWithdrawals=true)`,
+    });
+    skippedRowCount++;
+  }
 
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
@@ -236,7 +315,7 @@ export async function createImportPreview(
     const message = isDup ? "Duplicado (hash)" : null;
 
     previewRows.push({
-      row_number: i + 1,
+      row_number: previewRows.length + 1,
       exchange: op.exchange,
       raw_type: op.rawData?.type || op.rawData?.side || "unknown",
       normalized_type: op.opType,
@@ -252,9 +331,15 @@ export async function createImportPreview(
       message,
     });
 
-    if (!isDup) normalized++;
-    else skipped++;
+    if (isDup) {
+      skippedRowCount++;
+    } else {
+      normalizedCount++;
+    }
   }
+
+  const rawRowsCount = rawRows.length;
+  const duplicateCount = duplicateRows.size;
 
   // Store in DB
   try {
@@ -262,13 +347,22 @@ export async function createImportPreview(
       INSERT INTO fisco_import_batches (import_batch_id, exchange, year, status, dry_run, options_json, summary_json)
       VALUES ($1, $2, $3, 'preview', $4, $5, $6)
     `, [batchId, exchange, year, dryRun, JSON.stringify(options), JSON.stringify({
-      total_rows: ops.length,
-      normalized,
-      duplicates: duplicateRows.size,
-      skipped,
+      raw_rows: rawRowsCount,
+      parsed_rows: parsedRows,
+      normalized_rows: normalizedCount,
+      skipped_rows: skippedRowCount,
+      duplicate_rows: duplicateCount,
+      warning_rows: warningCount,
+      error_rows: errorCount,
+      total_rows: rawRowsCount,
+      normalized: normalizedCount,
+      duplicates: duplicateCount,
+      skipped: skippedRowCount,
       date_errors: dateErrors,
       value_warnings: valueWarnings,
-      errors,
+      errors: errorCount,
+      fiscal_year_detected: fiscalYearDetected,
+      warnings,
     })]);
 
     for (const row of previewRows) {
@@ -293,16 +387,25 @@ export async function createImportPreview(
     import_batch_id: batchId,
     exchange,
     year,
-    total_rows: ops.length,
-    normalized,
-    duplicates: duplicateRows.size,
-    skipped,
+    fiscal_year_detected: fiscalYearDetected,
+    raw_rows: rawRowsCount,
+    parsed_rows: parsedRows,
+    normalized_rows: normalizedCount,
+    skipped_rows: skippedRowCount,
+    duplicate_rows: duplicateCount,
+    warning_rows: warningCount,
+    error_rows: errorCount,
+    total_rows: rawRowsCount,
+    normalized: normalizedCount,
+    duplicates: duplicateCount,
+    skipped: skippedRowCount,
     date_errors: dateErrors,
     value_warnings: valueWarnings,
-    errors,
+    errors: errorCount,
     rows: previewRows,
     dry_run: dryRun,
     options,
+    warnings,
   };
 }
 
