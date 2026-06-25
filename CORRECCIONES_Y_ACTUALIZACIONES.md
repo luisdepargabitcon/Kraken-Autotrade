@@ -2,6 +2,79 @@
 
 ---
 
+## fix(fisco): refinar balance check fiat, withdrawals y diff historico
+
+**Fecha**: 2026-06-25  
+**Commit**: `fix(fisco): refinar balance check fiat, withdrawals y diff historico`  
+**Lote**: FISCO V2 — Lote 1.1 (refinamiento post-validación VPS)
+
+### Problemas detectados en VPS (balance-check 2025)
+
+1. **Falso positivo FIAT**: `DEPOSIT_WITHOUT_COST WARNING` para depósitos EUR en Kraken (entradas de capital, no activos cripto).
+2. **TON withdrawal etiquetado como "posible duplicación inventario"**: texto incorrecto; no había deposit compatible — es un retiro externo a wallet.
+3. **TON/USDC/XRP marcados NEEDS_REVIEW**: diff actual-vs-cierre-2025 era normal por operaciones en 2026.
+4. **`fisco_transfer_links` sin columna `amount`**: consultas manuales fallaban al usar columna inexistente.
+
+### Fixes implementados
+
+#### Fix #1 — Excluir FIAT de `deposits_without_cost`
+- `FIAT_ASSETS` set global: `EUR, USD, GBP, JPY, CHF, CAD, AUD, NOK, SEK, DKK`
+- La query de `depositNoCostQ` añade `AND fo.asset NOT IN (${fiatList})`
+- Los depósitos FIAT nunca generan `DEPOSIT_WITHOUT_COST` warning
+
+#### Fix #2 — Clasificación inteligente de withdrawals no enlazados
+- **Antes**: todos eran `UNLINKED_WITHDRAWAL` con texto "posible transfer interna"
+- **Ahora**: por cada withdrawal sin transfer_link, busca deposit compatible (mismo asset, otro exchange, ±5 días, cantidad ±5%)
+  - Si hay deposit → `INTERNAL_TRANSFER_CANDIDATE` + code `UNLINKED_WITHDRAWAL`
+  - Si no hay deposit → `EXTERNAL_WITHDRAWAL_REVIEW` + code `EXTERNAL_WITHDRAWAL_REVIEW`
+- Campo nuevo en `suspected_duplicate_transfers`: `classification`, `has_compatible_deposit`
+- Constante `TRANSFER_MATCH_WINDOW_DAYS = 5` (configurable)
+
+#### Fix #3 — `NEEDS_REVIEW` vs `DIFF_EXPLAINED`
+- Nuevo status `DIFF_EXPLAINED`: diff significativo pero explicado por operaciones en años posteriores
+- Query `postYearOpsQ`: detecta assets con ops en `>= yearEnd` (lots o disposals)
+- **Si hay ops posteriores**: `DIFF_EXPLAINED` (solo INFO, no bloquea) 
+- **Si NO hay ops posteriores**: `NEEDS_REVIEW` (diferencia sin explicación → posible error)
+- Campo nuevo en `InventorySnapshotRow`: `hasPostYearOps: boolean`
+
+#### Fix #4 — Endpoint `GET /api/fisco/transfer-links?year=YYYY`
+- Schema-safe: usa `amount_sent`, `amount_received`, `fee_amount` (columnas reales)
+- **NO** usa `amount` (columna inexistente que causaba error en consultas manuales)
+- JOIN con `fisco_operations` para fecha/external_id de origen y destino
+- Responde: `{ year, count, links: [...] }`
+
+### Tipos actualizados
+
+- `SnapshotStatus` añade `"DIFF_EXPLAINED"`
+- `InventorySnapshotRow` añade `hasPostYearOps: boolean`
+- `BalanceCheckResult.suspected_duplicate_transfers` añade `classification` + `has_compatible_deposit`
+
+### Tests resultado
+
+```
+Tests: 334 passed (334) — +5 nuevos sobre baseline 329
+fiscoInventorySnapshot: 19/19 ✅ (eran 14)
+  - BC-04a: INTERNAL_TRANSFER_CANDIDATE ✅
+  - BC-04b: EXTERNAL_WITHDRAWAL_REVIEW ✅
+  - BC-06: FIAT EUR no genera DEPOSIT_WITHOUT_COST ✅
+  - BC-07: cripto BTC sí genera DEPOSIT_WITHOUT_COST ✅
+  - SNAP-08: DIFF_EXPLAINED con ops posteriores ✅
+  - SNAP-09: NEEDS_REVIEW sin ops posteriores ✅
+npm run check: ✅ (0 errores TypeScript)
+```
+
+### Comandos de validación en VPS
+
+```bash
+# Balance check refinado
+curl "http://5.250.184.18:3020/api/fisco/balance-check?year=2025" | jq '{overallStatus, issues: [.issues[] | {severity, code, asset}]}'
+
+# Transfer links schema-safe
+curl "http://5.250.184.18:3020/api/fisco/transfer-links?year=2025" | jq '{count, links: [.links[] | {id, asset, from_exchange, to_exchange, amount_sent, status, confidence}]}'
+```
+
+---
+
 ## feat(fisco): diagnóstico inventario anual y balance check estilo CoinTracking
 
 **Fecha**: 2026-06-23  

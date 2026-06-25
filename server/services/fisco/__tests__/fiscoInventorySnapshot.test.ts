@@ -34,17 +34,19 @@ function makeMockPool(handler: QueryFn): Pool {
 
 // ─── SQL matchers ─────────────────────────────────────────────────────────────
 
-const isOpeningLots      = (sql: string) => sql.includes("fisco_lots") && sql.includes("fo.executed_at < $1") && !sql.includes(">=");
-const isOpeningDisposals = (sql: string) => sql.includes("fisco_disposals") && sql.includes("fd.disposed_at < $1") && !sql.includes(">=");
-const isAcquiredInYear   = (sql: string) => sql.includes("fisco_lots") && sql.includes("fo.executed_at >= $1");
-const isDisposedInYear   = (sql: string) => sql.includes("fisco_disposals") && sql.includes("fd.disposed_at >= $1") && sql.includes("fd.disposed_at <  $2") && !sql.includes("cost_basis_eur::numeric = 0");
-const isRemaining        = (sql: string) => sql.includes("remaining_qty") && !sql.includes("disposed_at") && !sql.includes("executed_at <") && !sql.includes("executed_at >=");
-const isRewardsNoPrice   = (sql: string) => sql.includes("staking") && sql.includes("price_eur IS NULL");
-const isDepositNoCost    = (sql: string) => sql.includes("op_type = 'deposit'") && sql.includes("total_eur IS NULL");
-const isSellNoCost       = (sql: string) => sql.includes("cost_basis_eur::numeric = 0") && sql.includes("proceeds_eur") && sql.includes("proceeds_eur::numeric > 0");
-const isUnlinkedWithdraw = (sql: string) => sql.includes("withdrawal") && sql.includes("fisco_transfer_links") && sql.includes("NOT EXISTS");
-const isCryptoFees       = (sql: string) => sql.includes("fee_eur") && sql.includes("HAVING COUNT");
-const isDustQ            = (sql: string) => sql.includes("remaining_qty::numeric > 0") && sql.includes("HAVING SUM");
+const isOpeningLots       = (sql: string) => sql.includes("fisco_lots") && sql.includes("fo.executed_at < $1") && !sql.includes(">=");
+const isOpeningDisposals  = (sql: string) => sql.includes("fisco_disposals") && sql.includes("fd.disposed_at < $1") && !sql.includes(">=");
+const isAcquiredInYear    = (sql: string) => sql.includes("fisco_lots") && sql.includes("fo.executed_at >= $1") && !sql.includes("UNION");
+const isDisposedInYear    = (sql: string) => sql.includes("fisco_disposals") && sql.includes("fd.disposed_at >= $1") && sql.includes("fd.disposed_at <  $2") && !sql.includes("cost_basis_eur::numeric = 0");
+const isRemaining         = (sql: string) => sql.includes("remaining_qty") && !sql.includes("disposed_at") && !sql.includes("executed_at <") && !sql.includes("executed_at >=");
+const isPostYearOps       = (sql: string) => sql.includes("SELECT DISTINCT") && sql.includes("UNION") && sql.includes("executed_at >= $1");
+const isRewardsNoPrice    = (sql: string) => sql.includes("staking") && sql.includes("price_eur IS NULL");
+const isDepositNoCost     = (sql: string) => sql.includes("op_type = 'deposit'") && sql.includes("total_eur IS NULL");
+const isSellNoCost        = (sql: string) => sql.includes("cost_basis_eur::numeric = 0") && sql.includes("proceeds_eur") && sql.includes("proceeds_eur::numeric > 0");
+const isUnlinkedWithdraw  = (sql: string) => sql.includes("withdrawal") && sql.includes("fisco_transfer_links") && sql.includes("NOT EXISTS");
+const isCompatibleDeposit = (sql: string) => sql.includes("op_type = 'deposit'") && sql.includes("fo.exchange !=") && sql.includes("INTERVAL");
+const isCryptoFees        = (sql: string) => sql.includes("fee_eur") && sql.includes("HAVING COUNT");
+const isDustQ             = (sql: string) => sql.includes("remaining_qty::numeric > 0") && sql.includes("HAVING SUM");
 
 // ─── Helper: build a pool for a scenario ─────────────────────────────────────
 
@@ -54,27 +56,32 @@ interface ScenarioData {
   acquiredRows?:    any[];
   disposedRows?:    any[];
   remainingRows?:   any[];
+  postYearOpsRows?: any[];
   rewardsNoPriceRows?: any[];
   depositNoCostRows?:  any[];
   sellNoCostRows?:     any[];
   unlinkedWithdrawRows?: any[];
+  // per-asset: compatible deposit lookup result (true/false → {cnt: "1"} or {cnt: "0"})
+  compatibleDepositCount?: number;
 }
 
 function makeScenarioPool(data: ScenarioData): Pool {
   return makeMockPool((sql) => {
-    if (isOpeningLots(sql))      return { rows: data.openingLotsRows      ?? [] };
-    if (isOpeningDisposals(sql)) return { rows: data.openingDispRows      ?? [] };
-    if (isAcquiredInYear(sql))   return { rows: data.acquiredRows         ?? [] };
-    if (isDisposedInYear(sql))   return { rows: data.disposedRows         ?? [] };
-    if (isRemaining(sql))        return { rows: data.remainingRows        ?? [] };
-    if (isRewardsNoPrice(sql))   return { rows: data.rewardsNoPriceRows   ?? [] };
-    if (isDepositNoCost(sql))    return { rows: data.depositNoCostRows    ?? [] };
-    // isSellNoCost: has cost_basis_eur::numeric = 0 which isDisposedInYear does NOT have,
-    // so if this matcher is true it must be the balance-check query (not the inventory query)
-    if (isSellNoCost(sql))       return { rows: data.sellNoCostRows       ?? [] };
-    if (isUnlinkedWithdraw(sql)) return { rows: data.unlinkedWithdrawRows ?? [] };
-    if (isCryptoFees(sql))       return { rows: [] };
-    if (isDustQ(sql))            return { rows: [] };
+    if (isOpeningLots(sql))       return { rows: data.openingLotsRows      ?? [] };
+    if (isOpeningDisposals(sql))  return { rows: data.openingDispRows      ?? [] };
+    // isPostYearOps MUST come before isAcquiredInYear (both match executed_at >= $1)
+    if (isPostYearOps(sql))       return { rows: data.postYearOpsRows      ?? [] };
+    if (isAcquiredInYear(sql))    return { rows: data.acquiredRows         ?? [] };
+    if (isDisposedInYear(sql))    return { rows: data.disposedRows         ?? [] };
+    if (isRemaining(sql))         return { rows: data.remainingRows        ?? [] };
+    if (isRewardsNoPrice(sql))    return { rows: data.rewardsNoPriceRows   ?? [] };
+    if (isDepositNoCost(sql))     return { rows: data.depositNoCostRows    ?? [] };
+    // isSellNoCost: has cost_basis_eur::numeric = 0 which isDisposedInYear does NOT have
+    if (isSellNoCost(sql))        return { rows: data.sellNoCostRows       ?? [] };
+    if (isUnlinkedWithdraw(sql))  return { rows: data.unlinkedWithdrawRows ?? [] };
+    if (isCompatibleDeposit(sql)) return { rows: [{ cnt: String(data.compatibleDepositCount ?? 0) }] };
+    if (isCryptoFees(sql))        return { rows: [] };
+    if (isDustQ(sql))             return { rows: [] };
     return { rows: [] };
   });
 }
@@ -109,13 +116,15 @@ describe("FiscoInventorySnapshotService — cálculo closing_qty correcto", () =
   it("SNAP-02: lote comprado en 2025 y vendido en 2026 → closing_2025 lo mantiene íntegro", async () => {
     // BTC: comprado 1.0 en 2025, no vendido en 2025 (disposal en 2026 no aparece)
     // opening=0, acq=1.0, disp=0 → closing=1.0
-    // remaining actual=0 (se vendió en 2026) → diff=-1.0 → NEEDS_REVIEW
+    // remaining actual=0 (se vendió en 2026) → diff=-1.0
+    // postYearOps: BTC tiene ops en 2026 → DIFF_EXPLAINED (no NEEDS_REVIEW)
     const pool = makeScenarioPool({
       openingLotsRows: [],
       openingDispRows: [],
       acquiredRows: [{ asset: "BTC", exchanges: ["kraken"], qty: "1.0", cost_eur: "50000" }],
       disposedRows: [],  // no hay disposals EN 2025
       remainingRows: [{ asset: "BTC", qty: "0.0" }],  // se vendió en 2026
+      postYearOpsRows: [{ asset: "BTC" }],  // BTC tiene ops en 2026
     });
     const svc = new FiscoInventorySnapshotService(pool);
     const result = await svc.getInventorySnapshot(2025);
@@ -124,9 +133,10 @@ describe("FiscoInventorySnapshotService — cálculo closing_qty correcto", () =
     expect(btc.closingQtyAsOfYearEnd).toBeCloseTo(1.0, 6);  // closing 2025 = 1.0 (aún no vendido)
     expect(btc.currentRemainingQty).toBeCloseTo(0.0, 6);    // hoy = 0 (ya vendido en 2026)
     expect(btc.currentVsYearEndDiff).toBeCloseTo(-1.0, 6);  // diff negativa: vendido en año posterior
-    // NEEDS_REVIEW porque diff > dust*100
-    expect(btc.status).toBe("NEEDS_REVIEW");
-    expect(btc.warnings.some(w => w.includes("años posteriores"))).toBe(true);
+    expect(btc.hasPostYearOps).toBe(true);
+    // DIFF_EXPLAINED porque hay ops en 2026 que explican el diff
+    expect(btc.status).toBe("DIFF_EXPLAINED");
+    expect(btc.warnings.some(w => w.includes("2026"))).toBe(true);
   });
 
   it("SNAP-03: lote comprado en 2026 → NO aparece en inventario 2025 (acq=0 para ese asset)", async () => {
@@ -258,11 +268,12 @@ describe("FiscoInventorySnapshotService — Balance Check", () => {
     expect(result.balanceCheck.overallStatus).toBe("CRITICAL");
   });
 
-  it("BC-04: detecta withdrawal sin transfer_link (suspected duplicate transfer)", async () => {
+  it("BC-04a: withdrawal con depósito compatible → INTERNAL_TRANSFER_CANDIDATE", async () => {
     const pool = makeScenarioPool({
       unlinkedWithdrawRows: [
-        { asset: "USDC", from_exchange: "revolutx", cnt: "1", total_amount: "360" },
+        { asset: "USDC", from_exchange: "revolutx", cnt: "1", total_amount: "360", first_withdrawal_at: "2025-03-15" },
       ],
+      compatibleDepositCount: 1,  // hay depósito compatible en otro exchange
     });
     const svc = new FiscoInventorySnapshotService(pool);
     const result = await svc.getInventorySnapshot(2025);
@@ -271,8 +282,31 @@ describe("FiscoInventorySnapshotService — Balance Check", () => {
     const t = result.balanceCheck.suspected_duplicate_transfers[0];
     expect(t.asset).toBe("USDC");
     expect(t.from_exchange).toBe("revolutx");
+    expect(t.classification).toBe("INTERNAL_TRANSFER_CANDIDATE");
+    expect(t.has_compatible_deposit).toBe(true);
 
     const issue = result.balanceCheck.issues.find(i => i.code === "UNLINKED_WITHDRAWAL");
+    expect(issue).toBeDefined();
+    expect(issue!.severity).toBe("WARNING");
+  });
+
+  it("BC-04b: withdrawal sin depósito compatible → EXTERNAL_WITHDRAWAL_REVIEW", async () => {
+    const pool = makeScenarioPool({
+      unlinkedWithdrawRows: [
+        { asset: "TON", from_exchange: "kraken", cnt: "1", total_amount: "32.07", first_withdrawal_at: "2025-04-10" },
+      ],
+      compatibleDepositCount: 0,  // sin depósito compatible
+    });
+    const svc = new FiscoInventorySnapshotService(pool);
+    const result = await svc.getInventorySnapshot(2025);
+
+    expect(result.balanceCheck.suspected_duplicate_transfers).toHaveLength(1);
+    const t = result.balanceCheck.suspected_duplicate_transfers[0];
+    expect(t.asset).toBe("TON");
+    expect(t.classification).toBe("EXTERNAL_WITHDRAWAL_REVIEW");
+    expect(t.has_compatible_deposit).toBe(false);
+
+    const issue = result.balanceCheck.issues.find(i => i.code === "EXTERNAL_WITHDRAWAL_REVIEW");
     expect(issue).toBeDefined();
     expect(issue!.severity).toBe("WARNING");
   });
@@ -284,6 +318,81 @@ describe("FiscoInventorySnapshotService — Balance Check", () => {
 
     expect(result.balanceCheck.issues).toHaveLength(0);
     expect(result.balanceCheck.overallStatus).toBe("OK");
+  });
+
+  it("BC-06: depósito FIAT EUR NO genera DEPOSIT_WITHOUT_COST warning", async () => {
+    // Los depósitos EUR/USD/GBP son entradas de capital, no cripto → no deben emitir warning
+    const pool = makeScenarioPool({
+      // Si la query excluye FIAT correctamente, depositNoCostRows debe estar vacío
+      depositNoCostRows: [],  // la query con AND fo.asset NOT IN ('EUR',...) devuelve vacío
+    });
+    const svc = new FiscoInventorySnapshotService(pool);
+    const result = await svc.getInventorySnapshot(2025);
+
+    const fiatIssue = result.balanceCheck.issues.find(
+      i => i.code === "DEPOSIT_WITHOUT_COST" && ["EUR", "USD", "GBP"].includes(i.asset)
+    );
+    expect(fiatIssue).toBeUndefined();
+    // No debe haber DEPOSIT_WITHOUT_COST para activos FIAT
+    expect(result.balanceCheck.deposits_without_cost.filter(
+      d => ["EUR", "USD", "GBP"].includes(d.asset)
+    )).toHaveLength(0);
+  });
+
+  it("BC-07: depósito cripto BTC sin cost basis sí genera DEPOSIT_WITHOUT_COST warning", async () => {
+    const pool = makeScenarioPool({
+      depositNoCostRows: [{ asset: "BTC", exchange: "kraken", cnt: "1", total_amount: "0.5" }],
+    });
+    const svc = new FiscoInventorySnapshotService(pool);
+    const result = await svc.getInventorySnapshot(2025);
+
+    const issue = result.balanceCheck.issues.find(i => i.code === "DEPOSIT_WITHOUT_COST" && i.asset === "BTC");
+    expect(issue).toBeDefined();
+    expect(issue!.severity).toBe("WARNING");
+  });
+
+});
+
+// ─── Lote 1.1 Diff classification tests ──────────────────────────────────────
+
+describe("FiscoInventorySnapshotService — diff current vs year-end (Lote 1.1)", () => {
+
+  it("SNAP-08: diff con ops posteriores → DIFF_EXPLAINED (INFO, no NEEDS_REVIEW)", async () => {
+    // TON: closing_2025=32.07, remaining_actual=0 (retirado en 2025 a wallet externa)
+    // postYearOps: tiene ops en 2026 → diff explicado → DIFF_EXPLAINED
+    const pool = makeScenarioPool({
+      acquiredRows: [{ asset: "TON", exchanges: ["kraken"], qty: "32.072276", cost_eur: "150" }],
+      disposedRows: [],
+      remainingRows: [{ asset: "TON", qty: "0.0" }],
+      postYearOpsRows: [{ asset: "TON" }],  // ops en años posteriores
+    });
+    const svc = new FiscoInventorySnapshotService(pool);
+    const result = await svc.getInventorySnapshot(2025);
+
+    const ton = result.rows.find(r => r.asset === "TON")!;
+    expect(ton).toBeDefined();
+    expect(ton.status).toBe("DIFF_EXPLAINED");
+    expect(ton.hasPostYearOps).toBe(true);
+    expect(ton.warnings.some(w => w.includes("2026"))).toBe(true);
+  });
+
+  it("SNAP-09: diff sin ops posteriores → NEEDS_REVIEW (error real)", async () => {
+    // ETH: closing_2025=5.0, remaining_actual=3.0 (diff=-2.0)
+    // postYearOps: ETH NO tiene ops en años posteriores → NEEDS_REVIEW
+    const pool = makeScenarioPool({
+      acquiredRows: [{ asset: "ETH", exchanges: ["kraken"], qty: "5.0", cost_eur: "10000" }],
+      disposedRows: [],
+      remainingRows: [{ asset: "ETH", qty: "3.0" }],
+      postYearOpsRows: [],  // sin ops posteriores para ETH
+    });
+    const svc = new FiscoInventorySnapshotService(pool);
+    const result = await svc.getInventorySnapshot(2025);
+
+    const eth = result.rows.find(r => r.asset === "ETH")!;
+    expect(eth).toBeDefined();
+    expect(eth.status).toBe("NEEDS_REVIEW");
+    expect(eth.hasPostYearOps).toBe(false);
+    expect(eth.warnings.some(w => w.includes("sin operaciones posteriores"))).toBe(true);
   });
 
 });

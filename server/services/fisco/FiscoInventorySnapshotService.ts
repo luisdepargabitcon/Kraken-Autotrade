@@ -32,7 +32,8 @@ export type SnapshotStatus =
   | "DUST"             // closing_qty > 0 pero < dust_threshold
   | "NEGATIVE"         // closing_qty < 0 — error estructural FIFO
   | "NO_DATA"          // sin operaciones para este activo/año
-  | "NEEDS_REVIEW";    // diff significativo entre year-end y remaining actual
+  | "NEEDS_REVIEW"     // diff significativo entre year-end y remaining actual, sin ops posteriores que lo expliquen
+  | "DIFF_EXPLAINED";  // diff significativo pero explicado por operaciones en años posteriores (INFO)
 
 export interface InventorySnapshotRow {
   asset: string;
@@ -58,6 +59,7 @@ export interface InventorySnapshotRow {
   gainLossEurInYear: number;
 
   status: SnapshotStatus;
+  hasPostYearOps: boolean;   // true si hay ops del asset en años posteriores (explica diff)
   warnings: string[];
 }
 
@@ -77,7 +79,14 @@ export interface BalanceCheckResult {
   // Resumen por categoría
   rewards_without_price: Array<{ asset: string; count: number; total_amount: number }>;
   deposits_without_cost: Array<{ asset: string; exchange: string; count: number; total_amount: number }>;
-  suspected_duplicate_transfers: Array<{ asset: string; from_exchange: string; to_exchange: string | null; detail: string }>;
+  suspected_duplicate_transfers: Array<{
+    asset: string;
+    from_exchange: string;
+    to_exchange: string | null;
+    detail: string;
+    classification: "INTERNAL_TRANSFER_CANDIDATE" | "EXTERNAL_WITHDRAWAL_REVIEW";
+    has_compatible_deposit: boolean;
+  }>;
   crypto_fees_unaccounted: Array<{ asset: string; total_fee_amount: number; note: string }>;
   dust_positions: Array<{ asset: string; closing_qty: number; threshold: number }>;
   sells_without_cost_basis: Array<{ asset: string; count: number; total_proceeds_eur: number }>;
@@ -100,6 +109,12 @@ export interface InventorySnapshotResult {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+
+// Activos FIAT que nunca tienen cost_basis en el contexto cripto
+const FIAT_ASSETS = new Set(["EUR", "USD", "GBP", "JPY", "CHF", "CAD", "AUD", "NOK", "SEK", "DKK"]);
+
+// Ventana temporal (días) para considerar un depósito como candidato a recibir un withdrawal
+const TRANSFER_MATCH_WINDOW_DAYS = 5;
 
 const DUST_THRESHOLDS: Record<string, number> = {
   BTC: 0.000_01,
@@ -254,12 +269,24 @@ export class FiscoInventorySnapshotService {
       ...acquired.keys(), ...disposed.keys(), ...remaining.keys(),
     ]);
 
-    // Excluir fiat puro (EUR, USD, GBP…)
-    const FIAT = new Set(["EUR", "USD", "GBP", "JPY", "CHF"]);
+    // ── Assets con operaciones en años POSTERIORES a year (para clasificar diff como DIFF_EXPLAINED)
+    const postYearOpsQ = await this.pool.query(`
+      SELECT DISTINCT fl.asset
+      FROM fisco_lots fl
+      JOIN fisco_operations fo ON fo.id = fl.operation_id
+      WHERE fo.executed_at >= $1::date
+      UNION
+      SELECT DISTINCT fo2.asset
+      FROM fisco_disposals fd2
+      JOIN fisco_operations fo2 ON fo2.id = fd2.sell_operation_id
+      WHERE fd2.disposed_at >= $1::date
+    `, [yearEnd]);
+    const assetsWithPostYearOps = new Set<string>(postYearOpsQ.rows.map((r: { asset: string }) => r.asset));
+
     const rows: InventorySnapshotRow[] = [];
 
     for (const asset of allAssets) {
-      if (FIAT.has(asset)) continue;
+      if (FIAT_ASSETS.has(asset)) continue;
 
       const oLots = openingLots.get(asset) ?? { qty: 0, costEur: 0 };
       const oDisp = openingDisp.get(asset) ?? { qty: 0, costEur: 0 };
@@ -285,6 +312,7 @@ export class FiscoInventorySnapshotService {
 
       const dust = dustThreshold(asset);
       const warnings: string[] = [];
+      const hasPostYearOps = assetsWithPostYearOps.has(asset);
 
       // Status logic
       let status: SnapshotStatus;
@@ -297,8 +325,15 @@ export class FiscoInventorySnapshotService {
         status = "DUST";
         warnings.push(`Saldo residual (dust) a 31/12/${year}: ${closingQty.toFixed(8)} ${asset}`);
       } else if (Math.abs(diff) > dust * 100) {
-        status = "NEEDS_REVIEW";
-        warnings.push(`Diferencia entre closing_2025 (${closingQty.toFixed(8)}) y remaining_actual (${currentRemaining.toFixed(8)}): diff=${diff.toFixed(8)} — operaciones en años posteriores o error`);
+        if (hasPostYearOps) {
+          // Diff explicado por operaciones posteriores: solo INFO
+          status = "DIFF_EXPLAINED";
+          warnings.push(`Diff ${diff.toFixed(8)} ${asset} entre closing_${year} (${closingQty.toFixed(8)}) y remaining_actual (${currentRemaining.toFixed(8)}) — explicado por operaciones en ${year + 1}+`);
+        } else {
+          // Diff sin operaciones posteriores que lo justifiquen: revisar
+          status = "NEEDS_REVIEW";
+          warnings.push(`Diferencia entre closing_${year} (${closingQty.toFixed(8)}) y remaining_actual (${currentRemaining.toFixed(8)}): diff=${diff.toFixed(8)} — sin operaciones posteriores que lo expliquen, posible error`);
+        }
       } else {
         status = "OK";
       }
@@ -322,6 +357,7 @@ export class FiscoInventorySnapshotService {
         costBasisUsedEurInYear: round8(disp.costEur),
         gainLossEurInYear: round8(disp.gainLossEur),
         status,
+        hasPostYearOps,
         warnings,
       });
     }
@@ -367,7 +403,9 @@ export class FiscoInventorySnapshotService {
       });
     }
 
-    // 2. Deposits externos sin cost basis (totalEur=0 y precio=0)
+    // 2. Deposits externos sin cost basis (totalEur=0 y precio=0) — excluir FIAT
+    //    Los depósitos EUR/USD/GBP son entradas de capital, no tienen cost_basis cripto
+    const fiatList = Array.from(FIAT_ASSETS).map(a => `'${a}'`).join(", ");
     const depositNoCostQ = await this.pool.query(`
       SELECT fo.exchange, fo.asset,
              COUNT(*) AS cnt,
@@ -376,13 +414,14 @@ export class FiscoInventorySnapshotService {
       WHERE fo.op_type = 'deposit'
         AND (fo.total_eur IS NULL OR fo.total_eur::numeric = 0)
         AND (fo.price_eur IS NULL OR fo.price_eur::numeric = 0)
+        AND fo.asset NOT IN (${fiatList})
         AND fo.executed_at >= $1::date
         AND fo.executed_at <  $2::date
       GROUP BY fo.exchange, fo.asset
       ORDER BY fo.asset
     `, [yearStart, yearEnd]);
 
-    const deposits_without_cost = depositNoCostQ.rows.map(r => ({
+    const deposits_without_cost = depositNoCostQ.rows.map((r: { asset: string; exchange: string; cnt: string; total_amount: string }) => ({
       asset: r.asset,
       exchange: r.exchange,
       count: parseInt(r.cnt),
@@ -429,14 +468,18 @@ export class FiscoInventorySnapshotService {
       });
     }
 
-    // 4. Transferencias internas sospechosas: withdrawals sin transfer_link ni deposit vinculado
-    //    (detecta potencial duplicación de inventario)
+    // 4. Transferencias internas sospechosas: withdrawals sin transfer_link
+    //    Clasificar: si hay depósito compatible en otro exchange (mismo asset, cantidad próxima,
+    //    dentro de TRANSFER_MATCH_WINDOW_DAYS) → INTERNAL_TRANSFER_CANDIDATE
+    //    Si no → EXTERNAL_WITHDRAWAL_REVIEW (salida real, no duplicación de inventario)
     const suspectedTransfersQ = await this.pool.query(`
       SELECT fo.asset, fo.exchange AS from_exchange,
              COUNT(*) AS cnt,
-             COALESCE(SUM(fo.amount::numeric), 0) AS total_amount
+             COALESCE(SUM(ABS(fo.amount::numeric)), 0) AS total_amount,
+             MIN(fo.executed_at) AS first_withdrawal_at
       FROM fisco_operations fo
       WHERE fo.op_type IN ('withdrawal', 'withdrawal_crypto')
+        AND fo.asset NOT IN (${fiatList})
         AND fo.executed_at >= $1::date
         AND fo.executed_at <  $2::date
         AND NOT EXISTS (
@@ -447,19 +490,51 @@ export class FiscoInventorySnapshotService {
       ORDER BY fo.asset
     `, [yearStart, yearEnd]);
 
-    const suspected_duplicate_transfers = suspectedTransfersQ.rows.map(r => ({
-      asset: r.asset,
-      from_exchange: r.from_exchange,
-      to_exchange: null as string | null,
-      detail: `${parseInt(r.cnt)} withdrawal(s) de ${r.asset} desde ${r.from_exchange} sin transfer_link. Posible transfer interna no enlazada (${parseFloat(r.total_amount).toFixed(8)} ${r.asset}).`,
-    }));
+    // Para cada withdrawal no enlazado, buscar depósito compatible en otro exchange
+    const suspected_duplicate_transfers: BalanceCheckResult["suspected_duplicate_transfers"] = [];
 
-    for (const t of suspected_duplicate_transfers) {
+    for (const r of suspectedTransfersQ.rows) {
+      const asset       = r.asset as string;
+      const fromExch    = r.from_exchange as string;
+      const totalAmount = parseFloat(r.total_amount);
+      const firstAt     = r.first_withdrawal_at as string;
+
+      // Buscar depósito compatible: mismo asset, otro exchange, dentro de ventana temporal
+      const compatibleDepositQ = await this.pool.query(`
+        SELECT COUNT(*) AS cnt
+        FROM fisco_operations fo
+        WHERE fo.op_type = 'deposit'
+          AND fo.asset = $1
+          AND fo.exchange != $2
+          AND fo.executed_at >= ($3::date - INTERVAL '${TRANSFER_MATCH_WINDOW_DAYS} days')
+          AND fo.executed_at <= ($3::date + INTERVAL '${TRANSFER_MATCH_WINDOW_DAYS} days')
+          AND ABS(fo.amount::numeric - $4) / GREATEST($4, 0.000001) < 0.05
+      `, [asset, fromExch, firstAt, totalAmount]);
+
+      const hasCompatibleDeposit = parseInt(compatibleDepositQ.rows[0]?.cnt ?? "0") > 0;
+      const classification = hasCompatibleDeposit
+        ? "INTERNAL_TRANSFER_CANDIDATE"
+        : "EXTERNAL_WITHDRAWAL_REVIEW";
+
+      const cnt = parseInt(r.cnt);
+      const detail = hasCompatibleDeposit
+        ? `${cnt} withdrawal(s) de ${asset} desde ${fromExch} sin transfer_link pero con depósito compatible detectado en otro exchange (${totalAmount.toFixed(8)} ${asset}). Probablemente transfer interna no enlazada — revisar y crear transfer_link.`
+        : `${cnt} withdrawal(s) de ${asset} desde ${fromExch} sin transfer_link ni depósito compatible (${totalAmount.toFixed(8)} ${asset}). Posible retiro externo — verificar destino.`;
+
+      suspected_duplicate_transfers.push({
+        asset,
+        from_exchange: fromExch,
+        to_exchange: null,
+        detail,
+        classification,
+        has_compatible_deposit: hasCompatibleDeposit,
+      });
+
       issues.push({
         severity: "WARNING",
-        code: "UNLINKED_WITHDRAWAL",
-        asset: t.asset,
-        detail: t.detail,
+        code: hasCompatibleDeposit ? "UNLINKED_WITHDRAWAL" : "EXTERNAL_WITHDRAWAL_REVIEW",
+        asset,
+        detail,
       });
     }
 

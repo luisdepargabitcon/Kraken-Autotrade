@@ -216,7 +216,7 @@ interface AuditSummary {
 
 // ─── Inventory Snapshot (Lote 1) ─────────────────────────────────────────────
 
-export type SnapshotStatus = "OK" | "DUST" | "NEGATIVE" | "NO_DATA" | "NEEDS_REVIEW";
+export type SnapshotStatus = "OK" | "DUST" | "NEGATIVE" | "NO_DATA" | "NEEDS_REVIEW" | "DIFF_EXPLAINED";
 
 interface InventorySnapshotRow {
   asset: string;
@@ -233,6 +233,7 @@ interface InventorySnapshotRow {
   costBasisUsedEurInYear: number;
   gainLossEurInYear: number;
   status: SnapshotStatus;
+  hasPostYearOps: boolean;
   warnings: string[];
 }
 
@@ -251,7 +252,14 @@ interface BalanceCheckResult {
   issues: BalanceCheckIssue[];
   rewards_without_price: Array<{ asset: string; count: number; total_amount: number }>;
   deposits_without_cost: Array<{ asset: string; exchange: string; count: number; total_amount: number }>;
-  suspected_duplicate_transfers: Array<{ asset: string; from_exchange: string; to_exchange: string | null; detail: string }>;
+  suspected_duplicate_transfers: Array<{
+    asset: string;
+    from_exchange: string;
+    to_exchange: string | null;
+    detail: string;
+    classification: "INTERNAL_TRANSFER_CANDIDATE" | "EXTERNAL_WITHDRAWAL_REVIEW";
+    has_compatible_deposit: boolean;
+  }>;
   sells_without_cost_basis: Array<{ asset: string; count: number; total_proceeds_eur: number }>;
   dust_positions: Array<{ asset: string; closing_qty: number; threshold: number }>;
 }
@@ -1350,6 +1358,7 @@ export default function Fisco() {
                 s === "DUST" ? "text-yellow-400" :
                 s === "NEGATIVE" ? "text-red-400" :
                 s === "NEEDS_REVIEW" ? "text-orange-400" :
+                s === "DIFF_EXPLAINED" ? "text-blue-400" :
                 "text-muted-foreground";
               return (<>
                 {/* ── Cards resumen ── */}

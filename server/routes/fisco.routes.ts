@@ -3403,6 +3403,67 @@ export function registerFiscoRebuildRoutes(app: Express): void {
   });
 
   /**
+   * GET /api/fisco/transfer-links?year=YYYY
+   * Lista transfer links del año con columnas reales de fisco_transfer_links.
+   * Schema-safe: no usa columna "amount" (no existe), usa amount_sent/amount_received/fee_amount.
+   */
+  app.get("/api/fisco/transfer-links", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const yearStart = `${year}-01-01`;
+      const yearEnd   = `${year + 1}-01-01`;
+
+      const result = await pool.query(`
+        SELECT
+          ftl.id,
+          ftl.asset,
+          ftl.from_exchange,
+          ftl.to_exchange,
+          ftl.amount_sent,
+          ftl.amount_received,
+          ftl.fee_amount,
+          ftl.fee_asset,
+          ftl.network,
+          ftl.tx_hash,
+          ftl.confidence,
+          ftl.status,
+          ftl.match_reason,
+          ftl.matched_at,
+          ftl.created_at,
+          -- Source operation info
+          fo_from.executed_at AS from_executed_at,
+          fo_from.external_id AS from_external_id,
+          -- Destination operation info
+          fo_to.executed_at   AS to_executed_at,
+          fo_to.exchange      AS to_exchange_confirmed
+        FROM fisco_transfer_links ftl
+        LEFT JOIN fisco_operations fo_from ON fo_from.id = ftl.from_operation_id
+        LEFT JOIN fisco_operations fo_to   ON fo_to.id   = ftl.to_operation_id
+        WHERE (
+          fo_from.executed_at >= $1::date AND fo_from.executed_at < $2::date
+          OR
+          fo_to.executed_at   >= $1::date AND fo_to.executed_at   < $2::date
+          OR
+          (fo_from.executed_at IS NULL AND ftl.created_at >= $1::date AND ftl.created_at < $2::date)
+        )
+        ORDER BY ftl.created_at DESC
+      `, [yearStart, yearEnd]);
+
+      return res.json({
+        year,
+        count: result.rows.length,
+        links: result.rows,
+      });
+    } catch (e: any) {
+      console.error("[fisco/transfer-links]", e);
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
    * POST /api/fisco/auto-sync/retry-failed
    * Retry a failed job
    */
