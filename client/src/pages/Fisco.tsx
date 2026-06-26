@@ -410,7 +410,7 @@ const OP_TYPE_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 // ============================================================
-// Section Table Component (Bit2Me style)
+// Section Table Component
 // ============================================================
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {

@@ -137,7 +137,7 @@ export function classifyConsiderationType(
  * Uses enriched disposal rows with counter_asset / pair / op_type so that
  * F/N/O is derived from actual transaction data, not a default fallback.
  *
- * transmissionValueEur = net proceeds (proceeds_eur - fee_eur) per Bit2Me convention.
+ * transmissionValueEur = net proceeds (proceeds_eur - fee_eur) per AEAT convention.
  * gain_loss_eur        = remains canonical (from fisco_disposals FIFO).
  */
 export function buildAnnualGainLossByAssetSummary(
@@ -1632,7 +1632,7 @@ export class FiscoHtmlRenderer {
   /**
    * Fetches per-sell-operation counter_asset data for the gain/loss summary.
    * Grouped by (asset, sell_operation_id, counter_asset, pair, op_type).
-   * net_proceeds_eur = SUM(proceeds_eur) - GREATEST(0, SUM(fee_eur)) per Bit2Me convention.
+   * net_proceeds_eur = SUM(proceeds_eur) - GREATEST(0, SUM(fee_eur)) per AEAT convention.
    */
   private async fetchDisposalCounterAssets(year: number): Promise<DisposalCounterAssetRow[]> {
     const q = await this.pool.query(`
@@ -1826,7 +1826,7 @@ ${partialErrors.length > 0 ? `
 
 <!-- 7. NOTA EXPLICATIVA — COMISIONES TRAZADAS (AEAT) -->
 <div class="section-block avoid-break" style="margin-top:1.5rem;padding:.75rem 1rem;background:#f8f8f8;border-left:3px solid #666;border-radius:4px;font-size:.82rem;color:#444">
-  <h2 style="margin-top:0;font-size:.95rem;color:#333">Nota informativa — Tratamiento de comisiones</h2>
+  <h2 style="margin-top:0;font-size:.95rem;color:#333">Nota informativa — Tratamiento de comisiones según criterio AEAT</h2>
   <p style="margin:.4rem 0">
     Las comisiones imputadas se muestran separadas para trazabilidad. Las comisiones de compra aumentan el valor de adquisición.
     Las comisiones de venta reducen el valor de transmisión. Por tanto, <strong>no deben sumarse ni restarse otra vez</strong> al completar Renta.

@@ -678,7 +678,7 @@ export function FiscoReportsCenter() {
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           Centro de informes, auditoría y exportación de datos fiscales FISCO.
-          Solo Kraken y RevolutX. Sin Bit2Me.
+          Solo Kraken y RevolutX.
         </p>
       </CardHeader>
       <CardContent>

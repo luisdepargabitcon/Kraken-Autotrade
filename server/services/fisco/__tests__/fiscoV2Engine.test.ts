@@ -1,5 +1,5 @@
 /**
- * Tests FISCO V2 — Criterio AEAT/Bit2Me de comisiones + Motor FIFO V2 independiente
+ * Tests FISCO V2 — Criterio AEAT de comisiones + Motor FIFO V2 independiente
  */
 import { describe, it, expect } from "vitest";
 import { normalizeToV2Events, detectFeeDoubleCount } from "../FiscoV2Normalizer";
@@ -27,10 +27,10 @@ function makeOp(overrides: Partial<any> = {}): any {
 }
 
 // ============================================================
-// 1. Fee Treatment AEAT/Bit2Me
+// 1. Fee Treatment AEAT
 // ============================================================
 
-describe("FISCO V2 — Criterio AEAT/Bit2Me de comisiones", () => {
+describe("FISCO V2 — Criterio AEAT de comisiones", () => {
   // Test 1: Compra 100€ + fee 1€ → acquisition_value = 101
   it("COMPRA: fee integrada en adquisición, acquisition_value = gross + fee", () => {
     const ops = [makeOp({ id: 1, op_type: "trade_buy", total_eur: "100", fee_eur: "1" })];

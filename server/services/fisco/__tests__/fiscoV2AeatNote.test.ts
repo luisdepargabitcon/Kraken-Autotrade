@@ -1,5 +1,5 @@
 /**
- * Tests for FiscoHtmlRenderer — AEAT/Bit2Me nota informativa + comisiones en informe.
+ * Tests for FiscoHtmlRenderer — AEAT nota informativa + comisiones en informe.
  * Verifica que el HTML contiene la nota explicativa sobre tratamiento de comisiones.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -16,7 +16,7 @@ vi.mock("../../../db", () => ({
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-describe("FiscoHtmlRenderer — Nota AEAT/Bit2Me en informe HTML", () => {
+describe("FiscoHtmlRenderer — Nota AEAT en informe HTML", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: all queries return empty
@@ -204,7 +204,7 @@ describe("FiscoHtmlRenderer — Comisiones en resumen por activo", () => {
 
   it("H-FEE-02: venta 100€ + fee 1€ → transmisión fiscal = 99€", async () => {
     const { buildAnnualGainLossByAssetSummary } = await import("../FiscoHtmlRenderer");
-    // net_proceeds_eur is already net of fee (100 - 1 = 99) per Bit2Me convention
+    // net_proceeds_eur is already net of fee (100 - 1 = 99) per AEAT convention
     const result = buildAnnualGainLossByAssetSummary(2025, [
       {
         asset: "BTC",
@@ -256,5 +256,64 @@ describe("FiscoHtmlRenderer — Comisiones en resumen por activo", () => {
     expect(result.totals.transmissionValueEur).toBe(195);
     expect(result.totals.acquisitionValueEur).toBe(150);
     expect(result.totals.capitalGainLossEur).toBe(45);
+  });
+});
+
+// ── Tests: ausencia de Bit2Me en informe HTML ──────────────────────────────
+
+describe("FiscoHtmlRenderer — sin referencias visibles a Bit2Me", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPool.query.mockResolvedValue({ rows: [] });
+  });
+
+  async function getHtml() {
+    const { FiscoHtmlRenderer } = await import("../FiscoHtmlRenderer");
+    const renderer = new FiscoHtmlRenderer(mockPool as any);
+    return renderer.renderAnnualHtml({
+      year: 2025,
+      exchanges: ["kraken"],
+      finStatus: {
+        status: "OK",
+        gains_eur: 100,
+        losses_eur: 50,
+        net_gain_loss_eur: 50,
+        operations_count: 10,
+        disposals_count: 5,
+        open_lots_count: 3,
+      },
+      portfolio: { total_eur: 5000 },
+      krakenRec: { status: "OK" },
+    });
+  }
+
+  it("NB1: HTML NO contiene 'Bit2Me'", async () => {
+    const html = await getHtml();
+    expect(html).not.toContain("Bit2Me");
+  });
+
+  it("NB2: HTML NO contiene 'bit2me' (case-insensitive)", async () => {
+    const html = await getHtml();
+    expect(html.toLowerCase()).not.toContain("bit2me");
+  });
+
+  it("NB3: HTML NO contiene 'AEAT/Bit2Me'", async () => {
+    const html = await getHtml();
+    expect(html).not.toContain("AEAT/Bit2Me");
+  });
+
+  it("NB4: HTML contiene 'AEAT'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("AEAT");
+  });
+
+  it("NB5: HTML contiene 'Tratamiento de comisiones según criterio AEAT'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Tratamiento de comisiones según criterio AEAT");
+  });
+
+  it("NB6: HTML contiene 'no deben sumarse ni restarse otra vez'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("no deben sumarse ni restarse otra vez");
   });
 });

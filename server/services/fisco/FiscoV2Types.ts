@@ -1,5 +1,5 @@
 /**
- * FISCO V2 Types — Eventos normalizados V2, tratamiento de comisiones AEAT/Bit2Me,
+ * FISCO V2 Types — Eventos normalizados V2, tratamiento de comisiones AEAT,
  * lotes y disposiciones V2 independientes del motor legacy.
  *
  * Criterio fiscal de comisiones: AEAT_INTEGRATED_TRACEABLE
@@ -9,7 +9,7 @@
  */
 
 // ============================================================
-// Fee Treatment (criterio AEAT/Bit2Me)
+// Fee Treatment (criterio AEAT)
 // ============================================================
 
 export type FeeTreatment =

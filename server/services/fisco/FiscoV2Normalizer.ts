@@ -1,6 +1,6 @@
 /**
  * FiscoV2Normalizer — Convierte operaciones de fisco_operations en eventos V2
- * con tratamiento de comisiones AEAT/Bit2Me (integrado y trazado).
+ * con tratamiento de comisiones AEAT (integrado y trazado).
  *
  * Reglas:
  * - Compra: fee_treatment = integrated_in_acquisition, fiscal_value = gross + fee

@@ -830,7 +830,7 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
   });
 
   // ============================================================
-  // ANNUAL REPORT: Bit2Me-style comprehensive fiscal report
+  // ANNUAL REPORT: comprehensive fiscal report
   // Single endpoint returns all 4 sections for a given year
   // ============================================================
   app.get("/api/fisco/annual-report", async (req, res) => {
@@ -1140,9 +1140,9 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         // Portfolio scope metadata — explains mixing when exchange filter is active
         portfolio_scope: portfolioScope,
         portfolio_note:  portfolioNote,
-        // AEAT/Bit2Me fee policy note
+        // AEAT fee policy note
         nota_comisiones: {
-          titulo: "Nota informativa — Tratamiento de comisiones (criterio AEAT/Bit2Me)",
+          titulo: "Nota informativa — Tratamiento de comisiones según criterio AEAT",
           fee_policy_explanation: [
             "Los valores de adquisición incluyen comisiones de compra integradas (integrated_in_acquisition).",
             "Los valores de transmisión son netos de comisiones de venta integradas (integrated_in_transmission).",
