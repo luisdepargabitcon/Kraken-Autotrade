@@ -21,6 +21,7 @@ interface FiscoOperation {
   price_eur: string | null;
   total_eur: string | null;
   fee_eur: string | null;
+  fee_asset: string | null;
   pair: string | null;
   external_id: string | null;
   executed_at: string;
@@ -421,7 +422,7 @@ function OperationDetailDrawer({ op, year, onClose }: { op: FiscoOperation; year
                 { label: "Par", value: op.pair ?? "—" },
                 { label: "Precio EUR", value: <span className="font-mono">{fmtEur(op.price_eur)}</span> },
                 { label: "Total EUR", value: <span className="font-mono">{fmtEur(op.total_eur)}</span> },
-                { label: "Comisión", value: <span className="font-mono">{fmtEur(op.fee_eur, 4)}</span> },
+                { label: "Comisión", value: <span className="font-mono">{fmtEur(op.fee_eur, 4)}{op.fee_asset ? ` / ${op.fee_asset}` : " €"}</span> },
                 { label: "ID externo", value: <span className="font-mono text-xs">{op.external_id ?? "—"}</span> },
               ].map(({ label, value }) => (
                 <div key={label} className="flex justify-between items-baseline gap-2 text-sm">

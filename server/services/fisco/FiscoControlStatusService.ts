@@ -31,6 +31,7 @@ export type FiscalResultStatus = "UPDATED" | "OUTDATED" | "BLOCKED" | "NEEDS_REB
 
 export interface DataFingerprint {
   operations_count: number;
+  operations_count_scope: string;
   lots_count: number;
   disposals_count: number;
   transfer_links_count: number;
@@ -70,9 +71,11 @@ export interface ControlStatusResponse {
     id: string;
     completed_at: string;
     operations_count: number;
+    operations_count_scope: string;
     lots_count: number;
     disposals_count: number;
     operation_set_hash: string | null;
+    has_operation_set_hash: boolean;
   } | null;
   pending_changes: PendingFiscalChanges | null;
   blockers: string[];
@@ -80,6 +83,8 @@ export interface ControlStatusResponse {
   required_actions: string[];
   sync_status: SyncStatus;
   schema_healthy: boolean;
+  v2_activation_blocked: boolean;
+  v2_activation_block_reason: string | null;
   generated_at: string;
 }
 
@@ -195,6 +200,7 @@ export class FiscoControlStatusService {
 
     return {
       operations_count: parseInt(opsQ.rows[0]?.cnt || "0"),
+      operations_count_scope: "year",
       lots_count: parseInt(lotsQ.rows[0]?.cnt || "0"),
       disposals_count: parseInt(dispQ.rows[0]?.cnt || "0"),
       transfer_links_count: parseInt(tlQ.rows[0]?.cnt || "0"),
@@ -448,13 +454,22 @@ export class FiscoControlStatusService {
       }
     }
 
+    // Determine official_engine: v2_shadow means legacy FIFO is still the official engine
+    const officialEngine = config.fiscoEngineMode === "v2_official" ? "v2_official" : "legacy_fifo";
+
+    // Check if last committed run has operation_set_hash
+    const hasOperationSetHash = !!lastCommittedRun?.operation_set_hash;
+    if (lastCommittedRun && !hasOperationSetHash) {
+      warnings.push("El último cálculo confirmado es anterior al sistema de huella. Recalcular FIFO para registrar la huella completa.");
+    }
+
     const reportCanBeFinalized = blockers.length === 0 && status !== "NEEDS_REBUILD" && status !== "BLOCKED";
 
     return {
       year,
       fiscal_result_status: status,
       report_can_be_finalized: reportCanBeFinalized,
-      official_engine: config.fiscoEngineMode,
+      official_engine: officialEngine,
       shadow_engine: "v2_shadow",
       official_result: officialResult,
       data_fingerprint: fingerprint,
@@ -462,9 +477,11 @@ export class FiscoControlStatusService {
         id: lastCommittedRun.id,
         completed_at: lastCommittedRun.completed_at?.toISOString() ?? null,
         operations_count: lastCommittedRun.operations_count,
+        operations_count_scope: "global",
         lots_count: lastCommittedRun.lots_count,
         disposals_count: lastCommittedRun.disposals_count,
         operation_set_hash: lastCommittedRun.operation_set_hash ?? null,
+        has_operation_set_hash: hasOperationSetHash,
       } : null,
       pending_changes: pendingChanges,
       blockers,
@@ -472,6 +489,8 @@ export class FiscoControlStatusService {
       required_actions: requiredActions,
       sync_status: syncStatus,
       schema_healthy: schemaHealthy,
+      v2_activation_blocked: !hasOperationSetHash,
+      v2_activation_block_reason: !hasOperationSetHash ? "last_committed_run.operation_set_hash is null — recalcular FIFO antes de activar V2 oficial" : null,
       generated_at: new Date().toISOString(),
     };
   }

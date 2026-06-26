@@ -2,6 +2,53 @@
 
 ---
 
+## fix(fisco): adaptar operations al schema real y corregir motor oficial
+
+**Fecha**: 2026-06-26
+**Commit**: `fix(fisco): adaptar operations al schema real y corregir motor oficial`
+**Lote**: FISCO V2 — Hotfix VPS Fase 1 (continuación)
+
+### Problema
+Tras validar el commit `8791b16` en VPS, el endpoint `/api/fisco/operations` seguía fallando con 500:
+- `column fo.fee_asset does not exist` — la tabla `fisco_operations` no tiene columna `fee_asset` (sí existe en `fisco_import_rows` y `fisco_transfer_links`, pero no en `fisco_operations`).
+- Además, `control-status` devolvía `official_engine: "v2_shadow"` lo cual es confuso: V2 en sombra no es el motor oficial.
+
+### Cambios implementados
+
+**Endpoint `/api/fisco/operations`** — adaptado al schema real:
+- Reemplazado `fo.fee_asset` por `NULL::text AS fee_asset` en ambas queries (paginada y sin paginar).
+- La respuesta incluye `fee_asset: null` — no falla aunque la columna no exista.
+- Si en el futuro se añade la columna, basta con cambiar `NULL::text` por `fo.fee_asset`.
+
+**`FiscoControlStatusService`** — `official_engine` corregido:
+- `official_engine` ahora devuelve `"legacy_fifo"` cuando `fiscoEngineMode` es `"v2_shadow"` o `"legacy"`.
+- Solo devuelve `"v2_official"` cuando `fiscoEngineMode === "v2_official"`.
+- Ya no confunde el motor en sombra con el motor oficial.
+
+**`FiscoControlStatusService`** — `has_operation_set_hash` + warning:
+- `last_committed_run` ahora incluye `has_operation_set_hash: boolean`.
+- Si `operation_set_hash` es null, añade warning: "El último cálculo confirmado es anterior al sistema de huella. Recalcular FIFO para registrar la huella completa."
+- Nuevos campos `v2_activation_blocked: boolean` y `v2_activation_block_reason: string | null` — bloquean activación V2 oficial si hash es null.
+
+**`FiscoControlStatusService`** — scope de counts aclarado:
+- `data_fingerprint.operations_count_scope = "year"` (operaciones del ejercicio fiscal).
+- `last_committed_run.operations_count_scope = "global"` (operaciones del rebuild global).
+- Evita confusión entre 264 (año) vs 489 (global).
+
+**UI Transacciones** (`FiscoTransaccionesSection.tsx`):
+- `FiscoOperation` interface actualizada con `fee_asset: string | null`.
+- Drawer muestra "Comisión: X € / activo Y" si `fee_asset` existe, o "Comisión: X €" si es null.
+- No muestra "undefined" ni rompe.
+
+**Tests**: 11 tests nuevos (H-19 a H-29) cubriendo fee_asset, official_engine, has_operation_set_hash, scope counts, UI fee_asset null.
+
+### Validación
+- `npm run check`: OK
+- `npm run build`: OK (2569 módulos)
+- `vitest fisco` (17 archivos): 527/527 OK
+
+---
+
 ## fix(fisco): reparar control-status y operaciones paginadas en VPS
 
 **Fecha**: 2026-06-26

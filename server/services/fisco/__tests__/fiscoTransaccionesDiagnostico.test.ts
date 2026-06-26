@@ -257,4 +257,68 @@ describe("Fase 1 — Hotfix VPS: schema, operations, UI", () => {
     expect(rebuildContent).toContain("commitToOfficial");
     expect(rebuildContent).toContain("recordResultHistory");
   });
+
+  // F1.7a: fee_asset fix
+  it("H-19: operations no referencia fo.fee_asset directamente", () => {
+    // Should use NULL::text AS fee_asset, not fo.fee_asset
+    expect(routesContent).toContain("NULL::text AS fee_asset");
+    expect(routesContent).not.toContain("fo.fee_asset");
+  });
+
+  it("H-20: operations SELECT no incluye fo.fee_asset en query de datos", () => {
+    // Verify both data queries (paginated and non-paginated) use NULL::text
+    const matches = routesContent.match(/NULL::text AS fee_asset/g);
+    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  // F1.7b: official_engine correction
+  it("H-21: control-status devuelve legacy_fifo cuando engine mode es v2_shadow", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    expect(svcContent).toContain('=== "v2_official" ? "v2_official" : "legacy_fifo"');
+  });
+
+  it("H-22: control-status no usa config.fiscoEngineMode directamente como official_engine", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    // The return should use officialEngine variable, not config.fiscoEngineMode
+    expect(svcContent).toContain("official_engine: officialEngine");
+  });
+
+  // F1.7c: has_operation_set_hash + warning
+  it("H-23: control-status incluye has_operation_set_hash", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    expect(svcContent).toContain("has_operation_set_hash");
+  });
+
+  it("H-24: control-status incluye warning si hash es null", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    expect(svcContent).toContain("anterior al sistema de huella");
+  });
+
+  it("H-25: control-status bloquea activación V2 si hash es null", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    expect(svcContent).toContain("v2_activation_blocked");
+    expect(svcContent).toContain("v2_activation_block_reason");
+  });
+
+  // F1.7d: scope counts
+  it("H-26: data_fingerprint incluye operations_count_scope = year", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    expect(svcContent).toContain('operations_count_scope: "year"');
+  });
+
+  it("H-27: last_committed_run incluye operations_count_scope = global", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    expect(svcContent).toContain('operations_count_scope: "global"');
+  });
+
+  // F1.7e: UI fee_asset null
+  it("H-28: UI FiscoOperation incluye fee_asset: string | null", () => {
+    expect(txContent).toContain("fee_asset: string | null");
+  });
+
+  it("H-29: UI drawer muestra fee_asset o € si es null", () => {
+    expect(txContent).toContain("op.fee_asset");
+    expect(txContent).toContain('` / ${op.fee_asset}`');
+    expect(txContent).toContain('" €"');
+  });
 });

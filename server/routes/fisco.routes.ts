@@ -656,7 +656,8 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         const dataQuery = `
           SELECT
             fo.id, fo.exchange, fo.op_type, fo.asset, fo.amount,
-            fo.price_eur, fo.total_eur, fo.fee_eur, fo.fee_asset,
+            fo.price_eur, fo.total_eur, fo.fee_eur,
+            NULL::text AS fee_asset,
             fo.pair, fo.executed_at, fo.external_id, fo.created_at,
             COALESCE(fd.disposals_count, 0) AS disposals_count,
             COALESCE(fd.gain_loss_eur, 0) AS gain_loss_eur
@@ -693,7 +694,8 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         const dataQuery = `
           SELECT
             fo.id, fo.exchange, fo.op_type, fo.asset, fo.amount,
-            fo.price_eur, fo.total_eur, fo.fee_eur, fo.fee_asset,
+            fo.price_eur, fo.total_eur, fo.fee_eur,
+            NULL::text AS fee_asset,
             fo.pair, fo.executed_at, fo.external_id, fo.created_at,
             COALESCE(fd.disposals_count, 0) AS disposals_count,
             COALESCE(fd.gain_loss_eur, 0) AS gain_loss_eur
