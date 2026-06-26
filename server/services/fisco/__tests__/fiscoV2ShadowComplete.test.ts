@@ -27,6 +27,7 @@ vi.mock("../fifo-engine", () => ({
     criticalErrors: [],
     warnings: [],
   })),
+  FifoResult: {},
 }));
 
 // Mock normalizer
@@ -34,6 +35,60 @@ vi.mock("../normalizer", () => ({
   normalizeKrakenLedger: vi.fn(() => Promise.resolve([])),
   normalizeRevolutXOrders: vi.fn(() => Promise.resolve([])),
   mergeAndSort: vi.fn(),
+}));
+
+// Mock V2 normalizer
+vi.mock("../FiscoV2Normalizer", () => ({
+  normalizeToV2Events: vi.fn(() => []),
+  detectFeeDoubleCount: vi.fn(() => []),
+}));
+
+// Mock V2 engine
+vi.mock("../FiscoV2EngineService", () => ({
+  runFifoV2: vi.fn(() => ({
+    lots: [],
+    disposals: [],
+    fee_events: [],
+    transfer_carryovers: [],
+    reward_events: [],
+    blockers: [],
+    warnings: [],
+    audit_trail: [],
+    is_safe_for_official: false,
+  })),
+  summarizeV2Result: vi.fn(() => ({
+    net_gain_loss_eur: 0,
+    gains_eur: 0,
+    losses_eur: 0,
+    disposals_count: 0,
+    by_asset: {},
+  })),
+  buildFeeTreatmentSummary: vi.fn(() => ({
+    integrated_in_acquisition: { count: 0, total_eur: 0 },
+    integrated_in_transmission: { count: 0, total_eur: 0 },
+    inventory_reduction: { count: 0, total_eur: 0 },
+    explicit_fee_disposal: { count: 0, total_eur: 0 },
+  })),
+}));
+
+// Mock FiscoConfigService
+vi.mock("../FiscoConfigService", () => ({
+  getFiscoConfig: vi.fn(async () => ({
+    fiscoEngineMode: "v2_shadow",
+    feeMode: "AEAT_INTEGRATED_TRACEABLE",
+    transferMatchingTimeWindowDays: 5,
+    transferMatchingAmountTolerancePct: 5,
+    dustThresholdDefault: 0.0001,
+    cryptoFeeTreatment: "inventory_reduction",
+    blockIfRewardWithoutPrice: false,
+    blockIfSellWithoutCostBasis: true,
+    blockIfTransferMismatch: false,
+    blockIfBalanceMismatchCritical: true,
+    rewardsAsIncome: true,
+  })),
+  setFiscoConfig: vi.fn(),
+  setFiscoConfigKey: vi.fn(),
+  getFinalizationStatus: vi.fn(),
 }));
 
 // Mock exchange services
@@ -274,6 +329,8 @@ describe("FISCO V2 Shadow — Comparison Gross Diff y Official Switch", () => {
       if (sql.includes("fisco_operations") && sql.includes("executed_at")) {
         return Promise.resolve({ rows: [] });
       }
+      if (sql.includes("SUM(fo.fee_eur")) return Promise.resolve({ rows: [{ total_fees_eur: 0 }] });
+      if (sql.includes("fisco_disposals fd")) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [] });
     });
 
@@ -288,7 +345,7 @@ describe("FISCO V2 Shadow — Comparison Gross Diff y Official Switch", () => {
     expect(typeof result.disposals_count_diff).toBe("number");
   });
 
-  it("C-02: safe_for_official_switch es false cuando is_full_v2_engine es false", async () => {
+  it("C-02: safe_for_official_switch es false cuando hay diff neta > 0.01", async () => {
     mockPool.query.mockReset();
     mockPool.query.mockImplementation((sql: string) => {
       if (sql.includes("COALESCE(SUM") && sql.includes("gains_eur")) {
@@ -298,17 +355,19 @@ describe("FISCO V2 Shadow — Comparison Gross Diff y Official Switch", () => {
       }
       if (sql.includes("GROUP BY fo.asset")) return Promise.resolve({ rows: [] });
       if (sql.includes("fisco_operations") && sql.includes("executed_at")) return Promise.resolve({ rows: [] });
+      if (sql.includes("SUM(fo.fee_eur")) return Promise.resolve({ rows: [{ total_fees_eur: 0 }] });
+      if (sql.includes("fisco_disposals fd")) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [] });
     });
 
     const { runComparison } = await import("../FiscoComparisonService");
     const result = await runComparison(2025);
 
-    expect(result.v2.is_full_v2_engine).toBe(false);
+    // V2 returns 0 net, baseline is -72.25, diff > 0.01 → blocked
     expect(result.safe_for_official_switch).toBe(false);
   });
 
-  it("C-03: official_switch_blockers contiene ENGINE_NOT_FULL_V2", async () => {
+  it("C-03: official_switch_blockers contiene NET_DIFF_EXCEEDS_TOLERANCE cuando diff > 0.01", async () => {
     mockPool.query.mockReset();
     mockPool.query.mockImplementation((sql: string) => {
       if (sql.includes("COALESCE(SUM") && sql.includes("gains_eur")) {
@@ -318,23 +377,27 @@ describe("FISCO V2 Shadow — Comparison Gross Diff y Official Switch", () => {
       }
       if (sql.includes("GROUP BY fo.asset")) return Promise.resolve({ rows: [] });
       if (sql.includes("fisco_operations") && sql.includes("executed_at")) return Promise.resolve({ rows: [] });
+      if (sql.includes("SUM(fo.fee_eur")) return Promise.resolve({ rows: [{ total_fees_eur: 0 }] });
+      if (sql.includes("fisco_disposals fd")) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [] });
     });
 
     const { runComparison } = await import("../FiscoComparisonService");
     const result = await runComparison(2025);
 
-    expect(result.official_switch_blockers).toContain("ENGINE_NOT_FULL_V2");
+    // Diff is 0 - (-72.25) = 72.25 > 0.01 → should have NET_DIFF blocker
+    expect(result.official_switch_blockers.some(b => b.includes("NET_DIFF"))).toBe(true);
   });
 
   it("C-04: is_safe_for_report es false cuando gross diff supera 10€", async () => {
     mockPool.query.mockReset();
-    // Mock fifo to return gains/losses that differ significantly from baseline
-    vi.mocked((await import("../fifo-engine")).runFifo).mockReturnValue({
-      disposals: [{ asset: "BTC", amount: 0.1, proceedsEur: 100, costBasisEur: 80, gainLossEur: 20, date: new Date("2025-01-01"), sellOperationId: 1 }],
-      summary: [{ asset: "BTC", totalGainLossEur: 20, lotsUsed: 1, disposals: 1 }],
-      criticalErrors: [],
-      warnings: [],
+    // Mock V2 engine to return gains/losses that differ significantly from baseline
+    vi.mocked((await import("../FiscoV2EngineService")).summarizeV2Result).mockReturnValue({
+      net_gain_loss_eur: 20,
+      gains_eur: 20,
+      losses_eur: 0,
+      disposals_count: 1,
+      by_asset: { BTC: { gain_loss: 20, proceeds: 100, cost_basis: 80, count: 1 } },
     } as any);
 
     mockPool.query.mockImplementation((sql: string) => {
@@ -348,6 +411,8 @@ describe("FISCO V2 Shadow — Comparison Gross Diff y Official Switch", () => {
       }
       if (sql.includes("GROUP BY fo.asset")) return Promise.resolve({ rows: [] });
       if (sql.includes("fisco_operations") && sql.includes("executed_at")) return Promise.resolve({ rows: [] });
+      if (sql.includes("SUM(fo.fee_eur")) return Promise.resolve({ rows: [{ total_fees_eur: 0 }] });
+      if (sql.includes("fisco_disposals fd")) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [] });
     });
 
@@ -369,36 +434,38 @@ describe("FISCO V2 Shadow — Comparison Gross Diff y Official Switch", () => {
       }
       if (sql.includes("GROUP BY fo.asset")) return Promise.resolve({ rows: [] });
       if (sql.includes("fisco_operations") && sql.includes("executed_at")) return Promise.resolve({ rows: [] });
+      if (sql.includes("SUM(fo.fee_eur")) return Promise.resolve({ rows: [{ total_fees_eur: 0 }] });
+      if (sql.includes("fisco_disposals fd")) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [] });
     });
 
-    // Reset fifo mock to return empty (no gross diff)
-    vi.mocked((await import("../fifo-engine")).runFifo).mockReturnValue({
-      disposals: [],
-      summary: [],
-      criticalErrors: [],
-      warnings: [],
+    // Reset V2 engine mock to return empty (no gross diff)
+    vi.mocked((await import("../FiscoV2EngineService")).summarizeV2Result).mockReturnValue({
+      net_gain_loss_eur: 0,
+      gains_eur: 0,
+      losses_eur: 0,
+      disposals_count: 0,
+      by_asset: {},
     } as any);
 
     const { runComparison } = await import("../FiscoComparisonService");
     const result = await runComparison(2025);
 
     // With no V2 disposals, gross diff = 0 - 45.87 = -45.87 (>10), so both reports are false
-    // But is_safe_for_shadow_report should still be more permissive than is_safe_for_report
-    // when gross diff is small. In this case gross diff is large, so both are false.
     expect(result.is_safe_for_shadow_report).toBe(false);
     expect(result.is_safe_for_report).toBe(false);
-    // But safe_for_official_switch is always false with basic engine
+    // safe_for_official_switch is false because diff > tolerance
     expect(result.safe_for_official_switch).toBe(false);
   });
 
   it("C-06: disposals_count_diff se calcula correctamente", async () => {
     mockPool.query.mockReset();
-    vi.mocked((await import("../fifo-engine")).runFifo).mockReturnValue({
-      disposals: new Array(100).fill({ asset: "BTC", amount: 0.1, proceedsEur: 100, costBasisEur: 80, gainLossEur: 20, date: new Date("2025-01-01"), sellOperationId: 1 }),
-      summary: [{ asset: "BTC", totalGainLossEur: 2000, lotsUsed: 100, disposals: 100 }],
-      criticalErrors: [],
-      warnings: [],
+    vi.mocked((await import("../FiscoV2EngineService")).summarizeV2Result).mockReturnValue({
+      net_gain_loss_eur: 2000,
+      gains_eur: 2000,
+      losses_eur: 0,
+      disposals_count: 100,
+      by_asset: { BTC: { gain_loss: 2000, proceeds: 10000, cost_basis: 8000, count: 100 } },
     } as any);
 
     mockPool.query.mockImplementation((sql: string) => {
@@ -409,6 +476,8 @@ describe("FISCO V2 Shadow — Comparison Gross Diff y Official Switch", () => {
       }
       if (sql.includes("GROUP BY fo.asset")) return Promise.resolve({ rows: [] });
       if (sql.includes("fisco_operations") && sql.includes("executed_at")) return Promise.resolve({ rows: [] });
+      if (sql.includes("SUM(fo.fee_eur")) return Promise.resolve({ rows: [{ total_fees_eur: 0 }] });
+      if (sql.includes("fisco_disposals fd")) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [] });
     });
 
@@ -416,7 +485,7 @@ describe("FISCO V2 Shadow — Comparison Gross Diff y Official Switch", () => {
     const result = await runComparison(2025);
 
     expect(result.disposals_count_diff).toBe(100 - 234);
-    expect(result.official_switch_blockers).toContain("DISPOSALS_COUNT_DIFF: -134");
+    expect(result.official_switch_blockers.some(b => b.includes("DISPOSALS_COUNT_DIFF: -134"))).toBe(true);
   });
 });
 

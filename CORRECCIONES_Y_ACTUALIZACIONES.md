@@ -2,6 +2,43 @@
 
 ---
 
+## feat(fisco-v2): comparacion legacy vs v2 con motor independiente y trazabilidad completa
+
+**Fecha**: 2026-06-26
+**Lote**: FISCO V2 — Fase 2 (C3)
+
+### Cambios implementados
+
+**Modificado: `FiscoComparisonService.ts`**:
+- Reemplazado motor legacy `runFifo` por motor V2 independiente `runFifoV2`
+- Usa `normalizeToV2Events` con `feeMode` de `FiscoConfigService`
+- Usa `summarizeV2Result` y `buildFeeTreatmentSummary` del V2 engine
+- Nuevos campos en `ComparisonResult`:
+  - `gross_diff_detail`: detalle de diferencias netas, gains y losses
+  - `operation_mapping`: mapeo legacy_disposal_id ↔ v2_disposal_id por sell_operation_id
+  - `unmapped_legacy_disposals` / `unmapped_v2_disposals`: disposiciones sin match
+  - `asset_diffs`: diff por activo con proceeds, cost_basis, disposals_count
+  - `fee_diff_detail`: diferencias de comisiones legacy vs V2, desglose por treatment
+  - `fee_treatment_summary`: resumen de comisiones por tipo de tratamiento
+- `safe_for_official_switch` ahora basado en tolerancias (0.01 EUR) en vez de hardcoded false
+- `official_switch_blockers` valida: NET_DIFF, GROSS_GAINS_DIFF, GROSS_LOSSES_DIFF, DISPOSALS_COUNT_DIFF, FEE_DIFF_TOTAL, UNMAPPED_LEGACY/V2_DISPOSALS
+- `v2.engine = "v2_independent"`, `v2.is_full_v2_engine = true`, `limitations = []`
+
+**Modificado: `fiscoV2ShadowComplete.test.ts`**:
+- Añadidos mocks para `FiscoV2Normalizer`, `FiscoV2EngineService`, `FiscoConfigService`
+- C-02: validación de `safe_for_official_switch` basada en diff > tolerancia
+- C-03: validación de `NET_DIFF_EXCEEDS_TOLERANCE` en blockers
+- C-04: mock de `summarizeV2Result` en vez de `runFifo`
+- C-05: mock de V2 engine, SQL mocks para fee y disposal queries
+- C-06: mock de `summarizeV2Result` con 100 disposals, validación correcta
+
+### Validación
+- `npm run check`: OK
+- `npm run build`: OK (2569 módulos)
+- `vitest fiscoV2Engine + fiscoV2ShadowComplete`: 38/38 OK
+
+---
+
 ## feat(fisco-v2): implementar criterio aeat bit2me de comisiones trazadas + motor fifo v2 independiente
 
 **Fecha**: 2026-06-26

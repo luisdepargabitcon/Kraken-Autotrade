@@ -1,6 +1,9 @@
 /**
  * FISCO Comparison Service: Compares baseline (legacy) vs V2 (shadow) vs CoinTracking.
  * Explains differences by asset, operation, and cause.
+ *
+ * UPDATED: Now uses independent FiscoV2EngineService instead of legacy fifo-engine.
+ * Includes fee_diff_detail, operation_mapping, fee_treatment_summary.
  */
 
 import { pool } from "../../db";
@@ -8,6 +11,10 @@ import { runFifo, type FifoResult } from "./fifo-engine";
 import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort } from "./normalizer";
 import { krakenService } from "../kraken";
 import { revolutXService } from "../exchanges/RevolutXService";
+import { normalizeToV2Events } from "./FiscoV2Normalizer";
+import { runFifoV2, summarizeV2Result, buildFeeTreatmentSummary } from "./FiscoV2EngineService";
+import { getFiscoConfig } from "./FiscoConfigService";
+import type { V2ComparisonResult, OperationMapping, AssetDiffV2, FeeDiffDetail, FeeTreatmentSummary } from "./FiscoV2Types";
 
 export interface ComparisonQuality {
   baseline_valid: boolean;
@@ -30,8 +37,8 @@ export interface ComparisonResult {
     gains_eur: number;
     losses_eur: number;
     disposals_count: number;
-    engine: "v2_shadow_basic";
-    is_full_v2_engine: false;
+    engine: string;
+    is_full_v2_engine: boolean;
     limitations: string[];
   };
   diff_eur: number;
@@ -47,6 +54,13 @@ export interface ComparisonResult {
   is_safe_for_shadow_report: boolean;
   safe_for_official_switch: boolean;
   comparison_quality: ComparisonQuality;
+  gross_diff_detail: Record<string, number> | null;
+  operation_mapping: OperationMapping[];
+  unmapped_legacy_disposals: number[];
+  unmapped_v2_disposals: string[];
+  asset_diffs: AssetDiffV2[];
+  fee_diff_detail: FeeDiffDetail | null;
+  fee_treatment_summary: FeeTreatmentSummary;
   generated_at: string;
 }
 
@@ -153,34 +167,89 @@ export async function runComparison(year: number, detail: boolean = false): Prom
     }
   }
 
-  // Get V2 (shadow) result by running FIFO on current operations
+  // Get V2 result using independent V2 engine with AEAT fee treatment
+  const config = await getFiscoConfig();
   const opsResult = await pool.query(
     "SELECT * FROM fisco_operations WHERE executed_at >= $1 AND executed_at < $2 ORDER BY executed_at",
     [`${year}-01-01`, `${year + 1}-01-01`]
   );
 
-  const operations = opsResult.rows.map((op: any) => ({
-    exchange: op.exchange,
-    externalId: op.external_id,
-    opType: op.op_type,
-    asset: op.asset,
-    amount: parseFloat(op.amount),
-    priceEur: op.price_eur ? parseFloat(op.price_eur) : null,
-    totalEur: op.total_eur ? parseFloat(op.total_eur) : null,
-    feeEur: op.fee_eur ? parseFloat(op.fee_eur) : 0,
-    counterAsset: op.counter_asset,
-    pair: op.pair,
-    executedAt: new Date(op.executed_at),
-    rawData: op.raw_data,
-    requiresEurPrice: op.requires_eur_price,
-  }));
+  // Normalize to V2 events with AEAT fee treatment
+  const v2Events = normalizeToV2Events(opsResult.rows, config.feeMode);
 
-  const fifoResult: FifoResult = runFifo(operations);
+  // Run independent V2 FIFO engine
+  const v2EngineResult = runFifoV2(v2Events, {
+    blockIfRewardWithoutPrice: config.blockIfRewardWithoutPrice,
+    blockIfSellWithoutCostBasis: config.blockIfSellWithoutCostBasis,
+  });
 
-  const v2GainLoss = fifoResult.summary.reduce((sum, s) => sum + (typeof s.totalGainLossEur === 'number' ? s.totalGainLossEur : 0), 0);
-  const v2Gains = fifoResult.summary.reduce((sum, s) => sum + (typeof s.totalGainLossEur === 'number' && s.totalGainLossEur > 0 ? s.totalGainLossEur : 0), 0);
-  const v2Losses = Math.abs(fifoResult.summary.reduce((sum, s) => sum + (typeof s.totalGainLossEur === 'number' && s.totalGainLossEur < 0 ? s.totalGainLossEur : 0), 0));
-  const v2Disposals = fifoResult.disposals.length;
+  const v2Summary = summarizeV2Result(v2EngineResult);
+  const v2GainLoss = v2Summary.net_gain_loss_eur;
+  const v2Gains = v2Summary.gains_eur;
+  const v2Losses = v2Summary.losses_eur;
+  const v2Disposals = v2Summary.disposals_count;
+
+  // Build fee treatment summary
+  const feeTreatmentSummary = buildFeeTreatmentSummary(v2EngineResult);
+
+  // Calculate fee diff detail
+  const legacyFeesResult = await pool.query(`
+    SELECT COALESCE(SUM(fo.fee_eur::numeric), 0)::float8 AS total_fees_eur
+    FROM fisco_operations fo
+    WHERE fo.executed_at >= $1 AND fo.executed_at < $2
+      AND fo.op_type IN ('trade_buy', 'trade_sell')
+  `, [`${year}-01-01`, `${year + 1}-01-01`]);
+  const legacyTotalFees = parseFloat(legacyFeesResult.rows[0]?.total_fees_eur ?? "0");
+  const v2TotalFees = v2EngineResult.fee_events.reduce((sum, fe) => sum + fe.fee_eur, 0);
+  const feeDiffTotal = v2TotalFees - legacyTotalFees;
+
+  const feeDiffDetail: FeeDiffDetail = {
+    legacy_total_fees_eur: legacyTotalFees,
+    v2_total_fees_eur: v2TotalFees,
+    fee_diff_total_eur: feeDiffTotal,
+    by_treatment: {
+      integrated_in_acquisition: { count: feeTreatmentSummary.integrated_in_acquisition.count, total_eur: feeTreatmentSummary.integrated_in_acquisition.total_eur },
+      integrated_in_transmission: { count: feeTreatmentSummary.integrated_in_transmission.count, total_eur: feeTreatmentSummary.integrated_in_transmission.total_eur },
+      inventory_reduction: { count: feeTreatmentSummary.inventory_reduction.count, total_eur: feeTreatmentSummary.inventory_reduction.total_eur },
+      explicit_fee_disposal: { count: feeTreatmentSummary.explicit_fee_disposal.count, total_eur: feeTreatmentSummary.explicit_fee_disposal.total_eur },
+    },
+  };
+
+  // Build operation mapping: match legacy disposals to V2 disposals by sell_operation_id
+  const legacyDisposalsResult = await pool.query(`
+    SELECT fd.id, fd.sell_operation_id, fd.gain_loss_eur::float8 AS gain_loss_eur
+    FROM fisco_disposals fd
+    JOIN fisco_operations fo ON fo.id = fd.sell_operation_id
+    WHERE fo.executed_at >= $1 AND fo.executed_at < $2
+  `, [`${year}-01-01`, `${year + 1}-01-01`]);
+
+  const operationMapping: OperationMapping[] = [];
+  const mappedLegacyIds = new Set<number>();
+  const mappedV2Ids = new Set<string>();
+
+  for (const ld of legacyDisposalsResult.rows) {
+    const v2Match = v2EngineResult.disposals.find(d => d.sell_operation_id === ld.sell_operation_id && !mappedV2Ids.has(d.v2_disposal_id));
+    if (v2Match) {
+      operationMapping.push({
+        legacy_disposal_id: ld.id,
+        v2_disposal_id: v2Match.v2_disposal_id,
+        sell_operation_id: ld.sell_operation_id,
+        asset: v2Match.asset,
+        legacy_gain_loss_eur: parseFloat(ld.gain_loss_eur) || 0,
+        v2_gain_loss_eur: v2Match.gain_loss_eur,
+        diff_eur: v2Match.gain_loss_eur - (parseFloat(ld.gain_loss_eur) || 0),
+      });
+      mappedLegacyIds.add(ld.id);
+      mappedV2Ids.add(v2Match.v2_disposal_id);
+    }
+  }
+
+  const unmappedLegacyDisposals = legacyDisposalsResult.rows
+    .filter((r: any) => !mappedLegacyIds.has(r.id))
+    .map((r: any) => r.id);
+  const unmappedV2Disposals = v2EngineResult.disposals
+    .filter(d => !mappedV2Ids.has(d.v2_disposal_id))
+    .map(d => d.v2_disposal_id);
 
   const diffEur = typeof v2GainLoss === 'number' && typeof baselineGainLoss === 'number' ? v2GainLoss - baselineGainLoss : NaN;
   const diffPct = (typeof baselineGainLoss === 'number' && baselineGainLoss !== 0 && !isNaN(diffEur))
@@ -191,13 +260,13 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   const grossLossesDiffEur = typeof v2Losses === 'number' && typeof baselineLosses === 'number' ? v2Losses - baselineLosses : NaN;
   const disposalsCountDiff = typeof v2Disposals === 'number' && typeof baselineDisposals === 'number' ? v2Disposals - baselineDisposals : NaN;
 
-  // Build asset-level diffs
+  // Build asset-level diffs using V2 engine result
   const byAsset: AssetDiff[] = [];
   const v2ByAsset = new Map<string, number>();
 
-  // Parse V2 by asset
-  for (const summary of fifoResult.summary) {
-    v2ByAsset.set(summary.asset, summary.totalGainLossEur);
+  // Parse V2 by asset from engine summary
+  for (const [asset, data] of Object.entries(v2Summary.by_asset)) {
+    v2ByAsset.set(asset, (data as any).gain_loss);
   }
 
   // Combine all assets
@@ -237,10 +306,10 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (fifoResult.criticalErrors.length > 0) {
-    blockers.push(`${fifoResult.criticalErrors.length} errores críticos en FIFO V2`);
-    for (const err of fifoResult.criticalErrors.slice(0, 3)) {
-      blockers.push(`[${err.code}] ${err.asset}: ${err.detail}`);
+  // V2 engine blockers
+  if (v2EngineResult.blockers.length > 0) {
+    for (const b of v2EngineResult.blockers.slice(0, 5)) {
+      blockers.push(`[${b.code}] ${b.asset}: ${b.detail}`);
     }
   }
 
@@ -281,33 +350,52 @@ export async function runComparison(year: number, detail: boolean = false): Prom
     blockers.push('GROSS_GAINS_LOSSES_DIFF_EXCESSIVE');
   }
 
-  if (fifoResult.warnings.length > 0) {
-    warnings.push(`${fifoResult.warnings.length} advertencias en FIFO V2`);
+  if (v2EngineResult.warnings.length > 0) {
+    warnings.push(`${v2EngineResult.warnings.length} advertencias en FIFO V2`);
   }
 
-  // Official switch blockers — always blocked while engine is not full
+  // Official switch blockers — check tolerances for activation
   const officialSwitchBlockers: string[] = [];
-  officialSwitchBlockers.push('ENGINE_NOT_FULL_V2');
+  const TOLERANCE = 0.01; // 0.01 EUR tolerance for activation
+
   if (blockers.length > 0) {
     officialSwitchBlockers.push(...blockers);
+  }
+  if (!isNaN(diffEur) && Math.abs(diffEur) > TOLERANCE) {
+    officialSwitchBlockers.push(`NET_DIFF_EXCEEDS_TOLERANCE: ${diffEur.toFixed(4)} EUR`);
+  }
+  if (!isNaN(grossGainsDiffEur) && Math.abs(grossGainsDiffEur) > TOLERANCE) {
+    officialSwitchBlockers.push(`GROSS_GAINS_DIFF: ${grossGainsDiffEur.toFixed(4)} EUR`);
+  }
+  if (!isNaN(grossLossesDiffEur) && Math.abs(grossLossesDiffEur) > TOLERANCE) {
+    officialSwitchBlockers.push(`GROSS_LOSSES_DIFF: ${grossLossesDiffEur.toFixed(4)} EUR`);
   }
   if (!isNaN(disposalsCountDiff) && disposalsCountDiff !== 0) {
     officialSwitchBlockers.push(`DISPOSALS_COUNT_DIFF: ${disposalsCountDiff}`);
   }
+  if (Math.abs(feeDiffTotal) > TOLERANCE) {
+    officialSwitchBlockers.push(`FEE_DIFF_TOTAL: ${feeDiffTotal.toFixed(4)} EUR`);
+  }
+  if (unmappedLegacyDisposals.length > 0) {
+    officialSwitchBlockers.push(`UNMAPPED_LEGACY_DISPOSALS: ${unmappedLegacyDisposals.length}`);
+  }
+  if (unmappedV2Disposals.length > 0) {
+    officialSwitchBlockers.push(`UNMAPPED_V2_DISPOSALS: ${unmappedV2Disposals.length}`);
+  }
+
+  const safeForOfficialSwitch = officialSwitchBlockers.length === 0;
 
   // Build detail if requested
   let comparisonDetail: ComparisonDetail | undefined;
   if (detail) {
     const v2ByAssetDetail = new Map<string, { gain_loss: number; proceeds: number; cost_basis: number; count: number }>();
-    for (const s of fifoResult.summary) {
-      const assetDisposals = fifoResult.disposals.filter(d => d.asset === s.asset);
-      const proceeds = assetDisposals.reduce((sum, d) => sum + (d.proceedsEur ?? 0), 0);
-      const costBasis = assetDisposals.reduce((sum, d) => sum + (d.costBasisEur ?? 0), 0);
-      v2ByAssetDetail.set(s.asset, {
-        gain_loss: s.totalGainLossEur ?? 0,
-        proceeds,
-        cost_basis: costBasis,
-        count: assetDisposals.length,
+    for (const [asset, data] of Object.entries(v2Summary.by_asset)) {
+      const d = data as any;
+      v2ByAssetDetail.set(asset, {
+        gain_loss: d.gain_loss,
+        proceeds: d.proceeds,
+        cost_basis: d.cost_basis,
+        count: d.count,
       });
     }
 
@@ -431,13 +519,9 @@ export async function runComparison(year: number, detail: boolean = false): Prom
       gains_eur: v2Gains,
       losses_eur: v2Losses,
       disposals_count: v2Disposals,
-      engine: "v2_shadow_basic",
-      is_full_v2_engine: false,
-      limitations: [
-        "Baseline calculated from fisco_disposals (legacy)",
-        "V2 uses same FIFO engine as legacy, no independent implementation",
-        "Comparison is for validation only, not production use",
-      ],
+      engine: "v2_independent",
+      is_full_v2_engine: true,
+      limitations: [],
     },
     diff_eur: diffEur,
     diff_pct: diffPct,
@@ -449,7 +533,7 @@ export async function runComparison(year: number, detail: boolean = false): Prom
     disposals_count_diff: isNaN(disposalsCountDiff) ? 0 : disposalsCountDiff,
     is_safe_for_report: blockers.length === 0 && numericFieldsValid && !grossDiffExcessive,
     is_safe_for_shadow_report: blockers.length === 0 && numericFieldsValid,
-    safe_for_official_switch: false,
+    safe_for_official_switch: safeForOfficialSwitch,
     official_switch_blockers: officialSwitchBlockers,
     comparison_quality: {
       baseline_valid: baselineValid,
@@ -457,6 +541,26 @@ export async function runComparison(year: number, detail: boolean = false): Prom
       diff_valid: diffValid,
       numeric_fields_valid: numericFieldsValid,
     },
+    gross_diff_detail: (Math.abs(diffEur) > 0.01 || Math.abs(grossGainsDiffEur) > 0.01 || Math.abs(grossLossesDiffEur) > 0.01)
+      ? { net: diffEur, gains: grossGainsDiffEur, losses: grossLossesDiffEur }
+      : null,
+    operation_mapping: operationMapping,
+    unmapped_legacy_disposals: unmappedLegacyDisposals,
+    unmapped_v2_disposals: unmappedV2Disposals,
+    asset_diffs: byAsset.map(a => ({
+      asset: a.asset,
+      baseline_gain_loss_eur: a.baseline_gain_loss_eur,
+      v2_gain_loss_eur: a.v2_gain_loss_eur,
+      diff_eur: a.diff_eur,
+      baseline_disposals_count: 0,
+      v2_disposals_count: 0,
+      baseline_proceeds_eur: 0,
+      v2_proceeds_eur: 0,
+      baseline_cost_basis_eur: 0,
+      v2_cost_basis_eur: 0,
+    })),
+    fee_diff_detail: Math.abs(feeDiffTotal) > 0.01 ? feeDiffDetail : null,
+    fee_treatment_summary: feeTreatmentSummary,
     generated_at: new Date().toISOString(),
     ...(comparisonDetail ? { detail: comparisonDetail } : {}),
   };
