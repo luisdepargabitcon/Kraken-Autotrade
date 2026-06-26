@@ -2,6 +2,68 @@
 
 ---
 
+## fix(fisco-v2): migracion audit backups schema health y tests completos
+
+**Fecha**: 2026-06-26
+**Lote**: FISCO V2 — Cierre obligatorio pre-deploy
+
+### Cambios implementados
+
+**Nuevo: `db/migrations/061_fisco_v2_activation_audit.sql`**:
+- `fisco_v2_backups`: UUID PK, year, backup_type, engine_before/after, operation_set_hash, legacy/v2/comparison JSON, config/disposals/lots snapshot
+- `fisco_v2_audit_log`: UUID PK, year, event_type, engine_before/after, hashes, net values, diff, safe_for_official_switch, backup_id FK, request/result JSON, blockers/warnings JSON
+- Índices: year+created_at DESC, event_type
+- `CREATE EXTENSION IF NOT EXISTS pgcrypto`
+
+**Modificado: `FiscoV2SchemaEnsureService.ts`**:
+- Reemplazadas definiciones antiguas de `fisco_v2_audit_log` y `fisco_v2_backups` con nueva estructura UUID + columnas completas
+- Añadido `CREATE EXTENSION IF NOT EXISTS pgcrypto`
+
+**Modificado: `FiscoV2ActivationService.ts`**:
+- `controlledCommit`: INSERT usa nuevas columnas (event_type, engine_before, net values, blockers/warnings JSON)
+- `activateOfficial`: INSERT backup con `backup_type='pre_activation'`, `official_engine_before/after`, `comparison_json`; audit log con `expected_operation_set_hash`, `engine_before/after`
+- `rollbackOfficial`: SELECT por `id` (UUID) en vez de `backup_id`; restore desde `official_engine_before`; audit con `engine_before/after`
+- `getAuditLog`: ORDER BY `created_at DESC` (antes `timestamp`)
+- `getBackups`: SELECT nuevas columnas (`id`, `backup_type`, `official_engine_before/after`)
+
+**Modificado: `fisco.routes.ts`**:
+- `schema-health` endpoint ahora verifica también: `fisco_v2_lots`, `fisco_v2_disposals`, `fisco_v2_fee_events`, `fisco_v2_audit_log`, `fisco_v2_backups`
+
+**Modificado: `FiscoControlStatusService.ts`**:
+- Schema check incluye `fisco_v2_audit_log` y `fisco_v2_backups`
+
+**Nuevo: `__tests__/fiscoV2Activation.test.ts`** (19 tests):
+- `controlledCommit`: D-01 sin hash falla, D-02 audit log correcto, D-03 no cambia engine
+- `activateOfficial`: E-01 confirm false, E-02 safe=false, E-03 hash mismatch, E-04 net mismatch, E-05 rounded mismatch, E-06 FEE_DOUBLE_COUNT_RISK, E-07 FEE_EUR_PRICE_MISSING, E-08 crea backup, E-09 audit activate, E-10 no cambia si false
+- `rollbackOfficial`: F-01 confirm false, F-02 backup no existe, F-03 restaura legacy_fifo + audit, F-04 no DELETE
+- `getAuditLog`: G-01 ordenado por created_at DESC
+- `getBackups`: G-02 devuelve backups
+
+**Nuevo: `__tests__/fiscoV2AeatNote.test.ts`** (9 tests):
+- H-AEAT-01 a 06: nota informativa en HTML (comisiones, adquisición, transmisión, no duplica, Nota informativa, dentro de report-main)
+- H-FEE-01: compra 100€ + fee 1€ → adquisición = 101€
+- H-FEE-02: venta 100€ + fee 1€ → transmisión = 99€
+- H-FEE-03: transmisión - adquisición = ganancia/pérdida (sin doble cómputo)
+
+**Modificado: `__tests__/fiscoV2Hotfix3.test.ts`**:
+- C-01 actualizado: engine ahora `v2_independent` (antes `v2_shadow_basic`), `is_full_v2_engine=true`
+- Añadidos mocks SQL para fee y disposals
+
+### Validación
+- `npm run check`: OK
+- `npm run build`: OK (2569 módulos)
+- Suite FISCO completa: **20/20 archivos, 572/572 tests OK**
+- Tests activación: 19/19 OK
+- Tests AEAT/comisiones: 9/9 OK
+
+### Commits
+1. `fix(fisco-v2): crear migracion audit backups y schema health` (6bf3835)
+2. `test(fisco-v2): cubrir activacion rollback y controlled commit` (2dc3984)
+3. `test(fisco): cubrir nota aeat bit2me y comisiones en informe` (d046aba)
+4. `fix(fisco-v2): actualizar test hotfix3 para motor v2_independent` (este commit)
+
+---
+
 ## feat(fisco-v2): informe anual con comisiones trazadas + ui actualizada
 
 **Fecha**: 2026-06-26

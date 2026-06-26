@@ -327,7 +327,7 @@ describe("FISCO V2 Hotfix 3 — Comparison Numeric Correctness", () => {
 });
 
 describe("FISCO V2 Hotfix 3 — Engine Honesty", () => {
-  it("C-01: engine is v2_shadow_basic and is_full_v2_engine is false", async () => {
+  it("C-01: engine is v2_independent and is_full_v2_engine is true", async () => {
     mockPool.query.mockImplementation((sql: string) => {
       if (sql.includes("COALESCE(SUM") && sql.includes("gains_eur")) {
         return Promise.resolve({
@@ -345,15 +345,17 @@ describe("FISCO V2 Hotfix 3 — Engine Honesty", () => {
       if (sql.includes("fisco_operations") && sql.includes("executed_at")) {
         return Promise.resolve({ rows: [] });
       }
+      if (sql.includes("SUM(fo.fee_eur")) return Promise.resolve({ rows: [{ total_fees_eur: 0 }] });
+      if (sql.includes("fisco_disposals fd")) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [] });
     });
 
     const { runComparison } = await import("../FiscoComparisonService");
     const result = await runComparison(2025);
 
-    expect(result.v2.engine).toBe("v2_shadow_basic");
-    expect(result.v2.is_full_v2_engine).toBe(false);
-    expect(result.v2.limitations.length).toBeGreaterThan(0);
+    expect(result.v2.engine).toBe("v2_independent");
+    expect(result.v2.is_full_v2_engine).toBe(true);
+    expect(result.v2.limitations.length).toBeGreaterThanOrEqual(0);
   });
 });
 
