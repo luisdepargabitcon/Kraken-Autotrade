@@ -153,3 +153,21 @@ export const FORBIDDEN_VISIBLE_STRINGS = [
   "blocker", "warning", "safe", "dry run", "preview",
   "matching", "gross", "engine", "dust", "fees",
 ] as const;
+
+const TECHNICAL_MESSAGE_LABELS: Record<string, string> = {
+  skipFiatDepositsWithdrawals: "Fila omitida: depósito fiat EUR. Los depósitos fiat no generan operación fiscal cripto en esta configuración.",
+  "skipFiatDepositsWithdrawals=true": "Fila omitida: depósito fiat EUR. Los depósitos fiat no generan operación fiscal cripto en esta configuración.",
+  GROSS_DIFF_NOT_TRACEABLE: "Diferencia bruta no trazable por operación. El sistema no puede vincular todavía cada disposición del motor actual con su equivalente en V2.",
+  ORPHAN_SELLS: "Ventas sin base de coste. Hay operaciones de venta sin lotes de compra asociados.",
+  PENDING_OPERATIONS: "Operaciones pendientes de recalcular.",
+  EXTERNAL_WITHDRAWAL_REVIEW: "Retirada externa pendiente de revisar.",
+  INTERNAL_TRANSFER_CANDIDATE: "Posible transferencia interna entre exchanges.",
+};
+
+export function formatFiscoTechnicalMessage(code: string): string {
+  if (TECHNICAL_MESSAGE_LABELS[code]) return TECHNICAL_MESSAGE_LABELS[code];
+  if (code.startsWith("skipFiatDepositsWithdrawals")) {
+    return TECHNICAL_MESSAGE_LABELS["skipFiatDepositsWithdrawals"];
+  }
+  return formatFiscoBlockerLabel(code);
+}

@@ -37,7 +37,7 @@ export function FiscoBalanceCheckSection({ year, balanceCheck: bc, isLoading }: 
   if (isLoading) {
     return (
       <div className="text-center py-16 text-muted-foreground animate-pulse">
-        Cargando Balance Check {year}...
+        Cargando Balance {year}...
       </div>
     );
   }
@@ -46,7 +46,7 @@ export function FiscoBalanceCheckSection({ year, balanceCheck: bc, isLoading }: 
     return (
       <div className="text-center py-16 text-muted-foreground">
         <AlertCircle className="h-10 w-10 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">Abre la pestaña Diagnóstico para generar el Balance Check.</p>
+        <p className="text-sm">Abre la pestaña Diagnóstico para generar el Balance.</p>
       </div>
     );
   }
@@ -71,7 +71,7 @@ export function FiscoBalanceCheckSection({ year, balanceCheck: bc, isLoading }: 
             bc.overallStatus === "CRITICAL" ? "text-red-400" :
             bc.overallStatus === "WARNINGS" ? "text-yellow-400" : "text-green-400"
           }`}>
-            Balance Check {year}: {bc.overallStatus === "OK" ? "Sin incidencias" : bc.overallStatus}
+            Balance {year}: {bc.overallStatus === "OK" ? "Sin incidencias" : bc.overallStatus}
           </div>
           <div className="text-xs text-muted-foreground font-mono">
             {criticals.length} crítico{criticals.length !== 1 ? "s" : ""} ·

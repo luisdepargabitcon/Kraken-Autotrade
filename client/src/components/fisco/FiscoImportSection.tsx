@@ -174,12 +174,12 @@ export function FiscoImportSection() {
             <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Opciones de importación</div>
             {([
               ["includeNormal",               "Operaciones normales (trades)"],
-              ["includeThirdFees",            "Fees en tercera divisa"],
-              ["includeStaking",              "Staking / rewards"],
+              ["includeThirdFees",            "Comisiones en tercera divisa"],
+              ["includeStaking",              "Staking / recompensas"],
               ["includeDeposits",             "Depósitos"],
               ["includeWithdrawals",          "Retiradas"],
               ["skipFiatDepositsWithdrawals", "Omitir depósitos/retiradas FIAT"],
-              ["detectDuplicates",            "Detectar duplicados (hash dedup)"],
+              ["detectDuplicates",            "Detectar duplicados (hash de deduplicación)"],
               ["reconcileTransfers",          "Reconciliar transferencias internas"],
             ] as [keyof ImportOptions, string][]).map(([key, label]) => (
               <div key={key} className="flex items-center justify-between gap-2">

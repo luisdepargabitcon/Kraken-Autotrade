@@ -36,7 +36,7 @@ function fmtDateShort(iso: string | null | undefined): string {
 
 const STATUS_CONFIG: Record<SnapshotStatus, { label: string; color: string; dot: string }> = {
   OK:            { label: "OK",          color: "text-green-400",  dot: "bg-green-400" },
-  DUST:          { label: "Dust",        color: "text-yellow-400", dot: "bg-yellow-400" },
+  DUST:          { label: "Residual",   color: "text-yellow-400", dot: "bg-yellow-400" },
   NEGATIVE:      { label: "Negativo",    color: "text-red-400",    dot: "bg-red-400" },
   NO_DATA:       { label: "Sin datos",   color: "text-gray-500",   dot: "bg-gray-500" },
   NEEDS_REVIEW:  { label: "Revisar",     color: "text-orange-400", dot: "bg-orange-400" },
@@ -115,7 +115,7 @@ export function FiscoPanelSection({
         <Card className={`border ${criticalIssues.length > 0 ? "border-red-500/40" : warningIssues.length > 0 ? "border-yellow-500/30" : "border-green-500/20"}`}>
           <CardContent className="p-4">
             <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">
-              <AlertTriangle className="h-3 w-3" /> Balance Check
+              <AlertTriangle className="h-3 w-3" /> Balance
             </div>
             {bc ? (
               <div className={`text-xl font-bold ${criticalIssues.length > 0 ? "text-red-400" : warningIssues.length > 0 ? "text-yellow-400" : "text-green-400"}`}>

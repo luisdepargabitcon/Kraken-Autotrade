@@ -43,7 +43,7 @@ export function FiscoTransferLinksSection({ year, data, isLoading, error }: Tran
     return (
       <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 text-center text-red-400">
         <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
-        <p className="text-sm">Error al cargar transfer links: {error.message}</p>
+        <p className="text-sm">Error al cargar transferencias: {error.message}</p>
       </div>
     );
   }
@@ -81,8 +81,8 @@ export function FiscoTransferLinksSection({ year, data, isLoading, error }: Tran
       {data.links.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted-foreground">
           <ArrowLeftRight className="h-8 w-8 mx-auto mb-3 opacity-30" />
-          <p className="text-sm font-medium">Sin transfer links registrados en {year}</p>
-          <p className="text-xs mt-1">Las transferencias internas entre exchanges se crean al usar el Transfer Matching.</p>
+          <p className="text-sm font-medium">Sin transferencias registradas en {year}</p>
+          <p className="text-xs mt-1">Las transferencias internas entre exchanges se crean al usar el emparejamiento de transferencias.</p>
         </div>
       ) : (
         <div className="rounded-xl border border-border overflow-hidden">
@@ -154,7 +154,7 @@ export function FiscoTransferLinksSection({ year, data, isLoading, error }: Tran
         <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
         <div>
           <p><strong>Transferencias internas</strong>: movimiento de activos entre exchanges propios. <strong>No son eventos fiscales</strong> — el coste base se conserva en el exchange destino.</p>
-          <p className="mt-1">Si hay withdrawals sin transfer_link, ve a <strong>Balance Check</strong> para clasificarlos.</p>
+          <p className="mt-1">Si hay retiradas sin transferencia enlazada, ve a <strong>Balance</strong> para clasificarlas.</p>
         </div>
       </div>
     </div>

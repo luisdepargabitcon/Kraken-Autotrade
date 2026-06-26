@@ -1005,7 +1005,7 @@ export default function Fisco() {
             {activeTab === "resumen" && "Informe FIFO completo: sección A (transmisiones), B (activos), C (rendimientos), D (saldos)."}
             {activeTab === "anexo" && "Detalle filtrable de todas las transacciones importadas con fechas, activos y tipo."}
             {activeTab === "informes" && "Centro de informes, exportaciones CSV/ZIP y auditoría fiscal multi-año."}
-            {activeTab === "diagnostico" && "Diagnóstico estilo CoinTracking: inventario histórico correcto a 31/12, balance check y avisos fiscales."}
+            {activeTab === "diagnostico" && "Diagnóstico estilo CoinTracking: inventario histórico correcto a 31/12, balance y avisos fiscales."}
             {activeTab === "alertas" && "Configuración de alertas fiscales automáticas vía Telegram."}
             {activeTab === "rebuild" && "Herramientas avanzadas: mantenimiento FIFO, reconstrucción con backup, validación de errores críticos."}
           </div>
@@ -1421,11 +1421,11 @@ export default function Fisco() {
                     </div>
                   </div>
                   <div className={`border rounded-lg p-3 space-y-1 ${bc.overallStatus === "CRITICAL" ? "bg-red-500/10 border-red-500/40" : bc.overallStatus === "WARNINGS" ? "bg-yellow-500/10 border-yellow-500/30" : "bg-green-500/5 border-green-500/20"}`}>
-                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Balance Check</div>
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Balance</div>
                     <div className={`text-sm font-bold ${bc.overallStatus === "CRITICAL" ? "text-red-400" : bc.overallStatus === "WARNINGS" ? "text-yellow-400" : "text-green-400"}`}>
                       {bc.overallStatus === "CRITICAL" ? "⛔ CRÍTICO" : bc.overallStatus === "WARNINGS" ? "⚠️ AVISOS" : "✓ OK"}
                     </div>
-                    <div className="text-[10px] text-muted-foreground">{bc.issues.length} issue{bc.issues.length !== 1 ? "s" : ""}</div>
+                    <div className="text-[10px] text-muted-foreground">{bc.issues.length} incidencia{bc.issues.length !== 1 ? "s" : ""}</div>
                   </div>
                   <div className="bg-card border border-border rounded-lg p-3 space-y-1">
                     <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Necesita revisión</div>
@@ -1442,7 +1442,7 @@ export default function Fisco() {
                     <CardHeader className="pb-2 pt-4 px-4">
                       <CardTitle className="text-sm flex items-center gap-2">
                         <AlertTriangle className={`h-4 w-4 ${bc.overallStatus === "CRITICAL" ? "text-red-400" : "text-yellow-400"}`} />
-                        Balance Check — {bc.issues.length} issue{bc.issues.length !== 1 ? "s" : ""} detectados
+                        Balance — {bc.issues.length} incidencia{bc.issues.length !== 1 ? "s" : ""} detectadas
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="px-4 pb-4 space-y-2">
@@ -2053,9 +2053,9 @@ export default function Fisco() {
                     {/* Estado seguridad */}
                     <div className="flex items-center gap-2 text-xs">
                       {v2ComparisonQ.data.is_safe_for_report ? (
-                        <span className="text-green-400 flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Seguro para informe en sombra</span>
+                        <span className="text-green-400 flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Apto para informe en sombra</span>
                       ) : (
-                        <span className="text-red-400 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> No seguro para informe en sombra</span>
+                        <span className="text-red-400 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> No apto para informe en sombra</span>
                       )}
                       <span className="text-muted-foreground">·</span>
                       {v2ComparisonQ.data.safe_for_official_switch ? (

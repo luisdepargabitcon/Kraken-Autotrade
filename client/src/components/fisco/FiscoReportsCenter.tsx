@@ -35,7 +35,7 @@ import type { FiscoV2ComparisonResult } from "./FiscoTypes";
 // ─── Constants ────────────────────────────────────────────────────────────────
 const AVAILABLE_YEARS = [2024, 2025, 2026];
 const AVAILABLE_EXCHANGES = [
-  { id: "global",   label: "Global consolidado (Kraken + RevolutX)" },
+  { id: "global",   label: "Consolidado global (Kraken + RevolutX)" },
   { id: "kraken",   label: "Kraken" },
   { id: "revolutx", label: "RevolutX" },
 ];
@@ -75,16 +75,16 @@ interface MultiYearReport {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function StatusBadge({ ok, warn, label }: { ok: boolean; warn?: boolean; label?: string }) {
-  if (ok && !warn) return <Badge className="bg-green-100 text-green-800 border-green-300">{label ?? "✓ OK"}</Badge>;
-  if (warn)        return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300">{label ?? "⚠ Warnings"}</Badge>;
-  return <Badge className="bg-red-100 text-red-800 border-red-300">{label ?? "✗ Error"}</Badge>;
+  if (ok && !warn) return <Badge className="bg-green-500/20 text-green-400 border-green-500/30">{label ?? "✓ OK"}</Badge>;
+  if (warn)        return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">{label ?? "⚠ Avisos"}</Badge>;
+  return <Badge className="bg-red-500/20 text-red-400 border-red-500/30">{label ?? "✗ Error"}</Badge>;
 }
 
 function RecBadge({ status }: { status: string }) {
-  if (status === "OK")               return <Badge className="bg-green-100 text-green-800">OK</Badge>;
-  if (status === "OK_WITH_WARNINGS") return <Badge className="bg-yellow-100 text-yellow-800">OK_WITH_WARNINGS</Badge>;
-  if (status === "WARNINGS")         return <Badge className="bg-yellow-100 text-yellow-800">WARNINGS</Badge>;
-  return <Badge className="bg-red-100 text-red-800">DIFFERENCES</Badge>;
+  if (status === "OK")               return <Badge className="bg-green-500/20 text-green-400">OK</Badge>;
+  if (status === "OK_WITH_WARNINGS") return <Badge className="bg-yellow-500/20 text-yellow-400">OK con avisos</Badge>;
+  if (status === "WARNINGS")         return <Badge className="bg-yellow-500/20 text-yellow-400">Avisos</Badge>;
+  return <Badge className="bg-red-500/20 text-red-400">Diferencias</Badge>;
 }
 
 function eur(n: number) {
@@ -147,7 +147,7 @@ function AnnualReportModule() {
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>Scope / Exchange</Label>
+          <Label>Ámbito / Plataforma</Label>
           <Select value={scope} onValueChange={setScope}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -168,15 +168,15 @@ function AnnualReportModule() {
           {finStatus.final_taxable_gain_loss_eur !== undefined && (
             <p className="text-sm">
               <strong>Total fiscal:</strong>{" "}
-              <span className={finStatus.final_taxable_gain_loss_eur >= 0 ? "text-red-700 font-bold" : "text-green-700 font-bold"}>
+              <span className={finStatus.final_taxable_gain_loss_eur >= 0 ? "text-red-400 font-bold" : "text-green-400 font-bold"}>
                 {eur(finStatus.final_taxable_gain_loss_eur)}
               </span>
             </p>
           )}
           {finStatus.blockers?.length > 0 && (
-            <div className="text-xs text-red-700 space-y-1">
+            <div className="text-xs text-red-300 space-y-1">
               {finStatus.blockers.map((b: any, i: number) => (
-                <div key={i}>⛔ [{b.code}] {b.detail}</div>
+                <div key={i}>⛔ {formatFiscoBlockerLabel(b.code)} — {b.detail}</div>
               ))}
             </div>
           )}
@@ -184,8 +184,8 @@ function AnnualReportModule() {
       )}
 
       {/* Panel estado V2 en sombra */}
-      <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 space-y-2">
-        <div className="flex items-center gap-2 text-sm font-medium text-blue-800">
+      <div className="rounded-lg border border-blue-500/30 bg-blue-950/20 p-3 space-y-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-blue-200">
           <ShieldCheck className="h-4 w-4" />
           Estado del motor V2 en sombra — {year}
         </div>
@@ -196,15 +196,15 @@ function AnnualReportModule() {
         ) : v2Comparison ? (
           <div className="space-y-2">
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
-              <div className="bg-white border border-border rounded p-2">
+              <div className="bg-background/40 border border-border rounded p-2">
                 <div className="text-muted-foreground">Motor en uso</div>
-                <div className="font-bold text-blue-700">{formatFiscoEngineModeLabel("legacy")}</div>
+                <div className="font-bold text-blue-300">{formatFiscoEngineModeLabel("legacy")}</div>
               </div>
-              <div className="bg-white border border-blue-200 rounded p-2">
+              <div className="bg-blue-950/30 border border-blue-500/30 rounded p-2">
                 <div className="text-muted-foreground">Simulación V2</div>
-                <div className="font-bold text-blue-700">{formatFiscoEngineModeLabel("v2_shadow")}</div>
+                <div className="font-bold text-blue-300">{formatFiscoEngineModeLabel("v2_shadow")}</div>
               </div>
-              <div className="bg-white border border-border rounded p-2 opacity-60">
+              <div className="bg-background/40 border border-border rounded p-2 opacity-60">
                 <div className="text-muted-foreground">V2 oficial</div>
                 <div className="font-bold text-muted-foreground flex items-center justify-center gap-1">
                   <Lock className="h-3 w-3" /> Bloqueado
@@ -212,48 +212,48 @@ function AnnualReportModule() {
               </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
-              <div className="bg-white border border-border rounded p-2">
+              <div className="bg-background/40 border border-border rounded p-2">
                 <div className="text-muted-foreground">Diferencia neta</div>
-                <div className={`font-bold font-mono ${v2Comparison.diff_eur >= 0 ? "text-green-700" : "text-red-700"}`}>
+                <div className={`font-bold font-mono ${v2Comparison.diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
                   {formatEurSigned(v2Comparison.diff_eur)}
                 </div>
               </div>
-              <div className="bg-white border border-border rounded p-2">
+              <div className="bg-background/40 border border-border rounded p-2">
                 <div className="text-muted-foreground">Dif. ganancias brutas</div>
-                <div className={`font-bold font-mono ${v2Comparison.gross_gains_diff_eur >= 0 ? "text-green-700" : "text-red-700"}`}>
+                <div className={`font-bold font-mono ${v2Comparison.gross_gains_diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
                   {formatEurSigned(v2Comparison.gross_gains_diff_eur)}
                 </div>
               </div>
-              <div className="bg-white border border-border rounded p-2">
+              <div className="bg-background/40 border border-border rounded p-2">
                 <div className="text-muted-foreground">Dif. pérdidas brutas</div>
-                <div className={`font-bold font-mono ${v2Comparison.gross_losses_diff_eur >= 0 ? "text-green-700" : "text-red-700"}`}>
+                <div className={`font-bold font-mono ${v2Comparison.gross_losses_diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
                   {formatEurSigned(v2Comparison.gross_losses_diff_eur)}
                 </div>
               </div>
-              <div className="bg-white border border-border rounded p-2">
+              <div className="bg-background/40 border border-border rounded p-2">
                 <div className="text-muted-foreground">Dif. disposiciones</div>
-                <div className={`font-bold font-mono ${v2Comparison.disposals_count_diff === 0 ? "text-muted-foreground" : "text-amber-600"}`}>
+                <div className={`font-bold font-mono ${v2Comparison.disposals_count_diff === 0 ? "text-muted-foreground" : "text-amber-400"}`}>
                   {v2Comparison.disposals_count_diff > 0 ? "+" : ""}{v2Comparison.disposals_count_diff}
                 </div>
               </div>
             </div>
             {v2Comparison.official_switch_blockers.length > 0 && (
-              <div className="rounded border border-red-200 bg-red-50 p-2 space-y-1">
-                <div className="text-xs font-semibold text-red-800 flex items-center gap-1">
+              <div className="rounded border border-red-500/30 bg-red-950/20 p-2 space-y-1">
+                <div className="text-xs font-semibold text-red-200 flex items-center gap-1">
                   <Lock className="h-3 w-3" /> Motivos de bloqueo para V2 oficial:
                 </div>
                 <ul className="space-y-0.5 pl-4">
                   {v2Comparison.official_switch_blockers.slice(0, 5).map((b, i) => (
-                    <li key={i} className="text-xs text-red-700">• {formatFiscoBlockerLabel(b)}</li>
+                    <li key={i} className="text-xs text-red-300">• {formatFiscoBlockerLabel(b)}</li>
                   ))}
                 </ul>
               </div>
             )}
             <div className="flex items-center gap-2 text-xs">
               {v2Comparison.is_safe_for_report ? (
-                <span className="text-green-700 flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Seguro para informe en sombra</span>
+                <span className="text-green-400 flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Apto para informe en sombra</span>
               ) : (
-                <span className="text-red-700 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> No seguro para informe en sombra</span>
+                <span className="text-red-400 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> No apto para informe en sombra</span>
               )}
               <span className="text-muted-foreground">·</span>
               <span className="text-muted-foreground">V2 oficial no disponible</span>
@@ -272,7 +272,7 @@ function AnnualReportModule() {
       <div className="flex gap-2 flex-wrap">
         <Button onClick={() => openReport(false)} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileText className="h-4 w-4 mr-2" />}
-          Generar informe anual HTML
+          Generar informe anual en HTML
         </Button>
         <Button variant="outline" onClick={() => openReport(true)}>
           <FileDown className="h-4 w-4 mr-2" />
@@ -318,8 +318,8 @@ function MultiYearReportModule() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border-l-4 border-yellow-400 bg-yellow-50 px-4 py-3">
-        <p className="text-sm text-yellow-800 font-medium">
+      <div className="rounded-lg border-l-4 border-yellow-400 bg-yellow-950/20 px-4 py-3">
+        <p className="text-sm text-yellow-200 font-medium">
           ⚠ Herramienta de auditoría global. Cada año fiscal se declara por separado.
           Este informe NO constituye una declaración fiscal conjunta.
         </p>
@@ -343,7 +343,7 @@ function MultiYearReportModule() {
         </div>
 
         <div>
-          <Label className="mb-2 block">Exchanges</Label>
+          <Label className="mb-2 block">Plataformas</Label>
           <div className="space-y-2">
             {AVAILABLE_EXCHANGES.filter(e => e.id !== "global").map(e => (
               <div key={e.id} className="flex items-center gap-2">
@@ -362,7 +362,7 @@ function MultiYearReportModule() {
               checked={includeBreakdown}
               onCheckedChange={(v) => setIncludeBreakdown(!!v)}
             />
-            <Label htmlFor="breakdown" className="cursor-pointer text-sm">Incluir detalle por exchange</Label>
+            <Label htmlFor="breakdown" className="cursor-pointer text-sm">Incluir detalle por plataforma</Label>
           </div>
         </div>
       </div>
@@ -412,13 +412,13 @@ function MultiYearReportModule() {
                     <td className="px-3 py-2">
                       <StatusBadge ok={y.fifo_status === "OK"} label={y.fifo_status} />
                     </td>
-                    <td className={`px-3 py-2 text-right font-mono ${y.ordinary_fifo_gain_loss_eur < 0 ? "text-green-700" : "text-red-700"}`}>
+                    <td className={`px-3 py-2 text-right font-mono ${y.ordinary_fifo_gain_loss_eur < 0 ? "text-green-400" : "text-red-400"}`}>
                       {eur(y.ordinary_fifo_gain_loss_eur)}
                     </td>
-                    <td className={`px-3 py-2 text-right font-mono ${y.conservative_external_disposals_gain_loss_eur < 0 ? "text-green-700" : "text-red-700"}`}>
+                    <td className={`px-3 py-2 text-right font-mono ${y.conservative_external_disposals_gain_loss_eur < 0 ? "text-green-400" : "text-red-400"}`}>
                       {eur(y.conservative_external_disposals_gain_loss_eur)}
                     </td>
-                    <td className={`px-3 py-2 text-right font-mono font-bold ${y.final_taxable_gain_loss_eur < 0 ? "text-green-700" : "text-red-700"}`}>
+                    <td className={`px-3 py-2 text-right font-mono font-bold ${y.final_taxable_gain_loss_eur < 0 ? "text-green-400" : "text-red-400"}`}>
                       {eur(y.final_taxable_gain_loss_eur)}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{eur(y.staking_total_eur)}</td>
@@ -455,22 +455,22 @@ function MultiYearReportModule() {
           {report.global_summary.totals_by_year.map(y => (
             <div key={y.year}>
               {y.blockers.length > 0 && (
-                <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1">
-                  <p className="text-sm font-bold text-red-800 flex items-center gap-1">
+                <div className="rounded-lg border border-red-500/30 bg-red-950/20 p-3 space-y-1">
+                  <p className="text-sm font-bold text-red-200 flex items-center gap-1">
                     <XCircle className="h-4 w-4" /> Bloqueos {y.year}
                   </p>
                   {y.blockers.map((b, i) => (
-                    <p key={i} className="text-xs text-red-700">⛔ [{b.code}] {b.detail}</p>
+                    <p key={i} className="text-xs text-red-300">⛔ {formatFiscoBlockerLabel(b.code)} — {b.detail}</p>
                   ))}
                 </div>
               )}
               {y.kraken_warnings.length > 0 && (
-                <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 space-y-1">
-                  <p className="text-sm font-bold text-yellow-800 flex items-center gap-1">
+                <div className="rounded-lg border border-yellow-500/30 bg-yellow-950/20 p-3 space-y-1">
+                  <p className="text-sm font-bold text-yellow-200 flex items-center gap-1">
                     <AlertTriangle className="h-4 w-4" /> Avisos de Kraken {y.year} (no bloqueantes)
                   </p>
                   {y.kraken_warnings.map((w, i) => (
-                    <p key={i} className="text-xs text-yellow-700">⚠ {w}</p>
+                    <p key={i} className="text-xs text-yellow-300">⚠ {w}</p>
                   ))}
                 </div>
               )}
@@ -561,7 +561,7 @@ function ExportsModule() {
         </div>
 
         <div>
-          <Label className="mb-2 block">Exchanges</Label>
+          <Label className="mb-2 block">Plataformas</Label>
           <div className="space-y-2">
             {AVAILABLE_EXCHANGES.filter(e => e.id !== "global").map(e => (
               <div key={e.id} className="flex items-center gap-2">
@@ -649,7 +649,7 @@ export function FiscoReportsCenter() {
             </TabsTrigger>
             <TabsTrigger value="multiyear" className="flex items-center gap-1.5">
               <Globe className="h-3.5 w-3.5" />
-              Multi-año auditoría
+              Auditoría multi-año
             </TabsTrigger>
             <TabsTrigger value="exports" className="flex items-center gap-1.5">
               <Download className="h-3.5 w-3.5" />

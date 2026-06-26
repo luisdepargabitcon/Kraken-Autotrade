@@ -8,6 +8,7 @@ import {
   formatFiscoImportStatusLabel,
   formatFiscoComparisonMetricLabel,
   formatFiscoDiffCauseLabel,
+  formatFiscoTechnicalMessage,
   formatEur,
   formatEurSigned,
   FiscoEngineMode,
@@ -187,6 +188,38 @@ describe("fiscoLabels — helpers de traducción castellano", () => {
     it("trata cero como positivo", () => {
       const result = formatEurSigned(0);
       expect(result.startsWith("+")).toBe(true);
+    });
+  });
+
+  describe("formatFiscoTechnicalMessage", () => {
+    it("traduce skipFiatDepositsWithdrawals", () => {
+      const result = formatFiscoTechnicalMessage("skipFiatDepositsWithdrawals");
+      expect(result).toContain("depósito fiat EUR");
+      expect(result).not.toContain("deposit fiat");
+    });
+    it("traduce skipFiatDepositsWithdrawals=true", () => {
+      const result = formatFiscoTechnicalMessage("skipFiatDepositsWithdrawals=true");
+      expect(result).toContain("depósito fiat EUR");
+    });
+    it("traduce GROSS_DIFF_NOT_TRACEABLE", () => {
+      const result = formatFiscoTechnicalMessage("GROSS_DIFF_NOT_TRACEABLE");
+      expect(result).toContain("no trazable");
+    });
+    it("traduce ORPHAN_SELLS", () => {
+      const result = formatFiscoTechnicalMessage("ORPHAN_SELLS");
+      expect(result).toContain("Ventas sin base de coste");
+    });
+    it("traduce PENDING_OPERATIONS", () => {
+      const result = formatFiscoTechnicalMessage("PENDING_OPERATIONS");
+      expect(result).toContain("pendientes");
+    });
+    it("traduce EXTERNAL_WITHDRAWAL_REVIEW", () => {
+      const result = formatFiscoTechnicalMessage("EXTERNAL_WITHDRAWAL_REVIEW");
+      expect(result).toContain("Retirada externa");
+    });
+    it("hace fallback a formatFiscoBlockerLabel para códigos no reconocidos", () => {
+      const result = formatFiscoTechnicalMessage("ENGINE_NOT_FULL_V2");
+      expect(result).toContain("motor V2");
     });
   });
 });

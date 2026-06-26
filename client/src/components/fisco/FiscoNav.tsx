@@ -37,7 +37,7 @@ export function FiscoNav({ active, onChange, criticalCount = 0, warningCount = 0
     { id: "diagnostico",    label: "Diagnóstico",     icon: Stethoscope },
     {
       id: "balance-check",
-      label: "Balance Check",
+      label: "Balance",
       icon: ShieldCheck,
       badge: criticalCount > 0 ? String(criticalCount) : warningCount > 0 ? String(warningCount) : undefined,
       badgeColor: criticalCount > 0 ? "bg-red-500" : "bg-yellow-500",
