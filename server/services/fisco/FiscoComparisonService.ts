@@ -12,9 +12,9 @@ import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort } from "./
 import { krakenService } from "../kraken";
 import { revolutXService } from "../exchanges/RevolutXService";
 import { normalizeToV2Events } from "./FiscoV2Normalizer";
-import { runFifoV2, summarizeV2Result, buildFeeTreatmentSummary } from "./FiscoV2EngineService";
+import { runFifoV2, summarizeV2Result, buildFeeTreatmentSummary, extractOpeningLots } from "./FiscoV2EngineService";
 import { getFiscoConfig } from "./FiscoConfigService";
-import type { V2ComparisonResult, OperationMapping, AssetDiffV2, FeeDiffDetail, FeeTreatmentSummary } from "./FiscoV2Types";
+import type { V2ComparisonResult, OperationMapping, AssetDiffV2, FeeDiffDetail, FeeTreatmentSummary, V2HistoricalScope, V2OpeningLot, V2EngineResult } from "./FiscoV2Types";
 
 export interface ComparisonQuality {
   baseline_valid: boolean;
@@ -61,6 +61,8 @@ export interface ComparisonResult {
   asset_diffs: AssetDiffV2[];
   fee_diff_detail: FeeDiffDetail | null;
   fee_treatment_summary: FeeTreatmentSummary;
+  v2_historical_scope: V2HistoricalScope;
+  opening_lots: V2OpeningLot[];
   generated_at: string;
 }
 
@@ -101,6 +103,124 @@ export interface ComparisonDetail {
   assets_only_in_v2: string[];
   summary_explanation: string;
 }
+
+// ============================================================
+// V2 Historical Processing — Full FIFO with year filtering
+// ============================================================
+
+interface V2HistoricalResult {
+  engineResult: V2EngineResult;
+  summary: ReturnType<typeof summarizeV2Result>;
+  historicalScope: V2HistoricalScope;
+  openingLots: V2OpeningLot[];
+}
+
+/**
+ * Load ALL operations from fisco_operations up to 31/12/Y 23:59:59,
+ * plus fisco_opening_balances as synthetic BUY events,
+ * normalize to V2 events, run full FIFO, and filter disposals to year Y.
+ *
+ * This is the canonical V2 historical processing function.
+ * It ensures that FIFO lots from previous years are available when
+ * processing sales in year Y, preventing SELL_WITHOUT_LOTS / UNKNOWN_BASIS.
+ */
+async function buildV2HistoricalResultForYear(
+  year: number,
+  feeMode: string,
+  options: {
+    blockIfRewardWithoutPrice?: boolean;
+    blockIfSellWithoutCostBasis?: boolean;
+  }
+): Promise<V2HistoricalResult> {
+  const yearEnd = `${year + 1}-01-01`;
+
+  // Load ALL operations up to 31/12/Y (inclusive of full year Y)
+  const opsResult = await pool.query(
+    "SELECT * FROM fisco_operations WHERE executed_at < $1 ORDER BY executed_at",
+    [yearEnd]
+  );
+
+  // Load opening balances (same as legacy FiscoRebuildService does)
+  let openingBalancesRows: any[] = [];
+  try {
+    const obResult = await pool.query(
+      "SELECT * FROM fisco_opening_balances WHERE is_active = TRUE ORDER BY acquisition_date ASC"
+    );
+    openingBalancesRows = obResult.rows;
+  } catch {
+    // Table may not exist in some environments
+    openingBalancesRows = [];
+  }
+
+  // Convert opening balances to synthetic DbOperation-like rows (trade_buy)
+  const openingBalanceOps = openingBalancesRows.map((row: any) => ({
+    id: -row.id || -(Date.now() + Math.random()),
+    exchange: row.exchange ?? "manual",
+    external_id: `opening_balance_${row.id}`,
+    op_type: "trade_buy",
+    asset: row.asset,
+    amount: String(row.quantity),
+    price_eur: row.quantity > 0 ? String(parseFloat(row.cost_basis_eur) / parseFloat(row.quantity)) : "0",
+    total_eur: String(row.cost_basis_eur),
+    fee_eur: "0",
+    counter_asset: "EUR",
+    pair: `${row.asset}/EUR`,
+    executed_at: new Date(row.acquisition_date),
+    raw_data: { source: "opening_balance", note: row.note },
+  }));
+
+  // Combine historical operations with opening balance synthetic ops
+  const allOps = [...openingBalanceOps, ...opsResult.rows];
+
+  // Normalize to V2 events
+  const v2Events = normalizeToV2Events(allOps, feeMode as any);
+
+  // Run full FIFO V2 engine on ALL events
+  const engineResult = runFifoV2(v2Events, {
+    blockIfRewardWithoutPrice: options.blockIfRewardWithoutPrice,
+    blockIfSellWithoutCostBasis: options.blockIfSellWithoutCostBasis,
+  });
+
+  // Summarize only disposals for the requested year
+  const summary = summarizeV2Result(engineResult, year);
+
+  // Extract opening lots: lots acquired before year start with remaining quantity
+  const openingLots = extractOpeningLots(engineResult, year);
+
+  // Build historical scope metadata
+  const operationsBeforeYear = opsResult.rows.filter(
+    (r: any) => new Date(r.executed_at).getFullYear() < year
+  ).length;
+  const operationsInYear = opsResult.rows.filter(
+    (r: any) => new Date(r.executed_at).getFullYear() === year
+  ).length;
+
+  const historicalScope: V2HistoricalScope = {
+    year,
+    operations_from: opsResult.rows.length > 0
+      ? new Date(opsResult.rows[0].executed_at).toISOString().split("T")[0]
+      : "N/A",
+    operations_to: opsResult.rows.length > 0
+      ? new Date(opsResult.rows[opsResult.rows.length - 1].executed_at).toISOString().split("T")[0]
+      : "N/A",
+    total_operations_loaded: allOps.length,
+    operations_before_year: operationsBeforeYear,
+    operations_in_year: operationsInYear,
+    opening_balances_loaded: openingBalanceOps.length,
+    has_historical_data: operationsBeforeYear > 0 || openingBalanceOps.length > 0,
+  };
+
+  return {
+    engineResult,
+    summary,
+    historicalScope,
+    openingLots,
+  };
+}
+
+// ============================================================
+// Comparison Service
+// ============================================================
 
 export async function runComparison(year: number, detail: boolean = false): Promise<ComparisonResult & { detail?: ComparisonDetail }> {
   // Baseline aggregate via SQL — avoids PG numeric string concatenation in JS reduce
@@ -167,23 +287,18 @@ export async function runComparison(year: number, detail: boolean = false): Prom
     }
   }
 
-  // Get V2 result using independent V2 engine with AEAT fee treatment
+  // Get V2 result using independent V2 engine with full historical processing
   const config = await getFiscoConfig();
-  const opsResult = await pool.query(
-    "SELECT * FROM fisco_operations WHERE executed_at >= $1 AND executed_at < $2 ORDER BY executed_at",
-    [`${year}-01-01`, `${year + 1}-01-01`]
-  );
 
-  // Normalize to V2 events with AEAT fee treatment
-  const v2Events = normalizeToV2Events(opsResult.rows, config.feeMode);
-
-  // Run independent V2 FIFO engine
-  const v2EngineResult = runFifoV2(v2Events, {
+  // Build V2 historical result: load ALL operations up to 31/12/Y, process full FIFO,
+  // then filter disposals to year Y only
+  const v2Historical = await buildV2HistoricalResultForYear(year, config.feeMode, {
     blockIfRewardWithoutPrice: config.blockIfRewardWithoutPrice,
     blockIfSellWithoutCostBasis: config.blockIfSellWithoutCostBasis,
   });
 
-  const v2Summary = summarizeV2Result(v2EngineResult);
+  const v2EngineResult = v2Historical.engineResult;
+  const v2Summary = v2Historical.summary;
   const v2GainLoss = v2Summary.net_gain_loss_eur;
   const v2Gains = v2Summary.gains_eur;
   const v2Losses = v2Summary.losses_eur;
@@ -597,6 +712,8 @@ export async function runComparison(year: number, detail: boolean = false): Prom
     })),
     fee_diff_detail: (Math.abs(feeDiffTotal) > 0.01 || v2InventoryReductionFees > 0.001 || v2ExplicitFeeDisposalFees > 0.001) ? feeDiffDetail : null,
     fee_treatment_summary: feeTreatmentSummary,
+    v2_historical_scope: v2Historical.historicalScope,
+    opening_lots: v2Historical.openingLots,
     generated_at: new Date().toISOString(),
     ...(comparisonDetail ? { detail: comparisonDetail } : {}),
   };

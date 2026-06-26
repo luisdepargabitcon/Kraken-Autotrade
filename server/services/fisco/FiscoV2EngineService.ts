@@ -410,6 +410,7 @@ function getBlockerMessage(code: V2BlockerCode): string {
     NEGATIVE_INVENTORY: "Inventario negativo tras operación.",
     UNKNOWN_BASIS: "Base de coste desconocida para parte de la venta.",
     REQUIRES_EUR_PRICE: "Operación requiere precio EUR manual.",
+    HISTORICAL_DATA_GAP: "Faltan datos históricos previos al año fiscal para calcular FIFO correctamente.",
   };
   return messages[code] ?? code;
 }
@@ -418,19 +419,32 @@ function getBlockerMessage(code: V2BlockerCode): string {
 // Summary helpers
 // ============================================================
 
-export function summarizeV2Result(result: V2EngineResult) {
-  const gains = result.disposals
+/**
+ * Summarize V2 result, optionally filtering disposals to a specific fiscal year.
+ * When year is provided, only disposals with executed_at in [year-01-01, year+1-01-01) are summed.
+ * This is essential for historical processing: the engine processes ALL events but
+ * we only report disposals belonging to the requested fiscal year.
+ */
+export function summarizeV2Result(result: V2EngineResult, year?: number) {
+  const yearDisposals = year
+    ? result.disposals.filter(d => {
+        const y = d.executed_at.getFullYear();
+        return y === year;
+      })
+    : result.disposals;
+
+  const gains = yearDisposals
     .filter(d => d.gain_loss_eur > 0)
     .reduce((sum, d) => sum + d.gain_loss_eur, 0);
   const losses = Math.abs(
-    result.disposals
+    yearDisposals
       .filter(d => d.gain_loss_eur < 0)
       .reduce((sum, d) => sum + d.gain_loss_eur, 0)
   );
   const net = gains - losses;
 
   const byAsset = new Map<string, { gain_loss: number; proceeds: number; cost_basis: number; count: number }>();
-  for (const d of result.disposals) {
+  for (const d of yearDisposals) {
     const existing = byAsset.get(d.asset) ?? { gain_loss: 0, proceeds: 0, cost_basis: 0, count: 0 };
     existing.gain_loss += d.gain_loss_eur;
     existing.proceeds += d.transmission_value_eur;
@@ -443,7 +457,7 @@ export function summarizeV2Result(result: V2EngineResult) {
     net_gain_loss_eur: net,
     gains_eur: gains,
     losses_eur: losses,
-    disposals_count: result.disposals.length,
+    disposals_count: yearDisposals.length,
     by_asset: Object.fromEntries(byAsset),
   };
 }
@@ -462,4 +476,22 @@ export function buildFeeTreatmentSummary(result: V2EngineResult) {
   }
 
   return summary;
+}
+
+/**
+ * Extract opening lots: lots that have quantity_remaining > 0 and were
+ * acquired before the start of the given fiscal year.
+ * These represent the inventory carried into year Y from previous years.
+ */
+export function extractOpeningLots(result: V2EngineResult, year: number) {
+  const yearStart = new Date(year, 0, 1);
+  return result.lots
+    .filter(lot => lot.quantity_remaining > 1e-10 && lot.acquired_at < yearStart)
+    .map(lot => ({
+      asset: lot.asset,
+      quantity_remaining: lot.quantity_remaining,
+      acquisition_value_eur: lot.acquisition_value_eur * (lot.quantity_remaining / lot.quantity_acquired),
+      acquired_at: lot.acquired_at.toISOString(),
+      source: lot.exchange,
+    }));
 }

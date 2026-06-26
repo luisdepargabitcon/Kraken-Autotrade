@@ -69,6 +69,7 @@ vi.mock("../FiscoV2EngineService", () => ({
     inventory_reduction: { count: 0, total_eur: 0 },
     explicit_fee_disposal: { count: 0, total_eur: 0 },
   })),
+  extractOpeningLots: vi.fn(() => []),
 }));
 
 // Mock FiscoConfigService

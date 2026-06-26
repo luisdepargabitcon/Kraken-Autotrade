@@ -2,6 +2,55 @@
 
 ---
 
+## fix(fisco-v2): procesar historico completo para fifo anual
+
+**Fecha**: 2026-06-26
+**Lote**: FISCO V2 — Commit 1: Motor histórico
+
+### Problema raíz
+El motor V2 shadow solo cargaba operaciones del año fiscal (`executed_at >= year-01-01 AND < year+1-01-01`). Esto provocaba que las ventas de 2026 no tuvieran lotes de adquisición previos (comprados en 2025), generando blockers `SELL_WITHOUT_LOTS`, `UNKNOWN_BASIS` y `NEGATIVE_INVENTORY`.
+
+### Cambios implementados
+
+**Archivos modificados:**
+- `server/services/fisco/FiscoV2Types.ts` — Añadido `HISTORICAL_DATA_GAP` a `V2BlockerCode`. Nuevos interfaces `V2HistoricalScope` y `V2OpeningLot`. Añadidos `v2_historical_scope` y `opening_lots` a `V2ComparisonResult`.
+- `server/services/fisco/FiscoV2EngineService.ts` — `summarizeV2Result` ahora acepta parámetro opcional `year` para filtrar disposiciones del año fiscal. Añadido `extractOpeningLots()` para extraer lotes restantes adquiridos antes del año. Añadido mensaje de blocker `HISTORICAL_DATA_GAP`.
+- `server/services/fisco/FiscoComparisonService.ts` — Nueva función `buildV2HistoricalResultForYear()` que carga TODAS las operaciones hasta 31/12/Y + `fisco_opening_balances` como synthetic BUY, procesa FIFO completo, y filtra disposiciones al año Y. `runComparison()` ahora usa esta función. Añadidos `v2_historical_scope` y `opening_lots` al resultado.
+
+**Archivos de tests modificados:**
+- `server/services/fisco/__tests__/fiscoV2ShadowComplete.test.ts` — Añadido `extractOpeningLots` al mock de `FiscoV2EngineService`.
+- `server/services/fisco/__tests__/fiscoV2FeeDiffSeparation.test.ts` — Añadido `extractOpeningLots` al mock de `FiscoV2EngineService`.
+
+**Nuevos archivos:**
+- `server/services/fisco/__tests__/fiscoV2Historical.test.ts` — 10 tests obligatorios:
+
+1. H-01: V2 procesa operaciones anteriores al año fiscal
+2. H-02: Venta 2026 consume lote comprado en 2025
+3. H-03: La disposición se imputa a 2026 aunque el lote sea de 2025
+4. H-04: summarizeV2Result solo suma disposiciones del año solicitado
+5. H-05: comparison 2026 incluye v2_historical_scope
+6. H-06: comparison 2026 incluye opening_lots
+7. H-07: No SELL_WITHOUT_LOTS / UNKNOWN_BASIS / NEGATIVE_INVENTORY con lotes históricos
+8. H-08: fisco_opening_balances se incorporan como synthetic BUY
+9. H-09: 2025 sigue safe_for_official_switch=true con datos coincidentes
+10. H-10: No cambia ningún resultado legacy oficial
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/fisco/`: ✅ 635/635 tests (625 existentes + 10 nuevos)
+
+### Condiciones estrictas cumplidas
+- V2 oficial NO activado
+- fisco_disposals legacy NO tocado
+- Resultados oficiales NO modificados
+- Informe oficial legacy NO tocado
+- Sin cambios UI
+- Sin activation/readiness multianual
+- Commit limitado al motor/comparison V2 shadow
+
+---
+
 ## fix(fisco-v2): migracion audit backups schema health y tests completos
 
 **Fecha**: 2026-06-26

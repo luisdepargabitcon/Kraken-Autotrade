@@ -160,7 +160,8 @@ export type V2BlockerCode =
   | "SELL_WITHOUT_LOTS"
   | "NEGATIVE_INVENTORY"
   | "UNKNOWN_BASIS"
-  | "REQUIRES_EUR_PRICE";
+  | "REQUIRES_EUR_PRICE"
+  | "HISTORICAL_DATA_GAP";
 
 export interface V2Blocker {
   code: V2BlockerCode;
@@ -177,6 +178,29 @@ export interface V2AuditEntry {
   action: string;
   detail: string;
   timestamp: string;
+}
+
+// ============================================================
+// V2 Historical Scope & Opening Lots
+// ============================================================
+
+export interface V2HistoricalScope {
+  year: number;
+  operations_from: string;
+  operations_to: string;
+  total_operations_loaded: number;
+  operations_before_year: number;
+  operations_in_year: number;
+  opening_balances_loaded: number;
+  has_historical_data: boolean;
+}
+
+export interface V2OpeningLot {
+  asset: string;
+  quantity_remaining: number;
+  acquisition_value_eur: number;
+  acquired_at: string;
+  source: string;
 }
 
 // ============================================================
@@ -216,6 +240,8 @@ export interface V2ComparisonResult {
   fee_treatment_summary: FeeTreatmentSummary;
   blockers: string[];
   warnings: string[];
+  v2_historical_scope: V2HistoricalScope;
+  opening_lots: V2OpeningLot[];
   generated_at: string;
 }
 

@@ -43,6 +43,7 @@ vi.mock("../FiscoV2EngineService", () => ({
   runFifoV2: mockRunFifoV2,
   summarizeV2Result: mockSummarizeV2Result,
   buildFeeTreatmentSummary: mockBuildFeeTreatmentSummary,
+  extractOpeningLots: vi.fn(() => []),
 }));
 
 vi.mock("../FiscoConfigService", () => ({
