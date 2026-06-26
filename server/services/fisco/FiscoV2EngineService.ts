@@ -71,6 +71,7 @@ export function runFifoV2(
     evt: V2Event,
     detail: string
   ) => {
+    const evtYear = evt.executed_at.getFullYear();
     blockers.push({
       code,
       message: getBlockerMessage(code),
@@ -78,6 +79,10 @@ export function runFifoV2(
       operation_id: evt.source_operation_id,
       external_id: evt.external_id,
       detail,
+      executed_at: evt.executed_at.toISOString(),
+      tax_year: evtYear,
+      whether_affects_requested_year: false,
+      whether_blocks_activation: false,
     });
   };
 
@@ -371,6 +376,7 @@ export function runFifoV2(
       if (tc.cost_basis_carried_eur === 0 && tc.amount_sent > 0) {
         const evt = sortedEvents.find(e => e.source_operation_id === tc.from_operation_id);
         if (evt) {
+          const evtYear = evt.executed_at.getFullYear();
           blockers.push({
             code: "TRANSFER_COST_CARRYOVER_UNRESOLVED",
             message: getBlockerMessage("TRANSFER_COST_CARRYOVER_UNRESOLVED"),
@@ -378,6 +384,10 @@ export function runFifoV2(
             operation_id: tc.from_operation_id,
             external_id: evt.external_id,
             detail: `Transferencia de ${tc.asset} sin arrastre de coste resuelto entre op ${tc.from_operation_id} y op ${tc.to_operation_id}.`,
+            executed_at: evt.executed_at.toISOString(),
+            tax_year: evtYear,
+            whether_affects_requested_year: false,
+            whether_blocks_activation: false,
           });
         }
       }
@@ -462,7 +472,20 @@ export function summarizeV2Result(result: V2EngineResult, year?: number) {
   };
 }
 
-export function buildFeeTreatmentSummary(result: V2EngineResult) {
+/**
+ * Build fee treatment summary, optionally filtering to a specific fiscal year.
+ * When year is provided, only fee_events with executed_at in year Y are summed.
+ * This is essential for historical processing: the engine processes ALL events but
+ * we only report fees belonging to the requested fiscal year.
+ */
+export function buildFeeTreatmentSummary(result: V2EngineResult, year?: number) {
+  const yearFees = year
+    ? result.fee_events.filter(fe => {
+        const y = new Date(fe.executed_at).getFullYear();
+        return y === year;
+      })
+    : result.fee_events;
+
   const summary = {
     integrated_in_acquisition: { count: 0, total_eur: 0 },
     integrated_in_transmission: { count: 0, total_eur: 0 },
@@ -470,7 +493,7 @@ export function buildFeeTreatmentSummary(result: V2EngineResult) {
     explicit_fee_disposal: { count: 0, total_eur: 0 },
   };
 
-  for (const fe of result.fee_events) {
+  for (const fe of yearFees) {
     summary[fe.fee_treatment].count += 1;
     summary[fe.fee_treatment].total_eur += fe.fee_eur;
   }
@@ -479,14 +502,56 @@ export function buildFeeTreatmentSummary(result: V2EngineResult) {
 }
 
 /**
- * Extract opening lots: lots that have quantity_remaining > 0 and were
- * acquired before the start of the given fiscal year.
- * These represent the inventory carried into year Y from previous years.
+ * Extract opening lots at year start: lots acquired before 01/01/Y
+ * with quantity_remaining > 0 AT THE POINT BEFORE year Y events are processed.
+ * This represents the inventory carried into year Y from previous years.
+ *
+ * Since the engine processes all events chronologically, we need to reconstruct
+ * the lot state at the start of year Y. We do this by checking which lots
+ * were acquired before year start and had not been fully consumed by
+ * disposals before year start.
  */
 export function extractOpeningLots(result: V2EngineResult, year: number) {
   const yearStart = new Date(year, 0, 1);
+
+  // For each lot acquired before year start, calculate how much was consumed
+  // by disposals that also occurred before year start.
+  const consumptionBeforeYear = new Map<string, number>();
+  for (const disposal of result.disposals) {
+    if (disposal.executed_at < yearStart) {
+      for (const consumed of disposal.lots_consumed) {
+        const current = consumptionBeforeYear.get(consumed.v2_lot_id) ?? 0;
+        consumptionBeforeYear.set(consumed.v2_lot_id, current + consumed.quantity);
+      }
+    }
+  }
+
   return result.lots
-    .filter(lot => lot.quantity_remaining > 1e-10 && lot.acquired_at < yearStart)
+    .filter(lot => lot.acquired_at < yearStart)
+    .map(lot => {
+      const consumed = consumptionBeforeYear.get(lot.v2_lot_id) ?? 0;
+      const remainingAtYearStart = lot.quantity_acquired - consumed;
+      if (remainingAtYearStart <= 1e-10) return null;
+      return {
+        asset: lot.asset,
+        quantity_remaining: remainingAtYearStart,
+        acquisition_value_eur: lot.acquisition_value_eur * (remainingAtYearStart / lot.quantity_acquired),
+        acquired_at: lot.acquired_at.toISOString(),
+        source: lot.exchange,
+      };
+    })
+    .filter((lot): lot is NonNullable<typeof lot> => lot !== null);
+}
+
+/**
+ * Extract closing lots at year end: lots with quantity_remaining > 0
+ * after ALL events (including year Y) have been processed.
+ * This represents the inventory at the end of year Y.
+ */
+export function extractClosingLots(result: V2EngineResult, year: number) {
+  const yearEnd = new Date(year + 1, 0, 1);
+  return result.lots
+    .filter(lot => lot.quantity_remaining > 1e-10 && lot.acquired_at < yearEnd)
     .map(lot => ({
       asset: lot.asset,
       quantity_remaining: lot.quantity_remaining,
@@ -494,4 +559,32 @@ export function extractOpeningLots(result: V2EngineResult, year: number) {
       acquired_at: lot.acquired_at.toISOString(),
       source: lot.exchange,
     }));
+}
+
+/**
+ * Filter blockers to those relevant for a specific fiscal year.
+ * Returns { yearBlockers, historicalBlockers } where yearBlockers are those
+ * whose operation occurred in the requested year, and historicalBlockers
+ * are those from previous years (diagnostic only, should not block activation).
+ */
+export function filterBlockersByYear(result: V2EngineResult, year: number) {
+  const yearBlockers: V2Blocker[] = [];
+  const historicalBlockers: V2Blocker[] = [];
+
+  for (const b of result.blockers) {
+    const blockerYear = b.tax_year;
+    const affectsYear = blockerYear === year;
+    const enriched = {
+      ...b,
+      whether_affects_requested_year: affectsYear,
+      whether_blocks_activation: affectsYear,
+    };
+    if (affectsYear) {
+      yearBlockers.push(enriched);
+    } else {
+      historicalBlockers.push(enriched);
+    }
+  }
+
+  return { yearBlockers, historicalBlockers };
 }

@@ -299,7 +299,7 @@ export const HTML_STYLE = `
   .btn-primary{background:#0f3460;color:#fff;border-color:#0f3460}
   .btn-primary:hover{background:#16213e}
   .section-block{border:1px solid #e0e0e0;border-radius:8px;padding:1.25rem;margin:1.25rem 0}
-  .gain-pos{color:#721c24;font-weight:700}.gain-neg{color:#155724;font-weight:700}.gain-zero{color:#555;font-weight:700}
+  .gain-pos{color:#155724;font-weight:700}.gain-neg{color:#721c24;font-weight:700}.gain-zero{color:#555;font-weight:700}
   .annual-gain-loss-summary{margin:1.5rem 0;page-break-after:always;break-after:page}
   .annual-gain-loss-summary h2{margin-top:0}
   .gain-loss-summary-table{width:100%;border-collapse:collapse;font-size:12px;margin:.75rem 0}

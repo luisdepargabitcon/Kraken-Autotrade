@@ -44,6 +44,8 @@ vi.mock("../FiscoV2EngineService", () => ({
   summarizeV2Result: mockSummarizeV2Result,
   buildFeeTreatmentSummary: mockBuildFeeTreatmentSummary,
   extractOpeningLots: vi.fn(() => []),
+  extractClosingLots: vi.fn(() => []),
+  filterBlockersByYear: vi.fn(() => ({ yearBlockers: [], historicalBlockers: [] })),
 }));
 
 vi.mock("../FiscoConfigService", () => ({

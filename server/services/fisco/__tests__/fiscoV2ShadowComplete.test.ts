@@ -70,6 +70,8 @@ vi.mock("../FiscoV2EngineService", () => ({
     explicit_fee_disposal: { count: 0, total_eur: 0 },
   })),
   extractOpeningLots: vi.fn(() => []),
+  extractClosingLots: vi.fn(() => []),
+  filterBlockersByYear: vi.fn(() => ({ yearBlockers: [], historicalBlockers: [] })),
 }));
 
 // Mock FiscoConfigService

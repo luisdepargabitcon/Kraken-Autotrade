@@ -295,12 +295,12 @@ describe("FISCO V2 Historical — Comparison service tests", () => {
 
     expect(result.opening_lots).toBeDefined();
     expect(Array.isArray(result.opening_lots)).toBe(true);
-    // The 2025 buy of 0.1 BTC, with 0.05 sold in 2026, leaves 0.05 remaining
-    // extractOpeningLots filters lots acquired before year start with remaining > 0
-    // After processing the 2026 sell, the lot has 0.05 remaining
+    // The 2025 buy of 0.1 BTC is the opening lot at 01/01/2026.
+    // extractOpeningLots now reconstructs state at year start (before year Y events),
+    // so the full 0.1 is the opening lot (the 2026 sell hasn't consumed it yet at that point).
     const btcOpeningLot = result.opening_lots.find(l => l.asset === "BTC");
     expect(btcOpeningLot).toBeDefined();
-    expect(btcOpeningLot!.quantity_remaining).toBeCloseTo(0.05, 8);
+    expect(btcOpeningLot!.quantity_remaining).toBeCloseTo(0.1, 8);
   });
 
   it("H-07: No se generan SELL_WITHOUT_LOTS / UNKNOWN_BASIS / NEGATIVE_INVENTORY cuando hay lotes históricos", async () => {
@@ -391,9 +391,9 @@ describe("FISCO V2 Historical — Opening balances", () => {
     expect(ethOpeningLot).toBeDefined();
     // 2.0 ETH acquired, 1.0 sold in 2025 → 1.0 remaining as opening lot
     // But wait — opening lots are lots acquired BEFORE year start (2025-01-01)
-    // The opening balance was acquired 2024-01-15, so it's before 2025
-    // After processing the 2025 sell, remaining should be 1.0
-    expect(ethOpeningLot!.quantity_remaining).toBeCloseTo(1.0, 6);
+    // The opening balance was acquired 2024-01-15, so it's before 2025.
+    // At year start 2025, the full 2.0 ETH is available (the 2025 sell hasn't happened yet).
+    expect(ethOpeningLot!.quantity_remaining).toBeCloseTo(2.0, 6);
 
     // No SELL_WITHOUT_LOTS because the opening balance provided the lot
     expect(result.blockers.some(b => b.includes("SELL_WITHOUT_LOTS"))).toBe(false);

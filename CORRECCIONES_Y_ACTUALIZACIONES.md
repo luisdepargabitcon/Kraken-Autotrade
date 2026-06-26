@@ -2,6 +2,77 @@
 
 ---
 
+## fix(fisco-v2): acotar comparison anual tras historico completo + corregir colores informe HTML
+
+**Fecha**: 2026-06-26
+**Lote**: FISCO V2 — Hotfix 1B: Scoping anual + colores HTML
+
+### Problema raíz
+Tras el commit 30df0e0 (histórico completo), 2026 seguía bloqueado por:
+1. **UNMAPPED_V2_DISPOSALS: 234** — las disposiciones V2 de 2025 se contaban como unmapped para 2026
+2. **FEE_DIFF_TRADING: 40.94 EUR** — las comisiones V2 de 2025 se sumaban a las de 2026
+3. **[NEGATIVE_INVENTORY] USDC** — blocker histórico arrastrado sin contexto de año
+4. **opening_lots = 0** — extractOpeningLots usaba quantity_remaining final en vez de estado al 01/01/Y
+5. **Colores HTML invertidos** — ganancias en rojo, pérdidas en verde
+
+### Cambios implementados
+
+**Archivos modificados:**
+- `server/services/fisco/FiscoV2Types.ts` — Añadidos campos `executed_at`, `tax_year`, `whether_affects_requested_year`, `whether_blocks_activation` a `V2Blocker`. Añadidos `closing_lots`, `historical_blockers`, `historical_warnings` a `V2ComparisonResult`.
+- `server/services/fisco/FiscoV2EngineService.ts`:
+  - `addBlocker()` ahora incluye `executed_at`, `tax_year` de la operación
+  - `buildFeeTreatmentSummary()` acepta `year?` para filtrar fees al año Y
+  - `extractOpeningLots()` reconstruye estado al 01/01/Y (resta consumo anterior al año)
+  - Nueva `extractClosingLots()` — lotes restantes tras 31/12/Y
+  - Nueva `filterBlockersByYear()` — separa yearBlockers vs historicalBlockers
+- `server/services/fisco/FiscoComparisonService.ts`:
+  - `buildV2HistoricalResultForYear()` ahora devuelve `yearDisposals`, `yearBlockers`, `historicalBlockers`, `feeTreatmentSummary` (filtrada a año Y), `closingLots`
+  - `runComparison()` usa solo `yearDisposals` para mapping/unmapped
+  - `runComparison()` usa solo `yearBlockers` para blockers de activación
+  - `runComparison()` usa `feeTreatmentSummary` filtrada a año Y
+  - `historicalBlockers` se exponen como `historical_blockers` (diagnóstico, no bloquean)
+  - Resultado incluye `closing_lots`, `historical_blockers`, `historical_warnings`
+- `server/services/fisco/FiscoHtmlRenderer.ts` — Corregidos colores CSS:
+  - `.gain-pos` (ganancia) → verde `#155724` (antes rojo `#721c24`)
+  - `.gain-neg` (pérdida) → rojo `#721c24` (antes verde `#155724`)
+  - `.gain-zero` → neutral `#555` (sin cambio)
+- `server/services/fisco/__tests__/fiscoV2ShadowComplete.test.ts` — Añadidos `extractClosingLots`, `filterBlockersByYear` al mock
+- `server/services/fisco/__tests__/fiscoV2FeeDiffSeparation.test.ts` — Añadidos `extractClosingLots`, `filterBlockersByYear` al mock
+- `server/services/fisco/__tests__/fiscoV2Historical.test.ts` — Actualizadas expectativas H-06 y H-08 para nuevo `extractOpeningLots` (estado al 01/01/Y)
+
+**Nuevos archivos:**
+- `server/services/fisco/__tests__/fiscoV2HotfixScoping.test.ts` — 15 tests:
+
+1. S-01: Disposiciones V2 de 2025 no aparecen como unmapped_v2 para 2026
+2. S-02: Mapping counts cuadran para 2026
+3. S-03: fee_diff_detail para 2026 no incluye fees de 2025
+4. S-04: FEE_DIFF_TRADING no aparece por arrastre de comisiones históricas
+5. S-05: safe_for_official_switch 2026 no se bloquea por disposiciones históricas
+6. S-06: NEGATIVE_INVENTORY incluye operation_id, executed_at, tax_year, whether_blocks_activation
+7. S-07: NEGATIVE_INVENTORY histórico (2025) no bloquea activation de 2026
+8. S-08: NEGATIVE_INVENTORY dentro del año (2026) sí bloquea
+9. S-09: opening_lots representa lotes abiertos al 01/01/Y
+10. S-10: closing_lots representa lotes restantes tras 31/12/Y
+11. S-11: 2025 sigue safe_for_official_switch=true, blockers=[], unmapped=0
+12. S-12: 2026 queda safe_for_official_switch=true sin blockers reales
+13. S-13a/b/c: Colores HTML correctos (verde=ganancia, rojo=pérdida, neutral=cero)
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/fisco/`: ✅ 650/650 tests (635 existentes + 15 nuevos)
+
+### Condiciones estrictas cumplidas
+- V2 oficial NO activado
+- fisco_disposals legacy NO tocado
+- Resultados oficiales NO modificados
+- Informe legacy NO tocado (solo colores CSS corregidos)
+- Sin cambios UI excepto colores CSS
+- Sin readiness multianual
+- No se bajaron tolerancias
+
+---
+
 ## fix(fisco-v2): procesar historico completo para fifo anual
 
 **Fecha**: 2026-06-26

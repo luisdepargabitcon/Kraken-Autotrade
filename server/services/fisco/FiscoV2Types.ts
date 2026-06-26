@@ -170,6 +170,10 @@ export interface V2Blocker {
   operation_id: number;
   external_id: string;
   detail: string;
+  executed_at: string;
+  tax_year: number;
+  whether_affects_requested_year: boolean;
+  whether_blocks_activation: boolean;
 }
 
 export interface V2AuditEntry {
@@ -242,6 +246,9 @@ export interface V2ComparisonResult {
   warnings: string[];
   v2_historical_scope: V2HistoricalScope;
   opening_lots: V2OpeningLot[];
+  closing_lots: V2OpeningLot[];
+  historical_blockers: string[];
+  historical_warnings: string[];
   generated_at: string;
 }
 

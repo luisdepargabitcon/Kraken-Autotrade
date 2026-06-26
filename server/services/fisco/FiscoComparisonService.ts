@@ -12,9 +12,9 @@ import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort } from "./
 import { krakenService } from "../kraken";
 import { revolutXService } from "../exchanges/RevolutXService";
 import { normalizeToV2Events } from "./FiscoV2Normalizer";
-import { runFifoV2, summarizeV2Result, buildFeeTreatmentSummary, extractOpeningLots } from "./FiscoV2EngineService";
+import { runFifoV2, summarizeV2Result, buildFeeTreatmentSummary, extractOpeningLots, extractClosingLots, filterBlockersByYear } from "./FiscoV2EngineService";
 import { getFiscoConfig } from "./FiscoConfigService";
-import type { V2ComparisonResult, OperationMapping, AssetDiffV2, FeeDiffDetail, FeeTreatmentSummary, V2HistoricalScope, V2OpeningLot, V2EngineResult } from "./FiscoV2Types";
+import type { V2ComparisonResult, OperationMapping, AssetDiffV2, FeeDiffDetail, FeeTreatmentSummary, V2HistoricalScope, V2OpeningLot, V2EngineResult, V2Blocker } from "./FiscoV2Types";
 
 export interface ComparisonQuality {
   baseline_valid: boolean;
@@ -63,6 +63,9 @@ export interface ComparisonResult {
   fee_treatment_summary: FeeTreatmentSummary;
   v2_historical_scope: V2HistoricalScope;
   opening_lots: V2OpeningLot[];
+  closing_lots: V2OpeningLot[];
+  historical_blockers: string[];
+  historical_warnings: string[];
   generated_at: string;
 }
 
@@ -113,6 +116,11 @@ interface V2HistoricalResult {
   summary: ReturnType<typeof summarizeV2Result>;
   historicalScope: V2HistoricalScope;
   openingLots: V2OpeningLot[];
+  closingLots: V2OpeningLot[];
+  yearDisposals: V2EngineResult["disposals"];
+  yearBlockers: V2Blocker[];
+  historicalBlockers: V2Blocker[];
+  feeTreatmentSummary: FeeTreatmentSummary;
 }
 
 /**
@@ -184,8 +192,20 @@ async function buildV2HistoricalResultForYear(
   // Summarize only disposals for the requested year
   const summary = summarizeV2Result(engineResult, year);
 
-  // Extract opening lots: lots acquired before year start with remaining quantity
+  // Extract year-filtered disposals for mapping/unmapped
+  const yearDisposals = engineResult.disposals.filter(d => d.executed_at.getFullYear() === year);
+
+  // Extract opening lots: state at 01/01/Y (before year Y events)
   const openingLots = extractOpeningLots(engineResult, year);
+
+  // Extract closing lots: state at 31/12/Y (after all events)
+  const closingLots = extractClosingLots(engineResult, year);
+
+  // Filter blockers by year: year blockers vs historical blockers
+  const { yearBlockers, historicalBlockers } = filterBlockersByYear(engineResult, year);
+
+  // Build fee treatment summary filtered to year Y only
+  const feeTreatmentSummary = buildFeeTreatmentSummary(engineResult, year);
 
   // Build historical scope metadata
   const operationsBeforeYear = opsResult.rows.filter(
@@ -215,6 +235,11 @@ async function buildV2HistoricalResultForYear(
     summary,
     historicalScope,
     openingLots,
+    closingLots,
+    yearDisposals,
+    yearBlockers,
+    historicalBlockers,
+    feeTreatmentSummary,
   };
 }
 
@@ -304,8 +329,8 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   const v2Losses = v2Summary.losses_eur;
   const v2Disposals = v2Summary.disposals_count;
 
-  // Build fee treatment summary
-  const feeTreatmentSummary = buildFeeTreatmentSummary(v2EngineResult);
+  // Use year-filtered fee treatment summary (only fees from year Y)
+  const feeTreatmentSummary = v2Historical.feeTreatmentSummary;
 
   // Calculate fee diff detail — separated by treatment type
   const legacyFeesResult = await pool.query(`
@@ -373,7 +398,7 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   const mappedV2Ids = new Set<string>();
 
   for (const ld of legacyDisposalsResult.rows) {
-    const v2Match = v2EngineResult.disposals.find(d => d.sell_operation_id === ld.sell_operation_id && !mappedV2Ids.has(d.v2_disposal_id));
+    const v2Match = v2Historical.yearDisposals.find(d => d.sell_operation_id === ld.sell_operation_id && !mappedV2Ids.has(d.v2_disposal_id));
     if (v2Match) {
       operationMapping.push({
         legacy_disposal_id: ld.id,
@@ -392,7 +417,7 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   const unmappedLegacyDisposals = legacyDisposalsResult.rows
     .filter((r: any) => !mappedLegacyIds.has(r.id))
     .map((r: any) => r.id);
-  const unmappedV2Disposals = v2EngineResult.disposals
+  const unmappedV2Disposals = v2Historical.yearDisposals
     .filter(d => !mappedV2Ids.has(d.v2_disposal_id))
     .map(d => d.v2_disposal_id);
 
@@ -451,10 +476,13 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  // V2 engine blockers
-  if (v2EngineResult.blockers.length > 0) {
-    for (const b of v2EngineResult.blockers.slice(0, 5)) {
-      blockers.push(`[${b.code}] ${b.asset}: ${b.detail}`);
+  // V2 engine blockers — only year-relevant blockers for activation
+  const yearBlockers = v2Historical.yearBlockers;
+  const historicalBlockers = v2Historical.historicalBlockers;
+
+  if (yearBlockers.length > 0) {
+    for (const b of yearBlockers.slice(0, 5)) {
+      blockers.push(`[${b.code}] ${b.asset}: ${b.detail} (op_id=${b.operation_id}, year=${b.tax_year})`);
     }
   }
 
@@ -498,6 +526,11 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   if (v2EngineResult.warnings.length > 0) {
     warnings.push(`${v2EngineResult.warnings.length} advertencias en FIFO V2`);
   }
+
+  // Historical blockers as warnings (diagnostic only, do not block activation)
+  const historicalBlockerStrings: string[] = historicalBlockers.map(b =>
+    `[${b.code}] ${b.asset}: ${b.detail} (op_id=${b.operation_id}, year=${b.tax_year})`
+  );
 
   // Official switch blockers — check tolerances for activation
   const officialSwitchBlockers: string[] = [];
@@ -714,6 +747,9 @@ export async function runComparison(year: number, detail: boolean = false): Prom
     fee_treatment_summary: feeTreatmentSummary,
     v2_historical_scope: v2Historical.historicalScope,
     opening_lots: v2Historical.openingLots,
+    closing_lots: v2Historical.closingLots,
+    historical_blockers: historicalBlockerStrings,
+    historical_warnings: [],
     generated_at: new Date().toISOString(),
     ...(comparisonDetail ? { detail: comparisonDetail } : {}),
   };
