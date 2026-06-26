@@ -200,13 +200,21 @@ export function FiscoTransaccionesSection({ year }: { year: string }) {
 
       {/* Tabla */}
       {opsQ.isLoading && <div className="text-center py-8 text-muted-foreground animate-pulse">Cargando operaciones...</div>}
-      {opsQ.error && <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-center text-red-400 text-sm">{opsQ.error.message}</div>}
+      {opsQ.error && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-center text-red-400 text-sm">
+          <div>No se pudieron cargar las transacciones fiscales.</div>
+          <details className="mt-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer hover:text-foreground transition-colors">Detalle técnico</summary>
+            <pre className="mt-1 text-left whitespace-pre-wrap break-all">{opsQ.error.message}</pre>
+          </details>
+        </div>
+      )}
 
       {opsQ.data && (
         <>
           <div className="rounded-xl border border-border overflow-hidden">
             <div className="overflow-auto max-h-[550px]">
-              <table className="w-full text-xs">
+              <table className="w-full text-xs min-w-[1300px]">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-muted/80 border-b border-border">
                     {SORT_COLUMNS.map(col => (

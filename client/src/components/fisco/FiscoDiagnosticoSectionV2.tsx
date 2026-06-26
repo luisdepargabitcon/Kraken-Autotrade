@@ -94,7 +94,7 @@ export function FiscoDiagnosticoSectionV2({
       {/* Tabla detallada */}
       <div className="rounded-xl border border-border overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[1350px]">
             <thead>
               <tr className="bg-muted/40 border-b border-border">
                 {columns.map(col => (

@@ -150,3 +150,111 @@ describe("Regresión — control fiscal no se rompe", () => {
     expect(dashboardContent).toContain('"control"');
   });
 });
+
+// ─── Fase 1: Hotfix VPS ──────────────────────────────────────────────────────
+
+describe("Fase 1 — Hotfix VPS: schema, operations, UI", () => {
+  const routesContent = readFileSync(ROUTES_PATH, "utf-8");
+  const txContent = readFileSync(join(CLIENT_DIR, "FiscoTransaccionesSection.tsx"), "utf-8");
+  const diagContent = readFileSync(join(CLIENT_DIR, "FiscoDiagnosticoSectionV2.tsx"), "utf-8");
+  const dashboardContent = readFileSync(DASHBOARD_PATH, "utf-8");
+  const SCHEMA_ENSURE_PATH = join(__dirname, "../FiscoControlSchemaEnsureService.ts");
+
+  // F1-Schema
+  it("H-01: FiscoControlSchemaEnsureService existe", () => {
+    const svcContent = readFileSync(SCHEMA_ENSURE_PATH, "utf-8");
+    expect(svcContent).toContain("FiscoControlSchemaEnsureService");
+    expect(svcContent).toContain("operation_set_hash");
+    expect(svcContent).toContain("fisco_result_history");
+    expect(svcContent).toContain("fisco_control_snapshots");
+  });
+
+  it("H-02: schema ensure usa ADD COLUMN IF NOT EXISTS", () => {
+    const svcContent = readFileSync(SCHEMA_ENSURE_PATH, "utf-8");
+    expect(svcContent).toContain("ADD COLUMN IF NOT EXISTS");
+  });
+
+  it("H-03: schema ensure usa CREATE TABLE IF NOT EXISTS", () => {
+    const svcContent = readFileSync(SCHEMA_ENSURE_PATH, "utf-8");
+    expect(svcContent).toContain("CREATE TABLE IF NOT EXISTS");
+  });
+
+  it("H-04: schema-health incluye fisco_result_history y fisco_control_snapshots", () => {
+    expect(routesContent).toContain("fisco_result_history");
+    expect(routesContent).toContain("fisco_control_snapshots");
+  });
+
+  it("H-05: schema-health verifica columnas operation_set_hash y fiscal_year", () => {
+    expect(routesContent).toContain("operation_set_hash");
+    expect(routesContent).toContain("fiscal_year");
+    expect(routesContent).toContain("information_schema.columns");
+  });
+
+  // F1-Operations
+  it("H-06: operations usa query de conteo separada (COUNT sin ORDER BY)", () => {
+    expect(routesContent).toContain("SELECT COUNT(*)::int AS total FROM fisco_operations fo");
+  });
+
+  it("H-07: operations no usa query.replace para count", () => {
+    expect(routesContent).not.toContain('query.replace("SELECT *"');
+  });
+
+  it("H-08: operations mapea sort a columnas con prefijo fo.", () => {
+    expect(routesContent).toContain("fo.executed_at");
+    expect(routesContent).toContain("SORT_MAP");
+  });
+
+  it("H-09: operations usa sort seguro por defecto (fo.executed_at)", () => {
+    expect(routesContent).toContain('?? "fo.executed_at"');
+  });
+
+  it("H-10: operations devuelve rows y operations (alias)", () => {
+    expect(routesContent).toContain("rows: result.rows");
+    expect(routesContent).toContain("operations: result.rows");
+  });
+
+  it("H-11: operations usa LEFT JOIN para disposals_count", () => {
+    expect(routesContent).toContain("LEFT JOIN");
+    expect(routesContent).toContain("disposals_count");
+    expect(routesContent).toContain("sell_operation_id");
+  });
+
+  // F1-UI
+  it("H-12: UI no muestra SQL crudo como mensaje principal", () => {
+    expect(txContent).toContain("No se pudieron cargar las transacciones fiscales.");
+    expect(txContent).toContain("Detalle técnico");
+    expect(txContent).toContain("<details");
+  });
+
+  it("H-13: tabla Transacciones usa min-w-[1300px]", () => {
+    expect(txContent).toContain("min-w-[1300px]");
+  });
+
+  it("H-14: tabla Diagnóstico usa min-w-[1350px]", () => {
+    expect(diagContent).toContain("min-w-[1350px]");
+  });
+
+  it("H-15: dashboard usa max-w-[1600px]", () => {
+    expect(dashboardContent).toContain("max-w-[1600px]");
+  });
+
+  // F1-Control status resilience
+  it("H-16: control-status usa try-catch para operation_set_hash", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    expect(svcContent).toContain("operation_set_hash may not exist");
+  });
+
+  it("H-17: control-status getOfficialResult usa try-catch para operation_set_hash", () => {
+    const svcContent = readFileSync(join(__dirname, "../FiscoControlStatusService.ts"), "utf-8");
+    // Should have two try-catch blocks for operation_set_hash queries
+    const matches = svcContent.match(/operation_set_hash may not exist/g);
+    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  // F1-No FIFO changes
+  it("H-18: no se modifica FiscoRebuildService commitToOfficial", () => {
+    const rebuildContent = readFileSync(join(__dirname, "../../FiscoRebuildService.ts"), "utf-8");
+    expect(rebuildContent).toContain("commitToOfficial");
+    expect(rebuildContent).toContain("recordResultHistory");
+  });
+});

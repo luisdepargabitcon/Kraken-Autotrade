@@ -986,6 +986,11 @@ export async function registerRoutes(
   // ============================================================
   // FISCO (Fiscal Control) ENDPOINTS (modularized)
   // ============================================================
+  // Ensure FISCO control schema (tables/columns) exists before routes
+  const { fiscoControlSchemaEnsureService } = await import('./services/fisco/FiscoControlSchemaEnsureService');
+  await fiscoControlSchemaEnsureService.ensure().catch((e: any) => {
+    console.warn("[startup] FiscoControlSchemaEnsure failed:", e.message);
+  });
   const { registerFiscoRoutes, registerFiscoRebuildRoutes } = await import('./routes/fisco.routes');
   registerFiscoRoutes(app, routerDeps);
   registerFiscoRebuildRoutes(app);

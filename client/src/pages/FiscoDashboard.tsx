@@ -189,7 +189,7 @@ export default function FiscoDashboard() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Nav />
-      <main className="max-w-6xl mx-auto px-4 md:px-6 py-6">
+      <main className="max-w-[1600px] 2xl:max-w-[1700px] mx-auto px-4 md:px-6 py-6">
 
         <TopBar
           year={year}

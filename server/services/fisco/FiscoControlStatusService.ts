@@ -228,13 +228,24 @@ export class FiscoControlStatusService {
       WHERE op_type = 'trade_sell' AND executed_at >= $1::date AND executed_at < $2::date
     `, [yearStart, yearEnd]);
 
-    // Get last committed run info
-    const runQ = await pool.query(`
-      SELECT id, completed_at, operation_set_hash
-      FROM fisco_rebuild_runs
-      WHERE mode = 'commit' AND status = 'committed'
-      ORDER BY completed_at DESC LIMIT 1
-    `);
+    // Get last committed run info — operation_set_hash may not exist if schema not ensured
+    let runQ: any;
+    try {
+      runQ = await pool.query(`
+        SELECT id, completed_at, operation_set_hash
+        FROM fisco_rebuild_runs
+        WHERE mode = 'commit' AND status = 'committed'
+        ORDER BY completed_at DESC LIMIT 1
+      `);
+    } catch (_e: any) {
+      // Column operation_set_hash may not exist — query without it
+      runQ = await pool.query(`
+        SELECT id, completed_at
+        FROM fisco_rebuild_runs
+        WHERE mode = 'commit' AND status = 'committed'
+        ORDER BY completed_at DESC LIMIT 1
+      `);
+    }
 
     const row = dispQ.rows[0];
     return {
@@ -291,13 +302,23 @@ export class FiscoControlStatusService {
     const fingerprint = await this.getDataFingerprint(year);
     const officialResult = await this.getOfficialResult(year);
 
-    // Last committed run
-    const lastRunQ = await pool.query(`
-      SELECT id, completed_at, operations_count, lots_count, disposals_count, operation_set_hash
-      FROM fisco_rebuild_runs
-      WHERE mode = 'commit' AND status = 'committed'
-      ORDER BY completed_at DESC LIMIT 1
-    `);
+    // Last committed run — operation_set_hash may not exist if schema not ensured yet
+    let lastRunQ: any;
+    try {
+      lastRunQ = await pool.query(`
+        SELECT id, completed_at, operations_count, lots_count, disposals_count, operation_set_hash
+        FROM fisco_rebuild_runs
+        WHERE mode = 'commit' AND status = 'committed'
+        ORDER BY completed_at DESC LIMIT 1
+      `);
+    } catch (_e: any) {
+      lastRunQ = await pool.query(`
+        SELECT id, completed_at, operations_count, lots_count, disposals_count
+        FROM fisco_rebuild_runs
+        WHERE mode = 'commit' AND status = 'committed'
+        ORDER BY completed_at DESC LIMIT 1
+      `);
+    }
     const lastCommittedRun = lastRunQ.rows[0] ?? null;
 
     // Pending changes

@@ -587,65 +587,93 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       const sortField = (req.query.sort as string) || "executed_at";
       const sortOrder = (req.query.order as string) || "desc";
 
-      // Validate sort field to prevent SQL injection
-      const ALLOWED_SORT = ["executed_at", "exchange", "op_type", "asset", "amount", "price_eur", "total_eur", "fee_eur", "pair", "external_id"];
-      const safeSort = ALLOWED_SORT.includes(sortField) ? sortField : "executed_at";
+      // Map sort to qualified column names — prevents SQL injection and GROUP BY issues
+      const SORT_MAP: Record<string, string> = {
+        executed_at: "fo.executed_at",
+        exchange:    "fo.exchange",
+        op_type:     "fo.op_type",
+        asset:       "fo.asset",
+        amount:      "fo.amount",
+        price_eur:   "fo.price_eur",
+        total_eur:   "fo.total_eur",
+        fee_eur:     "fo.fee_eur",
+        pair:        "fo.pair",
+        external_id: "fo.external_id",
+        created_at:  "fo.created_at",
+      };
+      const safeSort = SORT_MAP[sortField] ?? "fo.executed_at";
       const safeOrder = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
 
-      let query = `SELECT * FROM fisco_operations WHERE 1=1`;
+      // Build WHERE clause once — reuse for count and data queries
+      const whereParts: string[] = [];
       const params: any[] = [];
       let paramIdx = 1;
 
       if (yearFilter) {
-        query += ` AND EXTRACT(YEAR FROM executed_at) = $${paramIdx++}`;
+        whereParts.push(`EXTRACT(YEAR FROM fo.executed_at) = $${paramIdx++}`);
         params.push(yearFilter);
       }
       if (assetFilter) {
-        query += ` AND asset = $${paramIdx++}`;
+        whereParts.push(`fo.asset = $${paramIdx++}`);
         params.push(assetFilter.toUpperCase());
       }
       if (typeFilter) {
-        query += ` AND op_type = $${paramIdx++}`;
+        whereParts.push(`fo.op_type = $${paramIdx++}`);
         params.push(typeFilter);
       }
       if (exchangeFilter) {
-        query += ` AND exchange = $${paramIdx++}`;
+        whereParts.push(`fo.exchange = $${paramIdx++}`);
         params.push(exchangeFilter.toLowerCase());
       }
       if (fromFilter) {
-        query += ` AND executed_at >= $${paramIdx++}`;
+        whereParts.push(`fo.executed_at >= $${paramIdx++}`);
         params.push(new Date(fromFilter));
       }
       if (toFilter) {
-        query += ` AND executed_at <= $${paramIdx++}`;
+        whereParts.push(`fo.executed_at <= $${paramIdx++}`);
         params.push(new Date(toFilter + 'T23:59:59.999Z'));
       }
       if (searchFilter) {
-        query += ` AND (external_id ILIKE $${paramIdx} OR pair ILIKE $${paramIdx} OR asset ILIKE $${paramIdx})`;
+        whereParts.push(`(fo.external_id ILIKE $${paramIdx} OR fo.pair ILIKE $${paramIdx} OR fo.asset ILIKE $${paramIdx})`);
         params.push(`%${searchFilter}%`);
         paramIdx++;
       }
       if (onlyWarnings) {
-        query += ` AND op_type IN ('trade_sell') AND id NOT IN (SELECT DISTINCT operation_id FROM fisco_disposals WHERE operation_id IS NOT NULL)`;
+        whereParts.push(`fo.op_type = 'trade_sell' AND fo.id NOT IN (SELECT DISTINCT sell_operation_id FROM fisco_disposals WHERE sell_operation_id IS NOT NULL)`);
       }
 
-      query += ` ORDER BY ${safeSort} ${safeOrder}`;
+      const whereClause = whereParts.length > 0 ? "WHERE " + whereParts.join(" AND ") : "";
 
-      // If pagination requested, get total count then apply LIMIT/OFFSET
+      // ── Count query (no ORDER BY, no GROUP BY — just COUNT(*)) ──
       if (pageSize > 0) {
-        // Count total
-        const countQuery = query.replace("SELECT *", "SELECT COUNT(*) as total");
+        const countQuery = `SELECT COUNT(*)::int AS total FROM fisco_operations fo ${whereClause}`;
         const countResult = await pool.query(countQuery, params);
-        const total = parseInt(countResult.rows[0]?.total ?? "0");
+        const total = countResult.rows[0]?.total ?? 0;
         const totalPages = Math.ceil(total / pageSize);
         const offset = (page - 1) * pageSize;
 
-        query += ` LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
-        params.push(pageSize, offset);
+        // ── Data query with LEFT JOIN for disposals info ──
+        const dataQuery = `
+          SELECT
+            fo.id, fo.exchange, fo.op_type, fo.asset, fo.amount,
+            fo.price_eur, fo.total_eur, fo.fee_eur, fo.fee_asset,
+            fo.pair, fo.executed_at, fo.external_id, fo.created_at,
+            COALESCE(fd.disposals_count, 0) AS disposals_count,
+            COALESCE(fd.gain_loss_eur, 0) AS gain_loss_eur
+          FROM fisco_operations fo
+          LEFT JOIN (
+            SELECT sell_operation_id, COUNT(*) AS disposals_count, SUM(gain_loss_eur::numeric) AS gain_loss_eur
+            FROM fisco_disposals
+            GROUP BY sell_operation_id
+          ) fd ON fd.sell_operation_id = fo.id
+          ${whereClause}
+          ORDER BY ${safeSort} ${safeOrder}
+          LIMIT $${paramIdx++} OFFSET $${paramIdx++}
+        `;
+        const dataParams = [...params, pageSize, offset];
+        const result = await pool.query(dataQuery, dataParams);
 
-        const result = await pool.query(query, params);
-
-        // Extract unique assets & exchanges for filter dropdowns
+        // Extract unique assets & exchanges from the page
         const uniqueAssets = [...new Set(result.rows.map((r: any) => r.asset))].sort();
         const uniqueExchanges = [...new Set(result.rows.map((r: any) => r.exchange))].sort();
 
@@ -657,11 +685,28 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
           totalPages,
           unique_assets: uniqueAssets,
           unique_exchanges: uniqueExchanges,
-          operations: result.rows,
+          rows: result.rows,
+          operations: result.rows, // alias for backward compat
         });
       } else {
         // Backward compatibility: return all results without pagination
-        const result = await pool.query(query, params);
+        const dataQuery = `
+          SELECT
+            fo.id, fo.exchange, fo.op_type, fo.asset, fo.amount,
+            fo.price_eur, fo.total_eur, fo.fee_eur, fo.fee_asset,
+            fo.pair, fo.executed_at, fo.external_id, fo.created_at,
+            COALESCE(fd.disposals_count, 0) AS disposals_count,
+            COALESCE(fd.gain_loss_eur, 0) AS gain_loss_eur
+          FROM fisco_operations fo
+          LEFT JOIN (
+            SELECT sell_operation_id, COUNT(*) AS disposals_count, SUM(gain_loss_eur::numeric) AS gain_loss_eur
+            FROM fisco_disposals
+            GROUP BY sell_operation_id
+          ) fd ON fd.sell_operation_id = fo.id
+          ${whereClause}
+          ORDER BY ${safeSort} ${safeOrder}
+        `;
+        const result = await pool.query(dataQuery, params);
 
         const uniqueAssets = [...new Set(result.rows.map((r: any) => r.asset))].sort();
         const uniqueExchanges = [...new Set(result.rows.map((r: any) => r.exchange))].sort();
@@ -670,10 +715,12 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
           count: result.rows.length,
           unique_assets: uniqueAssets,
           unique_exchanges: uniqueExchanges,
-          operations: result.rows,
+          rows: result.rows,
+          operations: result.rows, // alias for backward compat
         });
       }
     } catch (e: any) {
+      console.error("[fisco/operations]", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -4063,6 +4110,8 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         "fisco_operations",
         "fisco_disposals",
         "fisco_transfer_links",
+        "fisco_result_history",
+        "fisco_control_snapshots",
       ];
 
       const results: Record<string, boolean> = {};
@@ -4074,14 +4123,35 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         results[table] = result.rows[0].exists !== null;
       }
 
-      const allExist = Object.values(results).every(v => v);
+      // Check columns in fisco_rebuild_runs
+      const colChecks: Record<string, boolean> = {};
+      const rebuildCols = ["operation_set_hash", "fiscal_year"];
+      for (const col of rebuildCols) {
+        try {
+          const colQ = await pool.query(`
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'fisco_rebuild_runs' AND column_name = $1
+          `, [col]);
+          colChecks[`fisco_rebuild_runs.${col}`] = colQ.rows.length > 0;
+        } catch (_e: any) {
+          colChecks[`fisco_rebuild_runs.${col}`] = false;
+        }
+      }
+
+      const allTablesExist = Object.values(results).every(v => v);
+      const allColsExist = Object.values(colChecks).every(v => v);
+      const allExist = allTablesExist && allColsExist;
+
+      const missing = [
+        ...Object.entries(results).filter(([_, exists]) => !exists).map(([t]) => t),
+        ...Object.entries(colChecks).filter(([_, exists]) => !exists).map(([c]) => c),
+      ];
 
       res.json({
         healthy: allExist,
         tables: results,
-        missing_tables: Object.entries(results)
-          .filter(([_, exists]) => !exists)
-          .map(([table]) => table),
+        columns: colChecks,
+        missing_tables: missing,
         generated_at: new Date().toISOString(),
       });
     } catch (e: any) {

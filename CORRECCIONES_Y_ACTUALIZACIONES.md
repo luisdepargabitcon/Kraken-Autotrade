@@ -2,6 +2,66 @@
 
 ---
 
+## fix(fisco): reparar control-status y operaciones paginadas en VPS
+
+**Fecha**: 2026-06-26
+**Commit**: `fix(fisco): reparar control-status y operaciones paginadas en VPS`
+**Lote**: FISCO V2 — Hotfix VPS Fase 1
+
+### Problema
+Tras desplegar el bloque anterior, dos errores 500 en VPS:
+1. `/api/fisco/control-status?year=2025` → `column "operation_set_hash" does not exist` (migration 060 no ejecutada en VPS)
+2. `/api/fisco/operations?year=2025&page=1&pageSize=3` → `column "fisco_operations.executed_at" must appear in the GROUP BY clause` (COUNT query heredaba ORDER BY)
+
+### Cambios implementados
+
+**Nuevo: FiscoControlSchemaEnsureService** (`server/services/fisco/FiscoControlSchemaEnsureService.ts`):
+- Servicio que garantiza al startup que las tablas `fisco_result_history`, `fisco_control_snapshots` y las columnas nuevas de `fisco_rebuild_runs` existen.
+- Usa `CREATE TABLE IF NOT EXISTS` y `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+- Idempotente, no lanza error.
+- Se ejecuta en `server/routes.ts` antes de registrar las rutas FISCO.
+
+**FiscoControlStatusService** — resiliente a columnas inexistentes:
+- `getOfficialResult()`: try-catch en query de `operation_set_hash` en `fisco_rebuild_runs`.
+- `getControlStatus()`: try-catch equivalente, fallback sin `operation_set_hash`.
+- Si la columna no existe, devuelve `null` en lugar de 500.
+
+**Endpoint `/api/fisco/operations`** — reescrito:
+- Query de conteo separada: `SELECT COUNT(*)::int AS total FROM fisco_operations fo WHERE ...` (sin ORDER BY, sin GROUP BY).
+- Query de datos con `LEFT JOIN` subquery para `disposals_count` y `gain_loss_eur`.
+- Sort mapeado a `fo.` prefijo via `SORT_MAP` (previene SQL injection y GROUP BY errors).
+- Sort inválido → fallback seguro `fo.executed_at DESC`.
+- Respuesta incluye `rows` + `operations` (alias backward compat).
+
+**Endpoint `/api/fisco/schema-health`** — ampliado:
+- Verifica `fisco_result_history`, `fisco_control_snapshots`.
+- Verifica columnas `operation_set_hash` y `fiscal_year` en `fisco_rebuild_runs` via `information_schema.columns`.
+- Devuelve `columns` además de `tables`.
+
+**UI Transacciones** (`FiscoTransaccionesSection.tsx`):
+- Error no muestra SQL crudo: mensaje principal "No se pudieron cargar las transacciones fiscales." con `<details>` desplegable para detalle técnico.
+- Tabla `min-w-[1300px]` para columnas más anchas.
+
+**UI Diagnóstico** (`FiscoDiagnosticoSectionV2.tsx`):
+- Tabla `min-w-[1350px]`.
+
+**FiscoDashboard**:
+- Container `max-w-[1600px] 2xl:max-w-[1700px]` (antes `max-w-6xl`).
+
+**Tests**: 18 tests nuevos (H-01 a H-18) cubriendo schema ensure, operations sin GROUP BY, sort seguro, UI sin SQL crudo, anchos de tabla, control-status resiliente, no modificación de FiscoRebuildService.
+
+### Validación
+- `npm run check`: OK
+- `npm run build`: OK (2569 módulos)
+- `vitest fisco` (17 archivos): 516/516 OK
+
+### No se modifica
+- FiscoRebuildService.ts (commitToOfficial, recordResultHistory intactos)
+- Cálculo FIFO, resultados oficiales, hashes, blockers, rebuild
+- Migration 060 (ya era idempotente, el problema era que no se había ejecutado en VPS)
+
+---
+
 ## feat(fisco-ui): paginar transacciones y explicar diagnostico en lenguaje natural
 
 **Fecha**: 2026-06-26
