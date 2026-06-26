@@ -2,6 +2,44 @@
 
 ---
 
+## feat(fisco-v2): activacion oficial con backup rollback y auditoria
+
+**Fecha**: 2026-06-26
+**Lote**: FISCO V2 — Fase 2 (C4)
+
+### Cambios implementados
+
+**Nuevo: `FiscoV2ActivationService.ts`**:
+- `controlledCommit(year)`: recalcula comparison, registra operation_set_hash, guarda audit log
+- `activateOfficial(year, confirm, expected_hash, expected_v2_net, expected_v2_rounded)`:
+  - Valida `confirm: true` (doble confirmación)
+  - Valida `safe_for_official_switch: true`
+  - Valida `operation_set_hash` coincide con esperado
+  - Valida `v2_net_gain_loss_eur` dentro de tolerancia 0.01
+  - Valida `v2_rounded_eur` coincide
+  - Crea backup en `fisco_v2_backups` (config + disposals + lots snapshot)
+  - Cambia engine a `v2_official`
+  - Registra audit log con action='activate'
+- `rollbackOfficial(year, backup_id, confirm)`:
+  - Valida `confirm: true`
+  - Restaura engine mode del backup
+  - Registra audit log con action='rollback'
+- `getAuditLog(year)`: devuelve historial de auditoría
+- `getBackups(year)`: devuelve backups disponibles
+
+**Modificado: `fisco.routes.ts`**:
+- `POST /api/fisco/rebuild/controlled-commit` — commit controlado con hash
+- `POST /api/fisco/v2/activate-official` — activación con validaciones estrictas
+- `POST /api/fisco/v2/rollback` — rollback con backup_id y confirmación
+- `GET /api/fisco/v2/audit-log?year=YYYY` — log de auditoría
+- `GET /api/fisco/v2/backups?year=YYYY` — backups disponibles
+
+### Validación
+- `npm run check`: OK
+- `npm run build`: OK (2569 módulos)
+
+---
+
 ## feat(fisco-v2): comparacion legacy vs v2 con motor independiente y trazabilidad completa
 
 **Fecha**: 2026-06-26

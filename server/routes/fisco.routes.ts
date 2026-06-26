@@ -23,6 +23,7 @@ import { createImportPreview, confirmImport, getImportBatches, getImportBatch, t
 import { getFiscoConfig, setFiscoConfig, getFinalizationStatus } from "../services/fisco/FiscoConfigService";
 import { runComparison } from "../services/fisco/FiscoComparisonService";
 import { fiscoControlStatusService } from "../services/fisco/FiscoControlStatusService";
+import { controlledCommit, activateOfficial, rollbackOfficial, getAuditLog, getBackups } from "../services/fisco/FiscoV2ActivationService";
 import multer from "multer";
 
 // Configure multer for memory storage (no disk writes)
@@ -4216,6 +4217,134 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       res.json(impact);
     } catch (e: any) {
       console.error("[fisco/change-impact]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/rebuild/controlled-commit
+   * Recalcula FIFO, registra operation_set_hash, guarda auditoría.
+   * Body: { year: number }
+   */
+  app.post("/api/fisco/rebuild/controlled-commit", async (req, res) => {
+    try {
+      const year = parseInt(req.body.year) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const result = await controlledCommit(year);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/controlled-commit]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/v2/activate-official
+   * Activa motor V2 oficial con validaciones estrictas y backup.
+   * Body: { year, confirm, expected_operation_set_hash, expected_v2_net_gain_loss_eur, expected_v2_rounded_eur }
+   */
+  app.post("/api/fisco/v2/activate-official", async (req, res) => {
+    try {
+      const {
+        year: yearParam,
+        confirm,
+        expected_operation_set_hash,
+        expected_v2_net_gain_loss_eur,
+        expected_v2_rounded_eur,
+      } = req.body;
+
+      const year = parseInt(yearParam) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      if (confirm !== true) {
+        return res.status(400).json({ error: "confirm debe ser true para activar V2 oficial" });
+      }
+      if (!expected_operation_set_hash || typeof expected_operation_set_hash !== "string") {
+        return res.status(400).json({ error: "expected_operation_set_hash es obligatorio" });
+      }
+      if (typeof expected_v2_net_gain_loss_eur !== "number") {
+        return res.status(400).json({ error: "expected_v2_net_gain_loss_eur es obligatorio" });
+      }
+      if (typeof expected_v2_rounded_eur !== "number") {
+        return res.status(400).json({ error: "expected_v2_rounded_eur es obligatorio" });
+      }
+
+      const result = await activateOfficial(
+        year,
+        confirm,
+        expected_operation_set_hash,
+        expected_v2_net_gain_loss_eur,
+        expected_v2_rounded_eur
+      );
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/v2/activate-official]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/v2/rollback
+   * Reversa activación V2 oficial, restaura backup.
+   * Body: { year, backup_id, confirm }
+   */
+  app.post("/api/fisco/v2/rollback", async (req, res) => {
+    try {
+      const { year: yearParam, backup_id, confirm } = req.body;
+      const year = parseInt(yearParam) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      if (!backup_id || typeof backup_id !== "string") {
+        return res.status(400).json({ error: "backup_id es obligatorio" });
+      }
+      if (confirm !== true) {
+        return res.status(400).json({ error: "confirm debe ser true para rollback" });
+      }
+
+      const result = await rollbackOfficial(year, backup_id, confirm);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/v2/rollback]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/v2/audit-log?year=YYYY
+   * Devuelve el log de auditoría de activaciones, rollbacks y commits.
+   */
+  app.get("/api/fisco/v2/audit-log", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const logs = await getAuditLog(year);
+      res.json({ year, logs });
+    } catch (e: any) {
+      console.error("[fisco/v2/audit-log]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/v2/backups?year=YYYY
+   * Devuelve los backups disponibles para rollback.
+   */
+  app.get("/api/fisco/v2/backups", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const backups = await getBackups(year);
+      res.json({ year, backups });
+    } catch (e: any) {
+      console.error("[fisco/v2/backups]", e);
       res.status(500).json({ error: e.message });
     }
   });
