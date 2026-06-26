@@ -21,7 +21,7 @@
  */
 
 import { pool } from "../../db";
-import { getFiscoConfig, getFinalizationStatus, type FiscoConfig, type FinalizationStatus } from "./FiscoConfigService";
+import { getFiscoConfig, type FiscoConfig } from "./FiscoConfigService";
 import { FiscoPendingDetector, type PendingFiscalChanges } from "./FiscoPendingDetector";
 import { createHash } from "crypto";
 
@@ -252,7 +252,7 @@ export class FiscoControlStatusService {
    * Get sync status info.
    */
   async getSyncStatus(lastRebuildAt: Date | null): Promise<SyncStatus> {
-    const [krakenQ, revolutxQ, importQ, confirmedQ, previewQ, errorsQ] = await Promise.all([
+    const [krakenQ, revolutxQ, importQ, confirmedQ, previewQ] = await Promise.all([
       pool.query(`SELECT MAX(completed_at) as last_sync FROM fisco_rebuild_runs WHERE mode = 'commit' AND status = 'committed' AND exchange_filter IN ('kraken', NULL)`),
       pool.query(`SELECT MAX(completed_at) as last_sync FROM fisco_rebuild_runs WHERE mode = 'commit' AND status = 'committed' AND exchange_filter IN ('revolutx', NULL)`),
       pool.query(`SELECT MAX(created_at) as last_import FROM fisco_import_batches WHERE status = 'confirmed'`),
@@ -262,8 +262,16 @@ export class FiscoControlStatusService {
           AND ($1::timestamp IS NULL OR confirmed_at > $1::timestamp)
       `, [lastRebuildAt]),
       pool.query(`SELECT COUNT(*) as cnt FROM fisco_import_batches WHERE status = 'preview'`),
-      pool.query(`SELECT exchange, last_error_msg FROM fisco_sync_retry WHERE status = 'exhausted' LIMIT 10`),
     ]);
+
+    // fisco_sync_retry may not exist — query separately with error handling
+    let syncErrors: string[] = [];
+    try {
+      const errorsQ = await pool.query(`SELECT exchange, last_error_msg FROM fisco_sync_retry WHERE status = 'exhausted' LIMIT 10`);
+      syncErrors = errorsQ.rows.map((r: any) => `[${r.exchange}] ${r.last_error_msg}`);
+    } catch (_e: any) {
+      // Table may not exist — skip gracefully
+    }
 
     return {
       kraken_last_sync_at: krakenQ.rows[0]?.last_sync?.toISOString() ?? null,
@@ -271,7 +279,7 @@ export class FiscoControlStatusService {
       last_import_batch_at: importQ.rows[0]?.last_import?.toISOString() ?? null,
       confirmed_imports_after_last_rebuild: parseInt(confirmedQ.rows[0]?.cnt ?? "0"),
       preview_batches_pending: parseInt(previewQ.rows[0]?.cnt ?? "0"),
-      sync_errors: errorsQ.rows.map((r: any) => `[${r.exchange}] ${r.last_error_msg}`),
+      sync_errors: syncErrors,
     };
   }
 
@@ -307,10 +315,7 @@ export class FiscoControlStatusService {
       if (r.rows[0].exists === null) schemaHealthy = false;
     }
 
-    // Finalization status
-    const finStatus = await getFinalizationStatus(year);
-
-    // Determine fiscal_result_status
+    // Determine fiscal_result_status (inline checks, avoid calling getFinalizationStatus to prevent duplicate DB queries)
     const blockers: string[] = [];
     const warnings: string[] = [];
     const requiredActions: string[] = [];
@@ -344,39 +349,68 @@ export class FiscoControlStatusService {
       status = "OUTDATED";
       warnings.push("El conjunto de operaciones ha cambiado desde el último cálculo fiscal.");
       requiredActions.push("Reconstruir FIFO para actualizar el resultado oficial");
-    } else if (finStatus.blockers.length > 0) {
-      status = "BLOCKED";
-      blockers.push(...finStatus.blockers);
-    } else if (finStatus.warnings.length > 0) {
-      status = "NEEDS_REVIEW";
-      warnings.push(...finStatus.warnings);
-      requiredActions.push("Revisar avisos antes de generar el informe");
     } else {
-      status = "UPDATED";
-    }
-
-    // Check for rewards without price
-    const snapshotQ = await pool.query(
-      "SELECT balance_check FROM fisco_inventory_snapshots WHERE year = $1 ORDER BY generated_at DESC LIMIT 1",
-      [year]
-    );
-    if (snapshotQ.rows.length > 0) {
-      const bc = snapshotQ.rows[0].balance_check;
-      if (bc?.rewards_without_price?.length > 0) {
-        if (config.blockIfRewardWithoutPrice) {
-          blockers.push(`${bc.rewards_without_price.length} rewards sin precio EUR (bloqueante por config)`);
-          if (status === "UPDATED") status = "BLOCKED";
-        } else {
-          warnings.push(`${bc.rewards_without_price.length} rewards sin precio EUR (no bloqueante)`);
+      // Check inventory snapshot for remaining blockers/warnings (inline, avoids duplicate detectPendingFiscalChanges)
+      let snapshotBlockers: string[] = [];
+      let snapshotWarnings: string[] = [];
+      try {
+        const snapshotQ = await pool.query(
+          "SELECT balance_check FROM fisco_inventory_snapshots WHERE year = $1 ORDER BY generated_at DESC LIMIT 1",
+          [year]
+        );
+        if (snapshotQ.rows.length > 0) {
+          const bc = snapshotQ.rows[0].balance_check;
+          if (bc?.rewards_without_price?.length > 0) {
+            if (config.blockIfRewardWithoutPrice) {
+              snapshotBlockers.push(`${bc.rewards_without_price.length} rewards sin precio EUR (bloqueante por config)`);
+            } else {
+              snapshotWarnings.push(`${bc.rewards_without_price.length} rewards sin precio EUR (no bloqueante)`);
+            }
+          }
+          if (bc?.sells_without_cost_basis?.length > 0 && !hasOrphanSells) {
+            if (config.blockIfSellWithoutCostBasis) {
+              snapshotBlockers.push(`${bc.sells_without_cost_basis.length} ventas sin base de coste (bloqueante por config)`);
+            } else {
+              snapshotWarnings.push(`${bc.sells_without_cost_basis.length} ventas sin base de coste (no bloqueante)`);
+            }
+          }
+          // Check for critical issues from balance check
+          const criticalIssues = bc?.issues?.filter((i: any) => i.severity === "CRITICAL") || [];
+          const warningIssues = bc?.issues?.filter((i: any) => i.severity === "WARNING") || [];
+          for (const issue of criticalIssues) {
+            snapshotBlockers.push(`[${issue.code}] ${issue.asset}: ${issue.detail}`);
+          }
+          for (const issue of warningIssues) {
+            snapshotWarnings.push(`[${issue.code}] ${issue.asset}: ${issue.detail}`);
+          }
+          // Suspected duplicate transfers
+          if (bc?.suspected_duplicate_transfers?.length > 0) {
+            if (config.blockIfTransferMismatch) {
+              snapshotBlockers.push(`${bc.suspected_duplicate_transfers.length} withdrawals sin transfer_link (bloqueante por config)`);
+            } else {
+              snapshotWarnings.push(`${bc.suspected_duplicate_transfers.length} withdrawals sin transfer_link (no bloqueante)`);
+            }
+          }
         }
+      } catch (snapErr: any) {
+        // fisco_inventory_snapshots table may not exist yet — skip gracefully
+        console.warn("[fisco/control-status] inventory snapshot check skipped:", snapErr.message);
       }
-      if (bc?.sells_without_cost_basis?.length > 0 && !hasOrphanSells) {
-        if (config.blockIfSellWithoutCostBasis) {
-          blockers.push(`${bc.sells_without_cost_basis.length} ventas sin base de coste (bloqueante por config)`);
-          if (status === "UPDATED") status = "BLOCKED";
-        } else {
-          warnings.push(`${bc.sells_without_cost_basis.length} ventas sin base de coste (no bloqueante)`);
-        }
+
+      // Engine mode check
+      if (config.fiscoEngineMode === "v2_official" && snapshotBlockers.length > 0) {
+        snapshotBlockers.push("No se puede activar v2_official mientras haya blockers. Usa v2_shadow para validar primero.");
+      }
+
+      if (snapshotBlockers.length > 0) {
+        status = "BLOCKED";
+        blockers.push(...snapshotBlockers);
+      } else if (snapshotWarnings.length > 0) {
+        status = "NEEDS_REVIEW";
+        warnings.push(...snapshotWarnings);
+        requiredActions.push("Revisar avisos antes de generar el informe");
+      } else {
+        status = "UPDATED";
       }
     }
 
