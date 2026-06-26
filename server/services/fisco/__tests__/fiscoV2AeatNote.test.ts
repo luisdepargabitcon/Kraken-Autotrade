@@ -118,7 +118,7 @@ describe("FiscoHtmlRenderer — Nota AEAT/Bit2Me en informe HTML", () => {
       krakenRec: { status: "OK" },
     });
 
-    expect(html.toLowerCase()).toContain("no duplica");
+    expect(html).toContain("no deben sumarse ni restarse otra vez");
   });
 
   it("H-AEAT-05: informe contiene sección 'Nota informativa'", async () => {
@@ -143,7 +143,7 @@ describe("FiscoHtmlRenderer — Nota AEAT/Bit2Me en informe HTML", () => {
 
     expect(html).toContain("Nota informativa");
     expect(html).toContain("Tratamiento de comisiones");
-    expect(html).toContain("AEAT_INTEGRATED_TRACEABLE");
+    expect(html).toContain("no deben sumarse ni restarse otra vez");
   });
 
   it("H-AEAT-06: la nota está dentro de report-main (imprimible)", async () => {

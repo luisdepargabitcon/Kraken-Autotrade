@@ -1220,11 +1220,11 @@ describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo
     } as any;
   }
 
-  it("R1: HTML contiene 'Resumen de ganancias y pérdidas por activo el 2025'", async () => {
+  it("R1: HTML contiene 'Datos a revisar / copiar en Renta'", async () => {
     const pool = makeHtmlRendererPool();
     const renderer = new FiscoHtmlRenderer(pool);
     const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
-    expect(html).toContain("Resumen de ganancias y pérdidas por activo el 2025");
+    expect(html).toContain("Datos a revisar / copiar en Renta");
   });
 
   it("R2: HTML contiene 'Tipo de contraprestación recibida a cambio'", async () => {
@@ -1297,11 +1297,11 @@ describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo
     expect(html).toContain("Avisos relevantes");
   });
 
-  it("R12: HTML contiene 'Resumen compacto por activo'", async () => {
+  it("R12: HTML contiene 'Resumen técnico de comprobación'", async () => {
     const pool = makeHtmlRendererPool();
     const renderer = new FiscoHtmlRenderer(pool);
     const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
-    expect(html).toContain("Resumen compacto por activo");
+    expect(html).toContain("Resumen técnico de comprobación");
   });
 
   it("R13: informe principal NO contiene External ID en la parte principal (.report-main)", async () => {
@@ -1364,11 +1364,11 @@ describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo
     expect(html).toContain('id="technical-annex"');
   });
 
-  it("R20: 'Resumen de ganancias y pérdidas' aparece antes de 'Importes para la declaración'", async () => {
+  it("R20: 'Datos a revisar / copiar en Renta' aparece antes de 'Importes para la declaración'", async () => {
     const pool = makeHtmlRendererPool();
     const renderer = new FiscoHtmlRenderer(pool);
     const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
-    const posResumen = html.indexOf("Resumen de ganancias y pérdidas por activo el 2025");
+    const posResumen = html.indexOf("Datos a revisar / copiar en Renta");
     const posImportes = html.indexOf("Importes para la declaración");
     expect(posResumen).toBeGreaterThan(0);
     expect(posImportes).toBeGreaterThan(0);
@@ -1845,5 +1845,97 @@ describe("renderAnnualHtml: texto disposiciones conservadoras según importe (CD
     const html = await getHtmlWith({});
     expect(html).toContain("Total fiscal final");
     expect(html).toContain("-200,00");
+  });
+});
+
+// ─── Tests RT1-RT16: tabla unificada Renta con badges, fórmulas y notas ──────
+
+describe("renderAnnualHtml: tabla unificada Renta — badges, fórmulas y notas (RT1-RT16)", () => {
+  async function getHtml() {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    return renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+  }
+
+  it("RT1: HTML contiene badge 'CAMPO RENTA'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("CAMPO RENTA");
+  });
+
+  it("RT2: HTML contiene badge 'Auxiliar'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Auxiliar");
+  });
+
+  it("RT3: HTML contiene clase CSS badge-renta", async () => {
+    const html = await getHtml();
+    expect(html).toContain("badge-renta");
+  });
+
+  it("RT4: HTML contiene clase CSS badge-aux", async () => {
+    const html = await getHtml();
+    expect(html).toContain("badge-aux");
+  });
+
+  it("RT5: HTML contiene columna 'Valor bruto de transmisión en EUR'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Valor bruto de transmisión en EUR");
+  });
+
+  it("RT6: HTML contiene columna 'Comisiones imputadas en EUR'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Comisiones imputadas en EUR");
+  });
+
+  it("RT7: HTML contiene columna 'Nº ventas'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Nº ventas");
+  });
+
+  it("RT8: HTML contiene caja 'Cómo se calcula'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Cómo se calcula");
+  });
+
+  it("RT9: HTML contiene fórmula 'Valor de transmisión neto = Valor bruto de transmisión − Comisiones de venta imputadas'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Valor de transmisión neto = Valor bruto de transmisión");
+    expect(html).toContain("Comisiones de venta imputadas");
+  });
+
+  it("RT10: HTML contiene fórmula 'Ganancia/Pérdida fiscal = Valor de transmisión neto − Valor de adquisición FIFO'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Ganancia/Pérdida fiscal = Valor de transmisión neto");
+    expect(html).toContain("Valor de adquisición FIFO");
+  });
+
+  it("RT11: HTML contiene caja 'Cómo leer esta tabla para Renta'", async () => {
+    const html = await getHtml();
+    expect(html).toContain("Cómo leer esta tabla para Renta");
+  });
+
+  it("RT12: HTML contiene clase CSS renta-table", async () => {
+    const html = await getHtml();
+    expect(html).toContain("renta-table");
+  });
+
+  it("RT13: HTML contiene clase CSS formula-box", async () => {
+    const html = await getHtml();
+    expect(html).toContain("formula-box");
+  });
+
+  it("RT14: HTML contiene clase CSS renta-help-box", async () => {
+    const html = await getHtml();
+    expect(html).toContain("renta-help-box");
+  });
+
+  it("RT15: HTML contiene nota 'no deben sumarse ni restarse otra vez' sobre comisiones", async () => {
+    const html = await getHtml();
+    expect(html).toContain("no deben sumarse ni restarse otra vez");
+  });
+
+  it("RT16: HTML contiene texto 'No copiar aparte' en cabecera de comisiones", async () => {
+    const html = await getHtml();
+    expect(html).toContain("No copiar aparte");
   });
 });

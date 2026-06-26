@@ -264,6 +264,16 @@ export const HTML_STYLE = `
   .badge{display:inline-block;padding:.15rem .45rem;border-radius:4px;font-size:.72rem;font-weight:600;white-space:nowrap}
   .ok{color:#155724}.err{color:#721c24}.warn{color:#856404}
   .b-ok{background:#d4edda;color:#155724}.b-warn{background:#fff3cd;color:#856404}.b-err{background:#f8d7da;color:#721c24}.b-info{background:#d1ecf1;color:#0c5460}
+  .badge-renta{background:#e3f2fd;color:#0d47a1;border:1px solid #90caf9}
+  .badge-aux{background:#f5f5f5;color:#666;border:1px solid #e0e0e0}
+  .renta-table{width:100%;border-collapse:collapse;font-size:12px;margin:.75rem 0}
+  .renta-table th,.renta-table td{border:1px solid #333;padding:4px 6px;vertical-align:middle}
+  .renta-table th{background:#e8eef8;font-weight:700;text-align:center;font-size:11px}
+  .renta-table td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .renta-table .total-row{font-weight:700;background:#f0f0f0}
+  .renta-table .total-row td{border-top:2px solid #333}
+  .formula-box{background:#f0f7ff;border:1px solid #bee5eb;border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;font-size:.85rem;color:#0c5460}
+  .renta-help-box{background:#fffde7;border:1px solid #fff9c4;border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;font-size:.82rem;color:#5d4037;line-height:1.6}
   details{border:1px solid #e0e0e0;border-radius:6px;margin:.5rem 0;padding:0}
   summary{padding:.6rem 1rem;cursor:pointer;font-weight:600;background:#f5f7ff;border-radius:5px;list-style:none;user-select:none}
   summary::-webkit-details-marker{display:none}
@@ -720,58 +730,124 @@ function fmtEurEs(n: number): string {
   return new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 
-// ─── Annual gain/loss summary section ────────────────────────────────────────
+// ─── Unified Renta table (tabla principal orientada a Renta) ────────────────
 
-function renderAnnualGainLossSummarySection(
-  summary: AnnualGainLossByAssetSummary
+function renderUnifiedRentaTable(
+  assetSummaries: AssetSummary[],
+  disposalsByAsset: Record<string, any[]>,
+  gainLossSummary: AnnualGainLossByAssetSummary
 ): string {
-  const { year, rows, totals } = summary;
+  const { year } = gainLossSummary;
 
-  if (rows.length === 0) {
+  const assetsWithDisposals = assetSummaries.filter(
+    a => (disposalsByAsset[a.asset] ?? []).length > 0 || (a.disposals_count ?? 0) > 0
+  );
+
+  if (assetsWithDisposals.length === 0) {
     return `
 <section class="annual-gain-loss-summary section-block">
-  <h2>Resumen de ganancias y pérdidas por activo el ${year}</h2>
+  <h2>Datos a revisar / copiar en Renta — Ganancias y pérdidas por activo</h2>
   <p style="color:#888">Sin transmisiones registradas en ${year}.</p>
 </section>`;
   }
 
-  const dataRows = rows.map(r => `
-      <tr>
-        <td>${r.ticker}</td>
-        <td>${r.name}</td>
-        <td>${r.considerationTypeLabel}</td>
-        <td>${fmtEurEs(r.transmissionValueEur)}</td>
-        <td>${fmtEurEs(r.acquisitionValueEur)}</td>
-        <td class="${r.capitalGainLossEur > 0.005 ? "gain-pos" : r.capitalGainLossEur < -0.005 ? "gain-neg" : "gain-zero"}">${fmtEurEs(r.capitalGainLossEur)}</td>
-      </tr>`).join("");
+  // Build a lookup of consideration types per asset from gainLossSummary
+  const considerationByAsset = new Map<string, string[]>();
+  for (const r of gainLossSummary.rows) {
+    const labels = considerationByAsset.get(r.ticker) ?? [];
+    labels.push(r.considerationTypeLabel);
+    considerationByAsset.set(r.ticker, labels);
+  }
 
-  const totalClass = totals.capitalGainLossEur > 0.005 ? "gain-pos"
-    : totals.capitalGainLossEur < -0.005 ? "gain-neg" : "gain-zero";
+  const badgeRenta = '<span class="badge badge-renta">CAMPO RENTA</span>';
+  const badgeAux = '<span class="badge badge-aux">Auxiliar</span>';
+
+  const dataRows = assetsWithDisposals.map(a => {
+    const disposals = disposalsByAsset[a.asset] ?? [];
+    const numSales  = new Set(disposals.map((d: any) => d.sell_operation_id)).size || (a.disposals_count ?? 0);
+    const grossProc = a.proceeds_eur ?? 0;
+    const fees      = a.fees_eur ?? 0;
+    const netTrans  = grossProc - fees;
+    const costBasis = a.cost_basis_eur ?? 0;
+    const gainLoss  = a.gain_loss_eur ?? 0;
+    const consLabels = considerationByAsset.get(a.asset) ?? ["—"];
+    const consText = consLabels.join("; ");
+
+    return `<tr>
+      <td><strong>${a.asset}</strong></td>
+      <td>${a.asset}</td>
+      <td>${consText}</td>
+      <td class="num">${fmtEurEs(grossProc)}</td>
+      <td class="num">${fmtEurEs(fees)}</td>
+      <td class="num">${fmtEurEs(netTrans)}</td>
+      <td class="num">${fmtEurEs(costBasis)}</td>
+      <td class="num ${gainClass(gainLoss)}">${fmtEurEs(gainLoss)}</td>
+      <td style="text-align:center">${numSales}</td>
+    </tr>`;
+  }).join("");
+
+  const totGross   = assetsWithDisposals.reduce((s, a) => s + (a.proceeds_eur ?? 0), 0);
+  const totFees    = assetsWithDisposals.reduce((s, a) => s + (a.fees_eur ?? 0), 0);
+  const totNet     = totGross - totFees;
+  const totCost    = assetsWithDisposals.reduce((s, a) => s + (a.cost_basis_eur ?? 0), 0);
+  const totGain    = assetsWithDisposals.reduce((s, a) => s + (a.gain_loss_eur ?? 0), 0);
+  const totSales   = assetsWithDisposals.reduce((s, a) => {
+    const disposals = disposalsByAsset[a.asset] ?? [];
+    return s + (new Set(disposals.map((d: any) => d.sell_operation_id)).size || (a.disposals_count ?? 0));
+  }, 0);
 
   return `
 <section class="annual-gain-loss-summary">
-  <h2>Resumen de ganancias y pérdidas por activo el ${year}</h2>
-  <table class="gain-loss-summary-table">
+  <h2>Datos a revisar / copiar en Renta — Ganancias y pérdidas por activo</h2>
+  <p style="font-size:.82rem;color:#555;margin:.4rem 0 .75rem">
+    Los campos marcados como <strong>CAMPO RENTA</strong> son los datos principales que deben revisarse para completar la declaración.
+    Las comisiones ya están integradas en los valores fiscales y se muestran solo para trazabilidad.
+  </p>
+  <table class="renta-table">
     <thead>
       <tr>
         <th>Ticker</th>
         <th>Nombre</th>
-        <th>Tipo de contraprestación recibida a cambio</th>
-        <th>Valor de transmisión neto en EUR</th>
-        <th>Valor de adquisición en EUR</th>
-        <th>Ganancia o pérdida de capital en EUR</th>
+        <th>Tipo de contraprestación recibida a cambio<br>${badgeRenta}</th>
+        <th>Valor bruto de transmisión en EUR<br>${badgeAux}</th>
+        <th>Comisiones imputadas en EUR<br>${badgeAux}<br><span style="font-size:.65rem;font-weight:400">No copiar aparte</span></th>
+        <th>Valor de transmisión neto en EUR<br>${badgeRenta}</th>
+        <th>Valor de adquisición en EUR<br>${badgeRenta}</th>
+        <th>Ganancia o pérdida de capital en EUR<br>${badgeRenta}</th>
+        <th>Nº ventas<br>${badgeAux}</th>
       </tr>
     </thead>
     <tbody>
       ${dataRows}
       <tr class="total-row">
-        <td colspan="3">Total ${year}</td>
-        <td>${fmtEurEs(totals.transmissionValueEur)}</td>
-        <td>${fmtEurEs(totals.acquisitionValueEur)}</td>
-        <td class="${totalClass}">${fmtEurEs(totals.capitalGainLossEur)}</td>
+        <td colspan="2">Total ${year}</td>
+        <td>—</td>
+        <td class="num">${fmtEurEs(totGross)}</td>
+        <td class="num">${fmtEurEs(totFees)}</td>
+        <td class="num">${fmtEurEs(totNet)}</td>
+        <td class="num">${fmtEurEs(totCost)}</td>
+        <td class="num ${gainClass(totGain)}">${fmtEurEs(totGain)}</td>
+        <td style="text-align:center">${totSales}</td>
       </tr>
     </tbody>
   </table>
+
+  <div class="formula-box">
+    <strong>Cómo se calcula</strong><br>
+    Valor de transmisión neto = Valor bruto de transmisión − Comisiones de venta imputadas<br>
+    Ganancia/Pérdida fiscal = Valor de transmisión neto − Valor de adquisición FIFO
+  </div>
+
+  <div class="renta-help-box">
+    <strong>Cómo leer esta tabla para Renta</strong>
+    <ol style="margin:.4rem 0 .4rem 1.2rem;padding:0">
+      <li><strong>Tipo de contraprestación recibida a cambio:</strong> Indica si la transmisión se hizo a cambio de moneda de curso legal (F) o de otra moneda virtual (N).</li>
+      <li><strong>Valor de transmisión neto en EUR:</strong> Es el valor de venta ya minorado por las comisiones de venta imputadas.</li>
+      <li><strong>Valor de adquisición en EUR:</strong> Es el coste FIFO de adquisición. Las comisiones de compra ya están incluidas cuando corresponde.</li>
+      <li><strong>Ganancia o pérdida de capital en EUR:</strong> Es el resultado fiscal: Valor de transmisión neto − Valor de adquisición.</li>
+      <li><strong>Comisiones imputadas:</strong> Se muestran solo para trazabilidad. No se introducen otra vez como importe independiente porque ya están integradas en el valor fiscal correspondiente.</li>
+    </ol>
+  </div>
 </section>`;
 }
 
@@ -1709,8 +1785,8 @@ export class FiscoHtmlRenderer {
   </p>
 </div>
 
-<!-- 2. TABLA OBLIGATORIA: RESUMEN G/P POR ACTIVO -->
-${renderAnnualGainLossSummarySection(gainLossSummary)}
+<!-- 2. TABLA OBLIGATORIA: DATOS PARA RENTA -->
+${renderUnifiedRentaTable(assetSummaries, disposalsByAsset, gainLossSummary)}
 
 ${partialErrors.length > 0 ? `
 <div class="warnings-box" style="margin:1rem 0">
@@ -1737,26 +1813,26 @@ ${partialErrors.length > 0 ? `
   ${renderRelevantWarnings(finEnriched, krakenRec)}
 </div>
 
-<!-- 6. RESUMEN COMPACTO POR ACTIVO -->
-<div class="section-block">
-  <h2>Resumen compacto por activo</h2>
-  ${renderCompactAssetSummary(assetSummaries, disposalsByAsset)}
-</div>
+<!-- 6. RESUMEN TÉCNICO DE COMPROBACIÓN (plegado) -->
+<details class="section-block">
+  <summary>Resumen técnico de comprobación</summary>
+  <div class="details-body">
+    <p style="font-size:.82rem;color:#555;margin:.4rem 0 .75rem">
+      Esta tabla sirve para comprobar bruto, comisiones y neto. La tabla superior es la tabla principal orientada a Renta.
+    </p>
+    ${renderCompactAssetSummary(assetSummaries, disposalsByAsset)}
+  </div>
+</details>
 
 <!-- 7. NOTA EXPLICATIVA — COMISIONES TRAZADAS (AEAT) -->
 <div class="section-block avoid-break" style="margin-top:1.5rem;padding:.75rem 1rem;background:#f8f8f8;border-left:3px solid #666;border-radius:4px;font-size:.82rem;color:#444">
   <h2 style="margin-top:0;font-size:.95rem;color:#333">Nota informativa — Tratamiento de comisiones</h2>
   <p style="margin:.4rem 0">
-    <strong>Criterio aplicado:</strong> AEAT integrado trazable (AEAT_INTEGRATED_TRACEABLE).
-    Las comisiones de compra se integran en el valor de adquisición (se suman al coste).
-    Las comisiones de venta se integran en el valor de transmisión (se restan del ingreso).
-    La columna «Comisiones» en las tablas es <strong>informativa y no duplica el cálculo fiscal</strong>:
-    el efecto fiscal ya está reflejado en el valor de adquisición o transmisión.
+    Las comisiones imputadas se muestran separadas para trazabilidad. Las comisiones de compra aumentan el valor de adquisición.
+    Las comisiones de venta reducen el valor de transmisión. Por tanto, <strong>no deben sumarse ni restarse otra vez</strong> al completar Renta.
   </p>
   <p style="margin:.4rem 0;color:#666;font-size:.78rem">
-    Este criterio sigue la doctrina AEAT/Bit2Me: las comisiones de transacción forman parte
-    del valor de adquisición o transmisión del activo, según corresponda, y no constituyen
-    un gasto deducible independiente.
+    Las comisiones de red o reducciones de inventario se muestran separadamente cuando proceda y no se mezclan con las comisiones de trading.
   </p>
 </div>
 
