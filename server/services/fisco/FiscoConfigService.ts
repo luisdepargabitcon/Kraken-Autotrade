@@ -6,9 +6,11 @@
 import { pool } from "../../db";
 
 export type FiscoEngineMode = "legacy" | "v2_shadow" | "v2_official";
+export type FeeMode = "AEAT_INTEGRATED_TRACEABLE" | "EXPLICIT_DISPOSAL";
 
 export interface FiscoConfig {
   fiscoEngineMode: FiscoEngineMode;
+  feeMode: FeeMode;
   transferMatchingTimeWindowDays: number;
   transferMatchingAmountTolerancePct: number;
   dustThresholdDefault: number;
@@ -17,10 +19,12 @@ export interface FiscoConfig {
   blockIfSellWithoutCostBasis: boolean;
   blockIfTransferMismatch: boolean;
   blockIfBalanceMismatchCritical: boolean;
+  rewardsAsIncome: boolean;
 }
 
 const DEFAULT_CONFIG: FiscoConfig = {
   fiscoEngineMode: "v2_shadow",
+  feeMode: "AEAT_INTEGRATED_TRACEABLE",
   transferMatchingTimeWindowDays: 5,
   transferMatchingAmountTolerancePct: 5,
   dustThresholdDefault: 0.0001,
@@ -29,6 +33,7 @@ const DEFAULT_CONFIG: FiscoConfig = {
   blockIfSellWithoutCostBasis: true,
   blockIfTransferMismatch: false,
   blockIfBalanceMismatchCritical: true,
+  rewardsAsIncome: true,
 };
 
 export async function getFiscoConfig(): Promise<FiscoConfig> {
@@ -53,6 +58,12 @@ export async function getFiscoConfig(): Promise<FiscoConfig> {
           break;
         case "crypto_fee_treatment":
           config.cryptoFeeTreatment = value as "inventory_reduction" | "explicit_disposal";
+          break;
+        case "fee_mode":
+          config.feeMode = value as FeeMode;
+          break;
+        case "rewards_as_income":
+          config.rewardsAsIncome = value === "true";
           break;
         case "block_if_reward_without_price":
           config.blockIfRewardWithoutPrice = value === "true";
@@ -111,6 +122,12 @@ export async function setFiscoConfig(config: Partial<FiscoConfig>): Promise<void
   }
   if (config.cryptoFeeTreatment !== undefined) {
     await setFiscoConfigKey("crypto_fee_treatment", config.cryptoFeeTreatment);
+  }
+  if (config.feeMode !== undefined) {
+    await setFiscoConfigKey("fee_mode", config.feeMode);
+  }
+  if (config.rewardsAsIncome !== undefined) {
+    await setFiscoConfigKey("rewards_as_income", String(config.rewardsAsIncome));
   }
   if (config.blockIfRewardWithoutPrice !== undefined) {
     await setFiscoConfigKey("block_if_reward_without_price", String(config.blockIfRewardWithoutPrice));

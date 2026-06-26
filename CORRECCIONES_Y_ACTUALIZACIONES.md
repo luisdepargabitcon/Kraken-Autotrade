@@ -2,6 +2,69 @@
 
 ---
 
+## feat(fisco-v2): implementar criterio aeat bit2me de comisiones trazadas + motor fifo v2 independiente
+
+**Fecha**: 2026-06-26
+**Commit**: `feat(fisco-v2): implementar criterio aeat bit2me de comisiones trazadas + motor fifo v2 independiente`
+**Lote**: FISCO V2 — Fase 2 (C1 + C2)
+
+### Cambios implementados
+
+**Nuevo: `FiscoV2Types.ts`** — Tipos V2 completos:
+- `FeeTreatment`: `integrated_in_acquisition`, `integrated_in_transmission`, `inventory_reduction`, `explicit_fee_disposal`
+- `FeeMode`: `AEAT_INTEGRATED_TRACEABLE` | `EXPLICIT_DISPOSAL`
+- `V2Event`, `V2Lot`, `V2Disposal`, `V2TransferCarryover`, `FeeEvent`
+- `V2EngineResult`, `V2Blocker` con códigos: `FEE_DOUBLE_COUNT_RISK`, `FEE_EUR_PRICE_MISSING`, `THIRD_ASSET_FEE_REVIEW_REQUIRED`, `TRANSFER_COST_CARRYOVER_UNRESOLVED`, `REWARD_PRICE_MISSING`
+- `V2ComparisonResult` con `operation_mapping`, `fee_diff_detail`, `fee_treatment_summary`
+- `V2ActivationRequest/Result`, `V2RollbackRequest/Result`, `V2AuditLog`
+
+**Nuevo: `FiscoV2Normalizer.ts`** — Normalizador V2:
+- Convierte `fisco_operations` → `V2Event[]` con fee treatment AEAT
+- Compra: `fiscal_value = gross + fee` (integrated_in_acquisition)
+- Venta: `fiscal_value = gross - fee` (integrated_in_transmission)
+- Withdrawal: `inventory_reduction`
+- Conversion crypto/crypto: genera SELL + BUY complementario
+- `detectFeeDoubleCount()`: detecta comisiones duplicadas por operación
+
+**Nuevo: `FiscoV2EngineService.ts`** — Motor FIFO V2 independiente:
+- `runFifoV2()`: procesa eventos V2, NO usa `fisco_disposals` legacy
+- Crea lotes V2 con `acquisition_value_eur` (gross + fee integrado)
+- Crea disposiciones V2 con `transmission_value_eur` (gross - fee integrado)
+- Transferencias internas: no generan ganancia/pérdida
+- Rewards: crean lote con valor EUR fiscal
+- Determinista: orden por `executed_at`, `external_id`, `source_operation_id`
+- Blockers: `SELL_WITHOUT_LOTS`, `NEGATIVE_INVENTORY`, `UNKNOWN_BASIS`, `FEE_DOUBLE_COUNT_RISK`, `REWARD_PRICE_MISSING`, `TRANSFER_COST_CARRYOVER_UNRESOLVED`
+- `summarizeV2Result()`: gains, losses, net, by_asset
+- `buildFeeTreatmentSummary()`: resume comisiones por tratamiento
+
+**Modificado: `FiscoConfigService.ts`**:
+- Añadido `feeMode: FeeMode` a `FiscoConfig`
+- Añadido `rewardsAsIncome: boolean` a `FiscoConfig`
+- Defaults: `feeMode = "AEAT_INTEGRATED_TRACEABLE"`, `rewardsAsIncome = true`
+- Persistencia en `fisco_config` table
+
+**Modificado: `FiscoV2SchemaEnsureService.ts`**:
+- Nuevas tablas: `fisco_v2_lots`, `fisco_v2_disposals`, `fisco_v2_fee_events`, `fisco_v2_audit_log`, `fisco_v2_backups`
+- Nuevos config defaults: `fee_mode`, `rewards_as_income`
+
+**Nuevo: `fiscoV2Engine.test.ts`** — 17 tests:
+- Fee treatment AEAT: compra (gross+fee), venta (gross-fee), no duplicación
+- Fee double count detection
+- FIFO V2: crea lotes, consume lotes, venta sin lote → blocker
+- Inventario negativo → blocker
+- Conversion crypto/crypto → SELL + BUY
+- Withdrawal no genera disposición
+- Reward sin precio → blocker, reward con precio → lote
+- Fee treatment summary, summarizeV2Result
+- Determinismo
+
+### Validación
+- `npm run check`: OK
+- `npm run build`: OK (2569 módulos)
+- `vitest fiscoV2Engine`: 17/17 OK
+
+---
+
 ## fix(fisco): adaptar operations al schema real y corregir motor oficial
 
 **Fecha**: 2026-06-26
