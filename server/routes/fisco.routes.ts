@@ -578,6 +578,19 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
       const exchangeFilter = req.query.exchange as string | undefined;
       const fromFilter = req.query.from as string | undefined;
       const toFilter = req.query.to as string | undefined;
+      const searchFilter = req.query.search as string | undefined;
+      const onlyWarnings = req.query.onlyWarnings === "true";
+
+      // Pagination
+      const page = parseInt(req.query.page as string) || 1;
+      const pageSize = parseInt(req.query.pageSize as string) || 0; // 0 = all (backward compat)
+      const sortField = (req.query.sort as string) || "executed_at";
+      const sortOrder = (req.query.order as string) || "desc";
+
+      // Validate sort field to prevent SQL injection
+      const ALLOWED_SORT = ["executed_at", "exchange", "op_type", "asset", "amount", "price_eur", "total_eur", "fee_eur", "pair", "external_id"];
+      const safeSort = ALLOWED_SORT.includes(sortField) ? sortField : "executed_at";
+      const safeOrder = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
 
       let query = `SELECT * FROM fisco_operations WHERE 1=1`;
       const params: any[] = [];
@@ -607,20 +620,59 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         query += ` AND executed_at <= $${paramIdx++}`;
         params.push(new Date(toFilter + 'T23:59:59.999Z'));
       }
-      query += ` ORDER BY executed_at DESC`;
+      if (searchFilter) {
+        query += ` AND (external_id ILIKE $${paramIdx} OR pair ILIKE $${paramIdx} OR asset ILIKE $${paramIdx})`;
+        params.push(`%${searchFilter}%`);
+        paramIdx++;
+      }
+      if (onlyWarnings) {
+        query += ` AND op_type IN ('trade_sell') AND id NOT IN (SELECT DISTINCT operation_id FROM fisco_disposals WHERE operation_id IS NOT NULL)`;
+      }
 
-      const result = await pool.query(query, params);
+      query += ` ORDER BY ${safeSort} ${safeOrder}`;
 
-      // Extract unique assets & exchanges for filter dropdowns
-      const uniqueAssets = [...new Set(result.rows.map((r: any) => r.asset))].sort();
-      const uniqueExchanges = [...new Set(result.rows.map((r: any) => r.exchange))].sort();
+      // If pagination requested, get total count then apply LIMIT/OFFSET
+      if (pageSize > 0) {
+        // Count total
+        const countQuery = query.replace("SELECT *", "SELECT COUNT(*) as total");
+        const countResult = await pool.query(countQuery, params);
+        const total = parseInt(countResult.rows[0]?.total ?? "0");
+        const totalPages = Math.ceil(total / pageSize);
+        const offset = (page - 1) * pageSize;
 
-      res.json({
-        count: result.rows.length,
-        unique_assets: uniqueAssets,
-        unique_exchanges: uniqueExchanges,
-        operations: result.rows,
-      });
+        query += ` LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
+        params.push(pageSize, offset);
+
+        const result = await pool.query(query, params);
+
+        // Extract unique assets & exchanges for filter dropdowns
+        const uniqueAssets = [...new Set(result.rows.map((r: any) => r.asset))].sort();
+        const uniqueExchanges = [...new Set(result.rows.map((r: any) => r.exchange))].sort();
+
+        res.json({
+          year: yearFilter,
+          page,
+          pageSize,
+          total,
+          totalPages,
+          unique_assets: uniqueAssets,
+          unique_exchanges: uniqueExchanges,
+          operations: result.rows,
+        });
+      } else {
+        // Backward compatibility: return all results without pagination
+        const result = await pool.query(query, params);
+
+        const uniqueAssets = [...new Set(result.rows.map((r: any) => r.asset))].sort();
+        const uniqueExchanges = [...new Set(result.rows.map((r: any) => r.exchange))].sort();
+
+        res.json({
+          count: result.rows.length,
+          unique_assets: uniqueAssets,
+          unique_exchanges: uniqueExchanges,
+          operations: result.rows,
+        });
+      }
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -3409,6 +3461,192 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       return res.json(result);
     } catch (e: any) {
       console.error("[fisco/inventory-snapshot]", e);
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/diagnostic-detail?year=YYYY&asset=BTC
+   * Devuelve el detalle de diagnóstico de un activo en lenguaje natural.
+   * Read-only, no modifica datos fiscales.
+   */
+  app.get("/api/fisco/diagnostic-detail", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const asset = (req.query.asset as string || "").toUpperCase();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      if (!asset) {
+        return res.status(400).json({ error: "asset requerido" });
+      }
+
+      // Get inventory snapshot for the year
+      const svc = new FiscoInventorySnapshotService(pool);
+      const snapshot = await svc.getInventorySnapshot(year);
+      const row = snapshot.rows.find((r: any) => r.asset === asset);
+
+      if (!row) {
+        return res.json({
+          year,
+          asset,
+          status: "NO_DATA",
+          severity: "INFO",
+          summary: `No hay datos de inventario para ${asset} en ${year}.`,
+          natural_explanation: `No se encontraron operaciones para ${asset} en el ejercicio ${year}. Puede que el activo no se haya negociado o importado en este periodo.`,
+          values: null,
+          likely_causes: ["El activo no tiene operaciones en este ejercicio."],
+          fiscal_impact: "Sin impacto fiscal para este activo en este ejercicio.",
+          recommended_actions: ["Verificar que las operaciones del activo hayan sido importadas correctamente."],
+          related_operations: [],
+          related_transfer_links: [],
+          related_withdrawals: [],
+          generated_at: new Date().toISOString(),
+        });
+      }
+
+      // Status translations and explanations
+      const STATUS_ES: Record<string, string> = {
+        OK: "Correcto",
+        DUST: "Saldo residual",
+        NEGATIVE: "Inventario negativo",
+        NO_DATA: "Sin datos",
+        NEEDS_REVIEW: "Revisar",
+        DIFF_EXPLAINED: "Explicado",
+      };
+
+      const STATUS_SEVERITY: Record<string, string> = {
+        OK: "INFO",
+        DUST: "WARNING",
+        NEGATIVE: "CRITICAL",
+        NO_DATA: "INFO",
+        NEEDS_REVIEW: "WARNING",
+        DIFF_EXPLAINED: "INFO",
+      };
+
+      const statusEs = STATUS_ES[row.status] ?? row.status;
+      const severity = STATUS_SEVERITY[row.status] ?? "INFO";
+
+      // Natural language explanation
+      let naturalExplanation = "";
+      let likelyCauses: string[] = [];
+      let fiscalImpact = "";
+      let recommendedActions: string[] = [];
+
+      switch (row.status) {
+        case "OK":
+          naturalExplanation = `El saldo de ${asset} cuadra dentro de la tolerancia configurada. El inventario calculado a cierre de ${year} coincide con el saldo actual, por lo que no se detectan discrepancias.`;
+          likelyCauses = [];
+          fiscalImpact = `Sin impacto. El resultado fiscal de ${asset} en ${year} es correcto: ganancia/pérdida de ${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2 }).format(row.gainLossEurInYear)} €.`;
+          recommendedActions = [];
+          break;
+        case "DUST":
+          naturalExplanation = `El sistema detecta una diferencia residual muy pequeña entre el saldo calculado a cierre de ${year} y el saldo actual de ${asset}. La diferencia parece compatible con redondeos, comisiones o restos mínimos. No parece un bloqueo fiscal crítico, pero queda marcada como saldo residual.`;
+          likelyCauses = ["Redondeos en cálculos de cantidades", "Comisiones de red no contabilizadas", "Restos mínimos de inventario tras disposiciones"];
+          fiscalImpact = `El impacto fiscal es mínimo. La ganancia/pérdida registrada es ${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2 }).format(row.gainLossEurInYear)} €.`;
+          recommendedActions = ["Revisar si la diferencia corresponde a comisiones conocidas", "Documentar el motivo si se requiere auditoría detallada"];
+          break;
+        case "NEGATIVE":
+          naturalExplanation = `El cálculo detecta inventario negativo para ${asset}. Esto significa que se han registrado disposiciones (ventas o transferencias) superiores al inventario disponible. Puede faltar histórico, saldo inicial o una compra previa no importada.`;
+          likelyCauses = ["Falta histórico de operaciones previas al año fiscal", "Saldo inicial no configurado", "Compra previa no importada", "Transferencia entrante no registrada"];
+          fiscalImpact = `El inventario negativo impide calcular correctamente el coste de adquisición. La ganancia/pérdida actual es ${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2 }).format(row.gainLossEurInYear)} €, pero puede no ser fiable.`;
+          recommendedActions = ["Importar operaciones previas al ejercicio", "Configurar saldo inicial si procede", "Revisar transferencias entrantes faltantes"];
+          break;
+        case "NEEDS_REVIEW":
+          naturalExplanation = `Hay una diferencia en ${asset} que requiere revisión manual antes de cerrar el informe. La diferencia entre el saldo a cierre de ${year} y el saldo actual no es trivial y no está automáticamente explicada.`;
+          likelyCauses = ["Operaciones posteriores al cierre no clasificadas", "Transferencias sin emparejar", "Retiradas externas sin documentar"];
+          fiscalImpact = `La ganancia/pérdida registrada es ${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2 }).format(row.gainLossEurInYear)} €. La diferencia puede afectar al resultado si corresponde a operaciones no registradas.`;
+          recommendedActions = ["Revisar operaciones posteriores al cierre", "Verificar transferencias y retiradas", "Documentar el motivo de la diferencia"];
+          break;
+        case "DIFF_EXPLAINED":
+          naturalExplanation = `La diferencia en ${asset} está explicada por operaciones posteriores, transferencias, retiradas o movimientos ya clasificados. No requiere acción adicional.`;
+          likelyCauses = ["Operaciones posteriores al año fiscal ya registradas", "Transferencias entre exchanges documentadas", "Retiradas a wallet propia contabilizadas"];
+          fiscalImpact = `El resultado fiscal de ${row.gainLossEurInYear >= 0 ? "ganancia" : "pérdida"} de ${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2 }).format(Math.abs(row.gainLossEurInYear))} € es correcto.`;
+          recommendedActions = [];
+          break;
+        default:
+          naturalExplanation = `Estado desconocido para ${asset}.`;
+          likelyCauses = [];
+          fiscalImpact = "Sin información de impacto fiscal.";
+          recommendedActions = ["Contactar soporte técnico."];
+      }
+
+      // Add warnings info
+      if (row.warnings.length > 0) {
+        naturalExplanation += ` Avisos adicionales: ${row.warnings.join("; ")}.`;
+      }
+
+      // Related operations (ops for this asset in this year)
+      let relatedOperations: any[] = [];
+      try {
+        const opsQ = await pool.query(
+          `SELECT id, exchange, op_type, amount, total_eur, fee_eur, executed_at, external_id, pair
+           FROM fisco_operations
+           WHERE asset = $1 AND EXTRACT(YEAR FROM executed_at) = $2
+           ORDER BY executed_at DESC LIMIT 20`,
+          [asset, year]
+        );
+        relatedOperations = opsQ.rows.map((r: any) => ({
+          id: r.id,
+          exchange: r.exchange,
+          op_type: r.op_type,
+          amount: r.amount,
+          total_eur: r.total_eur,
+          fee_eur: r.fee_eur,
+          executed_at: r.executed_at?.toISOString() ?? r.executed_at,
+          external_id: r.external_id,
+          pair: r.pair,
+        }));
+      } catch (_e: any) { /* table may not exist */ }
+
+      // Related transfer links
+      let relatedTransferLinks: any[] = [];
+      try {
+        const tlQ = await pool.query(
+          `SELECT id, from_exchange, to_exchange, amount_sent, amount_received, status, confidence, match_reason
+           FROM fisco_transfer_links
+           WHERE asset = $1
+           ORDER BY created_at DESC LIMIT 10`,
+          [asset]
+        );
+        relatedTransferLinks = tlQ.rows;
+      } catch (_e: any) { /* table may not exist */ }
+
+      // Related withdrawals (from balance check)
+      const relatedWithdrawals = (snapshot.balanceCheck?.suspected_duplicate_transfers ?? [])
+        .filter((w: any) => w.asset === asset);
+
+      const summary = `Diagnóstico de ${asset} — ${statusEs}`;
+
+      return res.json({
+        year,
+        asset,
+        status: row.status,
+        status_es: statusEs,
+        severity,
+        summary,
+        natural_explanation: naturalExplanation,
+        values: {
+          opening: row.openingQty,
+          acquired: row.acquiredQtyInYear,
+          disposed: row.disposedQtyInYear,
+          closing_31_12: row.closingQtyAsOfYearEnd,
+          cost_basis_eur: row.closingCostBasisEurAsOfYearEnd,
+          gain_loss_eur: row.gainLossEurInYear,
+          current_balance: row.currentRemainingQty,
+          diff: row.currentVsYearEndDiff,
+        },
+        likely_causes: likelyCauses,
+        fiscal_impact: fiscalImpact,
+        recommended_actions: recommendedActions,
+        related_operations: relatedOperations,
+        related_transfer_links: relatedTransferLinks,
+        related_withdrawals: relatedWithdrawals,
+        warnings: row.warnings,
+        generated_at: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.error("[fisco/diagnostic-detail]", e);
       return res.status(500).json({ error: e.message });
     }
   });

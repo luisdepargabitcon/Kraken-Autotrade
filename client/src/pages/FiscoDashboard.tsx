@@ -12,6 +12,8 @@ import { FiscoImportSection } from "@/components/fisco/FiscoImportSection";
 import { FiscoConfigSection } from "@/components/fisco/FiscoConfigSection";
 import { FiscoReportsCenter } from "@/components/fisco/FiscoReportsCenter";
 import { FiscoControlSection } from "@/components/fisco/FiscoControlSection";
+import { FiscoTransaccionesSection } from "@/components/fisco/FiscoTransaccionesSection";
+import { FiscoDiagnosticoSectionV2 } from "@/components/fisco/FiscoDiagnosticoSectionV2";
 
 import type {
   InventorySnapshotResult,
@@ -229,12 +231,12 @@ export default function FiscoDashboard() {
 
         {/* ── Transacciones ── */}
         {activeSection === "transacciones" && (
-          <FiscoTransaccionesEmbed year={year} />
+          <FiscoTransaccionesSection year={year} />
         )}
 
         {/* ── Diagnóstico (inventory snapshot) ── */}
         {activeSection === "diagnostico" && (
-          <FiscoDiagnosticoSection
+          <FiscoDiagnosticoSectionV2
             year={year}
             snapshot={snapshotQ.data}
             isLoading={snapshotQ.isLoading}

@@ -2,6 +2,55 @@
 
 ---
 
+## feat(fisco-ui): paginar transacciones y explicar diagnostico en lenguaje natural
+
+**Fecha**: 2026-06-26
+**Commit**: `feat(fisco-ui): paginar transacciones y explicar diagnostico en lenguaje natural`
+**Lote**: FISCO V2 — UX/UI Transacciones + Diagnóstico
+
+### Problema
+La pestaña "Transacciones" mostraba todas las operaciones sin paginación clara (225+ filas). La pestaña "Diagnóstico" usaba etiquetas en inglés (Opening, Diff, Dust) y no explicaba el diagnóstico al pinchar un activo.
+
+### Cambios implementados
+
+**Backend (server/routes/fisco.routes.ts):**
+- Endpoint `/api/fisco/operations` ampliado con paginación backend (page, pageSize, total, totalPages), ordenación (sort, order), búsqueda (search) y filtro "solo con aviso" (onlyWarnings). Backward compatible: sin pageSize devuelve todo como antes.
+- Nuevo endpoint `/api/fisco/diagnostic-detail?year=YYYY&asset=BTC` — devuelve diagnóstico en lenguaje natural con: natural_explanation, likely_causes, fiscal_impact, recommended_actions, related_operations, related_transfer_links, related_withdrawals. Read-only, no modifica datos fiscales.
+
+**Frontend — Transacciones (client/src/components/fisco/FiscoTransaccionesSection.tsx):**
+- Tabla fiscal profesional con paginación real (25/50/100 filas por página).
+- Selector de filas, botones Primera/Anterior/Siguiente/Última, texto "Mostrando X–Y de N operaciones".
+- Filtros: activo, plataforma, tipo, buscador por ID/par/activo, solo con aviso.
+- Ordenación por columna (fecha, plataforma, tipo, activo, cantidad, precio, total, comisión, par) con indicadores visuales.
+- Cabecera sticky, scroll interno con altura máxima.
+- Drawer lateral al pinchar operación: resumen natural, datos completos, impacto fiscal, relación FIFO.
+- Castellano completo: Compra/Venta/Comisión/Depósito/Retiro/Conversión/Staking/Recompensa.
+
+**Frontend — Diagnóstico (client/src/components/fisco/FiscoDiagnosticoSectionV2.tsx):**
+- Etiquetas en castellano: Saldo inicial, Adquirido, Dispuesto, Saldo cierre 31/12, Coste de adquisición, Ganancia/Pérdida año, Saldo actual, Diferencia.
+- Estados traducidos: Correcto, Saldo residual, Inventario negativo, Revisar, Explicado, Sin datos.
+- Modal al pinchar activo con: explicación natural, valores, posibles causas, impacto fiscal, acción recomendada, operaciones relacionadas, transferencias relacionadas, retiradas pendientes.
+- Tooltips en cabeceras explicando cada concepto.
+
+**FiscoDashboard.tsx:**
+- Sustituido FiscoTransaccionesEmbed por FiscoTransaccionesSection.
+- Sustituido FiscoDiagnosticoSection por FiscoDiagnosticoSectionV2.
+
+**Tests (server/services/fisco/__tests__/fiscoTransaccionesDiagnostico.test.ts):**
+- 22 tests: 10 transacciones (paginación, filtros, UI, copy), 8 diagnóstico (endpoint, castellano, modal), 4 regresión (control-status, finalization, result-history, FiscoControlSection).
+
+### Validación
+- npm run check: OK
+- npm run build: OK (2569 módulos)
+- vitest fisco (17 archivos): 498/498 OK
+
+### No se modifica
+- FiscoControlStatusService.ts, FiscoConfigService.ts, FiscoRebuildService.ts, migration 060
+- Endpoints control-status, result-history, change-impact, finalization-status
+- Cálculo FIFO, resultados oficiales, hashes, fingerprints, blockers, rebuild
+
+---
+
 ## feat(fisco): control fiscal de cambios, huella de datos y rebuild seguro
 
 **Fecha**: 2026-06-26  
