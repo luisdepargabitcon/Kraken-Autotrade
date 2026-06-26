@@ -149,6 +149,48 @@ describe("FISCO V2 Activation Service", () => {
     mockSetFiscoConfig.mockResolvedValue(undefined);
   });
 
+  // ── roundMoney2 helper tests ────────────────────────────────────────────
+
+  describe("roundMoney2 (fiscal rounding)", () => {
+    it("R-01: -72.24621015 se redondea a -72.25", async () => {
+      // Access the internal helper via the module's behavior:
+      // controlledCommit with officialNet=-72.24621015 and expectedRounded=-72.25 should succeed
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        officialNet: -72.24621015,
+        lastCommittedHash: null,
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      const result = await controlledCommit(2025, true, -72.24621015, -72.25);
+      expect(result.rounded_eur).toBe(-72.25);
+    });
+
+    it("R-02: 45.87020702 se redondea a 45.87", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        officialNet: 45.87020702,
+        lastCommittedHash: null,
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      const result = await controlledCommit(2025, true, 45.87020702, 45.87);
+      expect(result.rounded_eur).toBe(45.87);
+    });
+
+    it("R-03: -118.11641717 se redondea a -118.12", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        officialNet: -118.11641717,
+        lastCommittedHash: null,
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      const result = await controlledCommit(2025, true, -118.11641717, -118.12);
+      expect(result.rounded_eur).toBe(-118.12);
+    });
+  });
+
   // ── controlledCommit ────────────────────────────────────────────────────
 
   describe("controlledCommit", () => {
@@ -159,7 +201,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await expect(controlledCommit(2025, true, -72.25, -72)).rejects.toThrow("data_fingerprint.operation_set_hash is null");
+      await expect(controlledCommit(2025, true, -72.25, -72.25)).rejects.toThrow("data_fingerprint.operation_set_hash is null");
     });
 
     it("D-02: registra hash cuando last_committed_run.operation_set_hash es null", async () => {
@@ -171,7 +213,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      const result = await controlledCommit(2025, true, -72.24621015, -72);
+      const result = await controlledCommit(2025, true, -72.24621015, -72.25);
 
       expect(result.ok).toBe(true);
       expect(result.hash_registered).toBe(true);
@@ -203,7 +245,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await controlledCommit(2025, true, -72.24621015, -72);
+      await controlledCommit(2025, true, -72.24621015, -72.25);
 
       // setFiscoConfig should NOT be called during controlledCommit
       expect(mockSetFiscoConfig).not.toHaveBeenCalled();
@@ -214,7 +256,7 @@ describe("FISCO V2 Activation Service", () => {
       mockGetControlStatus.mockResolvedValue(makeControlStatus({}));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await expect(controlledCommit(2025, false, -72.25, -72)).rejects.toThrow("confirm must be true");
+      await expect(controlledCommit(2025, false, -72.25, -72.25)).rejects.toThrow("confirm must be true");
     });
 
     it("D-05: falla si expected_current_net_gain_loss_eur no coincide", async () => {
@@ -227,6 +269,16 @@ describe("FISCO V2 Activation Service", () => {
       await expect(controlledCommit(2025, true, -100, -100)).rejects.toThrow("net_gain_loss_eur mismatch");
     });
 
+    it("D-05b: falla si expected_current_rounded_eur no coincide (envía -72 en vez de -72.25)", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        officialNet: -72.24621015,
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      await expect(controlledCommit(2025, true, -72.24621015, -72)).rejects.toThrow("OFFICIAL_ROUNDED_MISMATCH");
+    });
+
     it("D-06: falla si HASH_MISMATCH (last_committed_hash != data_fingerprint_hash)", async () => {
       mockRunComparison.mockResolvedValue(makeComparison());
       mockGetControlStatus.mockResolvedValue(makeControlStatus({
@@ -235,7 +287,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await expect(controlledCommit(2025, true, -72.24621015, -72)).rejects.toThrow("HASH_MISMATCH");
+      await expect(controlledCommit(2025, true, -72.24621015, -72.25)).rejects.toThrow("HASH_MISMATCH");
     });
 
     it("D-07: already_registered=true cuando hash ya existe y coincide", async () => {
@@ -246,7 +298,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      const result = await controlledCommit(2025, true, -72.24621015, -72);
+      const result = await controlledCommit(2025, true, -72.24621015, -72.25);
 
       expect(result.already_registered).toBe(true);
       expect(result.hash_registered).toBe(false);
@@ -266,7 +318,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await controlledCommit(2025, true, -72.24621015, -72);
+      await controlledCommit(2025, true, -72.24621015, -72.25);
 
       const destructiveCall = mockPool.query.mock.calls.find(
         (c: any[]) => typeof c[0] === "string" &&
@@ -284,7 +336,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await expect(controlledCommit(2025, true, -72.25, -72)).rejects.toThrow("official_engine must be legacy_fifo");
+      await expect(controlledCommit(2025, true, -72.25, -72.25)).rejects.toThrow("official_engine must be legacy_fifo");
     });
 
     it("D-10: falla si hay blockers en control status", async () => {
@@ -294,7 +346,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await expect(controlledCommit(2025, true, -72.25, -72)).rejects.toThrow("blockers");
+      await expect(controlledCommit(2025, true, -72.25, -72.25)).rejects.toThrow("blockers");
     });
 
     it("D-11: falla si hay pending changes", async () => {
@@ -304,7 +356,7 @@ describe("FISCO V2 Activation Service", () => {
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await expect(controlledCommit(2025, true, -72.25, -72)).rejects.toThrow("pending changes");
+      await expect(controlledCommit(2025, true, -72.25, -72.25)).rejects.toThrow("pending changes");
     });
   });
 

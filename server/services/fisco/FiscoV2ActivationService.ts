@@ -19,6 +19,14 @@ import { getFiscoConfig, setFiscoConfig } from "./FiscoConfigService";
 import { fiscoControlStatusService } from "./FiscoControlStatusService";
 import { randomUUID } from "crypto";
 
+/**
+ * Round to 2 decimal places — same formula as FiscoValidationService.round2
+ * and finalization-status / annual-report.
+ */
+function roundMoney2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 export interface ControlledCommitResult {
   ok: boolean;
   year: number;
@@ -89,11 +97,11 @@ export async function controlledCommit(
     );
   }
 
-  // Validation 7: rounded value must match
-  const officialRounded = Math.round(officialNet);
-  if (officialRounded !== expectedCurrentRoundedEur) {
+  // Validation 7: rounded value must match (2 decimal places, with tolerance)
+  const officialRounded = roundMoney2(officialNet);
+  if (Math.abs(officialRounded - expectedCurrentRoundedEur) > 0.001) {
     throw new Error(
-      `official rounded mismatch. Expected: ${expectedCurrentRoundedEur}, Current: ${officialRounded}`
+      `OFFICIAL_ROUNDED_MISMATCH: expected_current_rounded_eur=${expectedCurrentRoundedEur}, current_rounded_eur=${officialRounded}, source_net_gain_loss_eur=${officialNet}, rounding_mode=2_decimals`
     );
   }
 
