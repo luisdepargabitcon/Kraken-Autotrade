@@ -132,30 +132,52 @@ CREATE TABLE IF NOT EXISTS fisco_v2_fee_events (
 );
 CREATE INDEX IF NOT EXISTS idx_fisco_v2_fee_events_op ON fisco_v2_fee_events(source_operation_id);
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS fisco_v2_audit_log (
-  id BIGSERIAL PRIMARY KEY,
-  action TEXT NOT NULL CHECK (action IN ('activate', 'rollback', 'controlled_commit')),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   year INTEGER NOT NULL,
-  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  event_type TEXT NOT NULL,
+  engine_before TEXT,
+  engine_after TEXT,
   operation_set_hash TEXT,
-  legacy_result JSONB,
-  v2_result JSONB,
-  differences JSONB,
-  fee_treatment_summary JSONB,
-  backup_id TEXT,
-  details JSONB
+  expected_operation_set_hash TEXT,
+  legacy_net_gain_loss_eur NUMERIC,
+  v2_net_gain_loss_eur NUMERIC,
+  diff_eur NUMERIC,
+  safe_for_official_switch BOOLEAN,
+  backup_id UUID,
+  request_json JSONB,
+  result_json JSONB,
+  blockers JSONB,
+  warnings JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by TEXT DEFAULT 'system'
 );
-CREATE INDEX IF NOT EXISTS idx_fisco_v2_audit_log_year ON fisco_v2_audit_log(year);
+CREATE INDEX IF NOT EXISTS idx_fisco_v2_audit_year_created
+  ON fisco_v2_audit_log(year, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fisco_v2_audit_event_type
+  ON fisco_v2_audit_log(event_type);
 
 CREATE TABLE IF NOT EXISTS fisco_v2_backups (
-  backup_id TEXT PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   year INTEGER NOT NULL,
-  engine_mode TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  backup_type TEXT NOT NULL,
+  official_engine_before TEXT,
+  official_engine_after TEXT,
+  operation_set_hash TEXT,
+  legacy_result_json JSONB,
+  v2_result_json JSONB,
+  comparison_json JSONB,
   config_snapshot JSONB,
   disposals_snapshot JSONB,
-  lots_snapshot JSONB
+  lots_snapshot JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by TEXT DEFAULT 'system',
+  notes TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_fisco_v2_backups_year_created
+  ON fisco_v2_backups(year, created_at DESC);
 `;
 
 export async function ensureFiscoV2Schema(): Promise<void> {

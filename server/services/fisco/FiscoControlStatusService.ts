@@ -335,7 +335,7 @@ export class FiscoControlStatusService {
     const syncStatus = await this.getSyncStatus(lastCommittedRun?.completed_at ?? null);
 
     // Schema health
-    const schemaTables = ["fisco_operations", "fisco_lots", "fisco_disposals", "fisco_config", "fisco_import_batches", "fisco_transfer_links"];
+    const schemaTables = ["fisco_operations", "fisco_lots", "fisco_disposals", "fisco_config", "fisco_import_batches", "fisco_transfer_links", "fisco_v2_audit_log", "fisco_v2_backups"];
     let schemaHealthy = true;
     for (const table of schemaTables) {
       const r = await pool.query("SELECT to_regclass($1) as exists", [`public.${table}`]);

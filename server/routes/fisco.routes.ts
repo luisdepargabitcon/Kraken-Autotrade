@@ -4115,6 +4115,11 @@ export function registerFiscoRebuildRoutes(app: Express): void {
         "fisco_transfer_links",
         "fisco_result_history",
         "fisco_control_snapshots",
+        "fisco_v2_lots",
+        "fisco_v2_disposals",
+        "fisco_v2_fee_events",
+        "fisco_v2_audit_log",
+        "fisco_v2_backups",
       ];
 
       const results: Record<string, boolean> = {};

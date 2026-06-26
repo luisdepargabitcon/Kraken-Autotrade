@@ -47,30 +47,33 @@ export async function controlledCommit(year: number): Promise<ControlledCommitRe
   }
 
   // Insert audit log
-  const auditId = `audit-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const auditId = randomUUID();
   await pool.query(`
-    INSERT INTO fisco_v2_audit_log (id, action, year, operation_set_hash, legacy_result, v2_result, differences, fee_treatment_summary, details)
-    VALUES ($1, 'controlled_commit', $2, $3, $4, $5, $6, $7, $8)
+    INSERT INTO fisco_v2_audit_log
+      (id, year, event_type, engine_before, operation_set_hash,
+       legacy_net_gain_loss_eur, v2_net_gain_loss_eur, diff_eur,
+       safe_for_official_switch, request_json, result_json, blockers, warnings)
+    VALUES ($1, $2, 'controlled_commit', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
   `, [
     auditId,
     year,
+    comparison.baseline.engine ?? 'legacy',
     operationSetHash,
-    JSON.stringify(comparison.baseline),
-    JSON.stringify(comparison.v2),
+    comparison.baseline.net_gain_loss_eur,
+    comparison.v2.net_gain_loss_eur,
+    comparison.diff_eur,
+    comparison.safe_for_official_switch,
+    JSON.stringify({ year }),
     JSON.stringify({
-      diff_eur: comparison.diff_eur,
-      gross_gains_diff: comparison.gross_gains_diff_eur,
-      gross_losses_diff: comparison.gross_losses_diff_eur,
-      disposals_count_diff: comparison.disposals_count_diff,
-    }),
-    JSON.stringify(comparison.fee_treatment_summary),
-    JSON.stringify({
-      official_switch_blockers: comparison.official_switch_blockers,
-      safe_for_official_switch: comparison.safe_for_official_switch,
+      baseline: comparison.baseline,
+      v2: comparison.v2,
+      fee_treatment_summary: comparison.fee_treatment_summary,
       operation_mapping_count: comparison.operation_mapping.length,
       unmapped_legacy: comparison.unmapped_legacy_disposals.length,
       unmapped_v2: comparison.unmapped_v2_disposals.length,
     }),
+    JSON.stringify(comparison.official_switch_blockers),
+    JSON.stringify(comparison.warnings),
   ]);
 
   return {
@@ -145,7 +148,7 @@ export async function activateOfficial(
   }
 
   // Create backup
-  const backupId = `backup-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const backupId = randomUUID();
   const config = await getFiscoConfig();
 
   // Snapshot current disposals and lots
@@ -159,12 +162,24 @@ export async function activateOfficial(
   );
 
   await pool.query(`
-    INSERT INTO fisco_v2_backups (backup_id, year, engine_mode, config_snapshot, disposals_snapshot, lots_snapshot)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO fisco_v2_backups
+      (id, year, backup_type, official_engine_before, official_engine_after,
+       operation_set_hash, legacy_result_json, v2_result_json, comparison_json,
+       config_snapshot, disposals_snapshot, lots_snapshot)
+    VALUES ($1, $2, 'pre_activation', $3, 'v2_official', $4, $5, $6, $7, $8, $9, $10)
   `, [
     backupId,
     year,
     config.fiscoEngineMode,
+    currentHash,
+    JSON.stringify(comparison.baseline),
+    JSON.stringify(comparison.v2),
+    JSON.stringify({
+      diff_eur: comparison.diff_eur,
+      gross_gains_diff: comparison.gross_gains_diff_eur,
+      gross_losses_diff: comparison.gross_losses_diff_eur,
+      fee_diff_detail: comparison.fee_diff_detail,
+    }),
     JSON.stringify(config),
     JSON.stringify(disposalsResult.rows),
     JSON.stringify(lotsResult.rows),
@@ -174,30 +189,38 @@ export async function activateOfficial(
   await setFiscoConfig({ fiscoEngineMode: "v2_official" } as any);
 
   // Insert audit log
-  const auditId = `audit-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const auditId = randomUUID();
   await pool.query(`
-    INSERT INTO fisco_v2_audit_log (id, action, year, operation_set_hash, legacy_result, v2_result, differences, fee_treatment_summary, backup_id, details)
-    VALUES ($1, 'activate', $2, $3, $4, $5, $6, $7, $8, $9)
+    INSERT INTO fisco_v2_audit_log
+      (id, year, event_type, engine_before, engine_after,
+       operation_set_hash, expected_operation_set_hash,
+       legacy_net_gain_loss_eur, v2_net_gain_loss_eur, diff_eur,
+       safe_for_official_switch, backup_id, request_json, result_json, blockers, warnings)
+    VALUES ($1, $2, 'activate', $3, 'v2_official', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
   `, [
     auditId,
     year,
+    config.fiscoEngineMode,
     currentHash,
-    JSON.stringify(comparison.baseline),
-    JSON.stringify(comparison.v2),
-    JSON.stringify({
-      diff_eur: comparison.diff_eur,
-      gross_gains_diff: comparison.gross_gains_diff_eur,
-      gross_losses_diff: comparison.gross_losses_diff_eur,
-    }),
-    JSON.stringify(comparison.fee_treatment_summary),
+    expectedOperationSetHash,
+    comparison.baseline.net_gain_loss_eur,
+    comparison.v2.net_gain_loss_eur,
+    comparison.diff_eur,
+    comparison.safe_for_official_switch,
     backupId,
     JSON.stringify({
-      previous_engine: config.fiscoEngineMode,
-      new_engine: "v2_official",
-      expected_hash: expectedOperationSetHash,
-      expected_v2_net: expectedV2NetGainLossEur,
-      expected_v2_rounded: expectedV2RoundedEur,
+      confirm,
+      expected_v2_net_gain_loss_eur: expectedV2NetGainLossEur,
+      expected_v2_rounded_eur: expectedV2RoundedEur,
     }),
+    JSON.stringify({
+      fee_treatment_summary: comparison.fee_treatment_summary,
+      operation_mapping_count: comparison.operation_mapping.length,
+      unmapped_legacy: comparison.unmapped_legacy_disposals.length,
+      unmapped_v2: comparison.unmapped_v2_disposals.length,
+    }),
+    JSON.stringify(comparison.official_switch_blockers),
+    JSON.stringify(comparison.warnings),
   ]);
 
   console.log(`[FISCO_V2_ACTIVATION] activated. backup_id=${backupId}, audit_id=${auditId}`);
@@ -230,7 +253,7 @@ export async function rollbackOfficial(
 
   // Get backup
   const backupResult = await pool.query(
-    "SELECT * FROM fisco_v2_backups WHERE backup_id = $1 AND year = $2",
+    "SELECT * FROM fisco_v2_backups WHERE id = $1 AND year = $2",
     [backupId, year]
   );
 
@@ -240,20 +263,24 @@ export async function rollbackOfficial(
 
   const backup = backupResult.rows[0];
   const previousConfig = JSON.parse(backup.config_snapshot);
-  const previousEngine = backup.engine_mode || "v2_shadow";
+  const previousEngine = backup.official_engine_before || "legacy_fifo";
 
   // Restore engine mode
   await setFiscoConfig({ fiscoEngineMode: previousEngine } as any);
 
   // Insert audit log
-  const auditId = `audit-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const auditId = randomUUID();
   await pool.query(`
-    INSERT INTO fisco_v2_audit_log (id, action, year, backup_id, details)
-    VALUES ($1, 'rollback', $2, $3, $4)
+    INSERT INTO fisco_v2_audit_log
+      (id, year, event_type, engine_before, engine_after, backup_id, request_json, result_json)
+    VALUES ($1, $2, 'rollback', $3, $4, $5, $6, $7)
   `, [
     auditId,
     year,
+    'v2_official',
+    previousEngine,
     backupId,
+    JSON.stringify({ confirm, backup_id: backupId }),
     JSON.stringify({
       restored_engine: previousEngine,
       backup_created_at: backup.created_at,
@@ -272,7 +299,7 @@ export async function rollbackOfficial(
 
 export async function getAuditLog(year: number, limit: number = 20): Promise<any[]> {
   const result = await pool.query(
-    "SELECT * FROM fisco_v2_audit_log WHERE year = $1 ORDER BY timestamp DESC LIMIT $2",
+    "SELECT * FROM fisco_v2_audit_log WHERE year = $1 ORDER BY created_at DESC LIMIT $2",
     [year, limit]
   );
   return result.rows;
@@ -280,7 +307,7 @@ export async function getAuditLog(year: number, limit: number = 20): Promise<any
 
 export async function getBackups(year: number): Promise<any[]> {
   const result = await pool.query(
-    "SELECT backup_id, year, engine_mode, created_at FROM fisco_v2_backups WHERE year = $1 ORDER BY created_at DESC",
+    "SELECT id, year, backup_type, official_engine_before, official_engine_after, operation_set_hash, created_at FROM fisco_v2_backups WHERE year = $1 ORDER BY created_at DESC",
     [year]
   );
   return result.rows;
