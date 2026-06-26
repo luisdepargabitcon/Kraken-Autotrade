@@ -141,6 +141,37 @@ export async function getFinalizationStatus(year: number): Promise<FinalizationS
   const blockers: string[] = [];
   const warnings: string[] = [];
 
+  // ── Control status integration: check for new operations and outdated results ──
+  const { FiscoPendingDetector } = await import("./FiscoPendingDetector");
+  const detector = FiscoPendingDetector.getInstance();
+  const pendingChanges = await detector.detectPendingFiscalChanges(year);
+
+  if (pendingChanges.pending_operations_count > 0) {
+    blockers.push("NEW_OPERATIONS_AFTER_REBUILD");
+    blockers.push(`Hay ${pendingChanges.pending_operations_count} operaciones nuevas posteriores al último cálculo FIFO.`);
+  }
+
+  if (pendingChanges.orphan_sells_count > 0) {
+    blockers.push("ORPHAN_SELLS");
+    blockers.push(`Hay ${pendingChanges.orphan_sells_count} ventas sin base de coste (sin disposals).`);
+  }
+
+  // Check operation_set_hash if last committed run has one
+  const lastRunQ = await pool.query(`
+    SELECT operation_set_hash FROM fisco_rebuild_runs
+    WHERE mode = 'commit' AND status = 'committed'
+    ORDER BY completed_at DESC LIMIT 1
+  `);
+  const lastHash = lastRunQ.rows[0]?.operation_set_hash;
+  if (lastHash) {
+    const { fiscoControlStatusService } = await import("./FiscoControlStatusService");
+    const currentHash = await fiscoControlStatusService.computeOperationSetHash(year);
+    if (lastHash !== currentHash) {
+      blockers.push("RESULT_OUTDATED");
+      warnings.push("El conjunto de operaciones ha cambiado desde el último cálculo fiscal.");
+    }
+  }
+
   // Check inventory snapshot for critical issues
   const snapshotResult = await pool.query(
     "SELECT * FROM fisco_inventory_snapshots WHERE year = $1 ORDER BY generated_at DESC LIMIT 1",

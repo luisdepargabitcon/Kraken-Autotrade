@@ -20,6 +20,7 @@ import { normalizeKrakenLedger, normalizeRevolutXOrders, mergeAndSort, type Norm
 import { runFifo, validateFifoResult, type FifoResult, type FiscoCriticalError } from "./fisco/fifo-engine";
 import { randomUUID } from "crypto";
 import { setFiscoRebuildMode } from "./fisco/rebuild-state";
+import { fiscoControlStatusService } from "./fisco/FiscoControlStatusService";
 
 // ============================================================
 // Types
@@ -161,6 +162,35 @@ export class FiscoRebuildService {
         // Step 8: Reconciliation after commit
         reconciliationId = await this.runReconciliation(runId);
         console.log(`[fisco/rebuild] Committed and reconciled. ReconciliationId=${reconciliationId}`);
+
+        // Step 9: Record result history per fiscal year
+        const gainsByYear = new Map<number, { gains: number; losses: number; net: number; disposals: number }>();
+        for (const disp of fifo.disposals) {
+          const dispYear = new Date(disp.disposedAt).getFullYear();
+          const entry = gainsByYear.get(dispYear) ?? { gains: 0, losses: 0, net: 0, disposals: 0 };
+          entry.net += disp.gainLossEur;
+          if (disp.gainLossEur > 0) entry.gains += disp.gainLossEur;
+          else entry.losses += disp.gainLossEur;
+          entry.disposals++;
+          gainsByYear.set(dispYear, entry);
+        }
+        for (const [fy, data] of gainsByYear) {
+          const hash = await fiscoControlStatusService.computeOperationSetHash(fy);
+          await fiscoControlStatusService.recordResultHistory({
+            fiscal_year: fy,
+            run_id: runId,
+            mode: "commit",
+            status: "committed",
+            operations_count: ops.length,
+            lots_count: fifo.lots.length,
+            disposals_count: data.disposals,
+            gains_eur: data.gains,
+            losses_eur: data.losses,
+            net_gain_loss_eur: data.net,
+            operation_set_hash: hash,
+          });
+          console.log(`[fisco/rebuild] Result history recorded for year=${fy} net=${data.net.toFixed(2)}€ hash=${hash}`);
+        }
       }
 
       await this.updateRun(runId, {

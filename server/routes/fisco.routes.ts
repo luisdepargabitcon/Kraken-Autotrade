@@ -22,6 +22,7 @@ import { FiscoInventorySnapshotService } from "../services/fisco/FiscoInventoryS
 import { createImportPreview, confirmImport, getImportBatches, getImportBatch, type ImportOptions } from "../services/fisco/FiscoImportService";
 import { getFiscoConfig, setFiscoConfig, getFinalizationStatus } from "../services/fisco/FiscoConfigService";
 import { runComparison } from "../services/fisco/FiscoComparisonService";
+import { fiscoControlStatusService } from "../services/fisco/FiscoControlStatusService";
 import multer from "multer";
 
 // Configure multer for memory storage (no disk writes)
@@ -3847,6 +3848,64 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       });
     } catch (e: any) {
       console.error("[fisco/schema-health]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // FISCO Control Status — control fiscal central
+  // ============================================================
+
+  /**
+   * GET /api/fisco/control-status?year=YYYY
+   * Estado consolidado del control fiscal para un año.
+   */
+  app.get("/api/fisco/control-status", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const status = await fiscoControlStatusService.getControlStatus(year);
+      res.json(status);
+    } catch (e: any) {
+      console.error("[fisco/control-status]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/result-history?year=YYYY
+   * Historial de resultados fiscales para un año.
+   */
+  app.get("/api/fisco/result-history", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const history = await fiscoControlStatusService.getResultHistory(year);
+      res.json({ year, history });
+    } catch (e: any) {
+      console.error("[fisco/result-history]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/change-impact?year=YYYY
+   * Análisis de impacto de cambios para un año.
+   */
+  app.get("/api/fisco/change-impact", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      if (isNaN(year) || year < 2020 || year > 2100) {
+        return res.status(400).json({ error: "year inválido" });
+      }
+      const impact = await fiscoControlStatusService.getChangeImpact(year);
+      res.json(impact);
+    } catch (e: any) {
+      console.error("[fisco/change-impact]", e);
       res.status(500).json({ error: e.message });
     }
   });

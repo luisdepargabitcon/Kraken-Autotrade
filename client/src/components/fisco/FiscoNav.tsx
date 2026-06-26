@@ -1,11 +1,12 @@
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Upload, List, Stethoscope, ShieldCheck,
-  ArrowLeftRight, FileText, Settings2, AlertTriangle,
+  ArrowLeftRight, FileText, Settings2, AlertTriangle, Gauge,
 } from "lucide-react";
 
 export type FiscoSection =
   | "panel"
+  | "control"
   | "importaciones"
   | "transacciones"
   | "diagnostico"
@@ -32,6 +33,7 @@ interface FiscoNavProps {
 export function FiscoNav({ active, onChange, criticalCount = 0, warningCount = 0 }: FiscoNavProps) {
   const items: NavItem[] = [
     { id: "panel",          label: "Panel",           icon: LayoutDashboard },
+    { id: "control",        label: "Control fiscal",  icon: Gauge },
     { id: "importaciones",  label: "Importaciones",   icon: Upload },
     { id: "transacciones",  label: "Transacciones",   icon: List },
     { id: "diagnostico",    label: "Diagnóstico",     icon: Stethoscope },

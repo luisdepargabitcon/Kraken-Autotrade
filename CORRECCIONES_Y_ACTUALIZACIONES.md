@@ -2,6 +2,50 @@
 
 ---
 
+## feat(fisco): control fiscal de cambios, huella de datos y rebuild seguro
+
+**Fecha**: 2026-06-26  
+**Commit**: `feat(fisco): control fiscal de cambios, huella de datos y rebuild seguro`  
+**Lote**: FISCO V2 — Control de cambios por nuevas operaciones
+
+### Problema
+Durante las validaciones pueden haber entrado nuevas operaciones de Kraken/RevolutX o ejecutado nuevos sync/rebuild, cambiando operaciones oficiales, lotes FIFO, disposiciones y resultado fiscal por año. No se puede asumir cifras antiguas como fijas.
+
+### Cambios implementados
+
+**Nuevos archivos:**
+- `db/migrations/060_fisco_control_status.sql` — Tablas `fisco_result_history` y `fisco_control_snapshots`, columnas `operation_set_hash`, `fiscal_year`, `gains_eur`, `losses_eur`, `net_gain_loss_eur`, deltas en `fisco_rebuild_runs`
+- `server/services/fisco/FiscoControlStatusService.ts` — Servicio central de control fiscal: `getControlStatus()`, `computeOperationSetHash()`, `getDataFingerprint()`, `getOfficialResult()`, `getSyncStatus()`, `getResultHistory()`, `recordResultHistory()`, `getChangeImpact()`
+- `client/src/components/fisco/FiscoControlSection.tsx` — Panel UI completo: estado del resultado, huella de datos, último rebuild, sync status, bloqueadores/avisos, acciones requeridas, revisar cambios, historial
+- `server/services/fisco/__tests__/fiscoControlStatus.test.ts` — 34 tests: control status, hash logic, finalization integration, change impact, result history, UI checks
+
+**Archivos modificados:**
+- `server/routes/fisco.routes.ts` — 3 endpoints nuevos: `GET /api/fisco/control-status`, `GET /api/fisco/result-history`, `GET /api/fisco/change-impact`
+- `server/services/FiscoRebuildService.ts` — Step 9: registra result history por año tras commit FIFO, calcula deltas vs cálculo anterior
+- `server/services/fisco/FiscoConfigService.ts` — `getFinalizationStatus()` integrado con control status: detecta `NEW_OPERATIONS_AFTER_REBUILD`, `ORPHAN_SELLS`, `RESULT_OUTDATED` vía operation_set_hash
+- `client/src/components/fisco/FiscoNav.tsx` — Nueva pestaña "Control fiscal" (icono Gauge) antes de Importaciones
+- `client/src/pages/FiscoDashboard.tsx` — Renderiza `FiscoControlSection` cuando `activeSection === "control"`
+
+### Endpoints nuevos
+- `GET /api/fisco/control-status?year=YYYY` — Estado consolidado: schema health, config, fingerprint, official result, pending changes, blockers, warnings, sync status
+- `GET /api/fisco/result-history?year=YYYY` — Historial de resultados fiscales con deltas entre ejecuciones
+- `GET /api/fisco/change-impact?year=YYYY` — Análisis de impacto: operaciones nuevas, delta, impacto por activo, explicación
+
+### Validación
+- `npm run check`: OK
+- `npm run build`: OK (2567 módulos)
+- `vitest fisco`: 476/476 tests OK (16 archivos)
+
+### Deploy VPS
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+Migration 060 se ejecuta automáticamente al iniciar.
+
+---
+
 ## fix(fisco): refinar balance check fiat, withdrawals y diff historico
 
 **Fecha**: 2026-06-25  

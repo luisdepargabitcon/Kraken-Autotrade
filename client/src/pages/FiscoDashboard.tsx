@@ -11,6 +11,7 @@ import { FiscoTransferLinksSection } from "@/components/fisco/FiscoTransferLinks
 import { FiscoImportSection } from "@/components/fisco/FiscoImportSection";
 import { FiscoConfigSection } from "@/components/fisco/FiscoConfigSection";
 import { FiscoReportsCenter } from "@/components/fisco/FiscoReportsCenter";
+import { FiscoControlSection } from "@/components/fisco/FiscoControlSection";
 
 import type {
   InventorySnapshotResult,
@@ -214,6 +215,11 @@ export default function FiscoDashboard() {
             pendingChanges={pendingQ.data}
             isLoadingSnapshot={snapshotQ.isLoading}
           />
+        )}
+
+        {/* ── Control fiscal ── */}
+        {activeSection === "control" && (
+          <FiscoControlSection year={parseInt(year)} />
         )}
 
         {/* ── Importaciones ── */}
