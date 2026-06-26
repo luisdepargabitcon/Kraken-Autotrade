@@ -13,8 +13,20 @@ import { Label } from "@/components/ui/label";
 import {
   Calculator, RefreshCw, TrendingUp, TrendingDown, FileText,
   AlertTriangle, Loader2, Download, Filter, ChevronDown, ChevronUp, X,
-  CalendarIcon, Plus, Minus, Send, Bell, Settings2, Clock, Zap, FileWarning, MessageSquare
+  CalendarIcon, Plus, Minus, Send, Bell, Settings2, Clock, Zap, FileWarning, MessageSquare,
+  ShieldCheck, Lock, Info
 } from "lucide-react";
+import {
+  formatFiscoEngineModeLabel,
+  formatFiscoBlockerLabel,
+  formatFiscoWarningLabel,
+  formatFiscoComparisonMetricLabel,
+  formatFiscoDiffCauseLabel,
+  formatEur as formatEurLabel,
+  formatEurSigned,
+  type FiscoEngineMode,
+} from "@/components/fisco/fiscoLabels";
+import type { FiscoV2ComparisonResult } from "@/components/fisco/FiscoTypes";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -429,6 +441,7 @@ export default function Fisco() {
   const [rebuildMode, setRebuildMode] = useState<"dry_run" | "commit">("dry_run");
   const [showAuditPanel, setShowAuditPanel] = useState(false);
   const [successfulDryRun, setSuccessfulDryRun] = useState(false);
+  const [showV2Detail, setShowV2Detail] = useState(false);
 
   // Anexo filters
   const [anexoAsset, setAnexoAsset] = useState("");
@@ -645,6 +658,33 @@ export default function Fisco() {
     retry: false,
     enabled: activeTab === "rebuild",
     staleTime: 30_000,
+  });
+
+  // --- V2 Comparison ---
+  const v2ComparisonQ = useQuery<FiscoV2ComparisonResult>({
+    queryKey: [`/api/fisco/comparison?year=${selectedYear}`],
+    queryFn: async () => {
+      const r = await fetch(`/api/fisco/comparison?year=${selectedYear}`);
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      return r.json();
+    },
+    refetchOnWindowFocus: false,
+    retry: false,
+    enabled: activeTab === "rebuild",
+    staleTime: 30_000,
+  });
+
+  // --- Rebuild V2 (shadow rebuild) ---
+  const rebuildV2 = useMutation<{ status: string; mode: string; blockers: string[]; warnings: string[] }, Error>({
+    mutationFn: async () => {
+      const resp = await fetch(`/api/fisco/rebuild-v2?year=${selectedYear}`, { method: "POST" });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || resp.statusText);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/fisco/comparison?year=${selectedYear}`] });
+    },
   });
 
   // --- Rebuild runs history ---
@@ -1831,7 +1871,7 @@ export default function Fisco() {
                      : <span className="text-red-400">✗ Errores críticos detectados</span>}
                   {validateQ.data && (
                     <span className="text-xs text-muted-foreground font-normal ml-auto">
-                      {validateQ.data.operationsCount.toLocaleString("es-ES")} ops · {validateQ.data.lotsCount.toLocaleString("es-ES")} lotes · {validateQ.data.disposalsCount.toLocaleString("es-ES")} disposals
+                      {validateQ.data.operationsCount.toLocaleString("es-ES")} ops · {validateQ.data.lotsCount.toLocaleString("es-ES")} lotes · {validateQ.data.disposalsCount.toLocaleString("es-ES")} disposiciones
                     </span>
                   )}
                 </CardTitle>
@@ -1876,7 +1916,7 @@ export default function Fisco() {
                         ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
                         : "border-border text-muted-foreground"
                     }`}>
-                      ⏳ {pendingChangesQ.data.pending_operations_count} ops pendientes desde último commit
+                      ⏳ {pendingChangesQ.data.pending_operations_count} ops pendientes desde la última confirmación
                     </span>
                     <span className={`px-2 py-1 rounded font-mono border ${
                       pendingChangesQ.data.orphan_sells_count > 0
@@ -1887,18 +1927,18 @@ export default function Fisco() {
                     </span>
                     {pendingChangesQ.data.lastCommittedRun && (
                       <span className="px-2 py-1 rounded font-mono border border-border text-muted-foreground">
-                        Último commit: {new Date(pendingChangesQ.data.lastCommittedRun.completed_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}
+                        Última confirmación: {new Date(pendingChangesQ.data.lastCommittedRun.completed_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}
                       </span>
                     )}
                     {!pendingChangesQ.data.lastCommittedRun && (
                       <span className="px-2 py-1 rounded font-mono border border-red-500/40 bg-red-500/10 text-red-300">
-                        ❌ Sin commit FIFO en la base de datos
+                        ❌ Sin confirmación FIFO en la base de datos
                       </span>
                     )}
                   </div>
                   {pendingChangesQ.data.has_pending && (
                     <p className="text-xs text-amber-400/80 mt-1">
-                      ⚠️ Se recomienda ejecutar un <strong>dry_run</strong> seguido de <strong>commit</strong> para aplicar el recálculo FIFO completo.
+                      ⚠️ Se recomienda ejecutar una <strong>simulación</strong> seguida de <strong>confirmación</strong> para aplicar el recálculo FIFO completo.
                     </p>
                   )}
                 </CardContent>
@@ -1911,6 +1951,206 @@ export default function Fisco() {
               </div>
             )}
 
+            {/* ── Panel estado motor fiscal V2 ── */}
+            <Card className="border border-blue-500/30 bg-blue-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-blue-400" />
+                  Estado del motor fiscal V2
+                  <button
+                    className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => v2ComparisonQ.refetch()}
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {/* Motor actual + V2 en sombra */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-muted/30 border border-border">
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Motor en uso</div>
+                    <div className="text-sm font-bold text-blue-400">{formatFiscoEngineModeLabel("legacy")}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">Resultado fiscal oficial</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Simulación V2</div>
+                    <div className="text-sm font-bold text-blue-400">{formatFiscoEngineModeLabel("v2_shadow")}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">Cálculo en paralelo, no oficial</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/20 border border-border opacity-60">
+                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">V2 oficial</div>
+                    <div className="text-sm font-bold text-muted-foreground flex items-center gap-1">
+                      <Lock className="h-3 w-3" /> Bloqueado
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">No disponible hasta validar</div>
+                  </div>
+                </div>
+
+                {/* Comparación */}
+                {v2ComparisonQ.isLoading && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Cargando comparación…
+                  </div>
+                )}
+                {v2ComparisonQ.data && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                      <div className="bg-card border border-border rounded p-2">
+                        <div className="text-muted-foreground">{formatFiscoComparisonMetricLabel("diff_eur")}</div>
+                        <div className={`font-bold font-mono ${v2ComparisonQ.data.diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {formatEurSigned(v2ComparisonQ.data.diff_eur)}
+                        </div>
+                      </div>
+                      <div className="bg-card border border-border rounded p-2">
+                        <div className="text-muted-foreground">{formatFiscoComparisonMetricLabel("gross_gains_diff_eur")}</div>
+                        <div className={`font-bold font-mono ${v2ComparisonQ.data.gross_gains_diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {formatEurSigned(v2ComparisonQ.data.gross_gains_diff_eur)}
+                        </div>
+                      </div>
+                      <div className="bg-card border border-border rounded p-2">
+                        <div className="text-muted-foreground">{formatFiscoComparisonMetricLabel("gross_losses_diff_eur")}</div>
+                        <div className={`font-bold font-mono ${v2ComparisonQ.data.gross_losses_diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {formatEurSigned(v2ComparisonQ.data.gross_losses_diff_eur)}
+                        </div>
+                      </div>
+                      <div className="bg-card border border-border rounded p-2">
+                        <div className="text-muted-foreground">{formatFiscoComparisonMetricLabel("disposals_count_diff")}</div>
+                        <div className={`font-bold font-mono ${v2ComparisonQ.data.disposals_count_diff === 0 ? "text-muted-foreground" : "text-amber-400"}`}>
+                          {v2ComparisonQ.data.disposals_count_diff > 0 ? "+" : ""}{v2ComparisonQ.data.disposals_count_diff}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Bloqueos para V2 oficial */}
+                    {v2ComparisonQ.data.official_switch_blockers.length > 0 && (
+                      <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-2.5 space-y-1">
+                        <div className="text-xs font-semibold text-red-400 flex items-center gap-1.5">
+                          <Lock className="h-3 w-3" /> Motivos de bloqueo para activar V2 oficial:
+                        </div>
+                        <ul className="space-y-0.5 pl-4">
+                          {v2ComparisonQ.data.official_switch_blockers.map((b, i) => (
+                            <li key={i} className="text-xs text-red-300">• {formatFiscoBlockerLabel(b)}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Avisos */}
+                    {v2ComparisonQ.data.warnings.length > 0 && (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1">
+                        <div className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+                          <AlertTriangle className="h-3 w-3" /> Avisos:
+                        </div>
+                        <ul className="space-y-0.5 pl-4">
+                          {v2ComparisonQ.data.warnings.map((w, i) => (
+                            <li key={i} className="text-xs text-amber-300">• {formatFiscoWarningLabel(w)}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Estado seguridad */}
+                    <div className="flex items-center gap-2 text-xs">
+                      {v2ComparisonQ.data.is_safe_for_report ? (
+                        <span className="text-green-400 flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Seguro para informe en sombra</span>
+                      ) : (
+                        <span className="text-red-400 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> No seguro para informe en sombra</span>
+                      )}
+                      <span className="text-muted-foreground">·</span>
+                      {v2ComparisonQ.data.safe_for_official_switch ? (
+                        <span className="text-green-400">V2 oficial listo para activar</span>
+                      ) : (
+                        <span className="text-muted-foreground">V2 oficial no disponible</span>
+                      )}
+                    </div>
+
+                    {/* Detalle por activo */}
+                    {v2ComparisonQ.data.by_asset.length > 0 && (
+                      <div className="pt-1">
+                        <button
+                          className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                          onClick={() => setShowV2Detail(!showV2Detail)}
+                        >
+                          {showV2Detail ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                          Diferencias por activo ({v2ComparisonQ.data.by_asset.length})
+                        </button>
+                        {showV2Detail && (
+                          <div className="mt-2 overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-border bg-muted/30">
+                                  <th className="text-left py-1.5 px-2">Activo</th>
+                                  <th className="text-right py-1.5 px-2">Motor actual</th>
+                                  <th className="text-right py-1.5 px-2">V2 en sombra</th>
+                                  <th className="text-right py-1.5 px-2">Diferencia</th>
+                                  <th className="text-left py-1.5 px-2">Causa probable</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {v2ComparisonQ.data.by_asset.map((row, i) => (
+                                  <tr key={i} className="border-b border-border/30">
+                                    <td className="py-1.5 px-2 font-mono">{row.asset}</td>
+                                    <td className="py-1.5 px-2 text-right font-mono">{formatEurLabel(row.baseline_gain_loss_eur)}</td>
+                                    <td className="py-1.5 px-2 text-right font-mono">{formatEurLabel(row.v2_gain_loss_eur)}</td>
+                                    <td className={`py-1.5 px-2 text-right font-mono font-bold ${row.diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                                      {formatEurSigned(row.diff_eur)}
+                                    </td>
+                                    <td className="py-1.5 px-2 text-muted-foreground">{formatFiscoDiffCauseLabel(row.cause)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Botón reconstruir V2 en sombra */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs gap-1.5 border-blue-500/40 text-blue-400 hover:bg-blue-500/10"
+                        onClick={() => rebuildV2.mutate()}
+                        disabled={rebuildV2.isPending}
+                      >
+                        {rebuildV2.isPending ? <><Loader2 className="h-3 w-3 animate-spin" /> Recalculando…</> : <><RefreshCw className="h-3 w-3" /> Recalcular V2 en sombra</>}
+                      </Button>
+                      {rebuildV2.data && (
+                        <span className="text-xs text-green-400 flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3" /> {rebuildV2.data.status}
+                        </span>
+                      )}
+                      {rebuildV2.isError && (
+                        <span className="text-xs text-red-400">Error: {rebuildV2.error.message}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {v2ComparisonQ.isError && (
+                  <div className="text-xs text-amber-400 flex items-center gap-1.5">
+                    <Info className="h-3 w-3" /> Comparación V2 no disponible aún para {selectedYear}. Ejecuta «Recalcular V2 en sombra» para generarla.
+                  </div>
+                )}
+
+                {/* Botón activar V2 oficial (deshabilitado) */}
+                <div className="flex items-center gap-2 pt-2 border-t border-border/50">
+                  <Button
+                    size="sm"
+                    disabled
+                    className="h-8 text-xs gap-1.5 opacity-50 cursor-not-allowed"
+                    title="V2 oficial no disponible hasta resolver todos los bloqueos"
+                  >
+                    <Lock className="h-3.5 w-3.5" /> Activar V2 oficial
+                  </Button>
+                  <span className="text-[10px] text-muted-foreground">
+                    Disponible cuando no haya bloqueos ni diferencias sin explicar
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Rebuild controls */}
             <Card className="border-border">
               <CardHeader className="pb-2">
@@ -1919,8 +2159,8 @@ export default function Fisco() {
               <CardContent className="space-y-4">
                 <p className="text-xs text-muted-foreground">
                   Descarga todo el historial de Kraken y RevolutX, renormaliza operaciones con tasas EUR históricas
-                  por fecha y recalcula el FIFO completo. El modo <strong>dry-run</strong> simula sin alterar los datos oficiales.
-                  El modo <strong>commit</strong> reemplaza los datos oficiales (solo si no hay errores críticos).
+                  por fecha y recalcula el FIFO completo. El modo <strong>simulación</strong> calcula sin alterar los datos oficiales.
+                  El modo <strong>confirmación</strong> reemplaza los datos oficiales (solo si no hay errores críticos).
                 </p>
 
                 {/* Mode selector */}
@@ -1939,7 +2179,7 @@ export default function Fisco() {
                             : "border-border text-muted-foreground hover:border-border/80"
                         }`}
                       >
-                        {m === "dry_run" ? "🔍 dry_run (simulación)" : "⚠️ commit (reemplazar datos)"}
+                        {m === "dry_run" ? "🔍 Simulación" : "⚠️ Confirmar (reemplazar datos)"}
                       </button>
                     ))}
                   </div>
@@ -1950,7 +2190,7 @@ export default function Fisco() {
                   <Button
                     onClick={() => {
                       if (rebuildMode === "commit" && !successfulDryRun) {
-                        alert("⚠️ Debes ejecutar primero un dry_run exitoso antes de poder hacer commit.");
+                        alert("⚠️ Debes ejecutar primero una simulación exitosa antes de poder confirmar.");
                         return;
                       }
                       setRebuildConfirm(rebuildMode);
@@ -1962,7 +2202,7 @@ export default function Fisco() {
                     <Settings2 className="h-4 w-4" />
                     {rebuildMode === "dry_run" ? "Ejecutar simulación" : "Solicitar reconstrucción real"}
                     {rebuildMode === "commit" && !successfulDryRun && (
-                      <span className="text-xs text-muted-foreground ml-2">(requiere dry_run exitoso)</span>
+                      <span className="text-xs text-muted-foreground ml-2">(requiere simulación exitosa)</span>
                     )}
                   </Button>
                 ) : (
@@ -1971,7 +2211,7 @@ export default function Fisco() {
                     <span className="text-xs text-yellow-300">
                       {rebuildConfirm === "commit"
                         ? "⚠️ CONFIRMAR: esto reemplazará los datos fiscales oficiales (backup automático activado). Esta acción es irreversible."
-                        : "Confirmar ejecución del dry-run (no altera datos oficiales)."}
+                        : "Confirmar ejecución de la simulación (no altera datos oficiales)."}
                     </span>
                     <div className="flex gap-2 ml-auto shrink-0">
                       <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setRebuildConfirm(null)}>
@@ -2003,7 +2243,7 @@ export default function Fisco() {
                       {[
                         ["Operaciones", runRebuild.data.operationsCount],
                         ["Lotes", runRebuild.data.lotsCount],
-                        ["Disposals", runRebuild.data.disposalsCount],
+                        ["Disposiciones", runRebuild.data.disposalsCount],
                         ["Errores críticos", runRebuild.data.criticalErrorsCount],
                       ].map(([label, val]) => (
                         <div key={label as string} className="bg-card border border-border rounded p-2">
@@ -2043,7 +2283,7 @@ export default function Fisco() {
                       className="ml-auto h-7 text-xs gap-1.5 border-blue-500/40 text-blue-400 hover:bg-blue-500/10"
                       onClick={() => { setShowAuditPanel(true); auditSummaryQ.refetch(); }}
                     >
-                      <FileWarning className="h-3.5 w-3.5" /> Ver informe dry-run
+                      <FileWarning className="h-3.5 w-3.5" /> Ver informe de simulación
                     </Button>
                     <Button
                       size="sm" variant="outline"
@@ -2140,7 +2380,7 @@ export default function Fisco() {
               <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
                 <h3 className="text-base font-semibold flex items-center gap-2">
                   {auditSummaryQ.data?.semaphore === "green" ? "🟢" : auditSummaryQ.data?.semaphore === "yellow" ? "🟡" : "🔴"}
-                  Informe Dry-Run FISCO
+                  Informe de simulación FISCO
                 </h3>
                 <Button variant="ghost" size="sm" onClick={() => setShowAuditPanel(false)}><X className="h-4 w-4" /></Button>
               </div>
@@ -2154,7 +2394,7 @@ export default function Fisco() {
                     {[
                       ["Operaciones", auditSummaryQ.data.operationsCount],
                       ["Lotes", auditSummaryQ.data.lotsCount],
-                      ["Disposals", auditSummaryQ.data.disposalsCount],
+                      ["Disposiciones", auditSummaryQ.data.disposalsCount],
                       ["Errores críticos", auditSummaryQ.data.criticalErrorsCount],
                     ].map(([label, val]) => (
                       <div key={label as string} className={`rounded border p-2 ${label === "Errores críticos" && (val as number) > 0 ? "border-red-500/40 bg-red-500/5" : "border-border bg-card"}`}>
@@ -2247,7 +2487,7 @@ export default function Fisco() {
                 </div>
               ) : (
                 <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-                  No hay dry-run completado. Ejecuta una simulación primero.
+                  No hay simulación completada. Ejecuta una simulación primero.
                 </div>
               )}
 

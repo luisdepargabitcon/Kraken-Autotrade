@@ -5,8 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Settings2, Info, AlertTriangle, CheckCircle2, Sliders } from "lucide-react";
-
-export type FiscoEngineMode = "legacy" | "v2_shadow" | "v2_official";
+import {
+  formatFiscoEngineModeLabel,
+  formatFiscoEngineModeDescription,
+  type FiscoEngineMode,
+} from "./fiscoLabels";
 
 interface FiscoConfig {
   engineMode: FiscoEngineMode;
@@ -41,9 +44,9 @@ const DEFAULT_CONFIG: FiscoConfig = {
 };
 
 const MODE_INFO: Record<FiscoEngineMode, { label: string; color: string; description: string }> = {
-  legacy:     { label: "Legado",       color: "border-border text-muted-foreground",  description: "Motor FIFO actual, sin cambios." },
-  v2_shadow:  { label: "V2 Shadow",    color: "border-blue-500/50 text-blue-400",     description: "FIFO V2 en paralelo (shadow mode). Calcula sin sustituir el oficial." },
-  v2_official:{ label: "V2 Oficial",   color: "border-green-500/50 text-green-400",   description: "FIFO V2 activo como cálculo oficial. Solo disponible sin blockers." },
+  legacy:     { label: formatFiscoEngineModeLabel("legacy"),       color: "border-border text-muted-foreground",  description: formatFiscoEngineModeDescription("legacy") },
+  v2_shadow:  { label: formatFiscoEngineModeLabel("v2_shadow"),    color: "border-blue-500/50 text-blue-400",     description: formatFiscoEngineModeDescription("v2_shadow") },
+  v2_official:{ label: formatFiscoEngineModeLabel("v2_official"),  color: "border-green-500/50 text-green-400",   description: formatFiscoEngineModeDescription("v2_official") },
 };
 
 export function FiscoConfigSection() {
@@ -112,7 +115,7 @@ export function FiscoConfigSection() {
           </div>
           <div className="flex items-start gap-2 p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-blue-300">
             <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-            <p><strong>v2_official</strong> se habilitará cuando FIFO V2 no tenga blockers ni diffs desconocidos. Por ahora usa <strong>v2_shadow</strong> para calcular en paralelo.</p>
+            <p><strong>V2 oficial</strong> se habilitará cuando el motor V2 no tenga bloqueos ni diferencias sin explicar. Por ahora se mantiene en <strong>V2 en sombra</strong> para calcular en paralelo sin sustituir el resultado oficial.</p>
           </div>
         </CardContent>
       </Card>
@@ -142,7 +145,7 @@ export function FiscoConfigSection() {
       <Card className="border border-border">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <Sliders className="h-4 w-4" /> Transfer Matching
+            <Sliders className="h-4 w-4" /> Emparejamiento de transferencias
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -156,13 +159,13 @@ export function FiscoConfigSection() {
               <div className="text-lg font-bold">±{config.transferMatchingAmountTolerancePct}%</div>
             </div>
             <div className="p-3 rounded-lg bg-muted/30 border border-border">
-              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Dust threshold</div>
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Umbral de saldo residual</div>
               <div className="text-lg font-bold">{config.dustThresholdDefault}</div>
             </div>
           </div>
           <div className="text-xs text-muted-foreground flex items-start gap-1.5">
             <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-            Estos parámetros se usan en Balance Check y en el matching de transferencias internas.
+            Estos parámetros se usan en la comprobación de balance y en el emparejamiento de transferencias internas.
           </div>
         </CardContent>
       </Card>
@@ -177,9 +180,9 @@ export function FiscoConfigSection() {
         <CardContent className="space-y-3">
           {([
             ["blockIfSellWithoutCostBasis",    "Bloquear si hay ventas sin base de coste"],
-            ["blockIfRewardWithoutPrice",      "Bloquear si hay rewards sin precio EUR"],
-            ["blockIfTransferMismatch",        "Bloquear si hay transfer mismatch sin resolver"],
-            ["blockIfBalanceMismatchCritical", "Bloquear si hay balance mismatch crítico"],
+            ["blockIfRewardWithoutPrice",      "Bloquear si hay recompensas sin precio EUR"],
+            ["blockIfTransferMismatch",        "Bloquear si hay discrepancias en transferencias sin resolver"],
+            ["blockIfBalanceMismatchCritical", "Bloquear si hay discrepancia crítica de balance"],
           ] as [keyof FiscoConfig, string][]).map(([key, label]) => (
             <div key={key} className="flex items-center justify-between gap-2">
               <Label htmlFor={key} className="text-xs font-normal cursor-pointer">{label}</Label>
@@ -197,13 +200,13 @@ export function FiscoConfigSection() {
       {/* ── Fee cripto ── */}
       <Card className="border border-border">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Tratamiento fees en cripto</CardTitle>
+          <CardTitle className="text-sm font-semibold">Tratamiento de comisiones en cripto</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {([
-              ["inventory_reduction", "Reducción de inventario", "La fee reduce el saldo del activo. No genera disposal explícito. (Recomendado para fees de red en transfers)"],
-              ["explicit_disposal",   "Disposal explícito",      "La fee se trata como una venta del activo. Genera ganancia/pérdida fiscal. (Conservador, para fees de trading)"],
+              ["inventory_reduction", "Reducción de inventario", "La comisión reduce el saldo del activo. No genera disposición explícita. (Recomendado para comisiones de red en transferencias)"],
+              ["explicit_disposal",   "Disposición explícita",   "La comisión se trata como una venta del activo. Genera ganancia/pérdida fiscal. (Conservador, para comisiones de trading)"],
             ] as [typeof config.cryptoFeeTreatment, string, string][]).map(([val, label, desc]) => (
               <button
                 key={val}

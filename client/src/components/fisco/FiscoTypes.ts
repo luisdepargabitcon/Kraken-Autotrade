@@ -119,6 +119,15 @@ export interface ImportPreviewRow {
 export interface ImportPreviewResult {
   import_batch_id: string;
   exchange: string;
+  year: number;
+  fiscal_year_detected: number;
+  raw_rows: number;
+  parsed_rows: number;
+  normalized_rows: number;
+  skipped_rows: number;
+  duplicate_rows: number;
+  warning_rows: number;
+  error_rows: number;
   total_rows: number;
   normalized: number;
   duplicates: number;
@@ -128,6 +137,7 @@ export interface ImportPreviewResult {
   errors: number;
   rows: ImportPreviewRow[];
   dry_run: boolean;
+  warnings: string[];
 }
 
 export interface FiscoV2ComparisonResult {
@@ -144,10 +154,15 @@ export interface FiscoV2ComparisonResult {
     gains_eur: number;
     losses_eur: number;
     disposals_count: number;
-    engine: "v2_shadow";
+    engine: "v2_shadow_basic";
+    is_full_v2_engine: boolean;
+    limitations: string[];
   };
   diff_eur: number;
   diff_pct: number | null;
+  gross_gains_diff_eur: number;
+  gross_losses_diff_eur: number;
+  disposals_count_diff: number;
   by_asset: Array<{
     asset: string;
     baseline_gain_loss_eur: number;
@@ -158,7 +173,16 @@ export interface FiscoV2ComparisonResult {
   }>;
   blockers: string[];
   warnings: string[];
+  official_switch_blockers: string[];
   is_safe_for_report: boolean;
+  is_safe_for_shadow_report: boolean;
+  safe_for_official_switch: boolean;
+  comparison_quality: {
+    baseline_valid: boolean;
+    v2_valid: boolean;
+    diff_valid: boolean;
+    numeric_fields_valid: boolean;
+  };
   generated_at: string;
 }
 

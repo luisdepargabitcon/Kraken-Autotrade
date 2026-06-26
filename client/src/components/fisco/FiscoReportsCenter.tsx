@@ -22,7 +22,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   FileText, Download, Archive, CheckCircle2, AlertTriangle, XCircle,
   Loader2, Globe, Building2, RefreshCw, FileDown, Table2, FileSpreadsheet,
+  ShieldCheck, Lock, Info,
 } from "lucide-react";
+import {
+  formatFiscoEngineModeLabel,
+  formatFiscoBlockerLabel,
+  formatFiscoWarningLabel,
+  formatEurSigned,
+} from "./fiscoLabels";
+import type { FiscoV2ComparisonResult } from "./FiscoTypes";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const AVAILABLE_YEARS = [2024, 2025, 2026];
@@ -111,6 +119,16 @@ function AnnualReportModule() {
     },
   });
 
+  const { data: v2Comparison, isLoading: v2Loading } = useQuery<FiscoV2ComparisonResult>({
+    queryKey: ["v2-comparison", year],
+    queryFn: async () => {
+      const r = await fetch(`/api/fisco/comparison?year=${year}`);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    retry: false,
+  });
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
@@ -164,6 +182,92 @@ function AnnualReportModule() {
           )}
         </div>
       )}
+
+      {/* Panel estado V2 en sombra */}
+      <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 space-y-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-blue-800">
+          <ShieldCheck className="h-4 w-4" />
+          Estado del motor V2 en sombra — {year}
+        </div>
+        {v2Loading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> Cargando comparación…
+          </div>
+        ) : v2Comparison ? (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="bg-white border border-border rounded p-2">
+                <div className="text-muted-foreground">Motor en uso</div>
+                <div className="font-bold text-blue-700">{formatFiscoEngineModeLabel("legacy")}</div>
+              </div>
+              <div className="bg-white border border-blue-200 rounded p-2">
+                <div className="text-muted-foreground">Simulación V2</div>
+                <div className="font-bold text-blue-700">{formatFiscoEngineModeLabel("v2_shadow")}</div>
+              </div>
+              <div className="bg-white border border-border rounded p-2 opacity-60">
+                <div className="text-muted-foreground">V2 oficial</div>
+                <div className="font-bold text-muted-foreground flex items-center justify-center gap-1">
+                  <Lock className="h-3 w-3" /> Bloqueado
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+              <div className="bg-white border border-border rounded p-2">
+                <div className="text-muted-foreground">Diferencia neta</div>
+                <div className={`font-bold font-mono ${v2Comparison.diff_eur >= 0 ? "text-green-700" : "text-red-700"}`}>
+                  {formatEurSigned(v2Comparison.diff_eur)}
+                </div>
+              </div>
+              <div className="bg-white border border-border rounded p-2">
+                <div className="text-muted-foreground">Dif. ganancias brutas</div>
+                <div className={`font-bold font-mono ${v2Comparison.gross_gains_diff_eur >= 0 ? "text-green-700" : "text-red-700"}`}>
+                  {formatEurSigned(v2Comparison.gross_gains_diff_eur)}
+                </div>
+              </div>
+              <div className="bg-white border border-border rounded p-2">
+                <div className="text-muted-foreground">Dif. pérdidas brutas</div>
+                <div className={`font-bold font-mono ${v2Comparison.gross_losses_diff_eur >= 0 ? "text-green-700" : "text-red-700"}`}>
+                  {formatEurSigned(v2Comparison.gross_losses_diff_eur)}
+                </div>
+              </div>
+              <div className="bg-white border border-border rounded p-2">
+                <div className="text-muted-foreground">Dif. disposiciones</div>
+                <div className={`font-bold font-mono ${v2Comparison.disposals_count_diff === 0 ? "text-muted-foreground" : "text-amber-600"}`}>
+                  {v2Comparison.disposals_count_diff > 0 ? "+" : ""}{v2Comparison.disposals_count_diff}
+                </div>
+              </div>
+            </div>
+            {v2Comparison.official_switch_blockers.length > 0 && (
+              <div className="rounded border border-red-200 bg-red-50 p-2 space-y-1">
+                <div className="text-xs font-semibold text-red-800 flex items-center gap-1">
+                  <Lock className="h-3 w-3" /> Motivos de bloqueo para V2 oficial:
+                </div>
+                <ul className="space-y-0.5 pl-4">
+                  {v2Comparison.official_switch_blockers.slice(0, 5).map((b, i) => (
+                    <li key={i} className="text-xs text-red-700">• {formatFiscoBlockerLabel(b)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="flex items-center gap-2 text-xs">
+              {v2Comparison.is_safe_for_report ? (
+                <span className="text-green-700 flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Seguro para informe en sombra</span>
+              ) : (
+                <span className="text-red-700 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> No seguro para informe en sombra</span>
+              )}
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">V2 oficial no disponible</span>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              El resultado oficial se calcula con el motor actual. La simulación V2 en sombra no afecta al resultado oficial.
+            </p>
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <Info className="h-3 w-3" /> Comparación V2 no disponible para {year}.
+          </div>
+        )}
+      </div>
 
       <div className="flex gap-2 flex-wrap">
         <Button onClick={() => openReport(false)} disabled={loading}>
@@ -353,7 +457,7 @@ function MultiYearReportModule() {
               {y.blockers.length > 0 && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1">
                   <p className="text-sm font-bold text-red-800 flex items-center gap-1">
-                    <XCircle className="h-4 w-4" /> Blockers {y.year}
+                    <XCircle className="h-4 w-4" /> Bloqueos {y.year}
                   </p>
                   {y.blockers.map((b, i) => (
                     <p key={i} className="text-xs text-red-700">⛔ [{b.code}] {b.detail}</p>
@@ -363,7 +467,7 @@ function MultiYearReportModule() {
               {y.kraken_warnings.length > 0 && (
                 <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 space-y-1">
                   <p className="text-sm font-bold text-yellow-800 flex items-center gap-1">
-                    <AlertTriangle className="h-4 w-4" /> Kraken warnings {y.year} (no bloqueantes)
+                    <AlertTriangle className="h-4 w-4" /> Avisos de Kraken {y.year} (no bloqueantes)
                   </p>
                   {y.kraken_warnings.map((w, i) => (
                     <p key={i} className="text-xs text-yellow-700">⚠ {w}</p>
@@ -405,7 +509,7 @@ function ExportsModule() {
       icon:  <Table2 className="h-4 w-4" />,
     },
     {
-      label: "Disposals FIFO",
+      label: "Disposiciones FIFO",
       file:  "fisco_disposals.csv",
       url:   `/api/fisco/export/disposals.csv${base}`,
       desc:  "asset, sell_op_id, lot_id, quantity, proceeds_eur, cost_basis_eur, gain_loss_eur …",
@@ -419,7 +523,7 @@ function ExportsModule() {
       icon:  <FileSpreadsheet className="h-4 w-4" />,
     },
     {
-      label: "Statement items / Withdrawals",
+      label: "Elementos de extracto / Retiradas",
       file:  "fisco_statement_items.csv",
       url:   `/api/fisco/export/statement-items.csv${base}`,
       desc:  "statement_type, classification, amount_sent, gain_loss_eur, reconciliation_status …",

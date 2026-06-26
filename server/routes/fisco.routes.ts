@@ -3699,8 +3699,9 @@ export function registerFiscoRebuildRoutes(app: Express): void {
   });
 
   /**
-   * GET /api/fisco/comparison?year=YYYY
+   * GET /api/fisco/comparison?year=YYYY&detail=true
    * Compare baseline (legacy) vs V2 (shadow) results.
+   * With detail=true, includes per-asset breakdown with proceeds, cost basis, and likely reason.
    */
   app.get("/api/fisco/comparison", async (req, res) => {
     try {
@@ -3708,7 +3709,8 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       if (isNaN(year) || year < 2020 || year > 2100) {
         return res.status(400).json({ error: "year inválido" });
       }
-      const comparison = await runComparison(year);
+      const detail = req.query.detail === "true" || req.query.detail === "1";
+      const comparison = await runComparison(year, detail);
       res.json(comparison);
     } catch (e: any) {
       console.error("[fisco/comparison]", e);
