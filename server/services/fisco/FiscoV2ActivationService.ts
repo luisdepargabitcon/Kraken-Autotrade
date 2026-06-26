@@ -2,15 +2,15 @@
  * FiscoV2ActivationService — Activación oficial V2 con backup, rollback y auditoría.
  *
  * Endpoints:
- * - controlledCommit: recalcula FIFO, registra operation_set_hash, guarda auditoría
+ * - controlledCommit: registra operation_set_hash (inicial o existente), guarda auditoría
  * - activateOfficial: valida safe_for_official_switch, crea backup, cambia engine a v2_official
  * - rollback: restaura backup, revierte engine a legacy_fifo o v2_shadow
  *
  * Validaciones estrictas:
- * - operation_set_hash debe estar registrado
- * - safe_for_official_switch debe ser true
- * - Doble confirmación (confirm: true)
+ * - confirm must be true
+ * - safe_for_official_switch debe ser true (para activateOfficial)
  * - Hash y valores esperados deben coincidir
+ * - controlledCommit NO exige hash previo; usa data_fingerprint.operation_set_hash
  */
 
 import { pool } from "../../db";
@@ -20,9 +20,17 @@ import { fiscoControlStatusService } from "./FiscoControlStatusService";
 import { randomUUID } from "crypto";
 
 export interface ControlledCommitResult {
-  committed: boolean;
+  ok: boolean;
   year: number;
+  controlled_commit: boolean;
+  hash_registered: boolean;
+  already_registered: boolean;
   operation_set_hash: string;
+  official_engine: string;
+  shadow_engine: string;
+  net_gain_loss_eur: number;
+  rounded_eur: number;
+  v2_activated: boolean;
   comparison_summary: {
     baseline_net: number;
     v2_net: number;
@@ -32,38 +40,127 @@ export interface ControlledCommitResult {
   audit_log_id: string;
 }
 
-export async function controlledCommit(year: number): Promise<ControlledCommitResult> {
+export async function controlledCommit(
+  year: number,
+  confirm: boolean,
+  expectedCurrentNetGainLossEur: number,
+  expectedCurrentRoundedEur: number
+): Promise<ControlledCommitResult> {
   console.log(`[FISCO_V2_ACTIVATION] controlled commit for year ${year}`);
 
-  // Run comparison to get current state
-  const comparison = await runComparison(year, true);
-
-  // Get control status to check operation_set_hash
-  const status = await fiscoControlStatusService.getControlStatus(year);
-  const operationSetHash = status.last_committed_run?.operation_set_hash ?? null;
-
-  if (!operationSetHash) {
-    throw new Error("No hay operation_set_hash registrado. Ejecutar rebuild FIFO antes de controlled commit.");
+  if (!confirm) {
+    throw new Error("confirm must be true to execute controlled commit. This is a safety check.");
   }
+
+  // Get control status — contains data_fingerprint, official_result, last_committed_run, etc.
+  const status = await fiscoControlStatusService.getControlStatus(year);
+
+  // Validation 1: official_engine must be legacy_fifo
+  if (status.official_engine !== "legacy_fifo") {
+    throw new Error(`official_engine must be legacy_fifo for controlled commit. Current: ${status.official_engine}`);
+  }
+
+  // Validation 2: report_can_be_finalized must be true
+  if (!status.report_can_be_finalized) {
+    throw new Error(`report_can_be_finalized is false. Blockers: ${status.blockers.join(", ")}`);
+  }
+
+  // Validation 3: no blockers
+  if (status.blockers.length > 0) {
+    throw new Error(`Control status has blockers: ${status.blockers.join(", ")}`);
+  }
+
+  // Validation 4: no pending changes
+  if (status.pending_changes?.has_pending) {
+    throw new Error(`There are pending changes. Run rebuild FIFO first.`);
+  }
+
+  // Validation 5: data_fingerprint.operation_set_hash must exist
+  const dataFingerprintHash = status.data_fingerprint?.operation_set_hash ?? null;
+  if (!dataFingerprintHash) {
+    throw new Error("data_fingerprint.operation_set_hash is null. Cannot register hash.");
+  }
+
+  // Validation 6: official_result.net_gain_loss_eur must match expected
+  const officialNet = status.official_result?.net_gain_loss_eur ?? null;
+  if (officialNet === null || Math.abs(officialNet - expectedCurrentNetGainLossEur) > 0.01) {
+    throw new Error(
+      `official_result.net_gain_loss_eur mismatch. Expected: ${expectedCurrentNetGainLossEur}, Current: ${officialNet}`
+    );
+  }
+
+  // Validation 7: rounded value must match
+  const officialRounded = Math.round(officialNet);
+  if (officialRounded !== expectedCurrentRoundedEur) {
+    throw new Error(
+      `official rounded mismatch. Expected: ${expectedCurrentRoundedEur}, Current: ${officialRounded}`
+    );
+  }
+
+  // Check last_committed_run.operation_set_hash
+  const lastCommittedHash = status.last_committed_run?.operation_set_hash ?? null;
+  let alreadyRegistered = false;
+
+  if (lastCommittedHash) {
+    if (lastCommittedHash === dataFingerprintHash) {
+      // Hash already registered and matches — idempotent
+      alreadyRegistered = true;
+      console.log(`[FISCO_V2_ACTIVATION] hash already registered and matches: ${dataFingerprintHash}`);
+    } else {
+      // Hash mismatch — block
+      throw new Error(
+        `HASH_MISMATCH: last_committed_run.operation_set_hash (${lastCommittedHash}) != data_fingerprint.operation_set_hash (${dataFingerprintHash})`
+      );
+    }
+  } else {
+    // last_committed_run.operation_set_hash is null — register it for the first time
+    // Update fisco_rebuild_runs with the hash and fiscal data
+    const lastRunId = status.last_committed_run?.id ?? null;
+    if (lastRunId) {
+      await pool.query(`
+        UPDATE fisco_rebuild_runs SET
+          operation_set_hash = $2,
+          fiscal_year = $3,
+          gains_eur = $4,
+          losses_eur = $5,
+          net_gain_loss_eur = $6
+        WHERE id = $1
+      `, [
+        lastRunId,
+        dataFingerprintHash,
+        year,
+        status.official_result?.gains_eur ?? 0,
+        status.official_result?.losses_eur ?? 0,
+        officialNet,
+      ]);
+      console.log(`[FISCO_V2_ACTIVATION] registered hash ${dataFingerprintHash} on run ${lastRunId}`);
+    } else {
+      console.log(`[FISCO_V2_ACTIVATION] no last_committed_run to update, registering hash in audit log only`);
+    }
+  }
+
+  // Run comparison to get V2 state for audit
+  const comparison = await runComparison(year, true);
 
   // Insert audit log
   const auditId = randomUUID();
   await pool.query(`
     INSERT INTO fisco_v2_audit_log
-      (id, year, event_type, engine_before, operation_set_hash,
+      (id, year, event_type, engine_before, engine_after, operation_set_hash,
        legacy_net_gain_loss_eur, v2_net_gain_loss_eur, diff_eur,
        safe_for_official_switch, request_json, result_json, blockers, warnings)
-    VALUES ($1, $2, 'controlled_commit', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    VALUES ($1, $2, 'controlled_commit_hash_registration', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
   `, [
     auditId,
     year,
-    comparison.baseline.engine ?? 'legacy',
-    operationSetHash,
-    comparison.baseline.net_gain_loss_eur,
+    status.official_engine,
+    status.official_engine, // engine_before = engine_after = legacy_fifo
+    dataFingerprintHash,
+    officialNet,
     comparison.v2.net_gain_loss_eur,
     comparison.diff_eur,
     comparison.safe_for_official_switch,
-    JSON.stringify({ year }),
+    JSON.stringify({ year, confirm, expected_current_net_gain_loss_eur: expectedCurrentNetGainLossEur, expected_current_rounded_eur: expectedCurrentRoundedEur }),
     JSON.stringify({
       baseline: comparison.baseline,
       v2: comparison.v2,
@@ -71,15 +168,24 @@ export async function controlledCommit(year: number): Promise<ControlledCommitRe
       operation_mapping_count: comparison.operation_mapping.length,
       unmapped_legacy: comparison.unmapped_legacy_disposals.length,
       unmapped_v2: comparison.unmapped_v2_disposals.length,
+      already_registered: alreadyRegistered,
     }),
     JSON.stringify(comparison.official_switch_blockers),
     JSON.stringify(comparison.warnings),
   ]);
 
   return {
-    committed: true,
+    ok: true,
     year,
-    operation_set_hash: operationSetHash,
+    controlled_commit: true,
+    hash_registered: !alreadyRegistered,
+    already_registered: alreadyRegistered,
+    operation_set_hash: dataFingerprintHash,
+    official_engine: status.official_engine,
+    shadow_engine: status.shadow_engine,
+    net_gain_loss_eur: officialNet,
+    rounded_eur: officialRounded,
+    v2_activated: false,
     comparison_summary: {
       baseline_net: comparison.baseline.net_gain_loss_eur,
       v2_net: comparison.v2.net_gain_loss_eur,

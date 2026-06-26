@@ -4240,8 +4240,9 @@ export function registerFiscoRebuildRoutes(app: Express): void {
 
   /**
    * POST /api/fisco/rebuild/controlled-commit
-   * Recalcula FIFO, registra operation_set_hash, guarda auditoría.
-   * Body: { year: number }
+   * Registra operation_set_hash (inicial o existente), guarda auditoría.
+   * No recalcular disposals, no cambiar motor oficial, no activar V2.
+   * Body: { year, confirm, expected_current_net_gain_loss_eur, expected_current_rounded_eur }
    */
   app.post("/api/fisco/rebuild/controlled-commit", async (req, res) => {
     try {
@@ -4249,7 +4250,17 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       if (isNaN(year) || year < 2020 || year > 2100) {
         return res.status(400).json({ error: "year inválido" });
       }
-      const result = await controlledCommit(year);
+      const { confirm, expected_current_net_gain_loss_eur, expected_current_rounded_eur } = req.body;
+      if (confirm !== true) {
+        return res.status(400).json({ error: "confirm debe ser true para controlled commit" });
+      }
+      if (typeof expected_current_net_gain_loss_eur !== "number") {
+        return res.status(400).json({ error: "expected_current_net_gain_loss_eur es obligatorio" });
+      }
+      if (typeof expected_current_rounded_eur !== "number") {
+        return res.status(400).json({ error: "expected_current_rounded_eur es obligatorio" });
+      }
+      const result = await controlledCommit(year, confirm, expected_current_net_gain_loss_eur, expected_current_rounded_eur);
       res.json(result);
     } catch (e: any) {
       console.error("[fisco/controlled-commit]", e);

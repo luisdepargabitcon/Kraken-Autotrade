@@ -72,11 +72,70 @@ function makeComparison(overrides: Partial<any> = {}) {
   };
 }
 
-function makeControlStatus(hash: string | null) {
+function makeControlStatus(opts: {
+  lastCommittedHash?: string | null;
+  dataFingerprintHash?: string | null;
+  officialEngine?: string;
+  reportCanBeFinalized?: boolean;
+  blockers?: string[];
+  pendingChanges?: any;
+  officialNet?: number;
+  officialGains?: number;
+  officialLosses?: number;
+} = {}) {
+  const dataFingerprintHash = opts.dataFingerprintHash !== undefined ? opts.dataFingerprintHash : "076a9ec3ae62b369";
+  const lastCommittedHash = opts.lastCommittedHash !== undefined ? opts.lastCommittedHash : null;
   return {
-    last_committed_run: hash
-      ? { id: "run-1", completed_at: new Date().toISOString(), operations_count: 100, lots_count: 50, disposals_count: 30, operation_set_hash: hash }
-      : null,
+    year: 2025,
+    fiscal_result_status: "UPDATED",
+    report_can_be_finalized: opts.reportCanBeFinalized ?? true,
+    official_engine: opts.officialEngine ?? "legacy_fifo",
+    shadow_engine: "v2_shadow",
+    official_result: {
+      net_gain_loss_eur: opts.officialNet ?? -72.24621015,
+      gains_eur: opts.officialGains ?? 45.87,
+      losses_eur: opts.officialLosses ?? -118.12,
+      disposals_count: 234,
+      sell_operations_count: 151,
+      calculated_from_run_id: "run-1",
+      calculated_at: new Date().toISOString(),
+    },
+    data_fingerprint: {
+      operations_count: 234,
+      operations_count_scope: "year",
+      lots_count: 234,
+      disposals_count: 234,
+      transfer_links_count: 0,
+      last_operation_executed_at: "2025-12-31T00:00:00Z",
+      last_operation_created_at: "2025-12-31T00:00:00Z",
+      operation_set_hash: dataFingerprintHash,
+    },
+    last_committed_run: {
+      id: "run-1",
+      completed_at: new Date().toISOString(),
+      operations_count: 234,
+      operations_count_scope: "global",
+      lots_count: 234,
+      disposals_count: 234,
+      operation_set_hash: lastCommittedHash,
+      has_operation_set_hash: lastCommittedHash !== null,
+    },
+    pending_changes: opts.pendingChanges ?? { has_pending: false, pending_operations_count: 0, orphan_sells_count: 0 },
+    blockers: opts.blockers ?? [],
+    warnings: [],
+    required_actions: [],
+    sync_status: {
+      kraken_last_sync_at: null,
+      revolutx_last_sync_at: null,
+      last_import_batch_at: null,
+      confirmed_imports_after_last_rebuild: 0,
+      preview_batches_pending: 0,
+      sync_errors: [],
+    },
+    schema_healthy: true,
+    v2_activation_blocked: false,
+    v2_activation_block_reason: null,
+    generated_at: new Date().toISOString(),
   };
 }
 
@@ -93,44 +152,159 @@ describe("FISCO V2 Activation Service", () => {
   // ── controlledCommit ────────────────────────────────────────────────────
 
   describe("controlledCommit", () => {
-    it("D-01: falla si no hay operation_set_hash registrado", async () => {
+    it("D-01: falla si data_fingerprint.operation_set_hash es null", async () => {
       mockRunComparison.mockResolvedValue(makeComparison());
-      mockGetControlStatus.mockResolvedValue(makeControlStatus(null));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        dataFingerprintHash: null,
+      }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await expect(controlledCommit(2025)).rejects.toThrow("operation_set_hash");
+      await expect(controlledCommit(2025, true, -72.25, -72)).rejects.toThrow("data_fingerprint.operation_set_hash is null");
     });
 
-    it("D-02: registra audit log y devuelve comparison summary", async () => {
+    it("D-02: registra hash cuando last_committed_run.operation_set_hash es null", async () => {
       mockRunComparison.mockResolvedValue(makeComparison());
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        lastCommittedHash: null,
+        dataFingerprintHash: "076a9ec3ae62b369",
+        officialNet: -72.24621015,
+      }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      const result = await controlledCommit(2025);
+      const result = await controlledCommit(2025, true, -72.24621015, -72);
 
-      expect(result.committed).toBe(true);
-      expect(result.operation_set_hash).toBe("hash-abc-123");
-      expect(result.comparison_summary.diff_eur).toBe(0);
-      expect(result.comparison_summary.safe_for_official_switch).toBe(true);
+      expect(result.ok).toBe(true);
+      expect(result.hash_registered).toBe(true);
+      expect(result.already_registered).toBe(false);
+      expect(result.operation_set_hash).toBe("076a9ec3ae62b369");
+      expect(result.v2_activated).toBe(false);
+      expect(result.official_engine).toBe("legacy_fifo");
       expect(result.audit_log_id).toBeDefined();
+
+      // Verify UPDATE fisco_rebuild_runs was called
+      const updateCall = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" && c[0].includes("UPDATE fisco_rebuild_runs") && c[0].includes("operation_set_hash")
+      );
+      expect(updateCall).toBeDefined();
 
       // Verify audit log INSERT was called
       const insertCall = mockPool.query.mock.calls.find(
         (c: any[]) => typeof c[0] === "string" && c[0].includes("INSERT INTO fisco_v2_audit_log")
       );
       expect(insertCall).toBeDefined();
-      expect(insertCall[0]).toContain("controlled_commit");
+      expect(insertCall[0]).toContain("controlled_commit_hash_registration");
     });
 
     it("D-03: no cambia el engine mode", async () => {
       mockRunComparison.mockResolvedValue(makeComparison());
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        lastCommittedHash: null,
+        dataFingerprintHash: "076a9ec3ae62b369",
+      }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
-      await controlledCommit(2025);
+      await controlledCommit(2025, true, -72.24621015, -72);
 
       // setFiscoConfig should NOT be called during controlledCommit
       expect(mockSetFiscoConfig).not.toHaveBeenCalled();
+    });
+
+    it("D-04: falla si confirm no es true", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({}));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      await expect(controlledCommit(2025, false, -72.25, -72)).rejects.toThrow("confirm must be true");
+    });
+
+    it("D-05: falla si expected_current_net_gain_loss_eur no coincide", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        officialNet: -72.24621015,
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      await expect(controlledCommit(2025, true, -100, -100)).rejects.toThrow("net_gain_loss_eur mismatch");
+    });
+
+    it("D-06: falla si HASH_MISMATCH (last_committed_hash != data_fingerprint_hash)", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        lastCommittedHash: "old-hash-aaa",
+        dataFingerprintHash: "new-hash-bbb",
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      await expect(controlledCommit(2025, true, -72.24621015, -72)).rejects.toThrow("HASH_MISMATCH");
+    });
+
+    it("D-07: already_registered=true cuando hash ya existe y coincide", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        lastCommittedHash: "076a9ec3ae62b369",
+        dataFingerprintHash: "076a9ec3ae62b369",
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      const result = await controlledCommit(2025, true, -72.24621015, -72);
+
+      expect(result.already_registered).toBe(true);
+      expect(result.hash_registered).toBe(false);
+      expect(result.operation_set_hash).toBe("076a9ec3ae62b369");
+
+      // UPDATE fisco_rebuild_runs should NOT be called (already registered)
+      const updateCall = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" && c[0].includes("UPDATE fisco_rebuild_runs")
+      );
+      expect(updateCall).toBeUndefined();
+    });
+
+    it("D-08: no hace DELETE/TRUNCATE en fisco_disposals ni fisco_lots", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        lastCommittedHash: null,
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      await controlledCommit(2025, true, -72.24621015, -72);
+
+      const destructiveCall = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" &&
+          (c[0].toUpperCase().includes("DELETE FROM FISCO_DISPOSALS") ||
+           c[0].toUpperCase().includes("DELETE FROM FISCO_LOTS") ||
+           c[0].toUpperCase().includes("TRUNCATE"))
+      );
+      expect(destructiveCall).toBeUndefined();
+    });
+
+    it("D-09: falla si official_engine no es legacy_fifo", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        officialEngine: "v2_official",
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      await expect(controlledCommit(2025, true, -72.25, -72)).rejects.toThrow("official_engine must be legacy_fifo");
+    });
+
+    it("D-10: falla si hay blockers en control status", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        blockers: ["SCHEMA_NOT_HEALTHY"],
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      await expect(controlledCommit(2025, true, -72.25, -72)).rejects.toThrow("blockers");
+    });
+
+    it("D-11: falla si hay pending changes", async () => {
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        pendingChanges: { has_pending: true, pending_operations_count: 5, orphan_sells_count: 0 },
+      }));
+
+      const { controlledCommit } = await import("../FiscoV2ActivationService");
+      await expect(controlledCommit(2025, true, -72.25, -72)).rejects.toThrow("pending changes");
     });
   });
 
@@ -147,7 +321,7 @@ describe("FISCO V2 Activation Service", () => {
         safe_for_official_switch: false,
         official_switch_blockers: ["NET_DIFF_EXCEEDS_TOLERANCE: 5.00 EUR"],
       }));
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-abc-123" }));
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
       await expect(activateOfficial(2025, true, "hash-abc-123", -72.25, -72)).rejects.toThrow("safe_for_official_switch is false");
@@ -155,7 +329,7 @@ describe("FISCO V2 Activation Service", () => {
 
     it("E-03: falla si hash no coincide", async () => {
       mockRunComparison.mockResolvedValue(makeComparison());
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-actual-456"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-actual-456" }));
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
       await expect(activateOfficial(2025, true, "hash-expected-123", -72.25, -72)).rejects.toThrow("hash mismatch");
@@ -163,7 +337,7 @@ describe("FISCO V2 Activation Service", () => {
 
     it("E-04: falla si expected_v2_net_gain_loss_eur no coincide", async () => {
       mockRunComparison.mockResolvedValue(makeComparison({ v2: { net_gain_loss_eur: -72.25, gains_eur: 45.87, losses_eur: 118.12, disposals_count: 234, engine: "v2_independent", is_full_v2_engine: true, limitations: [] } }));
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-abc-123" }));
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
       await expect(activateOfficial(2025, true, "hash-abc-123", -100, -100)).rejects.toThrow("V2 net gain/loss mismatch");
@@ -171,7 +345,7 @@ describe("FISCO V2 Activation Service", () => {
 
     it("E-05: falla si expected_v2_rounded_eur no coincide", async () => {
       mockRunComparison.mockResolvedValue(makeComparison({ v2: { net_gain_loss_eur: -72.25, gains_eur: 45.87, losses_eur: 118.12, disposals_count: 234, engine: "v2_independent", is_full_v2_engine: true, limitations: [] } }));
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-abc-123" }));
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
       await expect(activateOfficial(2025, true, "hash-abc-123", -72.25, -999)).rejects.toThrow("V2 rounded mismatch");
@@ -182,7 +356,7 @@ describe("FISCO V2 Activation Service", () => {
         safe_for_official_switch: false,
         official_switch_blockers: ["FEE_DOUBLE_COUNT_RISK: 2 events detected"],
       }));
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-abc-123" }));
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
       await expect(activateOfficial(2025, true, "hash-abc-123", -72.25, -72)).rejects.toThrow("FEE_DOUBLE_COUNT_RISK");
@@ -193,7 +367,7 @@ describe("FISCO V2 Activation Service", () => {
         safe_for_official_switch: false,
         official_switch_blockers: ["FEE_EUR_PRICE_MISSING: op 123"],
       }));
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-abc-123" }));
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
       await expect(activateOfficial(2025, true, "hash-abc-123", -72.25, -72)).rejects.toThrow("FEE_EUR_PRICE_MISSING");
@@ -201,7 +375,7 @@ describe("FISCO V2 Activation Service", () => {
 
     it("E-08: crea backup antes de cambiar motor", async () => {
       mockRunComparison.mockResolvedValue(makeComparison());
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-abc-123" }));
       mockPool.query.mockResolvedValue({ rows: [] });
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
@@ -225,7 +399,7 @@ describe("FISCO V2 Activation Service", () => {
 
     it("E-09: registra auditoría con event_type activate", async () => {
       mockRunComparison.mockResolvedValue(makeComparison());
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-abc-123" }));
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
       await activateOfficial(2025, true, "hash-abc-123", -72.25, -72);
@@ -241,7 +415,7 @@ describe("FISCO V2 Activation Service", () => {
         safe_for_official_switch: false,
         official_switch_blockers: ["BLOCKED"],
       }));
-      mockGetControlStatus.mockResolvedValue(makeControlStatus("hash-abc-123"));
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({ lastCommittedHash: "hash-abc-123" }));
 
       const { activateOfficial } = await import("../FiscoV2ActivationService");
       await expect(activateOfficial(2025, true, "hash-abc-123", -72.25, -72)).rejects.toThrow();
