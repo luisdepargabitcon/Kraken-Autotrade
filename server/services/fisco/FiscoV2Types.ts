@@ -247,6 +247,23 @@ export interface FeeDiffDetail {
   v2_total_fees_eur: number;
   fee_diff_total_eur: number;
   by_treatment: Record<FeeTreatment, { count: number; total_eur: number }>;
+  trading: {
+    legacy_total_fees_eur: number;
+    v2_total_fees_eur: number;
+    diff_eur: number;
+    blocks_activation: boolean;
+  };
+  inventory_reduction: {
+    v2_total_eur: number;
+    count: number;
+    blocks_activation: boolean;
+    explanation_es: string;
+  };
+  explicit_fee_disposal: {
+    v2_total_eur: number;
+    count: number;
+    blocks_activation: boolean;
+  };
 }
 
 export interface FeeTreatmentSummary {

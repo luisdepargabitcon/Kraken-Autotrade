@@ -192,7 +192,7 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   // Build fee treatment summary
   const feeTreatmentSummary = buildFeeTreatmentSummary(v2EngineResult);
 
-  // Calculate fee diff detail
+  // Calculate fee diff detail — separated by treatment type
   const legacyFeesResult = await pool.query(`
     SELECT COALESCE(SUM(fo.fee_eur::numeric), 0)::float8 AS total_fees_eur
     FROM fisco_operations fo
@@ -200,8 +200,21 @@ export async function runComparison(year: number, detail: boolean = false): Prom
       AND fo.op_type IN ('trade_buy', 'trade_sell')
   `, [`${year}-01-01`, `${year + 1}-01-01`]);
   const legacyTotalFees = parseFloat(legacyFeesResult.rows[0]?.total_fees_eur ?? "0");
-  const v2TotalFees = v2EngineResult.fee_events.reduce((sum, fe) => sum + fe.fee_eur, 0);
+
+  // V2 fees separated by treatment
+  const v2TradingFees = feeTreatmentSummary.integrated_in_acquisition.total_eur + feeTreatmentSummary.integrated_in_transmission.total_eur;
+  const v2InventoryReductionFees = feeTreatmentSummary.inventory_reduction.total_eur;
+  const v2ExplicitFeeDisposalFees = feeTreatmentSummary.explicit_fee_disposal.total_eur;
+  const v2TotalFees = v2TradingFees + v2InventoryReductionFees + v2ExplicitFeeDisposalFees;
+
+  // Trading fee diff: only compare trading fees (buy+sell integrated) with legacy
+  const feeDiffTrading = v2TradingFees - legacyTotalFees;
   const feeDiffTotal = v2TotalFees - legacyTotalFees;
+
+  const TOLERANCE_FEE = 0.01;
+  const tradingBlocks = Math.abs(feeDiffTrading) > TOLERANCE_FEE;
+  const inventoryReductionBlocks = false; // inventory reduction never blocks
+  const explicitFeeDisposalBlocks = false; // explicit fee disposal never blocks
 
   const feeDiffDetail: FeeDiffDetail = {
     legacy_total_fees_eur: legacyTotalFees,
@@ -212,6 +225,23 @@ export async function runComparison(year: number, detail: boolean = false): Prom
       integrated_in_transmission: { count: feeTreatmentSummary.integrated_in_transmission.count, total_eur: feeTreatmentSummary.integrated_in_transmission.total_eur },
       inventory_reduction: { count: feeTreatmentSummary.inventory_reduction.count, total_eur: feeTreatmentSummary.inventory_reduction.total_eur },
       explicit_fee_disposal: { count: feeTreatmentSummary.explicit_fee_disposal.count, total_eur: feeTreatmentSummary.explicit_fee_disposal.total_eur },
+    },
+    trading: {
+      legacy_total_fees_eur: legacyTotalFees,
+      v2_total_fees_eur: v2TradingFees,
+      diff_eur: feeDiffTrading,
+      blocks_activation: tradingBlocks,
+    },
+    inventory_reduction: {
+      v2_total_eur: v2InventoryReductionFees,
+      count: feeTreatmentSummary.inventory_reduction.count,
+      blocks_activation: inventoryReductionBlocks,
+      explanation_es: `V2 incluye ${v2InventoryReductionFees.toFixed(4)} € de comisión de red/reducción de inventario trazada aparte. No se mezcla con las comisiones de trading integradas en adquisiciones/transmisiones.`,
+    },
+    explicit_fee_disposal: {
+      v2_total_eur: v2ExplicitFeeDisposalFees,
+      count: feeTreatmentSummary.explicit_fee_disposal.count,
+      blocks_activation: explicitFeeDisposalBlocks,
     },
   };
 
@@ -373,8 +403,14 @@ export async function runComparison(year: number, detail: boolean = false): Prom
   if (!isNaN(disposalsCountDiff) && disposalsCountDiff !== 0) {
     officialSwitchBlockers.push(`DISPOSALS_COUNT_DIFF: ${disposalsCountDiff}`);
   }
-  if (Math.abs(feeDiffTotal) > TOLERANCE) {
-    officialSwitchBlockers.push(`FEE_DIFF_TOTAL: ${feeDiffTotal.toFixed(4)} EUR`);
+  // FEE_DIFF_TOTAL: only block if trading fee diff exceeds tolerance
+  // inventory_reduction and explicit_fee_disposal fees are traced separately and do not block
+  if (tradingBlocks) {
+    officialSwitchBlockers.push(`FEE_DIFF_TRADING: ${feeDiffTrading.toFixed(4)} EUR`);
+  }
+  // Add informative warning if inventory reduction fees exist
+  if (v2InventoryReductionFees > 0.001) {
+    warnings.push(`V2 incluye ${v2InventoryReductionFees.toFixed(4)} € de comisión de red/reducción de inventario trazada aparte. No se mezcla con las comisiones de trading integradas en adquisiciones/transmisiones.`);
   }
   if (unmappedLegacyDisposals.length > 0) {
     officialSwitchBlockers.push(`UNMAPPED_LEGACY_DISPOSALS: ${unmappedLegacyDisposals.length}`);
@@ -559,7 +595,7 @@ export async function runComparison(year: number, detail: boolean = false): Prom
       baseline_cost_basis_eur: 0,
       v2_cost_basis_eur: 0,
     })),
-    fee_diff_detail: Math.abs(feeDiffTotal) > 0.01 ? feeDiffDetail : null,
+    fee_diff_detail: (Math.abs(feeDiffTotal) > 0.01 || v2InventoryReductionFees > 0.001 || v2ExplicitFeeDisposalFees > 0.001) ? feeDiffDetail : null,
     fee_treatment_summary: feeTreatmentSummary,
     generated_at: new Date().toISOString(),
     ...(comparisonDetail ? { detail: comparisonDetail } : {}),

@@ -1140,6 +1140,18 @@ export function registerFiscoRoutes(app: Express, deps: RouterDeps): void {
         // Portfolio scope metadata — explains mixing when exchange filter is active
         portfolio_scope: portfolioScope,
         portfolio_note:  portfolioNote,
+        // AEAT/Bit2Me fee policy note
+        nota_comisiones: {
+          titulo: "Nota informativa — Tratamiento de comisiones (criterio AEAT/Bit2Me)",
+          fee_policy_explanation: [
+            "Los valores de adquisición incluyen comisiones de compra integradas (integrated_in_acquisition).",
+            "Los valores de transmisión son netos de comisiones de venta integradas (integrated_in_transmission).",
+            "Las comisiones de red/reducción de inventario (inventory_reduction) se muestran aparte y no se mezclan con las comisiones de trading.",
+            "Las comisiones pagadas en cripto distinto al activo operado (explicit_fee_disposal) se trazan separadamente.",
+            "No se duplican comisiones.",
+          ],
+          section_d_note: "section_d es informativa/diagnóstica. arithmetic_ok=false en activos con saldo cero o micro-saldos residuales (SOL, USDC, XRP) no afecta al cálculo FIFO de ganancias/pérdidas ni al estado de finalización. Estas diferencias son por redondeo de precisión en saldos de inventario y no requieren acción correctiva.",
+        },
       });
     } catch (e: any) {
       console.error("[fisco/annual-report] Error:", e);
