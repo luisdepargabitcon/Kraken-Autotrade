@@ -2,6 +2,42 @@
 
 ---
 
+## feat(fisco-v2): informe anual con comisiones trazadas + ui actualizada
+
+**Fecha**: 2026-06-26
+**Lote**: FISCO V2 — Fase 2 (C5)
+
+### Cambios implementados
+
+**Modificado: `FiscoTypes.ts` (client)**:
+- `FiscoV2ComparisonResult` actualizado con nuevos campos:
+  - `gross_diff_detail`, `operation_mapping`, `unmapped_legacy/v2_disposals`
+  - `asset_diffs` con proceeds, cost_basis, disposals_count por activo
+  - `fee_diff_detail` con legacy/v2 totals y desglose por treatment
+  - `fee_treatment_summary` con count y total_eur por tipo
+- `v2.engine` cambiado de literal `"v2_shadow_basic"` a `string`
+
+**Modificado: `FiscoReportsCenter.tsx` (client)**:
+- Panel V2 sombra ahora muestra:
+  - Resumen de comisiones por tratamiento AEAT (4 categorías)
+  - Diferencia de comisiones Legacy vs V2 (3 columnas: legacy, V2, diff)
+  - Resumen de mapeo de disposiciones (match, unmapped legacy, unmapped V2)
+  - Estado de activación V2 oficial (verde si safe_for_official_switch)
+  - Hasta 8 blockers en vez de 5
+
+**Modificado: `FiscoHtmlRenderer.ts` (server)**:
+- Añadida sección 7: "Nota informativa — Tratamiento de comisiones"
+  - Explica criterio AEAT_INTEGRATED_TRACEABLE
+  - Comisiones integradas en adquisición/transmisión, no duplican cálculo
+  - Referencia a doctrina AEAT/Bit2Me
+  - Sección imprimible (dentro de report-main, avoid-break)
+
+### Validación
+- `npm run check`: OK
+- `npm run build`: OK (2569 módulos)
+
+---
+
 ## feat(fisco-v2): activacion oficial con backup rollback y auditoria
 
 **Fecha**: 2026-06-26

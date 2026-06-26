@@ -1743,6 +1743,23 @@ ${partialErrors.length > 0 ? `
   ${renderCompactAssetSummary(assetSummaries, disposalsByAsset)}
 </div>
 
+<!-- 7. NOTA EXPLICATIVA — COMISIONES TRAZADAS (AEAT) -->
+<div class="section-block avoid-break" style="margin-top:1.5rem;padding:.75rem 1rem;background:#f8f8f8;border-left:3px solid #666;border-radius:4px;font-size:.82rem;color:#444">
+  <h2 style="margin-top:0;font-size:.95rem;color:#333">Nota informativa — Tratamiento de comisiones</h2>
+  <p style="margin:.4rem 0">
+    <strong>Criterio aplicado:</strong> AEAT integrado trazable (AEAT_INTEGRATED_TRACEABLE).
+    Las comisiones de compra se integran en el valor de adquisición (se suman al coste).
+    Las comisiones de venta se integran en el valor de transmisión (se restan del ingreso).
+    La columna «Comisiones» en las tablas es <strong>informativa y no duplica el cálculo fiscal</strong>:
+    el efecto fiscal ya está reflejado en el valor de adquisición o transmisión.
+  </p>
+  <p style="margin:.4rem 0;color:#666;font-size:.78rem">
+    Este criterio sigue la doctrina AEAT/Bit2Me: las comisiones de transacción forman parte
+    del valor de adquisición o transmisión del activo, según corresponda, y no constituyen
+    un gasto deducible independiente.
+  </p>
+</div>
+
 </div><!-- /.report-main -->
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->

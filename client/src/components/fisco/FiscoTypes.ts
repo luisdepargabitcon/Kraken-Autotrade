@@ -154,7 +154,7 @@ export interface FiscoV2ComparisonResult {
     gains_eur: number;
     losses_eur: number;
     disposals_count: number;
-    engine: "v2_shadow_basic";
+    engine: string;
     is_full_v2_engine: boolean;
     limitations: string[];
   };
@@ -182,6 +182,47 @@ export interface FiscoV2ComparisonResult {
     v2_valid: boolean;
     diff_valid: boolean;
     numeric_fields_valid: boolean;
+  };
+  gross_diff_detail: Record<string, number> | null;
+  operation_mapping: Array<{
+    legacy_disposal_id: number;
+    v2_disposal_id: string;
+    sell_operation_id: number;
+    asset: string;
+    legacy_gain_loss_eur: number;
+    v2_gain_loss_eur: number;
+    diff_eur: number;
+  }>;
+  unmapped_legacy_disposals: number[];
+  unmapped_v2_disposals: string[];
+  asset_diffs: Array<{
+    asset: string;
+    baseline_gain_loss_eur: number;
+    v2_gain_loss_eur: number;
+    diff_eur: number;
+    baseline_disposals_count: number;
+    v2_disposals_count: number;
+    baseline_proceeds_eur: number;
+    v2_proceeds_eur: number;
+    baseline_cost_basis_eur: number;
+    v2_cost_basis_eur: number;
+  }>;
+  fee_diff_detail: {
+    legacy_total_fees_eur: number;
+    v2_total_fees_eur: number;
+    fee_diff_total_eur: number;
+    by_treatment: {
+      integrated_in_acquisition: { count: number; total_eur: number };
+      integrated_in_transmission: { count: number; total_eur: number };
+      inventory_reduction: { count: number; total_eur: number };
+      explicit_fee_disposal: { count: number; total_eur: number };
+    };
+  } | null;
+  fee_treatment_summary: {
+    integrated_in_acquisition: { count: number; total_eur: number };
+    integrated_in_transmission: { count: number; total_eur: number };
+    inventory_reduction: { count: number; total_eur: number };
+    explicit_fee_disposal: { count: number; total_eur: number };
   };
   generated_at: string;
 }

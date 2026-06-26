@@ -243,10 +243,49 @@ function AnnualReportModule() {
                   <Lock className="h-3 w-3" /> Motivos de bloqueo para V2 oficial:
                 </div>
                 <ul className="space-y-0.5 pl-4">
-                  {v2Comparison.official_switch_blockers.slice(0, 5).map((b, i) => (
+                  {v2Comparison.official_switch_blockers.slice(0, 8).map((b, i) => (
                     <li key={i} className="text-xs text-red-300">• {formatFiscoBlockerLabel(b)}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {v2Comparison.safe_for_official_switch && (
+              <div className="rounded border border-green-500/30 bg-green-950/20 p-2 space-y-1">
+                <div className="text-xs font-semibold text-green-200 flex items-center gap-1">
+                  <ShieldCheck className="h-3 w-3" /> V2 listo para activación oficial
+                </div>
+                <p className="text-[10px] text-green-300">
+                  Todos los checks de tolerancia han pasado. Usar el endpoint de activación con doble confirmación.
+                </p>
+              </div>
+            )}
+            {/* Fee treatment summary */}
+            {v2Comparison.fee_treatment_summary && (
+              <div className="rounded border border-border bg-muted/20 p-2 space-y-1">
+                <div className="text-xs font-semibold text-muted-foreground">Comisiones por tratamiento AEAT:</div>
+                <div className="grid grid-cols-2 gap-1 text-[10px]">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Integradas en adquisición:</span><span className="font-mono">{v2Comparison.fee_treatment_summary.integrated_in_acquisition.count} · {eur(v2Comparison.fee_treatment_summary.integrated_in_acquisition.total_eur)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Integradas en transmisión:</span><span className="font-mono">{v2Comparison.fee_treatment_summary.integrated_in_transmission.count} · {eur(v2Comparison.fee_treatment_summary.integrated_in_transmission.total_eur)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Reducción de inventario:</span><span className="font-mono">{v2Comparison.fee_treatment_summary.inventory_reduction.count} · {eur(v2Comparison.fee_treatment_summary.inventory_reduction.total_eur)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Disposición explícita:</span><span className="font-mono">{v2Comparison.fee_treatment_summary.explicit_fee_disposal.count} · {eur(v2Comparison.fee_treatment_summary.explicit_fee_disposal.total_eur)}</span></div>
+                </div>
+              </div>
+            )}
+            {/* Fee diff detail */}
+            {v2Comparison.fee_diff_detail && (
+              <div className="rounded border border-amber-500/20 bg-amber-950/10 p-2 space-y-1">
+                <div className="text-xs font-semibold text-amber-200">Diferencia de comisiones Legacy vs V2:</div>
+                <div className="grid grid-cols-3 gap-1 text-[10px] text-center">
+                  <div><span className="text-muted-foreground block">Legacy</span><span className="font-mono">{eur(v2Comparison.fee_diff_detail.legacy_total_fees_eur)}</span></div>
+                  <div><span className="text-muted-foreground block">V2</span><span className="font-mono">{eur(v2Comparison.fee_diff_detail.v2_total_fees_eur)}</span></div>
+                  <div><span className="text-muted-foreground block">Diff</span><span className={`font-mono ${Math.abs(v2Comparison.fee_diff_detail.fee_diff_total_eur) > 0.01 ? "text-amber-400" : "text-muted-foreground"}`}>{eur(v2Comparison.fee_diff_detail.fee_diff_total_eur)}</span></div>
+                </div>
+              </div>
+            )}
+            {/* Operation mapping summary */}
+            {v2Comparison.operation_mapping && v2Comparison.operation_mapping.length > 0 && (
+              <div className="text-[10px] text-muted-foreground">
+                Mapeo: {v2Comparison.operation_mapping.length} disposiciones match · {v2Comparison.unmapped_legacy_disposals.length} legacy sin match · {v2Comparison.unmapped_v2_disposals.length} V2 sin match
               </div>
             )}
             <div className="flex items-center gap-2 text-xs">
@@ -256,7 +295,9 @@ function AnnualReportModule() {
                 <span className="text-red-400 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> No apto para informe en sombra</span>
               )}
               <span className="text-muted-foreground">·</span>
-              <span className="text-muted-foreground">V2 oficial no disponible</span>
+              <span className={v2Comparison.safe_for_official_switch ? "text-green-400 font-medium" : "text-muted-foreground"}>
+                {v2Comparison.safe_for_official_switch ? "V2 oficial listo para activación" : "V2 oficial bloqueado"}
+              </span>
             </div>
             <p className="text-[10px] text-muted-foreground">
               El resultado oficial se calcula con el motor actual. La simulación V2 en sombra no afecta al resultado oficial.
