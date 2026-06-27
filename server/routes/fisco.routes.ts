@@ -23,7 +23,7 @@ import { createImportPreview, confirmImport, getImportBatches, getImportBatch, t
 import { getFiscoConfig, setFiscoConfig, getFinalizationStatus } from "../services/fisco/FiscoConfigService";
 import { runComparison } from "../services/fisco/FiscoComparisonService";
 import { fiscoControlStatusService } from "../services/fisco/FiscoControlStatusService";
-import { controlledCommit, activateOfficial, rollbackOfficial, getAuditLog, getBackups, registerGlobalHash } from "../services/fisco/FiscoV2ActivationService";
+import { controlledCommit, activateOfficial, activateOfficialGlobal, rollbackOfficial, getAuditLog, getBackups, registerGlobalHash } from "../services/fisco/FiscoV2ActivationService";
 import { computeReadiness } from "../services/fisco/FiscoV2ReadinessService";
 import multer from "multer";
 
@@ -4305,43 +4305,80 @@ export function registerFiscoRebuildRoutes(app: Express): void {
   /**
    * POST /api/fisco/v2/activate-official
    * Activa motor V2 oficial con validaciones estrictas y backup.
-   * Body: { year, confirm, expected_operation_set_hash, expected_v2_net_gain_loss_eur, expected_v2_rounded_eur }
+   * Soporta modo global (years array) y modo legacy (single year).
+   * Body (global): { years: [2025,2026], confirm, expected_global_hash, expected_official_results: [{year, net_gain_loss_eur}], expected_v2_results: [{year, net_gain_loss_eur}] }
+   * Body (legacy): { year, confirm, expected_operation_set_hash, expected_v2_net_gain_loss_eur, expected_v2_rounded_eur }
    */
   app.post("/api/fisco/v2/activate-official", async (req, res) => {
     try {
       const {
-        year: yearParam,
+        years: yearsParam,
         confirm,
+        expected_global_hash,
+        expected_official_results,
+        expected_v2_results,
+        // Legacy per-year params
+        year: yearParam,
         expected_operation_set_hash,
         expected_v2_net_gain_loss_eur,
         expected_v2_rounded_eur,
       } = req.body;
 
-      const year = parseInt(yearParam) || new Date().getFullYear();
-      if (isNaN(year) || year < 2020 || year > 2100) {
-        return res.status(400).json({ error: "year inválido" });
-      }
-      if (confirm !== true) {
-        return res.status(400).json({ error: "confirm debe ser true para activar V2 oficial" });
-      }
-      if (!expected_operation_set_hash || typeof expected_operation_set_hash !== "string") {
-        return res.status(400).json({ error: "expected_operation_set_hash es obligatorio" });
-      }
-      if (typeof expected_v2_net_gain_loss_eur !== "number") {
-        return res.status(400).json({ error: "expected_v2_net_gain_loss_eur es obligatorio" });
-      }
-      if (typeof expected_v2_rounded_eur !== "number") {
-        return res.status(400).json({ error: "expected_v2_rounded_eur es obligatorio" });
-      }
+      // Global mode: years array provided
+      if (Array.isArray(yearsParam) && yearsParam.length > 0) {
+        const years = yearsParam.map((y: any) => parseInt(y)).filter((y: number) => !isNaN(y) && y >= 2020 && y <= 2100);
+        if (years.length === 0) {
+          return res.status(400).json({ error: "years debe contener al menos un año válido" });
+        }
+        if (confirm !== true) {
+          return res.status(400).json({ error: "confirm debe ser true para activar V2 oficial" });
+        }
+        if (!expected_global_hash || typeof expected_global_hash !== "string") {
+          return res.status(400).json({ error: "expected_global_hash es obligatorio" });
+        }
+        if (!Array.isArray(expected_official_results) || expected_official_results.length === 0) {
+          return res.status(400).json({ error: "expected_official_results debe ser un array no vacío" });
+        }
+        if (!Array.isArray(expected_v2_results) || expected_v2_results.length === 0) {
+          return res.status(400).json({ error: "expected_v2_results debe ser un array no vacío" });
+        }
 
-      const result = await activateOfficial(
-        year,
-        confirm,
-        expected_operation_set_hash,
-        expected_v2_net_gain_loss_eur,
-        expected_v2_rounded_eur
-      );
-      res.json(result);
+        const result = await activateOfficialGlobal(
+          years,
+          confirm,
+          expected_global_hash,
+          expected_official_results,
+          expected_v2_results
+        );
+        res.json(result);
+      } else {
+        // Legacy per-year mode
+        const year = parseInt(yearParam) || new Date().getFullYear();
+        if (isNaN(year) || year < 2020 || year > 2100) {
+          return res.status(400).json({ error: "year inválido" });
+        }
+        if (confirm !== true) {
+          return res.status(400).json({ error: "confirm debe ser true para activar V2 oficial" });
+        }
+        if (!expected_operation_set_hash || typeof expected_operation_set_hash !== "string") {
+          return res.status(400).json({ error: "expected_operation_set_hash es obligatorio" });
+        }
+        if (typeof expected_v2_net_gain_loss_eur !== "number") {
+          return res.status(400).json({ error: "expected_v2_net_gain_loss_eur es obligatorio" });
+        }
+        if (typeof expected_v2_rounded_eur !== "number") {
+          return res.status(400).json({ error: "expected_v2_rounded_eur es obligatorio" });
+        }
+
+        const result = await activateOfficial(
+          year,
+          confirm,
+          expected_operation_set_hash,
+          expected_v2_net_gain_loss_eur,
+          expected_v2_rounded_eur
+        );
+        res.json(result);
+      }
     } catch (e: any) {
       console.error("[fisco/v2/activate-official]", e);
       res.status(500).json({ error: e.message });

@@ -2,6 +2,97 @@
 
 ---
 
+## feat(fisco-v2): preparar activación oficial global con backup/rollback
+
+**Fecha**: 2026-06-27
+**Lote**: FISCO V2 — Activación oficial global + tests
+
+### Cambios implementados
+
+**`FiscoV2ActivationService.ts`**:
+- Nueva función `activateOfficialGlobal(years, confirm, expectedGlobalHash, expectedOfficialResults, expectedV2Results)`:
+  - Valida `computeReadiness` multianual → `activation_allowed` debe ser `true`
+  - Valida `expected_global_hash` contra `global_operation_set_hash` actual
+  - Valida resultados oficiales esperados para cada año
+  - Valida resultados V2 esperados para cada año
+  - Crea backup **antes** de cambiar engine (snapshot de disposals/lots de todos los años)
+  - Cambia `fisco_engine_mode` de `v2_shadow` a `v2_official`
+  - No toca `fisco_disposals` (solo SELECT para backup)
+  - Deja audit log con `event_type = 'activate_official_global'`, `backup_id`, `request_json` y `result_json`
+- `activateOfficial` (legacy per-year) se mantiene para compatibilidad
+
+**`fisco.routes.ts`**:
+- Endpoint `POST /api/fisco/v2/activate-official` ahora soporta modo global:
+  - Body global: `{ years: [2025,2026], confirm, expected_global_hash, expected_official_results, expected_v2_results }`
+  - Body legacy: `{ year, confirm, expected_operation_set_hash, expected_v2_net_gain_loss_eur, expected_v2_rounded_eur }`
+
+**`fiscoV2Activation.test.ts`**:
+- 13 tests nuevos (A-01 a A-13) cubriendo:
+  - Rechazo si readiness bloquea
+  - Rechazo si global_hash no coincide
+  - Rechazo si resultado oficial 2025/2026 no coincide
+  - Backup antes de cambiar engine
+  - Cambio de engine después de backup
+  - Audit log con backup_id
+  - No toca fisco_disposals
+  - Rollback restaura engine anterior
+  - Rollback falla si backup_id no existe
+  - Rollback deja audit log
+  - Resultados de ambos años en respuesta
+  - No referencias a Bit2Me
+- Tests existentes D-02 y D-07 actualizados para hash scope-aware
+- Total: 44 tests (31 existentes + 13 nuevos)
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/fisco/`: ✅ 26 archivos, 711 tests
+
+### Confirmación
+- V2 oficial **NO** activado en este commit (`engine_mode` sigue `v2_shadow`).
+- `fisco_disposals` **NO** modificado.
+- Resultados oficiales **NO** cambiados.
+- El endpoint está listo para activación tras deploy + validación VPS.
+
+### Comando de activación (NO ejecutar hasta validar VPS)
+```bash
+curl -X POST http://5.250.184.18:3020/api/fisco/v2/activate-official \
+  -H "Content-Type: application/json" \
+  -d '{
+    "years": [2025, 2026],
+    "confirm": true,
+    "expected_global_hash": "b15884b8e30011d0",
+    "expected_official_results": [
+      {"year": 2025, "net_gain_loss_eur": -72.24621015},
+      {"year": 2026, "net_gain_loss_eur": -861.94297563}
+    ],
+    "expected_v2_results": [
+      {"year": 2025, "net_gain_loss_eur": -72.24604691433981},
+      {"year": 2026, "net_gain_loss_eur": -861.9430118931554}
+    ]
+  }'
+```
+
+### Comando de validación post-activación
+```bash
+curl -s "http://5.250.184.18:3020/api/fisco/control-status?year=2025" | jq '{official_engine, fiscal_result_status}'
+curl -s "http://5.250.184.18:3020/api/fisco/control-status?year=2026" | jq '{official_engine, fiscal_result_status}'
+curl -s "http://5.250.184.18:3020/api/fisco/v2/readiness?years=2025,2026" | jq '{activation_allowed, engine_mode, all_updated}'
+```
+
+### Comando de rollback de emergencia
+```bash
+# Obtener backup_id del último backup:
+curl -s "http://5.250.184.18:3020/api/fisco/v2/backups?year=2025" | jq '.[0]'
+
+# Rollback:
+curl -X POST http://5.250.184.18:3020/api/fisco/v2/rollback \
+  -H "Content-Type: application/json" \
+  -d '{"year": 2025, "backup_id": "<BACKUP_ID>", "confirm": true}'
+```
+
+---
+
 ## fix(fisco-v2): corregir registro hash global previo a activacion
 
 **Fecha**: 2026-06-27

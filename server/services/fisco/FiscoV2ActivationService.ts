@@ -17,6 +17,7 @@ import { pool } from "../../db";
 import { runComparison } from "./FiscoComparisonService";
 import { getFiscoConfig, setFiscoConfig } from "./FiscoConfigService";
 import { fiscoControlStatusService } from "./FiscoControlStatusService";
+import { computeReadiness } from "./FiscoV2ReadinessService";
 import { randomUUID } from "crypto";
 
 /**
@@ -237,7 +238,7 @@ export async function activateOfficial(
   rollback_available: boolean;
   audit_log_id: string;
 }> {
-  console.log(`[FISCO_V2_ACTIVATION] activate official for year ${year}`);
+  console.log(`[FISCO_V2_ACTIVATION] activate official for year ${year} (legacy per-year)`);
 
   // Validation 1: confirm must be true
   if (!confirm) {
@@ -365,6 +366,190 @@ export async function activateOfficial(
     backup_id: backupId,
     rollback_available: true,
     audit_log_id: auditId,
+  };
+}
+
+export interface ActivateGlobalResult {
+  activated: boolean;
+  years: number[];
+  engine: string;
+  backup_id: string;
+  rollback_available: boolean;
+  audit_log_id: string;
+  readiness: any;
+  year_results: { year: number; legacy_net: number; v2_net: number; diff_eur: number }[];
+}
+
+/**
+ * Global V2 activation — validates ALL years before changing engine mode.
+ * fisco_engine_mode is global, so activation must be global too.
+ *
+ * Safety:
+ * - Calls computeReadiness for all years, requires activation_allowed=true
+ * - Validates expected_global_hash against current global hash
+ * - Validates expected_official_results for each year
+ * - Creates backup BEFORE changing engine
+ * - Does NOT touch fisco_disposals
+ * - Leaves audit log with backup_id
+ */
+export async function activateOfficialGlobal(
+  years: number[],
+  confirm: boolean,
+  expectedGlobalHash: string,
+  expectedOfficialResults: { year: number; net_gain_loss_eur: number }[],
+  expectedV2Results: { year: number; net_gain_loss_eur: number }[]
+): Promise<ActivateGlobalResult> {
+  console.log(`[FISCO_V2_ACTIVATION] activateOfficialGlobal for years ${years.join(", ")}`);
+
+  // Validation 1: confirm must be true
+  if (!confirm) {
+    throw new Error("confirm must be true to activate V2 official. This is a safety check.");
+  }
+
+  // Validation 2: run readiness check for all years
+  const readiness = await computeReadiness(years);
+  if (!readiness.activation_allowed) {
+    throw new Error(
+      `READINESS_BLOCKED: activation_allowed=false. Reasons: ${readiness.activation_block_reasons.join("; ")}`
+    );
+  }
+
+  // Validation 3: validate global hash
+  const firstStatus = await fiscoControlStatusService.getControlStatus(years[0]);
+  const currentGlobalHash = firstStatus.data_fingerprint?.global_operation_set_hash ?? null;
+  if (!currentGlobalHash) {
+    throw new Error("No hay global_operation_set_hash disponible.");
+  }
+  if (currentGlobalHash !== expectedGlobalHash) {
+    throw new Error(
+      `GLOBAL_HASH_MISMATCH: expected=${expectedGlobalHash}, current=${currentGlobalHash}`
+    );
+  }
+
+  // Validation 4: validate official results for each year
+  const yearResults: { year: number; legacy_net: number; v2_net: number; diff_eur: number }[] = [];
+  for (const expected of expectedOfficialResults) {
+    const yearStatus = await fiscoControlStatusService.getControlStatus(expected.year);
+    const officialNet = yearStatus.official_result?.net_gain_loss_eur ?? null;
+    if (officialNet === null || Math.abs(officialNet - expected.net_gain_loss_eur) > 0.01) {
+      throw new Error(
+        `OFFICIAL_RESULT_MISMATCH year ${expected.year}: expected=${expected.net_gain_loss_eur}, current=${officialNet}`
+      );
+    }
+  }
+
+  // Validation 5: validate V2 results for each year
+  for (const expected of expectedV2Results) {
+    const comparison = await runComparison(expected.year, true);
+    const v2Net = comparison.v2.net_gain_loss_eur;
+    if (Math.abs(v2Net - expected.net_gain_loss_eur) > 0.01) {
+      throw new Error(
+        `V2_RESULT_MISMATCH year ${expected.year}: expected=${expected.net_gain_loss_eur}, current=${v2Net}`
+      );
+    }
+    if (!comparison.safe_for_official_switch) {
+      throw new Error(
+        `safe_for_official_switch=false for year ${expected.year}. Blockers: ${comparison.official_switch_blockers.join(", ")}`
+      );
+    }
+    yearResults.push({
+      year: expected.year,
+      legacy_net: comparison.baseline.net_gain_loss_eur,
+      v2_net: v2Net,
+      diff_eur: comparison.diff_eur,
+    });
+  }
+
+  // Create backup BEFORE changing engine
+  const backupId = randomUUID();
+  const config = await getFiscoConfig();
+
+  // Snapshot disposals and lots for ALL years (safety, even though we don't modify them)
+  const allDisposals: any[] = [];
+  const allLots: any[] = [];
+  for (const year of years) {
+    const disposalsResult = await pool.query(
+      "SELECT * FROM fisco_disposals WHERE sell_operation_id IN (SELECT id FROM fisco_operations WHERE executed_at >= $1 AND executed_at < $2)",
+      [`${year}-01-01`, `${year + 1}-01-01`]
+    );
+    const lotsResult = await pool.query(
+      "SELECT * FROM fisco_lots WHERE operation_id IN (SELECT id FROM fisco_operations WHERE executed_at >= $1 AND executed_at < $2)",
+      [`${year}-01-01`, `${year + 1}-01-01`]
+    );
+    allDisposals.push(...disposalsResult.rows);
+    allLots.push(...lotsResult.rows);
+  }
+
+  await pool.query(`
+    INSERT INTO fisco_v2_backups
+      (id, year, backup_type, official_engine_before, official_engine_after,
+       operation_set_hash, legacy_result_json, v2_result_json, comparison_json,
+       config_snapshot, disposals_snapshot, lots_snapshot)
+    VALUES ($1, $2, 'pre_activation_global', $3, 'v2_official', $4, $5, $6, $7, $8, $9, $10)
+  `, [
+    backupId,
+    years[0],
+    config.fiscoEngineMode,
+    currentGlobalHash,
+    JSON.stringify(expectedOfficialResults),
+    JSON.stringify(expectedV2Results),
+    JSON.stringify({ readiness, year_results: yearResults }),
+    JSON.stringify(config),
+    JSON.stringify(allDisposals),
+    JSON.stringify(allLots),
+  ]);
+
+  // Activate V2 official — change global engine mode
+  await setFiscoConfig({ fiscoEngineMode: "v2_official" } as any);
+
+  // Insert audit log
+  const auditId = randomUUID();
+  await pool.query(`
+    INSERT INTO fisco_v2_audit_log
+      (id, year, event_type, engine_before, engine_after,
+       operation_set_hash, expected_operation_set_hash,
+       legacy_net_gain_loss_eur, v2_net_gain_loss_eur, diff_eur,
+       safe_for_official_switch, backup_id, request_json, result_json, blockers, warnings)
+    VALUES ($1, $2, 'activate_official_global', $3, 'v2_official', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+  `, [
+    auditId,
+    years[0],
+    config.fiscoEngineMode,
+    currentGlobalHash,
+    expectedGlobalHash,
+    yearResults[0]?.legacy_net ?? 0,
+    yearResults[0]?.v2_net ?? 0,
+    yearResults[0]?.diff_eur ?? 0,
+    readiness.all_safe_for_official_switch,
+    backupId,
+    JSON.stringify({
+      confirm,
+      years,
+      expected_global_hash: expectedGlobalHash,
+      expected_official_results: expectedOfficialResults,
+      expected_v2_results: expectedV2Results,
+    }),
+    JSON.stringify({
+      readiness,
+      year_results: yearResults,
+      all_disposals_snapshotted: allDisposals.length,
+      all_lots_snapshotted: allLots.length,
+    }),
+    JSON.stringify([]),
+    JSON.stringify([]),
+  ]);
+
+  console.log(`[FISCO_V2_ACTIVATION] global activation complete. backup_id=${backupId}, audit_id=${auditId}`);
+
+  return {
+    activated: true,
+    years,
+    engine: "v2_official",
+    backup_id: backupId,
+    rollback_available: true,
+    audit_log_id: auditId,
+    readiness,
+    year_results: yearResults,
   };
 }
 

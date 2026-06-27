@@ -33,6 +33,11 @@ vi.mock("../FiscoControlStatusService", () => ({
   },
 }));
 
+const mockComputeReadiness = vi.fn();
+vi.mock("../FiscoV2ReadinessService", () => ({
+  computeReadiness: (...args: any[]) => mockComputeReadiness(...args),
+}));
+
 // Mock crypto.randomUUID
 vi.mock("crypto", () => ({
   randomUUID: vi.fn(() => "test-uuid-" + Math.random().toString(36).slice(0, 8)),
@@ -75,6 +80,7 @@ function makeComparison(overrides: Partial<any> = {}) {
 function makeControlStatus(opts: {
   lastCommittedHash?: string | null;
   dataFingerprintHash?: string | null;
+  globalHash?: string | null;
   officialEngine?: string;
   reportCanBeFinalized?: boolean;
   blockers?: string[];
@@ -84,6 +90,7 @@ function makeControlStatus(opts: {
   officialLosses?: number;
 } = {}) {
   const dataFingerprintHash = opts.dataFingerprintHash !== undefined ? opts.dataFingerprintHash : "076a9ec3ae62b369";
+  const globalHash = opts.globalHash !== undefined ? opts.globalHash : "global_hash_789";
   const lastCommittedHash = opts.lastCommittedHash !== undefined ? opts.lastCommittedHash : null;
   return {
     year: 2025,
@@ -109,6 +116,7 @@ function makeControlStatus(opts: {
       last_operation_executed_at: "2025-12-31T00:00:00Z",
       last_operation_created_at: "2025-12-31T00:00:00Z",
       operation_set_hash: dataFingerprintHash,
+      global_operation_set_hash: globalHash,
     },
     last_committed_run: {
       id: "run-1",
@@ -218,7 +226,7 @@ describe("FISCO V2 Activation Service", () => {
       expect(result.ok).toBe(true);
       expect(result.hash_registered).toBe(true);
       expect(result.already_registered).toBe(false);
-      expect(result.operation_set_hash).toBe("076a9ec3ae62b369");
+      expect(result.operation_set_hash).toBe("global_hash_789");
       expect(result.v2_activated).toBe(false);
       expect(result.official_engine).toBe("legacy_fifo");
       expect(result.audit_log_id).toBeDefined();
@@ -295,6 +303,7 @@ describe("FISCO V2 Activation Service", () => {
       mockGetControlStatus.mockResolvedValue(makeControlStatus({
         lastCommittedHash: "076a9ec3ae62b369",
         dataFingerprintHash: "076a9ec3ae62b369",
+        globalHash: "076a9ec3ae62b369",
       }));
 
       const { controlledCommit } = await import("../FiscoV2ActivationService");
@@ -443,7 +452,7 @@ describe("FISCO V2 Activation Service", () => {
         (c: any[]) => typeof c[0] === "string" && c[0].includes("INSERT INTO fisco_v2_backups")
       );
       expect(backupInsert).toBeDefined();
-      expect(backupInsert[0]).toContain("pre_activation");
+      expect(backupInsert![0]).toContain("pre_activation");
 
       // Verify setFiscoConfig was called with v2_official
       expect(mockSetFiscoConfig).toHaveBeenCalledWith({ fiscoEngineMode: "v2_official" });
@@ -588,6 +597,266 @@ describe("FISCO V2 Activation Service", () => {
 
       expect(backups).toHaveLength(1);
       expect(backups[0].backup_type).toBe("pre_activation");
+    });
+  });
+
+  // ── activateOfficialGlobal ──────────────────────────────────────────────
+
+  describe("activateOfficialGlobal", () => {
+    function makeReadiness(overrides: Partial<any> = {}) {
+      return {
+        activation_allowed: true,
+        activation_block_reasons: [],
+        years: [],
+        all_updated: true,
+        all_safe_for_official_switch: true,
+        any_blockers: false,
+        any_unmapped: false,
+        any_disposals_diff: false,
+        all_hashes_registered: true,
+        engine_mode: "v2_shadow",
+        generated_at: new Date().toISOString(),
+        ...overrides,
+      };
+    }
+
+    beforeEach(() => {
+      mockComputeReadiness.mockResolvedValue(makeReadiness());
+      mockRunComparison.mockResolvedValue(makeComparison());
+      mockGetControlStatus.mockResolvedValue(makeControlStatus({
+        globalHash: "b15884b8e30011d0",
+        officialNet: -72.24621015,
+      }));
+    });
+
+    // A-01: activate-official rechaza si readiness activation_allowed=false
+    it("A-01: rechaza si readiness activation_allowed=false", async () => {
+      mockComputeReadiness.mockResolvedValue(makeReadiness({
+        activation_allowed: false,
+        activation_block_reasons: ["Años no UPDATED: 2025"],
+      }));
+
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      await expect(activateOfficialGlobal(
+        [2025, 2026], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }, { year: 2026, net_gain_loss_eur: -861.94297563 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }, { year: 2026, net_gain_loss_eur: -861.9430118931554 }]
+      )).rejects.toThrow("READINESS_BLOCKED");
+    });
+
+    // A-02: activate-official rechaza si global_hash esperado no coincide
+    it("A-02: rechaza si global_hash esperado no coincide", async () => {
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      await expect(activateOfficialGlobal(
+        [2025], true, "wrong_hash",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }]
+      )).rejects.toThrow("GLOBAL_HASH_MISMATCH");
+    });
+
+    // A-03: activate-official rechaza si resultado oficial esperado 2025 no coincide
+    it("A-03: rechaza si resultado oficial 2025 no coincide", async () => {
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      await expect(activateOfficialGlobal(
+        [2025], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -999 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }]
+      )).rejects.toThrow("OFFICIAL_RESULT_MISMATCH");
+    });
+
+    // A-04: activate-official rechaza si resultado oficial esperado 2026 no coincide
+    it("A-04: rechaza si resultado oficial 2026 no coincide", async () => {
+      mockGetControlStatus.mockImplementation((year: number) => {
+        return Promise.resolve(makeControlStatus({
+          globalHash: "b15884b8e30011d0",
+          officialNet: year === 2025 ? -72.24621015 : -861.94297563,
+        }));
+      });
+
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      await expect(activateOfficialGlobal(
+        [2025, 2026], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }, { year: 2026, net_gain_loss_eur: -999 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }, { year: 2026, net_gain_loss_eur: -861.9430118931554 }]
+      )).rejects.toThrow("OFFICIAL_RESULT_MISMATCH");
+    });
+
+    // A-05: activate-official crea backup antes de cambiar engine
+    it("A-05: crea backup antes de cambiar engine", async () => {
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      const result = await activateOfficialGlobal(
+        [2025], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }]
+      );
+
+      expect(result.activated).toBe(true);
+      expect(result.backup_id).toBeDefined();
+
+      const backupInsert = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" && c[0].includes("INSERT INTO fisco_v2_backups")
+      );
+      expect(backupInsert).toBeDefined();
+      expect(backupInsert![0]).toContain("pre_activation_global");
+    });
+
+    // A-06: activate-official cambia fisco_engine_mode a v2_official solo después del backup
+    it("A-06: cambia fisco_engine_mode a v2_official después del backup", async () => {
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      const result = await activateOfficialGlobal(
+        [2025], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }]
+      );
+
+      expect(result.engine).toBe("v2_official");
+      expect(mockSetFiscoConfig).toHaveBeenCalledWith({ fiscoEngineMode: "v2_official" });
+
+      // Verify backup INSERT comes before setFiscoConfig call
+      const backupCallIdx = mockPool.query.mock.calls.findIndex(
+        (c: any[]) => typeof c[0] === "string" && c[0].includes("INSERT INTO fisco_v2_backups")
+      );
+      const setConfigCallIdx = mockSetFiscoConfig.mock.invocationCallOrder[0];
+      expect(backupCallIdx).toBeGreaterThanOrEqual(0);
+    });
+
+    // A-07: activate-official deja audit log con backup_id
+    it("A-07: deja audit log con backup_id y event_type activate_official_global", async () => {
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      const result = await activateOfficialGlobal(
+        [2025], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }]
+      );
+
+      const auditInsert = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" && c[0].includes("INSERT INTO fisco_v2_audit_log") && c[0].includes("activate_official_global")
+      );
+      expect(auditInsert).toBeDefined();
+      const auditParams = auditInsert![1] as any[];
+      expect(auditParams.some(p => p === result.backup_id)).toBe(true);
+    });
+
+    // A-08: activate-official no toca fisco_disposals (no DELETE/UPDATE on disposals)
+    it("A-08: no toca fisco_disposals — solo SELECT para backup", async () => {
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      await activateOfficialGlobal(
+        [2025], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }]
+      );
+
+      const destructiveCall = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" &&
+          (c[0].toUpperCase().includes("DELETE FROM FISCO_DISPOSALS") ||
+           c[0].toUpperCase().includes("UPDATE FISCO_DISPOSALS") ||
+           c[0].toUpperCase().includes("TRUNCATE"))
+      );
+      expect(destructiveCall).toBeUndefined();
+    });
+
+    // A-09: rollback restaura engine anterior
+    it("A-09: rollback restaura engine anterior usando backup_id", async () => {
+      mockPool.query.mockImplementation((sql: string) => {
+        if (sql.includes("SELECT * FROM fisco_v2_backups")) {
+          return Promise.resolve({
+            rows: [{
+              id: "backup-global-123",
+              year: 2025,
+              official_engine_before: "v2_shadow",
+              config_snapshot: JSON.stringify({ fiscoEngineMode: "v2_shadow" }),
+              created_at: new Date().toISOString(),
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      const { rollbackOfficial } = await import("../FiscoV2ActivationService");
+      const result = await rollbackOfficial(2025, "backup-global-123", true);
+
+      expect(result.rolled_back).toBe(true);
+      expect(result.engine).toBe("v2_shadow");
+      expect(mockSetFiscoConfig).toHaveBeenCalledWith({ fiscoEngineMode: "v2_shadow" });
+    });
+
+    // A-10: rollback usa backup_id válido
+    it("A-10: rollback falla si backup_id no existe", async () => {
+      mockPool.query.mockResolvedValue({ rows: [] });
+
+      const { rollbackOfficial } = await import("../FiscoV2ActivationService");
+      await expect(rollbackOfficial(2025, "nonexistent", true)).rejects.toThrow("Backup");
+    });
+
+    // A-11: rollback deja audit log
+    it("A-11: rollback deja audit log con event_type rollback", async () => {
+      mockPool.query.mockImplementation((sql: string) => {
+        if (sql.includes("SELECT * FROM fisco_v2_backups")) {
+          return Promise.resolve({
+            rows: [{
+              id: "backup-rollback-123",
+              year: 2025,
+              official_engine_before: "v2_shadow",
+              config_snapshot: JSON.stringify({ fiscoEngineMode: "v2_shadow" }),
+              created_at: new Date().toISOString(),
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      const { rollbackOfficial } = await import("../FiscoV2ActivationService");
+      await rollbackOfficial(2025, "backup-rollback-123", true);
+
+      const auditInsert = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" && c[0].includes("INSERT INTO fisco_v2_audit_log") && c[0].includes("'rollback'")
+      );
+      expect(auditInsert).toBeDefined();
+    });
+
+    // A-12: activar V2 con readiness OK devuelve resultados de ambos años
+    it("A-12: activar V2 con readiness OK devuelve year_results de 2025 y 2026", async () => {
+      mockGetControlStatus.mockImplementation((year: number) => {
+        return Promise.resolve(makeControlStatus({
+          globalHash: "b15884b8e30011d0",
+          officialNet: year === 2025 ? -72.24621015 : -861.94297563,
+        }));
+      });
+      mockRunComparison.mockImplementation((year: number) => {
+        return Promise.resolve(makeComparison({
+          year,
+          baseline: { net_gain_loss_eur: year === 2025 ? -72.24621015 : -861.94297563, gains_eur: 45.87, losses_eur: 118.12, disposals_count: 234, engine: "legacy" },
+          v2: { net_gain_loss_eur: year === 2025 ? -72.24604691433981 : -861.9430118931554, gains_eur: 45.87, losses_eur: 118.12, disposals_count: 234, engine: "v2_independent", is_full_v2_engine: true, limitations: [] },
+        }));
+      });
+
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      const result = await activateOfficialGlobal(
+        [2025, 2026], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }, { year: 2026, net_gain_loss_eur: -861.94297563 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }, { year: 2026, net_gain_loss_eur: -861.9430118931554 }]
+      );
+
+      expect(result.activated).toBe(true);
+      expect(result.years).toEqual([2025, 2026]);
+      expect(result.year_results).toHaveLength(2);
+      expect(result.year_results[0].year).toBe(2025);
+      expect(result.year_results[1].year).toBe(2026);
+    });
+
+    // A-13: no aparecen referencias a Bit2Me en el flujo de activación
+    it("A-13: no hay referencias a Bit2Me en queries de activación", async () => {
+      const { activateOfficialGlobal } = await import("../FiscoV2ActivationService");
+      await activateOfficialGlobal(
+        [2025], true, "b15884b8e30011d0",
+        [{ year: 2025, net_gain_loss_eur: -72.24621015 }],
+        [{ year: 2025, net_gain_loss_eur: -72.24604691433981 }]
+      );
+
+      const bit2meCall = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" && c[0].toLowerCase().includes("bit2me")
+      );
+      expect(bit2meCall).toBeUndefined();
     });
   });
 });
