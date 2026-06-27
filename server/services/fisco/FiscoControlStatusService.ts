@@ -38,6 +38,7 @@ export interface DataFingerprint {
   last_operation_executed_at: string | null;
   last_operation_created_at: string | null;
   operation_set_hash: string;
+  global_operation_set_hash: string;
 }
 
 export interface OfficialResult {
@@ -182,6 +183,25 @@ export class FiscoControlStatusService {
   }
 
   /**
+   * Compute a deterministic hash for ALL operations (global scope).
+   * Hash = sha256(global | count | max(created_at) | max(executed_at) | sum_ids)
+   */
+  async computeGlobalOperationSetHash(): Promise<string> {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) as count,
+        COALESCE(MAX(created_at)::text, '') as max_created,
+        COALESCE(MAX(executed_at)::text, '') as max_executed,
+        COALESCE(SUM(id), 0) as sum_ids
+      FROM fisco_operations
+    `);
+
+    const row = result.rows[0];
+    const payload = `global|${row.count}|${row.max_created}|${row.max_executed}|${row.sum_ids}`;
+    return createHash("sha256").update(payload).digest("hex").substring(0, 16);
+  }
+
+  /**
    * Get current data fingerprint for a year.
    */
   async getDataFingerprint(year: number): Promise<DataFingerprint> {
@@ -197,6 +217,7 @@ export class FiscoControlStatusService {
     ]);
 
     const operation_set_hash = await this.computeOperationSetHash(year);
+    const global_operation_set_hash = await this.computeGlobalOperationSetHash();
 
     return {
       operations_count: parseInt(opsQ.rows[0]?.cnt || "0"),
@@ -207,6 +228,7 @@ export class FiscoControlStatusService {
       last_operation_executed_at: lastOpQ.rows[0]?.executed_at?.toISOString() ?? null,
       last_operation_created_at: lastOpQ.rows[0]?.created_at?.toISOString() ?? null,
       operation_set_hash,
+      global_operation_set_hash,
     };
   }
 
@@ -352,7 +374,14 @@ export class FiscoControlStatusService {
     // Check for new operations after last rebuild
     const hasNewOps = pendingChanges.pending_operations_count > 0;
     const hasOrphanSells = pendingChanges.orphan_sells_count > 0;
-    const hashChanged = lastCommittedRun?.operation_set_hash && lastCommittedRun.operation_set_hash !== fingerprint.operation_set_hash;
+    // Scope-aware hash comparison: last_committed_run is global scope, so compare
+    // against the current global hash, NOT the year-scoped hash.
+    // Comparing year hash vs global hash produces false OUTDATED.
+    const committedScope = lastCommittedRun?.operations_count_scope ?? "global";
+    const currentHashForComparison = committedScope === "year"
+      ? fingerprint.operation_set_hash
+      : fingerprint.global_operation_set_hash;
+    const hashChanged = lastCommittedRun?.operation_set_hash && lastCommittedRun.operation_set_hash !== currentHashForComparison;
     const confirmedImportsAfterRebuild = syncStatus.confirmed_imports_after_last_rebuild > 0;
 
     if (!schemaHealthy) {

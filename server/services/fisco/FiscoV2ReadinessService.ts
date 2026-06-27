@@ -38,9 +38,13 @@ export interface YearReadiness {
     is_full_v2_engine: boolean;
   };
   diff_eur: number;
-  data_fingerprint_hash: string;
-  last_committed_run_hash: string | null;
+  year_operation_set_hash: string;
+  global_operation_set_hash: string;
+  last_committed_hash: string | null;
+  last_committed_scope: string;
+  hash_scope_match: boolean;
   hash_matches: boolean;
+  hash_status_reason: string;
   has_operation_set_hash: boolean;
   v2_activation_blocked: boolean;
   v2_activation_block_reason: string | null;
@@ -98,10 +102,20 @@ export async function computeReadiness(years: number[]): Promise<ReadinessRespon
     const unmappedV2 = comparison.unmapped_v2_disposals?.length ?? 0;
     const disposalsDiff = comparison.disposals_count_diff ?? 0;
 
-    const dataFingerprintHash = controlStatus.data_fingerprint?.operation_set_hash ?? "";
+    const yearHash = controlStatus.data_fingerprint?.operation_set_hash ?? "";
+    const globalHash = controlStatus.data_fingerprint?.global_operation_set_hash ?? "";
     const lastCommittedHash = controlStatus.last_committed_run?.operation_set_hash ?? null;
-    const hashMatches = lastCommittedHash !== null && lastCommittedHash === dataFingerprintHash;
+    const lastCommittedScope = controlStatus.last_committed_run?.operations_count_scope ?? "global";
+    // Scope-aware hash comparison: compare same-scope hashes only
+    const currentHashForComparison = lastCommittedScope === "year" ? yearHash : globalHash;
+    const hashScopeMatch = true; // we always compare same-scope now
+    const hashMatches = lastCommittedHash !== null && lastCommittedHash === currentHashForComparison;
     const hasOperationSetHash = controlStatus.last_committed_run?.has_operation_set_hash ?? false;
+    const hashStatusReason = !hasOperationSetHash
+      ? "last_committed_run no tiene operation_set_hash registrado"
+      : !hashMatches
+        ? `Hash no coincide en scope ${lastCommittedScope}: committed=${lastCommittedHash} vs current=${currentHashForComparison}`
+        : `Hash coincide en scope ${lastCommittedScope}`;
 
     yearResults.push({
       year,
@@ -130,9 +144,13 @@ export async function computeReadiness(years: number[]): Promise<ReadinessRespon
         is_full_v2_engine: comparison.v2.is_full_v2_engine,
       },
       diff_eur: comparison.diff_eur,
-      data_fingerprint_hash: dataFingerprintHash,
-      last_committed_run_hash: lastCommittedHash,
+      year_operation_set_hash: yearHash,
+      global_operation_set_hash: globalHash,
+      last_committed_hash: lastCommittedHash,
+      last_committed_scope: lastCommittedScope,
+      hash_scope_match: hashScopeMatch,
       hash_matches: hashMatches,
+      hash_status_reason: hashStatusReason,
       has_operation_set_hash: hasOperationSetHash,
       v2_activation_blocked: controlStatus.v2_activation_blocked,
       v2_activation_block_reason: controlStatus.v2_activation_block_reason,
@@ -172,7 +190,7 @@ export async function computeReadiness(years: number[]): Promise<ReadinessRespon
   }
   if (!allHashesRegistered) {
     const noHash = yearResults.filter(y => !y.has_operation_set_hash || !y.hash_matches).map(y => y.year);
-    activationBlockReasons.push(`Hash no registrado o no coincide en: ${noHash.join(", ")} — usar controlled-commit`);
+    activationBlockReasons.push(`Hash no coincide en el mismo scope; revisar o registrar hash mediante flujo controlado en: ${noHash.join(", ")}`);
   }
 
   const activationAllowed = activationBlockReasons.length === 0;

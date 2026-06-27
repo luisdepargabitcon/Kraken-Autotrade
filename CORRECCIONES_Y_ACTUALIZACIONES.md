@@ -2,6 +2,46 @@
 
 ---
 
+## fix(fisco-v2): hacer readiness hash-aware por scope
+
+**Fecha**: 2026-06-27
+**Lote**: FISCO V2 — Fix hash scope mismatch en readiness
+
+### Causa exacta del OUTDATED 2025
+Era una **comparación year/global incorrecta**, no un mismatch real. En `FiscoControlStatusService.getControlStatus()`, línea 355 comparaba:
+- `last_committed_run.operation_set_hash` (scope **global**, hash `68abd376b577b67b` registrado para 2026)
+- contra `data_fingerprint.operation_set_hash` (scope **year**, hash `a94bb90faf518fb8` calculado solo para 2025)
+
+Como el hash anual de 2025 != hash global de 2026, el sistema marcaba 2025 como `OUTDATED` falsamente.
+
+### Fix implementado
+
+**`FiscoControlStatusService.ts`**:
+- Añadido `computeGlobalOperationSetHash()` — calcula hash de TODAS las operaciones (scope global).
+- Añadido `global_operation_set_hash` al interface `DataFingerprint`.
+- `getDataFingerprint()` ahora devuelve ambos hashes: year y global.
+- `getControlStatus()` ahora compara hash **same-scope**: si `last_committed_run.operations_count_scope = "global"`, compara contra `global_operation_set_hash`; si es `"year"`, compara contra `operation_set_hash`.
+
+**`FiscoV2ReadinessService.ts`**:
+- `YearReadiness` ahora expone: `year_operation_set_hash`, `global_operation_set_hash`, `last_committed_hash`, `last_committed_scope`, `hash_scope_match`, `hash_matches`, `hash_status_reason`.
+- Mensaje de bloqueo cambiado de "usar controlled-commit" a "Hash no coincide en el mismo scope; revisar o registrar hash mediante flujo controlado".
+
+**`fiscoV2Readiness.test.ts`**:
+- 11 tests nuevos (S-01 a S-11) cubriendo scope-aware hash comparison.
+- Total: 25 tests (14 originales + 11 nuevos).
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/fisco/`: ✅ 26 archivos, 687 tests
+
+### Confirmación
+- V2 oficial **NO** activado (`engine_mode` sigue `v2_shadow`).
+- `fisco_disposals` **NO** modificado.
+- Resultados oficiales **NO** cambiados.
+
+---
+
 ## feat(fisco-v2): readiness final multianual antes de activacion oficial
 
 **Fecha**: 2026-06-27
