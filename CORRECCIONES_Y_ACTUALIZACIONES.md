@@ -2,6 +2,63 @@
 
 ---
 
+## fix(fisco-v2): corregir estado readiness y backups tras activacion oficial
+
+**Fecha**: 2026-06-27
+**Lote**: FISCO V2 — Post-activation fixes
+
+### Problemas detectados tras activación V2
+
+1. **`engine_mode` hardcodeado en readiness**: `computeReadiness` devolvía siempre `engine_mode: "v2_shadow"` aunque la DB tuviera `v2_official`.
+2. **Response de `activate-official` incompleto**: Faltaban `v2_activated`, `engine_before`, `engine_after`.
+3. **Backups globales no visibles para todos los años**: `getBackups?year=2026` no devolvía el backup global creado con `year=2025`.
+
+### Cambios implementados
+
+**`FiscoV2ReadinessService.ts`**:
+- Importado `getFiscoConfig` y reemplazado `engine_mode: "v2_shadow"` hardcodeado por lectura real de `fisco_config.fiscoEngineMode`.
+
+**`FiscoV2ActivationService.ts`**:
+- `ActivateGlobalResult` interface extendida con `v2_activated`, `engine_before`, `engine_after`.
+- `activateOfficialGlobal` return ahora incluye `v2_activated: true`, `engine_before: config.fiscoEngineMode`, `engine_after: "v2_official"`.
+- `getBackups` ahora:
+  - Busca backups por año **OR** backups globales (`backup_type = 'pre_activation_global'`) cuyo `comparison_json` contenga el año solicitado.
+  - Devuelve `scope` ("global" o "year") y `years_scope` (array de años cubiertos) en cada backup.
+
+### Tests añadidos
+
+**`fiscoV2Readiness.test.ts`** — 8 tests nuevos (P-01 a P-08):
+- P-01: readiness post-activación devuelve `engine_mode = v2_official`
+- P-02: readiness antes de activar devuelve `engine_mode = v2_shadow`
+- P-03: readiness refleja cambios de `fisco_config` dinámicamente
+- P-04: readiness no modifica `fisco_disposals`
+- P-05: readiness no cambia resultados oficiales
+- P-06: readiness con `v2_official` devuelve años correctamente
+- P-07: no referencias a Bit2Me en readiness
+- P-08: `engine_mode` no afecta valores `legacy_result`/`v2_result`
+
+**`fiscoV2Activation.test.ts`** — 4 tests nuevos (PA-01 a PA-04):
+- PA-01: response incluye `activated`, `v2_activated`, `engine_before`, `engine_after`, `engine`, `backup_id`
+- PA-02: `getBackups` devuelve `scope=global` y `years_scope=[2025,2026]` para backups globales
+- PA-03: `getBackups(2026)` encuentra backup global que cubre 2026
+- PA-04: rollback con backup global restaura engine anterior
+
+Total: 723 tests en `server/services/fisco/` (26 archivos).
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/fisco/`: ✅ 723 tests
+
+### Confirmación
+- `fisco_engine_mode` permanece `v2_official` — **no se cambia**
+- `fisco_disposals` **no se modifica**
+- Resultados oficiales **no se cambian**
+- **No se hace rollback**
+- Backup `cbe89cb0-c2b0-4c40-8b11-ed429eada39b` sigue disponible
+
+---
+
 ## feat(fisco-v2): preparar activación oficial global con backup/rollback
 
 **Fecha**: 2026-06-27

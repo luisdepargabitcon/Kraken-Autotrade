@@ -371,8 +371,11 @@ export async function activateOfficial(
 
 export interface ActivateGlobalResult {
   activated: boolean;
+  v2_activated: boolean;
   years: number[];
   engine: string;
+  engine_before: string;
+  engine_after: string;
   backup_id: string;
   rollback_available: boolean;
   audit_log_id: string;
@@ -543,8 +546,11 @@ export async function activateOfficialGlobal(
 
   return {
     activated: true,
+    v2_activated: true,
     years,
     engine: "v2_official",
+    engine_before: config.fiscoEngineMode,
+    engine_after: "v2_official",
     backup_id: backupId,
     rollback_available: true,
     audit_log_id: auditId,
@@ -624,11 +630,38 @@ export async function getAuditLog(year: number, limit: number = 20): Promise<any
 }
 
 export async function getBackups(year: number): Promise<any[]> {
+  // Return backups for this year OR global backups that may cover this year
   const result = await pool.query(
-    "SELECT id, year, backup_type, official_engine_before, official_engine_after, operation_set_hash, created_at FROM fisco_v2_backups WHERE year = $1 ORDER BY created_at DESC",
-    [year]
+    `SELECT id, year, backup_type, official_engine_before, official_engine_after,
+            operation_set_hash, comparison_json, created_at
+     FROM fisco_v2_backups
+     WHERE year = $1
+        OR (backup_type = 'pre_activation_global' AND comparison_json::text LIKE $2)
+     ORDER BY created_at DESC`,
+    [year, `%"year":${year}%`]
   );
-  return result.rows;
+  // Add scope and years_scope fields for clarity
+  return result.rows.map((row: any) => {
+    let yearsScope: number[] = [row.year];
+    let scope = "year";
+    if (row.backup_type === "pre_activation_global") {
+      scope = "global";
+      // Try to extract years from comparison_json
+      try {
+        const parsed = typeof row.comparison_json === "string" ? JSON.parse(row.comparison_json) : row.comparison_json;
+        if (parsed?.year_results && Array.isArray(parsed.year_results)) {
+          yearsScope = parsed.year_results.map((yr: any) => yr.year);
+        }
+      } catch {
+        // keep default
+      }
+    }
+    return {
+      ...row,
+      scope,
+      years_scope: yearsScope,
+    };
+  });
 }
 
 /**

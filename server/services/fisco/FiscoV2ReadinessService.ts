@@ -10,6 +10,7 @@
 
 import { fiscoControlStatusService, type ControlStatusResponse } from "./FiscoControlStatusService";
 import { runComparison, type ComparisonResult } from "./FiscoComparisonService";
+import { getFiscoConfig } from "./FiscoConfigService";
 
 export interface YearReadiness {
   year: number;
@@ -217,6 +218,10 @@ export async function computeReadiness(years: number[]): Promise<ReadinessRespon
 
   const activationAllowed = activationBlockReasons.length === 0;
 
+  // Read real engine_mode from fisco_config (not hardcoded)
+  const config = await getFiscoConfig();
+  const engineMode = config.fiscoEngineMode ?? "v2_shadow";
+
   return {
     activation_allowed: activationAllowed,
     activation_block_reasons: activationBlockReasons,
@@ -227,7 +232,7 @@ export async function computeReadiness(years: number[]): Promise<ReadinessRespon
     any_unmapped: anyUnmapped,
     any_disposals_diff: anyDisposalsDiff,
     all_hashes_registered: allHashesRegistered,
-    engine_mode: "v2_shadow",
+    engine_mode: engineMode,
     generated_at: new Date().toISOString(),
   };
 }
