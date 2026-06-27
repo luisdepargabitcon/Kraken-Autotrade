@@ -2,6 +2,47 @@
 
 ---
 
+## feat(fisco-v2): readiness final multianual antes de activacion oficial
+
+**Fecha**: 2026-06-27
+**Lote**: FISCO V2 — Readiness multianual pre-activación
+
+### Objetivo
+Implementar validación conjunta multianual (2025+2026) antes de activación oficial V2, sin activar V2 ni modificar datos legacy.
+
+### Cambios implementados
+
+**Nuevos archivos:**
+- `server/services/fisco/FiscoV2ReadinessService.ts` — Servicio `computeReadiness(years)` que valida conjuntamente todos los años:
+  - `activation_allowed` = true solo si todos los años están UPDATED, sin blockers reales, `safe_for_official_switch=true`, sin unmapped, `disposals_count_diff=0`, y hashes registrados.
+  - `non_blocking_diagnostics` separados de `blockers` (historical_blockers, warnings).
+  - Muestra `legacy_result` y `v2_result` por año.
+  - Muestra `data_fingerprint_hash` vs `last_committed_run_hash` por año.
+  - NO activa V2, NO toca `fisco_disposals`, NO modifica resultados oficiales.
+- `server/services/fisco/__tests__/fiscoV2Readiness.test.ts` — 14 tests obligatorios.
+
+**Archivos modificados:**
+- `server/routes/fisco.routes.ts` — Endpoint `GET /api/fisco/v2/readiness?years=2025,2026`.
+
+### Reglas de bloqueo de activación
+- `activation_allowed = false` si cualquier año no está `UPDATED`.
+- `activation_allowed = false` si hay blockers reales (no históricos).
+- `activation_allowed = false` si `safe_for_official_switch != true`.
+- `activation_allowed = false` si hay unmapped legacy/V2 > 0.
+- `activation_allowed = false` si `disposals_count_diff != 0`.
+- `activation_allowed = false` si hash no registrado o no coincide → usar `controlled-commit`.
+
+### NEGATIVE_INVENTORY USDC op=60079
+- Sigue apareciendo como `non_blocking_diagnostics` (historical_blocker).
+- No bloquea activación: no afecta gain/loss, mapeo 1:1, sin UNKNOWN_BASIS, diff microscópica.
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/fisco/ --reporter=verbose`: ✅ 26 archivos, 676 tests
+
+---
+
 ## fix(fisco-v2): corregir negative inventory usdc en shadow 2026
 
 **Fecha**: 2026-06-27

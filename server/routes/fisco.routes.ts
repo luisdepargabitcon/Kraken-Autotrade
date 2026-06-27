@@ -24,6 +24,7 @@ import { getFiscoConfig, setFiscoConfig, getFinalizationStatus } from "../servic
 import { runComparison } from "../services/fisco/FiscoComparisonService";
 import { fiscoControlStatusService } from "../services/fisco/FiscoControlStatusService";
 import { controlledCommit, activateOfficial, rollbackOfficial, getAuditLog, getBackups } from "../services/fisco/FiscoV2ActivationService";
+import { computeReadiness } from "../services/fisco/FiscoV2ReadinessService";
 import multer from "multer";
 
 // Configure multer for memory storage (no disk writes)
@@ -4373,6 +4374,31 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       res.json({ year, backups });
     } catch (e: any) {
       console.error("[fisco/v2/backups]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/fisco/v2/readiness?years=2025,2026
+   * Validación conjunta multianual antes de activación oficial V2.
+   * NO activa V2, NO modifica datos, NO toca fisco_disposals.
+   */
+  app.get("/api/fisco/v2/readiness", async (req, res) => {
+    try {
+      const yearsParam = (req.query.years as string) || "";
+      const years = yearsParam
+        .split(",")
+        .map(y => parseInt(y.trim()))
+        .filter(y => !isNaN(y) && y >= 2020 && y <= 2100);
+
+      if (years.length === 0) {
+        return res.status(400).json({ error: "Parámetro 'years' es obligatorio. Ej: ?years=2025,2026" });
+      }
+
+      const result = await computeReadiness(years);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/v2/readiness]", e);
       res.status(500).json({ error: e.message });
     }
   });
