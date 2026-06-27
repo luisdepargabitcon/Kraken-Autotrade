@@ -23,7 +23,7 @@ import { createImportPreview, confirmImport, getImportBatches, getImportBatch, t
 import { getFiscoConfig, setFiscoConfig, getFinalizationStatus } from "../services/fisco/FiscoConfigService";
 import { runComparison } from "../services/fisco/FiscoComparisonService";
 import { fiscoControlStatusService } from "../services/fisco/FiscoControlStatusService";
-import { controlledCommit, activateOfficial, rollbackOfficial, getAuditLog, getBackups } from "../services/fisco/FiscoV2ActivationService";
+import { controlledCommit, activateOfficial, rollbackOfficial, getAuditLog, getBackups, registerGlobalHash } from "../services/fisco/FiscoV2ActivationService";
 import { computeReadiness } from "../services/fisco/FiscoV2ReadinessService";
 import multer from "multer";
 
@@ -4265,6 +4265,39 @@ export function registerFiscoRebuildRoutes(app: Express): void {
       res.json(result);
     } catch (e: any) {
       console.error("[fisco/controlled-commit]", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/fisco/v2/register-global-hash
+   * Registra el hash global actual en fisco_rebuild_runs de forma segura.
+   * NO activa V2, NO toca fisco_disposals, NO modifica resultados oficiales.
+   * Body: { confirm, expected_global_hash, expected_official_results: [{year, net_gain_loss_eur}] }
+   */
+  app.post("/api/fisco/v2/register-global-hash", async (req, res) => {
+    try {
+      const { confirm, expected_global_hash, expected_official_results } = req.body;
+
+      if (!confirm) {
+        return res.status(400).json({ error: "confirm must be true" });
+      }
+      if (typeof expected_global_hash !== "string" || !expected_global_hash) {
+        return res.status(400).json({ error: "expected_global_hash es obligatorio" });
+      }
+      if (!Array.isArray(expected_official_results) || expected_official_results.length === 0) {
+        return res.status(400).json({ error: "expected_official_results debe ser un array no vacío" });
+      }
+      for (const r of expected_official_results) {
+        if (typeof r.year !== "number" || typeof r.net_gain_loss_eur !== "number") {
+          return res.status(400).json({ error: "Cada elemento de expected_official_results debe tener year (number) y net_gain_loss_eur (number)" });
+        }
+      }
+
+      const result = await registerGlobalHash(confirm, expected_global_hash, expected_official_results);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[fisco/v2/register-global-hash]", e);
       res.status(500).json({ error: e.message });
     }
   });

@@ -719,4 +719,320 @@ describe("FISCO V2 Readiness Service", () => {
     expect(y2026.non_blocking_diagnostics.length).toBeGreaterThan(0);
     expect(y2026.blockers.length).toBe(0);
   });
+
+  // ── hash_semantic_status tests ─────────────────────────────────────────
+
+  // G-01: committed_scope=global, committed_hash == current_global_hash => OK_GLOBAL => UPDATED
+  it("G-01: committed scope=global, hash coincide con global => OK_GLOBAL", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year, {
+        data_fingerprint: {
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 460,
+          transfer_links_count: 1,
+          last_operation_executed_at: "2025-05-10T07:50:25.062Z",
+          last_operation_created_at: "2026-06-27T00:00:00.000Z",
+          operation_set_hash: "year_hash_A",
+          global_operation_set_hash: "global_hash_B",
+        },
+        last_committed_run: {
+          id: "run-1",
+          completed_at: "2026-06-27T00:00:00.000Z",
+          operations_count: 490,
+          operations_count_scope: "global",
+          lots_count: 243,
+          disposals_count: 460,
+          operation_set_hash: "global_hash_B",
+          has_operation_set_hash: true,
+        },
+      }))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2025]);
+
+    const y2025 = result.years.find(y => y.year === 2025)!;
+    expect(y2025.hash_semantic_status).toBe("OK_GLOBAL");
+    expect(y2025.hash_matches).toBe(true);
+  });
+
+  // G-02: committed_scope=global, committed_hash == year_hash but != global_hash => SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL
+  it("G-02: committed scope=global, hash coincide con year pero no global => SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year, {
+        data_fingerprint: {
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 460,
+          transfer_links_count: 1,
+          last_operation_executed_at: "2025-05-10T07:50:25.062Z",
+          last_operation_created_at: "2026-06-27T00:00:00.000Z",
+          operation_set_hash: "68abd376b577b67b",
+          global_operation_set_hash: "b15884b8e30011d0",
+        },
+        last_committed_run: {
+          id: "run-1",
+          completed_at: "2026-06-27T00:00:00.000Z",
+          operations_count: 490,
+          operations_count_scope: "global",
+          lots_count: 243,
+          disposals_count: 460,
+          operation_set_hash: "68abd376b577b67b",
+          has_operation_set_hash: true,
+        },
+      }))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2026]);
+
+    const y2026 = result.years.find(y => y.year === 2026)!;
+    expect(y2026.hash_semantic_status).toBe("SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL");
+    expect(y2026.hash_matches).toBe(false);
+    expect(y2026.hash_status_reason).toContain("Hash anual registrado como global");
+  });
+
+  // G-03: committed_scope=global, committed_hash no coincide con ningún hash => REAL_GLOBAL_MISMATCH
+  it("G-03: committed scope=global, hash no coincide con ninguno => REAL_GLOBAL_MISMATCH", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year, {
+        data_fingerprint: {
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 460,
+          transfer_links_count: 1,
+          last_operation_executed_at: "2025-05-10T07:50:25.062Z",
+          last_operation_created_at: "2026-06-27T00:00:00.000Z",
+          operation_set_hash: "year_hash_A",
+          global_operation_set_hash: "global_hash_B",
+        },
+        last_committed_run: {
+          id: "run-1",
+          completed_at: "2026-06-27T00:00:00.000Z",
+          operations_count: 490,
+          operations_count_scope: "global",
+          lots_count: 243,
+          disposals_count: 460,
+          operation_set_hash: "completely_different_hash",
+          has_operation_set_hash: true,
+        },
+      }))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2025]);
+
+    const y2025 = result.years.find(y => y.year === 2025)!;
+    expect(y2025.hash_semantic_status).toBe("REAL_GLOBAL_MISMATCH");
+    expect(y2025.hash_matches).toBe(false);
+  });
+
+  // G-04: committed_scope=year, committed_hash == year_hash => OK_YEAR
+  it("G-04: committed scope=year, hash coincide con year => OK_YEAR", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year, {
+        data_fingerprint: {
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 460,
+          transfer_links_count: 1,
+          last_operation_executed_at: "2025-05-10T07:50:25.062Z",
+          last_operation_created_at: "2026-06-27T00:00:00.000Z",
+          operation_set_hash: "year_hash_X",
+          global_operation_set_hash: "global_hash_Y",
+        },
+        last_committed_run: {
+          id: "run-1",
+          completed_at: "2026-06-27T00:00:00.000Z",
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 234,
+          operation_set_hash: "year_hash_X",
+          has_operation_set_hash: true,
+        },
+      }))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2025]);
+
+    const y2025 = result.years.find(y => y.year === 2025)!;
+    expect(y2025.hash_semantic_status).toBe("OK_YEAR");
+    expect(y2025.hash_matches).toBe(true);
+  });
+
+  // G-05: committed_scope=year, committed_hash != year_hash => OUTDATED (not OK_YEAR)
+  it("G-05: committed scope=year, hash no coincide con year => no OK_YEAR", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year, {
+        data_fingerprint: {
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 460,
+          transfer_links_count: 1,
+          last_operation_executed_at: "2025-05-10T07:50:25.062Z",
+          last_operation_created_at: "2026-06-27T00:00:00.000Z",
+          operation_set_hash: "year_hash_X",
+          global_operation_set_hash: "global_hash_Y",
+        },
+        last_committed_run: {
+          id: "run-1",
+          completed_at: "2026-06-27T00:00:00.000Z",
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 234,
+          operation_set_hash: "year_hash_DIFFERENT",
+          has_operation_set_hash: true,
+        },
+      }))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2025]);
+
+    const y2025 = result.years.find(y => y.year === 2025)!;
+    expect(y2025.hash_semantic_status).not.toBe("OK_YEAR");
+    expect(y2025.hash_matches).toBe(false);
+  });
+
+  // G-06: registerGlobalHash no activa V2 (engine_mode stays v2_shadow in readiness)
+  it("G-06: readiness no activa V2 — engine_mode sigue v2_shadow", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2025, 2026]);
+
+    expect(result.engine_mode).toBe("v2_shadow");
+  });
+
+  // G-07: registerGlobalHash no toca fisco_disposals (read-only in readiness)
+  it("G-07: readiness no modifica fisco_disposals — read-only", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    await computeReadiness([2025, 2026]);
+
+    expect(fiscoControlStatusService.getControlStatus).toHaveBeenCalledTimes(2);
+    expect(runComparison).toHaveBeenCalledTimes(2);
+  });
+
+  // G-08: registerGlobalHash no cambia resultados oficiales
+  it("G-08: readiness no cambia resultados oficiales", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2025]);
+
+    const y2025 = result.years.find(y => y.year === 2025)!;
+    expect(y2025.legacy_result.net_gain_loss_eur).toBe(-72.24621015);
+  });
+
+  // G-09: readiness bloquea si hash global no está registrado correctamente
+  it("G-09: readiness bloquea si SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year, {
+        data_fingerprint: {
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 460,
+          transfer_links_count: 1,
+          last_operation_executed_at: "2025-05-10T07:50:25.062Z",
+          last_operation_created_at: "2026-06-27T00:00:00.000Z",
+          operation_set_hash: "year_hash_A",
+          global_operation_set_hash: "global_hash_B",
+        },
+        last_committed_run: {
+          id: "run-1",
+          completed_at: "2026-06-27T00:00:00.000Z",
+          operations_count: 490,
+          operations_count_scope: "global",
+          lots_count: 243,
+          disposals_count: 460,
+          operation_set_hash: "year_hash_A",
+          has_operation_set_hash: true,
+        },
+      }))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2025]);
+
+    expect(result.activation_allowed).toBe(false);
+    expect(result.all_hashes_registered).toBe(false);
+  });
+
+  // G-10: readiness permite avanzar solo cuando current_global_hash == committed global hash y ambos años safe
+  it("G-10: readiness permite activación cuando global hash coincide y ambos años safe", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year, {
+        data_fingerprint: {
+          operations_count: 264,
+          operations_count_scope: "year",
+          lots_count: 243,
+          disposals_count: 460,
+          transfer_links_count: 1,
+          last_operation_executed_at: "2025-05-10T07:50:25.062Z",
+          last_operation_created_at: "2026-06-27T00:00:00.000Z",
+          operation_set_hash: "year_2025_hash",
+          global_operation_set_hash: "global_correct_hash",
+        },
+        last_committed_run: {
+          id: "run-1",
+          completed_at: "2026-06-27T00:00:00.000Z",
+          operations_count: 490,
+          operations_count_scope: "global",
+          lots_count: 243,
+          disposals_count: 460,
+          operation_set_hash: "global_correct_hash",
+          has_operation_set_hash: true,
+        },
+      }))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) => Promise.resolve(makeComparison(year)));
+
+    const result = await computeReadiness([2025, 2026]);
+
+    expect(result.activation_allowed).toBe(true);
+    expect(result.all_hashes_registered).toBe(true);
+    for (const yr of result.years) {
+      expect(yr.hash_semantic_status).toBe("OK_GLOBAL");
+    }
+  });
+
+  // G-11: non_blocking_diagnostics no bloquea activación
+  it("G-11: non_blocking_diagnostics no bloquea activación", async () => {
+    vi.mocked(fiscoControlStatusService.getControlStatus).mockImplementation((year: number) =>
+      Promise.resolve(makeControlStatus(year, {
+        warnings: ["Aviso no bloqueante"],
+      }))
+    );
+    vi.mocked(runComparison).mockImplementation((year: number) =>
+      Promise.resolve(makeComparison(year, {
+        historical_blockers: ["[NEGATIVE_INVENTORY] USDC op=60079"],
+        warnings: ["Warning V2"],
+      }))
+    );
+
+    const result = await computeReadiness([2026]);
+
+    expect(result.activation_allowed).toBe(true);
+    const y2026 = result.years.find(y => y.year === 2026)!;
+    expect(y2026.non_blocking_diagnostics.length).toBeGreaterThan(0);
+    expect(y2026.blockers.length).toBe(0);
+  });
 });

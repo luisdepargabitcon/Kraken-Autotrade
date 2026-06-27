@@ -2,6 +2,68 @@
 
 ---
 
+## fix(fisco-v2): corregir registro hash global previo a activacion
+
+**Fecha**: 2026-06-27
+**Lote**: FISCO V2 — Fix hash global registration + hash_semantic_status
+
+### Causa exacta del mismatch actual
+El hash `68abd376b577b67b` era el **hash anual de 2026** registrado como si fuera global. En `controlledCommit`, línea 87 usaba `data_fingerprint.operation_set_hash` (hash anual) y lo escribía en `fisco_rebuild_runs.operation_set_hash` con scope `global`. Esto causaba que readiness detectara un `SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL`.
+
+### Cambios implementados
+
+**`FiscoV2ActivationService.ts`**:
+- `controlledCommit`: ahora usa `global_operation_set_hash` cuando `committedScope = "global"`, y `operation_set_hash` cuando es `"year"`.
+- Añadido `hash_scope` al resultado de `controlledCommit`.
+- Nueva función `registerGlobalHash(confirm, expectedGlobalHash, expectedOfficialResults)` — flujo seguro para registrar el hash global actual:
+  - NO activa V2
+  - NO toca `fisco_disposals`
+  - NO modifica resultados oficiales
+  - Requiere confirmación explícita de hash global y resultados oficiales esperados
+  - Deja audit log (`event_type = 'register_global_hash'`)
+
+**`FiscoV2ReadinessService.ts`**:
+- Añadido `hash_semantic_status` a `YearReadiness` con 5 valores:
+  - `OK_GLOBAL` — committed hash (global scope) coincide con current global hash
+  - `OK_YEAR` — committed hash (year scope) coincide con current year hash
+  - `SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL` — committed hash coincide con year hash pero no con global hash
+  - `REAL_GLOBAL_MISMATCH` — committed hash no coincide con ningún hash actual
+  - `MISSING_HASH` — no hay hash registrado
+
+**`fisco.routes.ts`**:
+- Nuevo endpoint `POST /api/fisco/v2/register-global-hash` para registro seguro de hash global.
+
+**`fiscoV2Readiness.test.ts`**:
+- 11 tests nuevos (G-01 a G-11) cubriendo hash_semantic_status y escenarios de registro.
+- Total: 36 tests (14 R + 11 S + 11 G).
+
+### Endpoint propuesto para registrar b15884b8e30011d0
+```bash
+curl -X POST http://5.250.184.18:3020/api/fisco/v2/register-global-hash \
+  -H "Content-Type: application/json" \
+  -d '{
+    "confirm": true,
+    "expected_global_hash": "b15884b8e30011d0",
+    "expected_official_results": [
+      {"year": 2025, "net_gain_loss_eur": -72.24621015},
+      {"year": 2026, "net_gain_loss_eur": -861.94297563}
+    ]
+  }'
+```
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/fisco/`: ✅ 26 archivos, 698 tests
+
+### Confirmación
+- V2 oficial **NO** activado (`engine_mode` sigue `v2_shadow`).
+- `fisco_disposals` **NO** modificado.
+- Resultados oficiales **NO** cambiados.
+- El registro de hash global no se ejecuta automáticamente — requiere validación VPS y confirmación explícita.
+
+---
+
 ## fix(fisco-v2): hacer readiness hash-aware por scope
 
 **Fecha**: 2026-06-27

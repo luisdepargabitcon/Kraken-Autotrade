@@ -34,6 +34,7 @@ export interface ControlledCommitResult {
   hash_registered: boolean;
   already_registered: boolean;
   operation_set_hash: string;
+  hash_scope: string;
   official_engine: string;
   shadow_engine: string;
   net_gain_loss_eur: number;
@@ -45,6 +46,18 @@ export interface ControlledCommitResult {
     diff_eur: number;
     safe_for_official_switch: boolean;
   };
+  audit_log_id: string;
+}
+
+export interface RegisterGlobalHashResult {
+  ok: boolean;
+  hash_registered: boolean;
+  already_registered: boolean;
+  global_operation_set_hash: string;
+  previous_hash: string | null;
+  run_id: string;
+  official_results: { year: number; net_gain_loss_eur: number }[];
+  v2_activated: boolean;
   audit_log_id: string;
 }
 
@@ -83,11 +96,16 @@ export async function controlledCommit(
     throw new Error(`There are pending changes. Run rebuild FIFO first.`);
   }
 
-  // Validation 5: data_fingerprint.operation_set_hash must exist
-  const dataFingerprintHash = status.data_fingerprint?.operation_set_hash ?? null;
-  if (!dataFingerprintHash) {
+  // Validation 5: data_fingerprint hashes must exist
+  // Use the YEAR hash for controlledCommit since it's per-year
+  const yearHash = status.data_fingerprint?.operation_set_hash ?? null;
+  const globalHash = status.data_fingerprint?.global_operation_set_hash ?? null;
+  if (!yearHash) {
     throw new Error("data_fingerprint.operation_set_hash is null. Cannot register hash.");
   }
+  // The hash to register depends on the scope of the last committed run
+  const committedScope = status.last_committed_run?.operations_count_scope ?? "global";
+  const dataFingerprintHash = committedScope === "year" ? yearHash : (globalHash ?? yearHash);
 
   // Validation 6: official_result.net_gain_loss_eur must match expected
   const officialNet = status.official_result?.net_gain_loss_eur ?? null;
@@ -189,6 +207,7 @@ export async function controlledCommit(
     hash_registered: !alreadyRegistered,
     already_registered: alreadyRegistered,
     operation_set_hash: dataFingerprintHash,
+    hash_scope: committedScope,
     official_engine: status.official_engine,
     shadow_engine: status.shadow_engine,
     net_gain_loss_eur: officialNet,
@@ -425,4 +444,142 @@ export async function getBackups(year: number): Promise<any[]> {
     [year]
   );
   return result.rows;
+}
+
+/**
+ * Register the current global operation_set_hash on the last committed run.
+ *
+ * This is a safe flow that:
+ * - Does NOT activate V2
+ * - Does NOT touch fisco_disposals
+ * - Does NOT modify official results
+ * - Requires explicit confirmation of expected official results and global hash
+ * - Leaves an audit log
+ *
+ * Use this when the last_committed_run has a year hash stored as global
+ * (SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL) to correct the registration.
+ */
+export async function registerGlobalHash(
+  confirm: boolean,
+  expectedGlobalHash: string,
+  expectedOfficialResults: { year: number; net_gain_loss_eur: number }[]
+): Promise<RegisterGlobalHashResult> {
+  console.log(`[FISCO_V2_ACTIVATION] registerGlobalHash — safe hash registration`);
+
+  if (!confirm) {
+    throw new Error("confirm must be true to register global hash. This is a safety check.");
+  }
+
+  // Get control status for the first year to access global hash and last committed run
+  const firstYear = expectedOfficialResults[0]?.year;
+  if (!firstYear) {
+    throw new Error("expectedOfficialResults must contain at least one year.");
+  }
+
+  const status = await fiscoControlStatusService.getControlStatus(firstYear);
+
+  // Validation 1: official_engine must be legacy_fifo (not v2_official)
+  if (status.official_engine !== "legacy_fifo") {
+    throw new Error(`official_engine must be legacy_fifo. Current: ${status.official_engine}`);
+  }
+
+  // Validation 2: no blockers
+  if (status.blockers.length > 0) {
+    throw new Error(`Control status has blockers: ${status.blockers.join(", ")}`);
+  }
+
+  // Validation 3: no pending changes
+  if (status.pending_changes?.has_pending) {
+    throw new Error(`There are pending changes. Run rebuild FIFO first.`);
+  }
+
+  // Validation 4: global hash must exist
+  const currentGlobalHash = status.data_fingerprint?.global_operation_set_hash ?? null;
+  if (!currentGlobalHash) {
+    throw new Error("data_fingerprint.global_operation_set_hash is null. Cannot register.");
+  }
+
+  // Validation 5: expected global hash must match current
+  if (currentGlobalHash !== expectedGlobalHash) {
+    throw new Error(
+      `GLOBAL_HASH_MISMATCH: expected=${expectedGlobalHash}, current=${currentGlobalHash}`
+    );
+  }
+
+  // Validation 6: verify official results for each year
+  const officialResults: { year: number; net_gain_loss_eur: number }[] = [];
+  for (const expected of expectedOfficialResults) {
+    const yearStatus = await fiscoControlStatusService.getControlStatus(expected.year);
+    const officialNet = yearStatus.official_result?.net_gain_loss_eur ?? null;
+    if (officialNet === null || Math.abs(officialNet - expected.net_gain_loss_eur) > 0.01) {
+      throw new Error(
+        `OFFICIAL_RESULT_MISMATCH for year ${expected.year}: expected=${expected.net_gain_loss_eur}, current=${officialNet}`
+      );
+    }
+    officialResults.push({ year: expected.year, net_gain_loss_eur: officialNet });
+  }
+
+  // Get last committed run
+  const lastRunId = status.last_committed_run?.id ?? null;
+  const previousHash = status.last_committed_run?.operation_set_hash ?? null;
+
+  if (!lastRunId) {
+    throw new Error("No last_committed_run found. Cannot register hash.");
+  }
+
+  // Check if already correct
+  let alreadyRegistered = false;
+  if (previousHash === currentGlobalHash) {
+    alreadyRegistered = true;
+    console.log(`[FISCO_V2_ACTIVATION] global hash already registered correctly: ${currentGlobalHash}`);
+  } else {
+    // Update the hash on the last committed run
+    await pool.query(`
+      UPDATE fisco_rebuild_runs SET
+        operation_set_hash = $2
+      WHERE id = $1
+    `, [lastRunId, currentGlobalHash]);
+    console.log(`[FISCO_V2_ACTIVATION] registered global hash ${currentGlobalHash} on run ${lastRunId} (previous: ${previousHash})`);
+  }
+
+  // Insert audit log
+  const auditId = randomUUID();
+  await pool.query(`
+    INSERT INTO fisco_v2_audit_log
+      (id, year, event_type, engine_before, engine_after, operation_set_hash,
+       legacy_net_gain_loss_eur, v2_net_gain_loss_eur, diff_eur,
+       safe_for_official_switch, request_json, result_json, blockers, warnings)
+    VALUES ($1, $2, 'register_global_hash', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+  `, [
+    auditId,
+    firstYear,
+    status.official_engine,
+    status.official_engine, // engine_before = engine_after = legacy_fifo
+    currentGlobalHash,
+    officialResults[0]?.net_gain_loss_eur ?? 0,
+    null, // no V2 comparison needed
+    null,
+    null,
+    JSON.stringify({ confirm, expectedGlobalHash, expectedOfficialResults }),
+    JSON.stringify({
+      global_hash_registered: currentGlobalHash,
+      previous_hash: previousHash,
+      already_registered: alreadyRegistered,
+      official_results: officialResults,
+    }),
+    JSON.stringify([]),
+    JSON.stringify([]),
+  ]);
+
+  return {
+    ok: true,
+    hash_registered: !alreadyRegistered,
+    already_registered: alreadyRegistered,
+    global_operation_set_hash: currentGlobalHash,
+    previous_hash: previousHash,
+    run_id: lastRunId,
+    official_results: officialResults,
+    v2_activated: false,
+    audit_log_id: auditId,
+  };
 }

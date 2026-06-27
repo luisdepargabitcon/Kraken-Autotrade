@@ -45,6 +45,7 @@ export interface YearReadiness {
   hash_scope_match: boolean;
   hash_matches: boolean;
   hash_status_reason: string;
+  hash_semantic_status: "OK_GLOBAL" | "OK_YEAR" | "SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL" | "REAL_GLOBAL_MISMATCH" | "MISSING_HASH";
   has_operation_set_hash: boolean;
   v2_activation_blocked: boolean;
   v2_activation_block_reason: string | null;
@@ -106,16 +107,36 @@ export async function computeReadiness(years: number[]): Promise<ReadinessRespon
     const globalHash = controlStatus.data_fingerprint?.global_operation_set_hash ?? "";
     const lastCommittedHash = controlStatus.last_committed_run?.operation_set_hash ?? null;
     const lastCommittedScope = controlStatus.last_committed_run?.operations_count_scope ?? "global";
+    const hasOperationSetHash = controlStatus.last_committed_run?.has_operation_set_hash ?? false;
+
     // Scope-aware hash comparison: compare same-scope hashes only
     const currentHashForComparison = lastCommittedScope === "year" ? yearHash : globalHash;
-    const hashScopeMatch = true; // we always compare same-scope now
+    const hashScopeMatch = true;
     const hashMatches = lastCommittedHash !== null && lastCommittedHash === currentHashForComparison;
-    const hasOperationSetHash = controlStatus.last_committed_run?.has_operation_set_hash ?? false;
+
+    // Determine hash_semantic_status
+    let hashSemanticStatus: "OK_GLOBAL" | "OK_YEAR" | "SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL" | "REAL_GLOBAL_MISMATCH" | "MISSING_HASH";
+    if (!hasOperationSetHash || !lastCommittedHash) {
+      hashSemanticStatus = "MISSING_HASH";
+    } else if (lastCommittedScope === "year" && lastCommittedHash === yearHash) {
+      hashSemanticStatus = "OK_YEAR";
+    } else if (lastCommittedScope === "global" && lastCommittedHash === globalHash) {
+      hashSemanticStatus = "OK_GLOBAL";
+    } else if (lastCommittedScope === "global" && lastCommittedHash === yearHash && lastCommittedHash !== globalHash) {
+      // The committed hash matches the year hash but not the global hash —
+      // a year hash was stored as if it were global
+      hashSemanticStatus = "SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL";
+    } else {
+      hashSemanticStatus = "REAL_GLOBAL_MISMATCH";
+    }
+
     const hashStatusReason = !hasOperationSetHash
       ? "last_committed_run no tiene operation_set_hash registrado"
-      : !hashMatches
-        ? `Hash no coincide en scope ${lastCommittedScope}: committed=${lastCommittedHash} vs current=${currentHashForComparison}`
-        : `Hash coincide en scope ${lastCommittedScope}`;
+      : hashSemanticStatus === "SCOPE_MISMATCH_STORED_YEAR_AS_GLOBAL"
+        ? `Hash anual registrado como global: committed=${lastCommittedHash} coincide con year_hash=${yearHash} pero no con global_hash=${globalHash}`
+        : !hashMatches
+          ? `Hash no coincide en scope ${lastCommittedScope}: committed=${lastCommittedHash} vs current=${currentHashForComparison}`
+          : `Hash coincide en scope ${lastCommittedScope}`;
 
     yearResults.push({
       year,
@@ -151,6 +172,7 @@ export async function computeReadiness(years: number[]): Promise<ReadinessRespon
       hash_scope_match: hashScopeMatch,
       hash_matches: hashMatches,
       hash_status_reason: hashStatusReason,
+      hash_semantic_status: hashSemanticStatus,
       has_operation_set_hash: hasOperationSetHash,
       v2_activation_blocked: controlStatus.v2_activation_blocked,
       v2_activation_block_reason: controlStatus.v2_activation_block_reason,
