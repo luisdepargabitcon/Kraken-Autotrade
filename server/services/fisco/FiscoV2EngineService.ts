@@ -49,13 +49,34 @@ export function runFifoV2(
   const auditTrail: V2AuditEntry[] = [];
   const rewardEvents: V2Event[] = [];
 
-  // Sort events deterministically: executed_at, external_id, source_operation_id
+  // Sort events deterministically:
+  // 1. executed_at (chronological)
+  // 2. event_type priority (acquisitions before disposals within same timestamp)
+  // 3. source_operation_id (DB insertion order — preserves normalizer output order)
+  // 4. event_id (final tiebreaker for events from same operation)
+  //
+  // This fixes NEGATIVE_INVENTORY caused by external_id string comparison
+  // reordering operations from different trades at the same timestamp.
+  // The legacy engine uses stable sort by timestamp only, preserving insertion order.
+  // We replicate that by using source_operation_id as the primary tiebreaker.
+  const EVENT_TYPE_PRIORITY: Record<string, number> = {
+    DEPOSIT: 0,
+    TRANSFER_IN: 1,
+    REWARD: 2,
+    BUY: 3,
+    SELL: 4,
+    SWAP: 4,
+    WITHDRAWAL: 5,
+  };
   const sortedEvents = [...events].sort((a, b) => {
     const timeDiff = a.executed_at.getTime() - b.executed_at.getTime();
     if (timeDiff !== 0) return timeDiff;
-    if (a.external_id < b.external_id) return -1;
-    if (a.external_id > b.external_id) return 1;
-    return a.source_operation_id - b.source_operation_id;
+    const prioDiff = (EVENT_TYPE_PRIORITY[a.event_type] ?? 9) - (EVENT_TYPE_PRIORITY[b.event_type] ?? 9);
+    if (prioDiff !== 0) return prioDiff;
+    if (a.source_operation_id !== b.source_operation_id) return a.source_operation_id - b.source_operation_id;
+    if (a.event_id < b.event_id) return -1;
+    if (a.event_id > b.event_id) return 1;
+    return 0;
   });
 
   // Track open lots by asset
@@ -259,8 +280,36 @@ export function runFifoV2(
       }
 
       if (newInv < -1e-8) {
-        addBlocker("NEGATIVE_INVENTORY", evt,
-          `Inventario negativo de ${evt.asset}: ${newInv.toFixed(8)} tras venta.`);
+        const evtYear = evt.executed_at.getFullYear();
+        const invBefore = newInv + evt.quantity;
+        const lotsAvailBefore = assetLots.length + lotsConsumed.length;
+        const lotOpIds = lotsConsumed.map(lc => {
+          const lot = lots.find(l => l.v2_lot_id === lc.v2_lot_id);
+          return lot?.source_operation_id ?? 0;
+        }).filter(id => id > 0);
+        const affectsGainLoss = remainingToSell > 1e-10;
+        blockers.push({
+          code: "NEGATIVE_INVENTORY",
+          message: getBlockerMessage("NEGATIVE_INVENTORY"),
+          asset: evt.asset,
+          operation_id: evt.source_operation_id,
+          external_id: evt.external_id,
+          detail: `Inventario negativo de ${evt.asset}: ${newInv.toFixed(8)} tras venta de ${evt.quantity.toFixed(8)}. Inventario anterior: ${invBefore.toFixed(8)}. Lotes disponibles: ${lotsAvailBefore}, lotes consumidos: ${lotsConsumed.length}.`,
+          executed_at: evt.executed_at.toISOString(),
+          tax_year: evtYear,
+          whether_affects_requested_year: false,
+          whether_blocks_activation: false,
+          quantity_sold: evt.quantity,
+          inventory_before: invBefore,
+          inventory_after: newInv,
+          lots_available_before: lotsAvailBefore,
+          lots_consumed: lotsConsumed.length,
+          lot_source_operation_ids: lotOpIds,
+          whether_affects_gain_loss: affectsGainLoss,
+          explanation_es: affectsGainLoss
+            ? `Inventario negativo con base de coste desconocida para ${remainingToSell.toFixed(8)} ${evt.asset}. Afecta al cálculo de ganancia/pérdida.`
+            : `Inventario negativo tras venta pero toda la cantidad vendida tiene base de coste. Revisar orden de operaciones o saldos iniciales.`,
+        });
       }
 
       // Record fee event for sell
@@ -566,6 +615,11 @@ export function extractClosingLots(result: V2EngineResult, year: number) {
  * Returns { yearBlockers, historicalBlockers } where yearBlockers are those
  * whose operation occurred in the requested year, and historicalBlockers
  * are those from previous years (diagnostic only, should not block activation).
+ *
+ * For NEGATIVE_INVENTORY: only blocks activation if whether_affects_gain_loss
+ * is true (i.e., there's UNKNOWN_BASIS — sold quantity exceeds available lots).
+ * If inventory is negative but all sold quantity has cost basis, it's a
+ * transient balance warning that doesn't impact fiscal results.
  */
 export function filterBlockersByYear(result: V2EngineResult, year: number) {
   const yearBlockers: V2Blocker[] = [];
@@ -574,12 +628,14 @@ export function filterBlockersByYear(result: V2EngineResult, year: number) {
   for (const b of result.blockers) {
     const blockerYear = b.tax_year;
     const affectsYear = blockerYear === year;
+    const affectsGainLoss = b.whether_affects_gain_loss ?? true;
+    const blocksActivation = affectsYear && affectsGainLoss;
     const enriched = {
       ...b,
       whether_affects_requested_year: affectsYear,
-      whether_blocks_activation: affectsYear,
+      whether_blocks_activation: blocksActivation,
     };
-    if (affectsYear) {
+    if (affectsYear && blocksActivation) {
       yearBlockers.push(enriched);
     } else {
       historicalBlockers.push(enriched);

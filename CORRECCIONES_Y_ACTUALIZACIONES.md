@@ -2,6 +2,71 @@
 
 ---
 
+## fix(fisco-v2): corregir negative inventory usdc en shadow 2026
+
+**Fecha**: 2026-06-27
+**Lote**: FISCO V2 — Hotfix 1C: NEGATIVE_INVENTORY USDC op_id=60079
+
+### Causa raíz
+El ordenamiento de eventos V2 usaba `external_id` (comparación de strings) como tiebreaker para operaciones con el mismo timestamp. Esto podía reordenar operaciones de diferentes trades en el mismo timestamp, causando que una venta de USDC se procesara antes que la compra de USDC que la cubre.
+
+El motor legacy usa `mergeAndSort` que ordena solo por timestamp (stable sort), preservando el orden de inserción del normalizer. El normalizer genera pares ordenados: primero la disposición del stablecoin, luego la adquisición del crypto (Case 4/5). Con el sort por `external_id`, este orden se perdía.
+
+### Fix implementado
+Cambio del criterio de ordenamiento en `runFifoV2`:
+1. `executed_at` (cronológico)
+2. **`event_type` priority** (DEPOSIT=0, TRANSFER_IN=1, REWARD=2, BUY=3, SELL/SWAP=4, WITHDRAWAL=5) — adquisiciones antes que disposiciones dentro del mismo timestamp
+3. `source_operation_id` (orden de inserción en DB — preserva el orden del normalizer legacy)
+4. `event_id` (tiebreaker final para eventos de la misma operación)
+
+### Diagnóstico NEGATIVE_INVENTORY enriquecido
+El blocker ahora incluye:
+- `quantity_sold`, `inventory_before`, `inventory_after`
+- `lots_available_before`, `lots_consumed`, `lot_source_operation_ids`
+- `whether_affects_gain_loss` — true solo si hay UNKNOWN_BASIS (cantidad sin base de coste)
+- `explanation_es` — explicación en español
+
+### filterBlockersByYear mejorado
+NEGATIVE_INVENTORY solo bloquea activación si `whether_affects_gain_loss = true`. Si el inventario es negativo pero toda la cantidad vendida tiene base de coste (transient balance warning), no bloquea.
+
+### Archivos modificados
+- `server/services/fisco/FiscoV2Types.ts` — Campos opcionales de diagnóstico en `V2Blocker`
+- `server/services/fisco/FiscoV2EngineService.ts`:
+  - Sort de eventos: event_type priority + source_operation_id + event_id
+  - NEGATIVE_INVENTORY en SELL: diagnóstico detallado (inventory_before, inventory_after, lots, etc.)
+  - `filterBlockersByYear`: NEGATIVE_INVENTORY no bloquea si no afecta gain/loss
+
+### Nuevo archivo
+- `server/services/fisco/__tests__/fiscoV2HotfixNegativeInventory.test.ts` — 12 tests
+
+### Tests
+1. N-01: USDC con lotes suficientes no genera NEGATIVE_INVENTORY
+2. N-02: Compra/entrada y venta mismo timestamp procesa entrada antes que salida
+3. N-03: Stablecoin con disposición cubierta por lotes no bloquea activación
+4. N-04: Caso realmente sin lotes mantiene NEGATIVE_INVENTORY como blocker
+5. N-05: op_id con disposiciones mapeadas 1:1 no bloquea si no hay unknown basis
+6. N-06: Si existe UNKNOWN_BASIS, sí bloquea
+7. N-07: Si existe SELL_WITHOUT_LOTS, sí bloquea
+8. N-08: No se modifica resultado legacy
+9. N-09: 2025 sigue safe_for_official_switch = true
+10. N-10: NEGATIVE_INVENTORY incluye diagnóstico detallado
+11. N-SORT: Same-timestamp events sort BUY before SELL
+12. N-SORT-2: Same op_id — event_id as final tiebreaker
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/fisco/`: ✅ 662/662 tests (650 + 12 nuevos)
+
+### Condiciones cumplidas
+- V2 oficial NO activado
+- fisco_disposals legacy NO tocado
+- No se eliminaron blockers sin justificar
+- No se bajaron tolerancias
+- No se modificaron resultados oficiales
+
+---
+
 ## fix(fisco-v2): acotar comparison anual tras historico completo + corregir colores informe HTML
 
 **Fecha**: 2026-06-26

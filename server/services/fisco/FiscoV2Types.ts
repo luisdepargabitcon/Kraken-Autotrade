@@ -174,6 +174,14 @@ export interface V2Blocker {
   tax_year: number;
   whether_affects_requested_year: boolean;
   whether_blocks_activation: boolean;
+  quantity_sold?: number;
+  inventory_before?: number;
+  inventory_after?: number;
+  lots_available_before?: number;
+  lots_consumed?: number;
+  lot_source_operation_ids?: number[];
+  whether_affects_gain_loss?: boolean;
+  explanation_es?: string;
 }
 
 export interface V2AuditEntry {
