@@ -90,23 +90,25 @@ export function FiscoConfigSection() {
             {(["legacy", "v2_shadow", "v2_official"] as FiscoEngineMode[]).map(mode => {
               const info = MODE_INFO[mode];
               const isActive = config.engineMode === mode;
+              const isOfficialActive = config.engineMode === "v2_official";
               return (
                 <button
                   key={mode}
                   onClick={() => setMode(mode)}
-                  disabled={mode === "v2_official"}
+                  disabled={mode === "v2_official" && !isOfficialActive}
                   className={`text-left p-3 rounded-xl border transition-colors ${
                     isActive
                       ? `${info.color} bg-blue-500/10`
                       : "border-border text-muted-foreground hover:border-border/80"
-                  } ${mode === "v2_official" ? "opacity-50 cursor-not-allowed" : ""}`}
+                  } ${mode === "v2_official" && !isOfficialActive ? "opacity-50 cursor-not-allowed" : ""}`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className={`font-bold text-sm ${isActive ? info.color.split(" ").find(c => c.startsWith("text-")) : ""}`}>
                       {info.label}
                     </span>
                     {isActive && <Badge variant="outline" className={`text-[10px] ${info.color}`}>Activo</Badge>}
-                    {mode === "v2_official" && <Badge variant="outline" className="text-[10px] text-muted-foreground">Bloqueado</Badge>}
+                    {mode === "v2_official" && isOfficialActive && <Badge variant="outline" className="text-[10px] text-green-400 border-green-500/50">Ya activado</Badge>}
+                    {mode === "v2_official" && !isOfficialActive && <Badge variant="outline" className="text-[10px] text-muted-foreground">Bloqueado</Badge>}
                   </div>
                   <p className="text-xs text-muted-foreground">{info.description}</p>
                 </button>

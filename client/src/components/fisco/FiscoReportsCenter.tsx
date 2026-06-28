@@ -129,6 +129,17 @@ function AnnualReportModule() {
     retry: false,
   });
 
+  const { data: controlStatus } = useQuery<{ official_engine: string }>({
+    queryKey: ["fisco-control-status-reports", year],
+    queryFn: async () => {
+      const r = await fetch(`/api/fisco/control-status?year=${year}`);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+  const isV2Official = controlStatus?.official_engine === "v2_official";
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
@@ -237,7 +248,7 @@ function AnnualReportModule() {
                 </div>
               </div>
             </div>
-            {v2Comparison.official_switch_blockers.length > 0 && (
+            {v2Comparison.official_switch_blockers.length > 0 && !isV2Official && (
               <div className="rounded border border-red-500/30 bg-red-950/20 p-2 space-y-1">
                 <div className="text-xs font-semibold text-red-200 flex items-center gap-1">
                   <Lock className="h-3 w-3" /> Motivos de bloqueo para V2 oficial:
@@ -249,7 +260,17 @@ function AnnualReportModule() {
                 </ul>
               </div>
             )}
-            {v2Comparison.safe_for_official_switch && (
+            {isV2Official && (
+              <div className="rounded border border-green-500/30 bg-green-950/20 p-2 space-y-1">
+                <div className="text-xs font-semibold text-green-200 flex items-center gap-1">
+                  <ShieldCheck className="h-3 w-3" /> V2 oficial activo
+                </div>
+                <p className="text-[10px] text-green-300">
+                  Fisco V2 ya está activado oficialmente. No requiere activación.
+                </p>
+              </div>
+            )}
+            {v2Comparison.safe_for_official_switch && !isV2Official && (
               <div className="rounded border border-green-500/30 bg-green-950/20 p-2 space-y-1">
                 <div className="text-xs font-semibold text-green-200 flex items-center gap-1">
                   <ShieldCheck className="h-3 w-3" /> V2 listo para activación oficial
@@ -289,18 +310,22 @@ function AnnualReportModule() {
               </div>
             )}
             <div className="flex items-center gap-2 text-xs">
-              {v2Comparison.is_safe_for_report ? (
+              {isV2Official ? (
+                <span className="text-green-400 flex items-center gap-1 font-medium"><ShieldCheck className="h-3 w-3" /> V2 oficial activo</span>
+              ) : v2Comparison.is_safe_for_report ? (
                 <span className="text-green-400 flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Apto para informe en sombra</span>
               ) : (
                 <span className="text-red-400 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> No apto para informe en sombra</span>
               )}
               <span className="text-muted-foreground">·</span>
-              <span className={v2Comparison.safe_for_official_switch ? "text-green-400 font-medium" : "text-muted-foreground"}>
-                {v2Comparison.safe_for_official_switch ? "V2 oficial listo para activación" : "V2 oficial bloqueado"}
+              <span className={isV2Official ? "text-green-400 font-medium" : v2Comparison.safe_for_official_switch ? "text-green-400 font-medium" : "text-muted-foreground"}>
+                {isV2Official ? "Ya activado" : v2Comparison.safe_for_official_switch ? "V2 oficial listo para activación" : "V2 oficial bloqueado"}
               </span>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              El resultado oficial se calcula con el motor actual. La simulación V2 en sombra no afecta al resultado oficial.
+              {isV2Official
+                ? "El resultado oficial se calcula con el motor V2 oficial. La comparativa Legacy vs V2 se muestra como auditoría histórica."
+                : "El resultado oficial se calcula con el motor actual. La simulación V2 en sombra no afecta al resultado oficial."}
             </p>
           </div>
         ) : (

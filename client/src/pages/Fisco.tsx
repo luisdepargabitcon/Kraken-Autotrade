@@ -674,6 +674,19 @@ export default function Fisco() {
     staleTime: 30_000,
   });
 
+  // --- Control status (for engine_mode detection) ---
+  const controlStatusQ = useQuery<{ official_engine: string }>({
+    queryKey: [`/api/fisco/control-status?year=${selectedYear}`],
+    queryFn: async () => {
+      const r = await fetch(`/api/fisco/control-status?year=${selectedYear}`);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+  const isV2Official = controlStatusQ.data?.official_engine === "v2_official";
+
   // --- Rebuild V2 (shadow rebuild) ---
   const rebuildV2 = useMutation<{ status: string; mode: string; blockers: string[]; warnings: string[] }, Error>({
     mutationFn: async () => {
@@ -1952,11 +1965,11 @@ export default function Fisco() {
             )}
 
             {/* ── Panel estado motor fiscal V2 ── */}
-            <Card className="border border-blue-500/30 bg-blue-500/5">
+            <Card className={`border ${isV2Official ? "border-green-500/30 bg-green-500/5" : "border-blue-500/30 bg-blue-500/5"}`}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
-                  <ShieldCheck className="h-4 w-4 text-blue-400" />
-                  Estado del motor fiscal V2
+                  <ShieldCheck className={`h-4 w-4 ${isV2Official ? "text-green-400" : "text-blue-400"}`} />
+                  {isV2Official ? `Estado del motor fiscal oficial — ${selectedYear}` : "Estado del motor fiscal V2"}
                   <button
                     className="ml-auto text-xs text-muted-foreground hover:text-foreground"
                     onClick={() => v2ComparisonQ.refetch()}
@@ -1966,26 +1979,50 @@ export default function Fisco() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {/* Motor actual + V2 en sombra */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="p-3 rounded-lg bg-muted/30 border border-border">
-                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Motor en uso</div>
-                    <div className="text-sm font-bold text-blue-400">{formatFiscoEngineModeLabel("legacy")}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">Resultado fiscal oficial</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
-                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Simulación V2</div>
-                    <div className="text-sm font-bold text-blue-400">{formatFiscoEngineModeLabel("v2_shadow")}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">Cálculo en paralelo, no oficial</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-muted/20 border border-border opacity-60">
-                    <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">V2 oficial</div>
-                    <div className="text-sm font-bold text-muted-foreground flex items-center gap-1">
-                      <Lock className="h-3 w-3" /> Bloqueado
+                {isV2Official ? (
+                  /* ── V2 OFICIAL ACTIVO ── */
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30">
+                        <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Motor actual</div>
+                        <div className="text-sm font-bold text-green-400">V2 oficial</div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">Estado: Activo</div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-muted/20 border border-border">
+                        <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Badge</div>
+                        <div className="text-sm font-bold text-green-400 flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3" /> V2 oficial activo
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">Ya activado oficialmente</div>
+                      </div>
                     </div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">No disponible hasta validar</div>
-                  </div>
-                </div>
+                    <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-2.5 text-xs text-green-300">
+                      <ShieldCheck className="h-3 w-3 inline mr-1" />
+                      Fisco V2 ya está activado oficialmente. No requiere activación.
+                    </div>
+                  </>
+                ) : (
+                  /* ── V2 EN SOMBRA / LEGACY ── */
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="p-3 rounded-lg bg-muted/30 border border-border">
+                        <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Motor en uso</div>
+                        <div className="text-sm font-bold text-blue-400">{formatFiscoEngineModeLabel("legacy")}</div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">Resultado fiscal oficial</div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                        <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Simulación V2</div>
+                        <div className="text-sm font-bold text-blue-400">{formatFiscoEngineModeLabel("v2_shadow")}</div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">Cálculo en paralelo, no oficial</div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-muted/20 border border-border opacity-60">
+                        <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">V2 oficial</div>
+                        <div className="text-sm font-bold text-muted-foreground flex items-center gap-1">
+                          <Lock className="h-3 w-3" /> Bloqueado
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">No disponible hasta validar</div>
+                      </div>
+                    </div>
 
                 {/* Comparación */}
                 {v2ComparisonQ.isLoading && (
@@ -2128,6 +2165,38 @@ export default function Fisco() {
                     </div>
                   </div>
                 )}
+                {isV2Official && v2ComparisonQ.data && (
+                  /* ── Auditoría histórica Legacy vs V2 (solo cuando V2 oficial está activo) ── */
+                  <div className="space-y-2 pt-2 border-t border-border">
+                    <div className="text-xs font-semibold text-muted-foreground">Auditoría Legacy vs V2</div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                      <div className="bg-card border border-border rounded p-2">
+                        <div className="text-muted-foreground">Diferencia neta</div>
+                        <div className={`font-bold font-mono ${v2ComparisonQ.data.diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {formatEurSigned(v2ComparisonQ.data.diff_eur)}
+                        </div>
+                      </div>
+                      <div className="bg-card border border-border rounded p-2">
+                        <div className="text-muted-foreground">Diferencia ganancias brutas</div>
+                        <div className={`font-bold font-mono ${v2ComparisonQ.data.gross_gains_diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {formatEurSigned(v2ComparisonQ.data.gross_gains_diff_eur)}
+                        </div>
+                      </div>
+                      <div className="bg-card border border-border rounded p-2">
+                        <div className="text-muted-foreground">Diferencia pérdidas brutas</div>
+                        <div className={`font-bold font-mono ${v2ComparisonQ.data.gross_losses_diff_eur >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {formatEurSigned(v2ComparisonQ.data.gross_losses_diff_eur)}
+                        </div>
+                      </div>
+                      <div className="bg-card border border-border rounded p-2">
+                        <div className="text-muted-foreground">Diferencia disposiciones</div>
+                        <div className={`font-bold font-mono ${v2ComparisonQ.data.disposals_count_diff === 0 ? "text-muted-foreground" : "text-amber-400"}`}>
+                          {v2ComparisonQ.data.disposals_count_diff > 0 ? "+" : ""}{v2ComparisonQ.data.disposals_count_diff}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {v2ComparisonQ.isError && (
                   <div className="text-xs text-amber-400 flex items-center gap-1.5">
                     <Info className="h-3 w-3" /> Comparación V2 no disponible aún para {selectedYear}. Ejecuta «Recalcular V2 en sombra» para generarla.
@@ -2148,6 +2217,8 @@ export default function Fisco() {
                     Disponible cuando no haya bloqueos ni diferencias sin explicar
                   </span>
                 </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 
