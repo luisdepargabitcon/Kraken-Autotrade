@@ -1001,4 +1001,131 @@ describe("FISCO V2 Activation Service", () => {
       expect(mockSetFiscoConfig).toHaveBeenCalledWith({ fiscoEngineMode: "v2_shadow" });
     });
   });
+
+  // ── Global backup visibility (PB-xx) ────────────────────────────────────────
+
+  describe("Global backup visibility", () => {
+    const GLOBAL_BACKUP_ID = "cbe89cb0-c2b0-4c40-8b11-ed429eada39b";
+    const globalBackupRow = {
+      id: GLOBAL_BACKUP_ID,
+      year: 2025,
+      backup_type: "pre_activation_global",
+      official_engine_before: "v2_shadow",
+      official_engine_after: "v2_official",
+      operation_set_hash: "b15884b8e30011d0",
+      comparison_json: JSON.stringify({
+        readiness: { engine_mode: "v2_official" },
+        year_results: [
+          { year: 2025, legacy_net: -72.24621015, v2_net: -72.24604691, diff_eur: 0.00016 },
+          { year: 2026, legacy_net: -861.94297563, v2_net: -861.94301189, diff_eur: 0.00004 },
+        ],
+      }),
+      created_at: "2026-06-27T19:30:00.000Z",
+    };
+
+    function mockBackupsQuery() {
+      mockPool.query.mockImplementation((sql: string) => {
+        if (sql.includes("SELECT") && sql.includes("fisco_v2_backups") && !sql.includes("INSERT")) {
+          return Promise.resolve({ rows: [globalBackupRow] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+    }
+
+    // PB-01: getBackups(2025) devuelve backup global
+    it("PB-01: getBackups(2025) devuelve backup global", async () => {
+      mockBackupsQuery();
+
+      const { getBackups } = await import("../FiscoV2ActivationService");
+      const backups = await getBackups(2025);
+
+      expect(backups.length).toBeGreaterThanOrEqual(1);
+      const globalBackup = backups.find(b => b.id === GLOBAL_BACKUP_ID);
+      expect(globalBackup).toBeDefined();
+    });
+
+    // PB-02: getBackups(2026) devuelve backup global
+    it("PB-02: getBackups(2026) devuelve backup global", async () => {
+      mockBackupsQuery();
+
+      const { getBackups } = await import("../FiscoV2ActivationService");
+      const backups = await getBackups(2026);
+
+      expect(backups.length).toBeGreaterThanOrEqual(1);
+      const globalBackup = backups.find(b => b.id === GLOBAL_BACKUP_ID);
+      expect(globalBackup).toBeDefined();
+    });
+
+    // PB-03: backup global incluye scope = "global"
+    it("PB-03: backup global incluye scope = 'global'", async () => {
+      mockBackupsQuery();
+
+      const { getBackups } = await import("../FiscoV2ActivationService");
+      const backups = await getBackups(2025);
+
+      const globalBackup = backups.find(b => b.id === GLOBAL_BACKUP_ID);
+      expect(globalBackup!.scope).toBe("global");
+    });
+
+    // PB-04: backup global incluye years_scope = [2025, 2026]
+    it("PB-04: backup global incluye years_scope = [2025, 2026]", async () => {
+      mockBackupsQuery();
+
+      const { getBackups } = await import("../FiscoV2ActivationService");
+      const backups = await getBackups(2025);
+
+      const globalBackup = backups.find(b => b.id === GLOBAL_BACKUP_ID);
+      expect(globalBackup!.years_scope).toEqual([2025, 2026]);
+    });
+
+    // PB-05: backup global conserva backup_id original
+    it("PB-05: backup global conserva backup_id original", async () => {
+      mockBackupsQuery();
+
+      const { getBackups } = await import("../FiscoV2ActivationService");
+      const backups = await getBackups(2026);
+
+      const globalBackup = backups.find(b => b.id === GLOBAL_BACKUP_ID);
+      expect(globalBackup).toBeDefined();
+      expect(globalBackup!.id).toBe(GLOBAL_BACKUP_ID);
+    });
+
+    // PB-06: getBackups no crea backups nuevos (no INSERT queries)
+    it("PB-06: getBackups no crea backups nuevos", async () => {
+      mockBackupsQuery();
+
+      const { getBackups } = await import("../FiscoV2ActivationService");
+      await getBackups(2026);
+
+      const insertCall = mockPool.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === "string" && c[0].toUpperCase().includes("INSERT INTO FISCO_V2_BACKUPS")
+      );
+      expect(insertCall).toBeUndefined();
+    });
+
+    // PB-07: rollback sigue disponible usando backup_id = cbe89cb0-...
+    it("PB-07: rollback con backup_id global específico restaura engine", async () => {
+      mockPool.query.mockImplementation((sql: string) => {
+        if (sql.includes("SELECT * FROM fisco_v2_backups")) {
+          return Promise.resolve({
+            rows: [{
+              id: GLOBAL_BACKUP_ID,
+              year: 2025,
+              official_engine_before: "v2_shadow",
+              config_snapshot: JSON.stringify({ fiscoEngineMode: "v2_shadow" }),
+              created_at: "2026-06-27T19:30:00.000Z",
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      const { rollbackOfficial } = await import("../FiscoV2ActivationService");
+      const result = await rollbackOfficial(2025, GLOBAL_BACKUP_ID, true);
+
+      expect(result.rolled_back).toBe(true);
+      expect(result.engine).toBe("v2_shadow");
+      expect(mockSetFiscoConfig).toHaveBeenCalledWith({ fiscoEngineMode: "v2_shadow" });
+    });
+  });
 });

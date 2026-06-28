@@ -630,38 +630,49 @@ export async function getAuditLog(year: number, limit: number = 20): Promise<any
 }
 
 export async function getBackups(year: number): Promise<any[]> {
-  // Return backups for this year OR global backups that may cover this year
+  // Return backups for this year OR all global backups (filtered in JS)
+  // Using JS filtering because JSONB::text adds spaces after colons in PostgreSQL,
+  // making LIKE patterns unreliable for matching year values.
   const result = await pool.query(
     `SELECT id, year, backup_type, official_engine_before, official_engine_after,
             operation_set_hash, comparison_json, created_at
      FROM fisco_v2_backups
-     WHERE year = $1
-        OR (backup_type = 'pre_activation_global' AND comparison_json::text LIKE $2)
+     WHERE year = $1 OR backup_type = 'pre_activation_global'
      ORDER BY created_at DESC`,
-    [year, `%"year":${year}%`]
+    [year]
   );
-  // Add scope and years_scope fields for clarity
-  return result.rows.map((row: any) => {
-    let yearsScope: number[] = [row.year];
-    let scope = "year";
-    if (row.backup_type === "pre_activation_global") {
-      scope = "global";
-      // Try to extract years from comparison_json
-      try {
-        const parsed = typeof row.comparison_json === "string" ? JSON.parse(row.comparison_json) : row.comparison_json;
-        if (parsed?.year_results && Array.isArray(parsed.year_results)) {
-          yearsScope = parsed.year_results.map((yr: any) => yr.year);
+  // Filter and add scope/years_scope fields
+  return result.rows
+    .map((row: any) => {
+      let yearsScope: number[] = [row.year];
+      let scope = "year";
+      if (row.backup_type === "pre_activation_global") {
+        scope = "global";
+        // Try to extract years from comparison_json
+        try {
+          const parsed = typeof row.comparison_json === "string" ? JSON.parse(row.comparison_json) : row.comparison_json;
+          if (parsed?.year_results && Array.isArray(parsed.year_results)) {
+            yearsScope = parsed.year_results.map((yr: any) => yr.year);
+          } else if (parsed?.readiness?.years && Array.isArray(parsed.readiness.years)) {
+            yearsScope = parsed.readiness.years.map((yr: any) => yr.year ?? yr);
+          }
+        } catch {
+          // keep default
         }
-      } catch {
-        // keep default
       }
-    }
-    return {
-      ...row,
-      scope,
-      years_scope: yearsScope,
-    };
-  });
+      return {
+        ...row,
+        scope,
+        years_scope: yearsScope,
+      };
+    })
+    .filter((row: any) => {
+      // Include if it's a year-specific backup for this year,
+      // or if it's a global backup that covers this year
+      if (row.scope === "year") return true;
+      if (row.scope === "global") return row.years_scope.includes(year);
+      return true;
+    });
 }
 
 /**
