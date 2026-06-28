@@ -194,11 +194,11 @@ function AnnualReportModule() {
         </div>
       )}
 
-      {/* Panel estado V2 en sombra */}
-      <div className="rounded-lg border border-blue-500/30 bg-blue-950/20 p-3 space-y-2">
-        <div className="flex items-center gap-2 text-sm font-medium text-blue-200">
+      {/* Panel estado motor fiscal */}
+      <div className={`rounded-lg border p-3 space-y-2 ${isV2Official ? "border-green-500/30 bg-green-950/20" : "border-blue-500/30 bg-blue-950/20"}`}>
+        <div className={`flex items-center gap-2 text-sm font-medium ${isV2Official ? "text-green-200" : "text-blue-200"}`}>
           <ShieldCheck className="h-4 w-4" />
-          Estado del motor V2 en sombra — {year}
+          {isV2Official ? `Motor fiscal oficial — ${year}` : `Estado del motor V2 en sombra — ${year}`}
         </div>
         {v2Loading ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -207,21 +207,26 @@ function AnnualReportModule() {
         ) : v2Comparison ? (
           <div className="space-y-2">
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
-              <div className="bg-background/40 border border-border rounded p-2">
-                <div className="text-muted-foreground">Motor en uso</div>
-                <div className="font-bold text-blue-300">{formatFiscoEngineModeLabel("legacy")}</div>
+              <div className={`border rounded p-2 ${isV2Official ? "bg-background/40 border-border opacity-40" : "bg-background/40 border-border"}`}>
+                <div className="text-muted-foreground">{isV2Official ? "Motor anterior" : "Motor en uso"}</div>
+                <div className={`font-bold ${isV2Official ? "text-muted-foreground" : "text-blue-300"}`}>{formatFiscoEngineModeLabel("legacy")}</div>
               </div>
-              <div className="bg-blue-950/30 border border-blue-500/30 rounded p-2">
+              <div className={`border rounded p-2 ${isV2Official ? "bg-background/40 border-border opacity-40" : "bg-blue-950/30 border-blue-500/30"}`}>
                 <div className="text-muted-foreground">Simulación V2</div>
-                <div className="font-bold text-blue-300">{formatFiscoEngineModeLabel("v2_shadow")}</div>
+                <div className={`font-bold ${isV2Official ? "text-muted-foreground" : "text-blue-300"}`}>{formatFiscoEngineModeLabel("v2_shadow")}</div>
               </div>
-              <div className="bg-background/40 border border-border rounded p-2 opacity-60">
+              <div className={`border rounded p-2 ${isV2Official ? "bg-green-950/30 border-green-500/30" : "bg-background/40 border-border opacity-60"}`}>
                 <div className="text-muted-foreground">V2 oficial</div>
-                <div className="font-bold text-muted-foreground flex items-center justify-center gap-1">
-                  <Lock className="h-3 w-3" /> Bloqueado
+                <div className={`font-bold flex items-center justify-center gap-1 ${isV2Official ? "text-green-400" : "text-muted-foreground"}`}>
+                  {isV2Official ? <><ShieldCheck className="h-3 w-3" /> Activo</> : <><Lock className="h-3 w-3" /> Bloqueado</>}
                 </div>
               </div>
             </div>
+            {isV2Official && (
+              <div className="text-[11px] font-semibold text-muted-foreground pt-0.5 border-t border-border/40">
+                Auditoría histórica Legacy vs V2 — La comparativa se conserva solo como referencia. El motor oficial actual es V2.
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
               <div className="bg-background/40 border border-border rounded p-2">
                 <div className="text-muted-foreground">Diferencia neta</div>
@@ -266,7 +271,7 @@ function AnnualReportModule() {
                   <ShieldCheck className="h-3 w-3" /> V2 oficial activo
                 </div>
                 <p className="text-[10px] text-green-300">
-                  Fisco V2 ya está activado oficialmente. No requiere activación.
+                  El resultado oficial se calcula con el motor V2 oficial.
                 </p>
               </div>
             )}

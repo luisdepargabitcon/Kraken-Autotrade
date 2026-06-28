@@ -1984,7 +1984,7 @@ export default function Fisco() {
                   <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30">
-                        <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Motor actual</div>
+                        <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Motor fiscal oficial</div>
                         <div className="text-sm font-bold text-green-400">V2 oficial</div>
                         <div className="text-[10px] text-muted-foreground mt-0.5">Estado: Activo</div>
                       </div>
@@ -1998,7 +1998,7 @@ export default function Fisco() {
                     </div>
                     <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-2.5 text-xs text-green-300">
                       <ShieldCheck className="h-3 w-3 inline mr-1" />
-                      Fisco V2 ya está activado oficialmente. No requiere activación.
+                      El resultado oficial se calcula con el motor V2 oficial.
                     </div>
                   </>
                 ) : (
