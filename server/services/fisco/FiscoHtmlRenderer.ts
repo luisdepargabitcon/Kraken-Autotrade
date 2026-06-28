@@ -20,9 +20,12 @@ export interface AnnualGainLossByAssetRow {
   name: string;
   considerationTypeCode: string;
   considerationTypeLabel: string;
+  grossProceedsEur: number;
+  feesEur: number;
   transmissionValueEur: number;
   acquisitionValueEur: number;
   capitalGainLossEur: number;
+  numSales: number;
 }
 
 export interface AnnualGainLossByAssetSummary {
@@ -45,6 +48,8 @@ export interface DisposalCounterAssetRow {
   counter_asset: string | null;
   pair: string | null;
   op_type: string | null;
+  gross_proceeds_eur: number;
+  fees_eur: number;
   net_proceeds_eur: number;
   cost_basis_eur: number;
   gain_loss_eur: number;
@@ -56,6 +61,8 @@ const CONSIDERATION_TYPE_LABELS: Record<string, string> = {
   F: "F - Moneda de curso legal",
   N: "N - Otra moneda virtual",
   O: "O - Otro activo virtual",
+  B: "B - Bienes o servicios",
+  REVIEW: "REVISAR - Tipo no determinado",
 };
 
 // Fiat currencies: EUR, USD and major world currencies
@@ -86,8 +93,8 @@ export function classifyConsiderationType(
   opType: string | null | undefined,
   year: number,
   asset: string
-): { code: "F" | "N" | "O"; source: string } {
-  // 1. Fee/expense/other op_type → O
+): { code: "F" | "N" | "O" | "B" | "REVIEW"; source: string } {
+  // 1. Fee/expense/other op_type → O (otro activo virtual)
   if (opType && FEE_DISPOSAL_OP_TYPES.has(opType.toLowerCase())) {
     return { code: "O", source: "op_type_fee" };
   }
@@ -125,11 +132,11 @@ export function classifyConsiderationType(
     }
   }
 
-  // 4. No counter info → O + warning
+  // 4. No counter info → REVIEW (tipo no determinado)
   console.warn(
-    `[FISCO][ANNUAL_GAIN_LOSS_COUNTERPARTY_WARNING] year=${year} asset=${asset} reason=counter_asset_missing fallback=O`
+    `[FISCO][ANNUAL_GAIN_LOSS_COUNTERPARTY_WARNING] year=${year} asset=${asset} reason=counter_asset_missing fallback=REVIEW`
   );
-  return { code: "O", source: "missing_counter" };
+  return { code: "REVIEW", source: "missing_counter" };
 }
 
 /**
@@ -149,9 +156,12 @@ export function buildAnnualGainLossByAssetSummary(
   const groups = new Map<string, {
     ticker: string;
     typeCode: string;
+    grossProceedsEur: number;
+    feesEur: number;
     transmissionValueEur: number;
     acquisitionValueEur: number;
     capitalGainLossEur: number;
+    sellOpIds: Set<number>;
   }>();
 
   for (const r of disposalRows) {
@@ -161,21 +171,27 @@ export function buildAnnualGainLossByAssetSummary(
     const key = groupKey(r.asset, code);
     const existing = groups.get(key);
     if (existing) {
+      existing.grossProceedsEur     += r.gross_proceeds_eur;
+      existing.feesEur              += r.fees_eur;
       existing.transmissionValueEur += r.net_proceeds_eur;
       existing.acquisitionValueEur  += r.cost_basis_eur;
       existing.capitalGainLossEur   += r.gain_loss_eur;
+      existing.sellOpIds.add(r.sell_operation_id);
     } else {
       groups.set(key, {
         ticker: r.asset,
         typeCode: code,
+        grossProceedsEur:     r.gross_proceeds_eur,
+        feesEur:              r.fees_eur,
         transmissionValueEur: r.net_proceeds_eur,
         acquisitionValueEur:  r.cost_basis_eur,
         capitalGainLossEur:   r.gain_loss_eur,
+        sellOpIds: new Set([r.sell_operation_id]),
       });
     }
   }
 
-  const typeOrder: Record<string, number> = { F: 0, N: 1, O: 2 };
+  const typeOrder: Record<string, number> = { F: 0, N: 1, O: 2, B: 3, REVIEW: 4 };
   const rows: AnnualGainLossByAssetRow[] = [...groups.values()]
     .map(g => ({
       ticker: g.ticker,
@@ -183,9 +199,12 @@ export function buildAnnualGainLossByAssetSummary(
       considerationTypeCode: g.typeCode,
       considerationTypeLabel: CONSIDERATION_TYPE_LABELS[g.typeCode]
         ?? `${g.typeCode} - Tipo no determinado`,
+      grossProceedsEur:     g.grossProceedsEur,
+      feesEur:              g.feesEur,
       transmissionValueEur: g.transmissionValueEur,
-      acquisitionValueEur: g.acquisitionValueEur,
-      capitalGainLossEur: g.capitalGainLossEur,
+      acquisitionValueEur:  g.acquisitionValueEur,
+      capitalGainLossEur:   g.capitalGainLossEur,
+      numSales:             g.sellOpIds.size,
     }))
     .sort((a, b) => {
       const tc = a.ticker.localeCompare(b.ticker);
@@ -739,11 +758,10 @@ function renderUnifiedRentaTable(
 ): string {
   const { year } = gainLossSummary;
 
-  const assetsWithDisposals = assetSummaries.filter(
-    a => (disposalsByAsset[a.asset] ?? []).length > 0 || (a.disposals_count ?? 0) > 0
-  );
+  // Use gainLossSummary.rows directly: one row per (ticker, considerationTypeCode)
+  const rentaRows = gainLossSummary.rows;
 
-  if (assetsWithDisposals.length === 0) {
+  if (rentaRows.length === 0) {
     return `
 <section class="annual-gain-loss-summary section-block">
   <h2>Datos a revisar / copiar en Renta — Ganancias y pérdidas por activo</h2>
@@ -751,32 +769,21 @@ function renderUnifiedRentaTable(
 </section>`;
   }
 
-  // Build a lookup of consideration types per asset from gainLossSummary
-  const considerationByAsset = new Map<string, string[]>();
-  for (const r of gainLossSummary.rows) {
-    const labels = considerationByAsset.get(r.ticker) ?? [];
-    labels.push(r.considerationTypeLabel);
-    considerationByAsset.set(r.ticker, labels);
-  }
-
   const badgeRenta = '<span class="badge badge-renta">CAMPO RENTA</span>';
   const badgeAux = '<span class="badge badge-aux">Auxiliar</span>';
 
-  const dataRows = assetsWithDisposals.map(a => {
-    const disposals = disposalsByAsset[a.asset] ?? [];
-    const numSales  = new Set(disposals.map((d: any) => d.sell_operation_id)).size || (a.disposals_count ?? 0);
-    const grossProc = a.proceeds_eur ?? 0;
-    const fees      = a.fees_eur ?? 0;
-    const netTrans  = grossProc - fees;
-    const costBasis = a.cost_basis_eur ?? 0;
-    const gainLoss  = a.gain_loss_eur ?? 0;
-    const consLabels = considerationByAsset.get(a.asset) ?? ["—"];
-    const consText = consLabels.join("; ");
+  const dataRows = rentaRows.map(r => {
+    const grossProc = r.grossProceedsEur;
+    const fees      = r.feesEur;
+    const netTrans  = r.transmissionValueEur;
+    const costBasis = r.acquisitionValueEur;
+    const gainLoss  = r.capitalGainLossEur;
+    const numSales  = r.numSales;
 
     return `<tr>
-      <td><strong>${a.asset}</strong></td>
-      <td>${a.asset}</td>
-      <td>${consText}</td>
+      <td><strong>${r.ticker}</strong></td>
+      <td>${r.name}</td>
+      <td>${r.considerationTypeLabel}</td>
       <td class="num">${fmtEurEs(grossProc)}</td>
       <td class="num">${fmtEurEs(fees)}</td>
       <td class="num">${fmtEurEs(netTrans)}</td>
@@ -786,15 +793,12 @@ function renderUnifiedRentaTable(
     </tr>`;
   }).join("");
 
-  const totGross   = assetsWithDisposals.reduce((s, a) => s + (a.proceeds_eur ?? 0), 0);
-  const totFees    = assetsWithDisposals.reduce((s, a) => s + (a.fees_eur ?? 0), 0);
-  const totNet     = totGross - totFees;
-  const totCost    = assetsWithDisposals.reduce((s, a) => s + (a.cost_basis_eur ?? 0), 0);
-  const totGain    = assetsWithDisposals.reduce((s, a) => s + (a.gain_loss_eur ?? 0), 0);
-  const totSales   = assetsWithDisposals.reduce((s, a) => {
-    const disposals = disposalsByAsset[a.asset] ?? [];
-    return s + (new Set(disposals.map((d: any) => d.sell_operation_id)).size || (a.disposals_count ?? 0));
-  }, 0);
+  const totGross   = rentaRows.reduce((s, r) => s + r.grossProceedsEur, 0);
+  const totFees    = rentaRows.reduce((s, r) => s + r.feesEur, 0);
+  const totNet     = rentaRows.reduce((s, r) => s + r.transmissionValueEur, 0);
+  const totCost    = rentaRows.reduce((s, r) => s + r.acquisitionValueEur, 0);
+  const totGain    = rentaRows.reduce((s, r) => s + r.capitalGainLossEur, 0);
+  const totSales   = rentaRows.reduce((s, r) => s + r.numSales, 0);
 
   return `
 <section class="annual-gain-loss-summary">
@@ -841,7 +845,7 @@ function renderUnifiedRentaTable(
   <div class="renta-help-box">
     <strong>Cómo leer esta tabla para Renta</strong>
     <ol style="margin:.4rem 0 .4rem 1.2rem;padding:0">
-      <li><strong>Tipo de contraprestación recibida a cambio:</strong> Indica si la transmisión se hizo a cambio de moneda de curso legal (F) o de otra moneda virtual (N).</li>
+      <li><strong>Tipo de contraprestación recibida a cambio:</strong> Indica qué se recibió a cambio de la moneda virtual transmitida: F (moneda de curso legal como EUR/USD), N (otra moneda virtual como BTC/ETH), O (otro activo virtual como comisiones), o B (bienes o servicios). Cada fila tiene un único tipo.</li>
       <li><strong>Valor de transmisión neto en EUR:</strong> Es el valor de venta ya minorado por las comisiones de venta imputadas.</li>
       <li><strong>Valor de adquisición en EUR:</strong> Es el coste FIFO de adquisición. Las comisiones de compra ya están incluidas cuando corresponde.</li>
       <li><strong>Ganancia o pérdida de capital en EUR:</strong> Es el resultado fiscal: Valor de transmisión neto − Valor de adquisición.</li>
@@ -1642,6 +1646,10 @@ export class FiscoHtmlRenderer {
         sell_op.counter_asset,
         sell_op.pair,
         sell_op.op_type,
+        COALESCE(SUM(fd.proceeds_eur::numeric), 0)                  AS gross_proceeds_eur,
+        GREATEST(0, COALESCE(SUM(
+            GREATEST(0, fd.proceeds_eur::numeric - fd.cost_basis_eur::numeric - fd.gain_loss_eur::numeric)
+          ), 0))                                                   AS fees_eur,
         COALESCE(SUM(fd.proceeds_eur::numeric), 0)
           - GREATEST(0, COALESCE(SUM(
               GREATEST(0, fd.proceeds_eur::numeric - fd.cost_basis_eur::numeric - fd.gain_loss_eur::numeric)
@@ -1661,15 +1669,17 @@ export class FiscoHtmlRenderer {
     `, [year]);
 
     return q.rows.map((r: any) => ({
-      asset:             r.asset,
-      sell_operation_id: parseInt(r.sell_operation_id),
-      counter_asset:     r.counter_asset ?? null,
-      pair:              r.pair ?? null,
-      op_type:           r.op_type ?? null,
-      net_proceeds_eur:  parseFloat(r.net_proceeds_eur),
-      cost_basis_eur:    parseFloat(r.cost_basis_eur),
-      gain_loss_eur:     parseFloat(r.gain_loss_eur),
-      is_fee_disposal:   r.is_fee_disposal ?? false,
+      asset:              r.asset,
+      sell_operation_id:  parseInt(r.sell_operation_id),
+      counter_asset:      r.counter_asset ?? null,
+      pair:               r.pair ?? null,
+      op_type:            r.op_type ?? null,
+      gross_proceeds_eur: parseFloat(r.gross_proceeds_eur),
+      fees_eur:           parseFloat(r.fees_eur),
+      net_proceeds_eur:   parseFloat(r.net_proceeds_eur),
+      cost_basis_eur:     parseFloat(r.cost_basis_eur),
+      gain_loss_eur:      parseFloat(r.gain_loss_eur),
+      is_fee_disposal:    r.is_fee_disposal ?? false,
     }));
   }
 

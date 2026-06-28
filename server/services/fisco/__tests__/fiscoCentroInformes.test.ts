@@ -1003,6 +1003,8 @@ function makeDisposalRow(
     counter_asset: "USD",
     pair: `${asset}/USD`,
     op_type: "trade_sell",
+    gross_proceeds_eur: 100,
+    fees_eur: 0,
     net_proceeds_eur: 100,
     cost_basis_eur: 90,
     gain_loss_eur: 10,
@@ -1043,9 +1045,9 @@ describe("classifyConsiderationType", () => {
     expect(r.code).toBe("O");
     expect(r.source).toBe("op_type_fee");
   });
-  it("C10: counter_asset missing + op_type normal → O + source=missing_counter", () => {
+  it("C10: counter_asset missing + op_type normal → REVIEW + source=missing_counter", () => {
     const r = classifyConsiderationType(null, null, "trade_sell", 2025, "XXX");
-    expect(r.code).toBe("O");
+    expect(r.code).toBe("REVIEW");
     expect(r.source).toBe("missing_counter");
   });
   it("C11: infer F desde pair cuando counter_asset es null", () => {
@@ -1196,6 +1198,107 @@ describe("buildAnnualGainLossByAssetSummary", () => {
     const rows = [makeDisposalRow("SOL", { op_type: "fee", counter_asset: "USD" })];
     const result = buildAnnualGainLossByAssetSummary(2025, rows);
     expect(result.rows[0].considerationTypeCode).toBe("O");
+  });
+
+  it("S16: ETH con F y N → dos filas, ninguna con ';'", () => {
+    const rows = [
+      makeDisposalRow("ETH", { counter_asset: "EUR", pair: "ETH/EUR", sell_operation_id: 1, gain_loss_eur: 5 }),
+      makeDisposalRow("ETH", { counter_asset: "USDC", pair: "ETH/USDC", sell_operation_id: 2, gain_loss_eur: -2 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows).toHaveLength(2);
+    for (const r of result.rows) {
+      expect(r.considerationTypeLabel).not.toContain(";");
+      expect(r.considerationTypeLabel).not.toContain(" F ");
+      expect(r.considerationTypeCode).toMatch(/^[FNO]$/);
+    }
+  });
+
+  it("S17: SOL con F y N → dos filas separadas", () => {
+    const rows = [
+      makeDisposalRow("SOL", { counter_asset: "USD", pair: "SOL/USD", sell_operation_id: 1 }),
+      makeDisposalRow("SOL", { counter_asset: "USDC", pair: "SOL/USDC", sell_operation_id: 2 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows).toHaveLength(2);
+    const types = result.rows.map(r => r.considerationTypeCode).sort();
+    expect(types).toEqual(["F", "N"]);
+  });
+
+  it("S18: TON con F y N → dos filas separadas", () => {
+    const rows = [
+      makeDisposalRow("TON", { counter_asset: "EUR", pair: "TON/EUR", sell_operation_id: 1 }),
+      makeDisposalRow("TON", { counter_asset: "BTC", pair: "TON/BTC", sell_operation_id: 2, op_type: "trade_sell" }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows).toHaveLength(2);
+    const types = result.rows.map(r => r.considerationTypeCode).sort();
+    expect(types).toEqual(["F", "N"]);
+  });
+
+  it("S19: USDC con F y N → dos filas separadas", () => {
+    const rows = [
+      makeDisposalRow("USDC", { counter_asset: "EUR", pair: "USDC/EUR", sell_operation_id: 1 }),
+      makeDisposalRow("USDC", { counter_asset: "TON", pair: "USDC/TON", sell_operation_id: 2, op_type: "trade_sell" }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows).toHaveLength(2);
+    const types = result.rows.map(r => r.considerationTypeCode).sort();
+    expect(types).toEqual(["F", "N"]);
+  });
+
+  it("S20: BTC vendido por EUR → tipo F (no es moneda de curso legal, pero la contraprestación sí)", () => {
+    const rows = [makeDisposalRow("BTC", { counter_asset: "EUR", pair: "BTC/EUR", op_type: "trade_sell" })];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows[0].considerationTypeCode).toBe("F");
+    expect(result.rows[0].considerationTypeLabel).toBe("F - Moneda de curso legal");
+  });
+
+  it("S21: BTC permutado por ETH → tipo N (contraprestación es otra moneda virtual)", () => {
+    const rows = [makeDisposalRow("BTC", { counter_asset: "ETH", pair: "BTC/ETH", op_type: "trade_sell" })];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows[0].considerationTypeCode).toBe("N");
+    expect(result.rows[0].considerationTypeLabel).toBe("N - Otra moneda virtual");
+  });
+
+  it("S22: counter_asset missing → tipo REVIEW (no O)", () => {
+    const rows = [makeDisposalRow("BTC", { counter_asset: null, pair: null, op_type: "trade_sell" })];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows[0].considerationTypeCode).toBe("REVIEW");
+  });
+
+  it("S23: cada fila tiene un único tipo, nunca join(';')", () => {
+    const rows = [
+      makeDisposalRow("ETH",  { counter_asset: "EUR",  pair: "ETH/EUR",  sell_operation_id: 1 }),
+      makeDisposalRow("ETH",  { counter_asset: "USDC", pair: "ETH/USDC", sell_operation_id: 2 }),
+      makeDisposalRow("SOL",  { counter_asset: "USD",  pair: "SOL/USD",  sell_operation_id: 3 }),
+      makeDisposalRow("SOL",  { counter_asset: "USDC", pair: "SOL/USDC", sell_operation_id: 4 }),
+      makeDisposalRow("TON",  { counter_asset: "EUR",  pair: "TON/EUR",  sell_operation_id: 5 }),
+      makeDisposalRow("TON",  { counter_asset: "BTC",  pair: "TON/BTC",  sell_operation_id: 6, op_type: "trade_sell" }),
+      makeDisposalRow("USDC", { counter_asset: "EUR",  pair: "USDC/EUR", sell_operation_id: 7 }),
+      makeDisposalRow("USDC", { counter_asset: "TON",  pair: "USDC/TON", sell_operation_id: 8, op_type: "trade_sell" }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    // 4 tickers × 2 tipos = 8 filas
+    expect(result.rows).toHaveLength(8);
+    for (const r of result.rows) {
+      expect(r.considerationTypeLabel).not.toContain(";");
+      expect(r.considerationTypeLabel).not.toContain(" F - Moneda");
+    }
+  });
+
+  it("S24: numSales se calcula por grupo (ticker + tipo)", () => {
+    const rows = [
+      makeDisposalRow("BTC", { counter_asset: "EUR", pair: "BTC/EUR", sell_operation_id: 1, gain_loss_eur: 10 }),
+      makeDisposalRow("BTC", { counter_asset: "EUR", pair: "BTC/EUR", sell_operation_id: 2, gain_loss_eur: 5 }),
+      makeDisposalRow("BTC", { counter_asset: "ETH", pair: "BTC/ETH", sell_operation_id: 3, gain_loss_eur: -2, op_type: "trade_sell" }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows).toHaveLength(2);
+    const btcF = result.rows.find(r => r.considerationTypeCode === "F");
+    const btcN = result.rows.find(r => r.considerationTypeCode === "N");
+    expect(btcF!.numSales).toBe(2);
+    expect(btcN!.numSales).toBe(1);
   });
 });
 
