@@ -926,6 +926,134 @@ function renderUnifiedRentaTable(
 </script>`;
 }
 
+// ─── AEAT casillas resumen ────────────────────────────────────────────────────
+
+function renderAeatCasillasResumen(
+  year: number,
+  gainLossSummary: AnnualGainLossByAssetSummary,
+  stakingRows: any[],
+  finStatus: any
+): string {
+  const rows = gainLossSummary.rows;
+  if (rows.length === 0) return "";
+
+  const hasGainRows = rows.some(r => r.capitalGainLossEur > 0);
+  const hasLossRows = rows.some(r => r.capitalGainLossEur < 0);
+  const totalGains  = rows.reduce((s, r) => s + (r.capitalGainLossEur > 0 ? r.capitalGainLossEur : 0), 0);
+  const totalLosses = rows.reduce((s, r) => s + (r.capitalGainLossEur < 0 ? Math.abs(r.capitalGainLossEur) : 0), 0);
+  const stakingEur  = finStatus.staking_total_eur ?? 0;
+  const hasStaking  = (stakingRows && stakingRows.length > 0) || stakingEur > 0;
+
+  const casCod = (c: string) => `<code style="font-size:.8rem;background:#eef;padding:1px 5px;border-radius:3px;font-weight:700">${c}</code>`;
+  const noAp   = (t: string) => `<em style="color:#aaa">${t}</em>`;
+  const thH = `style="background:#f5f5f5;font-weight:600;font-size:.78rem;padding:.3rem .5rem;white-space:nowrap"`;
+  const tdH = `style="font-size:.82rem;padding:.3rem .5rem;vertical-align:top"`;
+  const tdS = `style="font-size:.78rem;color:#555;padding:.3rem .5rem;vertical-align:top"`;
+  const tdO = `style="font-size:.75rem;color:#777;padding:.3rem .5rem;vertical-align:top"`;
+
+  const thead = `<thead><tr>
+    <th ${thH}>Casilla</th><th ${thH}>Campo AEAT</th><th ${thH}>Valor en este informe</th>
+    <th ${thH}>Cuándo se cubre</th><th ${thH}>Observación</th>
+  </tr></thead>`;
+
+  const cr = (casilla: string, campo: string, valor: string, cuando: string, obs = ""): string =>
+    `<tr>
+      <td ${tdH}>${casCod(casilla)}</td><td ${tdH}>${campo}</td><td ${tdH}>${valor}</td>
+      <td ${tdS}>${cuando}</td><td ${tdO}>${obs}</td>
+    </tr>`;
+
+  const noteNoLoss = `<tr><td colspan="5" style="font-size:.78rem;color:#bbb;font-style:italic;padding:.25rem .5rem">1807 / 1808 — Sin filas con pérdida en ${year}.</td></tr>`;
+  const noteNoGain = `<tr><td colspan="5" style="font-size:.78rem;color:#bbb;font-style:italic;padding:.25rem .5rem">1809 / 1811 / 1812 — Sin filas con ganancia en ${year}.</td></tr>`;
+
+  const secA = [
+    cr("1800", "Titular de las monedas virtuales transmitidas", "DECLARANTE",
+       "Siempre que exista una fila de transmisión.", "Dato identificativo del titular."),
+    cr("1801", "Imputación temporal — operaciones a plazos o precio aplazado", noAp("No aplica / vacío"),
+       "Solo si el contribuyente usa criterio de operaciones a plazos.", "No marcar salvo que aplique expresamente."),
+    cr("1802", "Denominación de la moneda virtual transmitida", "Ticker de cada fila (BTC, ETH, SOL…)",
+       "Siempre que exista fila de transmisión.", ""),
+    cr("1803", "Clave de tipo de contraprestación recibida", "F, N, O o B según la fila",
+       "Siempre. Una clave por fila.", "El informe separa una fila por tipo AEAT. Nunca mezclar F/N en la misma fila."),
+    cr("1804", "Valor de transmisión", "Valor de transmisión neto en EUR de cada fila",
+       "Siempre.", "Usar el valor neto con comisiones ya integradas."),
+    cr("1805", "Valor de transmisión destinado a renta vitalicia", noAp("No aplica / vacío"),
+       "Solo si aplica reinversión en renta vitalicia.", "No rellenar salvo caso específico."),
+    cr("1806", "Valor de adquisición", "Valor de adquisición FIFO en EUR de cada fila",
+       "Siempre.", ""),
+    hasLossRows
+      ? cr("1807", "Pérdida patrimonial obtenida", "Importe de la pérdida (valor absoluto)",
+           "Solo filas con pérdida (1804 &minus; 1806 negativo).", "")
+      : noteNoLoss,
+    hasLossRows
+      ? cr("1808", `Pérdida patrimonial imputable a ${year}`, "Mismo importe que 1807 si toda la pérdida es del ejercicio",
+           `Solo filas con pérdida imputable a ${year}.`, "")
+      : "",
+    hasGainRows
+      ? cr("1809", "Ganancia patrimonial obtenida", "Importe de la ganancia",
+           "Solo filas con ganancia (1804 &minus; 1806 positivo).", "")
+      : noteNoGain,
+    cr("1810", "Ganancia exenta por reinversión en rentas vitalicias", noAp("No aplica / vacío"),
+       "Solo si aplica exención por reinversión.", "No rellenar salvo caso específico."),
+    hasGainRows ? cr("1811", "Ganancia no exenta", "Misma ganancia si no hay exención",
+      "Solo filas con ganancia.", "") : "",
+    hasGainRows ? cr("1812", `Ganancia no exenta imputable a ${year}`, "Misma ganancia imputable al ejercicio",
+      `Solo filas con ganancia imputable a ${year}.`, "") : "",
+  ].join("");
+
+  const v1813 = hasLossRows ? fmtEurEs(totalLosses) : noAp(`Sin pérdidas en ${year}`);
+  const v1814 = hasGainRows ? fmtEurEs(totalGains)  : noAp(`Sin ganancias en ${year}`);
+
+  const secB = [
+    cr("1813", "Suma de pérdidas patrimoniales por transmisiones de monedas virtuales",
+       v1813, "Siempre.", "Suma de casillas 1808. Debe coincidir con pérdidas totales de la tabla."),
+    cr("1814", "Suma de ganancias patrimoniales por transmisiones de monedas virtuales",
+       v1814, "Siempre.", "Suma de casillas 1812. Debe coincidir con ganancias totales de la tabla."),
+  ].join("");
+
+  const secC = hasStaking
+    ? `<h3 style="font-size:.88rem;color:#444;margin:.75rem 0 .35rem">C. Rendimientos de capital mobiliario cripto — Casilla 0033</h3>
+<table style="width:100%;border-collapse:collapse;font-size:.82rem">
+  <thead><tr>
+    <th ${thH}>Casilla</th><th ${thH}>Concepto</th><th ${thH}>Origen</th>
+    <th ${thH}>Importe EUR</th><th ${thH}>Nota</th>
+  </tr></thead>
+  <tbody><tr>
+    <td ${tdH}>${casCod("0033")}</td>
+    <td ${tdH}>Rendimiento de capital mobiliario cripto</td>
+    <td ${tdH}>Staking / rewards / earn / intereses cripto</td>
+    <td style="font-size:.82rem;padding:.3rem .5rem;vertical-align:top;text-align:right" class="${stakingEur > 0 ? "gain" : ""}">${stakingEur > 0 ? fmtEurEs(stakingEur) : "REVISAR"}</td>
+    <td ${tdO}>Declarar separado de las ganancias/pérdidas por transmisión (casillas 1800–1814).</td>
+  </tr></tbody>
+</table>`
+    : `<h3 style="font-size:.88rem;color:#444;margin:.75rem 0 .35rem">C. Rendimientos de capital mobiliario cripto — Casilla 0033</h3>
+<p style="font-size:.82rem;color:#888;font-style:italic" id="aeat-0033-no-staking">No se han detectado rendimientos de staking/rewards para la casilla 0033 en este informe.</p>`;
+
+  return `
+<section id="aeat-casillas-resumen" class="section-block avoid-break" style="border:1px solid #e0e0e0;border-radius:6px;padding:1rem 1.25rem;margin:1rem 0">
+  <h2 style="margin-top:0;font-size:1rem">Resumen AEAT — casillas cubiertas en Renta</h2>
+  <p style="font-size:.82rem;color:#555;margin:.3rem 0 .65rem">
+    Este bloque resume las casillas de Renta que se cubren con las filas anteriores.
+    Solo se muestran casillas con importe o dato aplicable.
+    Las comisiones ya están integradas en el valor de transmisión neto cuando corresponde.
+  </p>
+  <h3 style="font-size:.88rem;color:#444;margin:.75rem 0 .35rem">A. Por cada fila de la tabla Renta (casillas 1800–1812)</h3>
+  <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+    ${thead}
+    <tbody>${secA}</tbody>
+  </table>
+  <h3 style="font-size:.88rem;color:#444;margin:.75rem 0 .35rem">B. Totales del apartado de monedas virtuales</h3>
+  <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+    ${thead}
+    <tbody>${secB}</tbody>
+  </table>
+  ${secC}
+  <p style="font-size:.74rem;color:#aaa;margin-top:.65rem;border-top:1px solid #eee;padding-top:.5rem">
+    Las casillas 1801, 1805 y 1810 no se presentan como cubiertas en este informe salvo casos específicos.
+    La casilla 0033 es independiente de la tabla 1800–1814 y corresponde a rendimientos de capital mobiliario cripto.
+  </p>
+</section>`;
+}
+
 // ─── Compact asset summary (informe principal) ───────────────────────────────
 
 function renderCompactAssetSummary(
@@ -1868,6 +1996,9 @@ export class FiscoHtmlRenderer {
 
 <!-- 2. TABLA OBLIGATORIA: DATOS PARA RENTA -->
 ${renderUnifiedRentaTable(assetSummaries, disposalsByAsset, gainLossSummary)}
+
+<!-- 2b. RESUMEN AEAT — CASILLAS CUBIERTAS -->
+${renderAeatCasillasResumen(year, gainLossSummary, stakingRows, finEnriched)}
 
 ${partialErrors.length > 0 ? `
 <div class="warnings-box" style="margin:1rem 0">

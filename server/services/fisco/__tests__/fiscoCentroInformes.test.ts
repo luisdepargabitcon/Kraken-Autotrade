@@ -564,14 +564,14 @@ function makeHtmlRendererPool() {
     if (sql.includes("fisco_disposals") && sql.includes("JOIN fisco_operations sell_op") && sql.includes("ORDER BY sell_op.asset")) {
       return { rows: [{ asset: "BTC", disposed_at: "2025-06-01T00:00:00Z", exchange: "kraken", quantity: "0.1", proceeds_eur: "2500", cost_basis_eur: "2400", fee_eur: "10", gain_loss_eur: "90" }] };
     }
+    // staking rows — must come BEFORE generic fisco_operations/ORDER BY fo.asset check
+    if (sql.includes("fisco_operations") && sql.includes("op_type IN ('staking'")) return { rows: [] };
     // operations per asset detail
     if (sql.includes("fisco_operations") && sql.includes("ORDER BY fo.asset")) return { rows: [{ asset: "BTC", executed_at: "2025-01-15T00:00:00Z", exchange: "kraken", op_type: "trade_buy", amount: "0.5", price_eur: "28000", total_eur: "14000", fee_eur: "5", external_id: "TXABC" }] };
     // exchange summaries by operations
     if (sql.includes("GROUP BY fo.exchange")) return { rows: [{ exchange: "kraken", operations_count: "3", buys_count: "2", sells_count: "1", deposits_count: "0", withdrawals_count: "0", staking_count: "0", fees_eur: "5" }] };
     // disposals gain by exchange — real schema: JOIN sell_op, GROUP BY sell_op.exchange
     if (sql.includes("fisco_disposals") && sql.includes("GROUP BY sell_op.exchange")) return { rows: [{ exchange: "kraken", gain_loss_eur: "1000" }] };
-    // staking rows
-    if (sql.includes("op_type IN ('staking'")) return { rows: [] };
     // statement items — real schema uses fsi.year and fsi.event_at
     if (sql.includes("fisco_external_statement_items") && sql.includes("fsi.year")) return { rows: [] };
     // counts
@@ -1635,6 +1635,105 @@ describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo
     const renderer = new FiscoHtmlRenderer(pool);
     const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
     expect(html).toContain("rentaQuitarChecks");
+  });
+
+  it("AEAT-01: HTML contiene sección 'Resumen AEAT — casillas cubiertas en Renta'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Resumen AEAT — casillas cubiertas en Renta");
+  });
+
+  it("AEAT-02: HTML contiene casillas 1800, 1802, 1803, 1804, 1806", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("1800");
+    expect(html).toContain("1802");
+    expect(html).toContain("1803");
+    expect(html).toContain("1804");
+    expect(html).toContain("1806");
+  });
+
+  it("AEAT-03: HTML contiene totales 1813 y 1814", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("1813");
+    expect(html).toContain("1814");
+  });
+
+  it("AEAT-04: nota 1807/1808 aparece cuando no hay filas con pérdida", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("1807 / 1808 — Sin filas con pérdida en 2025");
+  });
+
+  it("AEAT-05: casillas 1809, 1811, 1812 aparecen cuando hay filas con ganancia", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("1809");
+    expect(html).toContain("1811");
+    expect(html).toContain("1812");
+  });
+
+  it("AEAT-06: casillas 1801, 1805, 1810 aparecen con texto 'No aplica'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const section = html.slice(html.indexOf("Resumen AEAT"), html.indexOf("Importes para la declaración"));
+    expect(section).toContain("1801");
+    expect(section).toContain("1805");
+    expect(section).toContain("1810");
+    expect(section).toContain("No aplica");
+  });
+
+  it("AEAT-07: casilla 0033 se muestra como tabla cuando hay staking_total_eur > 0", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const finConStaking = { ...MOCK_FIN_STATUS, staking_total_eur: 10 };
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: finConStaking, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("0033");
+    expect(html).toContain("Staking / rewards / earn / intereses cripto");
+  });
+
+  it("AEAT-08: NO aparece 'No se han detectado' cuando hay staking detectado", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).not.toContain("No se han detectado rendimientos de staking/rewards");
+  });
+
+  it("AEAT-09: 'No se han detectado rendimientos' aparece cuando staking_total_eur = 0", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const finSinStaking = { ...MOCK_FIN_STATUS, staking_total_eur: 0 };
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: finSinStaking, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("No se han detectado rendimientos de staking/rewards para la casilla 0033");
+  });
+
+  it("AEAT-10: sección AEAT aparece antes de 'Importes para la declaración'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const aeatPos     = html.indexOf("Resumen AEAT — casillas cubiertas en Renta");
+    const importesPos = html.indexOf("Importes para la declaración");
+    expect(aeatPos).toBeGreaterThan(0);
+    expect(importesPos).toBeGreaterThan(0);
+    expect(aeatPos).toBeLessThan(importesPos);
+  });
+
+  it("AEAT-11: sección 0033 separada de la tabla 1800–1814 (rendimientos ≠ transmisiones)", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const aeatSection = html.slice(html.indexOf("aeat-casillas-resumen"), html.indexOf("Importes para la declaración"));
+    const pos1814 = aeatSection.indexOf("1814");
+    const pos0033 = aeatSection.indexOf("0033");
+    expect(pos1814).toBeGreaterThan(0);
+    expect(pos0033).toBeGreaterThan(pos1814);
   });
 });
 
