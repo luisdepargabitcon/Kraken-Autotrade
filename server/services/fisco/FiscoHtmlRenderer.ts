@@ -26,6 +26,7 @@ export interface AnnualGainLossByAssetRow {
   acquisitionValueEur: number;
   capitalGainLossEur: number;
   numSales: number;
+  counterAssets: string[];
 }
 
 export interface AnnualGainLossByAssetSummary {
@@ -162,6 +163,7 @@ export function buildAnnualGainLossByAssetSummary(
     acquisitionValueEur: number;
     capitalGainLossEur: number;
     sellOpIds: Set<number>;
+    counterAssetSet: Set<string>;
   }>();
 
   for (const r of disposalRows) {
@@ -169,6 +171,8 @@ export function buildAnnualGainLossByAssetSummary(
       r.counter_asset, r.pair, r.op_type, year, r.asset
     );
     const key = groupKey(r.asset, code);
+    // Normalise counter_asset for display
+    const ca = r.counter_asset ? r.counter_asset.trim().toUpperCase() : null;
     const existing = groups.get(key);
     if (existing) {
       existing.grossProceedsEur     += r.gross_proceeds_eur;
@@ -177,7 +181,10 @@ export function buildAnnualGainLossByAssetSummary(
       existing.acquisitionValueEur  += r.cost_basis_eur;
       existing.capitalGainLossEur   += r.gain_loss_eur;
       existing.sellOpIds.add(r.sell_operation_id);
+      if (ca) existing.counterAssetSet.add(ca);
     } else {
+      const counterAssetSet = new Set<string>();
+      if (ca) counterAssetSet.add(ca);
       groups.set(key, {
         ticker: r.asset,
         typeCode: code,
@@ -187,6 +194,7 @@ export function buildAnnualGainLossByAssetSummary(
         acquisitionValueEur:  r.cost_basis_eur,
         capitalGainLossEur:   r.gain_loss_eur,
         sellOpIds: new Set([r.sell_operation_id]),
+        counterAssetSet,
       });
     }
   }
@@ -205,6 +213,9 @@ export function buildAnnualGainLossByAssetSummary(
       acquisitionValueEur:  g.acquisitionValueEur,
       capitalGainLossEur:   g.capitalGainLossEur,
       numSales:             g.sellOpIds.size,
+      counterAssets:        g.counterAssetSet.size > 0
+        ? [...g.counterAssetSet].sort()
+        : ["REVISAR"],
     }))
     .sort((a, b) => {
       const tc = a.ticker.localeCompare(b.ticker);
@@ -291,6 +302,10 @@ export const HTML_STYLE = `
   .renta-table td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
   .renta-table .total-row{font-weight:700;background:#f0f0f0}
   .renta-table .total-row td{border-top:2px solid #333}
+  .renta-table tr.renta-checked td{background:#e8f5e9!important;text-decoration:none}
+  .renta-table tr.renta-checked td strong{color:#1b5e20}
+  .badge-ayuda{background:#fff8e1;color:#6d4c00;border:1px solid #ffe082}
+  .btn-quitar-checks{margin:.4rem 0 .5rem;padding:.3rem .75rem;font-size:.8rem;cursor:pointer;border:1px solid #aaa;border-radius:4px;background:#f5f5f5;color:#333}
   .formula-box{background:#f0f7ff;border:1px solid #bee5eb;border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;font-size:.85rem;color:#0c5460}
   .renta-help-box{background:#fffde7;border:1px solid #fff9c4;border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;font-size:.82rem;color:#5d4037;line-height:1.6}
   details{border:1px solid #e0e0e0;border-radius:6px;margin:.5rem 0;padding:0}
@@ -770,20 +785,29 @@ function renderUnifiedRentaTable(
   }
 
   const badgeRenta = '<span class="badge badge-renta">CAMPO RENTA</span>';
-  const badgeAux = '<span class="badge badge-aux">Auxiliar</span>';
+  const badgeAux   = '<span class="badge badge-aux">Auxiliar</span>';
+  const badgeAyuda = '<span class="badge badge-ayuda">Ayuda local</span>';
+
+  // Build stable localStorage key per row:  fisco_renta_{year}_{ticker}_{typeCode}_{counterAssets joined}
+  const rentaKey = (r: AnnualGainLossByAssetRow) =>
+    `fisco_renta_${year}_${r.ticker}_${r.considerationTypeCode}_${r.counterAssets.join("_")}`;
 
   const dataRows = rentaRows.map(r => {
-    const grossProc = r.grossProceedsEur;
-    const fees      = r.feesEur;
-    const netTrans  = r.transmissionValueEur;
-    const costBasis = r.acquisitionValueEur;
-    const gainLoss  = r.capitalGainLossEur;
-    const numSales  = r.numSales;
+    const grossProc      = r.grossProceedsEur;
+    const fees           = r.feesEur;
+    const netTrans       = r.transmissionValueEur;
+    const costBasis      = r.acquisitionValueEur;
+    const gainLoss       = r.capitalGainLossEur;
+    const numSales       = r.numSales;
+    const counterDisplay = r.counterAssets.join(" / ");
+    const key            = rentaKey(r);
 
-    return `<tr>
+    return `<tr id="renta-row-${key}">
+      <td style="text-align:center;white-space:nowrap"><input type="checkbox" data-key="${key}" onchange="rentaCheck(this)" style="width:16px;height:16px;cursor:pointer"></td>
       <td><strong>${r.ticker}</strong></td>
       <td>${r.name}</td>
       <td>${r.considerationTypeLabel}</td>
+      <td style="font-size:.85em;color:#444">${counterDisplay}</td>
       <td class="num">${fmtEurEs(grossProc)}</td>
       <td class="num">${fmtEurEs(fees)}</td>
       <td class="num">${fmtEurEs(netTrans)}</td>
@@ -793,12 +817,14 @@ function renderUnifiedRentaTable(
     </tr>`;
   }).join("");
 
-  const totGross   = rentaRows.reduce((s, r) => s + r.grossProceedsEur, 0);
-  const totFees    = rentaRows.reduce((s, r) => s + r.feesEur, 0);
-  const totNet     = rentaRows.reduce((s, r) => s + r.transmissionValueEur, 0);
-  const totCost    = rentaRows.reduce((s, r) => s + r.acquisitionValueEur, 0);
-  const totGain    = rentaRows.reduce((s, r) => s + r.capitalGainLossEur, 0);
-  const totSales   = rentaRows.reduce((s, r) => s + r.numSales, 0);
+  const totGross = rentaRows.reduce((s, r) => s + r.grossProceedsEur, 0);
+  const totFees  = rentaRows.reduce((s, r) => s + r.feesEur, 0);
+  const totNet   = rentaRows.reduce((s, r) => s + r.transmissionValueEur, 0);
+  const totCost  = rentaRows.reduce((s, r) => s + r.acquisitionValueEur, 0);
+  const totGain  = rentaRows.reduce((s, r) => s + r.capitalGainLossEur, 0);
+  const totSales = rentaRows.reduce((s, r) => s + r.numSales, 0);
+
+  const rentaTableId = `renta-table-${year}`;
 
   return `
 <section class="annual-gain-loss-summary">
@@ -807,12 +833,15 @@ function renderUnifiedRentaTable(
     Los campos marcados como <strong>CAMPO RENTA</strong> son los datos principales que deben revisarse para completar la declaración.
     Las comisiones ya están integradas en los valores fiscales y se muestran solo para trazabilidad.
   </p>
-  <table class="renta-table">
+  <button class="btn-quitar-checks" onclick="rentaQuitarChecks('${rentaTableId}','${year}')">Quitar checks</button>
+  <table class="renta-table" id="${rentaTableId}">
     <thead>
       <tr>
+        <th>Metido en Renta<br>${badgeAyuda}</th>
         <th>Ticker</th>
         <th>Nombre</th>
         <th>Tipo de contraprestación recibida a cambio<br>${badgeRenta}</th>
+        <th>Activo recibido a cambio<br>${badgeAux}<br><span style="font-size:.65rem;font-weight:400">No copiar aparte</span></th>
         <th>Valor bruto de transmisión en EUR<br>${badgeAux}</th>
         <th>Comisiones imputadas en EUR<br>${badgeAux}<br><span style="font-size:.65rem;font-weight:400">No copiar aparte</span></th>
         <th>Valor de transmisión neto en EUR<br>${badgeRenta}</th>
@@ -824,7 +853,9 @@ function renderUnifiedRentaTable(
     <tbody>
       ${dataRows}
       <tr class="total-row">
+        <td>—</td>
         <td colspan="2">Total ${year}</td>
+        <td>—</td>
         <td>—</td>
         <td class="num">${fmtEurEs(totGross)}</td>
         <td class="num">${fmtEurEs(totFees)}</td>
@@ -836,6 +867,11 @@ function renderUnifiedRentaTable(
     </tbody>
   </table>
 
+  <p style="font-size:.78rem;color:#888;margin:.3rem 0 .75rem">
+    Las casillas <em>Metido en Renta</em> son una ayuda local para marcar filas ya introducidas en el borrador.
+    No forman parte de los datos fiscales y no modifican los importes.
+  </p>
+
   <div class="formula-box">
     <strong>Cómo se calcula</strong><br>
     Valor de transmisión neto = Valor bruto de transmisión − Comisiones de venta imputadas<br>
@@ -846,13 +882,48 @@ function renderUnifiedRentaTable(
     <strong>Cómo leer esta tabla para Renta</strong>
     <ol style="margin:.4rem 0 .4rem 1.2rem;padding:0">
       <li><strong>Tipo de contraprestación recibida a cambio:</strong> Indica qué se recibió a cambio de la moneda virtual transmitida: F (moneda de curso legal como EUR/USD), N (otra moneda virtual como BTC/ETH), O (otro activo virtual como comisiones), o B (bienes o servicios). Cada fila tiene un único tipo.</li>
+      <li><strong>Activo recibido a cambio:</strong> Lista de activos reales recibidos en este grupo de operaciones. Solo es auxiliar; el tipo AEAT es el que se copia en Renta.</li>
       <li><strong>Valor de transmisión neto en EUR:</strong> Es el valor de venta ya minorado por las comisiones de venta imputadas.</li>
       <li><strong>Valor de adquisición en EUR:</strong> Es el coste FIFO de adquisición. Las comisiones de compra ya están incluidas cuando corresponde.</li>
       <li><strong>Ganancia o pérdida de capital en EUR:</strong> Es el resultado fiscal: Valor de transmisión neto − Valor de adquisición.</li>
       <li><strong>Comisiones imputadas:</strong> Se muestran solo para trazabilidad. No se introducen otra vez como importe independiente porque ya están integradas en el valor fiscal correspondiente.</li>
     </ol>
   </div>
-</section>`;
+</section>
+
+<script>
+(function(){
+  function rentaLoadChecks(){
+    document.querySelectorAll('.renta-table input[type=checkbox][data-key]').forEach(function(cb){
+      var key=cb.getAttribute('data-key');
+      if(localStorage.getItem(key)==='1'){
+        cb.checked=true;
+        var tr=cb.closest('tr');
+        if(tr) tr.classList.add('renta-checked');
+      }
+    });
+  }
+  window.rentaCheck=function(cb){
+    var key=cb.getAttribute('data-key');
+    var tr=cb.closest('tr');
+    if(cb.checked){localStorage.setItem(key,'1');if(tr)tr.classList.add('renta-checked');}
+    else{localStorage.removeItem(key);if(tr)tr.classList.remove('renta-checked');}
+  };
+  window.rentaQuitarChecks=function(tableId,yr){
+    var tbl=document.getElementById(tableId);
+    if(!tbl)return;
+    tbl.querySelectorAll('input[type=checkbox][data-key]').forEach(function(cb){
+      var key=cb.getAttribute('data-key');
+      localStorage.removeItem(key);
+      cb.checked=false;
+      var tr=cb.closest('tr');
+      if(tr)tr.classList.remove('renta-checked');
+    });
+  };
+  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',rentaLoadChecks);}
+  else{rentaLoadChecks();}
+})();
+</script>`;
 }
 
 // ─── Compact asset summary (informe principal) ───────────────────────────────

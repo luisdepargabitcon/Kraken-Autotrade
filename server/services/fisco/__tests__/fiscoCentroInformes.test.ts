@@ -556,7 +556,7 @@ function makeHtmlRendererPool() {
     // fetchDisposalCounterAssets — new query for F/N/O classification (GROUP BY sell_operation_id)
     // Must come BEFORE the generic GROUP BY sell_op.asset check below
     if (sql.includes("fisco_disposals") && sql.includes("sell_op.counter_asset") && sql.includes("fd.sell_operation_id")) {
-      return { rows: [{ asset: "BTC", sell_operation_id: "1", counter_asset: "USD", pair: "BTC/USD", op_type: "trade_sell", net_proceeds_eur: "15000", cost_basis_eur: "14000", gain_loss_eur: "1000", is_fee_disposal: false }] };
+      return { rows: [{ asset: "BTC", sell_operation_id: "1", counter_asset: "USD", pair: "BTC/USD", op_type: "trade_sell", gross_proceeds_eur: "15100", fees_eur: "100", net_proceeds_eur: "15000", cost_basis_eur: "14000", gain_loss_eur: "1000", is_fee_disposal: false }] };
     }
     // disposals summary — real schema: JOIN sell_op ON sell_operation_id, GROUP BY sell_op.asset
     if (sql.includes("fisco_disposals") && sql.includes("GROUP BY sell_op.asset")) return { rows: [{ asset: "BTC", proceeds_eur: "15000", cost_basis_eur: "14000", gain_loss_eur: "1000", disposals_count: "2" }] };
@@ -1300,6 +1300,73 @@ describe("buildAnnualGainLossByAssetSummary", () => {
     expect(btcF!.numSales).toBe(2);
     expect(btcN!.numSales).toBe(1);
   });
+
+  it("S25: counterAssets contiene EUR cuando counter_asset=EUR", () => {
+    const rows = [makeDisposalRow("BTC", { counter_asset: "EUR", pair: "BTC/EUR" })];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows[0].counterAssets).toContain("EUR");
+  });
+
+  it("S26: BTC vendido por EUR → counterAssets=[EUR], tipo=F", () => {
+    const rows = [makeDisposalRow("BTC", { counter_asset: "EUR", pair: "BTC/EUR", op_type: "trade_sell" })];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    const row = result.rows[0];
+    expect(row.considerationTypeCode).toBe("F");
+    expect(row.counterAssets).toEqual(["EUR"]);
+  });
+
+  it("S27: BTC vendido por USD → counterAssets=[USD], tipo=F", () => {
+    const rows = [makeDisposalRow("BTC", { counter_asset: "USD", pair: "BTC/USD", op_type: "trade_sell" })];
+    const result = buildAnnualGainLossByAssetSummary(2026, rows);
+    const row = result.rows[0];
+    expect(row.considerationTypeCode).toBe("F");
+    expect(row.counterAssets).toEqual(["USD"]);
+  });
+
+  it("S28: BTC vendido por EUR y USD en mismo grupo F → counterAssets=[EUR, USD] (ordenado)", () => {
+    const rows = [
+      makeDisposalRow("BTC", { counter_asset: "USD", pair: "BTC/USD", sell_operation_id: 1 }),
+      makeDisposalRow("BTC", { counter_asset: "EUR", pair: "BTC/EUR", sell_operation_id: 2 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].counterAssets).toEqual(["EUR", "USD"]);
+  });
+
+  it("S29: BTC permutado por ETH → counterAssets=[ETH], tipo=N", () => {
+    const rows = [makeDisposalRow("BTC", { counter_asset: "ETH", pair: "BTC/ETH", op_type: "trade_sell" })];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    const row = result.rows[0];
+    expect(row.considerationTypeCode).toBe("N");
+    expect(row.counterAssets).toEqual(["ETH"]);
+  });
+
+  it("S30: ETH con N recibido en BTC y USDC → counterAssets=[BTC, USDC]", () => {
+    const rows = [
+      makeDisposalRow("ETH", { counter_asset: "BTC",  pair: "ETH/BTC",  sell_operation_id: 1, op_type: "trade_sell" }),
+      makeDisposalRow("ETH", { counter_asset: "USDC", pair: "ETH/USDC", sell_operation_id: 2, op_type: "trade_sell" }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    const rowN = result.rows.find(r => r.considerationTypeCode === "N");
+    expect(rowN).toBeDefined();
+    expect(rowN!.counterAssets).toEqual(["BTC", "USDC"]);
+  });
+
+  it("S31: counter_asset null → counterAssets=[REVISAR]", () => {
+    const rows = [makeDisposalRow("BTC", { counter_asset: null, pair: null, op_type: "trade_sell" })];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows[0].counterAssets).toEqual(["REVISAR"]);
+  });
+
+  it("S32: counterAssets es array sin duplicados aunque counter_asset se repita", () => {
+    const rows = [
+      makeDisposalRow("ETH", { counter_asset: "EUR", pair: "ETH/EUR", sell_operation_id: 1 }),
+      makeDisposalRow("ETH", { counter_asset: "EUR", pair: "ETH/EUR", sell_operation_id: 2 }),
+    ];
+    const result = buildAnnualGainLossByAssetSummary(2025, rows);
+    expect(result.rows[0].counterAssets).toEqual(["EUR"]);
+    expect(result.rows[0].counterAssets.length).toBe(1);
+  });
 });
 
 // ─── Tests: render HTML con sección resumen ──────────────────────────────────
@@ -1476,6 +1543,98 @@ describe("renderAnnualHtml: sección resumen de ganancias y pérdidas por activo
     expect(posResumen).toBeGreaterThan(0);
     expect(posImportes).toBeGreaterThan(0);
     expect(posResumen).toBeLessThan(posImportes);
+  });
+
+  it("R21: tabla Renta contiene columna 'Metido en Renta'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Metido en Renta");
+  });
+
+  it("R22: tabla Renta contiene columna 'Activo recibido a cambio'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Activo recibido a cambio");
+  });
+
+  it("R23: HTML contiene checkboxes con data-key (fisco_renta_...)", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain('data-key="fisco_renta_');
+    expect(html).toContain('type="checkbox"');
+  });
+
+  it("R24: HTML contiene script localStorage (rentaCheck, localStorage)", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("localStorage");
+    expect(html).toContain("rentaCheck");
+  });
+
+  it("R25: HTML contiene botón 'Quitar checks'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("Quitar checks");
+  });
+
+  it("R26: columna 'Metido en Renta' NO lleva badge 'CAMPO RENTA'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const summarySection = html.slice(
+      html.indexOf("Datos a revisar / copiar en Renta"),
+      html.indexOf("Importes para la declaración")
+    );
+    const metidoPos = summarySection.indexOf("Metido en Renta");
+    const campoRentaPos = summarySection.indexOf("CAMPO RENTA");
+    // "Metido en Renta" column header appears before first "CAMPO RENTA" badge
+    expect(metidoPos).toBeGreaterThan(0);
+    // The cell containing "Metido en Renta" must not contain "CAMPO RENTA" in the same th
+    const metidoTh = summarySection.slice(metidoPos, metidoPos + 200);
+    expect(metidoTh).not.toContain("CAMPO RENTA");
+  });
+
+  it("R27: columna 'Activo recibido a cambio' lleva badge 'Auxiliar' y texto 'No copiar aparte'", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    const summarySection = html.slice(
+      html.indexOf("Datos a revisar / copiar en Renta"),
+      html.indexOf("Importes para la declaración")
+    );
+    const activoPos = summarySection.indexOf("Activo recibido a cambio");
+    expect(activoPos).toBeGreaterThan(0);
+    const activoTh = summarySection.slice(activoPos, activoPos + 300);
+    expect(activoTh).toContain("Auxiliar");
+    expect(activoTh).toContain("No copiar aparte");
+    expect(activoTh).not.toContain("CAMPO RENTA");
+  });
+
+  it("R28: no aparece ';' en columna tipo contraprestación de la tabla Renta", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).not.toContain("F - Moneda de curso legal; N");
+    expect(html).not.toContain("N - Otra moneda virtual; F");
+  });
+
+  it("R29: data-key de checklist contiene year + ticker + typeCode", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("fisco_renta_2025_");
+  });
+
+  it("R30: HTML contiene función rentaQuitarChecks (para botón quitar checks)", async () => {
+    const pool = makeHtmlRendererPool();
+    const renderer = new FiscoHtmlRenderer(pool);
+    const html = await renderer.renderAnnualHtml({ year: 2025, exchanges: ["kraken"], finStatus: MOCK_FIN_STATUS, portfolio: MOCK_PORTFOLIO, krakenRec: MOCK_KRAKEN_REC });
+    expect(html).toContain("rentaQuitarChecks");
   });
 });
 
