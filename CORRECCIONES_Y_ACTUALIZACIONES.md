@@ -2,6 +2,64 @@
 
 ---
 
+## 2026-06-29 — feat(idca): allow manual buy registration into open cycle with recalculation
+
+### Función añadida
+Permite al usuario añadir manualmente una compra a un ciclo IDCA abierto. El ciclo recalcula precio medio, capital usado, cantidad total, TP, next buy y crea un evento de auditoría. **No ejecuta órdenes reales.**
+
+### Archivos nuevos
+- `server/services/institutionalDca/IdcaManualBuyService.ts` — Servicio con `addManualBuyToCycle()`
+- `client/src/components/idca/AddManualBuyModal.tsx` — Modal con preview antes/después
+- `server/services/__tests__/idcaManualBuy.test.ts` — 15 tests (cálculo + validación)
+
+### Archivos modificados
+- `server/routes/institutionalDca.routes.ts` — Endpoint `POST /api/institutional-dca/cycles/:id/manual-buy`
+- `client/src/hooks/useInstitutionalDca.ts` — Hook `useManualBuyCycle`
+- `client/src/pages/InstitutionalDca.tsx` — Botón "Añadir compra manual" en tarjeta de ciclo + modal
+
+### Fórmula usada
+```
+newQty = prevQty + manualQty
+newCost = prevCost + (manualQty * manualPrice) + feesUsd
+newAvg = newCost / newQty
+newTp = newAvg * (1 + tpPct/100)
+```
+
+### Campos recalculados
+- `totalQuantity`, `capitalUsedUsd`, `totalCostBasisUsd`, `avgEntryPrice`
+- `buyCount`, `lastBuyAt`, `tpTargetPrice`, `nextBuyPrice`
+- `lastManualEditAt`, `lastManualEditReason`, `editHistoryJson`
+
+### Evento creado
+`manual_buy_added_to_cycle` con payload completo (previous/new avg, qty, cost, TP, next buy, note)
+
+### Orden creada
+`orderType = manual_buy`, `executionStatus = filled`, `side = buy`, `rawExchangeResponseJson` con `manualEntry: true`
+
+### Opciones del modal
+- **Continuar gestión automática** (por defecto): el ciclo sigue gestionado por IDCA
+- **Proteger ciclo**: marca `isManualCycle=true`, `managedBy=manual` — no nuevas compras automáticas
+- Aviso especial si el ciclo está en solo salida
+
+### Validaciones
+- Ciclo existe y está abierto
+- Par coincide
+- price > 0, quantity > 0, notionalUsd > 0, feesUsd >= 0
+- No duplicar externalOrderId
+- Exchange válido: kraken, revolut_x, bit2me, manual_external, other
+- Doble confirmación visual: "Esto NO ejecuta una orden real"
+
+### Confirmación de no ejecutar órdenes reales
+El servicio no llama a ningún exchange API. Solo registra la compra en la DB y recalcula métricas.
+
+### Tests
+- `npm run check`: OK
+- `npm run build`: OK
+- `vitest idcaManualBuy`: 15/15 passed
+- Commit: `4aeafb4`
+
+---
+
 ## 2026-06-29 — fix(idca-hybrid): separar eventos del plan actual vs histórico del ciclo
 
 ### Problema
