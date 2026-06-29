@@ -99,6 +99,39 @@ const STATUS_LABELS: Record<string, string> = {
   GRID_INACTIVE: "Sin grid",
 };
 
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  GRID_PLAN_CREATED: "Plan grid creado",
+  GRID_LEVEL_PLANNED: "Nivel planificado",
+  GRID_LEVEL_TRIGGERED_SIMULATED: "Compra simulada activada",
+  GRID_LEVEL_TP_SIMULATED: "TP simulado alcanzado",
+  GRID_PLAN_CANCELLED: "Plan cancelado",
+  GRID_PLAN_UPDATED: "Plan actualizado",
+  GRID_STATE_CHANGE: "Cambio de estado",
+  GRID_BLOCKED: "Grid bloqueado",
+  GRID_UNBLOCKED: "Grid desbloqueado",
+  GRID_REGIME_CHANGE: "Cambio de r\u00e9gimen",
+  OBSERVER_ACTIVATED: "Observador activado",
+  OBSERVER_DEACTIVATED: "Observador desactivado",
+  ASSISTED_PROPOSAL_CREATED: "Propuesta asistida creada",
+  ASSISTED_PROPOSAL_EXPIRED: "Propuesta asistida expirada",
+};
+
+const KEY_EVENT_TYPES = new Set([
+  "GRID_PLAN_CREATED",
+  "GRID_PLAN_CANCELLED",
+  "GRID_PLAN_UPDATED",
+  "GRID_LEVEL_TRIGGERED_SIMULATED",
+  "GRID_LEVEL_TP_SIMULATED",
+  "GRID_STATE_CHANGE",
+  "GRID_BLOCKED",
+  "GRID_UNBLOCKED",
+  "GRID_REGIME_CHANGE",
+  "OBSERVER_ACTIVATED",
+  "OBSERVER_DEACTIVATED",
+  "ASSISTED_PROPOSAL_CREATED",
+  "ASSISTED_PROPOSAL_EXPIRED",
+]);
+
 const SEVERITY_COLORS: Record<string, string> = {
   info: "bg-blue-500/10 text-blue-400 border-blue-500/30",
   warning: "bg-orange-500/10 text-orange-400 border-orange-500/30",
@@ -128,6 +161,7 @@ export function useIdcaCycleGridPlan(pair: string, cycleId: number) {
 export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProps) {
   const [open, setOpen] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
+  const [showAllEvents, setShowAllEvents] = useState(false);
   const { data, isLoading, error, refetch } = useIdcaCycleGridPlan(pair, cycleId);
 
   const formatPrice = (val: string | number | null | undefined) => {
@@ -301,36 +335,66 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
               ))}
             </div>
 
+            {/* Observer-only banner */}
+            {data.observerOnly && (
+              <Alert className="border-blue-500/30 bg-blue-500/5 py-2">
+                <Eye className="h-3.5 w-3.5 text-blue-400" />
+                <AlertDescription className="text-xs text-blue-300">
+                  <strong>Modo Observador:</strong> Todos los niveles son <em>simulados</em> — ningún activo real cambia.
+                  Las compras y TP marcados aquí no se ejecutan en el exchange.
+                </AlertDescription>
+              </Alert>
+            )}
+
             {/* Events — current plan by default, toggle to full history */}
             <div className="space-y-2 border-t border-border/20 pt-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-xs font-medium text-muted-foreground">
                   {showHistory ? "Histórico completo del ciclo" : "Eventos del plan actual"}
                   <span className="ml-2 text-muted-foreground/60">
                     {data.currentPlanEventsCount ?? 0} plan actual · {data.historicalEventsCount ?? 0} histórico
                   </span>
                 </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 text-[11px] px-2 py-0"
-                  onClick={() => setShowHistory((v: boolean) => !v)}
-                >
-                  {showHistory ? "Solo plan actual" : "Ver histórico completo"}
-                </Button>
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 text-[11px] px-2 py-0"
+                    onClick={() => setShowAllEvents((v) => !v)}
+                  >
+                    {showAllEvents ? "Solo importantes" : "Ver todos"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 text-[11px] px-2 py-0"
+                    onClick={() => setShowHistory((v: boolean) => !v)}
+                  >
+                    {showHistory ? "Solo plan actual" : "Ver histórico"}
+                  </Button>
+                </div>
               </div>
               {events.length > 0 ? (
                 <div className="space-y-1 max-h-48 overflow-y-auto">
-                  {events.slice(0, 100).map((ev) => (
-                    <div key={ev.id} className="flex items-start gap-2 text-xs">
-                      <span className="text-muted-foreground whitespace-nowrap">{formatDate(ev.ts)}</span>
-                      <Badge variant="outline" className={`text-[10px] px-1 py-0 h-4 shrink-0 ${SEVERITY_COLORS[ev.severity] ?? SEVERITY_COLORS.info}`}>
-                        {ev.event_type}
-                      </Badge>
-                      <span className="text-muted-foreground">{ev.natural_reason}</span>
-                      {ev.leg_index != null && <span className="text-muted-foreground">(nivel {ev.leg_index})</span>}
-                    </div>
-                  ))}
+                  {events
+                    .filter((ev) => showAllEvents || KEY_EVENT_TYPES.has(ev.event_type))
+                    .slice(0, 100)
+                    .map((ev) => (
+                      <div key={ev.id} className="flex items-start gap-2 text-xs">
+                        <span className="text-muted-foreground whitespace-nowrap">{formatDate(ev.ts)}</span>
+                        <Badge variant="outline" className={`text-[10px] px-1 py-0 h-4 shrink-0 ${SEVERITY_COLORS[ev.severity] ?? SEVERITY_COLORS.info}`}>
+                          {EVENT_TYPE_LABELS[ev.event_type] ?? ev.event_type}
+                        </Badge>
+                        <span className="text-muted-foreground">{ev.natural_reason}</span>
+                        {ev.leg_index != null && <span className="text-muted-foreground">(nivel {ev.leg_index})</span>}
+                      </div>
+                    ))}
+                  {!showAllEvents && events.filter((ev) => !KEY_EVENT_TYPES.has(ev.event_type)).length > 0 && (
+                    <p className="text-[11px] text-muted-foreground/50 pt-1">
+                      {events.filter((ev) => !KEY_EVENT_TYPES.has(ev.event_type)).length} eventos técnicos ocultos
+                      (niveles planificados, etc.) — pulsa &ldquo;Ver todos&rdquo; para mostrarlos.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground/50">Sin eventos registrados</p>
