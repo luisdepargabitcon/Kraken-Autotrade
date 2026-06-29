@@ -1943,27 +1943,27 @@ function ConfigTab({ configSubTab, setConfigSubTab }: { configSubTab: "entrada" 
             desc="Ajusta automáticamente el tamaño de cada compra según la volatilidad del mercado." />
         </div>
 
-        {/* Asset enable toggles — Operativa del par */}
+        {/* Asset enable — read-only here, editable in ControlsBar */}
         <div className="border-t border-border/30 pt-4">
           <p className="text-xs font-semibold text-muted-foreground mb-2">Operativa del par</p>
-          <p className="text-xs text-muted-foreground mb-3">Si desactivas un par, el bot no abrirá ciclos ni hará nuevas compras. Si ya hay un ciclo abierto, seguirá permitiendo salidas para proteger la posición.</p>
-          <div className="flex flex-wrap gap-6">
+          <p className="text-xs text-muted-foreground mb-3">
+            Activar o desactivar un par se hace en la <strong>barra de controles superior</strong> (switch junto al nombre del par).
+          </p>
+          <div className="flex flex-wrap gap-4">
             {btc && (
               <div className="flex items-center gap-2">
-                <ToggleField label={`${btc.pair}`} checked={btc.enabled}
-                  onChange={(v) => updateAsset.mutate({ pair: btc.pair, enabled: v })} />
-                <span className={`text-xs font-mono px-2 py-0.5 rounded ${btc.enabled ? "bg-green-500/10 text-green-500" : "bg-amber-500/10 text-amber-500"}`}>
+                <span className="text-xs font-mono text-muted-foreground">{btc.pair}</span>
+                <Badge variant="outline" className={cn("text-[10px] font-mono px-1.5 py-0", btc.enabled ? "text-green-400 border-green-400/50 bg-green-400/5" : "text-amber-400 border-amber-400/50 bg-amber-400/5")}>
                   {btc.enabled ? "Activo" : "Solo salidas"}
-                </span>
+                </Badge>
               </div>
             )}
             {eth && (
               <div className="flex items-center gap-2">
-                <ToggleField label={`${eth.pair}`} checked={eth.enabled}
-                  onChange={(v) => updateAsset.mutate({ pair: eth.pair, enabled: v })} />
-                <span className={`text-xs font-mono px-2 py-0.5 rounded ${eth.enabled ? "bg-green-500/10 text-green-500" : "bg-amber-500/10 text-amber-500"}`}>
+                <span className="text-xs font-mono text-muted-foreground">{eth.pair}</span>
+                <Badge variant="outline" className={cn("text-[10px] font-mono px-1.5 py-0", eth.enabled ? "text-green-400 border-green-400/50 bg-green-400/5" : "text-amber-400 border-amber-400/50 bg-amber-400/5")}>
                   {eth.enabled ? "Activo" : "Solo salidas"}
-                </span>
+                </Badge>
               </div>
             )}
           </div>

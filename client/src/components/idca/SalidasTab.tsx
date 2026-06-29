@@ -1,12 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Shield, Target, TrendingUp, AlertTriangle } from 'lucide-react';
+import { Shield, Target, TrendingUp, AlertTriangle, Info } from 'lucide-react';
 import { useUpdateAssetConfig } from '@/hooks/useInstitutionalDca';
 
 interface SalidasTabProps {
@@ -17,43 +15,13 @@ interface SalidasTabProps {
 
 export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onConfigUpdate }) => {
   const [localConfig, setLocalConfig] = useState({
-    failSafeEnabled: true,
-    failSafeMaxLossPct: 15.0,
-    failSafeTriggerPct: 12.0,
-    
-    // Break-Even - configuración local solo para enable
     breakEvenEnabled: assetConfig?.breakevenEnabled ?? true,
-    // NOTA: protectionActivationPct se configura en ConfigTab (pestaña antigua)
-    
-    // Trailing - configuración local solo para enable
-    trailingEnabled: true,
-    // NOTA: trailingActivationPct y trailingMarginPct se configuran en ConfigTab (pestaña antigua)
-    
-    takeProfitEnabled: true,
     takeProfitPct: parseFloat(assetConfig?.takeProfitPct || "4.0"),
     dynamicTpEnabled: assetConfig?.dynamicTakeProfit ?? true,
-    
-    ocoEnabled: true,
-    tpRefMode: "conservative" as "aggressive" | "conservative" | "disabled",
   });
 
-  const [exitState, setExitState] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
-
   const updateConfig = useUpdateAssetConfig();
-
-  useEffect(() => {
-    // Simular obtención de estado de salidas
-    setExitState({
-      failSafeArmed: false,
-      breakEvenArmed: false,
-      trailingArmed: false,
-      tpArmed: false,
-      currentPnl: 2.5,
-      nearestTrigger: "break_even",
-      distanceToTrigger: 0.8,
-    });
-  }, [pair]);
 
   const handleSave = async () => {
     setIsLoading(true);
@@ -72,134 +40,46 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
     }
   };
 
-  const getStatusColor = (enabled: boolean) => 
-    enabled ? 'bg-green-500' : 'bg-gray-400';
-
-  const getUrgencyColor = (urgency: string) => {
-    switch (urgency) {
-      case 'critical': return 'text-red-400';
-      case 'high': return 'text-orange-400';
-      case 'medium': return 'text-yellow-400';
-      case 'low': return 'text-green-400';
-      default: return 'text-muted-foreground';
-    }
-  };
-
   return (
     <div className="space-y-6">
-      {/* Estado Actual de Salidas */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5" />
-            Estado Actual de Protecciones
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {exitState && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className={`w-3 h-3 rounded-full mx-auto mb-2 ${getStatusColor(exitState.failSafeArmed)}`} />
-                <div className="text-sm font-medium">Fail-Safe</div>
-                <div className="text-xs text-muted-foreground">
-                  {exitState.failSafeArmed ? 'Armado' : 'Inactivo'}
-                </div>
-              </div>
-              <div className="text-center">
-                <div className={`w-3 h-3 rounded-full mx-auto mb-2 ${getStatusColor(exitState.breakEvenArmed)}`} />
-                <div className="text-sm font-medium">Break-Even</div>
-                <div className="text-xs text-muted-foreground">
-                  {exitState.breakEvenArmed ? 'Armado' : 'Inactivo'}
-                </div>
-              </div>
-              <div className="text-center">
-                <div className={`w-3 h-3 rounded-full mx-auto mb-2 ${getStatusColor(exitState.trailingArmed)}`} />
-                <div className="text-sm font-medium">Trailing</div>
-                <div className="text-xs text-muted-foreground">
-                  {exitState.trailingArmed ? 'Armado' : 'Inactivo'}
-                </div>
-              </div>
-              <div className="text-center">
-                <div className={`w-3 h-3 rounded-full mx-auto mb-2 ${getStatusColor(exitState.tpArmed)}`} />
-                <div className="text-sm font-medium">Take Profit</div>
-                <div className="text-xs text-muted-foreground">
-                  {exitState.tpArmed ? 'Armado' : 'Inactivo'}
-                </div>
-              </div>
-            </div>
-          )}
-          
-          <div className="mt-4 p-3 bg-muted/20 rounded-lg border border-border/30">
-            <div className="flex justify-between items-center">
-              <span className="text-sm font-medium">PnL Actual:</span>
-              <span className={`text-sm font-bold ${exitState?.currentPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {exitState?.currentPnl.toFixed(2)}%
-              </span>
-            </div>
-            <div className="flex justify-between items-center mt-1">
-              <span className="text-sm font-medium">Trigger más cercano:</span>
-              <span className="text-sm">
-                {exitState?.nearestTrigger} ({exitState?.distanceToTrigger.toFixed(2)}%)
-              </span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Estado real: redirigir a Ciclos abiertos */}
+      <Alert>
+        <Info className="h-4 w-4" />
+        <AlertDescription>
+          El estado activo de protecciones (BE armado, trailing activo, precio TP) se muestra en{' '}
+          <strong>Ciclos abiertos</strong> para cada ciclo en tiempo real.
+        </AlertDescription>
+      </Alert>
 
-      {/* Configuración Fail-Safe */}
+      {/* Fail-Safe — siempre activo, no configurable desde UI */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            Fail-Safe (Protección contra pérdidas extremas)
+            Fail-Safe (Protección extrema)
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0" />
             <div>
-              <div className="font-medium">Fail-Safe Activado</div>
-              <div className="text-sm text-gray-500">Siempre activado por seguridad</div>
+              <div className="font-medium text-sm">Siempre activado por seguridad</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                El Fail-Safe del motor IDCA está siempre activo. Los umbrales exactos están 
+                en backend y requieren migración DB para ser configurables desde UI.
+              </div>
             </div>
-            <Switch checked={localConfig.failSafeEnabled} disabled />
           </div>
-          
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium">Pérdida Máxima</label>
-              <span className="text-sm">{localConfig.failSafeMaxLossPct}%</span>
-            </div>
-            <Slider
-              value={[localConfig.failSafeMaxLossPct]}
-              onValueChange={([value]) => setLocalConfig(prev => ({ ...prev, failSafeMaxLossPct: value }))}
-              min={5}
-              max={30}
-              step={0.5}
-              className="w-full"
-              disabled
-            />
-            <div className="text-xs text-muted-foreground mt-1">Valor fijo en runtime (requiere migración DB)</div>
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium">Trigger de Activación</label>
-              <span className="text-sm">{localConfig.failSafeTriggerPct}%</span>
-            </div>
-            <Slider
-              value={[localConfig.failSafeTriggerPct]}
-              onValueChange={([value]) => setLocalConfig(prev => ({ ...prev, failSafeTriggerPct: value }))}
-              min={3}
-              max={25}
-              step={0.5}
-              className="w-full"
-              disabled
-            />
-            <div className="text-xs text-muted-foreground mt-1">Valor fijo en runtime (requiere migración DB)</div>
-          </div>
+          <Alert className="border-amber-500/30 bg-amber-500/5 py-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+            <AlertDescription className="text-xs text-amber-300">
+              Pendiente de implementación backend. No configurable actualmente desde esta pantalla.
+            </AlertDescription>
+          </Alert>
         </CardContent>
       </Card>
 
-      {/* Configuración Break-Even */}
+      {/* Break-Even — breakevenEnabled persiste en backend */}
       <Card id="idca-config-break-even">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -219,15 +99,16 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
             />
           </div>
           <Alert>
-            <AlertTriangle className="h-4 w-4" />
+            <Info className="h-4 w-4" />
             <AlertDescription>
-              La activación y margen de Break-Even se configuran en la pestaña <strong>Config → Cuándo vender</strong>.
+              Activación de protección y buffer BE neto se configuran en{' '}
+              <strong>Configuración → Cuándo vender</strong>.
             </AlertDescription>
           </Alert>
         </CardContent>
       </Card>
 
-      {/* Configuración Trailing */}
+      {/* Trailing — informativo, valor configurado en Configuración */}
       <Card id="idca-config-trailing-margin">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -235,27 +116,19 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
             Trailing (Seguir ganancias)
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-medium">Trailing Activado</div>
-              <div className="text-sm text-gray-500">Sigue las ganancias con stop dinámico</div>
-            </div>
-            <Switch
-              checked={localConfig.trailingEnabled}
-              onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, trailingEnabled: checked }))}
-            />
-          </div>
+        <CardContent>
           <Alert>
-            <AlertTriangle className="h-4 w-4" />
+            <Info className="h-4 w-4" />
             <AlertDescription>
-              La activación y margen de Trailing se configuran en la pestaña <strong>Config → Cuándo vender</strong>.
+              Margen del trailing y activación del trailing se configuran en{' '}
+              <strong>Configuración → Cuándo vender</strong>. El trailing se activa automáticamente 
+              cuando el ciclo supera el umbral de activación configurado.
             </AlertDescription>
           </Alert>
         </CardContent>
       </Card>
 
-      {/* Configuración Take Profit */}
+      {/* Take Profit — takeProfitPct y dynamicTakeProfit persisten en backend */}
       <Card id="idca-config-take-profit">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -264,21 +137,10 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-medium">Take Profit Activado</div>
-              <div className="text-sm text-gray-500">Objetivo de ganancia</div>
-            </div>
-            <Switch 
-              checked={localConfig.takeProfitEnabled}
-              onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, takeProfitEnabled: checked }))}
-            />
-          </div>
-          
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm font-medium">Take Profit Base</label>
-              <span className="text-sm">{localConfig.takeProfitPct}%</span>
+              <span className="text-sm font-mono">{localConfig.takeProfitPct}%</span>
             </div>
             <Slider
               value={[localConfig.takeProfitPct]}
@@ -287,44 +149,30 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
               max={15}
               step={0.5}
               className="w-full"
-              disabled={!localConfig.takeProfitEnabled}
             />
           </div>
-          
+
           <div className="flex items-center justify-between">
             <div>
               <div className="font-medium">TP Dinámico</div>
-              <div className="text-sm text-gray-500">Ajusta según volatilidad</div>
+              <div className="text-sm text-gray-500">Ajusta TP según volatilidad y compras realizadas</div>
             </div>
-            <Switch 
+            <Switch
               checked={localConfig.dynamicTpEnabled}
               onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, dynamicTpEnabled: checked }))}
-              disabled={!localConfig.takeProfitEnabled}
             />
           </div>
-          
-          <div>
-            <label className="text-sm font-medium">Modo de Referencia TP</label>
-            <Select 
-              value={localConfig.tpRefMode} 
-              onValueChange={(value: "aggressive" | "conservative" | "disabled") => 
-                setLocalConfig(prev => ({ ...prev, tpRefMode: value }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="conservative">Conservador</SelectItem>
-                <SelectItem value="aggressive">Agresivo</SelectItem>
-                <SelectItem value="disabled">Desactivado</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              Guardrails del TP dinámico (min/max por par y ciclo) se configuran en{' '}
+              <strong>Configuración → Cuándo vender → Ajustes finos TP dinámico</strong>.
+            </AlertDescription>
+          </Alert>
         </CardContent>
       </Card>
 
-      {/* OCO Lógico */}
+      {/* OCO — pendiente backend, no funcional */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -333,36 +181,19 @@ export const SalidasTab: React.FC<SalidasTabProps> = ({ pair, assetConfig, onCon
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-medium">OCO Activado</div>
-              <div className="text-sm text-gray-500">Solo una salida se ejecuta (prioridad urgencia)</div>
-            </div>
-            <Switch 
-              checked={localConfig.ocoEnabled}
-              onCheckedChange={(checked) => setLocalConfig(prev => ({ ...prev, ocoEnabled: checked }))}
-            />
-          </div>
+          <Alert className="border-amber-500/30 bg-amber-500/5 py-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+            <AlertDescription className="text-xs text-amber-300">
+              Pendiente de implementación backend. No afecta al bot actualmente.
+            </AlertDescription>
+          </Alert>
         </CardContent>
       </Card>
 
-      {/* Alerta informativa */}
-      <Alert>
-        <AlertTriangle className="h-4 w-4" />
-        <AlertDescription>
-          <strong>Nota:</strong> Fail-Safe siempre está activado por seguridad. Las demás protecciones 
-          pueden configurarse según tu estrategia de riesgo.
-        </AlertDescription>
-      </Alert>
-
       {/* Botones de acción */}
       <div className="flex gap-4">
-        <Button 
-          onClick={handleSave} 
-          disabled={isLoading}
-          className="flex-1"
-        >
-          {isLoading ? 'Guardando...' : 'Guardar Configuración'}
+        <Button onClick={handleSave} disabled={isLoading} className="flex-1">
+          {isLoading ? 'Guardando...' : 'Guardar Configuración de Salidas'}
         </Button>
       </div>
     </div>

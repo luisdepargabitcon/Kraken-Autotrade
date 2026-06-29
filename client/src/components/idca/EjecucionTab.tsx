@@ -36,9 +36,7 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
     volumeThreshold: 10000,
   });
 
-  const [executionState, setExecutionState] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<any>(null);
   const [feesSaving, setFeesSaving] = useState(false);
 
   const updateAssetConfig = useUpdateAssetConfig();
@@ -106,26 +104,6 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
   const roundTripEst = entryFeeEst + exitFeeEst;
   const breakEvenNeeded = roundTripEst / refCapital * 100;
 
-  useEffect(() => {
-    // Simular obtención de estado de ejecución
-    setExecutionState({
-      currentStrategy: "simple",
-      activeOrders: 0,
-      totalExecutedToday: 2,
-      avgExecutionTime: 1250,
-      totalSlippage: 0.12,
-    });
-    
-    // Simular diagnóstico
-    setDiagnostics({
-      recommendation: "simple",
-      expectedDuration: 2000,
-      riskFactors: [
-        "High volatility - consider TWAP strategy",
-        "Large order size - consider child orders"
-      ],
-    });
-  }, [pair]);
 
   const handleSave = async () => {
     setIsLoading(true);
@@ -281,102 +259,6 @@ export const EjecucionTab: React.FC<EjecucionTabProps> = ({ pair, assetConfig, o
           son visuales y no afectan el runtime actualmente. Se implementarán en una próxima versión.
         </AlertDescription>
       </Alert>
-
-      {/* Estado Actual de Ejecución */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Zap className="h-5 w-5" />
-            Estado Actual de Ejecución
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {executionState && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  {getStrategyIcon(executionState.currentStrategy)}
-                  <span className="text-sm font-medium">Estrategia</span>
-                </div>
-                <div className="text-xs text-slate-400 capitalize">
-                  {executionState.currentStrategy}
-                </div>
-              </div>
-              <div className="text-center">
-                <div className="text-sm font-medium mb-2">Órdenes Activas</div>
-                <div className="text-2xl font-bold text-blue-400">
-                  {executionState.activeOrders}
-                </div>
-              </div>
-              <div className="text-center">
-                <div className="text-sm font-medium mb-2">Ejecutadas Hoy</div>
-                <div className="text-2xl font-bold text-green-400">
-                  {executionState.totalExecutedToday}
-                </div>
-              </div>
-              <div className="text-center">
-                <div className="text-sm font-medium mb-2">Tiempo Promedio</div>
-                <div className="text-2xl font-bold text-purple-400">
-                  {executionState.avgExecutionTime}ms
-                </div>
-              </div>
-            </div>
-          )}
-          
-          <div className="mt-4 p-3 bg-slate-800/40 rounded-lg border border-slate-700/40">
-            <div className="flex justify-between items-center">
-              <span className="text-sm font-medium">Slippage Acumulado:</span>
-              <span className={`text-sm font-bold ${executionState?.totalSlippage > 0.5 ? 'text-red-400' : 'text-green-400'}`}>
-                {executionState?.totalSlippage.toFixed(3)}%
-              </span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Diagnóstico y Recomendaciones */}
-      {diagnostics && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5" />
-              Diagnóstico de Ejecución
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div>
-                <span className="text-sm font-medium">Recomendación: </span>
-                <Badge variant="outline" className="ml-2">
-                  {diagnostics.recommendation}
-                </Badge>
-                <span className="text-sm text-slate-400 ml-2">
-                  ({getStrategyDescription(diagnostics.recommendation)})
-                </span>
-              </div>
-              
-              <div>
-                <span className="text-sm font-medium">Duración estimada: </span>
-                <span className="text-sm">{diagnostics.expectedDuration}ms</span>
-              </div>
-              
-              {diagnostics.riskFactors.length > 0 && (
-                <div>
-                  <span className="text-sm font-medium">Factores de riesgo:</span>
-                  <ul className="mt-1 space-y-1">
-                    {diagnostics.riskFactors.map((factor: string, index: number) => (
-                      <li key={index} className="text-sm text-orange-400 flex items-center gap-2">
-                        <span className="w-1 h-1 bg-orange-600 rounded-full"></span>
-                        {factor}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Configuración General */}
       <Card id="idca-config-capital">
