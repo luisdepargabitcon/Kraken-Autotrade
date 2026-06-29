@@ -170,10 +170,21 @@ export function useIdcaCycleGridPlan(pair: string, cycleId: number) {
 }
 
 export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProps) {
+  // ── ALL hooks must be declared before any conditional return (Rules of Hooks) ──
   const [open, setOpen] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
   const [showAllEvents, setShowAllEvents] = useState(false);
   const { data, isLoading, error, refetch } = useIdcaCycleGridPlan(pair, cycleId);
+  // historyQuery MUST live here, before early returns, even though 'enabled' controls fetching
+  const historyQuery = useQuery<GridEvent[]>({
+    queryKey: ["/api/idca/hybrid/events", pair, cycleId, "history"],
+    queryFn: () =>
+      fetch(`/api/idca/hybrid/events?pair=${encodeURIComponent(pair)}&cycleId=${cycleId}&limit=500`)
+        .then(r => r.json())
+        .then(j => j.data ?? []),
+    enabled: showHistory && open,
+    staleTime: 30_000,
+  });
 
   const formatPrice = (val: string | number | null | undefined) => {
     if (val == null) return "—";
@@ -195,6 +206,7 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
     return new Date(ts).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
   };
 
+  // ── Conditional returns AFTER all hooks ──
   if (isLoading) {
     return (
       <div className="text-xs text-muted-foreground p-2">
@@ -213,17 +225,6 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
       </Alert>
     );
   }
-
-  // Fetch full cycle history separately when user requests it
-  const historyQuery = useQuery<GridEvent[]>({
-    queryKey: ["/api/idca/hybrid/events", pair, cycleId, "history"],
-    queryFn: () =>
-      fetch(`/api/idca/hybrid/events?pair=${encodeURIComponent(pair)}&cycleId=${cycleId}&limit=500`)
-        .then(r => r.json())
-        .then(j => j.data ?? []),
-    enabled: showHistory && open,
-    staleTime: 30_000,
-  });
 
   if (!data || !data.plan || (data.levels ?? []).length === 0) {
     return (
