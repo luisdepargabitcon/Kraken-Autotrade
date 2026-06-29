@@ -1,14 +1,142 @@
-node_modules
+# ─────────────────────────────────────────────────────────────
+# Docker context hygiene — solo excluye artefactos locales.
+# NO borra datos; evita enviarlos al build daemon.
+# client/index.html y client/src/ NO están excluidos.
+# ─────────────────────────────────────────────────────────────
+
+# VCS
 .git
+.git/
 .gitignore
-README.md
-.env
-.env.local
+
+# Dependencies / build outputs
+node_modules
+node_modules/
 dist
+dist/
+build
+build/
+coverage
+coverage/
+
+# Vite / cache
+.vite
+.vite/
+.cache
+.cache/
+.next
+.next/
+
+# Replit / local state (NO necesario en imagen)
+.local
+.local/
 .replit
 replit.nix
+.config
+
+# Logs / runtime
 *.log
 npm-debug.log*
+logs
+logs/
+tmp
+tmp/
+temp
+temp/
+*.pid
+
+# OS / editor
 .DS_Store
+Thumbs.db
+.idea
+.idea/
+.vscode
+.vscode/
+
+# Docker / compose artefacts locales
+.docker
+.docker/
+docker-data
+docker-data/
+
+# Backups y directorios de respaldo
+backups
+backups/
+backup
+backup/
+backup_*
+*_backup
+*_backups
+fisco_backups
+fisco_backups/
+db_backups
+db_backups/
+dumps
+dumps/
+
+# Assets adjuntos (screenshots, imágenes de soporte — no código)
 attached_assets
-.vite
+attached_assets/
+
+# Informes y exports generados en la raíz del repo
+/*.html
+/*.pdf
+/informe_*.html
+/informe_*.pdf
+/report_*.html
+/report_*.pdf
+/fisco_*.html
+/fisco_*.pdf
+/fiscal_*.html
+/fiscal_*.pdf
+/annual_report_*.html
+/annual_report_*.pdf
+
+# CSV/XLSX en la raíz
+/*.csv
+/*.xlsx
+/*.xls
+/*.ods
+
+# Dumps SQL en la raíz
+/*.dump
+/*.sql.gz
+/*.backup
+/*.bak
+/diagnostic_btc_cycle.sql
+
+# Ficheros de análisis/bundle temporales en la raíz
+/bot_bundle.txt
+/bot_bundle_clean.txt
+/bot_artifacts.tgz
+/file_list.txt
+/bundle_files.txt
+/ai_strategy_grep.txt
+/check_vps_status.js
+
+# Markdown de auditoría/diagnóstico (no son código fuente)
+/auditoria.md
+/BITACORA.md.bak
+/CORRECCIONES_Y_ACTUALIZACIONES.md.bak
+/IDCA_AUDIT_REPORT.md
+/AUDIT_BOT_NORMAL_TIMESTOP_IDCA.md
+/AUDITORIA_REFERENCIA_ENTRADA_IDCA.md
+/FASE1_AUDITORIA_ARQUITECTURA.md
+/DIAGNOSTICO_BTC_CYCLE_FINAL.md
+/DIAGNOSTICO_BTC_CYCLE.md
+/VERIFICACION_ALERTAS.md
+/AUDIT_FASE1.md
+
+# Test / playwright artefacts
+/playwright-report
+/playwright-report/
+test-results
+test-results/
+screenshots
+screenshots/
+*.tmp
+
+# Env locales (la imagen usa variables de entorno del compose/VPS)
+.env
+.env.local
+.env.*.local
