@@ -28,9 +28,20 @@ export type GridState =
 export interface GridLeg {
   legIndex: number;
   side: "buy" | "sell";
-  plannedPrice: number;
+  plannedPrice: number;        // alias for plannedEntryPrice (buy side)
+  plannedEntryPrice: number;
+  plannedExitPrice: number;
+  quantity: number;            // asset units at this level
+  plannedNotionalUsd: number;  // USD allocated to this leg
+  expectedGrossProfitUsd: number;
+  expectedFeesUsd: number;
+  expectedNetProfitUsd: number;
   reason: string;
+  naturalReason: string;
   observerOnly: boolean;
+  triggerCondition: string;
+  cancelCondition: string;
+  legGroup: number;            // 1..nLevels, matches buy+sell pair
 }
 
 export interface GridDecision {
@@ -38,10 +49,14 @@ export interface GridDecision {
   gridState: GridState;
   levels: GridLeg[];
   capitalBudget: number;       // USD budgeted for grid
+  capitalPerLevel: number;     // USD per level group
+  maxGridCapitalPctOfCycle: number;
   levelsCount: number;
   atrSpacingPct: number;       // spacing used between levels
   reason: string;
   naturalReason: string;
+  gridPlanId: string;
+  observerOnly: boolean;
 }
 
 export interface GridConfig {
@@ -71,15 +86,22 @@ export function evaluateGridOverlay(
   mode: "off" | "observer" | "real"
 ): GridDecision {
 
+  const observerOnly = config.executionScope !== "real" || mode !== "real";
+  const gridPlanId = `GRID-${activeCycleId ?? 'no-cycle'}-${Date.now()}`;
+
   const inactiveDecision = (state: GridState, reason: string, naturalReason: string): GridDecision => ({
     gridAllowed: false,
     gridState: state,
     levels: [],
     capitalBudget: 0,
+    capitalPerLevel: 0,
+    maxGridCapitalPctOfCycle: config.maxGridCapitalPctOfCycle,
     levelsCount: 0,
     atrSpacingPct: 0,
     reason,
     naturalReason,
+    gridPlanId,
+    observerOnly,
   });
 
   if (!config.gridEnabled || mode === "off") {
@@ -141,8 +163,8 @@ export function evaluateGridOverlay(
   const nLevels = Math.min(config.maxGridLevels, 3);
   const capitalPerLevel = nLevels > 0 ? capitalBudget / nLevels : 0;
 
-  // Determine if observer-only
-  const observerOnly = config.executionScope !== "real" || mode !== "real";
+  // Fee estimate (round-trip 0.40%: 0.20% entry + 0.20% exit)
+  const feePctPerSide = 0.0020;
 
   // Build grid legs: nLevels buy levels below price, each with a matching sell above
   const levels: GridLeg[] = [];
@@ -150,32 +172,68 @@ export function evaluateGridOverlay(
     const buyPrice  = price * (1 - (atrSpacingPct * i) / 100);
     const sellPrice = price * (1 + (atrSpacingPct * 0.5) / 100); // sell half ATR above center
 
-    levels.push({
+    const roundedBuy = Math.round(buyPrice * 1e6) / 1e6;
+    const roundedSell = Math.round(sellPrice * 1e6) / 1e6;
+    const quantity = capitalPerLevel > 0 && roundedBuy > 0 ? capitalPerLevel / roundedBuy : 0;
+    const notional = roundedBuy * quantity;
+    const grossProfit = (roundedSell - roundedBuy) * quantity;
+    const fees = (roundedBuy * quantity + roundedSell * quantity) * feePctPerSide;
+    const netProfit = grossProfit - fees;
+
+    const group = i;
+    const buyLeg: GridLeg = {
       legIndex: i * 2 - 1,
       side: "buy",
-      plannedPrice: Math.round(buyPrice * 1e6) / 1e6,
-      reason: `grid_buy_level_${i} spacing=${atrSpacingPct.toFixed(2)}% budget=$${capitalPerLevel.toFixed(2)}`,
+      plannedPrice: roundedBuy,
+      plannedEntryPrice: roundedBuy,
+      plannedExitPrice: roundedSell,
+      quantity: Math.round(quantity * 1e8) / 1e8,
+      plannedNotionalUsd: Math.round(notional * 1e2) / 1e2,
+      expectedGrossProfitUsd: Math.round(grossProfit * 1e2) / 1e2,
+      expectedFeesUsd: Math.round(fees * 1e2) / 1e2,
+      expectedNetProfitUsd: Math.round(netProfit * 1e2) / 1e2,
+      reason: `grid_buy_level_${i}`,
+      naturalReason: `Nivel ${i}: compra simulada si el precio cae a $${roundedBuy.toFixed(2)}.`,
       observerOnly,
-    });
-    levels.push({
+      triggerCondition: `precio <= ${roundedBuy.toFixed(2)}`,
+      cancelCondition: `cambio de régimen, ciclo cerrado, volatilidad alta o datos insuficientes`,
+      legGroup: group,
+    };
+    const sellLeg: GridLeg = {
       legIndex: i * 2,
       side: "sell",
-      plannedPrice: Math.round(sellPrice * 1e6) / 1e6,
+      plannedPrice: roundedSell,
+      plannedEntryPrice: roundedBuy,
+      plannedExitPrice: roundedSell,
+      quantity: Math.round(quantity * 1e8) / 1e8,
+      plannedNotionalUsd: Math.round(notional * 1e2) / 1e2,
+      expectedGrossProfitUsd: Math.round(grossProfit * 1e2) / 1e2,
+      expectedFeesUsd: Math.round(fees * 1e2) / 1e2,
+      expectedNetProfitUsd: Math.round(netProfit * 1e2) / 1e2,
       reason: `grid_sell_level_${i}`,
+      naturalReason: `Nivel ${i}: TP simulado a $${roundedSell.toFixed(2)} tras compra simulada.`,
       observerOnly,
-    });
+      triggerCondition: `precio >= ${roundedSell.toFixed(2)}`,
+      cancelCondition: `cambio de régimen, ciclo cerrado, volatilidad alta o datos insuficientes`,
+      legGroup: group,
+    };
+    levels.push(buyLeg, sellLeg);
   }
 
   return {
     gridAllowed: true,
     gridState: "armed",
     levels,
-    capitalBudget,
+    capitalBudget: Math.round(capitalBudget * 1e2) / 1e2,
+    capitalPerLevel: Math.round(capitalPerLevel * 1e2) / 1e2,
+    maxGridCapitalPctOfCycle: config.maxGridCapitalPctOfCycle,
     levelsCount: nLevels,
     atrSpacingPct,
     reason: `regime=lateral atrPct=${atrPct?.toFixed(2)}% spacing=${atrSpacingPct.toFixed(2)}% levels=${nLevels} capital=$${capitalBudget.toFixed(2)} observer=${observerOnly}`,
     naturalReason: observerOnly
       ? `Grid inteligente preparado (modo observador). ${nLevels} niveles × $${capitalPerLevel.toFixed(0)} dentro del rango lateral detectado.`
       : `Grid inteligente armado en modo real. ${nLevels} niveles dentro del rango lateral.`,
+    gridPlanId,
+    observerOnly,
   };
 }

@@ -2,6 +2,92 @@
 
 ---
 
+## 2026-06-29 — feat(idca-hybrid): trazabilidad completa Grid Observer + endpoints + UI
+
+### Problema
+El endpoint `/api/idca/hybrid/events` devolvía `NOT_FOUND`. El Grid Observer carecía de persistencia detallada de niveles, no había tabla de eventos de ciclo de vida y la UI no mostraba el estado del grid ni los eventos dentro de cada ciclo.
+
+### Solución
+- Migración `060_idca_hybrid_grid_traceability.sql`:
+  - Añade columnas detalladas a `idca_grid_legs` (precios, cantidades, capital, PnL, condiciones, snapshots).
+  - Crea tabla `idca_hybrid_events` con eventos, severidad, motivos naturales y raw JSON.
+- `IdcaGridOverlay.ts` calcula `gridPlanId`, precios planificados, cantidades, PnL esperado y condiciones de trigger/cancel por leg.
+- `IdcaHybridDecisionService.ts` persiste legs enriquecidos, emite eventos de ciclo de vida y expone `getGridPlan`, `getAllGridPlans`, `getHybridEvents`.
+- API:
+  - `GET /api/idca/hybrid/events` filtrable (ya no devuelve NOT_FOUND).
+  - `GET /api/idca/hybrid/grid/:pair/:cycleId` plan completo.
+  - `GET /api/idca/hybrid/grid` listado de planes.
+- UI:
+  - `IdcaCycleGridOverlay.tsx`: grid dentro de cada ciclo normal.
+  - `IdcaHybridEventsPanel.tsx`: tabla de eventos con lenguaje natural, filtros y raw técnico.
+  - `IdcaHybridPanel.tsx`: integra overlay y eventos.
+- Tests: 34 tests en `idcaHybrid.test.ts` (incl. 4 de migración) + 21 tests del mapper.
+- Auditoría: `docs/audits/idca_hybrid_grid_traceability_audit.md`.
+
+### Archivos nuevos
+- `db/migrations/060_idca_hybrid_grid_traceability.sql`
+- `client/src/components/idca/IdcaCycleGridOverlay.tsx`
+- `docs/audits/idca_hybrid_grid_traceability_audit.md`
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaGridOverlay.ts`
+- `server/services/institutionalDca/IdcaHybridDecisionService.ts`
+- `server/routes/idcaHybrid.routes.ts`
+- `server/routes.ts`
+- `client/src/components/idca/IdcaHybridEventsPanel.tsx`
+- `client/src/components/idca/IdcaHybridPanel.tsx`
+- `server/services/__tests__/idcaHybrid.test.ts`
+
+### Validación
+- ✅ `npm run check`: sin errores
+- ✅ `npx vitest run server/services/__tests__/idcaHybrid.test.ts`: 34/34
+- ✅ `npx vitest run server/services/__tests__/idcaHybridEventMapper.test.ts`: 21/21
+
+### Reglas de seguridad
+- Todos los legs y eventos llevan `observer_only=true`.
+- No se ejecutan órdenes reales ni se modifica configuración de ciclos.
+- Ciclos importados y manuales bloquean el grid y generan evento de protección.
+
+---
+
+## 2026-06-28 — fix(fisco-ui): mostrar v2 oficial activo tras activacion fiscal
+
+### Problema
+La UI de Fiscal > Informes Fiscales mostraba textos de preactivación ("V2 en sombra", "Bloqueado", "listo para activación") incluso cuando `engine_mode = v2_official` ya estaba activo en backend.
+
+### Solución
+- Añadida query `control-status` en `Fisco.tsx` y `FiscoReportsCenter.tsx` para obtener `official_engine`
+- `Fisco.tsx`: Panel V2 ahora muestra "V2 oficial activo" cuando `official_engine === "v2_official"`
+  - Título: "Estado del motor fiscal oficial — {año}"
+  - Badge: "V2 oficial activo"
+  - Motor actual: "V2 oficial", Estado: "Activo"
+  - Mensaje verde: "Fisco V2 ya está activado oficialmente. No requiere activación."
+  - Oculta "V2 en sombra", "Bloqueado", "listo para activación"
+  - Muestra auditoría histórica Legacy vs V2 con etiquetas correctas
+- `FiscoConfigSection.tsx`: Badge "Ya activado" en vez de "Bloqueado" cuando v2_official activo
+- `FiscoReportsCenter.tsx`: Textos condicionales según `isV2Official`
+
+### Archivos modificados
+- `client/src/pages/Fisco.tsx`
+- `client/src/components/fisco/FiscoConfigSection.tsx`
+- `client/src/components/fisco/FiscoReportsCenter.tsx`
+
+### Validación
+- ✅ npm run check: sin errores
+- ✅ npm test fisco: 730/730 tests pasando
+- ✅ git commit: 374599f
+- ✅ git push: exitoso
+
+### Reglas cumplidas
+- No toca backend fiscal
+- No toca fisco_disposals ni fisco_lots
+- No recalcula fiscalidad
+- No hace rollback ni llama activate-official
+- No cambia fisco_engine_mode
+- Solo cambia textos, badges y lógica visual de UI
+
+---
+
 ## fix(fisco-v2): corregir estado readiness y backups tras activacion oficial
 
 **Fecha**: 2026-06-27

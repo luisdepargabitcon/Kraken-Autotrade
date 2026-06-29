@@ -184,6 +184,7 @@ export async function registerRoutes(
       { id: '057_idca_hybrid_intelligent_layers', filePath: path.join(migrationsDir, '057_idca_hybrid_intelligent_layers.sql') },
       { id: '058_ai_effective_decision_context', filePath: path.join(migrationsDir, '058_ai_effective_decision_context.sql') },
       { id: '059_fisco_v2_import_config', filePath: path.join(migrationsDir, '059_fisco_v2_import_config.sql') },
+      { id: '060_idca_hybrid_grid_traceability', filePath: path.join(migrationsDir, '060_idca_hybrid_grid_traceability.sql') },
     ];
 
     console.log('[startup] Running AutoMigrationRunner...');

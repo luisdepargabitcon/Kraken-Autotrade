@@ -219,22 +219,96 @@ async function persistHybridState(
 async function persistGridLegs(
   pair: string,
   cycleId: number | null,
-  decision: GridDecision
+  decision: GridDecision,
+  regimeSnapshot: IdcaRegimeSnapshot
 ): Promise<void> {
   if (!decision.gridAllowed || decision.levels.length === 0) return;
   try {
     // Clear existing planned legs for this pair+cycle
     await db.execute(sql`DELETE FROM idca_grid_legs WHERE pair = ${pair} AND cycle_id IS NOT DISTINCT FROM ${cycleId} AND status = 'planned'`);
     for (const leg of decision.levels) {
-      const { legIndex, side, plannedPrice, reason: legReason, observerOnly } = leg;
       await db.execute(sql`
         INSERT INTO idca_grid_legs
-          (pair, cycle_id, leg_index, status, side, planned_price, reason, observer_only)
-        VALUES (${pair},${cycleId},${legIndex},'planned',${side},${plannedPrice},${legReason},${observerOnly})
+          (pair, cycle_id, grid_plan_id, leg_index, status, side,
+           planned_price, planned_entry_price, planned_exit_price,
+           quantity, planned_notional_usd, planned_capital_pct_of_cycle,
+           expected_gross_profit_usd, expected_fees_usd, expected_net_profit_usd,
+           trigger_condition_json, cancel_condition_json,
+           regime_at_creation, atr_pct_at_creation, z_score_at_creation, vwap_at_creation, current_price_at_creation,
+           reason, natural_reason, observer_only)
+        VALUES (
+          ${pair}, ${cycleId}, ${decision.gridPlanId}, ${leg.legIndex}, 'planned', ${leg.side},
+          ${leg.plannedPrice}, ${leg.plannedEntryPrice}, ${leg.plannedExitPrice},
+          ${leg.quantity}, ${leg.plannedNotionalUsd}, ${decision.maxGridCapitalPctOfCycle},
+          ${leg.expectedGrossProfitUsd}, ${leg.expectedFeesUsd}, ${leg.expectedNetProfitUsd},
+          ${JSON.stringify({ condition: leg.triggerCondition })}::jsonb, ${JSON.stringify({ condition: leg.cancelCondition })}::jsonb,
+          ${regimeSnapshot.regime}, ${regimeSnapshot.atrPct ?? null}, ${regimeSnapshot.zScore ?? null}, ${regimeSnapshot.vwap ?? null}, ${regimeSnapshot.price},
+          ${leg.reason}, ${leg.naturalReason}, ${leg.observerOnly}
+        )
       `);
     }
   } catch (e: any) {
     console.warn(`[IDCA_HYBRID] persistGridLegs failed (non-fatal): ${e?.message}`);
+  }
+}
+
+interface HybridEventRow {
+  id: number;
+  ts: string;
+  pair: string;
+  cycle_id: number | null;
+  event_type: string;
+  severity: string;
+  observer_only: boolean;
+  grid_plan_id: string | null;
+  leg_index: number | null;
+  state_before: string | null;
+  state_after: string | null;
+  price: string | number | null;
+  quantity: string | number | null;
+  notional_usd: string | number | null;
+  expected_pnl_usd: string | number | null;
+  reason: string | null;
+  natural_reason: string | null;
+  raw_json: any;
+}
+
+async function persistHybridEvent(
+  pair: string,
+  cycleId: number | null,
+  eventType: string,
+  severity: "info" | "warning" | "blocked" | "simulated" | "proposal",
+  opts: {
+    gridPlanId?: string;
+    legIndex?: number;
+    stateBefore?: string;
+    stateAfter?: string;
+    price?: number;
+    quantity?: number;
+    notionalUsd?: number;
+    expectedPnlUsd?: number;
+    reason?: string;
+    naturalReason: string;
+    raw?: Record<string, unknown>;
+    observerOnly?: boolean;
+  }
+): Promise<void> {
+  try {
+    await db.execute(sql`
+      INSERT INTO idca_hybrid_events
+        (ts, pair, cycle_id, event_type, severity, observer_only,
+         grid_plan_id, leg_index, state_before, state_after,
+         price, quantity, notional_usd, expected_pnl_usd,
+         reason, natural_reason, raw_json)
+      VALUES (
+        NOW(), ${pair}, ${cycleId}, ${eventType}, ${severity}, ${opts.observerOnly ?? true},
+        ${opts.gridPlanId ?? null}, ${opts.legIndex ?? null}, ${opts.stateBefore ?? null}, ${opts.stateAfter ?? null},
+        ${opts.price ?? null}, ${opts.quantity ?? null}, ${opts.notionalUsd ?? null}, ${opts.expectedPnlUsd ?? null},
+        ${opts.reason ?? null}, ${opts.naturalReason}, ${opts.raw ? JSON.stringify(opts.raw) : null}::jsonb
+      )
+    `);
+  } catch (e: any) {
+    console.warn(`[IDCA_HYBRID] persistHybridEvent failed (non-fatal): ${e?.message}`);
   }
 }
 
@@ -342,7 +416,18 @@ async function evaluate(input: HybridEvaluationInput): Promise<HybridDecision> {
   // ── Persist state (non-blocking) ────────────────────────────────────────
   persistHybridState(input.pair, input.cycleId, decision).catch(() => {});
   if (gridDecision.gridAllowed) {
-    persistGridLegs(input.pair, input.cycleId, gridDecision).catch(() => {});
+    persistGridLegs(input.pair, input.cycleId, gridDecision, regimeSnapshot).catch(() => {});
+    persistHybridEvent(
+      input.pair, input.cycleId, "GRID_PLAN_CREATED", "simulated",
+      {
+        gridPlanId: gridDecision.gridPlanId,
+        stateAfter: gridDecision.gridState,
+        reason: gridDecision.reason,
+        naturalReason: gridDecision.naturalReason,
+        raw: { capitalBudget: gridDecision.capitalBudget, levelsCount: gridDecision.levelsCount, observerOnly: gridDecision.observerOnly },
+        observerOnly: gridDecision.observerOnly,
+      }
+    ).catch(() => {});
   }
 
   // ── Send alerts (non-blocking) ──────────────────────────────────────────
@@ -560,18 +645,64 @@ async function evaluateActiveCycle(input: ActiveCycleHybridInput): Promise<void>
 
   // ── Persist simulated grid legs (normal cycles only, always observer_only) ──
   if (gridSimulated && gridDecision && gridDecision.levels.length > 0) {
-    try {
-      await db.execute(sql`DELETE FROM idca_grid_legs WHERE pair = ${input.pair} AND cycle_id = ${input.cycleId} AND status = 'planned'`);
-      for (const leg of gridDecision.levels) {
-        await db.execute(sql`
-          INSERT INTO idca_grid_legs
-            (pair, cycle_id, leg_index, status, side, planned_price, reason, observer_only)
-          VALUES (${input.pair},${input.cycleId},${leg.legIndex},'planned',${leg.side},${leg.plannedPrice},${leg.reason},true)
-        `);
-      }
-    } catch (e: any) {
-      console.warn(`[IDCA][HYBRID_OBSERVER] persistGridLegs failed (non-fatal): ${e?.message}`);
+    persistGridLegs(input.pair, input.cycleId, gridDecision, regimeSnapshot).catch(() => {});
+    // Emit per-leg planned events
+    for (const leg of gridDecision.levels) {
+      persistHybridEvent(
+        input.pair, input.cycleId, "GRID_LEVEL_PLANNED", "simulated",
+        {
+          gridPlanId: gridDecision.gridPlanId,
+          legIndex: leg.legIndex,
+          price: leg.plannedPrice,
+          quantity: leg.quantity,
+          notionalUsd: leg.plannedNotionalUsd,
+          expectedPnlUsd: leg.expectedNetProfitUsd,
+          reason: leg.reason,
+          naturalReason: leg.naturalReason,
+          raw: { side: leg.side, triggerCondition: leg.triggerCondition, cancelCondition: leg.cancelCondition },
+          observerOnly: true,
+        }
+      ).catch(() => {});
     }
+  }
+  // Emit blocked grid event for imported/manual cycles
+  if (cycleKind === "imported" || cycleKind === "manual") {
+    persistHybridEvent(
+      input.pair, input.cycleId,
+      cycleKind === "imported" ? "GRID_BLOCKED_IMPORTED_CYCLE" : "GRID_BLOCKED_MANUAL_CYCLE",
+      "blocked",
+      {
+        stateAfter: observerState,
+        reason: `cycle_${cycleKind}`,
+        naturalReason: naturalReason,
+        raw: { cycleKind, isImported: input.isImported, isManualCycle: input.isManualCycle },
+        observerOnly: true,
+      }
+    ).catch(() => {});
+  } else if (gridDecision && !gridDecision.gridAllowed) {
+    persistHybridEvent(
+      input.pair, input.cycleId, "GRID_OBSERVER_BLOCKED", "blocked",
+      {
+        stateAfter: gridDecision.gridState,
+        reason: gridDecision.reason,
+        naturalReason: gridDecision.naturalReason,
+        raw: { cycleKind, regime: regimeSnapshot.regime },
+        observerOnly: true,
+      }
+    ).catch(() => {});
+  }
+  // Emit assisted proposal event
+  if (observerState === "ASSISTED_PROPOSAL_READY") {
+    persistHybridEvent(
+      input.pair, input.cycleId, "ASSISTED_PROPOSAL_READY", "proposal",
+      {
+        stateAfter: observerState,
+        reason: meanReversionDecision.reason,
+        naturalReason: `Propuesta asistida lista: ${meanReversionDecision.naturalReason}`,
+        raw: { score: meanReversionDecision.score, action: meanReversionDecision.action },
+        observerOnly: true,
+      }
+    ).catch(() => {});
   }
 
   // ── Telegram alert (informative, deduped) ─────────────────────────────────
@@ -633,6 +764,100 @@ async function getStatus(pair?: string): Promise<object> {
   return rows.rows ?? [];
 }
 
+async function getGridPlan(pair: string, cycleId: number): Promise<{
+  pair: string;
+  cycleId: number;
+  gridState: string | null;
+  observerOnly: boolean;
+  regime: string | null;
+  plan: Record<string, any> | null;
+  legs: any[];
+  events: any[];
+} | null> {
+  const stateRows = await db.execute(sql`
+    SELECT * FROM idca_hybrid_state
+    WHERE pair = ${pair} AND cycle_id = ${cycleId}
+    ORDER BY updated_at DESC LIMIT 1
+  `);
+  const state = (stateRows.rows ?? [])[0] as any;
+
+  const legRows = await db.execute(sql`
+    SELECT * FROM idca_grid_legs
+    WHERE pair = ${pair} AND cycle_id = ${cycleId}
+    ORDER BY leg_index ASC
+  `);
+  const legs = legRows.rows ?? [];
+
+  const eventRows = await db.execute(sql`
+    SELECT * FROM idca_hybrid_events
+    WHERE pair = ${pair} AND cycle_id = ${cycleId}
+    ORDER BY ts DESC LIMIT 100
+  `);
+  const events = eventRows.rows ?? [];
+
+  const gridState = state?.grid_state ?? "GRID_INACTIVE";
+  const observerOnly = legs.length > 0 ? Boolean(legs[0].observer_only) : true;
+  const levelsTriggered = legs.filter((l: any) => l.status === "triggered" || l.status === "closed").length;
+  const levelsClosed = legs.filter((l: any) => l.status === "closed").length;
+  const expectedNetProfit = legs.reduce((sum: number, l: any) => sum + parseFloat(String(l.expected_net_profit_usd ?? 0)), 0);
+  const capitalUsedSimulated = legs.reduce((sum: number, l: any) => sum + parseFloat(String(l.planned_notional_usd ?? 0)), 0);
+
+  const plan = state ? {
+    gridPlanId: legs[0]?.grid_plan_id ?? null,
+    createdAt: legs[0]?.created_at ?? state.created_at,
+    updatedAt: state.updated_at,
+    capitalMaxUsd: parseFloat(String(state.raw_json?.capitalBudget ?? 0)) || capitalUsedSimulated,
+    capitalUsedSimulatedUsd: capitalUsedSimulated,
+    maxGridCapitalPctOfCycle: legs[0]?.planned_capital_pct_of_cycle ?? 10,
+    levelsCount: legs.length,
+    levelsTriggered,
+    levelsClosed,
+    expectedNetProfitUsd: expectedNetProfit,
+    simulatedRealizedPnlUsd: 0,
+    status: gridState,
+    naturalReason: state.natural_reason,
+    raw: state.raw_json,
+  } : null;
+
+  return { pair, cycleId, gridState, observerOnly, regime: state?.regime ?? null, plan, legs, events };
+}
+
+async function getAllGridPlans(): Promise<any[]> {
+  const rows = await db.execute(sql`
+    SELECT DISTINCT pair, cycle_id FROM idca_grid_legs
+    WHERE status = 'planned'
+    ORDER BY pair, cycle_id
+  `);
+  const plans: any[] = [];
+  for (const row of rows.rows ?? []) {
+    const plan = await getGridPlan(String(row.pair), Number(row.cycle_id));
+    if (plan) plans.push(plan);
+  }
+  return plans;
+}
+
+async function getHybridEvents(
+  filters: {
+    pair?: string;
+    cycleId?: number;
+    eventType?: string;
+    since?: string;
+    limit?: number;
+    observerOnly?: boolean;
+  }
+): Promise<HybridEventRow[]> {
+  const limit = Math.min(filters.limit ?? 100, 200);
+  let query = sql`SELECT * FROM idca_hybrid_events WHERE 1=1`;
+  if (filters.pair) query = sql`${query} AND pair = ${filters.pair}`;
+  if (filters.cycleId != null) query = sql`${query} AND cycle_id = ${filters.cycleId}`;
+  if (filters.eventType) query = sql`${query} AND event_type = ${filters.eventType}`;
+  if (filters.since) query = sql`${query} AND ts >= ${filters.since}`;
+  if (filters.observerOnly != null) query = sql`${query} AND observer_only = ${filters.observerOnly}`;
+  query = sql`${query} ORDER BY ts DESC LIMIT ${limit}`;
+  const result = await db.execute(query);
+  return ((result.rows ?? []) as unknown[]) as HybridEventRow[];
+}
+
 export const idcaHybridDecisionService = {
   evaluate,
   evaluateActiveCycle,
@@ -642,6 +867,10 @@ export const idcaHybridDecisionService = {
   setAlertConfig,
   applyRecommended,
   getStatus,
+  getGridPlan,
+  getAllGridPlans,
+  getHybridEvents,
+  persistHybridEvent,
   invalidateConfigCache,
   DEFAULT_HYBRID_CONFIG,
   DEFAULT_ALERT_CONFIG,

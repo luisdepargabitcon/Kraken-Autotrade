@@ -18,6 +18,8 @@ import {
 } from "../institutionalDca/IdcaGridOverlay";
 import type { IdcaRegimeSnapshot } from "../institutionalDca/IdcaRegimeAdapter";
 import type { CycleKind, CycleObserverState } from "../institutionalDca/IdcaHybridDecisionService";
+import fs from "fs";
+import path from "path";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -252,6 +254,50 @@ describe("GridOverlay", () => {
     );
     expect(decision.gridAllowed).toBe(false);
   });
+
+  it("arms grid with rich traceability fields for each leg", () => {
+    const cycleCapital = 5000;
+    const maxPct = 10;
+    const decision = evaluateGridOverlay(
+      makeRegime({ regime: "lateral", atrPct: 1.5, price: 50000 }), noOpMr,
+      { ...defaultGridConfig, maxGridCapitalPctOfCycle: maxPct, maxGridLevels: 3 },
+      cycleCapital, 42, "observer"
+    );
+    expect(decision.gridAllowed).toBe(true);
+    expect(decision.gridPlanId).toMatch(/^GRID-42-/);
+    expect(decision.observerOnly).toBe(true);
+    expect(decision.capitalBudget).toBeGreaterThan(0);
+    expect(decision.capitalPerLevel).toBeGreaterThan(0);
+    expect(decision.maxGridCapitalPctOfCycle).toBe(maxPct);
+
+    const buyLegs = decision.levels.filter((l) => l.side === "buy");
+    expect(buyLegs.length).toBeGreaterThan(0);
+    for (const leg of buyLegs) {
+      expect(leg.plannedEntryPrice).toBeGreaterThan(0);
+      expect(leg.plannedExitPrice).toBeGreaterThan(leg.plannedEntryPrice);
+      expect(leg.quantity).toBeGreaterThan(0);
+      expect(leg.plannedNotionalUsd).toBeGreaterThan(0);
+      expect(leg.expectedNetProfitUsd).toBeDefined();
+      expect(leg.naturalReason).toContain("compra simulada");
+      expect(leg.triggerCondition).toContain("precio <=");
+      expect(leg.observerOnly).toBe(true);
+    }
+  });
+
+  it("capital per level does not exceed budget divided by levels", () => {
+    const cycleCapital = 9000;
+    const maxPct = 10;
+    const levels = 3;
+    const decision = evaluateGridOverlay(
+      makeRegime({ regime: "lateral", price: 3000 }), noOpMr,
+      { ...defaultGridConfig, maxGridCapitalPctOfCycle: maxPct, maxGridLevels: levels },
+      cycleCapital, 42, "observer"
+    );
+    const expectedBudget = (cycleCapital * maxPct) / 100;
+    const expectedPerLevel = expectedBudget / levels;
+    expect(decision.capitalBudget).toBeCloseTo(expectedBudget, 2);
+    expect(decision.capitalPerLevel).toBeCloseTo(expectedPerLevel, 2);
+  });
 });
 
 // ── ActiveCycle Observer Safety Invariants ────────────────────────────────────
@@ -381,5 +427,43 @@ describe("ActiveCycle Observer — cycleKind routing", () => {
     expect(naturalReason).toContain("importado");
     expect(naturalReason).toContain("no se modifica");
     expect(naturalReason).toContain("diagnóstico");
+  });
+});
+
+// ── Migration Traceability ───────────────────────────────────────────────────
+
+describe("Migration 060 — IDCA Hybrid Grid traceability", () => {
+  const migrationFile = path.resolve(
+    __dirname,
+    "../../../db/migrations/060_idca_hybrid_grid_traceability.sql"
+  );
+  const routesFile = path.resolve(__dirname, "../../routes.ts");
+
+  it("migration file exists", () => {
+    expect(fs.existsSync(migrationFile)).toBe(true);
+  });
+
+  it("migration creates idca_hybrid_events table", () => {
+    const sql = fs.readFileSync(migrationFile, "utf8");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS idca_hybrid_events");
+    expect(sql).toContain("event_type");
+    expect(sql).toContain("natural_reason");
+    expect(sql).toContain("observer_only");
+  });
+
+  it("migration enriches idca_grid_legs with traceability columns", () => {
+    const sql = fs.readFileSync(migrationFile, "utf8");
+    expect(sql).toContain("ALTER TABLE idca_grid_legs");
+    expect(sql).toContain("planned_entry_price");
+    expect(sql).toContain("planned_exit_price");
+    expect(sql).toContain("planned_notional_usd");
+    expect(sql).toContain("expected_net_profit_usd");
+    expect(sql).toContain("trigger_condition_json");
+  });
+
+  it("migration is registered in routes.ts AutoMigrationRunner", () => {
+    const routes = fs.readFileSync(routesFile, "utf8");
+    expect(routes).toContain("060_idca_hybrid_grid_traceability");
+    expect(routes).toContain("'060_idca_hybrid_grid_traceability'");
   });
 });

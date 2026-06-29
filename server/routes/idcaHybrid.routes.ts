@@ -8,6 +8,9 @@
  * POST /api/idca/hybrid/apply-recommended → apply safe conservative preset
  * GET  /api/idca/hybrid/status          → last hybrid state (all pairs or single)
  * GET  /api/idca/hybrid/grid-legs       → grid legs for a pair
+ * GET  /api/idca/hybrid/events          → hybrid/grid events with filters
+ * GET  /api/idca/hybrid/grid/:pair/:cycleId → full grid plan + legs + events for a cycle
+ * GET  /api/idca/hybrid/grid            → list of all grid plans
  * GET  /api/idca/hybrid/regime/:pair    → on-demand regime snapshot for a pair
  */
 
@@ -112,58 +115,54 @@ export function registerIdcaHybridRoutes(app: Express): void {
     }
   });
 
-  // GET /api/idca/hybrid/events?pair=BTC%2FUSD&limit=100
+  // GET /api/idca/hybrid/events?pair=BTC%2FUSD&cycleId=29&eventType=GRID_PLAN_CREATED&limit=100
   app.get("/api/idca/hybrid/events", async (req, res) => {
     try {
       const pair = req.query.pair as string | undefined;
+      const cycleId = req.query.cycleId ? parseInt(req.query.cycleId as string, 10) : undefined;
+      const eventType = req.query.eventType as string | undefined;
+      const since = req.query.since as string | undefined;
+      const observerOnly = req.query.observerOnly === "true" ? true : req.query.observerOnly === "false" ? false : undefined;
       const limit = Math.min(parseInt((req.query.limit as string) || "100", 10), 200);
 
-      let stateResult;
-      if (pair) {
-        stateResult = await db.execute(sql`
-          SELECT id, pair, cycle_id, mode, regime, mean_reversion_state, grid_state,
-                 last_price, score, reason, natural_reason, raw_json, updated_at
-          FROM idca_hybrid_state
-          WHERE pair = ${pair}
-          ORDER BY updated_at DESC
-          LIMIT ${limit}
-        `);
-      } else {
-        stateResult = await db.execute(sql`
-          SELECT id, pair, cycle_id, mode, regime, mean_reversion_state, grid_state,
-                 last_price, score, reason, natural_reason, raw_json, updated_at
-          FROM idca_hybrid_state
-          ORDER BY updated_at DESC
-          LIMIT ${limit}
-        `);
-      }
-
-      const rows = stateResult.rows ?? [];
-
-      // Fetch planned grid legs for the relevant pairs
-      let legRows: any[] = [];
-      if (rows.length > 0) {
-        const legResult = await db.execute(sql`
-          SELECT pair, cycle_id, leg_index, side, planned_price, quantity,
-                 reason, natural_reason, observer_only
-          FROM idca_grid_legs
-          WHERE status = 'planned'
-          ORDER BY pair, cycle_id, leg_index
-        `);
-        legRows = legResult.rows ?? [];
-      }
-
-      // Map each state row to a normalized event
-      const events = rows.map((row: any) => {
-        const legs = legRows.filter(
-          (leg: any) =>
-            leg.pair === row.pair &&
-            String(leg.cycle_id ?? "null") === String(row.cycle_id ?? "null")
-        );
-        return mapHybridStateToEvent(row, legs);
+      const events = await idcaHybridDecisionService.getHybridEvents({
+        pair,
+        cycleId,
+        eventType,
+        since,
+        limit,
+        observerOnly,
       });
 
       res.json({ success: true, data: events, total: events.length });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e?.message });
+    }
+  });
+
+  // GET /api/idca/hybrid/grid/:pair/:cycleId
+  app.get("/api/idca/hybrid/grid/:pair/:cycleId", async (req, res) => {
+    try {
+      const pair = decodeURIComponent(req.params.pair);
+      const cycleId = parseInt(req.params.cycleId, 10);
+      if (Number.isNaN(cycleId)) {
+        return res.status(400).json({ success: false, error: "cycleId must be a number" });
+      }
+      const data = await idcaHybridDecisionService.getGridPlan(pair, cycleId);
+      if (!data) {
+        return res.status(404).json({ success: false, error: `No grid plan found for ${pair} #${cycleId}` });
+      }
+      res.json({ success: true, data });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e?.message });
+    }
+  });
+
+  // GET /api/idca/hybrid/grid
+  app.get("/api/idca/hybrid/grid", async (_req, res) => {
+    try {
+      const data = await idcaHybridDecisionService.getAllGridPlans();
+      res.json({ success: true, data, total: data.length });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e?.message });
     }

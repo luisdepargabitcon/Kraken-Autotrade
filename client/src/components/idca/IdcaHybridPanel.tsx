@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { IdcaHybridEventsPanel } from "./IdcaHybridEventsPanel";
+import { IdcaCycleGridOverlay } from "./IdcaCycleGridOverlay";
 
 const API_BASE = "/api/idca/hybrid";
 
@@ -448,6 +449,11 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
                       </div>
                     )}
                   </div>
+
+                  {/* Grid overlay inside the cycle (observer-only, read-only) */}
+                  {cycleKind === "normal" && (
+                    <IdcaCycleGridOverlay pair={row.pair} cycleId={row.cycle_id} />
+                  )}
 
                   {/* Imported/manual warning */}
                   {isImportedOrManual && (
