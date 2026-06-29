@@ -198,36 +198,34 @@ export default function InstitutionalDca() {
           <IdcaMarketPriceHeader className="border border-border/30 rounded-lg p-3 bg-card/30" />
 
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid grid-cols-5 md:grid-cols-11 gap-1 h-auto p-1">
-              <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Resumen</TabsTrigger>
-              <TabsTrigger value="config" className="text-xs gap-1"><Settings2 className="h-3 w-3" /> Config</TabsTrigger>
-              <TabsTrigger value="adaptive" className="text-xs gap-1" data-testid="tab-adaptive"><Sparkles className="h-3 w-3" /> Adaptativo</TabsTrigger>
-              <TabsTrigger value="cycles" className="text-xs gap-1"><Activity className="h-3 w-3" /> Ciclos</TabsTrigger>
+            <TabsList className="grid grid-cols-4 md:grid-cols-7 gap-1 h-auto p-1">
+              <TabsTrigger value="summary" className="text-xs gap-1"><LayoutDashboard className="h-3 w-3" /> Panel</TabsTrigger>
+              <TabsTrigger value="cycles" className="text-xs gap-1"><Activity className="h-3 w-3" /> Ciclos abiertos</TabsTrigger>
+              <TabsTrigger value="config" className="text-xs gap-1"><Settings2 className="h-3 w-3" /> Configuración</TabsTrigger>
+              <TabsTrigger value="hybrid" className="text-xs gap-1"><Brain className="h-3 w-3" /> Hybrid/Grid</TabsTrigger>
               <TabsTrigger value="history" className="text-xs gap-1"><ListOrdered className="h-3 w-3" /> Historial</TabsTrigger>
-              <TabsTrigger value="legend" className="text-xs gap-1"><Info className="h-3 w-3" /> Leyenda</TabsTrigger>
-              <TabsTrigger value="simulation" className="text-xs gap-1"><Wallet className="h-3 w-3" /> Simulación</TabsTrigger>
-              <TabsTrigger value="events" className="text-xs gap-1"><Clock className="h-3 w-3" /> Eventos</TabsTrigger>
-              <TabsTrigger value="telegram" className="text-xs gap-1"><Send className="h-3 w-3" /> Telegram</TabsTrigger>
-              <TabsTrigger value="guide" className="text-xs gap-1"><BookOpen className="h-3 w-3" /> Guía</TabsTrigger>
-              <TabsTrigger value="hybrid" className="text-xs gap-1"><Brain className="h-3 w-3" /> Mejoras</TabsTrigger>
+              <TabsTrigger value="telegram" className="text-xs gap-1"><Send className="h-3 w-3" /> Alertas</TabsTrigger>
+              <TabsTrigger value="help" className="text-xs gap-1"><BookOpen className="h-3 w-3" /> Ayuda</TabsTrigger>
             </TabsList>
 
             <TabsContent value="summary"><SummaryTab /></TabsContent>
+            <TabsContent value="cycles"><CyclesTab /></TabsContent>
             <TabsContent value="config"><ConfigTab configSubTab={configSubTab} setConfigSubTab={setConfigSubTab} /></TabsContent>
+            <TabsContent value="hybrid"><IdcaHybridPanel /></TabsContent>
+            <TabsContent value="history"><HistoryTab /></TabsContent>
+            <TabsContent value="telegram"><TelegramTab /></TabsContent>
+            <TabsContent value="help"><HelpTab /></TabsContent>
+            {/* Legacy tabs — no visible trigger; accessible via nav hook or setActiveTab */}
             <TabsContent value="adaptive"><AdaptiveTab
               externalSubTab={adaptiveTab}
               setExternalSubTab={setAdaptiveTab}
               externalPair={selectedPair}
               setExternalPair={setSelectedPair}
             /></TabsContent>
-            <TabsContent value="cycles"><CyclesTab /></TabsContent>
-            <TabsContent value="history"><HistoryTab /></TabsContent>
-            <TabsContent value="legend"><LegendTab /></TabsContent>
             <TabsContent value="simulation"><SimulationTab /></TabsContent>
             <TabsContent value="events"><EventsTab /></TabsContent>
-            <TabsContent value="telegram"><TelegramTab /></TabsContent>
+            <TabsContent value="legend"><LegendTab /></TabsContent>
             <TabsContent value="guide"><GuideTab /></TabsContent>
-            <TabsContent value="hybrid"><IdcaHybridPanel /></TabsContent>
           </Tabs>
         </div>
       </div>
@@ -6289,6 +6287,38 @@ interface ConfigJumpButtonProps {
   pair: string;
   label: string;
   navigateFn?: (target: string, pair?: string) => void;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// HELP TAB — Combina GuideTab + LegendTab
+// ════════════════════════════════════════════════════════════════════
+
+function HelpTab() {
+  const [activeHelp, setActiveHelp] = useState<"guide" | "legend">("guide");
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant={activeHelp === "guide" ? "default" : "outline"}
+          className="text-xs gap-1"
+          onClick={() => setActiveHelp("guide")}
+        >
+          <BookOpen className="h-3 w-3" /> Guía de uso
+        </Button>
+        <Button
+          size="sm"
+          variant={activeHelp === "legend" ? "default" : "outline"}
+          className="text-xs gap-1"
+          onClick={() => setActiveHelp("legend")}
+        >
+          <Info className="h-3 w-3" /> Leyenda
+        </Button>
+      </div>
+      {activeHelp === "guide" && <GuideTab />}
+      {activeHelp === "legend" && <LegendTab />}
+    </div>
+  );
 }
 
 function ConfigJumpButton({ target, pair, label, navigateFn }: ConfigJumpButtonProps) {

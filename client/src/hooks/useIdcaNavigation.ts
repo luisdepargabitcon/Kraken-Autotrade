@@ -24,7 +24,7 @@ export type IdcaConfigTarget =
   | "advanced";
 
 export interface NavigateResult {
-  mainTab: "adaptativo" | "config" | "telegram" | "eventos";
+  mainTab: "adaptive" | "config" | "telegram" | "eventos";
   adaptiveTab?: "entradas" | "salidas" | "ejecucion" | "avanzado";
   configSubTab?: "entrada" | "general" | "vwap" | "distancia" | "plus";
   sectionId: string;
@@ -54,24 +54,24 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
     sectionId: "idca-config-entry",
   },
   "safety-ladder": {
-    mainTab: "adaptativo",
+    mainTab: "adaptive",
     adaptiveTab: "entradas",
     sectionId: "idca-config-safety-ladder",
   },
   "next-buy": {
-    mainTab: "adaptativo",
+    mainTab: "adaptive",
     adaptiveTab: "entradas",
     sectionId: "idca-config-safety-ladder",
   },
 
   // Salidas - Config real está en ConfigTab → General (Cuándo vender)
   "take-profit": {
-    mainTab: "adaptativo",
+    mainTab: "adaptive",
     adaptiveTab: "salidas",
     sectionId: "idca-config-take-profit",
   },
   "dynamic-tp": {
-    mainTab: "adaptativo",
+    mainTab: "adaptive",
     adaptiveTab: "salidas",
     sectionId: "idca-config-take-profit",
   },
@@ -93,7 +93,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
 
   // Ejecución
   "execution-slippage": {
-    mainTab: "adaptativo",
+    mainTab: "adaptive",
     adaptiveTab: "ejecucion",
     sectionId: "idca-config-execution-slippage",
   },
@@ -105,7 +105,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
 
   // Avanzado
   "cooldown": {
-    mainTab: "adaptativo",
+    mainTab: "adaptive",
     adaptiveTab: "avanzado",
     sectionId: "idca-config-cooldown",
   },
@@ -115,7 +115,7 @@ const TARGET_MAP: Record<IdcaConfigTarget, NavigateResult> = {
     sectionId: "idca-config-vwap-anchor",
   },
   "advanced": {
-    mainTab: "adaptativo",
+    mainTab: "adaptive",
     adaptiveTab: "avanzado",
     sectionId: "idca-config-advanced",
   },
