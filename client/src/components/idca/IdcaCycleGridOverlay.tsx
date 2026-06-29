@@ -99,6 +99,16 @@ const STATUS_LABELS: Record<string, string> = {
   GRID_INACTIVE: "Sin grid",
 };
 
+const REGIME_LABELS: Record<string, string> = {
+  lateral: "Lateral",
+  bullish: "Alcista",
+  bearish: "Bajista",
+  transition: "Transición",
+  high_volatility: "Alta volatilidad",
+  unknown: "Desconocido",
+  insufficient_data: "Datos insuficientes",
+};
+
 const EVENT_TYPE_LABELS: Record<string, string> = {
   GRID_PLAN_CREATED: "Plan grid creado",
   GRID_LEVEL_PLANNED: "Nivel planificado",
@@ -259,7 +269,7 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div className="space-y-0.5">
                 <div className="text-muted-foreground flex items-center gap-1"><TrendingDown className="h-3 w-3" /> Régimen</div>
-                <div className="font-medium">{data.regime ?? "—"}</div>
+                <div className="font-medium">{REGIME_LABELS[data.regime ?? ""] ?? data.regime ?? "—"}</div>
               </div>
               <div className="space-y-0.5">
                 <div className="text-muted-foreground flex items-center gap-1"><DollarSign className="h-3 w-3" /> Capital máx. autorizado</div>
@@ -275,11 +285,10 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
               </div>
               <div className="space-y-0.5">
                 <div className="text-muted-foreground">Niveles de compra</div>
-                <div className="font-medium">{plan.buyLevelsCount} <span className="text-muted-foreground/70">+ {plan.tpLegsCount} TP</span></div>
-              </div>
-              <div className="space-y-0.5">
-                <div className="text-muted-foreground">Legs técnicas</div>
-                <div className="font-medium text-muted-foreground">{plan.totalLegsCount}</div>
+                <div className="font-medium">
+                  {plan.buyLevelsCount ?? 0} compras
+                  {(plan.tpLegsCount ?? 0) > 0 && <span className="text-muted-foreground/70"> + {plan.tpLegsCount} TP vinculados</span>}
+                </div>
               </div>
               <div className="space-y-0.5">
                 <div className="text-muted-foreground">Activados / Cerrados</div>
@@ -287,7 +296,7 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
               </div>
               <div className="space-y-0.5">
                 <div className="text-muted-foreground">Beneficio neto esperado</div>
-                <div className={`font-medium ${plan.expectedNetProfitUsd >= 0 ? "text-green-400" : "text-red-400"}`}>
+                <div className={`font-medium ${(plan.expectedNetProfitUsd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                   {formatUsd(plan.expectedNetProfitUsd)}
                 </div>
               </div>
@@ -323,7 +332,7 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
                   <div className="col-span-2 font-mono">${formatPrice(lvl.plannedExitPrice)}</div>
                   <div className="col-span-2 font-mono">{formatQty(lvl.plannedQuantity)}</div>
                   <div className="col-span-2 font-mono">{formatUsd(lvl.plannedNotionalUsd)}</div>
-                  <div className={`col-span-1 text-right font-mono ${lvl.expectedNetProfitUsd >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  <div className={`col-span-1 text-right font-mono ${(lvl.expectedNetProfitUsd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                     {formatUsd(lvl.expectedNetProfitUsd)}
                   </div>
                   {lvl.triggerCondition && (

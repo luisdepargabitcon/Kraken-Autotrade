@@ -78,10 +78,30 @@ const REGIME_LABELS: Record<string, string> = {
   lateral: "Lateral",
   bullish: "Alcista",
   bearish: "Bajista",
+  transition: "Transición",
   high_volatility: "Alta volatilidad",
   unknown: "Desconocido",
   insufficient_data: "Datos insuficientes",
 };
+
+function buildObserverHint(observerState: string, regime: string | null): string {
+  const regLabel = REGIME_LABELS[regime ?? ""] ?? regime ?? "desconocido";
+  if (observerState === "GRID_BLOCKED_BEAR_TREND")
+    return `Grid no activo: tendencia bajista detectada. Sin compra Grid real.`;
+  if (observerState === "GRID_BLOCKED_DATA_QUALITY")
+    return `Grid no activo: calidad de datos insuficiente. Sin compra Grid real.`;
+  if (observerState === "GRID_BLOCKED_CAPITAL_LIMIT")
+    return `Grid no activo: límite de capital alcanzado. Sin compra Grid real.`;
+  if (observerState === "GRID_BLOCKED_IMPORTED_CYCLE" || observerState === "GRID_BLOCKED_MANUAL_CYCLE")
+    return `Grid no aplicado: este ciclo está protegido por ser importado/manual. Sin compra Grid real.`;
+  if (observerState === "GRID_PLAN_SIMULATED" && regime === "bullish")
+    return `Plan Grid simulado disponible, pero no se activan compras Grid porque el régimen es alcista (${regLabel}).`;
+  if (observerState === "GRID_PLAN_SIMULATED")
+    return `Plan Grid simulado listo. Las condiciones de mercado determinarán si se activa en modo Real.`;
+  if (observerState === "ASSISTED_PROPOSAL_READY")
+    return `Propuesta asistida disponible. Revión pendiente del operador. Sin orden real ejecutada.`;
+  return `El sistema está monitorizando el ciclo sin orden Grid real abierta.`;
+}
 
 const MR_STATE_LABELS: Record<string, string> = {
   confirmed: "Confirmada",
@@ -215,7 +235,7 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <Brain className="h-4 w-4 text-primary" />
-            IDCA Híbrido Inteligente
+            <span>Hybrid/Grid <span className="text-xs font-normal text-muted-foreground">— Diagnóstico y simulación avanzada del ciclo IDCA</span></span>
             <Badge variant="outline" className={`ml-auto text-xs px-2 py-0.5 ${modeBadge(currentMode)}`}>
               {currentMode === "off" && <Activity className="h-3 w-3 mr-1" />}
               {currentMode === "observer" && <Eye className="h-3 w-3 mr-1" />}
@@ -261,8 +281,8 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
             <Alert className="border-blue-500/30 bg-blue-500/5">
               <Eye className="h-4 w-4 text-blue-400" />
               <AlertDescription className="text-xs text-blue-300">
-                <strong>Modo Observador:</strong> El análisis híbrido se ejecuta y persiste, pero NO bloquea compras IDCA.
-                Úsalo para validar el comportamiento antes de activar modo Real.
+                <strong>Modo Observador activo:</strong> No se ejecuta ninguna orden real en el exchange.
+                El sistema analiza y genera simulaciones de Grid para que puedas validar el comportamiento antes de activar modo Real.
               </AlertDescription>
             </Alert>
           )}
@@ -371,18 +391,20 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
             <Alert className="border-blue-500/30 bg-blue-500/5 py-2">
               <ShieldOff className="h-3.5 w-3.5 text-blue-400" />
               <AlertDescription className="text-xs text-blue-300">
-                <strong>observer_only=true</strong> — No se ha ejecutado ninguna orden.
-                Hybrid/Grid solo genera diagnóstico y propuestas simuladas.
+                <strong>Modo Observador — sin órdenes reales.</strong> El sistema monitoriza los ciclos y genera planes Grid simulados,
+                pero <strong>no ha abierto ninguna posición real</strong> en el exchange.
               </AlertDescription>
             </Alert>
 
             {activeCycleRows.map((row: any) => {
-              const raw = typeof row.raw_json === "object" ? row.raw_json : {};
+              const raw = (row.raw_json != null && typeof row.raw_json === "object") ? row.raw_json as Record<string, any> : {};
               const cycleKind: string = raw.cycleKind ?? "normal";
               const observerState: string = row.grid_state ?? "OBSERVING_ACTIVE_CYCLE";
               const isImportedOrManual = cycleKind === "imported" || cycleKind === "manual";
               const hasProposal = observerState === "ASSISTED_PROPOSAL_READY" || observerState === "GRID_PLAN_SIMULATED";
               const isBlocked = observerState.startsWith("GRID_BLOCKED");
+              const regimeLabel = REGIME_LABELS[row.regime] ?? row.regime ?? "—";
+              const observerHint = buildObserverHint(observerState, row.regime);
 
               return (
                 <div key={row.id ?? row.cycle_id} className="border border-border/30 rounded-lg p-3 space-y-2">
@@ -400,12 +422,31 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
                       {CYCLE_KIND_LABELS[cycleKind] ?? cycleKind}
                     </Badge>
                     <Badge variant="outline" className={`text-xs px-1.5 py-0 h-5 ml-auto ${
-                      hasProposal ? "bg-green-500/10 text-green-400 border-green-500/30" :
-                      isBlocked   ? "bg-red-500/10 text-red-400 border-red-500/30" :
-                                    "bg-blue-500/10 text-blue-400 border-blue-500/30"
+                      hasProposal && !isBlocked ? "bg-amber-500/10 text-amber-400 border-amber-500/30" :
+                      isBlocked               ? "bg-amber-500/10 text-amber-400 border-amber-500/30" :
+                                                "bg-blue-500/10 text-blue-400 border-blue-500/30"
                     }`}>
                       {OBSERVER_STATE_LABELS[observerState] ?? observerState}
                     </Badge>
+                  </div>
+
+                  {/* Key status summary — always visible */}
+                  <div className="bg-muted/30 border border-border/20 rounded p-2 text-xs space-y-1.5">
+                    <div className="flex items-center gap-x-4 gap-y-1 flex-wrap">
+                      <span>
+                        <span className="text-muted-foreground">Orden Grid real: </span>
+                        <span className="font-medium text-green-400/80">No ejecutada</span>
+                      </span>
+                      <span>
+                        <span className="text-muted-foreground">Plan Grid: </span>
+                        <span className="font-medium">{hasProposal ? "Sí (simulado)" : "No"}</span>
+                      </span>
+                      <span>
+                        <span className="text-muted-foreground">Régimen: </span>
+                        <span className="font-medium">{regimeLabel}</span>
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground/80 leading-relaxed">{observerHint}</p>
                   </div>
 
                   {/* Cycle references (read-only display) */}
@@ -451,7 +492,7 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
                   </div>
 
                   {/* Grid overlay inside the cycle (observer-only, read-only) */}
-                  {cycleKind === "normal" && (
+                  {cycleKind === "normal" && row.cycle_id != null && (
                     <IdcaCycleGridOverlay pair={row.pair} cycleId={row.cycle_id} />
                   )}
 

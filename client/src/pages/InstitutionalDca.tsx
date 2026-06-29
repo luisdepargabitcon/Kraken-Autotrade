@@ -118,6 +118,7 @@ import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
 import { IdcaHybridPanel } from "@/components/idca/IdcaHybridPanel";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { IdcaMarketContextSummary } from "@/components/idca/IdcaMarketContextCard";
 import { IdcaMarketPriceHeader } from "@/components/idca/IdcaMarketPriceHeader";
 import { useIdcaNavigation, type IdcaConfigTarget } from "@/hooks/useIdcaNavigation";
@@ -211,7 +212,7 @@ export default function InstitutionalDca() {
             <TabsContent value="summary"><SummaryTab /></TabsContent>
             <TabsContent value="cycles"><CyclesTab /></TabsContent>
             <TabsContent value="config"><ConfigTab configSubTab={configSubTab} setConfigSubTab={setConfigSubTab} /></TabsContent>
-            <TabsContent value="hybrid"><IdcaHybridPanel /></TabsContent>
+            <TabsContent value="hybrid"><ErrorBoundary inline><IdcaHybridPanel /></ErrorBoundary></TabsContent>
             <TabsContent value="history"><HistoryTab /></TabsContent>
             <TabsContent value="telegram"><TelegramTab /></TabsContent>
             <TabsContent value="help"><HelpTab /></TabsContent>
@@ -3007,7 +3008,7 @@ function ImportPositionModal({ open, onClose }: { open: boolean; onClose: () => 
 // ════════════════════════════════════════════════════════════════════
 
 function CyclesTab() {
-  const [filter, setFilter] = useState<"all" | "active" | "closed">("all");
+  const [filter, setFilter] = useState<"all" | "active" | "closed">("active");
   const [modeFilter, setModeFilter] = useState<"all" | "simulation" | "live">("all");
   const [importOpen, setImportOpen] = useState(false);
   const { data: cycles, isLoading } = useIdcaCycles({

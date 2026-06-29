@@ -2,6 +2,8 @@ import { Component, ErrorInfo, ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
+  /** If true, renders a compact inline error card instead of the full-screen overlay */
+  inline?: boolean;
 }
 
 interface State {
@@ -26,6 +28,10 @@ export class ErrorBoundary extends Component<Props, State> {
     this.setState({ errorInfo });
   }
 
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null });
+  };
+
   handleReload = () => {
     window.location.reload();
   };
@@ -42,6 +48,41 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      if (this.props.inline) {
+        return (
+          <div style={{
+            border: "1px solid rgba(239,68,68,0.3)",
+            borderRadius: "8px",
+            padding: "16px",
+            backgroundColor: "rgba(239,68,68,0.05)",
+            color: "#fca5a5",
+            fontSize: "13px",
+          }}>
+            <strong>No se pudo cargar este panel.</strong>
+            <br />
+            <span style={{ color: "#a1a1aa", fontSize: "12px" }}>
+              {this.state.error?.message ?? "Error desconocido"}
+            </span>
+            <br />
+            <button
+              onClick={this.handleRetry}
+              style={{
+                marginTop: "10px",
+                padding: "4px 14px",
+                background: "#3b82f6",
+                color: "#fff",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontSize: "12px",
+              }}
+            >
+              Reintentar
+            </button>
+          </div>
+        );
+      }
+
       return (
         <div style={{
           minHeight: "100vh",
