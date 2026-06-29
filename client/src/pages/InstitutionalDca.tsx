@@ -106,6 +106,7 @@ import {
   XCircle,
   Filter,
   CheckCircle2,
+  PlusCircle,
 } from "lucide-react";
 import { cn, formatSmallUsd } from "@/lib/utils";
 import { IdcaEventsList, IdcaLiveEventsFeed, EVENT_TYPE_LABELS } from "@/components/idca/IdcaEventCards";
@@ -118,6 +119,7 @@ import { AvanzadoTab } from "@/components/idca/AvanzadoTab";
 import { IdcaTerminalPanel } from "@/components/idca/IdcaTerminalPanel";
 import { IdcaLogsPanel } from "@/components/idca/IdcaLogsPanel";
 import { IdcaHybridPanel } from "@/components/idca/IdcaHybridPanel";
+import { AddManualBuyModal } from "@/components/idca/AddManualBuyModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { IdcaMarketContextSummary } from "@/components/idca/IdcaMarketContextCard";
 import { IdcaMarketPriceHeader } from "@/components/idca/IdcaMarketPriceHeader";
@@ -3127,6 +3129,7 @@ function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: 
   const [showEditModal, setShowEditModal] = useState(false);
   const [showTimeStopDisableConfirm, setShowTimeStopDisableConfirm] = useState(false);
   const [showExitModal, setShowExitModal] = useState(false);
+  const [showManualBuyModal, setShowManualBuyModal] = useState(false);
   const { data: orders, isLoading: ordersLoading } = useIdcaCycleOrders(expanded ? cycle.id : null);
   const toggleSoloSalida = useToggleSoloSalida();
   const toggleTimeStop = useToggleTimeStop();
@@ -3909,6 +3912,19 @@ function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: 
                     Programar salida
                   </Button>
                 )}
+                {/* Manual buy registration */}
+                {cycle.status !== "closed" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-3 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 text-[10px] border border-cyan-400/30"
+                    onClick={() => setShowManualBuyModal(true)}
+                    title="Registra una compra manual dentro de este ciclo. No ejecuta órdenes reales."
+                  >
+                    <PlusCircle className="h-3 w-3 mr-1" />
+                    Añadir compra manual
+                  </Button>
+                )}
               </div>
               <Button
                 variant="ghost"
@@ -4337,6 +4353,9 @@ function CycleDetailRow({ cycle, marketContext }: { cycle: any; marketContext?: 
 
     {/* Lote 4: Exit Instruction Modal */}
     <IdcaCycleExitModal open={showExitModal} onClose={() => setShowExitModal(false)} cycle={cycle} />
+
+    {/* Manual Buy Registration Modal */}
+    <AddManualBuyModal open={showManualBuyModal} onOpenChange={setShowManualBuyModal} cycle={cycle} />
   </Card>
 );
 }

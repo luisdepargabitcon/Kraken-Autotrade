@@ -1032,6 +1032,36 @@ export function useSetCycleStatus() {
   });
 }
 
+export interface ManualBuyInput {
+  pair: string;
+  price: number;
+  quantity: number;
+  notionalUsd: number;
+  feesUsd: number;
+  executedAt: string;
+  exchange: string;
+  externalOrderId?: string | null;
+  note?: string | null;
+  continueAutomaticManagement: boolean;
+}
+
+export function useManualBuyCycle() {
+  const qc = useQueryClient();
+  return useMutation<any, Error, { cycleId: number } & ManualBuyInput>({
+    mutationFn: async ({ cycleId, ...body }) => {
+      const res = await apiRequest("POST", `${PREFIX}/cycles/${cycleId}/manual-buy`, body as any);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(err.error || "Failed to add manual buy");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["idca"] });
+    },
+  });
+}
+
 export function useIdcaClosedCycles(limit: number = 50) {
   return useQuery<IdcaCycle[]>({
     queryKey: ["idca", "cycles", "closed", limit],

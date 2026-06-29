@@ -708,6 +708,53 @@ export function registerInstitutionalDcaRoutes(app: Express): void {
     }
   });
 
+  // ─── Manual Buy Registration (add buy to open cycle, no real order) ──
+
+  app.post(`${PREFIX}/cycles/:id/manual-buy`, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+
+      const {
+        pair, price, quantity, notionalUsd, feesUsd,
+        executedAt, exchange, externalOrderId, note,
+        continueAutomaticManagement,
+      } = req.body;
+
+      if (!pair) return res.status(400).json({ error: "pair es requerido" });
+      if (!price || price <= 0) return res.status(400).json({ error: "price debe ser > 0" });
+      if (!quantity || quantity <= 0) return res.status(400).json({ error: "quantity debe ser > 0" });
+      if (!notionalUsd || notionalUsd <= 0) return res.status(400).json({ error: "notionalUsd debe ser > 0" });
+      if (feesUsd == null || feesUsd < 0) return res.status(400).json({ error: "feesUsd debe ser >= 0" });
+      if (!executedAt) return res.status(400).json({ error: "executedAt es requerido" });
+
+      const validExchanges = ["kraken", "revolut_x", "bit2me", "manual_external", "other"];
+      if (!exchange || !validExchanges.includes(exchange)) {
+        return res.status(400).json({ error: `exchange inválido. Permitidos: ${validExchanges.join(", ")}` });
+      }
+
+      const { addManualBuyToCycle } = await import("../services/institutionalDca/IdcaManualBuyService");
+      const result = await addManualBuyToCycle({
+        cycleId: id,
+        pair,
+        price: parseFloat(price),
+        quantity: parseFloat(quantity),
+        notionalUsd: parseFloat(notionalUsd),
+        feesUsd: parseFloat(feesUsd),
+        executedAt,
+        exchange,
+        externalOrderId: externalOrderId || null,
+        note: note || null,
+        continueAutomaticManagement: continueAutomaticManagement ?? true,
+      });
+
+      res.json(result);
+    } catch (e: any) {
+      console.error("[IDCA] manual-buy error:", e.message);
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // ─── Manual Close Cycle (sell position) ────────────────────────
 
   app.post(`${PREFIX}/cycles/:id/close-manual`, async (req, res) => {
