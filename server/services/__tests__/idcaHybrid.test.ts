@@ -488,6 +488,87 @@ describe("ActiveCycle Observer — cycleKind routing", () => {
   });
 });
 
+// ── Event Separation — current plan vs historical ─────────────────────────────
+/**
+ * Pure logic tests that verify event separation without a real DB.
+ * We simulate the filtering logic that getGridPlan and getHybridEvents implement.
+ */
+describe("Grid event separation — currentPlanEvents vs historicalEvents", () => {
+  interface MockEvent { id: number; grid_plan_id: string | null; event_type: string; ts: string; }
+
+  const PLAN_A = "GRID-29-1000000000001";
+  const PLAN_B = "GRID-29-1000000000002";
+
+  const allCycleEvents: MockEvent[] = [
+    { id: 1, grid_plan_id: PLAN_A, event_type: "GRID_PLAN_CREATED", ts: "2026-01-01T10:00:00Z" },
+    { id: 2, grid_plan_id: PLAN_A, event_type: "GRID_LEVEL_PLANNED", ts: "2026-01-01T10:00:01Z" },
+    { id: 3, grid_plan_id: PLAN_A, event_type: "GRID_LEVEL_PLANNED", ts: "2026-01-01T10:00:02Z" },
+    { id: 4, grid_plan_id: PLAN_A, event_type: "GRID_LEVEL_PLANNED", ts: "2026-01-01T10:00:03Z" },
+    { id: 5, grid_plan_id: null,   event_type: "GRID_BLOCKED_BEAR_TREND", ts: "2026-01-02T09:00:00Z" },
+    { id: 6, grid_plan_id: PLAN_B, event_type: "GRID_PLAN_CREATED", ts: "2026-01-03T10:00:00Z" },
+    { id: 7, grid_plan_id: PLAN_B, event_type: "GRID_LEVEL_PLANNED", ts: "2026-01-03T10:00:01Z" },
+    { id: 8, grid_plan_id: PLAN_B, event_type: "GRID_LEVEL_PLANNED", ts: "2026-01-03T10:00:02Z" },
+    { id: 9, grid_plan_id: PLAN_B, event_type: "GRID_LEVEL_PLANNED", ts: "2026-01-03T10:00:03Z" },
+  ];
+
+  function simulateGetGridPlanEventSeparation(currentGridPlanId: string) {
+    const currentPlanEvents = allCycleEvents.filter(ev => ev.grid_plan_id === currentGridPlanId);
+    const historicalEventsCount = allCycleEvents.length;
+    const currentPlanEventsCount = currentPlanEvents.length;
+    return { currentPlanEvents, currentPlanEventsCount, historicalEventsCount };
+  }
+
+  it("currentPlanEventsCount = 4 for a 3-level plan (1 CREATED + 3 PLANNED)", () => {
+    const { currentPlanEventsCount, currentPlanEvents } = simulateGetGridPlanEventSeparation(PLAN_B);
+    expect(currentPlanEventsCount).toBe(4);
+    expect(currentPlanEvents.map(e => e.event_type)).toContain("GRID_PLAN_CREATED");
+    expect(currentPlanEvents.filter(e => e.event_type === "GRID_LEVEL_PLANNED")).toHaveLength(3);
+  });
+
+  it("historicalEventsCount includes all events from the cycle (multiple plans + blocked)", () => {
+    const { historicalEventsCount } = simulateGetGridPlanEventSeparation(PLAN_B);
+    expect(historicalEventsCount).toBe(9); // 4 from PLAN_A + 1 blocked + 4 from PLAN_B
+    expect(historicalEventsCount).toBeGreaterThan(4); // strictly more than current plan
+  });
+
+  it("events[] returned = only currentPlanEvents, not mixed with old plans", () => {
+    const { currentPlanEvents } = simulateGetGridPlanEventSeparation(PLAN_B);
+    const planIds = new Set(currentPlanEvents.map(e => e.grid_plan_id));
+    expect(planIds.size).toBe(1);
+    expect(planIds.has(PLAN_B)).toBe(true);
+    expect(planIds.has(PLAN_A)).toBe(false);
+  });
+
+  it("latestPlanOnly filter: only events of most recent grid_plan_id", () => {
+    const latestPlanId = allCycleEvents
+      .filter(ev => ev.grid_plan_id != null)
+      .sort((a, b) => b.ts.localeCompare(a.ts))[0]?.grid_plan_id;
+    expect(latestPlanId).toBe(PLAN_B);
+    const filtered = allCycleEvents.filter(ev => ev.grid_plan_id === latestPlanId);
+    expect(filtered).toHaveLength(4);
+  });
+
+  it("gridPlanId filter: exact plan id filtering works", () => {
+    const filtered = allCycleEvents.filter(ev => ev.grid_plan_id === PLAN_A);
+    expect(filtered).toHaveLength(4);
+    expect(filtered.every(ev => ev.grid_plan_id === PLAN_A)).toBe(true);
+  });
+
+  it("cycle history does NOT contaminate current plan events", () => {
+    const { currentPlanEvents } = simulateGetGridPlanEventSeparation(PLAN_A);
+    // PLAN_A has 4 events, PLAN_B's events should not appear
+    expect(currentPlanEvents.find(ev => ev.grid_plan_id === PLAN_B)).toBeUndefined();
+    expect(currentPlanEvents.every(ev => ev.grid_plan_id === PLAN_A)).toBe(true);
+  });
+
+  it("blocked events (grid_plan_id=null) are only in historical, never in currentPlanEvents", () => {
+    const { currentPlanEvents } = simulateGetGridPlanEventSeparation(PLAN_B);
+    const nullPlanEvents = currentPlanEvents.filter(ev => ev.grid_plan_id === null);
+    expect(nullPlanEvents).toHaveLength(0);
+    expect(allCycleEvents.some(ev => ev.grid_plan_id === null)).toBe(true); // exists in full history
+  });
+});
+
 // ── Migration Traceability ───────────────────────────────────────────────────
 
 describe("Migration 060 — IDCA Hybrid Grid traceability", () => {

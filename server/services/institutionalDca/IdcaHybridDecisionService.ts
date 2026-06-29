@@ -787,6 +787,9 @@ async function getGridPlan(pair: string, cycleId: number): Promise<{
   gridState: string | null;
   observerOnly: boolean;
   regime: string | null;
+  currentGridPlanId: string | null;
+  currentPlanEventsCount: number;
+  historicalEventsCount: number;
   plan: Record<string, any> | null;
   levels: any[];
   legs: any[];
@@ -806,12 +809,13 @@ async function getGridPlan(pair: string, cycleId: number): Promise<{
   `);
   const legs = legRows.rows ?? [];
 
+  // Fetch ALL events for this cycle to compute historicalEventsCount correctly
   const eventRows = await db.execute(sql`
     SELECT * FROM idca_hybrid_events
     WHERE pair = ${pair} AND cycle_id = ${cycleId}
-    ORDER BY ts DESC LIMIT 100
+    ORDER BY ts ASC
   `);
-  const events = eventRows.rows ?? [];
+  const allCycleEvents: any[] = eventRows.rows ?? [];
 
   const gridState = state?.grid_state ?? "GRID_INACTIVE";
   const observerOnly = legs.length > 0 ? Boolean(legs[0].observer_only) : true;
@@ -866,8 +870,20 @@ async function getGridPlan(pair: string, cycleId: number): Promise<{
   }
   logicalLevels.sort((a, b) => a.gridLevelIndex - b.gridLevelIndex);
 
+  // Determine current plan ID from legs (most recent grid_plan_id)
+  const currentGridPlanId: string | null = (legs.find((l: any) => l.grid_plan_id)?.grid_plan_id as string | undefined) ?? null;
+
+  // Separate events: current plan vs full cycle history
+  const currentPlanEvents: any[] = currentGridPlanId
+    ? allCycleEvents.filter((ev: any) => ev.grid_plan_id === currentGridPlanId)
+    : allCycleEvents.slice(-50); // fallback: latest 50 if no plan id
+  const historicalEventsCount = allCycleEvents.length;
+  const currentPlanEventsCount = currentPlanEvents.length;
+  // Return current plan events newest-first, capped at 100
+  const events = [...currentPlanEvents].reverse().slice(0, 100);
+
   const plan = state ? {
-    gridPlanId: legs[0]?.grid_plan_id ?? null,
+    gridPlanId: currentGridPlanId,
     createdAt: legs[0]?.created_at ?? state.created_at,
     updatedAt: state.updated_at,
     status: gridState,
@@ -889,7 +905,13 @@ async function getGridPlan(pair: string, cycleId: number): Promise<{
     raw: state.raw_json,
   } : null;
 
-  return { pair, cycleId, gridState, observerOnly, regime: state?.regime ?? null, plan, levels: logicalLevels, legs, events };
+  return {
+    pair, cycleId, gridState, observerOnly, regime: state?.regime ?? null,
+    plan, levels: logicalLevels, legs, events,
+    currentPlanEventsCount,
+    historicalEventsCount,
+    currentGridPlanId,
+  };
 }
 
 async function getAllGridPlans(): Promise<any[]> {
@@ -914,15 +936,40 @@ async function getHybridEvents(
     since?: string;
     limit?: number;
     observerOnly?: boolean;
+    gridPlanId?: string;
+    latestPlanOnly?: boolean;
   }
 ): Promise<HybridEventRow[]> {
-  const limit = Math.min(filters.limit ?? 100, 200);
+  const limit = Math.min(filters.limit ?? 100, 500);
+
+  // Resolve latestPlanOnly: find the most recent grid_plan_id for this pair/cycle
+  let resolvedGridPlanId: string | undefined = filters.gridPlanId;
+  if (filters.latestPlanOnly && !resolvedGridPlanId) {
+    if (filters.pair && filters.cycleId != null) {
+      const latestPlan = await db.execute(sql`
+        SELECT grid_plan_id FROM idca_hybrid_events
+        WHERE pair = ${filters.pair} AND cycle_id = ${filters.cycleId}
+          AND grid_plan_id IS NOT NULL
+        ORDER BY ts DESC LIMIT 1
+      `);
+      resolvedGridPlanId = (latestPlan.rows ?? [])[0]?.grid_plan_id as string | undefined;
+    } else if (filters.pair) {
+      const latestPlan = await db.execute(sql`
+        SELECT grid_plan_id FROM idca_hybrid_events
+        WHERE pair = ${filters.pair} AND grid_plan_id IS NOT NULL
+        ORDER BY ts DESC LIMIT 1
+      `);
+      resolvedGridPlanId = (latestPlan.rows ?? [])[0]?.grid_plan_id as string | undefined;
+    }
+  }
+
   let query = sql`SELECT * FROM idca_hybrid_events WHERE 1=1`;
   if (filters.pair) query = sql`${query} AND pair = ${filters.pair}`;
   if (filters.cycleId != null) query = sql`${query} AND cycle_id = ${filters.cycleId}`;
   if (filters.eventType) query = sql`${query} AND event_type = ${filters.eventType}`;
   if (filters.since) query = sql`${query} AND ts >= ${filters.since}`;
   if (filters.observerOnly != null) query = sql`${query} AND observer_only = ${filters.observerOnly}`;
+  if (resolvedGridPlanId) query = sql`${query} AND grid_plan_id = ${resolvedGridPlanId}`;
   query = sql`${query} ORDER BY ts DESC LIMIT ${limit}`;
   const result = await db.execute(query);
   return ((result.rows ?? []) as unknown[]) as HybridEventRow[];

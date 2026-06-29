@@ -115,7 +115,10 @@ export function registerIdcaHybridRoutes(app: Express): void {
     }
   });
 
-  // GET /api/idca/hybrid/events?pair=BTC%2FUSD&cycleId=29&eventType=GRID_PLAN_CREATED&limit=100
+  // GET /api/idca/hybrid/events
+  // Filters: pair, cycleId, eventType, since, limit, observerOnly, gridPlanId, latestPlanOnly
+  // latestPlanOnly=true → only events of the latest grid_plan_id for pair/cycle
+  // gridPlanId=GRID-29-xxx → only events matching that plan
   app.get("/api/idca/hybrid/events", async (req, res) => {
     try {
       const pair = req.query.pair as string | undefined;
@@ -123,7 +126,9 @@ export function registerIdcaHybridRoutes(app: Express): void {
       const eventType = req.query.eventType as string | undefined;
       const since = req.query.since as string | undefined;
       const observerOnly = req.query.observerOnly === "true" ? true : req.query.observerOnly === "false" ? false : undefined;
-      const limit = Math.min(parseInt((req.query.limit as string) || "100", 10), 200);
+      const limit = Math.min(parseInt((req.query.limit as string) || "100", 10), 500);
+      const gridPlanId = req.query.gridPlanId as string | undefined;
+      const latestPlanOnly = req.query.latestPlanOnly === "true";
 
       const events = await idcaHybridDecisionService.getHybridEvents({
         pair,
@@ -132,6 +137,8 @@ export function registerIdcaHybridRoutes(app: Express): void {
         since,
         limit,
         observerOnly,
+        gridPlanId,
+        latestPlanOnly,
       });
 
       res.json({ success: true, data: events, total: events.length });

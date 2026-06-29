@@ -49,6 +49,9 @@ interface GridPlanResponse {
   gridState: string;
   observerOnly: boolean;
   regime: string | null;
+  currentGridPlanId: string | null;
+  currentPlanEventsCount: number;
+  historicalEventsCount: number;
   plan: {
     gridPlanId: string | null;
     createdAt: string;
@@ -124,6 +127,7 @@ export function useIdcaCycleGridPlan(pair: string, cycleId: number) {
 
 export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProps) {
   const [open, setOpen] = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
   const { data, isLoading, error, refetch } = useIdcaCycleGridPlan(pair, cycleId);
 
   const formatPrice = (val: string | number | null | undefined) => {
@@ -165,6 +169,17 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
     );
   }
 
+  // Fetch full cycle history separately when user requests it
+  const historyQuery = useQuery<GridEvent[]>({
+    queryKey: ["/api/idca/hybrid/events", pair, cycleId, "history"],
+    queryFn: () =>
+      fetch(`/api/idca/hybrid/events?pair=${encodeURIComponent(pair)}&cycleId=${cycleId}&limit=500`)
+        .then(r => r.json())
+        .then(j => j.data ?? []),
+    enabled: showHistory && open,
+    staleTime: 30_000,
+  });
+
   if (!data || !data.plan || (data.levels ?? []).length === 0) {
     return (
       <Alert className="border-muted py-2">
@@ -176,7 +191,9 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
     );
   }
 
-  const { plan, levels, events } = data;
+  const { plan, levels } = data;
+  const currentPlanEvents = data.events ?? [];
+  const events = showHistory ? (historyQuery.data ?? currentPlanEvents) : currentPlanEvents;
   const gridState = plan.status ?? data.gridState ?? "GRID_INACTIVE";
   const gridLabel = STATUS_LABELS[gridState] ?? gridState;
   const severity = gridState.startsWith("GRID_BLOCKED") || gridState === "GRID_INACTIVE" ? "blocked" : "simulated";
@@ -284,12 +301,27 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
               ))}
             </div>
 
-            {/* Events */}
-            {events.length > 0 && (
-              <div className="space-y-2 border-t border-border/20 pt-2">
-                <div className="text-xs font-medium text-muted-foreground">Eventos del grid</div>
-                <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {events.slice(0, 20).map((ev) => (
+            {/* Events — current plan by default, toggle to full history */}
+            <div className="space-y-2 border-t border-border/20 pt-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {showHistory ? "Histórico completo del ciclo" : "Eventos del plan actual"}
+                  <span className="ml-2 text-muted-foreground/60">
+                    {data.currentPlanEventsCount ?? 0} plan actual · {data.historicalEventsCount ?? 0} histórico
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-[11px] px-2 py-0"
+                  onClick={() => setShowHistory((v: boolean) => !v)}
+                >
+                  {showHistory ? "Solo plan actual" : "Ver histórico completo"}
+                </Button>
+              </div>
+              {events.length > 0 ? (
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {events.slice(0, 100).map((ev) => (
                     <div key={ev.id} className="flex items-start gap-2 text-xs">
                       <span className="text-muted-foreground whitespace-nowrap">{formatDate(ev.ts)}</span>
                       <Badge variant="outline" className={`text-[10px] px-1 py-0 h-4 shrink-0 ${SEVERITY_COLORS[ev.severity] ?? SEVERITY_COLORS.info}`}>
@@ -300,8 +332,10 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <p className="text-xs text-muted-foreground/50">Sin eventos registrados</p>
+              )}
+            </div>
 
             <div className="flex justify-end">
               <Button size="sm" variant="outline" className="text-xs gap-1" onClick={() => refetch()}>

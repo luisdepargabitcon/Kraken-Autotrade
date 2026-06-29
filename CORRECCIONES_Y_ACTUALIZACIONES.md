@@ -2,6 +2,65 @@
 
 ---
 
+## 2026-06-29 — fix(idca-hybrid): separar eventos del plan actual vs histórico del ciclo
+
+### Problema
+`GET /api/idca/hybrid/grid/:pair/:cycleId` devolvía `eventsCount=100` mezclando eventos de planes anteriores con el plan actual. La UI no distinguía entre "4 eventos del plan GRID-29-xxx" y "100 eventos del ciclo 29 acumulados históricamente".
+
+### Solución
+
+**`IdcaHybridDecisionService.ts` — `getGridPlan`**:
+- Carga TODOS los eventos del ciclo sin límite.
+- Filtra `currentPlanEvents` por `grid_plan_id = currentGridPlanId` (legs del plan activo).
+- `events[]` devuelto = solo eventos del plan actual (newest-first, capped 100).
+- `currentPlanEventsCount` = cantidad exacta del plan actual (ej. 4).
+- `historicalEventsCount` = total histórico del ciclo (ej. 100).
+- `currentGridPlanId` expuesto en la respuesta.
+
+**`IdcaHybridDecisionService.ts` — `getHybridEvents`**:
+- Nuevo filtro `gridPlanId`: filtra exactamente por ese plan.
+- Nuevo filtro `latestPlanOnly=true`: busca el `grid_plan_id` más reciente para pair/cycle y filtra.
+- Límite ampliado a 500 eventos para consultas históricas.
+
+**Route `GET /api/idca/hybrid/events`**:
+- Pasa `gridPlanId` y `latestPlanOnly` desde query params.
+- Límite ampliado a 500.
+
+**UI `IdcaCycleGridOverlay.tsx`**:
+- Por defecto muestra "Eventos del plan actual" (solo `currentPlanEventsCount` eventos).
+- Contador: "4 plan actual · 100 histórico".
+- Botón toggle "Ver histórico completo" / "Solo plan actual".
+- Al activar histórico, hace fetch a `/api/idca/hybrid/events?pair=...&cycleId=...&limit=500`.
+
+### Respuesta API corregida
+```json
+{
+  "events": [/* solo 4 eventos del plan GRID-29-1782738641065 */],
+  "currentPlanEventsCount": 4,
+  "historicalEventsCount": 100,
+  "currentGridPlanId": "GRID-29-1782738641065"
+}
+```
+
+### Nuevos filtros en /api/idca/hybrid/events
+- `?pair=ETH/USD&cycleId=29` → historial completo del ciclo
+- `?pair=ETH/USD&cycleId=29&latestPlanOnly=true` → solo último plan
+- `?gridPlanId=GRID-29-1782738641065` → plan exacto
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaHybridDecisionService.ts`
+- `server/routes/idcaHybrid.routes.ts`
+- `client/src/components/idca/IdcaCycleGridOverlay.tsx`
+- `server/services/__tests__/idcaHybrid.test.ts`
+
+### Validación
+- ✅ `npm run check`: sin errores
+- ✅ `npm run build`: ✅
+- ✅ `npx vitest run idcaHybrid.test.ts`: 44/44 (7 tests nuevos)
+- ✅ `observer_only=true`, no trading real, `doNotRewriteAnchor=true`
+
+---
+
 ## 2026-06-29 — fix(idca-hybrid): evitar doble conteo en Grid Observer + agrupar niveles lógicos
 
 ### Problema
