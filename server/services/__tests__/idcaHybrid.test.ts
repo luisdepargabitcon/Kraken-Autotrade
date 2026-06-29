@@ -298,6 +298,64 @@ describe("GridOverlay", () => {
     expect(decision.capitalBudget).toBeCloseTo(expectedBudget, 2);
     expect(decision.capitalPerLevel).toBeCloseTo(expectedPerLevel, 2);
   });
+
+  it("levelsCount = logical buy levels, NOT total legs", () => {
+    const nLevels = 3;
+    const decision = evaluateGridOverlay(
+      makeRegime({ regime: "lateral", price: 2000 }), noOpMr,
+      { ...defaultGridConfig, maxGridLevels: nLevels },
+      5000, 42, "observer"
+    );
+    expect(decision.gridAllowed).toBe(true);
+    const buyLegs = decision.levels.filter(l => l.side === "buy");
+    const sellLegs = decision.levels.filter(l => l.side === "sell");
+    expect(buyLegs.length).toBe(nLevels);
+    expect(sellLegs.length).toBe(nLevels);
+    expect(decision.levels.length).toBe(nLevels * 2); // total technical legs
+    expect(decision.levelsCount).toBe(nLevels);       // logical levels only
+  });
+
+  it("each leg has gridLevelIndex and legRole", () => {
+    const decision = evaluateGridOverlay(
+      makeRegime({ regime: "lateral", price: 2000 }), noOpMr,
+      { ...defaultGridConfig, maxGridLevels: 3 },
+      5000, 42, "observer"
+    );
+    for (const leg of decision.levels) {
+      expect(leg.gridLevelIndex).toBeGreaterThan(0);
+      expect(["buy_entry", "sell_tp"]).toContain(leg.legRole);
+      if (leg.side === "buy") expect(leg.legRole).toBe("buy_entry");
+      if (leg.side === "sell") expect(leg.legRole).toBe("sell_tp");
+    }
+  });
+
+  it("buy-only capital and PnL do not double-count sell legs", () => {
+    const cycleCapital = 9000;
+    const maxPct = 10;
+    const nLevels = 3;
+    const decision = evaluateGridOverlay(
+      makeRegime({ regime: "lateral", price: 3000 }), noOpMr,
+      { ...defaultGridConfig, maxGridCapitalPctOfCycle: maxPct, maxGridLevels: nLevels },
+      cycleCapital, 42, "observer"
+    );
+    const buyLegs = decision.levels.filter(l => l.legRole === "buy_entry" || l.side === "buy");
+    const sellLegs = decision.levels.filter(l => l.legRole === "sell_tp" || l.side === "sell");
+
+    const buyCapital = buyLegs.reduce((s, l) => s + l.plannedNotionalUsd, 0);
+    const sellCapital = sellLegs.reduce((s, l) => s + l.plannedNotionalUsd, 0);
+    const totalCapital = decision.levels.reduce((s, l) => s + l.plannedNotionalUsd, 0);
+
+    // Capital at risk must equal buy capital, not buy+sell
+    expect(buyCapital).toBeCloseTo(decision.capitalBudget, 0);
+    expect(totalCapital).toBeGreaterThan(buyCapital); // sell legs inflate total
+    expect(buyCapital).toBeLessThan(totalCapital);
+
+    const buyPnl = buyLegs.reduce((s, l) => s + l.expectedNetProfitUsd, 0);
+    const allPnl = decision.levels.reduce((s, l) => s + l.expectedNetProfitUsd, 0);
+    // PnL from buy+sell would be 2x; buy-only is the correct value
+    expect(allPnl).toBeCloseTo(buyPnl * 2, 0);
+    expect(buyPnl).toBeGreaterThan(0);
+  });
 });
 
 // ── ActiveCycle Observer Safety Invariants ────────────────────────────────────

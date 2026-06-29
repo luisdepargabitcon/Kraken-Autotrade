@@ -16,21 +16,20 @@ import {
   ChevronDown, Grid3X3, Eye, TrendingDown, DollarSign, Activity, Clock, Info, AlertTriangle,
 } from "lucide-react";
 
-interface GridLeg {
-  leg_index: number;
-  side: "buy" | "sell";
+interface LogicalLevel {
+  gridLevelIndex: number;
   status: string;
-  planned_entry_price: string | number;
-  planned_exit_price: string | number;
-  quantity: string | number;
-  planned_notional_usd: string | number;
-  expected_net_profit_usd: string | number;
-  natural_reason: string | null;
-  trigger_condition_json?: any;
-  observer_only: boolean;
-  created_at: string;
-  triggered_at: string | null;
-  closed_at: string | null;
+  plannedEntryPrice: number;
+  plannedExitPrice: number;
+  plannedQuantity: number;
+  plannedNotionalUsd: number;
+  expectedGrossProfitUsd: number;
+  expectedFeesUsd: number;
+  expectedNetProfitUsd: number;
+  triggerCondition: string | null;
+  cancelCondition: string | null;
+  entryTriggeredAt: string | null;
+  tpClosedAt: string | null;
 }
 
 interface GridEvent {
@@ -54,18 +53,23 @@ interface GridPlanResponse {
     gridPlanId: string | null;
     createdAt: string;
     updatedAt: string;
+    status: string;
+    naturalReason: string;
     capitalMaxUsd: number;
+    plannedBuyCapitalUsd: number;
+    plannedSellNotionalUsd: number;
     capitalUsedSimulatedUsd: number;
     maxGridCapitalPctOfCycle: number;
-    levelsCount: number;
+    buyLevelsCount: number;
+    tpLegsCount: number;
+    totalLegsCount: number;
     levelsTriggered: number;
     levelsClosed: number;
     expectedNetProfitUsd: number;
     simulatedRealizedPnlUsd: number;
-    status: string;
-    naturalReason: string;
   } | null;
-  legs: GridLeg[];
+  levels: LogicalLevel[];
+  legs: any[];
   events: GridEvent[];
 }
 
@@ -161,7 +165,7 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
     );
   }
 
-  if (!data || !data.plan || data.legs.length === 0) {
+  if (!data || !data.plan || (data.levels ?? []).length === 0) {
     return (
       <Alert className="border-muted py-2">
         <Info className="h-3.5 w-3.5" />
@@ -172,13 +176,10 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
     );
   }
 
-  const { plan, legs, events } = data;
+  const { plan, levels, events } = data;
   const gridState = plan.status ?? data.gridState ?? "GRID_INACTIVE";
   const gridLabel = STATUS_LABELS[gridState] ?? gridState;
   const severity = gridState.startsWith("GRID_BLOCKED") || gridState === "GRID_INACTIVE" ? "blocked" : "simulated";
-
-  // Separate buy/sell legs by group for display
-  const buyLegs = legs.filter((l) => l.side === "buy");
 
   return (
     <Card className="border-purple-500/20 bg-purple-500/5">
@@ -203,35 +204,35 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
         </CardHeader>
         <CollapsibleContent>
           <CardContent className="space-y-4">
-            {/* Summary */}
+            {/* Summary — corrected: capital and PnL only count buy levels */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div className="space-y-0.5">
                 <div className="text-muted-foreground flex items-center gap-1"><TrendingDown className="h-3 w-3" /> Régimen</div>
                 <div className="font-medium">{data.regime ?? "—"}</div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-muted-foreground flex items-center gap-1"><DollarSign className="h-3 w-3" /> Capital máx. grid</div>
+                <div className="text-muted-foreground flex items-center gap-1"><DollarSign className="h-3 w-3" /> Capital máx. autorizado</div>
                 <div className="font-medium">{formatUsd(plan.capitalMaxUsd)}</div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-muted-foreground flex items-center gap-1"><Activity className="h-3 w-3" /> Capital usado simulado</div>
-                <div className="font-medium">{formatUsd(plan.capitalUsedSimulatedUsd)}</div>
+                <div className="text-muted-foreground flex items-center gap-1"><Activity className="h-3 w-3" /> Capital simulado en riesgo</div>
+                <div className="font-medium text-amber-400">{formatUsd(plan.capitalUsedSimulatedUsd)}</div>
               </div>
               <div className="space-y-0.5">
                 <div className="text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3" /> Última actualización</div>
                 <div className="font-medium">{formatDate(plan.updatedAt)}</div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-muted-foreground">Niveles calculados</div>
-                <div className="font-medium">{plan.levelsCount}</div>
+                <div className="text-muted-foreground">Niveles de compra</div>
+                <div className="font-medium">{plan.buyLevelsCount} <span className="text-muted-foreground/70">+ {plan.tpLegsCount} TP</span></div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-muted-foreground">Niveles activados</div>
-                <div className="font-medium">{plan.levelsTriggered}</div>
+                <div className="text-muted-foreground">Legs técnicas</div>
+                <div className="font-medium text-muted-foreground">{plan.totalLegsCount}</div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-muted-foreground">Niveles cerrados</div>
-                <div className="font-medium">{plan.levelsClosed}</div>
+                <div className="text-muted-foreground">Activados / Cerrados</div>
+                <div className="font-medium">{plan.levelsTriggered} / {plan.levelsClosed}</div>
               </div>
               <div className="space-y-0.5">
                 <div className="text-muted-foreground">Beneficio neto esperado</div>
@@ -248,7 +249,7 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
               </p>
             )}
 
-            {/* Levels table */}
+            {/* Logical levels table — 1 row per buy level, NOT per technical leg */}
             <div className="border rounded-md overflow-hidden">
               <div className="bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground grid grid-cols-12 gap-1">
                 <div className="col-span-1">Nivel</div>
@@ -259,33 +260,28 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
                 <div className="col-span-2">Capital</div>
                 <div className="col-span-1 text-right">Neto</div>
               </div>
-              {buyLegs.map((buyLeg) => {
-                const legGroup = Math.ceil(buyLeg.leg_index / 2);
-                const sellLeg = legs.find((l) => Math.ceil(l.leg_index / 2) === legGroup && l.side === "sell");
-                return (
-                  <div key={buyLeg.leg_index} className="px-3 py-2 text-xs grid grid-cols-12 gap-1 items-center border-t border-border/10">
-                    <div className="col-span-1 font-medium">#{Math.ceil(buyLeg.leg_index / 2)}</div>
-                    <div className="col-span-2">
-                      <Badge variant="outline" className="text-[10px] px-1 py-0 h-5 bg-purple-500/5 text-purple-400 border-purple-500/20">
-                        {STATUS_LABELS[buyLeg.status] ?? buyLeg.status}
-                      </Badge>
-                    </div>
-                    <div className="col-span-2 font-mono">${formatPrice(buyLeg.planned_entry_price)}</div>
-                    <div className="col-span-2 font-mono">${formatPrice(buyLeg.planned_exit_price)}</div>
-                    <div className="col-span-2 font-mono">{formatQty(buyLeg.quantity)}</div>
-                    <div className="col-span-2 font-mono">{formatUsd(buyLeg.planned_notional_usd)}</div>
-                    <div className={`col-span-1 text-right font-mono ${parseFloat(String(buyLeg.expected_net_profit_usd ?? 0)) >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      {formatUsd(buyLeg.expected_net_profit_usd)}
-                    </div>
-                    <div className="col-span-12 text-[10px] text-muted-foreground pl-1">
-                      {buyLeg.natural_reason}
-                      {buyLeg.trigger_condition_json?.condition && (
-                        <span className="ml-2 text-blue-400/80">↳ {buyLeg.trigger_condition_json.condition}</span>
-                      )}
-                    </div>
+              {(levels ?? []).map((lvl) => (
+                <div key={lvl.gridLevelIndex} className="px-3 py-2 text-xs grid grid-cols-12 gap-1 items-center border-t border-border/10">
+                  <div className="col-span-1 font-medium">#{lvl.gridLevelIndex}</div>
+                  <div className="col-span-2">
+                    <Badge variant="outline" className="text-[10px] px-1 py-0 h-5 bg-purple-500/5 text-purple-400 border-purple-500/20">
+                      {STATUS_LABELS[lvl.status] ?? lvl.status}
+                    </Badge>
                   </div>
-                );
-              })}
+                  <div className="col-span-2 font-mono">${formatPrice(lvl.plannedEntryPrice)}</div>
+                  <div className="col-span-2 font-mono">${formatPrice(lvl.plannedExitPrice)}</div>
+                  <div className="col-span-2 font-mono">{formatQty(lvl.plannedQuantity)}</div>
+                  <div className="col-span-2 font-mono">{formatUsd(lvl.plannedNotionalUsd)}</div>
+                  <div className={`col-span-1 text-right font-mono ${lvl.expectedNetProfitUsd >= 0 ? "text-green-400" : "text-red-400"}`}>
+                    {formatUsd(lvl.expectedNetProfitUsd)}
+                  </div>
+                  {lvl.triggerCondition && (
+                    <div className="col-span-12 text-[10px] text-blue-400/80 pl-1">
+                      ↳ Activar: {lvl.triggerCondition}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
 
             {/* Events */}

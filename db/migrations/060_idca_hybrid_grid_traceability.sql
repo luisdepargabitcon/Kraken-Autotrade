@@ -19,7 +19,10 @@ ALTER TABLE idca_grid_legs
   ADD COLUMN IF NOT EXISTS z_score_at_creation  numeric(10, 4) DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS vwap_at_creation     numeric(20, 8) DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS current_price_at_creation numeric(20, 8) DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS triggered_at       timestamptz DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS grid_level_index     integer     DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS leg_role             text        DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS created_at           timestamptz DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS triggered_at         timestamptz DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS closed_at            timestamptz DEFAULT NULL;
 
 -- Backfill: planned_entry_price = planned_price for existing rows if null

@@ -51,6 +51,61 @@ Se implementa una máquina de estados clara para el Grid, persistencia de los ni
 - `npx vitest run server/services/__tests__/idcaHybrid.test.ts`: ✅ 34 tests
 - `npx vitest run server/services/__tests__/idcaHybridEventMapper.test.ts`: ✅ 21 tests
 
+---
+
+## Revisión 2 — 2026-06-29: Corrección doble conteo niveles, capital y PnL
+
+### Problema raíz
+El grid genera dos legs técnicas por nivel lógico: `buy_entry` + `sell_tp`. Sin distinción semántica:
+- `levelsCount` reportaba 6 para 3 niveles lógicos.
+- `capitalUsedSimulatedUsd` sumaba buy+sell = doble del capital real en riesgo.
+- `expectedNetProfitUsd` sumaba buy+sell = 2× el beneficio esperado real.
+- Los eventos `GRID_LEVEL_PLANNED` se emitían para buy Y sell legs (6 eventos por 3 niveles).
+
+### Corrección aplicada
+
+**`IdcaGridOverlay.ts`**:
+- Añadidos `gridLevelIndex` (1..n) y `legRole` (`buy_entry` | `sell_tp`) a `GridLeg`.
+- `levelsCount` ya era `nLevels` (correcto), el error era en `getGridPlan`.
+
+**`IdcaHybridDecisionService.ts` — `getGridPlan`**:
+- `buyLevelsCount` = legs donde `side=buy` o `leg_role=buy_entry`.
+- `tpLegsCount` = legs donde `side=sell` o `leg_role=sell_tp`.
+- `totalLegsCount` = todas las legs técnicas.
+- `plannedBuyCapitalUsd` = suma de `planned_notional_usd` solo en buy legs.
+- `plannedSellNotionalUsd` = suma sell legs (solo informativo).
+- `capitalUsedSimulatedUsd` = `plannedBuyCapitalUsd` (capital real en riesgo).
+- `expectedNetProfitUsd` = suma solo buy legs (beneficio sin duplicar).
+- `levelsTriggered` / `levelsClosed` cuentan solo buy legs.
+- Nueva clave `levels[]` con grupos lógicos (1 fila por nivel: entry+TP).
+- DB: `leg_role` y `grid_level_index` persistidos en `idca_grid_legs`.
+
+**Migración 060** (ya existente, extendida): añade columnas `grid_level_index`, `leg_role`, `created_at`.
+
+**Eventos**:
+- `GRID_PLAN_CREATED` ahora incluye `stateAfter` correcto.
+- `GRID_LEVEL_PLANNED` solo se emite para `buy_entry` legs (no duplicado para sell_tp).
+- Metadatos incluyen `gridLevelIndex` y `legRole`.
+
+**UI `IdcaCycleGridOverlay.tsx`**:
+- Consume `levels[]` (lógicos) en lugar de `legs[]` brutos.
+- Resumen: "N niveles de compra + N TP" en lugar de "N*2 niveles".
+- Capital simulado en riesgo = solo buy capital.
+- Beneficio neto esperado = solo buy PnL.
+
+### Valores esperados para ETH/USD ciclo #29 (3 niveles, 48.67 USD/nivel)
+- `buyLevelsCount: 3`, `tpLegsCount: 3`, `totalLegsCount: 6`
+- `capitalUsedSimulatedUsd: ~146.01` (3 × 48.67)
+- `expectedNetProfitUsd: ~1.54` (0.23 + 0.51 + 0.80)
+- Eventos: 1× GRID_PLAN_CREATED, 3× GRID_LEVEL_PLANNED
+
+### Tests añadidos (37 total en idcaHybrid.test.ts)
+- `levelsCount = logical buy levels, NOT total legs`
+- `each leg has gridLevelIndex and legRole`
+- `buy-only capital and PnL do not double-count sell legs`
+
+---
+
 ## Recomendaciones
 1. Desplegar en staging para validar la migración 060 sobre datos reales.
 2. Verificar que el endpoint `GET /api/idca/hybrid/events` ya no devuelve `NOT_FOUND`.

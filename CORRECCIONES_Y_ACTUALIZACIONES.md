@@ -2,6 +2,49 @@
 
 ---
 
+## 2026-06-29 — fix(idca-hybrid): evitar doble conteo en Grid Observer + agrupar niveles lógicos
+
+### Problema
+Con 3 niveles configurados (`maxGridLevels=3`), el grid genera 6 legs técnicas (3 buy_entry + 3 sell_tp). Sin distinguir roles:
+- `levelsCount` reportaba 6 (incorrecto — son 3 niveles lógicos).
+- `capitalUsedSimulatedUsd` sumaba buy+sell ≈ 292 USD en lugar de 146 USD real en riesgo.
+- `expectedNetProfitUsd` sumaba buy+sell = 3.08 en lugar de 1.54 USD correcto.
+- `GRID_LEVEL_PLANNED` se emitía 6 veces (por buy y por sell).
+
+### Solución
+- **`IdcaGridOverlay.ts`**: añadidos `gridLevelIndex` (1..n) y `legRole` (`buy_entry` | `sell_tp`) a cada leg.
+- **`IdcaHybridDecisionService.ts`** — `getGridPlan`:
+  - `buyLevelsCount`, `tpLegsCount`, `totalLegsCount` bien separados.
+  - `capitalUsedSimulatedUsd` = suma solo buy legs (capital real en riesgo).
+  - `plannedSellNotionalUsd` = informativo únicamente.
+  - `expectedNetProfitUsd` = suma solo buy legs (sin duplicar).
+  - Nuevo campo `levels[]` con agrupación lógica buy→sell (1 objeto por nivel).
+  - `levelsTriggered` / `levelsClosed` cuentan solo buy legs.
+- **Eventos**: `GRID_PLAN_CREATED` con `stateAfter` correcto; `GRID_LEVEL_PLANNED` solo para `buy_entry` (no duplicado).
+- **Migración 060** (extendida): columnas `grid_level_index`, `leg_role`, `created_at` en `idca_grid_legs`.
+- **UI `IdcaCycleGridOverlay.tsx`**: consume `levels[]` lógicos; muestra "3 niveles de compra + 3 TP"; capital y PnL correctos.
+
+### Valores corregidos para ETH/USD ciclo #29
+- Antes: levelsCount=6, capital=292 USD, PnL=3.08 USD
+- Después: buyLevelsCount=3, tpLegsCount=3, totalLegsCount=6, capitalUsedSimulatedUsd=146 USD, expectedNetProfitUsd=1.54 USD
+
+### Archivos modificados
+- `server/services/institutionalDca/IdcaGridOverlay.ts`
+- `server/services/institutionalDca/IdcaHybridDecisionService.ts`
+- `db/migrations/060_idca_hybrid_grid_traceability.sql`
+- `client/src/components/idca/IdcaCycleGridOverlay.tsx`
+- `server/services/__tests__/idcaHybrid.test.ts`
+- `docs/audits/idca_hybrid_grid_traceability_audit.md`
+
+### Validación
+- ✅ `npm run check`: sin errores
+- ✅ `npm run build`: ✅
+- ✅ `npx vitest run idcaHybrid.test.ts`: 37/37 (3 tests nuevos)
+- ✅ `observer_only=true` en todos los legs y eventos
+- ✅ No se activa modo real ni se modifican ciclos
+
+---
+
 ## 2026-06-29 — feat(idca-hybrid): trazabilidad completa Grid Observer + endpoints + UI
 
 ### Problema

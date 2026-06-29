@@ -27,6 +27,8 @@ export type GridState =
 
 export interface GridLeg {
   legIndex: number;
+  gridLevelIndex: number;      // 1..nLevels logical level
+  legRole: "buy_entry" | "sell_tp"; // semantic role within the logical level
   side: "buy" | "sell";
   plannedPrice: number;        // alias for plannedEntryPrice (buy side)
   plannedEntryPrice: number;
@@ -183,6 +185,8 @@ export function evaluateGridOverlay(
     const group = i;
     const buyLeg: GridLeg = {
       legIndex: i * 2 - 1,
+      gridLevelIndex: i,
+      legRole: "buy_entry",
       side: "buy",
       plannedPrice: roundedBuy,
       plannedEntryPrice: roundedBuy,
@@ -201,6 +205,8 @@ export function evaluateGridOverlay(
     };
     const sellLeg: GridLeg = {
       legIndex: i * 2,
+      gridLevelIndex: i,
+      legRole: "sell_tp",
       side: "sell",
       plannedPrice: roundedSell,
       plannedEntryPrice: roundedBuy,

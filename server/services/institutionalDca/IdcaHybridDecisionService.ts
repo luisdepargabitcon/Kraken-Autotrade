@@ -229,7 +229,7 @@ async function persistGridLegs(
     for (const leg of decision.levels) {
       await db.execute(sql`
         INSERT INTO idca_grid_legs
-          (pair, cycle_id, grid_plan_id, leg_index, status, side,
+          (pair, cycle_id, grid_plan_id, leg_index, grid_level_index, leg_role, status, side,
            planned_price, planned_entry_price, planned_exit_price,
            quantity, planned_notional_usd, planned_capital_pct_of_cycle,
            expected_gross_profit_usd, expected_fees_usd, expected_net_profit_usd,
@@ -237,7 +237,7 @@ async function persistGridLegs(
            regime_at_creation, atr_pct_at_creation, z_score_at_creation, vwap_at_creation, current_price_at_creation,
            reason, natural_reason, observer_only)
         VALUES (
-          ${pair}, ${cycleId}, ${decision.gridPlanId}, ${leg.legIndex}, 'planned', ${leg.side},
+          ${pair}, ${cycleId}, ${decision.gridPlanId}, ${leg.legIndex}, ${leg.gridLevelIndex}, ${leg.legRole}, 'planned', ${leg.side},
           ${leg.plannedPrice}, ${leg.plannedEntryPrice}, ${leg.plannedExitPrice},
           ${leg.quantity}, ${leg.plannedNotionalUsd}, ${decision.maxGridCapitalPctOfCycle},
           ${leg.expectedGrossProfitUsd}, ${leg.expectedFeesUsd}, ${leg.expectedNetProfitUsd},
@@ -417,14 +417,15 @@ async function evaluate(input: HybridEvaluationInput): Promise<HybridDecision> {
   persistHybridState(input.pair, input.cycleId, decision).catch(() => {});
   if (gridDecision.gridAllowed) {
     persistGridLegs(input.pair, input.cycleId, gridDecision, regimeSnapshot).catch(() => {});
+    const buyLevelsCount = gridDecision.levels.filter(l => l.legRole === "buy_entry" || l.side === "buy").length;
     persistHybridEvent(
       input.pair, input.cycleId, "GRID_PLAN_CREATED", "simulated",
       {
         gridPlanId: gridDecision.gridPlanId,
-        stateAfter: gridDecision.gridState,
+        stateAfter: "GRID_PLAN_SIMULATED",
         reason: gridDecision.reason,
         naturalReason: gridDecision.naturalReason,
-        raw: { capitalBudget: gridDecision.capitalBudget, levelsCount: gridDecision.levelsCount, observerOnly: gridDecision.observerOnly },
+        raw: { capitalBudget: gridDecision.capitalBudget, buyLevelsCount, totalLegsCount: gridDecision.levels.length, observerOnly: gridDecision.observerOnly },
         observerOnly: gridDecision.observerOnly,
       }
     ).catch(() => {});
@@ -550,7 +551,8 @@ async function evaluateActiveCycle(input: ActiveCycleHybridInput): Promise<void>
   } else if (cycleKind === "manual") {
     naturalReason = `Ciclo marcado como manual/importado: Hybrid/Grid permanece en observación por seguridad. No modifica parámetros, ancla ni referencias históricas, y no ejecuta Grid automáticamente. Régimen: ${regimeSnapshot.regime}.`;
   } else if (gridSimulated) {
-    naturalReason = `Modo observador: ciclo activo detectado; grid simulado (observer_only=true). ${gridDecision?.levels.length ?? 0} niveles calculados. ${meanReversionDecision.naturalReason}`;
+    const buyLevelsNR = (gridDecision?.levels ?? []).filter(l => l.legRole === "buy_entry" || l.side === "buy").length;
+    naturalReason = `Modo observador: ciclo activo detectado; grid simulado (observer_only=true). ${buyLevelsNR} niveles lógicos de compra + ${buyLevelsNR} TP vinculados. ${meanReversionDecision.naturalReason}`;
   } else if (observerState === "GRID_BLOCKED_BEAR_TREND") {
     naturalReason = `Grid bloqueado por tendencia bajista. Régimen: ${regimeSnapshot.regime}. Solo diagnóstico. ${meanReversionDecision.naturalReason}`;
   } else if (observerState === "GRID_BLOCKED_DATA_QUALITY") {
@@ -646,20 +648,35 @@ async function evaluateActiveCycle(input: ActiveCycleHybridInput): Promise<void>
   // ── Persist simulated grid legs (normal cycles only, always observer_only) ──
   if (gridSimulated && gridDecision && gridDecision.levels.length > 0) {
     persistGridLegs(input.pair, input.cycleId, gridDecision, regimeSnapshot).catch(() => {});
-    // Emit per-leg planned events
+    const buyLevelsCountObs = gridDecision.levels.filter(l => l.legRole === "buy_entry" || l.side === "buy").length;
+    // Emit GRID_PLAN_CREATED with stateAfter
+    persistHybridEvent(
+      input.pair, input.cycleId, "GRID_PLAN_CREATED", "simulated",
+      {
+        gridPlanId: gridDecision.gridPlanId,
+        stateAfter: observerState,
+        reason: gridDecision.reason,
+        naturalReason: `Plan de grid creado: ${buyLevelsCountObs} niveles lógicos de compra simulada. ${gridDecision.naturalReason}`,
+        raw: { capitalBudget: gridDecision.capitalBudget, buyLevelsCount: buyLevelsCountObs, totalLegsCount: gridDecision.levels.length, observerOnly: true },
+        observerOnly: true,
+      }
+    ).catch(() => {});
+    // Emit one GRID_LEVEL_PLANNED per logical buy level only (avoid duplicate for sell_tp)
     for (const leg of gridDecision.levels) {
+      if (leg.legRole !== "buy_entry" && leg.side !== "buy") continue;
       persistHybridEvent(
         input.pair, input.cycleId, "GRID_LEVEL_PLANNED", "simulated",
         {
           gridPlanId: gridDecision.gridPlanId,
-          legIndex: leg.legIndex,
+          legIndex: leg.gridLevelIndex ?? leg.legIndex,
+          stateAfter: "GRID_LEVEL_PLANNED",
           price: leg.plannedPrice,
           quantity: leg.quantity,
           notionalUsd: leg.plannedNotionalUsd,
           expectedPnlUsd: leg.expectedNetProfitUsd,
           reason: leg.reason,
           naturalReason: leg.naturalReason,
-          raw: { side: leg.side, triggerCondition: leg.triggerCondition, cancelCondition: leg.cancelCondition },
+          raw: { gridLevelIndex: leg.gridLevelIndex, legRole: leg.legRole, triggerCondition: leg.triggerCondition, cancelCondition: leg.cancelCondition },
           observerOnly: true,
         }
       ).catch(() => {});
@@ -771,6 +788,7 @@ async function getGridPlan(pair: string, cycleId: number): Promise<{
   observerOnly: boolean;
   regime: string | null;
   plan: Record<string, any> | null;
+  levels: any[];
   legs: any[];
   events: any[];
 } | null> {
@@ -797,29 +815,81 @@ async function getGridPlan(pair: string, cycleId: number): Promise<{
 
   const gridState = state?.grid_state ?? "GRID_INACTIVE";
   const observerOnly = legs.length > 0 ? Boolean(legs[0].observer_only) : true;
-  const levelsTriggered = legs.filter((l: any) => l.status === "triggered" || l.status === "closed").length;
-  const levelsClosed = legs.filter((l: any) => l.status === "closed").length;
-  const expectedNetProfit = legs.reduce((sum: number, l: any) => sum + parseFloat(String(l.expected_net_profit_usd ?? 0)), 0);
-  const capitalUsedSimulated = legs.reduce((sum: number, l: any) => sum + parseFloat(String(l.planned_notional_usd ?? 0)), 0);
+
+  // Avoid double-counting: split buy entry legs vs sell TP legs
+  const buyLegs = legs.filter((l: any) => l.side === "buy" || l.leg_role === "buy_entry");
+  const sellLegs = legs.filter((l: any) => l.side === "sell" || l.leg_role === "sell_tp");
+  const totalLegsCount = legs.length;
+  const buyLevelsCount = buyLegs.length;
+  const tpLegsCount = sellLegs.length;
+
+  const plannedBuyCapitalUsd = buyLegs.reduce((sum: number, l: any) => sum + parseFloat(String(l.planned_notional_usd ?? 0)), 0);
+  const plannedSellNotionalUsd = sellLegs.reduce((sum: number, l: any) => sum + parseFloat(String(l.planned_notional_usd ?? 0)), 0);
+  // Capital at risk is only the buy entry capital; TP legs are exits, not new capital
+  const capitalUsedSimulatedUsd = plannedBuyCapitalUsd;
+  // Expected profit is counted once per logical level (buy side only)
+  const expectedNetProfitUsd = buyLegs.reduce((sum: number, l: any) => sum + parseFloat(String(l.expected_net_profit_usd ?? 0)), 0);
+  // Triggered/closed status counts logical buy levels (entry + TP belong to same level)
+  const levelsTriggered = buyLegs.filter((l: any) => l.status === "triggered" || l.status === "closed").length;
+  const levelsClosed = buyLegs.filter((l: any) => l.status === "closed").length;
+
+  const capitalMaxUsd = parseFloat(String(state?.raw_json?.capitalBudget ?? 0)) || plannedBuyCapitalUsd;
+
+  // Build logical levels grouping buy entry and sell TP legs
+  const logicalLevels: any[] = [];
+  const buyByLevel = new Map<number, any>();
+  const sellByLevel = new Map<number, any>();
+  for (const leg of legs) {
+    const level = Number(leg.grid_level_index ?? Math.ceil(Number(leg.leg_index) / 2));
+    if (String(leg.side) === "buy" || String(leg.leg_role) === "buy_entry") buyByLevel.set(level, leg);
+    else if (String(leg.side) === "sell" || String(leg.leg_role) === "sell_tp") sellByLevel.set(level, leg);
+  }
+  for (const [level, buyLeg] of buyByLevel) {
+    const sellLeg = sellByLevel.get(level);
+    logicalLevels.push({
+      gridLevelIndex: level,
+      status: buyLeg.status,
+      entryLegId: buyLeg.id ?? null,
+      tpLegId: sellLeg?.id ?? null,
+      plannedEntryPrice: parseFloat(String(buyLeg.planned_entry_price ?? buyLeg.planned_price ?? 0)),
+      plannedExitPrice: parseFloat(String(buyLeg.planned_exit_price ?? sellLeg?.planned_price ?? 0)),
+      plannedQuantity: parseFloat(String(buyLeg.quantity ?? 0)),
+      plannedNotionalUsd: parseFloat(String(buyLeg.planned_notional_usd ?? 0)),
+      expectedGrossProfitUsd: parseFloat(String(buyLeg.expected_gross_profit_usd ?? 0)),
+      expectedFeesUsd: parseFloat(String(buyLeg.expected_fees_usd ?? 0)),
+      expectedNetProfitUsd: parseFloat(String(buyLeg.expected_net_profit_usd ?? 0)),
+      triggerCondition: buyLeg.trigger_condition_json?.condition ?? null,
+      cancelCondition: buyLeg.cancel_condition_json?.condition ?? null,
+      entryTriggeredAt: buyLeg.triggered_at ?? null,
+      tpClosedAt: sellLeg?.closed_at ?? null,
+    });
+  }
+  logicalLevels.sort((a, b) => a.gridLevelIndex - b.gridLevelIndex);
 
   const plan = state ? {
     gridPlanId: legs[0]?.grid_plan_id ?? null,
     createdAt: legs[0]?.created_at ?? state.created_at,
     updatedAt: state.updated_at,
-    capitalMaxUsd: parseFloat(String(state.raw_json?.capitalBudget ?? 0)) || capitalUsedSimulated,
-    capitalUsedSimulatedUsd: capitalUsedSimulated,
+    status: gridState,
+    observerOnly,
+    regime: state.regime ?? null,
+    naturalReason: state.natural_reason,
+    capitalMaxUsd,
+    plannedBuyCapitalUsd,
+    plannedSellNotionalUsd,
+    capitalUsedSimulatedUsd,
     maxGridCapitalPctOfCycle: legs[0]?.planned_capital_pct_of_cycle ?? 10,
-    levelsCount: legs.length,
+    buyLevelsCount,
+    tpLegsCount,
+    totalLegsCount,
     levelsTriggered,
     levelsClosed,
-    expectedNetProfitUsd: expectedNetProfit,
+    expectedNetProfitUsd,
     simulatedRealizedPnlUsd: 0,
-    status: gridState,
-    naturalReason: state.natural_reason,
     raw: state.raw_json,
   } : null;
 
-  return { pair, cycleId, gridState, observerOnly, regime: state?.regime ?? null, plan, legs, events };
+  return { pair, cycleId, gridState, observerOnly, regime: state?.regime ?? null, plan, levels: logicalLevels, legs, events };
 }
 
 async function getAllGridPlans(): Promise<any[]> {
