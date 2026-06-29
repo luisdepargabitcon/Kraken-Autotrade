@@ -29,6 +29,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { IdcaHybridEventsPanel } from "./IdcaHybridEventsPanel";
 import { IdcaCycleGridOverlay } from "./IdcaCycleGridOverlay";
+import { translateHybridText } from "./idcaTextUtils";
 
 const API_BASE = "/api/idca/hybrid";
 
@@ -362,7 +363,7 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
                 {latestState.natural_reason && (
                   <div className="col-span-2">
                     <span className="text-muted-foreground">Análisis</span>
-                    <div className="mt-0.5 text-foreground leading-relaxed">{latestState.natural_reason}</div>
+                    <div className="mt-0.5 text-foreground leading-relaxed">{translateHybridText(latestState.natural_reason)}</div>
                   </div>
                 )}
               </div>
@@ -514,7 +515,7 @@ export function IdcaHybridPanel({ pair }: { pair?: string }) {
                   {/* Natural reason */}
                   {row.natural_reason && (
                     <p className="text-xs text-muted-foreground leading-relaxed border-t border-border/20 pt-2">
-                      {row.natural_reason}
+                      {translateHybridText(row.natural_reason)}
                     </p>
                   )}
                 </div>

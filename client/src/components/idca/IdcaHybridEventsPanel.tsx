@@ -7,6 +7,7 @@
 
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { translateHybridText } from "./idcaTextUtils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -278,7 +279,7 @@ export function IdcaHybridEventsPanel({ pair }: IdcaHybridEventsPanelProps) {
                     {ev.price != null ? `$${formatPrice(ev.price)}` : ev.notional_usd != null ? formatUsd(ev.notional_usd) : "—"}
                   </div>
                   <div className="col-span-2 flex items-center gap-1">
-                    <span className="truncate">{ev.natural_reason ?? ev.reason ?? "—"}</span>
+                    <span className="truncate">{translateHybridText(ev.natural_reason ?? ev.reason) || "—"}</span>
                     <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`} />
                   </div>
                 </div>
@@ -286,7 +287,7 @@ export function IdcaHybridEventsPanel({ pair }: IdcaHybridEventsPanelProps) {
               <CollapsibleContent>
                 <div className="px-3 py-2 border-t border-border/10 bg-muted/20 space-y-2">
                   {ev.natural_reason && (
-                    <p className="text-xs text-foreground leading-relaxed">{ev.natural_reason}</p>
+                    <p className="text-xs text-foreground leading-relaxed">{translateHybridText(ev.natural_reason)}</p>
                   )}
                   {ev.reason && ev.reason !== ev.natural_reason && (
                     <p className="text-xs text-muted-foreground">Motivo técnico: <code className="text-[10px] bg-muted px-1 rounded">{ev.reason}</code></p>

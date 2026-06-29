@@ -7,6 +7,7 @@
 
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { translateHybridText } from "./idcaTextUtils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -305,7 +306,7 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
             {/* Natural reason */}
             {plan.naturalReason && (
               <p className="text-xs text-muted-foreground leading-relaxed border-t border-border/20 pt-2">
-                {plan.naturalReason}
+                {translateHybridText(plan.naturalReason)}
               </p>
             )}
 
@@ -394,7 +395,7 @@ export function IdcaCycleGridOverlay({ pair, cycleId }: IdcaCycleGridOverlayProp
                         <Badge variant="outline" className={`text-[10px] px-1 py-0 h-4 shrink-0 ${SEVERITY_COLORS[ev.severity] ?? SEVERITY_COLORS.info}`}>
                           {EVENT_TYPE_LABELS[ev.event_type] ?? ev.event_type}
                         </Badge>
-                        <span className="text-muted-foreground">{ev.natural_reason}</span>
+                        <span className="text-muted-foreground">{translateHybridText(ev.natural_reason)}</span>
                         {ev.leg_index != null && <span className="text-muted-foreground">(nivel {ev.leg_index})</span>}
                       </div>
                     ))}
