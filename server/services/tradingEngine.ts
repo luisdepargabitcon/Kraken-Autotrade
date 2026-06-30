@@ -25,6 +25,7 @@ import { markupTracker } from "./MarkupTracker";
 import { ExitManager, type IExitManagerHost, type OpenPosition as ExitOpenPosition, type ConfigSnapshot as ExitConfigSnapshot, type ExitReason as ExitExitReason, type FeeGatingResult as ExitFeeGatingResult } from "./exitManager";
 import { smartExitEngine, type SmartExitConfig, type SmartExitMarketData, type SmartExitPosition, type SmartExitDecision, type EntryContext } from "./SmartExitEngine";
 import { smartExitStateManager, type StateTransition } from "./SmartExitStateManager";
+import { checkCapitalEfficiencyGate, type CapitalEfficiencyGateInput } from "./capitalEfficiencyGate";
 import {
   calculateEMA as _calculateEMA,
   calculateRSI as _calculateRSI,
@@ -318,6 +319,17 @@ function validateMinimumsOrSkip(params: MinimumValidationParams): MinimumValidat
     floorUsd: effectiveFloor,
     availableAfterCushion,
   };
+
+  // REGLA 0: Capital efficiency — sgAllowUnderMin=false means block if < sgMinEntryUsd
+  if (positionMode === "SMART_GUARD" && !sgAllowUnderMin && orderUsdFinal < sgMinEntryUsd) {
+    return {
+      valid: false,
+      skipReason: "MIN_ORDER_USD",
+      reasonCode: "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN",
+      message: `Compra bloqueada: tamaño $${orderUsdFinal.toFixed(2)} inferior al mínimo configurado $${sgMinEntryUsd.toFixed(2)}. No merece ocupar un lote.`,
+      meta,
+    };
+  }
 
   // REGLA 1: Hard block - si orderUsdFinal < floorUsd (exchange min + absoluto)
   if (orderUsdFinal < effectiveFloor) {
@@ -3084,6 +3096,7 @@ ${positionsList}
                 entryPrice: position.entryPrice,
                 aiSampleId: position.aiSampleId,
                 openedAt: position.openedAt,
+                lotId,
               };
 
               const success = await this.executeTrade(
@@ -4020,7 +4033,8 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           // === SMART_GUARD v2 SIZING ===
           // Regla 1: sgMinEntryUsd es "objetivo preferido"
           // Regla 2: Si saldo >= sgMinEntryUsd → usar sgMinEntryUsd EXACTO
-          // Regla 3: Si saldo < sgMinEntryUsd → fallback a saldo disponible (si >= floorUsd)
+          // Regla 3: Si saldo < sgMinEntryUsd Y sgAllowUnderMin=true → fallback a saldo disponible (si >= floorUsd)
+          // Regla 3b: Si saldo < sgMinEntryUsd Y sgAllowUnderMin=false → BLOQUEAR (no fallback)
           // Regla 4: Si saldo < floorUsd → BLOQUEAR
           
           originalAmount = sgMinEntryUsd; // El objetivo propuesto siempre es sgMinEntryUsd
@@ -4030,8 +4044,13 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
             tradeAmountUSD = sgMinEntryUsd;
             sgReasonCode = "SMART_GUARD_ENTRY_USING_CONFIG_MIN";
             
+          } else if (!sgAllowUnderMin && availableAfterCushion < sgMinEntryUsd) {
+            // Caso B1: sgAllowUnderMin=false → NO fallback, bloquear
+            tradeAmountUSD = availableAfterCushion;
+            sgReasonCode = "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN";
+            
           } else if (availableAfterCushion >= floorUsd) {
-            // Caso B: Saldo insuficiente para config, pero >= floorUsd → fallback automático
+            // Caso B2: sgAllowUnderMin=true, saldo insuficiente para config, pero >= floorUsd → fallback
             tradeAmountUSD = availableAfterCushion;
             sgReasonCode = "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE";
             
@@ -4049,11 +4068,11 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           log(`SMART_GUARD ${pair}: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
           log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)} [exch=$${minRequiredUSD.toFixed(2)}, abs=$${SG_ABSOLUTE_MIN_USD}]`, "trading");
           log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
-          log(`  → sgAllowUnderMin=${sgAllowUnderMin} (DEPRECATED - ignorado, siempre fallback automático)`, "trading");
+          log(`  → sgAllowUnderMin=${sgAllowUnderMin}`, "trading");
           
-          // Fix coherencia: allowSmallerEntries siempre true en SMART_GUARD (auto fallback)
+          // Fix coherencia: allowSmallerEntries depende de sgAllowUnderMin
           this.updatePairTrace(pair, {
-            allowSmallerEntries: true, // SMART_GUARD v2: siempre permite auto fallback
+            allowSmallerEntries: sgAllowUnderMin,
             computedOrderUsd: tradeAmountUSD,
             minOrderUsd: floorUsd,
           });
@@ -4277,6 +4296,43 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           return;
         }
         
+        // === CAPITAL EFFICIENCY GATE (live mode) ===
+        if (positionMode === "SMART_GUARD") {
+          const liveGateResult = checkCapitalEfficiencyGate({
+            pair,
+            computedOrderUsd: orderUsdFinal,
+            currentPrice,
+            minEntryUsd: sgMinEntryUsd,
+            allowUnderMin: sgAllowUnderMin,
+            absoluteDustUsd: parseFloat(botConfig?.sgAbsoluteDustUsd?.toString() || "20"),
+            minExpectedProfitUsd: parseFloat(botConfig?.sgMinExpectedProfitUsd?.toString() || "1"),
+            slotEfficiencyEnabled: botConfig?.sgSlotEfficiencyEnabled ?? true,
+            maxLotsPerPair: sgMaxLotsPerPairConfig,
+            openLotsThisPair: currentOpenLotsForLog,
+            exposureAvailableUsd: effectiveMaxAllowed,
+            dryRun: this.dryRunMode,
+          });
+
+          if (!liveGateResult.allowed) {
+            log(`[CAPITAL_EFFICIENCY_GATE] ${pair}: ${liveGateResult.message}`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - ${liveGateResult.reason}`, {
+              pair, signal: "BUY", reason: liveGateResult.reason, ...liveGateResult.meta,
+            });
+            this.updatePairTrace(pair, {
+              computedOrderUsd: orderUsdFinal,
+              minOrderUsd: sgMinEntryUsd,
+              smartGuardDecision: "BLOCK",
+              blockReasonCode: "MIN_ORDER_USD",
+              blockDetails: { ...liveGateResult.meta },
+              finalSignal: "NONE",
+              finalReason: `Blocked: ${liveGateResult.message}`,
+            });
+            this.emitPairDecisionTrace(pair);
+            this.setPairCooldown(pair);
+            return;
+          }
+        }
+
         // Log de decisión final antes de ejecutar (con nuevo reason code)
         if (positionMode === "SMART_GUARD" && sgReasonCode) {
           log(`[FINAL CHECK] ${pair}: ALLOWED - ${sgReasonCode} orderUsd=$${orderUsdFinal.toFixed(2)}`, "trading");
@@ -5196,6 +5252,10 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           if (availableAfterCushion >= sgMinEntryUsd) {
             tradeAmountUSD = sgMinEntryUsd;
             sgReasonCode = "SMART_GUARD_ENTRY_USING_CONFIG_MIN";
+          } else if (!sgAllowUnderMin && availableAfterCushion < sgMinEntryUsd) {
+            // sgAllowUnderMin=false → NO fallback, bloquear
+            tradeAmountUSD = availableAfterCushion;
+            sgReasonCode = "SMART_GUARD_BLOCKED_BELOW_EXCHANGE_MIN";
           } else if (availableAfterCushion >= floorUsd) {
             tradeAmountUSD = availableAfterCushion;
             sgReasonCode = "SMART_GUARD_ENTRY_FALLBACK_TO_AVAILABLE";
@@ -5210,10 +5270,11 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           log(`SMART_GUARD ${pair} [${selectedStrategyId}]: Sizing v2 - order=$${tradeAmountUSD.toFixed(2)}, reason=${sgReasonCode}`, "trading");
           log(`  → availableUsd=$${usdDisponible.toFixed(2)}, sgMinEntryUsd=$${sgMinEntryUsd.toFixed(2)}, floorUsd=$${floorUsd.toFixed(2)}`, "trading");
           log(`  → cushionPct=${effectiveCushionPct.toFixed(2)}%, cushionAmt=$${cushionAmount.toFixed(2)}, availableAfterCushion=$${availableAfterCushion.toFixed(2)}`, "trading");
+          log(`  → sgAllowUnderMin=${sgAllowUnderMin}`, "trading");
           
-          // Fix coherencia: allowSmallerEntries siempre true en SMART_GUARD (auto fallback)
+          // Fix coherencia: allowSmallerEntries depende de sgAllowUnderMin
           this.updatePairTrace(pair, {
-            allowSmallerEntries: true,
+            allowSmallerEntries: sgAllowUnderMin,
             computedOrderUsd: tradeAmountUSD,
             minOrderUsd: floorUsd,
           });
@@ -5273,6 +5334,33 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
           });
           this.setPairCooldown(pair);
           return;
+        }
+
+        // === CAPITAL EFFICIENCY GATE (live mode - candles path) ===
+        if (positionMode === "SMART_GUARD") {
+          const candlesGateResult = checkCapitalEfficiencyGate({
+            pair,
+            computedOrderUsd: tradeAmountUSD,
+            currentPrice,
+            minEntryUsd: sgMinEntryUsd,
+            allowUnderMin: sgAllowUnderMin,
+            absoluteDustUsd: parseFloat(botConfig?.sgAbsoluteDustUsd?.toString() || "20"),
+            minExpectedProfitUsd: parseFloat(botConfig?.sgMinExpectedProfitUsd?.toString() || "1"),
+            slotEfficiencyEnabled: botConfig?.sgSlotEfficiencyEnabled ?? true,
+            maxLotsPerPair: botConfig?.sgMaxOpenLotsPerPair ?? 1,
+            openLotsThisPair: this.getOpenLotsForPair(pair),
+            exposureAvailableUsd: effectiveMaxAllowed,
+            dryRun: this.dryRunMode,
+          });
+
+          if (!candlesGateResult.allowed) {
+            log(`[CAPITAL_EFFICIENCY_GATE] ${pair}: ${candlesGateResult.message}`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `Señal BUY bloqueada - ${candlesGateResult.reason}`, {
+              pair, signal: "BUY", reason: candlesGateResult.reason, ...candlesGateResult.meta,
+            });
+            this.setPairCooldown(pair);
+            return;
+          }
         }
 
         // Ajustar por límite de exposición (solo para SINGLE/DCA)
@@ -6281,6 +6369,32 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
             // NO enviar Telegram de simulación - solo log
             return false;
           }
+
+          // === CAPITAL EFFICIENCY GATE ===
+          const drCfg = await storage.getBotConfig();
+          const sgParamsDR = drCfg?.positionMode === "SMART_GUARD" ? this.getSmartGuardParams(pair, drCfg) : null;
+          const gateResult = checkCapitalEfficiencyGate({
+            pair,
+            computedOrderUsd: totalUSD,
+            currentPrice: price,
+            minEntryUsd: sgParamsDR?.sgMinEntryUsd ?? parseFloat(drCfg?.sgMinEntryUsd?.toString() || "100"),
+            allowUnderMin: sgParamsDR?.sgAllowUnderMin ?? drCfg?.sgAllowUnderMin ?? true,
+            absoluteDustUsd: parseFloat(drCfg?.sgAbsoluteDustUsd?.toString() || "20"),
+            minExpectedProfitUsd: parseFloat(drCfg?.sgMinExpectedProfitUsd?.toString() || "1"),
+            slotEfficiencyEnabled: drCfg?.sgSlotEfficiencyEnabled ?? true,
+            maxLotsPerPair: drCfg?.sgMaxOpenLotsPerPair ?? 1,
+            openLotsThisPair: this.getOpenLotsForPair(pair),
+            exposureAvailableUsd: executionMeta.usdDisponible,
+            dryRun: true,
+          });
+
+          if (!gateResult.allowed) {
+            log(`${envPrefixLog} [CAPITAL_EFFICIENCY_GATE] ${gateResult.message}`, "trading");
+            await botLogger.info("TRADE_SKIPPED", `${envPrefixLog} ${gateResult.message}`, {
+              pair, type, reason: gateResult.reason, ...gateResult.meta,
+            });
+            return false;
+          }
         }
         
         const simTxid = `DRY-${Date.now()}`;
@@ -6400,6 +6514,27 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
             const entryPriceNum = matchedBuy ? parseFloat(matchedBuy.price) : (sellContext?.entryPrice || price);
             const pnlUsd = (price - entryPriceNum) * volumeNum;
             const pnlPct = entryPriceNum > 0 ? ((price - entryPriceNum) / entryPriceNum) * 100 : 0;
+
+            // === DRY_RUN_SELL_MATCH audit log ===
+            const matchStatus = !sellLotId ? "MISMATCH" :
+              (matchedBuy && matchedBuy.simTxid === sellLotId) ? "OK" : "MISMATCH";
+            const matchReason = !sellLotId ? "NO_LOTID_IN_SELL_CONTEXT" :
+              matchedBuyArr.length === 0 ? "BUY_NOT_FOUND" :
+              matchedBuy.simTxid === sellLotId ? "EXACT_MATCH" : "FIFO_FALLBACK";
+            const sellCtxEntryPrice = sellContext?.entryPrice || 0;
+            const entryPriceDiff = sellCtxEntryPrice > 0 ? Math.abs(entryPriceNum - sellCtxEntryPrice) : 0;
+            const priceMismatch = entryPriceDiff > 0.01;
+
+            log(`${envPrefixLog} [DRY_RUN_SELL_MATCH] pair=${pair} sellTxid=${simTxid} sellLotId=${sellLotId || 'none'} matchedBuyTxid=${matchedBuy?.simTxid || 'none'} matchStatus=${matchStatus} matchReason=${matchReason} entryPrice=${entryPriceNum.toFixed(8)} sellCtxEntryPrice=${sellCtxEntryPrice.toFixed(8)} priceMismatch=${priceMismatch} pnlUsd=${pnlUsd.toFixed(2)} pnlPct=${pnlPct.toFixed(4)}%`, "trading");
+
+            if (matchStatus === "MISMATCH" || priceMismatch) {
+              await botLogger.warn("DRY_RUN_SELL_MATCH", `Mismatch en matching SELL DRY_RUN para ${pair}`, {
+                pair, sellTxid: simTxid, sellLotId, matchedBuyTxid: matchedBuy?.simTxid || null,
+                matchStatus, matchReason, priceMismatch,
+                entryPrice: entryPriceNum, sellCtxEntryPrice, entryPriceDiff,
+                pnlUsd, pnlPct,
+              });
+            }
 
             // Insert the sell record
             await db.insert(dryRunTrades).values({

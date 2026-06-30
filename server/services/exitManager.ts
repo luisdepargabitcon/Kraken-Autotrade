@@ -1076,7 +1076,8 @@ export class ExitManager {
           sellAmount: actualSellAmount,
           positionAmount: position.amount,
           aiSampleId: position.aiSampleId,
-          openedAt: position.openedAt
+          openedAt: position.openedAt,
+          lotId
         };
         await botLogger.info("EXIT_TRIGGERED", `Salida disparada en ${pair}`, {
           posId: lotId, pair,
@@ -1320,7 +1321,8 @@ export class ExitManager {
                 sellAmount: sellAmount,
                 positionAmount: position.amount,
                 aiSampleId: position.aiSampleId,
-                openedAt: position.openedAt
+                openedAt: position.openedAt,
+                lotId
               };
 
               await botLogger.info("TIME_STOP_CLOSE", `TimeStop cierre forzado en ${pair} [SMART_GUARD]`, {
@@ -1793,7 +1795,8 @@ export class ExitManager {
           sellAmount: sellAmount,
           positionAmount: position.amount,
           aiSampleId: position.aiSampleId,
-          openedAt: position.openedAt
+          openedAt: position.openedAt,
+          lotId
         };
         await botLogger.info("EXIT_ORDER_PLACED", `SMART_GUARD intentando orden SELL en ${pair}`, {
           posId: lotId, pair, orderType: "market", side: "sell", qty: sellAmount,

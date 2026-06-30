@@ -107,6 +107,11 @@ export const botConfig = pgTable("bot_config", {
   sgMinPartUsd: decimal("sg_min_part_usd", { precision: 10, scale: 2 }).notNull().default("50.00"),
   sgScaleOutThreshold: decimal("sg_scale_out_threshold", { precision: 5, scale: 2 }).notNull().default("80.00"),
   sgMaxOpenLotsPerPair: integer("sg_max_open_lots_per_pair").notNull().default(1),
+  // Capital efficiency gate — prevent dust/micro entries that waste slots
+  sgAbsoluteDustUsd: decimal("sg_absolute_dust_usd", { precision: 10, scale: 2 }).notNull().default("20.00"),
+  sgMinExpectedProfitUsd: decimal("sg_min_expected_profit_usd", { precision: 10, scale: 2 }).notNull().default("1.00"),
+  sgSlotEfficiencyEnabled: boolean("sg_slot_efficiency_enabled").notNull().default(true),
+  sgExcludeMicroTradesFromScore: boolean("sg_exclude_micro_trades_from_score").notNull().default(true),
   // SMART_GUARD pair overrides (JSON: { "BTC/USD": { trailDistancePct: 1.0 }, ... })
   sgPairOverrides: jsonb("sg_pair_overrides"),
   // DRY_RUN mode: audit/verify without sending real orders to exchange

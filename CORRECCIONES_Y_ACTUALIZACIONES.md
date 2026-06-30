@@ -2,6 +2,64 @@
 
 ---
 
+## 2026-06-29 — fix(spot): block dust entries and validate dry run sell matching
+
+**Commit**: `fix(spot): block dust entries and validate dry run sell matching`
+
+### Problemas raíz
+1. **Micro-purchases ocupando slots**: El sizing SMART_GUARD v2 ignoraba `sgAllowUnderMin=false` y siempre hacía fallback automático a `availableAfterCushion` aunque fuera < `sgMinEntryUsd`, creando operaciones dust que distorsionan el score.
+2. **Mismatch Telegram vs Historial DRY RUN**: El `sellContext` en Smart Exit y exitManager NO incluía `lotId`, causando que el matching FIFO emparejara el buy equivocado → `entryPrice` incorrecto → PnL distorsionado en DB vs Telegram.
+
+### Cambios implementados
+
+**Archivos nuevos:**
+- `server/services/capitalEfficiencyGate.ts` — Función pura `checkCapitalEfficiencyGate()` con 5 reglas: min notional, dust absoluto, profit esperado mínimo, eficiencia de slots, capital útil disponible.
+- `db/migrations/062_capital_efficiency_gate.sql` — Añade `sg_absolute_dust_usd`, `sg_min_expected_profit_usd`, `sg_slot_efficiency_enabled`, `sg_exclude_micro_trades_from_score` a `bot_config`.
+- `server/services/__tests__/capitalEfficiencyGate.test.ts` — 17 tests cubriendo reglas A-E + escenarios combinados.
+- `server/services/__tests__/dryRunSellMatching.test.ts` — 11 tests cubriendo matching exacto, FIFO fallback, mismatch detection, PnL correctness, escenarios DRY-1782568262334 y DRY-1782069612018.
+
+**Archivos modificados:**
+- `shared/schema.ts` — 4 nuevos campos en `botConfig` table.
+- `server/services/botLogger.ts` — Añadido `DRY_RUN_SELL_MATCH` a `EventType`.
+- `server/services/tradingEngine.ts`:
+  - Import de `checkCapitalEfficiencyGate`.
+  - `validateMinimumsOrSkip`: REGLA 0 — bloquea si `sgAllowUnderMin=false` y `orderUsdFinal < sgMinEntryUsd`.
+  - Sizing v2 en `analyzePairAndTrade`: Caso B1 — si `sgAllowUnderMin=false`, no fallback, bloquea.
+  - Sizing v2 en `analyzePairAndTradeCandles`: Mismo fix B1 aplicado.
+  - Smart Exit `sellContext`: Añadido `lotId` al objeto.
+  - DRY RUN buy path: Integrado `checkCapitalEfficiencyGate` después del double-belt.
+  - Live buy path (analyzePairAndTrade): Integrado `checkCapitalEfficiencyGate` después de `validateMinimumsOrSkip`.
+  - Live buy path (candles): Integrado `checkCapitalEfficiencyGate` después de exposure check.
+  - DRY RUN sell path: Añadido log `DRY_RUN_SELL_MATCH` con `matchStatus` OK|MISMATCH, `matchReason`, `priceMismatch`.
+  - `allowSmallerEntries` en pair trace ahora depende de `sgAllowUnderMin` (antes siempre `true`).
+- `server/services/exitManager.ts`:
+  - 3 `sellContext` objects (líneas ~1073, ~1317, ~1792) ahora incluyen `lotId`.
+
+### Validación
+- `npm run check`: ✅
+- `vitest capitalEfficiencyGate`: 17/17 ✅
+- `vitest dryRunSellMatching`: 11/11 ✅
+- `vitest smartGuardConfigResolution`: 9/9 ✅
+- `vitest multiLotEntryGate`: 22/22 ✅
+
+### No se modifica
+- IDCA (cualquier módulo)
+- FISCO / fiscal history
+- Órdenes reales
+- Destructive cleanup
+
+### Migración DB requerida
+```sql
+-- 062_capital_efficiency_gate.sql
+ALTER TABLE bot_config
+  ADD COLUMN IF NOT EXISTS sg_absolute_dust_usd DECIMAL(10,2) NOT NULL DEFAULT 20.00,
+  ADD COLUMN IF NOT EXISTS sg_min_expected_profit_usd DECIMAL(10,2) NOT NULL DEFAULT 1.00,
+  ADD COLUMN IF NOT EXISTS sg_slot_efficiency_enabled BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS sg_exclude_micro_trades_from_score BOOLEAN NOT NULL DEFAULT true;
+```
+
+---
+
 ## 2026-06-29 — feat(idca): allow manual buy registration into open cycle with recalculation
 
 ### Función añadida

@@ -146,7 +146,9 @@ export type EventType =
   | "SAFE_SELL_SUCCESS"
   | "SAFE_SELL_FAILED"
   // FASE 7: DRY_RUN doble-venta prevenida
-  | "DRY_RUN_DOUBLE_SELL_PREVENTED";
+  | "DRY_RUN_DOUBLE_SELL_PREVENTED"
+  // Capital efficiency gate + DRY_RUN sell matching audit
+  | "DRY_RUN_SELL_MATCH";
 
 interface LogMeta {
   [key: string]: any;
