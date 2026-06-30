@@ -320,11 +320,33 @@ export function generateTradeDiagnostics(
 ): DiagnosticResult[] {
   const results: DiagnosticResult[] = [];
 
-  if (metrics.profitCapturePct !== null && metrics.profitCapturePct < 25 && (metrics.mfePnlUsd ?? 0) > 1) {
+  // If profit capture data is insufficient, skip capture-based diagnostics
+  if (metrics.profitCaptureQuality === "insufficient_data") {
+    results.push({
+      code: "PROFIT_CAPTURE_INSUFFICIENT_DATA",
+      severity: "info",
+      message: "No hay snapshots suficientes para evaluar la eficiencia de salida. La métrica se calculará mejor en operaciones nuevas.",
+    });
+    // Still check MAE (independent of profit capture)
+    if ((metrics.maePnlUsd ?? 0) < -capitalUsd * 0.5 && capitalUsd > 0) {
+      results.push({
+        code: "HIGH_MAE",
+        severity: "warning",
+        message: `Drawdown elevado: pérdida flotante máxima superó el 50% del capital invertido.`,
+      });
+    }
+    return results;
+  }
+
+  // Use displayProfitCapturePct for diagnostics (null when insufficient)
+  const pcPct = metrics.displayProfitCapturePct;
+
+  if (pcPct !== null && pcPct < 25 && (metrics.mfePnlUsd ?? 0) > 1) {
+    const prefix = metrics.profitCaptureQuality === "estimated" ? "Estimación: " : "";
     results.push({
       code: "LOW_PROFIT_CAPTURE",
       severity: "warning",
-      message: `Salida poco eficiente: se capturó solo el ${metrics.profitCapturePct.toFixed(0)}% del beneficio potencial (MFE $${metrics.mfePnlUsd?.toFixed(2)}).`,
+      message: `${prefix}Salida poco eficiente: se capturó solo el ${pcPct.toFixed(0)}% del beneficio potencial (MFE $${metrics.mfePnlUsd?.toFixed(2)}).`,
     });
   }
 
@@ -352,11 +374,12 @@ export function generateTradeDiagnostics(
     });
   }
 
-  if (results.length === 0 && metrics.profitCapturePct !== null && metrics.profitCapturePct >= 70) {
+  if (results.length === 0 && pcPct !== null && pcPct >= 70) {
+    const prefix = metrics.profitCaptureQuality === "estimated" ? "Estimación: " : "";
     results.push({
       code: "GOOD_EXIT",
       severity: "ok",
-      message: `Salida eficiente: se capturó el ${metrics.profitCapturePct.toFixed(0)}% del beneficio potencial.`,
+      message: `${prefix}Salida eficiente: se capturó el ${pcPct.toFixed(0)}% del beneficio potencial.`,
     });
   }
 
@@ -374,19 +397,42 @@ export function generateIdcaDiagnostics(
     capitalUsd: number;
     gridState?: string | null;
     gridPlanCreated?: boolean;
+    profitCaptureQuality?: string;
   }
 ): DiagnosticResult[] {
   const results: DiagnosticResult[] = [];
+  const quality = cycle.profitCaptureQuality ?? "reliable";
 
-  if ((cycle.profitCapturePct ?? 0) < 25 && (cycle.mfePnlUsd ?? 0) > 1) {
+  // If insufficient data, skip capture-based diagnostics and add info diagnostic
+  if (quality === "insufficient_data") {
+    results.push({
+      code: "PROFIT_CAPTURE_INSUFFICIENT_DATA",
+      severity: "info",
+      message: "No hay snapshots suficientes para evaluar la eficiencia de salida de este ciclo. La métrica se calculará mejor en ciclos nuevos.",
+    });
+    // Still check grid state (independent of profit capture)
+    if (cycle.gridPlanCreated && cycle.gridState !== "GRID_PLAN_SIMULATED") {
+      results.push({
+        code: "GRID_NOT_ACTIVE",
+        severity: "info",
+        message: `Grid observer planificado pero no activo. Estado: ${cycle.gridState ?? "desconocido"}.`,
+      });
+    }
+    return results;
+  }
+
+  const pcPct = cycle.profitCapturePct;
+  const prefix = quality === "estimated" ? "Estimación orientativa: " : "";
+
+  if (pcPct !== null && pcPct < 25 && (cycle.mfePnlUsd ?? 0) > 1) {
     results.push({
       code: "LOW_PROFIT_CAPTURE",
       severity: "warning",
-      message: `Ciclo capturó solo el ${(cycle.profitCapturePct ?? 0).toFixed(0)}% del MFE. Trailing o salida tardía.`,
+      message: `${prefix}Ciclo capturó solo el ${pcPct.toFixed(0)}% del MFE. Trailing o salida tardía.`,
     });
   }
 
-  if (cycle.buyCount > 3 && (cycle.profitCapturePct ?? 0) < 40) {
+  if (cycle.buyCount > 3 && (pcPct ?? 0) < 40) {
     results.push({
       code: "MANY_BUYS_LOW_CAPTURE",
       severity: "warning",
@@ -410,11 +456,11 @@ export function generateIdcaDiagnostics(
     });
   }
 
-  if (results.length === 0 && (cycle.profitCapturePct ?? 0) >= 70) {
+  if (results.length === 0 && (pcPct ?? 0) >= 70) {
     results.push({
       code: "GOOD_CYCLE",
       severity: "ok",
-      message: `Ciclo eficiente: capturó el ${(cycle.profitCapturePct ?? 0).toFixed(0)}% del beneficio potencial.`,
+      message: `${prefix}Ciclo eficiente: capturó el ${(pcPct ?? 0).toFixed(0)}% del beneficio potencial.`,
     });
   }
 

@@ -657,7 +657,9 @@ export function registerAuditRoutes(app: Express): void {
   app.get("/api/audit/idca/cycles", async (req, res) => {
     try {
       const pair = req.query.pair as string | undefined;
-      const status = req.query.status as string | undefined;
+      const rawStatus = req.query.status as string | undefined;
+      // Normalize status: "open" is an alias for "active" in IDCA
+      const status = rawStatus === "open" ? "active" : rawStatus;
       const limit = Math.min(parseInt(req.query.limit as string || "50", 10), 200);
       const offset = parseInt(req.query.offset as string || "0", 10);
       const since = req.query.since as string | undefined;
@@ -716,6 +718,7 @@ export function registerAuditRoutes(app: Express): void {
           capitalUsd: capital,
           gridPlanCreated: gridPlanId != null,
           gridState,
+          profitCaptureQuality: metrics.profitCaptureQuality,
         });
 
         cycles.push({
@@ -812,6 +815,7 @@ export function registerAuditRoutes(app: Express): void {
         capitalUsd: capital,
         gridPlanCreated: gridLegs.length > 0,
         gridState: hybridState?.grid_state ?? null,
+        profitCaptureQuality: metrics.profitCaptureQuality,
       });
 
       const durMin = durationMinutes(cycle.started_at, cycle.closed_at);

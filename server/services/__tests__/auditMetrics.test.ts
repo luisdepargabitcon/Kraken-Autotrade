@@ -25,6 +25,7 @@ import {
   generateIdcaChatGptSummary,
   classifyProfitCaptureQuality,
   type OhlcPoint,
+  type TradeEfficiencyMetrics,
 } from "../auditMetrics";
 import {
   classifyEventRetention,
@@ -595,6 +596,240 @@ describe("classifyProfitCaptureQuality", () => {
     });
     expect(m.profitCaptureQuality).toBe("reliable");
     expect(m.displayProfitCapturePct).toBeCloseTo(50, 1);
+  });
+});
+
+// ─── Diagnostics Quality-Aware ────────────────────────────────────────────────
+
+describe("generateIdcaDiagnostics with profitCaptureQuality", () => {
+  it("insufficient_data does NOT generate LOW_PROFIT_CAPTURE", () => {
+    const diags = generateIdcaDiagnostics({
+      buyCount: 2,
+      closeReason: "TAKE_PROFIT",
+      profitCapturePct: null,
+      mfePnlUsd: 5,
+      givebackUsd: 5,
+      maePnlUsd: -2,
+      capitalUsd: 100,
+      gridPlanCreated: false,
+      profitCaptureQuality: "insufficient_data",
+    });
+    const codes = diags.map(d => d.code);
+    expect(codes).not.toContain("LOW_PROFIT_CAPTURE");
+    expect(codes).not.toContain("MANY_BUYS_LOW_CAPTURE");
+    expect(codes).not.toContain("GOOD_CYCLE");
+  });
+
+  it("insufficient_data generates PROFIT_CAPTURE_INSUFFICIENT_DATA", () => {
+    const diags = generateIdcaDiagnostics({
+      buyCount: 2,
+      closeReason: "TAKE_PROFIT",
+      profitCapturePct: null,
+      mfePnlUsd: 5,
+      givebackUsd: 5,
+      maePnlUsd: -2,
+      capitalUsd: 100,
+      gridPlanCreated: false,
+      profitCaptureQuality: "insufficient_data",
+    });
+    const info = diags.find(d => d.code === "PROFIT_CAPTURE_INSUFFICIENT_DATA");
+    expect(info).toBeDefined();
+    expect(info?.severity).toBe("info");
+    expect(info?.message).toContain("snapshots suficientes");
+  });
+
+  it("insufficient_data does NOT say '0% del MFE'", () => {
+    const diags = generateIdcaDiagnostics({
+      buyCount: 2,
+      closeReason: "TAKE_PROFIT",
+      profitCapturePct: null,
+      mfePnlUsd: 5,
+      givebackUsd: 5,
+      maePnlUsd: -2,
+      capitalUsd: 100,
+      gridPlanCreated: false,
+      profitCaptureQuality: "insufficient_data",
+    });
+    const messages = diags.map(d => d.message).join(" ");
+    expect(messages).not.toContain("0% del MFE");
+    expect(messages).not.toContain("capturó solo el 0%");
+  });
+
+  it("estimated generates prudent diagnostics with 'Estimación' prefix", () => {
+    const diags = generateIdcaDiagnostics({
+      buyCount: 2,
+      closeReason: "TAKE_PROFIT",
+      profitCapturePct: 10,
+      mfePnlUsd: 50,
+      givebackUsd: 45,
+      maePnlUsd: -5,
+      capitalUsd: 100,
+      gridPlanCreated: false,
+      profitCaptureQuality: "estimated",
+    });
+    const lowCapture = diags.find(d => d.code === "LOW_PROFIT_CAPTURE");
+    expect(lowCapture).toBeDefined();
+    expect(lowCapture?.message).toContain("Estimación orientativa");
+  });
+
+  it("reliable generates normal diagnostics without 'Estimación' prefix", () => {
+    const diags = generateIdcaDiagnostics({
+      buyCount: 2,
+      closeReason: "TAKE_PROFIT",
+      profitCapturePct: 10,
+      mfePnlUsd: 50,
+      givebackUsd: 45,
+      maePnlUsd: -5,
+      capitalUsd: 100,
+      gridPlanCreated: false,
+      profitCaptureQuality: "reliable",
+    });
+    const lowCapture = diags.find(d => d.code === "LOW_PROFIT_CAPTURE");
+    expect(lowCapture).toBeDefined();
+    expect(lowCapture?.message).not.toContain("Estimación");
+  });
+
+  it("insufficient_data still checks grid state (independent)", () => {
+    const diags = generateIdcaDiagnostics({
+      buyCount: 1,
+      closeReason: null,
+      profitCapturePct: null,
+      mfePnlUsd: null,
+      givebackUsd: null,
+      maePnlUsd: null,
+      capitalUsd: 100,
+      gridPlanCreated: true,
+      gridState: "GRID_IDLE",
+      profitCaptureQuality: "insufficient_data",
+    });
+    const codes = diags.map(d => d.code);
+    expect(codes).toContain("PROFIT_CAPTURE_INSUFFICIENT_DATA");
+    expect(codes).toContain("GRID_NOT_ACTIVE");
+  });
+
+  it("default quality (omitted) behaves as reliable", () => {
+    const diags = generateIdcaDiagnostics({
+      buyCount: 2,
+      closeReason: "TAKE_PROFIT",
+      profitCapturePct: 80,
+      mfePnlUsd: 50,
+      givebackUsd: 10,
+      maePnlUsd: -5,
+      capitalUsd: 100,
+      gridPlanCreated: false,
+    });
+    const goodCycle = diags.find(d => d.code === "GOOD_CYCLE");
+    expect(goodCycle).toBeDefined();
+    expect(goodCycle?.message).not.toContain("Estimación");
+  });
+});
+
+describe("generateTradeDiagnostics with profitCaptureQuality", () => {
+  it("insufficient_data does NOT generate LOW_PROFIT_CAPTURE", () => {
+    const metrics: TradeEfficiencyMetrics = {
+      mfePnlUsd: 50, maePnlUsd: -5, mfePct: 50, maePct: -5,
+      givebackUsd: 45, givebackPct: 45,
+      profitCapturePct: null,
+      profitCaptureQuality: "insufficient_data",
+      rawProfitCapturePct: 300,
+      displayProfitCapturePct: null,
+      profitCaptureWarning: "supera 100%",
+      exitEfficiency: "Sin datos",
+      opportunityLostUsd: 45,
+    };
+    const diags = generateTradeDiagnostics(metrics, "TAKE_PROFIT", 100);
+    const codes = diags.map(d => d.code);
+    expect(codes).not.toContain("LOW_PROFIT_CAPTURE");
+    expect(codes).not.toContain("HIGH_GIVEBACK");
+    expect(codes).not.toContain("GOOD_EXIT");
+  });
+
+  it("insufficient_data generates PROFIT_CAPTURE_INSUFFICIENT_DATA", () => {
+    const metrics: TradeEfficiencyMetrics = {
+      mfePnlUsd: 50, maePnlUsd: -5, mfePct: 50, maePct: -5,
+      givebackUsd: 45, givebackPct: 45,
+      profitCapturePct: null,
+      profitCaptureQuality: "insufficient_data",
+      rawProfitCapturePct: 300,
+      displayProfitCapturePct: null,
+      profitCaptureWarning: "supera 100%",
+      exitEfficiency: "Sin datos",
+      opportunityLostUsd: 45,
+    };
+    const diags = generateTradeDiagnostics(metrics, "TAKE_PROFIT", 100);
+    const info = diags.find(d => d.code === "PROFIT_CAPTURE_INSUFFICIENT_DATA");
+    expect(info).toBeDefined();
+    expect(info?.severity).toBe("info");
+  });
+
+  it("insufficient_data does NOT say '0% del MFE'", () => {
+    const metrics: TradeEfficiencyMetrics = {
+      mfePnlUsd: 50, maePnlUsd: -5, mfePct: 50, maePct: -5,
+      givebackUsd: 45, givebackPct: 45,
+      profitCapturePct: null,
+      profitCaptureQuality: "insufficient_data",
+      rawProfitCapturePct: 300,
+      displayProfitCapturePct: null,
+      profitCaptureWarning: "supera 100%",
+      exitEfficiency: "Sin datos",
+      opportunityLostUsd: 45,
+    };
+    const diags = generateTradeDiagnostics(metrics, "TAKE_PROFIT", 100);
+    const messages = diags.map(d => d.message).join(" ");
+    expect(messages).not.toContain("0%");
+  });
+
+  it("insufficient_data still checks MAE (independent)", () => {
+    const metrics: TradeEfficiencyMetrics = {
+      mfePnlUsd: 50, maePnlUsd: -80, mfePct: 50, maePct: -80,
+      givebackUsd: 45, givebackPct: 45,
+      profitCapturePct: null,
+      profitCaptureQuality: "insufficient_data",
+      rawProfitCapturePct: 300,
+      displayProfitCapturePct: null,
+      profitCaptureWarning: "supera 100%",
+      exitEfficiency: "Sin datos",
+      opportunityLostUsd: 45,
+    };
+    const diags = generateTradeDiagnostics(metrics, "TAKE_PROFIT", 100);
+    const codes = diags.map(d => d.code);
+    expect(codes).toContain("HIGH_MAE");
+  });
+
+  it("estimated generates LOW_PROFIT_CAPTURE with 'Estimación' prefix", () => {
+    const metrics: TradeEfficiencyMetrics = {
+      mfePnlUsd: 50, maePnlUsd: -5, mfePct: 50, maePct: -5,
+      givebackUsd: 45, givebackPct: 45,
+      profitCapturePct: 10,
+      profitCaptureQuality: "estimated",
+      rawProfitCapturePct: 10,
+      displayProfitCapturePct: 10,
+      profitCaptureWarning: null,
+      exitEfficiency: "Baja",
+      opportunityLostUsd: 45,
+    };
+    const diags = generateTradeDiagnostics(metrics, "TAKE_PROFIT", 100);
+    const lowCapture = diags.find(d => d.code === "LOW_PROFIT_CAPTURE");
+    expect(lowCapture).toBeDefined();
+    expect(lowCapture?.message).toContain("Estimación");
+  });
+
+  it("reliable generates normal diagnostics without 'Estimación'", () => {
+    const metrics: TradeEfficiencyMetrics = {
+      mfePnlUsd: 50, maePnlUsd: -5, mfePct: 50, maePct: -5,
+      givebackUsd: 45, givebackPct: 45,
+      profitCapturePct: 10,
+      profitCaptureQuality: "reliable",
+      rawProfitCapturePct: 10,
+      displayProfitCapturePct: 10,
+      profitCaptureWarning: null,
+      exitEfficiency: "Baja",
+      opportunityLostUsd: 45,
+    };
+    const diags = generateTradeDiagnostics(metrics, "TAKE_PROFIT", 100);
+    const lowCapture = diags.find(d => d.code === "LOW_PROFIT_CAPTURE");
+    expect(lowCapture).toBeDefined();
+    expect(lowCapture?.message).not.toContain("Estimación");
   });
 });
 

@@ -352,3 +352,24 @@ Cada cálculo de Profit Capture incluye ahora un campo de calidad:
 - fisco_* (datos fiscales)
 - bot_events ERROR/WARN
 - bot_events de tipo TRADE_EXECUTED, ORDER_FILLED, POSITION_CLOSED, CONFIG_UPDATED, etc.
+
+---
+
+## 13. Active Cycle Visibility & Quality-Aware Diagnostics (v1.2)
+
+### Problema
+1. **Ciclos abiertos no visibles**: IDCA usa `status="active"` pero el frontend filtraba con `status="open"`, por lo que los ciclos activos no aparecían en Monitor → Auditoría IDCA → Ciclos abiertos.
+2. **Diagnóstico falso "0% del MFE"**: Ciclos con `profitCaptureQuality: "insufficient_data"` recibían `LOW_PROFIT_CAPTURE` porque `(null ?? 0) = 0 < 25`.
+
+### Solución
+- **Backend**: `status=open` se normaliza a `status=active` antes de consultar la base de datos.
+- **Frontend**: Parsing robusto de respuesta (soporta `data` array y `data.cycles`).
+- **Frontend**: `STATUS_COLORS` incluye `active`, `running`, `in_progress`, `completed`, `finished`.
+- **Frontend**: Helpers `isOpenCycle()` / `isClosedCycle()` para normalizar estados.
+- **Diagnósticos quality-aware**:
+
+| Quality | LOW_PROFIT_CAPTURE | HIGH_GIVEBACK | GOOD_CYCLE/EXIT | PROFIT_CAPTURE_INSUFFICIENT_DATA | MAE/Grid |
+|---|---|---|---|---|---|
+| `reliable` | ✅ normal | ✅ normal | ✅ normal | ❌ | ✅ |
+| `estimated` | ✅ con "Estimación:" | ✅ normal | ✅ con "Estimación:" | ❌ | ✅ |
+| `insufficient_data` | ❌ | ❌ | ❌ | ✅ info | ✅ |

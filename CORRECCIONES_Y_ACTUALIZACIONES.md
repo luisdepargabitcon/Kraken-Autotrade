@@ -2,6 +2,49 @@
 
 ---
 
+## 2026-06-30 — fix(audit-ui): show active IDCA cycles and avoid unreliable capture diagnostics
+
+**Commit**: `fix(audit-ui): show active IDCA cycles and avoid unreliable capture diagnostics`
+
+### Problemas corregidos
+1. **Ciclos abiertos no visibles**: Monitor → Auditoría IDCA → Ciclos abiertos mostraba "Sin ciclos" aunque existía un ciclo #30 ETH/USD activo. Causa: el backend filtraba `status='open'` pero IDCA usa `status='active'`.
+2. **Diagnóstico falso "0% del MFE"**: Ciclos con `profitCaptureQuality: "insufficient_data"` recibían diagnóstico `LOW_PROFIT_CAPTURE` diciendo "capturó solo el 0% del MFE" porque `(null ?? 0) = 0 < 25`.
+3. **Paginación "1-0 de 0"**: El contador mostraba "1-0 de 0" cuando no había ciclos.
+
+### Solución
+- **Backend**: `status=open` se normaliza a `status=active` antes de consultar.
+- **Frontend**: Parsing robusto de respuesta (soporta `data` array y `data.cycles`).
+- **Frontend**: `STATUS_COLORS` incluye `active`, `running`, `in_progress`, `completed`, `finished`.
+- **Frontend**: Helpers `isOpenCycle()` / `isClosedCycle()` para normalizar estados.
+- **Frontend**: Paginación muestra "0 de 0" cuando no hay resultados.
+- **Frontend**: Empty state con mensaje útil "Revisa los filtros de par o estado arriba".
+- **Frontend**: `CycleDetailCard` usa `displayProfitCapturePct` y muestra "(est.)" para estimated.
+- **Diagnósticos**: `insufficient_data` → `PROFIT_CAPTURE_INSUFFICIENT_DATA` (info), no genera `LOW_PROFIT_CAPTURE` ni `HIGH_GIVEBACK` ni `GOOD_CYCLE`.
+- **Diagnósticos**: `estimated` → prefix "Estimación orientativa:" en mensajes.
+- **Diagnósticos**: `reliable` → diagnósticos normales sin prefijo.
+- **Diagnósticos**: MAE y Grid state se siguen evaluando (independientes de Profit Capture).
+
+### Archivos
+- `server/routes/audit.routes.ts` — normalización status=open→active, pasar profitCaptureQuality a generateIdcaDiagnostics
+- `server/services/auditMetrics.ts` — generateTradeDiagnostics y generateIdcaDiagnostics quality-aware
+- `client/src/components/audit/AuditIdcaPanel.tsx` — response parsing robusto, STATUS_COLORS, helpers, paginación, empty state, detail card
+- `server/services/__tests__/auditMetrics.test.ts` — 13 tests nuevos (106 total)
+
+### Tests
+- `npx vitest run auditMetrics.test.ts`: 106/106 ✅
+- `npm run check`: ✅
+- `npm run build`: ✅
+
+### Seguridad
+- No se tocó lógica real de trading ✅
+- No se activó modo real ✅
+- No se ejecutaron órdenes ✅
+- No se cambió configuración ✅
+- No se tocaron datos fiscales ✅
+- No se borró nada ✅
+
+---
+
 ## 2026-06-30 — fix(audit): handle unreliable IDCA profit capture and add safe bot events retention
 
 **Commit**: `fix(audit): handle unreliable IDCA profit capture and add safe bot events retention`

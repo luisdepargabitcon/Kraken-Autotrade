@@ -88,10 +88,25 @@ interface CycleDetail {
 
 const STATUS_COLORS: Record<string, string> = {
   open: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  active: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  running: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  in_progress: "bg-blue-500/20 text-blue-400 border-blue-500/30",
   closed: "bg-muted/50 text-muted-foreground border-muted",
+  completed: "bg-muted/50 text-muted-foreground border-muted",
+  finished: "bg-muted/50 text-muted-foreground border-muted",
   paused: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
   idle: "bg-muted/30 text-muted-foreground border-muted",
 };
+
+function isOpenCycle(status: string | undefined | null): boolean {
+  const s = String(status ?? "").toLowerCase();
+  return ["active", "open", "running", "in_progress"].includes(s);
+}
+
+function isClosedCycle(status: string | undefined | null): boolean {
+  const s = String(status ?? "").toLowerCase();
+  return ["closed", "completed", "finished"].includes(s);
+}
 
 const EFFICIENCY_COLORS: Record<string, string> = {
   Excelente: "text-green-400",
@@ -229,7 +244,7 @@ function CyclesTab({ pair, status }: { pair: string; status: string }) {
   const [offset, setOffset] = useState(0);
   const limit = 25;
 
-  const { data, isLoading } = useQuery<{ success: boolean; data: IdcaCycle[]; total: number }>({
+  const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/audit/idca/cycles", pair, status, offset],
     queryFn: () => fetch(`/api/audit/idca/cycles?limit=${limit}&offset=${offset}${pair !== "all" ? `&pair=${encodeURIComponent(pair)}` : ""}${status !== "all" ? `&status=${status}` : ""}`).then(r => r.json()),
     refetchInterval: 120_000,
@@ -241,8 +256,19 @@ function CyclesTab({ pair, status }: { pair: string; status: string }) {
     enabled: selected != null,
   });
 
-  const cycles = data?.data ?? [];
-  const total = data?.total ?? 0;
+  // Robust response parsing: support both data array and data.cycles formats
+  const rawResp = data;
+  const cycles: IdcaCycle[] = Array.isArray(rawResp?.data)
+    ? rawResp.data
+    : Array.isArray(rawResp?.data?.cycles)
+      ? rawResp.data.cycles
+      : [];
+  const total: number =
+    typeof rawResp?.total === "number"
+      ? rawResp.total
+      : typeof rawResp?.data?.total === "number"
+        ? rawResp.data.total
+        : cycles.length;
 
   if (isLoading) return <div className="flex items-center gap-2 p-8 text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" /> Cargando ciclos...</div>;
 
@@ -254,7 +280,7 @@ function CyclesTab({ pair, status }: { pair: string; status: string }) {
           <Badge variant="outline" className="text-xs">{total}</Badge>
         </span>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>{offset + 1}–{Math.min(offset + limit, total)} de {total}</span>
+          <span>{total > 0 ? `${offset + 1}–${Math.min(offset + limit, total)} de ${total}` : "0 de 0"}</span>
           <Button variant="ghost" size="sm" onClick={() => setOffset(Math.max(0, offset - limit))} disabled={offset === 0} className="h-6 px-2">←</Button>
           <Button variant="ghost" size="sm" onClick={() => setOffset(offset + limit)} disabled={offset + limit >= total} className="h-6 px-2">→</Button>
         </div>
@@ -308,7 +334,9 @@ function CyclesTab({ pair, status }: { pair: string; status: string }) {
               </tr>
             ))}
             {cycles.length === 0 && (
-              <tr><td colSpan={12} className="py-8 text-center text-muted-foreground">Sin ciclos</td></tr>
+              <tr><td colSpan={12} className="py-8 text-center text-muted-foreground">
+                <p>No hay ciclos para este filtro. Revisa los filtros de par o estado arriba.</p>
+              </td></tr>
             )}
           </tbody>
         </table>
@@ -355,7 +383,7 @@ function CycleDetailCard({ detail, cycleId }: { detail: CycleDetail; cycleId: nu
             ["MFE (proxy)", m?.mfePnlUsd != null ? fmtUsd(m.mfePnlUsd) : "N/A"],
             ["MAE (proxy)", m?.maePnlUsd != null ? fmtUsd(m.maePnlUsd) : "N/A"],
             ["Giveback", m?.givebackUsd != null ? `$${m.givebackUsd.toFixed(2)}` : "N/A"],
-            ["Profit Capture", m?.profitCapturePct != null ? `${m.profitCapturePct.toFixed(1)}%` : "N/A"],
+            ["Profit Capture", m?.displayProfitCapturePct != null ? `${m.displayProfitCapturePct.toFixed(1)}%${m.profitCaptureQuality === "estimated" ? " (est.)" : ""}` : "N/A"],
             ["Break Even", c.tp_armed_at ? "Armado" : "No"],
             ["Trailing", c.trailing_active_at ? "Activo" : "No"],
             ["Motivo cierre", c.close_reason ?? "—"],
