@@ -52,6 +52,7 @@ import {
   buildSqlInList,
   type EventRetentionTier,
 } from "../services/audit/botEventClassification";
+import { calculateIdcaCycleRealizedPnl, type IdcaCyclePnlResult } from "../../shared/idcaCyclePnl";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -70,6 +71,47 @@ function fmtUsd(v: number | null): string {
   if (v === null) return "N/A";
   const prefix = v >= 0 ? "+" : "";
   return `${prefix}$${v.toFixed(2)}`;
+}
+
+/**
+ * Load orders for an IDCA cycle and compute canonical PnL using shared/idcaCyclePnl.ts.
+ * This ensures the audit uses the same PnL logic as IDCA → Historial.
+ */
+async function computeCanonicalIdcaPnl(cycleRow: any): Promise<{
+  pnlResult: IdcaCyclePnlResult;
+  orders: any[];
+}> {
+  const orderRows = await db.execute(sql`
+    SELECT * FROM institutional_dca_orders WHERE cycle_id = ${cycleRow.id} ORDER BY executed_at ASC
+  `);
+  const orders = (orderRows.rows ?? []) as any[];
+
+  const pnlResult = calculateIdcaCycleRealizedPnl(
+    {
+      id: cycleRow.id,
+      capitalUsedUsd: cycleRow.capital_used_usd,
+      totalQuantity: cycleRow.total_quantity,
+      avgEntryPrice: cycleRow.avg_entry_price,
+      realizedPnlUsd: cycleRow.realized_pnl_usd,
+      pair: cycleRow.pair,
+      status: cycleRow.status,
+      isImported: cycleRow.is_imported,
+      isManualCycle: cycleRow.is_manual_cycle,
+      sourceType: cycleRow.source_type,
+      managedBy: cycleRow.managed_by,
+      basePrice: cycleRow.base_price,
+      basePriceType: cycleRow.base_price_type,
+      importSnapshotJson: cycleRow.import_snapshot_json,
+    },
+    orders
+  );
+
+  return { pnlResult, orders };
+}
+
+/** Determine if canonical PnL is calculable (not insufficient or cost_basis_missing) */
+function isPnlCalculable(pnlSource: string): boolean {
+  return pnlSource !== "insufficient" && pnlSource !== "cost_basis_missing";
 }
 
 /** Fetch OHLC candles for a pair between two timestamps (1h timeframe) */
@@ -541,7 +583,9 @@ export function registerAuditRoutes(app: Express): void {
           avg_entry_price, tp_target_price, tp_target_pct,
           highest_price_after_tp, max_drawdown_pct,
           trailing_active_at, tp_armed_at, close_reason,
-          started_at, closed_at
+          started_at, closed_at, total_quantity,
+          is_imported, is_manual_cycle, source_type, managed_by,
+          base_price, base_price_type, import_snapshot_json
         FROM institutional_dca_cycles
         ${pair && pair !== "all" ? sql`WHERE pair = ${pair}` : sql``}
         ORDER BY started_at DESC
@@ -552,11 +596,24 @@ export function registerAuditRoutes(app: Express): void {
       const closed = cycles.filter(c => c.status === "closed");
       const open = cycles.filter(c => c.status !== "closed");
 
-      const closedPnls = closed.map(c => n(c.realized_pnl_usd));
+      // Compute canonical PnL for closed cycles (loads orders per cycle)
+      const closedPnlResults: { pnl: number; source: string; calculable: boolean }[] = [];
+      for (const c of closed) {
+        const { pnlResult } = await computeCanonicalIdcaPnl(c);
+        closedPnlResults.push({
+          pnl: pnlResult.realizedNetUsd,
+          source: pnlResult.pnlSource,
+          calculable: isPnlCalculable(pnlResult.pnlSource),
+        });
+      }
+
       const openPnls = open.map(c => n(c.unrealized_pnl_usd));
-      const totalRealizedPnl = closedPnls.reduce((a, b) => a + b, 0);
+      const calculableClosed = closedPnlResults.filter(r => r.calculable);
+      const totalRealizedPnl = calculableClosed.reduce((a, r) => a + r.pnl, 0);
       const totalUnrealizedPnl = openPnls.reduce((a, b) => a + b, 0);
-      const closedWins = closedPnls.filter(p => p > 0).length;
+      const closedWins = calculableClosed.filter(r => r.pnl > 0).length;
+      const closedLosses = calculableClosed.filter(r => r.pnl < 0).length;
+      const closedNeutral = calculableClosed.filter(r => Math.abs(r.pnl) < 0.01).length;
 
       // Compute per-cycle profit capture with quality classification
       let totalMfeUsd = 0;
@@ -566,11 +623,13 @@ export function registerAuditRoutes(app: Express): void {
       let cyclesWithProfitCaptureData = 0;
       let cyclesWithoutProfitCaptureData = 0;
 
-      for (const c of closed) {
+      for (let i = 0; i < closed.length; i++) {
+        const c = closed[i];
+        const pnlResult = closedPnlResults[i];
+        const pnl = pnlResult.pnl;
         const mfePrice = nullableN(c.highest_price_after_tp);
         const avgEntry = nullableN(c.avg_entry_price);
         const capital = n(c.capital_used_usd);
-        const pnl = n(c.realized_pnl_usd);
         if (mfePrice != null && avgEntry != null && avgEntry > 0) {
           const qty = capital / avgEntry;
           const mfe = (mfePrice - avgEntry) * qty;
@@ -600,12 +659,15 @@ export function registerAuditRoutes(app: Express): void {
         cyclesWithProfitCaptureData === 0 ? "none" :
         cyclesWithoutProfitCaptureData > 0 ? "partial" : "complete";
 
-      // By close reason
+      // By close reason — use canonical PnL
       const reasonMap = new Map<string, number[]>();
-      for (const c of closed) {
+      for (let i = 0; i < closed.length; i++) {
+        const c = closed[i];
+        const pnlResult = closedPnlResults[i];
+        if (!pnlResult.calculable) continue;
         const r = c.close_reason ?? "unknown";
         const arr = reasonMap.get(r) ?? [];
-        arr.push(n(c.realized_pnl_usd));
+        arr.push(pnlResult.pnl);
         reasonMap.set(r, arr);
       }
       const byCloseReason = Array.from(reasonMap.entries()).map(([reason, ps]) => ({
@@ -634,8 +696,8 @@ export function registerAuditRoutes(app: Express): void {
           closedCycles: closed.length,
           totalRealizedPnlUsd: parseFloat(totalRealizedPnl.toFixed(2)),
           totalUnrealizedPnlUsd: parseFloat(totalUnrealizedPnl.toFixed(2)),
-          closedWins, closedLosses: closed.length - closedWins,
-          closedWinRate: closed.length > 0 ? parseFloat(((closedWins / closed.length) * 100).toFixed(1)) : 0,
+          closedWins, closedLosses,
+          closedWinRate: calculableClosed.length > 0 ? parseFloat(((closedWins / calculableClosed.length) * 100).toFixed(1)) : 0,
           totalMfeUsd: mfeCount > 0 ? parseFloat(totalMfeUsd.toFixed(2)) : null,
           totalGivebackUsd: mfeCount > 0 ? parseFloat(totalGivebackUsd.toFixed(2)) : null,
           avgProfitCapturePct: avgProfitCapture,
@@ -678,7 +740,15 @@ export function registerAuditRoutes(app: Express): void {
       for (const c of (rows.rows ?? []) as any[]) {
         const avgEntry = nullableN(c.avg_entry_price);
         const capital = n(c.capital_used_usd);
-        const pnl = n(c.status === "closed" ? c.realized_pnl_usd : c.unrealized_pnl_usd);
+        const rawPnl = n(c.status === "closed" ? c.realized_pnl_usd : c.unrealized_pnl_usd);
+
+        // Compute canonical PnL using shared helper (same as IDCA Historial)
+        const { pnlResult } = await computeCanonicalIdcaPnl(c);
+        const canonicalPnl = c.status === "closed"
+          ? (isPnlCalculable(pnlResult.pnlSource) ? pnlResult.realizedNetUsd : rawPnl)
+          : rawPnl;
+        const pnl = canonicalPnl;
+
         const mfePrice = nullableN(c.highest_price_after_tp);
         const maePct = nullableN(c.max_drawdown_pct);
 
@@ -732,6 +802,14 @@ export function registerAuditRoutes(app: Express): void {
           startedAt: c.started_at, closedAt: c.closed_at ?? null,
           durationMinutes: durMin, durationLabel: formatDuration(durMin),
           finalPnlUsd: parseFloat(pnl.toFixed(2)),
+          canonicalPnlUsd: parseFloat(pnlResult.realizedNetUsd.toFixed(2)),
+          canonicalPnlPct: parseFloat(pnlResult.realizedPnlPct.toFixed(2)),
+          pnlSource: pnlResult.pnlSource,
+          pnlIsCalculable: isPnlCalculable(pnlResult.pnlSource),
+          rawRealizedPnlUsd: parseFloat(rawPnl.toFixed(2)),
+          rawRealizedPnlWarning: Math.abs(rawPnl - pnlResult.realizedNetUsd) > 0.50 ? "El valor bruto de DB no se usa porque parece valor de venta o dato importado contaminado." : null,
+          auditRealizedNetUsd: pnlResult.auditRealizedNetUsd != null ? parseFloat(pnlResult.auditRealizedNetUsd.toFixed(2)) : null,
+          pnlDiscrepancyUsd: pnlResult.pnlDiscrepancyUsd != null ? parseFloat(pnlResult.pnlDiscrepancyUsd.toFixed(2)) : null,
           beActive: c.tp_armed_at != null,
           trailingActive: c.trailing_active_at != null,
           gridPlanId, gridState,
@@ -792,7 +870,15 @@ export function registerAuditRoutes(app: Express): void {
 
       const avgEntry = nullableN(cycle.avg_entry_price);
       const capital = n(cycle.capital_used_usd);
-      const pnl = n(cycle.status === "closed" ? cycle.realized_pnl_usd : cycle.unrealized_pnl_usd);
+      const rawPnl = n(cycle.status === "closed" ? cycle.realized_pnl_usd : cycle.unrealized_pnl_usd);
+
+      // Compute canonical PnL (same as IDCA Historial)
+      const { pnlResult } = await computeCanonicalIdcaPnl(cycle);
+      const canonicalPnl = cycle.status === "closed"
+        ? (isPnlCalculable(pnlResult.pnlSource) ? pnlResult.realizedNetUsd : rawPnl)
+        : rawPnl;
+      const pnl = canonicalPnl;
+
       const mfePrice = nullableN(cycle.highest_price_after_tp);
       const maePct = nullableN(cycle.max_drawdown_pct);
 
@@ -832,6 +918,7 @@ export function registerAuditRoutes(app: Express): void {
         avgEntryFinal: avgEntry,
         tpPrice: nullableN(cycle.tp_target_price),
         finalPnlUsd: pnl, metrics,
+        pnlSource: pnlResult.pnlSource,
         beActive: cycle.tp_armed_at != null,
         trailingActive: cycle.trailing_active_at != null,
         gridPlanId, mrDecision: hybridState?.mean_reversion_state ?? null,
@@ -982,7 +1069,9 @@ export function registerAuditRoutes(app: Express): void {
 
       const rows = await db.execute(sql`
         SELECT id, pair, status, capital_used_usd, realized_pnl_usd, unrealized_pnl_usd,
-               buy_count, close_reason, started_at, closed_at
+               buy_count, close_reason, started_at, closed_at, total_quantity,
+               avg_entry_price, is_imported, is_manual_cycle, source_type, managed_by,
+               base_price, base_price_type, import_snapshot_json
         FROM institutional_dca_cycles
         WHERE 1=1
           ${pair && pair !== "all" ? sql`AND pair = ${pair}` : sql``}
@@ -993,7 +1082,21 @@ export function registerAuditRoutes(app: Express): void {
       const cycles = (rows.rows ?? []) as any[];
       const closed = cycles.filter(c => c.status === "closed");
       const open = cycles.filter(c => c.status !== "closed");
-      const totalPnl = closed.reduce((a, c) => a + n(c.realized_pnl_usd), 0);
+
+      // Compute canonical PnL for closed cycles
+      const closedCanonical: { cycle: any; pnl: number; source: string; calculable: boolean }[] = [];
+      for (const c of closed) {
+        const { pnlResult } = await computeCanonicalIdcaPnl(c);
+        closedCanonical.push({
+          cycle: c,
+          pnl: pnlResult.realizedNetUsd,
+          source: pnlResult.pnlSource,
+          calculable: isPnlCalculable(pnlResult.pnlSource),
+        });
+      }
+
+      const calculableClosed = closedCanonical.filter(r => r.calculable);
+      const totalPnl = calculableClosed.reduce((a, r) => a + r.pnl, 0);
       const openPnl = open.reduce((a, c) => a + n(c.unrealized_pnl_usd), 0);
 
       const lines = [
@@ -1004,14 +1107,14 @@ export function registerAuditRoutes(app: Express): void {
         `Ciclos totales: ${cycles.length} (${open.length} abiertos · ${closed.length} cerrados)`,
         `PnL realizado (cerrados): ${fmtUsd(totalPnl)}`,
         `PnL flotante (abiertos): ${fmtUsd(openPnl)}`,
-        `Win Rate ciclos cerrados: ${closed.length > 0 ? ((closed.filter(c => n(c.realized_pnl_usd) > 0).length / closed.length * 100).toFixed(0)) : "N/A"}%`,
+        `Win Rate ciclos cerrados: ${calculableClosed.length > 0 ? ((calculableClosed.filter(r => r.pnl > 0).length / calculableClosed.length * 100).toFixed(0)) : "N/A"}%`,
         `───────────────────────────────────`,
         `Por motivo de cierre:`,
         ...Array.from(new Map<string, number[]>(
-          closed.reduce((map, c) => {
-            const r = c.close_reason ?? "unknown";
-            if (!map.has(r)) map.set(r, []);
-            map.get(r)!.push(n(c.realized_pnl_usd));
+          closedCanonical.filter(r => r.calculable).reduce((map, r) => {
+            const reason = r.cycle.close_reason ?? "unknown";
+            if (!map.has(reason)) map.set(reason, []);
+            map.get(reason)!.push(r.pnl);
             return map;
           }, new Map<string, number[]>())
         ).entries()).map(([r, ps]) => {
@@ -1041,20 +1144,40 @@ export function registerAuditRoutes(app: Express): void {
       const rows = await db.execute(sql`
         SELECT id, pair, status, mode, buy_count, capital_used_usd,
                realized_pnl_usd, unrealized_pnl_usd, avg_entry_price,
-               tp_target_price, close_reason, started_at, closed_at
+               tp_target_price, close_reason, started_at, closed_at, total_quantity,
+               is_imported, is_manual_cycle, source_type, managed_by,
+               base_price, base_price_type, import_snapshot_json
         FROM institutional_dca_cycles
         WHERE 1=1
           ${pair && pair !== "all" ? sql`AND pair = ${pair}` : sql``}
           ${since ? sql`AND started_at >= ${since}::timestamptz` : sql``}
         ORDER BY started_at DESC LIMIT 10000
       `);
-      const data = (rows.rows ?? []) as any[];
+      const rawData = (rows.rows ?? []) as any[];
+
+      // Compute canonical PnL for each cycle
+      const data: any[] = [];
+      for (const r of rawData) {
+        const { pnlResult } = await computeCanonicalIdcaPnl(r);
+        const rawPnl = n(r.status === "closed" ? r.realized_pnl_usd : r.unrealized_pnl_usd);
+        const canonicalPnl = r.status === "closed"
+          ? (isPnlCalculable(pnlResult.pnlSource) ? pnlResult.realizedNetUsd : rawPnl)
+          : rawPnl;
+        data.push({
+          ...r,
+          canonical_pnl_usd: parseFloat(canonicalPnl.toFixed(2)),
+          pnl_source: pnlResult.pnlSource,
+          pnl_is_calculable: isPnlCalculable(pnlResult.pnlSource),
+          raw_realized_pnl_usd: parseFloat(rawPnl.toFixed(2)),
+        });
+      }
 
       if (format === "csv") {
-        const header = "id,pair,status,mode,buy_count,capital_usd,realized_pnl,unrealized_pnl,avg_entry,tp_price,close_reason,started_at,closed_at";
+        const header = "id,pair,status,mode,buy_count,capital_usd,canonical_pnl,pnl_source,raw_realized_pnl,unrealized_pnl,avg_entry,tp_price,close_reason,started_at,closed_at";
         const csvRows = data.map(r =>
           [r.id, r.pair, r.status, r.mode, r.buy_count, r.capital_used_usd,
-            r.realized_pnl_usd, r.unrealized_pnl_usd, r.avg_entry_price,
+            r.canonical_pnl_usd, r.pnl_source, r.raw_realized_pnl_usd,
+            r.unrealized_pnl_usd, r.avg_entry_price,
             r.tp_target_price, r.close_reason, r.started_at, r.closed_at].join(",")
         );
         res.setHeader("Content-Type", "text/csv");

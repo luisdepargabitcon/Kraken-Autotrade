@@ -373,3 +373,36 @@ Cada cálculo de Profit Capture incluye ahora un campo de calidad:
 | `reliable` | ✅ normal | ✅ normal | ✅ normal | ❌ | ✅ |
 | `estimated` | ✅ con "Estimación:" | ✅ normal | ✅ con "Estimación:" | ❌ | ✅ |
 | `insufficient_data` | ❌ | ❌ | ❌ | ✅ info | ✅ |
+
+---
+
+## 14. Canonical PnL Integration (v1.3)
+
+### Problema
+La Auditoría IDCA leía `realized_pnl_usd` directamente de la base de datos. En ciclos legacy/importados (pre-bee8391), este campo contiene el **valor de venta** (sell proceeds), no el beneficio neto. Esto producía:
+- Ciclo #18 ETH/USD: +1128.01 $ (venta) en lugar de +85.01 $ (beneficio)
+- Ciclo #15 BTC/USD: +1198.41 $ (venta) en lugar de +44.37 $ (beneficio)
+- `totalRealizedPnlUsd`: +1604.17 $ (suma de ventas brutas)
+
+### Solución
+La Auditoría IDCA usa ahora `calculateIdcaCycleRealizedPnl` de `shared/idcaCyclePnl.ts` — la misma función que usa IDCA → Historial.
+
+### PnL Source Classification
+
+| Source | Descripción | Calculable | Badge UI |
+|---|---|---|---|
+| `orders` | Calculado desde BUY+SELL orders | ✅ | — |
+| `orders_cycle_capital` | SELL orders + capitalUsedUsd como cost basis | ✅ | — |
+| `orders_avg_entry` | SELL orders + avgEntryPrice como cost basis | ✅ | — |
+| `imported_persisted_pnl` | PnL persistido de ciclo importado/manual | ✅ | "persistido" |
+| `cycle_realized_fallback` | Fallback: realizedPnlUsd plausible | ✅ | "fallback" |
+| `cycle_realized` | Fallback: realizedPnlUsd (no sell proceeds) | ✅ | "fallback" |
+| `cost_basis_missing` | Cost basis insuficiente | ❌ | "pendiente" |
+| `insufficient` | Datos insuficientes | ❌ | "N/A" |
+
+### Reglas de agregación
+- `totalRealizedPnlUsd` solo suma ciclos con `pnlIsCalculable=true`
+- `closedWins` / `closedLosses` solo de ciclos calculables
+- `byCloseReason` solo incluye ciclos calculables
+- Ciclos abiertos no suman en `totalRealizedPnlUsd`
+- Export incluye `canonical_pnl_usd`, `pnl_source`, `raw_realized_pnl_usd`

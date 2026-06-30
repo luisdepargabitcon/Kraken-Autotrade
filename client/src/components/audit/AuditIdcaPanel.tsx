@@ -54,6 +54,14 @@ interface IdcaCycle {
   closedAt: string | null;
   durationLabel: string;
   finalPnlUsd: number;
+  canonicalPnlUsd?: number;
+  canonicalPnlPct?: number;
+  pnlSource?: string;
+  pnlIsCalculable?: boolean;
+  rawRealizedPnlUsd?: number;
+  rawRealizedPnlWarning?: string | null;
+  auditRealizedNetUsd?: number | null;
+  pnlDiscrepancyUsd?: number | null;
   beActive: boolean;
   trailingActive: boolean;
   gridPlanId: string | null;
@@ -106,6 +114,23 @@ function isOpenCycle(status: string | undefined | null): boolean {
 function isClosedCycle(status: string | undefined | null): boolean {
   const s = String(status ?? "").toLowerCase();
   return ["closed", "completed", "finished"].includes(s);
+}
+
+function PnlSourceBadge({ source }: { source?: string }) {
+  if (!source) return null;
+  if (source === "imported_persisted_pnl") {
+    return <span className="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30" title="PnL persistido de ciclo importado/manual">persistido</span>;
+  }
+  if (source === "cycle_realized_fallback") {
+    return <span className="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30" title="Fallback: valor de ciclo sin órdenes suficientes">fallback</span>;
+  }
+  if (source === "cost_basis_missing") {
+    return <span className="text-[9px] px-1 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/30" title="Cost basis insuficiente">pendiente</span>;
+  }
+  if (source === "insufficient") {
+    return <span className="text-[9px] px-1 py-0.5 rounded bg-muted/30 text-muted-foreground border border-muted" title="Datos insuficientes">N/A</span>;
+  }
+  return null;
 }
 
 const EFFICIENCY_COLORS: Record<string, string> = {
@@ -315,7 +340,17 @@ function CyclesTab({ pair, status }: { pair: string; status: string }) {
                 </td>
                 <td className="py-1.5 px-2 text-right text-muted-foreground">{c.buyCount}</td>
                 <td className="py-1.5 px-2 text-right text-muted-foreground">${c.capitalUsedUsd.toFixed(0)}</td>
-                <td className="py-1.5 px-2 text-right"><PnlBadge value={c.finalPnlUsd} /></td>
+                <td className="py-1.5 px-2 text-right">
+                  <div className="flex items-center justify-end gap-1">
+                    <PnlBadge value={c.finalPnlUsd} />
+                    {c.pnlSource && c.pnlSource !== "orders" && c.pnlSource !== "orders_cycle_capital" && c.pnlSource !== "orders_avg_entry" && (
+                      <PnlSourceBadge source={c.pnlSource} />
+                    )}
+                  </div>
+                  {c.rawRealizedPnlWarning && (
+                    <div className="text-[8px] text-orange-400/70 mt-0.5" title={c.rawRealizedPnlWarning}>raw: {fmtUsd(c.rawRealizedPnlUsd)}</div>
+                  )}
+                </td>
                 <td className="py-1.5 px-2 text-right"><PnlBadge value={c.metrics.mfePnlUsd} /></td>
                 <td className="py-1.5 px-2 text-right">
                   {c.metrics.displayProfitCapturePct != null
@@ -383,7 +418,8 @@ function CycleDetailCard({ detail, cycleId }: { detail: CycleDetail; cycleId: nu
             ["MFE (proxy)", m?.mfePnlUsd != null ? fmtUsd(m.mfePnlUsd) : "N/A"],
             ["MAE (proxy)", m?.maePnlUsd != null ? fmtUsd(m.maePnlUsd) : "N/A"],
             ["Giveback", m?.givebackUsd != null ? `$${m.givebackUsd.toFixed(2)}` : "N/A"],
-            ["Profit Capture", m?.displayProfitCapturePct != null ? `${m.displayProfitCapturePct.toFixed(1)}%${m.profitCaptureQuality === "estimated" ? " (est.)" : ""}` : "N/A"],
+            ["P&L Canónico", `${fmtUsd(detail.cycle.canonicalPnlUsd ?? detail.cycle.finalPnlUsd)}${detail.cycle.pnlSource ? ` (${detail.cycle.pnlSource})` : ""}`],
+            ["P&L Raw DB", detail.cycle.rawRealizedPnlUsd != null ? fmtUsd(detail.cycle.rawRealizedPnlUsd) : "—"],
             ["Break Even", c.tp_armed_at ? "Armado" : "No"],
             ["Trailing", c.trailing_active_at ? "Activo" : "No"],
             ["Motivo cierre", c.close_reason ?? "—"],

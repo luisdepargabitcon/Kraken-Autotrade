@@ -527,6 +527,7 @@ export function generateIdcaChatGptSummary(cycle: {
   tpPrice: number | null;
   finalPnlUsd: number;
   metrics: TradeEfficiencyMetrics;
+  pnlSource?: string;
   beActive: boolean;
   trailingActive: boolean;
   gridPlanId: string | null;

@@ -2,6 +2,62 @@
 
 ---
 
+## 2026-06-30 — fix(audit-idca): use canonical cycle pnl from IDCA history
+
+**Commit**: `fix(audit-idca): use canonical cycle pnl from IDCA history`
+
+### Problema corregido
+La Auditoría IDCA en Monitor mostraba PnL brutos incorrectos porque leía directamente `realized_pnl_usd` de la base de datos. En ciclos legacy/importados, este campo contiene el **valor de venta** (sell proceeds), no el beneficio neto:
+- Ciclo #18 ETH/USD aparecía como +1128.01 $ (valor de venta) en lugar de +85.01 $ (beneficio real)
+- Ciclo #15 BTC/USD aparecía como +1198.41 $ en lugar de +44.37 $
+- `totalRealizedPnlUsd` del summary era +1604.17 $ (suma de ventas brutas) en lugar del canónico
+
+### Causa raíz
+`audit.routes.ts` línea 681 usaba `n(c.realized_pnl_usd)` directamente como PnL. El helper canónico `calculateIdcaCycleRealizedPnl` (en `shared/idcaCyclePnl.ts`) ya detecta y corrige esto, pero no se usaba en la auditoría.
+
+### Solución
+- **Backend**: Integrado `calculateIdcaCycleRealizedPnl` de `shared/idcaCyclePnl.ts` en todos los endpoints IDCA:
+  - `GET /api/audit/idca/summary` — `totalRealizedPnlUsd`, `closedWins`, `closedLosses`, `byCloseReason` usan PnL canónico
+  - `GET /api/audit/idca/cycles` — cada ciclo incluye `canonicalPnlUsd`, `pnlSource`, `pnlIsCalculable`, `rawRealizedPnlUsd`, `rawRealizedPnlWarning`
+  - `GET /api/audit/idca/cycles/:id` — detail usa PnL canónico y pasa `pnlSource` al ChatGPT summary
+  - `GET /api/audit/idca/export` — CSV/JSON incluyen `canonical_pnl_usd`, `pnl_source`, `raw_realized_pnl_usd`
+  - `GET /api/audit/idca/chatgpt-summary` — usa PnL canónico para totales y win rate
+- **Backend**: Nuevo helper `computeCanonicalIdcaPnl()` carga órdenes del ciclo y calcula PnL canónico
+- **Backend**: `isPnlCalculable()` excluye ciclos con `insufficient` o `cost_basis_missing` de agregaciones
+- **Frontend**: `IdcaCycle` interface extendida con campos canónicos
+- **Frontend**: `PnlSourceBadge` muestra badges: "persistido" (imported_persisted_pnl), "fallback" (cycle_realized_fallback), "pendiente" (cost_basis_missing), "N/A" (insufficient)
+- **Frontend**: Columna P&L muestra badge de fuente cuando no es "orders"
+- **Frontend**: Tooltip con valor raw DB cuando difiere del canónico
+- **Frontend**: `CycleDetailCard` muestra "P&L Canónico" con fuente y "P&L Raw DB" como dato técnico
+
+### Reglas de agregación
+- **Ciclos cerrados calculables**: `pnlIsCalculable=true` → suman en `totalRealizedPnlUsd`, wins/losses
+- **Ciclos con `insufficient` o `cost_basis_missing`**: excluidos de totales y win/loss
+- **Ciclos abiertos**: no suman en `totalRealizedPnlUsd`, solo en `totalUnrealizedPnlUsd`
+- **Ciclos importados/manuales**: `imported_persisted_pnl` es canónico, FIFO queda como auditoría
+
+### Archivos
+- `server/routes/audit.routes.ts` — integración `calculateIdcaCycleRealizedPnl` en 5 endpoints + helper
+- `server/services/auditMetrics.ts` — `pnlSource` añadido a `generateIdcaChatGptSummary`
+- `client/src/components/audit/AuditIdcaPanel.tsx` — interface extendida, `PnlSourceBadge`, tabla y detail actualizados
+- `server/services/__tests__/auditIdcaPnl.test.ts` — **nuevo**, 15 tests
+
+### Tests
+- `npx vitest run auditIdcaPnl.test.ts`: 15/15 ✅
+- `npx vitest run auditMetrics.test.ts`: 106/106 ✅
+- `npm run check`: ✅
+- `npm run build`: ✅
+
+### Seguridad
+- No se tocó lógica real de trading ✅
+- No se ejecutaron órdenes ✅
+- No se cambió configuración ✅
+- No se tocaron datos fiscales ✅
+- No se borró nada ✅
+- Solo lectura/auditoría/UI/cálculo canónico ✅
+
+---
+
 ## 2026-06-30 — fix(audit-ui): show active IDCA cycles and avoid unreliable capture diagnostics
 
 **Commit**: `fix(audit-ui): show active IDCA cycles and avoid unreliable capture diagnostics`
