@@ -157,6 +157,7 @@ interface DryRunTrade {
   exclusionReason?: string | null;
   excludedAt?: string | null;
   auditBatchId?: string | null;
+  entryNotionalUsd?: number | null;
 }
 
 interface PnLByReason {
@@ -214,6 +215,17 @@ interface DryRunSummary {
 
   // Legend
   legend: Record<string, string>;
+
+  // Capital efficiency metrics
+  microCount?: number;
+  dustCount?: number;
+  microPnl?: number;
+  dustPnl?: number;
+  cleanPnlExcludingMicro?: number;
+  microPct?: number;
+  sgMinEntryUsd?: number;
+  sgAbsoluteDustUsd?: number;
+  sgExcludeMicro?: boolean;
 }
 
 interface DryRunHistoryResponse {
@@ -371,6 +383,8 @@ export default function Terminal() {
   const toggleDryRunHistRow = (id: number) => setExpandedDryRunHist(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
   // Filter for DRY RUN history: 'included' | 'excluded' | 'all'
   const [dryRunExcludedFilter, setDryRunExcludedFilter] = useState<'included' | 'excluded' | 'all'>('included');
+  // Capital efficiency sub-filter: 'all' | 'clean' | 'micro' | 'dust'
+  const [dryRunMicroFilter, setDryRunMicroFilter] = useState<'all' | 'clean' | 'micro' | 'dust'>('all');
 
   const { data: dryRunPositions, isLoading: loadingDryRun, refetch: refetchDryRun, isFetching: fetchingDryRun } = useQuery<DryRunTrade[]>({
     queryKey: ["dryRunPositions"],
@@ -2372,6 +2386,47 @@ export default function Terminal() {
                     </div>
                   )}
 
+                  {/* Capital Efficiency Metrics */}
+                  {dryRunSummary && (dryRunSummary.microCount || dryRunSummary.dustCount) ? (
+                    <div className="p-3 bg-emerald-500/5 border-b border-amber-500/10">
+                      <p className="text-[10px] font-mono text-emerald-400 mb-2">EFICIENCIA DE CAPITAL</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-center">
+                        <div className="p-2 rounded bg-card/50">
+                          <p className="text-[9px] text-muted-foreground">MICRO</p>
+                          <p className="font-mono text-sm text-yellow-400">{dryRunSummary.microCount ?? 0}</p>
+                        </div>
+                        <div className="p-2 rounded bg-card/50">
+                          <p className="text-[9px] text-muted-foreground">DUST</p>
+                          <p className="font-mono text-sm text-orange-400">{dryRunSummary.dustCount ?? 0}</p>
+                        </div>
+                        <div className="p-2 rounded bg-card/50">
+                          <p className="text-[9px] text-muted-foreground">P&L MICRO</p>
+                          <p className={`font-mono text-sm ${(dryRunSummary.microPnl ?? 0) >= 0 ? 'text-green-400/70' : 'text-red-400/70'}`}>
+                            ${(dryRunSummary.microPnl ?? 0).toFixed(2)}
+                          </p>
+                        </div>
+                        <div className="p-2 rounded bg-card/50">
+                          <p className="text-[9px] text-muted-foreground">P&L DUST</p>
+                          <p className={`font-mono text-sm ${(dryRunSummary.dustPnl ?? 0) >= 0 ? 'text-green-400/70' : 'text-red-400/70'}`}>
+                            ${(dryRunSummary.dustPnl ?? 0).toFixed(2)}
+                          </p>
+                        </div>
+                        <div className="p-2 rounded bg-card/50">
+                          <p className="text-[9px] text-muted-foreground">P&L LIMPIO sin MICRO</p>
+                          <p className={`font-mono text-sm ${(dryRunSummary.cleanPnlExcludingMicro ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            ${(dryRunSummary.cleanPnlExcludingMicro ?? 0).toFixed(2)}
+                          </p>
+                        </div>
+                        <div className="p-2 rounded bg-card/50">
+                          <p className="text-[9px] text-muted-foreground">% MICRO</p>
+                          <p className="font-mono text-sm text-amber-400">
+                            {(dryRunSummary.microPct ?? 0).toFixed(1)}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {/* Filter tabs for included/excluded trades */}
                   <div className="flex items-center gap-2 p-3 border-b border-amber-500/10 bg-amber-500/5">
                     <span className="text-[10px] font-mono text-muted-foreground">MOSTRAR:</span>
@@ -2406,6 +2461,47 @@ export default function Terminal() {
                     </span>
                   </div>
 
+                  {/* Capital efficiency sub-filters */}
+                  {dryRunSummary && (
+                    <div className="flex items-center gap-2 px-3 py-2 border-b border-amber-500/10 bg-amber-500/3">
+                      <span className="text-[10px] font-mono text-muted-foreground">CAPITAL:</span>
+                      <div className="flex gap-1">
+                        <Button
+                          variant={dryRunMicroFilter === 'all' ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setDryRunMicroFilter('all')}
+                          className={`text-[10px] font-mono h-5 ${dryRunMicroFilter === 'all' ? 'bg-amber-600 hover:bg-amber-700' : 'border-amber-500/30'}`}
+                        >
+                          TODAS
+                        </Button>
+                        <Button
+                          variant={dryRunMicroFilter === 'clean' ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setDryRunMicroFilter('clean')}
+                          className={`text-[10px] font-mono h-5 ${dryRunMicroFilter === 'clean' ? 'bg-emerald-600 hover:bg-emerald-700' : 'border-amber-500/30'}`}
+                        >
+                          SCORE LIMPIO
+                        </Button>
+                        <Button
+                          variant={dryRunMicroFilter === 'micro' ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setDryRunMicroFilter('micro')}
+                          className={`text-[10px] font-mono h-5 ${dryRunMicroFilter === 'micro' ? 'bg-yellow-600 hover:bg-yellow-700' : 'border-amber-500/30'}`}
+                        >
+                          MICRO ({dryRunSummary.microCount ?? 0})
+                        </Button>
+                        <Button
+                          variant={dryRunMicroFilter === 'dust' ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setDryRunMicroFilter('dust')}
+                          className={`text-[10px] font-mono h-5 ${dryRunMicroFilter === 'dust' ? 'bg-orange-600 hover:bg-orange-700' : 'border-amber-500/30'}`}
+                        >
+                          DUST ({dryRunSummary.dustCount ?? 0})
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                   {dryRunHistory && dryRunHistory.trades.length > 0 ? (
                     <>
                       <div className="overflow-x-auto">
@@ -2429,6 +2525,16 @@ export default function Terminal() {
                               const isProfit = pnl > 0;
                               const isExpHist = expandedDryRunHist.has(trade.id);
                               const isExcluded = trade.excludedFromPnl === true;
+                              const entryNotional = trade.entryNotionalUsd ?? (trade.entryPrice && trade.amount ? parseFloat(trade.entryPrice) * parseFloat(trade.amount) : null);
+                              const sgMinEntry = dryRunSummary?.sgMinEntryUsd ?? 100;
+                              const sgDust = dryRunSummary?.sgAbsoluteDustUsd ?? 20;
+                              const isDust = entryNotional !== null && entryNotional < sgDust;
+                              const isMicro = !isDust && entryNotional !== null && entryNotional < sgMinEntry;
+                              const isExcludedScore = dryRunSummary?.sgExcludeMicro && (isMicro || isDust);
+                              // Apply micro/dust sub-filter
+                              if (dryRunMicroFilter === 'clean' && (isMicro || isDust)) return null;
+                              if (dryRunMicroFilter === 'micro' && !isMicro) return null;
+                              if (dryRunMicroFilter === 'dust' && !isDust) return null;
                               return (
                                 <>
                                   <tr
@@ -2443,6 +2549,21 @@ export default function Terminal() {
                                         {isExcluded && (
                                           <Badge variant="outline" className="text-[10px] border-red-500/50 bg-red-500/10 text-red-400">
                                             EXCLUIDA
+                                          </Badge>
+                                        )}
+                                        {isDust && entryNotional !== null && (
+                                          <Badge variant="outline" className="text-[10px] border-orange-500/50 bg-orange-500/10 text-orange-400" title="Operación residual: aunque el porcentaje sea bueno, la ganancia real sería irrelevante.">
+                                            DUST
+                                          </Badge>
+                                        )}
+                                        {isMicro && entryNotional !== null && (
+                                          <Badge variant="outline" className="text-[10px] border-yellow-500/50 bg-yellow-500/10 text-yellow-400" title="Compra bloqueada: el importe era demasiado pequeño para ocupar un lote.">
+                                            MICRO
+                                          </Badge>
+                                        )}
+                                        {isExcludedScore && (
+                                          <Badge variant="outline" className="text-[10px] border-purple-500/50 bg-purple-500/10 text-purple-400" title="Microoperación antigua: se muestra para auditoría, pero puede excluirse del score limpio.">
+                                            EXCLUIDA DEL SCORE
                                           </Badge>
                                         )}
                                         <span className="font-mono text-xs font-medium">{trade.pair}</span>

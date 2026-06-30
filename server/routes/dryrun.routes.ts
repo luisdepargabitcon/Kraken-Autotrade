@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type { RegisterRoutes } from "./types";
 import { db } from "../db";
-import { dryRunTrades, botEvents } from "@shared/schema";
+import { dryRunTrades, botEvents, botConfig } from "@shared/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { classifyExitReason, type NormalizedExitReason } from "../utils/exitReasonClassifier";
 import { MarketDataService } from "../services/MarketDataService";
@@ -48,11 +48,19 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
         conditions.push(eq(dryRunTrades.excludedFromPnl, false));
       }
 
-      const trades = await db.select().from(dryRunTrades)
+      const rawTrades = await db.select().from(dryRunTrades)
         .where(and(...conditions))
         .orderBy(desc(dryRunTrades.createdAt))
         .limit(limit)
         .offset(offset);
+
+      // Compute entryNotionalUsd for each trade (entryPrice * amount)
+      const trades = rawTrades.map(t => ({
+        ...t,
+        entryNotionalUsd: t.entryPrice && t.amount
+          ? parseFloat(t.entryPrice) * parseFloat(t.amount)
+          : t.type === "sell" ? null : parseFloat(t.totalUsd || "0"),
+      }));
 
       const countResult = await db.select({ count: sql<number>`count(*)` })
         .from(dryRunTrades)
@@ -430,8 +438,47 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
         strategyScore: "Puntuación de 0 a 100 que resume si la estrategia va bien encaminada. Combina PnL limpio, flotante, riesgo, calidad de salidas, profit factor, win rate, salud operativa y tamaño de muestra.",
       };
 
+      // ============ CAPITAL EFFICIENCY METRICS ============
+      // Fetch bot config for thresholds
+      const configRow = await db.select().from(botConfig).limit(1);
+      const sgMinEntryUsd = parseFloat(configRow[0]?.sgMinEntryUsd?.toString() || "100");
+      const sgAbsoluteDustUsd = parseFloat(configRow[0]?.sgAbsoluteDustUsd?.toString() || "20");
+      const sgExcludeMicro = configRow[0]?.sgExcludeMicroTradesFromScore ?? true;
+
+      // Classify sells by entry notional
+      let microCount = 0;
+      let dustCount = 0;
+      let microPnl = 0;
+      let dustPnl = 0;
+      for (const trade of cleanSells) {
+        const entryNotional = trade.entryPrice && trade.amount
+          ? parseFloat(trade.entryPrice) * parseFloat(trade.amount)
+          : 0;
+        if (entryNotional > 0 && entryNotional < sgAbsoluteDustUsd) {
+          dustCount++;
+          dustPnl += parseFloat(trade.realizedPnlUsd || "0");
+        } else if (entryNotional > 0 && entryNotional < sgMinEntryUsd) {
+          microCount++;
+          microPnl += parseFloat(trade.realizedPnlUsd || "0");
+        }
+      }
+      const cleanPnlExcludingMicro = cleanSellPnl - microPnl - dustPnl;
+      const totalCleanSells = cleanSells.length;
+      const microPct = totalCleanSells > 0 ? (microCount + dustCount) / totalCleanSells * 100 : 0;
+
       // ============ RESPONSE ============
       res.json({
+        // Capital efficiency metrics
+        microCount,
+        dustCount,
+        microPnl: parseFloat(microPnl.toFixed(2)),
+        dustPnl: parseFloat(dustPnl.toFixed(2)),
+        cleanPnlExcludingMicro: parseFloat(cleanPnlExcludingMicro.toFixed(2)),
+        microPct: parseFloat(microPct.toFixed(1)),
+        sgMinEntryUsd,
+        sgAbsoluteDustUsd,
+        sgExcludeMicro,
+
         // Legacy fields (backward compatibility)
         openCount: openPositions.length,
         totalOpenValue,

@@ -2,6 +2,63 @@
 
 ---
 
+## 2026-06-30 — feat(ui): expose smart guard capital efficiency controls
+
+**Commit**: `feat(ui): expose smart guard capital efficiency controls`
+
+### Problema
+La UI no exponía los nuevos campos de eficiencia de capital (`sgAbsoluteDustUsd`, `sgMinExpectedProfitUsd`, `sgSlotEfficiencyEnabled`, `sgExcludeMicroTradesFromScore`) añadidos en el commit `0dd989f`. El Historial DRY RUN tampoco mostraba badges visuales para operaciones micro/dust ni métricas separadas.
+
+### Cambios implementados
+
+**Archivos modificados:**
+- `client/src/components/trading/RiesgoTab.tsx`:
+  - Nueva sección "Eficiencia de capital" dentro de SMART_GUARD config con 6 campos:
+    - `sgMinEntryUsd` — Tamaño mínimo útil por compra
+    - `sgAllowUnderMin` — Permitir compras pequeñas (toggle con texto natural)
+    - `sgAbsoluteDustUsd` — Bloqueo absoluto de operaciones residuales
+    - `sgMinExpectedProfitUsd` — Ganancia mínima esperada
+    - `sgSlotEfficiencyEnabled` — Proteger slots de operaciones pequeñas
+    - `sgExcludeMicroTradesFromScore` — Separar microoperaciones del score limpio
+  - Resumen dinámico que cambia según los valores configurados
+  - Validación visual: warning si `sgAbsoluteDustUsd > sgMinEntryUsd`
+  - Texto informativo: "Esta protección se aplica tanto al modo normal como al DRY RUN. No afecta a IDCA."
+  - Todos los campos guardan via `onUpdate` → `PATCH /api/config`
+
+- `server/routes/dryrun.routes.ts`:
+  - `GET /api/dryrun/history`: Añadido `entryNotionalUsd` calculado (`entryPrice * amount`) a cada trade
+  - `GET /api/dryrun/summary`: Añadidas métricas de eficiencia de capital:
+    - `microCount`, `dustCount`, `microPnl`, `dustPnl`
+    - `cleanPnlExcludingMicro`, `microPct`
+    - `sgMinEntryUsd`, `sgAbsoluteDustUsd`, `sgExcludeMicro`
+  - Import de `botConfig` de `@shared/schema` para leer thresholds
+
+- `client/src/pages/Terminal.tsx`:
+  - `DryRunTrade` interface: añadido `entryNotionalUsd?: number | null`
+  - `DryRunSummary` interface: añadidos campos `microCount`, `dustCount`, `microPnl`, `dustPnl`, `cleanPnlExcludingMicro`, `microPct`, `sgMinEntryUsd`, `sgAbsoluteDustUsd`, `sgExcludeMicro`
+  - Estado `dryRunMicroFilter`: 'all' | 'clean' | 'micro' | 'dust'
+  - Badges visuales en filas del historial: DUST (naranja), MICRO (amarillo), EXCLUIDA DEL SCORE (morado)
+  - Filtros de capital: TODAS, SCORE LIMPIO, MICRO (count), DUST (count)
+  - Sección de métricas EFICIENCIA DE CAPITAL: 6 cards con micro/dust counts, P&L separado, P&L limpio sin micro, % micro
+  - Tooltips en lenguaje natural en cada badge
+
+### Validación
+- `npm run check`: ✅
+- No requiere migración DB (campos ya existen desde commit `0dd989f`)
+
+### No se modifica
+- IDCA (cualquier módulo)
+- FISCO / fiscal history
+- Órdenes reales
+- Lógica de trading
+- Cleanup destructivo
+
+---
+
+## 2026-06-30 — fix(startup): guard automigration runner against undefined path
+
+---
+
 ## 2026-06-29 — fix(spot): block dust entries and validate dry run sell matching
 
 **Commit**: `fix(spot): block dust entries and validate dry run sell matching`
