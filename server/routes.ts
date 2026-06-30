@@ -195,6 +195,7 @@ export async function registerRoutes(
         { id: '058_ai_effective_decision_context', filePath: path.join(migrationsDir, '058_ai_effective_decision_context.sql') },
         { id: '059_fisco_v2_import_config', filePath: path.join(migrationsDir, '059_fisco_v2_import_config.sql') },
         { id: '060_idca_hybrid_grid_traceability', filePath: path.join(migrationsDir, '060_idca_hybrid_grid_traceability.sql') },
+        { id: '061_audit_tables', filePath: path.join(migrationsDir, '061_audit_tables.sql') },
       ];
 
       await runner.run(migrations);
@@ -1029,6 +1030,12 @@ export async function registerRoutes(
   // ============================================================
   const { registerDryRunRoutes } = await import('./routes/dryrun.routes');
   registerDryRunRoutes(app, routerDeps);
+
+  // ============================================================
+  // AUDIT ENDPOINTS — Trading + IDCA (read-only)
+  // ============================================================
+  const { registerAuditRoutes } = await import('./routes/audit.routes');
+  registerAuditRoutes(app);
 
   // NOTE: Telegram chat CRUD routes are defined inline above (/api/telegram/chats, /api/telegram/send)
   // The old /api/integrations/telegram/* duplicate routes in telegram.routes.ts have been removed.

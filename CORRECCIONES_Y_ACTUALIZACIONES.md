@@ -2,6 +2,50 @@
 
 ---
 
+## 2026-06-30 — feat(audit): unified trading and IDCA audit system
+
+**Commit**: `feat(audit): unified trading and IDCA audit system`
+
+### Novedad
+Sistema de auditoría completo, separado e inteligente para Trading Normal/Dry Run e IDCA.
+
+### Archivos nuevos
+- `docs/audits/audit_system_design.md` — Documento de diseño con métricas, tablas, endpoints, retención y diagnósticos
+- `server/services/auditMetrics.ts` — Métricas compartidas puras: MFE, MAE, Giveback, Profit Capture, Exit Efficiency, Profit Factor, Expectancy, diagnósticos automáticos, generadores de resumen ChatGPT
+- `server/services/__tests__/auditMetrics.test.ts` — 60 tests unitarios (MFE/MAE/Giveback/Capture/Diagnostics/ChatGPT summaries/edge cases)
+- `db/migrations/061_audit_tables.sql` — Tablas `audit_trade_snapshots` + `audit_timeline_events` + función `cleanup_audit_tables()`
+- `server/routes/audit.routes.ts` — 15 endpoints read-only: Trading (summary, operations, detail, export, chatgpt), IDCA (summary, cycles, detail, timeline, grid/MR, export, chatgpt), Retención (status, preview, run)
+- `client/src/components/audit/AuditTradingPanel.tsx` — Panel Auditoría Trading con 5 sub-tabs: Resumen, Salidas (ExitAuditPanel integrado), Operaciones, Exportar/Copiar, Limpieza
+- `client/src/components/audit/AuditIdcaPanel.tsx` — Panel Auditoría IDCA con 5 sub-tabs: Resumen ciclos, Ciclos cerrados, Ciclos abiertos, Grid/MR, Exportar/Copiar
+
+### Archivos modificados
+- `server/routes.ts` — Registro de `registerAuditRoutes` + migración 061 en AutoMigrationRunner
+- `client/src/pages/Monitor.tsx` — Reemplazada pestaña "Auditoría Salidas" por "Auditoría Trading" + nueva "Auditoría IDCA"
+
+### Características
+- **Métricas comunes**: MFE, MAE, Giveback, Profit Capture %, Exit Efficiency, Opportunity Lost
+- **Trading**: Resumen por razón/par/régimen/estrategia, tabla operaciones con MFE/MAE derivado de candles, diagnósticos automáticos
+- **IDCA**: Resumen ciclos abiertos/cerrados, MFE proxy desde `highest_price_after_tp`, MAE desde `max_drawdown_pct`, Grid Observer + Mean Reversion state
+- **Export**: CSV, JSON, resumen copiable para ChatGPT
+- **Retención**: Preview seguro (sin borrar), limpieza con confirmación, nunca toca datos reales/fiscales
+- **Diagnósticos**: No invasivos, solo recomendaciones (LOW_PROFIT_CAPTURE, HIGH_GIVEBACK, HIGH_MAE, TIMESTOP_WITH_MFE, GRID_NOT_ACTIVE, etc.)
+- **Seguridad**: Read-only, no toca motor real, ejecución, claves, FIFO, ni config
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅ (2574 módulos cliente + server)
+- `vitest auditMetrics`: ✅ 60/60
+
+### Deploy VPS
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+Migration 061 se ejecuta automáticamente al iniciar.
+
+---
+
 ## 2026-06-30 — feat(ui): expose smart guard capital efficiency controls
 
 **Commit**: `feat(ui): expose smart guard capital efficiency controls`

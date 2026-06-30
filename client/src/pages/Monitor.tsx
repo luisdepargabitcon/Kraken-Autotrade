@@ -15,9 +15,10 @@ import {
   Download, Copy, Search, X, ChevronDown, ChevronRight,
   AlertCircle, AlertTriangle, Info, Terminal, Activity,
   Eye, TrendingUp, TrendingDown, Minus, Database, CheckCircle, BarChart3,
-  Gauge, AlertOctagon, Zap, Clock, HelpCircle, Shield
+  Gauge, AlertOctagon, Zap, Clock, HelpCircle, Shield, LineChart
 } from "lucide-react";
-import { ExitAuditPanel } from "@/components/trading/ExitAuditPanel";
+import { AuditTradingPanel } from "@/components/audit/AuditTradingPanel";
+import { AuditIdcaPanel } from "@/components/audit/AuditIdcaPanel";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
@@ -91,9 +92,13 @@ export default function Monitor() {
                 <BarChart3 className="h-4 w-4" />
                 Market Data
               </TabsTrigger>
-              <TabsTrigger value="exitaudit" className="gap-1" data-testid="tab-exitaudit">
+              <TabsTrigger value="audit-trading" className="gap-1" data-testid="tab-audit-trading">
                 <Shield className="h-4 w-4" />
-                Auditoría Salidas
+                Auditoría Trading
+              </TabsTrigger>
+              <TabsTrigger value="audit-idca" className="gap-1" data-testid="tab-audit-idca">
+                <LineChart className="h-4 w-4" />
+                Auditoría IDCA
               </TabsTrigger>
             </TabsList>
           </div>
@@ -114,8 +119,12 @@ export default function Monitor() {
             <MarketDataTab />
           </TabsContent>
 
-          <TabsContent value="exitaudit" className="mt-0">
-            <ExitAuditPanel />
+          <TabsContent value="audit-trading" className="mt-0">
+            <AuditTradingPanel />
+          </TabsContent>
+
+          <TabsContent value="audit-idca" className="mt-0">
+            <AuditIdcaPanel />
           </TabsContent>
         </Tabs>
       </div>
