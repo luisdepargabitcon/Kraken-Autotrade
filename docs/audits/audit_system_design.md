@@ -1,8 +1,8 @@
 # Audit System Design — Trading Normal/Dry Run & IDCA
 
-**Version**: 1.0  
+**Version**: 1.1  
 **Fecha**: 2026-06-30  
-**Estado**: Implementado (Fase 1–5)
+**Estado**: Implementado (Fase 1–5 + Profit Capture Quality + bot_events retention)
 
 ---
 
@@ -284,3 +284,71 @@ El sistema genera diagnósticos no invasivos basados en reglas:
 - **Fase 6**: Tabla `audit_idca_cycle_summary` para pre-computar resúmenes
 - **Gráficos**: Añadir mini-chart de evolución de PnL por operación/ciclo
 - **Alertas Telegram**: Enviar resumen de diagnóstico por Telegram (opcional)
+
+---
+
+## 11. Profit Capture Quality (v1.1)
+
+### Problema
+`avgProfitCapturePct` puede superar 100% cuando el MFE histórico (`highest_price_after_tp`) está infracalculado por falta de snapshots. El PnL final supera el MFE registrado, produciendo porcentajes absurdos (ej: 306.87%).
+
+### Solución
+Cada cálculo de Profit Capture incluye ahora un campo de calidad:
+
+| Calidad | Criterio | Display |
+|---|---|---|
+| `reliable` | MFE de snapshots/candles reales, 0 ≤ pct ≤ 100 | Valor normal |
+| `estimated` | MFE de fallback (highest_price_after_tp), 0 ≤ pct ≤ 100 | Valor + badge "est." |
+| `insufficient_data` | MFE null, ≤0, o pct > 100 | null + warning |
+
+### Campos API por ciclo
+- `rawProfitCapturePct`: valor crudo (puede ser >100)
+- `displayProfitCapturePct`: null si insufficient_data
+- `profitCaptureQuality`: "reliable" | "estimated" | "insufficient_data"
+- `profitCaptureWarning`: mensaje explicativo
+
+### Campos API summary IDCA
+- `avgProfitCapturePct`: media solo de ciclos reliable/estimated
+- `cyclesWithProfitCaptureData`: count
+- `cyclesWithoutProfitCaptureData`: count
+- `profitCaptureDataQuality`: "complete" | "partial" | "none"
+
+### UI
+- Tabla de ciclos: badge "est." para estimated, "N/A" con tooltip para insufficient_data
+- Summary: muestra cobertura de datos (X/Y ciclos con datos)
+
+---
+
+## 12. bot_events Retention Policy (v1.1)
+
+### Problema
+`bot_events` puede crecer a 117K+ filas / 147MB por eventos técnicos repetitivos.
+
+### Clasificación
+
+| Tier | Retención | Tipos de evento |
+|---|---|---|
+| **permanent** | Nunca borrar | TRADE_EXECUTED, ORDER_FILLED, POSITION_CLOSED, CONFIG_UPDATED, FIFO_LOTS_CLOSED, MANUAL_CLOSE_*, ERROR/WARN (todos) |
+| **12mo** | 365 días | SIGNAL_GENERATED, SMART_EXIT_*, TIME_STOP_*, SG_*, BREAKEVEN_ARMED, TRAILING_UPDATED, EXIT_EVAL, etc. |
+| **90d** | 90 días | ENGINE_TICK, MARKET_SCAN_SUMMARY, BALANCE_CHECK |
+| **30d** | 30 días | Cualquier INFO no clasificado (fallback seguro) |
+
+### Reglas de seguridad
+- ERROR y WARN **siempre** permanentes, independientemente del tipo
+- Borrado por **whitelist** de tipos no críticos, nunca borrado genérico por fecha
+- `confirm: true` obligatorio para ejecutar cleanup
+- Preview obligatorio antes de borrar
+- Registro de cleanup en `audit_timeline_events` (CLEANUP_BOT_EVENTS_RUN)
+
+### Endpoints
+- `GET /api/audit/retention/status`: incluye breakdown de bot_events por tipo/level/retentionTier
+- `POST /api/audit/retention/preview-cleanup`: muestra bot_events por tier
+- `POST /api/audit/retention/run-cleanup`: soporta `target: "bot_events"` con `confirm: true`
+
+### Lo que NUNCA se borra
+- dry_run_trades (operaciones reales)
+- institutional_dca_cycles (ciclos cerrados)
+- institutional_dca_orders (órdenes reales)
+- fisco_* (datos fiscales)
+- bot_events ERROR/WARN
+- bot_events de tipo TRADE_EXECUTED, ORDER_FILLED, POSITION_CLOSED, CONFIG_UPDATED, etc.

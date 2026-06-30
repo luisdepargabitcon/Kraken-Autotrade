@@ -2,6 +2,58 @@
 
 ---
 
+## 2026-06-30 — fix(audit): handle unreliable IDCA profit capture and add safe bot events retention
+
+**Commit**: `fix(audit): handle unreliable IDCA profit capture and add safe bot events retention`
+
+### Problema corregido
+1. **Profit Capture IDCA >100%**: `avgProfitCapturePct` mostraba 306.87% porque el MFE histórico (`highest_price_after_tp`) estaba infracalculado al no haber snapshots suficientes. El PnL final superaba el MFE registrado, produciendo un porcentaje absurdo.
+
+2. **bot_events 117K filas / 147 MB**: La tabla crecía sin control por eventos técnicos repetitivos sin política de retención.
+
+### Solución Profit Capture
+- Nuevo campo `profitCaptureQuality`: `"reliable" | "estimated" | "insufficient_data"`.
+- `displayProfitCapturePct`: null cuando insufficient_data (no muestra porcentajes absurdos).
+- `rawProfitCapturePct`: valor crudo para diagnóstico interno.
+- `profitCaptureWarning`: mensaje explicativo.
+- `avgProfitCapturePct` del summary se calcula solo con ciclos `reliable`/`estimated` (0-100).
+- Nuevos campos en summary: `cyclesWithProfitCaptureData`, `cyclesWithoutProfitCaptureData`, `profitCaptureDataQuality`.
+- UI muestra badge "est." para estimated y "N/A" con tooltip para insufficient_data.
+
+### Solución bot_events retention
+- Nuevo archivo `server/services/audit/botEventClassification.ts` con clasificación de 150+ EventTypes en 4 tiers:
+  - **permanent**: TRADE_EXECUTED, ORDER_FILLED, POSITION_CLOSED, CONFIG_UPDATED, FIFO_LOTS_CLOSED, etc. (nunca se borran)
+  - **12mo**: SIGNAL_GENERATED, SMART_EXIT_*, TIME_STOP_*, etc.
+  - **90d**: ENGINE_TICK, MARKET_SCAN_SUMMARY, BALANCE_CHECK
+  - **30d**: cualquier INFO no clasificado (fallback seguro)
+- ERROR y WARN siempre permanentes, independientemente del tipo.
+- `GET /api/audit/retention/status` ahora incluye breakdown de bot_events por tipo/level/retentionTier.
+- `POST /api/audit/retention/preview-cleanup` ahora muestra bot_events por tier.
+- `POST /api/audit/retention/run-cleanup` ahora soporta `target: "bot_events"` con `confirm: true` obligatorio.
+- Borrado por whitelist de tipos no críticos (nunca borrado genérico por fecha).
+- Registro de cleanup en `audit_timeline_events` (CLEANUP_BOT_EVENTS_RUN).
+- UI muestra tabla de bot_events con protegidos vs limiables, top tipos, y botón de limpieza dedicado.
+
+### Archivos
+- `server/services/auditMetrics.ts` — classifyProfitCaptureQuality, ProfitCaptureResult, hasReliableMfe
+- `server/services/audit/botEventClassification.ts` — nuevo, clasificación completa
+- `server/routes/audit.routes.ts` — endpoints actualizados con quality + bot_events
+- `client/src/components/audit/AuditIdcaPanel.tsx` — UI quality badges + data coverage
+- `client/src/components/audit/AuditTradingPanel.tsx` — UI bot_events breakdown + cleanup
+- `server/services/__tests__/auditMetrics.test.ts` — 33 tests nuevos (93 total)
+- `docs/audits/audit_system_design.md` — actualizado
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` — esta entrada
+
+### Seguridad
+- No se tocó lógica real de trading ✅
+- No se activó modo real ✅
+- No se ejecutaron órdenes ✅
+- No se borran operaciones reales ni datos fiscales ✅
+- Cleanup con preview obligatorio y confirm=true ✅
+- ERROR/WARN siempre permanentes ✅
+
+---
+
 ## 2026-06-30 — feat(audit): unified trading and IDCA audit system
 
 **Commit**: `feat(audit): unified trading and IDCA audit system`

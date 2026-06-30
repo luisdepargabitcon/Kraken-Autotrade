@@ -6,6 +6,8 @@
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export type ProfitCaptureQuality = "reliable" | "estimated" | "insufficient_data";
+
 export interface TradeEfficiencyMetrics {
   mfePnlUsd: number | null;
   maePnlUsd: number | null;
@@ -14,8 +16,19 @@ export interface TradeEfficiencyMetrics {
   givebackUsd: number | null;
   givebackPct: number | null;
   profitCapturePct: number | null;
+  profitCaptureQuality: ProfitCaptureQuality;
+  rawProfitCapturePct: number | null;
+  displayProfitCapturePct: number | null;
+  profitCaptureWarning: string | null;
   exitEfficiency: "Excelente" | "Buena" | "Regular" | "Baja" | "Sin datos";
   opportunityLostUsd: number | null;
+}
+
+export interface ProfitCaptureResult {
+  rawProfitCapturePct: number | null;
+  displayProfitCapturePct: number | null;
+  profitCaptureQuality: ProfitCaptureQuality;
+  profitCaptureWarning: string | null;
 }
 
 export interface OhlcPoint {
@@ -87,6 +100,7 @@ export function computeGivebackUsd(
 /**
  * Profit Capture % = finalPnl / MFE * 100.
  * Only computed when MFE > 0.
+ * Returns raw value (may be >100 or negative) for diagnostics.
  */
 export function computeProfitCapturePct(
   mfePnlUsd: number | null,
@@ -95,6 +109,71 @@ export function computeProfitCapturePct(
   if (mfePnlUsd === null || mfePnlUsd <= 0) return null;
   const pct = (finalPnlUsd / mfePnlUsd) * 100;
   return Math.min(Math.max(pct, -999), 999);
+}
+
+/**
+ * Classify profit capture quality and produce display-safe values.
+ *
+ * reliable: MFE came from real snapshots/candles, MFE >= finalPnl when finalPnl > 0, 0 <= pct <= 100.
+ * estimated: MFE came from fallback (e.g. highest_price_after_tp), value may be imprecise but 0 <= pct <= 100.
+ * insufficient_data: MFE is null, <=0, or pct > 100 / negative / incoherent due to missing data.
+ */
+export function classifyProfitCaptureQuality(
+  mfePnlUsd: number | null,
+  finalPnlUsd: number,
+  hasReliableMfe: boolean
+): ProfitCaptureResult {
+  const rawPct = computeProfitCapturePct(mfePnlUsd, finalPnlUsd);
+
+  // Case: no MFE at all
+  if (mfePnlUsd === null || mfePnlUsd <= 0) {
+    const warning = finalPnlUsd > 0
+      ? "No hay MFE registrado. No se puede calcular captura de beneficio."
+      : null;
+    return {
+      rawProfitCapturePct: rawPct,
+      displayProfitCapturePct: null,
+      profitCaptureQuality: "insufficient_data",
+      profitCaptureWarning: warning,
+    };
+  }
+
+  // Case: pct > 100 means finalPnl > MFE — data inconsistency
+  if (rawPct !== null && rawPct > 100) {
+    return {
+      rawProfitCapturePct: rawPct,
+      displayProfitCapturePct: null,
+      profitCaptureQuality: "insufficient_data",
+      profitCaptureWarning: `Profit Capture crudo (${rawPct.toFixed(1)}%) supera 100%. MFE infracalculado o faltan snapshots. No se muestra como KPI.`,
+    };
+  }
+
+  // Case: negative pct (finalPnl < 0 while MFE > 0) — valid but poor
+  if (rawPct !== null && rawPct < 0) {
+    return {
+      rawProfitCapturePct: rawPct,
+      displayProfitCapturePct: rawPct,
+      profitCaptureQuality: hasReliableMfe ? "reliable" : "estimated",
+      profitCaptureWarning: null,
+    };
+  }
+
+  // Normal case: 0 <= pct <= 100
+  if (rawPct !== null) {
+    return {
+      rawProfitCapturePct: rawPct,
+      displayProfitCapturePct: rawPct,
+      profitCaptureQuality: hasReliableMfe ? "reliable" : "estimated",
+      profitCaptureWarning: hasReliableMfe ? null : "MFE estimado sin snapshots completos. Valor orientativo.",
+    };
+  }
+
+  return {
+    rawProfitCapturePct: null,
+    displayProfitCapturePct: null,
+    profitCaptureQuality: "insufficient_data",
+    profitCaptureWarning: null,
+  };
 }
 
 /**
@@ -133,6 +212,8 @@ export interface EfficiencyInput {
   mfePriceOverride?: number | null;
   /** Optional pre-computed MAE proxy (e.g. from max_drawdown_pct) */
   maePctOverride?: number | null;
+  /** Whether MFE comes from reliable snapshots (true) or fallback estimation (false) */
+  hasReliableMfe?: boolean;
 }
 
 /**
@@ -163,7 +244,9 @@ export function buildTradeEfficiencyMetrics(input: EfficiencyInput): TradeEffici
     ? (givebackUsd / capitalUsd) * 100
     : null;
   const profitCapturePct = computeProfitCapturePct(mfePnlUsd, finalPnlUsd);
-  const exitEfficiency = classifyExitEfficiency(profitCapturePct);
+  const hasReliable = input.hasReliableMfe ?? (candles != null && candles.length > 0);
+  const pcQuality = classifyProfitCaptureQuality(mfePnlUsd, finalPnlUsd, hasReliable);
+  const exitEfficiency = classifyExitEfficiency(pcQuality.displayProfitCapturePct);
   const opportunityLostUsd = computeOpportunityLostUsd(mfePnlUsd, finalPnlUsd);
 
   return {
@@ -173,7 +256,11 @@ export function buildTradeEfficiencyMetrics(input: EfficiencyInput): TradeEffici
     maePct,
     givebackUsd,
     givebackPct,
-    profitCapturePct,
+    profitCapturePct: pcQuality.displayProfitCapturePct,
+    profitCaptureQuality: pcQuality.profitCaptureQuality,
+    rawProfitCapturePct: pcQuality.rawProfitCapturePct,
+    displayProfitCapturePct: pcQuality.displayProfitCapturePct,
+    profitCaptureWarning: pcQuality.profitCaptureWarning,
     exitEfficiency,
     opportunityLostUsd,
   };

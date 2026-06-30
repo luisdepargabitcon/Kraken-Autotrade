@@ -40,10 +40,18 @@ import {
   formatDuration,
   classifyExitEfficiency,
   computeProfitCapturePct,
+  classifyProfitCaptureQuality,
   type OhlcPoint,
   type TradeEfficiencyMetrics,
+  type ProfitCaptureQuality,
 } from "../services/auditMetrics";
 import { classifyExitReason } from "../utils/exitReasonClassifier";
+import {
+  classifyEventRetention,
+  getCleanableTypes,
+  buildSqlInList,
+  type EventRetentionTier,
+} from "../services/audit/botEventClassification";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -550,10 +558,13 @@ export function registerAuditRoutes(app: Express): void {
       const totalUnrealizedPnl = openPnls.reduce((a, b) => a + b, 0);
       const closedWins = closedPnls.filter(p => p > 0).length;
 
-      // Compute MFE proxy: highest_price_after_tp - avg_entry_price * total_quantity for each closed cycle
+      // Compute per-cycle profit capture with quality classification
       let totalMfeUsd = 0;
       let totalGivebackUsd = 0;
       let mfeCount = 0;
+      const perCycleCapture: number[] = [];
+      let cyclesWithProfitCaptureData = 0;
+      let cyclesWithoutProfitCaptureData = 0;
 
       for (const c of closed) {
         const mfePrice = nullableN(c.highest_price_after_tp);
@@ -567,12 +578,27 @@ export function registerAuditRoutes(app: Express): void {
           totalMfeUsd += mfe;
           totalGivebackUsd += giveback;
           mfeCount++;
+
+          // Use quality classifier — IDCA highest_price_after_tp is NOT reliable snapshots
+          const pcResult = classifyProfitCaptureQuality(mfe, pnl, false);
+          if (pcResult.displayProfitCapturePct !== null && pcResult.profitCaptureQuality !== "insufficient_data") {
+            perCycleCapture.push(pcResult.displayProfitCapturePct);
+            cyclesWithProfitCaptureData++;
+          } else {
+            cyclesWithoutProfitCaptureData++;
+          }
+        } else {
+          cyclesWithoutProfitCaptureData++;
         }
       }
 
-      const avgProfitCapture = mfeCount > 0
-        ? computeProfitCapturePct(totalMfeUsd / mfeCount, totalRealizedPnl / Math.max(closed.length, 1))
+      // avgProfitCapturePct only from reliable/estimated cycles (0-100 range)
+      const avgProfitCapture = perCycleCapture.length > 0
+        ? parseFloat((perCycleCapture.reduce((a, b) => a + b, 0) / perCycleCapture.length).toFixed(1))
         : null;
+      const profitCaptureDataQuality: "complete" | "partial" | "none" =
+        cyclesWithProfitCaptureData === 0 ? "none" :
+        cyclesWithoutProfitCaptureData > 0 ? "partial" : "complete";
 
       // By close reason
       const reasonMap = new Map<string, number[]>();
@@ -596,6 +622,9 @@ export function registerAuditRoutes(app: Express): void {
       if (beReason && beReason.totalPnlUsd < 1) {
         alerts.push("Break Even activa pero captura casi sin beneficio. Ajustar trailing después de BE.");
       }
+      if (cyclesWithoutProfitCaptureData > 0 && closed.length > 0) {
+        alerts.push(`${cyclesWithoutProfitCaptureData} ciclo(s) sin datos suficientes de Profit Capture. La métrica media se calcula solo con ciclos con datos fiables/estimados.`);
+      }
 
       res.json({
         success: true,
@@ -610,6 +639,9 @@ export function registerAuditRoutes(app: Express): void {
           totalMfeUsd: mfeCount > 0 ? parseFloat(totalMfeUsd.toFixed(2)) : null,
           totalGivebackUsd: mfeCount > 0 ? parseFloat(totalGivebackUsd.toFixed(2)) : null,
           avgProfitCapturePct: avgProfitCapture,
+          cyclesWithProfitCaptureData,
+          cyclesWithoutProfitCaptureData,
+          profitCaptureDataQuality,
           byCloseReason, alerts,
         },
       });
@@ -654,6 +686,7 @@ export function registerAuditRoutes(app: Express): void {
           capitalUsd: capital, finalPnlUsd: pnl,
           mfePriceOverride: mfePrice,
           maePctOverride: maePct != null ? -maePct : null,
+          hasReliableMfe: false, // IDCA highest_price_after_tp is a fallback, not snapshots
         });
 
         const durMin = durationMinutes(c.started_at, c.closed_at);
@@ -676,7 +709,7 @@ export function registerAuditRoutes(app: Express): void {
         const diagnostics = generateIdcaDiagnostics({
           buyCount: n(c.buy_count),
           closeReason: c.close_reason ?? null,
-          profitCapturePct: metrics.profitCapturePct,
+          profitCapturePct: metrics.displayProfitCapturePct,
           mfePnlUsd: metrics.mfePnlUsd,
           givebackUsd: metrics.givebackUsd,
           maePnlUsd: metrics.maePnlUsd,
@@ -700,6 +733,8 @@ export function registerAuditRoutes(app: Express): void {
           trailingActive: c.trailing_active_at != null,
           gridPlanId, gridState,
           metrics, exitEfficiency: metrics.exitEfficiency,
+          profitCaptureQuality: metrics.profitCaptureQuality,
+          profitCaptureWarning: metrics.profitCaptureWarning,
           diagnostics,
         });
       }
@@ -764,12 +799,13 @@ export function registerAuditRoutes(app: Express): void {
         capitalUsd: capital, finalPnlUsd: pnl,
         mfePriceOverride: mfePrice,
         maePctOverride: maePct != null ? -maePct : null,
+        hasReliableMfe: false,
       });
 
       const diagnostics = generateIdcaDiagnostics({
         buyCount: n(cycle.buy_count),
         closeReason: cycle.close_reason ?? null,
-        profitCapturePct: metrics.profitCapturePct,
+        profitCapturePct: metrics.displayProfitCapturePct,
         mfePnlUsd: metrics.mfePnlUsd,
         givebackUsd: metrics.givebackUsd,
         maePnlUsd: metrics.maePnlUsd,
@@ -1061,6 +1097,42 @@ export function registerAuditRoutes(app: Express): void {
         }
       }
 
+      // Add bot_events breakdown (top event types by count)
+      try {
+        const breakdownRows = await db.execute(sql`
+          SELECT type, level, count(*) AS c,
+                 min(timestamp) AS oldest, max(timestamp) AS newest
+          FROM bot_events
+          GROUP BY type, level
+          ORDER BY c DESC
+          LIMIT 30
+        `);
+        const botEventsBreakdown = (breakdownRows.rows ?? []).map((r: any) => ({
+          type: r.type,
+          level: r.level,
+          count: parseInt(r.c, 10),
+          oldest: r.oldest,
+          newest: r.newest,
+          retentionTier: classifyEventRetention(r.type, r.level),
+        }));
+        results.bot_events_breakdown = botEventsBreakdown;
+
+        // Count cleanable vs protected
+        let cleanable = 0;
+        let protected_ = 0;
+        for (const b of botEventsBreakdown) {
+          if (b.retentionTier === "permanent") protected_ += b.count;
+          else cleanable += b.count;
+        }
+        results.bot_events_summary = {
+          totalRows: results.bot_events?.rows ?? null,
+          totalSize: results.bot_events?.size ?? "—",
+          cleanableApprox: cleanable,
+          protectedApprox: protected_,
+          topTypes: botEventsBreakdown.slice(0, 10),
+        };
+      } catch { /* bot_events may not exist */ }
+
       res.json({ success: true, data: results });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e?.message });
@@ -1091,6 +1163,44 @@ export function registerAuditRoutes(app: Express): void {
         WHERE ts < NOW() - INTERVAL '90 days'
       `).catch(() => ({ rows: [{ c: 0 }] }));
 
+      // bot_events preview — classify by tier and count candidates
+      let botEventsPreview: Record<string, number> = {};
+      let botEventsTotalCleanable = 0;
+      try {
+        const cleanable = getCleanableTypes();
+        for (const tierInfo of cleanable.tiers) {
+          if (tierInfo.types.length === 0) {
+            // 30d tier: anything NOT in permanent or 12mo or 90d sets, INFO only
+            const knownTypes = [
+              ...Array.from(getCleanableTypes().types),
+            ];
+            // Build NOT IN list from known types + permanent types
+            const allKnown = knownTypes;
+            const notInList = allKnown.length > 0 ? buildSqlInList(allKnown) : "''";
+            const r = await db.execute(sql.raw(`
+              SELECT count(*) AS c FROM bot_events
+              WHERE timestamp < NOW() - INTERVAL '30 days'
+                AND level = 'INFO'
+                AND type NOT IN (${notInList})
+            `));
+            const cnt = parseInt((r.rows?.[0] as any)?.c ?? "0", 10);
+            botEventsPreview["30d_fallback"] = cnt;
+            botEventsTotalCleanable += cnt;
+          } else {
+            const inList = buildSqlInList(tierInfo.types);
+            const r = await db.execute(sql.raw(`
+              SELECT count(*) AS c FROM bot_events
+              WHERE timestamp < NOW() - INTERVAL '${tierInfo.days} days'
+                AND level = 'INFO'
+                AND type IN (${inList})
+            `));
+            const cnt = parseInt((r.rows?.[0] as any)?.c ?? "0", 10);
+            botEventsPreview[tierInfo.tier] = cnt;
+            botEventsTotalCleanable += cnt;
+          }
+        }
+      } catch { /* bot_events may not exist */ }
+
       res.json({
         success: true,
         preview: true,
@@ -1098,6 +1208,8 @@ export function registerAuditRoutes(app: Express): void {
           audit_trade_snapshots: parseInt((snapshotCount.rows?.[0] as any)?.c ?? "0", 10),
           audit_timeline_events_noncritical: parseInt((timelineCount.rows?.[0] as any)?.c ?? "0", 10),
           idca_hybrid_events_old: parseInt((hybridEventCount.rows?.[0] as any)?.c ?? "0", 10),
+          bot_events_by_tier: botEventsPreview,
+          bot_events_total_cleanable: botEventsTotalCleanable,
         },
         neverDeletes: [
           "dry_run_trades (operaciones reales preservadas)",
@@ -1105,6 +1217,8 @@ export function registerAuditRoutes(app: Express): void {
           "institutional_dca_orders (órdenes reales preservadas)",
           "fisco_* (datos fiscales preservados)",
           "audit_timeline_events con is_critical=true",
+          "bot_events con level=ERROR o level=WARN (siempre permanentes)",
+          "bot_events de tipo TRADE_EXECUTED, ORDER_FILLED, POSITION_CLOSED, CONFIG_UPDATED, etc.",
         ],
         params: { snapshotDays, timelineDays },
       });
@@ -1121,41 +1235,110 @@ export function registerAuditRoutes(app: Express): void {
     try {
       const snapshotDays = Math.max(parseInt(req.body?.snapshotRetentionDays ?? "365", 10), 90);
       const timelineDays = Math.max(parseInt(req.body?.timelineNonCriticalDays ?? "90", 10), 30);
+      const target = req.body?.target as string | undefined; // "bot_events" | undefined (all)
+      const confirmed = req.body?.confirm === true;
+
+      // If targeting bot_events, require explicit confirm
+      if (target === "bot_events" && !confirmed) {
+        return res.status(400).json({
+          success: false,
+          error: "Confirmation required: set confirm=true to clean bot_events. Use preview-cleanup first.",
+        });
+      }
 
       let snapshotsDeleted = 0;
       let timelineDeleted = 0;
       let hybridEventsDeleted = 0;
+      let botEventsDeleted = 0;
+      const botEventsByTier: Record<string, number> = {};
 
-      try {
-        const r = await db.execute(sql`
-          DELETE FROM audit_trade_snapshots
-          WHERE ts < NOW() - (${snapshotDays} || ' days')::interval
-          RETURNING id
-        `);
-        snapshotsDeleted = (r.rows ?? []).length;
-      } catch { /* table may not exist yet */ }
+      if (target !== "bot_events") {
+        try {
+          const r = await db.execute(sql`
+            DELETE FROM audit_trade_snapshots
+            WHERE ts < NOW() - (${snapshotDays} || ' days')::interval
+            RETURNING id
+          `);
+          snapshotsDeleted = (r.rows ?? []).length;
+        } catch { /* table may not exist yet */ }
 
-      try {
-        const r = await db.execute(sql`
-          DELETE FROM audit_timeline_events
-          WHERE is_critical = false AND ts < NOW() - (${timelineDays} || ' days')::interval
-          RETURNING id
-        `);
-        timelineDeleted = (r.rows ?? []).length;
-      } catch { /* table may not exist yet */ }
+        try {
+          const r = await db.execute(sql`
+            DELETE FROM audit_timeline_events
+            WHERE is_critical = false AND ts < NOW() - (${timelineDays} || ' days')::interval
+            RETURNING id
+          `);
+          timelineDeleted = (r.rows ?? []).length;
+        } catch { /* table may not exist yet */ }
 
-      try {
-        const r = await db.execute(sql`
-          DELETE FROM idca_hybrid_events WHERE ts < NOW() - INTERVAL '90 days'
-          RETURNING id
-        `);
-        hybridEventsDeleted = (r.rows ?? []).length;
-      } catch { /* table may not exist yet */ }
+        try {
+          const r = await db.execute(sql`
+            DELETE FROM idca_hybrid_events WHERE ts < NOW() - INTERVAL '90 days'
+            RETURNING id
+          `);
+          hybridEventsDeleted = (r.rows ?? []).length;
+        } catch { /* table may not exist yet */ }
+      }
+
+      // bot_events cleanup — only if target includes bot_events (or no target = all)
+      if (target === "bot_events" || !target) {
+        try {
+          const cleanable = getCleanableTypes();
+          for (const tierInfo of cleanable.tiers) {
+            if (tierInfo.types.length === 0) {
+              // 30d fallback: INFO events not in any known set
+              const allKnown = cleanable.types;
+              const notInList = allKnown.length > 0 ? buildSqlInList(allKnown) : "''";
+              const r = await db.execute(sql.raw(`
+                DELETE FROM bot_events
+                WHERE timestamp < NOW() - INTERVAL '30 days'
+                  AND level = 'INFO'
+                  AND type NOT IN (${notInList})
+                RETURNING id
+              `));
+              const cnt = (r.rows ?? []).length;
+              botEventsByTier["30d_fallback"] = cnt;
+              botEventsDeleted += cnt;
+            } else {
+              const inList = buildSqlInList(tierInfo.types);
+              const r = await db.execute(sql.raw(`
+                DELETE FROM bot_events
+                WHERE timestamp < NOW() - INTERVAL '${tierInfo.days} days'
+                  AND level = 'INFO'
+                  AND type IN (${inList})
+                RETURNING id
+              `));
+              const cnt = (r.rows ?? []).length;
+              botEventsByTier[tierInfo.tier] = cnt;
+              botEventsDeleted += cnt;
+            }
+          }
+        } catch (e: any) { /* bot_events may not exist */ }
+
+        // Log cleanup to audit_timeline_events
+        try {
+          await db.execute(sql`
+            INSERT INTO audit_timeline_events
+              (entity_type, entity_id, pair, event_type, description, is_critical, raw_json)
+            VALUES
+              ('system', 0, 'SYSTEM', 'CLEANUP_BOT_EVENTS_RUN',
+               ${`Cleaned ${botEventsDeleted} bot_events. Tiers: ${JSON.stringify(botEventsByTier)}`},
+               true,
+               ${JSON.stringify({ botEventsDeleted, botEventsByTier, target: target ?? "all", timestamp: new Date().toISOString() })}::jsonb)
+          `);
+        } catch { /* audit_timeline_events may not exist yet */ }
+      }
 
       res.json({
         success: true,
-        deleted: { snapshotsDeleted, timelineDeleted, hybridEventsDeleted },
-        preserved: ["dry_run_trades", "institutional_dca_cycles", "institutional_dca_orders", "fisco_*"],
+        deleted: {
+          snapshotsDeleted, timelineDeleted, hybridEventsDeleted,
+          botEventsDeleted, botEventsByTier,
+        },
+        preserved: [
+          "dry_run_trades", "institutional_dca_cycles", "institutional_dca_orders",
+          "fisco_*", "bot_events ERROR/WARN (permanent)", "bot_events trades/orders/config (permanent)",
+        ],
       });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e?.message });

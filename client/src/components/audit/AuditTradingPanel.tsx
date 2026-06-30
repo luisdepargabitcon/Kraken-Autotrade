@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import {
   RefreshCw, Copy, Download, AlertTriangle, CheckCircle2, BarChart3,
   TrendingUp, TrendingDown, Minus, Clock, Target, Shield, Zap, Info,
-  ChevronRight, AlertCircle
+  ChevronRight, AlertCircle, Activity
 } from "lucide-react";
 import { ExitAuditPanel } from "@/components/trading/ExitAuditPanel";
 import { cn } from "@/lib/utils";
@@ -65,7 +65,9 @@ interface TradeOperation {
 }
 
 interface RetentionStatus {
-  [table: string]: { rows: number | null; size: string };
+  [table: string]: { rows: number | null; size: string } | any;
+  bot_events_breakdown?: { type: string; level: string; count: number; oldest: string; newest: string; retentionTier: string }[];
+  bot_events_summary?: { totalRows: number | null; totalSize: string; cleanableApprox: number; protectedApprox: number; topTypes: any[] };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -430,7 +432,7 @@ function CleanupTab() {
   async function runPreview() {
     setLoading(true);
     try {
-      const r = await fetch("/api/audit/retention/preview-cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const r = await fetch("/api/audit/retention/preview-cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ includeBotEvents: true }) });
       setPreview(await r.json());
     } finally { setLoading(false); }
   }
@@ -438,7 +440,18 @@ function CleanupTab() {
   async function runCleanup() {
     setLoading(true);
     try {
-      const r = await fetch("/api/audit/retention/run-cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const r = await fetch("/api/audit/retention/run-cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
+      setDone(await r.json());
+      setPreview(null);
+      setConfirmed(false);
+      refetchStatus();
+    } finally { setLoading(false); }
+  }
+
+  async function runBotEventsCleanup() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/audit/retention/run-cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target: "bot_events", confirm: true }) });
       setDone(await r.json());
       setPreview(null);
       setConfirmed(false);
@@ -480,21 +493,70 @@ function CleanupTab() {
         </CardHeader>
         <CardContent className="px-4 pb-4 space-y-3">
           <p className="text-xs text-muted-foreground">Nunca borra: operaciones reales, ciclos cerrados, datos fiscales ni resúmenes permanentes.</p>
+
+          {/* bot_events section */}
+          {tables.bot_events_summary && (
+            <div className="bg-muted/20 rounded p-3 space-y-2">
+              <p className="text-xs font-semibold flex items-center gap-1"><Activity className="h-3.5 w-3.5" /> bot_events</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div><span className="text-muted-foreground">Filas:</span> {tables.bot_events_summary.totalRows?.toLocaleString() ?? "—"}</div>
+                <div><span className="text-muted-foreground">Tamaño:</span> {tables.bot_events_summary.totalSize}</div>
+                <div><span className="text-muted-foreground">Protegidos:</span> <span className="text-green-400">{tables.bot_events_summary.protectedApprox.toLocaleString()}</span></div>
+                <div><span className="text-muted-foreground">Limpiables:</span> <span className="text-orange-400">{tables.bot_events_summary.cleanableApprox.toLocaleString()}</span></div>
+              </div>
+              {tables.bot_events_breakdown && tables.bot_events_breakdown.length > 0 && (
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-muted-foreground">Top tipos de evento ({tables.bot_events_breakdown.length})</summary>
+                  <table className="w-full mt-1">
+                    <thead><tr className="text-muted-foreground"><th className="text-left py-0.5">Tipo</th><th className="text-left py-0.5">Level</th><th className="text-right py-0.5">Count</th><th className="text-left py-0.5">Retención</th></tr></thead>
+                    <tbody>
+                      {tables.bot_events_breakdown.slice(0, 15).map((b, i) => (
+                        <tr key={i} className="border-b border-muted/20">
+                          <td className="py-0.5 font-mono">{b.type}</td>
+                          <td className="py-0.5">{b.level}</td>
+                          <td className="py-0.5 text-right">{b.count.toLocaleString()}</td>
+                          <td className={cn("py-0.5", b.retentionTier === "permanent" ? "text-green-400" : b.retentionTier === "30d" ? "text-orange-400" : "text-yellow-400")}>{b.retentionTier}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </details>
+              )}
+              <p className="text-xs text-muted-foreground">Esta limpieza no borra operaciones reales, ciclos, compras, ventas ni datos fiscales. Solo eventos técnicos antiguos clasificados como no críticos.</p>
+            </div>
+          )}
           <div className="flex gap-3 flex-wrap">
             <Button variant="outline" size="sm" onClick={runPreview} disabled={loading}>
               <RefreshCw className={cn("h-3 w-3 mr-2", loading && "animate-spin")} />
               Ver qué se borraría
             </Button>
+            {tables.bot_events_summary && (tables.bot_events_summary.cleanableApprox > 0) && (
+              <Button variant="outline" size="sm" onClick={runBotEventsCleanup} disabled={loading || !confirmed}>
+                <Activity className="h-3 w-3 mr-2" />
+                Limpiar eventos técnicos antiguos
+              </Button>
+            )}
           </div>
           {preview && (
             <div className="space-y-2">
               <div className="bg-muted/20 rounded p-3 text-xs space-y-1">
                 <p className="font-semibold">Preview (nada borrado aún):</p>
-                {Object.entries(preview.wouldDelete as Record<string, number>).map(([k, v]) => (
-                  <p key={k}><span className="font-mono">{k}</span>: <span className={v > 0 ? "text-orange-400" : "text-muted-foreground"}>{v} filas</span></p>
+                {Object.entries(preview.wouldDelete as Record<string, any>).map(([k, v]) => (
+                  <p key={k}>
+                    <span className="font-mono">{k}</span>:{" "}
+                    {typeof v === "number"
+                      ? <span className={v > 0 ? "text-orange-400" : "text-muted-foreground"}>{v} filas</span>
+                      : <span className="text-muted-foreground">{JSON.stringify(v)}</span>}
+                  </p>
                 ))}
+                {preview.neverDeletes && (
+                  <div className="mt-2 pt-2 border-t border-muted/30">
+                    <p className="text-muted-foreground">Nunca borra:</p>
+                    {preview.neverDeletes.map((nd: string, i: number) => <p key={i} className="text-muted-foreground">• {nd}</p>)}
+                  </div>
+                )}
               </div>
-              {Object.values(preview.wouldDelete as Record<string, number>).some(v => v > 0) && (
+              {Object.values(preview.wouldDelete as Record<string, any>).some(v => typeof v === "number" ? v > 0 : Object.values(v as Record<string, number>).some(x => x > 0)) && (
                 <div className="flex items-center gap-2">
                   <input type="checkbox" id="confirm-cleanup" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />
                   <label htmlFor="confirm-cleanup" className="text-xs">Confirmo que quiero limpiar estos registros temporales</label>

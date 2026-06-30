@@ -23,8 +23,14 @@ import {
   generateIdcaDiagnostics,
   generateTradingChatGptSummary,
   generateIdcaChatGptSummary,
+  classifyProfitCaptureQuality,
   type OhlcPoint,
 } from "../auditMetrics";
+import {
+  classifyEventRetention,
+  getCleanableTypes,
+  buildSqlInList,
+} from "../audit/botEventClassification";
 
 const candles: OhlcPoint[] = [
   { high: 105, low: 95, open: 100, close: 102 },
@@ -490,5 +496,209 @@ describe("Edge cases", () => {
     });
     expect(m.mfePnlUsd).toBeCloseTo((52000 - 50000) * 0.001, 5);
     expect(m.maePnlUsd).toBeCloseTo((49500 - 50000) * 0.001, 5);
+  });
+});
+
+// ─── Profit Capture Quality ──────────────────────────────────────────────────
+
+describe("classifyProfitCaptureQuality", () => {
+  it("Case 1: MFE=40, final=4 → 10%, reliable", () => {
+    const r = classifyProfitCaptureQuality(40, 4, true);
+    expect(r.displayProfitCapturePct).toBeCloseTo(10, 1);
+    expect(r.profitCaptureQuality).toBe("reliable");
+    expect(r.profitCaptureWarning).toBeNull();
+  });
+
+  it("Case 2: MFE=40, final=40 → 100%, reliable", () => {
+    const r = classifyProfitCaptureQuality(40, 40, true);
+    expect(r.displayProfitCapturePct).toBeCloseTo(100, 1);
+    expect(r.profitCaptureQuality).toBe("reliable");
+  });
+
+  it("Case 3: MFE=10, final=30, no snapshots → insufficient_data (>100%)", () => {
+    const r = classifyProfitCaptureQuality(10, 30, false);
+    expect(r.displayProfitCapturePct).toBeNull();
+    expect(r.profitCaptureQuality).toBe("insufficient_data");
+    expect(r.rawProfitCapturePct).toBeGreaterThan(100);
+    expect(r.profitCaptureWarning).toContain("supera 100%");
+  });
+
+  it("Case 4: MFE=null, final=30 → insufficient_data", () => {
+    const r = classifyProfitCaptureQuality(null, 30, false);
+    expect(r.displayProfitCapturePct).toBeNull();
+    expect(r.profitCaptureQuality).toBe("insufficient_data");
+    expect(r.profitCaptureWarning).toContain("No hay MFE");
+  });
+
+  it("Case 5: MFE<=0, final>0 → insufficient_data", () => {
+    const r = classifyProfitCaptureQuality(-5, 30, true);
+    expect(r.displayProfitCapturePct).toBeNull();
+    expect(r.profitCaptureQuality).toBe("insufficient_data");
+  });
+
+  it("Case 6: estimated when hasReliableMfe=false and 0<pct<=100", () => {
+    const r = classifyProfitCaptureQuality(40, 20, false);
+    expect(r.profitCaptureQuality).toBe("estimated");
+    expect(r.displayProfitCapturePct).toBeCloseTo(50, 1);
+    expect(r.profitCaptureWarning).toContain("estimado");
+  });
+
+  it("Case 7: reliable when hasReliableMfe=true and 0<pct<=100", () => {
+    const r = classifyProfitCaptureQuality(40, 20, true);
+    expect(r.profitCaptureQuality).toBe("reliable");
+    expect(r.profitCaptureWarning).toBeNull();
+  });
+
+  it("Case 8: negative pct (loss with MFE) — valid, not insufficient", () => {
+    const r = classifyProfitCaptureQuality(40, -10, true);
+    expect(r.displayProfitCapturePct).toBeCloseTo(-25, 1);
+    expect(r.profitCaptureQuality).toBe("reliable");
+  });
+
+  it("Case 9: does not return Infinity", () => {
+    const r = classifyProfitCaptureQuality(0.001, 100, false);
+    expect(r.displayProfitCapturePct).toBeNull(); // >100 → insufficient
+    expect(r.rawProfitCapturePct).not.toBe(Infinity);
+    expect(Number.isFinite(r.rawProfitCapturePct)).toBe(true);
+  });
+
+  it("Case 10: does not return NaN", () => {
+    const r = classifyProfitCaptureQuality(null, 0, false);
+    expect(r.displayProfitCapturePct).toBeNull();
+    expect(Number.isNaN(r.rawProfitCapturePct)).toBe(false);
+  });
+
+  it("Case 11: JSON serializable (no Infinity/NaN)", () => {
+    const r1 = classifyProfitCaptureQuality(40, 4, true);
+    const r2 = classifyProfitCaptureQuality(null, 30, false);
+    const r3 = classifyProfitCaptureQuality(10, 300, false);
+    expect(() => JSON.stringify(r1)).not.toThrow();
+    expect(() => JSON.stringify(r2)).not.toThrow();
+    expect(() => JSON.stringify(r3)).not.toThrow();
+  });
+
+  it("buildTradeEfficiencyMetrics includes quality fields", () => {
+    const m = buildTradeEfficiencyMetrics({
+      entryPrice: 100, quantity: 1, capitalUsd: 100, finalPnlUsd: 30,
+      mfePriceOverride: 110, hasReliableMfe: false,
+    });
+    expect(m.profitCaptureQuality).toBe("insufficient_data"); // 300% > 100
+    expect(m.displayProfitCapturePct).toBeNull();
+    expect(m.rawProfitCapturePct).toBeGreaterThan(100);
+    expect(m.profitCaptureWarning).not.toBeNull();
+  });
+
+  it("buildTradeEfficiencyMetrics with candles → reliable", () => {
+    const m = buildTradeEfficiencyMetrics({
+      entryPrice: 100, quantity: 1, capitalUsd: 100, finalPnlUsd: 5,
+      candles: [{ high: 110, low: 95 }],
+    });
+    expect(m.profitCaptureQuality).toBe("reliable");
+    expect(m.displayProfitCapturePct).toBeCloseTo(50, 1);
+  });
+});
+
+// ─── Bot Event Classification ─────────────────────────────────────────────────
+
+describe("classifyEventRetention", () => {
+  it("TRADE_EXECUTED is permanent", () => {
+    expect(classifyEventRetention("TRADE_EXECUTED", "INFO")).toBe("permanent");
+  });
+
+  it("ORDER_FILLED is permanent", () => {
+    expect(classifyEventRetention("ORDER_FILLED", "INFO")).toBe("permanent");
+  });
+
+  it("POSITION_CLOSED is permanent", () => {
+    expect(classifyEventRetention("POSITION_CLOSED", "INFO")).toBe("permanent");
+  });
+
+  it("CONFIG_UPDATED is permanent", () => {
+    expect(classifyEventRetention("CONFIG_UPDATED", "INFO")).toBe("permanent");
+  });
+
+  it("ERROR level is always permanent regardless of type", () => {
+    expect(classifyEventRetention("ENGINE_TICK", "ERROR")).toBe("permanent");
+    expect(classifyEventRetention("UNKNOWN_TYPE", "ERROR")).toBe("permanent");
+  });
+
+  it("WARN level is always permanent regardless of type", () => {
+    expect(classifyEventRetention("ENGINE_TICK", "WARN")).toBe("permanent");
+  });
+
+  it("ENGINE_TICK INFO is 90d", () => {
+    expect(classifyEventRetention("ENGINE_TICK", "INFO")).toBe("90d");
+  });
+
+  it("SIGNAL_GENERATED INFO is 12mo", () => {
+    expect(classifyEventRetention("SIGNAL_GENERATED", "INFO")).toBe("12mo");
+  });
+
+  it("Unknown INFO type defaults to 30d", () => {
+    expect(classifyEventRetention("SOME_RANDOM_TYPE", "INFO")).toBe("30d");
+  });
+
+  it("FIFO_LOTS_CLOSED is permanent (fiscal)", () => {
+    expect(classifyEventRetention("FIFO_LOTS_CLOSED", "INFO")).toBe("permanent");
+  });
+
+  it("MANUAL_CLOSE_SUCCESS is permanent", () => {
+    expect(classifyEventRetention("MANUAL_CLOSE_SUCCESS", "INFO")).toBe("permanent");
+  });
+});
+
+describe("getCleanableTypes", () => {
+  it("returns tiers with 12mo, 90d, and 30d", () => {
+    const c = getCleanableTypes();
+    expect(c.tiers).toHaveLength(3);
+    expect(c.tiers.map(t => t.tier)).toContain("12mo");
+    expect(c.tiers.map(t => t.tier)).toContain("90d");
+    expect(c.tiers.map(t => t.tier)).toContain("30d");
+  });
+
+  it("12mo tier has 365 days", () => {
+    const c = getCleanableTypes();
+    const t12 = c.tiers.find(t => t.tier === "12mo");
+    expect(t12?.days).toBe(365);
+  });
+
+  it("90d tier has 90 days", () => {
+    const c = getCleanableTypes();
+    const t90 = c.tiers.find(t => t.tier === "90d");
+    expect(t90?.days).toBe(90);
+  });
+
+  it("30d tier has 30 days and empty types (fallback)", () => {
+    const c = getCleanableTypes();
+    const t30 = c.tiers.find(t => t.tier === "30d");
+    expect(t30?.days).toBe(30);
+    expect(t30?.types).toEqual([]);
+  });
+
+  it("does not include TRADE_EXECUTED in cleanable types", () => {
+    const c = getCleanableTypes();
+    expect(c.types).not.toContain("TRADE_EXECUTED");
+  });
+
+  it("does not include ORDER_FILLED in cleanable types", () => {
+    const c = getCleanableTypes();
+    expect(c.types).not.toContain("ORDER_FILLED");
+  });
+});
+
+describe("buildSqlInList", () => {
+  it("builds comma-separated quoted list", () => {
+    const list = buildSqlInList(["A", "B", "C"]);
+    expect(list).toBe("'A','B','C'");
+  });
+
+  it("escapes single quotes", () => {
+    const list = buildSqlInList(["IT'S", "OK"]);
+    expect(list).toBe("'IT''S','OK'");
+  });
+
+  it("handles empty array", () => {
+    const list = buildSqlInList([]);
+    expect(list).toBe("");
   });
 });

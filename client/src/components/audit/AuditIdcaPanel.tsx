@@ -32,6 +32,9 @@ interface IdcaSummary {
   totalMfeUsd: number | null;
   totalGivebackUsd: number | null;
   avgProfitCapturePct: number | null;
+  cyclesWithProfitCaptureData?: number;
+  cyclesWithoutProfitCaptureData?: number;
+  profitCaptureDataQuality?: "complete" | "partial" | "none";
   byCloseReason: { reason: string; count: number; totalPnlUsd: number; winRate: number }[];
   alerts: string[];
 }
@@ -56,11 +59,15 @@ interface IdcaCycle {
   gridPlanId: string | null;
   gridState: string | null;
   exitEfficiency: string;
+  profitCaptureQuality?: string;
+  profitCaptureWarning?: string | null;
   metrics: {
     mfePnlUsd: number | null;
     maePnlUsd: number | null;
     givebackUsd: number | null;
     profitCapturePct: number | null;
+    displayProfitCapturePct?: number | null;
+    profitCaptureQuality?: string;
   };
   diagnostics: { code: string; severity: string; message: string }[];
 }
@@ -178,8 +185,15 @@ function IdcaSummaryTab({ pair }: { pair: string }) {
           <Card className="bg-card/50"><CardContent className="p-3">
             <p className="text-xs text-muted-foreground mb-1">Profit Capture Medio</p>
             <p className={cn("text-lg font-bold", (d.avgProfitCapturePct ?? 0) >= 50 ? "text-green-400" : "text-yellow-400")}>
-              {d.avgProfitCapturePct != null ? `${d.avgProfitCapturePct.toFixed(0)}%` : "N/A"}
+              {d.avgProfitCapturePct != null ? `${d.avgProfitCapturePct.toFixed(0)}%` : "Sin datos"}
             </p>
+            {d.profitCaptureDataQuality && (
+              <p className="text-xs text-muted-foreground">
+                {d.cyclesWithProfitCaptureData ?? 0}/{(d.cyclesWithProfitCaptureData ?? 0) + (d.cyclesWithoutProfitCaptureData ?? 0)} ciclos con datos
+                {d.profitCaptureDataQuality === "partial" && " · parcial"}
+                {d.profitCaptureDataQuality === "none" && " · sin datos fiables"}
+              </p>
+            )}
           </CardContent></Card>
         </div>
       )}
@@ -278,9 +292,12 @@ function CyclesTab({ pair, status }: { pair: string; status: string }) {
                 <td className="py-1.5 px-2 text-right"><PnlBadge value={c.finalPnlUsd} /></td>
                 <td className="py-1.5 px-2 text-right"><PnlBadge value={c.metrics.mfePnlUsd} /></td>
                 <td className="py-1.5 px-2 text-right">
-                  {c.metrics.profitCapturePct != null
-                    ? <span className={c.metrics.profitCapturePct >= 50 ? "text-green-400" : "text-yellow-400"}>{c.metrics.profitCapturePct.toFixed(0)}%</span>
-                    : <span className="text-muted-foreground">N/A</span>}
+                  {c.metrics.displayProfitCapturePct != null
+                    ? <span className={c.metrics.displayProfitCapturePct >= 50 ? "text-green-400" : "text-yellow-400"}>
+                        {c.metrics.displayProfitCapturePct.toFixed(0)}%
+                        {c.profitCaptureQuality === "estimated" && <span className="text-[9px] text-muted-foreground ml-0.5">est.</span>}
+                      </span>
+                    : <span className="text-muted-foreground" title={c.profitCaptureWarning ?? undefined}>N/A</span>}
                 </td>
                 <td className={cn("py-1.5 px-2 text-xs", EFFICIENCY_COLORS[c.exitEfficiency])}>{c.exitEfficiency}</td>
                 <td className="py-1.5 px-2 text-xs">
