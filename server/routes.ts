@@ -23,6 +23,7 @@ import { AutoMigrationRunner } from "./services/AutoMigrationRunner";
 import { ensureFiscoV2Schema } from "./services/fisco/FiscoV2SchemaEnsureService";
 import { db } from "./db";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 let tradingEngine: TradingEngine | null = null;
@@ -171,25 +172,34 @@ export async function registerRoutes(
 
   // AutoMigrationRunner — execute SQL migrations from db/migrations
   try {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-    const migrationsDir = path.join(__dirname, '..', 'db', 'migrations');
+    let migrationsDir: string;
+    try {
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = path.dirname(__filename);
+      migrationsDir = path.join(__dirname, '..', 'db', 'migrations');
+    } catch {
+      migrationsDir = path.resolve(process.cwd(), 'db', 'migrations');
+    }
 
-    const runner = new AutoMigrationRunner(db.$client);
-    const migrations = [
-      { id: '049_telegram_alert_dedupe', filePath: path.join(migrationsDir, '049_telegram_alert_dedupe.sql') },
-      { id: '052_smart_exit_state', filePath: path.join(migrationsDir, '052_smart_exit_state.sql') },
-      { id: '053_add_telegram_alert_config_to_bot_config', filePath: path.join(migrationsDir, '053_add_telegram_alert_config_to_bot_config.sql') },
-      { id: '056_ai_shadow_decisions', filePath: path.join(migrationsDir, '056_ai_shadow_decisions.sql') },
-      { id: '057_idca_hybrid_intelligent_layers', filePath: path.join(migrationsDir, '057_idca_hybrid_intelligent_layers.sql') },
-      { id: '058_ai_effective_decision_context', filePath: path.join(migrationsDir, '058_ai_effective_decision_context.sql') },
-      { id: '059_fisco_v2_import_config', filePath: path.join(migrationsDir, '059_fisco_v2_import_config.sql') },
-      { id: '060_idca_hybrid_grid_traceability', filePath: path.join(migrationsDir, '060_idca_hybrid_grid_traceability.sql') },
-    ];
+    if (!fs.existsSync(migrationsDir)) {
+      console.log('[startup] AutoMigrationRunner skipped: migrations directory not found');
+    } else {
+      console.log(`[startup] AutoMigrationRunner using migrations dir: ${migrationsDir}`);
+      const runner = new AutoMigrationRunner(db.$client);
+      const migrations = [
+        { id: '049_telegram_alert_dedupe', filePath: path.join(migrationsDir, '049_telegram_alert_dedupe.sql') },
+        { id: '052_smart_exit_state', filePath: path.join(migrationsDir, '052_smart_exit_state.sql') },
+        { id: '053_add_telegram_alert_config_to_bot_config', filePath: path.join(migrationsDir, '053_add_telegram_alert_config_to_bot_config.sql') },
+        { id: '056_ai_shadow_decisions', filePath: path.join(migrationsDir, '056_ai_shadow_decisions.sql') },
+        { id: '057_idca_hybrid_intelligent_layers', filePath: path.join(migrationsDir, '057_idca_hybrid_intelligent_layers.sql') },
+        { id: '058_ai_effective_decision_context', filePath: path.join(migrationsDir, '058_ai_effective_decision_context.sql') },
+        { id: '059_fisco_v2_import_config', filePath: path.join(migrationsDir, '059_fisco_v2_import_config.sql') },
+        { id: '060_idca_hybrid_grid_traceability', filePath: path.join(migrationsDir, '060_idca_hybrid_grid_traceability.sql') },
+      ];
 
-    console.log('[startup] Running AutoMigrationRunner...');
-    await runner.run(migrations);
-    console.log('[startup] AutoMigrationRunner completed');
+      await runner.run(migrations);
+      console.log('[startup] AutoMigrationRunner completed');
+    }
   } catch (e: any) {
     console.error('[startup] AutoMigrationRunner error (non-fatal):', e?.message || e);
   }
