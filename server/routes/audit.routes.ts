@@ -114,6 +114,77 @@ function isPnlCalculable(pnlSource: string): boolean {
   return pnlSource !== "insufficient" && pnlSource !== "cost_basis_missing";
 }
 
+/** Check if a cycle status represents an open/active cycle */
+function isOpenCycleStatus(status: unknown): boolean {
+  const s = String(status ?? "").toLowerCase();
+  return ["active", "open", "running", "in_progress"].includes(s);
+}
+
+/** Neutral PnL threshold — cycles with |pnl| < this are classified as neutral */
+const IDCA_NEUTRAL_PNL_USD_THRESHOLD = 1.0;
+
+/** Classify a cycle's PnL as win, loss, neutral, open, or not_calculable */
+function classifyIdcaPnl(
+  pnlUsd: number | null | undefined,
+  isOpen: boolean,
+  isCalculable: boolean
+): "win" | "loss" | "neutral" | "open" | "not_calculable" {
+  if (isOpen) return "open";
+  if (!isCalculable || pnlUsd == null || !Number.isFinite(pnlUsd)) return "not_calculable";
+  if (Math.abs(pnlUsd) < IDCA_NEUTRAL_PNL_USD_THRESHOLD) return "neutral";
+  return pnlUsd > 0 ? "win" : "loss";
+}
+
+/** Build the PnL display object for a cycle, handling open vs closed correctly */
+function buildCyclePnlDisplay(cycleRow: any, pnlResult: IdcaCyclePnlResult) {
+  const isOpen = isOpenCycleStatus(cycleRow.status);
+  const rawPnl = n(cycleRow.status === "closed" ? cycleRow.realized_pnl_usd : cycleRow.unrealized_pnl_usd);
+  const unrealizedPnlUsd = isOpen ? n(cycleRow.unrealized_pnl_usd) : null;
+
+  if (isOpen) {
+    return {
+      displayPnlKind: "unrealized" as const,
+      displayPnlUsd: unrealizedPnlUsd,
+      displayPnlPct: null,
+      unrealizedPnlUsd,
+      realizedPnlUsd: null as number | null,
+      canonicalPnlUsd: null as number | null,
+      canonicalPnlPct: null as number | null,
+      pnlSource: "open_unrealized" as const,
+      pnlIsCalculable: true,
+      rawRealizedPnlUsd: null as number | null,
+      rawRealizedPnlWarning: null as string | null,
+      pnlClass: "open" as const,
+      isOpenCycle: true,
+      neutralThresholdUsd: IDCA_NEUTRAL_PNL_USD_THRESHOLD,
+    };
+  }
+
+  const calculable = isPnlCalculable(pnlResult.pnlSource);
+  const canonicalPnl = calculable ? pnlResult.realizedNetUsd : rawPnl;
+  const pnlClass = classifyIdcaPnl(canonicalPnl, false, calculable);
+  const warning = Math.abs(rawPnl - pnlResult.realizedNetUsd) > 0.50
+    ? "El valor bruto de DB no se usa porque parece valor de venta o dato importado contaminado."
+    : null;
+
+  return {
+    displayPnlKind: "realized" as const,
+    displayPnlUsd: canonicalPnl,
+    displayPnlPct: pnlResult.realizedPnlPct,
+    unrealizedPnlUsd: null as number | null,
+    realizedPnlUsd: canonicalPnl,
+    canonicalPnlUsd: parseFloat(pnlResult.realizedNetUsd.toFixed(2)),
+    canonicalPnlPct: parseFloat(pnlResult.realizedPnlPct.toFixed(2)),
+    pnlSource: pnlResult.pnlSource,
+    pnlIsCalculable: calculable,
+    rawRealizedPnlUsd: parseFloat(rawPnl.toFixed(2)),
+    rawRealizedPnlWarning: warning,
+    pnlClass,
+    isOpenCycle: false,
+    neutralThresholdUsd: IDCA_NEUTRAL_PNL_USD_THRESHOLD,
+  };
+}
+
 /** Fetch OHLC candles for a pair between two timestamps (1h timeframe) */
 async function fetchCandlesForPeriod(
   pair: string,
@@ -597,13 +668,16 @@ export function registerAuditRoutes(app: Express): void {
       const open = cycles.filter(c => c.status !== "closed");
 
       // Compute canonical PnL for closed cycles (loads orders per cycle)
-      const closedPnlResults: { pnl: number; source: string; calculable: boolean }[] = [];
+      const closedPnlResults: { pnl: number; source: string; calculable: boolean; pnlClass: string }[] = [];
       for (const c of closed) {
         const { pnlResult } = await computeCanonicalIdcaPnl(c);
+        const calculable = isPnlCalculable(pnlResult.pnlSource);
+        const pnl = calculable ? pnlResult.realizedNetUsd : 0;
         closedPnlResults.push({
-          pnl: pnlResult.realizedNetUsd,
+          pnl,
           source: pnlResult.pnlSource,
-          calculable: isPnlCalculable(pnlResult.pnlSource),
+          calculable,
+          pnlClass: classifyIdcaPnl(pnl, false, calculable),
         });
       }
 
@@ -611,9 +685,10 @@ export function registerAuditRoutes(app: Express): void {
       const calculableClosed = closedPnlResults.filter(r => r.calculable);
       const totalRealizedPnl = calculableClosed.reduce((a, r) => a + r.pnl, 0);
       const totalUnrealizedPnl = openPnls.reduce((a, b) => a + b, 0);
-      const closedWins = calculableClosed.filter(r => r.pnl > 0).length;
-      const closedLosses = calculableClosed.filter(r => r.pnl < 0).length;
-      const closedNeutral = calculableClosed.filter(r => Math.abs(r.pnl) < 0.01).length;
+      const closedWins = calculableClosed.filter(r => r.pnlClass === "win").length;
+      const closedLosses = calculableClosed.filter(r => r.pnlClass === "loss").length;
+      const closedNeutral = calculableClosed.filter(r => r.pnlClass === "neutral").length;
+      const closedNotCalculable = closed.length - calculableClosed.length;
 
       // Compute per-cycle profit capture with quality classification
       let totalMfeUsd = 0;
@@ -659,22 +734,31 @@ export function registerAuditRoutes(app: Express): void {
         cyclesWithProfitCaptureData === 0 ? "none" :
         cyclesWithoutProfitCaptureData > 0 ? "partial" : "complete";
 
-      // By close reason — use canonical PnL
-      const reasonMap = new Map<string, number[]>();
+      // By close reason — use canonical PnL with neutral classification
+      const reasonMap = new Map<string, { pnls: number[]; classes: string[] }>();
       for (let i = 0; i < closed.length; i++) {
         const c = closed[i];
         const pnlResult = closedPnlResults[i];
         if (!pnlResult.calculable) continue;
         const r = c.close_reason ?? "unknown";
-        const arr = reasonMap.get(r) ?? [];
-        arr.push(pnlResult.pnl);
-        reasonMap.set(r, arr);
+        const entry = reasonMap.get(r) ?? { pnls: [], classes: [] };
+        entry.pnls.push(pnlResult.pnl);
+        entry.classes.push(pnlResult.pnlClass);
+        reasonMap.set(r, entry);
       }
-      const byCloseReason = Array.from(reasonMap.entries()).map(([reason, ps]) => ({
-        reason, count: ps.length,
-        totalPnlUsd: parseFloat(ps.reduce((a, b) => a + b, 0).toFixed(2)),
-        winRate: parseFloat(((ps.filter(p => p > 0).length / ps.length) * 100).toFixed(1)),
-      })).sort((a, b) => a.totalPnlUsd - b.totalPnlUsd);
+      const byCloseReason = Array.from(reasonMap.entries()).map(([reason, { pnls: ps, classes }]) => {
+        const winCount = classes.filter(c => c === "win").length;
+        const lossCount = classes.filter(c => c === "loss").length;
+        const neutralCount = classes.filter(c => c === "neutral").length;
+        const winLossTotal = winCount + lossCount;
+        return {
+          reason, count: ps.length,
+          totalPnlUsd: parseFloat(ps.reduce((a, b) => a + b, 0).toFixed(2)),
+          winCount, lossCount, neutralCount,
+          winRate: parseFloat(((winCount / ps.length) * 100).toFixed(1)),
+          winRateExcludingNeutral: winLossTotal > 0 ? parseFloat(((winCount / winLossTotal) * 100).toFixed(1)) : 0,
+        };
+      }).sort((a, b) => a.totalPnlUsd - b.totalPnlUsd);
 
       const alerts: string[] = [];
       if (totalRealizedPnl < 0 && closed.length > 5) {
@@ -696,8 +780,10 @@ export function registerAuditRoutes(app: Express): void {
           closedCycles: closed.length,
           totalRealizedPnlUsd: parseFloat(totalRealizedPnl.toFixed(2)),
           totalUnrealizedPnlUsd: parseFloat(totalUnrealizedPnl.toFixed(2)),
-          closedWins, closedLosses,
+          closedWins, closedLosses, closedNeutral, closedNotCalculable,
           closedWinRate: calculableClosed.length > 0 ? parseFloat(((closedWins / calculableClosed.length) * 100).toFixed(1)) : 0,
+          closedWinRateExcludingNeutral: (closedWins + closedLosses) > 0 ? parseFloat(((closedWins / (closedWins + closedLosses)) * 100).toFixed(1)) : 0,
+          neutralThresholdUsd: IDCA_NEUTRAL_PNL_USD_THRESHOLD,
           totalMfeUsd: mfeCount > 0 ? parseFloat(totalMfeUsd.toFixed(2)) : null,
           totalGivebackUsd: mfeCount > 0 ? parseFloat(totalGivebackUsd.toFixed(2)) : null,
           avgProfitCapturePct: avgProfitCapture,
@@ -740,14 +826,12 @@ export function registerAuditRoutes(app: Express): void {
       for (const c of (rows.rows ?? []) as any[]) {
         const avgEntry = nullableN(c.avg_entry_price);
         const capital = n(c.capital_used_usd);
-        const rawPnl = n(c.status === "closed" ? c.realized_pnl_usd : c.unrealized_pnl_usd);
+        const isOpen = isOpenCycleStatus(c.status);
 
         // Compute canonical PnL using shared helper (same as IDCA Historial)
         const { pnlResult } = await computeCanonicalIdcaPnl(c);
-        const canonicalPnl = c.status === "closed"
-          ? (isPnlCalculable(pnlResult.pnlSource) ? pnlResult.realizedNetUsd : rawPnl)
-          : rawPnl;
-        const pnl = canonicalPnl;
+        const pnlDisplay = buildCyclePnlDisplay(c, pnlResult);
+        const pnl = pnlDisplay.displayPnlUsd ?? 0;
 
         const mfePrice = nullableN(c.highest_price_after_tp);
         const maePct = nullableN(c.max_drawdown_pct);
@@ -802,12 +886,7 @@ export function registerAuditRoutes(app: Express): void {
           startedAt: c.started_at, closedAt: c.closed_at ?? null,
           durationMinutes: durMin, durationLabel: formatDuration(durMin),
           finalPnlUsd: parseFloat(pnl.toFixed(2)),
-          canonicalPnlUsd: parseFloat(pnlResult.realizedNetUsd.toFixed(2)),
-          canonicalPnlPct: parseFloat(pnlResult.realizedPnlPct.toFixed(2)),
-          pnlSource: pnlResult.pnlSource,
-          pnlIsCalculable: isPnlCalculable(pnlResult.pnlSource),
-          rawRealizedPnlUsd: parseFloat(rawPnl.toFixed(2)),
-          rawRealizedPnlWarning: Math.abs(rawPnl - pnlResult.realizedNetUsd) > 0.50 ? "El valor bruto de DB no se usa porque parece valor de venta o dato importado contaminado." : null,
+          ...pnlDisplay,
           auditRealizedNetUsd: pnlResult.auditRealizedNetUsd != null ? parseFloat(pnlResult.auditRealizedNetUsd.toFixed(2)) : null,
           pnlDiscrepancyUsd: pnlResult.pnlDiscrepancyUsd != null ? parseFloat(pnlResult.pnlDiscrepancyUsd.toFixed(2)) : null,
           beActive: c.tp_armed_at != null,
@@ -870,14 +949,12 @@ export function registerAuditRoutes(app: Express): void {
 
       const avgEntry = nullableN(cycle.avg_entry_price);
       const capital = n(cycle.capital_used_usd);
-      const rawPnl = n(cycle.status === "closed" ? cycle.realized_pnl_usd : cycle.unrealized_pnl_usd);
+      const isOpen = isOpenCycleStatus(cycle.status);
 
       // Compute canonical PnL (same as IDCA Historial)
       const { pnlResult } = await computeCanonicalIdcaPnl(cycle);
-      const canonicalPnl = cycle.status === "closed"
-        ? (isPnlCalculable(pnlResult.pnlSource) ? pnlResult.realizedNetUsd : rawPnl)
-        : rawPnl;
-      const pnl = canonicalPnl;
+      const pnlDisplay = buildCyclePnlDisplay(cycle, pnlResult);
+      const pnl = pnlDisplay.displayPnlUsd ?? 0;
 
       const mfePrice = nullableN(cycle.highest_price_after_tp);
       const maePct = nullableN(cycle.max_drawdown_pct);
@@ -918,7 +995,10 @@ export function registerAuditRoutes(app: Express): void {
         avgEntryFinal: avgEntry,
         tpPrice: nullableN(cycle.tp_target_price),
         finalPnlUsd: pnl, metrics,
-        pnlSource: pnlResult.pnlSource,
+        pnlSource: pnlDisplay.pnlSource,
+        pnlClass: pnlDisplay.pnlClass,
+        isOpenCycle: pnlDisplay.isOpenCycle,
+        displayPnlKind: pnlDisplay.displayPnlKind,
         beActive: cycle.tp_armed_at != null,
         trailingActive: cycle.trailing_active_at != null,
         gridPlanId, mrDecision: hybridState?.mean_reversion_state ?? null,
@@ -1084,20 +1164,26 @@ export function registerAuditRoutes(app: Express): void {
       const open = cycles.filter(c => c.status !== "closed");
 
       // Compute canonical PnL for closed cycles
-      const closedCanonical: { cycle: any; pnl: number; source: string; calculable: boolean }[] = [];
+      const closedCanonical: { cycle: any; pnl: number; source: string; calculable: boolean; pnlClass: string }[] = [];
       for (const c of closed) {
         const { pnlResult } = await computeCanonicalIdcaPnl(c);
+        const calculable = isPnlCalculable(pnlResult.pnlSource);
+        const pnl = calculable ? pnlResult.realizedNetUsd : 0;
         closedCanonical.push({
           cycle: c,
-          pnl: pnlResult.realizedNetUsd,
+          pnl,
           source: pnlResult.pnlSource,
-          calculable: isPnlCalculable(pnlResult.pnlSource),
+          calculable,
+          pnlClass: classifyIdcaPnl(pnl, false, calculable),
         });
       }
 
       const calculableClosed = closedCanonical.filter(r => r.calculable);
       const totalPnl = calculableClosed.reduce((a, r) => a + r.pnl, 0);
       const openPnl = open.reduce((a, c) => a + n(c.unrealized_pnl_usd), 0);
+      const wins = calculableClosed.filter(r => r.pnlClass === "win").length;
+      const losses = calculableClosed.filter(r => r.pnlClass === "loss").length;
+      const neutral = calculableClosed.filter(r => r.pnlClass === "neutral").length;
 
       const lines = [
         `AUDITORÍA IDCA`,
@@ -1107,20 +1193,23 @@ export function registerAuditRoutes(app: Express): void {
         `Ciclos totales: ${cycles.length} (${open.length} abiertos · ${closed.length} cerrados)`,
         `PnL realizado (cerrados): ${fmtUsd(totalPnl)}`,
         `PnL flotante (abiertos): ${fmtUsd(openPnl)}`,
-        `Win Rate ciclos cerrados: ${calculableClosed.length > 0 ? ((calculableClosed.filter(r => r.pnl > 0).length / calculableClosed.length * 100).toFixed(0)) : "N/A"}%`,
+        `Win Rate ciclos cerrados: ${calculableClosed.length > 0 ? ((wins / calculableClosed.length * 100).toFixed(0)) : "N/A"}% (${wins}W / ${losses}L / ${neutral} neutral)`,
         `───────────────────────────────────`,
         `Por motivo de cierre:`,
-        ...Array.from(new Map<string, number[]>(
+        ...Array.from(new Map<string, { pnls: number[]; classes: string[] }>(
           closedCanonical.filter(r => r.calculable).reduce((map, r) => {
             const reason = r.cycle.close_reason ?? "unknown";
-            if (!map.has(reason)) map.set(reason, []);
-            map.get(reason)!.push(r.pnl);
+            if (!map.has(reason)) map.set(reason, { pnls: [], classes: [] });
+            map.get(reason)!.pnls.push(r.pnl);
+            map.get(reason)!.classes.push(r.pnlClass);
             return map;
-          }, new Map<string, number[]>())
-        ).entries()).map(([r, ps]) => {
+          }, new Map<string, { pnls: number[]; classes: string[] }>())
+        ).entries()).map(([r, { pnls: ps, classes }]) => {
+          const w = classes.filter(c => c === "win").length;
+          const l = classes.filter(c => c === "loss").length;
+          const n = classes.filter(c => c === "neutral").length;
           const t = ps.reduce((a, b) => a + b, 0);
-          const w = ps.filter(p => p > 0).length;
-          return `  ${r}: ${ps.length} ciclos · PnL ${fmtUsd(t)} · WR ${((w / ps.length) * 100).toFixed(0)}%`;
+          return `  ${r}: ${ps.length} ciclos · PnL ${fmtUsd(t)} · ${w}W / ${l}L / ${n}N`;
         }),
         `───────────────────────────────────`,
         `Generado: ${new Date().toLocaleString("es-ES")}`,
@@ -1159,24 +1248,25 @@ export function registerAuditRoutes(app: Express): void {
       const data: any[] = [];
       for (const r of rawData) {
         const { pnlResult } = await computeCanonicalIdcaPnl(r);
-        const rawPnl = n(r.status === "closed" ? r.realized_pnl_usd : r.unrealized_pnl_usd);
-        const canonicalPnl = r.status === "closed"
-          ? (isPnlCalculable(pnlResult.pnlSource) ? pnlResult.realizedNetUsd : rawPnl)
-          : rawPnl;
+        const pnlDisplay = buildCyclePnlDisplay(r, pnlResult);
         data.push({
           ...r,
-          canonical_pnl_usd: parseFloat(canonicalPnl.toFixed(2)),
-          pnl_source: pnlResult.pnlSource,
-          pnl_is_calculable: isPnlCalculable(pnlResult.pnlSource),
-          raw_realized_pnl_usd: parseFloat(rawPnl.toFixed(2)),
+          canonical_pnl_usd: pnlDisplay.canonicalPnlUsd,
+          pnl_source: pnlDisplay.pnlSource,
+          pnl_class: pnlDisplay.pnlClass,
+          pnl_is_calculable: pnlDisplay.pnlIsCalculable,
+          raw_realized_pnl_usd: pnlDisplay.rawRealizedPnlUsd,
+          unrealized_pnl_usd: pnlDisplay.unrealizedPnlUsd,
+          display_pnl_kind: pnlDisplay.displayPnlKind,
+          is_open_cycle: pnlDisplay.isOpenCycle,
         });
       }
 
       if (format === "csv") {
-        const header = "id,pair,status,mode,buy_count,capital_usd,canonical_pnl,pnl_source,raw_realized_pnl,unrealized_pnl,avg_entry,tp_price,close_reason,started_at,closed_at";
+        const header = "id,pair,status,mode,buy_count,capital_usd,canonical_pnl,pnl_source,pnl_class,raw_realized_pnl,unrealized_pnl,avg_entry,tp_price,close_reason,started_at,closed_at";
         const csvRows = data.map(r =>
           [r.id, r.pair, r.status, r.mode, r.buy_count, r.capital_used_usd,
-            r.canonical_pnl_usd, r.pnl_source, r.raw_realized_pnl_usd,
+            r.canonical_pnl_usd, r.pnl_source, r.pnl_class, r.raw_realized_pnl_usd,
             r.unrealized_pnl_usd, r.avg_entry_price,
             r.tp_target_price, r.close_reason, r.started_at, r.closed_at].join(",")
         );

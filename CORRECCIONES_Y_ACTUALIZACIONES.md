@@ -2,6 +2,94 @@
 
 ---
 
+## 2026-07-01 — fix(audit-idca): clarify open pnl and align neutral classification
+
+**Commit**: `fix(audit-idca): clarify open pnl and align neutral classification`
+
+### Problemas corregidos
+1. **Ciclo abierto #30 mostraba PnL confuso**: `canonicalPnlUsd=0`, `pnlSource=insufficient`, `rawRealizedPnlWarning="DB contaminado"`. Eso es incorrecto para un ciclo abierto — no tiene PnL realizado, tiene PnL no realizado (flotante).
+2. **Clasificación win/loss sin neutral**: Auditoría contaba 8W / 3L mientras Historial IDCA mostraba 7W / 2L / 2N. Ciclos residuales (#28 +0.81$, #24 -0.46$) se contaban como win/loss en lugar de neutral.
+
+### Causa raíz
+1. `audit.routes.ts` calculaba PnL canónico realizado para todos los ciclos sin distinguir abiertos vs cerrados. Un ciclo abierto sin órdenes de venta obtenía `pnlSource=insufficient` y warning de DB contaminado.
+2. `closedWins` usaba `pnl > 0` y `closedLosses` usaba `pnl < 0` sin umbral neutral. El Historial IDCA (`InstitutionalDca.tsx` línea 4486) usa `pnlUsd > 1` para win y `pnlUsd < -1` para loss.
+
+### Solución
+
+**Objetivo A — Ciclos abiertos como PnL no realizado**:
+- Nuevo helper `isOpenCycleStatus()` detecta `active`, `open`, `running`, `in_progress`
+- Nuevo helper `buildCyclePnlDisplay()` devuelve estructura status-aware:
+  - **Abierto**: `displayPnlKind="unrealized"`, `pnlSource="open_unrealized"`, `canonicalPnlUsd=null`, `rawRealizedPnlWarning=null`, `isOpenCycle=true`, `pnlClass="open"`
+  - **Cerrado**: mantiene lógica canónica del commit 321538d
+- Aplicado en `/summary`, `/cycles`, `/cycles/:id`, `/export`, `/chatgpt-summary`
+
+**Objetivo B — Clasificación neutral con umbral ±$1.00**:
+- Nueva constante `IDCA_NEUTRAL_PNL_USD_THRESHOLD = 1.0`
+- Nuevo helper `classifyIdcaPnl(pnlUsd, isOpen, isCalculable)`:
+  - `|pnl| < 1.00` → neutral
+  - `pnl >= 1.00` → win
+  - `pnl <= -1.00` → loss
+  - abierto → open
+  - no calculable → not_calculable
+- Summary ahora expone: `closedWins`, `closedLosses`, `closedNeutral`, `closedNotCalculable`, `closedWinRate`, `closedWinRateExcludingNeutral`, `neutralThresholdUsd`
+- `byCloseReason` ahora incluye `winCount`, `lossCount`, `neutralCount`, `winRateExcludingNeutral`
+- ChatGPT summary muestra `7W / 2L / 2N` en lugar de solo WR
+
+### Cambios por archivo
+
+- `server/routes/audit.routes.ts`:
+  - Nuevos helpers: `isOpenCycleStatus()`, `classifyIdcaPnl()`, `buildCyclePnlDisplay()`
+  - Constante `IDCA_NEUTRAL_PNL_USD_THRESHOLD = 1.0`
+  - Summary: wins/losses/neutral con threshold, `closedWinRateExcludingNeutral`, `neutralThresholdUsd`
+  - Cycles: usa `buildCyclePnlDisplay()` → `displayPnlKind`, `displayPnlUsd`, `pnlClass`, `isOpenCycle`, `unrealizedPnlUsd`, `realizedPnlUsd`
+  - Detail: usa `buildCyclePnlDisplay()` + pasa `pnlClass`, `isOpenCycle`, `displayPnlKind` al ChatGPT summary
+  - Export: incluye `pnl_class`, `display_pnl_kind`, `is_open_cycle`, `unrealized_pnl_usd`
+  - ChatGPT summary: wins/losses/neutral con threshold, formato `Xw / Yl / Zn`
+
+- `server/services/auditMetrics.ts`:
+  - `generateIdcaChatGptSummary` acepta `pnlClass`, `isOpenCycle`, `displayPnlKind`
+
+- `client/src/components/audit/AuditIdcaPanel.tsx`:
+  - `IdcaCycle` interface extendida: `displayPnlKind`, `displayPnlUsd`, `unrealizedPnlUsd`, `realizedPnlUsd`, `pnlClass`, `isOpenCycle`, `neutralThresholdUsd`
+  - `IdcaSummary` interface extendida: `closedNeutral`, `closedNotCalculable`, `closedWinRateExcludingNeutral`, `neutralThresholdUsd`, `byCloseReason` con `winCount/lossCount/neutralCount`
+  - `PnlSourceBadge`: badge "PnL abierto" para open, "Neutral" para neutral, "N/A" para not_calculable
+  - `PnlBadge`: color neutro para `pnlClass=neutral`
+  - Tabla ciclos: badge se muestra según `pnlClass`, raw warning solo para cerrados
+  - Summary: muestra `XG / YP / ZN` y `Umbral Neutral: ±$1.00`
+  - `byCloseReason`: muestra `Xw / Yl / Zn`
+  - Detail: "Estado PnL" (Realizado/No realizado/Neutral/No calculable), "PnL Abierto" vs "P&L Canónico", "P&L Raw DB" solo para cerrados, "Umbral Neutral"
+
+- `server/services/__tests__/auditIdcaPnl.test.ts`:
+  - 17 tests nuevos (32 total):
+    - Neutral: #28 +0.81→neutral, #24 -0.46→neutral, #23 +1.18→win, boundary $1.00→win, $0.99→neutral
+    - Open: #30 active→open, insufficient+isOpen→open
+    - Summary: 7W/2L/2N, winRate 63.6%, winRateExcludingNeutral 77.8%, open no suma en totalRealized
+
+### Validación esperada post-deploy
+
+| Ciclo | Antes | Después |
+|---|---|---|
+| #30 ETH/USD | canonicalPnl=0, source=insufficient, warning DB | displayPnlKind=unrealized, pnlSource=open_unrealized, isOpenCycle=true, rawRealizedPnlWarning=null |
+| #28 ETH/USD | closedWins=8 (contado como win) | pnlClass=neutral, closedWins=7 |
+| #24 BTC/USD | closedLosses=3 (contado como loss) | pnlClass=neutral, closedLosses=2 |
+| #23 ETH/USD | win | pnlClass=win (sin cambio) |
+| Summary | 8W / 3L | 7W / 2L / 2N, WR 63.6% (excl. neutral: 77.8%) |
+
+### Tests
+- `npx vitest run auditIdcaPnl.test.ts`: **32/32** ✅
+- `npm run check`: ✅
+- `npm run build`: ✅
+
+### Seguridad
+- No se tocó lógica real de trading ✅
+- No se ejecutaron órdenes ✅
+- No se cambió configuración ✅
+- No se tocaron datos fiscales ✅
+- No se borró nada ✅
+- Solo auditoría/UI/presentación/clasificación ✅
+
+---
+
 ## 2026-06-30 — fix(audit-idca): use canonical cycle pnl from IDCA history
 
 **Commit**: `fix(audit-idca): use canonical cycle pnl from IDCA history`

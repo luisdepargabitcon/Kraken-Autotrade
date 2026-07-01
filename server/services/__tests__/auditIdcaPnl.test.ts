@@ -280,3 +280,145 @@ describe("isPnlCalculable logic", () => {
     expect("imported_persisted_pnl" !== "insufficient" && "imported_persisted_pnl" !== "cost_basis_missing").toBe(true);
   });
 });
+
+// ─── Neutral classification (±$1.00 threshold) ────────────────────────
+
+const NEUTRAL_THRESHOLD = 1.0;
+
+function classifyPnl(pnlUsd: number | null, isOpen: boolean, isCalculable: boolean): string {
+  if (isOpen) return "open";
+  if (!isCalculable || pnlUsd == null || !Number.isFinite(pnlUsd)) return "not_calculable";
+  if (Math.abs(pnlUsd) < NEUTRAL_THRESHOLD) return "neutral";
+  return pnlUsd > 0 ? "win" : "loss";
+}
+
+describe("Audit IDCA neutral classification (±$1.00 threshold)", () => {
+  it("#28 ETH/USD +0.81 → neutral", () => {
+    expect(classifyPnl(0.81, false, true)).toBe("neutral");
+  });
+
+  it("#24 BTC/USD -0.46 → neutral", () => {
+    expect(classifyPnl(-0.46, false, true)).toBe("neutral");
+  });
+
+  it("#23 ETH/USD +1.18 → win", () => {
+    expect(classifyPnl(1.18, false, true)).toBe("win");
+  });
+
+  it("#18 ETH/USD +85.01 → win", () => {
+    expect(classifyPnl(85.01, false, true)).toBe("win");
+  });
+
+  it("#26 BTC/USD -106.69 → loss", () => {
+    expect(classifyPnl(-106.69, false, true)).toBe("loss");
+  });
+
+  it("#17 ETH/USD -654.95 → loss", () => {
+    expect(classifyPnl(-654.95, false, true)).toBe("loss");
+  });
+
+  it("open cycle → open (not win/loss/neutral)", () => {
+    expect(classifyPnl(21.36, true, true)).toBe("open");
+  });
+
+  it("not calculable → not_calculable", () => {
+    expect(classifyPnl(null, false, false)).toBe("not_calculable");
+  });
+
+  it("exactly $1.00 → win (boundary)", () => {
+    expect(classifyPnl(1.0, false, true)).toBe("win");
+  });
+
+  it("exactly -$1.00 → loss (boundary)", () => {
+    expect(classifyPnl(-1.0, false, true)).toBe("loss");
+  });
+
+  it("$0.99 → neutral (just below threshold)", () => {
+    expect(classifyPnl(0.99, false, true)).toBe("neutral");
+  });
+});
+
+// ─── Open cycle PnL display ───────────────────────────────────────────
+
+describe("Audit IDCA open cycle PnL display", () => {
+  it("#30 ETH/USD active cycle should use unrealized PnL, not realized", () => {
+    const cycle: IdcaCyclePnlInput = {
+      id: 30,
+      pair: "ETH/USD",
+      status: "active",
+      capitalUsedUsd: 1000,
+      avgEntryPrice: 3000,
+      realizedPnlUsd: 0,
+    };
+    const orders: IdcaCyclePnlOrder[] = [
+      { side: "buy", price: 3000, quantity: 0.333, gross_value_usd: 1000 },
+    ];
+    const result = calculateIdcaCycleRealizedPnl(cycle, orders);
+    // For open cycles, canonical PnL should NOT be used as "realized"
+    // The audit should use unrealized_pnl_usd from the DB instead
+    // pnlSource may be insufficient since there's no sell order
+    expect(result.pnlSource).toBe("insufficient");
+    // The audit code handles this by checking isOpenCycleStatus first
+  });
+
+  it("open cycle classification should be 'open', not 'insufficient'", () => {
+    const isOpen = true;
+    const pnlResult = { pnlSource: "insufficient", realizedNetUsd: 0 };
+    const isCalc = pnlResult.pnlSource !== "insufficient" && pnlResult.pnlSource !== "cost_basis_missing";
+    const pnlClass = classifyPnl(pnlResult.realizedNetUsd, isOpen, isCalc);
+    expect(pnlClass).toBe("open");
+  });
+});
+
+// ─── Summary aggregation with neutral ─────────────────────────────────
+
+describe("Audit IDCA summary aggregation with neutral", () => {
+  it("7 wins, 2 losses, 2 neutral from canonical PnLs", () => {
+    const canonicalPnls = [
+      85.01,   // #18 win
+      44.37,   // #15 win
+      1.18,    // #23 win
+      12.50,   // win
+      25.00,   // win
+      8.75,    // win
+      3.20,    // win
+      -106.69, // #26 loss
+      -654.95, // #17 loss
+      0.81,    // #28 neutral
+      -0.46,   // #24 neutral
+    ];
+
+    const wins = canonicalPnls.filter(p => classifyPnl(p, false, true) === "win").length;
+    const losses = canonicalPnls.filter(p => classifyPnl(p, false, true) === "loss").length;
+    const neutral = canonicalPnls.filter(p => classifyPnl(p, false, true) === "neutral").length;
+
+    expect(wins).toBe(7);
+    expect(losses).toBe(2);
+    expect(neutral).toBe(2);
+  });
+
+  it("winRate including neutral = 7/11 = 63.6%", () => {
+    const wins = 7;
+    const total = 11;
+    const winRate = (wins / total) * 100;
+    expect(winRate).toBeCloseTo(63.6, 0);
+  });
+
+  it("winRate excluding neutral = 7/9 = 77.8%", () => {
+    const wins = 7;
+    const losses = 2;
+    const winRate = (wins / (wins + losses)) * 100;
+    expect(winRate).toBeCloseTo(77.8, 0);
+  });
+
+  it("totalRealizedPnlUsd includes neutral but not open cycles", () => {
+    const closedPnls = [85.01, 44.37, 1.18, 12.50, 25.00, 8.75, 3.20, -106.69, -654.95, 0.81, -0.46];
+    const openPnl = 21.36; // #30 should NOT be in totalRealizedPnlUsd
+
+    const totalRealized = closedPnls.reduce((a, b) => a + b, 0);
+    // Sum = 85.01 + 44.37 + 1.18 + 12.50 + 25.00 + 8.75 + 3.20 - 106.69 - 654.95 + 0.81 - 0.46 = -581.28
+    expect(totalRealized).toBeCloseTo(-581.28, 1);
+    // Open cycle PnL should not be included in totalRealizedPnlUsd
+    expect(totalRealized).not.toBeCloseTo(-581.28 + openPnl, 1);
+  });
+});

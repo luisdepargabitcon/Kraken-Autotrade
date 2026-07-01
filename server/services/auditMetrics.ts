@@ -528,6 +528,9 @@ export function generateIdcaChatGptSummary(cycle: {
   finalPnlUsd: number;
   metrics: TradeEfficiencyMetrics;
   pnlSource?: string;
+  pnlClass?: string;
+  isOpenCycle?: boolean;
+  displayPnlKind?: string;
   beActive: boolean;
   trailingActive: boolean;
   gridPlanId: string | null;

@@ -406,3 +406,57 @@ La Auditoría IDCA usa ahora `calculateIdcaCycleRealizedPnl` de `shared/idcaCycl
 - `byCloseReason` solo incluye ciclos calculables
 - Ciclos abiertos no suman en `totalRealizedPnlUsd`
 - Export incluye `canonical_pnl_usd`, `pnl_source`, `raw_realized_pnl_usd`
+
+---
+
+## 15. Open Cycle PnL & Neutral Classification (v1.4)
+
+### Open cycles (status=active/open/running/in_progress)
+
+Los ciclos abiertos **no tienen PnL realizado**. El audit ahora lo refleja correctamente:
+
+| Campo | Valor para abierto | Valor para cerrado |
+|---|---|---|
+| `displayPnlKind` | `"unrealized"` | `"realized"` |
+| `displayPnlUsd` | `unrealized_pnl_usd` | `canonicalPnlUsd` |
+| `pnlSource` | `"open_unrealized"` | (según calculateIdcaCycleRealizedPnl) |
+| `canonicalPnlUsd` | `null` | valor canónico |
+| `rawRealizedPnlWarning` | `null` | solo si raw difiere del canónico |
+| `pnlClass` | `"open"` | win/loss/neutral/not_calculable |
+| `isOpenCycle` | `true` | `false` |
+
+### Neutral classification (umbral ±$1.00)
+
+Los ciclos con PnL residual (|valor| < $1.00) se clasifican como **neutral**, igual que Historial IDCA.
+
+Constante: `IDCA_NEUTRAL_PNL_USD_THRESHOLD = 1.0`
+
+| `pnlClass` | Condición |
+|---|---|
+| `win` | `pnlUsd >= 1.00` |
+| `loss` | `pnlUsd <= -1.00` |
+| `neutral` | `\|pnlUsd\| < 1.00` |
+| `open` | ciclo abierto |
+| `not_calculable` | insufficient o cost_basis_missing |
+
+### Summary fields
+
+| Campo | Descripción |
+|---|---|
+| `closedWins` | ciclos con `pnlClass=win` |
+| `closedLosses` | ciclos con `pnlClass=loss` |
+| `closedNeutral` | ciclos con `pnlClass=neutral` |
+| `closedNotCalculable` | ciclos no calculables |
+| `closedWinRate` | `wins / calculableTotal * 100` (incluye neutral) |
+| `closedWinRateExcludingNeutral` | `wins / (wins + losses) * 100` |
+| `neutralThresholdUsd` | `1.0` |
+
+### byCloseReason fields
+
+| Campo | Descripción |
+|---|---|
+| `winCount` | ciclos win en ese motivo |
+| `lossCount` | ciclos loss en ese motivo |
+| `neutralCount` | ciclos neutral en ese motivo |
+| `winRate` | `winCount / count * 100` |
+| `winRateExcludingNeutral` | `winCount / (winCount + lossCount) * 100` |

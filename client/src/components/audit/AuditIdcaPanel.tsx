@@ -28,14 +28,18 @@ interface IdcaSummary {
   totalUnrealizedPnlUsd: number;
   closedWins: number;
   closedLosses: number;
+  closedNeutral?: number;
+  closedNotCalculable?: number;
   closedWinRate: number;
+  closedWinRateExcludingNeutral?: number;
+  neutralThresholdUsd?: number;
   totalMfeUsd: number | null;
   totalGivebackUsd: number | null;
   avgProfitCapturePct: number | null;
   cyclesWithProfitCaptureData?: number;
   cyclesWithoutProfitCaptureData?: number;
   profitCaptureDataQuality?: "complete" | "partial" | "none";
-  byCloseReason: { reason: string; count: number; totalPnlUsd: number; winRate: number }[];
+  byCloseReason: { reason: string; count: number; totalPnlUsd: number; winRate: number; winCount?: number; lossCount?: number; neutralCount?: number; winRateExcludingNeutral?: number }[];
   alerts: string[];
 }
 
@@ -54,14 +58,22 @@ interface IdcaCycle {
   closedAt: string | null;
   durationLabel: string;
   finalPnlUsd: number;
-  canonicalPnlUsd?: number;
-  canonicalPnlPct?: number;
+  canonicalPnlUsd?: number | null;
+  canonicalPnlPct?: number | null;
   pnlSource?: string;
   pnlIsCalculable?: boolean;
-  rawRealizedPnlUsd?: number;
+  rawRealizedPnlUsd?: number | null;
   rawRealizedPnlWarning?: string | null;
   auditRealizedNetUsd?: number | null;
   pnlDiscrepancyUsd?: number | null;
+  displayPnlKind?: "realized" | "unrealized";
+  displayPnlUsd?: number | null;
+  displayPnlPct?: number | null;
+  unrealizedPnlUsd?: number | null;
+  realizedPnlUsd?: number | null;
+  pnlClass?: "win" | "loss" | "neutral" | "open" | "not_calculable";
+  isOpenCycle?: boolean;
+  neutralThresholdUsd?: number;
   beActive: boolean;
   trailingActive: boolean;
   gridPlanId: string | null;
@@ -116,7 +128,16 @@ function isClosedCycle(status: string | undefined | null): boolean {
   return ["closed", "completed", "finished"].includes(s);
 }
 
-function PnlSourceBadge({ source }: { source?: string }) {
+function PnlSourceBadge({ source, pnlClass }: { source?: string; pnlClass?: string }) {
+  if (pnlClass === "open" || source === "open_unrealized") {
+    return <span className="text-[9px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30" title="Este PnL es abierto/no realizado. Puede cambiar hasta que se cierre el ciclo.">PnL abierto</span>;
+  }
+  if (pnlClass === "neutral") {
+    return <span className="text-[9px] px-1 py-0.5 rounded bg-slate-500/20 text-slate-300 border border-slate-500/30" title="PnL residual (|valor| < $1.00). No cuenta como win ni loss.">Neutral</span>;
+  }
+  if (pnlClass === "not_calculable") {
+    return <span className="text-[9px] px-1 py-0.5 rounded bg-muted/30 text-muted-foreground border border-muted" title="No se puede calcular el PnL canónico">N/A</span>;
+  }
   if (!source) return null;
   if (source === "imported_persisted_pnl") {
     return <span className="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30" title="PnL persistido de ciclo importado/manual">persistido</span>;
@@ -147,9 +168,9 @@ function fmtUsd(v: number | null | undefined) {
   return `${p}$${v.toFixed(2)}`;
 }
 
-function PnlBadge({ value }: { value: number | null | undefined }) {
+function PnlBadge({ value, pnlClass }: { value: number | null | undefined; pnlClass?: string }) {
   if (value == null) return <span className="text-muted-foreground text-xs font-mono">N/A</span>;
-  const cls = value > 0 ? "text-green-400" : value < 0 ? "text-red-400" : "text-muted-foreground";
+  const cls = pnlClass === "neutral" ? "text-muted-foreground" : value > 0 ? "text-green-400" : value < 0 ? "text-red-400" : "text-muted-foreground";
   return <span className={cn("font-mono text-xs", cls)}>{fmtUsd(value)}</span>;
 }
 
@@ -199,7 +220,7 @@ function IdcaSummaryTab({ pair }: { pair: string }) {
         <Card className="bg-card/50"><CardContent className="p-3">
           <p className="text-xs text-muted-foreground mb-1">Ciclos cerrados</p>
           <p className="text-lg font-bold">{d.closedCycles}</p>
-          <p className="text-xs text-muted-foreground">{d.closedWins}G / {d.closedLosses}P · WR {d.closedWinRate}%</p>
+          <p className="text-xs text-muted-foreground">{d.closedWins}G / {d.closedLosses}P{d.closedNeutral ? ` / ${d.closedNeutral}N` : ""} · WR {d.closedWinRate}%</p>
         </CardContent></Card>
         <Card className="bg-card/50"><CardContent className="p-3">
           <p className="text-xs text-muted-foreground mb-1">P&L Realizado</p>
@@ -250,6 +271,7 @@ function IdcaSummaryTab({ pair }: { pair: string }) {
                 <div className="flex-1 text-xs">
                   <span className="font-medium capitalize">{r.reason ?? "—"}</span>
                   <span className="text-muted-foreground ml-2">({r.count} ciclos)</span>
+                  <span className="text-muted-foreground ml-2">· {r.winCount ?? 0}W / {r.lossCount ?? 0}L{r.neutralCount ? ` / ${r.neutralCount}N` : ""}</span>
                   <span className="text-muted-foreground ml-2">· WR: <span className={r.winRate >= 50 ? "text-green-400" : "text-red-400"}>{r.winRate}%</span></span>
                 </div>
                 <PnlBadge value={r.totalPnlUsd} />
@@ -342,12 +364,10 @@ function CyclesTab({ pair, status }: { pair: string; status: string }) {
                 <td className="py-1.5 px-2 text-right text-muted-foreground">${c.capitalUsedUsd.toFixed(0)}</td>
                 <td className="py-1.5 px-2 text-right">
                   <div className="flex items-center justify-end gap-1">
-                    <PnlBadge value={c.finalPnlUsd} />
-                    {c.pnlSource && c.pnlSource !== "orders" && c.pnlSource !== "orders_cycle_capital" && c.pnlSource !== "orders_avg_entry" && (
-                      <PnlSourceBadge source={c.pnlSource} />
-                    )}
+                    <PnlBadge value={c.finalPnlUsd} pnlClass={c.pnlClass} />
+                    <PnlSourceBadge source={c.pnlSource} pnlClass={c.pnlClass} />
                   </div>
-                  {c.rawRealizedPnlWarning && (
+                  {c.rawRealizedPnlWarning && !c.isOpenCycle && (
                     <div className="text-[8px] text-orange-400/70 mt-0.5" title={c.rawRealizedPnlWarning}>raw: {fmtUsd(c.rawRealizedPnlUsd)}</div>
                   )}
                 </td>
@@ -418,8 +438,10 @@ function CycleDetailCard({ detail, cycleId }: { detail: CycleDetail; cycleId: nu
             ["MFE (proxy)", m?.mfePnlUsd != null ? fmtUsd(m.mfePnlUsd) : "N/A"],
             ["MAE (proxy)", m?.maePnlUsd != null ? fmtUsd(m.maePnlUsd) : "N/A"],
             ["Giveback", m?.givebackUsd != null ? `$${m.givebackUsd.toFixed(2)}` : "N/A"],
-            ["P&L Canónico", `${fmtUsd(detail.cycle.canonicalPnlUsd ?? detail.cycle.finalPnlUsd)}${detail.cycle.pnlSource ? ` (${detail.cycle.pnlSource})` : ""}`],
-            ["P&L Raw DB", detail.cycle.rawRealizedPnlUsd != null ? fmtUsd(detail.cycle.rawRealizedPnlUsd) : "—"],
+            ["Estado PnL", c.isOpenCycle ? "No realizado (abierto)" : (c.pnlClass === "neutral" ? "Neutral" : c.pnlClass === "not_calculable" ? "No calculable" : "Realizado")],
+            [c.isOpenCycle ? "PnL Abierto" : "P&L Canónico", `${fmtUsd(c.isOpenCycle ? c.unrealizedPnlUsd : (c.canonicalPnlUsd ?? c.finalPnlUsd))}${c.pnlSource ? ` (${c.pnlSource})` : ""}`],
+            ["P&L Raw DB", !c.isOpenCycle && c.rawRealizedPnlUsd != null ? fmtUsd(c.rawRealizedPnlUsd) : "—"],
+            ["Umbral Neutral", `±$${(c.neutralThresholdUsd ?? 1.0).toFixed(2)}`],
             ["Break Even", c.tp_armed_at ? "Armado" : "No"],
             ["Trailing", c.trailing_active_at ? "Activo" : "No"],
             ["Motivo cierre", c.close_reason ?? "—"],
