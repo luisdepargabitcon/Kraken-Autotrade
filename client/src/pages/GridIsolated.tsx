@@ -9,8 +9,9 @@ import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle } from "lucide-react";
+import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon } from "lucide-react";
 import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
+import { GridActivityLive } from "@/components/grid/GridActivityLive";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -322,16 +323,17 @@ export default function GridIsolated() {
         </CardContent>
       </Card>
 
-      {/* Tabs — 8 subpestañas */}
+      {/* Tabs — 9 subpestañas */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-8">
+        <TabsList className="grid w-full grid-cols-9">
           <TabsTrigger value="resumen">Resumen</TabsTrigger>
-          <TabsTrigger value="config">Configuración</TabsTrigger>
-          <TabsTrigger value="capital">Capital Inteligente</TabsTrigger>
-          <TabsTrigger value="levels">Niveles y Ciclos</TabsTrigger>
-          <TabsTrigger value="risk">Riesgo y Recuperación</TabsTrigger>
+          <TabsTrigger value="cartera">Cartera</TabsTrigger>
+          <TabsTrigger value="ejecucion">Ejecución</TabsTrigger>
+          <TabsTrigger value="actividad">Actividad</TabsTrigger>
+          <TabsTrigger value="levels">Niveles</TabsTrigger>
+          <TabsTrigger value="risk">Riesgo</TabsTrigger>
           <TabsTrigger value="backtest">Backtest</TabsTrigger>
-          <TabsTrigger value="audit">Auditoría Grid</TabsTrigger>
+          <TabsTrigger value="audit">Auditoría</TabsTrigger>
           <TabsTrigger value="ayuda">Ayuda</TabsTrigger>
         </TabsList>
 
@@ -397,182 +399,349 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
 
-        {/* 2. Configuración Tab */}
-        <TabsContent value="config" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Settings2 className="h-5 w-5" />
-                Parámetros del Grid
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Capital Profile */}
-              <div className="space-y-2">
-                <Label>Perfil de Capital</Label>
-                <Select
-                  value={config?.capitalProfile || "balanced"}
-                  onValueChange={(v) => configMutation.mutate({ capitalProfile: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="conservative">Conservador (30% reserva)</SelectItem>
-                    <SelectItem value="balanced">Balanceado (20% reserva)</SelectItem>
-                    <SelectItem value="aggressive">Agresivo (10% reserva)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Net Profit Target */}
-              <div className="space-y-2">
-                <Label>Target de Beneficio Neto: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
-                <Slider
-                  value={[config?.netProfitTargetPct || 0.8]}
-                  min={0.1}
-                  max={3.0}
-                  step={0.1}
-                  onValueChange={(v) => configMutation.mutate({ netProfitTargetPct: v[0] })}
-                />
-                <p className="text-xs text-muted-foreground">
-                  El gap de precio bruto necesario será calculado automáticamente (incluye fees + reserva fiscal)
-                </p>
-              </div>
-
-              {/* Band Period */}
-              <div className="space-y-2">
-                <Label>Periodo de Bandas (Bollinger)</Label>
-                <Input
-                  type="number"
-                  value={config?.bandPeriod || 20}
-                  onChange={(e) => configMutation.mutate({ bandPeriod: parseInt(e.target.value) })}
-                />
-              </div>
-
-              {/* ATR Timeframe */}
-              <div className="space-y-2">
-                <Label>Timeframe ATR</Label>
-                <Select
-                  value={config?.atrTimeframe || "1h"}
-                  onValueChange={(v) => configMutation.mutate({ atrTimeframe: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="15min">15 min</SelectItem>
-                    <SelectItem value="1h">1 hora</SelectItem>
-                    <SelectItem value="4h">4 horas</SelectItem>
-                    <SelectItem value="1d">1 día</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Grid Step */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Step Mín %: {config?.gridStepMinPct?.toFixed(2)}</Label>
-                  <Slider
-                    value={[config?.gridStepMinPct || 0.15]}
-                    min={0.05}
-                    max={1.0}
-                    step={0.05}
-                    onValueChange={(v) => configMutation.mutate({ gridStepMinPct: v[0] })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Step Máx %: {config?.gridStepMaxPct?.toFixed(2)}</Label>
-                  <Slider
-                    value={[config?.gridStepMaxPct || 3.0]}
-                    min={1.0}
-                    max={10.0}
-                    step={0.5}
-                    onValueChange={(v) => configMutation.mutate({ gridStepMaxPct: v[0] })}
-                  />
-                </div>
-              </div>
-
-              {/* Geometric Ratio */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Ratio Geométrico Mín: {config?.geometricRatioMin?.toFixed(2)}</Label>
-                  <Slider
-                    value={[config?.geometricRatioMin || 0.8]}
-                    min={0.5}
-                    max={1.0}
-                    step={0.05}
-                    onValueChange={(v) => configMutation.mutate({ geometricRatioMin: v[0] })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Ratio Geométrico Máx: {config?.geometricRatioMax?.toFixed(2)}</Label>
-                  <Slider
-                    value={[config?.geometricRatioMax || 1.2]}
-                    min={1.0}
-                    max={2.0}
-                    step={0.05}
-                    onValueChange={(v) => configMutation.mutate({ geometricRatioMax: v[0] })}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* 3. Capital Inteligente Tab */}
-        <TabsContent value="capital" className="space-y-4">
+        {/* 2. Cartera Tab */}
+        <TabsContent value="cartera" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Wallet className="h-5 w-5" />
-                Capital Inteligente
+                Cartera Grid Aislada
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground">
+                El Grid solo puede usar esta cartera, no el saldo completo del bot. No toca capital de IDCA ni de Spot Normal.
+              </div>
+              {/* Resumen superior */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Cartera Grid total</p>
+                  <p className="text-lg font-bold">${((config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0)).toFixed(2)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Reservado en ciclos</p>
+                  <p className="text-lg font-bold">${status?.capitalReservedUsd?.toFixed(2) || "0.00"}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Libre para nuevos ciclos</p>
+                  <p className="text-lg font-bold text-green-500">${((config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0) - (status?.capitalReservedUsd || 0)).toFixed(2)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Ganancia acumulada</p>
+                  <p className={`text-lg font-bold ${(status?.totalNetPnlUsd || 0) >= 0 ? "text-green-500" : "text-red-500"}`}>
+                    {(status?.totalNetPnlUsd || 0) >= 0 ? "+" : ""}${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Cartera máxima</p>
+                  <p className="text-sm font-bold">${config?.gridWalletMaxUsd?.toFixed(2) || "5000.00"}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">% usado</p>
+                  <p className="text-sm font-bold">{config?.gridWalletMaxUsd ? ((status?.capitalReservedUsd || 0) / config.gridWalletMaxUsd * 100).toFixed(1) : "0.0"}%</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Estado</p>
+                  <Badge variant={((config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0) - (status?.capitalReservedUsd || 0)) > (config?.gridMinFreeCapitalUsd || 50) ? "default" : "secondary"}>
+                    {((config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0) - (status?.capitalReservedUsd || 0)) > (config?.gridMinFreeCapitalUsd || 50) ? "Disponible" : "Esperando oportunidad"}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Modo de asignación */}
               <div className="space-y-2">
-                <Label>Perfil de Capital</Label>
+                <Label>Modo de asignación de capital</Label>
                 <Select
-                  value={config?.capitalProfile || "balanced"}
-                  onValueChange={(v) => configMutation.mutate({ capitalProfile: v })}
+                  value={config?.gridWalletMode || "automatic"}
+                  onValueChange={(v) => configMutation.mutate({ gridWalletMode: v } as any)}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="conservative">Conservador (30% reserva)</SelectItem>
-                    <SelectItem value="balanced">Balanceado (20% reserva)</SelectItem>
-                    <SelectItem value="aggressive">Agresivo (10% reserva)</SelectItem>
+                    <SelectItem value="automatic">Automático (recomendado)</SelectItem>
+                    <SelectItem value="manual">Manual</SelectItem>
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  {config?.gridWalletMode === "manual"
+                    ? "El usuario fija cuánto capital máximo puede usar cada ciclo."
+                    : "El sistema decide cuánto capital asignar a cada ciclo según volatilidad, distancia entre niveles, riesgo y oportunidades disponibles."}
+                </p>
+              </div>
+
+              {/* Campos configurables */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Capital inicial cartera (USD)</Label>
+                  <Input
+                    type="number"
+                    value={config?.gridWalletInitialUsd || 1000}
+                    onChange={(e) => configMutation.mutate({ gridWalletInitialUsd: parseFloat(e.target.value) } as any)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Cartera máxima (USD)</Label>
+                  <Input
+                    type="number"
+                    value={config?.gridWalletMaxUsd || 5000}
+                    onChange={(e) => configMutation.mutate({ gridWalletMaxUsd: parseFloat(e.target.value) } as any)}
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Máx Ciclos Abiertos</Label>
+                  <Label>Capital máximo por ciclo (USD)</Label>
                   <Input
                     type="number"
-                    value={config?.maxOpenCycles || 10}
-                    onChange={(e) => configMutation.mutate({ maxOpenCycles: parseInt(e.target.value) })}
+                    value={config?.gridMaxCapitalPerCycleUsd || 600}
+                    onChange={(e) => configMutation.mutate({ gridMaxCapitalPerCycleUsd: parseFloat(e.target.value) } as any)}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Máx Órdenes Diarias</Label>
+                  <Label>Capital máximo por ciclo (%)</Label>
                   <Input
                     type="number"
-                    value={config?.maxDailyOrders || 300}
-                    onChange={(e) => configMutation.mutate({ maxDailyOrders: parseInt(e.target.value) })}
+                    value={config?.gridMaxCapitalPerCyclePct || 60}
+                    onChange={(e) => configMutation.mutate({ gridMaxCapitalPerCyclePct: parseFloat(e.target.value) } as any)}
                   />
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                El capital se aísla de Spot Normal e IDCA mediante strategy_capital_reservations.
-                El perfil controla el porcentaje de reserva y límites por nivel.
-              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Reserva (%)</Label>
+                  <Input
+                    type="number"
+                    value={config?.gridReservePct || 20}
+                    onChange={(e) => configMutation.mutate({ gridReservePct: parseFloat(e.target.value) } as any)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Capital libre mínimo (USD)</Label>
+                  <Input
+                    type="number"
+                    value={config?.gridMinFreeCapitalUsd || 50}
+                    onChange={(e) => configMutation.mutate({ gridMinFreeCapitalUsd: parseFloat(e.target.value) } as any)}
+                  />
+                </div>
+              </div>
+
+              {/* Reinvestment */}
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <Label>Reinvertir ganancias del Grid</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Si está activado, las ganancias cerradas se suman a la cartera Grid y pueden usarse en próximos ciclos. Si está desactivado, las ganancias se muestran aparte y no aumentan el capital operativo.
+                  </p>
+                </div>
+                <Switch
+                  checked={config?.gridWalletCompoundProfits ?? true}
+                  onCheckedChange={(v) => configMutation.mutate({ gridWalletCompoundProfits: v } as any)}
+                />
+              </div>
+
+              {/* Pausa por capital agotado */}
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <Label>Pausar ciclo si capital agotado</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Si un ciclo usa todo el capital/niveles asignados, el ciclo queda pausado. No se añade más capital automáticamente.
+                  </p>
+                </div>
+                <Switch
+                  checked={config?.gridPauseCycleWhenCapitalDepleted ?? true}
+                  onCheckedChange={(v) => configMutation.mutate({ gridPauseCycleWhenCapitalDepleted: v } as any)}
+                />
+              </div>
+
+              {/* Apertura de nuevo ciclo */}
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <Label>Permitir nuevo ciclo con capital libre</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Si el mercado ofrece una nueva zona válida y hay capital libre en la cartera Grid, el sistema puede abrir otro ciclo aislado. Si no hay capital libre, espera.
+                  </p>
+                </div>
+                <Switch
+                  checked={config?.gridAllowNewCycleWhenCapitalFree ?? true}
+                  onCheckedChange={(v) => configMutation.mutate({ gridAllowNewCycleWhenCapitalFree: v } as any)}
+                />
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* 4. Niveles y Ciclos Tab */}
+        {/* 3. Ejecución Tab */}
+        <TabsContent value="ejecucion" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ZapIcon className="h-5 w-5" />
+                Política de Ejecución
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg bg-muted/30 p-4 space-y-2">
+                <p className="text-sm font-semibold">3 intentos maker + 4º taker controlado</p>
+                <p className="text-sm text-muted-foreground">
+                  El Grid intenta evitar pagar taker. Primero coloca órdenes conservadoras buscando ejecución maker. Si después de 3 intentos no entra y la oportunidad sigue siendo válida, puede ejecutar al 4º intento como taker controlado. Ese fallback queda auditado.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Intentos maker antes de taker</Label>
+                  <Input
+                    type="number"
+                    value={config?.makerAttemptsBeforeTaker ?? 3}
+                    onChange={(e) => configMutation.mutate({ makerAttemptsBeforeTaker: parseInt(e.target.value) } as any)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Número de intento taker fallback</Label>
+                  <Input
+                    type="number"
+                    value={config?.takerFallbackAttemptNumber ?? 4}
+                    onChange={(e) => configMutation.mutate({ takerFallbackAttemptNumber: parseInt(e.target.value) } as any)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Máximo fallback taker por ciclo</Label>
+                  <Input
+                    type="number"
+                    value={config?.maxTakerFallbackPerCycle ?? 1}
+                    onChange={(e) => configMutation.mutate({ maxTakerFallbackPerCycle: parseInt(e.target.value) } as any)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Target beneficio neto: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
+                  <Slider
+                    value={[config?.netProfitTargetPct || 0.8]}
+                    min={0.1}
+                    max={3.0}
+                    step={0.1}
+                    onValueChange={(v) => configMutation.mutate({ netProfitTargetPct: v[0] })}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <Label>Fallback taker habilitado</Label>
+                  <p className="text-xs text-muted-foreground mt-1">Permitir el 4º intento como taker si no se consigue ejecución maker.</p>
+                </div>
+                <Switch
+                  checked={config?.takerFallbackEnabled ?? true}
+                  onCheckedChange={(v) => configMutation.mutate({ takerFallbackEnabled: v } as any)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <Label>Fallback taker requiere beneficio neto</Label>
+                  <p className="text-xs text-muted-foreground mt-1">El taker solo se permite si el beneficio neto estimado sigue por encima del objetivo.</p>
+                </div>
+                <Switch
+                  checked={config?.takerFallbackRequiresNetProfit ?? true}
+                  onCheckedChange={(v) => configMutation.mutate({ takerFallbackRequiresNetProfit: v } as any)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border p-4">
+                <div>
+                  <Label>Auditoría obligatoria de fallback taker</Label>
+                  <p className="text-xs text-muted-foreground mt-1">Todo fallback taker debe registrarse en auditoría con motivo, precio y comisión estimada.</p>
+                </div>
+                <Switch
+                  checked={config?.takerFallbackAuditRequired ?? true}
+                  onCheckedChange={(v) => configMutation.mutate({ takerFallbackAuditRequired: v } as any)}
+                />
+              </div>
+
+              {/* Configuración avanzada del Grid */}
+              <div className="space-y-4 pt-4 border-t">
+                <h3 className="text-sm font-semibold">Configuración avanzada del Grid</h3>
+                <div className="space-y-2">
+                  <Label>Perfil de Capital</Label>
+                  <Select
+                    value={config?.capitalProfile || "balanced"}
+                    onValueChange={(v) => configMutation.mutate({ capitalProfile: v })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="conservative">Conservador (30% reserva)</SelectItem>
+                      <SelectItem value="balanced">Balanceado (20% reserva)</SelectItem>
+                      <SelectItem value="aggressive">Agresivo (10% reserva)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Periodo de Bandas (Bollinger)</Label>
+                  <Input
+                    type="number"
+                    value={config?.bandPeriod || 20}
+                    onChange={(e) => configMutation.mutate({ bandPeriod: parseInt(e.target.value) })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Timeframe ATR</Label>
+                  <Select
+                    value={config?.atrTimeframe || "1h"}
+                    onValueChange={(v) => configMutation.mutate({ atrTimeframe: v })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="15min">15 min</SelectItem>
+                      <SelectItem value="1h">1 hora</SelectItem>
+                      <SelectItem value="4h">4 horas</SelectItem>
+                      <SelectItem value="1d">1 día</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Step Mín %: {config?.gridStepMinPct?.toFixed(2)}</Label>
+                    <Slider value={[config?.gridStepMinPct || 0.15]} min={0.05} max={1.0} step={0.05} onValueChange={(v) => configMutation.mutate({ gridStepMinPct: v[0] })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Step Máx %: {config?.gridStepMaxPct?.toFixed(2)}</Label>
+                    <Slider value={[config?.gridStepMaxPct || 3.0]} min={1.0} max={10.0} step={0.5} onValueChange={(v) => configMutation.mutate({ gridStepMaxPct: v[0] })} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Ratio Geométrico Mín: {config?.geometricRatioMin?.toFixed(2)}</Label>
+                    <Slider value={[config?.geometricRatioMin || 0.8]} min={0.5} max={1.0} step={0.05} onValueChange={(v) => configMutation.mutate({ geometricRatioMin: v[0] })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Ratio Geométrico Máx: {config?.geometricRatioMax?.toFixed(2)}</Label>
+                    <Slider value={[config?.geometricRatioMax || 1.2]} min={1.0} max={2.0} step={0.05} onValueChange={(v) => configMutation.mutate({ geometricRatioMax: v[0] })} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Máx Ciclos Abiertos</Label>
+                    <Input type="number" value={config?.maxOpenCycles || 10} onChange={(e) => configMutation.mutate({ maxOpenCycles: parseInt(e.target.value) })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Máx Órdenes Diarias</Label>
+                    <Input type="number" value={config?.maxDailyOrders || 300} onChange={(e) => configMutation.mutate({ maxDailyOrders: parseInt(e.target.value) })} />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* 4. Actividad en Directo Tab */}
+        <TabsContent value="actividad" className="space-y-4">
+          <GridActivityLive />
+        </TabsContent>
         <TabsContent value="levels" className="space-y-4">
           <Card>
             <CardHeader>
@@ -646,7 +815,7 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
 
-        {/* 5. Riesgo y Recuperación Tab */}
+        {/* 6. Riesgo y Seguridad Tab */}
         <TabsContent value="risk" className="space-y-4">
           <Card>
             <CardHeader>
@@ -782,7 +951,7 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
 
-        {/* 6. Backtest Tab */}
+        {/* 7. Backtest Tab */}
         <TabsContent value="backtest" className="space-y-4">
           <Card>
             <CardHeader>
@@ -836,7 +1005,7 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
 
-        {/* 7. Auditoría Grid Tab — espejo completo de Monitor > Grid */}
+        {/* 8. Auditoría Grid Tab — espejo completo de Monitor > Grid */}
         <TabsContent value="audit" className="space-y-4">
           <div className="rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground">
             Auditoría completa del Grid Isolated. Misma vista que Monitor {">"} Grid Isolated. Datos desde GET /api/grid-isolated/monitor/audit.
@@ -844,7 +1013,7 @@ export default function GridIsolated() {
           <GridMonitorPanel />
         </TabsContent>
 
-        {/* 8. Ayuda Tab */}
+        {/* 9. Ayuda Tab */}
         <TabsContent value="ayuda" className="space-y-4">
           <Card>
             <CardHeader>

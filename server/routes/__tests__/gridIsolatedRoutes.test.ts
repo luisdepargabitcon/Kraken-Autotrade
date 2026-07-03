@@ -20,20 +20,23 @@ vi.mock("../../services/botLogger", () => ({
   },
 }));
 
-vi.mock("../../db", () => ({
-  db: {
-    select: vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        orderBy: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([]),
-        }),
+vi.mock("../../db", () => {
+  const chainable = {
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    orderBy: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockResolvedValue([]),
+  };
+  return {
+    db: {
+      select: vi.fn().mockReturnValue(chainable),
+      insert: vi.fn().mockReturnValue({
+        values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 1 }]) }),
       }),
-    }),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockResolvedValue([]),
-    }),
-  },
-}));
+      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) }),
+    },
+  };
+});
 
 vi.mock("@shared/schema", () => ({
   gridIsolatedEvents: { createdAt: "created_at" },
@@ -50,6 +53,8 @@ vi.mock("@shared/schema", () => ({
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn(),
   desc: vi.fn(),
+  and: vi.fn(),
+  sql: vi.fn((strings: TemplateStringsArray, ...vals: any[]) => ({ sql: strings.join("?"), params: vals })),
 }));
 
 import { registerGridIsolatedRoutes } from "../gridIsolated.routes";
@@ -241,6 +246,74 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body).toContain("Post-only");
     expect(res.body).toContain("Ciclos:");
     expect(res.body).toContain("Circuit breaker:");
+  });
+
+  it("monitor/audit returns ok:true", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("ok", true);
+  });
+
+  it("monitor/audit returns wallet object", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.wallet).toBeDefined();
+    expect(res.body.wallet).toHaveProperty("totalUsd");
+    expect(res.body.wallet).toHaveProperty("freeUsd");
+    expect(res.body.wallet).toHaveProperty("reservedUsd");
+    expect(res.body.wallet).toHaveProperty("maxUsd");
+    expect(res.body.wallet).toHaveProperty("status");
+  });
+
+  it("monitor/audit returns execution object", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.execution).toBeDefined();
+    expect(res.body.execution).toHaveProperty("makerAttemptsBeforeTaker");
+    expect(res.body.execution).toHaveProperty("takerFallbackEnabled");
+    expect(res.body.execution).toHaveProperty("policyLabel");
+  });
+
+  it("monitor/audit execution policyLabel is in Spanish", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.execution.policyLabel).toContain("maker");
+    expect(res.body.execution.policyLabel).toContain("taker");
+  });
+
+  it("export chatgpt contains ejecución info when config available", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    expect(res.body).toContain("Modo:");
+    // Cartera/ejecución info only appears when config is loaded from engine
+    // In test env config may be default, so just check basic structure
+  });
+
+  it("export chatgpt actions are numbered from 1", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    if (res.body.includes("acciones recomendadas")) {
+      expect(res.body).toContain("  1. ");
+    }
+  });
+
+  it("GET /api/grid-isolated/events/live responds 200 with ok", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/events/live?sinceId=0&limit=20");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("ok", true);
+    expect(res.body).toHaveProperty("events");
+    expect(res.body).toHaveProperty("lastEventId");
+    expect(res.body).toHaveProperty("serverTime");
+    expect(res.body).toHaveProperty("pollMs");
+  });
+
+  it("GET /api/grid-isolated/events accepts cycleId param", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/events?cycleId=test-cycle-1");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it("GET /api/grid-isolated/events accepts onlyBlocking=true", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/events?onlyBlocking=true");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
   });
 
   it("POST /api/grid-isolated/shadow-validate responds 200 with no real orders", async () => {

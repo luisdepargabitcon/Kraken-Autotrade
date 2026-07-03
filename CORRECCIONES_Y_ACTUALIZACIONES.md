@@ -2,6 +2,62 @@
 
 ---
 
+## 2026-07-04 — feat(grid-isolated): refactor cartera, ejecución 3 maker + 4º taker, actividad en directo
+
+### Resumen
+Refactor profundo del Grid Aislado para implementar política de ejecución "3 intentos maker + 4º taker controlado", cartera aislada configurables, visor de actividad en directo y reestructuración de subpestañas.
+
+### Nuevos archivos
+- `db/migrations/064_grid_wallet_execution.sql` — Migración idempotente con 17 nuevos campos (ejecución + cartera)
+- `server/services/gridIsolated/gridActivityFormatter.ts` — Helper para normalizar eventos Grid a lenguaje natural (50+ mapeos de eventos)
+- `client/src/components/grid/GridActivityLive.tsx` — Visor actividad en directo con polling 3s, filtros, auto-scroll, pausa, copia y export
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — Nuevos campos en GridIsolatedConfig: makerAttemptsBeforeTaker, takerFallback*, gridWallet*, gridMaxCapitalPerCycle*, gridReservePct, gridMinFreeCapitalUsd, gridPauseCycleWhenCapitalDepleted, gridAllowNewCycleWhenCapitalFree. Nuevos constantes y executionPolicyLabel()
+- `shared/schema.ts` — 17 nuevas columnas en grid_isolated_configs. Default executionPolicy actualizado a MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — loadConfig/saveConfig ampliados para cargar/guardar nuevos campos con fallback seguro
+- `server/routes/gridIsolated.routes.ts` — /monitor/audit ampliado con ok:true, wallet{}, execution{}, executionPolicyLabel. /events ampliado con cycleId, levelId, onlyBlocking, onlyErrors. Nuevo /events/live con sinceId para polling. buildChatGPTSummary ampliado con cartera, ejecución y numeración correcta. allowedFields ampliado con 17 nuevos campos
+- `client/src/pages/GridIsolated.tsx` — Refactor de 8 a 9 subpestañas: Resumen, Cartera, Ejecución, Actividad, Niveles, Riesgo, Backtest, Auditoría, Ayuda. Nueva subpestaña Cartera con resumen financiero, modo automático/manual, reinversión, pausas. Nueva subpestaña Ejecución con política 3+1, switches de seguridad y config avanzada. Nueva subpestaña Actividad con GridActivityLive
+- `client/src/components/grid/GridMonitorPanel.tsx` — Ampliado de 7 a 9 subpestañas alineadas: Resumen, Cartera, Ejecución, Decisiones, Logs, Niveles, Seguridad, API/Reconc., Exportar
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 10 nuevos tests: ok:true, wallet, execution, policyLabel, events/live, cycleId, onlyBlocking. Mocks de DB y drizzle-orm mejorados
+
+### Política de ejecución
+- **3 intentos maker**: El Grid coloca órdenes conservadoras buscando ejecución maker
+- **4º intento taker fallback**: Si después de 3 intentos no entra y la oportunidad sigue siendo válida, puede ejecutar como taker controlado
+- **Seguridad**: takerFallbackRequiresNetProfit (solo si beneficio neto > objetivo), takerFallbackAuditRequired (auditoría obligatoria con motivo, precio y comisión)
+- **Límite**: maxTakerFallbackPerCycle = 1 por ciclo
+
+### Cartera aislada
+- Capital total, reservado, libre, ganancias acumuladas
+- Modo automático (sistema decide) o manual (usuario fija)
+- Reinversión de ganancias configurable
+- Pausa automática si capital agotado
+- Apertura de nuevos ciclos solo con capital libre
+- Reserva % y capital libre mínimo configurables
+
+### Endpoints nuevos
+- `GET /api/grid-isolated/events/live?sinceId=N&limit=N` — Polling para actividad en directo
+
+### Endpoints ampliados
+- `GET /api/grid-isolated/monitor/audit` — Ahora incluye `ok:true`, `wallet{}`, `execution{}`
+- `GET /api/grid-isolated/events` — Nuevos filtros: `cycleId`, `levelId`, `onlyBlocking`, `onlyErrors`
+- `POST /api/grid-isolated/config` — 17 nuevos campos actualizables
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `vitest gridIsolatedRoutes`: ✅ 26/26 tests
+
+### Deploy VPS
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+Migration 064 se ejecuta automáticamente al iniciar (idempotente con IF NOT EXISTS).
+
+---
+
 ## 2026-07-03 — fix(grid-isolated): improve audit logs and ChatGPT export
 
 **Tag**: WINDSURF GRID ISOLATED ENGINE — AUDITORÍA PROFESIONAL

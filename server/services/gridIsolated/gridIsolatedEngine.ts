@@ -119,6 +119,25 @@ class GridIsolatedEngine {
           isActive: row.isActive,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
+          // Execution: Maker/Taker
+          makerAttemptsBeforeTaker: row.makerAttemptsBeforeTaker ?? 3,
+          takerFallbackEnabled: row.takerFallbackEnabled ?? true,
+          takerFallbackAttemptNumber: row.takerFallbackAttemptNumber ?? 4,
+          maxTakerFallbackPerCycle: row.maxTakerFallbackPerCycle ?? 1,
+          takerFallbackRequiresNetProfit: row.takerFallbackRequiresNetProfit ?? true,
+          takerFallbackAuditRequired: row.takerFallbackAuditRequired ?? true,
+          // Wallet / Cartera
+          gridWalletMode: (row.gridWalletMode as any) ?? "automatic",
+          gridWalletInitialUsd: parseFloat(row.gridWalletInitialUsd ?? "1000"),
+          gridWalletMaxUsd: parseFloat(row.gridWalletMaxUsd ?? "5000"),
+          gridWalletUseProfits: row.gridWalletUseProfits ?? true,
+          gridWalletCompoundProfits: row.gridWalletCompoundProfits ?? true,
+          gridMaxCapitalPerCycleUsd: parseFloat(row.gridMaxCapitalPerCycleUsd ?? "600"),
+          gridMaxCapitalPerCyclePct: parseFloat(row.gridMaxCapitalPerCyclePct ?? "60"),
+          gridReservePct: parseFloat(row.gridReservePct ?? "20"),
+          gridMinFreeCapitalUsd: parseFloat(row.gridMinFreeCapitalUsd ?? "50"),
+          gridPauseCycleWhenCapitalDepleted: row.gridPauseCycleWhenCapitalDepleted ?? true,
+          gridAllowNewCycleWhenCapitalFree: row.gridAllowNewCycleWhenCapitalFree ?? true,
         };
         return this.config;
       }
@@ -169,6 +188,25 @@ class GridIsolatedEngine {
         maxDailyOrders: this.config.maxDailyOrders,
         fiscalStatus: this.config.fiscalStatus,
         isActive: this.config.isActive,
+        // Execution: Maker/Taker
+        makerAttemptsBeforeTaker: this.config.makerAttemptsBeforeTaker,
+        takerFallbackEnabled: this.config.takerFallbackEnabled,
+        takerFallbackAttemptNumber: this.config.takerFallbackAttemptNumber,
+        maxTakerFallbackPerCycle: this.config.maxTakerFallbackPerCycle,
+        takerFallbackRequiresNetProfit: this.config.takerFallbackRequiresNetProfit,
+        takerFallbackAuditRequired: this.config.takerFallbackAuditRequired,
+        // Wallet / Cartera
+        gridWalletMode: this.config.gridWalletMode,
+        gridWalletInitialUsd: this.config.gridWalletInitialUsd.toFixed(2),
+        gridWalletMaxUsd: this.config.gridWalletMaxUsd.toFixed(2),
+        gridWalletUseProfits: this.config.gridWalletUseProfits,
+        gridWalletCompoundProfits: this.config.gridWalletCompoundProfits,
+        gridMaxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd.toFixed(2),
+        gridMaxCapitalPerCyclePct: this.config.gridMaxCapitalPerCyclePct.toFixed(2),
+        gridReservePct: this.config.gridReservePct.toFixed(2),
+        gridMinFreeCapitalUsd: this.config.gridMinFreeCapitalUsd.toFixed(2),
+        gridPauseCycleWhenCapitalDepleted: this.config.gridPauseCycleWhenCapitalDepleted,
+        gridAllowNewCycleWhenCapitalFree: this.config.gridAllowNewCycleWhenCapitalFree,
         updatedAt: new Date(),
       };
 

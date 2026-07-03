@@ -134,11 +134,13 @@ export function GridMonitorPanel() {
   return (
     <div className="space-y-4">
       <Tabs value={activeSubtab} onValueChange={setActiveSubtab}>
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-9">
           <TabsTrigger value="resumen" className="text-xs">Resumen</TabsTrigger>
+          <TabsTrigger value="cartera" className="text-xs">Cartera</TabsTrigger>
+          <TabsTrigger value="ejecucion" className="text-xs">Ejecución</TabsTrigger>
           <TabsTrigger value="decisiones" className="text-xs">Decisiones</TabsTrigger>
-          <TabsTrigger value="logs" className="text-xs">Logs Inteligentes</TabsTrigger>
-          <TabsTrigger value="niveles" className="text-xs">Niveles y Ciclos</TabsTrigger>
+          <TabsTrigger value="logs" className="text-xs">Logs</TabsTrigger>
+          <TabsTrigger value="niveles" className="text-xs">Niveles</TabsTrigger>
           <TabsTrigger value="seguridad" className="text-xs">Seguridad</TabsTrigger>
           <TabsTrigger value="api" className="text-xs">API/Reconc.</TabsTrigger>
           <TabsTrigger value="exportar" className="text-xs">Exportar</TabsTrigger>
@@ -196,6 +198,111 @@ export function GridMonitorPanel() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        {/* 1b. Cartera */}
+        <TabsContent value="cartera" className="space-y-4">
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><Activity className="h-5 w-5" />Cartera Grid Aislada</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {audit?.wallet ? (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Total</p>
+                      <p className="text-lg font-bold">${audit.wallet.totalUsd?.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Reservado</p>
+                      <p className="text-lg font-bold">${audit.wallet.reservedUsd?.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Libre</p>
+                      <p className="text-lg font-bold text-green-500">${audit.wallet.freeUsd?.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Máximo</p>
+                      <p className="text-sm font-bold">${audit.wallet.maxUsd?.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Modo</p>
+                      <Badge variant="outline">{audit.wallet.mode}</Badge>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">% usado</p>
+                      <p className="text-sm font-bold">{audit.wallet.usedPct?.toFixed(1)}%</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Estado</p>
+                      <Badge variant={audit.wallet.status === "disponible" ? "default" : "secondary"}>{audit.wallet.status}</Badge>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Reinversión</p>
+                      <Badge variant={audit.wallet.compoundProfits ? "default" : "outline"}>{audit.wallet.compoundProfits ? "Activada" : "Desactivada"}</Badge>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Ganancia acumulada</p>
+                      <p className={`text-sm font-bold ${(audit.wallet.accumulatedPnlUsd || 0) >= 0 ? "text-green-500" : "text-red-500"}`}>
+                        ${(audit.wallet.accumulatedPnlUsd || 0).toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Datos de cartera no disponibles.</p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* 1c. Ejecución */}
+        <TabsContent value="ejecucion" className="space-y-4">
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><Zap className="h-5 w-5" />Política de Ejecución</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {audit?.execution ? (
+                <>
+                  <div className="rounded-lg bg-muted/30 p-3">
+                    <p className="text-sm font-semibold">{audit.execution.policyLabel}</p>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Intentos maker</p>
+                      <p className="text-lg font-bold">{audit.execution.makerAttemptsBeforeTaker}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Intento taker fallback</p>
+                      <p className="text-lg font-bold">{audit.execution.takerFallbackAttemptNumber}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Máx fallback/ciclo</p>
+                      <p className="text-lg font-bold">{audit.execution.maxTakerFallbackPerCycle}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Fallback habilitado</p>
+                      <Badge variant={audit.execution.takerFallbackEnabled ? "default" : "outline"}>{audit.execution.takerFallbackEnabled ? "Sí" : "No"}</Badge>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Requiere beneficio neto</p>
+                      <Badge variant={audit.execution.takerFallbackRequiresNetProfit ? "default" : "outline"}>{audit.execution.takerFallbackRequiresNetProfit ? "Sí" : "No"}</Badge>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Auditoría obligatoria</p>
+                    <Badge variant={audit.execution.takerFallbackAuditRequired ? "default" : "outline"}>{audit.execution.takerFallbackAuditRequired ? "Sí" : "No"}</Badge>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Datos de ejecución no disponibles.</p>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* 2. Decisiones */}

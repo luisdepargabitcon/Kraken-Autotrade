@@ -63,11 +63,26 @@ export const CAPITAL_PROFILES: Record<CapitalProfile, CapitalProfileConfig> = {
 
 // ─── Execution Policy ───────────────────────────────────────────────
 
-export type ExecutionPolicy = "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK";
+export type ExecutionPolicy = "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK" | "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK";
 
-export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK";
+export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK";
 
 export const POST_ONLY_MAX_ATTEMPTS = 3;
+
+export const MAKER_ATTEMPTS_BEFORE_TAKER = 3;
+export const TAKER_FALLBACK_ATTEMPT_NUMBER = 4;
+export const MAX_TAKER_FALLBACK_PER_CYCLE = 1;
+
+export function executionPolicyLabel(policy: ExecutionPolicy): string {
+  switch (policy) {
+    case "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK":
+      return "3 intentos maker + 4º taker controlado";
+    case "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK":
+      return "Maker primero, luego taker como fallback";
+    default:
+      return policy;
+  }
+}
 export const CIRCUIT_BREAKER_RETRY_DELAY_MS = 5 * 60 * 1000;
 export const DAILY_ORDER_REQUEST_LIMIT = 300;
 export const DAILY_ORDER_WARNING_THRESHOLD = 200;
@@ -268,13 +283,32 @@ export interface GridIsolatedConfig {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+  // ─── Execution: Maker/Taker ───
+  makerAttemptsBeforeTaker: number;
+  takerFallbackEnabled: boolean;
+  takerFallbackAttemptNumber: number;
+  maxTakerFallbackPerCycle: number;
+  takerFallbackRequiresNetProfit: boolean;
+  takerFallbackAuditRequired: boolean;
+  // ─── Wallet / Cartera ───
+  gridWalletMode: "automatic" | "manual";
+  gridWalletInitialUsd: number;
+  gridWalletMaxUsd: number;
+  gridWalletUseProfits: boolean;
+  gridWalletCompoundProfits: boolean;
+  gridMaxCapitalPerCycleUsd: number;
+  gridMaxCapitalPerCyclePct: number;
+  gridReservePct: number;
+  gridMinFreeCapitalUsd: number;
+  gridPauseCycleWhenCapitalDepleted: boolean;
+  gridAllowNewCycleWhenCapitalFree: boolean;
 }
 
 export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | "updatedAt"> = {
   pair: "BTC/USD",
   mode: "OFF",
   capitalProfile: "balanced",
-  executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK",
+  executionPolicy: "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK",
   netProfitTargetPct: 0.8,
   bandPeriod: 20,
   bandStdDevMultiplier: 2,
@@ -301,6 +335,25 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   maxDailyOrders: DAILY_ORDER_REQUEST_LIMIT,
   fiscalStatus: "pending",
   isActive: false,
+  // Execution: Maker/Taker
+  makerAttemptsBeforeTaker: MAKER_ATTEMPTS_BEFORE_TAKER,
+  takerFallbackEnabled: true,
+  takerFallbackAttemptNumber: TAKER_FALLBACK_ATTEMPT_NUMBER,
+  maxTakerFallbackPerCycle: MAX_TAKER_FALLBACK_PER_CYCLE,
+  takerFallbackRequiresNetProfit: true,
+  takerFallbackAuditRequired: true,
+  // Wallet / Cartera
+  gridWalletMode: "automatic",
+  gridWalletInitialUsd: 1000,
+  gridWalletMaxUsd: 5000,
+  gridWalletUseProfits: true,
+  gridWalletCompoundProfits: true,
+  gridMaxCapitalPerCycleUsd: 600,
+  gridMaxCapitalPerCyclePct: 60,
+  gridReservePct: 20,
+  gridMinFreeCapitalUsd: 50,
+  gridPauseCycleWhenCapitalDepleted: true,
+  gridAllowNewCycleWhenCapitalFree: true,
 };
 
 // ─── Mode Lock Safety Conditions ────────────────────────────────────
