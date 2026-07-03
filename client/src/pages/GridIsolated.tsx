@@ -17,6 +17,7 @@ import { GridBandsRangesPanel } from "@/components/grid/GridBandsRangesPanel";
 import { GridSummaryPanel } from "@/components/grid/GridSummaryPanel";
 import { GridHeaderHero } from "@/components/grid/GridHeaderHero";
 import { GridKpiStrip } from "@/components/grid/GridKpiStrip";
+import { GridLevelsMarketHeader } from "@/components/grid/GridLevelsMarketHeader";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -709,6 +710,14 @@ export default function GridIsolated() {
         </TabsContent>
         {/* 6. Niveles Tab */}
         <TabsContent value="niveles" className="space-y-4">
+          <GridLevelsMarketHeader
+            marketContext={auditData?.marketContext}
+            mode={config?.mode || "OFF"}
+            levelsCount={levels?.length || 0}
+            activeLevelsCount={levels?.filter((l: any) => l.status === "open").length || 0}
+            cyclesCount={cycles?.length || 0}
+            lastTickReason={(status as any)?.lastTickReason}
+          />
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

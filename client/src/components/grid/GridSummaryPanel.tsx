@@ -314,6 +314,7 @@ export function GridSummaryPanel({
         <GridLevelsPanel
           levels={levels}
           mode={mode}
+          currentPrice={auditData?.marketContext?.currentPrice}
           onGoToTab={onGoToTab}
         />
         <GridCyclesPanel

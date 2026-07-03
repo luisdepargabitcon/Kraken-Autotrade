@@ -1,15 +1,50 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Layers } from "lucide-react";
+import { Layers, TrendingUp, TrendingDown } from "lucide-react";
 
 interface GridLevelsPanelProps {
   levels: any[];
   mode: string;
+  currentPrice?: number | null;
   onGoToTab: (tab: string) => void;
 }
 
-export function GridLevelsPanel({ levels, mode, onGoToTab }: GridLevelsPanelProps) {
+export function GridLevelsPanel({ levels, mode, currentPrice, onGoToTab }: GridLevelsPanelProps) {
+  const formatPrice = (price: number) => `$${price.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatPct = (pct: number) => `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+
+  const getLevelRelation = (level: any) => {
+    if (currentPrice === null || currentPrice === undefined) return null;
+    const levelPrice = level.buyPrice || level.sellPrice;
+    if (!levelPrice) return null;
+
+    if (level.side === "BUY") {
+      if (levelPrice < currentPrice) {
+        return { label: "esperando bajada", color: "text-green-400", icon: TrendingDown };
+      } else if (levelPrice >= currentPrice) {
+        return { label: "en zona o superado", color: "text-amber-400", icon: TrendingUp };
+      }
+    } else if (level.side === "SELL") {
+      if (levelPrice > currentPrice) {
+        return { label: "objetivo superior", color: "text-green-400", icon: TrendingUp };
+      } else if (levelPrice <= currentPrice) {
+        return { label: "zona alcanzada", color: "text-amber-400", icon: TrendingDown };
+      }
+    }
+    return null;
+  };
+
+  const getDistance = (level: any) => {
+    if (currentPrice === null || currentPrice === undefined) return null;
+    const levelPrice = level.buyPrice || level.sellPrice;
+    if (!levelPrice) return null;
+
+    const distanceUsd = levelPrice - currentPrice;
+    const distancePct = (distanceUsd / currentPrice) * 100;
+    return { distanceUsd, distancePct };
+  };
+
   return (
     <Card className="border-border/50">
       <CardHeader className="pb-3">
@@ -29,25 +64,54 @@ export function GridLevelsPanel({ levels, mode, onGoToTab }: GridLevelsPanelProp
                     <th className="text-left py-2 px-2">Lado</th>
                     <th className="text-left py-2 px-2">Estado</th>
                     <th className="text-left py-2 px-2">Precio</th>
+                    <th className="text-left py-2 px-2">Distancia USD</th>
+                    <th className="text-left py-2 px-2">Distancia %</th>
+                    <th className="text-left py-2 px-2">Relación</th>
                     <th className="text-left py-2 px-2">Capital</th>
-                    <th className="text-left py-2 px-2">Cantidad</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {levels.slice(0, 10).map((level: any, i: number) => (
-                    <tr key={level.id || i} className="border-b">
-                      <td className="py-2 px-2 font-mono text-xs">#{i + 1}</td>
-                      <td className="py-2 px-2">
-                        <Badge variant={level.side === "BUY" ? "default" : "outline"} className="text-xs">
-                          {level.side}
-                        </Badge>
-                      </td>
-                      <td className="py-2 px-2"><Badge variant="secondary" className="text-xs">{level.status}</Badge></td>
-                      <td className="py-2 px-2 font-mono">${level.price?.toFixed(2)}</td>
-                      <td className="py-2 px-2 font-mono">${level.notionalUsd?.toFixed(2)}</td>
-                      <td className="py-2 px-2 font-mono text-xs">{level.quantity?.toFixed(6)}</td>
-                    </tr>
-                  ))}
+                  {levels.slice(0, 10).map((level: any, i: number) => {
+                    const distance = getDistance(level);
+                    const relation = getLevelRelation(level);
+                    const Icon = relation?.icon;
+
+                    return (
+                      <tr key={level.id || i} className="border-b">
+                        <td className="py-2 px-2 font-mono text-xs">#{i + 1}</td>
+                        <td className="py-2 px-2">
+                          <Badge variant={level.side === "BUY" ? "default" : "outline"} className="text-xs">
+                            {level.side}
+                          </Badge>
+                        </td>
+                        <td className="py-2 px-2"><Badge variant="secondary" className="text-xs">{level.status}</Badge></td>
+                        <td className="py-2 px-2 font-mono">{formatPrice(level.buyPrice || level.sellPrice)}</td>
+                        <td className="py-2 px-2 font-mono text-xs">
+                          {distance ? (
+                            <span className={distance.distanceUsd >= 0 ? "text-green-400" : "text-red-400"}>
+                              {distance.distanceUsd >= 0 ? "+" : ""}{distance.distanceUsd.toFixed(2)} $
+                            </span>
+                          ) : "—"}
+                        </td>
+                        <td className="py-2 px-2 font-mono text-xs">
+                          {distance ? (
+                            <span className={distance.distancePct >= 0 ? "text-green-400" : "text-red-400"}>
+                              {formatPct(distance.distancePct)}
+                            </span>
+                          ) : "—"}
+                        </td>
+                        <td className="py-2 px-2 text-xs">
+                          {relation ? (
+                            <div className={`flex items-center gap-1 ${relation.color}`}>
+                              {Icon && <Icon className="h-3 w-3" />}
+                              <span>{relation.label}</span>
+                            </div>
+                          ) : "—"}
+                        </td>
+                        <td className="py-2 px-2 font-mono text-xs">{formatPrice(level.notionalUsd)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

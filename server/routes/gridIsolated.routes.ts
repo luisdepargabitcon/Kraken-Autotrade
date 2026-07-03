@@ -28,6 +28,7 @@ import { gridIsolatedEngine } from "../services/gridIsolated/gridIsolatedEngine"
 import { gridModeLockService } from "../services/gridIsolated/gridModeLockService";
 import { gridReconciliationRunner } from "../services/gridIsolated/gridReconciliationRunner";
 import { gridBacktestEngine } from "../services/gridIsolated/gridBacktest";
+import { MarketDataService } from "../services/MarketDataService";
 import { botLogger } from "../services/botLogger";
 import { db } from "../db";
 import { gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
@@ -749,6 +750,90 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const resolvedRange = await resolveActiveRange(events, status, cycles.length);
       const chatgptSummary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config, resolvedRange);
 
+      // Market context for UI (read-only, no trading logic)
+      let marketContext: any = null;
+      try {
+        const pair = config?.pair || "BTC/USD";
+        const ticker = await MarketDataService.getTicker(pair);
+        if (ticker) {
+          const currentPrice = ticker.last;
+          const bandLower = resolvedRange?.bandLower;
+          const bandUpper = resolvedRange?.bandUpper;
+          const bandCenter = bandLower && bandUpper ? (bandLower + bandUpper) / 2 : null;
+          const bandWidthPct = bandLower && bandUpper ? ((bandUpper - bandLower) / bandLower) * 100 : null;
+
+          let bandPosition: "below" | "lower" | "middle" | "upper" | "above" = "below";
+          let bandPositionPct: number | null = null;
+          if (currentPrice && bandLower && bandUpper) {
+            if (currentPrice < bandLower) {
+              bandPosition = "below";
+              bandPositionPct = ((currentPrice - bandLower) / bandLower) * 100;
+            } else if (currentPrice > bandUpper) {
+              bandPosition = "above";
+              bandPositionPct = ((currentPrice - bandUpper) / bandUpper) * 100;
+            } else {
+              const range = bandUpper - bandLower;
+              const position = (currentPrice - bandLower) / range;
+              if (position < 0.33) {
+                bandPosition = "lower";
+              } else if (position < 0.67) {
+                bandPosition = "middle";
+              } else {
+                bandPosition = "upper";
+              }
+              bandPositionPct = position * 100;
+            }
+          }
+
+          // Find nearest level
+          let nearestLevel: any = null;
+          let nearestDistanceUsd: number | null = null;
+          let nearestDistancePct: number | null = null;
+          if (currentPrice && levels.length > 0) {
+            for (const level of levels) {
+              const levelPrice = (level as any).buyPrice || (level as any).sellPrice;
+              if (levelPrice) {
+                const dist = Math.abs(currentPrice - levelPrice);
+                if (nearestDistanceUsd === null || dist < nearestDistanceUsd) {
+                  nearestDistanceUsd = dist;
+                  nearestDistancePct = (dist / currentPrice) * 100;
+                  nearestLevel = level;
+                }
+              }
+            }
+          }
+
+          marketContext = {
+            pair,
+            currentPrice,
+            bid: ticker.bid || null,
+            ask: ticker.ask || null,
+            spreadPct: ticker.bid && ticker.ask ? ((ticker.ask - ticker.bid) / ticker.bid) * 100 : null,
+            source: "kraken",
+            updatedAt: new Date().toISOString(),
+            band: {
+              lower: bandLower,
+              center: bandCenter,
+              upper: bandUpper,
+              widthPct: bandWidthPct,
+              status: resolvedRange?.status || "sin_rango_activo",
+            },
+            bandPosition,
+            bandPositionPct,
+            nearestLevel: nearestLevel ? {
+              id: nearestLevel.id,
+              side: nearestLevel.side,
+              price: (nearestLevel as any).buyPrice || (nearestLevel as any).sellPrice,
+              distanceUsd: nearestDistanceUsd,
+              distancePct: nearestDistancePct,
+            } : null,
+          };
+        }
+      } catch (error) {
+        // Market context is optional; log but don't fail the request
+        botLogger.warn("Failed to fetch market context for Grid audit", { error: String(error) });
+      }
+
       const walletTotal = (config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0);
       const walletReserved = status?.capitalReservedUsd || 0;
       const walletFree = walletTotal - walletReserved;
@@ -923,6 +1008,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
           unknownOrders: levels.filter((l: any) => l.status === "unknown").length,
         },
         reconciliation: reconciliation || { ok: null, mismatches: [] },
+        marketContext,
         functionalStatus,
         lastShadowEvaluation: lastShadowValidation.at ? {
           at: lastShadowValidation.at,
