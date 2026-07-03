@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import express, { Express } from "express";
 import http from "http";
+import { getNaturalGridMessage } from "../../services/gridIsolated/gridActivityFormatter";
 
 // Mock dependencies
 vi.mock("../../services/exchanges/RevolutXService", () => ({
@@ -333,5 +334,84 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body).toHaveProperty("realOrdersPlaced", false);
     expect(res.body).toHaveProperty("realModesBlocked", true);
     expect(res.body).toHaveProperty("message");
+  });
+
+  // ─── Wallet configured detection tests ─────────────────────────
+  it("monitor/audit does NOT include 'Cartera Grid no configurada' when wallet has defaults", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const blockingReasons = res.body.safety?.blockingReasons || [];
+    const hasWalletNotConfigured = blockingReasons.some((r: string) =>
+      r.toLowerCase().includes("cartera grid no configurada") || r.toLowerCase().includes("capital no aislado")
+    );
+    expect(hasWalletNotConfigured).toBe(false);
+  });
+
+  it("monitor/audit decisions do NOT say 'Cartera Grid no configurada' when wallet has defaults", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const decisions = res.body.decisions || [];
+    const hasWalletNotConfigured = decisions.some((d: any) =>
+      (d.detected || "").toLowerCase().includes("cartera grid no configurada") ||
+      (d.reason || "").toLowerCase().includes("cartera grid no está configurada") ||
+      (d.reason || "").toLowerCase().includes("capital no aislado")
+    );
+    expect(hasWalletNotConfigured).toBe(false);
+  });
+
+  it("export chatgpt does NOT recommend 'Configurar cartera Grid' when wallet has defaults", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    expect(res.status).toBe(200);
+    const hasConfigRecommendation = (res.body as string).toLowerCase().includes("configurar cartera grid para aislar capital");
+    expect(hasConfigRecommendation).toBe(false);
+  });
+
+  // ─── naturalMessage tests ──────────────────────────────────────
+  it("getNaturalGridMessage for GRID_RANGE_ACTIVATED returns Spanish 'Rango activado'", () => {
+    const msg = getNaturalGridMessage("GRID_RANGE_ACTIVATED", "Range activated: c5d442f6...", { mode: "SHADOW" });
+    expect(msg).toContain("Rango activado");
+    expect(msg).toContain("SHADOW");
+    expect(msg).not.toContain("Range activated");
+  });
+
+  it("getNaturalGridMessage for GRID_RANGE_PROPOSED returns Spanish 'Rango propuesto'", () => {
+    const msg = getNaturalGridMessage("GRID_RANGE_PROPOSED", "Range proposed: 10 levels, mid=61973.4", {
+      levelsCount: 10,
+      centerPrice: 61973.4,
+      pair: "BTC/USD",
+      regime: "moderate",
+    });
+    expect(msg).toContain("Rango propuesto");
+    expect(msg).toContain("10 niveles");
+    expect(msg).not.toContain("Range proposed");
+  });
+
+  it("getNaturalGridMessage for GRID_MODE_CHANGED returns Spanish 'Modo Grid cambiado'", () => {
+    const msg = getNaturalGridMessage("GRID_MODE_CHANGED", "Mode changed: OFF → SHADOW", {
+      oldMode: "OFF",
+      newMode: "SHADOW",
+    });
+    expect(msg).toContain("Modo Grid cambiado");
+    expect(msg).toContain("OFF");
+    expect(msg).toContain("SHADOW");
+    expect(msg).not.toContain("Mode changed");
+  });
+
+  it("getNaturalGridMessage for unmapped GRID_* event returns generic Spanish fallback", () => {
+    const msg = getNaturalGridMessage("GRID_SOME_NEW_EVENT_TYPE", "Some English message", {});
+    expect(msg).toContain("Evento Grid registrado");
+    expect(msg).not.toContain("Some English message");
+  });
+
+  it("getNaturalGridMessage never returns raw English for mapped GRID events", () => {
+    const testCases = [
+      { eventType: "GRID_RANGE_ACTIVATED", raw: "Range activated: abc123" },
+      { eventType: "GRID_RANGE_PROPOSED", raw: "Range proposed: 10 levels" },
+      { eventType: "GRID_MODE_CHANGED", raw: "Mode changed: OFF → SHADOW" },
+    ];
+    for (const tc of testCases) {
+      const msg = getNaturalGridMessage(tc.eventType, tc.raw, {});
+      expect(msg).not.toBe(tc.raw);
+    }
   });
 });

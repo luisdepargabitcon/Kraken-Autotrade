@@ -2,6 +2,46 @@
 
 ---
 
+## 2026-07-04 — fix(grid-isolated): fix wallet configured detection and event natural messages
+
+### Resumen
+Corrige dos errores persistentes detectados en VPS tras commit f65200b:
+1. **Cartera mal marcada como no configurada**: `buildBlockingReasons` y `buildDecisions` usaban `|| 0` como default mientras el objeto wallet usaba `|| 1000`/`|| 5000`. Cuando config era null, blockingReasons veía 0 pero wallet mostraba 1000.
+2. **naturalMessage no funcionaba**: Los `messageFn` del formatter usaban `ev.message` (raw inglés) como primer fallback. Ahora generan texto en castellano desde metadataJson, con fallback genérico español para eventos `GRID_*` no mapeados.
+
+### Cambios principales
+
+**`server/routes/gridIsolated.routes.ts`**:
+- `buildBlockingReasons`: cambiado `|| 0` → `|| 1000`/`|| 5000` para walletInitial/walletMax (mismos defaults que el objeto wallet)
+- `buildDecisions`: mismo fix en la sección de capital
+- `buildChatGPTSummary`: mismo fix en walletInitialCfg/walletMaxCfg
+- `naturalRangeEventMessage`: default case ahora devuelve mensaje español genérico para `GRID_*` en vez de rawMessage
+
+**`server/services/gridIsolated/gridActivityFormatter.ts`**:
+- `GRID_MODE_CHANGED`: ahora genera "Modo Grid cambiado de {oldMode} a {newMode}." desde metadataJson (oldMode/newMode)
+- `GRID_RANGE_ACTIVATED`: ahora genera "Rango activado: el Grid usará esta banda para generar niveles futuros en modo {mode}." sin fallback a ev.message
+- `GRID_RANGE_PROPOSED`: ahora genera mensaje en castellano desde metadata (levels, midPrice, regime) sin fallback a ev.message
+- Todos los demás mappers: eliminado `ev.message ||` como fallback — ahora devuelven texto español directamente
+- `formatGridEvent`: fallback para eventos `GRID_*` no mapeados ahora devuelve "Evento Grid registrado: {tipo legible}."
+- `getNaturalGridMessage`: mismo fallback genérico español para eventos `GRID_*` no mapeados
+
+**`client/src/components/grid/GridActivityLive.tsx`**:
+- `naturalMessage` local: mismo fix para GRID_MODE_CHANGED, GRID_RANGE_PROPOSED, GRID_RANGE_ACTIVATED — genera desde metadata sin fallback a ev.message
+
+**`server/routes/__tests__/gridIsolatedRoutes.test.ts`**:
+- 8 tests nuevos (36 total):
+  - Wallet: no aparece "Cartera Grid no configurada" ni "capital no aislado" en blockingReasons, decisions, ni export
+  - naturalMessage: GRID_RANGE_ACTIVATED contiene "Rango activado", GRID_RANGE_PROPOSED contiene "Rango propuesto", GRID_MODE_CHANGED contiene "Modo Grid cambiado"
+  - Fallback genérico para GRID_* no mapeado
+  - Ningún evento mapeado devuelve raw English
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run`: 36/36 tests ✅
+
+---
+
 ## 2026-07-04 — fix(grid-isolated): clarify inactive range mode and naturalize visible events
 
 ### Resumen

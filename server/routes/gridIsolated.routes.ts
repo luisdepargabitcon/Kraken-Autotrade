@@ -52,9 +52,9 @@ function buildBlockingReasons(checks: any, config?: any): string[] {
   if (!checks.dailyOrderLimitRespected) {
     reasons.push("Límite diario de órdenes excedido");
   }
-  // Capital check: only block if wallet doesn't exist at all
-  const walletInitial = config?.gridWalletInitialUsd || 0;
-  const walletMax = config?.gridWalletMaxUsd || 0;
+  // Capital check: use same defaults as wallet object to avoid mismatch
+  const walletInitial = config?.gridWalletInitialUsd || 1000;
+  const walletMax = config?.gridWalletMaxUsd || 5000;
   if (walletInitial <= 0 && walletMax <= 0) {
     reasons.push("Cartera Grid no configurada — capital no aislado");
   }
@@ -134,9 +134,9 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
     });
   }
 
-  // Capital decision: explain correctly when wallet exists but no cycles
-  const walletInitial = config?.gridWalletInitialUsd || 0;
-  const walletMax = config?.gridWalletMaxUsd || 0;
+  // Capital decision: use same defaults as wallet object
+  const walletInitial = config?.gridWalletInitialUsd || 1000;
+  const walletMax = config?.gridWalletMaxUsd || 5000;
   if (walletInitial <= 0 && walletMax <= 0) {
     decisions.push({
       timestamp: new Date().toISOString(),
@@ -216,8 +216,8 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   lines.push(`Revolut X inicializado: ${checks.revolutxInitialized ? "sí" : "no"}.`);
   lines.push(`Balance disponible: ${checks.revolutxHasBalance ? "sí" : "no"}.`);
   lines.push(`Reconciliación OK: ${checks.reconciliationPassed ? "sí" : "no"}.`);
-  const walletInitialCfg = config?.gridWalletInitialUsd || 0;
-  const walletMaxCfg = config?.gridWalletMaxUsd || 0;
+  const walletInitialCfg = config?.gridWalletInitialUsd || 1000;
+  const walletMaxCfg = config?.gridWalletMaxUsd || 5000;
   if (walletInitialCfg > 0 || walletMaxCfg > 0) {
     const reserved = status?.capitalReservedUsd || 0;
     lines.push(`Capital reservado en ciclos: $${reserved.toFixed(2)}${reserved === 0 ? " (sin ciclos activos)" : ""}.`);
@@ -343,6 +343,10 @@ function naturalRangeEventMessage(eventType: string, rawMessage: string, meta: a
     case "GRID_RANGE_CLOSED":
       return `Rango cerrado: el rango anterior ya no está activo.${regime ? ` Régimen anterior: ${regime}.` : ""}`;
     default:
+      if (eventType.startsWith("GRID_")) {
+        const readable = eventType.replace(/^GRID_/, "").replace(/_/g, " ").toLowerCase();
+        return `Evento Grid registrado: ${readable}.`;
+      }
       return rawMessage;
   }
 }

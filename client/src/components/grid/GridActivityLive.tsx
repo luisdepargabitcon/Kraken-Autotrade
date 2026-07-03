@@ -79,22 +79,32 @@ function naturalMessage(ev: any): string {
   const eventType = ev.eventType;
   const msg = ev.message || "";
   switch (eventType) {
-    case "GRID_MODE_CHANGED":
-      return ev.message || `Modo Grid cambiado a ${ev.mode || "—"}.`;
+    case "GRID_MODE_CHANGED": {
+      const meta = ev.metadataJson || {};
+      const oldMode = meta.oldMode || meta.fromMode;
+      const newMode = meta.newMode || meta.toMode || ev.mode;
+      if (oldMode && newMode) return `Modo Grid cambiado de ${oldMode} a ${newMode}.`;
+      if (newMode) return `Modo Grid cambiado a ${newMode}.`;
+      return "Modo Grid cambiado.";
+    }
     case "GRID_RANGE_PROPOSED": {
       const meta = ev.metadataJson || {};
       const levels = meta.levelsCount ?? meta.levelsGenerated;
       const mid = meta.centerPrice ?? meta.midPrice;
       const pair = meta.pair || "BTC/USD";
+      const regime = meta.regime || meta.marketRegime || meta.volatilityState;
       if (mid != null && levels != null) {
-        return `Rango propuesto: el Grid detectó una zona válida para ${pair} con ${levels} niveles alrededor de ${Number(mid).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`;
+        let msg = `Rango propuesto: el Grid detectó una zona válida para ${pair} con ${levels} niveles alrededor de ${Number(mid).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`;
+        if (regime) msg += ` Régimen: ${regime}.`;
+        return msg;
       }
-      return ev.message || "Rango propuesto: el Grid detectó una zona válida.";
+      if (levels != null) return `Rango propuesto: el Grid detectó una zona válida para ${pair} con ${levels} niveles.`;
+      return `Rango propuesto: el Grid detectó una zona válida para ${pair}.`;
     }
     case "GRID_RANGE_ACTIVATED": {
       const meta = ev.metadataJson || {};
       const mode = meta.mode || "SHADOW";
-      return ev.message || `Rango activado: el Grid usará esta banda para generar niveles futuros en modo ${mode}.`;
+      return `Rango activado: el Grid usará esta banda para generar niveles futuros en modo ${mode}.`;
     }
     case "GRID_LEVEL_PLACED":
       return `Nivel creado para ${ev.pair || "BTC/USD"}.`;
