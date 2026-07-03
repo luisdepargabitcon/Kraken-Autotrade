@@ -15,6 +15,7 @@
  *   GET  /api/grid-isolated/monitor/audit       — Get audit data for Monitor and Auditoría Grid
  *   POST /api/grid-isolated/reconcile           — Run reconciliation
  *   POST /api/grid-isolated/backtest            — Run backtest
+ *   POST /api/grid-isolated/shadow-validate     — Run SHADOW validation tick (safe, no real orders)
  */
 
 import { Express, Request, Response } from "express";
@@ -301,6 +302,17 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const config = req.body as GridBacktestConfig;
       const results = await gridBacktestEngine.runBacktest(config);
       res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // ─── Shadow Validation ───────────────────────────────────
+
+  app.post("/api/grid-isolated/shadow-validate", async (_req: Request, res: Response) => {
+    try {
+      const result = await gridIsolatedEngine.runShadowValidation();
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }

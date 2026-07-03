@@ -107,8 +107,8 @@ describe("Grid Isolated — Default Config", () => {
     expect(DEFAULT_GRID_CONFIG.fiscalStatus).toBe("pending");
   });
 
-  it("default netProfitTargetPct is positive", () => {
-    expect(DEFAULT_GRID_CONFIG.netProfitTargetPct).toBeGreaterThan(0);
+  it("default netProfitTargetPct is 0.8", () => {
+    expect(DEFAULT_GRID_CONFIG.netProfitTargetPct).toBe(0.8);
   });
 
   it("default HODL recovery is enabled", () => {

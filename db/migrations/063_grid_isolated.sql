@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS grid_isolated_configs (
     mode            TEXT NOT NULL DEFAULT 'OFF',  -- OFF | SHADOW | REAL_LIMITED | REAL_FULL
     capital_profile TEXT NOT NULL DEFAULT 'balanced',  -- conservative | balanced | aggressive
     execution_policy TEXT NOT NULL DEFAULT 'MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK',
-    net_profit_target_pct   DECIMAL(6,3) NOT NULL DEFAULT 0.500,
+    net_profit_target_pct   DECIMAL(6,3) NOT NULL DEFAULT 0.800,
     band_period             INTEGER NOT NULL DEFAULT 20,
     band_std_dev_multiplier DECIMAL(4,2) NOT NULL DEFAULT 2.00,
     atr_period              INTEGER NOT NULL DEFAULT 14,

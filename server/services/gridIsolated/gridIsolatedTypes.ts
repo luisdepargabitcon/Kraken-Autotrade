@@ -275,7 +275,7 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   mode: "OFF",
   capitalProfile: "balanced",
   executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK",
-  netProfitTargetPct: 0.5,
+  netProfitTargetPct: 0.8,
   bandPeriod: 20,
   bandStdDevMultiplier: 2,
   atrPeriod: 14,

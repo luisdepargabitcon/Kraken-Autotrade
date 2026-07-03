@@ -1625,7 +1625,7 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   mode:                    text("mode").notNull().default("OFF"),
   capitalProfile:          text("capital_profile").notNull().default("balanced"),
   executionPolicy:         text("execution_policy").notNull().default("MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK"),
-  netProfitTargetPct:      decimal("net_profit_target_pct", { precision: 6, scale: 3 }).notNull().default("0.500"),
+  netProfitTargetPct:      decimal("net_profit_target_pct", { precision: 6, scale: 3 }).notNull().default("0.800"),
   bandPeriod:              integer("band_period").notNull().default(20),
   bandStdDevMultiplier:    decimal("band_std_dev_multiplier", { precision: 4, scale: 2 }).notNull().default("2.00"),
   atrPeriod:               integer("atr_period").notNull().default(14),

@@ -336,11 +336,11 @@ export default function GridIsolated() {
         <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="resumen">Resumen</TabsTrigger>
           <TabsTrigger value="config">Configuración</TabsTrigger>
-          <TabsTrigger value="capital">Capital</TabsTrigger>
-          <TabsTrigger value="levels">Niveles/Ciclos</TabsTrigger>
-          <TabsTrigger value="risk">Riesgo</TabsTrigger>
+          <TabsTrigger value="capital">Capital Inteligente</TabsTrigger>
+          <TabsTrigger value="levels">Niveles y Ciclos</TabsTrigger>
+          <TabsTrigger value="risk">Riesgo y Recuperación</TabsTrigger>
           <TabsTrigger value="backtest">Backtest</TabsTrigger>
-          <TabsTrigger value="audit">Auditoría</TabsTrigger>
+          <TabsTrigger value="audit">Auditoría Grid</TabsTrigger>
         </TabsList>
 
         {/* 1. Resumen Tab */}
@@ -437,7 +437,7 @@ export default function GridIsolated() {
               <div className="space-y-2">
                 <Label>Target de Beneficio Neto: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
                 <Slider
-                  value={[config?.netProfitTargetPct || 0.5]}
+                  value={[config?.netProfitTargetPct || 0.8]}
                   min={0.1}
                   max={3.0}
                   step={0.1}

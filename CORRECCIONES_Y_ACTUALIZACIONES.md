@@ -2,6 +2,108 @@
 
 ---
 
+## 2026-07-03 — fix(grid-isolated): align default net target and shadow validation
+
+**Tag**: WINDSURF GRID ISOLATED ENGINE — AJUSTE FINAL
+**Commit base**: 05bd104
+**Commit fix**: pendiente
+
+### Ajuste 1: NetProfitTargetPct default 0.5 → 0.8
+
+**Problema**: La API devolvía `netProfitTargetPct: 0.5` pero las instrucciones originales recomendaban 0.8.
+
+**Cambios**:
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — `DEFAULT_GRID_CONFIG.netProfitTargetPct: 0.8`
+- `shared/schema.ts` — `default("0.800")` en `gridIsolatedConfigs`
+- `db/migrations/063_grid_isolated.sql` — `DEFAULT 0.800`
+- `client/src/pages/GridIsolated.tsx` — fallback slider `0.8`
+- `server/services/__tests__/gridIsolatedTypes.test.ts` — test espera `0.8`
+
+**Nota**: La migración 063 ya está aplicada en staging con `0.500`. El nuevo default solo aplica para nuevas filas. La fila existente mantendrá 0.5 hasta que se actualice via API. No se requiere migración adicional — el cambio de default es para nuevos despliegues.
+
+### Ajuste 2: Nombres de 7 subpestañas alineados
+
+**Nombres finales**:
+1. Resumen
+2. Configuración
+3. Capital Inteligente
+4. Niveles y Ciclos
+5. Riesgo y Recuperación
+6. Backtest
+7. Auditoría Grid
+
+**Cambios**: `client/src/pages/GridIsolated.tsx` — labels de TabsTrigger actualizados.
+
+### Ajuste 3: Endpoint POST /api/grid-isolated/shadow-validate
+
+**Objetivo**: Validar SHADOW sin órdenes reales.
+
+**Endpoint**: `POST /api/grid-isolated/shadow-validate`
+
+**Respuesta**:
+```json
+{
+  "success": true,
+  "mode": "OFF",
+  "realOrdersPlaced": false,
+  "levelsGenerated": 0,
+  "eventsGenerated": 0,
+  "status": { ... GridExecutionStatus ... },
+  "realModesBlocked": true,
+  "message": "SHADOW validation OK — no real orders placed, simulation ran successfully"
+}
+```
+
+**Flujo**:
+1. Cambia a SHADOW (siempre permitido)
+2. Ejecuta un tick simulado
+3. Verifica que no se llamó placeOrder (SHADOW by design nunca llama a gridExecutionService)
+4. Cuenta niveles y eventos generados
+5. Verifica que REAL_LIMITED y REAL_FULL siguen bloqueados
+6. Restaura modo OFF si estaba OFF antes
+
+**Método añadido al engine**: `gridIsolatedEngine.runShadowValidation()`
+
+**Test añadido**: `POST /shadow-validate responds 200 with no real orders`
+
+### Validación
+- `npm run check` (tsc): ✅ sin errores
+- `npx vitest run` (6 archivos grid): ✅ 113/113 tests
+- `npm run build`: ✅
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — default netProfitTargetPct 0.8
+- `shared/schema.ts` — default DB 0.800
+- `db/migrations/063_grid_isolated.sql` — default SQL 0.800
+- `client/src/pages/GridIsolated.tsx` — nombres subpestañas + fallback slider 0.8
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — método runShadowValidation()
+- `server/routes/gridIsolated.routes.ts` — endpoint shadow-validate
+- `server/services/__tests__/gridIsolatedTypes.test.ts` — test default 0.8
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — test shadow-validate
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` — esta documentación
+
+### Endpoints finales disponibles
+| Endpoint | Método | Estado |
+|----------|--------|--------|
+| /api/grid-isolated/config | GET | ✅ |
+| /api/grid-isolated/config | POST | ✅ |
+| /api/grid-isolated/mode | POST | ✅ |
+| /api/grid-isolated/mode/acknowledge | POST | ✅ |
+| /api/grid-isolated/status | GET | ✅ |
+| /api/grid-isolated/levels | GET | ✅ |
+| /api/grid-isolated/cycles | GET | ✅ |
+| /api/grid-isolated/events | GET | ✅ |
+| /api/grid-isolated/pump-dump-state | GET | ✅ |
+| /api/grid-isolated/unlock-check | GET | ✅ (backward compat) |
+| /api/grid-isolated/unlock-status | GET | ✅ |
+| /api/grid-isolated/monitor/audit | GET | ✅ |
+| /api/grid-isolated/reconciliation | GET | ✅ |
+| /api/grid-isolated/reconcile | POST | ✅ |
+| /api/grid-isolated/backtest | POST | ✅ |
+| /api/grid-isolated/shadow-validate | POST | ✅ NUEVO |
+
+---
+
 ## 2026-07-03 — fix(grid-isolated): expose unlock status and monitor audit endpoints
 
 **Tag**: WINDSURF GRID ISOLATED ENGINE — FIX ENDPOINTS STAGING

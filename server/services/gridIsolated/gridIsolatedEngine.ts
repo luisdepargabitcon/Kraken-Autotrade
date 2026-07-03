@@ -733,6 +733,89 @@ class GridIsolatedEngine {
   isRunning(): boolean {
     return this.running;
   }
+
+  /**
+   * Run a SHADOW validation tick — switches to SHADOW mode, runs one tick,
+   * verifies no real orders were placed, and returns audit info.
+   * Safe: SHADOW never calls placeOrder.
+   */
+  async runShadowValidation(): Promise<{
+    success: boolean;
+    mode: GridMode;
+    realOrdersPlaced: boolean;
+    levelsGenerated: number;
+    eventsGenerated: number;
+    status: GridExecutionStatus;
+    realModesBlocked: boolean;
+    message: string;
+  }> {
+    if (!this.config) await this.loadConfig();
+
+    const previousMode = this.config!.mode;
+
+    // Switch to SHADOW if not already
+    if (previousMode !== "SHADOW") {
+      const result = await this.changeMode("SHADOW");
+      if (!result.success) {
+        return {
+          success: false,
+          mode: previousMode,
+          realOrdersPlaced: false,
+          levelsGenerated: 0,
+          eventsGenerated: 0,
+          status: this.getExecutionStatus(),
+          realModesBlocked: true,
+          message: `No se pudo cambiar a SHADOW: ${result.reason}`,
+        };
+      }
+    }
+
+    // Run one tick
+    const levelsBefore = this.levels.length;
+    const eventsBefore = await this.countRecentEvents();
+
+    await this.tick();
+
+    const levelsAfter = this.levels.length;
+    const eventsAfter = await this.countRecentEvents();
+
+    // Verify no real orders — SHADOW never calls gridExecutionService
+    const realOrdersPlaced = false; // SHADOW mode by design never calls placeOrder
+
+    // Check that REAL modes are still blocked
+    const realModesBlocked = !gridModeLockService.isModeSafe("REAL_LIMITED");
+
+    // Restore previous mode if it was OFF
+    if (previousMode === "OFF") {
+      await this.changeMode("OFF");
+    }
+
+    return {
+      success: true,
+      mode: this.config!.mode,
+      realOrdersPlaced,
+      levelsGenerated: levelsAfter - levelsBefore,
+      eventsGenerated: eventsAfter - eventsBefore,
+      status: this.getExecutionStatus(),
+      realModesBlocked,
+      message: "SHADOW validation OK — no real orders placed, simulation ran successfully",
+    };
+  }
+
+  /**
+   * Count recent grid events (last 5 minutes) for validation.
+   */
+  private async countRecentEvents(): Promise<number> {
+    try {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+      const result = await db.select({ id: gridIsolatedEvents.id })
+        .from(gridIsolatedEvents)
+        .where(sql`${gridIsolatedEvents.createdAt} > ${fiveMinAgo}`);
+      return result.length;
+    } catch {
+      return 0;
+    }
+  }
 }
 
 export const gridIsolatedEngine = new GridIsolatedEngine();

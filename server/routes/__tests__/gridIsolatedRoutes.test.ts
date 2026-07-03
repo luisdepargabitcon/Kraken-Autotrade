@@ -85,6 +85,35 @@ async function simulateGet(app: Express, path: string): Promise<{ status: number
   });
 }
 
+async function simulatePost(app: Express, path: string, body?: any): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(app);
+    server.listen(0, () => {
+      const port = (server.address() as any).port;
+      const payload = body ? JSON.stringify(body) : "";
+      const req = http.request(
+        `http://localhost:${port}${path}`,
+        { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) } },
+        (res) => {
+          let data = "";
+          res.on("data", (chunk) => { data += chunk; });
+          res.on("end", () => {
+            server.close();
+            try {
+              resolve({ status: res.statusCode || 200, body: JSON.parse(data) });
+            } catch {
+              resolve({ status: res.statusCode || 200, body: data });
+            }
+          });
+        }
+      );
+      req.on("error", (err) => { server.close(); reject(err); });
+      if (payload) req.write(payload);
+      req.end();
+    });
+  });
+}
+
 describe("Grid Isolated Routes — Endpoints", () => {
   let app: Express;
 
@@ -153,5 +182,14 @@ describe("Grid Isolated Routes — Endpoints", () => {
     const res = await simulateGet(app, "/api/grid-isolated/events");
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it("POST /api/grid-isolated/shadow-validate responds 200 with no real orders", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-validate");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("success");
+    expect(res.body).toHaveProperty("realOrdersPlaced", false);
+    expect(res.body).toHaveProperty("realModesBlocked", true);
+    expect(res.body).toHaveProperty("message");
   });
 });
