@@ -2,17 +2,19 @@
  * Grid Isolated Routes — API endpoints for the Grid Isolated Engine.
  *
  * Endpoints:
- *   GET  /api/grid-isolated/config         — Get current config
- *   POST /api/grid-isolated/config         — Update config
- *   POST /api/grid-isolated/mode           — Change mode (with safety lock)
- *   POST /api/grid-isolated/mode/acknowledge — Acknowledge mode lock
- *   GET  /api/grid-isolated/status         — Get execution status
- *   GET  /api/grid-isolated/levels         — Get current levels
- *   GET  /api/grid-isolated/cycles         — Get cycles
- *   GET  /api/grid-isolated/events         — Get grid events
- *   POST /api/grid-isolated/reconcile      — Run reconciliation
- *   POST /api/grid-isolated/backtest       — Run backtest
- *   GET  /api/grid-isolated/unlock-check   — Get mode unlock conditions
+ *   GET  /api/grid-isolated/config              — Get current config
+ *   POST /api/grid-isolated/config              — Update config
+ *   POST /api/grid-isolated/mode                — Change mode (with safety lock)
+ *   POST /api/grid-isolated/mode/acknowledge    — Acknowledge mode lock
+ *   GET  /api/grid-isolated/status              — Get execution status
+ *   GET  /api/grid-isolated/levels              — Get current levels
+ *   GET  /api/grid-isolated/cycles              — Get cycles
+ *   GET  /api/grid-isolated/events              — Get grid events
+ *   GET  /api/grid-isolated/unlock-check        — Get mode unlock conditions (raw checks)
+ *   GET  /api/grid-isolated/unlock-status       — Get full unlock status with blocking reasons
+ *   GET  /api/grid-isolated/monitor/audit       — Get audit data for Monitor and Auditoría Grid
+ *   POST /api/grid-isolated/reconcile           — Run reconciliation
+ *   POST /api/grid-isolated/backtest            — Run backtest
  */
 
 import { Express, Request, Response } from "express";
@@ -21,6 +23,9 @@ import { gridModeLockService } from "../services/gridIsolated/gridModeLockServic
 import { gridReconciliationRunner } from "../services/gridIsolated/gridReconciliationRunner";
 import { gridBacktestEngine } from "../services/gridIsolated/gridBacktest";
 import { botLogger } from "../services/botLogger";
+import { db } from "../db";
+import { gridIsolatedEvents } from "@shared/schema";
+import { desc } from "drizzle-orm";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig } from "../services/gridIsolated/gridIsolatedTypes";
 
 export function registerGridIsolatedRoutes(app: Express): void {
@@ -108,6 +113,48 @@ export function registerGridIsolatedRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/grid-isolated/unlock-status", async (_req: Request, res: Response) => {
+    try {
+      const checks = await gridModeLockService.runUnlockChecks();
+      const config = gridIsolatedEngine.getConfig();
+      const currentMode: GridMode = config?.mode || "OFF";
+
+      const blockingReasons: string[] = [];
+      if (!checks.postOnlySupported) {
+        blockingReasons.push("RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados");
+      }
+      if (!checks.revolutxInitialized) {
+        blockingReasons.push("Revolut X no está inicializado o no conectado");
+      }
+      if (!checks.revolutxHasBalance) {
+        blockingReasons.push("Revolut X no tiene balance disponible");
+      }
+      if (!checks.reconciliationPassed) {
+        blockingReasons.push("Reconciliación pendiente o con mismatches");
+      }
+      if (!checks.capitalReserved) {
+        blockingReasons.push("Capital no reservado o no aislado");
+      }
+      if (!checks.modeLockAcknowledged) {
+        blockingReasons.push("Mode lock no reconocido explícitamente por el usuario");
+      }
+      if (!checks.dailyOrderLimitRespected) {
+        blockingReasons.push("Límite diario de órdenes excedido");
+      }
+
+      res.json({
+        currentMode,
+        canUnlockRealLimited: blockingReasons.length === 0,
+        canUnlockRealFull: blockingReasons.length === 0,
+        postOnlySupported: checks.postOnlySupported,
+        blockingReasons,
+        checks,
+      });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   // ─── Status & Data ───────────────────────────────────────
 
   app.get("/api/grid-isolated/status", (_req: Request, res: Response) => {
@@ -137,6 +184,88 @@ export function registerGridIsolatedRoutes(app: Express): void {
   app.get("/api/grid-isolated/pump-dump-state", (_req: Request, res: Response) => {
     try {
       res.json(gridIsolatedEngine.getPumpDumpState());
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/grid-isolated/events", async (req: Request, res: Response) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const events = await db.select()
+        .from(gridIsolatedEvents)
+        .orderBy(desc(gridIsolatedEvents.createdAt))
+        .limit(limit);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // ─── Monitor / Audit ─────────────────────────────────────
+
+  app.get("/api/grid-isolated/monitor/audit", async (_req: Request, res: Response) => {
+    try {
+      const config = gridIsolatedEngine.getConfig();
+      const status = gridIsolatedEngine.getExecutionStatus();
+      const checks = await gridModeLockService.runUnlockChecks();
+
+      const blockingReasons: string[] = [];
+      if (!checks.postOnlySupported) {
+        blockingReasons.push("RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados");
+      }
+      if (!checks.revolutxInitialized) {
+        blockingReasons.push("Revolut X no está inicializado o no conectado");
+      }
+      if (!checks.revolutxHasBalance) {
+        blockingReasons.push("Revolut X no tiene balance disponible");
+      }
+      if (!checks.reconciliationPassed) {
+        blockingReasons.push("Reconciliación pendiente o con mismatches");
+      }
+      if (!checks.capitalReserved) {
+        blockingReasons.push("Capital no reservado o no aislado");
+      }
+      if (!checks.modeLockAcknowledged) {
+        blockingReasons.push("Mode lock no reconocido explícitamente por el usuario");
+      }
+      if (!checks.dailyOrderLimitRespected) {
+        blockingReasons.push("Límite diario de órdenes excedido");
+      }
+
+      const realModesBlocked = !checks.postOnlySupported || blockingReasons.length > 0;
+
+      let events: any[] = [];
+      try {
+        events = await db.select()
+          .from(gridIsolatedEvents)
+          .orderBy(desc(gridIsolatedEvents.createdAt))
+          .limit(20);
+      } catch {
+        // Table might not exist yet in some environments
+      }
+
+      res.json({
+        status: "ok",
+        mode: config?.mode || "OFF",
+        summary: {
+          pair: config?.pair || "BTC/USD",
+          executionPolicy: config?.executionPolicy || "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK",
+          postOnlySupported: checks.postOnlySupported,
+          realModesBlocked,
+          openCycles: status.openCycles,
+          openLevels: status.openLevels,
+          dailyOrderCount: status.dailyOrderCount,
+          circuitBreakerOpen: status.circuitBreakerOpen,
+        },
+        events,
+        decisions: [],
+        safety: {
+          realLimitedBlocked: realModesBlocked,
+          realFullBlocked: realModesBlocked,
+          blockingReasons,
+        },
+      });
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }

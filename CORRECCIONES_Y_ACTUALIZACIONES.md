@@ -2,6 +2,97 @@
 
 ---
 
+## 2026-07-03 — fix(grid-isolated): expose unlock status and monitor audit endpoints
+
+**Tag**: WINDSURF GRID ISOLATED ENGINE — FIX ENDPOINTS STAGING
+**Commit base**: a1d08c9
+**Commit fix**: pendiente
+
+### Problema detectado en staging (post-deploy a1d08c9)
+
+Tras deploy en VPS staging, validación confirmó:
+- Commit correcto: a1d08c9 ✅
+- Contenedor app OK ✅
+- Health OK ✅
+- AutoMigrationRunner OK ✅ (062 y 063 aplicadas)
+- /api/grid-isolated/config OK ✅
+- /api/grid-isolated/status OK ✅
+- Grid seguro: mode=OFF, isActive=false ✅
+
+**Endpoints que devolvían NOT_FOUND:**
+- `GET /api/grid-isolated/unlock-status` → 404
+- `GET /api/grid-isolated/monitor/audit` → 404
+
+### Causa raíz
+
+1. **unlock-status**: El backend exponía `/unlock-check` (devuelve solo `ModeUnlockCheck`), pero no `/unlock-status` (que devuelve `currentMode`, `canUnlockRealLimited`, `canUnlockRealFull`, `postOnlySupported`, `blockingReasons`, `checks`).
+2. **monitor/audit**: No existía. La UI del tab Auditoría Grid y el Monitor > Grid no tenían un endpoint unificado de auditoría.
+3. **events**: No existía aunque estaba documentado en el header del archivo de rutas.
+
+### Correcciones aplicadas
+
+#### 1. Endpoint GET /api/grid-isolated/unlock-status
+- Devuelve: `currentMode`, `canUnlockRealLimited`, `canUnlockRealFull`, `postOnlySupported`, `blockingReasons[]`, `checks{}`
+- `postOnlySupported=false` → `canUnlockRealLimited=false`, `canUnlockRealFull=false`
+- `blockingReasons` incluye "RevolutXService no tiene soporte post-only real confirmado"
+
+#### 2. Endpoint GET /api/grid-isolated/monitor/audit
+- Devuelve: `status`, `mode`, `summary{}`, `events[]`, `decisions[]`, `safety{}`
+- `summary` incluye: `pair`, `executionPolicy`, `postOnlySupported`, `realModesBlocked`, `openCycles`, `openLevels`, `dailyOrderCount`, `circuitBreakerOpen`
+- `safety` incluye: `realLimitedBlocked`, `realFullBlocked`, `blockingReasons[]`
+- `events` carga últimos 20 eventos de `grid_isolated_events`
+
+#### 3. Endpoint GET /api/grid-isolated/events
+- Devuelve últimos N eventos de la tabla `grid_isolated_events` (default 50)
+
+#### 4. UI alineada
+- `GridIsolated.tsx` ahora usa `/unlock-status` en lugar de `/unlock-check`
+- Tab Auditoría Grid usa `/monitor/audit` con datos reales (summary, safety, events)
+- `GridMonitorPanel.tsx` ya usaba endpoints existentes (`/status`, `/pump-dump-state`, `/reconciliation`) — sin cambios
+
+#### 5. Tests añadidos
+- Nuevo archivo: `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 8 tests
+  1. GET /unlock-status responde 200
+  2. unlock-status devuelve postOnlySupported=false
+  3. unlock-status bloquea REAL_LIMITED y REAL_FULL
+  4. GET /monitor/audit responde 200
+  5. monitor/audit devuelve summary con postOnlySupported y realModesBlocked
+  6. monitor/audit devuelve safety con blocking reasons
+  7. GET /unlock-check sigue funcionando (backward compat)
+  8. GET /events responde 200
+
+### Archivos modificados
+- `server/routes/gridIsolated.routes.ts` — añadidos endpoints unlock-status, monitor/audit, events
+- `client/src/pages/GridIsolated.tsx` — UI usa /unlock-status y /monitor/audit
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — nuevo, 8 tests
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` — esta documentación
+
+### Validación
+- `npm run check` (tsc): ✅ sin errores
+- `npx vitest run` (6 archivos grid): ✅ 112/112 tests
+- `npm run build`: ✅
+
+### Endpoints finales disponibles
+| Endpoint | Método | Estado |
+|----------|--------|--------|
+| /api/grid-isolated/config | GET | ✅ |
+| /api/grid-isolated/config | POST | ✅ |
+| /api/grid-isolated/mode | POST | ✅ |
+| /api/grid-isolated/mode/acknowledge | POST | ✅ |
+| /api/grid-isolated/status | GET | ✅ |
+| /api/grid-isolated/levels | GET | ✅ |
+| /api/grid-isolated/cycles | GET | ✅ |
+| /api/grid-isolated/events | GET | ✅ NUEVO |
+| /api/grid-isolated/pump-dump-state | GET | ✅ |
+| /api/grid-isolated/unlock-check | GET | ✅ (backward compat) |
+| /api/grid-isolated/unlock-status | GET | ✅ NUEVO |
+| /api/grid-isolated/monitor/audit | GET | ✅ NUEVO |
+| /api/grid-isolated/reconciliation | GET | ✅ |
+| /api/grid-isolated/reconcile | POST | ✅ |
+| /api/grid-isolated/backtest | POST | ✅ |
+
+---
+
 ## 2026-07-15 — fix(grid-isolated): harden post-only capabilities and UI audit
 
 **Tag**: WINDSURF GRID ISOLATED ENGINE — AUDITORÍA POST-COMMIT

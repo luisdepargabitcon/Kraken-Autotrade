@@ -38,13 +38,23 @@ export default function GridIsolated() {
   });
 
   const { data: unlockCheck } = useQuery({
-    queryKey: ["grid-unlock-check"],
+    queryKey: ["grid-unlock-status"],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/unlock-check`);
-      if (!res.ok) throw new Error("Failed to load unlock check");
+      const res = await fetch(`${API_BASE}/unlock-status`);
+      if (!res.ok) throw new Error("Failed to load unlock status");
       return res.json();
     },
     refetchInterval: 10000,
+  });
+
+  const { data: auditData } = useQuery({
+    queryKey: ["grid-monitor-audit"],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/monitor/audit`);
+      if (!res.ok) throw new Error("Failed to load audit data");
+      return res.json();
+    },
+    refetchInterval: 15000,
   });
 
   const { data: levels } = useQuery({
@@ -91,7 +101,7 @@ export default function GridIsolated() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["grid-unlock-check"] });
+      queryClient.invalidateQueries({ queryKey: ["grid-unlock-status"] });
     },
   });
 
@@ -251,55 +261,55 @@ export default function GridIsolated() {
               <p className="text-sm font-semibold">Condiciones de Desbloqueo REAL:</p>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck.revolutxInitialized ? "default" : "secondary"}>
-                    {unlockCheck.revolutxInitialized ? "✓" : "✗"}
+                  <Badge variant={unlockCheck?.checks?.revolutxInitialized ? "default" : "secondary"}>
+                    {unlockCheck?.checks?.revolutxInitialized ? "✓" : "✗"}
                   </Badge>
                   Revolut X Inicializado
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck.revolutxHasBalance ? "default" : "secondary"}>
-                    {unlockCheck.revolutxHasBalance ? "✓" : "✗"}
+                  <Badge variant={unlockCheck?.checks?.revolutxHasBalance ? "default" : "secondary"}>
+                    {unlockCheck?.checks?.revolutxHasBalance ? "✓" : "✗"}
                   </Badge>
                   Balance Disponible
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck.reconciliationPassed ? "default" : "secondary"}>
-                    {unlockCheck.reconciliationPassed ? "✓" : "✗"}
+                  <Badge variant={unlockCheck?.checks?.reconciliationPassed ? "default" : "secondary"}>
+                    {unlockCheck?.checks?.reconciliationPassed ? "✓" : "✗"}
                   </Badge>
                   Reconciliación OK
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck.capitalReserved ? "default" : "secondary"}>
-                    {unlockCheck.capitalReserved ? "✓" : "✗"}
+                  <Badge variant={unlockCheck?.checks?.capitalReserved ? "default" : "secondary"}>
+                    {unlockCheck?.checks?.capitalReserved ? "✓" : "✗"}
                   </Badge>
                   Capital Reservado
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck.modeLockAcknowledged ? "default" : "secondary"}>
-                    {unlockCheck.modeLockAcknowledged ? "✓" : "✗"}
+                  <Badge variant={unlockCheck?.checks?.modeLockAcknowledged ? "default" : "secondary"}>
+                    {unlockCheck?.checks?.modeLockAcknowledged ? "✓" : "✗"}
                   </Badge>
                   Lock Reconocido
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck.dailyOrderLimitRespected ? "default" : "secondary"}>
-                    {unlockCheck.dailyOrderLimitRespected ? "✓" : "✗"}
+                  <Badge variant={unlockCheck?.checks?.dailyOrderLimitRespected ? "default" : "secondary"}>
+                    {unlockCheck?.checks?.dailyOrderLimitRespected ? "✓" : "✗"}
                   </Badge>
                   Límite Diario OK
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck.postOnlySupported ? "default" : "secondary"}>
-                    {unlockCheck.postOnlySupported ? "✓" : "✗"}
+                  <Badge variant={unlockCheck?.postOnlySupported ? "default" : "secondary"}>
+                    {unlockCheck?.postOnlySupported ? "✓" : "✗"}
                   </Badge>
                   Post-Only Soportado
                 </div>
               </div>
-              {!unlockCheck.postOnlySupported && (
+              {!unlockCheck?.postOnlySupported && (
                 <div className="flex items-start gap-2 rounded-lg bg-orange-500/10 p-3 text-sm">
                   <AlertCircle className="h-4 w-4 mt-0.5 text-orange-500" />
                   <span>RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados.</span>
                 </div>
               )}
-              {!unlockCheck.modeLockAcknowledged && unlockCheck.postOnlySupported && (
+              {!unlockCheck?.checks?.modeLockAcknowledged && unlockCheck?.postOnlySupported && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -845,44 +855,63 @@ export default function GridIsolated() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Espejo de Monitor {">"} Grid Isolated. Mismos datos y endpoints de auditoría.
+                Espejo de Monitor {">"} Grid Isolated. Datos desde GET /api/grid-isolated/monitor/audit.
               </p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Circuit Breaker</p>
-                  <Badge variant={status?.circuitBreakerOpen ? "destructive" : "secondary"}>
-                    {status?.circuitBreakerOpen ? "ABIERTO" : "CERRADO"}
-                  </Badge>
+              {auditData?.summary && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Modo</p>
+                    <Badge variant={modeColor(auditData.mode || "OFF") as any}>{auditData.mode || "OFF"}</Badge>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Circuit Breaker</p>
+                    <Badge variant={auditData.summary.circuitBreakerOpen ? "destructive" : "secondary"}>
+                      {auditData.summary.circuitBreakerOpen ? "ABIERTO" : "CERRADO"}
+                    </Badge>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Post-Only</p>
+                    <Badge variant={auditData.summary.postOnlySupported ? "default" : "secondary"}>
+                      {auditData.summary.postOnlySupported ? "SOPORTADO" : "NO SOPORTADO"}
+                    </Badge>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Modos REAL</p>
+                    <Badge variant={auditData.summary.realModesBlocked ? "destructive" : "default"}>
+                      {auditData.summary.realModesBlocked ? "BLOQUEADOS" : "DESBLOQUEADOS"}
+                    </Badge>
+                  </div>
                 </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Pump/Dump State</p>
-                  <Badge variant={pumpDumpColor(status?.pumpDumpState || "normal") as any}>
-                    {status?.pumpDumpState || "normal"}
-                  </Badge>
+              )}
+              {auditData?.safety?.blockingReasons && auditData.safety.blockingReasons.length > 0 && (
+                <div className="rounded-lg bg-orange-500/10 p-3 space-y-1">
+                  {auditData.safety.blockingReasons.map((reason: string, i: number) => (
+                    <div key={i} className="flex items-start gap-2 text-sm">
+                      <AlertCircle className="h-4 w-4 mt-0.5 text-orange-500 flex-shrink-0" />
+                      <span>{reason}</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Órdenes Hoy</p>
-                  <p className="text-lg font-bold">{status?.dailyOrderCount || 0}</p>
+              )}
+              {auditData?.events && auditData.events.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Eventos Grid (últimos 20)</Label>
+                  <div className="rounded-lg border p-3 max-h-64 overflow-y-auto space-y-1">
+                    {auditData.events.map((ev: any) => (
+                      <div key={ev.id} className="flex items-center gap-2 text-xs border-b pb-1">
+                        <Badge variant="secondary">{ev.eventType}</Badge>
+                        <span className="text-muted-foreground">{new Date(ev.createdAt).toLocaleTimeString()}</span>
+                        <span className="truncate">{ev.message}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Reconciliación</p>
-                  <Badge variant={reconcileMutation.data?.ok ? "default" : "secondary"}>
-                    {reconcileMutation.data?.ok ? "OK" : "PENDIENTE"}
-                  </Badge>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Eventos Grid</Label>
-                  <Button variant="outline" size="sm">Actualizar</Button>
-                </div>
-                <div className="rounded-lg border p-3 max-h-64 overflow-y-auto">
-                  <p className="text-xs text-muted-foreground text-center py-4">
-                    Los eventos se cargan desde grid_isolated_events via API.
-                    Esta pestaña reutiliza los mismos endpoints que Monitor {">"} Grid Isolated.
-                  </p>
-                </div>
-              </div>
+              )}
+              {(!auditData?.events || auditData.events.length === 0) && (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No hay eventos registrados.
+                </p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
