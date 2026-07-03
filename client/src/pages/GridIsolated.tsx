@@ -9,7 +9,8 @@ import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers } from "lucide-react";
+import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle } from "lucide-react";
+import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -45,16 +46,6 @@ export default function GridIsolated() {
       return res.json();
     },
     refetchInterval: 10000,
-  });
-
-  const { data: auditData } = useQuery({
-    queryKey: ["grid-monitor-audit"],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/monitor/audit`);
-      if (!res.ok) throw new Error("Failed to load audit data");
-      return res.json();
-    },
-    refetchInterval: 15000,
   });
 
   const { data: levels } = useQuery({
@@ -331,9 +322,9 @@ export default function GridIsolated() {
         </CardContent>
       </Card>
 
-      {/* Tabs — 7 subpestañas */}
+      {/* Tabs — 8 subpestañas */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="resumen">Resumen</TabsTrigger>
           <TabsTrigger value="config">Configuración</TabsTrigger>
           <TabsTrigger value="capital">Capital Inteligente</TabsTrigger>
@@ -341,6 +332,7 @@ export default function GridIsolated() {
           <TabsTrigger value="risk">Riesgo y Recuperación</TabsTrigger>
           <TabsTrigger value="backtest">Backtest</TabsTrigger>
           <TabsTrigger value="audit">Auditoría Grid</TabsTrigger>
+          <TabsTrigger value="ayuda">Ayuda</TabsTrigger>
         </TabsList>
 
         {/* 1. Resumen Tab */}
@@ -844,74 +836,130 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
 
-        {/* 7. Auditoría Grid Tab — espejo de Monitor > Grid */}
+        {/* 7. Auditoría Grid Tab — espejo completo de Monitor > Grid */}
         <TabsContent value="audit" className="space-y-4">
+          <div className="rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground">
+            Auditoría completa del Grid Isolated. Misma vista que Monitor {">"} Grid Isolated. Datos desde GET /api/grid-isolated/monitor/audit.
+          </div>
+          <GridMonitorPanel />
+        </TabsContent>
+
+        {/* 8. Ayuda Tab */}
+        <TabsContent value="ayuda" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <ScrollText className="h-5 w-5" />
-                Auditoría Grid Isolated
+                <HelpCircle className="h-5 w-5" />
+                Ayuda — Grid Aislado BTC/USD
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Espejo de Monitor {">"} Grid Isolated. Datos desde GET /api/grid-isolated/monitor/audit.
-              </p>
-              {auditData?.summary && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div className="rounded-lg border p-3">
-                    <p className="text-xs text-muted-foreground">Modo</p>
-                    <Badge variant={modeColor(auditData.mode || "OFF") as any}>{auditData.mode || "OFF"}</Badge>
-                  </div>
-                  <div className="rounded-lg border p-3">
-                    <p className="text-xs text-muted-foreground">Circuit Breaker</p>
-                    <Badge variant={auditData.summary.circuitBreakerOpen ? "destructive" : "secondary"}>
-                      {auditData.summary.circuitBreakerOpen ? "ABIERTO" : "CERRADO"}
-                    </Badge>
-                  </div>
-                  <div className="rounded-lg border p-3">
-                    <p className="text-xs text-muted-foreground">Post-Only</p>
-                    <Badge variant={auditData.summary.postOnlySupported ? "default" : "secondary"}>
-                      {auditData.summary.postOnlySupported ? "SOPORTADO" : "NO SOPORTADO"}
-                    </Badge>
-                  </div>
-                  <div className="rounded-lg border p-3">
-                    <p className="text-xs text-muted-foreground">Modos REAL</p>
-                    <Badge variant={auditData.summary.realModesBlocked ? "destructive" : "default"}>
-                      {auditData.summary.realModesBlocked ? "BLOQUEADOS" : "DESBLOQUEADOS"}
-                    </Badge>
-                  </div>
-                </div>
-              )}
-              {auditData?.safety?.blockingReasons && auditData.safety.blockingReasons.length > 0 && (
-                <div className="rounded-lg bg-orange-500/10 p-3 space-y-1">
-                  {auditData.safety.blockingReasons.map((reason: string, i: number) => (
-                    <div key={i} className="flex items-start gap-2 text-sm">
-                      <AlertCircle className="h-4 w-4 mt-0.5 text-orange-500 flex-shrink-0" />
-                      <span>{reason}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {auditData?.events && auditData.events.length > 0 && (
-                <div className="space-y-2">
-                  <Label>Eventos Grid (últimos 20)</Label>
-                  <div className="rounded-lg border p-3 max-h-64 overflow-y-auto space-y-1">
-                    {auditData.events.map((ev: any) => (
-                      <div key={ev.id} className="flex items-center gap-2 text-xs border-b pb-1">
-                        <Badge variant="secondary">{ev.eventType}</Badge>
-                        <span className="text-muted-foreground">{new Date(ev.createdAt).toLocaleTimeString()}</span>
-                        <span className="truncate">{ev.message}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {(!auditData?.events || auditData.events.length === 0) && (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  No hay eventos registrados.
+            <CardContent className="space-y-4 text-sm">
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">¿Qué es el Grid Aislado?</h3>
+                <p className="text-muted-foreground">
+                  El Grid Aislado es un motor profesional de trading para BTC/USD en Revolut X, completamente separado del Spot Normal y del IDCA. No comparte inventario, capital ni estado con otras estrategias.
                 </p>
-              )}
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Modos de operación</h3>
+                <ul className="space-y-1 text-muted-foreground list-disc pl-4">
+                  <li><strong>OFF:</strong> El motor está apagado. No evalúa mercado ni envía órdenes. Es el modo por defecto.</li>
+                  <li><strong>SHADOW:</strong> Modo simulación. Evalúa el mercado y simula operaciones sin enviar órdenes reales. Ideal para validar la estrategia.</li>
+                  <li><strong>REAL_LIMITED:</strong> Opera con capital limitado y órdenes reales. Requiere que todas las condiciones de seguridad se cumplan.</li>
+                  <li><strong>REAL_FULL:</strong> Opera con capital completo y órdenes reales. Requiere todas las condiciones de seguridad y reconocimiento del usuario.</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Bloqueo de modos reales (Mode Lock)</h3>
+                <p className="text-muted-foreground">
+                  Los modos REAL_LIMITED y REAL_FULL están bloqueados por seguridad hasta que se cumplan TODAS estas condiciones:
+                </p>
+                <ul className="space-y-1 text-muted-foreground list-disc pl-4">
+                  <li>Revolut X inicializado y conectado</li>
+                  <li>Balance disponible en la cuenta</li>
+                  <li>Reconciliación de órdenes validada</li>
+                  <li>Capital reservado y aislado para el Grid</li>
+                  <li>Usuario reconoce el bloqueo explícitamente (acknowledge)</li>
+                  <li>Límite diario de órdenes respetado</li>
+                  <li>Soporte post-only confirmado en RevolutXService (actualmente NO soportado)</li>
+                </ul>
+                <p className="text-muted-foreground">
+                  Mientras post-only no esté soportado, los modos reales permanecerán bloqueados. SHADOW siempre está disponible.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Cómo usar SHADOW</h3>
+                <ol className="space-y-1 text-muted-foreground list-decimal pl-4">
+                  <li>Ve a la pestaña Configuración y ajusta los parámetros del Grid.</li>
+                  <li>Cambia el modo a SHADOW usando el selector de modo.</li>
+                  <li>El motor comenzará a evaluar el mercado y simular operaciones.</li>
+                  <li>Revisa los niveles generados en Niveles y Ciclos.</li>
+                  <li>Consulta los eventos y decisiones en Auditoría Grid {">"} Logs Inteligentes.</li>
+                  <li>Puedes ejecutar una validación SHADOW puntual con el endpoint POST /api/grid-isolated/shadow-validate.</li>
+                </ol>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Auditoría y monitorización</h3>
+                <p className="text-muted-foreground">
+                  La auditoría está disponible en dos sitios: Monitor {">"} Grid Isolated y Trading {">"} Grid Aislado {">"} Auditoría Grid. Ambas vistas usan el mismo endpoint y muestran la misma información.
+                </p>
+                <ul className="space-y-1 text-muted-foreground list-disc pl-4">
+                  <li><strong>Resumen:</strong> Estado general, modo, niveles, PnL, bloqueos.</li>
+                  <li><strong>Decisiones:</strong> Qué detectó el motor, qué quería hacer y qué decidió.</li>
+                  <li><strong>Logs Inteligentes:</strong> Eventos en formato legible con filtros por severidad y categoría.</li>
+                  <li><strong>Niveles y Ciclos:</strong> Tablas de niveles de compra/venta y ciclos abiertos/cerrados.</li>
+                  <li><strong>Seguridad:</strong> Todos los checks de bloqueo con motivos detallados.</li>
+                  <li><strong>API/Reconciliación:</strong> Estado de la API, reconciliación y circuit breaker.</li>
+                  <li><strong>Exportar:</strong> Copiar resumen para ChatGPT, exportar JSON/CSV.</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Circuit Breaker</h3>
+                <p className="text-muted-foreground">
+                  El circuit breaker es un mecanismo de seguridad que bloquea todas las órdenes si se detectan errores críticos (ej: ORDER_SUBMIT_UNKNOWN). Permanece abierto durante un cooldown antes de reintentar automáticamente.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Pump/Dump Guard</h3>
+                <p className="text-muted-foreground">
+                  El motor detecta movimientos bruscos de precio (pump o dump) y bloquea nuevas compras durante el cooldown para proteger el capital.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Target de Beneficio Neto</h3>
+                <p className="text-muted-foreground">
+                  El target neto (por defecto 0.8%) es el beneficio deseado después de fees y reserva fiscal. El motor calcula automáticamente el gap de precio bruto necesario. Si las bandas son demasiado estrechas para cubrir este objetivo, el motor pausa nuevas entradas.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Exportar a ChatGPT</h3>
+                <p className="text-muted-foreground">
+                  En la pestaña Exportar puedes copiar un resumen completo del estado del Grid para pegarlo en ChatGPT y obtener análisis o recomendaciones. También puedes exportar JSON o CSV con todos los eventos.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-semibold text-base">Endpoints principales</h3>
+                <ul className="space-y-1 text-muted-foreground list-disc pl-4 font-mono text-xs">
+                  <li>GET /api/grid-isolated/config — Configuración actual</li>
+                  <li>GET /api/grid-isolated/status — Estado de ejecución</li>
+                  <li>GET /api/grid-isolated/unlock-status — Estado de bloqueos</li>
+                  <li>GET /api/grid-isolated/monitor/audit — Auditoría completa</li>
+                  <li>GET /api/grid-isolated/events — Eventos con filtros</li>
+                  <li>POST /api/grid-isolated/shadow-validate — Validación SHADOW segura</li>
+                  <li>GET /api/grid-isolated/export/chatgpt — Resumen para ChatGPT</li>
+                  <li>GET /api/grid-isolated/export/json — Export JSON completo</li>
+                  <li>GET /api/grid-isolated/export/csv — Export CSV de eventos</li>
+                </ul>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

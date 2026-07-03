@@ -2,6 +2,122 @@
 
 ---
 
+## 2026-07-03 — fix(grid-isolated): improve audit logs and ChatGPT export
+
+**Tag**: WINDSURF GRID ISOLATED ENGINE — AUDITORÍA PROFESIONAL
+**Commit base**: 639b9e6
+**Commit fix**: pendiente
+
+### Objetivo
+Mejorar la auditoría del Grid Aislado para que permita comprobar claramente si el sistema funciona bien, con logs inteligentes, decisiones explicadas, y exportación a ChatGPT.
+
+### Cambios principales
+
+#### 1. Monitor > Grid Isolated — reconstruido con 7 subpestañas
+De 4 tarjetas básicas a auditoría completa con subpestañas:
+1. **Resumen** — tarjetas + texto natural explicando el estado
+2. **Decisiones** — tabla de decisiones del motor (qué detectó, qué quería, qué decidió, por qué)
+3. **Logs Inteligentes** — eventos en formato legible con filtros (INFO/WARNING/CRITICAL, categorías) y buscador
+4. **Niveles y Ciclos** — tablas de niveles y ciclos
+5. **Seguridad / Bloqueos** — todos los checks con motivos destacados
+6. **API / Reconciliación** — estado API, reconciliación, circuit breaker, mensajes naturales
+7. **Exportar / Copiar** — botones para copiar resumen ChatGPT, exportar JSON/CSV, copiar eventos
+
+Archivo: `client/src/components/grid/GridMonitorPanel.tsx` — rewrite completo
+
+#### 2. Trading > Grid Aislado > Auditoría Grid — espejo completo
+Ahora usa el mismo componente `GridMonitorPanel` que Monitor > Grid Isolated.
+No duplica lógica — ambos consumen `GET /api/grid-isolated/monitor/audit`.
+
+#### 3. Pestaña Ayuda añadida
+Trading > Grid Aislado ahora tiene 8 subpestañas (añadida "Ayuda"):
+- Instrucciones detalladas en castellano sobre el funcionamiento del modo Grid
+- Modos de operación (OFF/SHADOW/REAL_LIMITED/REAL_FULL)
+- Bloqueo de modos reales y condiciones
+- Cómo usar SHADOW
+- Auditoría y monitorización
+- Circuit Breaker, Pump/Dump, Target Neto
+- Exportar a ChatGPT
+- Endpoints principales
+
+#### 4. Endpoint /monitor/audit ampliado
+Respuesta ahora incluye:
+- `decisions[]` — decisiones del motor con explicación natural
+- `levels[]` — niveles actuales del Grid
+- `cycles[]` — ciclos actuales
+- `api{}` — info de API (dailyOrderCount, maxDailyOrders, circuitBreaker, reconciliation)
+- `reconciliation{}` — resultado de reconciliación
+- `safety{}` — ampliado con todos los checks individuales
+- `export.chatgptSummary` — resumen en texto plano para ChatGPT
+- `export.json{}` — resumen JSON estructurado
+
+#### 5. Endpoint /events ampliado con query params
+- `limit` — número máximo de eventos (default 50)
+- `eventType` — filtrar por tipo de evento
+- `mode` — filtrar por modo (OFF/SHADOW/REAL_LIMITED/REAL_FULL)
+- `since` — filtrar por fecha (ISO string)
+
+#### 6. Nuevos endpoints de exportación
+- `GET /api/grid-isolated/export/chatgpt` — resumen texto plano para ChatGPT
+- `GET /api/grid-isolated/export/json` — audit completo en JSON descargable
+- `GET /api/grid-isolated/export/csv` — eventos en CSV descargable
+
+#### 7. UI completamente en castellano
+Todos los textos, labels, badges y mensajes en castellano.
+
+### Funciones helper añadidas
+- `buildBlockingReasons(checks)` — centralizada, usada por unlock-status y monitor/audit
+- `buildDecisions(mode, checks, status, blockingReasons)` — genera decisiones explicadas
+- `buildChatGPTSummary(...)` — genera resumen texto plano para ChatGPT
+
+### Tests añadidos (8 nuevos)
+- `events accepts limit param`
+- `events does not fail with no events`
+- `monitor/audit returns decisions array`
+- `monitor/audit returns levels and cycles arrays`
+- `monitor/audit returns export.chatgptSummary`
+- `monitor/audit returns api info`
+- `GET /export/chatgpt responds 200 with text`
+- `export chatgpt contains modo, bloqueos, postOnlySupported and ciclos`
+
+Total: 121/121 tests pasando
+
+### Validación
+- `npm run check` (tsc): ✅ sin errores
+- `npx vitest run` (6 archivos grid): ✅ 121/121 tests
+- `npm run build`: ✅
+
+### Archivos modificados
+- `server/routes/gridIsolated.routes.ts` — ampliado /monitor/audit, /events con query params, /export/* endpoints, helpers
+- `client/src/components/grid/GridMonitorPanel.tsx` — rewrite completo con 7 subpestañas
+- `client/src/pages/GridIsolated.tsx` — Auditoría Grid usa GridMonitorPanel, añadida pestaña Ayuda, 8 subpestañas
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 8 tests nuevos
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` — esta documentación
+
+### Endpoints finales disponibles
+| Endpoint | Método | Estado |
+|----------|--------|--------|
+| /api/grid-isolated/config | GET/POST | ✅ |
+| /api/grid-isolated/mode | POST | ✅ |
+| /api/grid-isolated/mode/acknowledge | POST | ✅ |
+| /api/grid-isolated/status | GET | ✅ |
+| /api/grid-isolated/levels | GET | ✅ |
+| /api/grid-isolated/cycles | GET | ✅ |
+| /api/grid-isolated/events | GET | ✅ ampliado (limit, eventType, mode, since) |
+| /api/grid-isolated/pump-dump-state | GET | ✅ |
+| /api/grid-isolated/unlock-check | GET | ✅ |
+| /api/grid-isolated/unlock-status | GET | ✅ |
+| /api/grid-isolated/monitor/audit | GET | ✅ ampliado (decisions, levels, cycles, api, export) |
+| /api/grid-isolated/reconciliation | GET | ✅ |
+| /api/grid-isolated/reconcile | POST | ✅ |
+| /api/grid-isolated/backtest | POST | ✅ |
+| /api/grid-isolated/shadow-validate | POST | ✅ |
+| /api/grid-isolated/export/chatgpt | GET | ✅ NUEVO |
+| /api/grid-isolated/export/json | GET | ✅ NUEVO |
+| /api/grid-isolated/export/csv | GET | ✅ NUEVO |
+
+---
+
 ## 2026-07-03 — fix(grid-isolated): align default net target and shadow validation
 
 **Tag**: WINDSURF GRID ISOLATED ENGINE — AJUSTE FINAL

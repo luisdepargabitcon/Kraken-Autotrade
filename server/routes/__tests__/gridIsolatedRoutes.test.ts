@@ -184,6 +184,65 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(Array.isArray(res.body)).toBe(true);
   });
 
+  it("GET /api/grid-isolated/events accepts limit param", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/events?limit=5");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBeLessThanOrEqual(5);
+  });
+
+  it("GET /api/grid-isolated/events does not fail with no events", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/events?limit=1");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it("monitor/audit returns decisions array", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.decisions)).toBe(true);
+    expect(res.body.decisions.length).toBeGreaterThan(0);
+  });
+
+  it("monitor/audit returns levels and cycles arrays", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.levels)).toBe(true);
+    expect(Array.isArray(res.body.cycles)).toBe(true);
+  });
+
+  it("monitor/audit returns export.chatgptSummary", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.export).toBeDefined();
+    expect(typeof res.body.export.chatgptSummary).toBe("string");
+    expect(res.body.export.chatgptSummary).toContain("Modo:");
+    expect(res.body.export.chatgptSummary).toContain("Post-only");
+  });
+
+  it("monitor/audit returns api info", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.api).toBeDefined();
+    expect(res.body.api).toHaveProperty("dailyOrderCount");
+    expect(res.body.api).toHaveProperty("circuitBreakerOpen");
+  });
+
+  it("GET /api/grid-isolated/export/chatgpt responds 200 with text", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    expect(res.status).toBe(200);
+    expect(typeof res.body).toBe("string");
+    expect(res.body).toContain("Modo:");
+  });
+
+  it("export chatgpt contains modo, bloqueos, postOnlySupported and ciclos", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    expect(res.body).toContain("Modo:");
+    expect(res.body).toContain("Post-only");
+    expect(res.body).toContain("Ciclos:");
+    expect(res.body).toContain("Circuit breaker:");
+  });
+
   it("POST /api/grid-isolated/shadow-validate responds 200 with no real orders", async () => {
     const res = await simulatePost(app, "/api/grid-isolated/shadow-validate");
     expect(res.status).toBe(200);
