@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, Activity, History } from "lucide-react";
+import { AlertCircle, TrendingUp, Activity, History } from "lucide-react";
 
 interface GridBandsRangesPanelProps {
   auditData?: any;
@@ -10,6 +10,8 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
   const range = auditData?.range;
   const rangeHistory: any[] = auditData?.rangeHistory || [];
   const hasActiveRange = range && range.status !== "sin_rango_activo";
+  const hasLimits = hasActiveRange && range.lowerPrice != null && range.upperPrice != null;
+  const rangeId = range?.activeRangeVersionId;
 
   return (
     <div className="space-y-4">
@@ -35,36 +37,42 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Precio inferior</p>
-                  <p className="text-sm font-bold text-red-500">${range.lowerPrice?.toFixed(2)}</p>
+                  <p className="text-sm font-bold text-red-500">
+                    {range.lowerPrice != null ? `$${Number(range.lowerPrice).toFixed(2)}` : "—"}
+                  </p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Precio central</p>
-                  <p className="text-sm font-bold">${range.centerPrice?.toFixed(2)}</p>
+                  <p className="text-sm font-bold">
+                    {range.centerPrice != null ? `$${Number(range.centerPrice).toFixed(2)}` : "—"}
+                  </p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Precio superior</p>
-                  <p className="text-sm font-bold text-green-500">${range.upperPrice?.toFixed(2)}</p>
+                  <p className="text-sm font-bold text-green-500">
+                    {range.upperPrice != null ? `$${Number(range.upperPrice).toFixed(2)}` : "—"}
+                  </p>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Anchura (%)</p>
-                  <p className="text-sm font-bold">{range.widthPct?.toFixed(2)}%</p>
+                  <p className="text-sm font-bold">{range.widthPct != null ? `${Number(range.widthPct).toFixed(2)}%` : "—"}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Método/Régimen</p>
-                  <p className="text-sm font-bold">{range.method}</p>
+                  <p className="text-sm font-bold">{range.method || "—"}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Estado</p>
-                  <Badge variant={range.status === "active" ? "default" : "secondary"}>
+                  <Badge variant={range.status === "activo" || range.status === "active" ? "default" : "secondary"}>
                     {range.status}
                   </Badge>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Niveles generados</p>
-                  <p className="text-sm font-bold">{range.levelsGenerated ?? 0}</p>
+                  <p className="text-sm font-bold">{range.levelsGenerated ?? "—"}</p>
                 </div>
               </div>
 
@@ -78,6 +86,20 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                   <p className="text-sm">{range.updatedAt ? new Date(range.updatedAt).toLocaleString("es-ES") : "—"}</p>
                 </div>
               </div>
+
+              {rangeId && (
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">ID del rango</p>
+                  <p className="text-xs font-mono break-all">{rangeId}</p>
+                </div>
+              )}
+
+              {!hasLimits && (
+                <div className="flex items-start gap-2 rounded-lg bg-orange-500/10 p-3 text-sm">
+                  <AlertCircle className="h-4 w-4 mt-0.5 text-orange-500 shrink-0" />
+                  <span>Rango activo detectado, pero faltan límites inferior/superior en la metadata. Pendiente de enriquecer el evento de rango.</span>
+                </div>
+              )}
 
               <div className="rounded-lg bg-blue-500/10 p-3 text-sm">
                 <p className="text-blue-700 dark:text-blue-300">

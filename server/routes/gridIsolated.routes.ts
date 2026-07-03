@@ -197,7 +197,7 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
   return decisions;
 }
 
-function buildChatGPTSummary(mode: string, checks: any, status: any, blockingReasons: string[], levels: any[], cycles: any[], events: any[], config: any): string {
+function buildChatGPTSummary(mode: string, checks: any, status: any, blockingReasons: string[], levels: any[], cycles: any[], events: any[], config: any, resolvedRange?: any): string {
   const lines: string[] = [];
   lines.push("Resumen Grid Aislado BTC/USD para ChatGPT:");
   lines.push(`Fecha: ${new Date().toISOString()}`);
@@ -252,12 +252,23 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     lines.push(`Máximo fallback taker por ciclo: ${config.maxTakerFallbackPerCycle}.`);
   }
   // Bandas/Rangos
-  const rangeVersion = gridIsolatedEngine.getActiveRangeVersion();
-  if (rangeVersion) {
-    lines.push(`Bandas/Rangos: BTC/USD está trabajando entre ${rangeVersion.lowerPrice.toFixed(2)} $ y ${rangeVersion.upperPrice.toFixed(2)} $.`);
-    lines.push(`Rango creado el ${rangeVersion.createdAt ? new Date(rangeVersion.createdAt).toLocaleString("es-ES") : "fecha desconocida"}.`);
-    lines.push(`Anchura del rango: ${rangeVersion.bandWidthPct?.toFixed(2)} %. Régimen: ${rangeVersion.regime}.`);
-    lines.push(`Niveles generados: ${rangeVersion.levelsCount}.`);
+  if (resolvedRange && resolvedRange.status !== "sin_rango_activo") {
+    const rvId = resolvedRange.activeRangeVersionId || "desconocido";
+    const hasLimits = resolvedRange.lowerPrice != null && resolvedRange.upperPrice != null;
+    if (hasLimits) {
+      lines.push(`Bandas/Rangos: hay un rango activo en ${mode} con ID ${rvId}.`);
+      lines.push(`Rango: ${resolvedRange.pair} ${Number(resolvedRange.lowerPrice).toFixed(2)} $ – ${Number(resolvedRange.upperPrice).toFixed(2)} $.`);
+      if (resolvedRange.widthPct != null) lines.push(`Anchura: ${Number(resolvedRange.widthPct).toFixed(2)} %.`);
+      if (resolvedRange.method) lines.push(`Régimen: ${resolvedRange.method}.`);
+      if (resolvedRange.levelsGenerated != null) lines.push(`Niveles generados: ${resolvedRange.levelsGenerated}.`);
+    } else {
+      lines.push(`Bandas/Rangos: hay un rango activado en ${mode} con ID ${rvId}.`);
+      if (resolvedRange.levelsGenerated != null) {
+        lines.push(`Fue propuesto con ${resolvedRange.levelsGenerated} niveles.`);
+      }
+      lines.push(`Faltan límites inferior/superior en la metadata, por lo que la auditoría no puede mostrar todavía el rango completo.`);
+    }
+    lines.push(`Impacto: rango disponible para niveles futuros; no hay ciclos abiertos.`);
   } else {
     lines.push(`Bandas/Rangos: no hay rango activo todavía. El Grid está en ${mode} y espera una evaluación válida del mercado para generar bandas.`);
   }
@@ -300,6 +311,162 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     actions.forEach((a, i) => lines.push(`  ${i + 1}. ${a}`));
   }
   return lines.join("\n");
+}
+
+/**
+ * Natural Spanish message for range events.
+ */
+function naturalRangeEventMessage(eventType: string, rawMessage: string, meta: any): string {
+  const levelsCount = meta?.levelsCount ?? meta?.levelsGenerated;
+  const midPrice = meta?.centerPrice ?? meta?.midPrice;
+  const regime = meta?.regime ?? meta?.method;
+  const pair = meta?.pair || "BTC/USD";
+
+  switch (eventType) {
+    case "GRID_RANGE_PROPOSED":
+      if (midPrice != null && levelsCount != null) {
+        return `Rango propuesto: el Grid detectó una zona válida para ${pair} con ${levelsCount} niveles alrededor de ${Number(midPrice).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`;
+      }
+      return `Rango propuesto: el Grid detectó una zona válida para ${pair}.`;
+    case "GRID_RANGE_ACTIVATED":
+      return `Rango activado: el Grid usará esta banda para generar niveles futuros en modo ${meta?.mode || "SHADOW"}.`;
+    case "GRID_RANGE_PAUSED":
+      return `Rango pausado: ${meta?.reason || "el motor detuvo el rango activo."}`;
+    case "GRID_RANGE_CLOSED":
+      return `Rango cerrado: el rango anterior ya no está activo.${regime ? ` Régimen anterior: ${regime}.` : ""}`;
+    default:
+      return rawMessage;
+  }
+}
+
+/**
+ * Resolve active range from multiple sources:
+ * 1. In-memory activeRangeVersion (gridIsolatedEngine)
+ * 2. status.activeRangeVersionId
+ * 3. Last GRID_RANGE_ACTIVATED event with rangeVersionId
+ * 4. Last GRID_RANGE_PROPOSED event if no activated
+ * 5. DB gridRangeVersions table by id
+ * 6. Partial from metadataJson
+ */
+async function resolveActiveRange(events: any[], status: any, cyclesCount: number): Promise<any> {
+  // 1. Try in-memory first
+  const memRv = gridIsolatedEngine.getActiveRangeVersion();
+  if (memRv) {
+    return {
+      activeRangeVersionId: memRv.id,
+      pair: memRv.pair,
+      lowerPrice: memRv.lowerPrice,
+      upperPrice: memRv.upperPrice,
+      centerPrice: memRv.midPrice,
+      widthPct: memRv.bandWidthPct,
+      method: memRv.regime,
+      status: memRv.status === "active" ? "activo" : memRv.status,
+      createdAt: memRv.createdAt,
+      updatedAt: memRv.activatedAt,
+      naturalReason: `Rango activo: ${memRv.pair} ${memRv.lowerPrice.toFixed(2)} $ – ${memRv.upperPrice.toFixed(2)} $. Régimen: ${memRv.regime}.`,
+      lastChangeReason: "Rango activado después de la evaluación SHADOW.",
+      lastChangeAt: memRv.activatedAt,
+      impact: "El rango queda disponible para generar niveles futuros. No hay ciclos abiertos todavía.",
+      levelsGenerated: memRv.levelsCount,
+      cyclesAffected: cyclesCount,
+    };
+  }
+
+  // 2. Try status.activeRangeVersionId
+  let rangeVersionId: string | null = status?.activeRangeVersionId || null;
+
+  // 3. Search events for GRID_RANGE_ACTIVATED
+  const activatedEvent = events.find((ev: any) => ev.eventType === "GRID_RANGE_ACTIVATED");
+  const proposedEvent = events.find((ev: any) => ev.eventType === "GRID_RANGE_PROPOSED");
+
+  if (!rangeVersionId && activatedEvent?.rangeVersionId) {
+    rangeVersionId = activatedEvent.rangeVersionId;
+  }
+  if (!rangeVersionId && proposedEvent?.rangeVersionId) {
+    rangeVersionId = proposedEvent.rangeVersionId;
+  }
+
+  // 4. If no rangeVersionId at all, return sin_rango_activo
+  if (!rangeVersionId) {
+    return {
+      status: "sin_rango_activo",
+      naturalReason: "El Grid todavía no ha generado una banda activa porque no hay ciclo abierto o falta una evaluación SHADOW reciente.",
+    };
+  }
+
+  // 5. Try DB gridRangeVersions
+  try {
+    const dbRows = await db.select()
+      .from(gridRangeVersions)
+      .where(eq(gridRangeVersions.id, rangeVersionId))
+      .limit(1);
+
+    if (dbRows.length > 0) {
+      const row = dbRows[0];
+      const lowerPrice = row.lowerPrice ? parseFloat(String(row.lowerPrice)) : null;
+      const upperPrice = row.upperPrice ? parseFloat(String(row.upperPrice)) : null;
+      const centerPrice = row.midPrice ? parseFloat(String(row.midPrice)) : null;
+      const widthPct = row.bandWidthPct ? parseFloat(String(row.bandWidthPct)) : null;
+      const hasLimits = lowerPrice !== null && upperPrice !== null;
+
+      return {
+        activeRangeVersionId: row.id,
+        pair: row.pair,
+        lowerPrice,
+        upperPrice,
+        centerPrice,
+        widthPct,
+        method: row.regime,
+        status: row.status === "active" ? "activo" : row.status,
+        createdAt: row.createdAt,
+        updatedAt: row.activatedAt,
+        naturalReason: hasLimits
+          ? `Rango activo: ${row.pair} ${lowerPrice!.toFixed(2)} $ – ${upperPrice!.toFixed(2)} $. Régimen: ${row.regime}.`
+          : `Rango activo detectado (ID ${row.id}), pero faltan límites inferior/superior en la metadata. Pendiente de enriquecer el evento de rango.`,
+        lastChangeReason: "Rango activado después de la evaluación SHADOW.",
+        lastChangeAt: row.activatedAt || row.createdAt,
+        impact: "El rango queda disponible para generar niveles futuros. No hay ciclos abiertos todavía.",
+        levelsGenerated: row.levelsCount,
+        cyclesAffected: cyclesCount,
+      };
+    }
+  } catch {
+    // Table might not exist
+  }
+
+  // 6. Build partial from event metadataJson
+  const sourceEvent = activatedEvent || proposedEvent;
+  let meta: any = {};
+  try {
+    meta = sourceEvent?.metadataJson ? (typeof sourceEvent.metadataJson === "string" ? JSON.parse(sourceEvent.metadataJson) : sourceEvent.metadataJson) : {};
+  } catch {
+    meta = {};
+  }
+
+  const lowerPrice = meta.lowerPrice ?? null;
+  const upperPrice = meta.upperPrice ?? null;
+  const hasLimits = lowerPrice !== null && upperPrice !== null;
+
+  return {
+    activeRangeVersionId: rangeVersionId,
+    pair: sourceEvent?.pair || "BTC/USD",
+    lowerPrice,
+    upperPrice,
+    centerPrice: meta.centerPrice ?? null,
+    widthPct: meta.widthPct ?? null,
+    method: meta.method ?? meta.regime ?? "desconocido",
+    status: activatedEvent ? "activo" : "propuesto",
+    createdAt: proposedEvent?.createdAt || sourceEvent?.createdAt || null,
+    updatedAt: activatedEvent?.createdAt || null,
+    naturalReason: hasLimits
+      ? `Rango activo: ${sourceEvent?.pair || "BTC/USD"} ${lowerPrice.toFixed(2)} $ – ${upperPrice.toFixed(2)} $.`
+      : `Rango activo detectado (ID ${rangeVersionId}), pero faltan límites inferior/superior en la metadata. Pendiente de enriquecer el evento de rango.`,
+    lastChangeReason: activatedEvent ? "Rango activado después de la evaluación SHADOW." : "Rango propuesto, pendiente de activación.",
+    lastChangeAt: activatedEvent?.createdAt || proposedEvent?.createdAt || null,
+    impact: "El rango queda disponible para generar niveles futuros. No hay ciclos abiertos todavía.",
+    levelsGenerated: meta.levelsCount ?? null,
+    cyclesAffected: cyclesCount,
+  };
 }
 
 export function registerGridIsolatedRoutes(app: Express): void {
@@ -546,7 +713,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
       }
 
       const decisions = buildDecisions(mode, checks, status, blockingReasons, config);
-      const chatgptSummary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config);
+      const resolvedRange = await resolveActiveRange(events, status, cycles.length);
+      const chatgptSummary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config, resolvedRange);
 
       const walletTotal = (config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0);
       const walletReserved = status?.capitalReservedUsd || 0;
@@ -611,46 +779,28 @@ export function registerGridIsolatedRoutes(app: Express): void {
           takerFallbackAllowed: config?.takerFallbackEnabled ?? true,
           takerFallbackBlockedReason: null as string | null,
         },
-        range: (() => {
-          const rv = gridIsolatedEngine.getActiveRangeVersion();
-          if (!rv) {
-            return {
-              status: "sin_rango_activo",
-              naturalReason: "El Grid todavía no ha generado una banda activa porque no hay ciclo abierto o falta una evaluación SHADOW reciente.",
-            };
-          }
-          return {
-            activeRangeVersionId: rv.id,
-            pair: rv.pair,
-            lowerPrice: rv.lowerPrice,
-            upperPrice: rv.upperPrice,
-            centerPrice: rv.midPrice,
-            widthPct: rv.bandWidthPct,
-            method: rv.regime,
-            status: rv.status,
-            createdAt: rv.createdAt,
-            updatedAt: rv.activatedAt,
-            naturalReason: `Rango activo: ${rv.pair} ${rv.lowerPrice.toFixed(2)} $ – ${rv.upperPrice.toFixed(2)} $. Régimen: ${rv.regime}.`,
-            lastChangeReason: null,
-            lastChangeAt: rv.activatedAt,
-            impact: "Se recalculan niveles futuros; no se modifican ciclos abiertos.",
-            levelsGenerated: rv.levelsCount,
-            cyclesAffected: cycles.length,
-          };
-        })(),
+        range: resolvedRange,
         rangeHistory: (() => {
           try {
-            // Range history events are stored in gridIsolatedEvents with GRID_RANGE_* types
             const rangeEvents = events.filter((ev: any) =>
               ev.eventType?.startsWith("GRID_RANGE_") || ev.eventType?.startsWith("GRID_BAND_")
             );
-            return rangeEvents.slice(0, 20).map((ev: any) => ({
-              timestamp: ev.createdAt,
-              eventType: ev.eventType,
-              reason: ev.message,
-              mode: ev.mode,
-              rangeVersionId: ev.rangeVersionId,
-            }));
+            return rangeEvents.slice(0, 20).map((ev: any) => {
+              let meta: any = {};
+              try {
+                meta = ev.metadataJson ? (typeof ev.metadataJson === "string" ? JSON.parse(ev.metadataJson) : ev.metadataJson) : {};
+              } catch { meta = {}; }
+              const naturalReason = naturalRangeEventMessage(ev.eventType, ev.message, meta);
+              return {
+                timestamp: ev.createdAt,
+                eventType: ev.eventType,
+                reason: naturalReason,
+                rawMessage: ev.message,
+                mode: ev.mode,
+                rangeVersionId: ev.rangeVersionId,
+                metadata: meta,
+              };
+            });
           } catch {
             return [];
           }
@@ -770,7 +920,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
         events = await db.select().from(gridIsolatedEvents).orderBy(desc(gridIsolatedEvents.createdAt)).limit(20);
       } catch {}
 
-      const summary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config);
+      const resolvedRange = await resolveActiveRange(events, status, cycles.length);
+      const summary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config, resolvedRange);
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
       res.send(summary);
     } catch (error) {

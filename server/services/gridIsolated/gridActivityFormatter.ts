@@ -50,13 +50,26 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
     category: "BAND",
     severity: "INFO",
     title: "Banda propuesta",
-    messageFn: (ev) => ev.message || "Banda detectada: BTC/USD está dentro de una zona válida para Grid.",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      const levels = meta.levelsCount ?? meta.levelsGenerated;
+      const mid = meta.centerPrice ?? meta.midPrice;
+      const pair = meta.pair || "BTC/USD";
+      if (mid != null && levels != null) {
+        return `Rango propuesto: el Grid detectó una zona válida para ${pair} con ${levels} niveles alrededor de ${Number(mid).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`;
+      }
+      return ev.message || "Rango propuesto: el Grid detectó una zona válida.";
+    },
   },
   GRID_RANGE_ACTIVATED: {
     category: "BAND",
     severity: "SUCCESS",
     title: "Banda activada",
-    messageFn: (ev) => ev.message || "Banda activada para Grid.",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      const mode = meta.mode || "SHADOW";
+      return ev.message || `Rango activado: el Grid usará esta banda para generar niveles futuros en modo ${mode}.`;
+    },
   },
   GRID_RANGE_PAUSED: {
     category: "BAND",

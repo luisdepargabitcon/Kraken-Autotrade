@@ -445,11 +445,38 @@ class GridIsolatedEngine {
     };
     this.levels = gridLevels;
 
-    await this.logEvent("GRID_RANGE_PROPOSED", `Range proposed: ${generatedLevels.length} levels, mid=${bandSnapshot.midPrice}`, {
-      rangeVersionId, levelsCount: generatedLevels.length, regime: bandSnapshot.regime,
+    await this.logEvent("GRID_RANGE_PROPOSED", `Rango propuesto: el Grid detectó una zona válida para ${this.config.pair} con ${generatedLevels.length} niveles alrededor de ${bandSnapshot.midPrice.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`, {
+      rangeVersionId,
+      pair: this.config.pair,
+      lowerPrice: bandSnapshot.lower,
+      upperPrice: bandSnapshot.upper,
+      centerPrice: bandSnapshot.midPrice,
+      widthPct: bandSnapshot.bandWidthPct,
+      method: "bollinger_atr_hybrid",
+      reasonCode: "BAND_VALID",
+      naturalReason: `${this.config.pair} está en régimen ${bandSnapshot.regime} y permite separar niveles Grid con margen suficiente.`,
+      impact: "Se generan niveles futuros; no se modifican ciclos abiertos.",
+      levelsCount: generatedLevels.length,
+      regime: bandSnapshot.regime,
+      volatilityState: bandSnapshot.regime,
+      atrPct: bandSnapshot.atrPct,
+      bollingerWidthPct: bandSnapshot.bandWidthPct,
+      marketRegime: bandSnapshot.regime,
     });
-    await this.logEvent("GRID_RANGE_ACTIVATED", `Range activated: ${rangeVersionId}`, {
-      rangeVersionId, mode: this.config.mode,
+    await this.logEvent("GRID_RANGE_ACTIVATED", `Rango activado: el Grid usará esta banda para generar niveles futuros en modo ${this.config.mode}.`, {
+      rangeVersionId,
+      pair: this.config.pair,
+      mode: this.config.mode,
+      lowerPrice: bandSnapshot.lower,
+      upperPrice: bandSnapshot.upper,
+      centerPrice: bandSnapshot.midPrice,
+      widthPct: bandSnapshot.bandWidthPct,
+      method: "bollinger_atr_hybrid",
+      reasonCode: "SHADOW_ACTIVATION",
+      naturalReason: `El Grid activó este rango en ${this.config.mode} tras proponer una banda válida para ${this.config.pair}.`,
+      impact: "El rango queda disponible para generar niveles futuros. No hay ciclos abiertos todavía.",
+      levelsCount: generatedLevels.length,
+      regime: bandSnapshot.regime,
     });
   }
 
@@ -462,8 +489,9 @@ class GridIsolatedEngine {
       .set({ status: "paused" })
       .where(eq(gridRangeVersions.id, this.activeRangeVersion.id));
 
-    await this.logEvent("GRID_RANGE_PAUSED", `Range paused: ${reason}`, {
+    await this.logEvent("GRID_RANGE_PAUSED", `Rango pausado: ${reason}`, {
       rangeVersionId: this.activeRangeVersion.id, reason,
+      pair: this.activeRangeVersion.pair,
     });
   }
 

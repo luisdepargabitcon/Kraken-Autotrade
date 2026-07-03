@@ -2,6 +2,63 @@
 
 ---
 
+## 2026-07-04 — fix(grid-isolated): resolve active range from events and naturalize range logs
+
+### Resumen
+Corrige la incoherencia donde /monitor/audit devolvía range.status="sin_rango_activo" mientras existían eventos GRID_RANGE_ACTIVATED. Ahora el rango activo se resuelve desde múltiples fuentes (memoria → status → eventos → DB → metadataJson). Los eventos de rango ahora incluyen metadataJson completo con lowerPrice, upperPrice, centerPrice, widthPct, method, regime, levelsCount, etc. Los logs pasan de inglés crudo a castellano natural.
+
+### Cambios principales
+
+**1. resolveActiveRange() en gridIsolated.routes.ts**
+- Nueva función async que resuelve el rango activo en este orden:
+  1. `gridIsolatedEngine.getActiveRangeVersion()` (memoria)
+  2. `status.activeRangeVersionId`
+  3. Último evento `GRID_RANGE_ACTIVATED` con `rangeVersionId`
+  4. Último evento `GRID_RANGE_PROPOSED` si no hay activated
+  5. DB `gridRangeVersions` por id
+  6. Parcial desde `metadataJson` del evento
+- Si faltan lowerPrice/upperPrice, devuelve `null` (no inventa) y muestra aviso.
+- Usada en `/monitor/audit` (campo `range`) y en `buildChatGPTSummary`.
+
+**2. Eventos enriquecidos en gridIsolatedEngine.ts**
+- `GRID_RANGE_PROPOSED`: metadataJson ahora incluye lowerPrice, upperPrice, centerPrice, widthPct, method, reasonCode, naturalReason, impact, levelsCount, regime, volatilityState, atrPct, bollingerWidthPct, marketRegime.
+- `GRID_RANGE_ACTIVATED`: metadataJson incluye lowerPrice, upperPrice, centerPrice, widthPct, method, reasonCode, naturalReason, impact, levelsCount, regime, mode.
+- `GRID_RANGE_PAUSED`: mensaje en castellano + pair en metadata.
+- Mensajes pasan de "Range proposed: 10 levels, mid=61973.4" a "Rango propuesto: el Grid detectó una zona válida para BTC/USD con 10 niveles alrededor de 61.973,40 $."
+
+**3. naturalRangeEventMessage() en gridIsolated.routes.ts**
+- Nueva función que traduce eventos de rango a mensajes naturales en castellano.
+- Usada en `rangeHistory` del audit endpoint.
+
+**4. Export ChatGPT actualizado**
+- `buildChatGPTSummary` ahora recibe `resolvedRange` como parámetro.
+- Si hay rango activo con límites: muestra par, rango, anchura, régimen, niveles.
+- Si hay rango activo sin límites: muestra ID, niveles propuestos, aviso de límites faltantes.
+- Ya no dice "no hay rango activo" cuando existen eventos GRID_RANGE_ACTIVATED.
+
+**5. UI Bandas y Rangos actualizada**
+- `GridBandsRangesPanel.tsx`: Maneja lowerPrice/upperPrice null mostrando "—".
+- Muestra `activeRangeVersionId` cuando está disponible.
+- Muestra aviso naranja "Rango activo detectado, pero faltan límites..." cuando corresponde.
+- Usa `Number()` para conversión segura de decimals.
+
+**6. gridActivityFormatter.ts actualizado**
+- `GRID_RANGE_PROPOSED`: Usa metadataJson para construir mensaje natural con niveles y precio central.
+- `GRID_RANGE_ACTIVATED`: Usa metadataJson para mostrar modo.
+
+### Tests
+- 28/28 tests pasando.
+- No se tocaron IDCA, FISCO, órdenes reales, ni RevolutXService.
+
+### Archivos modificados
+- `server/routes/gridIsolated.routes.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridActivityFormatter.ts`
+- `client/src/components/grid/GridBandsRangesPanel.tsx`
+- `CORRECCIONES_Y_ACTUALIZACIONES.md`
+
+---
+
 ## 2026-07-04 — fix(grid-isolated): polish wallet sliders, range audit y Revolut X execution instructions
 
 ### Resumen
