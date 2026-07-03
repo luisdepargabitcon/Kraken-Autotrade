@@ -138,6 +138,37 @@ export default function GridIsolated() {
     },
   });
 
+  const activateMutation = useMutation({
+    mutationFn: async (active: boolean) => {
+      const res = await fetch(`${API_BASE}/activate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active }),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["grid-config"] });
+      queryClient.invalidateQueries({ queryKey: ["grid-status"] });
+      queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
+    },
+  });
+
+  const shadowValidateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE}/shadow-validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["grid-status"] });
+      queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
+    },
+  });
+
   // ─── Helpers ─────────────────────────────────────────────
   const modeColor = (mode: string) => {
     switch (mode) {
@@ -393,6 +424,10 @@ export default function GridIsolated() {
             acknowledgePending={acknowledgeMutation.isPending}
             reconcilePending={reconcileMutation.isPending}
             onGoToTab={(tab) => setActiveTab(tab)}
+            onActivate={(active) => activateMutation.mutate(active)}
+            onShadowValidate={() => shadowValidateMutation.mutate()}
+            activatePending={activateMutation.isPending}
+            shadowValidatePending={shadowValidateMutation.isPending}
           />
         </TabsContent>
 

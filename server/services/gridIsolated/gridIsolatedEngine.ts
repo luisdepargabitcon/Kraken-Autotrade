@@ -76,9 +76,16 @@ class GridIsolatedEngine {
   };
   private tickInterval: NodeJS.Timeout | null = null;
   private running: boolean = false;
+  private lastTickAt: Date | null = null;
+  private lastTickReason: string | null = null;
+  private lastShadowValidationAt: Date | null = null;
+  private lastShadowValidationResult: any = null;
+  private lastShadowEventAt: Date | null = null;
+  private shadowTickThrottleMs: number = 5 * 60 * 1000; // 5 min throttle for shadow info events
 
   /**
    * Load config from DB or create default.
+   * Auto-starts the engine if mode != OFF and isActive = true.
    */
   async loadConfig(): Promise<GridIsolatedConfig> {
     try {
@@ -139,6 +146,10 @@ class GridIsolatedEngine {
           gridPauseCycleWhenCapitalDepleted: row.gridPauseCycleWhenCapitalDepleted ?? true,
           gridAllowNewCycleWhenCapitalFree: row.gridAllowNewCycleWhenCapitalFree ?? true,
         };
+        // Auto-start engine if mode != OFF and isActive = true
+        if (this.config.mode !== "OFF" && this.config.isActive && !this.running) {
+          this.start();
+        }
         return this.config;
       }
     } catch (error) {
@@ -286,9 +297,22 @@ class GridIsolatedEngine {
 
   /**
    * Main tick — evaluate market, propose/activate ranges, check fills.
+   * Returns a diagnostic result describing what happened.
    */
   private async tick(): Promise<void> {
-    if (!this.config || this.config.mode === "OFF") return;
+    this.lastTickAt = new Date();
+
+    if (!this.config || this.config.mode === "OFF") {
+      this.lastTickReason = "Modo OFF — el motor no ejecuta ticks.";
+      return;
+    }
+
+    // Check isActive flag
+    if (!this.config.isActive) {
+      this.lastTickReason = "Motor inactivo (isActive=false). No se generan niveles ni ciclos automáticos.";
+      await this.logShadowTickEvent("GRID_SHADOW_TICK_SKIPPED", "Evaluación SHADOW omitida: motor inactivo (isActive=false).", { reason: "isActive=false" });
+      return;
+    }
 
     // Reset daily order count if needed
     this.checkDailyOrderReset();
@@ -296,6 +320,7 @@ class GridIsolatedEngine {
     // Check circuit breaker
     if (this.circuitBreakerOpen) {
       if (this.circuitBreakerOpenedAt && Date.now() - this.circuitBreakerOpenedAt.getTime() < CIRCUIT_BREAKER_RETRY_DELAY_MS) {
+        this.lastTickReason = "Circuit breaker abierto — en cooldown.";
         return; // Still in cooldown
       }
       this.circuitBreakerOpen = false;
@@ -312,28 +337,51 @@ class GridIsolatedEngine {
       pair: this.config.pair,
     });
 
-    if (!bandSnapshot) return;
+    if (!bandSnapshot) {
+      this.lastTickReason = "Sin datos de mercado (bandSnapshot no disponible).";
+      await this.logShadowTickEvent("GRID_SHADOW_NO_LEVELS", "El Grid evaluó el mercado pero no obtuvo datos de banda válidos.", { reason: "no_band_snapshot" });
+      return;
+    }
 
     // Check pump/dump guard
     await this.checkPumpDumpGuard(bandSnapshot.midPrice);
 
     if (!bandSnapshot.suitableForGrid) {
+      this.lastTickReason = `Condiciones de mercado no válidas para Grid: ${bandSnapshot.reason}`;
       // Pause active range if conditions not suitable
       if (this.activeRangeVersion && this.activeRangeVersion.status === "active") {
         await this.pauseRangeVersion(bandSnapshot.reason);
       }
+      await this.logShadowTickEvent("GRID_SHADOW_WAITING", `El Grid está en SHADOW esperando condiciones válidas. Motivo: ${bandSnapshot.reason}.`, { reason: bandSnapshot.reason });
       return;
     }
 
     // If no active range, propose one
     if (!this.activeRangeVersion) {
       await this.proposeRangeVersion(bandSnapshot);
+      this.lastTickReason = "Rango propuesto y activado en este tick.";
+    } else {
+      this.lastTickReason = "Tick completado — rango activo reutilizado.";
+      await this.logShadowTickEvent("GRID_SHADOW_RANGE_REUSED", "El Grid reutiliza el rango activo para auditoría. No se abren ciclos nuevos sin fills simulados.", { rangeVersionId: this.activeRangeVersion.id });
     }
 
     // In SHADOW mode: simulate fills
     if (this.config.mode === "SHADOW") {
       await this.simulateShadowTick(bandSnapshot.midPrice);
     }
+  }
+
+  /**
+   * Log a SHADOW tick event with throttling to avoid spam.
+   * Only logs if enough time has passed since the last shadow info event.
+   */
+  private async logShadowTickEvent(eventType: GridEventType, message: string, meta?: Record<string, any>): Promise<void> {
+    const now = Date.now();
+    if (this.lastShadowEventAt && (now - this.lastShadowEventAt.getTime()) < this.shadowTickThrottleMs) {
+      return; // Throttled — skip logging
+    }
+    this.lastShadowEventAt = new Date();
+    await this.logEvent(eventType, message, meta);
   }
 
   /**
@@ -758,7 +806,13 @@ class GridIsolatedEngine {
       capitalAvailableUsd: 0,
       totalNetPnlUsd: totalNetPnl,
       totalCyclesCompleted: completedCycles,
-    };
+      isActive: this.config?.isActive ?? false,
+      isRunning: this.running,
+      lastTickAt: this.lastTickAt,
+      lastTickReason: this.lastTickReason,
+      lastShadowValidationAt: this.lastShadowValidationAt,
+      lastShadowValidationResult: this.lastShadowValidationResult,
+    } as any;
   }
 
   /**
@@ -801,6 +855,34 @@ class GridIsolatedEngine {
   }
 
   /**
+   * Activate or deactivate the grid motor.
+   * Sets isActive in config and starts/stops the scheduler accordingly.
+   * Does NOT change mode — stays in SHADOW if already SHADOW.
+   */
+  async setActive(active: boolean): Promise<{ success: boolean; isActive: boolean; running: boolean }> {
+    if (!this.config) await this.loadConfig();
+    if (!this.config) return { success: false, isActive: false, running: false };
+
+    this.config.isActive = active;
+    await this.saveConfig();
+
+    if (active && this.config.mode !== "OFF") {
+      this.start();
+    } else {
+      this.stop();
+    }
+
+    return { success: true, isActive: this.config.isActive, running: this.running };
+  }
+
+  /**
+   * Get last shadow validation result.
+   */
+  getLastShadowValidation(): { at: Date | null; result: any } {
+    return { at: this.lastShadowValidationAt, result: this.lastShadowValidationResult };
+  }
+
+  /**
    * Run a SHADOW validation tick — switches to SHADOW mode, runs one tick,
    * verifies no real orders were placed, and returns audit info.
    * Safe: SHADOW never calls placeOrder.
@@ -814,10 +896,31 @@ class GridIsolatedEngine {
     status: GridExecutionStatus;
     realModesBlocked: boolean;
     message: string;
+    evaluated: boolean;
+    tickRan: boolean;
+    rangeUsed: string | null;
+    activeRangeVersionIdUsed: string | null;
+    levelsWouldGenerate: number;
+    reasonNoLevels: string | null;
+    reasonNoEvents: string | null;
+    marketSnapshotAvailable: boolean;
+    bandSnapshotAvailable: boolean;
+    walletAvailable: boolean;
+    capitalAvailable: boolean;
+    blockedByIsActive: boolean;
+    blockedByMode: boolean;
+    blockedByReconciliation: boolean;
+    blockedByModeLock: boolean;
+    blockedByNoRange: boolean;
+    blockedByNoMarketData: boolean;
+    blockedByExistingLevels: boolean;
+    blockedByRiskGuard: boolean;
+    nextAction: string;
   }> {
     if (!this.config) await this.loadConfig();
 
     const previousMode = this.config!.mode;
+    const configIsActive = this.config!.isActive;
 
     // Switch to SHADOW if not already
     if (previousMode !== "SHADOW") {
@@ -832,21 +935,52 @@ class GridIsolatedEngine {
           status: this.getExecutionStatus(),
           realModesBlocked: true,
           message: `No se pudo cambiar a SHADOW: ${result.reason}`,
+          evaluated: false,
+          tickRan: false,
+          rangeUsed: null,
+          activeRangeVersionIdUsed: null,
+          levelsWouldGenerate: 0,
+          reasonNoLevels: `No se pudo cambiar a SHADOW: ${result.reason}`,
+          reasonNoEvents: "No se ejecutó el tick.",
+          marketSnapshotAvailable: false,
+          bandSnapshotAvailable: false,
+          walletAvailable: false,
+          capitalAvailable: false,
+          blockedByIsActive: false,
+          blockedByMode: true,
+          blockedByReconciliation: false,
+          blockedByModeLock: false,
+          blockedByNoRange: false,
+          blockedByNoMarketData: false,
+          blockedByExistingLevels: false,
+          blockedByRiskGuard: false,
+          nextAction: "Resolver el bloqueo de modo para permitir SHADOW.",
         };
       }
     }
 
-    // Run one tick
+    // Gather diagnostics before tick
+    const rangeBefore = this.activeRangeVersion?.id || null;
     const levelsBefore = this.levels.length;
     const eventsBefore = await this.countRecentEvents();
 
+    // Temporarily force isActive=true for the validation tick
+    const originalIsActive = this.config!.isActive;
+    this.config!.isActive = true;
+
+    // Run one tick
     await this.tick();
+
+    // Restore isActive
+    this.config!.isActive = originalIsActive;
 
     const levelsAfter = this.levels.length;
     const eventsAfter = await this.countRecentEvents();
+    const levelsGenerated = levelsAfter - levelsBefore;
+    const eventsGenerated = eventsAfter - eventsBefore;
 
     // Verify no real orders — SHADOW never calls gridExecutionService
-    const realOrdersPlaced = false; // SHADOW mode by design never calls placeOrder
+    const realOrdersPlaced = false;
 
     // Check that REAL modes are still blocked
     const realModesBlocked = !gridModeLockService.isModeSafe("REAL_LIMITED");
@@ -856,16 +990,94 @@ class GridIsolatedEngine {
       await this.changeMode("OFF");
     }
 
-    return {
+    // Build diagnostics
+    const bandSnapshotAvailable = this.lastTickReason !== "Sin datos de mercado (bandSnapshot no disponible).";
+    const marketSnapshotAvailable = bandSnapshotAvailable;
+    const walletAvailable = (this.config?.gridWalletInitialUsd || 0) > 0;
+    const capitalAvailable = walletAvailable;
+    const blockedByIsActive = !configIsActive;
+    const blockedByMode = previousMode === "OFF" && !this.config!.isActive;
+    const blockedByReconciliation = false; // Checked in blockingReasons, not in engine tick
+    const blockedByModeLock = false;
+    const blockedByNoRange = !rangeBefore && levelsGenerated === 0;
+    const blockedByNoMarketData = !bandSnapshotAvailable;
+    const blockedByExistingLevels = levelsBefore > 0 && levelsGenerated === 0;
+    const blockedByRiskGuard = this.pumpDumpState.state !== "normal" || this.circuitBreakerOpen;
+
+    let reasonNoLevels: string | null = null;
+    if (levelsGenerated === 0) {
+      if (blockedByIsActive) {
+        reasonNoLevels = "El motor está en SHADOW pero isActive=false, por lo que no se generan niveles automáticos.";
+      } else if (blockedByNoMarketData) {
+        reasonNoLevels = "No hay datos de mercado disponibles para evaluar bandas.";
+      } else if (blockedByNoRange) {
+        reasonNoLevels = "No hay rango activo cargado en el motor runtime. El rango puede existir en auditoría pero no en memoria tras reinicio.";
+      } else if (blockedByExistingLevels) {
+        reasonNoLevels = "Ya existen niveles generados. El motor no duplica niveles para el mismo rango.";
+      } else if (blockedByRiskGuard) {
+        reasonNoLevels = `Risk guard activo: pump/dump=${this.pumpDumpState.state}, circuitBreaker=${this.circuitBreakerOpen}.`;
+      } else {
+        reasonNoLevels = this.lastTickReason || "El tick se ejecutó pero no generó niveles nuevos.";
+      }
+    }
+
+    let reasonNoEvents: string | null = null;
+    if (eventsGenerated === 0) {
+      if (blockedByIsActive) {
+        reasonNoEvents = "Motor inactivo (isActive=false) — no se ejecutaron ticks automáticos.";
+      } else {
+        reasonNoEvents = "El tick se ejecutó pero no produjo eventos nuevos (posiblemente condiciones sin cambios).";
+      }
+    }
+
+    let nextAction = "";
+    if (blockedByIsActive) {
+      nextAction = "Activar motor Grid en SHADOW o ejecutar una simulación forzada.";
+    } else if (blockedByNoMarketData) {
+      nextAction = "Verificar conectividad de datos de mercado y reintentar.";
+    } else if (blockedByNoRange) {
+      nextAction = "Esperar a que el motor proponga un rango o verificar datos de banda.";
+    } else if (levelsGenerated > 0) {
+      nextAction = "Revisar niveles generados en la pestaña Niveles.";
+    } else {
+      nextAction = "El motor está activo pero no hay cambios. Revisar condiciones de mercado.";
+    }
+
+    const result = {
       success: true,
       mode: this.config!.mode,
       realOrdersPlaced,
-      levelsGenerated: levelsAfter - levelsBefore,
-      eventsGenerated: eventsAfter - eventsBefore,
+      levelsGenerated,
+      eventsGenerated,
       status: this.getExecutionStatus(),
       realModesBlocked,
       message: "SHADOW validation OK — no real orders placed, simulation ran successfully",
+      evaluated: true,
+      tickRan: true,
+      rangeUsed: rangeBefore,
+      activeRangeVersionIdUsed: this.activeRangeVersion?.id || null,
+      levelsWouldGenerate: levelsGenerated,
+      reasonNoLevels,
+      reasonNoEvents,
+      marketSnapshotAvailable,
+      bandSnapshotAvailable,
+      walletAvailable,
+      capitalAvailable,
+      blockedByIsActive,
+      blockedByMode,
+      blockedByReconciliation,
+      blockedByModeLock,
+      blockedByNoRange,
+      blockedByNoMarketData,
+      blockedByExistingLevels,
+      blockedByRiskGuard,
+      nextAction,
     };
+
+    this.lastShadowValidationAt = new Date();
+    this.lastShadowValidationResult = result;
+
+    return result;
   }
 
   /**

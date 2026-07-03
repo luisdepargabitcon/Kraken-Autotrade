@@ -17,6 +17,7 @@
  *   POST /api/grid-isolated/reconcile           — Run reconciliation
  *   POST /api/grid-isolated/backtest            — Run backtest
  *   POST /api/grid-isolated/shadow-validate     — Run SHADOW validation tick (safe, no real orders)
+ *   POST /api/grid-isolated/activate            — Activate/deactivate Grid motor (isActive toggle)
  *   GET  /api/grid-isolated/export/chatgpt      — Export resumen para ChatGPT (texto plano)
  *   GET  /api/grid-isolated/export/json         — Export audit completo en JSON
  *   GET  /api/grid-isolated/export/csv          — Export eventos en CSV
@@ -79,17 +80,32 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
   }
 
   if (mode === "SHADOW") {
-    decisions.push({
-      timestamp: new Date().toISOString(),
-      mode: "SHADOW",
-      pair: "BTC/USD",
-      detected: "Modo SHADOW activo",
-      wanted: "Simular operaciones",
-      decided: "Evaluar y simular sin órdenes reales",
-      reason: "El Grid puede pasar a SHADOW porque no envía órdenes reales.",
-      impact: "Simulación segura",
-      nextAction: "Revisar niveles simulados y eventos generados",
-    });
+    const isActive = config?.isActive ?? false;
+    if (!isActive) {
+      decisions.push({
+        timestamp: new Date().toISOString(),
+        mode: "SHADOW",
+        pair: config?.pair || "BTC/USD",
+        detected: "Motor Grid inactivo",
+        wanted: "Simular niveles",
+        decided: "No ejecutar ticks automáticos",
+        reason: "La configuración tiene isActive=false. El modo SHADOW está configurado pero el motor no ejecuta ticks automáticos.",
+        impact: "Sin niveles ni ciclos generados automáticamente",
+        nextAction: "Activar motor Grid en SHADOW desde la UI o ejecutar simulación forzada.",
+      });
+    } else {
+      decisions.push({
+        timestamp: new Date().toISOString(),
+        mode: "SHADOW",
+        pair: config?.pair || "BTC/USD",
+        detected: "Modo SHADOW activo",
+        wanted: "Simular operaciones",
+        decided: "Evaluar y simular sin órdenes reales",
+        reason: "El Grid puede pasar a SHADOW porque no envía órdenes reales.",
+        impact: "Simulación segura",
+        nextAction: "Revisar niveles simulados y eventos generados",
+      });
+    }
   }
 
   if (!checks.postOnlySupported) {
@@ -740,6 +756,60 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const walletUsedPct = walletMax > 0 ? (walletReserved / walletMax) * 100 : 0;
       const walletStatus = walletFree <= 0 ? "sin capital" : walletFree < (config?.gridMinFreeCapitalUsd || 50) ? "esperando oportunidad" : "disponible";
 
+      // Functional status block
+      const isActive = config?.isActive ?? false;
+      const isRunning = (status as any)?.isRunning ?? false;
+      const lastTickAt = (status as any)?.lastTickAt ?? null;
+      const lastTickReason = (status as any)?.lastTickReason ?? null;
+      const activeRangeRuntime = status?.activeRangeVersionId ?? null;
+      const activeRangeAudit = resolvedRange?.activeRangeVersionId ?? null;
+      const rangeMismatch = activeRangeAudit && !activeRangeRuntime;
+
+      let functionalState = "unknown";
+      let functionalMessage = "";
+      if (mode === "OFF") {
+        functionalState = "off";
+        functionalMessage = "Grid en OFF. El motor no evalúa mercado ni genera actividad.";
+      } else if (!isActive) {
+        functionalState = "inactive";
+        functionalMessage = `Grid en ${mode}, pero sin actividad operativa nueva. El motor está inactivo (isActive=false). La auditoría está disponible${resolvedRange && resolvedRange.status !== "sin_rango_activo" ? " y hay un rango histórico activo" : ""}, pero el motor no genera niveles ni ciclos.`;
+      } else if (!isRunning) {
+        functionalState = "stopped";
+        functionalMessage = `Grid en ${mode} e isActive=true, pero el scheduler no está corriendo. Posible problema tras reinicio.`;
+      } else if (levels.length === 0 && cycles.length === 0) {
+        functionalState = "waiting";
+        functionalMessage = `Grid en ${mode} y motor activo, pero no ha generado niveles ni ciclos. ${lastTickReason || "Esperando condiciones válidas."}`;
+      } else {
+        functionalState = "active";
+        functionalMessage = `Grid en ${mode} y motor activo. ${levels.length} niveles, ${cycles.length} ciclos.`;
+      }
+
+      const functionalStatus = {
+        state: functionalState,
+        message: functionalMessage,
+        config: {
+          mode,
+          isActive,
+          walletConfigured: walletTotal > 0,
+          executionPolicy: config?.executionPolicy || "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK",
+        },
+        runtime: {
+          schedulerRunning: isRunning,
+          lastTickAt,
+          lastTickReason,
+          activeRangeRuntime,
+          activeRangeAudit,
+          rangeMismatch: !!rangeMismatch,
+        },
+        result: {
+          levelsGenerated: levels.length,
+          cyclesGenerated: cycles.length,
+          eventsGenerated: events.length,
+        },
+      };
+
+      const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
+
       res.json({
         ok: true,
         status: "ok",
@@ -853,6 +923,11 @@ export function registerGridIsolatedRoutes(app: Express): void {
           unknownOrders: levels.filter((l: any) => l.status === "unknown").length,
         },
         reconciliation: reconciliation || { ok: null, mismatches: [] },
+        functionalStatus,
+        lastShadowEvaluation: lastShadowValidation.at ? {
+          at: lastShadowValidation.at,
+          result: lastShadowValidation.result,
+        } : null,
         export: {
           chatgptSummary,
           json: {
@@ -918,6 +993,26 @@ export function registerGridIsolatedRoutes(app: Express): void {
     try {
       const result = await gridIsolatedEngine.runShadowValidation();
       res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // ─── Activate / Deactivate Motor ─────────────────────────
+
+  app.post("/api/grid-isolated/activate", async (req: Request, res: Response) => {
+    try {
+      const { active } = req.body as { active?: boolean };
+      const targetActive = active !== false; // default true if not specified
+      const result = await gridIsolatedEngine.setActive(targetActive);
+      res.json({
+        success: result.success,
+        isActive: result.isActive,
+        running: result.running,
+        message: targetActive
+          ? "Motor Grid activado. El scheduler iniciará ticks automáticos si el modo no es OFF."
+          : "Motor Grid desactivado. El scheduler se ha detenido.",
+      });
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }

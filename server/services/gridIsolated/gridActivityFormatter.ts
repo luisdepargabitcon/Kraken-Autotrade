@@ -311,6 +311,39 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
     title: "Simulación SHADOW",
     messageFn: () => "Simulación SHADOW ejecutada.",
   },
+  GRID_SHADOW_TICK_SKIPPED: {
+    category: "SYSTEM",
+    severity: "INFO",
+    title: "Tick SHADOW omitido",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `Evaluación SHADOW omitida: ${meta.reason || "motor inactivo"}.`;
+    },
+  },
+  GRID_SHADOW_NO_LEVELS: {
+    category: "SYSTEM",
+    severity: "INFO",
+    title: "SHADOW sin niveles",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `El Grid evaluó el mercado pero no generó niveles. Motivo: ${meta.reason || "condiciones no válidas"}.`;
+    },
+  },
+  GRID_SHADOW_RANGE_REUSED: {
+    category: "BAND",
+    severity: "INFO",
+    title: "Rango reutilizado",
+    messageFn: () => "El Grid reutiliza el último rango activo para auditoría. No se abren ciclos nuevos sin fills simulados.",
+  },
+  GRID_SHADOW_WAITING: {
+    category: "SYSTEM",
+    severity: "INFO",
+    title: "SHADOW esperando",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `El Grid está en SHADOW esperando condiciones válidas. Motivo: ${meta.reason || "no especificado"}.`;
+    },
+  },
 };
 
 export function formatGridEvent(ev: RawGridEvent): FormattedGridEvent {

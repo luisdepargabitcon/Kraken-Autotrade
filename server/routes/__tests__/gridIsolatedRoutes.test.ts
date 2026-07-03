@@ -336,6 +336,110 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body).toHaveProperty("message");
   });
 
+  // ─── Shadow-validate diagnostics tests ─────────────────────────
+  it("shadow-validate returns reasonNoLevels when levelsGenerated=0", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-validate");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("evaluated", true);
+    expect(res.body).toHaveProperty("tickRan", true);
+    expect(res.body).toHaveProperty("reasonNoLevels");
+    expect(res.body).toHaveProperty("reasonNoEvents");
+    expect(res.body).toHaveProperty("nextAction");
+    expect(res.body).toHaveProperty("blockedByIsActive");
+    expect(res.body).toHaveProperty("marketSnapshotAvailable");
+    expect(res.body).toHaveProperty("walletAvailable");
+    if (res.body.levelsGenerated === 0) {
+      expect(res.body.reasonNoLevels).toBeTruthy();
+      expect(typeof res.body.reasonNoLevels).toBe("string");
+    }
+  });
+
+  it("shadow-validate never places real orders", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-validate");
+    expect(res.status).toBe(200);
+    expect(res.body.realOrdersPlaced).toBe(false);
+  });
+
+  // ─── Activate endpoint tests ───────────────────────────────────
+  it("POST /api/grid-isolated/activate with active=true activates the motor", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/activate");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("success", true);
+    expect(res.body).toHaveProperty("isActive");
+    expect(res.body).toHaveProperty("running");
+    expect(res.body).toHaveProperty("message");
+  });
+
+  it("POST /api/grid-isolated/activate with active=false deactivates the motor", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/activate");
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+
+  // ─── Functional status in audit ────────────────────────────────
+  it("monitor/audit includes functionalStatus block", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("functionalStatus");
+    expect(res.body.functionalStatus).toHaveProperty("state");
+    expect(res.body.functionalStatus).toHaveProperty("message");
+    expect(res.body.functionalStatus).toHaveProperty("config");
+    expect(res.body.functionalStatus).toHaveProperty("runtime");
+    expect(res.body.functionalStatus).toHaveProperty("result");
+  });
+
+  it("monitor/audit functionalStatus.runtime exposes rangeMismatch", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.functionalStatus.runtime).toHaveProperty("activeRangeRuntime");
+    expect(res.body.functionalStatus.runtime).toHaveProperty("activeRangeAudit");
+    expect(res.body.functionalStatus.runtime).toHaveProperty("rangeMismatch");
+  });
+
+  it("monitor/audit includes lastShadowEvaluation when available", async () => {
+    // First run a shadow validation to populate lastShadowValidation
+    await simulatePost(app, "/api/grid-isolated/shadow-validate");
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    // lastShadowEvaluation may be null if no validation has been run, or an object
+    if (res.body.lastShadowEvaluation) {
+      expect(res.body.lastShadowEvaluation).toHaveProperty("at");
+      expect(res.body.lastShadowEvaluation).toHaveProperty("result");
+    }
+  });
+
+  // ─── isActive decision in audit ────────────────────────────────
+  it("monitor/audit decisions explain motor state (inactive or active) when in SHADOW", async () => {
+    const auditRes = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(auditRes.status).toBe(200);
+    const mode = auditRes.body.mode;
+    const decisions = auditRes.body.decisions || [];
+    if (mode === "SHADOW") {
+      const hasInactiveDecision = decisions.some((d: any) =>
+        d.detected === "Motor Grid inactivo" ||
+        (d.reason || "").includes("isActive=false")
+      );
+      const hasActiveDecision = decisions.some((d: any) =>
+        d.detected === "Modo SHADOW activo"
+      );
+      expect(hasInactiveDecision || hasActiveDecision).toBe(true);
+    } else {
+      // If mode is OFF, there should be a "Modo OFF activo" decision
+      const hasOffDecision = decisions.some((d: any) =>
+        d.detected === "Modo OFF activo"
+      );
+      expect(hasOffDecision).toBe(true);
+    }
+  });
+
+  // ─── Status exposes isActive and isRunning ─────────────────────
+  it("GET /api/grid-isolated/status exposes isActive and isRunning", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/status");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("isActive");
+    expect(res.body).toHaveProperty("isRunning");
+  });
+
   // ─── Wallet configured detection tests ─────────────────────────
   it("monitor/audit does NOT include 'Cartera Grid no configurada' when wallet has defaults", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");

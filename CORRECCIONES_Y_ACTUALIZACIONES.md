@@ -2,6 +2,86 @@
 
 ---
 
+## 2026-07-04 — fix(grid-isolated): explain shadow inactivity and expose functional runtime status
+
+### Resumen
+El módulo Grid estaba vivo y auditable pero no generaba actividad nueva. Causa raíz: `isActive=false` bloqueaba el tick del motor, pero la UI y la auditoría no lo explicaban. Además, `runShadowValidation` forzaba `isActive=true` temporalmente pero no diagnosticaba por qué `levelsGenerated=0`. Tras reinicio del servidor, el motor no se auto-iniciaba aunque mode=SHADOW e isActive=true.
+
+### Cambios principales
+
+**`server/services/gridIsolated/gridIsolatedEngine.ts`**:
+- `tick()`: ahora verifica `isActive` antes de ejecutar lógica. Si `isActive=false`, registra motivo y emite evento `GRID_SHADOW_TICK_SKIPPED` (con throttling 5 min).
+- `tick()`: registra `lastTickAt` y `lastTickReason` en cada ejecución para diagnóstico.
+- `tick()`: emite eventos `GRID_SHADOW_NO_LEVELS`, `GRID_SHADOW_WAITING`, `GRID_SHADOW_RANGE_REUSED` con throttling de 5 min para evitar spam.
+- `logShadowTickEvent()`: nuevo método privado con throttling/dedupe para eventos informativos SHADOW.
+- `loadConfig()`: auto-inicia el motor (`this.start()`) si mode != OFF e isActive = true tras cargar config de DB.
+- `getExecutionStatus()`: ahora expone `isActive`, `isRunning`, `lastTickAt`, `lastTickReason`, `lastShadowValidationAt`, `lastShadowValidationResult`.
+- `setActive(active)`: nuevo método para activar/desactivar el motor. Pone `isActive` en config, guarda a DB, y arranca/para el scheduler.
+- `getLastShadowValidation()`: nuevo método para exponer la última validación SHADOW.
+- `runShadowValidation()`: enriquecido con 15 campos de diagnóstico: `evaluated`, `tickRan`, `rangeUsed`, `activeRangeVersionIdUsed`, `levelsWouldGenerate`, `reasonNoLevels`, `reasonNoEvents`, `marketSnapshotAvailable`, `bandSnapshotAvailable`, `walletAvailable`, `capitalAvailable`, `blockedByIsActive`, `blockedByMode`, `blockedByReconciliation`, `blockedByModeLock`, `blockedByNoRange`, `blockedByNoMarketData`, `blockedByExistingLevels`, `blockedByRiskGuard`, `nextAction`.
+
+**`server/services/gridIsolated/gridIsolatedTypes.ts`**:
+- Añadidos `GRID_SHADOW_TICK_SKIPPED`, `GRID_SHADOW_NO_LEVELS`, `GRID_SHADOW_RANGE_REUSED`, `GRID_SHADOW_WAITING` a `GRID_EVENT_TYPES`.
+
+**`server/services/gridIsolated/gridActivityFormatter.ts`**:
+- Añadidos `EVENT_MAPPINGS` para los 4 nuevos tipos de evento SHADOW con `messageFn` en castellano.
+
+**`server/routes/gridIsolated.routes.ts`**:
+- `buildDecisions()`: cuando mode=SHADOW e isActive=false, añade decisión "Motor Grid inactivo" con reason, impact y nextAction.
+- Endpoint `POST /api/grid-isolated/activate`: nuevo endpoint para activar/desactivar el motor (toggle isActive).
+- `monitor/audit`: añade `functionalStatus` con state, message, config, runtime (schedulerRunning, lastTickAt, lastTickReason, activeRangeRuntime, activeRangeAudit, rangeMismatch), y result (levels, cycles, events).
+- `monitor/audit`: añade `lastShadowEvaluation` con timestamp y resultado completo.
+
+**`client/src/components/grid/GridSummaryPanel.tsx`**:
+- Nuevo bloque "Estado funcional del Grid" al inicio del panel con:
+  - Mensaje de estado funcional (active/inactive/off/waiting/stopped)
+  - Grid de 3 columnas: Configuración, Motor runtime, Resultado
+  - Último motivo de tick y última simulación SHADOW
+  - Botones: "Activar motor SHADOW", "Detener motor", "Ejecutar simulación SHADOW ahora"
+- Nuevas props: `onActivate`, `onShadowValidate`, `activatePending`, `shadowValidatePending`.
+
+**`client/src/pages/GridIsolated.tsx`**:
+- Añadidas mutaciones `activateMutation` y `shadowValidateMutation` con invalidación de queries.
+- Pasadas nuevas props a `GridSummaryPanel`.
+
+**`server/routes/__tests__/gridIsolatedRoutes.test.ts`**:
+- 9 tests nuevos (45 total):
+  - shadow-validate devuelve `reasonNoLevels` cuando levelsGenerated=0
+  - shadow-validate nunca envía órdenes reales
+  - POST /activate activa el motor
+  - POST /activate desactiva el motor
+  - audit incluye `functionalStatus` block
+  - audit functionalStatus.runtime expone `rangeMismatch`
+  - audit incluye `lastShadowEvaluation` cuando disponible
+  - audit decisions explican estado del motor (inactivo/activo/OFF)
+  - GET /status expone `isActive` e `isRunning`
+
+### Validación
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run`: 45/45 tests ✅
+
+### Comandos VPS para validar
+```bash
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+
+# Verificar estado funcional
+curl -s http://127.0.0.1:3020/api/grid-isolated/monitor/audit | jq '{functionalStatus, lastShadowEvaluation}'
+
+# Verificar status con isActive/isRunning
+curl -s http://127.0.0.1:3020/api/grid-isolated/status | jq '{mode,isActive,isRunning,lastTickAt,lastTickReason}'
+
+# Activar motor SHADOW
+curl -s -X POST -H "Content-Type: application/json" http://127.0.0.1:3020/api/grid-isolated/activate -d '{"active":true}' | jq '.'
+
+# Ejecutar simulación SHADOW con diagnósticos
+curl -s -X POST -H "Content-Type: application/json" http://127.0.0.1:3020/api/grid-isolated/shadow-validate -d '{}' | jq '{levelsGenerated,reasonNoLevels,blockedByIsActive,nextAction}'
+```
+
+---
+
 ## 2026-07-04 — fix(grid-isolated): fix wallet configured detection and event natural messages
 
 ### Resumen

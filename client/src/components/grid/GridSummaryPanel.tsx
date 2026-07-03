@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Activity, TrendingUp, TrendingDown, Wallet, Zap, Shield, BarChart3, Layers, Radio, Cpu, CheckCircle2, XCircle } from "lucide-react";
+import { AlertCircle, Activity, TrendingUp, TrendingDown, Wallet, Zap, Shield, BarChart3, Layers, Radio, Cpu, CheckCircle2, XCircle, Play, Pause, FlaskConical, Info } from "lucide-react";
 import { GridActivityLive } from "./GridActivityLive";
 
 interface GridSummaryPanelProps {
@@ -19,15 +19,25 @@ interface GridSummaryPanelProps {
   acknowledgePending: boolean;
   reconcilePending: boolean;
   onGoToTab: (tab: string) => void;
+  onActivate: (active: boolean) => void;
+  onShadowValidate: () => void;
+  activatePending: boolean;
+  shadowValidatePending: boolean;
 }
 
 export function GridSummaryPanel({
   config, status, auditData, levels, cycles, unlockCheck,
   modeColor, onModeChange, onAcknowledge, onReconcile,
   modeMutationPending, acknowledgePending, reconcilePending,
-  onGoToTab,
+  onGoToTab, onActivate, onShadowValidate, activatePending, shadowValidatePending,
 }: GridSummaryPanelProps) {
   const mode = config?.mode || "OFF";
+  const isActive = config?.isActive ?? false;
+  const isRunning = (status as any)?.isRunning ?? false;
+  const lastTickAt = (status as any)?.lastTickAt ?? null;
+  const lastTickReason = (status as any)?.lastTickReason ?? null;
+  const functionalStatus = auditData?.functionalStatus;
+  const lastShadowEval = auditData?.lastShadowEvaluation;
   const range = auditData?.range;
   const rangeHistory: any[] = auditData?.rangeHistory || [];
   const hasActiveRange = range && range.status !== "sin_rango_activo";
@@ -49,6 +59,150 @@ export function GridSummaryPanel({
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
       {/* Main content — 8 cols */}
       <div className="lg:col-span-8 space-y-4">
+
+        {/* 0. Estado funcional del Grid */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Info className="h-5 w-5" />
+              Estado funcional del Grid
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Functional status message */}
+            <div className={`rounded-lg p-3 text-sm ${functionalStatus?.state === "active" ? "bg-green-500/10 text-green-700 dark:text-green-300" : functionalStatus?.state === "inactive" || functionalStatus?.state === "off" ? "bg-orange-500/10 text-orange-700 dark:text-orange-300" : "bg-blue-500/10 text-blue-700 dark:text-blue-300"}`}>
+              <p className="font-medium">{functionalStatus?.message || "Estado funcional no disponible."}</p>
+            </div>
+
+            {/* Config + Runtime + Result grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Config */}
+              <div className="rounded-lg border p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground">Configuración</p>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Modo</span>
+                  <Badge variant={modeColor(mode) as any}>{mode}</Badge>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Motor activo</span>
+                  {isActive ? (
+                    <span className="flex items-center gap-1 text-green-500"><CheckCircle2 className="h-3 w-3" /> Sí</span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-orange-500"><XCircle className="h-3 w-3" /> No</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Cartera</span>
+                  <span className={wallet?.totalUsd > 0 ? "text-green-500" : "text-orange-500"}>
+                    {wallet?.totalUsd > 0 ? "Configurada" : "No configurada"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Runtime */}
+              <div className="rounded-lg border p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground">Motor runtime</p>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Scheduler</span>
+                  {isRunning ? (
+                    <span className="flex items-center gap-1 text-green-500"><Activity className="h-3 w-3" /> Activo</span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-muted-foreground"><Pause className="h-3 w-3" /> Inactivo</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Último tick</span>
+                  <span>{lastTickAt ? new Date(lastTickAt).toLocaleTimeString("es-ES") : "—"}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Rango runtime</span>
+                  <span className="font-mono text-[10px]">{(status as any)?.activeRangeVersionId ? String((status as any).activeRangeVersionId).slice(0, 8) : "—"}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Rango auditoría</span>
+                  <span className="font-mono text-[10px]">{range?.activeRangeVersionId ? String(range.activeRangeVersionId).slice(0, 8) : "—"}</span>
+                </div>
+                {functionalStatus?.runtime?.rangeMismatch && (
+                  <div className="text-[10px] text-orange-500 mt-1">
+                    Rango histórico en auditoría pero no cargado en runtime.
+                  </div>
+                )}
+              </div>
+
+              {/* Result */}
+              <div className="rounded-lg border p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-muted-foreground">Resultado</p>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Niveles</span>
+                  <span className="font-bold">{levels.length}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Ciclos</span>
+                  <span className="font-bold">{cycles.length}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Eventos</span>
+                  <span className="font-bold">{functionalStatus?.result?.eventsGenerated ?? "—"}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Last tick reason */}
+            {lastTickReason && (
+              <div className="rounded-lg bg-muted/30 p-2 text-xs text-muted-foreground">
+                <strong>Último motivo:</strong> {lastTickReason}
+              </div>
+            )}
+
+            {/* Last shadow evaluation */}
+            {lastShadowEval && (
+              <div className="rounded-lg bg-muted/30 p-2 text-xs text-muted-foreground">
+                <strong>Última simulación SHADOW:</strong> {new Date(lastShadowEval.at).toLocaleString("es-ES")}
+                {lastShadowEval.result?.reasonNoLevels && (
+                  <span className="block mt-1">Motivo sin niveles: {lastShadowEval.result.reasonNoLevels}</span>
+                )}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex flex-wrap gap-2 pt-2 border-t">
+              {mode !== "OFF" && !isActive && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => onActivate(true)}
+                  disabled={activatePending}
+                >
+                  <Play className="h-3 w-3 mr-1" />
+                  Activar motor SHADOW
+                </Button>
+              )}
+              {mode !== "OFF" && isActive && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => onActivate(false)}
+                  disabled={activatePending}
+                >
+                  <Pause className="h-3 w-3 mr-1" />
+                  Detener motor
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={onShadowValidate}
+                disabled={shadowValidatePending}
+              >
+                <FlaskConical className="h-3 w-3 mr-1" />
+                Ejecutar simulación SHADOW ahora
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* 4.1 Estado del mercado y rango activo */}
         <Card>
