@@ -7,17 +7,37 @@ interface GridLevelsPanelProps {
   levels: any[];
   mode: string;
   currentPrice?: number | null;
-  onGoToTab: (tab: string) => void;
+  limit?: number;
+  showViewAll?: boolean;
+  onGoToTab?: (tab: string) => void;
 }
 
-export function GridLevelsPanel({ levels, mode, currentPrice, onGoToTab }: GridLevelsPanelProps) {
-  const formatPrice = (price: number) => `$${price.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export function GridLevelsPanel({ levels, mode, currentPrice, limit = 10, showViewAll = true, onGoToTab }: GridLevelsPanelProps) {
+  const toNumberOrNull = (value: unknown): number | null => {
+    if (value === undefined || value === null) return null;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+
+  const formatPrice = (value: unknown) => {
+    const price = toNumberOrNull(value);
+    if (price === null) return "—";
+    return `$${price.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
   const formatPct = (pct: number) => `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+
+  const getLevelPrice = (level: any) =>
+    level?.price ?? level?.buyPrice ?? level?.sellPrice ?? null;
 
   const getLevelRelation = (level: any) => {
     if (currentPrice === null || currentPrice === undefined) return null;
-    const levelPrice = level.buyPrice || level.sellPrice;
-    if (!levelPrice) return null;
+    const levelPrice = toNumberOrNull(getLevelPrice(level));
+    if (levelPrice === null) return null;
 
     if (level.side === "BUY") {
       if (levelPrice < currentPrice) {
@@ -37,8 +57,8 @@ export function GridLevelsPanel({ levels, mode, currentPrice, onGoToTab }: GridL
 
   const getDistance = (level: any) => {
     if (currentPrice === null || currentPrice === undefined) return null;
-    const levelPrice = level.buyPrice || level.sellPrice;
-    if (!levelPrice) return null;
+    const levelPrice = toNumberOrNull(getLevelPrice(level));
+    if (levelPrice === null) return null;
 
     const distanceUsd = levelPrice - currentPrice;
     const distancePct = (distanceUsd / currentPrice) * 100;
@@ -68,10 +88,11 @@ export function GridLevelsPanel({ levels, mode, currentPrice, onGoToTab }: GridL
                     <th className="text-left py-2 px-2">Distancia %</th>
                     <th className="text-left py-2 px-2">Relación</th>
                     <th className="text-left py-2 px-2">Capital</th>
+                    <th className="text-left py-2 px-2">Cantidad</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {levels.slice(0, 10).map((level: any, i: number) => {
+                  {levels.slice(0, limit).map((level: any, i: number) => {
                     const distance = getDistance(level);
                     const relation = getLevelRelation(level);
                     const Icon = relation?.icon;
@@ -85,7 +106,7 @@ export function GridLevelsPanel({ levels, mode, currentPrice, onGoToTab }: GridL
                           </Badge>
                         </td>
                         <td className="py-2 px-2"><Badge variant="secondary" className="text-xs">{level.status}</Badge></td>
-                        <td className="py-2 px-2 font-mono">{formatPrice(level.buyPrice || level.sellPrice)}</td>
+                        <td className="py-2 px-2 font-mono">{formatPrice(getLevelPrice(level))}</td>
                         <td className="py-2 px-2 font-mono text-xs">
                           {distance ? (
                             <span className={distance.distanceUsd >= 0 ? "text-green-400" : "text-red-400"}>
@@ -109,13 +130,18 @@ export function GridLevelsPanel({ levels, mode, currentPrice, onGoToTab }: GridL
                           ) : "—"}
                         </td>
                         <td className="py-2 px-2 font-mono text-xs">{formatPrice(level.notionalUsd)}</td>
+                        <td className="py-2 px-2 font-mono text-xs">
+                          {toNumberOrNull(level?.quantity) !== null
+                            ? toNumberOrNull(level?.quantity)?.toFixed(6)
+                            : "—"}
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
-            {levels.length > 10 && (
+            {showViewAll && levels.length > limit && onGoToTab && (
               <Button variant="outline" size="sm" className="mt-2" onClick={() => onGoToTab("niveles")}>
                 Ver todos los {levels.length} niveles
               </Button>

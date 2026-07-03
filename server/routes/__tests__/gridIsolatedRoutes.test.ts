@@ -21,6 +21,16 @@ vi.mock("../../services/botLogger", () => ({
   },
 }));
 
+vi.mock("../../services/MarketDataService", () => ({
+  MarketDataService: {
+    getTicker: vi.fn().mockResolvedValue({
+      last: 62594.0,
+      bid: 62590.0,
+      ask: 62598.0,
+    }),
+  },
+}));
+
 vi.mock("../../db", () => {
   const chainable = {
     from: vi.fn().mockReturnThis(),
@@ -257,6 +267,31 @@ describe("Grid Isolated Routes — Endpoints", () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
     expect(res.body.range).toBeDefined();
     expect(res.body.range).toHaveProperty("status");
+  });
+
+  it("monitor/audit returns marketContext with currentPrice", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.marketContext).toBeDefined();
+    expect(res.body.marketContext).toHaveProperty("currentPrice", 62594.0);
+    expect(res.body.marketContext).toHaveProperty("pair");
+    expect(res.body.marketContext).toHaveProperty("source");
+  });
+
+  it("monitor/audit returns marketContext.band with lower/center/upper/widthPct", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    const band = res.body.marketContext?.band;
+    expect(band).toBeDefined();
+    expect(band).toHaveProperty("lower");
+    expect(band).toHaveProperty("center");
+    expect(band).toHaveProperty("upper");
+    expect(band).toHaveProperty("widthPct");
+    expect(band).toHaveProperty("status");
+  });
+
+  it("monitor/audit returns marketContext.bandPosition", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.marketContext?.bandPosition).toBeDefined();
+    expect(["below", "lower", "middle", "upper", "above", "unknown"]).toContain(res.body.marketContext?.bandPosition);
   });
 
   it("monitor/audit returns rangeHistory array", async () => {

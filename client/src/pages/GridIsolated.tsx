@@ -18,6 +18,7 @@ import { GridSummaryPanel } from "@/components/grid/GridSummaryPanel";
 import { GridHeaderHero } from "@/components/grid/GridHeaderHero";
 import { GridKpiStrip } from "@/components/grid/GridKpiStrip";
 import { GridLevelsMarketHeader } from "@/components/grid/GridLevelsMarketHeader";
+import { GridLevelsPanel } from "@/components/grid/GridLevelsPanel";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -718,50 +719,13 @@ export default function GridIsolated() {
             cyclesCount={cycles?.length || 0}
             lastTickReason={(status as any)?.lastTickReason}
           />
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Layers className="h-5 w-5" />
-                Niveles del Grid
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {levels && levels.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-xs text-muted-foreground border-b">
-                        <th className="text-left py-2 px-2">Nivel</th>
-                        <th className="text-left py-2 px-2">Estado</th>
-                        <th className="text-left py-2 px-2">Precio compra</th>
-                        <th className="text-left py-2 px-2">Precio venta objetivo</th>
-                        <th className="text-left py-2 px-2">Capital reservado</th>
-                        <th className="text-left py-2 px-2">Cantidad</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {levels.map((level: any) => (
-                        <tr key={level.id} className="border-b hover:bg-muted/30">
-                          <td className="py-2 px-2">
-                            <Badge variant={level.side === "BUY" ? "default" : "outline"}>{level.side}</Badge>
-                          </td>
-                          <td className="py-2 px-2"><Badge variant="secondary">{level.status}</Badge></td>
-                          <td className="py-2 px-2 font-mono">${level.price?.toFixed(2)}</td>
-                          <td className="py-2 px-2 font-mono text-muted-foreground">—</td>
-                          <td className="py-2 px-2">${level.notionalUsd?.toFixed(2)}</td>
-                          <td className="py-2 px-2 text-muted-foreground">{level.quantity?.toFixed(6)} BTC</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground py-8 text-center">
-                  No hay niveles activos. El Grid está en {config?.mode || "OFF"} o todavía no ha generado niveles operativos.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          <GridLevelsPanel
+            levels={levels || []}
+            mode={config?.mode || "OFF"}
+            currentPrice={auditData?.marketContext?.currentPrice}
+            limit={levels?.length || 0}
+            showViewAll={false}
+          />
         </TabsContent>
 
         {/* 7. Ciclos Tab */}

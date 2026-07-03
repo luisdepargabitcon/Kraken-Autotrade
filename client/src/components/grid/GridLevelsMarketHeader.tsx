@@ -34,12 +34,24 @@ export function GridLevelsMarketHeader({
 
   const { currentPrice, band, bandPosition, bandPositionPct, nearestLevel, updatedAt } = marketContext;
 
-  const formatPrice = (price: number | null) => {
+  const toNumberOrNull = (value: unknown): number | null => {
+    if (value === undefined || value === null) return null;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  };
+
+  const formatPrice = (value: unknown) => {
+    const price = toNumberOrNull(value);
     if (price === null) return "—";
     return `$${price.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  const formatPct = (pct: number | null) => {
+  const formatPct = (value: unknown) => {
+    const pct = toNumberOrNull(value);
     if (pct === null) return "—";
     return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
   };
@@ -51,6 +63,7 @@ export function GridLevelsMarketHeader({
       case "middle": return "Zona media de la banda";
       case "upper": return "Zona superior de la banda";
       case "above": return "Por encima de la banda";
+      case "unknown": return "Banda no disponible";
       default: return "Posición desconocida";
     }
   };
@@ -62,6 +75,7 @@ export function GridLevelsMarketHeader({
       case "middle": return "text-blue-400";
       case "upper": return "text-green-400";
       case "above": return "text-amber-400";
+      case "unknown": return "text-muted-foreground";
       default: return "text-muted-foreground";
     }
   };
@@ -145,6 +159,7 @@ export function GridLevelsMarketHeader({
 
         {/* Fila 2: Explicación natural */}
         <div className={`rounded-lg p-3 text-sm ${
+          bandPosition === "unknown" ? "bg-muted text-muted-foreground" :
           bandPosition === "below" || bandPosition === "above" ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" :
           "bg-blue-500/10 text-blue-700 dark:text-blue-300"
         }`}>

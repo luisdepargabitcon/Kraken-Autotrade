@@ -757,12 +757,27 @@ export function registerGridIsolatedRoutes(app: Express): void {
         const ticker = await MarketDataService.getTicker(pair);
         if (ticker) {
           const currentPrice = ticker.last;
-          const bandLower = resolvedRange?.bandLower;
-          const bandUpper = resolvedRange?.bandUpper;
-          const bandCenter = bandLower && bandUpper ? (bandLower + bandUpper) / 2 : null;
-          const bandWidthPct = bandLower && bandUpper ? ((bandUpper - bandLower) / bandLower) * 100 : null;
+          // Use real range field names with robust fallbacks
+          const bandLower =
+            resolvedRange?.lowerPrice ??
+            resolvedRange?.bandLower ??
+            resolvedRange?.lower ??
+            null;
+          const bandUpper =
+            resolvedRange?.upperPrice ??
+            resolvedRange?.bandUpper ??
+            resolvedRange?.upper ??
+            null;
+          const bandCenter =
+            resolvedRange?.centerPrice ??
+            resolvedRange?.center ??
+            (bandLower && bandUpper ? (bandLower + bandUpper) / 2 : null);
+          const bandWidthPct =
+            resolvedRange?.widthPct ??
+            resolvedRange?.bandWidthPct ??
+            (bandLower && bandUpper && bandCenter ? ((bandUpper - bandLower) / bandCenter) * 100 : null);
 
-          let bandPosition: "below" | "lower" | "middle" | "upper" | "above" = "below";
+          let bandPosition: "below" | "lower" | "middle" | "upper" | "above" | "unknown" = "unknown";
           let bandPositionPct: number | null = null;
           if (currentPrice && bandLower && bandUpper) {
             if (currentPrice < bandLower) {
@@ -785,13 +800,17 @@ export function registerGridIsolatedRoutes(app: Express): void {
             }
           }
 
-          // Find nearest level
+          // Find nearest level using real level.price with fallbacks
           let nearestLevel: any = null;
           let nearestDistanceUsd: number | null = null;
           let nearestDistancePct: number | null = null;
           if (currentPrice && levels.length > 0) {
             for (const level of levels) {
-              const levelPrice = (level as any).buyPrice || (level as any).sellPrice;
+              const levelPrice =
+                (level as any).price ??
+                (level as any).buyPrice ??
+                (level as any).sellPrice ??
+                null;
               if (levelPrice) {
                 const dist = Math.abs(currentPrice - levelPrice);
                 if (nearestDistanceUsd === null || dist < nearestDistanceUsd) {
@@ -823,7 +842,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
             nearestLevel: nearestLevel ? {
               id: nearestLevel.id,
               side: nearestLevel.side,
-              price: (nearestLevel as any).buyPrice || (nearestLevel as any).sellPrice,
+              price: (nearestLevel as any).price ?? (nearestLevel as any).buyPrice ?? (nearestLevel as any).sellPrice,
               distanceUsd: nearestDistanceUsd,
               distancePct: nearestDistancePct,
             } : null,
@@ -831,7 +850,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         }
       } catch (error) {
         // Market context is optional; log but don't fail the request
-        botLogger.warn("Failed to fetch market context for Grid audit", { error: String(error) });
+        botLogger.warn("SYSTEM_ERROR", "Failed to fetch market context for Grid audit", { error: String(error) });
       }
 
       const walletTotal = (config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0);
