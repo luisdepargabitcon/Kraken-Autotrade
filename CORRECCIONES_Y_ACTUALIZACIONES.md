@@ -2,6 +2,44 @@
 
 ---
 
+## 2026-07-04 — fix(grid-isolated): clarify inactive range mode and naturalize visible events
+
+### Resumen
+Ajuste fino final: el export ChatGPT ya no dice "rango activo en OFF" cuando el rango fue generado en SHADOW. Los textos de cartera no dicen "no configurada" cuando la wallet existe. Todos los eventos visibles (events/live, audit, export) ahora incluyen `naturalMessage` en castellano natural.
+
+### Cambios principales
+
+**1. Export ChatGPT — Bandas/Rangos según modo actual**
+- Si mode = OFF: "Último rango activo generado en SHADOW. Actualmente el Grid está en OFF, por lo que no está usando el rango para operar."
+- Si mode = SHADOW: "Rango activo en SHADOW."
+- Si mode = REAL: "Rango activo en modo real."
+
+**2. Cartera — coherencia entre defaults**
+- `buildBlockingReasons` y `buildDecisions` ahora usan `<= 0` en vez de `=== 0` para detectar cartera no configurada.
+- El texto "Cartera Grid no configurada — capital no aislado" solo aparece si `gridWalletInitialUsd <= 0 AND gridWalletMaxUsd <= 0`.
+- ChatGPT summary: "Capital reservado: cartera no configurada." solo si no hay config.
+
+**3. naturalMessage en todos los endpoints de eventos**
+- Nueva función `getNaturalGridMessage()` en `gridActivityFormatter.ts`: genera mensaje natural desde eventType + metadataJson.
+- `/events/live`: cada evento ahora incluye `naturalMessage`.
+- `/monitor/audit`: cada evento en `events[]` incluye `naturalMessage`.
+- Export ChatGPT: "Últimos eventos" usa `naturalMessage` en vez de `ev.message` crudo.
+- `GridActivityLive.tsx`: `formatEvent` usa `ev.naturalMessage` si existe, fallback a `naturalMessage()` local.
+- `naturalMessage()` local mejorado para GRID_RANGE_PROPOSED y GRID_RANGE_ACTIVATED con metadataJson.
+- `rawMessage` sigue disponible como detalle técnico desplegable.
+
+### Tests
+- 28/28 tests pasando.
+- No se tocaron IDCA, FISCO, órdenes reales, ni RevolutXService.
+
+### Archivos modificados
+- `server/routes/gridIsolated.routes.ts`
+- `server/services/gridIsolated/gridActivityFormatter.ts`
+- `client/src/components/grid/GridActivityLive.tsx`
+- `CORRECCIONES_Y_ACTUALIZACIONES.md`
+
+---
+
 ## 2026-07-04 — fix(grid-isolated): resolve active range from events and naturalize range logs
 
 ### Resumen

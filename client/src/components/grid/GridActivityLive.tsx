@@ -80,11 +80,22 @@ function naturalMessage(ev: any): string {
   const msg = ev.message || "";
   switch (eventType) {
     case "GRID_MODE_CHANGED":
-      return `Modo Grid cambiado a ${ev.mode || "—"}.`;
-    case "GRID_RANGE_PROPOSED":
-      return "Banda detectada: BTC/USD está dentro de una zona válida para Grid.";
-    case "GRID_RANGE_ACTIVATED":
-      return "Banda activada para Grid.";
+      return ev.message || `Modo Grid cambiado a ${ev.mode || "—"}.`;
+    case "GRID_RANGE_PROPOSED": {
+      const meta = ev.metadataJson || {};
+      const levels = meta.levelsCount ?? meta.levelsGenerated;
+      const mid = meta.centerPrice ?? meta.midPrice;
+      const pair = meta.pair || "BTC/USD";
+      if (mid != null && levels != null) {
+        return `Rango propuesto: el Grid detectó una zona válida para ${pair} con ${levels} niveles alrededor de ${Number(mid).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`;
+      }
+      return ev.message || "Rango propuesto: el Grid detectó una zona válida.";
+    }
+    case "GRID_RANGE_ACTIVATED": {
+      const meta = ev.metadataJson || {};
+      const mode = meta.mode || "SHADOW";
+      return ev.message || `Rango activado: el Grid usará esta banda para generar niveles futuros en modo ${mode}.`;
+    }
     case "GRID_LEVEL_PLACED":
       return `Nivel creado para ${ev.pair || "BTC/USD"}.`;
     case "GRID_LEVEL_FILLED":
@@ -141,7 +152,7 @@ function formatEvent(ev: any): FormattedEvent {
     category: categoryFromEventType(ev.eventType),
     mode: ev.mode || "OFF",
     title: ev.eventType.replace(/^GRID_/, "").replace(/_/g, " "),
-    message: naturalMessage(ev),
+    message: ev.naturalMessage || naturalMessage(ev),
     technicalCode: ev.eventType,
     details: ev.metadataJson ? (typeof ev.metadataJson === "string" ? ev.metadataJson : JSON.stringify(ev.metadataJson, null, 2)) : null,
     cycleId: ev.cycleId || null,

@@ -33,6 +33,7 @@ import { gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy } from "../services/gridIsolated/gridIsolatedTypes";
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
+import { getNaturalGridMessage } from "../services/gridIsolated/gridActivityFormatter";
 
 function buildBlockingReasons(checks: any, config?: any): string[] {
   const reasons: string[] = [];
@@ -54,7 +55,7 @@ function buildBlockingReasons(checks: any, config?: any): string[] {
   // Capital check: only block if wallet doesn't exist at all
   const walletInitial = config?.gridWalletInitialUsd || 0;
   const walletMax = config?.gridWalletMaxUsd || 0;
-  if (walletInitial === 0 && walletMax === 0) {
+  if (walletInitial <= 0 && walletMax <= 0) {
     reasons.push("Cartera Grid no configurada — capital no aislado");
   }
   return reasons;
@@ -136,7 +137,7 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
   // Capital decision: explain correctly when wallet exists but no cycles
   const walletInitial = config?.gridWalletInitialUsd || 0;
   const walletMax = config?.gridWalletMaxUsd || 0;
-  if (walletInitial === 0 && walletMax === 0) {
+  if (walletInitial <= 0 && walletMax <= 0) {
     decisions.push({
       timestamp: new Date().toISOString(),
       mode,
@@ -221,7 +222,7 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     const reserved = status?.capitalReservedUsd || 0;
     lines.push(`Capital reservado en ciclos: $${reserved.toFixed(2)}${reserved === 0 ? " (sin ciclos activos)" : ""}.`);
   } else {
-    lines.push(`Capital reservado: no configurado.`);
+    lines.push(`Capital reservado: cartera no configurada.`);
   }
   lines.push(`Mode lock reconocido: ${checks.modeLockAcknowledged ? "sí" : "no"}.`);
   lines.push(`Límite diario respetado: ${checks.dailyOrderLimitRespected ? "sí" : "no"}.`);
@@ -255,14 +256,20 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   if (resolvedRange && resolvedRange.status !== "sin_rango_activo") {
     const rvId = resolvedRange.activeRangeVersionId || "desconocido";
     const hasLimits = resolvedRange.lowerPrice != null && resolvedRange.upperPrice != null;
+    const rangeModeIntro = mode === "OFF"
+      ? "Último rango activo generado en SHADOW. Actualmente el Grid está en OFF, por lo que no está usando el rango para operar."
+      : mode === "SHADOW"
+      ? "Rango activo en SHADOW."
+      : "Rango activo en modo real.";
     if (hasLimits) {
-      lines.push(`Bandas/Rangos: hay un rango activo en ${mode} con ID ${rvId}.`);
+      lines.push(`Bandas/Rangos: ${rangeModeIntro}`);
       lines.push(`Rango: ${resolvedRange.pair} ${Number(resolvedRange.lowerPrice).toFixed(2)} $ – ${Number(resolvedRange.upperPrice).toFixed(2)} $.`);
       if (resolvedRange.widthPct != null) lines.push(`Anchura: ${Number(resolvedRange.widthPct).toFixed(2)} %.`);
       if (resolvedRange.method) lines.push(`Régimen: ${resolvedRange.method}.`);
       if (resolvedRange.levelsGenerated != null) lines.push(`Niveles generados: ${resolvedRange.levelsGenerated}.`);
     } else {
-      lines.push(`Bandas/Rangos: hay un rango activado en ${mode} con ID ${rvId}.`);
+      lines.push(`Bandas/Rangos: ${rangeModeIntro}`);
+      lines.push(`ID del rango: ${rvId}.`);
       if (resolvedRange.levelsGenerated != null) {
         lines.push(`Fue propuesto con ${resolvedRange.levelsGenerated} niveles.`);
       }
@@ -285,7 +292,8 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   if (events.length > 0) {
     lines.push(`Últimos eventos:`);
     events.slice(0, 10).forEach((ev: any) => {
-      lines.push(`  - [${ev.eventType}] ${ev.message}`);
+      const naturalMsg = getNaturalGridMessage(ev.eventType, ev.message, ev.metadataJson);
+      lines.push(`  - [${ev.eventType}] ${naturalMsg}`);
     });
   } else {
     lines.push("Eventos: todavía no hay eventos Grid generados.");
@@ -300,7 +308,7 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   }
   if (!checks.capitalReserved && (walletInitialCfg > 0 || walletMaxCfg > 0) && (status?.openCycles || 0) === 0) {
     // Wallet configured but no active cycles — not a blocking issue
-  } else if (!checks.capitalReserved && walletInitialCfg === 0 && walletMaxCfg === 0) {
+  } else if (!checks.capitalReserved && walletInitialCfg <= 0 && walletMaxCfg <= 0) {
     actions.push("Configurar cartera Grid para aislar capital.");
   }
   if (!checks.modeLockAcknowledged) {
@@ -675,9 +683,14 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
       const lastEventId = events.length > 0 ? events[0].id : sinceId;
 
+      const eventsWithNatural = events.map((ev: any) => ({
+        ...ev,
+        naturalMessage: getNaturalGridMessage(ev.eventType, ev.message, ev.metadataJson),
+      }));
+
       res.json({
         ok: true,
-        events,
+        events: eventsWithNatural,
         lastEventId,
         serverTime: new Date().toISOString(),
         pollMs: 3000,
@@ -805,7 +818,10 @@ export function registerGridIsolatedRoutes(app: Express): void {
             return [];
           }
         })(),
-        events,
+        events: events.map((ev: any) => ({
+          ...ev,
+          naturalMessage: getNaturalGridMessage(ev.eventType, ev.message, ev.metadataJson),
+        })),
         decisions,
         levels,
         cycles,

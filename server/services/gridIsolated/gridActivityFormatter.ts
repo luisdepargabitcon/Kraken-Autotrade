@@ -336,6 +336,32 @@ export function formatGridEvents(events: RawGridEvent[]): FormattedGridEvent[] {
   return events.map(formatGridEvent);
 }
 
+/**
+ * Get natural Spanish message for a raw grid event.
+ * Parses metadataJson if needed to produce a human-readable message.
+ */
+export function getNaturalGridMessage(eventType: string, rawMessage: string | null, metadataJson: any): string {
+  const meta = metadataJson ? (typeof metadataJson === "string" ? (() => { try { return JSON.parse(metadataJson); } catch { return {}; } })() : metadataJson) : {};
+  const mapping = EVENT_MAPPINGS[eventType];
+  if (mapping?.messageFn) {
+    const fakeEv: RawGridEvent = {
+      id: 0,
+      eventType,
+      message: rawMessage,
+      mode: meta.mode || null,
+      metadataJson: meta,
+      cycleId: meta.cycleId || null,
+      levelId: meta.levelId || null,
+      pair: meta.pair || null,
+      price: meta.price || null,
+      quantity: meta.quantity || null,
+      createdAt: new Date().toISOString(),
+    };
+    return mapping.messageFn(fakeEv);
+  }
+  return rawMessage || eventType;
+}
+
 export const SEVERITY_LABELS: Record<GridSeverity, string> = {
   INFO: "Info",
   SUCCESS: "OK",
