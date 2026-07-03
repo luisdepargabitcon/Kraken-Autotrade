@@ -320,6 +320,7 @@ export interface ModeUnlockCheck {
   capitalReserved: boolean;
   modeLockAcknowledged: boolean;
   dailyOrderLimitRespected: boolean;
+  postOnlySupported: boolean;
 }
 
 export const REAL_MODE_UNLOCK_DEFAULTS: ModeUnlockCheck = {
@@ -329,6 +330,7 @@ export const REAL_MODE_UNLOCK_DEFAULTS: ModeUnlockCheck = {
   capitalReserved: false,
   modeLockAcknowledged: false,
   dailyOrderLimitRespected: true,
+  postOnlySupported: false,
 };
 
 // ─── Grid Event Types (for botLogger) ───────────────────────────────

@@ -196,6 +196,7 @@ export async function registerRoutes(
         { id: '059_fisco_v2_import_config', filePath: path.join(migrationsDir, '059_fisco_v2_import_config.sql') },
         { id: '060_idca_hybrid_grid_traceability', filePath: path.join(migrationsDir, '060_idca_hybrid_grid_traceability.sql') },
         { id: '061_audit_tables', filePath: path.join(migrationsDir, '061_audit_tables.sql') },
+        { id: '062_capital_efficiency_gate', filePath: path.join(migrationsDir, '062_capital_efficiency_gate.sql') },
         { id: '063_grid_isolated', filePath: path.join(migrationsDir, '063_grid_isolated.sql') },
       ];
 

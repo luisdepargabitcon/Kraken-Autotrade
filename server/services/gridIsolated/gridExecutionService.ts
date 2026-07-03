@@ -1,7 +1,17 @@
 /**
  * GridExecutionService — Low-API maker-first order execution for Grid Isolated.
  *
- * Execution Policy: MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK
+ * IMPORTANT: RevolutXService does NOT currently support post-only orders.
+ * The placeOrder method sends a plain LIMIT order without execution_instructions.
+ * This means ALL limit orders may execute as taker (0.09% fee) instead of maker (0% fee).
+ *
+ * Until post-only support is added to RevolutXService:
+ *   - REAL_LIMITED mode is BLOCKED by gridModeLockService
+ *   - REAL_FULL mode is BLOCKED by gridModeLockService
+ *   - This service is implemented but NOT callable in production
+ *   - SHADOW mode does NOT use this service
+ *
+ * Execution Policy (when post-only is supported):
  *   1. Try post-only limit order (maker, 0% fee on Revolut X)
  *   2. If post-only rejected, retry up to POST_ONLY_MAX_ATTEMPTS (3)
  *   3. On 3rd rejection, place limit taker order (0.09% fee)
@@ -11,6 +21,7 @@
  *   - Post-only rejections → retry (these are expected, price moved)
  *   - Timeout / 5xx / 429 → do NOT fallback to taker, circuit breaker
  *   - 401/403 → log critical, stop engine
+ *   - ORDER_SUBMIT_UNKNOWN → do NOT place another order, circuit breaker
  *
  * Rate limiting:
  *   - Uses RevolutXService's built-in rate limiter (250ms FIFO queue)
@@ -128,17 +139,29 @@ class GridExecutionService {
   /**
    * Determine if an error is a post-only rejection (price moved).
    * Post-only rejections are EXPECTED and should trigger retry.
+   * NOTE: RevolutXService does not currently return post-only specific errors
+   * because it does not send post-only orders. This detection is for future use.
    */
   private isPostOnlyRejection(error: any): boolean {
     if (!error) return false;
     const msg = (error.message || error.toString() || "").toLowerCase();
-    // Revolut X returns specific error codes for post-only rejections
-    // "would_cross" or "post_only_would_cross" or similar
     return msg.includes("post_only") ||
            msg.includes("postonly") ||
            msg.includes("would_cross") ||
            msg.includes("would match") ||
            msg.includes("crosses");
+  }
+
+  /**
+   * Determine if an error is an ORDER_SUBMIT_UNKNOWN state.
+   * This means the order was submitted but we don't know if it was accepted.
+   * In this state, we must NOT place another order (risk of duplicate).
+   */
+  private isOrderSubmitUnknown(error: any): boolean {
+    if (!error) return false;
+    const msg = (error.message || error.toString() || "").toLowerCase();
+    return msg.includes("unknown") &&
+           (msg.includes("submit") || msg.includes("timeout") || msg.includes("no response"));
   }
 
   /**
@@ -224,6 +247,12 @@ class GridExecutionService {
         // Order not successful — check error type
         lastError = new Error(orderResult.error || "Unknown error");
 
+        if (this.isOrderSubmitUnknown(lastError)) {
+          // ORDER_SUBMIT_UNKNOWN: do NOT place another order, open circuit breaker
+          this.openCircuitBreaker(`ORDER_SUBMIT_UNKNOWN: ${lastError.message}`);
+          return this.failResult(request, `ORDER_SUBMIT_UNKNOWN — circuit breaker opened: ${lastError.message}`, postOnlyAttempts);
+        }
+
         if (this.isPostOnlyRejection(lastError)) {
           postOnlyAttempts = attempt;
           await botLogger.info("GRID_LEVEL_POST_ONLY_REJECTED", `Post-only rejected (attempt ${attempt}/${POST_ONLY_MAX_ATTEMPTS}): ${lastError.message}`, {
@@ -250,6 +279,11 @@ class GridExecutionService {
       } catch (error) {
         lastError = error;
         postOnlyAttempts = attempt;
+
+        if (this.isOrderSubmitUnknown(error)) {
+          this.openCircuitBreaker(`ORDER_SUBMIT_UNKNOWN: ${(error as Error).message}`);
+          return this.failResult(request, `ORDER_SUBMIT_UNKNOWN — circuit breaker opened: ${(error as Error).message}`, postOnlyAttempts);
+        }
 
         if (this.isRetryableApiError(error)) {
           this.openCircuitBreaker(`API error: ${(error as Error).message}`);

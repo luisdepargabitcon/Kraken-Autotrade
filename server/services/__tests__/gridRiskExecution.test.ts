@@ -393,3 +393,66 @@ describe("GridRiskManager — Stop Loss", () => {
     expect(result.suggestedSellPrice).toBeNull();
   });
 });
+
+// ─── Post-Only and Mode Lock Tests ──────────────────────────────────
+
+describe("GridModeLockService — Post-Only Block", () => {
+  it("REAL_LIMITED is blocked when postOnlySupported=false", async () => {
+    const { gridModeLockService } = await import("../gridIsolated/gridModeLockService");
+    const lock = await gridModeLockService.checkModeTransition("OFF", "REAL_LIMITED");
+    expect(lock.unlocked).toBe(false);
+    expect(lock.blockingReasons.some(r => r.includes("post-only"))).toBe(true);
+  });
+
+  it("REAL_FULL is blocked when postOnlySupported=false", async () => {
+    const { gridModeLockService } = await import("../gridIsolated/gridModeLockService");
+    const lock = await gridModeLockService.checkModeTransition("OFF", "REAL_FULL");
+    expect(lock.unlocked).toBe(false);
+    expect(lock.blockingReasons.some(r => r.includes("post-only"))).toBe(true);
+  });
+
+  it("SHADOW is always allowed regardless of postOnlySupported", async () => {
+    const { gridModeLockService } = await import("../gridIsolated/gridModeLockService");
+    const lock = await gridModeLockService.checkModeTransition("OFF", "SHADOW");
+    expect(lock.unlocked).toBe(true);
+    expect(lock.blockingReasons.length).toBe(0);
+  });
+
+  it("OFF is always allowed", async () => {
+    const { gridModeLockService } = await import("../gridIsolated/gridModeLockService");
+    const lock = await gridModeLockService.checkModeTransition("SHADOW", "OFF");
+    expect(lock.unlocked).toBe(true);
+  });
+
+  it("isModeSafe returns false for REAL modes when postOnlySupported=false", async () => {
+    const { gridModeLockService } = await import("../gridIsolated/gridModeLockService");
+    expect(gridModeLockService.isModeSafe("REAL_LIMITED")).toBe(false);
+    expect(gridModeLockService.isModeSafe("REAL_FULL")).toBe(false);
+    expect(gridModeLockService.isModeSafe("SHADOW")).toBe(true);
+    expect(gridModeLockService.isModeSafe("OFF")).toBe(true);
+  });
+});
+
+describe("GridExecutionService — ORDER_SUBMIT_UNKNOWN", () => {
+  it("ORDER_SUBMIT_UNKNOWN error opens circuit breaker and does not fallback to taker", async () => {
+    const { revolutXService } = await import("../exchanges/RevolutXService");
+    vi.mocked(revolutXService.placeOrder).mockResolvedValueOnce({
+      success: false,
+      error: "unknown submit timeout — no response from server",
+    });
+
+    const result = await gridExecutionService.placeOrder({
+      pair: "BTC/USD",
+      side: "BUY",
+      price: 50000,
+      quantity: 0.001,
+      clientOrderId: "test-unknown-submit-1",
+      postOnly: true,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("ORDER_SUBMIT_UNKNOWN");
+    expect(gridExecutionService.isCircuitBreakerOpen()).toBe(true);
+    expect(result.usedTakerFallback).toBe(false);
+  });
+});

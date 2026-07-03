@@ -66,6 +66,9 @@ class GridModeLockService {
     if (!checks.modeLockAcknowledged) {
       blockingReasons.push("Mode lock no reconocido explícitamente por el usuario");
     }
+    if (!checks.postOnlySupported) {
+      blockingReasons.push("RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados");
+    }
     if (!checks.dailyOrderLimitRespected) {
       blockingReasons.push("Límite diario de órdenes excedido");
     }
@@ -130,6 +133,10 @@ class GridModeLockService {
 
     // 6. Daily order limit — set externally by engine
     checks.dailyOrderLimitRespected = this.lastUnlockCheck.dailyOrderLimitRespected;
+
+    // 7. Post-only support — RevolutXService must support post-only orders for REAL modes
+    // Currently NOT supported: placeOrder does not send execution_instructions or post_only flag
+    checks.postOnlySupported = false;
 
     this.lastUnlockCheck = checks;
     return checks;
@@ -197,7 +204,8 @@ class GridModeLockService {
       this.lastUnlockCheck.reconciliationPassed &&
       this.lastUnlockCheck.capitalReserved &&
       this.acknowledged &&
-      this.lastUnlockCheck.dailyOrderLimitRespected
+      this.lastUnlockCheck.dailyOrderLimitRespected &&
+      this.lastUnlockCheck.postOnlySupported
     );
   }
 }

@@ -2,6 +2,76 @@
 
 ---
 
+## 2026-07-15 — fix(grid-isolated): harden post-only capabilities and UI audit
+
+**Tag**: WINDSURF GRID ISOLATED ENGINE — AUDITORÍA POST-COMMIT
+**Commit auditado**: ed30b50
+**Commit fix**: pendiente
+
+### Auditoría post-commit ed30b50 — Resultados
+
+#### 1) Post-Only Revolut X — NO SOPORTADO
+- **Estado**: RevolutXService NO envía `execution_instructions` ni `post_only` en el body de placeOrder.
+- **Confirmación**: grep de `post_only|postOnly|execution_instruction|maker_only` en RevolutXService.ts e IExchangeService.ts → 0 resultados.
+- **Corrección aplicada**:
+  - Añadido `postOnlySupported: boolean` a `ModeUnlockCheck` en `gridIsolatedTypes.ts`
+  - `REAL_MODE_UNLOCK_DEFAULTS.postOnlySupported = false`
+  - `gridModeLockService.ts`: check `postOnlySupported` bloquea REAL_LIMITED y REAL_FULL
+  - `isModeSafe()` incluye `postOnlySupported` en la verificación
+  - UI muestra aviso: "RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados"
+  - Comentarios actualizados en `gridExecutionService.ts` explicando limitación
+- **Tests añadidos**: 5 tests en `GridModeLockService — Post-Only Block` + 1 test `ORDER_SUBMIT_UNKNOWN`
+
+#### 2) UI Grid Aislado — 7 subpestañas
+- **Estado anterior**: 4 tabs (Configuración, Niveles, Ciclos, Riesgo)
+- **Corrección aplicada**: Reemplazado por 7 subpestañas:
+  1. **Resumen** — estado del motor, status cards, alertas
+  2. **Configuración** — parámetros del grid (bands, ATR, step, geometric ratio)
+  3. **Capital Inteligente** — perfil, max ciclos, max órdenes diarias, aislamiento
+  4. **Niveles y Ciclos** — niveles del grid + ciclos buy→sell fusionados
+  5. **Riesgo y Recuperación** — trailing, stop loss 3 capas, HODL, pump/dump, reconciliación
+  6. **Backtest** — formulario de configuración + modelos de fill
+  7. **Auditoría Grid** — espejo de Monitor > Grid (circuit breaker, pump/dump, órdenes hoy, reconciliación, eventos)
+- **Monitor > Grid**: ya existe con `GridMonitorPanel` en pestaña "Grid Isolated" de Monitor.tsx
+
+#### 3) gridRiskManager.ts — OK, COMMITEADO
+- `git show --stat ed30b50 | grep gridRiskManager` → confirmado: 285 líneas
+- `git ls-files | grep gridRiskManager` → presente en repo
+
+#### 4) Migración 063 y AutoMigration
+- **Problema detectado**: `062_capital_efficiency_gate.sql` NO estaba registrado en AutoMigrationRunner
+- **Corrección aplicada**: Añadido `062_capital_efficiency_gate` antes de `063_grid_isolated` en `server/routes.ts`
+- **Migración 063**: idempotente (`CREATE TABLE IF NOT EXISTS` en todas las 9 tablas), no rompe arranque
+- **Orden correcto**: 061 → 062 → 063
+
+#### 5) Validación final real
+- `npm run check` (tsc): ✅ sin errores
+- `npx vitest run` (5 archivos grid): ✅ 104/104 tests
+- `npm run build`: ✅ built in 18.75s
+
+#### 6) Riesgo de órdenes reales — Verificación por código
+- **Default mode = OFF**: ✅ (`DEFAULT_GRID_CONFIG.mode = "OFF"`)
+- **REAL_LIMITED no se activa por defecto**: ✅ (bloqueado por mode lock)
+- **REAL_FULL no se activa por defecto**: ✅ (bloqueado por mode lock)
+- **SHADOW no envía órdenes reales**: ✅ (gridExecutionService no se importa ni llama en SHADOW)
+- **REAL_LIMITED requiere unlock explícito**: ✅ (modeLockAcknowledged + postOnlySupported + 5 checks)
+- **REAL_FULL requiere unlock explícito**: ✅ (mismos checks)
+- **Si supportsPostOnly=false, ambos modos reales bloqueados**: ✅ (implementado y testeado)
+- **ORDER_SUBMIT_UNKNOWN no envía otra orden**: ✅ (circuit breaker + bloqueo, testeado)
+- **Timeout/5xx/429 no activa taker fallback**: ✅ (circuit breaker, testeado)
+- **allowMarketOrders = false por defecto**: ✅ (no se usa market en gridExecutionService)
+
+### Archivos modificados en este fix
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — añadido `postOnlySupported` a `ModeUnlockCheck` y `REAL_MODE_UNLOCK_DEFAULTS`
+- `server/services/gridIsolated/gridModeLockService.ts` — check `postOnlySupported` bloquea REAL, actualizado `isModeSafe()`
+- `server/services/gridIsolated/gridExecutionService.ts` — manejo `ORDER_SUBMIT_UNKNOWN`, comentarios post-only actualizados
+- `server/routes.ts` — añadida migración 062 al AutoMigrationRunner
+- `client/src/pages/GridIsolated.tsx` — 7 subpestañas, check postOnlySupported en UI, aviso visual
+- `server/services/__tests__/gridRiskExecution.test.ts` — 6 tests nuevos (post-only block + ORDER_SUBMIT_UNKNOWN)
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` — esta documentación
+
+---
+
 ## 2026-07-15 — feat(grid-isolated): Grid Isolated Professional Engine (FASES 1-13)
 
 **Tag**: WINDSURF GRID ISOLATED ENGINE
