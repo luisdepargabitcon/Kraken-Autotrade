@@ -61,6 +61,7 @@ export interface IExchangeService {
     price?: string;
     volume: string;
     clientOrderId?: string; // Optional: caller-provided order ID for traceability
+    executionInstruction?: "post_only" | "allow_taker"; // Revolut X execution instructions
   }): Promise<OrderResult>;
 
   cancelOrder(orderId: string): Promise<boolean>;

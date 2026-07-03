@@ -134,9 +134,10 @@ class GridModeLockService {
     // 6. Daily order limit — set externally by engine
     checks.dailyOrderLimitRespected = this.lastUnlockCheck.dailyOrderLimitRespected;
 
-    // 7. Post-only support — RevolutXService must support post-only orders for REAL modes
-    // Currently NOT supported: placeOrder does not send execution_instructions or post_only flag
-    checks.postOnlySupported = false;
+    // 7. Post-only / allow-taker support — RevolutXService now sends execution_instruction
+    // Revolut X API supports post_only and allow_taker for limit orders.
+    // The adapter passes executionInstruction in the limit order configuration.
+    checks.postOnlySupported = true;
 
     this.lastUnlockCheck = checks;
     return checks;

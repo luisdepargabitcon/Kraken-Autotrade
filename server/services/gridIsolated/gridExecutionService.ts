@@ -1,20 +1,13 @@
 /**
  * GridExecutionService — Low-API maker-first order execution for Grid Isolated.
  *
- * IMPORTANT: RevolutXService does NOT currently support post-only orders.
- * The placeOrder method sends a plain LIMIT order without execution_instructions.
- * This means ALL limit orders may execute as taker (0.09% fee) instead of maker (0% fee).
+ * Revolut X supports post_only and allow_taker execution instructions.
+ * The placeOrder method sends execution_instruction in the limit order configuration.
  *
- * Until post-only support is added to RevolutXService:
- *   - REAL_LIMITED mode is BLOCKED by gridModeLockService
- *   - REAL_FULL mode is BLOCKED by gridModeLockService
- *   - This service is implemented but NOT callable in production
- *   - SHADOW mode does NOT use this service
- *
- * Execution Policy (when post-only is supported):
- *   1. Try post-only limit order (maker, 0% fee on Revolut X)
- *   2. If post-only rejected, retry up to POST_ONLY_MAX_ATTEMPTS (3)
- *   3. On 3rd rejection, place limit taker order (0.09% fee)
+ * Execution Policy (MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK):
+ *   1. Try post_only limit order (maker, 0% fee on Revolut X) — attempts 1, 2, 3
+ *   2. If post_only rejected, retry up to makerAttemptsBeforeTaker (default 3)
+ *   3. On final rejection, place allow_taker limit order (0.09% fee) — attempt 4
  *   4. NEVER use market orders in normal flow
  *
  * Error handling:
@@ -229,6 +222,7 @@ class GridExecutionService {
           price: String(request.price),
           volume: String(request.quantity),
           clientOrderId: request.clientOrderId,
+          executionInstruction: "post_only",
         });
 
         if (orderResult.success) {
@@ -323,6 +317,7 @@ class GridExecutionService {
         price: String(takerPrice),
         volume: String(request.quantity),
         clientOrderId: request.clientOrderId + "_taker",
+        executionInstruction: "allow_taker",
       });
 
       if (orderResult.success) {

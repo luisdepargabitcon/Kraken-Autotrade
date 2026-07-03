@@ -2,6 +2,58 @@
 
 ---
 
+## 2026-07-04 — fix(grid-isolated): polish wallet sliders, range audit y Revolut X execution instructions
+
+### Resumen
+Pulido final del Grid Aislado: sliders de color con edición manual sincronizada para cartera, nueva subpestaña "Bandas y Rangos", corrección de textos de bloqueo REAL (post-only ahora soportado), RevolutXService envía `executionInstruction` correctamente, export ChatGPT actualizado con bandas/rangos.
+
+### Cambios principales
+
+**1. RevolutXService — post_only y allow_taker**
+- `IExchangeService.ts`: Añadido `executionInstruction?: "post_only" | "allow_taker"` al interface `placeOrder`.
+- `RevolutXService.ts`: `placeOrder` ahora incluye `execution_instruction` en el body de órdenes limit.
+- `gridExecutionService.ts`: Intentos maker 1-3 envían `executionInstruction: "post_only"`. Fallback taker (4º) envía `executionInstruction: "allow_taker"`. Header comment actualizado.
+- `gridModeLockService.ts`: `postOnlySupported = true` (antes false).
+
+**2. Textos de bloqueo REAL corregidos**
+- `gridIsolated.routes.ts` `buildBlockingReasons`: Eliminado check de `postOnlySupported` y `capitalReserved` como blocking reason. Ahora solo bloquea si wallet no configurada (initial=0 y max=0).
+- `buildDecisions`: Textos corregidos. Decision de capital ahora explica correctamente "sin ciclos activos" cuando wallet existe pero no hay ciclos.
+- `GridIsolated.tsx`: Texto "Post-Only Soportado" → "Post-Only / Allow-Taker". Mensaje positivo verde cuando soportado.
+
+**3. Cartera con sliders de color + edición manual**
+- `GridIsolated.tsx` tab Cartera: 6 sliders con color dinámico (verde/naranja/rojo según umbral) + input manual sincronizado para: capital inicial, cartera máxima, capital por ciclo USD, capital por ciclo %, reserva %, capital libre mínimo.
+- Botones: Guardar cambios, Restaurar recomendado, Aplicar perfil automático recomendado.
+- Resumen dinámico con valores actuales.
+
+**4. Bandas y Rangos — nueva subpestaña**
+- `GridBandsRangesPanel.tsx` (nuevo): Muestra rango activo (par, límites, centro, anchura, régimen, estado, timestamps, explicación, impacto) e histórico de cambios (eventos GRID_RANGE_* y GRID_BAND_*).
+- `GridIsolated.tsx`: 10 subpestañas (añadida "Bandas" entre Ejecución y Actividad).
+- `gridIsolated.routes.ts` `/monitor/audit`: Añadido `range` (datos del rango activo) y `rangeHistory` (eventos de cambio de banda).
+
+**5. Export ChatGPT actualizado**
+- `buildChatGPTSummary`: "Post-only soportado" → "Adaptador RevolutXService: compatible con post_only y allow_taker". Capital reservado ahora muestra "(sin ciclos activos)" cuando corresponde. Añadida sección Bandas/Rangos con datos del rango activo. Acciones recomendadas corregidas (sin post-only, añade mode lock).
+
+**6. Actividad en directo**
+- `GridActivityLive.tsx`: Ya tenía categoría BAND mapeada a eventos GRID_RANGE_*/GRID_BAND_*. No requiere cambios.
+
+### Tests
+- 28/28 tests pasando en `gridIsolatedRoutes.test.ts`.
+- Tests actualizados: `postOnlySupported=true`, no "post-only" en blockingReasons, "Adaptador RevolutXService" en ChatGPT summary.
+- Nuevos tests: `range` object, `rangeHistory` array en monitor/audit.
+
+### Archivos modificados
+- `server/services/exchanges/IExchangeService.ts`
+- `server/services/exchanges/RevolutXService.ts`
+- `server/services/gridIsolated/gridExecutionService.ts`
+- `server/services/gridIsolated/gridModeLockService.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts`
+- `client/src/pages/GridIsolated.tsx`
+- `client/src/components/grid/GridBandsRangesPanel.tsx` (nuevo)
+- `CORRECCIONES_Y_ACTUALIZACIONES.md`
+
+---
+
 ## 2026-07-04 — feat(grid-isolated): refactor cartera, ejecución 3 maker + 4º taker, actividad en directo
 
 ### Resumen

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon } from "lucide-react";
 import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
 import { GridActivityLive } from "@/components/grid/GridActivityLive";
+import { GridBandsRangesPanel } from "@/components/grid/GridBandsRangesPanel";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -67,6 +68,16 @@ export default function GridIsolated() {
       return res.json();
     },
     refetchInterval: 10000,
+  });
+
+  const { data: auditData } = useQuery({
+    queryKey: ["grid-audit"],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/monitor/audit`);
+      if (!res.ok) throw new Error("Failed to load audit");
+      return res.json();
+    },
+    refetchInterval: 15000,
   });
 
   // ─── Mutations ───────────────────────────────────────────
@@ -292,13 +303,19 @@ export default function GridIsolated() {
                   <Badge variant={unlockCheck?.postOnlySupported ? "default" : "secondary"}>
                     {unlockCheck?.postOnlySupported ? "✓" : "✗"}
                   </Badge>
-                  Post-Only Soportado
+                  Post-Only / Allow-Taker
                 </div>
               </div>
-              {!unlockCheck?.postOnlySupported && (
+              {unlockCheck && !unlockCheck.postOnlySupported && (
                 <div className="flex items-start gap-2 rounded-lg bg-orange-500/10 p-3 text-sm">
                   <AlertCircle className="h-4 w-4 mt-0.5 text-orange-500" />
-                  <span>RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados.</span>
+                  <span>Revolut X documenta post-only y allow-taker. Pendiente: verificar que el adaptador interno RevolutXService envía correctamente las instrucciones de ejecución.</span>
+                </div>
+              )}
+              {unlockCheck?.postOnlySupported && (
+                <div className="flex items-start gap-2 rounded-lg bg-green-500/10 p-3 text-sm">
+                  <Activity className="h-4 w-4 mt-0.5 text-green-500" />
+                  <span>Revolut X permite post-only y allow-taker. El Grid usa 3 intentos post-only para buscar maker. Si no entra, puede usar un 4º intento allow-taker controlado, descontando comisión taker y dejando todo auditado.</span>
                 </div>
               )}
               {!unlockCheck?.checks?.modeLockAcknowledged && unlockCheck?.postOnlySupported && (
@@ -323,12 +340,13 @@ export default function GridIsolated() {
         </CardContent>
       </Card>
 
-      {/* Tabs — 9 subpestañas */}
+      {/* Tabs — 10 subpestañas */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-9">
+        <TabsList className="grid w-full grid-cols-10">
           <TabsTrigger value="resumen">Resumen</TabsTrigger>
           <TabsTrigger value="cartera">Cartera</TabsTrigger>
           <TabsTrigger value="ejecucion">Ejecución</TabsTrigger>
+          <TabsTrigger value="bandas">Bandas</TabsTrigger>
           <TabsTrigger value="actividad">Actividad</TabsTrigger>
           <TabsTrigger value="levels">Niveles</TabsTrigger>
           <TabsTrigger value="risk">Riesgo</TabsTrigger>
@@ -399,7 +417,7 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
 
-        {/* 2. Cartera Tab */}
+        {/* 2. Cartera Tab — Sliders + edición manual */}
         <TabsContent value="cartera" className="space-y-4">
           <Card>
             <CardHeader>
@@ -408,10 +426,11 @@ export default function GridIsolated() {
                 Cartera Grid Aislada
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6">
               <div className="rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground">
                 El Grid solo puede usar esta cartera, no el saldo completo del bot. No toca capital de IDCA ni de Spot Normal.
               </div>
+
               {/* Resumen superior */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="rounded-lg border p-3">
@@ -433,6 +452,8 @@ export default function GridIsolated() {
                   </p>
                 </div>
               </div>
+
+              {/* Estado cartera */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Cartera máxima</p>
@@ -457,9 +478,7 @@ export default function GridIsolated() {
                   value={config?.gridWalletMode || "automatic"}
                   onValueChange={(v) => configMutation.mutate({ gridWalletMode: v } as any)}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="automatic">Automático (recomendado)</SelectItem>
                     <SelectItem value="manual">Manual</SelectItem>
@@ -472,102 +491,245 @@ export default function GridIsolated() {
                 </p>
               </div>
 
-              {/* Campos configurables */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* Sliders + inputs manuales */}
+              <div className="space-y-5 pt-4 border-t">
+                <h3 className="text-sm font-semibold">Configuración de capital</h3>
+
+                {/* 1. Capital inicial */}
                 <div className="space-y-2">
-                  <Label>Capital inicial cartera (USD)</Label>
-                  <Input
-                    type="number"
-                    value={config?.gridWalletInitialUsd || 1000}
-                    onChange={(e) => configMutation.mutate({ gridWalletInitialUsd: parseFloat(e.target.value) } as any)}
+                  <div className="flex items-center justify-between">
+                    <Label>Capital inicial cartera Grid</Label>
+                    <Input
+                      type="number"
+                      className="w-32 h-8 text-right"
+                      value={config?.gridWalletInitialUsd ?? 1000}
+                      min={0}
+                      max={config?.gridWalletMaxUsd || 5000}
+                      onChange={(e) => configMutation.mutate({ gridWalletInitialUsd: parseFloat(e.target.value) || 0 } as any)}
+                    />
+                  </div>
+                  <Slider
+                    value={[config?.gridWalletInitialUsd || 1000]}
+                    min={0}
+                    max={config?.gridWalletMaxUsd || 5000}
+                    step={50}
+                    onValueChange={(v) => configMutation.mutate({ gridWalletInitialUsd: v[0] } as any)}
+                    className={(config?.gridWalletInitialUsd || 1000) > (config?.gridWalletMaxUsd || 5000) * 0.8 ? "[&_[role=slider]]:bg-red-500" : (config?.gridWalletInitialUsd || 1000) > (config?.gridWalletMaxUsd || 5000) * 0.5 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
+                  />
+                  <p className="text-xs text-muted-foreground">Capital inicial que el Grid puede usar. Slider de 0 a máximo cartera.</p>
+                </div>
+
+                {/* 2. Cartera máxima */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Cartera máxima Grid</Label>
+                    <Input
+                      type="number"
+                      className="w-32 h-8 text-right"
+                      value={config?.gridWalletMaxUsd ?? 5000}
+                      min={0}
+                      max={50000}
+                      onChange={(e) => configMutation.mutate({ gridWalletMaxUsd: parseFloat(e.target.value) || 0 } as any)}
+                    />
+                  </div>
+                  <Slider
+                    value={[config?.gridWalletMaxUsd || 5000]}
+                    min={0}
+                    max={50000}
+                    step={100}
+                    onValueChange={(v) => configMutation.mutate({ gridWalletMaxUsd: v[0] } as any)}
+                    className={(config?.gridWalletMaxUsd || 5000) > 20000 ? "[&_[role=slider]]:bg-red-500" : (config?.gridWalletMaxUsd || 5000) > 10000 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
+                  />
+                  <p className="text-xs text-muted-foreground">Límite máximo de capital que la cartera Grid puede alcanzar (incluyendo ganancias reinvertidas).</p>
+                </div>
+
+                {/* 3. Capital máximo por ciclo USD */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Capital máximo por ciclo (USD)</Label>
+                    <Input
+                      type="number"
+                      className="w-32 h-8 text-right"
+                      value={config?.gridMaxCapitalPerCycleUsd ?? 600}
+                      min={0}
+                      max={config?.gridWalletMaxUsd || 5000}
+                      onChange={(e) => configMutation.mutate({ gridMaxCapitalPerCycleUsd: parseFloat(e.target.value) || 0 } as any)}
+                    />
+                  </div>
+                  <Slider
+                    value={[config?.gridMaxCapitalPerCycleUsd || 600]}
+                    min={0}
+                    max={config?.gridWalletMaxUsd || 5000}
+                    step={50}
+                    onValueChange={(v) => configMutation.mutate({ gridMaxCapitalPerCycleUsd: v[0] } as any)}
+                    className={(config?.gridMaxCapitalPerCycleUsd || 600) > (config?.gridWalletMaxUsd || 5000) * 0.5 ? "[&_[role=slider]]:bg-red-500" : (config?.gridMaxCapitalPerCycleUsd || 600) > (config?.gridWalletMaxUsd || 5000) * 0.3 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
                   />
                 </div>
+
+                {/* 4. Capital máximo por ciclo % */}
                 <div className="space-y-2">
-                  <Label>Cartera máxima (USD)</Label>
-                  <Input
-                    type="number"
-                    value={config?.gridWalletMaxUsd || 5000}
-                    onChange={(e) => configMutation.mutate({ gridWalletMaxUsd: parseFloat(e.target.value) } as any)}
+                  <div className="flex items-center justify-between">
+                    <Label>Capital máximo por ciclo (%)</Label>
+                    <Input
+                      type="number"
+                      className="w-24 h-8 text-right"
+                      value={config?.gridMaxCapitalPerCyclePct ?? 60}
+                      min={0}
+                      max={100}
+                      onChange={(e) => configMutation.mutate({ gridMaxCapitalPerCyclePct: parseFloat(e.target.value) || 0 } as any)}
+                    />
+                  </div>
+                  <Slider
+                    value={[config?.gridMaxCapitalPerCyclePct || 60]}
+                    min={0}
+                    max={100}
+                    step={5}
+                    onValueChange={(v) => configMutation.mutate({ gridMaxCapitalPerCyclePct: v[0] } as any)}
+                    className={(config?.gridMaxCapitalPerCyclePct || 60) > 80 ? "[&_[role=slider]]:bg-red-500" : (config?.gridMaxCapitalPerCyclePct || 60) > 60 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
                   />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+
+                {/* 5. Reserva % */}
                 <div className="space-y-2">
-                  <Label>Capital máximo por ciclo (USD)</Label>
-                  <Input
-                    type="number"
-                    value={config?.gridMaxCapitalPerCycleUsd || 600}
-                    onChange={(e) => configMutation.mutate({ gridMaxCapitalPerCycleUsd: parseFloat(e.target.value) } as any)}
+                  <div className="flex items-center justify-between">
+                    <Label>Reserva (%)</Label>
+                    <Input
+                      type="number"
+                      className="w-24 h-8 text-right"
+                      value={config?.gridReservePct ?? 20}
+                      min={0}
+                      max={80}
+                      onChange={(e) => configMutation.mutate({ gridReservePct: parseFloat(e.target.value) || 0 } as any)}
+                    />
+                  </div>
+                  <Slider
+                    value={[config?.gridReservePct || 20]}
+                    min={0}
+                    max={80}
+                    step={5}
+                    onValueChange={(v) => configMutation.mutate({ gridReservePct: v[0] } as any)}
+                    className={(config?.gridReservePct || 20) < 10 ? "[&_[role=slider]]:bg-red-500" : (config?.gridReservePct || 20) < 20 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
                   />
+                  <p className="text-xs text-muted-foreground">Porcentaje de cartera que se mantiene libre para no agotar todo el capital.</p>
                 </div>
+
+                {/* 6. Capital libre mínimo */}
                 <div className="space-y-2">
-                  <Label>Capital máximo por ciclo (%)</Label>
-                  <Input
-                    type="number"
-                    value={config?.gridMaxCapitalPerCyclePct || 60}
-                    onChange={(e) => configMutation.mutate({ gridMaxCapitalPerCyclePct: parseFloat(e.target.value) } as any)}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Reserva (%)</Label>
-                  <Input
-                    type="number"
-                    value={config?.gridReservePct || 20}
-                    onChange={(e) => configMutation.mutate({ gridReservePct: parseFloat(e.target.value) } as any)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Capital libre mínimo (USD)</Label>
-                  <Input
-                    type="number"
-                    value={config?.gridMinFreeCapitalUsd || 50}
-                    onChange={(e) => configMutation.mutate({ gridMinFreeCapitalUsd: parseFloat(e.target.value) } as any)}
+                  <div className="flex items-center justify-between">
+                    <Label>Capital libre mínimo (USD)</Label>
+                    <Input
+                      type="number"
+                      className="w-32 h-8 text-right"
+                      value={config?.gridMinFreeCapitalUsd ?? 50}
+                      min={0}
+                      max={config?.gridWalletInitialUsd || 1000}
+                      onChange={(e) => configMutation.mutate({ gridMinFreeCapitalUsd: parseFloat(e.target.value) || 0 } as any)}
+                    />
+                  </div>
+                  <Slider
+                    value={[config?.gridMinFreeCapitalUsd || 50]}
+                    min={0}
+                    max={config?.gridWalletInitialUsd || 1000}
+                    step={10}
+                    onValueChange={(v) => configMutation.mutate({ gridMinFreeCapitalUsd: v[0] } as any)}
+                    className="[&_[role=slider]]:bg-blue-500"
                   />
                 </div>
               </div>
 
-              {/* Reinvestment */}
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label>Reinvertir ganancias del Grid</Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Si está activado, las ganancias cerradas se suman a la cartera Grid y pueden usarse en próximos ciclos. Si está desactivado, las ganancias se muestran aparte y no aumentan el capital operativo.
-                  </p>
-                </div>
-                <Switch
-                  checked={config?.gridWalletCompoundProfits ?? true}
-                  onCheckedChange={(v) => configMutation.mutate({ gridWalletCompoundProfits: v } as any)}
-                />
+              {/* Resumen dinámico */}
+              <div className="rounded-lg bg-blue-500/10 p-3 text-sm">
+                <p className="text-blue-700 dark:text-blue-300">
+                  Con esta configuración, el Grid tendrá una cartera máxima de <strong>${(config?.gridWalletMaxUsd || 5000).toFixed(0)}</strong>,
+                  empezará usando <strong>${(config?.gridWalletInitialUsd || 1000).toFixed(0)}</strong>,
+                  reservará un <strong>{config?.gridReservePct || 20}%</strong> como colchón
+                  y no asignará más de <strong>${(config?.gridMaxCapitalPerCycleUsd || 600).toFixed(0)}</strong>
+                  {" "}o <strong>{config?.gridMaxCapitalPerCyclePct || 60}%</strong> a un ciclo individual.
+                </p>
               </div>
 
-              {/* Pausa por capital agotado */}
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label>Pausar ciclo si capital agotado</Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Si un ciclo usa todo el capital/niveles asignados, el ciclo queda pausado. No se añade más capital automáticamente.
-                  </p>
-                </div>
-                <Switch
-                  checked={config?.gridPauseCycleWhenCapitalDepleted ?? true}
-                  onCheckedChange={(v) => configMutation.mutate({ gridPauseCycleWhenCapitalDepleted: v } as any)}
-                />
+              {/* Botones */}
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="default"
+                  size="sm"
+                  disabled={configMutation.isPending}
+                  onClick={() => queryClient.invalidateQueries({ queryKey: ["grid-config"] })}
+                >
+                  {configMutation.isPending ? "Guardando..." : "Guardar cambios"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => configMutation.mutate({
+                    gridWalletInitialUsd: 1000,
+                    gridWalletMaxUsd: 5000,
+                    gridMaxCapitalPerCycleUsd: 600,
+                    gridMaxCapitalPerCyclePct: 60,
+                    gridReservePct: 20,
+                    gridMinFreeCapitalUsd: 50,
+                  } as any)}
+                >
+                  Restaurar recomendado
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => configMutation.mutate({
+                    gridWalletMode: "automatic",
+                    gridWalletInitialUsd: 1000,
+                    gridWalletMaxUsd: 5000,
+                    gridMaxCapitalPerCycleUsd: 600,
+                    gridMaxCapitalPerCyclePct: 60,
+                    gridReservePct: 20,
+                    gridMinFreeCapitalUsd: 50,
+                    gridWalletCompoundProfits: true,
+                    gridPauseCycleWhenCapitalDepleted: true,
+                    gridAllowNewCycleWhenCapitalFree: true,
+                  } as any)}
+                >
+                  Aplicar perfil automático recomendado
+                </Button>
               </div>
 
-              {/* Apertura de nuevo ciclo */}
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label>Permitir nuevo ciclo con capital libre</Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Si el mercado ofrece una nueva zona válida y hay capital libre en la cartera Grid, el sistema puede abrir otro ciclo aislado. Si no hay capital libre, espera.
-                  </p>
+              {/* Switches */}
+              <div className="space-y-3 pt-4 border-t">
+                <div className="flex items-center justify-between rounded-lg border p-4">
+                  <div>
+                    <Label>Reinvertir ganancias del Grid</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Si está activado, las ganancias cerradas se suman a la cartera Grid y pueden usarse en próximos ciclos.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={config?.gridWalletCompoundProfits ?? true}
+                    onCheckedChange={(v) => configMutation.mutate({ gridWalletCompoundProfits: v } as any)}
+                  />
                 </div>
-                <Switch
-                  checked={config?.gridAllowNewCycleWhenCapitalFree ?? true}
-                  onCheckedChange={(v) => configMutation.mutate({ gridAllowNewCycleWhenCapitalFree: v } as any)}
-                />
+                <div className="flex items-center justify-between rounded-lg border p-4">
+                  <div>
+                    <Label>Pausar ciclo si capital agotado</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Si un ciclo usa todo el capital/niveles asignados, el ciclo queda pausado.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={config?.gridPauseCycleWhenCapitalDepleted ?? true}
+                    onCheckedChange={(v) => configMutation.mutate({ gridPauseCycleWhenCapitalDepleted: v } as any)}
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-lg border p-4">
+                  <div>
+                    <Label>Permitir nuevo ciclo con capital libre</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Si hay capital libre en la cartera Grid, el sistema puede abrir otro ciclo aislado.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={config?.gridAllowNewCycleWhenCapitalFree ?? true}
+                    onCheckedChange={(v) => configMutation.mutate({ gridAllowNewCycleWhenCapitalFree: v } as any)}
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -736,6 +898,11 @@ export default function GridIsolated() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* 3b. Bandas y Rangos Tab */}
+        <TabsContent value="bandas" className="space-y-4">
+          <GridBandsRangesPanel auditData={auditData} />
         </TabsContent>
 
         {/* 4. Actividad en Directo Tab */}

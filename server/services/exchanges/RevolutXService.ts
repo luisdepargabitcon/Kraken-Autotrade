@@ -526,6 +526,7 @@ export class RevolutXService implements IExchangeService {
     price?: string;
     volume: string;
     clientOrderId?: string; // CRITICAL: Use caller-provided clientOrderId for ID linking
+    executionInstruction?: "post_only" | "allow_taker"; // Revolut X execution instructions
   }): Promise<OrderResult> {
     if (!this.initialized) throw new Error('Revolut X client not initialized');
 
@@ -567,7 +568,8 @@ export class RevolutXService implements IExchangeService {
     } else {
       orderBody.order_configuration.limit = {
         base_size: params.volume,
-        price: params.price
+        price: params.price,
+        ...(params.executionInstruction ? { execution_instruction: params.executionInstruction } : {}),
       };
     }
     

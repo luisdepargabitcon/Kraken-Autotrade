@@ -137,20 +137,18 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body).toHaveProperty("checks");
   });
 
-  it("unlock-status returns postOnlySupported=false", async () => {
+  it("unlock-status returns postOnlySupported=true", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/unlock-status");
-    expect(res.body.postOnlySupported).toBe(false);
+    expect(res.body.postOnlySupported).toBe(true);
   });
 
-  it("unlock-status blocks REAL_LIMITED and REAL_FULL when postOnlySupported=false", async () => {
+  it("unlock-status blocks REAL_LIMITED and REAL_FULL when mode lock not acknowledged", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/unlock-status");
     expect(res.body.canUnlockRealLimited).toBe(false);
     expect(res.body.canUnlockRealFull).toBe(false);
-    expect(res.body.blockingReasons).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("post-only"),
-      ])
-    );
+    // Blocking reasons should NOT contain post-only anymore
+    const hasPostOnly = res.body.blockingReasons.some((r: string) => r.toLowerCase().includes("post-only"));
+    expect(hasPostOnly).toBe(false);
   });
 
   it("GET /api/grid-isolated/monitor/audit responds 200", async () => {
@@ -162,10 +160,10 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body).toHaveProperty("safety");
   });
 
-  it("monitor/audit returns summary with postOnlySupported and realModesBlocked", async () => {
+  it("monitor/audit returns summary with postOnlySupported=true and realModesBlocked", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
-    expect(res.body.summary).toHaveProperty("postOnlySupported", false);
-    expect(res.body.summary).toHaveProperty("realModesBlocked", true);
+    expect(res.body.summary).toHaveProperty("postOnlySupported", true);
+    expect(res.body.summary).toHaveProperty("realModesBlocked");
     expect(res.body.summary).toHaveProperty("pair");
     expect(res.body.summary).toHaveProperty("executionPolicy");
   });
@@ -180,7 +178,7 @@ describe("Grid Isolated Routes — Endpoints", () => {
   it("GET /api/grid-isolated/unlock-check still works (backward compat)", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/unlock-check");
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("postOnlySupported", false);
+    expect(res.body).toHaveProperty("postOnlySupported", true);
   });
 
   it("GET /api/grid-isolated/events responds 200", async () => {
@@ -222,7 +220,7 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body.export).toBeDefined();
     expect(typeof res.body.export.chatgptSummary).toBe("string");
     expect(res.body.export.chatgptSummary).toContain("Modo:");
-    expect(res.body.export.chatgptSummary).toContain("Post-only");
+    expect(res.body.export.chatgptSummary).toContain("Adaptador RevolutXService");
   });
 
   it("monitor/audit returns api info", async () => {
@@ -240,10 +238,10 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body).toContain("Modo:");
   });
 
-  it("export chatgpt contains modo, bloqueos, postOnlySupported and ciclos", async () => {
+  it("export chatgpt contains modo, bloqueos, RevolutXService and ciclos", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
     expect(res.body).toContain("Modo:");
-    expect(res.body).toContain("Post-only");
+    expect(res.body).toContain("Adaptador RevolutXService");
     expect(res.body).toContain("Ciclos:");
     expect(res.body).toContain("Circuit breaker:");
   });
@@ -252,6 +250,18 @@ describe("Grid Isolated Routes — Endpoints", () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("ok", true);
+  });
+
+  it("monitor/audit returns range object", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.range).toBeDefined();
+    expect(res.body.range).toHaveProperty("status");
+  });
+
+  it("monitor/audit returns rangeHistory array", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.rangeHistory).toBeDefined();
+    expect(Array.isArray(res.body.rangeHistory)).toBe(true);
   });
 
   it("monitor/audit returns wallet object", async () => {

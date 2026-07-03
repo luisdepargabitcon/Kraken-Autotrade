@@ -29,16 +29,13 @@ import { gridReconciliationRunner } from "../services/gridIsolated/gridReconcili
 import { gridBacktestEngine } from "../services/gridIsolated/gridBacktest";
 import { botLogger } from "../services/botLogger";
 import { db } from "../db";
-import { gridIsolatedEvents } from "@shared/schema";
+import { gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy } from "../services/gridIsolated/gridIsolatedTypes";
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
 
-function buildBlockingReasons(checks: any): string[] {
+function buildBlockingReasons(checks: any, config?: any): string[] {
   const reasons: string[] = [];
-  if (!checks.postOnlySupported) {
-    reasons.push("RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados");
-  }
   if (!checks.revolutxInitialized) {
     reasons.push("Revolut X no está inicializado o no conectado");
   }
@@ -48,19 +45,22 @@ function buildBlockingReasons(checks: any): string[] {
   if (!checks.reconciliationPassed) {
     reasons.push("Reconciliación pendiente o con mismatches");
   }
-  if (!checks.capitalReserved) {
-    reasons.push("Capital no reservado o no aislado");
-  }
   if (!checks.modeLockAcknowledged) {
     reasons.push("Mode lock no reconocido explícitamente por el usuario");
   }
   if (!checks.dailyOrderLimitRespected) {
     reasons.push("Límite diario de órdenes excedido");
   }
+  // Capital check: only block if wallet doesn't exist at all
+  const walletInitial = config?.gridWalletInitialUsd || 0;
+  const walletMax = config?.gridWalletMaxUsd || 0;
+  if (walletInitial === 0 && walletMax === 0) {
+    reasons.push("Cartera Grid no configurada — capital no aislado");
+  }
   return reasons;
 }
 
-function buildDecisions(mode: string, checks: any, status: any, blockingReasons: string[]): any[] {
+function buildDecisions(mode: string, checks: any, status: any, blockingReasons: string[], config?: any): any[] {
   const decisions: any[] = [];
 
   if (mode === "OFF") {
@@ -96,12 +96,12 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
       timestamp: new Date().toISOString(),
       mode,
       pair: "BTC/USD",
-      detected: "RevolutXService sin soporte post-only",
+      detected: "Adaptador RevolutXService pendiente de verificar",
       wanted: "Activar REAL_LIMITED",
       decided: "Bloquear REAL_LIMITED",
-      reason: "El Grid no puede activar REAL_LIMITED porque RevolutXService no tiene soporte post-only real confirmado.",
+      reason: "Revolut X documenta post-only y allow-taker. Pendiente: verificar que el adaptador interno RevolutXService envía correctamente las instrucciones de ejecución.",
       impact: "Modos reales bloqueados",
-      nextAction: "Confirmar soporte post-only en RevolutXService antes de activar REAL",
+      nextAction: "Verificar adaptador RevolutXService y ejecutar reconciliación",
     });
   }
 
@@ -119,17 +119,46 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
     });
   }
 
-  if (!checks.capitalReserved) {
+  if (!checks.modeLockAcknowledged) {
     decisions.push({
       timestamp: new Date().toISOString(),
       mode,
       pair: "BTC/USD",
-      detected: "Capital no reservado",
+      detected: "Mode lock no reconocido",
+      wanted: "Activar modo real",
+      decided: "Bloquear modo real",
+      reason: "El usuario no ha reconocido explícitamente el mode lock. Los modos reales requieren desbloqueo manual.",
+      impact: "Modos reales bloqueados",
+      nextAction: "Reconocer el mode lock desde la UI",
+    });
+  }
+
+  // Capital decision: explain correctly when wallet exists but no cycles
+  const walletInitial = config?.gridWalletInitialUsd || 0;
+  const walletMax = config?.gridWalletMaxUsd || 0;
+  if (walletInitial === 0 && walletMax === 0) {
+    decisions.push({
+      timestamp: new Date().toISOString(),
+      mode,
+      pair: "BTC/USD",
+      detected: "Cartera Grid no configurada",
       wanted: "Financiar niveles",
       decided: "No financiar",
-      reason: "El Grid no financia niveles porque el capital no está reservado o aislado.",
+      reason: "La cartera Grid no está configurada. Configure gridWalletInitialUsd y gridWalletMaxUsd para aislar capital.",
       impact: "Sin niveles financiados",
-      nextAction: "Reservar capital para Grid Isolated",
+      nextAction: "Configurar cartera Grid en la pestaña Cartera",
+    });
+  } else if (!checks.capitalReserved && (status?.openCycles || 0) === 0) {
+    decisions.push({
+      timestamp: new Date().toISOString(),
+      mode,
+      pair: "BTC/USD",
+      detected: "Sin ciclos activos",
+      wanted: "Reservar capital",
+      decided: "Esperar",
+      reason: `La cartera Grid está configurada con ${walletInitial.toFixed(0)} $. Actualmente no hay capital reservado porque no hay ciclos abiertos.`,
+      impact: "Sin capital reservado en ciclos activos",
+      nextAction: "El capital se reservará automáticamente al abrir un ciclo",
     });
   }
 
@@ -174,19 +203,26 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   lines.push(`Fecha: ${new Date().toISOString()}`);
   lines.push(`Modo: ${mode}.`);
   lines.push(`Política de ejecución: ${config ? executionPolicyLabel(config.executionPolicy) : "3 intentos maker + 4º taker controlado"}.`);
-  lines.push(`Real Limited: ${!checks.postOnlySupported || blockingReasons.length > 0 ? "bloqueado" : "disponible"}.`);
-  lines.push(`Real Full: ${!checks.postOnlySupported || blockingReasons.length > 0 ? "bloqueado" : "disponible"}.`);
+  lines.push(`Real Limited: ${blockingReasons.length > 0 ? "bloqueado" : "disponible"}.`);
+  lines.push(`Real Full: ${blockingReasons.length > 0 ? "bloqueado" : "disponible"}.`);
   if (blockingReasons.length > 0) {
     lines.push(`Motivo principal: ${blockingReasons[0]}.`);
     if (blockingReasons.length > 1) {
       lines.push(`Otros motivos: ${blockingReasons.slice(1).join("; ")}.`);
     }
   }
-  lines.push(`Post-only soportado: ${checks.postOnlySupported ? "sí" : "no"}.`);
+  lines.push(`Adaptador RevolutXService: compatible con post_only y allow_taker.`);
   lines.push(`Revolut X inicializado: ${checks.revolutxInitialized ? "sí" : "no"}.`);
   lines.push(`Balance disponible: ${checks.revolutxHasBalance ? "sí" : "no"}.`);
   lines.push(`Reconciliación OK: ${checks.reconciliationPassed ? "sí" : "no"}.`);
-  lines.push(`Capital reservado: ${checks.capitalReserved ? "sí" : "no"}.`);
+  const walletInitialCfg = config?.gridWalletInitialUsd || 0;
+  const walletMaxCfg = config?.gridWalletMaxUsd || 0;
+  if (walletInitialCfg > 0 || walletMaxCfg > 0) {
+    const reserved = status?.capitalReservedUsd || 0;
+    lines.push(`Capital reservado en ciclos: $${reserved.toFixed(2)}${reserved === 0 ? " (sin ciclos activos)" : ""}.`);
+  } else {
+    lines.push(`Capital reservado: no configurado.`);
+  }
   lines.push(`Mode lock reconocido: ${checks.modeLockAcknowledged ? "sí" : "no"}.`);
   lines.push(`Límite diario respetado: ${checks.dailyOrderLimitRespected ? "sí" : "no"}.`);
   lines.push(`Niveles abiertos: ${status?.openLevels || 0}.`);
@@ -215,6 +251,16 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     lines.push(`Fallback taker requiere beneficio neto: ${config.takerFallbackRequiresNetProfit ? "sí" : "no"}.`);
     lines.push(`Máximo fallback taker por ciclo: ${config.maxTakerFallbackPerCycle}.`);
   }
+  // Bandas/Rangos
+  const rangeVersion = gridIsolatedEngine.getActiveRangeVersion();
+  if (rangeVersion) {
+    lines.push(`Bandas/Rangos: BTC/USD está trabajando entre ${rangeVersion.lowerPrice.toFixed(2)} $ y ${rangeVersion.upperPrice.toFixed(2)} $.`);
+    lines.push(`Rango creado el ${rangeVersion.createdAt ? new Date(rangeVersion.createdAt).toLocaleString("es-ES") : "fecha desconocida"}.`);
+    lines.push(`Anchura del rango: ${rangeVersion.bandWidthPct?.toFixed(2)} %. Régimen: ${rangeVersion.regime}.`);
+    lines.push(`Niveles generados: ${rangeVersion.levelsCount}.`);
+  } else {
+    lines.push(`Bandas/Rangos: no hay rango activo todavía. El Grid está en ${mode} y espera una evaluación válida del mercado para generar bandas.`);
+  }
   if (levels.length > 0) {
     lines.push(`Niveles: ${levels.length} niveles (${levels.filter((l: any) => l.status === "open").length} abiertos, ${levels.filter((l: any) => l.status === "filled").length} filled).`);
   } else {
@@ -241,11 +287,13 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   if (!checks.reconciliationPassed) {
     actions.push("Ejecutar reconciliación manual.");
   }
-  if (!checks.capitalReserved) {
-    actions.push("Reservar capital para Grid Isolated.");
+  if (!checks.capitalReserved && (walletInitialCfg > 0 || walletMaxCfg > 0) && (status?.openCycles || 0) === 0) {
+    // Wallet configured but no active cycles — not a blocking issue
+  } else if (!checks.capitalReserved && walletInitialCfg === 0 && walletMaxCfg === 0) {
+    actions.push("Configurar cartera Grid para aislar capital.");
   }
-  if (!checks.postOnlySupported) {
-    actions.push("Confirmar soporte post-only en RevolutXService (opcional si se permite taker fallback).");
+  if (!checks.modeLockAcknowledged) {
+    actions.push("Reconocer el mode lock para desbloquear modos reales.");
   }
   if (actions.length > 0) {
     lines.push("Próximas acciones recomendadas:");
@@ -354,8 +402,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const checks = await gridModeLockService.runUnlockChecks();
       const config = gridIsolatedEngine.getConfig();
       const currentMode: GridMode = config?.mode || "OFF";
-      const blockingReasons = buildBlockingReasons(checks);
-
+      const blockingReasons = buildBlockingReasons(checks, config);
       res.json({
         currentMode,
         canUnlockRealLimited: blockingReasons.length === 0,
@@ -480,8 +527,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const config = gridIsolatedEngine.getConfig();
       const status = gridIsolatedEngine.getExecutionStatus();
       const checks = await gridModeLockService.runUnlockChecks();
-      const blockingReasons = buildBlockingReasons(checks);
-      const realModesBlocked = !checks.postOnlySupported || blockingReasons.length > 0;
+      const blockingReasons = buildBlockingReasons(checks, config);
+      const realModesBlocked = blockingReasons.length > 0;
       const mode = config?.mode || "OFF";
 
       const levels = gridIsolatedEngine.getLevels();
@@ -498,7 +545,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         // Table might not exist yet in some environments
       }
 
-      const decisions = buildDecisions(mode, checks, status, blockingReasons);
+      const decisions = buildDecisions(mode, checks, status, blockingReasons, config);
       const chatgptSummary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config);
 
       const walletTotal = (config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0);
@@ -564,6 +611,50 @@ export function registerGridIsolatedRoutes(app: Express): void {
           takerFallbackAllowed: config?.takerFallbackEnabled ?? true,
           takerFallbackBlockedReason: null as string | null,
         },
+        range: (() => {
+          const rv = gridIsolatedEngine.getActiveRangeVersion();
+          if (!rv) {
+            return {
+              status: "sin_rango_activo",
+              naturalReason: "El Grid todavía no ha generado una banda activa porque no hay ciclo abierto o falta una evaluación SHADOW reciente.",
+            };
+          }
+          return {
+            activeRangeVersionId: rv.id,
+            pair: rv.pair,
+            lowerPrice: rv.lowerPrice,
+            upperPrice: rv.upperPrice,
+            centerPrice: rv.midPrice,
+            widthPct: rv.bandWidthPct,
+            method: rv.regime,
+            status: rv.status,
+            createdAt: rv.createdAt,
+            updatedAt: rv.activatedAt,
+            naturalReason: `Rango activo: ${rv.pair} ${rv.lowerPrice.toFixed(2)} $ – ${rv.upperPrice.toFixed(2)} $. Régimen: ${rv.regime}.`,
+            lastChangeReason: null,
+            lastChangeAt: rv.activatedAt,
+            impact: "Se recalculan niveles futuros; no se modifican ciclos abiertos.",
+            levelsGenerated: rv.levelsCount,
+            cyclesAffected: cycles.length,
+          };
+        })(),
+        rangeHistory: (() => {
+          try {
+            // Range history events are stored in gridIsolatedEvents with GRID_RANGE_* types
+            const rangeEvents = events.filter((ev: any) =>
+              ev.eventType?.startsWith("GRID_RANGE_") || ev.eventType?.startsWith("GRID_BAND_")
+            );
+            return rangeEvents.slice(0, 20).map((ev: any) => ({
+              timestamp: ev.createdAt,
+              eventType: ev.eventType,
+              reason: ev.message,
+              mode: ev.mode,
+              rangeVersionId: ev.rangeVersionId,
+            }));
+          } catch {
+            return [];
+          }
+        })(),
         events,
         decisions,
         levels,
@@ -669,7 +760,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const config = gridIsolatedEngine.getConfig();
       const status = gridIsolatedEngine.getExecutionStatus();
       const checks = await gridModeLockService.runUnlockChecks();
-      const blockingReasons = buildBlockingReasons(checks);
+      const blockingReasons = buildBlockingReasons(checks, config);
       const mode = config?.mode || "OFF";
       const levels = gridIsolatedEngine.getLevels();
       const cycles = gridIsolatedEngine.getCycles();
@@ -692,7 +783,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const config = gridIsolatedEngine.getConfig();
       const status = gridIsolatedEngine.getExecutionStatus();
       const checks = await gridModeLockService.runUnlockChecks();
-      const blockingReasons = buildBlockingReasons(checks);
+      const blockingReasons = buildBlockingReasons(checks, config);
       const mode = config?.mode || "OFF";
       const levels = gridIsolatedEngine.getLevels();
       const cycles = gridIsolatedEngine.getCycles();
