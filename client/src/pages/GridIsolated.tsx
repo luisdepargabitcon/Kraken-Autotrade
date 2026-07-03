@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -9,10 +10,11 @@ import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon } from "lucide-react";
+import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon, Cpu, CheckCircle2, XCircle } from "lucide-react";
 import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
 import { GridActivityLive } from "@/components/grid/GridActivityLive";
 import { GridBandsRangesPanel } from "@/components/grid/GridBandsRangesPanel";
+import { GridSummaryPanel } from "@/components/grid/GridSummaryPanel";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -159,26 +161,31 @@ export default function GridIsolated() {
 
   if (configLoading) {
     return (
-      <div className="container mx-auto p-6">
-        <Card>
-          <CardContent className="flex items-center justify-center py-12">
-            <Activity className="h-6 w-6 animate-pulse mr-2" />
-            <span>Cargando Grid Isolated...</span>
-          </CardContent>
-        </Card>
+      <div className="min-h-screen bg-background flex flex-col">
+        <Nav />
+        <div className="flex-1 p-6 max-w-[1600px] mx-auto w-full">
+          <Card>
+            <CardContent className="flex items-center justify-center py-12">
+              <Activity className="h-6 w-6 animate-pulse mr-2" />
+              <span>Cargando Grid Isolated...</span>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="min-h-screen bg-background flex flex-col">
+      <Nav />
+      <div className="flex-1 p-4 md:p-6 max-w-[1600px] mx-auto w-full space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Grid Isolated Professional</h1>
           <p className="text-sm text-muted-foreground">Motor de grid trading aislado — BTC/USD Revolut X</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <Badge variant={modeColor(config?.mode || "OFF") as any}>
             {config?.mode || "OFF"}
           </Badge>
@@ -190,60 +197,86 @@ export default function GridIsolated() {
               {status?.pumpDumpState?.toUpperCase()}
             </Badge>
           )}
+          {status?.lastReconciliationOk && (
+            <Badge variant="default" className="text-xs">Reconciliación OK</Badge>
+          )}
+          {unlockCheck && !unlockCheck.canUnlockRealLimited && (config?.mode === "OFF" || config?.mode === "SHADOW") && (
+            <Badge variant="secondary" className="text-xs">Real bloqueado</Badge>
+          )}
         </div>
       </div>
 
-      {/* Status Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-blue-500" />
-              <span className="text-sm text-muted-foreground">Niveles Abiertos</span>
+      {/* KPI Band */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <Card className="border-border/50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Layers className="h-3.5 w-3.5 text-blue-500" />
+              <span className="text-xs text-muted-foreground">Niveles abiertos</span>
             </div>
-            <p className="text-2xl font-bold mt-1">{status?.openLevels || 0}</p>
+            <p className="text-xl font-bold">{status?.openLevels || 0}</p>
+            <p className="text-xs text-muted-foreground">/ {auditData?.range?.levelsGenerated ?? "—"} generados</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Zap className="h-4 w-4 text-yellow-500" />
-              <span className="text-sm text-muted-foreground">Ciclos Abiertos</span>
+        <Card className="border-border/50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Zap className="h-3.5 w-3.5 text-yellow-500" />
+              <span className="text-xs text-muted-foreground">Ciclos abiertos</span>
             </div>
-            <p className="text-2xl font-bold mt-1">{status?.openCycles || 0}</p>
+            <p className="text-xl font-bold">{status?.openCycles || 0}</p>
+            <p className="text-xs text-muted-foreground">${status?.capitalReservedUsd?.toFixed(0) || 0} reservado</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-green-500" />
-              <span className="text-sm text-muted-foreground">PnL Neto Total</span>
+        <Card className="border-border/50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <BarChart3 className="h-3.5 w-3.5 text-green-500" />
+              <span className="text-xs text-muted-foreground">PnL neto total</span>
             </div>
-            <p className="text-2xl font-bold mt-1 text-green-500">
-              ${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}
-            </p>
+            <p className="text-xl font-bold text-green-500">${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-purple-500" />
-              <span className="text-sm text-muted-foreground">Ciclos Completados</span>
+        <Card className="border-border/50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <TrendingUp className="h-3.5 w-3.5 text-purple-500" />
+              <span className="text-xs text-muted-foreground">Ciclos completados</span>
             </div>
-            <p className="text-2xl font-bold mt-1">{status?.totalCyclesCompleted || 0}</p>
+            <p className="text-xl font-bold">{status?.totalCyclesCompleted || 0}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Activity className="h-3.5 w-3.5 text-cyan-500" />
+              <span className="text-xs text-muted-foreground">Mercado actual</span>
+            </div>
+            <p className="text-sm font-bold">{auditData?.range?.regime || auditData?.range?.method || "—"}</p>
+            <p className="text-xs text-muted-foreground">{status?.pumpDumpState === "normal" ? "Normal" : status?.pumpDumpState?.toUpperCase()}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Shield className="h-3.5 w-3.5 text-green-500" />
+              <span className="text-xs text-muted-foreground">Salud del motor</span>
+            </div>
+            <p className="text-xl font-bold text-green-500">{status?.circuitBreakerOpen ? "⚠" : "100%"}</p>
+            <p className="text-xs text-muted-foreground">{status?.lastReconciliationOk ? "Reconciliación OK" : "Pendiente"}</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Mode Control */}
+      {/* Mode Control — compact */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5" />
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Shield className="h-4 w-4" />
             Control de Modo
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {["OFF", "SHADOW", "REAL_LIMITED", "REAL_FULL"].map((mode) => (
               <Button
@@ -260,49 +293,35 @@ export default function GridIsolated() {
 
           {/* Mode Lock Safety Checks */}
           {(config?.mode === "OFF" || config?.mode === "SHADOW") && unlockCheck && (
-            <div className="rounded-lg border p-4 space-y-2">
+            <div className="rounded-lg border p-3 space-y-2">
               <p className="text-sm font-semibold">Condiciones de Desbloqueo REAL:</p>
-              <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck?.checks?.revolutxInitialized ? "default" : "secondary"}>
-                    {unlockCheck?.checks?.revolutxInitialized ? "✓" : "✗"}
-                  </Badge>
+                  {unlockCheck?.checks?.revolutxInitialized ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
                   Revolut X Inicializado
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck?.checks?.revolutxHasBalance ? "default" : "secondary"}>
-                    {unlockCheck?.checks?.revolutxHasBalance ? "✓" : "✗"}
-                  </Badge>
+                  {unlockCheck?.checks?.revolutxHasBalance ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
                   Balance Disponible
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck?.checks?.reconciliationPassed ? "default" : "secondary"}>
-                    {unlockCheck?.checks?.reconciliationPassed ? "✓" : "✗"}
-                  </Badge>
+                  {unlockCheck?.checks?.reconciliationPassed ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
                   Reconciliación OK
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck?.checks?.capitalReserved ? "default" : "secondary"}>
-                    {unlockCheck?.checks?.capitalReserved ? "✓" : "✗"}
-                  </Badge>
+                  {unlockCheck?.checks?.capitalReserved ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
                   Capital Reservado
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck?.checks?.modeLockAcknowledged ? "default" : "secondary"}>
-                    {unlockCheck?.checks?.modeLockAcknowledged ? "✓" : "✗"}
-                  </Badge>
+                  {unlockCheck?.checks?.modeLockAcknowledged ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
                   Lock Reconocido
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck?.checks?.dailyOrderLimitRespected ? "default" : "secondary"}>
-                    {unlockCheck?.checks?.dailyOrderLimitRespected ? "✓" : "✗"}
-                  </Badge>
+                  {unlockCheck?.checks?.dailyOrderLimitRespected ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
                   Límite Diario OK
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={unlockCheck?.postOnlySupported ? "default" : "secondary"}>
-                    {unlockCheck?.postOnlySupported ? "✓" : "✗"}
-                  </Badge>
+                  {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
                   Post-Only / Allow-Taker
                 </div>
               </div>
@@ -340,81 +359,41 @@ export default function GridIsolated() {
         </CardContent>
       </Card>
 
-      {/* Tabs — 10 subpestañas */}
+      {/* Tabs — 12 subpestañas */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-10">
-          <TabsTrigger value="resumen">Resumen</TabsTrigger>
-          <TabsTrigger value="cartera">Cartera</TabsTrigger>
-          <TabsTrigger value="ejecucion">Ejecución</TabsTrigger>
-          <TabsTrigger value="bandas">Bandas</TabsTrigger>
-          <TabsTrigger value="actividad">Actividad</TabsTrigger>
-          <TabsTrigger value="levels">Niveles</TabsTrigger>
-          <TabsTrigger value="risk">Riesgo</TabsTrigger>
-          <TabsTrigger value="backtest">Backtest</TabsTrigger>
-          <TabsTrigger value="audit">Auditoría</TabsTrigger>
-          <TabsTrigger value="ayuda">Ayuda</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-6 md:grid-cols-12 gap-1 h-auto p-1">
+          <TabsTrigger value="resumen" className="text-xs">Resumen</TabsTrigger>
+          <TabsTrigger value="cartera" className="text-xs">Cartera</TabsTrigger>
+          <TabsTrigger value="ejecucion" className="text-xs">Ejecución</TabsTrigger>
+          <TabsTrigger value="bandas" className="text-xs">Bandas</TabsTrigger>
+          <TabsTrigger value="actividad" className="text-xs">Actividad</TabsTrigger>
+          <TabsTrigger value="niveles" className="text-xs">Niveles</TabsTrigger>
+          <TabsTrigger value="ciclos" className="text-xs">Ciclos</TabsTrigger>
+          <TabsTrigger value="risk" className="text-xs">Riesgo</TabsTrigger>
+          <TabsTrigger value="backtest" className="text-xs">Backtest</TabsTrigger>
+          <TabsTrigger value="audit" className="text-xs">Auditoría</TabsTrigger>
+          <TabsTrigger value="ajustes" className="text-xs">Ajustes</TabsTrigger>
+          <TabsTrigger value="ayuda" className="text-xs">Ayuda</TabsTrigger>
         </TabsList>
 
-        {/* 1. Resumen Tab */}
+        {/* 1. Resumen Tab — Dashboard profesional */}
         <TabsContent value="resumen" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5" />
-                Estado del Motor
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Modo Actual</p>
-                  <Badge variant={modeColor(config?.mode || "OFF") as any}>{config?.mode || "OFF"}</Badge>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Pair</p>
-                  <p className="text-sm font-mono">{config?.pair || "BTC/USD"}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Perfil Capital</p>
-                  <p className="text-sm">{config?.capitalProfile || "balanced"}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Target Neto</p>
-                  <p className="text-sm">{config?.netProfitTargetPct?.toFixed(2)}%</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Niveles Abiertos</p>
-                  <p className="text-lg font-bold">{status?.openLevels || 0}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Ciclos Abiertos</p>
-                  <p className="text-lg font-bold">{status?.openCycles || 0}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">PnL Neto</p>
-                  <p className="text-lg font-bold text-green-500">${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Ciclos Completados</p>
-                  <p className="text-lg font-bold">{status?.totalCyclesCompleted || 0}</p>
-                </div>
-              </div>
-              {status?.circuitBreakerOpen && (
-                <div className="flex items-center gap-2 rounded-lg bg-destructive/10 p-3">
-                  <AlertCircle className="h-4 w-4 text-destructive" />
-                  <span className="text-sm">Circuit Breaker activo — órdenes bloqueadas</span>
-                </div>
-              )}
-              {status?.pumpDumpState !== "normal" && status?.pumpDumpState && (
-                <div className="flex items-center gap-2 rounded-lg bg-orange-500/10 p-3">
-                  <AlertCircle className="h-4 w-4 text-orange-500" />
-                  <span className="text-sm">{status.pumpDumpState.toUpperCase()} — Pump/Dump guard activo</span>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <GridSummaryPanel
+            config={config}
+            status={status}
+            auditData={auditData}
+            levels={levels || []}
+            cycles={cycles || []}
+            unlockCheck={unlockCheck}
+            modeColor={modeColor}
+            onModeChange={(m) => modeMutation.mutate(m)}
+            onAcknowledge={() => acknowledgeMutation.mutate()}
+            onReconcile={() => reconcileMutation.mutate()}
+            modeMutationPending={modeMutation.isPending}
+            acknowledgePending={acknowledgeMutation.isPending}
+            reconcilePending={reconcileMutation.isPending}
+            onGoToTab={(tab) => setActiveTab(tab)}
+          />
         </TabsContent>
 
         {/* 2. Cartera Tab — Sliders + edición manual */}
@@ -825,76 +804,24 @@ export default function GridIsolated() {
                 />
               </div>
 
-              {/* Configuración avanzada del Grid */}
-              <div className="space-y-4 pt-4 border-t">
-                <h3 className="text-sm font-semibold">Configuración avanzada del Grid</h3>
-                <div className="space-y-2">
-                  <Label>Perfil de Capital</Label>
-                  <Select
-                    value={config?.capitalProfile || "balanced"}
-                    onValueChange={(v) => configMutation.mutate({ capitalProfile: v })}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="conservative">Conservador (30% reserva)</SelectItem>
-                      <SelectItem value="balanced">Balanceado (20% reserva)</SelectItem>
-                      <SelectItem value="aggressive">Agresivo (10% reserva)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Periodo de Bandas (Bollinger)</Label>
-                  <Input
-                    type="number"
-                    value={config?.bandPeriod || 20}
-                    onChange={(e) => configMutation.mutate({ bandPeriod: parseInt(e.target.value) })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Timeframe ATR</Label>
-                  <Select
-                    value={config?.atrTimeframe || "1h"}
-                    onValueChange={(v) => configMutation.mutate({ atrTimeframe: v })}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="15min">15 min</SelectItem>
-                      <SelectItem value="1h">1 hora</SelectItem>
-                      <SelectItem value="4h">4 horas</SelectItem>
-                      <SelectItem value="1d">1 día</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Step Mín %: {config?.gridStepMinPct?.toFixed(2)}</Label>
-                    <Slider value={[config?.gridStepMinPct || 0.15]} min={0.05} max={1.0} step={0.05} onValueChange={(v) => configMutation.mutate({ gridStepMinPct: v[0] })} />
+              {/* Revolut X status */}
+              <div className="space-y-3 pt-4 border-t">
+                <h3 className="text-sm font-semibold">Estado Revolut X</h3>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
+                    <span>Post-only soportado</span>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Step Máx %: {config?.gridStepMaxPct?.toFixed(2)}</Label>
-                    <Slider value={[config?.gridStepMaxPct || 3.0]} min={1.0} max={10.0} step={0.5} onValueChange={(v) => configMutation.mutate({ gridStepMaxPct: v[0] })} />
+                  <div className="flex items-center gap-2">
+                    {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
+                    <span>Allow-taker soportado</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Ratio Geométrico Mín: {config?.geometricRatioMin?.toFixed(2)}</Label>
-                    <Slider value={[config?.geometricRatioMin || 0.8]} min={0.5} max={1.0} step={0.05} onValueChange={(v) => configMutation.mutate({ geometricRatioMin: v[0] })} />
+                {unlockCheck?.postOnlySupported && (
+                  <div className="rounded-lg bg-green-500/10 p-3 text-sm">
+                    Revolut X documenta post_only y allow_taker. El adaptador interno envía executionInstruction correctamente.
                   </div>
-                  <div className="space-y-2">
-                    <Label>Ratio Geométrico Máx: {config?.geometricRatioMax?.toFixed(2)}</Label>
-                    <Slider value={[config?.geometricRatioMax || 1.2]} min={1.0} max={2.0} step={0.05} onValueChange={(v) => configMutation.mutate({ geometricRatioMax: v[0] })} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Máx Ciclos Abiertos</Label>
-                    <Input type="number" value={config?.maxOpenCycles || 10} onChange={(e) => configMutation.mutate({ maxOpenCycles: parseInt(e.target.value) })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Máx Órdenes Diarias</Label>
-                    <Input type="number" value={config?.maxDailyOrders || 300} onChange={(e) => configMutation.mutate({ maxDailyOrders: parseInt(e.target.value) })} />
-                  </div>
-                </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -909,7 +836,8 @@ export default function GridIsolated() {
         <TabsContent value="actividad" className="space-y-4">
           <GridActivityLive />
         </TabsContent>
-        <TabsContent value="levels" className="space-y-4">
+        {/* 6. Niveles Tab */}
+        <TabsContent value="niveles" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -919,29 +847,45 @@ export default function GridIsolated() {
             </CardHeader>
             <CardContent>
               {levels && levels.length > 0 ? (
-                <div className="space-y-2">
-                  {levels.map((level: any) => (
-                    <div key={level.id} className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="flex items-center gap-3">
-                        <Badge variant={level.side === "BUY" ? "default" : "outline"}>
-                          {level.side}
-                        </Badge>
-                        <span className="font-mono text-sm">${level.price?.toFixed(2)}</span>
-                        <Badge variant="secondary">{level.status}</Badge>
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        ${level.notionalUsd?.toFixed(2)} · {level.quantity?.toFixed(6)} BTC
-                      </div>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-muted-foreground border-b">
+                        <th className="text-left py-2 px-2">Nivel</th>
+                        <th className="text-left py-2 px-2">Estado</th>
+                        <th className="text-left py-2 px-2">Precio compra</th>
+                        <th className="text-left py-2 px-2">Precio venta objetivo</th>
+                        <th className="text-left py-2 px-2">Capital reservado</th>
+                        <th className="text-left py-2 px-2">Cantidad</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {levels.map((level: any) => (
+                        <tr key={level.id} className="border-b hover:bg-muted/30">
+                          <td className="py-2 px-2">
+                            <Badge variant={level.side === "BUY" ? "default" : "outline"}>{level.side}</Badge>
+                          </td>
+                          <td className="py-2 px-2"><Badge variant="secondary">{level.status}</Badge></td>
+                          <td className="py-2 px-2 font-mono">${level.price?.toFixed(2)}</td>
+                          <td className="py-2 px-2 font-mono text-muted-foreground">—</td>
+                          <td className="py-2 px-2">${level.notionalUsd?.toFixed(2)}</td>
+                          <td className="py-2 px-2 text-muted-foreground">{level.quantity?.toFixed(6)} BTC</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground py-8 text-center">
-                  No hay niveles activos. Inicia el motor en modo SHADOW para generar niveles.
+                  No hay niveles activos. El Grid está en {config?.mode || "OFF"} o todavía no ha generado niveles operativos.
                 </p>
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* 7. Ciclos Tab */}
+        <TabsContent value="ciclos" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -951,31 +895,51 @@ export default function GridIsolated() {
             </CardHeader>
             <CardContent>
               {cycles && cycles.length > 0 ? (
-                <div className="space-y-2">
-                  {cycles.slice(0, 20).map((cycle: any) => (
-                    <div key={cycle.id} className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm font-semibold">#{cycle.cycleNumber}</span>
-                        <Badge variant={cycle.status === "completed" ? "default" : "outline"}>
-                          {cycle.status}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-4 text-sm">
-                        <span className="font-mono">
-                          ${cycle.buyPrice?.toFixed(2)} → ${cycle.sellPrice?.toFixed(2) || "—"}
-                        </span>
-                        {cycle.netPnlUsd !== 0 && (
-                          <span className={cycle.netPnlUsd > 0 ? "text-green-500" : "text-red-500"}>
-                            {cycle.netPnlUsd > 0 ? "+" : ""}${cycle.netPnlUsd?.toFixed(2)}
-                          </span>
-                        )}
-                      </div>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Ciclos activos</p>
+                      <p className="text-lg font-bold">{cycles.filter((c: any) => c.status === "open" || c.status === "active").length}</p>
                     </div>
-                  ))}
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Completados</p>
+                      <p className="text-lg font-bold text-green-500">{cycles.filter((c: any) => c.status === "completed").length}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">PnL realizado</p>
+                      <p className="text-lg font-bold text-green-500">
+                        ${cycles.filter((c: any) => c.status === "completed").reduce((sum: number, c: any) => sum + (c.netPnlUsd || 0), 0).toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Capital reservado</p>
+                      <p className="text-lg font-bold">${status?.capitalReservedUsd?.toFixed(2) || "0.00"}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {cycles.slice(0, 30).map((cycle: any) => (
+                      <div key={cycle.id} className="flex items-center justify-between rounded-lg border p-3">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-semibold">#{cycle.cycleNumber}</span>
+                          <Badge variant={cycle.status === "completed" ? "default" : "outline"}>{cycle.status}</Badge>
+                        </div>
+                        <div className="flex items-center gap-4 text-sm">
+                          <span className="font-mono">
+                            ${cycle.buyPrice?.toFixed(2)} → ${cycle.sellPrice?.toFixed(2) || "—"}
+                          </span>
+                          {cycle.netPnlUsd !== 0 && (
+                            <span className={cycle.netPnlUsd > 0 ? "text-green-500" : "text-red-500"}>
+                              {cycle.netPnlUsd > 0 ? "+" : ""}${cycle.netPnlUsd?.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground py-8 text-center">
-                  No hay ciclos registrados.
+                  No hay ciclos abiertos. El Grid todavía no ha reservado capital en ningún ciclo.
                 </p>
               )}
             </CardContent>
@@ -1180,7 +1144,96 @@ export default function GridIsolated() {
           <GridMonitorPanel />
         </TabsContent>
 
-        {/* 9. Ayuda Tab */}
+        {/* 9. Ajustes Tab */}
+        <TabsContent value="ajustes" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings2 className="h-5 w-5" />
+                Ajustes avanzados del Grid
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Perfil de Capital</Label>
+                  <Select
+                    value={config?.capitalProfile || "balanced"}
+                    onValueChange={(v) => configMutation.mutate({ capitalProfile: v })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="conservative">Conservador (30% reserva)</SelectItem>
+                      <SelectItem value="balanced">Balanceado (20% reserva)</SelectItem>
+                      <SelectItem value="aggressive">Agresivo (10% reserva)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Periodo de Bandas (Bollinger)</Label>
+                  <Input
+                    type="number"
+                    value={config?.bandPeriod || 20}
+                    onChange={(e) => configMutation.mutate({ bandPeriod: parseInt(e.target.value) })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Timeframe ATR</Label>
+                  <Select
+                    value={config?.atrTimeframe || "1h"}
+                    onValueChange={(v) => configMutation.mutate({ atrTimeframe: v })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="15min">15 min</SelectItem>
+                      <SelectItem value="1h">1 hora</SelectItem>
+                      <SelectItem value="4h">4 horas</SelectItem>
+                      <SelectItem value="1d">1 día</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Máx Ciclos Abiertos</Label>
+                  <Input type="number" value={config?.maxOpenCycles || 10} onChange={(e) => configMutation.mutate({ maxOpenCycles: parseInt(e.target.value) })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Step Mín %: {config?.gridStepMinPct?.toFixed(2)}</Label>
+                  <Slider value={[config?.gridStepMinPct || 0.15]} min={0.05} max={1.0} step={0.05} onValueChange={(v) => configMutation.mutate({ gridStepMinPct: v[0] })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Step Máx %: {config?.gridStepMaxPct?.toFixed(2)}</Label>
+                  <Slider value={[config?.gridStepMaxPct || 3.0]} min={1.0} max={10.0} step={0.5} onValueChange={(v) => configMutation.mutate({ gridStepMaxPct: v[0] })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Ratio Geométrico Mín: {config?.geometricRatioMin?.toFixed(2)}</Label>
+                  <Slider value={[config?.geometricRatioMin || 0.8]} min={0.5} max={1.0} step={0.05} onValueChange={(v) => configMutation.mutate({ geometricRatioMin: v[0] })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Ratio Geométrico Máx: {config?.geometricRatioMax?.toFixed(2)}</Label>
+                  <Slider value={[config?.geometricRatioMax || 1.2]} min={1.0} max={2.0} step={0.05} onValueChange={(v) => configMutation.mutate({ geometricRatioMax: v[0] })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Máx Órdenes Diarias</Label>
+                  <Input type="number" value={config?.maxDailyOrders || 300} onChange={(e) => configMutation.mutate({ maxDailyOrders: parseInt(e.target.value) })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Target Neto: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
+                  <Slider value={[config?.netProfitTargetPct || 0.8]} min={0.1} max={3.0} step={0.1} onValueChange={(v) => configMutation.mutate({ netProfitTargetPct: v[0] })} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* 10. Ayuda Tab */}
         <TabsContent value="ayuda" className="space-y-4">
           <Card>
             <CardHeader>
@@ -1300,6 +1353,7 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
       </Tabs>
+      </div>
     </div>
   );
 }
