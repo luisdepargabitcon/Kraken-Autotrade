@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { AuditTradingPanel } from "@/components/audit/AuditTradingPanel";
 import { AuditIdcaPanel } from "@/components/audit/AuditIdcaPanel";
+import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
@@ -100,6 +101,10 @@ export default function Monitor() {
                 <LineChart className="h-4 w-4" />
                 Auditoría IDCA
               </TabsTrigger>
+              <TabsTrigger value="grid-isolated" className="gap-1" data-testid="tab-grid-isolated">
+                <Activity className="h-4 w-4" />
+                Grid Isolated
+              </TabsTrigger>
             </TabsList>
           </div>
           
@@ -125,6 +130,10 @@ export default function Monitor() {
 
           <TabsContent value="audit-idca" className="mt-0">
             <AuditIdcaPanel />
+          </TabsContent>
+
+          <TabsContent value="grid-isolated" className="mt-0">
+            <GridMonitorPanel />
           </TabsContent>
         </Tabs>
       </div>

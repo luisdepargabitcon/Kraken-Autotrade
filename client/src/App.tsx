@@ -20,6 +20,7 @@ import FiscoDashboard from "@/pages/FiscoDashboard";
 import AiMl from "@/pages/AiMl";
 import Autotuning from "@/pages/Autotuning";
 import InstitutionalDca from "@/pages/InstitutionalDca";
+import GridIsolated from "@/pages/GridIsolated";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -35,6 +36,9 @@ function Router() {
       {/* Trading Activo */}
       <Route path="/trading" component={Strategies} />
       <Route path="/strategies"><Redirect to="/trading" /></Route>
+
+      {/* Grid Isolated */}
+      <Route path="/grid-isolated" component={GridIsolated} />
 
       {/* Fiscal Crypto */}
       <Route path="/fiscal" component={FiscoDashboard} />

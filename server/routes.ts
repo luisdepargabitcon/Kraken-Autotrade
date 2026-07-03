@@ -196,6 +196,7 @@ export async function registerRoutes(
         { id: '059_fisco_v2_import_config', filePath: path.join(migrationsDir, '059_fisco_v2_import_config.sql') },
         { id: '060_idca_hybrid_grid_traceability', filePath: path.join(migrationsDir, '060_idca_hybrid_grid_traceability.sql') },
         { id: '061_audit_tables', filePath: path.join(migrationsDir, '061_audit_tables.sql') },
+        { id: '063_grid_isolated', filePath: path.join(migrationsDir, '063_grid_isolated.sql') },
       ];
 
       await runner.run(migrations);
@@ -1036,6 +1037,17 @@ export async function registerRoutes(
   // ============================================================
   const { registerAuditRoutes } = await import('./routes/audit.routes');
   registerAuditRoutes(app);
+
+  // ============================================================
+  // GRID ISOLATED ENDPOINTS — Professional Grid Engine
+  // ============================================================
+  try {
+    const { registerGridIsolatedRoutes } = await import('./routes/gridIsolated.routes');
+    registerGridIsolatedRoutes(app);
+    console.log('[startup] Grid Isolated routes registered');
+  } catch (e: any) {
+    console.error('[startup] Failed to register Grid Isolated routes:', e?.message || e);
+  }
 
   // NOTE: Telegram chat CRUD routes are defined inline above (/api/telegram/chats, /api/telegram/send)
   // The old /api/integrations/telegram/* duplicate routes in telegram.routes.ts have been removed.

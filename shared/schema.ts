@@ -1616,3 +1616,206 @@ export const tuningProposals = pgTable("tuning_proposals", {
 
 export type TuningProposal = typeof tuningProposals.$inferSelect;
 export type InsertTuningProposal = typeof tuningProposals.$inferInsert;
+
+// ─── Grid Isolated Professional Engine ──────────────────────────────
+
+export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
+  id:                      serial("id").primaryKey(),
+  pair:                    text("pair").notNull().default("BTC/USD"),
+  mode:                    text("mode").notNull().default("OFF"),
+  capitalProfile:          text("capital_profile").notNull().default("balanced"),
+  executionPolicy:         text("execution_policy").notNull().default("MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK"),
+  netProfitTargetPct:      decimal("net_profit_target_pct", { precision: 6, scale: 3 }).notNull().default("0.500"),
+  bandPeriod:              integer("band_period").notNull().default(20),
+  bandStdDevMultiplier:    decimal("band_std_dev_multiplier", { precision: 4, scale: 2 }).notNull().default("2.00"),
+  atrPeriod:               integer("atr_period").notNull().default(14),
+  atrTimeframe:            text("atr_timeframe").notNull().default("1h"),
+  gridStepAtrMultiplier:   decimal("grid_step_atr_multiplier", { precision: 4, scale: 2 }).notNull().default("1.50"),
+  gridStepMinPct:          decimal("grid_step_min_pct", { precision: 6, scale: 3 }).notNull().default("0.150"),
+  gridStepMaxPct:          decimal("grid_step_max_pct", { precision: 6, scale: 3 }).notNull().default("3.000"),
+  geometricRatioMin:       decimal("geometric_ratio_min", { precision: 4, scale: 3 }).notNull().default("0.800"),
+  geometricRatioMax:       decimal("geometric_ratio_max", { precision: 4, scale: 3 }).notNull().default("1.200"),
+  trailingActivationPct:   decimal("trailing_activation_pct", { precision: 6, scale: 3 }).notNull().default("1.000"),
+  trailingStopPct:         decimal("trailing_stop_pct", { precision: 6, scale: 3 }).notNull().default("0.400"),
+  stopLossSoftPct:         decimal("stop_loss_soft_pct", { precision: 6, scale: 3 }).notNull().default("2.000"),
+  stopLossHardPct:         decimal("stop_loss_hard_pct", { precision: 6, scale: 3 }).notNull().default("5.000"),
+  stopLossEmergencyPct:    decimal("stop_loss_emergency_pct", { precision: 6, scale: 3 }).notNull().default("10.000"),
+  hodlRecoveryEnabled:     boolean("hodl_recovery_enabled").notNull().default(true),
+  pumpGuardDeviationPct:   decimal("pump_guard_deviation_pct", { precision: 6, scale: 3 }).notNull().default("3.000"),
+  pumpGuardVolumeSpikeRatio: decimal("pump_guard_volume_spike_ratio", { precision: 6, scale: 2 }).notNull().default("3.00"),
+  pumpGuardCooldownMinutes: integer("pump_guard_cooldown_minutes").notNull().default(30),
+  dumpGuardDeviationPct:   decimal("dump_guard_deviation_pct", { precision: 6, scale: 3 }).notNull().default("3.000"),
+  dumpGuardVolumeSpikeRatio: decimal("dump_guard_volume_spike_ratio", { precision: 6, scale: 2 }).notNull().default("3.00"),
+  dumpGuardCooldownMinutes: integer("dump_guard_cooldown_minutes").notNull().default(30),
+  maxOpenCycles:           integer("max_open_cycles").notNull().default(10),
+  maxDailyOrders:          integer("max_daily_orders").notNull().default(300),
+  fiscalStatus:            text("fiscal_status").notNull().default("pending"),
+  isActive:                boolean("is_active").notNull().default(false),
+  createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:               timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type GridIsolatedConfigRow = typeof gridIsolatedConfigs.$inferSelect;
+export type InsertGridIsolatedConfig = typeof gridIsolatedConfigs.$inferInsert;
+
+export const gridRangeVersions = pgTable("grid_range_versions", {
+  id:                      text("id").primaryKey(),
+  versionNumber:           integer("version_number").notNull(),
+  pair:                    text("pair").notNull().default("BTC/USD"),
+  status:                  text("status").notNull().default("proposed"),
+  midPrice:                decimal("mid_price", { precision: 18, scale: 8 }).notNull(),
+  upperPrice:              decimal("upper_price", { precision: 18, scale: 8 }).notNull(),
+  lowerPrice:              decimal("lower_price", { precision: 18, scale: 8 }).notNull(),
+  bandUpper:               decimal("band_upper", { precision: 18, scale: 8 }).notNull(),
+  bandMiddle:              decimal("band_middle", { precision: 18, scale: 8 }).notNull(),
+  bandLower:               decimal("band_lower", { precision: 18, scale: 8 }).notNull(),
+  bandWidthPct:            decimal("band_width_pct", { precision: 8, scale: 4 }).notNull(),
+  atrPct:                  decimal("atr_pct", { precision: 8, scale: 4 }).notNull(),
+  regime:                  text("regime").notNull(),
+  levelsCount:             integer("levels_count").notNull(),
+  geometricRatio:          decimal("geometric_ratio", { precision: 6, scale: 4 }).notNull(),
+  capitalBudgetUsd:        decimal("capital_budget_usd", { precision: 18, scale: 2 }).notNull(),
+  capitalPerLevelUsd:      decimal("capital_per_level_usd", { precision: 18, scale: 2 }).notNull(),
+  netProfitTargetPct:      decimal("net_profit_target_pct", { precision: 6, scale: 3 }).notNull(),
+  createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  activatedAt:             timestamp("activated_at", { withTimezone: true }),
+  closedAt:                timestamp("closed_at", { withTimezone: true }),
+});
+
+export type GridRangeVersionRow = typeof gridRangeVersions.$inferSelect;
+export type InsertGridRangeVersion = typeof gridRangeVersions.$inferInsert;
+
+export const gridIsolatedLevels = pgTable("grid_isolated_levels", {
+  id:                      text("id").primaryKey(),
+  rangeVersionId:          text("range_version_id").notNull(),
+  levelIndex:              integer("level_index").notNull(),
+  side:                    text("side").notNull(),
+  price:                   decimal("price", { precision: 18, scale: 8 }).notNull(),
+  notionalUsd:             decimal("notional_usd", { precision: 18, scale: 2 }).notNull(),
+  quantity:                decimal("quantity", { precision: 18, scale: 8 }).notNull(),
+  status:                  text("status").notNull().default("planned"),
+  filledQuantity:          decimal("filled_quantity", { precision: 18, scale: 8 }).notNull().default("0"),
+  filledPrice:             decimal("filled_price", { precision: 18, scale: 8 }),
+  clientOrderId:           text("client_order_id").notNull().unique(),
+  exchangeOrderId:         text("exchange_order_id"),
+  postOnlyAttempts:        integer("post_only_attempts").notNull().default(0),
+  usedTakerFallback:       boolean("used_taker_fallback").notNull().default(false),
+  netProfitTargetUsd:      decimal("net_profit_target_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  feeEstimateUsd:          decimal("fee_estimate_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  taxReserveUsd:           decimal("tax_reserve_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  placedAt:                timestamp("placed_at", { withTimezone: true }),
+  filledAt:                timestamp("filled_at", { withTimezone: true }),
+  cancelledAt:             timestamp("cancelled_at", { withTimezone: true }),
+});
+
+export type GridIsolatedLevelRow = typeof gridIsolatedLevels.$inferSelect;
+export type InsertGridIsolatedLevel = typeof gridIsolatedLevels.$inferInsert;
+
+export const gridIsolatedCycles = pgTable("grid_isolated_cycles", {
+  id:                      text("id").primaryKey(),
+  rangeVersionId:          text("range_version_id").notNull(),
+  cycleNumber:             integer("cycle_number").notNull(),
+  pair:                    text("pair").notNull().default("BTC/USD"),
+  status:                  text("status").notNull().default("pending"),
+  buyLevelId:              text("buy_level_id"),
+  sellLevelId:             text("sell_level_id"),
+  buyPrice:                decimal("buy_price", { precision: 18, scale: 8 }),
+  sellPrice:               decimal("sell_price", { precision: 18, scale: 8 }),
+  quantity:                decimal("quantity", { precision: 18, scale: 8 }).notNull(),
+  grossPnlUsd:             decimal("gross_pnl_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  feeTotalUsd:             decimal("fee_total_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  taxReserveUsd:           decimal("tax_reserve_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  netPnlUsd:               decimal("net_pnl_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  netPnlPct:               decimal("net_pnl_pct", { precision: 10, scale: 4 }).notNull().default("0"),
+  buyClientOrderId:        text("buy_client_order_id"),
+  sellClientOrderId:       text("sell_client_order_id"),
+  buyFilledAt:             timestamp("buy_filled_at", { withTimezone: true }),
+  sellFilledAt:            timestamp("sell_filled_at", { withTimezone: true }),
+  holdTimeMinutes:         integer("hold_time_minutes"),
+  createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt:             timestamp("completed_at", { withTimezone: true }),
+});
+
+export type GridIsolatedCycleRow = typeof gridIsolatedCycles.$inferSelect;
+export type InsertGridIsolatedCycle = typeof gridIsolatedCycles.$inferInsert;
+
+export const gridIsolatedEvents = pgTable("grid_isolated_events", {
+  id:                      bigserial("id", { mode: "number" }).primaryKey(),
+  eventType:               text("event_type").notNull(),
+  pair:                    text("pair").notNull().default("BTC/USD"),
+  rangeVersionId:          text("range_version_id"),
+  levelId:                 text("level_id"),
+  cycleId:                 text("cycle_id"),
+  mode:                    text("mode").notNull(),
+  message:                 text("message").notNull(),
+  metadataJson:            jsonb("metadata_json"),
+  createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type GridIsolatedEventRow = typeof gridIsolatedEvents.$inferSelect;
+export type InsertGridIsolatedEvent = typeof gridIsolatedEvents.$inferInsert;
+
+export const gridIsolatedMetricsSnapshots = pgTable("grid_isolated_metrics_snapshots", {
+  id:                      bigserial("id", { mode: "number" }).primaryKey(),
+  pair:                    text("pair").notNull().default("BTC/USD"),
+  mode:                    text("mode").notNull(),
+  activeRangeVersionId:    text("active_range_version_id"),
+  openLevels:              integer("open_levels").notNull().default(0),
+  openCycles:              integer("open_cycles").notNull().default(0),
+  dailyOrderCount:         integer("daily_order_count").notNull().default(0),
+  circuitBreakerOpen:      boolean("circuit_breaker_open").notNull().default(false),
+  pumpDumpState:           text("pump_dump_state").notNull().default("normal"),
+  capitalReservedUsd:      decimal("capital_reserved_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  capitalAvailableUsd:     decimal("capital_available_usd", { precision: 18, scale: 2 }).notNull().default("0"),
+  totalNetPnlUsd:          decimal("total_net_pnl_usd", { precision: 18, scale: 8 }).notNull().default("0"),
+  totalCyclesCompleted:    integer("total_cycles_completed").notNull().default(0),
+  capturedAt:              timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type GridIsolatedMetricsSnapshotRow = typeof gridIsolatedMetricsSnapshots.$inferSelect;
+export type InsertGridIsolatedMetricsSnapshot = typeof gridIsolatedMetricsSnapshots.$inferInsert;
+
+export const gridIsolatedBacktests = pgTable("grid_isolated_backtests", {
+  id:                      bigserial("id", { mode: "number" }).primaryKey(),
+  pair:                    text("pair").notNull().default("BTC/USD"),
+  startDate:               timestamp("start_date", { withTimezone: true }).notNull(),
+  endDate:                 timestamp("end_date", { withTimezone: true }).notNull(),
+  timeframe:               text("timeframe").notNull().default("1h"),
+  initialCapitalUsd:       decimal("initial_capital_usd", { precision: 18, scale: 2 }).notNull(),
+  fillModel:               text("fill_model").notNull().default("realistic"),
+  variantsJson:            jsonb("variants_json").notNull(),
+  resultsJson:             jsonb("results_json").notNull(),
+  createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type GridIsolatedBacktestRow = typeof gridIsolatedBacktests.$inferSelect;
+export type InsertGridIsolatedBacktest = typeof gridIsolatedBacktests.$inferInsert;
+
+export const strategyCapitalReservations = pgTable("strategy_capital_reservations", {
+  id:                      text("id").primaryKey(),
+  strategyType:            text("strategy_type").notNull(),
+  pair:                    text("pair").notNull(),
+  reservedUsd:             decimal("reserved_usd", { precision: 18, scale: 2 }).notNull(),
+  availableUsd:            decimal("available_usd", { precision: 18, scale: 2 }).notNull(),
+  reservedAt:              timestamp("reserved_at", { withTimezone: true }).notNull().defaultNow(),
+  releasedAt:              timestamp("released_at", { withTimezone: true }),
+  reason:                  text("reason").notNull(),
+});
+
+export type StrategyCapitalReservationRow = typeof strategyCapitalReservations.$inferSelect;
+export type InsertStrategyCapitalReservation = typeof strategyCapitalReservations.$inferInsert;
+
+export const exchangeBalanceSnapshots = pgTable("exchange_balance_snapshots", {
+  id:                      bigserial("id", { mode: "number" }).primaryKey(),
+  exchange:                text("exchange").notNull(),
+  pair:                    text("pair").notNull().default("BTC/USD"),
+  strategyType:            text("strategy_type").notNull(),
+  balanceUsd:              decimal("balance_usd", { precision: 18, scale: 8 }),
+  balanceBtc:              decimal("balance_btc", { precision: 18, scale: 8 }),
+  openOrdersCount:         integer("open_orders_count").notNull().default(0),
+  snapshotAt:              timestamp("snapshot_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ExchangeBalanceSnapshotRow = typeof exchangeBalanceSnapshots.$inferSelect;
+export type InsertExchangeBalanceSnapshot = typeof exchangeBalanceSnapshots.$inferInsert;

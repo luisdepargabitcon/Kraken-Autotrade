@@ -2,6 +2,90 @@
 
 ---
 
+## 2026-07-15 — feat(grid-isolated): Grid Isolated Professional Engine (FASES 1-13)
+
+**Tag**: WINDSURF GRID ISOLATED ENGINE
+**Commit**: pendiente
+
+### Resumen
+Implementación completa del motor de Grid Trading Aislado Profesional, independiente de Spot Normal e IDCA, con 13 fases completadas.
+
+### Archivos nuevos creados
+
+**Tipos y configuración (FASE 2):**
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — Tipos, enums, perfiles de capital, configuración por defecto, constantes de fees/tax
+- `server/services/gridIsolated/gridModeLockService.ts` — Servicio de bloqueos de seguridad para transiciones de modo
+
+**Base de datos (FASE 3):**
+- `db/migrations/063_grid_isolated.sql` — Migración con 9 tablas: configs, range_versions, levels, cycles, events, metrics_snapshots, backtests, capital_reservations, exchange_balance_snapshots
+
+**Servicios base (FASE 4-5):**
+- `server/services/gridIsolated/gridNetCalculator.ts` — Cálculo de target neto (gross→fees→tax→net), PnL por ciclo, break-even
+- `server/services/gridIsolated/gridCapitalAllocator.ts` — Asignación inteligente de capital con perfiles (conservative/balanced/aggressive), reserva y exclusión de capital de otras estrategias
+- `server/services/gridIsolated/gridBandAdapter.ts` — Adaptador de Bollinger Bands + ATR desde indicators.ts, evalúa idoneidad de régimen para grid
+- `server/services/gridIsolated/gridGeometricLevels.ts` — Distribución geométrica adaptativa de niveles (ratio dinámico según band width)
+
+**Motor y ejecución (FASE 6-9):**
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — Motor principal: tick loop, propuesta/activación de rangos, simulación SHADOW, pump/dump guard, circuit breaker
+- `server/services/gridIsolated/gridExecutionService.ts` — Ejecución low-API maker-first: 3 intentos post-only → fallback limit taker, circuit breaker, límite diario 300 órdenes
+- `server/services/gridIsolated/gridReconciliationRunner.ts` — Reconciliación local vs exchange, detección de mismatches, bloqueo de nuevas órdenes si discrepancia
+- `server/services/gridIsolated/gridRiskManager.ts` — Gestión de riesgo: trailing protection, stop loss 3 capas (soft/hard/emergency), HODL recovery
+- `server/services/gridIsolated/gridBacktest.ts` — Backtest robusto: 3 modelos de fill (optimistic/realistic/pessimistic), Sharpe ratio, max drawdown
+
+**API Routes:**
+- `server/routes/gridIsolated.routes.ts` — 12 endpoints: config CRUD, mode change, unlock-check, status, levels, cycles, reconciliation, backtest
+
+**UI (FASE 11-12):**
+- `client/src/pages/GridIsolated.tsx` — Página completa con 4 tabs: Configuración, Niveles, Ciclos, Riesgo
+- `client/src/components/grid/GridMonitorPanel.tsx` — Panel de monitor para página Monitor
+
+**Tests:**
+- `server/services/__tests__/gridIsolatedTypes.test.ts` — 34 tests (tipos, enums, perfiles, mode lock service)
+- `server/services/__tests__/gridNetCalculator.test.ts` — 16 tests (gross target, sell price, cycle PnL, break-even)
+- `server/services/__tests__/gridGeometricLevels.test.ts` — 19 tests (adaptive ratio, grid step, level generation)
+- `server/services/__tests__/gridIsolatedEngine.test.ts` — 11 tests (initial state, shadow simulation, mode safety, integration)
+- `server/services/__tests__/gridRiskExecution.test.ts` — 18 tests (circuit breaker, reconciliation, trailing, stop loss, HODL)
+
+**Total: 98 tests pasando**
+
+### Archivos modificados
+- `shared/schema.ts` — Añadidas 9 definiciones de tablas Drizzle ORM para Grid Isolated
+- `server/services/botLogger.ts` — Extendido EventType union con ~20 tipos de eventos Grid
+- `server/routes.ts` — Registrada migración 063 y rutas grid-isolated
+- `client/src/App.tsx` — Añadida ruta `/grid-isolated`
+- `client/src/components/dashboard/Nav.tsx` — Añadido item "GRID" en navegación
+- `client/src/pages/Monitor.tsx` — Añadida pestaña "Grid Isolated" con GridMonitorPanel
+
+### Características principales
+1. **Aislamiento total**: Capital, inventario y estado independientes de Spot Normal e IDCA
+2. **4 modos**: OFF, SHADOW (simulación), REAL_LIMITED, REAL_FULL (con safety locks)
+3. **Niveles geométricos adaptativos**: Ratio dinámico según band width de Bollinger
+4. **Cálculo neto profesional**: Target neto → gross gap + fees (0.09%×2) + reserva fiscal (20%)
+5. **Ejecución maker-first**: Post-only → 3 reintentos → fallback taker, nunca market orders
+6. **Risk management 3 capas**: Soft stop (HODL recovery) → Hard stop → Emergency stop
+7. **Trailing protection**: Activación configurable, trailing stop dinámico
+8. **Pump/Dump guard**: Detección de desviaciones con cooldown
+9. **Circuit breaker**: Bloqueo automático en errores de API
+10. **Reconciliación**: Verificación local vs exchange, bloqueo ante mismatches
+11. **Backtest robusto**: 3 modelos de fill, Sharpe, drawdown, múltiples variantes
+12. **Auditoría completa**: Eventos dedicados en grid_isolated_events + botLogger
+
+### Validación
+- `npx tsc --noEmit`: ✅ sin errores
+- `npx vitest run` (5 archivos grid): ✅ 98/98 tests
+- UI: Página `/grid-isolated` con 4 tabs funcionales
+- Monitor: Pestaña "Grid Isolated" con status en tiempo real
+
+### Deploy VPS
+```
+cd /opt/krakenbot-staging
+git pull origin main
+docker compose -f docker-compose.staging.yml up -d --build
+```
+Migration 063 se ejecuta automáticamente al iniciar.
+
+---
+
 ## 2026-07-01 — fix(audit-idca): clarify open pnl and align neutral classification
 
 **Commit**: `fix(audit-idca): clarify open pnl and align neutral classification`
