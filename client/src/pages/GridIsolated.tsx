@@ -15,6 +15,8 @@ import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
 import { GridActivityLive } from "@/components/grid/GridActivityLive";
 import { GridBandsRangesPanel } from "@/components/grid/GridBandsRangesPanel";
 import { GridSummaryPanel } from "@/components/grid/GridSummaryPanel";
+import { GridHeaderHero } from "@/components/grid/GridHeaderHero";
+import { GridKpiStrip } from "@/components/grid/GridKpiStrip";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -210,185 +212,19 @@ export default function GridIsolated() {
     <div className="min-h-screen bg-background flex flex-col">
       <Nav />
       <div className="flex-1 p-4 md:p-6 max-w-[1600px] mx-auto w-full space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Grid Isolated Professional</h1>
-          <p className="text-sm text-muted-foreground">Motor de grid trading aislado — BTC/USD Revolut X</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <Badge variant={modeColor(config?.mode || "OFF") as any}>
-            {config?.mode || "OFF"}
-          </Badge>
-          {status?.circuitBreakerOpen && (
-            <Badge variant="destructive">CIRCUIT BREAKER</Badge>
-          )}
-          {status?.pumpDumpState !== "normal" && (
-            <Badge variant={pumpDumpColor(status?.pumpDumpState) as any}>
-              {status?.pumpDumpState?.toUpperCase()}
-            </Badge>
-          )}
-          {status?.lastReconciliationOk && (
-            <Badge variant="default" className="text-xs">Reconciliación OK</Badge>
-          )}
-          {unlockCheck && !unlockCheck.canUnlockRealLimited && (config?.mode === "OFF" || config?.mode === "SHADOW") && (
-            <Badge variant="secondary" className="text-xs">Real bloqueado</Badge>
-          )}
-        </div>
-      </div>
+      {/* Header — IDCA-style compact hero */}
+      <GridHeaderHero
+        mode={config?.mode || "OFF"}
+        isActive={config?.isActive ?? false}
+        isRunning={(status as any)?.isRunning ?? false}
+        realBlocked={unlockCheck && !unlockCheck.canUnlockRealLimited}
+        circuitBreakerOpen={status?.circuitBreakerOpen}
+        pumpDumpState={status?.pumpDumpState || "normal"}
+        modeColor={modeColor}
+      />
 
-      {/* KPI Band */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Card className="border-border/50">
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Layers className="h-3.5 w-3.5 text-blue-500" />
-              <span className="text-xs text-muted-foreground">Niveles abiertos</span>
-            </div>
-            <p className="text-xl font-bold">{status?.openLevels || 0}</p>
-            <p className="text-xs text-muted-foreground">/ {auditData?.range?.levelsGenerated ?? "—"} generados</p>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50">
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Zap className="h-3.5 w-3.5 text-yellow-500" />
-              <span className="text-xs text-muted-foreground">Ciclos abiertos</span>
-            </div>
-            <p className="text-xl font-bold">{status?.openCycles || 0}</p>
-            <p className="text-xs text-muted-foreground">${status?.capitalReservedUsd?.toFixed(0) || 0} reservado</p>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50">
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <BarChart3 className="h-3.5 w-3.5 text-green-500" />
-              <span className="text-xs text-muted-foreground">PnL neto total</span>
-            </div>
-            <p className="text-xl font-bold text-green-500">${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50">
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingUp className="h-3.5 w-3.5 text-purple-500" />
-              <span className="text-xs text-muted-foreground">Ciclos completados</span>
-            </div>
-            <p className="text-xl font-bold">{status?.totalCyclesCompleted || 0}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50">
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Activity className="h-3.5 w-3.5 text-cyan-500" />
-              <span className="text-xs text-muted-foreground">Mercado actual</span>
-            </div>
-            <p className="text-sm font-bold">{auditData?.range?.regime || auditData?.range?.method || "—"}</p>
-            <p className="text-xs text-muted-foreground">{status?.pumpDumpState === "normal" ? "Normal" : status?.pumpDumpState?.toUpperCase()}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50">
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Shield className="h-3.5 w-3.5 text-green-500" />
-              <span className="text-xs text-muted-foreground">Salud del motor</span>
-            </div>
-            <p className="text-xl font-bold text-green-500">{status?.circuitBreakerOpen ? "⚠" : "100%"}</p>
-            <p className="text-xs text-muted-foreground">{status?.lastReconciliationOk ? "Reconciliación OK" : "Pendiente"}</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Mode Control — compact */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Shield className="h-4 w-4" />
-            Control de Modo
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {["OFF", "SHADOW", "REAL_LIMITED", "REAL_FULL"].map((mode) => (
-              <Button
-                key={mode}
-                variant={config?.mode === mode ? "default" : "outline"}
-                size="sm"
-                onClick={() => modeMutation.mutate(mode)}
-                disabled={modeMutation.isPending}
-              >
-                {mode}
-              </Button>
-            ))}
-          </div>
-
-          {/* Mode Lock Safety Checks */}
-          {(config?.mode === "OFF" || config?.mode === "SHADOW") && unlockCheck && (
-            <div className="rounded-lg border p-3 space-y-2">
-              <p className="text-sm font-semibold">Condiciones de Desbloqueo REAL:</p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.checks?.revolutxInitialized ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  Revolut X Inicializado
-                </div>
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.checks?.revolutxHasBalance ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  Balance Disponible
-                </div>
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.checks?.reconciliationPassed ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  Reconciliación OK
-                </div>
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.checks?.capitalReserved ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  Capital Reservado
-                </div>
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.checks?.modeLockAcknowledged ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  Lock Reconocido
-                </div>
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.checks?.dailyOrderLimitRespected ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  Límite Diario OK
-                </div>
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  Post-Only / Allow-Taker
-                </div>
-              </div>
-              {unlockCheck && !unlockCheck.postOnlySupported && (
-                <div className="flex items-start gap-2 rounded-lg bg-orange-500/10 p-3 text-sm">
-                  <AlertCircle className="h-4 w-4 mt-0.5 text-orange-500" />
-                  <span>Revolut X documenta post-only y allow-taker. Pendiente: verificar que el adaptador interno RevolutXService envía correctamente las instrucciones de ejecución.</span>
-                </div>
-              )}
-              {unlockCheck?.postOnlySupported && (
-                <div className="flex items-start gap-2 rounded-lg bg-green-500/10 p-3 text-sm">
-                  <Activity className="h-4 w-4 mt-0.5 text-green-500" />
-                  <span>Revolut X permite post-only y allow-taker. El Grid usa 3 intentos post-only para buscar maker. Si no entra, puede usar un 4º intento allow-taker controlado, descontando comisión taker y dejando todo auditado.</span>
-                </div>
-              )}
-              {!unlockCheck?.checks?.modeLockAcknowledged && unlockCheck?.postOnlySupported && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => acknowledgeMutation.mutate()}
-                  disabled={acknowledgeMutation.isPending}
-                >
-                  Reconocer Mode Lock
-                </Button>
-              )}
-            </div>
-          )}
-
-          {modeMutation.data && !modeMutation.data.success && (
-            <div className="flex items-start gap-2 rounded-lg bg-destructive/10 p-3 text-sm">
-              <AlertCircle className="h-4 w-4 mt-0.5 text-destructive" />
-              <span>{modeMutation.data.reason}</span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* KPI Strip — IDCA-style wide band */}
+      <GridKpiStrip status={status} auditData={auditData} />
 
       {/* Tabs — 12 subpestañas */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
