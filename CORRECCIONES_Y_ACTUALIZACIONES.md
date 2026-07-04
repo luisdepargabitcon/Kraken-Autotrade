@@ -2,6 +2,141 @@
 
 ---
 
+## CAPACIDADES DE DEPLOY Y PROCEDIMIENTO ( Windsurf / Cascade )
+
+**Fecha**: 2026-07-04
+**Estado**: ACTIVO
+
+### Capacidades
+Cascade (Windsurf) puede ejecutar deploys al servidor staging sin intervención manual del usuario. La clave SSH está configurada en el PC del usuario (`C:\Users\JSLUI\.ssh\id_ed25519`) con acceso sin contraseña a `root@5.250.184.18`.
+
+### Procedimiento obligatorio antes de cada deploy
+1. **Explicar** qué se va a desplegar: commits, archivos, motivo, riesgos, validaciones, partes no tocadas
+2. **Pedir aprobación** explícita al usuario con el formato obligatorio
+3. **Ejecutar deploy** solo tras aprobación
+4. **Validar** con comandos y señales de correcto/error
+5. **Documentar** en este archivo la entrada correspondiente
+
+### Comando de deploy (staging)
+```bash
+ssh root@5.250.184.18 "cd /opt/krakenbot-staging && git pull origin main && docker compose -f docker-compose.staging.yml up -d --build"
+```
+
+### Comandos de validación (staging)
+```bash
+# Status del Grid
+ssh root@5.250.184.18 "curl -s http://127.0.0.1:3020/api/grid-isolated/status | jq ."
+
+# Audit completo
+ssh root@5.250.184.18 "curl -s http://127.0.0.1:3020/api/grid-isolated/monitor/audit | jq ."
+
+# Logs recientes
+ssh root@5.250.184.18 "docker compose -f /opt/krakenbot-staging/docker-compose.staging.yml logs --since=5m krakenbot-staging-app | tail -50"
+
+# Contenedores
+ssh root@5.250.184.18 "docker compose -f /opt/krakenbot-staging/docker-compose.staging.yml ps"
+```
+
+### Reglas de seguridad
+- NO tocar IDCA, FISCO, REAL mode, órdenes reales, ni política 3 maker + 4º taker sin autorización específica
+- NO hacer cambios destructivos
+- Revisar este archivo antes de proponer o implementar cambios
+- Toda modificación debe documentarse aquí con: fecha, módulo, problema, motivo, solución, commit, validaciones, estado final, pendientes
+
+### Notas técnicas (PowerShell + SSH)
+- PowerShell escapa comillas dobles con backtick o las elimina. Para comandos SSH complejos con JSON, usar comillas simples externas: `ssh root@5.250.184.18 'comando con "comillas"'`
+- Para filtros jq largos, escribir el filtro en un fichero local y hacer `scp` al servidor, luego `jq -f /tmp/filtro.jq`
+- El heredoc `<< 'EOF'` no funciona desde PowerShell. Usar `ssh root@host "comando"` con comillas dobles externas
+
+---
+
+## 2026-07-04 — feat(grid): intelligent level rebuild on band change with safety preservation
+
+**Commit**: `7d5789c`
+**Tag**: WINDSURF GRID ISOLATED ENGINE — NIVELES INTELIGENTES
+**Estado**: CORREGIDO Y VALIDADO EN STAGING
+
+### Problema detectado
+Los niveles planificados del Grid no se recalculaban cuando la banda/rango activo cambiaba. Los niveles antiguos permanecían mezclados con los nuevos, sin distinción entre niveles activos e históricos. No existía mecanismo para preservar niveles con órdenes reales o ciclos abiertos.
+
+### Motivo
+Implementar comportamiento inteligente de niveles Grid cuando cambia la banda/rango, con reemplazo seguro de niveles `planned` y preservación de órdenes/ciclos reales.
+
+### Solución aplicada
+
+**Nuevos estados**:
+- `replaced` — para niveles y range versions antiguas sustituidas
+- `placed` — para niveles con orden colocada en exchange
+- `cycle_open` — para ciclos con compra filled pero venta pendiente
+
+**Nuevos eventos**:
+- `GRID_RANGE_CHANGED` — el rango activo cambió de banda
+- `GRID_LEVELS_REPLACED` — niveles planificados anteriores marcados como `replaced`
+- `GRID_LEVELS_REBUILT` — nuevos niveles recalculados con nuevo `rangeVersionId`
+- `GRID_LEVELS_PRESERVED_DUE_TO_CYCLE` — niveles conservados por tener ciclos/órdenes reales
+
+**Motor (`gridIsolatedEngine.ts`)**:
+- `loadActiveRangeVersion()`, `loadLevels()`, `loadCycles()`: cargan estado desde DB al iniciar
+- `isBandDrifted()`: detecta si precio salió de banda, ancho cambió >30%, o mid se desplazó >20% del ancho
+- `canRebuildLevels()`: solo permite reemplazar niveles `planned` sin `exchangeOrderId`, sin `filledAt`, y sin ciclos abiertos
+- `rebuildRangeAndLevels()`: marca rango anterior como `replaced`, niveles anteriores como `replaced`, genera nuevo `rangeVersionId` con nuevos niveles, loguea los 3 eventos
+
+**API (`gridIsolated.routes.ts`)**:
+- `levelsSummary` en audit: separa niveles actuales vs históricos por `rangeVersionId`
+- `summary` extendido: `activeRangeVersionId`, `activeRangeVersionNumber`, `activeRangeCreatedAt`, `activeRangeStatus`, `historicalLevelsCount`
+
+**UI (`GridLevelsPanel.tsx`)**:
+- Badge con `rangeVersionId` (8 chars) y fecha de generación
+- Conteo de niveles actuales vs históricos
+- Aviso sobre niveles históricos de rangos anteriores
+- Aviso de recálculo automático cuando cambia la banda
+
+**Tipos y formatter**:
+- `gridIsolatedTypes.ts`: nuevos estados y eventos añadidos
+- `gridActivityFormatter.ts`: mensajes en español natural para los 4 eventos nuevos
+
+**Tests**:
+- 6 tests nuevos (54 total): mensajes de eventos nuevos, `levelsSummary` en audit, campos de rango activo en summary
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridActivityFormatter.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `client/src/components/grid/GridLevelsPanel.tsx`
+- `client/src/pages/GridIsolated.tsx`
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts`
+
+### Partes NO tocadas
+- IDCA: no modificado
+- FISCO: no modificado
+- REAL mode: no activado
+- Órdenes reales: no ejecutadas
+- Política 3 maker + 4º taker: no modificada
+- Trading logic: no modificada
+
+### Validaciones ejecutadas
+- `npm run check` (tsc): OK
+- `npm run build`: OK
+- `npx vitest run`: 54/54 tests OK
+- Deploy a staging: contenedor arriba, sin errores
+
+### Validación staging (2026-07-04)
+- **Modo**: SHADOW activo y corriendo
+- **Rango activo**: versión #8, `8c8e34b9...`, estado `active`
+- **Niveles**: 65 planificados, 0 órdenes reales, 15 históricos
+- **Ciclos**: 0 abiertos
+- **Eventos detectados**:
+  - `GRID_RANGE_CHANGED` (id 189): "El rango activo cambió de 61443.90–62860.74 a 59185.06–63511.04."
+  - `GRID_LEVELS_REPLACED` (id 190): "Los niveles planificados anteriores fueron sustituidos por una nueva banda (10 niveles)."
+  - `GRID_LEVELS_REBUILT` (id 193): "La banda cambió y el Grid recalculó 10 niveles planificados."
+- **Errores**: ninguno (sin TypeError, sin ReferenceError, sin toLocaleString, sin columnas inexistentes)
+
+### Pendientes
+- Ninguno relacionado con esta funcionalidad. La auditoría de niveles inteligentes está implementada y validada.
+
+---
+
 ## 2026-07-04 — fix(grid-isolated): explain shadow inactivity and expose functional runtime status
 
 ### Resumen
