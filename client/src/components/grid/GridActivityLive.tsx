@@ -4,7 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ScrollText, Pause, Play, Trash2, Copy, Download, Radio } from "lucide-react";
+import { ScrollText, Pause, Play, Trash2, Copy, Download, Radio, Check } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button as UIButton } from "@/components/ui/button";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -180,6 +182,8 @@ export function GridActivityLive() {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [copyStatus, setCopyStatus] = useState("");
   const [lastEventId, setLastEventId] = useState(0);
+  const [selectedEvent, setSelectedEvent] = useState<FormattedEvent | null>(null);
+  const [copiedEvent, setCopiedEvent] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { data: liveData } = useQuery({
@@ -421,8 +425,8 @@ export function GridActivityLive() {
             filteredEvents.map((ev) => (
               <div
                 key={ev.id}
-                className="flex items-start gap-2 text-xs border-b pb-1 cursor-pointer hover:bg-muted/30 rounded px-1"
-                onClick={() => toggleExpand(ev.id)}
+                className="flex items-start gap-2 text-xs border-b pb-1 cursor-pointer hover:bg-muted/30 rounded px-1 py-1 transition-colors"
+                onClick={() => setSelectedEvent(ev)}
               >
                 <span className="text-muted-foreground whitespace-nowrap font-mono">
                   {new Date(ev.timestamp).toLocaleTimeString()}
@@ -442,16 +446,95 @@ export function GridActivityLive() {
                 <span className="flex-1 truncate">{ev.message}</span>
                 {ev.cycleId && <span className="text-muted-foreground text-[10px]">ciclo:{ev.cycleId.slice(0, 8)}</span>}
                 {ev.price && <span className="text-muted-foreground text-[10px]">${ev.price.toFixed(2)}</span>}
-                {expandedIds.has(ev.id) && ev.details && (
-                  <div className="w-full mt-1 p-2 rounded bg-muted/50 font-mono text-[10px] whitespace-pre-wrap break-all">
-                    {ev.details}
-                  </div>
-                )}
               </div>
             ))
           )}
         </div>
       </CardContent>
+
+      {/* Event detail modal */}
+      <Dialog open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <Radio className="h-4 w-4" />
+              {selectedEvent?.technicalCode}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedEvent && (
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg bg-muted/20 px-3 py-2">
+                  <span className="text-muted-foreground text-xs">Timestamp:</span>
+                  <p className="font-mono text-xs mt-0.5">{new Date(selectedEvent.timestamp).toLocaleString("es-ES")}</p>
+                </div>
+                <div className="rounded-lg bg-muted/20 px-3 py-2">
+                  <span className="text-muted-foreground text-xs">Severidad:</span>
+                  <Badge variant="outline" className={`text-[10px] ml-1 ${SEVERITY_COLORS[selectedEvent.severity] || ""}`}>{SEVERITY_LABELS[selectedEvent.severity]}</Badge>
+                </div>
+                <div className="rounded-lg bg-muted/20 px-3 py-2">
+                  <span className="text-muted-foreground text-xs">Categoría:</span>
+                  <span className="ml-1">{CATEGORY_LABELS[selectedEvent.category]}</span>
+                </div>
+                <div className="rounded-lg bg-muted/20 px-3 py-2">
+                  <span className="text-muted-foreground text-xs">Modo:</span>
+                  <Badge variant="outline" className="text-[10px] ml-1">{selectedEvent.mode}</Badge>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-muted/20 p-3">
+                <p className="text-muted-foreground text-xs mb-1">Mensaje:</p>
+                <p>{selectedEvent.message}</p>
+              </div>
+
+              {selectedEvent.cycleId && (
+                <div className="rounded-lg bg-muted/20 px-3 py-2">
+                  <span className="text-muted-foreground text-xs">Cycle ID:</span>
+                  <span className="font-mono text-xs ml-1">{selectedEvent.cycleId}</span>
+                </div>
+              )}
+              {selectedEvent.levelId && (
+                <div className="rounded-lg bg-muted/20 px-3 py-2">
+                  <span className="text-muted-foreground text-xs">Level ID:</span>
+                  <span className="font-mono text-xs ml-1">{selectedEvent.levelId}</span>
+                </div>
+              )}
+              {selectedEvent.price != null && (
+                <div className="rounded-lg bg-muted/20 px-3 py-2">
+                  <span className="text-muted-foreground text-xs">Precio:</span>
+                  <span className="font-mono ml-1">${selectedEvent.price.toFixed(2)}</span>
+                </div>
+              )}
+
+              {selectedEvent.details && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground text-xs">Metadata JSON:</span>
+                    <div className="flex items-center gap-1">
+                      <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => { navigator.clipboard.writeText(selectedEvent.details || ""); setCopiedEvent(true); setTimeout(() => setCopiedEvent(false), 2000); }}>
+                        {copiedEvent ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
+                        {copiedEvent ? "Copiado" : "Copiar JSON"}
+                      </Button>
+                      <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => {
+                        const blob = new Blob([selectedEvent.details || ""], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url; a.download = `event-${selectedEvent.id}.json`;
+                        a.click(); URL.revokeObjectURL(url);
+                      }}>
+                        <Download className="h-3 w-3 mr-1" /> Descargar
+                      </Button>
+                    </div>
+                  </div>
+                  <pre className="p-2 rounded bg-muted/50 font-mono text-[10px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                    {selectedEvent.details}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

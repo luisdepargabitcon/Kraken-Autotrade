@@ -20,12 +20,14 @@ import { GridKpiStrip } from "@/components/grid/GridKpiStrip";
 import { GridLevelsMarketHeader } from "@/components/grid/GridLevelsMarketHeader";
 import { GridLevelsPanel } from "@/components/grid/GridLevelsPanel";
 import { GridSettingsExplained } from "@/components/grid/GridSettingsExplained";
+import { GridExecutionPolicyPanel } from "@/components/grid/GridExecutionPolicyPanel";
 
 const API_BASE = "/api/grid-isolated";
 
 export default function GridIsolated() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("resumen");
+  const [showHodlConfirm, setShowHodlConfirm] = useState(false);
 
   // ─── Queries ─────────────────────────────────────────────
   const { data: config, isLoading: configLoading } = useQuery({
@@ -590,113 +592,34 @@ export default function GridIsolated() {
 
         {/* 3. Ejecución Tab */}
         <TabsContent value="ejecucion" className="space-y-4">
+          <GridExecutionPolicyPanel
+            config={config}
+            onConfigChange={(key, value) => configMutation.mutate({ [key]: value } as any)}
+          />
+          {/* Revolut X status */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <ZapIcon className="h-5 w-5" />
-                Política de Ejecución
+                Estado Revolut X
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg bg-muted/30 p-4 space-y-2">
-                <p className="text-sm font-semibold">3 intentos maker + 4º taker controlado</p>
-                <p className="text-sm text-muted-foreground">
-                  El Grid intenta evitar pagar taker. Primero coloca órdenes conservadoras buscando ejecución maker. Si después de 3 intentos no entra y la oportunidad sigue siendo válida, puede ejecutar al 4º intento como taker controlado. Ese fallback queda auditado.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Intentos maker antes de taker</Label>
-                  <Input
-                    type="number"
-                    value={config?.makerAttemptsBeforeTaker ?? 3}
-                    onChange={(e) => configMutation.mutate({ makerAttemptsBeforeTaker: parseInt(e.target.value) } as any)}
-                  />
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="flex items-center gap-2">
+                  {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
+                  <span>Post-only soportado</span>
                 </div>
-                <div className="space-y-2">
-                  <Label>Número de intento taker fallback</Label>
-                  <Input
-                    type="number"
-                    value={config?.takerFallbackAttemptNumber ?? 4}
-                    onChange={(e) => configMutation.mutate({ takerFallbackAttemptNumber: parseInt(e.target.value) } as any)}
-                  />
+                <div className="flex items-center gap-2">
+                  {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
+                  <span>Allow-taker soportado</span>
                 </div>
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Máximo fallback taker por ciclo</Label>
-                  <Input
-                    type="number"
-                    value={config?.maxTakerFallbackPerCycle ?? 1}
-                    onChange={(e) => configMutation.mutate({ maxTakerFallbackPerCycle: parseInt(e.target.value) } as any)}
-                  />
+              {unlockCheck?.postOnlySupported && (
+                <div className="rounded-lg bg-green-500/10 p-3 text-sm">
+                  Revolut X documenta post_only y allow_taker. El adaptador interno envía executionInstruction correctamente.
                 </div>
-                <div className="space-y-2">
-                  <Label>Target beneficio neto: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
-                  <Slider
-                    value={[config?.netProfitTargetPct || 0.8]}
-                    min={0.1}
-                    max={3.0}
-                    step={0.1}
-                    onValueChange={(v) => configMutation.mutate({ netProfitTargetPct: v[0] })}
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label>Fallback taker habilitado</Label>
-                  <p className="text-xs text-muted-foreground mt-1">Permitir el 4º intento como taker si no se consigue ejecución maker.</p>
-                </div>
-                <Switch
-                  checked={config?.takerFallbackEnabled ?? true}
-                  onCheckedChange={(v) => configMutation.mutate({ takerFallbackEnabled: v } as any)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label>Fallback taker requiere beneficio neto</Label>
-                  <p className="text-xs text-muted-foreground mt-1">El taker solo se permite si el beneficio neto estimado sigue por encima del objetivo.</p>
-                </div>
-                <Switch
-                  checked={config?.takerFallbackRequiresNetProfit ?? true}
-                  onCheckedChange={(v) => configMutation.mutate({ takerFallbackRequiresNetProfit: v } as any)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label>Auditoría obligatoria de fallback taker</Label>
-                  <p className="text-xs text-muted-foreground mt-1">Todo fallback taker debe registrarse en auditoría con motivo, precio y comisión estimada.</p>
-                </div>
-                <Switch
-                  checked={config?.takerFallbackAuditRequired ?? true}
-                  onCheckedChange={(v) => configMutation.mutate({ takerFallbackAuditRequired: v } as any)}
-                />
-              </div>
-
-              {/* Revolut X status */}
-              <div className="space-y-3 pt-4 border-t">
-                <h3 className="text-sm font-semibold">Estado Revolut X</h3>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div className="flex items-center gap-2">
-                    {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                    <span>Post-only soportado</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                    <span>Allow-taker soportado</span>
-                  </div>
-                </div>
-                {unlockCheck?.postOnlySupported && (
-                  <div className="rounded-lg bg-green-500/10 p-3 text-sm">
-                    Revolut X documenta post_only y allow_taker. El adaptador interno envía executionInstruction correctamente.
-                  </div>
-                )}
-              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -879,18 +802,65 @@ export default function GridIsolated() {
               </div>
 
               {/* HODL Recovery */}
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label>HODL Recovery</Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Tras soft stop loss, mantener posición y esperar recuperación a break-even
-                  </p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border p-4">
+                  <div>
+                    <Label>HODL Recovery</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Tras soft stop loss, mantener posición y esperar recuperación a break-even
+                    </p>
+                  </div>
+                  <Switch
+                    checked={config?.hodlRecoveryEnabled}
+                    onCheckedChange={(v) => {
+                      if (v && !config?.hodlRecoveryEnabled) {
+                        setShowHodlConfirm(true);
+                      } else {
+                        configMutation.mutate({ hodlRecoveryEnabled: v });
+                      }
+                    }}
+                  />
                 </div>
-                <Switch
-                  checked={config?.hodlRecoveryEnabled}
-                  onCheckedChange={(v) => configMutation.mutate({ hodlRecoveryEnabled: v })}
-                />
+                {/* Explanation box */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3 text-sm">
+                    <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">HODL Recovery (ON)</p>
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
+                      Tras un soft stop loss, NO se vende. Se mantiene la posición esperando que el precio recupere hasta break-even.
+                      <strong> Ventaja:</strong> evita realizar la pérdida. <strong> Riesgo:</strong> si el precio sigue bajando, la pérdida puede ampliarse indefinidamente.
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-orange-500/5 border border-orange-500/20 p-3 text-sm">
+                    <p className="font-semibold text-orange-700 dark:text-orange-300 mb-1">Stop Loss tradicional (OFF)</p>
+                    <p className="text-xs text-orange-700 dark:text-orange-300">
+                      Tras un soft stop loss, se vende inmediatamente realizando la pérdida.
+                      <strong> Ventaja:</strong> corta pérdidas de forma disciplinada. <strong> Desventaja:</strong> puede vender en el suelo antes de un rebote.
+                    </p>
+                  </div>
+                </div>
               </div>
+
+              {/* HODL Recovery confirmation dialog */}
+              {showHodlConfirm && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowHodlConfirm(false)}>
+                  <div className="bg-card border rounded-lg p-6 max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      <AlertCircle className="h-5 w-5 text-amber-500" />
+                      Confirmar HODL Recovery
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Estás activando HODL Recovery. Esto significa que tras un soft stop loss, el sistema NO venderá
+                      y mantendrá la posición esperando recuperación. Si el precio sigue bajando, la pérdida puede ampliarse.
+                    </p>
+                    <div className="flex items-center gap-2 justify-end">
+                      <Button variant="outline" size="sm" onClick={() => setShowHodlConfirm(false)}>Cancelar</Button>
+                      <Button variant="default" size="sm" onClick={() => { configMutation.mutate({ hodlRecoveryEnabled: true }); setShowHodlConfirm(false); }}>
+                        Activar HODL Recovery
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Pump/Dump Guard */}
               <div className="space-y-4">
@@ -1097,119 +1067,207 @@ export default function GridIsolated() {
 
         {/* 10. Ayuda Tab */}
         <TabsContent value="ayuda" className="space-y-4">
+          {/* Intro box */}
+          <Card className="border-blue-500/20 bg-gradient-to-br from-blue-500/5 to-card">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <HelpCircle className="h-5 w-5 text-blue-400 shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-semibold text-base mb-1">¿Qué es el Grid Aislado?</h3>
+                  <p className="text-sm text-muted-foreground">
+                    El Grid Aislado es un motor profesional de trading para BTC/USD en Revolut X, completamente separado del Spot Normal y del IDCA. No comparte inventario, capital ni estado con otras estrategias.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Modos de operación */}
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <HelpCircle className="h-5 w-5" />
-                Ayuda — Grid Aislado BTC/USD
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Activity className="h-4 w-4 text-green-400" />
+                Modos de operación
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">¿Qué es el Grid Aislado?</h3>
-                <p className="text-muted-foreground">
-                  El Grid Aislado es un motor profesional de trading para BTC/USD en Revolut X, completamente separado del Spot Normal y del IDCA. No comparte inventario, capital ni estado con otras estrategias.
-                </p>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-lg bg-muted/20 border p-3">
+                  <Badge variant="outline" className="text-xs mb-1">OFF</Badge>
+                  <p className="text-sm text-muted-foreground">El motor está apagado. No evalúa mercado ni envía órdenes. Es el modo por defecto.</p>
+                </div>
+                <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3">
+                  <Badge variant="secondary" className="text-xs mb-1">SHADOW</Badge>
+                  <p className="text-sm text-muted-foreground">Modo simulación. Evalúa el mercado y simula operaciones sin enviar órdenes reales. Ideal para validar la estrategia.</p>
+                </div>
+                <div className="rounded-lg bg-amber-500/5 border border-amber-500/20 p-3">
+                  <Badge variant="default" className="text-xs mb-1 bg-amber-600">REAL_LIMITED</Badge>
+                  <p className="text-sm text-muted-foreground">Opera con capital limitado y órdenes reales. Requiere que todas las condiciones de seguridad se cumplan.</p>
+                </div>
+                <div className="rounded-lg bg-red-500/5 border border-red-500/20 p-3">
+                  <Badge variant="destructive" className="text-xs mb-1">REAL_FULL</Badge>
+                  <p className="text-sm text-muted-foreground">Opera con capital completo y órdenes reales. Requiere todas las condiciones de seguridad y reconocimiento del usuario.</p>
+                </div>
               </div>
+            </CardContent>
+          </Card>
 
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Modos de operación</h3>
-                <ul className="space-y-1 text-muted-foreground list-disc pl-4">
-                  <li><strong>OFF:</strong> El motor está apagado. No evalúa mercado ni envía órdenes. Es el modo por defecto.</li>
-                  <li><strong>SHADOW:</strong> Modo simulación. Evalúa el mercado y simula operaciones sin enviar órdenes reales. Ideal para validar la estrategia.</li>
-                  <li><strong>REAL_LIMITED:</strong> Opera con capital limitado y órdenes reales. Requiere que todas las condiciones de seguridad se cumplan.</li>
-                  <li><strong>REAL_FULL:</strong> Opera con capital completo y órdenes reales. Requiere todas las condiciones de seguridad y reconocimiento del usuario.</li>
-                </ul>
+          {/* Mode Lock */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Shield className="h-4 w-4 text-amber-400" />
+                Bloqueo de modos reales (Mode Lock)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Los modos REAL_LIMITED y REAL_FULL están bloqueados por seguridad hasta que se cumplan TODAS estas condiciones:
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {[
+                  "Revolut X inicializado y conectado",
+                  "Balance disponible en la cuenta",
+                  "Reconciliación de órdenes validada",
+                  "Capital reservado y aislado para el Grid",
+                  "Usuario reconoce el bloqueo explícitamente",
+                  "Límite diario de órdenes respetado",
+                  "Soporte post-only confirmado en RevolutXService",
+                ].map((cond, i) => (
+                  <div key={i} className="flex items-center gap-2 rounded-lg bg-muted/20 px-3 py-2 text-sm">
+                    <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+                    <span>{cond}</span>
+                  </div>
+                ))}
               </div>
-
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Bloqueo de modos reales (Mode Lock)</h3>
-                <p className="text-muted-foreground">
-                  Los modos REAL_LIMITED y REAL_FULL están bloqueados por seguridad hasta que se cumplan TODAS estas condiciones:
-                </p>
-                <ul className="space-y-1 text-muted-foreground list-disc pl-4">
-                  <li>Revolut X inicializado y conectado</li>
-                  <li>Balance disponible en la cuenta</li>
-                  <li>Reconciliación de órdenes validada</li>
-                  <li>Capital reservado y aislado para el Grid</li>
-                  <li>Usuario reconoce el bloqueo explícitamente (acknowledge)</li>
-                  <li>Límite diario de órdenes respetado</li>
-                  <li>Soporte post-only confirmado en RevolutXService (actualmente NO soportado)</li>
-                </ul>
-                <p className="text-muted-foreground">
-                  Mientras post-only no esté soportado, los modos reales permanecerán bloqueados. SHADOW siempre está disponible.
-                </p>
+              <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-sm text-amber-700 dark:text-amber-300">
+                Mientras post-only no esté soportado, los modos reales permanecerán bloqueados. SHADOW siempre está disponible.
               </div>
+            </CardContent>
+          </Card>
 
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Cómo usar SHADOW</h3>
-                <ol className="space-y-1 text-muted-foreground list-decimal pl-4">
-                  <li>Ve a la pestaña Configuración y ajusta los parámetros del Grid.</li>
-                  <li>Cambia el modo a SHADOW usando el selector de modo.</li>
-                  <li>El motor comenzará a evaluar el mercado y simular operaciones.</li>
-                  <li>Revisa los niveles generados en Niveles y Ciclos.</li>
-                  <li>Consulta los eventos y decisiones en Auditoría Grid {">"} Logs Inteligentes.</li>
-                  <li>Puedes ejecutar una validación SHADOW puntual con el endpoint POST /api/grid-isolated/shadow-validate.</li>
-                </ol>
+          {/* Cómo usar SHADOW */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <FlaskConical className="h-4 w-4 text-blue-400" />
+                Cómo usar SHADOW
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ol className="space-y-2">
+                {[
+                  "Ve a la pestaña Configuración y ajusta los parámetros del Grid.",
+                  "Cambia el modo a SHADOW usando el selector de modo.",
+                  "El motor comenzará a evaluar el mercado y simular operaciones.",
+                  "Revisa los niveles generados en Niveles y Ciclos.",
+                  "Consulta los eventos y decisiones en Auditoría Grid > Logs Inteligentes.",
+                  "Puedes ejecutar una validación SHADOW puntual con el endpoint POST /api/grid-isolated/shadow-validate.",
+                ].map((step, i) => (
+                  <div key={i} className="flex items-start gap-3 rounded-lg bg-muted/20 px-3 py-2">
+                    <span className="font-mono font-bold text-blue-400 shrink-0">{i + 1}.</span>
+                    <span className="text-sm text-muted-foreground">{step}</span>
+                  </div>
+                ))}
+              </ol>
+            </CardContent>
+          </Card>
+
+          {/* Seguridad */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Shield className="h-4 w-4 text-red-400" />
+                Mecanismos de seguridad
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="rounded-lg bg-red-500/5 border border-red-500/20 p-3">
+                <p className="font-semibold text-sm mb-1">Circuit Breaker</p>
+                <p className="text-xs text-muted-foreground">Bloquea todas las órdenes si se detectan errores críticos (ej: ORDER_SUBMIT_UNKNOWN). Permanece abierto durante un cooldown antes de reintentar automáticamente.</p>
               </div>
-
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Auditoría y monitorización</h3>
-                <p className="text-muted-foreground">
-                  La auditoría está disponible en dos sitios: Monitor {">"} Grid Isolated y Trading {">"} Grid Aislado {">"} Auditoría Grid. Ambas vistas usan el mismo endpoint y muestran la misma información.
-                </p>
-                <ul className="space-y-1 text-muted-foreground list-disc pl-4">
-                  <li><strong>Resumen:</strong> Estado general, modo, niveles, PnL, bloqueos.</li>
-                  <li><strong>Decisiones:</strong> Qué detectó el motor, qué quería hacer y qué decidió.</li>
-                  <li><strong>Logs Inteligentes:</strong> Eventos en formato legible con filtros por severidad y categoría.</li>
-                  <li><strong>Niveles y Ciclos:</strong> Tablas de niveles de compra/venta y ciclos abiertos/cerrados.</li>
-                  <li><strong>Seguridad:</strong> Todos los checks de bloqueo con motivos detallados.</li>
-                  <li><strong>API/Reconciliación:</strong> Estado de la API, reconciliación y circuit breaker.</li>
-                  <li><strong>Exportar:</strong> Copiar resumen para ChatGPT, exportar JSON/CSV.</li>
-                </ul>
+              <div className="rounded-lg bg-orange-500/5 border border-orange-500/20 p-3">
+                <p className="font-semibold text-sm mb-1">Pump/Dump Guard</p>
+                <p className="text-xs text-muted-foreground">Detecta movimientos bruscos de precio (pump o dump) y bloquea nuevas compras durante el cooldown para proteger el capital.</p>
               </div>
-
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Circuit Breaker</h3>
-                <p className="text-muted-foreground">
-                  El circuit breaker es un mecanismo de seguridad que bloquea todas las órdenes si se detectan errores críticos (ej: ORDER_SUBMIT_UNKNOWN). Permanece abierto durante un cooldown antes de reintentar automáticamente.
-                </p>
+              <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3">
+                <p className="font-semibold text-sm mb-1">Target de Beneficio Neto</p>
+                <p className="text-xs text-muted-foreground">El target neto (por defecto 0.8%) es el beneficio deseado después de fees y reserva fiscal. Si las bandas son demasiado estrechas para cubrir este objetivo, el motor pausa nuevas entradas.</p>
               </div>
-
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Pump/Dump Guard</h3>
-                <p className="text-muted-foreground">
-                  El motor detecta movimientos bruscos de precio (pump o dump) y bloquea nuevas compras durante el cooldown para proteger el capital.
-                </p>
+              <div className="rounded-lg bg-purple-500/5 border border-purple-500/20 p-3">
+                <p className="font-semibold text-sm mb-1">HODL Recovery vs Stop Loss</p>
+                <p className="text-xs text-muted-foreground">HODL Recovery mantiene la posición tras un soft stop loss esperando recuperación. Stop Loss tradicional vende inmediatamente. HODL puede ampliar pérdidas si el precio sigue bajando.</p>
               </div>
+            </CardContent>
+          </Card>
 
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Target de Beneficio Neto</h3>
-                <p className="text-muted-foreground">
-                  El target neto (por defecto 0.8%) es el beneficio deseado después de fees y reserva fiscal. El motor calcula automáticamente el gap de precio bruto necesario. Si las bandas son demasiado estrechas para cubrir este objetivo, el motor pausa nuevas entradas.
-                </p>
+          {/* Auditoría */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <ScrollText className="h-4 w-4 text-purple-400" />
+                Auditoría y monitorización
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {[
+                  ["Resumen", "Estado general, modo, niveles, PnL, bloqueos."],
+                  ["Decisiones", "Qué detectó el motor, qué quería hacer y qué decidió."],
+                  ["Logs Inteligentes", "Eventos en formato legible con filtros por severidad y categoría."],
+                  ["Niveles y Ciclos", "Tablas de niveles de compra/venta y ciclos abiertos/cerrados."],
+                  ["Seguridad", "Todos los checks de bloqueo con motivos detallados."],
+                  ["API/Reconciliación", "Estado de la API, reconciliación y circuit breaker."],
+                  ["Exportar", "Copiar resumen para ChatGPT, exportar JSON/CSV."],
+                ].map(([title, desc], i) => (
+                  <div key={i} className="rounded-lg bg-muted/20 px-3 py-2 text-sm">
+                    <span className="font-semibold">{title}:</span> <span className="text-muted-foreground">{desc}</span>
+                  </div>
+                ))}
               </div>
+            </CardContent>
+          </Card>
 
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Exportar a ChatGPT</h3>
-                <p className="text-muted-foreground">
-                  En la pestaña Exportar puedes copiar un resumen completo del estado del Grid para pegarlo en ChatGPT y obtener análisis o recomendaciones. También puedes exportar JSON o CSV con todos los eventos.
-                </p>
-              </div>
+          {/* Exportar */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-green-400" />
+                Exportar a ChatGPT
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                En la pestaña Exportar puedes copiar un resumen completo del estado del Grid para pegarlo en ChatGPT y obtener análisis o recomendaciones. También puedes exportar JSON o CSV con todos los eventos.
+              </p>
+            </CardContent>
+          </Card>
 
-              <div className="space-y-2">
-                <h3 className="font-semibold text-base">Endpoints principales</h3>
-                <ul className="space-y-1 text-muted-foreground list-disc pl-4 font-mono text-xs">
-                  <li>GET /api/grid-isolated/config — Configuración actual</li>
-                  <li>GET /api/grid-isolated/status — Estado de ejecución</li>
-                  <li>GET /api/grid-isolated/unlock-status — Estado de bloqueos</li>
-                  <li>GET /api/grid-isolated/monitor/audit — Auditoría completa</li>
-                  <li>GET /api/grid-isolated/events — Eventos con filtros</li>
-                  <li>POST /api/grid-isolated/shadow-validate — Validación SHADOW segura</li>
-                  <li>GET /api/grid-isolated/export/chatgpt — Resumen para ChatGPT</li>
-                  <li>GET /api/grid-isolated/export/json — Export JSON completo</li>
-                  <li>GET /api/grid-isolated/export/csv — Export CSV de eventos</li>
-                </ul>
+          {/* Endpoints */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-amber-400" />
+                Endpoints principales
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 font-mono text-xs">
+                {[
+                  "GET /api/grid-isolated/config",
+                  "GET /api/grid-isolated/status",
+                  "GET /api/grid-isolated/unlock-status",
+                  "GET /api/grid-isolated/monitor/audit",
+                  "GET /api/grid-isolated/events",
+                  "POST /api/grid-isolated/shadow-validate",
+                  "GET /api/grid-isolated/export/chatgpt",
+                  "GET /api/grid-isolated/export/json",
+                  "GET /api/grid-isolated/export/csv",
+                ].map((ep, i) => (
+                  <div key={i} className="rounded bg-muted/20 px-2 py-1.5 text-muted-foreground">
+                    {ep}
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>

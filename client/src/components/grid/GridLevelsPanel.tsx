@@ -4,8 +4,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Layers, TrendingUp, TrendingDown, AlertTriangle, Info,
-  Copy, Download, ChevronLeft, ChevronRight, X,
+  Copy, Download, ChevronLeft, ChevronRight, X, Check,
 } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 // ─── Props ───────────────────────────────────────────────────
@@ -86,6 +89,7 @@ export function GridLevelsPanel({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [selectedLevel, setSelectedLevel] = useState<any | null>(null);
+  const [copiedDetail, setCopiedDetail] = useState(false);
 
   // ─── Range info from levelsSummary ─────────────────────────
   const activeRangeId = levelsSummary?.activeRangeVersionId;
@@ -557,26 +561,33 @@ export function GridLevelsPanel({
         )}
       </CardContent>
 
-      {/* ─── Level detail drawer ────────────────────────────── */}
-      {selectedLevel && (
-        <div
-          className="fixed inset-0 bg-black/50 z-50 flex justify-end"
-          onClick={() => setSelectedLevel(null)}
-        >
-          <div
-            className="w-full max-w-md h-full bg-card border-l border-border overflow-y-auto p-4 space-y-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold">Detalle del nivel</h3>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setSelectedLevel(null)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
+      {/* ─── Level detail modal (replaces drawer) ──────────── */}
+      <Dialog open={!!selectedLevel} onOpenChange={(open) => !open && setSelectedLevel(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Layers className="h-4 w-4" />
+              Detalle del nivel
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedLevel && (
+          <>
+          <div className="flex items-center gap-2 mb-2">
+            <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => { navigator.clipboard.writeText(JSON.stringify(selectedLevel, null, 2)); setCopiedDetail(true); setTimeout(() => setCopiedDetail(false), 2000); }}>
+              {copiedDetail ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
+              {copiedDetail ? "Copiado" : "Copiar JSON"}
+            </Button>
+            <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => {
+              const blob = new Blob([JSON.stringify(selectedLevel, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url; a.download = `level-${selectedLevel.id?.slice(0, 8) || "detail"}.json`;
+              a.click(); URL.revokeObjectURL(url);
+            }}>
+              <Download className="h-3 w-3 mr-1" /> Descargar JSON
+            </Button>
+          </div>
 
             <div className="space-y-2 text-sm">
               <Row label="ID" value={selectedLevel.id} mono />
@@ -704,9 +715,10 @@ export function GridLevelsPanel({
               Beneficio objetivo estimado, no beneficio realizado.
               {mode === "SHADOW" && " Estimado en simulación, sin orden real."}
             </div>
-          </div>
-        </div>
-      )}
+          </>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

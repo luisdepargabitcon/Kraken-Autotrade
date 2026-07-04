@@ -249,14 +249,21 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   ).length;
   const replacedLevelsCount = levels.filter((l: any) => l?.status === "replaced").length;
   const filledLevelsCount = levels.filter((l: any) => l?.status === "filled").length;
+  const simulatedFilledLevelsCount = levels.filter((l: any) =>
+    l?.status === "filled" && l?.exchangeOrderId == null
+  ).length;
   const historicalLevelsCount = status?.historicalLevelsCount || 0;
+  const totalLevels = levels.length;
+  const openCyclesCount = cycles.filter((c: any) => c?.status === "open" || c?.status === "active").length;
+  const closedCyclesCount = cycles.filter((c: any) => c?.status === "completed" || c?.status === "closed").length;
+  lines.push(`Niveles totales: ${totalLevels}.`);
   lines.push(`Niveles planificados: ${plannedLevelsCount}.`);
-  lines.push(`Niveles activos reales: ${realOpenOrdersCount}.`);
-  lines.push(`Niveles históricos/reemplazados: ${replacedLevelsCount + historicalLevelsCount}.`);
-  lines.push(`Niveles ejecutados (filled): ${filledLevelsCount}.`);
+  lines.push(`Niveles reemplazados (rangos anteriores): ${replacedLevelsCount}.`);
+  lines.push(`Niveles ejecutados (filled): ${filledLevelsCount} (${simulatedFilledLevelsCount} simulados, ${filledLevelsCount - simulatedFilledLevelsCount} reales).`);
   lines.push(`Órdenes reales abiertas: ${realOpenOrdersCount}.`);
-  lines.push(`Ciclos abiertos: ${status?.openCycles || 0}.`);
-  lines.push(`Ciclos cerrados: ${status?.totalCyclesCompleted || 0}.`);
+  lines.push(`Niveles históricos: ${replacedLevelsCount + historicalLevelsCount}.`);
+  lines.push(`Ciclos abiertos: ${openCyclesCount}.`);
+  lines.push(`Ciclos cerrados: ${closedCyclesCount}.`);
   lines.push(`PnL neto: $${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}.`);
   lines.push(`Circuit breaker: ${status?.circuitBreakerOpen ? "abierto" : "cerrado"}.`);
   lines.push(`Órdenes hoy: ${status?.dailyOrderCount || 0}.`);
@@ -350,12 +357,18 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     lines.push(`Bandas/Rangos: no hay rango activo todavía. El Grid está en ${mode} y espera una evaluación válida del mercado para generar bandas.`);
   }
   if (levels.length > 0) {
-    lines.push(`Niveles: ${levels.length} niveles (${levels.filter((l: any) => l.status === "open").length} abiertos, ${levels.filter((l: any) => l.status === "filled").length} filled).`);
+    const openCount = levels.filter((l: any) => l.status === "open").length;
+    const filledCount = levels.filter((l: any) => l.status === "filled").length;
+    const plannedCount = levels.filter((l: any) => l.status === "planned").length;
+    const replacedCount = levels.filter((l: any) => l.status === "replaced").length;
+    lines.push(`Niveles: ${levels.length} niveles (${plannedCount} planificados, ${openCount} abiertos, ${filledCount} filled, ${replacedCount} reemplazados).`);
   } else {
     lines.push("Niveles: sin niveles generados.");
   }
   if (cycles.length > 0) {
-    lines.push(`Ciclos: ${cycles.length} ciclos (${cycles.filter((c: any) => c.status === "completed").length} completados).`);
+    const completedCount = cycles.filter((c: any) => c.status === "completed").length;
+    const openCount = cycles.filter((c: any) => c.status === "open" || c.status === "active").length;
+    lines.push(`Ciclos: ${cycles.length} ciclos (${openCount} abiertos, ${completedCount} completados).`);
   } else {
     lines.push("Ciclos: sin ciclos abiertos ni simulados todavía.");
   }
@@ -978,7 +991,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
       const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
 
-      // Differentiate planned levels vs real active orders
+      // ─── Canonical level counts (g1 normalization) ───────────
       const plannedLevelsCount = levels.filter((l: any) => l?.status === "planned").length;
       const activeOrdersCount = levels.filter((l: any) =>
         ["open", "placed", "partially_filled", "filled"].includes(l?.status)
@@ -986,6 +999,30 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const realOpenOrdersCount = levels.filter((l: any) =>
         l?.exchangeOrderId != null && !["filled", "cancelled"].includes(l?.status)
       ).length;
+      const replacedLevelsCount = levels.filter((l: any) => l?.status === "replaced").length;
+      const filledLevelsCount = levels.filter((l: any) => l?.status === "filled").length;
+      const simulatedFilledLevelsCount = levels.filter((l: any) =>
+        l?.status === "filled" && l?.exchangeOrderId == null
+      ).length;
+      const cancelledLevelsCount = levels.filter((l: any) =>
+        ["cancelled", "expired"].includes(l?.status)
+      ).length;
+      const totalLevels = levels.length;
+      const currentRangeLevelsCount = activeRangeId
+        ? levels.filter((l: any) => l.rangeVersionId === activeRangeId).length
+        : 0;
+      const historicalRangeLevelsCount = activeRangeId
+        ? levels.filter((l: any) => l.rangeVersionId !== activeRangeId).length
+        : 0;
+      const currentPlannedLevelsCount = activeRangeId
+        ? levels.filter((l: any) => l.rangeVersionId === activeRangeId && l?.status === "planned").length
+        : 0;
+      const historicalPlannedLevelsCount = activeRangeId
+        ? levels.filter((l: any) => l.rangeVersionId !== activeRangeId && l?.status === "planned").length
+        : 0;
+      const plannedLevelsTotal = plannedLevelsCount;
+      const openCyclesCount = cycles.filter((c: any) => c?.status === "open" || c?.status === "active").length;
+      const closedCyclesCount = cycles.filter((c: any) => c?.status === "completed" || c?.status === "closed").length;
 
       res.json({
         ok: true,
@@ -1005,6 +1042,19 @@ export function registerGridIsolatedRoutes(app: Express): void {
           activeOrdersCount,
           realOpenOrdersCount,
           historicalLevelsCount: status.historicalLevelsCount,
+          // Canonical level counts (g1)
+          totalLevels,
+          currentRangeLevelsCount,
+          historicalRangeLevelsCount,
+          plannedLevelsTotal,
+          currentPlannedLevelsCount,
+          historicalPlannedLevelsCount,
+          replacedLevelsCount,
+          filledLevelsCount,
+          simulatedFilledLevelsCount,
+          cancelledLevelsCount,
+          openCyclesCount,
+          closedCyclesCount,
           totalCyclesCompleted: status.totalCyclesCompleted,
           dailyOrderCount: status.dailyOrderCount,
           circuitBreakerOpen: status.circuitBreakerOpen,
@@ -1093,6 +1143,20 @@ export function registerGridIsolatedRoutes(app: Express): void {
           historicalLevelsCount: historicalLevels.length,
           hasHistoricalLevels,
           allLevelsBelongToActiveRange,
+          // Canonical counts (g1)
+          totalLevels,
+          currentRangeLevelsCount,
+          historicalRangeLevelsCount,
+          plannedLevelsTotal,
+          currentPlannedLevelsCount,
+          historicalPlannedLevelsCount,
+          replacedLevelsCount,
+          filledLevelsCount,
+          simulatedFilledLevelsCount,
+          cancelledLevelsCount,
+          realOpenOrdersCount,
+          openCyclesCount,
+          closedCyclesCount,
           currentLevels: currentLevels.map((l: any) => ({
             id: l.id,
             rangeVersionId: l.rangeVersionId,

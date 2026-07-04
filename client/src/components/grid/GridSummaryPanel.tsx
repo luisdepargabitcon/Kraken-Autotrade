@@ -48,11 +48,19 @@ export function GridSummaryPanel({
   const wallet = auditData?.wallet;
   const safety = auditData?.safety;
   const decisions: any[] = auditData?.decisions || [];
+  const summary = auditData?.summary;
 
   return (
     <div className="space-y-4">
-      {/* ══════════ PANEL PRINCIPAL — ESTADO GENERAL DEL GRID ══════════ */}
-      {/* Copia el patrón de Smart Strategy Score de IDCA: card grande, ancho completo */}
+      {/* ═══ 1. CARTERA GRID (arriba, antes que nada) ═══ */}
+      <GridWalletSummaryPanel
+        wallet={wallet}
+        config={config}
+        status={status}
+        onGoToTab={onGoToTab}
+      />
+
+      {/* ═══ 2. ESTADO GENERAL DEL GRID ═══ */}
       <Card className="border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-card/50 to-amber-500/5 overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
@@ -95,13 +103,13 @@ export function GridSummaryPanel({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px border-b border-amber-500/10 bg-amber-500/10">
             <div className="bg-card/50 p-3">
               <p className="text-[10px] font-mono text-muted-foreground mb-1">NIVELES PLANIFICADOS</p>
-              <p className="font-mono text-lg font-bold">{auditData?.summary?.plannedLevelsCount ?? status?.openLevels ?? 0}</p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">{auditData?.summary?.realOpenOrdersCount ?? 0} órdenes reales</p>
+              <p className="font-mono text-lg font-bold">{summary?.plannedLevelsTotal ?? summary?.plannedLevelsCount ?? status?.openLevels ?? 0}</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">{summary?.realOpenOrdersCount ?? 0} órdenes reales abiertas</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-[10px] font-mono text-muted-foreground mb-1">CICLOS ABIERTOS</p>
-              <p className="font-mono text-lg font-bold">{status?.openCycles || 0}</p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">${status?.capitalReservedUsd?.toFixed(0) || 0} reservado</p>
+              <p className="font-mono text-lg font-bold">{summary?.openCyclesCount ?? status?.openCycles ?? 0}</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">{summary?.closedCyclesCount ?? 0} cerrados · ${status?.capitalReservedUsd?.toFixed(0) || 0} reservado</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-[10px] font-mono text-muted-foreground mb-1">PNL NETO TOTAL</p>
@@ -116,6 +124,26 @@ export function GridSummaryPanel({
                 {lastTickAt ? new Date(lastTickAt).toLocaleTimeString("es-ES") : "—"}
               </p>
               <p className="text-[9px] text-muted-foreground mt-0.5">{lastTickReason || "Sin tick reciente"}</p>
+            </div>
+          </div>
+
+          {/* Conteos canónicos detallados (g1) */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+            <div className="rounded-md bg-muted/20 px-3 py-2">
+              <span className="text-muted-foreground text-xs">Total niveles:</span>
+              <span className="font-mono font-bold ml-1">{summary?.totalLevels ?? 0}</span>
+            </div>
+            <div className="rounded-md bg-muted/20 px-3 py-2">
+              <span className="text-muted-foreground text-xs">Rango actual:</span>
+              <span className="font-mono font-bold ml-1">{summary?.currentRangeLevelsCount ?? 0}</span>
+            </div>
+            <div className="rounded-md bg-muted/20 px-3 py-2">
+              <span className="text-muted-foreground text-xs">Históricos:</span>
+              <span className="font-mono font-bold ml-1">{summary?.replacedLevelsCount ?? 0} reemplazados</span>
+            </div>
+            <div className="rounded-md bg-muted/20 px-3 py-2">
+              <span className="text-muted-foreground text-xs">Filled:</span>
+              <span className="font-mono font-bold ml-1">{summary?.filledLevelsCount ?? 0} ({summary?.simulatedFilledLevelsCount ?? 0} simulados)</span>
             </div>
           </div>
 
@@ -283,8 +311,7 @@ export function GridSummaryPanel({
         </CardContent>
       </Card>
 
-      {/* ══════════ CONTEXTO DE MERCADO ══════════ */}
-      {/* Ancho completo, similar a IdcaMarketContextSummary */}
+      {/* ═══ 3. CONTEXTO DE MERCADO Y BANDA ACTIVA ═══ */}
       <GridMarketContextPanel
         range={range}
         status={status}
@@ -292,24 +319,10 @@ export function GridSummaryPanel({
         onGoToTab={onGoToTab}
       />
 
-      {/* ══════════ CARTERA + POLÍTICA DE EJECUCIÓN ══════════ */}
-      {/* Grid 2 columnas equilibrado, no 8/4 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <GridWalletSummaryPanel
-          wallet={wallet}
-          config={config}
-          status={status}
-          onGoToTab={onGoToTab}
-        />
-        <GridExecutionPolicyPanel />
-      </div>
+      {/* ═══ 4. POLÍTICA DE EJECUCIÓN ═══ */}
+      <GridExecutionPolicyPanel />
 
-      {/* ══════════ ACTIVIDAD EN DIRECTO ══════════ */}
-      {/* Ancho completo */}
-      <GridLiveActivityPanel />
-
-      {/* ══════════ NIVELES + CICLOS ══════════ */}
-      {/* Grid 2 columnas equilibrado */}
+      {/* ═══ 5. NIVELES + CICLOS ═══ */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <GridLevelsPanel
           levels={levels}
@@ -323,7 +336,10 @@ export function GridSummaryPanel({
         />
       </div>
 
-      {/* ══════════ HISTÓRICO DE CAMBIOS DE BANDA ══════════ */}
+      {/* ═══ 6. ACTIVIDAD EN DIRECTO ═══ */}
+      <GridLiveActivityPanel />
+
+      {/* ═══ 7. HISTÓRICO DE CAMBIOS DE BANDA ═══ */}
       <GridRangeHistoryPanel rangeHistory={rangeHistory} />
     </div>
   );
