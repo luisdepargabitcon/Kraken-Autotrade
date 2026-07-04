@@ -5,7 +5,7 @@
  */
 
 export type GridSeverity = "INFO" | "SUCCESS" | "WARNING" | "BLOCKED" | "ERROR";
-export type GridCategory = "BAND" | "LEVEL" | "CYCLE" | "ORDER" | "WALLET" | "SAFETY" | "RECONCILIATION" | "API" | "SYSTEM";
+export type GridCategory = "BAND" | "LEVEL" | "CYCLE" | "ORDER" | "WALLET" | "SAFETY" | "RECONCILIATION" | "API" | "SYSTEM" | "MARKET";
 
 export interface FormattedGridEvent {
   id: number;
@@ -389,6 +389,19 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
       return `La banda cambió, pero se conservan niveles/ciclos abiertos por seguridad. Motivo: ${reason}.`;
     },
   },
+  GRID_REGIME_CHANGED: {
+    category: "MARKET",
+    severity: "INFO",
+    title: "Régimen de mercado cambiado",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      const prev = meta.previousRegime || "desconocido";
+      const next = meta.newRegime || "desconocido";
+      const reason = meta.reason || meta.reasonCode || "cambio de condiciones";
+      const pair = meta.pair || "BTC/USD";
+      return `${pair} pasó de ${prev} a ${next} porque ${reason}.`;
+    },
+  },
 };
 
 export function formatGridEvent(ev: RawGridEvent): FormattedGridEvent {
@@ -481,4 +494,5 @@ export const CATEGORY_LABELS: Record<GridCategory, string> = {
   RECONCILIATION: "Reconciliación",
   API: "API",
   SYSTEM: "Sistema",
+  MARKET: "Mercado",
 };

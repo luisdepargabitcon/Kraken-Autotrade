@@ -19,6 +19,7 @@ import { GridHeaderHero } from "@/components/grid/GridHeaderHero";
 import { GridKpiStrip } from "@/components/grid/GridKpiStrip";
 import { GridLevelsMarketHeader } from "@/components/grid/GridLevelsMarketHeader";
 import { GridLevelsPanel } from "@/components/grid/GridLevelsPanel";
+import { GridSettingsExplained } from "@/components/grid/GridSettingsExplained";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -737,6 +738,7 @@ export default function GridIsolated() {
             limit={levels?.length || 0}
             showViewAll={false}
             levelsSummary={auditData?.levelsSummary}
+            netProfitTargetPct={config?.netProfitTargetPct}
           />
         </TabsContent>
 
@@ -1010,6 +1012,9 @@ export default function GridIsolated() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <GridSettingsExplained config={config} />
+              <div className="border-t border-border/30 pt-4">
+                <h4 className="text-sm font-medium mb-3 text-muted-foreground">Parámetros técnicos</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Perfil de Capital</Label>
@@ -1084,6 +1089,7 @@ export default function GridIsolated() {
                   <Label>Target Neto: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
                   <Slider value={[config?.netProfitTargetPct || 0.8]} min={0.1} max={3.0} step={0.1} onValueChange={(v) => configMutation.mutate({ netProfitTargetPct: v[0] })} />
                 </div>
+              </div>
               </div>
             </CardContent>
           </Card>

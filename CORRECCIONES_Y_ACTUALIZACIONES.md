@@ -2,6 +2,108 @@
 
 ---
 
+## 2026-07-04 — feat(grid-ui): ajustes explicados, beneficio objetivo, filtros/paginación/export, detalle de nivel, régimen histórico, export ChatGPT enriquecido
+
+**Commit**: pendiente de commit
+**Tag**: WINDSURF GRID UI — AUDITORÍA Y EXPLICACIÓN
+**Estado**: IMPLEMENTADO Y VALIDADO LOCALMENTE (sin deploy)
+
+### Problema detectado
+1. La pestaña Ajustes del Grid mostraba parámetros técnicos sin explicar qué implica moverlos.
+2. La tabla de niveles no mostraba beneficio objetivo estimado por nivel.
+3. La tabla mezclaba niveles activos/planificados/históricos/replaced sin filtros ni paginación.
+4. No había detalle ampliado al pinchar una fila de nivel.
+5. El texto "zona alcanzada" era confuso: indicaba relación de precio, no operación ejecutada ni ciclo creado.
+6. No existía registro histórico de cambios de régimen de mercado.
+7. Los eventos de cambio de banda no incluían metadata detallada (centerDriftPct, widthChangePct, niveles preservados, etc.).
+8. El export ChatGPT no incluía niveles por estado, beneficio objetivo, régimen ni cambios de banda.
+
+### Motivo
+Mejorar la auditoría y usabilidad del Grid: que el usuario entienda cada ajuste, pueda filtrar y exportar niveles, vea beneficio objetivo estimado, acceda a detalle completo por nivel, y tenga trazabilidad de cambios de régimen y banda.
+
+### Solución aplicada
+
+**1. Ajustes explicados (`GridSettingsExplained.tsx`)**:
+- Nuevo componente que explica cada parámetro: qué hace, qué pasa si se sube/baja, si hace el Grid más agresivo/conservador, y qué riesgo tiene
+- Parámetros explicados: Perfil de Capital, Timeframe ATR, Periodo Bollinger, Máx Ciclos, Step Min/Max %, Ratio Geométrico Máx, Target Neto
+- Resumen interpretativo: "Con esta configuración, el Grid tenderá a ser más conservador/balanceado/agresivo porque…"
+
+**2. Columna Beneficio objetivo estimado (`GridLevelsPanel.tsx`)**:
+- Muestra $ estimado y % objetivo por nivel
+- Muestra fee estimada y reserva fiscal si disponibles
+- Si no se puede calcular, muestra "—"
+- Nota visible: "Beneficio objetivo estimado, no beneficio realizado"
+- En SHADOW: "Estimado en simulación, sin orden real"
+
+**3. Filtros, paginación y export (`GridLevelsPanel.tsx`)**:
+- Filtros: Activos, Planificados, Históricos, Reemplazados, Ejecutados, Cancelados, Todos
+- Filtro por defecto: "Activos"
+- Empty state si no hay activos: "No hay niveles activos reales ahora mismo" + botón "Ver niveles planificados"
+- Paginación: 10, 25, 50, 100 por página
+- Export: Copiar al portapapeles, Descargar CSV, Descargar JSON (respeta filtro actual)
+- Mantiene rangeVersionId activo, fecha de generación, conteo actuales/históricos, avisos
+
+**4. Detalle de nivel al pinchar (`GridLevelsPanel.tsx`)**:
+- Drawer lateral con: id, side, status, price, currentPrice, distanceUsd, distancePct, notionalUsd, quantity, netProfitTargetUsd, profitTargetPct, feeEstimateUsd, taxReserveUsd, rangeVersionId, ¿rango activo?, cycleId, exchangeOrderId, placedAt, filledAt, cancelledAt, createdAt, updatedAt
+- Explicación natural del estado: "planificado en SHADOW", "reemplazado", "ejecutado", etc.
+
+**5. Corrección "objetivo alcanzado" — CASO B verificado**:
+- **Conclusión con evidencia**: El texto era visual y confuso. Indicaba que el precio estaba en zona objetivo (levelPrice >= currentPrice para SELL), pero no significaba operación ejecutada ni ciclo creado. No había bug funcional: el motor SHADOW sí crea ciclos cuando corresponde (`simulateShadowTick` → `processCycleFill`).
+- **Corrección**: El texto ahora dice "precio en zona de venta, sin ciclo asociado" en lugar de "zona alcanzada". No usa "objetivo alcanzado" si no hay cycleId, filledAt o evento real/simulado de fill.
+- **Evidencia**: `getLevelRelation()` en `GridLevelsPanel.tsx` solo compara precios, no consulta status/ciclo/eventos. `simulateShadowTick()` en `gridIsolatedEngine.ts:789` sí procesa fills y crea ciclos correctamente.
+
+**6. Registro histórico de régimen (`gridIsolatedEngine.ts`)**:
+- Nuevo evento `GRID_REGIME_CHANGED` añadido a tipos y formatter
+- Se dispara cuando el régimen cambia durante un rebuild de banda
+- Metadata: pair, previousRegime, newRegime, reason, reasonCode, price, atrPct, bollingerWidthPct, timeframe
+- Formatter en español natural: "BTC/USD pasó de ranging a trending_up porque el precio cambió de banda…"
+
+**7. Cambios de banda enriquecidos (`gridIsolatedEngine.ts`)**:
+- `GRID_RANGE_CHANGED` ahora incluye: centerDriftPct, widthChangePct, trigger, replacedLevelsCount, preservedLevelsCount, preservedCyclesCount, safetyDecision, regime, atrPct
+- `GRID_LEVELS_REPLACED` ahora incluye: preservedLevelsCount, preservedCyclesCount
+- `GRID_LEVELS_REBUILT` ahora incluye: regime, centerDriftPct, widthChangePct
+
+**8. Export ChatGPT enriquecido (`gridIsolatedRoutes.ts`)**:
+- Niveles por estado: planificados, activos reales, históricos/reemplazados, ejecutados (filled)
+- Beneficio objetivo: target neto %, muestra por nivel, fee y reserva fiscal
+- Régimen de mercado actual
+- Último cambio de banda: fecha, deriva del centro, cambio de anchura, niveles sustituidos/preservados, ciclos preservados
+- Último cambio de régimen: fecha, régimen anterior/nuevo, motivo
+- Usa "objetivo estimado, no realizado" y "simulado, no realizado"
+
+### Archivos afectados
+- `client/src/components/grid/GridSettingsExplained.tsx` (nuevo)
+- `client/src/components/grid/GridLevelsPanel.tsx` (recreado completo)
+- `client/src/pages/GridIsolated.tsx` (import + prop + ajustes tab)
+- `server/services/gridIsolated/gridIsolatedTypes.ts` (GRID_REGIME_CHANGED)
+- `server/services/gridIsolated/gridActivityFormatter.ts` (MARKET category + formatter)
+- `server/services/gridIsolated/gridIsolatedEngine.ts` (metadata enriquecida + régimen change)
+- `server/routes/gridIsolated.routes.ts` (export ChatGPT enriquecido)
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` (3 tests nuevos, 57 total)
+
+### Partes NO tocadas
+- IDCA: no modificado
+- FISCO: no modificado
+- REAL mode: no activado
+- Órdenes reales: no ejecutadas
+- Política 3 maker + 4º taker: no modificada
+- Trading logic: no modificada
+- DB schema: no modificado (usa metadataJson existente en grid_isolated_events)
+
+### Validaciones ejecutadas
+- `npm run check` (tsc): OK
+- `npm run build`: OK (2590 módulos)
+- `npx vitest run`: 57/57 tests OK
+
+### Conclusión verificada sobre "objetivo alcanzado" sin ciclo
+**CASO B**: El texto era visual y confuso. Indicaba que el precio estaba en zona objetivo, pero no significaba operación ejecutada ni ciclo creado. El motor SHADOW funciona correctamente: `simulateShadowTick()` procesa fills y crea ciclos cuando el precio alcanza un nivel. El texto de la UI fue corregido para decir "precio en zona de venta, sin ciclo asociado" en lugar de "zona alcanzado".
+
+### Pendientes
+- Deploy a staging pendiente de aprobación del usuario
+- No hay migración DB: se reutiliza `metadataJson` existente en `grid_isolated_events`
+
+---
+
 ## CAPACIDADES DE DEPLOY Y PROCEDIMIENTO ( Windsurf / Cascade )
 
 **Fecha**: 2026-07-04

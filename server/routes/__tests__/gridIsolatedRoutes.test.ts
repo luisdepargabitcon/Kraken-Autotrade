@@ -608,4 +608,37 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body.summary).toHaveProperty("activeRangeStatus");
     expect(res.body.summary).toHaveProperty("historicalLevelsCount");
   });
+
+  // ─── Regime change event ────────────────────────────────────────
+  it("getNaturalGridMessage for GRID_REGIME_CHANGED returns Spanish regime change message", () => {
+    const msg = getNaturalGridMessage("GRID_REGIME_CHANGED", null, {
+      pair: "BTC/USD",
+      previousRegime: "ranging",
+      newRegime: "trending_up",
+      reason: "el precio superó la banda superior",
+    });
+    expect(msg).toContain("BTC/USD");
+    expect(msg).toContain("ranging");
+    expect(msg).toContain("trending_up");
+    expect(msg).toContain("pasó de");
+  });
+
+  // ─── Export ChatGPT includes levels by status and profit target ──
+  it("export chatgpt includes niveles activos reales and beneficio objetivo", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("Niveles planificados:");
+    expect(res.body).toContain("Niveles activos reales:");
+    expect(res.body).toContain("Niveles históricos/reemplazados:");
+    expect(res.body).toContain("Niveles ejecutados (filled):");
+    expect(res.body).toContain("Beneficio objetivo neto:");
+    expect(res.body).toContain("objetivo estimado, no realizado");
+  });
+
+  // ─── Export ChatGPT includes régimen de mercado ──────────────────
+  it("export chatgpt includes régimen de mercado actual", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("Resumen Grid Aislado");
+  });
 });

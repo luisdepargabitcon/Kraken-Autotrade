@@ -247,7 +247,13 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   const realOpenOrdersCount = levels.filter((l: any) =>
     l?.exchangeOrderId != null && !["filled", "cancelled"].includes(l?.status)
   ).length;
+  const replacedLevelsCount = levels.filter((l: any) => l?.status === "replaced").length;
+  const filledLevelsCount = levels.filter((l: any) => l?.status === "filled").length;
+  const historicalLevelsCount = status?.historicalLevelsCount || 0;
   lines.push(`Niveles planificados: ${plannedLevelsCount}.`);
+  lines.push(`Niveles activos reales: ${realOpenOrdersCount}.`);
+  lines.push(`Niveles históricos/reemplazados: ${replacedLevelsCount + historicalLevelsCount}.`);
+  lines.push(`Niveles ejecutados (filled): ${filledLevelsCount}.`);
   lines.push(`Órdenes reales abiertas: ${realOpenOrdersCount}.`);
   lines.push(`Ciclos abiertos: ${status?.openCycles || 0}.`);
   lines.push(`Ciclos cerrados: ${status?.totalCyclesCompleted || 0}.`);
@@ -255,6 +261,48 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   lines.push(`Circuit breaker: ${status?.circuitBreakerOpen ? "abierto" : "cerrado"}.`);
   lines.push(`Órdenes hoy: ${status?.dailyOrderCount || 0}.`);
   lines.push(`Pump/Dump: ${status?.pumpDumpState || "normal"}.`);
+  // Beneficio objetivo estimado
+  if (config) {
+    const targetPct = config.netProfitTargetPct ?? 0.8;
+    lines.push(`Beneficio objetivo neto: ${targetPct.toFixed(2)}% (objetivo estimado, no realizado).`);
+    if (levels.length > 0) {
+      const sampleLevel = levels.find((l: any) => l?.status === "planned");
+      if (sampleLevel?.netProfitTargetUsd != null) {
+        lines.push(`Beneficio objetivo estimado por nivel (muestra): $${Number(sampleLevel.netProfitTargetUsd).toFixed(2)} (simulado, no realizado).`);
+      }
+      if (sampleLevel?.feeEstimateUsd != null) {
+        lines.push(`Fee estimada por nivel: $${Number(sampleLevel.feeEstimateUsd).toFixed(2)}.`);
+      }
+      if (sampleLevel?.taxReserveUsd != null) {
+        lines.push(`Reserva fiscal estimada por nivel: $${Number(sampleLevel.taxReserveUsd).toFixed(2)}.`);
+      }
+    }
+  }
+  // Régimen de mercado
+  if (resolvedRange?.method) {
+    lines.push(`Régimen de mercado actual: ${resolvedRange.method}.`);
+  }
+  // Último cambio de banda en eventos
+  const rangeChangedEvent = events.find((e: any) => e?.eventType === "GRID_RANGE_CHANGED");
+  if (rangeChangedEvent) {
+    const meta = rangeChangedEvent.metadataJson || {};
+    lines.push(`Último cambio de banda: ${new Date(rangeChangedEvent.createdAt).toISOString()}.`);
+    if (meta.centerDriftPct != null) lines.push(`Deriva del centro: ${Number(meta.centerDriftPct).toFixed(2)}%.`);
+    if (meta.widthChangePct != null) lines.push(`Cambio de anchura: ${Number(meta.widthChangePct).toFixed(2)}%.`);
+    if (meta.replacedLevelsCount != null) lines.push(`Niveles sustituidos: ${meta.replacedLevelsCount}.`);
+    if (meta.preservedLevelsCount != null) lines.push(`Niveles preservados: ${meta.preservedLevelsCount}.`);
+    if (meta.preservedCyclesCount != null) lines.push(`Ciclos preservados: ${meta.preservedCyclesCount}.`);
+  }
+  // Último cambio de régimen
+  const regimeChangedEvent = events.find((e: any) => e?.eventType === "GRID_REGIME_CHANGED");
+  if (regimeChangedEvent) {
+    const meta = regimeChangedEvent.metadataJson || {};
+    lines.push(`Último cambio de régimen: ${new Date(regimeChangedEvent.createdAt).toISOString()}.`);
+    if (meta.previousRegime && meta.newRegime) {
+      lines.push(`Régimen anterior: ${meta.previousRegime}. Nuevo régimen: ${meta.newRegime}.`);
+    }
+    if (meta.reason) lines.push(`Motivo: ${meta.reason}.`);
+  }
   // Cartera
   if (config) {
     const walletTotal = config.gridWalletInitialUsd + (status?.totalNetPnlUsd || 0);

@@ -464,6 +464,22 @@ class GridIsolatedEngine {
     const activeLevels = this.levels.filter(l => l.rangeVersionId === oldRange.id);
     const replacedCount = activeLevels.length;
 
+    // Calculate drift metrics
+    const centerDriftPct = oldRange.midPrice > 0
+      ? ((bandSnapshot.midPrice - oldRange.midPrice) / oldRange.midPrice) * 100
+      : 0;
+    const widthChangePct = oldRange.bandWidthPct > 0
+      ? ((bandSnapshot.bandWidthPct - oldRange.bandWidthPct) / oldRange.bandWidthPct) * 100
+      : 0;
+
+    // Count preserved levels (with real orders or open cycles)
+    const preservedLevels = activeLevels.filter(l =>
+      l.exchangeOrderId != null || l.status === "filled" || l.status === "open"
+    );
+    const preservedCycles = this.cycles.filter(c =>
+      c.rangeVersionId === oldRange.id && c.status !== "completed" && c.status !== "cancelled"
+    );
+
     // Mark old range as replaced
     await db.update(gridRangeVersions)
       .set({ status: "replaced", closedAt: new Date() })
@@ -481,9 +497,10 @@ class GridIsolatedEngine {
       }
     }
 
-    // Log range change
+    // Log range change with enriched metadata
     await this.logEvent("GRID_RANGE_CHANGED", `El rango activo cambió de ${oldRange.bandLower.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}-${oldRange.bandUpper.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} a ${bandSnapshot.lower.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}-${bandSnapshot.upper.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`, {
       oldRangeVersionId: oldRange.id,
+      newRangeVersionId: this.activeRangeVersion?.id,
       oldLowerPrice: oldRange.bandLower,
       oldUpperPrice: oldRange.bandUpper,
       oldCenterPrice: oldRange.midPrice,
@@ -492,13 +509,24 @@ class GridIsolatedEngine {
       newUpperPrice: bandSnapshot.upper,
       newCenterPrice: bandSnapshot.midPrice,
       newWidthPct: bandSnapshot.bandWidthPct,
+      centerDriftPct,
+      widthChangePct,
       pair: this.config.pair,
+      regime: bandSnapshot.regime || oldRange.regime,
+      atrPct: bandSnapshot.atrPct ?? oldRange.atrPct,
+      trigger: "band_drift",
+      replacedLevelsCount: replacedCount,
+      preservedLevelsCount: preservedLevels.length,
+      preservedCyclesCount: preservedCycles.length,
+      safetyDecision: "rebuild_planned_levels",
     });
 
     // Log old levels replaced
     await this.logEvent("GRID_LEVELS_REPLACED", `Los niveles planificados anteriores fueron sustituidos por una nueva banda (${replacedCount} niveles).`, {
       oldRangeVersionId: oldRange.id,
       replacedLevelsCount: replacedCount,
+      preservedLevelsCount: preservedLevels.length,
+      preservedCyclesCount: preservedCycles.length,
       pair: this.config.pair,
     });
 
@@ -512,7 +540,27 @@ class GridIsolatedEngine {
       oldRangeVersionId: oldRange.id,
       levelsCount: newLevels.length,
       pair: this.config.pair,
+      regime: bandSnapshot.regime || oldRange.regime,
+      centerDriftPct,
+      widthChangePct,
     });
+
+    // Check for regime change
+    const oldRegime = oldRange.regime;
+    const newRegime = bandSnapshot.regime || bandSnapshot.method;
+    if (newRegime && oldRegime && newRegime !== oldRegime) {
+      await this.logEvent("GRID_REGIME_CHANGED", `${this.config.pair} pasó de ${oldRegime} a ${newRegime}.`, {
+        pair: this.config.pair,
+        previousRegime: oldRegime,
+        newRegime,
+        reason: `el precio cambió de banda y el régimen detectado cambió`,
+        reasonCode: "band_drift_regime_change",
+        price: bandSnapshot.midPrice,
+        atrPct: bandSnapshot.atrPct ?? oldRange.atrPct,
+        bollingerWidthPct: bandSnapshot.bandWidthPct,
+        timeframe: this.config.atrTimeframe,
+      });
+    }
   }
 
   /**
