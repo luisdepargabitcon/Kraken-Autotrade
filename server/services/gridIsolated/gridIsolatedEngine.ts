@@ -146,6 +146,11 @@ class GridIsolatedEngine {
           gridPauseCycleWhenCapitalDepleted: row.gridPauseCycleWhenCapitalDepleted ?? true,
           gridAllowNewCycleWhenCapitalFree: row.gridAllowNewCycleWhenCapitalFree ?? true,
         };
+        // Load active state from DB
+        await this.loadActiveRangeVersion();
+        await this.loadLevels();
+        await this.loadCycles();
+
         // Auto-start engine if mode != OFF and isActive = true
         if (this.config.mode !== "OFF" && this.config.isActive && !this.running) {
           this.start();
@@ -360,6 +365,19 @@ class GridIsolatedEngine {
     if (!this.activeRangeVersion) {
       await this.proposeRangeVersion(bandSnapshot);
       this.lastTickReason = "Rango propuesto y activado en este tick.";
+    } else if (this.isBandDrifted(bandSnapshot)) {
+      // Band has drifted significantly from active range
+      const canRebuild = this.canRebuildLevels();
+      if (canRebuild) {
+        await this.rebuildRangeAndLevels(bandSnapshot);
+        this.lastTickReason = "Banda desplazada — niveles planificados recalculados para el nuevo rango.";
+      } else {
+        this.lastTickReason = "Banda desplazada — niveles/ciclos reales conservados por seguridad.";
+        await this.logShadowTickEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "La banda cambió, pero se conservan niveles/ciclos abiertos por seguridad.", {
+          rangeVersionId: this.activeRangeVersion.id,
+          reason: "hay niveles con órdenes reales o ciclos abiertos",
+        });
+      }
     } else {
       this.lastTickReason = "Tick completado — rango activo reutilizado.";
       await this.logShadowTickEvent("GRID_SHADOW_RANGE_REUSED", "El Grid reutiliza el rango activo para auditoría. No se abren ciclos nuevos sin fills simulados.", { rangeVersionId: this.activeRangeVersion.id });
@@ -382,6 +400,228 @@ class GridIsolatedEngine {
     }
     this.lastShadowEventAt = new Date();
     await this.logEvent(eventType, message, meta);
+  }
+
+  /**
+   * Check if the current market band has drifted significantly from the active range.
+   * Returns true if the mid-price moved outside the active range or if the band width changed materially.
+   */
+  private isBandDrifted(bandSnapshot: any): boolean {
+    if (!this.activeRangeVersion) return false;
+    const active = this.activeRangeVersion;
+    const midPrice = bandSnapshot.midPrice;
+    const activeLower = active.bandLower;
+    const activeUpper = active.bandUpper;
+    const activeWidth = active.bandWidthPct;
+    const newWidth = bandSnapshot.bandWidthPct;
+
+    // Price moved outside the active band
+    if (midPrice < activeLower || midPrice > activeUpper) {
+      return true;
+    }
+
+    // Band width changed by more than 30%
+    if (activeWidth > 0 && Math.abs(newWidth - activeWidth) / activeWidth > 0.3) {
+      return true;
+    }
+
+    // Mid price moved more than 20% of the active band width
+    if (activeWidth > 0) {
+      const deviationPct = Math.abs(midPrice - active.midPrice) / active.midPrice * 100;
+      if (deviationPct > activeWidth * 0.2) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Determine whether levels can be safely replaced when the band drifts.
+   * Only planned levels without real orders or open cycles can be rebuilt.
+   */
+  private canRebuildLevels(): boolean {
+    if (!this.activeRangeVersion) return false;
+    const activeLevels = this.levels.filter(l => l.rangeVersionId === this.activeRangeVersion!.id);
+    const hasRealOrders = activeLevels.some(l =>
+      l.exchangeOrderId != null || l.status === "open" || l.status === "placed" || l.status === "partially_filled"
+    );
+    const hasOpenCycles = this.cycles.some(c =>
+      c.rangeVersionId === this.activeRangeVersion!.id &&
+      !["completed", "cancelled", "stop_loss_hit", "trailing_closed"].includes(c.status)
+    );
+    const hasFilledLevels = activeLevels.some(l => l.status === "filled");
+    return !hasRealOrders && !hasOpenCycles && !hasFilledLevels;
+  }
+
+  /**
+   * Replace the active range and its planned levels with a new band.
+   * Marks old range as replaced and old levels as replaced, then proposes a new range.
+   */
+  private async rebuildRangeAndLevels(bandSnapshot: any): Promise<void> {
+    if (!this.activeRangeVersion || !this.config) return;
+    const oldRange = this.activeRangeVersion;
+    const activeLevels = this.levels.filter(l => l.rangeVersionId === oldRange.id);
+    const replacedCount = activeLevels.length;
+
+    // Mark old range as replaced
+    await db.update(gridRangeVersions)
+      .set({ status: "replaced", closedAt: new Date() })
+      .where(eq(gridRangeVersions.id, oldRange.id));
+
+    // Mark old levels as replaced
+    if (activeLevels.length > 0) {
+      await db.update(gridIsolatedLevels)
+        .set({ status: "replaced" })
+        .where(eq(gridIsolatedLevels.rangeVersionId, oldRange.id));
+      for (const level of this.levels) {
+        if (level.rangeVersionId === oldRange.id) {
+          level.status = "replaced";
+        }
+      }
+    }
+
+    // Log range change
+    await this.logEvent("GRID_RANGE_CHANGED", `El rango activo cambió de ${oldRange.bandLower.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}-${oldRange.bandUpper.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} a ${bandSnapshot.lower.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}-${bandSnapshot.upper.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`, {
+      oldRangeVersionId: oldRange.id,
+      oldLowerPrice: oldRange.bandLower,
+      oldUpperPrice: oldRange.bandUpper,
+      oldCenterPrice: oldRange.midPrice,
+      oldWidthPct: oldRange.bandWidthPct,
+      newLowerPrice: bandSnapshot.lower,
+      newUpperPrice: bandSnapshot.upper,
+      newCenterPrice: bandSnapshot.midPrice,
+      newWidthPct: bandSnapshot.bandWidthPct,
+      pair: this.config.pair,
+    });
+
+    // Log old levels replaced
+    await this.logEvent("GRID_LEVELS_REPLACED", `Los niveles planificados anteriores fueron sustituidos por una nueva banda (${replacedCount} niveles).`, {
+      oldRangeVersionId: oldRange.id,
+      replacedLevelsCount: replacedCount,
+      pair: this.config.pair,
+    });
+
+    // Propose new range
+    await this.proposeRangeVersion(bandSnapshot);
+    const newLevels = this.levels.filter(l => l.rangeVersionId === this.activeRangeVersion!.id);
+
+    // Log new levels rebuilt
+    await this.logEvent("GRID_LEVELS_REBUILT", `La banda cambió y el Grid recalculó ${newLevels.length} niveles planificados.`, {
+      newRangeVersionId: this.activeRangeVersion!.id,
+      oldRangeVersionId: oldRange.id,
+      levelsCount: newLevels.length,
+      pair: this.config.pair,
+    });
+  }
+
+  /**
+   * Load active range version from DB.
+   */
+  private async loadActiveRangeVersion(): Promise<void> {
+    try {
+      const rows = await db.select().from(gridRangeVersions)
+        .where(eq(gridRangeVersions.status, "active"))
+        .orderBy(desc(gridRangeVersions.activatedAt))
+        .limit(1);
+      if (rows.length > 0) {
+        const row = rows[0];
+        this.activeRangeVersion = {
+          id: row.id,
+          versionNumber: row.versionNumber,
+          pair: row.pair,
+          status: row.status as any,
+          midPrice: parseFloat(row.midPrice),
+          upperPrice: parseFloat(row.upperPrice),
+          lowerPrice: parseFloat(row.lowerPrice),
+          bandUpper: parseFloat(row.bandUpper),
+          bandMiddle: parseFloat(row.bandMiddle),
+          bandLower: parseFloat(row.bandLower),
+          bandWidthPct: parseFloat(row.bandWidthPct),
+          atrPct: parseFloat(row.atrPct),
+          regime: row.regime,
+          levelsCount: row.levelsCount,
+          geometricRatio: parseFloat(row.geometricRatio),
+          capitalBudgetUsd: parseFloat(row.capitalBudgetUsd),
+          capitalPerLevelUsd: parseFloat(row.capitalPerLevelUsd),
+          netProfitTargetPct: parseFloat(row.netProfitTargetPct),
+          createdAt: row.createdAt,
+          activatedAt: row.activatedAt,
+          closedAt: row.closedAt,
+        };
+      }
+    } catch (error) {
+      botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to load active range: ${error}`);
+    }
+  }
+
+  /**
+   * Load levels from DB for the active range and all historical levels.
+   */
+  private async loadLevels(): Promise<void> {
+    try {
+      const rows = await db.select().from(gridIsolatedLevels).orderBy(desc(gridIsolatedLevels.createdAt));
+      this.levels = rows.map((row) => ({
+        id: row.id,
+        rangeVersionId: row.rangeVersionId,
+        levelIndex: row.levelIndex,
+        side: row.side as any,
+        price: parseFloat(row.price),
+        notionalUsd: parseFloat(row.notionalUsd),
+        quantity: parseFloat(row.quantity),
+        status: row.status as any,
+        filledQuantity: parseFloat(row.filledQuantity),
+        filledPrice: row.filledPrice ? parseFloat(row.filledPrice) : null,
+        clientOrderId: row.clientOrderId,
+        exchangeOrderId: row.exchangeOrderId,
+        postOnlyAttempts: row.postOnlyAttempts,
+        usedTakerFallback: row.usedTakerFallback,
+        netProfitTargetUsd: parseFloat(row.netProfitTargetUsd),
+        feeEstimateUsd: parseFloat(row.feeEstimateUsd),
+        taxReserveUsd: parseFloat(row.taxReserveUsd),
+        createdAt: row.createdAt,
+        placedAt: row.placedAt,
+        filledAt: row.filledAt,
+        cancelledAt: row.cancelledAt,
+      }));
+    } catch (error) {
+      botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to load levels: ${error}`);
+    }
+  }
+
+  /**
+   * Load cycles from DB.
+   */
+  private async loadCycles(): Promise<void> {
+    try {
+      const rows = await db.select().from(gridIsolatedCycles).orderBy(desc(gridIsolatedCycles.createdAt));
+      this.cycles = rows.map((row) => ({
+        id: row.id,
+        rangeVersionId: row.rangeVersionId,
+        cycleNumber: row.cycleNumber,
+        pair: row.pair,
+        status: row.status as any,
+        buyLevelId: row.buyLevelId,
+        sellLevelId: row.sellLevelId,
+        buyPrice: row.buyPrice ? parseFloat(row.buyPrice) : null,
+        sellPrice: row.sellPrice ? parseFloat(row.sellPrice) : null,
+        quantity: parseFloat(row.quantity),
+        grossPnlUsd: parseFloat(row.grossPnlUsd),
+        feeTotalUsd: parseFloat(row.feeTotalUsd),
+        taxReserveUsd: parseFloat(row.taxReserveUsd),
+        netPnlUsd: parseFloat(row.netPnlUsd),
+        netPnlPct: parseFloat(row.netPnlPct),
+        buyClientOrderId: row.buyClientOrderId,
+        sellClientOrderId: row.sellClientOrderId,
+        buyFilledAt: row.buyFilledAt,
+        sellFilledAt: row.sellFilledAt,
+        holdTimeMinutes: row.holdTimeMinutes,
+        createdAt: row.createdAt,
+        completedAt: row.completedAt,
+      }));
+    } catch (error) {
+      botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to load cycles: ${error}`);
+    }
   }
 
   /**
@@ -788,14 +1028,33 @@ class GridIsolatedEngine {
    */
   getExecutionStatus(): GridExecutionStatus {
     const openLevels = this.levels.filter(l => l.status === "open" || l.status === "planned").length;
-    const openCycles = this.cycles.filter(c => c.status !== "completed" && c.status !== "cancelled").length;
+    const plannedLevelsCount = this.levels.filter(l => l.status === "planned").length;
+    const activeOrdersCount = this.levels.filter(l =>
+      ["open", "placed", "partially_filled", "filled"].includes(l.status)
+    ).length;
+    const realOpenOrdersCount = this.levels.filter(l =>
+      l.exchangeOrderId != null && !["filled", "cancelled"].includes(l.status)
+    ).length;
+    const historicalLevelsCount = this.levels.filter(l =>
+      ["replaced", "cancelled", "filled"].includes(l.status)
+    ).length;
+    const openCycles = this.cycles.filter(c =>
+      c.status !== "completed" && c.status !== "cancelled"
+    ).length;
     const totalNetPnl = this.cycles.reduce((sum, c) => sum + c.netPnlUsd, 0);
     const completedCycles = this.cycles.filter(c => c.status === "completed").length;
 
     return {
       mode: this.config?.mode || "OFF",
       activeRangeVersionId: this.activeRangeVersion?.id || null,
+      activeRangeVersionNumber: this.activeRangeVersion?.versionNumber ?? null,
+      activeRangeCreatedAt: this.activeRangeVersion?.createdAt ?? null,
+      activeRangeStatus: this.activeRangeVersion?.status ?? null,
       openLevels,
+      plannedLevelsCount,
+      activeOrdersCount,
+      realOpenOrdersCount,
+      historicalLevelsCount,
       openCycles,
       dailyOrderCount: this.dailyOrderCount,
       circuitBreakerOpen: this.circuitBreakerOpen,

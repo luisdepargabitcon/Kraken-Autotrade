@@ -101,7 +101,8 @@ export type RangeVersionStatus =
   | "paused"
   | "exhausted"
   | "closed"
-  | "archived";
+  | "archived"
+  | "replaced";
 
 export interface GridRangeVersion {
   id: string;
@@ -132,11 +133,13 @@ export interface GridRangeVersion {
 export type GridLevelSide = "BUY" | "SELL";
 export type GridLevelStatus =
   | "planned"
+  | "placed"
   | "open"
   | "partially_filled"
   | "filled"
   | "cancelled"
-  | "expired";
+  | "expired"
+  | "replaced";
 
 export interface GridLevel {
   id: string;
@@ -174,7 +177,8 @@ export type GridCycleStatus =
   | "stop_loss_hit"
   | "trailing_closed"
   | "hodl_recovery"
-  | "cancelled";
+  | "cancelled"
+  | "cycle_open";
 
 export interface GridCycle {
   id: string;
@@ -196,7 +200,7 @@ export interface GridCycle {
   sellClientOrderId: string | null;
   buyFilledAt: Date | null;
   sellFilledAt: Date | null;
-  holdTimeMinutes: number;
+  holdTimeMinutes: number | null;
   createdAt: Date;
   completedAt: Date | null;
 }
@@ -433,6 +437,10 @@ export const GRID_EVENT_TYPES = [
   "GRID_SHADOW_NO_LEVELS",
   "GRID_SHADOW_RANGE_REUSED",
   "GRID_SHADOW_WAITING",
+  "GRID_RANGE_CHANGED",
+  "GRID_LEVELS_REBUILT",
+  "GRID_LEVELS_REPLACED",
+  "GRID_LEVELS_PRESERVED_DUE_TO_CYCLE",
 ] as const;
 
 export type GridEventType = (typeof GRID_EVENT_TYPES)[number];
@@ -482,7 +490,14 @@ export interface GridBacktestResult {
 export interface GridExecutionStatus {
   mode: GridMode;
   activeRangeVersionId: string | null;
+  activeRangeVersionNumber: number | null;
+  activeRangeCreatedAt: Date | null;
+  activeRangeStatus: RangeVersionStatus | null;
   openLevels: number;
+  plannedLevelsCount: number;
+  activeOrdersCount: number;
+  realOpenOrdersCount: number;
+  historicalLevelsCount: number;
   openCycles: number;
   dailyOrderCount: number;
   circuitBreakerOpen: boolean;

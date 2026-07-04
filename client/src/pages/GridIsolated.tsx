@@ -736,6 +736,7 @@ export default function GridIsolated() {
             currentPrice={auditData?.marketContext?.currentPrice}
             limit={levels?.length || 0}
             showViewAll={false}
+            levelsSummary={auditData?.levelsSummary}
           />
         </TabsContent>
 

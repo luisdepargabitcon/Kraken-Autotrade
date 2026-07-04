@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Layers, TrendingUp, TrendingDown } from "lucide-react";
+import { Layers, TrendingUp, TrendingDown, AlertTriangle, Info } from "lucide-react";
 
 interface GridLevelsPanelProps {
   levels: any[];
@@ -10,9 +10,10 @@ interface GridLevelsPanelProps {
   limit?: number;
   showViewAll?: boolean;
   onGoToTab?: (tab: string) => void;
+  levelsSummary?: any;
 }
 
-export function GridLevelsPanel({ levels, mode, currentPrice, limit = 10, showViewAll = true, onGoToTab }: GridLevelsPanelProps) {
+export function GridLevelsPanel({ levels, mode, currentPrice, limit = 10, showViewAll = true, onGoToTab, levelsSummary }: GridLevelsPanelProps) {
   const toNumberOrNull = (value: unknown): number | null => {
     if (value === undefined || value === null) return null;
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -65,6 +66,13 @@ export function GridLevelsPanel({ levels, mode, currentPrice, limit = 10, showVi
     return { distanceUsd, distancePct };
   };
 
+  const activeRangeId = levelsSummary?.activeRangeVersionId;
+  const hasHistorical = levelsSummary?.hasHistoricalLevels ?? false;
+  const allCurrent = levelsSummary?.allLevelsBelongToActiveRange ?? true;
+  const currentCount = levelsSummary?.currentLevelsCount ?? levels.length;
+  const historicalCount = levelsSummary?.historicalLevelsCount ?? 0;
+  const activeRangeCreatedAt = levelsSummary?.activeRangeCreatedAt;
+
   return (
     <Card className="border-border/50">
       <CardHeader className="pb-3">
@@ -72,6 +80,33 @@ export function GridLevelsPanel({ levels, mode, currentPrice, limit = 10, showVi
           <Layers className="h-4 w-4" />
           Niveles planificados del Grid
         </CardTitle>
+        <div className="space-y-2 mt-2">
+          {activeRangeId && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge variant="outline" className="font-mono">
+                Rango: {activeRangeId.slice(0, 8)}...
+              </Badge>
+              {activeRangeCreatedAt && (
+                <span className="text-muted-foreground">
+                  Generado: {new Date(activeRangeCreatedAt).toLocaleString("es-ES")}
+                </span>
+              )}
+              <Badge variant={allCurrent ? "default" : "secondary"} className="text-xs">
+                {currentCount} actuales · {historicalCount} históricos
+              </Badge>
+            </div>
+          )}
+          {hasHistorical && (
+            <div className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>Hay niveles históricos de rangos anteriores. La tabla muestra solo los del rango activo.</span>
+            </div>
+          )}
+          <div className="flex items-start gap-2 text-xs text-blue-600 dark:text-blue-400">
+            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>Estos niveles se recalculan cuando cambia la banda mientras estén en estado planned.</span>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         {levels && levels.length > 0 ? (

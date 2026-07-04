@@ -755,6 +755,17 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const resolvedRange = await resolveActiveRange(events, status, cycles.length);
       const chatgptSummary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config, resolvedRange);
 
+      // Separate current vs historical levels for the UI
+      const activeRangeId = status.activeRangeVersionId;
+      const currentLevels = activeRangeId
+        ? levels.filter((l: any) => l.rangeVersionId === activeRangeId)
+        : [];
+      const historicalLevels = activeRangeId
+        ? levels.filter((l: any) => l.rangeVersionId !== activeRangeId)
+        : [];
+      const hasHistoricalLevels = historicalLevels.length > 0;
+      const allLevelsBelongToActiveRange = levels.length > 0 && levels.every((l: any) => l.rangeVersionId === activeRangeId);
+
       // Market context for UI (read-only, no trading logic)
       let marketContext: any = null;
       try {
@@ -945,6 +956,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
           plannedLevelsCount,
           activeOrdersCount,
           realOpenOrdersCount,
+          historicalLevelsCount: status.historicalLevelsCount,
           totalCyclesCompleted: status.totalCyclesCompleted,
           dailyOrderCount: status.dailyOrderCount,
           circuitBreakerOpen: status.circuitBreakerOpen,
@@ -955,6 +967,10 @@ export function registerGridIsolatedRoutes(app: Express): void {
           lastReconciliationAt: status.lastReconciliationAt,
           lastReconciliationOk: status.lastReconciliationOk,
           netProfitTargetPct: config?.netProfitTargetPct,
+          activeRangeVersionId: status.activeRangeVersionId,
+          activeRangeVersionNumber: status.activeRangeVersionNumber,
+          activeRangeCreatedAt: status.activeRangeCreatedAt,
+          activeRangeStatus: status.activeRangeStatus,
         },
         wallet: {
           totalUsd: walletTotal,
@@ -1020,6 +1036,32 @@ export function registerGridIsolatedRoutes(app: Express): void {
         decisions,
         levels,
         cycles,
+        levelsSummary: {
+          activeRangeVersionId: activeRangeId,
+          activeRangeVersionNumber: status.activeRangeVersionNumber,
+          activeRangeCreatedAt: status.activeRangeCreatedAt,
+          activeRangeStatus: status.activeRangeStatus,
+          currentLevelsCount: currentLevels.length,
+          historicalLevelsCount: historicalLevels.length,
+          hasHistoricalLevels,
+          allLevelsBelongToActiveRange,
+          currentLevels: currentLevels.map((l: any) => ({
+            id: l.id,
+            rangeVersionId: l.rangeVersionId,
+            side: l.side,
+            price: l.price,
+            status: l.status,
+            createdAt: l.createdAt,
+          })),
+          historicalLevels: historicalLevels.map((l: any) => ({
+            id: l.id,
+            rangeVersionId: l.rangeVersionId,
+            side: l.side,
+            price: l.price,
+            status: l.status,
+            createdAt: l.createdAt,
+          })),
+        },
         safety: {
           realLimitedBlocked: realModesBlocked,
           realFullBlocked: realModesBlocked,

@@ -553,4 +553,59 @@ describe("Grid Isolated Routes — Endpoints", () => {
       expect(msg).not.toBe(tc.raw);
     }
   });
+
+  // ─── Smart level rebuild event messages ─────────────────────────
+  it("getNaturalGridMessage for GRID_LEVELS_REBUILT returns Spanish recalc message", () => {
+    const msg = getNaturalGridMessage("GRID_LEVELS_REBUILT", "Levels rebuilt", { levelsCount: 10 });
+    expect(msg).toContain("La banda cambió");
+    expect(msg).toContain("10 niveles planificados");
+  });
+
+  it("getNaturalGridMessage for GRID_LEVELS_REPLACED returns Spanish replacement message", () => {
+    const msg = getNaturalGridMessage("GRID_LEVELS_REPLACED", "Levels replaced", { replacedLevelsCount: 8 });
+    expect(msg).toContain("sustituidos");
+    expect(msg).toContain("8 niveles");
+  });
+
+  it("getNaturalGridMessage for GRID_LEVELS_PRESERVED_DUE_TO_CYCLE returns safety message", () => {
+    const msg = getNaturalGridMessage("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "Preserved", { reason: "ciclo abierto" });
+    expect(msg).toContain("conservan niveles/ciclos");
+    expect(msg).toContain("ciclo abierto");
+  });
+
+  it("getNaturalGridMessage for GRID_RANGE_CHANGED returns range change message", () => {
+    const msg = getNaturalGridMessage("GRID_RANGE_CHANGED", "Range changed", {
+      oldLowerPrice: 60000,
+      oldUpperPrice: 65000,
+      newLowerPrice: 61000,
+      newUpperPrice: 66000,
+    });
+    expect(msg).toContain("rango activo cambió");
+    expect(msg).toContain("60000–65000");
+    expect(msg).toContain("61000–66000");
+  });
+
+  // ─── Levels summary in audit ────────────────────────────────────
+  it("monitor/audit returns levelsSummary with active range info", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.levelsSummary).toBeDefined();
+    expect(res.body.levelsSummary).toHaveProperty("activeRangeVersionId");
+    expect(res.body.levelsSummary).toHaveProperty("currentLevelsCount");
+    expect(res.body.levelsSummary).toHaveProperty("historicalLevelsCount");
+    expect(res.body.levelsSummary).toHaveProperty("hasHistoricalLevels");
+    expect(res.body.levelsSummary).toHaveProperty("allLevelsBelongToActiveRange");
+    expect(res.body.levelsSummary).toHaveProperty("currentLevels");
+    expect(res.body.levelsSummary).toHaveProperty("historicalLevels");
+  });
+
+  it("monitor/audit summary includes active range and historical level counts", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.summary).toHaveProperty("activeRangeVersionId");
+    expect(res.body.summary).toHaveProperty("activeRangeVersionNumber");
+    expect(res.body.summary).toHaveProperty("activeRangeCreatedAt");
+    expect(res.body.summary).toHaveProperty("activeRangeStatus");
+    expect(res.body.summary).toHaveProperty("historicalLevelsCount");
+  });
 });

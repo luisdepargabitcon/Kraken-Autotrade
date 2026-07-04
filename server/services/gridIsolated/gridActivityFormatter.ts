@@ -344,6 +344,51 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
       return `El Grid está en SHADOW esperando condiciones válidas. Motivo: ${meta.reason || "no especificado"}.`;
     },
   },
+  GRID_RANGE_CHANGED: {
+    category: "BAND",
+    severity: "INFO",
+    title: "Rango cambiado",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      const oldLower = meta.oldLowerPrice ?? meta.oldLower;
+      const oldUpper = meta.oldUpperPrice ?? meta.oldUpper;
+      const newLower = meta.newLowerPrice ?? meta.newLower;
+      const newUpper = meta.newUpperPrice ?? meta.newUpper;
+      const oldRange = oldLower != null && oldUpper != null ? `${oldLower}–${oldUpper}` : "anterior";
+      const newRange = newLower != null && newUpper != null ? `${newLower}–${newUpper}` : "nuevo";
+      return `El rango activo cambió de ${oldRange} a ${newRange}.`;
+    },
+  },
+  GRID_LEVELS_REBUILT: {
+    category: "LEVEL",
+    severity: "INFO",
+    title: "Niveles recalculados",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      const count = meta.levelsCount ?? meta.newLevelsCount ?? "—";
+      return `La banda cambió y el Grid recalculó ${count} niveles planificados.`;
+    },
+  },
+  GRID_LEVELS_REPLACED: {
+    category: "LEVEL",
+    severity: "INFO",
+    title: "Niveles anteriores sustituidos",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      const count = meta.replacedLevelsCount ?? "—";
+      return `Los niveles planificados anteriores fueron sustituidos por una nueva banda (${count} niveles).`;
+    },
+  },
+  GRID_LEVELS_PRESERVED_DUE_TO_CYCLE: {
+    category: "SAFETY",
+    severity: "WARNING",
+    title: "Niveles conservados por seguridad",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      const reason = meta.reason || "hay ciclos u órdenes reales abiertos";
+      return `La banda cambió, pero se conservan niveles/ciclos abiertos por seguridad. Motivo: ${reason}.`;
+    },
+  },
 };
 
 export function formatGridEvent(ev: RawGridEvent): FormattedGridEvent {
