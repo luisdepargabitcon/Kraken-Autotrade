@@ -243,7 +243,12 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   }
   lines.push(`Mode lock reconocido: ${checks.modeLockAcknowledged ? "sí" : "no"}.`);
   lines.push(`Límite diario respetado: ${checks.dailyOrderLimitRespected ? "sí" : "no"}.`);
-  lines.push(`Niveles abiertos: ${status?.openLevels || 0}.`);
+  const plannedLevelsCount = levels.filter((l: any) => l?.status === "planned").length;
+  const realOpenOrdersCount = levels.filter((l: any) =>
+    l?.exchangeOrderId != null && !["filled", "cancelled"].includes(l?.status)
+  ).length;
+  lines.push(`Niveles planificados: ${plannedLevelsCount}.`);
+  lines.push(`Órdenes reales abiertas: ${realOpenOrdersCount}.`);
   lines.push(`Ciclos abiertos: ${status?.openCycles || 0}.`);
   lines.push(`Ciclos cerrados: ${status?.totalCyclesCompleted || 0}.`);
   lines.push(`PnL neto: $${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}.`);
@@ -914,6 +919,15 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
       const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
 
+      // Differentiate planned levels vs real active orders
+      const plannedLevelsCount = levels.filter((l: any) => l?.status === "planned").length;
+      const activeOrdersCount = levels.filter((l: any) =>
+        ["open", "placed", "partially_filled", "filled"].includes(l?.status)
+      ).length;
+      const realOpenOrdersCount = levels.filter((l: any) =>
+        l?.exchangeOrderId != null && !["filled", "cancelled"].includes(l?.status)
+      ).length;
+
       res.json({
         ok: true,
         status: "ok",
@@ -928,6 +942,9 @@ export function registerGridIsolatedRoutes(app: Express): void {
           canUnlockRealFull: blockingReasons.length === 0,
           openCycles: status.openCycles,
           openLevels: status.openLevels,
+          plannedLevelsCount,
+          activeOrdersCount,
+          realOpenOrdersCount,
           totalCyclesCompleted: status.totalCyclesCompleted,
           dailyOrderCount: status.dailyOrderCount,
           circuitBreakerOpen: status.circuitBreakerOpen,

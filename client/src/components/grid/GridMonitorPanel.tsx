@@ -157,8 +157,9 @@ export function GridMonitorPanel() {
               <Badge variant={modeColor(mode) as any} className="mt-1">{mode}</Badge>
             </CardContent></Card>
             <Card><CardContent className="p-3">
-              <div className="flex items-center gap-2"><Zap className="h-3 w-3 text-yellow-500" /><span className="text-xs text-muted-foreground">Niveles Abiertos</span></div>
-              <p className="text-lg font-bold mt-1">{summary?.openLevels || 0}</p>
+              <div className="flex items-center gap-2"><Zap className="h-3 w-3 text-yellow-500" /><span className="text-xs text-muted-foreground">Niveles Planificados</span></div>
+              <p className="text-lg font-bold mt-1">{summary?.plannedLevelsCount ?? summary?.openLevels ?? 0}</p>
+              <p className="text-[10px] text-muted-foreground">{summary?.realOpenOrdersCount ?? 0} órdenes reales</p>
             </CardContent></Card>
             <Card><CardContent className="p-3">
               <div className="flex items-center gap-2"><TrendingUp className="h-3 w-3 text-green-500" /><span className="text-xs text-muted-foreground">PnL Neto</span></div>

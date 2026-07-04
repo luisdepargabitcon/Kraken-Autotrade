@@ -10,7 +10,7 @@ import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon, Cpu, CheckCircle2, XCircle } from "lucide-react";
+import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon, Cpu, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
 import { GridActivityLive } from "@/components/grid/GridActivityLive";
 import { GridBandsRangesPanel } from "@/components/grid/GridBandsRangesPanel";
@@ -717,8 +717,19 @@ export default function GridIsolated() {
             levelsCount={levels?.length || 0}
             activeLevelsCount={levels?.filter((l: any) => l.status === "open").length || 0}
             cyclesCount={cycles?.length || 0}
+            realOpenOrdersCount={auditData?.summary?.realOpenOrdersCount || 0}
             lastTickReason={(status as any)?.lastTickReason}
           />
+          <Card className="border-amber-500/30 bg-amber-500/10">
+            <CardContent className="p-3">
+              <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <p>
+                  Estos niveles están planificados en {config?.mode || "SHADOW"}. No son órdenes reales ni capital ejecutado.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
           <GridLevelsPanel
             levels={levels || []}
             mode={config?.mode || "OFF"}

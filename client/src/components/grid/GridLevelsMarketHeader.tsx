@@ -8,6 +8,7 @@ interface GridLevelsMarketHeaderProps {
   levelsCount: number;
   activeLevelsCount: number;
   cyclesCount: number;
+  realOpenOrdersCount?: number;
   lastTickReason?: string | null;
 }
 
@@ -17,6 +18,7 @@ export function GridLevelsMarketHeader({
   levelsCount,
   activeLevelsCount,
   cyclesCount,
+  realOpenOrdersCount,
   lastTickReason,
 }: GridLevelsMarketHeaderProps) {
   if (!marketContext) {
@@ -94,7 +96,7 @@ export function GridLevelsMarketHeader({
       return "El precio está en la zona media de la banda. Grid operativo normal.";
     }
     if (bandPosition === "upper") {
-      return "El precio está en la zona superior de la banda. Posible oportunidad de venta.";
+      return "El precio está en la zona superior de la banda. El Grid mantiene compras planificadas por debajo y objetivos de venta por encima; todavía no hay ciclos abiertos.";
     }
     return "Estado del mercado no determinado.";
   };
@@ -171,7 +173,7 @@ export function GridLevelsMarketHeader({
           <div className="flex items-center gap-2">
             <Layers className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">
-              {levelsCount} niveles planificados · {activeLevelsCount} activos · {cyclesCount} ciclos
+              {levelsCount} niveles planificados · {realOpenOrdersCount ?? 0} órdenes reales · {cyclesCount} ciclos
             </span>
           </div>
           <Badge variant="outline" className="text-xs font-mono">

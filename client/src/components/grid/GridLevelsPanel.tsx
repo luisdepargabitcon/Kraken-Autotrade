@@ -70,7 +70,7 @@ export function GridLevelsPanel({ levels, mode, currentPrice, limit = 10, showVi
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Layers className="h-4 w-4" />
-          Niveles activos
+          Niveles planificados del Grid
         </CardTitle>
       </CardHeader>
       <CardContent>

@@ -10,9 +10,9 @@ export function GridKpiStrip({ status, auditData }: GridKpiStripProps) {
   const kpis = [
     {
       icon: <Layers className="h-4 w-4 text-blue-500" />,
-      label: "Niveles abiertos",
-      value: status?.openLevels || 0,
-      sub: `/ ${auditData?.range?.levelsGenerated ?? "—"} generados`,
+      label: "Niveles planificados",
+      value: auditData?.summary?.plannedLevelsCount ?? status?.openLevels ?? 0,
+      sub: `${auditData?.summary?.realOpenOrdersCount ?? 0} órdenes reales`,
       color: "",
     },
     {

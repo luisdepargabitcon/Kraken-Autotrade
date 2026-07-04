@@ -94,9 +94,9 @@ export function GridSummaryPanel({
           {/* KPIs del Grid — grid horizontal como IDCA */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px border-b border-amber-500/10 bg-amber-500/10">
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">NIVELES ABIERTOS</p>
-              <p className="font-mono text-lg font-bold">{status?.openLevels || 0}</p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">/ {auditData?.range?.levelsGenerated ?? "—"} generados</p>
+              <p className="text-[10px] font-mono text-muted-foreground mb-1">NIVELES PLANIFICADOS</p>
+              <p className="font-mono text-lg font-bold">{auditData?.summary?.plannedLevelsCount ?? status?.openLevels ?? 0}</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">{auditData?.summary?.realOpenOrdersCount ?? 0} órdenes reales</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-[10px] font-mono text-muted-foreground mb-1">CICLOS ABIERTOS</p>
