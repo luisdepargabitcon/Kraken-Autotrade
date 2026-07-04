@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { GridExecutionPolicyPanel } from "./GridExecutionPolicyPanel";
 import { GridCarteraDashboard } from "./GridCarteraDashboard";
 import { GridMonitorPanel } from "./GridMonitorPanel";
-import { Settings2, Shield, Cpu, FlaskConical, Zap, Zap as ZapIcon, CheckCircle2, XCircle, AlertCircle, AlertTriangle, TrendingUp, TrendingDown, Activity, ScrollText } from "lucide-react";
+import { Settings2, Shield, Cpu, FlaskConical, Zap, Zap as ZapIcon, CheckCircle2, XCircle, AlertCircle, AlertTriangle, TrendingUp, TrendingDown, Activity, ScrollText, Wallet } from "lucide-react";
 
 interface GridAjustesPanelProps {
   config: any;
@@ -35,12 +35,12 @@ export function GridAjustesPanel({
     <div className="space-y-4">
       <Tabs value={subTab} onValueChange={setSubTab}>
         <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 gap-1 h-auto p-1">
-          <TabsTrigger value="general" className="text-xs">General</TabsTrigger>
-          <TabsTrigger value="cartera" className="text-xs">Cartera</TabsTrigger>
-          <TabsTrigger value="ejecucion" className="text-xs">Ejecución</TabsTrigger>
-          <TabsTrigger value="riesgo" className="text-xs">Riesgo</TabsTrigger>
-          <TabsTrigger value="avanzado" className="text-xs">Avanzado</TabsTrigger>
-          <TabsTrigger value="auditoria" className="text-xs">Auditoría</TabsTrigger>
+          <TabsTrigger value="general" className="text-sm">General</TabsTrigger>
+          <TabsTrigger value="cartera" className="text-sm">Cartera</TabsTrigger>
+          <TabsTrigger value="ejecucion" className="text-sm">Ejecución</TabsTrigger>
+          <TabsTrigger value="riesgo" className="text-sm">Riesgo</TabsTrigger>
+          <TabsTrigger value="avanzado" className="text-sm">Avanzado</TabsTrigger>
+          <TabsTrigger value="auditoria" className="text-sm">Auditoría</TabsTrigger>
         </TabsList>
 
         {/* ─── General ─────────────────────────────── */}
@@ -53,99 +53,105 @@ export function GridAjustesPanel({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Perfil de Capital */}
+              {/* Perfil de Capital — segmented control visual */}
               <div className="space-y-2">
                 <Label className="text-sm">Perfil de Capital</Label>
-                <Select
-                  value={config?.capitalProfile || "balanced"}
-                  onValueChange={(v) => onConfirmChange("capitalProfile", "Perfil de capital", config?.capitalProfile || "balanced", v, "Cambia el perfil de riesgo del Grid.", "medium", false, false)}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="conservative">Conservador (30% reserva)</SelectItem>
-                    <SelectItem value="balanced">Balanceado (20% reserva)</SelectItem>
-                    <SelectItem value="aggressive">Agresivo (10% reserva)</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { v: "conservative", label: "Conservador", sub: "30% reserva", color: "green" },
+                    { v: "balanced", label: "Balanceado", sub: "20% reserva", color: "amber" },
+                    { v: "aggressive", label: "Agresivo", sub: "10% reserva", color: "red" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.v}
+                      onClick={() => onConfirmChange("capitalProfile", "Perfil de capital", config?.capitalProfile || "balanced", opt.v, "Cambia el perfil de riesgo del Grid.", "medium", false, false)}
+                      className={`rounded-lg border p-3 text-center transition-all ${
+                        (config?.capitalProfile || "balanced") === opt.v
+                          ? `border-${opt.color}-500/50 bg-${opt.color}-500/10 text-foreground`
+                          : "border-border/50 bg-muted/10 text-muted-foreground hover:bg-muted/20"
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">{opt.label}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{opt.sub}</p>
+                    </button>
+                  ))}
+                </div>
                 <p className="text-sm text-muted-foreground">Define cómo el Grid balancea exposición y reserva.</p>
               </div>
 
-              {/* Periodo Bollinger */}
+              {/* Periodo Bollinger — slider con display visual */}
               <div className="space-y-2">
-                <Label className="text-sm">Periodo de Bandas (Bollinger)</Label>
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="number"
-                    className="w-24 h-8 text-right"
-                    value={config?.bandPeriod || 20}
-                    min={5}
-                    max={100}
-                    onChange={(e) => onConfigChange("bandPeriod", parseInt(e.target.value) || 20)}
-                  />
-                  <Slider
-                    value={[config?.bandPeriod || 20]}
-                    min={5}
-                    max={100}
-                    step={1}
-                    onValueChange={(v) => onConfirmChange("bandPeriod", "Periodo Bollinger", config?.bandPeriod || 20, v[0], "Cambia cuántas velas usa el Grid para calcular bandas.", "low", false, true)}
-                    className="flex-1"
-                  />
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">Periodo de Bandas (Bollinger)</Label>
+                  <span className="text-lg font-bold text-blue-400 font-mono">{config?.bandPeriod || 20}</span>
                 </div>
+                <Slider
+                  value={[config?.bandPeriod || 20]}
+                  min={5}
+                  max={100}
+                  step={1}
+                  onValueChange={(v) => onConfirmChange("bandPeriod", "Periodo Bollinger", config?.bandPeriod || 20, v[0], "Cambia cuántas velas usa el Grid para calcular bandas.", "low", false, true)}
+                  className="[&_[role=slider]]:bg-blue-500"
+                />
                 <p className="text-sm text-muted-foreground">Mayor periodo = banda más estable. Menor = más reactiva.</p>
               </div>
 
-              {/* ATR Timeframe */}
+              {/* ATR Timeframe — segmented control */}
               <div className="space-y-2">
                 <Label className="text-sm">Timeframe ATR</Label>
-                <Select
-                  value={config?.atrTimeframe || "1h"}
-                  onValueChange={(v) => onConfirmChange("atrTimeframe", "Timeframe ATR", config?.atrTimeframe || "1h", v, "Cambia la sensibilidad del cálculo de volatilidad.", "low", false, true)}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="15min">15 min</SelectItem>
-                    <SelectItem value="1h">1 hora</SelectItem>
-                    <SelectItem value="4h">4 horas</SelectItem>
-                    <SelectItem value="1d">1 día</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { v: "15min", label: "15 min" },
+                    { v: "1h", label: "1 hora" },
+                    { v: "4h", label: "4 horas" },
+                    { v: "1d", label: "1 día" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.v}
+                      onClick={() => onConfirmChange("atrTimeframe", "Timeframe ATR", config?.atrTimeframe || "1h", opt.v, "Cambia la sensibilidad del cálculo de volatilidad.", "low", false, true)}
+                      className={`rounded-lg border p-2.5 text-center text-sm transition-all ${
+                        (config?.atrTimeframe || "1h") === opt.v
+                          ? "border-blue-500/50 bg-blue-500/10 text-foreground font-semibold"
+                          : "border-border/50 bg-muted/10 text-muted-foreground hover:bg-muted/20"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
                 <p className="text-sm text-muted-foreground">Timeframe largo = más estabilidad. Corto = más sensibilidad.</p>
               </div>
 
-              {/* Máx Ciclos */}
+              {/* Máx Ciclos — slider con display visual */}
               <div className="space-y-2">
-                <Label className="text-sm">Máx Ciclos Abiertos</Label>
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="number"
-                    className="w-24 h-8 text-right"
-                    value={config?.maxOpenCycles || 10}
-                    min={1}
-                    max={50}
-                    onChange={(e) => onConfigChange("maxOpenCycles", parseInt(e.target.value) || 10)}
-                  />
-                  <Slider
-                    value={[config?.maxOpenCycles || 10]}
-                    min={1}
-                    max={50}
-                    step={1}
-                    onValueChange={(v) => onConfirmChange("maxOpenCycles", "Máx ciclos abiertos", config?.maxOpenCycles || 10, v[0], "Más ciclos = más capital expuesto simultáneamente.", "high", true, false)}
-                    className="flex-1"
-                  />
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">Máx Ciclos Abiertos</Label>
+                  <span className={`text-lg font-bold font-mono ${(config?.maxOpenCycles || 10) > 20 ? "text-red-400" : (config?.maxOpenCycles || 10) > 10 ? "text-amber-400" : "text-green-400"}`}>{config?.maxOpenCycles || 10}</span>
                 </div>
+                <Slider
+                  value={[config?.maxOpenCycles || 10]}
+                  min={1}
+                  max={50}
+                  step={1}
+                  onValueChange={(v) => onConfirmChange("maxOpenCycles", "Máx ciclos abiertos", config?.maxOpenCycles || 10, v[0], "Más ciclos = más capital expuesto simultáneamente.", "high", true, false)}
+                  className={(config?.maxOpenCycles || 10) > 20 ? "[&_[role=slider]]:bg-red-500" : (config?.maxOpenCycles || 10) > 10 ? "[&_[role=slider]]:bg-amber-500" : "[&_[role=slider]]:bg-green-500"}
+                />
                 <p className="text-sm text-muted-foreground">Limita cuántos ciclos pueden estar abiertos a la vez.</p>
               </div>
 
-              {/* Máx órdenes diarias */}
+              {/* Máx órdenes diarias — slider con display visual */}
               <div className="space-y-2">
-                <Label className="text-sm">Máx Órdenes Diarias</Label>
-                <Input
-                  type="number"
-                  className="w-24 h-8 text-right"
-                  value={config?.maxDailyOrders || 300}
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">Máx Órdenes Diarias</Label>
+                  <span className="text-lg font-bold text-purple-400 font-mono">{config?.maxDailyOrders || 300}</span>
+                </div>
+                <Slider
+                  value={[config?.maxDailyOrders || 300]}
                   min={10}
                   max={1000}
-                  onChange={(e) => onConfigChange("maxDailyOrders", parseInt(e.target.value) || 300)}
+                  step={10}
+                  onValueChange={(v) => onConfigChange("maxDailyOrders", v[0])}
+                  className="[&_[role=slider]]:bg-purple-500"
                 />
                 <p className="text-sm text-muted-foreground">Límite de seguridad para evitar exceso de actividad.</p>
               </div>
@@ -209,7 +215,7 @@ export function GridAjustesPanel({
             <CardContent className="space-y-6">
               {/* HODL vs Stop explanation box */}
               <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-4 space-y-3">
-                <h3 className="text-sm font-semibold flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                <h3 className="text-base font-semibold flex items-center gap-2 text-amber-600 dark:text-amber-400">
                   <AlertCircle className="h-4 w-4" />
                   Cómo interactúan HODL Recovery y Stop Loss
                 </h3>
@@ -241,7 +247,7 @@ export function GridAjustesPanel({
 
               {/* Trailing Protection */}
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Trailing Protection</h3>
+                <h3 className="text-base font-semibold">Trailing Protection</h3>
                 <p className="text-sm text-muted-foreground">Activa un stop dinámico cuando el precio sube por encima de la activación.</p>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -271,7 +277,7 @@ export function GridAjustesPanel({
 
               {/* Stop Loss Layers */}
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Stop Loss (3 capas)</h3>
+                <h3 className="text-base font-semibold">Stop Loss (3 capas)</h3>
                 <p className="text-sm text-muted-foreground">Sistema escalado de protección contra caídas.</p>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
@@ -358,7 +364,7 @@ export function GridAjustesPanel({
 
               {/* Pump/Dump Guard */}
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Pump/Dump Guard</h3>
+                <h3 className="text-base font-semibold">Pump/Dump Guard</h3>
                 <p className="text-sm text-muted-foreground">Detecta movimientos bruscos y bloquea nuevas compras.</p>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -473,7 +479,7 @@ export function GridAjustesPanel({
 
               {/* Backtest placeholder */}
               <div className="pt-4 border-t">
-                <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+                <h3 className="text-base font-semibold flex items-center gap-2 mb-3">
                   <FlaskConical className="h-4 w-4" />
                   Backtest
                 </h3>

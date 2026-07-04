@@ -1,4 +1,5 @@
-﻿import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+﻿import { useState, useEffect, type ReactNode } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GridMarketContextPanel } from "./GridMarketContextPanel";
@@ -7,7 +8,79 @@ import { GridLiveActivityPanel } from "./GridLiveActivityPanel";
 import { GridLevelsPanel } from "./GridLevelsPanel";
 import { GridCyclesPanel } from "./GridCyclesPanel";
 import { GridRangeHistoryPanel } from "./GridRangeHistoryPanel";
-import { Activity, Shield, Wallet, Zap, Layers, CheckCircle2, XCircle, AlertTriangle, Settings2, Cpu } from "lucide-react";
+import { Activity, Shield, Wallet, Zap, Layers, CheckCircle2, XCircle, AlertTriangle, Settings2, Cpu, GripVertical, RotateCcw } from "lucide-react";
+
+// ─── Drag & drop section ordering ────────────────────────────
+const SECTION_IDS = ["cartera", "estado", "controles", "contexto", "niveles", "ciclos", "actividad", "historico"] as const;
+type SectionId = typeof SECTION_IDS[number];
+
+const DEFAULT_ORDER: SectionId[] = ["cartera", "estado", "controles", "contexto", "niveles", "ciclos", "actividad", "historico"];
+const STORAGE_KEY = "grid-summary-section-order";
+
+function loadOrder(): SectionId[] {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length === SECTION_IDS.length) {
+        const allPresent = SECTION_IDS.every(id => parsed.includes(id));
+        if (allPresent) return parsed as SectionId[];
+      }
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_ORDER;
+}
+
+function DraggableSection({
+  id, index, draggedId, dragOverId, onDragStart, onDragOver, onDrop, onDragEnd, onReset, children,
+}: {
+  id: SectionId;
+  index: number;
+  draggedId: SectionId | null;
+  dragOverId: SectionId | null;
+  onDragStart: (id: SectionId) => void;
+  onDragOver: (e: React.DragEvent, id: SectionId) => void;
+  onDrop: (id: SectionId) => void;
+  onDragEnd: () => void;
+  onReset: () => void;
+  children: ReactNode;
+}) {
+  const isDragging = draggedId === id;
+  const isDragOver = dragOverId === id && draggedId !== id;
+  return (
+    <div
+      draggable
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", id); onDragStart(id); }}
+      onDragOver={(e) => onDragOver(e, id)}
+      onDrop={() => onDrop(id)}
+      onDragEnd={onDragEnd}
+      className={`relative group transition-all ${
+        isDragging ? "opacity-40 scale-[0.98]" : ""
+      } ${isDragOver ? "ring-2 ring-blue-500/60 rounded-xl" : ""}`}
+    >
+      {/* Drag handle — desktop only, appears on hover */}
+      <div className="hidden md:flex absolute -top-3 left-1/2 -translate-x-1/2 z-20 cursor-grab active:cursor-grabbing items-center gap-1 px-2 py-0.5 rounded-md bg-muted/80 border border-border/60 text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shadow-sm">
+        <GripVertical className="h-3 w-3" />
+        <span className="text-[10px] font-mono">#{index + 1} · arrastrar</span>
+      </div>
+      {/* Reset button — only on first section */}
+      {index === 0 && (
+        <div className="hidden md:flex absolute -top-3 right-0 z-20">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onReset}
+            className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <RotateCcw className="h-3 w-3 mr-1" />
+            Restaurar orden
+          </Button>
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
 
 interface GridSummaryPanelProps {
   config: any;
@@ -49,40 +122,76 @@ export function GridSummaryPanel({
   const decisions: any[] = auditData?.decisions || [];
   const summary = auditData?.summary;
 
-  return (
-    <div className="space-y-4">
-      {/* ═══ 1. CARTERA GRID (arriba, antes que nada) ═══ */}
+  // ─── Normalized motor status (same logic as GridHeaderHero) ───
+  const motorLabel = mode === "OFF" ? "MOTOR DETENIDO" : isActive ? "MOTOR ACTIVO" : "MOTOR PAUSADO";
+  const motorBg = mode === "OFF" ? "text-muted-foreground border-muted-foreground/30" : isActive ? "bg-green-600" : "text-amber-400 border-amber-400/50";
+
+  // ─── Drag & drop state ──────────────────────────────────────
+  const [order, setOrder] = useState<SectionId[]>(loadOrder);
+  const [draggedId, setDraggedId] = useState<SectionId | null>(null);
+  const [dragOverId, setDragOverId] = useState<SectionId | null>(null);
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(order)); } catch { /* ignore */ }
+  }, [order]);
+
+  const handleDragStart = (id: SectionId) => setDraggedId(id);
+  const handleDragOver = (e: React.DragEvent, id: SectionId) => { e.preventDefault(); setDragOverId(id); };
+  const handleDrop = (id: SectionId) => {
+    if (draggedId && draggedId !== id) {
+      setOrder(prev => {
+        const newOrder = [...prev];
+        const fromIdx = newOrder.indexOf(draggedId);
+        const toIdx = newOrder.indexOf(id);
+        newOrder.splice(fromIdx, 1);
+        newOrder.splice(toIdx, 0, draggedId);
+        return newOrder;
+      });
+    }
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+  const handleDragEnd = () => { setDraggedId(null); setDragOverId(null); };
+  const resetOrder = () => setOrder(DEFAULT_ORDER);
+
+  // ─── Section content map ────────────────────────────────────
+  const sections: Record<SectionId, ReactNode> = {
+    cartera: (
       <GridWalletSummaryPanel
         wallet={wallet}
         config={config}
         status={status}
         onGoToTab={onGoToTab}
       />
-
-      {/* ═══ 2. ESTADO GENERAL DEL GRID ═══ */}
+    ),
+    estado: (
       <Card className="border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-card/50 to-amber-500/5 overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Cpu className="h-4 w-4 text-amber-400" />
-              <CardTitle className="text-sm font-mono font-bold text-amber-400">
+              <Cpu className="h-5 w-5 text-amber-400" />
+              <CardTitle className="text-base font-mono font-bold text-amber-400">
                 ESTADO GENERAL DEL GRID
               </CardTitle>
-              <Badge variant="outline" className="text-[9px] border-amber-500/30 text-amber-500/70">
+              <Badge variant="outline" className="text-xs border-amber-500/30 text-amber-500/70">
                 GRID ISOLATED
               </Badge>
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant={modeColor(mode) as any} className="text-xs font-mono">
+              <Badge variant={modeColor(mode) as any} className="text-sm font-mono">
                 {mode}
               </Badge>
-              {isActive ? (
-                <Badge variant="default" className="text-xs font-mono bg-green-600">
-                  MOTOR ACTIVO
+              {mode === "OFF" ? (
+                <Badge variant="outline" className={`text-sm font-mono ${motorBg}`}>
+                  {motorLabel}
+                </Badge>
+              ) : isActive ? (
+                <Badge variant="default" className="text-sm font-mono bg-green-600">
+                  {motorLabel}
                 </Badge>
               ) : (
-                <Badge variant="outline" className="text-xs font-mono text-amber-400 border-amber-400/50">
-                  MOTOR PAUSADO
+                <Badge variant="outline" className={`text-sm font-mono ${motorBg}`}>
+                  {motorLabel}
                 </Badge>
               )}
             </div>
@@ -95,66 +204,66 @@ export function GridSummaryPanel({
             functionalStatus?.state === "inactive" || functionalStatus?.state === "off" ? "bg-orange-500/10 text-orange-700 dark:text-orange-300" :
             "bg-blue-500/10 text-blue-700 dark:text-blue-300"
           }`}>
-            <p className="font-medium">{functionalStatus?.message || "Estado funcional no disponible."}</p>
+            <p className="font-medium text-sm">{functionalStatus?.message || "Sincronizando estado..."}</p>
           </div>
 
-          {/* KPIs del Grid — grid horizontal como IDCA */}
+          {/* KPIs del Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px border-b border-amber-500/10 bg-amber-500/10">
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">NIVELES PLANIFICADOS</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">NIVELES PLANIFICADOS</p>
               <p className="font-mono text-lg font-bold">{summary?.plannedLevelsTotal ?? summary?.plannedLevelsCount ?? status?.openLevels ?? 0}</p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">{summary?.realOpenOrdersCount ?? 0} órdenes reales abiertas</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{summary?.realOpenOrdersCount ?? 0} órdenes reales abiertas</p>
             </div>
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">CICLOS ABIERTOS</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">CICLOS ABIERTOS</p>
               <p className="font-mono text-lg font-bold">{summary?.openCyclesCount ?? status?.openCycles ?? 0}</p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">{summary?.closedCyclesCount ?? 0} cerrados · ${status?.capitalReservedUsd?.toFixed(0) || 0} reservado</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{summary?.closedCyclesCount ?? 0} cerrados · ${status?.capitalReservedUsd?.toFixed(0) || 0} reservado</p>
             </div>
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">PNL NETO TOTAL</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">PNL NETO TOTAL</p>
               <p className={`font-mono text-lg font-bold ${(status?.totalNetPnlUsd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                 {(status?.totalNetPnlUsd ?? 0) >= 0 ? "+" : ""}${(status?.totalNetPnlUsd ?? 0).toFixed(2)}
               </p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">{status?.totalCyclesCompleted || 0} ciclos completados</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{status?.totalCyclesCompleted || 0} ciclos completados</p>
             </div>
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">ÚLTIMO TICK</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">ÚLTIMO TICK</p>
               <p className="font-mono text-lg font-bold text-blue-400">
                 {lastTickAt ? new Date(lastTickAt).toLocaleTimeString("es-ES") : "—"}
               </p>
-              <p className="text-[9px] text-muted-foreground mt-0.5">{lastTickReason || "Sin tick reciente"}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{lastTickReason || "Sin tick reciente"}</p>
             </div>
           </div>
 
-          {/* Conteos canónicos detallados (g1) */}
+          {/* Conteos canónicos detallados */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
             <div className="rounded-md bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground text-xs">Total niveles:</span>
+              <span className="text-muted-foreground text-sm">Total niveles:</span>
               <span className="font-mono font-bold ml-1">{summary?.totalLevels ?? 0}</span>
             </div>
             <div className="rounded-md bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground text-xs">Rango actual:</span>
+              <span className="text-muted-foreground text-sm">Rango actual:</span>
               <span className="font-mono font-bold ml-1">{summary?.currentRangeLevelsCount ?? 0}</span>
             </div>
             <div className="rounded-md bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground text-xs">Históricos:</span>
+              <span className="text-muted-foreground text-sm">Históricos:</span>
               <span className="font-mono font-bold ml-1">{summary?.replacedLevelsCount ?? 0} reemplazados</span>
             </div>
             <div className="rounded-md bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground text-xs">Filled:</span>
+              <span className="text-muted-foreground text-sm">Filled:</span>
               <span className="font-mono font-bold ml-1">{summary?.filledLevelsCount ?? 0} ({summary?.simulatedFilledLevelsCount ?? 0} simulados)</span>
             </div>
           </div>
 
-          {/* Estado de seguridad — checklist horizontal */}
+          {/* Estado de seguridad */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-amber-500/10">
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">CIRCUIT BREAKER</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">CIRCUIT BREAKER</p>
               <div className="flex items-center gap-1.5">
                 {status?.circuitBreakerOpen ? (
-                  <XCircle className="h-3 w-3 text-red-400" />
+                  <XCircle className="h-4 w-4 text-red-400" />
                 ) : (
-                  <CheckCircle2 className="h-3 w-3 text-green-400" />
+                  <CheckCircle2 className="h-4 w-4 text-green-400" />
                 )}
                 <span className={`font-mono text-sm font-bold ${status?.circuitBreakerOpen ? "text-red-400" : "text-green-400"}`}>
                   {status?.circuitBreakerOpen ? "ABIERTO" : "CERRADO"}
@@ -162,12 +271,12 @@ export function GridSummaryPanel({
               </div>
             </div>
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">PUMP/DUMP GUARD</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">PUMP/DUMP GUARD</p>
               <div className="flex items-center gap-1.5">
                 {status?.pumpDumpState === "normal" ? (
-                  <CheckCircle2 className="h-3 w-3 text-green-400" />
+                  <CheckCircle2 className="h-4 w-4 text-green-400" />
                 ) : (
-                  <AlertTriangle className="h-3 w-3 text-amber-400" />
+                  <AlertTriangle className="h-4 w-4 text-amber-400" />
                 )}
                 <span className={`font-mono text-sm font-bold ${status?.pumpDumpState === "normal" ? "text-green-400" : "text-amber-400"}`}>
                   {status?.pumpDumpState?.toUpperCase() || "NORMAL"}
@@ -175,12 +284,12 @@ export function GridSummaryPanel({
               </div>
             </div>
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">RECONCILIACIÓN</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">RECONCILIACIÓN</p>
               <div className="flex items-center gap-1.5">
                 {status?.lastReconciliationOk ? (
-                  <CheckCircle2 className="h-3 w-3 text-green-400" />
+                  <CheckCircle2 className="h-4 w-4 text-green-400" />
                 ) : (
-                  <XCircle className="h-3 w-3 text-red-400" />
+                  <XCircle className="h-4 w-4 text-red-400" />
                 )}
                 <span className={`font-mono text-sm font-bold ${status?.lastReconciliationOk ? "text-green-400" : "text-red-400"}`}>
                   {status?.lastReconciliationOk ? "OK" : "PENDIENTE"}
@@ -188,12 +297,12 @@ export function GridSummaryPanel({
               </div>
             </div>
             <div className="bg-card/50 p-3">
-              <p className="text-[10px] font-mono text-muted-foreground mb-1">RANGO ACTIVO</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">RANGO ACTIVO</p>
               <div className="flex items-center gap-1.5">
                 {range && range.status !== "sin_rango_activo" ? (
-                  <CheckCircle2 className="h-3 w-3 text-green-400" />
+                  <CheckCircle2 className="h-4 w-4 text-green-400" />
                 ) : (
-                  <XCircle className="h-3 w-3 text-amber-400" />
+                  <XCircle className="h-4 w-4 text-amber-400" />
                 )}
                 <span className={`font-mono text-sm font-bold ${range && range.status !== "sin_rango_activo" ? "text-green-400" : "text-amber-400"}`}>
                   {range && range.status !== "sin_rango_activo" ? "ACTIVO" : "SIN RANGO"}
@@ -203,9 +312,8 @@ export function GridSummaryPanel({
           </div>
         </CardContent>
       </Card>
-
-      {/* ══════════ CONTROLES DE MODO Y MOTOR ══════════ */}
-      {/* Card horizontal con controles, similar a ControlsBar de IDCA */}
+    ),
+    controles: (
       <Card className="border-border/50">
         <CardContent className="p-4 space-y-3">
           <div className="flex flex-wrap items-center gap-4">
@@ -216,7 +324,7 @@ export function GridSummaryPanel({
                   key={m}
                   size="sm"
                   variant={mode === m ? "default" : "outline"}
-                  className="text-xs font-mono h-7"
+                  className="text-sm font-mono h-8"
                   onClick={() => onModeChange(m)}
                   disabled={modeMutationPending}
                 >
@@ -227,26 +335,26 @@ export function GridSummaryPanel({
 
             {/* Motor toggle */}
             <div className="flex items-center gap-2 ml-auto">
-              {isActive ? (
+              {isActive && mode !== "OFF" ? (
                 <Button
                   size="sm"
                   variant="outline"
-                  className="text-xs h-7"
+                  className="text-sm h-8"
                   onClick={() => onActivate(false)}
                   disabled={activatePending}
                 >
-                  <Settings2 className="h-3 w-3 mr-1" />
+                  <Settings2 className="h-4 w-4 mr-1" />
                   PAUSAR MOTOR
                 </Button>
               ) : (
                 <Button
                   size="sm"
                   variant="default"
-                  className="text-xs h-7"
+                  className="text-sm h-8"
                   onClick={() => onActivate(true)}
-                  disabled={activatePending}
+                  disabled={activatePending || mode === "OFF"}
                 >
-                  <Activity className="h-3 w-3 mr-1" />
+                  <Activity className="h-4 w-4 mr-1" />
                   ACTIVAR MOTOR
                 </Button>
               )}
@@ -256,11 +364,11 @@ export function GridSummaryPanel({
             <Button
               size="sm"
               variant="outline"
-              className="text-xs h-7"
+              className="text-sm h-8"
               onClick={onShadowValidate}
               disabled={shadowValidatePending}
             >
-              <Zap className="h-3 w-3 mr-1" />
+              <Zap className="h-4 w-4 mr-1" />
               SHADOW VALIDATE
             </Button>
           </div>
@@ -309,34 +417,52 @@ export function GridSummaryPanel({
           )}
         </CardContent>
       </Card>
-
-      {/* ═══ 3. CONTEXTO DE MERCADO Y BANDA ACTIVA ═══ */}
+    ),
+    contexto: (
       <GridMarketContextPanel
         range={range}
         status={status}
         mode={mode}
         onGoToTab={onGoToTab}
       />
+    ),
+    niveles: (
+      <GridLevelsPanel
+        levels={levels}
+        mode={mode}
+        currentPrice={auditData?.marketContext?.currentPrice}
+        onGoToTab={onGoToTab}
+      />
+    ),
+    ciclos: (
+      <GridCyclesPanel
+        cycles={cycles}
+        onGoToTab={onGoToTab}
+      />
+    ),
+    actividad: <GridLiveActivityPanel />,
+    historico: <GridRangeHistoryPanel rangeHistory={rangeHistory} />,
+  };
 
-      {/* ═══ 4. NIVELES + CICLOS ═══ */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <GridLevelsPanel
-          levels={levels}
-          mode={mode}
-          currentPrice={auditData?.marketContext?.currentPrice}
-          onGoToTab={onGoToTab}
-        />
-        <GridCyclesPanel
-          cycles={cycles}
-          onGoToTab={onGoToTab}
-        />
-      </div>
-
-      {/* ═══ 5. ACTIVIDAD EN DIRECTO ═══ */}
-      <GridLiveActivityPanel />
-
-      {/* ═══ 6. HISTÓRICO DE CAMBIOS DE BANDA ═══ */}
-      <GridRangeHistoryPanel rangeHistory={rangeHistory} />
+  return (
+    <div className="space-y-5 pt-2">
+      {/* Draggable sections — full width, one below another */}
+      {order.map((id, idx) => (
+        <DraggableSection
+          key={id}
+          id={id}
+          index={idx}
+          draggedId={draggedId}
+          dragOverId={dragOverId}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onDragEnd={handleDragEnd}
+          onReset={resetOrder}
+        >
+          {sections[id]}
+        </DraggableSection>
+      ))}
     </div>
   );
 }

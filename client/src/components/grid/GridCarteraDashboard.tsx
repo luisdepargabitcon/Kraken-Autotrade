@@ -2,7 +2,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -121,8 +120,8 @@ export function GridCarteraDashboard({ config, status, onConfigChange, onConfirm
           </div>
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>$0</span>
-            <span>$${reserved.toFixed(0)} reservado</span>
-            <span>$${max.toFixed(0)} máximo</span>
+            <span>${reserved.toFixed(0)} reservado</span>
+            <span>${max.toFixed(0)} máximo</span>
           </div>
         </CardContent>
       </Card>
@@ -304,6 +303,12 @@ function ConfigSlider({ label, value, min, max, step, displayValue, colorClass, 
   onDirectChange: (v: number) => void;
 }) {
   const colorMap = {
+    red: "text-red-400",
+    orange: "text-amber-400",
+    green: "text-green-400",
+    blue: "text-blue-400",
+  };
+  const sliderColorMap = {
     red: "[&_[role=slider]]:bg-red-500",
     orange: "[&_[role=slider]]:bg-orange-500",
     green: "[&_[role=slider]]:bg-green-500",
@@ -313,14 +318,7 @@ function ConfigSlider({ label, value, min, max, step, displayValue, colorClass, 
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label className="text-sm">{label}</Label>
-        <Input
-          type="number"
-          className="w-28 h-8 text-right text-sm"
-          value={value}
-          min={min}
-          max={max}
-          onChange={(e) => onDirectChange(parseFloat(e.target.value) || 0)}
-        />
+        <span className={`text-lg font-bold font-mono ${colorMap[colorClass]}`}>{displayValue}</span>
       </div>
       <Slider
         value={[value]}
@@ -328,7 +326,7 @@ function ConfigSlider({ label, value, min, max, step, displayValue, colorClass, 
         max={max}
         step={step}
         onValueChange={(v) => onChange(v[0])}
-        className={colorMap[colorClass]}
+        className={sliderColorMap[colorClass]}
       />
       <p className="text-sm text-muted-foreground">{explanation}</p>
     </div>

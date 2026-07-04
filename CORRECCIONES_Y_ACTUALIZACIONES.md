@@ -2,6 +2,110 @@
 
 ---
 
+## 2026-07-04 — fix(grid-ui): Corrección real Grid UI — layout, motor/OFF, inputs visuales, letra, política dinámica
+
+**Commit**: pendiente
+**Tag**: WINDSURF GRID UI — CORRECCIÓN REAL UI
+**Estado**: IMPLEMENTADO, CHECK OK, BUILD OK, TESTS OK (57/57), PENDIENTE DEPLOY + VALIDACIÓN VISUAL
+
+### Problema real detectado en la UI
+1. **Resumen desordenado**: Cartera aparecía primero, antes que Estado General. Niveles y Ciclos en `grid-cols-2` los hacía medias tarjetas estrechas frente al resto de cards anchas.
+2. **Incongruencia "Motor activo" vs "OFF"**: `GridHeaderHero` y `GridSummaryPanel` usaban `isActive` independientemente de `mode`. Si `isActive=true` con `mode=OFF`, se veía "Motor activo" + "OFF" simultáneamente.
+3. **Inputs/celdas feas en Ajustes**: General y Ejecución tenían `<Input type="number">` tipo Excel junto a sliders. Cartera tenía `ConfigSlider` con Input numérico.
+4. **Letra demasiado pequeña**: `text-[10px]`, `text-[9px]` en KPIs del Resumen. `text-xs` en badges del header. `text-xs` en subpestañas de Ajustes.
+5. **Política de ejecución estática**: `GridExecutionPolicyPanel` línea 38 tenía texto hardcoded `"3 intentos maker + 4º taker controlado"` que no cambiaba al mover sliders.
+
+### Cambios realizados
+
+#### 1. Reordenación de Resumen + layout equilibrado + drag & drop
+- **Editado**: `GridSummaryPanel.tsx`
+  - **Drag & drop nativo HTML5 implementado** (sin dependencias externas)
+  - Cada sección es un `DraggableSection` con handle visual (`GripVertical`) que aparece al hacer hover
+  - Handle muestra número de orden `#1 · arrastrar`, `#2 · arrastrar`, etc.
+  - Orden persiste en `localStorage` (key: `grid-summary-section-order`)
+  - Botón "Restaurar orden" en la primera sección (icono `RotateCcw`)
+  - En móvil (`< md`): drag desactivado visualmente (handle oculto), secciones en columna única
+  - Validación al cargar: si el orden guardado no tiene todos los IDs, vuelve al default
+  - **Orden por defecto**: Cartera → Estado General → Controles → Contexto → Niveles → Ciclos → Actividad → Histórico
+  - **Niveles y Ciclos**: full-width, una debajo de otra (no `grid-cols-2`), mismo peso visual que el resto
+
+#### 2. Corregir incongruencia Motor activo vs OFF
+- **Editado**: `GridHeaderHero.tsx`
+  - Normalización: si `mode=OFF` → "Motor detenido" (gris), sin importar `isActive`
+  - Si `mode!=OFF` + `isActive` → "Motor activo" (verde)
+  - Si `mode!=OFF` + `!isActive` → "Motor pausado" (naranja)
+  - Scheduler solo se muestra si `isRunning && mode !== "OFF"`
+- **Editado**: `GridSummaryPanel.tsx`
+  - Misma normalización: "MOTOR DETENIDO" / "MOTOR ACTIVO" / "MOTOR PAUSADO"
+  - Botón "ACTIVAR MOTOR" se deshabilita si `mode=OFF`
+  - Botón "PAUSAR MOTOR" solo aparece si `isActive && mode !== "OFF"`
+  - Fallback "Sincronizando estado..." si no hay `functionalStatus`
+
+#### 3. Sustituir inputs/celdas feas por tarjetas visuales
+- **Editado**: `GridAjustesPanel.tsx` (General)
+  - Perfil de Capital: `<Select>` → segmented control con 3 botones visuales (Conservador/Balanceado/Agresivo)
+  - Periodo Bollinger: `<Input type="number">` + `<Slider>` → solo `<Slider>` con display `<span>` grande
+  - ATR Timeframe: `<Select>` → segmented control con 4 botones (15min/1h/4h/1d)
+  - Máx Ciclos: `<Input>` → `<Slider>` con display visual
+  - Máx Órdenes Diarias: `<Input>` → `<Slider>` con display visual
+- **Editado**: `GridExecutionPolicyPanel.tsx`
+  - Eliminados 3 `<Input type="number">` (maker, taker, maxFallback)
+  - Reemplazados por displays `<span>` grandes con color
+  - Target neto: Input eliminado, display visual
+  - Switches: `p-3` → `p-4`, textos descriptivos dinámicos
+- **Editado**: `GridCarteraDashboard.tsx`
+  - `ConfigSlider`: eliminado `<Input type="number">`, reemplazado por display `<span>` con color y formato
+  - Eliminado import `Input` no usado
+
+#### 4. Aumentar tamaño de letra
+- **Editado**: `GridHeaderHero.tsx`
+  - Subtítulo: `text-[10px]` → `text-xs`
+  - Badges: `text-xs` → `text-sm`
+  - Scheduler: `text-xs` → `text-sm`
+- **Editado**: `GridSummaryPanel.tsx`
+  - KPIs labels: `text-[10px]` → `text-xs`
+  - KPIs sublabels: `text-[9px]` → `text-xs`
+  - Iconos seguridad: `h-3 w-3` → `h-4 w-4`
+  - Título sección: `text-sm` → `text-base`, icono `h-4` → `h-5`
+  - Badges modo/motor: `text-xs` → `text-sm`
+  - Conteos canónicos: `text-xs` → `text-sm`
+- **Editado**: `GridAjustesPanel.tsx`
+  - Subpestañas: `text-xs` → `text-sm`
+  - Títulos de sección en Riesgo: `text-sm` → `text-base`
+  - HODL explanation title: `text-sm` → `text-base`
+- **Editado**: `GridExecutionPolicyPanel.tsx`
+  - Todos los textos helper: `text-xs` → `text-sm`
+  - Labels: sin clase → `text-sm`
+  - Switches padding: `p-3` → `p-4`
+
+#### 5. Política de ejecución dinámica
+- **Editado**: `GridExecutionPolicyPanel.tsx`
+  - Headline dinámico: `"3 intentos maker + 4º taker controlado"` → construido desde `makerAttempts`, `takerAttempt`, `fallbackEnabled`
+  - Si fallback desactivado: `"3 intentos maker, sin fallback taker"`
+  - Explicación dinámica: incluye `maxFallback` veces por ciclo, `targetPct` objetivo, auditoría
+  - Concordancia gramatical: 1 intento, 2 intentos, 3º/4º/5º
+  - 4 mini-cards visuales con stats clave (maker, taker, máx fallback, target)
+  - Items del summary estático también dinámicos
+  - Switches con textos que referencian valores actuales
+
+### Archivos tocados
+- `client/src/components/grid/GridHeaderHero.tsx` (editado)
+- `client/src/components/grid/GridSummaryPanel.tsx` (editado)
+- `client/src/components/grid/GridAjustesPanel.tsx` (editado)
+- `client/src/components/grid/GridExecutionPolicyPanel.tsx` (editado)
+- `client/src/components/grid/GridCarteraDashboard.tsx` (editado)
+
+### Validaciones
+- `npm run check` — OK (tsc sin errores)
+- `npm run build` — OK (client + server)
+- `npx vitest run server/routes/__tests__/gridIsolatedRoutes.test.ts` — 57/57 tests OK
+
+### Pendientes
+- Validación visual en navegador por el usuario
+- Deploy staging (pendiente aprobación del usuario)
+
+---
+
 ## 2026-07-04 — fix(grid-ui): FASE F completada — Actividad cards + Niveles modal grande + coherencia OFF/SHADOW
 
 **Commit**: pendiente
