@@ -2,6 +2,63 @@
 
 ---
 
+## 2026-07-04 — feat(grid-ui): Grid Isolated UI overhaul — canonical counts, visual wallet, execution sliders, band visualization, event modals, HODL confirm, help restructure
+
+**Commit**: 060ef06
+**Tag**: WINDSURF GRID UI — OVERHAUL COMPLETO
+**Estado**: IMPLEMENTADO, BUILD OK, PENDIENTE DEPLOY STAGING
+
+### Problema
+El Grid Isolated tenía múltiples issues de UX y datos:
+- Conteos de niveles inconsistentes entre API, UI y export ChatGPT
+- Pestaña Resumen con orden ilógico (Cartera abajo)
+- Cartera sin colores dinámicos ni explicación
+- Ejecución con inputs planos sin sliders ni explicaciones
+- Bandas sin visualización gráfica ni metadata enriquecida
+- Actividad sin modal al pinchar eventos
+- Niveles con drawer en vez de modal
+- Riesgo: HODL Recovery sin explicación ni confirmación
+- Ayuda en texto plano sin estructura visual
+
+### Solución implementada
+
+**Backend (`server/routes/gridIsolated.routes.ts`)**:
+- Conteos canónicos en `summary` y `levelsSummary`: `totalLevels`, `currentRangeLevelsCount`, `historicalRangeLevelsCount`, `plannedLevelsTotal`, `currentPlannedLevelsCount`, `historicalPlannedLevelsCount`, `replacedLevelsCount`, `filledLevelsCount`, `simulatedFilledLevelsCount`, `cancelledLevelsCount`, `openCyclesCount`, `closedCyclesCount`
+- Export ChatGPT enriquecido con conteos canónicos y desglose filled reales vs simulados
+
+**Frontend — componentes modificados**:
+- `GridSummaryPanel.tsx`: Cartera arriba, KPIs con conteos canónicos, fila de conteos detallados, controles de modo integrados
+- `GridWalletSummaryPanel.tsx`: Cards visuales con gradientes, colores dinámicos (verde/ámbar/rojo según uso), barra de progreso de uso de cartera, explicación de aislamiento
+- `GridExecutionPolicyPanel.tsx`: Sliders configurables (maker attempts, taker fallback, max fallback per cycle, net profit target), switches con explicaciones, modo estático cuando no hay config
+- `GridBandsRangesPanel.tsx`: Visualización gráfica de banda con posición de precio actual, cards con colores por precio, metadata enriquecida en histórico (centerDrift, widthChange, preserved, regime, ATR, safetyDecision)
+- `GridLevelsPanel.tsx`: Drawer reemplazado por Dialog modal con copiar JSON y descargar JSON
+- `GridActivityLive.tsx`: Click en evento abre modal con detalles, copiar/descargar JSON del evento
+
+**Frontend — página `GridIsolated.tsx`**:
+- Ejecución tab usa `GridExecutionPolicyPanel` con config y onConfigChange
+- Riesgo tab: HODL Recovery con explicación comparativa (ON vs OFF), dialog de confirmación antes de activar
+- Ayuda tab: Reestructurada con cards por sección, cajas resaltadas con colores, badges visuales, grid de condiciones
+
+### Archivos afectados
+- `server/routes/gridIsolated.routes.ts`
+- `client/src/components/grid/GridSummaryPanel.tsx`
+- `client/src/components/grid/GridWalletSummaryPanel.tsx`
+- `client/src/components/grid/GridExecutionPolicyPanel.tsx`
+- `client/src/components/grid/GridBandsRangesPanel.tsx`
+- `client/src/components/grid/GridLevelsPanel.tsx`
+- `client/src/components/grid/GridActivityLive.tsx`
+- `client/src/pages/GridIsolated.tsx`
+
+### Validaciones
+- `npx tsc --noEmit`: OK
+- `npm run build`: OK (2590 módulos cliente, server 3.9mb)
+
+### Pendiente
+- Deploy staging
+- Verificación visual post-deploy
+
+---
+
 ## 2026-07-04 — feat(grid-ui): ajustes explicados, beneficio objetivo, filtros/paginación/export, detalle de nivel, régimen histórico, export ChatGPT enriquecido
 
 **Commit**: pendiente de commit
