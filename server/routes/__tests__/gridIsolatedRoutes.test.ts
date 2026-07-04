@@ -628,8 +628,8 @@ describe("Grid Isolated Routes — Endpoints", () => {
     const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
     expect(res.status).toBe(200);
     expect(res.body).toContain("Niveles planificados:");
-    expect(res.body).toContain("Niveles activos reales:");
-    expect(res.body).toContain("Niveles históricos/reemplazados:");
+    expect(res.body).toContain("Niveles totales:");
+    expect(res.body).toContain("Niveles reemplazados (rangos anteriores):");
     expect(res.body).toContain("Niveles ejecutados (filled):");
     expect(res.body).toContain("Beneficio objetivo neto:");
     expect(res.body).toContain("objetivo estimado, no realizado");
