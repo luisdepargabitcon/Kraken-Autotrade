@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ScrollText, Pause, Play, Trash2, Copy, Download, Radio, Check } from "lucide-react";
+import { ScrollText, Pause, Play, Trash2, Copy, Download, Radio, Check, TrendingUp, TrendingDown, Layers, Zap, Wallet, Shield, RefreshCw, Server, Activity as ActivityIcon, AlertCircle, AlertTriangle, CheckCircle2, XCircle, Info } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button as UIButton } from "@/components/ui/button";
 
@@ -39,6 +39,38 @@ const CATEGORY_LABELS: Record<string, string> = {
   RECONCILIATION: "Reconciliación",
   API: "API",
   SYSTEM: "Sistema",
+};
+
+const CATEGORY_ICONS: Record<string, typeof Radio> = {
+  BAND: TrendingUp,
+  LEVEL: Layers,
+  CYCLE: RefreshCw,
+  ORDER: Zap,
+  WALLET: Wallet,
+  SAFETY: Shield,
+  RECONCILIATION: RefreshCw,
+  API: Server,
+  SYSTEM: ActivityIcon,
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  BAND: "border-l-blue-500/40 bg-blue-500/5",
+  LEVEL: "border-l-purple-500/40 bg-purple-500/5",
+  CYCLE: "border-l-cyan-500/40 bg-cyan-500/5",
+  ORDER: "border-l-amber-500/40 bg-amber-500/5",
+  WALLET: "border-l-green-500/40 bg-green-500/5",
+  SAFETY: "border-l-red-500/40 bg-red-500/5",
+  RECONCILIATION: "border-l-orange-500/40 bg-orange-500/5",
+  API: "border-l-indigo-500/40 bg-indigo-500/5",
+  SYSTEM: "border-l-slate-500/40 bg-slate-500/5",
+};
+
+const SEVERITY_ICONS: Record<string, typeof Info> = {
+  INFO: Info,
+  SUCCESS: CheckCircle2,
+  WARNING: AlertTriangle,
+  BLOCKED: XCircle,
+  ERROR: AlertCircle,
 };
 
 const FILTER_OPTIONS = [
@@ -154,9 +186,30 @@ interface FormattedEvent {
   cycleId: string | null;
   levelId: string | null;
   price: number | null;
+  pair: string | null;
+  rangeVersionId: string | null;
+  reasonCode: string | null;
+  impactSummary: string | null;
+}
+
+function impactFromEvent(ev: any): string {
+  const cat = categoryFromEventType(ev.eventType);
+  const sev = severityFromEventType(ev.eventType);
+  switch (cat) {
+    case "BAND": return "Cambio de rango del Grid. Los niveles futuros se recalculan con la nueva banda.";
+    case "LEVEL": return sev === "SUCCESS" ? "Nivel ejecutado. Capital comprometido o liberado." : "Nivel planificado o modificado. Sin orden real todavía.";
+    case "CYCLE": return sev === "SUCCESS" ? "Ciclo completado con beneficio realizado." : "Ciclo abierto o modificado. Capital reservado.";
+    case "ORDER": return sev === "BLOCKED" || sev === "ERROR" ? "Orden rechazada o bloqueada. Se evaluará reintento." : "Orden colocada o ejecutada en el exchange.";
+    case "WALLET": return "Movimiento de capital dentro de la cartera Grid aislada.";
+    case "SAFETY": return sev === "BLOCKED" || sev === "ERROR" ? "Mecanismo de seguridad activado. Operaciones pausadas." : "Mecanismo de seguridad evaluado. Sin acción requerida.";
+    case "RECONCILIATION": return "Reconciliación entre estado local y exchange.";
+    case "API": return "Límite o estado de la API del exchange.";
+    default: return "Evento del sistema Grid.";
+  }
 }
 
 function formatEvent(ev: any): FormattedEvent {
+  const meta = ev.metadataJson || {};
   return {
     id: ev.id,
     timestamp: typeof ev.createdAt === "string" ? ev.createdAt : new Date(ev.createdAt).toISOString(),
@@ -170,6 +223,10 @@ function formatEvent(ev: any): FormattedEvent {
     cycleId: ev.cycleId || null,
     levelId: ev.levelId || null,
     price: ev.price ? parseFloat(ev.price) : null,
+    pair: meta.pair || ev.pair || null,
+    rangeVersionId: meta.rangeVersionId || ev.rangeVersionId || null,
+    reasonCode: meta.reasonCode || ev.reasonCode || null,
+    impactSummary: impactFromEvent(ev),
   };
 }
 
@@ -412,65 +469,106 @@ export function GridActivityLive() {
           {lastEventId > 0 && <span className="text-xs">Último ID: {lastEventId}</span>}
         </div>
 
-        {/* Lista de eventos */}
+        {/* Lista de eventos — cards visuales */}
         <div
           ref={scrollRef}
-          className="rounded-lg border bg-black/5 dark:bg-black/30 p-3 max-h-[500px] overflow-y-auto space-y-1"
+          className="rounded-lg border bg-black/5 dark:bg-black/30 p-3 max-h-[600px] overflow-y-auto space-y-2"
         >
           {filteredEvents.length === 0 ? (
-            <div className="text-center py-8 text-sm text-muted-foreground">
+            <div className="text-center py-12 text-sm text-muted-foreground">
               No hay eventos del Grid Aislado. Los eventos aparecerán aquí cuando el motor esté activo.
             </div>
           ) : (
-            filteredEvents.map((ev) => (
-              <div
-                key={ev.id}
-                className="flex items-start gap-2 text-xs border-b pb-1 cursor-pointer hover:bg-muted/30 rounded px-1 py-1 transition-colors"
-                onClick={() => setSelectedEvent(ev)}
-              >
-                <span className="text-muted-foreground whitespace-nowrap font-mono">
-                  {new Date(ev.timestamp).toLocaleTimeString()}
-                </span>
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] px-1 py-0 ${SEVERITY_COLORS[ev.severity] || ""}`}
+            filteredEvents.map((ev) => {
+              const CatIcon = CATEGORY_ICONS[ev.category] || Radio;
+              const SevIcon = SEVERITY_ICONS[ev.severity] || Info;
+              return (
+                <div
+                  key={ev.id}
+                  className={`rounded-lg border-l-4 ${CATEGORY_COLORS[ev.category] || ""} p-3 cursor-pointer hover:bg-muted/20 transition-all`}
+                  onClick={() => setSelectedEvent(ev)}
                 >
-                  {SEVERITY_LABELS[ev.severity]}
-                </Badge>
-                <Badge variant="secondary" className="text-[10px] px-1 py-0">
-                  {CATEGORY_LABELS[ev.category]}
-                </Badge>
-                <Badge variant="outline" className="text-[10px] px-1 py-0">
-                  {ev.mode}
-                </Badge>
-                <span className="flex-1 truncate">{ev.message}</span>
-                {ev.cycleId && <span className="text-muted-foreground text-[10px]">ciclo:{ev.cycleId.slice(0, 8)}</span>}
-                {ev.price && <span className="text-muted-foreground text-[10px]">${ev.price.toFixed(2)}</span>}
-              </div>
-            ))
+                  <div className="flex items-start gap-3">
+                    {/* Icono categoría */}
+                    <div className="shrink-0 mt-0.5">
+                      <CatIcon className="h-5 w-5 text-muted-foreground" />
+                    </div>
+
+                    {/* Contenido */}
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      {/* Fila superior: tipo + chips */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold">{ev.title}</span>
+                        <Badge variant="outline" className={`text-xs ${SEVERITY_COLORS[ev.severity] || ""}`}>
+                          <SevIcon className="h-3 w-3 mr-1" />
+                          {SEVERITY_LABELS[ev.severity]}
+                        </Badge>
+                        <Badge variant="secondary" className="text-xs">
+                          {CATEGORY_LABELS[ev.category]}
+                        </Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {ev.mode}
+                        </Badge>
+                      </div>
+
+                      {/* Mensaje natural */}
+                      <p className="text-sm text-foreground/90">{ev.message}</p>
+
+                      {/* Fila inferior: hora + impacto + IDs */}
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                        <span className="font-mono">{new Date(ev.timestamp).toLocaleString("es-ES")}</span>
+                        {ev.pair && <span>pair: {ev.pair}</span>}
+                        {ev.price != null && <span className="font-mono">${ev.price.toFixed(2)}</span>}
+                        {ev.cycleId && <span>ciclo: {ev.cycleId.slice(0, 8)}</span>}
+                        {ev.levelId && <span>nivel: {ev.levelId.slice(0, 8)}</span>}
+                      </div>
+
+                      {/* Resumen impacto */}
+                      {ev.impactSummary && (
+                        <p className="text-xs text-muted-foreground italic border-t border-border/20 pt-1.5 mt-1">
+                          {ev.impactSummary}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
           )}
         </div>
       </CardContent>
 
-      {/* Event detail modal */}
+      {/* Event detail modal — grande y completo */}
       <Dialog open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-sm">
-              <Radio className="h-4 w-4" />
+            <DialogTitle className="flex items-center gap-2 text-base">
+              {selectedEvent && (() => {
+                const CatIcon = CATEGORY_ICONS[selectedEvent.category] || Radio;
+                return <CatIcon className="h-5 w-5" />;
+              })()}
               {selectedEvent?.technicalCode}
             </DialogTitle>
           </DialogHeader>
           {selectedEvent && (
-            <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-4 text-sm">
+              {/* Mensaje natural grande */}
+              <div className="rounded-lg bg-muted/20 p-4">
+                <p className="text-muted-foreground text-xs mb-2">Mensaje natural:</p>
+                <p className="text-base text-foreground">{selectedEvent.message}</p>
+              </div>
+
+              {/* Grid de metadatos */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div className="rounded-lg bg-muted/20 px-3 py-2">
-                  <span className="text-muted-foreground text-xs">Timestamp:</span>
+                  <span className="text-muted-foreground text-xs">Fecha/Hora:</span>
                   <p className="font-mono text-xs mt-0.5">{new Date(selectedEvent.timestamp).toLocaleString("es-ES")}</p>
                 </div>
                 <div className="rounded-lg bg-muted/20 px-3 py-2">
                   <span className="text-muted-foreground text-xs">Severidad:</span>
-                  <Badge variant="outline" className={`text-[10px] ml-1 ${SEVERITY_COLORS[selectedEvent.severity] || ""}`}>{SEVERITY_LABELS[selectedEvent.severity]}</Badge>
+                  <div className="mt-0.5">
+                    <Badge variant="outline" className={`text-xs ${SEVERITY_COLORS[selectedEvent.severity] || ""}`}>{SEVERITY_LABELS[selectedEvent.severity]}</Badge>
+                  </div>
                 </div>
                 <div className="rounded-lg bg-muted/20 px-3 py-2">
                   <span className="text-muted-foreground text-xs">Categoría:</span>
@@ -478,39 +576,60 @@ export function GridActivityLive() {
                 </div>
                 <div className="rounded-lg bg-muted/20 px-3 py-2">
                   <span className="text-muted-foreground text-xs">Modo:</span>
-                  <Badge variant="outline" className="text-[10px] ml-1">{selectedEvent.mode}</Badge>
+                  <Badge variant="outline" className="text-xs ml-1">{selectedEvent.mode}</Badge>
                 </div>
+                {selectedEvent.pair && (
+                  <div className="rounded-lg bg-muted/20 px-3 py-2">
+                    <span className="text-muted-foreground text-xs">Pair:</span>
+                    <span className="font-mono ml-1">{selectedEvent.pair}</span>
+                  </div>
+                )}
+                {selectedEvent.reasonCode && (
+                  <div className="rounded-lg bg-muted/20 px-3 py-2">
+                    <span className="text-muted-foreground text-xs">Reason Code:</span>
+                    <span className="font-mono text-xs ml-1">{selectedEvent.reasonCode}</span>
+                  </div>
+                )}
+                {selectedEvent.rangeVersionId && (
+                  <div className="rounded-lg bg-muted/20 px-3 py-2">
+                    <span className="text-muted-foreground text-xs">Range Version ID:</span>
+                    <span className="font-mono text-xs ml-1">{selectedEvent.rangeVersionId.slice(0, 12)}...</span>
+                  </div>
+                )}
+                {selectedEvent.cycleId && (
+                  <div className="rounded-lg bg-muted/20 px-3 py-2">
+                    <span className="text-muted-foreground text-xs">Cycle ID:</span>
+                    <span className="font-mono text-xs ml-1">{selectedEvent.cycleId}</span>
+                  </div>
+                )}
+                {selectedEvent.levelId && (
+                  <div className="rounded-lg bg-muted/20 px-3 py-2">
+                    <span className="text-muted-foreground text-xs">Level ID:</span>
+                    <span className="font-mono text-xs ml-1">{selectedEvent.levelId}</span>
+                  </div>
+                )}
+                {selectedEvent.price != null && (
+                  <div className="rounded-lg bg-muted/20 px-3 py-2">
+                    <span className="text-muted-foreground text-xs">Precio:</span>
+                    <span className="font-mono ml-1">${selectedEvent.price.toFixed(2)}</span>
+                  </div>
+                )}
               </div>
 
-              <div className="rounded-lg bg-muted/20 p-3">
-                <p className="text-muted-foreground text-xs mb-1">Mensaje:</p>
-                <p>{selectedEvent.message}</p>
-              </div>
-
-              {selectedEvent.cycleId && (
-                <div className="rounded-lg bg-muted/20 px-3 py-2">
-                  <span className="text-muted-foreground text-xs">Cycle ID:</span>
-                  <span className="font-mono text-xs ml-1">{selectedEvent.cycleId}</span>
-                </div>
-              )}
-              {selectedEvent.levelId && (
-                <div className="rounded-lg bg-muted/20 px-3 py-2">
-                  <span className="text-muted-foreground text-xs">Level ID:</span>
-                  <span className="font-mono text-xs ml-1">{selectedEvent.levelId}</span>
-                </div>
-              )}
-              {selectedEvent.price != null && (
-                <div className="rounded-lg bg-muted/20 px-3 py-2">
-                  <span className="text-muted-foreground text-xs">Precio:</span>
-                  <span className="font-mono ml-1">${selectedEvent.price.toFixed(2)}</span>
+              {/* Impacto operativo */}
+              {selectedEvent.impactSummary && (
+                <div className="rounded-lg bg-amber-500/5 border border-amber-500/20 p-3">
+                  <p className="text-muted-foreground text-xs mb-1">Impacto operativo:</p>
+                  <p className="text-sm">{selectedEvent.impactSummary}</p>
                 </div>
               )}
 
+              {/* Metadata JSON */}
               {selectedEvent.details && (
-                <div className="space-y-1">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground text-xs">Metadata JSON:</span>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-2">
                       <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => { navigator.clipboard.writeText(selectedEvent.details || ""); setCopiedEvent(true); setTimeout(() => setCopiedEvent(false), 2000); }}>
                         {copiedEvent ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
                         {copiedEvent ? "Copiado" : "Copiar JSON"}
@@ -526,11 +645,34 @@ export function GridActivityLive() {
                       </Button>
                     </div>
                   </div>
-                  <pre className="p-2 rounded bg-muted/50 font-mono text-[10px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                  <pre className="p-3 rounded bg-muted/50 font-mono text-xs whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
                     {selectedEvent.details}
                   </pre>
                 </div>
               )}
+
+              {/* Botones inferiores */}
+              <div className="flex items-center gap-2 pt-2 border-t">
+                <Button size="sm" variant="outline" onClick={() => {
+                  const summary = `[${selectedEvent.timestamp}] [${SEVERITY_LABELS[selectedEvent.severity]}] [${CATEGORY_LABELS[selectedEvent.category]}] [${selectedEvent.mode}]\n${selectedEvent.technicalCode}\n${selectedEvent.message}\nImpacto: ${selectedEvent.impactSummary || "N/A"}`;
+                  navigator.clipboard.writeText(summary);
+                  setCopyStatus("Resumen copiado");
+                  setTimeout(() => setCopyStatus(""), 2000);
+                }}>
+                  <Copy className="h-3 w-3 mr-1" /> Copiar resumen
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => {
+                  navigator.clipboard.writeText(selectedEvent.details || "{}");
+                  setCopyStatus("JSON copiado");
+                  setTimeout(() => setCopyStatus(""), 2000);
+                }}>
+                  <Copy className="h-3 w-3 mr-1" /> Copiar JSON
+                </Button>
+                {copyStatus && <span className="text-xs text-green-500">{copyStatus}</span>}
+                <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelectedEvent(null)}>
+                  Cerrar
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>

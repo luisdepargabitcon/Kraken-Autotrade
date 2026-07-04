@@ -561,24 +561,57 @@ export function GridLevelsPanel({
         )}
       </CardContent>
 
-      {/* ─── Level detail modal (replaces drawer) ──────────── */}
+      {/* ─── Level detail modal (grande, centrado) ───────── */}
       <Dialog open={!!selectedLevel} onOpenChange={(open) => !open && setSelectedLevel(null)}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Layers className="h-4 w-4" />
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Layers className="h-5 w-5" />
               Detalle del nivel
             </DialogTitle>
           </DialogHeader>
 
           {selectedLevel && (
           <>
-          <div className="flex items-center gap-2 mb-2">
-            <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => { navigator.clipboard.writeText(JSON.stringify(selectedLevel, null, 2)); setCopiedDetail(true); setTimeout(() => setCopiedDetail(false), 2000); }}>
+          <div className="flex items-center gap-2 mb-3">
+            <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => {
+              const lvl = selectedLevel;
+              const d = getDistance(lvl);
+              const p = getProfitEstimate(lvl);
+              const summary = [
+                `Nivel: ${lvl.id}`,
+                `Lado: ${lvl.side}`,
+                `Estado: ${lvl.status}`,
+                `Precio: ${fmtPrice(getLevelPrice(lvl))}`,
+                `Precio actual: ${currentPrice != null ? fmtPrice(currentPrice) : "—"}`,
+                d ? `Distancia: ${d.distanceUsd >= 0 ? "+" : ""}${d.distanceUsd.toFixed(2)} $ (${fmtPct(d.distancePct)})` : "Distancia: —",
+                `Capital: ${fmtUsd(lvl.notionalUsd)}`,
+                `Cantidad: ${toNum(lvl.quantity)?.toFixed(6) ?? "—"}`,
+                p ? `Beneficio objetivo: +${p.targetUsd.toFixed(2)} $ / +${p.pct?.toFixed(2)}%` : "Beneficio objetivo: —",
+                p?.feeUsd != null ? `Fee: ${p.feeUsd.toFixed(2)} $` : "",
+                p?.taxUsd != null ? `Reserva fiscal: ${p.taxUsd.toFixed(2)} $` : "",
+                `RangeVersionId: ${lvl.rangeVersionId}`,
+                `Rango activo: ${lvl.rangeVersionId === activeRangeId ? "Sí" : "No (histórico)"}`,
+                lvl.cycleId ? `CycleId: ${lvl.cycleId}` : "Sin ciclo asociado",
+                lvl.exchangeOrderId ? `ExchangeOrderId: ${lvl.exchangeOrderId}` : "Sin orden real",
+                lvl.placedAt ? `placedAt: ${new Date(lvl.placedAt).toLocaleString("es-ES")}` : "",
+                lvl.filledAt ? `filledAt: ${new Date(lvl.filledAt).toLocaleString("es-ES")}` : "",
+                lvl.cancelledAt ? `cancelledAt: ${new Date(lvl.cancelledAt).toLocaleString("es-ES")}` : "",
+                `createdAt: ${new Date(lvl.createdAt).toLocaleString("es-ES")}`,
+                `Modo: ${mode}`,
+                getLevelExplanation(lvl),
+              ].filter(Boolean).join("\n");
+              navigator.clipboard.writeText(summary);
+              setCopiedDetail(true);
+              setTimeout(() => setCopiedDetail(false), 2000);
+            }}>
               {copiedDetail ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-              {copiedDetail ? "Copiado" : "Copiar JSON"}
+              {copiedDetail ? "Copiado" : "Copiar resumen"}
             </Button>
-            <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => {
+            <Button size="sm" variant="ghost" className="text-xs h-8" onClick={() => { navigator.clipboard.writeText(JSON.stringify(selectedLevel, null, 2)); setCopiedDetail(true); setTimeout(() => setCopiedDetail(false), 2000); }}>
+              <Copy className="h-3 w-3 mr-1" /> Copiar JSON
+            </Button>
+            <Button size="sm" variant="ghost" className="text-xs h-8" onClick={() => {
               const blob = new Blob([JSON.stringify(selectedLevel, null, 2)], { type: "application/json" });
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
@@ -711,9 +744,12 @@ export function GridLevelsPanel({
               {getLevelExplanation(selectedLevel)}
             </div>
 
-            <div className="text-[10px] text-muted-foreground">
-              Beneficio objetivo estimado, no beneficio realizado.
-              {mode === "SHADOW" && " Estimado en simulación, sin orden real."}
+            {/* Textos obligatorios */}
+            <div className="space-y-1 text-xs text-muted-foreground border-t pt-2">
+              <p>Beneficio objetivo estimado, no realizado.</p>
+              {!selectedLevel.exchangeOrderId && <p className="text-amber-500">Sin orden real.</p>}
+              {!selectedLevel.cycleId && <p>Sin ciclo asociado.</p>}
+              {mode === "SHADOW" && <p className="text-blue-500">Estimado en simulación SHADOW, sin orden real.</p>}
             </div>
           </>
           )}

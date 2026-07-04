@@ -3,7 +3,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GridMarketContextPanel } from "./GridMarketContextPanel";
 import { GridWalletSummaryPanel } from "./GridWalletSummaryPanel";
-import { GridExecutionPolicyPanel } from "./GridExecutionPolicyPanel";
 import { GridLiveActivityPanel } from "./GridLiveActivityPanel";
 import { GridLevelsPanel } from "./GridLevelsPanel";
 import { GridCyclesPanel } from "./GridCyclesPanel";
@@ -319,10 +318,7 @@ export function GridSummaryPanel({
         onGoToTab={onGoToTab}
       />
 
-      {/* ═══ 4. POLÍTICA DE EJECUCIÓN ═══ */}
-      <GridExecutionPolicyPanel />
-
-      {/* ═══ 5. NIVELES + CICLOS ═══ */}
+      {/* ═══ 4. NIVELES + CICLOS ═══ */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <GridLevelsPanel
           levels={levels}
@@ -336,10 +332,10 @@ export function GridSummaryPanel({
         />
       </div>
 
-      {/* ═══ 6. ACTIVIDAD EN DIRECTO ═══ */}
+      {/* ═══ 5. ACTIVIDAD EN DIRECTO ═══ */}
       <GridLiveActivityPanel />
 
-      {/* ═══ 7. HISTÓRICO DE CAMBIOS DE BANDA ═══ */}
+      {/* ═══ 6. HISTÓRICO DE CAMBIOS DE BANDA ═══ */}
       <GridRangeHistoryPanel rangeHistory={rangeHistory} />
     </div>
   );

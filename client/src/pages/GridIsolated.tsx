@@ -19,8 +19,9 @@ import { GridHeaderHero } from "@/components/grid/GridHeaderHero";
 import { GridKpiStrip } from "@/components/grid/GridKpiStrip";
 import { GridLevelsMarketHeader } from "@/components/grid/GridLevelsMarketHeader";
 import { GridLevelsPanel } from "@/components/grid/GridLevelsPanel";
-import { GridSettingsExplained } from "@/components/grid/GridSettingsExplained";
-import { GridExecutionPolicyPanel } from "@/components/grid/GridExecutionPolicyPanel";
+import { GridCarteraDashboard } from "@/components/grid/GridCarteraDashboard";
+import { GridConfigConfirmDialog, type ConfigChange } from "@/components/grid/GridConfigConfirmDialog";
+import { GridAjustesPanel } from "@/components/grid/GridAjustesPanel";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -28,6 +29,8 @@ export default function GridIsolated() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("resumen");
   const [showHodlConfirm, setShowHodlConfirm] = useState(false);
+  const [pendingChange, setPendingChange] = useState<ConfigChange | null>(null);
+  const [pendingChangeCallback, setPendingChangeCallback] = useState<(() => void) | null>(null);
 
   // ─── Queries ─────────────────────────────────────────────
   const { data: config, isLoading: configLoading } = useQuery({
@@ -102,6 +105,7 @@ export default function GridIsolated() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["grid-config"] });
       queryClient.invalidateQueries({ queryKey: ["grid-status"] });
+      queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
     },
   });
 
@@ -114,6 +118,7 @@ export default function GridIsolated() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["grid-unlock-status"] });
+      queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
     },
   });
 
@@ -142,6 +147,7 @@ export default function GridIsolated() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["grid-status"] });
+      queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
     },
   });
 
@@ -177,6 +183,28 @@ export default function GridIsolated() {
   });
 
   // ─── Helpers ─────────────────────────────────────────────
+  const handleConfirmChange = (
+    key: string,
+    label: string,
+    oldValue: any,
+    newValue: any,
+    impact: string,
+    riskLevel: "low" | "medium" | "high",
+    affectsCurrent: boolean,
+    requiresRecalc: boolean
+  ) => {
+    if (oldValue === newValue) return;
+    const change: ConfigChange = { label, oldValue, newValue, impact, riskLevel, affectsCurrent, requiresRecalc };
+    setPendingChange(change);
+    setPendingChangeCallback(() => () => configMutation.mutate({ [key]: newValue } as any));
+  };
+
+  const applyPendingChange = () => {
+    if (pendingChangeCallback) pendingChangeCallback();
+    setPendingChange(null);
+    setPendingChangeCallback(null);
+  };
+
   const modeColor = (mode: string) => {
     switch (mode) {
       case "OFF": return "secondary";
@@ -231,21 +259,16 @@ export default function GridIsolated() {
       {/* KPI Strip — IDCA-style wide band */}
       <GridKpiStrip status={status} auditData={auditData} />
 
-      {/* Tabs — 12 subpestañas */}
+      {/* Tabs — 7 main tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-6 md:grid-cols-12 gap-1 h-auto p-1">
-          <TabsTrigger value="resumen" className="text-xs">Resumen</TabsTrigger>
-          <TabsTrigger value="cartera" className="text-xs">Cartera</TabsTrigger>
-          <TabsTrigger value="ejecucion" className="text-xs">Ejecución</TabsTrigger>
-          <TabsTrigger value="bandas" className="text-xs">Bandas</TabsTrigger>
-          <TabsTrigger value="actividad" className="text-xs">Actividad</TabsTrigger>
-          <TabsTrigger value="niveles" className="text-xs">Niveles</TabsTrigger>
-          <TabsTrigger value="ciclos" className="text-xs">Ciclos</TabsTrigger>
-          <TabsTrigger value="risk" className="text-xs">Riesgo</TabsTrigger>
-          <TabsTrigger value="backtest" className="text-xs">Backtest</TabsTrigger>
-          <TabsTrigger value="audit" className="text-xs">Auditoría</TabsTrigger>
-          <TabsTrigger value="ajustes" className="text-xs">Ajustes</TabsTrigger>
-          <TabsTrigger value="ayuda" className="text-xs">Ayuda</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-4 md:grid-cols-7 gap-1 h-auto p-1">
+          <TabsTrigger value="resumen" className="text-sm">Resumen</TabsTrigger>
+          <TabsTrigger value="niveles" className="text-sm">Niveles</TabsTrigger>
+          <TabsTrigger value="bandas" className="text-sm">Bandas</TabsTrigger>
+          <TabsTrigger value="actividad" className="text-sm">Actividad</TabsTrigger>
+          <TabsTrigger value="ciclos" className="text-sm">Ciclos</TabsTrigger>
+          <TabsTrigger value="ajustes" className="text-sm">Ajustes</TabsTrigger>
+          <TabsTrigger value="ayuda" className="text-sm">Ayuda</TabsTrigger>
         </TabsList>
 
         {/* 1. Resumen Tab — Dashboard profesional */}
@@ -272,359 +295,7 @@ export default function GridIsolated() {
           />
         </TabsContent>
 
-        {/* 2. Cartera Tab — Sliders + edición manual */}
-        <TabsContent value="cartera" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Wallet className="h-5 w-5" />
-                Cartera Grid Aislada
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground">
-                El Grid solo puede usar esta cartera, no el saldo completo del bot. No toca capital de IDCA ni de Spot Normal.
-              </div>
-
-              {/* Resumen superior */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Cartera Grid total</p>
-                  <p className="text-lg font-bold">${((config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0)).toFixed(2)}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Reservado en ciclos</p>
-                  <p className="text-lg font-bold">${status?.capitalReservedUsd?.toFixed(2) || "0.00"}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Libre para nuevos ciclos</p>
-                  <p className="text-lg font-bold text-green-500">${((config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0) - (status?.capitalReservedUsd || 0)).toFixed(2)}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Ganancia acumulada</p>
-                  <p className={`text-lg font-bold ${(status?.totalNetPnlUsd || 0) >= 0 ? "text-green-500" : "text-red-500"}`}>
-                    {(status?.totalNetPnlUsd || 0) >= 0 ? "+" : ""}${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Estado cartera */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Cartera máxima</p>
-                  <p className="text-sm font-bold">${config?.gridWalletMaxUsd?.toFixed(2) || "5000.00"}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">% usado</p>
-                  <p className="text-sm font-bold">{config?.gridWalletMaxUsd ? ((status?.capitalReservedUsd || 0) / config.gridWalletMaxUsd * 100).toFixed(1) : "0.0"}%</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Estado</p>
-                  <Badge variant={((config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0) - (status?.capitalReservedUsd || 0)) > (config?.gridMinFreeCapitalUsd || 50) ? "default" : "secondary"}>
-                    {((config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0) - (status?.capitalReservedUsd || 0)) > (config?.gridMinFreeCapitalUsd || 50) ? "Disponible" : "Esperando oportunidad"}
-                  </Badge>
-                </div>
-              </div>
-
-              {/* Modo de asignación */}
-              <div className="space-y-2">
-                <Label>Modo de asignación de capital</Label>
-                <Select
-                  value={config?.gridWalletMode || "automatic"}
-                  onValueChange={(v) => configMutation.mutate({ gridWalletMode: v } as any)}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="automatic">Automático (recomendado)</SelectItem>
-                    <SelectItem value="manual">Manual</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  {config?.gridWalletMode === "manual"
-                    ? "El usuario fija cuánto capital máximo puede usar cada ciclo."
-                    : "El sistema decide cuánto capital asignar a cada ciclo según volatilidad, distancia entre niveles, riesgo y oportunidades disponibles."}
-                </p>
-              </div>
-
-              {/* Sliders + inputs manuales */}
-              <div className="space-y-5 pt-4 border-t">
-                <h3 className="text-sm font-semibold">Configuración de capital</h3>
-
-                {/* 1. Capital inicial */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Capital inicial cartera Grid</Label>
-                    <Input
-                      type="number"
-                      className="w-32 h-8 text-right"
-                      value={config?.gridWalletInitialUsd ?? 1000}
-                      min={0}
-                      max={config?.gridWalletMaxUsd || 5000}
-                      onChange={(e) => configMutation.mutate({ gridWalletInitialUsd: parseFloat(e.target.value) || 0 } as any)}
-                    />
-                  </div>
-                  <Slider
-                    value={[config?.gridWalletInitialUsd || 1000]}
-                    min={0}
-                    max={config?.gridWalletMaxUsd || 5000}
-                    step={50}
-                    onValueChange={(v) => configMutation.mutate({ gridWalletInitialUsd: v[0] } as any)}
-                    className={(config?.gridWalletInitialUsd || 1000) > (config?.gridWalletMaxUsd || 5000) * 0.8 ? "[&_[role=slider]]:bg-red-500" : (config?.gridWalletInitialUsd || 1000) > (config?.gridWalletMaxUsd || 5000) * 0.5 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
-                  />
-                  <p className="text-xs text-muted-foreground">Capital inicial que el Grid puede usar. Slider de 0 a máximo cartera.</p>
-                </div>
-
-                {/* 2. Cartera máxima */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Cartera máxima Grid</Label>
-                    <Input
-                      type="number"
-                      className="w-32 h-8 text-right"
-                      value={config?.gridWalletMaxUsd ?? 5000}
-                      min={0}
-                      max={50000}
-                      onChange={(e) => configMutation.mutate({ gridWalletMaxUsd: parseFloat(e.target.value) || 0 } as any)}
-                    />
-                  </div>
-                  <Slider
-                    value={[config?.gridWalletMaxUsd || 5000]}
-                    min={0}
-                    max={50000}
-                    step={100}
-                    onValueChange={(v) => configMutation.mutate({ gridWalletMaxUsd: v[0] } as any)}
-                    className={(config?.gridWalletMaxUsd || 5000) > 20000 ? "[&_[role=slider]]:bg-red-500" : (config?.gridWalletMaxUsd || 5000) > 10000 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
-                  />
-                  <p className="text-xs text-muted-foreground">Límite máximo de capital que la cartera Grid puede alcanzar (incluyendo ganancias reinvertidas).</p>
-                </div>
-
-                {/* 3. Capital máximo por ciclo USD */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Capital máximo por ciclo (USD)</Label>
-                    <Input
-                      type="number"
-                      className="w-32 h-8 text-right"
-                      value={config?.gridMaxCapitalPerCycleUsd ?? 600}
-                      min={0}
-                      max={config?.gridWalletMaxUsd || 5000}
-                      onChange={(e) => configMutation.mutate({ gridMaxCapitalPerCycleUsd: parseFloat(e.target.value) || 0 } as any)}
-                    />
-                  </div>
-                  <Slider
-                    value={[config?.gridMaxCapitalPerCycleUsd || 600]}
-                    min={0}
-                    max={config?.gridWalletMaxUsd || 5000}
-                    step={50}
-                    onValueChange={(v) => configMutation.mutate({ gridMaxCapitalPerCycleUsd: v[0] } as any)}
-                    className={(config?.gridMaxCapitalPerCycleUsd || 600) > (config?.gridWalletMaxUsd || 5000) * 0.5 ? "[&_[role=slider]]:bg-red-500" : (config?.gridMaxCapitalPerCycleUsd || 600) > (config?.gridWalletMaxUsd || 5000) * 0.3 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
-                  />
-                </div>
-
-                {/* 4. Capital máximo por ciclo % */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Capital máximo por ciclo (%)</Label>
-                    <Input
-                      type="number"
-                      className="w-24 h-8 text-right"
-                      value={config?.gridMaxCapitalPerCyclePct ?? 60}
-                      min={0}
-                      max={100}
-                      onChange={(e) => configMutation.mutate({ gridMaxCapitalPerCyclePct: parseFloat(e.target.value) || 0 } as any)}
-                    />
-                  </div>
-                  <Slider
-                    value={[config?.gridMaxCapitalPerCyclePct || 60]}
-                    min={0}
-                    max={100}
-                    step={5}
-                    onValueChange={(v) => configMutation.mutate({ gridMaxCapitalPerCyclePct: v[0] } as any)}
-                    className={(config?.gridMaxCapitalPerCyclePct || 60) > 80 ? "[&_[role=slider]]:bg-red-500" : (config?.gridMaxCapitalPerCyclePct || 60) > 60 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
-                  />
-                </div>
-
-                {/* 5. Reserva % */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Reserva (%)</Label>
-                    <Input
-                      type="number"
-                      className="w-24 h-8 text-right"
-                      value={config?.gridReservePct ?? 20}
-                      min={0}
-                      max={80}
-                      onChange={(e) => configMutation.mutate({ gridReservePct: parseFloat(e.target.value) || 0 } as any)}
-                    />
-                  </div>
-                  <Slider
-                    value={[config?.gridReservePct || 20]}
-                    min={0}
-                    max={80}
-                    step={5}
-                    onValueChange={(v) => configMutation.mutate({ gridReservePct: v[0] } as any)}
-                    className={(config?.gridReservePct || 20) < 10 ? "[&_[role=slider]]:bg-red-500" : (config?.gridReservePct || 20) < 20 ? "[&_[role=slider]]:bg-orange-500" : "[&_[role=slider]]:bg-green-500"}
-                  />
-                  <p className="text-xs text-muted-foreground">Porcentaje de cartera que se mantiene libre para no agotar todo el capital.</p>
-                </div>
-
-                {/* 6. Capital libre mínimo */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Capital libre mínimo (USD)</Label>
-                    <Input
-                      type="number"
-                      className="w-32 h-8 text-right"
-                      value={config?.gridMinFreeCapitalUsd ?? 50}
-                      min={0}
-                      max={config?.gridWalletInitialUsd || 1000}
-                      onChange={(e) => configMutation.mutate({ gridMinFreeCapitalUsd: parseFloat(e.target.value) || 0 } as any)}
-                    />
-                  </div>
-                  <Slider
-                    value={[config?.gridMinFreeCapitalUsd || 50]}
-                    min={0}
-                    max={config?.gridWalletInitialUsd || 1000}
-                    step={10}
-                    onValueChange={(v) => configMutation.mutate({ gridMinFreeCapitalUsd: v[0] } as any)}
-                    className="[&_[role=slider]]:bg-blue-500"
-                  />
-                </div>
-              </div>
-
-              {/* Resumen dinámico */}
-              <div className="rounded-lg bg-blue-500/10 p-3 text-sm">
-                <p className="text-blue-700 dark:text-blue-300">
-                  Con esta configuración, el Grid tendrá una cartera máxima de <strong>${(config?.gridWalletMaxUsd || 5000).toFixed(0)}</strong>,
-                  empezará usando <strong>${(config?.gridWalletInitialUsd || 1000).toFixed(0)}</strong>,
-                  reservará un <strong>{config?.gridReservePct || 20}%</strong> como colchón
-                  y no asignará más de <strong>${(config?.gridMaxCapitalPerCycleUsd || 600).toFixed(0)}</strong>
-                  {" "}o <strong>{config?.gridMaxCapitalPerCyclePct || 60}%</strong> a un ciclo individual.
-                </p>
-              </div>
-
-              {/* Botones */}
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  variant="default"
-                  size="sm"
-                  disabled={configMutation.isPending}
-                  onClick={() => queryClient.invalidateQueries({ queryKey: ["grid-config"] })}
-                >
-                  {configMutation.isPending ? "Guardando..." : "Guardar cambios"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => configMutation.mutate({
-                    gridWalletInitialUsd: 1000,
-                    gridWalletMaxUsd: 5000,
-                    gridMaxCapitalPerCycleUsd: 600,
-                    gridMaxCapitalPerCyclePct: 60,
-                    gridReservePct: 20,
-                    gridMinFreeCapitalUsd: 50,
-                  } as any)}
-                >
-                  Restaurar recomendado
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => configMutation.mutate({
-                    gridWalletMode: "automatic",
-                    gridWalletInitialUsd: 1000,
-                    gridWalletMaxUsd: 5000,
-                    gridMaxCapitalPerCycleUsd: 600,
-                    gridMaxCapitalPerCyclePct: 60,
-                    gridReservePct: 20,
-                    gridMinFreeCapitalUsd: 50,
-                    gridWalletCompoundProfits: true,
-                    gridPauseCycleWhenCapitalDepleted: true,
-                    gridAllowNewCycleWhenCapitalFree: true,
-                  } as any)}
-                >
-                  Aplicar perfil automático recomendado
-                </Button>
-              </div>
-
-              {/* Switches */}
-              <div className="space-y-3 pt-4 border-t">
-                <div className="flex items-center justify-between rounded-lg border p-4">
-                  <div>
-                    <Label>Reinvertir ganancias del Grid</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Si está activado, las ganancias cerradas se suman a la cartera Grid y pueden usarse en próximos ciclos.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={config?.gridWalletCompoundProfits ?? true}
-                    onCheckedChange={(v) => configMutation.mutate({ gridWalletCompoundProfits: v } as any)}
-                  />
-                </div>
-                <div className="flex items-center justify-between rounded-lg border p-4">
-                  <div>
-                    <Label>Pausar ciclo si capital agotado</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Si un ciclo usa todo el capital/niveles asignados, el ciclo queda pausado.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={config?.gridPauseCycleWhenCapitalDepleted ?? true}
-                    onCheckedChange={(v) => configMutation.mutate({ gridPauseCycleWhenCapitalDepleted: v } as any)}
-                  />
-                </div>
-                <div className="flex items-center justify-between rounded-lg border p-4">
-                  <div>
-                    <Label>Permitir nuevo ciclo con capital libre</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Si hay capital libre en la cartera Grid, el sistema puede abrir otro ciclo aislado.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={config?.gridAllowNewCycleWhenCapitalFree ?? true}
-                    onCheckedChange={(v) => configMutation.mutate({ gridAllowNewCycleWhenCapitalFree: v } as any)}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* 3. Ejecución Tab */}
-        <TabsContent value="ejecucion" className="space-y-4">
-          <GridExecutionPolicyPanel
-            config={config}
-            onConfigChange={(key, value) => configMutation.mutate({ [key]: value } as any)}
-          />
-          {/* Revolut X status */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ZapIcon className="h-5 w-5" />
-                Estado Revolut X
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  <span>Post-only soportado</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-3 w-3 text-green-500" /> : <XCircle className="h-3 w-3 text-red-500" />}
-                  <span>Allow-taker soportado</span>
-                </div>
-              </div>
-              {unlockCheck?.postOnlySupported && (
-                <div className="rounded-lg bg-green-500/10 p-3 text-sm">
-                  Revolut X documenta post_only y allow_taker. El adaptador interno envía executionInstruction correctamente.
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* 3b. Bandas y Rangos Tab */}
+        {/* 3. Bandas y Rangos Tab */}
         <TabsContent value="bandas" className="space-y-4">
           <GridBandsRangesPanel auditData={auditData} />
         </TabsContent>
@@ -633,7 +304,8 @@ export default function GridIsolated() {
         <TabsContent value="actividad" className="space-y-4">
           <GridActivityLive />
         </TabsContent>
-        {/* 6. Niveles Tab */}
+
+        {/* 5. Niveles Tab */}
         <TabsContent value="niveles" className="space-y-4">
           <GridLevelsMarketHeader
             marketContext={auditData?.marketContext}
@@ -665,7 +337,7 @@ export default function GridIsolated() {
           />
         </TabsContent>
 
-        {/* 7. Ciclos Tab */}
+        {/* 6. Ciclos Tab */}
         <TabsContent value="ciclos" className="space-y-4">
           <Card>
             <CardHeader>
@@ -679,21 +351,21 @@ export default function GridIsolated() {
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Ciclos activos</p>
+                      <p className="text-sm text-muted-foreground">Ciclos activos</p>
                       <p className="text-lg font-bold">{cycles.filter((c: any) => c.status === "open" || c.status === "active").length}</p>
                     </div>
                     <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Completados</p>
+                      <p className="text-sm text-muted-foreground">Completados</p>
                       <p className="text-lg font-bold text-green-500">{cycles.filter((c: any) => c.status === "completed").length}</p>
                     </div>
                     <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">PnL realizado</p>
+                      <p className="text-sm text-muted-foreground">PnL realizado</p>
                       <p className="text-lg font-bold text-green-500">
                         ${cycles.filter((c: any) => c.status === "completed").reduce((sum: number, c: any) => sum + (c.netPnlUsd || 0), 0).toFixed(2)}
                       </p>
                     </div>
                     <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Capital reservado</p>
+                      <p className="text-sm text-muted-foreground">Capital reservado</p>
                       <p className="text-lg font-bold">${status?.capitalReservedUsd?.toFixed(2) || "0.00"}</p>
                     </div>
                   </div>
@@ -727,342 +399,19 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
 
-        {/* 6. Riesgo y Seguridad Tab */}
-        <TabsContent value="risk" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                Configuración de Riesgo
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Trailing */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold">Trailing Protection</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Activación: {config?.trailingActivationPct?.toFixed(2)}%</Label>
-                    <Slider
-                      value={[config?.trailingActivationPct || 1.0]}
-                      min={0.5}
-                      max={5.0}
-                      step={0.1}
-                      onValueChange={(v) => configMutation.mutate({ trailingActivationPct: v[0] })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Stop: {config?.trailingStopPct?.toFixed(2)}%</Label>
-                    <Slider
-                      value={[config?.trailingStopPct || 0.4]}
-                      min={0.1}
-                      max={2.0}
-                      step={0.1}
-                      onValueChange={(v) => configMutation.mutate({ trailingStopPct: v[0] })}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Stop Loss */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold">Stop Loss (3 capas)</h3>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-yellow-600">Soft: {config?.stopLossSoftPct?.toFixed(1)}%</Label>
-                    <Slider
-                      value={[config?.stopLossSoftPct || 2.0]}
-                      min={1.0}
-                      max={5.0}
-                      step={0.5}
-                      onValueChange={(v) => configMutation.mutate({ stopLossSoftPct: v[0] })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-orange-600">Hard: {config?.stopLossHardPct?.toFixed(1)}%</Label>
-                    <Slider
-                      value={[config?.stopLossHardPct || 5.0]}
-                      min={3.0}
-                      max={10.0}
-                      step={0.5}
-                      onValueChange={(v) => configMutation.mutate({ stopLossHardPct: v[0] })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-red-600">Emergency: {config?.stopLossEmergencyPct?.toFixed(1)}%</Label>
-                    <Slider
-                      value={[config?.stopLossEmergencyPct || 10.0]}
-                      min={5.0}
-                      max={20.0}
-                      step={1.0}
-                      onValueChange={(v) => configMutation.mutate({ stopLossEmergencyPct: v[0] })}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* HODL Recovery */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between rounded-lg border p-4">
-                  <div>
-                    <Label>HODL Recovery</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Tras soft stop loss, mantener posición y esperar recuperación a break-even
-                    </p>
-                  </div>
-                  <Switch
-                    checked={config?.hodlRecoveryEnabled}
-                    onCheckedChange={(v) => {
-                      if (v && !config?.hodlRecoveryEnabled) {
-                        setShowHodlConfirm(true);
-                      } else {
-                        configMutation.mutate({ hodlRecoveryEnabled: v });
-                      }
-                    }}
-                  />
-                </div>
-                {/* Explanation box */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3 text-sm">
-                    <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">HODL Recovery (ON)</p>
-                    <p className="text-xs text-blue-700 dark:text-blue-300">
-                      Tras un soft stop loss, NO se vende. Se mantiene la posición esperando que el precio recupere hasta break-even.
-                      <strong> Ventaja:</strong> evita realizar la pérdida. <strong> Riesgo:</strong> si el precio sigue bajando, la pérdida puede ampliarse indefinidamente.
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-orange-500/5 border border-orange-500/20 p-3 text-sm">
-                    <p className="font-semibold text-orange-700 dark:text-orange-300 mb-1">Stop Loss tradicional (OFF)</p>
-                    <p className="text-xs text-orange-700 dark:text-orange-300">
-                      Tras un soft stop loss, se vende inmediatamente realizando la pérdida.
-                      <strong> Ventaja:</strong> corta pérdidas de forma disciplinada. <strong> Desventaja:</strong> puede vender en el suelo antes de un rebote.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* HODL Recovery confirmation dialog */}
-              {showHodlConfirm && (
-                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowHodlConfirm(false)}>
-                  <div className="bg-card border rounded-lg p-6 max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
-                    <h3 className="text-lg font-semibold flex items-center gap-2">
-                      <AlertCircle className="h-5 w-5 text-amber-500" />
-                      Confirmar HODL Recovery
-                    </h3>
-                    <p className="text-sm text-muted-foreground">
-                      Estás activando HODL Recovery. Esto significa que tras un soft stop loss, el sistema NO venderá
-                      y mantendrá la posición esperando recuperación. Si el precio sigue bajando, la pérdida puede ampliarse.
-                    </p>
-                    <div className="flex items-center gap-2 justify-end">
-                      <Button variant="outline" size="sm" onClick={() => setShowHodlConfirm(false)}>Cancelar</Button>
-                      <Button variant="default" size="sm" onClick={() => { configMutation.mutate({ hodlRecoveryEnabled: true }); setShowHodlConfirm(false); }}>
-                        Activar HODL Recovery
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Pump/Dump Guard */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold">Pump/Dump Guard</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Pump Deviation: {config?.pumpGuardDeviationPct?.toFixed(1)}%</Label>
-                    <Slider
-                      value={[config?.pumpGuardDeviationPct || 3.0]}
-                      min={1.0}
-                      max={10.0}
-                      step={0.5}
-                      onValueChange={(v) => configMutation.mutate({ pumpGuardDeviationPct: v[0] })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Dump Deviation: {config?.dumpGuardDeviationPct?.toFixed(1)}%</Label>
-                    <Slider
-                      value={[config?.dumpGuardDeviationPct || 3.0]}
-                      min={1.0}
-                      max={10.0}
-                      step={0.5}
-                      onValueChange={(v) => configMutation.mutate({ dumpGuardDeviationPct: v[0] })}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Reconciliation */}
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div>
-                  <Label>Reconciliación</Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Verificar estado local vs exchange
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => reconcileMutation.mutate()}
-                  disabled={reconcileMutation.isPending}
-                >
-                  Ejecutar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* 7. Backtest Tab */}
-        <TabsContent value="backtest" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FlaskConical className="h-5 w-5" />
-                Backtest del Grid
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Ejecuta un backtest con datos históricos para evaluar la estrategia.
-                Usa 3 modelos de fill: optimista, realista y pesimista.
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Capital Inicial (USD)</Label>
-                  <Input type="number" defaultValue={1000} id="bt-capital" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Modelo de Fill</Label>
-                  <Select defaultValue="realistic">
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="optimistic">Optimista (fill en touch)</SelectItem>
-                      <SelectItem value="realistic">Realista (fill en close)</SelectItem>
-                      <SelectItem value="pessimistic">Pesimista (close + slippage)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Fecha Inicio</Label>
-                  <Input type="date" defaultValue="2026-01-01" id="bt-start" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Fecha Fin</Label>
-                  <Input type="date" defaultValue="2026-07-01" id="bt-end" />
-                </div>
-              </div>
-              <Button variant="default" size="sm">
-                Ejecutar Backtest
-              </Button>
-              <p className="text-xs text-muted-foreground">
-                Los resultados mostrarán: PnL neto, ciclos completados, max drawdown, Sharpe ratio,
-                mejor/peor ciclo, y ciclos por día.
-              </p>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* 8. Auditoría Grid Tab — espejo completo de Monitor > Grid */}
-        <TabsContent value="audit" className="space-y-4">
-          <div className="rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground">
-            Auditoría completa del Grid Isolated. Misma vista que Monitor {">"} Grid Isolated. Datos desde GET /api/grid-isolated/monitor/audit.
-          </div>
-          <GridMonitorPanel />
-        </TabsContent>
-
-        {/* 9. Ajustes Tab */}
+        {/* 7. Ajustes Tab — subpestañas: General, Cartera, Ejecución, Riesgo, Avanzado, Auditoría */}
         <TabsContent value="ajustes" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Settings2 className="h-5 w-5" />
-                Ajustes avanzados del Grid
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <GridSettingsExplained config={config} />
-              <div className="border-t border-border/30 pt-4">
-                <h4 className="text-sm font-medium mb-3 text-muted-foreground">Parámetros técnicos</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Perfil de Capital</Label>
-                  <Select
-                    value={config?.capitalProfile || "balanced"}
-                    onValueChange={(v) => configMutation.mutate({ capitalProfile: v })}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="conservative">Conservador (30% reserva)</SelectItem>
-                      <SelectItem value="balanced">Balanceado (20% reserva)</SelectItem>
-                      <SelectItem value="aggressive">Agresivo (10% reserva)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Periodo de Bandas (Bollinger)</Label>
-                  <Input
-                    type="number"
-                    value={config?.bandPeriod || 20}
-                    onChange={(e) => configMutation.mutate({ bandPeriod: parseInt(e.target.value) })}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Timeframe ATR</Label>
-                  <Select
-                    value={config?.atrTimeframe || "1h"}
-                    onValueChange={(v) => configMutation.mutate({ atrTimeframe: v })}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="15min">15 min</SelectItem>
-                      <SelectItem value="1h">1 hora</SelectItem>
-                      <SelectItem value="4h">4 horas</SelectItem>
-                      <SelectItem value="1d">1 día</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Máx Ciclos Abiertos</Label>
-                  <Input type="number" value={config?.maxOpenCycles || 10} onChange={(e) => configMutation.mutate({ maxOpenCycles: parseInt(e.target.value) })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Step Mín %: {config?.gridStepMinPct?.toFixed(2)}</Label>
-                  <Slider value={[config?.gridStepMinPct || 0.15]} min={0.05} max={1.0} step={0.05} onValueChange={(v) => configMutation.mutate({ gridStepMinPct: v[0] })} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Step Máx %: {config?.gridStepMaxPct?.toFixed(2)}</Label>
-                  <Slider value={[config?.gridStepMaxPct || 3.0]} min={1.0} max={10.0} step={0.5} onValueChange={(v) => configMutation.mutate({ gridStepMaxPct: v[0] })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Ratio Geométrico Mín: {config?.geometricRatioMin?.toFixed(2)}</Label>
-                  <Slider value={[config?.geometricRatioMin || 0.8]} min={0.5} max={1.0} step={0.05} onValueChange={(v) => configMutation.mutate({ geometricRatioMin: v[0] })} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Ratio Geométrico Máx: {config?.geometricRatioMax?.toFixed(2)}</Label>
-                  <Slider value={[config?.geometricRatioMax || 1.2]} min={1.0} max={2.0} step={0.05} onValueChange={(v) => configMutation.mutate({ geometricRatioMax: v[0] })} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Máx Órdenes Diarias</Label>
-                  <Input type="number" value={config?.maxDailyOrders || 300} onChange={(e) => configMutation.mutate({ maxDailyOrders: parseInt(e.target.value) })} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Target Neto: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
-                  <Slider value={[config?.netProfitTargetPct || 0.8]} min={0.1} max={3.0} step={0.1} onValueChange={(v) => configMutation.mutate({ netProfitTargetPct: v[0] })} />
-                </div>
-              </div>
-              </div>
-            </CardContent>
-          </Card>
+          <GridAjustesPanel
+            config={config}
+            status={status}
+            unlockCheck={unlockCheck}
+            onConfigChange={(key, value) => configMutation.mutate({ [key]: value } as any)}
+            onConfirmChange={handleConfirmChange}
+            onReconcile={() => reconcileMutation.mutate()}
+            reconcilePending={reconcileMutation.isPending}
+            showHodlConfirm={showHodlConfirm}
+            setShowHodlConfirm={setShowHodlConfirm}
+          />
         </TabsContent>
 
         {/* 10. Ayuda Tab */}
@@ -1184,19 +533,19 @@ export default function GridIsolated() {
             <CardContent className="space-y-3">
               <div className="rounded-lg bg-red-500/5 border border-red-500/20 p-3">
                 <p className="font-semibold text-sm mb-1">Circuit Breaker</p>
-                <p className="text-xs text-muted-foreground">Bloquea todas las órdenes si se detectan errores críticos (ej: ORDER_SUBMIT_UNKNOWN). Permanece abierto durante un cooldown antes de reintentar automáticamente.</p>
+                <p className="text-sm text-muted-foreground">Bloquea todas las órdenes si se detectan errores críticos (ej: ORDER_SUBMIT_UNKNOWN). Permanece abierto durante un cooldown antes de reintentar automáticamente.</p>
               </div>
               <div className="rounded-lg bg-orange-500/5 border border-orange-500/20 p-3">
                 <p className="font-semibold text-sm mb-1">Pump/Dump Guard</p>
-                <p className="text-xs text-muted-foreground">Detecta movimientos bruscos de precio (pump o dump) y bloquea nuevas compras durante el cooldown para proteger el capital.</p>
+                <p className="text-sm text-muted-foreground">Detecta movimientos bruscos de precio (pump o dump) y bloquea nuevas compras durante el cooldown para proteger el capital.</p>
               </div>
               <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3">
                 <p className="font-semibold text-sm mb-1">Target de Beneficio Neto</p>
-                <p className="text-xs text-muted-foreground">El target neto (por defecto 0.8%) es el beneficio deseado después de fees y reserva fiscal. Si las bandas son demasiado estrechas para cubrir este objetivo, el motor pausa nuevas entradas.</p>
+                <p className="text-sm text-muted-foreground">El target neto (por defecto 0.8%) es el beneficio deseado después de fees y reserva fiscal. Si las bandas son demasiado estrechas para cubrir este objetivo, el motor pausa nuevas entradas.</p>
               </div>
               <div className="rounded-lg bg-purple-500/5 border border-purple-500/20 p-3">
                 <p className="font-semibold text-sm mb-1">HODL Recovery vs Stop Loss</p>
-                <p className="text-xs text-muted-foreground">HODL Recovery mantiene la posición tras un soft stop loss esperando recuperación. Stop Loss tradicional vende inmediatamente. HODL puede ampliar pérdidas si el precio sigue bajando.</p>
+                <p className="text-sm text-muted-foreground">HODL Recovery mantiene la posición tras un soft stop loss esperando recuperación. Stop Loss tradicional vende inmediatamente. HODL puede ampliar pérdidas si el precio sigue bajando. Los stops Hard y Emergency siempre venden, incluso con HODL activo.</p>
               </div>
             </CardContent>
           </Card>
@@ -1243,6 +592,88 @@ export default function GridIsolated() {
             </CardContent>
           </Card>
 
+          {/* Parámetros explicados — moved from Ajustes */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Settings2 className="h-4 w-4 text-blue-400" />
+                Parámetros del Grid explicados
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg bg-muted/20 p-4 text-sm">
+                <p className="font-semibold mb-1">Perfil de Capital</p>
+                <p className="text-muted-foreground">
+                  Define cómo el sistema balancea exposición y reserva. Conservador usa 30% de reserva, Balanceado 20%, Agresivo 10%.
+                  <strong className="text-foreground"> Subir agresividad:</strong> más capital expuesto, más ciclos simultáneos, más riesgo.
+                  <strong className="text-foreground"> Bajar agresividad:</strong> menos exposición, más colchón de seguridad.
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted/20 p-4 text-sm">
+                <p className="font-semibold mb-1">Timeframe ATR</p>
+                <p className="text-muted-foreground">
+                  El ATR (Average True Range) mide la volatilidad del mercado. El timeframe determina la sensibilidad:
+                  15 min es muy reactivo, 1 hora es equilibrado, 4 horas es estable, 1 día es muy estable.
+                  <strong className="text-foreground"> Timeframe corto:</strong> el Grid reacciona rápido, más operaciones.
+                  <strong className="text-foreground"> Timeframe largo:</strong> menos operaciones, más estabilidad.
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted/20 p-4 text-sm">
+                <p className="font-semibold mb-1">Periodo de Bandas Bollinger</p>
+                <p className="text-muted-foreground">
+                  Define cuántas velas usa el Grid para calcular las bandas superior e inferior que delimitan el rango de operación.
+                  <strong className="text-foreground"> Periodo corto (5-10):</strong> banda más estrecha y reactiva, más operaciones pero menos robustez.
+                  <strong className="text-foreground"> Periodo largo (50-100):</strong> banda más ancha y estable, menos operaciones pero más robustas.
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted/20 p-4 text-sm">
+                <p className="font-semibold mb-1">Máx Ciclos Abiertos</p>
+                <p className="text-muted-foreground">
+                  Limita cuántos ciclos (compras activas) pueden estar abiertos simultáneamente.
+                  <strong className="text-foreground"> Subir:</strong> más capital expuesto al mismo tiempo, más riesgo de drawdown.
+                  <strong className="text-foreground"> Bajar:</strong> menos exposición, pero menos oportunidades de beneficio.
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted/20 p-4 text-sm">
+                <p className="font-semibold mb-1">Step Mín % y Step Máx %</p>
+                <p className="text-muted-foreground">
+                  Distancia mínima y máxima entre niveles del Grid. El step mínimo no debe quedar por debajo de los fees (0.09% × 2 = 0.18%).
+                  <strong className="text-foreground"> Step mínimo alto:</strong> menos operaciones, más margen por operación.
+                  <strong className="text-foreground"> Step mínimo bajo:</strong> más operaciones pero menor margen, riesgo de no cubrir fees.
+                  <strong className="text-foreground"> Step máximo:</strong> controla la separación en los extremos de la banda.
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted/20 p-4 text-sm">
+                <p className="font-semibold mb-1">Ratio Geométrico Mín y Máx</p>
+                <p className="text-muted-foreground">
+                  Controla la progresión geométrica de los niveles hacia los extremos de la banda.
+                  Un ratio &lt; 1 comprime niveles cerca del centro. Un ratio &gt; 1 los expande hacia los extremos.
+                  <strong className="text-foreground"> Ratio mínimo:</strong> cuánto se comprimen los niveles cerca del precio actual.
+                  <strong className="text-foreground"> Ratio máximo:</strong> cuánto se expanden hacia los extremos.
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted/20 p-4 text-sm">
+                <p className="font-semibold mb-1">Target Beneficio Neto</p>
+                <p className="text-muted-foreground">
+                  Beneficio mínimo objetivo después de fees y reserva fiscal. Por defecto 0.8%.
+                  <strong className="text-foreground"> Subir:</strong> menos cierres, mayor beneficio por ciclo, pero más tiempo en posición.
+                  <strong className="text-foreground"> Bajar:</strong> cierres más fáciles con menor beneficio por ciclo.
+                </p>
+              </div>
+              <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-4 text-sm">
+                <p className="font-semibold text-amber-600 dark:text-amber-400 mb-2">HODL Recovery vs Stop Loss — Explicación detallada</p>
+                <div className="space-y-2 text-muted-foreground">
+                  <p><strong className="text-foreground">Prioridad de evaluación:</strong> HODL Recovery se evalúa primero. Si está activo, el sistema mantiene la posición hasta que el precio recupere break-even.</p>
+                  <p><strong className="text-foreground">Stop Loss Soft (-2%):</strong> Si HODL Recovery está ON, el soft stop <strong className="text-green-500">activa HODL</strong> (no vende). Si está OFF, vende inmediatamente.</p>
+                  <p><strong className="text-foreground">Stop Loss Hard (-5%):</strong> <strong className="text-red-500">Vende siempre</strong>, incluso con HODL activo. Override forzado.</p>
+                  <p><strong className="text-foreground">Stop Loss Emergency (-10%):</strong> <strong className="text-red-500">Vende siempre</strong>, override total. Cierra todo.</p>
+                  <p><strong className="text-foreground">¿Para qué sirve el slider Stop con HODL ON?</strong> El Stop Soft define cuándo se activa HODL. El Hard y Emergency definen cuándo se fuerza la venta aunque HODL esté activo.</p>
+                  <p><strong className="text-foreground">HODL Recovery no elimina todos los stops.</strong> Cambia el comportamiento del stop suave: en vez de vender inmediatamente, intenta recuperar hasta break-even. Los stops duros y de emergencia siguen protegiendo y pueden cerrar la posición.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Endpoints */}
           <Card>
             <CardHeader className="pb-3">
@@ -1252,7 +683,7 @@ export default function GridIsolated() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 font-mono text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 font-mono text-sm">
                 {[
                   "GET /api/grid-isolated/config",
                   "GET /api/grid-isolated/status",
@@ -1273,6 +704,14 @@ export default function GridIsolated() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Config confirmation dialog */}
+      <GridConfigConfirmDialog
+        open={!!pendingChange}
+        change={pendingChange}
+        onConfirm={applyPendingChange}
+        onCancel={() => { setPendingChange(null); setPendingChangeCallback(null); }}
+      />
       </div>
     </div>
   );

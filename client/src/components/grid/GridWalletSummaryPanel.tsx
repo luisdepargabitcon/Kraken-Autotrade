@@ -116,7 +116,7 @@ export function GridWalletSummaryPanel({ wallet, config, status, onGoToTab }: Gr
           </p>
         </div>
 
-        <Button variant="outline" size="sm" className="w-full" onClick={() => onGoToTab("cartera")}>
+        <Button variant="outline" size="sm" className="w-full" onClick={() => onGoToTab("ajustes")}>
           Editar configuración de capital
         </Button>
       </CardContent>

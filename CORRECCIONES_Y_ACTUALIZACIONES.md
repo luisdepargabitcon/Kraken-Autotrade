@@ -2,6 +2,137 @@
 
 ---
 
+## 2026-07-04 — fix(grid-ui): FASE F completada — Actividad cards + Niveles modal grande + coherencia OFF/SHADOW
+
+**Commit**: pendiente
+**Tag**: WINDSURF GRID UI — FASE F + COHERENCIA
+**Estado**: IMPLEMENTADO, CHECK OK, BUILD OK, TESTS OK (57/57), PENDIENTE DEPLOY
+
+### Problema
+- Pestaña Actividad parecía tabla Excel plana, sin cards visuales ni colores por categoría
+- Modal de evento era pequeño (max-w-lg), faltaban campos: pair, reasonCode, rangeVersionId, impactSummary
+- Modal de Niveles era pequeño (max-w-lg), faltaba botón "Copiar resumen", textos obligatorios incompletos
+- Imports unused: GridSettingsExplained, GridExecutionPolicyPanel
+- Mutations no invalidaban grid-audit después de cambiar modo/reconciliar → estado cacheado
+
+### Cambios realizados
+
+#### FASE F-1 — Actividad cards visuales + modal grande
+- **Editado**: `GridActivityLive.tsx`
+  - Lista de eventos: de filas planas `text-xs` a cards con `border-l-4` por color de categoría
+  - Cada card muestra: icono de categoría, tipo de evento, chip de severidad con icono, chip de categoría, chip de modo, mensaje natural, fecha/hora, pair, precio, cycleId/levelId, resumen de impacto
+  - Colores por categoría: BAND azul, LEVEL púrpura, CYCLE cyan, ORDER amber, WALLET verde, SAFETY rojo, RECONCILIATION naranja, API índigo, SYSTEM slate
+  - Modal ampliado de `max-w-lg` a `max-w-2xl`
+  - Modal ahora muestra: mensaje natural grande, grid 3 columnas con fecha/hora, severidad, categoría, modo, pair, reasonCode, rangeVersionId, cycleId, levelId, precio, impacto operativo, metadata JSON formateado
+  - Botones: "Copiar resumen", "Copiar JSON", "Descargar", "Cerrar"
+  - Nuevas constantes: CATEGORY_ICONS, CATEGORY_COLORS, SEVERITY_ICONS
+  - Nuevas funciones: impactFromEvent, formatEvent ampliado con pair, rangeVersionId, reasonCode, impactSummary
+
+#### FASE F-2 — Niveles modal grande + copiar resumen
+- **Editado**: `GridLevelsPanel.tsx`
+  - Modal ampliado de `max-w-lg` a `max-w-2xl`
+  - Nuevo botón "Copiar resumen" con texto formateado completo: ID, lado, estado, precio, distancia, capital, cantidad, beneficio, fee, fiscal, rangeVersionId, rango activo, cycleId, exchangeOrderId, fechas, modo, explicación
+  - Botones: "Copiar resumen", "Copiar JSON", "Descargar JSON"
+  - Textos obligatorios: "Beneficio objetivo estimado, no realizado.", "Sin orden real" si exchangeOrderId null, "Sin ciclo asociado" si no hay cycleId, "Estimado en simulación SHADOW" si mode=SHADOW
+
+#### Coherencia OFF/SHADOW
+- **Editado**: `GridIsolated.tsx`
+  - `modeMutation.onSuccess`: ahora invalida `grid-audit` además de `grid-config` y `grid-status`
+  - `acknowledgeMutation.onSuccess`: ahora invalida `grid-audit`
+  - `reconcileMutation.onSuccess`: ahora invalida `grid-audit`
+  - Eliminado import unused: `GridSettingsExplained`
+  - Eliminado import unused: `GridExecutionPolicyPanel`
+- Verificado: todas las pestañas usan `mode` de `config`, `isActive` de `config`, `isRunning` de `status`, `functionalStatus` de `auditData`
+- `GridHeaderHero`: usa `isActive` → "Motor activo" / "Motor inactivo"
+- `GridSummaryPanel`: usa `isActive` → "MOTOR ACTIVO" / "MOTOR PAUSADO", usa `functionalStatus.state` para color
+- `GridLevelsMarketHeader`: usa `mode` → OFF muestra "Motor inactivo", SHADOW muestra "Simulación segura"
+
+### Archivos tocados
+- `client/src/components/grid/GridActivityLive.tsx` (editado)
+- `client/src/components/grid/GridLevelsPanel.tsx` (editado)
+- `client/src/pages/GridIsolated.tsx` (editado)
+
+### Validaciones
+- `npm run check` — OK (tsc sin errores)
+- `npm run build` — OK (client + server, 2592 módulos)
+- `npx vitest run server/routes/__tests__/gridIsolatedRoutes.test.ts` — 57/57 tests OK
+
+### Pendientes
+- Deploy staging + validación visual
+- Reporte final
+
+---
+
+## 2026-07-04 — fix(grid-ui): Corrección visual Grid Isolated — integración por fases, subpestañas, HODL explicado, Ayuda expandida
+
+**Commit**: pendiente
+**Tag**: WINDSURF GRID UI — CORRECCIÓN VISUAL FASES A-G
+**Estado**: IMPLEMENTADO, CHECK OK, BUILD OK, TESTS OK (57/57), PENDIENTE DEPLOY
+
+### Problema
+El overhaul anterior del Grid Isolated quedó visualmente incompleto:
+- Ajustes contenía explicación larga (`GridSettingsExplained`) mezclada con controles
+- Ejecución y Riesgo eran pestañas principales separadas (12 pestañas totales)
+- Cartera era un formulario estilo Excel sin cards visuales
+- Resumen incluía `GridExecutionPolicyPanel` sin props (no funcional)
+- HODL Recovery vs Stop Loss no estaba explicado con verdad de código
+- Ayuda no contenía las explicaciones largas de parámetros
+- Letra y contraste insuficientes en varias secciones
+
+### Cambios realizados
+
+#### FASE A — Cartera visual
+- **Nuevo**: `GridCarteraDashboard.tsx` — dashboard con 6 cards grandes con gradientes, colores dinámicos, barra de progreso de uso de cartera, sliders configurables, switches y preview de configuración
+- **Editado**: `GridIsolated.tsx` — importa y usa `GridCarteraDashboard` dentro de Ajustes > subpestaña Cartera
+
+#### FASE B — Modal de confirmación de ajustes
+- **Nuevo**: `GridConfigConfirmDialog.tsx` — modal que muestra parámetro, valor anterior, valor nuevo, impacto, nivel de riesgo, si afecta al estado actual y si requiere recálculo
+- **Editado**: `GridIsolated.tsx` — añade estado `pendingChange` + `pendingChangeCallback`, helper `handleConfirmChange` y `applyPendingChange`, renderiza el dialog al final del componente
+
+#### FASE C — Ajustes con subpestañas
+- **Nuevo**: `GridAjustesPanel.tsx` — componente con 6 subpestañas: General, Cartera, Ejecución, Riesgo, Avanzado, Auditoría
+- **Editado**: `GridIsolated.tsx` — reemplaza el contenido de la pestaña Ajustes con `GridAjustesPanel`, elimina `GridSettingsExplained` de Ajustes
+
+#### FASE D — Mover Ejecución y Riesgo dentro de Ajustes
+- **Editado**: `GridIsolated.tsx` — reduce pestañas principales de 12 a 7 (Resumen, Niveles, Bandas, Actividad, Ciclos, Ajustes, Ayuda). Elimina pestañas principales: Cartera, Ejecución, Riesgo, Backtest, Auditoría (ahora subpestañas dentro de Ajustes)
+- Tamaño de letra de TabsTrigger subido de `text-xs` a `text-sm`
+
+#### FASE E — Resumen reordenado
+- **Editado**: `GridSummaryPanel.tsx` — elimina `GridExecutionPolicyPanel` (que se renderizaba sin props), elimina su import. Orden actual: Cartera → Estado → Mercado → Niveles → Ciclos → Actividad → Histórico Bandas
+- **Editado**: `GridWalletSummaryPanel.tsx` — botón "Editar configuración de capital" ahora navega a "ajustes" en vez de "cartera"
+
+#### FASE G — Ayuda expandida + letra/contraste
+- **Editado**: `GridIsolated.tsx` — Añade card "Parámetros del Grid explicados" en Ayuda con explicaciones detalladas de: Perfil de Capital, Timeframe ATR, Periodo Bollinger, Máx Ciclos, Step Mín/Máx, Ratio Geométrico, Target Neto, HODL Recovery vs Stop Loss
+- Mejora contraste: `text-xs` → `text-sm` en secciones de seguridad, endpoints y HODL Recovery de Ayuda
+- HODL Recovery vs Stop Loss ahora explica con verdad de código: prioridad de evaluación, soft stop activa HODL, hard/emergency siempre venden
+
+### HODL Recovery vs Stop Loss — Verdad de código (gridRiskManager.ts)
+1. HODL Recovery se evalúa **primero**. Si está activo, HOLD hasta break-even.
+2. **Soft stop (-2%)**: Si HODL ON → activa HODL (no vende). Si HODL OFF → vende.
+3. **Hard stop (-5%)**: Vende **siempre**, override de HODL.
+4. **Emergency stop (-10%)**: Vende **siempre**, override total.
+5. Los sliders de Stop siguen siendo útiles con HODL ON: Soft define cuándo se activa HODL, Hard/Emergency definen cuándo se fuerza venta.
+
+### Archivos tocados
+- `client/src/components/grid/GridConfigConfirmDialog.tsx` (nuevo)
+- `client/src/components/grid/GridCarteraDashboard.tsx` (nuevo)
+- `client/src/components/grid/GridAjustesPanel.tsx` (nuevo)
+- `client/src/pages/GridIsolated.tsx` (editado)
+- `client/src/components/grid/GridSummaryPanel.tsx` (editado)
+- `client/src/components/grid/GridWalletSummaryPanel.tsx` (editado)
+
+### Validaciones
+- `npm run check` — OK (tsc sin errores)
+- `npm run build` — OK (client + server)
+- `npx vitest run server/routes/__tests__/gridIsolatedRoutes.test.ts` — 57/57 tests OK
+
+### Pendientes
+- **FASE F**: Actividad cards + modal grande, Niveles modal grande + copiar (no implementado en esta sesión)
+- **Estado coherente OFF/SHADOW**: Revisar que todas las pestañas muestren estado consistente
+- **Deploy**: Pendiente hasta verificación visual completa
+
+---
+
 ## 2026-07-04 — feat(grid-ui): Grid Isolated UI overhaul — canonical counts, visual wallet, execution sliders, band visualization, event modals, HODL confirm, help restructure
 
 **Commit**: 060ef06
