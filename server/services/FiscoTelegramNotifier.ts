@@ -308,12 +308,13 @@ export class FiscoTelegramNotifier {
   }
 
   /**
-   * Envía mensaje usando el sistema unificado (sendAlertWithSubtype) + chat dedicado FISCO
+   * Envía mensaje usando el sistema unificado (sendAlertWithSubtype) únicamente.
+   * NO se envía directamente al chatId de fisco_alert_config si no está registrado en telegram_chats.
+   * Esto elimina el dual-path que causaba mensajes fantasma.
    */
   private async sendToConfiguredChat(message: string, alertType: string): Promise<void> {
     const unifiedSubtype = this.mapToUnifiedSubtype(alertType);
 
-    // 1) Broadcast via unified system (respects per-chat alertPreferences)
     if (unifiedSubtype) {
       try {
         await telegramService.sendAlertWithSubtype(message, 'fisco' as any, unifiedSubtype as any);
@@ -321,37 +322,29 @@ export class FiscoTelegramNotifier {
       } catch (error: any) {
         console.error(`[FISCO Telegram] sendAlertWithSubtype failed for ${alertType}:`, error?.message || error);
       }
-    }
-
-    // 2) Also send to FISCO-dedicated chat if configured and not already covered
-    try {
-      const config = await this.getAlertConfig();
-      const chatId = config?.chatId;
-      if (!chatId || chatId === 'not_configured') return;
-
-      // Avoid double-send: check if this chatId is already a registered telegram chat
-      // If it is, sendAlertWithSubtype already sent to it
-      const { storage } = await import('../storage');
-      const registeredChats = await storage.getTelegramChats();
-      const alreadySent = registeredChats.some(c => c.chatId === chatId && c.isActive);
-
-      if (!alreadySent) {
-        await telegramService.sendToChat(chatId, message, { parseMode: 'HTML' });
-        console.log(`[FISCO Telegram] ${alertType} also sent to dedicated FISCO chat ${chatId}`);
-      }
-    } catch (error: any) {
-      console.error(`[FISCO Telegram] Failed to send ${alertType} to dedicated chat:`, error?.message || error);
+    } else {
+      console.warn(`[FISCO Telegram] ${alertType} has no unified subtype mapping, alert NOT sent`);
     }
   }
 
   /**
-   * Envía informe HTML como archivo adjunto
+   * Envía informe HTML como archivo adjunto.
+   * Valida que el chatId de FISCO esté activo en telegram_chats antes de enviar.
    */
   private async sendHtmlReport(htmlContent: string, runId: string): Promise<void> {
     try {
       const config = await this.getAlertConfig();
       const chatId = config?.chatId;
       if (!chatId || chatId === 'not_configured') return;
+
+      // Validate chatId is active in telegram_chats
+      const { storage } = await import('../storage');
+      const registeredChats = await storage.getActiveTelegramChats();
+      const isActive = registeredChats.some(c => c.chatId === chatId);
+      if (!isActive) {
+        console.warn(`[FISCO Telegram] HTML report NOT sent: chatId ${chatId} not active in telegram_chats`);
+        return;
+      }
 
       const year = new Date().getFullYear();
       const dateStr = new Date().toISOString().slice(0, 10);
@@ -367,13 +360,23 @@ export class FiscoTelegramNotifier {
   }
 
   /**
-   * Envía informe en formato texto
+   * Envía informe en formato texto.
+   * Valida que el chatId de FISCO esté activo en telegram_chats antes de enviar.
    */
   private async sendTextReport(textContent: string): Promise<void> {
     try {
       const config = await this.getAlertConfig();
       const chatId = config?.chatId;
       if (!chatId || chatId === 'not_configured') return;
+
+      // Validate chatId is active in telegram_chats
+      const { storage } = await import('../storage');
+      const registeredChats = await storage.getActiveTelegramChats();
+      const isActive = registeredChats.some(c => c.chatId === chatId);
+      if (!isActive) {
+        console.warn(`[FISCO Telegram] Text report NOT sent: chatId ${chatId} not active in telegram_chats`);
+        return;
+      }
 
       const truncatedContent = textContent.length > 4000 
         ? textContent.substring(0, 4000) + '...\n\n[Contenido truncado]'

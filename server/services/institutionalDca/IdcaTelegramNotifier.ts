@@ -78,6 +78,15 @@ async function canSend(alertType: string): Promise<{ chatId: string; enabled: bo
     return { chatId: "", enabled: false };
   }
 
+  // Validate chatId is active in telegram_chats (central authorization)
+  const { storage } = await import("../../storage");
+  const activeChats = await storage.getActiveTelegramChats();
+  const isActive = activeChats.some(c => c.chatId === config.telegramChatId);
+  if (!isActive) {
+    console.log(`[IDCA][TELEGRAM][BLOCKED] alertType=${alertType} reason=chatId_not_active_in_telegram_chats (chatId=${config.telegramChatId})`);
+    return { chatId: "", enabled: false };
+  }
+
   const toggles = (config.telegramAlertTogglesJson || {}) as TelegramAlertToggles;
 
   // Check if this alert type is enabled

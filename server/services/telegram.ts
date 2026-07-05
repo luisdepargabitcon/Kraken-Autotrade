@@ -704,104 +704,146 @@ export class TelegramService {
   private setupCommands() {
     if (!this.bot) return;
 
+    // Command authorization guard — wraps handler with chat authorization check
+    const guard = async (chatId: number, command: string, handler: () => Promise<void>): Promise<void> => {
+      const startTime = Date.now();
+      try {
+        const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+        const auth = await telegramNotificationCenter.authorizeCommand(String(chatId), command);
+        if (!auth.authorized) {
+          const reason = auth.definition ? `permission:${auth.permission}` : "unknown_command";
+          await this.bot!.sendMessage(chatId, `⛔ No autorizado para ejecutar ${command}.`, { parse_mode: "HTML" });
+          await telegramNotificationCenter.logCommand({
+            chatId: String(chatId),
+            command,
+            status: "unauthorized",
+            isAuthorized: false,
+            permissionLevel: auth.permission || undefined,
+            errorMessage: reason,
+          });
+          return;
+        }
+        await handler();
+        const elapsed = Date.now() - startTime;
+        await telegramNotificationCenter.logCommand({
+          chatId: String(chatId),
+          command,
+          status: "executed",
+          isAuthorized: true,
+          permissionLevel: auth.permission || undefined,
+          executionTimeMs: elapsed,
+        });
+      } catch (err: any) {
+        const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+        await telegramNotificationCenter.logCommand({
+          chatId: String(chatId),
+          command,
+          status: "failed",
+          isAuthorized: true,
+          errorMessage: err?.message || String(err),
+        });
+        console.error(`[telegram] Command ${command} failed:`, err);
+      }
+    };
+
     this.bot.onText(/\/estado/, async (msg) => {
-      await this.handleEstado(msg.chat.id);
+      await guard(msg.chat.id, "/estado", () => this.handleEstado(msg.chat.id));
     });
 
     this.bot.onText(/\/pausar/, async (msg) => {
-      await this.handlePausar(msg.chat.id);
+      await guard(msg.chat.id, "/pausar", () => this.handlePausar(msg.chat.id));
     });
 
     this.bot.onText(/\/reanudar/, async (msg) => {
-      await this.handleReanudar(msg.chat.id);
+      await guard(msg.chat.id, "/reanudar", () => this.handleReanudar(msg.chat.id));
     });
 
     this.bot.onText(/\/ultimas/, async (msg) => {
-      await this.handleUltimas(msg.chat.id);
+      await guard(msg.chat.id, "/ultimas", () => this.handleUltimas(msg.chat.id));
     });
 
     this.bot.onText(/\/ayuda/, async (msg) => {
-      await this.handleAyuda(msg.chat.id);
+      await guard(msg.chat.id, "/ayuda", () => this.handleAyuda(msg.chat.id));
     });
 
     this.bot.onText(/\/balance/, async (msg) => {
-      await this.handleBalance(msg.chat.id);
+      await guard(msg.chat.id, "/balance", () => this.handleBalance(msg.chat.id));
     });
 
     this.bot.onText(/\/config/, async (msg) => {
-      await this.handleConfig(msg.chat.id);
+      await guard(msg.chat.id, "/config", () => this.handleConfig(msg.chat.id));
     });
 
     this.bot.onText(/\/exposicion/, async (msg) => {
-      await this.handleExposicion(msg.chat.id);
+      await guard(msg.chat.id, "/exposicion", () => this.handleExposicion(msg.chat.id));
     });
 
     this.bot.onText(/\/uptime/, async (msg) => {
-      await this.handleUptime(msg.chat.id);
+      await guard(msg.chat.id, "/uptime", () => this.handleUptime(msg.chat.id));
     });
 
     this.bot.onText(/\/menu/, async (msg) => {
-      await this.handleMenu(msg.chat.id);
+      await guard(msg.chat.id, "/menu", () => this.handleMenu(msg.chat.id));
     });
 
     this.bot.onText(/\/channels/, async (msg) => {
-      await this.handleChannels(msg.chat.id);
+      await guard(msg.chat.id, "/channels", () => this.handleChannels(msg.chat.id));
     });
 
     this.bot.onText(/\/balance(.*)/, async (msg, match) => {
       const args = match?.[1]?.trim().split(/\s+/) || [];
-      await this.handleBalance(msg.chat.id, args);
+      await guard(msg.chat.id, "/balance", () => this.handleBalance(msg.chat.id, args));
     });
 
     this.bot.onText(/\/cartera/, async (msg) => {
-      await this.handleCartera(msg.chat.id);
+      await guard(msg.chat.id, "/cartera", () => this.handleCartera(msg.chat.id));
     });
 
     this.bot.onText(/\/ultimas(.*)/, async (msg, match) => {
       const args = match?.[1]?.trim().split(/\s+/) || [];
-      await this.handleUltimas(msg.chat.id, args);
+      await guard(msg.chat.id, "/ultimas", () => this.handleUltimas(msg.chat.id, args));
     });
 
     this.bot.onText(/\/logs(.*)/, async (msg, match) => {
       const args = match?.[1]?.trim().split(/\s+/) || [];
-      await this.handleLogs(msg.chat.id, args);
+      await guard(msg.chat.id, "/logs", () => this.handleLogs(msg.chat.id, args));
     });
 
     this.bot.onText(/\/log\s+(\d+)/, async (msg, match) => {
-      await this.handleLogDetail(msg.chat.id, match?.[1]);
+      await guard(msg.chat.id, "/logs", () => this.handleLogDetail(msg.chat.id, match?.[1]));
     });
 
     // Posiciones command
     this.bot.onText(/\/posiciones/, async (msg) => {
-      await this.handlePosiciones(msg.chat.id);
+      await guard(msg.chat.id, "/posiciones", () => this.handlePosiciones(msg.chat.id));
     });
 
     // Ganancias command
     this.bot.onText(/\/ganancias/, async (msg) => {
-      await this.handleGanancias(msg.chat.id);
+      await guard(msg.chat.id, "/ganancias", () => this.handleGanancias(msg.chat.id));
     });
 
     // Admin command: refresh Telegram commands menu
     this.bot.onText(/\/refresh_commands/, async (msg) => {
-      await this.handleRefreshCommands(msg.chat.id);
+      await guard(msg.chat.id, "/refresh_commands", () => this.handleRefreshCommands(msg.chat.id));
     });
 
     // FISCO command: generate and send fiscal report
     this.bot.onText(/\/informe_fiscal/, async (msg) => {
-      await this.handleInformeFiscal(msg.chat.id);
+      await guard(msg.chat.id, "/informe_fiscal", () => this.handleInformeFiscal(msg.chat.id));
     });
 
     // FISCO command aliases
     this.bot.onText(/\/fiscal/, async (msg) => {
-      await this.handleInformeFiscal(msg.chat.id);
+      await guard(msg.chat.id, "/fiscal", () => this.handleInformeFiscal(msg.chat.id));
     });
 
     this.bot.onText(/\/reporte/, async (msg) => {
-      await this.handleInformeFiscal(msg.chat.id);
+      await guard(msg.chat.id, "/reporte", () => this.handleInformeFiscal(msg.chat.id));
     });
 
     this.bot.onText(/\/impuestos/, async (msg) => {
-      await this.handleInformeFiscal(msg.chat.id);
+      await guard(msg.chat.id, "/impuestos", () => this.handleInformeFiscal(msg.chat.id));
     });
 
     // Callback query handler for inline buttons
@@ -1992,9 +2034,8 @@ Incluye:
         }
       }
 
-      if (this.chatId) {
-        await this.sendMessage(message);
-      }
+      // NO FALLBACK: heartbeat only goes to active chats with alertHeartbeat=true.
+      // Previously this also sent to this.chatId (legacy) causing phantom messages.
       
       // Mark heartbeat as sent for cooldown tracking
       this.markEventSent("heartbeat");
@@ -2097,10 +2138,8 @@ Incluye:
         }
       }
 
-      // Also send to main chat
-      if (this.chatId) {
-        await this.sendMessage(message);
-      }
+      // NO FALLBACK: daily report only goes to active chats.
+      // Previously this also sent to this.chatId (legacy) causing phantom messages.
 
       console.log("[telegram] Reporte diario enviado");
     } catch (error) {
@@ -2218,18 +2257,13 @@ Incluye:
             sentChatIds.add(chat.chatId);
           }
         }
-        // FALLBACK: If active chats exist but none matched alertType, use default chatId
-        if (sentChatIds.size === 0 && this.chatId) {
-          console.warn(`[telegram] sendAlertToMultipleChats: ${chats.length} active chats but none accept alertType=${alertType}, falling back to default chatId`);
-          await this.sendMessage(message);
-          sentChatIds.add(this.chatId);
+        // NO FALLBACK: if no chats matched alertType, the alert is not sent.
+        // Previously this fell back to this.chatId (legacy api_config) causing phantom messages.
+        if (sentChatIds.size === 0) {
+          console.warn(`[telegram] sendAlertToMultipleChats: ${chats.length} active chats but none accept alertType=${alertType}, alert NOT sent (no fallback)`);
         }
-      } else if (this.chatId) {
-        console.log(`[telegram] sendAlertToMultipleChats: no active chats, using default chatId`);
-        await this.sendMessage(message);
-        sentChatIds.add(this.chatId);
       } else {
-        console.warn(`[telegram] sendAlertToMultipleChats: no chats and no default chatId - alert LOST (alertType=${alertType})`);
+        console.warn(`[telegram] sendAlertToMultipleChats: no active chats, alert NOT sent (alertType=${alertType})`);
       }
     } catch (error) {
       console.error("Error sending to multiple chats:", error);
@@ -2348,14 +2382,10 @@ Incluye:
       }
     }
 
-    // FALLBACK: If no chats matched, use default chatId
-    if (sentChatIds.size === 0 && this.chatId) {
-      console.log(`[telegram] sendAlertWithSubtype: no chats matched (alertType=${alertType}, subtype=${subtype}), falling back to default chatId`);
-      try {
-        await this.bot.sendMessage(this.chatId, message, { parse_mode: "HTML" });
-      } catch (error: any) {
-        console.error(`[telegram] Fallback send failed:`, error.message);
-      }
+    // NO FALLBACK: if no chats matched, the alert is not sent.
+    // Previously this fell back to this.chatId (legacy api_config) causing phantom messages.
+    if (sentChatIds.size === 0) {
+      console.warn(`[telegram] sendAlertWithSubtype: no chats matched (alertType=${alertType}, subtype=${subtype}), alert NOT sent (no fallback)`);
     }
   }
 
@@ -2580,13 +2610,9 @@ _KrakenBot.AI - Trading Autónomo_
     // Use new visual error template
     const message = buildErrorAlertHTMLSimple(title, description, meta);
 
-    const botConfig = await storage.getBotConfig();
-    const errorAlertChatId = (botConfig as any)?.errorAlertChatId as string | null | undefined;
-    if (errorAlertChatId) {
-      await this.sendToChat(errorAlertChatId, message);
-    } else {
-      await this.sendAlertWithSubtype(message, "errors", "error_api");
-    }
+    // NO FALLBACK to bot_config.errorAlertChatId — always route through telegram_chats.
+    // Previously this sent directly to errorAlertChatId bypassing channel authorization.
+    await this.sendAlertWithSubtype(message, "errors", "error_api");
     this.markEventSent("errors");
   }
 
@@ -2601,13 +2627,8 @@ _KrakenBot.AI - Trading Autónomo_
     }
     
     const message = buildErrorAlertHTML(ctx);
-    const botConfig = await storage.getBotConfig();
-    const errorAlertChatId = (botConfig as any)?.errorAlertChatId as string | null | undefined;
-    if (errorAlertChatId) {
-      await this.sendToChat(errorAlertChatId, message);
-    } else {
-      await this.sendAlertWithSubtype(message, "errors", "error_api");
-    }
+    // NO FALLBACK to bot_config.errorAlertChatId — always route through telegram_chats.
+    await this.sendAlertWithSubtype(message, "errors", "error_api");
     this.markEventSent("errors");
   }
 
@@ -2617,13 +2638,8 @@ _KrakenBot.AI - Trading Autónomo_
   async sendCriticalError(ctx: Omit<ErrorAlertContext, 'severity'>) {
     const message = buildErrorAlertHTML({ ...ctx, severity: "CRITICAL" });
 
-    const botConfig = await storage.getBotConfig();
-    const errorAlertChatId = (botConfig as any)?.errorAlertChatId as string | null | undefined;
-    if (errorAlertChatId) {
-      await this.sendToChat(errorAlertChatId, message);
-    } else {
-      await this.sendAlertWithSubtype(message, "errors", "error_critical");
-    }
+    // NO FALLBACK to bot_config.errorAlertChatId — always route through telegram_chats.
+    await this.sendAlertWithSubtype(message, "errors", "error_critical");
     this.markEventSent("errors");
   }
 
@@ -2663,7 +2679,6 @@ _KrakenBot.AI - Trading Autónomo_
       return;
     }
 
-    const signalRejectionAlertChatId = (botConfig as any)?.signalRejectionAlertChatId as string | null | undefined;
     const env = environment.envTag || "UNKNOWN";
     const timestamp = new Date().toLocaleTimeString('es-ES', { 
       hour: '2-digit', 
@@ -2722,11 +2737,8 @@ _KrakenBot.AI - Trading Autónomo_
 ━━━━━━━━━━━━━━━━━━━
 <i>CHESTER BOT - Filtro Avanzado</i>`;
 
-    if (signalRejectionAlertChatId) {
-      await this.sendToChat(signalRejectionAlertChatId, message);
-    } else {
-      await this.sendAlertWithSubtype(message, "trades", "trade_spread_rejected");
-    }
+    // NO FALLBACK to bot_config.signalRejectionAlertChatId — always route through telegram_chats.
+    await this.sendAlertWithSubtype(message, "trades", "trade_spread_rejected");
   }
 
   async sendHybridGuardWatchCreated(ctx: {

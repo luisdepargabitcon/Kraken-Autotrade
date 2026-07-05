@@ -1844,3 +1844,72 @@ export const exchangeBalanceSnapshots = pgTable("exchange_balance_snapshots", {
 
 export type ExchangeBalanceSnapshotRow = typeof exchangeBalanceSnapshots.$inferSelect;
 export type InsertExchangeBalanceSnapshot = typeof exchangeBalanceSnapshots.$inferInsert;
+
+// ============================================================
+// Telegram Global Config — kill switch, dedupe, rate-limit, quiet hours
+// ============================================================
+export const telegramGlobalConfig = pgTable("telegram_global_config", {
+  id: serial("id").primaryKey(),
+  telegramGlobalEnabled: boolean("telegram_global_enabled").notNull().default(true),
+  telegramSilentMode: boolean("telegram_silent_mode").notNull().default(false),
+  telegramMinSeverity: text("telegram_min_severity").notNull().default("LOW"),
+  telegramDefaultDedupeMinutes: integer("telegram_default_dedupe_minutes").notNull().default(5),
+  telegramDefaultRateLimitPerHour: integer("telegram_default_rate_limit_per_hour").notNull().default(30),
+  telegramQuietHoursConfig: jsonb("telegram_quiet_hours_config").notNull().default({ enabled: false, start: "22:00", end: "08:00", timezone: "Europe/Madrid" }),
+  telegramEnvironmentLabel: text("telegram_environment_label").notNull().default("staging"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type TelegramGlobalConfig = typeof telegramGlobalConfig.$inferSelect;
+
+// ============================================================
+// Telegram Alert Events — audit log for sent/blocked/failed messages
+// ============================================================
+export const telegramAlertEvents = pgTable("telegram_alert_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  timestamp: timestamp("timestamp").notNull().defaultNow(),
+  environment: text("environment"),
+  sourceModule: text("source_module"),
+  mode: text("mode"),
+  alertType: text("alert_type"),
+  severity: text("severity"),
+  pair: text("pair"),
+  cycleId: text("cycle_id"),
+  positionId: text("position_id"),
+  dryRunId: text("dry_run_id"),
+  chatId: text("chat_id"),
+  channelId: integer("channel_id"),
+  dedupeKey: text("dedupe_key"),
+  payloadHash: text("payload_hash"),
+  status: text("status").notNull().default("sent"),
+  blockReason: text("block_reason"),
+  sentAt: timestamp("sent_at"),
+  failedAt: timestamp("failed_at"),
+  errorMessage: text("error_message"),
+  naturalMessage: text("natural_message"),
+  technicalDetailsJson: jsonb("technical_details_json"),
+  rawPayloadJson: jsonb("raw_payload_json"),
+});
+
+export type TelegramAlertEvent = typeof telegramAlertEvents.$inferSelect;
+export type InsertTelegramAlertEvent = typeof telegramAlertEvents.$inferInsert;
+
+// ============================================================
+// Telegram Command Log — audit log for Telegram commands
+// ============================================================
+export const telegramCommandLog = pgTable("telegram_command_log", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  timestamp: timestamp("timestamp").notNull().defaultNow(),
+  chatId: text("chat_id").notNull(),
+  command: text("command").notNull(),
+  status: text("status").notNull().default("received"),
+  isAuthorized: boolean("is_authorized").notNull().default(false),
+  permissionLevel: text("permission_level"),
+  responseMessage: text("response_message"),
+  errorMessage: text("error_message"),
+  executionTimeMs: integer("execution_time_ms"),
+});
+
+export type TelegramCommandLog = typeof telegramCommandLog.$inferSelect;
+export type InsertTelegramCommandLog = typeof telegramCommandLog.$inferInsert;

@@ -198,6 +198,8 @@ export async function registerRoutes(
         { id: '061_audit_tables', filePath: path.join(migrationsDir, '061_audit_tables.sql') },
         { id: '062_capital_efficiency_gate', filePath: path.join(migrationsDir, '062_capital_efficiency_gate.sql') },
         { id: '063_grid_isolated', filePath: path.join(migrationsDir, '063_grid_isolated.sql') },
+        { id: '064_grid_wallet_execution', filePath: path.join(migrationsDir, '064_grid_wallet_execution.sql') },
+        { id: '065_telegram_global_config', filePath: path.join(migrationsDir, '065_telegram_global_config.sql') },
       ];
 
       await runner.run(migrations);
@@ -822,6 +824,62 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Error eliminando chat" });
+    }
+  });
+
+  // ── Telegram Global Config (kill switch, dedupe, rate-limit, quiet hours) ──
+  app.get("/api/telegram/global-config", async (req, res) => {
+    try {
+      const { telegramNotificationCenter } = await import("./services/TelegramNotificationCenter");
+      const config = await telegramNotificationCenter.getGlobalConfig();
+      res.json(config || { telegramGlobalEnabled: true, telegramSilentMode: false, telegramMinSeverity: "LOW" });
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo configuración global de Telegram" });
+    }
+  });
+
+  app.put("/api/telegram/global-config", async (req, res) => {
+    try {
+      const { telegramNotificationCenter } = await import("./services/TelegramNotificationCenter");
+      const updated = await telegramNotificationCenter.updateGlobalConfig(req.body);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Error actualizando configuración global de Telegram" });
+    }
+  });
+
+  // ── Telegram Alert Events Audit ──────────────────────────────────
+  app.get("/api/telegram/alert-events", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const { telegramNotificationCenter } = await import("./services/TelegramNotificationCenter");
+      const events = await telegramNotificationCenter.getAlertEvents(limit);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo eventos de alerta" });
+    }
+  });
+
+  // ── Telegram Command Logs ────────────────────────────────────────
+  app.get("/api/telegram/command-logs", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const { telegramNotificationCenter } = await import("./services/TelegramNotificationCenter");
+      const logs = await telegramNotificationCenter.getCommandLogs(limit);
+      res.json(logs);
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo logs de comandos" });
+    }
+  });
+
+  // ── Telegram Command Definitions ─────────────────────────────────
+  app.get("/api/telegram/commands", async (req, res) => {
+    try {
+      const { telegramNotificationCenter } = await import("./services/TelegramNotificationCenter");
+      const commands = telegramNotificationCenter.getCommandDefinitions();
+      res.json(commands);
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo definiciones de comandos" });
     }
   });
 

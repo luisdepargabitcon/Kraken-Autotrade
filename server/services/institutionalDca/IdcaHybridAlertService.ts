@@ -195,6 +195,16 @@ async function sendTelegram(message: string): Promise<void> {
     const config = await repo.getIdcaConfig();
     const chatId = config?.telegramChatId;
     if (!chatId) return;
+
+    // Validate chatId is active in telegram_chats (central authorization)
+    const { storage } = await import("../../storage");
+    const activeChats = await storage.getActiveTelegramChats();
+    const isActive = activeChats.some(c => c.chatId === chatId);
+    if (!isActive) {
+      console.log(`[IDCA_HYBRID_ALERT] BLOCKED: chatId ${chatId} not active in telegram_chats`);
+      return;
+    }
+
     await telegramService.sendToChat(chatId, message, { parseMode: "HTML" });
   } catch (e: any) {
     console.warn(`[IDCA_HYBRID_ALERT] sendTelegram failed: ${e?.message}`);

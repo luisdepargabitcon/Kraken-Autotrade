@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { storage } from "../storage";
+import { escapeHtml } from "./telegram/templates";
 
 export type ErrorType = 'PRICE_INVALID' | 'API_ERROR' | 'DATABASE_ERROR' | 'TRADING_ERROR' | 'SYSTEM_ERROR';
 export type ErrorSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -57,19 +58,12 @@ export class ErrorAlertService {
       return this.telegramService;
     }
     
-    // Import dinámico solo cuando se necesita (ESM compatible)
-    const telegramModule = await import("./telegram");
-    this.telegramService = new telegramModule.TelegramService();
-    
-    // Inicializar con token de apiConfig
-    const apiConfig = await storage.getApiConfig();
-    if (apiConfig?.telegramToken && apiConfig?.telegramChatId) {
-      this.telegramService.initialize({
-        token: apiConfig.telegramToken,
-        chatId: apiConfig.telegramChatId,
-      });
-    }
-    return this.telegramService;
+    // NO crear una nueva instancia de TelegramService aquí.
+    // Anteriormente esto creaba una instancia propia con token de api_config,
+    // lo que causaba conflictos 409 y mensajes fantasma.
+    // Si no hay instancia inyectada, no se pueden enviar alertas.
+    console.warn('[ErrorAlert] No TelegramService injected — error alerts will NOT be sent');
+    return null;
   }
 
   static getInstance(): ErrorAlertService {
@@ -88,7 +82,7 @@ export class ErrorAlertService {
       if (!this.shouldSendAlert(alert)) return;
       
       const telegramService = await this.getTelegramService();
-      if (!telegramService.isInitialized()) return;
+      if (!telegramService || !telegramService.isInitialized()) return;
 
       const message = await this.formatAlertMessage(alert);
       
@@ -196,13 +190,13 @@ export class ErrorAlertService {
       message += `\n📍 ${currentColor}<b>Línea:</b>${colorEnd} <code>${alert.lineNumber}</code>`;
     }
 
-    message += `\n\n❌ ${currentColor}<b>Error:</b>${colorEnd} ${alert.message}`;
+    message += `\n\n❌ ${currentColor}<b>Error:</b>${colorEnd} ${escapeHtml(alert.message)}`;
 
     // Añadir contexto si existe
     if (alert.context && Object.keys(alert.context).length > 0) {
       message += `\n\n📋 ${currentColor}<b>Contexto:</b>${colorEnd}`;
       for (const [key, value] of Object.entries(alert.context)) {
-        message += `\n   • ${currentColor}<b>${key}:</b>${colorEnd} <code>${JSON.stringify(value)}</code>`;
+        message += `\n   • ${currentColor}<b>${escapeHtml(key)}:</b>${colorEnd} <code>${escapeHtml(JSON.stringify(value))}</code>`;
       }
     }
 
@@ -220,7 +214,7 @@ export class ErrorAlertService {
           copyInstruction = `\n📋 <b>Código implicado:</b>`;
         }
         
-        message += `\n\n📋 ${currentColor}<b>Código Fuente:</b>${colorEnd}${copyInstruction}\n<pre><code>${codeSnippet}</code></pre>`;
+        message += `\n\n📋 ${currentColor}<b>Código Fuente:</b>${colorEnd}${copyInstruction}\n<pre><code>${escapeHtml(codeSnippet)}</code></pre>`;
       }
     }
 
@@ -228,7 +222,7 @@ export class ErrorAlertService {
     if (alert.stackTrace) {
       const simplifiedStack = this.simplifyStackTrace(alert.stackTrace);
       if (simplifiedStack) {
-        message += `\n\n🔍 ${currentColor}<b>Stack Trace:</b>${colorEnd}\n<pre><code>${simplifiedStack}</code></pre>`;
+        message += `\n\n🔍 ${currentColor}<b>Stack Trace:</b>${colorEnd}\n<pre><code>${escapeHtml(simplifiedStack)}</code></pre>`;
       }
     }
 

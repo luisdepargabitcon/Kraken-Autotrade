@@ -73,6 +73,13 @@ import {
   type InsertStrategyProfile,
   type TuningProposal,
   type InsertTuningProposal,
+  // Telegram global config & audit
+  telegramGlobalConfig as telegramGlobalConfigTable,
+  telegramAlertEvents as telegramAlertEventsTable,
+  telegramCommandLog as telegramCommandLogTable,
+  type TelegramGlobalConfig,
+  type InsertTelegramAlertEvent,
+  type InsertTelegramCommandLog,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gt, lt, sql, isNull, ne, or, inArray } from "drizzle-orm";
@@ -149,6 +156,18 @@ export interface IStorage {
   createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat>;
   updateTelegramChat(id: number, chat: Partial<InsertTelegramChat>): Promise<TelegramChat>;
   deleteTelegramChat(id: number): Promise<void>;
+  
+  // Telegram global config
+  getTelegramGlobalConfig(): Promise<TelegramGlobalConfig | undefined>;
+  updateTelegramGlobalConfig(updates: Partial<TelegramGlobalConfig>): Promise<TelegramGlobalConfig | undefined>;
+  
+  // Telegram alert events audit
+  insertTelegramAlertEvent(event: InsertTelegramAlertEvent): Promise<void>;
+  getRecentTelegramAlertEvents(limit: number): Promise<any[]>;
+  
+  // Telegram command log
+  insertTelegramCommandLog(entry: InsertTelegramCommandLog): Promise<void>;
+  getRecentTelegramCommandLogs(limit: number): Promise<any[]>;
   
   getOpenPositions(): Promise<OpenPosition[]>;
   getOpenPosition(pair: string): Promise<OpenPosition | undefined>;
@@ -1077,6 +1096,56 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTelegramChat(id: number): Promise<void> {
     await db.delete(telegramChatsTable).where(eq(telegramChatsTable.id, id));
+  }
+
+  // ============================================================
+  // Telegram Global Config
+  // ============================================================
+  async getTelegramGlobalConfig(): Promise<TelegramGlobalConfig | undefined> {
+    const rows = await db.select().from(telegramGlobalConfigTable).limit(1);
+    return rows[0];
+  }
+
+  async updateTelegramGlobalConfig(updates: Partial<TelegramGlobalConfig>): Promise<TelegramGlobalConfig | undefined> {
+    const [updated] = await db.update(telegramGlobalConfigTable)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(telegramGlobalConfigTable.id, 1))
+      .returning();
+    return updated;
+  }
+
+  // ============================================================
+  // Telegram Alert Events Audit
+  // ============================================================
+  async insertTelegramAlertEvent(event: InsertTelegramAlertEvent): Promise<void> {
+    try {
+      await db.insert(telegramAlertEventsTable).values(event);
+    } catch (err) {
+      console.error('[storage] Failed to insert telegram alert event:', err);
+    }
+  }
+
+  async getRecentTelegramAlertEvents(limit: number): Promise<any[]> {
+    return await db.select().from(telegramAlertEventsTable)
+      .orderBy(desc(telegramAlertEventsTable.timestamp))
+      .limit(limit);
+  }
+
+  // ============================================================
+  // Telegram Command Log
+  // ============================================================
+  async insertTelegramCommandLog(entry: InsertTelegramCommandLog): Promise<void> {
+    try {
+      await db.insert(telegramCommandLogTable).values(entry);
+    } catch (err) {
+      console.error('[storage] Failed to insert telegram command log:', err);
+    }
+  }
+
+  async getRecentTelegramCommandLogs(limit: number): Promise<any[]> {
+    return await db.select().from(telegramCommandLogTable)
+      .orderBy(desc(telegramCommandLogTable.timestamp))
+      .limit(limit);
   }
 
   async ensureDefaultChat(): Promise<void> {
