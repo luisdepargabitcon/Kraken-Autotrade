@@ -230,6 +230,12 @@ class GridIsolatedEngine {
         gridMinFreeCapitalUsd: this.config.gridMinFreeCapitalUsd.toFixed(2),
         gridPauseCycleWhenCapitalDepleted: this.config.gridPauseCycleWhenCapitalDepleted,
         gridAllowNewCycleWhenCapitalFree: this.config.gridAllowNewCycleWhenCapitalFree,
+        // Capital allocation modes
+        gridAllocationMode: this.config.gridAllocationMode,
+        gridCapitalDeploymentMode: this.config.gridCapitalDeploymentMode,
+        gridProgressiveIntensity: this.config.gridProgressiveIntensity.toFixed(2),
+        gridMaxLevelPct: this.config.gridMaxLevelPct.toFixed(2),
+        gridMinLevelUsd: this.config.gridMinLevelUsd.toFixed(2),
         updatedAt: new Date(),
       };
 
