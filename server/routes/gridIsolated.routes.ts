@@ -472,16 +472,18 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     const plannedSellNotional = sellLevels.reduce((s: number, l: any) => s + Number(l.notionalUsd || 0), 0);
     const maxBudget = config.gridMaxCapitalPerCycleUsd || 0;
     if (buyLevels.length > 0 || sellLevels.length > 0) {
-      lines.push(`Niveles BUY planificados: ${buyLevels.length} por $${plannedBuyUsd.toFixed(2)} total en USD.`);
+      lines.push(`Niveles BUY planificados: ${buyLevels.length} por $${plannedBuyUsd.toFixed(2)} total en USD (capital real).`);
       lines.push(`Niveles SELL planificados: ${sellLevels.length} por $${plannedSellNotional.toFixed(2)} notional visual — NO consumen USD; requieren BTC/inventario.`);
-      lines.push(`Notional bruto BUY+SELL: $${(plannedBuyUsd + plannedSellNotional).toFixed(2)} — no equivale a capital USD necesario.`);
+      lines.push(`Notional bruto visual BUY+SELL: $${(plannedBuyUsd + plannedSellNotional).toFixed(2)} — no equivale a capital USD necesario.`);
+      lines.push(`Capital USD realmente necesario: $${plannedBuyUsd.toFixed(2)} (solo BUY). Los SELL son objetivos teóricos de venta asociados a cada BUY por cantidad de BTC.`);
       if (maxBudget > 0) {
         const usedPct = (plannedBuyUsd / maxBudget) * 100;
         lines.push(`Presupuesto configurado: $${maxBudget.toFixed(2)}. Usado en BUY: ${usedPct.toFixed(1)}% ($${plannedBuyUsd.toFixed(2)}).`);
         lines.push(`Presupuesto no usado: $${Math.max(0, maxBudget - plannedBuyUsd).toFixed(2)} — reservado por seguridad, límites o configuración.`);
       }
       lines.push(`Modo de reparto: ${config.gridAllocationMode ?? "uniform"}. Modo de uso de presupuesto: ${config.gridCapitalDeploymentMode ?? "capped"}.`);
-      lines.push(`Los niveles SELL no consumen USD. Son objetivos de salida y requieren BTC/inventario, no dólares. Por eso el capital USD comprometible se calcula principalmente sobre los BUY.`);
+      lines.push(`Cada SELL está emparejado con un BUY: vende la cantidad de BTC que el BUY compraría, al precio del SELL. Por eso el notional visual del SELL es ligeramente superior al del BUY (incluye el beneficio objetivo).`);
+      lines.push(`Los niveles SELL no consumen USD. Son objetivos de salida y requieren BTC/inventario, no dólares. Por eso el capital USD comprometible se calcula exclusivamente sobre los BUY.`);
     }
   }
   // Ejecución
@@ -1375,6 +1377,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
                   distanceFromMidPct: undefined,
                 })),
                 sellLevelsCount: sellLevels.length,
+                sellNotionalTotal: sellLevels.reduce((s: number, l: any) => s + Number(l.notionalUsd || 0), 0),
                 capitalPerLevelUniform,
               });
             } catch {

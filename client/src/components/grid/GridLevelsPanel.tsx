@@ -424,6 +424,50 @@ export function GridLevelsPanel({
           </div>
         )}
 
+        {/* Capital allocation summary cards */}
+        {filteredLevels.length > 0 && (() => {
+          const buyLevels = filteredLevels.filter((l: any) => l.side === "BUY");
+          const sellLevels = filteredLevels.filter((l: any) => l.side === "SELL");
+          const buyTotal = buyLevels.reduce((s: number, l: any) => s + Number(l.notionalUsd || 0), 0);
+          const sellTotal = sellLevels.reduce((s: number, l: any) => s + Number(l.notionalUsd || 0), 0);
+          const grossVisual = buyTotal + sellTotal;
+          const cas = levelsSummary?.capitalAllocationSummary;
+          const buyTotalFinal = cas?.plannedBuyUsd ?? buyTotal;
+          const sellTotalFinal = cas?.plannedSellNotionalUsd ?? sellTotal;
+          const grossFinal = cas?.grossVisualNotionalUsd ?? grossVisual;
+          return (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
+                <p className="text-[10px] text-muted-foreground">Capital USD en BUY</p>
+                <p className="text-sm font-mono text-amber-400">{fmtUsd(buyTotalFinal)}</p>
+              </div>
+              <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-2">
+                <p className="text-[10px] text-muted-foreground">Notional visual SELL</p>
+                <p className="text-sm font-mono text-blue-400">{fmtUsd(sellTotalFinal)}</p>
+              </div>
+              <div className="rounded-md border border-green-500/30 bg-green-500/5 p-2">
+                <p className="text-[10px] text-muted-foreground">Capital USD necesario</p>
+                <p className="text-sm font-mono text-green-400">{fmtUsd(buyTotalFinal)}</p>
+              </div>
+              <div className="rounded-md border border-purple-500/30 bg-purple-500/5 p-2">
+                <p className="text-[10px] text-muted-foreground">Notional bruto visual</p>
+                <p className="text-sm font-mono text-purple-400">{fmtUsd(grossFinal)}</p>
+              </div>
+              <div className="rounded-md border border-border bg-muted/20 p-2">
+                <p className="text-[10px] text-muted-foreground">SELL computa USD</p>
+                <p className="text-sm font-mono text-muted-foreground">No</p>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* SELL disclaimer */}
+        {filteredLevels.length > 0 && (
+          <div className="mb-3 text-[10px] text-muted-foreground bg-muted/20 rounded-md p-2 border border-border/30">
+            Los SELL no consumen USD. Son objetivos teóricos de venta o salidas asociadas a ciclos. Requieren BTC/inventario, no dólares.
+          </div>
+        )}
+
         {/* Table or empty state */}
         {filteredLevels.length > 0 ? (
           <>
@@ -435,7 +479,7 @@ export function GridLevelsPanel({
                     <th className="text-left py-2 px-2">Lado</th>
                     <th className="text-left py-2 px-2">Estado final</th>
                     <th className="text-left py-2 px-2">Precio</th>
-                    <th className="text-left py-2 px-2">Capital</th>
+                    <th className="text-left py-2 px-2">Importe / Notional</th>
                     <th className="text-left py-2 px-2">Beneficio objetivo</th>
                     <th className="text-left py-2 px-2">Creado</th>
                     <th className="text-left py-2 px-2">Finalizado</th>
@@ -474,7 +518,14 @@ export function GridLevelsPanel({
                           {fmtPrice(getLevelPrice(level))}
                         </td>
                         <td className="py-2 px-2 font-mono text-xs">
-                          {fmtUsd(level.notionalUsd)}
+                          <span
+                            title={level.side === "BUY"
+                              ? "Consume USD si se ejecuta."
+                              : "No consume USD. Requiere BTC/inventario."}
+                            className={level.side === "BUY" ? "text-amber-400" : "text-blue-400"}
+                          >
+                            {fmtUsd(level.notionalUsd)}
+                          </span>
                         </td>
                         <td className="py-2 px-2 text-xs">
                           {profit ? (
@@ -618,7 +669,7 @@ export function GridLevelsPanel({
                 `Precio: ${fmtPrice(getLevelPrice(lvl))}`,
                 `Precio actual: ${currentPrice != null ? fmtPrice(currentPrice) : "—"}`,
                 d ? `Distancia: ${d.distanceUsd >= 0 ? "+" : ""}${d.distanceUsd.toFixed(2)} $ (${fmtPct(d.distancePct)})` : "Distancia: —",
-                `Capital: ${fmtUsd(lvl.notionalUsd)}`,
+                `Importe/Notional: ${fmtUsd(lvl.notionalUsd)}`,
                 `Cantidad: ${toNum(lvl.quantity)?.toFixed(6) ?? "—"}`,
                 p ? `Beneficio objetivo: +${p.targetUsd.toFixed(2)} $ / +${p.pct?.toFixed(2)}%` : "Beneficio objetivo: —",
                 p?.feeUsd != null ? `Fee: ${p.feeUsd.toFixed(2)} $` : "",
@@ -698,7 +749,15 @@ export function GridLevelsPanel({
                   </>
                 );
               })()}
-              <Row label="Capital reservado" value={fmtUsd(selectedLevel.notionalUsd)} mono />
+              <Row
+                label={selectedLevel.side === "BUY" ? "Capital USD asignado" : "Notional visual venta"}
+                value={
+                  <span className={selectedLevel.side === "BUY" ? "text-amber-400" : "text-blue-400"}>
+                    {fmtUsd(selectedLevel.notionalUsd)}
+                  </span>
+                }
+                mono
+              />
               <Row
                 label="Cantidad"
                 value={toNum(selectedLevel.quantity)?.toFixed(6) ?? "—"}
@@ -818,10 +877,10 @@ export function GridLevelsPanel({
             <div className="space-y-1 text-xs text-muted-foreground border-t pt-2">
               <p>Beneficio objetivo estimado, no realizado.</p>
               {selectedLevel.side === "BUY" && (
-                <p className="text-amber-500">BUY: consume USD real para la compra.</p>
+                <p className="text-amber-500">BUY: consume USD real para la compra. Este importe se reservaría si el BUY se ejecuta.</p>
               )}
               {selectedLevel.side === "SELL" && (
-                <p className="text-blue-400">SELL: requiere BTC/inventario, NO consume USD adicional.</p>
+                <p className="text-blue-400">SELL: no consume USD. Requiere BTC/inventario. Representa una salida/objetivo de venta.</p>
               )}
               {!selectedLevel.exchangeOrderId && <p className="text-amber-500">Sin orden real.</p>}
               {!selectedLevel.cycleId && <p>Sin ciclo asociado.</p>}

@@ -203,6 +203,7 @@ export interface BuildSummaryParams {
   minLevelUsd: number;
   buyLevels: LevelForAllocation[];
   sellLevelsCount: number;
+  sellNotionalTotal: number;
   capitalPerLevelUniform: number;
 }
 
@@ -285,6 +286,26 @@ export function applyWeightsToGeneratedLevels(
 
     buyIdx++;
   }
+
+  // ─── Update SELL notional visual from paired BUY quantity ───────────
+  // SELL levelIndex matches BUY levelIndex (both start at 0 = closest to mid).
+  // sell.notionalUsd = pairedBuy.quantity × sell.price
+  // This makes the SELL visual reflect "selling the BTC bought by the paired BUY"
+  // at the SELL price level, which is slightly higher than the BUY notional.
+  // SELL still does NOT consume USD — it requires BTC/inventory.
+  for (const sell of sellLevels) {
+    const pairedBuy = buyLevels.find(b => b.levelIndex === sell.levelIndex);
+    if (pairedBuy && pairedBuy.quantity > 0) {
+      sell.notionalUsd = pairedBuy.quantity * sell.price;
+      sell.quantity = pairedBuy.quantity; // same BTC quantity as the paired BUY
+      sell.netProfitTargetUsd = sell.notionalUsd * (netProfitTargetPct / 100);
+      sell.feeEstimateUsd = sell.notionalUsd * 0.0009;
+      sell.taxReserveUsd = sell.notionalUsd * (netProfitTargetPct / 100) * 0.20;
+    }
+    sell.capitalImpactType = "requires_base_asset_not_usd";
+    sell.allocationWeight = 0;
+    sell.allocationReason = "SELL teórico: no consume USD; requiere BTC/inventario";
+  }
 }
 
 export function buildCapitalAllocationSummary(
@@ -301,6 +322,7 @@ export function buildCapitalAllocationSummary(
     minLevelUsd,
     buyLevels,
     sellLevelsCount,
+    sellNotionalTotal,
     capitalPerLevelUniform,
   } = params;
 
@@ -316,7 +338,7 @@ export function buildCapitalAllocationSummary(
   );
 
   const plannedBuyUsd = perLevelAmounts.reduce((a, b) => a + b, 0);
-  const plannedSellNotionalUsd = sellLevelsCount * capitalPerLevelUniform;
+  const plannedSellNotionalUsd = sellNotionalTotal > 0 ? sellNotionalTotal : sellLevelsCount * capitalPerLevelUniform;
   const grossVisualNotionalUsd = plannedBuyUsd + plannedSellNotionalUsd;
   const budgetUnusedUsd = Math.max(0, maxBudgetReferenceUsd - plannedBuyUsd);
   const budgetUsedPct = maxBudgetReferenceUsd > 0 ? (plannedBuyUsd / maxBudgetReferenceUsd) * 100 : 0;

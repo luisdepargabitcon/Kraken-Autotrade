@@ -5,6 +5,124 @@
 
 ---
 
+## 2026-07-05 — Fix semántica SELL en tabla de niveles y capitalAllocationSummary
+
+### Problema detectado visualmente
+
+En la tabla de Niveles se observaba:
+- SELL #1-#5 con "Capital" = $60 cada uno
+- BUY #6-#10 con "Capital" = $120 cada uno
+
+Esto generaba confusión porque:
+1. BUY sí consume USD ($120 correcto)
+2. SELL no consume USD, pero mostraba $60 sin contexto
+3. La columna se llamaba "Capital", pero en SELL no es capital real
+4. `capitalAllocationSummary` decía `plannedSellNotionalUsd = $600` (artificial: 5 × $120)
+5. La tabla/DB mostraba SELL total = $300 (5 × $60 real)
+6. **Divergencia confirmada entre audit ($600) y DB/UI ($300)**
+
+### Causa raíz
+
+1. `gridCapitalAllocator.allocate()` calcula `capitalPerLevelUsd = $600 / 10 = $60` (divide entre todos los niveles)
+2. `generateGeometricLevels()` crea 5 BUY + 5 SELL, **todos** con `notionalUsd = $60`
+3. `applyWeightsToGeneratedLevels()` redistribuye **solo BUY** → cada BUY pasa a $120
+4. **SELL nunca se actualiza** → se queda con $60 residual de la generación inicial
+5. `buildCapitalAllocationSummary()` calcula `plannedSellNotionalUsd = sellLevelsCount × firstBuy.notionalUsd` = 5 × $120 = $600 (artificial)
+
+### Fórmula final aplicada para SELL
+
+```
+SELL notionalUsd = pairedBuy.quantity × sell.price
+```
+
+- Cada SELL vende la cantidad de BTC que el BUY correspondiente compraría
+- El precio del SELL es mayor que el del BUY → SELL notional > BUY notional
+- SELL incluye implícitamente el beneficio objetivo
+- SELL sigue sin consumir USD (`capitalImpactType = requires_base_asset_not_usd`)
+
+### Correcciones aplicadas
+
+**Archivo: `server/services/gridIsolated/gridAllocationEngine.ts`**
+
+1. `applyWeightsToGeneratedLevels()`: después de redistribuir BUY, actualiza cada SELL:
+   - `notionalUsd = pairedBuy.quantity × sell.price`
+   - `quantity = pairedBuy.quantity` (misma cantidad de BTC)
+   - `netProfitTargetUsd`, `feeEstimateUsd`, `taxReserveUsd` recalculados
+   - `capitalImpactType = requires_base_asset_not_usd`
+   - `allocationReason = "SELL teórico: no consume USD; requiere BTC/inventario"`
+
+2. `buildCapitalAllocationSummary()`:
+   - Nuevo parámetro `sellNotionalTotal` en `BuildSummaryParams`
+   - `plannedSellNotionalUsd` ahora usa el valor real (suma de SELL notionalUsd)
+   - Fallback a cálculo anterior solo si `sellNotionalTotal = 0`
+
+**Archivo: `server/routes/gridIsolated.routes.ts`**
+
+3. Audit endpoint: pasa `sellNotionalTotal` real (suma de `sellLevels[].notionalUsd`) al summary
+4. ChatGPT export: texto actualizado con explicación de emparejamiento BUY-SELL y notional visual vs capital real
+
+**Archivo: `client/src/components/grid/GridLevelsPanel.tsx`**
+
+5. Columna "Capital" → "Importe / Notional"
+6. Celda: BUY en ámbar ("Consume USD si se ejecuta."), SELL en azul ("No consume USD. Requiere BTC/inventario.")
+7. Cards de resumen encima de la tabla:
+   - Capital USD en BUY
+   - Notional visual SELL
+   - Capital USD necesario
+   - Notional bruto visual
+   - SELL computa USD: No
+8. Disclaimer: "Los SELL no consumen USD. Son objetivos teóricos de venta..."
+9. Modal: "Capital USD asignado" (BUY) / "Notional visual venta" (SELL)
+10. Modal: explicaciones específicas BUY/SELL
+
+### Tests
+
+**Archivo: `server/services/__tests__/gridWeightedLevels.test.ts`**
+
+- Test "SELL levels retain visual notionalUsd" → actualizado a "SELL levels have visual notionalUsd derived from paired BUY quantity × SELL price"
+- 10 tests nuevos en bloque "SELL notional consistency: $600 budget, 5 BUY, 5 SELL, uniform":
+  - BUY total = 600
+  - Cada BUY = 120
+  - SELL capitalImpactType correcto
+  - BUY capitalImpactType correcto
+  - plannedSellNotionalUsd = suma real (no artificial)
+  - grossVisualNotionalUsd = plannedBuyUsd + plannedSellNotionalUsd
+  - usdActuallyNeededForBuyLevels = plannedBuyUsd
+  - usdNotNeededBecauseSellLevelsDoNotConsumeUsd = plannedSellNotionalUsd
+  - SELL notional > paired BUY notional
+  - SELL quantity = paired BUY quantity
+
+### Validaciones
+
+- `tsc --noEmit`: ✅ sin errores
+- `vitest gridIsolatedRoutes`: ✅ 66/66
+- `vitest gridAllocationEngine`: ✅ 26/26
+- `vitest gridWeightedLevels`: ✅ 35/35 (10 tests nuevos)
+- **Total: 127/127 ✅**
+
+### Valores ejemplo (uniform, $600 budget)
+
+| Concepto | Valor |
+|---|---|
+| BUY total | $600.00 |
+| Cada BUY | $120.00 |
+| SELL notional visual total | ~$607-610 (ligeramente > $600) |
+| Cada SELL | ~$121-122 (pairedBuy.qty × sell.price) |
+| Capital USD realmente necesario | $600.00 |
+| Notional bruto visual | ~$1,207-1,210 |
+| SELL computa USD | No |
+
+### Estado final
+
+- BUY no se rompió: sigue $120 cada uno, $600 total ✅
+- Hard cap $600 no se rompió ✅
+- Tabla, audit y export coinciden ✅
+- No IDCA · No FISCO · No REAL · No órdenes reales
+- Grid sigue OFF
+- **NO se ha hecho deploy** (pendiente aprobación)
+
+---
+
 ## 2026-07-05 — api1: Campos fecha/duración en audit/export ChatGPT
 
 ### Objetivo

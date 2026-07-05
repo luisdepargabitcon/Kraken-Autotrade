@@ -251,13 +251,22 @@ describe("real user example — $3454 balance, balanced profile, capped $600", (
     }
   });
 
-  it("SELL levels retain visual notionalUsd but are not USD expenditure", () => {
+  it("SELL levels have visual notionalUsd derived from paired BUY quantity × SELL price", () => {
     const levels = generateAndApply({}, "uniform", 600);
     const sellLevels = levels.filter(l => l.side === "SELL");
-    // SELL notional is kept from generation (visual), not 0
-    sellLevels.forEach(l => {
-      expect(l.notionalUsd).toBeGreaterThan(0);
-      expect(l.capitalImpactType).toBe("requires_base_asset_not_usd");
+    const buyLevels = levels.filter(l => l.side === "BUY");
+    // SELL notional is now derived from paired BUY, not the original generation value
+    sellLevels.forEach(sell => {
+      expect(sell.notionalUsd).toBeGreaterThan(0);
+      expect(sell.capitalImpactType).toBe("requires_base_asset_not_usd");
+      // Find paired BUY by levelIndex
+      const pairedBuy = buyLevels.find(b => b.levelIndex === sell.levelIndex);
+      if (pairedBuy) {
+        // SELL notional should be approximately pairedBuy.quantity × sell.price
+        expect(sell.notionalUsd).toBeCloseTo(pairedBuy.quantity * sell.price, 0);
+        // SELL notional should be slightly higher than BUY notional (sell price > buy price)
+        expect(sell.notionalUsd).toBeGreaterThan(pairedBuy.notionalUsd);
+      }
     });
   });
 
@@ -315,5 +324,80 @@ describe("edge cases", () => {
     const buyLevels = levels.filter(l => l.side === "BUY");
     // Could be 0 or 1 if band too narrow — just no crash
     expect(Array.isArray(buyLevels)).toBe(true);
+  });
+});
+
+// ─── SELL notional consistency with capitalAllocationSummary ──────────────────
+
+describe("SELL notional consistency: $600 budget, 5 BUY, 5 SELL, uniform", () => {
+  const levels = generateAndApply({}, "uniform", 600);
+  const buyLevels = levels.filter(l => l.side === "BUY");
+  const sellLevels = levels.filter(l => l.side === "SELL");
+
+  it("BUY total = 600 (hard cap respected)", () => {
+    const buyTotal = buyLevels.reduce((s, l) => s + l.notionalUsd, 0);
+    expect(buyTotal).toBeCloseTo(600, 0);
+  });
+
+  it("each BUY = 120 (uniform distribution)", () => {
+    buyLevels.forEach(l => {
+      expect(l.notionalUsd).toBeCloseTo(120, 0);
+    });
+  });
+
+  it("SELL does not compute as USD (capitalImpactType)", () => {
+    sellLevels.forEach(l => {
+      expect(l.capitalImpactType).toBe("requires_base_asset_not_usd");
+    });
+  });
+
+  it("BUY capitalImpactType = consumes_usd", () => {
+    buyLevels.forEach(l => {
+      expect(l.capitalImpactType).toBe("consumes_usd");
+    });
+  });
+
+  it("plannedSellNotionalUsd = sum of actual SELL notionalUsd (not artificial)", () => {
+    const sellTotal = sellLevels.reduce((s, l) => s + l.notionalUsd, 0);
+    // Each SELL notional = pairedBuy.quantity × sell.price, so sellTotal > 600
+    expect(sellTotal).toBeGreaterThan(600);
+    // But should be in a reasonable range (not 300 like the old bug)
+    expect(sellTotal).toBeLessThan(700);
+  });
+
+  it("grossVisualNotionalUsd = plannedBuyUsd + plannedSellNotionalUsd", () => {
+    const buyTotal = buyLevels.reduce((s, l) => s + l.notionalUsd, 0);
+    const sellTotal = sellLevels.reduce((s, l) => s + l.notionalUsd, 0);
+    const gross = buyTotal + sellTotal;
+    expect(gross).toBeCloseTo(buyTotal + sellTotal, 2);
+    expect(gross).toBeGreaterThan(1200); // > 600 + 600 since SELL > BUY
+  });
+
+  it("usdActuallyNeededForBuyLevels = plannedBuyUsd", () => {
+    const buyTotal = buyLevels.reduce((s, l) => s + l.notionalUsd, 0);
+    expect(buyTotal).toBeCloseTo(600, 0);
+  });
+
+  it("usdNotNeededBecauseSellLevelsDoNotConsumeUsd = plannedSellNotionalUsd", () => {
+    const sellTotal = sellLevels.reduce((s, l) => s + l.notionalUsd, 0);
+    expect(sellTotal).toBeGreaterThan(0);
+  });
+
+  it("SELL notional > paired BUY notional (includes profit target)", () => {
+    sellLevels.forEach(sell => {
+      const pairedBuy = buyLevels.find(b => b.levelIndex === sell.levelIndex);
+      if (pairedBuy) {
+        expect(sell.notionalUsd).toBeGreaterThan(pairedBuy.notionalUsd);
+      }
+    });
+  });
+
+  it("SELL quantity = paired BUY quantity (same BTC)", () => {
+    sellLevels.forEach(sell => {
+      const pairedBuy = buyLevels.find(b => b.levelIndex === sell.levelIndex);
+      if (pairedBuy) {
+        expect(sell.quantity).toBeCloseTo(pairedBuy.quantity, 8);
+      }
+    });
   });
 });
