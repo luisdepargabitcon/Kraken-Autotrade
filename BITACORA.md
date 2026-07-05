@@ -85,6 +85,63 @@ Exponer los mismos datos de fechas/duración que se ven en UI en los endpoints A
 
 ---
 
+## 2026-07-05 — val1: Validación capitalAllocationSummary con SHADOW temporal
+
+### Procedimiento
+
+1. Guardado estado inicial: `mode=OFF, isActive=false`
+2. Cambiado a `SHADOW` + `isActive=true`
+3. Ejecutado `shadow-validate` (tick de simulación)
+4. Consultado `/monitor/audit` para inspeccionar `capitalAllocationSummary`
+5. Desactivado motor: `isActive=false`
+6. Devuelto a `OFF`
+
+### Resultados con budget $600 (uniform)
+
+| Campo | Valor esperado | Valor real | OK |
+|---|---|---|---|
+| `buyLevelsCount` | > 0 | 5 | ✅ |
+| `sellLevelsCount` | > 0 | 5 | ✅ |
+| `plannedBuyUsd` | > 0 | 600 | ✅ |
+| `plannedSellNotionalUsd` | > 0 | 600 | ✅ |
+| `usdActuallyNeededForBuyLevels` | = plannedBuyUsd | 600 | ✅ |
+| `usdNotNeededBecauseSellLevelsDoNotConsumeUsd` | = plannedSellNotionalUsd | 600 | ✅ |
+| `grossVisualNotionalUsd` | = plannedBuyUsd + plannedSellNotionalUsd | 1200 | ✅ |
+| `perLevelAllocations` | no vacío | 5 entradas | ✅ |
+| BUY `capitalImpactType` | `consumes_usd` | `consumes_usd` | ✅ |
+| SELL `capitalImpactType` | `requires_base_asset_not_usd` | `requires_base_asset_not_usd` | ✅ |
+
+### Per-level allocations (uniform, $600 budget)
+
+| Level | Side | Weight | Allocation | Reason |
+|---|---|---|---|---|
+| 0 | BUY | 1 | $120 | Uniforme |
+| 1 | BUY | 1 | $120 | Uniforme |
+| 2 | BUY | 1 | $120 | Uniforme |
+| 3 | BUY | 1 | $120 | Uniforme |
+| 4 | BUY | 1 | $120 | Uniforme |
+
+5 × $120 = **$600** = budget ✅
+
+### Estado final tras validación
+
+```json
+{
+  "mode": "OFF",
+  "isActive": false,
+  "isRunning": false,
+  "plannedLevelsCount": 45,
+  "realOpenOrdersCount": 0
+}
+```
+
+- Grid devuelto a OFF ✅
+- Motor desactivado ✅
+- 0 órdenes reales ✅
+- No IDCA · No FISCO · No REAL
+
+---
+
 ## 2026-07-05 — Limpieza doc + Fechas en tablas Niveles/Ciclos
 
 ### 1. Eliminación de CORRECCIONES_Y_ACTUALIZACIONES.md
