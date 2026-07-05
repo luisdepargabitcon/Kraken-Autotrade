@@ -1441,11 +1441,30 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
   // ─── Reconciliation ──────────────────────────────────────
 
-  app.post("/api/grid-isolated/rebuild-planned-levels", async (_req: Request, res: Response) => {
+  app.post("/api/grid-isolated/rebuild-planned-levels", async (req: Request, res: Response) => {
     try {
+      // Gate 1: env var must be explicitly enabled
+      if (process.env.GRID_ADMIN_REBUILD_ENABLED !== "true") {
+        return res.status(403).json({ success: false, reason: "GRID_ADMIN_REBUILD_ENABLED is not set to 'true'" });
+      }
+
+      // Gate 2: require exact confirmation token
+      const { confirm, reason, dryRun } = req.body as { confirm?: string; reason?: string; dryRun?: boolean };
+      if (confirm !== "REBUILD_PLANNED_LEVELS") {
+        return res.status(400).json({ success: false, reason: "Missing or incorrect 'confirm' field. Expected: \"REBUILD_PLANNED_LEVELS\"" });
+      }
+
+      // Gate 3: require reason string
+      if (!reason || typeof reason !== "string" || reason.trim().length < 5) {
+        return res.status(400).json({ success: false, reason: "Missing or too short 'reason' field (min 5 chars)" });
+      }
+
+      // Default dryRun = true (safe default)
+      const isDryRun = dryRun !== false;
+
       // Ensure engine state is fresh from DB
       await gridIsolatedEngine.loadConfig();
-      
+
       const status = gridIsolatedEngine.getExecutionStatus();
       const config = gridIsolatedEngine.getConfig();
 
@@ -1462,8 +1481,11 @@ export function registerGridIsolatedRoutes(app: Express): void {
       if (status.openCycles > 0) {
         return res.status(403).json({ success: false, reason: `Cannot rebuild: ${status.openCycles} open cycles` });
       }
+      if (gridIsolatedEngine.isRunning()) {
+        return res.status(403).json({ success: false, reason: "Engine is running — stop the grid before rebuild" });
+      }
 
-      const result = await gridIsolatedEngine.rebuildPlannedLevels();
+      const result = await gridIsolatedEngine.rebuildPlannedLevels({ dryRun: isDryRun, reason: reason.trim() });
       if (!result.success) {
         return res.status(400).json(result);
       }
