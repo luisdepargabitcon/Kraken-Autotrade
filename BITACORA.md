@@ -1,7 +1,51 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-05
+> Última actualización: 2026-07-06
+
+---
+
+## 2026-07-06 — Fix: gridAllocationMode no se guardaba en DB (commit 9405cba)
+
+### Problema
+Al cambiar "Modo de reparto de capital" en la UI (Cartera → Configuración de Capital), el valor seleccionado (uniform, progressive_conservative, progressive_aggressive, adaptive_market) no persistía. Al refrescar la página volvía a "uniform".
+
+### Causa raíz
+El método `saveConfig()` en `server/services/gridIsolated/gridIsolatedEngine.ts` no incluía los 5 campos de capital allocation en el objeto `values` que se persiste a la DB:
+- `gridAllocationMode`
+- `gridCapitalDeploymentMode`
+- `gridProgressiveIntensity`
+- `gridMaxLevelPct`
+- `gridMinLevelUsd`
+
+El endpoint `POST /api/grid-isolated/config` sí los aceptaba en `allowedFields` y los guardaba en `this.config` en memoria, pero al llamar `saveConfig()` los campos no se escribían a la fila de `grid_isolated_configs`. Al recargar, `loadConfig()` leía la DB (donde el valor seguía siendo el default `uniform`) y el cambio se perdía.
+
+### Corrección
+Añadidos los 5 campos al objeto `values` en `saveConfig()`:
+```typescript
+gridAllocationMode: this.config.gridAllocationMode,
+gridCapitalDeploymentMode: this.config.gridCapitalDeploymentMode,
+gridProgressiveIntensity: this.config.gridProgressiveIntensity.toFixed(2),
+gridMaxLevelPct: this.config.gridMaxLevelPct.toFixed(2),
+gridMinLevelUsd: this.config.gridMinLevelUsd.toFixed(2),
+```
+
+### Archivo modificado
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — líneas 233-238
+
+### Validaciones
+- `npx tsc --noEmit`: OK
+- `npx vitest run` (3 suites, 127 tests): 127/127 pass
+- Bug confirmado en staging antes del fix: POST config con `gridAllocationMode=adaptive_market` devolvía `null`
+- Pendiente: deploy a staging + validación API curl
+
+### Estado final
+- El fix está committed y pushed (`9405cba`)
+- **No desplegado en staging** — pendiente aprobación de deploy
+
+### Notas
+- No se tocaron IDCA, FISCO, REAL, órdenes reales, niveles, ciclos ni DB manualmente
+- Cambiar `gridAllocationMode` solo afecta a futuras generaciones de niveles, no regenera niveles existentes
 
 ---
 
