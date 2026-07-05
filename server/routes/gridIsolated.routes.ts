@@ -38,6 +38,148 @@ import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes
 import { getNaturalGridMessage } from "../services/gridIsolated/gridActivityFormatter";
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
 
+// ─── Timing metadata helpers for audit/export ───────────────────────────────
+
+const LEVEL_STATUS_LABELS: Record<string, string> = {
+  planned: "Planificado",
+  active: "Activo",
+  open: "Activo",
+  filled: "Ejecutado",
+  replaced: "Reemplazado",
+  cancelled: "Cancelado",
+  expired: "Expirado",
+};
+
+const CYCLE_STATUS_LABELS: Record<string, string> = {
+  open: "Abierto",
+  active: "Abierto",
+  buy_filled: "Compra ejecutada",
+  completed: "Cerrado",
+  cancelled: "Cancelado",
+  error: "Error",
+};
+
+function fmtDateEs(v: unknown): string {
+  if (!v) return "—";
+  try {
+    const d = new Date(v as string);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString("es-ES", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+  } catch { return "—"; }
+}
+
+function durationLabel(fromMs: number, toMs: number | null, suffix: string): string {
+  const endMs = toMs ?? Date.now();
+  const diffMs = Math.max(0, endMs - fromMs);
+  const totalMin = Math.floor(diffMs / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return `${suffix} ${parts.join(" ")}`;
+}
+
+function getLevelFinishedAt(level: any): Date | null {
+  const status = level?.status ?? "planned";
+  if (status === "filled" && level?.filledAt) return new Date(level.filledAt);
+  if (status === "cancelled" && (level?.cancelledAt || level?.updatedAt)) return new Date(level.cancelledAt || level.updatedAt);
+  if (status === "replaced" && (level?.replacedAt || level?.updatedAt)) return new Date(level.replacedAt || level.updatedAt);
+  if (status === "expired" && (level?.cancelledAt || level?.updatedAt)) return new Date(level.cancelledAt || level.updatedAt);
+  return null;
+}
+
+function getLevelFinishedReason(status: string): string {
+  if (["planned", "open", "active"].includes(status)) return "Pendiente";
+  if (status === "filled") return "Ejecutado";
+  if (status === "replaced") return "Reemplazado";
+  if (status === "cancelled") return "Cancelado";
+  if (status === "expired") return "Expirado";
+  return status;
+}
+
+function isLevelOpen(status: string): boolean {
+  return ["planned", "active", "open"].includes(status);
+}
+
+function enrichLevelTiming(level: any) {
+  const finishedAt = getLevelFinishedAt(level);
+  const open = isLevelOpen(level?.status ?? "planned");
+  const createdAtMs = level?.createdAt ? new Date(level.createdAt).getTime() : null;
+  const finishedAtMs = finishedAt ? finishedAt.getTime() : null;
+  const durationMs = createdAtMs !== null
+    ? (finishedAtMs ?? Date.now()) - createdAtMs
+    : null;
+  const durationLbl = createdAtMs !== null
+    ? open
+      ? durationLabel(createdAtMs, null, "abierto hace")
+      : finishedAtMs !== null
+        ? durationLabel(createdAtMs, finishedAtMs, "duró")
+        : null
+    : null;
+  return {
+    ...level,
+    createdAt: level?.createdAt ?? null,
+    finishedAt: finishedAt ? finishedAt.toISOString() : null,
+    finishedReason: getLevelFinishedReason(level?.status ?? "planned"),
+    durationMs,
+    durationLabel: durationLbl,
+    statusLabel: LEVEL_STATUS_LABELS[level?.status ?? "planned"] ?? level?.status ?? "—",
+    capitalImpactType: level?.side === "BUY" ? "consumes_usd" : "requires_base_asset_not_usd",
+  };
+}
+
+function getCycleOpenedAt(cycle: any): Date | null {
+  if (cycle?.openedAt) return new Date(cycle.openedAt);
+  if (cycle?.buyFilledAt) return new Date(cycle.buyFilledAt);
+  if (cycle?.createdAt) return new Date(cycle.createdAt);
+  return null;
+}
+
+function getCycleClosedAt(cycle: any): Date | null {
+  if (cycle?.closedAt) return new Date(cycle.closedAt);
+  if (cycle?.completedAt) return new Date(cycle.completedAt);
+  const closedStatuses = ["completed", "cancelled", "error"];
+  if (closedStatuses.includes(cycle?.status)) {
+    if (cycle?.sellFilledAt) return new Date(cycle.sellFilledAt);
+    if (cycle?.updatedAt) return new Date(cycle.updatedAt);
+  }
+  return null;
+}
+
+function isCycleOpen(cycle: any): boolean {
+  return ["open", "active", "buy_filled"].includes(cycle?.status ?? "");
+}
+
+function enrichCycleTiming(cycle: any) {
+  const openedAt = getCycleOpenedAt(cycle);
+  const closedAt = getCycleClosedAt(cycle);
+  const open = isCycleOpen(cycle);
+  const openedMs = openedAt ? openedAt.getTime() : null;
+  const closedMs = closedAt ? closedAt.getTime() : null;
+  const durationMs = openedMs !== null
+    ? (closedMs ?? Date.now()) - openedMs
+    : null;
+  const durationLbl = openedMs !== null
+    ? open
+      ? durationLabel(openedMs, null, "abierto hace")
+      : closedMs !== null
+        ? durationLabel(openedMs, closedMs, "duró")
+        : null
+    : null;
+  return {
+    ...cycle,
+    openedAt: openedAt ? openedAt.toISOString() : null,
+    closedAt: closedAt ? closedAt.toISOString() : null,
+    durationMs,
+    durationLabel: durationLbl,
+    statusLabel: CYCLE_STATUS_LABELS[cycle?.status ?? ""] ?? cycle?.status ?? "—",
+  };
+}
+
 function buildBlockingReasons(checks: any, config?: any): string[] {
   const reasons: string[] = [];
   if (!checks.revolutxInitialized) {
@@ -382,6 +524,19 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     const plannedCount = levels.filter((l: any) => l.status === "planned").length;
     const replacedCount = levels.filter((l: any) => l.status === "replaced").length;
     lines.push(`Niveles: ${levels.length} niveles (${plannedCount} planificados, ${openCount} abiertos, ${filledCount} filled, ${replacedCount} reemplazados).`);
+    // Per-level timing summary (first 5)
+    const sampleLevels = levels.slice(0, 5);
+    for (const lvl of sampleLevels) {
+      const enriched = enrichLevelTiming(lvl);
+      const side = enriched.side ?? "—";
+      const statusLbl = enriched.statusLabel ?? "—";
+      const created = enriched.createdAt ? fmtDateEs(enriched.createdAt) : "fecha desconocida";
+      if (enriched.finishedAt) {
+        lines.push(`  Nivel ${side} creado el ${created}. ${statusLbl}, ${enriched.durationLabel ?? "duración desconocida"}.`);
+      } else {
+        lines.push(`  Nivel ${side} creado el ${created}. Sigue ${statusLbl.toLowerCase()}, ${enriched.durationLabel ?? "pendiente"}.`);
+      }
+    }
   } else {
     lines.push("Niveles: sin niveles generados.");
   }
@@ -389,6 +544,18 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     const completedCount = cycles.filter((c: any) => c.status === "completed").length;
     const openCount = cycles.filter((c: any) => c.status === "open" || c.status === "active").length;
     lines.push(`Ciclos: ${cycles.length} ciclos (${openCount} abiertos, ${completedCount} completados).`);
+    // Per-cycle timing summary (first 5)
+    const sampleCycles = cycles.slice(0, 5);
+    for (const cyc of sampleCycles) {
+      const enriched = enrichCycleTiming(cyc);
+      const opened = enriched.openedAt ? fmtDateEs(enriched.openedAt) : "fecha desconocida";
+      if (enriched.closedAt) {
+        const closed = fmtDateEs(enriched.closedAt);
+        lines.push(`  Ciclo #${cyc.cycleNumber ?? "?"} abierto el ${opened} y cerrado el ${closed}. ${enriched.statusLabel}, ${enriched.durationLabel ?? "duración desconocida"}.`);
+      } else {
+        lines.push(`  Ciclo #${cyc.cycleNumber ?? "?"} abierto el ${opened}. Sigue ${enriched.statusLabel.toLowerCase()}, ${enriched.durationLabel ?? "pendiente"}.`);
+      }
+    }
   } else {
     lines.push("Ciclos: sin ciclos abiertos ni simulados todavía.");
   }
@@ -1155,8 +1322,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
           naturalMessage: getNaturalGridMessage(ev.eventType, ev.message, ev.metadataJson),
         })),
         decisions,
-        levels,
-        cycles,
+        levels: levels.map((l: any) => enrichLevelTiming(l)),
+        cycles: cycles.map((c: any) => enrichCycleTiming(c)),
         levelsSummary: {
           activeRangeVersionId: activeRangeId,
           activeRangeVersionNumber: status.activeRangeVersionNumber,
@@ -1180,22 +1347,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
           realOpenOrdersCount,
           openCyclesCount,
           closedCyclesCount,
-          currentLevels: currentLevels.map((l: any) => ({
-            id: l.id,
-            rangeVersionId: l.rangeVersionId,
-            side: l.side,
-            price: l.price,
-            status: l.status,
-            createdAt: l.createdAt,
-          })),
-          historicalLevels: historicalLevels.map((l: any) => ({
-            id: l.id,
-            rangeVersionId: l.rangeVersionId,
-            side: l.side,
-            price: l.price,
-            status: l.status,
-            createdAt: l.createdAt,
-          })),
+          currentLevels: currentLevels.map((l: any) => enrichLevelTiming(l)),
+          historicalLevels: historicalLevels.map((l: any) => enrichLevelTiming(l)),
           capitalAllocationSummary: (() => {
             try {
               const buyLevels = currentLevels.filter((l: any) => l.side === "BUY");
@@ -1404,8 +1557,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
         } : null,
         status,
         safety: { blockingReasons, postOnlySupported: checks.postOnlySupported, realModesBlocked: !checks.postOnlySupported || blockingReasons.length > 0 },
-        levels,
-        cycles,
+        levels: levels.map((l: any) => enrichLevelTiming(l)),
+        cycles: cycles.map((c: any) => enrichCycleTiming(c)),
         events,
         reconciliation: reconciliation || { ok: null, mismatches: [] },
       });

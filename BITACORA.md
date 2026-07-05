@@ -5,6 +5,86 @@
 
 ---
 
+## 2026-07-05 — api1: Campos fecha/duración en audit/export ChatGPT
+
+### Objetivo
+
+Exponer los mismos datos de fechas/duración que se ven en UI en los endpoints API:
+- `/api/grid-isolated/monitor/audit`
+- `/api/grid-isolated/export/chatgpt`
+- `/api/grid-isolated/export/json`
+
+### Cambios realizados
+
+**Archivo:** `server/routes/gridIsolated.routes.ts`
+
+**Nuevas funciones helper** (puras, sin side effects):
+
+| Función | Descripción |
+|---|---|
+| `fmtDateEs(v)` | Formatea fecha a es-ES DD/MM/YYYY HH:mm:ss |
+| `durationLabel(fromMs, toMs, suffix)` | Calcula duración "duró Xh Ym" / "abierto hace Xh Ym" |
+| `getLevelFinishedAt(level)` | Devuelve Date según status: filled→filledAt, cancelled→cancelledAt/updatedAt, replaced→replacedAt/updatedAt |
+| `getLevelFinishedReason(status)` | "Pendiente" / "Ejecutado" / "Reemplazado" / "Cancelado" / "Expirado" |
+| `enrichLevelTiming(level)` | Añade: createdAt, finishedAt, finishedReason, durationMs, durationLabel, statusLabel, capitalImpactType |
+| `getCycleOpenedAt(cycle)` | openedAt → buyFilledAt → createdAt |
+| `getCycleClosedAt(cycle)` | closedAt → completedAt → sellFilledAt → updatedAt (si cerrado) |
+| `enrichCycleTiming(cycle)` | Añade: openedAt, closedAt, durationMs, durationLabel, statusLabel |
+
+**Endpoints enriquecidos:**
+
+1. `/monitor/audit`:
+   - `levels[]`: cada nivel con timing completo
+   - `cycles[]`: cada ciclo con timing completo
+   - `levelsSummary.currentLevels[]`: enriquecidos con timing
+   - `levelsSummary.historicalLevels[]`: enriquecidos con timing
+
+2. `/export/chatgpt`:
+   - Por cada nivel (primeros 5): "Nivel BUY creado el 05/07/2026 14:32:10. Sigue pendiente desde hace 1h 12m."
+   - Por cada ciclo (primeros 5): "Ciclo #1 abierto el 05/07/2026 14:35:00 y cerrado el 05/07/2026 15:10:00. Cerrado, duró 35m."
+
+3. `/export/json`:
+   - `levels[]` y `cycles[]` enriquecidos con timing
+
+**Reglas de `capitalImpactType`:**
+- BUY → `consumes_usd`
+- SELL → `requires_base_asset_not_usd`
+
+**Reglas de `finishedAt`:**
+- `filled` → `filledAt`
+- `cancelled` → `cancelledAt` (fallback `updatedAt`)
+- `replaced` → `replacedAt` (fallback `updatedAt`)
+- `planned`/`open`/`active` → `null`
+
+### Tests añadidos
+
+**Archivo:** `server/routes/__tests__/gridIsolatedRoutes.test.ts`
+
+| Test | Verifica |
+|---|---|
+| `monitor/audit levels include timing fields` | createdAt, finishedAt, finishedReason, durationMs, durationLabel, statusLabel, capitalImpactType en todos los niveles |
+| `levelsSummary.currentLevels include timing fields` | statusLabel, capitalImpactType, durationLabel |
+| `levelsSummary.historicalLevels include timing fields` | statusLabel, capitalImpactType |
+| `monitor/audit cycles include timing fields` | openedAt, closedAt, durationMs, durationLabel, statusLabel |
+| `export chatgpt handles empty levels/cycles gracefully` | No rompe sin datos |
+| `export/json includes enriched levels with timing fields` | statusLabel, capitalImpactType, durationLabel en levels y cycles |
+
+### Validaciones
+
+- `tsc --noEmit`: ✅ sin errores
+- `vitest gridIsolatedRoutes`: ✅ 66/66 (6 tests nuevos)
+- `vitest gridAllocationEngine`: ✅ 26/26
+- `vitest gridWeightedLevels`: ✅ 25/25
+- **Total: 117/117 ✅**
+
+### Estado final
+
+- No se añadieron columnas a DB
+- No IDCA · No FISCO · No REAL · No órdenes reales
+- Grid sigue OFF
+
+---
+
 ## 2026-07-05 — Limpieza doc + Fechas en tablas Niveles/Ciclos
 
 ### 1. Eliminación de CORRECCIONES_Y_ACTUALIZACIONES.md

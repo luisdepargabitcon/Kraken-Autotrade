@@ -673,4 +673,87 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.status).toBe(200);
     expect(res.body).toContain("Resumen Grid Aislado");
   });
+
+  // ─── Timing metadata in audit levels ──────────────────────────────
+  it("monitor/audit levels include timing fields (createdAt, finishedAt, durationLabel, statusLabel, capitalImpactType)", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const allLevels = res.body.levels ?? [];
+    for (const lvl of allLevels) {
+      expect(lvl).toHaveProperty("createdAt");
+      expect(lvl).toHaveProperty("finishedAt");
+      expect(lvl).toHaveProperty("finishedReason");
+      expect(lvl).toHaveProperty("durationMs");
+      expect(lvl).toHaveProperty("durationLabel");
+      expect(lvl).toHaveProperty("statusLabel");
+      expect(lvl).toHaveProperty("capitalImpactType");
+      if (lvl.side === "BUY") {
+        expect(lvl.capitalImpactType).toBe("consumes_usd");
+      } else if (lvl.side === "SELL") {
+        expect(lvl.capitalImpactType).toBe("requires_base_asset_not_usd");
+      }
+    }
+  });
+
+  it("monitor/audit levelsSummary.currentLevels include timing fields", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const currentLevels = res.body.levelsSummary?.currentLevels ?? [];
+    for (const lvl of currentLevels) {
+      expect(lvl).toHaveProperty("statusLabel");
+      expect(lvl).toHaveProperty("capitalImpactType");
+      expect(lvl).toHaveProperty("durationLabel");
+    }
+  });
+
+  it("monitor/audit levelsSummary.historicalLevels include timing fields", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const historicalLevels = res.body.levelsSummary?.historicalLevels ?? [];
+    for (const lvl of historicalLevels) {
+      expect(lvl).toHaveProperty("statusLabel");
+      expect(lvl).toHaveProperty("capitalImpactType");
+    }
+  });
+
+  // ─── Timing metadata in audit cycles ──────────────────────────────
+  it("monitor/audit cycles include timing fields (openedAt, closedAt, durationLabel, statusLabel)", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const allCycles = res.body.cycles ?? [];
+    for (const cyc of allCycles) {
+      expect(cyc).toHaveProperty("openedAt");
+      expect(cyc).toHaveProperty("closedAt");
+      expect(cyc).toHaveProperty("durationMs");
+      expect(cyc).toHaveProperty("durationLabel");
+      expect(cyc).toHaveProperty("statusLabel");
+    }
+  });
+
+  // ─── Export ChatGPT does not crash without levels/cycles ──────────
+  it("export chatgpt handles empty levels/cycles gracefully", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    expect(res.status).toBe(200);
+    expect(typeof res.body).toBe("string");
+    // Should contain either "sin niveles" or level timing info
+    expect(res.body.includes("Niveles:") || res.body.includes("sin niveles")).toBe(true);
+    expect(res.body.includes("Ciclos:") || res.body.includes("sin ciclos")).toBe(true);
+  });
+
+  // ─── Export JSON includes timing metadata ─────────────────────────
+  it("export/json includes enriched levels with timing fields", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/json");
+    expect(res.status).toBe(200);
+    const levels = res.body.levels ?? [];
+    for (const lvl of levels) {
+      expect(lvl).toHaveProperty("statusLabel");
+      expect(lvl).toHaveProperty("capitalImpactType");
+      expect(lvl).toHaveProperty("durationLabel");
+    }
+    const cycles = res.body.cycles ?? [];
+    for (const cyc of cycles) {
+      expect(cyc).toHaveProperty("statusLabel");
+      expect(cyc).toHaveProperty("durationLabel");
+    }
+  });
 });
