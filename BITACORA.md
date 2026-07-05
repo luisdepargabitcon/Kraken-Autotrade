@@ -5,6 +5,93 @@
 
 ---
 
+## 2026-07-05 — Rebuild seguro de niveles planned antiguos (commit 9b09435)
+
+### Problema
+
+Tras el deploy del fix `208ea3d`, los niveles planned antiguos en DB seguían mostrando SELL=$60 (creados antes del fix). El código nuevo solo afectaría a nuevos rangos/niveles.
+
+### Por qué no se usó SQL manual
+
+- Riesgo de incoherencias entre rango activo, levelsSummary, eventos de auditoría, export ChatGPT, UI e histórico filled/replaced.
+- Se decidió usar el motor para regenerar niveles de forma segura.
+
+### Método seguro usado
+
+Se implementó endpoint interno `POST /api/grid-isolated/rebuild-planned-levels` (commit `9b09435`):
+
+**Método en `GridIsolatedEngine.rebuildPlannedLevels()`:**
+1. Validar mode = OFF o SHADOW (nunca REAL)
+2. Validar `realOpenOrdersCount = 0`
+3. Validar `openCycles = 0`
+4. Validar no hay niveles con `exchangeOrderId`
+5. Validar no hay niveles `filled` en rango activo
+6. Marcar rango activo como `replaced`
+7. Marcar niveles planned antiguos como `replaced`
+8. Generar nuevo rango + niveles con código actualizado (`proposeRangeVersion`)
+9. Emitir eventos: `GRID_LEVELS_REPLACED`, `GRID_LEVELS_REBUILT`, `GRID_RANGE_REBUILT_MANUAL`
+
+**Archivos nuevos/modificados:**
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — método `rebuildPlannedLevels()`
+- `server/routes/gridIsolated.routes.ts` — endpoint `POST /api/grid-isolated/rebuild-planned-levels`
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — `GRID_RANGE_REBUILT_MANUAL` en `GridEventType`
+- `server/services/gridIsolated/gridActivityFormatter.ts` — mapping para `GRID_RANGE_REBUILT_MANUAL`
+
+### Guardas verificadas antes del rebuild
+
+- mode = SHADOW ✅ (no REAL)
+- realOpenOrdersCount = 0 ✅
+- openCycles = 0 ✅
+- exchangeOrderId = NULL en todos los niveles planned ✅
+- No niveles filled en rango activo ✅
+
+### Resultado del rebuild
+
+| Métrica | Antes | Después |
+|---|---|---|
+| Rango activo | `5221cfca-...` | `e7ad49bc-...` |
+| Niveles planned antiguos | 10 (replaced) | — |
+| Niveles planned nuevos | — | 10 |
+| BUY total | $600.00 | $600.00 |
+| Cada BUY | $120.00 | $120.00 |
+| SELL total | $300.00 (5 × $60) | $626.42 (5 × ~$125) |
+| Cada SELL | $60.00 | $125.04–$125.53 |
+| Capital USD necesario | $600.00 | $600.00 |
+| Notional bruto visual | $900.00 | $1,226.42 |
+| SELL computa USD | No | No |
+
+### Validación post-rebuild
+
+- `mode = OFF` ✅ (restaurado)
+- `isActive = false` ✅
+- `isRunning = false` ✅
+- `realOpenOrdersCount = 0` ✅
+- `openCycles = 0` ✅
+- `exchangeOrderId = NULL` en nuevos planned ✅
+- Niveles filled históricos no tocados ✅
+- Niveles replaced históricos no tocados ✅
+- Eventos de auditoría emitidos: `GRID_LEVELS_REPLACED`, `GRID_LEVELS_REBUILT`, `GRID_RANGE_REBUILT_MANUAL` ✅
+- `capitalAllocationSummary`:
+  - `plannedBuyUsd = 600` ✅
+  - `plannedSellNotionalUsd = 626.42` ✅ (suma real, no artificial)
+  - `grossVisualNotionalUsd = 1226.42` ✅
+  - `usdActuallyNeededForBuyLevels = 600` ✅
+  - `usdNotNeededBecauseSellLevelsDoNotConsumeUsd = 626.42` ✅
+- `tsc --noEmit`: ✅
+- `vitest`: 127/127 ✅
+- Logs sin errores ✅
+
+### Estado final
+
+- Grid OFF ✅
+- No IDCA ✅
+- No FISCO ✅
+- No REAL ✅
+- No órdenes reales ✅
+- BITACORA.md actualizado ✅
+
+---
+
 ## 2026-07-05 — Fix semántica SELL en tabla de niveles y capitalAllocationSummary
 
 ### Problema detectado visualmente
