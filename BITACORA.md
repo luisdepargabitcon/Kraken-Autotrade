@@ -1,7 +1,87 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-01
+> Última actualización: 2026-07-05
+
+---
+
+## 2026-07-05 — Limpieza doc + Fechas en tablas Niveles/Ciclos
+
+### 1. Eliminación de CORRECCIONES_Y_ACTUALIZACIONES.md
+
+`CORRECCIONES_Y_ACTUALIZACIONES.md` eliminado del repositorio. Era fuente paralela obsoleta; todo su contenido estaba ya en commits o en esta `BITACORA.md`.
+
+**Comprobación post-eliminación:**
+```
+grep -R "CORRECCIONES_Y_ACTUALIZACIONES" . --exclude-dir=node_modules --exclude-dir=.git
+→ Solo referencias históricas en docs/*.md de auditoría (no código fuente)
+```
+
+**Única fuente oficial: `BITACORA.md`**
+
+### 2. Tabla de Niveles — nuevas columnas Creado / Finalizado / Duración
+
+**Archivo:** `client/src/components/grid/GridLevelsPanel.tsx`
+
+Columnas añadidas a la tabla (sin migración DB — usan campos ya existentes):
+
+| Columna | Fuente | Lógica |
+|---|---|---|
+| **Estado final** | `status` | Localizado: Planificado / Activo / Ejecutado / Reemplazado / Cancelado |
+| **Capital** | `notionalUsd` | Desplazado a posición más visible |
+| **Beneficio objetivo** | `netProfitTargetUsd` | Compactado a `+X $` |
+| **Creado** | `createdAt` | DD/MM/YYYY HH:mm:ss (es-ES) |
+| **Finalizado** | `filledAt` si filled / `cancelledAt` si cancelled|replaced / "Pendiente" si planned | Calculado en UI, sin columna nueva |
+| **Duración** | `createdAt` → `filledAt`/`cancelledAt`/`Date.now()` | "duró Xh Ym" o "hace Xh Ym" |
+
+Nuevas funciones helpers (puras, sin side effects):
+- `fmtDate(v)` — formatea cualquier fecha a es-ES DD/MM/YYYY HH:mm:ss
+- `durationLabel(fromMs, toMs, suffix)` — calcula duración en Xh Ym
+- `getLevelFinishedAt(level)` — devuelve Date|null según status
+- `getLevelFinishedLabel(level)` — texto "Pendiente" / fecha formateada
+- `getLevelStatusLabel(status)` — etiqueta natural española
+
+**Modal de nivel** actualizado con:
+- Fila "Creado" con fecha formateada
+- Fila "Finalizado" (verde si terminado, gris si pendiente)
+- Fila "Duración" (azul, "abierto hace..." / "duró...")
+- Fila "Estado natural" en español
+- Fila "Impacto capital": BUY → "Consume USD 💵" / SELL → "Requiere BTC/inventario 🔷"
+- Textos obligatorios diferenciados BUY/SELL
+
+### 3. Tabla de Ciclos — Reescritura completa GridCyclesPanel.tsx
+
+**Archivo:** `client/src/components/grid/GridCyclesPanel.tsx` (reescrito completamente)
+
+Columnas añadidas a la tabla:
+
+| Columna | Fuente | Lógica |
+|---|---|---|
+| **Apertura** | `openedAt` → `buyFilledAt` → `createdAt` | Preferencia en orden |
+| **Cierre** | `closedAt` → `completedAt` → `sellFilledAt` → `updatedAt` si closed | Fallback encadenado |
+| **Duración** | Apertura → Cierre (o ahora si abierto) | "duró Xh Ym" / "hace Xh Ym" |
+| **Estado** | `status` | Localizado: Abierto / Compra ejecutada / Cerrado / Cancelado |
+
+Añadido:
+- Paginación (10/25/50 por página)
+- `showViewAll` prop para botón "Ver todos"
+- Modal de detalle con: ID, par, estado, BUY/SELL precios, cantidad, capital usado, PnL bruto/fees/fiscal/neto, apertura, cierre, duración, BUY/SELL filledAt, holdTimeMinutes, levelIds, orderIds
+
+No se añadieron columnas a DB. Toda la lógica de fechas se calcula en UI usando campos existentes (`createdAt`, `filledAt`, `cancelledAt`, `sellFilledAt`, `completedAt`, `updatedAt`).
+
+### Validaciones
+
+- `tsc --noEmit`: ✅ sin errores
+- `vitest gridAllocationEngine`: ✅ 26/26
+- `vitest gridWeightedLevels`: ✅ 25/25
+- `vitest gridIsolatedRoutes`: ✅ 60/60
+- **Total: 111/111 ✅**
+
+### Estado final
+
+- Grid en OFF durante todo el proceso
+- No IDCA · No FISCO · No REAL · No órdenes reales
+- `BITACORA.md` = única fuente oficial
 
 ---
 

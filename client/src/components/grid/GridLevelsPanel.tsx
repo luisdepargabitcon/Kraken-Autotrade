@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Layers, TrendingUp, TrendingDown, AlertTriangle, Info,
-  Copy, Download, ChevronLeft, ChevronRight, X, Check,
+  Copy, Download, ChevronLeft, ChevronRight, X, Check, Clock,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -68,6 +68,65 @@ function fmtUsd(v: unknown): string {
 
 function fmtPct(p: number): string {
   return `${p >= 0 ? "+" : ""}${p.toFixed(2)}%`;
+}
+
+const DATE_LOCALE = "es-ES";
+const DATE_OPTIONS: Intl.DateTimeFormatOptions = {
+  day: "2-digit", month: "2-digit", year: "numeric",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+};
+
+function fmtDate(v: unknown): string {
+  if (!v) return "—";
+  try {
+    const d = new Date(v as string);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString(DATE_LOCALE, DATE_OPTIONS);
+  } catch { return "—"; }
+}
+
+function durationLabel(fromMs: number, toMs: number | null, suffix: string): string {
+  const endMs = toMs ?? Date.now();
+  const diffMs = Math.max(0, endMs - fromMs);
+  const totalMin = Math.floor(diffMs / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return `${suffix} ${parts.join(" ")}`;
+}
+
+function getLevelFinishedAt(level: any): Date | null {
+  const status = level?.status ?? "planned";
+  if (status === "filled" && level?.filledAt) return new Date(level.filledAt);
+  if (status === "cancelled" && level?.cancelledAt) return new Date(level.cancelledAt);
+  if (status === "replaced" && level?.cancelledAt) return new Date(level.cancelledAt);
+  if (status === "replaced" && level?.updatedAt) return new Date(level.updatedAt);
+  return null;
+}
+
+function getLevelFinishedLabel(level: any): string {
+  const fin = getLevelFinishedAt(level);
+  if (fin) return fmtDate(fin);
+  const status = level?.status ?? "planned";
+  if (["planned", "open"].includes(status)) return "Pendiente";
+  if (status === "active") return "Activo";
+  return "—";
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  planned: "Planificado",
+  active: "Activo",
+  open: "Activo",
+  filled: "Ejecutado",
+  replaced: "Reemplazado",
+  cancelled: "Cancelado",
+  expired: "Expirado",
+};
+
+function getLevelStatusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status;
 }
 
 function getLevelPrice(level: any): number | null {
@@ -374,13 +433,13 @@ export function GridLevelsPanel({
                   <tr className="text-xs text-muted-foreground border-b">
                     <th className="text-left py-2 px-2">Nivel</th>
                     <th className="text-left py-2 px-2">Lado</th>
-                    <th className="text-left py-2 px-2">Estado</th>
+                    <th className="text-left py-2 px-2">Estado final</th>
                     <th className="text-left py-2 px-2">Precio</th>
-                    <th className="text-left py-2 px-2">Dist. USD</th>
-                    <th className="text-left py-2 px-2">Dist. %</th>
-                    <th className="text-left py-2 px-2">Relación</th>
-                    <th className="text-left py-2 px-2">Beneficio objetivo</th>
                     <th className="text-left py-2 px-2">Capital</th>
+                    <th className="text-left py-2 px-2">Beneficio objetivo</th>
+                    <th className="text-left py-2 px-2">Creado</th>
+                    <th className="text-left py-2 px-2">Finalizado</th>
+                    <th className="text-left py-2 px-2">Duración</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -408,73 +467,47 @@ export function GridLevelsPanel({
                         </td>
                         <td className="py-2 px-2">
                           <Badge variant="secondary" className="text-xs">
-                            {level.status}
+                            {getLevelStatusLabel(level.status)}
                           </Badge>
                         </td>
                         <td className="py-2 px-2 font-mono">
                           {fmtPrice(getLevelPrice(level))}
                         </td>
                         <td className="py-2 px-2 font-mono text-xs">
-                          {distance ? (
-                            <span
-                              className={
-                                distance.distanceUsd >= 0
-                                  ? "text-green-400"
-                                  : "text-red-400"
-                              }
-                            >
-                              {distance.distanceUsd >= 0 ? "+" : ""}
-                              {distance.distanceUsd.toFixed(2)} $
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2 px-2 font-mono text-xs">
-                          {distance ? (
-                            <span
-                              className={
-                                distance.distancePct >= 0
-                                  ? "text-green-400"
-                                  : "text-red-400"
-                              }
-                            >
-                              {fmtPct(distance.distancePct)}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2 px-2 text-xs">
-                          {relation ? (
-                            <div className={cn("flex items-center gap-1", relation.color)}>
-                              {Icon && <Icon className="h-3 w-3" />}
-                              <span>{relation.label}</span>
-                            </div>
-                          ) : (
-                            "—"
-                          )}
+                          {fmtUsd(level.notionalUsd)}
                         </td>
                         <td className="py-2 px-2 text-xs">
                           {profit ? (
-                            <div className="space-y-0.5">
-                              <div className="font-mono text-green-400">
-                                +{profit.targetUsd.toFixed(2)} $ / +
-                                {profit.pct?.toFixed(2)}%
-                              </div>
-                              {profit.feeUsd !== null && (
-                                <div className="text-muted-foreground text-[10px]">
-                                  fee {profit.feeUsd.toFixed(2)} $ · fiscal{" "}
-                                  {profit.taxUsd?.toFixed(2) ?? "—"} $
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
+                            <span className="font-mono text-green-400">
+                              +{profit.targetUsd.toFixed(2)} $
+                            </span>
+                          ) : "—"}
                         </td>
-                        <td className="py-2 px-2 font-mono text-xs">
-                          {fmtUsd(level.notionalUsd)}
+                        <td className="py-2 px-2 text-xs text-muted-foreground whitespace-nowrap">
+                          {level.createdAt ? fmtDate(level.createdAt) : "—"}
+                        </td>
+                        <td className="py-2 px-2 text-xs whitespace-nowrap">
+                          {(() => {
+                            const fin = getLevelFinishedAt(level);
+                            if (fin) return <span className="text-green-400">{fmtDate(fin)}</span>;
+                            const st = level?.status ?? "planned";
+                            if (["planned","open"].includes(st))
+                              return <span className="text-muted-foreground">Pendiente</span>;
+                            if (st === "active")
+                              return <span className="text-blue-400">Activo</span>;
+                            return <span className="text-muted-foreground">—</span>;
+                          })()}
+                        </td>
+                        <td className="py-2 px-2 text-xs whitespace-nowrap">
+                          {(() => {
+                            if (!level.createdAt) return "—";
+                            const from = new Date(level.createdAt).getTime();
+                            const fin = getLevelFinishedAt(level);
+                            const isOpen = ["planned","active","open"].includes(level?.status ?? "");
+                            if (fin) return <span className="text-muted-foreground">{durationLabel(from, fin.getTime(), "duró")}</span>;
+                            if (isOpen) return <span className="text-blue-400 flex items-center gap-1"><Clock className="h-3 w-3" />{durationLabel(from, null, "hace")}</span>;
+                            return "—";
+                          })()}
                         </td>
                       </tr>
                     );
@@ -728,13 +761,50 @@ export function GridLevelsPanel({
                 />
               )}
               <Row
-                label="createdAt"
-                value={new Date(selectedLevel.createdAt).toLocaleString("es-ES")}
+                label="Creado"
+                value={fmtDate(selectedLevel.createdAt)}
+              />
+              {(() => {
+                const fin = getLevelFinishedAt(selectedLevel);
+                const finLabel = getLevelFinishedLabel(selectedLevel);
+                return (
+                  <Row
+                    label="Finalizado"
+                    value={
+                      fin
+                        ? <span className="text-green-400">{finLabel}</span>
+                        : <span className="text-muted-foreground">{finLabel}</span>
+                    }
+                  />
+                );
+              })()}
+              {(() => {
+                if (!selectedLevel.createdAt) return null;
+                const from = new Date(selectedLevel.createdAt).getTime();
+                const fin = getLevelFinishedAt(selectedLevel);
+                const isOpen = ["planned","active","open"].includes(selectedLevel?.status ?? "");
+                const label = fin
+                  ? durationLabel(from, fin.getTime(), "duró")
+                  : isOpen ? durationLabel(from, null, "abierto hace")
+                  : null;
+                return label ? <Row label="Duración" value={<span className="text-blue-400">{label}</span>} /> : null;
+              })()}
+              <Row
+                label="Estado natural"
+                value={getLevelStatusLabel(selectedLevel.status)}
+              />
+              <Row
+                label="Impacto capital"
+                value={
+                  selectedLevel.side === "BUY"
+                    ? <span className="text-amber-400">Consume USD 💵</span>
+                    : <span className="text-blue-400">Requiere BTC/inventario (no USD) 🔷</span>
+                }
               />
               {selectedLevel.updatedAt && (
                 <Row
                   label="updatedAt"
-                  value={new Date(selectedLevel.updatedAt).toLocaleString("es-ES")}
+                  value={fmtDate(selectedLevel.updatedAt)}
                 />
               )}
             </div>
@@ -747,6 +817,12 @@ export function GridLevelsPanel({
             {/* Textos obligatorios */}
             <div className="space-y-1 text-xs text-muted-foreground border-t pt-2">
               <p>Beneficio objetivo estimado, no realizado.</p>
+              {selectedLevel.side === "BUY" && (
+                <p className="text-amber-500">BUY: consume USD real para la compra.</p>
+              )}
+              {selectedLevel.side === "SELL" && (
+                <p className="text-blue-400">SELL: requiere BTC/inventario, NO consume USD adicional.</p>
+              )}
               {!selectedLevel.exchangeOrderId && <p className="text-amber-500">Sin orden real.</p>}
               {!selectedLevel.cycleId && <p>Sin ciclo asociado.</p>}
               {mode === "SHADOW" && <p className="text-blue-500">Estimado en simulación SHADOW, sin orden real.</p>}
