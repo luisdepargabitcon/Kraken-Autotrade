@@ -487,6 +487,7 @@ export const GRID_EVENT_TYPES = [
   "GRID_LEVELS_REPLACED",
   "GRID_LEVELS_PRESERVED_DUE_TO_CYCLE",
   "GRID_REGIME_CHANGED",
+  "GRID_RANGE_REBUILT_MANUAL",
 ] as const;
 
 export type GridEventType = (typeof GRID_EVENT_TYPES)[number];

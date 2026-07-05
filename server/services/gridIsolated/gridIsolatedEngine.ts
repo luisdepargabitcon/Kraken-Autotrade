@@ -1166,6 +1166,154 @@ class GridIsolatedEngine {
   }
 
   /**
+   * Safely rebuild planned levels for the active range.
+   * Marks old planned levels as replaced, generates new levels with current code.
+   * Safety guards:
+   *   - mode must be OFF or SHADOW (never REAL)
+   *   - no real open orders
+   *   - no open cycles
+   *   - no levels with exchangeOrderId
+   *   - no filled levels in active range
+   */
+  async rebuildPlannedLevels(): Promise<{
+    success: boolean;
+    reason?: string;
+    oldRangeVersionId?: string;
+    newRangeVersionId?: string;
+    replacedLevelsCount?: number;
+    newLevelsCount?: number;
+    beforeSummary?: { buyTotal: number; sellTotal: number };
+    afterSummary?: { buyTotal: number; sellTotal: number };
+  }> {
+    if (!this.config) {
+      return { success: false, reason: "No config loaded" };
+    }
+
+    // Guard 1: mode must be OFF or SHADOW
+    if (this.config.mode === "REAL_LIMITED" || this.config.mode === "REAL_FULL") {
+      return { success: false, reason: `Cannot rebuild in REAL mode (${this.config.mode})` };
+    }
+
+    // Guard 2: no active range
+    if (!this.activeRangeVersion) {
+      return { success: false, reason: "No active range version to rebuild" };
+    }
+
+    const oldRange = this.activeRangeVersion;
+    const activeLevels = this.levels.filter(l => l.rangeVersionId === oldRange.id);
+
+    // Guard 3: no real orders
+    const hasRealOrders = activeLevels.some(l =>
+      l.exchangeOrderId != null || l.status === "open" || l.status === "placed" || l.status === "partially_filled"
+    );
+    if (hasRealOrders) {
+      return { success: false, reason: "Active range has real orders or open levels" };
+    }
+
+    // Guard 4: no open cycles
+    const hasOpenCycles = this.cycles.some(c =>
+      c.rangeVersionId === oldRange.id &&
+      !["completed", "cancelled", "stop_loss_hit", "trailing_closed"].includes(c.status)
+    );
+    if (hasOpenCycles) {
+      return { success: false, reason: "Active range has open cycles" };
+    }
+
+    // Guard 5: no filled levels in active range
+    const hasFilledLevels = activeLevels.some(l => l.status === "filled");
+    if (hasFilledLevels) {
+      return { success: false, reason: "Active range has filled levels — cannot rebuild safely" };
+    }
+
+    // Compute before summary
+    const beforeBuyTotal = activeLevels
+      .filter(l => l.side === "BUY" && l.status === "planned")
+      .reduce((s, l) => s + Number(l.notionalUsd || 0), 0);
+    const beforeSellTotal = activeLevels
+      .filter(l => l.side === "SELL" && l.status === "planned")
+      .reduce((s, l) => s + Number(l.notionalUsd || 0), 0);
+
+    // Get fresh band snapshot
+    const bandSnapshot = await getGridBandSnapshot({
+      pair: this.config.pair,
+      atrPeriod: this.config.atrPeriod ?? 14,
+      atrTimeframe: this.config.atrTimeframe ?? "1h",
+      bandPeriod: this.config.bandPeriod ?? 89,
+      bandStdDevMultiplier: this.config.bandStdDevMultiplier ?? 2.0,
+    });
+    if (!bandSnapshot) {
+      return { success: false, reason: "Could not fetch band snapshot from market data" };
+    }
+
+    // Mark old range as replaced
+    await db.update(gridRangeVersions)
+      .set({ status: "replaced", closedAt: new Date() })
+      .where(eq(gridRangeVersions.id, oldRange.id));
+
+    // Mark old planned levels as replaced
+    const plannedLevels = activeLevels.filter(l => l.status === "planned");
+    if (plannedLevels.length > 0) {
+      await db.update(gridIsolatedLevels)
+        .set({ status: "replaced" })
+        .where(eq(gridIsolatedLevels.rangeVersionId, oldRange.id));
+      for (const level of this.levels) {
+        if (level.rangeVersionId === oldRange.id && level.status === "planned") {
+          level.status = "replaced";
+        }
+      }
+    }
+
+    // Log old levels replaced
+    await this.logEvent("GRID_LEVELS_REPLACED", `Rebuild manual: ${plannedLevels.length} niveles planificados antiguos marcados como replaced.`, {
+      oldRangeVersionId: oldRange.id,
+      replacedLevelsCount: plannedLevels.length,
+      pair: this.config.pair,
+      trigger: "manual_rebuild_planned_levels",
+    });
+
+    // Generate new range + levels with current code
+    await this.proposeRangeVersion(bandSnapshot);
+    const newLevels = this.levels.filter(l => l.rangeVersionId === this.activeRangeVersion!.id);
+
+    // Log new levels rebuilt
+    await this.logEvent("GRID_LEVELS_REBUILT", `Rebuild manual: ${newLevels.length} niveles nuevos generados con código actualizado.`, {
+      newRangeVersionId: this.activeRangeVersion!.id,
+      oldRangeVersionId: oldRange.id,
+      levelsCount: newLevels.length,
+      pair: this.config.pair,
+      trigger: "manual_rebuild_planned_levels",
+    });
+
+    // Log audit event
+    await this.logEvent("GRID_RANGE_REBUILT_MANUAL", `Rebuild manual de niveles planificados completado. Rango ${oldRange.id.slice(0, 8)} → ${this.activeRangeVersion!.id.slice(0, 8)}.`, {
+      oldRangeVersionId: oldRange.id,
+      newRangeVersionId: this.activeRangeVersion!.id,
+      replacedLevelsCount: plannedLevels.length,
+      newLevelsCount: newLevels.length,
+      pair: this.config.pair,
+      trigger: "manual_rebuild_planned_levels",
+    });
+
+    // Compute after summary
+    const afterBuyTotal = newLevels
+      .filter(l => l.side === "BUY")
+      .reduce((s, l) => s + Number(l.notionalUsd || 0), 0);
+    const afterSellTotal = newLevels
+      .filter(l => l.side === "SELL")
+      .reduce((s, l) => s + Number(l.notionalUsd || 0), 0);
+
+    return {
+      success: true,
+      oldRangeVersionId: oldRange.id,
+      newRangeVersionId: this.activeRangeVersion!.id,
+      replacedLevelsCount: plannedLevels.length,
+      newLevelsCount: newLevels.length,
+      beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal },
+      afterSummary: { buyTotal: afterBuyTotal, sellTotal: afterSellTotal },
+    };
+  }
+
+  /**
    * Get all levels.
    */
   getLevels(): GridLevel[] {

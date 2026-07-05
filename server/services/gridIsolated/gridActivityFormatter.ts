@@ -402,6 +402,19 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
       return `${pair} pasó de ${prev} a ${next} porque ${reason}.`;
     },
   },
+  GRID_RANGE_REBUILT_MANUAL: {
+    category: "LEVEL",
+    severity: "INFO",
+    title: "Rebuild manual de niveles",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      const oldId = meta.oldRangeVersionId ? String(meta.oldRangeVersionId).slice(0, 8) : "—";
+      const newId = meta.newRangeVersionId ? String(meta.newRangeVersionId).slice(0, 8) : "—";
+      const replaced = meta.replacedLevelsCount ?? 0;
+      const created = meta.newLevelsCount ?? 0;
+      return `Rebuild manual: rango ${oldId} → ${newId}. ${replaced} niveles reemplazados, ${created} nuevos generados.`;
+    },
+  },
 };
 
 export function formatGridEvent(ev: RawGridEvent): FormattedGridEvent {

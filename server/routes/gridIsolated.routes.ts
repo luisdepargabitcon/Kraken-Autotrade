@@ -1441,6 +1441,38 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
   // ─── Reconciliation ──────────────────────────────────────
 
+  app.post("/api/grid-isolated/rebuild-planned-levels", async (_req: Request, res: Response) => {
+    try {
+      // Ensure engine state is fresh from DB
+      await gridIsolatedEngine.loadConfig();
+      
+      const status = gridIsolatedEngine.getExecutionStatus();
+      const config = gridIsolatedEngine.getConfig();
+
+      // Pre-flight safety checks
+      if (!config) {
+        return res.status(400).json({ success: false, reason: "No config loaded" });
+      }
+      if (config.mode === "REAL_LIMITED" || config.mode === "REAL_FULL") {
+        return res.status(403).json({ success: false, reason: `Cannot rebuild in REAL mode (${config.mode})` });
+      }
+      if (status.realOpenOrdersCount > 0) {
+        return res.status(403).json({ success: false, reason: `Cannot rebuild: ${status.realOpenOrdersCount} real open orders` });
+      }
+      if (status.openCycles > 0) {
+        return res.status(403).json({ success: false, reason: `Cannot rebuild: ${status.openCycles} open cycles` });
+      }
+
+      const result = await gridIsolatedEngine.rebuildPlannedLevels();
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   app.post("/api/grid-isolated/reconcile", async (req: Request, res: Response) => {
     try {
       const { pair } = req.body as { pair?: string };
