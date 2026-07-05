@@ -36,6 +36,7 @@ import {
   toGridLevels,
   computeAdaptiveRatio,
 } from "./gridGeometricLevels";
+import { applyWeightsToGeneratedLevels } from "./gridAllocationEngine";
 import {
   computeGrossTargetFromNet,
   computeSellPrice,
@@ -145,6 +146,12 @@ class GridIsolatedEngine {
           gridMinFreeCapitalUsd: parseFloat(row.gridMinFreeCapitalUsd ?? "50"),
           gridPauseCycleWhenCapitalDepleted: row.gridPauseCycleWhenCapitalDepleted ?? true,
           gridAllowNewCycleWhenCapitalFree: row.gridAllowNewCycleWhenCapitalFree ?? true,
+          // Capital allocation modes
+          gridAllocationMode: (row.gridAllocationMode as any) ?? "uniform",
+          gridCapitalDeploymentMode: (row.gridCapitalDeploymentMode as any) ?? "capped",
+          gridProgressiveIntensity: parseFloat(row.gridProgressiveIntensity ?? "0.30"),
+          gridMaxLevelPct: parseFloat(row.gridMaxLevelPct ?? "40.00"),
+          gridMinLevelUsd: parseFloat(row.gridMinLevelUsd ?? "30.00"),
         };
         // Load active state from DB
         await this.loadActiveRangeVersion();
@@ -681,7 +688,15 @@ class GridIsolatedEngine {
     const allocation = await gridCapitalAllocator.allocate(
       this.config.capitalProfile,
       10, // initial estimate
-      this.config.netProfitTargetPct
+      this.config.netProfitTargetPct,
+      {
+        maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
+        allocationMode: this.config.gridAllocationMode ?? "uniform",
+        deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
+        progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
+        maxLevelPct: this.config.gridMaxLevelPct ?? 40,
+        minLevelUsd: this.config.gridMinLevelUsd ?? 30,
+      }
     );
 
     const generatedLevels = generateGeometricLevels({
@@ -699,6 +714,20 @@ class GridIsolatedEngine {
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
       maxLevels: allocation.levelsCount,
     });
+
+    // ─── Apply per-level weighted capital to BUY levels ───────────────
+    // After geometry is fixed, re-distribute budget using the configured
+    // allocation mode. SELL levels are marked "requires_base_asset_not_usd".
+    applyWeightsToGeneratedLevels(
+      generatedLevels,
+      allocation.finalGridBudgetUsd,
+      this.config.gridAllocationMode ?? "uniform",
+      this.config.gridProgressiveIntensity ?? 0.30,
+      this.config.gridMaxLevelPct ?? 40,
+      this.config.gridMinLevelUsd ?? 30,
+      bandSnapshot.regime ?? "ranging",
+      this.config.netProfitTargetPct
+    );
 
     const rangeVersionId = randomUUID();
     const ratio = computeAdaptiveRatio(

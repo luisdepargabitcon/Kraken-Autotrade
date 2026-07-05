@@ -16,6 +16,7 @@ import { Settings2, Shield, Cpu, FlaskConical, Zap, Zap as ZapIcon, CheckCircle2
 interface GridAjustesPanelProps {
   config: any;
   status: any;
+  auditData?: any;
   unlockCheck: any;
   onConfigChange: (key: string, value: any) => void;
   onConfirmChange: (key: string, label: string, oldValue: any, newValue: any, impact: string, riskLevel: "low" | "medium" | "high", affectsCurrent: boolean, requiresRecalc: boolean) => void;
@@ -26,7 +27,7 @@ interface GridAjustesPanelProps {
 }
 
 export function GridAjustesPanel({
-  config, status, unlockCheck, onConfigChange, onConfirmChange,
+  config, status, auditData, unlockCheck, onConfigChange, onConfirmChange,
   onReconcile, reconcilePending, showHodlConfirm, setShowHodlConfirm,
 }: GridAjustesPanelProps) {
   const [subTab, setSubTab] = useState("general");
@@ -164,6 +165,7 @@ export function GridAjustesPanel({
           <GridCarteraDashboard
             config={config}
             status={status}
+            auditData={auditData}
             onConfigChange={onConfigChange}
             onConfirmChange={onConfirmChange}
           />

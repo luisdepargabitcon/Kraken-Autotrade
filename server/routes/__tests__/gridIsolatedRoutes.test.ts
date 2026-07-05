@@ -609,6 +609,38 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body.summary).toHaveProperty("historicalLevelsCount");
   });
 
+  // ─── capitalAllocationSummary in audit ──────────────────────────
+  it("monitor/audit levelsSummary includes capitalAllocationSummary", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.levelsSummary).toHaveProperty("capitalAllocationSummary");
+  });
+
+  it("capitalAllocationSummary has BUY/SELL fields or is null", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    const cs = res.body.levelsSummary?.capitalAllocationSummary;
+    if (cs !== null && cs !== undefined) {
+      expect(cs).toHaveProperty("buyLevelsCount");
+      expect(cs).toHaveProperty("sellLevelsCount");
+      expect(cs).toHaveProperty("plannedBuyUsd");
+      expect(cs).toHaveProperty("plannedSellNotionalUsd");
+      expect(cs).toHaveProperty("usdActuallyNeededForBuyLevels");
+      expect(cs).toHaveProperty("usdNotNeededBecauseSellLevelsDoNotConsumeUsd");
+      expect(cs).toHaveProperty("allocationMode");
+      expect(cs).toHaveProperty("capitalDeploymentMode");
+      expect(cs).toHaveProperty("allocationExplanation");
+      expect(cs).toHaveProperty("perLevelAllocations");
+    }
+  });
+
+  // ─── ChatGPT export includes BUY/SELL capital explanation ────────
+  it("export chatgpt does not crash (basic check)", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/chatgpt");
+    expect(res.status).toBe(200);
+    expect(typeof res.body).toBe("string");
+    expect(res.body.length).toBeGreaterThan(50);
+  });
+
   // ─── Regime change event ────────────────────────────────────────
   it("getNaturalGridMessage for GRID_REGIME_CHANGED returns Spanish regime change message", () => {
     const msg = getNaturalGridMessage("GRID_REGIME_CHANGED", null, {

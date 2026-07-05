@@ -1670,6 +1670,12 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   gridMinFreeCapitalUsd:         decimal("grid_min_free_capital_usd", { precision: 12, scale: 2 }).notNull().default("50.00"),
   gridPauseCycleWhenCapitalDepleted: boolean("grid_pause_cycle_when_capital_depleted").notNull().default(true),
   gridAllowNewCycleWhenCapitalFree:  boolean("grid_allow_new_cycle_when_capital_free").notNull().default(true),
+  // Capital allocation modes
+  gridAllocationMode:              text("grid_allocation_mode").notNull().default("uniform"),
+  gridCapitalDeploymentMode:       text("grid_capital_deployment_mode").notNull().default("capped"),
+  gridProgressiveIntensity:        decimal("grid_progressive_intensity", { precision: 5, scale: 2 }).notNull().default("0.30"),
+  gridMaxLevelPct:                 decimal("grid_max_level_pct", { precision: 5, scale: 2 }).notNull().default("40.00"),
+  gridMinLevelUsd:                 decimal("grid_min_level_usd", { precision: 10, scale: 2 }).notNull().default("30.00"),
   createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt:               timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -24,7 +24,19 @@ import {
   type CapitalProfile,
   type CapitalProfileConfig,
   type CapitalReservation,
+  type AllocationMode,
+  type CapitalDeploymentMode,
 } from "./gridIsolatedTypes";
+import { computeEffectiveBuyBudget } from "./gridAllocationEngine";
+
+export interface GridCapitalConstraints {
+  maxCapitalPerCycleUsd?: number;
+  allocationMode?: AllocationMode;
+  deploymentMode?: CapitalDeploymentMode;
+  progressiveIntensity?: number;
+  maxLevelPct?: number;
+  minLevelUsd?: number;
+}
 
 export interface CapitalAllocationResult {
   totalBalanceUsd: number;
@@ -37,6 +49,9 @@ export interface CapitalAllocationResult {
   capitalPerLevelUsd: number;
   levelsCount: number;
   profile: CapitalProfileConfig;
+  maxCapitalPerCycleUsd: number;
+  deploymentMode: CapitalDeploymentMode;
+  allocationMode: AllocationMode;
 }
 
 class GridCapitalAllocator {
@@ -121,7 +136,8 @@ class GridCapitalAllocator {
   async allocate(
     profile: CapitalProfile,
     levelsCount: number,
-    netProfitTargetPct: number
+    netProfitTargetPct: number,
+    constraints?: GridCapitalConstraints
   ): Promise<CapitalAllocationResult> {
     const profileConfig = CAPITAL_PROFILES[profile];
     const totalBalanceUsd = await this.getTotalBalanceUsd();
@@ -137,16 +153,31 @@ class GridCapitalAllocator {
     // Apply max capital percentage of balance
     const maxGridCapitalUsd = totalBalanceUsd * (profileConfig.maxCapitalPctOfBalance / 100);
 
-    // Final budget is the lesser of available and max
-    const finalGridBudgetUsd = Math.min(availableForGridUsd, maxGridCapitalUsd);
+    // Profile-based budget ceiling
+    let finalGridBudgetUsd = Math.min(availableForGridUsd, maxGridCapitalUsd);
 
-    // Per-level allocation
+    // Apply gridMaxCapitalPerCycleUsd as a hard cap if provided
+    const maxCapPerCycle = constraints?.maxCapitalPerCycleUsd ?? 0;
+    const deploymentMode: CapitalDeploymentMode = constraints?.deploymentMode ?? "capped";
+    const allocationMode: AllocationMode = constraints?.allocationMode ?? "uniform";
+    const minLevelUsd = constraints?.minLevelUsd ?? profileConfig.minNotionalPerLevelUsd;
+
     const effectiveLevels = Math.min(levelsCount, profileConfig.maxLevelsPerRange);
-    let capitalPerLevelUsd = finalGridBudgetUsd / effectiveLevels;
+
+    finalGridBudgetUsd = computeEffectiveBuyBudget(
+      finalGridBudgetUsd,
+      maxCapPerCycle,
+      deploymentMode,
+      effectiveLevels,
+      minLevelUsd
+    );
+
+    // Per-level allocation (uniform baseline)
+    let capitalPerLevelUsd = effectiveLevels > 0 ? finalGridBudgetUsd / effectiveLevels : 0;
 
     // Clamp to profile min/max
     capitalPerLevelUsd = Math.max(
-      profileConfig.minNotionalPerLevelUsd,
+      minLevelUsd,
       Math.min(capitalPerLevelUsd, profileConfig.maxNotionalPerLevelUsd)
     );
 
@@ -163,6 +194,9 @@ class GridCapitalAllocator {
       capitalPerLevelUsd,
       levelsCount: effectiveLevels,
       profile: profileConfig,
+      maxCapitalPerCycleUsd: maxCapPerCycle,
+      deploymentMode,
+      allocationMode,
     };
   }
 

@@ -2029,6 +2029,12 @@ export class DatabaseStorage implements IStorage {
         { table: 'open_positions', column: 'sg_current_stop_price', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_current_stop_price DECIMAL(18,8)' },
         { table: 'open_positions', column: 'sg_scale_out_done', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS sg_scale_out_done BOOLEAN DEFAULT false' },
         { table: 'open_positions', column: 'config_snapshot_json', sql: 'ALTER TABLE open_positions ADD COLUMN IF NOT EXISTS config_snapshot_json JSONB' },
+        // grid_isolated_configs — allocation mode fields
+        { table: 'grid_isolated_configs', column: 'grid_allocation_mode', sql: "ALTER TABLE grid_isolated_configs ADD COLUMN IF NOT EXISTS grid_allocation_mode TEXT NOT NULL DEFAULT 'uniform'" },
+        { table: 'grid_isolated_configs', column: 'grid_capital_deployment_mode', sql: "ALTER TABLE grid_isolated_configs ADD COLUMN IF NOT EXISTS grid_capital_deployment_mode TEXT NOT NULL DEFAULT 'capped'" },
+        { table: 'grid_isolated_configs', column: 'grid_progressive_intensity', sql: 'ALTER TABLE grid_isolated_configs ADD COLUMN IF NOT EXISTS grid_progressive_intensity DECIMAL(5,2) NOT NULL DEFAULT 0.30' },
+        { table: 'grid_isolated_configs', column: 'grid_max_level_pct', sql: 'ALTER TABLE grid_isolated_configs ADD COLUMN IF NOT EXISTS grid_max_level_pct DECIMAL(5,2) NOT NULL DEFAULT 40.00' },
+        { table: 'grid_isolated_configs', column: 'grid_min_level_usd', sql: 'ALTER TABLE grid_isolated_configs ADD COLUMN IF NOT EXISTS grid_min_level_usd DECIMAL(10,2) NOT NULL DEFAULT 30.00' },
       ];
       
       for (const migration of migrations) {

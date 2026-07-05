@@ -39,6 +39,8 @@ export interface GeometricLevelConfig {
   maxLevels: number;
 }
 
+export type CapitalImpactType = "consumes_usd" | "requires_base_asset_not_usd";
+
 export interface GeneratedLevel {
   levelIndex: number;
   side: GridLevelSide;
@@ -50,6 +52,9 @@ export interface GeneratedLevel {
   netProfitTargetUsd: number;
   feeEstimateUsd: number;
   taxReserveUsd: number;
+  capitalImpactType: CapitalImpactType;
+  allocationWeight: number;
+  allocationReason: string;
 }
 
 /**
@@ -155,6 +160,9 @@ export function generateGeometricLevels(config: GeometricLevelConfig): Generated
       netProfitTargetUsd: capitalPerLevelUsd * (netProfitTargetPct / 100),
       feeEstimateUsd: capitalPerLevelUsd * 0.0009, // 0.09% taker fee
       taxReserveUsd: capitalPerLevelUsd * (netProfitTargetPct / 100) * 0.20,
+      capitalImpactType: "consumes_usd",
+      allocationWeight: 1.0,
+      allocationReason: "Uniforme (pendiente de recalcular con modo)",
     });
   }
 
@@ -180,6 +188,9 @@ export function generateGeometricLevels(config: GeometricLevelConfig): Generated
       netProfitTargetUsd: capitalPerLevelUsd * (netProfitTargetPct / 100),
       feeEstimateUsd: capitalPerLevelUsd * 0.0009,
       taxReserveUsd: capitalPerLevelUsd * (netProfitTargetPct / 100) * 0.20,
+      capitalImpactType: "requires_base_asset_not_usd",
+      allocationWeight: 0,
+      allocationReason: "SELL — no consume USD; requiere BTC/inventario",
     });
   }
 

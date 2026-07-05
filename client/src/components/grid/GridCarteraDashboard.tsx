@@ -5,16 +5,20 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Wallet, TrendingUp, TrendingDown, Shield, DollarSign, Percent, PiggyBank, Activity, Lock, Settings2 } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, Shield, DollarSign, Percent, PiggyBank, Activity, Lock, Settings2, ShoppingCart, ArrowUpCircle, Info, BarChart2, ChevronDown, ChevronUp } from "lucide-react";
+import { useState } from "react";
 
 interface GridCarteraDashboardProps {
   config: any;
   status: any;
+  auditData?: any;
   onConfigChange: (key: string, value: any) => void;
   onConfirmChange: (key: string, label: string, oldValue: any, newValue: any, impact: string, riskLevel: "low" | "medium" | "high", affectsCurrent: boolean, requiresRecalc: boolean) => void;
 }
 
-export function GridCarteraDashboard({ config, status, onConfigChange, onConfirmChange }: GridCarteraDashboardProps) {
+export function GridCarteraDashboard({ config, status, auditData, onConfigChange, onConfirmChange }: GridCarteraDashboardProps) {
+  const [showPerLevel, setShowPerLevel] = useState(false);
+  const capitalSummary = auditData?.levelsSummary?.capitalAllocationSummary;
   const total = (config?.gridWalletInitialUsd || 1000) + (status?.totalNetPnlUsd || 0);
   const reserved = status?.capitalReservedUsd || 0;
   const free = total - reserved;
@@ -86,6 +90,119 @@ export function GridCarteraDashboard({ config, status, onConfigChange, onConfirm
 
   return (
     <div className="space-y-4">
+
+      {/* ─── Reparto real de capital del Grid ─────────────────── */}
+      {capitalSummary ? (
+        <Card className="border-indigo-500/30">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart2 className="h-4 w-4 text-indigo-400" />
+              Reparto real de capital del Grid
+              <Badge variant="outline" className="text-xs font-mono ml-auto">
+                {capitalSummary.allocationMode?.replace(/_/g, " ") ?? "uniform"}
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* BUY vs SELL cards */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <ShoppingCart className="h-3.5 w-3.5 text-green-400" />
+                  <span className="text-xs text-muted-foreground">BUY — USD real</span>
+                </div>
+                <p className="text-xl font-bold text-green-400">${capitalSummary.plannedBuyUsd?.toFixed(2) ?? "—"}</p>
+                <p className="text-xs text-muted-foreground mt-1">{capitalSummary.buyLevelsCount ?? 0} niveles × USD real</p>
+              </div>
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <ArrowUpCircle className="h-3.5 w-3.5 text-blue-400" />
+                  <span className="text-xs text-muted-foreground">SELL — notional visual</span>
+                </div>
+                <p className="text-xl font-bold text-blue-400">${capitalSummary.plannedSellNotionalUsd?.toFixed(2) ?? "—"}</p>
+                <p className="text-xs text-muted-foreground mt-1">{capitalSummary.sellLevelsCount ?? 0} niveles × BTC/inventario</p>
+              </div>
+            </div>
+
+            {/* Budget utilization */}
+            {(capitalSummary.maxBudgetReferenceUsd ?? 0) > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Presupuesto BUY usado</span>
+                  <span className="font-bold font-mono text-green-400">{(capitalSummary.budgetUsedPct ?? 0).toFixed(1)}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-muted/30 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-green-500 transition-all"
+                    style={{ width: `${Math.min(capitalSummary.budgetUsedPct ?? 0, 100)}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>$0</span>
+                  <span>${(capitalSummary.plannedBuyUsd ?? 0).toFixed(0)} usados</span>
+                  <span>${(capitalSummary.maxBudgetReferenceUsd ?? 0).toFixed(0)} máx</span>
+                </div>
+              </div>
+            )}
+
+            {/* Explanation */}
+            <div className="rounded-md bg-indigo-500/10 border border-indigo-500/20 p-3 text-sm text-indigo-200">
+              <div className="flex items-start gap-2">
+                <Info className="h-4 w-4 shrink-0 mt-0.5 text-indigo-400" />
+                <p>{capitalSummary.allocationExplanation}</p>
+              </div>
+            </div>
+
+            {/* Budget unused reason */}
+            {capitalSummary.budgetUnusedUsd > 1 && (
+              <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-200">
+                <span className="font-semibold">Por qué no se usa todo el presupuesto:</span>{" "}
+                {capitalSummary.budgetUnusedReason}
+              </div>
+            )}
+
+            {/* Per-level toggle */}
+            {(capitalSummary.perLevelAllocations?.length ?? 0) > 0 && (
+              <div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-xs"
+                  onClick={() => setShowPerLevel(v => !v)}
+                >
+                  {showPerLevel ? <ChevronUp className="h-3 w-3 mr-1" /> : <ChevronDown className="h-3 w-3 mr-1" />}
+                  {showPerLevel ? "Ocultar" : "Ver"} detalle por nivel BUY
+                </Button>
+                {showPerLevel && (
+                  <div className="mt-2 rounded-lg border border-border/50 overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/30">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Nivel</th>
+                          <th className="px-3 py-2 text-right">Peso</th>
+                          <th className="px-3 py-2 text-right">Capital USD</th>
+                          <th className="px-3 py-2 text-left hidden md:table-cell">Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {capitalSummary.perLevelAllocations.map((lvl: any, i: number) => (
+                          <tr key={i} className="border-t border-border/30 hover:bg-muted/10">
+                            <td className="px-3 py-1.5 font-mono">BUY {lvl.levelIndex + 1}</td>
+                            <td className="px-3 py-1.5 text-right font-mono">{(lvl.weight ?? 1).toFixed(2)}</td>
+                            <td className="px-3 py-1.5 text-right font-mono text-green-400">${(lvl.allocationUsd ?? 0).toFixed(2)}</td>
+                            <td className="px-3 py-1.5 text-muted-foreground hidden md:table-cell">{lvl.allocationReason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
       {/* Visual cards grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {cards.map((c, i) => {
@@ -152,6 +269,63 @@ export function GridCarteraDashboard({ config, status, onConfigChange, onConfirm
               {config?.gridWalletMode === "manual"
                 ? "Tú fijas cuánto capital máximo puede usar cada ciclo."
                 : "El sistema decide cuánto capital asignar según volatilidad, distancia entre niveles y riesgo."}
+            </p>
+          </div>
+
+          {/* Allocation mode selector */}
+          <div className="space-y-2 pt-2 border-t">
+            <Label className="text-sm font-medium">Modo de reparto de capital</Label>
+            <Select
+              value={config?.gridAllocationMode || "uniform"}
+              onValueChange={(v) => onConfirmChange("gridAllocationMode", "Modo de reparto", config?.gridAllocationMode || "uniform", v, "Cambia cómo se distribuye el presupuesto BUY entre los niveles. No afecta niveles SELL (solo BTC).", "low", false, true)}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="uniform">Uniforme — igual capital por nivel BUY</SelectItem>
+                <SelectItem value="progressive_conservative">Progresivo conservador — más en niveles profundos</SelectItem>
+                <SelectItem value="progressive_aggressive">Progresivo agresivo — fuerte concentración profunda</SelectItem>
+                <SelectItem value="adaptive_market">Adaptativo por mercado — pesos por distancia/régimen</SelectItem>
+              </SelectContent>
+            </Select>
+            {config?.gridAllocationMode === "progressive_conservative" || config?.gridAllocationMode === "progressive_aggressive" ? (
+              <ConfigSlider
+                label="Intensidad progresiva"
+                value={config?.gridProgressiveIntensity ?? 0.30}
+                min={0.05}
+                max={0.80}
+                step={0.05}
+                displayValue={`+${((config?.gridProgressiveIntensity ?? 0.30) * 100).toFixed(0)}% / nivel`}
+                colorClass={(config?.gridProgressiveIntensity ?? 0.30) > 0.60 ? "red" : (config?.gridProgressiveIntensity ?? 0.30) > 0.40 ? "orange" : "green"}
+                explanation="Incremento porcentual adicional por cada nivel más profundo."
+                onChange={(v) => onConfirmChange("gridProgressiveIntensity", "Intensidad progresiva", config?.gridProgressiveIntensity ?? 0.30, v, "Más intensidad = mayor diferencia entre primer y último nivel BUY.", "low", false, true)}
+                onDirectChange={(v) => onConfigChange("gridProgressiveIntensity", v)}
+              />
+            ) : null}
+            <p className="text-sm text-muted-foreground">
+              {config?.gridAllocationMode === "progressive_conservative" && "Los niveles BUY más profundos reciben algo más de capital. Favorece entradas escalonadas con coste promedio decreciente."}
+              {config?.gridAllocationMode === "progressive_aggressive" && "Fuerte concentración de capital en niveles profundos. Mayor potencial, mayor exposición si el precio sigue bajando."}
+              {config?.gridAllocationMode === "adaptive_market" && "El capital se reparte según distancia al precio actual y régimen de mercado. Más dinámico y reactivo."}
+              {(!config?.gridAllocationMode || config?.gridAllocationMode === "uniform") && "Capital igual para todos los niveles BUY. Sencillo, predecible y fácil de auditar."}
+            </p>
+          </div>
+
+          {/* Deployment mode */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Modo de uso del presupuesto</Label>
+            <Select
+              value={config?.gridCapitalDeploymentMode || "capped"}
+              onValueChange={(v) => onConfirmChange("gridCapitalDeploymentMode", "Modo de uso", config?.gridCapitalDeploymentMode || "capped", v, "Cambia si el grid intenta gastar todo el presupuesto o solo hasta el límite.", "low", false, true)}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="capped">Conservador (capped) — hasta el máximo, sin forzar todo</SelectItem>
+                <SelectItem value="target_budget">Presupuesto objetivo — intenta usar todo el máximo</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              {config?.gridCapitalDeploymentMode === "target_budget"
+                ? "El grid intenta aproximarse al presupuesto máximo configurado. El capital no usado es mínimo."
+                : "El grid usa hasta el máximo pero no se fuerza a gastar todo. El sobrante queda como reserva."}
             </p>
           </div>
 

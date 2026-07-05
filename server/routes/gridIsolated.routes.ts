@@ -36,6 +36,7 @@ import { desc, eq, and, sql } from "drizzle-orm";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy } from "../services/gridIsolated/gridIsolatedTypes";
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
 import { getNaturalGridMessage } from "../services/gridIsolated/gridActivityFormatter";
+import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
 
 function buildBlockingReasons(checks: any, config?: any): string[] {
   const reasons: string[] = [];
@@ -310,7 +311,7 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     }
     if (meta.reason) lines.push(`Motivo: ${meta.reason}.`);
   }
-  // Cartera
+  // Cartera + reparto de capital BUY/SELL
   if (config) {
     const walletTotal = config.gridWalletInitialUsd + (status?.totalNetPnlUsd || 0);
     const reserved = status?.capitalReservedUsd || 0;
@@ -321,6 +322,25 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     lines.push(`Cartera máxima: $${config.gridWalletMaxUsd.toFixed(2)}.`);
     lines.push(`Modo cartera: ${config.gridWalletMode}.`);
     lines.push(`Reinversión de ganancias: ${config.gridWalletCompoundProfits ? "activada" : "desactivada"}.`);
+    // Capital BUY/SELL breakdown
+    const buyLevels = levels.filter((l: any) => l?.side === "BUY" && l?.status === "planned");
+    const sellLevels = levels.filter((l: any) => l?.side === "SELL" && l?.status === "planned");
+    const sampleNotional = buyLevels.length > 0 ? Number(buyLevels[0].notionalUsd || 0) : 0;
+    const plannedBuyUsd = buyLevels.reduce((s: number, l: any) => s + Number(l.notionalUsd || 0), 0);
+    const plannedSellNotional = sellLevels.reduce((s: number, l: any) => s + Number(l.notionalUsd || 0), 0);
+    const maxBudget = config.gridMaxCapitalPerCycleUsd || 0;
+    if (buyLevels.length > 0 || sellLevels.length > 0) {
+      lines.push(`Niveles BUY planificados: ${buyLevels.length} por $${plannedBuyUsd.toFixed(2)} total en USD.`);
+      lines.push(`Niveles SELL planificados: ${sellLevels.length} por $${plannedSellNotional.toFixed(2)} notional visual — NO consumen USD; requieren BTC/inventario.`);
+      lines.push(`Notional bruto BUY+SELL: $${(plannedBuyUsd + plannedSellNotional).toFixed(2)} — no equivale a capital USD necesario.`);
+      if (maxBudget > 0) {
+        const usedPct = (plannedBuyUsd / maxBudget) * 100;
+        lines.push(`Presupuesto configurado: $${maxBudget.toFixed(2)}. Usado en BUY: ${usedPct.toFixed(1)}% ($${plannedBuyUsd.toFixed(2)}).`);
+        lines.push(`Presupuesto no usado: $${Math.max(0, maxBudget - plannedBuyUsd).toFixed(2)} — reservado por seguridad, límites o configuración.`);
+      }
+      lines.push(`Modo de reparto: ${config.gridAllocationMode ?? "uniform"}. Modo de uso de presupuesto: ${config.gridCapitalDeploymentMode ?? "capped"}.`);
+      lines.push(`Los niveles SELL no consumen USD. Son objetivos de salida y requieren BTC/inventario, no dólares. Por eso el capital USD comprometible se calcula principalmente sobre los BUY.`);
+    }
   }
   // Ejecución
   if (config) {
@@ -603,6 +623,9 @@ export function registerGridIsolatedRoutes(app: Express): void {
         "gridMaxCapitalPerCycleUsd", "gridMaxCapitalPerCyclePct",
         "gridReservePct", "gridMinFreeCapitalUsd",
         "gridPauseCycleWhenCapitalDepleted", "gridAllowNewCycleWhenCapitalFree",
+        // Capital allocation modes
+        "gridAllocationMode", "gridCapitalDeploymentMode",
+        "gridProgressiveIntensity", "gridMaxLevelPct", "gridMinLevelUsd",
       ];
 
       for (const field of allowedFields) {
@@ -1173,6 +1196,38 @@ export function registerGridIsolatedRoutes(app: Express): void {
             status: l.status,
             createdAt: l.createdAt,
           })),
+          capitalAllocationSummary: (() => {
+            try {
+              const buyLevels = currentLevels.filter((l: any) => l.side === "BUY");
+              const sellLevels = currentLevels.filter((l: any) => l.side === "SELL");
+              const capitalPerLevelUniform = buyLevels.length > 0
+                ? Number(buyLevels[0].notionalUsd || 0)
+                : (config?.gridMaxCapitalPerCycleUsd
+                  ? config.gridMaxCapitalPerCycleUsd / Math.max(1, buyLevels.length || 5)
+                  : 0);
+              const maxBudget = config?.gridMaxCapitalPerCycleUsd ?? 0;
+              return buildCapitalAllocationSummary({
+                totalWalletUsd: walletTotal,
+                maxBudgetReferenceUsd: maxBudget || (capitalPerLevelUniform * (buyLevels.length || 1)),
+                configuredReservePct: config?.gridReservePct ?? 20,
+                allocationMode: (config?.gridAllocationMode ?? "uniform") as any,
+                deploymentMode: (config?.gridCapitalDeploymentMode ?? "capped") as any,
+                progressiveIntensity: config?.gridProgressiveIntensity ?? 0.30,
+                maxLevelPct: config?.gridMaxLevelPct ?? 40,
+                minLevelUsd: config?.gridMinLevelUsd ?? 30,
+                buyLevels: buyLevels.map((l: any, i: number) => ({
+                  levelIndex: i,
+                  side: "BUY" as const,
+                  price: Number(l.price || 0),
+                  distanceFromMidPct: undefined,
+                })),
+                sellLevelsCount: sellLevels.length,
+                capitalPerLevelUniform,
+              });
+            } catch {
+              return null;
+            }
+          })(),
         },
         safety: {
           realLimitedBlocked: realModesBlocked,

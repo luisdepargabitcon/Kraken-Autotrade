@@ -404,6 +404,7 @@ export default function GridIsolated() {
           <GridAjustesPanel
             config={config}
             status={status}
+            auditData={auditData}
             unlockCheck={unlockCheck}
             onConfigChange={(key, value) => configMutation.mutate({ [key]: value } as any)}
             onConfirmChange={handleConfirmChange}

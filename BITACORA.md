@@ -1,7 +1,134 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-04-27
+> Última actualización: 2026-07-01
+
+---
+
+## 2026-07-01 — Grid Capital Allocation Refactor
+
+**Objetivo:** Refactorizar completamente la lógica de reparto de capital del Grid Aislado. Corregir el bug donde `gridMaxCapitalPerCycleUsd` era ignorado por el allocator. Añadir modos de reparto (uniform, progressive_conservative, progressive_aggressive, adaptive_market). Exponer un resumen canónico BUY/SELL en la API y la UI. Aclarar que los niveles SELL no consumen USD.
+
+### Auditoría: fórmula real de $86.35
+
+La fórmula que producía `$86.35/nivel` en staging era:
+
+```
+totalBalance = $3,454
+Perfil: balanced → maxCapitalPctOfBalance = 25%, reservePct = 20%, maxLevels = 12, minNotional = $30, maxNotional = $800
+
+reservedAmount = $3,454 × 20% = $690.80
+availableForGrid = $3,454 − $690.80 = $2,763.20
+maxGridCapital = $3,454 × 25% = $863.50
+finalBudget = min($2,763.20, $863.50) = $863.50
+
+effectiveLevels = min(10, 12) = 10
+capitalPerLevel = $863.50 / 10 = $86.35  ← sin clamp
+
+5 BUY × $86.35 = $431.75 USD realmente necesarios
+5 SELL × $86.35 = $431.75 notional VISUAL — NO consume USD (requiere BTC/inventario)
+```
+
+**Bug corregido:** `gridMaxCapitalPerCycleUsd = 600` era almacenado en DB pero **nunca se aplicaba** como cap al allocator. Ahora se pasa como hard cap vía `constraints.maxCapitalPerCycleUsd`.
+
+### Regla canónica BUY/SELL
+
+- **Niveles BUY**: consumen USD real. `plannedBuyUsd = buyLevelsCount × notionalUsd`.
+- **Niveles SELL**: objetivos de salida. Requieren BTC/inventario, **NO consumen USD**. El campo `notionalUsd` en SELL es visual.
+- **Notional bruto** (BUY + SELL) ≠ capital USD necesario.
+- **Presupuesto no usado**: es normal si el modo es `capped` (conservador por diseño).
+
+### Archivos nuevos
+
+| Archivo | Descripción |
+|---|---|
+| `server/services/gridIsolated/gridAllocationEngine.ts` | Funciones puras: pesos, distribución, summary |
+| `server/services/__tests__/gridAllocationEngine.test.ts` | 26 tests unitarios |
+
+### Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `shared/schema.ts` | +5 columnas: `grid_allocation_mode`, `grid_capital_deployment_mode`, `grid_progressive_intensity`, `grid_max_level_pct`, `grid_min_level_usd` |
+| `server/storage.ts` | +5 migraciones automáticas `ADD COLUMN IF NOT EXISTS` |
+| `server/services/gridIsolated/gridIsolatedTypes.ts` | +`AllocationMode`, `CapitalDeploymentMode`, `CapitalAllocationSummary`, `PerLevelAllocation`; +5 campos en `GridIsolatedConfig` y `DEFAULT_GRID_CONFIG` |
+| `server/services/gridIsolated/gridCapitalAllocator.ts` | `allocate()` acepta `GridCapitalConstraints`; aplica `maxCapitalPerCycleUsd` como hard cap |
+| `server/services/gridIsolated/gridIsolatedEngine.ts` | `loadConfig()` mapea los 5 nuevos campos; `proposeRangeVersion()` pasa constraints al allocator |
+| `server/routes/gridIsolated.routes.ts` | `allowedFields` +5 campos; `levelsSummary.capitalAllocationSummary` en audit; ChatGPT export con BUY/SELL breakdown |
+| `client/src/components/grid/GridCarteraDashboard.tsx` | Panel "Reparto real de capital del Grid" con cards BUY/SELL, barra de uso, explicación, tabla per-level, selector de modo |
+| `client/src/components/grid/GridAjustesPanel.tsx` | +`auditData` prop → pasa a `GridCarteraDashboard` |
+| `client/src/pages/GridIsolated.tsx` | Pasa `auditData` a `GridAjustesPanel` |
+| `server/routes/__tests__/gridIsolatedRoutes.test.ts` | +3 tests: capitalAllocationSummary en audit, chatgpt crash check |
+
+### Modos de reparto implementados
+
+| Modo | Comportamiento |
+|---|---|
+| `uniform` | Igual capital por nivel BUY (default) |
+| `progressive_conservative` | Peso_i = 1 + intensity × i (conservative, default intensity=0.20) |
+| `progressive_aggressive` | Peso_i = 1 + intensity × i (aggressive, default intensity=0.45) |
+| `adaptive_market` | Peso por distancia al precio actual × factor régimen |
+
+### Modos de uso de presupuesto
+
+| Modo | Comportamiento |
+|---|---|
+| `capped` | Hasta el máximo configurado, sin forzar gasto total (default) |
+| `target_budget` | Intenta aproximarse al máximo; el sobrante es mínimo |
+
+### Validaciones
+
+- `tsc --noEmit`: ✅ sin errores
+- `vitest gridAllocationEngine`: ✅ 26/26
+- `vitest gridIsolatedRoutes`: ✅ 60/60
+
+### Aplicación de pesos reales en generación de niveles (r12 — completado)
+
+**Problema:** `generateGeometricLevels()` asignaba `capitalPerLevelUsd` uniforme a todos los niveles BUY, ignorando el modo de reparto configurado.
+
+**Solución implementada (2 pasos, sin migración DB):**
+
+**Paso 1 — `gridGeometricLevels.ts`:**
+- Nuevo tipo `CapitalImpactType = "consumes_usd" | "requires_base_asset_not_usd"`
+- `GeneratedLevel` ahora incluye: `capitalImpactType`, `allocationWeight`, `allocationReason`
+- BUY defaults: `capitalImpactType = "consumes_usd"`, weight = 1.0
+- SELL defaults: `capitalImpactType = "requires_base_asset_not_usd"`, weight = 0
+
+**Paso 2 — `gridAllocationEngine.ts`:**
+- Nueva función `applyWeightsToGeneratedLevels(levels, effectiveBuyBudget, allocationMode, ...)`
+- Muta los niveles BUY en-place: actualiza `notionalUsd`, `quantity`, `netProfitTargetUsd`, `feeEstimateUsd`, `taxReserveUsd`
+- Marca los niveles SELL con los metadatos correctos
+- El `notionalUsd` resultante queda persistido en DB con el valor correcto ponderado
+
+**Paso 3 — `gridIsolatedEngine.ts` `proposeRangeVersion()`:**
+- Llama a `applyWeightsToGeneratedLevels` DESPUÉS de `generateGeometricLevels` y ANTES de la inserción en DB
+- Los niveles se persisten con el `notionalUsd` real ponderado
+
+**Nuevo archivo de tests — `gridWeightedLevels.test.ts` (25 tests):**
+- Invariantes de `capitalImpactType` por lado
+- Cap de presupuesto BUY
+- Floor `minLevelUsd`
+- Modo uniform: todos iguales
+- Modo progressive_conservative: BUY[0] < BUY[1] < ... (monotonía)
+- Modo progressive_aggressive: pendiente más pronunciada
+- Ejemplo real: $3454 balance, perfil balanced, cap $600
+  - `computeEffectiveBuyBudget(863.5, 600, "capped", 5, 30) = 600` ✅
+  - Uniform: 5 BUY × $120 = $600 total ✅
+  - Progressive: suma ≈ $600, nivel más profundo > $120 ✅
+  - SELL: visual, `capitalImpactType = "requires_base_asset_not_usd"` ✅
+- Adaptive market: pesos por distancia
+- Edge cases: budget 0, banda muy estrecha
+
+**Validaciones finales:**
+- `tsc --noEmit`: ✅ sin errores
+- `vitest gridAllocationEngine`: ✅ 26/26
+- `vitest gridWeightedLevels`: ✅ 25/25
+- `vitest gridIsolatedRoutes`: ✅ 60/60
+- **Total: 111/111 ✅**
+
+### Pendiente
+
+- Deploy staging: requiere aprobación explícita.
 
 ---
 

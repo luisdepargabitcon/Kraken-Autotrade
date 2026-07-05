@@ -29,6 +29,39 @@ export function isModeActive(mode: GridMode): boolean {
 
 export type CapitalProfile = "conservative" | "balanced" | "aggressive";
 
+export type AllocationMode = "uniform" | "progressive_conservative" | "progressive_aggressive" | "adaptive_market";
+
+export type CapitalDeploymentMode = "capped" | "target_budget" | "adaptive_budget";
+
+export interface PerLevelAllocation {
+  levelIndex: number;
+  side: "BUY" | "SELL";
+  weight: number;
+  allocationUsd: number;
+  allocationReason: string;
+}
+
+export interface CapitalAllocationSummary {
+  totalWalletUsd: number;
+  configuredMaxCapitalBudgetUsd: number;
+  configuredReservePct: number;
+  buyLevelsCount: number;
+  sellLevelsCount: number;
+  plannedBuyUsd: number;
+  plannedSellNotionalUsd: number;
+  grossVisualNotionalUsd: number;
+  usdActuallyNeededForBuyLevels: number;
+  usdNotNeededBecauseSellLevelsDoNotConsumeUsd: number;
+  maxBudgetReferenceUsd: number;
+  budgetUsedPct: number;
+  budgetUnusedUsd: number;
+  budgetUnusedReason: string;
+  allocationMode: AllocationMode;
+  capitalDeploymentMode: CapitalDeploymentMode;
+  allocationExplanation: string;
+  perLevelAllocations: PerLevelAllocation[];
+}
+
 export interface CapitalProfileConfig {
   reservePct: number;
   maxCapitalPctOfBalance: number;
@@ -306,6 +339,12 @@ export interface GridIsolatedConfig {
   gridMinFreeCapitalUsd: number;
   gridPauseCycleWhenCapitalDepleted: boolean;
   gridAllowNewCycleWhenCapitalFree: boolean;
+  // ─── Capital Allocation Modes ───
+  gridAllocationMode: AllocationMode;
+  gridCapitalDeploymentMode: CapitalDeploymentMode;
+  gridProgressiveIntensity: number;
+  gridMaxLevelPct: number;
+  gridMinLevelUsd: number;
 }
 
 export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | "updatedAt"> = {
@@ -358,6 +397,12 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   gridMinFreeCapitalUsd: 50,
   gridPauseCycleWhenCapitalDepleted: true,
   gridAllowNewCycleWhenCapitalFree: true,
+  // Capital Allocation Modes
+  gridAllocationMode: "uniform" as AllocationMode,
+  gridCapitalDeploymentMode: "capped" as CapitalDeploymentMode,
+  gridProgressiveIntensity: 0.30,
+  gridMaxLevelPct: 40,
+  gridMinLevelUsd: 30,
 };
 
 // ─── Mode Lock Safety Conditions ────────────────────────────────────
