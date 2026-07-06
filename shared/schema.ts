@@ -1914,6 +1914,7 @@ export const telegramAlertEvents = pgTable("telegram_alert_events", {
   dryRunId: text("dry_run_id"),
   chatId: text("chat_id"),
   channelId: integer("channel_id"),
+  tokenId: integer("token_id"),
   dedupeKey: text("dedupe_key"),
   payloadHash: text("payload_hash"),
   status: text("status").notNull().default("sent"),

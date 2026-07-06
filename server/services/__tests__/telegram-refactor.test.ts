@@ -19,30 +19,42 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const {
   mockGetTelegramGlobalConfig,
   mockGetActiveTelegramChats,
+  mockGetTelegramChats,
   mockInsertTelegramAlertEvent,
   mockInsertTelegramCommandLog,
   mockUpdateTelegramGlobalConfig,
   mockGetRecentTelegramAlertEvents,
   mockGetRecentTelegramCommandLogs,
+  mockGetTelegramAlertRules,
+  mockGetTelegramBotTokenById,
+  mockGetDefaultTelegramBotToken,
 } = vi.hoisted(() => ({
   mockGetTelegramGlobalConfig: vi.fn(),
   mockGetActiveTelegramChats: vi.fn(),
+  mockGetTelegramChats: vi.fn(),
   mockInsertTelegramAlertEvent: vi.fn(),
   mockInsertTelegramCommandLog: vi.fn(),
   mockUpdateTelegramGlobalConfig: vi.fn(),
   mockGetRecentTelegramAlertEvents: vi.fn(),
   mockGetRecentTelegramCommandLogs: vi.fn(),
+  mockGetTelegramAlertRules: vi.fn(),
+  mockGetTelegramBotTokenById: vi.fn(),
+  mockGetDefaultTelegramBotToken: vi.fn(),
 }));
 
 vi.mock("../../storage", () => ({
   storage: {
     getTelegramGlobalConfig: mockGetTelegramGlobalConfig,
     getActiveTelegramChats: mockGetActiveTelegramChats,
+    getTelegramChats: mockGetTelegramChats,
     insertTelegramAlertEvent: mockInsertTelegramAlertEvent,
     insertTelegramCommandLog: mockInsertTelegramCommandLog,
     updateTelegramGlobalConfig: mockUpdateTelegramGlobalConfig,
     getRecentTelegramAlertEvents: mockGetRecentTelegramAlertEvents,
     getRecentTelegramCommandLogs: mockGetRecentTelegramCommandLogs,
+    getTelegramAlertRules: mockGetTelegramAlertRules,
+    getTelegramBotTokenById: mockGetTelegramBotTokenById,
+    getDefaultTelegramBotToken: mockGetDefaultTelegramBotToken,
   },
 }));
 
@@ -76,9 +88,16 @@ describe("FASE A — Telegram Refactor Tests", () => {
       telegramEnvironmentLabel: "test",
     });
     mockGetActiveTelegramChats.mockResolvedValue([
-      { id: 1, chatId: "-100123", name: "Main", isActive: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {} },
-      { id: 2, chatId: "-100456", name: "Trades", isActive: true, alertTrades: true, alertErrors: false, alertSystem: false, alertBalance: false, alertHeartbeat: false, alertPreferences: {} },
+      { id: 1, chatId: "-100123", name: "Main", isActive: true, isDefault: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {}, enabledModes: null, enabledAlerts: null, tokenId: null },
+      { id: 2, chatId: "-100456", name: "Trades", isActive: true, isDefault: false, alertTrades: true, alertErrors: false, alertSystem: false, alertBalance: false, alertHeartbeat: false, alertPreferences: {}, enabledModes: null, enabledAlerts: null, tokenId: null },
     ]);
+    mockGetTelegramChats.mockResolvedValue([
+      { id: 1, chatId: "-100123", name: "Main", isActive: true, isDefault: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {}, enabledModes: null, enabledAlerts: null, tokenId: null },
+      { id: 2, chatId: "-100456", name: "Trades", isActive: true, isDefault: false, alertTrades: true, alertErrors: false, alertSystem: false, alertBalance: false, alertHeartbeat: false, alertPreferences: {}, enabledModes: null, enabledAlerts: null, tokenId: null },
+    ]);
+    mockGetTelegramAlertRules.mockResolvedValue([]);
+    mockGetDefaultTelegramBotToken.mockResolvedValue({ id: 1, isActive: true, name: "default", tokenLast4: "1234" });
+    mockGetTelegramBotTokenById.mockResolvedValue(undefined);
     mockInsertTelegramAlertEvent.mockResolvedValue(undefined);
     mockInsertTelegramCommandLog.mockResolvedValue(undefined);
     telegramNotificationCenter.invalidateConfigCache();
@@ -179,6 +198,7 @@ describe("FASE A — Telegram Refactor Tests", () => {
   describe("A2: No phantom fallbacks", () => {
     it("does not send when no active chats exist", async () => {
       mockGetActiveTelegramChats.mockResolvedValue([]);
+      mockGetTelegramChats.mockResolvedValue([]);
 
       const status = await telegramNotificationCenter.send({
         sourceModule: "test",
@@ -245,8 +265,9 @@ describe("FASE A — Telegram Refactor Tests", () => {
         alertCategory: "trades",
       });
 
-      // Both chats have alertTrades=true
-      expect(sendSpy).toHaveBeenCalledTimes(2);
+      // FASE 6 routing: resolves to a single target chat (default channel)
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+      expect(sendSpy).toHaveBeenCalledWith("-100123", "Buy!", { parseMode: "HTML" });
     });
 
     it("does not send to chat with alertErrors=false for error alerts", async () => {
@@ -395,6 +416,7 @@ describe("FASE A — Telegram Refactor Tests", () => {
 
     it("inserts audit event on blocked status with block reason", async () => {
       mockGetActiveTelegramChats.mockResolvedValue([]);
+      mockGetTelegramChats.mockResolvedValue([]);
 
       await telegramNotificationCenter.send({
         sourceModule: "test",

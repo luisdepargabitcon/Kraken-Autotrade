@@ -38,6 +38,11 @@ export type AlertStatus =
   | "blocked_by_channel_disabled"
   | "blocked_by_missing_channel"
   | "blocked_by_missing_token"
+  | "blocked_by_token_disabled"
+  | "blocked_by_alert_rule_disabled"
+  | "blocked_by_no_matching_channel"
+  | "blocked_by_channel_mode_not_allowed"
+  | "blocked_by_channel_alert_not_allowed"
   | "blocked_by_dedupe"
   | "blocked_by_rate_limit"
   | "blocked_by_quiet_hours"
@@ -246,7 +251,18 @@ class TelegramNotificationCenter {
       }
     }
 
-    // 5. Dedupe
+    // 5. Alert rule lookup (mode + alertType)
+    const alertCategory = alert.alertCategory || this.inferCategory(alert.mode, alert.alertType);
+    const rule = await this.getAlertRule(alert.mode, alert.alertType);
+
+    // 5a. If alert rule exists and is disabled, block
+    if (rule && !rule.enabled) {
+      await this.audit(alert, "blocked_by_alert_rule_disabled", env, `rule_id:${rule.id}`);
+      log(`[TelegramNC] BLOCKED by alert rule disabled: ${alert.mode}/${alert.alertType} rule_id=${rule.id}`, "trading");
+      return "blocked_by_alert_rule_disabled";
+    }
+
+    // 6. Dedupe
     if (!alert.skipDedupe) {
       const dedupeKey = alert.dedupeKey || this.buildDedupeKey(alert);
       if (this.isDeduped(dedupeKey, config?.telegramDefaultDedupeMinutes || 5)) {
@@ -256,7 +272,7 @@ class TelegramNotificationCenter {
       }
     }
 
-    // 6. Rate limit
+    // 7. Rate limit
     if (!alert.skipRateLimit) {
       const rateLimitKey = `${alert.sourceModule}:${alert.mode}`;
       if (this.isRateLimited(rateLimitKey, config?.telegramDefaultRateLimitPerHour || 30)) {
@@ -266,56 +282,89 @@ class TelegramNotificationCenter {
       }
     }
 
-    // 7. Get active channels and send
-    const { telegramService } = await import("./telegram");
-    if (!telegramService.isInitialized()) {
-      await this.audit(alert, "blocked_by_missing_token", env);
-      log(`[TelegramNC] BLOCKED by missing token: ${alert.sourceModule}/${alert.alertType}`, "trading");
-      return "blocked_by_missing_token";
-    }
-
-    const chats = await storage.getActiveTelegramChats();
-    if (chats.length === 0) {
+    // 8. Get all chats (not just active — we need to check isActive in routing)
+    const allChats = await storage.getTelegramChats();
+    const activeChats = allChats.filter(c => c.isActive);
+    if (activeChats.length === 0) {
       await this.audit(alert, "blocked_by_missing_channel", env);
       log(`[TelegramNC] BLOCKED no active channels: ${alert.sourceModule}/${alert.alertType}`, "trading");
       return "blocked_by_missing_channel";
     }
 
-    // Filter chats by alert category/subtype preferences
-    const alertCategory = alert.alertCategory || this.inferCategory(alert.mode, alert.alertType);
-    const alertSubtype = alert.alertSubtype || alert.alertType;
-    const targetChats = chats.filter(chat => this.shouldSendToChat(chat, alertCategory, alertSubtype));
+    // 9. Resolve channel using routing: rule.channelId → compatible → default
+    const targetChat = this.resolveChannelForAlert(allChats, alert.mode, alertCategory, rule);
+    if (!targetChat) {
+      await this.audit(alert, "blocked_by_no_matching_channel", env, `mode:${alert.mode},category:${alertCategory}`);
+      log(`[TelegramNC] BLOCKED no matching channel for mode=${alert.mode} category=${alertCategory}`, "trading");
+      return "blocked_by_no_matching_channel";
+    }
 
-    if (targetChats.length === 0) {
-      await this.audit(alert, "blocked_by_channel_disabled", env);
-      log(`[TelegramNC] BLOCKED no matching channels for category=${alertCategory} subtype=${alertSubtype}`, "trading");
+    // 10. Validate channel allows this mode
+    if (!this.isChannelAllowedForMode(targetChat, alert.mode)) {
+      await this.audit(alert, "blocked_by_channel_mode_not_allowed", env, `mode:${alert.mode},chat:${targetChat.chatId}`, undefined, targetChat.chatId, targetChat.id);
+      log(`[TelegramNC] BLOCKED channel ${targetChat.chatId} does not allow mode ${alert.mode}`, "trading");
+      return "blocked_by_channel_mode_not_allowed";
+    }
+
+    // 11. Validate channel allows this alert category
+    if (!this.isChannelAllowedForAlert(targetChat, alertCategory)) {
+      await this.audit(alert, "blocked_by_channel_alert_not_allowed", env, `category:${alertCategory},chat:${targetChat.chatId}`, undefined, targetChat.chatId, targetChat.id);
+      log(`[TelegramNC] BLOCKED channel ${targetChat.chatId} does not allow alert ${alertCategory}`, "trading");
+      return "blocked_by_channel_alert_not_allowed";
+    }
+
+    // 12. Also check legacy shouldSendToChat for backward compat
+    const alertSubtype = alert.alertSubtype || alert.alertType;
+    if (!this.shouldSendToChat(targetChat, alertCategory, alertSubtype)) {
+      await this.audit(alert, "blocked_by_channel_disabled", env, `shouldSendToChat:false,category:${alertCategory}`, undefined, targetChat.chatId, targetChat.id);
+      log(`[TelegramNC] BLOCKED shouldSendToChat false for ${targetChat.chatId} category=${alertCategory}`, "trading");
       return "blocked_by_channel_disabled";
     }
 
-    // Send to each matching chat
+    // 13. Resolve token: rule.tokenId → chat.tokenId → default token
+    const token = await this.resolveTokenForChannel(targetChat, rule);
+    if (!token) {
+      await this.audit(alert, "blocked_by_missing_token", env, `no_token_for_chat:${targetChat.chatId}`, undefined, targetChat.chatId, targetChat.id);
+      log(`[TelegramNC] BLOCKED no active token for chat ${targetChat.chatId}`, "trading");
+      return "blocked_by_missing_token";
+    }
+
+    // 14. Validate token is active
+    if (!token.isActive) {
+      await this.audit(alert, "blocked_by_token_disabled", env, `token_id:${token.id}`, undefined, targetChat.chatId, targetChat.id, token.id);
+      log(`[TelegramNC] BLOCKED token ${token.id} is disabled`, "trading");
+      return "blocked_by_token_disabled";
+    }
+
+    // 15. Send via telegram service
+    const { telegramService } = await import("./telegram");
+    if (!telegramService.isInitialized()) {
+      await this.audit(alert, "blocked_by_missing_token", env, "telegram_service_not_initialized", undefined, targetChat.chatId, targetChat.id, token.id);
+      log(`[TelegramNC] BLOCKED telegram service not initialized`, "trading");
+      return "blocked_by_missing_token";
+    }
+
     let anySent = false;
     let lastError = "";
-    for (const chat of targetChats) {
-      try {
-        const sent = await telegramService.sendToChat(chat.chatId, alert.message, { parseMode: "HTML" });
-        if (sent) {
-          anySent = true;
-          await this.audit(alert, "sent", env, undefined, undefined, chat.chatId, chat.id);
-        } else {
-          lastError = "sendToChat returned false";
-        }
-      } catch (err: any) {
-        lastError = err?.message || String(err);
-        console.error(`[TelegramNC] Failed to send to chat ${chat.chatId}:`, lastError);
+    try {
+      const sent = await telegramService.sendToChat(targetChat.chatId, alert.message, { parseMode: "HTML" });
+      if (sent) {
+        anySent = true;
+        await this.audit(alert, "sent", env, undefined, undefined, targetChat.chatId, targetChat.id, token.id);
+      } else {
+        lastError = "sendToChat returned false";
       }
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+      console.error(`[TelegramNC] Failed to send to chat ${targetChat.chatId}:`, lastError);
     }
 
     if (!anySent) {
-      await this.audit(alert, "failed_send", env, lastError);
+      await this.audit(alert, "failed_send", env, lastError, undefined, targetChat.chatId, targetChat.id, token.id);
       return "failed_send";
     }
 
-    // Mark dedupe + rate limit
+    // 16. Mark dedupe + rate limit
     if (!alert.skipDedupe) {
       const dedupeKey = alert.dedupeKey || this.buildDedupeKey(alert);
       this.markDeduped(dedupeKey);
@@ -351,23 +400,37 @@ class TelegramNotificationCenter {
       return "blocked_by_channel_disabled";
     }
 
+    // Resolve token for this chat
+    const token = await this.resolveTokenForChannel(chat, null);
+    if (!token) {
+      await this.audit(alert, "blocked_by_missing_token", env, `no_token_for_chat:${chatId}`, undefined, chatId, chat.id);
+      log(`[TelegramNC] BLOCKED no active token for chat ${chatId}`, "trading");
+      return "blocked_by_missing_token";
+    }
+
+    if (!token.isActive) {
+      await this.audit(alert, "blocked_by_token_disabled", env, `token_id:${token.id}`, undefined, chatId, chat.id, token.id);
+      log(`[TelegramNC] BLOCKED token ${token.id} is disabled`, "trading");
+      return "blocked_by_token_disabled";
+    }
+
     const { telegramService } = await import("./telegram");
     if (!telegramService.isInitialized()) {
-      await this.audit(alert, "blocked_by_missing_token", env);
+      await this.audit(alert, "blocked_by_missing_token", env, "telegram_service_not_initialized", undefined, chatId, chat.id, token.id);
       return "blocked_by_missing_token";
     }
 
     try {
       const sent = await telegramService.sendToChat(chatId, alert.message, { parseMode: "HTML" });
       if (sent) {
-        await this.audit(alert, "sent", env, undefined, undefined, chatId, chat.id);
+        await this.audit(alert, "sent", env, undefined, undefined, chatId, chat.id, token.id);
         return "sent";
       } else {
-        await this.audit(alert, "failed_send", env, "sendToChat returned false");
+        await this.audit(alert, "failed_send", env, "sendToChat returned false", undefined, chatId, chat.id, token.id);
         return "failed_send";
       }
     } catch (err: any) {
-      await this.audit(alert, "failed_send", env, err?.message || String(err));
+      await this.audit(alert, "failed_send", env, err?.message || String(err), undefined, chatId, chat.id, token.id);
       return "failed_send";
     }
   }
@@ -552,6 +615,91 @@ class TelegramNotificationCenter {
     }
   }
 
+  // ─── FASE 6: Routing helpers ───────────────────────────────
+
+  private mapModeToEnabledMode(mode: AlertMode): string {
+    const modeMap: Record<string, string> = {
+      spot: "trading",
+      spot_dry_run: "trading",
+      idca: "idca",
+      idca_hybrid: "idca",
+      smart_exit: "smart_exit",
+      fisco: "fiscal",
+      system: "system",
+      ai: "trading",
+    };
+    return modeMap[mode] || mode;
+  }
+
+  private isChannelAllowedForMode(chat: any, mode: AlertMode): boolean {
+    const enabledModes = chat.enabledModes as string[] | null;
+    if (!enabledModes || enabledModes.length === 0) return true;
+    const mappedMode = this.mapModeToEnabledMode(mode);
+    return enabledModes.includes(mappedMode);
+  }
+
+  private isChannelAllowedForAlert(chat: any, alertCategory: string): boolean {
+    const enabledAlerts = chat.enabledAlerts as string[] | null;
+    if (!enabledAlerts || enabledAlerts.length === 0) return true;
+    return enabledAlerts.includes(alertCategory);
+  }
+
+  private async getAlertRule(mode: AlertMode, alertType: string): Promise<any | null> {
+    try {
+      const rules = await storage.getTelegramAlertRules();
+      const mappedMode = this.mapModeToEnabledMode(mode);
+      return rules.find(r => r.mode === mappedMode && r.alertType === alertType) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveChannelForAlert(
+    chats: any[],
+    mode: AlertMode,
+    alertCategory: string,
+    rule: any | null,
+  ): any | null {
+    // 1. If rule specifies a chatId (channel), find that specific channel
+    if (rule?.chatId) {
+      const specific = chats.find(c => c.id === rule.chatId && c.isActive);
+      if (specific) return specific;
+    }
+
+    // 2. Find active channels that allow this mode and alert category
+    const compatible = chats.filter(c =>
+      c.isActive &&
+      this.isChannelAllowedForMode(c, mode) &&
+      this.isChannelAllowedForAlert(c, alertCategory)
+    );
+
+    if (compatible.length > 0) {
+      // Prefer default channel
+      const defaultChan = compatible.find(c => c.isDefault);
+      return defaultChan || compatible[0];
+    }
+
+    // 3. Fallback: any active default channel
+    const defaultChan = chats.find(c => c.isActive && c.isDefault);
+    if (defaultChan) return defaultChan;
+
+    return null;
+  }
+
+  private async resolveTokenForChannel(chat: any, rule: any | null): Promise<any | null> {
+    // 1. Use channel's token_id
+    if (chat.tokenId) {
+      const token = await storage.getTelegramBotTokenById(chat.tokenId);
+      if (token && token.isActive) return token;
+    }
+
+    // 2. Fallback: default active token
+    const defaultToken = await storage.getDefaultTelegramBotToken();
+    if (defaultToken && defaultToken.isActive) return defaultToken;
+
+    return null;
+  }
+
   private async audit(
     alert: NormalizedAlert,
     status: AlertStatus,
@@ -560,6 +708,7 @@ class TelegramNotificationCenter {
     dedupeKey?: string,
     chatId?: string,
     channelId?: number,
+    tokenId?: number,
   ): Promise<void> {
     try {
       await storage.insertTelegramAlertEvent({
@@ -574,6 +723,7 @@ class TelegramNotificationCenter {
         dryRunId: alert.dryRunId,
         chatId: chatId || null,
         channelId: channelId || null,
+        tokenId: tokenId || null,
         dedupeKey: dedupeKey || alert.dedupeKey || null,
         payloadHash: null,
         status,

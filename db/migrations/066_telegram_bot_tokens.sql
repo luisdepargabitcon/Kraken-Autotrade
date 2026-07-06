@@ -1,4 +1,4 @@
--- Migration 049: Telegram Bot Tokens Table
+-- Migration 066: Telegram Bot Tokens Table
 -- Gestión multi-bot de tokens Telegram
 -- Cada canal puede asociarse a un token específico
 
@@ -38,6 +38,10 @@ ALTER TABLE telegram_chats
 
 -- Índice para búsqueda por token_id
 CREATE INDEX idx_telegram_chats_token_id ON telegram_chats(token_id) WHERE token_id IS NOT NULL;
+
+-- Añadir token_id a telegram_alert_events para auditoría de routing
+ALTER TABLE telegram_alert_events
+  ADD COLUMN IF NOT EXISTS token_id INTEGER;
 
 -- Trigger para updated_at
 CREATE OR REPLACE FUNCTION update_telegram_bot_tokens_updated_at()
