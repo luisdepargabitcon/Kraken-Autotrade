@@ -56,7 +56,7 @@ function Router() {
       <Route path="/terminal" component={Terminal} />
       <Route path="/wallet" component={Wallet} />
       <Route path="/integrations" component={Integrations} />
-      <Route path="/notifications" component={Notifications} />
+      <Route path="/notifications"><Redirect to="/telegram" /></Route>
       <Route path="/guide" component={Guide} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/backups" component={Backups} />

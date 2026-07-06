@@ -32,11 +32,6 @@ export default function Integrations() {
   const [activeExchange, setActiveExchange] = useState<"kraken" | "revolutx">("kraken");
   const [tradingExchange, setTradingExchange] = useState<"kraken" | "revolutx">("kraken");
   const [dataExchange, setDataExchange] = useState<"kraken" | "revolutx">("kraken");
-  
-  const [telegramToken, setTelegramToken] = useState("");
-  const [telegramChatId, setTelegramChatId] = useState("");
-  const [telegramConnected, setTelegramConnected] = useState(false);
-  const [showTelegramToken, setShowTelegramToken] = useState(false);
 
   const { data: apiConfig } = useQuery({
     queryKey: ["apiConfig"],
@@ -56,7 +51,6 @@ export default function Integrations() {
       setActiveExchange(apiConfig.activeExchange ?? "kraken");
       setTradingExchange(apiConfig.tradingExchange ?? apiConfig.activeExchange ?? "kraken");
       setDataExchange(apiConfig.dataExchange ?? apiConfig.activeExchange ?? "kraken");
-      setTelegramConnected(apiConfig.telegramConnected);
     }
   }, [apiConfig]);
 
@@ -119,25 +113,6 @@ export default function Integrations() {
     },
     onError: (error: Error) => {
       toast.error(error.message);
-    },
-  });
-
-  const telegramMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/config/telegram", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: telegramToken, chatId: telegramChatId }),
-      });
-      if (!res.ok) throw new Error("Failed to connect");
-      return res.json();
-    },
-    onSuccess: () => {
-      setTelegramConnected(true);
-      toast.success("Telegram conectado correctamente");
-    },
-    onError: () => {
-      toast.error("Error al conectar con Telegram");
     },
   });
 
@@ -431,19 +406,11 @@ export default function Integrations() {
                     <CardTitle>Telegram Bot</CardTitle>
                     <CardDescription>Gestión centralizada en la pestaña Telegram.</CardDescription>
                   </div>
-                  {telegramConnected ? (
-                    <div className="flex items-center gap-2 text-green-500">
-                      <Check className="h-5 w-5" />
-                      <span className="text-sm font-mono">CONECTADO</span>
-                    </div>
-                  ) : (
-                    <span className="text-sm font-mono text-yellow-500">DESCONECTADO</span>
-                  )}
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 text-xs text-muted-foreground">
-                  La configuración de Telegram (token, canales, kill switch, alertas, comandos, auditoría) se gestiona ahora desde un único lugar.
+                  La configuración de Telegram (tokens, canales, kill switch, alertas, comandos, auditoría) se gestiona ahora desde un único lugar.
                 </div>
                 <Link href="/telegram">
                   <Button variant="default" className="w-full" data-testid="link-to-telegram">

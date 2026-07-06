@@ -1,10 +1,12 @@
-import { 
-  type BotConfig, 
-  type Trade, 
-  type Notification, 
+import {
+  type BotConfig,
+  type Trade,
+  type Notification,
   type MarketData,
   type ApiConfig,
   type TelegramChat,
+  type TelegramBotToken,
+  type TelegramAlertRule,
   type OpenPosition,
   type AiTradeSample,
   type AiShadowDecision,
@@ -46,6 +48,8 @@ import {
   marketData as marketDataTable,
   apiConfig as apiConfigTable,
   telegramChats as telegramChatsTable,
+  telegramBotTokens as telegramBotTokensTable,
+  telegramAlertRules as telegramAlertRulesTable,
   openPositions as openPositionsTable,
   tradeFills as tradeFillsTable,
   lotMatches as lotMatchesTable,
@@ -156,7 +160,25 @@ export interface IStorage {
   createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat>;
   updateTelegramChat(id: number, chat: Partial<InsertTelegramChat>): Promise<TelegramChat>;
   deleteTelegramChat(id: number): Promise<void>;
-  
+
+  // Telegram bot tokens
+  getTelegramBotTokens(): Promise<TelegramBotToken[]>;
+  getActiveTelegramBotTokens(): Promise<TelegramBotToken[]>;
+  getDefaultTelegramBotToken(): Promise<TelegramBotToken | undefined>;
+  getTelegramBotTokenById(id: number): Promise<TelegramBotToken | undefined>;
+  createTelegramBotToken(token: Omit<TelegramBotToken, "id" | "createdAt" | "updatedAt" | "lastValidatedAt" | "lastError" | "deletedAt">): Promise<TelegramBotToken>;
+  updateTelegramBotToken(id: number, token: Partial<TelegramBotToken>): Promise<TelegramBotToken>;
+  deleteTelegramBotToken(id: number): Promise<void>;
+  validateTelegramBotToken(id: number): Promise<{ valid: boolean; error?: string }>;
+
+  // Telegram alert rules
+  getTelegramAlertRules(chatId?: number): Promise<TelegramAlertRule[]>;
+  getTelegramAlertRulesByMode(chatId: number, mode: string): Promise<TelegramAlertRule[]>;
+  createTelegramAlertRule(rule: Omit<TelegramAlertRule, "id" | "createdAt" | "updatedAt">): Promise<TelegramAlertRule>;
+  updateTelegramAlertRule(id: number, rule: Partial<TelegramAlertRule>): Promise<TelegramAlertRule>;
+  deleteTelegramAlertRule(id: number): Promise<void>;
+  upsertTelegramAlertRule(rule: Omit<TelegramAlertRule, "id" | "createdAt" | "updatedAt">): Promise<TelegramAlertRule>;
+
   // Telegram global config
   getTelegramGlobalConfig(): Promise<TelegramGlobalConfig | undefined>;
   updateTelegramGlobalConfig(updates: Partial<TelegramGlobalConfig>): Promise<TelegramGlobalConfig | undefined>;
@@ -1096,6 +1118,156 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTelegramChat(id: number): Promise<void> {
     await db.delete(telegramChatsTable).where(eq(telegramChatsTable.id, id));
+  }
+
+  // ============================================================
+  // Telegram Bot Tokens
+  // ============================================================
+  async getTelegramBotTokens(): Promise<TelegramBotToken[]> {
+    return await db.select().from(telegramBotTokensTable)
+      .where(isNull(telegramBotTokensTable.deletedAt))
+      .orderBy(desc(telegramBotTokensTable.createdAt));
+  }
+
+  async getActiveTelegramBotTokens(): Promise<TelegramBotToken[]> {
+    return await db.select().from(telegramBotTokensTable)
+      .where(and(
+        eq(telegramBotTokensTable.isActive, true),
+        isNull(telegramBotTokensTable.deletedAt)
+      ))
+      .orderBy(desc(telegramBotTokensTable.createdAt));
+  }
+
+  async getDefaultTelegramBotToken(): Promise<TelegramBotToken | undefined> {
+    const tokens = await db.select().from(telegramBotTokensTable)
+      .where(and(
+        eq(telegramBotTokensTable.isDefault, true),
+        eq(telegramBotTokensTable.isActive, true),
+        isNull(telegramBotTokensTable.deletedAt)
+      ))
+      .limit(1);
+    return tokens[0];
+  }
+
+  async getTelegramBotTokenById(id: number): Promise<TelegramBotToken | undefined> {
+    const tokens = await db.select().from(telegramBotTokensTable)
+      .where(and(
+        eq(telegramBotTokensTable.id, id),
+        isNull(telegramBotTokensTable.deletedAt)
+      ))
+      .limit(1);
+    return tokens[0];
+  }
+
+  async createTelegramBotToken(token: Omit<TelegramBotToken, "id" | "createdAt" | "updatedAt" | "lastValidatedAt" | "lastError" | "deletedAt">): Promise<TelegramBotToken> {
+    const [newToken] = await db.insert(telegramBotTokensTable).values({
+      ...token,
+      lastValidatedAt: null,
+      lastError: null,
+      deletedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).returning();
+    return newToken;
+  }
+
+  async updateTelegramBotToken(id: number, token: Partial<TelegramBotToken>): Promise<TelegramBotToken> {
+    const [updated] = await db.update(telegramBotTokensTable)
+      .set({ ...token, updatedAt: new Date() })
+      .where(eq(telegramBotTokensTable.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteTelegramBotToken(id: number): Promise<void> {
+    await db.update(telegramBotTokensTable)
+      .set({ deletedAt: new Date(), isActive: false })
+      .where(eq(telegramBotTokensTable.id, id));
+  }
+
+  async validateTelegramBotToken(id: number): Promise<{ valid: boolean; error?: string }> {
+    const token = await this.getTelegramBotTokenById(id);
+    if (!token) {
+      return { valid: false, error: "Token not found" };
+    }
+
+    try {
+      // Validar token haciendo un getMe call a Telegram API
+      const TelegramBot = require('node-telegram-bot-api');
+      const bot = new TelegramBot(token.tokenEncrypted);
+      await bot.getMe();
+      await this.updateTelegramBotToken(id, {
+        lastValidatedAt: new Date(),
+        lastError: null,
+      });
+      return { valid: true };
+    } catch (error: any) {
+      const errorMsg = error.message || "Unknown error";
+      await this.updateTelegramBotToken(id, {
+        lastValidatedAt: new Date(),
+        lastError: errorMsg,
+      });
+      return { valid: false, error: errorMsg };
+    }
+  }
+
+  // ============================================================
+  // Telegram Alert Rules
+  // ============================================================
+  async getTelegramAlertRules(chatId?: number): Promise<TelegramAlertRule[]> {
+    if (chatId) {
+      return await db.select().from(telegramAlertRulesTable)
+        .where(eq(telegramAlertRulesTable.chatId, chatId))
+        .orderBy(telegramAlertRulesTable.mode, telegramAlertRulesTable.alertType);
+    }
+    return await db.select().from(telegramAlertRulesTable)
+      .orderBy(telegramAlertRulesTable.chatId, telegramAlertRulesTable.mode, telegramAlertRulesTable.alertType);
+  }
+
+  async getTelegramAlertRulesByMode(chatId: number, mode: string): Promise<TelegramAlertRule[]> {
+    return await db.select().from(telegramAlertRulesTable)
+      .where(and(
+        eq(telegramAlertRulesTable.chatId, chatId),
+        eq(telegramAlertRulesTable.mode, mode)
+      ))
+      .orderBy(telegramAlertRulesTable.alertType);
+  }
+
+  async createTelegramAlertRule(rule: Omit<TelegramAlertRule, "id" | "createdAt" | "updatedAt">): Promise<TelegramAlertRule> {
+    const [newRule] = await db.insert(telegramAlertRulesTable).values({
+      ...rule,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).returning();
+    return newRule;
+  }
+
+  async updateTelegramAlertRule(id: number, rule: Partial<TelegramAlertRule>): Promise<TelegramAlertRule> {
+    const [updated] = await db.update(telegramAlertRulesTable)
+      .set({ ...rule, updatedAt: new Date() })
+      .where(eq(telegramAlertRulesTable.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteTelegramAlertRule(id: number): Promise<void> {
+    await db.delete(telegramAlertRulesTable).where(eq(telegramAlertRulesTable.id, id));
+  }
+
+  async upsertTelegramAlertRule(rule: Omit<TelegramAlertRule, "id" | "createdAt" | "updatedAt">): Promise<TelegramAlertRule> {
+    const existing = await db.select().from(telegramAlertRulesTable)
+      .where(and(
+        eq(telegramAlertRulesTable.chatId, rule.chatId),
+        eq(telegramAlertRulesTable.mode, rule.mode),
+        eq(telegramAlertRulesTable.alertType, rule.alertType)
+      ))
+      .limit(1);
+
+    if (existing.length > 0) {
+      return await this.updateTelegramAlertRule(existing[0].id, rule);
+    } else {
+      return await this.createTelegramAlertRule(rule);
+    }
   }
 
   // ============================================================

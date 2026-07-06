@@ -32,7 +32,6 @@ export function Nav() {
     // SISTEMA
     { separator: true, label: "SISTEMA" },
     { href: "/telegram", label: "TELEGRAM", icon: MessageSquare },
-    { href: "/notifications", label: "ALERTAS", icon: Bell },
     { href: "/integrations", label: "APIS", icon: Plug },
     { href: "/settings", label: "SISTEMA", icon: Settings },
     { href: "/backups", label: "BACKUPS", icon: HardDrive },

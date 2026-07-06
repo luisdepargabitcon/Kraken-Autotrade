@@ -313,6 +313,22 @@ export const marketData = pgTable("market_data", {
   timestamp: timestamp("timestamp").notNull().defaultNow(),
 });
 
+// Telegram Bot Tokens Table
+export const telegramBotTokens = pgTable("telegram_bot_tokens", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  tokenEncrypted: text("token_encrypted").notNull(),
+  tokenLast4: text("token_last4").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  isDefault: boolean("is_default").notNull().default(false),
+  environment: text("environment").notNull().default("production"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  lastValidatedAt: timestamp("last_validated_at"),
+  lastError: text("last_error"),
+  deletedAt: timestamp("deleted_at"),
+});
+
 export const telegramChats = pgTable("telegram_chats", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
@@ -325,7 +341,23 @@ export const telegramChats = pgTable("telegram_chats", {
   alertHeartbeat: boolean("alert_heartbeat").notNull().default(true),
   alertPreferences: jsonb("alert_preferences").notNull().default({}),
   isActive: boolean("is_active").notNull().default(true),
+  tokenId: integer("token_id").references(() => telegramBotTokens.id, { onDelete: "set null" }),
+  enabledModes: text("enabled_modes").array().notNull().default(["trading", "idca", "fiscal", "smart_exit"]),
+  enabledAlerts: text("enabled_alerts").array().notNull().default(["trades", "errors", "system", "balance", "heartbeat"]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Telegram Alert Rules Table
+export const telegramAlertRules = pgTable("telegram_alert_rules", {
+  id: serial("id").primaryKey(),
+  chatId: integer("chat_id").notNull().references(() => telegramChats.id, { onDelete: "cascade" }),
+  mode: text("mode").notNull(),
+  alertType: text("alert_type").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  minSeverity: text("min_severity").notNull().default("LOW"),
+  cooldownSeconds: integer("cooldown_seconds").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // FISCO Alert Configuration Table
@@ -753,6 +785,8 @@ export type Notification = typeof notifications.$inferSelect;
 export type MarketData = typeof marketData.$inferSelect;
 export type ApiConfig = typeof apiConfig.$inferSelect;
 export type TelegramChat = typeof telegramChats.$inferSelect;
+export type TelegramBotToken = typeof telegramBotTokens.$inferSelect;
+export type TelegramAlertRule = typeof telegramAlertRules.$inferSelect;
 export type DryRunTrade = typeof dryRunTrades.$inferSelect;
 export type InsertDryRunTrade = z.infer<typeof insertDryRunTradeSchema>;
 export type BotEvent = typeof botEvents.$inferSelect;

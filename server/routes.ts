@@ -748,14 +748,18 @@ export async function registerRoutes(
 
   app.post("/api/telegram/chats", async (req, res) => {
     try {
-      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, alertPreferences } = req.body;
-      
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, alertPreferences, tokenId, enabledModes, enabledAlerts } = req.body;
+
       if (!name || !chatId) {
         return res.status(400).json({ error: "Nombre y Chat ID son requeridos" });
       }
 
-      if (!telegramService.isInitialized()) {
-        return res.status(400).json({ error: "Telegram no está configurado. Configura primero el token principal." });
+      // Validar tokenId si se proporciona
+      if (tokenId !== undefined && tokenId !== null) {
+        const token = await storage.getTelegramBotTokenById(tokenId);
+        if (!token || !token.isActive) {
+          return res.status(400).json({ error: "Token no encontrado o inactivo" });
+        }
       }
 
       const existingChats = await storage.getTelegramChats();
@@ -779,6 +783,7 @@ export async function registerRoutes(
       const chat = await storage.createTelegramChat({
         name,
         chatId,
+        isDefault: existingChats.length === 0,
         alertTrades: derivedTrades,
         alertErrors: derivedErrors,
         alertSystem: derivedSystem,
@@ -786,8 +791,11 @@ export async function registerRoutes(
         alertHeartbeat: derivedHeartbeat,
         alertPreferences: prefs,
         isActive: true,
+        tokenId: tokenId || null,
+        enabledModes: enabledModes || ["trading", "idca", "fiscal", "smart_exit"],
+        enabledAlerts: enabledAlerts || ["trades", "errors", "system", "balance", "heartbeat"],
       });
-      
+
       res.json(chat);
     } catch (error) {
       res.status(500).json({ error: "Error creando chat" });
@@ -797,8 +805,16 @@ export async function registerRoutes(
   app.put("/api/telegram/chats/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, alertPreferences, isActive } = req.body;
-      
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, alertPreferences, isActive, tokenId, enabledModes, enabledAlerts } = req.body;
+
+      // Validar tokenId si se proporciona
+      if (tokenId !== undefined && tokenId !== null) {
+        const token = await storage.getTelegramBotTokenById(tokenId);
+        if (!token || !token.isActive) {
+          return res.status(400).json({ error: "Token no encontrado o inactivo" });
+        }
+      }
+
       const chat = await storage.updateTelegramChat(id, {
         name,
         chatId,
@@ -809,8 +825,11 @@ export async function registerRoutes(
         alertHeartbeat,
         alertPreferences,
         isActive,
+        tokenId: tokenId !== undefined ? tokenId : undefined,
+        enabledModes: enabledModes !== undefined ? enabledModes : undefined,
+        enabledAlerts: enabledAlerts !== undefined ? enabledAlerts : undefined,
       });
-      
+
       res.json(chat);
     } catch (error) {
       res.status(500).json({ error: "Error actualizando chat" });
@@ -824,6 +843,214 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Error eliminando chat" });
+    }
+  });
+
+  // ── Telegram Bot Tokens (multi-bot support) ──
+  app.get("/api/telegram/tokens", async (req, res) => {
+    try {
+      const tokens = await storage.getTelegramBotTokens();
+      // No enviar token completo, solo last4
+      const safeTokens = tokens.map(t => ({
+        ...t,
+        tokenEncrypted: undefined,
+        tokenLast4: t.tokenLast4,
+      }));
+      res.json(safeTokens);
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo tokens" });
+    }
+  });
+
+  app.post("/api/telegram/tokens", async (req, res) => {
+    try {
+      const { name, token, environment = "production" } = req.body;
+
+      if (!name || !token) {
+        return res.status(400).json({ error: "Nombre y token son requeridos" });
+      }
+
+      // Validar formato de token (debe empezar con números y : )
+      if (!/^\d+:[A-Za-z0-9_-]+$/.test(token)) {
+        return res.status(400).json({ error: "Formato de token inválido" });
+      }
+
+      // Extraer últimos 4 caracteres
+      const tokenLast4 = token.slice(-4);
+
+      // Validar token con Telegram API
+      const TelegramBot = require('node-telegram-bot-api');
+      const bot = new TelegramBot(token);
+      try {
+        await bot.getMe();
+      } catch (error: any) {
+        return res.status(400).json({ error: "Token inválido: " + error.message });
+      }
+
+      // Si es el primer token, marcar como default
+      const existingTokens = await storage.getTelegramBotTokens();
+      const isDefault = existingTokens.length === 0;
+
+      const newToken = await storage.createTelegramBotToken({
+        name,
+        tokenEncrypted: token, // TODO: Encriptar antes de guardar
+        tokenLast4,
+        isActive: true,
+        isDefault,
+        environment,
+      });
+
+      res.json({
+        ...newToken,
+        tokenEncrypted: undefined,
+        tokenLast4: newToken.tokenLast4,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Error creando token" });
+    }
+  });
+
+  app.patch("/api/telegram/tokens/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { name, isActive, isDefault, token } = req.body;
+
+      const existing = await storage.getTelegramBotTokenById(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Token no encontrado" });
+      }
+
+      const updates: any = {};
+      if (name !== undefined) updates.name = name;
+      if (isActive !== undefined) updates.isActive = isActive;
+      if (isDefault !== undefined) {
+        // Si se marca como default, desmarcar otros
+        if (isDefault) {
+          const allTokens = await storage.getTelegramBotTokens();
+          for (const t of allTokens) {
+            if (t.id !== id && t.isDefault) {
+              await storage.updateTelegramBotToken(t.id, { isDefault: false });
+            }
+          }
+        }
+        updates.isDefault = isDefault;
+      }
+      if (token !== undefined) {
+        // Validar nuevo token
+        if (!/^\d+:[A-Za-z0-9_-]+$/.test(token)) {
+          return res.status(400).json({ error: "Formato de token inválido" });
+        }
+        const TelegramBot = require('node-telegram-bot-api');
+        const bot = new TelegramBot(token);
+        try {
+          await bot.getMe();
+        } catch (error: any) {
+          return res.status(400).json({ error: "Token inválido: " + error.message });
+        }
+        updates.tokenEncrypted = token;
+        updates.tokenLast4 = token.slice(-4);
+      }
+
+      const updated = await storage.updateTelegramBotToken(id, updates);
+      res.json({
+        ...updated,
+        tokenEncrypted: undefined,
+        tokenLast4: updated.tokenLast4,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Error actualizando token" });
+    }
+  });
+
+  app.post("/api/telegram/tokens/:id/test", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const result = await storage.validateTelegramBotToken(id);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: "Error validando token" });
+    }
+  });
+
+  app.delete("/api/telegram/tokens/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTelegramBotToken(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Error eliminando token" });
+    }
+  });
+
+  // ── Telegram Alert Rules (granular alert configuration by mode) ──
+  app.get("/api/telegram/alert-rules", async (req, res) => {
+    try {
+      const chatId = req.query.chatId ? parseInt(req.query.chatId as string) : undefined;
+      const rules = await storage.getTelegramAlertRules(chatId);
+      res.json(rules);
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo reglas de alerta" });
+    }
+  });
+
+  app.get("/api/telegram/alert-rules/:chatId/:mode", async (req, res) => {
+    try {
+      const chatId = parseInt(req.params.chatId);
+      const mode = req.params.mode;
+      const rules = await storage.getTelegramAlertRulesByMode(chatId, mode);
+      res.json(rules);
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo reglas de alerta por modo" });
+    }
+  });
+
+  app.post("/api/telegram/alert-rules", async (req, res) => {
+    try {
+      const { chatId, mode, alertType, enabled, minSeverity, cooldownSeconds } = req.body;
+
+      if (!chatId || !mode || !alertType) {
+        return res.status(400).json({ error: "chatId, mode y alertType son requeridos" });
+      }
+
+      const rule = await storage.createTelegramAlertRule({
+        chatId,
+        mode,
+        alertType,
+        enabled: enabled ?? true,
+        minSeverity: minSeverity ?? "LOW",
+        cooldownSeconds: cooldownSeconds ?? 0,
+      });
+
+      res.json(rule);
+    } catch (error) {
+      res.status(500).json({ error: "Error creando regla de alerta" });
+    }
+  });
+
+  app.put("/api/telegram/alert-rules/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { enabled, minSeverity, cooldownSeconds } = req.body;
+
+      const updates: any = {};
+      if (enabled !== undefined) updates.enabled = enabled;
+      if (minSeverity !== undefined) updates.minSeverity = minSeverity;
+      if (cooldownSeconds !== undefined) updates.cooldownSeconds = cooldownSeconds;
+
+      const rule = await storage.updateTelegramAlertRule(id, updates);
+      res.json(rule);
+    } catch (error) {
+      res.status(500).json({ error: "Error actualizando regla de alerta" });
+    }
+  });
+
+  app.delete("/api/telegram/alert-rules/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTelegramAlertRule(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Error eliminando regla de alerta" });
     }
   });
 

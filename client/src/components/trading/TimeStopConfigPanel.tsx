@@ -42,7 +42,6 @@ interface TimeStopConfigRow {
   maxTtlHours: string;
   closeOrderType: "market" | "limit";
   limitFallbackSeconds: number;
-  telegramAlertEnabled: boolean;
   logExpiryEvenIfDisabled: boolean;
   softMode: boolean;
   priority: number;
@@ -137,7 +136,6 @@ export function TimeStopConfigPanel() {
       maxTtlHours: "168",
       closeOrderType: "market" as const,
       limitFallbackSeconds: 30,
-      telegramAlertEnabled: true,
       logExpiryEvenIfDisabled: true,
       softMode: true,
       priority: 10,
@@ -154,7 +152,6 @@ export function TimeStopConfigPanel() {
       maxTtlHours: base.maxTtlHours,
       closeOrderType: base.closeOrderType,
       limitFallbackSeconds: base.limitFallbackSeconds,
-      telegramAlertEnabled: base.telegramAlertEnabled,
       logExpiryEvenIfDisabled: base.logExpiryEvenIfDisabled,
       softMode: base.softMode,
       priority: 10,
