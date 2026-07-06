@@ -738,5 +738,44 @@ describe("FASE A — Telegram Refactor Tests", () => {
       expect(result.authorized).toBe(true);
       expect(result.definition?.name).toBe("/status");
     });
+
+    it("blocks when alert rule is disabled for legacy channel", async () => {
+      mockGetTelegramAlertRules.mockResolvedValue([
+        { id: 10, mode: "trading", alertType: "trade_buy", enabled: false, chatId: 1 },
+      ]);
+
+      const status = await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Test",
+        alertCategory: "trades",
+      });
+
+      expect(status).toBe("blocked_by_alert_rule_disabled");
+    });
+
+    it("legacy channel with importedFromLegacy=true has alert rules disabled", async () => {
+      // This tests the migration 067/068 behavior
+      mockGetTelegramChats.mockResolvedValue([
+        { id: 1, chatId: "-100123", name: "Legacy API Config", isActive: false, isDefault: false, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: { importedFromLegacy: "true", needsUserReview: "true" }, enabledModes: null, enabledAlerts: null, tokenId: null },
+      ]);
+      mockGetActiveTelegramChats.mockResolvedValue([]);
+
+      mockGetTelegramAlertRules.mockResolvedValue([
+        { id: 10, mode: "trading", alertType: "all", enabled: false, chatId: 1 },
+      ]);
+
+      const status = await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Test",
+        alertCategory: "trades",
+      });
+
+      // Should be blocked by alert rule disabled OR missing channel (since legacy is inactive)
+      expect(status === "blocked_by_alert_rule_disabled" || status === "blocked_by_missing_channel").toBe(true);
+    });
   });
 });

@@ -40,12 +40,18 @@ DO $$ BEGIN
 END $$;
 
 -- Insertar reglas por defecto para chats existentes
+-- Legacy imported channels (importedFromLegacy=true or needsUserReview=true) get enabled=false
 INSERT INTO telegram_alert_rules (chat_id, mode, alert_type, enabled, min_severity)
-SELECT 
-  c.id, 
-  m.mode, 
+SELECT
+  c.id,
+  m.mode,
   'all' as alert_type,
-  true,
+  CASE
+    WHEN c.alert_preferences->>'importedFromLegacy' = 'true'
+      OR c.alert_preferences->>'needsUserReview' = 'true'
+    THEN false
+    ELSE true
+  END AS enabled,
   'LOW'
 FROM telegram_chats c
 CROSS JOIN (VALUES ('trading'), ('idca'), ('fiscal'), ('smart_exit'), ('system')) AS m(mode)

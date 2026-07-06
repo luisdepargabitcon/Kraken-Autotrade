@@ -202,6 +202,7 @@ export async function registerRoutes(
         { id: '065_telegram_global_config', filePath: path.join(migrationsDir, '065_telegram_global_config.sql') },
         { id: '066_telegram_bot_tokens', filePath: path.join(migrationsDir, '066_telegram_bot_tokens.sql') },
         { id: '067_telegram_alert_rules', filePath: path.join(migrationsDir, '067_telegram_alert_rules.sql') },
+        { id: '068_disable_legacy_alert_rules', filePath: path.join(migrationsDir, '068_disable_legacy_alert_rules.sql') },
       ];
 
       await runner.run(migrations);
@@ -845,6 +846,115 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Error eliminando chat" });
+    }
+  });
+
+  // ── /api/telegram/channels aliases (FASE FIX 1) ──
+  // These are aliases for /api/telegram/chats to maintain consistency with UI and validation
+  app.get("/api/telegram/channels", async (req, res) => {
+    try {
+      const chats = await storage.getTelegramChats();
+      res.json(chats);
+    } catch (error) {
+      res.status(500).json({ error: "Error obteniendo channels" });
+    }
+  });
+
+  app.post("/api/telegram/channels", async (req, res) => {
+    try {
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, alertPreferences, tokenId, enabledModes, enabledAlerts } = req.body;
+
+      if (!name || !chatId) {
+        return res.status(400).json({ error: "Nombre y Chat ID son requeridos" });
+      }
+
+      // Validar tokenId si se proporciona
+      if (tokenId !== undefined && tokenId !== null) {
+        const token = await storage.getTelegramBotTokenById(tokenId);
+        if (!token || !token.isActive) {
+          return res.status(400).json({ error: "Token no encontrado o inactivo" });
+        }
+      }
+
+      const existingChats = await storage.getTelegramChats();
+      const duplicate = existingChats.find(c => c.chatId === chatId);
+      if (duplicate) {
+        return res.status(400).json({ error: "Este Chat ID ya está configurado." });
+      }
+
+      const testSent = await telegramService.sendToChat(chatId, "✅ Chat configurado correctamente en KrakenBot!");
+      if (!testSent) {
+        return res.status(400).json({ error: "No se pudo enviar mensaje al chat. Verifica el Chat ID." });
+      }
+
+      const prefs = alertPreferences || {};
+      const derivedTrades = alertTrades ?? (prefs.trade_buy !== false || prefs.trade_sell !== false);
+      const derivedErrors = alertErrors ?? (prefs.error_api !== false || prefs.error_critical !== false);
+      const derivedSystem = alertSystem ?? (prefs.cycle_started !== false || prefs.cycle_closed !== false);
+      const derivedBalance = alertBalance ?? (prefs.balance !== false);
+      const derivedHeartbeat = alertHeartbeat ?? (prefs.heartbeat !== false);
+
+      const chat = await storage.createTelegramChat({
+        name,
+        chatId,
+        alertTrades: derivedTrades,
+        alertErrors: derivedErrors,
+        alertSystem: derivedSystem,
+        alertBalance: derivedBalance,
+        alertHeartbeat: derivedHeartbeat,
+        alertPreferences: prefs,
+        tokenId: tokenId || null,
+        enabledModes: enabledModes || null,
+        enabledAlerts: enabledAlerts || null,
+      });
+
+      res.json(chat);
+    } catch (error) {
+      res.status(500).json({ error: "Error creando channel" });
+    }
+  });
+
+  app.put("/api/telegram/channels/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, alertPreferences, isActive, tokenId, enabledModes, enabledAlerts } = req.body;
+
+      // Validar tokenId si se proporciona
+      if (tokenId !== undefined && tokenId !== null) {
+        const token = await storage.getTelegramBotTokenById(tokenId);
+        if (!token || !token.isActive) {
+          return res.status(400).json({ error: "Token no encontrado o inactivo" });
+        }
+      }
+
+      const chat = await storage.updateTelegramChat(id, {
+        name,
+        chatId,
+        alertTrades,
+        alertErrors,
+        alertSystem,
+        alertBalance,
+        alertHeartbeat,
+        alertPreferences,
+        isActive,
+        tokenId: tokenId || null,
+        enabledModes,
+        enabledAlerts,
+      });
+
+      res.json(chat);
+    } catch (error) {
+      res.status(500).json({ error: "Error actualizando channel" });
+    }
+  });
+
+  app.delete("/api/telegram/channels/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTelegramChat(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Error eliminando channel" });
     }
   });
 
