@@ -48,6 +48,88 @@
 
 ---
 
+## 2026-07-07 — Validación final UX Telegram staging — eab28fc
+
+### Deploy
+- Commit: `eab28fc` fix(telegram): permitir crear canal inactivo sin test de envío
+- Commit previo: `ad2c683` feat(telegram): UX 1-7 — Canales/Tokens reales, Alertas en subpestañas, eliminar restos
+- VPS: `cd /opt/krakenbot-staging && git pull && docker compose -f docker-compose.staging.yml up -d --build`
+- Espera: 50s para app startup
+
+### Validación API
+- Health: `{"status":"ok","schema":{"healthy":true,"migrationRan":true}}` ✅
+- `/api/telegram/channels`: 200 OK, 3 canales (FISCO activo, Legacy API Config inactivo, Legacy IDCA inactivo) ✅
+- `/api/telegram/tokens`: 200 OK, tokens listados ✅
+- `/api/telegram/alert-rules`: 200 OK, 15 reglas (5 por canal) ✅
+- `/api/telegram/audit`: 0 HIGH, 2 WARNING, 1 INFO ✅
+- `/api/telegram/commands`: 51 comandos, 7 required encontrados ✅
+- `/api/telegram/grid-alert-catalog`: 20 alertas, 0 observerForbidden ✅
+
+### Validación DB
+- Tablas: `telegram_bot_tokens`, `telegram_alert_rules`, `telegram_chats`, `telegram_alert_events` ✅
+- Columnas `telegram_chats`: `token_id`, `enabled_modes`, `enabled_alerts` ✅
+- Columnas `telegram_alert_events`: `token_id`, `channel_id`, `chat_id`, `status`, `block_reason` ✅
+- Canales:
+  - ID 6 FISCO: activo, sin token, enabled_modes trading/idca/fiscal/smart_exit ✅
+  - ID 7 Legacy API Config: inactivo, importedFromLegacy=true ✅
+  - ID 8 Legacy IDCA: inactivo, importedFromLegacy=true ✅
+- Alert rules:
+  - FISCO: 5 reglas enabled=true ✅
+  - Legacy API Config: 5 reglas enabled=false ✅
+  - Legacy IDCA: 5 reglas enabled=false ✅
+- Migrations: 066, 067, 068 aplicadas ✅
+
+### Validación CRUD Canal Temporal
+- POST `/api/telegram/channels` con `isActive=false`: creado ID=9 ✅
+- PUT `/api/telegram/channels/9` editado nombre: OK ✅
+- GET `/api/telegram/channels` verificado canal temporal: OK ✅
+- DELETE `/api/telegram/channels/9`: OK ✅
+- Verificación borrado: 0 canales restantes con chatId=-999999999001 ✅
+
+### Validación Bundle/Frontend
+- "Tokens" encontrado en bundle ✅
+- "Añadir canal" encontrado en bundle ✅
+- "SPOT Dry Run" encontrado en bundle ✅
+- "Grid / Hybrid" encontrado en bundle ✅
+- "Alertas por modo" encontrado solo como tab trigger (no como estructura principal) ✅
+- "Configurar Grid Isolated" no encontrado en bundle ✅
+- "Configurar alertas fiscales" no encontrado en bundle (solo en código fuente como link informativo) ✅
+
+### Validación Logs
+- Sin `DATABASE_ERROR` ✅
+- Sin `ERROR CRITICAL` ✅
+- Sin `NOT_FOUND` en telegram endpoints ✅
+- Sin `token completo` en logs ✅
+
+### Validación Código Fuente Local
+- "Alertas por modo": solo en Telegram.tsx como tab trigger ✅
+- "Configurar Grid Isolated": no encontrado ✅
+- "Configurar alertas fiscales": solo en TelegramFiscoTab.tsx como link a /fiscal (aceptable) ✅
+- "Añadir canal": en TelegramChannelsTab.tsx ✅
+- "TelegramTokensTab": existe, importado y renderizado en Telegram.tsx ✅
+- "SPOT Dry Run": en Telegram.tsx ✅
+- "Grid / Hybrid": en Telegram.tsx ✅
+
+### Tests Locales
+- `npm run check`: OK ✅
+- `npm run build`: OK ✅
+- `telegram-refactor.test.ts`: 42/42 OK ✅
+
+### Checklist Visual Esperada
+- Tabs principales: General, Tokens, Canales, Alertas, Comandos, Auditoría ✅
+- Tokens: botón Añadir token, lista tokens, token oculto ✅
+- Canales: botón Añadir canal, Editar/Activar-Inactivar/Eliminar, legacy inactivos ✅
+- Alertas: subpestañas SPOT Real, SPOT Dry Run, IDCA, Grid/Hybrid, Smart Exit, Fiscalidad, Sistema, IA/Shadow ✅
+- Grid/Hybrid: 20 alertas configurables con enabled/severity/cooldown ✅
+
+### Limitaciones Pendientes
+- Ninguna crítica
+
+### URL Final
+http://5.250.184.18:3020/telegram?v=telegram-ux-final-eab28fc
+
+---
+
 ## 2026-07-07 — UX 1: Auditoría frontend Telegram (en progreso)
 
 ### Tabla de auditoría
