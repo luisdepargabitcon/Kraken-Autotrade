@@ -429,7 +429,7 @@ export default function Integrations() {
                   </div>
                   <div className="flex-1">
                     <CardTitle>Telegram Bot</CardTitle>
-                    <CardDescription>Credenciales del bot para recibir alertas.</CardDescription>
+                    <CardDescription>Gestión centralizada en la pestaña Telegram.</CardDescription>
                   </div>
                   {telegramConnected ? (
                     <div className="flex items-center gap-2 text-green-500">
@@ -442,55 +442,15 @@ export default function Integrations() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid gap-2">
-                  <Label>Bot Token (de @BotFather)</Label>
-                  <div className="relative">
-                    <Input 
-                      type={showTelegramToken ? "text" : "password"}
-                      placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz" 
-                      className="font-mono bg-background/50 pr-10"
-                      value={telegramToken}
-                      onChange={(e) => setTelegramToken(e.target.value)}
-                      data-testid="input-telegram-token"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-0 top-0 h-full"
-                      onClick={() => setShowTelegramToken(!showTelegramToken)}
-                    >
-                      {showTelegramToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </Button>
-                  </div>
+                <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 text-xs text-muted-foreground">
+                  La configuración de Telegram (token, canales, kill switch, alertas, comandos, auditoría) se gestiona ahora desde un único lugar.
                 </div>
-                <div className="grid gap-2">
-                  <Label>Chat ID principal</Label>
-                  <Input 
-                    placeholder="-1001234567890" 
-                    className="font-mono bg-background/50"
-                    value={telegramChatId}
-                    onChange={(e) => setTelegramChatId(e.target.value)}
-                    data-testid="input-telegram-chatid"
-                  />
-                </div>
-                <Button 
-                  className="w-full"
-                  onClick={() => telegramMutation.mutate()}
-                  disabled={!telegramToken || !telegramChatId || telegramMutation.isPending}
-                  data-testid="button-connect-telegram"
-                >
-                  {telegramMutation.isPending ? "Probando..." : telegramConnected ? "Reconectar" : "Conectar Telegram"}
-                </Button>
-                
-                {telegramConnected && (
-                  <Link href="/notifications">
-                    <Button variant="outline" className="w-full mt-2" data-testid="link-to-notifications">
-                      <ArrowRight className="mr-2 h-4 w-4" />
-                      Gestionar canales y alertas en Notificaciones
-                    </Button>
-                  </Link>
-                )}
+                <Link href="/telegram">
+                  <Button variant="default" className="w-full" data-testid="link-to-telegram">
+                    <ArrowRight className="mr-2 h-4 w-4" />
+                    Ir a Centro Telegram
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
           </div>

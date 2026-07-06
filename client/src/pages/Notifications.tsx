@@ -403,6 +403,9 @@ export default function Notifications() {
                 Notificaciones
               </h1>
               <p className="text-muted-foreground mt-1">Telegram Global · Un bot, todos los módulos NEXA.</p>
+              <Link href="/telegram" className="text-xs text-blue-400 hover:underline mt-1 inline-block">
+                → Ir a Centro Telegram unificado (kill switch, canales, comandos, auditoría)
+              </Link>
             </div>
             <div className="hidden sm:flex items-center gap-4 text-sm text-muted-foreground">
               <div className="flex items-center gap-1.5">

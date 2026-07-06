@@ -7,7 +7,7 @@ const tabs = [
   { href: "/dca", label: "DCA", icon: TrendingUp, aliases: ["/institutional-dca"] },
   { href: "/trading", label: "Trading", icon: BarChart3, aliases: ["/strategies"] },
   { href: "/fiscal", label: "Fiscal", icon: FileText, aliases: ["/fisco"] },
-  { href: "/settings", label: "Sistema", icon: Settings, aliases: ["/monitor", "/wallet", "/integrations", "/notifications", "/backups", "/terminal", "/ai", "/guide"] },
+  { href: "/settings", label: "Sistema", icon: Settings, aliases: ["/monitor", "/wallet", "/integrations", "/notifications", "/backups", "/terminal", "/ai", "/guide", "/telegram"] },
 ];
 
 export function MobileTabBar() {

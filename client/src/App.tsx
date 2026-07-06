@@ -21,6 +21,7 @@ import AiMl from "@/pages/AiMl";
 import Autotuning from "@/pages/Autotuning";
 import InstitutionalDca from "@/pages/InstitutionalDca";
 import GridIsolated from "@/pages/GridIsolated";
+import Telegram from "@/pages/Telegram";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -46,6 +47,9 @@ function Router() {
 
       {/* Dashboard legacy */}
       <Route path="/dashboard-legacy" component={Dashboard} />
+
+      {/* Telegram unificado */}
+      <Route path="/telegram" component={Telegram} />
 
       {/* Sistema — rutas existentes */}
       <Route path="/settings" component={Settings} />
