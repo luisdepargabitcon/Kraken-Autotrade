@@ -862,7 +862,7 @@ export async function registerRoutes(
 
   app.post("/api/telegram/channels", async (req, res) => {
     try {
-      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, alertPreferences, tokenId, enabledModes, enabledAlerts } = req.body;
+      const { name, chatId, alertTrades, alertErrors, alertSystem, alertBalance, alertHeartbeat, alertPreferences, tokenId, enabledModes, enabledAlerts, isActive } = req.body;
 
       if (!name || !chatId) {
         return res.status(400).json({ error: "Nombre y Chat ID son requeridos" });
@@ -882,9 +882,12 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Este Chat ID ya está configurado." });
       }
 
-      const testSent = await telegramService.sendToChat(chatId, "✅ Chat configurado correctamente en KrakenBot!");
-      if (!testSent) {
-        return res.status(400).json({ error: "No se pudo enviar mensaje al chat. Verifica el Chat ID." });
+      // Solo enviar test si el canal se crea como activo
+      if (isActive !== false) {
+        const testSent = await telegramService.sendToChat(chatId, "✅ Chat configurado correctamente en KrakenBot!");
+        if (!testSent) {
+          return res.status(400).json({ error: "No se pudo enviar mensaje al chat. Verifica el Chat ID." });
+        }
       }
 
       const prefs = alertPreferences || {};
