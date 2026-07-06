@@ -883,6 +883,16 @@ export async function registerRoutes(
     }
   });
 
+  // ── Grid Alert Catalog (FASE H) ──────────────────────────────────
+  app.get("/api/telegram/grid-alert-catalog", async (req, res) => {
+    try {
+      const { GRID_ALERT_DEFINITIONS } = await import("./services/institutionalDca/GridAlertTypes");
+      res.json(GRID_ALERT_DEFINITIONS);
+    } catch (error: any) {
+      res.status(500).json({ error: "Error obteniendo catalogo de alertas Grid", detail: error?.message });
+    }
+  });
+
   // ── Telegram Audit (FASE C) ──────────────────────────────────────
   // Detects: legacy chat IDs, orphan channels, ENV fallback issues
   app.get("/api/telegram/audit", async (req, res) => {
@@ -906,10 +916,20 @@ export async function registerRoutes(
             severity: "HIGH",
             code: "LEGACY_CHAT_ID_IN_API_CONFIG",
             detail: `api_config.telegram_chat_id = "${apiConfigRow.telegramChatId}" but this chatId is NOT registered in telegram_chats. Messages would go to a phantom channel.`,
-            recommendation: "Register this chatId in telegram_chats or remove it from api_config.",
+            recommendation: "Import as inactive channel for review, or remove the legacy reference.",
             source: "api_config",
             chatId: apiConfigRow.telegramChatId,
             resolvable: true,
+          });
+        } else if ((exists.alertPreferences as any)?.needsUserReview) {
+          issues.push({
+            severity: "WARNING",
+            code: "LEGACY_CHAT_ID_IMPORTED_NEEDS_REVIEW",
+            detail: `api_config.telegram_chat_id = "${apiConfigRow.telegramChatId}" was imported as channel "${exists.name}" but is INACTIVE and pending review.`,
+            recommendation: "Review and activate manually from Telegram > Canales if this channel should receive alerts.",
+            source: "api_config",
+            chatId: apiConfigRow.telegramChatId,
+            resolvable: false,
           });
         } else if (!exists.isActive) {
           issues.push({
@@ -968,10 +988,20 @@ export async function registerRoutes(
             severity: "HIGH",
             code: "IDCA_CHAT_ID_NOT_REGISTERED",
             detail: `institutional_dca_config.telegram_chat_id = "${idcaConfig.telegramChatId}" is NOT registered in telegram_chats.`,
-            recommendation: "Register this chatId in telegram_chats or remove from IDCA config.",
+            recommendation: "Import as inactive channel for review, or remove the legacy reference.",
             source: "idca_config",
             chatId: idcaConfig.telegramChatId,
             resolvable: true,
+          });
+        } else if ((exists.alertPreferences as any)?.needsUserReview) {
+          issues.push({
+            severity: "WARNING",
+            code: "LEGACY_CHAT_ID_IMPORTED_NEEDS_REVIEW",
+            detail: `institutional_dca_config.telegram_chat_id = "${idcaConfig.telegramChatId}" was imported as channel "${exists.name}" but is INACTIVE and pending review.`,
+            recommendation: "Review and activate manually from Telegram > Canales if this channel should receive alerts.",
+            source: "idca_config",
+            chatId: idcaConfig.telegramChatId,
+            resolvable: false,
           });
         } else if (!exists.isActive) {
           issues.push({
@@ -1071,6 +1101,7 @@ export async function registerRoutes(
           highSeverity: issues.filter(i => i.severity === "HIGH").length,
           mediumSeverity: issues.filter(i => i.severity === "MEDIUM").length,
           lowSeverity: issues.filter(i => i.severity === "LOW").length,
+          warning: issues.filter(i => i.severity === "WARNING").length,
           info: issues.filter(i => i.severity === "INFO").length,
         },
       });
@@ -1106,24 +1137,26 @@ export async function registerRoutes(
         if (existing.length > 0) {
           return res.status(400).json({ error: "Este chatId ya está registrado como canal" });
         }
-        const defaultName = name || (source === "api_config" ? "Principal / Legacy API" : source === "idca_config" ? "IDCA Legacy" : "FISCO Legacy");
-        const alertPreferences = source === "idca_config"
-          ? { idca: true, grid: true }
-          : source === "fisco_config"
-          ? { fisco: true }
-          : {};
+        // SAFETY: legacy channels are imported INACTIVE by default. Registering as active
+        // could reactivate phantom messages to a channel the user may have deliberately
+        // removed from the UI. The user must explicitly activate it from Telegram > Canales.
+        const defaultName = name || (source === "api_config" ? "Legacy API Config" : source === "idca_config" ? "Legacy IDCA" : "Legacy FISCO");
+        const alertPreferences: Record<string, any> = {
+          importedFromLegacy: true,
+          needsUserReview: true,
+        };
         const [created] = await db.insert(telegramChats).values({
           name: defaultName,
           chatId,
-          isActive: true,
-          alertTrades: source === "api_config",
-          alertErrors: true,
-          alertSystem: source === "api_config",
+          isActive: false,
+          alertTrades: false,
+          alertErrors: false,
+          alertSystem: false,
           alertBalance: false,
           alertHeartbeat: false,
           alertPreferences,
         }).returning();
-        return res.json({ status: "registered", channel: created });
+        return res.json({ status: "imported_inactive", channel: created });
       }
 
       if (action === "clear_reference") {

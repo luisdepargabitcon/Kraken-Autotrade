@@ -1,6 +1,8 @@
 import TelegramBot from "node-telegram-bot-api";
 import cron from "node-cron";
 import si from "systeminformation";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { storage } from "../storage";
 import type { TelegramChat } from "@shared/schema";
 import { environment } from "./environment";
@@ -846,6 +848,57 @@ export class TelegramService {
       await guard(msg.chat.id, "/impuestos", () => this.handleInformeFiscal(msg.chat.id));
     });
 
+    // ── FASE I: Nuevos comandos (catálogo rehecho) ──────────────
+    // Alias directos a handlers existentes
+    this.bot.onText(/\/status\b/, async (msg) => {
+      await guard(msg.chat.id, "/status", () => this.handleEstado(msg.chat.id));
+    });
+    this.bot.onText(/\/help\b/, async (msg) => {
+      await guard(msg.chat.id, "/help", () => this.handleAyuda(msg.chat.id));
+    });
+    this.bot.onText(/\/last_alerts\b/, async (msg) => {
+      await guard(msg.chat.id, "/last_alerts", () => this.handleUltimas(msg.chat.id));
+    });
+    this.bot.onText(/\/pause_bot\b/, async (msg) => {
+      await guard(msg.chat.id, "/pause_bot", () => this.handlePausar(msg.chat.id));
+    });
+    this.bot.onText(/\/resume_bot\b/, async (msg) => {
+      await guard(msg.chat.id, "/resume_bot", () => this.handleReanudar(msg.chat.id));
+    });
+
+    // Nuevos handlers ligeros
+    this.bot.onText(/\/telegram_status\b/, async (msg) => {
+      await guard(msg.chat.id, "/telegram_status", () => this.handleTelegramStatus(msg.chat.id));
+    });
+    this.bot.onText(/\/commands\b/, async (msg) => {
+      await guard(msg.chat.id, "/commands", () => this.handleCommandsCatalog(msg.chat.id));
+    });
+    this.bot.onText(/\/health\b/, async (msg) => {
+      await guard(msg.chat.id, "/health", () => this.handleHealthCommand(msg.chat.id));
+    });
+    this.bot.onText(/\/version\b/, async (msg) => {
+      await guard(msg.chat.id, "/version", () => this.handleVersionCommand(msg.chat.id));
+    });
+    this.bot.onText(/\/audit\b/, async (msg) => {
+      await guard(msg.chat.id, "/audit", () => this.handleAuditCommand(msg.chat.id));
+    });
+
+    // Comandos con implementación pendiente (registrados en catálogo, responden sin fallar)
+    const pendingCommands = [
+      "/spot_status", "/spot_positions", "/spot_dryrun_status",
+      "/idca_status", "/idca_cycles", "/idca_active", "/idca_summary",
+      "/grid_status", "/grid_observer", "/grid_cycles", "/grid_proposals",
+      "/fisco_status", "/errors",
+      "/spot_pause", "/spot_resume", "/idca_pause", "/idca_resume",
+      "/grid_pause", "/grid_resume", "/telegram_mute", "/telegram_unmute",
+    ];
+    for (const cmd of pendingCommands) {
+      const escaped = cmd.replace("/", "\\/");
+      this.bot.onText(new RegExp(`${escaped}\\b`), async (msg) => {
+        await guard(msg.chat.id, cmd, () => this.handlePendingCommand(msg.chat.id, cmd));
+      });
+    }
+
     // Callback query handler for inline buttons
     this.bot.on("callback_query", async (query) => {
       if (!query.data || !query.message) return;
@@ -913,6 +966,118 @@ export class TelegramService {
     } catch (error: any) {
       await this.bot?.sendMessage(chatId, `❌ Error actualizando comandos: ${escapeHtml(error.message)}`);
     }
+  }
+
+  // FASE I: Nuevos handlers ligeros
+  private async handleTelegramStatus(chatId: number) {
+    try {
+      const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+      const config = await telegramNotificationCenter.getGlobalConfig();
+      const chats = await storage.getActiveTelegramChats();
+      const message = [
+        getBotBranding(),
+        `━━━━━━━━━━━━━━━━━━━`,
+        `📡 <b>Estado Telegram</b>`,
+        ``,
+        `Kill switch global: ${config?.telegramGlobalEnabled ? "✅ ON" : "🔴 OFF"}`,
+        `Modo silencioso: ${config?.telegramSilentMode ? "🔇 ON" : "🔊 OFF"}`,
+        `Severidad mínima: ${config?.telegramMinSeverity || "LOW"}`,
+        `Canales activos: ${chats.length}`,
+        `Entorno: ${config?.telegramEnvironmentLabel || "unknown"}`,
+      ].join("\n");
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async handleCommandsCatalog(chatId: number) {
+    try {
+      const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+      const defs = telegramNotificationCenter.getCommandDefinitions();
+      const active = defs.filter(c => !c.deprecated);
+      const deprecated = defs.filter(c => c.deprecated);
+      const lines = [
+        getBotBranding(),
+        `━━━━━━━━━━━━━━━━━━━`,
+        `📋 <b>Catálogo de Comandos</b> (${active.length} activos, ${deprecated.length} legacy)`,
+        ``,
+        ...active.map(c => `${c.name} — ${escapeHtml(c.description)}`),
+      ].join("\n");
+      await this.bot?.sendMessage(chatId, lines, { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async handleHealthCommand(chatId: number) {
+    try {
+      const config = await storage.getBotConfig();
+      const engineActive = this.engineController?.isActive() ?? false;
+      const message = [
+        getBotBranding(),
+        `━━━━━━━━━━━━━━━━━━━`,
+        `🩺 <b>Health</b>`,
+        ``,
+        `Motor: ${engineActive ? "✅ activo" : "⏸️ detenido"}`,
+        `DB: ✅ conectada`,
+        `Uptime proceso: ${formatDuration(new Date(Date.now() - process.uptime() * 1000))}`,
+      ].join("\n");
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async handleVersionCommand(chatId: number) {
+    try {
+      let version = "unknown";
+      try {
+        version = readFileSync(join(process.cwd(), "VERSION"), "utf-8").trim();
+      } catch { /* VERSION file may not exist locally */ }
+      const message = [
+        getBotBranding(),
+        `━━━━━━━━━━━━━━━━━━━`,
+        `🏷️ <b>Versión</b>`,
+        ``,
+        `Commit/Version: <code>${escapeHtml(version)}</code>`,
+        `Entorno: ${environment.envTag}`,
+      ].join("\n");
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  private async handleAuditCommand(chatId: number) {
+    try {
+      const message = [
+        getBotBranding(),
+        `━━━━━━━━━━━━━━━━━━━`,
+        `🔍 <b>Auditoría Telegram</b>`,
+        ``,
+        `Revisa el diagnóstico completo en la app:`,
+        `Telegram → Auditoría`,
+        ``,
+        `O consulta el endpoint: <code>/api/telegram/audit</code>`,
+      ].join("\n");
+      await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
+    } catch (error: any) {
+      await this.bot?.sendMessage(chatId, `❌ Error: ${escapeHtml(error.message)}`);
+    }
+  }
+
+  /** FASE I: Comandos registrados en catálogo pero con implementación pendiente (SPOT/IDCA/Grid status y pause/resume). */
+  private async handlePendingCommand(chatId: number, command: string) {
+    const message = [
+      getBotBranding(),
+      `━━━━━━━━━━━━━━━━━━━`,
+      `🚧 <b>Comando en desarrollo</b>`,
+      ``,
+      `<code>${escapeHtml(command)}</code> está registrado en el catálogo pero su implementación completa está pendiente.`,
+      `Consulta el estado detallado desde la app web mientras tanto.`,
+    ].join("\n");
+    await this.bot?.sendMessage(chatId, message, { parse_mode: "HTML" });
   }
 
   private async handleEstado(chatId: number) {

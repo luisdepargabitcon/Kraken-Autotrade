@@ -205,6 +205,31 @@ describe("FASE A — Telegram Refactor Tests", () => {
     });
   });
 
+  // ── FASE G: Legacy import as inactive channel ────────────────
+
+  describe("FASE G: Legacy channel imported as inactive requires review", () => {
+    it("does not send to a legacy channel imported as inactive, and audits blocked_by_channel_disabled", async () => {
+      // getActiveTelegramChats only returns ACTIVE chats — an imported-but-inactive
+      // legacy channel must NOT appear here, simulating the real DB behavior.
+      mockGetActiveTelegramChats.mockResolvedValue([
+        { id: 1, chatId: "-100123", name: "Main", isActive: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {} },
+      ]);
+
+      const legacyChatId = "-1002639300934"; // Legacy API Config chatId (imported inactive)
+      const status = await telegramNotificationCenter.sendToSpecificChat(legacyChatId, {
+        sourceModule: "test",
+        mode: "system",
+        alertType: "error_api",
+        message: "Should not be delivered — legacy channel pending review",
+      });
+
+      expect(status).toBe("blocked_by_channel_disabled");
+      expect(mockInsertTelegramAlertEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "blocked_by_channel_disabled" }),
+      );
+    });
+  });
+
   // ── A3: Active/inactive channel validation ──────────────────
 
   describe("A3: Channel validation", () => {
@@ -272,6 +297,54 @@ describe("FASE A — Telegram Refactor Tests", () => {
       const result = await telegramNotificationCenter.authorizeCommand("-100123", "/refresh_commands");
       expect(result.authorized).toBe(true);
       expect(result.permission).toBe("admin");
+    });
+
+    // ── FASE I: Catálogo de comandos rehecho ──────────────────
+    it("/grid_status exists in the command catalog", () => {
+      const defs = telegramNotificationCenter.getCommandDefinitions();
+      const gridStatus = defs.find(c => c.name === "/grid_status");
+      expect(gridStatus).toBeDefined();
+      expect(gridStatus?.module).toBe("grid");
+    });
+
+    it("/idca_status exists in the command catalog", () => {
+      const defs = telegramNotificationCenter.getCommandDefinitions();
+      const idcaStatus = defs.find(c => c.name === "/idca_status");
+      expect(idcaStatus).toBeDefined();
+      expect(idcaStatus?.module).toBe("idca");
+    });
+
+    it("/telegram_status exists as read_only general command", () => {
+      const defs = telegramNotificationCenter.getCommandDefinitions();
+      const cmd = defs.find(c => c.name === "/telegram_status");
+      expect(cmd).toBeDefined();
+      expect(cmd?.permission).toBe("read_only");
+    });
+
+    it("legacy command /estado is marked deprecated with alias to /status", () => {
+      const defs = telegramNotificationCenter.getCommandDefinitions();
+      const legacy = defs.find(c => c.name === "/estado");
+      expect(legacy?.deprecated).toBe(true);
+      expect(legacy?.aliasOf).toBe("/status");
+      expect(legacy?.description).toContain("/status");
+    });
+
+    it("dangerous action commands require confirmation", () => {
+      const defs = telegramNotificationCenter.getCommandDefinitions();
+      const pauseBot = defs.find(c => c.name === "/pause_bot");
+      const telegramMute = defs.find(c => c.name === "/telegram_mute");
+      expect(pauseBot?.requiresConfirmation).toBe(true);
+      expect(pauseBot?.permission).toBe("action");
+      expect(telegramMute?.requiresConfirmation).toBe(true);
+      expect(telegramMute?.permission).toBe("admin");
+    });
+
+    it("read-only commands do not require confirmation", () => {
+      const defs = telegramNotificationCenter.getCommandDefinitions();
+      const readOnlyCmds = defs.filter(c => c.permission === "read_only");
+      for (const cmd of readOnlyCmds) {
+        expect(cmd.requiresConfirmation).toBeFalsy();
+      }
     });
 
     it("logs command execution", async () => {

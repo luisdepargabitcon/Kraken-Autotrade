@@ -190,22 +190,26 @@ async function sendGridPausedAlert(
   await sendTelegram(lines.join("\n"));
 }
 
+// FASE J: routed through TelegramNotificationCenter for kill switch + audit trail.
 async function sendTelegram(message: string): Promise<void> {
   try {
     const config = await repo.getIdcaConfig();
     const chatId = config?.telegramChatId;
     if (!chatId) return;
 
-    // Validate chatId is active in telegram_chats (central authorization)
-    const { storage } = await import("../../storage");
-    const activeChats = await storage.getActiveTelegramChats();
-    const isActive = activeChats.some(c => c.chatId === chatId);
-    if (!isActive) {
-      console.log(`[IDCA_HYBRID_ALERT] BLOCKED: chatId ${chatId} not active in telegram_chats`);
-      return;
+    const { telegramNotificationCenter } = await import("../TelegramNotificationCenter");
+    const status = await telegramNotificationCenter.sendToSpecificChat(chatId, {
+      sourceModule: "IDCA_HYBRID",
+      mode: "idca_hybrid",
+      alertType: "idca_hybrid_alert",
+      message,
+      severity: "LOW",
+      skipDedupe: true,
+      skipRateLimit: true,
+    });
+    if (status !== "sent") {
+      console.log(`[IDCA_HYBRID_ALERT] Not sent: status=${status}`);
     }
-
-    await telegramService.sendToChat(chatId, message, { parseMode: "HTML" });
   } catch (e: any) {
     console.warn(`[IDCA_HYBRID_ALERT] sendTelegram failed: ${e?.message}`);
   }

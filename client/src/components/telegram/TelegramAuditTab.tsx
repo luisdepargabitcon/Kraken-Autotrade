@@ -74,7 +74,7 @@ export default function TelegramAuditTab() {
       return res.json();
     },
     onSuccess: (_data, variables) => {
-      const msg = variables.action === "register_channel" ? "Canal registrado correctamente"
+      const msg = variables.action === "register_channel" ? "Canal importado como INACTIVO — revísalo en Telegram > Canales antes de activarlo"
         : variables.action === "clear_reference" ? "Referencia legacy eliminada"
         : "Issue ignorado";
       toast.success(msg);
@@ -216,6 +216,7 @@ export default function TelegramAuditTab() {
                     <div key={i} className={`p-2 rounded-lg border text-xs ${
                       issue.severity === "HIGH" ? "border-red-500/30 bg-red-500/5" :
                       issue.severity === "MEDIUM" ? "border-yellow-500/30 bg-yellow-500/5" :
+                      issue.severity === "WARNING" ? "border-orange-500/30 bg-orange-500/5" :
                       issue.severity === "LOW" ? "border-blue-500/30 bg-blue-500/5" :
                       "border-green-500/30 bg-green-500/5"
                     }`}>
@@ -232,7 +233,7 @@ export default function TelegramAuditTab() {
                         <div className="flex gap-2 mt-2">
                           <Button size="sm" variant="outline" className="h-6 text-[10px]" disabled={resolveIssue.isPending}
                             onClick={() => resolveIssue.mutate({ action: "register_channel", source: issue.source, chatId: issue.chatId })}>
-                            Registrar como canal
+                            Importar como canal inactivo
                           </Button>
                           <Button size="sm" variant="outline" className="h-6 text-[10px]" disabled={resolveIssue.isPending}
                             onClick={() => resolveIssue.mutate({ action: "clear_reference", source: issue.source, chatId: issue.chatId })}>

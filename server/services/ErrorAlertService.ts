@@ -89,15 +89,29 @@ export class ErrorAlertService {
       // Obtener configuración del chat específico para alertas de errores
       const botConfig = await storage.getBotConfig();
       const errorAlertChatId = botConfig?.errorAlertChatId;
-      
+
+      // FASE J: routed through TelegramNotificationCenter for kill switch + audit trail.
+      // ErrorAlertService keeps its own rate limiting (this.config.rateLimitMinutes),
+      // so dedupe/rate-limit are skipped at the center to avoid double-blocking.
+      const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+      const normalizedAlert = {
+        sourceModule: "ErrorAlertService",
+        mode: "system" as const,
+        alertType: alert.type,
+        message,
+        severity: alert.severity,
+        skipDedupe: true,
+        skipRateLimit: true,
+      };
+
       if (errorAlertChatId) {
         // Enviar solo al chat específico configurado
-        await telegramService.sendToSpecificChat(message, errorAlertChatId);
-        console.log(`[ErrorAlert] Sent ${alert.type} alert to specific chat: ${errorAlertChatId}`);
+        const status = await telegramNotificationCenter.sendToSpecificChat(errorAlertChatId, normalizedAlert);
+        console.log(`[ErrorAlert] ${alert.type} alert to specific chat ${errorAlertChatId}: status=${status}`);
       } else {
         // Enviar a todos los chats activos (comportamiento por defecto)
-        await telegramService.sendAlertWithSubtype(message, "errors", "error_api");
-        console.log(`[ErrorAlert] Sent ${alert.type} alert to all active chats`);
+        const status = await telegramNotificationCenter.send({ ...normalizedAlert, alertCategory: "errors" });
+        console.log(`[ErrorAlert] ${alert.type} alert to all active chats: status=${status}`);
       }
       
       this.updateRateLimit(alert);

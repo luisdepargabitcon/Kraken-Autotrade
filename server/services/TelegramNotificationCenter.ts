@@ -81,29 +81,81 @@ interface CommandDefinition {
   name: string;
   permission: CommandPermission;
   description: string;
+  module?: "general" | "spot" | "idca" | "grid" | "fisco" | "system";
+  deprecated?: boolean;
+  aliasOf?: string;
+  requiresConfirmation?: boolean;
 }
 
+// FASE I: Catálogo de comandos rehecho — nuevos comandos en inglés organizados
+// por módulo, comandos legacy en español mantenidos como alias deprecated.
 const COMMAND_DEFINITIONS: CommandDefinition[] = [
-  { name: "/estado", permission: "read_only", description: "Estado del bot" },
-  { name: "/pausar", permission: "action", description: "Pausar el bot" },
-  { name: "/reanudar", permission: "action", description: "Reanudar el bot" },
-  { name: "/ultimas", permission: "read_only", description: "Últimas operaciones" },
-  { name: "/ayuda", permission: "read_only", description: "Ayuda" },
-  { name: "/balance", permission: "read_only", description: "Balance exchanges" },
-  { name: "/config", permission: "read_only", description: "Configuración riesgo" },
-  { name: "/exposicion", permission: "read_only", description: "Exposición actual" },
-  { name: "/uptime", permission: "read_only", description: "Uptime" },
-  { name: "/menu", permission: "read_only", description: "Menú inline" },
-  { name: "/channels", permission: "read_only", description: "Gestión canales" },
-  { name: "/cartera", permission: "read_only", description: "Cartera valorada" },
-  { name: "/logs", permission: "read_only", description: "Logs paginados" },
-  { name: "/posiciones", permission: "read_only", description: "Posiciones abiertas" },
-  { name: "/ganancias", permission: "read_only", description: "Resumen P&L" },
-  { name: "/refresh_commands", permission: "admin", description: "Admin: refrescar comandos" },
-  { name: "/informe_fiscal", permission: "action", description: "Generar informe fiscal" },
-  { name: "/fiscal", permission: "action", description: "Alias informe fiscal" },
-  { name: "/reporte", permission: "action", description: "Alias informe fiscal" },
-  { name: "/impuestos", permission: "action", description: "Alias informe fiscal" },
+  // ── General ──────────────────────────────────────────────
+  { name: "/help", permission: "read_only", description: "Lista de comandos disponibles", module: "general" },
+  { name: "/status", permission: "read_only", description: "Estado general del bot", module: "general" },
+  { name: "/health", permission: "read_only", description: "Estado de salud del sistema (sin secretos)", module: "general" },
+  { name: "/version", permission: "read_only", description: "Versión y commit actual desplegado", module: "general" },
+  { name: "/uptime", permission: "read_only", description: "Tiempo activo del bot", module: "general" },
+  { name: "/last_alerts", permission: "read_only", description: "Últimas alertas enviadas", module: "general" },
+  { name: "/telegram_status", permission: "read_only", description: "Estado global Telegram (kill switch, canales activos)", module: "general" },
+
+  // ── SPOT ─────────────────────────────────────────────────
+  { name: "/spot_status", permission: "read_only", description: "Estado del trading SPOT activo", module: "spot" },
+  { name: "/spot_positions", permission: "read_only", description: "Posiciones SPOT abiertas", module: "spot" },
+  { name: "/spot_dryrun_status", permission: "read_only", description: "Estado del modo Dry Run", module: "spot" },
+
+  // ── IDCA ─────────────────────────────────────────────────
+  { name: "/idca_status", permission: "read_only", description: "Estado general de IDCA", module: "idca" },
+  { name: "/idca_cycles", permission: "read_only", description: "Ciclos IDCA (activos e históricos)", module: "idca" },
+  { name: "/idca_active", permission: "read_only", description: "Ciclos IDCA activos actualmente", module: "idca" },
+  { name: "/idca_summary", permission: "read_only", description: "Resumen P&L y capital IDCA", module: "idca" },
+
+  // ── Grid ─────────────────────────────────────────────────
+  { name: "/grid_status", permission: "read_only", description: "Estado del sistema Grid/Hybrid", module: "grid" },
+  { name: "/grid_observer", permission: "read_only", description: "Estado del Grid Observer (modo simulado)", module: "grid" },
+  { name: "/grid_cycles", permission: "read_only", description: "Ciclos Grid observados", module: "grid" },
+  { name: "/grid_proposals", permission: "read_only", description: "Propuestas asistidas de Grid pendientes", module: "grid" },
+
+  // ── Fiscalidad ───────────────────────────────────────────
+  { name: "/fisco_status", permission: "read_only", description: "Estado de sincronización fiscal", module: "fisco" },
+  { name: "/informe_fiscal", permission: "action", description: "Generar informe fiscal", module: "fisco", requiresConfirmation: true },
+
+  // ── Sistema ──────────────────────────────────────────────
+  { name: "/errors", permission: "read_only", description: "Errores recientes del sistema", module: "system" },
+  { name: "/audit", permission: "read_only", description: "Diagnóstico telegram:audit", module: "system" },
+  { name: "/commands", permission: "read_only", description: "Catálogo de comandos disponibles", module: "system" },
+
+  // ── Acciones con permiso (requieren confirmación) ────────
+  { name: "/pause_bot", permission: "action", description: "Pausar el bot completo", module: "system", requiresConfirmation: true },
+  { name: "/resume_bot", permission: "action", description: "Reanudar el bot completo", module: "system", requiresConfirmation: true },
+  { name: "/spot_pause", permission: "action", description: "Pausar trading SPOT", module: "spot", requiresConfirmation: true },
+  { name: "/spot_resume", permission: "action", description: "Reanudar trading SPOT", module: "spot", requiresConfirmation: true },
+  { name: "/idca_pause", permission: "action", description: "Pausar módulo IDCA", module: "idca", requiresConfirmation: true },
+  { name: "/idca_resume", permission: "action", description: "Reanudar módulo IDCA", module: "idca", requiresConfirmation: true },
+  { name: "/grid_pause", permission: "action", description: "Pausar módulo Grid", module: "grid", requiresConfirmation: true },
+  { name: "/grid_resume", permission: "action", description: "Reanudar módulo Grid", module: "grid", requiresConfirmation: true },
+  { name: "/telegram_mute", permission: "admin", description: "Activar modo silencioso Telegram", module: "system", requiresConfirmation: true },
+  { name: "/telegram_unmute", permission: "admin", description: "Desactivar modo silencioso Telegram", module: "system", requiresConfirmation: true },
+  { name: "/refresh_commands", permission: "admin", description: "Admin: refrescar catálogo de comandos", module: "system" },
+
+  // ── Legacy (español) — mantenidos como alias deprecated ──
+  { name: "/estado", permission: "read_only", description: "Legacy. Nuevo comando recomendado: /status", module: "general", deprecated: true, aliasOf: "/status" },
+  { name: "/pausar", permission: "action", description: "Legacy. Nuevo comando recomendado: /pause_bot", module: "system", deprecated: true, aliasOf: "/pause_bot", requiresConfirmation: true },
+  { name: "/reanudar", permission: "action", description: "Legacy. Nuevo comando recomendado: /resume_bot", module: "system", deprecated: true, aliasOf: "/resume_bot", requiresConfirmation: true },
+  { name: "/ultimas", permission: "read_only", description: "Legacy. Nuevo comando recomendado: /last_alerts", module: "general", deprecated: true, aliasOf: "/last_alerts" },
+  { name: "/ayuda", permission: "read_only", description: "Legacy. Nuevo comando recomendado: /help", module: "general", deprecated: true, aliasOf: "/help" },
+  { name: "/balance", permission: "read_only", description: "Legacy. Balance exchanges", module: "general", deprecated: true },
+  { name: "/config", permission: "read_only", description: "Legacy. Configuración riesgo", module: "general", deprecated: true },
+  { name: "/exposicion", permission: "read_only", description: "Legacy. Exposición actual", module: "general", deprecated: true },
+  { name: "/menu", permission: "read_only", description: "Legacy. Menú inline", module: "general", deprecated: true },
+  { name: "/channels", permission: "read_only", description: "Legacy. Nuevo comando recomendado: /telegram_status", module: "general", deprecated: true, aliasOf: "/telegram_status" },
+  { name: "/cartera", permission: "read_only", description: "Legacy. Nuevo comando recomendado: /idca_summary", module: "idca", deprecated: true, aliasOf: "/idca_summary" },
+  { name: "/logs", permission: "read_only", description: "Legacy. Nuevo comando recomendado: /errors", module: "system", deprecated: true, aliasOf: "/errors" },
+  { name: "/posiciones", permission: "read_only", description: "Legacy. Nuevo comando recomendado: /spot_positions", module: "spot", deprecated: true, aliasOf: "/spot_positions" },
+  { name: "/ganancias", permission: "read_only", description: "Legacy. Nuevo comando recomendado: /idca_summary", module: "idca", deprecated: true, aliasOf: "/idca_summary" },
+  { name: "/fiscal", permission: "action", description: "Legacy. Nuevo comando recomendado: /informe_fiscal", module: "fisco", deprecated: true, aliasOf: "/informe_fiscal", requiresConfirmation: true },
+  { name: "/reporte", permission: "action", description: "Legacy. Nuevo comando recomendado: /informe_fiscal", module: "fisco", deprecated: true, aliasOf: "/informe_fiscal", requiresConfirmation: true },
+  { name: "/impuestos", permission: "action", description: "Legacy. Nuevo comando recomendado: /informe_fiscal", module: "fisco", deprecated: true, aliasOf: "/informe_fiscal", requiresConfirmation: true },
 ];
 
 // ─── TelegramNotificationCenter ──────────────────────────────

@@ -352,6 +352,9 @@ export class FiscoTelegramNotifier {
       const fileBuffer = Buffer.from(htmlContent, 'utf-8');
       const caption = `📄 <b>Informe Fiscal ${year}</b>\n📅 Generado: ${formatSpanishDate(new Date())}\n💡 <i>Abrir en navegador para ver el informe completo</i>`;
 
+      // FASE J: document/binary sending is not modeled by TelegramNotificationCenter's
+      // NormalizedAlert (text-only). Kept as direct low-level transport, justified —
+      // channel active-check above already enforces central authorization.
       await telegramService.sendDocumentToChat(chatId, fileBuffer, filename, caption);
 
     } catch (error: any) {
@@ -382,7 +385,17 @@ export class FiscoTelegramNotifier {
         ? textContent.substring(0, 4000) + '...\n\n[Contenido truncado]'
         : textContent;
 
-      await telegramService.sendToChat(chatId, `📄 <b>Informe Fiscal</b>\n\n${truncatedContent}`, { parseMode: 'HTML' });
+      // FASE J: routed through TelegramNotificationCenter for kill switch + audit trail.
+      const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+      await telegramNotificationCenter.sendToSpecificChat(chatId, {
+        sourceModule: "FISCO",
+        mode: "fisco",
+        alertType: "fisco_report_text",
+        message: `📄 <b>Informe Fiscal</b>\n\n${truncatedContent}`,
+        severity: "LOW",
+        skipDedupe: true,
+        skipRateLimit: true,
+      });
 
     } catch (error: any) {
       console.error('[FISCO Telegram] Failed to send text report:', error?.message || error);

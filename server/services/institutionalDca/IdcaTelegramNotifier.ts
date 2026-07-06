@@ -137,13 +137,23 @@ export async function getTelegramStatus(): Promise<{
   };
 }
 
+// FASE J: routed through TelegramNotificationCenter for kill switch + audit trail.
+// IDCA keeps its own cooldown/toggle/active-chat gating in canSend() upstream,
+// so dedupe/rate-limit are skipped here to avoid double-blocking existing behavior.
 async function send(chatId: string, message: string, threadId?: string): Promise<boolean> {
   if (!telegramService.isInitialized()) return false;
   try {
-    if (threadId) {
-      return await telegramService.sendToChat(chatId, message, { parseMode: "HTML" });
-    }
-    return await telegramService.sendToChat(chatId, message, { parseMode: "HTML" });
+    const { telegramNotificationCenter } = await import("../TelegramNotificationCenter");
+    const status = await telegramNotificationCenter.sendToSpecificChat(chatId, {
+      sourceModule: "IDCA",
+      mode: "idca",
+      alertType: "idca_alert",
+      message,
+      severity: "LOW",
+      skipDedupe: true,
+      skipRateLimit: true,
+    });
+    return status === "sent";
   } catch (e: any) {
     console.error("[IDCA][TELEGRAM] Error sending:", e.message);
     return false;

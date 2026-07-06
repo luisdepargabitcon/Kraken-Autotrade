@@ -1,28 +1,22 @@
 /**
- * Telegram.tsx — Página principal unificada de Telegram
+ * Telegram.tsx — Página principal unificada de Telegram (FASE E: reorganizada)
  *
- * 12 subpestañas:
- *  1. Ajustes Telegram (global config, token, kill switch)
- *  2. Canales (telegram_chats management)
- *  3. Comandos (command definitions + logs)
- *  4. SPOT / Trading activo
- *  5. SPOT Dry Run
- *  6. IDCA
- *  7. IDCA Hybrid/Grid
- *  8. Smart Exit
- *  9. Fiscalidad
- * 10. Sistema / errores críticos
- * 11. IA / Shadow Mode / Autoafinación
- * 12. Auditoría / Historial
+ * 5 grupos lógicos:
+ *  1. General   (Ajustes: kill switch, token, silent mode, severidad, dedupe, rate-limit, quiet hours)
+ *  2. Canales   (CRUD completo de canales)
+ *  3. Alertas por modo (acordeón: SPOT, SPOT Dry Run, IDCA, IDCA Hybrid/Grid, Smart Exit, Fiscalidad, Sistema, IA)
+ *  4. Comandos  (catálogo + logs)
+ *  5. Auditoría (enviados/bloqueados/fallidos + diagnóstico telegram:audit)
  */
 
 import { useState } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
   Settings, Users, Terminal, TrendingUp, FlaskConical,
   CircleDollarSign, Brain, Bell, FileText, AlertTriangle,
-  Sparkles, History, MessageSquare, Send, Power
+  Sparkles, History, MessageSquare, Layers
 } from "lucide-react";
 
 import TelegramSettingsTab from "@/components/telegram/TelegramSettingsTab";
@@ -38,8 +32,19 @@ import TelegramSystemTab from "@/components/telegram/TelegramSystemTab";
 import TelegramAiTab from "@/components/telegram/TelegramAiTab";
 import TelegramAuditTab from "@/components/telegram/TelegramAuditTab";
 
+const ALERT_MODE_SECTIONS = [
+  { value: "spot", icon: TrendingUp, label: "SPOT Real", component: TelegramSpotTab },
+  { value: "spot-dryrun", icon: FlaskConical, label: "SPOT Dry Run", component: TelegramSpotDryRunTab },
+  { value: "idca", icon: CircleDollarSign, label: "IDCA", component: TelegramIdcaTab },
+  { value: "idca-hybrid", icon: Brain, label: "IDCA Hybrid / Grid", component: TelegramIdcaHybridTab },
+  { value: "smart-exit", icon: Bell, label: "Smart Exit", component: TelegramSmartExitTab },
+  { value: "fisco", icon: FileText, label: "Fiscalidad", component: TelegramFiscoTab },
+  { value: "system", icon: AlertTriangle, label: "Sistema", component: TelegramSystemTab },
+  { value: "ai", icon: Sparkles, label: "IA / Shadow Mode", component: TelegramAiTab },
+];
+
 export default function Telegram() {
-  const [activeTab, setActiveTab] = useState("settings");
+  const [activeGroup, setActiveGroup] = useState("general");
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -59,33 +64,34 @@ export default function Telegram() {
           </div>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-12 gap-1 h-auto p-1">
-            <TabsTrigger value="settings" className="text-xs gap-1"><Settings className="h-3 w-3" /> Ajustes</TabsTrigger>
-            <TabsTrigger value="channels" className="text-xs gap-1"><Users className="h-3 w-3" /> Canales</TabsTrigger>
-            <TabsTrigger value="commands" className="text-xs gap-1"><Terminal className="h-3 w-3" /> Comandos</TabsTrigger>
-            <TabsTrigger value="spot" className="text-xs gap-1"><TrendingUp className="h-3 w-3" /> SPOT</TabsTrigger>
-            <TabsTrigger value="spot-dryrun" className="text-xs gap-1"><FlaskConical className="h-3 w-3" /> Dry Run</TabsTrigger>
-            <TabsTrigger value="idca" className="text-xs gap-1"><CircleDollarSign className="h-3 w-3" /> IDCA</TabsTrigger>
-            <TabsTrigger value="idca-hybrid" className="text-xs gap-1"><Brain className="h-3 w-3" /> Hybrid</TabsTrigger>
-            <TabsTrigger value="smart-exit" className="text-xs gap-1"><Bell className="h-3 w-3" /> Smart Exit</TabsTrigger>
-            <TabsTrigger value="fisco" className="text-xs gap-1"><FileText className="h-3 w-3" /> FISCO</TabsTrigger>
-            <TabsTrigger value="system" className="text-xs gap-1"><AlertTriangle className="h-3 w-3" /> Sistema</TabsTrigger>
-            <TabsTrigger value="ai" className="text-xs gap-1"><Sparkles className="h-3 w-3" /> IA</TabsTrigger>
-            <TabsTrigger value="audit" className="text-xs gap-1"><History className="h-3 w-3" /> Auditoría</TabsTrigger>
+        <Tabs value={activeGroup} onValueChange={setActiveGroup}>
+          <TabsList className="grid grid-cols-5 gap-1 h-auto p-1">
+            <TabsTrigger value="general" className="text-xs gap-1.5"><Settings className="h-3.5 w-3.5" /> General</TabsTrigger>
+            <TabsTrigger value="channels" className="text-xs gap-1.5"><Users className="h-3.5 w-3.5" /> Canales</TabsTrigger>
+            <TabsTrigger value="alerts" className="text-xs gap-1.5"><Layers className="h-3.5 w-3.5" /> Alertas por modo</TabsTrigger>
+            <TabsTrigger value="commands" className="text-xs gap-1.5"><Terminal className="h-3.5 w-3.5" /> Comandos</TabsTrigger>
+            <TabsTrigger value="audit" className="text-xs gap-1.5"><History className="h-3.5 w-3.5" /> Auditoría</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="settings"><TelegramSettingsTab /></TabsContent>
+          <TabsContent value="general"><TelegramSettingsTab /></TabsContent>
           <TabsContent value="channels"><TelegramChannelsTab /></TabsContent>
+
+          <TabsContent value="alerts">
+            <Accordion type="single" collapsible defaultValue="spot" className="space-y-2">
+              {ALERT_MODE_SECTIONS.map(({ value, icon: Icon, label, component: Component }) => (
+                <AccordionItem key={value} value={value} className="border border-border/50 rounded-lg px-3">
+                  <AccordionTrigger className="text-sm hover:no-underline">
+                    <span className="flex items-center gap-2"><Icon className="h-4 w-4" /> {label}</span>
+                  </AccordionTrigger>
+                  <AccordionContent className="pt-2 pb-4">
+                    <Component />
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </TabsContent>
+
           <TabsContent value="commands"><TelegramCommandsTab /></TabsContent>
-          <TabsContent value="spot"><TelegramSpotTab /></TabsContent>
-          <TabsContent value="spot-dryrun"><TelegramSpotDryRunTab /></TabsContent>
-          <TabsContent value="idca"><TelegramIdcaTab /></TabsContent>
-          <TabsContent value="idca-hybrid"><TelegramIdcaHybridTab /></TabsContent>
-          <TabsContent value="smart-exit"><TelegramSmartExitTab /></TabsContent>
-          <TabsContent value="fisco"><TelegramFiscoTab /></TabsContent>
-          <TabsContent value="system"><TelegramSystemTab /></TabsContent>
-          <TabsContent value="ai"><TelegramAiTab /></TabsContent>
           <TabsContent value="audit"><TelegramAuditTab /></TabsContent>
         </Tabs>
       </div>

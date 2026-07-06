@@ -1020,7 +1020,14 @@ export class FiscoAutoSyncService {
       }, "FiscoAutoSyncSuccess");
 
       const message = buildFiscoAutoSyncSuccessHTML(context);
-      await telegramService.sendMessage(message, { parseMode: "HTML" });
+      const { telegramNotificationCenter } = await import("../TelegramNotificationCenter");
+      await telegramNotificationCenter.send({
+        sourceModule: "FISCO_AUTO_SYNC",
+        mode: "fisco",
+        alertType: "fisco_auto_sync_success",
+        message,
+        severity: "LOW",
+      });
       console.log(`[fisco/auto-sync] Telegram success sent: year=${year} newOps=${newOpsCount}`);
     } catch (error: any) {
       console.error(`[fisco/auto-sync] Failed to send Telegram success:`, error);
@@ -1052,7 +1059,14 @@ export class FiscoAutoSyncService {
       }, "FiscoAutoSyncNoChanges");
 
       const message = buildFiscoAutoSyncNoChangesHTML(context);
-      await telegramService.sendMessage(message, { parseMode: "HTML" });
+      const { telegramNotificationCenter } = await import("../TelegramNotificationCenter");
+      await telegramNotificationCenter.send({
+        sourceModule: "FISCO_AUTO_SYNC",
+        mode: "fisco",
+        alertType: "fisco_auto_sync_no_changes",
+        message,
+        severity: "LOW",
+      });
       console.log(`[fisco/auto-sync] Telegram no changes sent: year=${year}`);
     } catch (error: any) {
       console.error(`[fisco/auto-sync] Failed to send Telegram no changes:`, error);
@@ -1080,7 +1094,14 @@ export class FiscoAutoSyncService {
       }, "FiscoAutoSyncWarnings");
 
       const message = buildFiscoAutoSyncWarningsHTML(context);
-      await telegramService.sendMessage(message, { parseMode: "HTML" });
+      const { telegramNotificationCenter } = await import("../TelegramNotificationCenter");
+      await telegramNotificationCenter.send({
+        sourceModule: "FISCO_AUTO_SYNC",
+        mode: "fisco",
+        alertType: "fisco_auto_sync_warnings",
+        message,
+        severity: "MEDIUM",
+      });
       console.log(`[fisco/auto-sync] Telegram with warnings sent: year=${year} warnings=${warnings.length}`);
     } catch (error: any) {
       console.error(`[fisco/auto-sync] Failed to send Telegram with warnings:`, error);
@@ -1106,7 +1127,14 @@ export class FiscoAutoSyncService {
       }, "FiscoAutoSyncError");
 
       const message = buildFiscoAutoSyncErrorHTML(context);
-      await telegramService.sendMessage(message, { parseMode: "HTML" });
+      const { telegramNotificationCenter } = await import("../TelegramNotificationCenter");
+      await telegramNotificationCenter.send({
+        sourceModule: "FISCO_AUTO_SYNC",
+        mode: "fisco",
+        alertType: "fisco_auto_sync_error",
+        message,
+        severity: "HIGH",
+      });
       console.log(`[fisco/auto-sync] Telegram error sent: attempt=${attempt}/${maxAttempts} error=${error}`);
     } catch (error: any) {
       console.error(`[fisco/auto-sync] Failed to send Telegram error:`, error);
@@ -1147,7 +1175,14 @@ export class FiscoAutoSyncService {
       }, "FiscoAutoSyncAllFailed");
 
       const message = buildFiscoAutoSyncAllFailedHTML(context);
-      await telegramService.sendMessage(message, { parseMode: "HTML" });
+      const { telegramNotificationCenter } = await import("../TelegramNotificationCenter");
+      await telegramNotificationCenter.send({
+        sourceModule: "FISCO_AUTO_SYNC",
+        mode: "fisco",
+        alertType: "fisco_auto_sync_all_failed",
+        message,
+        severity: "CRITICAL",
+      });
       console.log(`[fisco/auto-sync] Telegram all failed sent: attempt=${attempt}/${maxAttempts}`);
     } catch (error: any) {
       console.error(`[fisco/auto-sync] Failed to send Telegram all failed:`, error);
