@@ -547,99 +547,34 @@ export function SmartExitTab() {
             </CardContent>
           </Card>
 
-          {/* Notifications */}
+          {/* Notifications — read-only, managed from Telegram > Smart Exit (FASE D5) */}
           <Card className="glass-panel border-border/50">
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-4 w-4 text-blue-500" />
-                  <CardTitle className="text-sm">Notificaciones Telegram</CardTitle>
-                </div>
-                <Switch
-                  checked={config.notifications.enabled}
-                  onCheckedChange={(checked) =>
-                    updateMutation.mutate({
-                      notifications: { ...config.notifications, enabled: checked },
-                    })
-                  }
-                />
+              <div className="flex items-center gap-2">
+                <Bell className="h-4 w-4 text-blue-500" />
+                <CardTitle className="text-sm">Notificaciones Telegram — gestionado desde Telegram</CardTitle>
               </div>
               <CardDescription className="text-xs">
-                Alertas Smart Exit enviadas por Telegram
+                La configuración de alertas, cooldown y score mínimo se gestiona ahora desde el Centro Telegram unificado.
               </CardDescription>
             </CardHeader>
-            {config.notifications.enabled && (
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {[
-                    { key: "notifyOnThresholdHit" as const, label: "Umbral alcanzado", desc: "Score supera el umbral" },
-                    { key: "notifyOnExecutedExit" as const, label: "Salida ejecutada", desc: "Smart Exit cierra posición" },
-                    { key: "notifyOnRegimeChange" as const, label: "Cambio de régimen", desc: "Régimen de mercado cambia" },
-                  ].map((n) => (
-                    <div key={n.key} className="flex items-center justify-between p-2 rounded-lg border border-border/30">
-                      <div>
-                        <div className="text-xs font-medium">{n.label}</div>
-                        <div className="text-[10px] text-muted-foreground">{n.desc}</div>
-                      </div>
-                      <Switch
-                        checked={config.notifications[n.key] as boolean}
-                        onCheckedChange={() => toggleNotification(n.key)}
-                      />
-                    </div>
-                  ))}
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-2.5 rounded-lg border border-border/40 bg-card/30">
+                  <p className="text-muted-foreground">Estado</p>
+                  <p className="font-mono font-medium">{config.notifications.enabled ? "Habilitado" : "Deshabilitado"}</p>
                 </div>
-
-                <Separator />
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs">Cooldown</Label>
-                      <span className="text-xs font-mono text-muted-foreground">{config.notifications.cooldownSec}s</span>
-                    </div>
-                    <Slider
-                      value={[config.notifications.cooldownSec]}
-                      min={60}
-                      max={900}
-                      step={60}
-                      onValueChange={([v]) =>
-                        updateMutation.mutate({
-                          notifications: { ...config.notifications, cooldownSec: v },
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs">Score mín. para notificar</Label>
-                      <span className="text-xs font-mono text-muted-foreground">{config.notifications.minScoreToNotify}</span>
-                    </div>
-                    <Slider
-                      value={[config.notifications.minScoreToNotify]}
-                      min={1}
-                      max={8}
-                      step={1}
-                      onValueChange={([v]) =>
-                        updateMutation.mutate({
-                          notifications: { ...config.notifications, minScoreToNotify: v },
-                        })
-                      }
-                    />
-                  </div>
+                <div className="p-2.5 rounded-lg border border-border/40 bg-card/30">
+                  <p className="text-muted-foreground">Cooldown</p>
+                  <p className="font-mono font-medium">{config.notifications.cooldownSec}s</p>
                 </div>
-
-                <div className="flex items-center justify-between p-2 rounded-lg border border-border/30">
-                  <div>
-                    <div className="text-xs font-medium">Una alerta por evento</div>
-                    <div className="text-[10px] text-muted-foreground">No repetir alertas para el mismo evento</div>
-                  </div>
-                  <Switch
-                    checked={config.notifications.oneAlertPerEvent}
-                    onCheckedChange={() => toggleNotification("oneAlertPerEvent")}
-                  />
-                </div>
-              </CardContent>
-            )}
+              </div>
+              <a href="/telegram">
+                <Button variant="outline" size="sm" className="w-full">
+                  Configurar en Telegram → Smart Exit
+                </Button>
+              </a>
+            </CardContent>
           </Card>
         </>
       )}

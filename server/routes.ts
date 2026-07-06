@@ -907,6 +907,9 @@ export async function registerRoutes(
             code: "LEGACY_CHAT_ID_IN_API_CONFIG",
             detail: `api_config.telegram_chat_id = "${apiConfigRow.telegramChatId}" but this chatId is NOT registered in telegram_chats. Messages would go to a phantom channel.`,
             recommendation: "Register this chatId in telegram_chats or remove it from api_config.",
+            source: "api_config",
+            chatId: apiConfigRow.telegramChatId,
+            resolvable: true,
           });
         } else if (!exists.isActive) {
           issues.push({
@@ -914,6 +917,9 @@ export async function registerRoutes(
             code: "LEGACY_CHAT_ID_INACTIVE",
             detail: `api_config.telegram_chat_id = "${apiConfigRow.telegramChatId}" is registered but INACTIVE in telegram_chats.`,
             recommendation: "Activate the channel in telegram_chats or remove from api_config.",
+            source: "api_config",
+            chatId: apiConfigRow.telegramChatId,
+            resolvable: false,
           });
         }
       }
@@ -963,6 +969,9 @@ export async function registerRoutes(
             code: "IDCA_CHAT_ID_NOT_REGISTERED",
             detail: `institutional_dca_config.telegram_chat_id = "${idcaConfig.telegramChatId}" is NOT registered in telegram_chats.`,
             recommendation: "Register this chatId in telegram_chats or remove from IDCA config.",
+            source: "idca_config",
+            chatId: idcaConfig.telegramChatId,
+            resolvable: true,
           });
         } else if (!exists.isActive) {
           issues.push({
@@ -970,6 +979,9 @@ export async function registerRoutes(
             code: "IDCA_CHAT_ID_INACTIVE",
             detail: `institutional_dca_config.telegram_chat_id = "${idcaConfig.telegramChatId}" is INACTIVE in telegram_chats.`,
             recommendation: "Activate the channel or remove from IDCA config.",
+            source: "idca_config",
+            chatId: idcaConfig.telegramChatId,
+            resolvable: false,
           });
         }
       }
@@ -985,6 +997,9 @@ export async function registerRoutes(
             code: "FISCO_CHAT_ID_NOT_REGISTERED",
             detail: `fisco_alert_config.chat_id = "${fiscoConfig.chatId}" is NOT registered in telegram_chats.`,
             recommendation: "Register this chatId in telegram_chats or remove from FISCO alert config.",
+            source: "fisco_config",
+            chatId: fiscoConfig.chatId,
+            resolvable: true,
           });
         } else if (!exists.isActive) {
           issues.push({
@@ -992,6 +1007,19 @@ export async function registerRoutes(
             code: "FISCO_CHAT_ID_INACTIVE",
             detail: `fisco_alert_config.chat_id = "${fiscoConfig.chatId}" is INACTIVE in telegram_chats.`,
             recommendation: "Activate the channel or remove from FISCO alert config.",
+            source: "fisco_config",
+            chatId: fiscoConfig.chatId,
+            resolvable: false,
+          });
+        } else {
+          issues.push({
+            severity: "INFO",
+            code: "FISCO_CHAT_ID_RESOLVED",
+            detail: `fisco_alert_config.chat_id = "${fiscoConfig.chatId}" is correctly registered and active as channel "${exists.name}".`,
+            recommendation: "No action needed.",
+            source: "fisco_config",
+            chatId: fiscoConfig.chatId,
+            resolvable: false,
           });
         }
       }
@@ -1049,6 +1077,76 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("[telegram:audit] Error:", error);
       res.status(500).json({ error: "Error ejecutando auditoria Telegram", detail: error?.message });
+    }
+  });
+
+  // ── Telegram Audit Resolve Actions (FASE G) ──────────────────────
+  // Allows registering a legacy chatId as a proper telegram_chats channel,
+  // or clearing the legacy reference from the source config table.
+  app.post("/api/telegram/audit/resolve", async (req, res) => {
+    try {
+      const { action, source, chatId, name } = req.body as {
+        action: "register_channel" | "clear_reference" | "ignore";
+        source: "api_config" | "idca_config" | "fisco_config";
+        chatId?: string;
+        name?: string;
+      };
+
+      if (!action || !source) {
+        return res.status(400).json({ error: "action y source son requeridos" });
+      }
+
+      const { db } = await import("./db");
+      const { telegramChats, apiConfig: apiConfigTable, institutionalDcaConfig, fiscoAlertConfig } = await import("../shared/schema");
+      const { eq } = await import("drizzle-orm");
+
+      if (action === "register_channel") {
+        if (!chatId) return res.status(400).json({ error: "chatId requerido" });
+        const existing = await db.select().from(telegramChats).where(eq(telegramChats.chatId, chatId));
+        if (existing.length > 0) {
+          return res.status(400).json({ error: "Este chatId ya está registrado como canal" });
+        }
+        const defaultName = name || (source === "api_config" ? "Principal / Legacy API" : source === "idca_config" ? "IDCA Legacy" : "FISCO Legacy");
+        const alertPreferences = source === "idca_config"
+          ? { idca: true, grid: true }
+          : source === "fisco_config"
+          ? { fisco: true }
+          : {};
+        const [created] = await db.insert(telegramChats).values({
+          name: defaultName,
+          chatId,
+          isActive: true,
+          alertTrades: source === "api_config",
+          alertErrors: true,
+          alertSystem: source === "api_config",
+          alertBalance: false,
+          alertHeartbeat: false,
+          alertPreferences,
+        }).returning();
+        return res.json({ status: "registered", channel: created });
+      }
+
+      if (action === "clear_reference") {
+        if (source === "api_config") {
+          await db.update(apiConfigTable).set({ telegramChatId: null }).where(eq(apiConfigTable.id, 1));
+        } else if (source === "idca_config") {
+          await db.update(institutionalDcaConfig).set({ telegramChatId: null }).where(eq(institutionalDcaConfig.id, 1));
+        } else if (source === "fisco_config") {
+          // fisco_alert_config.chat_id is NOT NULL — clearing means deleting the row
+          await db.delete(fiscoAlertConfig).where(eq(fiscoAlertConfig.id, 1));
+        }
+        return res.json({ status: "cleared" });
+      }
+
+      if (action === "ignore") {
+        // No-op: acknowledged by the user, issue remains but is not acted upon.
+        return res.json({ status: "ignored" });
+      }
+
+      return res.status(400).json({ error: "Acción no reconocida" });
+    } catch (error: any) {
+      console.error("[telegram:audit:resolve] Error:", error);
+      res.status(500).json({ error: "Error resolviendo issue de auditoría", detail: error?.message });
     }
   });
 

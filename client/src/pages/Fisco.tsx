@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { FiscoReportsCenter } from "@/components/fisco/FiscoReportsCenter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
@@ -1566,204 +1567,42 @@ export default function Fisco() {
           {/* ==================== TAB: ALERTAS TELEGRAM ==================== */}
           <TabsContent value="alertas" className="space-y-5">
 
-            {/* Alert Toggles Card */}
+            {/* Alert Config Card — read-only, managed from Telegram > Fiscalidad */}
             <Card className="border border-border">
               <CardHeader className="py-3 px-5 bg-blue-500/10 border-b border-blue-500/20">
                 <CardTitle className="flex items-center gap-2 text-sm text-blue-400">
                   <Settings2 className="h-4 w-4" />
-                  Configuración de Alertas Fiscales por Telegram
+                  Alertas Fiscales por Telegram — gestionado desde Telegram
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-5">
+              <CardContent className="p-5 space-y-4">
                 {alertConfigQ.isLoading ? (
                   <div className="text-center py-8">
                     <Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
                     <p className="text-xs text-muted-foreground mt-2">Cargando configuración...</p>
                   </div>
-                ) : alertConfigQ.isError ? (
-                  <div className="text-center py-6 text-muted-foreground text-sm">
-                    <AlertTriangle className="h-5 w-5 mx-auto mb-2 text-yellow-400" />
-                    No hay configuración de alertas aún. Se creará automáticamente al activar una alerta.
-                  </div>
                 ) : (
-                  <div className="space-y-6">
-                    {/* Channel Selector */}
-                    <div className="p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 rounded-lg bg-cyan-500/10">
-                          <MessageSquare className="h-4 w-4 text-cyan-400" />
-                        </div>
-                        <div>
-                          <Label className="text-sm font-medium">Canal de destino para alertas Fiscal Crypto</Label>
-                          <p className="text-xs text-muted-foreground mt-0.5">Selecciona el chat/grupo de Telegram donde se enviarán informes y alertas fiscales</p>
-                        </div>
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      La selección de canal y los toggles de alertas (sync diario, sync manual, informes, errores) se gestionan ahora
+                      desde el Centro Telegram unificado, para evitar duplicados y mensajes fantasma.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                      <div className="p-2.5 rounded-lg border border-border/40 bg-card/30">
+                        <p className="text-muted-foreground">Canal destino</p>
+                        <p className="font-mono font-medium">{alertConfigQ.data?.chatId && alertConfigQ.data.chatId !== "not_configured" ? alertConfigQ.data.chatId : "— sin asignar —"}</p>
                       </div>
-                      <Select
-                        value={alertConfigQ.data?.chatId || "not_configured"}
-                        onValueChange={(chatId) => updateAlertConfig.mutate({ chatId })}
-                        disabled={updateAlertConfig.isPending || !telegramChatsQ.data?.length}
-                      >
-                        <SelectTrigger className="w-full mt-2">
-                          <SelectValue placeholder="Seleccionar canal..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {telegramChatsQ.data?.filter(c => c.isActive).map((chat) => (
-                            <SelectItem key={chat.chatId} value={chat.chatId}>
-                              {chat.name} ({chat.chatId})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {alertConfigQ.data?._noDefaultChat && (!alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured") && (
-                        <p className="text-xs text-yellow-400 mt-2 flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3" />
-                          No hay canal configurado — selecciona uno para activar las alertas Fiscal Crypto
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Toggle rows — disabled until a channel is selected */}
-                    {(() => { const noChannel = !alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured"; return (
-                    <div className={`grid gap-4 ${noChannel ? "opacity-50 pointer-events-none" : ""}`}>
-                      {noChannel && (
-                        <p className="text-xs text-yellow-400 -mb-2">Selecciona un canal arriba para poder configurar los toggles</p>
-                      )}
-                      {/* Sync Daily */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-lg bg-emerald-500/10">
-                            <Clock className="h-4 w-4 text-emerald-400" />
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium">Sincronización diaria (08:00)</Label>
-                            <p className="text-xs text-muted-foreground mt-0.5">Alerta cuando el cron diario sincroniza los exchanges</p>
-                          </div>
-                        </div>
-                        <Switch
-                          checked={alertConfigQ.data?.syncDailyEnabled ?? true}
-                          onCheckedChange={(checked) => updateAlertConfig.mutate({ syncDailyEnabled: checked })}
-                          disabled={updateAlertConfig.isPending || noChannel}
-                        />
-                      </div>
-
-                      {/* Sync Manual */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-lg bg-blue-500/10">
-                            <Zap className="h-4 w-4 text-blue-400" />
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium">Sincronización manual</Label>
-                            <p className="text-xs text-muted-foreground mt-0.5">Alerta al sincronizar manualmente desde UI o Telegram</p>
-                          </div>
-                        </div>
-                        <Switch
-                          checked={alertConfigQ.data?.syncManualEnabled ?? true}
-                          onCheckedChange={(checked) => updateAlertConfig.mutate({ syncManualEnabled: checked })}
-                          disabled={updateAlertConfig.isPending || noChannel}
-                        />
-                      </div>
-
-                      {/* Report Generated */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-lg bg-purple-500/10">
-                            <FileText className="h-4 w-4 text-purple-400" />
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium">Informe fiscal generado</Label>
-                            <p className="text-xs text-muted-foreground mt-0.5">Alerta cuando se genera y envía un informe fiscal</p>
-                          </div>
-                        </div>
-                        <Switch
-                          checked={alertConfigQ.data?.reportGeneratedEnabled ?? true}
-                          onCheckedChange={(checked) => updateAlertConfig.mutate({ reportGeneratedEnabled: checked })}
-                          disabled={updateAlertConfig.isPending || !alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured"}
-                        />
-                      </div>
-
-                      {/* Error Sync */}
-                      <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-lg bg-red-500/10">
-                            <FileWarning className="h-4 w-4 text-red-400" />
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium">Errores de sincronización</Label>
-                            <p className="text-xs text-muted-foreground mt-0.5">Alerta cuando falla la sincronización de exchanges</p>
-                          </div>
-                        </div>
-                        <Switch
-                          checked={alertConfigQ.data?.errorSyncEnabled ?? true}
-                          onCheckedChange={(checked) => updateAlertConfig.mutate({ errorSyncEnabled: checked })}
-                          disabled={updateAlertConfig.isPending || !alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured"}
-                        />
+                      <div className="p-2.5 rounded-lg border border-border/40 bg-card/30">
+                        <p className="text-muted-foreground">Sync diario / manual</p>
+                        <p className="font-mono font-medium">{alertConfigQ.data?.syncDailyEnabled ? "ON" : "OFF"} / {alertConfigQ.data?.syncManualEnabled ? "ON" : "OFF"}</p>
                       </div>
                     </div>
-                    ); })()}
-
-                    {/* Separator */}
-                    <div className="border-t border-border pt-4">
-                      <h4 className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Preferencias de notificación</h4>
-                      <div className="grid gap-4">
-                        {/* Notify Always */}
-                        <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-yellow-500/10">
-                              <Bell className="h-4 w-4 text-yellow-400" />
-                            </div>
-                            <div>
-                              <Label className="text-sm font-medium">Notificar siempre</Label>
-                              <p className="text-xs text-muted-foreground mt-0.5">Enviar alerta incluso si no hay operaciones nuevas</p>
-                            </div>
-                          </div>
-                          <Switch
-                            checked={alertConfigQ.data?.notifyAlways ?? false}
-                            onCheckedChange={(checked) => updateAlertConfig.mutate({ notifyAlways: checked })}
-                            disabled={updateAlertConfig.isPending || !alertConfigQ.data?.chatId || alertConfigQ.data.chatId === "not_configured"}
-                          />
-                        </div>
-
-                        {/* Summary Threshold */}
-                        <div className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-white/5 transition-colors">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-cyan-500/10">
-                              <Filter className="h-4 w-4 text-cyan-400" />
-                            </div>
-                            <div>
-                              <Label className="text-sm font-medium">Umbral de resumen</Label>
-                              <p className="text-xs text-muted-foreground mt-0.5">Si hay más operaciones que este número, envía resumen en lugar de detalle</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={1}
-                              max={500}
-                              value={alertConfigQ.data?.summaryThreshold ?? 30}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value);
-                                if (val >= 1 && val <= 500) updateAlertConfig.mutate({ summaryThreshold: val });
-                              }}
-                              className="w-20 h-9 px-2 rounded-md border border-border bg-background text-sm text-center font-mono"
-                            />
-                            <span className="text-xs text-muted-foreground">ops</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Save status */}
-                    {updateAlertConfig.isPending && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Guardando...</p>
-                    )}
-                    {updateAlertConfig.isSuccess && (
-                      <p className="text-xs text-green-400">✓ Configuración guardada</p>
-                    )}
-                    {updateAlertConfig.isError && (
-                      <p className="text-xs text-red-400">✗ Error: {(updateAlertConfig.error as Error).message}</p>
-                    )}
-                  </div>
+                    <Link href="/telegram">
+                      <Button size="sm" className="w-full">
+                        Configurar en Telegram → Fiscalidad
+                      </Button>
+                    </Link>
+                  </>
                 )}
               </CardContent>
             </Card>

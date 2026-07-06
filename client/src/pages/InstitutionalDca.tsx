@@ -3,6 +3,7 @@
  * Completely independent from the main bot UI.
  */
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { Link } from "wouter";
 import { calculateIdcaCycleRealizedPnl } from "@shared/idcaCyclePnl";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -5370,251 +5371,47 @@ function EventsLogPanel() {
 
 function TelegramTab() {
   const { data: config } = useIdcaConfig();
-  const updateConfig = useUpdateIdcaConfig();
-  const testTelegram = useIdcaTelegramTest();
-  const { data: telegramStatus, refetch: refetchStatus } = useIdcaTelegramStatus();
-  const { toast } = useToast();
+  const { data: telegramStatus } = useIdcaTelegramStatus();
 
   if (!config) return <div className="text-center py-8 text-muted-foreground">Cargando...</div>;
 
-  const toggles = (config.telegramAlertTogglesJson || {}) as Record<string, boolean>;
-
-  const updateToggle = (key: string, val: boolean) => {
-    updateConfig.mutate({
-      telegramAlertTogglesJson: { ...toggles, [key]: val },
-    });
-  };
-
   const isConnected = config.telegramEnabled && !!telegramStatus?.chatIdConfigured && !!telegramStatus?.serviceInitialized;
-
-  const buyActive = [toggles["cycle_started"] !== false, toggles["base_buy_executed"] !== false, toggles["safety_buy_executed"] !== false, !!toggles["buy_blocked"]].filter(Boolean).length;
-  const sellActive = [toggles["protection_armed"] !== false, toggles["trailing_activated"] !== false, toggles["tp_armed"] !== false, toggles["trailing_exit"] !== false, toggles["breakeven_exit"] !== false, toggles["module_max_drawdown_reached"] !== false].filter(Boolean).length;
-  const vwapActive = [toggles["vwap_anchor_changed"] !== false, toggles["vwap_approaching_buy"] !== false, toggles["vwap_drawdown_milestone"] !== false, toggles["trailing_buy_armed"] !== false, toggles["trailing_buy_triggered"] !== false].filter(Boolean).length;
-  const sysActive = [toggles["critical_error"] !== false, !!toggles["smart_adjustment_applied"], !!toggles["simulation_alerts_enabled"]].filter(Boolean).length;
 
   return (
     <div className="space-y-4">
       <Card className="border-border/50">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-mono flex items-center gap-2">
-            <Send className="h-4 w-4" /> CONFIGURACIÓN TELEGRAM IDCA
+            <Send className="h-4 w-4" /> TELEGRAM IDCA — gestionado desde Telegram
             <Badge variant="outline" className={cn("text-[10px] ml-auto", isConnected ? "text-green-400 border-green-500/40 bg-green-500/10" : "text-red-400 border-red-500/40 bg-red-500/10")}>
               {isConnected ? "✓ Conectado" : "✗ Sin conexión"}
             </Badge>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-wrap gap-4">
-            <ToggleField label="Telegram Habilitado" checked={config.telegramEnabled}
-              onChange={(v) => updateConfig.mutate({ telegramEnabled: v })} />
-            <ToggleField label="Alertas en Simulación" checked={config.simulationTelegramEnabled}
-              onChange={(v) => updateConfig.mutate({ simulationTelegramEnabled: v })} />
+          <p className="text-xs text-muted-foreground">
+            La configuración de canales, chat ID, toggles de alertas de compra/venta/VWAP/sistema y los sliders de frecuencia/detalle/agrupación
+            se gestionan ahora desde el Centro Telegram unificado, para evitar duplicados y mensajes fantasma.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="p-2.5 rounded-lg border border-border/40 bg-card/30">
+              <p className="text-muted-foreground">Estado</p>
+              <p className="font-mono font-medium">{config.telegramEnabled ? "Habilitado" : "Deshabilitado"}</p>
+            </div>
+            <div className="p-2.5 rounded-lg border border-border/40 bg-card/30">
+              <p className="text-muted-foreground">Canal destino</p>
+              <p className="font-mono font-medium">{config.telegramChatId || "— sin asignar —"}</p>
+            </div>
+            <div className="p-2.5 rounded-lg border border-border/40 bg-card/30">
+              <p className="text-muted-foreground">Alertas en simulación</p>
+              <p className="font-mono font-medium">{config.simulationTelegramEnabled ? "Sí" : "No"}</p>
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <ConfigField label="Chat ID" value={config.telegramChatId || ""}
-              onChange={(v) => updateConfig.mutate({ telegramChatId: v })} />
-            <ConfigField label="Thread ID (opcional)" value={config.telegramThreadId || ""}
-              onChange={(v) => updateConfig.mutate({ telegramThreadId: v })} />
-            <ConfigField label="Cooldown (seg)" value={String(config.telegramCooldownSeconds)}
-              onChange={(v) => updateConfig.mutate({ telegramCooldownSeconds: parseInt(v) })} type="number" />
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button size="sm" variant="outline" className="text-xs"
-              onClick={() => testTelegram.mutate(undefined, {
-                onSuccess: (data: any) => { refetchStatus(); toast({ title: data.success ? "Test OK ✅" : "Test Fallido ❌", description: data.message || data.error || "Revisar logs", variant: data.success ? "default" : "destructive" }); },
-                onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-              })}>
-              <Send className="h-3 w-3 mr-1" /> Enviar Test
+          <Link href="/telegram">
+            <Button size="sm" className="w-full">
+              Configurar en Telegram → IDCA
             </Button>
-            {telegramStatus && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${telegramStatus.enabled ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>
-                  {telegramStatus.enabled ? '✓ Habilitado' : '✗ Deshabilitado'}
-                </span>
-                <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${telegramStatus.chatIdConfigured ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>
-                  {telegramStatus.chatIdConfigured ? '✓ Chat ID OK' : '✗ Sin Chat ID'}
-                </span>
-                <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${telegramStatus.serviceInitialized ? 'bg-green-500/15 text-green-400' : 'bg-amber-500/15 text-amber-400'}`}>
-                  {telegramStatus.serviceInitialized ? '✓ Servicio activo' : '⚠ Servicio no init'}
-                </span>
-                {config.mode === 'simulation' && (
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${telegramStatus.simulationAlertsEnabled ? 'bg-blue-500/15 text-blue-400' : 'bg-amber-500/15 text-amber-400'}`}>
-                    {telegramStatus.simulationAlertsEnabled ? '✓ Sim. alertas ON' : '⚠ Sim. alertas OFF'}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Alertas de Compra ── */}
-      <Card className="border-border/50">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono flex items-center gap-2">🛒 ALERTAS DE COMPRA <span className="text-[10px] text-muted-foreground font-normal">{buyActive}/4 activas</span></CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <ToggleField label="Ciclo iniciado" checked={toggles["cycle_started"] !== false}
-              desc="Cada vez que se abre una compra base" onChange={(v) => updateToggle("cycle_started", v)} />
-            <ToggleField label="Compra base ejecutada" checked={toggles["base_buy_executed"] !== false}
-              desc="Confirmación de la orden base" onChange={(v) => updateToggle("base_buy_executed", v)} />
-            <ToggleField label="Compra de seguridad" checked={toggles["safety_buy_executed"] !== false}
-              desc="Safety orders ejecutadas" onChange={(v) => updateToggle("safety_buy_executed", v)} />
-            <ToggleField label="Compra bloqueada" checked={!!toggles["buy_blocked"]}
-              desc="Cuando la entrada es rechazada" onChange={(v) => updateToggle("buy_blocked", v)} />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Alertas de Venta / Salida ── */}
-      <Card className="border-border/50">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono flex items-center gap-2">📈 ALERTAS DE VENTA / SALIDA <span className="text-[10px] text-muted-foreground font-normal">{sellActive}/6 activas</span></CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <ToggleField label="Protección armada" checked={toggles["protection_armed"] !== false}
-              desc="Stop break-even activado (+X%)" onChange={(v) => updateToggle("protection_armed", v)} />
-            <ToggleField label="Trailing activado" checked={toggles["trailing_activated"] !== false}
-              desc="Trailing stop iniciando seguimiento" onChange={(v) => updateToggle("trailing_activated", v)} />
-            <ToggleField label="TP alcanzado (venta parcial)" checked={toggles["tp_armed"] !== false}
-              desc="Take profit: vende parcial + trailing residual" onChange={(v) => updateToggle("tp_armed", v)} />
-            <ToggleField label="Salida trailing" checked={toggles["trailing_exit"] !== false}
-              desc="Stop trailing ejecutado → venta final" onChange={(v) => updateToggle("trailing_exit", v)} />
-            <ToggleField label="Salida break-even" checked={toggles["breakeven_exit"] !== false}
-              desc="Stop tocado, salida a coste" onChange={(v) => updateToggle("breakeven_exit", v)} />
-            <ToggleField label="Drawdown máximo módulo" checked={toggles["module_max_drawdown_reached"] !== false}
-              desc="El módulo superó el drawdown configurado" onChange={(v) => updateToggle("module_max_drawdown_reached", v)} />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Alertas VWAP ── */}
-      <Card className="border-border/50">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono flex items-center gap-2">📊 ALERTAS VWAP / TRAILING BUY <span className="text-[10px] text-muted-foreground font-normal">{vwapActive}/5 activas</span></CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <ToggleField label="Ancla actualizada" checked={toggles["vwap_anchor_changed"] !== false}
-              desc="Nuevo máximo registrado como referencia VWAP" onChange={(v) => updateToggle("vwap_anchor_changed", v)} />
-            <ToggleField label="Precio cerca de compra" checked={toggles["vwap_approaching_buy"] !== false}
-              desc="Precio a ≤3% del trigger (cooldown 2h)" onChange={(v) => updateToggle("vwap_approaching_buy", v)} />
-            <ToggleField label="Hito de caída" checked={toggles["vwap_drawdown_milestone"] !== false}
-              desc="-5%, -10%, -15%, -20% desde ancla (1x por hito)" onChange={(v) => updateToggle("vwap_drawdown_milestone", v)} />
-            <ToggleField label="Trailing buy armado" checked={toggles["trailing_buy_armed"] !== false}
-              desc="Precio entró en zona de interés" onChange={(v) => updateToggle("trailing_buy_armed", v)} />
-            <ToggleField label="Trailing buy disparado" checked={toggles["trailing_buy_triggered"] !== false}
-              desc="Rebote confirmado → se evalúa entrada" onChange={(v) => updateToggle("trailing_buy_triggered", v)} />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Alertas IDCA — 3 sliders ── */}
-      {(() => {
-        const tu = config.telegramUiJson as Record<string, number> | null;
-        const freq     = tu?.telegramAlertFrequencyLevel ?? 85;
-        const detail   = tu?.telegramAlertDetailLevel    ?? 40;
-        const grouping = tu?.telegramAlertGroupingLevel  ?? 85;
-        const ap       = deriveAlertPreview(freq, detail, grouping);
-        const saveTu   = (key: string, val: number) =>
-          updateConfig.mutate({ telegramUiJson: { ...(tu ?? {}), [key]: val } });
-        return (
-          <Card className="border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-mono">🔔 ALERTAS IDCA</CardTitle>
-              <p className="text-xs text-muted-foreground">Configura cuándo y con qué detalle el bot te notifica. Sin parámetros técnicos.</p>
-            </CardHeader>
-            <CardContent className="space-y-6">
-
-              {/* Slider T1 — Frecuencia */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">Frecuencia de alertas IDCA</Label>
-                  <span className="font-mono text-lg font-semibold text-blue-400">{freq}</span>
-                </div>
-                <Slider value={[freq]} onValueChange={(v) => saveTu("telegramAlertFrequencyLevel", v[0])}
-                  min={0} max={100} step={1} className="[&>span]:bg-blue-500" />
-                <div className="flex justify-between text-[10px] text-muted-foreground">
-                  <span>Más avisos</span><span>Menos avisos</span>
-                </div>
-              </div>
-
-              {/* Slider T2 — Detalle */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">Detalle de alertas</Label>
-                  <span className="font-mono text-lg font-semibold text-amber-400">{detail}</span>
-                </div>
-                <Slider value={[detail]} onValueChange={(v) => saveTu("telegramAlertDetailLevel", v[0])}
-                  min={0} max={100} step={1} className="[&>span]:bg-amber-500" />
-                <div className="flex justify-between text-[10px] text-muted-foreground">
-                  <span>Solo importante</span><span>Muy detallado</span>
-                </div>
-              </div>
-
-              {/* Slider T3 — Agrupación */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">Agrupar avisos repetidos</Label>
-                  <span className="font-mono text-lg font-semibold text-green-400">{grouping}</span>
-                </div>
-                <Slider value={[grouping]} onValueChange={(v) => saveTu("telegramAlertGroupingLevel", v[0])}
-                  min={0} max={100} step={1} className="[&>span]:bg-green-500" />
-                <div className="flex justify-between text-[10px] text-muted-foreground">
-                  <span>Individuales</span><span>Agrupados</span>
-                </div>
-              </div>
-
-              {/* Resumen calculado */}
-              <div className="rounded-md border border-border/50 bg-muted/30 p-3 space-y-2">
-                <p className="text-xs font-mono font-medium text-muted-foreground">CONFIGURACIÓN CALCULADA</p>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Perfil</span>
-                    <span className="font-mono font-medium">{ap.profile}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Tracking precio</span>
-                    <span className={`font-mono font-medium ${ap.tracking ? "text-amber-400" : "text-muted-foreground"}`}>
-                      {ap.tracking ? "activo ⚠️" : "desactivado"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Cooldown watching</span>
-                    <span className="font-mono font-medium">{ap.watchingMin} min</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Cooldown tracking</span>
-                    <span className="font-mono font-medium">{ap.trackingMin} min</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Resumen periódico</span>
-                    <span className="font-mono font-medium">{ap.digestMin} min</span>
-                  </div>
-                </div>
-              </div>
-
-            </CardContent>
-          </Card>
-        );
-      })()}
-
-      {/* ── Alertas de Sistema ── */}
-      <Card className="border-border/50">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-mono flex items-center gap-2">⚙️ ALERTAS DE SISTEMA <span className="text-[10px] text-muted-foreground font-normal">{sysActive}/3 activas</span></CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <ToggleField label="Error crítico" checked={toggles["critical_error"] !== false}
-              desc="Fallos graves (venta fallida, etc.)" onChange={(v) => updateToggle("critical_error", v)} />
-            <ToggleField label="Ajuste inteligente" checked={!!toggles["smart_adjustment_applied"]}
-              desc="Smart-Guard modificó parámetros" onChange={(v) => updateToggle("smart_adjustment_applied", v)} />
-            <ToggleField label="Alertas en simulación" checked={!!toggles["simulation_alerts_enabled"]}
-              desc="Recibir notificaciones en modo simulación" onChange={(v) => updateToggle("simulation_alerts_enabled", v)} />
-          </div>
+          </Link>
         </CardContent>
       </Card>
     </div>

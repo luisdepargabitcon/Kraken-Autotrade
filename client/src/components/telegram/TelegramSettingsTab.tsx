@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Power, Send, Check, Eye, EyeOff, AlertTriangle } from "lucide-react";
+import { Power, Send, Check, Eye, EyeOff, AlertTriangle, Zap, Clock, Users, RefreshCw, TrendingUp, Heart, BarChart3, AlertCircle, Shield } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -23,11 +24,34 @@ interface GlobalConfig {
   telegramEnvironmentLabel: string;
 }
 
+interface BotConfig {
+  notifCooldownStopUpdated: number;
+  notifCooldownRegimeChange: number;
+  notifCooldownHeartbeat: number;
+  notifCooldownTrades: number;
+  notifCooldownErrors: number;
+  nonceErrorAlertsEnabled: boolean;
+  signalRejectionAlertsEnabled: boolean;
+  buySnapshotAlertsEnabled: boolean;
+  spreadTelegramAlertEnabled: boolean;
+  errorAlertChatId?: string | null;
+  signalRejectionAlertChatId?: string | null;
+}
+
+interface TelegramChatLite {
+  id: number;
+  name: string;
+  chatId: string;
+  isActive: boolean;
+}
+
 export default function TelegramSettingsTab() {
   const queryClient = useQueryClient();
   const [token, setToken] = useState("");
   const [chatId, setChatId] = useState("");
   const [showToken, setShowToken] = useState(false);
+  const [customMessage, setCustomMessage] = useState("");
+  const [selectedDestination, setSelectedDestination] = useState<string>("default");
 
   const { data: config, isLoading } = useQuery<GlobalConfig>({
     queryKey: ["telegramGlobalConfig"],
@@ -46,6 +70,67 @@ export default function TelegramSettingsTab() {
       return res.json();
     },
   });
+
+  const { data: botConfig } = useQuery<BotConfig>({
+    queryKey: ["botConfig"],
+    queryFn: async () => {
+      const res = await fetch("/api/config");
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+
+  const { data: telegramChats = [] } = useQuery<TelegramChatLite[]>({
+    queryKey: ["telegramChats"],
+    queryFn: async () => {
+      const res = await fetch("/api/telegram/chats");
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+
+  const updateBotConfig = useMutation({
+    mutationFn: async (patch: Partial<BotConfig>) => {
+      const res = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["botConfig"] });
+      toast.success("Configuración actualizada");
+    },
+    onError: () => toast.error("Error al actualizar configuración"),
+  });
+
+  const sendCustomMessage = useMutation({
+    mutationFn: async () => {
+      let payload: any = { message: customMessage };
+      if (selectedDestination !== "default") payload.chatRefId = parseInt(selectedDestination);
+      const res = await fetch("/api/telegram/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Mensaje enviado");
+      setCustomMessage("");
+    },
+    onError: () => toast.error("Error al enviar mensaje"),
+  });
+
+  const formatCooldown = (seconds: number): string => {
+    if (seconds === 0) return "Sin límite";
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}min`;
+    return `${Math.floor(seconds / 3600)}h`;
+  };
 
   useEffect(() => {
     if (apiConfig) {
@@ -187,6 +272,185 @@ export default function TelegramSettingsTab() {
               onClick={() => sendTest.mutate()}>
               <Send className="h-3 w-3 mr-1" /> Test
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Enviar mensaje de prueba a canal específico */}
+      {isConnected && (
+        <Card className="border-border/50">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-green-500/20 rounded-lg">
+                <Send className="h-5 w-5 text-green-400" />
+              </div>
+              <div>
+                <CardTitle className="text-sm">Enviar Mensaje de Prueba</CardTitle>
+                <CardDescription className="text-xs">Envía un mensaje a un canal específico</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Select value={selectedDestination} onValueChange={setSelectedDestination}>
+              <SelectTrigger className="h-9"><SelectValue placeholder="Destino" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Chat por defecto</SelectItem>
+                {telegramChats.map((chat) => (
+                  <SelectItem key={chat.id} value={chat.id.toString()}>
+                    {chat.name} ({chat.chatId})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex gap-2">
+              <Textarea placeholder="Mensaje de prueba..." className="bg-background/50 min-h-[60px] flex-1 text-xs"
+                value={customMessage} onChange={(e) => setCustomMessage(e.target.value)} />
+              <Button className="self-end" size="sm"
+                onClick={() => sendCustomMessage.mutate()}
+                disabled={!customMessage.trim() || sendCustomMessage.isPending}>
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Alertas Globales (toggles maestros) */}
+      <Card className="border-border/50">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-purple-500/20 rounded-lg">
+              <Zap className="h-5 w-5 text-purple-400" />
+            </div>
+            <div>
+              <CardTitle className="text-sm">Alertas Globales</CardTitle>
+              <CardDescription className="text-xs">Toggles maestros por categoría, independiente del canal</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex items-center justify-between p-3 border border-border rounded-lg bg-card/30">
+              <div className="space-y-0.5">
+                <Label className="text-xs">Errores de Nonce</Label>
+                <p className="text-[10px] text-muted-foreground">Errores persistentes de nonce con Kraken</p>
+              </div>
+              <Switch checked={botConfig?.nonceErrorAlertsEnabled ?? true}
+                onCheckedChange={(v) => updateBotConfig.mutate({ nonceErrorAlertsEnabled: v })} />
+            </div>
+            <div className="flex items-center justify-between p-3 border border-border rounded-lg bg-card/30">
+              <div className="space-y-0.5">
+                <Label className="text-xs">Rechazo de Señales</Label>
+                <p className="text-[10px] text-muted-foreground">Filtros MTF / Anti-Cresta bloquean compra</p>
+              </div>
+              <Switch checked={botConfig?.signalRejectionAlertsEnabled ?? true}
+                onCheckedChange={(v) => updateBotConfig.mutate({ signalRejectionAlertsEnabled: v })} />
+            </div>
+            <div className="flex items-center justify-between p-3 border border-border rounded-lg bg-card/30">
+              <div className="space-y-0.5">
+                <Label className="text-xs">Snapshot de Compra</Label>
+                <p className="text-[10px] text-muted-foreground">Snapshot técnico al ejecutar una compra</p>
+              </div>
+              <Switch checked={botConfig?.buySnapshotAlertsEnabled ?? true}
+                onCheckedChange={(v) => updateBotConfig.mutate({ buySnapshotAlertsEnabled: v })} />
+            </div>
+            <div className="flex items-center justify-between p-3 border border-border rounded-lg bg-card/30">
+              <div className="space-y-0.5">
+                <Label className="text-xs">Alerta de Spread</Label>
+                <p className="text-[10px] text-muted-foreground">Alerta cuando el spread rechaza una operación</p>
+              </div>
+              <Switch checked={botConfig?.spreadTelegramAlertEnabled ?? true}
+                onCheckedChange={(v) => updateBotConfig.mutate({ spreadTelegramAlertEnabled: v })} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Destino de alertas especiales */}
+      <Card className="border-red-500/20 bg-red-500/5">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-red-500/20 rounded-lg">
+              <Shield className="h-5 w-5 text-red-400" />
+            </div>
+            <div>
+              <CardTitle className="text-sm">Destino de Alertas Especiales</CardTitle>
+              <CardDescription className="text-xs">Dirige alertas críticas y de rechazo a canales específicos</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-medium">Errores Críticos</Label>
+              <Select value={botConfig?.errorAlertChatId ?? "all"}
+                onValueChange={(v) => updateBotConfig.mutate({ errorAlertChatId: v === "all" ? null : v })}>
+                <SelectTrigger className="bg-background/50 h-9 text-xs"><SelectValue placeholder="Seleccionar destino" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all"><span className="flex items-center gap-2"><Users className="h-3.5 w-3.5" /> Todos los chats activos</span></SelectItem>
+                  {telegramChats.filter(c => c.isActive).map(chat => (
+                    <SelectItem key={chat.id} value={chat.chatId}>{chat.name} <span className="text-muted-foreground font-mono text-xs">({chat.chatId})</span></SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">PRICE_INVALID, API_ERROR, DATABASE_ERROR, TRADING_ERROR, SYSTEM_ERROR</p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-medium">Rechazo de Señales</Label>
+              <Select value={botConfig?.signalRejectionAlertChatId ?? "all"}
+                onValueChange={(v) => updateBotConfig.mutate({ signalRejectionAlertChatId: v === "all" ? null : v })}>
+                <SelectTrigger className="bg-background/50 h-9 text-xs"><SelectValue placeholder="Seleccionar destino" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all"><span className="flex items-center gap-2"><Users className="h-3.5 w-3.5" /> Todos los chats activos</span></SelectItem>
+                  {telegramChats.filter(c => c.isActive).map(chat => (
+                    <SelectItem key={chat.id} value={chat.chatId}>{chat.name} <span className="text-muted-foreground font-mono text-xs">({chat.chatId})</span></SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">Filtros MTF estricto y Anti-Cresta</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Cooldowns */}
+      <Card className="border-border/50">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-500/20 rounded-lg">
+              <Clock className="h-5 w-5 text-blue-400" />
+            </div>
+            <div>
+              <CardTitle className="text-sm">Cooldowns</CardTitle>
+              <CardDescription className="text-xs">Tiempo mínimo entre notificaciones del mismo tipo</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {[
+              { key: 'notifCooldownStopUpdated', label: 'Stop Actualiz.', icon: <RefreshCw className="h-3.5 w-3.5 text-orange-400" />, max: 3600, def: 60 },
+              { key: 'notifCooldownRegimeChange', label: 'Cambio Régimen', icon: <TrendingUp className="h-3.5 w-3.5 text-purple-400" />, max: 3600, def: 300 },
+              { key: 'notifCooldownHeartbeat', label: 'Heartbeat', icon: <Heart className="h-3.5 w-3.5 text-red-400" />, max: 86400, def: 3600 },
+              { key: 'notifCooldownTrades', label: 'Trades', icon: <BarChart3 className="h-3.5 w-3.5 text-green-400" />, max: 3600, def: 0 },
+              { key: 'notifCooldownErrors', label: 'Errores', icon: <AlertCircle className="h-3.5 w-3.5 text-yellow-400" />, max: 3600, def: 60 },
+            ].map(({ key, label, icon, max, def }) => (
+              <div key={key} className="p-3 border border-border rounded-lg bg-card/30 space-y-2">
+                <div className="flex items-center gap-1.5">{icon}<Label className="text-xs">{label}</Label></div>
+                <div className="flex items-center gap-1">
+                  <Input type="number" min="0" max={max}
+                    defaultValue={(botConfig as any)?.[key] ?? def}
+                    key={`${key}-${(botConfig as any)?.[key]}`}
+                    onBlur={(e) => {
+                      const val = parseInt(e.target.value);
+                      if (!isNaN(val) && val >= 0) updateBotConfig.mutate({ [key]: val } as any);
+                    }}
+                    className="font-mono w-full h-8 text-xs" />
+                  <span className="text-[10px] text-muted-foreground shrink-0">s</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">{formatCooldown((botConfig as any)?.[key] ?? def)}</p>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>

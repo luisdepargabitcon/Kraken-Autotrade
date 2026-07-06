@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { History, RefreshCw, Shield, AlertTriangle, CheckCircle, Info } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 interface AlertEvent {
   id: number;
@@ -48,6 +49,8 @@ export default function TelegramAuditTab() {
     },
   });
 
+  const queryClient = useQueryClient();
+
   const { data: auditData, refetch: refetchAudit } = useQuery({
     queryKey: ["telegramAuditDiagnostic"],
     queryFn: async () => {
@@ -55,6 +58,30 @@ export default function TelegramAuditTab() {
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
+  });
+
+  const resolveIssue = useMutation({
+    mutationFn: async (payload: { action: string; source: string; chatId?: string; name?: string }) => {
+      const res = await fetch("/api/telegram/audit/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      const msg = variables.action === "register_channel" ? "Canal registrado correctamente"
+        : variables.action === "clear_reference" ? "Referencia legacy eliminada"
+        : "Issue ignorado";
+      toast.success(msg);
+      queryClient.invalidateQueries({ queryKey: ["telegramAuditDiagnostic"] });
+      queryClient.invalidateQueries({ queryKey: ["telegramChats"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const sentCount = events.filter(e => e.status === "sent").length;
@@ -201,6 +228,22 @@ export default function TelegramAuditTab() {
                       </div>
                       <p className="text-muted-foreground">{issue.detail}</p>
                       <p className="text-blue-400 mt-1">→ {issue.recommendation}</p>
+                      {issue.resolvable && issue.source && issue.chatId && (
+                        <div className="flex gap-2 mt-2">
+                          <Button size="sm" variant="outline" className="h-6 text-[10px]" disabled={resolveIssue.isPending}
+                            onClick={() => resolveIssue.mutate({ action: "register_channel", source: issue.source, chatId: issue.chatId })}>
+                            Registrar como canal
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-6 text-[10px]" disabled={resolveIssue.isPending}
+                            onClick={() => resolveIssue.mutate({ action: "clear_reference", source: issue.source, chatId: issue.chatId })}>
+                            Eliminar referencia legacy
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-6 text-[10px]" disabled={resolveIssue.isPending}
+                            onClick={() => resolveIssue.mutate({ action: "ignore", source: issue.source, chatId: issue.chatId })}>
+                            Ignorar por ahora
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
