@@ -2157,6 +2157,18 @@ Incluye:
       return false;
     }
 
+    // FASE C: Respect global kill switch — no direct sends bypass TelegramNotificationCenter
+    try {
+      const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+      const globalConfig = await telegramNotificationCenter.getGlobalConfig();
+      if (globalConfig && !globalConfig.telegramGlobalEnabled) {
+        console.warn("[telegram] sendMessage BLOCKED by global kill switch (FASE C ENV policy)");
+        return false;
+      }
+    } catch {
+      // If config load fails, allow send (fail-open for trading safety)
+    }
+
     try {
       const prefix = options?.skipPrefix ? "" : await this.getMessagePrefixHTML();
       const fullMessage = prefix + message;

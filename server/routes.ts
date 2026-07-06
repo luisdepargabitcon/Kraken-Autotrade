@@ -883,6 +883,175 @@ export async function registerRoutes(
     }
   });
 
+  // ── Telegram Audit (FASE C) ──────────────────────────────────────
+  // Detects: legacy chat IDs, orphan channels, ENV fallback issues
+  app.get("/api/telegram/audit", async (req, res) => {
+    try {
+      const { telegramNotificationCenter } = await import("./services/TelegramNotificationCenter");
+      const { db } = await import("./db");
+      const { telegramChats, apiConfig: apiConfigTable, institutionalDcaConfig, fiscoAlertConfig } = await import("../shared/schema");
+
+      const issues: any[] = [];
+
+      // 1. Get all telegram_chats
+      const allChats = await db.select().from(telegramChats);
+
+      // 2. Check for legacy chat IDs in api_config
+      const apiConfigRows = await db.select().from(apiConfigTable).limit(1);
+      const apiConfigRow = apiConfigRows[0];
+      if (apiConfigRow?.telegramChatId) {
+        const exists = allChats.find(c => c.chatId === apiConfigRow.telegramChatId);
+        if (!exists) {
+          issues.push({
+            severity: "HIGH",
+            code: "LEGACY_CHAT_ID_IN_API_CONFIG",
+            detail: `api_config.telegram_chat_id = "${apiConfigRow.telegramChatId}" but this chatId is NOT registered in telegram_chats. Messages would go to a phantom channel.`,
+            recommendation: "Register this chatId in telegram_chats or remove it from api_config.",
+          });
+        } else if (!exists.isActive) {
+          issues.push({
+            severity: "MEDIUM",
+            code: "LEGACY_CHAT_ID_INACTIVE",
+            detail: `api_config.telegram_chat_id = "${apiConfigRow.telegramChatId}" is registered but INACTIVE in telegram_chats.`,
+            recommendation: "Activate the channel in telegram_chats or remove from api_config.",
+          });
+        }
+      }
+
+      // 3. Check ENV fallback (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)
+      const envToken = process.env.TELEGRAM_BOT_TOKEN;
+      const envChatId = process.env.TELEGRAM_CHAT_ID;
+      if (envToken || envChatId) {
+        const globalConfig = await telegramNotificationCenter.getGlobalConfig();
+        if (!globalConfig?.telegramGlobalEnabled) {
+          issues.push({
+            severity: "INFO",
+            code: "ENV_FALLBACK_IGNORED_GLOBAL_OFF",
+            detail: `ENV TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID present but global kill switch is OFF. ENV fallback is correctly ignored.`,
+            recommendation: "No action needed — ENV is ignored when global is OFF.",
+          });
+        }
+        if (envChatId) {
+          const exists = allChats.find(c => c.chatId === envChatId);
+          if (!exists) {
+            issues.push({
+              severity: "HIGH",
+              code: "ENV_CHAT_ID_NOT_IN_TELEGRAM_CHATS",
+              detail: `ENV TELEGRAM_CHAT_ID = "${envChatId}" is NOT registered in telegram_chats.`,
+              recommendation: "Register this chatId in telegram_chats or remove from ENV.",
+            });
+          }
+        }
+        if (allChats.filter(c => c.isActive).length === 0) {
+          issues.push({
+            severity: "INFO",
+            code: "ENV_FALLBACK_IGNORED_NO_ACTIVE_CHANNELS",
+            detail: `ENV TELEGRAM_CHAT_ID present but no active channels in telegram_chats. ENV fallback is correctly ignored.`,
+            recommendation: "No action needed — ENV is ignored when no active channels exist.",
+          });
+        }
+      }
+
+      // 4. Check IDCA config telegramChatId
+      const idcaConfigRows = await db.select().from(institutionalDcaConfig).limit(1);
+      const idcaConfig = idcaConfigRows[0];
+      if (idcaConfig?.telegramChatId) {
+        const exists = allChats.find(c => c.chatId === idcaConfig.telegramChatId);
+        if (!exists) {
+          issues.push({
+            severity: "HIGH",
+            code: "IDCA_CHAT_ID_NOT_REGISTERED",
+            detail: `institutional_dca_config.telegram_chat_id = "${idcaConfig.telegramChatId}" is NOT registered in telegram_chats.`,
+            recommendation: "Register this chatId in telegram_chats or remove from IDCA config.",
+          });
+        } else if (!exists.isActive) {
+          issues.push({
+            severity: "MEDIUM",
+            code: "IDCA_CHAT_ID_INACTIVE",
+            detail: `institutional_dca_config.telegram_chat_id = "${idcaConfig.telegramChatId}" is INACTIVE in telegram_chats.`,
+            recommendation: "Activate the channel or remove from IDCA config.",
+          });
+        }
+      }
+
+      // 5. Check FISCO alert config chatId
+      const fiscoConfigRows = await db.select().from(fiscoAlertConfig).limit(1);
+      const fiscoConfig = fiscoConfigRows[0];
+      if (fiscoConfig?.chatId) {
+        const exists = allChats.find(c => c.chatId === fiscoConfig.chatId);
+        if (!exists) {
+          issues.push({
+            severity: "HIGH",
+            code: "FISCO_CHAT_ID_NOT_REGISTERED",
+            detail: `fisco_alert_config.chat_id = "${fiscoConfig.chatId}" is NOT registered in telegram_chats.`,
+            recommendation: "Register this chatId in telegram_chats or remove from FISCO alert config.",
+          });
+        } else if (!exists.isActive) {
+          issues.push({
+            severity: "MEDIUM",
+            code: "FISCO_CHAT_ID_INACTIVE",
+            detail: `fisco_alert_config.chat_id = "${fiscoConfig.chatId}" is INACTIVE in telegram_chats.`,
+            recommendation: "Activate the channel or remove from FISCO alert config.",
+          });
+        }
+      }
+
+      // 6. Orphan inactive channels
+      const configuredChatIds = new Set<string>();
+      if (apiConfigRow?.telegramChatId) configuredChatIds.add(apiConfigRow.telegramChatId);
+      if (idcaConfig?.telegramChatId) configuredChatIds.add(idcaConfig.telegramChatId);
+      if (fiscoConfig?.chatId) configuredChatIds.add(fiscoConfig.chatId);
+      if (envChatId) configuredChatIds.add(envChatId);
+
+      const orphanChats = allChats.filter(c => !configuredChatIds.has(c.chatId));
+      const orphanInactive = orphanChats.filter(c => !c.isActive);
+      if (orphanInactive.length > 0) {
+        issues.push({
+          severity: "LOW",
+          code: "ORPHAN_INACTIVE_CHANNELS",
+          detail: `${orphanInactive.length} inactive channel(s) not referenced by any module config: ${orphanInactive.map(c => c.name + " (" + c.chatId + ")").join(", ")}`,
+          recommendation: "Consider deleting these channels if no longer needed.",
+        });
+      }
+
+      // 7. Global config status
+      const globalConfig = await telegramNotificationCenter.getGlobalConfig();
+      const activeChats = allChats.filter(c => c.isActive);
+
+      res.json({
+        timestamp: new Date().toISOString(),
+        globalConfig: {
+          telegramGlobalEnabled: globalConfig?.telegramGlobalEnabled ?? true,
+          telegramSilentMode: globalConfig?.telegramSilentMode ?? false,
+          telegramMinSeverity: globalConfig?.telegramMinSeverity ?? "LOW",
+          telegramEnvironmentLabel: globalConfig?.telegramEnvironmentLabel ?? "unknown",
+        },
+        channels: {
+          total: allChats.length,
+          active: activeChats.length,
+          inactive: allChats.length - activeChats.length,
+        },
+        envFallback: {
+          hasEnvToken: !!envToken,
+          hasEnvChatId: !!envChatId,
+          envChatIdRegistered: envChatId ? allChats.some(c => c.chatId === envChatId) : null,
+          policy: "ENV fallback ignored if global OFF or no active channels",
+        },
+        issues,
+        summary: {
+          totalIssues: issues.length,
+          highSeverity: issues.filter(i => i.severity === "HIGH").length,
+          mediumSeverity: issues.filter(i => i.severity === "MEDIUM").length,
+          lowSeverity: issues.filter(i => i.severity === "LOW").length,
+          info: issues.filter(i => i.severity === "INFO").length,
+        },
+      });
+    } catch (error: any) {
+      console.error("[telegram:audit] Error:", error);
+      res.status(500).json({ error: "Error ejecutando auditoria Telegram", detail: error?.message });
+    }
+  });
+
   // ── Dashboard — Stale-While-Revalidate ──────────────────────────
   //
   // The KrakenRateLimiter is FIFO concurrency=1 with 500ms spacing.
