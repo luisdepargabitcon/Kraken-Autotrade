@@ -5407,11 +5407,9 @@ function TelegramTab() {
               <p className="font-mono font-medium">{config.simulationTelegramEnabled ? "Sí" : "No"}</p>
             </div>
           </div>
-          <Link href="/telegram">
-            <Button size="sm" className="w-full">
-              Configurar en Telegram → IDCA
-            </Button>
-          </Link>
+          <div className="text-xs text-muted-foreground p-2 bg-muted/20 rounded">
+            Configura canales, modos y alertas desde <Link href="/telegram" className="text-blue-400 hover:underline">Telegram</Link>.
+          </div>
         </CardContent>
       </Card>
     </div>

@@ -1597,11 +1597,9 @@ export default function Fisco() {
                         <p className="font-mono font-medium">{alertConfigQ.data?.syncDailyEnabled ? "ON" : "OFF"} / {alertConfigQ.data?.syncManualEnabled ? "ON" : "OFF"}</p>
                       </div>
                     </div>
-                    <Link href="/telegram">
-                      <Button size="sm" className="w-full">
-                        Configurar en Telegram → Fiscalidad
-                      </Button>
-                    </Link>
+                    <div className="text-xs text-muted-foreground p-2 bg-muted/20 rounded">
+                      Configura canales y alertas desde <Link href="/telegram" className="text-blue-400 hover:underline">Telegram</Link>.
+                    </div>
                   </>
                 )}
               </CardContent>

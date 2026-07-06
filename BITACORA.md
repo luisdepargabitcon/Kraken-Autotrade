@@ -48,6 +48,34 @@
 
 ---
 
+## 2026-07-07 — UX 1: Auditoría frontend Telegram (en progreso)
+
+### Tabla de auditoría
+
+| Archivo | Resto UX encontrado | Problema | Acción aplicada |
+|---------|---------------------|----------|-----------------|
+| `client/src/pages/Telegram.tsx` | Alertas por modo usa Accordion | Debe usar subpestañas internas | Pendiente UX 4 |
+| `client/src/components/telegram/TelegramChannelsTab.tsx` | Usa `/api/telegram/chats` | Debe usar `/api/telegram/channels` | Pendiente UX 2 |
+| `client/src/components/telegram/TelegramChannelsTab.tsx` | Formulario incompleto (sin token, enabledModes, enabledAlerts) | Falta configuración completa | Pendiente UX 2 |
+| `client/src/pages/InstitutionalDca.tsx` | TelegramTab con "Configurar en Telegram → IDCA" | Link fuera de /telegram | Pendiente UX 5 |
+| `client/src/pages/Fisco.tsx` | Tab "Alertas Telegram" con "Configurar en Telegram → Fiscalidad" | Link fuera de /telegram | Pendiente UX 5 |
+| `client/src/components/strategies/SmartExitTab.tsx` | "Configurar en Telegram → Smart Exit" | Link fuera de /telegram | Pendiente UX 5 |
+| `client/src/pages/Telegram.tsx` | Falta subpestaña Tokens | No hay UI multi-token | Pendiente UX 3 |
+| `client/src/components/telegram/*` | Tabs de alertas por modo incompletos | Grid sin 20 alertas configurables | Pendiente UX 4 |
+
+### Pendiente
+- UX 2: Canales formulario real funcional
+- UX 3: Tokens UI real multi-bot
+- UX 4: Alertas por modo en subpestañas
+- UX 5: Eliminar restos Telegram fuera de /telegram
+- UX 6: Conectar UI a endpoints correctos
+- UX 7: Limpiar scripts temporales
+- UX 8: Tests frontend/integración
+- UX 9: Deploy y validación visual real
+- UX 10: BITACORA.md con UX real final
+
+---
+
 ## 2026-07-06 — Refactor Telegram FASE 6-10: Routing central + fix staging (commits 068c0fe → 1ed19e1)
 
 ### Problema

@@ -569,11 +569,9 @@ export function SmartExitTab() {
                   <p className="font-mono font-medium">{config.notifications.cooldownSec}s</p>
                 </div>
               </div>
-              <a href="/telegram">
-                <Button variant="outline" size="sm" className="w-full">
-                  Configurar en Telegram → Smart Exit
-                </Button>
-              </a>
+              <div className="text-xs text-muted-foreground p-2 bg-muted/20 rounded">
+                Configura canales y alertas desde <a href="/telegram" className="text-blue-400 hover:underline">Telegram</a>.
+              </div>
             </CardContent>
           </Card>
         </>

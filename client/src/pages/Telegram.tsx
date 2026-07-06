@@ -1,26 +1,27 @@
 /**
- * Telegram.tsx — Página principal unificada de Telegram (FASE E: reorganizada)
+ * Telegram.tsx — Página principal unificada de Telegram (FASE UX: reorganizada)
  *
- * 5 grupos lógicos:
+ * 6 grupos lógicos:
  *  1. General   (Ajustes: kill switch, token, silent mode, severidad, dedupe, rate-limit, quiet hours)
- *  2. Canales   (CRUD completo de canales)
- *  3. Alertas por modo (acordeón: SPOT, SPOT Dry Run, IDCA, IDCA Hybrid/Grid, Smart Exit, Fiscalidad, Sistema, IA)
- *  4. Comandos  (catálogo + logs)
- *  5. Auditoría (enviados/bloqueados/fallidos + diagnóstico telegram:audit)
+ *  2. Tokens    (Multi-bot: añadir, editar, activar/inactivar, probar, eliminar)
+ *  3. Canales   (CRUD completo de canales con token, modos, alertas)
+ *  4. Alertas por modo (subpestañas: SPOT, SPOT Dry Run, IDCA, Grid/Hybrid, Smart Exit, Fiscalidad, Sistema, IA)
+ *  5. Comandos  (catálogo + logs)
+ *  6. Auditoría (enviados/bloqueados/fallidos + diagnóstico telegram:audit)
  */
 
 import { useState } from "react";
 import { Nav } from "@/components/dashboard/Nav";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
   Settings, Users, Terminal, TrendingUp, FlaskConical,
   CircleDollarSign, Brain, Bell, FileText, AlertTriangle,
-  Sparkles, History, MessageSquare, Layers
+  Sparkles, History, MessageSquare, Layers, Key
 } from "lucide-react";
 
 import TelegramSettingsTab from "@/components/telegram/TelegramSettingsTab";
 import TelegramChannelsTab from "@/components/telegram/TelegramChannelsTab";
+import TelegramTokensTab from "@/components/telegram/TelegramTokensTab";
 import TelegramCommandsTab from "@/components/telegram/TelegramCommandsTab";
 import TelegramSpotTab from "@/components/telegram/TelegramSpotTab";
 import TelegramSpotDryRunTab from "@/components/telegram/TelegramSpotDryRunTab";
@@ -45,6 +46,7 @@ const ALERT_MODE_SECTIONS = [
 
 export default function Telegram() {
   const [activeGroup, setActiveGroup] = useState("general");
+  const [activeAlertMode, setActiveAlertMode] = useState("spot");
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -65,8 +67,9 @@ export default function Telegram() {
         </div>
 
         <Tabs value={activeGroup} onValueChange={setActiveGroup}>
-          <TabsList className="grid grid-cols-5 gap-1 h-auto p-1">
+          <TabsList className="grid grid-cols-6 gap-1 h-auto p-1">
             <TabsTrigger value="general" className="text-xs gap-1.5"><Settings className="h-3.5 w-3.5" /> General</TabsTrigger>
+            <TabsTrigger value="tokens" className="text-xs gap-1.5"><Key className="h-3.5 w-3.5" /> Tokens</TabsTrigger>
             <TabsTrigger value="channels" className="text-xs gap-1.5"><Users className="h-3.5 w-3.5" /> Canales</TabsTrigger>
             <TabsTrigger value="alerts" className="text-xs gap-1.5"><Layers className="h-3.5 w-3.5" /> Alertas por modo</TabsTrigger>
             <TabsTrigger value="commands" className="text-xs gap-1.5"><Terminal className="h-3.5 w-3.5" /> Comandos</TabsTrigger>
@@ -74,21 +77,24 @@ export default function Telegram() {
           </TabsList>
 
           <TabsContent value="general"><TelegramSettingsTab /></TabsContent>
+          <TabsContent value="tokens"><TelegramTokensTab /></TabsContent>
           <TabsContent value="channels"><TelegramChannelsTab /></TabsContent>
 
           <TabsContent value="alerts">
-            <Accordion type="single" collapsible defaultValue="spot" className="space-y-2">
-              {ALERT_MODE_SECTIONS.map(({ value, icon: Icon, label, component: Component }) => (
-                <AccordionItem key={value} value={value} className="border border-border/50 rounded-lg px-3">
-                  <AccordionTrigger className="text-sm hover:no-underline">
-                    <span className="flex items-center gap-2"><Icon className="h-4 w-4" /> {label}</span>
-                  </AccordionTrigger>
-                  <AccordionContent className="pt-2 pb-4">
-                    <Component />
-                  </AccordionContent>
-                </AccordionItem>
+            <Tabs value={activeAlertMode} onValueChange={setActiveAlertMode}>
+              <TabsList className="grid grid-cols-4 md:grid-cols-8 gap-1 h-auto p-1 mb-4">
+                {ALERT_MODE_SECTIONS.map(({ value, icon: Icon, label }) => (
+                  <TabsTrigger key={value} value={value} className="text-[10px] gap-1 h-8">
+                    <Icon className="h-3 w-3" /> {label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              {ALERT_MODE_SECTIONS.map(({ value, component: Component }) => (
+                <TabsContent key={value} value={value}>
+                  <Component />
+                </TabsContent>
               ))}
-            </Accordion>
+            </Tabs>
           </TabsContent>
 
           <TabsContent value="commands"><TelegramCommandsTab /></TabsContent>
