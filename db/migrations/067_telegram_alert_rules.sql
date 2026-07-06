@@ -42,10 +42,11 @@ END $$;
 -- Insertar reglas por defecto para chats existentes
 INSERT INTO telegram_alert_rules (chat_id, mode, alert_type, enabled, min_severity)
 SELECT 
-  id, 
-  unnest(ARRAY['trading', 'idca', 'fiscal', 'smart_exit', 'system']) as mode,
-  unnest(ARRAY['all']) as alert_type,
+  c.id, 
+  m.mode, 
+  'all' as alert_type,
   true,
   'LOW'
-FROM telegram_chats
+FROM telegram_chats c
+CROSS JOIN (VALUES ('trading'), ('idca'), ('fiscal'), ('smart_exit'), ('system')) AS m(mode)
 ON CONFLICT (chat_id, mode, alert_type) DO NOTHING;
