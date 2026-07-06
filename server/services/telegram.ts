@@ -927,10 +927,15 @@ export class TelegramService {
     if (!this.bot) return;
     
     try {
-      const commands = TELEGRAM_COMMANDS.map(cmd => ({
-        command: cmd.command,
-        description: cmd.description,
-      }));
+      const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+      const allDefs = telegramNotificationCenter.getCommandDefinitions();
+      // Only register non-deprecated commands with Telegram's command menu
+      const commands = allDefs
+        .filter(c => !c.deprecated)
+        .map(c => ({
+          command: c.name.replace("/", ""),
+          description: c.description,
+        }));
       
       await this.bot.setMyCommands(commands);
       console.log(`[telegram] ✅ Registered ${commands.length} commands with Telegram`);
@@ -946,8 +951,11 @@ export class TelegramService {
     try {
       await this.registerCommandsWithTelegram();
       
-      const commandList = TELEGRAM_COMMANDS
-        .map(cmd => `/${cmd.command} - ${cmd.description}`)
+      const { telegramNotificationCenter } = await import("./TelegramNotificationCenter");
+      const allDefs = telegramNotificationCenter.getCommandDefinitions();
+      const activeDefs = allDefs.filter(c => !c.deprecated);
+      const commandList = activeDefs
+        .map(c => `${c.name} - ${c.description}`)
         .join("\n");
       
       const message = [
@@ -955,7 +963,7 @@ export class TelegramService {
         `━━━━━━━━━━━━━━━━━━━`,
         `✅ <b>Comandos actualizados</b>`,
         ``,
-        `<b>Comandos registrados (${TELEGRAM_COMMANDS.length}):</b>`,
+        `<b>Comandos registrados (${activeDefs.length}):</b>`,
         `<pre>${escapeHtml(commandList)}</pre>`,
         ``,
         `<i>El menú de comandos de Telegram ha sido actualizado.</i>`,

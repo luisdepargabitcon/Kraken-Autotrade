@@ -445,11 +445,22 @@ class TelegramNotificationCenter {
     authorized: boolean;
     permission: CommandPermission | null;
     definition: CommandDefinition | null;
+    tokenId?: number;
   }> {
     const commandName = commandText.trim().split(/\s+/)[0];
-    const def = this.commandDefs.find(c => c.name === commandName);
+
+    // Check for deprecated alias and resolve to canonical command
+    let def = this.commandDefs.find(c => c.name === commandName);
     if (!def) {
       return { authorized: false, permission: null, definition: null };
+    }
+
+    // If this is a deprecated alias, use the canonical definition for permission check
+    if (def!.deprecated && def!.aliasOf) {
+      const canonical = this.commandDefs.find(c => c.name === def!.aliasOf);
+      if (canonical) {
+        def = canonical;
+      }
     }
 
     // Check if chatId is in active telegram_chats
@@ -459,10 +470,16 @@ class TelegramNotificationCenter {
       return { authorized: false, permission: null, definition: def };
     }
 
-    // All active chats can run read_only commands.
+    // Resolve token for this channel
+    const token = await this.resolveTokenForChannel(chat, null);
+    if (!token || !token.isActive) {
+      return { authorized: false, permission: def.permission, definition: def };
+    }
+
+    // All active chats with valid token can run read_only commands.
     // action and admin commands require the chat to be active (already checked).
     // Future: add a per-chat permission field for admin commands.
-    return { authorized: true, permission: def.permission, definition: def };
+    return { authorized: true, permission: def.permission, definition: def, tokenId: token.id };
   }
 
   /**
