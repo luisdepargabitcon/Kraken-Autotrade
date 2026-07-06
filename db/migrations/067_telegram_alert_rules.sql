@@ -15,10 +15,10 @@ CREATE TABLE IF NOT EXISTS telegram_alert_rules (
 );
 
 -- Índices
-CREATE INDEX idx_telegram_alert_rules_chat_id ON telegram_alert_rules(chat_id);
-CREATE INDEX idx_telegram_alert_rules_mode ON telegram_alert_rules(mode);
-CREATE INDEX idx_telegram_alert_rules_alert_type ON telegram_alert_rules(alert_type);
-CREATE UNIQUE INDEX idx_telegram_alert_rules_unique 
+CREATE INDEX IF NOT EXISTS idx_telegram_alert_rules_chat_id ON telegram_alert_rules(chat_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_alert_rules_mode ON telegram_alert_rules(mode);
+CREATE INDEX IF NOT EXISTS idx_telegram_alert_rules_alert_type ON telegram_alert_rules(alert_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_alert_rules_unique 
   ON telegram_alert_rules(chat_id, mode, alert_type);
 
 -- Trigger para updated_at
@@ -30,10 +30,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trigger_update_telegram_alert_rules_updated_at
-  BEFORE UPDATE ON telegram_alert_rules
-  FOR EACH ROW
-  EXECUTE FUNCTION update_telegram_alert_rules_updated_at();
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trigger_update_telegram_alert_rules_updated_at') THEN
+    CREATE TRIGGER trigger_update_telegram_alert_rules_updated_at
+      BEFORE UPDATE ON telegram_alert_rules
+      FOR EACH ROW
+      EXECUTE FUNCTION update_telegram_alert_rules_updated_at();
+  END IF;
+END $$;
 
 -- Insertar reglas por defecto para chats existentes
 INSERT INTO telegram_alert_rules (chat_id, mode, alert_type, enabled, min_severity)

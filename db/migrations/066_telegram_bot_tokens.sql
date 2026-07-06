@@ -18,12 +18,12 @@ CREATE TABLE IF NOT EXISTS telegram_bot_tokens (
 );
 
 -- Índices
-CREATE INDEX idx_telegram_bot_tokens_active ON telegram_bot_tokens(is_active) WHERE deleted_at IS NULL;
-CREATE INDEX idx_telegram_bot_tokens_default ON telegram_bot_tokens(is_default) WHERE deleted_at IS NULL;
-CREATE INDEX idx_telegram_bot_tokens_env ON telegram_bot_tokens(environment) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_telegram_bot_tokens_active ON telegram_bot_tokens(is_active) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_telegram_bot_tokens_default ON telegram_bot_tokens(is_default) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_telegram_bot_tokens_env ON telegram_bot_tokens(environment) WHERE deleted_at IS NULL;
 
 -- Constraint: solo un token por defecto activo por entorno
-CREATE UNIQUE INDEX idx_telegram_bot_tokens_unique_default 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_bot_tokens_unique_default 
   ON telegram_bot_tokens(environment) 
   WHERE is_default = true AND is_active = true AND deleted_at IS NULL;
 
@@ -37,7 +37,7 @@ ALTER TABLE telegram_chats
   ADD COLUMN IF NOT EXISTS enabled_alerts TEXT[] DEFAULT ARRAY['trades', 'errors', 'system', 'balance', 'heartbeat']::TEXT[];
 
 -- Índice para búsqueda por token_id
-CREATE INDEX idx_telegram_chats_token_id ON telegram_chats(token_id) WHERE token_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_telegram_chats_token_id ON telegram_chats(token_id) WHERE token_id IS NOT NULL;
 
 -- Añadir token_id a telegram_alert_events para auditoría de routing
 ALTER TABLE telegram_alert_events
@@ -52,7 +52,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trigger_update_telegram_bot_tokens_updated_at
-  BEFORE UPDATE ON telegram_bot_tokens
-  FOR EACH ROW
-  EXECUTE FUNCTION update_telegram_bot_tokens_updated_at();
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trigger_update_telegram_bot_tokens_updated_at') THEN
+    CREATE TRIGGER trigger_update_telegram_bot_tokens_updated_at
+      BEFORE UPDATE ON telegram_bot_tokens
+      FOR EACH ROW
+      EXECUTE FUNCTION update_telegram_bot_tokens_updated_at();
+  END IF;
+END $$;

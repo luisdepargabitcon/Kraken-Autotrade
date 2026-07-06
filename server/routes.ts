@@ -200,6 +200,8 @@ export async function registerRoutes(
         { id: '063_grid_isolated', filePath: path.join(migrationsDir, '063_grid_isolated.sql') },
         { id: '064_grid_wallet_execution', filePath: path.join(migrationsDir, '064_grid_wallet_execution.sql') },
         { id: '065_telegram_global_config', filePath: path.join(migrationsDir, '065_telegram_global_config.sql') },
+        { id: '066_telegram_bot_tokens', filePath: path.join(migrationsDir, '066_telegram_bot_tokens.sql') },
+        { id: '067_telegram_alert_rules', filePath: path.join(migrationsDir, '067_telegram_alert_rules.sql') },
       ];
 
       await runner.run(migrations);
