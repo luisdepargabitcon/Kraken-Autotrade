@@ -5,6 +5,82 @@
 
 ---
 
+## 2026-07-06 — Refactor Telegram FASE 6-10: Routing central + fix staging (commits 068c0fe → 1ed19e1)
+
+### Problema
+- TelegramNotificationCenter.send() usaba lógica legacy de broadcast a todos los chats activos
+- No existía pipeline de routing token → canal → modo → alerta
+- No había validación de alert rules, mode filtering, ni token resolution
+- Audit no incluía tokenId para trazabilidad
+- Comandos no validaban token del canal
+- Migrations 066/067 no estaban registradas en AutoMigrationRunner → staging app reiniciando
+
+### Solución — FASE 6: Routing central token → canal → modo → alerta
+- `TelegramNotificationCenter.send()` reescrito con pipeline de 16 pasos:
+  1. global kill switch → 2. silent mode → 3. severity filter → 4. quiet hours →
+  5. alert rule lookup → 6. dedupe → 7. rate limit → 8. active channels →
+  9. channel resolution (rule.chatId → compatible → default) →
+  10. mode validation (enabledModes) → 11. alert validation (enabledAlerts) →
+  12. legacy shouldSendToChat → 13. token resolution (chat.tokenId → default) →
+  14. token active validation → 15. send → 16. audit with tokenId/channelId
+- Nuevos block reasons: `blocked_by_token_disabled`, `blocked_by_alert_rule_disabled`,
+  `blocked_by_no_matching_channel`, `blocked_by_channel_mode_not_allowed`,
+  `blocked_by_channel_alert_not_allowed`, `blocked_by_missing_token`
+- `sendToSpecificChat()` actualizado con token resolution y audit con tokenId
+- `shared/schema.ts`: `tokenId` añadido a `telegramAlertEvents`
+- Migration 066: `ALTER TABLE telegram_alert_events ADD COLUMN IF NOT EXISTS token_id`
+
+### Solución — FASE 7: Comandos por token/canal
+- `authorizeCommand()` ahora resuelve token del canal y valida que esté activo
+- Retorna `tokenId` en el resultado para audit
+- `registerCommandsWithTelegram()` usa catálogo de TelegramNotificationCenter (no-deprecated only)
+- `handleRefreshCommands()` usa catálogo nuevo en lugar de TELEGRAM_COMMANDS legacy
+- Alias deprecated resueltos a comando canonical en authorizeCommand
+
+### Solución — FASE 8: Validación UI no duplicados
+- Verificado: todas las páginas fuera de /telegram tienen controles Telegram read-only
+- Notifications.tsx: display only con link a /telegram
+- InstitutionalDca.tsx TelegramTab: read-only con link a /telegram
+- Integrations.tsx: card con link a /telegram
+- TimeStopConfigPanel.tsx: sin referencias Telegram
+- No se requirieron cambios
+
+### Solución — FASE 9: Tests
+- 40 tests en `telegram-refactor.test.ts` (26 originales + 14 nuevos FASE 6/7)
+- Tests cubren: alert rule disabled, rule-specified channel routing, channel mode/alert blocking,
+  token missing/disabled, token resolution from channel tokenId, audit with tokenId/channelId,
+  sendToSpecificChat token resolution, authorizeCommand with tokenId, deprecated alias resolution
+
+### Solución — FASE 10: Deploy staging + fix migrations
+- **Causa**: migrations 066/067 no estaban en la lista del AutoMigrationRunner en `routes.ts`
+- **Fix 1**: Añadidas 066 y 067 al runner automático
+- **Fix 2**: Idempotencia — `CREATE INDEX IF NOT EXISTS` y `CREATE TRIGGER` envuelto en `DO $$` block
+- **Fix 3**: Migration 067 INSERT con `CROSS JOIN VALUES` en lugar de `unnest` de arrays con longitudes distintas (producía NULLs en columna NOT NULL)
+- **Validación VPS staging**:
+  - Container `krakenbot-staging-app` Up, no reinicia
+  - Health OK: `{"status":"ok","schema":{"healthy":true,"migrationRan":true}}`
+  - `telegram_bot_tokens` table existe
+  - `telegram_alert_rules` table existe (15 reglas por defecto insertadas)
+  - `telegram_chats` tiene `token_id`, `enabled_modes`, `enabled_alerts`
+  - `telegram_alert_events` tiene `token_id`
+  - `/api/telegram/tokens` responde (`[]`)
+  - `/api/telegram/alert-rules` responde (15 reglas)
+  - `/api/telegram/commands` responde (51 comandos)
+  - `/api/telegram/grid-alert-catalog` responde (20 entradas)
+  - Logs sin `DATABASE_ERROR` ni `ERROR CRITICAL`
+
+### Archivos modificados
+- `server/services/TelegramNotificationCenter.ts` — Routing pipeline, helper functions, audit con tokenId
+- `server/services/telegram.ts` — registerCommandsWithTelegram y handleRefreshCommands con nuevo catálogo
+- `server/routes.ts` — Migrations 066/067 añadidas al AutoMigrationRunner
+- `shared/schema.ts` — tokenId en telegramAlertEvents
+- `db/migrations/066_telegram_bot_tokens.sql` — Idempotencia (IF NOT EXISTS, DO $$ trigger)
+- `db/migrations/067_telegram_alert_rules.sql` — Idempotencia + fix INSERT CROSS JOIN VALUES
+- `server/services/__tests__/telegram-refactor.test.ts` — 40 tests
+- `scripts/deploy_validate_telegram.sh` — Script de deploy/validación VPS
+
+---
+
 ## 2026-07-06 — Refactor Telegram FASE D/E/G/H/I/J (commit d8b6852)
 
 ### Problema
