@@ -511,4 +511,232 @@ describe("FASE A — Telegram Refactor Tests", () => {
       expect(status).toBe("blocked_by_mode_disabled");
     });
   });
+
+  // ── FASE 6: Routing central token → canal → modo → alerta ────
+
+  describe("FASE 6: Routing central", () => {
+    it("blocks when alert rule is disabled", async () => {
+      mockGetTelegramAlertRules.mockResolvedValue([
+        { id: 10, mode: "trading", alertType: "trade_buy", enabled: false, chatId: 1 },
+      ]);
+
+      const status = await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Test",
+        alertCategory: "trades",
+      });
+
+      expect(status).toBe("blocked_by_alert_rule_disabled");
+      expect(mockInsertTelegramAlertEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "blocked_by_alert_rule_disabled" }),
+      );
+    });
+
+    it("routes to rule-specified channel when alert rule has chatId", async () => {
+      const { telegramService } = await import("../telegram");
+      const sendSpy = vi.spyOn(telegramService, "sendToChat");
+
+      mockGetTelegramAlertRules.mockResolvedValue([
+        { id: 10, mode: "trading", alertType: "trade_buy", enabled: true, chatId: 2 },
+      ]);
+
+      await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Routed!",
+        alertCategory: "trades",
+      });
+
+      // Should route to chat id=2 (Trades channel), not id=1 (Main)
+      expect(sendSpy).toHaveBeenCalledWith("-100456", "Routed!", { parseMode: "HTML" });
+    });
+
+    it("blocks when channel does not allow mode", async () => {
+      mockGetTelegramChats.mockResolvedValue([
+        { id: 1, chatId: "-100123", name: "Main", isActive: true, isDefault: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {}, enabledModes: ["idca"], enabledAlerts: null, tokenId: null },
+      ]);
+      mockGetActiveTelegramChats.mockResolvedValue([
+        { id: 1, chatId: "-100123", name: "Main", isActive: true, isDefault: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {}, enabledModes: ["idca"], enabledAlerts: null, tokenId: null },
+      ]);
+
+      const status = await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Test",
+        alertCategory: "trades",
+      });
+
+      expect(status).toBe("blocked_by_channel_mode_not_allowed");
+    });
+
+    it("blocks when channel does not allow alert category", async () => {
+      mockGetTelegramChats.mockResolvedValue([
+        { id: 1, chatId: "-100123", name: "Main", isActive: true, isDefault: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {}, enabledModes: null, enabledAlerts: ["trades"], tokenId: null },
+      ]);
+      mockGetActiveTelegramChats.mockResolvedValue([
+        { id: 1, chatId: "-100123", name: "Main", isActive: true, isDefault: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {}, enabledModes: null, enabledAlerts: ["trades"], tokenId: null },
+      ]);
+
+      const status = await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "error_api",
+        message: "Error",
+        alertCategory: "errors",
+      });
+
+      expect(status).toBe("blocked_by_channel_alert_not_allowed");
+    });
+
+    it("blocks when no token available for channel", async () => {
+      mockGetDefaultTelegramBotToken.mockResolvedValue(undefined);
+      mockGetTelegramBotTokenById.mockResolvedValue(undefined);
+
+      const status = await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Test",
+        alertCategory: "trades",
+      });
+
+      expect(status).toBe("blocked_by_missing_token");
+    });
+
+    it("blocks when token is disabled", async () => {
+      mockGetDefaultTelegramBotToken.mockResolvedValue({ id: 1, isActive: false, name: "disabled", tokenLast4: "0000" });
+      mockGetTelegramBotTokenById.mockResolvedValue(undefined);
+
+      const status = await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Test",
+        alertCategory: "trades",
+      });
+
+      expect(status).toBe("blocked_by_missing_token");
+    });
+
+    it("resolves token from channel tokenId", async () => {
+      const { telegramService } = await import("../telegram");
+      const sendSpy = vi.spyOn(telegramService, "sendToChat");
+
+      mockGetTelegramBotTokenById.mockImplementation(async (id: number) => {
+        if (id === 5) return { id: 5, isActive: true, name: "channel-token", tokenLast4: "5555" };
+        return undefined;
+      });
+      mockGetDefaultTelegramBotToken.mockResolvedValue({ id: 1, isActive: true, name: "default", tokenLast4: "1234" });
+      mockGetTelegramChats.mockResolvedValue([
+        { id: 1, chatId: "-100123", name: "Main", isActive: true, isDefault: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {}, enabledModes: null, enabledAlerts: null, tokenId: 5 },
+      ]);
+      mockGetActiveTelegramChats.mockResolvedValue([
+        { id: 1, chatId: "-100123", name: "Main", isActive: true, isDefault: true, alertTrades: true, alertErrors: true, alertSystem: true, alertBalance: true, alertHeartbeat: true, alertPreferences: {}, enabledModes: null, enabledAlerts: null, tokenId: 5 },
+      ]);
+
+      await telegramNotificationCenter.send({
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Token test",
+        alertCategory: "trades",
+      });
+
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+      expect(mockInsertTelegramAlertEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ tokenId: 5 }),
+      );
+    });
+
+    it("audits sent alert with tokenId and channelId", async () => {
+      await telegramNotificationCenter.send({
+        sourceModule: "tradingEngine",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Buy!",
+        pair: "BTC/USD",
+        alertCategory: "trades",
+      });
+
+      expect(mockInsertTelegramAlertEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "sent",
+          tokenId: 1,
+          channelId: 1,
+          chatId: "-100123",
+        }),
+      );
+    });
+
+    it("sendToSpecificChat resolves token and audits with tokenId", async () => {
+      await telegramNotificationCenter.sendToSpecificChat("-100123", {
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Direct",
+        alertCategory: "trades",
+      });
+
+      expect(mockInsertTelegramAlertEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "sent",
+          tokenId: 1,
+          channelId: 1,
+          chatId: "-100123",
+        }),
+      );
+    });
+
+    it("sendToSpecificChat blocks when token is missing", async () => {
+      mockGetDefaultTelegramBotToken.mockResolvedValue(undefined);
+      mockGetTelegramBotTokenById.mockResolvedValue(undefined);
+
+      const status = await telegramNotificationCenter.sendToSpecificChat("-100123", {
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "No token",
+      });
+
+      expect(status).toBe("blocked_by_missing_token");
+    });
+
+    it("sendToSpecificChat blocks when token is disabled", async () => {
+      mockGetDefaultTelegramBotToken.mockResolvedValue({ id: 2, isActive: false, name: "disabled", tokenLast4: "0000" });
+      mockGetTelegramBotTokenById.mockResolvedValue(undefined);
+
+      const status = await telegramNotificationCenter.sendToSpecificChat("-100123", {
+        sourceModule: "test",
+        mode: "spot",
+        alertType: "trade_buy",
+        message: "Disabled token",
+      });
+
+      expect(status).toBe("blocked_by_missing_token");
+    });
+
+    it("authorizeCommand returns tokenId when token is valid", async () => {
+      const result = await telegramNotificationCenter.authorizeCommand("-100123", "/status");
+      expect(result.authorized).toBe(true);
+      expect(result.tokenId).toBe(1);
+    });
+
+    it("authorizeCommand rejects when token is missing", async () => {
+      mockGetDefaultTelegramBotToken.mockResolvedValue(undefined);
+      mockGetTelegramBotTokenById.mockResolvedValue(undefined);
+
+      const result = await telegramNotificationCenter.authorizeCommand("-100123", "/status");
+      expect(result.authorized).toBe(false);
+    });
+
+    it("authorizeCommand resolves deprecated alias to canonical command", async () => {
+      const result = await telegramNotificationCenter.authorizeCommand("-100123", "/estado");
+      expect(result.authorized).toBe(true);
+      expect(result.definition?.name).toBe("/status");
+    });
+  });
 });
