@@ -1,7 +1,50 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-06
+> Última actualización: 2026-07-07
+
+---
+
+## 2026-07-07 — FIX Telegram: /api/telegram/channels 404 + legacy rules enabled (commit 1234870)
+
+### Problema
+- `/api/telegram/channels` devolvía 404 aunque `/api/telegram/chats` existía → UI no podía gestionar canales
+- Migration 067 creó alert rules `enabled=true` para canales legacy importados (importedFromLegacy=true, needsUserReview=true)
+- Esto incumplía la regla: "Legacy importado no se activa por defecto y no debe conservar alertas activas hasta revisión/configuración manual"
+
+### Solución — FIX 1: /api/telegram/channels alias endpoints
+- `routes.ts`: Añadidos endpoints alias que reutilizan la lógica de `/api/telegram/chats`:
+  - `GET /api/telegram/channels` → `getTelegramChats()`
+  - `POST /api/telegram/channels` → `createTelegramChat()` con validación tokenId
+  - `PUT /api/telegram/channels/:id` → `updateTelegramChat()` con validación tokenId
+  - `DELETE /api/telegram/channels/:id` → `deleteTelegramChat()`
+- UI Telegram → Canales ahora puede añadir, editar, activar/inactivar, asignar token, probar y eliminar canales
+
+### Solución — FIX 2: Legacy alert rules disabled
+- Migration 067: INSERT con `CASE` para `enabled=false` cuando `importedFromLegacy=true` o `needsUserReview=true`
+- Migration 068: `UPDATE` para desactivar reglas legacy existentes en staging
+- `routes.ts`: migration 068 añadida al AutoMigrationRunner
+- Resultado: chat_id 7 (Legacy API Config) y chat_id 8 (Legacy IDCA) tienen todas sus alert rules `enabled=false`
+
+### Solución — FIX 3: Tests
+- 42 tests en `telegram-refactor.test.ts` (40 originales + 2 nuevos legacy rules)
+- Tests cubren: alert rule disabled blocking, legacy channel con `importedFromLegacy=true`
+
+### Validación VPS staging
+- Container `krakenbot-staging-app` Up, no reinicia
+- Health: `{"status":"ok","schema":{"healthy":true,"migrationRan":true}}`
+- `/api/telegram/channels` responde 200 con 3 canales
+- `/api/telegram/audit` sin HIGH (WARNING x2, INFO x1)
+- Legacy API Config (chat_id 7): `isActive=false`, todas las alert rules `enabled=false`
+- Legacy IDCA (chat_id 8): `isActive=false`, todas las alert rules `enabled=false`
+- FISCO (chat_id 6): `isActive=true`, alert rules `enabled=true`
+- Logs sin `DATABASE_ERROR` ni `ERROR CRITICAL`
+
+### Archivos modificados
+- `server/routes.ts` — /api/telegram/channels endpoints + migration 068
+- `db/migrations/067_telegram_alert_rules.sql` — INSERT con CASE para legacy
+- `db/migrations/068_disable_legacy_alert_rules.sql` — UPDATE legacy rules disabled
+- `server/services/__tests__/telegram-refactor.test.ts` — 2 tests legacy rules
 
 ---
 
