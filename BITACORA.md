@@ -5,6 +5,97 @@
 
 ---
 
+## 2026-07-06 — Refactor Telegram FASE A/B/C (commits 0a59cb3, bb98f61, b6098e2)
+
+### Problema
+El sistema Telegram tenía múltiples problemas:
+- Mensajes fantasma (phantom) enviados a chat IDs legacy de `api_config` cuando no había canales activos
+- FISCO enviaba por dual-path (HTML + texto) causando duplicados
+- IDCA no validaba si el chat ID estaba activo en `telegram_chats`
+- ErrorAlertService generaba HTML malformado (tag `<span>` sin clase `tg-spoiler`)
+- Sin kill switch global para bloquear todos los envíos
+- Sin deduplicación ni rate-limiting centralizado
+- Comandos sin autorización por chat
+- Sin auditoría de alertas enviadas/bloqueadas/fallidas
+- Configuración Telegram dispersa en múltiples páginas (Integrations, Notifications, IDCA, FISCO, SmartExit)
+
+### Solución — FASE A: Infraestructura backend (commit 0a59cb3)
+
+**Nuevos archivos:**
+- `server/services/TelegramNotificationCenter.ts` — Autoridad central para routing de alertas
+- `server/services/__tests__/telegram-refactor.test.ts` — 19 tests
+- `db/migrations/065_telegram_global_config.sql` — Tablas `telegram_global_config`, `telegram_alert_events`, `telegram_command_log`
+
+**Archivos modificados:**
+- `shared/schema.ts` — Schema Drizzle para nuevas tablas
+- `server/storage.ts` — Métodos storage para global config, alert events, command logs
+- `server/routes.ts` — Endpoints API: `/api/telegram/global-config`, `/api/telegram/alert-events`, `/api/telegram/command-logs`, `/api/telegram/commands`
+- `server/services/telegram.ts` — Eliminados fallbacks a `this.chatId` en `sendAlertWithSubtype`, `sendAlertToMultipleChats`, heartbeat, daily report; añadido guard de autorización en comandos
+- `server/services/ErrorAlertService.ts` — HTML escaping en mensaje, contexto, código y stack trace; eliminada creación de instancia fallback de TelegramService
+- `server/services/FiscoTelegramNotifier.ts` — Eliminado dual-path; validación de chat activo antes de enviar
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — Validación de chat activo en `telegram_chats`; channel authorization en `canSend()`
+- `server/services/institutionalDca/IdcaHybridAlertService.ts` — Validación de chat activo antes de enviar
+
+**Validación FASE A en VPS:**
+- Health OK, Docker up, migración 065 aplicada
+- 3 tablas creadas: `telegram_global_config`, `telegram_alert_events`, `telegram_command_log`
+- Global config: `telegramGlobalEnabled: true`, `telegramSilentMode: false`, `telegramMinSeverity: LOW`
+- 19 comandos con permisos correctos (read_only/action/admin)
+- Sin errores CRITICAL en logs
+
+### Solución — FASE B: UI Telegram unificada (commit bb98f61)
+
+**Nuevos archivos:**
+- `client/src/pages/Telegram.tsx` — Página principal con 12 subpestañas
+- `client/src/components/telegram/TelegramSettingsTab.tsx` — Kill switch, token, silent mode, severity, dedupe, rate-limit, quiet hours, environment label
+- `client/src/components/telegram/TelegramChannelsTab.tsx` — CRUD de `telegram_chats`, toggle active/inactive, alert preferences
+- `client/src/components/telegram/TelegramCommandsTab.tsx` — Command definitions + command logs
+- `client/src/components/telegram/TelegramSpotTab.tsx` — SPOT / Trading activo
+- `client/src/components/telegram/TelegramSpotDryRunTab.tsx` — SPOT Dry Run
+- `client/src/components/telegram/TelegramIdcaTab.tsx` — IDCA status + link a config detallada
+- `client/src/components/telegram/TelegramIdcaHybridTab.tsx` — IDCA Hybrid/Grid (Grid Observer = "Grid simulado")
+- `client/src/components/telegram/TelegramSmartExitTab.tsx` — Smart Exit notificaciones
+- `client/src/components/telegram/TelegramFiscoTab.tsx` — FISCO alertas
+- `client/src/components/telegram/TelegramSystemTab.tsx` — Sistema / errores críticos
+- `client/src/components/telegram/TelegramAiTab.tsx` — IA / Shadow Mode / Autoafinación
+- `client/src/components/telegram/TelegramAuditTab.tsx` — Auditoría / Historial (alert events + diagnostic)
+
+**Archivos modificados:**
+- `client/src/App.tsx` — Ruta `/telegram`
+- `client/src/components/dashboard/Nav.tsx` — Link "TELEGRAM" en sección SISTEMA
+- `client/src/components/mobile/MobileTabBar.tsx` — `/telegram` en aliases
+- `client/src/pages/Integrations.tsx` — Sección Telegram reemplazada con link a `/telegram`
+- `client/src/pages/Notifications.tsx` — Link a `/telegram` en header
+
+**Validación FASE B en VPS:**
+- Build OK, deploy OK, health OK
+- API endpoints funcionando: global-config, commands, alert-events, command-logs
+
+### Solución — FASE C: Saneamiento legacy + telegram:audit + ENV policy (commit b6098e2)
+
+**Archivos modificados:**
+- `server/routes.ts` — Nuevo endpoint `GET /api/telegram/audit` que detecta:
+  - Chat IDs legacy en `api_config` no registrados en `telegram_chats`
+  - Chat IDs de IDCA/FISCO no registrados o inactivos
+  - ENV fallback (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID) presente pero ignorado correctamente
+  - Canales huérfanos inactivos no referenciados por ningún módulo
+- `server/services/telegram.ts` — `sendMessage()` ahora respeta kill switch global (ENV fallback policy)
+- `client/src/components/telegram/TelegramAuditTab.tsx` — UI de diagnóstico con badges de severidad y recomendaciones
+
+**Validación FASE C en VPS:**
+- `GET /api/telegram/audit` responde correctamente
+- Detecta 3 issues HIGH: chat IDs de api_config, IDCA y FISCO no registrados en `telegram_chats`
+- ENV fallback: política correcta (ignorado si global OFF o sin canales activos)
+- `sendMessage()` respeta kill switch global
+
+### Estado final
+- **3 fases completadas y validadas en VPS staging**
+- **19/19 tests passing**
+- **3 commits pushed a origin/main**: `0a59cb3`, `bb98f61`, `b6098e2`
+- **Pendiente**: Registrar los chat IDs legacy (`-1002639300934`, `-10024116945102`, `-1003504297101`) en `telegram_chats` o eliminarlos de las configs de cada módulo
+
+---
+
 ## 2026-07-06 — Fix: gridAllocationMode no se guardaba en DB (commit 9405cba)
 
 ### Problema
