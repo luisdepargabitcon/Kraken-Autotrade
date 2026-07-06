@@ -5,6 +5,66 @@
 
 ---
 
+## 2026-07-06 — Refactor Telegram FASE D/E/G/H/I/J (commit d8b6852)
+
+### Problema
+- Configuración Telegram dispersa en múltiples páginas (Notifications, IDCA, FISCO, SmartExit) con duplicados editables
+- Legacy chat IDs detectados por auditoría sin mecanismo seguro de importación
+- Catálogo de comandos mezclaba comandos nuevos y legacy sin distinción
+- Falta catálogo completo de alertas Grid con regla de lenguaje observer_only
+- UI Telegram con 12 subpestañas planas, difícil de navegar
+- Envíos directos a Telegram sin pasar por NotificationCenter en algunos servicios
+
+### Solución — FASE D: Centralización UI legacy (read-only)
+**Archivos modificados:**
+- `client/src/pages/Notifications.tsx` — Reescrito como resumen read-only con link a Telegram > Ajustes
+- `client/src/pages/InstitutionalDca.tsx` — Tab Telegram reemplazado por resumen read-only link a Telegram > IDCA
+- `client/src/pages/Fisco.tsx` — Sección alert config reemplazada por resumen read-only link a Telegram > Fiscalidad
+- `client/src/components/strategies/SmartExitTab.tsx` — Toggles Telegram reemplazados por resumen read-only link a Telegram > Smart Exit
+- `client/src/components/telegram/TelegramSmartExitTab.tsx` — Implementado config editable real migrado desde SmartExitTab
+
+### Solución — FASE G: Importación segura de legacy chat IDs
+**Archivos modificados:**
+- `server/routes.ts` — POST `/api/telegram/audit/resolve` con acciones: `register_channel` (importa como INACTIVO con flags `importedFromLegacy=true`, `needsUserReview=true`), `clear_reference` (elimina referencia legacy), `ignore` (marca issue resuelto). Audit issues enriquecidos con `source`, `chatId`, `resolvable`. Severidad WARNING para legacy importado.
+- `client/src/components/telegram/TelegramAuditTab.tsx` — Botones de acción para resolver issues, toast con mensaje claro sobre importación inactiva, estilos para severidad WARNING.
+
+### Solución — FASE J: Rerouting completo a NotificationCenter
+**Archivos modificados:**
+- `server/services/institutionalDca/IdcaTelegramNotifier.ts` — `send()` rerouteado a `telegramNotificationCenter.sendToSpecificChat()`
+- `server/services/institutionalDca/IdcaHybridAlertService.ts` — `sendTelegram()` rerouteado a `telegramNotificationCenter.sendToSpecificChat()`
+- `server/services/FiscoTelegramNotifier.ts` — `sendTextReport()` rerouteado a `telegramNotificationCenter.sendToSpecificChat()`; `sendDocument()` mantiene directo (binario)
+- `server/services/fisco/FiscoAutoSyncService.ts` — Todos los `sendMessage()` rerouteados a `telegramNotificationCenter.sendToSpecificChat()`
+- `server/services/ErrorAlertService.ts` — `sendCriticalError()` rerouteado a `telegramNotificationCenter.sendToSpecificChat()`
+- `server/services/__tests__/telegram-refactor.test.ts` — Test de regresión: legacy import como inactivo bloquea envíos, audita `blocked_by_channel_disabled`.
+
+### Solución — FASE I: Catálogo de comandos rehecho
+**Archivos modificados:**
+- `server/services/TelegramNotificationCenter.ts` — `COMMAND_DEFINITIONS` expandido: comandos nuevos en inglés organizados por módulo (general, spot, idca, grid, fisco, system), comandos legacy en español marcados `deprecated: true` con `aliasOf` al comando nuevo, campo `requiresConfirmation` para acciones peligrosas.
+- `server/services/telegram.ts` — Handlers nuevos: `/status`, `/help`, `/last_alerts`, `/pause_bot`, `/resume_bot`, `/telegram_status`, `/commands`, `/health`, `/version`, `/audit`. Handlers pending para comandos registrados pero sin implementación completa (`/spot_status`, `/idca_status`, etc.). Imports `readFileSync`, `join` para VERSION.
+- `server/services/__tests__/telegram-refactor.test.ts` — Tests: `/grid_status` existe en catálogo, `/idca_status` existe, `/telegram_status` es read_only, `/estado` es deprecated con alias a `/status`, comandos peligrosos requieren confirmación, read-only no requieren confirmación.
+
+### Solución — FASE H: Catálogo completo de alertas Grid
+**Nuevos archivos:**
+- `server/services/institutionalDca/GridAlertTypes.ts` — 20 tipos de alerta Grid definidos con: `type`, `label`, `defaultEnabled`, `defaultSeverity`, `defaultDedupeMinutes`, `maxMessagesPerHour`, `onlyOnStateChange`, `groupByCycle`, `observerOnlyType`, `naturalTemplate`. Función `buildGridAlertMessage()` que aplica regla de lenguaje: si `observerOnly=true`, nunca "ejecutado"/"orden creada"/"compra preparada" — siempre "simulado"/"informativo"/"sin orden real".
+- `server/services/institutionalDca/__tests__/GridAlertTypes.test.ts` — 5 tests: 20 tipos definidos, observer-only no usa palabras prohibidas, sanitización de wording, wording real cuando observerOnly=false, lookup por tipo.
+
+**Archivos modificados:**
+- `server/routes.ts` — GET `/api/telegram/grid-alert-catalog` expone `GRID_ALERT_DEFINITIONS`.
+- `client/src/components/telegram/TelegramIdcaHybridTab.tsx` — Muestra catálogo completo con badges de severidad, badge SIMULADO para observerOnly, dedupe y max/h.
+
+### Solución — FASE E: Reorganización UI Telegram (5 grupos)
+**Archivos modificados:**
+- `client/src/pages/Telegram.tsx` — Reorganizado de 12 subpestañas planas a 5 grupos lógicos: 1) General (TelegramSettingsTab), 2) Canales (TelegramChannelsTab), 3) Alertas por modo (Accordion con 8 secciones: SPOT Real, SPOT Dry Run, IDCA, IDCA Hybrid/Grid, Smart Exit, Fiscalidad, Sistema, IA), 4) Comandos (TelegramCommandsTab), 5) Auditoría (TelegramAuditTab).
+
+### Validación
+- TypeScript: sin errores
+- Build: exitoso (client 2605 módulos, server 3.9mb)
+- Tests Telegram: 31/31 passing (26 refactor + 5 GridAlertTypes)
+- Deploy staging: `git push` + `docker compose up -d --build` exitoso
+- Commit: d8b6852
+
+---
+
 ## 2026-07-06 — Refactor Telegram FASE A/B/C (commits 0a59cb3, bb98f61, b6098e2)
 
 ### Problema
