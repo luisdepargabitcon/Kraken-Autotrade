@@ -5,6 +5,301 @@
 
 ---
 
+## 2026-07-07 — FASE 3A AUDITORÍA: SPACING ATR / PROXIMIDAD BUY-SELL / BENEFICIO NETO MÍNIMO
+
+### Resumen
+Auditoría exhaustiva (solo lectura, sin cambios funcionales) del sistema de generación de niveles del Grid Isolated. Se detecta un bug crítico: la separación entre niveles consecutivos del mismo lado es ~0.0043%, 37× inferior al objetivo bruto mínimo de ~1.68%. **No se implementó ninguna solución.**
+
+### Fórmula actual exacta del spacing
+
+#### Rango/Banda (Bollinger)
+- **Archivo**: `server/services/gridIsolated/gridBandAdapter.ts:42-91`
+- Se obtienen candles de `MarketDataService.getCandles(pair, atrTimeframe)`.
+- Bollinger Bands: `bandPeriod=20`, `bandStdDevMultiplier=2.0` sobre los closes.
+- **Pmin** = Bollinger lower band
+- **Pmax** = Bollinger upper band
+- **midPrice** = `prices[prices.length - 1]` (último close, **no** la banda media de Bollinger)
+
+#### ATR
+- **Archivo**: `server/services/gridIsolated/gridBandAdapter.ts:59-60` → `server/services/indicators.ts:118-147`
+- **Timeframe**: `atrTimeframe = "4h"` (config DB)
+- **Periodo**: `atrPeriod = 14` (14 velas de 4h = 56 horas)
+- **Cálculo**: Simple average de los últimos `period` True Ranges (no EMA, no Wilder's smoothing)
+- **ATR%** = `(ATR / currentPrice) * 100`
+
+#### gridStep
+- **Archivo**: `server/services/gridIsolated/gridGeometricLevels.ts:83-93`
+```
+atrBasedStepPct = atrPct * gridStepAtrMultiplier
+clampedStepPct = clamp(atrBasedStepPct, gridStepMinPct, gridStepMaxPct)
+baseStep = midPrice * (clampedStepPct / 100)
+```
+
+#### Ratio geométrico
+- **Archivo**: `server/services/gridIsolated/gridGeometricLevels.ts:65-76`
+- Mapea `bandWidthPct` de [1%, 15%] → [ratioMin, ratioMax]
+- Con bandWidth 2.83%: `normalized = (2.83-1)/(15-1) = 0.131` → `ratio = 0.95 + 0.131*(1.35-0.95) = 1.0022`
+
+#### Generación de niveles
+- **Archivo**: `server/services/gridIsolated/gridGeometricLevels.ts:107-198`
+```
+minDistance = midPrice * (grossTargetPct / 100)
+effectiveBaseStep = max(baseStep, minDistance)
+
+BUY[i]:  price = midPrice - effectiveBaseStep * ratio^i
+SELL[i]: price = midPrice + effectiveBaseStep * ratio^i
+```
+Solo se generan niveles dentro de la banda (±2% de tolerancia).
+
+#### Beneficio objetivo y fees
+- **Archivo**: `server/services/gridIsolated/gridNetCalculator.ts:62-86`
+- `FEE_BUFFER_BUY_PCT = 0.09%`, `FEE_BUFFER_SELL_PCT = 0.09%` (taker conservativo)
+- `TAX_RESERVE_PCT = 20%` del neto antes de impuestos
+```
+netBeforeTax = netProfitTargetPct / (1 - 0.20)
+grossTargetPct = netBeforeTax + feeBuyPct + feeSellPct
+```
+- Con `netProfitTargetPct = 1.2%`:
+  - `netBeforeTax = 1.50%`
+  - `grossTargetPct = 1.50 + 0.09 + 0.09 = 1.68%`
+
+**Importante**: `grossTargetPct` **ya incluye** las fees de compra y venta. No debe sumarse de nuevo en fórmulas de spacing mínimo.
+
+### Valores reales de configuración (DB staging, 2026-07-07)
+
+| Parámetro | Valor |
+|---|---|
+| mode | SHADOW |
+| netProfitTargetPct | 1.2% |
+| bandPeriod | 20 |
+| bandStdDevMultiplier | 2.0 |
+| atrPeriod | 14 |
+| atrTimeframe | 4h |
+| gridStepAtrMultiplier | 1.5 |
+| gridStepMinPct | 0.20% |
+| gridStepMaxPct | 3.0% |
+| geometricRatioMin | 0.95 |
+| geometricRatioMax | 1.35 |
+| gridAllocationMode | adaptive_market |
+| gridCapitalDeploymentMode | capped |
+| gridMaxCapitalPerCycleUsd | 600 |
+| gridWalletInitialUsd | 1000 |
+| gridWalletMaxUsd | 1700 |
+
+### Datos reales del rango #14 (aba1e874, paused, histórico)
+
+| Dato | Valor |
+|---|---|
+| midPrice | $63,300.80 |
+| Band lower | $61,098.74 |
+| Band upper | $63,880.37 |
+| Band width | 2.83% |
+| ATR% | 1.2412% |
+| Precio actual | $63,993.40 |
+| geometric_ratio (DB) | 1.0022 |
+| netProfitTargetPct (DB) | 1.20% |
+| Niveles BUY | 5 |
+| Niveles SELL | 5 |
+
+### Niveles reales generados
+
+**BUY (ordenados por precio ascendente):**
+
+| Index | Precio | Dist. desde mid | Dist. nivel anterior |
+|---|---|---|---|
+| 0 | $62,111.66 | $1,189.14 (1.88%) | — |
+| 1 | $62,114.32 | $1,186.48 (1.88%) | $2.66 (0.0043%) |
+| 2 | $62,116.97 | $1,183.83 (1.87%) | $2.65 (0.0043%) |
+| 3 | $62,119.62 | $1,181.18 (1.87%) | $2.65 (0.0043%) |
+| 4 | $62,122.26 | $1,178.54 (1.86%) | $2.64 (0.0043%) |
+
+**SELL (ordenados por precio ascendente):**
+
+| Index | Precio | Dist. desde mid | Dist. nivel anterior |
+|---|---|---|---|
+| 0 | $64,479.34 | $1,178.54 (1.86%) | — |
+| 1 | $64,481.98 | $1,181.18 (1.87%) | $2.64 (0.0043%) |
+| 2 | $64,484.63 | $1,183.83 (1.87%) | $2.65 (0.0043%) |
+| 3 | $64,487.28 | $1,186.48 (1.88%) | $2.65 (0.0043%) |
+| 4 | $64,489.94 | $1,189.14 (1.88%) | $2.66 (0.0043%) |
+
+### Métricas de separación
+
+| Métrica | Valor |
+|---|---|
+| Separación media BUY-BUY | **$2.66 → 0.0043%** |
+| Separación media SELL-SELL | **$2.66 → 0.0043%** |
+| Separación BUY más cercano al mercado | $62,122.26 → 2.93% bajo precio actual |
+| Separación SELL más cercano al mercado | $64,479.34 → 0.76% sobre precio actual |
+| Gap BUY max → SELL min | $2,357.08 → 3.73% |
+| Beneficio neto objetivo | 1.2% (~$1.44 por nivel sobre ~$120) |
+| Beneficio bruto objetivo | 1.68% (incluye fees) |
+| Fees estimadas por nivel | $0.108 (0.09% × 2 sobre ~$120) |
+
+### Causa del bug: lógica geométrica
+
+La fórmula actual calcula distancia **desde midPrice**, no separación acumulativa entre niveles:
+```
+distance[i] = effectiveBaseStep * ratio^i
+price[i] = midPrice - distance[i]
+```
+
+La separación entre nivel `i` e `i-1` es:
+```
+gap = baseStep * ratio^i - baseStep * ratio^(i-1) = baseStep * ratio^(i-1) * (ratio - 1)
+```
+
+Con `ratio = 1.0022` y `baseStep = $1,177`:
+```
+gap = 1177 * 0.0022 = $2.59 → 0.004% del precio
+```
+
+**El ratio geométrico ≈ 1.0 hace que los niveles sean casi idénticos.** Con `bandWidthPct = 2.83%` y el rango de mapeo [1%, 15%], el ratio sale muy cerca de `ratioMin = 0.95`, que a su vez es muy cerca de 1.0.
+
+### Diagnóstico: ¿configuración, lógica o ambas?
+
+**Ambas:**
+
+1. **Lógica**: El diseño geométrico con `distance[i] = baseStep * ratio^i` hace que la separación entre niveles consecutivos sea `baseStep * (ratio - 1)`, que con ratio ≈ 1.0 es casi cero. La separación debería ser acumulativa desde el nivel anterior, no desde mid.
+
+2. **Configuración**: `gridStepMinPct = 0.20%` es demasiado bajo. No cubre ni las fees (0.18%). Debería ser al menos `grossTargetPct` (1.68%).
+
+### ¿El spacing mínimo cubre fees + spread + target neto?
+
+**No directamente.** El `gridStepMinPct = 0.20%` es insuficiente. Sin embargo, el `effectiveBaseStep = max(baseStep, minDistance)` salva el primer nivel porque `minDistance` se calcula desde `grossTargetPct = 1.68%`. Pero los niveles consecutivos del mismo lado pueden estar a 0.004% entre sí, lo que es el problema real.
+
+### Propuesta de fórmula de spacing mínimo (corregida — sin doble conteo de fees)
+
+**Corrección importante**: `grossTargetPct` ya incluye `feeBuyPct + feeSellPct` según `gridNetCalculator.ts:73-74`. Por tanto, la fórmula propuesta **no debe sumar fees dos veces**.
+
+**Opción A (recomendada — usa grossTargetPct que ya incluye fees):**
+```
+minSpacingPctReal = max(
+  gridStepMinPct,
+  grossTargetPct + spreadBufferPct + safetyBufferPct
+)
+```
+
+**Opción B (desglosada — equivalente matemática):**
+```
+minSpacingPctReal = max(
+  gridStepMinPct,
+  netBeforeTaxPct + feeBuyPct + feeSellPct + spreadBufferPct + safetyBufferPct
+)
+```
+
+**No usar**: `feeBuyPct + feeSellPct + grossTargetPct` (doble conteo de fees).
+
+Con valores actuales (Opción A):
+```
+minSpacingPctReal = max(0.20, 1.68 + 0.01 + 0.10) = 1.79%
+spacingPct = clamp(atrPct * gridStepAtrMultiplier, minSpacingPctReal, gridStepMaxPct)
+           = clamp(1.24 * 1.5, 1.79, 3.0) = clamp(1.86, 1.79, 3.0) = 1.86%
+```
+
+Separación mínima entre niveles: **1.86%** en vez del **0.004%** actual.
+
+### Análisis de viabilidad de banda
+
+**Advertencia crítica**: Si el spacing mínimo real ronda 1.7%–2.0%, puede que **no quepan 5 BUY y 5 SELL** dentro de una banda de solo 2.83% de anchura.
+
+Cálculo: con spacing de 1.86% y banda de 2.83%:
+- Cada lado (BUY o SELL) tiene ~1.41% de espacio desde midPrice al borde de banda
+- Con spacing de 1.86%, solo cabría **0-1 niveles por lado** dentro de la banda
+- Para 5 niveles por lado con spacing 1.86%: se necesitaría banda de al menos `5 * 1.86% = 9.3%` por lado → **18.6% total**
+
+**Fase 3B debe analizar:**
+- Cuántos niveles caben realmente en la banda con spacing corregido
+- Si hay que reducir niveles dinámicamente según ancho de banda
+- Si hay que ampliar la banda (cambiar `bandStdDevMultiplier` o timeframe de Bollinger)
+- Si hay que marcar el Grid como "compacto/no viable" cuando no caben suficientes niveles
+- Si hay que permitir niveles fuera de banda con tolerancia
+- Si hay que separar rango macro (Bollinger 4h) y spacing operativo (ATR 1h)
+
+### Duda técnica sobre midPrice
+
+El código actual usa:
+```
+midPrice = prices[prices.length - 1]  // último close
+```
+
+Esto **no** es necesariamente el centro de la Bollinger Band.
+
+**Comparación para Fase 3B:**
+
+| Opción | Ventajas | Desventajas |
+|---|---|---|
+| **A) gridCenter = currentPrice/lastClose** (actual) | El Grid sigue al mercado; niveles se ajustan al precio actual | Si el precio está cerca del techo de la banda, los SELL pueden quedar fuera; el Grid se "desplaza" con el precio |
+| **B) gridCenter = Bollinger middle band** | El Grid queda más estable; distribución simétrica dentro de la banda | Si el precio se aleja del centro, los niveles BUY/SELL quedan asimétricos respecto al precio real |
+
+**No cambiar todavía.** Fase 3B debe evaluar ambas opciones con simulación.
+
+### Recomendación ATR 15m vs 1h vs 4h
+
+| Timeframe | Ventajas | Desventajas |
+|---|---|---|
+| 15m | Muy responsivo, detecta micro-volatilidad | Ruidoso, puede compactar grid en picos |
+| 1h | Balance estabilidad/responsividad | Puede ser lento para ajustar spacing |
+| 4h (actual) | Muy estable, menos ruido | Demasiado lento para adaptar spacing a cambios intradiarios |
+
+**Recomendación para BTC/USD en este bot:**
+- **Spacing micro**: ATR 14 en **1h** — mejor balance para grid trading BTC
+- **Rango macro**: Bollinger 20 en **4h** — mantener actual para banda
+- Dejar `atrTimeframe` configurable (ya lo es)
+
+### Propuesta para Fase 3B: Diseño y simulación (NO implementación)
+
+Fase 3B debe ser **diseño + simulación**, no implementación directa.
+
+**Entregable Fase 3B:**
+1. Fórmula actual vs fórmula propuesta (side-by-side)
+2. Simulación con los mismos datos reales del rango #14
+3. Número de niveles generados con fórmula nueva
+4. Si caben dentro de banda
+5. Separación media BUY-BUY con fórmula nueva
+6. Separación media SELL-SELL con fórmula nueva
+7. Beneficio neto esperado por nivel
+8. Qué pasa si no caben 5 niveles por lado (reducción dinámica, ampliación de banda, etc.)
+9. Recomendación: reducir niveles / ampliar rango / cambiar ATR timeframe / usar Bollinger middle / o mantener configuración
+10. Riesgo de aplicar a rangos existentes
+11. Qué tests habría que actualizar
+12. Qué UI habría que ajustar
+13. Confirmación de que NO se implementa nada sin aprobación
+
+### Riesgos identificados
+
+- **Riesgo bajo**: Los cambios serían en generación de niveles en SHADOW. No hay órdenes reales.
+- **Riesgo medio**: Si se cambia la fórmula geométrica, los rangos existentes en DB quedan obsoletos. Habría que generar nuevos rangos para ver el efecto.
+- **Riesgo de regresión**: Los tests existentes (`gridWeightedLevels.test.ts`, `gridAllocationEngine.test.ts`) podrían romperse si cambia la firma de `generateGeometricLevels`.
+- **Riesgo de viabilidad**: Con spacing mínimo corregido (~1.8%), es posible que el Grid actual con 10 niveles no quepa en bandas estrechas (<5%). Habría que rediseñar el número de niveles o la anchura de banda.
+
+### Archivos auditados (solo lectura)
+- `server/services/gridIsolated/gridGeometricLevels.ts`
+- `server/services/gridIsolated/gridBandAdapter.ts`
+- `server/services/gridIsolated/gridNetCalculator.ts`
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/indicators.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `client/src/components/grid/GridLevelsPanel.tsx`
+- `client/src/components/grid/GridLevelsMarketHeader.tsx`
+
+### Pendientes para Fase 3B
+1. Diseñar fórmula de separación acumulativa entre niveles (no desde mid)
+2. Simular con datos del rango #14
+3. Analizar viabilidad de banda con spacing corregido
+4. Evaluar midPrice = lastClose vs Bollinger middle
+5. Proponer ajustes de configuración (gridStepMinPct, atrTimeframe, número de niveles)
+6. Lista de tests a actualizar
+7. Lista de cambios UI necesarios
+8. **Sin implementación sin aprobación expresa**
+
+### Confirmación de restricciones
+- ✅ No IDCA · No FISCO · No REAL · No órdenes reales · No rebuild · No DB manual · No migraciones · No cambios de lógica de trading · No deploy
+- ✅ Solo auditoría y documentación, sin cambios funcionales
+
+---
+
 ## 2026-07-07 — FASE 2.2 FIX VISUAL: FILTRO RANGO ACTIVO NO MUSTRA HISTÓRICOS SI activeRangeVersionId ES NULL
 
 ### Resumen
