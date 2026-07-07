@@ -1,7 +1,225 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-07
+> Última actualización: 2026-07-08
+
+---
+
+## 2026-07-08 — FASE 3B SIMULACIÓN: SPACING ATR Y VIABILIDAD PROFESIONAL DE GRID
+
+### Resumen
+Simulación comparativa de fórmulas de spacing para Grid Isolated. Se confirma que el problema es doble: (1) la fórmula geométrica actual deja niveles pegados, y (2) la banda actual (2.83%) es incompatible con spacing mínimo rentable (~1.79%). **No se implementó ninguna fórmula nueva.**
+
+### Script auxiliar
+- **Archivo**: `scripts/grid_spacing_phase3b_simulation.ts`
+- **Naturaleza**: Script auxiliar de análisis. NO forma parte del build de producción. No se importa en ningún módulo del bot.
+- **tsconfig.json**: `include` cubre `client/src/**/*`, `shared/**/*`, `server/**/*` — **NO cubre `scripts/`**.
+- **Validación**:
+  - `npm run check`: ✅ (no cubre scripts/, no afectado)
+  - `npx tsc scripts/... --noEmit`: ❌ (error en `node_modules/@types/request` — conflicto de dependencias, no relacionado con el script)
+  - `npx tsx scripts/grid_spacing_phase3b_simulation.ts`: ✅ (ejecuta correctamente, exit code 0)
+
+### Fórmula actual simulada
+```
+distance[i] = effectiveBaseStep × ratio^i
+price[i] = centerPrice ± distance[i]
+```
+Con `ratio ≈ 1.002286`, la separación entre niveles consecutivos es `baseStep × (ratio - 1) ≈ 0.004%`.
+
+### Fórmula propuesta simulada (acumulativa)
+```
+spacingPct = clamp(atrPct × gridStepAtrMultiplier, minSpacingPctReal, gridStepMaxPct)
+
+BUY[0]  = centerPrice × (1 - spacingPct/100)
+BUY[i]  = BUY[i-1] × (1 - gapPct[i]/100)
+
+SELL[0] = centerPrice × (1 + spacingPct/100)
+SELL[i] = SELL[i-1] × (1 + gapPct[i]/100)
+```
+
+Tres variantes de `gapPct[i]` simuladas:
+- **Lineal estable**: `gapPct = spacingPct`
+- **Geométrica suave**: `gapPct = spacingPct × ratio^i`
+- **Geométrica clampada**: `gapPct = clamp(spacingPct × ratio^i, minSpacingPctReal, gridStepMaxPct)`
+
+### Spacing mínimo rentable (sin doble conteo de fees)
+```
+minSpacingPctReal = grossTargetPct + spreadBufferPct + safetyBufferPct
+                  = 1.68% + 0.01% + 0.10% = 1.79%
+```
+`grossTargetPct` ya incluye `feeBuyPct + feeSellPct`. No sumar fees dos veces.
+
+### Tabla comparativa de simulación
+
+| # | Fórmula | Center | ATR | Spacing | BUY+SELL | B-B gap | En banda | Fuera | Net% | Veredicto |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | Actual | lastClose | 4h | 1.86% | 5+5 | 0.004% | 5 | 5 | 1.35% | ❌ 5 fuera banda |
+| 2 | Actual | Bollinger mid | 4h | 1.86% | 5+5 | 0.004% | 10 | 0 | 1.35% | ✅ pero niveles pegados |
+| 3 | Prop. lineal | lastClose | 4h | 1.86% | 5+5 | 1.86% | 1 | 9 | 1.35% | ❌ 9 fuera banda |
+| 4 | Prop. lineal | Bollinger mid | 4h | 1.86% | 5+5 | 1.86% | 2 | 8 | 1.35% | ❌ 8 fuera banda |
+| 5 | Prop. geom. suave | lastClose | 4h | 1.86% | 5+5 | 1.87% | 1 | 9 | 1.35% | ❌ 9 fuera |
+| 6 | Prop. geom. clamp | lastClose | 4h | 1.86% | 5+5 | 1.87% | 1 | 9 | 1.35% | ❌ 9 fuera |
+| 7 | Prop. lineal | lastClose | 1h | 1.79% | 5+5 | 1.79% | 1 | 9 | 1.29% | ❌ 9 fuera |
+| 8 | Prop. lineal | Bollinger mid | 1h | 1.79% | 5+5 | 1.79% | 2 | 8 | 1.29% | ❌ 8 fuera |
+| 9 | Prop. + reducción din. | lastClose | 4h | 1.86% | 1+0 | 1.86% | 1 | 0 | 1.35% | ⚠️ Solo 1 nivel |
+| 10 | Prop. + reducción din. | Bollinger mid | 4h | 1.86% | 1+1 | 1.86% | 2 | 0 | 1.35% | ⚠️ Solo 2 niveles |
+| 11 | Prop. + tolerancia 3% | lastClose | 4h | 1.86% | 5+5 | 1.86% | 1 | 9 | 1.35% | ❌ Tolerancia insuficiente |
+| 12 | Prop. + reducción din. | lastClose | 1h | 1.79% | 1+0 | 1.79% | 1 | 0 | 1.29% | ⚠️ Solo 1 nivel |
+| 13 | Prop. + reducción din. | Bollinger mid | 1h | 1.79% | 1+1 | 1.79% | 2 | 0 | 1.29% | ⚠️ Solo 2 niveles |
+| 14 | Prop. + reducción din. | lastClose | 15m | 1.79% | 1+0 | 1.79% | 1 | 0 | 1.29% | ⚠️ Solo 1 nivel |
+
+### Niveles que caben realmente en banda (2.83%)
+
+**Con lastClose ($63,300.80):**
+- Spacing 1.86% (ATR 4h): 1 BUY + 0 SELL = **1 nivel total**
+- Spacing 1.79% (ATR 1h/15m): 1 BUY + 0 SELL = **1 nivel total**
+- BW necesaria para 5+5: **~18.63%**
+
+**Con Bollinger middle ($62,489.56):**
+- Spacing 1.86% (ATR 4h): 1 BUY + 1 SELL = **2 niveles total**
+- Spacing 1.79% (ATR 1h/15m): 1 BUY + 1 SELL = **2 niveles total**
+- BW necesaria para 5+5: **~17.91%**
+
+### Comparación centerPrice
+
+| Opción | Center | Espacio BUY | Espacio SELL | Niveles | Sesgo |
+|---|---|---|---|---|---|
+| A) lastClose | $63,300.80 | 3.48% | 0.92% | 1+0 | Arriba (SELL no caben) |
+| B) Bollinger middle | $62,489.56 | 2.23% | 2.23% | 1+1 | Simétrico |
+| C) Híbrido (clamp 25% BW) | $62,931.67 | 2.92% | 1.51% | 1+0 | Ligeramente arriba |
+
+**Recomendación preliminar**: Bollinger middle — es el único que genera niveles simétricos.
+
+### Comparación ATR timeframes
+
+| Timeframe | ATR% | Spacing% | Niveles (lastClose) | Veredicto |
+|---|---|---|---|---|
+| 15m | 0.3103% (estimado √T) | 1.79% (clamp piso) | 1+0 | ❌ Insuficiente |
+| 1h | 0.6206% (estimado √T) | 1.79% (clamp piso) | 1+0 | ❌ Insuficiente |
+| 4h (actual) | 1.2412% | 1.86% | 1+0 | ❌ Insuficiente |
+
+**Los ATR 1h y 15m de esta simulación son aproximaciones por escala temporal (regla √T), NO ATR calculados con velas reales. No deben usarse para decidir definitivamente el timeframe. Para una decisión final habría que recalcular con candles reales 1h y 15m (Fase 3C-PRE).**
+
+**Con los datos estimados, cambiar ATR timeframe no soluciona el problema principal porque el `minSpacingPctReal` domina. La decisión definitiva de ATR timeframe queda pendiente de una simulación con candles reales 1h/15m. El problema prioritario es la incompatibilidad entre bandWidth actual, spacing mínimo real y número de niveles.**
+
+### Beneficio neto y fees
+
+Todas las variantes cumplen el `netProfitTargetPct = 1.2%`:
+- Spacing 1.86%: neto = 1.35% ✅
+- Spacing 1.79%: neto = 1.29% ✅
+
+Fórmula (sin doble conteo): `neto = (spacing - fees) × (1 - taxReserve) = (spacing - 0.18%) × 0.80`
+
+### Impacto sobre capital
+
+- `gridMaxCapitalPerCycleUsd = $600` (configurable, no hardcodear)
+- Sin reducción (5+5): BUY capital = $600, SELL notional = $600 ✅
+- Con reducción dinámica (1+1): BUY capital = $120, SELL notional = $120 ✅
+
+**En esta simulación el notional SELL se muestra simplificado. En el bot real, el SELL notional debe calcularse como quantity comprada × sellPrice y normalmente será superior al BUY si el SELL está por encima del BUY. SELL no consume USD, pero sí requiere inventario BTC.**
+
+### Conclusión principal
+
+No basta con corregir la fórmula geométrica. También hay que decidir:
+- Reducir niveles dinámicamente según banda disponible.
+- Ampliar rango operativo (evaluar `bandStdDevMultiplier` o rango operativo independiente).
+- Marcar Grid como compacto/no viable si no caben suficientes niveles.
+- Separar rango macro (Bollinger 4h para régimen) y rango operativo (banda para niveles).
+- O cambiar configuración de niveles/bandas.
+
+### Criterio profesional de viabilidad Grid
+
+Un Grid profesional no debe forzar un número fijo de niveles si el rango disponible no permite una separación rentable.
+
+La lógica correcta debe ser:
+
+1. **Calcular rango útil**:
+   `usefulRangePct = upperBandPct - lowerBandPct`
+
+2. **Calcular spacing mínimo rentable**:
+   `minSpacingPctReal = grossTargetPct + spreadBufferPct + safetyBufferPct`
+
+   O equivalente:
+   `minSpacingPctReal = netBeforeTaxPct + feeBuyPct + feeSellPct + spreadBufferPct + safetyBufferPct`
+
+   No doble contar fees: no usar `feeBuyPct + feeSellPct + grossTargetPct` si `grossTargetPct` ya incluye fees.
+
+3. **Calcular spacing operativo**:
+   `spacingPct = clamp(atrPct × gridStepAtrMultiplier, minSpacingPctReal, gridStepMaxPct)`
+
+4. **Calcular cuántos niveles caben**:
+   `maxBuyLevels = floor(espacio disponible hacia abajo / spacingPct)`
+   `maxSellLevels = floor(espacio disponible hacia arriba / spacingPct)`
+
+5. **Generar solo niveles viables**:
+   `buyLevels = min(configuredBuyLevels, maxBuyLevels)`
+   `sellLevels = min(configuredSellLevels, maxSellLevels)`
+
+6. **Si caben pocos niveles**:
+   - Si `totalLevels < minLevelsForViableGrid`: marcar Grid como compacto/no viable.
+   - No regenerar rango operativo automáticamente sin aprobación.
+   - Explicar en UI por qué no caben niveles.
+
+7. **No forzar 5 BUY + 5 SELL**:
+   Si la banda solo permite 1 BUY + 1 SELL rentable, no fabricar 10 niveles pegados.
+
+### Recomendaciones preliminares (no definitivas)
+
+- **Fórmula**: Acumulativa lineal (`gapPct = spacingPct`). La geométrica no aporta beneficio significativo.
+- **Center price**: Bollinger middle (simétrico). lastClose deja SELL fuera cuando precio está cerca del techo.
+- **ATR timeframe**: Pendiente de Fase 3C-PRE con candles reales. Con datos estimados, el timeframe no cambia el resultado porque `minSpacingPctReal` domina.
+- **Regla si no caben niveles**: Reducción dinámica + evaluar ampliación de rango operativo.
+- **Configs nuevas propuestas**: `spreadBufferPct`, `safetyBufferPct`, `minLevelsForViableGrid`, `useBollingerMiddleAsCenter`, `dynamicLevelReduction`.
+- **Configs existentes a reutilizar**: `gridStepAtrMultiplier`, `gridStepMaxPct`, `netProfitTargetPct`.
+- **Configs a revisar**: `gridStepMinPct` (subir de 0.20% a ~1.0% o eliminar), `bandStdDevMultiplier` (evaluar subir de 2.0 a 3.0).
+
+### Riesgos identificados
+
+- **Riesgo medio**: Cambiar `generateGeometricLevels` puede romper tests existentes.
+- **Riesgo medio**: Rangos existentes en DB quedan obsoletos con nueva fórmula.
+- **Riesgo bajo**: En SHADOW no hay órdenes reales.
+- **Riesgo de viabilidad**: Con banda 2.83% y spacing 1.79%, el Grid solo puede tener 1-2 niveles — operativamente inútil sin ampliar la banda.
+
+### Propuesta para Fase 3C (diseño, NO implementación)
+
+Fase 3C debería implementar solo si se aprueba explícitamente:
+1. Fórmula acumulativa con `spacingPct` como separación real entre niveles.
+2. `minSpacingPctReal` como piso de spacing.
+3. Viabilidad de banda: calcular cuántos niveles caben antes de generar.
+4. Reducción dinámica de niveles.
+5. Estado UI: Grid equilibrado / compacto / no viable.
+6. Center price: Bollinger middle o híbrido `clamp(currentPrice, middle ± X% de bandWidth)`.
+7. `gridMaxCapitalPerCycleUsd` configurable (no hardcodear).
+8. SELL notional calculado como `qty comprada × sellPrice`.
+9. Todo primero en SHADOW.
+
+**No iniciar Fase 3C hasta aprobar Fase 3C-PRE.**
+
+### Próxima fase: FASE 3C-PRE — ATR REAL Y SIMULACIÓN CON CANDLES REALES
+
+Objetivo: Recolectar datos reales de velas BTC/USD para 15m, 1h y 4h. Calcular ATR real 14 en cada timeframe y repetir simulación con datos reales, no con aproximación por √T.
+
+Entregable Fase 3C-PRE:
+1. ATR real 15m.
+2. ATR real 1h.
+3. ATR real 4h.
+4. Comparativa contra estimación por √T.
+5. Simulación de spacing con cada ATR real.
+6. Niveles que caben con lastClose.
+7. Niveles que caben con Bollinger middle.
+8. Niveles que caben con center híbrido.
+9. Recomendación final de timeframe ATR.
+10. Recomendación final de centerPrice.
+11. Recomendación final de viabilidad: reducir niveles / ampliar rango / marcar compacto / combinación.
+
+**No implementar Fase 3C hasta aprobar Fase 3C-PRE.**
+
+### Archivos creados
+- `scripts/grid_spacing_phase3b_simulation.ts` — script auxiliar, no se importa en producción
+
+### Confirmación de restricciones
+- ✅ No IDCA · No FISCO · No REAL · No órdenes reales · No rebuild · No DB manual · No migraciones · No cambios de lógica de trading · No deploy
+- ✅ Solo simulación y documentación, sin cambios funcionales
 
 ---
 
