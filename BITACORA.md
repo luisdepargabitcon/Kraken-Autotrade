@@ -5,6 +5,46 @@
 
 ---
 
+## 2026-07-07 — FASE 2.2 FIX VISUAL: FILTRO RANGO ACTIVO NO MUSTRA HISTÓRICOS SI activeRangeVersionId ES NULL
+
+### Resumen
+Bug visual: el filtro "Rango activo" mostraba niveles históricos cuando `activeRangeVersionId` era null. **No se tocó lógica de trading.**
+
+### Causa exacta
+En `GridLevelsPanel.tsx` línea 175, el filtro "rango-activo" tenía fallback:
+```typescript
+case "rango-activo":
+  return activeRangeId
+    ? levels.filter((l) => l?.rangeVersionId === activeRangeId)
+    : levels.filter((l) => l?.status === "planned"); // ← BUG: muestra todos los planificados globales
+```
+Cuando `activeRangeId` era null, el fallback mostraba todos los niveles con status "planned" de cualquier rangeVersionId.
+
+### Corrección
+1. **GridLevelsPanel.tsx**: filtro "rango-activo" ahora retorna `[]` cuando `activeRangeId` es null
+2. **GridLevelsPanel.tsx**: contador muestra "Sin rango activo" cuando no hay rango activo
+3. **GridLevelsPanel.tsx**: empty state con aviso azul: "No hay rango activo cargado. Los niveles históricos están disponibles en los filtros globales."
+4. **GridLevelsPanel.tsx**: botón del empty state cambia a "Ver planificados globales"
+5. **GridLevelsMarketHeader.tsx**: "Siguiente nivel cercano" muestra "Sin rango activo" cuando no hay rango activo
+6. **GridLevelsMarketHeader.tsx**: explicación natural: "El Grid está en {mode} sin rango activo cargado en memoria..."
+7. **gridIsolated.routes.ts**: `nearestLevel` en backend ahora filtra por `activeRangeId` — no usa niveles históricos
+
+### Archivos tocados
+- `client/src/components/grid/GridLevelsPanel.tsx` — fix filtro, contador, empty state
+- `client/src/components/grid/GridLevelsMarketHeader.tsx` — prop activeRangeVersionId, textos "Sin rango activo"
+- `client/src/pages/GridIsolated.tsx` — pasar activeRangeVersionId a GridLevelsMarketHeader
+- `server/routes/gridIsolated.routes.ts` — nearestLevel filtrado por activeRangeId
+
+### Tests ejecutados
+- `npm run check`: ✅
+- `npm run build`: ✅ (2606 módulos)
+- `vitest`: ✅ 127/127
+
+### Confirmación de restricciones
+- ✅ No IDCA · No FISCO · No REAL · No órdenes reales · No rebuild · No DB · No migraciones · No lógica de trading
+
+---
+
 ## 2026-07-07 — FASE 2.1 AJUSTE VISUAL/SEMÁNTICO POST-DEPLOY GRID
 
 ### Resumen

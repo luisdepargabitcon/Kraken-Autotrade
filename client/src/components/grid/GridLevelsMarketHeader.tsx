@@ -11,6 +11,7 @@ interface GridLevelsMarketHeaderProps {
   realOpenOrdersCount?: number;
   lastTickReason?: string | null;
   activeRangeLevelsCount?: number;
+  activeRangeVersionId?: string | null;
 }
 
 export function GridLevelsMarketHeader({
@@ -22,6 +23,7 @@ export function GridLevelsMarketHeader({
   realOpenOrdersCount,
   lastTickReason,
   activeRangeLevelsCount,
+  activeRangeVersionId,
 }: GridLevelsMarketHeaderProps) {
   if (!marketContext) {
     return (
@@ -100,7 +102,9 @@ export function GridLevelsMarketHeader({
     if (bandPosition === "upper") {
       return "El precio está en la zona superior de la banda. El Grid mantiene compras planificadas por debajo y objetivos de venta por encima; todavía no hay ciclos abiertos.";
     }
-    return "Estado del mercado no determinado.";
+    return activeRangeVersionId
+      ? "Estado del mercado no determinado."
+      : `El Grid está en ${mode} sin rango activo cargado en memoria. Los niveles históricos siguen disponibles en filtros globales.`;
   };
 
   return (
@@ -156,7 +160,7 @@ export function GridLevelsMarketHeader({
                 </p>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">Sin niveles</p>
+              <p className="text-sm text-muted-foreground">{activeRangeVersionId ? "Sin niveles" : "Sin rango activo"}</p>
             )}
           </div>
         </div>

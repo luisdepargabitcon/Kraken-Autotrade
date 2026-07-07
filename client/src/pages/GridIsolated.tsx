@@ -317,6 +317,7 @@ export default function GridIsolated() {
             realOpenOrdersCount={auditData?.summary?.realOpenOrdersCount || 0}
             lastTickReason={(status as any)?.lastTickReason}
             activeRangeLevelsCount={auditData?.summary?.currentRangeLevelsCount}
+            activeRangeVersionId={auditData?.levelsSummary?.activeRangeVersionId ?? null}
           />
           <Card className="border-amber-500/30 bg-amber-500/10">
             <CardContent className="p-3">

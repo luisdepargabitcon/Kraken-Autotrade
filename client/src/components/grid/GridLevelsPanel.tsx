@@ -172,7 +172,7 @@ export function GridLevelsPanel({
       case "rango-activo":
         return activeRangeId
           ? levels.filter((l: any) => l?.rangeVersionId === activeRangeId)
-          : levels.filter((l: any) => l?.status === "planned");
+          : [];
       case "activos":
         return levels.filter((l: any) =>
           l?.exchangeOrderId != null &&
@@ -449,7 +449,9 @@ export function GridLevelsPanel({
               <Download className="h-3 w-3 mr-1" /> JSON
             </Button>
             <span className="text-xs text-muted-foreground ml-auto">
-              {filteredLevels.length} {GLOBAL_FILTERS.includes(filter) ? "niveles globales" : "niveles"}
+              {filter === "rango-activo" && !activeRangeId
+                ? "Sin rango activo"
+                : `${filteredLevels.length} ${GLOBAL_FILTERS.includes(filter) ? "niveles globales" : "niveles"}`}
             </span>
           </div>
         )}
@@ -703,23 +705,36 @@ export function GridLevelsPanel({
             </div>
           </>
         ) : (
-          <div className="text-sm text-muted-foreground py-4 text-center space-y-2">
-            <p>
-              {filter === "rango-activo"
-                ? "No hay rango activo o no hay niveles en el rango activo. Usa \"Todos\" para ver niveles históricos."
-                : filter === "activos"
-                ? "No hay niveles activos reales ahora mismo."
-                : `No hay niveles con filtro "${FILTER_LABELS[filter]}".`}
-            </p>
-            {filter === "rango-activo" && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setFilter("todos")}
-              >
-                Ver todos los niveles
-              </Button>
+          <div className="space-y-3">
+            {filter === "rango-activo" && !activeRangeId && (
+              <div className="rounded-md bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300">
+                <div className="flex items-start gap-2">
+                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>
+                    No hay rango activo cargado. Los niveles históricos están disponibles en los filtros globales ("Planificados globales", "Históricos" o "Todos").
+                  </span>
+                </div>
+              </div>
             )}
+            <div className="text-sm text-muted-foreground py-4 text-center space-y-2">
+              <p>
+                {filter === "rango-activo"
+                  ? activeRangeId
+                    ? "No hay niveles en el rango activo actual."
+                    : "No hay rango activo cargado actualmente."
+                  : filter === "activos"
+                  ? "No hay niveles activos reales ahora mismo."
+                  : `No hay niveles con filtro "${FILTER_LABELS[filter]}".`}
+              </p>
+              {filter === "rango-activo" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setFilter("planificados")}
+                >
+                  Ver planificados globales
+                </Button>
+              )}
             {filter === "activos" && (
               <Button
                 size="sm"
@@ -729,6 +744,7 @@ export function GridLevelsPanel({
                 Ver niveles planificados
               </Button>
             )}
+          </div>
           </div>
         )}
 

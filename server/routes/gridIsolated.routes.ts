@@ -1069,12 +1069,15 @@ export function registerGridIsolatedRoutes(app: Express): void {
             }
           }
 
-          // Find nearest level using real level.price with fallbacks
+          // Find nearest level using only active range levels (not historical)
           let nearestLevel: any = null;
           let nearestDistanceUsd: number | null = null;
           let nearestDistancePct: number | null = null;
-          if (currentPrice && levels.length > 0) {
-            for (const level of levels) {
+          const nearestLevels = activeRangeId
+            ? levels.filter((l: any) => l.rangeVersionId === activeRangeId)
+            : [];
+          if (currentPrice && nearestLevels.length > 0) {
+            for (const level of nearestLevels) {
               const levelPrice =
                 (level as any).price ??
                 (level as any).buyPrice ??
