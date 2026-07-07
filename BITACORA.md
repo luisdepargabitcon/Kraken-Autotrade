@@ -5,6 +5,230 @@
 
 ---
 
+## 2026-07-07 — AUDITORÍA FASE 1.5: Integración real del Grid Isolated (sin commit, solo documental)
+
+### Resumen
+Auditoría profunda archivo por archivo del módulo Grid Isolated para verificar qué está realmente integrado, qué está dormido, y qué riesgos existen antes de avanzar a fases de implementación. **No se modificó código funcional.**
+
+### Flujo real actual del tick
+
+```
+setInterval(60s) → tick()
+  ├→ [GUARD] mode === "OFF"? → return
+  ├→ [GUARD] isActive === false? → return
+  ├→ checkDailyOrderReset()
+  ├→ [GUARD] circuitBreakerOpen? → return (cooldown 5min)
+  ├→ getGridBandSnapshot()          ← gridBandAdapter.ts (BBands + ATR)
+  ├→ [GUARD] !bandSnapshot? → return
+  ├→ checkPumpDumpGuard(midPrice)   ← SOLO precio, sin volumen
+  ├→ [GUARD] !suitableForGrid? → pauseRangeVersion() → return
+  ├→ IF !activeRangeVersion:
+  │    └→ proposeRangeVersion(bandSnapshot)
+  │         ├→ GridCapitalAllocator.allocate()
+  │         ├→ generateGeometricLevels()
+  │         ├→ applyWeightsToGeneratedLevels()
+  │         ├→ db.insert(gridRangeVersions)
+  │         ├→ db.insert(gridIsolatedLevels) × N
+  │         └→ logEvent(GRID_RANGE_PROPOSED/ACTIVATED)
+  ├→ ELSE IF isBandDrifted(bandSnapshot):
+  │    ├→ canRebuildLevels()? → rebuildRangeAndLevels()
+  │    └→ else → logShadowTickEvent(PRESERVED) → return
+  ├→ ELSE: logShadowTickEvent(RANGE_REUSED)
+  └→ IF mode === "SHADOW":
+       └→ simulateShadowTick(midPrice)
+            ├→ FOR each level (planned/open):
+            │    ├→ BUY && price <= level.price → filled
+            │    └→ SELL && price >= level.price → filled
+            ├→ IF filled:
+            │    ├→ level.status = "filled"
+            │    ├→ db.update(gridIsolatedLevels)
+            │    └→ processCycleFill(level, price)
+            │         ├→ BUY → crear ciclo "buy_filled"
+            │         └→ SELL → FIFO match primer "buy_filled" → "completed"
+            └→ (sin risk evaluation, sin execution, sin reconciliation)
+```
+
+### Módulos activos (funcionando ahora)
+
+| Módulo | Archivo | Función |
+|--------|---------|---------|
+| Engine Core | `gridIsolatedEngine.ts` | Tick, rangos, niveles, SHADOW sim, ciclos |
+| Band Adapter | `gridBandAdapter.ts` | BBands + ATR + suitability |
+| Geometric Levels | `gridGeometricLevels.ts` | Generación de niveles con ratio adaptativo |
+| Allocation Engine | `gridAllocationEngine.ts` | Pesos uniform/progressive/adaptive |
+| Capital Allocator | `gridCapitalAllocator.ts` | Balance, reservas, budget |
+| Net Calculator | `gridNetCalculator.ts` | Gross/net target, fees, PnL |
+| Mode Lock | `gridModeLockService.ts` | Safety gates para REAL |
+| Backtest | `gridBacktest.ts` | Simulación histórica multi-variant |
+| Activity Formatter | `gridActivityFormatter.ts` | Eventos → lenguaje natural |
+| Types | `gridIsolatedTypes.ts` | Tipos, constantes, defaults |
+
+### Módulos dormidos (existen pero no operan)
+
+| Módulo | Archivo | Razón de dormancia |
+|--------|---------|-------------------|
+| Risk Manager | `gridRiskManager.ts` | **No importado** en engine. Trailing, stop loss 3-capas, HODL completos pero nunca invocados. |
+| Execution Service | `gridExecutionService.ts` | **No importado** en engine. Maker-first + taker fallback completos pero nunca invocados. |
+| Reconciliation Runner | `gridReconciliationRunner.ts` | Importado en routes pero `fetchExchangeOrders()` retorna `[]` siempre (stub). |
+
+### Riesgos críticos identificados
+
+1. **Taker fallback automático**: `gridExecutionService.placeOrder()` cae a taker después de 3 rechazos post-only **sin validar** `takerFallbackEnabled`, `takerFallbackRequiresNetProfit`, ni `takerFallbackAuditRequired` de config. **Contradice** la política del usuario: "maker/post-only salvo emergencia explícita".
+2. **Reconciliation stub**: `fetchExchangeOrders()` retorna `[]` → no detecta mismatches → `canPlaceNewOrders()` retorna `true` → REAL podría desbloquearse sin verificación real.
+3. **Risk Manager dormante**: 6 campos de config (`trailingActivationPct`, `trailingStopPct`, `stopLossSoftPct`, `stopLossHardPct`, `stopLossEmergencyPct`, `hodlRecoveryEnabled`) se persisten y cargan pero nunca se utilizan.
+4. **Stop Loss Hard**: si se activara el risk manager, `STOP_LOSS_HARD` vende a mercado en pérdida — **viola** la política de no vender a mercado salvo emergencia explícita.
+5. **Ciclos FIFO**: matching SELL→BUY es FIFO puro sin linking explícito. SELL de nivel lejano puede cerrar BUY de nivel cercano con PnL negativo. `maxOpenCycles` no se valida en `simulateShadowTick()`.
+6. **Pump/Dump guard**: `volumeSpikeRatio` siempre = 0. No usa volumen real. Solo loggea, no pausa ni bloquea.
+
+### Contradicción taker fallback vs política maker/post-only
+
+`gridExecutionService.ts:304-340`: después de 3 intentos post-only rechazados, cae automáticamente a taker con price adjustment ±0.1%. **No consulta**:
+- `config.takerFallbackEnabled` (debería ser gate)
+- `config.takerFallbackRequiresNetProfit` (debería validar profit)
+- `config.takerFallbackAuditRequired` (debería exigir evento auditoría)
+
+Propuesta (no implementada): disabled por defecto, solo permitido con config explícita de emergencia, evento de auditoría obligatorio, nunca silencioso.
+
+### Reconciliation stub — análisis crítico
+
+**Archivo**: `gridReconciliationRunner.ts`
+**Función**: `fetchExchangeOrders(pair)` @ línea 180
+
+```typescript
+private async fetchExchangeOrders(pair: string): Promise<any[]> {
+  if (!revolutXService.isInitialized()) return [];
+  // For now, return empty — will be populated when method is available
+  return [];
+}
+```
+
+**Comportamiento exacto de `canPlaceNewOrders()`**:
+- `canPlaceNewOrders()` @ línea 225: retorna `!this.lastResult.blockedNewOrders`
+- `reconcile()` @ línea 130: `const ok = mismatches.length === 0`
+- Como `fetchExchangeOrders()` retorna `[]`, no hay órdenes del exchange para comparar
+- Si hay niveles locales con `status === "open"` y `exchangeOrderId`, se detecta mismatch "not_found" → `ok = false` → `blockedNewOrders = true`
+- **Pero**: en SHADOW actual, los niveles no tienen `exchangeOrderId` (no hay órdenes reales), y la línea 62 descarta niveles sin `exchangeOrderId` ni `clientOrderId` → **no se generan mismatches** → `ok = true` → `canPlaceNewOrders() = true`
+
+**Riesgo**: Si se activa REAL sin fix, `setReconciliationPassed(true)` se invoca desde routes tras `reconcile()`, pero la reconciliación es vacía. REAL se desbloquearía sin verificación real.
+
+**Propuesta de corrección** (no implementada):
+- `fetchExchangeOrders()` debe retornar `null` (no `[]`) cuando no puede obtener órdenes
+- `reconcile()` debe tratar `null` como error → `ok = false` → `blockedNewOrders = true`
+- `canPlaceNewOrders()` debe retornar `false` si `lastResult` es null o si `fetchExchangeOrders` no está implementado
+
+### Ciclos FIFO — estados usados vs definidos
+
+**Estados usados**: `buy_filled`, `completed`
+**Estados definidos pero no usados**: `pending`, `buy_placed`, `sell_placed`, `sell_filled`, `cancelled`, `stop_loss_hit`, `trailing_closed`
+
+**Linking**: `buyLevelId` y `sellLevelId` ya existen en DB y se asignan, pero no hay pairing predefinido BUY level → SELL level. El matching es `this.cycles.find(c => c.status === "buy_filled")` (FIFO).
+
+### Adaptive_market casi igual a uniform
+
+En `gridAllocationEngine.ts`, `adaptive_market` aplica multiplicadores por régimen:
+- `ranging` → ×1.0 (idéntico a uniform)
+- `bullish` → ×0.70
+- `bearish` → ×0.85
+
+En SHADOW actual, el régimen suele ser `ranging` → resultado idéntico a uniform. Solo se diferencia en bullish/bearish, que son los casos donde `assessGridSuitability()` puede pausar el grid.
+
+### Capital allocation — capitalPerLevelUsd
+
+`gridRangeVersions.capitalPerLevelUsd` persiste el **uniform baseline**, no el weighted. Los niveles individuales sí tienen su `notionalUsd` weighted correcto. La UI usa `buildCapitalAllocationSummary()` que trabaja con notionalUsd reales, no con `capitalPerLevelUsd`.
+
+**Decisión**: NO renombrar `capitalPerLevelUsd`. Si hace falta, añadir campos nuevos no destructivos: `baseCapitalPerLevelUsd`, `plannedBuyUsd`, `allocationModeApplied`.
+
+### Pump/Dump guard — detector sin volumen
+
+`checkPumpDumpGuard(currentPrice)` @ `gridIsolatedEngine.ts`:
+- Compara precio actual vs `midPrice` del rango activo
+- `volumeSpikeRatio` siempre = 0 (no obtiene volumen de candles)
+- Solo loggea eventos, no pausa ni bloquea nuevos buys
+- El nombre "guard" es engañoso — es un detector, no un guard
+
+`MarketDataService.getCandles()` retorna candles con campo `volume` disponible pero no se utiliza.
+
+### Tablas sin uso
+
+| Tabla | Schema | Estado |
+|-------|--------|--------|
+| `grid_isolated_metrics_snapshots` | `shared/schema.ts:1818` | Creada en DB, ningún módulo la escribe ni lee |
+| `grid_isolated_backtests` | `shared/schema.ts:1838` | Creada en DB, backtest engine no persiste resultados |
+
+No se eliminan. Son infraestructura preparada para futuro.
+
+### Recomendación de orden seguro de implementación
+
+**Prioridad 1** (UI/audit sin tocar lógica):
+- Mostrar risk states en UI (read-only)
+- Persistir metrics snapshots y backtest results (solo inserts)
+- Riesgo: Bajo
+
+**Prioridad 2** (correcciones semánticas):
+- Fix pump/dump: usar volumen real de candles
+- Fix pump/dump: pausar nuevos buys cuando activo
+- Añadir campos no destructivos: `plannedBuyUsd`, `allocationModeApplied`
+- Riesgo: Medio
+
+**Prioridad 3** (cycle linking en SHADOW):
+- Paired SELL level en generateGeometricLevels
+- Matching por pairedSellLevelId en processCycleFill
+- maxOpenCycles validation
+- Riesgo: Alto
+
+**Prioridad 4** (risk manager en SHADOW):
+- Añadir `riskStateJson` jsonb a `grid_isolated_cycles`
+- Cablear gridRiskManager al engine
+- evaluateCycle después de simulateShadowTick
+- Cambiar STOP_LOSS_HARD → HODL (no vender a mercado)
+- Riesgo: Alto
+
+**Prioridad 5** (reconciliation READ-ONLY):
+- Implementar `getOpenOrders()` en RevolutXService
+- `fetchExchangeOrders()` real
+- Bloquear REAL si no hay reconciliación < 10min
+- Riesgo: Medio
+
+**Prioridad 6** (execution service real):
+- Fix taker fallback: disabled por defecto + gates
+- `placeRealOrders()` en engine
+- Polling de fills, cancelación stale
+- Sincronizar circuit breaker y daily order count
+- Riesgo: Crítico
+
+### Archivos revisados (sin modificación)
+- `server/services/gridIsolated/gridIsolatedEngine.ts` (1621L)
+- `server/services/gridIsolated/gridIsolatedTypes.ts` (591L)
+- `server/services/gridIsolated/gridBandAdapter.ts` (162L)
+- `server/services/gridIsolated/gridGeometricLevels.ts` (231L)
+- `server/services/gridIsolated/gridAllocationEngine.ts` (383L)
+- `server/services/gridIsolated/gridCapitalAllocator.ts` (282L)
+- `server/services/gridIsolated/gridNetCalculator.ts` (172L)
+- `server/services/gridIsolated/gridExecutionService.ts` (382L)
+- `server/services/gridIsolated/gridRiskManager.ts` (286L)
+- `server/services/gridIsolated/gridReconciliationRunner.ts` (247L)
+- `server/services/gridIsolated/gridModeLockService.ts` (215L)
+- `server/services/gridIsolated/gridBacktest.ts` (360L)
+- `server/services/gridIsolated/gridActivityFormatter.ts` (512L)
+- `server/routes/gridIsolated.routes.ts` (1397L+)
+- `shared/schema.ts` (grid tables: 1656-1857)
+- `client/src/pages/GridIsolated.tsx` (720L)
+- 20 componentes frontend en `client/src/components/grid/`
+
+### Estado final
+- Auditoría documental completada
+- No se modificó código funcional
+- No se tocó DB
+- No se hizo deploy
+- No se activó REAL
+- No se tocaron IDCA ni FISCO
+
+### Pendientes
+- Fase 2 Segura: UI / auditoría / semántica (sin tocar lógica de trading)
+- Fases 3-6: pendientes de aprobación tras Fase 2
+
+---
+
 ## 2026-07-07 — FIX Telegram: /api/telegram/channels 404 + legacy rules enabled (commit 1234870)
 
 ### Problema
