@@ -10,7 +10,7 @@ import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon, Cpu, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon, Cpu, CheckCircle2, XCircle, AlertTriangle, Info } from "lucide-react";
 import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
 import { GridActivityLive } from "@/components/grid/GridActivityLive";
 import { GridBandsRangesPanel } from "@/components/grid/GridBandsRangesPanel";
@@ -22,6 +22,7 @@ import { GridLevelsPanel } from "@/components/grid/GridLevelsPanel";
 import { GridCarteraDashboard } from "@/components/grid/GridCarteraDashboard";
 import { GridConfigConfirmDialog, type ConfigChange } from "@/components/grid/GridConfigConfirmDialog";
 import { GridAjustesPanel } from "@/components/grid/GridAjustesPanel";
+import { GridIntegrationStatusPanel } from "@/components/grid/GridIntegrationStatusPanel";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -315,6 +316,7 @@ export default function GridIsolated() {
             cyclesCount={cycles?.length || 0}
             realOpenOrdersCount={auditData?.summary?.realOpenOrdersCount || 0}
             lastTickReason={(status as any)?.lastTickReason}
+            activeRangeLevelsCount={auditData?.summary?.currentRangeLevelsCount}
           />
           <Card className="border-amber-500/30 bg-amber-500/10">
             <CardContent className="p-3">
@@ -322,6 +324,16 @@ export default function GridIsolated() {
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                 <p>
                   Estos niveles están planificados en {config?.mode || "SHADOW"}. No son órdenes reales ni capital ejecutado.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-blue-500/20 bg-blue-500/5">
+            <CardContent className="p-3">
+              <div className="flex items-start gap-2 text-xs text-blue-700 dark:text-blue-300">
+                <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                <p>
+                  La separación entre compras y ventas depende de la anchura de banda, ATR, número de niveles, spacing mínimo/máximo y beneficio neto objetivo. Más niveles dentro de una banda estrecha producen niveles más juntos.
                 </p>
               </div>
             </CardContent>
@@ -676,6 +688,7 @@ export default function GridIsolated() {
           </Card>
 
           {/* Endpoints */}
+          <GridIntegrationStatusPanel auditData={auditData} />
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">

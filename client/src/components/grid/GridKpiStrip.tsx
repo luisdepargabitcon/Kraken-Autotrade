@@ -11,8 +11,8 @@ export function GridKpiStrip({ status, auditData }: GridKpiStripProps) {
     {
       icon: <Layers className="h-4 w-4 text-blue-500" />,
       label: "Niveles planificados",
-      value: auditData?.summary?.plannedLevelsCount ?? status?.openLevels ?? 0,
-      sub: `${auditData?.summary?.realOpenOrdersCount ?? 0} órdenes reales`,
+      value: auditData?.summary?.currentPlannedLevelsCount ?? auditData?.summary?.plannedLevelsCount ?? status?.openLevels ?? 0,
+      sub: `${auditData?.summary?.realOpenOrdersCount ?? 0} órdenes reales · ${auditData?.summary?.currentRangeLevelsCount ?? 0} en rango activo`,
       color: "",
     },
     {

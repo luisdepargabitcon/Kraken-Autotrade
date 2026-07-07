@@ -10,6 +10,7 @@ interface GridLevelsMarketHeaderProps {
   cyclesCount: number;
   realOpenOrdersCount?: number;
   lastTickReason?: string | null;
+  activeRangeLevelsCount?: number;
 }
 
 export function GridLevelsMarketHeader({
@@ -20,6 +21,7 @@ export function GridLevelsMarketHeader({
   cyclesCount,
   realOpenOrdersCount,
   lastTickReason,
+  activeRangeLevelsCount,
 }: GridLevelsMarketHeaderProps) {
   if (!marketContext) {
     return (
@@ -173,7 +175,10 @@ export function GridLevelsMarketHeader({
           <div className="flex items-center gap-2">
             <Layers className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">
-              {levelsCount} niveles planificados · {realOpenOrdersCount ?? 0} órdenes reales · {cyclesCount} ciclos
+              {activeRangeLevelsCount ?? levelsCount} niveles en rango activo · {realOpenOrdersCount ?? 0} órdenes reales · {cyclesCount} ciclos
+              {activeRangeLevelsCount != null && levelsCount > activeRangeLevelsCount && (
+                <span className="text-amber-500"> ({levelsCount - activeRangeLevelsCount} históricos)</span>
+              )}
             </span>
           </div>
           <Badge variant="outline" className="text-xs font-mono">

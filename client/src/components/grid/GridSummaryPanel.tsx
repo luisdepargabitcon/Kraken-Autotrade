@@ -211,8 +211,8 @@ export function GridSummaryPanel({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px border-b border-amber-500/10 bg-amber-500/10">
             <div className="bg-card/50 p-3">
               <p className="text-xs font-mono text-muted-foreground mb-1">NIVELES PLANIFICADOS</p>
-              <p className="font-mono text-lg font-bold">{summary?.plannedLevelsTotal ?? summary?.plannedLevelsCount ?? status?.openLevels ?? 0}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{summary?.realOpenOrdersCount ?? 0} órdenes reales abiertas</p>
+              <p className="font-mono text-lg font-bold">{summary?.currentPlannedLevelsCount ?? summary?.plannedLevelsCount ?? status?.openLevels ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{summary?.realOpenOrdersCount ?? 0} órdenes reales · {summary?.currentRangeLevelsCount ?? 0} en rango activo</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-xs font-mono text-muted-foreground mb-1">CICLOS ABIERTOS</p>
@@ -240,6 +240,7 @@ export function GridSummaryPanel({
             <div className="rounded-md bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground text-sm">Total niveles:</span>
               <span className="font-mono font-bold ml-1">{summary?.totalLevels ?? 0}</span>
+              <span className="text-[10px] text-muted-foreground ml-1">(global/histórico)</span>
             </div>
             <div className="rounded-md bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground text-sm">Rango actual:</span>
@@ -432,6 +433,8 @@ export function GridSummaryPanel({
         mode={mode}
         currentPrice={auditData?.marketContext?.currentPrice}
         onGoToTab={onGoToTab}
+        levelsSummary={auditData?.levelsSummary}
+        netProfitTargetPct={auditData?.summary?.netProfitTargetPct}
       />
     ),
     ciclos: (

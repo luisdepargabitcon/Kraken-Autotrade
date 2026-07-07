@@ -5,6 +5,82 @@
 
 ---
 
+## 2026-07-07 — FASE 2 SEGURA: UI / AUDITORÍA / SEMÁNTICA GRID
+
+### Resumen
+Mejoras de UI, auditoría visual y semántica en la pestaña Grid Isolated. **No se tocó lógica de trading.** No se cambiaron fórmulas, spacing, adaptive_market, ciclos, ni se activaron módulos dormidos.
+
+### Causa exacta de la mezcla de niveles
+La tabla `GridLevelsPanel` recibía `levels` desde `/api/grid-isolated/levels` que retorna `gridIsolatedEngine.getLevels()` — **todos** los niveles de **todos** los rangeVersionId. El filtro por defecto era "activos" (niveles con `exchangeOrderId`), pero en SHADOW no hay `exchangeOrderId`, así que la tabla aparecía vacía o mostraba niveles históricos mezclados con planificados. El KPI superior usaba `plannedLevelsCount` global (todos los planned de todos los rangos), no del rango activo.
+
+### Dataset antes/después
+- **Antes**: Tabla recibía `levels` globales sin `levelsSummary`. Filtro por defecto "activos". KPI usaba `plannedLevelsCount` global.
+- **Después**: Tabla recibe `levelsSummary` con `activeRangeVersionId`. Filtro por defecto "rango-activo" que filtra por `rangeVersionId === activeRangeId`. KPI usa `currentPlannedLevelsCount` del rango activo. `GridLevelsMarketHeader` muestra `activeRangeLevelsCount` con históricos entre paréntesis.
+
+### Qué muestra ahora la tabla
+- Por defecto: solo niveles del rango activo actual (`rangeVersionId === activeRangeVersionId`)
+- Filtros disponibles: Rango activo, Activos, Planificados, Históricos, Reemplazados, Ejecutados, Cancelados, Todos
+- Si no hay rango activo, muestra niveles planificados como fallback
+
+### Qué muestra ahora el resumen
+- KPI "Niveles planificados" usa `currentPlannedLevelsCount` (rango activo)
+- Subtexto: "X órdenes reales · Y en rango activo"
+- "Total niveles" etiquetado como "(global/histórico)"
+- "Rango actual" muestra `currentRangeLevelsCount`
+
+### Modales añadidos
+1. **Importe / Notional**: icono `HelpCircle` en cabecera de columna. Modal explica BUY (consume USD real, depende de capital máximo, modo reparto, min/max por nivel, número de niveles, precio) vs SELL (no consume USD, notional visual, puede ser mayor que BUY). Botones: Ir a Ajustes de Cartera, Ir a Reparto de Capital, Cerrar.
+2. **Beneficio Objetivo**: icono `HelpCircle` en cabecera de columna. Modal explica factores (precio BUY/SELL, cantidad BTC, fees maker, spread, target neto, distancia entre niveles, ATR, política maker/post-only). Botones: Ir a Ajustes de Salidas/Beneficio, Ir a Ajustes de Bandas/Niveles, Cerrar.
+
+### Explicación BUY vs SELL
+- Disclaimer visible sobre la tabla: "Las compras BUY consumen capital USD real. Las ventas SELL no consumen USD: representan el valor estimado de vender el BTC comprado a un precio superior."
+- Card de proximidad: aviso no alarmista si separación media < 1% — "Grid compacto: los niveles están cercanos. Revisa ATR multiplier, spacing mínimo, número de niveles o beneficio objetivo."
+- Card de ayuda en pestaña Niveles: "La separación entre compras y ventas depende de la anchura de banda, ATR, número de niveles, spacing mínimo/máximo y beneficio neto objetivo."
+
+### Estado de módulos dormidos mostrado
+Nuevo componente `GridIntegrationStatusPanel` en pestaña Ayuda:
+- Risk Manager: implementado pero no activo
+- Execution Service: implementado pero no invocado
+- Reconciliation: estructura existente, fetchExchangeOrders() es stub
+- Modo REAL: no seguro hasta reconciliación real
+- Pump/Dump: detector, no guard activo
+- WebSocket: no implementado en esta fase
+
+### Archivos tocados
+- `client/src/components/grid/GridLevelsPanel.tsx` — nuevo filtro "rango-activo" por defecto, modales Importe/Notional y Beneficio Objetivo, disclaimer BUY/SELL, aviso proximidad, empty state para rango-activo
+- `client/src/components/grid/GridSummaryPanel.tsx` — pasar `levelsSummary` y `netProfitTargetPct` a `GridLevelsPanel`, KPI usa `currentPlannedLevelsCount`, etiqueta "(global/histórico)" en total niveles
+- `client/src/components/grid/GridKpiStrip.tsx` — KPI usa `currentPlannedLevelsCount` en vez de `plannedLevelsCount` global
+- `client/src/components/grid/GridLevelsMarketHeader.tsx` — nueva prop `activeRangeLevelsCount`, muestra niveles en rango activo con históricos entre paréntesis
+- `client/src/components/grid/GridIntegrationStatusPanel.tsx` — **nuevo** componente panel estado de integración
+- `client/src/pages/GridIsolated.tsx` — import `GridIntegrationStatusPanel`, pasar `activeRangeLevelsCount` a header, card de ayuda proximidad, import `Info` icon
+
+### Tests ejecutados
+- `npm run check`: ✅ (tsc sin errores)
+- `npm run build`: ✅ (2606 módulos, build completo)
+- `npx vitest run gridIsolatedRoutes.test.ts`: ✅ 66/66
+- `npx vitest run gridAllocationEngine.test.ts`: ✅ 26/26
+- `npx vitest run gridWeightedLevels.test.ts`: ✅ 35/35
+- Total: 127/127 tests pasan
+
+### Pendientes
+- Deploy (pendiente de aprobación del usuario)
+- Fases 3-6 del roadmap (cycle linking, risk manager, reconciliation, execution) siguen pendientes
+
+### Riesgos
+- Ninguno: no se tocó lógica de trading, generación de niveles, spacing, adaptive_market, ciclos, risk manager, execution service, reconciliación real, ni DB
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL
+- ✅ No órdenes reales
+- ✅ No rebuild
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No deploy sin aprobación
+
+---
+
 ## 2026-07-07 — AUDITORÍA FASE 1.5: Integración real del Grid Isolated (sin commit, solo documental)
 
 ### Resumen

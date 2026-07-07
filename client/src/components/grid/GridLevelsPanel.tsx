@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   Layers, TrendingUp, TrendingDown, AlertTriangle, Info,
   Copy, Download, ChevronLeft, ChevronRight, X, Check, Clock,
+  Settings2, HelpCircle,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -25,6 +26,7 @@ interface GridLevelsPanelProps {
 
 // ─── Types ───────────────────────────────────────────────────
 type FilterKey =
+  | "rango-activo"
   | "activos"
   | "planificados"
   | "historicos"
@@ -34,6 +36,7 @@ type FilterKey =
   | "todos";
 
 const FILTER_LABELS: Record<FilterKey, string> = {
+  "rango-activo": "Rango activo",
   activos: "Activos",
   planificados: "Planificados",
   historicos: "Históricos",
@@ -144,11 +147,13 @@ export function GridLevelsPanel({
   levelsSummary,
   netProfitTargetPct,
 }: GridLevelsPanelProps) {
-  const [filter, setFilter] = useState<FilterKey>("activos");
+  const [filter, setFilter] = useState<FilterKey>("rango-activo");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [selectedLevel, setSelectedLevel] = useState<any | null>(null);
   const [copiedDetail, setCopiedDetail] = useState(false);
+  const [showImporteModal, setShowImporteModal] = useState(false);
+  const [showBeneficioModal, setShowBeneficioModal] = useState(false);
 
   // ─── Range info from levelsSummary ─────────────────────────
   const activeRangeId = levelsSummary?.activeRangeVersionId;
@@ -162,6 +167,10 @@ export function GridLevelsPanel({
   const filteredLevels = useMemo(() => {
     if (!levels || levels.length === 0) return [];
     switch (filter) {
+      case "rango-activo":
+        return activeRangeId
+          ? levels.filter((l: any) => l?.rangeVersionId === activeRangeId)
+          : levels.filter((l: any) => l?.status === "planned");
       case "activos":
         return levels.filter((l: any) =>
           l?.exchangeOrderId != null &&
@@ -192,6 +201,25 @@ export function GridLevelsPanel({
         return levels;
     }
   }, [levels, filter, activeRangeId]);
+
+  // ─── Proximity check ──────────────────────────────────────
+  const proximityWarning = useMemo(() => {
+    if (!filteredLevels || filteredLevels.length < 2) return null;
+    const buyLevels = filteredLevels.filter((l: any) => l.side === "BUY").map((l: any) => toNum(l.price)).filter((n): n is number => n !== null).sort((a, b) => a - b);
+    const sellLevels = filteredLevels.filter((l: any) => l.side === "SELL").map((l: any) => toNum(l.price)).filter((n): n is number => n !== null).sort((a, b) => a - b);
+    if (buyLevels.length < 2 && sellLevels.length < 2) return null;
+    const allGaps: number[] = [];
+    for (let i = 1; i < buyLevels.length; i++) allGaps.push(buyLevels[i] - buyLevels[i - 1]);
+    for (let i = 1; i < sellLevels.length; i++) allGaps.push(sellLevels[i] - sellLevels[i - 1]);
+    if (allGaps.length === 0) return null;
+    const avgGap = allGaps.reduce((s, g) => s + g, 0) / allGaps.length;
+    const avgPrice = [...buyLevels, ...sellLevels].reduce((s, p) => s + p, 0) / (buyLevels.length + sellLevels.length);
+    const avgGapPct = (avgGap / avgPrice) * 100;
+    if (avgGapPct < 1.0) {
+      return { avgGapPct, avgGap, avgPrice };
+    }
+    return null;
+  }, [filteredLevels]);
 
   // ─── Pagination ────────────────────────────────────────────
   const totalPages = Math.max(1, Math.ceil(filteredLevels.length / pageSize));
@@ -463,8 +491,21 @@ export function GridLevelsPanel({
 
         {/* SELL disclaimer */}
         {filteredLevels.length > 0 && (
-          <div className="mb-3 text-[10px] text-muted-foreground bg-muted/20 rounded-md p-2 border border-border/30">
-            Los SELL no consumen USD. Son objetivos teóricos de venta o salidas asociadas a ciclos. Requieren BTC/inventario, no dólares.
+          <div className="mb-3 text-[11px] text-muted-foreground bg-muted/20 rounded-md p-2 border border-border/30">
+            <strong>Las compras BUY consumen capital USD real.</strong> Las ventas SELL no consumen USD: representan el valor estimado de vender el BTC comprado a un precio superior. Por eso el notional SELL puede ser mayor que el importe BUY.
+          </div>
+        )}
+
+        {/* Proximity warning */}
+        {proximityWarning && filteredLevels.length > 0 && (
+          <div className="mb-3 rounded-md bg-amber-500/10 border border-amber-500/30 p-2 text-xs text-amber-700 dark:text-amber-300">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                <strong>Grid compacto:</strong> los niveles están cercanos (separación media ~{proximityWarning.avgGapPct.toFixed(2)}%).
+                Revisa ATR multiplier, spacing mínimo, número de niveles o beneficio objetivo si quieres menos operaciones y más margen por ciclo.
+              </span>
+            </div>
           </div>
         )}
 
@@ -479,8 +520,22 @@ export function GridLevelsPanel({
                     <th className="text-left py-2 px-2">Lado</th>
                     <th className="text-left py-2 px-2">Estado final</th>
                     <th className="text-left py-2 px-2">Precio</th>
-                    <th className="text-left py-2 px-2">Importe / Notional</th>
-                    <th className="text-left py-2 px-2">Beneficio objetivo</th>
+                    <th className="text-left py-2 px-2">
+                      <div className="flex items-center gap-1">
+                        Importe / Notional
+                        <button onClick={(e) => { e.stopPropagation(); setShowImporteModal(true); }} className="hover:text-foreground transition-colors">
+                          <HelpCircle className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </th>
+                    <th className="text-left py-2 px-2">
+                      <div className="flex items-center gap-1">
+                        Beneficio objetivo
+                        <button onClick={(e) => { e.stopPropagation(); setShowBeneficioModal(true); }} className="hover:text-foreground transition-colors">
+                          <HelpCircle className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </th>
                     <th className="text-left py-2 px-2">Creado</th>
                     <th className="text-left py-2 px-2">Finalizado</th>
                     <th className="text-left py-2 px-2">Duración</th>
@@ -617,10 +672,21 @@ export function GridLevelsPanel({
         ) : (
           <div className="text-sm text-muted-foreground py-4 text-center space-y-2">
             <p>
-              {filter === "activos"
+              {filter === "rango-activo"
+                ? "No hay rango activo o no hay niveles en el rango activo. Usa \"Todos\" para ver niveles históricos."
+                : filter === "activos"
                 ? "No hay niveles activos reales ahora mismo."
                 : `No hay niveles con filtro "${FILTER_LABELS[filter]}".`}
             </p>
+            {filter === "rango-activo" && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setFilter("todos")}
+              >
+                Ver todos los niveles
+              </Button>
+            )}
             {filter === "activos" && (
               <Button
                 size="sm"
@@ -888,6 +954,89 @@ export function GridLevelsPanel({
             </div>
           </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Modal: Importe / Notional ────────────────────── */}
+      <Dialog open={showImporteModal} onOpenChange={setShowImporteModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Settings2 className="h-5 w-5" />
+              Qué significa Importe / Notional
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div className="space-y-2">
+              <p className="font-semibold text-amber-400">BUY — Capital USD real</p>
+              <ul className="list-disc list-inside text-muted-foreground space-y-1 text-xs">
+                <li>Es capital USD real. Consume saldo si se ejecuta.</li>
+                <li>Cuenta contra el capital máximo configurable del Grid.</li>
+                <li>Depende de: capital máximo, modo de reparto, capital mínimo/máximo por nivel, número de niveles BUY y precio del nivel.</li>
+                <li>Ejemplo: si el límite es 600 USD, la suma de BUY no debe superar 600 USD.</li>
+              </ul>
+            </div>
+            <div className="space-y-2">
+              <p className="font-semibold text-blue-400">SELL — Notional visual de venta</p>
+              <ul className="list-disc list-inside text-muted-foreground space-y-1 text-xs">
+                <li>No consume USD.</li>
+                <li>Es notional visual de venta.</li>
+                <li>Si hay ciclo asociado: sellNotional = cantidad BTC comprada × precio SELL.</li>
+                <li>Puede ser mayor que BUY porque incluye beneficio bruto esperado.</li>
+              </ul>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setShowImporteModal(false); onGoToTab?.("ajustes"); }}>
+              Ir a Ajustes de Cartera
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { setShowImporteModal(false); onGoToTab?.("resumen"); }}>
+              Ir a Reparto de Capital
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setShowImporteModal(false)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Modal: Beneficio Objetivo ────────────────────── */}
+      <Dialog open={showBeneficioModal} onOpenChange={setShowBeneficioModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Settings2 className="h-5 w-5" />
+              Qué afecta al beneficio objetivo
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div className="space-y-2">
+              <p className="font-semibold">Depende de:</p>
+              <ul className="list-disc list-inside text-muted-foreground space-y-1 text-xs">
+                <li>Precio BUY y precio SELL</li>
+                <li>Cantidad BTC</li>
+                <li>Fees maker y spread</li>
+                <li>Target neto configurado</li>
+                <li>Distancia entre niveles</li>
+                <li>ATR / volatilidad</li>
+                <li>Política maker/post-only</li>
+              </ul>
+            </div>
+            <div className="rounded-md bg-blue-500/10 border border-blue-500/20 p-3 text-xs text-blue-700 dark:text-blue-300">
+              Si subes el beneficio objetivo, el SELL necesita estar más lejos del BUY. Si lo bajas, los niveles pueden quedar más juntos. Si hay muchos niveles dentro de una banda estrecha, el beneficio por ciclo será menor.
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setShowBeneficioModal(false); onGoToTab?.("ajustes"); }}>
+              Ir a Ajustes de Salidas / Beneficio
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { setShowBeneficioModal(false); onGoToTab?.("bandas"); }}>
+              Ir a Ajustes de Bandas / Niveles
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setShowBeneficioModal(false)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Card>
