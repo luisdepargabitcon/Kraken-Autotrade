@@ -5,6 +5,49 @@
 
 ---
 
+## 2026-07-07 — FASE 2.1 AJUSTE VISUAL/SEMÁNTICO POST-DEPLOY GRID
+
+### Resumen
+Ajustes visuales y semánticos tras revisión visual de la Fase 2 desplegada. **No se tocó lógica de trading.**
+
+### Problemas detectados
+1. **Filtro "Planificados"** mostraba 85 niveles globales (todos los rangeVersionId) sin aclarar que eran históricos/globales
+2. **Tarjetas de resumen** mostraban valores del rango activo pero la tabla podía estar en modo global, causando confusión
+3. **Pestaña Ayuda**: panel de módulos dormidos estaba al final, requiriendo scroll excesivo
+4. **Mecanismos de seguridad**: Pump/Dump, HODL Recovery y Stop Loss aparecían como protecciones activas cuando están dormidas/informativas
+
+### Cambios en filtros
+- "Planificados" renombrado a "Planificados globales"
+- Contador derecho cambia a "niveles globales" cuando el filtro es global
+- Aviso ámbar visible cuando filtro ≠ "rango-activo": "Estás viendo niveles globales/históricos..."
+- Nueva columna "Rango" en tabla: muestra "Activo" (verde) o "Histórico" + ID corto del rangeVersionId
+
+### Cambios en tarjetas resumen
+- Título "Resumen del rango activo" siempre visible sobre las tarjetas
+- Cuando filtro es global, aparece etiqueta: "Tabla en modo global/histórico; este resumen sigue mostrando el rango activo actual"
+- Las tarjetas siempre calculan desde el rango activo (Opción A del usuario)
+
+### Cambios en pestaña Ayuda
+- `GridIntegrationStatusPanel` movido antes de "Mecanismos de seguridad" (visible sin scroll)
+- Circuit Breaker: etiqueta "Activo"
+- Pump/Dump: renombrado a "Pump/Dump Detector", etiqueta "Informativo actualmente", texto aclarado
+- HODL Recovery vs Stop Loss: etiqueta "Implementado, pendiente de integración", texto aclarado que no está cableado
+- Target de Beneficio Neto: etiqueta "Activo" (se usa en gridNetCalculator)
+
+### Archivos tocados
+- `client/src/components/grid/GridLevelsPanel.tsx` — rename filtros, GLOBAL_FILTERS, columna Rango, título tarjetas, avisos
+- `client/src/pages/GridIsolated.tsx` — mover GridIntegrationStatusPanel, actualizar textos de seguridad con badges
+
+### Tests ejecutados
+- `npm run check`: ✅
+- `npm run build`: ✅ (2606 módulos)
+- `vitest`: ✅ 127/127
+
+### Confirmación de restricciones
+- ✅ No IDCA · No FISCO · No REAL · No órdenes reales · No rebuild · No DB · No migraciones · No lógica de trading
+
+---
+
 ## 2026-07-07 — FASE 2 SEGURA: UI / AUDITORÍA / SEMÁNTICA GRID
 
 ### Resumen

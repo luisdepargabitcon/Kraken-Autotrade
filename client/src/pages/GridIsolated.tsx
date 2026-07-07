@@ -535,6 +535,9 @@ export default function GridIsolated() {
             </CardContent>
           </Card>
 
+          {/* Estado de integración — módulos dormidos */}
+          <GridIntegrationStatusPanel auditData={auditData} />
+
           {/* Seguridad */}
           <Card>
             <CardHeader className="pb-3">
@@ -545,20 +548,32 @@ export default function GridIsolated() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="rounded-lg bg-red-500/5 border border-red-500/20 p-3">
-                <p className="font-semibold text-sm mb-1">Circuit Breaker</p>
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="font-semibold text-sm">Circuit Breaker</p>
+                  <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/30">Activo</Badge>
+                </div>
                 <p className="text-sm text-muted-foreground">Bloquea todas las órdenes si se detectan errores críticos (ej: ORDER_SUBMIT_UNKNOWN). Permanece abierto durante un cooldown antes de reintentar automáticamente.</p>
               </div>
               <div className="rounded-lg bg-orange-500/5 border border-orange-500/20 p-3">
-                <p className="font-semibold text-sm mb-1">Pump/Dump Guard</p>
-                <p className="text-sm text-muted-foreground">Detecta movimientos bruscos de precio (pump o dump) y bloquea nuevas compras durante el cooldown para proteger el capital.</p>
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="font-semibold text-sm">Pump/Dump Detector</p>
+                  <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/30">Informativo actualmente</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">Detecta desviaciones de precio y registra eventos. En esta fase no pausa ni cancela automáticamente nuevas compras.</p>
               </div>
               <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3">
-                <p className="font-semibold text-sm mb-1">Target de Beneficio Neto</p>
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="font-semibold text-sm">Target de Beneficio Neto</p>
+                  <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/30">Activo</Badge>
+                </div>
                 <p className="text-sm text-muted-foreground">El target neto (por defecto 0.8%) es el beneficio deseado después de fees y reserva fiscal. Si las bandas son demasiado estrechas para cubrir este objetivo, el motor pausa nuevas entradas.</p>
               </div>
               <div className="rounded-lg bg-purple-500/5 border border-purple-500/20 p-3">
-                <p className="font-semibold text-sm mb-1">HODL Recovery vs Stop Loss</p>
-                <p className="text-sm text-muted-foreground">HODL Recovery mantiene la posición tras un soft stop loss esperando recuperación. Stop Loss tradicional vende inmediatamente. HODL puede ampliar pérdidas si el precio sigue bajando. Los stops Hard y Emergency siempre venden, incluso con HODL activo.</p>
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="font-semibold text-sm">HODL Recovery vs Stop Loss</p>
+                  <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/30">Implementado, pendiente de integración</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">El módulo Risk Manager existe en código, pero todavía no está cableado al motor Grid. No se debe considerar protección activa hasta una fase posterior en SHADOW. HODL Recovery mantiene la posición tras un soft stop loss esperando recuperación. Stop Loss tradicional vende inmediatamente. Los stops Hard y Emergency siempre venden, incluso con HODL activo.</p>
               </div>
             </CardContent>
           </Card>
@@ -688,7 +703,6 @@ export default function GridIsolated() {
           </Card>
 
           {/* Endpoints */}
-          <GridIntegrationStatusPanel auditData={auditData} />
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">

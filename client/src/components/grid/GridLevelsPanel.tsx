@@ -38,13 +38,15 @@ type FilterKey =
 const FILTER_LABELS: Record<FilterKey, string> = {
   "rango-activo": "Rango activo",
   activos: "Activos",
-  planificados: "Planificados",
+  planificados: "Planificados globales",
   historicos: "Históricos",
   reemplazados: "Reemplazados",
   ejecutados: "Ejecutados",
   cancelados: "Cancelados",
   todos: "Todos",
 };
+
+const GLOBAL_FILTERS: FilterKey[] = ["planificados", "historicos", "reemplazados", "ejecutados", "cancelados", "todos"];
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
@@ -447,12 +449,12 @@ export function GridLevelsPanel({
               <Download className="h-3 w-3 mr-1" /> JSON
             </Button>
             <span className="text-xs text-muted-foreground ml-auto">
-              {filteredLevels.length} niveles
+              {filteredLevels.length} {GLOBAL_FILTERS.includes(filter) ? "niveles globales" : "niveles"}
             </span>
           </div>
         )}
 
-        {/* Capital allocation summary cards */}
+        {/* Capital allocation summary cards — always from active range */}
         {filteredLevels.length > 0 && (() => {
           const buyLevels = filteredLevels.filter((l: any) => l.side === "BUY");
           const sellLevels = filteredLevels.filter((l: any) => l.side === "SELL");
@@ -464,6 +466,15 @@ export function GridLevelsPanel({
           const sellTotalFinal = cas?.plannedSellNotionalUsd ?? sellTotal;
           const grossFinal = cas?.grossVisualNotionalUsd ?? grossVisual;
           return (
+            <>
+            <div className="flex items-center gap-2 mb-1">
+              <p className="text-xs font-semibold text-muted-foreground">Resumen del rango activo</p>
+              {GLOBAL_FILTERS.includes(filter) && (
+                <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                  · Tabla en modo global/histórico; este resumen sigue mostrando el rango activo actual.
+                </span>
+              )}
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
                 <p className="text-[10px] text-muted-foreground">Capital USD en BUY</p>
@@ -486,8 +497,21 @@ export function GridLevelsPanel({
                 <p className="text-sm font-mono text-muted-foreground">No</p>
               </div>
             </div>
+            </>
           );
         })()}
+
+        {/* Global/historical disclaimer */}
+        {filteredLevels.length > 0 && GLOBAL_FILTERS.includes(filter) && (
+          <div className="mb-3 rounded-md bg-amber-500/10 border border-amber-500/30 p-2 text-xs text-amber-700 dark:text-amber-300">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                <strong>Estás viendo niveles globales/históricos.</strong> Estos niveles no representan necesariamente el capital activo actual del Grid. El resumen superior corresponde al rango activo.
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* SELL disclaimer */}
         {filteredLevels.length > 0 && (
@@ -519,6 +543,7 @@ export function GridLevelsPanel({
                     <th className="text-left py-2 px-2">Nivel</th>
                     <th className="text-left py-2 px-2">Lado</th>
                     <th className="text-left py-2 px-2">Estado final</th>
+                    <th className="text-left py-2 px-2">Rango</th>
                     <th className="text-left py-2 px-2">Precio</th>
                     <th className="text-left py-2 px-2">
                       <div className="flex items-center gap-1">
@@ -568,6 +593,14 @@ export function GridLevelsPanel({
                           <Badge variant="secondary" className="text-xs">
                             {getLevelStatusLabel(level.status)}
                           </Badge>
+                        </td>
+                        <td className="py-2 px-2 text-xs whitespace-nowrap">
+                          {level.rangeVersionId ? (
+                            <span className={level.rangeVersionId === activeRangeId ? "text-green-400" : "text-muted-foreground"}>
+                              {level.rangeVersionId === activeRangeId ? "Activo" : "Histórico"}
+                              <span className="text-muted-foreground/60 ml-1">#{String(level.rangeVersionId).slice(-6)}</span>
+                            </span>
+                          ) : "—"}
                         </td>
                         <td className="py-2 px-2 font-mono">
                           {fmtPrice(getLevelPrice(level))}
