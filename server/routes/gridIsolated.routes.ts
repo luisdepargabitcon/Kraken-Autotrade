@@ -1008,6 +1008,17 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const resolvedRange = await resolveActiveRange(events, status, cycles.length);
       const chatgptSummary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config, resolvedRange);
 
+      // Separate current vs historical levels for the UI
+      const activeRangeId = status.activeRangeVersionId;
+      const currentLevels = activeRangeId
+        ? levels.filter((l: any) => l.rangeVersionId === activeRangeId)
+        : [];
+      const historicalLevels = activeRangeId
+        ? levels.filter((l: any) => l.rangeVersionId !== activeRangeId)
+        : [];
+      const hasHistoricalLevels = historicalLevels.length > 0;
+      const allLevelsBelongToActiveRange = levels.length > 0 && levels.every((l: any) => l.rangeVersionId === activeRangeId);
+
       // Extract professionalGenerator data from events
       const professionalGenerator = (() => {
         const professionalEvents = events.filter((ev: any) =>
@@ -1021,53 +1032,99 @@ export function registerGridIsolatedRoutes(app: Express): void {
             reason: "No professional generator event found",
           };
         }
-        const latestEvent = professionalEvents[0];
-        let metadata: any = {};
-        try {
-          metadata = latestEvent.metadataJson ? (typeof latestEvent.metadataJson === "string" ? JSON.parse(latestEvent.metadataJson) : latestEvent.metadataJson) : {};
-        } catch { metadata = {}; }
-        const pg = metadata.professionalGenerator;
-        if (!pg) {
+
+        // First, try to find an event that belongs to the active range
+        const activeRangeEvent = professionalEvents.find((ev: any) => ev.rangeVersionId === activeRangeId);
+        if (activeRangeEvent) {
+          let metadata: any = {};
+          try {
+            metadata = activeRangeEvent.metadataJson ? (typeof activeRangeEvent.metadataJson === "string" ? JSON.parse(activeRangeEvent.metadataJson) : activeRangeEvent.metadataJson) : {};
+          } catch { metadata = {}; }
+          const pg = metadata.professionalGenerator;
+          if (!pg) {
+            return {
+              available: false,
+              reason: "Professional generator metadata not found in event",
+            };
+          }
           return {
-            available: false,
-            reason: "Professional generator metadata not found in event",
+            available: true,
+            source: "event",
+            mode: pg.mode || "shadow_generation",
+            formula: pg.formula || "accumulated_spacing",
+            legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
+            viabilityStatus: pg.viabilityStatus,
+            minSpacingPctReal: pg.minSpacingPctReal,
+            spacingPct: pg.spacingPct,
+            centerPrice: pg.centerPrice,
+            operationalLower: pg.operationalLower,
+            operationalUpper: pg.operationalUpper,
+            operationalBandWidthPct: pg.operationalBandWidthPct,
+            operationalSemiRangePct: pg.operationalSemiRangePct,
+            requestedBuyLevels: pg.requestedBuyLevels,
+            requestedSellLevels: pg.requestedSellLevels,
+            generatedBuyLevels: pg.generatedBuyLevels,
+            generatedSellLevels: pg.generatedSellLevels,
+            reductionApplied: pg.reductionApplied,
+            reason: pg.reason,
+            eventId: activeRangeEvent.id,
+            eventCreatedAt: activeRangeEvent.createdAt,
+            rangeVersionId: activeRangeEvent.rangeVersionId,
           };
         }
+
+        // If no event for active range, check if there's a recent NOT_VIABLE/COMPACT event without range
+        const recentFailureEvent = professionalEvents.find((ev: any) =>
+          (ev.eventType === "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE" ||
+           ev.eventType === "GRID_PROFESSIONAL_GENERATOR_COMPACT") &&
+          !ev.rangeVersionId
+        );
+        if (recentFailureEvent) {
+          let metadata: any = {};
+          try {
+            metadata = recentFailureEvent.metadataJson ? (typeof recentFailureEvent.metadataJson === "string" ? JSON.parse(recentFailureEvent.metadataJson) : recentFailureEvent.metadataJson) : {};
+          } catch { metadata = {}; }
+          const pg = metadata.professionalGenerator;
+          if (!pg) {
+            return {
+              available: false,
+              reason: "Professional generator metadata not found in event",
+            };
+          }
+          return {
+            available: true,
+            source: "event",
+            mode: pg.mode || "shadow_generation",
+            formula: pg.formula || "accumulated_spacing",
+            legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
+            viabilityStatus: pg.viabilityStatus,
+            minSpacingPctReal: pg.minSpacingPctReal,
+            spacingPct: pg.spacingPct,
+            centerPrice: pg.centerPrice,
+            operationalLower: pg.operationalLower,
+            operationalUpper: pg.operationalUpper,
+            operationalBandWidthPct: pg.operationalBandWidthPct,
+            operationalSemiRangePct: pg.operationalSemiRangePct,
+            requestedBuyLevels: pg.requestedBuyLevels,
+            requestedSellLevels: pg.requestedSellLevels,
+            generatedBuyLevels: pg.generatedBuyLevels,
+            generatedSellLevels: pg.generatedSellLevels,
+            reductionApplied: pg.reductionApplied,
+            reason: pg.reason,
+            eventId: recentFailureEvent.id,
+            eventCreatedAt: recentFailureEvent.createdAt,
+            rangeVersionId: recentFailureEvent.rangeVersionId,
+            stale: true,
+          };
+        }
+
+        // No event for active range and no recent failure event
         return {
-          available: true,
-          source: "event",
-          mode: pg.mode || "shadow_generation",
-          formula: pg.formula || "accumulated_spacing",
-          legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
-          viabilityStatus: pg.viabilityStatus,
-          minSpacingPctReal: pg.minSpacingPctReal,
-          spacingPct: pg.spacingPct,
-          centerPrice: pg.centerPrice,
-          operationalLower: pg.operationalLower,
-          operationalUpper: pg.operationalUpper,
-          operationalBandWidthPct: pg.operationalBandWidthPct,
-          operationalSemiRangePct: pg.operationalSemiRangePct,
-          requestedBuyLevels: pg.requestedBuyLevels,
-          requestedSellLevels: pg.requestedSellLevels,
-          generatedBuyLevels: pg.generatedBuyLevels,
-          generatedSellLevels: pg.generatedSellLevels,
-          reductionApplied: pg.reductionApplied,
-          reason: pg.reason,
-          eventId: latestEvent.id,
-          eventCreatedAt: latestEvent.createdAt,
+          available: false,
+          reason: "No professional generator event found for active range",
+          activeRangeId,
         };
       })();
-
-      // Separate current vs historical levels for the UI
-      const activeRangeId = status.activeRangeVersionId;
-      const currentLevels = activeRangeId
-        ? levels.filter((l: any) => l.rangeVersionId === activeRangeId)
-        : [];
-      const historicalLevels = activeRangeId
-        ? levels.filter((l: any) => l.rangeVersionId !== activeRangeId)
-        : [];
-      const hasHistoricalLevels = historicalLevels.length > 0;
-      const allLevelsBelongToActiveRange = levels.length > 0 && levels.every((l: any) => l.rangeVersionId === activeRangeId);
 
       // Market context for UI (read-only, no trading logic)
       let marketContext: any = null;

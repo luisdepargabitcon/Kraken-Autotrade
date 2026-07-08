@@ -469,6 +469,78 @@ class GridIsolatedEngine {
   }
 
   /**
+   * Pre-check if the professional generator can generate viable levels.
+   * Used by rebuildRangeAndLevels and rebuildPlannedLevels to avoid leaving the system
+   * without a valid range due to a rebuild that produces 0 levels.
+   */
+  private async precheckProfessionalGeneration(bandSnapshot: any): Promise<{
+    ok: boolean;
+    levelsCount: number;
+    viabilityStatus?: string;
+    professionalGenerator?: any;
+    reason?: string;
+  }> {
+    if (!this.config) {
+      return { ok: false, levelsCount: 0, reason: "No config loaded" };
+    }
+
+    const allocation = await gridCapitalAllocator.allocate(
+      this.config.capitalProfile,
+      10, // initial estimate
+      this.config.netProfitTargetPct,
+      {
+        maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
+        allocationMode: this.config.gridAllocationMode ?? "uniform",
+        deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
+        progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
+        maxLevelPct: this.config.gridMaxLevelPct ?? 40,
+        minLevelUsd: this.config.gridMinLevelUsd ?? 30,
+      }
+    );
+    const professionalPrecheck = generateProfessionalGridLevels({
+      currentPrice: bandSnapshot.midPrice,
+      bollingerMiddle: bandSnapshot.middle,
+      bollingerUpper: bandSnapshot.upper,
+      bollingerLower: bandSnapshot.lower,
+      atrPct: bandSnapshot.atrPct,
+      netProfitTargetPct: this.config.netProfitTargetPct,
+      gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
+      gridStepMaxPct: this.config.gridStepMaxPct,
+      configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
+      configuredSellLevels: Math.floor(allocation.levelsCount / 2),
+      capitalPerLevelUsd: allocation.capitalPerLevelUsd,
+      spreadBufferPct: 0.01,
+      safetyBufferPct: 0.10,
+      minLevelsForViableGrid: 4,
+      centerPriceMode: "hybrid",
+      centerClampPct: 0.25,
+      operationalRangeMode: "hybrid",
+      operationalBandWidthPct: 20.0,
+      atrRangeMultiplier: 8.0,
+      minOperationalBandWidthPct: 20.0,
+      dynamicLevelReduction: true,
+      gridViabilityMode: "strict",
+    });
+
+    if (professionalPrecheck.levels.length === 0) {
+      return {
+        ok: false,
+        levelsCount: 0,
+        viabilityStatus: professionalPrecheck.viabilityStatus,
+        professionalGenerator: professionalPrecheck.professionalGenerator,
+        reason: "professional_generator_zero_levels_precheck",
+      };
+    }
+
+    return {
+      ok: true,
+      levelsCount: professionalPrecheck.levels.length,
+      viabilityStatus: professionalPrecheck.viabilityStatus,
+      professionalGenerator: professionalPrecheck.professionalGenerator,
+    };
+  }
+
+  /**
    * Replace the active range and its planned levels with a new band.
    * Marks old range as replaced and old levels as replaced, then proposes a new range.
    * SAFETY: Before marking old range as replaced, verify that the new professional generator
@@ -497,39 +569,13 @@ class GridIsolatedEngine {
     );
 
     // SAFETY: Pre-check if professional generator can generate viable levels before marking old range as replaced
-    const allocation = gridCapitalAllocator.computeAllocation(this.config);
-    const professionalPrecheck = generateProfessionalGridLevels({
-      currentPrice: bandSnapshot.midPrice,
-      bollingerMiddle: bandSnapshot.middle,
-      bollingerUpper: bandSnapshot.upper,
-      bollingerLower: bandSnapshot.lower,
-      atrPct: bandSnapshot.atrPct,
-      netProfitTargetPct: this.config.netProfitTargetPct,
-      gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
-      gridStepMaxPct: this.config.gridStepMaxPct,
-      configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
-      configuredSellLevels: Math.floor(allocation.levelsCount / 2),
-      capitalPerLevelUsd: allocation.capitalPerLevelUsd,
-      spreadBufferPct: 0.01,
-      safetyBufferPct: 0.10,
-      minLevelsForViableGrid: 4,
-      centerPriceMode: "hybrid",
-      centerClampPct: 0.25,
-      operationalRangeMode: "hybrid",
-      operationalBandWidthPct: 20.0,
-      atrRangeMultiplier: 8.0,
-      minOperationalBandWidthPct: 20.0,
-      dynamicLevelReduction: true,
-      gridViabilityMode: "strict",
-    });
-
-    // If pre-check fails (0 levels), abort rebuild and preserve old range
-    if (professionalPrecheck.levels.length === 0) {
+    const precheck = await this.precheckProfessionalGeneration(bandSnapshot);
+    if (!precheck.ok) {
       await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "El rebuild fue abortado porque el generador profesional no pudo generar niveles viables. Se conserva el rango anterior.", {
         rangeVersionId: oldRange.id,
-        reason: "professional_generator_zero_levels_precheck",
-        viabilityStatus: professionalPrecheck.viabilityStatus,
-        professionalGenerator: professionalPrecheck.professionalGenerator,
+        reason: precheck.reason,
+        viabilityStatus: precheck.viabilityStatus,
+        professionalGenerator: precheck.professionalGenerator,
         centerDriftPct,
         widthChangePct,
       });
@@ -1357,6 +1403,29 @@ class GridIsolatedEngine {
     });
     if (!bandSnapshot) {
       return { success: false, reason: "Could not fetch band snapshot from market data", dryRun };
+    }
+
+    // SAFETY: Pre-check if professional generator can generate viable levels before marking old range as replaced
+    const precheck = await this.precheckProfessionalGeneration(bandSnapshot);
+    if (!precheck.ok) {
+      await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "Rebuild manual abortado porque el generador profesional no pudo generar niveles viables. Se conserva el rango anterior.", {
+        rangeVersionId: oldRange.id,
+        reason: precheck.reason,
+        viabilityStatus: precheck.viabilityStatus,
+        professionalGenerator: precheck.professionalGenerator,
+        trigger: "manual_rebuild_planned_levels",
+        manualReason: reason,
+        dryRun,
+      });
+      return {
+        success: false,
+        dryRun,
+        reason: precheck.reason,
+        oldRangeVersionId: oldRange.id,
+        replacedLevelsCount: 0,
+        newLevelsCount: 0,
+        beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal },
+      };
     }
 
     // If dryRun, return what would happen without touching DB

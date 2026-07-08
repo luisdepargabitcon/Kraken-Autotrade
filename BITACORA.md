@@ -5,6 +5,87 @@
 
 ---
 
+## 2026-07-08 — FASE 3C.2-C PROTECCIÓN FINAL REBUILD MANUAL Y AUDIT PROFESSIONAL GENERATOR
+
+### Resumen
+Protección final del rebuild manual y corrección del audit professionalGenerator. Creación de helper reutilizable para precheck profesional, protección de rebuildPlannedLevels manual con precheck, y filtrado de professionalGenerator audit por activeRangeVersionId para asegurar que solo se muestre el evento correspondiente al rango activo.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — helper precheckProfessionalGeneration, protección rebuild manual
+- `server/routes/gridIsolated.routes.ts` — filtrado professionalGenerator por activeRangeVersionId
+
+### 1. Helper precheckProfessionalGeneration reutilizable
+**Problema:** rebuildRangeAndLevels() y rebuildPlannedLevels() tenían lógica duplicada de precheck profesional, creando riesgo de divergencia.
+
+**Solución:** Crear helper privado `precheckProfessionalGeneration(bandSnapshot)` que:
+- Usa la misma configuración que proposeRangeVersion() (spreadBufferPct=0.01, safetyBufferPct=0.10, minLevelsForViableGrid=4, centerPriceMode="hybrid", operationalRangeMode="hybrid", operationalBandWidthPct=20.0, atrRangeMultiplier=8.0, dynamicLevelReduction=true, gridViabilityMode="strict")
+- Llama a generateProfessionalGridLevels() con los parámetros de configuración
+- Devuelve { ok, levelsCount, viabilityStatus, professionalGenerator, reason }
+- Si levels.length === 0, devuelve ok=false con reason="professional_generator_zero_levels_precheck"
+
+**Uso:** Este helper se usa ahora tanto en rebuildRangeAndLevels() como en rebuildPlannedLevels().
+
+### 2. rebuildRangeAndLevels protegido con helper
+**Cambio:** Reemplazada la lógica duplicada de precheck por llamada al helper precheckProfessionalGeneration().
+- Si precheck.ok === false, aborta rebuild y conserva rango viejo
+- Loggea evento GRID_LEVELS_PRESERVED_DUE_TO_CYCLE con reason del precheck
+- Solo si precheck.ok === true, marca rango viejo como replaced
+
+### 3. rebuildPlannedLevels manual protegido con helper
+**Problema:** rebuildPlannedLevels() manual podía marcar el rango viejo como replaced antes de saber si el nuevo generador profesional podía generar niveles.
+
+**Solución:** Añadir precheck profesional antes de marcar rango viejo como replaced:
+- Después de obtener bandSnapshot, llamar a precheckProfessionalGeneration()
+- Si precheck.ok === false:
+  - Loggear evento GRID_LEVELS_PRESERVED_DUE_TO_CYCLE con trigger="manual_rebuild_planned_levels"
+  - Devolver { success: false, reason: precheck.reason, replacedLevelsCount: 0, newLevelsCount: 0, beforeSummary }
+  - No marcar rango viejo como replaced
+  - No marcar niveles viejos como replaced
+  - No llamar a proposeRangeVersion()
+  - No activar rango nuevo
+- Si precheck.ok === true, continuar con el rebuild normal
+
+**Regla:** El endpoint manual queda tan protegido como el rebuild automático por drift.
+
+### 4. professionalGenerator audit filtrado por activeRangeVersionId
+**Problema:** professionalGenerator se extraía del último evento GRID_PROFESSIONAL_GENERATOR_* de los últimos 50 eventos sin garantizar que perteneciera al rango activo actual.
+
+**Solución:** Filtrar eventos profesionales por activeRangeVersionId:
+- Primero buscar evento profesional con ev.rangeVersionId === activeRangeId
+- Si se encuentra, devolver professionalGenerator con available=true
+- Si no se encuentra, buscar evento NOT_VIABLE/COMPACT reciente sin rangeVersionId
+- Si se encuentra, devolver professionalGenerator con available=true y stale=true
+- Si no se encuentra ninguno, devolver { available: false, reason: "No professional generator event found for active range", activeRangeId }
+
+**Regla:** No mostrar como válido un professionalGenerator que no pertenece al rango activo.
+
+### 5. Tests ejecutados
+- **npm run check:** ✅
+- **npx vitest run gridSpacingCalculator.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts:** ✅ 26/26 tests passed
+- **npx vitest run gridIsolatedRoutes.test.ts:** ✅ 66/66 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No rebuild ejecutado
+- ✅ No regeneración de niveles existentes automáticamente
+- ✅ No cambios de config DB
+- ✅ No Risk Manager
+- ✅ No Execution Service
+- ✅ No reconciliation real
+- ✅ No deploy
+
+### Siguiente fase
+Fase 3C.3: Ajustes finos de configuración y monitoreo
+
+---
+
 ## 2026-07-08 — FASE 3C.2-B CORRECCIONES DE INTEGRACIÓN PROFESIONAL ANTES DE DEPLOY
 
 ### Resumen
