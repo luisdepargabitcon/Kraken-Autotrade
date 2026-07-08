@@ -846,4 +846,39 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body).toHaveProperty("configSource");
     expect(["memory", "db_snapshot", "default_runtime_empty"]).toContain(res.body.configSource);
   });
+
+  // ─── 3C.2-G-B: Pre-validation before marking filled ───────────────
+
+  it("API cycle status label for buy_filled is 'Compra simulada SHADOW', not 'Compra ejecutada'", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const cycles = res.body.cycles ?? [];
+    for (const cyc of cycles) {
+      if (cyc.status === "buy_filled") {
+        expect(cyc.statusLabel).toBe("Compra simulada SHADOW");
+      }
+    }
+  });
+
+  it("getNaturalGridMessage for GRID_CYCLE_BUY_FILLED returns 'Compra simulada SHADOW'", async () => {
+    const msg = getNaturalGridMessage("GRID_CYCLE_BUY_FILLED" as any, null, null);
+    expect(msg).toContain("Compra simulada SHADOW");
+    expect(msg).not.toContain("Compra ejecutada");
+  });
+
+  it("getNaturalGridMessage for GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE returns SELL ignored message", async () => {
+    const msg = getNaturalGridMessage("GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE" as any, null, null);
+    expect(msg).toBeTruthy();
+    expect(msg.toLowerCase()).toContain("sell");
+  });
+
+  it("getNaturalGridMessage for GRID_SHADOW_MAX_OPEN_CYCLES_REACHED returns max cycles message", async () => {
+    const msg = getNaturalGridMessage("GRID_SHADOW_MAX_OPEN_CYCLES_REACHED" as any, null, null);
+    expect(msg).toBeTruthy();
+  });
+
+  it("getNaturalGridMessage for GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED returns duplicate message", async () => {
+    const msg = getNaturalGridMessage("GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED" as any, null, null);
+    expect(msg).toBeTruthy();
+  });
 });

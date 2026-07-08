@@ -54,7 +54,7 @@ const LEVEL_STATUS_LABELS: Record<string, string> = {
 const CYCLE_STATUS_LABELS: Record<string, string> = {
   open: "Abierto",
   active: "Abierto",
-  buy_filled: "Compra ejecutada",
+  buy_filled: "Compra simulada SHADOW",
   completed: "Cerrado",
   cancelled: "Cancelado",
   error: "Error",

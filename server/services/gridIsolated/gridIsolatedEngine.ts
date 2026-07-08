@@ -1103,6 +1103,7 @@ class GridIsolatedEngine {
   /**
    * SHADOW mode simulation — check if price would have filled any levels.
    * Only processes levels that belong to the active range version.
+   * Pre-validates with canProcessShadowFill() before marking any level as filled.
    */
   private async simulateShadowTick(currentPrice: number): Promise<void> {
     if (!this.activeRangeVersion || !this.config) return;
@@ -1121,6 +1122,17 @@ class GridIsolatedEngine {
       }
 
       if (filled) {
+        // Pre-validate before touching level state or DB
+        const validation = this.canProcessShadowFill(level, activeRangeId);
+        if (!validation.ok) {
+          await this.logEvent(validation.eventType!, validation.reason!, {
+            levelId: level.id, side: level.side, mode: "SHADOW",
+            ...validation.details,
+          });
+          continue;
+        }
+
+        // Only now mark as filled
         level.status = "filled";
         level.filledPrice = currentPrice;
         level.filledQuantity = level.quantity;
@@ -1147,21 +1159,24 @@ class GridIsolatedEngine {
   }
 
   /**
-   * Process a fill and create/complete cycles.
-   * Only processes levels that belong to the active range version.
-   * Respects maxOpenCycles and prevents duplicate cycles per buyLevelId.
+   * Pre-validate whether a SHADOW fill can be processed for a level.
+   * Returns ok=true only if the fill is safe to apply.
+   * Does NOT modify level state or DB.
    */
-  private async processCycleFill(level: GridLevel, fillPrice: number): Promise<void> {
-    if (!this.activeRangeVersion || !this.config) return;
+  private canProcessShadowFill(
+    level: GridLevel,
+    activeRangeId: string
+  ): { ok: boolean; reason?: string; eventType?: GridEventType; details?: Record<string, any> } {
+    if (!this.config) return { ok: false, reason: "No config", eventType: "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE" };
 
-    const activeRangeId = this.activeRangeVersion.id;
-
-    // Block levels outside active range
+    // Level must belong to active range
     if (level.rangeVersionId !== activeRangeId) {
-      await this.logEvent("GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE", `[SHADOW] Level ${level.id} ignored: belongs to range ${level.rangeVersionId}, not active ${activeRangeId}`, {
-        levelId: level.id, levelRangeVersionId: level.rangeVersionId, activeRangeVersionId: activeRangeId, mode: "SHADOW",
-      });
-      return;
+      return {
+        ok: false,
+        eventType: "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE",
+        reason: `[SHADOW] Level ${level.id} ignored: belongs to range ${level.rangeVersionId}, not active ${activeRangeId}`,
+        details: { levelRangeVersionId: level.rangeVersionId, activeRangeVersionId: activeRangeId },
+      };
     }
 
     if (level.side === "BUY") {
@@ -1172,18 +1187,12 @@ class GridIsolatedEngine {
       ).length;
 
       if (openCyclesForActiveRange >= this.config.maxOpenCycles) {
-        await this.logEvent("GRID_SHADOW_MAX_OPEN_CYCLES_REACHED", `[SHADOW] Max open cycles (${this.config.maxOpenCycles}) reached for active range. BUY level ${level.id} not filled.`, {
-          levelId: level.id, openCycles: openCyclesForActiveRange, maxOpenCycles: this.config.maxOpenCycles, mode: "SHADOW",
-        });
-        // Revert level status since we're not processing it
-        level.status = "planned";
-        level.filledPrice = null;
-        level.filledQuantity = 0;
-        level.filledAt = null;
-        await db.update(gridIsolatedLevels)
-          .set({ status: "planned", filledPrice: null, filledAt: null })
-          .where(eq(gridIsolatedLevels.id, level.id));
-        return;
+        return {
+          ok: false,
+          eventType: "GRID_SHADOW_MAX_OPEN_CYCLES_REACHED",
+          reason: `[SHADOW] Max open cycles (${this.config.maxOpenCycles}) reached for active range. BUY level ${level.id} not filled.`,
+          details: { openCycles: openCyclesForActiveRange, maxOpenCycles: this.config.maxOpenCycles },
+        };
       }
 
       // Check for existing open cycle for this buy level (prevent duplicates)
@@ -1193,12 +1202,43 @@ class GridIsolatedEngine {
       );
 
       if (existingCycleForBuy) {
-        await this.logEvent("GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED", `[SHADOW] Duplicate cycle for buy level ${level.id} ignored. Existing cycle ${existingCycleForBuy.id}.`, {
-          levelId: level.id, existingCycleId: existingCycleForBuy.id, mode: "SHADOW",
-        });
-        return;
+        return {
+          ok: false,
+          eventType: "GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED",
+          reason: `[SHADOW] Duplicate cycle for buy level ${level.id} ignored. Existing cycle ${existingCycleForBuy.id}.`,
+          details: { existingCycleId: existingCycleForBuy.id },
+        };
       }
+    } else if (level.side === "SELL") {
+      // Check there is an open cycle from the same active range
+      const openCycle = this.cycles.find(c =>
+        c.rangeVersionId === activeRangeId && c.status === "buy_filled"
+      );
 
+      if (!openCycle) {
+        return {
+          ok: false,
+          eventType: "GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE",
+          reason: `[SHADOW] SELL simulado ignorado: no existe BUY/ciclo abierto del mismo rango activo.`,
+          details: { levelId: level.id },
+        };
+      }
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * Process a fill and create/complete cycles.
+   * Pre-validated by canProcessShadowFill() — all checks (range, maxOpenCycles,
+   * duplicate BUY, SELL with open cycle) are already done before calling this.
+   */
+  private async processCycleFill(level: GridLevel, fillPrice: number): Promise<void> {
+    if (!this.activeRangeVersion || !this.config) return;
+
+    const activeRangeId = this.activeRangeVersion.id;
+
+    if (level.side === "BUY") {
       // Create new cycle
       const cycle: GridCycle = {
         id: randomUUID(),

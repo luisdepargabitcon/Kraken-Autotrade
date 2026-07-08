@@ -146,8 +146,8 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
   GRID_CYCLE_BUY_FILLED: {
     category: "CYCLE",
     severity: "SUCCESS",
-    title: "Compra de ciclo ejecutada",
-    messageFn: () => "Compra ejecutada. Ciclo Grid activo.",
+    title: "Compra de ciclo simulada SHADOW",
+    messageFn: () => "Compra simulada SHADOW. Ciclo Grid activo.",
   },
   GRID_CYCLE_SELL_PLACED: {
     category: "CYCLE",
@@ -414,6 +414,30 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
       const created = meta.newLevelsCount ?? 0;
       return `Rebuild manual: rango ${oldId} → ${newId}. ${replaced} niveles reemplazados, ${created} nuevos generados.`;
     },
+  },
+  GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE: {
+    category: "SYSTEM",
+    severity: "WARNING",
+    title: "Nivel SHADOW fuera de rango activo",
+    messageFn: () => "Nivel SHADOW ignorado: no pertenece al rango activo actual.",
+  },
+  GRID_SHADOW_MAX_OPEN_CYCLES_REACHED: {
+    category: "SYSTEM",
+    severity: "WARNING",
+    title: "Máximo de ciclos abiertos SHADOW",
+    messageFn: () => "Máximo de ciclos abiertos SHADOW alcanzado. BUY no simulado.",
+  },
+  GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED: {
+    category: "SYSTEM",
+    severity: "WARNING",
+    title: "BUY duplicado SHADOW ignorado",
+    messageFn: () => "BUY SHADOW duplicado ignorado: ya existe ciclo abierto para este nivel.",
+  },
+  GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE: {
+    category: "SYSTEM",
+    severity: "WARNING",
+    title: "SELL SHADOW sin ciclo abierto",
+    messageFn: () => "SELL simulado ignorado: no existe BUY/ciclo abierto del mismo rango activo.",
   },
 };
 

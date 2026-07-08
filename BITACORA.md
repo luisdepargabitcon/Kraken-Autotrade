@@ -445,6 +445,88 @@ Correcciones de seguridad y semántica aplicadas al generador profesional SHADOW
 - ✅ No deploy (solo commit)
 
 ### Siguiente fase
+Fase 3C.2-G-B: Prevalidación de fills SHADOW antes de marcar niveles
+
+---
+
+## FASE 3C.2-G-B — Prevalidación de fills SHADOW antes de marcar filled (2026-07-09)
+
+### Contexto
+- FASE 3C.2-G implementó checks en `processCycleFill()`, pero el nivel ya se marcaba como `filled` y se actualizaba DB **antes** de que `processCycleFill()` pudiera rechazarlo.
+- Si el fill era rechazado (BUY duplicado, SELL sin ciclo, maxOpenCycles), el nivel quedaba en estado `filled` en DB o requería revert manual.
+- Label API/audit todavía exponía "Compra ejecutada" en lugar de "Compra simulada SHADOW".
+
+### Problema exacto
+Flujo anterior:
+1. `simulateShadowTick()` detecta fill
+2. Marca `level.status = "filled"`, `filledPrice`, `filledQuantity`, `filledAt`
+3. Actualiza DB como `filled`
+4. Llama `processCycleFill()`
+5. `processCycleFill()` puede rechazar (duplicado, maxCycles, sin ciclo) → demasiado tarde
+
+### Solución: Helper previo `canProcessShadowFill()`
+Nuevo método que valida **antes** de tocar el nivel o DB:
+
+```
+canProcessShadowFill(level, activeRangeId) → { ok, reason?, eventType?, details? }
+```
+
+Valida:
+- **Cualquier nivel:** `level.rangeVersionId === activeRangeId`
+- **BUY:** `openCyclesForActiveRange < config.maxOpenCycles` + no existe ciclo abierto con mismo `buyLevelId`
+- **SELL:** existe ciclo `buy_filled` del mismo `activeRangeId`
+
+Solo si `ok === true`:
+- Marca `level.status = "filled"`
+- Actualiza DB
+- Llama `processCycleFill()`
+
+Si `ok === false`:
+- NO toca el nivel
+- NO actualiza DB
+- Loguea evento claro
+- `continue`
+
+### processCycleFill() limpiado
+- Eliminados todos los checks redundantes (range, maxOpenCycles, duplicado, SELL sin ciclo)
+- Ahora solo crea/completa ciclos, sin validación — toda la validación está en `canProcessShadowFill()`
+- Eliminado el revert manual de `maxOpenCycles` (ya no se necesita porque no se marca filled)
+
+### Nuevo evento
+- `GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE` — SELL simulado ignorado cuando no hay BUY/ciclo abierto del mismo rango
+
+### Label API/audit corregido
+- `gridIsolated.routes.ts`: `CYCLE_STATUS_LABELS["buy_filled"]` = `"Compra simulada SHADOW"` (antes: `"Compra ejecutada"`)
+- `gridActivityFormatter.ts`: `GRID_CYCLE_BUY_FILLED` title = `"Compra de ciclo simulada SHADOW"`, message = `"Compra simulada SHADOW. Ciclo Grid activo."`
+- Mapeos añadidos para los 4 nuevos eventos SHADOW en `gridActivityFormatter.ts`
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — nuevo `canProcessShadowFill()`, `simulateShadowTick()` reescrito, `processCycleFill()` limpiado
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — añadido `GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE`
+- `server/services/gridIsolated/gridActivityFormatter.ts` — label corregido, 4 nuevos mapeos de eventos
+- `server/routes/gridIsolated.routes.ts` — `CYCLE_STATUS_LABELS["buy_filled"]` = `"Compra simulada SHADOW"`
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 5 nuevos tests
+
+### Tests ejecutados
+- **npm run check:** ✅
+- **npx vitest run gridIsolatedRoutes.test.ts:** ✅ 79/79 tests passed
+- **npx vitest run gridSpacingCalculator.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts:** ✅ 26/26 tests passed
+- **Total:** 175/175 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No rebuild
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No producción
+- ✅ No deploy (solo commit)
+
+### Siguiente fase
 Fase 3C.2-H: Limpieza segura de ciclos SHADOW huérfanos (dryRun=true, preview, confirmación)
 Fase 3C.3: Grid más operativo — SELL objetivo asociado a cada BUY, perfil de actividad, preview de primer BUY
 
