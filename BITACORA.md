@@ -5,6 +5,160 @@
 
 ---
 
+## 2026-07-08 — FASE 3C-PRE ATR REAL Y SIMULACIÓN CON CANDLES REALES
+
+### Resumen
+Recálculo de ATR con velas reales de Kraken para 15m, 1h y 4h. Se confirma que con configuración actual (Bollinger 2σ) **no cabe ni un solo nivel rentable** en ningún timeframe ni center price. El problema es estructural: la banda es incompatible con el spacing mínimo rentable. **No se implementó ninguna fórmula nueva.**
+
+### Script auxiliar
+- **Archivo**: `scripts/grid_spacing_phase3c_pre_real_atr.ts`
+- **Naturaleza**: Script auxiliar de análisis. NO forma parte del build de producción. No se importa en ningún módulo del bot. No modifica DB. No toca motor. Solo lee Kraken API pública y simula.
+- **tsconfig.json**: `include` cubre `client/src/**/*`, `shared/**/*`, `server/**/*` — **NO cubre `scripts/`**.
+
+### Fuente de candles
+Kraken API pública: `GET https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval={min}`
+Sin autenticación. Sin tocar DB. Sin tocar motor real.
+
+### Candles obtenidas
+
+| Timeframe | Candles recibidas | Suficientes para ATR 14 |
+|---|---|---|
+| 15m | 721 | ✅ |
+| 1h | 721 | ✅ |
+| 4h | 721 | ✅ |
+
+### Vela cerrada vs vela en curso
+La API de Kraken OHLC devuelve la última vela que puede estar aún en curso (sin cerrar). Este script **NO excluye** la última vela porque es de auditoría. Los cálculos pueden incluir la vela actual en curso. Para implementación final conviene excluir velas no cerradas o validar cierre por timestamp/timeframe.
+
+### ATR real 14 por timeframe
+
+| Timeframe | ATR 14 (USD) | ATR% | lastClose | BB upper | BB middle | BB lower | Band width |
+|---|---|---|---|---|---|---|---|
+| 15m | $182.97 | **0.2887%** | $63,406.80 | $64,190.25 | $63,700.76 | $63,211.27 | 1.54% |
+| 1h | $453.21 | **0.7148%** | $63,406.80 | $64,058.78 | $63,404.49 | $62,750.20 | 2.06% |
+| 4h | $908.46 | **1.4328%** | $63,406.80 | $64,070.48 | $63,203.15 | $62,335.83 | 2.74% |
+
+### Comparativa ATR real vs estimación √T (Fase 3B)
+
+| Timeframe | ATR% Real | ATR% √T (estimado) | Diferencia abs | Diferencia % | Nota |
+|---|---|---|---|---|---|
+| 15m | 0.2887% | 0.3103% | -0.0216% | -6.97% | √T sobreestimó |
+| 1h | 0.7148% | 0.6206% | +0.0942% | +15.17% | √T subestimó |
+| 4h | 1.4328% | 1.2412% | +0.1916% | +15.43% | Dato real actual > auditado Fase 3A |
+
+**Conclusión**: La regla √T subestima el ATR real en 1h y 4h (~15%), y sobreestima ligeramente en 15m (~7%). La aproximación √T no es fiable para decisiones operativas.
+
+### Distancias desde centerPrice a bandas
+
+| TF | lastClose → upper | lastClose → lower | middle → upper | middle → lower |
+|---|---|---|---|---|
+| 15m | 1.24% | 0.31% | 0.77% | 0.77% |
+| 1h | 1.03% | 1.04% | 1.03% | 1.03% |
+| 4h | 1.05% | 1.69% | 1.37% | 1.37% |
+
+### Simulación de viabilidad con ATR real
+
+`minSpacingPctReal = 1.79%` | `gridStepAtrMultiplier = 1.5` | `gridStepMaxPct = 3.0%`
+
+| TF | Center | ATR% | Spacing% | BUY | SELL | Total | BW necesaria 5+5 | Net% | Veredicto |
+|---|---|---|---|---|---|---|---|---|---|
+| 15m | lastClose | 0.2887% | 1.79% | 0 | 0 | 0 | 17.90% | 1.29% | ❌ No viable |
+| 15m | Bollinger mid | 0.2887% | 1.79% | 0 | 0 | 0 | 17.90% | 1.29% | ❌ No viable |
+| 15m | Híbrido | 0.2887% | 1.79% | 0 | 0 | 0 | 17.90% | 1.29% | ❌ No viable |
+| 1h | lastClose | 0.7148% | 1.79% | 0 | 0 | 0 | 17.90% | 1.29% | ❌ No viable |
+| 1h | Bollinger mid | 0.7148% | 1.79% | 0 | 0 | 0 | 17.90% | 1.29% | ❌ No viable |
+| 1h | Híbrido | 0.7148% | 1.79% | 0 | 0 | 0 | 17.90% | 1.29% | ❌ No viable |
+| 4h | lastClose | 1.4328% | 2.15% | 0 | 0 | 0 | 21.49% | 1.58% | ❌ No viable |
+| 4h | Bollinger mid | 1.4328% | 2.15% | 0 | 0 | 0 | 21.49% | 1.58% | ❌ No viable |
+| 4h | Híbrido | 1.4328% | 2.15% | 0 | 0 | 0 | 21.49% | 1.58% | ❌ No viable |
+
+### Causa de 0 niveles
+
+El `minSpacingPctReal` (1.79%) es mayor que el **semi-ancho de banda** en todos los timeframes:
+
+| TF | Semi-ancho BW | Spacing mínimo | ¿Cabe 1 nivel? |
+|---|---|---|---|
+| 15m | 0.77% | 1.79% | ❌ (spacing > 2× semi-ancho) |
+| 1h | 1.03% | 1.79% | ❌ (spacing > semi-ancho) |
+| 4h | 1.37% | 2.15% | ❌ (spacing > semi-ancho) |
+
+Incluso el primer nivel desde el center price cae fuera de la banda. **No cabe ni un solo nivel rentable.**
+
+### BandWidth necesaria para 5+5
+
+| TF | Spacing | BW necesaria 5+5 | BW actual | Ratio |
+|---|---|---|---|---|
+| 15m | 1.79% | 17.90% | 1.54% | 11.6× |
+| 1h | 1.79% | 17.90% | 2.06% | 8.7× |
+| 4h | 2.15% | 21.49% | 2.74% | 7.8× |
+
+### Beneficio neto y fees
+
+Todas las variantes cumplen el `netProfitTargetPct = 1.2%`:
+- Spacing 1.79% (15m/1h): neto = 1.29% ✅
+- Spacing 2.15% (4h): neto = 1.58% ✅
+
+Fórmula (sin doble conteo): `neto = (spacing - fees) × (1 - taxReserve/100)`
+
+### Conclusión principal
+
+Con configuración actual, el Grid no debe generar niveles profesionales rentables. Si los genera, es porque la fórmula antigua los compacta artificialmente. Esto ya se observa en staging/SHADOW o en los rangos históricos auditados.
+
+### ATR timeframe no resuelve el problema
+
+El cambio de ATR timeframe no soluciona por sí solo el problema. Con datos reales, 15m, 1h y 4h siguen generando 0 niveles viables con la banda actual. La elección final del ATR timeframe solo tiene sentido después de definir un rango operativo suficiente.
+
+Recomendación provisional:
+- ATR 1h puede ser candidato para spacing operativo por equilibrio.
+- ATR 4h puede servir como contexto/régimen.
+- Decisión final pendiente de Fase 3C diseño.
+
+### Implicación estratégica
+
+No basta con cambiar la fórmula geométrica. Fase 3C debe resolver también el concepto de rango operativo.
+
+Opciones:
+
+**A) Mantener Bollinger como rango operativo:**
+- Con 2σ no caben niveles.
+- Con 3σ/4σ podría caber 1+1, pero seguiría siendo marginal.
+- No resuelve 5+5 niveles.
+
+**B) Separar rango macro y rango operativo:**
+- Bollinger 4h sirve para régimen/diagnóstico.
+- El rango operativo de Grid se calcula aparte.
+- Puede basarse en ATR múltiple, porcentaje fijo configurable o combinación.
+
+**C) Reducir niveles dinámicamente:**
+- Generar solo niveles que caben.
+- Si `totalLevels < minLevelsForViableGrid`, marcar Grid no viable.
+
+**D) Bajar objetivo neto:**
+- Permitiría más densidad.
+- Pero reduce beneficio por ciclo.
+- No hacerlo automáticamente.
+
+**Recomendación documental**: La solución profesional más probable es combinar:
+- Fórmula acumulativa.
+- Spacing mínimo rentable.
+- Rango operativo independiente.
+- Reducción dinámica de niveles.
+- Estado Grid compacto/no viable.
+- Todo primero en SHADOW.
+
+### Validación del script
+- `npm run check`: ✅ (no cubre `scripts/`)
+- `npx tsx scripts/grid_spacing_phase3c_pre_real_atr.ts`: ✅ (ejecuta correctamente, 721 candles por timeframe)
+
+### Archivos creados
+- `scripts/grid_spacing_phase3c_pre_real_atr.ts` — script auxiliar, no se importa en producción
+
+### Confirmación de restricciones
+- ✅ No IDCA · No FISCO · No REAL · No órdenes reales · No rebuild · No DB manual · No migraciones · No cambios de lógica de trading · No deploy
+- ✅ Solo lectura de Kraken API pública + simulación + documentación
+
+---
+
 ## 2026-07-08 — FASE 3B SIMULACIÓN: SPACING ATR Y VIABILIDAD PROFESIONAL DE GRID
 
 ### Resumen
