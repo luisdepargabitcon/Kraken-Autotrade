@@ -561,6 +561,8 @@ export interface GridExecutionStatus {
   globalLevelsCount: number;
   globalPlannedLevelsCount: number;
   orphanPlannedLevelsCount: number;
+  configLoaded: boolean;
+  configSource: "memory" | "db_snapshot" | "default_runtime_empty";
 }
 
 // ─── Reconciliation ─────────────────────────────────────────────────

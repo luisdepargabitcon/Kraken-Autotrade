@@ -1016,7 +1016,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         : [];
       const historicalLevels = activeRangeId
         ? levels.filter((l: any) => l.rangeVersionId !== activeRangeId)
-        : [];
+        : levels; // Without active range, all levels are historical/orphan
       const hasHistoricalLevels = historicalLevels.length > 0;
       const allLevelsBelongToActiveRange = levels.length > 0 && levels.every((l: any) => l.rangeVersionId === activeRangeId);
 
@@ -1323,8 +1323,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
         : 0;
       const historicalPlannedLevelsCount = activeRangeId
         ? levels.filter((l: any) => l.rangeVersionId !== activeRangeId && l?.status === "planned").length
-        : 0;
-      const globalPlannedLevelsTotal = plannedLevelsCount;
+        : levels.filter((l: any) => l?.status === "planned").length;
+      const globalPlannedLevelsTotal = levels.filter((l: any) => l?.status === "planned").length;
       const openCyclesCount = cycles.filter((c: any) => c?.status === "open" || c?.status === "active").length;
       const closedCyclesCount = cycles.filter((c: any) => c?.status === "completed" || c?.status === "closed").length;
 

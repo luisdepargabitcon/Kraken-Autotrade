@@ -249,11 +249,111 @@ Fix pre-deploy para precisión en validación read-only y counts de audit. El en
 - ✅ No deploy
 
 ### Siguiente fase
+Fase 3C.2-F: Fix auto-start en validación read-only y auditoría histórica
+
+### Resumen
+Fix crítico detectado tras deploy staging de 195b080. El endpoint read-only /api/grid-isolated/professional-generator/validate autoarrancaba el motor porque llamaba a loadConfig(), que tiene side-effect de auto-start si mode!=OFF y isActive=true. Se creó readConfigSnapshotFromDb() sin auto-start, se añadió getRuntimeFingerprint() para detectar side effects, se corrigió /status para no mostrar OFF falso, y se corrigió audit histórico cuando activeRangeId=null.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — readConfigSnapshotFromDb(), getRuntimeFingerprint(), validateProfessionalGeneratorReadOnly() sin auto-start, getExecutionStatus() con configOverride
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — añadidos configLoaded, configSource a GridExecutionStatus
+- `server/routes/gridIsolated.routes.ts` — audit histórico corregido cuando activeRangeId=null
+
+### 1. Causa exacta del auto-start
+**Problema:** validateProfessionalGeneratorReadOnly() llamaba a this.loadConfig() si this.config no estaba cargada. loadConfig() tiene side-effect:
+```typescript
+if (this.config.mode !== "OFF" && this.config.isActive && !this.running) {
+  this.start();
+}
+```
+Esto convertía una validación read-only en operación con efecto runtime: arrancaba scheduler, dejaba el Grid en SHADOW, podía generar rangos SHADOW automáticamente.
+
+**Evidencia staging:** Antes del endpoint: mode=OFF, isActive=false, isRunning=false. Después: mode=SHADOW, isActive=true, isRunning=true.
+
+### 2. readConfigSnapshotFromDb() sin auto-start
+**Solución:** Crear método privado readConfigSnapshotFromDb() que lee config de DB SIN llamar start():
+- Mismo mapeo de campos que loadConfig()
+- NO llama loadActiveRangeVersion()
+- NO llama loadLevels()
+- NO llama loadCycles()
+- NO llama this.start()
+- Devuelve snapshot sin mutar this.config
+
+**Regla:** Una sola fuente de verdad para config en read-only: readConfigSnapshotFromDb().
+
+### 3. getRuntimeFingerprint() para detectar side effects
+**Solución:** Añadir helper getRuntimeFingerprint() que captura estado crítico:
+```typescript
+{
+  mode: this.config?.mode ?? null,
+  isActive: this.config?.isActive ?? null,
+  isRunning: this.running,
+  activeRangeVersionId: this.activeRangeVersion?.id ?? null,
+  levelsCount: this.levels.length,
+  cyclesCount: this.cycles.length,
+  tickIntervalActive: this.tickInterval !== null,
+}
+```
+
+validateProfessionalGeneratorReadOnly() captura fingerprint ANTES y DESPUÉS, detecta cambios y devuelve sideEffectsDetected.
+
+**Regla:** Validación read-only debe tener sideEffectsDetected=false siempre.
+
+### 4. validateProfessionalGeneratorReadOnly() sin auto-start
+**Solución:** Modificar método para:
+- Usar configSnapshot = this.config ? {...this.config} : await this.readConfigSnapshotFromDb()
+- NO llamar this.loadConfig()
+- Usar configSnapshot en lugar de this.config para getGridBandSnapshot y generateProfessionalGridLevels
+- Devolver runtimeBefore, runtimeAfter, sideEffectsDetected en resultado
+
+**Regla:** Endpoint read-only NO puede cambiar mode, isActive, isRunning, tickInterval, levels, cycles.
+
+### 5. /status sin OFF falso ni auto-start
+**Problema:** getExecutionStatus() devolvía mode="OFF" si this.config no estaba cargada, aunque DB tuviera SHADOW/isActive=true. Esto era engañoso.
+
+**Solución:** Añadir parámetro opcional configOverride a getExecutionStatus():
+- Si configOverride pasado, usarlo sin mutar this.config
+- Añadir campos configLoaded y configSource ("memory" | "db_snapshot" | "default_runtime_empty")
+- /status sigue usando getExecutionStatus() sin parámetros (configLoaded=false si no cargada)
+
+**Regla UX:** status debe indicar claramente si config viene de memoria, DB snapshot, o runtime vacío.
+
+### 6. Audit histórico corregido cuando activeRangeId=null
+**Problema:** En /monitor/audit, si activeRangeId=null:
+- historicalLevels = [] (vacío)
+- historicalPlannedLevelsCount = 0
+- Pero había 160 niveles en memoria (todos históricos/orphan sin rango activo)
+
+**Solución:**
+- historicalLevels = activeRangeId ? levels.filter(l => l.rangeVersionId !== activeRangeId) : levels
+- historicalPlannedLevelsCount = activeRangeId ? levels.filter(...) : levels.filter(l => l.status === "planned").length
+- globalPlannedLevelsTotal = levels.filter(l => l.status === "planned").length (siempre global)
+
+**Regla:** Sin rango activo, todos los niveles cargados son históricos/orphan/globales, no current.
+
+### 7. Tests ejecutados
+- **npm run check:** ✅
+- **npx vitest run gridIsolatedRoutes.test.ts:** ✅ 66/66 tests passed
+- **npx vitest run gridSpacingCalculator.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts:** ✅ 26/26 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No rebuild ejecutado
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No cambios config DB
+- ✅ No Risk Manager
+- ✅ No Execution Service
+- ✅ No reconciliation real
+- ✅ No deploy
+
+### Siguiente fase
 Fase 3C.3: Ajustes finos de configuración y monitoreo
-
----
-
-## 2026-07-08 — FASE 3C.2-B CORRECCIONES DE INTEGRACIÓN PROFESIONAL ANTES DE DEPLOY
 
 ### Resumen
 Correcciones de seguridad y semántica aplicadas al generador profesional SHADOW antes de deploy. Blindaje contra rangos con 0 niveles, corrección de semántica de rango operativo vs Bollinger macro, protección de rebuild manual/drift, limpieza de imports legacy y exposición de professionalGenerator en audit raíz.

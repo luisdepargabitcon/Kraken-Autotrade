@@ -178,6 +178,97 @@ class GridIsolatedEngine {
   }
 
   /**
+   * Read config snapshot from DB WITHOUT auto-starting the engine.
+   * Used for read-only operations that should not change runtime state.
+   */
+  private async readConfigSnapshotFromDb(): Promise<GridIsolatedConfig | null> {
+    try {
+      const rows = await db.select().from(gridIsolatedConfigs).limit(1);
+      if (rows.length > 0) {
+        const row = rows[0];
+        return {
+          id: String(row.id),
+          pair: row.pair,
+          mode: row.mode as GridMode,
+          capitalProfile: row.capitalProfile as any,
+          executionPolicy: row.executionPolicy as any,
+          netProfitTargetPct: parseFloat(row.netProfitTargetPct),
+          bandPeriod: row.bandPeriod,
+          bandStdDevMultiplier: parseFloat(row.bandStdDevMultiplier),
+          atrPeriod: row.atrPeriod,
+          atrTimeframe: row.atrTimeframe,
+          gridStepAtrMultiplier: parseFloat(row.gridStepAtrMultiplier),
+          gridStepMinPct: parseFloat(row.gridStepMinPct),
+          gridStepMaxPct: parseFloat(row.gridStepMaxPct),
+          geometricRatioMin: parseFloat(row.geometricRatioMin),
+          geometricRatioMax: parseFloat(row.geometricRatioMax),
+          trailingActivationPct: parseFloat(row.trailingActivationPct),
+          trailingStopPct: parseFloat(row.trailingStopPct),
+          stopLossSoftPct: parseFloat(row.stopLossSoftPct),
+          stopLossHardPct: parseFloat(row.stopLossHardPct),
+          stopLossEmergencyPct: parseFloat(row.stopLossEmergencyPct),
+          hodlRecoveryEnabled: row.hodlRecoveryEnabled,
+          pumpGuardDeviationPct: parseFloat(row.pumpGuardDeviationPct),
+          pumpGuardVolumeSpikeRatio: parseFloat(row.pumpGuardVolumeSpikeRatio),
+          pumpGuardCooldownMinutes: row.pumpGuardCooldownMinutes,
+          dumpGuardDeviationPct: parseFloat(row.dumpGuardDeviationPct),
+          dumpGuardVolumeSpikeRatio: parseFloat(row.dumpGuardVolumeSpikeRatio),
+          dumpGuardCooldownMinutes: row.dumpGuardCooldownMinutes,
+          maxOpenCycles: row.maxOpenCycles,
+          maxDailyOrders: row.maxDailyOrders,
+          fiscalStatus: row.fiscalStatus,
+          isActive: row.isActive,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          // Execution: Maker/Taker
+          makerAttemptsBeforeTaker: row.makerAttemptsBeforeTaker ?? 3,
+          takerFallbackEnabled: row.takerFallbackEnabled ?? true,
+          takerFallbackAttemptNumber: row.takerFallbackAttemptNumber ?? 4,
+          maxTakerFallbackPerCycle: row.maxTakerFallbackPerCycle ?? 1,
+          takerFallbackRequiresNetProfit: row.takerFallbackRequiresNetProfit ?? true,
+          takerFallbackAuditRequired: row.takerFallbackAuditRequired ?? true,
+          // Wallet / Cartera
+          gridWalletMode: (row.gridWalletMode as any) ?? "automatic",
+          gridWalletInitialUsd: parseFloat(row.gridWalletInitialUsd ?? "1000"),
+          gridWalletMaxUsd: parseFloat(row.gridWalletMaxUsd ?? "5000"),
+          gridWalletUseProfits: row.gridWalletUseProfits ?? true,
+          gridWalletCompoundProfits: row.gridWalletCompoundProfits ?? true,
+          gridMaxCapitalPerCycleUsd: parseFloat(row.gridMaxCapitalPerCycleUsd ?? "600"),
+          gridMaxCapitalPerCyclePct: parseFloat(row.gridMaxCapitalPerCyclePct ?? "60"),
+          gridReservePct: parseFloat(row.gridReservePct ?? "20"),
+          gridMinFreeCapitalUsd: parseFloat(row.gridMinFreeCapitalUsd ?? "50"),
+          gridPauseCycleWhenCapitalDepleted: row.gridPauseCycleWhenCapitalDepleted ?? true,
+          gridAllowNewCycleWhenCapitalFree: row.gridAllowNewCycleWhenCapitalFree ?? true,
+          // Capital allocation modes
+          gridAllocationMode: (row.gridAllocationMode as any) ?? "uniform",
+          gridCapitalDeploymentMode: (row.gridCapitalDeploymentMode as any) ?? "capped",
+          gridProgressiveIntensity: parseFloat(row.gridProgressiveIntensity ?? "0.30"),
+          gridMaxLevelPct: parseFloat(row.gridMaxLevelPct ?? "40.00"),
+          gridMinLevelUsd: parseFloat(row.gridMinLevelUsd ?? "30.00"),
+        };
+      }
+    } catch (error) {
+      botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to read config snapshot: ${error}`);
+    }
+    return null;
+  }
+
+  /**
+   * Get runtime fingerprint to detect side effects in read-only operations.
+   */
+  private getRuntimeFingerprint() {
+    return {
+      mode: this.config?.mode ?? null,
+      isActive: this.config?.isActive ?? null,
+      isRunning: this.running,
+      activeRangeVersionId: this.activeRangeVersion?.id ?? null,
+      levelsCount: this.levels.length,
+      cyclesCount: this.cycles.length,
+      tickIntervalActive: this.tickInterval !== null,
+    };
+  }
+
+  /**
    * Save config to DB.
    */
   async saveConfig(): Promise<void> {
@@ -1251,9 +1342,11 @@ class GridIsolatedEngine {
 
   /**
    * Get execution status (for API/UI).
+   * Uses config snapshot if not loaded, without auto-starting.
    */
-  getExecutionStatus(): GridExecutionStatus {
+  getExecutionStatus(configOverride?: GridIsolatedConfig | null): GridExecutionStatus {
     const activeRangeId = this.activeRangeVersion?.id || null;
+    const configToUse = configOverride ?? this.config;
 
     // Filter levels by active range version if exists
     const activeLevels = activeRangeId
@@ -1302,8 +1395,19 @@ class GridIsolatedEngine {
     const totalNetPnl = this.cycles.reduce((sum, c) => sum + c.netPnlUsd, 0);
     const completedCycles = this.cycles.filter(c => c.status === "completed").length;
 
+    // Determine config source
+    let configLoaded = false;
+    let configSource: "memory" | "db_snapshot" | "default_runtime_empty" = "default_runtime_empty";
+    if (this.config) {
+      configLoaded = true;
+      configSource = "memory";
+    } else if (configOverride) {
+      configLoaded = true;
+      configSource = "db_snapshot";
+    }
+
     return {
-      mode: this.config?.mode || "OFF",
+      mode: configToUse?.mode || "OFF",
       activeRangeVersionId: activeRangeId,
       activeRangeVersionNumber: this.activeRangeVersion?.versionNumber ?? null,
       activeRangeCreatedAt: this.activeRangeVersion?.createdAt ?? null,
@@ -1323,7 +1427,7 @@ class GridIsolatedEngine {
       capitalAvailableUsd: 0,
       totalNetPnlUsd: totalNetPnl,
       totalCyclesCompleted: completedCycles,
-      isActive: this.config?.isActive ?? false,
+      isActive: configToUse?.isActive ?? false,
       isRunning: this.running,
       lastTickAt: this.lastTickAt,
       lastTickReason: this.lastTickReason,
@@ -1332,6 +1436,8 @@ class GridIsolatedEngine {
       globalLevelsCount,
       globalPlannedLevelsCount,
       orphanPlannedLevelsCount,
+      configLoaded,
+      configSource,
     } as any;
   }
 
@@ -1611,28 +1717,35 @@ class GridIsolatedEngine {
   /**
    * Read-only validation of the professional grid generator.
    * Does NOT persist ranges, levels, or place orders.
+   * Does NOT auto-start the engine.
    * Safe to call even when market conditions are unsuitable.
    */
   async validateProfessionalGeneratorReadOnly(): Promise<any> {
-    // Load config if not already loaded
-    if (!this.config) {
-      await this.loadConfig();
-    }
+    // Capture runtime fingerprint BEFORE to detect side effects
+    const runtimeBefore = this.getRuntimeFingerprint();
 
-    if (!this.config) {
+    // Load config snapshot WITHOUT auto-start
+    const configSnapshot = this.config
+      ? { ...this.config }
+      : await this.readConfigSnapshotFromDb();
+
+    if (!configSnapshot) {
       return {
         ok: false,
         error: "Grid config not loaded",
+        runtimeBefore,
+        runtimeAfter: this.getRuntimeFingerprint(),
+        sideEffectsDetected: false,
       };
     }
 
     // Get current band snapshot using REAL config
     const bandSnapshot = await getGridBandSnapshot({
-      pair: this.config.pair,
-      bandPeriod: this.config.bandPeriod,
-      bandStdDevMultiplier: this.config.bandStdDevMultiplier,
-      atrPeriod: this.config.atrPeriod,
-      atrTimeframe: this.config.atrTimeframe,
+      pair: configSnapshot.pair,
+      bandPeriod: configSnapshot.bandPeriod,
+      bandStdDevMultiplier: configSnapshot.bandStdDevMultiplier,
+      atrPeriod: configSnapshot.atrPeriod,
+      atrTimeframe: configSnapshot.atrTimeframe,
     });
 
     if (!bandSnapshot) {
@@ -1641,21 +1754,24 @@ class GridIsolatedEngine {
         error: "No band snapshot available",
         suitableForGrid: false,
         bandReason: "No market data available",
+        runtimeBefore,
+        runtimeAfter: this.getRuntimeFingerprint(),
+        sideEffectsDetected: false,
       };
     }
 
     // Execute professional generator with same config as proposeRangeVersion
     const allocation = await gridCapitalAllocator.allocate(
-      this.config.capitalProfile,
+      configSnapshot.capitalProfile,
       10, // initial estimate
-      this.config.netProfitTargetPct,
+      configSnapshot.netProfitTargetPct,
       {
-        maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
-        allocationMode: this.config.gridAllocationMode ?? "uniform",
-        deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
-        progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
-        maxLevelPct: this.config.gridMaxLevelPct ?? 40,
-        minLevelUsd: this.config.gridMinLevelUsd ?? 30,
+        maxCapitalPerCycleUsd: configSnapshot.gridMaxCapitalPerCycleUsd ?? 0,
+        allocationMode: configSnapshot.gridAllocationMode ?? "uniform",
+        deploymentMode: configSnapshot.gridCapitalDeploymentMode ?? "capped",
+        progressiveIntensity: configSnapshot.gridProgressiveIntensity ?? 0.30,
+        maxLevelPct: configSnapshot.gridMaxLevelPct ?? 40,
+        minLevelUsd: configSnapshot.gridMinLevelUsd ?? 30,
       }
     );
 
@@ -1665,9 +1781,9 @@ class GridIsolatedEngine {
       bollingerUpper: bandSnapshot.upper,
       bollingerLower: bandSnapshot.lower,
       atrPct: bandSnapshot.atrPct,
-      netProfitTargetPct: this.config.netProfitTargetPct,
-      gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
-      gridStepMaxPct: this.config.gridStepMaxPct,
+      netProfitTargetPct: configSnapshot.netProfitTargetPct,
+      gridStepAtrMultiplier: configSnapshot.gridStepAtrMultiplier,
+      gridStepMaxPct: configSnapshot.gridStepMaxPct,
       configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
       configuredSellLevels: Math.floor(allocation.levelsCount / 2),
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
@@ -1685,6 +1801,19 @@ class GridIsolatedEngine {
     });
 
     const pg = professionalResult.professionalGenerator || {};
+
+    // Capture runtime fingerprint AFTER to detect side effects
+    const runtimeAfter = this.getRuntimeFingerprint();
+
+    // Detect side effects: any change in critical runtime state
+    const sideEffectsDetected =
+      runtimeBefore.mode !== runtimeAfter.mode ||
+      runtimeBefore.isActive !== runtimeAfter.isActive ||
+      runtimeBefore.isRunning !== runtimeAfter.isRunning ||
+      runtimeBefore.activeRangeVersionId !== runtimeAfter.activeRangeVersionId ||
+      runtimeBefore.levelsCount !== runtimeAfter.levelsCount ||
+      runtimeBefore.cyclesCount !== runtimeAfter.cyclesCount ||
+      runtimeBefore.tickIntervalActive !== runtimeAfter.tickIntervalActive;
 
     const result = {
       ok: true,
@@ -1709,16 +1838,19 @@ class GridIsolatedEngine {
       changesMode: false,
       rebuild: false,
       configUsed: {
-        pair: this.config.pair,
-        bandPeriod: this.config.bandPeriod,
-        bandStdDevMultiplier: this.config.bandStdDevMultiplier,
-        atrPeriod: this.config.atrPeriod,
-        atrTimeframe: this.config.atrTimeframe,
-        netProfitTargetPct: this.config.netProfitTargetPct,
-        gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
-        gridStepMaxPct: this.config.gridStepMaxPct,
+        pair: configSnapshot.pair,
+        bandPeriod: configSnapshot.bandPeriod,
+        bandStdDevMultiplier: configSnapshot.bandStdDevMultiplier,
+        atrPeriod: configSnapshot.atrPeriod,
+        atrTimeframe: configSnapshot.atrTimeframe,
+        netProfitTargetPct: configSnapshot.netProfitTargetPct,
+        gridStepAtrMultiplier: configSnapshot.gridStepAtrMultiplier,
+        gridStepMaxPct: configSnapshot.gridStepMaxPct,
       },
       note: "Resultado matemático read-only; el motor real seguiría bloqueando generación porque el mercado no es apto si suitableForGrid=false.",
+      runtimeBefore,
+      runtimeAfter,
+      sideEffectsDetected,
     };
 
     // Store in memory
