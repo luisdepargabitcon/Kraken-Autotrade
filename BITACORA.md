@@ -630,6 +630,41 @@ Fase 3C.3: Grid más operativo — SELL objetivo asociado a cada BUY, perfil de 
 ### Confirmación de restricciones
 - ✅ No IDCA, No FISCO, No REAL, No órdenes reales, No rebuild, No DB manual, No migraciones, No limpieza real, No producción, No deploy
 
+---
+
+## FASE 3C.2-H-C — Audit shadow cleanup coherente con preview (2026-07-09)
+
+### Contexto
+- FASE 3C.2-H-B desplegada en staging (ee04bce). HARD VALIDATION PASSED.
+- `/status` detecta 24 ciclos SHADOW pre-fix correctamente (db_snapshot).
+- `/shadow-cleanup/preview` detecta 24 ciclos, `safeToArchiveShadowOnly=true`, `realOrdersAffected=false`.
+- **Pero** `/monitor/audit` devolvía `preFixShadowCyclesCount=0` y `cleanupRecommended=false`.
+
+### Causa
+- El audit usaba `getExecutionStatus()` (runtime vacío → 0 ciclos).
+- No usaba `getStatusSafe()` que hace fallback a db_snapshot.
+
+### Fix
+- `/monitor/audit` ahora usa `await gridIsolatedEngine.getStatusSafe()` en vez de `gridIsolatedEngine.getExecutionStatus()`.
+- `shadowCleanup` block ahora calcula `preFixShadowCyclesCount` desde `status.activeOpenCyclesCount` (que viene de db_snapshot si runtime vacío).
+- Nuevos campos en audit `shadowCleanup`: `safeToArchiveShadowOnly`, `realOrdersAffected`, `affectedCyclesCount`, `affectedLevelsCount`, `dryRunOnly`, `readOnly`.
+- Con datos reales de staging: audit ahora devolverá `preFixShadowCyclesCount=24`, `cleanupRecommended=true`, `safeToArchiveShadowOnly=true`.
+
+### Archivos modificados
+- `server/routes/gridIsolated.routes.ts` — audit usa `getStatusSafe()`, shadowCleanup usa status coherente.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 3 nuevos tests (90 total).
+
+### Tests ejecutados
+- **npm run check:** ✅
+- **vitest gridIsolatedRoutes.test.ts:** ✅ 90/90
+- **vitest gridSpacingCalculator.test.ts:** ✅ 35/35
+- **vitest gridWeightedLevels.test.ts:** ✅ 35/35
+- **vitest gridAllocationEngine.test.ts:** ✅ 26/26
+- **Total:** 186/186 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA, No FISCO, No REAL, No órdenes reales, No rebuild, No DB manual, No migraciones, No limpieza real, No producción, No deploy
+
 ### Archivos modificados
 - `server/services/gridIsolated/gridIsolatedEngine.ts` — guard fuerte para 0 niveles, semántica de rango, pre-check en rebuild
 - `server/services/gridIsolated/gridIsolatedTypes.ts` — añadido evento GRID_PROFESSIONAL_GENERATOR_COMPACT

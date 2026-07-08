@@ -987,7 +987,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
   app.get("/api/grid-isolated/monitor/audit", async (_req: Request, res: Response) => {
     try {
       const config = gridIsolatedEngine.getConfig();
-      const status = gridIsolatedEngine.getExecutionStatus();
+      const status = await gridIsolatedEngine.getStatusSafe();
       const checks = await gridModeLockService.runUnlockChecks();
       const blockingReasons = buildBlockingReasons(checks, config);
       const realModesBlocked = blockingReasons.length > 0;
@@ -1558,12 +1558,18 @@ export function registerGridIsolatedRoutes(app: Express): void {
           result: lastShadowValidation.result,
         } : null,
         shadowCleanup: {
-          preFixShadowCyclesCount: activeOpenCyclesCount,
+          preFixShadowCyclesCount: status.activeOpenCyclesCount || 0,
           cleanupPreviewAvailable: true,
-          cleanupRecommended: activeOpenCyclesCount > 0,
-          cleanupReason: activeOpenCyclesCount > 0
-            ? `Hay ${activeOpenCyclesCount} ciclos SHADOW abiertos. Se recomienda ejecutar una limpieza segura dry-run antes de continuar.`
+          cleanupRecommended: (status.activeOpenCyclesCount || 0) > 0 && status.realOpenOrdersCount === 0,
+          cleanupReason: (status.activeOpenCyclesCount || 0) > 0
+            ? `Hay ${status.activeOpenCyclesCount} ciclos SHADOW abiertos. Se recomienda ejecutar una limpieza segura dry-run antes de continuar.`
             : "No se detectaron ciclos SHADOW abiertos que requieran limpieza.",
+          safeToArchiveShadowOnly: (status.activeOpenCyclesCount || 0) > 0 && status.realOpenOrdersCount === 0,
+          realOrdersAffected: status.realOpenOrdersCount > 0,
+          affectedCyclesCount: status.activeOpenCyclesCount || 0,
+          affectedLevelsCount: 0,
+          dryRunOnly: true,
+          readOnly: true,
         },
         export: {
           chatgptSummary,

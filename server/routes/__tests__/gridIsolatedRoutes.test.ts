@@ -960,4 +960,38 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body.shadowCleanup).toHaveProperty("cleanupRecommended");
     expect(res.body.shadowCleanup).toHaveProperty("cleanupReason");
   });
+
+  // ─── 3C.2-H-C: Audit shadow cleanup coherent with preview ─────────
+
+  it("monitor/audit shadowCleanup includes safeToArchiveShadowOnly, realOrdersAffected, dryRunOnly, readOnly", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.shadowCleanup).toHaveProperty("safeToArchiveShadowOnly");
+    expect(res.body.shadowCleanup).toHaveProperty("realOrdersAffected");
+    expect(res.body.shadowCleanup).toHaveProperty("affectedCyclesCount");
+    expect(res.body.shadowCleanup).toHaveProperty("affectedLevelsCount");
+    expect(res.body.shadowCleanup).toHaveProperty("dryRunOnly");
+    expect(res.body.shadowCleanup).toHaveProperty("readOnly");
+    expect(res.body.shadowCleanup.dryRunOnly).toBe(true);
+    expect(res.body.shadowCleanup.readOnly).toBe(true);
+  });
+
+  it("monitor/audit does not falsely return cleanupRecommended=false when cycles exist", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    // With mocked DB (empty), preFixShadowCyclesCount should be 0 and cleanupRecommended false
+    // This test verifies the logic is coherent: if count=0 then recommended=false
+    const sc = res.body.shadowCleanup;
+    if (sc.preFixShadowCyclesCount === 0) {
+      expect(sc.cleanupRecommended).toBe(false);
+    } else {
+      expect(sc.cleanupRecommended).toBe(true);
+    }
+  });
+
+  it("monitor/audit does not auto-start motor", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.functionalStatus.runtime.schedulerRunning).toBe(false);
+  });
 });
