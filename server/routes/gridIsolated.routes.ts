@@ -38,9 +38,6 @@ import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy 
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
 import { getNaturalGridMessage } from "../services/gridIsolated/gridActivityFormatter";
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
-import { getGridBandSnapshot } from "../services/gridIsolated/gridBandAdapter";
-import { gridCapitalAllocator } from "../services/gridIsolated/gridCapitalAllocator";
-import { generateProfessionalGridLevels } from "../services/gridIsolated/gridSpacingCalculator";
 
 // ─── Timing metadata helpers for audit/export ───────────────────────────────
 
@@ -1296,6 +1293,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       };
 
       const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
+      const lastProfessionalValidation = gridIsolatedEngine.getLastProfessionalGeneratorValidation();
 
       // ─── Canonical level counts (g1 normalization) ───────────
       const plannedLevelsCount = levels.filter((l: any) => l?.status === "planned").length;
@@ -1326,7 +1324,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const historicalPlannedLevelsCount = activeRangeId
         ? levels.filter((l: any) => l.rangeVersionId !== activeRangeId && l?.status === "planned").length
         : 0;
-      const plannedLevelsTotal = plannedLevelsCount;
+      const globalPlannedLevelsTotal = plannedLevelsCount;
       const openCyclesCount = cycles.filter((c: any) => c?.status === "open" || c?.status === "active").length;
       const closedCyclesCount = cycles.filter((c: any) => c?.status === "completed" || c?.status === "closed").length;
 
@@ -1344,15 +1342,19 @@ export function registerGridIsolatedRoutes(app: Express): void {
           canUnlockRealFull: blockingReasons.length === 0,
           openCycles: status.openCycles,
           openLevels: status.openLevels,
-          plannedLevelsCount,
-          activeOrdersCount,
+          plannedLevelsCount: status.plannedLevelsCount,
+          activeOrdersCount: status.activeOrdersCount,
           realOpenOrdersCount,
           historicalLevelsCount: status.historicalLevelsCount,
+          // Global counters (all levels in memory)
+          globalLevelsCount: status.globalLevelsCount,
+          globalPlannedLevelsCount: status.globalPlannedLevelsCount,
+          orphanPlannedLevelsCount: status.orphanPlannedLevelsCount,
           // Canonical level counts (g1)
           totalLevels,
           currentRangeLevelsCount,
           historicalRangeLevelsCount,
-          plannedLevelsTotal,
+          globalPlannedLevelsTotal,
           currentPlannedLevelsCount,
           historicalPlannedLevelsCount,
           replacedLevelsCount,
@@ -1453,7 +1455,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
           totalLevels,
           currentRangeLevelsCount,
           historicalRangeLevelsCount,
-          plannedLevelsTotal,
+          globalPlannedLevelsTotal,
           currentPlannedLevelsCount,
           historicalPlannedLevelsCount,
           replacedLevelsCount,
@@ -1529,12 +1531,15 @@ export function registerGridIsolatedRoutes(app: Express): void {
         professionalGeneratorRuntime: {
           lastEventAvailable: professionalGenerator.available || false,
           lastEventReason: professionalGenerator.available ? null : (professionalGenerator.reason || null),
-          lastValidationAvailable: lastShadowValidation.at !== null,
-          lastValidationAt: lastShadowValidation.at || null,
-          lastValidationResult: lastShadowValidation.result || null,
+          lastShadowValidationAvailable: lastShadowValidation.at !== null,
+          lastShadowValidationAt: lastShadowValidation.at || null,
+          lastShadowValidationResult: lastShadowValidation.result || null,
+          lastReadOnlyValidationAvailable: lastProfessionalValidation.at !== null,
+          lastReadOnlyValidationAt: lastProfessionalValidation.at || null,
+          lastReadOnlyValidationResult: lastProfessionalValidation.result || null,
           blockedByUnsuitableMarket: (lastShadowValidation.result as any)?.blockedByUnsuitableMarket || false,
           marketUnsuitableReason: (lastShadowValidation.result as any)?.marketUnsuitableReason || null,
-          professionalGeneratorExecuted: (lastShadowValidation.result as any)?.professionalGeneratorExecuted || false,
+          professionalGeneratorExecuted: (lastProfessionalValidation.result as any)?.professionalGeneratorExecuted || false,
         },
         lastShadowEvaluation: lastShadowValidation.at ? {
           at: lastShadowValidation.at,
@@ -1782,93 +1787,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
         return res.status(503).json({ error: "Grid engine not available" });
       }
 
-      const config = engine.getConfig();
-      if (!config) {
-        return res.status(400).json({ error: "Grid config not loaded" });
-      }
-
-      // Get current band snapshot (read-only)
-      const bandSnapshot = await getGridBandSnapshot({
-        pair: config.pair || "BTC/USD",
-        bandPeriod: 20,
-        bandStdDevMultiplier: 2,
-        atrPeriod: config.atrPeriod || 14,
-        atrTimeframe: "15m",
-      });
-
-      if (!bandSnapshot) {
-        return res.status(400).json({
-          error: "No band snapshot available",
-          suitableForGrid: false,
-          bandReason: "No market data available",
-        });
-      }
-
-      // Execute professional generator with same config as proposeRangeVersion
-      const allocation = await gridCapitalAllocator.allocate(
-        config.capitalProfile,
-        10, // initial estimate
-        config.netProfitTargetPct,
-        {
-          maxCapitalPerCycleUsd: config.gridMaxCapitalPerCycleUsd ?? 0,
-          allocationMode: config.gridAllocationMode ?? "uniform",
-          deploymentMode: config.gridCapitalDeploymentMode ?? "capped",
-          progressiveIntensity: config.gridProgressiveIntensity ?? 0.30,
-          maxLevelPct: config.gridMaxLevelPct ?? 40,
-          minLevelUsd: config.gridMinLevelUsd ?? 30,
-        }
-      );
-
-      const professionalResult = generateProfessionalGridLevels({
-        currentPrice: bandSnapshot.midPrice,
-        bollingerMiddle: bandSnapshot.middle,
-        bollingerUpper: bandSnapshot.upper,
-        bollingerLower: bandSnapshot.lower,
-        atrPct: bandSnapshot.atrPct,
-        netProfitTargetPct: config.netProfitTargetPct,
-        gridStepAtrMultiplier: config.gridStepAtrMultiplier,
-        gridStepMaxPct: config.gridStepMaxPct,
-        configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
-        configuredSellLevels: Math.floor(allocation.levelsCount / 2),
-        capitalPerLevelUsd: allocation.capitalPerLevelUsd,
-        spreadBufferPct: 0.01,
-        safetyBufferPct: 0.10,
-        minLevelsForViableGrid: 4,
-        centerPriceMode: "hybrid",
-        centerClampPct: 0.25,
-        operationalRangeMode: "hybrid",
-        operationalBandWidthPct: 20.0,
-        atrRangeMultiplier: 8.0,
-        minOperationalBandWidthPct: 20.0,
-        dynamicLevelReduction: true,
-        gridViabilityMode: "strict",
-      });
-
-      const pg = professionalResult.professionalGenerator || {};
-
-      res.json({
-        ok: true,
-        suitableForGrid: bandSnapshot.suitableForGrid,
-        bandReason: bandSnapshot.reason || null,
-        professionalGeneratorExecuted: true,
-        viabilityStatus: professionalResult.viabilityStatus,
-        levelsCount: professionalResult.levels.length,
-        generatedBuyLevels: pg.generatedBuyLevels || 0,
-        generatedSellLevels: pg.generatedSellLevels || 0,
-        minSpacingPctReal: pg.minSpacingPctReal || null,
-        spacingPct: pg.spacingPct || null,
-        centerPrice: pg.centerPrice || null,
-        operationalLower: pg.operationalLower || null,
-        operationalUpper: pg.operationalUpper || null,
-        operationalBandWidthPct: pg.operationalBandWidthPct || null,
-        operationalSemiRangePct: pg.operationalSemiRangePct || null,
-        legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
-        persistsLevels: false,
-        placesOrders: false,
-        changesMode: false,
-        rebuild: false,
-        note: "Resultado matemático read-only; el motor real seguiría bloqueando generación porque el mercado no es apto si suitableForGrid=false.",
-      });
+      const result = await engine.validateProfessionalGeneratorReadOnly();
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }

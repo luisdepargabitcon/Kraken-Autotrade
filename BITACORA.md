@@ -159,6 +159,96 @@ Corrección del diagnóstico SHADOW tras la validación funcional post-deploy. E
 - ✅ No deploy
 
 ### Siguiente fase
+Fase 3C.2-E: Fix validación read-only con config real y counts audit
+
+---
+
+## 2026-07-08 — FASE 3C.2-E FIX VALIDACIÓN READ-ONLY CON CONFIG REAL Y COUNTS AUDIT
+
+### Resumen
+Fix pre-deploy para precisión en validación read-only y counts de audit. El endpoint read-only usaba valores hardcodeados en lugar de config real, orphanPlannedLevelsCount quedaba mal sin rango activo, y audit mezclaba counts operativos con globales. Se movió validación al engine, se corrigieron counts operativos/globales, y se añadió visibilidad de validación read-only en audit.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — método validateProfessionalGeneratorReadOnly() con config real, corrección orphanPlannedLevelsCount
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — añadidos globalLevelsCount, globalPlannedLevelsCount, orphanPlannedLevelsCount a GridExecutionStatus
+- `server/routes/gridIsolated.routes.ts` — endpoint simplificado, counts audit corregidos, professionalGeneratorRuntime con read-only
+
+### 1. Validación read-only movida al engine con config real
+**Problema:** El endpoint /api/grid-isolated/professional-generator/validate llamaba a getGridBandSnapshot con valores hardcodeados (bandPeriod: 20, bandStdDevMultiplier: 2, atrTimeframe: "15m") en lugar de usar la config real del Grid.
+
+**Solución:** Crear método público validateProfessionalGeneratorReadOnly() en gridIsolatedEngine.ts:
+- Carga config si no existe
+- Usa EXACTAMENTE la config real: this.config.pair, this.config.bandPeriod, this.config.bandStdDevMultiplier, this.config.atrPeriod, this.config.atrTimeframe
+- Ejecuta generateProfessionalGridLevels() con misma config interna SHADOW que proposeRangeVersion()
+- Devuelve resultado completo con configUsed para verificación
+- Guarda última validación en memoria: lastProfessionalGeneratorValidationAt, lastProfessionalGeneratorValidationResult
+- Añadir getter getLastProfessionalGeneratorValidation()
+
+**Regla:** Una sola fuente de verdad: engine. No hardcodes en routes.
+
+### 2. Endpoint simplificado
+**Problema:** El endpoint duplicaba lógica del generador en routes, hardcodeando timeframe/bandas.
+
+**Solución:** Simplificar endpoint a solo:
+- await gridIsolatedEngine.loadConfig()
+- const result = await gridIsolatedEngine.validateProfessionalGeneratorReadOnly()
+- res.json(result)
+
+**Regla:** No duplicar lógica en routes. No llamar getGridBandSnapshot ni generateProfessionalGridLevels desde routes.
+
+### 3. Corrección orphanPlannedLevelsCount
+**Problema:** En getExecutionStatus(), si activeRangeVersionId=null, orphanPlannedLevelsCount quedaba 0 aunque existieran niveles planned en memoria.
+
+**Solución:** Si activeRangeId=null, orphanPlannedLevelsCount cuenta todos los planned en memoria (todos son orphan/históricos sin rango activo).
+
+**Regla:** Sin rango activo, todos los planned cargados son orphan/históricos, no operativos.
+
+### 4. Corrección /monitor/audit counts operativos/globales
+**Problema:** /monitor/audit recalculaba plannedLevelsCount y activeOrdersCount desde levels globales, reintroduciendo confusión.
+
+**Solución:**
+- summary.plannedLevelsCount usa status.plannedLevelsCount (operativo)
+- summary.activeOrdersCount usa status.activeOrdersCount (operativo)
+- Añadir campos globales separados: globalLevelsCount, globalPlannedLevelsCount, orphanPlannedLevelsCount
+- En levelsSummary: currentPlannedLevelsCount viene de currentLevels (rango activo)
+- plannedLevelsTotal renombrado a globalPlannedLevelsTotal (claridad)
+- Si activeRangeId=null: currentLevelsCount=0, currentPlannedLevelsCount=0
+
+**Regla UX:** KPIs operativos = solo rango activo. KPIs globales/históricos = nombre explícito.
+
+### 5. professionalGeneratorRuntime con read-only validation
+**Problema:** professionalGeneratorRuntime solo usaba lastShadowValidation, no reflejaba validación read-only.
+
+**Solución:** Añadir en /monitor/audit:
+- lastShadowValidationAvailable, lastShadowValidationAt, lastShadowValidationResult
+- lastReadOnlyValidationAvailable, lastReadOnlyValidationAt, lastReadOnlyValidationResult
+- blockedByUnsuitableMarket/marketUnsuitableReason desde lastShadowValidation
+- professionalGeneratorExecuted desde lastReadOnlyValidation
+
+**Regla:** El audit debe exponer tanto estado de eventos como estado de validaciones runtime.
+
+### 6. Tests ejecutados
+- **npm run check:** ✅
+- **npx vitest run gridSpacingCalculator.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts:** ✅ 26/26 tests passed
+- **npx vitest run gridIsolatedRoutes.test.ts:** ✅ 66/66 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No rebuild ejecutado
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No cambios config DB
+- ✅ No Risk Manager
+- ✅ No Execution Service
+- ✅ No reconciliation real
+- ✅ No deploy
+
+### Siguiente fase
 Fase 3C.3: Ajustes finos de configuración y monitoreo
 
 ---

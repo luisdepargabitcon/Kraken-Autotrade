@@ -558,6 +558,9 @@ export interface GridExecutionStatus {
   capitalAvailableUsd: number;
   totalNetPnlUsd: number;
   totalCyclesCompleted: number;
+  globalLevelsCount: number;
+  globalPlannedLevelsCount: number;
+  orphanPlannedLevelsCount: number;
 }
 
 // ─── Reconciliation ─────────────────────────────────────────────────
