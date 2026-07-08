@@ -876,7 +876,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
   app.get("/api/grid-isolated/status", async (_req: Request, res: Response) => {
     try {
-      const status = await gridIsolatedEngine.getStatusFromDb();
+      const status = await gridIsolatedEngine.getStatusSafe();
       res.json(status);
     } catch (error) {
       res.status(500).json({ error: String(error) });

@@ -1549,8 +1549,28 @@ class GridIsolatedEngine {
   }
 
   /**
-   * Get execution status from DB snapshot without auto-starting or mutating runtime.
-   * Used when runtime is empty (this.config is null) to still show real DB state.
+   * Safe status: returns runtime status if loaded, otherwise falls back to DB snapshot.
+   * This is the preferred method for /status endpoint — never auto-starts, never mutates runtime.
+   */
+  async getStatusSafe(): Promise<GridExecutionStatus> {
+    if (this.config) {
+      const status = this.getExecutionStatus();
+      return {
+        ...status,
+        runtimeLoaded: true,
+        statusSource: "runtime" as const,
+        configLoaded: true,
+        configSource: "memory" as const,
+      };
+    }
+    return await this.getStatusFromDb();
+  }
+
+  /**
+   * Get execution status from DB snapshot — READ-ONLY fallback.
+   * Only used when runtime is not loaded (this.config is null).
+   * Does NOT modify this.config, this.activeRangeVersion, this.levels, this.cycles.
+   * Does NOT start the scheduler.
    */
   async getStatusFromDb(): Promise<GridExecutionStatus> {
     if (this.config) {
@@ -1834,8 +1854,10 @@ class GridIsolatedEngine {
     }
 
     return {
+      ok: true,
       timestamp: new Date().toISOString(),
       dryRun: true,
+      readOnly: true,
       realOrdersAffected,
       cycles: {
         totalOpenCycles: openCycles.length,

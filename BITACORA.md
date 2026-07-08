@@ -598,6 +598,38 @@ Fase 3C.3: Grid más operativo — SELL objetivo asociado a cada BUY, perfil de 
 - ✅ No deploy (solo commit)
 - ✅ No limpieza real ejecutada (solo preview dry-run)
 
+---
+
+## FASE 3C.2-H-B — Status seguro runtime/db_snapshot (2026-07-09)
+
+### Problema detectado
+- FASE 3C.2-H cambió `/status` para usar `getStatusFromDb()` directamente.
+- Eso significaba que **siempre** usaba DB snapshot, incluso cuando el runtime estaba cargado.
+- Esto rompía la regla: runtime vivo tiene prioridad, db_snapshot es solo fallback.
+
+### Fix
+- Nuevo método `getStatusSafe()` en `gridIsolatedEngine.ts`:
+  - Si `this.config` está cargado → devuelve `getExecutionStatus()` con `statusSource="runtime"`, `configSource="memory"`, `runtimeLoaded=true`.
+  - Si `this.config` es null → fallback a `getStatusFromDb()` con `statusSource="db_snapshot"`.
+- Ruta `/status` cambiada de `getStatusFromDb()` a `getStatusSafe()`.
+- `getStatusFromDb()` documentado como fallback read-only únicamente.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — nuevo `getStatusSafe()`, documentación en `getStatusFromDb()`.
+- `server/routes/gridIsolated.routes.ts` — `/status` usa `getStatusSafe()`.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 3 nuevos tests (87 total).
+
+### Tests ejecutados
+- **npm run check:** ✅
+- **vitest gridIsolatedRoutes.test.ts:** ✅ 87/87
+- **vitest gridSpacingCalculator.test.ts:** ✅ 35/35
+- **vitest gridWeightedLevels.test.ts:** ✅ 35/35
+- **vitest gridAllocationEngine.test.ts:** ✅ 26/26
+- **Total:** 183/183 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA, No FISCO, No REAL, No órdenes reales, No rebuild, No DB manual, No migraciones, No limpieza real, No producción, No deploy
+
 ### Archivos modificados
 - `server/services/gridIsolated/gridIsolatedEngine.ts` — guard fuerte para 0 niveles, semántica de rango, pre-check en rebuild
 - `server/services/gridIsolated/gridIsolatedTypes.ts` — añadido evento GRID_PROFESSIONAL_GENERATOR_COMPACT
