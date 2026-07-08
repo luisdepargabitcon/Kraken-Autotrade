@@ -216,8 +216,8 @@ export function GridSummaryPanel({
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-xs font-mono text-muted-foreground mb-1">CICLOS ABIERTOS</p>
-              <p className="font-mono text-lg font-bold">{summary?.openCyclesCount ?? status?.openCycles ?? 0}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{summary?.closedCyclesCount ?? 0} cerrados · ${status?.capitalReservedUsd?.toFixed(0) || 0} reservado</p>
+              <p className="font-mono text-lg font-bold">{summary?.activeOpenCyclesCount ?? status?.activeOpenCyclesCount ?? summary?.openCyclesCount ?? status?.openCycles ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{summary?.closedCyclesCount ?? 0} cerrados · {summary?.orphanOpenCyclesCount ?? status?.orphanOpenCyclesCount ?? 0} orphan</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-xs font-mono text-muted-foreground mb-1">PNL NETO TOTAL</p>
@@ -441,6 +441,7 @@ export function GridSummaryPanel({
       <GridCyclesPanel
         cycles={cycles}
         onGoToTab={onGoToTab}
+        activeRangeVersionId={status?.activeRangeVersionId ?? null}
       />
     ),
     actividad: <GridLiveActivityPanel />,

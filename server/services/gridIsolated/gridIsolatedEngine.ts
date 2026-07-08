@@ -1102,11 +1102,15 @@ class GridIsolatedEngine {
 
   /**
    * SHADOW mode simulation — check if price would have filled any levels.
+   * Only processes levels that belong to the active range version.
    */
   private async simulateShadowTick(currentPrice: number): Promise<void> {
     if (!this.activeRangeVersion || !this.config) return;
 
+    const activeRangeId = this.activeRangeVersion.id;
+
     for (const level of this.levels) {
+      if (level.rangeVersionId !== activeRangeId) continue;
       if (level.status !== "planned" && level.status !== "open") continue;
 
       let filled = false;
@@ -1144,15 +1148,61 @@ class GridIsolatedEngine {
 
   /**
    * Process a fill and create/complete cycles.
+   * Only processes levels that belong to the active range version.
+   * Respects maxOpenCycles and prevents duplicate cycles per buyLevelId.
    */
   private async processCycleFill(level: GridLevel, fillPrice: number): Promise<void> {
     if (!this.activeRangeVersion || !this.config) return;
 
+    const activeRangeId = this.activeRangeVersion.id;
+
+    // Block levels outside active range
+    if (level.rangeVersionId !== activeRangeId) {
+      await this.logEvent("GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE", `[SHADOW] Level ${level.id} ignored: belongs to range ${level.rangeVersionId}, not active ${activeRangeId}`, {
+        levelId: level.id, levelRangeVersionId: level.rangeVersionId, activeRangeVersionId: activeRangeId, mode: "SHADOW",
+      });
+      return;
+    }
+
     if (level.side === "BUY") {
+      // Check maxOpenCycles for active range
+      const openCyclesForActiveRange = this.cycles.filter(c =>
+        c.rangeVersionId === activeRangeId &&
+        ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c.status)
+      ).length;
+
+      if (openCyclesForActiveRange >= this.config.maxOpenCycles) {
+        await this.logEvent("GRID_SHADOW_MAX_OPEN_CYCLES_REACHED", `[SHADOW] Max open cycles (${this.config.maxOpenCycles}) reached for active range. BUY level ${level.id} not filled.`, {
+          levelId: level.id, openCycles: openCyclesForActiveRange, maxOpenCycles: this.config.maxOpenCycles, mode: "SHADOW",
+        });
+        // Revert level status since we're not processing it
+        level.status = "planned";
+        level.filledPrice = null;
+        level.filledQuantity = 0;
+        level.filledAt = null;
+        await db.update(gridIsolatedLevels)
+          .set({ status: "planned", filledPrice: null, filledAt: null })
+          .where(eq(gridIsolatedLevels.id, level.id));
+        return;
+      }
+
+      // Check for existing open cycle for this buy level (prevent duplicates)
+      const existingCycleForBuy = this.cycles.find(c =>
+        c.buyLevelId === level.id &&
+        !["completed", "cancelled", "stop_loss_hit", "trailing_closed"].includes(c.status)
+      );
+
+      if (existingCycleForBuy) {
+        await this.logEvent("GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED", `[SHADOW] Duplicate cycle for buy level ${level.id} ignored. Existing cycle ${existingCycleForBuy.id}.`, {
+          levelId: level.id, existingCycleId: existingCycleForBuy.id, mode: "SHADOW",
+        });
+        return;
+      }
+
       // Create new cycle
       const cycle: GridCycle = {
         id: randomUUID(),
-        rangeVersionId: this.activeRangeVersion.id,
+        rangeVersionId: activeRangeId,
         cycleNumber: this.cycles.length + 1,
         pair: this.config.pair,
         status: "buy_filled",
@@ -1193,8 +1243,10 @@ class GridIsolatedEngine {
         cycleId: cycle.id, buyPrice: fillPrice, mode: "SHADOW",
       });
     } else if (level.side === "SELL") {
-      // Find oldest open cycle (buy_filled, no sell yet)
-      const openCycle = this.cycles.find(c => c.status === "buy_filled");
+      // Find oldest open cycle from the SAME active range only
+      const openCycle = this.cycles.find(c =>
+        c.rangeVersionId === activeRangeId && c.status === "buy_filled"
+      );
       if (!openCycle) return;
 
       openCycle.sellLevelId = level.id;
@@ -1389,9 +1441,18 @@ class GridIsolatedEngine {
         ).length
       : this.levels.filter(l => l.status === "planned").length;
 
+    const openCycleStatuses = ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"];
     const openCycles = this.cycles.filter(c =>
-      c.status !== "completed" && c.status !== "cancelled"
+      !["completed", "cancelled", "stop_loss_hit", "trailing_closed"].includes(c.status)
     ).length;
+    const activeOpenCyclesCount = activeRangeId
+      ? this.cycles.filter(c => c.rangeVersionId === activeRangeId && openCycleStatuses.includes(c.status)).length
+      : 0;
+    const globalOpenCyclesCount = openCycles;
+    const orphanOpenCyclesCount = activeRangeId
+      ? this.cycles.filter(c => c.rangeVersionId !== activeRangeId && openCycleStatuses.includes(c.status)).length
+      : openCycles;
+    const historicalOpenCyclesCount = orphanOpenCyclesCount;
     const totalNetPnl = this.cycles.reduce((sum, c) => sum + c.netPnlUsd, 0);
     const completedCycles = this.cycles.filter(c => c.status === "completed").length;
 
@@ -1418,6 +1479,10 @@ class GridIsolatedEngine {
       realOpenOrdersCount,
       historicalLevelsCount,
       openCycles,
+      activeOpenCyclesCount,
+      globalOpenCyclesCount,
+      orphanOpenCyclesCount,
+      historicalOpenCyclesCount,
       dailyOrderCount: this.dailyOrderCount,
       circuitBreakerOpen: this.circuitBreakerOpen,
       pumpDumpState: this.pumpDumpState.state,

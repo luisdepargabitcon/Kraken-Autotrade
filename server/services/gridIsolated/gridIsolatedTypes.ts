@@ -491,6 +491,9 @@ export const GRID_EVENT_TYPES = [
   "GRID_PROFESSIONAL_GENERATOR_USED",
   "GRID_PROFESSIONAL_GENERATOR_COMPACT",
   "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE",
+  "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE",
+  "GRID_SHADOW_MAX_OPEN_CYCLES_REACHED",
+  "GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED",
 ] as const;
 
 export type GridEventType = (typeof GRID_EVENT_TYPES)[number];
@@ -549,6 +552,10 @@ export interface GridExecutionStatus {
   realOpenOrdersCount: number;
   historicalLevelsCount: number;
   openCycles: number;
+  activeOpenCyclesCount: number;
+  globalOpenCyclesCount: number;
+  orphanOpenCyclesCount: number;
+  historicalOpenCyclesCount: number;
   dailyOrderCount: number;
   circuitBreakerOpen: boolean;
   pumpDumpState: PumpDumpState;

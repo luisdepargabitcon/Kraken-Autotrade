@@ -10,6 +10,7 @@ interface GridCyclesPanelProps {
   onGoToTab: (tab: string) => void;
   limit?: number;
   showViewAll?: boolean;
+  activeRangeVersionId?: string | null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ function getCycleClosedAt(cycle: any): Date | null {
 const CYCLE_STATUS_LABELS: Record<string, string> = {
   open: "Abierto",
   active: "Abierto",
-  buy_filled: "Compra ejecutada",
+  buy_filled: "Compra simulada SHADOW",
   completed: "Cerrado",
   cancelled: "Cancelado",
   error: "Error",
@@ -99,7 +100,7 @@ function Row({ label, value, mono }: { label: string; value: React.ReactNode; mo
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = true }: GridCyclesPanelProps) {
+export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = true, activeRangeVersionId = null }: GridCyclesPanelProps) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [selectedCycle, setSelectedCycle] = useState<any | null>(null);
@@ -144,13 +145,17 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
             </p>
           </div>
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-muted-foreground">Capital en ciclos</p>
+            <p className="text-xs text-muted-foreground">Capital simulado en ciclos SHADOW</p>
             <p className="text-lg font-bold">{fmtUsd(reservedCapital)}</p>
           </div>
         </div>
 
         {cycles.length > 0 ? (
           <>
+            {/* SHADOW notice */}
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-400">
+              Estos ciclos son simulados. No hay órdenes reales ni capital ejecutado.
+            </div>
             {/* Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -263,6 +268,19 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
             No hay ciclos todavía.
           </div>
         )}
+
+        {/* Orphan cycles notice */}
+        {(() => {
+          const orphanCycles = cycles.filter((c: any) =>
+            isCycleOpen(c) && c.rangeVersionId && c.rangeVersionId !== activeRangeVersionId
+          );
+          if (orphanCycles.length === 0) return null;
+          return (
+            <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-2 text-xs text-blue-400">
+              Hay {orphanCycles.length} ciclos SHADOW históricos/orphan. No pertenecen al rango activo actual.
+            </div>
+          );
+        })()}
       </CardContent>
 
       {/* ─── Cycle detail modal ────────────────────────────────────── */}

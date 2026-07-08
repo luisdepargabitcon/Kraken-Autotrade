@@ -151,7 +151,7 @@ function naturalMessage(ev: any): string {
     case "GRID_CYCLE_BUY_PLACED":
       return "Orden de compra colocada para ciclo Grid.";
     case "GRID_CYCLE_BUY_FILLED":
-      return "Compra ejecutada. Ciclo Grid activo.";
+      return "Compra simulada SHADOW. Ciclo Grid activo.";
     case "GRID_CYCLE_COMPLETED":
       return "Ciclo Grid completado con beneficio.";
     case "GRID_PUMP_GUARD_TRIGGERED":

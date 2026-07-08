@@ -353,10 +353,100 @@ validateProfessionalGeneratorReadOnly() captura fingerprint ANTES y DESPUÉS, de
 - ✅ No deploy
 
 ### Siguiente fase
-Fase 3C.3: Ajustes finos de configuración y monitoreo
+Fase 3C.2-G: Corrección de simulación SHADOW sobre niveles históricos
 
 ### Resumen
 Correcciones de seguridad y semántica aplicadas al generador profesional SHADOW antes de deploy. Blindaje contra rangos con 0 niveles, corrección de semántica de rango operativo vs Bollinger macro, protección de rebuild manual/drift, limpieza de imports legacy y exposición de professionalGenerator en audit raíz.
+
+---
+
+## FASE 3C.2-G — Corrección de simulación SHADOW sobre niveles históricos (2026-07-09)
+
+### Contexto
+- Validación 3C.2-F correcta para endpoint read-only: `sideEffectsDetected=false`, `runtimeBefore == runtimeAfter`.
+- HARD VALIDATION falló por asumir `openCycles=0` en script remoto; el endpoint no creó los 24 ciclos.
+- Problema real detectado: 24 ciclos SHADOW abiertos en staging, 160 niveles globales/históricos planificados.
+- Riesgo: `simulateShadowTick` podía recorrer niveles históricos/globales y generar ciclos nuevos sobre niveles que no pertenecen al rango activo.
+- Motor parado en staging via API: `mode=OFF`, `isRunning=false`, `realOpenOrdersCount=0`.
+
+### Fixes implementados
+
+**1. simulateShadowTick filtrar por activeRangeVersionId**
+- `simulateShadowTick()` ahora filtra `level.rangeVersionId !== activeRangeId` con `continue`.
+- Solo niveles del rango activo pueden generar fills SHADOW.
+
+**2. processCycleFill bloquear nivel fuera de rango activo**
+- `processCycleFill()` ahora rechaza niveles con `level.rangeVersionId !== activeRangeId`.
+- Logea evento `GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE`.
+- Un nivel histórico jamás debe crear ciclo en el rango activo.
+
+**3. maxOpenCycles respetado en SHADOW**
+- Antes de crear ciclo BUY, cuenta ciclos abiertos del rango activo.
+- Si `openCyclesForActiveRange >= config.maxOpenCycles`, rechaza y revierte nivel a `planned`.
+- Logea evento `GRID_SHADOW_MAX_OPEN_CYCLES_REACHED`.
+
+**4. Evitar duplicados por buyLevelId**
+- Antes de crear ciclo BUY, busca ciclo existente para ese `buyLevelId`.
+- Si ya existe ciclo abierto para ese nivel, ignora el fill.
+- Logea evento `GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED`.
+
+**5. SELL solo cierra ciclo del mismo rango activo**
+- `processCycleFill()` en rama SELL ahora busca ciclo con `c.rangeVersionId === activeRangeId`.
+- No mezcla SELL del rango actual con ciclos de rangos anteriores.
+
+**6. Status/audit: separar ciclos activos, globales y orphan**
+- `getExecutionStatus()` ahora devuelve: `activeOpenCyclesCount`, `globalOpenCyclesCount`, `orphanOpenCyclesCount`, `historicalOpenCyclesCount`.
+- Si `activeRangeVersionId` existe: `activeOpenCyclesCount` = ciclos abiertos del rango activo; `orphanOpenCyclesCount` = ciclos abiertos de otros rangos.
+- Si `activeRangeVersionId=null`: `activeOpenCyclesCount=0`; todos los ciclos abiertos son orphan/históricos.
+- Audit endpoint (`/monitor/audit`) incluye los mismos campos en `summary`.
+- KPIs principales de la UI usan `activeOpenCyclesCount`, no `globalOpenCyclesCount`.
+
+**7. UI: aclarar que son simulaciones SHADOW**
+- `GridCyclesPanel.tsx`: "Compra ejecutada" → "Compra simulada SHADOW".
+- `GridCyclesPanel.tsx`: "Capital en ciclos" → "Capital simulado en ciclos SHADOW".
+- Aviso visible: "Estos ciclos son simulados. No hay órdenes reales ni capital ejecutado."
+- Aviso orphan: "Hay N ciclos SHADOW históricos/orphan. No pertenecen al rango activo actual."
+- `GridActivityLive.tsx`: "Compra ejecutada. Ciclo Grid activo." → "Compra simulada SHADOW. Ciclo Grid activo."
+- `GridSummaryPanel.tsx`: KPI "CICLOS ABIERTOS" ahora usa `activeOpenCyclesCount` y muestra orphan count.
+
+### Nuevos tipos de evento
+- `GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE`
+- `GRID_SHADOW_MAX_OPEN_CYCLES_REACHED`
+- `GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED`
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — simulateShadowTick, processCycleFill, getExecutionStatus
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — nuevos GridEventType, nuevos campos en GridExecutionStatus
+- `server/routes/gridIsolated.routes.ts` — audit con activeOpenCyclesCount/globalOpenCyclesCount/orphanOpenCyclesCount
+- `client/src/components/grid/GridCyclesPanel.tsx` — textos SHADOW, avisos, prop activeRangeVersionId
+- `client/src/components/grid/GridActivityLive.tsx` — texto "Compra simulada SHADOW"
+- `client/src/components/grid/GridSummaryPanel.tsx` — KPI usa activeOpenCyclesCount, pasa activeRangeVersionId
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 8 nuevos tests
+
+### Tests ejecutados
+- **npm run check:** ✅
+- **npx vitest run gridIsolatedRoutes.test.ts:** ✅ 74/74 tests passed
+- **npx vitest run gridSpacingCalculator.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts:** ✅ 26/26 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No rebuild ejecutado
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No cambios config DB
+- ✅ No Risk Manager
+- ✅ No Execution Service
+- ✅ No reconciliation real
+- ✅ No deploy (solo commit)
+
+### Siguiente fase
+Fase 3C.2-H: Limpieza segura de ciclos SHADOW huérfanos (dryRun=true, preview, confirmación)
+Fase 3C.3: Grid más operativo — SELL objetivo asociado a cada BUY, perfil de actividad, preview de primer BUY
 
 ### Archivos modificados
 - `server/services/gridIsolated/gridIsolatedEngine.ts` — guard fuerte para 0 niveles, semántica de rango, pre-check en rebuild

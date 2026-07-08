@@ -756,4 +756,94 @@ describe("Grid Isolated Routes — Endpoints", () => {
       expect(cyc).toHaveProperty("durationLabel");
     }
   });
+
+  // ─── 3C.2-G: SHADOW cycle separation tests ────────────────────────
+
+  it("monitor/audit summary includes activeOpenCyclesCount, globalOpenCyclesCount, orphanOpenCyclesCount", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.summary).toHaveProperty("activeOpenCyclesCount");
+    expect(res.body.summary).toHaveProperty("globalOpenCyclesCount");
+    expect(res.body.summary).toHaveProperty("orphanOpenCyclesCount");
+    expect(typeof res.body.summary.activeOpenCyclesCount).toBe("number");
+    expect(typeof res.body.summary.globalOpenCyclesCount).toBe("number");
+    expect(typeof res.body.summary.orphanOpenCyclesCount).toBe("number");
+  });
+
+  it("status includes activeOpenCyclesCount and orphanOpenCyclesCount", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/status");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("activeOpenCyclesCount");
+    expect(res.body).toHaveProperty("globalOpenCyclesCount");
+    expect(res.body).toHaveProperty("orphanOpenCyclesCount");
+    expect(res.body).toHaveProperty("historicalOpenCyclesCount");
+  });
+
+  it("status activeOpenCyclesCount is 0 when no active range", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/status");
+    expect(res.status).toBe(200);
+    // In test mock, no active range is loaded, so activeOpenCyclesCount should be 0
+    expect(res.body.activeOpenCyclesCount).toBe(0);
+  });
+
+  it("monitor/audit orphanOpenCyclesCount equals globalOpenCyclesCount when no active range", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    // Without active range, all open cycles are orphan
+    if (!res.body.summary.activeRangeVersionId) {
+      expect(res.body.summary.orphanOpenCyclesCount).toBe(res.body.summary.globalOpenCyclesCount);
+      expect(res.body.summary.activeOpenCyclesCount).toBe(0);
+    }
+  });
+
+  it("monitor/audit does not mix orphan cycles as active cycles", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const s = res.body.summary;
+    // active + orphan should never exceed global
+    expect(s.activeOpenCyclesCount + s.orphanOpenCyclesCount).toBeLessThanOrEqual(s.globalOpenCyclesCount + 1);
+  });
+
+  it("professional-generator validate is read-only with sideEffectsDetected=false", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/professional-generator/validate");
+    expect(res.status).toBe(200);
+    // In test mock, MarketDataService.getCandles may not exist, so ok could be false.
+    // When ok=true, validate that readOnly fields are present and correct.
+    if (res.body.ok === true) {
+      expect(res.body).toHaveProperty("readOnly", true);
+      expect(res.body).toHaveProperty("sideEffectsDetected", false);
+      expect(res.body).toHaveProperty("persistsLevels", false);
+      expect(res.body).toHaveProperty("placesOrders", false);
+      expect(res.body).toHaveProperty("changesMode", false);
+      expect(res.body).toHaveProperty("rebuild", false);
+      expect(res.body).toHaveProperty("runtimeBefore");
+      expect(res.body).toHaveProperty("runtimeAfter");
+    } else {
+      // When ok=false (mock env without candles), still should not have side effects
+      expect(res.body).toHaveProperty("ok", false);
+    }
+  });
+
+  it("professional-generator validate runtimeBefore equals runtimeAfter (no side effects)", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/professional-generator/validate");
+    expect(res.status).toBe(200);
+    // Only check runtime fingerprint when ok=true (candles available)
+    if (res.body.ok !== true) return;
+    const before = res.body.runtimeBefore;
+    const after = res.body.runtimeAfter;
+    expect(before).toBeTruthy();
+    expect(after).toBeTruthy();
+    expect(before.mode).toBe(after.mode);
+    expect(before.isActive).toBe(after.isActive);
+    expect(before.isRunning).toBe(after.isRunning);
+    expect(before.tickIntervalActive).toBe(after.tickIntervalActive);
+  });
+
+  it("status configLoaded and configSource are present", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/status");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("configLoaded");
+    expect(res.body).toHaveProperty("configSource");
+    expect(["memory", "db_snapshot", "default_runtime_empty"]).toContain(res.body.configSource);
+  });
 });

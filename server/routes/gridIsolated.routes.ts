@@ -1327,6 +1327,13 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const globalPlannedLevelsTotal = levels.filter((l: any) => l?.status === "planned").length;
       const openCyclesCount = cycles.filter((c: any) => c?.status === "open" || c?.status === "active").length;
       const closedCyclesCount = cycles.filter((c: any) => c?.status === "completed" || c?.status === "closed").length;
+      const activeOpenCyclesCount = activeRangeId
+        ? cycles.filter((c: any) => c?.rangeVersionId === activeRangeId && ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)).length
+        : 0;
+      const orphanOpenCyclesCount = activeRangeId
+        ? cycles.filter((c: any) => c?.rangeVersionId !== activeRangeId && ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)).length
+        : openCyclesCount;
+      const globalOpenCyclesCount = openCyclesCount;
 
       res.json({
         ok: true,
@@ -1363,6 +1370,9 @@ export function registerGridIsolatedRoutes(app: Express): void {
           cancelledLevelsCount,
           openCyclesCount,
           closedCyclesCount,
+          activeOpenCyclesCount,
+          globalOpenCyclesCount,
+          orphanOpenCyclesCount,
           totalCyclesCompleted: status.totalCyclesCompleted,
           dailyOrderCount: status.dailyOrderCount,
           circuitBreakerOpen: status.circuitBreakerOpen,
