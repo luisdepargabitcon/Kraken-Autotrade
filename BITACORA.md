@@ -527,8 +527,76 @@ Si `ok === false`:
 - ✅ No deploy (solo commit)
 
 ### Siguiente fase
-Fase 3C.2-H: Limpieza segura de ciclos SHADOW huérfanos (dryRun=true, preview, confirmación)
+Fase 3C.2-I: Aplicar limpieza SHADOW con confirmación explícita (confirmToken, backup, dryRun=false opcional)
 Fase 3C.3: Grid más operativo — SELL objetivo asociado a cada BUY, perfil de actividad, preview de primer BUY
+
+---
+
+## FASE 3C.2-H — Preview limpieza segura de ciclos SHADOW pre-fix (2026-07-09)
+
+### Contexto
+- FASE 3C.2-G-B desplegado en staging (cb5f347), HARD VALIDATION PASSED.
+- Al cargar config real tras deploy, aparecen 24 ciclos SHADOW abiertos del rango activo `ab00bb17`.
+- Estos ciclos NO fueron creados por el fix nuevo — son pre-fix, generados antes del blindaje de simulación.
+- No son compras reales (`realOpenOrdersCount=0`), pero contaminan UI/auditoría.
+- `/status` devolvía `default_runtime_empty` cuando el motor no estaba cargado, ocultando el estado real de DB.
+
+### Problema 1: /status mostraba runtime vacío como estado real
+- Antes: `GET /status` llamaba `getExecutionStatus()` que usa `this.config` (null si motor no cargado).
+- Resultado: `configSource=default_runtime_empty`, `openCycles=0`, `activeRangeVersionId=null`.
+- Después de activar/desactivar: cargaba config y aparecían 24 ciclos.
+- **Fix**: Nuevo método `getStatusFromDb()` que lee config, range, levels y cycles desde DB sin auto-start.
+  - `configSource="db_snapshot"`, `statusSource="db_snapshot"`, `runtimeLoaded=false`.
+  - No muta `this.config`, `this.activeRangeVersion`, `this.levels`, `this.cycles`.
+  - No arranca motor, no crea eventos, no toca órdenes.
+
+### Problema 2: Sin diagnóstico de ciclos SHADOW pre-fix
+- **Fix**: Nuevo endpoint `POST /api/grid-isolated/shadow-cleanup/preview` (dry-run únicamente).
+- No modifica DB, no borra ciclos, no borra niveles, no cierra rango, no cambia modo, no arranca motor.
+- Devuelve análisis completo:
+  - **Ciclos**: totalOpenCycles, activeRangeOpenCycles, orphanOpenCycles, cyclesByRangeVersionId, cyclesByBuyLevelId, duplicateBuyLevelCycles, cyclesWithoutBuyLevel, cyclesWhoseBuyLevelIsNotFilled, cyclesWithNoSellTarget, cyclesWithStatusBuyFilled.
+  - **Niveles**: filledLevelsWithoutCycle, plannedLevelsFromHistoricalRanges, filledLevelsFromHistoricalRanges, levelsBelongingToActiveRange, levelsBelongingToInactiveRanges.
+  - **Riesgo**: safeToArchiveShadowOnly, reason, affectedCyclesCount, affectedLevelsCount, realOrdersAffected.
+  - **Preview**: archiveCycleIds, resetLevelIds, preserveCycleIds, preserveLevelIds.
+- Regla absoluta: si cualquier ciclo/nivel tiene `exchangeOrderId` real → `safeToArchiveShadowOnly=false`.
+
+### Audit/UI: Etiquetado de ciclos pre-fix
+- `/monitor/audit` ahora expone `shadowCleanup`:
+  - `preFixShadowCyclesCount`: número de ciclos SHADOW abiertos del rango activo.
+  - `cleanupPreviewAvailable`: true.
+  - `cleanupRecommended`: true si hay ciclos abiertos.
+  - `cleanupReason`: mensaje explicativo.
+
+### Deuda técnica documentada
+- Error preexistente en logs PostgreSQL: `malformed array literal: "Condiciones de mercado favorables"`.
+- No relacionado con Grid ni con este deploy. Probablemente proviene de otra tabla/columna.
+- Queda como deuda técnica separada para investigación futura.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — nuevo `getStatusFromDb()`, nuevo `shadowCleanupPreview()`, `getExecutionStatus()` añade `runtimeLoaded` y `statusSource`.
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — `GridExecutionStatus` añade `runtimeLoaded` y `statusSource`.
+- `server/routes/gridIsolated.routes.ts` — `/status` ahora usa `getStatusFromDb()`, nuevo endpoint `shadow-cleanup/preview`, audit expone `shadowCleanup`.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 5 nuevos tests.
+
+### Tests ejecutados
+- **npm run check:** ✅
+- **npx vitest run gridIsolatedRoutes.test.ts:** ✅ 84/84 tests passed
+- **npx vitest run gridSpacingCalculator.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts:** ✅ 26/26 tests passed
+- **Total:** 180/180 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No rebuild
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No producción
+- ✅ No deploy (solo commit)
+- ✅ No limpieza real ejecutada (solo preview dry-run)
 
 ### Archivos modificados
 - `server/services/gridIsolated/gridIsolatedEngine.ts` — guard fuerte para 0 niveles, semántica de rango, pre-check en rebuild

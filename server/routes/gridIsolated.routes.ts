@@ -19,6 +19,7 @@
  *   POST /api/grid-isolated/shadow-validate     — Run SHADOW validation tick (safe, no real orders)
  *   POST /api/grid-isolated/activate            — Activate/deactivate Grid motor (isActive toggle)
  *   POST /api/grid-isolated/professional-generator/validate — Read-only validation of professional generator
+ *   POST /api/grid-isolated/shadow-cleanup/preview — Dry-run preview of SHADOW cleanup (no DB modifications)
  *   GET  /api/grid-isolated/export/chatgpt      — Export resumen para ChatGPT (texto plano)
  *   GET  /api/grid-isolated/export/json         — Export audit completo en JSON
  *   GET  /api/grid-isolated/export/csv          — Export eventos en CSV
@@ -873,9 +874,10 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
   // ─── Status & Data ───────────────────────────────────────
 
-  app.get("/api/grid-isolated/status", (_req: Request, res: Response) => {
+  app.get("/api/grid-isolated/status", async (_req: Request, res: Response) => {
     try {
-      res.json(gridIsolatedEngine.getExecutionStatus());
+      const status = await gridIsolatedEngine.getStatusFromDb();
+      res.json(status);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
@@ -1555,6 +1557,14 @@ export function registerGridIsolatedRoutes(app: Express): void {
           at: lastShadowValidation.at,
           result: lastShadowValidation.result,
         } : null,
+        shadowCleanup: {
+          preFixShadowCyclesCount: activeOpenCyclesCount,
+          cleanupPreviewAvailable: true,
+          cleanupRecommended: activeOpenCyclesCount > 0,
+          cleanupReason: activeOpenCyclesCount > 0
+            ? `Hay ${activeOpenCyclesCount} ciclos SHADOW abiertos. Se recomienda ejecutar una limpieza segura dry-run antes de continuar.`
+            : "No se detectaron ciclos SHADOW abiertos que requieran limpieza.",
+        },
         export: {
           chatgptSummary,
           json: {
@@ -1574,6 +1584,17 @@ export function registerGridIsolatedRoutes(app: Express): void {
           },
         },
       });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // ─── Shadow Cleanup Preview (dry-run only, no DB modifications) ────────
+
+  app.post("/api/grid-isolated/shadow-cleanup/preview", async (_req: Request, res: Response) => {
+    try {
+      const preview = await gridIsolatedEngine.shadowCleanupPreview();
+      res.json(preview);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }

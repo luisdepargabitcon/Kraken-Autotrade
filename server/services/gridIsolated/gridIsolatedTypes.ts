@@ -571,6 +571,8 @@ export interface GridExecutionStatus {
   orphanPlannedLevelsCount: number;
   configLoaded: boolean;
   configSource: "memory" | "db_snapshot" | "default_runtime_empty";
+  runtimeLoaded: boolean;
+  statusSource: "runtime" | "db_snapshot";
 }
 
 // ─── Reconciliation ─────────────────────────────────────────────────

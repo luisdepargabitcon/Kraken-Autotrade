@@ -1543,6 +1543,144 @@ class GridIsolatedEngine {
       orphanPlannedLevelsCount,
       configLoaded,
       configSource,
+      runtimeLoaded: !!this.config,
+      statusSource: this.config ? "runtime" : (configOverride ? "db_snapshot" : "default_runtime_empty"),
+    } as any;
+  }
+
+  /**
+   * Get execution status from DB snapshot without auto-starting or mutating runtime.
+   * Used when runtime is empty (this.config is null) to still show real DB state.
+   */
+  async getStatusFromDb(): Promise<GridExecutionStatus> {
+    if (this.config) {
+      return this.getExecutionStatus();
+    }
+
+    const openCycleStatuses = ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"];
+
+    // Read config from DB
+    const configRows = await db.select().from(gridIsolatedConfigs).limit(1);
+    if (configRows.length === 0) {
+      return {
+        mode: "OFF",
+        activeRangeVersionId: null,
+        activeRangeVersionNumber: null,
+        activeRangeCreatedAt: null,
+        activeRangeStatus: null,
+        openLevels: 0,
+        plannedLevelsCount: 0,
+        activeOrdersCount: 0,
+        realOpenOrdersCount: 0,
+        historicalLevelsCount: 0,
+        openCycles: 0,
+        activeOpenCyclesCount: 0,
+        globalOpenCyclesCount: 0,
+        orphanOpenCyclesCount: 0,
+        historicalOpenCyclesCount: 0,
+        dailyOrderCount: 0,
+        circuitBreakerOpen: false,
+        pumpDumpState: { state: "normal", triggeredAt: null, peakPrice: null, troughPrice: null } as any,
+        lastReconciliationAt: null,
+        lastReconciliationOk: null,
+        capitalReservedUsd: 0,
+        capitalAvailableUsd: 0,
+        totalNetPnlUsd: 0,
+        totalCyclesCompleted: 0,
+        globalLevelsCount: 0,
+        globalPlannedLevelsCount: 0,
+        orphanPlannedLevelsCount: 0,
+        configLoaded: false,
+        configSource: "default_runtime_empty",
+        runtimeLoaded: false,
+        statusSource: "db_snapshot",
+      } as any;
+    }
+
+    const cfg = configRows[0];
+
+    // Read active range version from DB
+    const rangeRows = await db.select().from(gridRangeVersions)
+      .where(eq(gridRangeVersions.status, "active"))
+      .orderBy(desc(gridRangeVersions.createdAt))
+      .limit(1);
+    const activeRange = rangeRows.length > 0 ? rangeRows[0] : null;
+    const activeRangeId = activeRange?.id ?? null;
+
+    // Read all levels from DB
+    const allLevels = await db.select().from(gridIsolatedLevels).limit(10000);
+    const activeLevels = activeRangeId
+      ? allLevels.filter(l => l.rangeVersionId === activeRangeId)
+      : [];
+
+    const openLevels = activeRangeId
+      ? activeLevels.filter(l => l.status === "open" || l.status === "planned").length
+      : 0;
+    const plannedLevelsCount = activeRangeId
+      ? activeLevels.filter(l => l.status === "planned").length
+      : 0;
+    const activeOrdersCount = activeRangeId
+      ? activeLevels.filter(l => ["open", "placed", "partially_filled", "filled"].includes(l.status)).length
+      : 0;
+    const realOpenOrdersCount = allLevels.filter(l =>
+      l.exchangeOrderId != null && !["filled", "cancelled"].includes(l.status)
+    ).length;
+    const historicalLevelsCount = activeRangeId
+      ? allLevels.filter(l => l.rangeVersionId !== activeRangeId && ["replaced", "cancelled", "filled"].includes(l.status)).length
+      : allLevels.filter(l => ["replaced", "cancelled", "filled"].includes(l.status)).length;
+    const globalLevelsCount = allLevels.length;
+    const globalPlannedLevelsCount = allLevels.filter(l => l.status === "planned").length;
+    const orphanPlannedLevelsCount = activeRangeId
+      ? allLevels.filter(l => l.rangeVersionId !== activeRangeId && l.status === "planned").length
+      : allLevels.filter(l => l.status === "planned").length;
+
+    // Read all cycles from DB
+    const allCycles = await db.select().from(gridIsolatedCycles).limit(10000);
+    const openCycles = allCycles.filter(c =>
+      !["completed", "cancelled", "stop_loss_hit", "trailing_closed"].includes(c.status)
+    ).length;
+    const activeOpenCyclesCount = activeRangeId
+      ? allCycles.filter(c => c.rangeVersionId === activeRangeId && openCycleStatuses.includes(c.status)).length
+      : 0;
+    const globalOpenCyclesCount = openCycles;
+    const orphanOpenCyclesCount = activeRangeId
+      ? allCycles.filter(c => c.rangeVersionId !== activeRangeId && openCycleStatuses.includes(c.status)).length
+      : openCycles;
+    const completedCycles = allCycles.filter(c => c.status === "completed").length;
+    const totalNetPnl = allCycles.reduce((sum, c) => sum + parseFloat(c.netPnlUsd || "0"), 0);
+
+    return {
+      mode: (cfg.mode as any) || "OFF",
+      activeRangeVersionId: activeRangeId,
+      activeRangeVersionNumber: activeRange?.versionNumber ?? null,
+      activeRangeCreatedAt: activeRange?.createdAt ?? null,
+      activeRangeStatus: (activeRange?.status as any) ?? null,
+      openLevels,
+      plannedLevelsCount,
+      activeOrdersCount,
+      realOpenOrdersCount,
+      historicalLevelsCount,
+      openCycles,
+      activeOpenCyclesCount,
+      globalOpenCyclesCount,
+      orphanOpenCyclesCount,
+      historicalOpenCyclesCount: orphanOpenCyclesCount,
+      dailyOrderCount: 0,
+      circuitBreakerOpen: false,
+      pumpDumpState: { state: "normal", triggeredAt: null, peakPrice: null, troughPrice: null } as any,
+      lastReconciliationAt: null,
+      lastReconciliationOk: null,
+      capitalReservedUsd: 0,
+      capitalAvailableUsd: 0,
+      totalNetPnlUsd: totalNetPnl,
+      totalCyclesCompleted: completedCycles,
+      globalLevelsCount,
+      globalPlannedLevelsCount,
+      orphanPlannedLevelsCount,
+      configLoaded: false,
+      configSource: "db_snapshot",
+      runtimeLoaded: false,
+      statusSource: "db_snapshot",
     } as any;
   }
 
@@ -1551,6 +1689,188 @@ class GridIsolatedEngine {
    */
   getConfig(): GridIsolatedConfig | null {
     return this.config;
+  }
+
+  /**
+   * Dry-run preview of SHADOW cleanup — analyzes cycles/levels from DB without modifying anything.
+   * Returns a diagnostic report of cycles/levels that could be archived/reset.
+   */
+  async shadowCleanupPreview(): Promise<any> {
+    const openCycleStatuses = ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"];
+
+    // Read all cycles from DB
+    const allCycles = await db.select().from(gridIsolatedCycles).limit(10000);
+    // Read all levels from DB
+    const allLevels = await db.select().from(gridIsolatedLevels).limit(10000);
+    // Read active range from DB
+    const rangeRows = await db.select().from(gridRangeVersions)
+      .where(eq(gridRangeVersions.status, "active"))
+      .orderBy(desc(gridRangeVersions.createdAt))
+      .limit(1);
+    const activeRangeId = rangeRows.length > 0 ? rangeRows[0].id : null;
+
+    // ─── A) Cycle analysis ─────────────────────────────────
+    const openCycles = allCycles.filter(c => openCycleStatuses.includes(c.status));
+    const activeRangeOpenCycles = activeRangeId
+      ? openCycles.filter(c => c.rangeVersionId === activeRangeId)
+      : [];
+    const orphanOpenCycles = activeRangeId
+      ? openCycles.filter(c => c.rangeVersionId !== activeRangeId)
+      : openCycles;
+    const historicalOpenCycles = orphanOpenCycles;
+
+    // Group by rangeVersionId
+    const cyclesByRangeVersionId: Record<string, number> = {};
+    for (const c of openCycles) {
+      cyclesByRangeVersionId[c.rangeVersionId] = (cyclesByRangeVersionId[c.rangeVersionId] || 0) + 1;
+    }
+
+    // Group by buyLevelId
+    const cyclesByBuyLevelId: Record<string, number> = {};
+    for (const c of openCycles) {
+      if (c.buyLevelId) {
+        cyclesByBuyLevelId[c.buyLevelId] = (cyclesByBuyLevelId[c.buyLevelId] || 0) + 1;
+      }
+    }
+
+    // Duplicate buyLevelId cycles (more than 1 open cycle per buyLevelId)
+    const duplicateBuyLevelCycles = Object.entries(cyclesByBuyLevelId)
+      .filter(([, count]) => count > 1)
+      .map(([buyLevelId, count]) => ({ buyLevelId, count }));
+
+    // Cycles without buyLevelId
+    const cyclesWithoutBuyLevel = openCycles.filter(c => !c.buyLevelId);
+
+    // Cycles whose buyLevel is not filled
+    const cyclesWhoseBuyLevelIsNotFilled = openCycles.filter(c => {
+      if (!c.buyLevelId) return false;
+      const level = allLevels.find(l => l.id === c.buyLevelId);
+      return level && level.status !== "filled";
+    });
+
+    // Cycles with no sell target (sellLevelId is null)
+    const cyclesWithNoSellTarget = openCycles.filter(c => !c.sellLevelId);
+
+    // Cycles with status buy_filled
+    const cyclesWithStatusBuyFilled = openCycles.filter(c => c.status === "buy_filled");
+
+    // ─── B) Level analysis ─────────────────────────────────
+    const filledLevelsWithoutCycle = allLevels.filter(l =>
+      l.status === "filled" && l.side === "BUY" &&
+      !allCycles.some(c => c.buyLevelId === l.id)
+    );
+
+    const plannedLevelsFromHistoricalRanges = activeRangeId
+      ? allLevels.filter(l => l.rangeVersionId !== activeRangeId && l.status === "planned")
+      : allLevels.filter(l => l.status === "planned");
+
+    const filledLevelsFromHistoricalRanges = activeRangeId
+      ? allLevels.filter(l => l.rangeVersionId !== activeRangeId && l.status === "filled")
+      : [];
+
+    const levelsBelongingToActiveRange = activeRangeId
+      ? allLevels.filter(l => l.rangeVersionId === activeRangeId)
+      : [];
+
+    const levelsBelongingToInactiveRanges = activeRangeId
+      ? allLevels.filter(l => l.rangeVersionId !== activeRangeId)
+      : allLevels;
+
+    // ─── C) Risk assessment ────────────────────────────────
+    // Check if any cycle/level has real exchangeOrderId
+    const cyclesWithRealOrders = openCycles.filter(c => {
+      const buyLevel = c.buyLevelId ? allLevels.find(l => l.id === c.buyLevelId) : null;
+      const sellLevel = c.sellLevelId ? allLevels.find(l => l.id === c.sellLevelId) : null;
+      return (buyLevel?.exchangeOrderId != null) || (sellLevel?.exchangeOrderId != null);
+    });
+
+    const levelsWithRealOrders = allLevels.filter(l =>
+      l.exchangeOrderId != null && !["filled", "cancelled"].includes(l.status)
+    );
+
+    const realOrdersAffected = cyclesWithRealOrders.length > 0 || levelsWithRealOrders.length > 0;
+
+    // A cycle can be proposed for archive if:
+    // - no real exchangeOrderId on associated levels
+    // - status is open/active/buy_filled
+    // - no sellFilledAt (not completed)
+    const archiveCycleIds = openCycles.filter(c => {
+      const buyLevel = c.buyLevelId ? allLevels.find(l => l.id === c.buyLevelId) : null;
+      const sellLevel = c.sellLevelId ? allLevels.find(l => l.id === c.sellLevelId) : null;
+      const hasRealOrder = (buyLevel?.exchangeOrderId != null) || (sellLevel?.exchangeOrderId != null);
+      return !hasRealOrder && !c.sellFilledAt;
+    }).map(c => c.id);
+
+    // A level can be proposed for reset if:
+    // - exchangeOrderId is null
+    // - status is "filled" (from SHADOW simulation)
+    // - belongs to a cycle proposed for archive, or is inconsistent
+    const resetLevelIds = allLevels.filter(l => {
+      if (l.exchangeOrderId != null) return false;
+      if (l.status !== "filled") return false;
+      // Check if it belongs to a cycle proposed for archive
+      const belongsToArchivedCycle = allCycles.some(c =>
+        archiveCycleIds.includes(c.id) &&
+        (c.buyLevelId === l.id || c.sellLevelId === l.id)
+      );
+      // Or it's a filled BUY level without any cycle
+      const isOrphanFilledBuy = l.side === "BUY" && !allCycles.some(c => c.buyLevelId === l.id);
+      return belongsToArchivedCycle || isOrphanFilledBuy;
+    }).map(l => l.id);
+
+    const preserveCycleIds = allCycles.filter(c => !archiveCycleIds.includes(c.id)).map(c => c.id);
+    const preserveLevelIds = allLevels.filter(l => !resetLevelIds.includes(l.id)).map(l => l.id);
+
+    const safeToArchiveShadowOnly = !realOrdersAffected;
+
+    // Determine cleanup reason
+    let cleanupReason = "";
+    if (realOrdersAffected) {
+      cleanupReason = "No se puede limpiar automáticamente: se detectaron órdenes reales asociadas.";
+    } else if (archiveCycleIds.length > 0) {
+      cleanupReason = `Se detectaron ${archiveCycleIds.length} ciclos SHADOW abiertos sin órdenes reales, candidatos para archivo.`;
+    } else {
+      cleanupReason = "No se detectaron ciclos SHADOW abiertos que requieran limpieza.";
+    }
+
+    return {
+      timestamp: new Date().toISOString(),
+      dryRun: true,
+      realOrdersAffected,
+      cycles: {
+        totalOpenCycles: openCycles.length,
+        activeRangeOpenCycles: activeRangeOpenCycles.length,
+        orphanOpenCycles: orphanOpenCycles.length,
+        historicalOpenCycles: historicalOpenCycles.length,
+        cyclesByRangeVersionId,
+        cyclesByBuyLevelId,
+        duplicateBuyLevelCycles,
+        cyclesWithoutBuyLevel: cyclesWithoutBuyLevel.length,
+        cyclesWhoseBuyLevelIsNotFilled: cyclesWhoseBuyLevelIsNotFilled.length,
+        cyclesWithNoSellTarget: cyclesWithNoSellTarget.length,
+        cyclesWithStatusBuyFilled: cyclesWithStatusBuyFilled.length,
+      },
+      levels: {
+        filledLevelsWithoutCycle: filledLevelsWithoutCycle.length,
+        plannedLevelsFromHistoricalRanges: plannedLevelsFromHistoricalRanges.length,
+        filledLevelsFromHistoricalRanges: filledLevelsFromHistoricalRanges.length,
+        levelsBelongingToActiveRange: levelsBelongingToActiveRange.length,
+        levelsBelongingToInactiveRanges: levelsBelongingToInactiveRanges.length,
+      },
+      risk: {
+        safeToArchiveShadowOnly,
+        reason: cleanupReason,
+        affectedCyclesCount: archiveCycleIds.length,
+        affectedLevelsCount: resetLevelIds.length,
+        realOrdersAffected,
+      },
+      preview: {
+        archiveCycleIds,
+        resetLevelIds,
+        preserveCycleIds,
+        preserveLevelIds,
+      },
+    };
   }
 
   /**

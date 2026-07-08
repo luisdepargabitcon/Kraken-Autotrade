@@ -881,4 +881,54 @@ describe("Grid Isolated Routes — Endpoints", () => {
     const msg = getNaturalGridMessage("GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED" as any, null, null);
     expect(msg).toBeTruthy();
   });
+
+  // ─── 3C.2-H: DB snapshot status + shadow cleanup preview ──────────
+
+  it("status with runtime empty uses db_snapshot, not default_runtime_empty, when config exists in DB", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/status");
+    expect(res.status).toBe(200);
+    // configSource should be "db_snapshot" if config exists in DB (mocked DB has config rows)
+    // or "default_runtime_empty" if no config. Either way, should not auto-start.
+    expect(res.body).toHaveProperty("configSource");
+    expect(res.body).toHaveProperty("statusSource");
+    expect(res.body.isRunning).toBe(false);
+  });
+
+  it("status db_snapshot includes activeOpenCyclesCount, globalOpenCyclesCount, orphanOpenCyclesCount", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/status");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("activeOpenCyclesCount");
+    expect(res.body).toHaveProperty("globalOpenCyclesCount");
+    expect(res.body).toHaveProperty("orphanOpenCyclesCount");
+  });
+
+  it("shadow-cleanup/preview does not modify DB and returns dry-run analysis", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/preview", {});
+    expect(res.status).toBe(200);
+    expect(res.body.dryRun).toBe(true);
+    expect(res.body).toHaveProperty("cycles");
+    expect(res.body).toHaveProperty("levels");
+    expect(res.body).toHaveProperty("risk");
+    expect(res.body).toHaveProperty("preview");
+    expect(res.body.risk).toHaveProperty("realOrdersAffected");
+    expect(res.body.risk).toHaveProperty("safeToArchiveShadowOnly");
+  });
+
+  it("shadow-cleanup/preview detects cycles and returns safeToArchiveShadowOnly", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/preview", {});
+    expect(res.status).toBe(200);
+    // With mocked DB (no real exchangeOrderId), safeToArchiveShadowOnly should be true
+    expect(res.body.risk.realOrdersAffected).toBe(false);
+    expect(res.body.risk.safeToArchiveShadowOnly).toBe(true);
+  });
+
+  it("monitor/audit exposes preFixShadowCyclesCount and cleanupPreviewAvailable", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("shadowCleanup");
+    expect(res.body.shadowCleanup).toHaveProperty("preFixShadowCyclesCount");
+    expect(res.body.shadowCleanup).toHaveProperty("cleanupPreviewAvailable");
+    expect(res.body.shadowCleanup).toHaveProperty("cleanupRecommended");
+    expect(res.body.shadowCleanup).toHaveProperty("cleanupReason");
+  });
 });
