@@ -32,9 +32,7 @@ import { gridModeLockService } from "./gridModeLockService";
 import { gridCapitalAllocator } from "./gridCapitalAllocator";
 import { getGridBandSnapshot } from "./gridBandAdapter";
 import {
-  generateGeometricLevels,
   toGridLevels,
-  computeAdaptiveRatio,
 } from "./gridGeometricLevels";
 import {
   generateProfessionalGridLevels,
@@ -473,6 +471,8 @@ class GridIsolatedEngine {
   /**
    * Replace the active range and its planned levels with a new band.
    * Marks old range as replaced and old levels as replaced, then proposes a new range.
+   * SAFETY: Before marking old range as replaced, verify that the new professional generator
+   * can generate viable levels. If not, abort rebuild and preserve old range.
    */
   private async rebuildRangeAndLevels(bandSnapshot: any): Promise<void> {
     if (!this.activeRangeVersion || !this.config) return;
@@ -496,7 +496,47 @@ class GridIsolatedEngine {
       c.rangeVersionId === oldRange.id && c.status !== "completed" && c.status !== "cancelled"
     );
 
-    // Mark old range as replaced
+    // SAFETY: Pre-check if professional generator can generate viable levels before marking old range as replaced
+    const allocation = gridCapitalAllocator.computeAllocation(this.config);
+    const professionalPrecheck = generateProfessionalGridLevels({
+      currentPrice: bandSnapshot.midPrice,
+      bollingerMiddle: bandSnapshot.middle,
+      bollingerUpper: bandSnapshot.upper,
+      bollingerLower: bandSnapshot.lower,
+      atrPct: bandSnapshot.atrPct,
+      netProfitTargetPct: this.config.netProfitTargetPct,
+      gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
+      gridStepMaxPct: this.config.gridStepMaxPct,
+      configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
+      configuredSellLevels: Math.floor(allocation.levelsCount / 2),
+      capitalPerLevelUsd: allocation.capitalPerLevelUsd,
+      spreadBufferPct: 0.01,
+      safetyBufferPct: 0.10,
+      minLevelsForViableGrid: 4,
+      centerPriceMode: "hybrid",
+      centerClampPct: 0.25,
+      operationalRangeMode: "hybrid",
+      operationalBandWidthPct: 20.0,
+      atrRangeMultiplier: 8.0,
+      minOperationalBandWidthPct: 20.0,
+      dynamicLevelReduction: true,
+      gridViabilityMode: "strict",
+    });
+
+    // If pre-check fails (0 levels), abort rebuild and preserve old range
+    if (professionalPrecheck.levels.length === 0) {
+      await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "El rebuild fue abortado porque el generador profesional no pudo generar niveles viables. Se conserva el rango anterior.", {
+        rangeVersionId: oldRange.id,
+        reason: "professional_generator_zero_levels_precheck",
+        viabilityStatus: professionalPrecheck.viabilityStatus,
+        professionalGenerator: professionalPrecheck.professionalGenerator,
+        centerDriftPct,
+        widthChangePct,
+      });
+      return;
+    }
+
+    // Mark old range as replaced (only after pre-check passes)
     await db.update(gridRangeVersions)
       .set({ status: "replaced", closedAt: new Date() })
       .where(eq(gridRangeVersions.id, oldRange.id));
@@ -738,13 +778,23 @@ class GridIsolatedEngine {
 
     const { levels: generatedLevels, viabilityStatus, professionalGenerator } = professionalResult;
 
-    // If not viable, abort generation without fallback to old generator
-    if (viabilityStatus === "not_viable") {
-      await this.logEvent("GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE", "No se generan niveles porque no caben niveles rentables con la configuración actual.", {
-        viabilityStatus,
-        professionalGenerator,
-        pair: this.config.pair,
-      });
+    // Strong guard: never persist range with 0 levels (compact or not_viable)
+    if (generatedLevels.length === 0) {
+      await this.logEvent(
+        viabilityStatus === "compact"
+          ? "GRID_PROFESSIONAL_GENERATOR_COMPACT"
+          : "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE",
+        viabilityStatus === "compact"
+          ? "No se generan niveles porque el Grid queda compacto en modo strict."
+          : "No se generan niveles porque no caben niveles rentables con la configuración actual.",
+        {
+          viabilityStatus,
+          professionalGenerator,
+          pair: this.config.pair,
+          generatedLevelsCount: 0,
+          reasonCode: "PROFESSIONAL_GENERATOR_ZERO_LEVELS",
+        }
+      );
       return;
     }
 
@@ -773,8 +823,10 @@ class GridIsolatedEngine {
       pair: this.config.pair,
       status: "proposed",
       midPrice: professionalGenerator.centerPrice.toFixed(8),
-      upperPrice: bandSnapshot.upper.toFixed(8),
-      lowerPrice: bandSnapshot.lower.toFixed(8),
+      // Use operational range for Grid levels (not Bollinger macro)
+      upperPrice: professionalGenerator.operationalUpper.toFixed(8),
+      lowerPrice: professionalGenerator.operationalLower.toFixed(8),
+      // Keep Bollinger macro for diagnosis/regime
       bandUpper: bandSnapshot.upper.toFixed(8),
       bandMiddle: bandSnapshot.middle.toFixed(8),
       bandLower: bandSnapshot.lower.toFixed(8),
@@ -821,8 +873,10 @@ class GridIsolatedEngine {
       pair: this.config.pair,
       status: "active",
       midPrice: professionalGenerator.centerPrice,
-      upperPrice: bandSnapshot.upper,
-      lowerPrice: bandSnapshot.lower,
+      // Use operational range for Grid levels (not Bollinger macro)
+      upperPrice: professionalGenerator.operationalUpper,
+      lowerPrice: professionalGenerator.operationalLower,
+      // Keep Bollinger macro for diagnosis/regime
       bandUpper: bandSnapshot.upper,
       bandMiddle: bandSnapshot.middle,
       bandLower: bandSnapshot.lower,

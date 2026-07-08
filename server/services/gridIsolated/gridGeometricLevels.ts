@@ -1,6 +1,18 @@
 /**
- * GridGeometricLevels — Geometric adaptive level distribution for the Grid.
+ * GridGeometricLevels — LEGACY / DEPRECATED
  *
+ * This geometric adaptive level distribution is NO LONGER the primary path
+ * for generating new SHADOW levels. The professional generator
+ * (generateProfessionalGridLevels in gridSpacingCalculator.ts) is now the
+ * main path for SHADOW mode.
+ *
+ * This module is temporarily preserved for:
+ * - Backtests (gridBacktest.ts)
+ * - Compatibility with existing tests
+ *
+ * DO NOT use in proposeRangeVersion() for new SHADOW level generation.
+ *
+ * Original description:
  * Instead of evenly spaced levels, this module distributes grid levels
  * using a geometric progression that adapts to:
  *   - Bollinger Band width (volatility regime)

@@ -5,6 +5,96 @@
 
 ---
 
+## 2026-07-08 — FASE 3C.2-B CORRECCIONES DE INTEGRACIÓN PROFESIONAL ANTES DE DEPLOY
+
+### Resumen
+Correcciones de seguridad y semántica aplicadas al generador profesional SHADOW antes de deploy. Blindaje contra rangos con 0 niveles, corrección de semántica de rango operativo vs Bollinger macro, protección de rebuild manual/drift, limpieza de imports legacy y exposición de professionalGenerator en audit raíz.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — guard fuerte para 0 niveles, semántica de rango, pre-check en rebuild
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — añadido evento GRID_PROFESSIONAL_GENERATOR_COMPACT
+- `server/services/gridIsolated/gridGeometricLevels.ts` — marcado como LEGACY/DEPRECATED
+- `server/routes/gridIsolated.routes.ts` — exposición de professionalGenerator en audit raíz
+
+### 1. Compact/strict con 0 niveles corregido
+**Problema:** generateProfessionalGridLevels() en modo strict podía devolver viabilityStatus="compact" con levels=[], pero proposeRangeVersion() solo abortaba si viabilityStatus==="not_viable".
+
+**Solución:** Guard fuerte que aborta si generatedLevels.length === 0, independientemente de viabilityStatus. Si compact, loggea evento GRID_PROFESSIONAL_GENERATOR_COMPACT. Si not_viable, loggea GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE.
+
+**Regla:** No persistir rangeVersion si generatedLevels.length === 0. No activar rango con 0 niveles. No fallback al generador viejo.
+
+### 2. Semántica del rango persistido corregida
+**Problema:** lowerPrice/upperPrice guardaban Bollinger macro (bandSnapshot.lower/upper), pero los niveles se calculaban con rango operativo profesional (professionalGenerator.operationalLower/Upper). Esto confundía UI/audit.
+
+**Solución:**
+- lowerPrice/upperPrice = rango operativo (professionalGenerator.operationalLower/Upper)
+- bandLower/bandUpper = Bollinger macro (bandSnapshot.lower/upper) para diagnóstico/régimen
+- Separación clara: rango operativo = donde se colocan niveles; banda macro = diagnóstico/régimen
+
+### 3. Rebuild manual/rebuild por drift protegido
+**Problema:** rebuildRangeAndLevels() marcaba el rango viejo como replaced antes de saber si proposeRangeVersion() conseguiría generar un rango nuevo viable. Riesgo de dejar sistema sin rango válido.
+
+**Solución:** Pre-check en memoria antes de marcar rango viejo como replaced:
+- Calcular professionalPrecheck con generateProfessionalGridLevels()
+- Si levels.length === 0, abortar rebuild y conservar rango viejo
+- Loggear evento GRID_LEVELS_PRESERVED_DUE_TO_CYCLE con reason="professional_generator_zero_levels_precheck"
+- Solo si hay niveles > 0, reemplazar rango viejo y persistir nuevo
+
+**Regla:** Nunca dejar al sistema sin rango válido por culpa de un rebuild que produce 0 niveles.
+
+### 4. Legacy limpiado sin romper backtest
+**Acciones:**
+- Eliminados imports no usados en gridIsolatedEngine.ts: generateGeometricLevels, computeAdaptiveRatio
+- Mantenido toGridLevels (se usa para convertir GeneratedLevel[] a GridLevel[])
+- Añadido comentario LEGACY/DEPRECATED en gridGeometricLevels.ts
+- gridBacktest.ts sigue usando generateGeometricLevels (fuera de SHADOW real)
+
+### 5. professionalGenerator expuesto en audit raíz
+**Problema:** professionalGenerator solo estaba en eventos, no en el objeto raíz de GET /api/grid-isolated/monitor/audit.
+
+**Solución:**
+- Extraer último evento GRID_PROFESSIONAL_GENERATOR_* de los últimos 50 eventos
+- Reconstruir objeto professionalGenerator desde metadata del evento
+- Exponer en objeto raíz de respuesta con campos:
+  - available (true/false)
+  - source ("event")
+  - mode, formula, legacyGeneratorUsed
+  - viabilityStatus, minSpacingPctReal, spacingPct
+  - centerPrice, operationalLower, operationalUpper
+  - operationalBandWidthPct, operationalSemiRangePct
+  - requestedBuyLevels, requestedSellLevels
+  - generatedBuyLevels, generatedSellLevels
+  - reductionApplied, reason
+  - eventId, eventCreatedAt
+- Si no hay evento: available=false, reason="No professional generator event found"
+
+### 6. Tests ejecutados
+- **npm run check:** ✅
+- **npx vitest run gridSpacingCalculator.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts:** ✅ 26/26 tests passed
+- **npx vitest run gridIsolatedRoutes.test.ts:** ✅ 66/66 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No rebuild automático
+- ✅ No regeneración de niveles existentes automáticamente
+- ✅ No cambios de config DB
+- ✅ No Risk Manager
+- ✅ No Execution Service
+- ✅ No reconciliation real
+- ✅ No deploy
+
+### Siguiente fase
+Fase 3C.3: Ajustes finos de configuración y monitoreo
+
+---
+
 ## 2026-07-08 — FASE 3C.2 SUSTITUCIÓN DEL GENERADOR SHADOW POR SPACING PROFESIONAL
 
 ### Resumen

@@ -1008,6 +1008,56 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const resolvedRange = await resolveActiveRange(events, status, cycles.length);
       const chatgptSummary = buildChatGPTSummary(mode, checks, status, blockingReasons, levels, cycles, events, config, resolvedRange);
 
+      // Extract professionalGenerator data from events
+      const professionalGenerator = (() => {
+        const professionalEvents = events.filter((ev: any) =>
+          ev.eventType === "GRID_PROFESSIONAL_GENERATOR_USED" ||
+          ev.eventType === "GRID_PROFESSIONAL_GENERATOR_COMPACT" ||
+          ev.eventType === "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE"
+        );
+        if (professionalEvents.length === 0) {
+          return {
+            available: false,
+            reason: "No professional generator event found",
+          };
+        }
+        const latestEvent = professionalEvents[0];
+        let metadata: any = {};
+        try {
+          metadata = latestEvent.metadataJson ? (typeof latestEvent.metadataJson === "string" ? JSON.parse(latestEvent.metadataJson) : latestEvent.metadataJson) : {};
+        } catch { metadata = {}; }
+        const pg = metadata.professionalGenerator;
+        if (!pg) {
+          return {
+            available: false,
+            reason: "Professional generator metadata not found in event",
+          };
+        }
+        return {
+          available: true,
+          source: "event",
+          mode: pg.mode || "shadow_generation",
+          formula: pg.formula || "accumulated_spacing",
+          legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
+          viabilityStatus: pg.viabilityStatus,
+          minSpacingPctReal: pg.minSpacingPctReal,
+          spacingPct: pg.spacingPct,
+          centerPrice: pg.centerPrice,
+          operationalLower: pg.operationalLower,
+          operationalUpper: pg.operationalUpper,
+          operationalBandWidthPct: pg.operationalBandWidthPct,
+          operationalSemiRangePct: pg.operationalSemiRangePct,
+          requestedBuyLevels: pg.requestedBuyLevels,
+          requestedSellLevels: pg.requestedSellLevels,
+          generatedBuyLevels: pg.generatedBuyLevels,
+          generatedSellLevels: pg.generatedSellLevels,
+          reductionApplied: pg.reductionApplied,
+          reason: pg.reason,
+          eventId: latestEvent.id,
+          eventCreatedAt: latestEvent.createdAt,
+        };
+      })();
+
       // Separate current vs historical levels for the UI
       const activeRangeId = status.activeRangeVersionId;
       const currentLevels = activeRangeId
@@ -1414,6 +1464,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         reconciliation: reconciliation || { ok: null, mismatches: [] },
         marketContext,
         functionalStatus,
+        professionalGenerator,
         lastShadowEvaluation: lastShadowValidation.at ? {
           at: lastShadowValidation.at,
           result: lastShadowValidation.result,
