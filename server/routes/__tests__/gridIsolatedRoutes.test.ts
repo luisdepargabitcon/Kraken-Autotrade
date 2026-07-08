@@ -962,6 +962,7 @@ describe("Grid Isolated Routes — Endpoints", () => {
   });
 
   // ─── 3C.2-H-C: Audit shadow cleanup coherent with preview ─────────
+  // ─── 3C.2-H-C-B: Audit shadowCleanup based on real shadowCleanupPreview() ──
 
   it("monitor/audit shadowCleanup includes safeToArchiveShadowOnly, realOrdersAffected, dryRunOnly, readOnly", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
@@ -972,15 +973,28 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body.shadowCleanup).toHaveProperty("affectedLevelsCount");
     expect(res.body.shadowCleanup).toHaveProperty("dryRunOnly");
     expect(res.body.shadowCleanup).toHaveProperty("readOnly");
+    // With mocked DB (empty), preview returns dryRun=true, readOnly=true
     expect(res.body.shadowCleanup.dryRunOnly).toBe(true);
     expect(res.body.shadowCleanup.readOnly).toBe(true);
+  });
+
+  it("monitor/audit shadowCleanup derives from shadowCleanupPreview, not just status", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    const sc = res.body.shadowCleanup;
+    // With mocked DB (empty), preview returns totalOpenCycles=0, affectedCyclesCount=0
+    // These values come from shadowCleanupPreview(), not from status alone
+    expect(sc.preFixShadowCyclesCount).toBe(0);
+    expect(sc.affectedCyclesCount).toBe(0);
+    expect(sc.affectedLevelsCount).toBe(0);
+    expect(sc.realOrdersAffected).toBe(false);
+    expect(sc.safeToArchiveShadowOnly).toBe(true);
+    expect(sc.cleanupRecommended).toBe(false);
   });
 
   it("monitor/audit does not falsely return cleanupRecommended=false when cycles exist", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
     expect(res.status).toBe(200);
-    // With mocked DB (empty), preFixShadowCyclesCount should be 0 and cleanupRecommended false
-    // This test verifies the logic is coherent: if count=0 then recommended=false
     const sc = res.body.shadowCleanup;
     if (sc.preFixShadowCyclesCount === 0) {
       expect(sc.cleanupRecommended).toBe(false);
@@ -990,6 +1004,12 @@ describe("Grid Isolated Routes — Endpoints", () => {
   });
 
   it("monitor/audit does not auto-start motor", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.functionalStatus.runtime.schedulerRunning).toBe(false);
+  });
+
+  it("monitor/audit does not modify DB (no mode change, no start)", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
     expect(res.status).toBe(200);
     expect(res.body.functionalStatus.runtime.schedulerRunning).toBe(false);

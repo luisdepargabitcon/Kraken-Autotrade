@@ -989,6 +989,14 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const config = gridIsolatedEngine.getConfig();
       const status = await gridIsolatedEngine.getStatusSafe();
       const checks = await gridModeLockService.runUnlockChecks();
+
+      // shadowCleanupPreview is read-only/dryRun — safe to call for audit diagnostics
+      let cleanupPreview: any = null;
+      try {
+        cleanupPreview = await gridIsolatedEngine.shadowCleanupPreview();
+      } catch {
+        // If preview fails, audit still works with fallback from status
+      }
       const blockingReasons = buildBlockingReasons(checks, config);
       const realModesBlocked = blockingReasons.length > 0;
       const mode = config?.mode || "OFF";
@@ -1558,18 +1566,20 @@ export function registerGridIsolatedRoutes(app: Express): void {
           result: lastShadowValidation.result,
         } : null,
         shadowCleanup: {
-          preFixShadowCyclesCount: status.activeOpenCyclesCount || 0,
+          preFixShadowCyclesCount: cleanupPreview?.cycles?.totalOpenCycles ?? (status.activeOpenCyclesCount || 0),
           cleanupPreviewAvailable: true,
-          cleanupRecommended: (status.activeOpenCyclesCount || 0) > 0 && status.realOpenOrdersCount === 0,
-          cleanupReason: (status.activeOpenCyclesCount || 0) > 0
+          cleanupRecommended: cleanupPreview
+            ? (cleanupPreview.risk.affectedCyclesCount > 0 && cleanupPreview.risk.realOrdersAffected === false && cleanupPreview.risk.safeToArchiveShadowOnly === true)
+            : ((status.activeOpenCyclesCount || 0) > 0 && status.realOpenOrdersCount === 0),
+          cleanupReason: cleanupPreview?.risk?.reason ?? ((status.activeOpenCyclesCount || 0) > 0
             ? `Hay ${status.activeOpenCyclesCount} ciclos SHADOW abiertos. Se recomienda ejecutar una limpieza segura dry-run antes de continuar.`
-            : "No se detectaron ciclos SHADOW abiertos que requieran limpieza.",
-          safeToArchiveShadowOnly: (status.activeOpenCyclesCount || 0) > 0 && status.realOpenOrdersCount === 0,
-          realOrdersAffected: status.realOpenOrdersCount > 0,
-          affectedCyclesCount: status.activeOpenCyclesCount || 0,
-          affectedLevelsCount: 0,
-          dryRunOnly: true,
-          readOnly: true,
+            : "No se detectaron ciclos SHADOW abiertos que requieran limpieza."),
+          safeToArchiveShadowOnly: cleanupPreview?.risk?.safeToArchiveShadowOnly ?? false,
+          realOrdersAffected: cleanupPreview?.risk?.realOrdersAffected ?? (status.realOpenOrdersCount > 0),
+          affectedCyclesCount: cleanupPreview?.risk?.affectedCyclesCount ?? 0,
+          affectedLevelsCount: cleanupPreview?.risk?.affectedLevelsCount ?? 0,
+          dryRunOnly: cleanupPreview?.dryRun === true,
+          readOnly: cleanupPreview?.readOnly === true,
         },
         export: {
           chatgptSummary,
