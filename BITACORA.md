@@ -5,6 +5,327 @@
 
 ---
 
+## 2026-07-08 — FASE 3C-DISEÑO RANGO OPERATIVO PROFESIONAL + FÓRMULA ACUMULATIVA
+
+### Resumen
+Diseño profesional para resolver el problema estructural identificado en Fase 3C-PRE: el rango operativo actual (Bollinger 2σ) es incompatible con el spacing mínimo rentable. Se propone separar rango macro (régimen) de rango operativo (niveles), usar fórmula acumulativa lineal, calcular viabilidad antes de generar niveles, y no forzar 5 BUY + 5 SELL. **No se implementó ninguna fórmula nueva.**
+
+### Diagnóstico del problema actual
+
+**Fórmula actual (`gridGeometricLevels.ts:143`):**
+```typescript
+const distance = effectiveBaseStep * Math.pow(ratio, i);
+const price = midPrice - distance;
+```
+- Distancia absoluta desde mid-price, no acumulativa.
+- Con `ratio ≈ 1.002` (adaptado de BW 2.06%), separación entre niveles = `baseStep × (ratio-1) ≈ 0.004%`.
+- Niveles quedan artificialmente pegados.
+
+**Rango operativo actual:**
+- Bollinger 4h, 2σ, período 20.
+- BW actual: 1.54%–2.74% (Fase 3C-PRE).
+- Spacing mínimo rentable: ~1.79%.
+- Resultado: 0 niveles viables en todas las combinaciones.
+
+**Conclusión:** El problema es doble: (1) fórmula geométrica deja niveles pegados, (2) banda actual insuficiente para spacing rentable.
+
+### Diseño recomendado: separación de rangos
+
+**Rango macro (régimen) — sin cambios:**
+- Bollinger 4h, 2σ, período 20.
+- Sirve para `assessGridSuitability()`: diagnosticar lateral/volátil/tendencial.
+- No cambia. `gridBandAdapter.ts` sigue calculando esto.
+
+**Rango operativo (niveles) — nuevo concepto:**
+- Es el rango donde se colocan los niveles BUY y SELL.
+- Debe ser suficientemente amplio para que quepan niveles con spacing rentable.
+- Se calcula independientemente del rango macro.
+
+### Rango operativo: modo híbrido recomendado
+
+**Definición de términos (no ambiguo):**
+- `operationalBandWidthPct`: ancho total de banda (upper - lower) / middle × 100.
+- `operationalSemiRangePct`: porcentaje por lado desde centerPrice (hacia abajo y hacia arriba).
+
+**Fórmula híbrida:**
+```
+operationalBandWidthPct = max(
+  bollingerBandWidthPct,           // lo que da Bollinger
+  atrRangeMultiplier × atrPct,     // lo que da ATR
+  minOperationalBandWidthPct       // piso configurable (ancho total)
+)
+
+operationalLower = centerPrice × (1 - operationalBandWidthPct / 200)
+operationalUpper = centerPrice × (1 + operationalBandWidthPct / 200)
+```
+
+**Por qué híbrido:**
+- Mantiene Bollinger como referencia (no rompe compatibilidad).
+- ATR asegura adaptividad a volatilidad.
+- `minOperationalBandWidthPct` garantiza espacio para niveles rentables.
+
+**Ejemplo numérico:**
+- Para 5 BUY + 5 SELL con spacing 1.79%, se necesita BW ≈ 17.9%.
+- Con `minOperationalBandWidthPct = 20%` (ancho total), semi-rango ≈ 10% por lado.
+- Esto garantiza caben 5+5 niveles con spacing 1.79%.
+
+**Configs propuestas (no migrar todavía):**
+- `operationalRangeMode`: `"bollinger" | "atr" | "hybrid" | "fixed"` (default: `"hybrid"`)
+- `operationalBandWidthPct`: ancho fijo si mode = `"fixed"` (default: `20.0`)
+- `atrRangeMultiplier`: multiplicador ATR para rango (default: `8.0`)
+- `minOperationalBandWidthPct`: piso de ancho total en modo híbrido (default: `20.0`)
+
+### Fórmula acumulativa lineal
+
+**Spacing operativo:**
+```
+spacingPct = clamp(
+  atrPct × gridStepAtrMultiplier,
+  minSpacingPctReal,
+  gridStepMaxPct
+)
+```
+
+**Spacing mínimo rentable (sin doble conteo):**
+```
+grossTargetPct = computeGrossTargetFromNet(netProfitTargetPct).grossTargetPct
+minSpacingPctReal = grossTargetPct + spreadBufferPct + safetyBufferPct
+```
+`grossTargetPct` ya incluye `feeBuyPct + feeSellPct`. No sumar fees dos veces.
+
+**Nota sobre netProfitTargetPct:**
+- `netProfitTargetPct = 0.8%` es default de código (`DEFAULT_GRID_CONFIG`).
+- El valor real de configuración en staging debe verificarse antes de implementar.
+- Las simulaciones Fase 3B/3C-PRE usaron el target documentado en auditoría (1.2%).
+- Antes de implementar se debe leer el valor efectivo desde la config activa.
+
+**Generación acumulativa lineal:**
+```
+BUY[0]  = centerPrice × (1 - spacingPct/100)
+BUY[i]  = BUY[i-1] × (1 - spacingPct/100)
+
+SELL[0] = centerPrice × (1 + spacingPct/100)
+SELL[i] = SELL[i-1] × (1 + spacingPct/100)
+```
+
+**Por qué lineal:**
+- Separación entre niveles siempre = `spacingPct` — garantiza rentabilidad uniforme.
+- No requiere calibrar `geometricRatioMin`/`geometricRatioMax` (causa del bug).
+- Más fácil de testear y auditar.
+- La geométrica suave no aporta beneficio significativo según simulación Fase 3B.
+
+### Viabilidad de banda: cálculo iterativo
+
+**Cálculo de niveles que caben (iterativo, no lineal):**
+```
+// BUY
+let buyPrice = centerPrice × (1 - spacingPct/100)
+let buyCount = 0
+while buyPrice >= operationalLower and buyCount < configuredBuyLevels:
+  buyCount++
+  buyPrice = buyPrice × (1 - spacingPct/100)
+
+// SELL
+let sellPrice = centerPrice × (1 + spacingPct/100)
+let sellCount = 0
+while sellPrice <= operationalUpper and sellCount < configuredSellLevels:
+  sellCount++
+  sellPrice = sellPrice × (1 + spacingPct/100)
+
+totalLevels = buyCount + sellCount
+```
+
+**Reglas de viabilidad:**
+| Condición | Estado | Acción |
+|---|---|---|
+| `totalLevels >= minLevelsForViableGrid` | **Viable** | Generar `min(configured, buyCount)` BUY + `min(configured, sellCount)` SELL |
+| `0 < totalLevels < minLevelsForViableGrid` | **Compacto** | Generar niveles que caben + marcar compacto en UI |
+| `totalLevels = 0` | **No viable** | No generar niveles + marcar no viable + explicar motivo |
+
+**`minLevelsForViableGrid`**: default `4` (mínimo 2 BUY + 2 SELL para que el Grid tenga sentido).
+
+### Center price: híbrido clamp
+
+**Fórmula:**
+```
+centerPrice = clamp(
+  currentPrice,
+  bollingerMiddle - (centerClampPct / 100) × (bollingerUpper - bollingerLower),
+  bollingerMiddle + (centerClampPct / 100) × (bollingerUpper - bollingerLower)
+)
+```
+Con `centerClampPct = 25%`: el center se mantiene dentro del 25% central de la banda.
+
+**Comportamiento por régimen:**
+| Régimen | Center recomendado | Motivo |
+|---|---|---|
+| **Lateral** | Híbrido (cerca de middle) | Distribución simétrica BUY/SELL |
+| **Cerca del techo** | Híbrido → se clamp hacia middle | Evita que SELL no quepan |
+| **Cerca del suelo** | Híbrido → se clamp hacia middle | Evita que BUY no quepan |
+| **Tendencia fuerte** | No generar Grid | `assessGridSuitability` ya bloquea |
+
+**Config propuesta:** `centerPriceMode`: `"lastClose" | "bollingerMiddle" | "hybrid"` (default: `"hybrid"`)
+
+### ATR timeframe: nota sobre recomendación
+
+**Nota sobre atrTimeframe:**
+- ATR 1h queda como candidato recomendado para spacing operativo por equilibrio (spacing 1.79% vs volatilidad 0.71%).
+- La configuración efectiva actual debe verificarse antes de cualquier implementación.
+- Fase 3C-PRE demostró que cambiar ATR timeframe no resuelve por sí solo la viabilidad si el rango operativo sigue siendo estrecho.
+- ATR 4h puede servir como contexto/régimen, pero la decisión final depende del diseño de rango operativo.
+
+### Configs nuevas propuestas (no migrar todavía)
+
+| Campo | Tipo | Default | Descripción |
+|---|---|---|---|
+| `spreadBufferPct` | number | 0.01 | Buffer de spread para minSpacingPctReal |
+| `safetyBufferPct` | number | 0.10 | Buffer de seguridad para minSpacingPctReal |
+| `minLevelsForViableGrid` | number | 4 | Mínimo de niveles para Grid viable |
+| `centerPriceMode` | enum | `"hybrid"` | Modo de cálculo de center price |
+| `centerClampPct` | number | 25.0 | Porcentaje de clamp para center híbrido |
+| `operationalRangeMode` | enum | `"hybrid"` | Modo de rango operativo |
+| `operationalBandWidthPct` | number | 20.0 | Ancho total fijo si mode = fixed |
+| `atrRangeMultiplier` | number | 8.0 | Multiplicador ATR para rango operativo |
+| `minOperationalBandWidthPct` | number | 20.0 | Piso de ancho total en modo híbrido |
+| `dynamicLevelReduction` | boolean | true | Reducir niveles si no caben |
+| `gridViabilityMode` | enum | `"strict"` | `"strict"` = no generar si no viable, `"compact"` = generar los que quepan |
+
+### Configs existentes a reutilizar
+
+| Campo | Valor actual | Uso en Fase 3C |
+|---|---|---|
+| `netProfitTargetPct` | 0.8 (default) | Base para `grossTargetPct` y `minSpacingPctReal` — valor real staging debe verificarse |
+| `gridStepAtrMultiplier` | 1.5 | Multiplicador ATR para spacing |
+| `gridStepMaxPct` | 3.0 | Techo de spacing |
+| `bandPeriod` | 20 | Período Bollinger (rango macro) |
+| `bandStdDevMultiplier` | 2 | σ Bollinger (rango macro) |
+| `atrPeriod` | 14 | Período ATR |
+| `atrTimeframe` | "1h" (default) | Timeframe ATR — valor real staging debe verificarse |
+| `gridMaxCapitalPerCycleUsd` | 600 | Capital máximo por ciclo |
+
+### Configs existentes a deprecar o revisar
+
+| Campo | Valor actual | Acción |
+|---|---|---|
+| `gridStepMinPct` | 0.15 | **Subir a ~1.0% o eliminar** — `minSpacingPctReal` lo reemplaza como piso real |
+| `geometricRatioMin` | 0.8 | **Deprecar** — la fórmula acumulativa lineal no usa ratio |
+| `geometricRatioMax` | 1.2 | **Deprecar** — mismo motivo |
+
+### UI propuesta (no implementar todavía)
+
+**Panel de viabilidad en `GridCarteraDashboard.tsx`:**
+
+| Campo | Ejemplo | Descripción |
+|---|---|---|
+| Estado Grid | `✅ Viable` / `⚠️ Compacto` / `❌ No viable` | Estado calculado |
+| Rango macro | `$62,335 — $64,070 (2.74%)` | Bollinger 4h 2σ |
+| Rango operativo | `$58,100 — $67,700 (15.3%)` | Rango calculado para niveles |
+| Spacing mínimo rentable | `1.79%` | `grossTargetPct + spread + safety` |
+| Spacing aplicado | `1.79%` | `clamp(ATR×mult, min, max)` |
+| Niveles solicitados | `5 BUY + 5 SELL` | Config |
+| Niveles viables | `5 BUY + 5 SELL` o `2 BUY + 1 SELL` | Calculado |
+| Center price | `$63,404 (híbrido)` | Center calculado |
+| ATR% | `0.7148% (1h)` | ATR usado |
+
+**Advertencias:**
+- Si **compacto**: "⚠️ Grid compacto: solo caben X niveles rentables con el rango operativo actual."
+- Si **no viable**: "❌ No se generan niveles porque no caben niveles rentables con la configuración actual. Considere ampliar el rango operativo o reducir el objetivo neto."
+- Si **rango estrecho**: "⚠️ Rango operativo estrecho: BW operativa X% vs spacing mínimo Y%."
+
+### Plan de implementación por subfases
+
+**3C.1 — Funciones puras de cálculo + tests:**
+- Crear `gridSpacingCalculator.ts` (funciones puras):
+  - `calculateMinSpacingPctReal(netProfitTargetPct, spreadBufferPct, safetyBufferPct)`
+  - `calculateSpacingPct(atrPct, gridStepAtrMultiplier, minSpacingPctReal, gridStepMaxPct)`
+  - `calculateOperationalRange(centerPrice, mode, bollingerBands, atrPct, configs)`
+  - `calculateBandViabilityIterative(centerPrice, operationalLower, operationalUpper, spacingPct, configuredLevels)`
+  - `generateAccumulatedLevels(centerPrice, spacingPct, operationalLower, operationalUpper, maxLevels)`
+- Crear tests (ver sección Tests propuestos).
+- **No integrar en motor real.**
+- **No tocar `gridGeometricLevels.ts`.**
+
+**3C.2 — Integración en generación SHADOW:**
+- Modificar `gridIsolatedEngine.ts` para usar nuevas funciones en modo SHADOW.
+- Mantener `gridGeometricLevels.ts` como fallback.
+- Comparar niveles generados (viejo vs nuevo) en logs.
+- **No rebuild automático.**
+- **No tocar REAL.**
+
+**3C.3 — UI de viabilidad:**
+- Añadir panel de viabilidad en `GridCarteraDashboard.tsx`.
+- Mostrar estado, rangos, spacing, niveles viables.
+- Mostrar advertencias.
+- **No activar regeneración desde UI.**
+
+**3C.4 — Regeneración manual segura de rango SHADOW:**
+- Endpoint para regenerar rango en SHADOW con nueva fórmula.
+- Confirmación explícita requerida.
+- Audit trail completo.
+- **No regeneración automática.**
+
+**3C.5 — Validación con endpoint audit:**
+- Endpoint de auditoría que compara niveles viejos vs nuevos.
+- Validar spacing, rentabilidad, niveles en banda.
+- Reporte de diferencias.
+- **No REAL.**
+
+### Tests propuestos
+
+**`gridMinSpacing.test.ts`:**
+- Valida `calculateMinSpacingPctReal` con valores conocidos.
+- No doble conteo de fees.
+- `minSpacingPctReal > grossTargetPct` siempre.
+- Edge cases: netProfitTargetPct = 0, fees = 0, taxReserve = 0.
+
+**`gridOperationalRange.test.ts`:**
+- Modo `"bollinger"`: usa Bollinger bands como rango.
+- Modo `"atr"`: usa ATR × multiplicador.
+- Modo `"hybrid"`: `max(bollinger, atr, minPct)`.
+- Modo `"fixed"`: porcentaje fijo.
+- Rango simétrico alrededor de center.
+- Edge cases: ATR = 0, Bollinger degenerado.
+
+**`gridBandViability.test.ts`:**
+- Cálculo iterativo de `maxBuyLevels` y `maxSellLevels`.
+- `totalLevels = 0` cuando spacing > semi-ancho.
+- `totalLevels >= 10` cuando rango es suficientemente ancho.
+- Estados: viable / compacto / no viable.
+- `minLevelsForViableGrid` respeta umbral.
+
+**`gridAccumulatedLevels.test.ts`:**
+- `BUY[0] = center × (1 - spacing/100)`.
+- `BUY[i] = BUY[i-1] × (1 - spacing/100)`.
+- Separación entre niveles consecutivos = `spacingPct` (no `spacingPct × (ratio-1)`).
+- Todos los niveles están dentro del rango operativo.
+- No se generan más niveles de los que caben.
+- `SELL notional = qty × sellPrice` (no `capitalPerLevel`).
+
+**`gridNoViableRange.test.ts`:**
+- Grid no viable: 0 niveles generados, estado = "no viable".
+- Grid compacto: pocos niveles, estado = "compacto".
+- Grid viable: niveles completos, estado = "viable".
+- No forzar 5+5 cuando no caben.
+- Mensaje de motivo cuando no genera niveles.
+
+### Riesgos
+
+| Riesgo | Nivel | Mitigación |
+|---|---|---|
+| Cambiar `generateGeometricLevels` rompe tests existentes | Medio | 3C.1 crea funciones nuevas sin tocar las viejas. 3C.2 integra con fallback. |
+| Rangos existentes en DB quedan obsoletos | Medio | 3C.4 regenera manualmente en SHADOW con audit. |
+| Rango operativo amplio expone a más riesgo direccional | Medio | `assessGridSuitability` sigue bloqueando en tendencias. |
+| `minOperationalBandWidthPct = 20%` puede ser demasiado amplio en baja volatilidad | Bajo | Es configurable. Empezar con 20% y ajustar en SHADOW. |
+| Deprecar `geometricRatioMin/Max` puede afectar config existente | Bajo | Mantener campos en DB pero ignorarlos en nueva fórmula. |
+| `gridStepMinPct = 0.15` vs `minSpacingPctReal = 1.79` puede confundir | Bajo | Documentar que `minSpacingPctReal` reemplaza `gridStepMinPct` como piso real. |
+| **Risk Manager y Stop Loss no son mitigaciones activas** | Medio | Risk Manager, Stop Loss y HODL Recovery siguen dormidos o pendientes de integración. La mitigación de esta fase es operar solo en SHADOW, mantener REAL desactivado, no generar órdenes reales y usar `assessGridSuitability` / estados de viabilidad como filtros informativos. |
+
+### Confirmación de restricciones
+- ✅ No IDCA · No FISCO · No REAL · No órdenes reales · No rebuild · No DB manual · No migraciones · No cambios funcionales · No deploy
+- ✅ Solo diseño documentado, sin implementación
+
+---
+
 ## 2026-07-08 — FASE 3C-PRE ATR REAL Y SIMULACIÓN CON CANDLES REALES
 
 ### Resumen
