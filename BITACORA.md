@@ -5,6 +5,116 @@
 
 ---
 
+## 2026-07-08 — FASE 3C.2 SUSTITUCIÓN DEL GENERADOR SHADOW POR SPACING PROFESIONAL
+
+### Resumen
+Sustitución del generador de niveles Grid en SHADOW por la nueva fórmula profesional (spacing acumulativo). La fórmula vieja (geometric) ya no es el camino principal para generar niveles nuevos. Si la nueva fórmula devuelve not_viable, el Grid genera 0 niveles y no hace fallback al generador viejo. Solo SHADOW, sin REAL, sin órdenes reales.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridSpacingCalculator.ts` — añadida función generateProfessionalGridLevels()
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — sustituido generateGeometricLevels por generateProfessionalGridLevels en proposeRangeVersion()
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — añadidos tipos de eventos GRID_PROFESSIONAL_GENERATOR_USED y GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE
+- `server/services/__tests__/gridSpacingCalculator.test.ts` — añadidos 5 tests para generateProfessionalGridLevels()
+
+### Punto de integración
+**Archivo:** `server/services/gridIsolated/gridIsolatedEngine.ts`
+**Función:** `proposeRangeVersion()` (línea 691-894)
+**Cambio:** Sustituido `generateGeometricLevels()` por `generateProfessionalGridLevels()`
+
+### Comportamiento nuevo
+1. **Calcula spacing mínimo rentable** usando calculateMinSpacingPctReal()
+2. **Calcula spacing aplicado** con clamp ATR/min/max usando calculateSpacingPct()
+3. **Calcula center price** usando calculateCenterPrice() (hybrid mode por defecto)
+4. **Calcula rango operativo** usando calculateOperationalRange() (hybrid mode por defecto)
+5. **Cuenta niveles viables iterativamente** usando countViableLevelsIterative()
+6. **Clasifica viabilidad** usando classifyGridViability()
+7. **Genera niveles acumulativos** SOLO si viable (strict mode)
+8. **Si not_viable:** aborta generación, 0 niveles, no fallback viejo, evento GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE
+
+### Defaults internos para SHADOW (sin migración DB)
+- spreadBufferPct = 0.01
+- safetyBufferPct = 0.10
+- minLevelsForViableGrid = 4
+- centerPriceMode = "hybrid"
+- centerClampPct = 0.25
+- operationalRangeMode = "hybrid"
+- minOperationalBandWidthPct = 20.0
+- atrRangeMultiplier = 8.0
+- dynamicLevelReduction = true
+- gridViabilityMode = "strict"
+
+### Adaptación al formato existente
+La función generateProfessionalGridLevels() devuelve GeneratedLevel[] compatible con applyWeightsToGeneratedLevels():
+- BUY: capitalImpactType = "consumes_usd", allocationWeight > 0
+- SELL: capitalImpactType = "requires_base_asset_not_usd", allocationWeight = 0
+- Todos los campos necesarios: levelIndex, side, price, notionalUsd, quantity, distanceFromMidPct, geometricRatio (placeholder 1.0), netProfitTargetUsd, feeEstimateUsd, taxReserveUsd, capitalImpactType, allocationWeight, allocationReason
+
+### professionalGenerator en audit/monitor
+Objeto expuesto en eventos GRID_PROFESSIONAL_GENERATOR_USED y GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE:
+```typescript
+{
+  enabled: true,
+  mode: "shadow_generation",
+  formula: "accumulated_spacing",
+  legacyGeneratorUsed: false,
+  viabilityStatus,
+  minSpacingPctReal,
+  spacingPct,
+  centerPrice,
+  operationalLower,
+  operationalUpper,
+  operationalBandWidthPct,
+  operationalSemiRangePct,
+  requestedBuyLevels,
+  requestedSellLevels,
+  generatedBuyLevels,
+  generatedSellLevels,
+  reductionApplied,
+  reason
+}
+```
+
+### Eventos de auditoría nuevos
+- GRID_PROFESSIONAL_GENERATOR_USED — cuando se generan niveles con fórmula profesional
+- GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE — cuando no caben niveles rentables
+
+### Tests creados
+5 tests adicionales en gridSpacingCalculator.test.ts:
+- genera niveles en formato GeneratedLevel compatible con applyWeightsToGeneratedLevels
+- devuelve not_viable y niveles vacíos cuando rango operativo es estrecho
+- professionalGenerator object contiene todos los campos requeridos
+- BUY levels tienen capitalImpactType = consumes_usd
+- SELL levels tienen capitalImpactType = requires_base_asset_not_usd
+
+### Validación
+- **npm run check**: ✅
+- **npx vitest run gridSpacingCalculator.test.ts**: ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts**: ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts**: ✅ 26/26 tests passed
+- **npx vitest run gridIsolatedRoutes.test.ts**: ✅ 66/66 tests passed
+
+### Confirmación de restricciones
+- ✅ No integración en REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No fallback al generador viejo
+- ✅ Si not_viable genera 0 niveles
+- ✅ No rebuild automático
+- ✅ No regeneración de niveles existentes automáticamente
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No cambios de config DB
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No Risk Manager
+- ✅ No Execution Service
+- ✅ No reconciliation real
+- ✅ No deploy
+
+### Siguiente fase
+Fase 3C.3: Ajustes finos de configuración y monitoreo
+
+---
+
 ## 2026-07-08 — FASE 3C.1 FUNCIONES PURAS DE SPACING, RANGO OPERATIVO Y VIABILIDAD
 
 ### Resumen

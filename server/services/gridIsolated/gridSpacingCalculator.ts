@@ -9,6 +9,7 @@
  *   - Iterative viable level counting
  *   - Viability classification (viable, compact, not_viable)
  *   - Accumulated grid level preview
+ *   - Professional grid level generation (replaces geometric formula)
  *
  * PURE FUNCTIONS ONLY:
  *   - No DB
@@ -17,11 +18,11 @@
  *   - No state
  *   - No side effects
  *
- * This module is NOT integrated into the real engine yet. It's for testing and
- * future integration in Fase 3C.2 (SHADOW mode with fallback).
+ * Integrated in Fase 3C.2 for SHADOW mode generation.
  */
 
 import { computeGrossTargetFromNet } from "./gridNetCalculator";
+import { randomUUID } from "crypto";
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -155,6 +156,249 @@ export interface AccumulatedLevelsResult {
   sellLevelsCount: number;
   totalLevelsCount: number;
   explanation: string;
+}
+
+// ─── Professional Grid Level Generation (replaces geometric formula) ───
+
+export interface ProfessionalLevelGenerationInput {
+  currentPrice: number;
+  bollingerMiddle: number;
+  bollingerUpper: number;
+  bollingerLower: number;
+  atrPct: number;
+  netProfitTargetPct: number;
+  gridStepAtrMultiplier: number;
+  gridStepMaxPct: number;
+  configuredBuyLevels: number;
+  configuredSellLevels: number;
+  capitalPerLevelUsd: number;
+  // Defaults for SHADOW mode (no DB migration yet)
+  spreadBufferPct?: number;
+  safetyBufferPct?: number;
+  minLevelsForViableGrid?: number;
+  centerPriceMode?: CenterPriceMode;
+  centerClampPct?: number;
+  operationalRangeMode?: OperationalRangeMode;
+  operationalBandWidthPct?: number;
+  atrRangeMultiplier?: number;
+  minOperationalBandWidthPct?: number;
+  dynamicLevelReduction?: boolean;
+  gridViabilityMode?: "strict" | "compact";
+}
+
+export interface GeneratedLevel {
+  levelIndex: number;
+  side: "BUY" | "SELL";
+  price: number;
+  notionalUsd: number;
+  quantity: number;
+  distanceFromMidPct: number;
+  geometricRatio: number; // Placeholder for compatibility
+  netProfitTargetUsd: number;
+  feeEstimateUsd: number;
+  taxReserveUsd: number;
+  capitalImpactType: "consumes_usd" | "requires_base_asset_not_usd";
+  allocationWeight: number;
+  allocationReason: string;
+}
+
+export interface ProfessionalLevelGenerationResult {
+  levels: GeneratedLevel[];
+  viabilityStatus: GridViabilityStatus;
+  professionalGenerator: {
+    enabled: true;
+    mode: "shadow_generation";
+    formula: "accumulated_spacing";
+    legacyGeneratorUsed: false;
+    viabilityStatus: GridViabilityStatus;
+    minSpacingPctReal: number;
+    spacingPct: number;
+    centerPrice: number;
+    operationalLower: number;
+    operationalUpper: number;
+    operationalBandWidthPct: number;
+    operationalSemiRangePct: number;
+    requestedBuyLevels: number;
+    requestedSellLevels: number;
+    generatedBuyLevels: number;
+    generatedSellLevels: number;
+    reductionApplied: boolean;
+    reason: string;
+  };
+}
+
+/**
+ * Generate professional grid levels using accumulated spacing formula.
+ * This replaces the geometric formula (which had the bug of levels getting stuck together).
+ *
+ * Process:
+ * 1. Calculate minimum profitable spacing
+ * 2. Calculate applied spacing with ATR clamping
+ * 3. Calculate center price
+ * 4. Calculate operational range
+ * 5. Count viable levels iteratively
+ * 6. Classify viability
+ * 7. Generate levels only if viable (strict mode) or generate reduced levels (compact mode)
+ *
+ * Returns GeneratedLevel[] compatible with applyWeightsToGeneratedLevels.
+ */
+export function generateProfessionalGridLevels(input: ProfessionalLevelGenerationInput): ProfessionalLevelGenerationResult {
+  const {
+    currentPrice,
+    bollingerMiddle,
+    bollingerUpper,
+    bollingerLower,
+    atrPct,
+    netProfitTargetPct,
+    gridStepAtrMultiplier,
+    gridStepMaxPct,
+    configuredBuyLevels,
+    configuredSellLevels,
+    capitalPerLevelUsd,
+    spreadBufferPct = 0.01,
+    safetyBufferPct = 0.10,
+    minLevelsForViableGrid = 4,
+    centerPriceMode = "hybrid",
+    centerClampPct = 0.25,
+    operationalRangeMode = "hybrid",
+    operationalBandWidthPct = 20.0,
+    atrRangeMultiplier = 8.0,
+    minOperationalBandWidthPct = 20.0,
+    dynamicLevelReduction = true,
+    gridViabilityMode = "strict",
+  } = input;
+
+  // 1. Calculate minimum profitable spacing
+  const minSpacingResult = calculateMinSpacingPctReal({
+    netProfitTargetPct,
+    spreadBufferPct,
+    safetyBufferPct,
+  });
+
+  // 2. Calculate applied spacing
+  const spacingResult = calculateSpacingPct({
+    atrPct,
+    gridStepAtrMultiplier,
+    minSpacingPctReal: minSpacingResult.minSpacingPctReal,
+    gridStepMaxPct,
+  });
+
+  // 3. Calculate center price
+  const centerPriceResult = calculateCenterPrice({
+    currentPrice,
+    bollingerMiddle,
+    bollingerUpper,
+    bollingerLower,
+    mode: centerPriceMode,
+    centerClampPct,
+  });
+
+  // 4. Calculate operational range
+  const operationalRangeResult = calculateOperationalRange({
+    centerPrice: centerPriceResult.centerPrice,
+    bollingerUpper,
+    bollingerLower,
+    atrPct,
+    mode: operationalRangeMode,
+    operationalBandWidthPct,
+    atrRangeMultiplier,
+    minOperationalBandWidthPct,
+  });
+
+  // 5. Count viable levels iteratively
+  const viableLevelsResult = countViableLevelsIterative({
+    centerPrice: centerPriceResult.centerPrice,
+    operationalLower: operationalRangeResult.operationalLower,
+    operationalUpper: operationalRangeResult.operationalUpper,
+    spacingPct: spacingResult.spacingPct,
+    configuredBuyLevels,
+    configuredSellLevels,
+  });
+
+  // 6. Classify viability
+  const viabilityResult = classifyGridViability({
+    totalViableLevels: viableLevelsResult.totalViableLevels,
+    minLevelsForViableGrid,
+  });
+
+  // 7. Generate levels based on viability mode
+  let levels: GeneratedLevel[] = [];
+  let generatedBuyLevels = 0;
+  let generatedSellLevels = 0;
+
+  if (viabilityResult.status === "not_viable") {
+    // Strict mode: no levels if not viable
+    levels = [];
+    generatedBuyLevels = 0;
+    generatedSellLevels = 0;
+  } else if (viabilityResult.status === "compact" && gridViabilityMode === "strict") {
+    // Strict mode: no levels if compact
+    levels = [];
+    generatedBuyLevels = 0;
+    generatedSellLevels = 0;
+  } else {
+    // Viable or compact with compact mode: generate levels that fit
+    const previewResult = generateAccumulatedGridLevelsPreview({
+      centerPrice: centerPriceResult.centerPrice,
+      operationalLower: operationalRangeResult.operationalLower,
+      operationalUpper: operationalRangeResult.operationalUpper,
+      spacingPct: spacingResult.spacingPct,
+      configuredBuyLevels: viableLevelsResult.maxBuyLevels,
+      configuredSellLevels: viableLevelsResult.maxSellLevels,
+      dynamicLevelReduction,
+    });
+
+    // Convert GridLevelPreview to GeneratedLevel format
+    levels = previewResult.levels.map((preview) => {
+      const quantity = capitalPerLevelUsd / preview.price;
+      const distanceFromMidPct = preview.distancePctFromCenter;
+      const breakdown = computeGrossTargetFromNet(netProfitTargetPct);
+
+      return {
+        levelIndex: preview.index,
+        side: preview.side,
+        price: preview.price,
+        notionalUsd: capitalPerLevelUsd,
+        quantity,
+        distanceFromMidPct,
+        geometricRatio: 1.0, // Placeholder for compatibility (linear spacing)
+        netProfitTargetUsd: capitalPerLevelUsd * (netProfitTargetPct / 100),
+        feeEstimateUsd: capitalPerLevelUsd * 0.0009, // 0.09% taker fee
+        taxReserveUsd: capitalPerLevelUsd * (netProfitTargetPct / 100) * 0.20,
+        capitalImpactType: preview.side === "BUY" ? "consumes_usd" : "requires_base_asset_not_usd",
+        allocationWeight: preview.side === "BUY" ? 1.0 : 0,
+        allocationReason: preview.side === "BUY" ? "Uniforme (pendiente de recalcular con modo)" : "SELL — no consume USD; requiere BTC/inventario",
+      };
+    });
+
+    generatedBuyLevels = previewResult.buyLevelsCount;
+    generatedSellLevels = previewResult.sellLevelsCount;
+  }
+
+  return {
+    levels,
+    viabilityStatus: viabilityResult.status,
+    professionalGenerator: {
+      enabled: true,
+      mode: "shadow_generation",
+      formula: "accumulated_spacing",
+      legacyGeneratorUsed: false,
+      viabilityStatus: viabilityResult.status,
+      minSpacingPctReal: minSpacingResult.minSpacingPctReal,
+      spacingPct: spacingResult.spacingPct,
+      centerPrice: centerPriceResult.centerPrice,
+      operationalLower: operationalRangeResult.operationalLower,
+      operationalUpper: operationalRangeResult.operationalUpper,
+      operationalBandWidthPct: operationalRangeResult.operationalBandWidthPct,
+      operationalSemiRangePct: operationalRangeResult.operationalSemiRangePct,
+      requestedBuyLevels: configuredBuyLevels,
+      requestedSellLevels: configuredSellLevels,
+      generatedBuyLevels,
+      generatedSellLevels,
+      reductionApplied: viableLevelsResult.reductionApplied,
+      reason: viableLevelsResult.reason,
+    },
+  };
 }
 
 // ─── Functions ───────────────────────────────────────────────────────────

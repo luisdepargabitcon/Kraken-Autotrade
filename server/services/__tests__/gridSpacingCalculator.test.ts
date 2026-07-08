@@ -7,6 +7,7 @@ import {
   countViableLevelsIterative,
   classifyGridViability,
   generateAccumulatedGridLevelsPreview,
+  generateProfessionalGridLevels,
 } from "../gridIsolated/gridSpacingCalculator";
 
 describe("GridSpacingCalculator — calculateMinSpacingPctReal", () => {
@@ -448,5 +449,157 @@ describe("GridSpacingCalculator — Fase 3C-PRE real case", () => {
 
     expect(viableLevels.totalViableLevels).toBeGreaterThanOrEqual(4);
     expect(viability.status).toBe("viable");
+  });
+});
+
+describe("GridSpacingCalculator — generateProfessionalGridLevels", () => {
+  it("generates levels in GeneratedLevel format compatible with applyWeightsToGeneratedLevels", () => {
+    const result = generateProfessionalGridLevels({
+      currentPrice: 63000,
+      bollingerMiddle: 62500,
+      bollingerUpper: 64000,
+      bollingerLower: 61000,
+      atrPct: 0.71,
+      netProfitTargetPct: 1.2,
+      gridStepAtrMultiplier: 1.5,
+      gridStepMaxPct: 3.0,
+      configuredBuyLevels: 5,
+      configuredSellLevels: 5,
+      capitalPerLevelUsd: 120,
+      operationalRangeMode: "fixed",
+      operationalBandWidthPct: 20.0,
+      gridViabilityMode: "strict",
+    });
+
+    expect(result.levels.length).toBeGreaterThan(0);
+    expect(result.viabilityStatus).toBe("viable");
+
+    const firstLevel = result.levels[0];
+    expect(firstLevel).toHaveProperty("levelIndex");
+    expect(firstLevel).toHaveProperty("side");
+    expect(firstLevel).toHaveProperty("price");
+    expect(firstLevel).toHaveProperty("notionalUsd");
+    expect(firstLevel).toHaveProperty("quantity");
+    expect(firstLevel).toHaveProperty("distanceFromMidPct");
+    expect(firstLevel).toHaveProperty("geometricRatio");
+    expect(firstLevel).toHaveProperty("netProfitTargetUsd");
+    expect(firstLevel).toHaveProperty("feeEstimateUsd");
+    expect(firstLevel).toHaveProperty("taxReserveUsd");
+    expect(firstLevel).toHaveProperty("capitalImpactType");
+    expect(firstLevel).toHaveProperty("allocationWeight");
+    expect(firstLevel).toHaveProperty("allocationReason");
+  });
+
+  it("returns not_viable and empty levels when operational range is too narrow", () => {
+    const result = generateProfessionalGridLevels({
+      currentPrice: 63000,
+      bollingerMiddle: 62500,
+      bollingerUpper: 63200, // Very narrow
+      bollingerLower: 62800,
+      atrPct: 0.71,
+      netProfitTargetPct: 1.2,
+      gridStepAtrMultiplier: 1.5,
+      gridStepMaxPct: 3.0,
+      configuredBuyLevels: 5,
+      configuredSellLevels: 5,
+      capitalPerLevelUsd: 120,
+      operationalRangeMode: "bollinger",
+      gridViabilityMode: "strict",
+    });
+
+    expect(result.viabilityStatus).toBe("not_viable");
+    expect(result.levels.length).toBe(0);
+    expect(result.professionalGenerator.legacyGeneratorUsed).toBe(false);
+    expect(result.professionalGenerator.generatedBuyLevels).toBe(0);
+    expect(result.professionalGenerator.generatedSellLevels).toBe(0);
+  });
+
+  it("professionalGenerator object contains all required fields", () => {
+    const result = generateProfessionalGridLevels({
+      currentPrice: 63000,
+      bollingerMiddle: 62500,
+      bollingerUpper: 64000,
+      bollingerLower: 61000,
+      atrPct: 0.71,
+      netProfitTargetPct: 1.2,
+      gridStepAtrMultiplier: 1.5,
+      gridStepMaxPct: 3.0,
+      configuredBuyLevels: 5,
+      configuredSellLevels: 5,
+      capitalPerLevelUsd: 120,
+      operationalRangeMode: "fixed",
+      operationalBandWidthPct: 20.0,
+      gridViabilityMode: "strict",
+    });
+
+    const pg = result.professionalGenerator;
+    expect(pg.enabled).toBe(true);
+    expect(pg.mode).toBe("shadow_generation");
+    expect(pg.formula).toBe("accumulated_spacing");
+    expect(pg.legacyGeneratorUsed).toBe(false);
+    expect(pg).toHaveProperty("viabilityStatus");
+    expect(pg).toHaveProperty("minSpacingPctReal");
+    expect(pg).toHaveProperty("spacingPct");
+    expect(pg).toHaveProperty("centerPrice");
+    expect(pg).toHaveProperty("operationalLower");
+    expect(pg).toHaveProperty("operationalUpper");
+    expect(pg).toHaveProperty("operationalBandWidthPct");
+    expect(pg).toHaveProperty("operationalSemiRangePct");
+    expect(pg).toHaveProperty("requestedBuyLevels");
+    expect(pg).toHaveProperty("requestedSellLevels");
+    expect(pg).toHaveProperty("generatedBuyLevels");
+    expect(pg).toHaveProperty("generatedSellLevels");
+    expect(pg).toHaveProperty("reductionApplied");
+    expect(pg).toHaveProperty("reason");
+  });
+
+  it("BUY levels have capitalImpactType = consumes_usd", () => {
+    const result = generateProfessionalGridLevels({
+      currentPrice: 63000,
+      bollingerMiddle: 62500,
+      bollingerUpper: 64000,
+      bollingerLower: 61000,
+      atrPct: 0.71,
+      netProfitTargetPct: 1.2,
+      gridStepAtrMultiplier: 1.5,
+      gridStepMaxPct: 3.0,
+      configuredBuyLevels: 5,
+      configuredSellLevels: 5,
+      capitalPerLevelUsd: 120,
+      operationalRangeMode: "fixed",
+      operationalBandWidthPct: 20.0,
+      gridViabilityMode: "strict",
+    });
+
+    const buyLevels = result.levels.filter(l => l.side === "BUY");
+    buyLevels.forEach(level => {
+      expect(level.capitalImpactType).toBe("consumes_usd");
+      expect(level.allocationWeight).toBeGreaterThan(0);
+    });
+  });
+
+  it("SELL levels have capitalImpactType = requires_base_asset_not_usd", () => {
+    const result = generateProfessionalGridLevels({
+      currentPrice: 63000,
+      bollingerMiddle: 62500,
+      bollingerUpper: 64000,
+      bollingerLower: 61000,
+      atrPct: 0.71,
+      netProfitTargetPct: 1.2,
+      gridStepAtrMultiplier: 1.5,
+      gridStepMaxPct: 3.0,
+      configuredBuyLevels: 5,
+      configuredSellLevels: 5,
+      capitalPerLevelUsd: 120,
+      operationalRangeMode: "fixed",
+      operationalBandWidthPct: 20.0,
+      gridViabilityMode: "strict",
+    });
+
+    const sellLevels = result.levels.filter(l => l.side === "SELL");
+    sellLevels.forEach(level => {
+      expect(level.capitalImpactType).toBe("requires_base_asset_not_usd");
+      expect(level.allocationWeight).toBe(0);
+    });
   });
 });

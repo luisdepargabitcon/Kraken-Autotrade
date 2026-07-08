@@ -36,6 +36,9 @@ import {
   toGridLevels,
   computeAdaptiveRatio,
 } from "./gridGeometricLevels";
+import {
+  generateProfessionalGridLevels,
+} from "./gridSpacingCalculator";
 import { applyWeightsToGeneratedLevels } from "./gridAllocationEngine";
 import {
   computeGrossTargetFromNet,
@@ -687,6 +690,7 @@ class GridIsolatedEngine {
 
   /**
    * Propose a new range version based on band snapshot.
+   * Uses professional generator (accumulated spacing) instead of geometric formula.
    */
   private async proposeRangeVersion(bandSnapshot: any): Promise<void> {
     if (!this.config) return;
@@ -705,21 +709,44 @@ class GridIsolatedEngine {
       }
     );
 
-    const generatedLevels = generateGeometricLevels({
-      midPrice: bandSnapshot.midPrice,
-      bandUpper: bandSnapshot.upper,
-      bandLower: bandSnapshot.lower,
+    // Use professional generator (accumulated spacing) instead of geometric formula
+    const professionalResult = generateProfessionalGridLevels({
+      currentPrice: bandSnapshot.midPrice,
+      bollingerMiddle: bandSnapshot.middle,
+      bollingerUpper: bandSnapshot.upper,
+      bollingerLower: bandSnapshot.lower,
       atrPct: bandSnapshot.atrPct,
-      bandWidthPct: bandSnapshot.bandWidthPct,
       netProfitTargetPct: this.config.netProfitTargetPct,
       gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
-      gridStepMinPct: this.config.gridStepMinPct,
       gridStepMaxPct: this.config.gridStepMaxPct,
-      geometricRatioMin: this.config.geometricRatioMin,
-      geometricRatioMax: this.config.geometricRatioMax,
+      configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
+      configuredSellLevels: Math.floor(allocation.levelsCount / 2),
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
-      maxLevels: allocation.levelsCount,
+      // Internal defaults for SHADOW mode (no DB migration yet)
+      spreadBufferPct: 0.01,
+      safetyBufferPct: 0.10,
+      minLevelsForViableGrid: 4,
+      centerPriceMode: "hybrid",
+      centerClampPct: 0.25,
+      operationalRangeMode: "hybrid",
+      operationalBandWidthPct: 20.0,
+      atrRangeMultiplier: 8.0,
+      minOperationalBandWidthPct: 20.0,
+      dynamicLevelReduction: true,
+      gridViabilityMode: "strict",
     });
+
+    const { levels: generatedLevels, viabilityStatus, professionalGenerator } = professionalResult;
+
+    // If not viable, abort generation without fallback to old generator
+    if (viabilityStatus === "not_viable") {
+      await this.logEvent("GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE", "No se generan niveles porque no caben niveles rentables con la configuración actual.", {
+        viabilityStatus,
+        professionalGenerator,
+        pair: this.config.pair,
+      });
+      return;
+    }
 
     // ─── Apply per-level weighted capital to BUY levels ───────────────
     // After geometry is fixed, re-distribute budget using the configured
@@ -736,11 +763,8 @@ class GridIsolatedEngine {
     );
 
     const rangeVersionId = randomUUID();
-    const ratio = computeAdaptiveRatio(
-      bandSnapshot.bandWidthPct,
-      this.config.geometricRatioMin,
-      this.config.geometricRatioMax
-    );
+    // Use 1.0 as placeholder for geometricRatio (linear spacing)
+    const ratio = 1.0;
 
     // Persist range version
     await db.insert(gridRangeVersions).values({
@@ -748,7 +772,7 @@ class GridIsolatedEngine {
       versionNumber: await this.getNextVersionNumber(),
       pair: this.config.pair,
       status: "proposed",
-      midPrice: bandSnapshot.midPrice.toFixed(8),
+      midPrice: professionalGenerator.centerPrice.toFixed(8),
       upperPrice: bandSnapshot.upper.toFixed(8),
       lowerPrice: bandSnapshot.lower.toFixed(8),
       bandUpper: bandSnapshot.upper.toFixed(8),
@@ -796,7 +820,7 @@ class GridIsolatedEngine {
       versionNumber: 0, // will be corrected
       pair: this.config.pair,
       status: "active",
-      midPrice: bandSnapshot.midPrice,
+      midPrice: professionalGenerator.centerPrice,
       upperPrice: bandSnapshot.upper,
       lowerPrice: bandSnapshot.lower,
       bandUpper: bandSnapshot.upper,
@@ -816,14 +840,30 @@ class GridIsolatedEngine {
     };
     this.levels = gridLevels;
 
-    await this.logEvent("GRID_RANGE_PROPOSED", `Rango propuesto: el Grid detectó una zona válida para ${this.config.pair} con ${generatedLevels.length} niveles alrededor de ${bandSnapshot.midPrice.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`, {
+    await this.logEvent("GRID_PROFESSIONAL_GENERATOR_USED", `Generador profesional (spacing acumulativo): ${generatedLevels.length} niveles generados con viabilidad ${viabilityStatus}.`, {
       rangeVersionId,
       pair: this.config.pair,
-      lowerPrice: bandSnapshot.lower,
-      upperPrice: bandSnapshot.upper,
-      centerPrice: bandSnapshot.midPrice,
-      widthPct: bandSnapshot.bandWidthPct,
-      method: "bollinger_atr_hybrid",
+      viabilityStatus,
+      professionalGenerator,
+      lowerPrice: professionalGenerator.operationalLower,
+      upperPrice: professionalGenerator.operationalUpper,
+      centerPrice: professionalGenerator.centerPrice,
+      widthPct: professionalGenerator.operationalBandWidthPct,
+      method: "professional_accumulated_spacing",
+      reasonCode: "PROFESSIONAL_GENERATOR",
+      naturalReason: `El Grid generó ${generatedLevels.length} niveles usando fórmula profesional acumulativa con viabilidad ${viabilityStatus}.`,
+      impact: "Se generan niveles futuros; no se modifican ciclos abiertos.",
+      levelsCount: generatedLevels.length,
+      regime: bandSnapshot.regime,
+    });
+    await this.logEvent("GRID_RANGE_PROPOSED", `Rango propuesto: el Grid detectó una zona válida para ${this.config.pair} con ${generatedLevels.length} niveles alrededor de ${professionalGenerator.centerPrice.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`, {
+      rangeVersionId,
+      pair: this.config.pair,
+      lowerPrice: professionalGenerator.operationalLower,
+      upperPrice: professionalGenerator.operationalUpper,
+      centerPrice: professionalGenerator.centerPrice,
+      widthPct: professionalGenerator.operationalBandWidthPct,
+      method: "professional_accumulated_spacing",
       reasonCode: "BAND_VALID",
       naturalReason: `${this.config.pair} está en régimen ${bandSnapshot.regime} y permite separar niveles Grid con margen suficiente.`,
       impact: "Se generan niveles futuros; no se modifican ciclos abiertos.",
@@ -833,16 +873,17 @@ class GridIsolatedEngine {
       atrPct: bandSnapshot.atrPct,
       bollingerWidthPct: bandSnapshot.bandWidthPct,
       marketRegime: bandSnapshot.regime,
+      professionalGenerator,
     });
     await this.logEvent("GRID_RANGE_ACTIVATED", `Rango activado: el Grid usará esta banda para generar niveles futuros en modo ${this.config.mode}.`, {
       rangeVersionId,
       pair: this.config.pair,
       mode: this.config.mode,
-      lowerPrice: bandSnapshot.lower,
-      upperPrice: bandSnapshot.upper,
-      centerPrice: bandSnapshot.midPrice,
-      widthPct: bandSnapshot.bandWidthPct,
-      method: "bollinger_atr_hybrid",
+      lowerPrice: professionalGenerator.operationalLower,
+      upperPrice: professionalGenerator.operationalUpper,
+      centerPrice: professionalGenerator.centerPrice,
+      widthPct: professionalGenerator.operationalBandWidthPct,
+      method: "professional_accumulated_spacing",
       reasonCode: "SHADOW_ACTIVATION",
       naturalReason: `El Grid activó este rango en ${this.config.mode} tras proponer una banda válida para ${this.config.pair}.`,
       impact: "El rango queda disponible para generar niveles futuros. No hay ciclos abiertos todavía.",
