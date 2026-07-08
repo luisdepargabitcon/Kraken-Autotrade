@@ -82,6 +82,83 @@ Protección final del rebuild manual y corrección del audit professionalGenerat
 - ✅ No deploy
 
 ### Siguiente fase
+Fase 3C.2-D: Diagnóstico SHADOW y validación read-only del generador profesional
+
+---
+
+## 2026-07-08 — FASE 3C.2-D DIAGNÓSTICO SHADOW Y VALIDACIÓN READ-ONLY DEL GENERADOR PROFESIONAL
+
+### Resumen
+Corrección del diagnóstico SHADOW tras la validación funcional post-deploy. El generador profesional no se ejecutó porque el tick cortó antes en bandSnapshot.suitableForGrid === false, no porque no hubiera rango activo. Se añadió prioridad en el diagnóstico, separación de counts activos vs globales, y un endpoint read-only para validar el generador profesional sin depender de condiciones de mercado.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — corrección reasonNoLevels, separación counts activos/globales
+- `server/routes/gridIsolated.routes.ts` — endpoint read-only professional-generator/validate, professionalGeneratorRuntime en audit
+
+### 1. Corrección de reasonNoLevels en runShadowValidation()
+**Problema:** runShadowValidation() devolvía reasonNoLevels="No hay rango activo cargado en el motor runtime..." cuando el real motivo era que el mercado no era apto (bandSnapshot.suitableForGrid === false).
+
+**Solución:** Añadir prioridad en el diagnóstico:
+- Si lastTickReason empieza por "Condiciones de mercado no válidas para Grid", usar ese motivo como reasonNoLevels
+- Añadir flags: blockedByUnsuitableMarket, marketUnsuitableReason, professionalGeneratorExecuted
+- nextAction actualizado para sugerir validación read-only cuando mercado no apto
+
+**Regla:** El diagnóstico debe reflejar el motivo real del bloqueo, no un síntoma secundario.
+
+### 2. Separación de counts activos vs globales en getExecutionStatus()
+**Problema:** Con activeRangeVersionId=null, /status mostraba openLevels=75, plannedLevelsCount=75, activeOrdersCount=25, lo que confundía porque no había rango activo.
+
+**Solución:** Filtrar niveles por activeRangeVersionId:
+- Si activeRangeVersionId existe: openLevels, plannedLevelsCount, activeOrdersCount solo cuentan niveles del rango activo
+- Si activeRangeVersionId=null: estos counts operativos son 0
+- Mantener contadores globales aparte: globalLevelsCount, globalPlannedLevelsCount, orphanPlannedLevelsCount
+
+**Regla:** Los KPIs operativos deben referirse al rango activo. Los históricos/globales tienen nombre explícito.
+
+### 3. Endpoint read-only professional-generator/validate
+**Problema:** No se podía validar el generador profesional sin depender de que suitableForGrid fuera true.
+
+**Solución:** Crear endpoint POST /api/grid-isolated/professional-generator/validate:
+- SOLO READ-ONLY: no persistir rango, no persistir niveles, no cambiar mode, no ejecutar tick, no rebuild, no órdenes reales
+- Carga config, obtiene bandSnapshot actual, ejecuta generateProfessionalGridLevels() con misma config que proposeRangeVersion()
+- Devuelve resultado completo: ok, suitableForGrid, bandReason, professionalGeneratorExecuted=true, viabilityStatus, levelsCount, generatedBuyLevels, generatedSellLevels, minSpacingPctReal, spacingPct, centerPrice, operationalLower, operationalUpper, operationalBandWidthPct, operationalSemiRangePct, legacyGeneratorUsed=false
+- Incluye note: "Resultado matemático read-only; el motor real seguiría bloqueando generación porque el mercado no es apto si suitableForGrid=false."
+
+**Regla:** Este endpoint NO es comparador old vs new. Solo valida el generador profesional nuevo.
+
+### 4. professionalGeneratorRuntime en audit root
+**Problema:** No había visibilidad del estado runtime del generador profesional en el audit.
+
+**Solución:** Añadir bloque professionalGeneratorRuntime en /monitor/audit:
+- lastEventAvailable, lastEventReason
+- lastValidationAvailable, lastValidationAt, lastValidationResult
+- blockedByUnsuitableMarket, marketUnsuitableReason
+- professionalGeneratorExecuted
+
+**Regla:** El audit debe exponer tanto el estado de eventos como el estado de validaciones runtime.
+
+### 5. Tests ejecutados
+- **npm run check:** ✅
+- **npx vitest run gridSpacingCalculator.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridWeightedLevels.test.ts:** ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts:** ✅ 26/26 tests passed
+- **npx vitest run gridIsolatedRoutes.test.ts:** ✅ 66/66 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No REAL (solo SHADOW)
+- ✅ No órdenes reales
+- ✅ No rebuild ejecutado
+- ✅ No DB manual
+- ✅ No migraciones
+- ✅ No cambios de config DB
+- ✅ No Risk Manager
+- ✅ No Execution Service
+- ✅ No reconciliation real
+- ✅ No deploy
+
+### Siguiente fase
 Fase 3C.3: Ajustes finos de configuración y monitoreo
 
 ---

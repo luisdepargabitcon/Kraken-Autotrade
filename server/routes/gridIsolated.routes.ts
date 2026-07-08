@@ -18,6 +18,7 @@
  *   POST /api/grid-isolated/backtest            — Run backtest
  *   POST /api/grid-isolated/shadow-validate     — Run SHADOW validation tick (safe, no real orders)
  *   POST /api/grid-isolated/activate            — Activate/deactivate Grid motor (isActive toggle)
+ *   POST /api/grid-isolated/professional-generator/validate — Read-only validation of professional generator
  *   GET  /api/grid-isolated/export/chatgpt      — Export resumen para ChatGPT (texto plano)
  *   GET  /api/grid-isolated/export/json         — Export audit completo en JSON
  *   GET  /api/grid-isolated/export/csv          — Export eventos en CSV
@@ -37,6 +38,9 @@ import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy 
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
 import { getNaturalGridMessage } from "../services/gridIsolated/gridActivityFormatter";
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
+import { getGridBandSnapshot } from "../services/gridIsolated/gridBandAdapter";
+import { gridCapitalAllocator } from "../services/gridIsolated/gridCapitalAllocator";
+import { generateProfessionalGridLevels } from "../services/gridIsolated/gridSpacingCalculator";
 
 // ─── Timing metadata helpers for audit/export ───────────────────────────────
 
@@ -1522,6 +1526,16 @@ export function registerGridIsolatedRoutes(app: Express): void {
         marketContext,
         functionalStatus,
         professionalGenerator,
+        professionalGeneratorRuntime: {
+          lastEventAvailable: professionalGenerator.available || false,
+          lastEventReason: professionalGenerator.available ? null : (professionalGenerator.reason || null),
+          lastValidationAvailable: lastShadowValidation.at !== null,
+          lastValidationAt: lastShadowValidation.at || null,
+          lastValidationResult: lastShadowValidation.result || null,
+          blockedByUnsuitableMarket: (lastShadowValidation.result as any)?.blockedByUnsuitableMarket || false,
+          marketUnsuitableReason: (lastShadowValidation.result as any)?.marketUnsuitableReason || null,
+          professionalGeneratorExecuted: (lastShadowValidation.result as any)?.professionalGeneratorExecuted || false,
+        },
         lastShadowEvaluation: lastShadowValidation.at ? {
           at: lastShadowValidation.at,
           result: lastShadowValidation.result,
@@ -1750,6 +1764,111 @@ export function registerGridIsolatedRoutes(app: Express): void {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", "attachment; filename=grid-isolated-events.csv");
       res.send(header + rows);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  /**
+   * POST /api/grid-isolated/professional-generator/validate
+   * Read-only validation of the professional grid generator.
+   * Does NOT persist ranges, levels, or place orders.
+   * Safe to call even when market conditions are unsuitable.
+   */
+  app.post("/api/grid-isolated/professional-generator/validate", async (_req: Request, res: Response) => {
+    try {
+      const engine = gridIsolatedEngine;
+      if (!engine) {
+        return res.status(503).json({ error: "Grid engine not available" });
+      }
+
+      const config = engine.getConfig();
+      if (!config) {
+        return res.status(400).json({ error: "Grid config not loaded" });
+      }
+
+      // Get current band snapshot (read-only)
+      const bandSnapshot = await getGridBandSnapshot({
+        pair: config.pair || "BTC/USD",
+        bandPeriod: 20,
+        bandStdDevMultiplier: 2,
+        atrPeriod: config.atrPeriod || 14,
+        atrTimeframe: "15m",
+      });
+
+      if (!bandSnapshot) {
+        return res.status(400).json({
+          error: "No band snapshot available",
+          suitableForGrid: false,
+          bandReason: "No market data available",
+        });
+      }
+
+      // Execute professional generator with same config as proposeRangeVersion
+      const allocation = await gridCapitalAllocator.allocate(
+        config.capitalProfile,
+        10, // initial estimate
+        config.netProfitTargetPct,
+        {
+          maxCapitalPerCycleUsd: config.gridMaxCapitalPerCycleUsd ?? 0,
+          allocationMode: config.gridAllocationMode ?? "uniform",
+          deploymentMode: config.gridCapitalDeploymentMode ?? "capped",
+          progressiveIntensity: config.gridProgressiveIntensity ?? 0.30,
+          maxLevelPct: config.gridMaxLevelPct ?? 40,
+          minLevelUsd: config.gridMinLevelUsd ?? 30,
+        }
+      );
+
+      const professionalResult = generateProfessionalGridLevels({
+        currentPrice: bandSnapshot.midPrice,
+        bollingerMiddle: bandSnapshot.middle,
+        bollingerUpper: bandSnapshot.upper,
+        bollingerLower: bandSnapshot.lower,
+        atrPct: bandSnapshot.atrPct,
+        netProfitTargetPct: config.netProfitTargetPct,
+        gridStepAtrMultiplier: config.gridStepAtrMultiplier,
+        gridStepMaxPct: config.gridStepMaxPct,
+        configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
+        configuredSellLevels: Math.floor(allocation.levelsCount / 2),
+        capitalPerLevelUsd: allocation.capitalPerLevelUsd,
+        spreadBufferPct: 0.01,
+        safetyBufferPct: 0.10,
+        minLevelsForViableGrid: 4,
+        centerPriceMode: "hybrid",
+        centerClampPct: 0.25,
+        operationalRangeMode: "hybrid",
+        operationalBandWidthPct: 20.0,
+        atrRangeMultiplier: 8.0,
+        minOperationalBandWidthPct: 20.0,
+        dynamicLevelReduction: true,
+        gridViabilityMode: "strict",
+      });
+
+      const pg = professionalResult.professionalGenerator || {};
+
+      res.json({
+        ok: true,
+        suitableForGrid: bandSnapshot.suitableForGrid,
+        bandReason: bandSnapshot.reason || null,
+        professionalGeneratorExecuted: true,
+        viabilityStatus: professionalResult.viabilityStatus,
+        levelsCount: professionalResult.levels.length,
+        generatedBuyLevels: pg.generatedBuyLevels || 0,
+        generatedSellLevels: pg.generatedSellLevels || 0,
+        minSpacingPctReal: pg.minSpacingPctReal || null,
+        spacingPct: pg.spacingPct || null,
+        centerPrice: pg.centerPrice || null,
+        operationalLower: pg.operationalLower || null,
+        operationalUpper: pg.operationalUpper || null,
+        operationalBandWidthPct: pg.operationalBandWidthPct || null,
+        operationalSemiRangePct: pg.operationalSemiRangePct || null,
+        legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
+        persistsLevels: false,
+        placesOrders: false,
+        changesMode: false,
+        rebuild: false,
+        note: "Resultado matemático read-only; el motor real seguiría bloqueando generación porque el mercado no es apto si suitableForGrid=false.",
+      });
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }

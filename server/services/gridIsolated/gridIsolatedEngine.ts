@@ -1251,17 +1251,49 @@ class GridIsolatedEngine {
    * Get execution status (for API/UI).
    */
   getExecutionStatus(): GridExecutionStatus {
-    const openLevels = this.levels.filter(l => l.status === "open" || l.status === "planned").length;
-    const plannedLevelsCount = this.levels.filter(l => l.status === "planned").length;
-    const activeOrdersCount = this.levels.filter(l =>
-      ["open", "placed", "partially_filled", "filled"].includes(l.status)
-    ).length;
+    const activeRangeId = this.activeRangeVersion?.id || null;
+
+    // Filter levels by active range version if exists
+    const activeLevels = activeRangeId
+      ? this.levels.filter(l => l.rangeVersionId === activeRangeId)
+      : [];
+
+    // Operational counts refer to active range only
+    const openLevels = activeRangeId
+      ? activeLevels.filter(l => l.status === "open" || l.status === "planned").length
+      : 0;
+    const plannedLevelsCount = activeRangeId
+      ? activeLevels.filter(l => l.status === "planned").length
+      : 0;
+    const activeOrdersCount = activeRangeId
+      ? activeLevels.filter(l =>
+          ["open", "placed", "partially_filled", "filled"].includes(l.status)
+        ).length
+      : 0;
+
+    // Real orders count is always global (safety check)
     const realOpenOrdersCount = this.levels.filter(l =>
       l.exchangeOrderId != null && !["filled", "cancelled"].includes(l.status)
     ).length;
-    const historicalLevelsCount = this.levels.filter(l =>
-      ["replaced", "cancelled", "filled"].includes(l.status)
-    ).length;
+
+    // Historical levels count is global (all non-active ranges)
+    const historicalLevelsCount = activeRangeId
+      ? this.levels.filter(l =>
+          l.rangeVersionId !== activeRangeId && ["replaced", "cancelled", "filled"].includes(l.status)
+        ).length
+      : this.levels.filter(l =>
+          ["replaced", "cancelled", "filled"].includes(l.status)
+        ).length;
+
+    // Global counters for all levels in memory
+    const globalLevelsCount = this.levels.length;
+    const globalPlannedLevelsCount = this.levels.filter(l => l.status === "planned").length;
+    const orphanPlannedLevelsCount = activeRangeId
+      ? this.levels.filter(l =>
+          l.rangeVersionId !== activeRangeId && l.status === "planned"
+        ).length
+      : 0;
+
     const openCycles = this.cycles.filter(c =>
       c.status !== "completed" && c.status !== "cancelled"
     ).length;
@@ -1270,7 +1302,7 @@ class GridIsolatedEngine {
 
     return {
       mode: this.config?.mode || "OFF",
-      activeRangeVersionId: this.activeRangeVersion?.id || null,
+      activeRangeVersionId: activeRangeId,
       activeRangeVersionNumber: this.activeRangeVersion?.versionNumber ?? null,
       activeRangeCreatedAt: this.activeRangeVersion?.createdAt ?? null,
       activeRangeStatus: this.activeRangeVersion?.status ?? null,
@@ -1295,6 +1327,9 @@ class GridIsolatedEngine {
       lastTickReason: this.lastTickReason,
       lastShadowValidationAt: this.lastShadowValidationAt,
       lastShadowValidationResult: this.lastShadowValidationResult,
+      globalLevelsCount,
+      globalPlannedLevelsCount,
+      orphanPlannedLevelsCount,
     } as any;
   }
 
@@ -1689,9 +1724,16 @@ class GridIsolatedEngine {
     const blockedByExistingLevels = levelsBefore > 0 && levelsGenerated === 0;
     const blockedByRiskGuard = this.pumpDumpState.state !== "normal" || this.circuitBreakerOpen;
 
+    // Check if market was unsuitable (takes priority over other reasons)
+    const blockedByUnsuitableMarket = this.lastTickReason?.startsWith("Condiciones de mercado no válidas para Grid") || false;
+    const marketUnsuitableReason = blockedByUnsuitableMarket ? this.lastTickReason : null;
+    const professionalGeneratorExecuted = !blockedByUnsuitableMarket && levelsGenerated > 0;
+
     let reasonNoLevels: string | null = null;
     if (levelsGenerated === 0) {
-      if (blockedByIsActive) {
+      if (blockedByUnsuitableMarket) {
+        reasonNoLevels = this.lastTickReason || "Condiciones de mercado no válidas para Grid";
+      } else if (blockedByIsActive) {
         reasonNoLevels = "El motor está en SHADOW pero isActive=false, por lo que no se generan niveles automáticos.";
       } else if (blockedByNoMarketData) {
         reasonNoLevels = "No hay datos de mercado disponibles para evaluar bandas.";
@@ -1716,7 +1758,9 @@ class GridIsolatedEngine {
     }
 
     let nextAction = "";
-    if (blockedByIsActive) {
+    if (blockedByUnsuitableMarket) {
+      nextAction = "Esperar condiciones de mercado aptas o ejecutar validación read-only del generador profesional.";
+    } else if (blockedByIsActive) {
       nextAction = "Activar motor Grid en SHADOW o ejecutar una simulación forzada.";
     } else if (blockedByNoMarketData) {
       nextAction = "Verificar conectividad de datos de mercado y reintentar.";
@@ -1756,6 +1800,9 @@ class GridIsolatedEngine {
       blockedByNoMarketData,
       blockedByExistingLevels,
       blockedByRiskGuard,
+      blockedByUnsuitableMarket,
+      marketUnsuitableReason,
+      professionalGeneratorExecuted,
       nextAction,
     };
 
