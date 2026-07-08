@@ -5,6 +5,137 @@
 
 ---
 
+## 2026-07-08 — FASE 3C.1 FUNCIONES PURAS DE SPACING, RANGO OPERATIVO Y VIABILIDAD
+
+### Resumen
+Implementación de funciones puras de cálculo para la nueva arquitectura matemática del Grid Isolated: spacing mínimo rentable, spacing aplicado, center price, rango operativo, conteo iterativo de niveles viables, generación acumulativa teórica y estados de viabilidad. **No se integró en el motor real todavía.** Solo funciones puras + tests.
+
+### Archivos creados
+- `server/services/gridIsolated/gridSpacingCalculator.ts` — módulo de funciones puras
+- `server/services/__tests__/gridSpacingCalculator.test.ts` — tests unitarios (30 tests)
+
+### Funciones implementadas
+
+**1. calculateMinSpacingPctReal(input)**
+- Calcula spacing mínimo rentable: `minSpacingPctReal = grossTargetPct + spreadBufferPct + safetyBufferPct`
+- Acepta `grossTargetPct` directamente o `netProfitTargetPct` (usa `computeGrossTargetFromNet`)
+- No doble cuenta fees (grossTargetPct ya incluye feeBuy + feeSell)
+
+**2. calculateSpacingPct(input)**
+- Calcula spacing aplicado con clamp: `spacingPct = clamp(atrPct * gridStepAtrMultiplier, minSpacingPctReal, gridStepMaxPct)`
+- Devuelve explicación con clampReason: "atr" | "min" | "max"
+
+**3. calculateCenterPrice(input)**
+- Soporta modos: "lastClose", "bollingerMiddle", "hybrid"
+- Hybrid clampa currentPrice hacia middle si está cerca de extremos
+- `centerClampPct` es fracción del ancho de banda (0.25 = 25% de BW)
+
+**4. calculateOperationalRange(input)**
+- Soporta modos: "bollinger", "fixed", "atr", "hybrid"
+- `operationalBandWidthPct` = ancho total de banda
+- `operationalSemiRangePct` = porcentaje por lado
+- Fixed: usa operationalBandWidthPct como total (± operationalBandWidthPct/2)
+- ATR: usa atrRangeMultiplier * atrPct como semi-rango (total = 2 * atrRangeMultiplier * atrPct)
+- Hybrid: usa el rango más amplio entre Bollinger, ATR y minOperationalBandWidthPct
+
+**5. countViableLevelsIterative(input)**
+- Conteo iterativo, no aproximación lineal
+- BUY: `price = centerPrice * (1 - spacingPct/100)`, luego multiplica por `(1 - spacingPct/100)` repetidamente
+- SELL: `price = centerPrice * (1 + spacingPct/100)`, luego multiplica por `(1 + spacingPct/100)` repetidamente
+- Devuelve maxBuyLevels, maxSellLevels, totalViableLevels, reductionApplied, reason
+
+**6. classifyGridViability(input)**
+- Estados: "viable" (≥ minLevelsForViableGrid), "compact" (> 0 pero < minLevelsForViableGrid), "not_viable" (0)
+- Devuelve explicación del estado
+
+**7. generateAccumulatedGridLevelsPreview(input)**
+- Genera niveles teóricos acumulativos: `BUY[i] = BUY[i-1] * (1 - spacingPct/100)`
+- `SELL[i] = SELL[i-1] * (1 + spacingPct/100)`
+- Respeca operationalLower/Upper y dynamicLevelReduction
+- Devuelve preview, no toca DB, no genera órdenes
+
+### Tests creados
+
+**30 tests en gridSpacingCalculator.test.ts:**
+
+A) min spacing (4 tests)
+- No doble cuenta fees
+- Con grossTargetPct=1.68, spread=0.01, safety=0.10 devuelve 1.79
+- Si spread/safety son 0, devuelve grossTargetPct
+- Error si no se proporciona ni grossTargetPct ni netProfitTargetPct
+
+B) spacing clamp (3 tests)
+- ATR * multiplier < minSpacingPctReal → usa min
+- ATR * multiplier entre min y max → usa ATR
+- ATR * multiplier > max → usa max
+
+C) center price (5 tests)
+- lastClose devuelve currentPrice
+- bollingerMiddle devuelve middle
+- hybrid clampa hacia middle si está cerca de extremos
+- hybrid no mueve si está dentro de rango permitido
+
+D) operational range (4 tests)
+- fixed con operationalBandWidthPct=20 genera ±10% por lado
+- bollinger respeta lower/upper
+- atr con atrRangeMultiplier genera rango simétrico
+- hybrid usa rango más amplio entre Bollinger, ATR y mínimo
+
+E) conteo iterativo (4 tests)
+- Banda estrecha + spacing > semi-rango → 0 niveles
+- Banda suficiente → 5 BUY + 5 SELL
+- No usa aproximación lineal
+- No genera niveles fuera de operationalLower/Upper
+
+F) viabilidad (3 tests)
+- 0 niveles → not_viable
+- 1-3 niveles (minLevelsForViableGrid=4) → compact
+- 4+ niveles → viable
+
+G) preview acumulativo (5 tests)
+- BUY[1] calcula desde BUY[0], no desde center
+- SELL[1] calcula desde SELL[0], no desde center
+- gapPctFromPrevious ≈ spacingPct
+- No genera más niveles de los que caben
+- No fuerza 5+5 si no caben
+
+H) caso real Fase 3C-PRE (2 tests)
+- Con Bollinger como rango operativo (estrecho) → not_viable, 0 niveles
+- Con rango operativo fijo/híbrido ancho suficiente → viable, niveles caben
+
+### Validación
+
+- **npm run check**: ✅
+- **npx vitest run gridSpacingCalculator.test.ts**: ✅ 30/30 tests passed
+- **npx vitest run gridWeightedLevels.test.ts**: ✅ 35/35 tests passed
+- **npx vitest run gridAllocationEngine.test.ts**: ✅ 26/26 tests passed
+- **npx vitest run gridIsolatedRoutes.test.ts**: ✅ 66/66 tests passed
+
+### Confirmación de restricciones
+- ✅ No integración en gridIsolatedEngine.ts
+- ✅ No modificación de generación real de niveles
+- ✅ No modificación de rangos existentes
+- ✅ No rebuild
+- ✅ No regeneración de niveles reales
+- ✅ No DB
+- ✅ No migraciones
+- ✅ No cambios de config DB
+- ✅ No REAL
+- ✅ No órdenes reales
+- ✅ No adaptive_market
+- ✅ No ciclos
+- ✅ No Risk Manager
+- ✅ No Execution Service
+- ✅ No reconciliation real
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ No deploy
+
+### Siguiente fase
+Fase 3C.2: Integración en generación SHADOW con fallback
+
+---
+
 ## 2026-07-08 — FASE 3C-DISEÑO RANGO OPERATIVO PROFESIONAL + FÓRMULA ACUMULATIVA
 
 ### Resumen
