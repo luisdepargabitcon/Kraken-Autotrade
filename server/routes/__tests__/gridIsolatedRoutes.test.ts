@@ -1179,4 +1179,112 @@ describe("Grid Isolated Routes — Endpoints", () => {
       }
     }
   });
+
+  // ─── 3C.3-C: Adaptive Smart Range Config Persistence ──────────────
+
+  it("POST /api/grid-isolated/config persists adaptive smart range fields", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/config", {
+      gridRangeControlMode: 'adaptive_smart',
+      adaptiveRangeEnabled: true,
+      adaptiveRangeProfile: 'aggressive',
+      adaptiveRangeMinPct: 2.00,
+      adaptiveRangeMaxPct: 8.00,
+      adaptiveRangeLowVolMaxPct: 3.50,
+      adaptiveRangeNormalMaxPct: 6.00,
+      adaptiveRangeHighVolMaxPct: 8.00,
+      adaptiveRangeTargetFullLevels: true,
+      adaptiveRangeMinViableLevels: 6,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.gridRangeControlMode).toBe('adaptive_smart');
+    expect(res.body.adaptiveRangeEnabled).toBe(true);
+    expect(res.body.adaptiveRangeProfile).toBe('aggressive');
+    expect(res.body.adaptiveRangeMinPct).toBe(2.00);
+    expect(res.body.adaptiveRangeMaxPct).toBe(8.00);
+    expect(res.body.adaptiveRangeLowVolMaxPct).toBe(3.50);
+    expect(res.body.adaptiveRangeNormalMaxPct).toBe(6.00);
+    expect(res.body.adaptiveRangeHighVolMaxPct).toBe(8.00);
+    expect(res.body.adaptiveRangeTargetFullLevels).toBe(true);
+    expect(res.body.adaptiveRangeMinViableLevels).toBe(6);
+  });
+
+  it("POST /api/grid-isolated/config restores adaptive smart range defaults", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/config", {
+      gridRangeControlMode: 'adaptive_smart',
+      adaptiveRangeEnabled: true,
+      adaptiveRangeProfile: 'balanced',
+      adaptiveRangeMinPct: 1.50,
+      adaptiveRangeMaxPct: 7.00,
+      adaptiveRangeLowVolMaxPct: 3.00,
+      adaptiveRangeNormalMaxPct: 5.00,
+      adaptiveRangeHighVolMaxPct: 7.00,
+      adaptiveRangeTargetFullLevels: false,
+      adaptiveRangeMinViableLevels: 4,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.gridRangeControlMode).toBe('adaptive_smart');
+    expect(res.body.adaptiveRangeProfile).toBe('balanced');
+    expect(res.body.adaptiveRangeMinPct).toBe(1.50);
+    expect(res.body.adaptiveRangeMaxPct).toBe(7.00);
+    expect(res.body.adaptiveRangeMinViableLevels).toBe(4);
+  });
+
+  it("saveConfig includes all 10 adaptive smart range fields in db.update set values", async () => {
+    const updateMock = db.update as any;
+    updateMock.mock.clearMock ? updateMock.mock.clearMock() : undefined;
+
+    await simulatePost(app, "/api/grid-isolated/config", {
+      adaptiveRangeProfile: 'conservative',
+    });
+
+    const calls = updateMock.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+
+    const updateChain = updateMock.mock.results[updateMock.mock.results.length - 1]?.value;
+    if (updateChain && updateChain.set && updateChain.set.mock) {
+      const setCalls = updateChain.set.mock.calls;
+      if (setCalls.length > 0) {
+        const valuesObj = setCalls[setCalls.length - 1][0];
+        expect(valuesObj).toHaveProperty("gridRangeControlMode");
+        expect(valuesObj).toHaveProperty("adaptiveRangeEnabled");
+        expect(valuesObj).toHaveProperty("adaptiveRangeProfile");
+        expect(valuesObj).toHaveProperty("adaptiveRangeMinPct");
+        expect(valuesObj).toHaveProperty("adaptiveRangeMaxPct");
+        expect(valuesObj).toHaveProperty("adaptiveRangeLowVolMaxPct");
+        expect(valuesObj).toHaveProperty("adaptiveRangeNormalMaxPct");
+        expect(valuesObj).toHaveProperty("adaptiveRangeHighVolMaxPct");
+        expect(valuesObj).toHaveProperty("adaptiveRangeTargetFullLevels");
+        expect(valuesObj).toHaveProperty("adaptiveRangeMinViableLevels");
+      }
+    }
+  });
+
+  it("GET /api/grid-isolated/monitor/audit exposes rangeIntelligence", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("rangeIntelligence");
+    const ri = res.body.rangeIntelligence;
+    expect(ri).toHaveProperty("rangeControlMode");
+    expect(ri).toHaveProperty("adaptiveRangeEnabled");
+    expect(ri).toHaveProperty("adaptiveRangeProfile");
+    expect(ri).toHaveProperty("adaptiveRangeMinPct");
+    expect(ri).toHaveProperty("adaptiveRangeMaxPct");
+    expect(ri).toHaveProperty("adaptiveRangeLowVolMaxPct");
+    expect(ri).toHaveProperty("adaptiveRangeNormalMaxPct");
+    expect(ri).toHaveProperty("adaptiveRangeHighVolMaxPct");
+    expect(ri).toHaveProperty("adaptiveRangeTargetFullLevels");
+    expect(ri).toHaveProperty("adaptiveRangeMinViableLevels");
+    expect(ri).toHaveProperty("lastAdaptiveRangeDecision");
+    expect(ri).toHaveProperty("lastRangeAudit");
+  });
+
+  it("professional-generator validate includes adaptiveRangeDecision when ok", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/professional-generator/validate");
+    expect(res.status).toBe(200);
+    if (res.body.ok === true) {
+      expect(res.body).toHaveProperty("adaptiveRangeDecision");
+      expect(res.body).toHaveProperty("rangeControlMode");
+      expect(res.body).toHaveProperty("rangeProfile");
+    }
+  });
 });

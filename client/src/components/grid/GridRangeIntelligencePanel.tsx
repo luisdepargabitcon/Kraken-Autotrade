@@ -123,6 +123,14 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
           )}
         </div>
 
+        {/* Stale range warning */}
+        {!adaptiveDecision && rangeAudit && (
+          <div className="rounded-lg bg-amber-500/5 border border-amber-500/20 p-3 text-sm text-amber-700 dark:text-amber-300 flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>El rango activo actual fue creado antes de Adaptive Smart Range. Estos cálculos aplican solo a futuros rangos o a una regeneración manual autorizada.</span>
+          </div>
+        )}
+
         {/* Adaptive Range Decision */}
         {adaptiveDecision ? (
           <div className="space-y-3">
