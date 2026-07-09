@@ -64,12 +64,12 @@ export function GridLevelsMarketHeader({
 
   const getBandPositionLabel = () => {
     switch (bandPosition) {
-      case "below": return "Por debajo de la banda";
-      case "lower": return "Zona baja de la banda";
-      case "middle": return "Zona media de la banda";
-      case "upper": return "Zona superior de la banda";
-      case "above": return "Por encima de la banda";
-      case "unknown": return "Banda no disponible";
+      case "below": return "Por debajo del rango";
+      case "lower": return "Zona baja del rango";
+      case "middle": return "Zona media del rango";
+      case "upper": return "Zona superior del rango";
+      case "above": return "Por encima del rango";
+      case "unknown": return "Rango no disponible";
       default: return "Posición desconocida";
     }
   };
@@ -88,19 +88,19 @@ export function GridLevelsMarketHeader({
 
   const getNaturalExplanation = () => {
     if (bandPosition === "below") {
-      return "El precio está por debajo de la banda activa. El Grid espera que el precio entre en rango para generar niveles.";
+      return "El precio está por debajo del rango operativo. El Grid espera que el precio entre en rango para generar niveles.";
     }
     if (bandPosition === "above") {
-      return "El precio está por encima de la banda activa. El Grid espera condiciones más favorables.";
+      return "El precio está por encima del rango operativo. El Grid espera condiciones más favorables.";
     }
     if (bandPosition === "lower") {
-      return "El precio está en la zona baja de la banda. Posible oportunidad de compra.";
+      return "El precio está en la zona baja del rango. Posible oportunidad de compra.";
     }
     if (bandPosition === "middle") {
-      return "El precio está en la zona media de la banda. Grid operativo normal.";
+      return "El precio está en la zona media del rango. Grid operativo normal.";
     }
     if (bandPosition === "upper") {
-      return "El precio está en la zona superior de la banda. El Grid mantiene compras planificadas por debajo y objetivos de venta por encima; todavía no hay ciclos abiertos.";
+      return "El precio está en la zona superior del rango. El Grid mantiene compras planificadas por debajo y objetivos de venta por encima; todavía no hay ciclos abiertos.";
     }
     return activeRangeVersionId
       ? "Estado del mercado no determinado."

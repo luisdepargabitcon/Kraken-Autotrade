@@ -14,19 +14,19 @@ export function GridMarketContextPanel({ range, status, mode, onGoToTab }: GridM
   const pumpDumpState = status?.pumpDumpState || "normal";
 
   const naturalMessage = !hasActiveRange
-    ? "No hay banda activa. El Grid está esperando condiciones válidas para detectar una zona de entrada."
+    ? "No hay rango activo. El Grid está esperando condiciones válidas para detectar una zona de entrada."
     : mode === "OFF"
-    ? "Banda detectada en auditoría. El Grid está en OFF, por lo que no la usa para operar."
+    ? "Rango detectado en auditoría. El Grid está en OFF, por lo que no lo usa para operar."
     : mode === "SHADOW"
-    ? "Rango activo en SHADOW. El sistema usará esta banda para generar niveles futuros en simulación."
-    : "Rango activo en modo real. El sistema usará esta banda para generar niveles operativos.";
+    ? "Rango activo en SHADOW. El sistema usará este rango para generar niveles futuros en simulación."
+    : "Rango activo en modo real. El sistema usará este rango para generar niveles operativos.";
 
   return (
     <Card className="border-border/50">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <BarChart3 className="h-4 w-4" />
-          Contexto de mercado y banda activa
+          Contexto de mercado y rango activo
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -48,7 +48,7 @@ export function GridMarketContextPanel({ range, status, mode, onGoToTab }: GridM
                 </Badge>
               </div>
               <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Estado de banda</p>
+                <p className="text-xs text-muted-foreground">Estado del rango</p>
                 <Badge variant="default" className="text-xs">{range.status}</Badge>
               </div>
             </div>
