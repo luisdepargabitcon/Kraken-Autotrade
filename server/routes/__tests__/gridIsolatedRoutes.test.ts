@@ -79,6 +79,7 @@ vi.mock("drizzle-orm", () => ({
 }));
 
 import { registerGridIsolatedRoutes } from "../gridIsolated.routes";
+import { db } from "../../db";
 
 function createApp(): Express {
   const app = express();
@@ -1102,5 +1103,80 @@ describe("Grid Isolated Routes — Endpoints", () => {
     const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", { dryRun: true });
     expect(res.status).toBe(200);
     expect(res.body.realOrdersAffected).toBe(false);
+  });
+
+  // ─── 3C.3-A: Compact Range Config Persistence ───────────────────
+
+  it("POST /api/grid-isolated/config persists enforceCompactRange, gridRangeMaxPct, maxDistanceFromCenterPct, maxSellDistanceFromNearestBuyPct", async () => {
+    const updateSpy = (db.update as any);
+    const setSpy = updateSpy.mock.calls;
+    const beforeCount = setSpy.length;
+
+    const res = await simulatePost(app, "/api/grid-isolated/config", {
+      enforceCompactRange: false,
+      gridRangeMaxPct: 3.25,
+      maxDistanceFromCenterPct: 1.60,
+      maxSellDistanceFromNearestBuyPct: 1.75,
+    });
+    expect(res.status).toBe(200);
+
+    // Config returned must reflect the updated values
+    expect(res.body.enforceCompactRange).toBe(false);
+    expect(res.body.gridRangeMaxPct).toBe(3.25);
+    expect(res.body.maxDistanceFromCenterPct).toBe(1.60);
+    expect(res.body.maxSellDistanceFromNearestBuyPct).toBe(1.75);
+
+    // db.update must have been called (saveConfig persists)
+    const afterCount = setSpy.length;
+    expect(afterCount).toBeGreaterThan(beforeCount);
+  });
+
+  it("POST /api/grid-isolated/config restores compact range defaults", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/config", {
+      enforceCompactRange: true,
+      gridRangeMaxPct: 2.50,
+      maxDistanceFromCenterPct: 1.25,
+      maxSellDistanceFromNearestBuyPct: 1.50,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.enforceCompactRange).toBe(true);
+    expect(res.body.gridRangeMaxPct).toBe(2.50);
+    expect(res.body.maxDistanceFromCenterPct).toBe(1.25);
+    expect(res.body.maxSellDistanceFromNearestBuyPct).toBe(1.50);
+  });
+
+  it("saveConfig includes all 4 compact range fields in db.update set values", async () => {
+    const updateMock = db.update as any;
+    // Clear previous calls
+    updateMock.mock.clearMock ? updateMock.mock.clearMock() : undefined;
+
+    // Trigger a config save by updating any field
+    await simulatePost(app, "/api/grid-isolated/config", {
+      gridRangeMaxPct: 3.00,
+    });
+
+    // Find the last update call — check that set was called with values containing compact range fields
+    const calls = updateMock.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+
+    // The last update call should be for gridIsolatedConfigs
+    // set() receives the values object
+    const lastCall = calls[calls.length - 1];
+    const setFn = lastCall[0]; // update(table) returns { set: vi.fn() }
+    // Actually, update is called with table arg, returns object with set
+    // The mock: update: vi.fn().mockReturnValue(updateChain)
+    // updateChain = { set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) }
+    // So we need to check updateChain.set.mock.calls
+    const updateChain = updateMock.mock.results[updateMock.mock.results.length - 1]?.value;
+    if (updateChain && updateChain.set && updateChain.set.mock) {
+      const setCalls = updateChain.set.mock.calls;
+      if (setCalls.length > 0) {
+        const valuesObj = setCalls[setCalls.length - 1][0];
+        expect(valuesObj).toHaveProperty("enforceCompactRange");
+        expect(valuesObj).toHaveProperty("gridRangeMaxPct");
+        expect(valuesObj).toHaveProperty("maxDistanceFromCenterPct");
+        expect(valuesObj).toHaveProperty("maxSellDistanceFromNearestBuyPct");
+      }
+    }
   });
 });

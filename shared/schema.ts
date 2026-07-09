@@ -1710,6 +1710,11 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   gridProgressiveIntensity:        decimal("grid_progressive_intensity", { precision: 5, scale: 2 }).notNull().default("0.30"),
   gridMaxLevelPct:                 decimal("grid_max_level_pct", { precision: 5, scale: 2 }).notNull().default("40.00"),
   gridMinLevelUsd:                 decimal("grid_min_level_usd", { precision: 10, scale: 2 }).notNull().default("30.00"),
+  // Compact Range Control (3C.3-A)
+  enforceCompactRange:             boolean("enforce_compact_range").notNull().default(true),
+  gridRangeMaxPct:                 decimal("grid_range_max_pct", { precision: 6, scale: 2 }).notNull().default("2.50"),
+  maxDistanceFromCenterPct:        decimal("max_distance_from_center_pct", { precision: 6, scale: 2 }).notNull().default("1.25"),
+  maxSellDistanceFromNearestBuyPct: decimal("max_sell_distance_from_nearest_buy_pct", { precision: 6, scale: 2 }).notNull().default("1.50"),
   createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt:               timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

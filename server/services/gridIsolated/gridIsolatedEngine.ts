@@ -156,10 +156,10 @@ class GridIsolatedEngine {
           gridMaxLevelPct: parseFloat(row.gridMaxLevelPct ?? "40.00"),
           gridMinLevelUsd: parseFloat(row.gridMinLevelUsd ?? "30.00"),
           // Compact Range Control (3C.3-A)
-          enforceCompactRange: (row as any).enforce_compact_range ?? true,
-          gridRangeMaxPct: parseFloat((row as any).grid_range_max_pct ?? "2.50"),
-          maxDistanceFromCenterPct: parseFloat((row as any).max_distance_from_center_pct ?? "1.25"),
-          maxSellDistanceFromNearestBuyPct: parseFloat((row as any).max_sell_distance_from_nearest_buy_pct ?? "1.50"),
+          enforceCompactRange: row.enforceCompactRange ?? true,
+          gridRangeMaxPct: parseFloat(row.gridRangeMaxPct ?? "2.50"),
+          maxDistanceFromCenterPct: parseFloat(row.maxDistanceFromCenterPct ?? "1.25"),
+          maxSellDistanceFromNearestBuyPct: parseFloat(row.maxSellDistanceFromNearestBuyPct ?? "1.50"),
         };
         // Load active state from DB
         await this.loadActiveRangeVersion();
@@ -251,10 +251,10 @@ class GridIsolatedEngine {
           gridMaxLevelPct: parseFloat(row.gridMaxLevelPct ?? "40.00"),
           gridMinLevelUsd: parseFloat(row.gridMinLevelUsd ?? "30.00"),
           // Compact Range Control (3C.3-A)
-          enforceCompactRange: (row as any).enforce_compact_range ?? true,
-          gridRangeMaxPct: parseFloat((row as any).grid_range_max_pct ?? "2.50"),
-          maxDistanceFromCenterPct: parseFloat((row as any).max_distance_from_center_pct ?? "1.25"),
-          maxSellDistanceFromNearestBuyPct: parseFloat((row as any).max_sell_distance_from_nearest_buy_pct ?? "1.50"),
+          enforceCompactRange: row.enforceCompactRange ?? true,
+          gridRangeMaxPct: parseFloat(row.gridRangeMaxPct ?? "2.50"),
+          maxDistanceFromCenterPct: parseFloat(row.maxDistanceFromCenterPct ?? "1.25"),
+          maxSellDistanceFromNearestBuyPct: parseFloat(row.maxSellDistanceFromNearestBuyPct ?? "1.50"),
         };
       }
     } catch (error) {
@@ -340,6 +340,11 @@ class GridIsolatedEngine {
         gridProgressiveIntensity: this.config.gridProgressiveIntensity.toFixed(2),
         gridMaxLevelPct: this.config.gridMaxLevelPct.toFixed(2),
         gridMinLevelUsd: this.config.gridMinLevelUsd.toFixed(2),
+        // Compact Range Control (3C.3-A)
+        enforceCompactRange: this.config.enforceCompactRange ?? true,
+        gridRangeMaxPct: Number(this.config.gridRangeMaxPct ?? 2.50).toFixed(2),
+        maxDistanceFromCenterPct: Number(this.config.maxDistanceFromCenterPct ?? 1.25).toFixed(2),
+        maxSellDistanceFromNearestBuyPct: Number(this.config.maxSellDistanceFromNearestBuyPct ?? 1.50).toFixed(2),
         updatedAt: new Date(),
       } as any;
 

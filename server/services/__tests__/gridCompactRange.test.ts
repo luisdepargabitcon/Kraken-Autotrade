@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateProfessionalGridLevels } from "../gridIsolated/gridSpacingCalculator";
+import { DEFAULT_GRID_CONFIG } from "../gridIsolated/gridIsolatedTypes";
 
 describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
   const baseInput = {
@@ -19,6 +20,15 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     gridViabilityMode: "strict" as const,
   };
 
+  // Viable compact input: small spacing fits levels within 2.5%
+  const viableCompactInput = {
+    ...baseInput,
+    netProfitTargetPct: 0.15,
+    atrPct: 0.10,
+    gridStepAtrMultiplier: 1.0,
+    gridStepMaxPct: 0.50,
+  };
+
   it("1. enforceCompactRange=true compresses operational range to gridRangeMaxPct", () => {
     const result = generateProfessionalGridLevels({
       ...baseInput,
@@ -35,12 +45,9 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     expect(pg.rangeAudit!.rangeMaxPct).toBe(2.50);
   });
 
-  it("2. with configured levels, totalRangePct stays within gridRangeMaxPct", () => {
+  it("2. viable compact case generates levels AND totalRangePct within gridRangeMaxPct", () => {
     const result = generateProfessionalGridLevels({
-      ...baseInput,
-      netProfitTargetPct: 0.3,
-      atrPct: 0.15,
-      gridStepAtrMultiplier: 1.0,
+      ...viableCompactInput,
       enforceCompactRange: true,
       gridRangeMaxPct: 2.50,
       maxDistanceFromCenterPct: 1.25,
@@ -48,18 +55,19 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     });
 
     const audit = result.professionalGenerator.rangeAudit!;
-    // Operational range must be compressed to gridRangeMaxPct
     expect(result.professionalGenerator.operationalBandWidthPct).toBeLessThanOrEqual(2.50);
-    // If levels were generated, their total range must be within the limit
-    if (audit.levelsCount > 0) {
-      expect(audit.totalRangePct).toBeLessThanOrEqual(2.50);
-    }
+    // For a viable case, levels MUST be generated
+    expect(audit.levelsCount).toBeGreaterThan(0);
+    expect(audit.buyLevelsCount).toBeGreaterThan(0);
+    expect(audit.sellLevelsCount).toBeGreaterThan(0);
+    // Total range of generated levels must be within the limit
+    expect(audit.totalRangePct).toBeLessThanOrEqual(2.50);
   });
 
-  it("3. if net target requires more spacing than allowed, warning is emitted", () => {
+  it("3. impossible net target → warning AND compactRangeOk=false OR no levels", () => {
     const result = generateProfessionalGridLevels({
       ...baseInput,
-      netProfitTargetPct: 5.0, // Very high target → large min spacing
+      netProfitTargetPct: 5.0,
       enforceCompactRange: true,
       gridRangeMaxPct: 2.50,
       maxDistanceFromCenterPct: 1.25,
@@ -71,11 +79,18 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
       w.includes("Target neto") && w.includes("excede gridRangeMaxPct")
     );
     expect(hasTargetWarning).toBe(true);
+    // Must not produce misleading levels: either compactRangeOk=false, or no levels, or not viable
+    const noMisleadingLevels =
+      !audit.compactRangeOk ||
+      result.levels.length === 0 ||
+      result.viabilityStatus === "not_viable" ||
+      result.viabilityStatus === "compact";
+    expect(noMisleadingLevels).toBe(true);
   });
 
-  it("4. SELL levels are not excessively far from nearest BUY", () => {
+  it("4. SELL-to-BUY gap is valid and within maxSellDistanceFromNearestBuyPct", () => {
     const result = generateProfessionalGridLevels({
-      ...baseInput,
+      ...viableCompactInput,
       enforceCompactRange: true,
       gridRangeMaxPct: 2.50,
       maxDistanceFromCenterPct: 1.25,
@@ -83,6 +98,13 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     });
 
     const audit = result.professionalGenerator.rangeAudit!;
+    // Must have both BUY and SELL to measure gap
+    expect(audit.buyLevelsCount).toBeGreaterThan(0);
+    expect(audit.sellLevelsCount).toBeGreaterThan(0);
+    // Gap must be a valid number
+    expect(audit.sellToBuyGapPct).not.toBeNaN();
+    expect(audit.sellToBuyGapPct).not.toBeNull();
+    expect(audit.sellToBuyGapPct).not.toBeUndefined();
     expect(audit.sellToBuyGapPct).toBeLessThanOrEqual(1.50);
   });
 
@@ -105,7 +127,6 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
       gridRangeMaxPct: 2.50,
     });
 
-    // All levels should be in "planned" state conceptually — no exchangeOrderId
     result.levels.forEach(level => {
       expect(level).toHaveProperty("price");
       expect(level).toHaveProperty("quantity");
@@ -113,7 +134,7 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     });
   });
 
-  it("7. enforceCompactRange=false does not compress range", () => {
+  it("7. enforceCompactRange=false preserves 20% range; DEFAULT config has enforceCompactRange=true", () => {
     const result = generateProfessionalGridLevels({
       ...baseInput,
       enforceCompactRange: false,
@@ -121,9 +142,14 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     });
 
     const pg = result.professionalGenerator;
-    // Without compact enforcement, operational range stays at original (20% for fixed mode)
     expect(pg.operationalBandWidthPct).toBe(20.0);
     expect(pg.rangeAudit!.compactRangeEnforced).toBe(false);
+
+    // System default must be enforceCompactRange=true
+    expect(DEFAULT_GRID_CONFIG.enforceCompactRange).toBe(true);
+    expect(DEFAULT_GRID_CONFIG.gridRangeMaxPct).toBe(2.50);
+    expect(DEFAULT_GRID_CONFIG.maxDistanceFromCenterPct).toBe(1.25);
+    expect(DEFAULT_GRID_CONFIG.maxSellDistanceFromNearestBuyPct).toBe(1.50);
   });
 
   it("8. rangeAudit contains all required fields", () => {
@@ -134,26 +160,60 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     });
 
     const audit = result.professionalGenerator.rangeAudit!;
-    expect(audit).toHaveProperty("centerPrice");
-    expect(audit).toHaveProperty("lowerBuyPrice");
-    expect(audit).toHaveProperty("upperSellPrice");
-    expect(audit).toHaveProperty("totalRangePct");
-    expect(audit).toHaveProperty("maxBuyDistancePctFromCenter");
-    expect(audit).toHaveProperty("maxSellDistancePctFromCenter");
-    expect(audit).toHaveProperty("minSpacingPct");
-    expect(audit).toHaveProperty("maxSpacingPct");
-    expect(audit).toHaveProperty("netTargetPct");
-    expect(audit).toHaveProperty("levelsCount");
-    expect(audit).toHaveProperty("buyLevelsCount");
-    expect(audit).toHaveProperty("sellLevelsCount");
-    expect(audit).toHaveProperty("compactRangeEnforced");
-    expect(audit).toHaveProperty("rangeMaxPct");
-    expect(audit).toHaveProperty("maxDistanceFromCenterPct");
-    expect(audit).toHaveProperty("maxSellDistanceFromNearestBuyPct");
-    expect(audit).toHaveProperty("compactRangeOk");
-    expect(audit).toHaveProperty("warnings");
-    expect(audit).toHaveProperty("sellToBuyGapPct");
-    expect(audit).toHaveProperty("avgSpacingPct");
-    expect(audit).toHaveProperty("reason");
+    const requiredFields = [
+      "centerPrice", "lowerBuyPrice", "upperSellPrice", "totalRangePct",
+      "maxBuyDistancePctFromCenter", "maxSellDistancePctFromCenter",
+      "minSpacingPct", "maxSpacingPct", "netTargetPct",
+      "levelsCount", "buyLevelsCount", "sellLevelsCount",
+      "compactRangeEnforced", "rangeMaxPct", "maxDistanceFromCenterPct",
+      "maxSellDistanceFromNearestBuyPct", "compactRangeOk", "warnings",
+      "sellToBuyGapPct", "avgSpacingPct", "reason",
+    ];
+    for (const field of requiredFields) {
+      expect(audit).toHaveProperty(field);
+    }
+  });
+
+  it("9. anti-absurd-range: operationalBandWidthPct=20 + enforceCompactRange=true → never persists 20%", () => {
+    const result = generateProfessionalGridLevels({
+      ...baseInput,
+      operationalBandWidthPct: 20.0,
+      enforceCompactRange: true,
+      gridRangeMaxPct: 2.50,
+    });
+
+    const pg = result.professionalGenerator;
+    // Must be compressed to 2.50, never 20%
+    expect(pg.operationalBandWidthPct).toBe(2.50);
+    expect(pg.operationalBandWidthPct).not.toBe(20.0);
+    // Audit must confirm compression
+    expect(pg.rangeAudit!.compactRangeEnforced).toBe(true);
+    // If there's a warning about compression, it must mention the original range
+    const hasCompressionWarning = pg.rangeAudit!.warnings.some((w: string) =>
+      w.includes("Comprimiendo") || w.includes("excede gridRangeMaxPct")
+    );
+    expect(hasCompressionWarning).toBe(true);
+  });
+
+  it("10. rangeAudit.reason contains natural language summary", () => {
+    const resultOk = generateProfessionalGridLevels({
+      ...viableCompactInput,
+      enforceCompactRange: true,
+      gridRangeMaxPct: 2.50,
+    });
+    const auditOk = resultOk.professionalGenerator.rangeAudit!;
+    expect(auditOk.reason).toContain("Rango compacto OK");
+
+    const resultWarn = generateProfessionalGridLevels({
+      ...baseInput,
+      netProfitTargetPct: 5.0,
+      enforceCompactRange: true,
+      gridRangeMaxPct: 2.50,
+    });
+    const auditWarn = resultWarn.professionalGenerator.rangeAudit!;
+    // When not OK, reason must contain explanatory text
+    if (!auditWarn.compactRangeOk) {
+      expect(auditWarn.reason).toContain("demasiado amplio");
+    }
   });
 });

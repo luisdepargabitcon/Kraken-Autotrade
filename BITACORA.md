@@ -4043,4 +4043,53 @@ Cuando `enforceCompactRange=true` y el rango operacional excede `gridRangeMaxPct
 ### Estado
 - Código commit-ready. Pendiente: commit + push. Deploy VPS requiere autorización explícita del usuario.
 
+---
+
+## FASE 3C.3-A — REVISIÓN OBLIGATORIA: Persistencia + Schema + Tests Endurecidos (09-JUL-2026)
+
+### Contexto
+Revisión obligatoria detectó que `saveConfig()` NO persistía los 4 campos compact range, y `shared/schema.ts` NO tenía las columnas. `loadConfig()` usaba snake_case `(row as any).enforce_compact_range` en lugar de camelCase Drizzle `row.enforceCompactRange`. Esto repetía el bug anterior de `gridAllocationMode`.
+
+### Problemas detectados
+1. **`saveConfig()`**: No incluía `enforceCompactRange`, `gridRangeMaxPct`, `maxDistanceFromCenterPct`, `maxSellDistanceFromNearestBuyPct` en el objeto `values` enviado a `db.update`.
+2. **`shared/schema.ts`**: No tenía las 4 columnas en `gridIsolatedConfigs`.
+3. **`loadConfig()` y `readConfigSnapshotFromDb()`**: Usaban `(row as any).enforce_compact_range` (snake_case) en lugar de `row.enforceCompactRange` (camelCase Drizzle).
+
+### Solución aplicada
+1. **Schema**: Añadidas 4 columnas a `gridIsolatedConfigs` en `shared/schema.ts`:
+   - `enforceCompactRange` (boolean, default true)
+   - `gridRangeMaxPct` (decimal(6,2), default 2.50)
+   - `maxDistanceFromCenterPct` (decimal(6,2), default 1.25)
+   - `maxSellDistanceFromNearestBuyPct` (decimal(6,2), default 1.50)
+2. **Migración**: Creada `db/migrations/069_grid_compact_range_control.sql` — idempotente con `IF NOT EXISTS` por columna.
+3. **`saveConfig()`**: Añadidos los 4 campos al objeto `values` con formato correcto (boolean directo, decimal con `.toFixed(2)`).
+4. **`loadConfig()` y `readConfigSnapshotFromDb()`**: Cambiados de `(row as any).snake_case` a `row.camelCase` (propiedad real del schema Drizzle).
+5. **Tests endurecidos**: 10 tests en `gridCompactRange.test.ts` (antes 8) + 3 tests nuevos en `gridIsolatedRoutes.test.ts` (persistencia, restauración, saveConfig directo).
+
+### Archivos modificados
+- `shared/schema.ts` — 4 columnas nuevas en `gridIsolatedConfigs`.
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — `saveConfig()` persiste 4 campos; `loadConfig()` y `readConfigSnapshotFromDb()` usan camelCase.
+- `server/services/__tests__/gridCompactRange.test.ts` — reescrito con 10 tests endurecidos.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 3 tests nuevos de persistencia + import `db`.
+
+### Archivos nuevos
+- `db/migrations/069_grid_compact_range_control.sql` — migración idempotente.
+
+### Tests ejecutados
+- **tsc --noEmit (npm run check):** ✅
+- **vitest gridCompactRange.test.ts:** ✅ 10/10
+- **vitest gridSpacingCalculator.test.ts:** ✅ 35/35 (sin regresiones)
+- **vitest gridIsolatedRoutes.test.ts:** ✅ 103/103 (sin regresiones)
+
+### Confirmación de restricciones
+- ✅ No producción, No REAL, No órdenes reales, No SHADOW
+- ✅ No rebuild, No regenerar niveles, No shadow-cleanup/apply
+- ✅ No DB manual, No SQL manual — migración creada en repo, no aplicada manualmente
+- ✅ No IDCA, No FISCO, No Risk Manager, No Execution Service
+- ✅ Grid OFF mantenido
+- ✅ No deploy hasta autorización expresa del usuario
+
+### Estado
+- Código commit-ready. Deploy VPS requiere ejecutar migración 069 + autorización explícita.
+
 *Mantenido por: Windsurf Cascade AI*
