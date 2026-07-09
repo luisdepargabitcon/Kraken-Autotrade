@@ -194,17 +194,22 @@ export function GridAjustesPanel({
                 <div className="flex items-center gap-2">
                   {config?.takerFallbackEnabled
                     ? <AlertCircle className="h-4 w-4 text-amber-500" />
-                    : <XCircle className="h-4 w-4 text-muted-foreground" />}
+                    : <CheckCircle2 className="h-4 w-4 text-green-500" />}
                   <span>
-                    Taker fallback: {config?.takerFallbackEnabled
-                      ? "Disponible solo como emergencia controlada"
-                      : "Desactivado por política"}
+                    {config?.takerFallbackEnabled
+                      ? "Taker fallback activo: solo emergencia controlada"
+                      : "Taker fallback desactivado: maker/post-only estricto"}
                   </span>
                 </div>
               </div>
               {unlockCheck?.postOnlySupported && (
                 <div className="rounded-lg bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-300">
                   Revolut X soporta post-only. La política operativa del Grid prioriza maker/post-only; taker no se usa salvo configuración explícita de emergencia.
+                </div>
+              )}
+              {config?.takerFallbackEnabled && (
+                <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-700 dark:text-amber-300">
+                  El usuario ha indicado preferencia por maker/post-only estricto. Revisar si este fallback debe desactivarse antes de cualquier modo real.
                 </div>
               )}
             </CardContent>

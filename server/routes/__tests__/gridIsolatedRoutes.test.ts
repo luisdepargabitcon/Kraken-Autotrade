@@ -1299,4 +1299,79 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body.geometricRatioMin).not.toBe(0.5);
     expect(res.body.geometricRatioMax).not.toBe(2.0);
   });
+
+  // ─── 3C.3-E1: Separated width fields in audit ──────────────
+
+  it("monitor/audit range exposes marketBollingerWidthPct", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.range).toBeDefined();
+    if (res.body.range.status !== "sin_rango_activo") {
+      expect(res.body.range).toHaveProperty("marketBollingerWidthPct");
+    }
+  });
+
+  it("monitor/audit range exposes operationalRangeWidthPct", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.range).toBeDefined();
+    if (res.body.range.status !== "sin_rango_activo") {
+      expect(res.body.range).toHaveProperty("operationalRangeWidthPct");
+    }
+  });
+
+  it("monitor/audit range exposes operationalSemiRangePct", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.range).toBeDefined();
+    if (res.body.range.status !== "sin_rango_activo") {
+      expect(res.body.range).toHaveProperty("operationalSemiRangePct");
+    }
+  });
+
+  it("monitor/audit range exposes activeRangePriceWidthPct", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.range).toBeDefined();
+    if (res.body.range.status !== "sin_rango_activo") {
+      expect(res.body.range).toHaveProperty("activeRangePriceWidthPct");
+    }
+  });
+
+  it("monitor/audit range exposes rangeGenerationMethod and rangeGenerationSource", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.range).toBeDefined();
+    if (res.body.range.status !== "sin_rango_activo") {
+      expect(res.body.range).toHaveProperty("rangeGenerationMethod");
+      expect(res.body.range).toHaveProperty("rangeGenerationSource");
+    }
+  });
+
+  it("monitor/audit activeRangePriceWidthPct is calculated from lower/upper/center", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    const r = res.body.range;
+    if (r && r.status !== "sin_rango_activo" && r.activeRangePriceWidthPct != null) {
+      const lower = Number(r.lowerPrice);
+      const upper = Number(r.upperPrice);
+      const center = Number(r.centerPrice);
+      const expected = ((upper - lower) / center) * 100;
+      expect(r.activeRangePriceWidthPct).toBeCloseTo(expected, 1);
+    }
+  });
+
+  it("monitor/audit execution exposes makerOnlyPreferred and takerFallbackPolicyLabel", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.execution).toBeDefined();
+    expect(res.body.execution).toHaveProperty("makerOnlyPreferred", true);
+    expect(res.body.execution).toHaveProperty("takerFallbackPolicyLabel");
+    const label = res.body.execution.takerFallbackPolicyLabel;
+    expect(typeof label).toBe("string");
+    expect(label).toMatch(/Taker fallback/);
+  });
+
+  it("monitor/audit execution takerFallbackPolicyLabel matches enabled state", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    const exec = res.body.execution;
+    if (exec.takerFallbackEnabled) {
+      expect(exec.takerFallbackPolicyLabel).toContain("activo");
+    } else {
+      expect(exec.takerFallbackPolicyLabel).toContain("desactivado");
+    }
+  });
 });

@@ -1,7 +1,34 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-09
+> Última actualización: 2026-07-10
+
+---
+
+## 2026-07-10 — FASE 3C.3-E1 ALINEAR SEGURIDAD Y AUDITORÍA GRID POST-DEPLOY
+
+### Resumen
+Tras deploy staging 3C.3-D2 y acción segura (Grid OFF), se corrige la auditoría y UX informativa para distinguir ancho Bollinger/mercado vs ancho operativo real, etiquetar rango v18 como pre-adaptive, y auditar taker fallback sin cambiar config real.
+
+### Archivos modificados
+- `server/routes/gridIsolated.routes.ts` — Audit `range` enriquecido con: `marketBollingerWidthPct`, `operationalRangeWidthPct`, `operationalSemiRangePct`, `activeRangePriceWidthPct` (calculado desde lower/upper/center), `activeRangeLowerPrice/UpperPrice/CenterPrice`, `rangeGenerationMethod`, `rangeGenerationSource` (pre_adaptive/adaptive_smart/unknown). Audit `execution` enriquecido con: `makerOnlyPreferred: true`, `postOnlySupported`, `takerFallbackPolicyLabel` (label dinámico según enabled state).
+- `client/src/components/grid/GridBandsRangesPanel.tsx` — Tarjeta principal "Anchura" → "Ancho operativo real" (usa `activeRangePriceWidthPct`). Nueva fila de 4 campos: Ancho Bollinger/mercado, Ancho operativo (generador), Semi-rango operativo, Origen del rango (badge pre-adaptive/adaptive_smart). Aviso ámbar si rango es pre-adaptive. Aviso blue si hay divergencia >1% entre Bollinger y operativo real.
+- `client/src/components/grid/GridRangeIntelligencePanel.tsx` — Nueva sección "Anchos del rango activo actual" mostrando los 3 anchos lado a lado + badge origen.
+- `client/src/components/grid/GridAjustesPanel.tsx` — Taker fallback: icono ámbar si activo, verde (CheckCircle2) si desactivado. Label dinámico: "Taker fallback activo: solo emergencia controlada" / "Taker fallback desactivado: maker/post-only estricto". Aviso ámbar adicional si está activo recordando preferencia maker/post-only.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 8 tests nuevos: audit expone marketBollingerWidthPct, operationalRangeWidthPct, operationalSemiRangePct, activeRangePriceWidthPct, rangeGenerationMethod/Source; activeRangePriceWidthPct se calcula desde lower/upper/center; execution expone makerOnlyPreferred y takerFallbackPolicyLabel; label coincide con enabled state.
+- `BITACORA.md` — Esta entrada.
+
+### Validaciones
+- **npm run check (tsc):** ✅
+- **vitest (4 archivos):** ✅ 188/188 tests (117 routes + 71 otros)
+- **npm run build:** ✅
+
+### Confirmaciones
+- ✅ No deploy, No VPS escritura, No producción, No REAL, No SHADOW
+- ✅ No órdenes reales, No rebuild, No regeneración, No shadow-cleanup/apply
+- ✅ No DB manual, No SQL manual, No migraciones destructivas
+- ✅ No IDCA, No FISCO, No Risk Manager, No Execution Service, No Reconciliation real
+- ✅ No se cambió `takerFallbackEnabled`, `executionPolicy`, ni ninguna config real — solo labels/UX/audit
 
 ---
 

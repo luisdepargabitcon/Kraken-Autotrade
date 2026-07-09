@@ -68,6 +68,13 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
   const v18Warnings: string[] = rangeAudit?.warnings ?? [];
   const v18Reason = rangeAudit?.reason;
 
+  // Audit range width fields (from enriched audit response)
+  const auditRange = auditData?.range;
+  const auditMarketBollingerWidthPct = auditRange?.marketBollingerWidthPct != null ? Number(auditRange.marketBollingerWidthPct) : null;
+  const auditOperationalRangeWidthPct = auditRange?.operationalRangeWidthPct != null ? Number(auditRange.operationalRangeWidthPct) : null;
+  const auditActiveRangePriceWidthPct = auditRange?.activeRangePriceWidthPct != null ? Number(auditRange.activeRangePriceWidthPct) : null;
+  const auditRangeGenerationSource = auditRange?.rangeGenerationSource ?? null;
+
   return (
     <Card className="border-purple-500/30 bg-gradient-to-br from-purple-500/5 to-card">
       <CardHeader className="pb-3">
@@ -110,6 +117,32 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
             </div>
           </div>
         </div>
+
+        {/* Audit range width comparison */}
+        {auditActiveRangePriceWidthPct != null && (
+          <div className="rounded-lg bg-muted/20 border p-3 space-y-2">
+            <p className="text-sm font-semibold">Anchos del rango activo actual</p>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded bg-muted/30 p-2">
+                <p className="text-muted-foreground">Ancho Bollinger/mercado</p>
+                <p className="font-mono font-semibold">{auditMarketBollingerWidthPct?.toFixed(2) ?? '—'}%</p>
+              </div>
+              <div className="rounded bg-muted/30 p-2">
+                <p className="text-muted-foreground">Ancho operativo (generador)</p>
+                <p className="font-mono font-semibold">{auditOperationalRangeWidthPct?.toFixed(2) ?? '—'}%</p>
+              </div>
+              <div className="rounded bg-muted/30 p-2">
+                <p className="text-muted-foreground">Ancho operativo real (precio)</p>
+                <p className="font-mono font-semibold text-blue-400">{auditActiveRangePriceWidthPct?.toFixed(2) ?? '—'}%</p>
+              </div>
+            </div>
+            {auditRangeGenerationSource && (
+              <Badge variant="outline" className="text-xs">
+                {auditRangeGenerationSource === 'pre_adaptive' ? 'Rango previo / pre-adaptive' : auditRangeGenerationSource === 'adaptive_smart' ? 'Adaptive Smart Range' : auditRangeGenerationSource}
+              </Badge>
+            )}
+          </div>
+        )}
 
         {/* Regime Bucket */}
         <div className="rounded-lg bg-muted/20 border p-3 space-y-2">

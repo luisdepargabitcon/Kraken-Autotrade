@@ -1435,8 +1435,58 @@ export function registerGridIsolatedRoutes(app: Express): void {
           takerFallbackAuditRequired: config?.takerFallbackAuditRequired ?? true,
           takerFallbackAllowed: config?.takerFallbackEnabled ?? true,
           takerFallbackBlockedReason: null as string | null,
+          makerOnlyPreferred: true,
+          postOnlySupported: checks.postOnlySupported ?? null,
+          takerFallbackPolicyLabel:
+            (config?.takerFallbackEnabled ?? true)
+              ? "Taker fallback activo: solo emergencia controlada"
+              : "Taker fallback desactivado: maker/post-only estricto",
         },
-        range: resolvedRange,
+        range: (() => {
+          const r = resolvedRange;
+          if (!r || r.status === "sin_rango_activo") return r;
+
+          const lower = r.lowerPrice != null ? Number(r.lowerPrice) : null;
+          const upper = r.upperPrice != null ? Number(r.upperPrice) : null;
+          const center = r.centerPrice != null ? Number(r.centerPrice) : null;
+          const activeRangePriceWidthPct =
+            lower != null && upper != null && center != null && center > 0
+              ? ((upper - lower) / center) * 100
+              : null;
+
+          const marketBollingerWidthPct = r.widthPct != null ? Number(r.widthPct) : null;
+
+          const pgAny = professionalGenerator as any;
+          const operationalRangeWidthPct =
+            pgAny?.available && pgAny.operationalBandWidthPct != null
+              ? pgAny.operationalBandWidthPct
+              : null;
+          const operationalSemiRangePct =
+            pgAny?.available && pgAny.operationalSemiRangePct != null
+              ? pgAny.operationalSemiRangePct
+              : null;
+
+          const rangeGenerationMethod = r.method ?? null;
+          const rangeGenerationSource =
+            rangeGenerationMethod === "professional_accumulated_spacing"
+              ? "pre_adaptive"
+              : rangeGenerationMethod === "adaptive_smart"
+                ? "adaptive_smart"
+                : rangeGenerationMethod ?? "unknown";
+
+          return {
+            ...r,
+            marketBollingerWidthPct,
+            operationalRangeWidthPct,
+            operationalSemiRangePct,
+            activeRangePriceWidthPct,
+            activeRangeLowerPrice: lower,
+            activeRangeUpperPrice: upper,
+            activeRangeCenterPrice: center,
+            rangeGenerationMethod,
+            rangeGenerationSource,
+          };
+        })(),
         rangeHistory: (() => {
           try {
             const rangeEvents = events.filter((ev: any) =>

@@ -28,6 +28,15 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
   const rangeId = range?.activeRangeVersionId;
   const currentPrice = auditData?.marketContext?.currentPrice;
   const widthPct = range?.widthPct != null ? Number(range.widthPct) : null;
+  const marketBollingerWidthPct = range?.marketBollingerWidthPct != null ? Number(range.marketBollingerWidthPct) : null;
+  const operationalRangeWidthPct = range?.operationalRangeWidthPct != null ? Number(range.operationalRangeWidthPct) : null;
+  const operationalSemiRangePct = range?.operationalSemiRangePct != null ? Number(range.operationalSemiRangePct) : null;
+  const activeRangePriceWidthPct = range?.activeRangePriceWidthPct != null ? Number(range.activeRangePriceWidthPct) : null;
+  const rangeGenerationSource = range?.rangeGenerationSource ?? null;
+  const isPreAdaptive = rangeGenerationSource === "pre_adaptive";
+  const hasWidthDivergence =
+    activeRangePriceWidthPct != null && marketBollingerWidthPct != null &&
+    Math.abs(activeRangePriceWidthPct - marketBollingerWidthPct) > 1;
   const lowerPrice = range?.lowerPrice != null ? Number(range.lowerPrice) : null;
   const upperPrice = range?.upperPrice != null ? Number(range.upperPrice) : null;
   const centerPrice = range?.centerPrice != null ? Number(range.centerPrice) : null;
@@ -121,10 +130,10 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                 <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-blue-500/5">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Info className="h-3 w-3 text-blue-400" />
-                    <p className="text-xs text-muted-foreground">Anchura</p>
+                    <p className="text-xs text-muted-foreground">Ancho operativo real</p>
                   </div>
                   <p className="text-sm font-bold text-blue-400">
-                    {widthPct != null ? `${widthPct.toFixed(2)}%` : "—"}
+                    {activeRangePriceWidthPct != null ? `${activeRangePriceWidthPct.toFixed(2)}%` : "—"}
                   </p>
                 </div>
               </div>
@@ -149,6 +158,39 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                   <p className="text-sm font-bold">{range.levelsGenerated ?? "—"}</p>
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Ancho Bollinger/mercado</p>
+                  <p className="text-sm font-mono">{marketBollingerWidthPct != null ? `${marketBollingerWidthPct.toFixed(2)}%` : "—"}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Ancho operativo (generador)</p>
+                  <p className="text-sm font-mono">{operationalRangeWidthPct != null ? `${operationalRangeWidthPct.toFixed(2)}%` : "—"}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Semi-rango operativo</p>
+                  <p className="text-sm font-mono">{operationalSemiRangePct != null ? `${operationalSemiRangePct.toFixed(2)}%` : "—"}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Origen del rango</p>
+                  <Badge variant="outline" className="text-xs mt-1">
+                    {isPreAdaptive ? "Rango previo / pre-adaptive" : rangeGenerationSource === "adaptive_smart" ? "Adaptive Smart Range" : rangeGenerationSource ?? "—"}
+                  </Badge>
+                </div>
+              </div>
+
+              {isPreAdaptive && (
+                <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  Este rango fue generado antes de Adaptive Smart Range. Se conserva por seguridad y no se regenera automáticamente.
+                </div>
+              )}
+
+              {hasWidthDivergence && (
+                <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3 text-xs text-blue-700 dark:text-blue-300">
+                  El ancho Bollinger/mercado ({marketBollingerWidthPct?.toFixed(2)}%) y el ancho operativo real ({activeRangePriceWidthPct?.toFixed(2)}%) no son lo mismo. Bollinger mide el régimen; el rango operativo es donde el Grid coloca niveles.
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border p-3">
