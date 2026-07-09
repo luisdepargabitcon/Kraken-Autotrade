@@ -204,6 +204,7 @@ export async function registerRoutes(
         { id: '067_telegram_alert_rules', filePath: path.join(migrationsDir, '067_telegram_alert_rules.sql') },
         { id: '068_disable_legacy_alert_rules', filePath: path.join(migrationsDir, '068_disable_legacy_alert_rules.sql') },
         { id: '069_grid_compact_range_control', filePath: path.join(migrationsDir, '069_grid_compact_range_control.sql') },
+        { id: '070_grid_adaptive_smart_range', filePath: path.join(migrationsDir, '070_grid_adaptive_smart_range.sql') },
       ];
 
       await runner.run(migrations);

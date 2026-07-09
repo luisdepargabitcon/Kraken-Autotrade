@@ -469,6 +469,9 @@ describe("GridSpacingCalculator — generateProfessionalGridLevels", () => {
       operationalRangeMode: "fixed",
       operationalBandWidthPct: 20.0,
       gridViabilityMode: "strict",
+      gridRangeControlMode: 'fixed_compact' as const,
+      adaptiveRangeEnabled: false,
+      enforceCompactRange: false,
     });
 
     expect(result.levels.length).toBeGreaterThan(0);
@@ -505,6 +508,9 @@ describe("GridSpacingCalculator — generateProfessionalGridLevels", () => {
       capitalPerLevelUsd: 120,
       operationalRangeMode: "bollinger",
       gridViabilityMode: "strict",
+      gridRangeControlMode: 'fixed_compact' as const,
+      adaptiveRangeEnabled: false,
+      enforceCompactRange: false,
     });
 
     expect(result.viabilityStatus).toBe("not_viable");
@@ -530,6 +536,9 @@ describe("GridSpacingCalculator — generateProfessionalGridLevels", () => {
       operationalRangeMode: "fixed",
       operationalBandWidthPct: 20.0,
       gridViabilityMode: "strict",
+      gridRangeControlMode: 'fixed_compact' as const,
+      adaptiveRangeEnabled: false,
+      enforceCompactRange: false,
     });
 
     const pg = result.professionalGenerator;
@@ -569,6 +578,9 @@ describe("GridSpacingCalculator — generateProfessionalGridLevels", () => {
       operationalRangeMode: "fixed",
       operationalBandWidthPct: 20.0,
       gridViabilityMode: "strict",
+      gridRangeControlMode: 'fixed_compact' as const,
+      adaptiveRangeEnabled: false,
+      enforceCompactRange: false,
     });
 
     const buyLevels = result.levels.filter(l => l.side === "BUY");
@@ -594,6 +606,9 @@ describe("GridSpacingCalculator — generateProfessionalGridLevels", () => {
       operationalRangeMode: "fixed",
       operationalBandWidthPct: 20.0,
       gridViabilityMode: "strict",
+      gridRangeControlMode: 'fixed_compact' as const,
+      adaptiveRangeEnabled: false,
+      enforceCompactRange: false,
     });
 
     const sellLevels = result.levels.filter(l => l.side === "SELL");

@@ -350,6 +350,17 @@ export interface GridIsolatedConfig {
   gridRangeMaxPct: number;
   maxDistanceFromCenterPct: number;
   maxSellDistanceFromNearestBuyPct: number;
+  // ─── Adaptive Smart Range (3C.3-C) ───
+  gridRangeControlMode: 'adaptive_smart' | 'fixed_compact' | 'legacy_hybrid';
+  adaptiveRangeEnabled: boolean;
+  adaptiveRangeProfile: 'conservative' | 'balanced' | 'aggressive';
+  adaptiveRangeMinPct: number;
+  adaptiveRangeMaxPct: number;
+  adaptiveRangeLowVolMaxPct: number;
+  adaptiveRangeNormalMaxPct: number;
+  adaptiveRangeHighVolMaxPct: number;
+  adaptiveRangeTargetFullLevels: boolean;
+  adaptiveRangeMinViableLevels: number;
 }
 
 export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | "updatedAt"> = {
@@ -413,6 +424,17 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   gridRangeMaxPct: 2.50,
   maxDistanceFromCenterPct: 1.25,
   maxSellDistanceFromNearestBuyPct: 1.50,
+  // Adaptive Smart Range (3C.3-C)
+  gridRangeControlMode: 'adaptive_smart' as const,
+  adaptiveRangeEnabled: true,
+  adaptiveRangeProfile: 'balanced' as const,
+  adaptiveRangeMinPct: 1.50,
+  adaptiveRangeMaxPct: 7.00,
+  adaptiveRangeLowVolMaxPct: 3.00,
+  adaptiveRangeNormalMaxPct: 5.00,
+  adaptiveRangeHighVolMaxPct: 7.00,
+  adaptiveRangeTargetFullLevels: false,
+  adaptiveRangeMinViableLevels: 4,
 };
 
 // ─── Mode Lock Safety Conditions ────────────────────────────────────

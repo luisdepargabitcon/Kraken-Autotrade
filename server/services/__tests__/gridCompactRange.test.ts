@@ -18,6 +18,9 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     operationalRangeMode: "fixed" as const,
     operationalBandWidthPct: 20.0,
     gridViabilityMode: "strict" as const,
+    // Use fixed_compact mode to test 3C.3-A compact range path
+    gridRangeControlMode: 'fixed_compact' as const,
+    adaptiveRangeEnabled: false,
   };
 
   // Viable compact input: small spacing fits levels within 2.5%

@@ -798,6 +798,11 @@ export function registerGridIsolatedRoutes(app: Express): void {
         "gridAllocationMode", "gridCapitalDeploymentMode",
         "gridProgressiveIntensity", "gridMaxLevelPct", "gridMinLevelUsd",
         "enforceCompactRange", "gridRangeMaxPct", "maxDistanceFromCenterPct", "maxSellDistanceFromNearestBuyPct",
+        // Adaptive Smart Range (3C.3-C)
+        "gridRangeControlMode", "adaptiveRangeEnabled", "adaptiveRangeProfile",
+        "adaptiveRangeMinPct", "adaptiveRangeMaxPct",
+        "adaptiveRangeLowVolMaxPct", "adaptiveRangeNormalMaxPct", "adaptiveRangeHighVolMaxPct",
+        "adaptiveRangeTargetFullLevels", "adaptiveRangeMinViableLevels",
       ];
 
       for (const field of allowedFields) {
@@ -1601,6 +1606,22 @@ export function registerGridIsolatedRoutes(app: Express): void {
             cyclesCount: cycles.length,
             eventsCount: events.length,
           },
+        },
+        rangeIntelligence: {
+          rangeControlMode: config?.gridRangeControlMode ?? 'adaptive_smart',
+          adaptiveRangeEnabled: config?.adaptiveRangeEnabled ?? true,
+          adaptiveRangeProfile: config?.adaptiveRangeProfile ?? 'balanced',
+          adaptiveRangeMinPct: config?.adaptiveRangeMinPct ?? 1.50,
+          adaptiveRangeMaxPct: config?.adaptiveRangeMaxPct ?? 7.00,
+          adaptiveRangeLowVolMaxPct: config?.adaptiveRangeLowVolMaxPct ?? 3.00,
+          adaptiveRangeNormalMaxPct: config?.adaptiveRangeNormalMaxPct ?? 5.00,
+          adaptiveRangeHighVolMaxPct: config?.adaptiveRangeHighVolMaxPct ?? 7.00,
+          adaptiveRangeTargetFullLevels: config?.adaptiveRangeTargetFullLevels ?? false,
+          adaptiveRangeMinViableLevels: config?.adaptiveRangeMinViableLevels ?? 4,
+          lastAdaptiveRangeDecision: (lastProfessionalValidation.result as any)?.adaptiveRangeDecision ?? null,
+          lastRangeAudit: (lastProfessionalValidation.result as any)?.rangeAudit ?? professionalGenerator.rangeAudit ?? null,
+          lastReadOnlyValidationRangeControlMode: (lastProfessionalValidation.result as any)?.rangeControlMode ?? null,
+          lastReadOnlyValidationRangeProfile: (lastProfessionalValidation.result as any)?.rangeProfile ?? null,
         },
       });
     } catch (error) {

@@ -1715,6 +1715,17 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   gridRangeMaxPct:                 decimal("grid_range_max_pct", { precision: 6, scale: 2 }).notNull().default("2.50"),
   maxDistanceFromCenterPct:        decimal("max_distance_from_center_pct", { precision: 6, scale: 2 }).notNull().default("1.25"),
   maxSellDistanceFromNearestBuyPct: decimal("max_sell_distance_from_nearest_buy_pct", { precision: 6, scale: 2 }).notNull().default("1.50"),
+  // Adaptive Smart Range (3C.3-C)
+  gridRangeControlMode:              text("grid_range_control_mode").notNull().default("adaptive_smart"),
+  adaptiveRangeEnabled:              boolean("adaptive_range_enabled").notNull().default(true),
+  adaptiveRangeProfile:              text("adaptive_range_profile").notNull().default("balanced"),
+  adaptiveRangeMinPct:               decimal("adaptive_range_min_pct", { precision: 6, scale: 2 }).notNull().default("1.50"),
+  adaptiveRangeMaxPct:               decimal("adaptive_range_max_pct", { precision: 6, scale: 2 }).notNull().default("7.00"),
+  adaptiveRangeLowVolMaxPct:         decimal("adaptive_range_low_vol_max_pct", { precision: 6, scale: 2 }).notNull().default("3.00"),
+  adaptiveRangeNormalMaxPct:         decimal("adaptive_range_normal_max_pct", { precision: 6, scale: 2 }).notNull().default("5.00"),
+  adaptiveRangeHighVolMaxPct:        decimal("adaptive_range_high_vol_max_pct", { precision: 6, scale: 2 }).notNull().default("7.00"),
+  adaptiveRangeTargetFullLevels:     boolean("adaptive_range_target_full_levels").notNull().default(false),
+  adaptiveRangeMinViableLevels:      integer("adaptive_range_min_viable_levels").notNull().default(4),
   createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt:               timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

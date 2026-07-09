@@ -23,6 +23,7 @@ import { GridCarteraDashboard } from "@/components/grid/GridCarteraDashboard";
 import { GridConfigConfirmDialog, type ConfigChange } from "@/components/grid/GridConfigConfirmDialog";
 import { GridAjustesPanel } from "@/components/grid/GridAjustesPanel";
 import { GridIntegrationStatusPanel } from "@/components/grid/GridIntegrationStatusPanel";
+import { GridRangeIntelligencePanel } from "@/components/grid/GridRangeIntelligencePanel";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -298,6 +299,7 @@ export default function GridIsolated() {
 
         {/* 3. Bandas y Rangos Tab */}
         <TabsContent value="bandas" className="space-y-4">
+          <GridRangeIntelligencePanel auditData={auditData} config={config} />
           <GridBandsRangesPanel auditData={auditData} />
         </TabsContent>
 

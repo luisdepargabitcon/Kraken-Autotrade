@@ -31,6 +31,71 @@ export type OperationalRangeMode = "bollinger" | "fixed" | "atr" | "hybrid";
 export type GridViabilityStatus = "viable" | "compact" | "not_viable";
 export type ClampReason = "atr" | "min" | "max";
 
+// ─── Adaptive Smart Range (3C.3-C) ─────────────────────────────────────
+
+export type RangeControlMode = 'adaptive_smart' | 'fixed_compact' | 'legacy_hybrid';
+export type AdaptiveRangeProfile = 'conservative' | 'balanced' | 'aggressive';
+export type RegimeBucket = 'low_volatility' | 'normal_lateral' | 'high_volatility' | 'unsuitable_trend' | 'pump_dump' | 'unknown';
+
+export interface AdaptiveSmartRangeInput {
+  gridRangeControlMode: RangeControlMode;
+  adaptiveRangeEnabled: boolean;
+  adaptiveRangeProfile: AdaptiveRangeProfile;
+  adaptiveRangeMinPct: number;
+  adaptiveRangeMaxPct: number;
+  adaptiveRangeLowVolMaxPct: number;
+  adaptiveRangeNormalMaxPct: number;
+  adaptiveRangeHighVolMaxPct: number;
+  adaptiveRangeTargetFullLevels: boolean;
+  adaptiveRangeMinViableLevels: number;
+  // Market data
+  bollingerBandWidthPct: number;
+  atrPct: number;
+  spacingPct: number;
+  minSpacingPctReal: number;
+  // Level config
+  requestedBuyLevels: number;
+  requestedSellLevels: number;
+  // Compact range fallback (for fixed_compact mode)
+  gridRangeMaxPct: number;
+  // Market suitability
+  marketSuitable: boolean;
+  regimeLabel?: string;
+}
+
+export interface AdaptiveSmartRangeResult {
+  enabled: boolean;
+  mode: RangeControlMode;
+  profile: AdaptiveRangeProfile;
+  regimeBucket: RegimeBucket;
+  marketSuitable: boolean;
+  bollingerBandWidthPct: number;
+  atrPct: number;
+  spacingPct: number;
+  minSpacingPctReal: number;
+  requestedBuyLevels: number;
+  requestedSellLevels: number;
+  minViableLevels: number;
+  rangeByVolatilityPct: number;
+  rangeNeededForMinViableLevelsPct: number;
+  rangeNeededForRequestedLevelsPct: number;
+  regimeMinPct: number;
+  regimeMaxPct: number;
+  proposedRangePct: number;
+  finalRangePct: number;
+  operationalLower: number;
+  operationalUpper: number;
+  operationalBandWidthPct: number;
+  operationalSemiRangePct: number;
+  levelsWouldFitAtFinalRange: number;
+  buyLevelsWouldFit: number;
+  sellLevelsWouldFit: number;
+  compactRangeOk: boolean;
+  adaptiveRangeOk: boolean;
+  warnings: string[];
+  reason: string;
+}
+
 export interface MinSpacingInput {
   grossTargetPct?: number;
   netProfitTargetPct?: number;
@@ -189,6 +254,19 @@ export interface ProfessionalLevelGenerationInput {
   gridRangeMaxPct?: number;
   maxDistanceFromCenterPct?: number;
   maxSellDistanceFromNearestBuyPct?: number;
+  // ─── Adaptive Smart Range (3C.3-C) ───
+  gridRangeControlMode?: RangeControlMode;
+  adaptiveRangeEnabled?: boolean;
+  adaptiveRangeProfile?: AdaptiveRangeProfile;
+  adaptiveRangeMinPct?: number;
+  adaptiveRangeMaxPct?: number;
+  adaptiveRangeLowVolMaxPct?: number;
+  adaptiveRangeNormalMaxPct?: number;
+  adaptiveRangeHighVolMaxPct?: number;
+  adaptiveRangeTargetFullLevels?: boolean;
+  adaptiveRangeMinViableLevels?: number;
+  marketSuitable?: boolean;
+  regimeLabel?: string;
 }
 
 export interface GeneratedLevel {
@@ -253,6 +331,10 @@ export interface ProfessionalLevelGenerationResult {
       avgSpacingPct: number;
       reason: string;
     };
+    // ─── Adaptive Smart Range Decision (3C.3-C) ───
+    adaptiveRangeDecision?: AdaptiveSmartRangeResult;
+    rangeControlMode?: RangeControlMode;
+    rangeProfile?: AdaptiveRangeProfile;
   };
 }
 
@@ -299,6 +381,19 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     gridRangeMaxPct = 2.50,
     maxDistanceFromCenterPct = 1.25,
     maxSellDistanceFromNearestBuyPct = 1.50,
+    // Adaptive Smart Range (3C.3-C)
+    gridRangeControlMode = 'adaptive_smart',
+    adaptiveRangeEnabled = true,
+    adaptiveRangeProfile = 'balanced',
+    adaptiveRangeMinPct = 1.50,
+    adaptiveRangeMaxPct = 7.00,
+    adaptiveRangeLowVolMaxPct = 3.00,
+    adaptiveRangeNormalMaxPct = 5.00,
+    adaptiveRangeHighVolMaxPct = 7.00,
+    adaptiveRangeTargetFullLevels = false,
+    adaptiveRangeMinViableLevels = 4,
+    marketSuitable = true,
+    regimeLabel,
   } = input;
 
   // 1. Calculate minimum profitable spacing
@@ -339,20 +434,74 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
   });
 
   // 4b. Compact Range Control (3C.3-A): clamp operational range to gridRangeMaxPct
+  // 4c. Adaptive Smart Range (3C.3-C): calculate adaptive range and override if enabled
+  const bollingerBandWidthPct = ((bollingerUpper - bollingerLower) / centerPriceResult.centerPrice) * 100;
+  let adaptiveRangeDecision: AdaptiveSmartRangeResult | undefined;
   const compactRangeWarnings: string[] = [];
-  if (enforceCompactRange && operationalRangeResult.operationalBandWidthPct > gridRangeMaxPct) {
-    compactRangeWarnings.push(
-      `Rango operacional original (${operationalRangeResult.operationalBandWidthPct.toFixed(2)}%) excede gridRangeMaxPct (${gridRangeMaxPct}%). Comprimiendo a límite compacto.`
-    );
-    const compactSemiRangePct = gridRangeMaxPct / 2;
-    operationalRangeResult = {
-      ...operationalRangeResult,
-      operationalLower: centerPriceResult.centerPrice * (1 - compactSemiRangePct / 100),
-      operationalUpper: centerPriceResult.centerPrice * (1 + compactSemiRangePct / 100),
-      operationalBandWidthPct: gridRangeMaxPct,
-      operationalSemiRangePct: compactSemiRangePct,
-      explanation: `operational range (COMPACT): ${operationalRangeResult.operationalLower.toFixed(2)} - ${operationalRangeResult.operationalUpper.toFixed(2)} (BW: ${gridRangeMaxPct}%, semi-range: ${compactSemiRangePct}%, clamped from original)`,
-    };
+
+  if (gridRangeControlMode === 'adaptive_smart' && adaptiveRangeEnabled) {
+    // Use adaptive smart range calculation
+    const adaptiveResult = calculateAdaptiveSmartRange({
+      gridRangeControlMode,
+      adaptiveRangeEnabled,
+      adaptiveRangeProfile,
+      adaptiveRangeMinPct,
+      adaptiveRangeMaxPct,
+      adaptiveRangeLowVolMaxPct,
+      adaptiveRangeNormalMaxPct,
+      adaptiveRangeHighVolMaxPct,
+      adaptiveRangeTargetFullLevels,
+      adaptiveRangeMinViableLevels,
+      bollingerBandWidthPct,
+      atrPct,
+      spacingPct: spacingResult.spacingPct,
+      minSpacingPctReal: minSpacingResult.minSpacingPctReal,
+      requestedBuyLevels: configuredBuyLevels,
+      requestedSellLevels: configuredSellLevels,
+      gridRangeMaxPct,
+      marketSuitable,
+      regimeLabel,
+    });
+    adaptiveRangeDecision = adaptiveResult;
+
+    // Override operational range with adaptive result
+    if (adaptiveResult.finalRangePct > 0) {
+      const adaptiveSemiRangePct = adaptiveResult.finalRangePct / 2;
+      operationalRangeResult = {
+        operationalLower: centerPriceResult.centerPrice * (1 - adaptiveSemiRangePct / 100),
+        operationalUpper: centerPriceResult.centerPrice * (1 + adaptiveSemiRangePct / 100),
+        operationalBandWidthPct: adaptiveResult.finalRangePct,
+        operationalSemiRangePct: adaptiveSemiRangePct,
+        mode: operationalRangeMode,
+        explanation: `operational range (ADAPTIVE SMART): ${adaptiveResult.operationalLower.toFixed(2)} - ${adaptiveResult.operationalUpper.toFixed(2)} (BW: ${adaptiveResult.finalRangePct.toFixed(2)}%, regime: ${adaptiveResult.regimeBucket}, profile: ${adaptiveRangeProfile})`,
+      };
+    } else {
+      // Not viable or unsuitable — set zero-width range so no levels fit
+      operationalRangeResult = {
+        ...operationalRangeResult,
+        operationalLower: centerPriceResult.centerPrice,
+        operationalUpper: centerPriceResult.centerPrice,
+        operationalBandWidthPct: 0,
+        operationalSemiRangePct: 0,
+        explanation: `operational range (ADAPTIVE SMART): BLOCKED — ${adaptiveResult.reason}`,
+      };
+    }
+  } else {
+    // fixed_compact or legacy_hybrid: use 3C.3-A compact range logic
+    if (enforceCompactRange && operationalRangeResult.operationalBandWidthPct > gridRangeMaxPct) {
+      compactRangeWarnings.push(
+        `Rango operacional original (${operationalRangeResult.operationalBandWidthPct.toFixed(2)}%) excede gridRangeMaxPct (${gridRangeMaxPct}%). Comprimiendo a límite compacto.`
+      );
+      const compactSemiRangePct = gridRangeMaxPct / 2;
+      operationalRangeResult = {
+        ...operationalRangeResult,
+        operationalLower: centerPriceResult.centerPrice * (1 - compactSemiRangePct / 100),
+        operationalUpper: centerPriceResult.centerPrice * (1 + compactSemiRangePct / 100),
+        operationalBandWidthPct: gridRangeMaxPct,
+        operationalSemiRangePct: compactSemiRangePct,
+        explanation: `operational range (COMPACT): ${operationalRangeResult.operationalLower.toFixed(2)} - ${operationalRangeResult.operationalUpper.toFixed(2)} (BW: ${gridRangeMaxPct}%, semi-range: ${compactSemiRangePct}%, clamped from original)`,
+      };
+    }
   }
 
   // 5. Count viable levels iteratively
@@ -522,6 +671,9 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
         avgSpacingPct,
         reason: rangeAuditReason,
       },
+      adaptiveRangeDecision,
+      rangeControlMode: gridRangeControlMode,
+      rangeProfile: adaptiveRangeProfile,
     },
   };
 }
@@ -883,5 +1035,247 @@ export function generateAccumulatedGridLevelsPreview(input: AccumulatedLevelsInp
     sellLevelsCount: sellCount,
     totalLevelsCount,
     explanation: `Generated ${buyCount} BUY + ${sellCount} SELL levels (total: ${totalLevelsCount}) with spacing ${spacingPct.toFixed(2)}%`,
+  };
+}
+
+// ─── Adaptive Smart Range (3C.3-C) ──────────────────────────────────────
+
+/**
+ * Calculate adaptive smart range based on market regime, volatility, and level requirements.
+ *
+ * This function determines the operational range dynamically instead of using a fixed cap.
+ * It classifies the market into regime buckets and applies different max range limits
+ * based on the detected regime.
+ *
+ * PURE FUNCTION: No DB, no side effects, no external API.
+ */
+export function calculateAdaptiveSmartRange(input: AdaptiveSmartRangeInput): AdaptiveSmartRangeResult {
+  const {
+    gridRangeControlMode,
+    adaptiveRangeEnabled,
+    adaptiveRangeProfile,
+    adaptiveRangeMinPct,
+    adaptiveRangeMaxPct,
+    adaptiveRangeLowVolMaxPct,
+    adaptiveRangeNormalMaxPct,
+    adaptiveRangeHighVolMaxPct,
+    adaptiveRangeTargetFullLevels,
+    adaptiveRangeMinViableLevels,
+    bollingerBandWidthPct,
+    atrPct,
+    spacingPct,
+    minSpacingPctReal,
+    requestedBuyLevels,
+    requestedSellLevels,
+    gridRangeMaxPct,
+    marketSuitable,
+    regimeLabel,
+  } = input;
+
+  const warnings: string[] = [];
+
+  // 1. Determine regime bucket based on volatility and suitability
+  let regimeBucket: RegimeBucket;
+  const regimeLower = (regimeLabel || '').toLowerCase();
+
+  if (!marketSuitable || regimeLower.includes('trend') || regimeLower.includes('no_apto') || regimeLower.includes('unsuitable')) {
+    regimeBucket = 'unsuitable_trend';
+  } else if (regimeLower.includes('pump') || regimeLower.includes('dump')) {
+    regimeBucket = 'pump_dump';
+  } else if (atrPct < 1.0 && bollingerBandWidthPct < 3.0) {
+    regimeBucket = 'low_volatility';
+  } else if (atrPct > 2.5 || bollingerBandWidthPct > 8.0) {
+    regimeBucket = 'high_volatility';
+  } else {
+    regimeBucket = 'normal_lateral';
+  }
+
+  // 2. Profile multipliers for volatility-based range calculation
+  const profileMultiplier = adaptiveRangeProfile === 'conservative' ? 3.0
+    : adaptiveRangeProfile === 'aggressive' ? 5.0
+    : 4.0; // balanced
+
+  // 3. Range by volatility: max(bollingerBandWidth, atrPct * multiplier)
+  const rangeByVolatilityPct = Math.max(bollingerBandWidthPct, atrPct * profileMultiplier);
+
+  // 4. Calculate range needed for min viable levels (iterative, not approximation)
+  // Each level is spaced by spacingPct compounding: level[i] = center * (1 - spacing/100)^i
+  // Total range for N levels on one side = (1 - (1-spacing/100)^N) * 100 (approx)
+  // But more precisely: the distance from center to the Nth level is:
+  //   center - center*(1-spacing/100)^N = center * (1 - (1-spacing/100)^N)
+  //   As percentage: (1 - (1-spacing/100)^N) * 100
+  // Total range (both sides) = 2 * (1 - (1-spacing/100)^N) * 100
+  const calcRangeForLevels = (n: number): number => {
+    if (n <= 0) return 0;
+    const factor = Math.pow(1 - spacingPct / 100, n);
+    return 2 * (1 - factor) * 100;
+  };
+
+  const minLevelsOneSide = Math.ceil(adaptiveRangeMinViableLevels / 2);
+  const rangeNeededForMinViableLevelsPct = calcRangeForLevels(minLevelsOneSide);
+  const maxRequestedOneSide = Math.max(requestedBuyLevels, requestedSellLevels);
+  const rangeNeededForRequestedLevelsPct = calcRangeForLevels(maxRequestedOneSide);
+
+  // 5. Determine regime max
+  let regimeMaxPct: number;
+  switch (regimeBucket) {
+    case 'low_volatility':
+      regimeMaxPct = adaptiveRangeLowVolMaxPct;
+      break;
+    case 'normal_lateral':
+      regimeMaxPct = adaptiveRangeNormalMaxPct;
+      break;
+    case 'high_volatility':
+      regimeMaxPct = adaptiveRangeHighVolMaxPct;
+      break;
+    case 'unsuitable_trend':
+    case 'pump_dump':
+      regimeMaxPct = 0; // Block
+      break;
+    default:
+      regimeMaxPct = adaptiveRangeMaxPct;
+  }
+
+  const regimeMinPct = adaptiveRangeMinPct;
+
+  // 6. Check market suitability — do NOT amplify range for unsuitable markets
+  if (regimeBucket === 'unsuitable_trend' || regimeBucket === 'pump_dump') {
+    return {
+      enabled: true,
+      mode: gridRangeControlMode,
+      profile: adaptiveRangeProfile,
+      regimeBucket,
+      marketSuitable,
+      bollingerBandWidthPct,
+      atrPct,
+      spacingPct,
+      minSpacingPctReal,
+      requestedBuyLevels,
+      requestedSellLevels,
+      minViableLevels: adaptiveRangeMinViableLevels,
+      rangeByVolatilityPct,
+      rangeNeededForMinViableLevelsPct,
+      rangeNeededForRequestedLevelsPct,
+      regimeMinPct,
+      regimeMaxPct: 0,
+      proposedRangePct: 0,
+      finalRangePct: 0,
+      operationalLower: 0,
+      operationalUpper: 0,
+      operationalBandWidthPct: 0,
+      operationalSemiRangePct: 0,
+      levelsWouldFitAtFinalRange: 0,
+      buyLevelsWouldFit: 0,
+      sellLevelsWouldFit: 0,
+      compactRangeOk: false,
+      adaptiveRangeOk: false,
+      warnings: ['Mercado no apto para Grid: no se amplía rango para forzar operaciones.'],
+      reason: 'Bloqueado: el mercado no es apto para Grid; no se amplía rango para forzar operaciones.',
+    };
+  }
+
+  // 7. Proposed range
+  const proposedRangePct = adaptiveRangeTargetFullLevels
+    ? Math.max(rangeByVolatilityPct, rangeNeededForRequestedLevelsPct)
+    : Math.max(rangeByVolatilityPct, rangeNeededForMinViableLevelsPct);
+
+  // 8. Clamp to [regimeMinPct, regimeMaxPct]
+  const finalRangePct = Math.max(regimeMinPct, Math.min(proposedRangePct, regimeMaxPct));
+
+  // 9. Calculate operational bounds (centerPrice = 0 placeholder, set by caller)
+  const operationalSemiRangePct = finalRangePct / 2;
+  // These will be set by the caller using actual centerPrice
+  const operationalLower = 0;
+  const operationalUpper = 0;
+
+  // 10. Count how many levels would fit at finalRangePct
+  const semiRangePct = operationalSemiRangePct;
+  let buyLevelsWouldFit = 0;
+  let buyFactor = 1 - spacingPct / 100;
+  let buyDistancePct = (1 - buyFactor) * 100;
+  while (buyDistancePct <= semiRangePct && buyLevelsWouldFit < requestedBuyLevels) {
+    buyLevelsWouldFit++;
+    buyFactor = buyFactor * (1 - spacingPct / 100);
+    buyDistancePct = (1 - buyFactor) * 100;
+  }
+
+  let sellLevelsWouldFit = 0;
+  let sellFactor = 1 + spacingPct / 100;
+  let sellDistancePct = (sellFactor - 1) * 100;
+  while (sellDistancePct <= semiRangePct && sellLevelsWouldFit < requestedSellLevels) {
+    sellLevelsWouldFit++;
+    sellFactor = sellFactor * (1 + spacingPct / 100);
+    sellDistancePct = (sellFactor - 1) * 100;
+  }
+
+  const levelsWouldFitAtFinalRange = buyLevelsWouldFit + sellLevelsWouldFit;
+
+  // 11. Check viability
+  const adaptiveRangeOk = levelsWouldFitAtFinalRange >= adaptiveRangeMinViableLevels;
+  const compactRangeOk = levelsWouldFitAtFinalRange >= adaptiveRangeMinViableLevels;
+
+  // 12. Warnings
+  if (finalRangePct < rangeNeededForMinViableLevelsPct) {
+    warnings.push(
+      `Rango final (${finalRangePct.toFixed(2)}%) insuficiente para niveles mínimos viables (necesita ~${rangeNeededForMinViableLevelsPct.toFixed(2)}%).`
+    );
+  }
+  if (minSpacingPctReal > spacingPct * 0.95) {
+    warnings.push(
+      `Spacing aplicado (${spacingPct.toFixed(2)}%) muy cerca del mínimo rentable (${minSpacingPctReal.toFixed(2)}%).`
+    );
+  }
+  if (finalRangePct >= regimeMaxPct && proposedRangePct > regimeMaxPct) {
+    warnings.push(
+      `Rango propuesto (${proposedRangePct.toFixed(2)}%) limitado por máximo de régimen (${regimeMaxPct.toFixed(2)}%).`
+    );
+  }
+  if (!adaptiveRangeOk) {
+    warnings.push(
+      `No se generan niveles: el rango seguro para este régimen no permite colocar niveles rentables sin ampliar demasiado el riesgo.`
+    );
+  }
+
+  // 13. Reason in natural language
+  let reason: string;
+  if (!adaptiveRangeOk) {
+    reason = 'No viable: el rango seguro para este régimen no permite colocar niveles rentables sin ampliar demasiado el riesgo.';
+  } else if (levelsWouldFitAtFinalRange < requestedBuyLevels + requestedSellLevels) {
+    reason = `Rango adaptativo OK: el mercado está en régimen ${regimeBucket} y la volatilidad permite usar un rango operativo del ${finalRangePct.toFixed(2)}% sin superar el máximo seguro para este régimen. Caben ${buyLevelsWouldFit} BUY + ${sellLevelsWouldFit} SELL (solicitados: ${requestedBuyLevels} + ${requestedSellLevels}).`;
+  } else {
+    reason = `Rango adaptativo OK: el mercado está en régimen ${regimeBucket} y la volatilidad permite usar un rango operativo del ${finalRangePct.toFixed(2)}% sin superar el máximo seguro para este régimen. Caben todos los niveles solicitados (${buyLevelsWouldFit} BUY + ${sellLevelsWouldFit} SELL).`;
+  }
+
+  return {
+    enabled: true,
+    mode: gridRangeControlMode,
+    profile: adaptiveRangeProfile,
+    regimeBucket,
+    marketSuitable,
+    bollingerBandWidthPct,
+    atrPct,
+    spacingPct,
+    minSpacingPctReal,
+    requestedBuyLevels,
+    requestedSellLevels,
+    minViableLevels: adaptiveRangeMinViableLevels,
+    rangeByVolatilityPct,
+    rangeNeededForMinViableLevelsPct,
+    rangeNeededForRequestedLevelsPct,
+    regimeMinPct,
+    regimeMaxPct,
+    proposedRangePct,
+    finalRangePct,
+    operationalLower,
+    operationalUpper,
+    operationalBandWidthPct: finalRangePct,
+    operationalSemiRangePct,
+    levelsWouldFitAtFinalRange,
+    buyLevelsWouldFit,
+    sellLevelsWouldFit,
+    compactRangeOk,
+    adaptiveRangeOk,
+    warnings,
+    reason,
   };
 }

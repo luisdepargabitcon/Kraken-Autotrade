@@ -4137,3 +4137,106 @@ Deploy staging autorizado por el usuario. Se desplegó compact range control en 
 - Deploy staging completado y validado. Grid OFF. Pendiente: fase posterior de regeneración controlada con autorización expresa.
 
 *Mantenido por: Windsurf Cascade AI*
+
+---
+
+## FASE 3C.3-C: Adaptive Smart Range + UX Grid Inteligente — 2026-01-XX
+
+### Problema
+El Grid Isolated usaba un rango fijo compacto (max 2.5%) que no se adaptaba a las condiciones del mercado. En regímenes de baja volatilidad el rango era demasiado amplio, y en alta volatilidad demasiado estrecho, impidiendo generar niveles rentables.
+
+### Solución: Adaptive Smart Range
+Implementación de un rango operacional inteligente que se ajusta dinámicamente según:
+- Régimen de mercado detectado (low_volatility, normal_lateral, high_volatility, unsuitable_trend, pump_dump)
+- Volatilidad (Bollinger Band Width + ATR)
+- Perfil configurado (conservative, balanced, aggressive)
+- Niveles solicitados y mínimos viables
+- Spacing aplicado y mínimo rentable
+
+### Algoritmo calculateAdaptiveSmartRange()
+1. **Clasificar régimen**: Basado en ATR, BBW, marketSuitable y regimeLabel
+2. **Range by volatility**: `max(BBW, ATR * profileMultiplier)` donde multiplier = 3.0/4.0/5.0 (conservative/balanced/aggressive)
+3. **Range needed for levels**: Cálculo iterativo del rango necesario para N niveles con spacing compounding
+4. **Proposed range**: `max(rangeByVolatility, rangeNeededForMinViable)` o `max(rangeByVolatility, rangeNeededForRequested)` si targetFullLevels=true
+5. **Clamp to regime**: `clamp(proposedRange, regimeMinPct, regimeMaxPct)` donde regimeMaxPct varía por régimen
+6. **Block unsuitable**: Si régimen es unsuitable_trend o pump_dump → finalRangePct=0, no se generan niveles
+7. **Count levels fit**: Cálculo iterativo de cuántos niveles caben en el rango final
+8. **Viability check**: adaptiveRangeOk = levelsWouldFit >= minViableLevels
+
+### Nuevos campos de configuración (10 campos)
+| Campo | Tipo | Default | Descripción |
+|-------|------|---------|-------------|
+| gridRangeControlMode | text | 'adaptive_smart' | Modo de control: adaptive_smart, fixed_compact, legacy_hybrid |
+| adaptiveRangeEnabled | boolean | true | Activa/desactiva range adaptativo |
+| adaptiveRangeProfile | text | 'balanced' | Perfil: conservative, balanced, aggressive |
+| adaptiveRangeMinPct | decimal(6,2) | 1.50 | Rango mínimo global (%) |
+| adaptiveRangeMaxPct | decimal(6,2) | 7.00 | Rango máximo global (%) |
+| adaptiveRangeLowVolMaxPct | decimal(6,2) | 3.00 | Máximo para régimen low_volatility |
+| adaptiveRangeNormalMaxPct | decimal(6,2) | 5.00 | Máximo para régimen normal_lateral |
+| adaptiveRangeHighVolMaxPct | decimal(6,2) | 7.00 | Máximo para régimen high_volatility |
+| adaptiveRangeTargetFullLevels | boolean | false | Si true, dimensiona para todos los niveles solicitados |
+| adaptiveRangeMinViableLevels | integer | 4 | Mínimo de niveles viables para considerar OK |
+
+### Migración DB
+- **070_grid_adaptive_smart_range.sql**: Idempotente, añade 10 columnas a `grid_isolated_configs`
+- Registrada en AutoMigrationRunner en `server/routes.ts`
+
+### Archivos modificados
+- `db/migrations/070_grid_adaptive_smart_range.sql` — Nueva migración idempotente
+- `server/routes.ts` — Registro de migración 070
+- `shared/schema.ts` — 10 nuevos campos en `gridIsolatedConfigs`
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — Campos en interfaz + DEFAULT_GRID_CONFIG
+- `server/services/gridIsolated/gridSpacingCalculator.ts` — `calculateAdaptiveSmartRange()` + integración en `generateProfessionalGridLevels()`
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — loadConfig, readConfigSnapshotFromDb, saveConfig, 3 llamadas a generateProfessionalGridLevels, validateProfessionalGeneratorReadOnly
+- `server/routes/gridIsolated.routes.ts` — allowedFields + rangeIntelligence en audit endpoint
+- `client/src/components/grid/GridRangeIntelligencePanel.tsx` — Nuevo panel UX
+- `client/src/pages/GridIsolated.tsx` — Import y uso del panel en tab Bandas
+- `server/services/__tests__/gridAdaptiveSmartRange.test.ts` — 26 tests nuevos
+- `server/services/__tests__/gridCompactRange.test.ts` — Actualizado para fixed_compact mode
+- `server/services/__tests__/gridSpacingCalculator.test.ts` — Actualizado para fixed_compact mode
+
+### UX: Panel "Rango Inteligente del Grid"
+Muestra: modo (adaptive_smart/fixed_compact), perfil, estado adaptive, régimen detectado, Bollinger BW, ATR, spacing, cálculo del rango (por volatilidad, necesario para mínimos, necesario para solicitados, propuesto, final), niveles que caben (BUY/SELL/total vs solicitados), razón en lenguaje natural, warnings, configuración completa, y rango v18 existente (compact range audit).
+
+### Tests
+- `gridAdaptiveSmartRange.test.ts`: 26 tests (22 unit + 4 integration)
+  - Clasificación de régimen (low_vol, normal, high_vol, unsuitable, pump_dump)
+  - Perfiles (conservative, balanced, aggressive)
+  - Clamp a régimen min/max
+  - targetFullLevels
+  - Viability (ok y not ok)
+  - Warnings
+  - Audit fields completos
+  - Integración con generateProfessionalGridLevels
+  - Fallback a fixed_compact
+  - Block unsuitable market
+- `gridCompactRange.test.ts`: 10 tests (sin regresión)
+- `gridSpacingCalculator.test.ts`: 35 tests (sin regresión)
+- **Total: 71 tests pasando**
+
+### Validaciones
+- `npx tsc --noEmit`: ✅ sin errores
+- `npx vitest run`: ✅ 71/71 tests
+- `npm run build`: ✅ build exitoso
+
+### Confirmaciones de restricciones
+- ✅ No deploy en VPS
+- ✅ No activar SHADOW
+- ✅ No activar REAL
+- ✅ No regenerar niveles
+- ✅ No ejecutar rebuild
+- ✅ No shadow-cleanup/apply
+- ✅ No tocar IDCA
+- ✅ No tocar FISCO
+- ✅ No tocar Risk Manager
+- ✅ No tocar Execution Service
+- ✅ No SQL manual en VPS
+- ✅ No modificar DB manualmente
+- ✅ No cambiar rango v18 existente (fixed_compact sigue disponible)
+- ✅ No borrar ni sustituir rangos activos
+- ✅ No crear órdenes reales
+- ✅ No crear ciclos reales
+- ✅ No crear ciclos SHADOW nuevos
+
+### Estado
+- Implementación local completada. Sin deploy. Sin activación. Pendiente: deploy staging con autorización expresa del usuario.

@@ -160,6 +160,17 @@ class GridIsolatedEngine {
           gridRangeMaxPct: parseFloat(row.gridRangeMaxPct ?? "2.50"),
           maxDistanceFromCenterPct: parseFloat(row.maxDistanceFromCenterPct ?? "1.25"),
           maxSellDistanceFromNearestBuyPct: parseFloat(row.maxSellDistanceFromNearestBuyPct ?? "1.50"),
+          // Adaptive Smart Range (3C.3-C)
+          gridRangeControlMode: (row.gridRangeControlMode as any) ?? 'adaptive_smart',
+          adaptiveRangeEnabled: row.adaptiveRangeEnabled ?? true,
+          adaptiveRangeProfile: (row.adaptiveRangeProfile as any) ?? 'balanced',
+          adaptiveRangeMinPct: parseFloat(row.adaptiveRangeMinPct ?? "1.50"),
+          adaptiveRangeMaxPct: parseFloat(row.adaptiveRangeMaxPct ?? "7.00"),
+          adaptiveRangeLowVolMaxPct: parseFloat(row.adaptiveRangeLowVolMaxPct ?? "3.00"),
+          adaptiveRangeNormalMaxPct: parseFloat(row.adaptiveRangeNormalMaxPct ?? "5.00"),
+          adaptiveRangeHighVolMaxPct: parseFloat(row.adaptiveRangeHighVolMaxPct ?? "7.00"),
+          adaptiveRangeTargetFullLevels: row.adaptiveRangeTargetFullLevels ?? false,
+          adaptiveRangeMinViableLevels: row.adaptiveRangeMinViableLevels ?? 4,
         };
         // Load active state from DB
         await this.loadActiveRangeVersion();
@@ -255,6 +266,17 @@ class GridIsolatedEngine {
           gridRangeMaxPct: parseFloat(row.gridRangeMaxPct ?? "2.50"),
           maxDistanceFromCenterPct: parseFloat(row.maxDistanceFromCenterPct ?? "1.25"),
           maxSellDistanceFromNearestBuyPct: parseFloat(row.maxSellDistanceFromNearestBuyPct ?? "1.50"),
+          // Adaptive Smart Range (3C.3-C)
+          gridRangeControlMode: (row.gridRangeControlMode as any) ?? 'adaptive_smart',
+          adaptiveRangeEnabled: row.adaptiveRangeEnabled ?? true,
+          adaptiveRangeProfile: (row.adaptiveRangeProfile as any) ?? 'balanced',
+          adaptiveRangeMinPct: parseFloat(row.adaptiveRangeMinPct ?? "1.50"),
+          adaptiveRangeMaxPct: parseFloat(row.adaptiveRangeMaxPct ?? "7.00"),
+          adaptiveRangeLowVolMaxPct: parseFloat(row.adaptiveRangeLowVolMaxPct ?? "3.00"),
+          adaptiveRangeNormalMaxPct: parseFloat(row.adaptiveRangeNormalMaxPct ?? "5.00"),
+          adaptiveRangeHighVolMaxPct: parseFloat(row.adaptiveRangeHighVolMaxPct ?? "7.00"),
+          adaptiveRangeTargetFullLevels: row.adaptiveRangeTargetFullLevels ?? false,
+          adaptiveRangeMinViableLevels: row.adaptiveRangeMinViableLevels ?? 4,
         };
       }
     } catch (error) {
@@ -345,6 +367,17 @@ class GridIsolatedEngine {
         gridRangeMaxPct: Number(this.config.gridRangeMaxPct ?? 2.50).toFixed(2),
         maxDistanceFromCenterPct: Number(this.config.maxDistanceFromCenterPct ?? 1.25).toFixed(2),
         maxSellDistanceFromNearestBuyPct: Number(this.config.maxSellDistanceFromNearestBuyPct ?? 1.50).toFixed(2),
+        // Adaptive Smart Range (3C.3-C)
+        gridRangeControlMode: this.config.gridRangeControlMode ?? 'adaptive_smart',
+        adaptiveRangeEnabled: this.config.adaptiveRangeEnabled ?? true,
+        adaptiveRangeProfile: this.config.adaptiveRangeProfile ?? 'balanced',
+        adaptiveRangeMinPct: Number(this.config.adaptiveRangeMinPct ?? 1.50).toFixed(2),
+        adaptiveRangeMaxPct: Number(this.config.adaptiveRangeMaxPct ?? 7.00).toFixed(2),
+        adaptiveRangeLowVolMaxPct: Number(this.config.adaptiveRangeLowVolMaxPct ?? 3.00).toFixed(2),
+        adaptiveRangeNormalMaxPct: Number(this.config.adaptiveRangeNormalMaxPct ?? 5.00).toFixed(2),
+        adaptiveRangeHighVolMaxPct: Number(this.config.adaptiveRangeHighVolMaxPct ?? 7.00).toFixed(2),
+        adaptiveRangeTargetFullLevels: this.config.adaptiveRangeTargetFullLevels ?? false,
+        adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
         updatedAt: new Date(),
       } as any;
 
@@ -632,6 +665,17 @@ class GridIsolatedEngine {
       gridRangeMaxPct: this.config.gridRangeMaxPct ?? 2.50,
       maxDistanceFromCenterPct: this.config.maxDistanceFromCenterPct ?? 1.25,
       maxSellDistanceFromNearestBuyPct: this.config.maxSellDistanceFromNearestBuyPct ?? 1.50,
+      // Adaptive Smart Range (3C.3-C)
+      gridRangeControlMode: this.config.gridRangeControlMode ?? 'adaptive_smart',
+      adaptiveRangeEnabled: this.config.adaptiveRangeEnabled ?? true,
+      adaptiveRangeProfile: this.config.adaptiveRangeProfile ?? 'balanced',
+      adaptiveRangeMinPct: this.config.adaptiveRangeMinPct ?? 1.50,
+      adaptiveRangeMaxPct: this.config.adaptiveRangeMaxPct ?? 7.00,
+      adaptiveRangeLowVolMaxPct: this.config.adaptiveRangeLowVolMaxPct ?? 3.00,
+      adaptiveRangeNormalMaxPct: this.config.adaptiveRangeNormalMaxPct ?? 5.00,
+      adaptiveRangeHighVolMaxPct: this.config.adaptiveRangeHighVolMaxPct ?? 7.00,
+      adaptiveRangeTargetFullLevels: this.config.adaptiveRangeTargetFullLevels ?? false,
+      adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
     });
 
     if (professionalPrecheck.levels.length === 0) {
@@ -936,6 +980,17 @@ class GridIsolatedEngine {
       gridRangeMaxPct: this.config.gridRangeMaxPct ?? 2.50,
       maxDistanceFromCenterPct: this.config.maxDistanceFromCenterPct ?? 1.25,
       maxSellDistanceFromNearestBuyPct: this.config.maxSellDistanceFromNearestBuyPct ?? 1.50,
+      // Adaptive Smart Range (3C.3-C)
+      gridRangeControlMode: this.config.gridRangeControlMode ?? 'adaptive_smart',
+      adaptiveRangeEnabled: this.config.adaptiveRangeEnabled ?? true,
+      adaptiveRangeProfile: this.config.adaptiveRangeProfile ?? 'balanced',
+      adaptiveRangeMinPct: this.config.adaptiveRangeMinPct ?? 1.50,
+      adaptiveRangeMaxPct: this.config.adaptiveRangeMaxPct ?? 7.00,
+      adaptiveRangeLowVolMaxPct: this.config.adaptiveRangeLowVolMaxPct ?? 3.00,
+      adaptiveRangeNormalMaxPct: this.config.adaptiveRangeNormalMaxPct ?? 5.00,
+      adaptiveRangeHighVolMaxPct: this.config.adaptiveRangeHighVolMaxPct ?? 7.00,
+      adaptiveRangeTargetFullLevels: this.config.adaptiveRangeTargetFullLevels ?? false,
+      adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
     });
 
     const { levels: generatedLevels, viabilityStatus, professionalGenerator } = professionalResult;
@@ -2477,6 +2532,17 @@ class GridIsolatedEngine {
       gridRangeMaxPct: configSnapshot.gridRangeMaxPct ?? 2.50,
       maxDistanceFromCenterPct: configSnapshot.maxDistanceFromCenterPct ?? 1.25,
       maxSellDistanceFromNearestBuyPct: configSnapshot.maxSellDistanceFromNearestBuyPct ?? 1.50,
+      // Adaptive Smart Range (3C.3-C)
+      gridRangeControlMode: configSnapshot.gridRangeControlMode ?? 'adaptive_smart',
+      adaptiveRangeEnabled: configSnapshot.adaptiveRangeEnabled ?? true,
+      adaptiveRangeProfile: configSnapshot.adaptiveRangeProfile ?? 'balanced',
+      adaptiveRangeMinPct: configSnapshot.adaptiveRangeMinPct ?? 1.50,
+      adaptiveRangeMaxPct: configSnapshot.adaptiveRangeMaxPct ?? 7.00,
+      adaptiveRangeLowVolMaxPct: configSnapshot.adaptiveRangeLowVolMaxPct ?? 3.00,
+      adaptiveRangeNormalMaxPct: configSnapshot.adaptiveRangeNormalMaxPct ?? 5.00,
+      adaptiveRangeHighVolMaxPct: configSnapshot.adaptiveRangeHighVolMaxPct ?? 7.00,
+      adaptiveRangeTargetFullLevels: configSnapshot.adaptiveRangeTargetFullLevels ?? false,
+      adaptiveRangeMinViableLevels: configSnapshot.adaptiveRangeMinViableLevels ?? 4,
     });
 
     const pg = professionalResult.professionalGenerator || {};
@@ -2530,6 +2596,10 @@ class GridIsolatedEngine {
       runtimeBefore,
       runtimeAfter,
       sideEffectsDetected,
+      rangeAudit: pg.rangeAudit || null,
+      adaptiveRangeDecision: pg.adaptiveRangeDecision || null,
+      rangeControlMode: pg.rangeControlMode || null,
+      rangeProfile: pg.rangeProfile || null,
     };
 
     // Store in memory
