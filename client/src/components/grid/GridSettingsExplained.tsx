@@ -52,7 +52,6 @@ export function GridSettingsExplained({ config }: { config: any }) {
   const targetPct = config?.netProfitTargetPct ?? 0.8;
   const stepMin = config?.gridStepMinPct ?? 0.15;
   const stepMax = config?.gridStepMaxPct ?? 3.0;
-  const ratioMax = config?.geometricRatioMax ?? 1.2;
   const maxCycles = config?.maxOpenCycles ?? 10;
   const bandPeriod = config?.bandPeriod ?? 20;
   const atrTimeframe = config?.atrTimeframe || "1h";
@@ -105,14 +104,7 @@ export function GridSettingsExplained({ config }: { config: any }) {
         riskLevel="balanced"
       />
       <SettingExplanation
-        title="Ratio Geométrico Máx"
-        description="Controla cuánto pueden variar los niveles hacia los extremos de la banda."
-        higherEffect="Más alto = niveles más progresivos y menos lineales hacia los extremos."
-        lowerEffect="Cerca de 1 = niveles más uniformes y equidistantes."
-        riskLevel={ratioMax > 1.5 ? "aggressive" : "balanced"}
-      />
-      <SettingExplanation
-        title="Target Neto"
+        title="Objetivo neto por nivel"
         description="Beneficio neto mínimo objetivo después de costes estimados (fees + reserva fiscal)."
         higherEffect="Más alto = menos cierres pero mayor beneficio por ciclo completado."
         lowerEffect="Más bajo = cierres más fáciles con menor beneficio por ciclo."

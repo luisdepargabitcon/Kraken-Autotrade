@@ -37,7 +37,7 @@ type FilterKey =
 
 const FILTER_LABELS: Record<FilterKey, string> = {
   "rango-activo": "Rango vigente",
-  activos: "Niveles del rango vigente",
+  activos: "Órdenes reales",
   planificados: "Planificados",
   historicos: "Históricos",
   reemplazados: "Reemplazados",
