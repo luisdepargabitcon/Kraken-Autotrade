@@ -3935,4 +3935,64 @@ Añadir una 4ª subpestaña "Logs IDCA" en IDCA → Eventos, con vista continua 
 - ✅ No producción, No deploy
 - ✅ No DELETE — solo UPDATE status a "cancelled"
 - ✅ Transacción DB con rollback automático si falla
+
+---
+
+## FASE 3C.2-I-B — Ejecución única limpieza SHADOW prefijo en staging
+
+**Fecha:** 09-JUL-2026
+**Módulo:** Grid Isolated — Shadow Cleanup Apply
+**Commit:** (sin commit — solo ejecución en staging)
+
+### Contexto
+Después de validar el endpoint en 3C.2-I-A, se ejecutó la limpieza real controlada de los 24 ciclos SHADOW prefijo en staging.
+
+### Resultado
+- `apply.ok=true`, `apply.applied=true`, `dryRun=false`
+- `archivedCyclesCount=24`, `updatedLevelsCount=24`
+- `realOrdersAffected=false`
+- `backupHash=1783561047649_24_24`
+- Preview after: `totalOpenCycles=0`, `affectedCyclesCount=0`, `affectedLevelsCount=0`
+- Audit after: `preFixShadowCyclesCount=0`, `cleanupRecommended=false`
+- DB: 24 cycles status=cancelled, 24 levels status=cancelled
+- Grid final: mode=OFF, isActive=false, isRunning=false, realOpenOrdersCount=0
+
+### Incidencia detectada
+El endpoint `/status` seguía mostrando `activeOpenCyclesCount=24` y `globalOpenCyclesCount=24` después de la limpieza, porque el engine mantenía `this.cycles` y `this.levels` en memoria sin sincronizar con los cambios de DB.
+
+### Confirmación de restricciones
+- ✅ No producción, No órdenes reales, No deploy, No commit, No DB manual
+- ✅ Limpieza aplicada una sola vez, No repetida
+- ✅ Grid OFF final
+
+---
+
+## FASE 3C.2-I-C — Fix coherencia runtime/status post-cleanup
+
+**Fecha:** 09-JUL-2026
+**Módulo:** Grid Isolated — Shadow Cleanup Apply
+**Commit:** (pendiente)
+
+### Problema
+Después de `applyShadowCleanup()` con `dryRun=false`, la DB se actualizaba correctamente (cycles→cancelled, levels→cancelled), pero el estado runtime en memoria (`this.cycles`, `this.levels`) no se sincronizaba. `getStatusSafe()` usaba este estado en memoria, mostrando `activeOpenCyclesCount=24` cuando la DB ya tenía 0.
+
+### Solución
+En `applyShadowCleanup()`, después de la transacción DB, sincronizar el estado en memoria:
+- Cycles afectados: `status="cancelled"`, `completedAt=now`
+- Levels afectados: `status="cancelled"`, `filledPrice=null`, `filledQuantity=0`, `filledAt=null`, `cancelledAt=now`
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — sync in-memory cycles/levels tras transacción en `applyShadowCleanup()`.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — añadido `inArray` al mock de `drizzle-orm`.
+- `server/services/__tests__/gridIsolatedEngine.shadowCleanup.test.ts` — nuevo archivo con 6 tests: apply correcto, sync cycles memoria, sync levels memoria, getStatusSafe=0, guard anti-repeat (counts=24), guard anti-repeat (counts=0).
+
+### Tests ejecutados
+- **tsc --noEmit:** ✅
+- **vitest gridIsolatedEngine.shadowCleanup.test.ts:** ✅ 6/6
+- **vitest gridIsolatedRoutes.test.ts:** ✅ 100/100
+
+### Confirmación de restricciones
+- ✅ No IDCA, No FISCO, No REAL, No órdenes reales, No DB manual, No SQL manual
+- ✅ No nueva limpieza real, No rebuild, No regenerar niveles
+- ✅ Fix mínimo: solo mutación de estado en memoria existente
 *Mantenido por: Windsurf Cascade AI*

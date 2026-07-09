@@ -2050,6 +2050,25 @@ class GridIsolatedEngine {
         backupHash,
       });
 
+      // Sync in-memory runtime state to match DB after cleanup
+      const archiveSet = new Set(archiveCycleIds);
+      const resetSet = new Set(resetLevelIds);
+      for (const cycle of this.cycles) {
+        if (archiveSet.has(cycle.id)) {
+          cycle.status = "cancelled" as any;
+          cycle.completedAt = now;
+        }
+      }
+      for (const level of this.levels) {
+        if (resetSet.has(level.id)) {
+          level.status = "cancelled" as any;
+          level.filledPrice = null;
+          level.filledQuantity = 0;
+          level.filledAt = null;
+          level.cancelledAt = now;
+        }
+      }
+
       // Get status after cleanup
       const statusAfter = await this.getStatusSafe();
 
