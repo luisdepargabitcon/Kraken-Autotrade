@@ -203,6 +203,7 @@ export async function registerRoutes(
         { id: '066_telegram_bot_tokens', filePath: path.join(migrationsDir, '066_telegram_bot_tokens.sql') },
         { id: '067_telegram_alert_rules', filePath: path.join(migrationsDir, '067_telegram_alert_rules.sql') },
         { id: '068_disable_legacy_alert_rules', filePath: path.join(migrationsDir, '068_disable_legacy_alert_rules.sql') },
+        { id: '069_grid_compact_range_control', filePath: path.join(migrationsDir, '069_grid_compact_range_control.sql') },
       ];
 
       await runner.run(migrations);
