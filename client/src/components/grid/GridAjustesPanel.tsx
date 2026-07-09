@@ -192,13 +192,19 @@ export function GridAjustesPanel({
                   <span>Post-only soportado</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {unlockCheck?.postOnlySupported ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />}
-                  <span>Allow-taker soportado</span>
+                  {config?.takerFallbackEnabled
+                    ? <AlertCircle className="h-4 w-4 text-amber-500" />
+                    : <XCircle className="h-4 w-4 text-muted-foreground" />}
+                  <span>
+                    Taker fallback: {config?.takerFallbackEnabled
+                      ? "Disponible solo como emergencia controlada"
+                      : "Desactivado por política"}
+                  </span>
                 </div>
               </div>
               {unlockCheck?.postOnlySupported && (
                 <div className="rounded-lg bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-300">
-                  Revolut X documenta post_only y allow_taker. El adaptador interno envía executionInstruction correctamente.
+                  Revolut X soporta post-only. La política operativa del Grid prioriza maker/post-only; taker no se usa salvo configuración explícita de emergencia.
                 </div>
               )}
             </CardContent>
@@ -644,7 +650,8 @@ export function GridAjustesPanel({
                   </Select>
                 </div>
               </div>
-              <Button variant="default" size="sm">Ejecutar Backtest</Button>
+              <Button variant="default" size="sm" disabled>Backtest pendiente de validación</Button>
+              <p className="text-xs text-muted-foreground">La simulación/backtest se habilitará en una fase posterior. No afecta al Grid actual.</p>
             </CardContent>
           </Card>
         </TabsContent>

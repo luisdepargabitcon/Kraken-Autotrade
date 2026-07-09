@@ -336,7 +336,7 @@ export default function GridIsolated() {
               <div className="flex items-start gap-2 text-xs text-blue-700 dark:text-blue-300">
                 <Info className="h-4 w-4 mt-0.5 shrink-0" />
                 <p>
-                  La separación entre compras y ventas depende de la anchura de banda, ATR, número de niveles, spacing mínimo/máximo y beneficio neto objetivo. Más niveles dentro de una banda estrecha producen niveles más juntos.
+                  La separación entre compras y ventas depende de la anchura del rango operativo, ATR, número de niveles, spacing mínimo/máximo y beneficio neto objetivo. Más niveles dentro de un rango estrecho producen niveles más juntos.
                 </p>
               </div>
             </CardContent>
@@ -569,7 +569,7 @@ export default function GridIsolated() {
                   <p className="font-semibold text-sm">Target de Beneficio Neto</p>
                   <Badge variant="outline" className="text-[10px] text-green-400 border-green-400/30">Activo</Badge>
                 </div>
-                <p className="text-sm text-muted-foreground">El target neto (por defecto 0.8%) es el beneficio deseado después de fees y reserva fiscal. Si las bandas son demasiado estrechas para cubrir este objetivo, el motor pausa nuevas entradas.</p>
+                <p className="text-sm text-muted-foreground">El target neto (por defecto 0.8%) es el beneficio deseado después de fees y reserva fiscal. Si los rangos son demasiado estrechos para cubrir este objetivo, el motor pausa nuevas entradas.</p>
               </div>
               <div className="rounded-lg bg-purple-500/5 border border-purple-500/20 p-3">
                 <div className="flex items-center gap-2 mb-1">
@@ -671,7 +671,7 @@ export default function GridIsolated() {
                   Distancia mínima y máxima entre niveles del Grid. El step mínimo no debe quedar por debajo de los fees (0.09% × 2 = 0.18%).
                   <strong className="text-foreground"> Step mínimo alto:</strong> menos operaciones, más margen por operación.
                   <strong className="text-foreground"> Step mínimo bajo:</strong> más operaciones pero menor margen, riesgo de no cubrir fees.
-                  <strong className="text-foreground"> Step máximo:</strong> controla la separación en los extremos de la banda.
+                  <strong className="text-foreground"> Step máximo:</strong> controla la separación en los extremos del rango operativo.
                 </p>
               </div>
               <div className="rounded-lg bg-muted/20 p-4 text-sm">

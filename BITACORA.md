@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-07-09 — FASE 3C.3-D2 PULIDO FINAL UX GRID PRE-DEPLOY
+
+### Resumen
+Pulido final de textos y etiquetas UX del Grid tras revisión manual post-3C.3-D-REV. Corregidos residuos de "banda" cuando el contexto es "rango operativo", textos contradictorios en Niveles, confusión maker/taker en Revolut X, etiquetas inglesas en Range Intelligence, y backtest deshabilitado.
+
+### Archivos modificados
+- `client/src/components/grid/GridBandsRangesPanel.tsx` — "Rango activo actual" → "Rango operativo activo"; "Banda activa" → "Rango operativo"; "de la banda" → "del rango operativo"; "banda activa" → "rango activo" en estado sin rango.
+- `client/src/components/grid/GridLevelsPanel.tsx` — "cambió la banda" → "cambió el rango operativo"; "Planificados globales" → "Planificados"; "Ver planificados globales" → "Ver niveles planificados"; "banda estrecha" → "rango estrecho"; "Ir a Ajustes de Bandas / Niveles" → "Ir a Ajustes de Rangos / Niveles".
+- `client/src/components/grid/GridAjustesPanel.tsx` — "Allow-taker soportado" → "Taker fallback: Desactivado por política / Disponible solo como emergencia controlada"; texto Revolut X reescrito priorizando maker/post-only; botón "Ejecutar Backtest" → disabled "Backtest pendiente de validación" con nota.
+- `client/src/components/grid/GridRangeIntelligencePanel.tsx` — modeLabel: "Adaptive Smart"→"Rango inteligente", "Fixed Compact"→"Compacto fijo", "Legacy Hybrid"→"Modo heredado / diagnóstico"; regimeLabels humanizadas (Baja volatilidad, Lateral normal, etc.); "Adaptive ON/OFF"→"Adaptativo activo/desactivado"; "Bollinger BW"→"Ancho Bollinger"; "Spacing aplicado"→"Separación aplicada"; "Min spacing rentable"→"Separación mínima rentable"; "BUY"→"Compra / BUY"; "SELL"→"Venta / SELL"; "v18 OK"→"Comparativa OK"; "v18 Issues"→"Avisos comparativa"; "BUY max dist."→"Dist. máx compra"; "SELL max dist."→"Dist. máx venta"; "Gap SELL-BUY"→"Separación venta-compra"; config summary humanizada.
+- `client/src/pages/GridIsolated.tsx` — "anchura de banda"→"anchura del rango operativo"; "bandas demasiado estrechas"→"rangos demasiado estrechos"; "extremos de la banda"→"extremos del rango operativo".
+
+### Validaciones
+- **npm run check (tsc):** ✅
+- **vitest (4 archivos):** ✅ 180/180 tests
+- **npm run build:** ✅
+
+### Confirmaciones
+- ✅ No deploy, No VPS escritura, No producción, No REAL, No SHADOW
+- ✅ No órdenes reales, No rebuild, No regeneración de niveles, No shadow-cleanup/apply
+- ✅ No DB manual, No SQL manual, No IDCA, No FISCO
+- ✅ Grid OFF mantenido
+
+---
+
 ## 2026-07-09 — FASE 3C.3-D LIMPIEZA UX GRID / ELIMINAR LEGACY Y DUPLICADOS CONFUSOS
 
 ### Resumen

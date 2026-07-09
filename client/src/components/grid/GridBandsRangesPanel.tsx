@@ -44,13 +44,13 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <TrendingUp className="h-5 w-5" />
-            Rango activo actual
+            Rango operativo activo
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {!hasActiveRange ? (
             <div className="rounded-lg bg-muted/30 p-4 text-sm text-muted-foreground">
-              {range?.naturalReason || "El Grid todavía no ha generado una banda activa porque no hay ciclo abierto o falta una evaluación SHADOW reciente."}
+              {range?.naturalReason || "El Grid todavía no ha generado un rango activo porque no hay ciclo abierto o falta una evaluación SHADOW reciente."}
             </div>
           ) : (
             <>
@@ -59,7 +59,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-red-400 font-mono">${lowerPrice?.toFixed(2)}</span>
-                    <span className="text-muted-foreground">Banda activa</span>
+                    <span className="text-muted-foreground">Rango operativo</span>
                     <span className="text-green-400 font-mono">${upperPrice?.toFixed(2)}</span>
                   </div>
                   <div className="relative h-8 rounded-lg bg-gradient-to-r from-red-500/20 via-yellow-500/20 to-green-500/20 border border-border/30">
@@ -82,7 +82,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                   </div>
                   {pricePositionPct != null && (
                     <p className="text-xs text-center text-muted-foreground">
-                      Precio actual en {pricePositionPct.toFixed(1)}% de la banda
+                      Precio actual en {pricePositionPct.toFixed(1)}% del rango operativo
                       {pricePositionPct < 20 && " (cerca del suelo)"}
                       {pricePositionPct > 80 && " (cerca del techo)"}
                     </p>

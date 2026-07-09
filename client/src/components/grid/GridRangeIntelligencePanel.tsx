@@ -20,17 +20,17 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
   const profile = ri.adaptiveRangeProfile ?? config?.adaptiveRangeProfile ?? 'balanced';
   const enabled = ri.adaptiveRangeEnabled ?? config?.adaptiveRangeEnabled ?? true;
 
-  const modeLabel = mode === 'adaptive_smart' ? 'Adaptive Smart' : mode === 'fixed_compact' ? 'Fixed Compact' : 'Legacy Hybrid';
+  const modeLabel = mode === 'adaptive_smart' ? 'Rango inteligente' : mode === 'fixed_compact' ? 'Compacto fijo' : 'Modo heredado / diagnóstico';
   const modeColor = mode === 'adaptive_smart' ? 'default' : mode === 'fixed_compact' ? 'secondary' : 'outline';
 
   const regimeBucket = adaptiveDecision?.regimeBucket ?? 'unknown';
   const regimeLabels: Record<string, string> = {
-    low_volatility: 'Low Volatility',
-    normal_lateral: 'Normal Lateral',
-    high_volatility: 'High Volatility',
-    unsuitable_trend: 'Unsuitable Trend',
+    low_volatility: 'Baja volatilidad',
+    normal_lateral: 'Lateral normal',
+    high_volatility: 'Alta volatilidad',
+    unsuitable_trend: 'Tendencia no apta',
     pump_dump: 'Pump/Dump',
-    unknown: 'Unknown',
+    unknown: 'Sin datos',
   };
   const regimeColor: Record<string, string> = {
     low_volatility: 'secondary',
@@ -83,11 +83,11 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
           <Badge variant="outline" className="text-xs">Perfil: {profile}</Badge>
           {enabled ? (
             <Badge variant="outline" className="text-xs text-green-400 border-green-400/30">
-              <CheckCircle2 className="h-3 w-3 mr-1" /> Adaptive ON
+              <CheckCircle2 className="h-3 w-3 mr-1" /> Adaptativo activo
             </Badge>
           ) : (
             <Badge variant="outline" className="text-xs text-muted-foreground">
-              <XCircle className="h-3 w-3 mr-1" /> Adaptive OFF
+              <XCircle className="h-3 w-3 mr-1" /> Adaptativo desactivado
             </Badge>
           )}
         </div>
@@ -123,7 +123,7 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
           {adaptiveDecision && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mt-2">
               <div className="rounded bg-muted/30 p-2">
-                <p className="text-muted-foreground">Bollinger BW</p>
+                <p className="text-muted-foreground">Ancho Bollinger</p>
                 <p className="font-mono font-semibold">{bollingerBandWidthPct?.toFixed(2) ?? '—'}%</p>
               </div>
               <div className="rounded bg-muted/30 p-2">
@@ -131,11 +131,11 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
                 <p className="font-mono font-semibold">{atrPct?.toFixed(2) ?? '—'}%</p>
               </div>
               <div className="rounded bg-muted/30 p-2">
-                <p className="text-muted-foreground">Spacing aplicado</p>
+                <p className="text-muted-foreground">Separación aplicada</p>
                 <p className="font-mono font-semibold">{spacingPct?.toFixed(2) ?? '—'}%</p>
               </div>
               <div className="rounded bg-muted/30 p-2">
-                <p className="text-muted-foreground">Min spacing rentable</p>
+                <p className="text-muted-foreground">Separación mínima rentable</p>
                 <p className="font-mono font-semibold">{minSpacingPctReal?.toFixed(2) ?? '—'}%</p>
               </div>
             </div>
@@ -203,12 +203,12 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
               <p className="text-sm font-semibold">Niveles que caben</p>
               <div className="grid grid-cols-3 gap-2 text-xs">
                 <div className="rounded bg-muted/30 p-2 text-center">
-                  <p className="text-muted-foreground">BUY</p>
+                  <p className="text-muted-foreground">Compra / BUY</p>
                   <p className="font-mono font-semibold text-green-500">{buyLevelsWouldFit ?? 0}</p>
                   <p className="text-muted-foreground text-[10px]">(solicitados: {requestedBuyLevels ?? '—'})</p>
                 </div>
                 <div className="rounded bg-muted/30 p-2 text-center">
-                  <p className="text-muted-foreground">SELL</p>
+                  <p className="text-muted-foreground">Venta / SELL</p>
                   <p className="font-mono font-semibold text-blue-500">{sellLevelsWouldFit ?? 0}</p>
                   <p className="text-muted-foreground text-[10px]">(solicitados: {requestedSellLevels ?? '—'})</p>
                 </div>
@@ -256,7 +256,7 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
               Referencia Compact Range (comparativa)
             </p>
             {mode === 'adaptive_smart' && (
-              <p className="text-xs text-muted-foreground italic">Este bloque es solo comparativo si el modo activo es Adaptive Smart.</p>
+              <p className="text-xs text-muted-foreground italic">Este bloque no decide el rango actual si el modo activo es Rango inteligente. Solo sirve para comparar.</p>
             )}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
               <div className="rounded bg-muted/30 p-2">
@@ -264,23 +264,23 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
                 <p className="font-mono font-semibold">{v18TotalRangePct?.toFixed(2) ?? '—'}%</p>
               </div>
               <div className="rounded bg-muted/30 p-2">
-                <p className="text-muted-foreground">BUY max dist.</p>
+                <p className="text-muted-foreground">Dist. máx compra</p>
                 <p className="font-mono font-semibold">{rangeAudit?.maxBuyDistancePctFromCenter?.toFixed(2) ?? '—'}%</p>
               </div>
               <div className="rounded bg-muted/30 p-2">
-                <p className="text-muted-foreground">SELL max dist.</p>
+                <p className="text-muted-foreground">Dist. máx venta</p>
                 <p className="font-mono font-semibold">{rangeAudit?.maxSellDistancePctFromCenter?.toFixed(2) ?? '—'}%</p>
               </div>
               <div className="rounded bg-muted/30 p-2">
-                <p className="text-muted-foreground">Gap SELL-BUY</p>
+                <p className="text-muted-foreground">Separación venta-compra</p>
                 <p className="font-mono font-semibold">{rangeAudit?.sellToBuyGapPct?.toFixed(2) ?? '—'}%</p>
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs">
               {v18CompactRangeOk ? (
-                <Badge variant="outline" className="text-xs text-green-400 border-green-400/30">v18 OK</Badge>
+                <Badge variant="outline" className="text-xs text-green-400 border-green-400/30">Comparativa OK</Badge>
               ) : (
-                <Badge variant="outline" className="text-xs text-red-400 border-red-400/30">v18 Issues</Badge>
+                <Badge variant="outline" className="text-xs text-red-400 border-red-400/30">Avisos comparativa</Badge>
               )}
               {v18Reason && <span className="text-muted-foreground">{v18Reason}</span>}
             </div>
@@ -301,13 +301,13 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
         <div className="rounded-lg bg-muted/20 p-3 space-y-1">
           <p className="text-xs font-semibold text-muted-foreground mb-1">Configuración Adaptive Smart Range</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-            <div><span className="text-muted-foreground">Min global:</span> <span className="font-mono">{ri.adaptiveRangeMinPct?.toFixed(2) ?? '—'}%</span></div>
-            <div><span className="text-muted-foreground">Max global:</span> <span className="font-mono">{ri.adaptiveRangeMaxPct?.toFixed(2) ?? '—'}%</span></div>
-            <div><span className="text-muted-foreground">Max low vol:</span> <span className="font-mono">{ri.adaptiveRangeLowVolMaxPct?.toFixed(2) ?? '—'}%</span></div>
-            <div><span className="text-muted-foreground">Max normal:</span> <span className="font-mono">{ri.adaptiveRangeNormalMaxPct?.toFixed(2) ?? '—'}%</span></div>
-            <div><span className="text-muted-foreground">Max high vol:</span> <span className="font-mono">{ri.adaptiveRangeHighVolMaxPct?.toFixed(2) ?? '—'}%</span></div>
-            <div><span className="text-muted-foreground">Target full levels:</span> <span className="font-mono">{ri.adaptiveRangeTargetFullLevels ? 'Sí' : 'No'}</span></div>
-            <div><span className="text-muted-foreground">Min viable levels:</span> <span className="font-mono">{ri.adaptiveRangeMinViableLevels ?? '—'}</span></div>
+            <div><span className="text-muted-foreground">Mín global:</span> <span className="font-mono">{ri.adaptiveRangeMinPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Máx global:</span> <span className="font-mono">{ri.adaptiveRangeMaxPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Máx baja vol:</span> <span className="font-mono">{ri.adaptiveRangeLowVolMaxPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Máx lateral normal:</span> <span className="font-mono">{ri.adaptiveRangeNormalMaxPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Máx alta vol:</span> <span className="font-mono">{ri.adaptiveRangeHighVolMaxPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Forzar todos los niveles:</span> <span className="font-mono">{ri.adaptiveRangeTargetFullLevels ? 'Sí' : 'No'}</span></div>
+            <div><span className="text-muted-foreground">Mín. niveles viables:</span> <span className="font-mono">{ri.adaptiveRangeMinViableLevels ?? '—'}</span></div>
           </div>
         </div>
       </CardContent>

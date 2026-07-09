@@ -357,7 +357,7 @@ export function GridLevelsPanel({
     const isActiveRange = level?.rangeVersionId === activeRangeId;
 
     if (status === "replaced")
-      return "Este nivel pertenece a un rango anterior y fue reemplazado cuando cambió la banda.";
+      return "Este nivel pertenece a un rango anterior y fue reemplazado cuando cambió el rango operativo.";
     if (status === "filled")
       return isShadow
         ? "Este nivel fue ejecutado en simulación SHADOW. No hay orden real."
@@ -413,7 +413,7 @@ export function GridLevelsPanel({
           <div className="flex items-start gap-2 text-xs text-blue-600 dark:text-blue-400">
             <Info className="h-4 w-4 mt-0.5 shrink-0" />
             <span>
-              Los niveles planificados se recalculan cuando cambia la banda. El beneficio
+              Los niveles planificados se recalculan cuando cambia el rango operativo. El beneficio
               mostrado es objetivo estimado, no realizado.
             </span>
           </div>
@@ -711,7 +711,7 @@ export function GridLevelsPanel({
                 <div className="flex items-start gap-2">
                   <Info className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    No hay rango activo cargado. Los niveles históricos están disponibles en los filtros globales ("Planificados globales", "Históricos" o "Todos").
+                    No hay rango activo cargado. Los niveles históricos están disponibles en los filtros Planificados, Históricos o Todos.
                   </span>
                 </div>
               </div>
@@ -732,7 +732,7 @@ export function GridLevelsPanel({
                   variant="outline"
                   onClick={() => setFilter("planificados")}
                 >
-                  Ver planificados globales
+                  Ver niveles planificados
                 </Button>
               )}
             {filter === "activos" && (
@@ -1072,7 +1072,7 @@ export function GridLevelsPanel({
               </ul>
             </div>
             <div className="rounded-md bg-blue-500/10 border border-blue-500/20 p-3 text-xs text-blue-700 dark:text-blue-300">
-              Si subes el beneficio objetivo, el SELL necesita estar más lejos del BUY. Si lo bajas, los niveles pueden quedar más juntos. Si hay muchos niveles dentro de una banda estrecha, el beneficio por ciclo será menor.
+              Si subes el beneficio objetivo, el SELL necesita estar más lejos del BUY. Si lo bajas, los niveles pueden quedar más juntos. Si hay muchos niveles dentro de un rango estrecho, el beneficio por ciclo será menor.
             </div>
           </div>
           <DialogFooter className="gap-2">
@@ -1080,7 +1080,7 @@ export function GridLevelsPanel({
               Ir a Ajustes de Salidas / Beneficio
             </Button>
             <Button variant="outline" size="sm" onClick={() => { setShowBeneficioModal(false); onGoToTab?.("bandas"); }}>
-              Ir a Ajustes de Bandas / Niveles
+              Ir a Ajustes de Rangos / Niveles
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setShowBeneficioModal(false)}>
               Cerrar
