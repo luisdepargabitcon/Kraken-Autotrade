@@ -675,16 +675,7 @@ export default function GridIsolated() {
                 </p>
               </div>
               <div className="rounded-lg bg-muted/20 p-4 text-sm">
-                <p className="font-semibold mb-1">Ratio Geométrico Mín y Máx</p>
-                <p className="text-muted-foreground">
-                  Controla la progresión geométrica de los niveles hacia los extremos de la banda.
-                  Un ratio &lt; 1 comprime niveles cerca del centro. Un ratio &gt; 1 los expande hacia los extremos.
-                  <strong className="text-foreground"> Ratio mínimo:</strong> cuánto se comprimen los niveles cerca del precio actual.
-                  <strong className="text-foreground"> Ratio máximo:</strong> cuánto se expanden hacia los extremos.
-                </p>
-              </div>
-              <div className="rounded-lg bg-muted/20 p-4 text-sm">
-                <p className="font-semibold mb-1">Target Beneficio Neto</p>
+                <p className="font-semibold mb-1">Objetivo neto por nivel</p>
                 <p className="text-muted-foreground">
                   Beneficio mínimo objetivo después de fees y reserva fiscal. Por defecto 0.8%.
                   <strong className="text-foreground"> Subir:</strong> menos cierres, mayor beneficio por ciclo, pero más tiempo en posición.

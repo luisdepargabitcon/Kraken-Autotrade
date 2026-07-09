@@ -1287,4 +1287,16 @@ describe("Grid Isolated Routes — Endpoints", () => {
       expect(res.body).toHaveProperty("rangeProfile");
     }
   });
+
+  // ─── 3C.3-D: UX Cleanup — Legacy field removal ──────────────
+
+  it("POST /api/grid-isolated/config ignores geometricRatioMin/Max (removed from allowedFields)", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/config", {
+      geometricRatioMin: 0.5,
+      geometricRatioMax: 2.0,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.geometricRatioMin).not.toBe(0.5);
+    expect(res.body.geometricRatioMax).not.toBe(2.0);
+  });
 });

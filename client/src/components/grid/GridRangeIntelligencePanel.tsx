@@ -92,6 +92,25 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
           )}
         </div>
 
+        {/* Human conclusion */}
+        <div className={`rounded-lg p-3 text-sm ${adaptiveOk ? 'bg-green-500/10 border border-green-500/30' : adaptiveDecision ? 'bg-red-500/10 border border-red-500/30' : 'bg-muted/20 border border-border/30'}`}>
+          <div className="flex items-start gap-2">
+            {adaptiveOk ? <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" /> : adaptiveDecision ? <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" /> : <Info className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />}
+            <div>
+              <p className="font-semibold">Conclusión:</p>
+              {adaptiveOk ? (
+                <p className="text-muted-foreground">Rango adaptive viable para futuros niveles. El rango actual puede mantenerse.</p>
+              ) : adaptiveDecision ? (
+                <p className="text-muted-foreground">No viable. El objetivo neto actual exige más separación de la permitida para este régimen.
+                  {!adaptiveOk && rangeAudit && ' La evaluación actual puede ser no viable para regenerar un nuevo rango, aunque exista un rango activo creado anteriormente.'}
+                </p>
+              ) : (
+                <p className="text-muted-foreground">No hay decisión adaptive disponible todavía. Ejecuta una validación read-only para generarla.</p>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* Regime Bucket */}
         <div className="rounded-lg bg-muted/20 border p-3 space-y-2">
           <div className="flex items-center gap-2 text-sm">
@@ -229,13 +248,16 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
           </div>
         )}
 
-        {/* Existing v18 Range Audit */}
+        {/* Existing v18 Range Audit — comparativa legacy */}
         {rangeAudit && (
           <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
             <p className="text-sm font-semibold flex items-center gap-1">
               <Info className="h-3 w-3 text-blue-400" />
-              Rango v18 existente (Compact Range)
+              Referencia Compact Range (comparativa)
             </p>
+            {mode === 'adaptive_smart' && (
+              <p className="text-xs text-muted-foreground italic">Este bloque es solo comparativo si el modo activo es Adaptive Smart.</p>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
               <div className="rounded bg-muted/30 p-2">
                 <p className="text-muted-foreground">Rango total</p>

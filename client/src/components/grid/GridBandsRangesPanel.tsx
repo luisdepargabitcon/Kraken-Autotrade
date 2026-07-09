@@ -2,6 +2,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, TrendingUp, TrendingDown, Activity, History, BarChart3, Info } from "lucide-react";
 
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  GRID_RANGE_ACTIVATED: "Rango activado",
+  GRID_RANGE_PROPOSED: "Nuevo rango propuesto",
+  GRID_RANGE_CHANGED: "Rango actualizado",
+  GRID_RANGE_PAUSED: "Rango pausado",
+  GRID_RANGE_REJECTED: "Rango rechazado",
+  rebuild_planned_levels: "Reconstrucción de niveles planificados",
+  GRID_REGULATIONS_RANGE_CHANGED: "Cambio de rango del Grid",
+};
+
+function humanizeEventType(eventType: string): string {
+  return EVENT_TYPE_LABELS[eventType] ?? eventType;
+}
+
 interface GridBandsRangesPanelProps {
   auditData?: any;
 }
@@ -30,7 +44,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <TrendingUp className="h-5 w-5" />
-            Banda Activa
+            Rango activo actual
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -179,13 +193,13 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <History className="h-5 w-5" />
-            Histórico de Cambios de Banda
+            Histórico de cambios de rango
           </CardTitle>
         </CardHeader>
         <CardContent>
           {rangeHistory.length === 0 ? (
             <div className="text-sm text-muted-foreground py-4 text-center">
-              No hay cambios de banda registrados todavía. Los eventos GRID_RANGE_* aparecerán aquí cuando el motor proponga, active o pause rangos.
+              No hay cambios de rango registrados todavía. Los eventos aparecerán aquí cuando el motor proponga, active o pause rangos.
             </div>
           ) : (
             <div className="space-y-2">
@@ -202,7 +216,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                     <Activity className="h-4 w-4 mt-0.5 text-blue-500 shrink-0" />
                     <div className="flex-1 space-y-1">
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">{ev.eventType}</Badge>
+                        <Badge variant="outline" className="text-xs">{humanizeEventType(ev.eventType)}</Badge>
                         {ev.mode && <Badge variant="secondary" className="text-xs">{ev.mode}</Badge>}
                         <span className="text-xs text-muted-foreground">
                           {ev.timestamp ? new Date(ev.timestamp).toLocaleString("es-ES") : ""}
@@ -214,13 +228,13 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-xs">
                           {centerDrift != null && (
                             <div className="rounded bg-muted/30 px-2 py-1">
-                              <span className="text-muted-foreground">Center drift:</span>
+                              <span className="text-muted-foreground">Cambio de centro:</span>
                               <span className={`font-mono ml-1 ${Math.abs(centerDrift) > 5 ? "text-amber-400" : "text-green-400"}`}>{centerDrift.toFixed(2)}%</span>
                             </div>
                           )}
                           {widthChange != null && (
                             <div className="rounded bg-muted/30 px-2 py-1">
-                              <span className="text-muted-foreground">Width change:</span>
+                              <span className="text-muted-foreground">Cambio de anchura:</span>
                               <span className={`font-mono ml-1 ${widthChange > 0 ? "text-green-400" : "text-red-400"}`}>{widthChange > 0 ? "+" : ""}{widthChange.toFixed(2)}%</span>
                             </div>
                           )}

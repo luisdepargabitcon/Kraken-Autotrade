@@ -408,105 +408,243 @@ export function GridAjustesPanel({
 
         {/* ─── Avanzado ───────────────────────────── */}
         <TabsContent value="avanzado" className="space-y-4">
+          {/* Bloque 1: Control real del Grid */}
           <Card className="border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <Cpu className="h-4 w-4" />
-                Parámetros Avanzados
+                Control real del Grid
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Step Min */}
+              {/* Separación mínima manual */}
               <div className="space-y-2">
-                <Label className="text-sm">Step Mín %: {config?.gridStepMinPct?.toFixed(2)}%</Label>
+                <Label className="text-sm">Separación mínima manual: {config?.gridStepMinPct?.toFixed(2)}%</Label>
                 <Slider
                   value={[config?.gridStepMinPct || 0.15]}
                   min={0.05}
                   max={1.0}
                   step={0.05}
-                  onValueChange={(v) => onConfirmChange("gridStepMinPct", "Step mín", config?.gridStepMinPct || 0.15, v[0], "Distancia mínima entre niveles. No debe quedar por debajo de fees.", "high", false, true)}
+                  onValueChange={(v) => onConfirmChange("gridStepMinPct", "Sep. mín", config?.gridStepMinPct || 0.15, v[0], "Distancia mínima entre niveles. No debe quedar por debajo de fees.", "high", false, true)}
                 />
-                <p className="text-sm text-muted-foreground"><TrendingUp className="inline h-3 w-3 text-green-400" /> Subes: menos operaciones, más margen. <TrendingDown className="inline h-3 w-3 text-blue-400" /> Bajas: más operaciones posibles.</p>
+                <p className="text-sm text-muted-foreground">Puede quedar superada por el mínimo rentable calculado por fees, spread y objetivo neto.</p>
               </div>
 
-              {/* Step Max */}
+              {/* Separación máxima permitida */}
               <div className="space-y-2">
-                <Label className="text-sm">Step Máx %: {config?.gridStepMaxPct?.toFixed(2)}%</Label>
+                <Label className="text-sm">Separación máxima permitida: {config?.gridStepMaxPct?.toFixed(2)}%</Label>
                 <Slider
                   value={[config?.gridStepMaxPct || 3.0]}
                   min={1.0}
                   max={10.0}
                   step={0.5}
-                  onValueChange={(v) => onConfirmChange("gridStepMaxPct", "Step máx", config?.gridStepMaxPct || 3.0, v[0], "Distancia máxima entre niveles en extremos.", "medium", false, true)}
+                  onValueChange={(v) => onConfirmChange("gridStepMaxPct", "Sep. máx", config?.gridStepMaxPct || 3.0, v[0], "Límite superior de separación entre niveles.", "medium", false, true)}
                 />
-                <p className="text-sm text-muted-foreground">Controla la separación en los extremos de la banda.</p>
+                <p className="text-sm text-muted-foreground">No define por sí solo el rango final; el rango también depende de volatilidad, beneficio neto y viabilidad.</p>
               </div>
 
-              {/* Ratio Geométrico */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-sm">Ratio Geométrico Mín: {config?.geometricRatioMin?.toFixed(2)}</Label>
-                  <Slider
-                    value={[config?.geometricRatioMin || 0.8]}
-                    min={0.5}
-                    max={1.0}
-                    step={0.05}
-                    onValueChange={(v) => onConfirmChange("geometricRatioMin", "Ratio geom. mín", config?.geometricRatioMin || 0.8, v[0], "Controla progresión de niveles hacia extremos.", "low", false, true)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-sm">Ratio Geométrico Máx: {config?.geometricRatioMax?.toFixed(2)}</Label>
-                  <Slider
-                    value={[config?.geometricRatioMax || 1.2]}
-                    min={1.0}
-                    max={2.0}
-                    step={0.05}
-                    onValueChange={(v) => onConfirmChange("geometricRatioMax", "Ratio geom. máx", config?.geometricRatioMax || 1.2, v[0], "Controla progresión de niveles hacia extremos.", "low", false, true)}
-                  />
-                </div>
-              </div>
-
-              {/* Target Neto */}
+              {/* Objetivo neto por nivel */}
               <div className="space-y-2">
-                <Label className="text-sm">Target Beneficio Neto: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
+                <Label className="text-sm">Objetivo neto por nivel: {config?.netProfitTargetPct?.toFixed(2)}%</Label>
                 <Slider
                   value={[config?.netProfitTargetPct || 0.8]}
                   min={0.1}
                   max={3.0}
                   step={0.1}
-                  onValueChange={(v) => onConfirmChange("netProfitTargetPct", "Target neto", config?.netProfitTargetPct || 0.8, v[0], "Beneficio mínimo objetivo después de fees y reserva fiscal.", "medium", false, false)}
+                  onValueChange={(v) => onConfirmChange("netProfitTargetPct", "Objetivo neto", config?.netProfitTargetPct || 0.8, v[0], "Beneficio mínimo objetivo después de fees y reserva fiscal.", "medium", false, false)}
                 />
-                <p className="text-sm text-muted-foreground"><TrendingUp className="inline h-3 w-3 text-green-400" /> Subes: menos cierres, más beneficio. <TrendingDown className="inline h-3 w-3 text-blue-400" /> Bajas: cierres más fáciles.</p>
+                <p className="text-sm text-muted-foreground">Más alto exige más separación entre niveles. Si el objetivo es demasiado alto, pueden caber menos niveles o el rango puede ser no viable.</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Bloque 2: Adaptive Smart Range */}
+          <Card className="border-purple-500/30 bg-gradient-to-br from-purple-500/5 to-card">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Activity className="h-4 w-4 text-purple-400" />
+                Adaptive Smart Range
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {/* Modo de control de rango */}
+              <div className="space-y-2">
+                <Label className="text-sm">Modo de control de rango</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { v: "adaptive_smart", label: "Adaptive Smart", desc: "Rango dinámico por régimen" },
+                    { v: "fixed_compact", label: "Fixed Compact", desc: "Rango compacto fijo" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.v}
+                      onClick={() => onConfirmChange("gridRangeControlMode", "Modo control rango", config?.gridRangeControlMode || "adaptive_smart", opt.v, "Cambia el modo de cálculo de rango del Grid.", "medium", false, true)}
+                      className={`rounded-lg border p-3 text-center transition-all ${
+                        (config?.gridRangeControlMode || "adaptive_smart") === opt.v
+                          ? "border-purple-500/50 bg-purple-500/10 text-foreground"
+                          : "border-border/50 bg-muted/10 text-muted-foreground hover:bg-muted/20"
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">{opt.label}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Backtest placeholder */}
-              <div className="pt-4 border-t">
-                <h3 className="text-base font-semibold flex items-center gap-2 mb-3">
-                  <FlaskConical className="h-4 w-4" />
-                  Backtest
-                </h3>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Ejecuta un backtest con datos históricos para evaluar la estrategia.
-                </p>
+              {/* Adaptive Range Enabled */}
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <Label className="text-sm">Adaptive Range activado</Label>
+                  <p className="text-sm text-muted-foreground mt-1">Activa el cálculo adaptativo de rango basado en volatilidad y régimen.</p>
+                </div>
+                <Switch
+                  checked={config?.adaptiveRangeEnabled ?? true}
+                  onCheckedChange={(v) => onConfirmChange("adaptiveRangeEnabled", "Adaptive Range", config?.adaptiveRangeEnabled ?? true, v, "Activa/desactiva el motor adaptive.", "medium", false, true)}
+                />
+              </div>
+
+              {/* Perfil */}
+              <div className="space-y-2">
+                <Label className="text-sm">Perfil Adaptive</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { v: "conservative", label: "Conservador", desc: "Rangos prudentes" },
+                    { v: "balanced", label: "Balanceado", desc: "Equilibrio seguridad/frecuencia" },
+                    { v: "aggressive", label: "Agresivo", desc: "Rangos más amplios" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.v}
+                      onClick={() => onConfirmChange("adaptiveRangeProfile", "Perfil adaptive", config?.adaptiveRangeProfile || "balanced", opt.v, "Cambia el perfil de riesgo del rango adaptive.", "low", false, true)}
+                      className={`rounded-lg border p-2.5 text-center text-sm transition-all ${
+                        (config?.adaptiveRangeProfile || "balanced") === opt.v
+                          ? "border-purple-500/50 bg-purple-500/10 text-foreground font-semibold"
+                          : "border-border/50 bg-muted/10 text-muted-foreground hover:bg-muted/20"
+                      }`}
+                    >
+                      <p className="font-semibold">{opt.label}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-sm text-muted-foreground">Conservative = rangos más prudentes, menos exposición. Balanced = equilibrio entre seguridad y frecuencia. Aggressive = permite rangos más amplios si está habilitado.</p>
+              </div>
+
+              {/* Rangos por régimen */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold">Límites de rango por régimen</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label className="text-sm">Capital Inicial (USD)</Label>
-                    <Input type="number" defaultValue={1000} id="bt-capital" />
+                    <Label className="text-sm">Rango mínimo global: {config?.adaptiveRangeMinPct?.toFixed(2)}%</Label>
+                    <Slider
+                      value={[config?.adaptiveRangeMinPct || 1.5]}
+                      min={0.5}
+                      max={5.0}
+                      step={0.25}
+                      onValueChange={(v) => onConfirmChange("adaptiveRangeMinPct", "Rango mín", config?.adaptiveRangeMinPct || 1.5, v[0], "Rango mínimo permitido para cualquier régimen.", "low", false, true)}
+                    />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-sm">Modelo de Fill</Label>
-                    <Select defaultValue="realistic">
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="optimistic">Optimista</SelectItem>
-                        <SelectItem value="realistic">Realista</SelectItem>
-                        <SelectItem value="pessimistic">Pesimista</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label className="text-sm">Rango máximo global: {config?.adaptiveRangeMaxPct?.toFixed(2)}%</Label>
+                    <Slider
+                      value={[config?.adaptiveRangeMaxPct || 7.0]}
+                      min={3.0}
+                      max={15.0}
+                      step={0.5}
+                      onValueChange={(v) => onConfirmChange("adaptiveRangeMaxPct", "Rango máx", config?.adaptiveRangeMaxPct || 7.0, v[0], "Rango máximo permitido para cualquier régimen.", "low", false, true)}
+                    />
                   </div>
                 </div>
-                <Button variant="default" size="sm" className="mt-3">Ejecutar Backtest</Button>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm text-xs">Máx baja vol: {config?.adaptiveRangeLowVolMaxPct?.toFixed(2)}%</Label>
+                    <Slider
+                      value={[config?.adaptiveRangeLowVolMaxPct || 3.0]}
+                      min={1.0}
+                      max={8.0}
+                      step={0.25}
+                      onValueChange={(v) => onConfirmChange("adaptiveRangeLowVolMaxPct", "Máx low vol", config?.adaptiveRangeLowVolMaxPct || 3.0, v[0], "Rango máximo en régimen de baja volatilidad.", "low", false, true)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm text-xs">Máx lateral normal: {config?.adaptiveRangeNormalMaxPct?.toFixed(2)}%</Label>
+                    <Slider
+                      value={[config?.adaptiveRangeNormalMaxPct || 5.0]}
+                      min={2.0}
+                      max={10.0}
+                      step={0.25}
+                      onValueChange={(v) => onConfirmChange("adaptiveRangeNormalMaxPct", "Máx normal", config?.adaptiveRangeNormalMaxPct || 5.0, v[0], "Rango máximo en régimen lateral normal.", "low", false, true)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm text-xs">Máx alta vol: {config?.adaptiveRangeHighVolMaxPct?.toFixed(2)}%</Label>
+                    <Slider
+                      value={[config?.adaptiveRangeHighVolMaxPct || 7.0]}
+                      min={3.0}
+                      max={15.0}
+                      step={0.5}
+                      onValueChange={(v) => onConfirmChange("adaptiveRangeHighVolMaxPct", "Máx high vol", config?.adaptiveRangeHighVolMaxPct || 7.0, v[0], "Rango máximo en régimen de alta volatilidad.", "low", false, true)}
+                    />
+                  </div>
+                </div>
               </div>
+
+              {/* Target full levels + Min viable levels */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label className="text-sm">Target full levels</Label>
+                    <p className="text-sm text-muted-foreground mt-1">ON: intenta meter todos los niveles. OFF: no fuerza rangos enormes.</p>
+                  </div>
+                  <Switch
+                    checked={config?.adaptiveRangeTargetFullLevels ?? false}
+                    onCheckedChange={(v) => onConfirmChange("adaptiveRangeTargetFullLevels", "Target full levels", config?.adaptiveRangeTargetFullLevels ?? false, v, "Forzar rangos para meter todos los niveles.", "low", false, true)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm">Mínimo niveles viables: {config?.adaptiveRangeMinViableLevels ?? 4}</Label>
+                  <Slider
+                    value={[config?.adaptiveRangeMinViableLevels || 4]}
+                    min={2}
+                    max={12}
+                    step={1}
+                    onValueChange={(v) => onConfirmChange("adaptiveRangeMinViableLevels", "Mín viable", config?.adaptiveRangeMinViableLevels || 4, v[0], "Mínimo de niveles para considerar el rango viable.", "low", false, true)}
+                  />
+                  <p className="text-sm text-muted-foreground">Si no caben estos niveles, el rango se marca como no viable.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Bloque 3: Backtest (separado) */}
+          <Card className="border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <FlaskConical className="h-4 w-4" />
+                Simulación / Backtest
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3 text-sm text-blue-700 dark:text-blue-300">
+                El backtest no cambia la configuración operativa ni crea órdenes. Solo simula.
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-sm">Capital Inicial (USD)</Label>
+                  <Input type="number" defaultValue={1000} id="bt-capital" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm">Modelo de Fill</Label>
+                  <Select defaultValue="realistic">
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="optimistic">Optimista</SelectItem>
+                      <SelectItem value="realistic">Realista</SelectItem>
+                      <SelectItem value="pessimistic">Pesimista</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <Button variant="default" size="sm">Ejecutar Backtest</Button>
             </CardContent>
           </Card>
         </TabsContent>

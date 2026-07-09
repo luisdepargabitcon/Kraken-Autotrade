@@ -36,9 +36,9 @@ type FilterKey =
   | "todos";
 
 const FILTER_LABELS: Record<FilterKey, string> = {
-  "rango-activo": "Rango activo",
-  activos: "Activos",
-  planificados: "Planificados globales",
+  "rango-activo": "Rango vigente",
+  activos: "Niveles del rango vigente",
+  planificados: "Planificados",
   historicos: "Históricos",
   reemplazados: "Reemplazados",
   ejecutados: "Ejecutados",
@@ -479,19 +479,19 @@ export function GridLevelsPanel({
             </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
-                <p className="text-[10px] text-muted-foreground">Capital USD en BUY</p>
+                <p className="text-[10px] text-muted-foreground">Capital reservado para compras</p>
                 <p className="text-sm font-mono text-amber-400">{fmtUsd(buyTotalFinal)}</p>
               </div>
               <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-2">
-                <p className="text-[10px] text-muted-foreground">Notional visual SELL</p>
+                <p className="text-[10px] text-muted-foreground">Valor estimado de ventas</p>
                 <p className="text-sm font-mono text-blue-400">{fmtUsd(sellTotalFinal)}</p>
               </div>
               <div className="rounded-md border border-green-500/30 bg-green-500/5 p-2">
-                <p className="text-[10px] text-muted-foreground">Capital USD necesario</p>
+                <p className="text-[10px] text-muted-foreground">Capital mínimo necesario</p>
                 <p className="text-sm font-mono text-green-400">{fmtUsd(buyTotalFinal)}</p>
               </div>
               <div className="rounded-md border border-purple-500/30 bg-purple-500/5 p-2">
-                <p className="text-[10px] text-muted-foreground">Notional bruto visual</p>
+                <p className="text-[10px] text-muted-foreground">Volumen bruto estimado</p>
                 <p className="text-sm font-mono text-purple-400">{fmtUsd(grossFinal)}</p>
               </div>
               <div className="rounded-md border border-border bg-muted/20 p-2">
@@ -518,7 +518,7 @@ export function GridLevelsPanel({
         {/* SELL disclaimer */}
         {filteredLevels.length > 0 && (
           <div className="mb-3 text-[11px] text-muted-foreground bg-muted/20 rounded-md p-2 border border-border/30">
-            <strong>Las compras BUY consumen capital USD real.</strong> Las ventas SELL no consumen USD: representan el valor estimado de vender el BTC comprado a un precio superior. Por eso el notional SELL puede ser mayor que el importe BUY.
+            <strong>Las compras BUY consumen capital USD real.</strong> Las ventas SELL son virtuales en SHADOW. No consumen USD real; representan el valor estimado de vender el BTC comprado a precios inferiores.
           </div>
         )}
 
@@ -544,12 +544,12 @@ export function GridLevelsPanel({
                   <tr className="text-xs text-muted-foreground border-b">
                     <th className="text-left py-2 px-2">Nivel</th>
                     <th className="text-left py-2 px-2">Lado</th>
-                    <th className="text-left py-2 px-2">Estado final</th>
-                    <th className="text-left py-2 px-2">Rango</th>
+                    <th className="text-left py-2 px-2">Estado del nivel</th>
+                    <th className="text-left py-2 px-2">Rango vigente</th>
                     <th className="text-left py-2 px-2">Precio</th>
                     <th className="text-left py-2 px-2">
                       <div className="flex items-center gap-1">
-                        Importe / Notional
+                        Importe estimado
                         <button onClick={(e) => { e.stopPropagation(); setShowImporteModal(true); }} className="hover:text-foreground transition-colors">
                           <HelpCircle className="h-3 w-3" />
                         </button>
@@ -557,7 +557,7 @@ export function GridLevelsPanel({
                     </th>
                     <th className="text-left py-2 px-2">
                       <div className="flex items-center gap-1">
-                        Beneficio objetivo
+                        Beneficio objetivo estimado
                         <button onClick={(e) => { e.stopPropagation(); setShowBeneficioModal(true); }} className="hover:text-foreground transition-colors">
                           <HelpCircle className="h-3 w-3" />
                         </button>
@@ -723,7 +723,7 @@ export function GridLevelsPanel({
                     ? "No hay niveles en el rango activo actual."
                     : "No hay rango activo cargado actualmente."
                   : filter === "activos"
-                  ? "No hay niveles activos reales ahora mismo."
+                  ? "No hay órdenes reales activas. Existen niveles planificados en SHADOW para simulación."
                   : `No hay niveles con filtro "${FILTER_LABELS[filter]}".`}
               </p>
               {filter === "rango-activo" && (

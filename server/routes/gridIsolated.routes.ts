@@ -777,7 +777,6 @@ export function registerGridIsolatedRoutes(app: Express): void {
         "pair", "capitalProfile", "executionPolicy", "netProfitTargetPct",
         "bandPeriod", "bandStdDevMultiplier", "atrPeriod", "atrTimeframe",
         "gridStepAtrMultiplier", "gridStepMinPct", "gridStepMaxPct",
-        "geometricRatioMin", "geometricRatioMax",
         "trailingActivationPct", "trailingStopPct",
         "stopLossSoftPct", "stopLossHardPct", "stopLossEmergencyPct",
         "hodlRecoveryEnabled",

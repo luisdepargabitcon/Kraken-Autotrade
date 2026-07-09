@@ -1,7 +1,47 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-08
+> Última actualización: 2026-07-09
+
+---
+
+## 2026-07-09 — FASE 3C.3-D LIMPIEZA UX GRID / ELIMINAR LEGACY Y DUPLICADOS CONFUSOS
+
+### Resumen
+Limpieza de la UX del Grid Isolated para eliminar configuración legacy que ya no afecta al flujo real, reducir duplicados confusos y humanizar textos técnicos. Se eliminó Ratio Geométrico Min/Max de UI y allowedFields, se reorganizó Ajustes > Avanzado en 3 bloques, se humanizaron eventos de histórico de rangos, y se renombraron filtros/columnas/resúmenes de Niveles.
+
+### Decisión sobre Ratio Geométrico Min/Max
+**ELIMINADO de UI y allowedFields.** Verificación: `generateGeometricGridLevels` nunca es llamado. El generador profesional (`generateProfessionalGridLevels`) hardcodea `geometricRatio: 1.0`. Los campos existen en DB/schema por compatibilidad pero no controlan ningún cálculo real. No se eliminan columnas DB ni se hace migración destructiva.
+
+### Archivos modificados
+- `client/src/components/grid/GridAjustesPanel.tsx` — Reorganizado Avanzado en 3 bloques: Control real del Grid, Adaptive Smart Range (modo, perfil, límites por régimen, target full levels, min viable), Backtest separado con disclaimer. Eliminados sliders Ratio Geométrico Min/Max. Renombrados labels: Step→Separación, Target→Objetivo neto por nivel.
+- `client/src/components/grid/GridRangeIntelligencePanel.tsx` — Añadida conclusión humana arriba (viable/no viable). Renombrado "Rango v18 existente (Compact Range)" → "Referencia Compact Range (comparativa)" con nota de que es comparativo. Añadido mensaje explicativo cuando adaptiveRangeOk=false pero existe rango activo.
+- `client/src/components/grid/GridBandsRangesPanel.tsx` — Renombrado "Banda Activa" → "Rango activo actual". Añadido humanizeEventType() con traducciones españolas. Renombrados "Center drift"→"Cambio de centro", "Width change"→"Cambio de anchura".
+- `client/src/components/grid/GridLevelsPanel.tsx` — Renombrados filtros: "Rango activo"→"Rango vigente", "Activos"→"Niveles del rango vigente", "Planificados globales"→"Planificados". Renombradas columnas: "Estado final"→"Estado del nivel", "Rango"→"Rango vigente", "Importe/Notional"→"Importe estimado", "Beneficio objetivo"→"Beneficio objetivo estimado". Renombradas tarjetas: "Capital USD en BUY"→"Capital reservado para compras", "Notional visual SELL"→"Valor estimado de ventas", "Capital USD necesario"→"Capital mínimo necesario", "Notional bruto visual"→"Volumen bruto estimado". Corregido texto empty state SHADOW.
+- `client/src/pages/GridIsolated.tsx` — Eliminado bloque explicación Ratio Geométrico de Ayuda. Renombrado "Target Beneficio Neto"→"Objetivo neto por nivel".
+- `server/routes/gridIsolated.routes.ts` — Eliminado `geometricRatioMin` y `geometricRatioMax` de `allowedFields` en POST /config.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — Añadido test verificando que geometricRatioMin/Max son ignorados por POST /config.
+
+### Validaciones ejecutadas
+- `npm run check`: ✅
+- `npx vitest run` (gridAdaptiveSmartRange, gridCompactRange, gridSpacingCalculator, gridIsolatedRoutes): ✅ 180/180 tests
+- `npm run build`: ✅
+
+### Confirmaciones
+- No deploy.
+- No VPS deploy.
+- No producción.
+- No REAL.
+- No SHADOW.
+- No órdenes reales.
+- No rebuild.
+- No regeneración de niveles.
+- No shadow-cleanup/apply.
+- No DB manual.
+- No SQL manual.
+- No IDCA.
+- No FISCO.
+- Grid queda seguro (OFF).
 
 ---
 
