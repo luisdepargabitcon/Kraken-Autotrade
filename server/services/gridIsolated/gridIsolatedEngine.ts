@@ -23,7 +23,7 @@ import {
   gridIsolatedCycles,
   gridIsolatedEvents,
 } from "@shared/schema";
-import { eq, desc, and, isNull, sql } from "drizzle-orm";
+import { eq, desc, and, isNull, sql, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { botLogger } from "../botLogger";
 import { MarketDataService } from "../MarketDataService";
@@ -1893,6 +1893,192 @@ class GridIsolatedEngine {
         preserveLevelIds,
       },
     };
+  }
+
+  /**
+   * Apply SHADOW cleanup — archives cycles and cancels levels.
+   * Requires confirmToken when dryRun=false.
+   * Uses DB transaction. No DELETE operations.
+   * Returns backup/evidence object for audit.
+   */
+  async applyShadowCleanup(opts: {
+    dryRun: boolean;
+    confirmToken?: string | null;
+    expectedCyclesCount?: number;
+    expectedLevelsCount?: number;
+  }): Promise<any> {
+    const { dryRun, confirmToken, expectedCyclesCount, expectedLevelsCount } = opts;
+
+    // Always run preview first
+    const cleanupPreview = await this.shadowCleanupPreview();
+
+    // Log preview event
+    await this.logEvent("GRID_SHADOW_CLEANUP_PREVIEWED", `Vista previa de limpieza SHADOW: ${cleanupPreview.risk.affectedCyclesCount} ciclos, ${cleanupPreview.risk.affectedLevelsCount} niveles.`, {
+      affectedCyclesCount: cleanupPreview.risk.affectedCyclesCount,
+      affectedLevelsCount: cleanupPreview.risk.affectedLevelsCount,
+      dryRun,
+    });
+
+    // ─── dryRun=true: return preview only, no DB modifications ───
+    if (dryRun) {
+      return {
+        ok: true,
+        dryRun: true,
+        readOnly: true,
+        action: "preview_apply",
+        wouldArchiveCyclesCount: cleanupPreview.risk.affectedCyclesCount,
+        wouldUpdateLevelsCount: cleanupPreview.risk.affectedLevelsCount,
+        realOrdersAffected: cleanupPreview.risk.realOrdersAffected,
+        safeToArchiveShadowOnly: cleanupPreview.risk.safeToArchiveShadowOnly,
+        cleanupPreview,
+      };
+    }
+
+    // ─── dryRun=false: require confirmToken and validations ───
+    const archiveCycleIds = cleanupPreview.preview.archiveCycleIds as string[];
+    const resetLevelIds = cleanupPreview.preview.resetLevelIds as string[];
+
+    // Validation 1: confirmToken required
+    if (!confirmToken) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", "Limpieza SHADOW abortada: confirmToken requerido.", { reason: "missing_confirm_token" });
+      return { ok: false, applied: false, reason: "confirmToken es requerido para dryRun=false" };
+    }
+
+    // Validation 2: confirmToken must match expected format
+    const activeRangeId = cleanupPreview.preview.archiveCycleIds.length > 0
+      ? (await db.select().from(gridIsolatedCycles).where(eq(gridIsolatedCycles.id, archiveCycleIds[0])).limit(1))[0]?.rangeVersionId
+      : null;
+    const expectedToken = activeRangeId
+      ? `ARCHIVE_SHADOW_PREFIX_${activeRangeId.toUpperCase()}_${archiveCycleIds.length}_CYCLES`
+      : null;
+
+    if (expectedToken && confirmToken !== expectedToken) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", `Limpieza SHADOW abortada: confirmToken incorrecto.`, { reason: "invalid_confirm_token", expected: expectedToken });
+      return { ok: false, applied: false, reason: `confirmToken incorrecto. Esperado: ${expectedToken}` };
+    }
+
+    // Validation 3: expectedCyclesCount must match
+    if (expectedCyclesCount !== undefined && expectedCyclesCount !== cleanupPreview.risk.affectedCyclesCount) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", `Limpieza SHADOW abortada: expectedCyclesCount=${expectedCyclesCount} != actual=${cleanupPreview.risk.affectedCyclesCount}.`, { reason: "cycles_count_mismatch" });
+      return { ok: false, applied: false, reason: `expectedCyclesCount (${expectedCyclesCount}) no coincide con detectado (${cleanupPreview.risk.affectedCyclesCount})` };
+    }
+
+    // Validation 4: expectedLevelsCount must match
+    if (expectedLevelsCount !== undefined && expectedLevelsCount !== cleanupPreview.risk.affectedLevelsCount) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", `Limpieza SHADOW abortada: expectedLevelsCount=${expectedLevelsCount} != actual=${cleanupPreview.risk.affectedLevelsCount}.`, { reason: "levels_count_mismatch" });
+      return { ok: false, applied: false, reason: `expectedLevelsCount (${expectedLevelsCount}) no coincide con detectado (${cleanupPreview.risk.affectedLevelsCount})` };
+    }
+
+    // Validation 5: hard safety checks
+    if (cleanupPreview.ok !== true) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", "Limpieza SHADOW abortada: preview.ok !== true.", { reason: "preview_not_ok" });
+      return { ok: false, applied: false, reason: "preview.ok !== true" };
+    }
+    if (cleanupPreview.risk.realOrdersAffected !== false) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", "Limpieza SHADOW abortada: realOrdersAffected !== false.", { reason: "real_orders_detected" });
+      return { ok: false, applied: false, reason: "realOrdersAffected !== false — no se puede limpiar" };
+    }
+    if (cleanupPreview.risk.safeToArchiveShadowOnly !== true) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", "Limpieza SHADOW abortada: safeToArchiveShadowOnly !== true.", { reason: "not_safe_to_archive" });
+      return { ok: false, applied: false, reason: "safeToArchiveShadowOnly !== true" };
+    }
+    if (cleanupPreview.risk.affectedCyclesCount <= 0) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", "Limpieza SHADOW abortada: no cycles to archive.", { reason: "no_affected_cycles" });
+      return { ok: false, applied: false, reason: "affectedCyclesCount <= 0" };
+    }
+
+    // Validation 6: archiveCycleIds length must match expectedCyclesCount
+    if (archiveCycleIds.length !== (expectedCyclesCount ?? cleanupPreview.risk.affectedCyclesCount)) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", `Limpieza SHADOW abortada: archiveCycleIds.length mismatch.`, { reason: "archive_ids_length_mismatch" });
+      return { ok: false, applied: false, reason: "archiveCycleIds.length no coincide con expectedCyclesCount" };
+    }
+
+    // Validation 7: mode must be OFF
+    const config = this.getConfig();
+    const currentMode = config?.mode || "OFF";
+    if (currentMode !== "OFF") {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", `Limpieza SHADOW abortada: mode=${currentMode} (debe ser OFF).`, { reason: "mode_not_off", mode: currentMode });
+      return { ok: false, applied: false, reason: `mode debe ser OFF (actual: ${currentMode})` };
+    }
+
+    // Validation 8: realOpenOrdersCount must be 0
+    const status = await this.getStatusSafe();
+    if (status.realOpenOrdersCount !== 0) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", `Limpieza SHADOW abortada: realOpenOrdersCount=${status.realOpenOrdersCount}.`, { reason: "real_open_orders" });
+      return { ok: false, applied: false, reason: `realOpenOrdersCount !== 0 (actual: ${status.realOpenOrdersCount})` };
+    }
+
+    // ─── Build backup/evidence object (in memory) ───
+    const now = new Date();
+    const backup = {
+      timestamp: now.toISOString(),
+      reason: "shadow_prefix_cleanup",
+      dryRun: false,
+      affectedCycles: archiveCycleIds,
+      affectedLevels: resetLevelIds,
+      previewHash: JSON.stringify(cleanupPreview.preview).length.toString(),
+      confirmTokenUsed: true,
+    };
+    const backupHash = `${now.getTime()}_${archiveCycleIds.length}_${resetLevelIds.length}`;
+
+    // ─── Execute in transaction ───
+    try {
+      await db.transaction(async (tx) => {
+        // Archive cycles: set status to "cancelled", set completedAt
+        await tx.update(gridIsolatedCycles)
+          .set({
+            status: "cancelled",
+            completedAt: now,
+          })
+          .where(inArray(gridIsolatedCycles.id, archiveCycleIds));
+
+        // Cancel levels: set status to "cancelled", clear fill data
+        await tx.update(gridIsolatedLevels)
+          .set({
+            status: "cancelled",
+            filledPrice: null,
+            filledQuantity: "0",
+            filledAt: null,
+            cancelledAt: now,
+          })
+          .where(inArray(gridIsolatedLevels.id, resetLevelIds));
+      });
+
+      await this.logEvent("GRID_SHADOW_CLEANUP_APPLIED", `Limpieza SHADOW aplicada: ${archiveCycleIds.length} ciclos archivados, ${resetLevelIds.length} niveles cancelados.`, {
+        archivedCyclesCount: archiveCycleIds.length,
+        updatedLevelsCount: resetLevelIds.length,
+        backupHash,
+      });
+
+      // Get status after cleanup
+      const statusAfter = await this.getStatusSafe();
+
+      return {
+        ok: true,
+        dryRun: false,
+        applied: true,
+        archivedCyclesCount: archiveCycleIds.length,
+        updatedLevelsCount: resetLevelIds.length,
+        realOrdersAffected: false,
+        backupHash,
+        backupSummary: {
+          timestamp: backup.timestamp,
+          reason: backup.reason,
+          affectedCyclesCount: archiveCycleIds.length,
+          affectedLevelsCount: resetLevelIds.length,
+        },
+        affectedCycleIds: archiveCycleIds,
+        affectedLevelIds: resetLevelIds,
+        statusAfter: {
+          activeOpenCyclesCount: statusAfter.activeOpenCyclesCount,
+          globalOpenCyclesCount: statusAfter.globalOpenCyclesCount,
+          realOpenOrdersCount: statusAfter.realOpenOrdersCount,
+        },
+      };
+    } catch (error) {
+      await this.logEvent("GRID_SHADOW_CLEANUP_ABORTED", `Limpieza SHADOW abortada: error en transacción: ${String(error)}`, { reason: "transaction_error", error: String(error) });
+      return { ok: false, applied: false, reason: `Error en transacción: ${String(error)}` };
+    }
   }
 
   /**

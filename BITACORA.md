@@ -3887,4 +3887,52 @@ Añadir una 4ª subpestaña "Logs IDCA" en IDCA → Eventos, con vista continua 
 ---
 
 *Última actualización: 2026-04-26*
+
+---
+
+## FASE 3C.2-I-A — Endpoint seguro de aplicación de limpieza SHADOW (2026-07-09)
+
+### Contexto
+- FASE 3C.2-H-C-B cerrada en staging: 24 ciclos SHADOW pre-fix detectados, preview y audit coinciden, `realOrdersAffected=false`, `safeToArchiveShadowOnly=true`, `cleanupRecommended=true`.
+- Se crea endpoint `POST /api/grid-isolated/shadow-cleanup/apply` para aplicar limpieza de forma segura.
+- **No se ejecutó limpieza real todavía.** El endpoint existe pero no se ha invocado con `dryRun=false`.
+
+### Problema
+- No existía un endpoint seguro para aplicar la limpieza de ciclos/niveles SHADOW pre-fix.
+- Se necesitaba un mecanismo con validaciones duras, confirmToken, transacción DB, backup en memoria, y sin DELETE.
+
+### Solución
+1. **Endpoint `POST /api/grid-isolated/shadow-cleanup/apply`:**
+   - `dryRun=true` (default): devuelve preview read-only, no modifica DB.
+   - `dryRun=false`: requiere `confirmToken`, `expectedCyclesCount`, `expectedLevelsCount`.
+2. **Método `applyShadowCleanup()` en engine:**
+   - Llama `shadowCleanupPreview()` primero.
+   - 8 validaciones duras antes de tocar DB: ok, dryRun, readOnly, realOrdersAffected, safeToArchiveShadowOnly, affectedCyclesCount > 0, archiveCycleIds length, mode OFF, realOpenOrdersCount 0.
+   - Transacción DB: ciclos → `status="cancelled"`, `completedAt=now()`. Niveles → `status="cancelled"`, `filledPrice=null`, `filledQuantity=0`, `filledAt=null`, `cancelledAt=now()`.
+   - No DELETE. No borra filas. Reversible/auditable.
+   - Backup en memoria con timestamp, affected IDs, previewHash, confirmTokenUsed.
+   - Eventos: `GRID_SHADOW_CLEANUP_PREVIEWED`, `GRID_SHADOW_CLEANUP_APPLIED`, `GRID_SHADOW_CLEANUP_ABORTED`.
+3. **Event types añadidos** en `gridIsolatedTypes.ts` y formatter en `gridActivityFormatter.ts`.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — nuevo método `applyShadowCleanup()`, import `inArray`.
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — 3 nuevos event types.
+- `server/services/gridIsolated/gridActivityFormatter.ts` — 3 nuevas entradas en EVENT_MAPPINGS.
+- `server/routes/gridIsolated.routes.ts` — nuevo endpoint `POST /shadow-cleanup/apply`.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 8 nuevos tests (100 total), mock `db.transaction`.
+
+### Tests ejecutados
+- **npm run check:** ✅
+- **vitest gridIsolatedRoutes.test.ts:** ✅ 100/100
+- **vitest gridSpacingCalculator.test.ts:** ✅ 35/35
+- **vitest gridWeightedLevels.test.ts:** ✅ 35/35
+- **vitest gridAllocationEngine.test.ts:** ✅ 26/26
+- **Total:** 196/196 tests passed
+
+### Confirmación de restricciones
+- ✅ No IDCA, No FISCO, No REAL, No órdenes reales, No rebuild, No DB manual, No migraciones
+- ✅ No limpieza real ejecutada (endpoint creado pero no invocado con dryRun=false)
+- ✅ No producción, No deploy
+- ✅ No DELETE — solo UPDATE status a "cancelled"
+- ✅ Transacción DB con rollback automático si falla
 *Mantenido por: Windsurf Cascade AI*

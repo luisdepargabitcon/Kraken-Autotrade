@@ -439,6 +439,33 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
     title: "SELL SHADOW sin ciclo abierto",
     messageFn: () => "SELL simulado ignorado: no existe BUY/ciclo abierto del mismo rango activo.",
   },
+  GRID_SHADOW_CLEANUP_PREVIEWED: {
+    category: "SYSTEM",
+    severity: "INFO",
+    title: "Limpieza SHADOW previsualizada",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `Vista previa de limpieza SHADOW: ${meta.affectedCyclesCount ?? 0} ciclos, ${meta.affectedLevelsCount ?? 0} niveles candidatos.`;
+    },
+  },
+  GRID_SHADOW_CLEANUP_APPLIED: {
+    category: "SYSTEM",
+    severity: "INFO",
+    title: "Limpieza SHADOW aplicada",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `Limpieza SHADOW aplicada: ${meta.archivedCyclesCount ?? 0} ciclos archivados, ${meta.updatedLevelsCount ?? 0} niveles cancelados.`;
+    },
+  },
+  GRID_SHADOW_CLEANUP_ABORTED: {
+    category: "SYSTEM",
+    severity: "WARNING",
+    title: "Limpieza SHADOW abortada",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `Limpieza SHADOW abortada: ${meta.reason ?? "motivo desconocido"}.`;
+    },
+  },
 };
 
 export function formatGridEvent(ev: RawGridEvent): FormattedGridEvent {

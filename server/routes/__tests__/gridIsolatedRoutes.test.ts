@@ -38,13 +38,22 @@ vi.mock("../../db", () => {
     orderBy: vi.fn().mockReturnThis(),
     limit: vi.fn().mockResolvedValue([]),
   };
+  const updateChain = { set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) };
+  const txObj = {
+    select: vi.fn().mockReturnValue(chainable),
+    insert: vi.fn().mockReturnValue({
+      values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 1 }]) }),
+    }),
+    update: vi.fn().mockReturnValue(updateChain),
+  };
   return {
     db: {
       select: vi.fn().mockReturnValue(chainable),
       insert: vi.fn().mockReturnValue({
         values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 1 }]) }),
       }),
-      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) }),
+      update: vi.fn().mockReturnValue(updateChain),
+      transaction: vi.fn().mockImplementation(async (fn: (tx: any) => Promise<any>) => fn(txObj)),
     },
   };
 });
@@ -1013,5 +1022,84 @@ describe("Grid Isolated Routes — Endpoints", () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
     expect(res.status).toBe(200);
     expect(res.body.functionalStatus.runtime.schedulerRunning).toBe(false);
+  });
+
+  // ─── 3C.2-I-A: Shadow Cleanup Apply endpoint ──────────────────────
+
+  it("shadow-cleanup/apply with dryRun=true returns read-only preview, no DB modification", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", { dryRun: true });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.dryRun).toBe(true);
+    expect(res.body.readOnly).toBe(true);
+    expect(res.body.action).toBe("preview_apply");
+    expect(res.body).toHaveProperty("wouldArchiveCyclesCount");
+    expect(res.body).toHaveProperty("wouldUpdateLevelsCount");
+    expect(res.body).toHaveProperty("cleanupPreview");
+  });
+
+  it("shadow-cleanup/apply with dryRun=false without confirmToken aborts", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", { dryRun: false });
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.applied).toBe(false);
+    expect(res.body.reason).toContain("confirmToken");
+  });
+
+  it("shadow-cleanup/apply with dryRun=false and incorrect confirmToken aborts", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", {
+      dryRun: false,
+      confirmToken: "WRONG_TOKEN",
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.applied).toBe(false);
+  });
+
+  it("shadow-cleanup/apply with dryRun=false and incorrect expectedCyclesCount aborts", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", {
+      dryRun: false,
+      confirmToken: "ARCHIVE_SHADOW_PREFIX_TEST_0_CYCLES",
+      expectedCyclesCount: 999,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.applied).toBe(false);
+    expect(res.body.reason).toContain("expectedCyclesCount");
+  });
+
+  it("shadow-cleanup/apply with dryRun=false and incorrect expectedLevelsCount aborts", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", {
+      dryRun: false,
+      confirmToken: "ARCHIVE_SHADOW_PREFIX_TEST_0_CYCLES",
+      expectedLevelsCount: 999,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.applied).toBe(false);
+    expect(res.body.reason).toContain("expectedLevelsCount");
+  });
+
+  it("shadow-cleanup/apply defaults to dryRun=true when dryRun not specified", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", {});
+    expect(res.status).toBe(200);
+    expect(res.body.dryRun).toBe(true);
+    expect(res.body.readOnly).toBe(true);
+  });
+
+  it("shadow-cleanup/apply dryRun=true does not call db.update", async () => {
+    const { db } = await import("../../db");
+    const updateBefore = (db.update as any).mock.calls.length;
+    await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", { dryRun: true });
+    const updateAfter = (db.update as any).mock.calls.length;
+    // dryRun=true should not trigger any db.update calls from the apply path
+    // (shadowCleanupPreview is read-only)
+    expect(updateAfter).toBe(updateBefore);
+  });
+
+  it("shadow-cleanup/apply does not touch Execution Service or place real orders", async () => {
+    const res = await simulatePost(app, "/api/grid-isolated/shadow-cleanup/apply", { dryRun: true });
+    expect(res.status).toBe(200);
+    expect(res.body.realOrdersAffected).toBe(false);
   });
 });

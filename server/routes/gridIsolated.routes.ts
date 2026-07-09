@@ -1616,6 +1616,34 @@ export function registerGridIsolatedRoutes(app: Express): void {
     }
   });
 
+  // ─── Shadow Cleanup Apply (dryRun or real with confirmToken) ────────
+
+  app.post("/api/grid-isolated/shadow-cleanup/apply", async (req: Request, res: Response) => {
+    try {
+      const { dryRun, confirmToken, expectedCyclesCount, expectedLevelsCount } = req.body as {
+        dryRun?: boolean;
+        confirmToken?: string | null;
+        expectedCyclesCount?: number;
+        expectedLevelsCount?: number;
+      };
+
+      const result = await gridIsolatedEngine.applyShadowCleanup({
+        dryRun: dryRun !== false,
+        confirmToken: confirmToken ?? null,
+        expectedCyclesCount,
+        expectedLevelsCount,
+      });
+
+      if (result.ok === false) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   // ─── Reconciliation ──────────────────────────────────────
 
   app.post("/api/grid-isolated/rebuild-planned-levels", async (req: Request, res: Response) => {
