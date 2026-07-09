@@ -184,6 +184,11 @@ export interface ProfessionalLevelGenerationInput {
   minOperationalBandWidthPct?: number;
   dynamicLevelReduction?: boolean;
   gridViabilityMode?: "strict" | "compact";
+  // ─── Compact Range Control (3C.3-A) ───
+  enforceCompactRange?: boolean;
+  gridRangeMaxPct?: number;
+  maxDistanceFromCenterPct?: number;
+  maxSellDistanceFromNearestBuyPct?: number;
 }
 
 export interface GeneratedLevel {
@@ -224,6 +229,30 @@ export interface ProfessionalLevelGenerationResult {
     generatedSellLevels: number;
     reductionApplied: boolean;
     reason: string;
+    // ─── Compact Range Audit (3C.3-A) ───
+    rangeAudit?: {
+      centerPrice: number;
+      lowerBuyPrice: number;
+      upperSellPrice: number;
+      totalRangePct: number;
+      maxBuyDistancePctFromCenter: number;
+      maxSellDistancePctFromCenter: number;
+      minSpacingPct: number;
+      maxSpacingPct: number;
+      netTargetPct: number;
+      levelsCount: number;
+      buyLevelsCount: number;
+      sellLevelsCount: number;
+      compactRangeEnforced: boolean;
+      rangeMaxPct: number;
+      maxDistanceFromCenterPct: number;
+      maxSellDistanceFromNearestBuyPct: number;
+      compactRangeOk: boolean;
+      warnings: string[];
+      sellToBuyGapPct: number;
+      avgSpacingPct: number;
+      reason: string;
+    };
   };
 }
 
@@ -266,6 +295,10 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     minOperationalBandWidthPct = 20.0,
     dynamicLevelReduction = true,
     gridViabilityMode = "strict",
+    enforceCompactRange = false,
+    gridRangeMaxPct = 2.50,
+    maxDistanceFromCenterPct = 1.25,
+    maxSellDistanceFromNearestBuyPct = 1.50,
   } = input;
 
   // 1. Calculate minimum profitable spacing
@@ -294,7 +327,7 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
   });
 
   // 4. Calculate operational range
-  const operationalRangeResult = calculateOperationalRange({
+  let operationalRangeResult = calculateOperationalRange({
     centerPrice: centerPriceResult.centerPrice,
     bollingerUpper,
     bollingerLower,
@@ -304,6 +337,23 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     atrRangeMultiplier,
     minOperationalBandWidthPct,
   });
+
+  // 4b. Compact Range Control (3C.3-A): clamp operational range to gridRangeMaxPct
+  const compactRangeWarnings: string[] = [];
+  if (enforceCompactRange && operationalRangeResult.operationalBandWidthPct > gridRangeMaxPct) {
+    compactRangeWarnings.push(
+      `Rango operacional original (${operationalRangeResult.operationalBandWidthPct.toFixed(2)}%) excede gridRangeMaxPct (${gridRangeMaxPct}%). Comprimiendo a límite compacto.`
+    );
+    const compactSemiRangePct = gridRangeMaxPct / 2;
+    operationalRangeResult = {
+      ...operationalRangeResult,
+      operationalLower: centerPriceResult.centerPrice * (1 - compactSemiRangePct / 100),
+      operationalUpper: centerPriceResult.centerPrice * (1 + compactSemiRangePct / 100),
+      operationalBandWidthPct: gridRangeMaxPct,
+      operationalSemiRangePct: compactSemiRangePct,
+      explanation: `operational range (COMPACT): ${operationalRangeResult.operationalLower.toFixed(2)} - ${operationalRangeResult.operationalUpper.toFixed(2)} (BW: ${gridRangeMaxPct}%, semi-range: ${compactSemiRangePct}%, clamped from original)`,
+    };
+  }
 
   // 5. Count viable levels iteratively
   const viableLevelsResult = countViableLevelsIterative({
@@ -375,6 +425,58 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     generatedSellLevels = previewResult.sellLevelsCount;
   }
 
+  // 8. Build range audit (3C.3-A)
+  const buyLevels = levels.filter(l => l.side === "BUY");
+  const sellLevels = levels.filter(l => l.side === "SELL");
+  const lowerBuyPrice = buyLevels.length > 0 ? Math.min(...buyLevels.map(l => l.price)) : centerPriceResult.centerPrice;
+  const upperSellPrice = sellLevels.length > 0 ? Math.max(...sellLevels.map(l => l.price)) : centerPriceResult.centerPrice;
+  const totalRangePct = lowerBuyPrice > 0 ? ((upperSellPrice - lowerBuyPrice) / centerPriceResult.centerPrice) * 100 : 0;
+  const maxBuyDistancePctFromCenter = buyLevels.length > 0 ? Math.max(...buyLevels.map(l => l.distanceFromMidPct)) : 0;
+  const maxSellDistancePctFromCenter = sellLevels.length > 0 ? Math.max(...sellLevels.map(l => l.distanceFromMidPct)) : 0;
+
+  // SELL-to-BUY gap: distance from highest BUY to lowest SELL (across center)
+  const highestBuyPrice = buyLevels.length > 0 ? Math.max(...buyLevels.map(l => l.price)) : centerPriceResult.centerPrice;
+  const lowestSellPrice = sellLevels.length > 0 ? Math.min(...sellLevels.map(l => l.price)) : centerPriceResult.centerPrice;
+  const sellToBuyGapPct = highestBuyPrice > 0 ? ((lowestSellPrice - highestBuyPrice) / highestBuyPrice) * 100 : 0;
+
+  const avgSpacingPct = levels.length > 1 ? totalRangePct / (levels.length - 1) : 0;
+  const minSpacingPct = spacingResult.spacingPct;
+  const maxSpacingPct = spacingResult.spacingPct;
+
+  // Compact range validation
+  let compactRangeOk = true;
+  const rangeAuditWarnings = [...compactRangeWarnings];
+
+  if (enforceCompactRange) {
+    if (totalRangePct > gridRangeMaxPct) {
+      compactRangeOk = false;
+      rangeAuditWarnings.push(`Rango total (${totalRangePct.toFixed(2)}%) supera gridRangeMaxPct (${gridRangeMaxPct}%).`);
+    }
+    if (maxBuyDistancePctFromCenter > maxDistanceFromCenterPct) {
+      compactRangeOk = false;
+      rangeAuditWarnings.push(`BUY más alejada (${maxBuyDistancePctFromCenter.toFixed(2)}%) supera maxDistanceFromCenterPct (${maxDistanceFromCenterPct}%).`);
+    }
+    if (maxSellDistancePctFromCenter > maxDistanceFromCenterPct) {
+      compactRangeOk = false;
+      rangeAuditWarnings.push(`SELL más alejada (${maxSellDistancePctFromCenter.toFixed(2)}%) supera maxDistanceFromCenterPct (${maxDistanceFromCenterPct}%).`);
+    }
+    if (sellToBuyGapPct > maxSellDistanceFromNearestBuyPct) {
+      compactRangeOk = false;
+      rangeAuditWarnings.push(`Gap SELL-BUY (${sellToBuyGapPct.toFixed(2)}%) supera maxSellDistanceFromNearestBuyPct (${maxSellDistanceFromNearestBuyPct}%).`);
+    }
+    // Check if net target forces spacing beyond compact range
+    const minRequiredRangePct = minSpacingResult.minSpacingPctReal * Math.max(configuredBuyLevels, configuredSellLevels) * 2;
+    if (minRequiredRangePct > gridRangeMaxPct) {
+      rangeAuditWarnings.push(
+        `Target neto (${netProfitTargetPct}%) requiere spacing mínimo acumulado ~${minRequiredRangePct.toFixed(2)}% que excede gridRangeMaxPct (${gridRangeMaxPct}%). Considerar bajar target neto o ampliar rango.`
+      );
+    }
+  }
+
+  const rangeAuditReason = compactRangeOk
+    ? `Rango compacto OK: total ${totalRangePct.toFixed(2)}%, BUY max ${maxBuyDistancePctFromCenter.toFixed(2)}%, SELL max ${maxSellDistancePctFromCenter.toFixed(2)}%`
+    : `Rango demasiado amplio: ${rangeAuditWarnings.join("; ")}`;
+
   return {
     levels,
     viabilityStatus: viabilityResult.status,
@@ -397,6 +499,29 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
       generatedSellLevels,
       reductionApplied: viableLevelsResult.reductionApplied,
       reason: viableLevelsResult.reason,
+      rangeAudit: {
+        centerPrice: centerPriceResult.centerPrice,
+        lowerBuyPrice,
+        upperSellPrice,
+        totalRangePct,
+        maxBuyDistancePctFromCenter,
+        maxSellDistancePctFromCenter,
+        minSpacingPct,
+        maxSpacingPct,
+        netTargetPct: netProfitTargetPct,
+        levelsCount: levels.length,
+        buyLevelsCount: buyLevels.length,
+        sellLevelsCount: sellLevels.length,
+        compactRangeEnforced: enforceCompactRange,
+        rangeMaxPct: gridRangeMaxPct,
+        maxDistanceFromCenterPct,
+        maxSellDistanceFromNearestBuyPct,
+        compactRangeOk,
+        warnings: rangeAuditWarnings,
+        sellToBuyGapPct,
+        avgSpacingPct,
+        reason: rangeAuditReason,
+      },
     },
   };
 }

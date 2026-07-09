@@ -3995,4 +3995,52 @@ En `applyShadowCleanup()`, después de la transacción DB, sincronizar el estado
 - ✅ No IDCA, No FISCO, No REAL, No órdenes reales, No DB manual, No SQL manual
 - ✅ No nueva limpieza real, No rebuild, No regenerar niveles
 - ✅ Fix mínimo: solo mutación de estado en memoria existente
+
+---
+
+## FASE 3C.3-A — Compact Grid Range Control (09-JUL-2026)
+
+### Contexto
+El generador profesional de niveles (`generateProfessionalGridLevels`) producía un rango operacional excesivamente amplio para configuraciones de capital pequeño y target neto bajo. El rango operacional tomaba el más ancho entre Bollinger (20%), ATR (×8), y mínimo bandwidth (20%), resultando en un rango total de ~20% cuando se esperaba ~2.5%.
+
+### Problema
+- `calculateOperationalRange` en modo `hybrid` selecciona el rango más amplio entre Bollinger, ATR y mínimo bandwidth.
+- Con `operationalBandWidthPct=20%` y `minOperationalBandWidthPct=20%`, el rango siempre era ≥20%.
+- No existían límites explícitos para comprimir el rango a un valor compacto adecuado para capital pequeño.
+- No había auditoría de amplitud de rango ni warnings sobre target neto vs rango disponible.
+
+### Solución
+Implementado `enforceCompactRange` con límites configurables:
+- **`enforceCompactRange`** (bool, default `true`): activa la compresión del rango operacional.
+- **`gridRangeMaxPct`** (float, default `2.50`): rango total máximo permitido en %.
+- **`maxDistanceFromCenterPct`** (float, default `1.25`): distancia máxima desde el centro por lado.
+- **`maxSellDistanceFromNearestBuyPct`** (float, default `1.50`): gap máximo entre SELL más cercano y BUY más cercano.
+
+Cuando `enforceCompactRange=true` y el rango operacional excede `gridRangeMaxPct`, se comprime a `gridRangeMaxPct` centrado en `centerPrice`. Se genera un objeto `rangeAudit` con métricas completas: rango total, distancias máximas, spacing, warnings, y razón.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — añadidos 4 campos a `GridIsolatedConfig` y `DEFAULT_GRID_CONFIG`.
+- `server/services/gridIsolated/gridSpacingCalculator.ts` — añadidos campos a `ProfessionalLevelGenerationInput` y `ProfessionalLevelGenerationResult`; implementada compresión de rango y `rangeAudit` en `generateProfessionalGridLevels`.
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — pasados params compact range en precheck y `proposeRangeVersion`; cargados desde DB en `loadConfig` y `readConfigSnapshotFromDb`; guardados en `saveConfig`.
+- `server/routes/gridIsolated.routes.ts` — añadidos campos a `allowedFields` en POST `/api/grid-isolated/config`; añadido `rangeAudit` al response de `/api/grid-isolated/monitor/audit`.
+
+### Archivos nuevos
+- `server/services/__tests__/gridCompactRange.test.ts` — 8 tests: compresión de rango, límite total, warning target neto, gap SELL-BUY, read-only (pure function), sin órdenes reales, sin enforce cuando disabled, campos completos del audit.
+
+### Tests ejecutados
+- **tsc --noEmit (npm run check):** ✅
+- **vitest gridCompactRange.test.ts:** ✅ 8/8
+- **vitest gridSpacingCalculator.test.ts:** ✅ 35/35 (sin regresiones)
+- **vitest gridIsolatedRoutes.test.ts:** ✅ 100/100 (sin regresiones)
+
+### Confirmación de restricciones
+- ✅ No IDCA, No FISCO, No REAL, No órdenes reales
+- ✅ No DB manual, No SQL manual, No migración DB (campos se leen con fallback `as any`)
+- ✅ No deploy, No activación, No regeneración de niveles en VPS
+- ✅ Grid OFF mantenido, sin shadow activation
+- ✅ Cambios son puramente calculados (pure function), sin side effects
+
+### Estado
+- Código commit-ready. Pendiente: commit + push. Deploy VPS requiere autorización explícita del usuario.
+
 *Mantenido por: Windsurf Cascade AI*

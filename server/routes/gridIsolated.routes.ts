@@ -797,6 +797,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         // Capital allocation modes
         "gridAllocationMode", "gridCapitalDeploymentMode",
         "gridProgressiveIntensity", "gridMaxLevelPct", "gridMinLevelUsd",
+        "enforceCompactRange", "gridRangeMaxPct", "maxDistanceFromCenterPct", "maxSellDistanceFromNearestBuyPct",
       ];
 
       for (const field of allowedFields) {
@@ -1078,6 +1079,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
             generatedSellLevels: pg.generatedSellLevels,
             reductionApplied: pg.reductionApplied,
             reason: pg.reason,
+            rangeAudit: pg.rangeAudit || null,
             eventId: activeRangeEvent.id,
             eventCreatedAt: activeRangeEvent.createdAt,
             rangeVersionId: activeRangeEvent.rangeVersionId,
@@ -1122,6 +1124,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
             generatedSellLevels: pg.generatedSellLevels,
             reductionApplied: pg.reductionApplied,
             reason: pg.reason,
+            rangeAudit: pg.rangeAudit || null,
             eventId: recentFailureEvent.id,
             eventCreatedAt: recentFailureEvent.createdAt,
             rangeVersionId: recentFailureEvent.rangeVersionId,

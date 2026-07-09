@@ -345,6 +345,11 @@ export interface GridIsolatedConfig {
   gridProgressiveIntensity: number;
   gridMaxLevelPct: number;
   gridMinLevelUsd: number;
+  // ─── Compact Range Control (3C.3-A) ───
+  enforceCompactRange: boolean;
+  gridRangeMaxPct: number;
+  maxDistanceFromCenterPct: number;
+  maxSellDistanceFromNearestBuyPct: number;
 }
 
 export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | "updatedAt"> = {
@@ -403,6 +408,11 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   gridProgressiveIntensity: 0.30,
   gridMaxLevelPct: 40,
   gridMinLevelUsd: 30,
+  // Compact Range Control (3C.3-A)
+  enforceCompactRange: true,
+  gridRangeMaxPct: 2.50,
+  maxDistanceFromCenterPct: 1.25,
+  maxSellDistanceFromNearestBuyPct: 1.50,
 };
 
 // ─── Mode Lock Safety Conditions ────────────────────────────────────
