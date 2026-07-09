@@ -4092,4 +4092,48 @@ Revisión obligatoria detectó que `saveConfig()` NO persistía los 4 campos com
 ### Estado
 - Código commit-ready. Deploy VPS requiere ejecutar migración 069 + autorización explícita.
 
+---
+
+## FASE 3C.3-A — DEPLOY STAGING + VALIDACIÓN (09-JUL-2026)
+
+### Contexto
+Deploy staging autorizado por el usuario. Se desplegó compact range control en VPS staging.
+
+### Commits desplegados
+- `1478748` — feat(grid): 3C.3-A Compact Grid Range Control
+- `3643060` — fix(grid): 3C.3-A-REV schema + saveConfig persistence + hardened tests
+- `a0585f2` — fix(grid): register migration 069 in AutoMigrationRunner list
+- `a1ce00a` — fix(grid): pass compact range params to validateProfessionalGeneratorReadOnly
+
+### Fix adicional durante deploy
+1. **Migration 069 no registrada**: `AutoMigrationRunner` en `server/routes.ts` no incluía la migración 069 en su lista. Corregido añadiendo entrada.
+2. **`validateProfessionalGeneratorReadOnly` sin compact range**: El endpoint read-only no pasaba los 4 campos compact range al generador, produciendo `operationalBandWidthPct=21.5%` en lugar de `2.5%`. Corregido añadiendo los 4 campos.
+
+### Validaciones en staging (5.250.184.18:3020)
+1. **Contenedores**: `krakenbot-staging-app` Up, `krakenbot-staging-db` Up/healthy ✅
+2. **Migración 069**: Ejecutada por AutoMigrationRunner. DB confirma columnas con valores correctos ✅
+3. **Status inicial**: `mode:OFF` (tras set manual), `isActive:false`, `realOpenOrdersCount:0`, `openCycles:0` ✅
+4. **Config before**: 4 campos compact range presentes en `/config` ✅
+5. **Test persistencia**: POST config con valores no-default → GET confirma persistencia ✅
+6. **Config final restaurada**: `enforceCompactRange:true`, `gridRangeMaxPct:2.5`, `maxDistanceFromCenterPct:1.25`, `maxSellDistanceFromNearestBuyPct:1.5` ✅
+7. **Professional generator validate**: `readOnly:true`, `sideEffectsDetected:false`, `operationalBandWidthPct:2.5` (compact range enforced), `viabilityStatus:not_viable` (esperado con netTarget 1.2% en rango 2.5%) ✅
+8. **Status final**: `mode:OFF`, `isActive:false`, `isRunning:false`, `realOpenOrdersCount:0` ✅
+
+### Confirmaciones
+- ✅ No producción
+- ✅ No REAL
+- ✅ No SHADOW (mode puesto en OFF manualmente)
+- ✅ No órdenes reales
+- ✅ No rebuild
+- ✅ No regenerar niveles (rango v18 existente se mantiene)
+- ✅ No shadow-cleanup/apply
+- ✅ No DB manual (migración ejecutada por AutoMigrationRunner)
+- ✅ No SQL manual
+- ✅ No IDCA
+- ✅ No FISCO
+- ✅ Grid OFF final
+
+### Estado
+- Deploy staging completado y validado. Grid OFF. Pendiente: fase posterior de regeneración controlada con autorización expresa.
+
 *Mantenido por: Windsurf Cascade AI*
