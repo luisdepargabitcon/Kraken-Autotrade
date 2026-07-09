@@ -5,6 +5,76 @@
 
 ---
 
+## 2026-07-10 — FASE 3C.3-E2 UX INTELIGENTE DE CONFIGURACIÓN GRID
+
+### Resumen
+Conversión de Ajustes > Avanzado en una configuración inteligente, explicativa y segura. Los sliders ya no hacen POST automático ni abren modal en cada tick. Se introduce draftConfig local, panel de impacto estimado, presets Adaptive, cambio inteligente Adaptive Smart / Fixed Compact, valor efectivo usado por el motor, alertas inteligentes y backtest deshabilitado.
+
+### Archivos nuevos
+- `client/src/components/grid/GridAdvancedConfig.tsx` — Componente dedicado para la pestaña Avanzado con toda la lógica de draftConfig, presets, impacto, alertas, valor efectivo y modo colapsable.
+
+### Archivos modificados
+- `client/src/components/grid/GridAjustesPanel.tsx` — Reemplazado el contenido del TabsContent "avanzado" con `<GridAdvancedConfig>`. Añadidos imports (useMemo, useEffect, useRef, Collapsible, GridAdvancedConfig, iconos nuevos).
+- `BITACORA.md` — Esta entrada.
+
+### Cómo funciona draftConfig
+- `draft` es un estado local que se inicializa desde `config` del backend via `useEffect`.
+- Mover un slider actualiza `draft[key]`, **no** hace POST ni abre modal.
+- `dirtyFields` se calcula comparando `draft` vs `config` original.
+- Si hay cambios sin aplicar, aparece barra ámbar con "Descartar cambios" / "Aplicar cambios".
+- "Aplicar cambios" abre modal de resumen con tabla antes/después. Al confirmar, envía cada campo dirty via `onConfigChange` (POST al backend).
+- `useEffect` re-sincroniza `draft` cuando `config` cambia del backend.
+
+### Cómo funcionan presets
+- 3 presets: Conservador, Balanceado, Agresivo con valores definidos.
+- Al pulsar un preset, NO se guarda directamente. Muestra tabla antes/después con campos cambiados.
+- Botones "Aplicar perfil" / "Cancelar".
+- "Aplicar perfil" actualiza `draft` (no POST directo). El usuario debe pulsar "Aplicar cambios" después.
+
+### Cómo funciona cambio Adaptive/Fixed
+- Si modo = adaptive_smart: muestra controles Adaptive, colapsa Fixed Compact.
+- Si modo = fixed_compact: muestra controles Fixed Compact, colapsa Adaptive.
+- Cambiar modo actualiza `draft`, no guarda directamente. Muestra aviso: "Este cambio no modifica el rango activo actual ni regenera niveles."
+
+### Cómo se muestra impacto de sliders
+- Panel "Impacto estimado de esta configuración" compara draft vs config guardada.
+- Mensajes específicos por campo: objetivo neto, separación mín/máx, rango máximo, target full levels, mínimo niveles viables.
+- Si no hay cambios: "No hay cambios pendientes".
+- Mensaje fijo: "No se regeneran niveles automáticamente."
+
+### Cómo se muestra valor efectivo
+- Bloque "Valor efectivo usado por el motor".
+- Para gridStepMinPct: muestra valor manual, minSpacingPctReal del audit, y effectiveMinSpacing = max(manual, minSpacingPctReal).
+- Para gridStepMaxPct: indica si está limitando o no comparando con spacingPct del audit.
+- Si faltan datos: "Pendiente de validación read-only."
+
+### Alertas inteligentes añadidas
+- A) netProfitTargetPct >= 1.2 → aviso
+- B) gridStepMaxPct < minSpacingPctReal → error
+- C) adaptiveRangeMaxPct < normalMax o < highVolMax → error
+- D) lowVolMax > normalMax → aviso
+- E) normalMax > highVolMax → aviso
+- F) targetFullLevels=true y rangeMax bajo → aviso
+- G) Fixed Compact activo → aviso
+
+### Backtest
+- Botón deshabilitado, inputs deshabilitados (opacity-50).
+- Texto: "Backtest pendiente de validación. La simulación/backtest se habilitará en una fase posterior."
+
+### Validaciones
+- **npm run check (tsc):** ✅
+- **vitest (4 archivos):** ✅ 188/188 tests
+- **npm run build:** ✅
+
+### Confirmaciones
+- ✅ No deploy, No VPS, No producción, No REAL, No SHADOW nuevo
+- ✅ No órdenes reales, No rebuild, No regeneración de niveles
+- ✅ No shadow-cleanup/apply, No DB manual, No SQL manual
+- ✅ No IDCA, No FISCO, No Risk Manager, No Execution Service
+- ✅ No endpoint nuevo, No side effects
+
+---
+
 ## 2026-07-10 — FASE 3C.3-E1 ALINEAR SEGURIDAD Y AUDITORÍA GRID POST-DEPLOY
 
 ### Resumen
