@@ -2473,6 +2473,10 @@ class GridIsolatedEngine {
       minOperationalBandWidthPct: 20.0,
       dynamicLevelReduction: true,
       gridViabilityMode: "strict",
+      enforceCompactRange: configSnapshot.enforceCompactRange ?? true,
+      gridRangeMaxPct: configSnapshot.gridRangeMaxPct ?? 2.50,
+      maxDistanceFromCenterPct: configSnapshot.maxDistanceFromCenterPct ?? 1.25,
+      maxSellDistanceFromNearestBuyPct: configSnapshot.maxSellDistanceFromNearestBuyPct ?? 1.50,
     });
 
     const pg = professionalResult.professionalGenerator || {};
