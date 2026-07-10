@@ -39,6 +39,7 @@ import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy 
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
 import { getNaturalGridMessage } from "../services/gridIsolated/gridActivityFormatter";
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
+import { evaluateActiveRangeLifecycle } from "../services/gridIsolated/gridRangeLifecycle";
 
 // ─── Timing metadata helpers for audit/export ───────────────────────────────
 
@@ -1352,6 +1353,63 @@ export function registerGridIsolatedRoutes(app: Express): void {
         : openCyclesCount;
       const globalOpenCyclesCount = openCyclesCount;
 
+      // ─── Range lifecycle evaluation (read-only, no side effects) ────────
+      const r = resolvedRange;
+      const lower = r && r.lowerPrice != null ? Number(r.lowerPrice) : null;
+      const upper = r && r.upperPrice != null ? Number(r.upperPrice) : null;
+      const center = r && r.centerPrice != null ? Number(r.centerPrice) : null;
+      const arpWidthPct = lower != null && upper != null && center != null && center > 0
+        ? ((upper - lower) / center) * 100 : null;
+      const mbWidthPct = r?.widthPct != null ? Number(r.widthPct) : null;
+      const pgAny = professionalGenerator as any;
+      const opRangeWidthPct = pgAny?.available && pgAny.operationalBandWidthPct != null ? pgAny.operationalBandWidthPct : null;
+      const rGenMethod = r?.method ?? null;
+      const rGenSource = rGenMethod === "professional_accumulated_spacing" ? "pre_adaptive"
+        : rGenMethod === "adaptive_smart" ? "adaptive_smart"
+        : rGenMethod ?? "unknown";
+
+      const rangeLifecycle = r && r.status !== "sin_rango_activo"
+        ? evaluateActiveRangeLifecycle({
+            mode,
+            config,
+            activeRange: r,
+            marketContext,
+            rangeIntelligence: null,
+            professionalGenerator,
+            openCyclesCount,
+            activeOpenCyclesCount,
+            globalOpenCyclesCount,
+            currentPrice: marketContext?.currentPrice ?? null,
+            atrPct: marketContext?.atrPct ?? null,
+            marketBollingerWidthPct: mbWidthPct,
+            operationalRangeWidthPct: opRangeWidthPct,
+            activeRangePriceWidthPct: arpWidthPct,
+            rangeGenerationSource: rGenSource,
+            rangeGenerationMethod: rGenMethod,
+            activeRangeCreatedAt: r.createdAt ?? null,
+            adaptiveDecision: (lastProfessionalValidation.result as any)?.adaptiveRangeDecision ?? null,
+          })
+        : evaluateActiveRangeLifecycle({
+            mode,
+            config,
+            activeRange: null,
+            marketContext,
+            rangeIntelligence: null,
+            professionalGenerator,
+            openCyclesCount,
+            activeOpenCyclesCount,
+            globalOpenCyclesCount,
+            currentPrice: marketContext?.currentPrice ?? null,
+            atrPct: marketContext?.atrPct ?? null,
+            marketBollingerWidthPct: null,
+            operationalRangeWidthPct: null,
+            activeRangePriceWidthPct: null,
+            rangeGenerationSource: null,
+            rangeGenerationMethod: null,
+            activeRangeCreatedAt: null,
+            adaptiveDecision: null,
+          });
+
       res.json({
         ok: true,
         status: "ok",
@@ -1485,6 +1543,9 @@ export function registerGridIsolatedRoutes(app: Express): void {
             activeRangeCenterPrice: center,
             rangeGenerationMethod,
             rangeGenerationSource,
+            rangeLifecycleStatus: rangeLifecycle.status,
+            rangeCanReuseForNewLevels: rangeLifecycle.canReuseForNewLevels,
+            rangeLifecycleReason: rangeLifecycle.naturalReason,
           };
         })(),
         rangeHistory: (() => {
@@ -1672,6 +1733,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
           lastReadOnlyValidationRangeControlMode: (lastProfessionalValidation.result as any)?.rangeControlMode ?? null,
           lastReadOnlyValidationRangeProfile: (lastProfessionalValidation.result as any)?.rangeProfile ?? null,
         },
+        rangeLifecycle,
       });
     } catch (error) {
       res.status(500).json({ error: String(error) });

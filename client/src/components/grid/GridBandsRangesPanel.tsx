@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, TrendingUp, TrendingDown, Activity, History, BarChart3, Info } from "lucide-react";
+import { AlertCircle, TrendingUp, TrendingDown, Activity, History, BarChart3, Info, ShieldCheck, ShieldAlert, Gauge } from "lucide-react";
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   GRID_RANGE_ACTIVATED: "Rango activado",
@@ -191,6 +191,89 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                   El ancho Bollinger/mercado ({marketBollingerWidthPct?.toFixed(2)}%) y el ancho operativo real ({activeRangePriceWidthPct?.toFixed(2)}%) no son lo mismo. Bollinger mide el régimen; el rango operativo es donde el Grid coloca niveles.
                 </div>
               )}
+
+              {/* ─── Estado de validez del rango (lifecycle) ─── */}
+              {auditData?.rangeLifecycle && (() => {
+                const lc = auditData.rangeLifecycle;
+                const statusLabels: Record<string, string> = {
+                  reusable: "Reutilizable",
+                  audit_only: "Solo auditoría",
+                  stale_pre_adaptive: "Pre-adaptive / requiere validación",
+                  stale_market_shift: "Mercado desplazado",
+                  stale_age: "Caducado por antigüedad",
+                  invalid_price_outside: "Precio fuera de rango",
+                  invalid_regime: "Régimen no apto",
+                  protected_by_open_cycles: "Protegido por ciclos abiertos",
+                  needs_adaptive_validation: "Requiere validación Adaptive",
+                  unknown: "Datos insuficientes",
+                };
+                const statusLabel = statusLabels[lc.status] ?? lc.status;
+                const isStale = lc.status.startsWith("stale_") || lc.status.startsWith("invalid_");
+                const isProtected = lc.status === "protected_by_open_cycles";
+                const isReusable = lc.status === "reusable";
+
+                return (
+                  <div className={`rounded-lg border p-4 space-y-3 ${
+                    isReusable ? "bg-green-500/5 border-green-500/20"
+                    : isProtected ? "bg-blue-500/5 border-blue-500/20"
+                    : isStale ? "bg-amber-500/5 border-amber-500/30"
+                    : "bg-muted/20 border-border/50"
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      {isReusable
+                        ? <ShieldCheck className="h-4 w-4 text-green-500" />
+                        : <ShieldAlert className="h-4 w-4 text-amber-500" />}
+                      <h4 className="text-sm font-semibold">Estado de validez del rango</h4>
+                      <Badge variant={isReusable ? "default" : isStale ? "destructive" : "secondary"} className="text-xs">
+                        {statusLabel}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">¿Usable para nuevos niveles?</span>
+                        {lc.canReuseForNewLevels
+                          ? <Badge variant="default" className="text-xs bg-green-500">Sí</Badge>
+                          : <Badge variant="destructive" className="text-xs">No</Badge>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">¿Visible para auditoría?</span>
+                        {lc.canReuseForAudit
+                          ? <Badge variant="secondary" className="text-xs">Sí</Badge>
+                          : <Badge variant="outline" className="text-xs">No</Badge>}
+                      </div>
+                    </div>
+
+                    <div className="text-sm text-muted-foreground">
+                      <strong className="text-foreground">Motivo:</strong> {lc.naturalReason}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      <strong className="text-foreground">Impacto:</strong> {lc.impact}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      <strong className="text-foreground">Acción recomendada:</strong> {lc.nextAction}
+                    </div>
+
+                    {lc.status === "stale_pre_adaptive" && (
+                      <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
+                        Este rango es previo a Adaptive Smart Range. Se conserva para auditoría, pero no se recomienda usarlo para nuevos niveles.
+                      </div>
+                    )}
+
+                    {lc.canReuseForNewLevels === false && (
+                      <div className="flex items-center gap-2">
+                        <Badge variant="destructive" className="text-xs">No usar para nuevos niveles</Badge>
+                      </div>
+                    )}
+                    {lc.canReuseForAudit && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Gauge className="h-3 w-3" />
+                        <span>Visible para auditoría</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border p-3">

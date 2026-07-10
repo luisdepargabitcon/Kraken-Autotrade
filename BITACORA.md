@@ -5,6 +5,88 @@
 
 ---
 
+## 2026-07-10 — FASE 3C.3-E3 RANGE LIFECYCLE / REVALIDACIÓN DEL RANGO ACTIVO
+
+### Resumen
+Implementa política read-only de ciclo de vida del rango activo. Evalúa si el rango sigue siendo válido, lo marca como reusable/stale/invalid/pre-adaptive/protected, y lo expone en audit + UI. No regenera automáticamente, no crea nuevos rangeVersionId, no rebuild, no niveles nuevos, no SHADOW nuevo, no REAL.
+
+### Archivos nuevos
+- `server/services/gridIsolated/gridRangeLifecycle.ts` — Función pura `evaluateActiveRangeLifecycle(input)` sin side effects.
+- `server/services/__tests__/gridRangeLifecycle.test.ts` — 15 tests unitarios cubriendo todos los estados.
+
+### Archivos modificados
+- `server/routes/gridIsolated.routes.ts` — Import de `evaluateActiveRangeLifecycle`. Cálculo de `rangeLifecycle` antes del `res.json()` del audit. Añadido `rangeLifecycle` top-level en audit response. Añadidos `rangeLifecycleStatus`, `rangeCanReuseForNewLevels`, `rangeLifecycleReason` dentro de `range`.
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 4 tests nuevos: audit expone rangeLifecycle, range incluye rangeLifecycleStatus, no modifica mode/isActive/isRunning, no crea niveles/ciclos.
+- `client/src/components/grid/GridBandsRangesPanel.tsx` — Bloque "Estado de validez del rango" con status, badges de reusabilidad, motivo, impacto, acción recomendada, aviso pre-adaptive.
+- `client/src/components/grid/GridRangeIntelligencePanel.tsx` — Bloque lifecycle con status, badges, checks (edad, drift, divergencia).
+- `BITACORA.md` — Esta entrada.
+
+### Estados lifecycle posibles
+- `reusable` — Rango sano, puede usarse para nuevos niveles.
+- `audit_only` — Grid en OFF, rango solo para auditoría.
+- `stale_pre_adaptive` — Rango pre-adaptive en modo adaptive_smart, no recomendado para nuevos niveles.
+- `stale_market_shift` — Centro del rango desplazado más del umbral (max(2.0, atrPct*1.5) o 2.5%).
+- `stale_age` — Rango con más de 48h sin renovar.
+- `invalid_price_outside` — Precio actual fuera del rango operativo.
+- `invalid_regime` — Régimen unsuitable_trend o pump_dump.
+- `protected_by_open_cycles` — Hay ciclos abiertos, no se sustituye el rango.
+- `needs_adaptive_validation` — Reservado para futuros casos.
+- `unknown` — Datos insuficientes.
+
+### Reglas de revalidación
+- A) OFF: audit_only, canReuseForNewLevels=false.
+- B) Pre-adaptive + adaptive_smart: stale_pre_adaptive.
+- C) Edad > 48h: stale_age.
+- D) Precio fuera de rango: invalid_price_outside.
+- E) Center drift > umbral: stale_market_shift.
+- F) Divergencia de anchura > 5%: warning check, no invalida por sí solo.
+- G) Régimen pump_dump/unsuitable_trend: invalid_regime.
+- H) Ciclos abiertos: protected_by_open_cycles, canRegenerateNow=false.
+- I) Todo correcto: reusable.
+
+### Qué cambia en audit
+- Top-level `rangeLifecycle` con: status, canReuseForAudit, canReuseForNewLevels, canRegenerateNow, shouldSuggestValidation, shouldSuggestManualRegeneration, reasonCode, naturalReason, impact, nextAction, checks.
+- `range` incluye: rangeLifecycleStatus, rangeCanReuseForNewLevels, rangeLifecycleReason.
+- No rompe compatibilidad.
+
+### Qué cambia en UI
+- GridBandsRangesPanel: bloque "Estado de validez del rango" con badges verde/ámbar/rojo según status, motivo, impacto, acción, aviso pre-adaptive.
+- GridRangeIntelligencePanel: bloque lifecycle con status, badges, checks (edad, drift, divergencia).
+
+### Confirmación de no regeneración
+- No se llama proposeRangeVersion con persistencia.
+- No se llama generateProfessionalGridLevels con persistencia.
+- No se crea nueva gridRangeVersion.
+- No se reemplaza v18.
+- No se hace rebuild planned levels.
+- No se hace shadow cleanup.
+- No se activa scheduler.
+
+### Validaciones
+- **npm run check (tsc):** ✅
+- **vitest gridRangeLifecycle.test.ts:** ✅ 15/15
+- **vitest gridIsolatedRoutes.test.ts:** ✅ 121/121 (117 + 4 nuevos)
+- **vitest gridAdaptiveSmartRange + gridCompactRange + gridSpacingCalculator:** ✅
+- **Total tests:** 207/207
+- **npm run build:** ✅
+
+### Confirmaciones
+- ✅ No deploy (pendiente de fase deploy)
+- ✅ No VPS escritura
+- ✅ No producción
+- ✅ No REAL
+- ✅ No SHADOW nuevo
+- ✅ No órdenes reales
+- ✅ No rebuild
+- ✅ No regeneración de niveles
+- ✅ No shadow-cleanup/apply
+- ✅ No DB manual
+- ✅ No SQL manual
+- ✅ No IDCA
+- ✅ No FISCO
+
+---
+
 ## 2026-07-10 — FASE 3C.3-E2 UX INTELIGENTE DE CONFIGURACIÓN GRID
 
 ### Resumen

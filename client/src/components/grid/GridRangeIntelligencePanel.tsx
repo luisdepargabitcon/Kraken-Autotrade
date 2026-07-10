@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Brain, TrendingUp, TrendingDown, Activity, AlertTriangle, Info, CheckCircle2, XCircle, Gauge } from "lucide-react";
+import { Brain, TrendingUp, TrendingDown, Activity, AlertTriangle, Info, CheckCircle2, XCircle, Gauge, ShieldCheck, ShieldAlert } from "lucide-react";
 
 interface GridRangeIntelligencePanelProps {
   auditData?: any;
@@ -182,6 +182,65 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
             <span>El rango activo actual fue creado antes de Adaptive Smart Range. Estos cálculos aplican solo a futuros rangos o a una regeneración manual autorizada.</span>
           </div>
         )}
+
+        {/* ─── Range lifecycle status ─── */}
+        {auditData?.rangeLifecycle && (() => {
+          const lc = auditData.rangeLifecycle;
+          const statusLabels: Record<string, string> = {
+            reusable: "Reutilizable",
+            audit_only: "Solo auditoría",
+            stale_pre_adaptive: "Pre-adaptive / requiere validación",
+            stale_market_shift: "Mercado desplazado",
+            stale_age: "Caducado por antigüedad",
+            invalid_price_outside: "Precio fuera de rango",
+            invalid_regime: "Régimen no apto",
+            protected_by_open_cycles: "Protegido por ciclos abiertos",
+            needs_adaptive_validation: "Requiere validación Adaptive",
+            unknown: "Datos insuficientes",
+          };
+          const statusLabel = statusLabels[lc.status] ?? lc.status;
+          const isReusable = lc.status === "reusable";
+          const isStale = lc.status.startsWith("stale_") || lc.status.startsWith("invalid_");
+
+          return (
+            <div className={`rounded-lg border p-3 space-y-2 ${
+              isReusable ? "bg-green-500/5 border-green-500/20"
+              : isStale ? "bg-amber-500/5 border-amber-500/30"
+              : "bg-muted/20 border-border/50"
+            }`}>
+              <div className="flex items-center gap-2 text-sm">
+                {isReusable
+                  ? <ShieldCheck className="h-4 w-4 text-green-500" />
+                  : <ShieldAlert className="h-4 w-4 text-amber-500" />}
+                <span className="font-semibold">Validez del rango activo:</span>
+                <Badge variant={isReusable ? "default" : isStale ? "destructive" : "secondary"} className="text-xs">
+                  {statusLabel}
+                </Badge>
+                {lc.canReuseForNewLevels
+                  ? <Badge variant="default" className="text-xs bg-green-500">Niveles: Sí</Badge>
+                  : <Badge variant="destructive" className="text-xs">Niveles: No</Badge>}
+              </div>
+              <p className="text-xs text-muted-foreground">{lc.naturalReason}</p>
+              <p className="text-xs text-muted-foreground"><strong className="text-foreground">Acción:</strong> {lc.nextAction}</p>
+              {lc.checks && (
+                <div className="grid grid-cols-3 gap-2 text-xs mt-1">
+                  <div className="rounded bg-muted/30 p-1.5">
+                    <p className="text-muted-foreground">Edad (h)</p>
+                    <p className="font-mono">{lc.checks.ageHours != null ? lc.checks.ageHours.toFixed(1) : "—"}</p>
+                  </div>
+                  <div className="rounded bg-muted/30 p-1.5">
+                    <p className="text-muted-foreground">Drift centro</p>
+                    <p className="font-mono">{lc.checks.centerDriftPct != null ? `${lc.checks.centerDriftPct.toFixed(2)}%` : "—"}</p>
+                  </div>
+                  <div className="rounded bg-muted/30 p-1.5">
+                    <p className="text-muted-foreground">Divergencia ancho</p>
+                    <p className="font-mono">{lc.checks.widthDivergencePct != null ? `${lc.checks.widthDivergencePct.toFixed(2)}%` : "—"}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Adaptive Range Decision */}
         {adaptiveDecision ? (

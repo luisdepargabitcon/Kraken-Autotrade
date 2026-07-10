@@ -1374,4 +1374,56 @@ describe("Grid Isolated Routes — Endpoints", () => {
       expect(exec.takerFallbackPolicyLabel).toContain("desactivado");
     }
   });
+
+  // ─── Range lifecycle tests ────────────────────────────────
+  it("GET /monitor/audit exposes rangeLifecycle with status, naturalReason, nextAction", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.rangeLifecycle).toBeDefined();
+    expect(res.body.rangeLifecycle.status).toBeDefined();
+    expect(typeof res.body.rangeLifecycle.status).toBe("string");
+    expect(res.body.rangeLifecycle.naturalReason).toBeDefined();
+    expect(typeof res.body.rangeLifecycle.naturalReason).toBe("string");
+    expect(res.body.rangeLifecycle.nextAction).toBeDefined();
+    expect(typeof res.body.rangeLifecycle.nextAction).toBe("string");
+    expect(res.body.rangeLifecycle.canReuseForAudit).toBeDefined();
+    expect(typeof res.body.rangeLifecycle.canReuseForAudit).toBe("boolean");
+    expect(res.body.rangeLifecycle.canReuseForNewLevels).toBeDefined();
+    expect(typeof res.body.rangeLifecycle.canReuseForNewLevels).toBe("boolean");
+    expect(res.body.rangeLifecycle.canRegenerateNow).toBeDefined();
+    expect(typeof res.body.rangeLifecycle.canRegenerateNow).toBe("boolean");
+    expect(res.body.rangeLifecycle.shouldSuggestValidation).toBeDefined();
+    expect(typeof res.body.rangeLifecycle.shouldSuggestValidation).toBe("boolean");
+    expect(res.body.rangeLifecycle.checks).toBeDefined();
+    expect(res.body.rangeLifecycle.reasonCode).toBeDefined();
+  });
+
+  it("GET /monitor/audit range includes rangeLifecycleStatus", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    if (res.body.range && res.body.range.status !== "sin_rango_activo") {
+      expect(res.body.range.rangeLifecycleStatus).toBeDefined();
+      expect(res.body.range.rangeCanReuseForNewLevels).toBeDefined();
+      expect(typeof res.body.range.rangeCanReuseForNewLevels).toBe("boolean");
+      expect(res.body.range.rangeLifecycleReason).toBeDefined();
+    }
+  });
+
+  it("GET /monitor/audit rangeLifecycle does not modify mode/isActive/isRunning", async () => {
+    const before = await simulateGet(app, "/api/grid-isolated/status");
+    const audit = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    const after = await simulateGet(app, "/api/grid-isolated/status");
+    expect(audit.status).toBe(200);
+    expect(after.body.mode).toBe(before.body.mode);
+    expect(after.body.isActive).toBe(before.body.isActive);
+    expect(after.body.isRunning).toBe(before.body.isRunning);
+  });
+
+  it("GET /monitor/audit rangeLifecycle does not create levels or cycles", async () => {
+    const before = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    const after = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(after.status).toBe(200);
+    expect(after.body.levelsSummary.currentLevelsCount).toBe(before.body.levelsSummary.currentLevelsCount);
+    expect(after.body.levelsSummary.openCyclesCount).toBe(before.body.levelsSummary.openCyclesCount);
+  });
 });
