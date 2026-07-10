@@ -58,13 +58,13 @@ class GridModeLockService {
       blockingReasons.push("Revolut X no tiene balance disponible");
     }
     if (!checks.reconciliationPassed) {
-      blockingReasons.push("Reconciliación pendiente o con mismatches");
+      blockingReasons.push("Reconciliación pendiente o con diferencias sin verificar");
     }
     if (!checks.capitalReserved) {
       blockingReasons.push("Capital no reservado o no aislado");
     }
     if (!checks.modeLockAcknowledged) {
-      blockingReasons.push("Mode lock no reconocido explícitamente por el usuario");
+      blockingReasons.push("Bloqueo de modo no reconocido explícitamente por el usuario");
     }
     if (!checks.postOnlySupported) {
       blockingReasons.push("RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados");
