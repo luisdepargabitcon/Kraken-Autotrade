@@ -27,10 +27,10 @@ Refactor general de componentes UI del Grid para mejorar la experiencia de usuar
 - `BITACORA.md` — Esta entrada.
 
 ### Validaciones
-- `tsc --noEmit --skipLibCheck`: OK
-- `vitest run` (grid tests): 50/50 OK
-- `vitest run` (all): 2306 pass, 16 fail (telegram template snapshots pre-existing, unrelated)
-- Build Vite: error filesystem Windows (Qsync), no code-related
+- `npm run check` (tsc): OK
+- `npx vitest run` (6 ficheros grid): 228/228 OK
+- `npm run build` (client + server): OK
+- Validación funcional: no REAL, no órdenes reales, no dryRun=false, no borrado físico, no SQL manual
 
 ### Estado final
 - Todos los paneles del Grid usan terminología en castellano
@@ -40,6 +40,7 @@ Refactor general de componentes UI del Grid para mejorar la experiencia de usuar
 - Niveles archivan sin borrar
 - Botones "Analizar ahora sin operar" en paneles de rango
 - SHADOW explicado en todos los paneles relevantes
+- Auditoría sin términos técnicos visibles (mismatch, mode lock, circuit breaker traducidos)
 
 ### Pendientes
 - Deploy a VPS staging

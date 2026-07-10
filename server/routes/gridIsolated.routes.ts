@@ -192,7 +192,7 @@ function buildBlockingReasons(checks: any, config?: any): string[] {
     reasons.push("Revolut X no tiene balance disponible");
   }
   if (!checks.reconciliationPassed) {
-    reasons.push("Reconciliación pendiente o con mismatches");
+    reasons.push("Reconciliación pendiente o con diferencias sin verificar");
   }
   if (!checks.modeLockAcknowledged) {
     reasons.push("Bloqueo de modo no reconocido explícitamente por el usuario");

@@ -265,7 +265,7 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(res.body).toContain("Modo:");
     expect(res.body).toContain("Adaptador RevolutXService");
     expect(res.body).toContain("Ciclos:");
-    expect(res.body).toContain("Circuit breaker:");
+    expect(res.body).toContain("Protector de circuito:");
   });
 
   it("monitor/audit returns ok:true", async () => {
