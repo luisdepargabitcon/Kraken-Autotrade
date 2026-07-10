@@ -165,7 +165,7 @@ export function evaluateActiveRangeLifecycle(input: RangeLifecycleInput): RangeL
       naturalReason: "Grid en OFF. El rango se muestra solo para auditoría. No se usa para operar.",
       impact: "Sin impacto operativo. El motor no genera niveles ni abre ciclos.",
       nextAction: isPreAdaptive && adaptiveModeActive
-        ? "Validar nuevo rango Adaptive Smart en modo read-only antes de reactivar."
+        ? "Validar nuevo rango Adaptive Smart en modo solo lectura antes de reactivar."
         : "Mantener en OFF hasta que se decida reactivar.",
       checks,
     };
@@ -183,7 +183,7 @@ export function evaluateActiveRangeLifecycle(input: RangeLifecycleInput): RangeL
       reasonCode: "PRE_ADAPTIVE_IN_ADAPTIVE_MODE",
       naturalReason: "Este rango fue generado antes de Adaptive Smart Range. Se conserva para auditoría, pero no debería usarse para nuevos niveles Adaptive sin validación.",
       impact: "El rango v18 pre-adaptive puede no reflejar la volatilidad y régimen actuales del mercado.",
-      nextAction: "Validar nuevo rango Adaptive Smart en modo read-only.",
+      nextAction: "Validar nuevo rango Adaptive Smart en modo solo lectura.",
       checks,
     };
   }
@@ -265,7 +265,7 @@ export function evaluateActiveRangeLifecycle(input: RangeLifecycleInput): RangeL
       reasonCode: "PRICE_OUTSIDE_RANGE",
       naturalReason: "El precio actual está fuera del rango operativo. Conviene validar un nuevo rango antes de generar niveles.",
       impact: "Los niveles existentes pueden no ser ejecutables si el precio se ha movido fuera del rango.",
-      nextAction: "Validar nuevo rango en modo read-only.",
+      nextAction: "Validar nuevo rango en modo solo lectura.",
       checks,
     };
   }
@@ -301,7 +301,7 @@ export function evaluateActiveRangeLifecycle(input: RangeLifecycleInput): RangeL
         reasonCode: "CENTER_DRIFT_EXCEEDED",
         naturalReason: `El centro del rango se ha desplazado ${centerDriftPct.toFixed(2)}% respecto al precio actual (umbral ${driftThreshold.toFixed(2)}%).`,
         impact: "El rango puede no reflejar el precio actual del mercado.",
-        nextAction: "Validar nuevo rango en modo read-only.",
+        nextAction: "Validar nuevo rango en modo solo lectura.",
         checks,
       };
     }
@@ -334,7 +334,7 @@ export function evaluateActiveRangeLifecycle(input: RangeLifecycleInput): RangeL
       reasonCode: "RANGE_TOO_OLD",
       naturalReason: `El rango tiene ${ageHours.toFixed(1)}h (máximo recomendado ${MAX_RANGE_AGE_HOURS}h). Puede estar obsoleto respecto al mercado.`,
       impact: "El rango puede no reflejar las condiciones actuales de volatilidad.",
-      nextAction: "Validar nuevo rango en modo read-only.",
+      nextAction: "Validar nuevo rango en modo solo lectura.",
       checks,
     };
   }
@@ -390,7 +390,7 @@ export function evaluateActiveRangeLifecycle(input: RangeLifecycleInput): RangeL
     reasonCode: "INSUFFICIENT_DATA",
     naturalReason: "No hay datos suficientes para evaluar la validez del rango activo.",
     impact: "Se muestra el rango para auditoría, pero no se recomienda usarlo para nuevos niveles sin validación.",
-    nextAction: "Validar nuevo rango en modo read-only cuando sea posible.",
+    nextAction: "Validar nuevo rango en modo solo lectura cuando sea posible.",
     checks,
   };
 }
