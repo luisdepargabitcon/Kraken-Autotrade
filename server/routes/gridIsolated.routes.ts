@@ -1005,7 +1005,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       }
       const blockingReasons = buildBlockingReasons(checks, config);
       const realModesBlocked = blockingReasons.length > 0;
-      const mode = config?.mode || "OFF";
+      const mode = status?.mode ?? config?.mode ?? "OFF";
 
       const levels = gridIsolatedEngine.getLevels();
       const cycles = gridIsolatedEngine.getCycles();
@@ -1907,7 +1907,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const status = gridIsolatedEngine.getExecutionStatus();
       const checks = await gridModeLockService.runUnlockChecks();
       const blockingReasons = buildBlockingReasons(checks, config);
-      const mode = config?.mode || "OFF";
+      const mode = status?.mode ?? config?.mode ?? "OFF";
       const levels = gridIsolatedEngine.getLevels();
       const cycles = gridIsolatedEngine.getCycles();
 
@@ -1931,7 +1931,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const status = gridIsolatedEngine.getExecutionStatus();
       const checks = await gridModeLockService.runUnlockChecks();
       const blockingReasons = buildBlockingReasons(checks, config);
-      const mode = config?.mode || "OFF";
+      const mode = status?.mode ?? config?.mode ?? "OFF";
       const levels = gridIsolatedEngine.getLevels();
       const cycles = gridIsolatedEngine.getCycles();
       const reconciliation = gridReconciliationRunner.getLastResult();

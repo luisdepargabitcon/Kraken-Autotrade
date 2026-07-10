@@ -1426,4 +1426,53 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(after.body.levelsSummary.currentLevelsCount).toBe(before.body.levelsSummary.currentLevelsCount);
     expect(after.body.levelsSummary.openCyclesCount).toBe(before.body.levelsSummary.openCyclesCount);
   });
+
+  // ─── E3-REV-A: audit mode alignment with status ────────────
+  it("GET /monitor/audit mode matches status.mode (effective mode alignment)", async () => {
+    const statusRes = await simulateGet(app, "/api/grid-isolated/status");
+    const auditRes = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(auditRes.status).toBe(200);
+    expect(auditRes.body.mode).toBe(statusRes.body.mode);
+  });
+
+  it("GET /monitor/audit rangeLifecycle reasonCode is coherent with audit.mode", async () => {
+    const auditRes = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(auditRes.status).toBe(200);
+    const lc = auditRes.body.rangeLifecycle;
+    expect(lc).toBeDefined();
+    if (auditRes.body.mode === "OFF") {
+      expect(lc.reasonCode).toBe("OFF_MODE");
+      expect(lc.canReuseForNewLevels).toBe(false);
+    } else if (auditRes.body.mode === "SHADOW") {
+      expect(lc.reasonCode).not.toBe("OFF_MODE");
+    }
+  });
+
+  it("GET /monitor/audit does not return OFF_MODE when status.mode is SHADOW", async () => {
+    // This test verifies the fix: when status.mode=SHADOW, audit should not say OFF_MODE
+    // We use the evaluateActiveRangeLifecycle function directly to verify coherence
+    const { evaluateActiveRangeLifecycle } = await import("../../services/gridIsolated/gridRangeLifecycle");
+    const result = evaluateActiveRangeLifecycle({
+      mode: "SHADOW",
+      config: { adaptiveRangeEnabled: true, gridRangeControlMode: "adaptive_smart" } as any,
+      activeRange: null,
+      marketContext: null,
+      rangeIntelligence: null,
+      professionalGenerator: { available: false },
+      openCyclesCount: 0,
+      activeOpenCyclesCount: 0,
+      globalOpenCyclesCount: 0,
+      currentPrice: null,
+      atrPct: null,
+      marketBollingerWidthPct: null,
+      operationalRangeWidthPct: null,
+      activeRangePriceWidthPct: null,
+      rangeGenerationSource: null,
+      rangeGenerationMethod: null,
+      activeRangeCreatedAt: null,
+      adaptiveDecision: null,
+    });
+    expect(result.reasonCode).not.toBe("OFF_MODE");
+    expect(result.status).not.toBe("audit_only");
+  });
 });
