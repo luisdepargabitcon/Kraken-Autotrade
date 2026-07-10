@@ -184,4 +184,44 @@ describe("evaluateActiveRangeLifecycle", () => {
     expect(result.checks.adaptiveModeActive).toBe(true);
     expect(result.checks.adaptiveDecisionAvailable).toBe(true);
   });
+
+  it("16. adaptiveRangeOk=false (field name adaptiveRangeOk) => needs_adaptive_validation", () => {
+    const result = evaluateActiveRangeLifecycle({
+      ...baseInput,
+      adaptiveDecision: { adaptiveRangeOk: false, regimeBucket: "normal_lateral" },
+    });
+    expect(result.status).toBe("needs_adaptive_validation");
+    expect(result.canReuseForNewLevels).toBe(false);
+    expect(result.canReuseForAudit).toBe(true);
+    expect(result.shouldSuggestValidation).toBe(true);
+    expect(result.reasonCode).toBe("ADAPTIVE_RANGE_NOT_VIABLE");
+  });
+
+  it("17. rangeOk=false (legacy field name) => needs_adaptive_validation", () => {
+    const result = evaluateActiveRangeLifecycle({
+      ...baseInput,
+      adaptiveDecision: { rangeOk: false, regimeBucket: "normal_lateral" },
+    });
+    expect(result.status).toBe("needs_adaptive_validation");
+    expect(result.canReuseForNewLevels).toBe(false);
+    expect(result.reasonCode).toBe("ADAPTIVE_RANGE_NOT_VIABLE");
+  });
+
+  it("18. adaptiveRangeOk=false with open cycles => protected_by_open_cycles", () => {
+    const result = evaluateActiveRangeLifecycle({
+      ...baseInput,
+      adaptiveDecision: { adaptiveRangeOk: false, regimeBucket: "normal_lateral" },
+      activeOpenCyclesCount: 1,
+    });
+    expect(result.status).toBe("protected_by_open_cycles");
+    expect(result.canRegenerateNow).toBe(false);
+  });
+
+  it("19. adaptiveRangeOk=false + pump_dump regime => invalid_regime takes priority", () => {
+    const result = evaluateActiveRangeLifecycle({
+      ...baseInput,
+      adaptiveDecision: { adaptiveRangeOk: false, regimeBucket: "pump_dump" },
+    });
+    expect(result.status).toBe("invalid_regime");
+  });
 });

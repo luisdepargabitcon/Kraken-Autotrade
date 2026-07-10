@@ -1,16 +1,13 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
-  Cpu, FlaskConical, Activity, AlertTriangle, AlertCircle, CheckCircle2, XCircle,
-  Info, TrendingUp, TrendingDown, Brain, Gauge, Lightbulb, ChevronDown, Zap,
+  Cpu, Activity, AlertTriangle, AlertCircle, CheckCircle2, XCircle,
+  Info, Brain, Lightbulb, ChevronDown,
 } from "lucide-react";
 
 interface GridAdvancedConfigProps {
@@ -70,7 +67,6 @@ const DRAFT_KEYS = [
 
 export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfigChange }: GridAdvancedConfigProps) {
   const [draft, setDraft] = useState<Record<string, any>>({});
-  const [showPresetPreview, setShowPresetPreview] = useState<string | null>(null);
   const [showApplySummary, setShowApplySummary] = useState(false);
   const [fixedCompactOpen, setFixedCompactOpen] = useState(false);
 
@@ -247,24 +243,6 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
     return list;
   }, [eff, minSpacingPctReal, isAdaptive]);
 
-  // Preset preview
-  const presetPreview = useMemo(() => {
-    if (!showPresetPreview) return null;
-    const preset = PRESETS[showPresetPreview];
-    if (!preset) return null;
-    return Object.entries(preset.values).map(([key, newVal]) => {
-      const currentVal = eff(key, newVal);
-      return { key, currentVal, newVal, changed: currentVal !== newVal };
-    });
-  }, [showPresetPreview, eff]);
-
-  const applyPreset = () => {
-    if (!showPresetPreview) return;
-    const preset = PRESETS[showPresetPreview];
-    if (!preset) return;
-    setDraft(prev => ({ ...prev, ...preset.values }));
-    setShowPresetPreview(null);
-  };
 
   return (
     <div className="space-y-4">
@@ -282,95 +260,24 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
         </div>
       )}
 
-      {/* ─── Bloque 1: Control real del Grid ───────────────── */}
-      <Card className="border-border/50">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Cpu className="h-4 w-4" />
-            Control real del Grid
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <Label className="text-sm">Separación mínima manual: {eff("gridStepMinPct", 0.15)?.toFixed(2)}%</Label>
-            <Slider
-              value={[eff("gridStepMinPct", 0.15)]}
-              min={0.05} max={1.0} step={0.05}
-              onValueChange={(v) => updateDraft("gridStepMinPct", v[0])}
-            />
-            <p className="text-sm text-muted-foreground">Puede quedar superada por el mínimo rentable calculado por fees, spread y objetivo neto.</p>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-sm">Separación máxima permitida: {eff("gridStepMaxPct", 3.0)?.toFixed(2)}%</Label>
-            <Slider
-              value={[eff("gridStepMaxPct", 3.0)]}
-              min={1.0} max={10.0} step={0.5}
-              onValueChange={(v) => updateDraft("gridStepMaxPct", v[0])}
-            />
-            <p className="text-sm text-muted-foreground">No define por sí solo el rango final; el rango también depende de volatilidad, beneficio neto y viabilidad.</p>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-sm">Objetivo neto por nivel: {eff("netProfitTargetPct", 0.8)?.toFixed(2)}%</Label>
-            <Slider
-              value={[eff("netProfitTargetPct", 0.8)]}
-              min={0.1} max={3.0} step={0.1}
-              onValueChange={(v) => updateDraft("netProfitTargetPct", v[0])}
-            />
-            <p className="text-sm text-muted-foreground">Más alto exige más separación entre niveles. Si el objetivo es demasiado alto, pueden caber menos niveles o el rango puede ser no viable.</p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── Valor efectivo usado por el motor ─────────────── */}
-      <Card className="border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-card">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Gauge className="h-4 w-4 text-blue-400" />
-            Valor efectivo usado por el motor
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <div className="rounded-lg bg-muted/20 p-3">
-            <p className="text-muted-foreground">
-              Tu separación manual es <strong className="text-foreground font-mono">{eff("gridStepMinPct", 0.15)?.toFixed(2)}%</strong>
-              {minSpacingPctReal != null ? (
-                <>
-                  , pero el motor no puede bajar de <strong className="text-foreground font-mono">{minSpacingPctReal.toFixed(2)}%</strong> porque debe cubrir objetivo neto, fees, spread y seguridad. Por tanto, la separación efectiva mínima es <strong className="text-blue-400 font-mono">{effectiveMinSpacing.toFixed(2)}%</strong>.
-                </>
-              ) : (
-                <>. Pendiente de validación read-only para conocer la separación mínima rentable.</>
-              )}
-            </p>
-          </div>
-          <div className="rounded-lg bg-muted/20 p-3">
-            <p className="text-muted-foreground">
-              Separación máxima permitida: <strong className="text-foreground font-mono">{eff("gridStepMaxPct", 3.0)?.toFixed(2)}%</strong>
-              {spacingPct != null ? (
-                spacingPct >= eff("gridStepMaxPct", 3.0) - 0.01
-                  ? <>. La separación máxima está limitando ahora mismo.</>
-                  : <>. La separación máxima no está limitando ahora mismo.</>
-              ) : (
-                <>. Pendiente de validación read-only.</>
-              )}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── Bloque 2: Mode switching + Adaptive / Fixed ───── */}
+      {/* ─── Bloque 1: Cómo calcula el rango ──────────────── */}
       <Card className="border-purple-500/30 bg-gradient-to-br from-purple-500/5 to-card">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Activity className="h-4 w-4 text-purple-400" />
-            Modo de control de rango
+            Cómo calcula el rango
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
+          <p className="text-sm text-muted-foreground">
+            Elige cómo quieres que el Grid decida el rango de precios donde colocará los niveles de compra y venta.
+          </p>
+
           {/* Mode selector */}
           <div className="grid grid-cols-2 gap-2">
             {[
-              { v: "adaptive_smart", label: "Adaptive Smart", desc: "Rango dinámico por régimen" },
-              { v: "fixed_compact", label: "Fixed Compact", desc: "Rango compacto fijo" },
+              { v: "adaptive_smart", label: "Rango inteligente", desc: "Se adapta solo según la volatilidad del mercado" },
+              { v: "fixed_compact", label: "Rango fijo compacto", desc: "Tú defines los límites del rango manualmente" },
             ].map((opt) => (
               <button
                 key={opt.v}
@@ -398,176 +305,36 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
           {isAdaptive ? (
             <div className="space-y-4">
               <div className="rounded-lg bg-purple-500/5 border border-purple-500/20 p-3 text-sm text-muted-foreground">
-                Adaptive Smart calcula el rango según volatilidad, régimen y viabilidad. Es el modo recomendado para evitar rangos fijos que se quedan cortos o demasiado amplios.
+                El rango inteligente calcula automáticamente la anchura del rango según la volatilidad del mercado y el beneficio neto que has configurado. Es el modo recomendado porque se adapta solo.
               </div>
 
               {/* Adaptive Range Enabled */}
               <div className="flex items-center justify-between rounded-lg border p-3">
                 <div>
-                  <Label className="text-sm">Adaptive Range activado</Label>
-                  <p className="text-sm text-muted-foreground mt-1">Activa el cálculo adaptativo de rango basado en volatilidad y régimen.</p>
+                  <Label className="text-sm">Cálculo adaptativo activado</Label>
+                  <p className="text-sm text-muted-foreground mt-1">Si está activado, el Grid calcula el rango automáticamente. Si lo desactivas, el rango no se recalcula.</p>
                 </div>
                 <Switch
                   checked={eff("adaptiveRangeEnabled", true)}
                   onCheckedChange={(v) => updateDraft("adaptiveRangeEnabled", v)}
                 />
               </div>
-
-              {/* Presets */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold flex items-center gap-1">
-                  <Lightbulb className="h-3 w-3 text-amber-400" />
-                  Presets Adaptive
-                </Label>
-                <div className="grid grid-cols-3 gap-2">
-                  {Object.entries(PRESETS).map(([key, preset]) => (
-                    <button
-                      key={key}
-                      onClick={() => setShowPresetPreview(key)}
-                      className={`rounded-lg border p-2.5 text-center text-sm transition-all ${
-                        showPresetPreview === key
-                          ? "border-amber-500/50 bg-amber-500/10 text-foreground font-semibold"
-                          : "border-border/50 bg-muted/10 text-muted-foreground hover:bg-muted/20"
-                      }`}
-                    >
-                      <p className="font-semibold capitalize">{key === "conservative" ? "Conservador" : key === "balanced" ? "Balanceado" : "Agresivo"}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Preset preview */}
-              {presetPreview && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-3">
-                  <p className="text-sm text-muted-foreground">{PRESETS[showPresetPreview!]?.text}</p>
-                  <div className="grid grid-cols-1 gap-1 text-xs">
-                    {presetPreview.map(({ key, currentVal, newVal, changed }) => (
-                      <div key={key} className={`flex items-center justify-between rounded px-2 py-1 ${changed ? "bg-amber-500/10" : ""}`}>
-                        <span className="text-muted-foreground font-mono">{key}</span>
-                        <span className="flex items-center gap-2">
-                          <span className="text-muted-foreground line-through">{String(currentVal)}</span>
-                          <span className="text-foreground">→</span>
-                          <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">{String(newVal)}</span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2 justify-end">
-                    <Button variant="outline" size="sm" onClick={() => setShowPresetPreview(null)}>Cancelar</Button>
-                    <Button size="sm" onClick={applyPreset}>Aplicar perfil</Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Perfil */}
-              <div className="space-y-2">
-                <Label className="text-sm">Perfil Adaptive</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { v: "conservative", label: "Conservador", desc: "Rangos prudentes" },
-                    { v: "balanced", label: "Balanceado", desc: "Equilibrio seguridad/frecuencia" },
-                    { v: "aggressive", label: "Agresivo", desc: "Rangos más amplios" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.v}
-                      onClick={() => updateDraft("adaptiveRangeProfile", opt.v)}
-                      className={`rounded-lg border p-2.5 text-center text-sm transition-all ${
-                        eff("adaptiveRangeProfile", "balanced") === opt.v
-                          ? "border-purple-500/50 bg-purple-500/10 text-foreground font-semibold"
-                          : "border-border/50 bg-muted/10 text-muted-foreground hover:bg-muted/20"
-                      }`}
-                    >
-                      <p className="font-semibold">{opt.label}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Rangos por régimen */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold">Límites de rango por régimen</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-sm">Rango mínimo global: {eff("adaptiveRangeMinPct", 1.5)?.toFixed(2)}%</Label>
-                    <Slider value={[eff("adaptiveRangeMinPct", 1.5)]} min={0.5} max={5.0} step={0.25}
-                      onValueChange={(v) => updateDraft("adaptiveRangeMinPct", v[0])} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm">Rango máximo global: {eff("adaptiveRangeMaxPct", 7.0)?.toFixed(2)}%</Label>
-                    <Slider value={[eff("adaptiveRangeMaxPct", 7.0)]} min={3.0} max={15.0} step={0.5}
-                      onValueChange={(v) => updateDraft("adaptiveRangeMaxPct", v[0])} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-2">
-                    <Label className="text-sm text-xs">Máx baja vol: {eff("adaptiveRangeLowVolMaxPct", 3.0)?.toFixed(2)}%</Label>
-                    <Slider value={[eff("adaptiveRangeLowVolMaxPct", 3.0)]} min={1.0} max={8.0} step={0.25}
-                      onValueChange={(v) => updateDraft("adaptiveRangeLowVolMaxPct", v[0])} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm text-xs">Máx lateral normal: {eff("adaptiveRangeNormalMaxPct", 5.0)?.toFixed(2)}%</Label>
-                    <Slider value={[eff("adaptiveRangeNormalMaxPct", 5.0)]} min={2.0} max={10.0} step={0.25}
-                      onValueChange={(v) => updateDraft("adaptiveRangeNormalMaxPct", v[0])} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm text-xs">Máx alta vol: {eff("adaptiveRangeHighVolMaxPct", 7.0)?.toFixed(2)}%</Label>
-                    <Slider value={[eff("adaptiveRangeHighVolMaxPct", 7.0)]} min={3.0} max={15.0} step={0.5}
-                      onValueChange={(v) => updateDraft("adaptiveRangeHighVolMaxPct", v[0])} />
-                  </div>
-                </div>
-              </div>
-
-              {/* Target full levels + Min viable levels */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex items-center justify-between rounded-lg border p-3">
-                  <div>
-                    <Label className="text-sm">Target full levels</Label>
-                    <p className="text-sm text-muted-foreground mt-1">ON: intenta meter todos los niveles. OFF: no fuerza rangos enormes.</p>
-                  </div>
-                  <Switch
-                    checked={eff("adaptiveRangeTargetFullLevels", false)}
-                    onCheckedChange={(v) => updateDraft("adaptiveRangeTargetFullLevels", v)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-sm">Mínimo niveles viables: {eff("adaptiveRangeMinViableLevels", 4)}</Label>
-                  <Slider value={[eff("adaptiveRangeMinViableLevels", 4)]} min={2} max={12} step={1}
-                    onValueChange={(v) => updateDraft("adaptiveRangeMinViableLevels", v[0])} />
-                  <p className="text-sm text-muted-foreground">Si no caben estos niveles, el rango se marca como no viable.</p>
-                </div>
-              </div>
             </div>
           ) : (
             /* Fixed Compact section */
             <div className="space-y-4">
               <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3 text-sm text-muted-foreground">
-                Fixed Compact usa límites fijos de rango. Es más predecible, pero puede quedarse corto en semanas de más volatilidad o bloquear niveles si el mercado requiere más espacio.
+                El rango fijo compacto usa límites que tú defines. Es más predecible, pero puede quedarse corto si el mercado se vuelve más volátil o bloquear niveles si no hay suficiente espacio.
               </div>
               <div className="flex items-center justify-between rounded-lg border p-3">
                 <div>
-                  <Label className="text-sm">Enforce Compact Range</Label>
-                  <p className="text-sm text-muted-foreground mt-1">Fuerza el rango compacto fijado manualmente.</p>
+                  <Label className="text-sm">Forzar rango compacto fijo</Label>
+                  <p className="text-sm text-muted-foreground mt-1">Si está activado, el Grid siempre usa el rango que definas aquí, sin adaptarse.</p>
                 </div>
                 <Switch
                   checked={eff("enforceCompactRange", false)}
                   onCheckedChange={(v) => updateDraft("enforceCompactRange", v)}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-sm">Rango máximo (Fixed): {eff("gridRangeMaxPct", 5.0)?.toFixed(2)}%</Label>
-                <Slider value={[eff("gridRangeMaxPct", 5.0)]} min={1.0} max={15.0} step={0.5}
-                  onValueChange={(v) => updateDraft("gridRangeMaxPct", v[0])} />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-sm">Máx distancia desde centro: {eff("maxDistanceFromCenterPct", 10.0)?.toFixed(2)}%</Label>
-                <Slider value={[eff("maxDistanceFromCenterPct", 10.0)]} min={2.0} max={20.0} step={0.5}
-                  onValueChange={(v) => updateDraft("maxDistanceFromCenterPct", v[0])} />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-sm">Máx distancia venta-compra: {eff("maxSellDistanceFromNearestBuyPct", 8.0)?.toFixed(2)}%</Label>
-                <Slider value={[eff("maxSellDistanceFromNearestBuyPct", 8.0)]} min={2.0} max={15.0} step={0.5}
-                  onValueChange={(v) => updateDraft("maxSellDistanceFromNearestBuyPct", v[0])} />
               </div>
             </div>
           )}
@@ -576,27 +343,27 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
           <Collapsible open={fixedCompactOpen} onOpenChange={setFixedCompactOpen}>
             <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
               <ChevronDown className={`h-3 w-3 transition-transform ${fixedCompactOpen ? "rotate-180" : ""}`} />
-              {isAdaptive ? "Ver configuración Fixed Compact (inactiva)" : "Ver configuración Adaptive Smart (inactiva)"}
+              {isAdaptive ? "Ver ajustes del rango fijo (inactivos)" : "Ver ajustes del rango inteligente (inactivos)"}
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-3">
               {isAdaptive ? (
                 <div className="rounded-lg bg-muted/20 border p-3 space-y-2 text-xs text-muted-foreground">
-                  <p>Estos campos no afectan mientras Adaptive Smart esté activo:</p>
+                  <p>Estos ajustes no afectan mientras el rango inteligente esté activo:</p>
                   <div className="grid grid-cols-2 gap-2">
-                    <div>Enforce Compact: {String(eff("enforceCompactRange", false))}</div>
-                    <div>Range Max: {eff("gridRangeMaxPct", 5.0)?.toFixed(2)}%</div>
-                    <div>Max Dist Center: {eff("maxDistanceFromCenterPct", 10.0)?.toFixed(2)}%</div>
-                    <div>Max Sell-Buy Dist: {eff("maxSellDistanceFromNearestBuyPct", 8.0)?.toFixed(2)}%</div>
+                    <div>Forzar rango fijo: {String(eff("enforceCompactRange", false))}</div>
+                    <div>Rango máximo fijo: {eff("gridRangeMaxPct", 5.0)?.toFixed(2)}%</div>
+                    <div>Distancia máxima desde el centro: {eff("maxDistanceFromCenterPct", 10.0)?.toFixed(2)}%</div>
+                    <div>Distancia máxima venta-compra: {eff("maxSellDistanceFromNearestBuyPct", 8.0)?.toFixed(2)}%</div>
                   </div>
                 </div>
               ) : (
                 <div className="rounded-lg bg-muted/20 border p-3 space-y-2 text-xs text-muted-foreground">
-                  <p>Estos campos no afectan mientras Fixed Compact esté activo:</p>
+                  <p>Estos ajustes no afectan mientras el rango fijo esté activo:</p>
                   <div className="grid grid-cols-2 gap-2">
-                    <div>Adaptive Enabled: {String(eff("adaptiveRangeEnabled", true))}</div>
-                    <div>Profile: {eff("adaptiveRangeProfile", "balanced")}</div>
-                    <div>Range Min: {eff("adaptiveRangeMinPct", 1.5)?.toFixed(2)}%</div>
-                    <div>Range Max: {eff("adaptiveRangeMaxPct", 7.0)?.toFixed(2)}%</div>
+                    <div>Cálculo adaptativo: {String(eff("adaptiveRangeEnabled", true))}</div>
+                    <div>Carácter: {eff("adaptiveRangeProfile", "balanced")}</div>
+                    <div>Rango mínimo: {eff("adaptiveRangeMinPct", 1.5)?.toFixed(2)}%</div>
+                    <div>Rango máximo: {eff("adaptiveRangeMaxPct", 7.0)?.toFixed(2)}%</div>
                   </div>
                 </div>
               )}
@@ -605,91 +372,287 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
         </CardContent>
       </Card>
 
-      {/* ─── Panel Impacto Estimado ────────────────────────── */}
+      {/* ─── Bloque 2: Carácter del Grid (merged presets + profile) ─── */}
+      <Card className="border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Lightbulb className="h-4 w-4 text-amber-400" />
+            Carácter del Grid
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Elige el carácter general del Grid. Esto define automáticamente los límites del rango y cómo de agresivo o conservador quiere ser.
+          </p>
+
+          {/* Unified character selector — replaces both Presets and Perfil */}
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { v: "conservative", label: "Conservador", desc: "Rangos más estrechos, menos exposición, más seguro", color: "green" },
+              { v: "balanced", label: "Equilibrado", desc: "Balance entre seguridad y frecuencia de operaciones", color: "amber" },
+              { v: "aggressive", label: "Agresivo", desc: "Rangos más amplios, más niveles, mayor exposición", color: "red" },
+            ].map((opt) => {
+              const currentProfile = eff("adaptiveRangeProfile", "balanced");
+              const isActive = currentProfile === opt.v;
+              const preset = PRESETS[opt.v];
+              return (
+                <button
+                  key={opt.v}
+                  onClick={() => {
+                    updateDraft("adaptiveRangeProfile", opt.v);
+                    setDraft(prev => ({ ...prev, ...preset.values }));
+                  }}
+                  className={`rounded-lg border p-3 text-center text-sm transition-all ${
+                    isActive
+                      ? `border-${opt.color}-500/50 bg-${opt.color}-500/10 text-foreground font-semibold`
+                      : "border-border/50 bg-muted/10 text-muted-foreground hover:bg-muted/20"
+                  }`}
+                >
+                  <p className="font-semibold">{opt.label}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Show what the selected character means */}
+          <div className="rounded-lg bg-muted/20 border p-3 text-sm text-muted-foreground">
+            <p className="font-semibold text-foreground mb-1">Qué significa este carácter:</p>
+            <p>{PRESETS[eff("adaptiveRangeProfile", "balanced")]?.text ?? "—"}</p>
+          </div>
+
+          {/* Detailed limits per character (collapsible) */}
+          <Collapsible>
+            <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+              <ChevronDown className="h-3 w-3" />
+              Ver límites detallados del carácter seleccionado
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-3">
+              <div className="rounded-lg bg-muted/20 border p-3 space-y-2 text-xs">
+                <div className="grid grid-cols-2 gap-2">
+                  <div><span className="text-muted-foreground">Rango mínimo global:</span> <span className="font-mono">{eff("adaptiveRangeMinPct", 1.5)?.toFixed(2)}%</span></div>
+                  <div><span className="text-muted-foreground">Rango máximo global:</span> <span className="font-mono">{eff("adaptiveRangeMaxPct", 7.0)?.toFixed(2)}%</span></div>
+                  <div><span className="text-muted-foreground">Máx baja volatilidad:</span> <span className="font-mono">{eff("adaptiveRangeLowVolMaxPct", 3.0)?.toFixed(2)}%</span></div>
+                  <div><span className="text-muted-foreground">Máx lateral normal:</span> <span className="font-mono">{eff("adaptiveRangeNormalMaxPct", 5.0)?.toFixed(2)}%</span></div>
+                  <div><span className="text-muted-foreground">Máx alta volatilidad:</span> <span className="font-mono">{eff("adaptiveRangeHighVolMaxPct", 7.0)?.toFixed(2)}%</span></div>
+                  <div><span className="text-muted-foreground">Mínimo niveles viables:</span> <span className="font-mono">{eff("adaptiveRangeMinViableLevels", 4)}</span></div>
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </CardContent>
+      </Card>
+
+      {/* ─── Bloque 3: Ajustes finos ───────────────────────── */}
       <Card className="border-border/50">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <Brain className="h-4 w-4 text-purple-400" />
-            Impacto estimado de esta configuración
+            <Cpu className="h-4 w-4" />
+            Ajustes finos
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
-          {impactMessages.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No hay cambios pendientes respecto a la configuración guardada.</p>
-          ) : (
-            impactMessages.map((msg, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                <Info className="h-3 w-3 mt-0.5 shrink-0 text-blue-400" />
-                <span>{msg.text}</span>
+        <CardContent className="space-y-5">
+          <p className="text-sm text-muted-foreground">
+            Estos ajustes te permiten controlar manualmente la separación entre niveles y el beneficio objetivo. Si no estás seguro, mantén los valores por defecto.
+          </p>
+
+          <div className="space-y-2">
+            <Label className="text-sm">Separación mínima entre niveles: {eff("gridStepMinPct", 0.15)?.toFixed(2)}%</Label>
+            <Slider
+              value={[eff("gridStepMinPct", 0.15)]}
+              min={0.05} max={1.0} step={0.05}
+              onValueChange={(v) => updateDraft("gridStepMinPct", v[0])}
+            />
+            <p className="text-sm text-muted-foreground">Distancia mínima entre niveles de compra/venta. El motor puede aumentarla automáticamente para cubrir fees y beneficio neto.</p>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm">Separación máxima entre niveles: {eff("gridStepMaxPct", 3.0)?.toFixed(2)}%</Label>
+            <Slider
+              value={[eff("gridStepMaxPct", 3.0)]}
+              min={1.0} max={10.0} step={0.5}
+              onValueChange={(v) => updateDraft("gridStepMaxPct", v[0])}
+            />
+            <p className="text-sm text-muted-foreground">Distancia máxima permitida entre niveles. No define el rango por sí solo; el rango también depende de la volatilidad y el beneficio neto.</p>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm">Beneficio neto objetivo por nivel: {eff("netProfitTargetPct", 0.8)?.toFixed(2)}%</Label>
+            <Slider
+              value={[eff("netProfitTargetPct", 0.8)]}
+              min={0.1} max={3.0} step={0.1}
+              onValueChange={(v) => updateDraft("netProfitTargetPct", v[0])}
+            />
+            <p className="text-sm text-muted-foreground">Beneficio mínimo que quieres obtener por cada ciclo de compra-venta, después de restar fees y reserva fiscal. Más alto = más beneficio por ciclo pero más difícil de cerrar.</p>
+          </div>
+
+          {/* Adaptive-specific fine settings */}
+          {isAdaptive && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label className="text-sm">Forzar todos los niveles</Label>
+                    <p className="text-sm text-muted-foreground mt-1">Si está activado, intenta meter todos los niveles solicitados aunque el rango tenga que ser muy amplio. Si no cabe, marca el rango como no viable.</p>
+                  </div>
+                  <Switch
+                    checked={eff("adaptiveRangeTargetFullLevels", false)}
+                    onCheckedChange={(v) => updateDraft("adaptiveRangeTargetFullLevels", v)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm">Mínimo de niveles para que el rango sea viable: {eff("adaptiveRangeMinViableLevels", 4)}</Label>
+                  <Slider value={[eff("adaptiveRangeMinViableLevels", 4)]} min={2} max={12} step={1}
+                    onValueChange={(v) => updateDraft("adaptiveRangeMinViableLevels", v[0])} />
+                  <p className="text-sm text-muted-foreground">Si no caben al menos estos niveles, el rango se considera no viable y no se genera.</p>
+                </div>
               </div>
-            ))
+
+              {/* Límites por régimen — collapsible */}
+              <Collapsible>
+                <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                  <ChevronDown className="h-3 w-3" />
+                  Ajustar límites de rango por tipo de mercado
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-3 space-y-3">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm">Rango mínimo global: {eff("adaptiveRangeMinPct", 1.5)?.toFixed(2)}%</Label>
+                      <Slider value={[eff("adaptiveRangeMinPct", 1.5)]} min={0.5} max={5.0} step={0.25}
+                        onValueChange={(v) => updateDraft("adaptiveRangeMinPct", v[0])} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm">Rango máximo global: {eff("adaptiveRangeMaxPct", 7.0)?.toFixed(2)}%</Label>
+                      <Slider value={[eff("adaptiveRangeMaxPct", 7.0)]} min={3.0} max={15.0} step={0.5}
+                        onValueChange={(v) => updateDraft("adaptiveRangeMaxPct", v[0])} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-2">
+                      <Label className="text-sm text-xs">Máx baja volatilidad: {eff("adaptiveRangeLowVolMaxPct", 3.0)?.toFixed(2)}%</Label>
+                      <Slider value={[eff("adaptiveRangeLowVolMaxPct", 3.0)]} min={1.0} max={8.0} step={0.25}
+                        onValueChange={(v) => updateDraft("adaptiveRangeLowVolMaxPct", v[0])} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm text-xs">Máx lateral normal: {eff("adaptiveRangeNormalMaxPct", 5.0)?.toFixed(2)}%</Label>
+                      <Slider value={[eff("adaptiveRangeNormalMaxPct", 5.0)]} min={2.0} max={10.0} step={0.25}
+                        onValueChange={(v) => updateDraft("adaptiveRangeNormalMaxPct", v[0])} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm text-xs">Máx alta volatilidad: {eff("adaptiveRangeHighVolMaxPct", 7.0)?.toFixed(2)}%</Label>
+                      <Slider value={[eff("adaptiveRangeHighVolMaxPct", 7.0)]} min={3.0} max={15.0} step={0.5}
+                        onValueChange={(v) => updateDraft("adaptiveRangeHighVolMaxPct", v[0])} />
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </>
           )}
-          <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 pt-2 border-t">
-            <CheckCircle2 className="h-3 w-3 shrink-0" />
-            <span>No se regeneran niveles automáticamente. Los cambios solo afectan a futuros rangos.</span>
+
+          {/* Fixed-compact-specific settings */}
+          {!isAdaptive && (
+            <>
+              <div className="space-y-2">
+                <Label className="text-sm">Rango máximo (fijo): {eff("gridRangeMaxPct", 5.0)?.toFixed(2)}%</Label>
+                <Slider value={[eff("gridRangeMaxPct", 5.0)]} min={1.0} max={15.0} step={0.5}
+                  onValueChange={(v) => updateDraft("gridRangeMaxPct", v[0])} />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm">Distancia máxima desde el centro: {eff("maxDistanceFromCenterPct", 10.0)?.toFixed(2)}%</Label>
+                <Slider value={[eff("maxDistanceFromCenterPct", 10.0)]} min={2.0} max={20.0} step={0.5}
+                  onValueChange={(v) => updateDraft("maxDistanceFromCenterPct", v[0])} />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm">Distancia máxima venta-compra: {eff("maxSellDistanceFromNearestBuyPct", 8.0)?.toFixed(2)}%</Label>
+                <Slider value={[eff("maxSellDistanceFromNearestBuyPct", 8.0)]} min={2.0} max={15.0} step={0.5}
+                  onValueChange={(v) => updateDraft("maxSellDistanceFromNearestBuyPct", v[0])} />
+              </div>
+            </>
+          )}
+
+          {/* Valor efectivo usado por el motor */}
+          <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3 space-y-2 text-sm">
+            <p className="font-semibold text-blue-700 dark:text-blue-300">Valor real que usa el motor</p>
+            <p className="text-muted-foreground">
+              Tu separación manual es <strong className="text-foreground font-mono">{eff("gridStepMinPct", 0.15)?.toFixed(2)}%</strong>
+              {minSpacingPctReal != null ? (
+                <>
+                  , pero el motor no puede bajar de <strong className="text-foreground font-mono">{minSpacingPctReal.toFixed(2)}%</strong> porque debe cubrir beneficio neto, fees y spread. Por tanto, la separación real mínima es <strong className="text-blue-400 font-mono">{effectiveMinSpacing.toFixed(2)}%</strong>.
+                </>
+              ) : (
+                <>. Pendiente de validación para conocer la separación mínima rentable.</>
+              )}
+            </p>
+            <p className="text-muted-foreground">
+              Separación máxima permitida: <strong className="text-foreground font-mono">{eff("gridStepMaxPct", 3.0)?.toFixed(2)}%</strong>
+              {spacingPct != null ? (
+                spacingPct >= eff("gridStepMaxPct", 3.0) - 0.01
+                  ? <>. Está limitando ahora mismo.</>
+                  : <>. No está limitando ahora mismo.</>
+              ) : (
+                <>. Pendiente de validación.</>
+              )}
+            </p>
           </div>
         </CardContent>
       </Card>
 
-      {/* ─── Alertas inteligentes ──────────────────────────── */}
-      {alerts.length > 0 && (
-        <Card className="border-red-500/30">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-red-400" />
-              Alertas de configuración
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {alerts.map((alert, i) => (
-              <div
-                key={i}
-                className={`flex items-start gap-2 rounded-lg p-3 text-sm ${
-                  alert.type === "danger"
-                    ? "bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300"
-                    : "bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300"
-                }`}
-              >
-                {alert.type === "danger"
-                  ? <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                  : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />}
-                <span>{alert.text}</span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ─── Backtest ──────────────────────────────────────── */}
+      {/* ─── Bloque 4: Resultado de esta configuración ─────── */}
       <Card className="border-border/50">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <FlaskConical className="h-4 w-4" />
-            Simulación / Backtest
+            <Brain className="h-4 w-4 text-purple-400" />
+            Resultado de esta configuración
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3 text-sm text-blue-700 dark:text-blue-300">
-            Backtest pendiente de validación. La simulación/backtest se habilitará en una fase posterior. No afecta al Grid actual.
-          </div>
-          <div className="grid grid-cols-2 gap-4 opacity-50">
-            <div className="space-y-2">
-              <Label className="text-sm">Capital Inicial (USD)</Label>
-              <Input type="number" defaultValue={1000} disabled id="bt-capital" />
+        <CardContent className="space-y-3">
+          {/* Impact messages */}
+          {impactMessages.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span>No hay cambios pendientes. La configuración actual está guardada y funcionando.</span>
             </div>
+          ) : (
             <div className="space-y-2">
-              <Label className="text-sm">Modelo de Fill</Label>
-              <Select defaultValue="realistic" disabled>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="optimistic">Optimista</SelectItem>
-                  <SelectItem value="realistic">Realista</SelectItem>
-                  <SelectItem value="pessimistic">Pesimista</SelectItem>
-                </SelectContent>
-              </Select>
+              <p className="text-sm font-semibold">Cambios pendientes:</p>
+              {impactMessages.map((msg, i) => (
+                <div key={i} className={`flex items-start gap-2 rounded-lg p-3 text-sm ${
+                  msg.type === "danger" ? "bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300"
+                  : msg.type === "warning" ? "bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300"
+                  : "bg-blue-500/10 border border-blue-500/20 text-blue-700 dark:text-blue-300"
+                }`}>
+                  {msg.type === "danger" ? <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                  : msg.type === "warning" ? <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  : <Info className="h-4 w-4 mt-0.5 shrink-0" />}
+                  <span>{msg.text}</span>
+                </div>
+              ))}
             </div>
+          )}
+
+          {/* Smart alerts */}
+          {alerts.length > 0 && (
+            <div className="space-y-2">
+              {alerts.map((alert, i) => (
+                <div
+                  key={i}
+                  className={`flex items-start gap-2 rounded-lg p-3 text-sm ${
+                    alert.type === "danger"
+                      ? "bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300"
+                      : "bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300"
+                  }`}
+                >
+                  {alert.type === "danger"
+                    ? <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                    : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+                  <span>{alert.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 pt-2 border-t">
+            <CheckCircle2 className="h-3 w-3 shrink-0" />
+            <span>No se regeneran niveles automáticamente. Los cambios solo afectan a futuros rangos. No se activa SHADOW ni REAL.</span>
           </div>
-          <Button variant="default" size="sm" disabled>Backtest pendiente de validación</Button>
         </CardContent>
       </Card>
 

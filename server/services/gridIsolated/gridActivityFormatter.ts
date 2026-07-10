@@ -176,14 +176,14 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
   GRID_CYCLE_TRAILING_CLOSED: {
     category: "CYCLE",
     severity: "INFO",
-    title: "Trailing stop cerrado",
-    messageFn: () => "Ciclo cerrado por trailing stop.",
+    title: "Cierre por seguimiento de precio",
+    messageFn: () => "Ciclo cerrado por seguimiento de precio (trailing stop).",
   },
   GRID_CYCLE_HODL_RECOVERY: {
     category: "CYCLE",
     severity: "WARNING",
-    title: "HODL recovery activado",
-    messageFn: () => "Ciclo en recuperación HODL.",
+    title: "Recuperación por mantenimiento activada",
+    messageFn: () => "Ciclo en recuperación: mantener posición hasta que el precio se recupere.",
   },
   GRID_CYCLE_CANCELLED: {
     category: "CYCLE",
@@ -194,32 +194,32 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
   GRID_PUMP_GUARD_TRIGGERED: {
     category: "SAFETY",
     severity: "BLOCKED",
-    title: "Pump guard activado",
-    messageFn: () => "Pump detectado. Compras pausadas.",
+    title: "Detector de subida brusca activado",
+    messageFn: () => "Subida brusca detectada. Compras pausadas por seguridad.",
   },
   GRID_DUMP_GUARD_TRIGGERED: {
     category: "SAFETY",
     severity: "BLOCKED",
-    title: "Dump guard activado",
-    messageFn: () => "Dump detectado. Compras pausadas.",
+    title: "Detector de caída brusca activado",
+    messageFn: () => "Caída brusca detectada. Compras pausadas por seguridad.",
   },
   GRID_PUMP_DUMP_COOLDOWN_END: {
     category: "SAFETY",
     severity: "INFO",
-    title: "Cooldown Pump/Dump terminado",
-    messageFn: () => "Cooldown Pump/Dump finalizado. Grid reanudado.",
+    title: "Enfriamiento terminado",
+    messageFn: () => "Enfriamiento tras subida/caída brusca finalizado. Grid reanudado.",
   },
   GRID_TRAILING_ACTIVATED: {
     category: "CYCLE",
     severity: "INFO",
-    title: "Trailing activado",
-    messageFn: () => "Trailing stop activado.",
+    title: "Seguimiento de precio activado",
+    messageFn: () => "Seguimiento de precio (trailing stop) activado.",
   },
   GRID_TRAILING_STOP_UPDATED: {
     category: "CYCLE",
     severity: "INFO",
-    title: "Trailing stop actualizado",
-    messageFn: () => "Trailing stop actualizado.",
+    title: "Seguimiento de precio actualizado",
+    messageFn: () => "Seguimiento de precio (trailing stop) actualizado.",
   },
   GRID_RECONCILIATION_OK: {
     category: "RECONCILIATION",
@@ -266,26 +266,26 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
   GRID_CIRCUIT_BREAKER_OPENED: {
     category: "SAFETY",
     severity: "BLOCKED",
-    title: "Circuit breaker abierto",
-    messageFn: () => "Circuit breaker abierto. Todas las órdenes bloqueadas.",
+    title: "Protector de circuito abierto",
+    messageFn: () => "Protector de circuito abierto. Todas las órdenes bloqueadas.",
   },
   GRID_CIRCUIT_BREAKER_CLOSED: {
     category: "SAFETY",
     severity: "SUCCESS",
-    title: "Circuit breaker cerrado",
-    messageFn: () => "Circuit breaker cerrado. Órdenes reanudadas.",
+    title: "Protector de circuito cerrado",
+    messageFn: () => "Protector de circuito cerrado. Órdenes reanudadas.",
   },
   GRID_BACKTEST_STARTED: {
     category: "SYSTEM",
     severity: "INFO",
-    title: "Backtest iniciado",
-    messageFn: () => "Backtest Grid iniciado.",
+    title: "Simulación histórica iniciada",
+    messageFn: () => "Simulación histórica del Grid iniciada.",
   },
   GRID_BACKTEST_COMPLETED: {
     category: "SYSTEM",
     severity: "SUCCESS",
-    title: "Backtest completado",
-    messageFn: () => "Backtest Grid completado.",
+    title: "Simulación histórica completada",
+    messageFn: () => "Simulación histórica del Grid completada.",
   },
   GRID_MODE_UNLOCK_REQUESTED: {
     category: "SAFETY",
@@ -405,14 +405,14 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
   GRID_RANGE_REBUILT_MANUAL: {
     category: "LEVEL",
     severity: "INFO",
-    title: "Rebuild manual de niveles",
+    title: "Recálculo manual de niveles",
     messageFn: (ev) => {
       const meta = ev.metadataJson || {};
       const oldId = meta.oldRangeVersionId ? String(meta.oldRangeVersionId).slice(0, 8) : "—";
       const newId = meta.newRangeVersionId ? String(meta.newRangeVersionId).slice(0, 8) : "—";
       const replaced = meta.replacedLevelsCount ?? 0;
       const created = meta.newLevelsCount ?? 0;
-      return `Rebuild manual: rango ${oldId} → ${newId}. ${replaced} niveles reemplazados, ${created} nuevos generados.`;
+      return `Recálculo manual: rango ${oldId} → ${newId}. ${replaced} niveles reemplazados, ${created} nuevos generados.`;
     },
   },
   GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE: {

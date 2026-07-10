@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import {
   Layers, TrendingUp, TrendingDown, AlertTriangle, Info,
   Copy, Download, ChevronLeft, ChevronRight, X, Check, Clock,
-  Settings2, HelpCircle,
+  Settings2, HelpCircle, Archive,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { translateGridLabel, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
 
 // ─── Props ───────────────────────────────────────────────────
 interface GridLevelsPanelProps {
@@ -120,18 +121,8 @@ function getLevelFinishedLabel(level: any): string {
   return "—";
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  planned: "Planificado",
-  active: "Activo",
-  open: "Activo",
-  filled: "Ejecutado",
-  replaced: "Reemplazado",
-  cancelled: "Cancelado",
-  expired: "Expirado",
-};
-
 function getLevelStatusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status;
+  return translateGridLabel(status);
 }
 
 function getLevelPrice(level: any): number | null {
@@ -249,11 +240,11 @@ export function GridLevelsPanel({
     const isCancelled = ["cancelled", "expired"].includes(status);
 
     if (isReplaced)
-      return { label: "rango anterior, reemplazado", color: "text-muted-foreground", icon: X };
+      return { label: "de un rango anterior, archivado", color: "text-muted-foreground", icon: Archive };
     if (isFilled)
-      return { label: "ejecutado (filled)", color: "text-green-400", icon: TrendingUp };
+      return { label: "ejecutado (simulado)", color: "text-green-400", icon: TrendingUp };
     if (isCancelled)
-      return { label: "cancelado", color: "text-red-400", icon: X };
+      return { label: status === "expired" ? "expirado (archivado)" : "cancelado", color: "text-red-400", icon: X };
 
     if (level.side === "BUY") {
       if (levelPrice < currentPrice)
@@ -357,23 +348,25 @@ export function GridLevelsPanel({
     const isActiveRange = level?.rangeVersionId === activeRangeId;
 
     if (status === "replaced")
-      return "Este nivel pertenece a un rango anterior y fue reemplazado cuando cambió el rango operativo.";
+      return "Este nivel pertenece a un rango anterior. Se ha archivado sin borrarlo para conservar el historial. No afecta al rango actual.";
     if (status === "filled")
       return isShadow
-        ? "Este nivel fue ejecutado en simulación SHADOW. No hay orden real."
+        ? "Este nivel fue ejecutado en simulación SHADOW. No hay orden real ni capital ejecutado."
         : "Este nivel fue ejecutado con orden real.";
-    if (status === "cancelled" || status === "expired")
-      return `Este nivel fue ${status === "cancelled" ? "cancelado" : "expirado"}.`;
+    if (status === "expired")
+      return "Este nivel ha expirado. Se archiva sin borrarlo para conservar el historial. Ya no está activo.";
+    if (status === "cancelled")
+      return "Este nivel fue cancelado. Se conserva en el historial pero no está activo.";
     if (status === "planned") {
       if (!isActiveRange)
-        return "Este nivel pertenece a un rango anterior y ya no está activo.";
+        return "Este nivel pertenece a un rango anterior. Se conserva archivado para auditoría pero ya no está activo.";
       return isShadow
-        ? "Este nivel está planificado en SHADOW. No hay orden real."
+        ? "Este nivel está planificado en simulación SHADOW. No hay orden real ni capital comprometido."
         : "Este nivel está planificado y esperando activación.";
     }
     if (level?.exchangeOrderId)
       return `Este nivel tiene orden real colocada en el exchange (ID: ${level.exchangeOrderId}).`;
-    return `Estado actual: ${status}.`;
+    return `Estado actual: ${translateGridLabel(status)}.`;
   };
 
   // ─── Render ────────────────────────────────────────────────
@@ -413,10 +406,15 @@ export function GridLevelsPanel({
           <div className="flex items-start gap-2 text-xs text-blue-600 dark:text-blue-400">
             <Info className="h-4 w-4 mt-0.5 shrink-0" />
             <span>
-              Los niveles planificados se recalculan cuando cambia el rango operativo. El beneficio
-              mostrado es objetivo estimado, no realizado.
+              Los niveles planificados se recalculan cuando cambia el rango. El beneficio mostrado es una estimación, no un beneficio realizado. Los niveles antiguos se archivan sin borrarse para conservar el historial.
             </span>
           </div>
+          {mode === "SHADOW" && (
+            <div className="rounded-lg bg-muted/20 border p-3 text-sm text-muted-foreground">
+              <p className="font-semibold text-foreground mb-1">¿Qué significa SHADOW?</p>
+              <p>{SHADOW_EXPLANATION}</p>
+            </div>
+          )}
         </div>
       </CardHeader>
 
@@ -902,35 +900,35 @@ export function GridLevelsPanel({
                 );
               })()}
               <Row
-                label="RangeVersionId"
+                label="ID del rango"
                 value={`${selectedLevel.rangeVersionId?.slice(0, 12)}...`}
                 mono
               />
               <Row
-                label="¿Rango activo?"
-                value={selectedLevel.rangeVersionId === activeRangeId ? "Sí" : "No (histórico)"}
+                label="¿Pertenece al rango actual?"
+                value={selectedLevel.rangeVersionId === activeRangeId ? "Sí" : "No (de un rango anterior, archivado)"}
               />
               {selectedLevel.cycleId && (
-                <Row label="CycleId" value={selectedLevel.cycleId} mono />
+                <Row label="ID del ciclo asociado" value={selectedLevel.cycleId} mono />
               )}
               {selectedLevel.exchangeOrderId && (
-                <Row label="ExchangeOrderId" value={selectedLevel.exchangeOrderId} mono />
+                <Row label="ID de orden en el exchange" value={selectedLevel.exchangeOrderId} mono />
               )}
               {selectedLevel.placedAt && (
                 <Row
-                  label="placedAt"
+                  label="Orden colocada el"
                   value={new Date(selectedLevel.placedAt).toLocaleString("es-ES")}
                 />
               )}
               {selectedLevel.filledAt && (
                 <Row
-                  label="filledAt"
+                  label="Ejecutada el"
                   value={new Date(selectedLevel.filledAt).toLocaleString("es-ES")}
                 />
               )}
               {selectedLevel.cancelledAt && (
                 <Row
-                  label="cancelledAt"
+                  label="Cancelada/expirada el"
                   value={new Date(selectedLevel.cancelledAt).toLocaleString("es-ES")}
                 />
               )}
@@ -964,7 +962,7 @@ export function GridLevelsPanel({
                 return label ? <Row label="Duración" value={<span className="text-blue-400">{label}</span>} /> : null;
               })()}
               <Row
-                label="Estado natural"
+                label="Estado"
                 value={getLevelStatusLabel(selectedLevel.status)}
               />
               <Row
@@ -977,7 +975,7 @@ export function GridLevelsPanel({
               />
               {selectedLevel.updatedAt && (
                 <Row
-                  label="updatedAt"
+                  label="Última actualización"
                   value={fmtDate(selectedLevel.updatedAt)}
                 />
               )}

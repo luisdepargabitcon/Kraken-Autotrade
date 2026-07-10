@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Brain, TrendingUp, TrendingDown, Activity, AlertTriangle, Info, CheckCircle2, XCircle, Gauge, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Brain, TrendingUp, TrendingDown, Activity, AlertTriangle, Info, CheckCircle2, XCircle, Gauge, ShieldCheck, ShieldAlert, FlaskConical } from "lucide-react";
+import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION, ANALYZE_NOW_EXPLANATION } from "@/lib/gridTranslate";
 
 interface GridRangeIntelligencePanelProps {
   auditData?: any;
@@ -20,18 +22,10 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
   const profile = ri.adaptiveRangeProfile ?? config?.adaptiveRangeProfile ?? 'balanced';
   const enabled = ri.adaptiveRangeEnabled ?? config?.adaptiveRangeEnabled ?? true;
 
-  const modeLabel = mode === 'adaptive_smart' ? 'Rango inteligente' : mode === 'fixed_compact' ? 'Compacto fijo' : 'Modo heredado / diagnóstico';
+  const modeLabel = translateGridLabel(mode);
   const modeColor = mode === 'adaptive_smart' ? 'default' : mode === 'fixed_compact' ? 'secondary' : 'outline';
 
   const regimeBucket = adaptiveDecision?.regimeBucket ?? 'unknown';
-  const regimeLabels: Record<string, string> = {
-    low_volatility: 'Baja volatilidad',
-    normal_lateral: 'Lateral normal',
-    high_volatility: 'Alta volatilidad',
-    unsuitable_trend: 'Tendencia no apta',
-    pump_dump: 'Pump/Dump',
-    unknown: 'Sin datos',
-  };
   const regimeColor: Record<string, string> = {
     low_volatility: 'secondary',
     normal_lateral: 'default',
@@ -87,14 +81,14 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
         {/* Mode + Profile + Enabled */}
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={modeColor as any} className="text-xs">{modeLabel}</Badge>
-          <Badge variant="outline" className="text-xs">Perfil: {profile}</Badge>
+          <Badge variant="outline" className="text-xs">Carácter: {translateGridLabel(profile)}</Badge>
           {enabled ? (
             <Badge variant="outline" className="text-xs text-green-400 border-green-400/30">
-              <CheckCircle2 className="h-3 w-3 mr-1" /> Adaptativo activo
+              <CheckCircle2 className="h-3 w-3 mr-1" /> Cálculo automático activo
             </Badge>
           ) : (
             <Badge variant="outline" className="text-xs text-muted-foreground">
-              <XCircle className="h-3 w-3 mr-1" /> Adaptativo desactivado
+              <XCircle className="h-3 w-3 mr-1" /> Cálculo automático desactivado
             </Badge>
           )}
         </div>
@@ -106,13 +100,13 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
             <div>
               <p className="font-semibold">Conclusión:</p>
               {adaptiveOk ? (
-                <p className="text-muted-foreground">Rango adaptive viable para futuros niveles. El rango actual puede mantenerse.</p>
+                <p className="text-muted-foreground">El rango es viable. El Grid puede usar este rango para futuros niveles.</p>
               ) : adaptiveDecision ? (
-                <p className="text-muted-foreground">No viable. El objetivo neto actual exige más separación de la permitida para este régimen.
-                  {!adaptiveOk && rangeAudit && ' La evaluación actual puede ser no viable para regenerar un nuevo rango, aunque exista un rango activo creado anteriormente.'}
+                <p className="text-muted-foreground">El rango no es viable con la configuración actual. El beneficio neto objetivo exige más separación de la que permite el tipo de mercado detectado.
+                  {!adaptiveOk && rangeAudit && ' Puede que exista un rango guardado anteriormente que siga funcionando, pero no se generaría uno nuevo con estas condiciones.'}
                 </p>
               ) : (
-                <p className="text-muted-foreground">No hay decisión adaptive disponible todavía. Ejecuta una validación read-only para generarla.</p>
+                <p className="text-muted-foreground">Todavía no hay un cálculo de rango disponible. Pulsa "Analizar ahora sin operar" para generar uno.</p>
               )}
             </div>
           </div>
@@ -138,7 +132,7 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
             </div>
             {auditRangeGenerationSource && (
               <Badge variant="outline" className="text-xs">
-                {auditRangeGenerationSource === 'pre_adaptive' ? 'Rango previo / pre-adaptive' : auditRangeGenerationSource === 'adaptive_smart' ? 'Adaptive Smart Range' : auditRangeGenerationSource}
+                {translateGridLabel(auditRangeGenerationSource)}
               </Badge>
             )}
           </div>
@@ -150,7 +144,7 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
             <Gauge className="h-4 w-4 text-blue-400" />
             <span className="font-semibold">Régimen detectado:</span>
             <Badge variant={regimeColor[regimeBucket] as any} className="text-xs">
-              {regimeLabels[regimeBucket] ?? regimeBucket}
+              {translateGridLabel(regimeBucket)}
             </Badge>
           </div>
           {adaptiveDecision && (
@@ -179,61 +173,51 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
         {!adaptiveDecision && rangeAudit && (
           <div className="rounded-lg bg-amber-500/5 border border-amber-500/20 p-3 text-sm text-amber-700 dark:text-amber-300 flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-            <span>El rango activo actual fue creado antes de Adaptive Smart Range. Estos cálculos aplican solo a futuros rangos o a una regeneración manual autorizada.</span>
+            <span>El rango guardado se creó antes del cálculo inteligente. Estos cálculos solo aplican a futuros rangos o a una regeneración manual.</span>
           </div>
         )}
 
         {/* ─── Range lifecycle status ─── */}
         {auditData?.rangeLifecycle && (() => {
           const lc = auditData.rangeLifecycle;
-          const statusLabels: Record<string, string> = {
-            reusable: "Reutilizable",
-            audit_only: "Solo auditoría",
-            stale_pre_adaptive: "Pre-adaptive / requiere validación",
-            stale_market_shift: "Mercado desplazado",
-            stale_age: "Caducado por antigüedad",
-            invalid_price_outside: "Precio fuera de rango",
-            invalid_regime: "Régimen no apto",
-            protected_by_open_cycles: "Protegido por ciclos abiertos",
-            needs_adaptive_validation: "Requiere validación Adaptive",
-            unknown: "Datos insuficientes",
-          };
-          const statusLabel = statusLabels[lc.status] ?? lc.status;
+          const ds = gridDisplayStatus(lc.status);
           const isReusable = lc.status === "reusable";
-          const isStale = lc.status.startsWith("stale_") || lc.status.startsWith("invalid_");
+          const isProtected = lc.status === "protected_by_open_cycles";
 
           return (
             <div className={`rounded-lg border p-3 space-y-2 ${
               isReusable ? "bg-green-500/5 border-green-500/20"
-              : isStale ? "bg-amber-500/5 border-amber-500/30"
+              : isProtected ? "bg-blue-500/5 border-blue-500/20"
+              : ds.color === "red" ? "bg-red-500/5 border-red-500/30"
+              : ds.color === "amber" ? "bg-amber-500/5 border-amber-500/30"
               : "bg-muted/20 border-border/50"
             }`}>
               <div className="flex items-center gap-2 text-sm">
                 {isReusable
                   ? <ShieldCheck className="h-4 w-4 text-green-500" />
                   : <ShieldAlert className="h-4 w-4 text-amber-500" />}
-                <span className="font-semibold">Validez del rango activo:</span>
-                <Badge variant={isReusable ? "default" : isStale ? "destructive" : "secondary"} className="text-xs">
-                  {statusLabel}
+                <span className="font-semibold">¿Es válido el rango guardado?</span>
+                <Badge variant={isReusable ? "default" : ds.color === "red" ? "destructive" : "secondary"} className="text-xs">
+                  {ds.label}
                 </Badge>
                 {lc.canReuseForNewLevels
-                  ? <Badge variant="default" className="text-xs bg-green-500">Niveles: Sí</Badge>
-                  : <Badge variant="destructive" className="text-xs">Niveles: No</Badge>}
+                  ? <Badge variant="default" className="text-xs bg-green-500">Nuevos niveles: Sí</Badge>
+                  : <Badge variant="destructive" className="text-xs">Nuevos niveles: No</Badge>}
               </div>
               <p className="text-xs text-muted-foreground">{lc.naturalReason}</p>
-              <p className="text-xs text-muted-foreground"><strong className="text-foreground">Acción:</strong> {lc.nextAction}</p>
+              <p className="text-xs text-muted-foreground"><strong className="text-foreground">Acción recomendada:</strong> {lc.nextAction}</p>
               {lc.checks && (
                 <div className="grid grid-cols-3 gap-2 text-xs mt-1">
                   <div className="rounded bg-muted/30 p-1.5">
-                    <p className="text-muted-foreground">Edad (h)</p>
+                    <p className="text-muted-foreground">Edad (horas)</p>
                     <p className="font-mono">{lc.checks.ageHours != null ? lc.checks.ageHours.toFixed(1) : "—"}</p>
                   </div>
                   <div className="rounded bg-muted/30 p-1.5">
-                    <p className="text-muted-foreground">Drift centro</p>
+                    <p className="text-muted-foreground">Desviación del centro</p>
                     <p className="font-mono">{lc.checks.centerDriftPct != null ? `${lc.checks.centerDriftPct.toFixed(2)}%` : "—"}</p>
                   </div>
                   <div className="rounded bg-muted/30 p-1.5">
-                    <p className="text-muted-foreground">Divergencia ancho</p>
+                    <p className="text-muted-foreground">Diferencia de ancho</p>
                     <p className="font-mono">{lc.checks.widthDivergencePct != null ? `${lc.checks.widthDivergencePct.toFixed(2)}%` : "—"}</p>
                   </div>
                 </div>
@@ -335,8 +319,9 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
             )}
           </div>
         ) : (
-          <div className="rounded-lg bg-muted/20 p-3 text-sm text-muted-foreground">
-            No hay decisión de rango adaptativo disponible todavía. Ejecuta una validación read-only para generarla.
+          <div className="rounded-lg bg-muted/20 p-3 text-sm text-muted-foreground space-y-2">
+            <p>Todavía no hay un cálculo de rango disponible. Pulsa "Analizar ahora sin operar" para que el Grid calcule qué rango usaría con las condiciones actuales.</p>
+            <p className="text-xs">{ANALYZE_NOW_EXPLANATION}</p>
           </div>
         )}
 
@@ -391,16 +376,43 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
 
         {/* Config summary */}
         <div className="rounded-lg bg-muted/20 p-3 space-y-1">
-          <p className="text-xs font-semibold text-muted-foreground mb-1">Configuración Adaptive Smart Range</p>
+          <p className="text-xs font-semibold text-muted-foreground mb-1">Configuración del rango inteligente</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-            <div><span className="text-muted-foreground">Mín global:</span> <span className="font-mono">{ri.adaptiveRangeMinPct?.toFixed(2) ?? '—'}%</span></div>
-            <div><span className="text-muted-foreground">Máx global:</span> <span className="font-mono">{ri.adaptiveRangeMaxPct?.toFixed(2) ?? '—'}%</span></div>
-            <div><span className="text-muted-foreground">Máx baja vol:</span> <span className="font-mono">{ri.adaptiveRangeLowVolMaxPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Rango mínimo:</span> <span className="font-mono">{ri.adaptiveRangeMinPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Rango máximo:</span> <span className="font-mono">{ri.adaptiveRangeMaxPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Máx baja volatilidad:</span> <span className="font-mono">{ri.adaptiveRangeLowVolMaxPct?.toFixed(2) ?? '—'}%</span></div>
             <div><span className="text-muted-foreground">Máx lateral normal:</span> <span className="font-mono">{ri.adaptiveRangeNormalMaxPct?.toFixed(2) ?? '—'}%</span></div>
-            <div><span className="text-muted-foreground">Máx alta vol:</span> <span className="font-mono">{ri.adaptiveRangeHighVolMaxPct?.toFixed(2) ?? '—'}%</span></div>
+            <div><span className="text-muted-foreground">Máx alta volatilidad:</span> <span className="font-mono">{ri.adaptiveRangeHighVolMaxPct?.toFixed(2) ?? '—'}%</span></div>
             <div><span className="text-muted-foreground">Forzar todos los niveles:</span> <span className="font-mono">{ri.adaptiveRangeTargetFullLevels ? 'Sí' : 'No'}</span></div>
             <div><span className="text-muted-foreground">Mín. niveles viables:</span> <span className="font-mono">{ri.adaptiveRangeMinViableLevels ?? '—'}</span></div>
           </div>
+        </div>
+
+        {/* Analizar ahora button */}
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              fetch("/api/grid-isolated/shadow-validate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+              }).then(() => {
+                window.location.reload();
+              });
+            }}
+          >
+            <FlaskConical className="h-4 w-4 mr-1" />
+            Analizar ahora sin operar
+          </Button>
+          <span className="text-xs text-muted-foreground">{ANALYZE_NOW_EXPLANATION}</span>
+        </div>
+
+        {/* SHADOW explanation */}
+        <div className="rounded-lg bg-muted/20 border p-3 text-sm text-muted-foreground">
+          <p className="font-semibold text-foreground mb-1">¿Qué es SHADOW?</p>
+          <p>{SHADOW_EXPLANATION}</p>
         </div>
       </CardContent>
     </Card>

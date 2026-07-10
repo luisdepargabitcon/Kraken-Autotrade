@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Zap, Clock, ChevronLeft, ChevronRight } from "lucide-react";
+import { Zap, Clock, ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import { translateGridLabel, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
 
 interface GridCyclesPanelProps {
   cycles: any[];
@@ -70,17 +71,13 @@ function getCycleClosedAt(cycle: any): Date | null {
   return null;
 }
 
-const CYCLE_STATUS_LABELS: Record<string, string> = {
+const CYCLE_STATUS_OVERRIDES: Record<string, string> = {
   open: "Abierto",
   active: "Abierto",
-  buy_filled: "Compra simulada SHADOW",
-  completed: "Cerrado",
-  cancelled: "Cancelado",
-  error: "Error",
 };
 
 function getCycleStatusLabel(status: string): string {
-  return CYCLE_STATUS_LABELS[status] ?? status;
+  return CYCLE_STATUS_OVERRIDES[status] ?? translateGridLabel(status);
 }
 
 function isCycleOpen(cycle: any): boolean {
@@ -100,13 +97,24 @@ function Row({ label, value, mono }: { label: string; value: React.ReactNode; mo
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
+type CycleFilter = "all" | "active" | "completed" | "cancelled";
+
+const FILTER_LABELS: Record<CycleFilter, string> = {
+  all: "Todos",
+  active: "Activos",
+  completed: "Cerrados",
+  cancelled: "Cancelados",
+};
+
 export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = true, activeRangeVersionId = null }: GridCyclesPanelProps) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [selectedCycle, setSelectedCycle] = useState<any | null>(null);
+  const [cycleFilter, setCycleFilter] = useState<CycleFilter>("all");
 
   const activeCycles = cycles.filter((c: any) => isCycleOpen(c));
   const completedCycles = cycles.filter((c: any) => c.status === "completed");
+  const cancelledCycles = cycles.filter((c: any) => c.status === "cancelled" || c.status === "error");
   const totalPnl = completedCycles.reduce((sum: number, c: any) => sum + (toNum(c.netPnlUsd) ?? 0), 0);
   const reservedCapital = activeCycles.reduce((sum: number, c: any) => {
     const qty = toNum(c.quantity) ?? 0;
@@ -114,9 +122,16 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
     return sum + qty * bp;
   }, 0);
 
-  const totalPages = Math.max(1, Math.ceil(cycles.length / pageSize));
+  const filteredCycles = useMemo(() => {
+    if (cycleFilter === "active") return cycles.filter((c: any) => isCycleOpen(c));
+    if (cycleFilter === "completed") return cycles.filter((c: any) => c.status === "completed");
+    if (cycleFilter === "cancelled") return cycles.filter((c: any) => c.status === "cancelled" || c.status === "error");
+    return cycles;
+  }, [cycles, cycleFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCycles.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
-  const paginatedCycles = cycles.slice(safePage * pageSize, (safePage + 1) * pageSize);
+  const paginatedCycles = filteredCycles.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
   return (
     <Card className="border-border/50">
@@ -132,30 +147,54 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Ciclos activos</p>
-            <p className="text-lg font-bold">{activeCycles.length}</p>
+            <p className="text-lg font-bold text-blue-400">{activeCycles.length}</p>
           </div>
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-muted-foreground">Completados</p>
+            <p className="text-xs text-muted-foreground">Cerrados con beneficio</p>
             <p className="text-lg font-bold text-green-500">{completedCycles.length}</p>
           </div>
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-muted-foreground">PnL realizado</p>
+            <p className="text-xs text-muted-foreground">Cancelados / Error</p>
+            <p className="text-lg font-bold text-red-400">{cancelledCycles.length}</p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-muted-foreground">Beneficio simulado total</p>
             <p className={`text-lg font-bold ${totalPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
               {totalPnl >= 0 ? "+" : ""}{fmtUsd(totalPnl)}
             </p>
           </div>
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-muted-foreground">Capital simulado en ciclos SHADOW</p>
-            <p className="text-lg font-bold">{fmtUsd(reservedCapital)}</p>
-          </div>
+        </div>
+
+        {/* SHADOW notice */}
+        <div className="rounded-lg bg-muted/20 border p-3 text-sm text-muted-foreground">
+          <p className="font-semibold text-foreground mb-1">¿Qué son estos ciclos?</p>
+          <p>{SHADOW_EXPLANATION}</p>
         </div>
 
         {cycles.length > 0 ? (
           <>
-            {/* SHADOW notice */}
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-400">
-              Estos ciclos son simulados. No hay órdenes reales ni capital ejecutado.
+            {/* Filter tabs */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <Filter className="h-3 w-3 text-muted-foreground" />
+              {(Object.keys(FILTER_LABELS) as CycleFilter[]).map((f) => {
+                const count = f === "all" ? cycles.length
+                  : f === "active" ? activeCycles.length
+                  : f === "completed" ? completedCycles.length
+                  : cancelledCycles.length;
+                return (
+                  <Button
+                    key={f}
+                    size="sm"
+                    variant={cycleFilter === f ? "default" : "outline"}
+                    className="text-xs h-7"
+                    onClick={() => { setCycleFilter(f); setPage(0); }}
+                  >
+                    {FILTER_LABELS[f]} ({count})
+                  </Button>
+                );
+              })}
             </div>
+
             {/* Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -262,6 +301,12 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
                 Ver todos los {cycles.length} ciclos
               </Button>
             )}
+
+            {filteredCycles.length === 0 && (
+              <div className="text-sm text-muted-foreground py-4 text-center">
+                No hay ciclos en esta categoría.
+              </div>
+            )}
           </>
         ) : (
           <div className="text-sm text-muted-foreground py-4 text-center">
@@ -277,7 +322,7 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
           if (orphanCycles.length === 0) return null;
           return (
             <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-2 text-xs text-blue-400">
-              Hay {orphanCycles.length} ciclos SHADOW históricos/orphan. No pertenecen al rango activo actual.
+              Hay {orphanCycles.length} ciclo(s) de un rango anterior. No pertenecen al rango guardado actual. Se conservan para auditoría.
             </div>
           );
         })()}
@@ -315,26 +360,26 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
                     {getCycleStatusLabel(selectedCycle.status)}
                   </Badge>
                 } />
-                <Row label="Precio compra (BUY)" value={
+                <Row label="Precio de compra" value={
                   selectedCycle.buyPrice != null
                     ? <span className="font-mono">${(toNum(selectedCycle.buyPrice) ?? 0).toFixed(2)}</span>
                     : "—"
                 } />
-                <Row label="Precio venta (SELL)" value={
+                <Row label="Precio de venta" value={
                   selectedCycle.sellPrice != null
                     ? <span className="font-mono">${(toNum(selectedCycle.sellPrice) ?? 0).toFixed(2)}</span>
                     : <span className="text-muted-foreground">Pendiente</span>
                 } />
-                <Row label="Cantidad BTC" value={`${toNum(selectedCycle.quantity)?.toFixed(6) ?? "—"} BTC`} mono />
-                <Row label="Capital usado" value={<span className="font-mono">{fmtUsd(capital)}</span>} />
-                <Row label="PnL bruto" value={
+                <Row label="Cantidad" value={`${toNum(selectedCycle.quantity)?.toFixed(6) ?? "—"} BTC`} mono />
+                <Row label="Capital usado (simulado)" value={<span className="font-mono">{fmtUsd(capital)}</span>} />
+                <Row label="Beneficio bruto" value={
                   <span className={`font-mono ${(toNum(selectedCycle.grossPnlUsd) ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                     {fmtUsd(selectedCycle.grossPnlUsd)}
                   </span>
                 } />
-                <Row label="Fees totales" value={<span className="font-mono text-amber-400">{fmtUsd(selectedCycle.feeTotalUsd)}</span>} />
+                <Row label="Comisiones totales" value={<span className="font-mono text-amber-400">{fmtUsd(selectedCycle.feeTotalUsd)}</span>} />
                 <Row label="Reserva fiscal" value={<span className="font-mono text-amber-400">{fmtUsd(selectedCycle.taxReserveUsd)}</span>} />
-                <Row label="PnL neto" value={
+                <Row label="Beneficio neto" value={
                   pnl !== null
                     ? <span className={`font-mono font-bold ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
                         {pnl >= 0 ? "+" : ""}{fmtUsd(pnl)} ({toNum(selectedCycle.netPnlPct)?.toFixed(3) ?? "—"}%)
@@ -351,16 +396,16 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
                       : <span className="text-muted-foreground">—</span>
                 } />
                 {durLabel && <Row label="Duración" value={<span className="text-blue-400">{durLabel}</span>} />}
-                {selectedCycle.buyFilledAt && <Row label="BUY filled at" value={fmtDate(selectedCycle.buyFilledAt)} />}
-                {selectedCycle.sellFilledAt && <Row label="SELL filled at" value={fmtDate(selectedCycle.sellFilledAt)} />}
+                {selectedCycle.buyFilledAt && <Row label="Compra ejecutada (simulada)" value={fmtDate(selectedCycle.buyFilledAt)} />}
+                {selectedCycle.sellFilledAt && <Row label="Venta ejecutada (simulada)" value={fmtDate(selectedCycle.sellFilledAt)} />}
                 {selectedCycle.holdTimeMinutes != null && (
                   <Row label="Tiempo en posición" value={`${selectedCycle.holdTimeMinutes} min`} />
                 )}
                 <div className="border-t my-2" />
-                {selectedCycle.buyLevelId && <Row label="BUY LevelId" value={selectedCycle.buyLevelId} mono />}
-                {selectedCycle.sellLevelId && <Row label="SELL LevelId" value={selectedCycle.sellLevelId} mono />}
-                {selectedCycle.buyClientOrderId && <Row label="BUY OrderId" value={selectedCycle.buyClientOrderId} mono />}
-                {selectedCycle.sellClientOrderId && <Row label="SELL OrderId" value={selectedCycle.sellClientOrderId} mono />}
+                {selectedCycle.buyLevelId && <Row label="ID nivel de compra" value={selectedCycle.buyLevelId} mono />}
+                {selectedCycle.sellLevelId && <Row label="ID nivel de venta" value={selectedCycle.sellLevelId} mono />}
+                {selectedCycle.buyClientOrderId && <Row label="ID orden de compra" value={selectedCycle.buyClientOrderId} mono />}
+                {selectedCycle.sellClientOrderId && <Row label="ID orden de venta" value={selectedCycle.sellClientOrderId} mono />}
               </div>
             );
           })()}

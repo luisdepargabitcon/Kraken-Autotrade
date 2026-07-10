@@ -87,7 +87,7 @@ export function evaluateActiveRangeLifecycle(input: RangeLifecycleInput): RangeL
   // Basic checks
   const isPreAdaptive = rangeGenerationSource === "pre_adaptive";
   const adaptiveDecisionAvailable = adaptiveDecision != null;
-  const adaptiveRangeOk = adaptiveDecision?.rangeOk ?? null;
+  const adaptiveRangeOk = adaptiveDecision?.adaptiveRangeOk ?? adaptiveDecision?.rangeOk ?? null;
 
   // Age
   let ageHours: number | null = null;
@@ -201,6 +201,38 @@ export function evaluateActiveRangeLifecycle(input: RangeLifecycleInput): RangeL
       naturalReason: `El régimen actual (${regimeBucket}) no es apto para generar niveles Grid.`,
       impact: "Nuevas entradas deben pausarse hasta que el mercado vuelva a un régimen apto.",
       nextAction: "Pausar nuevas entradas hasta que el mercado vuelva a régimen apto.",
+      checks,
+    };
+  }
+
+  // ─── Rule D2: Adaptive decision says range not viable ──
+  if (adaptiveRangeOk === false && adaptiveModeActive) {
+    if (hasOpenCycles) {
+      return {
+        status: "protected_by_open_cycles",
+        canReuseForAudit: true,
+        canReuseForNewLevels: false,
+        canRegenerateNow: false,
+        shouldSuggestValidation: true,
+        shouldSuggestManualRegeneration: false,
+        reasonCode: "ADAPTIVE_NOT_VIABLE_WITH_OPEN_CYCLES",
+        naturalReason: "El cálculo inteligente indica que el rango no es viable, pero hay ciclos abiertos que impiden sustituir el rango.",
+        impact: "No se sustituye el rango para no romper compras/ventas en curso. Una vez cierren los ciclos, se deberá validar un nuevo rango.",
+        nextAction: "Esperar a que los ciclos abiertos se cierren. Luego pulsar \"Analizar ahora sin operar\" para validar un nuevo rango.",
+        checks,
+      };
+    }
+    return {
+      status: "needs_adaptive_validation",
+      canReuseForAudit: true,
+      canReuseForNewLevels: false,
+      canRegenerateNow: true,
+      shouldSuggestValidation: true,
+      shouldSuggestManualRegeneration: false,
+      reasonCode: "ADAPTIVE_RANGE_NOT_VIABLE",
+      naturalReason: "El cálculo inteligente indica que el rango no es viable con la configuración actual y las condiciones del mercado. El beneficio neto objetivo exige más separación de la que permite el tipo de mercado detectado.",
+      impact: "No se deben generar nuevos niveles con este rango. El rango guardado puede seguir en auditoría, pero no es apto para nuevos niveles.",
+      nextAction: "Revisar el beneficio neto objetivo o el carácter del Grid. Pulsa \"Analizar ahora sin operar\" para ver qué rango usaría el Grid con las condiciones actuales.",
       checks,
     };
   }

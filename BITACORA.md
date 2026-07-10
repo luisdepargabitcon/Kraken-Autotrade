@@ -5,6 +5,48 @@
 
 ---
 
+## 2026-07-10 — SIMPLIFICACIÓN UX GRID: TRADUCCIONES, FILTROS, LIFECYCLE FIX
+
+### Resumen
+Refactor general de componentes UI del Grid para mejorar la experiencia de usuarios no técnicos. Todos los términos técnicos se traducen al castellano con helpers centralizados. Se añaden filtros por estado en ciclos, explicaciones de SHADOW en todos los paneles, botones "Analizar ahora sin operar", y se corrige el lifecycle para marcar rangos no viables como no reutilizables.
+
+### Archivo nuevo
+- `client/src/lib/gridTranslate.ts` — Helper `translateGridLabel` para traducir términos técnicos al castellano. `gridDisplayStatus` para badges de lifecycle. `SHADOW_EXPLANATION` y `ANALYZE_NOW_EXPLANATION` para textos explicativos.
+
+### Archivos modificados
+- `client/src/components/grid/GridAdvancedConfig.tsx` — 4 bloques en castellano: "Cómo calcula el rango", "Carácter del Grid", "Ajustes finos", "Resultado de esta configuración". Eliminada duplicidad presets/profile.
+- `client/src/components/grid/GridBandsRangesPanel.tsx` — 3 bloques: "Mercado ahora", "Rango guardado", "Qué haría el Grid ahora". Añadido botón "Analizar ahora sin operar" y explicación SHADOW.
+- `client/src/components/grid/GridRangeIntelligencePanel.tsx` — Traducido con `translateGridLabel` y `gridDisplayStatus`. Añadido botón "Analizar ahora sin operar" y explicación SHADOW.
+- `client/src/components/grid/GridCyclesPanel.tsx` — Filtros: Todos/Activos/Cerrados/Cancelados con contadores. KPI con cancelados. Explicación SHADOW. Traducidos labels del modal de detalle.
+- `client/src/components/grid/GridLevelsPanel.tsx` — Icono Archive para niveles reemplazados/expirados. Explicaciones mejoradas ("archivado sin borrar"). Traducidos campos del modal (RangeVersionId→ID del rango, placedAt→Orden colocada el, etc.). Añadida explicación SHADOW.
+- `server/services/gridIsolated/gridRangeLifecycle.ts` — Rule D2: `adaptiveRangeOk=false` en modo adaptive → `needs_adaptive_validation` con `canReuseForNewLevels=false`. Añadida protección por ciclos abiertos en Rule D2. Corregido field name: ahora comprueba tanto `adaptiveRangeOk` como `rangeOk`.
+- `server/routes/gridIsolated.routes.ts` — Audit en castellano: "mode lock"→"bloqueo de modo", "circuit breaker"→"protector de circuito", "pump/dump"→"subida/caída brusca", "cooldown"→"enfriamiento".
+- `server/services/gridIsolated/gridActivityFormatter.ts` — Eventos en castellano: "Pump guard"→"Detector de subida brusca", "Circuit breaker"→"Protector de circuito", "Backtest"→"Simulación histórica", "Trailing stop"→"Seguimiento de precio", "Rebuild"→"Recálculo".
+- `server/services/__tests__/gridRangeLifecycle.test.ts` — 4 tests nuevos (16-19): adaptiveRangeOk=false, rangeOk legacy, con ciclos abiertos, con pump_dump.
+- `server/services/__tests__/gridTranslate.test.ts` — 14 tests nuevos: translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION, ANALYZE_NOW_EXPLANATION.
+- `BITACORA.md` — Esta entrada.
+
+### Validaciones
+- `tsc --noEmit --skipLibCheck`: OK
+- `vitest run` (grid tests): 50/50 OK
+- `vitest run` (all): 2306 pass, 16 fail (telegram template snapshots pre-existing, unrelated)
+- Build Vite: error filesystem Windows (Qsync), no code-related
+
+### Estado final
+- Todos los paneles del Grid usan terminología en castellano
+- Helper `translateGridLabel` centraliza traducciones
+- Lifecycle corrige `adaptiveRangeOk=false` → no reutilizable
+- Ciclos tienen filtros por estado
+- Niveles archivan sin borrar
+- Botones "Analizar ahora sin operar" en paneles de rango
+- SHADOW explicado en todos los paneles relevantes
+
+### Pendientes
+- Deploy a VPS staging
+- Validación visual en navegador
+
+---
+
 ## 2026-07-10 — FASE 3C.3-E3 RANGE LIFECYCLE / REVALIDACIÓN DEL RANGO ACTIVO
 
 ### Resumen

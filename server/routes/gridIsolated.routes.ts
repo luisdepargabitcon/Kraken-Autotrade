@@ -195,7 +195,7 @@ function buildBlockingReasons(checks: any, config?: any): string[] {
     reasons.push("Reconciliación pendiente o con mismatches");
   }
   if (!checks.modeLockAcknowledged) {
-    reasons.push("Mode lock no reconocido explícitamente por el usuario");
+    reasons.push("Bloqueo de modo no reconocido explícitamente por el usuario");
   }
   if (!checks.dailyOrderLimitRespected) {
     reasons.push("Límite diario de órdenes excedido");
@@ -261,8 +261,8 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
       mode,
       pair: "BTC/USD",
       detected: "Adaptador RevolutXService pendiente de verificar",
-      wanted: "Activar REAL_LIMITED",
-      decided: "Bloquear REAL_LIMITED",
+      wanted: "Activar modo real limitado",
+      decided: "Bloquear modo real limitado",
       reason: "Revolut X documenta post-only y allow-taker. Pendiente: verificar que el adaptador interno RevolutXService envía correctamente las instrucciones de ejecución.",
       impact: "Modos reales bloqueados",
       nextAction: "Verificar adaptador RevolutXService y ejecutar reconciliación",
@@ -288,12 +288,12 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
       timestamp: new Date().toISOString(),
       mode,
       pair: "BTC/USD",
-      detected: "Mode lock no reconocido",
+      detected: "Bloqueo de modo no reconocido",
       wanted: "Activar modo real",
       decided: "Bloquear modo real",
-      reason: "El usuario no ha reconocido explícitamente el mode lock. Los modos reales requieren desbloqueo manual.",
+      reason: "El usuario no ha reconocido explícitamente el bloqueo de modo. Los modos reales requieren desbloqueo manual.",
       impact: "Modos reales bloqueados",
-      nextAction: "Reconocer el mode lock desde la UI",
+      nextAction: "Reconocer el bloqueo de modo desde la UI",
     });
   }
 
@@ -331,12 +331,12 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
       timestamp: new Date().toISOString(),
       mode,
       pair: "BTC/USD",
-      detected: "Circuit breaker abierto",
+      detected: "Protector de circuito abierto",
       wanted: "Enviar órdenes",
       decided: "Bloquear todas las órdenes",
-      reason: "El Grid bloquea órdenes porque el circuit breaker está abierto por errores críticos.",
+      reason: "El Grid bloquea órdenes porque el protector de circuito está abierto por errores críticos.",
       impact: "Órdenes bloqueadas",
-      nextAction: "Esperar cooldown del circuit breaker",
+      nextAction: "Esperar enfriamiento del protector de circuito",
     });
   }
 
@@ -345,16 +345,16 @@ function buildDecisions(mode: string, checks: any, status: any, blockingReasons:
       timestamp: new Date().toISOString(),
       mode,
       pair: "BTC/USD",
-      detected: `Pump/Dump: ${status.pumpDumpState}`,
+      detected: `Subida/caída brusca: ${status.pumpDumpState}`,
       wanted: "Comprar niveles",
       decided: "Bloquear compras",
       reason: status.pumpDumpState === "pump_detected"
-        ? "El Grid bloquea compras porque detecta subida brusca (pump)."
+        ? "El Grid bloquea compras porque detecta una subida brusca del precio."
         : status.pumpDumpState === "dump_detected"
-        ? "El Grid bloquea compras porque detecta caída brusca (dump)."
-        : "El Grid está en cooldown Pump/Dump.",
+        ? "El Grid bloquea compras porque detecta una caída brusca del precio."
+        : "El Grid está en enfriamiento tras detectar subida/caída brusca.",
       impact: "Compras pausadas",
-      nextAction: "Esperar normalización de volatility",
+      nextAction: "Esperar normalización de la volatilidad",
     });
   }
 
@@ -387,7 +387,7 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   } else {
     lines.push(`Capital reservado: cartera no configurada.`);
   }
-  lines.push(`Mode lock reconocido: ${checks.modeLockAcknowledged ? "sí" : "no"}.`);
+  lines.push(`Bloqueo de modo reconocido: ${checks.modeLockAcknowledged ? "sí" : "no"}.`);
   lines.push(`Límite diario respetado: ${checks.dailyOrderLimitRespected ? "sí" : "no"}.`);
   const plannedLevelsCount = levels.filter((l: any) => l?.status === "planned").length;
   const realOpenOrdersCount = levels.filter((l: any) =>
@@ -411,9 +411,9 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
   lines.push(`Ciclos abiertos: ${openCyclesCount}.`);
   lines.push(`Ciclos cerrados: ${closedCyclesCount}.`);
   lines.push(`PnL neto: $${status?.totalNetPnlUsd?.toFixed(2) || "0.00"}.`);
-  lines.push(`Circuit breaker: ${status?.circuitBreakerOpen ? "abierto" : "cerrado"}.`);
+  lines.push(`Protector de circuito: ${status?.circuitBreakerOpen ? "abierto" : "cerrado"}.`);
   lines.push(`Órdenes hoy: ${status?.dailyOrderCount || 0}.`);
-  lines.push(`Pump/Dump: ${status?.pumpDumpState || "normal"}.`);
+  lines.push(`Subida/caída brusca: ${status?.pumpDumpState || "normal"}.`);
   // Beneficio objetivo estimado
   if (config) {
     const targetPct = config.netProfitTargetPct ?? 0.8;
@@ -587,7 +587,7 @@ function buildChatGPTSummary(mode: string, checks: any, status: any, blockingRea
     actions.push("Configurar cartera Grid para aislar capital.");
   }
   if (!checks.modeLockAcknowledged) {
-    actions.push("Reconocer el mode lock para desbloquear modos reales.");
+    actions.push("Reconocer el bloqueo de modo para desbloquear modos reales.");
   }
   if (actions.length > 0) {
     lines.push("Próximas acciones recomendadas:");
@@ -844,7 +844,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
   app.post("/api/grid-isolated/mode/acknowledge", async (_req: Request, res: Response) => {
     try {
       await gridModeLockService.acknowledgeLock();
-      res.json({ success: true, message: "Mode lock acknowledged" });
+      res.json({ success: true, message: "Bloqueo de modo reconocido" });
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }

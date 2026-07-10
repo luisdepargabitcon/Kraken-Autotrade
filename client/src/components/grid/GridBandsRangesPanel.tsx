@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, TrendingUp, TrendingDown, Activity, History, BarChart3, Info, ShieldCheck, ShieldAlert, Gauge } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { AlertCircle, TrendingUp, TrendingDown, Activity, History, BarChart3, Info, ShieldCheck, ShieldAlert, Gauge, FlaskConical } from "lucide-react";
+import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   GRID_RANGE_ACTIVATED: "Rango activado",
@@ -46,20 +48,68 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
     ? ((currentPrice - lowerPrice) / (upperPrice - lowerPrice)) * 100
     : null;
 
+  // Market context data
+  const marketCtx = auditData?.marketContext;
+  const atrPct = marketCtx?.atrPct != null ? Number(marketCtx.atrPct) : null;
+  const regime = range?.regime || range?.method || marketCtx?.regime || null;
+
   return (
     <div className="space-y-4">
-      {/* Rango activo */}
+      {/* ─── Bloque 1: Mercado ahora ─────────────────────── */}
+      <Card className="border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Activity className="h-4 w-4 text-blue-400" />
+            Mercado ahora
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Precio actual</p>
+              <p className="text-lg font-bold text-blue-400">
+                {currentPrice != null ? `$${currentPrice.toFixed(2)}` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Ancho Bandas Bollinger</p>
+              <p className="text-sm font-mono font-bold">
+                {marketBollingerWidthPct != null ? `${marketBollingerWidthPct.toFixed(2)}%` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Volatilidad (ATR)</p>
+              <p className="text-sm font-mono font-bold">
+                {atrPct != null ? `${atrPct.toFixed(2)}%` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Tipo de mercado</p>
+              <Badge variant="outline" className="text-xs mt-1">
+                {regime ? translateGridLabel(regime) : "Sin datos"}
+              </Badge>
+            </div>
+          </div>
+          {hasWidthDivergence && (
+            <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3 text-xs text-blue-700 dark:text-blue-300">
+              El ancho de Bandas Bollinger ({marketBollingerWidthPct?.toFixed(2)}%) y el ancho del rango guardado ({activeRangePriceWidthPct?.toFixed(2)}%) son diferentes. Las Bandas Bollinger miden la volatilidad del mercado; el rango guardado es donde el Grid coloca sus niveles.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ─── Bloque 2: Rango guardado ────────────────────── */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5" />
-            Rango operativo activo
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <TrendingUp className="h-4 w-4" />
+            Rango que tiene guardado el Grid
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {!hasActiveRange ? (
             <div className="rounded-lg bg-muted/30 p-4 text-sm text-muted-foreground">
-              {range?.naturalReason || "El Grid todavía no ha generado un rango activo porque no hay ciclo abierto o falta una evaluación SHADOW reciente."}
+              {range?.naturalReason || "El Grid todavía no tiene un rango guardado. Esto es normal si no ha habido una evaluación reciente o si no hay ciclos abiertos."}
             </div>
           ) : (
             <>
@@ -68,7 +118,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-red-400 font-mono">${lowerPrice?.toFixed(2)}</span>
-                    <span className="text-muted-foreground">Rango operativo</span>
+                    <span className="text-muted-foreground">Rango guardado</span>
                     <span className="text-green-400 font-mono">${upperPrice?.toFixed(2)}</span>
                   </div>
                   <div className="relative h-8 rounded-lg bg-gradient-to-r from-red-500/20 via-yellow-500/20 to-green-500/20 border border-border/30">
@@ -91,7 +141,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                   </div>
                   {pricePositionPct != null && (
                     <p className="text-xs text-center text-muted-foreground">
-                      Precio actual en {pricePositionPct.toFixed(1)}% del rango operativo
+                      El precio está al {pricePositionPct.toFixed(1)}% del rango
                       {pricePositionPct < 20 && " (cerca del suelo)"}
                       {pricePositionPct > 80 && " (cerca del techo)"}
                     </p>
@@ -103,7 +153,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                 <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-red-500/5">
                   <div className="flex items-center gap-1.5 mb-1">
                     <TrendingDown className="h-3 w-3 text-red-400" />
-                    <p className="text-xs text-muted-foreground">Precio inferior</p>
+                    <p className="text-xs text-muted-foreground">Precio suelo</p>
                   </div>
                   <p className="text-sm font-bold text-red-400">
                     {lowerPrice != null ? `$${lowerPrice.toFixed(2)}` : "—"}
@@ -121,7 +171,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                 <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-green-500/5">
                   <div className="flex items-center gap-1.5 mb-1">
                     <TrendingUp className="h-3 w-3 text-green-400" />
-                    <p className="text-xs text-muted-foreground">Precio superior</p>
+                    <p className="text-xs text-muted-foreground">Precio techo</p>
                   </div>
                   <p className="text-sm font-bold text-green-400">
                     {upperPrice != null ? `$${upperPrice.toFixed(2)}` : "—"}
@@ -130,7 +180,7 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                 <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-blue-500/5">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Info className="h-3 w-3 text-blue-400" />
-                    <p className="text-xs text-muted-foreground">Ancho operativo real</p>
+                    <p className="text-xs text-muted-foreground">Ancho del rango</p>
                   </div>
                   <p className="text-sm font-bold text-blue-400">
                     {activeRangePriceWidthPct != null ? `${activeRangePriceWidthPct.toFixed(2)}%` : "—"}
@@ -144,100 +194,63 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                   <p className="text-sm font-mono font-bold">{range.pair}</p>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Régimen / método</p>
-                  <Badge variant="outline" className="text-xs mt-1">{range.regime || range.method || "—"}</Badge>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Estado</p>
-                  <Badge variant={range.status === "activo" || range.status === "active" ? "default" : "secondary"} className="mt-1">
-                    {range.status}
+                  <p className="text-xs text-muted-foreground">Origen del rango</p>
+                  <Badge variant="outline" className="text-xs mt-1">
+                    {translateGridLabel(rangeGenerationSource)}
                   </Badge>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Niveles generados</p>
                   <p className="text-sm font-bold">{range.levelsGenerated ?? "—"}</p>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Ancho Bollinger/mercado</p>
-                  <p className="text-sm font-mono">{marketBollingerWidthPct != null ? `${marketBollingerWidthPct.toFixed(2)}%` : "—"}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Ancho operativo (generador)</p>
-                  <p className="text-sm font-mono">{operationalRangeWidthPct != null ? `${operationalRangeWidthPct.toFixed(2)}%` : "—"}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Semi-rango operativo</p>
-                  <p className="text-sm font-mono">{operationalSemiRangePct != null ? `${operationalSemiRangePct.toFixed(2)}%` : "—"}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Origen del rango</p>
-                  <Badge variant="outline" className="text-xs mt-1">
-                    {isPreAdaptive ? "Rango previo / pre-adaptive" : rangeGenerationSource === "adaptive_smart" ? "Adaptive Smart Range" : rangeGenerationSource ?? "—"}
+                  <p className="text-xs text-muted-foreground">Estado</p>
+                  <Badge variant={range.status === "activo" || range.status === "active" ? "default" : "secondary"} className="mt-1">
+                    {range.status === "activo" || range.status === "active" ? "Activo" : range.status}
                   </Badge>
                 </div>
               </div>
 
               {isPreAdaptive && (
                 <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
-                  Este rango fue generado antes de Adaptive Smart Range. Se conserva por seguridad y no se regenera automáticamente.
-                </div>
-              )}
-
-              {hasWidthDivergence && (
-                <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3 text-xs text-blue-700 dark:text-blue-300">
-                  El ancho Bollinger/mercado ({marketBollingerWidthPct?.toFixed(2)}%) y el ancho operativo real ({activeRangePriceWidthPct?.toFixed(2)}%) no son lo mismo. Bollinger mide el régimen; el rango operativo es donde el Grid coloca niveles.
+                  Este rango se guardó antes de que el Grid tuviera el cálculo inteligente (Adaptive Smart). Se conserva por seguridad y no se recalcula automáticamente.
                 </div>
               )}
 
               {/* ─── Estado de validez del rango (lifecycle) ─── */}
               {auditData?.rangeLifecycle && (() => {
                 const lc = auditData.rangeLifecycle;
-                const statusLabels: Record<string, string> = {
-                  reusable: "Reutilizable",
-                  audit_only: "Solo auditoría",
-                  stale_pre_adaptive: "Pre-adaptive / requiere validación",
-                  stale_market_shift: "Mercado desplazado",
-                  stale_age: "Caducado por antigüedad",
-                  invalid_price_outside: "Precio fuera de rango",
-                  invalid_regime: "Régimen no apto",
-                  protected_by_open_cycles: "Protegido por ciclos abiertos",
-                  needs_adaptive_validation: "Requiere validación Adaptive",
-                  unknown: "Datos insuficientes",
-                };
-                const statusLabel = statusLabels[lc.status] ?? lc.status;
-                const isStale = lc.status.startsWith("stale_") || lc.status.startsWith("invalid_");
-                const isProtected = lc.status === "protected_by_open_cycles";
+                const ds = gridDisplayStatus(lc.status);
                 const isReusable = lc.status === "reusable";
+                const isProtected = lc.status === "protected_by_open_cycles";
 
                 return (
                   <div className={`rounded-lg border p-4 space-y-3 ${
                     isReusable ? "bg-green-500/5 border-green-500/20"
                     : isProtected ? "bg-blue-500/5 border-blue-500/20"
-                    : isStale ? "bg-amber-500/5 border-amber-500/30"
+                    : ds.color === "red" ? "bg-red-500/5 border-red-500/30"
+                    : ds.color === "amber" ? "bg-amber-500/5 border-amber-500/30"
                     : "bg-muted/20 border-border/50"
                   }`}>
                     <div className="flex items-center gap-2">
                       {isReusable
                         ? <ShieldCheck className="h-4 w-4 text-green-500" />
                         : <ShieldAlert className="h-4 w-4 text-amber-500" />}
-                      <h4 className="text-sm font-semibold">Estado de validez del rango</h4>
-                      <Badge variant={isReusable ? "default" : isStale ? "destructive" : "secondary"} className="text-xs">
-                        {statusLabel}
+                      <h4 className="text-sm font-semibold">¿Es válido este rango?</h4>
+                      <Badge variant={isReusable ? "default" : ds.color === "red" ? "destructive" : "secondary"} className="text-xs">
+                        {ds.label}
                       </Badge>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">¿Usable para nuevos niveles?</span>
+                        <span className="text-muted-foreground">¿Sirve para nuevos niveles?</span>
                         {lc.canReuseForNewLevels
                           ? <Badge variant="default" className="text-xs bg-green-500">Sí</Badge>
                           : <Badge variant="destructive" className="text-xs">No</Badge>}
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">¿Visible para auditoría?</span>
+                        <span className="text-muted-foreground">¿Visible en auditoría?</span>
                         {lc.canReuseForAudit
                           ? <Badge variant="secondary" className="text-xs">Sí</Badge>
                           : <Badge variant="outline" className="text-xs">No</Badge>}
@@ -253,12 +266,6 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
                     <div className="text-sm text-muted-foreground">
                       <strong className="text-foreground">Acción recomendada:</strong> {lc.nextAction}
                     </div>
-
-                    {lc.status === "stale_pre_adaptive" && (
-                      <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
-                        Este rango es previo a Adaptive Smart Range. Se conserva para auditoría, pero no se recomienda usarlo para nuevos niveles.
-                      </div>
-                    )}
 
                     {lc.canReuseForNewLevels === false && (
                       <div className="flex items-center gap-2">
@@ -294,22 +301,62 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
               )}
 
               {!hasLimits && (
-                <div className="flex items-start gap-2 rounded-lg bg-orange-500/10 p-3 text-sm">
+                <div className="flex items-start gap-2 rounded-lg bg-orange-500/10 border border-orange-500/30 p-3 text-sm text-orange-700 dark:text-orange-300">
                   <AlertCircle className="h-4 w-4 mt-0.5 text-orange-500 shrink-0" />
-                  <span>Rango activo detectado, pero faltan límites inferior/superior en la metadata. Pendiente de enriquecer el evento de rango.</span>
+                  <span>Hay un rango guardado, pero faltan los límites de precio. Pendiente de completar la información del rango.</span>
                 </div>
               )}
-
-              <div className="rounded-lg bg-blue-500/10 p-3 text-sm">
-                <p className="text-blue-700 dark:text-blue-300">
-                  <strong>Explicación:</strong> {range.naturalReason}
-                </p>
-                <p className="text-blue-700 dark:text-blue-300 mt-1">
-                  <strong>Impacto:</strong> {range.impact || "Se recalculan niveles futuros; no se modifican ciclos abiertos."}
-                </p>
-              </div>
             </>
           )}
+        </CardContent>
+      </Card>
+
+      {/* ─── Bloque 3: Qué haría el Grid ahora ────────────── */}
+      <Card className="border-purple-500/30 bg-gradient-to-br from-purple-500/5 to-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <FlaskConical className="h-4 w-4 text-purple-400" />
+            Qué haría el Grid ahora
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3 text-sm text-blue-700 dark:text-blue-300">
+            <p>
+              <strong>Explicación:</strong> {range?.naturalReason || "No hay un rango activo para evaluar."}
+            </p>
+            {range?.impact && (
+              <p className="mt-1">
+                <strong>Impacto:</strong> {range.impact}
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-lg bg-muted/20 border p-3 text-sm text-muted-foreground">
+            <p className="font-semibold text-foreground mb-1">¿Qué es SHADOW?</p>
+            <p>{SHADOW_EXPLANATION}</p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                fetch("/api/grid-isolated/shadow-validate", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({}),
+                }).then(() => {
+                  window.location.reload();
+                });
+              }}
+            >
+              <FlaskConical className="h-4 w-4 mr-1" />
+              Analizar ahora sin operar
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Ejecuta una validación en modo solo lectura. No envía órdenes ni modifica el rango.
+            </span>
+          </div>
         </CardContent>
       </Card>
 
