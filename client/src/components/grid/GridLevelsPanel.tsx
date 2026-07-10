@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Layers, TrendingUp, TrendingDown, AlertTriangle, Info,
+  Layers, TrendingUp, TrendingDown, AlertTriangle, AlertCircle, Info,
   Copy, Download, ChevronLeft, ChevronRight, X, Check, Clock,
   Settings2, HelpCircle, Archive,
 } from "lucide-react";
@@ -705,13 +705,28 @@ export function GridLevelsPanel({
         ) : (
           <div className="space-y-3">
             {filter === "rango-activo" && !activeRangeId && (
-              <div className="rounded-md bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300">
-                <div className="flex items-start gap-2">
-                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
-                  <span>
-                    No hay rango activo cargado. Los niveles históricos están disponibles en los filtros Planificados, Históricos o Todos.
-                  </span>
+              <div className="space-y-3">
+                <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div className="space-y-1">
+                      <p className="font-semibold">Sin rango activo cargado</p>
+                      <p>El motor no tiene un rango activo en memoria. Esto es normal tras un reinicio o si no ha habido evaluación reciente.</p>
+                      <p className="text-xs">Pulsa "Analizar ahora sin operar" en la pestaña Bandas para que el motor evalúe el mercado.</p>
+                    </div>
+                  </div>
                 </div>
+                {levels.length > 0 && (
+                  <div className="rounded-md bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300">
+                    <div className="flex items-start gap-2">
+                      <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                      <div className="space-y-1">
+                        <p>Hay {levels.length} nivel(es) históricos de rangos anteriores.</p>
+                        <p>Están archivados para conservar el historial. No afectan al funcionamiento del Grid.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             <div className="text-sm text-muted-foreground py-4 text-center space-y-2">
@@ -724,6 +739,15 @@ export function GridLevelsPanel({
                   ? "No hay órdenes reales activas. Existen niveles planificados en SHADOW para simulación."
                   : `No hay niveles con filtro "${FILTER_LABELS[filter]}".`}
               </p>
+              {filter === "rango-activo" && levels.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setFilter("historicos")}
+                >
+                  Ver niveles históricos ({levels.length})
+                </Button>
+              )}
               {filter === "rango-activo" && (
                 <Button
                   size="sm"

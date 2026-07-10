@@ -7,8 +7,9 @@ import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Cpu, Activity, AlertTriangle, AlertCircle, CheckCircle2, XCircle,
-  Info, Brain, Lightbulb, ChevronDown,
+  Info, Brain, Lightbulb, ChevronDown, ArrowRight, Sparkles,
 } from "lucide-react";
+import { buildGridConfigRecommendations, applyRecommendationToDraft, type GridRecommendation } from "@/lib/gridConfigAdvisor";
 
 interface GridAdvancedConfigProps {
   config: any;
@@ -208,40 +209,21 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
     return msgs;
   }, [draft, config, eff]);
 
-  // ─── Smart alerts ─────────────────────────────────────────
-  const alerts = useMemo(() => {
-    const list: { type: "warning" | "danger"; text: string }[] = [];
-    const netProfit = eff("netProfitTargetPct", 0.8);
-    const stepMax = eff("gridStepMaxPct", 3.0);
-    const rangeMax = eff("adaptiveRangeMaxPct", 7.0);
-    const lowVolMax = eff("adaptiveRangeLowVolMaxPct", 3.0);
-    const normalMax = eff("adaptiveRangeNormalMaxPct", 5.0);
-    const highVolMax = eff("adaptiveRangeHighVolMaxPct", 7.0);
-    const targetFull = eff("adaptiveRangeTargetFullLevels", false);
+  // ─── Smart recommendations from gridConfigAdvisor ─────────────
+  const recommendations = useMemo(() => {
+    return buildGridConfigRecommendations({
+      config,
+      draft,
+      auditData,
+      diagnostic: auditData?.latestGridDiagnostic,
+    });
+  }, [config, draft, auditData]);
 
-    if (netProfit >= 1.2) {
-      list.push({ type: "warning", text: "Objetivo exigente. Puede reducir niveles viables o hacer no viable el rango." });
+  const handleApplyRecommendation = (rec: GridRecommendation) => {
+    if (rec.recommendedPatch && Object.keys(rec.recommendedPatch).length > 0) {
+      setDraft(prev => applyRecommendationToDraft(prev, rec));
     }
-    if (minSpacingPctReal != null && stepMax < minSpacingPctReal) {
-      list.push({ type: "danger", text: "La separación máxima permitida es menor que la separación mínima rentable. Esta configuración puede bloquear la generación de niveles." });
-    }
-    if (rangeMax < normalMax || rangeMax < highVolMax) {
-      list.push({ type: "danger", text: "El máximo global es menor que algún máximo por régimen." });
-    }
-    if (lowVolMax > normalMax) {
-      list.push({ type: "warning", text: "Baja volatilidad no debería tener más rango que lateral normal." });
-    }
-    if (normalMax > highVolMax) {
-      list.push({ type: "warning", text: "Alta volatilidad debería permitir igual o más rango que lateral normal." });
-    }
-    if (targetFull && rangeMax < 6) {
-      list.push({ type: "warning", text: "Estás pidiendo todos los niveles, pero el rango máximo puede no ser suficiente." });
-    }
-    if (!isAdaptive) {
-      list.push({ type: "warning", text: "Modo más rígido. Puede ser útil como cinturón de seguridad, pero no se adapta tanto a volatilidad." });
-    }
-    return list;
-  }, [eff, minSpacingPctReal, isAdaptive]);
+  };
 
 
   return (
@@ -604,13 +586,53 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {/* Diagnostic-based status */}
+          {(() => {
+            const diag = auditData?.latestGridDiagnostic;
+            if (!diag) {
+              return (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Info className="h-4 w-4 shrink-0" />
+                  <span>Pendiente de diagnóstico. Pulsa "Analizar ahora sin operar" en la pestaña Bandas.</span>
+                </div>
+              );
+            }
+            if (!diag.hasActiveRange) {
+              return (
+                <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  <p className="font-semibold">Sin rango activo</p>
+                  <p>{diag.humanProblem || "No hay rango activo cargado."}</p>
+                  <p className="mt-1"><strong>Próximo paso:</strong> {diag.humanNextStep}</p>
+                </div>
+              );
+            }
+            const adaptiveDecision = auditData?.rangeIntelligence?.lastAdaptiveRangeDecision;
+            if (adaptiveDecision && !adaptiveDecision.adaptiveRangeOk) {
+              return (
+                <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-700 dark:text-red-300">
+                  <p className="font-semibold">Rango no viable</p>
+                  <p>{adaptiveDecision.reason || "El rango no es viable con la configuración actual."}</p>
+                </div>
+              );
+            }
+            if (diag.professionalGeneratorGeneratedLevels === 0 && diag.repeatedCompactEventsCount > 0) {
+              return (
+                <div className="rounded-lg bg-orange-500/10 border border-orange-500/30 p-3 text-sm text-orange-700 dark:text-orange-300">
+                  <p className="font-semibold">El generador no produce niveles</p>
+                  <p>Hay {diag.repeatedCompactEventsCount} evento(s) compacto(s). Revisa las recomendaciones de abajo.</p>
+                </div>
+              );
+            }
+            return (
+              <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>El rango es viable y el generador produce niveles. Configuración correcta.</span>
+              </div>
+            );
+          })()}
+
           {/* Impact messages */}
-          {impactMessages.length === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              <span>No hay cambios pendientes. La configuración actual está guardada y funcionando.</span>
-            </div>
-          ) : (
+          {impactMessages.length > 0 && (
             <div className="space-y-2">
               <p className="text-sm font-semibold">Cambios pendientes:</p>
               {impactMessages.map((msg, i) => (
@@ -628,22 +650,49 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
             </div>
           )}
 
-          {/* Smart alerts */}
-          {alerts.length > 0 && (
+          {/* Smart recommendations */}
+          {recommendations.length > 0 && (
             <div className="space-y-2">
-              {alerts.map((alert, i) => (
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Sparkles className="h-4 w-4 text-purple-400" />
+                Recomendaciones inteligentes
+              </div>
+              {recommendations.map((rec) => (
                 <div
-                  key={i}
-                  className={`flex items-start gap-2 rounded-lg p-3 text-sm ${
-                    alert.type === "danger"
-                      ? "bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300"
-                      : "bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300"
+                  key={rec.id}
+                  className={`rounded-lg p-3 space-y-2 ${
+                    rec.severity === "danger" ? "bg-red-500/10 border border-red-500/30"
+                    : rec.severity === "warning" ? "bg-amber-500/10 border border-amber-500/30"
+                    : "bg-blue-500/10 border border-blue-500/20"
                   }`}
                 >
-                  {alert.type === "danger"
-                    ? <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                    : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />}
-                  <span>{alert.text}</span>
+                  <div className="flex items-start gap-2">
+                    {rec.severity === "danger" ? <XCircle className="h-4 w-4 mt-0.5 shrink-0 text-red-500" />
+                    : rec.severity === "warning" ? <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+                    : <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />}
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold">{rec.title}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{rec.plainExplanation}</p>
+                      {rec.expectedImpact && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          <strong>Impacto esperado:</strong> {rec.expectedImpact}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {rec.recommendedLabel && Object.keys(rec.recommendedPatch).length > 0 && (
+                    <div className="flex items-center gap-2 pl-6">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleApplyRecommendation(rec)}
+                      >
+                        <ArrowRight className="h-3 w-3 mr-1" />
+                        {rec.ctaApply}: {rec.recommendedLabel}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">Solo modifica el borrador</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

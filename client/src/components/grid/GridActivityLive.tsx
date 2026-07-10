@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -309,6 +309,63 @@ export function GridActivityLive() {
     return true;
   });
 
+  // ─── Group consecutive repeated events ────────────────────
+  const GROUPABLE_TYPES = new Set([
+    "GRID_PROFESSIONAL_GENERATOR_COMPACT",
+    "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE",
+    "GRID_SHADOW_TICK_SKIPPED",
+    "GRID_SHADOW_NO_LEVELS",
+    "GRID_SHADOW_RANGE_REUSED",
+    "GRID_LEVELS_PRESERVED_DUE_TO_CYCLE",
+  ]);
+  const GROUP_WINDOW_MS = 60_000; // 60s window
+
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  const groupedEvents = useMemo(() => {
+    type GroupItem = { type: "single"; ev: FormattedEvent } | { type: "group"; key: string; events: FormattedEvent[] };
+    const result: GroupItem[] = [];
+    let i = 0;
+    while (i < filteredEvents.length) {
+      const ev = filteredEvents[i];
+      if (!GROUPABLE_TYPES.has(ev.technicalCode)) {
+        result.push({ type: "single", ev });
+        i++;
+        continue;
+      }
+      // Collect consecutive same-type events within time window
+      const group: FormattedEvent[] = [ev];
+      let j = i + 1;
+      while (j < filteredEvents.length) {
+        const next = filteredEvents[j];
+        if (next.technicalCode !== ev.technicalCode) break;
+        const t1 = new Date(ev.timestamp).getTime();
+        const t2 = new Date(next.timestamp).getTime();
+        if (Math.abs(t2 - t1) > GROUP_WINDOW_MS) break;
+        group.push(next);
+        j++;
+      }
+      if (group.length <= 1) {
+        result.push({ type: "single", ev });
+        i++;
+      } else {
+        const key = `${ev.technicalCode}-${ev.id}`;
+        result.push({ type: "group", key, events: group });
+        i = j;
+      }
+    }
+    return result;
+  }, [filteredEvents]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   const toggleExpand = (id: number) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -479,58 +536,126 @@ export function GridActivityLive() {
               No hay eventos del Grid Aislado. Los eventos aparecerán aquí cuando el motor esté activo.
             </div>
           ) : (
-            filteredEvents.map((ev) => {
-              const CatIcon = CATEGORY_ICONS[ev.category] || Radio;
-              const SevIcon = SEVERITY_ICONS[ev.severity] || Info;
-              return (
-                <div
-                  key={ev.id}
-                  className={`rounded-lg border-l-4 ${CATEGORY_COLORS[ev.category] || ""} p-3 cursor-pointer hover:bg-muted/20 transition-all`}
-                  onClick={() => setSelectedEvent(ev)}
-                >
-                  <div className="flex items-start gap-3">
-                    {/* Icono categoría */}
-                    <div className="shrink-0 mt-0.5">
-                      <CatIcon className="h-5 w-5 text-muted-foreground" />
-                    </div>
-
-                    {/* Contenido */}
-                    <div className="flex-1 min-w-0 space-y-1.5">
-                      {/* Fila superior: tipo + chips */}
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-semibold">{ev.title}</span>
-                        <Badge variant="outline" className={`text-xs ${SEVERITY_COLORS[ev.severity] || ""}`}>
-                          <SevIcon className="h-3 w-3 mr-1" />
-                          {SEVERITY_LABELS[ev.severity]}
-                        </Badge>
-                        <Badge variant="secondary" className="text-xs">
-                          {CATEGORY_LABELS[ev.category]}
-                        </Badge>
-                        <Badge variant="outline" className="text-xs">
-                          {ev.mode}
-                        </Badge>
+            groupedEvents.map((item) => {
+              if (item.type === "single") {
+                const ev = item.ev;
+                const CatIcon = CATEGORY_ICONS[ev.category] || Radio;
+                const SevIcon = SEVERITY_ICONS[ev.severity] || Info;
+                return (
+                  <div
+                    key={ev.id}
+                    className={`rounded-lg border-l-4 ${CATEGORY_COLORS[ev.category] || ""} p-3 cursor-pointer hover:bg-muted/20 transition-all`}
+                    onClick={() => setSelectedEvent(ev)}
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Icono categoría */}
+                      <div className="shrink-0 mt-0.5">
+                        <CatIcon className="h-5 w-5 text-muted-foreground" />
                       </div>
 
-                      {/* Mensaje natural */}
-                      <p className="text-sm text-foreground/90">{ev.message}</p>
+                      {/* Contenido */}
+                      <div className="flex-1 min-w-0 space-y-1.5">
+                        {/* Fila superior: tipo + chips */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold">{ev.title}</span>
+                          <Badge variant="outline" className={`text-xs ${SEVERITY_COLORS[ev.severity] || ""}`}>
+                            <SevIcon className="h-3 w-3 mr-1" />
+                            {SEVERITY_LABELS[ev.severity]}
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs">
+                            {CATEGORY_LABELS[ev.category]}
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">
+                            {ev.mode}
+                          </Badge>
+                        </div>
 
-                      {/* Fila inferior: hora + impacto + IDs */}
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                        <span className="font-mono">{new Date(ev.timestamp).toLocaleString("es-ES")}</span>
-                        {ev.pair && <span>pair: {ev.pair}</span>}
-                        {ev.price != null && <span className="font-mono">${ev.price.toFixed(2)}</span>}
-                        {ev.cycleId && <span>ciclo: {ev.cycleId.slice(0, 8)}</span>}
-                        {ev.levelId && <span>nivel: {ev.levelId.slice(0, 8)}</span>}
+                        {/* Mensaje natural */}
+                        <p className="text-sm text-foreground/90">{ev.message}</p>
+
+                        {/* Fila inferior: hora + impacto + IDs */}
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <span className="font-mono">{new Date(ev.timestamp).toLocaleString("es-ES")}</span>
+                          {ev.pair && <span>pair: {ev.pair}</span>}
+                          {ev.price != null && <span className="font-mono">${ev.price.toFixed(2)}</span>}
+                          {ev.cycleId && <span>ciclo: {ev.cycleId.slice(0, 8)}</span>}
+                          {ev.levelId && <span>nivel: {ev.levelId.slice(0, 8)}</span>}
+                        </div>
+
+                        {/* Resumen impacto */}
+                        {ev.impactSummary && (
+                          <p className="text-xs text-muted-foreground italic border-t border-border/20 pt-1.5 mt-1">
+                            {ev.impactSummary}
+                          </p>
+                        )}
                       </div>
-
-                      {/* Resumen impacto */}
-                      {ev.impactSummary && (
-                        <p className="text-xs text-muted-foreground italic border-t border-border/20 pt-1.5 mt-1">
-                          {ev.impactSummary}
-                        </p>
-                      )}
                     </div>
                   </div>
+                );
+              }
+
+              // ─── Grouped events ───
+              const group = item.events;
+              const first = group[0];
+              const last = group[group.length - 1];
+              const CatIcon = CATEGORY_ICONS[first.category] || Radio;
+              const SevIcon = SEVERITY_ICONS[first.severity] || Info;
+              const isExpanded = expandedGroups.has(item.key);
+
+              return (
+                <div key={item.key}>
+                  {/* Group header */}
+                  <div
+                    className={`rounded-lg border-l-4 ${CATEGORY_COLORS[first.category] || ""} p-3 cursor-pointer hover:bg-muted/20 transition-all`}
+                    onClick={() => toggleGroup(item.key)}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="shrink-0 mt-0.5">
+                        <CatIcon className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold">{first.title}</span>
+                          <Badge variant="outline" className={`text-xs ${SEVERITY_COLORS[first.severity] || ""}`}>
+                            <SevIcon className="h-3 w-3 mr-1" />
+                            {SEVERITY_LABELS[first.severity]}
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs">
+                            {CATEGORY_LABELS[first.category]}
+                          </Badge>
+                          <Badge variant="outline" className="text-xs bg-orange-500/10 text-orange-600 border-orange-500/20">
+                            {group.length} repetidos
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-foreground/90">
+                          {first.message} <span className="text-muted-foreground">({group.length} veces en menos de 1 min)</span>
+                        </p>
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <span className="font-mono">{new Date(first.timestamp).toLocaleString("es-ES")}</span>
+                          <span className="text-muted-foreground">hasta {new Date(last.timestamp).toLocaleTimeString("es-ES")}</span>
+                          <span className="text-blue-500">{isExpanded ? "Contraer" : "Expandir"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded group items */}
+                  {isExpanded && (
+                    <div className="ml-6 mt-1 space-y-1 border-l-2 border-border/30 pl-3">
+                      {group.map((ev) => (
+                        <div
+                          key={ev.id}
+                          className={`rounded-lg border-l-4 ${CATEGORY_COLORS[ev.category] || ""} p-2 cursor-pointer hover:bg-muted/20 transition-all`}
+                          onClick={() => setSelectedEvent(ev)}
+                        >
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="font-mono text-muted-foreground">{new Date(ev.timestamp).toLocaleTimeString("es-ES")}</span>
+                            <span className="text-foreground/80">{ev.message}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })

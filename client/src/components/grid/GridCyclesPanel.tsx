@@ -97,13 +97,15 @@ function Row({ label, value, mono }: { label: string; value: React.ReactNode; mo
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-type CycleFilter = "all" | "active" | "completed" | "cancelled";
+type CycleFilter = "all" | "active" | "completed" | "cancelled" | "rango-activo" | "historicos";
 
 const FILTER_LABELS: Record<CycleFilter, string> = {
   all: "Todos",
   active: "Activos",
   completed: "Cerrados",
   cancelled: "Cancelados",
+  "rango-activo": "Rango vigente",
+  "historicos": "Históricos",
 };
 
 export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = true, activeRangeVersionId = null }: GridCyclesPanelProps) {
@@ -122,12 +124,21 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
     return sum + qty * bp;
   }, 0);
 
+  const activeRangeCycles = activeRangeVersionId
+    ? cycles.filter((c: any) => c?.rangeVersionId === activeRangeVersionId)
+    : [];
+  const historicalCycles = activeRangeVersionId
+    ? cycles.filter((c: any) => c?.rangeVersionId !== activeRangeVersionId)
+    : cycles;
+
   const filteredCycles = useMemo(() => {
     if (cycleFilter === "active") return cycles.filter((c: any) => isCycleOpen(c));
     if (cycleFilter === "completed") return cycles.filter((c: any) => c.status === "completed");
     if (cycleFilter === "cancelled") return cycles.filter((c: any) => c.status === "cancelled" || c.status === "error");
+    if (cycleFilter === "rango-activo") return activeRangeCycles;
+    if (cycleFilter === "historicos") return historicalCycles;
     return cycles;
-  }, [cycles, cycleFilter]);
+  }, [cycles, cycleFilter, activeRangeVersionId]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCycles.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
@@ -180,7 +191,9 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
                 const count = f === "all" ? cycles.length
                   : f === "active" ? activeCycles.length
                   : f === "completed" ? completedCycles.length
-                  : cancelledCycles.length;
+                  : f === "cancelled" ? cancelledCycles.length
+                  : f === "rango-activo" ? activeRangeCycles.length
+                  : historicalCycles.length;
                 return (
                   <Button
                     key={f}
@@ -202,6 +215,7 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
                   <tr className="text-xs text-muted-foreground border-b">
                     <th className="text-left py-2 px-2">#</th>
                     <th className="text-left py-2 px-2">Estado</th>
+                    <th className="text-left py-2 px-2">Rango</th>
                     <th className="text-left py-2 px-2">Compra</th>
                     <th className="text-left py-2 px-2">Venta</th>
                     <th className="text-left py-2 px-2">PnL neto</th>
@@ -231,6 +245,13 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
                           >
                             {getCycleStatusLabel(cycle.status)}
                           </Badge>
+                        </td>
+                        <td className="py-2 px-2 text-xs whitespace-nowrap">
+                          {cycle.rangeVersionId ? (
+                            <span className={cycle.rangeVersionId === activeRangeVersionId ? "text-green-400" : "text-muted-foreground"}>
+                              {cycle.rangeVersionId === activeRangeVersionId ? "Activo" : "Histórico"}
+                            </span>
+                          ) : "—"}
                         </td>
                         <td className="py-2 px-2 font-mono text-xs">
                           {cycle.buyPrice != null ? `$${(toNum(cycle.buyPrice) ?? 0).toFixed(2)}` : "—"}

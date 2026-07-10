@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, TrendingUp, TrendingDown, Activity, History, BarChart3, Info, ShieldCheck, ShieldAlert, Gauge, FlaskConical } from "lucide-react";
-import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
+import { AlertCircle, TrendingUp, TrendingDown, Activity, History, BarChart3, Info, ShieldCheck, ShieldAlert, Gauge, FlaskConical, Stethoscope, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION, ANALYZE_NOW_EXPLANATION } from "@/lib/gridTranslate";
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   GRID_RANGE_ACTIVATED: "Rango activado",
@@ -43,6 +44,11 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
   const upperPrice = range?.upperPrice != null ? Number(range.upperPrice) : null;
   const centerPrice = range?.centerPrice != null ? Number(range.centerPrice) : null;
 
+  // Diagnostic data
+  const diagnostic = auditData?.latestGridDiagnostic;
+  const sv = diagnostic?.lastShadowValidationResult;
+  const pg = auditData?.professionalGenerator;
+
   // Calculate position of current price within the band
   const pricePositionPct = (currentPrice != null && lowerPrice != null && upperPrice != null && upperPrice > lowerPrice)
     ? ((currentPrice - lowerPrice) / (upperPrice - lowerPrice)) * 100
@@ -52,6 +58,35 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
   const marketCtx = auditData?.marketContext;
   const atrPct = marketCtx?.atrPct != null ? Number(marketCtx.atrPct) : null;
   const regime = range?.regime || range?.method || marketCtx?.regime || null;
+
+  // Analyze button state
+  const [analyzeState, setAnalyzeState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [analyzeMsg, setAnalyzeMsg] = useState<string>("");
+
+  const handleAnalyze = async () => {
+    setAnalyzeState("loading");
+    setAnalyzeMsg("");
+    try {
+      const resp = await fetch("/api/grid-isolated/shadow-validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (data.success === false) {
+        setAnalyzeState("error");
+        setAnalyzeMsg(data.reason || data.message || "Error en la validación");
+      } else {
+        setAnalyzeState("ok");
+        setAnalyzeMsg("Análisis completado. Recarga para ver los resultados.");
+        setTimeout(() => window.location.reload(), 1500);
+      }
+    } catch (err: any) {
+      setAnalyzeState("error");
+      setAnalyzeMsg(err.message || "Error de conexión");
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -108,8 +143,116 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           {!hasActiveRange ? (
-            <div className="rounded-lg bg-muted/30 p-4 text-sm text-muted-foreground">
-              {range?.naturalReason || "El Grid todavía no tiene un rango guardado. Esto es normal si no ha habido una evaluación reciente o si no hay ciclos abiertos."}
+            <div className="space-y-4">
+              {/* ─── Sin rango activo: explicación clara ─── */}
+              <div className="rounded-lg bg-amber-500/5 border border-amber-500/30 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-amber-500" />
+                  <h4 className="text-sm font-semibold">Sin rango activo cargado</h4>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {diagnostic?.humanProblem || range?.naturalReason || "El Grid no tiene un rango activo en memoria. Esto es normal tras un reinicio o si todavía no ha habido una evaluación reciente del mercado."}
+                </p>
+                {diagnostic?.humanNextStep && (
+                  <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
+                    <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                    <span><strong>Próximo paso:</strong> {diagnostic.humanNextStep}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* ─── Último análisis del motor ─── */}
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Stethoscope className="h-4 w-4 text-blue-400" />
+                  <h4 className="text-sm font-semibold">Último análisis del motor</h4>
+                </div>
+
+                {/* Estado del motor */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                  <div className="rounded bg-muted/30 p-2">
+                    <p className="text-muted-foreground">Modo actual</p>
+                    <p className="font-mono font-semibold">{diagnostic?.mode || "—"}</p>
+                  </div>
+                  <div className="rounded bg-muted/30 p-2">
+                    <p className="text-muted-foreground">Motor activo</p>
+                    <p className="font-mono font-semibold">{diagnostic?.isActive ? "Sí" : "No"}</p>
+                  </div>
+                  <div className="rounded bg-muted/30 p-2">
+                    <p className="text-muted-foreground">Scheduler corriendo</p>
+                    <p className="font-mono font-semibold">{diagnostic?.isRunning ? "Sí" : "No"}</p>
+                  </div>
+                </div>
+
+                {/* Último tick */}
+                {diagnostic?.lastTickReason && (
+                  <div className="rounded bg-muted/20 p-2 text-xs">
+                    <p className="text-muted-foreground">Último motivo del motor:</p>
+                    <p className="font-mono">{diagnostic.lastTickReason}</p>
+                    {diagnostic.lastTickAt && (
+                      <p className="text-muted-foreground mt-1">
+                        {new Date(diagnostic.lastTickAt).toLocaleString("es-ES")}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Última validación SHADOW */}
+                {sv && (
+                  <div className="rounded bg-muted/20 p-2 text-xs space-y-1">
+                    <p className="text-muted-foreground font-semibold">Última validación SHADOW:</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>Niveles generados: <span className="font-mono">{sv.levelsGenerated ?? 0}</span></div>
+                      <div>Órdenes reales: <span className="font-mono">{sv.realOrdersPlaced ? "Sí" : "No"}</span></div>
+                      {sv.reasonNoLevels && (
+                        <div className="col-span-2 text-amber-600 dark:text-amber-400">
+                          Motivo sin niveles: {sv.reasonNoLevels}
+                        </div>
+                      )}
+                      {sv.nextAction && (
+                        <div className="col-span-2 text-blue-600 dark:text-blue-400">
+                          Acción: {sv.nextAction}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Generador profesional */}
+                {pg?.available && (
+                  <div className="rounded bg-muted/20 p-2 text-xs space-y-1">
+                    <p className="text-muted-foreground font-semibold">Generador profesional:</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>Viabilidad: <span className="font-mono">{pg.viabilityStatus ?? "—"}</span></div>
+                      <div>Niveles generados: <span className="font-mono">{(pg.generatedBuyLevels ?? 0) + (pg.generatedSellLevels ?? 0)}</span></div>
+                      {pg.reason && (
+                        <div className="col-span-2 text-muted-foreground">{pg.reason}</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Eventos compactos repetidos */}
+                {diagnostic?.repeatedCompactEventsCount > 0 && (
+                  <div className="rounded bg-orange-500/10 border border-orange-500/30 p-2 text-xs text-orange-700 dark:text-orange-300">
+                    <p>El generador profesional ha producido <strong>{diagnostic.repeatedCompactEventsCount}</strong> evento(s) compacto(s) recientemente. El rango no es viable con la configuración actual.</p>
+                  </div>
+                )}
+
+                {/* Lifecycle del rango */}
+                {diagnostic?.rangeLifecycleStatus && diagnostic.rangeLifecycleStatus !== "unknown_lifecycle" && (
+                  <div className="rounded bg-muted/20 p-2 text-xs space-y-1">
+                    <p className="text-muted-foreground font-semibold">Ciclo de vida del rango:</p>
+                    <div>Estado: <Badge variant="outline" className="text-xs">{translateGridLabel(diagnostic.rangeLifecycleStatus)}</Badge></div>
+                    {diagnostic.rangeLifecycleReason && (
+                      <p className="text-muted-foreground">{diagnostic.rangeLifecycleReason}</p>
+                    )}
+                    {diagnostic.rangeLifecycleNextAction && (
+                      <p className="text-muted-foreground"><strong>Acción:</strong> {diagnostic.rangeLifecycleNextAction}</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <>
@@ -322,9 +465,19 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
         <CardContent className="space-y-3">
           <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3 text-sm text-blue-700 dark:text-blue-300">
             <p>
-              <strong>Explicación:</strong> {range?.naturalReason || "No hay un rango activo para evaluar."}
+              <strong>Explicación:</strong> {diagnostic?.humanSummary || range?.naturalReason || "No hay un rango activo para evaluar."}
             </p>
-            {range?.impact && (
+            {diagnostic?.humanProblem && (
+              <p className="mt-1">
+                <strong>Problema:</strong> {diagnostic.humanProblem}
+              </p>
+            )}
+            {diagnostic?.humanNextStep && (
+              <p className="mt-1">
+                <strong>Próximo paso:</strong> {diagnostic.humanNextStep}
+              </p>
+            )}
+            {range?.impact && !diagnostic?.humanProblem && (
               <p className="mt-1">
                 <strong>Impacto:</strong> {range.impact}
               </p>
@@ -336,26 +489,38 @@ export function GridBandsRangesPanel({ auditData }: GridBandsRangesPanelProps) {
             <p>{SHADOW_EXPLANATION}</p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                fetch("/api/grid-isolated/shadow-validate", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({}),
-                }).then(() => {
-                  window.location.reload();
-                });
-              }}
-            >
-              <FlaskConical className="h-4 w-4 mr-1" />
-              Analizar ahora sin operar
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Ejecuta una validación en modo solo lectura. No envía órdenes ni modifica el rango.
-            </span>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleAnalyze}
+                disabled={analyzeState === "loading"}
+              >
+                {analyzeState === "loading" ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Analizando...</>
+                ) : analyzeState === "ok" ? (
+                  <><CheckCircle2 className="h-4 w-4 mr-1 text-green-500" /> Análisis completado</>
+                ) : analyzeState === "error" ? (
+                  <><XCircle className="h-4 w-4 mr-1 text-red-500" /> Reintentar análisis</>
+                ) : (
+                  <><FlaskConical className="h-4 w-4 mr-1" /> Analizar ahora sin operar</>
+                )}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {ANALYZE_NOW_EXPLANATION}
+              </span>
+            </div>
+            {analyzeState === "error" && analyzeMsg && (
+              <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-700 dark:text-red-300">
+                {analyzeMsg}
+              </div>
+            )}
+            {analyzeState === "ok" && analyzeMsg && (
+              <div className="rounded-lg bg-green-500/10 border border-green-500/30 p-2 text-xs text-green-700 dark:text-green-300">
+                {analyzeMsg}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
