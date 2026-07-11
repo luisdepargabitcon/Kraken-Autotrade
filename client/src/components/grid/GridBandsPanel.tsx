@@ -15,6 +15,8 @@ import { GridAnalyzeNowButton } from "./GridAnalyzeNowButton";
 interface GridBandsPanelProps {
   auditData?: any;
   onAuditRefreshed?: () => void;
+  onTryRecommendation?: (rec: any) => void;
+  onGoToRecommendationTarget?: (rec: any) => void;
 }
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
@@ -41,7 +43,7 @@ function fmtPct(v: unknown): string {
   return Number.isFinite(n) ? `${n.toFixed(2)}%` : "—";
 }
 
-export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelProps) {
+export function GridBandsPanel({ auditData, onAuditRefreshed, onTryRecommendation, onGoToRecommendationTarget }: GridBandsPanelProps) {
   const currentOperationalState = auditData?.currentOperationalState;
   const activeRange = auditData?.activeRange;
   const diagnostic = auditData?.latestGridDiagnostic;
@@ -90,12 +92,6 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
 
   const rangeDifference = bandRequiredRangePct != null && bandAllowedRangePct != null
     ? bandRequiredRangePct - bandAllowedRangePct : null;
-
-  function applyRecommendationToDraft(rec: any) {
-    if (!rec.recommendedPatch || Object.keys(rec.recommendedPatch).length === 0) return;
-    setDraftNotice(`Cambio aplicado al borrador: ${rec.title}. Pulsa "Guardar cambios" en Ajustes para hacerlo efectivo.`);
-    setTimeout(() => setDraftNotice(null), 6000);
-  }
 
   return (
     <div className="space-y-4">
@@ -304,17 +300,16 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                 <h4 className="text-sm font-semibold">Banda no viable</h4>
               </div>
               <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
-                <p>{bandExplanation || "Con los ajustes actuales, el Grid no puede crear una banda rentable y segura."}</p>
+                <p>El Grid calculó una banda orientativa, pero no la activa porque con la configuración actual no caben niveles suficientes.</p>
               </div>
               {(() => {
-                const adaptiveDecision = auditData?.rangeIntelligence?.lastAdaptiveRangeDecision;
-                const allowedPct = adaptiveDecision?.regimeMaxPct ?? null;
-                const requiredPct = adaptiveDecision?.finalRangePct ?? null;
+                const allowedPct = bandAllowedRangePct;
+                const requiredPct = bandRequiredRangePct;
                 const netProfitPct = auditData?.config?.netProfitTargetPct ?? null;
                 if (allowedPct != null && requiredPct != null && requiredPct > allowedPct) {
                   const explanation = buildRangeExplanation(allowedPct, requiredPct, netProfitPct);
                   return (
-                    <div className="rounded-lg bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300">
+                    <div className="rounded-lg bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300 whitespace-pre-line">
                       <p>{explanation}</p>
                     </div>
                   );
@@ -371,11 +366,11 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Niveles que cabrían</p>
-                  <p className="text-sm font-bold">{(bandBuyFit ?? 0) + (bandSellFit ?? 0)}</p>
+                  <p className="text-sm font-bold">{bandBuyFit ?? 0} compra + {bandSellFit ?? 0} venta</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Niveles solicitados</p>
-                  <p className="text-sm font-bold">{(bandReqBuy ?? 0) + (bandReqSell ?? 0)}</p>
+                  <p className="text-sm font-bold">{bandReqBuy ?? 0} compra + {bandReqSell ?? 0} venta</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Niveles generados</p>
@@ -679,7 +674,7 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
           </div>
 
           {draftNotice && (
-            <div className="rounded-lg bg-green-500/10 border border-green-500/30 p-3 text-sm text-green-700 dark:text-green-300">
+            <div className="rounded-lg bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300">
               {draftNotice}
             </div>
           )}
@@ -710,25 +705,27 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2 mt-2">
-                      {rec.ctaApply && rec.recommendedPatch && Object.keys(rec.recommendedPatch).length > 0 && (
+                      {rec.recommendedPatch && Object.keys(rec.recommendedPatch).length > 0 && (
                         <Button
                           variant="outline"
                           size="sm"
                           className="text-xs"
-                          onClick={() => applyRecommendationToDraft(rec)}
+                          onClick={() => {
+                            onTryRecommendation?.(rec);
+                            setDraftNotice("Cambio aplicado en pantalla en la pestaña Ajustes. Todavía no está guardado.");
+                            setTimeout(() => setDraftNotice(null), 6000);
+                          }}
                         >
-                          {renderSafeGridText(rec.ctaApply)}
+                          Probar este ajuste
                         </Button>
                       )}
-                      {rec.ctaGoTo && (
-                        <Button variant="ghost" size="sm" className="text-xs" onClick={() => {
-                          const tab = document.querySelector('[data-value="ajustes"]') as HTMLElement | null;
-                          tab?.click();
-                        }}>
-                          {renderSafeGridText(rec.ctaGoTo)}
+                      {rec.targetField && (
+                        <Button variant="ghost" size="sm" className="text-xs" onClick={() => onGoToRecommendationTarget?.(rec)}>
+                          Ir al ajuste
                         </Button>
                       )}
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">Solo cambia los valores en pantalla. No se guarda hasta que pulses Guardar cambios.</p>
                   </div>
                 ))}
               </div>

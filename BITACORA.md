@@ -5,6 +5,61 @@
 
 ---
 
+## 2026-07-12 — GRID FASE 3C.4-F: Acciones reales de recomendaciones y navegación a Ajustes
+
+### Resumen
+Conexión real de botones de recomendaciones desde cualquier pestaña (Bandas, Resumen, Niveles, Ciclos) hacia Ajustes > Avanzado. Corrección de diagnosticBand con precios 0. Textos de botones centralizados ("Probar este ajuste" + "Ir al ajuste"). Explicación humana mejorada del problema 4.25% vs 7.10%.
+
+### Problema
+- Los botones de recomendación en Bandas usaban una función local `applyRecommendationToDraft` que no hacía nada real
+- El botón "Ir al ajuste" hacía un hack con `document.querySelector` que no funcionaba
+- Los textos `ctaApply` del backend ("Aplicar recomendación") se usaban directamente como texto del botón
+- `diagnosticBand` mostraba `lowerPrice=0, upperPrice=0` cuando los precios operativos eran 0
+- No había navegación real entre pestañas al pulsar recomendaciones
+
+### Solución
+1. **Controlador global en `GridIsolated.tsx`**:
+   - Estado: `pendingRecommendationPatch`, `focusConfigField`, `activeSettingsSubTab`
+   - `handleTryRecommendation(rec)`: aplica patch, cambia a Ajustes > Avanzado, focus al slider
+   - `handleGoToRecommendationTarget(rec)`: navega a Ajustes > Avanzado, focus al slider sin modificar draft
+   - `handleRecommendationApplied()`: limpia el patch pendiente
+2. **`GridAdvancedConfig.tsx`**: acepta `externalRecommendationPatch` y `externalFocusField` vía useEffect
+3. **`GridAjustesPanel.tsx`**: pasa through `activeSubTab`, `externalRecommendationPatch`, `externalFocusField`, `onRecommendationApplied`
+4. **`GridBandsPanel.tsx`**:
+   - Botones hardcodeados: "Probar este ajuste" + "Ir al ajuste" (ignora `ctaApply` del backend)
+   - `onTryRecommendation` prop: navega a Ajustes y aplica patch
+   - `onGoToRecommendationTarget` prop: navega a Ajustes y enfoca slider
+   - Texto: "Solo cambia los valores en pantalla. No se guarda hasta que pulses Guardar cambios."
+   - Niveles: "1 compra + 1 venta" en vez de suma
+5. **`buildGridAuditViewModel.ts`**: trata precios 0 como inválidos, recalcula orientativos desde centerPrice + finalRangePct
+6. **`shared/gridConfigAdvisor.ts`**: `buildRangeExplanation` mejorada con texto más claro y formato multi-línea
+
+### Archivos afectados
+- `client/src/pages/GridIsolated.tsx`
+- `client/src/components/grid/GridAjustesPanel.tsx`
+- `client/src/components/grid/GridAdvancedConfig.tsx`
+- `client/src/components/grid/GridBandsPanel.tsx`
+- `server/services/gridIsolated/buildGridAuditViewModel.ts`
+- `shared/gridConfigAdvisor.ts`
+- `client/src/lib/__tests__/gridConfigAdvisor.test.ts`
+
+### Validaciones
+- `npm run check`: ✅
+- 8 ficheros obligatorios: ✅ 226/226 tests
+- `npm run build`: ✅
+
+### Seguridad
+- NO REAL. NO órdenes reales. NO compra/venta real.
+- Recomendaciones solo modifican draft en pantalla.
+- Navegación entre pestañas no activa nada.
+- Guardado requiere confirmación explícita en Ajustes.
+
+### Estado final
+- SHADOW, isActive=true, isRunning=true, realOpenOrdersCount=0, openCycles=0
+- Pendiente: validación visual post-deploy en staging VPS
+
+---
+
 ## 2026-07-12 — GRID FASE 3C.4-E: Recomendaciones aplicables, perfiles BTC lateral y UX borrador
 
 ### Resumen

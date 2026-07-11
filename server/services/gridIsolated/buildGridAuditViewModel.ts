@@ -593,16 +593,23 @@ function buildDiagnosticBand(
     const rangeNeededForMinViable = toNum(adaptiveDecision.rangeNeededForMinViableLevelsPct);
 
     // Try to get lower/center/upper from operational fields
+    // Treat 0 as invalid (not null) — 0 means the field was sent but has no real value
     let lowerPrice = toNum(adaptiveDecision.operationalLower);
     let upperPrice = toNum(adaptiveDecision.operationalUpper);
     let centerPrice = toNum(adaptiveDecision.centerPrice) ?? toNum(professionalGenerator?.centerPrice);
 
-    // If no explicit operational prices, calculate from currentPrice + finalRangePct
-    if ((lowerPrice == null || upperPrice == null) && currentPrice != null && finalRangePct != null && finalRangePct > 0) {
+    // Treat 0 prices as invalid
+    if (lowerPrice != null && lowerPrice <= 0) lowerPrice = null;
+    if (upperPrice != null && upperPrice <= 0) upperPrice = null;
+    if (centerPrice != null && centerPrice <= 0) centerPrice = null;
+
+    // If no valid operational prices, calculate from centerPrice or currentPrice + finalRangePct
+    if ((lowerPrice == null || upperPrice == null) && (centerPrice != null || currentPrice != null) && finalRangePct != null && finalRangePct > 0) {
+      const refPrice = centerPrice ?? currentPrice!;
       const halfPct = finalRangePct / 200;
-      lowerPrice = currentPrice * (1 - halfPct);
-      upperPrice = currentPrice * (1 + halfPct);
-      centerPrice = centerPrice ?? currentPrice;
+      lowerPrice = refPrice * (1 - halfPct);
+      upperPrice = refPrice * (1 + halfPct);
+      centerPrice = centerPrice ?? refPrice;
     }
 
     const widthPct = lowerPrice != null && upperPrice != null && centerPrice != null && centerPrice > 0

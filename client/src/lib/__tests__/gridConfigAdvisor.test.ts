@@ -506,7 +506,8 @@ describe("gridConfigAdvisor", () => {
       expect(text).toContain("1.20");
       expect(text).toContain("7.10");
       expect(text).toContain("4.25");
-      expect(text).toContain("no sirva para Grid");
+      expect(text).toContain("SHADOW");
+      expect(text).toContain("0.70");
     });
   });
 });

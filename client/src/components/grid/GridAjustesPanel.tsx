@@ -28,14 +28,28 @@ interface GridAjustesPanelProps {
   showHodlConfirm: boolean;
   setShowHodlConfirm: (v: boolean) => void;
   onAuditRefreshed?: () => void;
+  activeSubTab?: string;
+  onSubTabChange?: (tab: string) => void;
+  externalRecommendationPatch?: Record<string, any> | null;
+  externalFocusField?: string | null;
+  onRecommendationApplied?: () => void;
 }
 
 export function GridAjustesPanel({
   config, status, auditData, unlockCheck, onConfigChange, onConfirmChange,
   onReconcile, reconcilePending, showHodlConfirm, setShowHodlConfirm,
-  onAuditRefreshed,
+  onAuditRefreshed, activeSubTab, onSubTabChange, externalRecommendationPatch, externalFocusField, onRecommendationApplied,
 }: GridAjustesPanelProps) {
-  const [subTab, setSubTab] = useState("general");
+  const [subTab, setSubTab] = useState(activeSubTab || "general");
+
+  useEffect(() => {
+    if (activeSubTab && activeSubTab !== subTab) setSubTab(activeSubTab);
+  }, [activeSubTab]);
+
+  const handleSubTabChange = (tab: string) => {
+    setSubTab(tab);
+    onSubTabChange?.(tab);
+  };
 
   const hasActiveRange = auditData?.currentOperationalState?.hasActiveRange ?? auditData?.activeRange?.exists ?? false;
 
@@ -48,7 +62,7 @@ export function GridAjustesPanel({
           onAuditRefreshed={onAuditRefreshed}
         />
       )}
-      <Tabs value={subTab} onValueChange={setSubTab}>
+      <Tabs value={subTab} onValueChange={handleSubTabChange}>
         <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 gap-1 h-auto p-1">
           <TabsTrigger value="general" className="text-sm">General</TabsTrigger>
           <TabsTrigger value="cartera" className="text-sm">Cartera</TabsTrigger>
@@ -439,6 +453,9 @@ export function GridAjustesPanel({
             onConfirmChange={onConfirmChange}
             onConfigChange={onConfigChange}
             onAuditRefreshed={onAuditRefreshed}
+            externalRecommendationPatch={externalRecommendationPatch}
+            externalFocusField={externalFocusField}
+            onRecommendationApplied={onRecommendationApplied}
           />
         </TabsContent>
 

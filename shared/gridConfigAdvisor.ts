@@ -84,13 +84,17 @@ export function getBtcProfile(id: string): BtcProfile | undefined {
 
 export function buildRangeExplanation(allowedPct: number | null, requiredPct: number | null, netProfitPct: number | null): string {
   if (allowedPct == null || requiredPct == null) return "";
-  let text = `BTC puede moverse 1,5%–3% en un día, pero tu configuración actual pide demasiado beneficio por cada ciclo.`;
+  let text = "BTC sí puede servir para Grid. El problema es la configuración actual.\n\n";
   if (netProfitPct != null) {
-    text += ` Con ${netProfitPct.toFixed(2)}% neto por nivel, el motor necesita separar mucho compras y ventas.`;
+    text += "Ahora el Grid intenta ganar " + netProfitPct.toFixed(2) + "% neto por cada tramo. Para conseguir eso necesita separar mucho las compras y ventas.\n\n";
   }
-  text += ` Por eso, para colocar al menos 3 niveles rentables, necesita una banda aproximada del ${requiredPct.toFixed(2)}%.`;
-  text += ` Ahora el límite está en ${allowedPct.toFixed(2)}%, así que no caben suficientes niveles.`;
-  text += ` No significa que BTC no sirva para Grid. Significa que esta configuración es demasiado exigente para una banda compacta.`;
+  text += "Con los niveles pedidos, necesita aproximadamente un " + requiredPct.toFixed(2) + "% de anchura para montar una banda completa.\n\n";
+  text += "Pero tu ajuste actual solo permite " + allowedPct.toFixed(2) + "%, así que no caben niveles suficientes.\n\n";
+  text += "Solución recomendada para probar en SHADOW:\n";
+  text += "- Bajar objetivo neto a 0.70%–0.90%\n";
+  text += "- Ampliar rango normal a 6.00%–7.00%\n";
+  text += "- Mantener mínimo viable en 3 niveles\n";
+  text += "- No forzar todos los niveles";
   return text;
 }
 

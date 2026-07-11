@@ -20,6 +20,9 @@ interface GridAdvancedConfigProps {
   onConfirmChange: (key: string, label: string, oldValue: any, newValue: any, impact: string, riskLevel: "low" | "medium" | "high", affectsCurrent: boolean, requiresRecalc: boolean) => void;
   onConfigChange: (key: string, value: any) => void;
   onAuditRefreshed?: () => void;
+  externalRecommendationPatch?: Record<string, any> | null;
+  externalFocusField?: string | null;
+  onRecommendationApplied?: () => void;
 }
 
 const PRESETS: Record<string, { values: Record<string, any>; text: string }> = {
@@ -70,7 +73,7 @@ const DRAFT_KEYS = [
   "enforceCompactRange", "gridRangeMaxPct", "maxDistanceFromCenterPct", "maxSellDistanceFromNearestBuyPct",
 ];
 
-export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfigChange, onAuditRefreshed }: GridAdvancedConfigProps) {
+export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfigChange, onAuditRefreshed, externalRecommendationPatch, externalFocusField, onRecommendationApplied }: GridAdvancedConfigProps) {
   const [draft, setDraft] = useState<Record<string, any>>({});
   const [showApplySummary, setShowApplySummary] = useState(false);
   const [fixedCompactOpen, setFixedCompactOpen] = useState(false);
@@ -101,6 +104,28 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
       setDraft(newDraft);
     }
   }, [config]);
+
+  // Apply external recommendation patch (from Bandas/Resumen/Niveles/Ciclos)
+  useEffect(() => {
+    if (externalRecommendationPatch && Object.keys(externalRecommendationPatch).length > 0) {
+      setDraft(prev => ({ ...prev, ...externalRecommendationPatch }));
+      setDraftNotice("Cambio aplicado en pantalla. Todavía no está guardado.");
+      setSavedNotice(false);
+      setTimeout(() => setDraftNotice(null), 6000);
+      onRecommendationApplied?.();
+    }
+  }, [externalRecommendationPatch]);
+
+  // Focus/scroll to field when externalFocusField changes
+  useEffect(() => {
+    if (externalFocusField) {
+      // Delay to allow tab switch + render
+      const timer = setTimeout(() => {
+        scrollToField(externalFocusField);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [externalFocusField]);
 
   // Get effective value: draft > config > default
   const eff = useCallback((key: string, fallback: any) => {
@@ -648,7 +673,7 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
               return (
                 <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300 space-y-1">
                   <p className="font-semibold">¿Por qué no cabe la banda?</p>
-                  <p>{explanation}</p>
+                  <p className="whitespace-pre-line">{explanation}</p>
                 </div>
               );
             }

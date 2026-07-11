@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,6 +34,35 @@ export default function GridIsolated() {
   const [showHodlConfirm, setShowHodlConfirm] = useState(false);
   const [pendingChange, setPendingChange] = useState<ConfigChange | null>(null);
   const [pendingChangeCallback, setPendingChangeCallback] = useState<(() => void) | null>(null);
+
+  // ─── Global recommendation controller ───────────────────
+  const [activeSettingsSubTab, setActiveSettingsSubTab] = useState("general");
+  const [pendingRecommendationPatch, setPendingRecommendationPatch] = useState<Record<string, any> | null>(null);
+  const [focusConfigField, setFocusConfigField] = useState<string | null>(null);
+
+  const handleTryRecommendation = useCallback((rec: any) => {
+    if (!rec.recommendedPatch || Object.keys(rec.recommendedPatch).length === 0) return;
+    setPendingRecommendationPatch(rec.recommendedPatch);
+    if (rec.targetField) setFocusConfigField(rec.targetField);
+    setActiveSettingsSubTab("avanzado");
+    setActiveTab("ajustes");
+  }, []);
+
+  const handleGoToRecommendationTarget = useCallback((rec: any) => {
+    if (rec.targetField) setFocusConfigField(rec.targetField);
+    setActiveSettingsSubTab("avanzado");
+    setActiveTab("ajustes");
+  }, []);
+
+  const handleRecommendationApplied = useCallback(() => {
+    setPendingRecommendationPatch(null);
+  }, []);
+
+  const handleFocusConfigField = useCallback((field: string) => {
+    setFocusConfigField(field);
+    setActiveSettingsSubTab("avanzado");
+    setActiveTab("ajustes");
+  }, []);
 
   // ─── Queries ─────────────────────────────────────────────
   const { data: config, isLoading: configLoading } = useQuery({
@@ -301,7 +330,12 @@ export default function GridIsolated() {
 
         {/* 3. Bandas y Rangos Tab */}
         <TabsContent value="bandas" className="space-y-4">
-          <GridBandsPanel auditData={auditData} onAuditRefreshed={refreshAudit} />
+          <GridBandsPanel
+            auditData={auditData}
+            onAuditRefreshed={refreshAudit}
+            onTryRecommendation={handleTryRecommendation}
+            onGoToRecommendationTarget={handleGoToRecommendationTarget}
+          />
         </TabsContent>
 
         {/* 4. Actividad en Directo Tab */}
@@ -380,6 +414,11 @@ export default function GridIsolated() {
             showHodlConfirm={showHodlConfirm}
             setShowHodlConfirm={setShowHodlConfirm}
             onAuditRefreshed={refreshAudit}
+            activeSubTab={activeSettingsSubTab}
+            onSubTabChange={setActiveSettingsSubTab}
+            externalRecommendationPatch={pendingRecommendationPatch}
+            externalFocusField={focusConfigField}
+            onRecommendationApplied={handleRecommendationApplied}
           />
         </TabsContent>
 
