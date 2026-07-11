@@ -9,7 +9,6 @@ import {
 } from "lucide-react";
 import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION, ANALYZE_NOW_EXPLANATION } from "@/lib/gridTranslate";
 import { renderSafeGridText } from "@/lib/renderSafeGridText";
-import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
 import { GridAnalyzeNowButton } from "./GridAnalyzeNowButton";
 
 interface GridBandsPanelProps {
@@ -36,6 +35,11 @@ function fmtPrice(v: unknown): string {
   return Number.isFinite(n) ? `$${n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—";
 }
 
+function fmtPct(v: unknown): string {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? `${n.toFixed(2)}%` : "—";
+}
+
 export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelProps) {
   const currentOperationalState = auditData?.currentOperationalState;
   const activeRange = auditData?.activeRange;
@@ -47,8 +51,11 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
   const rangeHistory: any[] = auditData?.rangeHistory || [];
   const rangeIntelligence = auditData?.rangeIntelligence;
   const adaptiveDecision = rangeIntelligence?.lastAdaptiveRangeDecision;
+  const diagnosticBand = auditData?.diagnosticBand;
 
   const hasActiveRange = currentOperationalState?.hasActiveRange ?? activeRange?.exists ?? false;
+  const bandStatus = diagnosticBand?.status ?? "not_enough_data";
+  const bandExists = diagnosticBand?.exists ?? false;
   const currentPrice = marketContext?.currentPrice;
   const lowerPrice = activeRange?.lowerPrice;
   const upperPrice = activeRange?.upperPrice;
@@ -61,28 +68,54 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
   const marketBollingerWidthPct = marketContext?.bollingerWidthPct ?? marketContext?.bandWidthPct ?? null;
 
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+
+  const bandLower = diagnosticBand?.lowerPrice ?? null;
+  const bandCenter = diagnosticBand?.centerPrice ?? null;
+  const bandUpper = diagnosticBand?.upperPrice ?? null;
+  const bandWidthPct = diagnosticBand?.widthPct ?? null;
+  const bandRequiredRangePct = diagnosticBand?.requiredRangePct ?? null;
+  const bandAllowedRangePct = diagnosticBand?.allowedRangePct ?? null;
+  const bandFinalRangePct = diagnosticBand?.finalRangePct ?? null;
+  const bandBuyFit = diagnosticBand?.buyLevelsWouldFit ?? null;
+  const bandSellFit = diagnosticBand?.sellLevelsWouldFit ?? null;
+  const bandReqBuy = diagnosticBand?.requestedBuyLevels ?? null;
+  const bandReqSell = diagnosticBand?.requestedSellLevels ?? null;
+  const bandGenBuy = diagnosticBand?.generatedBuyLevels ?? null;
+  const bandGenSell = diagnosticBand?.generatedSellLevels ?? null;
+  const bandReason = diagnosticBand?.reason ?? null;
+  const bandExplanation = diagnosticBand?.plainExplanation ?? null;
+  const bandNextAction = diagnosticBand?.nextAction ?? null;
+
+  const rangeDifference = bandRequiredRangePct != null && bandAllowedRangePct != null
+    ? bandRequiredRangePct - bandAllowedRangePct : null;
+
+  function applyRecommendationToDraft(rec: any) {
+    if (!rec.recommendedPatch || Object.keys(rec.recommendedPatch).length === 0) return;
+    setDraftNotice(`Cambio aplicado al borrador: ${rec.title}. Pulsa "Guardar cambios" en Ajustes para hacerlo efectivo.`);
+    setTimeout(() => setDraftNotice(null), 6000);
+  }
 
   return (
     <div className="space-y-4">
-      {/* ─── Bloque 1: Estado ─────────────────────────────── */}
+      {/* ─── Bloque 1: Estado de la banda del Grid ─────────── */}
       <Card className="border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-card">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Activity className="h-4 w-4 text-blue-400" />
-            Estado del Grid
+            Estado de la banda del Grid
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!hasActiveRange && (
-            <GridNoActiveRangeBlock
-              currentOperationalState={currentOperationalState}
-              latestGridDiagnostic={diagnostic}
-              onAuditRefreshed={onAuditRefreshed}
-            />
-          )}
-
-          {hasActiveRange && (
+          {/* ─── CASO A: Banda activa ─── */}
+          {bandStatus === "active" && hasActiveRange && (
             <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-5 w-5 text-green-500" />
+                <Badge variant="default" className="bg-green-500">Banda activa: Sí</Badge>
+                <Badge variant="outline" className="text-xs">Modo: {currentOperationalState?.status?.startsWith("real") ? "REAL" : "SHADOW"}</Badge>
+              </div>
+
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Precio actual</p>
@@ -90,13 +123,11 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Ancho Bandas Bollinger</p>
-                  <p className="text-sm font-mono font-bold">
-                    {marketBollingerWidthPct != null ? `${Number(marketBollingerWidthPct).toFixed(2)}%` : "—"}
-                  </p>
+                  <p className="text-sm font-mono font-bold">{fmtPct(marketBollingerWidthPct)}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Volatilidad (ATR)</p>
-                  <p className="text-sm font-mono font-bold">{atrPct != null ? `${Number(atrPct).toFixed(2)}%` : "—"}</p>
+                  <p className="text-sm font-mono font-bold">{fmtPct(atrPct)}</p>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">Tipo de mercado</p>
@@ -110,7 +141,7 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-red-400 font-mono">{fmtPrice(lowerPrice)}</span>
-                    <span className="text-muted-foreground">Rango activo</span>
+                    <span className="text-muted-foreground">Banda activa</span>
                     <span className="text-green-400 font-mono">{fmtPrice(upperPrice)}</span>
                   </div>
                   <div className="relative h-8 rounded-lg bg-gradient-to-r from-red-500/20 via-yellow-500/20 to-green-500/20 border border-border/30">
@@ -161,9 +192,9 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                 <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-blue-500/5">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Info className="h-3 w-3 text-blue-400" />
-                    <p className="text-xs text-muted-foreground">Ancho del rango</p>
+                    <p className="text-xs text-muted-foreground">Ancho de la banda</p>
                   </div>
-                  <p className="text-sm font-bold text-blue-400">{widthPct != null ? `${Number(widthPct).toFixed(2)}%` : "—"}</p>
+                  <p className="text-sm font-bold text-blue-400">{fmtPct(widthPct)}</p>
                 </div>
               </div>
 
@@ -173,21 +204,237 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                   <p className="text-sm font-mono font-bold">{auditData?.summary?.pair || auditData?.config?.pair || "BTC/USD"}</p>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Origen del rango</p>
+                  <p className="text-xs text-muted-foreground">Origen de la banda</p>
                   <Badge variant="outline" className="text-xs mt-1">
                     {rangeSource ? translateGridLabel(rangeSource) : "—"}
                   </Badge>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Niveles generados</p>
-                  <p className="text-sm font-bold">{diagnostic?.levelsGenerated ?? diagnostic?.professionalGeneratorGeneratedLevels ?? "—"}</p>
+                  <p className="text-xs text-muted-foreground">Niveles vigentes</p>
+                  <p className="text-sm font-bold">{diagnostic?.levelsGenerated ?? "—"}</p>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Estado</p>
-                  <Badge variant={activeRange?.status === "active" || activeRange?.status === "activo" ? "default" : "secondary"} className="mt-1">
-                    {activeRange?.status === "active" || activeRange?.status === "activo" ? "Activo" : translateGridLabel(activeRange?.status)}
-                  </Badge>
+                  <p className="text-xs text-muted-foreground">Fecha de creación</p>
+                  <p className="text-sm font-bold">{activeRange?.createdAt ? new Date(activeRange.createdAt).toLocaleDateString("es-ES") : "—"}</p>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── CASO B: Banda calculada, no activada ─── */}
+          {bandStatus === "calculated_not_active" && bandExists && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Info className="h-5 w-5 text-blue-400" />
+                <h4 className="text-sm font-semibold">Banda calculada, no activada</h4>
+              </div>
+              <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3 text-sm text-blue-700 dark:text-blue-300">
+                <p>{bandExplanation || "El Grid ha calculado una zona orientativa, pero no la ha activado porque la configuración actual no permite crear niveles seguros."}</p>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-red-500/5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <TrendingDown className="h-3 w-3 text-red-400" />
+                    <p className="text-xs text-muted-foreground">Precio inferior calculado</p>
+                  </div>
+                  <p className="text-sm font-bold text-red-400">{fmtPrice(bandLower)}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-yellow-500/5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <BarChart3 className="h-3 w-3 text-yellow-400" />
+                    <p className="text-xs text-muted-foreground">Precio central</p>
+                  </div>
+                  <p className="text-sm font-bold text-yellow-400">{fmtPrice(bandCenter)}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-green-500/5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <TrendingUp className="h-3 w-3 text-green-400" />
+                    <p className="text-xs text-muted-foreground">Precio superior calculado</p>
+                  </div>
+                  <p className="text-sm font-bold text-green-400">{fmtPrice(bandUpper)}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-gradient-to-br from-card to-blue-500/5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Info className="h-3 w-3 text-blue-400" />
+                    <p className="text-xs text-muted-foreground">Ancho calculado</p>
+                  </div>
+                  <p className="text-sm font-bold text-blue-400">{fmtPct(bandWidthPct)}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Rango permitido</p>
+                  <p className="text-sm font-mono font-bold">{fmtPct(bandAllowedRangePct)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Rango necesario para mínimos</p>
+                  <p className="text-sm font-mono font-bold">{fmtPct(bandRequiredRangePct)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Niveles que cabrían</p>
+                  <p className="text-sm font-bold">{(bandBuyFit ?? 0) + (bandSellFit ?? 0)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Niveles solicitados</p>
+                  <p className="text-sm font-bold">{(bandReqBuy ?? 0) + (bandReqSell ?? 0)}</p>
+                </div>
+              </div>
+
+              {bandReason && (
+                <div className="rounded-lg bg-muted/20 border p-3 text-sm text-muted-foreground">
+                  <strong>Motivo:</strong> {renderSafeGridText(bandReason)}
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row items-start gap-3">
+                <GridAnalyzeNowButton onAuditRefreshed={onAuditRefreshed} />
+                <span className="text-xs text-muted-foreground pt-2">{ANALYZE_NOW_EXPLANATION}</span>
+              </div>
+            </div>
+          )}
+
+          {/* ─── CASO C: Banda no viable ─── */}
+          {bandStatus === "not_viable" && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-5 w-5 text-amber-500" />
+                <h4 className="text-sm font-semibold">Banda no viable</h4>
+              </div>
+              <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
+                <p>{bandExplanation || "Con los ajustes actuales, el Grid no puede crear una banda rentable y segura."}</p>
+              </div>
+
+              {bandExists && bandLower != null && bandUpper != null && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Precio inferior orientativo</p>
+                    <p className="text-sm font-bold text-red-400">{fmtPrice(bandLower)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Precio central orientativo</p>
+                    <p className="text-sm font-bold text-yellow-400">{fmtPrice(bandCenter)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Precio superior orientativo</p>
+                    <p className="text-sm font-bold text-green-400">{fmtPrice(bandUpper)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Ancho orientativo</p>
+                    <p className="text-sm font-bold text-blue-400">{fmtPct(bandWidthPct)}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Rango que permite la configuración</p>
+                  <p className="text-sm font-mono font-bold">{fmtPct(bandAllowedRangePct)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Rango necesario para mínimos</p>
+                  <p className="text-sm font-mono font-bold">{fmtPct(bandRequiredRangePct)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Diferencia (necesario − permitido)</p>
+                  <p className={`text-sm font-mono font-bold ${rangeDifference != null && rangeDifference > 0 ? "text-red-400" : "text-green-400"}`}>
+                    {rangeDifference != null ? `${rangeDifference.toFixed(2)}%` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Objetivo neto actual</p>
+                  <p className="text-sm font-mono font-bold">{fmtPct(auditData?.config?.netProfitTargetPct)}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Separación mínima rentable</p>
+                  <p className="text-sm font-mono font-bold">{fmtPct(adaptiveDecision?.minSpacingPctReal ?? professionalGenerator?.minSpacingPctReal)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Niveles que cabrían</p>
+                  <p className="text-sm font-bold">{(bandBuyFit ?? 0) + (bandSellFit ?? 0)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Niveles solicitados</p>
+                  <p className="text-sm font-bold">{(bandReqBuy ?? 0) + (bandReqSell ?? 0)}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Niveles generados</p>
+                  <p className="text-sm font-bold">{(bandGenBuy ?? 0) + (bandGenSell ?? 0)}</p>
+                </div>
+              </div>
+
+              {bandReason && (
+                <div className="rounded-lg bg-muted/20 border p-3 text-sm text-muted-foreground">
+                  <strong>Motivo:</strong> {renderSafeGridText(bandReason)}
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <GridAnalyzeNowButton onAuditRefreshed={onAuditRefreshed} />
+                <Button variant="outline" size="sm" onClick={() => {
+                  const tab = document.querySelector('[data-value="ajustes"]') as HTMLElement | null;
+                  tab?.click();
+                }}>
+                  <Gauge className="h-4 w-4 mr-1" />
+                  Ir a Ajustes
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ─── CASO D: Sin diagnóstico / Mercado no apto ─── */}
+          {(bandStatus === "not_enough_data" || bandStatus === "market_unsuitable") && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                {bandStatus === "market_unsuitable" ? (
+                  <TrendingDown className="h-5 w-5 text-amber-500" />
+                ) : (
+                  <Info className="h-5 w-5 text-muted-foreground" />
+                )}
+                <h4 className="text-sm font-semibold">
+                  {bandStatus === "market_unsuitable" ? "Mercado no apto" : "Sin análisis de banda todavía"}
+                </h4>
+              </div>
+              <div className="rounded-lg bg-muted/20 border p-3 text-sm text-muted-foreground">
+                <p>{bandExplanation || "No hay análisis de banda todavía."}</p>
+              </div>
+              {bandNextAction && (
+                <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{bandNextAction}</span>
+                </div>
+              )}
+              <div className="flex flex-col sm:flex-row items-start gap-3">
+                <GridAnalyzeNowButton onAuditRefreshed={onAuditRefreshed} />
+                <span className="text-xs text-muted-foreground pt-2">{ANALYZE_NOW_EXPLANATION}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Market context always visible if available */}
+          {currentPrice != null && bandStatus !== "active" && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t">
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Precio actual</p>
+                <p className="text-lg font-bold text-blue-400">{fmtPrice(currentPrice)}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Ancho Bandas Bollinger</p>
+                <p className="text-sm font-mono font-bold">{fmtPct(marketBollingerWidthPct)}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Volatilidad (ATR)</p>
+                <p className="text-sm font-mono font-bold">{fmtPct(atrPct)}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Tipo de mercado</p>
+                <Badge variant="outline" className="text-xs mt-1">
+                  {regime ? translateGridLabel(regime) : "Sin datos"}
+                </Badge>
               </div>
             </div>
           )}
@@ -250,7 +497,7 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
 
           {professionalGenerator?.available && (
             <div className="rounded-lg bg-muted/20 border p-3 text-sm space-y-1">
-              <p className="text-muted-foreground font-semibold">Generador profesional:</p>
+              <p className="text-muted-foreground font-semibold">Motor de cálculo:</p>
               <div className="grid grid-cols-2 gap-2">
                 <div>Viabilidad: <span className="font-mono">{professionalGenerator.viabilityStatus ?? "—"}</span></div>
                 <div>Niveles generados: <span className="font-mono">{(professionalGenerator.generatedBuyLevels ?? 0) + (professionalGenerator.generatedSellLevels ?? 0)}</span></div>
@@ -261,57 +508,51 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
 
           {diagnostic?.repeatedCompactEventsCount > 0 && (
             <div className="rounded-lg bg-orange-500/10 border border-orange-500/30 p-2 text-xs text-orange-700 dark:text-orange-300">
-              <p>El generador profesional ha producido <strong>{diagnostic.repeatedCompactEventsCount}</strong> evento(s) compacto(s) recientemente. El rango no es viable con la configuración actual.</p>
+              <p>El motor de cálculo ha producido <strong>{diagnostic.repeatedCompactEventsCount}</strong> evaluación(es) donde el rango queda demasiado estrecho. La configuración actual no permite crear una banda rentable.</p>
             </div>
           )}
 
           {diagnostic?.notViableEventsCount > 0 && (
             <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-700 dark:text-red-300">
-              <p>El generador profesional marcó <strong>{diagnostic.notViableEventsCount}</strong> rango(s) como no viable(s). Revisa la configuración.</p>
+              <p>El motor de cálculo marcó <strong>{diagnostic.notViableEventsCount}</strong> banda(s) como no viable(s). Revisa la configuración.</p>
             </div>
           )}
 
           {rangeIntelligence && (
-            <div className="rounded-lg bg-muted/20 border p-3 text-sm space-y-2">
-              <div className="flex items-center gap-2">
+            <details className="rounded-lg bg-muted/20 border p-3 text-sm">
+              <summary className="cursor-pointer text-sm font-semibold flex items-center gap-2">
                 <Gauge className="h-4 w-4 text-muted-foreground" />
-                <h4 className="font-semibold">Inteligencia de rango</h4>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                <div className="rounded bg-muted/30 p-2">
-                  <p className="text-muted-foreground">Control</p>
-                  <p className="font-mono font-semibold">{translateGridLabel(rangeIntelligence.rangeControlMode)}</p>
-                </div>
-                <div className="rounded bg-muted/30 p-2">
-                  <p className="text-muted-foreground">Perfil</p>
-                  <p className="font-mono font-semibold">{translateGridLabel(rangeIntelligence.adaptiveRangeProfile)}</p>
-                </div>
-                <div className="rounded bg-muted/30 p-2">
-                  <p className="text-muted-foreground">Mín / Máx %</p>
-                  <p className="font-mono font-semibold">{rangeIntelligence.adaptiveRangeMinPct} / {rangeIntelligence.adaptiveRangeMaxPct}</p>
+                Inteligencia de rango (detalle técnico)
+              </summary>
+              <div className="space-y-2 mt-2">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                  <div className="rounded bg-muted/30 p-2">
+                    <p className="text-muted-foreground">Control</p>
+                    <p className="font-mono font-semibold">{translateGridLabel(rangeIntelligence.rangeControlMode)}</p>
+                  </div>
+                  <div className="rounded bg-muted/30 p-2">
+                    <p className="text-muted-foreground">Perfil</p>
+                    <p className="font-mono font-semibold">{translateGridLabel(rangeIntelligence.adaptiveRangeProfile)}</p>
+                  </div>
+                  <div className="rounded bg-muted/30 p-2">
+                    <p className="text-muted-foreground">Mín / Máx %</p>
+                    <p className="font-mono font-semibold">{rangeIntelligence.adaptiveRangeMinPct} / {rangeIntelligence.adaptiveRangeMaxPct}</p>
+                  </div>
                 </div>
                 {adaptiveDecision && (
-                  <div className="rounded bg-muted/30 p-2 col-span-2 md:col-span-3">
-                    <p className="text-muted-foreground">Última decisión adaptativa</p>
+                  <div className="rounded bg-muted/30 p-2">
+                    <p className="text-muted-foreground mb-1">Última decisión adaptativa</p>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                       <div><span className="text-muted-foreground">Viable:</span> <span>{adaptiveDecision.adaptiveRangeOk ? "Sí" : "No"}</span></div>
                       <div><span className="text-muted-foreground">Rango final:</span> <span>{adaptiveDecision.finalRangePct != null ? `${Number(adaptiveDecision.finalRangePct).toFixed(2)}%` : "—"}</span></div>
-                      <div><span className="text-muted-foreground">BUY caben:</span> <span>{adaptiveDecision.buyLevelsWouldFit ?? "—"}</span></div>
-                      <div><span className="text-muted-foreground">SELL caben:</span> <span>{adaptiveDecision.sellLevelsWouldFit ?? "—"}</span></div>
-                      <div><span className="text-muted-foreground">BUY solicitados:</span> <span>{adaptiveDecision.requestedBuyLevels ?? "—"}</span></div>
-                      <div><span className="text-muted-foreground">SELL solicitados:</span> <span>{adaptiveDecision.requestedSellLevels ?? "—"}</span></div>
-                      <div><span className="text-muted-foreground">Separación compra:</span> <span>{adaptiveDecision.buySpacingPct != null ? `${Number(adaptiveDecision.buySpacingPct).toFixed(2)}%` : "—"}</span></div>
-                      <div><span className="text-muted-foreground">Separación venta:</span> <span>{adaptiveDecision.sellSpacingPct != null ? `${Number(adaptiveDecision.sellSpacingPct).toFixed(2)}%` : "—"}</span></div>
-                      <div className="col-span-2 md:col-span-4"><span className="text-muted-foreground">Motivo:</span> <span>{renderSafeGridText(adaptiveDecision.reason || adaptiveDecision.naturalReason)}</span></div>
+                      <div><span className="text-muted-foreground">Niveles que caben:</span> <span>{adaptiveDecision.levelsWouldFitAtFinalRange ?? "—"}</span></div>
+                      <div><span className="text-muted-foreground">Solicitados:</span> <span>{(adaptiveDecision.requestedBuyLevels ?? 0) + (adaptiveDecision.requestedSellLevels ?? 0)}</span></div>
                     </div>
-                    <details className="mt-2">
-                      <summary className="text-xs text-muted-foreground cursor-pointer">Ver detalle técnico</summary>
-                      <pre className="text-xs overflow-auto mt-1">{JSON.stringify(adaptiveDecision, null, 2)}</pre>
-                    </details>
+                    <pre className="text-xs overflow-auto mt-2">{JSON.stringify(adaptiveDecision, null, 2)}</pre>
                   </div>
                 )}
               </div>
-            </div>
+            </details>
           )}
 
           {/* Histórico de cambios de rango (colapsado por defecto) */}
@@ -421,14 +662,20 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
             <span className="text-xs text-muted-foreground pt-2">{ANALYZE_NOW_EXPLANATION}</span>
           </div>
 
+          {draftNotice && (
+            <div className="rounded-lg bg-green-500/10 border border-green-500/30 p-3 text-sm text-green-700 dark:text-green-300">
+              {draftNotice}
+            </div>
+          )}
+
           {recommendations.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Lightbulb className="h-4 w-4 text-amber-500" />
-                <h4 className="text-sm font-semibold">Recomendaciones de configuración</h4>
+                <h4 className="text-sm font-semibold">Configuración recomendada</h4>
               </div>
               <div className="space-y-2">
-                {recommendations.map((rec: any) => (
+                {recommendations.filter((rec: any) => rec.severity !== "info").map((rec: any) => (
                   <div key={rec.id} className={`rounded-lg border p-3 ${
                     rec.severity === "danger" ? "bg-red-500/5 border-red-500/20"
                     : rec.severity === "warning" ? "bg-amber-500/5 border-amber-500/20"
@@ -439,7 +686,6 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                         rec.severity === "danger" ? "text-red-500" : rec.severity === "warning" ? "text-amber-500" : "text-blue-500"
                       }`} />
                       <p className="text-sm font-semibold">{renderSafeGridText(rec.title)}</p>
-                      <Badge variant="outline" className="text-xs ml-auto">{rec.severity}</Badge>
                     </div>
                     <p className="text-sm text-muted-foreground mt-1">{renderSafeGridText(rec.plainExplanation ?? rec.explanation)}</p>
                     {rec.currentValue != null && rec.recommendedValue != null && (
@@ -447,15 +693,26 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                         Valor actual: <span className="font-mono">{renderSafeGridText(rec.currentValue)}</span> → recomendado: <span className="font-mono">{renderSafeGridText(rec.recommendedValue)}</span>
                       </p>
                     )}
-                    {rec.ctas && rec.ctas.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {rec.ctas.map((cta: any, idx: number) => (
-                          <Button key={idx} variant="outline" size="sm" className="text-xs" asChild>
-                            <a href={renderSafeGridText(cta.target, "#")}>{renderSafeGridText(cta.label)}</a>
-                          </Button>
-                        ))}
-                      </div>
-                    )}
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {rec.ctaApply && rec.recommendedPatch && Object.keys(rec.recommendedPatch).length > 0 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-xs"
+                          onClick={() => applyRecommendationToDraft(rec)}
+                        >
+                          {renderSafeGridText(rec.ctaApply)}
+                        </Button>
+                      )}
+                      {rec.ctaGoTo && (
+                        <Button variant="ghost" size="sm" className="text-xs" onClick={() => {
+                          const tab = document.querySelector('[data-value="ajustes"]') as HTMLElement | null;
+                          tab?.click();
+                        }}>
+                          {renderSafeGridText(rec.ctaGoTo)}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

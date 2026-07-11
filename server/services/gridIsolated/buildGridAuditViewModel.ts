@@ -15,12 +15,35 @@
 import { buildGridConfigRecommendations } from "@shared/gridConfigAdvisor";
 import { evaluateActiveRangeLifecycle } from "./gridRangeLifecycle";
 
+export interface GridDiagnosticBand {
+  exists: boolean;
+  status: "active" | "calculated_not_active" | "not_viable" | "not_enough_data" | "market_unsuitable";
+  lowerPrice: number | null;
+  centerPrice: number | null;
+  upperPrice: number | null;
+  widthPct: number | null;
+  requiredRangePct: number | null;
+  allowedRangePct: number | null;
+  finalRangePct: number | null;
+  buyLevelsWouldFit: number | null;
+  sellLevelsWouldFit: number | null;
+  requestedBuyLevels: number | null;
+  requestedSellLevels: number | null;
+  generatedBuyLevels: number | null;
+  generatedSellLevels: number | null;
+  reason: string;
+  plainExplanation: string;
+  nextAction: string;
+  source: "active_range" | "last_adaptive_decision" | "last_shadow_validation" | "professional_generator" | "none";
+}
+
 export interface GridAuditViewModel {
   currentOperationalState: GridOperationalState;
   activeRange: GridActiveRangeView;
   counters: GridCounters;
   latestGridDiagnostic: GridLatestDiagnostic;
   recommendations: any[];
+  diagnosticBand: GridDiagnosticBand;
 }
 
 export interface GridOperationalState {
@@ -275,10 +298,10 @@ function buildLatestGridDiagnostic(
       humanNextStep = "Espera al siguiente tick o pulsa Analizar mercado ahora.";
     }
   } else {
-    humanSummary = `El Grid no tiene un rango activo cargado en el motor runtime. El modo actual es ${mode}.`;
+    humanSummary = `El motor analizó el mercado, pero no activó ninguna banda. El modo actual es ${mode}.`;
     if (blockedByNoRange) {
-      humanProblem = "No hay rango activo cargado en el motor runtime. El rango puede existir en auditoría pero no en memoria tras reinicio.";
-      humanNextStep = "Pulsa \"Analizar mercado ahora\" para que el motor evalúe el mercado y proponga un rango.";
+      humanProblem = "El motor no tiene una banda activa en memoria. Esto puede ocurrir tras un reinicio o si no ha habido evaluación reciente.";
+      humanNextStep = "Pulsa \"Analizar mercado ahora\" para que el motor evalúe el mercado y proponga una banda.";
     } else if (blockedByUnsuitableMarket) {
       humanProblem = sv?.marketUnsuitableReason || "Las condiciones de mercado no son aptas para el Grid.";
       humanNextStep = "Espera a que el mercado cambie o ajusta la configuración del rango.";
@@ -292,11 +315,11 @@ function buildLatestGridDiagnostic(
       humanProblem = "El guardián de seguridad está activo (pump/dump o cortocircuito).";
       humanNextStep = "Espera a que el guardián se reinicie automáticamente.";
     } else if (repeatedCompactEventsCount > 0) {
-      humanProblem = `El generador profesional ha producido ${repeatedCompactEventsCount} evento(s) compacto(s) recientemente. El rango no es viable con la configuración actual.`;
-      humanNextStep = "Revisa las recomendaciones de configuración o ajusta el beneficio neto objetivo.";
+      humanProblem = `El motor de cálculo ha producido ${repeatedCompactEventsCount} evaluación(es) recientes donde el rango queda demasiado estrecho. La configuración actual no permite crear una banda rentable.`;
+      humanNextStep = "Revisa las recomendaciones de configuración: bajar el objetivo neto o ampliar el rango máximo.";
     } else if (notViableEvents.length > 0) {
-      humanProblem = "El generador profesional marcó el rango como no viable en la última evaluación.";
-      humanNextStep = "Ajusta la configuración: baja el beneficio neto objetivo o amplía el rango máximo.";
+      humanProblem = "El motor de cálculo marcó la banda como no viable en la última evaluación.";
+      humanNextStep = "Ajusta la configuración: bajar el objetivo neto o ampliar el rango máximo.";
     } else {
       humanProblem = "No hay suficiente información de diagnóstico todavía.";
       humanNextStep = "Pulsa \"Analizar mercado ahora\" para generar un diagnóstico.";
@@ -525,6 +548,214 @@ function buildCurrentOperationalState(
   };
 }
 
+function buildDiagnosticBand(
+  activeRange: GridActiveRangeView,
+  adaptiveDecision: any,
+  professionalGenerator: any,
+  marketContext: any,
+  config: any,
+  diagnostic: GridLatestDiagnostic
+): GridDiagnosticBand {
+  const currentPrice = toNum(marketContext?.currentPrice);
+  const netProfitTargetPct = toNum(config?.netProfitTargetPct) ?? 0.8;
+  const minSpacingPctReal = toNum(adaptiveDecision?.minSpacingPctReal) ?? toNum(professionalGenerator?.minSpacingPctReal);
+
+  // CASE A: activeRange exists
+  if (activeRange.exists && activeRange.lowerPrice != null && activeRange.upperPrice != null) {
+    return {
+      exists: true,
+      status: "active",
+      lowerPrice: activeRange.lowerPrice,
+      centerPrice: activeRange.centerPrice,
+      upperPrice: activeRange.upperPrice,
+      widthPct: activeRange.widthPct,
+      requiredRangePct: adaptiveDecision?.rangeNeededForMinViableLevelsPct ?? null,
+      allowedRangePct: adaptiveDecision?.regimeMaxPct ?? null,
+      finalRangePct: adaptiveDecision?.finalRangePct ?? activeRange.widthPct,
+      buyLevelsWouldFit: adaptiveDecision?.buyLevelsWouldFit ?? null,
+      sellLevelsWouldFit: adaptiveDecision?.sellLevelsWouldFit ?? null,
+      requestedBuyLevels: adaptiveDecision?.requestedBuyLevels ?? null,
+      requestedSellLevels: adaptiveDecision?.requestedSellLevels ?? null,
+      generatedBuyLevels: professionalGenerator?.generatedBuyLevels ?? null,
+      generatedSellLevels: professionalGenerator?.generatedSellLevels ?? null,
+      reason: "Rango activo cargado en el motor.",
+      plainExplanation: "El Grid tiene un rango activo y está operando en modo simulación (SHADOW).",
+      nextAction: "Revisa los niveles y la actividad para ver el estado de la simulación.",
+      source: "active_range",
+    };
+  }
+
+  // CASE B/C: no activeRange, but adaptiveDecision exists
+  if (adaptiveDecision) {
+    const finalRangePct = toNum(adaptiveDecision.finalRangePct);
+    const adaptiveOk = adaptiveDecision.adaptiveRangeOk === true;
+    const regimeMaxPct = toNum(adaptiveDecision.regimeMaxPct);
+    const rangeNeededForMinViable = toNum(adaptiveDecision.rangeNeededForMinViableLevelsPct);
+
+    // Try to get lower/center/upper from operational fields
+    let lowerPrice = toNum(adaptiveDecision.operationalLower);
+    let upperPrice = toNum(adaptiveDecision.operationalUpper);
+    let centerPrice = toNum(adaptiveDecision.centerPrice) ?? toNum(professionalGenerator?.centerPrice);
+
+    // If no explicit operational prices, calculate from currentPrice + finalRangePct
+    if ((lowerPrice == null || upperPrice == null) && currentPrice != null && finalRangePct != null && finalRangePct > 0) {
+      const halfPct = finalRangePct / 200;
+      lowerPrice = currentPrice * (1 - halfPct);
+      upperPrice = currentPrice * (1 + halfPct);
+      centerPrice = centerPrice ?? currentPrice;
+    }
+
+    const widthPct = lowerPrice != null && upperPrice != null && centerPrice != null && centerPrice > 0
+      ? ((upperPrice - lowerPrice) / centerPrice) * 100 : finalRangePct;
+
+    const hasCalculatedBand = lowerPrice != null && upperPrice != null && centerPrice != null;
+
+    if (adaptiveOk) {
+      // Band is viable but not activated
+      return {
+        exists: true,
+        status: "calculated_not_active",
+        lowerPrice,
+        centerPrice,
+        upperPrice,
+        widthPct,
+        requiredRangePct: rangeNeededForMinViable,
+        allowedRangePct: regimeMaxPct,
+        finalRangePct,
+        buyLevelsWouldFit: adaptiveDecision.buyLevelsWouldFit ?? null,
+        sellLevelsWouldFit: adaptiveDecision.sellLevelsWouldFit ?? null,
+        requestedBuyLevels: adaptiveDecision.requestedBuyLevels ?? null,
+        requestedSellLevels: adaptiveDecision.requestedSellLevels ?? null,
+        generatedBuyLevels: professionalGenerator?.generatedBuyLevels ?? null,
+        generatedSellLevels: professionalGenerator?.generatedSellLevels ?? null,
+        reason: adaptiveDecision.reason ?? "El motor calculó una banda viable pero no la activó automáticamente.",
+        plainExplanation: "El Grid ha calculado una zona orientativa viable, pero no la ha activado porque necesita confirmación o aún no se han dado las condiciones para activarla.",
+        nextAction: "Pulsa \"Analizar mercado ahora\" para forzar una nueva evaluación, o ajusta la configuración si quieres que el motor active el rango.",
+        source: "last_adaptive_decision",
+      };
+    }
+
+    // Not viable
+    if (hasCalculatedBand) {
+      const requiredRangePct = rangeNeededForMinViable;
+      const allowedRangePct = regimeMaxPct;
+      const difference = requiredRangePct != null && allowedRangePct != null
+        ? requiredRangePct - allowedRangePct : null;
+
+      let plainExplanation = "Con los ajustes actuales, el Grid no puede crear una banda rentable y segura.";
+      if (difference != null && difference > 0 && requiredRangePct != null && allowedRangePct != null) {
+        plainExplanation += ` El rango que permite la configuración (${allowedRangePct.toFixed(2)}%) es menor que el rango necesario para el mínimo de niveles (${requiredRangePct.toFixed(2)}%).`;
+      }
+      if (minSpacingPctReal != null && netProfitTargetPct != null) {
+        plainExplanation += ` El objetivo neto de ${netProfitTargetPct.toFixed(2)}% exige una separación mínima de ${minSpacingPctReal.toFixed(2)}% entre niveles.`;
+      }
+
+      return {
+        exists: true,
+        status: "not_viable",
+        lowerPrice,
+        centerPrice,
+        upperPrice,
+        widthPct,
+        requiredRangePct,
+        allowedRangePct,
+        finalRangePct,
+        buyLevelsWouldFit: adaptiveDecision.buyLevelsWouldFit ?? null,
+        sellLevelsWouldFit: adaptiveDecision.sellLevelsWouldFit ?? null,
+        requestedBuyLevels: adaptiveDecision.requestedBuyLevels ?? null,
+        requestedSellLevels: adaptiveDecision.requestedSellLevels ?? null,
+        generatedBuyLevels: professionalGenerator?.generatedBuyLevels ?? null,
+        generatedSellLevels: professionalGenerator?.generatedSellLevels ?? null,
+        reason: adaptiveDecision.reason ?? "No viable con la configuración actual.",
+        plainExplanation,
+        nextAction: "Revisa las recomendaciones de configuración: bajar el objetivo neto o ampliar el rango máximo.",
+        source: "last_adaptive_decision",
+      };
+    }
+  }
+
+  // Check professionalGenerator for compact/not_viable
+  if (professionalGenerator?.available) {
+    const pgLower = toNum(professionalGenerator.operationalLower);
+    const pgUpper = toNum(professionalGenerator.operationalUpper);
+    const pgCenter = toNum(professionalGenerator.centerPrice);
+    const viability = professionalGenerator.viabilityStatus;
+
+    if (pgLower != null && pgUpper != null && pgCenter != null && pgLower > 0 && pgUpper > pgLower) {
+      const widthPct = ((pgUpper - pgLower) / pgCenter) * 100;
+      return {
+        exists: true,
+        status: viability === "compact" || viability === "not_viable" ? "not_viable" : "calculated_not_active",
+        lowerPrice: pgLower,
+        centerPrice: pgCenter,
+        upperPrice: pgUpper,
+        widthPct,
+        requiredRangePct: adaptiveDecision?.rangeNeededForMinViableLevelsPct ?? null,
+        allowedRangePct: adaptiveDecision?.regimeMaxPct ?? null,
+        finalRangePct: toNum(professionalGenerator.operationalBandWidthPct) ?? widthPct,
+        buyLevelsWouldFit: adaptiveDecision?.buyLevelsWouldFit ?? null,
+        sellLevelsWouldFit: adaptiveDecision?.sellLevelsWouldFit ?? null,
+        requestedBuyLevels: professionalGenerator.requestedBuyLevels ?? null,
+        requestedSellLevels: professionalGenerator.requestedSellLevels ?? null,
+        generatedBuyLevels: professionalGenerator.generatedBuyLevels ?? null,
+        generatedSellLevels: professionalGenerator.generatedSellLevels ?? null,
+        reason: professionalGenerator.reason ?? "El rango permitido solo deja espacio para muy pocos niveles.",
+        plainExplanation: "El motor de cálculo evaluó el mercado, pero el rango permitido es demasiado estrecho para crear una estructura completa de niveles rentables.",
+        nextAction: "Revisa las recomendaciones: bajar el objetivo neto o ampliar el rango máximo permitiría más niveles.",
+        source: "professional_generator",
+      };
+    }
+  }
+
+  // Check if market is unsuitable
+  if (diagnostic.professionalGeneratorViabilityStatus === "market_unsuitable" || diagnostic.lastTickReason?.startsWith("Condiciones de mercado no válidas")) {
+    return {
+      exists: false,
+      status: "market_unsuitable",
+      lowerPrice: null,
+      centerPrice: null,
+      upperPrice: null,
+      widthPct: null,
+      requiredRangePct: null,
+      allowedRangePct: null,
+      finalRangePct: null,
+      buyLevelsWouldFit: null,
+      sellLevelsWouldFit: null,
+      requestedBuyLevels: null,
+      requestedSellLevels: null,
+      generatedBuyLevels: null,
+      generatedSellLevels: null,
+      reason: "Las condiciones de mercado no son aptas para el Grid en este momento.",
+      plainExplanation: "El motor analizó el mercado, pero las condiciones actuales no son adecuadas para crear una banda.",
+      nextAction: "Espera a que el mercado cambie o ajusta la configuración del rango.",
+      source: "none",
+    };
+  }
+
+  // CASE D: no diagnostic at all
+  return {
+    exists: false,
+    status: "not_enough_data",
+    lowerPrice: null,
+    centerPrice: null,
+    upperPrice: null,
+    widthPct: null,
+    requiredRangePct: null,
+    allowedRangePct: null,
+    finalRangePct: null,
+    buyLevelsWouldFit: null,
+    sellLevelsWouldFit: null,
+    requestedBuyLevels: null,
+    requestedSellLevels: null,
+    generatedBuyLevels: null,
+    generatedSellLevels: null,
+    reason: "No hay análisis de banda todavía.",
+    plainExplanation: "El motor aún no ha evaluado el mercado. Pulsa \"Analizar mercado ahora\" para generar un diagnóstico.",
+    nextAction: "Pulsa \"Analizar mercado ahora\" para que el motor evalúe el mercado y calcule una banda.",
+    source: "none",
+  };
+}
+
 function buildRecommendations(
   config: any,
   auditData: any,
@@ -609,11 +840,21 @@ export function buildGridAuditViewModel(
 
   const recommendations = buildRecommendations(config, auditDataForRecommendations, latestGridDiagnostic);
 
+  const diagnosticBand = buildDiagnosticBand(
+    activeRange,
+    adaptiveDecision,
+    professionalGenerator,
+    marketContext,
+    config,
+    latestGridDiagnostic
+  );
+
   return {
     currentOperationalState,
     activeRange,
     counters,
     latestGridDiagnostic,
     recommendations,
+    diagnosticBand,
   };
 }

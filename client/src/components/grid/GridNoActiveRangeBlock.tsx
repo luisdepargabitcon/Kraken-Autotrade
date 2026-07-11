@@ -31,7 +31,7 @@ export function GridNoActiveRangeBlock({
     if (status === "off") return <Activity className="h-5 w-5 text-muted-foreground" />;
     if (status === "shadow_inactive") return <Info className="h-5 w-5 text-blue-500" />;
     if (status === "shadow_market_unsuitable") return <TrendingDown className="h-5 w-5 text-amber-500" />;
-    if (status === "shadow_compact_not_viable") return <TrendingUp className="h-5 w-5 text-amber-500" />;
+    if (status === "shadow_compact_not_viable") return <AlertCircle className="h-5 w-5 text-amber-500" />;
     return <AlertCircle className="h-5 w-5 text-amber-500" />;
   })();
 
@@ -43,6 +43,17 @@ export function GridNoActiveRangeBlock({
     status === "shadow_market_unsuitable" ? "amber" :
     status === "shadow_inactive" ? "blue" :
     status === "off" ? "slate" : "amber";
+
+  const statusLabel: Record<string, string> = {
+    shadow_has_range: "Banda activa",
+    shadow_waiting_for_range: "Esperando banda",
+    shadow_no_levels: "Sin niveles",
+    shadow_compact_not_viable: "Banda no viable",
+    shadow_market_unsuitable: "Mercado no apto",
+    shadow_inactive: "Motor inactivo",
+    off: "Apagado",
+    unknown: "Desconocido",
+  };
 
   const borderClass = {
     green: "border-green-500/30 bg-green-500/5",
@@ -64,7 +75,7 @@ export function GridNoActiveRangeBlock({
         <div className="flex items-center gap-2">
           {statusIcon}
           <h4 className="text-sm font-semibold">{title}</h4>
-          <Badge variant="outline" className="text-xs ml-auto">{status}</Badge>
+          <Badge variant="outline" className="text-xs ml-auto">{statusLabel[status] ?? status}</Badge>
         </div>
         <p className="text-sm text-muted-foreground">{summary}</p>
         {problem && (
@@ -90,7 +101,7 @@ export function GridNoActiveRangeBlock({
         <CardTitle className="text-base flex items-center gap-2">
           {statusIcon}
           {title}
-          <Badge variant="outline" className="text-xs ml-auto">{status}</Badge>
+          <Badge variant="outline" className="text-xs ml-auto">{statusLabel[status] ?? status}</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">

@@ -81,7 +81,7 @@ describe("buildGridAuditViewModel", () => {
     expect(vm.currentOperationalState.hasActiveRange).toBe(false);
     expect(vm.activeRange.exists).toBe(false);
     expect(vm.latestGridDiagnostic.hasActiveRange).toBe(false);
-    expect(vm.latestGridDiagnostic.humanSummary).toContain("no tiene un rango activo");
+    expect(vm.latestGridDiagnostic.humanSummary).toContain("no activó ninguna banda");
     expect(vm.latestGridDiagnostic.humanProblem).not.toBeNull();
     expect(vm.latestGridDiagnostic.humanProblem).not.toBe("");
     expect(vm.currentOperationalState.plainSummary).not.toContain("rango activado");

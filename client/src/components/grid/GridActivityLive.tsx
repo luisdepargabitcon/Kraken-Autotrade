@@ -128,26 +128,26 @@ function naturalMessage(ev: any): string {
       const pair = meta.pair || "BTC/USD";
       const regime = meta.regime || meta.marketRegime || meta.volatilityState;
       if (mid != null && levels != null) {
-        let msg = `Rango propuesto: el Grid detectó una zona válida para ${pair} con ${levels} niveles alrededor de ${Number(mid).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`;
-        if (regime) msg += ` Régimen: ${regime}.`;
+        let msg = `Banda propuesta: el motor calculó una zona viable para ${pair} con ${levels} niveles alrededor de ${Number(mid).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $.`;
+        if (regime) msg += ` Tipo de mercado: ${regime}.`;
         return msg;
       }
-      if (levels != null) return `Rango propuesto: el Grid detectó una zona válida para ${pair} con ${levels} niveles.`;
-      return `Rango propuesto: el Grid detectó una zona válida para ${pair}.`;
+      if (levels != null) return `Banda propuesta: el motor calculó una zona viable para ${pair} con ${levels} niveles.`;
+      return `Banda propuesta: el motor calculó una zona viable para ${pair}.`;
     }
     case "GRID_RANGE_ACTIVATED": {
       const meta = ev.metadataJson || {};
       const mode = meta.mode || "SHADOW";
-      return `Rango activado: el Grid usará esta banda para generar niveles futuros en modo ${mode}.`;
+      return `Banda activada: el Grid usará esta banda para generar niveles en modo ${mode}.`;
     }
     case "GRID_LEVEL_PLACED":
       return `Nivel creado para ${ev.pair || "BTC/USD"}.`;
     case "GRID_LEVEL_FILLED":
       return "Nivel ejecutado completamente.";
     case "GRID_LEVEL_POST_ONLY_REJECTED":
-      return "Orden maker rechazada. Se evaluará reintento o fallback taker.";
+      return "Orden rechazada por el exchange. Se evaluará reintento.";
     case "GRID_LEVEL_TAKER_FALLBACK":
-      return "Fallback taker ejecutado de forma controlada.";
+      return "Orden ejecutada como market (taker) de forma controlada.";
     case "GRID_CYCLE_BUY_PLACED":
       return "Orden de compra colocada para ciclo Grid.";
     case "GRID_CYCLE_BUY_FILLED":
@@ -159,7 +159,7 @@ function naturalMessage(ev: any): string {
     case "GRID_DUMP_GUARD_TRIGGERED":
       return "Dump detectado. Compras pausadas.";
     case "GRID_CIRCUIT_BREAKER_OPENED":
-      return "Circuit breaker abierto. Todas las órdenes bloqueadas.";
+      return "Protección activada. Todas las órdenes bloqueadas temporalmente.";
     case "GRID_CAPITAL_RESERVED":
       return "Capital reservado para ciclo Grid.";
     case "GRID_CAPITAL_RELEASED":
@@ -169,7 +169,7 @@ function naturalMessage(ev: any): string {
     case "GRID_MODE_UNLOCK_DENIED":
       return "Desbloqueo de modos reales denegado.";
     case "GRID_SHADOW_NO_VIABLE_RANGE":
-      return "El motor evaluó el mercado pero no pudo generar un rango viable con la configuración actual.";
+      return "El motor evaluó el mercado pero no pudo generar una banda viable con la configuración actual.";
     default:
       return msg || eventType;
   }
@@ -198,13 +198,13 @@ function impactFromEvent(ev: any): string {
   const cat = categoryFromEventType(ev.eventType);
   const sev = severityFromEventType(ev.eventType);
   switch (cat) {
-    case "BAND": return "Cambio de rango del Grid. Los niveles futuros se recalculan con la nueva banda.";
+    case "BAND": return "Cambio de banda del Grid. Los niveles futuros se recalculan con la nueva banda.";
     case "LEVEL": return sev === "SUCCESS" ? "Nivel ejecutado. Capital comprometido o liberado." : "Nivel planificado o modificado. Sin orden real todavía.";
     case "CYCLE": return sev === "SUCCESS" ? "Ciclo completado con beneficio realizado." : "Ciclo abierto o modificado. Capital reservado.";
     case "ORDER": return sev === "BLOCKED" || sev === "ERROR" ? "Orden rechazada o bloqueada. Se evaluará reintento." : "Orden colocada o ejecutada en el exchange.";
     case "WALLET": return "Movimiento de capital dentro de la cartera Grid aislada.";
-    case "SAFETY": return sev === "BLOCKED" || sev === "ERROR" ? "Mecanismo de seguridad activado. Operaciones pausadas." : "Mecanismo de seguridad evaluado. Sin acción requerida.";
-    case "RECONCILIATION": return "Reconciliación entre estado local y exchange.";
+    case "SAFETY": return sev === "BLOCKED" || sev === "ERROR" ? "Protección activada. Operaciones pausadas." : "Protección evaluada. Sin acción requerida.";
+    case "RECONCILIATION": return "Verificación entre estado local y exchange.";
     case "API": return "Límite o estado de la API del exchange.";
     default: return "Evento del sistema Grid.";
   }
