@@ -10,6 +10,7 @@ vi.mock("../../services/exchanges/RevolutXService", () => ({
     placeOrder: vi.fn(),
     cancelOrder: vi.fn(),
     getBalance: vi.fn().mockResolvedValue({ USD: 0, BTC: 0 }),
+    postOnlySupported: true,
   },
 }));
 

@@ -1,7 +1,54 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-10
+> Última actualización: 2026-07-11
+
+---
+
+## 2026-07-11 — GRID FASE 3C.4-C: POST-ONLY SUPPORT CORRECTO
+
+### Resumen
+Corregir el `postOnlySupported` en `GridModeLockService` para que no se fuerce a `true` y bloquear correctamente los modos REAL_LIMITED/REAL_FULL cuando el adaptador RevolutX no confirma soporte post-only/maker. Actualizar el mock de `gridIsolatedRoutes.test.ts` para que `unlock-status` y `monitor/audit` sigan reportando `postOnlySupported=true` en el escenario con adaptador confirmado.
+
+### Módulo
+Grid Isolated — Modo lock y seguridad REAL.
+
+### Problema
+- `gridModeLockService.runUnlockChecks()` ponía `postOnlySupported = true` de forma incondicional, relajando la seguridad del bloqueo REAL.
+- `gridRiskExecution.test.ts` fallaba porque los modos REAL no añadían el motivo `post-only` a `blockingReasons`.
+- `gridIsolatedRoutes.test.ts` esperaba `postOnlySupported=true` en `unlock-status` y `monitor/audit`, pero el nuevo comportamiento por defecto `false` lo rompía.
+
+### Solución
+- `gridModeLockService.runUnlockChecks()` ahora lee `revolutXService.postOnlySupported` y es `false` por defecto. Si el adaptador no confirma soporte, los modos REAL se bloquean con el mensaje "RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados".
+- Mock de `gridIsolatedRoutes.test.ts` añade `postOnlySupported: true` para representar el adaptador ya confirmado.
+- `GridModeLockService.checkModeTransition` e `isModeSafe` mantienen las demás condiciones (inicializado, balance, reconciliación, capital, reconocimiento, límite diario).
+
+### Archivos afectados
+- `server/services/gridIsolated/gridModeLockService.ts`
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts`
+
+### Validaciones
+- `npm run check` (tsc): OK
+- Tests Grid obligatorios: todos OK (9/9 archivos, 267/267 tests)
+  - `gridRiskExecution.test.ts`: OK
+  - `gridRangeLifecycle.test.ts`: OK
+  - `gridAdaptiveSmartRange.test.ts`: OK
+  - `gridCompactRange.test.ts`: OK
+  - `gridSpacingCalculator.test.ts`: OK
+  - `buildGridAuditViewModel.test.ts`: OK
+  - `gridActivityFormatter.test.ts`: OK
+  - `gridIsolatedRoutes.test.ts`: OK
+  - `gridConfigAdvisor.test.ts`: OK
+- `npm run build`: OK
+- No se toca REAL mode, IDCA, FISCO, órdenes reales, DB.
+
+### Estado final
+- `postOnlySupported` depende del adaptador RevolutX; `false` por defecto bloquea REAL_LIMITED/REAL_FULL con motivo `post-only`.
+- Tests Grid obligatorios pasan.
+- Build OK.
+
+### Pendientes
+- Commit/push y deploy VPS staging con validación de endpoints.
 
 ---
 
