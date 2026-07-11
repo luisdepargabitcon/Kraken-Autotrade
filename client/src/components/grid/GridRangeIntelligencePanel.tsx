@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Brain, TrendingUp, TrendingDown, Activity, AlertTriangle, Info, CheckCircle2, XCircle, Gauge, ShieldCheck, ShieldAlert, FlaskConical } from "lucide-react";
 import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION, ANALYZE_NOW_EXPLANATION } from "@/lib/gridTranslate";
+import { renderSafeGridText } from "@/lib/renderSafeGridText";
 
 interface GridRangeIntelligencePanelProps {
   auditData?: any;
@@ -204,8 +205,8 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
                   ? <Badge variant="default" className="text-xs bg-green-500">Nuevos niveles: Sí</Badge>
                   : <Badge variant="destructive" className="text-xs">Nuevos niveles: No</Badge>}
               </div>
-              <p className="text-xs text-muted-foreground">{lc.naturalReason}</p>
-              <p className="text-xs text-muted-foreground"><strong className="text-foreground">Acción recomendada:</strong> {lc.nextAction}</p>
+              <p className="text-xs text-muted-foreground">{renderSafeGridText(lc.naturalReason)}</p>
+              <p className="text-xs text-muted-foreground"><strong className="text-foreground">Acción recomendada:</strong> {renderSafeGridText(lc.nextAction)}</p>
               {lc.checks && (
                 <div className="grid grid-cols-3 gap-2 text-xs mt-1">
                   <div className="rounded bg-muted/30 p-1.5">
@@ -301,7 +302,7 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
               <div className={`rounded-lg p-3 text-sm ${adaptiveOk ? 'bg-green-500/5 border border-green-500/20' : 'bg-red-500/5 border border-red-500/20'}`}>
                 <div className="flex items-start gap-2">
                   {adaptiveOk ? <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" /> : <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />}
-                  <p className="text-muted-foreground">{reason}</p>
+                  <p className="text-muted-foreground">{renderSafeGridText(reason)}</p>
                 </div>
               </div>
             )}
@@ -312,7 +313,7 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
                 {warnings.map((w, i) => (
                   <div key={i} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
                     <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span>{w}</span>
+                    <span>{renderSafeGridText(w)}</span>
                   </div>
                 ))}
               </div>
@@ -359,14 +360,14 @@ export function GridRangeIntelligencePanel({ auditData, config }: GridRangeIntel
               ) : (
                 <Badge variant="outline" className="text-xs text-red-400 border-red-400/30">Avisos comparativa</Badge>
               )}
-              {v18Reason && <span className="text-muted-foreground">{v18Reason}</span>}
+              {v18Reason && <span className="text-muted-foreground">{renderSafeGridText(v18Reason)}</span>}
             </div>
             {v18Warnings.length > 0 && (
               <div className="space-y-1">
                 {v18Warnings.map((w, i) => (
                   <div key={i} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
                     <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span>{w}</span>
+                    <span>{renderSafeGridText(w)}</span>
                   </div>
                 ))}
               </div>

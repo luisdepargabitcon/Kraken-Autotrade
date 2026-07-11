@@ -8,6 +8,7 @@ import {
   FlaskConical, Gauge, Lightbulb, ChevronDown, History, Stethoscope, CheckCircle2,
 } from "lucide-react";
 import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION, ANALYZE_NOW_EXPLANATION } from "@/lib/gridTranslate";
+import { renderSafeGridText } from "@/lib/renderSafeGridText";
 import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
 import { GridAnalyzeNowButton } from "./GridAnalyzeNowButton";
 
@@ -45,6 +46,7 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
   const marketContext = auditData?.marketContext;
   const rangeHistory: any[] = auditData?.rangeHistory || [];
   const rangeIntelligence = auditData?.rangeIntelligence;
+  const adaptiveDecision = rangeIntelligence?.lastAdaptiveRangeDecision;
 
   const hasActiveRange = currentOperationalState?.hasActiveRange ?? activeRange?.exists ?? false;
   const currentPrice = marketContext?.currentPrice;
@@ -288,10 +290,24 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                   <p className="text-muted-foreground">Mín / Máx %</p>
                   <p className="font-mono font-semibold">{rangeIntelligence.adaptiveRangeMinPct} / {rangeIntelligence.adaptiveRangeMaxPct}</p>
                 </div>
-                {rangeIntelligence.lastAdaptiveRangeDecision && (
+                {adaptiveDecision && (
                   <div className="rounded bg-muted/30 p-2 col-span-2 md:col-span-3">
                     <p className="text-muted-foreground">Última decisión adaptativa</p>
-                    <p className="font-mono font-semibold">{rangeIntelligence.lastAdaptiveRangeDecision}</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      <div><span className="text-muted-foreground">Viable:</span> <span>{adaptiveDecision.adaptiveRangeOk ? "Sí" : "No"}</span></div>
+                      <div><span className="text-muted-foreground">Rango final:</span> <span>{adaptiveDecision.finalRangePct != null ? `${Number(adaptiveDecision.finalRangePct).toFixed(2)}%` : "—"}</span></div>
+                      <div><span className="text-muted-foreground">BUY caben:</span> <span>{adaptiveDecision.buyLevelsWouldFit ?? "—"}</span></div>
+                      <div><span className="text-muted-foreground">SELL caben:</span> <span>{adaptiveDecision.sellLevelsWouldFit ?? "—"}</span></div>
+                      <div><span className="text-muted-foreground">BUY solicitados:</span> <span>{adaptiveDecision.requestedBuyLevels ?? "—"}</span></div>
+                      <div><span className="text-muted-foreground">SELL solicitados:</span> <span>{adaptiveDecision.requestedSellLevels ?? "—"}</span></div>
+                      <div><span className="text-muted-foreground">Separación compra:</span> <span>{adaptiveDecision.buySpacingPct != null ? `${Number(adaptiveDecision.buySpacingPct).toFixed(2)}%` : "—"}</span></div>
+                      <div><span className="text-muted-foreground">Separación venta:</span> <span>{adaptiveDecision.sellSpacingPct != null ? `${Number(adaptiveDecision.sellSpacingPct).toFixed(2)}%` : "—"}</span></div>
+                      <div className="col-span-2 md:col-span-4"><span className="text-muted-foreground">Motivo:</span> <span>{renderSafeGridText(adaptiveDecision.reason || adaptiveDecision.naturalReason)}</span></div>
+                    </div>
+                    <details className="mt-2">
+                      <summary className="text-xs text-muted-foreground cursor-pointer">Ver detalle técnico</summary>
+                      <pre className="text-xs overflow-auto mt-1">{JSON.stringify(adaptiveDecision, null, 2)}</pre>
+                    </details>
                   </div>
                 )}
               </div>
@@ -422,20 +438,20 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
                       <CheckCircle2 className={`h-4 w-4 ${
                         rec.severity === "danger" ? "text-red-500" : rec.severity === "warning" ? "text-amber-500" : "text-blue-500"
                       }`} />
-                      <p className="text-sm font-semibold">{rec.title}</p>
+                      <p className="text-sm font-semibold">{renderSafeGridText(rec.title)}</p>
                       <Badge variant="outline" className="text-xs ml-auto">{rec.severity}</Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">{rec.explanation}</p>
+                    <p className="text-sm text-muted-foreground mt-1">{renderSafeGridText(rec.plainExplanation ?? rec.explanation)}</p>
                     {rec.currentValue != null && rec.recommendedValue != null && (
                       <p className="text-xs text-muted-foreground mt-1">
-                        Valor actual: <span className="font-mono">{rec.currentValue}</span> → recomendado: <span className="font-mono">{rec.recommendedValue}</span>
+                        Valor actual: <span className="font-mono">{renderSafeGridText(rec.currentValue)}</span> → recomendado: <span className="font-mono">{renderSafeGridText(rec.recommendedValue)}</span>
                       </p>
                     )}
                     {rec.ctas && rec.ctas.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {rec.ctas.map((cta: any, idx: number) => (
                           <Button key={idx} variant="outline" size="sm" className="text-xs" asChild>
-                            <a href={cta.target || "#"}>{cta.label}</a>
+                            <a href={renderSafeGridText(cta.target, "#")}>{renderSafeGridText(cta.label)}</a>
                           </Button>
                         ))}
                       </div>

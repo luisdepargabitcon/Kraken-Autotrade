@@ -5,6 +5,44 @@
 
 ---
 
+## 2026-07-11 — GRID HOTFIX: EVITAR RENDERIZADO DE OBJETOS EN PESTAÑA BANDAS
+
+### Resumen
+Corregir el crash React #31 "Objects are not valid as a React child" en la pestaña Grid > Bandas, causado por el renderizado directo del objeto `rangeIntelligence.lastAdaptiveRangeDecision` en `GridBandsPanel.tsx`. Se reemplaza por un resumen humano con `Viable`, `Rango final`, `Niveles`, `Separaciones` y `Motivo`, y se protegen los textos de recomendaciones con el helper `renderSafeGridText`. También se protege `GridRangeIntelligencePanel.tsx`.
+
+### Módulo
+Grid UI — Pestaña Bandas / Rango Inteligente.
+
+### Problema
+- `GridBandsPanel.tsx` renderizaba directamente `{rangeIntelligence.lastAdaptiveRangeDecision}` (objeto), lanzando `Minified React error #31`.
+- `rec.explanation` en recomendaciones apuntaba a un campo inexistente (`plainExplanation` es el correcto), dejando el texto vacío y riesgo de objeto.
+- Paneles secundarios no usaban un helper seguro para textos dinámicos.
+
+### Solución
+- Crear `client/src/lib/renderSafeGridText.ts` para convertir `string`/`number`/`boolean` a texto seguro y devolver `—` para objetos u otros valores.
+- En `GridBandsPanel.tsx`: reemplazar el renderizado del objeto por un resumen humano con `details` JSON; proteger `rec.title`, `rec.plainExplanation`, `rec.currentValue`, `rec.recommendedValue` y `cta.label`/`cta.target`.
+- En `GridRangeIntelligencePanel.tsx`: importar `renderSafeGridText` y aplicarlo a `reason`, `v18Reason`, `warnings`, `naturalReason` y `nextAction`.
+
+### Archivos afectados
+- `client/src/components/grid/GridBandsPanel.tsx`
+- `client/src/components/grid/GridRangeIntelligencePanel.tsx`
+- `client/src/lib/renderSafeGridText.ts` (nuevo)
+
+### Validaciones
+- `npm run check` (tsc): OK
+- Tests Grid obligatorios: 177/177 OK
+- `npm run build`: OK
+
+### Estado final
+- No se renderiza ningún objeto directamente en JSX.
+- Resumen de decisión adaptativa visible y JSON técnico oculto en `details`.
+- No se toca lógica de ejecución real, IDCA, FISCO, DB, órdenes.
+
+### Pendientes
+- Commit, push, deploy VPS staging y validación visual.
+
+---
+
 ## 2026-07-11 — GRID FASE 3C.4-C: POST-ONLY SUPPORT CORRECTO
 
 ### Resumen
