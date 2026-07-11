@@ -1,7 +1,52 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-11
+> Última actualización: 2026-07-12
+
+---
+
+## 2026-07-12 — GRID FASE 3C.4-D: diagnosticBand + UI 4 estados + limpieza lenguaje
+
+### Resumen
+Añadir `diagnosticBand` al `GridAuditViewModel` con 4 estados (activa/calculada/no viable/sin datos), reescribir `GridBandsPanel.tsx` con UI de 4 estados, limpiar jerga técnica en toda la UI del Grid, y añadir botones de recomendación que solo modifican borrador.
+
+### Módulo
+Grid Isolated — Backend audit view model + Frontend Bandas + Activity Live.
+
+### Problema
+- La UI del Grid usaba jerga técnica ("generador profesional", "circuit breaker", "rango runtime", "fallback taker") confusa para el usuario.
+- No existía un estado unificado de "banda diagnóstica" que mostrara claramente si el Grid tenía banda activa, calculada, no viable, o sin datos.
+- Las recomendaciones no diferenciaban entre aplicar al borrador vs aplicar directamente.
+
+### Solución
+- **Backend:** Nueva interfaz `GridDiagnosticBand` con campos `status`, `exists`, precios, anchos, niveles, `plainExplanation`, `nextAction`, `source`. Función `buildDiagnosticBand()` que evalúa activeRange → adaptiveDecision → professionalGenerator → market_unsuitable → not_enough_data.
+- **Frontend GridBandsPanel:** Rewrite con 4 bloques condicionales (CASO A/B/C/D), market context siempre visible, detalle técnico colapsado en `<details>`, botones de recomendación con `applyRecommendationToDraft()` que muestra notice temporal.
+- **Frontend GridNoActiveRangeBlock:** Etiquetas humanas (`statusLabel`), icono corregido para `shadow_compact_not_viable`.
+- **Frontend GridActivityLive:** "Rango" → "Banda", "Circuit breaker" → "Protección", "Generador profesional" → "Motor de cálculo", "Reconciliación" → "Verificación".
+- **Backend buildGridAuditViewModel:** Limpieza de `humanSummary`, `humanProblem`, `humanNextStep` con lenguaje claro.
+
+### Archivos afectados
+- `server/services/gridIsolated/buildGridAuditViewModel.ts` — nueva interfaz + función + limpieza texto
+- `client/src/components/grid/GridBandsPanel.tsx` — rewrite completo
+- `client/src/components/grid/GridNoActiveRangeBlock.tsx` — etiquetas humanas + icono
+- `client/src/components/grid/GridActivityLive.tsx` — limpieza jerga
+- `server/services/__tests__/buildGridAuditViewModel.test.ts` — fix assertion
+- `server/services/__tests__/gridDiagnosticBand.test.ts` — **nuevo** (7 tests)
+- `client/src/components/grid/GridBandsPanel.test.ts` — **nuevo** (19 tests)
+
+### Validaciones
+- `npm run check` (tsc): ✅
+- `npm run build`: ✅ (2612 módulos)
+- `vitest run` (3 ficheros): 30/30 tests ✅
+- Deploy VPS staging: ✅ (commit c3fd1be)
+
+### Estado final
+- El endpoint `/api/grid-isolated/monitor/audit` devuelve `diagnosticBand` en el view model.
+- El panel de Bandas muestra 4 estados claramente diferenciados con lenguaje claro.
+- Las recomendaciones muestran notice de "cambio aplicado al borrador" sin modificar config directamente.
+
+### Pendientes
+- Validación visual post-deploy por el usuario.
 
 ---
 
