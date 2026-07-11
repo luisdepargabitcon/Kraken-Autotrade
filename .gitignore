@@ -7,3 +7,6 @@ vite.config.ts.*
 VERSION
 FUENTES_BOT.md
 =
+deploy_staging.log
+*_staging.log
+*.deploy.log
