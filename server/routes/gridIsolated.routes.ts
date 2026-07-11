@@ -37,9 +37,10 @@ import { gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy } from "../services/gridIsolated/gridIsolatedTypes";
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
-import { getNaturalGridMessage } from "../services/gridIsolated/gridActivityFormatter";
+import { getNaturalGridMessage, getNaturalGridTitle } from "../services/gridIsolated/gridActivityFormatter";
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
 import { evaluateActiveRangeLifecycle } from "../services/gridIsolated/gridRangeLifecycle";
+import { buildGridAuditViewModel } from "../services/gridIsolated/buildGridAuditViewModel";
 
 // ─── Timing metadata helpers for audit/export ───────────────────────────────
 
@@ -952,7 +953,12 @@ export function registerGridIsolatedRoutes(app: Express): void {
       }
 
       const events = await query.orderBy(desc(gridIsolatedEvents.createdAt)).limit(limit);
-      res.json(events);
+      const eventsWithNatural = events.map((ev: any) => ({
+        ...ev,
+        naturalMessage: getNaturalGridMessage(ev.eventType, ev.message, ev.metadataJson),
+        title: getNaturalGridTitle(ev.eventType),
+      }));
+      res.json(eventsWithNatural);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
@@ -974,6 +980,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const eventsWithNatural = events.map((ev: any) => ({
         ...ev,
         naturalMessage: getNaturalGridMessage(ev.eventType, ev.message, ev.metadataJson),
+        title: getNaturalGridTitle(ev.eventType),
       }));
 
       res.json({
@@ -1410,6 +1417,21 @@ export function registerGridIsolatedRoutes(app: Express): void {
             adaptiveDecision: null,
           });
 
+      const gridViewModel = buildGridAuditViewModel(
+        mode,
+        config,
+        status,
+        levels,
+        cycles,
+        events,
+        resolvedRange,
+        marketContext,
+        lastShadowValidation,
+        lastProfessionalValidation,
+        professionalGenerator,
+        rangeLifecycle
+      );
+
       res.json({
         ok: true,
         status: "ok",
@@ -1734,92 +1756,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
           lastReadOnlyValidationRangeProfile: (lastProfessionalValidation.result as any)?.rangeProfile ?? null,
         },
         rangeLifecycle,
-
-        // ─── latestGridDiagnostic: consolidated diagnostic that exists even without active range ───
-        latestGridDiagnostic: (() => {
-          const sv = lastShadowValidation.result as any;
-          const svAt = lastShadowValidation.at;
-          const pg = professionalGenerator as any;
-          const compactEvents = events.filter((ev: any) => ev.eventType === "GRID_PROFESSIONAL_GENERATOR_COMPACT");
-          const notViableEvents = events.filter((ev: any) => ev.eventType === "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE");
-          const repeatedCompactEventsCount = compactEvents.length;
-
-          const hasActiveRange = !!status?.activeRangeVersionId;
-          const reasonNoLevels = sv?.reasonNoLevels ?? null;
-          const blockedByNoRange = sv?.blockedByNoRange ?? false;
-          const blockedByUnsuitableMarket = sv?.blockedByUnsuitableMarket ?? false;
-          const blockedByIsActive = sv?.blockedByIsActive ?? false;
-          const blockedByNoMarketData = sv?.blockedByNoMarketData ?? false;
-          const blockedByRiskGuard = sv?.blockedByRiskGuard ?? false;
-
-          // Build human-friendly summary, problem, and next step
-          let humanSummary = "";
-          let humanProblem = "";
-          let humanNextStep = "";
-
-          if (hasActiveRange) {
-            humanSummary = `El Grid tiene un rango activo (versión ${status?.activeRangeVersionNumber ?? "?"}). El motor está en modo ${mode}.`;
-            if (sv?.levelsGenerated > 0) {
-              humanProblem = "";
-              humanNextStep = "El rango está activo y generó niveles. Revisa la pestaña Niveles.";
-            } else if (reasonNoLevels) {
-              humanProblem = reasonNoLevels;
-              humanNextStep = sv?.nextAction || "Revisa las condiciones del mercado y la configuración.";
-            }
-          } else {
-            humanSummary = `El Grid no tiene un rango activo cargado en el motor runtime. El modo actual es ${mode}.`;
-            if (blockedByNoRange) {
-              humanProblem = "No hay rango activo cargado en el motor runtime. El rango puede existir en auditoría pero no en memoria tras reinicio.";
-              humanNextStep = "Pulsa \"Analizar ahora sin operar\" para que el motor evalúe el mercado y proponga un rango.";
-            } else if (blockedByUnsuitableMarket) {
-              humanProblem = sv?.marketUnsuitableReason || "Las condiciones de mercado no son aptas para el Grid.";
-              humanNextStep = "Esperar a que el mercado cambie o ajustar la configuración del rango.";
-            } else if (blockedByIsActive) {
-              humanProblem = "El motor está en SHADOW pero isActive=false. No se generan niveles automáticos.";
-              humanNextStep = "Activa el motor Grid desde la UI para que empiece a evaluar.";
-            } else if (blockedByNoMarketData) {
-              humanProblem = "No hay datos de mercado disponibles para evaluar.";
-              humanNextStep = "Verificar la conectividad con el exchange.";
-            } else if (blockedByRiskGuard) {
-              humanProblem = "El guardián de seguridad está activo (pump/dump o cortocircuito).";
-              humanNextStep = "Esperar a que el guardián se reinicie automáticamente.";
-            } else if (repeatedCompactEventsCount > 0) {
-              humanProblem = `El generador profesional ha producido ${repeatedCompactEventsCount} evento(s) compacto(s) recientemente. El rango no es viable con la configuración actual.`;
-              humanNextStep = "Revisa las recomendaciones de configuración o ajusta el beneficio neto objetivo.";
-            } else if (notViableEvents.length > 0) {
-              humanProblem = "El generador profesional marcó el rango como no viable en la última evaluación.";
-              humanNextStep = "Ajusta la configuración: baja el beneficio neto objetivo o amplía el rango máximo.";
-            } else {
-              humanProblem = "No hay suficiente información de diagnóstico todavía.";
-              humanNextStep = "Pulsa \"Analizar ahora sin operar\" para generar un diagnóstico.";
-            }
-          }
-
-          return {
-            hasActiveRange,
-            mode,
-            isActive: config?.isActive ?? false,
-            isRunning: (status as any)?.isRunning ?? false,
-            lastTickAt: (status as any)?.lastTickAt ?? null,
-            lastTickReason: (status as any)?.lastTickReason ?? null,
-            lastShadowValidationAt: svAt || null,
-            lastShadowValidationResult: sv || null,
-            lastProfessionalValidationAt: lastProfessionalValidation.at || null,
-            lastProfessionalValidationResult: lastProfessionalValidation.result || null,
-            professionalGeneratorAvailable: pg?.available ?? false,
-            professionalGeneratorReason: pg?.available ? null : (pg?.reason ?? null),
-            professionalGeneratorViabilityStatus: pg?.viabilityStatus ?? null,
-            professionalGeneratorGeneratedLevels: pg?.available ? (pg.generatedBuyLevels ?? 0) + (pg.generatedSellLevels ?? 0) : 0,
-            repeatedCompactEventsCount,
-            notViableEventsCount: notViableEvents.length,
-            rangeLifecycleStatus: rangeLifecycle?.status ?? null,
-            rangeLifecycleReason: rangeLifecycle?.naturalReason ?? null,
-            rangeLifecycleNextAction: rangeLifecycle?.nextAction ?? null,
-            humanSummary,
-            humanProblem,
-            humanNextStep,
-          };
-        })(),
+        ...gridViewModel,
       });
     } catch (error) {
       res.status(500).json({ error: String(error) });
@@ -2027,6 +1964,22 @@ export function registerGridIsolatedRoutes(app: Express): void {
         events = await db.select().from(gridIsolatedEvents).orderBy(desc(gridIsolatedEvents.createdAt)).limit(50);
       } catch {}
 
+      const resolvedRange = await resolveActiveRange(events, status, cycles.length);
+      const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
+      const lastProfessionalValidation = gridIsolatedEngine.getLastProfessionalGeneratorValidation();
+      const gridViewModel = buildGridAuditViewModel(
+        mode,
+        config,
+        status,
+        levels,
+        cycles,
+        events,
+        resolvedRange,
+        null,
+        lastShadowValidation,
+        lastProfessionalValidation
+      );
+
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.setHeader("Content-Disposition", "attachment; filename=grid-isolated-audit.json");
       res.json({
@@ -2044,6 +1997,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         cycles: cycles.map((c: any) => enrichCycleTiming(c)),
         events,
         reconciliation: reconciliation || { ok: null, mismatches: [] },
+        ...gridViewModel,
       });
     } catch (error) {
       res.status(500).json({ error: String(error) });

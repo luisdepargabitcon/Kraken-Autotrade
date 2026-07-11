@@ -3,8 +3,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Zap, Clock, ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import { Zap, Clock, ChevronLeft, ChevronRight, Filter, ChevronDown, History } from "lucide-react";
 import { translateGridLabel, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
 
 interface GridCyclesPanelProps {
   cycles: any[];
@@ -12,6 +14,8 @@ interface GridCyclesPanelProps {
   limit?: number;
   showViewAll?: boolean;
   activeRangeVersionId?: string | null;
+  auditData?: any;
+  onAuditRefreshed?: () => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -108,11 +112,12 @@ const FILTER_LABELS: Record<CycleFilter, string> = {
   "historicos": "Históricos",
 };
 
-export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = true, activeRangeVersionId = null }: GridCyclesPanelProps) {
+export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = true, activeRangeVersionId = null, auditData, onAuditRefreshed }: GridCyclesPanelProps) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [selectedCycle, setSelectedCycle] = useState<any | null>(null);
-  const [cycleFilter, setCycleFilter] = useState<CycleFilter>("all");
+  const [cycleFilter, setCycleFilter] = useState<CycleFilter>("active");
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const activeCycles = cycles.filter((c: any) => isCycleOpen(c));
   const completedCycles = cycles.filter((c: any) => c.status === "completed");
@@ -153,6 +158,13 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!activeRangeVersionId && (
+          <GridNoActiveRangeBlock
+            currentOperationalState={auditData?.currentOperationalState}
+            latestGridDiagnostic={auditData?.latestGridDiagnostic}
+            onAuditRefreshed={onAuditRefreshed}
+          />
+        )}
 
         {/* KPI strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -184,7 +196,7 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
 
         {cycles.length > 0 ? (
           <>
-            {/* Filter tabs */}
+            {/* Default filter hides cancelled; history is expandable below */}
             <div className="flex items-center gap-2 flex-wrap">
               <Filter className="h-3 w-3 text-muted-foreground" />
               {(Object.keys(FILTER_LABELS) as CycleFilter[]).map((f) => {
@@ -325,8 +337,60 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
 
             {filteredCycles.length === 0 && (
               <div className="text-sm text-muted-foreground py-4 text-center">
-                No hay ciclos en esta categoría.
+                No hay ciclos en esta categoría. Los cancelados y antiguos están en el histórico.
               </div>
+            )}
+
+            {/* Expandable history — cancelled and old cycles */}
+            {(cancelledCycles.length > 0 || historicalCycles.length > 0) && (
+              <Collapsible open={historyOpen} onOpenChange={setHistoryOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="flex items-center gap-2 w-full justify-start">
+                    <History className="h-4 w-4" />
+                    <span>Histórico (cancelados / antiguos)</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${historyOpen ? "rotate-180" : ""}`} />
+                    <Badge variant="secondary" className="ml-auto text-xs">
+                      {cancelledCycles.length + historicalCycles.length}
+                    </Badge>
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="overflow-x-auto mt-2">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-muted-foreground border-b">
+                          <th className="text-left py-2 px-2">#</th>
+                          <th className="text-left py-2 px-2">Estado</th>
+                          <th className="text-left py-2 px-2">Compra</th>
+                          <th className="text-left py-2 px-2">Venta</th>
+                          <th className="text-left py-2 px-2">PnL neto</th>
+                          <th className="text-left py-2 px-2">Cierre</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...cancelledCycles, ...historicalCycles].slice(0, 50).map((cycle: any) => {
+                          const pnl = toNum(cycle.netPnlUsd);
+                          const closedAt = getCycleClosedAt(cycle);
+                          return (
+                            <tr key={cycle.id} className="border-b cursor-pointer hover:bg-muted/30 transition-colors" onClick={() => setSelectedCycle(cycle)}>
+                              <td className="py-2 px-2 font-mono text-xs">#{cycle.cycleNumber}</td>
+                              <td className="py-2 px-2">
+                                <Badge variant="outline" className="text-xs">
+                                  {getCycleStatusLabel(cycle.status)}
+                                </Badge>
+                              </td>
+                              <td className="py-2 px-2 font-mono text-xs">{cycle.buyPrice != null ? `$${(toNum(cycle.buyPrice) ?? 0).toFixed(2)}` : "—"}</td>
+                              <td className="py-2 px-2 font-mono text-xs">{cycle.sellPrice != null ? `$${(toNum(cycle.sellPrice) ?? 0).toFixed(2)}` : "—"}</td>
+                              <td className="py-2 px-2 font-mono text-xs">{pnl !== null ? <span className={pnl >= 0 ? "text-green-400" : "text-red-400"}>{pnl >= 0 ? "+" : ""}{fmtUsd(pnl)}</span> : "—"}</td>
+                              <td className="py-2 px-2 text-xs text-muted-foreground whitespace-nowrap">{closedAt ? fmtDate(closedAt) : "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             )}
           </>
         ) : (

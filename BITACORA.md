@@ -5,6 +5,73 @@
 
 ---
 
+## 2026-07-10 — GRID AUDIT VIEWMODEL + UI UNIFICADA
+
+### Resumen
+Integración del `GridAuditViewModel` unificado en `/monitor/audit` y `/export/json`, eliminando datos duplicados y asegurando un solo contrato para todos los paneles del Grid. Se crean bloques reutilizables para el estado sin rango activo y el botón “Analizar mercado ahora”, se unifican en Niveles, Ciclos, Ajustes, Resumen y Bandas, y se mejora la pestaña Actividad para mostrar mensajes humanos, agrupar eventos y esconder códigos técnicos en el detalle.
+
+### Módulo
+Grid Isolated — Auditoría, UI, API y tests.
+
+### Problema
+- El audit de Grid exponía `latestGridDiagnostic` tanto desde la ruta como desde `buildGridAuditViewModel`, generando duplicación y posibles inconsistencias.
+- `lastTickReason` decía “Rango propuesto y activado” aunque `activeRangeVersionId` era `null`, contradiciendo el estado real.
+- Las pestañas Niveles, Ciclos, Ajustes y Resumen mostraban mensajes distintos y confusos cuando no había rango activo.
+- La actividad mostraba códigos técnicos como títulos y no agrupaba eventos repetidos.
+
+### Solución
+- `buildGridAuditViewModel` centraliza `currentOperationalState`, `activeRange`, `counters`, `latestGridDiagnostic` y `recommendations`.
+- La ruta `/monitor/audit` consume el view model y la exportación JSON lo incluye alineado con la UI.
+- Se corrige `gridIsolatedEngine.tick` para que `lastTickReason` no afirme rango activado si `activeRangeVersion` sigue `null`.
+- Nuevos componentes reutilizables `GridNoActiveRangeBlock` y `GridAnalyzeNowButton`.
+- `GridBandsPanel` rediseñado con 3 bloques (Estado, Análisis, Acciones).
+- Niveles: filtro por defecto `rango-activo`, mensaje unificado cuando no hay rango.
+- Ciclos: filtro por defecto `active`, histórico cancelados/antiguos expandible.
+- Ajustes: avisos con valor actual → recomendado y botón “Aplicar al borrador”.
+- Actividad: títulos y mensajes humanos, agrupación de eventos, código técnico solo en el modal de detalle.
+
+### Archivos afectados
+#### Nuevos
+- `client/src/components/grid/GridNoActiveRangeBlock.tsx`
+- `client/src/components/grid/GridAnalyzeNowButton.tsx`
+- `server/services/__tests__/buildGridAuditViewModel.test.ts`
+- `server/services/__tests__/gridActivityFormatter.test.ts`
+
+#### Modificados
+- `server/services/gridIsolated/buildGridAuditViewModel.ts` — view model unificado y `latestGridDiagnostic` enriquecido.
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — fix `lastTickReason`.
+- `server/services/gridIsolated/gridIsolatedTypes.ts` — añadido `GRID_SHADOW_NO_VIABLE_RANGE`.
+- `server/services/gridIsolated/gridActivityFormatter.ts` — nuevo `getNaturalGridTitle` y mapping `GRID_SHADOW_NO_VIABLE_RANGE`.
+- `server/routes/gridIsolated.routes.ts` — `/monitor/audit` y `/export/json` usan `buildGridAuditViewModel`; `/events` y `/events/live` añaden `title` y `naturalMessage`.
+- `client/src/pages/GridIsolated.tsx` — usa `GridBandsPanel`, `GridCyclesPanel`, pasa `onAuditRefreshed` a subpaneles.
+- `client/src/components/grid/GridBandsPanel.tsx` — rediseño 3 bloques con componentes reutilizables.
+- `client/src/components/grid/GridLevelsPanel.tsx` — prop `auditData` y `onAuditRefreshed`, bloque unificado sin rango activo.
+- `client/src/components/grid/GridCyclesPanel.tsx` — prop `auditData` y `onAuditRefreshed`, filtro activo por defecto, histórico expandible.
+- `client/src/components/grid/GridAjustesPanel.tsx` — bloque unificado sin rango activo, prop `onAuditRefreshed`.
+- `client/src/components/grid/GridSummaryPanel.tsx` — prop `onAuditRefreshed`, bloque estado unificado, botón Analizar.
+- `client/src/components/grid/GridAdvancedConfig.tsx` — recomendaciones con valor actual → recomendado y botón al borrador.
+- `client/src/components/grid/GridActivityLive.tsx` — títulos/mensajes humanos, agrupación, detalle técnico.
+
+### Validaciones
+- `npm run check` (tsc): OK
+- `npm run build` (client + server): OK
+- Tests nuevos: `buildGridAuditViewModel.test.ts` (4/4) y `gridActivityFormatter.test.ts` (6/6) OK
+- Validación funcional: no REAL, no órdenes reales, no borrado físico, no SQL manual
+
+### Estado final
+- `buildGridAuditViewModel` es la única fuente de verdad para el audit del Grid.
+- `lastTickReason` coherente con `activeRangeVersionId`.
+- Bloque “No hay rango activo ahora” unificado en Bandas, Niveles, Ciclos, Ajustes y Resumen.
+- Actividad muestra lenguaje humano, agrupa eventos y oculta códigos técnicos en el detalle.
+- Export JSON incluye `currentOperationalState`, `activeRange`, `counters`, `recommendations` y `latestGridDiagnostic`.
+
+### Pendientes
+- Deploy a VPS staging
+- Validación visual en navegador
+- Revisar tests pre-existentes fallidos (`gridRiskExecution.test.ts`, `idcaMarketContextHelpers.test.ts`) que no están relacionados con este cambio
+
+---
+
 ## 2026-07-10 — SIMPLIFICACIÓN UX GRID: TRADUCCIONES, FILTROS, LIFECYCLE FIX
 
 ### Resumen

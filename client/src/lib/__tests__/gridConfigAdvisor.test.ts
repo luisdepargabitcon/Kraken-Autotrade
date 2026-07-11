@@ -3,7 +3,7 @@ import {
   buildGridConfigRecommendations,
   applyRecommendationToDraft,
   type GridRecommendation,
-} from "../gridConfigAdvisor";
+} from "@shared/gridConfigAdvisor";
 
 function makeInput(overrides: Record<string, any> = {}) {
   return {

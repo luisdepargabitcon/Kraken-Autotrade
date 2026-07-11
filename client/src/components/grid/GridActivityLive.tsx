@@ -168,6 +168,8 @@ function naturalMessage(ev: any): string {
       return "Reconciliación con diferencias detectadas.";
     case "GRID_MODE_UNLOCK_DENIED":
       return "Desbloqueo de modos reales denegado.";
+    case "GRID_SHADOW_NO_VIABLE_RANGE":
+      return "El motor evaluó el mercado pero no pudo generar un rango viable con la configuración actual.";
     default:
       return msg || eventType;
   }
@@ -216,7 +218,7 @@ function formatEvent(ev: any): FormattedEvent {
     severity: severityFromEventType(ev.eventType),
     category: categoryFromEventType(ev.eventType),
     mode: ev.mode || "OFF",
-    title: ev.eventType.replace(/^GRID_/, "").replace(/_/g, " "),
+    title: ev.title || ev.eventType.replace(/^GRID_/, "").replace(/_/g, " "),
     message: ev.naturalMessage || naturalMessage(ev),
     technicalCode: ev.eventType,
     details: ev.metadataJson ? (typeof ev.metadataJson === "string" ? ev.metadataJson : JSON.stringify(ev.metadataJson, null, 2)) : null,
@@ -315,6 +317,7 @@ export function GridActivityLive() {
     "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE",
     "GRID_SHADOW_TICK_SKIPPED",
     "GRID_SHADOW_NO_LEVELS",
+    "GRID_SHADOW_NO_VIABLE_RANGE",
     "GRID_SHADOW_RANGE_REUSED",
     "GRID_LEVELS_PRESERVED_DUE_TO_CYCLE",
   ]);
@@ -672,7 +675,7 @@ export function GridActivityLive() {
                 const CatIcon = CATEGORY_ICONS[selectedEvent.category] || Radio;
                 return <CatIcon className="h-5 w-5" />;
               })()}
-              {selectedEvent?.technicalCode}
+              {selectedEvent?.title || selectedEvent?.technicalCode}
             </DialogTitle>
           </DialogHeader>
           {selectedEvent && (
@@ -707,6 +710,12 @@ export function GridActivityLive() {
                   <div className="rounded-lg bg-muted/20 px-3 py-2">
                     <span className="text-muted-foreground text-xs">Pair:</span>
                     <span className="font-mono ml-1">{selectedEvent.pair}</span>
+                  </div>
+                )}
+                {selectedEvent.technicalCode && (
+                  <div className="rounded-lg bg-muted/20 px-3 py-2">
+                    <span className="text-muted-foreground text-xs">Código técnico:</span>
+                    <span className="font-mono text-xs ml-1">{selectedEvent.technicalCode}</span>
                   </div>
                 )}
                 {selectedEvent.reasonCode && (

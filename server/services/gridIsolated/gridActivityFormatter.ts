@@ -335,6 +335,15 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
     title: "Rango reutilizado",
     messageFn: () => "El Grid reutiliza el último rango activo para auditoría. No se abren ciclos nuevos sin fills simulados.",
   },
+  GRID_SHADOW_NO_VIABLE_RANGE: {
+    category: "BAND",
+    severity: "WARNING",
+    title: "Rango no viable",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `El motor evaluó el mercado pero no pudo generar un rango viable. Motivo: ${meta.reason || "configuración no encaja"}.`;
+    },
+  },
   GRID_SHADOW_WAITING: {
     category: "SYSTEM",
     severity: "INFO",
@@ -538,6 +547,16 @@ export function getNaturalGridMessage(eventType: string, rawMessage: string | nu
     return `Evento Grid registrado: ${readable}.`;
   }
   return rawMessage || eventType;
+}
+
+export function getNaturalGridTitle(eventType: string): string {
+  const mapping = EVENT_MAPPINGS[eventType];
+  if (mapping?.title) return mapping.title;
+  if (eventType.startsWith("GRID_")) {
+    const readable = eventType.replace(/^GRID_/, "").replace(/_/g, " ").toLowerCase();
+    return readable.charAt(0).toUpperCase() + readable.slice(1);
+  }
+  return eventType;
 }
 
 export const SEVERITY_LABELS: Record<GridSeverity, string> = {

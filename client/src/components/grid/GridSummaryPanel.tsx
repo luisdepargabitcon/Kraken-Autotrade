@@ -9,6 +9,8 @@ import { GridLevelsPanel } from "./GridLevelsPanel";
 import { GridCyclesPanel } from "./GridCyclesPanel";
 import { GridRangeHistoryPanel } from "./GridRangeHistoryPanel";
 import { Activity, Shield, Wallet, Zap, Layers, CheckCircle2, XCircle, AlertTriangle, Settings2, Cpu, GripVertical, RotateCcw } from "lucide-react";
+import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
+import { GridAnalyzeNowButton } from "./GridAnalyzeNowButton";
 
 // ─── Drag & drop section ordering ────────────────────────────
 const SECTION_IDS = ["cartera", "estado", "controles", "contexto", "niveles", "ciclos", "actividad", "historico"] as const;
@@ -101,6 +103,7 @@ interface GridSummaryPanelProps {
   onShadowValidate: () => void;
   activatePending: boolean;
   shadowValidatePending: boolean;
+  onAuditRefreshed?: () => void;
 }
 
 export function GridSummaryPanel({
@@ -108,6 +111,7 @@ export function GridSummaryPanel({
   modeColor, onModeChange, onAcknowledge, onReconcile,
   modeMutationPending, acknowledgePending, reconcilePending,
   onGoToTab, onActivate, onShadowValidate, activatePending, shadowValidatePending,
+  onAuditRefreshed,
 }: GridSummaryPanelProps) {
   const mode = config?.mode || "OFF";
   const isActive = config?.isActive ?? false;
@@ -115,6 +119,7 @@ export function GridSummaryPanel({
   const lastTickAt = (status as any)?.lastTickAt ?? null;
   const lastTickReason = (status as any)?.lastTickReason ?? null;
   const functionalStatus = auditData?.functionalStatus;
+  const currentOperationalState = auditData?.currentOperationalState;
   const range = auditData?.range;
   const rangeHistory: any[] = auditData?.rangeHistory || [];
   const wallet = auditData?.wallet;
@@ -198,6 +203,14 @@ export function GridSummaryPanel({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Estado unificado del Grid */}
+          <GridNoActiveRangeBlock
+            currentOperationalState={currentOperationalState}
+            latestGridDiagnostic={auditData?.latestGridDiagnostic}
+            onAuditRefreshed={onAuditRefreshed}
+            compact={currentOperationalState?.hasActiveRange ?? false}
+          />
+
           {/* Mensaje de estado funcional */}
           <div className={`rounded-lg p-3 text-sm ${
             functionalStatus?.state === "active" ? "bg-green-500/10 text-green-700 dark:text-green-300" :
@@ -206,6 +219,8 @@ export function GridSummaryPanel({
           }`}>
             <p className="font-medium text-sm">{functionalStatus?.message || "Sincronizando estado..."}</p>
           </div>
+
+          <GridAnalyzeNowButton onAuditRefreshed={onAuditRefreshed} size="sm" />
 
           {/* KPIs del Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px border-b border-amber-500/10 bg-amber-500/10">
@@ -435,6 +450,8 @@ export function GridSummaryPanel({
         onGoToTab={onGoToTab}
         levelsSummary={auditData?.levelsSummary}
         netProfitTargetPct={auditData?.summary?.netProfitTargetPct}
+        auditData={auditData}
+        onAuditRefreshed={onAuditRefreshed}
       />
     ),
     ciclos: (
@@ -442,6 +459,8 @@ export function GridSummaryPanel({
         cycles={cycles}
         onGoToTab={onGoToTab}
         activeRangeVersionId={status?.activeRangeVersionId ?? null}
+        auditData={auditData}
+        onAuditRefreshed={onAuditRefreshed}
       />
     ),
     actividad: <GridLiveActivityPanel />,

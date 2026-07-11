@@ -519,7 +519,12 @@ class GridIsolatedEngine {
     // If no active range, propose one
     if (!this.activeRangeVersion) {
       await this.proposeRangeVersion(bandSnapshot);
-      this.lastTickReason = "Rango propuesto y activado en este tick.";
+      if (!this.activeRangeVersion) {
+        this.lastTickReason = "No se propuso rango activo: el generador no produjo niveles viables con la configuración actual.";
+        await this.logShadowTickEvent("GRID_SHADOW_NO_VIABLE_RANGE", "El motor evaluó el mercado pero no pudo generar un rango viable.", { reason: "no_viable_range" });
+      } else {
+        this.lastTickReason = "Rango propuesto y activado en este tick.";
+      }
     } else if (this.isBandDrifted(bandSnapshot)) {
       // Band has drifted significantly from active range
       const canRebuild = this.canRebuildLevels();

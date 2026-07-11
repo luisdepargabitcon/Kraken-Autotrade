@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { translateGridLabel, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
+import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
 
 // ─── Props ───────────────────────────────────────────────────
 interface GridLevelsPanelProps {
@@ -23,6 +24,8 @@ interface GridLevelsPanelProps {
   onGoToTab?: (tab: string) => void;
   levelsSummary?: any;
   netProfitTargetPct?: number | null;
+  auditData?: any;
+  onAuditRefreshed?: () => void;
 }
 
 // ─── Types ───────────────────────────────────────────────────
@@ -139,6 +142,8 @@ export function GridLevelsPanel({
   onGoToTab,
   levelsSummary,
   netProfitTargetPct,
+  auditData,
+  onAuditRefreshed,
 }: GridLevelsPanelProps) {
   const [filter, setFilter] = useState<FilterKey>("rango-activo");
   const [page, setPage] = useState(0);
@@ -530,6 +535,18 @@ export function GridLevelsPanel({
                 Revisa ATR multiplier, spacing mínimo, número de niveles o beneficio objetivo si quieres menos operaciones y más margen por ciclo.
               </span>
             </div>
+          </div>
+        )}
+
+        {/* No active range block — unified across tabs */}
+        {!activeRangeId && (
+          <div className="mb-3">
+            <GridNoActiveRangeBlock
+              currentOperationalState={auditData?.currentOperationalState}
+              latestGridDiagnostic={auditData?.latestGridDiagnostic}
+              onAuditRefreshed={onAuditRefreshed}
+              compact={false}
+            />
           </div>
         )}
 

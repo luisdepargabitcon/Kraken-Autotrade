@@ -13,22 +13,23 @@ import { Input } from "@/components/ui/input";
 import { AlertCircle, Activity, Settings2, BarChart3, Shield, Zap, TrendingUp, TrendingDown, Wallet, FlaskConical, ScrollText, Layers, HelpCircle, Radio, Zap as ZapIcon, Cpu, CheckCircle2, XCircle, AlertTriangle, Info } from "lucide-react";
 import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
 import { GridActivityLive } from "@/components/grid/GridActivityLive";
-import { GridBandsRangesPanel } from "@/components/grid/GridBandsRangesPanel";
+import { GridBandsPanel } from "@/components/grid/GridBandsPanel";
 import { GridSummaryPanel } from "@/components/grid/GridSummaryPanel";
 import { GridHeaderHero } from "@/components/grid/GridHeaderHero";
 import { GridKpiStrip } from "@/components/grid/GridKpiStrip";
 import { GridLevelsMarketHeader } from "@/components/grid/GridLevelsMarketHeader";
 import { GridLevelsPanel } from "@/components/grid/GridLevelsPanel";
+import { GridCyclesPanel } from "@/components/grid/GridCyclesPanel";
 import { GridCarteraDashboard } from "@/components/grid/GridCarteraDashboard";
 import { GridConfigConfirmDialog, type ConfigChange } from "@/components/grid/GridConfigConfirmDialog";
 import { GridAjustesPanel } from "@/components/grid/GridAjustesPanel";
 import { GridIntegrationStatusPanel } from "@/components/grid/GridIntegrationStatusPanel";
-import { GridRangeIntelligencePanel } from "@/components/grid/GridRangeIntelligencePanel";
 
 const API_BASE = "/api/grid-isolated";
 
 export default function GridIsolated() {
   const queryClient = useQueryClient();
+  const refreshAudit = () => queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
   const [activeTab, setActiveTab] = useState("resumen");
   const [showHodlConfirm, setShowHodlConfirm] = useState(false);
   const [pendingChange, setPendingChange] = useState<ConfigChange | null>(null);
@@ -294,13 +295,13 @@ export default function GridIsolated() {
             onShadowValidate={() => shadowValidateMutation.mutate()}
             activatePending={activateMutation.isPending}
             shadowValidatePending={shadowValidateMutation.isPending}
+            onAuditRefreshed={refreshAudit}
           />
         </TabsContent>
 
         {/* 3. Bandas y Rangos Tab */}
         <TabsContent value="bandas" className="space-y-4">
-          <GridRangeIntelligencePanel auditData={auditData} config={config} />
-          <GridBandsRangesPanel auditData={auditData} />
+          <GridBandsPanel auditData={auditData} onAuditRefreshed={refreshAudit} />
         </TabsContent>
 
         {/* 4. Actividad en Directo Tab */}
@@ -349,69 +350,20 @@ export default function GridIsolated() {
             showViewAll={false}
             levelsSummary={auditData?.levelsSummary}
             netProfitTargetPct={config?.netProfitTargetPct}
+            auditData={auditData}
+            onAuditRefreshed={refreshAudit}
           />
         </TabsContent>
 
         {/* 6. Ciclos Tab */}
         <TabsContent value="ciclos" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Zap className="h-5 w-5" />
-                Ciclos (Buy → Sell)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {cycles && cycles.length > 0 ? (
-                <div className="space-y-3">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="rounded-lg border p-3">
-                      <p className="text-sm text-muted-foreground">Ciclos activos</p>
-                      <p className="text-lg font-bold">{cycles.filter((c: any) => c.status === "open" || c.status === "active").length}</p>
-                    </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-sm text-muted-foreground">Completados</p>
-                      <p className="text-lg font-bold text-green-500">{cycles.filter((c: any) => c.status === "completed").length}</p>
-                    </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-sm text-muted-foreground">PnL realizado</p>
-                      <p className="text-lg font-bold text-green-500">
-                        ${cycles.filter((c: any) => c.status === "completed").reduce((sum: number, c: any) => sum + (c.netPnlUsd || 0), 0).toFixed(2)}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-sm text-muted-foreground">Capital reservado</p>
-                      <p className="text-lg font-bold">${status?.capitalReservedUsd?.toFixed(2) || "0.00"}</p>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    {cycles.slice(0, 30).map((cycle: any) => (
-                      <div key={cycle.id} className="flex items-center justify-between rounded-lg border p-3">
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-semibold">#{cycle.cycleNumber}</span>
-                          <Badge variant={cycle.status === "completed" ? "default" : "outline"}>{cycle.status}</Badge>
-                        </div>
-                        <div className="flex items-center gap-4 text-sm">
-                          <span className="font-mono">
-                            ${cycle.buyPrice?.toFixed(2)} → ${cycle.sellPrice?.toFixed(2) || "—"}
-                          </span>
-                          {cycle.netPnlUsd !== 0 && (
-                            <span className={cycle.netPnlUsd > 0 ? "text-green-500" : "text-red-500"}>
-                              {cycle.netPnlUsd > 0 ? "+" : ""}${cycle.netPnlUsd?.toFixed(2)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground py-8 text-center">
-                  No hay ciclos abiertos. El Grid todavía no ha reservado capital en ningún ciclo.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          <GridCyclesPanel
+            cycles={cycles || []}
+            onGoToTab={setActiveTab}
+            activeRangeVersionId={auditData?.levelsSummary?.activeRangeVersionId ?? null}
+            auditData={auditData}
+            onAuditRefreshed={refreshAudit}
+          />
         </TabsContent>
 
         {/* 7. Ajustes Tab — subpestañas: General, Cartera, Ejecución, Riesgo, Avanzado, Auditoría */}
@@ -427,6 +379,7 @@ export default function GridIsolated() {
             reconcilePending={reconcileMutation.isPending}
             showHodlConfirm={showHodlConfirm}
             setShowHodlConfirm={setShowHodlConfirm}
+            onAuditRefreshed={refreshAudit}
           />
         </TabsContent>
 

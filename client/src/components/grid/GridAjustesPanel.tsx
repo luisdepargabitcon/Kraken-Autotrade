@@ -13,6 +13,7 @@ import { GridExecutionPolicyPanel } from "./GridExecutionPolicyPanel";
 import { GridCarteraDashboard } from "./GridCarteraDashboard";
 import { GridMonitorPanel } from "./GridMonitorPanel";
 import { GridAdvancedConfig } from "./GridAdvancedConfig";
+import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
 import { Settings2, Shield, Cpu, FlaskConical, Zap, Zap as ZapIcon, CheckCircle2, XCircle, AlertCircle, AlertTriangle, TrendingUp, TrendingDown, Activity, ScrollText, Wallet, ChevronDown, Brain, Gauge, Lightbulb } from "lucide-react";
 
 interface GridAjustesPanelProps {
@@ -26,16 +27,27 @@ interface GridAjustesPanelProps {
   reconcilePending: boolean;
   showHodlConfirm: boolean;
   setShowHodlConfirm: (v: boolean) => void;
+  onAuditRefreshed?: () => void;
 }
 
 export function GridAjustesPanel({
   config, status, auditData, unlockCheck, onConfigChange, onConfirmChange,
   onReconcile, reconcilePending, showHodlConfirm, setShowHodlConfirm,
+  onAuditRefreshed,
 }: GridAjustesPanelProps) {
   const [subTab, setSubTab] = useState("general");
 
+  const hasActiveRange = auditData?.currentOperationalState?.hasActiveRange ?? auditData?.activeRange?.exists ?? false;
+
   return (
     <div className="space-y-4">
+      {!hasActiveRange && (
+        <GridNoActiveRangeBlock
+          currentOperationalState={auditData?.currentOperationalState}
+          latestGridDiagnostic={auditData?.latestGridDiagnostic}
+          onAuditRefreshed={onAuditRefreshed}
+        />
+      )}
       <Tabs value={subTab} onValueChange={setSubTab}>
         <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 gap-1 h-auto p-1">
           <TabsTrigger value="general" className="text-sm">General</TabsTrigger>

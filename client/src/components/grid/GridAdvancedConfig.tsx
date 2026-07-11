@@ -9,7 +9,7 @@ import {
   Cpu, Activity, AlertTriangle, AlertCircle, CheckCircle2, XCircle,
   Info, Brain, Lightbulb, ChevronDown, ArrowRight, Sparkles,
 } from "lucide-react";
-import { buildGridConfigRecommendations, applyRecommendationToDraft, type GridRecommendation } from "@/lib/gridConfigAdvisor";
+import { buildGridConfigRecommendations, applyRecommendationToDraft, type GridRecommendation } from "@shared/gridConfigAdvisor";
 
 interface GridAdvancedConfigProps {
   config: any;
@@ -681,14 +681,20 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
                     </div>
                   </div>
                   {rec.recommendedLabel && Object.keys(rec.recommendedPatch).length > 0 && (
-                    <div className="flex items-center gap-2 pl-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 pl-6">
+                      <div className="text-xs text-muted-foreground">
+                        <span className="font-mono">{rec.currentValue ?? "—"}</span>
+                        <span className="mx-1">→</span>
+                        <span className="font-mono font-semibold text-green-500">{rec.recommendedValue ?? rec.recommendedLabel}</span>
+                      </div>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => handleApplyRecommendation(rec)}
+                        className="ml-0 sm:ml-auto"
                       >
                         <ArrowRight className="h-3 w-3 mr-1" />
-                        {rec.ctaApply}: {rec.recommendedLabel}
+                        Aplicar al borrador
                       </Button>
                       <span className="text-xs text-muted-foreground">Solo modifica el borrador</span>
                     </div>
