@@ -5,6 +5,58 @@
 
 ---
 
+## 2026-07-12 — GRID FASE 3C.4-F (b): Desbloqueo por Qsync y validación con lógica pura
+
+### Resumen
+Se descartó la vía jsdom local porque `node_modules/react` y `react-dom` tenían sus ficheros `development.js` como stubs de Qsync y `vitest` no podía leerlos (UNKNOWN read / timeout). Se sustituyó por helpers puros testables con `node` y se integraron en `GridIsolated.tsx` y `GridBandsPanel.tsx`.
+
+### Problema
+- `vitest` con `jsdom` y tests `.tsx` fallaban con `UNKNOWN: unknown error, read` al intentar leer `react.development.js` y `react-dom-client.development.js` desde Qsync
+- `Get-Content` de los ficheros `development.js` devolvía "La operación de nube no se completó antes de que expirara el período de tiempo de espera"
+- No se podían ejecutar tests de componente React en el entorno local
+- Existían dependencias instaladas (`@testing-library/react`, `jsdom`, ...) que no se podían usar
+
+### Solución
+1. **Eliminar** tests `.tsx` jsdom fallidos y dependencias no usadas
+2. **Revertir** `vitest.config.ts` y `vitest.setup.ts` a estado estable (sin hacks `NODE_ENV=production` ni `environmentMatchGlobs`)
+3. **Crear `client/src/lib/gridRecommendationActions.ts`** con funciones puras:
+   - `buildTryRecommendationAction`
+   - `buildGoToRecommendationTargetAction`
+   - `getRecommendationPrimaryButtonLabel`
+   - `getRecommendationSecondaryButtonLabel`
+   - `sanitizeDiagnosticBandPricesForUi`
+4. **Crear `client/src/lib/__tests__/gridRecommendationActions.test.ts`** con tests de `node` puros
+5. **Integrar en `GridIsolated.tsx`**: `handleTryRecommendation` y `handleGoToRecommendationTarget` usan helpers
+6. **Integrar en `GridBandsPanel.tsx`**:
+   - Botones usan `getRecommendationPrimaryButtonLabel()` / `getRecommendationSecondaryButtonLabel()`
+   - `diagnosticBand` se sanea con `sanitizeDiagnosticBandPricesForUi()` antes de pintar
+   - `fmtPrice()` devuelve `"No disponible"` para valores inválidos o 0
+
+### Archivos afectados
+- `client/src/lib/gridRecommendationActions.ts` (nuevo)
+- `client/src/lib/__tests__/gridRecommendationActions.test.ts` (nuevo)
+- `client/src/pages/GridIsolated.tsx`
+- `client/src/components/grid/GridBandsPanel.tsx`
+- `package.json`
+- `package-lock.json`
+- `vitest.config.ts`
+- `vitest.setup.ts`
+
+### Validaciones
+- `npm run check`: ✅
+- Tests Grid requeridos (9 ficheros, 234 tests): ✅
+- `npm run build`: ✅
+
+### Restricciones
+- No REAL
+- No órdenes reales
+- No DB manual
+- No SQL manual
+- No IDCA
+- No FISCO
+
+---
+
 ## 2026-07-12 — GRID FASE 3C.4-F: Acciones reales de recomendaciones y navegación a Ajustes
 
 ### Resumen

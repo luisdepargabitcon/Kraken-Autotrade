@@ -10,6 +10,11 @@ import {
 import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION, ANALYZE_NOW_EXPLANATION } from "@/lib/gridTranslate";
 import { renderSafeGridText } from "@/lib/renderSafeGridText";
 import { buildRangeExplanation } from "@shared/gridConfigAdvisor";
+import {
+  sanitizeDiagnosticBandPricesForUi,
+  getRecommendationPrimaryButtonLabel,
+  getRecommendationSecondaryButtonLabel,
+} from "@/lib/gridRecommendationActions";
 import { GridAnalyzeNowButton } from "./GridAnalyzeNowButton";
 
 interface GridBandsPanelProps {
@@ -35,7 +40,7 @@ function humanizeEventType(eventType: string): string {
 
 function fmtPrice(v: unknown): string {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
-  return Number.isFinite(n) ? `$${n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—";
+  return Number.isFinite(n) && n > 0 ? `$${n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "No disponible";
 }
 
 function fmtPct(v: unknown): string {
@@ -54,7 +59,7 @@ export function GridBandsPanel({ auditData, onAuditRefreshed, onTryRecommendatio
   const rangeHistory: any[] = auditData?.rangeHistory || [];
   const rangeIntelligence = auditData?.rangeIntelligence;
   const adaptiveDecision = rangeIntelligence?.lastAdaptiveRangeDecision;
-  const diagnosticBand = auditData?.diagnosticBand;
+  const diagnosticBand = sanitizeDiagnosticBandPricesForUi(auditData?.diagnosticBand);
 
   const hasActiveRange = currentOperationalState?.hasActiveRange ?? activeRange?.exists ?? false;
   const bandStatus = diagnosticBand?.status ?? "not_enough_data";
@@ -716,12 +721,12 @@ export function GridBandsPanel({ auditData, onAuditRefreshed, onTryRecommendatio
                             setTimeout(() => setDraftNotice(null), 6000);
                           }}
                         >
-                          Probar este ajuste
+                          {getRecommendationPrimaryButtonLabel()}
                         </Button>
                       )}
                       {rec.targetField && (
                         <Button variant="ghost" size="sm" className="text-xs" onClick={() => onGoToRecommendationTarget?.(rec)}>
-                          Ir al ajuste
+                          {getRecommendationSecondaryButtonLabel()}
                         </Button>
                       )}
                     </div>

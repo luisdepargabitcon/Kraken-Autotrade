@@ -24,6 +24,7 @@ import { GridCarteraDashboard } from "@/components/grid/GridCarteraDashboard";
 import { GridConfigConfirmDialog, type ConfigChange } from "@/components/grid/GridConfigConfirmDialog";
 import { GridAjustesPanel } from "@/components/grid/GridAjustesPanel";
 import { GridIntegrationStatusPanel } from "@/components/grid/GridIntegrationStatusPanel";
+import { buildTryRecommendationAction, buildGoToRecommendationTargetAction } from "@/lib/gridRecommendationActions";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -41,17 +42,19 @@ export default function GridIsolated() {
   const [focusConfigField, setFocusConfigField] = useState<string | null>(null);
 
   const handleTryRecommendation = useCallback((rec: any) => {
-    if (!rec.recommendedPatch || Object.keys(rec.recommendedPatch).length === 0) return;
-    setPendingRecommendationPatch(rec.recommendedPatch);
-    if (rec.targetField) setFocusConfigField(rec.targetField);
-    setActiveSettingsSubTab("avanzado");
-    setActiveTab("ajustes");
+    const action = buildTryRecommendationAction(rec);
+    if (!action.patch || Object.keys(action.patch).length === 0) return;
+    setPendingRecommendationPatch(action.patch);
+    if (action.focusField) setFocusConfigField(action.focusField);
+    setActiveSettingsSubTab(action.settingsSubTab);
+    setActiveTab(action.mainTab);
   }, []);
 
   const handleGoToRecommendationTarget = useCallback((rec: any) => {
-    if (rec.targetField) setFocusConfigField(rec.targetField);
-    setActiveSettingsSubTab("avanzado");
-    setActiveTab("ajustes");
+    const action = buildGoToRecommendationTargetAction(rec);
+    if (action.focusField) setFocusConfigField(action.focusField);
+    setActiveSettingsSubTab(action.settingsSubTab);
+    setActiveTab(action.mainTab);
   }, []);
 
   const handleRecommendationApplied = useCallback(() => {
