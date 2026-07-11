@@ -23,6 +23,77 @@ export interface GridRecommendation {
   recommendedValue?: string;
 }
 
+export interface BtcProfile {
+  id: string;
+  label: string;
+  description: string;
+  patch: Record<string, any>;
+}
+
+export const BTC_PROFILES: BtcProfile[] = [
+  {
+    id: "prudente",
+    label: "Prudente BTC",
+    description: "Menos beneficio por ciclo, más facilidad para que entren niveles.",
+    patch: {
+      netProfitTargetPct: 0.50,
+      adaptiveRangeMinPct: 2.50,
+      adaptiveRangeMaxPct: 5.50,
+      adaptiveRangeLowVolMaxPct: 3.00,
+      adaptiveRangeNormalMaxPct: 5.50,
+      adaptiveRangeHighVolMaxPct: 7.00,
+      adaptiveRangeMinViableLevels: 2,
+      adaptiveRangeTargetFullLevels: false,
+    },
+  },
+  {
+    id: "equilibrado",
+    label: "Equilibrado BTC",
+    description: "Recomendado para empezar en SHADOW. Busca aprovechar oscilaciones normales sin forzar todos los niveles.",
+    patch: {
+      netProfitTargetPct: 0.70,
+      adaptiveRangeMinPct: 3.00,
+      adaptiveRangeMaxPct: 7.00,
+      adaptiveRangeLowVolMaxPct: 4.00,
+      adaptiveRangeNormalMaxPct: 6.00,
+      adaptiveRangeHighVolMaxPct: 8.00,
+      adaptiveRangeMinViableLevels: 3,
+      adaptiveRangeTargetFullLevels: false,
+    },
+  },
+  {
+    id: "amplio",
+    label: "Amplio BTC",
+    description: "Más espacio para mercado volátil. Más exposición, pero evita que el Grid quede bloqueado por rango demasiado pequeño.",
+    patch: {
+      netProfitTargetPct: 0.80,
+      adaptiveRangeMinPct: 3.50,
+      adaptiveRangeMaxPct: 9.00,
+      adaptiveRangeLowVolMaxPct: 4.50,
+      adaptiveRangeNormalMaxPct: 7.00,
+      adaptiveRangeHighVolMaxPct: 9.00,
+      adaptiveRangeMinViableLevels: 3,
+      adaptiveRangeTargetFullLevels: false,
+    },
+  },
+];
+
+export function getBtcProfile(id: string): BtcProfile | undefined {
+  return BTC_PROFILES.find(p => p.id === id);
+}
+
+export function buildRangeExplanation(allowedPct: number | null, requiredPct: number | null, netProfitPct: number | null): string {
+  if (allowedPct == null || requiredPct == null) return "";
+  let text = `BTC puede moverse 1,5%–3% en un día, pero tu configuración actual pide demasiado beneficio por cada ciclo.`;
+  if (netProfitPct != null) {
+    text += ` Con ${netProfitPct.toFixed(2)}% neto por nivel, el motor necesita separar mucho compras y ventas.`;
+  }
+  text += ` Por eso, para colocar al menos 3 niveles rentables, necesita una banda aproximada del ${requiredPct.toFixed(2)}%.`;
+  text += ` Ahora el límite está en ${allowedPct.toFixed(2)}%, así que no caben suficientes niveles.`;
+  text += ` No significa que BTC no sirva para Grid. Significa que esta configuración es demasiado exigente para una banda compacta.`;
+  return text;
+}
+
 interface AdvisorInput {
   config: any;
   draft: Record<string, any>;
@@ -68,7 +139,7 @@ export function buildGridConfigRecommendations(input: AdvisorInput): GridRecomme
       expectedImpact: "Más niveles caben en el rango. Menos beneficio por ciclo pero más operaciones posibles.",
       targetSection: "Ajustes finos",
       targetField: "netProfitTargetPct",
-      ctaApply: `Aplicar ${newNetProfit.toFixed(2)}% al borrador`,
+      ctaApply: "Probar este ajuste",
       ctaGoTo: "Ir al objetivo neto",
       currentValue: `${netProfit.toFixed(2)}%`,
       recommendedValue: `${newNetProfit.toFixed(2)}%`,
@@ -88,7 +159,7 @@ export function buildGridConfigRecommendations(input: AdvisorInput): GridRecomme
       expectedImpact: "Cada régimen podrá usar su rango completo. Más niveles posibles en mercados volátiles.",
       targetSection: "Ajustes finos",
       targetField: "adaptiveRangeMaxPct",
-      ctaApply: "Alinear al borrador",
+      ctaApply: "Probar este ajuste",
       ctaGoTo: "Ir al ajuste",
       currentValue: `${rangeMax.toFixed(2)}%`,
       recommendedValue: `${newRangeMax.toFixed(2)}%`,
@@ -108,7 +179,7 @@ export function buildGridConfigRecommendations(input: AdvisorInput): GridRecomme
       expectedImpact: "El Grid podrá operar mejor en mercados volátiles sin quedarse sin espacio.",
       targetSection: "Ajustes finos",
       targetField: "adaptiveRangeHighVolMaxPct",
-      ctaApply: "Igualar al borrador",
+      ctaApply: "Probar este ajuste",
       ctaGoTo: "Ir al ajuste",
       currentValue: `${highVolMax.toFixed(2)}%`,
       recommendedValue: `${newHighVol.toFixed(2)}%`,
@@ -128,7 +199,7 @@ export function buildGridConfigRecommendations(input: AdvisorInput): GridRecomme
       expectedImpact: "El motor podrá generar niveles con suficiente separación para ser rentables.",
       targetSection: "Ajustes finos",
       targetField: "gridStepMaxPct",
-      ctaApply: "Aplicar recomendación",
+      ctaApply: "Probar este ajuste",
       ctaGoTo: "Ir al ajuste",
       currentValue: `${stepMax.toFixed(2)}%`,
       recommendedValue: `${newStepMax.toFixed(2)}%`,
@@ -151,10 +222,30 @@ export function buildGridConfigRecommendations(input: AdvisorInput): GridRecomme
         expectedImpact: "El Grid podrá usar un rango más amplio para acomodar los niveles solicitados.",
         targetSection: "Ajustes finos",
         targetField: "adaptiveRangeMaxPct",
-        ctaApply: "Aplicar recomendación",
+        ctaApply: "Probar este ajuste",
         ctaGoTo: "Ir al ajuste",
         currentValue: `${rangeMax.toFixed(2)}%`,
         recommendedValue: `${newRangeMax.toFixed(2)}%`,
+      });
+    }
+
+    // 5b) Auto-recommend Equilibrado profile when not viable
+    const equilibrado = getBtcProfile("equilibrado");
+    if (equilibrado) {
+      recs.push({
+        id: "range_not_viable_equilibrado",
+        severity: "warning",
+        title: "Probar configuración Equilibrada BTC",
+        plainExplanation: "Esta configuración baja el beneficio por ciclo y amplía la banda para que puedan caber niveles en oscilaciones normales de BTC.",
+        recommendedPatch: equilibrado.patch,
+        recommendedLabel: "Aplicar perfil Equilibrado BTC",
+        expectedImpact: "Baja el beneficio por ciclo y amplía la banda. Más niveles caben en el rango.",
+        targetSection: "Ajustes finos",
+        targetField: "netProfitTargetPct",
+        ctaApply: "Probar Equilibrado BTC",
+        ctaGoTo: "Ir al ajuste",
+        currentValue: "Configuración actual",
+        recommendedValue: "Perfil Equilibrado BTC",
       });
     }
 
@@ -171,7 +262,7 @@ export function buildGridConfigRecommendations(input: AdvisorInput): GridRecomme
         expectedImpact: "Más niveles caben en el rango. Menos beneficio por ciclo pero más viabilidad.",
         targetSection: "Ajustes finos",
         targetField: "netProfitTargetPct",
-        ctaApply: "Aplicar recomendación",
+        ctaApply: "Probar este ajuste",
         ctaGoTo: "Ir al ajuste",
         currentValue: `${netProfit.toFixed(2)}%`,
         recommendedValue: `${newNetProfit.toFixed(2)}%`,
@@ -211,10 +302,10 @@ export function buildGridConfigRecommendations(input: AdvisorInput): GridRecomme
       expectedImpact: "El Grid usará rangos más apropiados en mercados tranquilos.",
       targetSection: "Ajustes finos",
       targetField: "adaptiveRangeLowVolMaxPct",
-      ctaApply: "Aplicar recomendación",
+      ctaApply: "Probar este ajuste",
       ctaGoTo: "Ir al ajuste",
       currentValue: `${lowVolMax.toFixed(2)}%`,
-      recommendedValue: `${newLowVol.toFixed(2)}%`,
+      recommendedValue: newLowVol.toFixed(2) + "%",
     });
   }
 
@@ -224,15 +315,15 @@ export function buildGridConfigRecommendations(input: AdvisorInput): GridRecomme
       id: "target_full_low_range",
       severity: "warning",
       title: "Pides todos los niveles pero el rango máximo puede no ser suficiente",
-      plainExplanation: `Tienes activado "Forzar todos los niveles" pero el rango máximo es solo ${rangeMax.toFixed(2)}%. Puede que no quepan todos los niveles solicitados.`,
+      plainExplanation: "Tienes activado \"Forzar todos los niveles\" pero el rango máximo es solo " + rangeMax.toFixed(2) + "%. Puede que no quepan todos los niveles solicitados.",
       recommendedPatch: { adaptiveRangeMaxPct: 8.0 },
       recommendedLabel: "Subir rango máximo a 8.00%",
       expectedImpact: "Más espacio para acomodar todos los niveles solicitados.",
       targetSection: "Ajustes finos",
       targetField: "adaptiveRangeMaxPct",
-      ctaApply: "Aplicar recomendación",
+      ctaApply: "Probar este ajuste",
       ctaGoTo: "Ir al ajuste",
-      currentValue: `${rangeMax.toFixed(2)}%`,
+      currentValue: rangeMax.toFixed(2) + "%",
       recommendedValue: "8.00%",
     });
   }

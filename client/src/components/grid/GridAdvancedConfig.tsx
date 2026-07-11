@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -7,15 +7,19 @@ import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Cpu, Activity, AlertTriangle, AlertCircle, CheckCircle2, XCircle,
-  Info, Brain, Lightbulb, ChevronDown, ArrowRight, Sparkles,
+  Info, Brain, Lightbulb, ChevronDown, ArrowRight, Sparkles, Crosshair, RefreshCw,
 } from "lucide-react";
-import { buildGridConfigRecommendations, applyRecommendationToDraft, type GridRecommendation } from "@shared/gridConfigAdvisor";
+import {
+  buildGridConfigRecommendations, applyRecommendationToDraft, buildRangeExplanation,
+  BTC_PROFILES, type GridRecommendation,
+} from "@shared/gridConfigAdvisor";
 
 interface GridAdvancedConfigProps {
   config: any;
   auditData?: any;
   onConfirmChange: (key: string, label: string, oldValue: any, newValue: any, impact: string, riskLevel: "low" | "medium" | "high", affectsCurrent: boolean, requiresRecalc: boolean) => void;
   onConfigChange: (key: string, value: any) => void;
+  onAuditRefreshed?: () => void;
 }
 
 const PRESETS: Record<string, { values: Record<string, any>; text: string }> = {
@@ -66,10 +70,24 @@ const DRAFT_KEYS = [
   "enforceCompactRange", "gridRangeMaxPct", "maxDistanceFromCenterPct", "maxSellDistanceFromNearestBuyPct",
 ];
 
-export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfigChange }: GridAdvancedConfigProps) {
+export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfigChange, onAuditRefreshed }: GridAdvancedConfigProps) {
   const [draft, setDraft] = useState<Record<string, any>>({});
   const [showApplySummary, setShowApplySummary] = useState(false);
   const [fixedCompactOpen, setFixedCompactOpen] = useState(false);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState(false);
+  const sliderRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const scrollToField = (field: string) => {
+    const el = sliderRefs.current[field];
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-blue-400", "rounded-lg");
+      setTimeout(() => {
+        el.classList.remove("ring-2", "ring-blue-400", "rounded-lg");
+      }, 3000);
+    }
+  };
 
   // Initialize draft from config when config changes
   useEffect(() => {
@@ -128,6 +146,9 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
       onConfigChange(key, newVal);
     }
     setShowApplySummary(false);
+    setSavedNotice(true);
+    setDraftNotice(null);
+    setTimeout(() => setSavedNotice(false), 8000);
   };
 
   // Mode
@@ -222,22 +243,52 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
   const handleApplyRecommendation = (rec: GridRecommendation) => {
     if (rec.recommendedPatch && Object.keys(rec.recommendedPatch).length > 0) {
       setDraft(prev => applyRecommendationToDraft(prev, rec));
+      setDraftNotice("Cambio aplicado en pantalla. Todav\u00eda no est\u00e1 guardado.");
+      setTimeout(() => setDraftNotice(null), 6000);
     }
+  };
+
+  const handleApplyBtcProfile = (profile: typeof BTC_PROFILES[0]) => {
+    setDraft(prev => ({ ...prev, ...profile.patch }));
+    setDraftNotice("Perfil aplicado en pantalla. Pulsa \"Guardar cambios\" para hacerlo efectivo.");
+    setTimeout(() => setDraftNotice(null), 6000);
   };
 
 
   return (
     <div className="space-y-4">
+      {/* ─── Draft notice ──────────────────────────────────── */}
+      {draftNotice && (
+        <div className="rounded-lg bg-blue-500/10 border border-blue-500/30 p-3 flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+          <Info className="h-4 w-4 shrink-0" />
+          <span>{draftNotice}</span>
+        </div>
+      )}
+
+      {/* ─── Saved notice ───────────────────────────────────── */}
+      {savedNotice && (
+        <div className="rounded-lg bg-green-500/10 border border-green-500/30 p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-300">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>Cambios guardados. Pulsa "Analizar mercado ahora" para recalcular la banda.</span>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => onAuditRefreshed?.()}>
+            <RefreshCw className="h-3 w-3 mr-1" />
+            Analizar mercado ahora
+          </Button>
+        </div>
+      )}
+
       {/* ─── Draft status bar ──────────────────────────────── */}
       {isDirty && (
         <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
             <AlertCircle className="h-4 w-4" />
-            <span>Tienes {dirtyFields.length} cambio(s) sin aplicar. No se envían al backend hasta que pulses "Aplicar cambios".</span>
+            <span>Tienes {dirtyFields.length} cambio(s) pendiente(s). Pulsa "Guardar cambios" para enviarlos al backend.</span>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={discardDraft}>Descartar cambios</Button>
-            <Button size="sm" onClick={() => setShowApplySummary(true)}>Aplicar cambios</Button>
+            <Button variant="outline" size="sm" onClick={discardDraft}>Deshacer cambios</Button>
+            <Button size="sm" onClick={() => setShowApplySummary(true)}>Guardar cambios</Button>
           </div>
         </div>
       )}
@@ -438,7 +489,7 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
             Estos ajustes te permiten controlar manualmente la separación entre niveles y el beneficio objetivo. Si no estás seguro, mantén los valores por defecto.
           </p>
 
-          <div className="space-y-2">
+          <div className="space-y-2" ref={(el) => { sliderRefs.current["gridStepMinPct"] = el; }}>
             <Label className="text-sm">Separación mínima entre niveles: {eff("gridStepMinPct", 0.15)?.toFixed(2)}%</Label>
             <Slider
               value={[eff("gridStepMinPct", 0.15)]}
@@ -447,7 +498,7 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
             />
             <p className="text-sm text-muted-foreground">Distancia mínima entre niveles de compra/venta. El motor puede aumentarla automáticamente para cubrir fees y beneficio neto.</p>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2" ref={(el) => { sliderRefs.current["gridStepMaxPct"] = el; }}>
             <Label className="text-sm">Separación máxima entre niveles: {eff("gridStepMaxPct", 3.0)?.toFixed(2)}%</Label>
             <Slider
               value={[eff("gridStepMaxPct", 3.0)]}
@@ -456,7 +507,7 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
             />
             <p className="text-sm text-muted-foreground">Distancia máxima permitida entre niveles. No define el rango por sí solo; el rango también depende de la volatilidad y el beneficio neto.</p>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2" ref={(el) => { sliderRefs.current["netProfitTargetPct"] = el; }}>
             <Label className="text-sm">Beneficio neto objetivo por nivel: {eff("netProfitTargetPct", 0.8)?.toFixed(2)}%</Label>
             <Slider
               value={[eff("netProfitTargetPct", 0.8)]}
@@ -480,7 +531,7 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
                     onCheckedChange={(v) => updateDraft("adaptiveRangeTargetFullLevels", v)}
                   />
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-2" ref={(el) => { sliderRefs.current["adaptiveRangeMinViableLevels"] = el; }}>
                   <Label className="text-sm">Mínimo de niveles para que el rango sea viable: {eff("adaptiveRangeMinViableLevels", 4)}</Label>
                   <Slider value={[eff("adaptiveRangeMinViableLevels", 4)]} min={2} max={12} step={1}
                     onValueChange={(v) => updateDraft("adaptiveRangeMinViableLevels", v[0])} />
@@ -496,29 +547,29 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
                 </CollapsibleTrigger>
                 <CollapsibleContent className="pt-3 space-y-3">
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
+                    <div className="space-y-2" ref={(el) => { sliderRefs.current["adaptiveRangeMinPct"] = el; }}>
                       <Label className="text-sm">Rango mínimo global: {eff("adaptiveRangeMinPct", 1.5)?.toFixed(2)}%</Label>
                       <Slider value={[eff("adaptiveRangeMinPct", 1.5)]} min={0.5} max={5.0} step={0.25}
                         onValueChange={(v) => updateDraft("adaptiveRangeMinPct", v[0])} />
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2" ref={(el) => { sliderRefs.current["adaptiveRangeMaxPct"] = el; }}>
                       <Label className="text-sm">Rango máximo global: {eff("adaptiveRangeMaxPct", 7.0)?.toFixed(2)}%</Label>
                       <Slider value={[eff("adaptiveRangeMaxPct", 7.0)]} min={3.0} max={15.0} step={0.5}
                         onValueChange={(v) => updateDraft("adaptiveRangeMaxPct", v[0])} />
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-2">
+                    <div className="space-y-2" ref={(el) => { sliderRefs.current["adaptiveRangeLowVolMaxPct"] = el; }}>
                       <Label className="text-sm text-xs">Máx baja volatilidad: {eff("adaptiveRangeLowVolMaxPct", 3.0)?.toFixed(2)}%</Label>
                       <Slider value={[eff("adaptiveRangeLowVolMaxPct", 3.0)]} min={1.0} max={8.0} step={0.25}
                         onValueChange={(v) => updateDraft("adaptiveRangeLowVolMaxPct", v[0])} />
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2" ref={(el) => { sliderRefs.current["adaptiveRangeNormalMaxPct"] = el; }}>
                       <Label className="text-sm text-xs">Máx lateral normal: {eff("adaptiveRangeNormalMaxPct", 5.0)?.toFixed(2)}%</Label>
                       <Slider value={[eff("adaptiveRangeNormalMaxPct", 5.0)]} min={2.0} max={10.0} step={0.25}
                         onValueChange={(v) => updateDraft("adaptiveRangeNormalMaxPct", v[0])} />
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2" ref={(el) => { sliderRefs.current["adaptiveRangeHighVolMaxPct"] = el; }}>
                       <Label className="text-sm text-xs">Máx alta volatilidad: {eff("adaptiveRangeHighVolMaxPct", 7.0)?.toFixed(2)}%</Label>
                       <Slider value={[eff("adaptiveRangeHighVolMaxPct", 7.0)]} min={3.0} max={15.0} step={0.5}
                         onValueChange={(v) => updateDraft("adaptiveRangeHighVolMaxPct", v[0])} />
@@ -574,6 +625,69 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
               )}
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ─── Bloque 3b: Configuración recomendada BTC ──────── */}
+      <Card className="border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Lightbulb className="h-4 w-4 text-blue-400" />
+            Configuración recomendada para BTC lateral
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Range explanation */}
+          {(() => {
+            const adaptiveDecision = auditData?.rangeIntelligence?.lastAdaptiveRangeDecision;
+            const allowedPct = adaptiveDecision?.regimeMaxPct ?? null;
+            const requiredPct = adaptiveDecision?.finalRangePct ?? null;
+            const netProfitPct = eff("netProfitTargetPct", 0.8);
+            if (allowedPct != null && requiredPct != null && requiredPct > allowedPct) {
+              const explanation = buildRangeExplanation(allowedPct, requiredPct, netProfitPct);
+              return (
+                <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300 space-y-1">
+                  <p className="font-semibold">¿Por qué no cabe la banda?</p>
+                  <p>{explanation}</p>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
+          <p className="text-sm text-muted-foreground">
+            Perfiles predefinidos para BTC en modo lateral/intradía. Solo cambian los valores en pantalla.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {BTC_PROFILES.map((profile) => (
+              <div
+                key={profile.id}
+                className="rounded-lg border border-border/50 p-4 space-y-3 flex flex-col"
+              >
+                <div>
+                  <p className="text-sm font-semibold">{profile.label}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{profile.description}</p>
+                </div>
+                <div className="text-xs space-y-1 text-muted-foreground flex-1">
+                  <div>Beneficio neto: <span className="font-mono text-foreground">{profile.patch.netProfitTargetPct.toFixed(2)}%</span></div>
+                  <div>Rango mín: <span className="font-mono text-foreground">{profile.patch.adaptiveRangeMinPct.toFixed(2)}%</span></div>
+                  <div>Rango máx: <span className="font-mono text-foreground">{profile.patch.adaptiveRangeMaxPct.toFixed(2)}%</span></div>
+                  <div>Mín niveles: <span className="font-mono text-foreground">{profile.patch.adaptiveRangeMinViableLevels}</span></div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleApplyBtcProfile(profile)}
+                  className="w-full"
+                >
+                  Probar {profile.label}
+                </Button>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Al pulsar un perfil, los sliders cambian en pantalla. Pulsa "Guardar cambios" para hacerlo efectivo.
+          </p>
         </CardContent>
       </Card>
 
@@ -687,16 +801,24 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
                         <span className="mx-1">→</span>
                         <span className="font-mono font-semibold text-green-500">{rec.recommendedValue ?? rec.recommendedLabel}</span>
                       </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleApplyRecommendation(rec)}
-                        className="ml-0 sm:ml-auto"
-                      >
-                        <ArrowRight className="h-3 w-3 mr-1" />
-                        Aplicar al borrador
-                      </Button>
-                      <span className="text-xs text-muted-foreground">Solo modifica el borrador</span>
+                      <div className="flex items-center gap-2 ml-0 sm:ml-auto">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => scrollToField(rec.targetField)}
+                        >
+                          <Crosshair className="h-3 w-3 mr-1" />
+                          Ir al ajuste
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => handleApplyRecommendation(rec)}
+                        >
+                          <ArrowRight className="h-3 w-3 mr-1" />
+                          Probar este ajuste
+                        </Button>
+                      </div>
+                      <span className="text-xs text-muted-foreground w-full">Solo cambia los valores en pantalla. Para hacerlo efectivo pulsa Guardar cambios.</span>
                     </div>
                   )}
                 </div>
@@ -731,13 +853,13 @@ export function GridAdvancedConfig({ config, auditData, onConfirmChange, onConfi
                 </div>
               ))}
             </div>
-            <div className="rounded-lg bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-300 flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              <span>No se regeneran niveles automáticamente. No se activa SHADOW ni REAL.</span>
+            <div className="rounded-lg bg-blue-500/10 p-3 text-sm text-blue-700 dark:text-blue-300 flex items-center gap-2">
+              <Info className="h-4 w-4 shrink-0" />
+              <span>Guardar estos cambios afectará a futuros análisis de banda. No activa REAL y no envía órdenes.</span>
             </div>
             <div className="flex items-center gap-2 justify-end">
               <Button variant="outline" size="sm" onClick={() => setShowApplySummary(false)}>Cancelar</Button>
-              <Button size="sm" onClick={applyDraft}>Aplicar {dirtyFields.length} cambio(s)</Button>
+              <Button size="sm" onClick={applyDraft}>Guardar {dirtyFields.length} cambio(s)</Button>
             </div>
           </div>
         </div>

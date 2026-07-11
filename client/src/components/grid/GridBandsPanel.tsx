@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { translateGridLabel, gridDisplayStatus, SHADOW_EXPLANATION, ANALYZE_NOW_EXPLANATION } from "@/lib/gridTranslate";
 import { renderSafeGridText } from "@/lib/renderSafeGridText";
+import { buildRangeExplanation } from "@shared/gridConfigAdvisor";
 import { GridAnalyzeNowButton } from "./GridAnalyzeNowButton";
 
 interface GridBandsPanelProps {
@@ -305,6 +306,21 @@ export function GridBandsPanel({ auditData, onAuditRefreshed }: GridBandsPanelPr
               <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-300">
                 <p>{bandExplanation || "Con los ajustes actuales, el Grid no puede crear una banda rentable y segura."}</p>
               </div>
+              {(() => {
+                const adaptiveDecision = auditData?.rangeIntelligence?.lastAdaptiveRangeDecision;
+                const allowedPct = adaptiveDecision?.regimeMaxPct ?? null;
+                const requiredPct = adaptiveDecision?.finalRangePct ?? null;
+                const netProfitPct = auditData?.config?.netProfitTargetPct ?? null;
+                if (allowedPct != null && requiredPct != null && requiredPct > allowedPct) {
+                  const explanation = buildRangeExplanation(allowedPct, requiredPct, netProfitPct);
+                  return (
+                    <div className="rounded-lg bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300">
+                      <p>{explanation}</p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
 
               {bandExists && bandLower != null && bandUpper != null && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

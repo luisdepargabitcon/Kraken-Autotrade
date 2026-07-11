@@ -5,6 +5,67 @@
 
 ---
 
+## 2026-07-12 — GRID FASE 3C.4-E: Recomendaciones aplicables, perfiles BTC lateral y UX borrador
+
+### Resumen
+Refactor UX completo de las recomendaciones de configuración Grid. Cambio de "Aplicar al borrador" a "Probar este ajuste", botones "Ir al ajuste" con scroll/focus, perfiles BTC predefinidos (Prudente/Equilibrado/Amplio), explicación humana del problema 4.25% vs 7.10%, recomendación automática de perfil Equilibrado cuando el rango no es viable, y UX mejorada de Guardar cambios con resumen diff, confirmación y botón post-save "Analizar mercado ahora".
+
+### Problema
+- El botón "Aplicar al borrador" no aclaraba que solo cambiaba valores en pantalla
+- No había forma de navegar al slider afectado por una recomendación
+- Faltaban perfiles predefinidos para BTC en modo lateral
+- No había explicación humana de por qué 4.25% no caben 7.10%
+- El guardado no mostraba resumen ni próximos pasos
+- Tras guardar no había acción clara para recalcular la banda
+
+### Solución
+1. **shared/gridConfigAdvisor.ts**:
+   - `BtcProfile` interface + `BTC_PROFILES` array (Prudente/Equilibrado/Amplio) con patches completos
+   - `getBtcProfile(id)` helper
+   - `buildRangeExplanation(allowed, required, netProfit)` — explicación humana del problema de banda no viable
+   - Recomendación automática `range_not_viable_equilibrado` cuando el rango no es viable
+   - Todos los `ctaApply` cambiados a "Probar este ajuste" o "Probar Equilibrado BTC"
+2. **GridAdvancedConfig.tsx**:
+   - `draftNotice` state: muestra "Cambio aplicado en pantalla. Todavía no está guardado."
+   - `savedNotice` state: muestra "Cambios guardados" + botón "Analizar mercado ahora"
+   - `sliderRefs` con `scrollToField(field)`: scroll suave + highlight ring-2 3 segundos
+   - Botón "Ir al ajuste" (Crosshair icon) junto a "Probar este ajuste" en cada recomendación
+   - Sección "Configuración recomendada para BTC lateral" con 3 tarjetas perfil
+   - Explicación humana `buildRangeExplanation` cuando banda no viable
+   - Modal guardar: texto "Guardar estos cambios afectará a futuros análisis de banda. No activa REAL y no envía órdenes."
+   - Botón "Deshacer cambios" (antes "Descartar cambios")
+   - Botón "Guardar cambios" (antes "Aplicar cambios")
+   - `onAuditRefreshed` prop pasada desde `GridAjustesPanel`
+3. **GridBandsPanel.tsx**: Explicación humana `buildRangeExplanation` en caso "Banda no viable"
+4. **GridAjustesPanel.tsx**: Pasa `onAuditRefreshed` a `GridAdvancedConfig`
+
+### Archivos afectados
+- `shared/gridConfigAdvisor.ts`
+- `client/src/components/grid/GridAdvancedConfig.tsx`
+- `client/src/components/grid/GridBandsPanel.tsx`
+- `client/src/components/grid/GridAjustesPanel.tsx`
+- `client/src/lib/__tests__/gridConfigAdvisor.test.ts` (actualizado)
+- `client/src/lib/__tests__/gridApplyRecommendation.test.ts` (nuevo)
+
+### Validaciones
+- `npm run check`: ✅
+- `npx vitest run` (8 ficheros obligatorios): ✅ 226/226 tests
+- `npm run build`: ✅
+- Tests nuevos: gridConfigAdvisor 35 tests, gridApplyRecommendation 7 tests
+
+### Seguridad
+- NO REAL. NO órdenes reales. NO compra/venta real.
+- NO regeneración automática de banda.
+- Recomendaciones solo modifican draft en pantalla.
+- Guardado requiere confirmación explícita.
+- Post-save no auto-genera banda, solo ofrece "Analizar mercado ahora".
+
+### Estado final
+- SHADOW, isActive=true, isRunning=true, realOpenOrdersCount=0, openCycles=0
+- Pendiente: validación visual post-deploy en staging VPS
+
+---
+
 ## 2026-07-12 — GRID FASE 3C.4-D: diagnosticBand + UI 4 estados + limpieza lenguaje
 
 ### Resumen

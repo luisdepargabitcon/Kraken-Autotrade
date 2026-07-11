@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   buildGridConfigRecommendations,
   applyRecommendationToDraft,
+  BTC_PROFILES,
+  getBtcProfile,
+  buildRangeExplanation,
   type GridRecommendation,
 } from "@shared/gridConfigAdvisor";
 
@@ -143,6 +146,31 @@ describe("gridConfigAdvisor", () => {
       expect(rec!.recommendedPatch.netProfitTargetPct).toBe(0.7);
     });
 
+    it("auto-recommends Equilibrado BTC profile when range not viable", () => {
+      const recs = buildGridConfigRecommendations(
+        makeInput({
+          config: { netProfitTargetPct: 1.2, adaptiveRangeMaxPct: 4.25 },
+          auditData: {
+            rangeIntelligence: {
+              lastAdaptiveRangeDecision: {
+                adaptiveRangeOk: false,
+                finalRangePct: 7.10,
+                regimeMaxPct: 4.25,
+                minSpacingPctReal: 1.79,
+              },
+            },
+          },
+        })
+      );
+      const rec = recs.find((r) => r.id === "range_not_viable_equilibrado");
+      expect(rec).toBeDefined();
+      expect(rec!.severity).toBe("warning");
+      expect(rec!.recommendedPatch.netProfitTargetPct).toBe(0.70);
+      expect(rec!.recommendedPatch.adaptiveRangeMaxPct).toBe(7.00);
+      expect(rec!.recommendedPatch.adaptiveRangeMinViableLevels).toBe(3);
+      expect(rec!.ctaApply).toContain("Probar");
+    });
+
     it("does not suggest lowering profit when already <= 0.5", () => {
       const recs = buildGridConfigRecommendations(
         makeInput({
@@ -219,6 +247,124 @@ describe("gridConfigAdvisor", () => {
       );
       const rec = recs.find((r) => r.id === "high_net_profit");
       expect(rec).toBeDefined();
+    });
+
+    it("A) Objetivo exigente: netProfit=1.2 → patch <= 1.0", () => {
+      const recs = buildGridConfigRecommendations(
+        makeInput({ config: { netProfitTargetPct: 1.2 } })
+      );
+      const rec = recs.find((r) => r.id === "high_net_profit");
+      expect(rec).toBeDefined();
+      expect(rec!.recommendedPatch.netProfitTargetPct).toBeLessThanOrEqual(1.0);
+    });
+
+    it("B) Máximo global menor que normal/high → patch >= normal", () => {
+      const recs = buildGridConfigRecommendations(
+        makeInput({ config: { adaptiveRangeMaxPct: 3.5, adaptiveRangeNormalMaxPct: 4.25, adaptiveRangeHighVolMaxPct: 3.5 } })
+      );
+      const rec = recs.find((r) => r.id === "range_max_below_regime");
+      expect(rec).toBeDefined();
+      expect(rec!.recommendedPatch.adaptiveRangeMaxPct).toBeGreaterThanOrEqual(4.25);
+    });
+
+    it("C) Alta volatilidad menor que lateral normal → patch >= normal", () => {
+      const recs = buildGridConfigRecommendations(
+        makeInput({ config: { adaptiveRangeHighVolMaxPct: 3.5, adaptiveRangeNormalMaxPct: 4.25 } })
+      );
+      const rec = recs.find((r) => r.id === "high_vol_below_normal");
+      expect(rec).toBeDefined();
+      expect(rec!.recommendedPatch.adaptiveRangeHighVolMaxPct).toBeGreaterThanOrEqual(4.25);
+    });
+
+    it("D) Rango no viable: propuesta debe ampliar rango o bajar objetivo", () => {
+      const recs = buildGridConfigRecommendations(
+        makeInput({
+          config: { netProfitTargetPct: 1.2, adaptiveRangeMaxPct: 4.25 },
+          auditData: {
+            rangeIntelligence: {
+              lastAdaptiveRangeDecision: {
+                adaptiveRangeOk: false,
+                finalRangePct: 7.10,
+                regimeMaxPct: 4.25,
+                minSpacingPctReal: 1.79,
+              },
+            },
+          },
+        })
+      );
+      const hasRangeFix = recs.some(r => r.recommendedPatch.adaptiveRangeMaxPct > 4.25);
+      const hasProfitFix = recs.some(r => r.recommendedPatch.netProfitTargetPct < 1.2);
+      const hasEquilibrado = recs.some(r => r.id === "range_not_viable_equilibrado");
+      expect(hasRangeFix || hasProfitFix || hasEquilibrado).toBe(true);
+    });
+
+    it("E) Aplicar recomendación: draft cambia, savedConfig no cambia, dirtyFields contiene campos", () => {
+      const savedConfig = { netProfitTargetPct: 1.2 };
+      const draft = { netProfitTargetPct: 1.2 };
+      const recs = buildGridConfigRecommendations(
+        makeInput({ config: savedConfig, draft })
+      );
+      const rec = recs.find((r) => r.id === "high_net_profit");
+      expect(rec).toBeDefined();
+      const newDraft = applyRecommendationToDraft(draft, rec!);
+      expect(newDraft.netProfitTargetPct).toBeLessThan(1.2);
+      expect(savedConfig.netProfitTargetPct).toBe(1.2);
+      expect(draft.netProfitTargetPct).toBe(1.2);
+    });
+
+    it("all recommendation patches use valid draftConfig keys", () => {
+      const validKeys = new Set([
+        "netProfitTargetPct", "adaptiveRangeMaxPct", "adaptiveRangeLowVolMaxPct",
+        "adaptiveRangeNormalMaxPct", "adaptiveRangeHighVolMaxPct", "gridStepMaxPct",
+        "adaptiveRangeMinViableLevels", "adaptiveRangeTargetFullLevels", "adaptiveRangeMinPct",
+      ]);
+      const recs = buildGridConfigRecommendations(
+        makeInput({
+          config: {
+            netProfitTargetPct: 1.5,
+            adaptiveRangeMaxPct: 3.0,
+            adaptiveRangeNormalMaxPct: 5.0,
+            adaptiveRangeHighVolMaxPct: 7.0,
+            adaptiveRangeLowVolMaxPct: 6.0,
+            adaptiveRangeTargetFullLevels: true,
+          },
+          auditData: {
+            rangeIntelligence: {
+              lastAdaptiveRangeDecision: {
+                adaptiveRangeOk: false,
+                finalRangePct: 8.0,
+                regimeMaxPct: 3.0,
+                minSpacingPctReal: 2.0,
+              },
+            },
+          },
+        })
+      );
+      for (const rec of recs) {
+        for (const key of Object.keys(rec.recommendedPatch)) {
+          expect(validKeys.has(key)).toBe(true);
+        }
+      }
+    });
+
+    it("all ctaApply texts say 'Probar' not 'Aplicar al borrador'", () => {
+      const recs = buildGridConfigRecommendations(
+        makeInput({
+          config: {
+            netProfitTargetPct: 1.5,
+            adaptiveRangeMaxPct: 3.0,
+            adaptiveRangeNormalMaxPct: 5.0,
+            adaptiveRangeHighVolMaxPct: 7.0,
+            adaptiveRangeLowVolMaxPct: 6.0,
+          },
+        })
+      );
+      for (const rec of recs) {
+        if (rec.ctaApply) {
+          expect(rec.ctaApply).toContain("Probar");
+          expect(rec.ctaApply).not.toContain("borrador");
+        }
+      }
     });
 
     it("returns multiple recommendations when multiple issues exist", () => {
@@ -298,6 +444,69 @@ describe("gridConfigAdvisor", () => {
       };
       const result = applyRecommendationToDraft(draft, rec);
       expect(result).toEqual({ netProfitTargetPct: 0.8 });
+    });
+  });
+
+  describe("BTC_PROFILES", () => {
+    it("has 3 profiles: prudente, equilibrado, amplio", () => {
+      expect(BTC_PROFILES.length).toBe(3);
+      const ids = BTC_PROFILES.map(p => p.id);
+      expect(ids).toContain("prudente");
+      expect(ids).toContain("equilibrado");
+      expect(ids).toContain("amplio");
+    });
+
+    it("prudente has netProfitTargetPct=0.50", () => {
+      const p = getBtcProfile("prudente");
+      expect(p).toBeDefined();
+      expect(p!.patch.netProfitTargetPct).toBe(0.50);
+      expect(p!.patch.adaptiveRangeMinViableLevels).toBe(2);
+    });
+
+    it("equilibrado has netProfitTargetPct=0.70", () => {
+      const p = getBtcProfile("equilibrado");
+      expect(p).toBeDefined();
+      expect(p!.patch.netProfitTargetPct).toBe(0.70);
+      expect(p!.patch.adaptiveRangeMaxPct).toBe(7.00);
+    });
+
+    it("amplio has netProfitTargetPct=0.80", () => {
+      const p = getBtcProfile("amplio");
+      expect(p).toBeDefined();
+      expect(p!.patch.netProfitTargetPct).toBe(0.80);
+      expect(p!.patch.adaptiveRangeMaxPct).toBe(9.00);
+    });
+
+    it("all profiles have all required keys", () => {
+      const requiredKeys = [
+        "netProfitTargetPct", "adaptiveRangeMinPct", "adaptiveRangeMaxPct",
+        "adaptiveRangeLowVolMaxPct", "adaptiveRangeNormalMaxPct", "adaptiveRangeHighVolMaxPct",
+        "adaptiveRangeMinViableLevels", "adaptiveRangeTargetFullLevels",
+      ];
+      for (const profile of BTC_PROFILES) {
+        for (const key of requiredKeys) {
+          expect(profile.patch).toHaveProperty(key);
+        }
+      }
+    });
+  });
+
+  describe("buildRangeExplanation", () => {
+    it("returns empty string when allowedPct is null", () => {
+      expect(buildRangeExplanation(null, 7.0, 1.2)).toBe("");
+    });
+
+    it("returns empty string when requiredPct is null", () => {
+      expect(buildRangeExplanation(4.25, null, 1.2)).toBe("");
+    });
+
+    it("returns explanation containing BTC, neto, banda", () => {
+      const text = buildRangeExplanation(4.25, 7.10, 1.20);
+      expect(text).toContain("BTC");
+      expect(text).toContain("1.20");
+      expect(text).toContain("7.10");
+      expect(text).toContain("4.25");
+      expect(text).toContain("no sirva para Grid");
     });
   });
 });

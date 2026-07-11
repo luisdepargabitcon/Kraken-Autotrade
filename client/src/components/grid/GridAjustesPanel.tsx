@@ -438,6 +438,7 @@ export function GridAjustesPanel({
             auditData={auditData}
             onConfirmChange={onConfirmChange}
             onConfigChange={onConfigChange}
+            onAuditRefreshed={onAuditRefreshed}
           />
         </TabsContent>
 
