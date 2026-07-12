@@ -62,10 +62,17 @@ Hotfix del modo Grid SHADOW. Se resuelve el precio de ejecución con datos de me
 - `npm run check`: ✅
 - `npm run test`: ✅
 - `npm run build`: ✅
+- Validación post-deploy staging (`/api/grid-isolated/status`, `monitor/audit`, `export/json`): ✅
+  - `mode`: `SHADOW`
+  - `realOpenOrdersCount`: `0`
+  - `pumpDumpState`: string normal
+  - Sin términos prohibidos (`[object object]`, `Objects are not valid`, `React error #31`)
+  - Sin errores en logs
 
 ### Estado
 - `check`, `test` y `build` pasan sin errores.
-- Listo para commit y despliegue a staging.
+- Desplegado en staging y validado.
+- Se corrigió un `pumpDumpState` object residual en `getStatusFromDb` que provocaba `[object Object]` en la auditoría; se forzó rebuild `--no-cache` para asegurar que la imagen Docker incluía el cambio.
 
 ### Restricciones
 - No real trading ni órdenes reales.
