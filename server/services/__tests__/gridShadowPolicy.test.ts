@@ -78,29 +78,29 @@ describe("getShadowPumpGuardPolicy", () => {
 describe("getCrossedShadowLevels", () => {
   const rangeId = "range-1";
 
-  it("returns only BUY levels crossed below the execution price", () => {
+  it("returns only BUY levels crossed when execution price is at or below the level price", () => {
     const levels: GridLevel[] = [
-      makeLevel({ id: "b1", side: "BUY", price: 99_000, rangeVersionId: rangeId }),
-      makeLevel({ id: "b2", side: "BUY", price: 101_000, rangeVersionId: rangeId }),
+      makeLevel({ id: "b1", side: "BUY", price: 101_000, rangeVersionId: rangeId }),
+      makeLevel({ id: "b2", side: "BUY", price: 99_000, rangeVersionId: rangeId }),
       makeLevel({ id: "s1", side: "SELL", price: 101_500, rangeVersionId: rangeId }),
     ];
     const result = getCrossedShadowLevels(levels, 100_000, rangeId, 100_000);
     expect(result.levels.map(l => l.id)).toEqual(["b1"]);
   });
 
-  it("returns only SELL levels crossed above the execution price", () => {
+  it("returns only SELL levels crossed when execution price is at or above the level price", () => {
     const levels: GridLevel[] = [
       makeLevel({ id: "b1", side: "BUY", price: 99_000, rangeVersionId: rangeId }),
       makeLevel({ id: "s1", side: "SELL", price: 101_500, rangeVersionId: rangeId }),
       makeLevel({ id: "s2", side: "SELL", price: 100_500, rangeVersionId: rangeId }),
     ];
     const result = getCrossedShadowLevels(levels, 101_000, rangeId, 100_000);
-    expect(result.levels.map(l => l.id)).toEqual(["s2", "s1"]);
+    expect(result.levels.map(l => l.id)).toEqual(["s2"]);
   });
 
   it("orders SELL first when execution price is above center", () => {
     const levels: GridLevel[] = [
-      makeLevel({ id: "b1", side: "BUY", price: 99_000, rangeVersionId: rangeId }),
+      makeLevel({ id: "b1", side: "BUY", price: 103_000, rangeVersionId: rangeId }),
       makeLevel({ id: "s1", side: "SELL", price: 101_500, rangeVersionId: rangeId }),
     ];
     const result = getCrossedShadowLevels(levels, 102_000, rangeId, 100_000);
@@ -110,7 +110,7 @@ describe("getCrossedShadowLevels", () => {
 
   it("orders BUY first when execution price is below center", () => {
     const levels: GridLevel[] = [
-      makeLevel({ id: "s1", side: "SELL", price: 101_000, rangeVersionId: rangeId }),
+      makeLevel({ id: "s1", side: "SELL", price: 97_000, rangeVersionId: rangeId }),
       makeLevel({ id: "b1", side: "BUY", price: 99_000, rangeVersionId: rangeId }),
     ];
     const result = getCrossedShadowLevels(levels, 98_000, rangeId, 100_000);
@@ -120,7 +120,7 @@ describe("getCrossedShadowLevels", () => {
 
   it("ignores levels from other ranges or non-planned/open statuses", () => {
     const levels: GridLevel[] = [
-      makeLevel({ id: "b1", side: "BUY", price: 99_000, rangeVersionId: rangeId }),
+      makeLevel({ id: "b1", side: "BUY", price: 100_500, rangeVersionId: rangeId }),
       makeLevel({ id: "b2", side: "BUY", price: 99_500, rangeVersionId: "other-range" }),
       { ...makeLevel({ id: "b3", side: "BUY", price: 99_500, rangeVersionId: rangeId }), status: "filled" } as GridLevel,
     ];
