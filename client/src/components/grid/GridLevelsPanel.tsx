@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { translateGridLabel, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
+import { filterGridLevels, gridLevelOperationalLabel } from "@/lib/gridLevelFilters";
 import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
 
 // ─── Props ───────────────────────────────────────────────────
@@ -163,41 +164,7 @@ export function GridLevelsPanel({
 
   // ─── Filtering ─────────────────────────────────────────────
   const filteredLevels = useMemo(() => {
-    if (!levels || levels.length === 0) return [];
-    switch (filter) {
-      case "rango-activo":
-        return activeRangeId
-          ? levels.filter((l: any) => l?.rangeVersionId === activeRangeId)
-          : [];
-      case "activos":
-        return levels.filter((l: any) =>
-          l?.exchangeOrderId != null &&
-          !["filled", "cancelled", "replaced", "expired"].includes(l?.status)
-        );
-      case "planificados":
-        return levels.filter(
-          (l: any) => l?.status === "planned" && l?.exchangeOrderId == null
-        );
-      case "historicos":
-        return levels.filter(
-          (l: any) =>
-            l?.rangeVersionId !== activeRangeId || l?.status === "replaced"
-        );
-      case "reemplazados":
-        return levels.filter((l: any) => l?.status === "replaced");
-      case "ejecutados":
-        return levels.filter(
-          (l: any) =>
-            l?.status === "filled" || l?.filledAt != null
-        );
-      case "cancelados":
-        return levels.filter((l: any) =>
-          ["cancelled", "expired"].includes(l?.status)
-        );
-      case "todos":
-      default:
-        return levels;
-    }
+    return filterGridLevels(levels, filter, activeRangeId);
   }, [levels, filter, activeRangeId]);
 
   // ─── Proximity check ──────────────────────────────────────
@@ -613,8 +580,8 @@ export function GridLevelsPanel({
                         </td>
                         <td className="py-2 px-2 text-xs whitespace-nowrap">
                           {level.rangeVersionId ? (
-                            <span className={level.rangeVersionId === activeRangeId ? "text-green-400" : "text-muted-foreground"}>
-                              {level.rangeVersionId === activeRangeId ? "Activo" : "Histórico"}
+                            <span className={level.rangeVersionId === activeRangeId && level.status !== "replaced" ? "text-green-400" : "text-muted-foreground"}>
+                              {gridLevelOperationalLabel(level, activeRangeId)}
                               <span className="text-muted-foreground/60 ml-1">#{String(level.rangeVersionId).slice(-6)}</span>
                             </span>
                           ) : "—"}

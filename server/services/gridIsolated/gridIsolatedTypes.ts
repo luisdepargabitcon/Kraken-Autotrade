@@ -528,6 +528,10 @@ export const GRID_EVENT_TYPES = [
   "GRID_SHADOW_MAX_OPEN_CYCLES_REACHED",
   "GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED",
   "GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE",
+  "GRID_SHADOW_FILL_BEFORE_REBUILD",
+  "GRID_SHADOW_EXECUTION_PRICE",
+  "GRID_PUMP_GUARD_BLOCKED_REBUILD",
+  "GRID_PUMP_GUARD_ALLOWED_EXIT_ONLY",
   "GRID_SHADOW_CLEANUP_PREVIEWED",
   "GRID_SHADOW_CLEANUP_APPLIED",
   "GRID_SHADOW_CLEANUP_ABORTED",
@@ -608,7 +612,13 @@ export interface GridExecutionStatus {
   configLoaded: boolean;
   configSource: "memory" | "db_snapshot" | "default_runtime_empty";
   runtimeLoaded: boolean;
-  statusSource: "runtime" | "db_snapshot";
+  statusSource: "runtime" | "db_snapshot" | "default_runtime_empty";
+  shadowExecutionPrice?: number | null;
+  shadowExecutionPriceSource?: string | null;
+  shadowExecutionPriceBid?: number | null;
+  shadowExecutionPriceAsk?: number | null;
+  bandSnapshotClose?: number | null;
+  bandSnapshotTimeframe?: string | null;
 }
 
 // ─── Reconciliation ─────────────────────────────────────────────────

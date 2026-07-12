@@ -31,6 +31,14 @@ import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { gridModeLockService } from "./gridModeLockService";
 import { gridCapitalAllocator } from "./gridCapitalAllocator";
 import { getGridBandSnapshot } from "./gridBandAdapter";
+import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult } from "./gridShadowExecutionPrice";
+import {
+  getShadowPumpGuardPolicy,
+  getCrossedShadowLevels,
+  selectShadowCycleForSell,
+  SHADOW_SELL_PAIRING_POLICY,
+  type ShadowPumpGuardPolicy,
+} from "./gridShadowPolicy";
 import {
   toGridLevels,
 } from "./gridGeometricLevels";
@@ -86,6 +94,9 @@ class GridIsolatedEngine {
   private shadowTickThrottleMs: number = 5 * 60 * 1000; // 5 min throttle for shadow info events
   private lastProfessionalGeneratorValidationAt: Date | null = null;
   private lastProfessionalGeneratorValidationResult: any = null;
+  private lastShadowExecutionPrice: GridShadowExecutionPriceResult | null = null;
+  private lastPausedEventKey: string | null = null;
+  private lastPausedEventAt: Date | null = null;
 
   /**
    * Load config from DB or create default.
@@ -301,6 +312,57 @@ class GridIsolatedEngine {
   }
 
   /**
+   * Resolve the SHADOW execution price from current market data (ticker) before
+   * using band snapshot close as fallback. This price is independent of the band
+   * snapshot used for range/suitability calculations.
+   */
+  private async resolveShadowExecutionPrice(bandSnapshot: any): Promise<GridShadowExecutionPriceResult> {
+    if (!this.config) throw new Error("No config loaded");
+    const pair = this.config.pair;
+
+    let ticker: { bid?: number | null; ask?: number | null; last?: number | null } | null = null;
+    try {
+      const mdsTicker = await MarketDataService.getTicker(pair);
+      if (mdsTicker) {
+        ticker = mdsTicker;
+      }
+    } catch (e) {
+      botLogger.warn("GRID_SHADOW_EXECUTION_PRICE", `No se pudo obtener ticker para ${pair}: ${e}`, { pair });
+    }
+
+    const marketContextPrice = ticker?.last ?? null;
+    const result = resolveGridShadowExecutionPrice({
+      tickerLast: ticker?.last,
+      bid: ticker?.bid,
+      ask: ticker?.ask,
+      marketContextPrice,
+      bandSnapshotClose: bandSnapshot?.midPrice ?? null,
+    });
+
+    this.lastShadowExecutionPrice = result;
+
+    if (result.source === "band_snapshot_fallback") {
+      await botLogger.warn("GRID_SHADOW_EXECUTION_PRICE", `[SHADOW] Precio de ejecución usando fallback de bandSnapshot: ${result.price}`, {
+        price: result.price,
+        bandSnapshotClose: bandSnapshot?.midPrice,
+        source: result.source,
+      });
+    }
+
+    await this.logEvent("GRID_SHADOW_EXECUTION_PRICE", `[SHADOW] Precio de ejecución resuelto: ${result.price} (${result.source})`, {
+      price: result.price,
+      source: result.source,
+      bid: result.bid,
+      ask: result.ask,
+      spreadPct: result.spreadPct,
+      bandSnapshotClose: bandSnapshot?.midPrice,
+      bandSnapshotTimeframe: this.config.atrTimeframe,
+    });
+
+    return result;
+  }
+
+  /**
    * Save config to DB.
    */
   async saveConfig(): Promise<void> {
@@ -488,7 +550,7 @@ class GridIsolatedEngine {
       await this.logEvent("GRID_CIRCUIT_BREAKER_CLOSED", "Circuit breaker closed after cooldown");
     }
 
-    // Get band snapshot
+    // Get band snapshot (for band/range/suitability, not execution price)
     const bandSnapshot = await getGridBandSnapshot({
       bandPeriod: this.config.bandPeriod,
       bandStdDevMultiplier: this.config.bandStdDevMultiplier,
@@ -503,8 +565,36 @@ class GridIsolatedEngine {
       return;
     }
 
-    // Check pump/dump guard
-    await this.checkPumpDumpGuard(bandSnapshot.midPrice);
+    // Resolve execution price from current market data (independent of band snapshot)
+    let shadowExecutionPrice: GridShadowExecutionPriceResult;
+    try {
+      shadowExecutionPrice = await this.resolveShadowExecutionPrice(bandSnapshot);
+    } catch (error) {
+      this.lastTickReason = `Sin precio de ejecución SHADOW disponible: ${error}`;
+      await this.logShadowTickEvent("GRID_SHADOW_NO_LEVELS", "El Grid no pudo resolver el precio de ejecución SHADOW.", { reason: "no_shadow_execution_price", error: String(error) });
+      return;
+    }
+
+    // Check pump/dump guard using the current execution price
+    await this.checkPumpDumpGuard(shadowExecutionPrice.price);
+    const pumpGuard = getShadowPumpGuardPolicy(this.pumpDumpState.state);
+
+    // Pump/dump guard: block rebuild, new ranges and new BUYs; allow SELL exits from open cycles
+    if (pumpGuard.active) {
+      this.lastTickReason = `Pump/dump guard activo (${this.pumpDumpState.state}). Rebuild y nuevos BUY bloqueados. Solo salidas SELL de ciclos abiertos permitidas.`;
+
+      if (this.config.mode === "SHADOW" && this.activeRangeVersion && pumpGuard.allowExistingCycleSellExit) {
+        await this.simulateShadowTick(shadowExecutionPrice.price, { bandSnapshot, pumpGuard });
+      }
+
+      await this.logShadowTickEvent("GRID_PUMP_GUARD_BLOCKED_REBUILD", `Pump/dump guard bloqueó rebuild/nuevos niveles: ${this.pumpDumpState.reason}`, {
+        state: this.pumpDumpState.state,
+        price: shadowExecutionPrice.price,
+        deviationPct: this.pumpDumpState.priceDeviationPct,
+        reason: this.pumpDumpState.reason,
+      });
+      return;
+    }
 
     if (!bandSnapshot.suitableForGrid) {
       this.lastTickReason = `Condiciones de mercado no válidas para Grid: ${bandSnapshot.reason}`;
@@ -514,6 +604,24 @@ class GridIsolatedEngine {
       }
       await this.logShadowTickEvent("GRID_SHADOW_WAITING", `El Grid está en SHADOW esperando condiciones válidas. Motivo: ${bandSnapshot.reason}.`, { reason: bandSnapshot.reason });
       return;
+    }
+
+    // In SHADOW mode: process fills BEFORE any range rebuild.
+    // A level from the active range that is touched by the market price has priority
+    // over replacing the band. If a fill occurs, we skip rebuild this tick.
+    if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
+      const fillsProcessed = await this.simulateShadowTick(shadowExecutionPrice.price, { bandSnapshot, pumpGuard });
+      if (fillsProcessed) {
+        this.lastTickReason = "Fills SHADOW procesados antes del rebuild. No se reemplaza la banda en este tick para proteger ciclos/niveles activos.";
+        await this.logEvent("GRID_SHADOW_FILL_BEFORE_REBUILD", "Fill SHADOW priorizado sobre rebuild. Banda conservada en este tick.", {
+          rangeVersionId: this.activeRangeVersion.id,
+          shadowExecutionPrice: shadowExecutionPrice.price,
+          shadowExecutionPriceSource: shadowExecutionPrice.source,
+          bandSnapshotClose: bandSnapshot.midPrice,
+          bandSnapshotTimeframe: this.config.atrTimeframe,
+        });
+        return;
+      }
     }
 
     // If no active range, propose one
@@ -543,9 +651,9 @@ class GridIsolatedEngine {
       await this.logShadowTickEvent("GRID_SHADOW_RANGE_REUSED", "El Grid reutiliza el rango activo para auditoría. No se abren ciclos nuevos sin fills simulados.", { rangeVersionId: this.activeRangeVersion.id });
     }
 
-    // In SHADOW mode: simulate fills
-    if (this.config.mode === "SHADOW") {
-      await this.simulateShadowTick(bandSnapshot.midPrice);
+    // In SHADOW mode: if we did not process a fill, simulate without active range (no-op) or with already handled range.
+    if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
+      await this.simulateShadowTick(shadowExecutionPrice.price, { bandSnapshot, pumpGuard });
     }
   }
 
@@ -1170,12 +1278,33 @@ class GridIsolatedEngine {
 
   /**
    * Pause active range version.
+   * Updates DB and in-memory state, and deduplicates repeated GRID_RANGE_PAUSED events.
    */
   private async pauseRangeVersion(reason: string): Promise<void> {
     if (!this.activeRangeVersion) return;
+
+    const eventKey = `${this.activeRangeVersion.id}::paused::${reason}`;
+    const now = Date.now();
+    const dedupeTtlMs = 60 * 60 * 1000; // 1 hour
+
+    // Already paused in memory with same reason within TTL: skip
+    if (
+      this.activeRangeVersion.status === "paused" &&
+      this.lastPausedEventKey === eventKey &&
+      this.lastPausedEventAt &&
+      now - this.lastPausedEventAt.getTime() < dedupeTtlMs
+    ) {
+      return;
+    }
+
     await db.update(gridRangeVersions)
       .set({ status: "paused" })
       .where(eq(gridRangeVersions.id, this.activeRangeVersion.id));
+
+    // Sync in-memory state
+    this.activeRangeVersion.status = "paused";
+    this.lastPausedEventKey = eventKey;
+    this.lastPausedEventAt = new Date();
 
     await this.logEvent("GRID_RANGE_PAUSED", `Rango pausado: ${reason}`, {
       rangeVersionId: this.activeRangeVersion.id, reason,
@@ -1185,60 +1314,76 @@ class GridIsolatedEngine {
 
   /**
    * SHADOW mode simulation — check if price would have filled any levels.
-   * Only processes levels that belong to the active range version.
-   * Pre-validates with canProcessShadowFill() before marking any level as filled.
+   * Processes crossed levels in deterministic order and respects the pump guard.
+   * Returns true if at least one BUY/SELL cycle was filled (used to skip rebuild).
    */
-  private async simulateShadowTick(currentPrice: number): Promise<void> {
-    if (!this.activeRangeVersion || !this.config) return;
+  private async simulateShadowTick(
+    executionPrice: number,
+    ctx: { bandSnapshot: any; pumpGuard: ShadowPumpGuardPolicy }
+  ): Promise<boolean> {
+    if (!this.activeRangeVersion || !this.config) return false;
 
     const activeRangeId = this.activeRangeVersion.id;
+    const centerPrice = this.activeRangeVersion.midPrice;
 
-    for (const level of this.levels) {
-      if (level.rangeVersionId !== activeRangeId) continue;
-      if (level.status !== "planned" && level.status !== "open") continue;
+    const { levels: crossedLevels, ordering } = getCrossedShadowLevels(
+      this.levels,
+      executionPrice,
+      activeRangeId,
+      centerPrice
+    );
 
-      let filled = false;
-      if (level.side === "BUY" && currentPrice <= level.price) {
-        filled = true;
-      } else if (level.side === "SELL" && currentPrice >= level.price) {
-        filled = true;
+    if (crossedLevels.length === 0) return false;
+
+    let fillsProcessed = false;
+
+    for (const level of crossedLevels) {
+      // Pump guard active: never allow new BUY fills; SELL exits allowed only if a cycle exists
+      if (ctx.pumpGuard.active && level.side === "BUY") {
+        await this.logEvent("GRID_PUMP_GUARD_BLOCKED_REBUILD", `[SHADOW] BUY level ${level.id} bloqueado por pump guard`, {
+          levelId: level.id, side: level.side, price: executionPrice, state: this.pumpDumpState.state,
+        });
+        continue;
       }
 
-      if (filled) {
-        // Pre-validate before touching level state or DB
-        const validation = this.canProcessShadowFill(level, activeRangeId);
-        if (!validation.ok) {
-          await this.logEvent(validation.eventType!, validation.reason!, {
-            levelId: level.id, side: level.side, mode: "SHADOW",
-            ...validation.details,
-          });
-          continue;
-        }
-
-        // Only now mark as filled
-        level.status = "filled";
-        level.filledPrice = currentPrice;
-        level.filledQuantity = level.quantity;
-        level.filledAt = new Date();
-
-        await this.logEvent("GRID_LEVEL_FILLED", `[SHADOW] ${level.side} level filled at ${currentPrice}`, {
-          levelId: level.id, side: level.side, price: currentPrice, mode: "SHADOW",
+      // Pre-validate before touching level state or DB
+      const validation = this.canProcessShadowFill(level, activeRangeId, ctx.pumpGuard);
+      if (!validation.ok) {
+        await this.logEvent(validation.eventType!, validation.reason!, {
+          levelId: level.id, side: level.side, mode: "SHADOW",
+          ...validation.details,
         });
+        continue;
+      }
 
-        // Update DB
-        await db.update(gridIsolatedLevels)
-          .set({
-            status: "filled",
-            filledPrice: currentPrice.toFixed(8),
-            filledQuantity: level.quantity.toFixed(8),
-            filledAt: new Date(),
-          })
-          .where(eq(gridIsolatedLevels.id, level.id));
+      // Only now mark as filled
+      level.status = "filled";
+      level.filledPrice = executionPrice;
+      level.filledQuantity = level.quantity;
+      level.filledAt = new Date();
 
-        // Create or complete cycle
-        await this.processCycleFill(level, currentPrice);
+      await this.logEvent("GRID_LEVEL_FILLED", `[SHADOW] ${level.side} level filled at ${executionPrice}`, {
+        levelId: level.id, side: level.side, price: executionPrice, mode: "SHADOW",
+      });
+
+      // Update DB
+      await db.update(gridIsolatedLevels)
+        .set({
+          status: "filled",
+          filledPrice: executionPrice.toFixed(8),
+          filledQuantity: level.quantity.toFixed(8),
+          filledAt: new Date(),
+        })
+        .where(eq(gridIsolatedLevels.id, level.id));
+
+      // Create or complete cycle
+      const cycle = await this.processCycleFill(level, executionPrice);
+      if (cycle) {
+        fillsProcessed = true;
       }
     }
+
+    return fillsProcessed;
   }
 
   /**
@@ -1248,11 +1393,12 @@ class GridIsolatedEngine {
    */
   private canProcessShadowFill(
     level: GridLevel,
-    activeRangeId: string
+    activeRangeId: string,
+    pumpGuard: ShadowPumpGuardPolicy
   ): { ok: boolean; reason?: string; eventType?: GridEventType; details?: Record<string, any> } {
     if (!this.config) return { ok: false, reason: "No config", eventType: "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE" };
 
-    // Level must belong to active range
+    // Level must belong to active range and be planned/open
     if (level.rangeVersionId !== activeRangeId) {
       return {
         ok: false,
@@ -1262,7 +1408,21 @@ class GridIsolatedEngine {
       };
     }
 
+    if (level.status !== "planned" && level.status !== "open") {
+      return { ok: false, reason: "Level not planned/open", eventType: "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE" };
+    }
+
     if (level.side === "BUY") {
+      // Pump guard blocks any new BUY fill
+      if (!pumpGuard.allowBuyFill) {
+        return {
+          ok: false,
+          eventType: "GRID_PUMP_GUARD_BLOCKED_REBUILD",
+          reason: `[SHADOW] BUY level ${level.id} blocked: pump/dump guard active`,
+          details: { levelId: level.id, state: this.pumpDumpState.state },
+        };
+      }
+
       // Check maxOpenCycles for active range
       const openCyclesForActiveRange = this.cycles.filter(c =>
         c.rangeVersionId === activeRangeId &&
@@ -1293,17 +1453,20 @@ class GridIsolatedEngine {
         };
       }
     } else if (level.side === "SELL") {
-      // Check there is an open cycle from the same active range
-      const openCycle = this.cycles.find(c =>
-        c.rangeVersionId === activeRangeId && c.status === "buy_filled"
-      );
+      // Deterministically pair SELL with the oldest profitable BUY cycle in the same range
+      const matchedCycle = selectShadowCycleForSell({
+        sellLevel: level,
+        cycles: this.cycles,
+        activeRangeId,
+        policy: SHADOW_SELL_PAIRING_POLICY,
+      });
 
-      if (!openCycle) {
+      if (!matchedCycle) {
         return {
           ok: false,
           eventType: "GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE",
-          reason: `[SHADOW] SELL simulado ignorado: no existe BUY/ciclo abierto del mismo rango activo.`,
-          details: { levelId: level.id },
+          reason: `[SHADOW] SELL simulado ignorado: no existe BUY/ciclo rentable del mismo rango activo.`,
+          details: { levelId: level.id, activeRangeId, pairingPolicy: SHADOW_SELL_PAIRING_POLICY },
         };
       }
     }
@@ -1315,9 +1478,10 @@ class GridIsolatedEngine {
    * Process a fill and create/complete cycles.
    * Pre-validated by canProcessShadowFill() — all checks (range, maxOpenCycles,
    * duplicate BUY, SELL with open cycle) are already done before calling this.
+   * Returns the created/completed cycle or null if the SELL had no candidate.
    */
-  private async processCycleFill(level: GridLevel, fillPrice: number): Promise<void> {
-    if (!this.activeRangeVersion || !this.config) return;
+  private async processCycleFill(level: GridLevel, fillPrice: number): Promise<GridCycle | null> {
+    if (!this.activeRangeVersion || !this.config) return null;
 
     const activeRangeId = this.activeRangeVersion.id;
 
@@ -1365,12 +1529,23 @@ class GridIsolatedEngine {
       await this.logEvent("GRID_CYCLE_BUY_FILLED", `[SHADOW] Cycle ${cycle.cycleNumber} buy filled at ${fillPrice}`, {
         cycleId: cycle.id, buyPrice: fillPrice, mode: "SHADOW",
       });
+
+      return cycle;
     } else if (level.side === "SELL") {
-      // Find oldest open cycle from the SAME active range only
-      const openCycle = this.cycles.find(c =>
-        c.rangeVersionId === activeRangeId && c.status === "buy_filled"
-      );
-      if (!openCycle) return;
+      // Deterministically pair SELL with the oldest profitable BUY cycle in the same range
+      const openCycle = selectShadowCycleForSell({
+        sellLevel: level,
+        cycles: this.cycles,
+        activeRangeId,
+        policy: SHADOW_SELL_PAIRING_POLICY,
+      });
+
+      if (!openCycle) {
+        await this.logEvent("GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE", `[SHADOW] SELL level ${level.id} ignored: no matching profitable cycle`, {
+          levelId: level.id, sellPrice: fillPrice, activeRangeId, pairingPolicy: SHADOW_SELL_PAIRING_POLICY,
+        });
+        return null;
+      }
 
       openCycle.sellLevelId = level.id;
       openCycle.sellPrice = fillPrice;
@@ -1394,6 +1569,10 @@ class GridIsolatedEngine {
       openCycle.completedAt = new Date();
       openCycle.sellClientOrderId = level.clientOrderId;
 
+      const expectedGrossPct = openCycle.buyPrice && openCycle.buyPrice > 0
+        ? ((fillPrice - openCycle.buyPrice) / openCycle.buyPrice) * 100
+        : null;
+
       await db.update(gridIsolatedCycles)
         .set({
           status: "completed",
@@ -1412,10 +1591,24 @@ class GridIsolatedEngine {
         .where(eq(gridIsolatedCycles.id, openCycle.id));
 
       await this.logEvent("GRID_CYCLE_COMPLETED", `[SHADOW] Cycle ${openCycle.cycleNumber} completed: net PnL $${pnl.netPnlUsd.toFixed(2)} (${pnl.netPnlPct.toFixed(3)}%)`, {
-        cycleId: openCycle.id, buyPrice: openCycle.buyPrice, sellPrice: fillPrice,
-        netPnlUsd: pnl.netPnlUsd, netPnlPct: pnl.netPnlPct, mode: "SHADOW",
+        cycleId: openCycle.id,
+        buyLevelId: openCycle.buyLevelId,
+        sellLevelId: level.id,
+        buyPrice: openCycle.buyPrice,
+        sellPrice: fillPrice,
+        quantity: openCycle.quantity,
+        netPnlUsd: pnl.netPnlUsd,
+        netPnlPct: pnl.netPnlPct,
+        expectedGrossPct,
+        expectedNetPnl: pnl.netPnlUsd,
+        pairingPolicy: SHADOW_SELL_PAIRING_POLICY,
+        mode: "SHADOW",
       });
+
+      return openCycle;
     }
+
+    return null;
   }
 
   /**
@@ -1628,6 +1821,12 @@ class GridIsolatedEngine {
       configSource,
       runtimeLoaded: !!this.config,
       statusSource: this.config ? "runtime" : (configOverride ? "db_snapshot" : "default_runtime_empty"),
+      shadowExecutionPrice: this.lastShadowExecutionPrice?.price ?? null,
+      shadowExecutionPriceSource: this.lastShadowExecutionPrice?.source ?? null,
+      shadowExecutionPriceBid: this.lastShadowExecutionPrice?.bid ?? null,
+      shadowExecutionPriceAsk: this.lastShadowExecutionPrice?.ask ?? null,
+      bandSnapshotClose: null,
+      bandSnapshotTimeframe: this.config?.atrTimeframe ?? null,
     } as any;
   }
 

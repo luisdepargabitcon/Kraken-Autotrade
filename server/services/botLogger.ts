@@ -189,7 +189,8 @@ export type EventType =
   | "GRID_MODE_UNLOCK_REQUESTED"
   | "GRID_MODE_UNLOCK_GRANTED"
   | "GRID_MODE_UNLOCK_DENIED"
-  | "GRID_SHADOW_SIMULATION";
+  | "GRID_SHADOW_SIMULATION"
+  | "GRID_SHADOW_EXECUTION_PRICE";
 
 interface LogMeta {
   [key: string]: any;

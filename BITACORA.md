@@ -1,7 +1,76 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-12
+> Última actualización: 2026-07-13
+
+---
+
+## 2026-07-13 — GRID FASE 3C.4-H: Priorizar fills SHADOW, pump guard efectivo y sincronización de pausa
+
+### Resumen
+Hotfix del modo Grid SHADOW. Se resuelve el precio de ejecución con datos de mercado en tiempo real (ticker), se simulan fills antes de cualquier rebuild de banda, se bloquean nuevas compras y rebuilds durante pump/dump, se permite únicamente la salida SELL de ciclos abiertos, se vincula determinísticamente cada SELL al ciclo BUY más antiguo y rentable del mismo rango, se sincroniza el estado de pausa entre DB y memoria y se deduplican eventos de pausa. Se corrigen los filtros del panel de niveles para restringir "Planificados" al rango activo y etiquetar correctamente niveles históricos/legacy.
+
+### Problema
+- `simulateShadowTick` se ejecutaba al final de `tick()` con `bandSnapshot.midPrice` y tras posibles rebuilds de rango.
+- No existía un precio de ejecución SHADOW independiente del snapshot de bandas.
+- El pump guard no bloqueaba fills de compra ni rebuilds en estado pump/dump.
+- Los SELL se emparejaban con cualquier ciclo abierto del mismo rango, sin garantía de rentabilidad ni orden FIFO.
+- `pauseRangeVersion` no actualizaba `this.activeRangeVersion.status` en memoria y podía loguear `GRID_RANGE_PAUSED` repetidamente.
+- El panel de niveles mostraba niveles "planificados" de rangos antiguos y no diferenciaba claramente niveles históricos/legacy.
+
+### Solución
+1. **Nuevo helper `server/services/gridIsolated/gridShadowExecutionPrice.ts`**:
+   - `resolveGridShadowExecutionPrice`: prioriza `tickerLast`, luego mid `bid/ask`, luego `marketContextPrice`, finalmente `bandSnapshotClose`.
+2. **Nuevo helper `server/services/gridIsolated/gridShadowPolicy.ts`**:
+   - `getShadowPumpGuardPolicy`: política de bloqueo según estado pump/dump.
+   - `getCrossedShadowLevels`: niveles cruzados en orden determinista (SELL/BUY según posición respecto al centro).
+   - `selectShadowCycleForSell`: emparejamiento FIFO del mismo rango, solo ciclos rentables.
+3. **Modificar `server/services/gridIsolated/gridIsolatedEngine.ts`**:
+   - `resolveShadowExecutionPrice`: obtiene ticker via `MarketDataService` y delega al helper.
+   - `tick()`: resuelve precio de ejecución, evalúa pump guard, simula fills SHADOW antes de rebuild, salta rebuild si se procesó algún fill y vuelve a simular fills si el rango se reutiliza.
+   - `pauseRangeVersion`: actualiza `this.activeRangeVersion.status = "paused"` y deduplica eventos con `lastPausedEventKey`/`lastPausedEventAt`.
+   - `simulateShadowTick`: ahora acepta `{ bandSnapshot, pumpGuard }`, devuelve `boolean` y procesa niveles cruzados en orden determinista.
+   - `canProcessShadowFill`: rechaza BUY cuando `pumpGuard` no lo permite, empareja SELL con `selectShadowCycleForSell`.
+   - `processCycleFill`: empareja SELL determinísticamente, devuelve ciclo, añade metadatos de pairing y PnL esperado.
+   - `getExecutionStatus`: expone `shadowExecutionPrice*`, `bandSnapshotTimeframe` y `pumpDumpState` como string.
+4. **Modificar `server/services/botLogger.ts`**: añade `GRID_SHADOW_EXECUTION_PRICE` al `EventType`.
+5. **Modificar `server/services/gridIsolated/gridIsolatedTypes.ts`**: añade tipos `statusSource` fallback y campos `shadowExecutionPrice*` a `GridExecutionStatus`.
+6. **Modificar `client/src/lib/gridLevelFilters.ts`**:
+   - Restringe `planificados` al rango activo.
+   - Incluye `replaced` del rango activo en `historicos`.
+   - Añade `isHistoricalLegacyGridLevel` y `gridLevelOperationalLabel`.
+7. **Modificar `client/src/components/grid/GridLevelsPanel.tsx`**: usa `filterGridLevels` y `gridLevelOperationalLabel` para filtrar y etiquetar.
+8. **Tests nuevos**:
+   - `server/services/__tests__/gridShadowExecutionPrice.test.ts`
+   - `server/services/__tests__/gridShadowPolicy.test.ts`
+   - `client/src/lib/__tests__/gridLevelFilters.test.ts`
+
+### Archivos afectados
+- `server/services/gridIsolated/gridShadowExecutionPrice.ts` (nuevo)
+- `server/services/gridIsolated/gridShadowPolicy.ts` (nuevo)
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/botLogger.ts`
+- `client/src/lib/gridLevelFilters.ts`
+- `client/src/components/grid/GridLevelsPanel.tsx`
+- `server/services/__tests__/gridShadowExecutionPrice.test.ts` (nuevo)
+- `server/services/__tests__/gridShadowPolicy.test.ts` (nuevo)
+- `client/src/lib/__tests__/gridLevelFilters.test.ts` (nuevo)
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅
+- `npm run test`: ✅
+- `npm run build`: ✅
+
+### Estado
+- `check`, `test` y `build` pasan sin errores.
+- Listo para commit y despliegue a staging.
+
+### Restricciones
+- No real trading ni órdenes reales.
+- No modificar DB manualmente.
+- No tocar el gestor de riesgo real más allá de lectura.
 
 ---
 
