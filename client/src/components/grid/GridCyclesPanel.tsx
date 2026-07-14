@@ -151,9 +151,17 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
     return cycles;
   }, [cycles, cycleFilter, activeRangeVersionId]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredCycles.length / pageSize));
+  // Apply historyLimit for historical/all filters before pagination
+  const limitedCycles = useMemo(() => {
+    if (cycleFilter === "historicos" || cycleFilter === "all") {
+      return filteredCycles.slice(0, historyLimit);
+    }
+    return filteredCycles;
+  }, [filteredCycles, cycleFilter, historyLimit]);
+
+  const totalPages = Math.max(1, Math.ceil(limitedCycles.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
-  const paginatedCycles = filteredCycles.slice(safePage * pageSize, (safePage + 1) * pageSize);
+  const paginatedCycles = limitedCycles.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
   return (
     <Card className="border-border/50">

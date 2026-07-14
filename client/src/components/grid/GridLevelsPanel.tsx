@@ -210,10 +210,16 @@ export function GridLevelsPanel({
     return null;
   }, [filteredLevels]);
 
+  // ─── Apply historyLimit for historicos filter ──────────────
+  const limitedLevels = useMemo(() => {
+    if (filter === "historicos") return filteredLevels.slice(0, historyLimit);
+    return filteredLevels;
+  }, [filteredLevels, filter, historyLimit]);
+
   // ─── Pagination ────────────────────────────────────────────
-  const totalPages = Math.max(1, Math.ceil(filteredLevels.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(limitedLevels.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
-  const paginatedLevels = filteredLevels.slice(
+  const paginatedLevels = limitedLevels.slice(
     safePage * pageSize,
     (safePage + 1) * pageSize
   );
