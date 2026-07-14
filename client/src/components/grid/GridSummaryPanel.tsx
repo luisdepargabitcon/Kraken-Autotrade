@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, type ReactNode } from "react";
+﻿import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,9 +8,13 @@ import { GridLiveActivityPanel } from "./GridLiveActivityPanel";
 import { GridLevelsPanel } from "./GridLevelsPanel";
 import { GridCyclesPanel } from "./GridCyclesPanel";
 import { GridRangeHistoryPanel } from "./GridRangeHistoryPanel";
-import { Activity, Shield, Wallet, Zap, Layers, CheckCircle2, XCircle, AlertTriangle, Settings2, Cpu, GripVertical, RotateCcw } from "lucide-react";
+import { GridOperationalStatusStrip } from "./GridOperationalStatusStrip";
+import { GridActionNoticesList } from "./GridActionNoticeCard";
+import { Activity, Shield, Wallet, Zap, Layers, CheckCircle2, XCircle, AlertTriangle, Settings2, Cpu, GripVertical, RotateCcw, Eye, Code2 } from "lucide-react";
 import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
 import { GridAnalyzeNowButton } from "./GridAnalyzeNowButton";
+import { buildGridActionNotices } from "@/lib/gridActionNotices";
+import type { GridActionNotice } from "@/lib/gridActionNotices";
 
 // ─── Drag & drop section ordering ────────────────────────────
 const SECTION_IDS = ["cartera", "estado", "controles", "contexto", "niveles", "ciclos", "actividad", "historico"] as const;
@@ -131,6 +135,23 @@ export function GridSummaryPanel({
   const motorLabel = mode === "OFF" ? "MOTOR DETENIDO" : isActive ? "MOTOR ACTIVO" : "MOTOR PAUSADO";
   const motorBg = mode === "OFF" ? "text-muted-foreground border-muted-foreground/30" : isActive ? "bg-green-600" : "text-amber-400 border-amber-400/50";
 
+  // ─── View mode (Simple / Expert) ────────────────────────────
+  const [viewMode, setViewMode] = useState<"simple" | "expert">("simple");
+  const [dismissedNotices, setDismissedNotices] = useState<Set<string>>(new Set());
+
+  const actionNotices = useMemo(() => {
+    const all = buildGridActionNotices(status, auditData, levels, cycles);
+    return all.filter(n => !dismissedNotices.has(n.id));
+  }, [status, auditData, levels, cycles, dismissedNotices]);
+
+  const handleDismissNotice = (id: string) => {
+    setDismissedNotices(prev => new Set([...prev, id]));
+  };
+
+  const handleNoticeCtaClick = (notice: GridActionNotice) => {
+    if (notice.targetTab) onGoToTab(notice.targetTab);
+  };
+
   // ─── Drag & drop state ──────────────────────────────────────
   const [order, setOrder] = useState<SectionId[]>(loadOrder);
   const [draggedId, setDraggedId] = useState<SectionId | null>(null);
@@ -172,7 +193,7 @@ export function GridSummaryPanel({
     estado: (
       <Card className="border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-card/50 to-amber-500/5 overflow-hidden">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <Cpu className="h-5 w-5 text-amber-400" />
               <CardTitle className="text-base font-mono font-bold text-amber-400">
@@ -183,6 +204,27 @@ export function GridSummaryPanel({
               </Badge>
             </div>
             <div className="flex items-center gap-2">
+              {/* Simple / Expert toggle */}
+              <div className="flex items-center gap-1 rounded-md border border-border/40 p-0.5">
+                <Button
+                  size="sm"
+                  variant={viewMode === "simple" ? "default" : "ghost"}
+                  className="h-6 px-2 text-xs gap-1"
+                  onClick={() => setViewMode("simple")}
+                >
+                  <Eye className="h-3 w-3" />
+                  Simple
+                </Button>
+                <Button
+                  size="sm"
+                  variant={viewMode === "expert" ? "default" : "ghost"}
+                  className="h-6 px-2 text-xs gap-1"
+                  onClick={() => setViewMode("expert")}
+                >
+                  <Code2 className="h-3 w-3" />
+                  Experto
+                </Button>
+              </div>
               <Badge variant={modeColor(mode) as any} className="text-sm font-mono">
                 {mode}
               </Badge>
@@ -203,7 +245,31 @@ export function GridSummaryPanel({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Estado unificado del Grid */}
+          {/* ── Operational status strip (always visible) */}
+          <GridOperationalStatusStrip
+            mode={mode}
+            isActive={isActive}
+            isRunning={isRunning}
+            circuitBreakerOpen={status?.circuitBreakerOpen ?? false}
+            pumpDumpState={status?.pumpDumpState ?? "normal"}
+            lastReconciliationOk={status?.lastReconciliationOk ?? null}
+            hasActiveRange={!!(range && range.status !== "sin_rango_activo")}
+            compact={viewMode === "simple"}
+          />
+
+          {/* ── Actionable notices */}
+          {actionNotices.length > 0 && (
+            <GridActionNoticesList
+              notices={actionNotices}
+              onCtaClick={handleNoticeCtaClick}
+              onSecondaryCtaClick={handleNoticeCtaClick}
+              onDismiss={handleDismissNotice}
+              compact={viewMode === "simple"}
+              maxVisible={viewMode === "simple" ? 3 : 10}
+            />
+          )}
+
+          {/* ── No range block */}
           <GridNoActiveRangeBlock
             currentOperationalState={currentOperationalState}
             latestGridDiagnostic={auditData?.latestGridDiagnostic}
@@ -211,7 +277,7 @@ export function GridSummaryPanel({
             compact={currentOperationalState?.hasActiveRange ?? false}
           />
 
-          {/* Mensaje de estado funcional */}
+          {/* ── Functional status message */}
           <div className={`rounded-lg p-3 text-sm ${
             functionalStatus?.state === "active" ? "bg-green-500/10 text-green-700 dark:text-green-300" :
             functionalStatus?.state === "inactive" || functionalStatus?.state === "off" ? "bg-orange-500/10 text-orange-700 dark:text-orange-300" :
@@ -250,82 +316,86 @@ export function GridSummaryPanel({
             </div>
           </div>
 
-          {/* Conteos canónicos detallados */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-            <div className="rounded-md bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground text-sm">Total niveles:</span>
-              <span className="font-mono font-bold ml-1">{summary?.totalLevels ?? 0}</span>
-              <span className="text-[10px] text-muted-foreground ml-1">(global/histórico)</span>
+          {/* Expert-only: detailed counts */}
+          {viewMode === "expert" && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+              <div className="rounded-md bg-muted/20 px-3 py-2">
+                <span className="text-muted-foreground text-sm">Total niveles:</span>
+                <span className="font-mono font-bold ml-1">{summary?.totalLevels ?? 0}</span>
+                <span className="text-[10px] text-muted-foreground ml-1">(global/histórico)</span>
+              </div>
+              <div className="rounded-md bg-muted/20 px-3 py-2">
+                <span className="text-muted-foreground text-sm">Rango actual:</span>
+                <span className="font-mono font-bold ml-1">{summary?.currentRangeLevelsCount ?? 0}</span>
+              </div>
+              <div className="rounded-md bg-muted/20 px-3 py-2">
+                <span className="text-muted-foreground text-sm">Históricos:</span>
+                <span className="font-mono font-bold ml-1">{summary?.replacedLevelsCount ?? 0} reemplazados</span>
+              </div>
+              <div className="rounded-md bg-muted/20 px-3 py-2">
+                <span className="text-muted-foreground text-sm">Filled:</span>
+                <span className="font-mono font-bold ml-1">{summary?.filledLevelsCount ?? 0} ({summary?.simulatedFilledLevelsCount ?? 0} simulados)</span>
+              </div>
             </div>
-            <div className="rounded-md bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground text-sm">Rango actual:</span>
-              <span className="font-mono font-bold ml-1">{summary?.currentRangeLevelsCount ?? 0}</span>
-            </div>
-            <div className="rounded-md bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground text-sm">Históricos:</span>
-              <span className="font-mono font-bold ml-1">{summary?.replacedLevelsCount ?? 0} reemplazados</span>
-            </div>
-            <div className="rounded-md bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground text-sm">Filled:</span>
-              <span className="font-mono font-bold ml-1">{summary?.filledLevelsCount ?? 0} ({summary?.simulatedFilledLevelsCount ?? 0} simulados)</span>
-            </div>
-          </div>
+          )}
 
-          {/* Estado de seguridad */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-amber-500/10">
-            <div className="bg-card/50 p-3">
-              <p className="text-xs font-mono text-muted-foreground mb-1">CIRCUIT BREAKER</p>
-              <div className="flex items-center gap-1.5">
-                {status?.circuitBreakerOpen ? (
-                  <XCircle className="h-4 w-4 text-red-400" />
-                ) : (
-                  <CheckCircle2 className="h-4 w-4 text-green-400" />
-                )}
-                <span className={`font-mono text-sm font-bold ${status?.circuitBreakerOpen ? "text-red-400" : "text-green-400"}`}>
-                  {status?.circuitBreakerOpen ? "ABIERTO" : "CERRADO"}
-                </span>
+          {/* Expert-only: safety detail grid */}
+          {viewMode === "expert" && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-amber-500/10">
+              <div className="bg-card/50 p-3">
+                <p className="text-xs font-mono text-muted-foreground mb-1">CIRCUIT BREAKER</p>
+                <div className="flex items-center gap-1.5">
+                  {status?.circuitBreakerOpen ? (
+                    <XCircle className="h-4 w-4 text-red-400" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 text-green-400" />
+                  )}
+                  <span className={`font-mono text-sm font-bold ${status?.circuitBreakerOpen ? "text-red-400" : "text-green-400"}`}>
+                    {status?.circuitBreakerOpen ? "ABIERTO" : "CERRADO"}
+                  </span>
+                </div>
+              </div>
+              <div className="bg-card/50 p-3">
+                <p className="text-xs font-mono text-muted-foreground mb-1">PUMP/DUMP GUARD</p>
+                <div className="flex items-center gap-1.5">
+                  {status?.pumpDumpState === "normal" ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-400" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4 text-amber-400" />
+                  )}
+                  <span className={`font-mono text-sm font-bold ${status?.pumpDumpState === "normal" ? "text-green-400" : "text-amber-400"}`}>
+                    {status?.pumpDumpState?.toUpperCase() || "NORMAL"}
+                  </span>
+                </div>
+              </div>
+              <div className="bg-card/50 p-3">
+                <p className="text-xs font-mono text-muted-foreground mb-1">RECONCILIACIÓN</p>
+                <div className="flex items-center gap-1.5">
+                  {status?.lastReconciliationOk ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-400" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-red-400" />
+                  )}
+                  <span className={`font-mono text-sm font-bold ${status?.lastReconciliationOk ? "text-green-400" : "text-red-400"}`}>
+                    {status?.lastReconciliationOk ? "OK" : "PENDIENTE"}
+                  </span>
+                </div>
+              </div>
+              <div className="bg-card/50 p-3">
+                <p className="text-xs font-mono text-muted-foreground mb-1">RANGO ACTIVO</p>
+                <div className="flex items-center gap-1.5">
+                  {range && range.status !== "sin_rango_activo" ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-400" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-amber-400" />
+                  )}
+                  <span className={`font-mono text-sm font-bold ${range && range.status !== "sin_rango_activo" ? "text-green-400" : "text-amber-400"}`}>
+                    {range && range.status !== "sin_rango_activo" ? "ACTIVO" : "SIN RANGO"}
+                  </span>
+                </div>
               </div>
             </div>
-            <div className="bg-card/50 p-3">
-              <p className="text-xs font-mono text-muted-foreground mb-1">PUMP/DUMP GUARD</p>
-              <div className="flex items-center gap-1.5">
-                {status?.pumpDumpState === "normal" ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-400" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4 text-amber-400" />
-                )}
-                <span className={`font-mono text-sm font-bold ${status?.pumpDumpState === "normal" ? "text-green-400" : "text-amber-400"}`}>
-                  {status?.pumpDumpState?.toUpperCase() || "NORMAL"}
-                </span>
-              </div>
-            </div>
-            <div className="bg-card/50 p-3">
-              <p className="text-xs font-mono text-muted-foreground mb-1">RECONCILIACIÓN</p>
-              <div className="flex items-center gap-1.5">
-                {status?.lastReconciliationOk ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-400" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-red-400" />
-                )}
-                <span className={`font-mono text-sm font-bold ${status?.lastReconciliationOk ? "text-green-400" : "text-red-400"}`}>
-                  {status?.lastReconciliationOk ? "OK" : "PENDIENTE"}
-                </span>
-              </div>
-            </div>
-            <div className="bg-card/50 p-3">
-              <p className="text-xs font-mono text-muted-foreground mb-1">RANGO ACTIVO</p>
-              <div className="flex items-center gap-1.5">
-                {range && range.status !== "sin_rango_activo" ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-400" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-amber-400" />
-                )}
-                <span className={`font-mono text-sm font-bold ${range && range.status !== "sin_rango_activo" ? "text-green-400" : "text-amber-400"}`}>
-                  {range && range.status !== "sin_rango_activo" ? "ACTIVO" : "SIN RANGO"}
-                </span>
-              </div>
-            </div>
-          </div>
+          )}
         </CardContent>
       </Card>
     ),

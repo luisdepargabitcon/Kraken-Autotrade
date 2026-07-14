@@ -3,10 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Zap, Clock, ChevronLeft, ChevronRight, Filter, ChevronDown, History } from "lucide-react";
+import { Zap, Clock, ChevronLeft, ChevronRight, Filter, ChevronDown, History, Eye, Code2, LayoutGrid, List } from "lucide-react";
 import { translateGridLabel, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
+import { GridCycleProgressCard } from "./GridCycleProgressCard";
+import { GridHistoryLimitSelector } from "./GridHistoryLimitSelector";
 
 interface GridCyclesPanelProps {
   cycles: any[];
@@ -118,6 +120,10 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
   const [selectedCycle, setSelectedCycle] = useState<any | null>(null);
   const [cycleFilter, setCycleFilter] = useState<CycleFilter>("active");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"simple" | "expert">("simple");
+  const [layoutMode, setLayoutMode] = useState<"cards" | "table">("cards");
+  const [historyLimit, setHistoryLimit] = useState(20);
+  const currentPrice: number | null = (auditData?.marketContext?.currentPrice ?? null);
 
   const activeCycles = cycles.filter((c: any) => isCycleOpen(c));
   const completedCycles = cycles.filter((c: any) => c.status === "completed");
@@ -152,10 +158,36 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
   return (
     <Card className="border-border/50">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Zap className="h-4 w-4" />
-          Ciclos
-        </CardTitle>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Zap className="h-4 w-4" />
+            Ciclos
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            {/* Simple / Expert toggle */}
+            <div className="flex items-center gap-0.5 rounded-md border border-border/40 p-0.5">
+              <Button size="sm" variant={viewMode === "simple" ? "default" : "ghost"}
+                className="h-6 px-2 text-xs gap-1" onClick={() => setViewMode("simple")}>
+                <Eye className="h-3 w-3" />Simple
+              </Button>
+              <Button size="sm" variant={viewMode === "expert" ? "default" : "ghost"}
+                className="h-6 px-2 text-xs gap-1" onClick={() => setViewMode("expert")}>
+                <Code2 className="h-3 w-3" />Experto
+              </Button>
+            </div>
+            {/* Cards / Table toggle */}
+            <div className="flex items-center gap-0.5 rounded-md border border-border/40 p-0.5">
+              <Button size="sm" variant={layoutMode === "cards" ? "default" : "ghost"}
+                className="h-6 px-2 text-xs gap-1" onClick={() => setLayoutMode("cards")}>
+                <LayoutGrid className="h-3 w-3" />Tarjetas
+              </Button>
+              <Button size="sm" variant={layoutMode === "table" ? "default" : "ghost"}
+                className="h-6 px-2 text-xs gap-1" onClick={() => setLayoutMode("table")}>
+                <List className="h-3 w-3" />Tabla
+              </Button>
+            </div>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {!activeRangeVersionId && (
@@ -196,7 +228,7 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
 
         {cycles.length > 0 ? (
           <>
-            {/* Default filter hides cancelled; history is expandable below */}
+            {/* Filter bar */}
             <div className="flex items-center gap-2 flex-wrap">
               <Filter className="h-3 w-3 text-muted-foreground" />
               {(Object.keys(FILTER_LABELS) as CycleFilter[]).map((f) => {
@@ -220,90 +252,120 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
               })}
             </div>
 
-            {/* Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-muted-foreground border-b">
-                    <th className="text-left py-2 px-2">#</th>
-                    <th className="text-left py-2 px-2">Estado</th>
-                    <th className="text-left py-2 px-2">Rango</th>
-                    <th className="text-left py-2 px-2">Compra</th>
-                    <th className="text-left py-2 px-2">Venta</th>
-                    <th className="text-left py-2 px-2">PnL neto</th>
-                    <th className="text-left py-2 px-2">Apertura</th>
-                    <th className="text-left py-2 px-2">Cierre</th>
-                    <th className="text-left py-2 px-2">Duración</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedCycles.map((cycle: any) => {
-                    const openedAt = getCycleOpenedAt(cycle);
-                    const closedAt = getCycleClosedAt(cycle);
-                    const open = isCycleOpen(cycle);
-                    const pnl = toNum(cycle.netPnlUsd);
+            {/* History limit selector for historical/all filters */}
+            {(cycleFilter === "historicos" || cycleFilter === "all") && filteredCycles.length > 0 && (
+              <GridHistoryLimitSelector
+                label="Ciclos históricos visibles"
+                totalCount={filteredCycles.length}
+                visibleLimit={historyLimit}
+                onLimitChange={setHistoryLimit}
+                infoText="Los datos se conservan completos en la base de datos. Este selector solo limita los visibles."
+              />
+            )}
 
-                    return (
-                      <tr
-                        key={cycle.id}
-                        className="border-b cursor-pointer hover:bg-muted/30 transition-colors"
-                        onClick={() => setSelectedCycle(cycle)}
-                      >
-                        <td className="py-2 px-2 font-mono text-xs">#{cycle.cycleNumber}</td>
-                        <td className="py-2 px-2">
-                          <Badge
-                            variant={cycle.status === "completed" ? "default" : "outline"}
-                            className="text-xs"
-                          >
-                            {getCycleStatusLabel(cycle.status)}
-                          </Badge>
-                        </td>
-                        <td className="py-2 px-2 text-xs whitespace-nowrap">
-                          {cycle.rangeVersionId ? (
-                            <span className={cycle.rangeVersionId === activeRangeVersionId ? "text-green-400" : "text-muted-foreground"}>
-                              {cycle.rangeVersionId === activeRangeVersionId ? "Activo" : "Histórico"}
-                            </span>
-                          ) : "—"}
-                        </td>
-                        <td className="py-2 px-2 font-mono text-xs">
-                          {cycle.buyPrice != null ? `$${(toNum(cycle.buyPrice) ?? 0).toFixed(2)}` : "—"}
-                        </td>
-                        <td className="py-2 px-2 font-mono text-xs">
-                          {cycle.sellPrice != null ? `$${(toNum(cycle.sellPrice) ?? 0).toFixed(2)}` : "—"}
-                        </td>
-                        <td className="py-2 px-2 font-mono text-xs">
-                          {pnl !== null ? (
-                            <span className={pnl >= 0 ? "text-green-400" : "text-red-400"}>
-                              {pnl >= 0 ? "+" : ""}{fmtUsd(pnl)}
-                            </span>
-                          ) : "—"}
-                        </td>
-                        <td className="py-2 px-2 text-xs text-muted-foreground whitespace-nowrap">
-                          {openedAt ? fmtDate(openedAt) : "—"}
-                        </td>
-                        <td className="py-2 px-2 text-xs whitespace-nowrap">
-                          {closedAt
-                            ? <span className="text-green-400">{fmtDate(closedAt)}</span>
-                            : open
-                              ? <span className="text-blue-400">Abierto</span>
-                              : <span className="text-muted-foreground">—</span>
-                          }
-                        </td>
-                        <td className="py-2 px-2 text-xs whitespace-nowrap">
-                          {openedAt ? (
-                            closedAt
-                              ? <span className="text-muted-foreground">{durationLabel(openedAt.getTime(), closedAt.getTime(), "duró")}</span>
+            {/* Cards layout */}
+            {layoutMode === "cards" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {paginatedCycles.map((cycle: any) => (
+                  <GridCycleProgressCard
+                    key={cycle.id}
+                    cycle={cycle}
+                    currentPrice={currentPrice}
+                    isActiveRange={cycle.rangeVersionId === activeRangeVersionId}
+                    onClick={setSelectedCycle}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Table layout */}
+            {layoutMode === "table" && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b">
+                      <th className="text-left py-2 px-2">#</th>
+                      <th className="text-left py-2 px-2">Estado</th>
+                      <th className="text-left py-2 px-2">Rango</th>
+                      <th className="text-left py-2 px-2">Compra</th>
+                      <th className="text-left py-2 px-2">Venta</th>
+                      <th className="text-left py-2 px-2">PnL neto</th>
+                      <th className="text-left py-2 px-2">Apertura</th>
+                      <th className="text-left py-2 px-2">Cierre</th>
+                      {viewMode === "expert" && <th className="text-left py-2 px-2">Duración</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedCycles.map((cycle: any) => {
+                      const openedAt = getCycleOpenedAt(cycle);
+                      const closedAt = getCycleClosedAt(cycle);
+                      const open = isCycleOpen(cycle);
+                      const pnl = toNum(cycle.netPnlUsd);
+
+                      return (
+                        <tr
+                          key={cycle.id}
+                          className="border-b cursor-pointer hover:bg-muted/30 transition-colors"
+                          onClick={() => setSelectedCycle(cycle)}
+                        >
+                          <td className="py-2 px-2 font-mono text-xs">#{cycle.cycleNumber}</td>
+                          <td className="py-2 px-2">
+                            <Badge
+                              variant={cycle.status === "completed" ? "default" : "outline"}
+                              className="text-xs"
+                            >
+                              {getCycleStatusLabel(cycle.status)}
+                            </Badge>
+                          </td>
+                          <td className="py-2 px-2 text-xs whitespace-nowrap">
+                            {cycle.rangeVersionId ? (
+                              <span className={cycle.rangeVersionId === activeRangeVersionId ? "text-green-400" : "text-muted-foreground"}>
+                                {cycle.rangeVersionId === activeRangeVersionId ? "Activo" : "Histórico"}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td className="py-2 px-2 font-mono text-xs">
+                            {cycle.buyPrice != null ? `$${(toNum(cycle.buyPrice) ?? 0).toFixed(2)}` : "—"}
+                          </td>
+                          <td className="py-2 px-2 font-mono text-xs">
+                            {cycle.sellPrice != null ? `$${(toNum(cycle.sellPrice) ?? 0).toFixed(2)}` : "—"}
+                          </td>
+                          <td className="py-2 px-2 font-mono text-xs">
+                            {pnl !== null ? (
+                              <span className={pnl >= 0 ? "text-green-400" : "text-red-400"}>
+                                {pnl >= 0 ? "+" : ""}{fmtUsd(pnl)}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td className="py-2 px-2 text-xs text-muted-foreground whitespace-nowrap">
+                            {openedAt ? fmtDate(openedAt) : "—"}
+                          </td>
+                          <td className="py-2 px-2 text-xs whitespace-nowrap">
+                            {closedAt
+                              ? <span className="text-green-400">{fmtDate(closedAt)}</span>
                               : open
-                                ? <span className="text-blue-400 flex items-center gap-1"><Clock className="h-3 w-3" />{durationLabel(openedAt.getTime(), null, "hace")}</span>
-                                : "—"
-                          ) : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                                ? <span className="text-blue-400">Abierto</span>
+                                : <span className="text-muted-foreground">—</span>
+                            }
+                          </td>
+                          {viewMode === "expert" && (
+                            <td className="py-2 px-2 text-xs whitespace-nowrap">
+                              {openedAt ? (
+                                closedAt
+                                  ? <span className="text-muted-foreground">{durationLabel(openedAt.getTime(), closedAt.getTime(), "duró")}</span>
+                                  : open
+                                    ? <span className="text-blue-400 flex items-center gap-1"><Clock className="h-3 w-3" />{durationLabel(openedAt.getTime(), null, "hace")}</span>
+                                    : "—"
+                              ) : "—"}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Pagination */}
             <div className="flex items-center justify-between mt-2">

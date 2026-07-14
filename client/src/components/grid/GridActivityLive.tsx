@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ScrollText, Pause, Play, Trash2, Copy, Download, Radio, Check, TrendingUp, TrendingDown, Layers, Zap, Wallet, Shield, RefreshCw, Server, Activity as ActivityIcon, AlertCircle, AlertTriangle, CheckCircle2, XCircle, Info } from "lucide-react";
+import { ScrollText, Pause, Play, Trash2, Copy, Download, Radio, Check, TrendingUp, TrendingDown, Layers, Zap, Wallet, Shield, RefreshCw, Server, Activity as ActivityIcon, AlertCircle, AlertTriangle, CheckCircle2, XCircle, Info, Eye, Code2, ChevronLeft, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button as UIButton } from "@/components/ui/button";
 
@@ -237,6 +237,9 @@ export function GridActivityLive() {
   const [limit, setLimit] = useState("100");
   const [autoScroll, setAutoScroll] = useState(true);
   const [paused, setPaused] = useState(false);
+  const [viewMode, setViewMode] = useState<"simple" | "expert">("simple");
+  const [activityPage, setActivityPage] = useState(0);
+  const ACTIVITY_PAGE_SIZE = 20;
   const [clearedIds, setClearedIds] = useState<Set<number>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [copyStatus, setCopyStatus] = useState("");
@@ -300,7 +303,7 @@ export function GridActivityLive() {
     }
   }, [allEvents, autoScroll, paused]);
 
-  const filteredEvents = allEvents.filter((ev) => {
+  const filteredEventsRaw = allEvents.filter((ev) => {
     if (clearedIds.has(ev.id)) return false;
     if (filter === "all") return true;
     if (filter === "blocking") return ev.severity === "BLOCKED";
@@ -310,6 +313,11 @@ export function GridActivityLive() {
     if (ev.category !== filter) return false;
     return true;
   });
+
+  const filteredEvents = filteredEventsRaw;
+
+  const activityTotalPages = Math.max(1, Math.ceil(filteredEvents.length / ACTIVITY_PAGE_SIZE));
+  const safeActivityPage = Math.min(activityPage, activityTotalPages - 1);
 
   // ─── Group consecutive repeated events ────────────────────
   const GROUPABLE_TYPES = new Set([
@@ -438,13 +446,41 @@ export function GridActivityLive() {
     } catch {}
   }, []);
 
+  const activitySummary = useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const recent = allEvents.filter(ev => new Date(ev.timestamp).getTime() > cutoff);
+    return {
+      total24h: recent.length,
+      buys: recent.filter(ev => ev.technicalCode === "GRID_CYCLE_BUY_FILLED").length,
+      sells: recent.filter(ev => ev.technicalCode === "GRID_CYCLE_COMPLETED").length,
+      errors: recent.filter(ev => ev.severity === "ERROR" || ev.severity === "BLOCKED").length,
+      pauses: recent.filter(ev => ev.technicalCode.includes("CIRCUIT") || ev.technicalCode.includes("PAUSED")).length,
+    };
+  }, [allEvents]);
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Radio className="h-5 w-5" />
-          Actividad en Directo — Grid Aislado
-        </CardTitle>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="flex items-center gap-2">
+            <Radio className="h-5 w-5" />
+            Actividad en Directo — Grid Aislado
+          </CardTitle>
+          <div className="flex items-center gap-1 rounded-md border border-border/40 p-0.5">
+            <button
+              className={`h-6 px-2 text-xs rounded flex items-center gap-1 transition-colors ${viewMode === "simple" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => setViewMode("simple")}
+            >
+              <Eye className="h-3 w-3" />Simple
+            </button>
+            <button
+              className={`h-6 px-2 text-xs rounded flex items-center gap-1 transition-colors ${viewMode === "expert" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => setViewMode("expert")}
+            >
+              <Code2 className="h-3 w-3" />Experto
+            </button>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Controles */}
@@ -520,14 +556,63 @@ export function GridActivityLive() {
           {copyStatus && <span className="text-sm text-muted-foreground">{copyStatus}</span>}
         </div>
 
+        {/* Summary strip */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          <div className="rounded-md bg-muted/20 px-2 py-1.5 text-center">
+            <p className="text-[10px] text-muted-foreground">Últimas 24h</p>
+            <p className="text-sm font-bold font-mono">{activitySummary.total24h}</p>
+          </div>
+          <div className="rounded-md bg-blue-500/10 px-2 py-1.5 text-center">
+            <p className="text-[10px] text-muted-foreground">Compras sim.</p>
+            <p className="text-sm font-bold font-mono text-blue-400">{activitySummary.buys}</p>
+          </div>
+          <div className="rounded-md bg-green-500/10 px-2 py-1.5 text-center">
+            <p className="text-[10px] text-muted-foreground">Ciclos cierre</p>
+            <p className="text-sm font-bold font-mono text-green-400">{activitySummary.sells}</p>
+          </div>
+          <div className="rounded-md bg-red-500/10 px-2 py-1.5 text-center">
+            <p className="text-[10px] text-muted-foreground">Errores/bloqueos</p>
+            <p className="text-sm font-bold font-mono text-red-400">{activitySummary.errors}</p>
+          </div>
+          <div className="rounded-md bg-amber-500/10 px-2 py-1.5 text-center">
+            <p className="text-[10px] text-muted-foreground">Pausas</p>
+            <p className="text-sm font-bold font-mono text-amber-400">{activitySummary.pauses}</p>
+          </div>
+        </div>
+
         {/* Estado */}
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Badge variant={paused ? "secondary" : "default"} className="text-xs">
             {paused ? "Pausado" : "En directo"}
           </Badge>
-          <span>{filteredEvents.length} eventos visibles</span>
-          {lastEventId > 0 && <span className="text-xs">Último ID: {lastEventId}</span>}
+          <span>{filteredEvents.length} eventos</span>
+          {lastEventId > 0 && viewMode === "expert" && <span className="text-xs font-mono">ID: {lastEventId}</span>}
         </div>
+
+        {/* Pagination top */}
+        {activityTotalPages > 1 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              Pág. {safeActivityPage + 1} / {activityTotalPages} · {ACTIVITY_PAGE_SIZE} por página
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                className="h-7 px-2 rounded border text-xs disabled:opacity-40"
+                disabled={safeActivityPage === 0}
+                onClick={() => setActivityPage(p => Math.max(0, p - 1))}
+              >
+                <ChevronLeft className="h-3 w-3" />
+              </button>
+              <button
+                className="h-7 px-2 rounded border text-xs disabled:opacity-40"
+                disabled={safeActivityPage >= activityTotalPages - 1}
+                onClick={() => setActivityPage(p => Math.min(activityTotalPages - 1, p + 1))}
+              >
+                <ChevronRight className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Lista de eventos — cards visuales */}
         <div
@@ -539,7 +624,9 @@ export function GridActivityLive() {
               No hay eventos del Grid Aislado. Los eventos aparecerán aquí cuando el motor esté activo.
             </div>
           ) : (
-            groupedEvents.map((item) => {
+            groupedEvents
+              .slice(safeActivityPage * ACTIVITY_PAGE_SIZE, (safeActivityPage + 1) * ACTIVITY_PAGE_SIZE)
+              .map((item) => {
               if (item.type === "single") {
                 const ev = item.ev;
                 const CatIcon = CATEGORY_ICONS[ev.category] || Radio;
@@ -664,6 +751,27 @@ export function GridActivityLive() {
             })
           )}
         </div>
+
+        {/* Pagination bottom */}
+        {activityTotalPages > 1 && (
+          <div className="flex items-center justify-end gap-1">
+            <button
+              className="h-7 px-2 rounded border text-xs disabled:opacity-40"
+              disabled={safeActivityPage === 0}
+              onClick={() => setActivityPage(p => Math.max(0, p - 1))}
+            >
+              <ChevronLeft className="h-3 w-3" />
+            </button>
+            <span className="text-xs text-muted-foreground px-1">{safeActivityPage + 1} / {activityTotalPages}</span>
+            <button
+              className="h-7 px-2 rounded border text-xs disabled:opacity-40"
+              disabled={safeActivityPage >= activityTotalPages - 1}
+              onClick={() => setActivityPage(p => Math.min(activityTotalPages - 1, p + 1))}
+            >
+              <ChevronRight className="h-3 w-3" />
+            </button>
+          </div>
+        )}
       </CardContent>
 
       {/* Event detail modal — grande y completo */}

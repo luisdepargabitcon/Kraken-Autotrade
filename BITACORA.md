@@ -1,7 +1,55 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-13
+> Última actualización: 2026-07-15
+
+---
+
+## 2026-07-15 — GRID UI ENHANCEMENT: Helpers puros, componentes reutilizables, redesign paneles
+
+### Resumen
+Mejora integral de la UI del Grid Aislado. Se crean 4 helpers puros con 61 tests unitarios que pasan, 4 componentes reutilizables nuevos, y se redesignan los 4 paneles principales (Summary, Levels, Cycles, Activity) con modo Simple/Experto, avisos accionables con modal de explicación, barra de estado operativa semafórica y paginación de 20 eventos por defecto.
+
+### Archivos nuevos
+
+**Helpers puros (0 side-effects, seguros para test):**
+- `client/src/lib/gridCycleProgress.ts` — Cálculo de estado/progreso/tooltips de ciclo a partir de precios
+- `client/src/lib/gridActionNotices.ts` — Generación de avisos accionables (SHADOW, históricos, pump, CB, reconciliación)
+- `client/src/lib/gridActivityViewModel.ts` — Filtrado, agrupación, paginación y summary de eventos de actividad
+- `client/src/lib/gridRetentionPolicy.ts` — Dry-run preview de política de retención (nunca borra, solo clasifica)
+
+**Tests (61/61 ✅):**
+- `client/src/lib/__tests__/gridCycleProgress.test.ts` — 15 tests
+- `client/src/lib/__tests__/gridActionNotices.test.ts` — 14 tests
+- `client/src/lib/__tests__/gridActivityViewModel.test.ts` — 18 tests
+- `client/src/lib/__tests__/gridRetentionPolicy.test.ts` — 14 tests
+
+**Componentes reutilizables:**
+- `client/src/components/grid/GridOperationalStatusStrip.tsx` — Semáforo 5 indicadores (motor, rango, CB, pump, reconciliación) en modo compacto o completo
+- `client/src/components/grid/GridActionNoticeCard.tsx` — Tarjeta de aviso accionable con modal explicativo, CTA y dismiss. También `GridActionNoticesList`.
+- `client/src/components/grid/GridCycleProgressCard.tsx` — Tarjeta de ciclo con barra de progreso visual buy→TP, colores por estado, métricas compactas
+- `client/src/components/grid/GridHistoryLimitSelector.tsx` — Selector de límite de registros históricos visibles con badge de candidatos a archivo
+
+### Archivos modificados
+
+- `client/src/components/grid/GridSummaryPanel.tsx` — Agrega `GridOperationalStatusStrip`, `GridActionNoticesList`, toggle Simple/Experto. En modo Simple se ocultan grids técnicos de seguridad y conteos detallados.
+- `client/src/components/grid/GridLevelsPanel.tsx` — Agrega toggle Simple/Experto, `GridActionNoticeCard` para aviso de proximidad, `GridHistoryLimitSelector` en filtro históricos.
+- `client/src/components/grid/GridCyclesPanel.tsx` — Agrega toggle Simple/Experto, layout Cards/Tabla, `GridCycleProgressCard` en vista tarjetas, `GridHistoryLimitSelector` en filtros históricos/all.
+- `client/src/components/grid/GridActivityLive.tsx` — Agrega toggle Simple/Experto, summary strip 5 KPIs (24h), paginación 20 eventos/página con controles superior e inferior.
+
+### Validaciones
+- `npm run check`: ✅ (0 errores TS)
+- `vitest run` (4 suites): ✅ 61/61
+- `npm run build`: ✅ (2620 módulos, 18s)
+
+### Comportamiento post-deploy
+- Sin cambios en DB ni rutas API.
+- Sin cambios en motor de trading.
+- Solo UI / helpers frontend.
+- Deploy: `git pull + docker compose -f docker-compose.staging.yml up -d --build`
+
+### Pendiente (baja prioridad)
+- `a7`: `GridRetentionPolicyPanel` con endpoint read-only preview (no destructivo)
 
 ---
 

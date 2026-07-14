@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   Layers, TrendingUp, TrendingDown, AlertTriangle, AlertCircle, Info,
   Copy, Download, ChevronLeft, ChevronRight, X, Check, Clock,
-  Settings2, HelpCircle, Archive,
+  Settings2, HelpCircle, Archive, Eye, Code2,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 import { translateGridLabel, SHADOW_EXPLANATION } from "@/lib/gridTranslate";
 import { filterGridLevels, gridLevelOperationalLabel } from "@/lib/gridLevelFilters";
 import { GridNoActiveRangeBlock } from "./GridNoActiveRangeBlock";
+import { GridHistoryLimitSelector } from "./GridHistoryLimitSelector";
+import { GridActionNoticeCard } from "./GridActionNoticeCard";
+import type { GridActionNotice } from "@/lib/gridActionNotices";
 
 // ─── Props ───────────────────────────────────────────────────
 interface GridLevelsPanelProps {
@@ -153,6 +156,27 @@ export function GridLevelsPanel({
   const [copiedDetail, setCopiedDetail] = useState(false);
   const [showImporteModal, setShowImporteModal] = useState(false);
   const [showBeneficioModal, setShowBeneficioModal] = useState(false);
+  const [viewMode, setViewMode] = useState<"simple" | "expert">("simple");
+  const [historyLimit, setHistoryLimit] = useState(50);
+  const [dismissedProximityNotice, setDismissedProximityNotice] = useState(false);
+
+  const proximityNotice: GridActionNotice | null = useMemo(() => {
+    const warn = levelsSummary?.proximityWarning;
+    if (!warn || dismissedProximityNotice) return null;
+    return {
+      id: "proximity_warning",
+      severity: "info",
+      title: "Separación condicionada por beneficio",
+      shortText: "Los niveles están muy juntos dado el objetivo neto mínimo.",
+      explanation: "El objetivo de beneficio neto mínimo limita cuántos niveles se pueden generar sin solaparse. Esto puede reducir el número de niveles activos.",
+      technicalReason: `avgGapPct ≈ ${warn.avgGapPct?.toFixed(2) ?? "—"}% entre niveles`,
+      impact: "Menos operaciones simultáneas. El Grid es más selectivo.",
+      recommendedAction: "Reduce el objetivo neto mínimo, ajusta el número de niveles o amplía la banda.",
+      targetTab: "ajustes",
+      targetField: "netProfitTargetPct",
+      ctaLabel: "Ir al objetivo neto",
+    };
+  }, [levelsSummary, dismissedProximityNotice]);
 
   // ─── Range info from levelsSummary ─────────────────────────
   const activeRangeId = levelsSummary?.activeRangeVersionId;
@@ -345,10 +369,22 @@ export function GridLevelsPanel({
   return (
     <Card className="border-border/50">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Layers className="h-4 w-4" />
-          Niveles planificados del Grid
-        </CardTitle>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Layers className="h-4 w-4" />
+            Niveles planificados del Grid
+          </CardTitle>
+          <div className="flex items-center gap-1 rounded-md border border-border/40 p-0.5">
+            <Button size="sm" variant={viewMode === "simple" ? "default" : "ghost"}
+              className="h-6 px-2 text-xs gap-1" onClick={() => setViewMode("simple")}>
+              <Eye className="h-3 w-3" />Simple
+            </Button>
+            <Button size="sm" variant={viewMode === "expert" ? "default" : "ghost"}
+              className="h-6 px-2 text-xs gap-1" onClick={() => setViewMode("expert")}>
+              <Code2 className="h-3 w-3" />Experto
+            </Button>
+          </div>
+        </div>
 
         {/* Range info badges */}
         <div className="space-y-2 mt-2">
@@ -391,6 +427,31 @@ export function GridLevelsPanel({
       </CardHeader>
 
       <CardContent>
+        {/* Proximity notice */}
+        {proximityNotice && (
+          <div className="mb-3">
+            <GridActionNoticeCard
+              notice={proximityNotice}
+              onCtaClick={() => onGoToTab?.("ajustes")}
+              onDismiss={() => setDismissedProximityNotice(true)}
+              compact={viewMode === "simple"}
+            />
+          </div>
+        )}
+
+        {/* History limit selector for historical filter */}
+        {filter === "historicos" && (
+          <div className="mb-3">
+            <GridHistoryLimitSelector
+              label="Niveles históricos visibles"
+              totalCount={filteredLevels.length}
+              visibleLimit={historyLimit}
+              onLimitChange={setHistoryLimit}
+              infoText="Los niveles se conservan completos. Este selector limita los visibles por página."
+            />
+          </div>
+        )}
+
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2 mb-3">
           {(Object.keys(FILTER_LABELS) as FilterKey[]).map((key) => (
