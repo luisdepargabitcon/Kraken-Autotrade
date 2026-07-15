@@ -47,11 +47,20 @@ Tras deploy de 3C.4-G se detectó una inconsistencia: `/status` leía fallback d
 - Solo lectura; sin cierre ni limpieza de ciclos.
 
 ### Hotfix detectado en post-deploy
-- `/monitor/audit` fallaba con `TypeError: E.toFixed is not a function` porque `buildGridAuditViewModel` llamaba `.toFixed()` sobre valores decimales provenientes de la DB que llegaban como strings.
-- Corrección: envolver los valores numéricos con `Number(...)` antes de `.toFixed(...)`.
+- `/monitor/audit` fallaba con `TypeError: E.toFixed is not a function` porque el snapshot fallback entregaba `config` con campos decimales como strings de DB.
+- Corrección 1: en `buildGridAuditViewModel` se envolvieron los valores con `Number(...)` antes de `.toFixed(...)`.
+- Corrección 2: en `gridRuntimeSnapshotResolver` se usa `engine.getConfigSnapshotFromDb()` para obtener el `config` ya normalizado a números cuando no hay runtime cargado.
+
+### Validación post-deploy 3C.4-G-REV (staging)
+- `/status`: `mode=SHADOW`, `activeRangeVersionId=null`, `realOpenOrdersCount=0`, `openCycles=2`, `activeOpenCyclesCount=0`, `orphanOpenCyclesCount=2`.
+- `/monitor/audit`: `mode=SHADOW`, counters coherentes, sin errores.
+- `/shadow-orphan-cycles/diagnose`: `mode=SHADOW`, `readOnly=true`, `realOrdersAffected=false`, `cyclesOrphanCount=2`, `currentPrice=~64960`.
+- `/export/json`: `mode=SHADOW`, `cyclesCount=26`, `openCyclesCount=2`.
+- Todos los checks de coherencia entre endpoints: ✅
+- Sin errores en logs.
 
 ### Pendiente
-- Redeploy staging 3C.4-G-REV + hotfix y validar coherencia post-deploy.
+- Validar visualmente en UI que "Ciclos fuera del rango activo" muestre 2.
 
 ---
 
