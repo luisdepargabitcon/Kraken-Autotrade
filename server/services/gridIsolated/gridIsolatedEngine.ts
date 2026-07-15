@@ -216,7 +216,15 @@ class GridIsolatedEngine {
    * Read config snapshot from DB WITHOUT auto-starting the engine.
    * Used for read-only operations that should not change runtime state.
    */
+  async getConfigSnapshotFromDb(): Promise<GridIsolatedConfig | null> {
+    return this.readConfigSnapshotFromDbInternal();
+  }
+
   private async readConfigSnapshotFromDb(): Promise<GridIsolatedConfig | null> {
+    return this.readConfigSnapshotFromDbInternal();
+  }
+
+  private async readConfigSnapshotFromDbInternal(): Promise<GridIsolatedConfig | null> {
     try {
       const rows = await db.select().from(gridIsolatedConfigs).limit(1);
       if (rows.length > 0) {

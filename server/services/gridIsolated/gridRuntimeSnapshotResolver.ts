@@ -204,6 +204,7 @@ export interface GridRuntimeSnapshotEngineLike {
   getLastTickAt: () => Date | null;
   getLastTickReason: () => string | null;
   getLastShadowExecutionPrice: () => { price: number | null } | null;
+  getConfigSnapshotFromDb?: () => Promise<GridIsolatedConfig | null>;
 }
 
 export async function resolveRuntimeSnapshot(
@@ -223,8 +224,14 @@ export async function resolveRuntimeSnapshot(
   let cycles = cyclesFromRuntime;
 
   if (!runtimeLoaded) {
+    // Prefer engine's normalized config snapshot so numeric fields are numbers, not DB strings.
+    config = engine.getConfigSnapshotFromDb
+      ? await engine.getConfigSnapshotFromDb()
+      : null;
     const dbData = await readDbFallback();
-    config = dbData.config;
+    if (!config && dbData.config) {
+      config = dbData.config;
+    }
     activeRangeVersion = dbData.activeRangeVersion;
     levels = dbData.levels;
     cycles = dbData.cycles;

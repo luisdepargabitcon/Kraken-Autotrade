@@ -30,6 +30,7 @@ print('keys:', list(audit.keys()) if isinstance(audit, dict) else type(audit))
 print('mode:', audit.get('mode') if isinstance(audit, dict) else None)
 if isinstance(audit, dict) and audit.get('error'):
     print('error:', audit['error'])
+    print('stack:', audit.get('stack'))
 print('\n=== AUDIT counters ===')
 print(json.dumps(audit.get('counters') or {}, indent=2))
 
