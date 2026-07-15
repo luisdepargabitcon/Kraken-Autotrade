@@ -5,6 +5,52 @@
 
 ---
 
+## 2026-07-15 — GRID FASE 3C.4-G-REV: Unificar snapshot runtime/DB para endpoints coherentes
+
+### Resumen
+Tras deploy de 3C.4-G se detectó una inconsistencia: `/status` leía fallback de DB y reportaba 2 ciclos orphan, pero `/monitor/audit`, `/export/json` y `/shadow-orphan-cycles/diagnose` leían solo el runtime en memoria. En staging el runtime estaba vacío, por lo que los tres últimos endpoints devolvían `mode: OFF`, 0 ciclos y `currentPrice: null`. Se añade un resolver común read-only que unifica la fuente de verdad.
+
+### Problema
+- `/status` usaba `getStatusSafe()` con fallback a DB.
+- `/monitor/audit` y `/export/json` usaban `engine.getLevels()/getCycles()` (runtime vacío).
+- `/shadow-orphan-cycles/diagnose` usaba `engine.cycles/levels` (runtime vacío).
+- Resultado: mismos endpoints, datos contradictorios.
+
+### Solución
+1. **Nuevo helper `server/services/gridIsolated/gridRuntimeSnapshotResolver.ts`**:
+   - `resolveRuntimeSnapshot(engine)`: devuelve snapshot unificado.
+   - Prefiere runtime si está cargado; si no, lee DB de forma read-only sin mutar el motor.
+   - Incluye conteos coherente de ciclos, niveles, órdenes reales, precio actual y fuente.
+2. **Nuevos getters read-only en `GridIsolatedEngine`**:
+   - `getRunning()`, `getLastTickAt()`, `getLastTickReason()`, `getLastShadowExecutionPrice()`.
+   - Evitan acceso a propiedades privadas desde el resolver.
+3. **Endpoints actualizados**:
+   - `/api/grid-isolated/levels` → snapshot.levels.
+   - `/api/grid-isolated/cycles` → snapshot.cycles.
+   - `/api/grid-isolated/monitor/audit` → snapshot.levels/cycles.
+   - `/api/grid-isolated/export/json` → snapshot.levels/cycles.
+   - `/api/grid-isolated/shadow-orphan-cycles/diagnose` → usa snapshot vía `diagnoseShadowOrphanCycles()`.
+
+### Archivos nuevos/modificados
+- `server/services/gridIsolated/gridRuntimeSnapshotResolver.ts` (nuevo)
+- `server/services/gridIsolated/__tests__/gridRuntimeSnapshotResolver.test.ts` (nuevo)
+- `server/services/gridIsolated/gridIsolatedEngine.ts` (getters + integración diagnose con snapshot)
+- `server/routes/gridIsolated.routes.ts` (levels/cycles/audit/export usan snapshot)
+
+### Validaciones
+- `npm run check`: ✅
+- `npx vitest run` Grid afectados: ✅ 164 tests
+- `npm run build`: ✅
+
+### Restricciones respetadas
+- Sin cambios en DB, órdenes reales, IDCA, SPOT, FISCO, Risk Manager.
+- Solo lectura; sin cierre ni limpieza de ciclos.
+
+### Pendiente
+- Redeploy staging 3C.4-G-REV y validar coherencia post-deploy.
+
+---
+
 ## 2026-07-15 — GRID FASE 3C.4-G: Separar ciclos orphan/históricos y evitar ventas SHADOW engañosas
 
 ### Resumen

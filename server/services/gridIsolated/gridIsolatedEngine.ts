@@ -51,6 +51,10 @@ import {
   type ShadowOrphanDiagnosisResult,
 } from "./gridShadowOrphanDiagnosis";
 import {
+  resolveRuntimeSnapshot,
+  type GridRuntimeSnapshot,
+} from "./gridRuntimeSnapshotResolver";
+import {
   computeGrossTargetFromNet,
   computeSellPrice,
   computeCyclePnL,
@@ -2614,6 +2618,34 @@ class GridIsolatedEngine {
   }
 
   /**
+   * Get running flag (read-only).
+   */
+  getRunning(): boolean {
+    return this.running;
+  }
+
+  /**
+   * Get last tick timestamp (read-only).
+   */
+  getLastTickAt(): Date | null {
+    return this.lastTickAt;
+  }
+
+  /**
+   * Get last tick reason (read-only).
+   */
+  getLastTickReason(): string | null {
+    return this.lastTickReason;
+  }
+
+  /**
+   * Get last shadow execution price (read-only).
+   */
+  getLastShadowExecutionPrice(): GridShadowExecutionPriceResult | null {
+    return this.lastShadowExecutionPrice;
+  }
+
+  /**
    * Get pump/dump state.
    */
   getPumpDumpState(): PumpDumpGuardState {
@@ -2655,32 +2687,27 @@ class GridIsolatedEngine {
   /**
    * Read-only diagnosis of orphan/historical SHADOW cycles.
    * Does NOT modify cycles, levels, DB, or place orders.
+   * Uses the unified runtime snapshot resolver so it stays coherent with
+   * /status, /monitor/audit and /export/json even when the runtime is empty.
    */
   async diagnoseShadowOrphanCycles(): Promise<ShadowOrphanDiagnosisResult> {
-    const mode = this.config?.mode || "OFF";
-    const activeRangeId = this.activeRangeVersion?.id ?? null;
-    let currentPrice = this.lastShadowExecutionPrice?.price ?? null;
-
-    // Fallback to ticker if no recent shadow execution price is available.
-    // MarketDataService.getTicker is read-only (cached market data, no orders).
-    if (currentPrice == null && this.config?.pair) {
-      try {
-        const ticker = await MarketDataService.getTicker(this.config.pair);
-        if (ticker?.last != null) {
-          currentPrice = Number(ticker.last);
-        }
-      } catch {
-        currentPrice = null;
-      }
-    }
-
+    const snapshot = await this.getRuntimeSnapshot();
     return diagnoseShadowOrphanCycles(
-      this.cycles,
-      this.levels,
-      activeRangeId,
-      currentPrice,
-      mode
+      snapshot.cycles,
+      snapshot.levels,
+      snapshot.activeRangeVersionId,
+      snapshot.currentPrice,
+      snapshot.mode
     );
+  }
+
+  /**
+   * Unified read-only snapshot of the Grid state.
+   * Prefers in-memory runtime; falls back to DB when the runtime is not loaded.
+   * Never auto-starts the scheduler and never mutates the engine.
+   */
+  async getRuntimeSnapshot(): Promise<GridRuntimeSnapshot> {
+    return resolveRuntimeSnapshot(this);
   }
 
   getLastProfessionalGeneratorValidation(): { at: Date | null; result: any } {

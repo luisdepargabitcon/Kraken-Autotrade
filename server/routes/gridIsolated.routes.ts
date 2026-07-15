@@ -890,17 +890,19 @@ export function registerGridIsolatedRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/grid-isolated/levels", (_req: Request, res: Response) => {
+  app.get("/api/grid-isolated/levels", async (_req: Request, res: Response) => {
     try {
-      res.json(gridIsolatedEngine.getLevels());
+      const snapshot = await gridIsolatedEngine.getRuntimeSnapshot();
+      res.json(snapshot.levels);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
   });
 
-  app.get("/api/grid-isolated/cycles", (_req: Request, res: Response) => {
+  app.get("/api/grid-isolated/cycles", async (_req: Request, res: Response) => {
     try {
-      res.json(gridIsolatedEngine.getCycles());
+      const snapshot = await gridIsolatedEngine.getRuntimeSnapshot();
+      res.json(snapshot.cycles);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
@@ -999,7 +1001,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
   app.get("/api/grid-isolated/monitor/audit", async (_req: Request, res: Response) => {
     try {
-      const config = gridIsolatedEngine.getConfig();
+      const snapshot = await gridIsolatedEngine.getRuntimeSnapshot();
+      const config = snapshot.config;
       const status = await gridIsolatedEngine.getStatusSafe();
       const checks = await gridModeLockService.runUnlockChecks();
 
@@ -1014,8 +1017,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const realModesBlocked = blockingReasons.length > 0;
       const mode = status?.mode ?? config?.mode ?? "OFF";
 
-      const levels = gridIsolatedEngine.getLevels();
-      const cycles = gridIsolatedEngine.getCycles();
+      const levels = snapshot.levels;
+      const cycles = snapshot.cycles;
       const reconciliation = gridReconciliationRunner.getLastResult();
 
       let events: any[] = [];
@@ -1950,13 +1953,14 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
   app.get("/api/grid-isolated/export/json", async (_req: Request, res: Response) => {
     try {
-      const config = gridIsolatedEngine.getConfig();
-      const status = gridIsolatedEngine.getExecutionStatus();
+      const snapshot = await gridIsolatedEngine.getRuntimeSnapshot();
+      const config = snapshot.config;
+      const status = await gridIsolatedEngine.getStatusSafe();
       const checks = await gridModeLockService.runUnlockChecks();
       const blockingReasons = buildBlockingReasons(checks, config);
       const mode = status?.mode ?? config?.mode ?? "OFF";
-      const levels = gridIsolatedEngine.getLevels();
-      const cycles = gridIsolatedEngine.getCycles();
+      const levels = snapshot.levels;
+      const cycles = snapshot.cycles;
       const reconciliation = gridReconciliationRunner.getLastResult();
 
       let events: any[] = [];
