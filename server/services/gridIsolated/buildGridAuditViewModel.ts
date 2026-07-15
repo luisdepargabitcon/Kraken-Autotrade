@@ -651,10 +651,10 @@ function buildDiagnosticBand(
 
       let plainExplanation = "Con los ajustes actuales, el Grid no puede crear una banda rentable y segura.";
       if (difference != null && difference > 0 && requiredRangePct != null && allowedRangePct != null) {
-        plainExplanation += ` El rango que permite la configuración (${allowedRangePct.toFixed(2)}%) es menor que el rango necesario para el mínimo de niveles (${requiredRangePct.toFixed(2)}%).`;
+        plainExplanation += ` El rango que permite la configuración (${Number(allowedRangePct).toFixed(2)}%) es menor que el rango necesario para el mínimo de niveles (${Number(requiredRangePct).toFixed(2)}%).`;
       }
       if (minSpacingPctReal != null && netProfitTargetPct != null) {
-        plainExplanation += ` El objetivo neto de ${netProfitTargetPct.toFixed(2)}% exige una separación mínima de ${minSpacingPctReal.toFixed(2)}% entre niveles.`;
+        plainExplanation += ` El objetivo neto de ${Number(netProfitTargetPct).toFixed(2)}% exige una separación mínima de ${Number(minSpacingPctReal).toFixed(2)}% entre niveles.`;
       }
 
       return {

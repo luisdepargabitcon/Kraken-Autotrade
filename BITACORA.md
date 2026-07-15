@@ -46,8 +46,12 @@ Tras deploy de 3C.4-G se detectó una inconsistencia: `/status` leía fallback d
 - Sin cambios en DB, órdenes reales, IDCA, SPOT, FISCO, Risk Manager.
 - Solo lectura; sin cierre ni limpieza de ciclos.
 
+### Hotfix detectado en post-deploy
+- `/monitor/audit` fallaba con `TypeError: E.toFixed is not a function` porque `buildGridAuditViewModel` llamaba `.toFixed()` sobre valores decimales provenientes de la DB que llegaban como strings.
+- Corrección: envolver los valores numéricos con `Number(...)` antes de `.toFixed(...)`.
+
 ### Pendiente
-- Redeploy staging 3C.4-G-REV y validar coherencia post-deploy.
+- Redeploy staging 3C.4-G-REV + hotfix y validar coherencia post-deploy.
 
 ---
 
