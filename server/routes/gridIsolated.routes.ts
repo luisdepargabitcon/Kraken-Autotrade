@@ -2043,4 +2043,23 @@ export function registerGridIsolatedRoutes(app: Express): void {
       res.status(500).json({ error: String(error) });
     }
   });
+
+  /**
+   * GET /api/grid-isolated/shadow-orphan-cycles/diagnose
+   * Read-only diagnosis of orphan/historical SHADOW cycles.
+   * Does NOT close cycles, modify DB, or place orders.
+   */
+  app.get("/api/grid-isolated/shadow-orphan-cycles/diagnose", async (_req: Request, res: Response) => {
+    try {
+      const engine = gridIsolatedEngine;
+      if (!engine) {
+        return res.status(503).json({ error: "Grid engine not available" });
+      }
+
+      const result = await engine.diagnoseShadowOrphanCycles();
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
 }

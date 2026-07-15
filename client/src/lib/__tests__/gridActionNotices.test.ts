@@ -98,6 +98,30 @@ describe("buildGridActionNotices", () => {
     expect(prox?.recommendedAction).not.toContain("guarda");
     expect(prox?.recommendedAction).not.toContain("activa");
   });
+
+  it("generates orphan_open_cycles notice when there are orphan open cycles", () => {
+    const orphanCycle = { id: "c1", status: "buy_filled", rangeVersionId: "range-old" };
+    const notices = buildGridActionNotices(baseStatus, baseAudit, [], [orphanCycle]);
+    const orphan = notices.find(n => n.id === "orphan_open_cycles");
+    expect(orphan).toBeDefined();
+    expect(orphan?.severity).toBe("warning");
+    expect(orphan?.targetTab).toBe("ciclos");
+  });
+
+  it("does NOT generate orphan_open_cycles when cycles belong to active range", () => {
+    const activeCycle = { id: "c1", status: "buy_filled", rangeVersionId: "range-active" };
+    const notices = buildGridActionNotices(baseStatus, baseAudit, [], [activeCycle]);
+    const orphan = notices.find(n => n.id === "orphan_open_cycles");
+    expect(orphan).toBeUndefined();
+  });
+
+  it("orphan notice title reflects no active range", () => {
+    const status = { ...baseStatus, activeRangeVersionId: null };
+    const orphanCycle = { id: "c1", status: "buy_filled", rangeVersionId: "range-old" };
+    const notices = buildGridActionNotices(status, baseAudit, [], [orphanCycle]);
+    const orphan = notices.find(n => n.id === "orphan_open_cycles");
+    expect(orphan?.title).toContain("Sin rango activo");
+  });
 });
 
 describe("noticeIsBlocking", () => {

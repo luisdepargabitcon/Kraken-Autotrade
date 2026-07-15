@@ -38,6 +38,12 @@ export function buildGridActionNotices(
   const totalLevels: number = levels?.length ?? 0;
   const historicalLevels = levels?.filter(l => l?.rangeVersionId !== activeRangeId) ?? [];
 
+  const openCycleStatuses = new Set(["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"]);
+  const isCycleOpen = (c: any) => openCycleStatuses.has(c?.status);
+  const orphanOpenCycles = activeRangeId
+    ? (cycles ?? []).filter(c => isCycleOpen(c) && c?.rangeVersionId !== activeRangeId)
+    : (cycles ?? []).filter(c => isCycleOpen(c));
+
   if (mode === "SHADOW") {
     notices.push({
       id: "shadow_mode",
@@ -52,6 +58,26 @@ export function buildGridActionNotices(
       targetTab: "resumen",
       ctaLabel: "Ver cómo funciona SHADOW",
       secondaryCtaLabel: "Ver configuración REAL",
+    });
+  }
+
+  if (orphanOpenCycles.length > 0) {
+    notices.push({
+      id: "orphan_open_cycles",
+      severity: "warning",
+      title: activeRangeId ? "Ciclos orphan/históricos abiertos" : "Sin rango activo: ciclos abiertos no ejecutables",
+      shortText: `${orphanOpenCycles.length} ciclo(s) abierto(s) no pertenece(n) al rango activo.`,
+      explanation:
+        "Estos ciclos quedaron abiertos de rangos anteriores o no tienen rango activo asociado. El motor no los cierra automáticamente porque los niveles que dispararían la venta ya no están bajo gestión del rango vigente. No son operativos ni consumen capital.",
+      technicalReason: activeRangeId
+        ? `${orphanOpenCycles.length} ciclos con rangeVersionId !== activeRangeVersionId y status abierto`
+        : `No existe activeRangeVersionId; ${orphanOpenCycles.length} ciclos abiertos sin rango vigente`,
+      impact: "Sin impacto en capital ni órdenes reales. No se cierran automáticamente.",
+      recommendedAction: activeRangeId
+        ? "Revisa la pestaña Ciclos, filtro Orphan/históricos. Considera reconciliación o archivado controlado."
+        : "Activa un rango válido para que el motor pueda gestionar ciclos nuevos. Los ciclos existentes requieren reconciliación manual.",
+      targetTab: "ciclos",
+      ctaLabel: "Ver ciclos orphan",
     });
   }
 

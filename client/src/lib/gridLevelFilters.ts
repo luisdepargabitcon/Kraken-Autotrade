@@ -52,6 +52,7 @@ export function isHistoricalLegacyGridLevel(level: any, activeRangeId?: string |
 }
 
 export function gridLevelOperationalLabel(level: any, activeRangeId?: string | null): string {
+  if (!activeRangeId) return "Histórico / no ejecutable — sin rango activo";
   if (level?.rangeVersionId === activeRangeId) return "Activo";
   if (level?.status === "planned") return "Planificado histórico / no ejecutable";
   if (isHistoricalLegacyGridLevel(level, activeRangeId)) return "Histórico legacy / no ejecutable / no afecta PnL";

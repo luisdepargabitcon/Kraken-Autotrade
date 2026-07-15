@@ -103,11 +103,12 @@ function Row({ label, value, mono }: { label: string; value: React.ReactNode; mo
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-type CycleFilter = "all" | "active" | "completed" | "cancelled" | "rango-activo" | "historicos";
+type CycleFilter = "all" | "active" | "orphan" | "completed" | "cancelled" | "rango-activo" | "historicos";
 
 const FILTER_LABELS: Record<CycleFilter, string> = {
   all: "Todos",
-  active: "Activos",
+  active: "Activos ejecutables",
+  orphan: "Orphan/históricos",
   completed: "Cerrados",
   cancelled: "Cancelados",
   "rango-activo": "Rango vigente",
@@ -125,11 +126,18 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
   const [historyLimit, setHistoryLimit] = useState(20);
   const currentPrice: number | null = (auditData?.marketContext?.currentPrice ?? null);
 
-  const activeCycles = cycles.filter((c: any) => isCycleOpen(c));
+  // Active/executable cycles belong to the currently active range and are open.
+  const activeExecutableCycles = activeRangeVersionId
+    ? cycles.filter((c: any) => isCycleOpen(c) && c?.rangeVersionId === activeRangeVersionId)
+    : [];
+  // Orphan/historical open cycles are open but NOT from the active range (or all open cycles when no active range).
+  const orphanCycles = activeRangeVersionId
+    ? cycles.filter((c: any) => isCycleOpen(c) && c?.rangeVersionId !== activeRangeVersionId)
+    : cycles.filter((c: any) => isCycleOpen(c));
   const completedCycles = cycles.filter((c: any) => c.status === "completed");
   const cancelledCycles = cycles.filter((c: any) => c.status === "cancelled" || c.status === "error");
   const totalPnl = completedCycles.reduce((sum: number, c: any) => sum + (toNum(c.netPnlUsd) ?? 0), 0);
-  const reservedCapital = activeCycles.reduce((sum: number, c: any) => {
+  const reservedCapital = activeExecutableCycles.reduce((sum: number, c: any) => {
     const qty = toNum(c.quantity) ?? 0;
     const bp = toNum(c.buyPrice) ?? 0;
     return sum + qty * bp;
@@ -143,13 +151,14 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
     : cycles;
 
   const filteredCycles = useMemo(() => {
-    if (cycleFilter === "active") return cycles.filter((c: any) => isCycleOpen(c));
+    if (cycleFilter === "active") return activeExecutableCycles;
+    if (cycleFilter === "orphan") return orphanCycles;
     if (cycleFilter === "completed") return cycles.filter((c: any) => c.status === "completed");
     if (cycleFilter === "cancelled") return cycles.filter((c: any) => c.status === "cancelled" || c.status === "error");
     if (cycleFilter === "rango-activo") return activeRangeCycles;
     if (cycleFilter === "historicos") return historicalCycles;
     return cycles;
-  }, [cycles, cycleFilter, activeRangeVersionId]);
+  }, [cycles, cycleFilter, activeRangeVersionId, activeExecutableCycles, orphanCycles, activeRangeCycles, historicalCycles]);
 
   // Apply historyLimit for historical/all filters before pagination
   const limitedCycles = useMemo(() => {
@@ -207,10 +216,14 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
         )}
 
         {/* KPI strip */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div className="rounded-lg border p-3">
-            <p className="text-xs text-muted-foreground">Ciclos activos</p>
-            <p className="text-lg font-bold text-blue-400">{activeCycles.length}</p>
+            <p className="text-xs text-muted-foreground">Activos ejecutables</p>
+            <p className="text-lg font-bold text-blue-400">{activeExecutableCycles.length}</p>
+          </div>
+          <div className="rounded-lg border p-3">
+            <p className="text-xs text-muted-foreground">Orphan/históricos</p>
+            <p className="text-lg font-bold text-amber-400">{orphanCycles.length}</p>
           </div>
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Cerrados con beneficio</p>
@@ -241,7 +254,8 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
               <Filter className="h-3 w-3 text-muted-foreground" />
               {(Object.keys(FILTER_LABELS) as CycleFilter[]).map((f) => {
                 const count = f === "all" ? cycles.length
-                  : f === "active" ? activeCycles.length
+                  : f === "active" ? activeExecutableCycles.length
+                  : f === "orphan" ? orphanCycles.length
                   : f === "completed" ? completedCycles.length
                   : f === "cancelled" ? cancelledCycles.length
                   : f === "rango-activo" ? activeRangeCycles.length
@@ -327,9 +341,13 @@ export function GridCyclesPanel({ cycles, onGoToTab, limit = 10, showViewAll = t
                           </td>
                           <td className="py-2 px-2 text-xs whitespace-nowrap">
                             {cycle.rangeVersionId ? (
-                              <span className={cycle.rangeVersionId === activeRangeVersionId ? "text-green-400" : "text-muted-foreground"}>
-                                {cycle.rangeVersionId === activeRangeVersionId ? "Activo" : "Histórico"}
-                              </span>
+                              cycle.rangeVersionId === activeRangeVersionId ? (
+                                <span className="text-green-400">Activo</span>
+                              ) : isCycleOpen(cycle) ? (
+                                <span className="text-amber-400">Orphan / no ejecutable</span>
+                              ) : (
+                                <span className="text-muted-foreground">Histórico</span>
+                              )
                             ) : "—"}
                           </td>
                           <td className="py-2 px-2 font-mono text-xs">

@@ -47,6 +47,10 @@ import {
 } from "./gridSpacingCalculator";
 import { applyWeightsToGeneratedLevels } from "./gridAllocationEngine";
 import {
+  diagnoseShadowOrphanCycles,
+  type ShadowOrphanDiagnosisResult,
+} from "./gridShadowOrphanDiagnosis";
+import {
   computeGrossTargetFromNet,
   computeSellPrice,
   computeCyclePnL,
@@ -2646,6 +2650,37 @@ class GridIsolatedEngine {
    */
   getLastShadowValidation(): { at: Date | null; result: any } {
     return { at: this.lastShadowValidationAt, result: this.lastShadowValidationResult };
+  }
+
+  /**
+   * Read-only diagnosis of orphan/historical SHADOW cycles.
+   * Does NOT modify cycles, levels, DB, or place orders.
+   */
+  async diagnoseShadowOrphanCycles(): Promise<ShadowOrphanDiagnosisResult> {
+    const mode = this.config?.mode || "OFF";
+    const activeRangeId = this.activeRangeVersion?.id ?? null;
+    let currentPrice = this.lastShadowExecutionPrice?.price ?? null;
+
+    // Fallback to ticker if no recent shadow execution price is available.
+    // MarketDataService.getTicker is read-only (cached market data, no orders).
+    if (currentPrice == null && this.config?.pair) {
+      try {
+        const ticker = await MarketDataService.getTicker(this.config.pair);
+        if (ticker?.last != null) {
+          currentPrice = Number(ticker.last);
+        }
+      } catch {
+        currentPrice = null;
+      }
+    }
+
+    return diagnoseShadowOrphanCycles(
+      this.cycles,
+      this.levels,
+      activeRangeId,
+      currentPrice,
+      mode
+    );
   }
 
   getLastProfessionalGeneratorValidation(): { at: Date | null; result: any } {

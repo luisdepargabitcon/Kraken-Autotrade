@@ -1476,4 +1476,35 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(result.reasonCode).not.toBe("OFF_MODE");
     expect(result.status).not.toBe("audit_only");
   });
+
+  // ─── 3C.4-G: Shadow orphan cycle diagnosis endpoint ─────────────────
+
+  it("GET /api/grid-isolated/shadow-orphan-cycles/diagnose responds 200", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/shadow-orphan-cycles/diagnose");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("readOnly", true);
+    expect(res.body).toHaveProperty("realOrdersAffected", false);
+    expect(res.body).toHaveProperty("cyclesOrphanCount");
+    expect(res.body).toHaveProperty("cyclesEligibleForSimulatedClose");
+    expect(res.body).toHaveProperty("recommendation");
+  });
+
+  it("shadow-orphan-cycles/diagnose returns mode and activeRangeVersionId", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/shadow-orphan-cycles/diagnose");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("mode");
+    expect(res.body).toHaveProperty("activeRangeVersionId");
+    expect(typeof res.body.cyclesOrphanCount).toBe("number");
+    expect(typeof res.body.cyclesEligibleForSimulatedClose).toBe("number");
+  });
+
+  it("shadow-orphan-cycles/diagnose is read-only (does not modify status)", async () => {
+    const before = await simulateGet(app, "/api/grid-isolated/status");
+    const diag = await simulateGet(app, "/api/grid-isolated/shadow-orphan-cycles/diagnose");
+    const after = await simulateGet(app, "/api/grid-isolated/status");
+    expect(diag.status).toBe(200);
+    expect(after.body.mode).toBe(before.body.mode);
+    expect(after.body.isActive).toBe(before.body.isActive);
+    expect(after.body.isRunning).toBe(before.body.isRunning);
+  });
 });

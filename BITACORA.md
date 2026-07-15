@@ -5,6 +5,68 @@
 
 ---
 
+## 2026-07-15 — GRID FASE 3C.4-G: Separar ciclos orphan/históricos y evitar ventas SHADOW engañosas
+
+### Resumen
+El Grid en modo SHADOW tenía 2 ciclos abiertos de rangos anteriores (orphan/históricos) mientras el motor no disponía de rango activo. La UI mostraba "Ciclos activos" sin distinguir que no eran ejecutables, y el usuario podía interpretar que el motor los cerraría automáticamente si el precio superaba un SELL histórico. Se separa claramente en UI/API entre ciclos activos ejecutables del rango vigente y ciclos orphan/históricos no ejecutables, y se añade un endpoint read-only de diagnóstico.
+
+### Problema
+- `activeRangeVersionId: null`, `openCycles: 2`, `activeOpenCyclesCount: 0`, `orphanOpenCyclesCount: 2`.
+- La UI contaba los 2 ciclos orphan como "Ciclos activos".
+- Si el precio actual superaba el SELL asociado a un ciclo orphan, el motor no lo cerraba (por seguridad), pero la UI no explicaba por qué.
+- No existía un diagnóstico explícito y seguro para inspeccionar estos ciclos.
+
+### Solución
+1. **Nuevo helper `server/services/gridIsolated/gridShadowOrphanDiagnosis.ts`**:
+   - `diagnoseShadowOrphanCycles`: clasifica ciclos abiertos que no pertenecen al rango activo, calcula `wouldCloseNow` según precio actual y SELL asociado, indica `safeToArchive`, y nunca modifica estado ni DB.
+2. **Nuevo método en `GridIsolatedEngine`**:
+   - `diagnoseShadowOrphanCycles()`: expone el helper con datos del runtime y precio de mercado actual (read-only).
+3. **Nuevo endpoint `GET /api/grid-isolated/shadow-orphan-cycles/diagnose`**:
+   - Devuelve `cyclesOrphanCount`, `cyclesEligibleForSimulatedClose`, `currentPrice`, detalle por ciclo, `realOrdersAffected=false`, `readOnly=true`.
+4. **UI — `client/src/components/grid/GridCyclesPanel.tsx`**:
+   - KPI strip separa "Activos ejecutables" del rango vigente vs "Orphan/históricos".
+   - Nuevo filtro "Orphan/históricos".
+   - Tabla y tarjetas marcan ciclos orphan con "Orphan / no ejecutable".
+5. **UI — `client/src/components/grid/GridCycleProgressCard.tsx`**:
+   - Badge "Orphan / no ejecutable sin rango activo" cuando `!isActiveRange`.
+6. **UI — `client/src/components/grid/GridSummaryPanel.tsx`**:
+   - KPI renombrado a "Ciclos activos ejecutables" con subtexto orphan.
+7. **UI — `client/src/lib/gridActionNotices.ts`**:
+   - Nuevo aviso `orphan_open_cycles` que explica por qué no se cierran y a dónde navegar.
+8. **UI — `client/src/lib/gridLevelFilters.ts`**:
+   - `gridLevelOperationalLabel` retorna "Histórico / no ejecutable — sin rango activo" cuando no hay `activeRangeId`.
+
+### Archivos nuevos
+- `server/services/gridIsolated/gridShadowOrphanDiagnosis.ts` — helper puro read-only
+- `server/services/gridIsolated/__tests__/gridShadowOrphanDiagnosis.test.ts` — 8 tests unitarios
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — método `diagnoseShadowOrphanCycles()`
+- `server/routes/gridIsolated.routes.ts` — endpoint `GET /api/grid-isolated/shadow-orphan-cycles/diagnose`
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` — 3 tests del nuevo endpoint
+- `client/src/components/grid/GridCyclesPanel.tsx` — separación activos/orphan/históricos
+- `client/src/components/grid/GridCycleProgressCard.tsx` — badge orphan
+- `client/src/components/grid/GridSummaryPanel.tsx` — KPI renombrado
+- `client/src/lib/gridActionNotices.ts` — aviso orphan
+- `client/src/lib/__tests__/gridActionNotices.test.ts` — 3 tests del aviso
+- `client/src/lib/gridLevelFilters.ts` — etiqueta sin rango activo
+
+### Validaciones
+- `npm run check`: ✅ 0 errores TS
+- `npx vitest run` (helpers + rutas afectadas): ✅ 148 tests pass
+- `npm run build`: ✅ (2620 módulos, 19.6s)
+
+### Restricciones respetadas
+- Sin cambios en DB.
+- Sin cambios en motor de ejecución de órdenes reales.
+- Sin tocar IDCA, SPOT, FISCO ni Risk Manager global.
+- Endpoint y helper 100% read-only.
+
+### Pendiente
+- Deploy a staging SHADOW.
+
+---
+
 ## 2026-07-15 — GRID UI ENHANCEMENT: Helpers puros, componentes reutilizables, redesign paneles
 
 ### Resumen

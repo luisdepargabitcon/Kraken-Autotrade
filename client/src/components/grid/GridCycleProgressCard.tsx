@@ -135,7 +135,10 @@ export function GridCycleProgressCard({
           </div>
         )}
         {!isActiveRange && (
-          <div className="col-span-3 text-muted-foreground/60">Rango anterior</div>
+          <div className="col-span-3 flex items-center gap-1 text-amber-400/80">
+            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-400/80" />
+            <span>Orphan / no ejecutable sin rango activo</span>
+          </div>
         )}
       </div>
 

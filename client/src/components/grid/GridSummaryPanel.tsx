@@ -296,9 +296,9 @@ export function GridSummaryPanel({
               <p className="text-xs text-muted-foreground mt-0.5">{summary?.realOpenOrdersCount ?? 0} órdenes reales · {summary?.currentRangeLevelsCount ?? 0} en rango activo</p>
             </div>
             <div className="bg-card/50 p-3">
-              <p className="text-xs font-mono text-muted-foreground mb-1">CICLOS ABIERTOS</p>
+              <p className="text-xs font-mono text-muted-foreground mb-1">CICLOS ACTIVOS EJECUTABLES</p>
               <p className="font-mono text-lg font-bold">{summary?.activeOpenCyclesCount ?? status?.activeOpenCyclesCount ?? summary?.openCyclesCount ?? status?.openCycles ?? 0}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{summary?.closedCyclesCount ?? 0} cerrados · {summary?.orphanOpenCyclesCount ?? status?.orphanOpenCyclesCount ?? 0} orphan</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{summary?.closedCyclesCount ?? 0} cerrados · {summary?.orphanOpenCyclesCount ?? status?.orphanOpenCyclesCount ?? 0} orphan/históricos</p>
             </div>
             <div className="bg-card/50 p-3">
               <p className="text-xs font-mono text-muted-foreground mb-1">PNL NETO TOTAL</p>
