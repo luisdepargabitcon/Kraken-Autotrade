@@ -1762,7 +1762,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
         ...gridViewModel,
       });
     } catch (error) {
-      res.status(500).json({ error: String(error) });
+      console.error("[/api/grid-isolated/monitor/audit] error:", error);
+      res.status(500).json({ error: String(error), stack: error instanceof Error ? error.stack : null });
     }
   });
 
