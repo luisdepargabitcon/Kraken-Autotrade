@@ -1658,7 +1658,7 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   pair:                    text("pair").notNull().default("BTC/USD"),
   mode:                    text("mode").notNull().default("OFF"),
   capitalProfile:          text("capital_profile").notNull().default("balanced"),
-  executionPolicy:         text("execution_policy").notNull().default("MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK"),
+  executionPolicy:         text("execution_policy").notNull().default("MAKER_ONLY"),
   netProfitTargetPct:      decimal("net_profit_target_pct", { precision: 6, scale: 3 }).notNull().default("0.800"),
   bandPeriod:              integer("band_period").notNull().default(20),
   bandStdDevMultiplier:    decimal("band_std_dev_multiplier", { precision: 4, scale: 2 }).notNull().default("2.00"),
@@ -1687,7 +1687,7 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   isActive:                boolean("is_active").notNull().default(false),
   // Execution: Maker/Taker
   makerAttemptsBeforeTaker:      integer("maker_attempts_before_taker").notNull().default(3),
-  takerFallbackEnabled:          boolean("taker_fallback_enabled").notNull().default(true),
+  takerFallbackEnabled:          boolean("taker_fallback_enabled").notNull().default(false),
   takerFallbackAttemptNumber:    integer("taker_fallback_attempt_number").notNull().default(4),
   maxTakerFallbackPerCycle:      integer("max_taker_fallback_per_cycle").notNull().default(1),
   takerFallbackRequiresNetProfit: boolean("taker_fallback_requires_net_profit").notNull().default(true),

@@ -2,7 +2,7 @@
  * GridCycleStartupService — Single owner of Grid SHADOW initialization at server startup.
  *
  * Order:
- *   1. Wait for migrations (assumed done before this service runs)
+ *   1. Run migrations (if a runMigrations callback is provided)
  *   2. Verify DB connectivity
  *   3. Load config without starting engine
  *   4. Only if mode === "SHADOW" and isActive === true:
@@ -58,7 +58,8 @@ export interface GridStartupEngineLike {
  * Idempotent: multiple calls are no-ops after the first successful run.
  */
 export async function initializeGridShadowAtStartup(
-  engineOverride?: GridStartupEngineLike
+  engineOverride?: GridStartupEngineLike,
+  options?: { runMigrations?: () => Promise<void> }
 ): Promise<GridStartupResult> {
   if (startupInProgress) {
     return { started: false, reason: "Startup already in progress" };
@@ -81,6 +82,10 @@ export async function initializeGridShadowAtStartup(
   startupInProgress = true;
 
   try {
+    if (options?.runMigrations) {
+      await options.runMigrations();
+    }
+
     const dbOk = await verifyDbConnection();
     if (!dbOk) {
       throw new Error("Database connection not available");

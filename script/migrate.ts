@@ -1289,11 +1289,12 @@ END $$;
     console.log("[migrate] 049_dryrun_audit_columns OK");
 
     // ============================================================
-    // AUTOTUNING TRACKED MIGRATIONS (051+)
+    // TRACKED MIGRATIONS (051+)
     // Uses AutoMigrationRunner: advisory lock + transactions + schema_migrations table.
     // These migrations throw on failure — the app will NOT start if they fail.
+    // Includes 071_grid_cycle_target_sell for Grid Isolated target SELL columns.
     // ============================================================
-    console.log("[migrate] Running autotuning tracked migrations...");
+    console.log("[migrate] Running tracked migrations...");
     const { AutoMigrationRunner } = await import("../server/services/AutoMigrationRunner");
     const autoRunner = new AutoMigrationRunner(pool);
     const trackedMigrations = [
@@ -1302,6 +1303,22 @@ END $$;
       "053_autotuning_trade_metrics",
       "054_autotuning_strategy_profiles",
       "055_autotuning_tuning_proposals",
+      "056_ai_shadow_decisions",
+      "057_idca_hybrid_intelligent_layers",
+      "058_ai_effective_decision_context",
+      "059_fisco_v2_import_config",
+      "060_idca_hybrid_grid_traceability",
+      "061_audit_tables",
+      "062_capital_efficiency_gate",
+      "063_grid_isolated",
+      "064_grid_wallet_execution",
+      "065_telegram_global_config",
+      "066_telegram_bot_tokens",
+      "067_telegram_alert_rules",
+      "068_disable_legacy_alert_rules",
+      "069_grid_compact_range_control",
+      "070_grid_adaptive_smart_range",
+      "071_grid_cycle_target_sell",
     ].map((name) => ({
       id: name,
       filePath: path.resolve(process.cwd(), "db", "migrations", `${name}.sql`),

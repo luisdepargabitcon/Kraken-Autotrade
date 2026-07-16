@@ -28,6 +28,36 @@ import { fileURLToPath } from "url";
 
 let tradingEngine: TradingEngine | null = null;
 
+const migrationsDir = (() => {
+  try {
+    return path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'db', 'migrations');
+  } catch {
+    return path.resolve(process.cwd(), 'db', 'migrations');
+  }
+})();
+
+const MIGRATIONS = [
+  { id: '049_telegram_alert_dedupe', filePath: path.join(migrationsDir, '049_telegram_alert_dedupe.sql') },
+  { id: '052_smart_exit_state', filePath: path.join(migrationsDir, '052_smart_exit_state.sql') },
+  { id: '053_add_telegram_alert_config_to_bot_config', filePath: path.join(migrationsDir, '053_add_telegram_alert_config_to_bot_config.sql') },
+  { id: '056_ai_shadow_decisions', filePath: path.join(migrationsDir, '056_ai_shadow_decisions.sql') },
+  { id: '057_idca_hybrid_intelligent_layers', filePath: path.join(migrationsDir, '057_idca_hybrid_intelligent_layers.sql') },
+  { id: '058_ai_effective_decision_context', filePath: path.join(migrationsDir, '058_ai_effective_decision_context.sql') },
+  { id: '059_fisco_v2_import_config', filePath: path.join(migrationsDir, '059_fisco_v2_import_config.sql') },
+  { id: '060_idca_hybrid_grid_traceability', filePath: path.join(migrationsDir, '060_idca_hybrid_grid_traceability.sql') },
+  { id: '061_audit_tables', filePath: path.join(migrationsDir, '061_audit_tables.sql') },
+  { id: '062_capital_efficiency_gate', filePath: path.join(migrationsDir, '062_capital_efficiency_gate.sql') },
+  { id: '063_grid_isolated', filePath: path.join(migrationsDir, '063_grid_isolated.sql') },
+  { id: '064_grid_wallet_execution', filePath: path.join(migrationsDir, '064_grid_wallet_execution.sql') },
+  { id: '065_telegram_global_config', filePath: path.join(migrationsDir, '065_telegram_global_config.sql') },
+  { id: '066_telegram_bot_tokens', filePath: path.join(migrationsDir, '066_telegram_bot_tokens.sql') },
+  { id: '067_telegram_alert_rules', filePath: path.join(migrationsDir, '067_telegram_alert_rules.sql') },
+  { id: '068_disable_legacy_alert_rules', filePath: path.join(migrationsDir, '068_disable_legacy_alert_rules.sql') },
+  { id: '069_grid_compact_range_control', filePath: path.join(migrationsDir, '069_grid_compact_range_control.sql') },
+  { id: '070_grid_adaptive_smart_range', filePath: path.join(migrationsDir, '070_grid_adaptive_smart_range.sql') },
+  { id: '071_grid_cycle_target_sell', filePath: path.join(migrationsDir, '071_grid_cycle_target_sell.sql') },
+];
+
 
 export function initializeWebSockets(httpServer: Server): void {
   eventsWs.initialize(httpServer);
@@ -171,47 +201,20 @@ export async function registerRoutes(
   }
 
   // AutoMigrationRunner — execute SQL migrations from db/migrations
+  let gridMigrationsSucceeded = false;
   try {
-    let migrationsDir: string;
-    try {
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = path.dirname(__filename);
-      migrationsDir = path.join(__dirname, '..', 'db', 'migrations');
-    } catch {
-      migrationsDir = path.resolve(process.cwd(), 'db', 'migrations');
-    }
-
     if (!fs.existsSync(migrationsDir)) {
       console.log('[startup] AutoMigrationRunner skipped: migrations directory not found');
     } else {
       console.log(`[startup] AutoMigrationRunner using migrations dir: ${migrationsDir}`);
       const runner = new AutoMigrationRunner(db.$client);
-      const migrations = [
-        { id: '049_telegram_alert_dedupe', filePath: path.join(migrationsDir, '049_telegram_alert_dedupe.sql') },
-        { id: '052_smart_exit_state', filePath: path.join(migrationsDir, '052_smart_exit_state.sql') },
-        { id: '053_add_telegram_alert_config_to_bot_config', filePath: path.join(migrationsDir, '053_add_telegram_alert_config_to_bot_config.sql') },
-        { id: '056_ai_shadow_decisions', filePath: path.join(migrationsDir, '056_ai_shadow_decisions.sql') },
-        { id: '057_idca_hybrid_intelligent_layers', filePath: path.join(migrationsDir, '057_idca_hybrid_intelligent_layers.sql') },
-        { id: '058_ai_effective_decision_context', filePath: path.join(migrationsDir, '058_ai_effective_decision_context.sql') },
-        { id: '059_fisco_v2_import_config', filePath: path.join(migrationsDir, '059_fisco_v2_import_config.sql') },
-        { id: '060_idca_hybrid_grid_traceability', filePath: path.join(migrationsDir, '060_idca_hybrid_grid_traceability.sql') },
-        { id: '061_audit_tables', filePath: path.join(migrationsDir, '061_audit_tables.sql') },
-        { id: '062_capital_efficiency_gate', filePath: path.join(migrationsDir, '062_capital_efficiency_gate.sql') },
-        { id: '063_grid_isolated', filePath: path.join(migrationsDir, '063_grid_isolated.sql') },
-        { id: '064_grid_wallet_execution', filePath: path.join(migrationsDir, '064_grid_wallet_execution.sql') },
-        { id: '065_telegram_global_config', filePath: path.join(migrationsDir, '065_telegram_global_config.sql') },
-        { id: '066_telegram_bot_tokens', filePath: path.join(migrationsDir, '066_telegram_bot_tokens.sql') },
-        { id: '067_telegram_alert_rules', filePath: path.join(migrationsDir, '067_telegram_alert_rules.sql') },
-        { id: '068_disable_legacy_alert_rules', filePath: path.join(migrationsDir, '068_disable_legacy_alert_rules.sql') },
-        { id: '069_grid_compact_range_control', filePath: path.join(migrationsDir, '069_grid_compact_range_control.sql') },
-        { id: '070_grid_adaptive_smart_range', filePath: path.join(migrationsDir, '070_grid_adaptive_smart_range.sql') },
-      ];
-
-      await runner.run(migrations);
+      await runner.run(MIGRATIONS);
+      gridMigrationsSucceeded = true;
       console.log('[startup] AutoMigrationRunner completed');
     }
   } catch (e: any) {
-    console.error('[startup] AutoMigrationRunner error (non-fatal):', e?.message || e);
+    console.error('[startup] AutoMigrationRunner error (Grid SHADOW startup will be skipped):', e?.message || e);
+    gridMigrationsSucceeded = false;
   }
 
   // FISCO V2 Schema Ensure — inline SQL, no file dependency
@@ -1753,15 +1756,17 @@ export async function registerRoutes(
   }
 
   // Grid SHADOW startup (only starts if mode=SHADOW and isActive=true)
-  setTimeout(async () => {
-    try {
-      const { initializeGridShadowAtStartup } = await import('./services/gridIsolated/gridCycleStartupService');
+  try {
+    const { initializeGridShadowAtStartup } = await import('./services/gridIsolated/gridCycleStartupService');
+    if (!gridMigrationsSucceeded) {
+      console.error('[startup] Grid SHADOW startup skipped: migrations did not complete successfully');
+    } else {
       const result = await initializeGridShadowAtStartup();
       console.log('[startup] Grid SHADOW startup result:', result);
-    } catch (e: any) {
-      console.error('[startup] Grid SHADOW startup failed:', e?.message || e);
     }
-  }, 5000);
+  } catch (e: any) {
+    console.error('[startup] Grid SHADOW startup failed:', e?.message || e);
+  }
 
   // NOTE: Telegram chat CRUD routes are defined inline above (/api/telegram/chats, /api/telegram/send)
   // The old /api/integrations/telegram/* duplicate routes in telegram.routes.ts have been removed.

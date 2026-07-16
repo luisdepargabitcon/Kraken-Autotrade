@@ -24,6 +24,7 @@ import {
   CAPITAL_PROFILES,
   DEFAULT_GRID_CONFIG,
   DEFAULT_EXECUTION_POLICY,
+  SHADOW_EXECUTION_POLICY,
   POST_ONLY_MAX_ATTEMPTS,
   CIRCUIT_BREAKER_RETRY_DELAY_MS,
   DAILY_ORDER_REQUEST_LIMIT,
@@ -32,6 +33,8 @@ import {
   FEE_BUFFER_SELL_PCT,
   TAX_RESERVE_PCT,
   GRID_EVENT_TYPES,
+  isLegacyExecutionPolicy,
+  getEffectiveExecutionPolicy,
   type GridMode,
   type CapitalProfile,
 } from "../gridIsolated/gridIsolatedTypes";
@@ -94,9 +97,27 @@ describe("Grid Isolated — Default Config", () => {
     expect(DEFAULT_GRID_CONFIG.pair).toBe("BTC/USD");
   });
 
-  it("default execution policy is MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK", () => {
-    expect(DEFAULT_EXECUTION_POLICY).toBe("MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK");
-    expect(DEFAULT_GRID_CONFIG.executionPolicy).toBe("MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK");
+  it("default execution policy is MAKER_ONLY", () => {
+    expect(DEFAULT_EXECUTION_POLICY).toBe("MAKER_ONLY");
+    expect(DEFAULT_GRID_CONFIG.executionPolicy).toBe("MAKER_ONLY");
+    expect(DEFAULT_GRID_CONFIG.takerFallbackEnabled).toBe(false);
+  });
+
+  it("SHADOW execution policy is always MAKER_ONLY", () => {
+    expect(SHADOW_EXECUTION_POLICY).toBe("MAKER_ONLY");
+  });
+
+  it("identifies legacy fallback policies", () => {
+    expect(isLegacyExecutionPolicy("MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK")).toBe(true);
+    expect(isLegacyExecutionPolicy("MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK")).toBe(true);
+    expect(isLegacyExecutionPolicy("MAKER_ONLY")).toBe(false);
+    expect(isLegacyExecutionPolicy(null)).toBe(false);
+  });
+
+  it("effective policy normalizes SHADOW to MAKER_ONLY", () => {
+    expect(getEffectiveExecutionPolicy({ mode: "SHADOW", executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK" })).toBe("MAKER_ONLY");
+    expect(getEffectiveExecutionPolicy({ mode: "SHADOW", executionPolicy: "MAKER_ONLY" })).toBe("MAKER_ONLY");
+    expect(getEffectiveExecutionPolicy({ mode: "REAL_LIMITED", executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK" })).toBe("MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK");
   });
 
   it("default isActive is false", () => {
@@ -198,25 +219,33 @@ describe("Grid Mode Lock Service", () => {
     const lock = await gridModeLockService.checkModeTransition("SHADOW", "OFF");
     expect(lock.unlocked).toBe(true);
     expect(lock.blockingReasons).toHaveLength(0);
+    expect(lock.blockingReasonDetails).toHaveLength(0);
   });
 
   it("SHADOW mode is always allowed", async () => {
     const lock = await gridModeLockService.checkModeTransition("OFF", "SHADOW");
     expect(lock.unlocked).toBe(true);
     expect(lock.blockingReasons).toHaveLength(0);
+    expect(lock.blockingReasonDetails).toHaveLength(0);
   });
 
   it("REAL_LIMITED is blocked without acknowledgment", async () => {
     const lock = await gridModeLockService.checkModeTransition("SHADOW", "REAL_LIMITED");
     expect(lock.unlocked).toBe(false);
     expect(lock.blockingReasons.length).toBeGreaterThan(0);
-    expect(lock.blockingReasons.some(r => r.toLowerCase().includes("mode lock"))).toBe(true);
+    expect(lock.blockingReasonDetails.length).toBeGreaterThan(0);
+    expect(lock.blockingReasonDetails.some(r => r.code === "MODE_LOCK_NOT_ACKNOWLEDGED")).toBe(true);
+    expect(lock.blockingReasonDetails.some(r => r.humanReason.toLowerCase().includes("bloqueo de modo"))).toBe(true);
   });
 
   it("REAL_FULL is blocked without all conditions", async () => {
     const lock = await gridModeLockService.checkModeTransition("SHADOW", "REAL_FULL");
     expect(lock.unlocked).toBe(false);
     expect(lock.blockingReasons.length).toBeGreaterThan(0);
+    expect(lock.blockingReasonDetails.length).toBe(lock.blockingReasons.length);
+    const codes = lock.blockingReasonDetails.map(r => r.code);
+    expect(codes).toContain("MODE_LOCK_NOT_ACKNOWLEDGED");
+    expect(codes).toContain("REVOLUTX_NOT_INITIALIZED");
   });
 
   it("isModeSafe returns true for OFF and SHADOW", () => {

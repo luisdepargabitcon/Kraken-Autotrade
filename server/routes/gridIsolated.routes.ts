@@ -21,6 +21,8 @@
  *   POST /api/grid-isolated/activate            — Activate/deactivate Grid motor (isActive toggle)
  *   POST /api/grid-isolated/professional-generator/validate — Read-only validation of professional generator
  *   POST /api/grid-isolated/shadow-cleanup/preview — Dry-run preview of SHADOW cleanup (no DB modifications)
+ *   GET  /api/grid-isolated/shadow-open-cycles/diagnose — Read-only diagnosis of all open cycles (would they close now?)
+ *   GET  /api/grid-isolated/shadow-orphan-cycles/diagnose — Deprecated alias for /shadow-open-cycles/diagnose
  *   GET  /api/grid-isolated/export/chatgpt      — Export resumen para ChatGPT (texto plano)
  *   GET  /api/grid-isolated/export/json         — Export audit completo en JSON
  *   GET  /api/grid-isolated/export/csv          — Export eventos en CSV
@@ -2078,9 +2080,33 @@ export function registerGridIsolatedRoutes(app: Express): void {
   });
 
   /**
+   * GET /api/grid-isolated/shadow-open-cycles/diagnose
+   * Read-only diagnosis of all open SHADOW cycles.
+   * Reports whether each cycle would be closed by processOpenCyclesShadow()
+   * without actually closing cycles, modifying the DB, or placing orders.
+   */
+  app.get("/api/grid-isolated/shadow-open-cycles/diagnose", async (_req: Request, res: Response) => {
+    try {
+      const engine = gridIsolatedEngine;
+      if (!engine) {
+        return res.status(503).json({ error: "Grid engine not available" });
+      }
+
+      const result = await engine.diagnoseShadowOpenCycles();
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        error: "Error al diagnosticar ciclos abiertos",
+        errorReference: "GRID_OPEN_CYCLE_DIAGNOSE_ERROR",
+      });
+    }
+  });
+
+  /**
    * GET /api/grid-isolated/shadow-orphan-cycles/diagnose
-   * Read-only diagnosis of orphan/historical SHADOW cycles.
-   * Does NOT close cycles, modify DB, or place orders.
+   * Deprecated alias of /api/grid-isolated/shadow-open-cycles/diagnose.
+   * Kept for backwards compatibility. Returns the same payload with
+   * a `deprecated` flag and `replacement` URL.
    */
   app.get("/api/grid-isolated/shadow-orphan-cycles/diagnose", async (_req: Request, res: Response) => {
     try {
@@ -2089,12 +2115,16 @@ export function registerGridIsolatedRoutes(app: Express): void {
         return res.status(503).json({ error: "Grid engine not available" });
       }
 
-      const result = await engine.diagnoseShadowOrphanCycles();
-      res.json(result);
+      const result = await engine.diagnoseShadowOpenCycles();
+      res.json({
+        ...result,
+        deprecated: true,
+        replacement: "/api/grid-isolated/shadow-open-cycles/diagnose",
+      });
     } catch (error) {
       res.status(500).json({
-        error: "Error al diagnosticar ciclos orphan",
-        errorReference: "GRID_ORPHAN_DIAGNOSE_ERROR",
+        error: "Error al diagnosticar ciclos abiertos",
+        errorReference: "GRID_OPEN_CYCLE_DIAGNOSE_ERROR",
       });
     }
   });

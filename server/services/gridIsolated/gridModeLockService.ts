@@ -35,7 +35,7 @@ class GridModeLockService {
     currentMode: GridMode,
     requestedMode: GridMode
   ): Promise<GridModeLock> {
-    const blockingReasons: string[] = [];
+    const blockingReasonDetails: { code: string; humanReason: string }[] = [];
 
     // OFF and SHADOW are always allowed
     if (requestedMode === "OFF" || requestedMode === "SHADOW") {
@@ -44,6 +44,7 @@ class GridModeLockService {
         requestedMode,
         unlocked: true,
         blockingReasons: [],
+        blockingReasonDetails: [],
         checkedAt: new Date(),
       };
     }
@@ -52,34 +53,57 @@ class GridModeLockService {
     const checks = await this.runUnlockChecks();
 
     if (!checks.revolutxInitialized) {
-      blockingReasons.push("Revolut X no está inicializado o no conectado");
+      blockingReasonDetails.push({
+        code: "REVOLUTX_NOT_INITIALIZED",
+        humanReason: "Revolut X no está inicializado o no conectado",
+      });
     }
     if (!checks.revolutxHasBalance) {
-      blockingReasons.push("Revolut X no tiene balance disponible");
+      blockingReasonDetails.push({
+        code: "REVOLUTX_NO_BALANCE",
+        humanReason: "Revolut X no tiene balance disponible",
+      });
     }
     if (!checks.reconciliationPassed) {
-      blockingReasons.push("Reconciliación pendiente o con diferencias sin verificar");
+      blockingReasonDetails.push({
+        code: "RECONCILIATION_NOT_PASSED",
+        humanReason: "Reconciliación pendiente o con diferencias sin verificar",
+      });
     }
     if (!checks.capitalReserved) {
-      blockingReasons.push("Capital no reservado o no aislado");
+      blockingReasonDetails.push({
+        code: "CAPITAL_NOT_RESERVED",
+        humanReason: "Capital no reservado o no aislado",
+      });
     }
     if (!checks.modeLockAcknowledged) {
-      blockingReasons.push("Mode lock no reconocido explícitamente por el usuario");
+      blockingReasonDetails.push({
+        code: "MODE_LOCK_NOT_ACKNOWLEDGED",
+        humanReason: "El bloqueo de modo no ha sido reconocido explícitamente por el usuario",
+      });
     }
     if (!checks.postOnlySupported) {
-      blockingReasons.push("RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados");
+      blockingReasonDetails.push({
+        code: "POST_ONLY_NOT_SUPPORTED",
+        humanReason: "RevolutXService no tiene soporte post-only real confirmado; modos REAL bloqueados",
+      });
     }
     if (!checks.dailyOrderLimitRespected) {
-      blockingReasons.push("Límite diario de órdenes excedido");
+      blockingReasonDetails.push({
+        code: "DAILY_ORDER_LIMIT_EXCEEDED",
+        humanReason: "Límite diario de órdenes excedido",
+      });
     }
 
-    const unlocked = blockingReasons.length === 0;
+    const blockingReasons = blockingReasonDetails.map((r) => r.humanReason);
+    const unlocked = blockingReasonDetails.length === 0;
 
     const lock: GridModeLock = {
       currentMode,
       requestedMode,
       unlocked,
       blockingReasons,
+      blockingReasonDetails,
       checkedAt: new Date(),
     };
 
@@ -93,7 +117,7 @@ class GridModeLockService {
       await botLogger.warn(
         "GRID_MODE_UNLOCK_DENIED",
         `Mode transition ${currentMode} → ${requestedMode} blocked: ${blockingReasons.join("; ")}`,
-        { currentMode, requestedMode, blockingReasons, checks }
+        { currentMode, requestedMode, blockingReasons, blockingReasonDetails: blockingReasonDetails.map(r => ({ reasonCode: r.code, humanReason: r.humanReason })), checks }
       );
     }
 

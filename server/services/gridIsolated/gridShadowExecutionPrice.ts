@@ -2,7 +2,8 @@ export type GridShadowExecutionPriceSource =
   | "ticker_last"
   | "bid_ask_mid"
   | "market_context"
-  | "band_snapshot_fallback";
+  | "band_snapshot_fallback"
+  | "no_price";
 
 export interface GridShadowExecutionPriceInput {
   tickerLast?: number | null;

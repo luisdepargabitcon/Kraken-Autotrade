@@ -5227,3 +5227,65 @@ Muestra: modo (adaptive_smart/fixed_compact), perfil, estado adaptive, régimen 
 
 ### Estado
 - Implementación local completada. Sin deploy. Sin activación. Pendiente: deploy staging con autorización expresa del usuario.
+
+---
+
+## FASE Grid Policy + Startup + SHADOW Close — 2026-07-16
+
+### Contexto
+Revisión correctiva del Grid Isolated: endurecer la política de ejecución por defecto a MAKER_ONLY, normalizar SHADOW a MAKER_ONLY en runtime, restaurar mensajes en español con reasonCode/humanReason, eliminar arranque con `setTimeout`, registrar migración 071, y añadir endpoints de diagnóstico de ciclos abiertos + tests de cierre transaccional SHADOW.
+
+### Problemas detectados
+1. **Política de ejecución**: DEFAULT_EXECUTION_POLICY y DEFAULT_GRID_CONFIG.executionPolicy no eran MAKER_ONLY, y legacy policies seguían siendo defaults.
+2. **SHADOW no normalizaba a MAKER_ONLY**: podía arrancar con políticas legacy en runtime.
+3. **Mensajes de bloqueo de modo**: `gridModeLockService.checkModeTransition` no separaba reasonCode y humanReason en español.
+4. **Arranque no determinista**: `routes.ts` usaba `setTimeout` para arrancar Grid SHADOW, lo que ocultaba errores de migración.
+5. **Migración 071 no registrada**: `071_grid_cycle_target_sell.sql` no estaba en `AutoMigrationRunner` ni en `script/migrate.ts`.
+6. **Diagnóstico de ciclos abiertos inexistente**: no había endpoint read-only para saber qué ciclos abiertos se cerrarían ahora y cuáles requieren revisión.
+7. **HODL_RECOVERY**: posible riesgo de que se intente cerrar automáticamente.
+
+### Solución aplicada
+1. **MAKER_ONLY por defecto**: `gridIsolatedTypes.ts`, `shared/schema.ts`, `gridIsolatedEngine.ts`, y tests actualizados. Legacy policies marcadas como deprecated pero conservadas para parseo de configs antiguas.
+2. **Runtime SHADOW**: `loadConfig`, `readConfigSnapshotFromDb`, `changeMode` normalizan a MAKER_ONLY y loguean advertencia cuando detectan legacy.
+3. **Mensajes español**: `gridModeLockService` ahora devuelve `blockingReasonDetails` con `reasonCode` y `humanReason` en español.
+4. **Startup determinista**: se eliminó `setTimeout` en `routes.ts`. El flujo es ahora: `AutoMigrationRunner` con flag de éxito → `initializeGridShadowAtStartup()` esperado. Si migraciones fallan, Grid SHADOW no arranca y se loguea claramente.
+5. **Migración 071**: añadida a `MIGRATIONS` en `server/routes.ts` y a `trackedMigrations` en `script/migrate.ts`.
+6. **Diagnóstico ciclos abiertos**: nuevo `server/services/gridIsolated/gridShadowOpenCycleDiagnosis.ts` + endpoint `GET /api/grid-isolated/shadow-open-cycles/diagnose` y alias deprecado `/shadow-orphan-cycles/diagnose`.
+7. **HODL_RECOVERY**: `processOpenCyclesShadow` filtra por `POSITION_OPEN_GRID_CYCLE_STATUSES` (excluye HODL). `diagnoseShadowOpenCycles` marca HODL con `requiresReview: true`.
+8. **Tests**: `gridOpenCycleShadowClose.test.ts` con 9 tests de cierre transaccional (modo/inactivo, bid nulo, por debajo target, cierre exitoso, resolución faltante, HODL skip, rollback por concurrencia, revisión de target).
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridModeLockService.ts`
+- `server/services/gridIsolated/gridCycleStartupService.ts`
+- `server/services/gridIsolated/gridShadowExecutionPrice.ts`
+- `server/services/gridIsolated/gridShadowOpenCycleDiagnosis.ts` (nuevo)
+- `server/routes.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `server/services/__tests__/gridIsolatedTypes.test.ts`
+- `server/services/botLogger.ts`
+- `script/migrate.ts`
+- `shared/schema.ts`
+
+### Archivos nuevos
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `server/services/gridIsolated/gridShadowOpenCycleDiagnosis.ts`
+
+### Tests ejecutados
+- **npm run check (tsc):** ✅ sin errores
+- **npx vitest run server/services/gridIsolated/__tests__:** ✅ 36/36
+- **npm run build:** ✅ exitoso
+
+### Confirmación de restricciones
+- ✅ No deploy en VPS
+- ✅ No activar SHADOW/REAL
+- ✅ No órdenes reales
+- ✅ No DB manual, no SQL manual
+- ✅ No shadow-cleanup/apply
+- ✅ No IDCA, no FISCO, no Risk Manager, no Execution Service
+- ✅ No regenerar niveles, no rebuild
+- ✅ No borrar ni sustituir rangos activos
+
+### Estado
+- Código commit-ready. Commit: `fix(grid): endurecer maker-only startup y cierre persistente shadow`. Deploy VPS requiere autorización expresa del usuario.

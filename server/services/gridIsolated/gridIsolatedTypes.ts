@@ -98,11 +98,13 @@ export const CAPITAL_PROFILES: Record<CapitalProfile, CapitalProfileConfig> = {
 
 export type ExecutionPolicy =
   | "MAKER_ONLY"
+  /** @deprecated Legacy fallback policies kept only for parsing old configs. New cycles default to MAKER_ONLY. */
   | "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK"
+  /** @deprecated Legacy fallback policies kept only for parsing old configs. New cycles default to MAKER_ONLY. */
   | "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK";
 
-/** Default policy for REAL execution modes. */
-export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK";
+/** Default policy for the Grid: maker-only, no taker fallback. */
+export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "MAKER_ONLY";
 
 /** SHADOW mode always uses maker-only, zero fees, no taker fallback. */
 export const SHADOW_EXECUTION_POLICY: ExecutionPolicy = "MAKER_ONLY";
@@ -118,12 +120,33 @@ export function executionPolicyLabel(policy: ExecutionPolicy): string {
     case "MAKER_ONLY":
       return "Solo maker (sin taker fallback)";
     case "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK":
-      return "3 intentos maker + 4º taker controlado";
+      return "3 intentos maker + 4º taker controlado (legacy)";
     case "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK":
-      return "Maker primero, luego taker como fallback";
+      return "Maker primero, luego taker como fallback (legacy)";
     default:
       return policy;
   }
+}
+
+export const LEGACY_EXECUTION_POLICIES: readonly ExecutionPolicy[] = [
+  "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK",
+  "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK",
+];
+
+export function isLegacyExecutionPolicy(policy: ExecutionPolicy | string | null | undefined): boolean {
+  if (!policy) return false;
+  return (LEGACY_EXECUTION_POLICIES as readonly string[]).includes(policy as string);
+}
+
+/**
+ * Returns the effective execution policy for a loaded config.
+ * SHADOW always normalizes to MAKER_ONLY. REAL modes use the stored value,
+ * but legacy fallback policies are allowed in memory only for old rows and
+ * should not be applied for new cycles.
+ */
+export function getEffectiveExecutionPolicy(config: { mode: GridMode; executionPolicy: ExecutionPolicy }): ExecutionPolicy {
+  if (config.mode === "SHADOW") return "MAKER_ONLY";
+  return config.executionPolicy;
 }
 export const CIRCUIT_BREAKER_RETRY_DELAY_MS = 5 * 60 * 1000;
 export const DAILY_ORDER_REQUEST_LIMIT = 300;
@@ -434,7 +457,7 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   pair: "BTC/USD",
   mode: "OFF",
   capitalProfile: "balanced",
-  executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK",
+  executionPolicy: "MAKER_ONLY",
   netProfitTargetPct: 0.8,
   bandPeriod: 20,
   bandStdDevMultiplier: 2,
@@ -463,7 +486,7 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   isActive: false,
   // Execution: Maker/Taker
   makerAttemptsBeforeTaker: MAKER_ATTEMPTS_BEFORE_TAKER,
-  takerFallbackEnabled: true,
+  takerFallbackEnabled: false,
   takerFallbackAttemptNumber: TAKER_FALLBACK_ATTEMPT_NUMBER,
   maxTakerFallbackPerCycle: MAX_TAKER_FALLBACK_PER_CYCLE,
   takerFallbackRequiresNetProfit: true,
@@ -511,6 +534,8 @@ export interface GridModeLock {
   requestedMode: GridMode;
   unlocked: boolean;
   blockingReasons: string[];
+  /** Structured reason codes and human-readable Spanish reasons. */
+  blockingReasonDetails: { code: string; humanReason: string }[];
   checkedAt: Date;
 }
 

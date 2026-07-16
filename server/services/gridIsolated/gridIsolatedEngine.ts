@@ -51,6 +51,10 @@ import {
   type ShadowOrphanDiagnosisResult,
 } from "./gridShadowOrphanDiagnosis";
 import {
+  diagnoseShadowOpenCycles,
+  type ShadowOpenCycleDiagnosisResult,
+} from "./gridShadowOpenCycleDiagnosis";
+import {
   resolveRuntimeSnapshot,
   type GridRuntimeSnapshot,
 } from "./gridRuntimeSnapshotResolver";
@@ -74,6 +78,9 @@ import {
   NON_TARGET_SELL_CLOSABLE_STATUSES,
   OPEN_POSITION_GRID_CYCLE_STATUSES,
   TERMINAL_GRID_CYCLE_STATUSES,
+  SHADOW_EXECUTION_POLICY,
+  getEffectiveExecutionPolicy,
+  isLegacyExecutionPolicy,
   type GridIsolatedConfig,
   type GridMode,
   type GridRangeVersion,
@@ -127,12 +134,13 @@ class GridIsolatedEngine {
       const rows = await db.select().from(gridIsolatedConfigs).limit(1);
       if (rows.length > 0) {
         const row = rows[0];
+        const originalExecutionPolicy = row.executionPolicy as string | null;
         this.config = {
           id: String(row.id),
           pair: row.pair,
           mode: row.mode as GridMode,
           capitalProfile: row.capitalProfile as any,
-          executionPolicy: row.executionPolicy as any,
+          executionPolicy: getEffectiveExecutionPolicy({ mode: row.mode as GridMode, executionPolicy: row.executionPolicy as any }),
           netProfitTargetPct: parseFloat(row.netProfitTargetPct),
           bandPeriod: row.bandPeriod,
           bandStdDevMultiplier: parseFloat(row.bandStdDevMultiplier),
@@ -163,7 +171,7 @@ class GridIsolatedEngine {
           updatedAt: row.updatedAt,
           // Execution: Maker/Taker
           makerAttemptsBeforeTaker: row.makerAttemptsBeforeTaker ?? 3,
-          takerFallbackEnabled: row.takerFallbackEnabled ?? true,
+          takerFallbackEnabled: row.takerFallbackEnabled ?? false,
           takerFallbackAttemptNumber: row.takerFallbackAttemptNumber ?? 4,
           maxTakerFallbackPerCycle: row.maxTakerFallbackPerCycle ?? 1,
           takerFallbackRequiresNetProfit: row.takerFallbackRequiresNetProfit ?? true,
@@ -203,6 +211,13 @@ class GridIsolatedEngine {
           adaptiveRangeTargetFullLevels: row.adaptiveRangeTargetFullLevels ?? false,
           adaptiveRangeMinViableLevels: row.adaptiveRangeMinViableLevels ?? 4,
         };
+        if (this.config.mode === "SHADOW" && isLegacyExecutionPolicy(originalExecutionPolicy)) {
+          await botLogger.warn(
+            "GRID_SHADOW_EXECUTION_POLICY_NORMALIZED",
+            `Configuración SHADOW almacenada contiene política legacy '${originalExecutionPolicy}'; se usa MAKER_ONLY en runtime sin reescribir DB.`,
+            { originalPolicy: originalExecutionPolicy, effectivePolicy: SHADOW_EXECUTION_POLICY }
+          );
+        }
         // Load active state from DB
         await this.loadActiveRangeVersion();
         await this.loadLevels();
@@ -242,7 +257,7 @@ class GridIsolatedEngine {
           pair: row.pair,
           mode: row.mode as GridMode,
           capitalProfile: row.capitalProfile as any,
-          executionPolicy: row.executionPolicy as any,
+          executionPolicy: getEffectiveExecutionPolicy({ mode: row.mode as GridMode, executionPolicy: row.executionPolicy as any }),
           netProfitTargetPct: parseFloat(row.netProfitTargetPct),
           bandPeriod: row.bandPeriod,
           bandStdDevMultiplier: parseFloat(row.bandStdDevMultiplier),
@@ -273,7 +288,7 @@ class GridIsolatedEngine {
           updatedAt: row.updatedAt,
           // Execution: Maker/Taker
           makerAttemptsBeforeTaker: row.makerAttemptsBeforeTaker ?? 3,
-          takerFallbackEnabled: row.takerFallbackEnabled ?? true,
+          takerFallbackEnabled: row.takerFallbackEnabled ?? false,
           takerFallbackAttemptNumber: row.takerFallbackAttemptNumber ?? 4,
           maxTakerFallbackPerCycle: row.maxTakerFallbackPerCycle ?? 1,
           takerFallbackRequiresNetProfit: row.takerFallbackRequiresNetProfit ?? true,
@@ -494,6 +509,20 @@ class GridIsolatedEngine {
 
     const oldMode = this.config!.mode;
     this.config!.mode = newMode;
+
+    // SHADOW mode always runs as maker-only
+    if (newMode === "SHADOW") {
+      const previousPolicy = this.config!.executionPolicy;
+      this.config!.executionPolicy = getEffectiveExecutionPolicy({ mode: "SHADOW", executionPolicy: this.config!.executionPolicy });
+      if (isLegacyExecutionPolicy(previousPolicy)) {
+        await botLogger.warn(
+          "GRID_MODE_CHANGED",
+          `Modo SHADOW activado: política legacy '${previousPolicy}' normalizada a MAKER_ONLY al guardar configuración.`,
+          { previousPolicy, effectivePolicy: this.config!.executionPolicy }
+        );
+      }
+    }
+
     await this.saveConfig();
 
     await this.logEvent("GRID_MODE_CHANGED", `Mode changed: ${oldMode} → ${newMode}`, {
@@ -3108,6 +3137,62 @@ class GridIsolatedEngine {
       snapshot.activeRangeVersionId,
       snapshot.currentPrice,
       snapshot.mode
+    );
+  }
+
+  /**
+   * Read-only diagnosis of all open cycles (including HODL recovery).
+   * Reports whether each cycle would be closed now by processOpenCyclesShadow()
+   * without actually closing it or placing orders.
+   */
+  async diagnoseShadowOpenCycles(): Promise<ShadowOpenCycleDiagnosisResult> {
+    const snapshot = await this.getRuntimeSnapshot();
+    const pair = snapshot.config?.pair;
+
+    let ticker: { bid?: number | null; ask?: number | null; last?: number | null } | null = null;
+    if (pair) {
+      try {
+        const mdsTicker = await MarketDataService.getTicker(pair);
+        if (mdsTicker) {
+          ticker = mdsTicker;
+        }
+      } catch (e) {
+        botLogger.warn("GRID_SHADOW_OPEN_CYCLE_DIAGNOSE", `No se pudo obtener ticker para ${pair}: ${e}`, { pair });
+      }
+    }
+
+    const marketContextPrice = snapshot.currentPrice ?? null;
+    let priceResult: GridShadowExecutionPriceResult;
+    try {
+      priceResult = resolveGridShadowExecutionPrice({
+        tickerLast: ticker?.last,
+        bid: ticker?.bid,
+        ask: ticker?.ask,
+        marketContextPrice,
+        bandSnapshotClose: marketContextPrice,
+      });
+    } catch {
+      priceResult = {
+        price: marketContextPrice ?? 0,
+        source: marketContextPrice != null ? "market_context" : "no_price",
+        bid: ticker?.bid ?? null,
+        ask: ticker?.ask ?? null,
+        spreadPct: null,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    const activeRangeVersion = snapshot.source === "runtime"
+      ? this.activeRangeVersion
+      : null;
+
+    return diagnoseShadowOpenCycles(
+      snapshot.cycles,
+      snapshot.levels,
+      snapshot.activeRangeVersionId,
+      priceResult,
+      snapshot.mode,
+      activeRangeVersion
     );
   }
 
