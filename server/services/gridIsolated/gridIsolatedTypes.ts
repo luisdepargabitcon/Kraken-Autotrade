@@ -96,9 +96,16 @@ export const CAPITAL_PROFILES: Record<CapitalProfile, CapitalProfileConfig> = {
 
 // ─── Execution Policy ───────────────────────────────────────────────
 
-export type ExecutionPolicy = "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK" | "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK";
+export type ExecutionPolicy =
+  | "MAKER_ONLY"
+  | "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK"
+  | "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK";
 
-export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK";
+/** Default policy for REAL execution modes. */
+export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK";
+
+/** SHADOW mode always uses maker-only, zero fees, no taker fallback. */
+export const SHADOW_EXECUTION_POLICY: ExecutionPolicy = "MAKER_ONLY";
 
 export const POST_ONLY_MAX_ATTEMPTS = 3;
 
@@ -108,6 +115,8 @@ export const MAX_TAKER_FALLBACK_PER_CYCLE = 1;
 
 export function executionPolicyLabel(policy: ExecutionPolicy): string {
   switch (policy) {
+    case "MAKER_ONLY":
+      return "Solo maker (sin taker fallback)";
     case "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK":
       return "3 intentos maker + 4º taker controlado";
     case "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK":
@@ -221,8 +230,11 @@ export interface GridCycle {
   status: GridCycleStatus;
   buyLevelId: string | null;
   sellLevelId: string | null;
+  targetSellLevelId: string | null;
   buyPrice: number | null;
   sellPrice: number | null;
+  targetSellPrice: number | null;
+  targetSellQuantity: number | null;
   quantity: number;
   grossPnlUsd: number;
   feeTotalUsd: number;
@@ -237,6 +249,61 @@ export interface GridCycle {
   createdAt: Date;
   completedAt: Date | null;
 }
+
+// Estados de ciclo con BUY aún no ejecutada. No se pueden cerrar con una SELL.
+export const ENTRY_PENDING_GRID_CYCLE_STATUSES: readonly GridCycleStatus[] = [
+  "pending",
+  "buy_placed",
+] as const;
+
+// Estados de ciclo con posición comprada y pendiente de venta.
+// processOpenCyclesShadow solo actúa sobre estos estados.
+export const POSITION_OPEN_GRID_CYCLE_STATUSES: readonly GridCycleStatus[] = [
+  "buy_filled",
+  "sell_placed",
+] as const;
+
+// Estados en los que ya se ejecutó una SELL pero falta finalización contable.
+export const SELL_FILLED_PENDING_FINALIZATION_STATUSES: readonly GridCycleStatus[] = [
+  "sell_filled",
+] as const;
+
+// Estados terminales que nunca se reprocesan.
+export const TERMINAL_GRID_CYCLE_STATUSES: readonly GridCycleStatus[] = [
+  "completed",
+  "stop_loss_hit",
+  "trailing_closed",
+  "cancelled",
+] as const;
+
+// Estados de posición abierta para contadores, incluyendo HODL recovery.
+// HODL recovery conserva BTC comprado a la espera de una salida posterior;
+// por tanto se considera una posición abierta especial.
+export const OPEN_POSITION_GRID_CYCLE_STATUSES: readonly GridCycleStatus[] = [
+  ...POSITION_OPEN_GRID_CYCLE_STATUSES,
+  ...SELL_FILLED_PENDING_FINALIZATION_STATUSES,
+  "hodl_recovery",
+] as const;
+
+// Estados que no pueden cerrarse automáticamente por SELL objetivo en esta fase.
+export const NON_TARGET_SELL_CLOSABLE_STATUSES: readonly GridCycleStatus[] = [
+  ...ENTRY_PENDING_GRID_CYCLE_STATUSES,
+  ...TERMINAL_GRID_CYCLE_STATUSES,
+  "hodl_recovery",
+] as const;
+
+export type GridCycleLifecycleState =
+  | "ENTRY_PENDING"
+  | "OPEN_WAITING_SELL"
+  | "SELL_FILLED_PENDING_FINALIZATION"
+  | "HODL_RECOVERY"
+  | "COMPLETED"
+  | "STOP_LOSS_HIT"
+  | "TRAILING_CLOSED"
+  | "CANCELLED"
+  | "UNKNOWN";
+
+export type GridCycleRangeRelation = "current_range" | "previous_range" | "unknown_range";
 
 // ─── Pump/Dump Guard ────────────────────────────────────────────────
 
@@ -367,7 +434,7 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   pair: "BTC/USD",
   mode: "OFF",
   capitalProfile: "balanced",
-  executionPolicy: "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK",
+  executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK",
   netProfitTargetPct: 0.8,
   bandPeriod: 20,
   bandStdDevMultiplier: 2,
@@ -529,7 +596,11 @@ export const GRID_EVENT_TYPES = [
   "GRID_SHADOW_DUPLICATE_BUY_LEVEL_IGNORED",
   "GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE",
   "GRID_SHADOW_FILL_BEFORE_REBUILD",
+  "GRID_SHADOW_OPEN_CYCLES_CLOSED",
+  "GRID_SHADOW_OPEN_CYCLES_NO_BID",
   "GRID_SHADOW_EXECUTION_PRICE",
+  "GRID_CYCLE_TARGET_REVIEW_REQUIRED",
+  "GRID_CYCLES_RECOVERED",
   "GRID_PUMP_GUARD_BLOCKED_REBUILD",
   "GRID_PUMP_GUARD_ALLOWED_EXIT_ONLY",
   "GRID_SHADOW_CLEANUP_PREVIEWED",
@@ -597,6 +668,11 @@ export interface GridExecutionStatus {
   globalOpenCyclesCount: number;
   orphanOpenCyclesCount: number;
   historicalOpenCyclesCount: number;
+  executableOpenCyclesCount: number;
+  waitingSellCyclesCount: number;
+  trailingActiveCyclesCount: number;
+  reviewRequiredCyclesCount: number;
+  previousRangeOpenCyclesCount: number;
   dailyOrderCount: number;
   circuitBreakerOpen: boolean;
   pumpDumpState: PumpDumpState;

@@ -1752,6 +1752,17 @@ export async function registerRoutes(
     console.error('[startup] Failed to register Grid Isolated routes:', e?.message || e);
   }
 
+  // Grid SHADOW startup (only starts if mode=SHADOW and isActive=true)
+  setTimeout(async () => {
+    try {
+      const { initializeGridShadowAtStartup } = await import('./services/gridIsolated/gridCycleStartupService');
+      const result = await initializeGridShadowAtStartup();
+      console.log('[startup] Grid SHADOW startup result:', result);
+    } catch (e: any) {
+      console.error('[startup] Grid SHADOW startup failed:', e?.message || e);
+    }
+  }, 5000);
+
   // NOTE: Telegram chat CRUD routes are defined inline above (/api/telegram/chats, /api/telegram/send)
   // The old /api/integrations/telegram/* duplicate routes in telegram.routes.ts have been removed.
 

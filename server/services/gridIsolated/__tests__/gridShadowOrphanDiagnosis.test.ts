@@ -11,8 +11,11 @@ function makeCycle(partial: Partial<GridCycle>): GridCycle {
     status: "buy_filled",
     buyLevelId: "buy-level-1",
     sellLevelId: null,
+    targetSellLevelId: null,
     buyPrice: 60000,
     sellPrice: null,
+    targetSellPrice: null,
+    targetSellQuantity: null,
     quantity: 0.01,
     grossPnlUsd: 0,
     feeTotalUsd: 0,
@@ -68,11 +71,12 @@ describe("diagnoseShadowOrphanCycles", () => {
   });
 
   it("counts orphan cycles when activeRangeVersionId is null", () => {
-    const cycle = makeCycle({ sellLevelId: "sell-level-1" });
     const sellLevel = makeLevel({ id: "sell-level-1", side: "SELL", price: 61000, status: "planned" });
+    const cycle = makeCycle({ targetSellLevelId: "sell-level-1", targetSellPrice: 61000, targetSellQuantity: 0.01 });
     const result = diagnoseShadowOrphanCycles([cycle], [sellLevel], null, 65000, "SHADOW");
     expect(result.cyclesOrphanCount).toBe(1);
     expect(result.orphanCycles[0].wouldCloseNow).toBe(true);
+    expect(result.orphanCycles[0].hasResolvedTarget).toBe(true);
     expect(result.cyclesEligibleForSimulatedClose).toBe(1);
     expect(result.realOrdersAffected).toBe(false);
     expect(result.readOnly).toBe(true);
@@ -94,10 +98,11 @@ describe("diagnoseShadowOrphanCycles", () => {
   });
 
   it("marks wouldCloseNow=false when current price is below sell level", () => {
-    const cycle = makeCycle({ sellLevelId: "sell-level-1" });
     const sellLevel = makeLevel({ id: "sell-level-1", side: "SELL", price: 70000, status: "planned" });
+    const cycle = makeCycle({ targetSellLevelId: "sell-level-1", targetSellPrice: 70000, targetSellQuantity: 0.01 });
     const result = diagnoseShadowOrphanCycles([cycle], [sellLevel], null, 65000, "SHADOW");
     expect(result.orphanCycles[0].wouldCloseNow).toBe(false);
+    expect(result.orphanCycles[0].targetSellPrice).toBe(70000);
     expect(result.cyclesEligibleForSimulatedClose).toBe(0);
   });
 

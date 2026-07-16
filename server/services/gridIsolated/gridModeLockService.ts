@@ -64,7 +64,7 @@ class GridModeLockService {
       blockingReasons.push("Capital no reservado o no aislado");
     }
     if (!checks.modeLockAcknowledged) {
-      blockingReasons.push("Bloqueo de modo no reconocido explícitamente por el usuario");
+      blockingReasons.push("Mode lock no reconocido explícitamente por el usuario");
     }
     if (!checks.postOnlySupported) {
       blockingReasons.push("RevolutXService no tiene soporte post-only real confirmado — modos REAL bloqueados");

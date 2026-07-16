@@ -34,6 +34,8 @@ export interface CyclePnL {
   buyPrice: number;
   sellPrice: number;
   quantity: number;
+  buyLiquidityRole?: "maker" | "taker";
+  sellLiquidityRole?: "maker" | "taker";
   grossPnlUsd: number;
   buyFeeUsd: number;
   sellFeeUsd: number;
@@ -43,6 +45,17 @@ export interface CyclePnL {
   netPnlUsd: number;
   netPnlPct: number;
   actualPriceGapPct: number;
+}
+
+export interface CyclePnLOptions {
+  buyPrice: number;
+  sellPrice: number;
+  quantity: number;
+  buyLiquidityRole?: "maker" | "taker";
+  sellLiquidityRole?: "maker" | "taker";
+  makerFeePct?: number;
+  takerFeePct?: number;
+  taxReservePct?: number;
 }
 
 /**
@@ -131,6 +144,61 @@ export function computeCyclePnL(
     buyPrice,
     sellPrice,
     quantity,
+    grossPnlUsd,
+    buyFeeUsd,
+    sellFeeUsd,
+    totalFeesUsd,
+    netBeforeTaxUsd,
+    taxReserveUsd,
+    netPnlUsd,
+    netPnlPct,
+    actualPriceGapPct,
+  };
+}
+
+/**
+ * Compute cycle PnL with explicit liquidity roles. Avoids ambiguous boolean flags.
+ * Default SHADOW policy: maker/maker (post-only), 0% fee, 20% tax reserve.
+ */
+export function computeCyclePnLWithRoles(options: CyclePnLOptions): CyclePnL {
+  const {
+    buyPrice,
+    sellPrice,
+    quantity,
+    buyLiquidityRole = "maker",
+    sellLiquidityRole = "maker",
+    makerFeePct = 0.00,
+    takerFeePct = 0.09,
+    taxReservePct = TAX_RESERVE_PCT,
+  } = options;
+
+  const buyNotional = buyPrice * quantity;
+  const sellNotional = sellPrice * quantity;
+
+  const buyFeeRate = (buyLiquidityRole === "taker" ? takerFeePct : makerFeePct) / 100;
+  const sellFeeRate = (sellLiquidityRole === "taker" ? takerFeePct : makerFeePct) / 100;
+
+  const buyFeeUsd = buyNotional * buyFeeRate;
+  const sellFeeUsd = sellNotional * sellFeeRate;
+  const totalFeesUsd = buyFeeUsd + sellFeeUsd;
+
+  const grossPnlUsd = sellNotional - buyNotional;
+  const netBeforeTaxUsd = grossPnlUsd - totalFeesUsd;
+
+  const taxReserveUsd = netBeforeTaxUsd > 0
+    ? netBeforeTaxUsd * (taxReservePct / 100)
+    : 0;
+
+  const netPnlUsd = netBeforeTaxUsd - taxReserveUsd;
+  const actualPriceGapPct = buyPrice > 0 ? ((sellPrice - buyPrice) / buyPrice) * 100 : 0;
+  const netPnlPct = buyNotional > 0 ? (netPnlUsd / buyNotional) * 100 : 0;
+
+  return {
+    buyPrice,
+    sellPrice,
+    quantity,
+    buyLiquidityRole,
+    sellLiquidityRole,
     grossPnlUsd,
     buyFeeUsd,
     sellFeeUsd,

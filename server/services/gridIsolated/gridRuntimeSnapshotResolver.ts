@@ -27,6 +27,7 @@ import type {
   GridMode,
   PumpDumpState,
 } from "./gridIsolatedTypes";
+import { OPEN_POSITION_GRID_CYCLE_STATUSES } from "./gridIsolatedTypes";
 
 export type GridRuntimeSnapshotSource =
   | "runtime"
@@ -47,6 +48,11 @@ export interface GridRuntimeSnapshot {
   orphanOpenCyclesCount: number;
   historicalOpenCyclesCount: number;
   globalOpenCyclesCount: number;
+  executableOpenCyclesCount: number;
+  waitingSellCyclesCount: number;
+  trailingActiveCyclesCount: number;
+  reviewRequiredCyclesCount: number;
+  previousRangeOpenCyclesCount: number;
   openLevels: number;
   plannedLevelsCount: number;
   historicalLevelsCount: number;
@@ -62,17 +68,8 @@ export interface GridRuntimeSnapshot {
   cycles: GridCycle[];
 }
 
-const OPEN_CYCLE_STATUSES = new Set([
-  "open",
-  "active",
-  "buy_filled",
-  "buy_placed",
-  "sell_placed",
-  "cycle_open",
-]);
-
 function isCycleOpen(c: GridCycle): boolean {
-  return OPEN_CYCLE_STATUSES.has(c.status);
+  return OPEN_POSITION_GRID_CYCLE_STATUSES.includes(c.status as any);
 }
 
 function calculateCounts(
@@ -91,6 +88,11 @@ function calculateCounts(
   | "orphanOpenCyclesCount"
   | "historicalOpenCyclesCount"
   | "globalOpenCyclesCount"
+  | "executableOpenCyclesCount"
+  | "waitingSellCyclesCount"
+  | "trailingActiveCyclesCount"
+  | "reviewRequiredCyclesCount"
+  | "previousRangeOpenCyclesCount"
   | "realOpenOrdersCount"
 > {
   const activeLevels = activeRangeId
@@ -129,6 +131,26 @@ function calculateCounts(
     ? openCyclesList.filter(c => c.rangeVersionId !== activeRangeId).length
     : openCycles;
 
+  const executableOpenCyclesCount = cycles.filter(c =>
+    (OPEN_POSITION_GRID_CYCLE_STATUSES as readonly string[]).includes(c.status) &&
+    c.targetSellLevelId != null
+  ).length;
+
+  const waitingSellCyclesCount = cycles.filter(c =>
+    (OPEN_POSITION_GRID_CYCLE_STATUSES as readonly string[]).includes(c.status)
+  ).length;
+
+  const trailingActiveCyclesCount = 0; // Reserved for future trailing/stop phase
+
+  const reviewRequiredCyclesCount = cycles.filter(c =>
+    (OPEN_POSITION_GRID_CYCLE_STATUSES as readonly string[]).includes(c.status) &&
+    c.targetSellLevelId == null
+  ).length;
+
+  const previousRangeOpenCyclesCount = activeRangeId
+    ? openCyclesList.filter(c => c.rangeVersionId !== activeRangeId).length
+    : openCycles;
+
   return {
     openLevels,
     plannedLevelsCount,
@@ -140,6 +162,11 @@ function calculateCounts(
     orphanOpenCyclesCount,
     historicalOpenCyclesCount: orphanOpenCyclesCount,
     globalOpenCyclesCount: openCycles,
+    executableOpenCyclesCount,
+    waitingSellCyclesCount,
+    trailingActiveCyclesCount,
+    reviewRequiredCyclesCount,
+    previousRangeOpenCyclesCount,
     realOpenOrdersCount,
   };
 }
@@ -279,6 +306,11 @@ export async function resolveRuntimeSnapshot(
     historicalLevelsCount: counts.historicalLevelsCount,
     globalLevelsCount: counts.globalLevelsCount,
     orphanPlannedLevelsCount: counts.orphanPlannedLevelsCount,
+    executableOpenCyclesCount: counts.executableOpenCyclesCount,
+    waitingSellCyclesCount: counts.waitingSellCyclesCount,
+    trailingActiveCyclesCount: counts.trailingActiveCyclesCount,
+    reviewRequiredCyclesCount: counts.reviewRequiredCyclesCount,
+    previousRangeOpenCyclesCount: counts.previousRangeOpenCyclesCount,
     currentPrice,
     currentPriceSource,
     lastTickAt: engine.getLastTickAt() ?? null,

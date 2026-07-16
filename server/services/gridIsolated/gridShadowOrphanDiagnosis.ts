@@ -1,4 +1,5 @@
 import type { GridCycle, GridLevel } from "./gridIsolatedTypes";
+import { OPEN_POSITION_GRID_CYCLE_STATUSES } from "./gridIsolatedTypes";
 
 export interface ShadowOrphanCycleDiagnosis {
   id: string;
@@ -7,12 +8,16 @@ export interface ShadowOrphanCycleDiagnosis {
   rangeVersionId: string;
   buyPrice: number | null;
   sellPrice: number | null;
+  targetSellPrice: number | null;
   currentPrice: number | null;
   wouldCloseNow: boolean;
   reasonNotClosed: string;
   safeToArchive: boolean;
   buyLevelId: string | null;
   sellLevelId: string | null;
+  targetSellLevelId: string | null;
+  hasResolvedTarget: boolean;
+  targetResolvableByRange: boolean;
 }
 
 export interface ShadowOrphanDiagnosisResult {
@@ -20,21 +25,14 @@ export interface ShadowOrphanDiagnosisResult {
   activeRangeVersionId: string | null;
   currentPrice: number | null;
   cyclesOrphanCount: number;
+  cyclesWithoutResolvedTarget: number;
+  cyclesWithTargetResolutionPossible: number;
   cyclesEligibleForSimulatedClose: number;
   realOrdersAffected: false;
   readOnly: true;
   recommendation: string;
   orphanCycles: ShadowOrphanCycleDiagnosis[];
 }
-
-const OPEN_CYCLE_STATUSES = new Set([
-  "open",
-  "active",
-  "buy_filled",
-  "buy_placed",
-  "sell_placed",
-  "cycle_open",
-]);
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -47,7 +45,7 @@ function toNum(v: unknown): number | null {
 }
 
 function isCycleOpen(c: GridCycle): boolean {
-  return OPEN_CYCLE_STATUSES.has(c.status);
+  return OPEN_POSITION_GRID_CYCLE_STATUSES.includes(c.status as any);
 }
 
 function levelHasRealOrder(level: GridLevel | undefined): boolean {
@@ -82,18 +80,29 @@ export function diagnoseShadowOrphanCycles(
     (activeRangeVersionId == null || c.rangeVersionId !== activeRangeVersionId)
   );
 
+  const cyclesWithTargetResolutionPossible = orphanCycles.filter(cycle =>
+    levels.some(l =>
+      l.rangeVersionId === cycle.rangeVersionId &&
+      l.side === "SELL" &&
+      l.price > (toNum(cycle.buyPrice) ?? 0) &&
+      l.quantity > 0
+    )
+  ).length;
+
   const orphanDetails: ShadowOrphanCycleDiagnosis[] = orphanCycles.map(cycle => {
     const buyLevel = findLevel(levels, cycle.buyLevelId);
     const sellLevel = findLevel(levels, cycle.sellLevelId);
+    const targetSellLevel = findLevel(levels, cycle.targetSellLevelId);
     const buyPrice = toNum(cycle.buyPrice) ?? toNum(buyLevel?.price);
-    const sellPrice = toNum(cycle.sellPrice) ?? toNum(sellLevel?.price);
+    const sellPrice = toNum(cycle.sellPrice) ?? toNum(sellLevel?.price) ?? toNum(cycle.targetSellPrice) ?? toNum(targetSellLevel?.price);
+    const targetSellPrice = toNum(cycle.targetSellPrice) ?? toNum(targetSellLevel?.price);
 
     const wouldCloseNow = Boolean(
       currentPrice != null &&
-      sellPrice != null &&
+      targetSellPrice != null &&
       buyPrice != null &&
       cycle.status === "buy_filled" &&
-      currentPrice >= sellPrice
+      currentPrice >= targetSellPrice
     );
 
     let reasonNotClosed = "Ciclo fuera del rango activo; no se cierra automáticamente sin rango vigente.";
@@ -106,6 +115,12 @@ export function diagnoseShadowOrphanCycles(
     }
 
     const safeToArchive = !levelHasRealOrder(buyLevel) && !levelHasRealOrder(sellLevel);
+    const targetResolvableByRange = levels.some(l =>
+      l.rangeVersionId === cycle.rangeVersionId &&
+      l.side === "SELL" &&
+      l.price > (buyPrice ?? 0) &&
+      l.quantity > 0
+    );
 
     return {
       id: cycle.id,
@@ -114,26 +129,34 @@ export function diagnoseShadowOrphanCycles(
       rangeVersionId: cycle.rangeVersionId,
       buyPrice,
       sellPrice,
+      targetSellPrice,
       currentPrice,
       wouldCloseNow,
       reasonNotClosed,
       safeToArchive,
       buyLevelId: cycle.buyLevelId,
       sellLevelId: cycle.sellLevelId,
+      targetSellLevelId: cycle.targetSellLevelId,
+      hasResolvedTarget: targetSellLevel != null || targetSellPrice != null,
+      targetResolvableByRange,
     };
   });
+
+  const cyclesWithoutResolvedTarget = orphanDetails.filter(c => c.hasResolvedTarget === false).length;
 
   const eligibleCount = orphanDetails.filter(c => c.wouldCloseNow).length;
 
   const recommendation = activeRangeVersionId == null
-    ? "Hay ciclos orphan/históricos abiertos pero no existe rango activo. No se procesarán cierres SHADOW hasta que se active un rango. Considere reconciliación manual o archivado controlado."
-    : `Hay ${orphanCycles.length} ciclos orphan/históricos abiertos. El motor solo cierra ciclos del rango activo; estos ciclos requieren reconciliación o archivado controlado.`;
+    ? `Hay ${orphanCycles.length} ciclos orphan/históricos abiertos (${cyclesWithoutResolvedTarget} sin target SELL resuelto). No se procesarán cierres SHADOW hasta que se active un rango. Considere reconciliación manual o archivado controlado.`
+    : `Hay ${orphanCycles.length} ciclos orphan/históricos abiertos (${cyclesWithoutResolvedTarget} sin target SELL resuelto, ${cyclesWithTargetResolutionPossible} con SELL candidata en su rango). El motor solo cierra ciclos del rango activo; estos ciclos requieren reconciliación o archivado controlado.`;
 
   return {
     mode,
     activeRangeVersionId,
     currentPrice,
     cyclesOrphanCount: orphanCycles.length,
+    cyclesWithoutResolvedTarget,
+    cyclesWithTargetResolutionPossible,
     cyclesEligibleForSimulatedClose: eligibleCount,
     realOrdersAffected: false,
     readOnly: true,

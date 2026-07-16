@@ -10,7 +10,7 @@ const mockCyclesRows: any[] = CYCLE_IDS.map((id, i) => ({
   rangeVersionId: RANGE_ID,
   cycleNumber: i + 1,
   pair: "BTC/USD",
-  status: "open",
+  status: "buy_filled",
   buyLevelId: LEVEL_IDS[i],
   sellLevelId: null,
   buyPrice: "60000",

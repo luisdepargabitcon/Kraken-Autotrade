@@ -1,7 +1,95 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-15
+> Última actualización: 2026-07-16
+
+---
+
+## 2026-07-16 — GRID FASE 3C.4-I: Persistent Grid Cycle Fix — target SELL, cierre atómico SHADOW y autostart diferido
+
+### Resumen
+Se implementa la revisión definitiva del plan de corrección del ciclo de grid persistente en modo SHADOW. Se introduce el estado `target_sell_*` en cada ciclo, un resolvedor determinista BUY→SELL, cierre atómico transaccional con rollback ante conflictos de concurrencia, autostart diferido a un servicio dedicado y mejora de los contadores de ejecución. Los endpoints públicos ya no exponen stack traces.
+
+### Problema
+- `loadConfig` arrancaba el scheduler automáticamente, impidiendo recuperación controlada al inicio.
+- No existía un target SELL explícito por ciclo; se usaba `sellLevelId` con ambigüedad entre orden ejecutada y objetivo pendiente.
+- Los cierres SHADOW no eran atómicos ni idempotentes.
+- La resolución BUY→SELL permitía múltiples candidatos y no validaba rango/par/cantidad.
+- El tick simulaba fills antes de intentar cerrar ciclos abiertos ya alcanzables.
+- Los contadores de ejecución no distinguían ciclos ejecutables, en espera de SELL, en revisión ni de rangos previos.
+- Las respuestas de error de algunos endpoints públicos podían incluir stack traces.
+
+### Solución
+1. **Migración 071 y schema**:
+   - `db/migrations/071_grid_cycle_target_sell.sql` añade `target_sell_level_id`, `target_sell_price`, `target_sell_quantity` e índice único parcial a `grid_isolated_cycles`.
+   - `shared/schema.ts` actualiza la tabla `gridIsolatedCycles` con las mismas columnas.
+2. **Tipos y constantes en `server/services/gridIsolated/gridIsolatedTypes.ts`**:
+   - `GridCycle` incluye `targetSellLevelId`, `targetSellPrice`, `targetSellQuantity`.
+   - Nuevas constantes de estados: `ENTRY_PENDING_GRID_CYCLE_STATUSES`, `OPEN_POSITION_GRID_CYCLE_STATUSES`, `SELL_FILLED_PENDING_FINALIZATION_GRID_CYCLE_STATUSES`, `TERMINAL_GRID_CYCLE_STATUSES`, `HODL_RECOVERY_GRID_CYCLE_STATUSES`.
+   - `GridExecutionStatus` añade `executableOpenCyclesCount`, `waitingSellCyclesCount`, `reviewRequiredCyclesCount`, `previousRangeOpenCyclesCount`, `trailingActiveCyclesCount`.
+   - `ExecutionPolicy` incluye `MAKER_ONLY`; `SHADOW_EXECUTION_POLICY` = `MAKER_ONLY`.
+3. **Resolvedor puro `server/services/gridIsolated/gridCycleTargetResolver.ts`**:
+   - `resolveTargetSellForCycle`: asociación determinista BUY→SELL, rechazo de múltiples candidatos válidos, validación de par, rango, cantidad y rentabilidad mínima.
+   - `buildClaimedSellIds`: conjunto de SELLs ya reclamados por otros ciclos.
+   - Tests unitarios en `__tests__/gridCycleTargetResolver.test.ts`.
+4. **Servicio de arranque `server/services/gridIsolated/gridCycleStartupService.ts`**:
+   - `initializeGridShadowAtStartup`: carga config, resuelve y persiste targets SELL de ciclos abiertos **sin cerrarlos**, y arranca el scheduler **una sola vez** solo si modo = SHADOW y `isActive = true`.
+   - Idempotente con `startupCompleted` y `lastStartupEngine`; acepta `engineOverride` para tests.
+   - Tests unitarios en `__tests__/gridCycleStartupService.test.ts`.
+5. **Motor `server/services/gridIsolated/gridIsolatedEngine.ts`**:
+   - `loadConfig` ya no arranca el motor.
+   - `changeMode` controla autostart SHADOW solo cuando el modo destino es `SHADOW`.
+   - `processOpenCyclesShadow`: evalúa ciclos abiertos por `bestBid`, cierra atómicamente en transacción con `FOR UPDATE` y rollback si el target SELL ya no es válido.
+   - `resolveAndPersistOpenCycleTargets`: recuperación al inicio; solo resuelve y persiste `target_sell_*` sin cerrar ciclos.
+   - `tick` y `simulateShadowTick` priorizan cierre de ciclos abiertos antes de simular nuevos fills; usan `bestBid` para SELL; usan `computeCyclePnLWithRoles` maker-only.
+   - `processCycleFill` asigna `targetSellLevelId` y calcula PnL con `computeCyclePnLWithRoles`.
+   - `getExecutionStatus` y `getStatusFromDb` exponen los nuevos contadores.
+   - Añade getters read-only (`getRunning`, `getLastTickAt`, etc.).
+6. **Cálculo de PnL `server/services/gridIsolated/gridNetCalculator.ts`**:
+   - `CyclePnLOptions` y `computeCyclePnLWithRoles` para cálculo explícito con roles `maker`/`taker`.
+   - Mantiene `computeCyclePnL` para compatibilidad.
+7. **Diagnóstico y snapshot**:
+   - `gridShadowOrphanDiagnosis.ts` incluye `targetSellPrice`, `hasResolvedTarget`, `targetResolvableByRange`, `cyclesWithoutResolvedTarget`, `cyclesWithTargetResolutionPossible`.
+   - `gridRuntimeSnapshotResolver.ts` integra los nuevos contadores y usa las constantes de estado.
+8. **Rutas `server/routes/gridIsolated.routes.ts`**:
+   - Nuevo `POST /api/grid-isolated/recover-open-cycles` para resolución manual de targets sin cerrar ciclos.
+   - Respuestas de error de `/monitor/audit` y `/shadow-orphan-cycles/diagnose` sin stack traces públicos.
+9. **Integración en `server/routes.ts`**:
+   - Llama a `initializeGridShadowAtStartup` tras registrar las rutas Grid Isolated.
+
+### Archivos nuevos
+- `db/migrations/071_grid_cycle_target_sell.sql`
+- `server/services/gridIsolated/gridCycleTargetResolver.ts`
+- `server/services/gridIsolated/__tests__/gridCycleTargetResolver.test.ts`
+- `server/services/gridIsolated/gridCycleStartupService.ts`
+- `server/services/gridIsolated/__tests__/gridCycleStartupService.test.ts`
+
+### Archivos modificados
+- `shared/schema.ts`
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridNetCalculator.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridRuntimeSnapshotResolver.ts`
+- `server/services/gridIsolated/gridShadowOrphanDiagnosis.ts`
+- `server/services/gridIsolated/gridModeLockService.ts` (mensaje de bloqueo con "mode lock")
+- `server/routes/gridIsolated.routes.ts`
+- `server/routes.ts`
+- `server/services/__tests__/gridIsolatedEngine.shadowCleanup.test.ts` (estado `buy_filled` en mocks)
+- `server/services/gridIsolated/__tests__/gridShadowOrphanDiagnosis.test.ts` (campos `targetSell*`)
+
+### Validaciones
+- `npm run check`: ✅ 0 errores TS
+- `npx vitest run server/services/gridIsolated/__tests__ server/services/__tests__/gridIsolatedEngine.test.ts server/services/__tests__/gridIsolatedEngine.shadowCleanup.test.ts server/services/__tests__/gridIsolatedTypes.test.ts`: ✅ 78 tests (incluyendo nuevos)
+- `npm run build`: ✅ (2620 módulos)
+- Full `npx vitest run`: 19 files fallan por tests no relacionados (snapshots de Telegram `templates.test.ts`, helpers de IDCA `idcaMarketContextHelpers.test.ts`, etc.). Los cambios de esta fase no dependen de esos módulos.
+
+### Restricciones respetadas
+- No se envían órdenes reales.
+- No se despliega sin aprobación explícita.
+- No se modifican IDCA, SPOT, FISCO ni Risk Manager global fuera de lo estrictamente necesario para compilar.
+
+### Pendiente
+- Deploy a staging SHADOW y validar endpoints `/status`, `/recover-open-cycles`, `/shadow-orphan-cycles/diagnose` y `/monitor/audit` con ciclos reales.
 
 ---
 
