@@ -45,7 +45,7 @@ export function getFreshnessState(lastUpdated?: string): FreshnessState {
 export function getReferencePriceState(anchorPriceUpdatedAt?: string): ReferencePriceState {
   if (!anchorPriceUpdatedAt) return "unknown";
   const ageH = (Date.now() - new Date(anchorPriceUpdatedAt).getTime()) / 3_600_000;
-  return ageH < 24 ? "recently_changed" : "stable";
+  return ageH < 72 ? "recently_changed" : "stable";
 }
 
 export function getZoneVisual(zone?: VwapZone | string): ZoneVisual {
@@ -166,7 +166,7 @@ export function getQualityBadgeText(qualityDetail?: MarketContextQualityDetail, 
       return `Parcial: ${qualityDetail.candleCount}/${qualityDetail.requiredForOptimal} velas`;
     case "missing_vwap_zone":
       if (effectiveReferenceSource === "vwap_anchor") return "Ancla IDCA activa";
-      return "Parcial: falta VWAP";
+      return "Parcial: sin zona VWAP";
     case "missing_atrp":
       return "Parcial: falta ATRP";
     default:

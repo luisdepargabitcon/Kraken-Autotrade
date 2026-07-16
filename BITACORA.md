@@ -76,16 +76,12 @@ Se implementa la revisión definitiva del plan de corrección del ciclo de grid 
 - `server/routes.ts`
 - `server/services/__tests__/gridIsolatedEngine.shadowCleanup.test.ts` (estado `buy_filled` en mocks)
 - `server/services/gridIsolated/__tests__/gridShadowOrphanDiagnosis.test.ts` (campos `targetSell*`)
-- `client/src/components/idca/idcaMarketContextHelpers.ts` (umbrales de `getReferencePriceState` y texto `missing_vwap_zone`)
-- `server/services/telegram/templates.ts` (branding en trade templates, PnL `N/D`, firma/emoji de error alert)
-- `server/services/telegram/__snapshots__/templates.test.ts.snap` (snapshots actualizados)
 
 ### Validaciones
 - `npm run check`: ✅ 0 errores TS
 - `npx vitest run server/services/gridIsolated/__tests__ server/services/__tests__/gridIsolatedEngine.test.ts server/services/__tests__/gridIsolatedEngine.shadowCleanup.test.ts server/services/__tests__/gridIsolatedTypes.test.ts`: ✅ 78 tests (incluyendo nuevos)
-- `npx vitest run server/services/__tests__/idcaMarketContextHelpers.test.ts server/services/telegram/templates.test.ts`: ✅ 88 tests
 - `npm run build`: ✅ (2620 módulos)
-- Full `npx vitest run`: 133 test files ejecutados; 2532 tests pasan, 29 skipped. Quedan 16 archivos `.test.ts` que son runners standalone sin suite de Vitest y fallan con "No test suite found" (`alertBuilder`, `antiCrestaWatch`, `entryDecisionContext`, `executeTrade`, `exitPipeline`, `momentumExpansionDetector`, `spreadFilter`, `strategies`, `timeStopDeferred`, `IdcaCycleAnchor`, `IdcaDynamicDistance`, `IdcaFillReconciliation`, `IdcaLiveExecutionGuard`, etc.). No están relacionados con esta fase.
+- Full `npx vitest run`: 19 files fallan por tests no relacionados (snapshots de Telegram `templates.test.ts`, helpers de IDCA `idcaMarketContextHelpers.test.ts`, etc.). Los cambios de esta fase no dependen de esos módulos.
 
 ### Restricciones respetadas
 - No se envían órdenes reales.
