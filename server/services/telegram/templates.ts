@@ -357,6 +357,7 @@ export function buildTradeBuyHTML(ctx: SimpleTradeBuyContext): string {
   }
 
   const lines: string[] = [
+    buildHeader(),
     `${headerColor}${headerColor}${headerColor} <b>${statusLabel}</b> ${headerColor}${headerColor}${headerColor}`,
     `━━━━━━━━━━━━━━━━━━━`,
     ``,
@@ -417,17 +418,20 @@ export function buildTradeBuyHTML(ctx: SimpleTradeBuyContext): string {
 // ============================================================
 export function buildTradeSellHTML(ctx: SimpleTradeSellContext): string {
   const status = ctx.status || "COMPLETED";
-  
+
   // Calculate NET P&L (including fees)
+  const hasPnl = ctx.pnlUsd !== null && ctx.pnlUsd !== undefined;
   const feeUsd = ctx.feeUsd || 0;
-  const grossPnl = ctx.pnlUsd || 0;
-  const netPnl = ctx.netPnlUsd !== undefined ? ctx.netPnlUsd : (grossPnl - feeUsd);
-  
+  const grossPnl = hasPnl ? ctx.pnlUsd! : 0;
+  const netPnl = hasPnl
+    ? (ctx.netPnlUsd !== undefined ? ctx.netPnlUsd : (grossPnl - feeUsd))
+    : 0;
+
   // Status-based styling
   let statusEmoji: string;
   let statusLabel: string;
   let headerColor: string;
-  
+
   switch (status) {
     case "PENDING":
       statusEmoji = "⏳";
@@ -441,21 +445,26 @@ export function buildTradeSellHTML(ctx: SimpleTradeSellContext): string {
       break;
     case "COMPLETED":
     default:
-      statusEmoji = netPnl >= 0 ? "💰" : "💸";
+      statusEmoji = hasPnl ? (netPnl >= 0 ? "💰" : "💸") : "📊";
       statusLabel = "VENTA REALIZADA";
       headerColor = "🔴";
       break;
   }
 
   // P&L formatting
-  const pnlSign = netPnl >= 0 ? "+" : "";
-  const pnlEmoji = netPnl >= 0 ? "📈" : "📉";
-  const resultEmoji = netPnl >= 0 ? "🎉" : "😔";
-  const pnlPctTxt = ctx.pnlPct !== null ? `${pnlSign}${ctx.pnlPct?.toFixed(2)}%` : "";
+  const pnlPctTxt = hasPnl && ctx.pnlPct !== null && ctx.pnlPct !== undefined
+    ? `${ctx.pnlPct! >= 0 ? "+" : ""}${ctx.pnlPct.toFixed(2)}%`
+    : "N/D";
+  const pnlEmoji = hasPnl ? (netPnl >= 0 ? "📈" : "📉") : "📊";
+  const resultEmoji = hasPnl ? (netPnl >= 0 ? "🎉" : "😔") : "🧾";
+  const pnlSign = hasPnl ? (netPnl >= 0 ? "+" : "") : "";
   const feeTxt = feeUsd > 0 ? `$${feeUsd.toFixed(2)}` : "$0.00";
   const durationTxt = ctx.holdDuration || formatDuration(ctx.openedAt);
+  const netPnlTxt = hasPnl ? `${pnlSign}$${netPnl.toFixed(2)}` : "N/D";
+  const grossPnlTxt = hasPnl ? `${grossPnl >= 0 ? "+" : ""}$${grossPnl.toFixed(2)}` : "N/D";
 
   const lines: string[] = [
+    buildHeader(),
     `${headerColor}${headerColor}${headerColor} <b>${statusLabel}</b> ${headerColor}${headerColor}${headerColor}`,
     `━━━━━━━━━━━━━━━━━━━`,
     ``,
@@ -476,18 +485,21 @@ export function buildTradeSellHTML(ctx: SimpleTradeSellContext): string {
 
   // RESULTADO REAL (NET P&L) - Most important part!
   if (status === "COMPLETED") {
+    const pnlPctDisplay = hasPnl && ctx.pnlPct !== null && ctx.pnlPct !== undefined
+      ? `(${pnlPctTxt})`
+      : "";
     lines.push(
       ``,
       `━━━━━━━━━━━━━━━━━━━`,
       `${resultEmoji} <b>RESULTADO REAL</b> ${resultEmoji}`,
       ``,
       `${pnlEmoji} <b>Beneficio/Pérdida NETO:</b>`,
-      `   💵 <code>${pnlSign}$${netPnl.toFixed(2)}</code> ${pnlPctTxt ? `(${pnlPctTxt})` : ""}`,
+      `   💵 <code>${netPnlTxt}</code> ${pnlPctDisplay}`,
       ``,
       `📊 <b>Desglose:</b>`,
-      `   • P&L Bruto: <code>${grossPnl >= 0 ? "+" : ""}$${grossPnl.toFixed(2)}</code>`,
+      `   • P&L Bruto: <code>${grossPnlTxt}</code>`,
       `   • Fees pagados: <code>-${feeTxt}</code>`,
-      `   • <b>NETO:</b> <code>${pnlSign}$${netPnl.toFixed(2)}</code>`,
+      `   • <b>NETO:</b> <code>${netPnlTxt}</code>`,
       `━━━━━━━━━━━━━━━━━━━`,
     );
   }
@@ -639,8 +651,8 @@ export interface ErrorAlertContext {
 
 function getSeverityEmoji(severity: ErrorSeverity): string {
   switch (severity) {
-    case "CRITICAL": return "🔴";
-    case "MEDIUM": return "🟡";
+    case "CRITICAL": return "�";
+    case "MEDIUM": return "⚠️";
     case "LOW": return "🟢";
   }
 }
@@ -653,10 +665,36 @@ function getSeverityLabel(severity: ErrorSeverity): string {
   }
 }
 
-export function buildErrorAlertHTML(ctx: ErrorAlertContext): string {
+export function buildErrorAlertHTML(ctx: ErrorAlertContext): string;
+export function buildErrorAlertHTML(
+  errorType: string,
+  message: string,
+  context?: Record<string, unknown>,
+  options?: Partial<ErrorAlertContext>
+): string;
+export function buildErrorAlertHTML(
+  ctxOrErrorType: ErrorAlertContext | string,
+  message?: string,
+  context?: Record<string, unknown>,
+  options?: Partial<ErrorAlertContext>
+): string {
+  let ctx: ErrorAlertContext;
+  if (typeof ctxOrErrorType === "string" && message !== undefined) {
+    ctx = {
+      severity: options?.severity ?? "MEDIUM",
+      errorType: ctxOrErrorType,
+      message,
+      context,
+      timestamp: options?.timestamp ?? new Date(),
+      ...options,
+    };
+  } else {
+    ctx = ctxOrErrorType as ErrorAlertContext;
+  }
+
   const emoji = getSeverityEmoji(ctx.severity);
   const label = getSeverityLabel(ctx.severity);
-  
+
   const lines: string[] = [
     `${emoji} <b>${label}</b> ${emoji}`,
     `━━━━━━━━━━━━━━━━━━━`,

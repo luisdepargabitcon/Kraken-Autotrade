@@ -107,55 +107,68 @@ Panel: http://localhost:5000"
 
 exports[`Template Snapshots > TradeBuy snapshot 1`] = `
 "[NAS/PROD] 🤖 CHESTER BOT 🇪🇸
+🟢🟢🟢 <b>COMPRA REALIZADA</b> 🟢🟢🟢
 ━━━━━━━━━━━━━━━━━━━
-🟢 <b>COMPRA XRP/USD</b> 🟢
 
-🏦 <b>Exchange:</b> <code>RevolutX</code>
-💵 <b>Precio:</b> <code>$3.15</code>
-📦 <b>Cantidad:</b> <code>109.58</code>
-💰 <b>Total:</b> <code>$345.19</code>
+✅ <b>XRP/USD</b>
+
+🏦 Exchange: <code>RevolutX</code>
+💵 Precio: <code>$3.15</code>
+📦 Cantidad: <code>109.58</code>
+💰 Total invertido: <code>$345.19</code>
 
 📊 <b>Indicadores:</b>
 EMA10&gt;EMA20 ✓, MACD+ ✓, Vol 1.8x ✓, RSI 42
 
-🧭 <b>Régimen:</b> <code>TREND</code>
-   ↳ Tendencia alcista (ADX=32, EMAs alineadas)
-🔀 <b>Estrategia Router:</b> <code>momentum_candles_15m</code>
+🧭 Régimen: <code>TREND</code>
+   ↳ <i>Tendencia alcista (ADX=32, EMAs alineadas)</i>
+🔀 Estrategia: <code>momentum_candles_15m</code>
 
-⚙️ <b>Modo:</b> <code>SMART_GUARD</code>
-🔗 <b>OrderID:</b> <code>177b3f2a-1234-5678-9abc-def012345678</code>
-🎫 <b>LotID:</b> <code>engine-1769186188930-XRPUSD</code>
+⚙️ Modo: <code>SMART_GUARD</code>
+🔗 OrderID: <code>177b3f2a-123...</code>
+🎫 LotID: <code>engine-17691861...</code>
 
-📅 23/01/2026, 11:30:00
 ━━━━━━━━━━━━━━━━━━━
+🕐 23/01/2026, 11:30:00
 
 Panel: http://localhost:5000"
 `;
 
 exports[`Template Snapshots > TradeSell snapshot 1`] = `
 "[NAS/PROD] 🤖 CHESTER BOT 🇪🇸
+🔴🔴🔴 <b>VENTA REALIZADA</b> 🔴🔴🔴
 ━━━━━━━━━━━━━━━━━━━
-🔴 <b>VENTA ETH/USD</b> 🔴
 
-🏦 <b>Exchange:</b> <code>RevolutX</code>
-💵 <b>Precio:</b> <code>$3350.00</code>
-📦 <b>Cantidad:</b> <code>0.175</code>
-💰 <b>Total:</b> <code>$586.25</code>
-⏱️ <b>Duración:</b> <code>1d 2h 15m</code>
+💰 <b>ETH/USD</b>
 
-📈 <b>Resultado:</b>
-   • PnL: <code>+$23.11</code> (<code>+4.10%</code>)
-   • Fee: <code>$1.17</code>
+🏦 Exchange: <code>RevolutX</code>
+💵 Precio venta: <code>$3350.00</code>
+📦 Cantidad: <code>0.175</code>
+💰 Total recibido: <code>$586.25</code>
+⏱️ Duración: <code>1d 2h 15m</code>
 
-🛡️ <b>Tipo de salida:</b> <code>TRAILING_STOP</code>
-⚡ <b>Trigger:</b> <code>Trail activado en $3380, ejecutado en $3350</code>
-
-⚙️ <b>Modo:</b> <code>SMART_GUARD</code>
-🔗 <b>OrderID:</b> <code>288c4g3b-9876-5432-1fed-cba987654321</code>
-🎫 <b>LotID:</b> <code>engine-1769172237672-ETHUSD</code>
-
-📅 23/01/2026, 11:30:00
 ━━━━━━━━━━━━━━━━━━━
+🎉 <b>RESULTADO REAL</b> 🎉
+
+📈 <b>Beneficio/Pérdida NETO:</b>
+   💵 <code>+$21.94</code> (+4.10%)
+
+📊 <b>Desglose:</b>
+   • P&L Bruto: <code>+$23.11</code>
+   • Fees pagados: <code>-$1.17</code>
+   • <b>NETO:</b> <code>+$21.94</code>
+━━━━━━━━━━━━━━━━━━━
+🔀 Estrategia: <code>momentum_candles_15m</code>
+
+🛡️ Tipo salida: <code>TRAILING_STOP</code>
+⚡ Trigger: <code>Trail activado en $3380, ejecutado en $3350</code>
+
+⚙️ Modo: <code>SMART_GUARD</code>
+🔗 OrderID: <code>288c4g3b-987...</code>
+🎫 LotID: <code>engine-17691722...</code>
+
+━━━━━━━━━━━━━━━━━━━
+🕐 23/01/2026, 11:30:00
 
 Panel: http://localhost:5000"
 `;
