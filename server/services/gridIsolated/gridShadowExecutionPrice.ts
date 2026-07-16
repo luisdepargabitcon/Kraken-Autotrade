@@ -6,6 +6,7 @@ export type GridShadowExecutionPriceSource =
   | "no_price";
 
 export interface GridShadowExecutionPriceInput {
+  pair?: string | null;
   tickerLast?: number | null;
   bid?: number | null;
   ask?: number | null;
@@ -15,6 +16,7 @@ export interface GridShadowExecutionPriceInput {
 }
 
 export interface GridShadowExecutionPriceResult {
+  pair: string | null;
   price: number;
   source: GridShadowExecutionPriceSource;
   bid?: number | null;
@@ -30,6 +32,7 @@ function validPrice(value: unknown): value is number {
 export function resolveGridShadowExecutionPrice(
   input: GridShadowExecutionPriceInput
 ): GridShadowExecutionPriceResult {
+  const pair = input.pair ?? null;
   const bid = validPrice(input.bid) ? input.bid : null;
   const ask = validPrice(input.ask) ? input.ask : null;
   const spreadPct = bid != null && ask != null && ask >= bid
@@ -38,19 +41,19 @@ export function resolveGridShadowExecutionPrice(
   const timestamp = (input.now ?? new Date()).toISOString();
 
   if (validPrice(input.tickerLast)) {
-    return { price: input.tickerLast, source: "ticker_last", bid, ask, spreadPct, timestamp };
+    return { pair, price: input.tickerLast, source: "ticker_last", bid, ask, spreadPct, timestamp };
   }
 
   if (bid != null && ask != null) {
-    return { price: (bid + ask) / 2, source: "bid_ask_mid", bid, ask, spreadPct, timestamp };
+    return { pair, price: (bid + ask) / 2, source: "bid_ask_mid", bid, ask, spreadPct, timestamp };
   }
 
   if (validPrice(input.marketContextPrice)) {
-    return { price: input.marketContextPrice, source: "market_context", bid, ask, spreadPct, timestamp };
+    return { pair, price: input.marketContextPrice, source: "market_context", bid, ask, spreadPct, timestamp };
   }
 
   if (validPrice(input.bandSnapshotClose)) {
-    return { price: input.bandSnapshotClose, source: "band_snapshot_fallback", bid, ask, spreadPct, timestamp };
+    return { pair, price: input.bandSnapshotClose, source: "band_snapshot_fallback", bid, ask, spreadPct, timestamp };
   }
 
   throw new Error("No valid Grid SHADOW execution price available");

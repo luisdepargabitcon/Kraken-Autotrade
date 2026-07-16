@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { GridIsolatedConfig, GridCycle, GridLevel, GridRangeVersion } from "../gridIsolatedTypes";
 import type { GridShadowExecutionPriceResult } from "../gridShadowExecutionPrice";
+import { GRID_SHADOW_PRICE_MAX_AGE_MS } from "../gridShadowMarketPriceFreshness";
 
 // ─── Mock dependencies before importing engine ───────────────────────
 vi.mock("../../../db", () => {
@@ -284,6 +285,7 @@ function makeRange(overrides: Partial<GridRangeVersion> = {}): GridRangeVersion 
 
 function priceResult(opts: Partial<GridShadowExecutionPriceResult>): GridShadowExecutionPriceResult {
   return {
+    pair: opts.pair ?? "BTC/USD",
     price: opts.bid ?? opts.price ?? 0,
     source: opts.source ?? "ticker_last",
     bid: opts.bid ?? null,
@@ -604,6 +606,100 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       const cycle = engine.cycles[0];
       expect(engine.config.executionPolicy).toBe("MAKER_ONLY");
       expect(cycle.executionPolicy).toBeFalsy(); // not stored on cycle directly
+    });
+  });
+
+  describe("FRESHNESS Y PRECIO OBSOLETO", () => {
+    it("bid >= target y precio fresco → cierra", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(1);
+      expect(db.transaction).toHaveBeenCalled();
+    });
+
+    it("bid >= target y priceStale=true → no cierra", async () => {
+      const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 1).toISOString();
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(botLogger.info).toHaveBeenCalledWith(
+        "GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE",
+        expect.any(String),
+        expect.objectContaining({ reason: "stale" }),
+      );
+      expect((gridIsolatedEngine as any).cycles[0].status).toBe("buy_filled");
+    });
+
+    it("bid >= target y timestamp ausente → no cierra", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: "" }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(botLogger.info).toHaveBeenCalledWith(
+        "GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE",
+        expect.any(String),
+        expect.objectContaining({ reason: "missing_timestamp" }),
+      );
+    });
+
+    it("bid >= target y timestamp inválido → no cierra", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: "not-a-date" }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(botLogger.info).toHaveBeenCalledWith(
+        "GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE",
+        expect.any(String),
+        expect.objectContaining({ reason: "invalid_timestamp" }),
+      );
+    });
+
+    it("bid >= target y edad exactamente igual al límite → cierra", async () => {
+      const edgeTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS).toISOString();
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: edgeTimestamp }));
+      expect(result).toBe(1);
+      expect(db.transaction).toHaveBeenCalled();
+    });
+
+    it("bid >= target y edad superior al límite → no cierra", async () => {
+      const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 10).toISOString();
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("precio de ETH/USD no puede cerrar un ciclo BTC/USD", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, pair: "ETH/USD" }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(botLogger.info).toHaveBeenCalledWith(
+        "GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE",
+        expect.any(String),
+        expect.objectContaining({ reason: "pair_mismatch" }),
+      );
+      expect((gridIsolatedEngine as any).cycles[0].status).toBe("buy_filled");
+    });
+
+    it("diagnóstico y motor producen la misma conclusión de frescura", async () => {
+      const { evaluateShadowMarketPriceFreshness } = await import("../gridShadowMarketPriceFreshness");
+      const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 1).toISOString();
+      const freshness = evaluateShadowMarketPriceFreshness({ timestamp: staleTimestamp });
+      expect(freshness.isFresh).toBe(false);
+      expect(freshness.reason).toBe("stale");
+
+      const engineResult = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }));
+      expect(engineResult).toBe(0);
+    });
+
+    it("sellExecutionPrice sigue siendo targetSellPrice", async () => {
+      await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 65_000 }));
+      const cycle = (gridIsolatedEngine as any).cycles[0];
+      expect(cycle.sellPrice).toBe(61_000);
+      expect(cycle.sellPrice).not.toBe(65_000);
+    });
+
+    it("al llegar un precio nuevo y fresco el ciclo vuelve a ser elegible", async () => {
+      const engine = gridIsolatedEngine as any;
+      const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 1).toISOString();
+      expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }))).toBe(0);
+      expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).toBe(1);
     });
   });
 });

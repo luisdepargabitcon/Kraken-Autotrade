@@ -32,6 +32,7 @@ import { gridModeLockService } from "./gridModeLockService";
 import { gridCapitalAllocator } from "./gridCapitalAllocator";
 import { getGridBandSnapshot } from "./gridBandAdapter";
 import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult } from "./gridShadowExecutionPrice";
+import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from "./gridShadowMarketPriceFreshness";
 import {
   getShadowPumpGuardPolicy,
   getCrossedShadowLevels,
@@ -371,6 +372,7 @@ class GridIsolatedEngine {
 
     const marketContextPrice = ticker?.last ?? null;
     const result = resolveGridShadowExecutionPrice({
+      pair: this.config.pair,
       tickerLast: ticker?.last,
       bid: ticker?.bid,
       ask: ticker?.ask,
@@ -1508,12 +1510,45 @@ class GridIsolatedEngine {
       return 0;
     }
 
+    // Centralized freshness check: do not close cycles using a stale or unknown price.
+    const freshness = evaluateShadowMarketPriceFreshness({
+      timestamp: priceResult.timestamp,
+      maxAgeMs: GRID_SHADOW_PRICE_MAX_AGE_MS,
+    });
+    if (!freshness.isFresh) {
+      await this.logEvent("GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE", `Precio obsoleto o inválido; se omite cierre de ciclos SHADOW.`, {
+        source: priceResult.source,
+        reason: freshness.reason,
+        ageMs: freshness.ageMs,
+        maxAgeMs: freshness.maxAgeMs,
+        priceTimestamp: priceResult.timestamp,
+        pair: priceResult.pair,
+      });
+      return 0;
+    }
+
+    // Price must belong to the engine's configured pair.
+    if (priceResult.pair != null && priceResult.pair !== this.config.pair) {
+      await this.logEvent("GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE", `Par del precio (${priceResult.pair}) no coincide con el par del motor (${this.config.pair}); se omite cierre de ciclos SHADOW.`, {
+        source: priceResult.source,
+        reason: "pair_mismatch",
+        pricePair: priceResult.pair,
+        enginePair: this.config.pair,
+      });
+      return 0;
+    }
+
     const rangeVersions = this.activeRangeVersion ? [this.activeRangeVersion] : [];
     const claimedIds = buildClaimedSellIds(this.cycles);
 
     let closedCount = 0;
     for (const cycle of this.cycles) {
       if (!POSITION_OPEN_GRID_CYCLE_STATUSES.includes(cycle.status as any)) continue;
+
+      // Price/cycle pair consistency: a price for a different asset must not close this cycle.
+      if (priceResult.pair != null && priceResult.pair !== cycle.pair) {
+        continue;
+      }
 
       // Resolve target SELL if not yet persisted
       let targetLevelId = cycle.targetSellLevelId;
@@ -3165,6 +3200,7 @@ class GridIsolatedEngine {
     let priceResult: GridShadowExecutionPriceResult;
     try {
       priceResult = resolveGridShadowExecutionPrice({
+        pair: pair ?? undefined,
         tickerLast: ticker?.last,
         bid: ticker?.bid,
         ask: ticker?.ask,
@@ -3173,6 +3209,7 @@ class GridIsolatedEngine {
       });
     } catch {
       priceResult = {
+        pair: pair ?? null,
         price: marketContextPrice ?? 0,
         source: marketContextPrice != null ? "market_context" : "no_price",
         bid: ticker?.bid ?? null,

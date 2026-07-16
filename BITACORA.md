@@ -5,6 +5,74 @@
 
 ---
 
+## 2026-07-16 — GRID FASE 3C.4-I-REV-C: Bloqueos previos al deploy SHADOW
+
+### Resumen
+Se resuelven los tres bloqueos técnicos restantes antes de autorizar el deploy SHADOW: cierre protegido contra precios obsoletos, mock completo de `MarketDataService` en los tests Grid, y ejecución limpia del checker oficial de migraciones.
+
+### Problema
+- `processOpenCyclesShadow()` podría cerrar ciclos con un `bestBid` obsoleto si el timestamp del precio no se validaba.
+- Los tests Grid emitían `MarketDataService.getCandles is not a function` porque el mock solo incluía `getTicker`.
+- El checker oficial de migraciones fallaba por falsos positivos con líneas de comentario SQL y por la interpretación regex de `DO $$` en entornos Windows (CRLF).
+
+### Solución
+1. **Frescura de precio unificada**:
+   - Nuevo `server/services/gridIsolated/gridShadowMarketPriceFreshness.ts` con `GRID_SHADOW_PRICE_MAX_AGE_MS = 60_000` y `evaluateShadowMarketPriceFreshness({ timestamp, now, maxAgeMs })`.
+   - `processOpenCyclesShadow()` devuelve 0 y registra `GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE` cuando el precio es obsoleto, falta timestamp, el timestamp es inválido/futuro, o el par no coincide con el del ciclo.
+   - `gridShadowOpenCycleDiagnosis.ts` usa el mismo helper y añade `priceFresh`, `priceAgeMs`, `priceMaxAgeMs`, `priceStaleReason`; `wouldCloseNow` solo es true con precio fresco y par correcto.
+   - `resolveGridShadowExecutionPrice` ahora incluye `pair` en el resultado; los callers del motor lo pasan desde `this.config.pair`.
+   - Nuevo evento `GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE` en `gridIsolatedTypes.ts`.
+
+2. **Mock de `MarketDataService` completo**:
+   - `server/routes/__tests__/gridIsolatedRoutes.test.ts`: mock con `getTicker`, `getPrice`, `getCandles`, `getATR`, `getCandlesFromDb`, `putPrice`, `putCandles`.
+   - `getCandles` devuelve 120 velas sintéticas deterministas para `GridBandAdapter` y validaciones.
+
+3. **Checker oficial de migraciones**:
+   - `scripts/check-migrations-idempotent.sh` actualizado para:
+     - Ignorar líneas SQL de comentario (`--`) antes de buscar `ADD CONSTRAINT IF NOT EXISTS`.
+     - Usar `grep -F` para la cadena fija `DO $$` (el carácter `$` se interpretaba como ancla regex).
+     - Normalizar finales de línea CRLF con `tr -d '\r'` para evitar falsos negativos/positivos en Windows.
+   - Resultado: `PASSED` con migraciones `071` y `072` validadas.
+
+4. **Verificación estática de migraciones**:
+   - Nuevo `server/services/gridIsolated/__tests__/gridMigrationsRegistered.test.ts` que confirma que `071` y `072` están registradas exactamente una vez en `server/routes.ts` y `script/migrate.ts`, y valida el contenido idempotente de ambos archivos SQL.
+
+5. **Tests**:
+   - `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`: 10 tests de frescura/pair incluyendo timestamp ausente, inválido, exactamente en el límite, superior al límite, par incorrecto (ETH/USD vs BTC/USD) y re-eligibilidad tras llegar precio fresco.
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` (frescura y par)
+- `server/services/gridIsolated/gridIsolatedTypes.ts` (evento nuevo)
+- `server/services/gridIsolated/gridShadowExecutionPrice.ts` (campo `pair`)
+- `server/services/gridIsolated/gridShadowOpenCycleDiagnosis.ts` (campos de frescura)
+- `server/services/gridIsolated/gridShadowMarketPriceFreshness.ts` (nuevo)
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `server/services/gridIsolated/__tests__/gridMigrationsRegistered.test.ts` (nuevo)
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts`
+- `scripts/check-migrations-idempotent.sh`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅
+- `npx vitest run server/services/gridIsolated/__tests__ server/services/__tests__/gridIsolatedEngine.test.ts server/services/__tests__/gridIsolatedEngine.shadowCleanup.test.ts server/services/__tests__/gridIsolatedTypes.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts`: ✅ 10 archivos, 275 tests
+- `npx vitest run server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts server/services/gridIsolated/__tests__/gridCycleStartupService.test.ts server/services/gridIsolated/__tests__/gridCycleTargetResolver.test.ts`: ✅ 3 archivos, 62 tests
+- `scripts/check-migrations-idempotent.sh` (Git Bash): ✅ PASSED
+- `npm run build`: ✅
+- Full `npx vitest run` mantiene fallos preexistentes en Telegram, IDCA, SPOT y FISCO, ajenos al alcance Grid.
+
+### Restricciones respetadas
+- No deploy.
+- No acceso al VPS.
+- No migraciones ejecutadas en staging.
+- No ciclos reales modificados.
+- No modo REAL activado.
+- No órdenes reales enviadas.
+- No shadow-cleanup.
+- No se tocaron IDCA, Telegram, SPOT ni FISCO.
+- Commit limitado a servicios/tests Grid, checker y BITÁCORA.
+
+---
+
 ## 2026-07-16 — GRID FASE 3C.4-I-REV-B: Cierre técnico pre-deploy
 
 ### Resumen

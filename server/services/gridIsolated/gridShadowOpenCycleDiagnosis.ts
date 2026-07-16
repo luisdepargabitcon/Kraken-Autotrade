@@ -13,6 +13,7 @@ import {
 } from "./gridIsolatedTypes";
 import { resolveTargetSellForCycle, buildClaimedSellIds } from "./gridCycleTargetResolver";
 import type { GridShadowExecutionPriceResult } from "./gridShadowExecutionPrice";
+import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from "./gridShadowMarketPriceFreshness";
 
 export interface ShadowOpenCycleDiagnosisItem {
   id: string;
@@ -48,6 +49,10 @@ export interface ShadowOpenCycleDiagnosisResult {
   priceSource: string;
   priceTimestamp: string | null;
   priceStale: boolean;
+  priceFresh: boolean;
+  priceAgeMs: number | null;
+  priceMaxAgeMs: number;
+  priceStaleReason: string | null;
   totalOpen: number;
   eligibleToClose: number;
   wouldCloseNow: number;
@@ -125,11 +130,15 @@ export function diagnoseShadowOpenCycles(
   const currentPrice = priceResult.price ?? currentBid;
   const priceSource = priceResult.source ?? "unknown";
   const priceTimestamp = priceResult.timestamp ?? null;
-  // Si el timestamp tiene más de 60 segundos consideramos el precio stale.
-  const priceTimestampDate = priceTimestamp ? new Date(priceTimestamp) : null;
-  const priceStale = priceTimestampDate
-    ? Date.now() - priceTimestampDate.getTime() > 60_000
-    : false;
+  const freshness = evaluateShadowMarketPriceFreshness({
+    timestamp: priceTimestamp,
+    maxAgeMs: GRID_SHADOW_PRICE_MAX_AGE_MS,
+  });
+  const priceFresh = freshness.isFresh;
+  const priceStale = !freshness.isFresh;
+  const priceAgeMs = freshness.ageMs;
+  const priceMaxAgeMs = freshness.maxAgeMs;
+  const priceStaleReason = freshness.reason;
 
   const openCycles = cycles.filter((c) =>
     OPEN_POSITION_GRID_CYCLE_STATUSES.includes(c.status as any)
@@ -190,7 +199,9 @@ export function diagnoseShadowOpenCycles(
       mode === "SHADOW" &&
       isClosableStatus &&
       hasTarget &&
-      !isHodl;
+      !isHodl &&
+      priceFresh &&
+      (priceResult.pair == null || priceResult.pair === cycle.pair);
 
     const wouldClose = Boolean(
       eligible &&
@@ -283,6 +294,10 @@ export function diagnoseShadowOpenCycles(
     priceSource,
     priceTimestamp,
     priceStale,
+    priceFresh,
+    priceAgeMs,
+    priceMaxAgeMs,
+    priceStaleReason,
     totalOpen: openCycles.length,
     eligibleToClose,
     wouldCloseNow,

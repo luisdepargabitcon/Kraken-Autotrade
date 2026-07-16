@@ -20,7 +20,13 @@ echo ""
 # ─── Check 1: ADD CONSTRAINT IF NOT EXISTS ───────────────────────────────────
 # PostgreSQL does NOT support this syntax. Use DO $$ + pg_constraint instead.
 echo "--- Check 1: ADD CONSTRAINT IF NOT EXISTS (invalid PostgreSQL syntax) ---"
-MATCHES=$(grep -rn --include="*.sql" -i "ADD CONSTRAINT IF NOT EXISTS" "$MIGRATIONS_DIR" || true)
+# Strip leading comment lines (SQL lines starting with --) before checking.
+MATCHES=$(grep -rn --include="*.sql" -i "ADD CONSTRAINT IF NOT EXISTS" "$MIGRATIONS_DIR" | tr -d '\r' | awk -F: '{
+  line=$0;
+  sub(/^[^:]*:[^:]*:/, "", line);
+  if (line ~ /^[[:space:]]*--/) next;
+  print
+}' || true)
 
 if [ -n "$MATCHES" ]; then
   echo "ERROR: Found invalid 'ADD CONSTRAINT IF NOT EXISTS' in:"
@@ -50,10 +56,13 @@ echo "--- Check 2: Bare ADD CONSTRAINT (not inside DO block, not preceded by DRO
 WARN_COUNT=0
 
 while IFS= read -r file; do
-  # Check if file has ADD CONSTRAINT but NOT wrapped in DO $$ and NOT preceded by DROP CONSTRAINT IF EXISTS
-  HAS_ADD=$(grep -c -i "ADD CONSTRAINT" "$file" || true)
-  HAS_DO=$(grep -c -i "DO \$\$\|DO\$\$" "$file" || true)
-  HAS_DROP_GUARD=$(grep -c -i "DROP CONSTRAINT IF EXISTS" "$file" || true)
+  # Check if file has ADD CONSTRAINT but NOT wrapped in DO $$ and NOT preceded by DROP CONSTRAINT IF EXISTS.
+  # Ignore SQL comment lines (leading --) and normalize CRLF before counting.
+  SQL_BODY=$(sed -e '/^[[:space:]]*--/d' "$file" | tr -d '\r')
+  HAS_ADD=$(echo "$SQL_BODY" | grep -c -i "ADD CONSTRAINT" || true)
+  # Use fixed-string match because DO $$ contains regex metacharacter $.
+  HAS_DO=$(echo "$SQL_BODY" | grep -c -iF 'DO $$' || true)
+  HAS_DROP_GUARD=$(echo "$SQL_BODY" | grep -c -i "DROP CONSTRAINT IF EXISTS" || true)
 
   if [ "$HAS_ADD" -gt 0 ] && [ "$HAS_DO" -eq 0 ] && [ "$HAS_DROP_GUARD" -eq 0 ]; then
     echo "WARN: $file — has ADD CONSTRAINT but no DO \$\$ block or DROP CONSTRAINT IF EXISTS guard"
@@ -87,7 +96,7 @@ for dir in "${TS_CHECK_DIRS[@]}"; do
       # Heuristic: if the file has ALTER TABLE.*ADD CONSTRAINT.*UNIQUE and lot_id
       if grep -q "ALTER TABLE.*ADD CONSTRAINT.*UNIQUE.*lot_id" "$file" 2>/dev/null; then
         # Check if it's inside a DO $$ block (look for DO $$ before and END $$ after)
-        if ! grep -B5 -A5 "ALTER TABLE.*ADD CONSTRAINT.*UNIQUE.*lot_id" "$file" | grep -q "DO \$\$"; then
+        if ! grep -B5 -A5 "ALTER TABLE.*ADD CONSTRAINT.*UNIQUE.*lot_id" "$file" | tr -d '\r' | grep -qF 'DO $$'; then
           echo "ERROR: $file — found direct 'ALTER TABLE ... ADD CONSTRAINT ... UNIQUE (lot_id)' without DO \$\$ block"
           TS_ERROR_COUNT=$((TS_ERROR_COUNT + 1))
         fi

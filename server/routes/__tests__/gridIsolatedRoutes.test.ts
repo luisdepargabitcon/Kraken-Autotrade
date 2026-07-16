@@ -23,15 +23,42 @@ vi.mock("../../services/botLogger", () => ({
   },
 }));
 
-vi.mock("../../services/MarketDataService", () => ({
-  MarketDataService: {
-    getTicker: vi.fn().mockResolvedValue({
-      last: 62594.0,
-      bid: 62590.0,
-      ask: 62598.0,
-    }),
-  },
-}));
+vi.mock("../../services/MarketDataService", () => {
+  function generateCandles(count = 120) {
+    const basePrice = 62594.0;
+    const candles = [];
+    for (let i = 0; i < count; i++) {
+      const close = basePrice + Math.sin(i * 0.15) * 1500 + ((i % 7) - 3) * 80;
+      const open = close + ((i % 5) - 2) * 25;
+      const high = Math.max(open, close) + 120 + (i % 3) * 40;
+      const low = Math.min(open, close) - 120 - (i % 3) * 40;
+      candles.push({
+        time: Date.now() - (count - i) * 3_600_000,
+        open,
+        high,
+        low,
+        close,
+        volume: 1 + i,
+      });
+    }
+    return candles;
+  }
+  return {
+    MarketDataService: {
+      getTicker: vi.fn().mockResolvedValue({
+        last: 62594.0,
+        bid: 62590.0,
+        ask: 62598.0,
+      }),
+      getPrice: vi.fn().mockResolvedValue(62594.0),
+      getCandles: vi.fn().mockResolvedValue(generateCandles()),
+      getATR: vi.fn().mockResolvedValue(2.1),
+      getCandlesFromDb: vi.fn().mockResolvedValue(null),
+      putPrice: vi.fn(),
+      putCandles: vi.fn(),
+    },
+  };
+});
 
 vi.mock("../../db", () => {
   const chainable = {
