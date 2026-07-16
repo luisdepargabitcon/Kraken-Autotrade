@@ -1319,6 +1319,7 @@ END $$;
       "069_grid_compact_range_control",
       "070_grid_adaptive_smart_range",
       "071_grid_cycle_target_sell",
+      "072_grid_maker_only_defaults",
     ].map((name) => ({
       id: name,
       filePath: path.resolve(process.cwd(), "db", "migrations", `${name}.sql`),

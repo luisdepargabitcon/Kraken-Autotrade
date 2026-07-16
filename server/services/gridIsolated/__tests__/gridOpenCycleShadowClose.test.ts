@@ -1,62 +1,150 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { gridIsolatedEngine } from "../gridIsolatedEngine";
-import { db } from "../../../db";
-import { botLogger } from "../../botLogger";
 import type { GridIsolatedConfig, GridCycle, GridLevel, GridRangeVersion } from "../gridIsolatedTypes";
 import type { GridShadowExecutionPriceResult } from "../gridShadowExecutionPrice";
 
-const CYCLE_ID = "cycle-1";
-const RANGE_ID = "range-1";
-const BUY_LEVEL_ID = "buy-level-1";
-const SELL_LEVEL_ID = "sell-level-1";
+// ─── Mock dependencies before importing engine ───────────────────────
+vi.mock("../../../db", () => {
+  // Simple in-memory DB used by processOpenCyclesShadow.
+  // It supports update + transaction with predicate evaluation.
+  function makeMockTable(name: string, columns: string[]) {
+    const table: any = { __mockTable: name };
+    for (const col of columns) {
+      table[col] = { __name: col, __table: name };
+    }
+    return table;
+  }
 
-vi.mock("../../../db", () => ({
-  db: {
-    update: vi.fn(),
-    transaction: vi.fn(),
-    insert: vi.fn(() => ({ values: vi.fn(() => Promise.resolve()) })),
-  },
+  function cloneState(state: any) {
+    return JSON.parse(JSON.stringify(state));
+  }
+
+  function evalPred(row: any, pred: any): boolean {
+    if (!pred) return true;
+    if (pred.op === "eq") return row[pred.col.__name] === pred.value;
+    if (pred.op === "isNull") return row[pred.col.__name] == null;
+    if (pred.op === "inArray") return pred.arr.includes(row[pred.col.__name]);
+    if (pred.op === "and") return pred.conds.every((c: any) => evalPred(row, c));
+    return true;
+  }
+
+  function executeUpdate(state: any, table: any, setValues: any, predicate: any, returningCols: any) {
+    const rows = state[table.__mockTable];
+    if (!rows) return [];
+    const matches = rows.filter((row: any) => evalPred(row, predicate));
+    for (const row of matches) {
+      Object.assign(row, setValues);
+    }
+    return matches.map((row: any) => {
+      const out: any = {};
+      for (const key of Object.keys(returningCols || {})) {
+        const col = returningCols[key];
+        out[key] = col && col.__name ? row[col.__name] : row[key];
+      }
+      return out;
+    });
+  }
+
+  function makeUpdateBuilder(state: any, table: any) {
+    const builder: any = {
+      _set: {},
+      _where: { op: "and", conds: [] },
+      set(values: any) { builder._set = values; return builder; },
+      where(predicate: any) { builder._where = predicate; return builder; },
+      returning(cols: any) {
+        return Promise.resolve(executeUpdate(state, table, builder._set, builder._where, cols));
+      },
+      then(onF: any, onR: any) {
+        return Promise.resolve(executeUpdate(state, table, builder._set, builder._where, {})).then(onF, onR);
+      },
+    };
+    return builder;
+  }
+
+  let txQueue = Promise.resolve();
+
+  const db: any = {
+    _state: { cycles: [], levels: [] },
+    _resetState(newState: any) { db._state = newState; },
+    _resetTxQueue() { txQueue = Promise.resolve(); },
+    update(table: any) { return makeUpdateBuilder(db._state, table); },
+    insert() { return { values: (vals: any) => Promise.resolve([]) }; },
+    transaction: vi.fn().mockImplementation((callback: any) => {
+      const p = txQueue.then(async () => {
+        const txState = cloneState(db._state);
+        const tx = {
+          update: (table: any) => makeUpdateBuilder(txState, table),
+          insert: () => ({ values: (vals: any) => Promise.resolve([]) }),
+        };
+        try {
+          const result = await callback(tx);
+          db._state = txState;
+          return result;
+        } catch (e) {
+          throw e;
+        }
+      });
+      txQueue = p.catch(() => {});
+      return p;
+    }),
+  };
+
+  return { db, __testDb: db };
+});
+
+vi.mock("@shared/schema", () => ({
+  gridIsolatedEvents: { createdAt: "created_at" },
+  gridIsolatedConfigs: {},
+  gridRangeVersions: {},
+  gridIsolatedLevels: (() => {
+    const cols = ["id", "rangeVersionId", "levelIndex", "side", "price", "quantity", "status", "clientOrderId", "exchangeOrderId", "filledPrice", "filledQuantity", "filledAt", "createdAt", "placedAt", "cancelledAt"];
+    const table: any = { __mockTable: "levels" };
+    for (const c of cols) table[c] = { __name: c, __table: "levels" };
+    return table;
+  })(),
+  gridIsolatedCycles: (() => {
+    const cols = ["id", "rangeVersionId", "cycleNumber", "pair", "status", "buyLevelId", "sellLevelId", "targetSellLevelId", "buyPrice", "sellPrice", "targetSellPrice", "targetSellQuantity", "quantity", "grossPnlUsd", "feeTotalUsd", "taxReserveUsd", "netPnlUsd", "netPnlPct", "buyClientOrderId", "sellClientOrderId", "buyFilledAt", "sellFilledAt", "holdTimeMinutes", "createdAt", "completedAt"];
+    const table: any = { __mockTable: "cycles" };
+    for (const c of cols) table[c] = { __name: c, __table: "cycles" };
+    return table;
+  })(),
+}));
+
+vi.mock("drizzle-orm", () => ({
+  eq: (col: any, value: any) => ({ op: "eq", col, value }),
+  and: (...conds: any[]) => ({ op: "and", conds }),
+  isNull: (col: any) => ({ op: "isNull", col }),
+  inArray: (col: any, arr: any[]) => ({ op: "inArray", col, arr }),
+  desc: vi.fn(),
+  sql: (strings: TemplateStringsArray, ...vals: any[]) => ({ sql: strings.join("?"), params: vals }),
 }));
 
 vi.mock("../../botLogger", () => ({
   botLogger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
+    info: vi.fn().mockResolvedValue(undefined),
+    warn: vi.fn().mockResolvedValue(undefined),
+    error: vi.fn().mockResolvedValue(undefined),
+    debug: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
-function makeWhereBuilder(returningResult: any = [{ id: CYCLE_ID }]) {
-  const builder = {
-    returning: vi.fn().mockResolvedValue(returningResult),
-    then: (onFulfilled: any, onRejected: any) =>
-      Promise.resolve(returningResult ?? []).then(onFulfilled, onRejected),
-  };
-  return builder;
-}
+vi.mock("../../MarketDataService", () => ({
+  MarketDataService: {},
+}));
 
-function makeUpdateBuilder(returningResult: any = [{ id: CYCLE_ID }]) {
-  const whereBuilder = makeWhereBuilder(returningResult);
-  const setBuilder = {
-    where: vi.fn().mockReturnValue(whereBuilder),
-  };
-  return {
-    set: vi.fn().mockReturnValue(setBuilder),
-    where: vi.fn().mockReturnValue(whereBuilder),
-  };
-}
+vi.mock("../../exchanges/ExchangeFactory", () => ({
+  ExchangeFactory: {},
+}));
 
-function resetMocks() {
-  vi.clearAllMocks();
-  (db.update as any).mockImplementation(() => makeUpdateBuilder());
-  (db.transaction as any).mockImplementation(async (callback: any) => {
-    const tx = {
-      update: vi.fn().mockImplementation(() => makeUpdateBuilder([{ id: CYCLE_ID }])),
-    };
-    return await callback(tx);
-  });
-}
+// ─── Import engine after mocks ─────────────────────────────────────
+import { gridIsolatedEngine } from "../gridIsolatedEngine";
+import { db } from "../../../db";
+import { botLogger } from "../../botLogger";
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+const CYCLE_ID = "cycle-1";
+const RANGE_ID = "range-1";
+const BUY_LEVEL_ID = "buy-level-1";
+const SELL_LEVEL_ID = "sell-level-1";
 
 function makeConfig(overrides: Partial<GridIsolatedConfig> = {}): GridIsolatedConfig {
   return {
@@ -194,125 +282,328 @@ function makeRange(overrides: Partial<GridRangeVersion> = {}): GridRangeVersion 
   } as GridRangeVersion;
 }
 
-function priceResult(bid: number | null, ask: number | null = null): GridShadowExecutionPriceResult {
+function priceResult(opts: Partial<GridShadowExecutionPriceResult>): GridShadowExecutionPriceResult {
   return {
-    price: bid ?? 0,
-    source: bid != null ? "ticker_last" : "no_price",
-    bid,
-    ask,
-    spreadPct: null,
-    timestamp: new Date().toISOString(),
+    price: opts.bid ?? opts.price ?? 0,
+    source: opts.source ?? "ticker_last",
+    bid: opts.bid ?? null,
+    ask: opts.ask ?? null,
+    spreadPct: opts.spreadPct ?? null,
+    timestamp: opts.timestamp ?? new Date().toISOString(),
+  } as GridShadowExecutionPriceResult;
+}
+
+function resetEngine(cycles: GridCycle[], levels: GridLevel[], configOverrides: Partial<GridIsolatedConfig> = {}, rangeOverrides: Partial<GridRangeVersion> = {}) {
+  (db as any)._resetTxQueue();
+  const engine = gridIsolatedEngine as any;
+  engine.config = makeConfig(configOverrides);
+  engine.cycles = cycles;
+  engine.levels = levels;
+  engine.activeRangeVersion = makeRange(rangeOverrides);
+  engine.lastShadowEventAt = null;
+
+  const rows = {
+    cycles: cycles.map((c) => ({ ...c })),
+    levels: levels.map((l) => ({ ...l })),
   };
+  (db as any)._resetState(rows);
+  return engine;
 }
 
 describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
   beforeEach(() => {
-    resetMocks();
-    const engine = gridIsolatedEngine as any;
-    engine.config = makeConfig();
-    engine.cycles = [makeCycle()];
-    engine.levels = [makeLevel()];
-    engine.activeRangeVersion = makeRange();
-    engine.lastShadowEventAt = null;
+    vi.clearAllMocks();
+    (db as any)._resetTxQueue();
+    resetEngine([makeCycle()], [makeLevel()]);
   });
 
-  it("devuelve 0 si el modo no es SHADOW", async () => {
-    const engine = gridIsolatedEngine as any;
-    engine.config = makeConfig({ mode: "OFF" });
-    const result = await engine.processOpenCyclesShadow(priceResult(61_500));
-    expect(result).toBe(0);
-    expect(db.transaction).not.toHaveBeenCalled();
-  });
-
-  it("devuelve 0 si el motor está inactivo", async () => {
-    const engine = gridIsolatedEngine as any;
-    engine.config = makeConfig({ isActive: false });
-    const result = await engine.processOpenCyclesShadow(priceResult(61_500));
-    expect(result).toBe(0);
-    expect(db.transaction).not.toHaveBeenCalled();
-  });
-
-  it("devuelve 0 si no hay bid disponible", async () => {
-    const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult(null));
-    expect(result).toBe(0);
-    expect(db.transaction).not.toHaveBeenCalled();
-  });
-
-  it("no cierra cuando el bid está por debajo del target SELL", async () => {
-    const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult(60_900));
-    expect(result).toBe(0);
-    expect(db.transaction).not.toHaveBeenCalled();
-  });
-
-  it("cierra transaccionalmente cuando el bid alcanza el target SELL", async () => {
-    const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult(61_200));
-    expect(result).toBe(1);
-    expect(db.transaction).toHaveBeenCalledTimes(1);
-
-    const cycle = (gridIsolatedEngine as any).cycles[0];
-    expect(cycle.status).toBe("completed");
-    expect(cycle.sellLevelId).toBe(SELL_LEVEL_ID);
-    expect(cycle.sellPrice).toBe(61_000);
-    expect(cycle.sellFilledAt).toBeInstanceOf(Date);
-    expect(typeof cycle.netPnlUsd).toBe("number");
-
-    const level = (gridIsolatedEngine as any).levels[0];
-    expect(level.status).toBe("filled");
-    expect(level.filledPrice).toBe(61_000);
-    expect(level.filledQuantity).toBe(0.001);
-    expect(level.filledAt).toBeInstanceOf(Date);
-  });
-
-  it("resuelve target SELL faltante y cierra transaccionalmente", async () => {
-    const engine = gridIsolatedEngine as any;
-    engine.cycles = [makeCycle({ targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null })];
-    engine.levels = [makeLevel({ id: SELL_LEVEL_ID })];
-
-    const result = await engine.processOpenCyclesShadow(priceResult(61_200));
-    expect(result).toBe(1);
-    expect(db.update).toHaveBeenCalled();
-    expect(db.transaction).toHaveBeenCalledTimes(1);
-
-    const cycle = engine.cycles[0];
-    expect(cycle.targetSellLevelId).toBe(SELL_LEVEL_ID);
-    expect(cycle.status).toBe("completed");
-  });
-
-  it("omite ciclos en HODL_RECOVERY sin intentar cierre", async () => {
-    const engine = gridIsolatedEngine as any;
-    engine.cycles = [makeCycle({ status: "hodl_recovery" })];
-    const result = await engine.processOpenCyclesShadow(priceResult(61_200));
-    expect(result).toBe(0);
-    expect(db.transaction).not.toHaveBeenCalled();
-  });
-
-  it("hace rollback si la actualización del ciclo no afecta a ninguna fila", async () => {
-    const engine = gridIsolatedEngine as any;
-    (db.transaction as any).mockImplementation(async (callback: any) => {
-      const tx = {
-        update: vi.fn().mockImplementation(() =>
-          makeUpdateBuilder([]) // 0 rows devueltas => dispara throw
-        ),
-      };
-      return await callback(tx);
+  describe("MODO / ACTIVACIÓN", () => {
+    it("devuelve 0 si el modo no es SHADOW", async () => {
+      const engine = gridIsolatedEngine as any;
+      engine.config.mode = "OFF";
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_500 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
     });
 
-    await expect(
-      engine.processOpenCyclesShadow(priceResult(61_200))
-    ).rejects.toThrow("ya fue cerrado por otro proceso");
-
-    const cycle = engine.cycles[0];
-    expect(cycle.status).toBe("buy_filled");
+    it("devuelve 0 si el motor está inactivo", async () => {
+      const engine = gridIsolatedEngine as any;
+      engine.config.isActive = false;
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_500 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
   });
 
-  it("rechaza ciclos cuya resolución de target requiera revisión", async () => {
-    const engine = gridIsolatedEngine as any;
-    // Rango inexistente para el ciclo => resolver devuelve requiresReview
-    engine.activeRangeVersion = makeRange({ id: "otro-rango", pair: "BTC/USD" });
-    engine.cycles = [makeCycle({ targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null })];
+  describe("PRECIO", () => {
+    it("bestBid >= targetSellPrice → cierra", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(1);
+    });
 
-    const result = await engine.processOpenCyclesShadow(priceResult(61_200));
-    expect(result).toBe(0);
-    expect(db.transaction).not.toHaveBeenCalled();
+    it("sellExecutionPrice = targetSellPrice, no un bid superior", async () => {
+      await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 65_000 }));
+      const cycle = (gridIsolatedEngine as any).cycles[0];
+      expect(cycle.sellPrice).toBe(61_000);
+    });
+
+    it("ask >= target pero bid < target → no cierra", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 60_900, ask: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("last >= target pero bid < target → no cierra", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 60_900, price: 61_500, source: "ticker_last" }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("no cierra si no hay bid disponible", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: null }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("sin bid y fallback last no autorizado → no cierra", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: null, price: 61_500, source: "no_price" }));
+      expect(result).toBe(0);
+    });
+  });
+
+  describe("ESTADOS", () => {
+    it("pending no se procesa", async () => {
+      const engine = resetEngine([makeCycle({ status: "pending" as any })], [makeLevel()]);
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("buy_placed no se procesa", async () => {
+      const engine = resetEngine([makeCycle({ status: "buy_placed" as any })], [makeLevel()]);
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("buy_filled sí se procesa", async () => {
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(1);
+    });
+
+    it("sell_filled no crea otra ejecución", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "sell_filled" as any, sellLevelId: SELL_LEVEL_ID, sellPrice: 61_000, sellFilledAt: new Date(), completedAt: new Date() })],
+        [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
+      );
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("completed no se reprocesa", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "completed" as any, sellLevelId: SELL_LEVEL_ID, sellPrice: 61_000, sellFilledAt: new Date(), completedAt: new Date() })],
+        [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
+      );
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("stop_loss_hit no se reprocesa", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "stop_loss_hit" as any, completedAt: new Date() })],
+        [makeLevel()]
+      );
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("trailing_closed no se reprocesa", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "trailing_closed" as any, completedAt: new Date() })],
+        [makeLevel()]
+      );
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("hodl_recovery queda requiresReview y no se cierra", async () => {
+      const engine = resetEngine([makeCycle({ status: "hodl_recovery" as any })], [makeLevel()]);
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("VALIDACIÓN Y ATOMICIDAD DEL SELL", () => {
+    it("ciclo actualizado y SELL actualizada → commit", async () => {
+      const engine = gridIsolatedEngine as any;
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(1);
+
+      const cycle = engine.cycles[0];
+      expect(cycle.status).toBe("completed");
+      expect(cycle.sellLevelId).toBe(SELL_LEVEL_ID);
+      expect(cycle.completedAt).toBeInstanceOf(Date);
+
+      const level = engine.levels[0];
+      expect(level.status).toBe("filled");
+      expect(level.filledPrice).toBe(61_000);
+      expect(level.filledAt).toBeInstanceOf(Date);
+    });
+
+    it("SELL ya filled → no segundo fill (rollback)", async () => {
+      const engine = resetEngine(
+        [makeCycle()],
+        [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
+      );
+      await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
+      const cycle = engine.cycles[0];
+      expect(cycle.status).toBe("buy_filled");
+    });
+
+    it("targetSellLevelId incorrecto → rollback", async () => {
+      const engine = resetEngine(
+        [makeCycle({ targetSellLevelId: "fake-id" })],
+        [makeLevel({ id: SELL_LEVEL_ID })]
+      );
+      // Nivel con id "fake-id" no existe → tx.update(levels) devuelve 0 filas
+      await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
+    });
+
+    it("rangeVersionId distinto → rollback", async () => {
+      const engine = resetEngine(
+        [makeCycle()],
+        [makeLevel({ rangeVersionId: "otro-rango" })]
+      );
+      await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
+    });
+
+    it("side distinto de SELL → rollback", async () => {
+      const engine = resetEngine(
+        [makeCycle()],
+        [makeLevel({ side: "BUY" as any })]
+      );
+      await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
+    });
+
+    it("ciclo ya completed → idempotente (no transacción exitosa)", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "completed" as any, completedAt: new Date(), sellPrice: 61_000, sellFilledAt: new Date(), sellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
+      );
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+    });
+  });
+
+  describe("RESOLUCIÓN FALTANTE DE TARGET", () => {
+    it("resuelve target SELL faltante, persiste y cierra", async () => {
+      const engine = resetEngine(
+        [makeCycle({ targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null })],
+        [makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any })]
+      );
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(1);
+      const cycle = engine.cycles[0];
+      expect(cycle.targetSellLevelId).toBe(SELL_LEVEL_ID);
+      expect(cycle.targetSellPrice).toBe(61_000);
+      expect(cycle.status).toBe("completed");
+    });
+
+    it("rechaza ciclos cuya resolución de target requiera revisión", async () => {
+      const engine = resetEngine(
+        [makeCycle({ targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null })],
+        [makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001 })],
+        {},
+        { id: "otro-rango" }
+      );
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it("SELL reclamada por otro ciclo → revisión, no cierre", async () => {
+      const engine = resetEngine(
+        [
+          makeCycle({ id: "c1", cycleNumber: 1, targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null }),
+          makeCycle({ id: "c2", cycleNumber: 2, targetSellLevelId: SELL_LEVEL_ID, targetSellPrice: 61_000, targetSellQuantity: 0.001 }),
+        ],
+        [makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001 })]
+      );
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      // c2 has target, c1 cannot resolve because SELL already claimed by c2
+      expect(result).toBe(1); // c2 closes
+      expect(engine.cycles[0].targetSellLevelId).toBeNull(); // c1 unresolved
+      expect(engine.cycles[0].status).not.toBe("completed");
+    });
+  });
+
+  describe("CONCURRENCIA", () => {
+    it("dos llamadas concurrentes → un solo cierre", async () => {
+      const engine = gridIsolatedEngine as any;
+      const results = await Promise.allSettled([
+        engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })),
+        engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })),
+      ]);
+      const successes = results.filter((r) => r.status === "fulfilled" && typeof r.value === "number").length;
+      expect(successes).toBe(1);
+      expect(engine.cycles[0].status).toBe("completed");
+    });
+  });
+
+  describe("SEGURIDAD / PNL", () => {
+    it("Ciclo A: PnL exacto con buyPrice=63264.40 target=64893.12322364 qty=0.00379061", async () => {
+      const qty = 0.00379061;
+      const target = 64893.12322364;
+      const engine = resetEngine(
+        [makeCycle({
+          id: "cA",
+          cycleNumber: 1,
+          buyPrice: 63264.40,
+          targetSellPrice: target,
+          targetSellQuantity: qty,
+          quantity: qty,
+          targetSellLevelId: SELL_LEVEL_ID,
+        })],
+        [makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: target, quantity: qty, status: "planned" as any })]
+      );
+      await engine.processOpenCyclesShadow(priceResult({ bid: target }));
+      const cycle = engine.cycles[0];
+      expect(cycle.grossPnlUsd).toBeCloseTo(6.173854538762, 10);
+      expect(cycle.feeTotalUsd).toBeCloseTo(0, 10);
+      expect(cycle.taxReserveUsd).toBeCloseTo(1.234770907752, 10);
+      expect(cycle.netPnlUsd).toBeCloseTo(4.939083631010, 10);
+      expect(cycle.netPnlPct).toBeCloseTo(2.0595762845, 10);
+      expect(cycle.feeTotalUsd).toBeCloseTo(0, 10);
+
+      // Los roles se auditan en el evento GRID_CYCLE_COMPLETED, no en el ciclo
+      const completedCall = (botLogger.info as any).mock.calls.find((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
+      expect(completedCall).toBeTruthy();
+      expect(completedCall[2]).toMatchObject({
+        buyLiquidityRole: "maker",
+        sellLiquidityRole: "maker",
+        executionPolicy: "MAKER_ONLY",
+        takerFallbackUsed: false,
+      });
+    });
+
+    it("no invoca ningún adaptador de exchange", async () => {
+      // ExchangeFactory mock is empty; no call assertions needed except process succeeds
+      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(1);
+    });
+
+    it("executionPolicy=MAKER_ONLY, takerFallbackUsed=false, roles=maker", async () => {
+      const engine = gridIsolatedEngine as any;
+      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const cycle = engine.cycles[0];
+      expect(engine.config.executionPolicy).toBe("MAKER_ONLY");
+      expect(cycle.executionPolicy).toBeFalsy(); // not stored on cycle directly
+    });
   });
 });

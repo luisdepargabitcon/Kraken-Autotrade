@@ -18,8 +18,10 @@ export interface ShadowOpenCycleDiagnosisItem {
   id: string;
   cycleNumber: number;
   status: GridCycleStatus;
+  lifecycleState: GridCycleStatus;
   pair: string;
   rangeVersionId: string;
+  rangeRelation: "active" | "previous";
   buyPrice: number | null;
   quantity: number;
   buyFilledAt: Date | null;
@@ -44,12 +46,19 @@ export interface ShadowOpenCycleDiagnosisResult {
   currentBid: number | null;
   currentAsk: number | null;
   priceSource: string;
+  priceTimestamp: string | null;
+  priceStale: boolean;
   totalOpen: number;
   eligibleToClose: number;
   wouldCloseNow: number;
+  cyclesEligibleForSimulatedClose: number;
+  executableOpenCyclesCount: number;
+  waitingSellCyclesCount: number;
+  previousRangeOpenCyclesCount: number;
   missingTarget: number;
   inHodlRecovery: number;
   requiresReview: number;
+  reviewRequiredCyclesCount: number;
   realOrdersAffected: false;
   readOnly: true;
   recommendation: string;
@@ -115,6 +124,12 @@ export function diagnoseShadowOpenCycles(
   const currentAsk = priceResult.ask ?? null;
   const currentPrice = priceResult.price ?? currentBid;
   const priceSource = priceResult.source ?? "unknown";
+  const priceTimestamp = priceResult.timestamp ?? null;
+  // Si el timestamp tiene más de 60 segundos consideramos el precio stale.
+  const priceTimestampDate = priceTimestamp ? new Date(priceTimestamp) : null;
+  const priceStale = priceTimestampDate
+    ? Date.now() - priceTimestampDate.getTime() > 60_000
+    : false;
 
   const openCycles = cycles.filter((c) =>
     OPEN_POSITION_GRID_CYCLE_STATUSES.includes(c.status as any)
@@ -212,12 +227,17 @@ export function diagnoseShadowOpenCycles(
 
     if (itemRequiresReview) requiresReview++;
 
+    const rangeRelation: "active" | "previous" =
+      cycle.rangeVersionId === activeRangeVersionId ? "active" : "previous";
+
     details.push({
       id: cycle.id,
       cycleNumber: cycle.cycleNumber,
       status: cycle.status,
+      lifecycleState: cycle.status,
       pair: cycle.pair,
       rangeVersionId: cycle.rangeVersionId,
+      rangeRelation,
       buyPrice: cycle.buyPrice ?? null,
       quantity: cycle.quantity,
       buyFilledAt: cycle.buyFilledAt ?? null,
@@ -236,6 +256,15 @@ export function diagnoseShadowOpenCycles(
     });
   }
 
+  const executableOpenCyclesCount = openCycles.filter(
+    (c) => c.targetSellLevelId != null
+  ).length;
+  const waitingSellCyclesCount = openCycles.length;
+  const previousRangeOpenCyclesCount = activeRangeVersionId
+    ? openCycles.filter((c) => c.rangeVersionId !== activeRangeVersionId).length
+    : 0;
+  const reviewRequiredCyclesCount = requiresReview;
+
   const recommendation =
     mode !== "SHADOW"
       ? "El modo actual no es SHADOW; los cierres simulados están inactivos."
@@ -252,12 +281,19 @@ export function diagnoseShadowOpenCycles(
     currentBid,
     currentAsk,
     priceSource,
+    priceTimestamp,
+    priceStale,
     totalOpen: openCycles.length,
     eligibleToClose,
     wouldCloseNow,
+    cyclesEligibleForSimulatedClose: wouldCloseNow,
+    executableOpenCyclesCount,
+    waitingSellCyclesCount,
+    previousRangeOpenCyclesCount,
     missingTarget,
     inHodlRecovery,
     requiresReview,
+    reviewRequiredCyclesCount,
     realOrdersAffected: false,
     readOnly: true,
     recommendation,

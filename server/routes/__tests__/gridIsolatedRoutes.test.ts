@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import express, { Express } from "express";
 import http from "http";
 import { getNaturalGridMessage } from "../../services/gridIsolated/gridActivityFormatter";
+import { gridIsolatedEngine } from "../../services/gridIsolated/gridIsolatedEngine";
 
 // Mock dependencies
 vi.mock("../../services/exchanges/RevolutXService", () => ({
@@ -1479,23 +1480,26 @@ describe("Grid Isolated Routes — Endpoints", () => {
 
   // ─── 3C.4-G: Shadow orphan cycle diagnosis endpoint ─────────────────
 
-  it("GET /api/grid-isolated/shadow-orphan-cycles/diagnose responds 200", async () => {
+  it("GET /api/grid-isolated/shadow-orphan-cycles/diagnose (deprecated alias) responds 200", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/shadow-orphan-cycles/diagnose");
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("readOnly", true);
     expect(res.body).toHaveProperty("realOrdersAffected", false);
-    expect(res.body).toHaveProperty("cyclesOrphanCount");
+    expect(res.body).toHaveProperty("deprecated", true);
+    expect(res.body).toHaveProperty("replacement", "/api/grid-isolated/shadow-open-cycles/diagnose");
     expect(res.body).toHaveProperty("cyclesEligibleForSimulatedClose");
     expect(res.body).toHaveProperty("recommendation");
   });
 
-  it("shadow-orphan-cycles/diagnose returns mode and activeRangeVersionId", async () => {
+  it("shadow-orphan-cycles/diagnose alias returns same functional fields as canonical endpoint", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/shadow-orphan-cycles/diagnose");
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("mode");
     expect(res.body).toHaveProperty("activeRangeVersionId");
-    expect(typeof res.body.cyclesOrphanCount).toBe("number");
     expect(typeof res.body.cyclesEligibleForSimulatedClose).toBe("number");
+    expect(typeof res.body.totalOpen).toBe("number");
+    expect(res.body.deprecated).toBe(true);
+    expect(res.body.replacement).toBe("/api/grid-isolated/shadow-open-cycles/diagnose");
   });
 
   it("shadow-orphan-cycles/diagnose is read-only (does not modify status)", async () => {
@@ -1506,5 +1510,196 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(after.body.mode).toBe(before.body.mode);
     expect(after.body.isActive).toBe(before.body.isActive);
     expect(after.body.isRunning).toBe(before.body.isRunning);
+  });
+
+  // ─── 3C.4-I-REV-B: shadow-open-cycles/diagnose endpoint ─────────────
+
+  function setupOpenCyclesDiagnose(opts: { mode?: string; isActive?: boolean; cycleStatus?: any; targetSet?: boolean; previousRange?: boolean } = {}) {
+    const engine = gridIsolatedEngine as any;
+    engine.config = {
+      id: 1,
+      pair: "BTC/USD",
+      mode: opts.mode ?? "SHADOW",
+      isActive: opts.isActive ?? true,
+      executionPolicy: "MAKER_ONLY",
+    } as any;
+    engine.activeRangeVersion = {
+      id: "rv1",
+      pair: "BTC/USD",
+      versionNumber: 1,
+      status: "active",
+      createdAt: new Date(),
+      activatedAt: new Date(),
+      closedAt: null,
+    } as any;
+    engine.levels = [{
+      id: "s1",
+      rangeVersionId: "rv1",
+      levelIndex: 1,
+      side: "SELL",
+      price: 61000,
+      quantity: 0.001,
+      status: "planned",
+      clientOrderId: "sell-client-1",
+      exchangeOrderId: null,
+      filledPrice: null,
+      filledQuantity: null,
+      filledAt: null,
+      createdAt: new Date(),
+      placedAt: null,
+      cancelledAt: null,
+    }] as any[];
+    engine.cycles = [{
+      id: "c1",
+      rangeVersionId: opts.previousRange ? "rv2" : "rv1",
+      cycleNumber: 1,
+      pair: "BTC/USD",
+      status: opts.cycleStatus ?? "buy_filled",
+      buyLevelId: "b1",
+      sellLevelId: null,
+      targetSellLevelId: opts.targetSet !== false ? "s1" : null,
+      buyPrice: 60000,
+      sellPrice: null,
+      targetSellPrice: opts.targetSet !== false ? 61000 : null,
+      targetSellQuantity: opts.targetSet !== false ? 0.001 : null,
+      quantity: 0.001,
+      grossPnlUsd: 0,
+      feeTotalUsd: 0,
+      taxReserveUsd: 0,
+      netPnlUsd: 0,
+      netPnlPct: 0,
+      buyClientOrderId: "buy-client-1",
+      sellClientOrderId: null,
+      buyFilledAt: new Date(Date.now() - 60_000),
+      sellFilledAt: null,
+      holdTimeMinutes: 0,
+      createdAt: new Date(),
+      completedAt: null,
+    }] as any[];
+    engine.lastShadowExecutionPrice = null;
+  }
+
+  function resetDiagnoseEngine() {
+    const engine = gridIsolatedEngine as any;
+    engine.config = null;
+    engine.activeRangeVersion = null;
+    engine.cycles = [];
+    engine.levels = [];
+  }
+
+  describe("GET /api/grid-isolated/shadow-open-cycles/diagnose", () => {
+    beforeEach(() => { setupOpenCyclesDiagnose(); });
+    afterEach(() => { resetDiagnoseEngine(); });
+
+    it("responds 200 with readOnly=true and realOrdersAffected=false", async () => {
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(res.body.readOnly).toBe(true);
+      expect(res.body.realOrdersAffected).toBe(false);
+      expect(res.body.mode).toBe("SHADOW");
+    });
+
+    it("returns price context fields", async () => {
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(typeof res.body.currentBid).toBe("number");
+      expect(typeof res.body.priceSource).toBe("string");
+      expect(typeof res.body.priceTimestamp).toBe("string");
+      expect(typeof res.body.priceStale).toBe("boolean");
+      expect(res.body.priceStale).toBe(false);
+    });
+
+    it("returns counts for one executable open cycle", async () => {
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(res.body.totalOpen).toBe(1);
+      expect(res.body.executableOpenCyclesCount).toBe(1);
+      expect(res.body.waitingSellCyclesCount).toBe(1);
+      expect(res.body.previousRangeOpenCyclesCount).toBe(0);
+      expect(res.body.reviewRequiredCyclesCount).toBe(0);
+      expect(res.body.cyclesEligibleForSimulatedClose).toBe(1);
+      expect(res.body.wouldCloseNow).toBe(1);
+      expect(res.body.eligibleToClose).toBe(1);
+    });
+
+    it("returns per-cycle diagnostic details", async () => {
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(res.body.cycles).toHaveLength(1);
+      const cycle = res.body.cycles[0];
+      expect(cycle.targetSellPrice).toBe(61000);
+      expect(cycle.rangeRelation).toBe("active");
+      expect(cycle.lifecycleState).toBe("buy_filled");
+      expect(cycle.requiresReview).toBe(false);
+    });
+
+    it("marks HODL_RECOVERY as requiresReview and excludes it from close", async () => {
+      setupOpenCyclesDiagnose({ cycleStatus: "hodl_recovery" });
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(res.body.inHodlRecovery).toBe(1);
+      expect(res.body.cyclesEligibleForSimulatedClose).toBe(0);
+      expect(res.body.reviewRequiredCyclesCount).toBe(1);
+      expect(res.body.cycles[0].requiresReview).toBe(true);
+    });
+
+    it("detects missing target as requiresReview", async () => {
+      // El ciclo compró a un precio superior a cualquier SELL del rango activo,
+      // por lo que resolveTargetSellForCycle no encuentra objetivo.
+      setupOpenCyclesDiagnose({ targetSet: false, previousRange: true });
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(res.body.missingTarget).toBe(1);
+      expect(res.body.executableOpenCyclesCount).toBe(0);
+      expect(res.body.reviewRequiredCyclesCount).toBe(1);
+    });
+
+    it("classifies previous-range open cycles with rangeRelation=previous", async () => {
+      setupOpenCyclesDiagnose({ previousRange: true });
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(res.body.previousRangeOpenCyclesCount).toBe(1);
+      expect(res.body.cycles[0].rangeRelation).toBe("previous");
+    });
+
+    it("is read-only: does not persist target, update cycles/levels or place orders", async () => {
+      setupOpenCyclesDiagnose({ targetSet: false });
+      const engine = gridIsolatedEngine as any;
+      const beforeTarget = engine.cycles[0].targetSellLevelId;
+      const beforeLevelStatus = engine.levels[0].status;
+      const beforeCycleStatus = engine.cycles[0].status;
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(engine.cycles[0].targetSellLevelId).toBe(beforeTarget);
+      expect(engine.cycles[0].status).toBe(beforeCycleStatus);
+      expect(engine.levels[0].status).toBe(beforeLevelStatus);
+    });
+  });
+
+  describe("GET /api/grid-isolated/shadow-orphan-cycles/diagnose alias", () => {
+    beforeEach(() => { setupOpenCyclesDiagnose(); });
+    afterEach(() => { resetDiagnoseEngine(); });
+
+    it("responds 200 with deprecated=true and replacement", async () => {
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-orphan-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(res.body.deprecated).toBe(true);
+      expect(res.body.replacement).toBe("/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.body.readOnly).toBe(true);
+      expect(res.body.realOrdersAffected).toBe(false);
+      expect(res.body.mode).toBe("SHADOW");
+    });
+
+    it("returns same functional content as the canonical endpoint", async () => {
+      const canonical = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      const alias = await simulateGet(app, "/api/grid-isolated/shadow-orphan-cycles/diagnose");
+      expect(canonical.status).toBe(200);
+      expect(alias.status).toBe(200);
+      const stripTimestamp = (body: any) => {
+        const { deprecated: _d, replacement: _r, priceTimestamp: _pt, ...rest } = body;
+        return rest;
+      };
+      expect(stripTimestamp(alias.body)).toEqual(stripTimestamp(canonical.body));
+    });
   });
 });

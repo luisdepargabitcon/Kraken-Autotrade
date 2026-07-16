@@ -5,6 +5,66 @@
 
 ---
 
+## 2026-07-16 — GRID FASE 3C.4-I-REV-B: Cierre técnico pre-deploy
+
+### Resumen
+Revisión final y ampliación de cobertura de tests antes del deploy del cierre atómico SHADOW y diagnóstico de ciclos abiertos. Se corrige la migración 071, se añade la 072 para defaults MAKER_ONLY, se elimina el endpoint mutador `POST /recover-open-cycles` y se consolidan tests de cierre, endpoints y arranque determinista.
+
+### Problema
+- Necesidad de garantizar que `execution_policy` sea `MAKER_ONLY` y `taker_fallback_enabled` sea `FALSE` por defecto en PostgreSQL.
+- El endpoint `POST /recover-open-cycles` era un punto de mutación manual no deseado.
+- Faltaban tests del endpoint `/shadow-open-cycles/diagnose` y su alias deprecado.
+- Faltaban tests del arranque determinista (`gridCycleStartupService`).
+- `processOpenCyclesShadow` carecía de cobertura de PnL exacto, concurrencia y rollback.
+
+### Solución
+1. **Migración 071 corregida**: `db/migrations/071_grid_cycle_target_sell.sql` ahora es idempotente y añade `target_sell_level_id`, `target_sell_price`, `target_sell_quantity` y el índice único parcial con guardas `IF NOT EXISTS`.
+2. **Migración 072**: `db/migrations/072_grid_maker_only_defaults.sql` establece defaults en `grid_isolated_configs` para `execution_policy = 'MAKER_ONLY'` y `taker_fallback_enabled = FALSE` sin tocar filas existentes.
+3. **Registro de migraciones**: `server/routes.ts` (AutoMigrationRunner) y `script/migrate.ts` (trackedMigrations) incluyen `072_grid_maker_only_defaults.sql`.
+4. **Rutas `server/routes/gridIsolated.routes.ts`**:
+   - Se elimina `POST /api/grid-isolated/recover-open-cycles` y su documentación.
+   - `GET /api/grid-isolated/shadow-open-cycles/diagnose` es el endpoint canónico.
+   - `GET /api/grid-isolated/shadow-orphan-cycles/diagnose` sigue funcionando como alias deprecado con `deprecated: true` y `replacement`.
+5. **Diagnóstico `server/services/gridIsolated/gridShadowOpenCycleDiagnosis.ts`**:
+   - Añade `priceTimestamp`, `priceStale`, `cyclesEligibleForSimulatedClose`, `executableOpenCyclesCount`, `waitingSellCyclesCount`, `previousRangeOpenCyclesCount`, `reviewRequiredCyclesCount`.
+   - Añade `lifecycleState` y `rangeRelation` por ciclo para auditabilidad.
+6. **Tests**:
+   - `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`: 29 tests de `processOpenCyclesShadow` cubriendo modo, precio, estados, validación/atomicidad, resolución de target, concurrencia, PnL exacto y roles.
+   - `server/services/gridIsolated/__tests__/gridCycleStartupService.test.ts`: tests de migración, fallos de DB/config/recovery, concurrencia de arranque y `isGridStartupCompleted`.
+   - `server/routes/__tests__/gridIsolatedRoutes.test.ts`: tests del endpoint `/shadow-open-cycles/diagnose` y su alias, verificando campos de respuesta, read-only y no mutación.
+
+### Archivos nuevos
+- `db/migrations/072_grid_maker_only_defaults.sql`
+
+### Archivos modificados
+- `db/migrations/071_grid_cycle_target_sell.sql` (idempotencia y guardas `IF NOT EXISTS`)
+- `server/routes/gridIsolated.routes.ts` (eliminado `recover-open-cycles`, alias de diagnose)
+- `server/routes.ts` (registro migración 072)
+- `script/migrate.ts` (registro migración 072)
+- `server/services/gridIsolated/gridShadowOpenCycleDiagnosis.ts` (campos adicionales)
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `server/services/gridIsolated/__tests__/gridCycleStartupService.test.ts`
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅ 0 errores TS
+- `npx vitest run server/services/gridIsolated server/routes/__tests__/gridIsolatedRoutes.test.ts`: ✅ 202 tests
+- `npx vitest run server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`: ✅ 29 tests
+- `npx vitest run server/services/gridIsolated/__tests__/gridCycleStartupService.test.ts`: ✅ 13 tests
+- `npm run build`: ✅
+- Check de idempotencia de migraciones: ✅ (tras ignorar líneas de comentario; 071 y 072 son idempotentes)
+- Full `npx vitest run`: 18 test files fallan por tests no relacionados (snapshots de Telegram `templates.test.ts`, helpers de IDCA `idcaMarketContextHelpers.test.ts`, estrategias, FISCO, etc.). Los cambios de REV-B no dependen de esos módulos.
+
+### Restricciones respetadas
+- No se envían órdenes reales.
+- No se activa modo REAL.
+- No se modifica ningún ciclo real.
+- No se despliega ni accede al VPS.
+- Commit limitado a grid, migraciones 071/072, tests, registro de migraciones y BITACORA.
+
+---
+
 ## 2026-07-16 — GRID FASE 3C.4-I: Persistent Grid Cycle Fix — target SELL, cierre atómico SHADOW y autostart diferido
 
 ### Resumen

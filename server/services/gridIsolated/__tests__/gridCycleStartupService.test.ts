@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   initializeGridShadowAtStartup,
   resetGridStartupState,
+  isGridStartupCompleted,
   type GridStartupEngineLike,
 } from "../gridCycleStartupService";
 import type { GridIsolatedConfig } from "../gridIsolatedTypes";
+import { db } from "../../../db";
 
 vi.mock("../../../db", () => ({
   db: {
@@ -156,5 +158,105 @@ describe("gridCycleStartupService", () => {
     const result = await initializeGridShadowAtStartup(engine);
     expect(result.started).toBe(true);
     expect(result.recovery).toEqual({ resolved: 2, reviewRequired: 1, errors: 0 });
+  });
+
+  it("runs provided migration callback before loading config", async () => {
+    const runMigrations = vi.fn().mockResolvedValue(undefined);
+    const engine = makeEngine();
+    const result = await initializeGridShadowAtStartup(engine, { runMigrations });
+    expect(runMigrations).toHaveBeenCalledTimes(1);
+    expect(engine.loadConfig).toHaveBeenCalledTimes(1);
+    expect(result.started).toBe(true);
+  });
+
+  it("does not start if migration callback fails", async () => {
+    const runMigrations = vi.fn().mockRejectedValue(new Error("Migration failed"));
+    const engine = makeEngine();
+    const result = await initializeGridShadowAtStartup(engine, { runMigrations });
+    expect(result.started).toBe(false);
+    expect(result.error).toContain("Migration failed");
+    expect(engine.loadConfig).not.toHaveBeenCalled();
+    expect(engine.start).not.toHaveBeenCalled();
+  });
+
+  it("does not start if DB connection check fails", async () => {
+    vi.mocked(db.execute).mockRejectedValueOnce(new Error("DB down"));
+    const engine = makeEngine();
+    const result = await initializeGridShadowAtStartup(engine);
+    expect(result.started).toBe(false);
+    expect(result.error).toContain("Database connection not available");
+    expect(engine.loadConfig).not.toHaveBeenCalled();
+    expect(engine.start).not.toHaveBeenCalled();
+  });
+
+  it("does not start if config load fails", async () => {
+    const engine = makeEngine({
+      loadConfig: vi.fn().mockRejectedValue(new Error("Config corrupt")),
+    });
+    const result = await initializeGridShadowAtStartup(engine);
+    expect(result.started).toBe(false);
+    expect(result.error).toContain("Config corrupt");
+    expect(engine.resolveAndPersistOpenCycleTargets).not.toHaveBeenCalled();
+    expect(engine.start).not.toHaveBeenCalled();
+  });
+
+  it("does not start if recovery fails", async () => {
+    const engine = makeEngine({
+      resolveAndPersistOpenCycleTargets: vi.fn().mockRejectedValue(new Error("Recovery error")),
+    });
+    const result = await initializeGridShadowAtStartup(engine);
+    expect(result.started).toBe(false);
+    expect(result.error).toContain("Recovery error");
+    expect(engine.start).not.toHaveBeenCalled();
+  });
+
+  it("reports error if scheduler does not report running after start", async () => {
+    const engine = makeEngine({
+      start: vi.fn(),
+      getRunning: vi.fn().mockReturnValue(false),
+    });
+    const result = await initializeGridShadowAtStartup(engine);
+    expect(result.started).toBe(false);
+    expect(result.error).toContain("Engine scheduler did not start");
+    expect(engine.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks concurrent startup calls", async () => {
+    const runMigrations = vi.fn().mockImplementation(() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
+    const engine = makeEngine();
+    const first = initializeGridShadowAtStartup(engine, { runMigrations });
+    // Defer to the event loop so the first call reaches the in-progress guard.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = await initializeGridShadowAtStartup(engine, { runMigrations });
+    expect(second.started).toBe(false);
+    expect(second.reason).toContain("Startup already in progress");
+
+    const result1 = await first;
+    expect(result1.started).toBe(true);
+
+    // Third call after completion is a no-op due to startupCompleted guard
+    const result3 = await initializeGridShadowAtStartup(engine);
+    expect(result3.started).toBe(true);
+    expect(result3.reason).toContain("Startup already completed");
+    expect(engine.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("remembers previous startup failure until reset", async () => {
+    const engine = makeEngine({
+      loadConfig: vi.fn().mockRejectedValue(new Error("first attempt failed")),
+    });
+    const result1 = await initializeGridShadowAtStartup(engine);
+    expect(result1.started).toBe(false);
+    const result2 = await initializeGridShadowAtStartup(engine);
+    expect(result2.started).toBe(false);
+    expect(result2.reason).toContain("Previous startup failed");
+    expect(engine.loadConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes startup completion via isGridStartupCompleted", async () => {
+    expect(isGridStartupCompleted()).toBe(false);
+    const engine = makeEngine();
+    await initializeGridShadowAtStartup(engine);
+    expect(isGridStartupCompleted()).toBe(true);
   });
 });

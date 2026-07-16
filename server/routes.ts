@@ -56,6 +56,7 @@ const MIGRATIONS = [
   { id: '069_grid_compact_range_control', filePath: path.join(migrationsDir, '069_grid_compact_range_control.sql') },
   { id: '070_grid_adaptive_smart_range', filePath: path.join(migrationsDir, '070_grid_adaptive_smart_range.sql') },
   { id: '071_grid_cycle_target_sell', filePath: path.join(migrationsDir, '071_grid_cycle_target_sell.sql') },
+  { id: '072_grid_maker_only_defaults', filePath: path.join(migrationsDir, '072_grid_maker_only_defaults.sql') },
 ];
 
 

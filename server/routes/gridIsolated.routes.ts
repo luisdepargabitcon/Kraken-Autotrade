@@ -17,7 +17,6 @@
  *   POST /api/grid-isolated/reconcile           — Run reconciliation
  *   POST /api/grid-isolated/backtest            — Run backtest
  *   POST /api/grid-isolated/shadow-validate     — Run SHADOW validation tick (safe, no real orders)
- *   POST /api/grid-isolated/recover-open-cycles — Resolve and persist target SELL associations (no closes)
  *   POST /api/grid-isolated/activate            — Activate/deactivate Grid motor (isActive toggle)
  *   POST /api/grid-isolated/professional-generator/validate — Read-only validation of professional generator
  *   POST /api/grid-isolated/shadow-cleanup/preview — Dry-run preview of SHADOW cleanup (no DB modifications)
@@ -2052,30 +2051,6 @@ export function registerGridIsolatedRoutes(app: Express): void {
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: String(error) });
-    }
-  });
-
-  /**
-   * POST /api/grid-isolated/recover-open-cycles
-   * Resolves and persists target SELL associations for open cycles.
-   * Does NOT close cycles. Does NOT place real orders.
-   */
-  app.post("/api/grid-isolated/recover-open-cycles", async (_req: Request, res: Response) => {
-    try {
-      const engine = gridIsolatedEngine;
-      if (!engine) {
-        return res.status(503).json({ error: "Grid engine not available" });
-      }
-
-      // Ensure config is loaded without auto-starting the scheduler
-      await engine.loadConfig();
-      const result = await engine.resolveAndPersistOpenCycleTargets();
-      res.json({ success: true, ...result });
-    } catch (error) {
-      res.status(500).json({
-        error: "Error al resolver ciclos abiertos",
-        errorReference: "GRID_RECOVER_OPEN_CYCLES_ERROR",
-      });
     }
   });
 
