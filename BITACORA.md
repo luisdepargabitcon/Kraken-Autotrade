@@ -5695,3 +5695,92 @@ Continuación de la auditoría de la nueva UX del Grid aislado. Se añaden tests
 ### Riesgos
 - La barra de navegación desktop ahora es horizontalmente scrollable si el viewport es estrecho; esto es intencional para evitar romper el layout, pero en pantallas muy pequeñas desktop el usuario debe desplazar para ver los últimos enlaces.
 - `puppeteer-core` añade paquetes de desarrollo; si no se usa con frecuencia, puede eliminarse en una limpieza posterior.
+
+---
+
+## 2026-07-17 — GRID FASE 3C.4-K-REV-B: Cierre limpio pre-push
+
+### Resumen
+Cierre de la revisión pre-push de la refactorización UX del Grid aislado. Se retiran las herramientas temporales de auditoría visual/red, se tipa correctamente `marketContext` como `GridMarketContext | null`, se añaden tests que garantizan que `marketContext` solo es `null` en endpoints de exportación y se validan modo SHADOW único, política maker-only y ausencia de desbordamiento horizontal.
+
+### Problemas detectados y soluciones
+1. **Dependencia temporal `puppeteer-core` y scripts de auditoría**:
+   - Eliminados `scripts/visual-audit-grid.mjs`, `scripts/network-audit-grid.mjs` y `scripts/nav-validation.mjs`.
+   - Eliminado `puppeteer-core` de `package.json` / `package-lock.json`.
+2. **Datos de mercado no reflejaban frescura en `operational.header`**:
+   - Se añade el tipo `GridMarketContext` en `server/services/gridIsolated/gridIsolatedTypes.ts`.
+   - El endpoint `/api/grid-isolated/monitor/audit` rellena `currentBid`, `currentAsk`, `priceSource`, `priceFresh`, `priceAgeMs` y `priceMaxAgeMs`.
+   - El endpoint `/api/grid-isolated/export/json` mantiene `marketContext = null` (sin datos sensibles de mercado).
+3. **Verificación de seguridad del selector de modo**:
+   - Test en `gridUxRender.test.tsx` comprueba que `GridOperationalHeader` no renderiza `REAL_LIMITED` ni `REAL_FULL`.
+4. **Política maker-only**:
+   - `GridSettingsPanel` mantiene ocultos los campos legacy de taker fallback.
+   - Test renderizado SSR confirma que no aparecen `takerFallbackEnabled` ni `maxTakerFallbackPerCycle`.
+
+### Archivos añadidos o modificados
+- `package.json` / `package-lock.json` (elimina `puppeteer-core`)
+- `scripts/visual-audit-grid.mjs` (eliminado)
+- `scripts/network-audit-grid.mjs` (eliminado)
+- `scripts/nav-validation.mjs` (eliminado)
+- `server/services/gridIsolated/gridIsolatedTypes.ts` (tipo `GridMarketContext`)
+- `server/routes/gridIsolated.routes.ts` (tipado `marketContext` y campos operativos)
+- `server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts` (tests marketContext)
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts` (tests export audit y monitor)
+- `client/src/components/grid/__tests__/gridUxRender.test.tsx` (test no REAL_LIMITED/REAL_FULL)
+- `BITACORA.md`
+
+### Tests ejecutados
+- **npm run check (tsc):** ✅ sin errores
+- **npx vitest run server/services/gridIsolated server/routes/__tests__/gridIsolatedRoutes.test.ts client/src/components/grid:** ✅ 253/253
+- **npm run build:** ✅ exitoso
+- **npx vitest run --reporter=json:** 2644 tests, 2603 passed, 12 failed. Fallos ajenos al Grid:
+  - `server/services/telegram/templates.test.ts` (9 fallos)
+  - `server/services/__tests__/idcaMarketContextHelpers.test.ts` (3 fallos)
+
+### Tabla final de componentes eliminados en el refactor UX Grid (29)
+
+| Componente eliminado | Función que cubría | Reemplazo en la nueva UX | Estado |
+|---|---|---|---|
+| `GridActionNoticeCard` | Notificaciones de acciones del grid | `GridNotificationCenter` | Eliminado |
+| `GridActivityLive` | Actividad en vivo | `GridOverviewPanel` | Eliminado |
+| `GridAdvancedConfig` | Configuración avanzada | `GridSettingsPanel` | Eliminado |
+| `GridAjustesPanel` | Panel general de ajustes | `GridSettingsPanel` | Eliminado |
+| `GridAnalyzeNowButton` | Botón de análisis/recomendaciones | `GridOverviewPanel` | Eliminado |
+| `GridBandsPanel.test.ts` | Tests del panel de bandas | Tests de `GridLevelsCompactPanel` / `gridUxRender` | Eliminado |
+| `GridBandsPanel` | Visualización de bandas | `GridLevelsCompactPanel` | Eliminado |
+| `GridBandsRangesPanel` | Rangos y bandas combinados | `GridLevelsCompactPanel` | Eliminado |
+| `GridCarteraDashboard` | Resumen de cartera | `GridOverviewPanel` | Eliminado |
+| `GridConfigConfirmDialog` | Diálogo de confirmación de config | Aplicar/reset en `GridSettingsPanel` | Eliminado |
+| `GridCycleProgressCard` | Tarjeta de progreso de ciclo | `GridOpenCyclesPanel` | Eliminado |
+| `GridCyclesPanel` | Panel de ciclos | `GridOpenCyclesPanel` | Eliminado |
+| `GridEngineStatusPanel` | Estado del motor/ejecución | `GridOperationalHeader` | Eliminado |
+| `GridExecutionPolicyPanel` | Política y modo de ejecución | `GridOperationalHeader` (modo SHADOW único) | Eliminado |
+| `GridHeaderHero` | Cabecera hero con KPIs | `GridOperationalHeader` | Eliminado |
+| `GridHistoryLimitSelector` | Selector de límite de historial | Filtros de `GridLevelsCompactPanel` | Eliminado |
+| `GridIntegrationStatusPanel` | Estado de integraciones | `GridOperationalHeader` | Eliminado |
+| `GridKpiStrip` | Tira de KPIs | `GridOperationalHeader` | Eliminado |
+| `GridLevelsMarketHeader` | Cabecera de mercado en niveles | `GridLevelsCompactPanel` | Eliminado |
+| `GridLevelsPanel` | Panel de niveles | `GridLevelsCompactPanel` | Eliminado |
+| `GridLiveActivityPanel` | Panel de actividad live | `GridOverviewPanel` | Eliminado |
+| `GridMarketContextPanel` | Contexto de mercado detallado | `GridOperationalHeader` (resumen de mercado) | Eliminado |
+| `GridNoActiveRangeBlock` | Bloque "sin rango activo" | `GridOverviewPanel` | Eliminado |
+| `GridOperationalStatusStrip` | Tira de estado operativo | `GridOperationalHeader` | Eliminado |
+| `GridRangeHistoryPanel` | Historial de rangos | `GridLevelsCompactPanel` | Eliminado |
+| `GridRangeIntelligencePanel` | Inteligencia/análisis de rangos | `GridOverviewPanel` | Eliminado |
+| `GridSettingsExplained` | Explicación de ajustes | `GridSettingsPanel` | Eliminado |
+| `GridSummaryPanel` | Resumen general del grid | `GridOverviewPanel` | Eliminado |
+| `GridWalletSummaryPanel` | Resumen de wallet/capital | `GridOverviewPanel` | Eliminado |
+
+### Restricciones respetadas
+- ✅ No push ni deploy en VPS sin autorización
+- ✅ No modificar Telegram/IDCA/FISCO/Risk/Execution
+- ✅ No DB manual ni SQL manual
+- ✅ No activar SHADOW/REAL ni regenerar niveles
+- ✅ No tocar ciclos, targets, SPOT ni FISCO
+
+### Estado
+- Código commit-ready. Eliminación de herramientas temporales y tipado de `marketContext` listos para push.
+- Los 12 fallos del suite completo están aislados en Telegram e IDCA y no afectan al Grid.
+
+### Riesgos
+- Ninguno adicional respecto a la refactorización UX previa; el módulo Grid pasa `tsc`, tests de Grid y build.

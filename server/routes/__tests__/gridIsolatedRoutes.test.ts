@@ -797,6 +797,24 @@ describe("Grid Isolated Routes — Endpoints", () => {
     }
   });
 
+  it("export/json builds view model with null marketContext and does not invent a zero price", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/export/json");
+    expect(res.status).toBe(200);
+    expect(res.body.operational).toBeDefined();
+    expect(res.body.operational.header).toBeDefined();
+    expect(res.body.operational.header.currentPrice).not.toBe(0);
+  });
+
+  it("monitor/audit operational header includes live price and freshness", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.status).toBe(200);
+    expect(res.body.operational).toBeDefined();
+    expect(typeof res.body.operational.header.currentPrice).toBe("number");
+    expect(res.body.operational.header.currentPrice).toBeGreaterThan(0);
+    expect(typeof res.body.operational.header.priceFresh).toBe("boolean");
+    expect(res.body.operational.header.priceSource).toBe("kraken");
+  });
+
   // ─── 3C.2-G: SHADOW cycle separation tests ────────────────────────
 
   it("monitor/audit summary includes activeOpenCyclesCount, globalOpenCyclesCount, orphanOpenCyclesCount", async () => {

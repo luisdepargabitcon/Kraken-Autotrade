@@ -208,4 +208,35 @@ describe("buildGridOperationalViewModel", () => {
     expect(c25!.estimatedNetPnl).not.toBeNull();
     expect(c25!.distanceUsd).toBeGreaterThan(0);
   });
+
+  it("usa marketContext para precio, bid, ask, fuente y frescura", () => {
+    const input = makeInput({
+      marketContext: {
+        currentPrice: 94000,
+        currentBid: 93950,
+        currentAsk: 94050,
+        priceSource: "kraken",
+        priceFresh: true,
+        priceAgeMs: 1200,
+        priceMaxAgeMs: 5000,
+      },
+    });
+    const vm = buildGridOperationalViewModel(input);
+    expect(vm.header.currentPrice).toBe(94000);
+    expect(vm.header.currentBid).toBe(93950);
+    expect(vm.header.currentAsk).toBe(94050);
+    expect(vm.header.priceSource).toBe("kraken");
+    expect(vm.header.priceFresh).toBe(true);
+  });
+
+  it("no inventa precio cero cuando no hay datos de mercado", () => {
+    const input = makeInput({
+      marketContext: null,
+      status: { ...makeInput().status, currentPrice: null, currentBid: null, currentAsk: null, lastPrice: null, priceSource: null, priceFresh: false },
+    });
+    const vm = buildGridOperationalViewModel(input);
+    expect(vm.header.currentPrice).toBeNull();
+    expect(vm.header.currentBid).toBeNull();
+    expect(vm.header.currentAsk).toBeNull();
+  });
 });

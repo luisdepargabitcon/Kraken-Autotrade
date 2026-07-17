@@ -169,6 +169,12 @@ describe("Grid UX render", () => {
     expect(html).toContain("Sin exposición");
   });
 
+  it("GridOperationalHeader does not expose REAL_LIMITED or REAL_FULL mode selectors", () => {
+    const html = renderToString(<GridOperationalHeader operational={headerOperational} />);
+    expect(html).not.toContain("REAL_LIMITED");
+    expect(html).not.toContain("REAL_FULL");
+  });
+
   it("GridOverviewPanel renders state summary and active range", () => {
     const html = renderToString(<GridOverviewPanel operational={overviewOperational} onAnalyze={() => {}} onGoToTab={() => {}} />);
     expect(html).toContain("Rango activo en simulación");

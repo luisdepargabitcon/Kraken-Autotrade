@@ -754,3 +754,38 @@ export interface CapitalReservation {
   releasedAt: Date | null;
   reason: string;
 }
+
+// ─── Market Context (read-only snapshot for UI) ───────────────────────
+
+export interface GridMarketContext {
+  pair: string;
+  currentPrice: number;
+  bid: number | null;
+  ask: number | null;
+  spreadPct: number | null;
+  source: string;
+  updatedAt: string;
+  currentBid?: number | null;
+  currentAsk?: number | null;
+  priceSource?: string | null;
+  priceFresh?: boolean;
+  priceAgeMs?: number | null;
+  priceMaxAgeMs?: number | null;
+  band: {
+    lower: number | null;
+    center: number | null;
+    upper: number | null;
+    widthPct: number | null;
+    status: string;
+  };
+  bandPosition: string;
+  bandPositionPct: number | null;
+  atrPct?: number | null;
+  nearestLevel: {
+    id: string | number;
+    side: string;
+    price: number;
+    distanceUsd: number | null;
+    distancePct: number | null;
+  } | null;
+}

@@ -37,7 +37,7 @@ import { botLogger } from "../services/botLogger";
 import { db } from "../db";
 import { gridIsolatedConfigs, gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
-import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy } from "../services/gridIsolated/gridIsolatedTypes";
+import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy, GridMarketContext } from "../services/gridIsolated/gridIsolatedTypes";
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
 import { getNaturalGridMessage, getNaturalGridTitle } from "../services/gridIsolated/gridActivityFormatter";
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
@@ -1177,7 +1177,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       })();
 
       // Market context for UI (read-only, no trading logic)
-      let marketContext: any = null;
+      let marketContext: GridMarketContext | null = null;
       try {
         const pair = config?.pair || "BTC/USD";
         const ticker = await MarketDataService.getTicker(pair);
@@ -1256,8 +1256,14 @@ export function registerGridIsolatedRoutes(app: Express): void {
             currentPrice,
             bid: ticker.bid || null,
             ask: ticker.ask || null,
+            currentBid: ticker.bid || null,
+            currentAsk: ticker.ask || null,
             spreadPct: ticker.bid && ticker.ask ? ((ticker.ask - ticker.bid) / ticker.bid) * 100 : null,
             source: "kraken",
+            priceSource: "kraken",
+            priceFresh: true,
+            priceAgeMs: 0,
+            priceMaxAgeMs: 5000,
             updatedAt: new Date().toISOString(),
             band: {
               lower: bandLower,
@@ -2002,7 +2008,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const resolvedRange = await resolveActiveRange(events, status, cycles.length);
       const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
       const lastProfessionalValidation = gridIsolatedEngine.getLastProfessionalGeneratorValidation();
-      const marketContext: any = null; // Export endpoint uses minimal view model without live market data
+      const marketContext: GridMarketContext | null = null; // Export endpoint uses minimal view model without live market data
       const gridViewModel = buildGridAuditViewModel(
         mode,
         config,
