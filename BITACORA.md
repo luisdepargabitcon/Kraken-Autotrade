@@ -53,10 +53,38 @@ Se corrige la resolución de SELL objetivo para ciclos abiertos cuyo `rangeVersi
 - `server/routes/__tests__/gridIsolatedRoutes.test.ts`
 - `BITACORA.md`
 
-### Validaciones
+### Validaciones locales
 - `npm run check`: ✅ 0 errores TS
 - `npx vitest run server/services/gridIsolated/__tests__ server/services/__tests__/gridIsolatedEngine.test.ts server/services/__tests__/gridIsolatedEngine.shadowCleanup.test.ts server/services/__tests__/gridIsolatedTypes.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts`: ✅ 10 archivos, 287 tests
 - `npm run build`: ✅
+
+### Deploy staging
+- Commit: `253a4e7` — `fix(grid): resolver targets de ciclos en rangos históricos`
+- Push: `main` avanzó de `bd9334b` a `253a4e7`.
+- Redeploy: `docker compose -f docker-compose.staging.yml up -d --build --no-deps krakenbot-staging-app` ✅
+- Contenedores: `krakenbot-staging-app` recreado (`Up ...`), `krakenbot-staging-db` `Up 2 months (healthy)`.
+
+### Post-deploy validation
+- `GET /api/grid-isolated/status`:
+  - `mode`: `SHADOW`, `isActive`: `true`, `isRunning`: `true`, `realOpenOrdersCount`: `0`, `globalLevelsCount`: `184`, `globalPlannedLevelsCount`: `63`.
+- `GET /api/grid-isolated/monitor/audit`:
+  - `functionalStatus.state`: `active`; `execution.policy`: `MAKER_ONLY`.
+  - `execution.effectiveTakerFallbackEnabled`: `false`; `execution.effectiveTakerFallbackAllowed`: `false`; `execution.effectiveMakerOnly`: `true`; `execution.takerFallbackUsed`: `false`; `takerFallbackPolicyLabel`: "Solo maker — fallback taker desactivado en SHADOW".
+  - `execution.storedExecutionPolicy`: `MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK`; `storedTakerFallbackEnabled`: `true` (legacy no reescrito en DB).
+- `GET /api/grid-isolated/shadow-open-cycles/diagnose`:
+  - `totalOpen`: `2`
+  - `previousRangeOpenCyclesCount`: `2`
+  - `waitingSellCyclesCount`: `2`
+  - `missingTarget`: `0`
+  - `requiresReview`: `0`
+  - `reviewRequiredCyclesCount`: `0`
+  - `executableOpenCyclesCount`: `2`
+  - `cyclesEligibleForSimulatedClose`: `0` (bid actual `63055` < targets `64893.12` / `65692.19`)
+  - Ciclo 25: `targetSellLevelId`=`c6e8cfd1-37fa-4516-88e8-79ebe54a5f43`, `targetSellPrice`=`64893.12322364`, `targetSellQuantity`=`0.00379061`, `rangeRelation`=`previous`, `requiresReview`=`false`.
+  - Ciclo 26: `targetSellLevelId`=`4f300503-ff58-4aba-9d0b-6fc8f7869018`, `targetSellPrice`=`65692.1959141`, `targetSellQuantity`=`0.00383786`, `rangeRelation`=`previous`, `requiresReview`=`false`.
+- `GET /api/grid-isolated/export/json`:
+  - Ciclos 25 y 26 (`status: buy_filled`) presentan `targetSellLevelId`, `targetSellPrice` y `targetSellQuantity` persistidos correctamente.
+- No hay órdenes reales, no hay fallback taker, no hay modo REAL activado. `krakenbot-staging-db` no se tocó.
 
 ### Restricciones respetadas
 - Solo Grid.
