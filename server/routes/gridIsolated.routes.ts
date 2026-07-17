@@ -2002,6 +2002,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const resolvedRange = await resolveActiveRange(events, status, cycles.length);
       const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
       const lastProfessionalValidation = gridIsolatedEngine.getLastProfessionalGeneratorValidation();
+      const marketContext: any = null; // Export endpoint uses minimal view model without live market data
       const gridViewModel = buildGridAuditViewModel(
         mode,
         config,
@@ -2010,7 +2011,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         cycles,
         events,
         resolvedRange,
-        null,
+        marketContext,
         lastShadowValidation,
         lastProfessionalValidation
       );

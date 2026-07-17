@@ -5,6 +5,126 @@
 
 ---
 
+## 2026-07-17 — GRID FASE UX 3C.4-K: Refactor de la interfaz operativa a 4 pestañas y fuente única de verdad
+
+### Resumen
+Se implementa la nueva experiencia operativa del Grid aislado: una cabecera compacta, 4 pestañas (Resumen, Ciclos, Niveles, Ajustes), un centro de avisos/diagnóstico inferior desplegable y un único `operational` view model que clasifica y traduce todo el estado del motor para la UI. Se eliminan los componentes legacy duplicados del Grid y se añaden tests unitarios que validan el tratamiento de los ciclos 25 y 26 y la política MAKER_ONLY en SHADOW.
+
+### Problema
+- `GridIsolated.tsx` mantenía 7 pestañas y decenas de componentes antiguos (`GridSummaryPanel`, `GridHeaderHero`, `GridKpiStrip`, `GridLevelsPanel`, `GridCyclesPanel`, `GridAjustesPanel`, `GridBandsPanel`, etc.) con datos repetidos, textos contradictorios y exposición técnica al usuario.
+- La UI consultaba `auditData`, `status`, `levels`, `cycles` por separado; no existía una fuente única de verdad para la nueva experiencia operativa.
+- Ciclos de rangos anteriores (como 25 y 26) corrían riesgo de mostrarse como "huérfanos" o históricos inactivos.
+- No existían tests del view model operacional.
+
+### Solución
+1. **View model operativo único**:
+   - Nuevo `server/services/gridIsolated/buildGridOperationalViewModel.ts` (función pura).
+   - Genera `header`, `overview`, `openCycles/closedCycles/cancelledCycles`, `currentRange`, `levels` (vigentes/objetivo/histórico), `capital`, `notifications` (agrupadas y deduplicadas por severidad), `execution` y `settings`.
+   - Marca los ciclos de rangos anteriores como `rangeRelation = "previous"` y los niveles SELL objetivo como `targetOfOpenCycle`, sin etiquetarlos como huérfanos.
+   - Normaliza la ejecución: en SHADOW `policy` se fuerza a `MAKER_ONLY` y `takerFallbackEnabled/Allowed` a `false`.
+
+2. **Integración en auditoría**:
+   - `buildGridAuditViewModel.ts` ahora incluye `operational: GridOperationalViewModel`.
+   - `server/routes/gridIsolated.routes.ts` pasa `marketContext` al view model y corrige el endpoint `/export/json` para usar un `marketContext` mínimo.
+
+3. **Nuevos componentes React**:
+   - `GridOperationalHeader.tsx`: cabecera compacta con modo, estado, precio, PnL, ciclos y ejecución.
+   - `GridOverviewPanel.tsx`: pestaña Resumen con estado, operaciones abiertas, rango, capital y recomendación principal.
+   - `GridOpenCyclesPanel.tsx`: pestaña Ciclos con acordeón, barra visual BUY→SELL, historial colapsable y detalle técnico oculto.
+   - `GridLevelsCompactPanel.tsx`: pestaña Niveles con filtros Vigentes/Ciclos abiertos/Histórico y búsqueda.
+   - `GridSettingsPanel.tsx`: pestaña Ajustes con modo simple/experto, controles por metadatos, revisión de cambios y aplicación.
+   - `GridNotificationCenter.tsx`: centro inferior desplegable de avisos agrupados por severidad.
+
+4. **Refactor de `client/src/pages/GridIsolated.tsx`**:
+   - Pasa de 7 pestañas a 4: Resumen, Ciclos, Niveles, Ajustes.
+   - Consume exclusivamente `auditData.operational`.
+   - Incluye controles operativos compactos (selector de modo, pausa/reanudación, refrescar, analizar SHADOW).
+   - Elimina imports y dependencias de los componentes legacy.
+
+5. **Limpieza de legacy**:
+   - Eliminados 29 archivos de componentes grid obsoletos (ver lista en "Archivos eliminados").
+   - Se conserva `GridMonitorPanel.tsx` porque sigue siendo usado por `pages/Monitor.tsx`.
+
+6. **Tests**:
+   - Nuevo `server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts` con 8 tests que cubren cabecera, política SHADOW, ciclos 25/26, agrupación de notificaciones y ajustes simples.
+
+### Archivos nuevos
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts`
+- `client/src/components/grid/GridOperationalHeader.tsx`
+- `client/src/components/grid/GridOverviewPanel.tsx` (reescrito)
+- `client/src/components/grid/GridOpenCyclesPanel.tsx`
+- `client/src/components/grid/GridLevelsCompactPanel.tsx`
+- `client/src/components/grid/GridSettingsPanel.tsx`
+- `client/src/components/grid/GridNotificationCenter.tsx`
+
+### Archivos modificados
+- `server/services/gridIsolated/buildGridAuditViewModel.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `client/src/pages/GridIsolated.tsx` (reescrito)
+
+### Archivos eliminados (legacy Grid UX)
+- `client/src/components/grid/GridActionNoticeCard.tsx`
+- `client/src/components/grid/GridActivityLive.tsx`
+- `client/src/components/grid/GridAdvancedConfig.tsx`
+- `client/src/components/grid/GridAjustesPanel.tsx`
+- `client/src/components/grid/GridAnalyzeNowButton.tsx`
+- `client/src/components/grid/GridBandsPanel.test.ts`
+- `client/src/components/grid/GridBandsPanel.tsx`
+- `client/src/components/grid/GridBandsRangesPanel.tsx`
+- `client/src/components/grid/GridCarteraDashboard.tsx`
+- `client/src/components/grid/GridConfigConfirmDialog.tsx`
+- `client/src/components/grid/GridCycleProgressCard.tsx`
+- `client/src/components/grid/GridCyclesPanel.tsx`
+- `client/src/components/grid/GridEngineStatusPanel.tsx`
+- `client/src/components/grid/GridExecutionPolicyPanel.tsx`
+- `client/src/components/grid/GridHeaderHero.tsx`
+- `client/src/components/grid/GridHistoryLimitSelector.tsx`
+- `client/src/components/grid/GridIntegrationStatusPanel.tsx`
+- `client/src/components/grid/GridKpiStrip.tsx`
+- `client/src/components/grid/GridLevelsMarketHeader.tsx`
+- `client/src/components/grid/GridLevelsPanel.tsx`
+- `client/src/components/grid/GridLiveActivityPanel.tsx`
+- `client/src/components/grid/GridMarketContextPanel.tsx`
+- `client/src/components/grid/GridNoActiveRangeBlock.tsx`
+- `client/src/components/grid/GridOperationalStatusStrip.tsx`
+- `client/src/components/grid/GridRangeHistoryPanel.tsx`
+- `client/src/components/grid/GridRangeIntelligencePanel.tsx`
+- `client/src/components/grid/GridSettingsExplained.tsx`
+- `client/src/components/grid/GridSummaryPanel.tsx`
+- `client/src/components/grid/GridWalletSummaryPanel.tsx`
+
+### Validación local
+- `npm run check`: ✅ 0 errores TS
+- `npx vitest run server/services/gridIsolated`: ✅ 7/7 archivos, 103 tests
+- `npm run build`: ✅ (cliente + servidor)
+- `npx vitest run` (completo): ⚠️ fallan 12 tests en `server/services/telegram/templates.test.ts` por snapshots de Telegram desactualizados; son ajenos a esta refactorización del Grid.
+
+### Validación manual con fixture
+Se usó el fixture del test `buildGridOperationalViewModel.test.ts`:
+- `range-active-v1` como rango vigente.
+- `range-old-v0` como rango anterior con los ciclos 25 y 26 apuntando a sus `targetSellLevelId` (`c6e8cfd1-37fa-4516-88e8-79ebe54a5f43` y `4f300503-ff58-4aba-9d0b-6fc8f7869018`).
+- Ciclo 27 perteneciente al rango vigente.
+- Precio de mercado 94 000 USD.
+
+Resultado:
+- `operational.openCycles` devuelve 3 ciclos.
+- Ciclos 25 y 26 tienen `rangeRelation = "previous"`, `statusLabel = "Abierto"`, `rangeLabel = "Rango anterior (gestión activa)"` y no contienen "huérfano" ni "histórico" como sinónimo de inactivo.
+- Los niveles SELL objetivo de 25 y 26 aparecen en `levels.openCycleTargetLevels` con `targetOfOpenCycle = true` y `rangeRelation = "previous"`.
+- El ciclo 27 es `rangeRelation = "current"`.
+- En modo `SHADOW`, `execution.policy = "MAKER_ONLY"`, `takerFallbackEnabled = false` y `takerFallbackAllowed = false`.
+- Las notificaciones se agrupan por severidad y suman los duplicados (`GRID_PRICE_STALE` ×2 en warning, `GRID_SHADOW_CYCLE_COMPLETED` ×1 en success).
+
+### Pendientes
+- Revisión y aprobación del usuario de este informe antes de cualquier deploy.
+- Tras aprobación, desplegar en staging y validar visualmente en `/grid-isolated`:
+  - Cabecera compacta se ve bien en 360 px y 390 px de ancho.
+  - 4 pestañas caben en una fila sin scroll horizontal.
+  - Ciclos 25 y 26 muestran "Rango anterior (gestión activa)" y barra de progreso BUY→SELL.
+  - Centro de avisos se despliega y agrupa por severidad.
+
+---
+
 ## 2026-07-17 — GRID FASE 3C.4-J-REV1: Corrección del resolver de rangos históricos y redeploy staging
 
 ### Resumen

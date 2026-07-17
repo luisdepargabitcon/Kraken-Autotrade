@@ -14,6 +14,10 @@
 
 import { buildGridConfigRecommendations } from "@shared/gridConfigAdvisor";
 import { evaluateActiveRangeLifecycle } from "./gridRangeLifecycle";
+import {
+  buildGridOperationalViewModel,
+  type GridOperationalViewModel,
+} from "./buildGridOperationalViewModel";
 
 export interface GridDiagnosticBand {
   exists: boolean;
@@ -44,6 +48,7 @@ export interface GridAuditViewModel {
   latestGridDiagnostic: GridLatestDiagnostic;
   recommendations: any[];
   diagnosticBand: GridDiagnosticBand;
+  operational: GridOperationalViewModel;
 }
 
 export interface GridOperationalState {
@@ -856,6 +861,18 @@ export function buildGridAuditViewModel(
     latestGridDiagnostic
   );
 
+  const operational = buildGridOperationalViewModel({
+    mode,
+    config,
+    status,
+    levels,
+    cycles,
+    events,
+    marketContext,
+    currentOperationalState,
+    recommendations,
+  });
+
   return {
     currentOperationalState,
     activeRange,
@@ -863,5 +880,6 @@ export function buildGridAuditViewModel(
     latestGridDiagnostic,
     recommendations,
     diagnosticBand,
+    operational,
   };
 }
