@@ -12,8 +12,12 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./client/src"),
     },
   },
+  esbuild: {
+    jsx: "automatic",
+    jsxImportSource: "react",
+  },
   test: {
-    include: ["server/**/*.test.ts", "client/**/*.test.ts"],
+    include: ["server/**/*.test.ts", "client/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["node_modules", "dist", "build"],
     environment: "node",
     setupFiles: ["./vitest.setup.ts"],

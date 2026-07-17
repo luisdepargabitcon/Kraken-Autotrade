@@ -10,3 +10,6 @@ FUENTES_BOT.md
 deploy_staging.log
 *_staging.log
 *.deploy.log
+visual-audit/
+vitest-report*.json
+vitest-grid-ux.log

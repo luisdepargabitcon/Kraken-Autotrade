@@ -43,8 +43,8 @@ export function Nav() {
 
   return (
     <>
-      <nav className="h-14 md:h-16 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-50 px-4 md:px-6 flex items-center justify-between">
-        <div className="flex items-center gap-4 md:gap-8">
+      <nav className="h-14 md:h-16 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-50 px-4 md:px-6 flex items-center justify-between overflow-hidden">
+        <div className="flex items-center gap-4 md:gap-8 min-w-0">
           <Button 
             variant="ghost" 
             size="icon" 
@@ -64,7 +64,7 @@ export function Nav() {
             </span>
           </div>
 
-          <div className="hidden md:flex items-center gap-0.5">
+          <div className="hidden md:flex items-center gap-0.5 overflow-x-auto max-w-full min-w-0 scrollbar-hide">
             {navItems.map((item, idx) => {
               if (isSeparator(item)) {
                 return (

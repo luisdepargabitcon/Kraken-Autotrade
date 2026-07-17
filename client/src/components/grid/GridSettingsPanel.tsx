@@ -46,6 +46,14 @@ function deepClone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v ?? {}));
 }
 
+function prettifyLabel(key: string): string {
+  return key
+    .replace(/([A-Z])/g, " $1")
+    .replace(/_/g, " ")
+    .replace(/^./, (s) => s.toUpperCase())
+    .trim();
+}
+
 const FIELD_META: Record<string, FieldMeta> = {
   gridWalletMaxUsd: {
     label: "Capital máximo del Grid",
@@ -360,6 +368,14 @@ const FIELD_META: Record<string, FieldMeta> = {
     impact: "Evita bucles o condiciones extremas.",
     recommended: "300",
   },
+  // Security: never expose taker fallback or execution policy controls in this UX
+  makerAttemptsBeforeTaker: { label: "Intentos maker", type: "integer", hidden: true, help: "" },
+  takerFallbackEnabled: { label: "Taker fallback", type: "boolean", hidden: true, help: "" },
+  takerFallbackAttemptNumber: { label: "Número de intento taker", type: "integer", hidden: true, help: "" },
+  maxTakerFallbackPerCycle: { label: "Máximos taker fallback por ciclo", type: "integer", hidden: true, help: "" },
+  takerFallbackRequiresNetProfit: { label: "Taker fallback requiere beneficio", type: "boolean", hidden: true, help: "" },
+  takerFallbackAuditRequired: { label: "Taker fallback requiere auditoría", type: "boolean", hidden: true, help: "" },
+  executionPolicy: { label: "Política de ejecución", type: "text", hidden: true, help: "" },
 };
 
 function getFieldMeta(key: string): FieldMeta | undefined {
@@ -368,7 +384,7 @@ function getFieldMeta(key: string): FieldMeta | undefined {
 
 function guessMeta(key: string, value: unknown): FieldMeta {
   const t = typeof value;
-  const base: FieldMeta = { label: key, type: "text", help: "" };
+  const base: FieldMeta = { label: prettifyLabel(key), type: "text", help: "" };
   if (t === "boolean") {
     base.type = "boolean";
     base.help = "Activa o desactiva esta opción.";
@@ -530,7 +546,7 @@ function ExpertMode({
 
 export function GridSettingsPanel({ config, operational, onApply, applyPending }: GridSettingsPanelProps) {
   const [viewMode, setViewMode] = useState<"simple" | "expert">("simple");
-  const [draft, setDraft] = useState<Record<string, any>>({});
+  const [draft, setDraft] = useState<Record<string, any>>(deepClone(config ?? {}));
   const [reviewOpen, setReviewOpen] = useState(false);
 
   useEffect(() => {
@@ -653,7 +669,7 @@ export function GridSettingsPanel({ config, operational, onApply, applyPending }
             <div className="space-y-1">
               {changedFields.map((change) => (
                 <div key={change.key} className="grid grid-cols-3 gap-2 text-xs">
-                  <span className="text-muted-foreground">{FIELD_META[change.key]?.label ?? change.key}</span>
+                  <span className="text-muted-foreground">{FIELD_META[change.key]?.label ?? prettifyLabel(change.key)}</span>
                   <span className="font-mono truncate" title={JSON.stringify(change.oldValue)}>{JSON.stringify(change.oldValue)}</span>
                   <span className="font-mono text-cyan-400 truncate" title={JSON.stringify(change.newValue)}>{JSON.stringify(change.newValue)}</span>
                 </div>
@@ -665,3 +681,5 @@ export function GridSettingsPanel({ config, operational, onApply, applyPending }
     </Card>
   );
 }
+
+export { FIELD_META, prettifyLabel };

@@ -756,7 +756,7 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     takerFallbackAllowed,
     makerOnly,
     takerFallbackLabel: makerOnly
-      ? "Órdenes solo maker — recomendado"
+      ? "Solo maker — fallback taker desactivado"
       : takerFallbackEnabled
         ? "Fallback taker activo"
         : "Fallback taker desactivado",
@@ -777,7 +777,7 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
       { id: "spacing", title: "Separación de niveles", description: "Distancia mínima/máxima entre niveles.", fields: ["gridStepMinPct", "gridStepMaxPct", "gridStepAtrMultiplier", "gridMaxLevelPct", "gridMinLevelUsd"] },
       { id: "protection", title: "Protección Pump/Dump", description: "Bloqueo de compras ante movimientos bruscos.", fields: ["pumpGuardDeviationPct", "pumpGuardVolumeSpikeRatio", "pumpGuardCooldownMinutes", "dumpGuardDeviationPct", "dumpGuardVolumeSpikeRatio", "dumpGuardCooldownMinutes"] },
       { id: "exits", title: "Salidas y HODL", description: "Stop loss y recuperación de posiciones.", fields: ["hodlRecoveryEnabled", "stopLossSoftPct", "stopLossHardPct", "stopLossEmergencyPct", "trailingActivationPct", "trailingStopPct"] },
-      { id: "limits", title: "Límites operativos", description: "Máximos de ciclos y órdenes diarias.", fields: ["maxOpenCycles", "maxDailyOrders", "makerAttemptsBeforeTaker", "takerFallbackEnabled", "takerFallbackAttemptNumber", "maxTakerFallbackPerCycle", "takerFallbackRequiresNetProfit", "takerFallbackAuditRequired"] },
+      { id: "limits", title: "Límites operativos", description: "Máximos de ciclos y órdenes diarias.", fields: ["maxOpenCycles", "maxDailyOrders"] },
       { id: "simulation", title: "Simulación y diagnóstico", description: "Beneficio neto objetivo y parámetros de validación.", fields: ["netProfitTargetPct", "enforceCompactRange", "gridRangeMaxPct", "maxDistanceFromCenterPct", "maxSellDistanceFromNearestBuyPct"] },
     ],
   };

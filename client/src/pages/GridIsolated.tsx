@@ -6,7 +6,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Activity, RefreshCw, FlaskConical } from "lucide-react";
 import { GridOperationalHeader } from "@/components/grid/GridOperationalHeader";
@@ -56,22 +55,6 @@ export default function GridIsolated() {
   const operational = auditData?.operational;
 
   // ─── Mutations ───────────────────────────────────────────
-  const modeMutation = useMutation({
-    mutationFn: async (mode: string) => {
-      const res = await fetch(`${API_BASE}/mode`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["grid-config"] });
-      queryClient.invalidateQueries({ queryKey: ["grid-status"] });
-      queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
-    },
-  });
-
   const activateMutation = useMutation({
     mutationFn: async (active: boolean) => {
       const res = await fetch(`${API_BASE}/activate`, {
@@ -149,21 +132,12 @@ export default function GridIsolated() {
           <CardContent className="p-3">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-                <Select
-                  value={mode}
-                  onValueChange={(m) => modeMutation.mutate(m)}
-                  disabled={modeMutation.isPending}
+                <Badge
+                  variant="outline"
+                  className={mode === "SHADOW" ? "text-xs h-7 px-2 bg-cyan-500/10 text-cyan-400 border-cyan-500/30" : "text-xs h-7 px-2"}
                 >
-                  <SelectTrigger className="w-[150px] text-xs h-8">
-                    <SelectValue placeholder="Modo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="OFF">OFF</SelectItem>
-                    <SelectItem value="SHADOW">SHADOW</SelectItem>
-                    <SelectItem value="REAL_LIMITED">REAL_LIMITED</SelectItem>
-                    <SelectItem value="REAL_FULL">REAL_FULL</SelectItem>
-                  </SelectContent>
-                </Select>
+                  Modo: {mode === "SHADOW" ? "SHADOW" : mode}
+                </Badge>
 
                 <div className="flex items-center gap-2 rounded-md border border-border/50 px-3 py-1.5">
                   <Switch
