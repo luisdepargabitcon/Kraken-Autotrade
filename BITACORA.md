@@ -71,8 +71,19 @@ Se completa el rediseño UX del Grid aislado añadiendo una quinta pestaña "Mer
 - `npx vitest run server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts server/services/__tests__/buildGridAuditViewModel.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts client/src/components/grid/__tests__/gridUxRender.test.tsx`: ✅ 167/167 tests
 - `npx vitest run` (completo): ⚠️ fallan 12 tests preexistentes ajenos a esta refactorización: 9 en `server/services/telegram/templates.test.ts` (snapshots desactualizados/etiquetas) y 3 en `server/services/__tests__/idcaMarketContextHelpers.test.ts` (umbrales de `getReferencePriceState` y `getQualityBadgeText`). No afectan la funcionalidad del Grid.
 
-### Pendientes
-- Deploy en staging y validación visual/red post-deploy.
+### Deploy en staging
+- Commit `67a5854` pushed a `origin/main`.
+- `git pull` + `docker compose -f docker-compose.staging.yml up -d --build` ejecutado en `5.250.184.18:/opt/krakenbot-staging`.
+- Imagen `krakenbot-staging-krakenbot-staging-app` reconstruida y contenedor reiniciado correctamente.
+
+### Validación post-deploy
+- `GET /` → HTTP 200 con `index.html`.
+- `GET /grid-isolated` → HTTP 200 (SPA sirve el bundle).
+- `GET /api/grid-isolated/monitor/audit` → HTTP 200, `ok=true`.
+- `operational.header`: `title=GRID AISLADO BTC/USD`, `mode=SHADOW`, `pair=BTC/USD`, `realizedNetPnlUsd=0`, `openEstimatedNetPnlUsd=12.88`, `realOpenOrdersCount=0`.
+- `operational.market.pair=BTC/USD` con `current.price`, `bid`, `ask`, `spreadPct` y `entryRange`.
+- `operational.market.exitObligationRanges` muestra ciclos abiertos de rango anterior esperando precio de venta.
+- Logs del contenedor: sin errores de Grid; el motor sigue ejecutando scans periódicos.
 
 ---
 
