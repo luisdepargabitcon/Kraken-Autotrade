@@ -35,7 +35,7 @@ import { gridBacktestEngine } from "../services/gridIsolated/gridBacktest";
 import { MarketDataService } from "../services/MarketDataService";
 import { botLogger } from "../services/botLogger";
 import { db } from "../db";
-import { gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
+import { gridIsolatedConfigs, gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy } from "../services/gridIsolated/gridIsolatedTypes";
 import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
@@ -1008,6 +1008,10 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const status = await gridIsolatedEngine.getStatusSafe();
       const checks = await gridModeLockService.runUnlockChecks();
 
+      // Stored execution config (may differ from normalized/effective config)
+      const storedConfigRows = await db.select().from(gridIsolatedConfigs).limit(1);
+      const storedConfig = storedConfigRows[0] || null;
+
       // shadowCleanupPreview is read-only/dryRun — safe to call for audit diagnostics
       let cleanupPreview: any = null;
       try {
@@ -1018,6 +1022,21 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const blockingReasons = buildBlockingReasons(checks, config);
       const realModesBlocked = blockingReasons.length > 0;
       const mode = status?.mode ?? config?.mode ?? "OFF";
+
+      const effectivePolicy = mode === "SHADOW"
+        ? "MAKER_ONLY" as ExecutionPolicy
+        : (config?.executionPolicy ?? "MAKER_ONLY" as ExecutionPolicy);
+      const effectivePolicyLabel = executionPolicyLabel(effectivePolicy);
+      const storedExecutionPolicy = storedConfig?.executionPolicy as string | null;
+      const storedTakerFallbackEnabled = storedConfig?.takerFallbackEnabled ?? true;
+      const storedTakerFallbackAllowed = storedTakerFallbackEnabled;
+      const effectiveTakerFallbackEnabled = mode === "SHADOW" ? false : storedTakerFallbackEnabled;
+      const effectiveTakerFallbackAllowed = mode === "SHADOW" ? false : storedTakerFallbackEnabled;
+      const effectiveMakerOnly = mode === "SHADOW" ? true : effectivePolicy === "MAKER_ONLY";
+      const takerFallbackUsed = (snapshot.levels || []).some((l: any) => l?.usedTakerFallback === true);
+      const takerFallbackPolicyLabel = effectiveTakerFallbackEnabled
+        ? "Taker fallback activo: solo emergencia controlada"
+        : "Solo maker — fallback taker desactivado en SHADOW";
 
       const levels = snapshot.levels;
       const cycles = snapshot.cycles;
@@ -1305,7 +1324,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
           mode,
           isActive,
           walletConfigured: walletTotal > 0,
-          executionPolicy: config?.executionPolicy || "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK",
+          executionPolicy: effectivePolicy,
+          storedExecutionPolicy,
         },
         runtime: {
           schedulerRunning: isRunning,
@@ -1443,8 +1463,9 @@ export function registerGridIsolatedRoutes(app: Express): void {
         mode,
         summary: {
           pair: config?.pair || "BTC/USD",
-          executionPolicy: config?.executionPolicy || "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK",
-          executionPolicyLabel: config ? executionPolicyLabel(config.executionPolicy as ExecutionPolicy) : "3 intentos maker + 4º taker controlado",
+          executionPolicy: effectivePolicy,
+          executionPolicyLabel: effectivePolicyLabel,
+          storedExecutionPolicy,
           postOnlySupported: checks.postOnlySupported,
           realModesBlocked,
           canUnlockRealLimited: blockingReasons.length === 0,
@@ -1510,22 +1531,26 @@ export function registerGridIsolatedRoutes(app: Express): void {
           accumulatedPnlUsd: status?.totalNetPnlUsd || 0,
         },
         execution: {
-          policy: config?.executionPolicy || "MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK",
-          policyLabel: config ? executionPolicyLabel(config.executionPolicy as ExecutionPolicy) : "3 intentos maker + 4º taker controlado",
+          policy: effectivePolicy,
+          policyLabel: effectivePolicyLabel,
+          storedExecutionPolicy,
+          storedTakerFallbackEnabled,
+          storedTakerFallbackAllowed,
+          effectiveTakerFallbackEnabled,
+          effectiveTakerFallbackAllowed,
+          effectiveMakerOnly,
+          takerFallbackUsed,
+          takerFallbackEnabled: effectiveTakerFallbackEnabled,
+          takerFallbackAllowed: effectiveTakerFallbackAllowed,
           makerAttemptsBeforeTaker: config?.makerAttemptsBeforeTaker ?? 3,
-          takerFallbackEnabled: config?.takerFallbackEnabled ?? true,
           takerFallbackAttemptNumber: config?.takerFallbackAttemptNumber ?? 4,
           maxTakerFallbackPerCycle: config?.maxTakerFallbackPerCycle ?? 1,
           takerFallbackRequiresNetProfit: config?.takerFallbackRequiresNetProfit ?? true,
           takerFallbackAuditRequired: config?.takerFallbackAuditRequired ?? true,
-          takerFallbackAllowed: config?.takerFallbackEnabled ?? true,
           takerFallbackBlockedReason: null as string | null,
           makerOnlyPreferred: true,
           postOnlySupported: checks.postOnlySupported ?? null,
-          takerFallbackPolicyLabel:
-            (config?.takerFallbackEnabled ?? true)
-              ? "Taker fallback activo: solo emergencia controlada"
-              : "Taker fallback desactivado: maker/post-only estricto",
+          takerFallbackPolicyLabel,
         },
         range: (() => {
           const r = resolvedRange;

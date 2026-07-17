@@ -1,7 +1,71 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-16
+> Última actualización: 2026-07-17
+
+---
+
+## 2026-07-17 — GRID FASE 3C.4-J-REV1: Corrección del resolver de rangos históricos y redeploy staging
+
+### Resumen
+Se corrige la resolución de SELL objetivo para ciclos abiertos cuyo `rangeVersionId` ya no es el rango activo. Ahora se carga de forma determinista la versión de rango histórica exacta a la que pertenece cada ciclo, se aplica en startup recovery, tick de cierre SHADOW y diagnóstico read-only, y se expone correctamente la política efectiva `MAKER_ONLY` en la auditoría.
+
+### Problema
+- `resolveAndPersistOpenCycleTargets()` y `processOpenCyclesShadow()` solo usaban `this.activeRangeVersion`, por lo que ciclos de rangos reemplazados (por ejemplo, ciclos 25 y 26) no resolvían su target SELL.
+- El endpoint `/api/grid-isolated/monitor/audit` mostraba `takerFallbackEnabled`/`takerFallbackAllowed` con valores almacenados legacy en lugar de la política efectiva `MAKER_ONLY` en SHADOW.
+
+### Solución
+1. **Loader determinista de rangos históricos**:
+   - Nuevo `server/services/gridIsolated/gridCycleRangeVersionLoader.ts` con `loadRangeVersionsForCycles(cycles)`.
+   - Extrae los `rangeVersionId` distintos de los ciclos y consulta solo esas filas en `grid_range_versions`.
+   - No usa aproximación por precio, no carga todos los rangos históricos, no depende del rango activo.
+
+2. **Motor `gridIsolatedEngine.ts`**:
+   - Añade `private referencedRangeVersions: GridRangeVersion[]`.
+   - `loadConfig()` carga las versiones referenciadas tras `loadCycles()`.
+   - `resolveAndPersistOpenCycleTargets()` y `processOpenCyclesShadow()` usan `this.referencedRangeVersions`.
+   - `diagnoseShadowOpenCycles()` carga las versiones referenciadas por el snapshot actual y las pasa al diagnóstico.
+
+3. **Diagnóstico `gridShadowOpenCycleDiagnosis.ts`**:
+   - Firma actualizada para aceptar `rangeVersions?: GridRangeVersion[]` y resolver targets históricos sin persistir.
+   - `executableOpenCyclesCount` ahora se calcula a partir de los detalles resueltos.
+   - `previousRangeOpenCyclesCount` devuelve `openCycles.length` cuando no hay rango activo.
+
+4. **Auditoría `gridIsolated.routes.ts`**:
+   - Lee la fila almacenada de `grid_isolated_configs` para separar configuración legacy (`storedExecutionPolicy`, `storedTakerFallbackEnabled/Allowed`).
+   - Expone `execution.policy = MAKER_ONLY`, `effectiveTakerFallbackEnabled=false`, `effectiveTakerFallbackAllowed=false`, `effectiveMakerOnly=true`, `takerFallbackUsed=false` en modo SHADOW.
+   - `takerFallbackPolicyLabel` ahora refleja: "Solo maker — fallback taker desactivado en SHADOW".
+
+5. **Tests**:
+   - `gridCycleTargetResolver.test.ts`: resolución desde rango histórico, ciclos A/B con IDs exactos, rechazo de SELL de otro rango, inexistencia de rango, no selección por proximidad de precio.
+   - `gridOpenCycleShadowClose.test.ts`: cierre con rango histórico y sin rango activo, target con rango activo distinto, no cierre si falta el rango, bid < target, ciclos A/B exactos con PnL correcto.
+   - `gridIsolatedRoutes.test.ts`: diagnóstico read-only resuelve candidates históricos y reporta contadores (`totalOpen=2`, `previousRangeOpenCyclesCount=2`, `missingTarget=0`, `reviewRequiredCyclesCount=0`, `executableOpenCyclesCount=2`).
+
+### Archivos nuevos
+- `server/services/gridIsolated/gridCycleRangeVersionLoader.ts`
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridShadowOpenCycleDiagnosis.ts`
+- `server/services/gridIsolated/__tests__/gridCycleTargetResolver.test.ts`
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅ 0 errores TS
+- `npx vitest run server/services/gridIsolated/__tests__ server/services/__tests__/gridIsolatedEngine.test.ts server/services/__tests__/gridIsolatedEngine.shadowCleanup.test.ts server/services/__tests__/gridIsolatedTypes.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts`: ✅ 10 archivos, 287 tests
+- `npm run build`: ✅
+
+### Restricciones respetadas
+- Solo Grid.
+- Solo staging.
+- Solo SHADOW.
+- No SQL manual, no UPDATE manual, no recovery POST, no shadow-cleanup, no asignación manual de target.
+- No reactivar rango histórico, no cerrar ciclos manualmente, no modo REAL.
+- No tocar IDCA, Telegram, SPOT, FISCO ni credenciales.
+- No migraciones nuevas ni modificaciones a las existentes 071/072.
 
 ---
 

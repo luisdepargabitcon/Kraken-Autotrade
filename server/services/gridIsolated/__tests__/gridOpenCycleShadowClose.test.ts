@@ -302,6 +302,7 @@ function resetEngine(cycles: GridCycle[], levels: GridLevel[], configOverrides: 
   engine.cycles = cycles;
   engine.levels = levels;
   engine.activeRangeVersion = makeRange(rangeOverrides);
+  engine.referencedRangeVersions = engine.activeRangeVersion ? [engine.activeRangeVersion] : [];
   engine.lastShadowEventAt = null;
 
   const rows = {
@@ -700,6 +701,165 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 1).toISOString();
       expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }))).toBe(0);
       expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).toBe(1);
+    });
+  });
+
+  describe("RANGOS HISTÓRICOS", () => {
+    it("resuelve target, persiste y cierra con rango histórico y sin rango activo", async () => {
+      const historicalRangeId = "9bf99770-c40c-4870-a166-4389a51226f0";
+      const cycle = makeCycle({
+        rangeVersionId: historicalRangeId,
+        buyPrice: 63264.40,
+        quantity: 0.00379061,
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const level = makeLevel({
+        id: "c6e8cfd1-37fa-4516-88e8-79ebe54a5f43",
+        rangeVersionId: historicalRangeId,
+        side: "SELL",
+        price: 64893.12322364,
+        quantity: 0.00379061,
+      });
+      const engine = resetEngine([cycle], [level], {}, { id: historicalRangeId, pair: "BTC/USD", status: "replaced" });
+      engine.activeRangeVersion = null;
+      engine.referencedRangeVersions = [makeRange({ id: historicalRangeId, pair: "BTC/USD", status: "replaced" })];
+
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 64893.12322364 }));
+      expect(result).toBe(1);
+      const closed = engine.cycles[0];
+      expect(closed.targetSellLevelId).toBe("c6e8cfd1-37fa-4516-88e8-79ebe54a5f43");
+      expect(closed.targetSellPrice).toBe(64893.12322364);
+      expect(closed.status).toBe("completed");
+    });
+
+    it("resuelve target histórico cuando el rango activo es distinto", async () => {
+      const historicalRangeId = "9bf99770-c40c-4870-a166-4389a51226f0";
+      const activeRangeId = "new-active-range";
+      const cycle = makeCycle({
+        rangeVersionId: historicalRangeId,
+        buyPrice: 62532.30,
+        quantity: 0.00383786,
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const level = makeLevel({
+        id: "4f300503-ff58-4aba-9d0b-6fc8f7869018",
+        rangeVersionId: historicalRangeId,
+        side: "SELL",
+        price: 65692.19591410,
+        quantity: 0.00383786,
+      });
+      const engine = resetEngine([cycle], [level], {}, { id: activeRangeId, pair: "BTC/USD", status: "active" });
+      engine.referencedRangeVersions = [
+        makeRange({ id: historicalRangeId, pair: "BTC/USD", status: "replaced" }),
+        makeRange({ id: activeRangeId, pair: "BTC/USD", status: "active" }),
+      ];
+
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 65692.19591410 }));
+      expect(result).toBe(1);
+      expect(engine.cycles[0].targetSellLevelId).toBe("4f300503-ff58-4aba-9d0b-6fc8f7869018");
+    });
+
+    it("no cierra ciclos históricos si referencedRangeVersions no incluye su rango", async () => {
+      const cycle = makeCycle({
+        rangeVersionId: "missing-historical-range",
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const level = makeLevel({
+        rangeVersionId: "missing-historical-range",
+        side: "SELL",
+        price: 61_000,
+        quantity: 0.001,
+      });
+      const engine = resetEngine([cycle], [level], {}, { id: "active-range", pair: "BTC/USD" });
+      engine.referencedRangeVersions = [makeRange({ id: "active-range", pair: "BTC/USD" })];
+
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      expect(result).toBe(0);
+      expect(engine.cycles[0].targetSellLevelId).toBeNull();
+    });
+
+    it("mantener abierto con bid < target para rango histórico", async () => {
+      const historicalRangeId = "9bf99770-c40c-4870-a166-4389a51226f0";
+      const cycle = makeCycle({
+        rangeVersionId: historicalRangeId,
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const level = makeLevel({
+        id: "c6e8cfd1-37fa-4516-88e8-79ebe54a5f43",
+        rangeVersionId: historicalRangeId,
+        side: "SELL",
+        price: 64893.12322364,
+        quantity: 0.00379061,
+      });
+      const engine = resetEngine([cycle], [level], {}, { id: "active-range", pair: "BTC/USD" });
+      engine.referencedRangeVersions = [makeRange({ id: historicalRangeId, pair: "BTC/USD", status: "replaced" })];
+
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 64000 }));
+      expect(result).toBe(0);
+      expect(engine.cycles[0].status).toBe("buy_filled");
+    });
+
+    it("Ciclo A y B exactos: resuelve targets, cierra ambos y PnL correcto", async () => {
+      const rangeA = "9bf99770-c40c-4870-a166-4389a51226f0";
+      const rangeB = "9bf99770-c40c-4870-a166-4389a51226f1";
+      const cycleA = makeCycle({
+        id: "cA",
+        cycleNumber: 25,
+        rangeVersionId: rangeA,
+        buyPrice: 63264.40,
+        quantity: 0.00379061,
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const cycleB = makeCycle({
+        id: "cB",
+        cycleNumber: 26,
+        rangeVersionId: rangeB,
+        buyPrice: 62532.30,
+        quantity: 0.00383786,
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const levelA = makeLevel({
+        id: "c6e8cfd1-37fa-4516-88e8-79ebe54a5f43",
+        rangeVersionId: rangeA,
+        side: "SELL",
+        price: 64893.12322364,
+        quantity: 0.00379061,
+      });
+      const levelB = makeLevel({
+        id: "4f300503-ff58-4aba-9d0b-6fc8f7869018",
+        rangeVersionId: rangeB,
+        side: "SELL",
+        price: 65692.19591410,
+        quantity: 0.00383786,
+      });
+      const engine = resetEngine([cycleA, cycleB], [levelA, levelB], {}, { id: "active-range", pair: "BTC/USD" });
+      engine.referencedRangeVersions = [
+        makeRange({ id: rangeA, pair: "BTC/USD", status: "replaced" }),
+        makeRange({ id: rangeB, pair: "BTC/USD", status: "replaced" }),
+      ];
+
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 66_000 }));
+      expect(result).toBe(2);
+
+      const closedA = engine.cycles.find((c: any) => c.id === "cA");
+      const closedB = engine.cycles.find((c: any) => c.id === "cB");
+      expect(closedA.targetSellLevelId).toBe("c6e8cfd1-37fa-4516-88e8-79ebe54a5f43");
+      expect(closedA.grossPnlUsd).toBeCloseTo(6.173854538762, 10);
+      expect(closedA.feeTotalUsd).toBeCloseTo(0, 10);
+      expect(closedA.netPnlUsd).toBeCloseTo(4.939083631010, 10);
+      expect(closedB.targetSellLevelId).toBe("4f300503-ff58-4aba-9d0b-6fc8f7869018");
     });
   });
 });

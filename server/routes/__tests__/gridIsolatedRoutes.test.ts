@@ -1701,6 +1701,57 @@ describe("Grid Isolated Routes — Endpoints", () => {
       expect(engine.cycles[0].status).toBe(beforeCycleStatus);
       expect(engine.levels[0].status).toBe(beforeLevelStatus);
     });
+
+    it("resuelve candidates históricos y reporta contadores correctos sin persistir", async () => {
+      const engine = gridIsolatedEngine as any;
+      const rangeA = "9bf99770-c40c-4870-a166-4389a51226f0";
+      const rangeB = "9bf99770-c40c-4870-a166-4389a51226f1";
+      engine.config = {
+        id: 1,
+        pair: "BTC/USD",
+        mode: "SHADOW",
+        isActive: true,
+        executionPolicy: "MAKER_ONLY",
+      } as any;
+      engine.activeRangeVersion = { id: "new-active", pair: "BTC/USD", versionNumber: 2, status: "active", createdAt: new Date() } as any;
+      engine.referencedRangeVersions = [
+        { id: rangeA, pair: "BTC/USD", versionNumber: 1, status: "replaced", createdAt: new Date() },
+        { id: rangeB, pair: "BTC/USD", versionNumber: 1, status: "replaced", createdAt: new Date() },
+      ] as any;
+      engine.cycles = [
+        { id: "cA", cycleNumber: 25, rangeVersionId: rangeA, pair: "BTC/USD", status: "buy_filled", buyPrice: 63264.40, quantity: 0.00379061, targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null, buyClientOrderId: "bcA", sellClientOrderId: null, buyFilledAt: new Date(), createdAt: new Date(), completedAt: null, grossPnlUsd: 0, feeTotalUsd: 0, taxReserveUsd: 0, netPnlUsd: 0, netPnlPct: 0, holdTimeMinutes: 0 },
+        { id: "cB", cycleNumber: 26, rangeVersionId: rangeB, pair: "BTC/USD", status: "buy_filled", buyPrice: 62532.30, quantity: 0.00383786, targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null, buyClientOrderId: "bcB", sellClientOrderId: null, buyFilledAt: new Date(), createdAt: new Date(), completedAt: null, grossPnlUsd: 0, feeTotalUsd: 0, taxReserveUsd: 0, netPnlUsd: 0, netPnlPct: 0, holdTimeMinutes: 0 },
+      ];
+      engine.levels = [
+        { id: "c6e8cfd1-37fa-4516-88e8-79ebe54a5f43", rangeVersionId: rangeA, side: "SELL", price: 64893.12322364, quantity: 0.00379061, status: "planned", clientOrderId: "scA", exchangeOrderId: null, filledPrice: null, filledQuantity: null, filledAt: null, createdAt: new Date() },
+        { id: "4f300503-ff58-4aba-9d0b-6fc8f7869018", rangeVersionId: rangeB, side: "SELL", price: 65692.19591410, quantity: 0.00383786, status: "planned", clientOrderId: "scB", exchangeOrderId: null, filledPrice: null, filledQuantity: null, filledAt: null, createdAt: new Date() },
+      ];
+      engine.lastShadowExecutionPrice = null;
+      // Evita query real; diagnosis usará referencedRangeVersions ya cargados
+      const originalLoader = engine.loadReferencedRangeVersions;
+      engine.loadReferencedRangeVersions = async () => {};
+
+      const res = await simulateGet(app, "/api/grid-isolated/shadow-open-cycles/diagnose");
+      expect(res.status).toBe(200);
+      expect(res.body.totalOpen).toBe(2);
+      expect(res.body.previousRangeOpenCyclesCount).toBe(2);
+      expect(res.body.missingTarget).toBe(0);
+      expect(res.body.reviewRequiredCyclesCount).toBe(0);
+      expect(res.body.executableOpenCyclesCount).toBe(2);
+      const diagA = res.body.cycles.find((c: any) => c.id === "cA");
+      const diagB = res.body.cycles.find((c: any) => c.id === "cB");
+      expect(diagA.targetSellLevelId).toBe("c6e8cfd1-37fa-4516-88e8-79ebe54a5f43");
+      expect(diagA.targetSellPrice).toBe(64893.12322364);
+      expect(diagB.targetSellLevelId).toBe("4f300503-ff58-4aba-9d0b-6fc8f7869018");
+      expect(diagB.targetSellPrice).toBe(65692.19591410);
+      expect(diagA.requiresReview).toBe(false);
+      expect(diagA.rangeRelation).toBe("previous");
+      // No persistencia
+      expect(engine.cycles[0].targetSellLevelId).toBeNull();
+      expect(engine.cycles[1].targetSellLevelId).toBeNull();
+
+      engine.loadReferencedRangeVersions = originalLoader;
+    });
   });
 
   describe("GET /api/grid-isolated/shadow-orphan-cycles/diagnose alias", () => {
@@ -1723,7 +1774,7 @@ describe("Grid Isolated Routes — Endpoints", () => {
       expect(canonical.status).toBe(200);
       expect(alias.status).toBe(200);
       const stripTimestamp = (body: any) => {
-        const { deprecated: _d, replacement: _r, priceTimestamp: _pt, ...rest } = body;
+        const { deprecated: _d, replacement: _r, priceTimestamp: _pt, priceAgeMs: _pa, ...rest } = body;
         return rest;
       };
       expect(stripTimestamp(alias.body)).toEqual(stripTimestamp(canonical.body));

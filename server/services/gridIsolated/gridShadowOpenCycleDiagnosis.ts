@@ -112,10 +112,10 @@ function levelStatus(
  *
  * @param cycles all cycles from the engine
  * @param levels all levels from the engine
- * @param activeRangeVersionId currently active range version id, or null
  * @param priceResult current SHADOW execution price (bid/ask/source)
  * @param mode current engine mode
- * @param rangeVersion active range version (used to resolve missing targets), or null
+ * @param activeRangeVersion currently active range version object, or null
+ * @param rangeVersions all range versions referenced by open cycles (used to resolve missing targets)
  */
 export function diagnoseShadowOpenCycles(
   cycles: GridCycle[],
@@ -123,7 +123,8 @@ export function diagnoseShadowOpenCycles(
   activeRangeVersionId: string | null,
   priceResult: GridShadowExecutionPriceResult,
   mode: string,
-  rangeVersion?: GridRangeVersion | null
+  activeRangeVersion?: GridRangeVersion | null,
+  rangeVersions?: GridRangeVersion[]
 ): ShadowOpenCycleDiagnosisResult {
   const currentBid = priceResult.bid ?? null;
   const currentAsk = priceResult.ask ?? null;
@@ -145,9 +146,14 @@ export function diagnoseShadowOpenCycles(
   );
 
   const claimedIds = buildClaimedSellIds(cycles);
-  const rangeVersions = rangeVersion ? [rangeVersion] : activeRangeVersionId
-    ? [{ id: activeRangeVersionId, pair: cycles[0]?.pair ?? "" } as GridRangeVersion]
-    : [];
+  const effectiveRangeVersions =
+    (rangeVersions && rangeVersions.length > 0)
+      ? rangeVersions
+      : activeRangeVersion
+        ? [activeRangeVersion]
+        : activeRangeVersionId
+          ? [{ id: activeRangeVersionId, pair: cycles[0]?.pair ?? "" } as GridRangeVersion]
+          : [];
 
   const details: ShadowOpenCycleDiagnosisItem[] = [];
   let eligibleToClose = 0;
@@ -179,7 +185,7 @@ export function diagnoseShadowOpenCycles(
       const resolution = resolveTargetSellForCycle({
         cycle,
         levels,
-        rangeVersions,
+        rangeVersions: effectiveRangeVersions,
         alreadyClaimedSellIds: claimedIds,
       });
       targetResolutionReason = resolution.reason;
@@ -267,13 +273,13 @@ export function diagnoseShadowOpenCycles(
     });
   }
 
-  const executableOpenCyclesCount = openCycles.filter(
-    (c) => c.targetSellLevelId != null
+  const executableOpenCyclesCount = details.filter(
+    (d) => d.targetSellLevelId != null
   ).length;
   const waitingSellCyclesCount = openCycles.length;
   const previousRangeOpenCyclesCount = activeRangeVersionId
     ? openCycles.filter((c) => c.rangeVersionId !== activeRangeVersionId).length
-    : 0;
+    : openCycles.length;
   const reviewRequiredCyclesCount = requiresReview;
 
   const recommendation =

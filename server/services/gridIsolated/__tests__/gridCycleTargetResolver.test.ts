@@ -202,4 +202,143 @@ describe("gridCycleTargetResolver", () => {
     expect(ids.has("sell-2")).toBe(true);
     expect(ids.has("sell-1")).toBe(false);
   });
+
+  describe("RANGOS HISTÓRICOS", () => {
+    it("resuelve un ciclo cuyo rango ya no es el activo", () => {
+      const historicalRange = "historical-range-001";
+      const cycle = makeCycle({
+        id: "c1",
+        rangeVersionId: historicalRange,
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const level = makeLevel({
+        id: "sell-h1",
+        rangeVersionId: historicalRange,
+        side: "SELL",
+        price: 64893.12322364,
+        quantity: 0.00379061,
+      });
+      const result = resolveTargetSellForCycle({
+        cycle,
+        levels: [level],
+        rangeVersions: [
+          makeRange({ id: historicalRange, pair: "BTC/USD", status: "replaced" }),
+          makeRange({ id: "active-range", pair: "BTC/USD", status: "active" }),
+        ],
+      });
+      expect(result.resolved).toBe(true);
+      expect(result.targetSellLevelId).toBe("sell-h1");
+      expect(result.targetSellPrice).toBe(64893.12322364);
+      expect(result.targetSellQuantity).toBe(0.00379061);
+    });
+
+    it("cada ciclo usa su rango histórico exacto", () => {
+      const rangeA = "historical-a";
+      const rangeB = "historical-b";
+      const cycleA = makeCycle({
+        id: "cA",
+        rangeVersionId: rangeA,
+        buyPrice: 63264.40,
+        quantity: 0.00379061,
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const cycleB = makeCycle({
+        id: "cB",
+        rangeVersionId: rangeB,
+        buyPrice: 62532.30,
+        quantity: 0.00383786,
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const levelA = makeLevel({
+        id: "c6e8cfd1-37fa-4516-88e8-79ebe54a5f43",
+        rangeVersionId: rangeA,
+        side: "SELL",
+        price: 64893.12322364,
+        quantity: 0.00379061,
+      });
+      const levelB = makeLevel({
+        id: "4f300503-ff58-4aba-9d0b-6fc8f7869018",
+        rangeVersionId: rangeB,
+        side: "SELL",
+        price: 65692.19591410,
+        quantity: 0.00383786,
+      });
+      const ranges = [
+        makeRange({ id: rangeA, pair: "BTC/USD", status: "replaced" }),
+        makeRange({ id: rangeB, pair: "BTC/USD", status: "replaced" }),
+      ];
+
+      const resultA = resolveTargetSellForCycle({ cycle: cycleA, levels: [levelA, levelB], rangeVersions: ranges });
+      const resultB = resolveTargetSellForCycle({ cycle: cycleB, levels: [levelA, levelB], rangeVersions: ranges });
+
+      expect(resultA.resolved).toBe(true);
+      expect(resultA.targetSellLevelId).toBe("c6e8cfd1-37fa-4516-88e8-79ebe54a5f43");
+      expect(resultB.resolved).toBe(true);
+      expect(resultB.targetSellLevelId).toBe("4f300503-ff58-4aba-9d0b-6fc8f7869018");
+    });
+
+    it("no usa una SELL de otro rango aunque sea la única cercana", () => {
+      const otherRange = "other-range";
+      const cycle = makeCycle({
+        rangeVersionId: "cycle-range",
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const result = resolveTargetSellForCycle({
+        cycle,
+        levels: [makeLevel({ id: "other-sell", rangeVersionId: otherRange, side: "SELL", price: 65000, quantity: 0.00379061 })],
+        rangeVersions: [makeRange({ id: "cycle-range", pair: "BTC/USD" }), makeRange({ id: otherRange, pair: "BTC/USD" })],
+      });
+      expect(result.resolved).toBe(false);
+      expect(result.requiresReview).toBe(true);
+      expect(result.reason).toContain("rango");
+    });
+
+    it("no resuelve si el rango del ciclo no está en rangeVersions", () => {
+      const result = resolveTargetSellForCycle({
+        cycle: makeCycle({ rangeVersionId: "missing-range", targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null }),
+        levels: [makeLevel({ rangeVersionId: "missing-range" })],
+        rangeVersions: [makeRange({ id: "active-range" })],
+      });
+      expect(result.resolved).toBe(false);
+      expect(result.requiresReview).toBe(true);
+    });
+
+    it("rechaza rango histórico inexistente en DB", () => {
+      const result = resolveTargetSellForCycle({
+        cycle: makeCycle({ rangeVersionId: "not-in-db", targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null }),
+        levels: [],
+        rangeVersions: [],
+      });
+      expect(result.resolved).toBe(false);
+      expect(result.requiresReview).toBe(true);
+    });
+
+    it("no elige rango por proximidad de precio", () => {
+      const cycle = makeCycle({
+        buyPrice: 63264.40,
+        quantity: 0.00379061,
+        rangeVersionId: "low-range",
+        targetSellLevelId: null,
+        targetSellPrice: null,
+        targetSellQuantity: null,
+      });
+      const lowSell = makeLevel({ id: "sell-low", rangeVersionId: "low-range", side: "SELL", price: 64000, quantity: 0.00379061 });
+      const highSell = makeLevel({ id: "sell-high", rangeVersionId: "high-range", side: "SELL", price: 64893.12322364, quantity: 0.00379061 });
+      const result = resolveTargetSellForCycle({
+        cycle,
+        levels: [lowSell, highSell],
+        rangeVersions: [makeRange({ id: "low-range" }), makeRange({ id: "high-range" })],
+      });
+      expect(result.resolved).toBe(true);
+      expect(result.targetSellLevelId).toBe("sell-low");
+    });
+  });
 });

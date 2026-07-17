@@ -65,6 +65,9 @@ import {
   type TargetSellResolution,
 } from "./gridCycleTargetResolver";
 import {
+  loadRangeVersionsForCycles,
+} from "./gridCycleRangeVersionLoader";
+import {
   computeGrossTargetFromNet,
   computeSellPrice,
   computeCyclePnL,
@@ -98,6 +101,7 @@ import {
 class GridIsolatedEngine {
   private config: GridIsolatedConfig | null = null;
   private activeRangeVersion: GridRangeVersion | null = null;
+  private referencedRangeVersions: GridRangeVersion[] = [];
   private levels: GridLevel[] = [];
   private cycles: GridCycle[] = [];
   private dailyOrderCount: number = 0;
@@ -223,6 +227,7 @@ class GridIsolatedEngine {
         await this.loadActiveRangeVersion();
         await this.loadLevels();
         await this.loadCycles();
+        await this.loadReferencedRangeVersions(this.cycles);
 
         return this.config;
       }
@@ -1121,6 +1126,19 @@ class GridIsolatedEngine {
   }
 
   /**
+   * Load all range versions referenced by the given cycles.
+   * Only the exact rangeVersionId values are queried; no proximity guesses.
+   */
+  private async loadReferencedRangeVersions(cycles: GridCycle[]): Promise<void> {
+    try {
+      this.referencedRangeVersions = await loadRangeVersionsForCycles(cycles);
+    } catch (error) {
+      botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to load referenced range versions: ${error}`);
+      this.referencedRangeVersions = [];
+    }
+  }
+
+  /**
    * Resolve and persist target SELL associations for open cycles.
    * Does NOT close cycles. Used during startup recovery.
    */
@@ -1137,7 +1155,7 @@ class GridIsolatedEngine {
     let reviewRequired = 0;
     let errors = 0;
 
-    const rangeVersions = this.activeRangeVersion ? [this.activeRangeVersion] : [];
+    const rangeVersions = this.referencedRangeVersions;
     const claimedIds = buildClaimedSellIds(this.cycles);
 
     for (const cycle of this.cycles) {
@@ -1538,7 +1556,7 @@ class GridIsolatedEngine {
       return 0;
     }
 
-    const rangeVersions = this.activeRangeVersion ? [this.activeRangeVersion] : [];
+    const rangeVersions = this.referencedRangeVersions;
     const claimedIds = buildClaimedSellIds(this.cycles);
 
     let closedCount = 0;
@@ -3223,13 +3241,16 @@ class GridIsolatedEngine {
       ? this.activeRangeVersion
       : null;
 
+    await this.loadReferencedRangeVersions(snapshot.cycles);
+
     return diagnoseShadowOpenCycles(
       snapshot.cycles,
       snapshot.levels,
       snapshot.activeRangeVersionId,
       priceResult,
       snapshot.mode,
-      activeRangeVersion
+      activeRangeVersion,
+      this.referencedRangeVersions
     );
   }
 
