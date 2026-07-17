@@ -5629,3 +5629,69 @@ Revisión correctiva del Grid Isolated: endurecer la política de ejecución por
 
 ### Estado
 - Código commit-ready. Commit: `fix(grid): endurecer maker-only startup y cierre persistente shadow`. Deploy VPS requiere autorización expresa del usuario.
+
+---
+
+## 2026-07-17 — GRID FASE UX 3C.4-K.2: Auditoría frontend, tests de renderizado, validación visual y red
+
+### Resumen
+Continuación de la auditoría de la nueva UX del Grid aislado. Se añaden tests de renderizado SSR para los componentes refactorizados, se corrige el descubrimiento de tests `.tsx` en Vitest, se valida visualmente la página en anchos 360/390/768/1280px, se audita la red para descartar POSTs automáticos y se fija un defecto de desbordamiento horizontal en la navegación global.
+
+### Problemas detectados y soluciones
+1. **Tests `.tsx` no descubiertos por Vitest**:
+   - `vitest.config.ts` ahora incluye `client/**/*.{test,spec}.{ts,tsx}`.
+   - Se añade configuración `esbuild: { jsx: "automatic", jsxImportSource: "react" }` para que JSX funcione en entorno Node sin importar React explícitamente.
+
+2. **Aserciones de renderizado frágiles ante comentarios SSR**:
+   - Algunos textos como `Vigentes (1)` se separan por `<!-- -->` en `ReactDOMServer.renderToString`.
+   - Se añade helper `cleanHtml` en `gridUxRender.test.tsx` para eliminar esos comentarios antes de asertar.
+
+3. **Campos sensibles del taker fallback visibles en markup**:
+   - `GridSettingsPanel.tsx` exporta `FIELD_META` y `prettifyLabel`, y marca `takerFallbackEnabled`, `takerFallbackAttemptNumber`, `maxTakerFallbackPerCycle`, `takerFallbackRequiresNetProfit`, `takerFallbackAuditRequired`, `makerAttemptsBeforeTaker` y `executionPolicy` como `hidden: true`.
+   - El renderizado muestra el mensaje estático "Solo maker" pero no los controles legacy.
+
+4. **Desbordamiento horizontal a 1280px**:
+   - La barra de navegación global `Nav.tsx` forzaba el ancho de la página porque los enlaces desktop no se ajustaban.
+   - Se añade `overflow-x-auto scrollbar-hide` al contenedor de links desktop y `overflow-hidden` al `nav`, de modo que el exceso de ancho se desplace internamente sin romper el layout de la página.
+
+### Archivos añadidos o modificados
+- `client/src/components/grid/__tests__/gridUxRender.test.tsx` (nuevo)
+- `vitest.config.ts`
+- `client/src/components/grid/GridSettingsPanel.tsx`
+- `client/src/components/dashboard/Nav.tsx`
+- `scripts/visual-audit-grid.mjs` (nuevo, herramienta de auditoría visual)
+- `scripts/network-audit-grid.mjs` (nuevo, herramienta de auditoría de red)
+- `.gitignore` (ignora `visual-audit/`, `vitest-report*.json`, `vitest-grid-ux.log`)
+- `package.json` / `package-lock.json` (añade `puppeteer-core` como devDependency para los scripts de auditoría)
+- También se conservan intactos los cambios previos de `GridIsolated.tsx` y `buildGridOperationalViewModel.ts` (selector de modo eliminado y metadatos de ejecución ajustados).
+
+### Tests ejecutados
+- **npm run check (tsc):** ✅ sin errores
+- **npx vitest run grid:** ✅ 692/692 tests (incluye `gridUxRender.test.tsx`)
+- **npm run build:** ✅ exitoso
+- **npx vitest run --reporter=json --outputFile=vitest-report.json:** ⚠️ 12 fallos fuera del Grid (templates de Telegram y helpers de IDCA); se registran pero no se corrigen por estar fuera del alcance y por restricción de no tocar Telegram.
+
+### Validación visual
+- Anchos probados: 360, 390, 768 y 1280px con `puppeteer-core` y Microsoft Edge.
+- `scripts/visual-audit-grid.mjs` genera screenshots y mide `scrollWidth` vs `clientWidth`.
+- Resultado tras el fix de `Nav.tsx`: sin desbordamiento horizontal en ningún ancho.
+  - 360: scrollWidth=360
+  - 390: scrollWidth=390
+  - 768: scrollWidth=768
+  - 1280: scrollWidth=1280
+
+### Auditoría de red
+- `scripts/network-audit-grid.mjs` carga `/grid-isolated` y observa todas las peticiones durante ~11s (incluye un refetch automático de `status`).
+- Peticiones registradas: `GET /api/grid-isolated/config`, `GET /api/grid-isolated/status` (x2), `GET /api/grid-isolated/monitor/audit`.
+- **POSTs automáticos detectados: 0**. Los POSTs (`/activate`, `/shadow-validate`, `/config`) solo se disparan por interacción del usuario.
+
+### Commit
+- `c184180` — `Grid UX audit: frontend render tests, vitest tsx config, secure settings panel, nav overflow fix, visual/network audit scripts`
+
+### Estado
+- Código commit-ready. Sin deploy en VPS sin autorización expresa del usuario.
+- Los fallos del suite completo están limitados a módulos ajenos al Grid (Telegram/IDCA) y no afectan la validez del refactor de UX.
+
+### Riesgos
+- La barra de navegación desktop ahora es horizontalmente scrollable si el viewport es estrecho; esto es intencional para evitar romper el layout, pero en pantallas muy pequeñas desktop el usuario debe desplazar para ver los últimos enlaces.
+- `puppeteer-core` añade paquetes de desarrollo; si no se usa con frecuencia, puede eliminarse en una limpieza posterior.
