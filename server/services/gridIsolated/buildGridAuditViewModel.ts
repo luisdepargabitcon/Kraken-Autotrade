@@ -871,6 +871,11 @@ export function buildGridAuditViewModel(
     marketContext,
     currentOperationalState,
     recommendations,
+    resolvedRange,
+    adaptiveDecision,
+    professionalGenerator,
+    lastProfessionalValidationAt: lastProfessionalValidation.at,
+    lastShadowValidationAt: lastShadowValidation.at,
   });
 
   return {

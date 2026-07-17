@@ -32,7 +32,7 @@ function severityLabel(severity: Severity): string {
     case "error": return "Requiere atención";
     case "warning": return "Recomendaciones";
     case "success": return "Completado";
-    case "shadow": return "Información";
+    case "shadow": return "Modo SHADOW";
     default: return "Información";
   }
 }
@@ -155,7 +155,7 @@ export function GridNotificationCenter({ operational }: GridNotificationCenterPr
                   {severityIcon(group.severity as Severity)}
                   <span className="font-semibold text-sm">{severityLabel(group.severity as Severity)}</span>
                   <Badge variant="outline" className="text-xs ml-auto">
-                    {group.count}
+                    {group.items?.length ?? 0} avisos agrupados · {group.count ?? 0} eventos
                   </Badge>
                 </div>
                 <div className="space-y-2">

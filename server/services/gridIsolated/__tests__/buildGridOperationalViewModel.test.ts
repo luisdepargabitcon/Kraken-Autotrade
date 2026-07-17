@@ -239,4 +239,46 @@ describe("buildGridOperationalViewModel", () => {
     expect(vm.header.currentBid).toBeNull();
     expect(vm.header.currentAsk).toBeNull();
   });
+
+  it("expone el market view model con datos actuales, rango de entrada y recomendación", () => {
+    const input = makeInput({
+      marketContext: {
+        currentPrice: 94000,
+        bid: 93950,
+        ask: 94050,
+        priceFresh: true,
+        source: "kraken",
+        priceSource: "kraken",
+        band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.21 },
+        bandPosition: "lower",
+        bandPositionPct: 25,
+        atrPct: 1.2,
+      },
+      recommendations: [
+        {
+          title: "Bajar objetivo neto",
+          explanation: "Permite más niveles",
+          consequence: "Más operaciones",
+          suggestedLevels: 10,
+          suggestedLower: 92000,
+          suggestedUpper: 98000,
+          repetitionCount: 2,
+          technicalCode: "NET_PROFIT_TARGET_HIGH",
+        },
+      ],
+    });
+    const vm = buildGridOperationalViewModel(input);
+    expect(vm.market).toBeDefined();
+    expect(vm.market.pair).toBe("BTC/USD");
+    expect(vm.market.current.price).toBe(94000);
+    expect(vm.market.entryRange.calculatedLower).toBe(93000);
+    expect(vm.market.recommendation?.title).toBe("Bajar objetivo neto");
+  });
+
+  it("header expone PnL realizado y beneficio estimado abierto", () => {
+    const input = makeInput({ status: { ...makeInput().status, totalNetPnlUsd: 123.45 } });
+    const vm = buildGridOperationalViewModel(input);
+    expect(vm.header.realizedNetPnlUsd).toBe(123.45);
+    expect(typeof vm.header.openEstimatedNetPnlUsd).toBe("number");
+  });
 });

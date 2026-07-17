@@ -649,6 +649,12 @@ async function resolveActiveRange(events: any[], status: any, cyclesCount: numbe
       upperPrice: memRv.upperPrice,
       centerPrice: memRv.midPrice,
       widthPct: memRv.bandWidthPct,
+      bandLower: memRv.bandLower,
+      bandMiddle: memRv.bandMiddle,
+      bandUpper: memRv.bandUpper,
+      bandWidthPct: memRv.bandWidthPct,
+      atrPct: memRv.atrPct,
+      regime: memRv.regime,
       method: memRv.regime,
       status: memRv.status === "active" ? "activo" : memRv.status,
       createdAt: memRv.createdAt,
@@ -697,6 +703,10 @@ async function resolveActiveRange(events: any[], status: any, cyclesCount: numbe
       const upperPrice = row.upperPrice ? parseFloat(String(row.upperPrice)) : null;
       const centerPrice = row.midPrice ? parseFloat(String(row.midPrice)) : null;
       const widthPct = row.bandWidthPct ? parseFloat(String(row.bandWidthPct)) : null;
+      const bandLower = row.bandLower ? parseFloat(String(row.bandLower)) : null;
+      const bandMiddle = row.bandMiddle ? parseFloat(String(row.bandMiddle)) : null;
+      const bandUpper = row.bandUpper ? parseFloat(String(row.bandUpper)) : null;
+      const atrPct = row.atrPct ? parseFloat(String(row.atrPct)) : null;
       const hasLimits = lowerPrice !== null && upperPrice !== null;
 
       return {
@@ -706,6 +716,12 @@ async function resolveActiveRange(events: any[], status: any, cyclesCount: numbe
         upperPrice,
         centerPrice,
         widthPct,
+        bandLower,
+        bandMiddle,
+        bandUpper,
+        bandWidthPct: widthPct,
+        atrPct,
+        regime: row.regime,
         method: row.regime,
         status: row.status === "active" ? "activo" : row.status,
         createdAt: row.createdAt,
@@ -744,6 +760,12 @@ async function resolveActiveRange(events: any[], status: any, cyclesCount: numbe
     upperPrice,
     centerPrice: meta.centerPrice ?? null,
     widthPct: meta.widthPct ?? null,
+    bandLower: meta.bandLower ?? null,
+    bandMiddle: meta.bandMiddle ?? meta.centerPrice ?? null,
+    bandUpper: meta.bandUpper ?? null,
+    bandWidthPct: meta.bandWidthPct ?? meta.widthPct ?? null,
+    atrPct: meta.atrPct ?? null,
+    regime: meta.regime ?? null,
     method: meta.method ?? meta.regime ?? "desconocido",
     status: activatedEvent ? "activo" : "propuesto",
     createdAt: proposedEvent?.createdAt || sourceEvent?.createdAt || null,

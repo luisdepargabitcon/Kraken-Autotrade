@@ -5,6 +5,77 @@
 
 ---
 
+## 2026-07-17 — GRID FASE UX REV-E: Nueva pestaña "Mercado", métricas de PnL y análisis centralizado
+
+### Resumen
+Se completa el rediseño UX del Grid aislado añadiendo una quinta pestaña "Mercado" con datos de mercado, rango de entrada, rango de salida, ciclo objetivo y recomendaciones. Se centraliza el CTA "Analizar" en el panel de mercado, se añaden métricas de PnL realizado y beneficio estimado abierto a la cabecera operativa y se pulen los paneles existentes para evitar duplicidades y textos confusos.
+
+### Problema
+- La pestaña "Resumen" mezclaba análisis de mercado, operaciones y recomendaciones; el botón "Analizar" aparecía duplicado.
+- No existía un panel dedicado a la lectura de mercado, rango de entrada/salida y ciclo objetivo.
+- La cabecera operativa no mostraba el PnL realizado ni el beneficio estimado de los ciclos abiertos.
+- `resolvedRange` no transportaba los datos de banda Bollinger/ATR necesarios para enriquecer el market view model.
+
+### Solución
+1. **Nuevo `GridMarketViewModel`**:
+   - `server/services/gridIsolated/buildGridMarketViewModel.ts` genera `current`, `entryRange`, `exitRange`, `targetCycle` y `recommendation` de forma pura (sin DB ni efectos laterales).
+   - Se integra en `buildGridOperationalViewModel.ts` como campo `market` y en `buildGridAuditViewModel.ts` a través del `operational` view model.
+
+2. **Nuevos datos en `resolvedRange`**:
+   - `server/routes/gridIsolated.routes.ts` ahora incluye `bandLower`, `bandMiddle`, `bandUpper`, `bandWidthPct`, `atrPct` y `regime` en el objeto `resolvedRange` (desde memoria, DB o eventos).
+
+3. **Nuevas métricas de cabecera**:
+   - `buildGridOperationalViewModel.ts` calcula `realizedNetPnlUsd` y `openEstimatedNetPnlUsd` y los expone en `OperationalHeader`.
+   - `GridOperationalHeader.tsx` muestra PnL realizado, beneficio estimado abierto, par y órdenes reales en 5 columnas.
+
+4. **Nueva pestaña "Mercado"**:
+   - `client/src/components/grid/GridMarketPanel.tsx` muestra precio, bid/ask, spread, régimen, posición en banda, ATR, rango de entrada, rango de salida, ciclo objetivo y recomendación principal.
+   - Incluye el CTA "Analizar mercado ahora" único (`onAnalyze` ejecuta `POST /api/grid-isolated/shadow-validate`).
+
+5. **Actualización de `GridIsolated.tsx`**:
+   - Pasa de 4 a 5 pestañas: Resumen, Mercado, Ciclos, Niveles, Ajustes.
+   - Controles operativos simplificados (solo pausa/reanudación y refrescar).
+   - El CTA de análisis se mueve al `GridMarketPanel`.
+
+6. **Pulido de paneles existentes**:
+   - `GridOverviewPanel.tsx`: elimina `onAnalyze`, evita CTA duplicado.
+   - `GridOpenCyclesPanel.tsx`: relación de rango (anterior/vigente) en la cabecera de cada ciclo, acordeón colapsable por defecto y aviso sobre ciclos de rangos anteriores.
+   - `GridLevelsCompactPanel.tsx`: filtro por defecto a "ciclos" si no hay niveles vigentes, aviso en histórico y paginación de 20 en 20.
+   - `GridNotificationCenter.tsx`: etiqueta "Modo SHADOW" separada de "Información" y badge con avisos agrupados + eventos.
+
+7. **Tests**:
+   - Añadidos/actualizados tests en `gridUxRender.test.tsx`, `buildGridOperationalViewModel.test.ts`, `buildGridAuditViewModel.test.ts` y `gridIsolatedRoutes.test.ts` para validar la pestaña Mercado, métricas de cabecera y market view model.
+
+### Archivos nuevos
+- `server/services/gridIsolated/buildGridMarketViewModel.ts`
+- `client/src/components/grid/GridMarketPanel.tsx`
+
+### Archivos modificados
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `server/services/gridIsolated/buildGridAuditViewModel.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `client/src/pages/GridIsolated.tsx`
+- `client/src/components/grid/GridOperationalHeader.tsx`
+- `client/src/components/grid/GridOverviewPanel.tsx`
+- `client/src/components/grid/GridOpenCyclesPanel.tsx`
+- `client/src/components/grid/GridLevelsCompactPanel.tsx`
+- `client/src/components/grid/GridNotificationCenter.tsx`
+- `client/src/components/grid/__tests__/gridUxRender.test.tsx`
+- `server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts`
+- `server/services/__tests__/buildGridAuditViewModel.test.ts`
+- `server/routes/__tests__/gridIsolatedRoutes.test.ts`
+
+### Validación local
+- `npm run check`: ✅ 0 errores TS
+- `npm run build`: ✅ (cliente + servidor)
+- `npx vitest run server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts server/services/__tests__/buildGridAuditViewModel.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts client/src/components/grid/__tests__/gridUxRender.test.tsx`: ✅ 167/167 tests
+- `npx vitest run` (completo): ⚠️ fallan 12 tests preexistentes ajenos a esta refactorización: 9 en `server/services/telegram/templates.test.ts` (snapshots desactualizados/etiquetas) y 3 en `server/services/__tests__/idcaMarketContextHelpers.test.ts` (umbrales de `getReferencePriceState` y `getQualityBadgeText`). No afectan la funcionalidad del Grid.
+
+### Pendientes
+- Deploy en staging y validación visual/red post-deploy.
+
+---
+
 ## 2026-07-17 — GRID FASE UX 3C.4-K: Refactor de la interfaz operativa a 4 pestañas y fuente única de verdad
 
 ### Resumen

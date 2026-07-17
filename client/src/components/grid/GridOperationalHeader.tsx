@@ -69,7 +69,17 @@ export function GridOperationalHeader({ operational }: GridOperationalHeaderProp
           </div>
 
           {/* Bottom row: metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-3">
+            <div className="rounded-lg border border-border/40 p-2 md:p-3">
+              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Par</p>
+              <p className="text-sm md:text-base font-semibold font-mono truncate">
+                {header.pair ?? "BTC/USD"}
+              </p>
+              <p className="text-[10px] text-muted-foreground truncate">
+                {header.priceSource ? `Fuente: ${header.priceSource}` : "—"}
+              </p>
+            </div>
+
             <div className="rounded-lg border border-border/40 p-2 md:p-3">
               <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Precio actual</p>
               <p className="text-sm md:text-base font-semibold font-mono truncate" title={header.priceSource ? `Fuente: ${header.priceSource}` : undefined}>
@@ -81,20 +91,20 @@ export function GridOperationalHeader({ operational }: GridOperationalHeaderProp
             </div>
 
             <div className="rounded-lg border border-border/40 p-2 md:p-3">
-              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Operaciones abiertas</p>
+              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Ciclos abiertos</p>
               <p className="text-sm md:text-base font-semibold font-mono truncate">
                 {header.openCycles ?? 0}
               </p>
               <p className="text-[10px] text-muted-foreground truncate">
-                Esperando venta
+                Operaciones en curso
               </p>
             </div>
 
             <div className="rounded-lg border border-border/40 p-2 md:p-3">
-              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">PnL neto</p>
-              <p className={`text-sm md:text-base font-semibold font-mono truncate ${(header.totalNetPnlUsd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">PnL realizado</p>
+              <p className={`text-sm md:text-base font-semibold font-mono truncate ${(header.realizedNetPnlUsd ?? header.totalNetPnlUsd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                 <TrendingUp className="inline h-3 w-3 mr-1" />
-                {fmtUsd(header.totalNetPnlUsd)}
+                {fmtUsd(header.realizedNetPnlUsd ?? header.totalNetPnlUsd)}
               </p>
               <p className="text-[10px] text-muted-foreground truncate">
                 Acumulado simulado
@@ -102,13 +112,23 @@ export function GridOperationalHeader({ operational }: GridOperationalHeaderProp
             </div>
 
             <div className="rounded-lg border border-border/40 p-2 md:p-3">
+              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Beneficio estimado abierto</p>
+              <p className={`text-sm md:text-base font-semibold font-mono truncate ${(header.openEstimatedNetPnlUsd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                <Wallet className="inline h-3 w-3 mr-1" />
+                {fmtUsd(header.openEstimatedNetPnlUsd)}
+              </p>
+              <p className="text-[10px] text-muted-foreground truncate">
+                Si cerrara a target
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-border/40 p-2 md:p-3 md:col-span-5">
               <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Órdenes reales</p>
               <p className="text-sm md:text-base font-semibold font-mono truncate">
                 {header.realOpenOrdersCount ?? 0}
               </p>
               <p className="text-[10px] text-muted-foreground truncate">
-                <Wallet className="inline h-3 w-3 mr-1" />
-                {header.realOpenOrdersCount === 0 ? "Sin exposición" : "En mercado"}
+                {header.realOpenOrdersCount === 0 ? "Sin exposición real" : "En mercado"}
               </p>
             </div>
           </div>

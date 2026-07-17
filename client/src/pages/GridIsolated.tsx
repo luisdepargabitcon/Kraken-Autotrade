@@ -3,17 +3,17 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Activity, RefreshCw, FlaskConical } from "lucide-react";
+import { Activity, RefreshCw } from "lucide-react";
 import { GridOperationalHeader } from "@/components/grid/GridOperationalHeader";
 import { GridOverviewPanel } from "@/components/grid/GridOverviewPanel";
 import { GridOpenCyclesPanel } from "@/components/grid/GridOpenCyclesPanel";
 import { GridLevelsCompactPanel } from "@/components/grid/GridLevelsCompactPanel";
 import { GridSettingsPanel } from "@/components/grid/GridSettingsPanel";
 import { GridNotificationCenter } from "@/components/grid/GridNotificationCenter";
+import { GridMarketPanel } from "@/components/grid/GridMarketPanel";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -132,13 +132,6 @@ export default function GridIsolated() {
           <CardContent className="p-3">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-                <Badge
-                  variant="outline"
-                  className={mode === "SHADOW" ? "text-xs h-7 px-2 bg-cyan-500/10 text-cyan-400 border-cyan-500/30" : "text-xs h-7 px-2"}
-                >
-                  Modo: {mode === "SHADOW" ? "SHADOW" : mode}
-                </Badge>
-
                 <div className="flex items-center gap-2 rounded-md border border-border/50 px-3 py-1.5">
                   <Switch
                     id="grid-active"
@@ -150,10 +143,6 @@ export default function GridIsolated() {
                     {isActive ? "Activo" : "Pausado"}
                   </Label>
                 </div>
-
-                <Badge variant={isRunning ? "default" : "outline"} className="text-xs h-7 px-2">
-                  {isRunning ? "Motor en ejecución" : "Motor detenido"}
-                </Badge>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -166,25 +155,16 @@ export default function GridIsolated() {
                   <RefreshCw className="h-3 w-3 mr-1" />
                   Refrescar
                 </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="text-xs h-8"
-                  onClick={() => shadowValidateMutation.mutate()}
-                  disabled={shadowValidateMutation.isPending || mode !== "SHADOW"}
-                >
-                  <FlaskConical className="h-3 w-3 mr-1" />
-                  {shadowValidateMutation.isPending ? "Analizando..." : "Analizar SHADOW"}
-                </Button>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Tabs — 4 main tabs */}
+        {/* Tabs — 5 main tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-4 h-auto p-1">
+          <TabsList className="grid w-full grid-cols-5 h-auto p-1">
             <TabsTrigger value="resumen" className="text-xs md:text-sm">Resumen</TabsTrigger>
+            <TabsTrigger value="mercado" className="text-xs md:text-sm">Mercado</TabsTrigger>
             <TabsTrigger value="ciclos" className="text-xs md:text-sm">Ciclos</TabsTrigger>
             <TabsTrigger value="niveles" className="text-xs md:text-sm">Niveles</TabsTrigger>
             <TabsTrigger value="ajustes" className="text-xs md:text-sm">Ajustes</TabsTrigger>
@@ -193,8 +173,15 @@ export default function GridIsolated() {
           <TabsContent value="resumen" className="space-y-3 pt-2">
             <GridOverviewPanel
               operational={operational}
-              onAnalyze={() => shadowValidateMutation.mutate()}
               onGoToTab={(tab) => setActiveTab(tab)}
+            />
+          </TabsContent>
+
+          <TabsContent value="mercado" className="space-y-3 pt-2">
+            <GridMarketPanel
+              operational={operational}
+              onAnalyze={() => shadowValidateMutation.mutate()}
+              loading={shadowValidateMutation.isPending}
             />
           </TabsContent>
 

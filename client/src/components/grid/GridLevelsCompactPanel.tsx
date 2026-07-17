@@ -110,15 +110,20 @@ function LevelRow({ level, index }: LevelRowProps) {
 }
 
 export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelProps) {
-  const [filter, setFilter] = useState<LevelFilter>("vigentes");
+  const all = operational?.levels ?? {};
+  const defaultFilter: LevelFilter =
+    (all.activeRangeLevels?.length ?? 0) === 0 && (all.openCycleTargetLevels?.length ?? 0) > 0
+      ? "ciclos"
+      : "vigentes";
+  const [filter, setFilter] = useState<LevelFilter>(defaultFilter);
   const [search, setSearch] = useState("");
+  const [historyLimit, setHistoryLimit] = useState(20);
 
   const levels = useMemo(() => {
-    const all = operational?.levels ?? {};
     if (filter === "vigentes") return (all.activeRangeLevels ?? []) as any[];
     if (filter === "ciclos") return (all.openCycleTargetLevels ?? []) as any[];
-    return (all.historicalLevels ?? []) as any[];
-  }, [operational?.levels, filter]);
+    return ((all.historicalLevels ?? []) as any[]).slice(0, historyLimit);
+  }, [all, filter, historyLimit]);
 
   const filteredLevels = useMemo(() => {
     if (!search.trim()) return levels;
@@ -179,9 +184,27 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
           </div>
         )}
 
+        {filter === "historico" && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-xs text-amber-400">
+            Los niveles históricos son solo de referencia; no se reconstruye la banda original.
+          </div>
+        )}
+
         <div className="space-y-3">
           {filteredLevels.length > 0 ? (
-            filteredLevels.map((level, i) => <LevelRow key={level.id || i} level={level} index={i} />)
+            <>
+              {filteredLevels.map((level, i) => <LevelRow key={level.id || i} level={level} index={i} />)}
+              {filter === "historico" && (all.historicalLevels?.length ?? 0) > historyLimit && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full text-xs h-8"
+                  onClick={() => setHistoryLimit((l) => l + 20)}
+                >
+                  Mostrar más ({(all.historicalLevels?.length ?? 0) - historyLimit} restantes)
+                </Button>
+              )}
+            </>
           ) : (
             <div className="text-sm text-muted-foreground py-8 text-center">
               No hay niveles en esta categoría.

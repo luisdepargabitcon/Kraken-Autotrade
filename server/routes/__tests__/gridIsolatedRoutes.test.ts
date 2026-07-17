@@ -334,6 +334,15 @@ describe("Grid Isolated Routes — Endpoints", () => {
     expect(["below", "lower", "middle", "upper", "above", "unknown"]).toContain(res.body.marketContext?.bandPosition);
   });
 
+  it("monitor/audit returns operational.market view model", async () => {
+    const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
+    expect(res.body.operational).toBeDefined();
+    expect(res.body.operational.market).toBeDefined();
+    expect(res.body.operational.market).toHaveProperty("pair");
+    expect(res.body.operational.market).toHaveProperty("current");
+    expect(res.body.operational.market).toHaveProperty("entryRange");
+  });
+
   it("monitor/audit returns rangeHistory array", async () => {
     const res = await simulateGet(app, "/api/grid-isolated/monitor/audit");
     expect(res.body.rangeHistory).toBeDefined();

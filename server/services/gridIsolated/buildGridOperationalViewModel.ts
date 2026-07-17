@@ -10,6 +10,7 @@
  */
 
 import { executionPolicyLabel, type ExecutionPolicy } from "./gridIsolatedTypes";
+import { buildGridMarketViewModel, type GridMarketViewModel } from "./buildGridMarketViewModel";
 
 export type CycleRangeRelation = "current" | "previous" | "unknown";
 
@@ -30,6 +31,8 @@ export interface OperationalHeader {
   priceMaxAgeMs: number | null;
   openCycles: number;
   totalNetPnlUsd: number;
+  realizedNetPnlUsd: number;
+  openEstimatedNetPnlUsd: number;
   realOpenOrdersCount: number;
   executionPolicy: ExecutionPolicy;
   executionPolicyLabel: string;
@@ -196,6 +199,7 @@ export interface GridOperationalViewModel {
     takerFallbackLabel: string;
   };
   settings: OperationalSettingsProfile;
+  market: GridMarketViewModel;
 }
 
 const FEE_BUY_PCT = 0.09;
@@ -592,6 +596,11 @@ export interface BuildGridOperationalViewModelInput {
   marketContext: any;
   currentOperationalState: any;
   recommendations: any[];
+  resolvedRange?: any;
+  adaptiveDecision?: any;
+  professionalGenerator?: any;
+  lastProfessionalValidationAt?: Date | string | null;
+  lastShadowValidationAt?: Date | string | null;
 }
 
 export function buildGridOperationalViewModel(input: BuildGridOperationalViewModelInput): GridOperationalViewModel {
@@ -605,6 +614,11 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     marketContext,
     currentOperationalState,
     recommendations,
+    resolvedRange,
+    adaptiveDecision,
+    professionalGenerator,
+    lastProfessionalValidationAt,
+    lastShadowValidationAt,
   } = input;
 
   const currentPrice = toNum(marketContext?.currentPrice ?? status?.currentPrice ?? status?.lastPrice);
@@ -624,6 +638,22 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
   const takerFallbackAllowed = takerFallbackEnabled;
   const makerOnly = policy === "MAKER_ONLY";
 
+  const openCycleObjects = cycles
+    .filter((c: any) =>
+      ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)
+    )
+    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
+
+  const closedCycleObjects = cycles
+    .filter((c: any) => c?.status === "completed")
+    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
+
+  const cancelledCycleObjects = cycles
+    .filter((c: any) => c?.status === "cancelled" || c?.status === "error")
+    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
+
+  const openEstimatedNetPnlUsd = openCycleObjects.reduce((sum, c) => sum + (c.estimatedNetPnl ?? 0), 0);
+
   const header: OperationalHeader = {
     title: "GRID AISLADO BTC/USD",
     pair: config?.pair ?? "BTC/USD",
@@ -639,10 +669,10 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     priceFresh,
     priceAgeMs,
     priceMaxAgeMs,
-    openCycles: cycles.filter((c: any) =>
-      ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)
-    ).length,
+    openCycles: openCycleObjects.length,
     totalNetPnlUsd: toNum(status?.totalNetPnlUsd) ?? 0,
+    realizedNetPnlUsd: toNum(status?.totalNetPnlUsd) ?? 0,
+    openEstimatedNetPnlUsd,
     realOpenOrdersCount,
     executionPolicy: policy,
     executionPolicyLabel: executionPolicyLabel(policy),
@@ -650,20 +680,6 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     takerFallbackAllowed,
     makerOnly,
   };
-
-  const openCycleObjects = cycles
-    .filter((c: any) =>
-      ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)
-    )
-    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
-
-  const closedCycleObjects = cycles
-    .filter((c: any) => c?.status === "completed")
-    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
-
-  const cancelledCycleObjects = cycles
-    .filter((c: any) => c?.status === "cancelled" || c?.status === "error")
-    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
 
   const primaryRec = (recommendations || [])[0];
   const overview: OperationalOverview = {
@@ -762,6 +778,23 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
         : "Fallback taker desactivado",
   };
 
+  const market = buildGridMarketViewModel({
+    pair: config?.pair ?? "BTC/USD",
+    mode,
+    config,
+    status,
+    marketContext,
+    resolvedRange,
+    adaptiveDecision,
+    professionalGenerator,
+    currentOperationalState,
+    recommendations,
+    openCycles: openCycleObjects,
+    levels,
+    lastProfessionalValidationAt: lastProfessionalValidationAt ?? null,
+    lastShadowValidationAt: lastShadowValidationAt ?? null,
+  });
+
   const settings: OperationalSettingsProfile = {
     simple: {
       capitalMax: toNum(config?.gridWalletMaxUsd) ?? 5000,
@@ -794,6 +827,7 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     notifications,
     execution: executionView,
     settings,
+    market,
   };
 }
 

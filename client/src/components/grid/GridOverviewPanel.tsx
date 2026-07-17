@@ -1,11 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Info, CheckCircle2, AlertCircle, Clock, TrendingUp, Wallet, Layers, ArrowRight } from "lucide-react";
+import { Info, CheckCircle2, AlertCircle, Clock, TrendingUp, Wallet, Layers } from "lucide-react";
 
 interface GridOverviewPanelProps {
   operational?: any;
-  onAnalyze?: () => void;
   onGoToTab?: (tab: string) => void;
 }
 
@@ -20,7 +19,7 @@ function fmtPrice(v: number | null | undefined): string {
   return `$${v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function GridOverviewPanel({ operational, onAnalyze, onGoToTab }: GridOverviewPanelProps) {
+export function GridOverviewPanel({ operational, onGoToTab }: GridOverviewPanelProps) {
   const overview = operational?.overview ?? {};
   const capital = operational?.capital ?? {};
   const openCycles = (operational?.openCycles ?? []) as any[];
@@ -53,12 +52,6 @@ export function GridOverviewPanel({ operational, onAnalyze, onGoToTab }: GridOve
               <Clock className="h-4 w-4" />
               {overview.nextAction || "—"}
             </span>
-            {overview.canAnalyzeNow && onAnalyze && (
-              <Button size="sm" variant="outline" onClick={onAnalyze}>
-                Analizar mercado ahora
-                <ArrowRight className="h-3 w-3 ml-1" />
-              </Button>
-            )}
           </div>
         </CardContent>
       </Card>
@@ -146,8 +139,8 @@ export function GridOverviewPanel({ operational, onAnalyze, onGoToTab }: GridOve
           <CardContent className="space-y-3">
             <p className="text-sm font-medium">{overview.primaryRecommendation.title}</p>
             <p className="text-sm text-muted-foreground">{overview.primaryRecommendation.explanation}</p>
-            {overview.primaryRecommendation.ctaLabel && onAnalyze && (
-              <Button size="sm" variant="outline" onClick={onAnalyze}>
+            {overview.primaryRecommendation.ctaLabel && onGoToTab && (
+              <Button size="sm" variant="outline" onClick={() => onGoToTab("ajustes")}>
                 {overview.primaryRecommendation.ctaLabel}
               </Button>
             )}

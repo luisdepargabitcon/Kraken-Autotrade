@@ -130,6 +130,15 @@ function CycleHeader({ cycle }: { cycle: any }) {
         <Badge variant="outline" className={cn("text-xs", statusClasses(cycle.color))}>
           {cycle.statusLabel}
         </Badge>
+        {cycle.rangeRelation === "previous" ? (
+          <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
+            Rango anterior
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] text-cyan-400 border-cyan-500/30 bg-cyan-500/10">
+            Rango vigente
+          </Badge>
+        )}
       </div>
       <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
         <span>Compra: <span className="font-mono text-foreground">{fmtPrice(cycle.buyPrice)}</span></span>
@@ -163,18 +172,23 @@ export function GridOpenCyclesPanel({ operational }: GridOpenCyclesPanelProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         {openCycles.length > 0 ? (
-          <Accordion type="multiple" defaultValue={openCycles.map((c: any) => c.id)} className="w-full">
-            {openCycles.map((cycle) => (
-              <AccordionItem key={cycle.id} value={cycle.id} className="border-b border-border/50">
-                <AccordionTrigger className="hover:no-underline py-2">
-                  <CycleHeader cycle={cycle} />
-                </AccordionTrigger>
-                <AccordionContent>
-                  <CycleDetail cycle={cycle} />
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
+          <>
+            <p className="text-xs text-muted-foreground">
+              Los ciclos de un rango anterior siguen activos hasta completar su venta; no se reconstruye la banda histórica.
+            </p>
+            <Accordion type="single" collapsible className="w-full">
+              {openCycles.map((cycle) => (
+                <AccordionItem key={cycle.id} value={cycle.id} className="border-b border-border/50">
+                  <AccordionTrigger className="hover:no-underline py-2">
+                    <CycleHeader cycle={cycle} />
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <CycleDetail cycle={cycle} />
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </>
         ) : (
           <div className="text-sm text-muted-foreground py-6 text-center">
             No hay operaciones abiertas.

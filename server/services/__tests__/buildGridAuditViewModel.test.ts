@@ -121,6 +121,9 @@ describe("buildGridAuditViewModel", () => {
     expect(vm.latestGridDiagnostic.humanProblem).toBeNull();
     expect(vm.counters.currentLevels).toBe(10);
     expect(vm.counters.currentPlannedLevels).toBe(10);
+    expect(vm.operational).toBeDefined();
+    expect(vm.operational.market).toBeDefined();
+    expect(vm.operational.market.pair).toBe("BTC/USD");
   });
 
   it("genera recomendaciones cuando el objetivo de beneficio es exigente", () => {

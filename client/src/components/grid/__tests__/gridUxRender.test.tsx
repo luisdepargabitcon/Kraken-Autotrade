@@ -6,11 +6,13 @@ import { GridOverviewPanel } from "../GridOverviewPanel";
 import { GridNotificationCenter } from "../GridNotificationCenter";
 import { GridLevelsCompactPanel } from "../GridLevelsCompactPanel";
 import { GridOpenCyclesPanel } from "../GridOpenCyclesPanel";
+import { GridMarketPanel } from "../GridMarketPanel";
 import { GridSettingsPanel, FIELD_META } from "../GridSettingsPanel";
 
 const headerOperational = {
   header: {
     title: "GRID AISLADO BTC/USD",
+    pair: "BTC/USD",
     mode: "SHADOW",
     isActive: true,
     isRunning: true,
@@ -22,6 +24,8 @@ const headerOperational = {
     priceFresh: true,
     openCycles: 2,
     totalNetPnlUsd: 12.34,
+    realizedNetPnlUsd: 12.34,
+    openEstimatedNetPnlUsd: 5.67,
     realOpenOrdersCount: 0,
   },
 };
@@ -104,6 +108,8 @@ const cyclesOperational = {
       estimatedNetPnl: 5.5,
       rangeRelation: "previous",
       durationLabel: "2 h",
+      estimatedGrossPnlUsd: 6.2,
+      estimatedNetPnlUsd: 5.5,
     },
   ],
   closedCycles: [
@@ -176,11 +182,12 @@ describe("Grid UX render", () => {
   });
 
   it("GridOverviewPanel renders state summary and active range", () => {
-    const html = renderToString(<GridOverviewPanel operational={overviewOperational} onAnalyze={() => {}} onGoToTab={() => {}} />);
+    const html = renderToString(<GridOverviewPanel operational={overviewOperational} onGoToTab={() => {}} />);
     expect(html).toContain("Rango activo en simulación");
     expect(html).toContain("Rango de entrada");
     expect(html).toContain("93.000,00");
     expect(html).toContain("Capital libre");
+    expect(html).not.toContain("Analizar mercado ahora");
   });
 
   it("GridNotificationCenter renders header with total count", () => {
@@ -204,6 +211,69 @@ describe("Grid UX render", () => {
     expect(text).toContain("Ciclo #25");
     expect(text).toContain("Rango anterior");
     expect(text).toContain("Histórico (2)");
+    expect(text).not.toContain("Analizar SHADOW");
+  });
+
+  it("GridMarketPanel renders market, entry range and recommendation", () => {
+    const marketOperational = {
+      header: headerOperational.header,
+      market: {
+        pair: "BTC/USD",
+        current: {
+          price: 95000,
+          bid: 94990,
+          ask: 95010,
+          spreadPct: 0.02,
+          source: "kraken",
+          fresh: true,
+          ageMs: 500,
+          maxAgeMs: 5000,
+          regime: { code: "SIDEWAYS", label: "Lateral", direction: "lateral" },
+          band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.21, position: "middle", positionPct: 50, atrPct: 1.2 },
+        },
+        entryRange: {
+          mode: "ADAPTIVE",
+          active: true,
+          calculatedLower: 93000,
+          calculatedUpper: 97000,
+          calculatedWidthPct: 4.21,
+          requestedLevels: 8,
+          viableLevels: 6,
+          spacingPct: 0.5,
+          minimumProfitableSpacingPct: 0.8,
+          netProfitTargetPct: 0.8,
+          reasonLabel: "Rango viable",
+          explanation: "El motor encontró un rango viable para el modo SHADOW.",
+        },
+        recommendation: {
+          title: "Baja el objetivo neto",
+          explanation: "Permite encajar más niveles rentables.",
+          consequence: "Mayor frecuencia de operaciones.",
+          suggestedLevels: 10,
+          suggestedLower: 92000,
+          suggestedUpper: 98000,
+          repetitionCount: 3,
+          technicalCode: "NET_PROFIT_TARGET_HIGH",
+        },
+      },
+    };
+    const onAnalyze = vi.fn();
+    const html = renderToString(<GridMarketPanel operational={marketOperational} onAnalyze={onAnalyze} />);
+    const text = cleanHtml(html);
+    expect(text).toContain("Mercado actual");
+    expect(text).toContain("Rango de entrada");
+    expect(text).toContain("Analizar mercado ahora");
+    expect(text).toContain("Baja el objetivo neto");
+    expect(text).toContain("Lateral");
+  });
+
+  it("GridOperationalHeader renders PnL realizado, beneficio estimado abierto y par", () => {
+    const html = renderToString(<GridOperationalHeader operational={headerOperational} />);
+    const text = cleanHtml(html);
+    expect(text).toContain("PnL realizado");
+    expect(text).toContain("Beneficio estimado abierto");
+    expect(text).toContain("BTC/USD");
+    expect(text).toContain("Órdenes reales");
   });
 
   it("GridSettingsPanel does not call onApply on mount and hides taker fallback fields", () => {
