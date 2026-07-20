@@ -18,7 +18,7 @@
  * This module is PURE: no DB access, no side effects, no exchange calls, no clock.
  */
 
-import type { GridCycle, GridLevel, GridRangeVersion } from "./gridIsolatedTypes";
+import type { GridCycle, GridLevel, GridRangeVersion, GridTargetCalculation, GridRejectedCandidate } from "./gridIsolatedTypes";
 
 export interface ExitSelectorParams {
   /** Real BUY fill price of the cycle. */
@@ -48,44 +48,33 @@ export interface ExitSelectorParams {
   maxDistancePct?: number;
 }
 
-export interface RejectedCandidate {
-  levelId: string;
-  side: "BUY" | "SELL";
-  price: number;
-  reasonCode:
-    | "PRICE_NOT_ABOVE_BUY"
-    | "DISTANCE_TOO_FAR"
-    | "QUANTITY_INVALID"
-    | "MIN_ORDER_USD"
-    | "OPERATIONAL_NET_NOT_POSITIVE"
-    | "AVAILABLE_NET_BELOW_TARGET";
-  operationalNetPnlUsd: number;
-  availablePnlAfterTaxPct: number;
-}
+type RejectedCandidate = GridRejectedCandidate & {
+  operationalNetPnlUsd?: number;
+  availablePnlAfterTaxPct?: number;
+};
 
-export interface TargetSelectionResult {
-  selected: boolean;
-  policyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2";
-  targetKind: "PERSISTED_SELL" | "SYNTHETIC_RUNG";
-  targetRungLevelId: string | null;
-  targetSellLevelId: string | null;
-  targetSellPrice: number | null;
-  targetSellQuantity: number | null;
-  grossPnlUsd: number | null;
-  exchangeFeesUsd: number | null;
-  operationalCostsUsd: number | null;
-  operationalNetPnlUsd: number | null;
-  operationalNetPnlPct: number | null;
-  taxReserveUsd: number | null;
-  availablePnlAfterTaxUsd: number | null;
-  availablePnlAfterTaxPct: number | null;
-  rejectedCandidates: RejectedCandidate[];
-  reasonCode:
-    | "TARGET_FOUND"
-    | "NO_RUNGS_ABOVE_BUY"
-    | "NO_PROFITABLE_RUNG"
-    | "INVALID_INPUT";
-  explanation: string;
+type ReasonCode =
+  | "TARGET_FOUND"
+  | "NO_RUNGS_ABOVE_BUY"
+  | "NO_PROFITABLE_RUNG"
+  | "INVALID_INPUT"
+  | "PRICE_NOT_ABOVE_BUY"
+  | "DISTANCE_TOO_FAR"
+  | "QUANTITY_INVALID"
+  | "MIN_ORDER_USD"
+  | "OPERATIONAL_NET_NOT_POSITIVE"
+  | "AVAILABLE_NET_BELOW_TARGET";
+
+function reasonText(code: ReasonCode | string): string {
+  switch (code) {
+    case "PRICE_NOT_ABOVE_BUY": return "El precio del rung no es superior al precio de compra.";
+    case "DISTANCE_TOO_FAR": return "El rung supera la distancia máxima permitida desde la compra.";
+    case "QUANTITY_INVALID": return "La cantidad del rung no es válida o no es múltiplo del step.";
+    case "MIN_ORDER_USD": return "El valor nocional del rung es inferior al mínimo permitido.";
+    case "OPERATIONAL_NET_NOT_POSITIVE": return "El PnL neto operacional no es positivo.";
+    case "AVAILABLE_NET_BELOW_TARGET": return "El PnL neto disponible tras impuestos no alcanza el objetivo.";
+    default: return code;
+  }
 }
 
 function roundToStep(value: number, step: number): number {
@@ -160,11 +149,10 @@ export function selectFirstProfitableHigherRung(
   levels: GridLevel[],
   rangeVersion: GridRangeVersion | undefined,
   params: ExitSelectorParams
-): TargetSelectionResult {
+): GridTargetCalculation {
   if (!validPositive(cycle.buyPrice) || !validPositive(cycle.quantity)) {
     return {
       selected: false,
-      policyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
       targetKind: "SYNTHETIC_RUNG",
       targetRungLevelId: null,
       targetSellLevelId: null,
@@ -178,6 +166,7 @@ export function selectFirstProfitableHigherRung(
       taxReserveUsd: null,
       availablePnlAfterTaxUsd: null,
       availablePnlAfterTaxPct: null,
+      netProfitTargetPct: params.netProfitTargetPct,
       rejectedCandidates: [],
       reasonCode: "INVALID_INPUT",
       explanation: "El ciclo no tiene precio de compra o cantidad válidos.",
@@ -187,7 +176,6 @@ export function selectFirstProfitableHigherRung(
   if (rangeVersion && rangeVersion.pair !== cycle.pair) {
     return {
       selected: false,
-      policyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
       targetKind: "SYNTHETIC_RUNG",
       targetRungLevelId: null,
       targetSellLevelId: null,
@@ -201,6 +189,7 @@ export function selectFirstProfitableHigherRung(
       taxReserveUsd: null,
       availablePnlAfterTaxUsd: null,
       availablePnlAfterTaxPct: null,
+      netProfitTargetPct: params.netProfitTargetPct,
       rejectedCandidates: [],
       reasonCode: "INVALID_INPUT",
       explanation: `Par del rango (${rangeVersion.pair}) no coincide con el par del ciclo (${cycle.pair}).`,
@@ -223,7 +212,6 @@ export function selectFirstProfitableHigherRung(
   if (candidates.length === 0) {
     return {
       selected: false,
-      policyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
       targetKind: "SYNTHETIC_RUNG",
       targetRungLevelId: null,
       targetSellLevelId: null,
@@ -237,6 +225,7 @@ export function selectFirstProfitableHigherRung(
       taxReserveUsd: null,
       availablePnlAfterTaxUsd: null,
       availablePnlAfterTaxPct: null,
+      netProfitTargetPct: params.netProfitTargetPct,
       rejectedCandidates: [],
       reasonCode: "NO_RUNGS_ABOVE_BUY",
       explanation: "No hay ningún escalón (BUY ni SELL) por encima del precio de compra.",
@@ -262,6 +251,7 @@ export function selectFirstProfitableHigherRung(
         side: rung.side,
         price: rung.price,
         reasonCode,
+        reason: reasonText(reasonCode),
         operationalNetPnlUsd: 0,
         availablePnlAfterTaxPct: 0,
       });
@@ -281,6 +271,7 @@ export function selectFirstProfitableHigherRung(
         side: rung.side,
         price: rung.price,
         reasonCode: "QUANTITY_INVALID",
+        reason: reasonText("QUANTITY_INVALID"),
         operationalNetPnlUsd: 0,
         availablePnlAfterTaxPct: 0,
       });
@@ -296,6 +287,7 @@ export function selectFirstProfitableHigherRung(
           side: rung.side,
           price: rung.price,
           reasonCode: "PRICE_NOT_ABOVE_BUY",
+          reason: reasonText("PRICE_NOT_ABOVE_BUY"),
           operationalNetPnlUsd: 0,
           availablePnlAfterTaxPct: 0,
         });
@@ -310,6 +302,7 @@ export function selectFirstProfitableHigherRung(
         side: rung.side,
         price: targetPrice,
         reasonCode: "MIN_ORDER_USD",
+        reason: reasonText("MIN_ORDER_USD"),
         operationalNetPnlUsd: 0,
         availablePnlAfterTaxPct: 0,
       });
@@ -324,6 +317,7 @@ export function selectFirstProfitableHigherRung(
         side: rung.side,
         price: targetPrice,
         reasonCode: "OPERATIONAL_NET_NOT_POSITIVE",
+        reason: reasonText("OPERATIONAL_NET_NOT_POSITIVE"),
         operationalNetPnlUsd: pnl.operationalNetPnlUsd,
         availablePnlAfterTaxPct: pnl.availablePnlAfterTaxPct,
       });
@@ -336,6 +330,7 @@ export function selectFirstProfitableHigherRung(
         side: rung.side,
         price: targetPrice,
         reasonCode: "AVAILABLE_NET_BELOW_TARGET",
+        reason: reasonText("AVAILABLE_NET_BELOW_TARGET"),
         operationalNetPnlUsd: pnl.operationalNetPnlUsd,
         availablePnlAfterTaxPct: pnl.availablePnlAfterTaxPct,
       });
@@ -345,7 +340,6 @@ export function selectFirstProfitableHigherRung(
     const isPersistedSell = rung.side === "SELL";
     return {
       selected: true,
-      policyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
       targetKind: isPersistedSell ? "PERSISTED_SELL" : "SYNTHETIC_RUNG",
       targetRungLevelId: rung.id,
       targetSellLevelId: isPersistedSell ? rung.id : null,
@@ -359,6 +353,7 @@ export function selectFirstProfitableHigherRung(
       taxReserveUsd: pnl.taxReserveUsd,
       availablePnlAfterTaxUsd: pnl.availablePnlAfterTaxUsd,
       availablePnlAfterTaxPct: pnl.availablePnlAfterTaxPct,
+      netProfitTargetPct: params.netProfitTargetPct,
       rejectedCandidates,
       reasonCode: "TARGET_FOUND",
       explanation: `Primer escalón superior rentable: ${isPersistedSell ? "SELL persistida" : "RUNG sintético sobre BUY"} a ${targetPrice} (net disponible ${pnl.availablePnlAfterTaxPct.toFixed(4)}%).`,
@@ -381,6 +376,7 @@ export function selectFirstProfitableHigherRung(
     taxReserveUsd: null,
     availablePnlAfterTaxUsd: null,
     availablePnlAfterTaxPct: null,
+    netProfitTargetPct: params.netProfitTargetPct,
     rejectedCandidates,
     reasonCode: "NO_PROFITABLE_RUNG",
     explanation: "Ningún escalón superior cumple el objetivo neto disponible configurado.",

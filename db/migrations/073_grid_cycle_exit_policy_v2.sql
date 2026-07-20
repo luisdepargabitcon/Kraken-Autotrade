@@ -19,7 +19,5 @@ CREATE INDEX IF NOT EXISTS idx_grid_cycles_exit_policy
   ON grid_isolated_cycles(exit_policy_version)
   WHERE exit_policy_version IS NOT NULL;
 
--- 3. Índice para localizar ciclos con estado de riesgo persistido.
-CREATE INDEX IF NOT EXISTS idx_grid_cycles_risk_state
-  ON grid_isolated_cycles(risk_state_json)
-  WHERE risk_state_json IS NOT NULL;
+-- 3. No se añade índice sobre risk_state_json porque no se consulta el JSON
+--    completo en ninguna ruta crítica; se mantiene solo el índice de auditoría.

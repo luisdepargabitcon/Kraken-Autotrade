@@ -9,7 +9,7 @@
  * no order placement, no state mutation. It only classifies and labels data.
  */
 
-import { executionPolicyLabel, type ExecutionPolicy } from "./gridIsolatedTypes";
+import { executionPolicyLabel, type ExecutionPolicy, type GridCycleRiskState, type GridClosePath } from "./gridIsolatedTypes";
 import { buildGridMarketViewModel, type GridMarketViewModel } from "./buildGridMarketViewModel";
 
 export type CycleRangeRelation = "current" | "previous" | "unknown";
@@ -97,7 +97,10 @@ export interface OperationalOpenCycle {
   requiresReview: boolean;
   targetReached: boolean;
   executable: boolean;
-  riskState: any;
+  riskState: GridCycleRiskState | null;
+  riskStateLabel: string | null;
+  activeExitRoute: GridClosePath | null;
+  activeExitRouteLabel: string | null;
   buyLevelId: string | null;
   sellLevelId: string | null;
   targetSellLevelId: string | null;
@@ -252,28 +255,6 @@ function statusColor(status: string, requiresReview: boolean): OperationalOpenCy
   return "amber";
 }
 
-function translateStatus(status: string): string {
-  switch (status) {
-    case "open":
-    case "active":
-    case "buy_placed":
-    case "sell_placed":
-    case "cycle_open":
-      return "Esperando venta";
-    case "buy_filled":
-      return "Esperando precio de venta";
-    case "completed":
-    case "closed":
-      return "Venta simulada completada";
-    case "cancelled":
-      return "Cancelado";
-    case "error":
-      return "Error";
-    default:
-      return status || "Desconocido";
-  }
-}
-
 function cycleRangeLabel(relation: CycleRangeRelation): string {
   if (relation === "current") return "Rango vigente";
   return "Rango anterior (gestión activa)";
@@ -299,12 +280,61 @@ function extractTargetCalculation(cycle: any): { operationalCostsUsd?: number; e
   }
 }
 
-function parseRiskState(cycle: any): any {
+function parseRiskState(cycle: any): GridCycleRiskState | null {
   if (!cycle?.riskStateJson) return null;
   try {
-    return typeof cycle.riskStateJson === "string" ? JSON.parse(cycle.riskStateJson) : cycle.riskStateJson;
+    const parsed = typeof cycle.riskStateJson === "string" ? JSON.parse(cycle.riskStateJson) : cycle.riskStateJson;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as GridCycleRiskState;
   } catch {
     return null;
+  }
+}
+
+function riskStateSummary(risk: GridCycleRiskState | null): string | null {
+  if (!risk) return null;
+  if (risk.hodl?.active) return "HODL recovery";
+  if (risk.trailing?.activated) return "Trailing activo";
+  if (risk.stopLoss?.some(l => l.triggered)) return "Stop-loss disparado";
+  if (risk.lastAction) return risk.lastAction;
+  return null;
+}
+
+function closePathLabel(path: GridClosePath | null): string | null {
+  switch (path) {
+    case "NORMAL_TARGET": return "Target normal";
+    case "TRAILING_MAKER": return "Trailing maker";
+    case "PROTECTIVE_MAKER": return "Stop-loss maker";
+    case "HODL_RECOVERY": return "Recuperación HODL";
+    default: return null;
+  }
+}
+
+function translateStatus(status: string): string {
+  switch (status) {
+    case "open":
+    case "active":
+    case "buy_placed":
+    case "sell_placed":
+    case "cycle_open":
+      return "Esperando venta";
+    case "buy_filled":
+      return "Esperando precio de venta";
+    case "completed":
+    case "closed":
+      return "Venta simulada completada";
+    case "stop_loss_hit":
+      return "Stop-loss ejecutado";
+    case "trailing_closed":
+      return "Cerrado por trailing";
+    case "hodl_recovery":
+      return "Recuperación HODL";
+    case "cancelled":
+      return "Cancelado";
+    case "error":
+      return "Error";
+    default:
+      return status || "Desconocido";
   }
 }
 
@@ -397,6 +427,8 @@ function buildOpenCycle(
           ? "range"
           : null);
 
+  const risk = parseRiskState(cycle);
+
   return {
     id: cycle?.id ?? String(cycle?.cycleNumber ?? "?"),
     cycleNumber: cycle?.cycleNumber ?? 0,
@@ -429,8 +461,11 @@ function buildOpenCycle(
     targetRungLevelId: cycle?.targetRungLevelId ?? null,
     requiresReview,
     targetReached: estimates.targetReached,
-    executable: status === "buy_filled" || status === "open" || status === "active" || status === "sell_placed",
-    riskState: parseRiskState(cycle),
+    executable: status === "buy_filled" || status === "open" || status === "active" || status === "sell_placed" || status === "hodl_recovery",
+    riskState: risk,
+    riskStateLabel: riskStateSummary(risk),
+    activeExitRoute: risk?.activeExitRoute ?? null,
+    activeExitRouteLabel: closePathLabel(risk?.activeExitRoute ?? null),
     buyLevelId: cycle?.buyLevelId ?? null,
     sellLevelId: cycle?.sellLevelId ?? null,
     targetSellLevelId: cycle?.targetSellLevelId ?? null,

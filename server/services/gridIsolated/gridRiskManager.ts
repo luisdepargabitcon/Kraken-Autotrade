@@ -169,7 +169,9 @@ class GridRiskManager {
     }
 
     // ─── 3. Check Trailing Protection ──────────────────────────────
-    if (profitPct >= config.trailingActivationPct) {
+    // Once trailing is active it remains active even if the current profit
+    // retraces below the activation threshold, until the stop is hit.
+    if (profitPct >= config.trailingActivationPct || trailingState.activated) {
       // Trailing should be active
       let updatedTrailing: TrailingProtectionState = { ...trailingState };
 

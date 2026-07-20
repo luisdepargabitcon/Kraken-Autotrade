@@ -582,12 +582,14 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       );
       await engine.processOpenCyclesShadow(priceResult({ bid: target }));
       const cycle = engine.cycles[0];
+      const expectedFee = 0.4372156701960858;
+      const expectedTax = 1.1473277737131882;
+      const expectedNet = 4.589311094852752;
       expect(cycle.grossPnlUsd).toBeCloseTo(6.173854538762, 10);
-      expect(cycle.feeTotalUsd).toBeCloseTo(0, 10);
-      expect(cycle.taxReserveUsd).toBeCloseTo(1.234770907752, 10);
-      expect(cycle.netPnlUsd).toBeCloseTo(4.939083631010, 10);
-      expect(cycle.netPnlPct).toBeCloseTo(2.0595762845, 10);
-      expect(cycle.feeTotalUsd).toBeCloseTo(0, 10);
+      expect(cycle.feeTotalUsd).toBeCloseTo(expectedFee, 10);
+      expect(cycle.taxReserveUsd).toBeCloseTo(expectedTax, 10);
+      expect(cycle.netPnlUsd).toBeCloseTo(expectedNet, 10);
+      expect(cycle.netPnlPct).toBeCloseTo(1.9137226658, 10);
 
       // Los roles se auditan en el evento GRID_CYCLE_COMPLETED, no en el ciclo
       const completedCall = (botLogger.info as any).mock.calls.find((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
@@ -862,9 +864,119 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       const closedB = engine.cycles.find((c: any) => c.id === "cB");
       expect(closedA.targetSellLevelId).toBe("c6e8cfd1-37fa-4516-88e8-79ebe54a5f43");
       expect(closedA.grossPnlUsd).toBeCloseTo(6.173854538762, 10);
-      expect(closedA.feeTotalUsd).toBeCloseTo(0, 10);
-      expect(closedA.netPnlUsd).toBeCloseTo(4.939083631010, 10);
+      expect(closedA.feeTotalUsd).toBeCloseTo(0.4372156701960858, 10);
+      expect(closedA.netPnlUsd).toBeCloseTo(4.589311094852752, 10);
       expect(closedB.targetSellLevelId).toBe("4f300503-ff58-4aba-9d0b-6fc8f7869018");
+    });
+  });
+
+  describe("RIESGO Y MÁQUINA DE ESTADOS", () => {
+    it("trailing stop se activa, recalcula stop y cierra por trailing_closed", async () => {
+      const engine = resetEngine(
+        [makeCycle({
+          targetSellPrice: 70_000,
+          targetSellLevelId: null,
+          targetRungLevelId: null,
+          exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+          targetKind: "SYNTHETIC_RUNG",
+          riskStateJson: null,
+        })],
+        [makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any })],
+        { trailingEnabled: true, trailingActivationPct: 1.0, trailingStopPct: 0.5 }
+      );
+
+      // Paso 1: activar trailing a 60650 (1.08% > 1%)
+      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 60_650 }));
+      let risk = engine.cycles[0].riskStateJson as any;
+      expect(risk?.trailing?.activated).toBe(true);
+      expect(risk?.activeExitRoute).toBeNull();
+
+      // Paso 2: precio cae por debajo del stop (60650 * 0.995 = 60346.75)
+      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 60_300 }));
+      risk = engine.cycles[0].riskStateJson as any;
+      expect(risk?.lastAction).toBe("TRAILING_CLOSE");
+      expect(risk?.activeExitRoute).toBe("TRAILING_MAKER");
+      expect(risk?.pendingExitPrice).toBeCloseTo(60346.75, 2);
+
+      // Paso 3: el cierre SHADOW ejecuta el maker exit a 60300
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 60_300 }));
+      expect(result).toBe(1);
+      expect(engine.cycles[0].status).toBe("trailing_closed");
+      expect(engine.cycles[0].sellPrice).toBeCloseTo(60346.75, 2);
+    });
+
+    it("stop-loss soft cierra como stop_loss_hit cuando HODL está desactivado", async () => {
+      const engine = resetEngine(
+        [makeCycle({
+          targetSellPrice: 70_000,
+          targetSellLevelId: null,
+          targetRungLevelId: null,
+          exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+          targetKind: "SYNTHETIC_RUNG",
+          riskStateJson: null,
+        })],
+        [makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any })],
+        { stopLossEnabled: true, stopLossSoftPct: 3, hodlRecoveryEnabled: false }
+      );
+
+      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 58_000 }));
+      const risk = engine.cycles[0].riskStateJson as any;
+      expect(risk?.lastAction).toBe("STOP_LOSS_SOFT");
+      expect(risk?.activeExitRoute).toBe("PROTECTIVE_MAKER");
+
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 58_000 }));
+      expect(result).toBe(1);
+      expect(engine.cycles[0].status).toBe("stop_loss_hit");
+      expect(engine.cycles[0].sellPrice).toBeCloseTo(58_000, 2);
+    });
+
+    it("HODL recovery activa, espera target y cierra cuando se alcanza", async () => {
+      const engine = resetEngine(
+        [makeCycle({
+          targetSellPrice: 70_000,
+          targetSellLevelId: null,
+          targetRungLevelId: null,
+          exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+          targetKind: "SYNTHETIC_RUNG",
+          riskStateJson: null,
+        })],
+        [makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any })],
+        { stopLossEnabled: true, stopLossSoftPct: 3, hodlRecoveryEnabled: true }
+      );
+
+      // Soft stop en 58200 -> activa HODL con target de break-even > 60000
+      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 58_200 }));
+      let risk = engine.cycles[0].riskStateJson as any;
+      expect(risk?.lastAction).toBe("HODL_RECOVERY_ACTIVATE");
+      expect(engine.cycles[0].status).toBe("hodl_recovery");
+      const recoveryTarget = risk?.hodl?.recoveryTargetPrice;
+      expect(recoveryTarget).toBeGreaterThan(60_000);
+
+      // Recuperación: el precio vuelve al target de break-even
+      await engine.evaluateRiskForOpenCycles(priceResult({ bid: recoveryTarget }));
+      risk = engine.cycles[0].riskStateJson as any;
+      expect(risk?.activeExitRoute).toBe("HODL_RECOVERY");
+
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: recoveryTarget }));
+      expect(result).toBe(1);
+      expect(engine.cycles[0].status).toBe("completed");
+      expect(engine.cycles[0].sellPrice).toBeCloseTo(recoveryTarget, 2);
+    });
+
+    it("rearma el nivel BUY original tras cerrar el ciclo", async () => {
+      const engine = resetEngine(
+        [makeCycle()],
+        [
+          makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+          makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+        ]
+      );
+      await engine.processOpenCyclesShadow(priceResult({ bid: 61_000 }));
+      expect(engine.cycles[0].status).toBe("completed");
+
+      const buyLevel = engine.levels.find((l: any) => l.id === BUY_LEVEL_ID);
+      expect(buyLevel?.status).toBe("planned");
+      expect(buyLevel?.filledPrice).toBeNull();
     });
   });
 });

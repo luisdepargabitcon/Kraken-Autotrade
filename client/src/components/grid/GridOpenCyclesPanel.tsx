@@ -108,7 +108,10 @@ function CycleDetail({ cycle }: { cycle: any }) {
 
       {cycle.riskState && (
         <div className="rounded border border-border/40 p-2 text-xs space-y-1">
-          <div className="text-muted-foreground">Estado de riesgo</div>
+          <div className="text-muted-foreground">
+            Estado de riesgo {cycle.riskStateLabel ? `· ${cycle.riskStateLabel}` : ""}
+            {cycle.activeExitRouteLabel ? ` · ${cycle.activeExitRouteLabel}` : ""}
+          </div>
           {cycle.riskState.trailing?.activated && (
             <div className="font-mono text-[10px] text-amber-400">
               Trailing activo — stop {fmtPrice(cycle.riskState.trailing.currentStopPrice)}
@@ -119,7 +122,12 @@ function CycleDetail({ cycle }: { cycle: any }) {
               HODL Recovery — target {fmtPrice(cycle.riskState.hodl.recoveryTargetPrice)}
             </div>
           )}
-          {!cycle.riskState.trailing?.activated && !cycle.riskState.hodl?.active && (
+          {cycle.riskState.stopLoss?.some((l: any) => l.triggered) && (
+            <div className="font-mono text-[10px] text-red-400">
+              Stop-loss disparado
+            </div>
+          )}
+          {!cycle.riskState.trailing?.activated && !cycle.riskState.hodl?.active && !cycle.riskState.stopLoss?.some((l: any) => l.triggered) && (
             <div className="font-mono text-[10px] text-muted-foreground">Sin riesgo activo</div>
           )}
         </div>

@@ -5,6 +5,63 @@
 
 ---
 
+## 2026-07-21 — GRID COUNTER-AUDIT REFINEMENT: JSONB tipados, fees dinámicos, migración 073 y máquina de estados SHADOW
+
+### Resumen
+Refinamiento de la auditoría Grid Counter-Audit: los campos `riskStateJson` y `targetCalculationJson` se persisten como objetos JSONB tipados, no como strings. El motor usa comisiones y reserva fiscal dinámicas (maker 0.09 %, taker 0.09 %, reserva 20 %) en lugar de valores hardcoded. Se corrige la migración `073` eliminando el índice innecesario sobre `risk_state_json`. Se completa la máquina de estados de riesgo en SHADOW: trailing, stop-loss y HODL recovery activan rutas de cierre `maker-only` con rearme del nivel BUY original. Se mantiene el modo SHADOW, no se ejecutan órdenes reales, no hay fallback taker y se eliminan cambios UI fuera de ámbito (badge de commit).
+
+### Problema
+- `riskStateJson` y `targetCalculationJson` se trataban como strings en algunas rutas, perdiendo tipado y facilitando inconsistencias.
+- El motor usaba comisiones hardcoded (`makerFeePct: 0`, `takerFeePct: 0.09`) y `taxReservePct: 20` en vez de las constantes/parámetros configurables.
+- La migración `073` creaba un índice sobre `risk_state_json` que no se consulta y consume espacio.
+- `evaluateRiskForOpenCycles` solo persistía el estado de riesgo; no conectaba con `processOpenCyclesShadow` para ejecutar cierres maker cuando se disparaban trailing/stop/HODL.
+- `processOpenCyclesShadow` no rearmaba el nivel BUY original tras cerrar un ciclo, impidiendo la rotación completa del RUNG.
+- El badge `Windsurf · commit` en `NexaHome.tsx` y `vite.config.ts` quedaba fuera del alcance de la auditoría Grid.
+
+### Solución
+1. **Tipado JSONB**:
+   - `gridIsolatedTypes.ts`: `GridCycle.targetCalculationJson` y `GridCycle.riskStateJson` son objetos tipados; `GridCycleRiskState` incluye `activeExitRoute?: GridClosePath | null` y `pendingExitPrice?: number | null`.
+   - `gridIsolatedEngine.ts`: `parseJsonbObject` reemplaza a `stringifyJsonField`; los ciclos cargados desde DB se parsean como objetos.
+2. **Fees dinámicos**:
+   - Todas las llamadas a `computeCyclePnLWithRoles` en SHADOW usan `FEE_BUFFER_BUY_PCT` (0.09), `FEE_BUFFER_SELL_PCT` (0.09) y `TAX_RESERVE_PCT` (20).
+3. **Migración 073 corregida**:
+   - `db/migrations/073_grid_cycle_exit_policy_v2.sql`: se elimina `idx_grid_cycles_risk_state`; se mantiene `idx_grid_cycles_exit_policy`.
+4. **Máquina de estados SHADOW**:
+   - `evaluateRiskForOpenCycles` mapea `TRAILING_CLOSE`, `STOP_LOSS_*` y `HODL_RECOVERY_*` a `activeExitRoute` + `pendingExitPrice`, activa circuit breaker en emergencia y pasa `hodl_recovery` como estado.
+   - `processOpenCyclesShadow` integra `resolveExitForCycle`, `canFillExit` y `completeCycleShadow`; cierra por la ruta activa con maker-only y rearma el BUY.
+   - `gridRiskManager.ts`: el trailing sigue activo aunque el beneficio retroceda por debajo del umbral de activación, permitiendo que el stop se dispare.
+5. **View model y UI**:
+   - `buildGridOperationalViewModel.ts`: expone `riskState`, `riskStateLabel`, `activeExitRoute`, `activeExitRouteLabel`.
+   - `GridOpenCyclesPanel.tsx`: muestra etiquetas de ruta activa y estado de riesgo.
+6. **Limpieza de alcance**:
+   - Se revierten `client/src/pages/NexaHome.tsx` y `vite.config.ts` a su estado original.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridCycleExitSelector.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridRiskManager.ts`
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `client/src/components/grid/GridOpenCyclesPanel.tsx`
+- `db/migrations/073_grid_cycle_exit_policy_v2.sql`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅ sin errores de TypeScript.
+- `npm run build`: ✅ cliente y servidor.
+- `npx vitest run server/services/gridIsolated/__tests__`: ✅ 120 tests Grid.
+- `npx vitest run`: ⚠️ fallos preexistentes ajenos (telegram snapshots, IDCA market context helpers) no relacionados con Grid.
+
+### Estado final
+Implementación refinada lista. Pendiente: deploy a staging previa aprobación del usuario y validación visual post-deploy.
+
+### Pendientes
+- Desplegar a staging y validar UI de ciclos abiertos, logs de eventos y estados de riesgo.
+- Verificar migración 073 aplicada idempotente en base de datos staging.
+
+---
+
 ## 2026-07-21 — GRID COUNTER-AUDIT: Política FIRST_PROFITABLE_HIGHER_RUNG_V2, persistencia de obligación SELL y estados de riesgo
 
 ### Resumen

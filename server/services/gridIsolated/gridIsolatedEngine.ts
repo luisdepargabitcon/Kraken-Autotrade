@@ -66,7 +66,6 @@ import {
 } from "./gridCycleTargetResolver";
 import {
   selectFirstProfitableHigherRung,
-  type TargetSelectionResult,
 } from "./gridCycleExitSelector";
 import { gridRiskManager } from "./gridRiskManager";
 import {
@@ -95,6 +94,7 @@ import {
   type GridRangeVersion,
   type GridLevel,
   type GridCycle,
+  type GridCycleStatus,
   type GridExecutionStatus,
   type GridCycleLifecycleState,
   type GridCycleRangeRelation,
@@ -104,10 +104,15 @@ import {
   type GridExitPolicyVersion,
   type GridTargetKind,
   type GridCycleRiskState,
+  type GridClosePath,
+  type GridTargetCalculation,
   type RiskAction,
   type TrailingProtectionState,
   type StopLossLayer,
   type HodlRecoveryState,
+  FEE_BUFFER_BUY_PCT,
+  FEE_BUFFER_SELL_PCT,
+  TAX_RESERVE_PCT,
 } from "./gridIsolatedTypes";
 
 class GridIsolatedEngine {
@@ -369,17 +374,21 @@ class GridIsolatedEngine {
   }
 
   /**
-   * Normalize a JSONB value from the DB (already parsed) or a raw string into a
-   * stable JSON string, or null when empty.
+   * Parse a JSONB value from the DB into a plain object. Handles both string
+   * JSON (legacy/edge) and already-parsed objects.
    */
-  private stringifyJsonField(value: unknown): string | null {
+  private parseJsonbObject(value: unknown): Record<string, unknown> | null {
     if (value == null) return null;
-    if (typeof value === "string") return value;
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return null;
+    if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
     }
+    return null;
   }
 
   /**
@@ -388,9 +397,11 @@ class GridIsolatedEngine {
   private buildDefaultRiskState(): GridCycleRiskState {
     return {
       trailing: gridRiskManager.initTrailingState(),
-      stopLoss: gridRiskManager.initStopLossLayers(this.config ?? undefined as any),
+      stopLoss: gridRiskManager.initStopLossLayers(this.config as GridIsolatedConfig),
       hodl: gridRiskManager.initHodlState(),
       lastAction: null,
+      activeExitRoute: null,
+      pendingExitPrice: null,
       lastEvaluatedAt: null,
     };
   }
@@ -399,28 +410,37 @@ class GridIsolatedEngine {
    * Parse persisted risk_state_json into a typed object, falling back to defaults.
    */
   private parseRiskState(cycle: GridCycle): GridCycleRiskState {
-    const defaults = {
+    const defaults: GridCycleRiskState = {
       trailing: gridRiskManager.initTrailingState(),
       stopLoss: this.config ? gridRiskManager.initStopLossLayers(this.config) : [],
       hodl: gridRiskManager.initHodlState(),
       lastAction: null,
+      activeExitRoute: null,
+      pendingExitPrice: null,
       lastEvaluatedAt: null,
     };
-    if (!cycle.riskStateJson) return defaults;
-    try {
-      const parsed = typeof cycle.riskStateJson === "string"
-        ? JSON.parse(cycle.riskStateJson)
-        : cycle.riskStateJson;
-      return {
-        trailing: parsed?.trailing ? { ...defaults.trailing, ...parsed.trailing } : defaults.trailing,
-        stopLoss: Array.isArray(parsed?.stopLoss) ? parsed.stopLoss : defaults.stopLoss,
-        hodl: parsed?.hodl ? { ...defaults.hodl, ...parsed.hodl } : defaults.hodl,
-        lastAction: parsed?.lastAction ?? defaults.lastAction,
-        lastEvaluatedAt: parsed?.lastEvaluatedAt ? new Date(parsed.lastEvaluatedAt) : defaults.lastEvaluatedAt,
-      };
-    } catch {
-      return defaults;
-    }
+    const parsed = this.parseJsonbObject(cycle.riskStateJson);
+    if (!parsed) return defaults;
+    const validCloseRoute = (v: unknown): GridClosePath | null => {
+      if (v === "NORMAL_TARGET" || v === "TRAILING_MAKER" || v === "PROTECTIVE_MAKER" || v === "HODL_RECOVERY") return v;
+      return null;
+    };
+    return {
+      trailing: parsed?.trailing ? { ...defaults.trailing, ...(parsed.trailing as Record<string, unknown>) } : defaults.trailing,
+      stopLoss: Array.isArray(parsed?.stopLoss) ? parsed.stopLoss as StopLossLayer[] : defaults.stopLoss,
+      hodl: parsed?.hodl ? { ...defaults.hodl, ...(parsed.hodl as Record<string, unknown>) } : defaults.hodl,
+      lastAction: (parsed?.lastAction as RiskAction) ?? defaults.lastAction,
+      activeExitRoute: validCloseRoute(parsed?.activeExitRoute) ?? defaults.activeExitRoute,
+      pendingExitPrice: typeof parsed?.pendingExitPrice === "number" && Number.isFinite(parsed.pendingExitPrice) ? parsed.pendingExitPrice : null,
+      lastEvaluatedAt: parsed?.lastEvaluatedAt ? new Date(parsed.lastEvaluatedAt as string | number | Date) : defaults.lastEvaluatedAt,
+    };
+  }
+
+  /**
+   * Parse persisted target_calculation_json into a typed object.
+   */
+  private parseTargetCalculation(cycle: GridCycle): GridTargetCalculation | null {
+    return this.parseJsonbObject(cycle.targetCalculationJson) as GridTargetCalculation | null;
   }
 
   /**
@@ -805,6 +825,7 @@ class GridIsolatedEngine {
     // Persistently evaluate trailing, stop-loss and HODL recovery for all open cycles.
     if (this.config.mode === "SHADOW") {
       await this.evaluateRiskForOpenCycles(shadowExecutionPrice);
+      await this.processOpenCyclesShadow(shadowExecutionPrice);
     }
   }
 
@@ -1187,8 +1208,8 @@ class GridIsolatedEngine {
         netPnlPct: parseFloat(row.netPnlPct),
         exitPolicyVersion: row.exitPolicyVersion as GridExitPolicyVersion | null ?? null,
         targetKind: row.targetKind as GridTargetKind | null ?? null,
-        targetCalculationJson: this.stringifyJsonField(row.targetCalculationJson),
-        riskStateJson: this.stringifyJsonField(row.riskStateJson),
+        targetCalculationJson: this.parseJsonbObject(row.targetCalculationJson) as GridCycle["targetCalculationJson"],
+        riskStateJson: this.parseJsonbObject(row.riskStateJson) as GridCycle["riskStateJson"],
         buyClientOrderId: row.buyClientOrderId,
         sellClientOrderId: row.sellClientOrderId,
         buyFilledAt: row.buyFilledAt,
@@ -1252,7 +1273,7 @@ class GridIsolatedEngine {
       let targetLevelId: string | null = null;
       let targetRungLevelId: string | null = null;
       let targetKind: GridTargetKind = "UNKNOWN";
-      let targetCalculationJson: string | null = null;
+      let targetCalculationJson: GridTargetCalculation | null = null;
       let reason = "";
       let candidateCount = 0;
       let resolvedNow = false;
@@ -1268,9 +1289,9 @@ class GridIsolatedEngine {
             buyFillPrice: cycle.buyPrice ?? 0,
             buyFillQuantity: cycle.quantity,
             netProfitTargetPct: this.config.netProfitTargetPct,
-            makerFeePct: 0,
-            takerFeePct: 0.09,
-            taxReservePct: 20,
+            makerFeePct: FEE_BUFFER_BUY_PCT,
+            takerFeePct: FEE_BUFFER_SELL_PCT,
+            taxReservePct: TAX_RESERVE_PCT,
           }
         );
         if (selectorResult.selected) {
@@ -1278,8 +1299,8 @@ class GridIsolatedEngine {
           targetQty = selectorResult.targetSellQuantity;
           targetLevelId = selectorResult.targetSellLevelId;
           targetRungLevelId = selectorResult.targetRungLevelId;
-          targetKind = selectorResult.targetKind;
-          targetCalculationJson = JSON.stringify(selectorResult);
+          targetKind = selectorResult.targetKind ?? "UNKNOWN";
+          targetCalculationJson = selectorResult;
           resolvedNow = true;
         } else {
           reason = selectorResult.explanation;
@@ -1656,8 +1677,235 @@ class GridIsolatedEngine {
   }
 
   /**
-   * Process open cycles in SHADOW mode, independent of the active range.
-   * Closes any cycle whose target SELL has been reached by the best bid.
+   * Resolve the active exit for an open cycle.
+   * Returns the effective target price, quantity, sell level id and close path.
+   * Uses persisted risk state when a trailing/protective/HODL route is active,
+   * otherwise falls back to the explicit normal SELL target.
+   */
+  private resolveExitForCycle(cycle: GridCycle): {
+    targetPrice: number | null;
+    targetQty: number | null;
+    sellLevelId: string | null;
+    closePath: GridClosePath | null;
+  } {
+    const risk = this.parseRiskState(cycle);
+
+    // If an active risk route exists, use the pending exit price calculated
+    // during the last risk evaluation.
+    if (risk.activeExitRoute && risk.pendingExitPrice != null) {
+      return {
+        targetPrice: risk.pendingExitPrice,
+        targetQty: cycle.quantity,
+        sellLevelId: null,
+        closePath: risk.activeExitRoute,
+      };
+    }
+
+    // When a cycle is in HODL recovery without an active exit route it must not
+    // be closed by a normal target; it waits for the recovery target.
+    if (cycle.status === "hodl_recovery") {
+      return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null };
+    }
+
+    // Normal explicit SELL target (persisted or V2 synthetic).
+    if (cycle.targetSellPrice != null && cycle.targetSellQuantity != null) {
+      return {
+        targetPrice: cycle.targetSellPrice,
+        targetQty: cycle.targetSellQuantity,
+        sellLevelId: cycle.targetSellLevelId,
+        closePath: "NORMAL_TARGET",
+      };
+    }
+
+    return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null };
+  }
+
+  /**
+   * Determine whether the current best bid can fill a pending exit maker order.
+   * Conservative SHADOW maker-only model:
+   *   - Take-profit targets above buy (NORMAL_TARGET, HODL_RECOVERY): fill when bid >= price.
+   *   - Trailing stop and protective stop (sells triggered by price drop): fill when bid <= price.
+   */
+  private canFillExit(bestBid: number, targetPrice: number, closePath: GridClosePath | null): boolean {
+    if (closePath === "TRAILING_MAKER" || closePath === "PROTECTIVE_MAKER") {
+      return bestBid <= targetPrice;
+    }
+    return bestBid >= targetPrice;
+  }
+
+  /**
+   * Complete a cycle in SHADOW mode and rearm the source BUY level.
+   * Atomic transaction: update cycle, optionally mark target SELL level filled,
+   * and reset the source BUY level to planned so it can rotate again.
+   * Does NOT place real orders.
+   */
+  private async completeCycleShadow(
+    cycle: GridCycle,
+    sellPrice: number,
+    sellLevelId: string | null,
+    closePath: GridClosePath,
+    priceResult: GridShadowExecutionPriceResult
+  ): Promise<boolean> {
+    if (!this.config || TERMINAL_GRID_CYCLE_STATUSES.includes(cycle.status as any)) return false;
+
+    const now = new Date();
+    const holdTimeMinutes = cycle.buyFilledAt
+      ? Math.round((now.getTime() - cycle.buyFilledAt.getTime()) / 60000)
+      : 0;
+
+    const pnl = computeCyclePnLWithRoles({
+      buyPrice: cycle.buyPrice!,
+      sellPrice,
+      quantity: cycle.quantity,
+      buyLiquidityRole: "maker",
+      sellLiquidityRole: "maker",
+      makerFeePct: FEE_BUFFER_BUY_PCT,
+      takerFeePct: FEE_BUFFER_SELL_PCT,
+      taxReservePct: TAX_RESERVE_PCT,
+    });
+
+    const sellClientOrderId = sellLevelId
+      ? this.levels.find(l => l.id === sellLevelId)?.clientOrderId ?? null
+      : null;
+
+    const finalStatus: GridCycleStatus =
+      closePath === "TRAILING_MAKER"
+        ? "trailing_closed"
+        : closePath === "PROTECTIVE_MAKER"
+        ? "stop_loss_hit"
+        : "completed";
+
+    await db.transaction(async (tx) => {
+      const cycleUpdate = await tx.update(gridIsolatedCycles)
+        .set({
+          status: finalStatus,
+          sellLevelId,
+          sellPrice: sellPrice.toFixed(8),
+          sellFilledAt: now,
+          grossPnlUsd: pnl.grossPnlUsd.toFixed(8),
+          feeTotalUsd: pnl.totalFeesUsd.toFixed(8),
+          taxReserveUsd: pnl.taxReserveUsd.toFixed(8),
+          netPnlUsd: pnl.netPnlUsd.toFixed(8),
+          netPnlPct: pnl.netPnlPct.toFixed(4),
+          holdTimeMinutes,
+          completedAt: now,
+          sellClientOrderId,
+        })
+        .where(and(
+          eq(gridIsolatedCycles.id, cycle.id),
+          inArray(gridIsolatedCycles.status, POSITION_OPEN_GRID_CYCLE_STATUSES as any),
+          isNull(gridIsolatedCycles.completedAt)
+        ))
+        .returning({ id: gridIsolatedCycles.id });
+
+      if (cycleUpdate.length !== 1) {
+        throw new Error(`Ciclo ${cycle.id} ya fue cerrado por otro proceso`);
+      }
+
+      // Persisted SELL target: mark level filled atomically.
+      if (sellLevelId) {
+        const levelUpdate = await tx.update(gridIsolatedLevels)
+          .set({
+            status: "filled",
+            filledPrice: sellPrice.toFixed(8),
+            filledQuantity: cycle.quantity.toFixed(8),
+            filledAt: now,
+          })
+          .where(and(
+            eq(gridIsolatedLevels.id, sellLevelId),
+            eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
+            eq(gridIsolatedLevels.side, "SELL"),
+            isNull(gridIsolatedLevels.filledAt)
+          ))
+          .returning({ id: gridIsolatedLevels.id });
+
+        if (levelUpdate.length !== 1) {
+          throw new Error(`Nivel SELL ${sellLevelId} no está disponible para cerrar el ciclo ${cycle.id}`);
+        }
+      }
+
+      // Rearm the source BUY level so it can rotate again.
+      if (cycle.buyLevelId) {
+        await tx.update(gridIsolatedLevels)
+          .set({
+            status: "planned",
+            filledPrice: null,
+            filledQuantity: "0",
+            filledAt: null,
+          })
+          .where(and(
+            eq(gridIsolatedLevels.id, cycle.buyLevelId),
+            eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
+            eq(gridIsolatedLevels.side, "BUY"),
+            eq(gridIsolatedLevels.status, "filled")
+          ));
+      }
+    });
+
+    // In-memory sync
+    cycle.status = finalStatus;
+    cycle.sellLevelId = sellLevelId;
+    cycle.sellPrice = sellPrice;
+    cycle.sellFilledAt = now;
+    cycle.grossPnlUsd = pnl.grossPnlUsd;
+    cycle.feeTotalUsd = pnl.totalFeesUsd;
+    cycle.taxReserveUsd = pnl.taxReserveUsd;
+    cycle.netPnlUsd = pnl.netPnlUsd;
+    cycle.netPnlPct = pnl.netPnlPct;
+    cycle.holdTimeMinutes = holdTimeMinutes;
+    cycle.completedAt = now;
+    cycle.sellClientOrderId = sellClientOrderId;
+
+    const sellLevel = this.levels.find(l => l.id === sellLevelId);
+    if (sellLevel) {
+      sellLevel.status = "filled";
+      sellLevel.filledPrice = sellPrice;
+      sellLevel.filledQuantity = cycle.quantity;
+      sellLevel.filledAt = now;
+    }
+
+    const buyLevel = cycle.buyLevelId ? this.levels.find(l => l.id === cycle.buyLevelId) : undefined;
+    if (buyLevel) {
+      buyLevel.status = "planned";
+      buyLevel.filledPrice = null;
+      buyLevel.filledQuantity = 0;
+      buyLevel.filledAt = null;
+    }
+
+    const eventType: GridEventType =
+      closePath === "TRAILING_MAKER"
+        ? "GRID_CYCLE_TRAILING_CLOSED"
+        : closePath === "PROTECTIVE_MAKER"
+        ? "GRID_CYCLE_STOP_LOSS_HIT"
+        : "GRID_CYCLE_COMPLETED";
+
+    await this.logEvent(eventType, `[SHADOW] Ciclo ${cycle.cycleNumber} cerrado por ${closePath} a ${sellPrice} (maker/maker). Net PnL $${pnl.netPnlUsd.toFixed(2)} (${pnl.netPnlPct.toFixed(3)}%)`, {
+      cycleId: cycle.id,
+      buyLevelId: cycle.buyLevelId,
+      sellLevelId,
+      buyPrice: cycle.buyPrice,
+      sellPrice,
+      quantity: cycle.quantity,
+      closePath,
+      netPnlUsd: pnl.netPnlUsd,
+      netPnlPct: pnl.netPnlPct,
+      grossPnlUsd: pnl.grossPnlUsd,
+      feeTotalUsd: pnl.totalFeesUsd,
+      taxReserveUsd: pnl.taxReserveUsd,
+      buyLiquidityRole: "maker",
+      sellLiquidityRole: "maker",
+      executionPolicy: "MAKER_ONLY",
+      takerFallbackUsed: false,
+      priceSource: priceResult.source,
+      mode: "SHADOW",
+    });
+
+    return true;
+  }
+
+  /**
+   * Process open cycles in SHADOW mode.
+   * Closes any cycle whose active exit target can be filled by the best bid.
    * Runs ONLY in SHADOW mode. No real orders are placed.
    */
   private async processOpenCyclesShadow(
@@ -1673,7 +1921,6 @@ class GridIsolatedEngine {
       return 0;
     }
 
-    // Centralized freshness check: do not close cycles using a stale or unknown price.
     const freshness = evaluateShadowMarketPriceFreshness({
       timestamp: priceResult.timestamp,
       maxAgeMs: GRID_SHADOW_PRICE_MAX_AGE_MS,
@@ -1690,7 +1937,6 @@ class GridIsolatedEngine {
       return 0;
     }
 
-    // Price must belong to the engine's configured pair.
     if (priceResult.pair != null && priceResult.pair !== this.config.pair) {
       await this.logEvent("GRID_SHADOW_CLOSE_SKIPPED_STALE_PRICE", `Par del precio (${priceResult.pair}) no coincide con el par del motor (${this.config.pair}); se omite cierre de ciclos SHADOW.`, {
         source: priceResult.source,
@@ -1701,245 +1947,26 @@ class GridIsolatedEngine {
       return 0;
     }
 
-    const rangeVersions = this.referencedRangeVersions;
-    const claimedIds = buildClaimedSellIds(this.cycles);
+    // Ensure every open cycle has an explicit SELL target before checking fills.
+    await this.resolveAndPersistOpenCycleTargets();
 
     let closedCount = 0;
     for (const cycle of this.cycles) {
       if (!POSITION_OPEN_GRID_CYCLE_STATUSES.includes(cycle.status as any)) continue;
+      if (priceResult.pair != null && priceResult.pair !== cycle.pair) continue;
 
-      // Price/cycle pair consistency: a price for a different asset must not close this cycle.
-      if (priceResult.pair != null && priceResult.pair !== cycle.pair) {
-        continue;
-      }
+      const exit = this.resolveExitForCycle(cycle);
+      if (!exit.targetPrice || !exit.targetQty || !exit.closePath) continue;
+      if (!this.canFillExit(bestBid, exit.targetPrice, exit.closePath)) continue;
 
-      // Resolve target SELL if not yet persisted
-      let targetLevelId = cycle.targetSellLevelId;
-      let targetPrice = cycle.targetSellPrice;
-      let targetQty = cycle.targetSellQuantity;
-      let targetKind = cycle.targetKind;
-
-      const needsResolution =
-        targetPrice == null ||
-        targetQty == null ||
-        targetKind == null ||
-        (!targetLevelId && cycle.exitPolicyVersion !== "FIRST_PROFITABLE_HIGHER_RUNG_V2");
-
-      if (needsResolution) {
-        const policyVersion = cycle.exitPolicyVersion ?? this.config.defaultExitPolicyVersion ?? "FIRST_PROFITABLE_HIGHER_RUNG_V2";
-        const rangeVersion = rangeVersions.find(rv => rv.id === cycle.rangeVersionId);
-        let resolvedNow = false;
-
-        if (policyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2") {
-          const selectorResult = selectFirstProfitableHigherRung(
-            cycle,
-            this.levels,
-            rangeVersion,
-            {
-              buyFillPrice: cycle.buyPrice ?? 0,
-              buyFillQuantity: cycle.quantity,
-              netProfitTargetPct: this.config.netProfitTargetPct,
-              makerFeePct: 0,
-              takerFeePct: 0.09,
-              taxReservePct: 20,
-            }
-          );
-          if (selectorResult.selected) {
-            targetPrice = selectorResult.targetSellPrice;
-            targetQty = selectorResult.targetSellQuantity;
-            targetLevelId = selectorResult.targetSellLevelId;
-            targetKind = selectorResult.targetKind;
-            cycle.exitPolicyVersion = policyVersion;
-            cycle.targetKind = selectorResult.targetKind;
-            cycle.targetRungLevelId = selectorResult.targetRungLevelId;
-            cycle.targetCalculationJson = JSON.stringify(selectorResult);
-            resolvedNow = true;
-          } else {
-            await this.logEvent("GRID_CYCLE_TARGET_REVIEW_REQUIRED", `Ciclo ${cycle.cycleNumber}: no se pudo resolver SELL objetivo automáticamente (V2).`, {
-              cycleId: cycle.id,
-              reason: selectorResult.explanation,
-              candidateCount: selectorResult.rejectedCandidates.length,
-              exitPolicyVersion: policyVersion,
-            });
-            continue;
-          }
-        } else {
-          const resolution = resolveTargetSellForCycle({
-            cycle,
-            levels: this.levels,
-            rangeVersions,
-            alreadyClaimedSellIds: claimedIds,
-          });
-          if (!resolution.resolved || resolution.requiresReview) {
-            await this.logEvent("GRID_CYCLE_TARGET_REVIEW_REQUIRED", `Ciclo ${cycle.cycleNumber}: no se pudo resolver SELL objetivo automáticamente.`, {
-              cycleId: cycle.id,
-              reason: resolution.reason,
-              candidateCount: resolution.candidateCount,
-              exitPolicyVersion: policyVersion,
-            });
-            continue;
-          }
-          targetLevelId = resolution.targetSellLevelId!;
-          targetPrice = resolution.targetSellPrice!;
-          targetQty = resolution.targetSellQuantity!;
-          targetKind = "PERSISTED_SELL";
-          cycle.targetKind = targetKind;
-          resolvedNow = true;
-        }
-
-        if (!resolvedNow) continue;
-
-        // Persist the resolved target
-        try {
-          await db.update(gridIsolatedCycles)
-            .set({
-              exitPolicyVersion: cycle.exitPolicyVersion ?? policyVersion,
-              targetKind,
-              targetRungLevelId: cycle.targetRungLevelId,
-              targetSellLevelId: targetLevelId,
-              targetSellPrice: targetPrice!.toFixed(8),
-              targetSellQuantity: targetQty!.toFixed(8),
-              targetCalculationJson: cycle.targetCalculationJson,
-            })
-            .where(and(
-              eq(gridIsolatedCycles.id, cycle.id),
-              isNull(gridIsolatedCycles.targetSellLevelId)
-            ));
-          cycle.targetSellLevelId = targetLevelId;
-          cycle.targetSellPrice = targetPrice;
-          cycle.targetSellQuantity = targetQty;
-          if (targetLevelId) claimedIds.add(targetLevelId);
-        } catch (err: any) {
-          // Unique index violation: another process/cycle claimed this SELL
-          if (err?.message?.includes("unique")) {
-            await this.logEvent("GRID_CYCLE_TARGET_REVIEW_REQUIRED", `Ciclo ${cycle.cycleNumber}: SELL objetivo ya reclamada por otro ciclo.`, {
-              cycleId: cycle.id,
-              targetSellLevelId: targetLevelId,
-            });
-          } else {
-            throw err;
-          }
-          continue;
-        }
-      }
-
-      if (!targetPrice || !targetQty) continue;
-      if (bestBid < targetPrice) continue;
-
-      // Atomic close within transaction
-      const now = new Date();
-      const holdTimeMinutes = cycle.buyFilledAt
-        ? Math.round((now.getTime() - cycle.buyFilledAt.getTime()) / 60000)
-        : 0;
-
-      const pnl = computeCyclePnLWithRoles({
-        buyPrice: cycle.buyPrice!,
-        sellPrice: targetPrice,
-        quantity: cycle.quantity,
-        buyLiquidityRole: "maker",
-        sellLiquidityRole: "maker",
-        makerFeePct: 0,
-        takerFeePct: 0.09,
-        taxReservePct: 20,
-      });
-
-      const sellClientOrderId = this.levels.find(l => l.id === targetLevelId)?.clientOrderId ?? null;
-
-      await db.transaction(async (tx) => {
-        // 1. Reclaim and close the cycle
-        const cycleUpdate = await tx.update(gridIsolatedCycles)
-          .set({
-            status: "completed",
-            sellLevelId: targetLevelId,
-            sellPrice: targetPrice.toFixed(8),
-            sellFilledAt: now,
-            grossPnlUsd: pnl.grossPnlUsd.toFixed(8),
-            feeTotalUsd: pnl.totalFeesUsd.toFixed(8),
-            taxReserveUsd: pnl.taxReserveUsd.toFixed(8),
-            netPnlUsd: pnl.netPnlUsd.toFixed(8),
-            netPnlPct: pnl.netPnlPct.toFixed(4),
-            holdTimeMinutes,
-            completedAt: now,
-            sellClientOrderId,
-          })
-          .where(and(
-            eq(gridIsolatedCycles.id, cycle.id),
-            inArray(gridIsolatedCycles.status, POSITION_OPEN_GRID_CYCLE_STATUSES as any),
-            isNull(gridIsolatedCycles.completedAt)
-          ))
-          .returning({ id: gridIsolatedCycles.id });
-
-        if (cycleUpdate.length !== 1) {
-          throw new Error(`Ciclo ${cycle.id} ya fue cerrado por otro proceso`);
-        }
-
-        // 2. Mark the SELL level as filled SHADOW only when target is a persisted SELL.
-        // Synthetic targets (BUY rung reused as SELL) do not own a level row.
-        if (targetLevelId) {
-          const levelUpdate = await tx.update(gridIsolatedLevels)
-            .set({
-              status: "filled",
-              filledPrice: targetPrice.toFixed(8),
-              filledQuantity: targetQty.toFixed(8),
-              filledAt: now,
-            })
-            .where(and(
-              eq(gridIsolatedLevels.id, targetLevelId),
-              eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
-              eq(gridIsolatedLevels.side, "SELL"),
-              isNull(gridIsolatedLevels.filledAt)
-            ))
-            .returning({ id: gridIsolatedLevels.id });
-
-          if (levelUpdate.length !== 1) {
-            throw new Error(`Nivel SELL ${targetLevelId} no está disponible para cerrar el ciclo ${cycle.id}`);
-          }
-        }
-      });
-
-      // Update in-memory state
-      cycle.status = "completed";
-      cycle.sellLevelId = targetLevelId;
-      cycle.sellPrice = targetPrice;
-      cycle.sellFilledAt = now;
-      cycle.grossPnlUsd = pnl.grossPnlUsd;
-      cycle.feeTotalUsd = pnl.totalFeesUsd;
-      cycle.taxReserveUsd = pnl.taxReserveUsd;
-      cycle.netPnlUsd = pnl.netPnlUsd;
-      cycle.netPnlPct = pnl.netPnlPct;
-      cycle.holdTimeMinutes = holdTimeMinutes;
-      cycle.completedAt = now;
-      cycle.sellClientOrderId = sellClientOrderId;
-
-      const level = this.levels.find(l => l.id === targetLevelId);
-      if (level) {
-        level.status = "filled";
-        level.filledPrice = targetPrice;
-        level.filledQuantity = targetQty;
-        level.filledAt = now;
-      }
-
-      await this.logEvent("GRID_CYCLE_COMPLETED", `[SHADOW] Ciclo ${cycle.cycleNumber} completado a ${targetPrice} (maker/maker). Net PnL $${pnl.netPnlUsd.toFixed(2)} (${pnl.netPnlPct.toFixed(3)}%)`, {
-        cycleId: cycle.id,
-        buyLevelId: cycle.buyLevelId,
-        sellLevelId: targetLevelId,
-        buyPrice: cycle.buyPrice,
-        sellPrice: targetPrice,
-        quantity: cycle.quantity,
-        netPnlUsd: pnl.netPnlUsd,
-        netPnlPct: pnl.netPnlPct,
-        grossPnlUsd: pnl.grossPnlUsd,
-        feeTotalUsd: pnl.totalFeesUsd,
-        taxReserveUsd: pnl.taxReserveUsd,
-        buyLiquidityRole: "maker",
-        sellLiquidityRole: "maker",
-        executionPolicy: "MAKER_ONLY",
-        takerFallbackUsed: false,
-        priceSource: priceResult.source,
-        mode: "SHADOW",
-      });
-
-      closedCount++;
+      const closed = await this.completeCycleShadow(
+        cycle,
+        exit.targetPrice,
+        exit.sellLevelId,
+        exit.closePath,
+        priceResult
+      );
+      if (closed) closedCount++;
     }
 
     return closedCount;
@@ -2046,6 +2073,16 @@ class GridIsolatedEngine {
     }
 
     if (level.side === "BUY") {
+      // Emergency circuit breaker blocks new BUY fills
+      if (this.circuitBreakerOpen) {
+        return {
+          ok: false,
+          eventType: "GRID_CIRCUIT_BREAKER_BLOCKED_BUY",
+          reason: `[SHADOW] BUY level ${level.id} blocked: circuit breaker open`,
+          details: { levelId: level.id, circuitBreakerOpen: this.circuitBreakerOpen },
+        };
+      }
+
       // Pump guard blocks any new BUY fill
       if (!pumpGuard.allowBuyFill) {
         return {
@@ -2163,7 +2200,7 @@ class GridIsolatedEngine {
         exitPolicyVersion,
         targetKind: "UNKNOWN",
         targetCalculationJson: null,
-        riskStateJson: null,
+        riskStateJson: this.buildDefaultRiskState(),
         buyClientOrderId: level.clientOrderId,
         sellClientOrderId: null,
         buyFilledAt: new Date(),
@@ -2183,9 +2220,9 @@ class GridIsolatedEngine {
             buyFillPrice: fillPrice,
             buyFillQuantity: level.quantity,
             netProfitTargetPct: this.config.netProfitTargetPct,
-            makerFeePct: 0,
-            takerFeePct: 0.09,
-            taxReservePct: 20,
+            makerFeePct: FEE_BUFFER_BUY_PCT,
+            takerFeePct: FEE_BUFFER_SELL_PCT,
+            taxReservePct: TAX_RESERVE_PCT,
           }
         );
         if (selectorResult.selected) {
@@ -2194,7 +2231,7 @@ class GridIsolatedEngine {
           cycle.targetSellLevelId = selectorResult.targetSellLevelId;
           cycle.targetSellPrice = selectorResult.targetSellPrice;
           cycle.targetSellQuantity = selectorResult.targetSellQuantity;
-          cycle.targetCalculationJson = JSON.stringify(selectorResult);
+          cycle.targetCalculationJson = selectorResult;
         } else {
           await this.logEvent("GRID_CYCLE_TARGET_REVIEW_REQUIRED", `[SHADOW] Ciclo ${cycle.cycleNumber}: BUY rellenado pero no se encontró target V2 rentable.`, {
             cycleId: cycle.id,
@@ -2204,8 +2241,6 @@ class GridIsolatedEngine {
         }
       }
 
-      const defaultRiskState = this.buildDefaultRiskState();
-      cycle.riskStateJson = JSON.stringify(defaultRiskState);
       this.cycles.push(cycle);
 
       const insertValues: any = {
@@ -2294,9 +2329,9 @@ class GridIsolatedEngine {
         quantity: openCycle.quantity,
         buyLiquidityRole: "maker",
         sellLiquidityRole: "maker",
-        makerFeePct: 0,
-        takerFeePct: 0.09,
-        taxReservePct: 20,
+        makerFeePct: FEE_BUFFER_BUY_PCT,
+        takerFeePct: FEE_BUFFER_SELL_PCT,
+        taxReservePct: TAX_RESERVE_PCT,
       });
 
       openCycle.grossPnlUsd = pnl.grossPnlUsd;
@@ -2332,6 +2367,30 @@ class GridIsolatedEngine {
         })
         .where(eq(gridIsolatedCycles.id, openCycle.id));
 
+      // Rearm the source BUY level so it can rotate again.
+      if (openCycle.buyLevelId) {
+        await db.update(gridIsolatedLevels)
+          .set({
+            status: "planned",
+            filledPrice: null,
+            filledQuantity: "0",
+            filledAt: null,
+          })
+          .where(and(
+            eq(gridIsolatedLevels.id, openCycle.buyLevelId),
+            eq(gridIsolatedLevels.rangeVersionId, openCycle.rangeVersionId),
+            eq(gridIsolatedLevels.side, "BUY"),
+            eq(gridIsolatedLevels.status, "filled")
+          ));
+        const buyLevel = this.levels.find(l => l.id === openCycle.buyLevelId);
+        if (buyLevel) {
+          buyLevel.status = "planned";
+          buyLevel.filledPrice = null;
+          buyLevel.filledQuantity = 0;
+          buyLevel.filledAt = null;
+        }
+      }
+
       await this.logEvent("GRID_CYCLE_COMPLETED", `[SHADOW] Cycle ${openCycle.cycleNumber} completed (maker/maker): net PnL $${pnl.netPnlUsd.toFixed(2)} (${pnl.netPnlPct.toFixed(3)}%)`, {
         cycleId: openCycle.id,
         buyLevelId: openCycle.buyLevelId,
@@ -2363,9 +2422,9 @@ class GridIsolatedEngine {
   /**
    * Evaluate trailing stop, stop-loss layers and HODL recovery for every open
    * cycle. Persist the resulting risk_state_json so the state survives restarts.
-   * In this phase risk actions are logged and persisted but do NOT trigger an
-   * automatic market/taker close; execution remains MAKER_ONLY and uses the
-   * explicit SELL target path.
+   * When a risk action implies a SHADOW maker exit, set activeExitRoute and
+   * pendingExitPrice so processOpenCyclesShadow can complete the cycle without
+   * taker orders. MAKER_ONLY execution is preserved.
    */
   private async evaluateRiskForOpenCycles(
     priceResult: GridShadowExecutionPriceResult
@@ -2406,15 +2465,64 @@ class GridIsolatedEngine {
         stopLoss: evaluation.stopLossLayers,
         hodl: evaluation.hodlState,
         lastAction: evaluation.action as RiskAction,
+        activeExitRoute: null,
+        pendingExitPrice: null,
         lastEvaluatedAt: new Date(),
       };
 
-      const riskStateJson = JSON.stringify(nextRisk);
-      cycle.riskStateJson = riskStateJson;
+      // Determine active exit route and pending maker exit price.
+      switch (evaluation.action) {
+        case "TRAILING_UPDATE":
+          // Trailing is active but not triggered yet; keep tracking.
+          break;
+        case "TRAILING_CLOSE":
+          nextRisk.activeExitRoute = "TRAILING_MAKER";
+          nextRisk.pendingExitPrice = evaluation.trailingState.currentStopPrice ?? evaluation.suggestedSellPrice;
+          break;
+        case "STOP_LOSS_SOFT":
+          nextRisk.activeExitRoute = "PROTECTIVE_MAKER";
+          nextRisk.pendingExitPrice = evaluation.suggestedSellPrice ?? currentPrice;
+          break;
+        case "STOP_LOSS_HARD":
+          nextRisk.activeExitRoute = "PROTECTIVE_MAKER";
+          nextRisk.pendingExitPrice = evaluation.suggestedSellPrice ?? currentPrice;
+          break;
+        case "STOP_LOSS_EMERGENCY":
+          nextRisk.activeExitRoute = "PROTECTIVE_MAKER";
+          nextRisk.pendingExitPrice = evaluation.suggestedSellPrice ?? currentPrice;
+          this.circuitBreakerOpen = true;
+          await this.logEvent("GRID_CIRCUIT_BREAKER_OPEN", `Stop-loss de emergencia activado para ciclo ${cycle.cycleNumber}. Se bloquean nuevas compras Grid hasta revisión.`, {
+            cycleId: cycle.id,
+            currentPrice,
+            pendingExitPrice: nextRisk.pendingExitPrice,
+            mode: "SHADOW",
+          });
+          break;
+        case "HODL_RECOVERY_ACTIVATE":
+          nextRisk.activeExitRoute = "HODL_RECOVERY";
+          nextRisk.pendingExitPrice = evaluation.hodlState.recoveryTargetPrice ?? null;
+          cycle.status = "hodl_recovery";
+          try {
+            await db.update(gridIsolatedCycles)
+              .set({ status: "hodl_recovery", riskStateJson: nextRisk })
+              .where(eq(gridIsolatedCycles.id, cycle.id));
+          } catch (err) {
+            botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to persist HODL recovery state for cycle ${cycle.id}: ${err}`);
+          }
+          break;
+        case "HODL_RECOVERY_SELL":
+          nextRisk.activeExitRoute = "HODL_RECOVERY";
+          nextRisk.pendingExitPrice = evaluation.hodlState.recoveryTargetPrice ?? currentPrice;
+          break;
+        default:
+          break;
+      }
+
+      cycle.riskStateJson = nextRisk;
 
       try {
         await db.update(gridIsolatedCycles)
-          .set({ riskStateJson })
+          .set({ riskStateJson: nextRisk })
           .where(eq(gridIsolatedCycles.id, cycle.id));
       } catch (err) {
         botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to persist risk state for cycle ${cycle.id}: ${err}`);
@@ -2427,13 +2535,14 @@ class GridIsolatedEngine {
           cycleId: cycle.id,
           action: evaluation.action,
           currentPrice,
+          activeExitRoute: nextRisk.activeExitRoute,
+          pendingExitPrice: nextRisk.pendingExitPrice,
           suggestedSellPrice: evaluation.suggestedSellPrice,
           trailingActivated: evaluation.trailingState.activated,
           trailingStopPrice: evaluation.trailingState.currentStopPrice,
           stopLossLayers: evaluation.stopLossLayers.map(l => ({ layer: l.layer, triggered: l.triggered, triggerPricePct: l.triggerPricePct })),
           hodlActive: evaluation.hodlState.active,
           recoveryTargetPrice: evaluation.hodlState.recoveryTargetPrice,
-          riskStateJson,
           mode: "SHADOW",
         });
       }

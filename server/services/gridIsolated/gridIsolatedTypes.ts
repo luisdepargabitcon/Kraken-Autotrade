@@ -272,6 +272,53 @@ export type RiskAction =
   | "HODL_RECOVERY_ACTIVATE"
   | "HODL_RECOVERY_SELL";
 
+export type GridClosePath =
+  | "NORMAL_TARGET"
+  | "TRAILING_MAKER"
+  | "PROTECTIVE_MAKER"
+  | "HODL_RECOVERY";
+
+export interface GridRejectedCandidate {
+  levelId: string;
+  side: GridLevelSide;
+  price: number;
+  reasonCode: string;
+  reason: string;
+}
+
+export interface GridTargetCalculation {
+  selected: boolean;
+  /** Policy version used to compute this target (legacy field kept for audits). */
+  policyVersion?: "FIRST_PROFITABLE_HIGHER_RUNG_V2";
+  targetKind: GridTargetKind | null;
+  targetSellLevelId: string | null;
+  targetRungLevelId: string | null;
+  targetSellPrice: number | null;
+  targetSellQuantity: number | null;
+  grossPnlUsd: number | null;
+  exchangeFeesUsd: number | null;
+  operationalCostsUsd: number | null;
+  operationalNetPnlUsd: number | null;
+  operationalNetPnlPct: number | null;
+  taxReserveUsd: number | null;
+  availablePnlAfterTaxUsd: number | null;
+  availablePnlAfterTaxPct: number | null;
+  netProfitTargetPct: number | null;
+  rejectedCandidates: GridRejectedCandidate[];
+  explanation: string;
+  reasonCode?: string;
+}
+
+export interface GridCycleRiskState {
+  trailing: TrailingProtectionState;
+  stopLoss: StopLossLayer[];
+  hodl: HodlRecoveryState;
+  lastAction: RiskAction | null;
+  activeExitRoute: GridClosePath | null;
+  pendingExitPrice: number | null;
+  lastEvaluatedAt: Date | null;
+}
+
 export interface GridCycle {
   id: string;
   rangeVersionId: string;
@@ -297,10 +344,10 @@ export interface GridCycle {
   exitPolicyVersion: GridExitPolicyVersion | null;
   /** Tipo de target: SELL persistida o RUNG sintético. */
   targetKind: GridTargetKind | null;
-  /** JSON serializado con el desglose del cálculo del target (costes, comisiones, reserva). */
-  targetCalculationJson: string | null;
-  /** JSON serializado con el estado de trailing, stops y HODL recovery. */
-  riskStateJson: string | null;
+  /** Desglose del cálculo del target (costes, comisiones, reserva). */
+  targetCalculationJson: GridTargetCalculation | null;
+  /** Estado de trailing, stops y HODL recovery. */
+  riskStateJson: GridCycleRiskState | null;
   buyClientOrderId: string | null;
   sellClientOrderId: string | null;
   buyFilledAt: Date | null;
@@ -321,6 +368,7 @@ export const ENTRY_PENDING_GRID_CYCLE_STATUSES: readonly GridCycleStatus[] = [
 export const POSITION_OPEN_GRID_CYCLE_STATUSES: readonly GridCycleStatus[] = [
   "buy_filled",
   "sell_placed",
+  "hodl_recovery",
 ] as const;
 
 // Estados en los que ya se ejecutó una SELL pero falta finalización contable.
@@ -675,6 +723,8 @@ export const GRID_EVENT_TYPES = [
   "GRID_CYCLES_RECOVERED",
   "GRID_PUMP_GUARD_BLOCKED_REBUILD",
   "GRID_PUMP_GUARD_ALLOWED_EXIT_ONLY",
+  "GRID_CIRCUIT_BREAKER_OPEN",
+  "GRID_CIRCUIT_BREAKER_BLOCKED_BUY",
   "GRID_SHADOW_CLEANUP_PREVIEWED",
   "GRID_SHADOW_CLEANUP_APPLIED",
   "GRID_SHADOW_CLEANUP_ABORTED",
