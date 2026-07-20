@@ -83,15 +83,21 @@ export interface OperationalOpenCycle {
   estimatedFee: number | null;
   estimatedTax: number | null;
   estimatedNetPnl: number | null;
+  /** Operational cost estimate (spread + safety buffer) from the V2 target calculation. */
+  estimatedOperationalCost: number | null;
   openedAt: string | null;
   durationLabel: string;
   rangeVersionId: string | null;
   rangeRelation: CycleRangeRelation;
   rangeLabel: string;
   targetSource: string | null;
+  exitPolicyVersion: string | null;
+  targetKind: string | null;
+  targetRungLevelId: string | null;
   requiresReview: boolean;
   targetReached: boolean;
   executable: boolean;
+  riskState: any;
   buyLevelId: string | null;
   sellLevelId: string | null;
   targetSellLevelId: string | null;
@@ -282,6 +288,26 @@ function taxReserve(grossPnl: number): number {
   return grossPnl * (TAX_RESERVE_PCT / 100);
 }
 
+function extractTargetCalculation(cycle: any): { operationalCostsUsd?: number; exchangeFeesUsd?: number } | null {
+  if (!cycle?.targetCalculationJson) return null;
+  try {
+    return typeof cycle.targetCalculationJson === "string"
+      ? JSON.parse(cycle.targetCalculationJson)
+      : cycle.targetCalculationJson;
+  } catch {
+    return null;
+  }
+}
+
+function parseRiskState(cycle: any): any {
+  if (!cycle?.riskStateJson) return null;
+  try {
+    return typeof cycle.riskStateJson === "string" ? JSON.parse(cycle.riskStateJson) : cycle.riskStateJson;
+  } catch {
+    return null;
+  }
+}
+
 function computeCycleEstimates(
   cycle: any,
   currentPrice: number | null,
@@ -292,6 +318,7 @@ function computeCycleEstimates(
   | "estimatedFee"
   | "estimatedTax"
   | "estimatedNetPnl"
+  | "estimatedOperationalCost"
   | "progressPct"
   | "distanceUsd"
   | "distancePct"
@@ -308,6 +335,7 @@ function computeCycleEstimates(
       estimatedFee: null,
       estimatedTax: null,
       estimatedNetPnl: null,
+      estimatedOperationalCost: null,
       progressPct: null,
       distanceUsd: null,
       distancePct: null,
@@ -321,6 +349,9 @@ function computeCycleEstimates(
   const tax = taxReserve(Math.max(0, grossIfSold));
   const net = grossIfSold - fee - tax;
 
+  const targetCalc = extractTargetCalculation(cycle);
+  const operationalCost = targetCalc?.operationalCostsUsd ?? null;
+
   const distanceUsd = sell - (price ?? buy);
   const distancePct = buy > 0 ? (distanceUsd / buy) * 100 : null;
   const progressUsd = price != null ? price - buy : 0;
@@ -333,6 +364,7 @@ function computeCycleEstimates(
     estimatedFee: fee,
     estimatedTax: tax,
     estimatedNetPnl: net,
+    estimatedOperationalCost: operationalCost,
     progressPct,
     distanceUsd,
     distancePct,
@@ -352,6 +384,18 @@ function buildOpenCycle(
   const estimates = computeCycleEstimates(cycle, currentPrice, currentBid);
   const status = cycle?.status ?? "unknown";
   const requiresReview = cycle?.requiresReview === true;
+
+  const targetKind = cycle?.targetKind ?? null;
+  const exitPolicyVersion = cycle?.exitPolicyVersion ?? null;
+  const targetSource =
+    cycle?.targetSource ??
+    (targetKind === "SYNTHETIC_RUNG"
+      ? "synthetic_rung"
+      : targetKind === "PERSISTED_SELL"
+        ? "persisted_sell"
+        : cycle?.targetSellLevelId
+          ? "range"
+          : null);
 
   return {
     id: cycle?.id ?? String(cycle?.cycleNumber ?? "?"),
@@ -373,15 +417,20 @@ function buildOpenCycle(
     estimatedFee: estimates.estimatedFee,
     estimatedTax: estimates.estimatedTax,
     estimatedNetPnl: estimates.estimatedNetPnl,
+    estimatedOperationalCost: estimates.estimatedOperationalCost,
     openedAt: cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null,
     durationLabel: fmtDuration(cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null),
     rangeVersionId: cycle?.rangeVersionId ?? null,
     rangeRelation: relation,
     rangeLabel: cycleRangeLabel(relation),
-    targetSource: cycle?.targetSource ?? (cycle?.targetSellLevelId ? "range" : null),
+    targetSource,
+    exitPolicyVersion,
+    targetKind,
+    targetRungLevelId: cycle?.targetRungLevelId ?? null,
     requiresReview,
     targetReached: estimates.targetReached,
     executable: status === "buy_filled" || status === "open" || status === "active" || status === "sell_placed",
+    riskState: parseRiskState(cycle),
     buyLevelId: cycle?.buyLevelId ?? null,
     sellLevelId: cycle?.sellLevelId ?? null,
     targetSellLevelId: cycle?.targetSellLevelId ?? null,

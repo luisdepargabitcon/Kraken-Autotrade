@@ -103,7 +103,7 @@ vi.mock("@shared/schema", () => ({
     return table;
   })(),
   gridIsolatedCycles: (() => {
-    const cols = ["id", "rangeVersionId", "cycleNumber", "pair", "status", "buyLevelId", "sellLevelId", "targetSellLevelId", "buyPrice", "sellPrice", "targetSellPrice", "targetSellQuantity", "quantity", "grossPnlUsd", "feeTotalUsd", "taxReserveUsd", "netPnlUsd", "netPnlPct", "buyClientOrderId", "sellClientOrderId", "buyFilledAt", "sellFilledAt", "holdTimeMinutes", "createdAt", "completedAt"];
+    const cols = ["id", "rangeVersionId", "cycleNumber", "pair", "status", "buyLevelId", "sellLevelId", "targetSellLevelId", "targetRungLevelId", "buyPrice", "sellPrice", "targetSellPrice", "targetSellQuantity", "exitPolicyVersion", "targetKind", "targetCalculationJson", "riskStateJson", "quantity", "grossPnlUsd", "feeTotalUsd", "taxReserveUsd", "netPnlUsd", "netPnlPct", "buyClientOrderId", "sellClientOrderId", "buyFilledAt", "sellFilledAt", "holdTimeMinutes", "createdAt", "completedAt"];
     const table: any = { __mockTable: "cycles" };
     for (const c of cols) table[c] = { __name: c, __table: "cycles" };
     return table;
@@ -251,6 +251,7 @@ function makeCycle(overrides: Partial<GridCycle> = {}): GridCycle {
     buyLevelId: BUY_LEVEL_ID,
     sellLevelId: null,
     targetSellLevelId: SELL_LEVEL_ID,
+    targetRungLevelId: SELL_LEVEL_ID,
     buyPrice: 60_000,
     sellPrice: null,
     targetSellPrice: 61_000,
@@ -261,6 +262,10 @@ function makeCycle(overrides: Partial<GridCycle> = {}): GridCycle {
     taxReserveUsd: 0,
     netPnlUsd: 0,
     netPnlPct: 0,
+    exitPolicyVersion: "SYMMETRIC_INDEX_V1",
+    targetKind: "PERSISTED_SELL",
+    targetCalculationJson: null,
+    riskStateJson: null,
     buyClientOrderId: "client-buy-1",
     sellClientOrderId: null,
     buyFilledAt: new Date(Date.now() - 60_000),

@@ -96,13 +96,22 @@ export default function NexaHome() {
     <AppShell>
       <div className="max-w-[1200px] mx-auto px-4 py-6 sm:py-10 space-y-8">
         {/* Title */}
-        <div className="text-center space-y-1">
+        <div className="text-center space-y-2">
           <h1 className="text-xl sm:text-2xl font-bold text-foreground">
             NEXA Crypto Suite
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground">
             Plataforma modular de gestión crypto
           </p>
+          <div className="flex justify-center">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-mono text-cyan-400">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500" />
+              </span>
+              Windsurf · commit {import.meta.env.VITE_GIT_COMMIT ?? "unknown"}
+            </span>
+          </div>
         </div>
 
         {/* 3 Main Worlds */}

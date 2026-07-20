@@ -245,6 +245,33 @@ export type GridCycleStatus =
   | "cancelled"
   | "cycle_open";
 
+export type GridExitPolicyVersion =
+  | "SYMMETRIC_INDEX_V1"
+  | "FIRST_PROFITABLE_HIGHER_RUNG_V2";
+
+export type GridTargetKind =
+  | "PERSISTED_SELL"
+  | "SYNTHETIC_RUNG"
+  | "UNKNOWN";
+
+export interface GridCycleRiskState {
+  trailing: TrailingProtectionState;
+  stopLoss: StopLossLayer[];
+  hodl: HodlRecoveryState;
+  lastAction: RiskAction | null;
+  lastEvaluatedAt: Date | null;
+}
+
+export type RiskAction =
+  | "HOLD"
+  | "TRAILING_UPDATE"
+  | "TRAILING_CLOSE"
+  | "STOP_LOSS_SOFT"
+  | "STOP_LOSS_HARD"
+  | "STOP_LOSS_EMERGENCY"
+  | "HODL_RECOVERY_ACTIVATE"
+  | "HODL_RECOVERY_SELL";
+
 export interface GridCycle {
   id: string;
   rangeVersionId: string;
@@ -254,6 +281,8 @@ export interface GridCycle {
   buyLevelId: string | null;
   sellLevelId: string | null;
   targetSellLevelId: string | null;
+  /** Identificador del escalón RUNG original (BUY o SELL) usado para calcular el target. */
+  targetRungLevelId: string | null;
   buyPrice: number | null;
   sellPrice: number | null;
   targetSellPrice: number | null;
@@ -264,6 +293,14 @@ export interface GridCycle {
   taxReserveUsd: number;
   netPnlUsd: number;
   netPnlPct: number;
+  /** Política de salida asignada a este ciclo. */
+  exitPolicyVersion: GridExitPolicyVersion | null;
+  /** Tipo de target: SELL persistida o RUNG sintético. */
+  targetKind: GridTargetKind | null;
+  /** JSON serializado con el desglose del cálculo del target (costes, comisiones, reserva). */
+  targetCalculationJson: string | null;
+  /** JSON serializado con el estado de trailing, stops y HODL recovery. */
+  riskStateJson: string | null;
   buyClientOrderId: string | null;
   sellClientOrderId: string | null;
   buyFilledAt: Date | null;
@@ -382,6 +419,12 @@ export interface GridIsolatedConfig {
   mode: GridMode;
   capitalProfile: CapitalProfile;
   executionPolicy: ExecutionPolicy;
+  /** Política de salida por defecto para nuevos ciclos. */
+  defaultExitPolicyVersion?: GridExitPolicyVersion;
+  /** Activa/desactiva el trailing stop a nivel de ciclo. */
+  trailingEnabled?: boolean;
+  /** Activa/desactiva las capas de stop-loss. */
+  stopLossEnabled?: boolean;
   netProfitTargetPct: number;
   bandPeriod: number;
   bandStdDevMultiplier: number;
@@ -458,6 +501,9 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   mode: "OFF",
   capitalProfile: "balanced",
   executionPolicy: "MAKER_ONLY",
+  defaultExitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+  trailingEnabled: false,
+  stopLossEnabled: false,
   netProfitTargetPct: 0.8,
   bandPeriod: 20,
   bandStdDevMultiplier: 2,

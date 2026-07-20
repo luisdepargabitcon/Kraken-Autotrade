@@ -101,9 +101,29 @@ function CycleDetail({ cycle }: { cycle: any }) {
         <span>Distancia pendiente: <span className="font-mono text-foreground">{cycle.distanceUsd != null ? fmtUsd(cycle.distanceUsd) : "—"} ({cycle.distancePct != null ? `${cycle.distancePct.toFixed(2)}%` : "—"})</span></span>
         <span>Beneficio bruto estimado: <span className="font-mono text-foreground">{fmtUsd(cycle.estimatedGrossPnl)}</span></span>
         <span>Comisiones estimadas: <span className="font-mono text-foreground">{fmtUsd(cycle.estimatedFee)}</span></span>
+        <span>Costes operativos estimados: <span className="font-mono text-foreground">{fmtUsd(cycle.estimatedOperationalCost)}</span></span>
         <span>Reserva fiscal: <span className="font-mono text-foreground">{fmtUsd(cycle.estimatedTax)}</span></span>
-        <span className="col-span-2">Beneficio neto estimado: <span className={cycle.estimatedNetPnl != null && cycle.estimatedNetPnl >= 0 ? "text-green-400" : "text-red-400"}>{fmtUsd(cycle.estimatedNetPnl)}</span></span>
+        <span>Beneficio neto estimado: <span className={cycle.estimatedNetPnl != null && cycle.estimatedNetPnl >= 0 ? "text-green-400" : "text-red-400"}>{fmtUsd(cycle.estimatedNetPnl)}</span></span>
       </div>
+
+      {cycle.riskState && (
+        <div className="rounded border border-border/40 p-2 text-xs space-y-1">
+          <div className="text-muted-foreground">Estado de riesgo</div>
+          {cycle.riskState.trailing?.activated && (
+            <div className="font-mono text-[10px] text-amber-400">
+              Trailing activo — stop {fmtPrice(cycle.riskState.trailing.currentStopPrice)}
+            </div>
+          )}
+          {cycle.riskState.hodl?.active && (
+            <div className="font-mono text-[10px] text-blue-400">
+              HODL Recovery — target {fmtPrice(cycle.riskState.hodl.recoveryTargetPrice)}
+            </div>
+          )}
+          {!cycle.riskState.trailing?.activated && !cycle.riskState.hodl?.active && (
+            <div className="font-mono text-[10px] text-muted-foreground">Sin riesgo activo</div>
+          )}
+        </div>
+      )}
 
       <div className="border-t pt-2 mt-2">
         <details className="text-xs text-muted-foreground">
@@ -111,8 +131,10 @@ function CycleDetail({ cycle }: { cycle: any }) {
           <div className="mt-2 space-y-1 font-mono text-[10px]">
             <p>ID: {cycle.id}</p>
             <p>Rango de origen: {cycle.rangeRelation === "current" ? "Rango vigente" : "Rango anterior"}</p>
-            <p>Política: Solo maker</p>
+            <p>Política salida: {cycle.exitPolicyVersion ?? "—"} ({cycle.targetKind ?? "sin target"})</p>
+            <p>Origen target: {cycle.targetSource ?? "—"}</p>
             <p>Target SELL ID: {cycle.targetSellLevelId ?? cycle.sellLevelId ?? "—"}</p>
+            <p>Target RUNG ID: {cycle.targetRungLevelId ?? "—"}</p>
           </div>
         </details>
       </div>
@@ -130,6 +152,21 @@ function CycleHeader({ cycle }: { cycle: any }) {
         <Badge variant="outline" className={cn("text-xs", statusClasses(cycle.color))}>
           {cycle.statusLabel}
         </Badge>
+        {cycle.targetSource && (
+          <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-500/30 bg-purple-500/10">
+            {cycle.targetSource === "synthetic_rung" ? "Rung sintético" : cycle.targetSource === "persisted_sell" ? "SELL propia" : "Target range"}
+          </Badge>
+        )}
+        {cycle.riskState?.trailing?.activated && (
+          <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
+            Trailing
+          </Badge>
+        )}
+        {cycle.riskState?.hodl?.active && (
+          <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/30 bg-blue-500/10">
+            HODL
+          </Badge>
+        )}
         {cycle.rangeRelation === "previous" ? (
           <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
             Rango anterior

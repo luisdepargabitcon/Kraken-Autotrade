@@ -1,7 +1,84 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-17
+> Última actualización: 2026-07-21
+
+---
+
+## 2026-07-21 — GRID COUNTER-AUDIT: Política FIRST_PROFITABLE_HIGHER_RUNG_V2, persistencia de obligación SELL y estados de riesgo
+
+### Resumen
+Se implementa la política de salida `FIRST_PROFITABLE_HIGHER_RUNG_V2` para el Grid Isolated BTC/USD, convirtiendo el grid en una rotación profesional. Cada ciclo de compra calcula y persiste su propia obligación de venta (target SELL), ya sea una SELL del propio rango o un RUNG sintético (BUY reutilizado como objetivo de venta). Se eliminan los cierres FIFO ambiguos; ahora un nivel SELL solo cierra el ciclo que lo tiene asignado como target explícito. Se integran de forma persistente el trailing stop, stop-loss y HODL recovery en modo SHADOW bajo `MAKER_ONLY`. Se añade una migración DB aditiva e idempotente para los nuevos campos de ciclo y se actualiza el UI para mostrar el tipo de target, costes operativos y estado de riesgo.
+
+### Problema
+- Los ciclos se cerraban por FIFO sin una obligación de venta explícita, lo que podía asignar una SELL al ciclo equivocado.
+- No existía una política de selección de target que ignorara la etiqueta lateral (BUY/SELL) y eligiera el primer escalón superior rentable.
+- No se persistía el cálculo detallado del target ni el estado de riesgo por ciclo; un reinicio perdía trailing/ stops/HODL.
+- Los campos de ciclo no soportaban `exitPolicyVersion`, `targetKind`, `targetRungLevelId`, `targetCalculationJson` ni `riskStateJson`.
+
+### Solución
+1. **Selector `FIRST_PROFITABLE_HIGHER_RUNG_V2`**:
+   - `server/services/gridIsolated/gridCycleExitSelector.ts`: función pura que escanea todos los RUNGs (BUY y SELL) por encima del precio de compra real, calcula PnL bruto, comisiones exchange, costes operacionales, reserva fiscal y PnL disponible, y elige el primer escalón cuyo neto disponible cumpla el target configurado. Respeta tick size, quantity step y min order USD. Devuelve `targetSellLevelId = null` cuando el target es un RUNG sintético.
+
+2. **Extensión del esquema y tipos**:
+   - `server/services/gridIsolated/gridIsolatedTypes.ts`: añade `GridExitPolicyVersion`, `GridTargetKind`, `GridCycleRiskState`, `RiskAction`, y los campos `exitPolicyVersion`, `targetKind`, `targetRungLevelId`, `targetCalculationJson`, `riskStateJson` a `GridCycle`. Añade `defaultExitPolicyVersion`, `trailingEnabled` y `stopLossEnabled` a `GridIsolatedConfig` (desactivados por defecto).
+   - `shared/schema.ts`: añade las columnas equivalentes a `grid_isolated_cycles`.
+   - `db/migrations/073_grid_cycle_exit_policy_v2.sql`: migración aditiva e idempotente con columnas e índices para auditoría.
+
+3. **Motor `gridIsolatedEngine.ts`**:
+   - Al crear un ciclo BUY en SHADOW se ejecuta el selector V2 y se persiste la obligación SELL (`targetKind`, `targetRungLevelId`, `targetSellLevelId`, `targetCalculationJson`).
+   - Los cierres SELL solo se permiten cuando el nivel es el `targetSellLevelId` explícito del ciclo. Los ciclos legacy sin política V2 siguen usando FIFO como fallback controlado.
+   - `resolveAndPersistOpenCycleTargets` utiliza V2 para ciclos con esa política y el legacy resolver para el resto.
+   - `processOpenCyclesShadow` soporta targets sintéticos: si `targetSellLevelId` es `null`, cierra el ciclo sin modificar ninguna fila de nivel.
+   - Se añade `evaluateRiskForOpenCycles`: evalúa trailing, stop-loss y HODL por ciclo, persiste `riskStateJson` y registra eventos; en esta fase no ejecuta cierres automáticos de mercado/taker, manteniendo `MAKER_ONLY`.
+   - `getExecutionStatus` ahora cuenta ciclos con trailing activado usando el estado persistido.
+
+4. **View model y UI**:
+   - `server/services/gridIsolated/buildGridOperationalViewModel.ts`: expone `exitPolicyVersion`, `targetKind`, `targetRungLevelId`, `targetSource`, `estimatedOperationalCost` y `riskState` en cada ciclo operativo.
+   - `client/src/components/grid/GridOpenCyclesPanel.tsx`: muestra badges de origen del target (`synthetic_rung`, `persisted_sell`, `target range`), estado de riesgo (trailing/HODL), y en los detalles técnicos la política de salida, origen del target y costes operativos.
+   - `client/src/pages/NexaHome.tsx` + `vite.config.ts`: badge "Windsurf · commit <hash>" en el home para trazabilidad de despliegues.
+
+5. **Tests**:
+   - `server/services/gridIsolated/__tests__/gridCycleExitSelector.test.ts`: 9 tests unitarios del selector V2.
+   - `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`: actualizado con nuevos campos de ciclo; 44 tests pasan.
+   - `server/services/__tests__/gridRiskExecution.test.ts`: 24 tests pasan sin regresiones.
+
+### Archivos nuevos
+- `server/services/gridIsolated/gridCycleExitSelector.ts`
+- `server/services/gridIsolated/__tests__/gridCycleExitSelector.test.ts`
+- `db/migrations/073_grid_cycle_exit_policy_v2.sql`
+
+### Archivos modificados
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `client/src/components/grid/GridOpenCyclesPanel.tsx`
+- `client/src/pages/NexaHome.tsx`
+- `vite.config.ts`
+- `shared/schema.ts`
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `BITACORA.md`
+
+### Validación local
+- `npm run check`: ✅ 0 errores TS
+- `npm run build`: ✅ (cliente + servidor)
+- `npx vitest run server/services/gridIsolated/__tests__/gridCycleExitSelector.test.ts server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts server/services/__tests__/gridRiskExecution.test.ts`: ✅ 77/77 tests
+- `npx vitest run` (completo): ✅ 2617 tests pasan, 12 fallos preexistentes ajenos a esta refactorización (9 snapshots en `server/services/telegram/templates.test.ts` y 3 en `server/services/__tests__/idcaMarketContextHelpers.test.ts`). No se introducen nuevas regresiones.
+
+### Deploy en staging
+- Commit pendiente: se entregará tras aprobación explícita del usuario.
+- Procedimiento: `git pull` + `docker compose -f docker-compose.staging.yml up -d --build` en `5.250.184.18:/opt/krakenbot-staging`.
+- La migración `073_grid_cycle_exit_policy_v2.sql` se aplicará automáticamente al arrancar el contenedor (si el entrypoint/migrador del proyecto ejecuta nuevos scripts en `db/migrations`).
+
+### Validación post-deploy recomendada
+- Verificar en Home el badge "Windsurf · commit <hash>".
+- Entrar a Grid Isolated → Ciclos: los ciclos abiertos deben mostrar origen del target y, si aplica, badge de trailing/HODL.
+- Revisar logs `GRID_CYCLE_BUY_FILLED` con `targetKind` y `exitPolicyVersion`.
+- Revisar en BD: `SELECT id, exit_policy_version, target_kind, target_rung_level_id, risk_state_json FROM grid_isolated_cycles LIMIT 5;`.
+
+### Pendientes / notas de seguridad
+- Los toggles `trailingEnabled` y `stopLossEnabled` están desactivados por defecto. Para activar trailing/stops reales hay que añadirlos al config (no requiere migración extra al ser opcionales) y habilitarlos explícitamente.
+- La ejecución de cierres por trailing/stop se mantiene en modo observación en esta fase: se persiste estado y se loguean eventos, pero el cierre real continúa usando la obligación SELL explícita para evitar fills taker.
 
 ---
 
