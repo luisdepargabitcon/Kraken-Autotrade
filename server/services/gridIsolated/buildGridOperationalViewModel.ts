@@ -10,6 +10,7 @@
  */
 
 import { executionPolicyLabel, type ExecutionPolicy, type GridCycleRiskState, type GridClosePath } from "./gridIsolatedTypes";
+import { safeParseRiskStateJson } from "./gridJsonbValidators";
 import { buildGridMarketViewModel, type GridMarketViewModel } from "./buildGridMarketViewModel";
 
 export type CycleRangeRelation = "current" | "previous" | "unknown";
@@ -39,6 +40,9 @@ export interface OperationalHeader {
   takerFallbackEnabled: boolean;
   takerFallbackAllowed: boolean;
   makerOnly: boolean;
+  circuitBreakerOpen: boolean;
+  circuitBreakerReason: string | null;
+  circuitBreakerCooldownUntil: string | null;
 }
 
 export interface OperationalOverview {
@@ -52,6 +56,9 @@ export interface OperationalOverview {
   hasActiveRange: boolean;
   canAnalyzeNow: boolean;
   primaryRecommendation: OperationalRecommendation | null;
+  circuitBreakerOpen: boolean;
+  circuitBreakerReason: string | null;
+  circuitBreakerCooldownUntil: string | null;
 }
 
 export interface OperationalRecommendation {
@@ -282,13 +289,7 @@ function extractTargetCalculation(cycle: any): { operationalCostsUsd?: number; e
 
 function parseRiskState(cycle: any): GridCycleRiskState | null {
   if (!cycle?.riskStateJson) return null;
-  try {
-    const parsed = typeof cycle.riskStateJson === "string" ? JSON.parse(cycle.riskStateJson) : cycle.riskStateJson;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    return parsed as GridCycleRiskState;
-  } catch {
-    return null;
-  }
+  return safeParseRiskStateJson(cycle.riskStateJson);
 }
 
 function riskStateSummary(risk: GridCycleRiskState | null): string | null {
@@ -303,6 +304,8 @@ function riskStateSummary(risk: GridCycleRiskState | null): string | null {
 function closePathLabel(path: GridClosePath | null): string | null {
   switch (path) {
     case "NORMAL_TARGET": return "Target normal";
+    case "SYNTHETIC_RUNG": return "Rung sintético";
+    case "LEGACY_PERSISTED_TARGET": return "Target legacy persistido";
     case "TRAILING_MAKER": return "Trailing maker";
     case "PROTECTIVE_MAKER": return "Stop-loss maker";
     case "HODL_RECOVERY": return "Recuperación HODL";
@@ -763,6 +766,9 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     takerFallbackEnabled,
     takerFallbackAllowed,
     makerOnly,
+    circuitBreakerOpen: config?.circuitBreakerOpen === true,
+    circuitBreakerReason: config?.circuitBreakerReason ?? null,
+    circuitBreakerCooldownUntil: config?.circuitBreakerCooldownUntil ? new Date(config.circuitBreakerCooldownUntil).toISOString() : null,
   };
 
   const primaryRec = (recommendations || [])[0];
@@ -786,6 +792,9 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
           ctaTarget: primaryRec.targetSection || "ajustes",
         }
       : null,
+    circuitBreakerOpen: header.circuitBreakerOpen,
+    circuitBreakerReason: header.circuitBreakerReason,
+    circuitBreakerCooldownUntil: header.circuitBreakerCooldownUntil,
   };
 
   const activeRangeExists = currentOperationalState?.hasActiveRange ?? false;

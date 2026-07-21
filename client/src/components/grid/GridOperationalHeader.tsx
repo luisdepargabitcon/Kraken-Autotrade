@@ -1,6 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, Layers, TrendingUp, Wallet } from "lucide-react";
+import { Activity, AlertTriangle, Layers, TrendingUp, Wallet } from "lucide-react";
 
 interface GridOperationalHeaderProps {
   operational?: any;
@@ -53,6 +53,12 @@ export function GridOperationalHeader({ operational }: GridOperationalHeaderProp
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              {header.circuitBreakerOpen && (
+                <Badge variant="outline" className="border-red-500/30 text-red-500 bg-red-500/10" title={header.circuitBreakerReason ?? "Circuit breaker abierto"}>
+                  <AlertTriangle className="h-3 w-3 mr-1" />
+                  Circuit breaker
+                </Badge>
+              )}
               <Badge
                 variant="outline"
                 className={isActive ? "border-green-500/30 text-green-500 bg-green-500/10" : "border-amber-500/30 text-amber-500 bg-amber-500/10"}
