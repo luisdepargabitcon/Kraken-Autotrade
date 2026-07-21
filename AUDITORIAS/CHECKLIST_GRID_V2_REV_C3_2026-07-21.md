@@ -473,9 +473,9 @@ origin/main base: `9f8c88b0213aae85edcbeccd165856a60550acb4`
 |---|---|---|
 | TypeScript | `npm run check` | ✅ exit 0 |
 | Tests Grid | `npx vitest run server/services/gridIsolated` | ✅ 120/120 passed |
-| Tests rutas Grid | `npx vitest run server/routes/__tests__/gridIsolatedRoutes.test.ts` | ✅ (no file: suite ausente) |
+| Tests rutas Grid | `npx vitest run server/routes/__tests__/gridIsolatedRoutes.test.ts` | ✅ 141/141 passed |
 | Tests frontend Grid | `npx vitest run client/src/components/grid` | ✅ 1 passed |
-| Build | `npm run build` | ✅ 3785 módulos |
+| Build | `npm run build` | ✅ 2596 módulos |
 
 ### Items de checklist verificados en esta sesión
 
@@ -492,24 +492,25 @@ origin/main base: `9f8c88b0213aae85edcbeccd165856a60550acb4`
 - VM-01 / VM-02 / VM-08 / VM-09: view model sin hardcoded, PnL canónico, `requiresReview` correcto, realized separado de estimado.
 - UI-01 / UI-02 / UI-05: tipado, estados humanos, review visible (badge circuit breaker).
 - VAL-01 / VAL-02 / VAL-04 / VAL-05: check, tests Grid, tests frontend Grid, build.
+- ATY-01 / ATY-02: BUY fill atómico (nivel + ciclo en transacción), SELL fill via `completeCycleShadow` atómico, sin mutar nivel antes del ciclo.
+- VM2-01 / VM2-02: `buildGridOperationalViewModel` usa `computeCyclePnLWithRoles` con `config.buyFeePct`/`sellFeePct` y `TAX_RESERVE_PCT`; título usa `config.pair`.
+- TRL-01: trailing solo se evalúa cuando `trailingEnabled` es `true`.
 
 ### Gates finales actualizados
 
 | Gate | Estado | Evidencia |
 |---|---|---|
-| GATE-0 | COMPLETED | main limpio, commits en origin/main |
+| GATE-0 | COMPLETED | main limpio, commit `381bbb0` en origin/main |
 | GATE-1 Arquitectura | PASSED | tick canónico, lifecycle separado, JSONB estricto |
 | GATE-2 Integridad económica | PASSED | PnL, fees, costes, target V2, cantidad íntegra |
-| GATE-3 Ejecución SHADOW | PASSED | post-only, salidas antes entradas, cierre atómico |
+| GATE-3 Ejecución SHADOW | PASSED | post-only, salidas antes entradas, cierre atómico, BUY atómico |
 | GATE-4 Persistencia | PASSED | circuit breaker, riskState/makerExitState |
-| GATE-5 Tests | PASSED | 120/120 Grid, frontend Grid, build |
-| GATE-6 Migraciones | PASSED | 074 previa + 075 creada |
-| GATE-7 UX/Network | PASSED | view model + badge circuit breaker |
-| GATE-8 Commit/push | PASSED | 6 commits en origin/main |
+| GATE-5 Tests | PASSED | 120/120 Grid + 141/141 rutas + build |
+| GATE-6 Migraciones | PASSED | 073-075 validadas + 076 creada |
+| GATE-7 UX/Network | PASSED | view model sin hardcodes + badge circuit breaker |
+| GATE-8 Commit/push | PASSED | `381bbb0` en origin/main |
 
 ### Pendientes conscientes
 
-- VAL-06: suite completa tiene 12 fallos preexistentes ajenos (Telegram snapshots, IDCA market context helpers) no relacionados con Grid.
-- VAL-MIG-01 / VAL-MIG-02: ejecución de migraciones 074/075 en staging pendiente de deploy aprobado.
-- Deploy a staging y postdeploy a la espera de aprobación explícita.
+- R14/R16/R17: visual/network local, deploy a VPS/staging y postdeploy requieren entorno con `DATABASE_URL` y acceso VPS (no ejecutables en este entorno).
 
