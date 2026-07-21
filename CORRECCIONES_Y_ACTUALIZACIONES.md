@@ -36,3 +36,20 @@
   - `npx vitest run server/services/gridIsolated`: 120/120 passed
   - `npx vitest run`: 2621 passed, 12 failed (fallos en snapshots de Telegram e IDCA no relacionados con Grid Isolated)
 - **Estado final:** Gate A y C del tick audit cerrados. Pendientes Gates D, E, F, G, H, J.
+
+---
+
+## 2026-01-23 — Grid Isolated V2 cierre atómico unificado (Gate D)
+
+- **Módulo:** `server/services/gridIsolated/gridIsolatedEngine.ts`
+- **Problema:** `processCycleFill` para SELL duplicaba la lógica de cierre del ciclo (PnL, persistencia, rearme BUY) en lugar de reutilizar `completeCycleShadow`.
+- **Motivo:** Tener un único path transaccional atómico para cerrar ciclos tanto por fills de nivel SELL como por `processOpenCyclesShadow`.
+- **Solución:**
+  - La rama SELL de `processCycleFill` ahora determina la ruta de cierre (`NORMAL_TARGET`, `SYNTHETIC_RUNG`, `LEGACY_PERSISTED_TARGET`) y delega en `completeCycleShadow`.
+  - `completeCycleShadow` permanece como el único punto que actualiza atomáticamente ciclo, nivel SELL y nivel BUY.
+- **Archivos afectados:**
+  - `server/services/gridIsolated/gridIsolatedEngine.ts`
+- **Validaciones:**
+  - `npm run check`: OK
+  - `npx vitest run server/services/gridIsolated`: 120/120 passed
+- **Estado final:** Gate D cerrado. Pendientes Gates E, F, G, H, J.

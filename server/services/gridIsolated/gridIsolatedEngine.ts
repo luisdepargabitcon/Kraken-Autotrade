@@ -2469,107 +2469,27 @@ class GridIsolatedEngine {
         return null;
       }
 
-      openCycle.sellLevelId = level.id;
-      openCycle.targetSellLevelId = level.id;
-      openCycle.sellPrice = fillPrice;
-      openCycle.targetSellPrice = fillPrice;
-      openCycle.targetSellQuantity = openCycle.quantity;
-      openCycle.sellFilledAt = new Date();
-      openCycle.holdTimeMinutes = Math.round(
-        (openCycle.sellFilledAt.getTime() - (openCycle.buyFilledAt?.getTime() || 0)) / 60000
-      );
+      // Route reflects the kind of target that was hit.
+      const closePath: GridClosePath =
+        openCycle.targetKind === "PERSISTED_SELL"
+          ? "LEGACY_PERSISTED_TARGET"
+          : openCycle.targetKind === "SYNTHETIC_RUNG"
+          ? "SYNTHETIC_RUNG"
+          : "NORMAL_TARGET";
 
-      const pnl = computeCyclePnLWithRoles({
-        buyPrice: openCycle.buyPrice!,
-        sellPrice: fillPrice,
-        quantity: openCycle.quantity,
-        buyLiquidityRole: "maker",
-        sellLiquidityRole: "maker",
-        makerFeePct: FEE_BUFFER_BUY_PCT,
-        takerFeePct: FEE_BUFFER_SELL_PCT,
-        taxReservePct: TAX_RESERVE_PCT,
-      });
-
-      openCycle.grossPnlUsd = pnl.grossPnlUsd;
-      openCycle.feeTotalUsd = pnl.totalFeesUsd;
-      openCycle.taxReserveUsd = pnl.taxReserveUsd;
-      openCycle.netPnlUsd = pnl.netPnlUsd;
-      openCycle.netPnlPct = pnl.netPnlPct;
-      openCycle.status = "completed";
-      openCycle.completedAt = new Date();
-      openCycle.sellClientOrderId = level.clientOrderId;
-
-      const expectedGrossPct = openCycle.buyPrice && openCycle.buyPrice > 0
-        ? ((fillPrice - openCycle.buyPrice) / openCycle.buyPrice) * 100
-        : null;
-
-      await db.update(gridIsolatedCycles)
-        .set({
-          status: "completed",
-          sellLevelId: level.id,
-          targetSellLevelId: level.id,
-          sellPrice: fillPrice.toFixed(8),
-          targetSellPrice: fillPrice.toFixed(8),
-          targetSellQuantity: openCycle.quantity.toFixed(8),
-          sellFilledAt: new Date(),
-          grossPnlUsd: pnl.grossPnlUsd.toFixed(8),
-          feeTotalUsd: pnl.totalFeesUsd.toFixed(8),
-          taxReserveUsd: pnl.taxReserveUsd.toFixed(8),
-          netPnlUsd: pnl.netPnlUsd.toFixed(8),
-          netPnlPct: pnl.netPnlPct.toFixed(4),
-          holdTimeMinutes: openCycle.holdTimeMinutes,
-          completedAt: new Date(),
-          sellClientOrderId: level.clientOrderId,
-        })
-        .where(eq(gridIsolatedCycles.id, openCycle.id));
-
-      // Rearm the source BUY level so it can rotate again.
-      if (openCycle.buyLevelId) {
-        await db.update(gridIsolatedLevels)
-          .set({
-            status: "planned",
-            filledPrice: null,
-            filledQuantity: "0",
-            filledAt: null,
-          })
-          .where(and(
-            eq(gridIsolatedLevels.id, openCycle.buyLevelId),
-            eq(gridIsolatedLevels.rangeVersionId, openCycle.rangeVersionId),
-            eq(gridIsolatedLevels.side, "BUY"),
-            eq(gridIsolatedLevels.status, "filled")
-          ));
-        const buyLevel = this.levels.find(l => l.id === openCycle.buyLevelId);
-        if (buyLevel) {
-          buyLevel.status = "planned";
-          buyLevel.filledPrice = null;
-          buyLevel.filledQuantity = 0;
-          buyLevel.filledAt = null;
-        }
-      }
-
-      await this.logEvent("GRID_CYCLE_COMPLETED", `[SHADOW] Cycle ${openCycle.cycleNumber} completed (maker/maker): net PnL $${pnl.netPnlUsd.toFixed(2)} (${pnl.netPnlPct.toFixed(3)}%)`, {
-        cycleId: openCycle.id,
-        buyLevelId: openCycle.buyLevelId,
-        sellLevelId: level.id,
-        targetSellLevelId: level.id,
-        buyPrice: openCycle.buyPrice,
-        sellPrice: fillPrice,
-        quantity: openCycle.quantity,
-        netPnlUsd: pnl.netPnlUsd,
-        netPnlPct: pnl.netPnlPct,
-        grossPnlUsd: pnl.grossPnlUsd,
-        feeTotalUsd: pnl.totalFeesUsd,
-        taxReserveUsd: pnl.taxReserveUsd,
-        expectedGrossPct,
-        expectedNetPnl: pnl.netPnlUsd,
-        buyLiquidityRole: "maker",
-        sellLiquidityRole: "maker",
-        executionPolicy: "MAKER_ONLY",
-        takerFallbackUsed: false,
-        mode: "SHADOW",
-      });
-
-      return openCycle;
+      // Use the single atomic closer so processOpenCyclesShadow and
+      // processCycleFill share the same transactional path.
+      const priceResult: GridShadowExecutionPriceResult = {
+        pair: this.config.pair,
+        price: fillPrice,
+        source: "ticker_last",
+        bid: fillPrice,
+        ask: null,
+        spreadPct: null,
+        timestamp: new Date().toISOString(),
+      };
+      const closed = await this.completeCycleShadow(openCycle, fillPrice, level.id, closePath, priceResult);
+      return closed ? openCycle : null;
     }
 
     return null;
