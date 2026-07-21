@@ -76,3 +76,20 @@
   - `npm run check`: OK
   - `npx vitest run server/services/gridIsolated`: 120/120 passed
 - **Estado final:** Gate E cerrado. Pendientes Gates F, G, H, J.
+
+---
+
+## 2026-01-23 — Grid Isolated V2 validación JSONB estricta antes de persistir (Gate F)
+
+- **Módulo:** `server/services/gridIsolated/gridIsolatedEngine.ts`, `server/services/gridIsolated/gridJsonbValidators.ts`
+- **Problema:** Los JSONB `riskStateJson` y `makerExitStateJson` se persistían sin validación estricta tras su modificación en runtime.
+- **Motivo:** Evitar estados corruptos/inválidos en DB y detectar desajustes de esquema de forma defensiva.
+- **Solución:**
+  - Se importan `validateRiskStateJson` y `validateMakerExitStateJson` en el motor.
+  - Antes de `db.update(gridIsolatedCycles).set(...)` en `evaluateRiskForOpenCycles` se valida `nextRisk` y `nextRisk.protectiveExit`. Si fallan, se reemplazan por estados por defecto (`defaultRiskState` / `defaultMakerExit`) y se loguea el error.
+- **Archivos afectados:**
+  - `server/services/gridIsolated/gridIsolatedEngine.ts`
+- **Validaciones:**
+  - `npm run check`: OK
+  - `npx vitest run server/services/gridIsolated`: 120/120 passed
+- **Estado final:** Gate F cerrado. Pendientes Gates G, H, J.

@@ -81,6 +81,8 @@ import {
   safeParseMakerExitStateJson,
   safeParseRiskStateJson,
   safeParseTargetCalculationJson,
+  validateMakerExitStateJson,
+  validateRiskStateJson,
 } from "./gridJsonbValidators";
 import {
   DEFAULT_GRID_CONFIG,
@@ -2596,7 +2598,7 @@ class GridIsolatedEngine {
         evaluation = riskEval;
       }
 
-      const nextRisk: GridCycleRiskState = {
+      let nextRisk: GridCycleRiskState = {
         trailing: evaluation?.trailingState ?? risk.trailing,
         stopLoss: evaluation?.stopLossLayers ?? risk.stopLoss,
         hodl: evaluation?.hodlState ?? risk.hodl,
@@ -2634,6 +2636,18 @@ class GridIsolatedEngine {
       } else {
         nextRisk.activeExitRoute = nextRisk.protectiveExit.route ?? null;
         nextRisk.pendingExitPrice = nextRisk.protectiveExit.requestedMakerPrice ?? nextRisk.protectiveExit.triggerPrice ?? null;
+      }
+
+      // Strict JSONB validation before persistence (Gate F)
+      const riskValidation = validateRiskStateJson(nextRisk);
+      if (!riskValidation.valid) {
+        botLogger.error("GRID_RISK_STATE_VALIDATION_FAILED" as any, `[GridIsolatedEngine] riskStateJson inválido para ciclo ${cycle.id}: ${riskValidation.reason}`, { code: riskValidation.code });
+        nextRisk = this.defaultRiskState();
+      }
+      const exitValidation = validateMakerExitStateJson(nextRisk.protectiveExit);
+      if (!exitValidation.valid) {
+        botLogger.error("GRID_MAKER_EXIT_VALIDATION_FAILED" as any, `[GridIsolatedEngine] makerExitStateJson inválido para ciclo ${cycle.id}: ${exitValidation.reason}`, { code: exitValidation.code });
+        nextRisk.protectiveExit = this.defaultMakerExit();
       }
 
       cycle.riskStateJson = nextRisk;
