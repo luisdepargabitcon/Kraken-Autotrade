@@ -131,6 +131,8 @@ class GridIsolatedEngine {
   private dailyOrderResetAt: Date = new Date();
   private circuitBreakerOpen: boolean = false;
   private circuitBreakerOpenedAt: Date | null = null;
+  private circuitBreakerReason: string | null = null;
+  private circuitBreakerCooldownUntil: Date | null = null;
   private closingCycleIds: Set<string> = new Set();
   /** Canonical tick id incremented exactly once per main tick() execution. */
   private currentTickId = 0;
@@ -246,6 +248,11 @@ class GridIsolatedEngine {
           adaptiveRangeHighVolMaxPct: parseFloat(row.adaptiveRangeHighVolMaxPct ?? "7.00"),
           adaptiveRangeTargetFullLevels: row.adaptiveRangeTargetFullLevels ?? false,
           adaptiveRangeMinViableLevels: row.adaptiveRangeMinViableLevels ?? 4,
+          // Risk/circuit breaker persistence
+          circuitBreakerOpen: row.circuitBreakerOpen ?? false,
+          circuitBreakerOpenedAt: row.circuitBreakerOpenedAt,
+          circuitBreakerReason: row.circuitBreakerReason ?? null,
+          circuitBreakerCooldownUntil: row.circuitBreakerCooldownUntil,
         };
         if (this.config.mode === "SHADOW" && isLegacyExecutionPolicy(originalExecutionPolicy)) {
           await botLogger.warn(
@@ -254,6 +261,12 @@ class GridIsolatedEngine {
             { originalPolicy: originalExecutionPolicy, effectivePolicy: SHADOW_EXECUTION_POLICY }
           );
         }
+        // Load risk/circuit breaker state from DB
+        this.circuitBreakerOpen = this.config.circuitBreakerOpen ?? false;
+        this.circuitBreakerOpenedAt = this.config.circuitBreakerOpenedAt ?? null;
+        this.circuitBreakerReason = this.config.circuitBreakerReason ?? null;
+        this.circuitBreakerCooldownUntil = this.config.circuitBreakerCooldownUntil ?? null;
+
         // Load active state from DB
         await this.loadActiveRangeVersion();
         await this.loadLevels();
@@ -372,6 +385,11 @@ class GridIsolatedEngine {
           adaptiveRangeHighVolMaxPct: parseFloat(row.adaptiveRangeHighVolMaxPct ?? "7.00"),
           adaptiveRangeTargetFullLevels: row.adaptiveRangeTargetFullLevels ?? false,
           adaptiveRangeMinViableLevels: row.adaptiveRangeMinViableLevels ?? 4,
+          // Risk/circuit breaker persistence
+          circuitBreakerOpen: row.circuitBreakerOpen ?? false,
+          circuitBreakerOpenedAt: row.circuitBreakerOpenedAt,
+          circuitBreakerReason: row.circuitBreakerReason ?? null,
+          circuitBreakerCooldownUntil: row.circuitBreakerCooldownUntil,
         };
       }
     } catch (error) {
@@ -647,6 +665,11 @@ class GridIsolatedEngine {
         adaptiveRangeHighVolMaxPct: Number(this.config.adaptiveRangeHighVolMaxPct ?? 7.00).toFixed(2),
         adaptiveRangeTargetFullLevels: this.config.adaptiveRangeTargetFullLevels ?? false,
         adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
+        // Risk/circuit breaker persistence
+        circuitBreakerOpen: this.circuitBreakerOpen ?? this.config.circuitBreakerOpen ?? false,
+        circuitBreakerOpenedAt: this.circuitBreakerOpenedAt ?? this.config.circuitBreakerOpenedAt ?? null,
+        circuitBreakerReason: this.circuitBreakerReason ?? this.config.circuitBreakerReason ?? null,
+        circuitBreakerCooldownUntil: this.circuitBreakerCooldownUntil ?? this.config.circuitBreakerCooldownUntil ?? null,
         updatedAt: new Date(),
       } as any;
 
@@ -765,12 +788,27 @@ class GridIsolatedEngine {
 
     // Check circuit breaker
     if (this.circuitBreakerOpen) {
-      if (this.circuitBreakerOpenedAt && Date.now() - this.circuitBreakerOpenedAt.getTime() < CIRCUIT_BREAKER_RETRY_DELAY_MS) {
+      const now = Date.now();
+      const cooldownUntilMs = this.circuitBreakerCooldownUntil
+        ? this.circuitBreakerCooldownUntil.getTime()
+        : this.circuitBreakerOpenedAt
+          ? this.circuitBreakerOpenedAt.getTime() + CIRCUIT_BREAKER_RETRY_DELAY_MS
+          : now;
+      if (now < cooldownUntilMs) {
         this.lastTickReason = "Circuit breaker abierto — en cooldown.";
         return; // Still in cooldown
       }
       this.circuitBreakerOpen = false;
       this.circuitBreakerOpenedAt = null;
+      this.circuitBreakerReason = null;
+      this.circuitBreakerCooldownUntil = null;
+      if (this.config) {
+        this.config.circuitBreakerOpen = false;
+        this.config.circuitBreakerOpenedAt = null;
+        this.config.circuitBreakerReason = null;
+        this.config.circuitBreakerCooldownUntil = null;
+        await this.saveConfig();
+      }
       await this.logEvent("GRID_CIRCUIT_BREAKER_CLOSED", "Circuit breaker closed after cooldown");
     }
 
@@ -2611,9 +2649,21 @@ class GridIsolatedEngine {
 
       // Circuit breaker only on emergency stop.
       if (evaluation?.action === "STOP_LOSS_EMERGENCY") {
+        const reason = `Stop-loss de emergencia activado para ciclo ${cycle.cycleNumber}`;
+        const openedAt = new Date();
+        const cooldownUntil = new Date(openedAt.getTime() + CIRCUIT_BREAKER_RETRY_DELAY_MS);
         this.circuitBreakerOpen = true;
-        this.circuitBreakerOpenedAt = new Date();
-        await this.logEvent("GRID_CIRCUIT_BREAKER_OPEN", `Stop-loss de emergencia activado para ciclo ${cycle.cycleNumber}. Se bloquean nuevas compras Grid hasta revisión.`, {
+        this.circuitBreakerOpenedAt = openedAt;
+        this.circuitBreakerReason = reason;
+        this.circuitBreakerCooldownUntil = cooldownUntil;
+        if (this.config) {
+          this.config.circuitBreakerOpen = true;
+          this.config.circuitBreakerOpenedAt = openedAt;
+          this.config.circuitBreakerReason = reason;
+          this.config.circuitBreakerCooldownUntil = cooldownUntil;
+          await this.saveConfig();
+        }
+        await this.logEvent("GRID_CIRCUIT_BREAKER_OPEN", `${reason}. Se bloquean nuevas compras Grid hasta revisión.`, {
           cycleId: cycle.id,
           currentPrice,
           pendingExitPrice: nextRisk.pendingExitPrice,

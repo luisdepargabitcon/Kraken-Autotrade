@@ -1731,6 +1731,11 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   adaptiveRangeHighVolMaxPct:        decimal("adaptive_range_high_vol_max_pct", { precision: 6, scale: 2 }).notNull().default("7.00"),
   adaptiveRangeTargetFullLevels:     boolean("adaptive_range_target_full_levels").notNull().default(false),
   adaptiveRangeMinViableLevels:      integer("adaptive_range_min_viable_levels").notNull().default(4),
+  // Risk/circuit breaker persistence
+  circuitBreakerOpen:      boolean("circuit_breaker_open").notNull().default(false),
+  circuitBreakerOpenedAt:  timestamp("circuit_breaker_opened_at", { withTimezone: true }),
+  circuitBreakerReason:    text("circuit_breaker_reason"),
+  circuitBreakerCooldownUntil: timestamp("circuit_breaker_cooldown_until", { withTimezone: true }),
   createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt:               timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

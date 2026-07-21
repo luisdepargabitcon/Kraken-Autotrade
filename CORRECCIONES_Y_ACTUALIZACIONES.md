@@ -53,3 +53,26 @@
   - `npm run check`: OK
   - `npx vitest run server/services/gridIsolated`: 120/120 passed
 - **Estado final:** Gate D cerrado. Pendientes Gates E, F, G, H, J.
+
+---
+
+## 2026-01-23 — Grid Isolated V2 circuit breaker persistente (Gate E)
+
+- **Módulo:** `server/services/gridIsolated/gridIsolatedEngine.ts`, `server/services/gridIsolated/gridIsolatedTypes.ts`, `shared/schema.ts`, `db/migrations/075_grid_circuit_breaker_persistence.sql`
+- **Problema:** El estado del circuit breaker (`circuitBreakerOpen`, `openedAt`) se mantenía solo en memoria y se perdía al reiniciar el proceso.
+- **Motivo:** Garantizar que un stop-loss de emergencia o error crítico persista el bloqueo de nuevas compras hasta que pase el cooldown, incluso tras reinicio.
+- **Solución:**
+  - Añadidas columnas `circuit_breaker_open`, `circuit_breaker_opened_at`, `circuit_breaker_reason`, `circuit_breaker_cooldown_until` a `grid_isolated_configs`.
+  - Añadidos campos equivalentes a `GridIsolatedConfig` y `DEFAULT_GRID_CONFIG`.
+  - `loadConfig` y `readConfigSnapshotFromDbInternal` cargan el estado desde DB.
+  - `tick()` consulta `circuitBreakerCooldownUntil` y, al cerrarse, limpia estado en DB con `saveConfig()`.
+  - `evaluateRiskForOpenCycles` abre el breaker en `STOP_LOSS_EMERGENCY`, calcula cooldown y persiste con `saveConfig()`.
+- **Archivos afectados:**
+  - `server/services/gridIsolated/gridIsolatedEngine.ts`
+  - `server/services/gridIsolated/gridIsolatedTypes.ts`
+  - `shared/schema.ts`
+  - `db/migrations/075_grid_circuit_breaker_persistence.sql`
+- **Validaciones:**
+  - `npm run check`: OK
+  - `npx vitest run server/services/gridIsolated`: 120/120 passed
+- **Estado final:** Gate E cerrado. Pendientes Gates F, G, H, J.

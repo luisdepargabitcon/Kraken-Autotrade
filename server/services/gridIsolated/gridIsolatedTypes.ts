@@ -576,6 +576,11 @@ export interface GridIsolatedConfig {
   adaptiveRangeHighVolMaxPct: number;
   adaptiveRangeTargetFullLevels: boolean;
   adaptiveRangeMinViableLevels: number;
+  // Risk/circuit breaker persistence
+  circuitBreakerOpen?: boolean;
+  circuitBreakerOpenedAt?: Date | null;
+  circuitBreakerReason?: string | null;
+  circuitBreakerCooldownUntil?: Date | null;
 }
 
 export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | "updatedAt"> = {
@@ -655,6 +660,11 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   adaptiveRangeHighVolMaxPct: 7.00,
   adaptiveRangeTargetFullLevels: false,
   adaptiveRangeMinViableLevels: 4,
+  // Risk/circuit breaker persistence
+  circuitBreakerOpen: false,
+  circuitBreakerOpenedAt: null,
+  circuitBreakerReason: null,
+  circuitBreakerCooldownUntil: null,
 };
 
 // ─── Mode Lock Safety Conditions ────────────────────────────────────
