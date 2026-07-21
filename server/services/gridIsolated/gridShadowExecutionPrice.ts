@@ -25,6 +25,23 @@ export interface GridShadowExecutionPriceResult {
   timestamp: string;
 }
 
+/**
+ * Canonical context for a single engine tick. Created once in tick() and passed
+ * to helpers so the same tickId, timestamps and price snapshot are used
+ * throughout the entire tick without accidental double-increment or re-evaluation.
+ */
+export interface GridTickContext {
+  tickId: number;
+  startedAt: Date;
+  pair: string;
+  bid: number | null;
+  ask: number | null;
+  last: number | null;
+  marketTimestamp: string;
+  priceSource: GridShadowExecutionPriceSource;
+  freshness: { isFresh: boolean; reason: string | null; ageMs: number | null; maxAgeMs: number };
+}
+
 function validPrice(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }

@@ -31,7 +31,7 @@ import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { gridModeLockService } from "./gridModeLockService";
 import { gridCapitalAllocator } from "./gridCapitalAllocator";
 import { getGridBandSnapshot } from "./gridBandAdapter";
-import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult } from "./gridShadowExecutionPrice";
+import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult, type GridTickContext } from "./gridShadowExecutionPrice";
 import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from "./gridShadowMarketPriceFreshness";
 import {
   getShadowPumpGuardPolicy,
@@ -134,6 +134,8 @@ class GridIsolatedEngine {
   private closingCycleIds: Set<string> = new Set();
   /** Monotonic tick sequence used to enforce separation between trigger, pending and fill lifecycle phases. */
   private tickSequence = 0;
+  /** Canonical tick id incremented exactly once per main tick() execution. */
+  private currentTickId = 0;
   private pumpDumpState: PumpDumpGuardState = {
     state: "normal" as PumpDumpState,
     triggeredAt: null,
@@ -780,45 +782,58 @@ class GridIsolatedEngine {
       return;
     }
 
+    // Canonical tick id: incremented exactly once per tick().
+    this.currentTickId++;
+    const ctx: GridTickContext = {
+      tickId: this.currentTickId,
+      startedAt: this.lastTickAt!,
+      pair: this.config.pair,
+      bid: shadowExecutionPrice.bid ?? null,
+      ask: shadowExecutionPrice.ask ?? null,
+      last: shadowExecutionPrice.source === "ticker_last" ? shadowExecutionPrice.price : null,
+      marketTimestamp: shadowExecutionPrice.timestamp,
+      priceSource: shadowExecutionPrice.source,
+      freshness: evaluateShadowMarketPriceFreshness({ timestamp: shadowExecutionPrice.timestamp, now: this.lastTickAt! }),
+    };
+
     // Check pump/dump guard using the current execution price
     await this.checkPumpDumpGuard(shadowExecutionPrice.price);
     const pumpGuard = getShadowPumpGuardPolicy(this.pumpDumpState.state);
+    let blockNewRangesAndBuys = false;
 
-    // Pump/dump guard: block rebuild, new ranges and new BUYs; allow SELL exits from open cycles
+    // Pump/dump guard: block rebuild, new ranges and new BUYs; allow SELL exits from open cycles.
+    // Exits are evaluated below regardless of this guard.
     if (pumpGuard.active) {
-      this.lastTickReason = `Pump/dump guard activo (${this.pumpDumpState.state}). Rebuild y nuevos BUY bloqueados. Solo salidas SELL de ciclos abiertos permitidas.`;
-
-      if (this.config.mode === "SHADOW" && this.activeRangeVersion && pumpGuard.allowExistingCycleSellExit) {
-        await this.simulateShadowTick(shadowExecutionPrice.price, { bandSnapshot, pumpGuard });
-      }
-
+      blockNewRangesAndBuys = true;
+      this.lastTickReason = `Pump/dump guard activo (${this.pumpDumpState.state}). Rebuild y nuevos BUY bloqueados. Salidas SELL de ciclos abiertos permitidas.`;
       await this.logShadowTickEvent("GRID_PUMP_GUARD_BLOCKED_REBUILD", `Pump/dump guard bloqueó rebuild/nuevos niveles: ${this.pumpDumpState.reason}`, {
         state: this.pumpDumpState.state,
         price: shadowExecutionPrice.price,
         deviationPct: this.pumpDumpState.priceDeviationPct,
         reason: this.pumpDumpState.reason,
       });
-      return;
     }
 
     if (!bandSnapshot.suitableForGrid) {
+      blockNewRangesAndBuys = true;
       this.lastTickReason = `Condiciones de mercado no válidas para Grid: ${bandSnapshot.reason}`;
-      // Pause active range if conditions not suitable
+      // Pause active range if conditions not suitable, but still process exits below.
       if (this.activeRangeVersion && this.activeRangeVersion.status === "active") {
         await this.pauseRangeVersion(bandSnapshot.reason);
       }
       await this.logShadowTickEvent("GRID_SHADOW_WAITING", `El Grid está en SHADOW esperando condiciones válidas. Motivo: ${bandSnapshot.reason}.`, { reason: bandSnapshot.reason });
-      return;
     }
 
-    // In SHADOW mode: first close existing open cycles whose target SELL has been reached.
-    // This runs independently of the active range. Then process active-range fills.
+    // In SHADOW mode: evaluate risk once, then close existing open cycles whose
+    // target SELL has been reached, before processing new entries or rebuilds.
     if (this.config.mode === "SHADOW") {
-      const cyclesClosed = await this.processOpenCyclesShadow(shadowExecutionPrice);
+      await this.evaluateRiskForOpenCycles(shadowExecutionPrice, ctx);
+      const cyclesClosed = await this.processOpenCyclesShadow(shadowExecutionPrice, ctx);
       if (cyclesClosed > 0) {
         this.lastTickReason = `Cierres SHADOW de ciclos abiertos: ${cyclesClosed}. Rebuild aplazado para evitar solapamientos.`;
         await this.logEvent("GRID_SHADOW_OPEN_CYCLES_CLOSED", `Cierres SHADOW de ciclos abiertos: ${cyclesClosed}. Banda conservada en este tick.`, {
           cyclesClosed,
+          tickId: ctx.tickId,
           shadowExecutionPrice: shadowExecutionPrice.price,
           shadowExecutionPriceSource: shadowExecutionPrice.source,
           bandSnapshotClose: bandSnapshot.midPrice,
@@ -872,15 +887,10 @@ class GridIsolatedEngine {
       await this.logShadowTickEvent("GRID_SHADOW_RANGE_REUSED", "El Grid reutiliza el rango activo para auditoría. No se abren ciclos nuevos sin fills simulados.", { rangeVersionId: this.activeRangeVersion.id });
     }
 
-    // In SHADOW mode: if we did not process a fill, simulate without active range (no-op) or with already handled range.
-    if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
+    // Risk evaluation and exit processing for SHADOW happen earlier in the tick;
+    // this path is reached when no fills occurred and no active range needs replacement.
+    if (this.config.mode === "SHADOW" && !this.activeRangeVersion) {
       await this.simulateShadowTick(shadowExecutionPrice.price, { bandSnapshot, pumpGuard });
-    }
-
-    // Persistently evaluate trailing, stop-loss and HODL recovery for all open cycles.
-    if (this.config.mode === "SHADOW") {
-      await this.evaluateRiskForOpenCycles(shadowExecutionPrice);
-      await this.processOpenCyclesShadow(shadowExecutionPrice);
     }
   }
 
@@ -1742,7 +1752,8 @@ class GridIsolatedEngine {
    */
   private resolveExitForCycle(
     cycle: GridCycle,
-    priceResult: GridShadowExecutionPriceResult
+    priceResult: GridShadowExecutionPriceResult,
+    tickId: number
   ): {
     targetPrice: number | null;
     targetQty: number | null;
@@ -1763,7 +1774,7 @@ class GridIsolatedEngine {
       risk.activeExitRoute &&
       risk.pendingExitPrice != null &&
       risk.protectiveExit.lifecycleTickId != null &&
-      this.tickSequence > risk.protectiveExit.lifecycleTickId
+      tickId > risk.protectiveExit.lifecycleTickId
     ) {
       return {
         targetPrice: risk.pendingExitPrice,
@@ -1986,11 +1997,23 @@ class GridIsolatedEngine {
    * Process open cycles in SHADOW mode.
    * Closes any cycle whose active exit target can be filled by the best bid.
    * Runs ONLY in SHADOW mode. No real orders are placed.
+   * Does NOT advance the canonical tick id; it must be passed from tick().
    */
   private async processOpenCyclesShadow(
-    priceResult: GridShadowExecutionPriceResult
+    priceResult: GridShadowExecutionPriceResult,
+    ctx?: GridTickContext
   ): Promise<number> {
-    this.tickSequence++;
+    const tickCtx: GridTickContext = ctx ?? {
+      tickId: ++this.currentTickId,
+      startedAt: new Date(),
+      pair: this.config?.pair ?? "BTC/USD",
+      bid: priceResult.bid ?? null,
+      ask: priceResult.ask ?? null,
+      last: priceResult.source === "ticker_last" ? priceResult.price : null,
+      marketTimestamp: priceResult.timestamp,
+      priceSource: priceResult.source,
+      freshness: evaluateShadowMarketPriceFreshness({ timestamp: priceResult.timestamp }),
+    };
     if (!this.config || this.config.mode !== "SHADOW" || !this.config.isActive) return 0;
 
     const bestBid = priceResult.bid ?? null;
@@ -2027,10 +2050,6 @@ class GridIsolatedEngine {
       return 0;
     }
 
-    // Run risk/exit lifecycle so normal targets can transition from TRIGGERED
-    // to MAKER_PENDING before we check fills.
-    await this.evaluateRiskForOpenCycles(priceResult);
-
     // Ensure every open cycle has an explicit SELL target before checking fills.
     await this.resolveAndPersistOpenCycleTargets();
 
@@ -2039,7 +2058,8 @@ class GridIsolatedEngine {
       if (!POSITION_OPEN_GRID_CYCLE_STATUSES.includes(cycle.status as any)) continue;
       if (priceResult.pair != null && priceResult.pair !== cycle.pair) continue;
 
-      const exit = this.resolveExitForCycle(cycle, priceResult);
+      const risk = this.parseRiskState(cycle);
+      const exit = this.resolveExitForCycle(cycle, priceResult, tickCtx.tickId);
       if (!exit.targetPrice || !exit.targetQty || !exit.closePath || !exit.eligibleForFill) continue;
       if (!this.canFillExit(bestBid, exit.targetPrice, exit.closePath)) continue;
 
@@ -2522,9 +2542,22 @@ class GridIsolatedEngine {
    *   - tick N+2+: if bid reaches requested price, processOpenCyclesShadow fills.
    */
   private async evaluateRiskForOpenCycles(
-    priceResult: GridShadowExecutionPriceResult
+    priceResult: GridShadowExecutionPriceResult,
+    ctx?: GridTickContext
   ): Promise<void> {
     if (!this.config) return;
+
+    const tickCtx: GridTickContext = ctx ?? {
+      tickId: ++this.currentTickId,
+      startedAt: new Date(),
+      pair: this.config.pair,
+      bid: priceResult.bid ?? null,
+      ask: priceResult.ask ?? null,
+      last: priceResult.source === "ticker_last" ? priceResult.price : null,
+      marketTimestamp: priceResult.timestamp,
+      priceSource: priceResult.source,
+      freshness: evaluateShadowMarketPriceFreshness({ timestamp: priceResult.timestamp }),
+    };
 
     const riskFeaturesEnabled =
       (this.config.trailingEnabled ?? false) ||
@@ -2588,7 +2621,8 @@ class GridIsolatedEngine {
         intended,
         currentPrice,
         currentAsk,
-        priceResult
+        priceResult,
+        tickCtx
       );
       nextRisk.activeExitRoute = nextRisk.protectiveExit.route ?? null;
       nextRisk.pendingExitPrice = nextRisk.protectiveExit.requestedMakerPrice ?? nextRisk.protectiveExit.triggerPrice ?? null;
@@ -2684,7 +2718,8 @@ class GridIsolatedEngine {
     intended: { route: GridClosePath | null; price: number | null },
     currentBid: number,
     currentAsk: number,
-    priceResult: GridShadowExecutionPriceResult
+    priceResult: GridShadowExecutionPriceResult,
+    ctx: GridTickContext
   ): GridPendingMakerExit {
     const now = new Date();
 
@@ -2717,7 +2752,7 @@ class GridIsolatedEngine {
         requestedMakerPrice: intended.price,
         makerOrderCreatedAt: now,
         makerEligibleAfter: new Date(now.getTime() + 1),
-        lifecycleTickId: this.tickSequence,
+        lifecycleTickId: ctx.tickId,
         pendingQuantity: cycle.quantity,
         simulatedOrderId: `grid-shadow-${cycle.id}-${now.getTime()}`,
       };

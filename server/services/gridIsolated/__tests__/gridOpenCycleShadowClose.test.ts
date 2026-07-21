@@ -294,6 +294,20 @@ function makeRange(overrides: Partial<GridRangeVersion> = {}): GridRangeVersion 
   } as GridRangeVersion;
 }
 
+function makeTickContext(engine: any, price: GridShadowExecutionPriceResult, tickId: number) {
+  return {
+    tickId,
+    startedAt: new Date(),
+    pair: engine.config?.pair ?? "BTC/USD",
+    bid: price.bid ?? null,
+    ask: price.ask ?? null,
+    last: price.source === "ticker_last" ? price.price : null,
+    marketTimestamp: price.timestamp,
+    priceSource: price.source,
+    freshness: { isFresh: true, reason: null, ageMs: 0, maxAgeMs: 60000 },
+  };
+}
+
 async function runUntilClosed(
   engine: any,
   opts: Partial<GridShadowExecutionPriceResult>,
@@ -301,10 +315,21 @@ async function runUntilClosed(
 ): Promise<number> {
   let closed = 0;
   for (let i = 0; i < maxTicks; i++) {
-    closed = await engine.processOpenCyclesShadow(priceResult(opts));
+    closed = await processLifecycleTick(engine, opts);
     if (closed > 0) return closed;
   }
   return 0;
+}
+
+async function processLifecycleTick(
+  engine: any,
+  opts: Partial<GridShadowExecutionPriceResult>
+): Promise<number> {
+  const price = priceResult(opts);
+  const tickId = ++engine.currentTickId;
+  const ctx = makeTickContext(engine, price, tickId);
+  await engine.evaluateRiskForOpenCycles(price, ctx);
+  return engine.processOpenCyclesShadow(price, ctx);
 }
 
 function priceResult(opts: Partial<GridShadowExecutionPriceResult>): GridShadowExecutionPriceResult {
@@ -329,6 +354,8 @@ function resetEngine(cycles: GridCycle[], levels: GridLevel[], configOverrides: 
   engine.referencedRangeVersions = engine.activeRangeVersion ? [engine.activeRangeVersion] : [];
   engine.lastShadowEventAt = null;
   engine.tickSequence = 0;
+  engine.currentTickId = 0;
+  engine.closingCycleIds?.clear();
 
   const rows = {
     cycles: cycles.map((c) => ({ ...c })),
@@ -489,8 +516,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle()],
         [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
       );
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })); // trigger
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })); // pending
+      await processLifecycleTick(engine, { bid: 61_200 }); // trigger
+      await processLifecycleTick(engine, { bid: 61_200 }); // pending
       await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
       const cycle = engine.cycles[0];
       expect(cycle.status).toBe("buy_filled");
@@ -502,8 +529,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeLevel({ id: SELL_LEVEL_ID })]
       );
       // Nivel con id "fake-id" no existe → tx.update(levels) devuelve 0 filas
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })); // trigger
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })); // pending
+      await processLifecycleTick(engine, { bid: 61_200 }); // trigger
+      await processLifecycleTick(engine, { bid: 61_200 }); // pending
       await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
     });
 
@@ -512,8 +539,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle()],
         [makeLevel({ rangeVersionId: "otro-rango" })]
       );
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })); // trigger
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })); // pending
+      await processLifecycleTick(engine, { bid: 61_200 }); // trigger
+      await processLifecycleTick(engine, { bid: 61_200 }); // pending
       await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
     });
 
@@ -522,8 +549,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle()],
         [makeLevel({ side: "BUY" as any })]
       );
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })); // trigger
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })); // pending
+      await processLifecycleTick(engine, { bid: 61_200 }); // trigger
+      await processLifecycleTick(engine, { bid: 61_200 }); // pending
       await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
     });
 
@@ -583,8 +610,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     it("dos llamadas concurrentes → un solo cierre", async () => {
       const engine = gridIsolatedEngine as any;
       // Trigger -> pending -> two concurrent fill attempts.
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      await processLifecycleTick(engine, { bid: 61_200 });
+      await processLifecycleTick(engine, { bid: 61_200 });
       expect((engine.cycles[0].riskStateJson as any)?.protectiveExit?.state).toBe("MAKER_PENDING");
       const results = await Promise.allSettled([
         engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })),
@@ -697,7 +724,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       for (let i = 0; i < 5; i++) {
         // Keep every tick just inside the freshness window.
         const edgeTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS + 100).toISOString();
-        result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: edgeTimestamp }));
+        result = await processLifecycleTick(engine, { bid: 61_200, timestamp: edgeTimestamp });
         if (result > 0) break;
       }
       expect(result).toBe(1);
@@ -745,9 +772,9 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       const engine = gridIsolatedEngine as any;
       const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 1).toISOString();
       expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }))).toBe(0);
-      expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).toBe(0); // trigger
-      expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).toBe(0); // pending
-      expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).toBe(1);
+      expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(0); // trigger
+      expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(0); // pending
+      expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(1);
     });
   });
 
