@@ -5,6 +5,59 @@
 
 ---
 
+## 2026-07-21 — GRID V2 FIXES: `lifecycleTickId`, makerExitStateJson unificado, sin FIFO, validación JSONB estricta
+
+### Resumen
+Se separan por ticks con persistencia las fases de trigger, pending y fill del lifecycle maker SHADOW. `makerExitStateJson` pasa a ser la fuente de verdad del protective exit, se parsea con validación estricta y se persiste junto a `riskStateJson`. Se elimina el fallback FIFO para cierres SELL: ahora un SELL solo cierra el ciclo que lo tiene como target explícito. Se pre-valida la existencia de un target V2 rentable antes de rellenar un BUY. Se actualizan los tests Grid, se des-skip el test concurrente y se corrige el contador `tickSequence` en `resetEngine`.
+
+### Problema
+- `lifecycleTickId` no existía, por lo que trigger, pending y fill podían ocurrir en el mismo tick.
+- `makerExitStateJson` se parseaba con `safeParseTargetCalculationJson` y se ignoraba; `riskStateJson.protectiveExit` no tenía fuente única.
+- `canFillExit` tenía una rama asimétrica `<=` para trailing/protective.
+- `OPEN_POSITION_GRID_CYCLE_STATUSES` contenía `hodl_recovery` duplicado.
+- Persistía un fallback FIFO en `processCycleFill` y `canProcessShadowFill`.
+- No se pre-validaba target V2 antes de marcar un BUY como filled.
+- El test de concurrencia estaba skipped y `tickSequence` no se reseteaba entre tests.
+
+### Solución
+1. `gridIsolatedTypes.ts`: añadir `lifecycleTickId` a `GridPendingMakerExit`; eliminar `GridCycleRiskState` duplicado; quitar `hodl_recovery` duplicado; clarificar comentarios de fees SHADOW.
+2. `gridJsonbValidators.ts`: validación estricta con `REQUIRES_REVIEW` por defecto para JSONB corrupto; nuevo `safeParseMakerExitStateJson` y `validateMakerExitStateJson`.
+3. `gridIsolatedEngine.ts`:
+   - Añadir `tickSequence` e incrementarla en `processOpenCyclesShadow`.
+   - `advanceProtectiveExitLifecycle` fija `lifecycleTickId` y `makerEligibleAfter` estrictamente futuro en `MAKER_PENDING`.
+   - `resolveExitForCycle` exige `this.tickSequence > protectiveExit.lifecycleTickId` para fills.
+   - `canFillExit` simétrico `bid >= requestedMakerPrice`.
+   - `parseRiskState` prefere `makerExitStateJson` sobre `riskStateJson.protectiveExit`.
+   - Persistir `makerExitStateJson` en cierres y evaluaciones de riesgo.
+   - Eliminar FIFO en `canProcessShadowFill` y `processCycleFill`.
+   - Pre-validar target V2 rentable antes de BUY fill mediante `selectFirstProfitableHigherRung`.
+4. Tests: `tickSequence = 0` en `resetEngine`; test concurrente unskipped y adaptado a 3 fases; expectativas de trailing ajustadas.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridJsonbValidators.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/gridIsolated/__tests__`: ✅ 120 tests
+- `npx vitest run`: ⚠️ fallos preexistentes ajenos (telegram snapshots, IDCA market context helpers) no relacionados con Grid.
+
+### Estado final
+- Motor Grid SHADOW con lifecycle maker robusto y persistencia unificada. Preparado para staging.
+- No se realizó deploy.
+
+### Pendientes
+- Unificar cierre atómico del SELL en `processCycleFill` usando `completeCycleShadow`.
+- Garantizar una sola evaluación de riesgo por tick y priorizar salidas antes de entradas.
+- Persistencia del circuit breaker en DB.
+- Validación visual de ciclos abiertos y migración 074 en staging.
+
+---
+
 ## 2026-07-21 — GRID COUNTER-AUDIT REFINEMENT: lifecycle maker, `safeParseRiskStateJson`, fees explícitos
 
 ### Resumen

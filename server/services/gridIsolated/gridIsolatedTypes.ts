@@ -106,7 +106,7 @@ export type ExecutionPolicy =
 /** Default policy for the Grid: maker-only, no taker fallback. */
 export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "MAKER_ONLY";
 
-/** SHADOW mode always uses maker-only, no taker fallback. Fees are simulated using configured buy/sell fee percentages. */
+/** SHADOW mode always uses maker-only, no taker fallback, zero real order fees. Fees are simulated using the configured buy/sell fee percentages. */
 export const SHADOW_EXECUTION_POLICY: ExecutionPolicy = "MAKER_ONLY";
 
 export const POST_ONLY_MAX_ATTEMPTS = 3;
@@ -273,6 +273,8 @@ export interface GridPendingMakerExit {
   requestedMakerPrice: number | null;
   makerOrderCreatedAt: Date | null;
   makerEligibleAfter: Date | null;
+  /** Tick sequence in which the maker order was created; fills are only allowed on a later tick. */
+  lifecycleTickId: number | null;
   lastRepricedAt: Date | null;
   repriceAttempts: number;
   pendingQuantity: number;
@@ -342,16 +344,6 @@ export interface GridTargetCalculation {
   rejectedCandidates: GridRejectedCandidate[];
   explanation: string;
   reasonCode?: string;
-}
-
-export interface GridCycleRiskState {
-  trailing: TrailingProtectionState;
-  stopLoss: StopLossLayer[];
-  hodl: HodlRecoveryState;
-  lastAction: RiskAction | null;
-  activeExitRoute: GridClosePath | null;
-  pendingExitPrice: number | null;
-  lastEvaluatedAt: Date | null;
 }
 
 export interface GridCycle {
@@ -427,7 +419,6 @@ export const TERMINAL_GRID_CYCLE_STATUSES: readonly GridCycleStatus[] = [
 export const OPEN_POSITION_GRID_CYCLE_STATUSES: readonly GridCycleStatus[] = [
   ...POSITION_OPEN_GRID_CYCLE_STATUSES,
   ...SELL_FILLED_PENDING_FINALIZATION_STATUSES,
-  "hodl_recovery",
 ] as const;
 
 // Estados que no pueden cerrarse automáticamente por SELL objetivo en esta fase.

@@ -78,6 +78,7 @@ import {
   computeCyclePnLWithRoles,
 } from "./gridNetCalculator";
 import {
+  safeParseMakerExitStateJson,
   safeParseRiskStateJson,
   safeParseTargetCalculationJson,
 } from "./gridJsonbValidators";
@@ -131,6 +132,8 @@ class GridIsolatedEngine {
   private circuitBreakerOpen: boolean = false;
   private circuitBreakerOpenedAt: Date | null = null;
   private closingCycleIds: Set<string> = new Set();
+  /** Monotonic tick sequence used to enforce separation between trigger, pending and fill lifecycle phases. */
+  private tickSequence = 0;
   private pumpDumpState: PumpDumpGuardState = {
     state: "normal" as PumpDumpState,
     triggeredAt: null,
@@ -445,6 +448,7 @@ class GridIsolatedEngine {
       requestedMakerPrice: null,
       makerOrderCreatedAt: null,
       makerEligibleAfter: null,
+      lifecycleTickId: null,
       lastRepricedAt: null,
       repriceAttempts: 0,
       pendingQuantity: 0,
@@ -464,6 +468,11 @@ class GridIsolatedEngine {
   private parseRiskState(cycle: GridCycle): GridCycleRiskState {
     const parsed = safeParseRiskStateJson(cycle.riskStateJson);
     if (!parsed) return this.defaultRiskState();
+    // makerExitStateJson is the source of truth for the protective exit lifecycle.
+    const makerExit = safeParseMakerExitStateJson(cycle.makerExitStateJson);
+    if (makerExit) {
+      parsed.protectiveExit = makerExit;
+    }
     // Ensure nested defaults exist even if the validator returned a partial state.
     const defaults = this.defaultRiskState();
     return {
@@ -1256,7 +1265,7 @@ class GridIsolatedEngine {
         targetKind: row.targetKind as GridTargetKind | null ?? null,
         targetCalculationJson: safeParseTargetCalculationJson(row.targetCalculationJson),
         riskStateJson: safeParseRiskStateJson(row.riskStateJson),
-        makerExitStateJson: safeParseTargetCalculationJson(row.makerExitStateJson) as any,
+        makerExitStateJson: safeParseMakerExitStateJson(row.makerExitStateJson),
         buyClientOrderId: row.buyClientOrderId,
         sellClientOrderId: row.sellClientOrderId,
         buyFilledAt: row.buyFilledAt,
@@ -1749,7 +1758,13 @@ class GridIsolatedEngine {
     }
 
     // Once a maker exit is pending, that route takes precedence.
-    if (risk.protectiveExit.state === "MAKER_PENDING" && risk.activeExitRoute && risk.pendingExitPrice != null) {
+    if (
+      risk.protectiveExit.state === "MAKER_PENDING" &&
+      risk.activeExitRoute &&
+      risk.pendingExitPrice != null &&
+      risk.protectiveExit.lifecycleTickId != null &&
+      this.tickSequence > risk.protectiveExit.lifecycleTickId
+    ) {
       return {
         targetPrice: risk.pendingExitPrice,
         targetQty: risk.protectiveExit.pendingQuantity || cycle.quantity,
@@ -1763,15 +1778,11 @@ class GridIsolatedEngine {
   }
 
   /**
-   * Determine whether the current best bid can fill a pending exit maker order.
-   * Conservative SHADOW maker-only model:
-   *   - Take-profit targets above buy (NORMAL_TARGET, HODL_RECOVERY): fill when bid >= price.
-   *   - Trailing stop and protective stop (sells triggered by price drop): fill when bid <= price.
+   * Determine whether the current best bid can fill a pending SELL maker order.
+   * All SHADOW exits are simulated as post-only maker SELL orders: a resting
+   * sell is filled only when the market bid reaches or exceeds the requested price.
    */
-  private canFillExit(bestBid: number, targetPrice: number, closePath: GridClosePath | null): boolean {
-    if (closePath === "TRAILING_MAKER" || closePath === "PROTECTIVE_MAKER") {
-      return bestBid <= targetPrice;
-    }
+  private canFillExit(bestBid: number, targetPrice: number, _closePath: GridClosePath | null): boolean {
     return bestBid >= targetPrice;
   }
 
@@ -1828,6 +1839,7 @@ class GridIsolatedEngine {
       filledAt: now,
       bestBidAtFill: priceResult.bid ?? null,
       bestAskAtFill: priceResult.ask ?? null,
+      lifecycleTickId: currentRisk.protectiveExit.lifecycleTickId ?? this.tickSequence,
     };
     const filledRisk: GridCycleRiskState = {
       ...currentRisk,
@@ -1851,6 +1863,7 @@ class GridIsolatedEngine {
             completedAt: now,
             sellClientOrderId,
             riskStateJson: filledRisk,
+            makerExitStateJson: filledProtectiveExit,
           })
           .where(and(
             eq(gridIsolatedCycles.id, cycle.id),
@@ -1920,6 +1933,7 @@ class GridIsolatedEngine {
     cycle.completedAt = now;
     cycle.sellClientOrderId = sellClientOrderId;
     cycle.riskStateJson = filledRisk;
+    cycle.makerExitStateJson = filledProtectiveExit;
 
     const sellLevel = this.levels.find(l => l.id === sellLevelId);
     if (sellLevel) {
@@ -1976,6 +1990,7 @@ class GridIsolatedEngine {
   private async processOpenCyclesShadow(
     priceResult: GridShadowExecutionPriceResult
   ): Promise<number> {
+    this.tickSequence++;
     if (!this.config || this.config.mode !== "SHADOW" || !this.config.isActive) return 0;
 
     const bestBid = priceResult.bid ?? null;
@@ -2191,9 +2206,38 @@ class GridIsolatedEngine {
           details: { existingCycleId: existingCycleForBuy.id },
         };
       }
+
+      // Pre-validate that a profitable V2 SELL target exists before filling BUY.
+      const exitPolicyVersion = this.config.defaultExitPolicyVersion ?? "FIRST_PROFITABLE_HIGHER_RUNG_V2";
+      if (exitPolicyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2") {
+        const syntheticCycle = this.buildSyntheticCycleForBuyPrevalidation(level, level.price);
+        const selectorResult = selectFirstProfitableHigherRung(
+          syntheticCycle,
+          this.levels,
+          this.activeRangeVersion ?? undefined,
+          {
+            buyFillPrice: level.price,
+            buyFillQuantity: level.quantity,
+            netProfitTargetPct: this.config.netProfitTargetPct,
+            buyFeePct: this.config.buyFeePct,
+            sellFeePct: this.config.sellFeePct,
+            makerFeePct: FEE_BUFFER_BUY_PCT,
+            takerFeePct: FEE_BUFFER_SELL_PCT,
+            taxReservePct: TAX_RESERVE_PCT,
+          }
+        );
+        if (!selectorResult.selected) {
+          return {
+            ok: false,
+            eventType: "GRID_CYCLE_TARGET_REVIEW_REQUIRED",
+            reason: `[SHADOW] BUY level ${level.id} no rellenado: no existe target V2 rentable.`,
+            details: { levelId: level.id, reason: selectorResult.explanation },
+          };
+        }
+      }
     } else if (level.side === "SELL") {
       // Target-based SELL closing: the level must be the explicit target of an
-      // open cycle. Legacy V1 cycles without an explicit target use FIFO.
+      // open cycle. No FIFO fallback.
       const explicitCycle = this.cycles.find(
         c =>
           c.status === "buy_filled" &&
@@ -2202,34 +2246,30 @@ class GridIsolatedEngine {
       );
 
       if (!explicitCycle) {
-        const legacyCycles = this.cycles.filter(c =>
-          c.status === "buy_filled" &&
-          c.rangeVersionId === activeRangeId &&
-          (c.exitPolicyVersion == null || c.exitPolicyVersion === "SYMMETRIC_INDEX_V1") &&
-          c.sellLevelId == null &&
-          c.completedAt == null &&
-          c.buyPrice != null &&
-          level.price > c.buyPrice
-        );
-        const matchedCycle = legacyCycles
-          .sort((a, b) => {
-            const ta = a.buyFilledAt ? new Date(a.buyFilledAt).getTime() : a.createdAt.getTime();
-            const tb = b.buyFilledAt ? new Date(b.buyFilledAt).getTime() : b.createdAt.getTime();
-            return ta - tb || a.id.localeCompare(b.id);
-          })[0];
-
-        if (!matchedCycle) {
-          return {
-            ok: false,
-            eventType: "GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE",
-            reason: `[SHADOW] SELL simulado ignorado: no existe BUY/ciclo que reclame este SELL como target explícito.`,
-            details: { levelId: level.id, activeRangeId },
-          };
-        }
+        return {
+          ok: false,
+          eventType: "GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE",
+          reason: `[SHADOW] SELL simulado ignorado: no existe BUY/ciclo que reclame este SELL como target explícito.`,
+          details: { levelId: level.id, activeRangeId },
+        };
       }
     }
 
     return { ok: true };
+  }
+
+  /**
+   * Build a temporary cycle used only for BUY pre-validation. It has no DB id
+   * and represents the cycle that would be created if the BUY level were filled.
+   */
+  private buildSyntheticCycleForBuyPrevalidation(level: GridLevel, fillPrice: number): Pick<GridCycle, "id" | "rangeVersionId" | "pair" | "buyPrice" | "quantity"> {
+    return {
+      id: level.id,
+      rangeVersionId: level.rangeVersionId,
+      pair: this.config?.pair ?? "BTC/USD",
+      buyPrice: fillPrice,
+      quantity: level.quantity,
+    };
   }
 
   /**
@@ -2350,33 +2390,13 @@ class GridIsolatedEngine {
       return cycle;
     } else if (level.side === "SELL") {
       // Target-based SELL closing: the SELL level must be the explicit target of
-      // an open cycle. This eliminates ambiguous FIFO associations. Legacy V1
-      // cycles without an explicit target fall back to the previous FIFO policy.
-      let openCycle: GridCycle | undefined = this.cycles.find(
+      // an open cycle. No FIFO fallback.
+      const openCycle = this.cycles.find(
         c =>
           c.status === "buy_filled" &&
           c.rangeVersionId === activeRangeId &&
           c.targetSellLevelId === level.id
       );
-
-      if (!openCycle) {
-        // Legacy fallback only for cycles without a V2 target assignment.
-        const legacyCycles = this.cycles.filter(c =>
-          c.status === "buy_filled" &&
-          c.rangeVersionId === activeRangeId &&
-          (c.exitPolicyVersion == null || c.exitPolicyVersion === "SYMMETRIC_INDEX_V1") &&
-          c.sellLevelId == null &&
-          c.completedAt == null &&
-          c.buyPrice != null &&
-          level.price > c.buyPrice
-        );
-        openCycle = legacyCycles
-          .sort((a, b) => {
-            const ta = a.buyFilledAt ? new Date(a.buyFilledAt).getTime() : a.createdAt.getTime();
-            const tb = b.buyFilledAt ? new Date(b.buyFilledAt).getTime() : b.createdAt.getTime();
-            return ta - tb || a.id.localeCompare(b.id);
-          })[0];
-      }
 
       if (!openCycle) {
         await this.logEvent("GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE", `[SHADOW] SELL level ${level.id} ignored: no cycle owns it as explicit target`, {
@@ -2574,10 +2594,11 @@ class GridIsolatedEngine {
       nextRisk.pendingExitPrice = nextRisk.protectiveExit.requestedMakerPrice ?? nextRisk.protectiveExit.triggerPrice ?? null;
 
       cycle.riskStateJson = nextRisk;
+      cycle.makerExitStateJson = nextRisk.protectiveExit;
 
       try {
         await db.update(gridIsolatedCycles)
-          .set({ riskStateJson: nextRisk, status: cycle.status })
+          .set({ riskStateJson: nextRisk, makerExitStateJson: nextRisk.protectiveExit, status: cycle.status })
           .where(eq(gridIsolatedCycles.id, cycle.id));
       } catch (err) {
         botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to persist risk state for cycle ${cycle.id}: ${err}`);
@@ -2626,20 +2647,20 @@ class GridIsolatedEngine {
         case "TRAILING_CLOSE":
           return {
             route: "TRAILING_MAKER",
-            price: evaluation.trailingState.currentStopPrice ?? evaluation.suggestedSellPrice ?? currentPrice,
+            price: currentPrice,
           };
         case "STOP_LOSS_SOFT":
         case "STOP_LOSS_HARD":
         case "STOP_LOSS_EMERGENCY":
           return {
             route: "PROTECTIVE_MAKER",
-            price: evaluation.suggestedSellPrice ?? currentPrice,
+            price: currentPrice,
           };
         case "HODL_RECOVERY_ACTIVATE":
         case "HODL_RECOVERY_SELL":
           return {
             route: "HODL_RECOVERY",
-            price: evaluation.hodlState.recoveryTargetPrice ?? currentPrice,
+            price: currentPrice,
           };
       }
     }
@@ -2690,13 +2711,13 @@ class GridIsolatedEngine {
     // Trigger already detected in a previous tick -> create the resting maker order.
     if (protectiveExit.state === "TRIGGERED") {
       if (protectiveExit.route !== intended.route) return protectiveExit;
-      const makerPrice = protectiveExit.triggerPrice ?? intended.price;
       return {
         ...protectiveExit,
         state: "MAKER_PENDING",
-        requestedMakerPrice: makerPrice,
+        requestedMakerPrice: intended.price,
         makerOrderCreatedAt: now,
-        makerEligibleAfter: now,
+        makerEligibleAfter: new Date(now.getTime() + 1),
+        lifecycleTickId: this.tickSequence,
         pendingQuantity: cycle.quantity,
         simulatedOrderId: `grid-shadow-${cycle.id}-${now.getTime()}`,
       };
