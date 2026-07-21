@@ -58,6 +58,46 @@ Se separan por ticks con persistencia las fases de trigger, pending y fill del l
 
 ---
 
+## 2026-07-21 — GRID V2 REV-C6: precio maker post-only SHADOW, `GridTickContext` unificado y cierre de rangos históricos
+
+### Resumen
+Se corrige el cálculo del precio `requestedMakerPrice` para simulaciones SHADOW, separando el comportamiento entre objetivo `NORMAL_TARGET` (se conserva el target fijo) y salidas protectoras (trailing, stop-loss, HODL), donde el precio maker debe descansar por encima del mejor ask y no cruzar el bid. Se normaliza la entrada `intendedExitPrice` para soportar valores string provenientes de persistencia. Se mantiene `GridTickContext` como único vector de tick y se eliminan incrementos duplicados de `tickId`/`tickSequence` en los helpers de test.
+
+### Problema
+- `computeShadowPostOnlySellPrice` rechazaba `NORMAL_TARGET` cuando `target < ask` o `target == bid`, cambiando el `sellPrice` de cierre.
+- `intended.price` podía ser `string` (toFixed de DB), y `Number.isFinite(string)` devolvía `false`, bloqueando el paso a `MAKER_PENDING`.
+- La guarda `price > currentBid` era demasiado estricta para objetivos iguales al bid.
+- Los tests de rangos históricos y de lifecycle fallaban por `TRIGGERED` sin avanzar a `MAKER_PENDING`.
+
+### Solución
+1. `gridIsolatedEngine.ts`:
+   - `computeShadowPostOnlySellPrice` acepta `number | string | null` y normaliza con `parseFloat`.
+   - En `advanceProtectiveExitLifecycle`, `NORMAL_TARGET` usa directamente `intended.price` para `requestedMakerPrice`.
+   - Salidas protectoras usan `computeShadowPostOnlySellPrice` con `>= currentBid` y fallback al `intended` cuando no hay ask.
+2. `gridOpenCycleShadowClose.test.ts`:
+   - `processLifecycleTick` llama a `evaluateRiskForOpenCycles` y `processOpenCyclesShadow` con el mismo `GridTickContext` y un único incremento de `tickId`.
+   - `resetEngine` limpia `currentTickId`, `tickSequence` y `closingCycleIds`.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅
+- `npx vitest run server/services/gridIsolated`: ✅ 120/120 tests
+
+### Estado final
+- Lifecycle SHADOW robusto: trigger en tick t, pending en t+1, fill en t+2.
+- Cierres con `NORMAL_TARGET` respetan el precio objetivo; salidas protectoras usan post-only realista.
+- Tests de rangos históricos y lifecycle pasan.
+
+### Pendientes
+- Continuar con subfase B (validación exhaustiva de circuit breaker y pump/dump guard).
+- Validar migración 074 en staging cuando se apruebe deploy.
+
+---
+
 ## 2026-07-21 — GRID COUNTER-AUDIT REFINEMENT: lifecycle maker, `safeParseRiskStateJson`, fees explícitos
 
 ### Resumen

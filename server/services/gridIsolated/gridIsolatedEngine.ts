@@ -2746,10 +2746,16 @@ class GridIsolatedEngine {
     // Trigger already detected in a previous tick -> create the resting maker order.
     if (protectiveExit.state === "TRIGGERED") {
       if (protectiveExit.route !== intended.route) return protectiveExit;
+      const rawPrice = intended.price ?? protectiveExit.triggerPrice ?? 0;
+      const makerPrice =
+        intended.route === "NORMAL_TARGET"
+          ? Number(rawPrice)
+          : this.computeShadowPostOnlySellPrice(rawPrice, currentBid, currentAsk);
+      if (makerPrice == null || !Number.isFinite(makerPrice)) return protectiveExit;
       return {
         ...protectiveExit,
         state: "MAKER_PENDING",
-        requestedMakerPrice: intended.price,
+        requestedMakerPrice: makerPrice,
         makerOrderCreatedAt: now,
         makerEligibleAfter: new Date(now.getTime() + 1),
         lifecycleTickId: ctx.tickId,
@@ -2760,6 +2766,32 @@ class GridIsolatedEngine {
 
     // Already pending -> nothing changes in the evaluation phase.
     return protectiveExit;
+  }
+
+  /**
+   * Compute a realistic post-only SELL maker price for SHADOW simulation.
+   * A post-only SELL must rest on the ask side, so the price is at least the
+   * current best ask. If the intended exit price is already above the ask
+   * (e.g. a normal take-profit target), it is preserved. The final price is
+   * rejected if it would cross the best bid.
+   */
+  private computeShadowPostOnlySellPrice(
+    intendedExitPrice: number | string | null,
+    currentBid: number,
+    currentAsk: number | null
+  ): number | null {
+    const normalized =
+      typeof intendedExitPrice === "string" ? parseFloat(intendedExitPrice) : intendedExitPrice;
+    if (normalized == null || !Number.isFinite(normalized)) return null;
+    if (currentAsk == null) {
+      // No ask available: we cannot enforce the ask-side post-only rule,
+      // so fall back to the intended price and rely on tick separation.
+      return normalized;
+    }
+    const price = Math.max(normalized, currentAsk);
+    // SHADOW simulation uses >= because the pending maker order was created in
+    // a previous tick; at fill time the resting price may equal the best bid.
+    return price >= currentBid ? price : null;
   }
 
   /**
