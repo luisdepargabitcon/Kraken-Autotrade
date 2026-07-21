@@ -310,6 +310,8 @@ export type RiskAction =
 
 export type GridClosePath =
   | "NORMAL_TARGET"
+  | "SYNTHETIC_RUNG"
+  | "LEGACY_PERSISTED_TARGET"
   | "TRAILING_MAKER"
   | "PROTECTIVE_MAKER"
   | "HODL_RECOVERY";

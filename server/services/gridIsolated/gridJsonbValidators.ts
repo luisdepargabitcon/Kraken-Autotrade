@@ -27,6 +27,8 @@ export type JsonbValidationResult<T> =
 
 const VALID_GRID_CLOSE_PATHS: (GridClosePath | null)[] = [
   "NORMAL_TARGET",
+  "SYNTHETIC_RUNG",
+  "LEGACY_PERSISTED_TARGET",
   "TRAILING_MAKER",
   "PROTECTIVE_MAKER",
   "HODL_RECOVERY",

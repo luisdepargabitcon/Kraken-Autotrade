@@ -132,8 +132,6 @@ class GridIsolatedEngine {
   private circuitBreakerOpen: boolean = false;
   private circuitBreakerOpenedAt: Date | null = null;
   private closingCycleIds: Set<string> = new Set();
-  /** Monotonic tick sequence used to enforce separation between trigger, pending and fill lifecycle phases. */
-  private tickSequence = 0;
   /** Canonical tick id incremented exactly once per main tick() execution. */
   private currentTickId = 0;
   private pumpDumpState: PumpDumpGuardState = {
@@ -461,6 +459,25 @@ class GridIsolatedEngine {
       bestAskAtFill: null,
       cancellationReason: null,
     };
+  }
+
+  /**
+   * Return the minimum price tick size for a given pair.
+   * Defaults are chosen to match Kraken's precision for common pairs.
+   */
+  private getPriceTickSize(pair: string): number {
+    const normalized = (pair || "BTC/USD").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (normalized.startsWith("BTCUSD") || normalized.startsWith("XBTUSD")) return 0.1;
+    if (normalized.startsWith("BTCEUR") || normalized.startsWith("XBTEUR")) return 0.1;
+    if (normalized.startsWith("BTCGBP")) return 0.1;
+    if (normalized.startsWith("ETHUSD") || normalized.startsWith("ETHEUR")) return 0.01;
+    if (normalized.startsWith("SOLUSD") || normalized.startsWith("SOLEUR")) return 0.001;
+    return 0.01;
+  }
+
+  private ceilToStep(value: number, step: number): number {
+    if (!Number.isFinite(step) || step <= 0) return value;
+    return Math.ceil(value / step) * step;
   }
 
   /**
@@ -1762,13 +1779,39 @@ class GridIsolatedEngine {
     eligibleForFill: boolean;
   } {
     const risk = this.parseRiskState(cycle);
+    const bestBid = priceResult.bid ?? null;
+    if (bestBid == null) {
+      return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null, eligibleForFill: false };
+    }
 
     // HODL recovery without an active maker order cannot be closed by a normal target.
     if (cycle.status === "hodl_recovery" && risk.protectiveExit.state !== "MAKER_PENDING") {
       return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null, eligibleForFill: false };
     }
 
-    // Once a maker exit is pending, that route takes precedence.
+    // Fixed SELL targets (persisted level or synthetic rung) can be filled
+    // directly from the TRIGGERED state after one tick of separation,
+    // because the target price itself is the resting maker price.
+    const fixedTargetRoutes: GridClosePath[] = ["NORMAL_TARGET", "SYNTHETIC_RUNG", "LEGACY_PERSISTED_TARGET"];
+    if (
+      risk.protectiveExit.state === "TRIGGERED" &&
+      risk.protectiveExit.route &&
+      fixedTargetRoutes.includes(risk.protectiveExit.route) &&
+      risk.protectiveExit.triggerPrice != null &&
+      risk.protectiveExit.lifecycleTickId != null &&
+      tickId > risk.protectiveExit.lifecycleTickId &&
+      bestBid >= risk.protectiveExit.triggerPrice
+    ) {
+      return {
+        targetPrice: risk.protectiveExit.triggerPrice,
+        targetQty: risk.protectiveExit.pendingQuantity || cycle.quantity,
+        sellLevelId: cycle.targetSellLevelId,
+        closePath: risk.protectiveExit.route,
+        eligibleForFill: true,
+      };
+    }
+
+    // Once a protective maker exit is pending, that route takes precedence.
     if (
       risk.protectiveExit.state === "MAKER_PENDING" &&
       risk.activeExitRoute &&
@@ -1776,10 +1819,11 @@ class GridIsolatedEngine {
       risk.protectiveExit.lifecycleTickId != null &&
       tickId > risk.protectiveExit.lifecycleTickId
     ) {
+      const fixedTargetRoutes: GridClosePath[] = ["NORMAL_TARGET", "SYNTHETIC_RUNG", "LEGACY_PERSISTED_TARGET"];
       return {
         targetPrice: risk.pendingExitPrice,
         targetQty: risk.protectiveExit.pendingQuantity || cycle.quantity,
-        sellLevelId: risk.activeExitRoute === "NORMAL_TARGET" ? cycle.targetSellLevelId : null,
+        sellLevelId: fixedTargetRoutes.includes(risk.activeExitRoute) ? cycle.targetSellLevelId : null,
         closePath: risk.activeExitRoute,
         eligibleForFill: true,
       };
@@ -1850,7 +1894,7 @@ class GridIsolatedEngine {
       filledAt: now,
       bestBidAtFill: priceResult.bid ?? null,
       bestAskAtFill: priceResult.ask ?? null,
-      lifecycleTickId: currentRisk.protectiveExit.lifecycleTickId ?? this.tickSequence,
+      lifecycleTickId: currentRisk.protectiveExit.lifecycleTickId,
     };
     const filledRisk: GridCycleRiskState = {
       ...currentRisk,
@@ -2004,7 +2048,7 @@ class GridIsolatedEngine {
     ctx?: GridTickContext
   ): Promise<number> {
     const tickCtx: GridTickContext = ctx ?? {
-      tickId: ++this.currentTickId,
+      tickId: Date.now(),
       startedAt: new Date(),
       pair: this.config?.pair ?? "BTC/USD",
       bid: priceResult.bid ?? null,
@@ -2548,7 +2592,7 @@ class GridIsolatedEngine {
     if (!this.config) return;
 
     const tickCtx: GridTickContext = ctx ?? {
-      tickId: ++this.currentTickId,
+      tickId: Date.now(),
       startedAt: new Date(),
       pair: this.config.pair,
       bid: priceResult.bid ?? null,
@@ -2564,7 +2608,7 @@ class GridIsolatedEngine {
       (this.config.stopLossEnabled ?? false);
 
     const currentPrice = priceResult.bid ?? priceResult.price ?? null;
-    const currentAsk = priceResult.ask ?? currentPrice;
+    const currentAsk = priceResult.ask ?? null;
     if (currentPrice == null) return;
 
     for (const cycle of this.cycles) {
@@ -2572,14 +2616,14 @@ class GridIsolatedEngine {
 
       const risk = this.parseRiskState(cycle);
 
-      const targetReached = cycle.targetSellPrice != null && cycle.targetSellPrice > 0 && currentPrice >= cycle.targetSellPrice;
+      const hasTarget = cycle.targetSellPrice != null && cycle.targetSellPrice > 0;
       const pendingExit = risk.protectiveExit.state !== "NONE";
       const shouldEvaluateRisk =
         riskFeaturesEnabled ||
         risk.trailing.activated ||
         risk.hodl.active;
 
-      if (!shouldEvaluateRisk && !targetReached && !pendingExit) continue;
+      if (!shouldEvaluateRisk && !hasTarget && !pendingExit) continue;
 
       let evaluation: { action: string; suggestedSellPrice: number | null; trailingState: TrailingProtectionState; hodlState: HodlRecoveryState; stopLossLayers: StopLossLayer[]; reason: string } | null = null;
       if (shouldEvaluateRisk) {
@@ -2624,8 +2668,15 @@ class GridIsolatedEngine {
         priceResult,
         tickCtx
       );
-      nextRisk.activeExitRoute = nextRisk.protectiveExit.route ?? null;
-      nextRisk.pendingExitPrice = nextRisk.protectiveExit.requestedMakerPrice ?? nextRisk.protectiveExit.triggerPrice ?? null;
+      // While trailing is armed but not firing, do not advertise the normal target
+      // as the active exit route; it would confuse the UI/risk state.
+      if (evaluation?.action === "TRAILING_UPDATE") {
+        nextRisk.activeExitRoute = null;
+        nextRisk.pendingExitPrice = null;
+      } else {
+        nextRisk.activeExitRoute = nextRisk.protectiveExit.route ?? null;
+        nextRisk.pendingExitPrice = nextRisk.protectiveExit.requestedMakerPrice ?? nextRisk.protectiveExit.triggerPrice ?? null;
+      }
 
       cycle.riskStateJson = nextRisk;
       cycle.makerExitStateJson = nextRisk.protectiveExit;
@@ -2674,39 +2725,50 @@ class GridIsolatedEngine {
   private resolveIntendedExit(
     cycle: GridCycle,
     evaluation: { action: string; suggestedSellPrice: number | null; trailingState: TrailingProtectionState; hodlState: HodlRecoveryState } | null,
-    currentPrice: number
+    _currentPrice: number
   ): { route: GridClosePath | null; price: number | null } {
     if (evaluation) {
       switch (evaluation.action) {
+        case "TRAILING_UPDATE":
+          // Trailing is watching but not closing yet; keep normal target armed
+          // without exposing an active exit route.
+          return { route: null, price: null };
         case "TRAILING_CLOSE":
           return {
             route: "TRAILING_MAKER",
-            price: currentPrice,
+            price: _currentPrice,
           };
         case "STOP_LOSS_SOFT":
         case "STOP_LOSS_HARD":
         case "STOP_LOSS_EMERGENCY":
           return {
             route: "PROTECTIVE_MAKER",
-            price: currentPrice,
+            price: _currentPrice,
           };
         case "HODL_RECOVERY_ACTIVATE":
         case "HODL_RECOVERY_SELL":
           return {
             route: "HODL_RECOVERY",
-            price: currentPrice,
+            price: _currentPrice,
           };
       }
     }
 
     // Normal explicit SELL target (legacy persisted level or V2 synthetic rung).
+    // The target is armed as soon as it exists; it does NOT wait until the bid
+    // reaches it, because a resting maker order must be created before the fill.
     if (
       cycle.status !== "hodl_recovery" &&
       cycle.targetSellPrice != null &&
-      cycle.targetSellPrice > 0 &&
-      currentPrice >= cycle.targetSellPrice
+      cycle.targetSellPrice > 0
     ) {
-      return { route: "NORMAL_TARGET", price: cycle.targetSellPrice };
+      const route: GridClosePath =
+        cycle.targetKind === "PERSISTED_SELL"
+          ? "LEGACY_PERSISTED_TARGET"
+          : cycle.targetKind === "SYNTHETIC_RUNG"
+          ? "SYNTHETIC_RUNG"
+          : "NORMAL_TARGET";
+      return { route, price: cycle.targetSellPrice };
     }
 
     return { route: null, price: null };
@@ -2717,7 +2779,7 @@ class GridIsolatedEngine {
     protectiveExit: GridPendingMakerExit,
     intended: { route: GridClosePath | null; price: number | null },
     currentBid: number,
-    currentAsk: number,
+    currentAsk: number | null,
     priceResult: GridShadowExecutionPriceResult,
     ctx: GridTickContext
   ): GridPendingMakerExit {
@@ -2740,18 +2802,47 @@ class GridIsolatedEngine {
         bestAskAtTrigger: currentAsk,
         requestedMakerPrice: null,
         pendingQuantity: cycle.quantity,
+        lifecycleTickId: ctx.tickId,
       };
     }
 
     // Trigger already detected in a previous tick -> create the resting maker order.
     if (protectiveExit.state === "TRIGGERED") {
-      if (protectiveExit.route !== intended.route) return protectiveExit;
+      // If the intended route changed (e.g. target armed, then trailing triggers),
+      // reset to a fresh trigger with the new route.
+      if (protectiveExit.route !== intended.route) {
+        if (!intended.route || intended.price == null) return protectiveExit;
+        return {
+          ...this.defaultMakerExit(),
+          state: "TRIGGERED",
+          route: intended.route,
+          triggerPrice: intended.price,
+          triggerDetectedAt: now,
+          bestBidAtTrigger: currentBid,
+          bestAskAtTrigger: currentAsk,
+          pendingQuantity: cycle.quantity,
+          lifecycleTickId: ctx.tickId,
+        };
+      }
+      // A new post-only maker order can only be placed on a later tick than the trigger.
+      if (
+        protectiveExit.lifecycleTickId != null &&
+        ctx.tickId <= protectiveExit.lifecycleTickId
+      ) {
+        return protectiveExit;
+      }
       const rawPrice = intended.price ?? protectiveExit.triggerPrice ?? 0;
-      const makerPrice =
-        intended.route === "NORMAL_TARGET"
-          ? Number(rawPrice)
-          : this.computeShadowPostOnlySellPrice(rawPrice, currentBid, currentAsk);
-      if (makerPrice == null || !Number.isFinite(makerPrice)) return protectiveExit;
+      const makerPrice = this.computeShadowPostOnlySellPrice(
+        intended.route,
+        rawPrice,
+        currentBid,
+        currentAsk,
+        cycle.pair
+      );
+      if (makerPrice == null || !Number.isFinite(makerPrice)) {
+        // bestAsk missing or price not post-only valid: keep TRIGGERED and retry next tick.
+        return protectiveExit;
+      }
       return {
         ...protectiveExit,
         state: "MAKER_PENDING",
@@ -2770,28 +2861,50 @@ class GridIsolatedEngine {
 
   /**
    * Compute a realistic post-only SELL maker price for SHADOW simulation.
-   * A post-only SELL must rest on the ask side, so the price is at least the
-   * current best ask. If the intended exit price is already above the ask
-   * (e.g. a normal take-profit target), it is preserved. The final price is
-   * rejected if it would cross the best bid.
+   *
+   * Placement rule for a NEW maker order:
+   *   requestedMakerPrice > bestBid
+   *   requestedMakerPrice >= bestAsk (rest on the ask side)
+   *
+   * For NORMAL_TARGET/SYNTHETIC_RUNG/LEGACY_PERSISTED_TARGET the price is the
+   * fixed target, but it is only accepted if it is strictly above the best bid.
+   * For protective routes the price is:
+   *   ceilToTick(max(intendedPrice, bestAsk, bestBid + tickSize))
+   *
+   * If bestAsk is not available the order cannot be placed safely; return null.
    */
   private computeShadowPostOnlySellPrice(
+    route: GridClosePath,
     intendedExitPrice: number | string | null,
     currentBid: number,
-    currentAsk: number | null
+    currentAsk: number | null,
+    pair: string
   ): number | null {
     const normalized =
       typeof intendedExitPrice === "string" ? parseFloat(intendedExitPrice) : intendedExitPrice;
     if (normalized == null || !Number.isFinite(normalized)) return null;
+
     if (currentAsk == null) {
-      // No ask available: we cannot enforce the ask-side post-only rule,
-      // so fall back to the intended price and rely on tick separation.
+      // No ask available: cannot verify post-only placement; refuse to place.
+      return null;
+    }
+
+    const tickSize = this.getPriceTickSize(pair);
+    const isFixedTargetRoute =
+      route === "NORMAL_TARGET" ||
+      route === "SYNTHETIC_RUNG" ||
+      route === "LEGACY_PERSISTED_TARGET";
+
+    if (isFixedTargetRoute) {
+      // Fixed targets keep their price; they must be strictly above the best bid.
+      if (normalized <= currentBid) return null;
       return normalized;
     }
-    const price = Math.max(normalized, currentAsk);
-    // SHADOW simulation uses >= because the pending maker order was created in
-    // a previous tick; at fill time the resting price may equal the best bid.
-    return price >= currentBid ? price : null;
+
+    // Protective routes (trailing, stop, HODL): place above ask and bid+tickSize.
+    const minPostOnlyPrice = currentBid + tickSize;
+    const price = this.ceilToStep(Math.max(normalized, currentAsk, minPostOnlyPrice), tickSize);
+    return price > currentBid ? price : null;
   }
 
   /**

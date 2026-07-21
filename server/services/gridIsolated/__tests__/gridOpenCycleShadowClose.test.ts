@@ -333,12 +333,13 @@ async function processLifecycleTick(
 }
 
 function priceResult(opts: Partial<GridShadowExecutionPriceResult>): GridShadowExecutionPriceResult {
+  const bid = opts.bid ?? null;
   return {
     pair: opts.pair ?? "BTC/USD",
-    price: opts.bid ?? opts.price ?? 0,
+    price: opts.price ?? bid ?? 0,
     source: opts.source ?? "ticker_last",
-    bid: opts.bid ?? null,
-    ask: opts.ask ?? null,
+    bid,
+    ask: opts.ask ?? (typeof bid === "number" ? bid + 0.001 : null),
     spreadPct: opts.spreadPct ?? null,
     timestamp: opts.timestamp ?? new Date().toISOString(),
   } as GridShadowExecutionPriceResult;
@@ -516,8 +517,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle()],
         [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
       );
-      await processLifecycleTick(engine, { bid: 61_200 }); // trigger
-      await processLifecycleTick(engine, { bid: 61_200 }); // pending
+      await processLifecycleTick(engine, { bid: 60_900 }); // trigger
+      await processLifecycleTick(engine, { bid: 60_900 }); // pending
       await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
       const cycle = engine.cycles[0];
       expect(cycle.status).toBe("buy_filled");
@@ -529,8 +530,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeLevel({ id: SELL_LEVEL_ID })]
       );
       // Nivel con id "fake-id" no existe → tx.update(levels) devuelve 0 filas
-      await processLifecycleTick(engine, { bid: 61_200 }); // trigger
-      await processLifecycleTick(engine, { bid: 61_200 }); // pending
+      await processLifecycleTick(engine, { bid: 60_900 }); // trigger
+      await processLifecycleTick(engine, { bid: 60_900 }); // pending
       await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
     });
 
@@ -539,8 +540,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle()],
         [makeLevel({ rangeVersionId: "otro-rango" })]
       );
-      await processLifecycleTick(engine, { bid: 61_200 }); // trigger
-      await processLifecycleTick(engine, { bid: 61_200 }); // pending
+      await processLifecycleTick(engine, { bid: 60_900 }); // trigger
+      await processLifecycleTick(engine, { bid: 60_900 }); // pending
       await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
     });
 
@@ -549,8 +550,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle()],
         [makeLevel({ side: "BUY" as any })]
       );
-      await processLifecycleTick(engine, { bid: 61_200 }); // trigger
-      await processLifecycleTick(engine, { bid: 61_200 }); // pending
+      await processLifecycleTick(engine, { bid: 60_900 }); // trigger
+      await processLifecycleTick(engine, { bid: 60_900 }); // pending
       await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
     });
 
@@ -609,9 +610,9 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
   describe("CONCURRENCIA", () => {
     it("dos llamadas concurrentes → un solo cierre", async () => {
       const engine = gridIsolatedEngine as any;
-      // Trigger -> pending -> two concurrent fill attempts.
-      await processLifecycleTick(engine, { bid: 61_200 });
-      await processLifecycleTick(engine, { bid: 61_200 });
+      // Trigger -> pending por debajo del target -> dos intentos concurrentes de fill.
+      await processLifecycleTick(engine, { bid: 60_900 });
+      await processLifecycleTick(engine, { bid: 60_900 });
       expect((engine.cycles[0].riskStateJson as any)?.protectiveExit?.state).toBe("MAKER_PENDING");
       const results = await Promise.allSettled([
         engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })),
@@ -773,8 +774,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 1).toISOString();
       expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }))).toBe(0);
       expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(0); // trigger
-      expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(0); // pending
-      expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(1);
+      expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(1); // fill tras separación de un tick
     });
   });
 
@@ -953,29 +953,30 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       );
 
       // Paso 1: activar trailing a 60650 (1.08% > 1%)
-      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 60_650 }));
+      await processLifecycleTick(engine, { bid: 60_650 });
       let risk = engine.cycles[0].riskStateJson as any;
       expect(risk?.trailing?.activated).toBe(true);
       expect(risk?.activeExitRoute).toBeNull();
 
       // Paso 2: precio cae por debajo del stop (60650 * 0.995 = 60346.75)
-      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 60_300 }));
+      await processLifecycleTick(engine, { bid: 60_300 });
       risk = engine.cycles[0].riskStateJson as any;
       expect(risk?.lastAction).toBe("TRAILING_CLOSE");
       expect(risk?.activeExitRoute).toBe("TRAILING_MAKER");
       expect(risk?.pendingExitPrice).toBeCloseTo(60_300, 2);
       expect(risk?.protectiveExit?.state).toBe("TRIGGERED");
 
-      // Paso 3: la orden maker pasa a estado pending
-      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 60_300 }));
+      // Paso 3: la orden maker post-only se coloca por encima del bid
+      await processLifecycleTick(engine, { bid: 60_300 });
       risk = engine.cycles[0].riskStateJson as any;
       expect(risk?.protectiveExit?.state).toBe("MAKER_PENDING");
+      expect(risk?.pendingExitPrice).toBeCloseTo(60_300.1, 1);
 
-      // Paso 4: el cierre SHADOW ejecuta el maker exit al bid actual (60300)
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 60_300 }));
+      // Paso 4: el cierre SHADOW ejecuta el maker exit cuando bid >= pending price
+      const result = await processLifecycleTick(engine, { bid: 60_300.2 });
       expect(result).toBe(1);
       expect(engine.cycles[0].status).toBe("trailing_closed");
-      expect(engine.cycles[0].sellPrice).toBeCloseTo(60_300, 2);
+      expect(engine.cycles[0].sellPrice).toBeCloseTo(60_300.1, 1);
     });
 
     it("stop-loss soft cierra como stop_loss_hit cuando HODL está desactivado", async () => {
@@ -992,20 +993,21 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         { stopLossEnabled: true, stopLossSoftPct: 3, hodlRecoveryEnabled: false }
       );
 
-      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 58_000 }));
+      await processLifecycleTick(engine, { bid: 58_000 });
       let risk = engine.cycles[0].riskStateJson as any;
       expect(risk?.lastAction).toBe("STOP_LOSS_SOFT");
       expect(risk?.activeExitRoute).toBe("PROTECTIVE_MAKER");
       expect(risk?.protectiveExit?.state).toBe("TRIGGERED");
 
-      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 58_000 }));
+      await processLifecycleTick(engine, { bid: 58_000 });
       risk = engine.cycles[0].riskStateJson as any;
       expect(risk?.protectiveExit?.state).toBe("MAKER_PENDING");
+      expect(risk?.pendingExitPrice).toBeCloseTo(58_000.1, 1);
 
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 58_000 }));
+      const result = await processLifecycleTick(engine, { bid: 58_000.2 });
       expect(result).toBe(1);
       expect(engine.cycles[0].status).toBe("stop_loss_hit");
-      expect(engine.cycles[0].sellPrice).toBeCloseTo(58_000, 2);
+      expect(engine.cycles[0].sellPrice).toBeCloseTo(58_000.1, 1);
     });
 
     it("HODL recovery activa, espera target y cierra cuando se alcanza", async () => {
@@ -1023,7 +1025,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       );
 
       // Soft stop en 58200 -> activa HODL con target de break-even > 60000
-      await engine.evaluateRiskForOpenCycles(priceResult({ bid: 58_200 }));
+      await processLifecycleTick(engine, { bid: 58_200 });
       let risk = engine.cycles[0].riskStateJson as any;
       expect(risk?.lastAction).toBe("HODL_RECOVERY_ACTIVATE");
       expect(engine.cycles[0].status).toBe("hodl_recovery");
@@ -1031,15 +1033,16 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       expect(recoveryTarget).toBeGreaterThan(60_000);
 
       // Recuperación: el precio vuelve al target de break-even -> PENDING
-      await engine.evaluateRiskForOpenCycles(priceResult({ bid: recoveryTarget }));
+      await processLifecycleTick(engine, { bid: recoveryTarget });
       risk = engine.cycles[0].riskStateJson as any;
       expect(risk?.activeExitRoute).toBe("HODL_RECOVERY");
       expect(risk?.protectiveExit?.state).toBe("MAKER_PENDING");
+      expect(risk?.pendingExitPrice).toBeCloseTo(recoveryTarget + 0.1, 1);
 
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: recoveryTarget }));
+      const result = await processLifecycleTick(engine, { bid: recoveryTarget + 0.2 });
       expect(result).toBe(1);
       expect(engine.cycles[0].status).toBe("completed");
-      expect(engine.cycles[0].sellPrice).toBeCloseTo(recoveryTarget, 2);
+      expect(engine.cycles[0].sellPrice).toBeCloseTo(recoveryTarget + 0.1, 1);
     });
 
     it("rearma el nivel BUY original tras cerrar el ciclo", async () => {
