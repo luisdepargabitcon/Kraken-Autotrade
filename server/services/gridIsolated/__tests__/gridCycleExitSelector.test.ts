@@ -34,6 +34,7 @@ describe("gridCycleExitSelector — FIRST_PROFITABLE_HIGHER_RUNG_V2", () => {
     holdTimeMinutes: 0,
     createdAt: new Date(),
     completedAt: null,
+    makerExitStateJson: null,
   });
 
   const makeLevel = (overrides: Partial<GridLevel> & { id: string }): GridLevel => ({
@@ -86,6 +87,8 @@ describe("gridCycleExitSelector — FIRST_PROFITABLE_HIGHER_RUNG_V2", () => {
     buyFillPrice: 60_000,
     buyFillQuantity: 0.001,
     netProfitTargetPct: 0.8,
+    buyFeePct: 0,
+    sellFeePct: 0,
     makerFeePct: 0,
     takerFeePct: 0.09,
     taxReservePct: 20,
@@ -161,11 +164,11 @@ describe("gridCycleExitSelector — FIRST_PROFITABLE_HIGHER_RUNG_V2", () => {
   it("rechaza un RUNG con notional inferior al mínimo permitido", () => {
     const cycle = makeCycle(60_000, 0.001);
     const levels = [
-      makeLevel({ id: "s1", side: "SELL", price: 60_700, quantity: 0.000001 }),
+      makeLevel({ id: "s1", side: "SELL", price: 60_700, quantity: 0.001 }),
     ];
     const result = selectFirstProfitableHigherRung(cycle, levels, rangeVersion, {
       ...baseParams,
-      minOrderUsd: 10,
+      minOrderUsd: 100,
     });
     expect(result.selected).toBe(false);
     expect(result.rejectedCandidates[0].reasonCode).toBe("MIN_ORDER_USD");

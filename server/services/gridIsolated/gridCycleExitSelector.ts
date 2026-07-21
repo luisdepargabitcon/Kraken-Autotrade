@@ -65,6 +65,8 @@ type ReasonCode =
   | "PRICE_NOT_ABOVE_BUY"
   | "DISTANCE_TOO_FAR"
   | "QUANTITY_INVALID"
+  | "BUY_QTY_NOT_STEP_ALIGNED"
+  | "RUNG_QUANTITY_INSUFFICIENT"
   | "MIN_ORDER_USD"
   | "OPERATIONAL_NET_NOT_POSITIVE"
   | "AVAILABLE_NET_BELOW_TARGET";
@@ -74,6 +76,8 @@ function reasonText(code: ReasonCode | string): string {
     case "PRICE_NOT_ABOVE_BUY": return "El precio del rung no es superior al precio de compra.";
     case "DISTANCE_TOO_FAR": return "El rung supera la distancia máxima permitida desde la compra.";
     case "QUANTITY_INVALID": return "La cantidad del rung no es válida o no es múltiplo del step.";
+    case "BUY_QTY_NOT_STEP_ALIGNED": return "La cantidad comprada no es múltiplo del quantity step; no se puede cerrar íntegramente.";
+    case "RUNG_QUANTITY_INSUFFICIENT": return "El rung no tiene cantidad suficiente para cerrar el ciclo completo.";
     case "MIN_ORDER_USD": return "El valor nocional del rung es inferior al mínimo permitido.";
     case "OPERATIONAL_NET_NOT_POSITIVE": return "El PnL neto operacional no es positivo.";
     case "AVAILABLE_NET_BELOW_TARGET": return "El PnL neto disponible tras impuestos no alcanza el objetivo.";
@@ -265,12 +269,37 @@ export function selectFirstProfitableHigherRung(
       continue;
     }
 
-    // Target quantity never exceeds the real BUY fill quantity and is stepped.
-    let targetQty = rung.quantity;
+    // Gate G: target quantity must close the WHOLE cycle (cantidad íntegra).
+    // A persisted SELL rung must have enough available quantity.
+    if (rung.side === "SELL" && rung.quantity < buyQty) {
+      rejectedCandidates.push({
+        levelId: rung.id,
+        side: rung.side,
+        price: rung.price,
+        reasonCode: "RUNG_QUANTITY_INSUFFICIENT",
+        reason: reasonText("RUNG_QUANTITY_INSUFFICIENT"),
+        operationalNetPnlUsd: 0,
+        availablePnlAfterTaxPct: 0,
+      });
+      continue;
+    }
+
+    let targetQty = buyQty;
     if (validPositive(quantityStep)) {
-      targetQty = floorToStep(Math.min(targetQty, buyQty), quantityStep);
-    } else {
-      targetQty = Math.min(targetQty, buyQty);
+      const steppedQty = floorToStep(buyQty, quantityStep);
+      if (Math.abs(steppedQty - buyQty) > 1e-12) {
+        rejectedCandidates.push({
+          levelId: rung.id,
+          side: rung.side,
+          price: rung.price,
+          reasonCode: "BUY_QTY_NOT_STEP_ALIGNED",
+          reason: reasonText("BUY_QTY_NOT_STEP_ALIGNED"),
+          operationalNetPnlUsd: 0,
+          availablePnlAfterTaxPct: 0,
+        });
+        continue;
+      }
+      targetQty = steppedQty;
     }
     if (!validPositive(targetQty)) {
       rejectedCandidates.push({
