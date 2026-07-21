@@ -116,8 +116,8 @@ describe("gridCycleExitSelector — FIRST_PROFITABLE_HIGHER_RUNG_V2", () => {
     ];
     const result = selectFirstProfitableHigherRung(cycle, levels, rangeVersion, baseParams);
     expect(result.selected).toBe(true);
-    expect(result.targetKind).toBe("PERSISTED_SELL");
-    expect(result.targetSellLevelId).toBe("s1");
+    expect(result.targetKind).toBe("SYNTHETIC_RUNG");
+    expect(result.targetSellLevelId).toBeNull();
     expect(result.targetRungLevelId).toBe("s1");
     expect(result.targetSellPrice).toBe(60_700);
     expect(result.availablePnlAfterTaxPct).toBeGreaterThan(0.8);
@@ -131,7 +131,7 @@ describe("gridCycleExitSelector — FIRST_PROFITABLE_HIGHER_RUNG_V2", () => {
     ];
     const result = selectFirstProfitableHigherRung(cycle, levels, rangeVersion, baseParams);
     expect(result.selected).toBe(true);
-    expect(result.targetSellLevelId).toBe("s1");
+    expect(result.targetSellLevelId).toBeNull();
     expect(result.rejectedCandidates.length).toBe(1);
     expect(result.rejectedCandidates[0].reasonCode).toBe("AVAILABLE_NET_BELOW_TARGET");
   });

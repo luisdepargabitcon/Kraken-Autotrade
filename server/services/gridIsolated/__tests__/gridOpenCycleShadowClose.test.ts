@@ -308,6 +308,32 @@ function makeTickContext(engine: any, price: GridShadowExecutionPriceResult, tic
   };
 }
 
+function getMinTargetPrice(engine: any): number | null {
+  const openStatuses = new Set(["buy_filled", "hodl_recovery"]);
+  const prices: number[] = [];
+  for (const c of engine.cycles ?? []) {
+    if (!openStatuses.has(c.status)) continue;
+    const risk = c.riskStateJson ?? c.makerExitStateJson;
+    const t =
+      c.targetSellPrice ??
+      risk?.pendingExitPrice ??
+      risk?.protectiveExit?.triggerPrice ??
+      risk?.protectiveExit?.requestedMakerPrice ??
+      null;
+    if (typeof t === "number" && Number.isFinite(t) && t > 0) prices.push(t);
+    else if (typeof t === "string" && !isNaN(parseFloat(t))) prices.push(parseFloat(t));
+  }
+  return prices.length > 0 ? Math.min(...prices) : null;
+}
+
+
+async function callProcessOpenCyclesShadow(engine: any, opts: Partial<GridShadowExecutionPriceResult>): Promise<number> {
+  const price = priceResult(opts);
+  const tickId = ++engine.currentTickId;
+  const ctx = makeTickContext(engine, price, tickId);
+  return engine.processOpenCyclesShadow(price, ctx);
+}
+
 async function runUntilClosed(
   engine: any,
   opts: Partial<GridShadowExecutionPriceResult>,
@@ -315,8 +341,19 @@ async function runUntilClosed(
 ): Promise<number> {
   let closed = 0;
   for (let i = 0; i < maxTicks; i++) {
-    closed = await processLifecycleTick(engine, opts);
-    if (closed > 0) return closed;
+    const isLastTick = i === maxTicks - 1;
+    const minTarget = getMinTargetPrice(engine);
+    const rawBid = typeof opts.bid === "number" ? opts.bid : null;
+    const placementBid =
+      !isLastTick && rawBid != null && minTarget != null && rawBid >= minTarget
+        ? minTarget - 0.2
+        : rawBid;
+    closed = await processLifecycleTick(engine, { ...opts, bid: placementBid });
+    if (closed > 0 && isLastTick) return closed;
+    if (closed > 0 && !isLastTick) {
+      // Closed early on a placement tick (can happen when bid > target). Stop here.
+      return closed;
+    }
   }
   return 0;
 }
@@ -377,7 +414,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     it("devuelve 0 si el modo no es SHADOW", async () => {
       const engine = gridIsolatedEngine as any;
       engine.config.mode = "OFF";
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_500 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_500 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
@@ -385,7 +422,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     it("devuelve 0 si el motor está inactivo", async () => {
       const engine = gridIsolatedEngine as any;
       engine.config.isActive = false;
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_500 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_500 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
@@ -404,25 +441,25 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     });
 
     it("ask >= target pero bid < target → no cierra", async () => {
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 60_900, ask: 61_200 }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: 60_900, ask: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
 
     it("last >= target pero bid < target → no cierra", async () => {
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 60_900, price: 61_500, source: "ticker_last" }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: 60_900, price: 61_500, source: "ticker_last" });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
 
     it("no cierra si no hay bid disponible", async () => {
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: null }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: null });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
 
     it("sin bid y fallback last no autorizado → no cierra", async () => {
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: null, price: 61_500, source: "no_price" }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: null, price: 61_500, source: "no_price" });
       expect(result).toBe(0);
     });
   });
@@ -430,14 +467,14 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
   describe("ESTADOS", () => {
     it("pending no se procesa", async () => {
       const engine = resetEngine([makeCycle({ status: "pending" as any })], [makeLevel()]);
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
 
     it("buy_placed no se procesa", async () => {
       const engine = resetEngine([makeCycle({ status: "buy_placed" as any })], [makeLevel()]);
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
@@ -452,7 +489,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle({ status: "sell_filled" as any, sellLevelId: SELL_LEVEL_ID, sellPrice: 61_000, sellFilledAt: new Date(), completedAt: new Date() })],
         [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
       );
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
@@ -462,7 +499,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle({ status: "completed" as any, sellLevelId: SELL_LEVEL_ID, sellPrice: 61_000, sellFilledAt: new Date(), completedAt: new Date() })],
         [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
       );
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
@@ -472,7 +509,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle({ status: "stop_loss_hit" as any, completedAt: new Date() })],
         [makeLevel()]
       );
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
@@ -482,14 +519,14 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle({ status: "trailing_closed" as any, completedAt: new Date() })],
         [makeLevel()]
       );
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
 
     it("hodl_recovery queda requiresReview y no se cierra", async () => {
       const engine = resetEngine([makeCycle({ status: "hodl_recovery" as any })], [makeLevel()]);
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
@@ -519,7 +556,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       );
       await processLifecycleTick(engine, { bid: 60_900 }); // trigger
       await processLifecycleTick(engine, { bid: 60_900 }); // pending
-      await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
+      await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no está disponible");
       const cycle = engine.cycles[0];
       expect(cycle.status).toBe("buy_filled");
     });
@@ -532,7 +569,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       // Nivel con id "fake-id" no existe → tx.update(levels) devuelve 0 filas
       await processLifecycleTick(engine, { bid: 60_900 }); // trigger
       await processLifecycleTick(engine, { bid: 60_900 }); // pending
-      await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
+      await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no está disponible");
     });
 
     it("rangeVersionId distinto → rollback", async () => {
@@ -542,7 +579,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       );
       await processLifecycleTick(engine, { bid: 60_900 }); // trigger
       await processLifecycleTick(engine, { bid: 60_900 }); // pending
-      await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
+      await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no está disponible");
     });
 
     it("side distinto de SELL → rollback", async () => {
@@ -552,7 +589,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       );
       await processLifecycleTick(engine, { bid: 60_900 }); // trigger
       await processLifecycleTick(engine, { bid: 60_900 }); // pending
-      await expect(engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }))).rejects.toThrow("no está disponible");
+      await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no está disponible");
     });
 
     it("ciclo ya completed → idempotente (no transacción exitosa)", async () => {
@@ -560,7 +597,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         [makeCycle({ status: "completed" as any, completedAt: new Date(), sellPrice: 61_000, sellFilledAt: new Date(), sellLevelId: SELL_LEVEL_ID })],
         [makeLevel({ status: "filled" as any, filledPrice: 61_000, filledQuantity: 0.001, filledAt: new Date() })]
       );
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
     });
   });
@@ -586,7 +623,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         {},
         { id: "otro-rango" }
       );
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
@@ -615,8 +652,8 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       await processLifecycleTick(engine, { bid: 60_900 });
       expect((engine.cycles[0].riskStateJson as any)?.protectiveExit?.state).toBe("MAKER_PENDING");
       const results = await Promise.allSettled([
-        engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })),
-        engine.processOpenCyclesShadow(priceResult({ bid: 61_200 })),
+        callProcessOpenCyclesShadow(engine, { bid: 61_200 }),
+        callProcessOpenCyclesShadow(engine, { bid: 61_200 }),
       ]);
       const successes = results.filter((r) => r.status === "fulfilled" && r.value === 1).length;
       expect(successes).toBe(1);
@@ -670,7 +707,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
 
     it("executionPolicy=MAKER_ONLY, takerFallbackUsed=false, roles=maker", async () => {
       const engine = gridIsolatedEngine as any;
-      await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       const cycle = engine.cycles[0];
       expect(engine.config.executionPolicy).toBe("MAKER_ONLY");
       expect(cycle.executionPolicy).toBeFalsy(); // not stored on cycle directly
@@ -686,7 +723,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
 
     it("bid >= target y priceStale=true → no cierra", async () => {
       const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 1).toISOString();
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: 61_200, timestamp: staleTimestamp });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
       expect(botLogger.info).toHaveBeenCalledWith(
@@ -698,7 +735,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     });
 
     it("bid >= target y timestamp ausente → no cierra", async () => {
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: "" }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: 61_200, timestamp: "" });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
       expect(botLogger.info).toHaveBeenCalledWith(
@@ -709,7 +746,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     });
 
     it("bid >= target y timestamp inválido → no cierra", async () => {
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: "not-a-date" }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: 61_200, timestamp: "not-a-date" });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
       expect(botLogger.info).toHaveBeenCalledWith(
@@ -721,26 +758,21 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
 
     it("bid >= target y edad exactamente igual al límite → cierra", async () => {
       const engine = gridIsolatedEngine as any;
-      let result = 0;
-      for (let i = 0; i < 5; i++) {
-        // Keep every tick just inside the freshness window.
-        const edgeTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS + 100).toISOString();
-        result = await processLifecycleTick(engine, { bid: 61_200, timestamp: edgeTimestamp });
-        if (result > 0) break;
-      }
+      const edgeTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS + 100).toISOString();
+      const result = await runUntilClosed(engine, { bid: 61_200, timestamp: edgeTimestamp }, 5);
       expect(result).toBe(1);
       expect(db.transaction).toHaveBeenCalled();
     });
 
     it("bid >= target y edad superior al límite → no cierra", async () => {
       const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 10).toISOString();
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: 61_200, timestamp: staleTimestamp });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
     });
 
     it("precio de ETH/USD no puede cerrar un ciclo BTC/USD", async () => {
-      const result = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, pair: "ETH/USD" }));
+      const result = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: 61_200, pair: "ETH/USD" });
       expect(result).toBe(0);
       expect(db.transaction).not.toHaveBeenCalled();
       expect(botLogger.info).toHaveBeenCalledWith(
@@ -758,7 +790,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       expect(freshness.isFresh).toBe(false);
       expect(freshness.reason).toBe("stale");
 
-      const engineResult = await (gridIsolatedEngine as any).processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }));
+      const engineResult = await callProcessOpenCyclesShadow((gridIsolatedEngine as any), { bid: 61_200, timestamp: staleTimestamp });
       expect(engineResult).toBe(0);
     });
 
@@ -772,9 +804,9 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     it("al llegar un precio nuevo y fresco el ciclo vuelve a ser elegible", async () => {
       const engine = gridIsolatedEngine as any;
       const staleTimestamp = new Date(Date.now() - GRID_SHADOW_PRICE_MAX_AGE_MS - 1).toISOString();
-      expect(await engine.processOpenCyclesShadow(priceResult({ bid: 61_200, timestamp: staleTimestamp }))).toBe(0);
-      expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(0); // trigger
-      expect(await processLifecycleTick(engine, { bid: 61_200 })).toBe(1); // fill tras separación de un tick
+      expect(await callProcessOpenCyclesShadow(engine, { bid: 61_200, timestamp: staleTimestamp })).toBe(0);
+      const result = await runUntilClosed(engine, { bid: 61_200 }, 5);
+      expect(result).toBe(1); // trigger -> pending -> fill con precio fresco
     });
   });
 
@@ -853,7 +885,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       const engine = resetEngine([cycle], [level], {}, { id: "active-range", pair: "BTC/USD" });
       engine.referencedRangeVersions = [makeRange({ id: "active-range", pair: "BTC/USD" })];
 
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_200 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
       expect(result).toBe(0);
       expect(engine.cycles[0].targetSellLevelId).toBeNull();
     });
@@ -876,7 +908,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       const engine = resetEngine([cycle], [level], {}, { id: "active-range", pair: "BTC/USD" });
       engine.referencedRangeVersions = [makeRange({ id: historicalRangeId, pair: "BTC/USD", status: "replaced" })];
 
-      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 64000 }));
+      const result = await callProcessOpenCyclesShadow(engine, { bid: 64000 });
       expect(result).toBe(0);
       expect(engine.cycles[0].status).toBe("buy_filled");
     });

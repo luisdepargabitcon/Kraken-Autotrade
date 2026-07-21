@@ -5,6 +5,57 @@
 
 ---
 
+## 2026-07-21 — GRID V2 REV-C3: cierre de lifecycle SHADOW, view model sin hardcodes, atomicidad BUY/SELL y migración 076
+
+### Resumen
+Se corrigen los tests de `gridOpenCycleShadowClose.test.ts` ajustando el lifecycle maker a trigger→pending→fill separados por ticks. Se refuerza `makerEligibleAfter` con `GridTickContext`, se desactiva trailing cuando `trailingEnabled=false`, y se hace atómico el fill BUY (nivel+ciclo en una transacción). Se eliminan hardcodes de comisiones en `buildGridOperationalViewModel` usando `computeCyclePnLWithRoles` y la configuración. Se actualiza `gridCycleExitSelector` para que la obligación V2 sea siempre sintética y con cantidad íntegra del ciclo. Se crea la migración 076 con índice compuesto `(range_version_id, status)` y se validan localmente las migraciones 073-075. Se añade `callProcessOpenCyclesShadow` y se ajusta `runUntilClosed` para no cerrar con bid por encima del target.
+
+### Problema
+- `processOpenCyclesShadow` devolvía 0 cierres aunque el bid superaba el target.
+- `TRIGGERED` podía intentar crear orden maker en el mismo tick, sin separación de fases.
+- `runUntilClosed` usaba `bid` directo, lo que colocaba el maker por debajo del mejor bid y nunca llenaba.
+- `gridRiskManager` activaba trailing aunque `trailingEnabled=false`.
+- `buildGridOperationalViewModel` usaba comisiones y tax hardcodeadas.
+- `simulateShadowTick` mutaba el nivel antes de crear el ciclo, rompiendo atomicidad.
+- `gridCycleExitSelector` devolvía `targetSellLevelId` no nulo para rungs V2.
+
+### Solución
+1. `gridIsolatedEngine.ts`:
+   - `advanceProtectiveExitLifecycle` separa `TRIGGERED` y `MAKER_PENDING` con `lifecycleTickId` posterior y `makerEligibleAfter` real.
+   - `resolveExitForCycle` exige `ctx.tickId > lifecycleTickId`, `ctx.startedAt >= makerEligibleAfter` y `bid >= requestedMakerPrice`.
+   - `simulateShadowTick` ya no actualiza el nivel antes del fill; `processCycleFill` envuelve BUY en `db.transaction` con `tx.update(gridIsolatedLevels)` + `tx.insert(gridIsolatedCycles)`.
+   - `tick()` no bloquea salidas con circuit breaker; solo bloquea nuevas compras/rebuilds.
+2. `gridRiskManager.ts`: trailing solo se evalúa si `config.trailingEnabled` es `true`.
+3. `buildGridOperationalViewModel.ts`: usa `computeCyclePnLWithRoles` con `config.buyFeePct`/`sellFeePct` y `TAX_RESERVE_PCT`; título usa `config.pair`.
+4. `gridCycleExitSelector.ts`: V2 siempre `targetSellLevelId: null` y cantidad íntegra del ciclo.
+5. `gridOpenCycleShadowClose.test.ts`: helpers `callProcessOpenCyclesShadow`, `getMinTargetPrice`, `runUntilClosed` ajustado y tests de frescor adaptados.
+6. `db/migrations/076_grid_open_cycles_range_status_index.sql`: índice compuesto idempotente para consultas de ciclos abiertos por rango.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridRiskManager.ts`
+- `server/services/gridIsolated/gridCycleExitSelector.ts`
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `server/services/gridIsolated/__tests__/gridCycleExitSelector.test.ts`
+- `vitest.config.ts`
+- `db/migrations/076_grid_open_cycles_range_status_index.sql`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/gridIsolated server/routes/__tests__/gridIsolatedRoutes.test.ts server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts`: ✅ 261 tests
+- `npx vitest run server/services/gridIsolated`: ✅ 120/120 tests
+- `npx vitest run server/routes/__tests__/gridIsolatedRoutes.test.ts`: ✅ 141/141 tests
+- `npm run start` local no ejecutable por falta de `DATABASE_URL` (visual/network local requiere entorno DB).
+
+### Estado final
+- Motor Grid SHADOW con lifecycle maker robusto, atomicidad en BUY, view model sin hardcodes y obligación V2 sintética.
+- Pendiente: deploy en VPS/staging y validación visual (requiere entorno con DB y acceso VPS).
+
+---
+
 ## 2026-07-21 — GRID V2 FIXES: `lifecycleTickId`, makerExitStateJson unificado, sin FIFO, validación JSONB estricta
 
 ### Resumen

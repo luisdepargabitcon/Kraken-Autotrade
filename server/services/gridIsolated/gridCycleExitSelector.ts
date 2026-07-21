@@ -252,7 +252,7 @@ export function selectFirstProfitableHigherRung(
         const distancePct = ((rung.price - buyPrice) / buyPrice) * 100;
         if (distancePct > maxDistancePct) return "DISTANCE_TOO_FAR";
       }
-      if (!validPositive(rung.quantity)) return "QUANTITY_INVALID";
+      // V2: rung quantity is purely a reference for price; it does not own the cycle obligation.
       return null;
     })();
 
@@ -270,21 +270,8 @@ export function selectFirstProfitableHigherRung(
     }
 
     // Gate G: target quantity must close the WHOLE cycle (cantidad íntegra).
-    // A persisted SELL rung must have enough available quantity.
-    if (rung.side === "SELL" && rung.quantity < buyQty) {
-      rejectedCandidates.push({
-        levelId: rung.id,
-        side: rung.side,
-        price: rung.price,
-        reasonCode: "RUNG_QUANTITY_INSUFFICIENT",
-        reason: reasonText("RUNG_QUANTITY_INSUFFICIENT"),
-        operationalNetPnlUsd: 0,
-        availablePnlAfterTaxPct: 0,
-      });
-      continue;
-    }
-
-    let targetQty = buyQty;
+    // For V2 the rung only provides price; the cycle's own quantity closes it.
+    let targetQty = cycle.quantity;
     if (validPositive(quantityStep)) {
       const steppedQty = floorToStep(buyQty, quantityStep);
       if (Math.abs(steppedQty - buyQty) > 1e-12) {
@@ -301,6 +288,9 @@ export function selectFirstProfitableHigherRung(
       }
       targetQty = steppedQty;
     }
+
+    // For V2 the obligation is always synthetic; the rung is not a persisted SELL owner.
+    const targetKind: "SYNTHETIC_RUNG" = "SYNTHETIC_RUNG";
     if (!validPositive(targetQty)) {
       rejectedCandidates.push({
         levelId: rung.id,
@@ -373,13 +363,12 @@ export function selectFirstProfitableHigherRung(
       continue;
     }
 
-    const isPersistedSell = rung.side === "SELL";
     return {
       selected: true,
       stateVersion: 1,
-      targetKind: isPersistedSell ? "PERSISTED_SELL" : "SYNTHETIC_RUNG",
+      targetKind,
       targetRungLevelId: rung.id,
-      targetSellLevelId: isPersistedSell ? rung.id : null,
+      targetSellLevelId: null,
       targetSellPrice: targetPrice,
       targetSellQuantity: targetQty,
       grossPnlUsd: pnl.grossPnlUsd,
@@ -393,7 +382,7 @@ export function selectFirstProfitableHigherRung(
       netProfitTargetPct: params.netProfitTargetPct,
       rejectedCandidates,
       reasonCode: "TARGET_FOUND",
-      explanation: `Primer escalón superior rentable: ${isPersistedSell ? "SELL persistida" : "RUNG sintético sobre BUY"} a ${targetPrice} (net disponible ${pnl.availablePnlAfterTaxPct.toFixed(4)}%).`,
+      explanation: `Primer escalón superior rentable: RUNG sintético V2 a ${targetPrice} (net disponible ${pnl.availablePnlAfterTaxPct.toFixed(4)}%).`,
     };
   }
 

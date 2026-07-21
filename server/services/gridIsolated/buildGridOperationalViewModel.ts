@@ -9,9 +9,10 @@
  * no order placement, no state mutation. It only classifies and labels data.
  */
 
-import { executionPolicyLabel, type ExecutionPolicy, type GridCycleRiskState, type GridClosePath } from "./gridIsolatedTypes";
+import { executionPolicyLabel, type ExecutionPolicy, type GridCycleRiskState, type GridClosePath, TAX_RESERVE_PCT } from "./gridIsolatedTypes";
 import { safeParseRiskStateJson } from "./gridJsonbValidators";
 import { buildGridMarketViewModel, type GridMarketViewModel } from "./buildGridMarketViewModel";
+import { computeCyclePnLWithRoles } from "./gridNetCalculator";
 
 export type CycleRangeRelation = "current" | "previous" | "unknown";
 
@@ -218,10 +219,6 @@ export interface GridOperationalViewModel {
   market: GridMarketViewModel;
 }
 
-const FEE_BUY_PCT = 0.09;
-const FEE_SELL_PCT = 0.09;
-const TAX_RESERVE_PCT = 20;
-
 function toNum(v: unknown): number | null {
   if (v == null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -265,15 +262,6 @@ function statusColor(status: string, requiresReview: boolean): OperationalOpenCy
 function cycleRangeLabel(relation: CycleRangeRelation): string {
   if (relation === "current") return "Rango vigente";
   return "Rango anterior (gestión activa)";
-}
-
-function feeUsd(amountUsd: number): number {
-  return amountUsd * ((FEE_BUY_PCT + FEE_SELL_PCT) / 100);
-}
-
-function taxReserve(grossPnl: number): number {
-  if (grossPnl <= 0) return 0;
-  return grossPnl * (TAX_RESERVE_PCT / 100);
 }
 
 function extractTargetCalculation(cycle: any): { operationalCostsUsd?: number; exchangeFeesUsd?: number } | null {
@@ -344,7 +332,8 @@ function translateStatus(status: string): string {
 function computeCycleEstimates(
   cycle: any,
   currentPrice: number | null,
-  currentBid: number | null
+  currentBid: number | null,
+  config: any
 ): Pick<
   OperationalOpenCycle,
   | "estimatedGrossPnl"
@@ -376,11 +365,16 @@ function computeCycleEstimates(
     };
   }
 
-  const capital = buy * qty;
-  const grossIfSold = (sell - buy) * qty;
-  const fee = feeUsd(capital + sell * qty);
-  const tax = taxReserve(Math.max(0, grossIfSold));
-  const net = grossIfSold - fee - tax;
+  const pnl = computeCyclePnLWithRoles({
+    buyPrice: buy,
+    sellPrice: sell,
+    quantity: qty,
+    buyLiquidityRole: "maker",
+    sellLiquidityRole: "maker",
+    buyFeePct: config?.buyFeePct ?? 0.09,
+    sellFeePct: config?.sellFeePct ?? 0.09,
+    taxReservePct: TAX_RESERVE_PCT,
+  });
 
   const targetCalc = extractTargetCalculation(cycle);
   const operationalCost = targetCalc?.operationalCostsUsd ?? null;
@@ -393,10 +387,10 @@ function computeCycleEstimates(
   const targetReached = price != null && price >= sell;
 
   return {
-    estimatedGrossPnl: grossIfSold,
-    estimatedFee: fee,
-    estimatedTax: tax,
-    estimatedNetPnl: net,
+    estimatedGrossPnl: pnl.grossPnlUsd,
+    estimatedFee: pnl.totalFeesUsd,
+    estimatedTax: pnl.taxReserveUsd,
+    estimatedNetPnl: pnl.netPnlUsd,
     estimatedOperationalCost: operationalCost,
     progressPct,
     distanceUsd,
@@ -409,12 +403,13 @@ function buildOpenCycle(
   cycle: any,
   activeRangeVersionId: string | null,
   currentPrice: number | null,
-  currentBid: number | null
+  currentBid: number | null,
+  config: any
 ): OperationalOpenCycle {
   const relation = toRangeRelation(cycle, activeRangeVersionId);
   const buy = toNum(cycle?.buyPrice);
   const qty = toNum(cycle?.quantity);
-  const estimates = computeCycleEstimates(cycle, currentPrice, currentBid);
+  const estimates = computeCycleEstimates(cycle, currentPrice, currentBid, config);
   const status = cycle?.status ?? "unknown";
   const requiresReview = cycle?.requiresReview === true;
 
@@ -729,21 +724,22 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     .filter((c: any) =>
       ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)
     )
-    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
+    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid, config));
 
   const closedCycleObjects = cycles
     .filter((c: any) => c?.status === "completed")
-    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
+    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid, config));
 
   const cancelledCycleObjects = cycles
     .filter((c: any) => c?.status === "cancelled" || c?.status === "error")
-    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid));
+    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid, config));
 
   const openEstimatedNetPnlUsd = openCycleObjects.reduce((sum, c) => sum + (c.estimatedNetPnl ?? 0), 0);
 
+  const pair = config?.pair ?? "BTC/USD";
   const header: OperationalHeader = {
-    title: "GRID AISLADO BTC/USD",
-    pair: config?.pair ?? "BTC/USD",
+    title: `GRID AISLADO ${pair}`,
+    pair,
     mode,
     modeLabel: mode === "SHADOW" ? "Simulación (SHADOW)" : mode,
     isActive: config?.isActive ?? false,

@@ -21,5 +21,6 @@ export default defineConfig({
     exclude: ["node_modules", "dist", "build"],
     environment: "node",
     setupFiles: ["./vitest.setup.ts"],
+    sequence: { concurrent: false },
   },
 });
