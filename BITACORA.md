@@ -6134,3 +6134,66 @@ Cierre de la revisión pre-push de la refactorización UX del Grid aislado. Se r
 
 ### Riesgos
 - Ninguno adicional respecto a la refactorización UX previa; el módulo Grid pasa `tsc`, tests de Grid y build.
+
+---
+
+## 2026-07-21 — Grid Isolated V2 Tick Audit: cierre Gates A/C/D/E/F/G/H/J (REV-C3)
+
+### Resumen
+Auditoría final del tick canónico y lifecycle maker en el motor Grid SHADOW. Se asegura un único incremento de `currentTickId` por tick, separación estricta de fases `TRIGGERED`/`MAKER_PENDING`/fill, cierre atómico unificado de SELL, validación JSONB estricta, persistencia del circuit breaker, obligación V2 con cantidad íntegra, y exposición en el view model/UI.
+
+### Problema
+- Incrementos redundantes de `currentTickId` en helpers (`processOpenCyclesShadow`/`evaluateRiskForOpenCycles`).
+- `TRIGGERED` podía pasar a `MAKER_PENDING` y llenar en el mismo tick.
+- `processCycleFill` duplicaba lógica de cierre SELL.
+- Circuit breaker era transitorio (no sobrevivía a reinicios).
+- `riskStateJson`/`makerExitStateJson` se persistían sin validación estricta.
+- El selector V2 podía cerrar con cantidad parcial usando `rung.quantity`.
+- El view model no reflejaba el estado del circuit breaker ni usaba parseo JSONB estricto.
+
+### Solución
+1. `gridIsolatedEngine.ts`:
+   - `tick()` incrementa `currentTickId` una sola vez y pasa `GridTickContext` a helpers.
+   - Elimina `tickSequence`; `lifecycleTickId` es el único separador de fases.
+   - `advanceProtectiveExitLifecycle` impide `TRIGGERED`→`MAKER_PENDING` en el mismo tick.
+   - `resolveExitForCycle` solo permite fills cuando `tickId > lifecycleTickId`.
+   - `processOpenCyclesShadow` procesa salidas antes que entradas; guards no bloquean salidas.
+   - `computeShadowPostOnlySellPrice` estricto: `requestedMakerPrice > bestBid`, `>= bestAsk`, sin ask no coloca.
+   - `NORMAL_TARGET` arma orden maker en el mismo tick de BUY fill (precio fijo como resting).
+   - `processCycleFill` SELL delega a `completeCycleShadow` (cierre atómico unificado).
+   - Persistencia de circuit breaker: apertura/cierre guardan `circuitBreakerOpen`, `reason`, `cooldownUntil` en DB vía `saveConfig`.
+   - Validación estricta de `nextRisk` y `nextRisk.protectiveExit` antes de `db.update`.
+2. `gridCycleExitSelector.ts`:
+   - La cantidad de cierre es la `buyQty` completa.
+   - Rechaza SELL persistido con `rung.quantity < buyQty`.
+   - Rechaza `buyQty` que no sea múltiplo del `quantityStep`.
+3. `gridJsonbValidators.ts`: validadores estrictos con `REQUIRES_REVIEW` para JSONB corrupto; `stateVersion` 1 obligatoria.
+4. `shared/schema.ts` + migración `075_grid_circuit_breaker_persistence.sql`: columnas de circuit breaker.
+5. `buildGridOperationalViewModel.ts`: campos `circuitBreakerOpen/reason/cooldownUntil` en header/overview; `safeParseRiskStateJson`; labels de `GridClosePath`.
+6. `GridOperationalHeader.tsx`: badge rojo "Circuit breaker" cuando aplica.
+7. `AUDITORIAS/CHECKLIST_GRID_V2_REV_C3_2026-07-21.md`: actualizado con cierre de gates.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridCycleExitSelector.ts`
+- `server/services/gridIsolated/gridJsonbValidators.ts`
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+- `server/services/gridIsolated/__tests__/gridCycleExitSelector.test.ts`
+- `client/src/components/grid/GridOperationalHeader.tsx`
+- `shared/schema.ts`
+- `db/migrations/075_grid_circuit_breaker_persistence.sql`
+- `AUDITORIAS/CHECKLIST_GRID_V2_REV_C3_2026-07-21.md`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅
+- `npx vitest run server/services/gridIsolated`: ✅ 120/120 passed
+- `npx vitest run client/src/components/grid`: ✅ 1 passed
+- `npm run build`: ✅ 3785 módulos
+
+### Estado final
+- Todos los gates A/C/D/E/F/G/H/J cerrados. Commit y push a `origin/main` completados.
+- Pendiente: deploy a staging y postdeploy (requiere aprobación explícita).
+- Pendiente: ejecución de migraciones 074/075 en staging tras deploy.
