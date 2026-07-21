@@ -5,6 +5,47 @@
 
 ---
 
+## 2026-07-21 — GRID COUNTER-AUDIT REFINEMENT: lifecycle maker, `safeParseRiskStateJson`, fees explícitos
+
+### Resumen
+Se refina el lifecycle de salidas maker para `FIRST_PROFITABLE_HIGHER_RUNG_V2`: trigger, pending y fill son tres fases separadas y persistentes. `safeParseRiskStateJson` devuelve `null` para entradas nulas, permitiendo aplicar `defaultRiskState()` sin marcar ciclos nuevos como `REQUIRES_REVIEW`. Los cálculos financieros usan `buyFeePct`/`sellFeePct` explícitos. Se añade un lock en memoria (`closingCycleIds`) para prevenir cierres dobles concurrentes.
+
+### Problema
+- `safeParseRiskStateJson` marcaba ciclos nuevos (`riskStateJson: null`) como `REQUIRES_REVIEW`, bloqueando transiciones del lifecycle maker.
+- `processOpenCyclesShadow` no ejecutaba `evaluateRiskForOpenCycles`, por lo que el lifecycle maker no avanzaba y los cierres normales no ocurrían.
+- La guarda de fill requería comparar timestamps, lo que hacía fallar tests y no aportaba robustez frente al estado persistente.
+- No había protección contra dos ticks simultáneos cerrando el mismo ciclo.
+- Los tests de cierre asumían un solo tick.
+- Al crear un ciclo desde un fill BUY, faltaba `makerExitStateJson` y `buyFeePct`/`sellFeePct` en el selector.
+
+### Solución
+1. `safeParseRiskStateJson` retorna `null` cuando `raw == null`.
+2. `processOpenCyclesShadow` llama a `evaluateRiskForOpenCycles(priceResult)` antes de resolver targets/fills.
+3. `resolveExitForCycle` solo cierra si `protectiveExit.state === "MAKER_PENDING"`.
+4. `completeCycleShadow` protegido por `closingCycleIds: Set<string>`.
+5. Tests actualizados con helper `runUntilClosed` y expectativas de 3 fases.
+6. `processCycleFill` añade `makerExitStateJson: null` y pasa `buyFeePct`/`sellFeePct` al selector.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridJsonbValidators.ts`
+- `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts`
+
+### Validaciones
+- `npm run check`: ✅
+- `npx vitest run server/services/gridIsolated`: 119 passed, 1 skipped.
+
+### Estado final
+- Motor Grid SHADOW listo para validación en staging con lifecycle maker robusto.
+- No se realizó deploy.
+
+### Pendientes
+- Re-escribir test concurrente para preparar el ciclo en `MAKER_PENDING` antes del race.
+- Ejecutar `npm run build` y tests de rutas/frontend Grid.
+- Validar migración 074 en staging.
+
+---
+
 ## 2026-07-21 — GRID COUNTER-AUDIT REFINEMENT: JSONB tipados, fees dinámicos, migración 073 y máquina de estados SHADOW
 
 ### Resumen

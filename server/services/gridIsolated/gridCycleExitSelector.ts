@@ -27,6 +27,10 @@ export interface ExitSelectorParams {
   buyFillQuantity: number;
   /** Net profit target configured for the grid (%). */
   netProfitTargetPct: number;
+  /** Fee % applied to the BUY side. */
+  buyFeePct: number;
+  /** Fee % applied to the SELL side. */
+  sellFeePct: number;
   /** Exchange maker fee % (e.g. 0.00). */
   makerFeePct: number;
   /** Exchange taker fee % (e.g. 0.09). */
@@ -110,8 +114,8 @@ function computeOperationalPnL(
   const sellNotional = sellPrice * quantity;
   const grossPnlUsd = sellNotional - buyNotional;
 
-  const buyFeeRate = params.makerFeePct / 100;
-  const sellFeeRate = params.makerFeePct / 100;
+  const buyFeeRate = (params.buyFeePct ?? params.makerFeePct) / 100;
+  const sellFeeRate = (params.sellFeePct ?? params.makerFeePct) / 100;
   const buyFeeUsd = buyNotional * buyFeeRate;
   const sellFeeUsd = sellNotional * sellFeeRate;
   const exchangeFeesUsd = buyFeeUsd + sellFeeUsd;
@@ -153,6 +157,7 @@ export function selectFirstProfitableHigherRung(
   if (!validPositive(cycle.buyPrice) || !validPositive(cycle.quantity)) {
     return {
       selected: false,
+      stateVersion: 1,
       targetKind: "SYNTHETIC_RUNG",
       targetRungLevelId: null,
       targetSellLevelId: null,
@@ -176,6 +181,7 @@ export function selectFirstProfitableHigherRung(
   if (rangeVersion && rangeVersion.pair !== cycle.pair) {
     return {
       selected: false,
+      stateVersion: 1,
       targetKind: "SYNTHETIC_RUNG",
       targetRungLevelId: null,
       targetSellLevelId: null,
@@ -212,6 +218,7 @@ export function selectFirstProfitableHigherRung(
   if (candidates.length === 0) {
     return {
       selected: false,
+      stateVersion: 1,
       targetKind: "SYNTHETIC_RUNG",
       targetRungLevelId: null,
       targetSellLevelId: null,
@@ -340,6 +347,7 @@ export function selectFirstProfitableHigherRung(
     const isPersistedSell = rung.side === "SELL";
     return {
       selected: true,
+      stateVersion: 1,
       targetKind: isPersistedSell ? "PERSISTED_SELL" : "SYNTHETIC_RUNG",
       targetRungLevelId: rung.id,
       targetSellLevelId: isPersistedSell ? rung.id : null,
@@ -362,6 +370,7 @@ export function selectFirstProfitableHigherRung(
 
   return {
     selected: false,
+    stateVersion: 1,
     policyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
     targetKind: "SYNTHETIC_RUNG",
     targetRungLevelId: null,

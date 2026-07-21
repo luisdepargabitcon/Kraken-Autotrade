@@ -7,8 +7,7 @@
  *   - netProfitTargetPct: final target after tax reserve
  *   - per-cycle PnL: gross, fees, tax reserve, net
  *
- * Uses Revolut X fees: maker 0.00%, taker 0.09%.
- * Fee buffers: 0.09% buy + 0.09% sell (conservative — assumes taker on both sides).
+ * Configurable buy/sell fee percentages (default 0.09% each for SHADOW simulation).
  * Tax reserve: 20% of net profit.
  *
  * This module is PURE — no side effects, no DB, no exchange calls.
@@ -53,6 +52,10 @@ export interface CyclePnLOptions {
   quantity: number;
   buyLiquidityRole?: "maker" | "taker";
   sellLiquidityRole?: "maker" | "taker";
+  /** Explicit buy fee percentage. Overrides role-based fee if provided. */
+  buyFeePct?: number;
+  /** Explicit sell fee percentage. Overrides role-based fee if provided. */
+  sellFeePct?: number;
   makerFeePct?: number;
   takerFeePct?: number;
   taxReservePct?: number;
@@ -158,7 +161,7 @@ export function computeCyclePnL(
 
 /**
  * Compute cycle PnL with explicit liquidity roles. Avoids ambiguous boolean flags.
- * Default SHADOW policy: maker/maker (post-only), 0% fee, 20% tax reserve.
+ * Default SHADOW policy: maker/maker (post-only), configurable fees, 20% tax reserve.
  */
 export function computeCyclePnLWithRoles(options: CyclePnLOptions): CyclePnL {
   const {
@@ -167,16 +170,22 @@ export function computeCyclePnLWithRoles(options: CyclePnLOptions): CyclePnL {
     quantity,
     buyLiquidityRole = "maker",
     sellLiquidityRole = "maker",
-    makerFeePct = 0.00,
-    takerFeePct = 0.09,
+    buyFeePct: explicitBuyFeePct,
+    sellFeePct: explicitSellFeePct,
+    makerFeePct = FEE_BUFFER_BUY_PCT,
+    takerFeePct = FEE_BUFFER_SELL_PCT,
     taxReservePct = TAX_RESERVE_PCT,
   } = options;
 
   const buyNotional = buyPrice * quantity;
   const sellNotional = sellPrice * quantity;
 
-  const buyFeeRate = (buyLiquidityRole === "taker" ? takerFeePct : makerFeePct) / 100;
-  const sellFeeRate = (sellLiquidityRole === "taker" ? takerFeePct : makerFeePct) / 100;
+  const buyFeeRate = (explicitBuyFeePct !== undefined
+    ? explicitBuyFeePct
+    : buyLiquidityRole === "taker" ? takerFeePct : makerFeePct) / 100;
+  const sellFeeRate = (explicitSellFeePct !== undefined
+    ? explicitSellFeePct
+    : sellLiquidityRole === "taker" ? takerFeePct : makerFeePct) / 100;
 
   const buyFeeUsd = buyNotional * buyFeeRate;
   const sellFeeUsd = sellNotional * sellFeeRate;
@@ -228,12 +237,13 @@ export function cycleMeetsNetTarget(
 export function computeBreakEvenSellPrice(
   buyPrice: number,
   quantity: number,
-  takerFeePct: number = 0.09
+  buyFeePct: number = FEE_BUFFER_BUY_PCT,
+  sellFeePct: number = FEE_BUFFER_SELL_PCT
 ): number {
   const buyNotional = buyPrice * quantity;
-  const buyFeeUsd = buyNotional * (takerFeePct / 100);
+  const buyFeeUsd = buyNotional * (buyFeePct / 100);
   // At break-even: sellNotional - sellFee - buyNotional - buyFee = 0
-  // sellNotional * (1 - takerFee/100) = buyNotional + buyFee
-  const sellNotional = (buyNotional + buyFeeUsd) / (1 - takerFeePct / 100);
+  // sellNotional * (1 - sellFee/100) = buyNotional + buyFee
+  const sellNotional = (buyNotional + buyFeeUsd) / (1 - sellFeePct / 100);
   return sellNotional / quantity;
 }

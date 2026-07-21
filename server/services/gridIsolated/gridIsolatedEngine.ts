@@ -78,6 +78,10 @@ import {
   computeCyclePnLWithRoles,
 } from "./gridNetCalculator";
 import {
+  safeParseRiskStateJson,
+  safeParseTargetCalculationJson,
+} from "./gridJsonbValidators";
+import {
   DEFAULT_GRID_CONFIG,
   DAILY_ORDER_REQUEST_LIMIT,
   DAILY_ORDER_WARNING_THRESHOLD,
@@ -110,6 +114,7 @@ import {
   type TrailingProtectionState,
   type StopLossLayer,
   type HodlRecoveryState,
+  type GridPendingMakerExit,
   FEE_BUFFER_BUY_PCT,
   FEE_BUFFER_SELL_PCT,
   TAX_RESERVE_PCT,
@@ -125,6 +130,7 @@ class GridIsolatedEngine {
   private dailyOrderResetAt: Date = new Date();
   private circuitBreakerOpen: boolean = false;
   private circuitBreakerOpenedAt: Date | null = null;
+  private closingCycleIds: Set<string> = new Set();
   private pumpDumpState: PumpDumpGuardState = {
     state: "normal" as PumpDumpState,
     triggeredAt: null,
@@ -163,6 +169,11 @@ class GridIsolatedEngine {
           mode: row.mode as GridMode,
           capitalProfile: row.capitalProfile as any,
           executionPolicy: getEffectiveExecutionPolicy({ mode: row.mode as GridMode, executionPolicy: row.executionPolicy as any }),
+          defaultExitPolicyVersion: (row.defaultExitPolicyVersion as GridExitPolicyVersion | undefined) ?? DEFAULT_GRID_CONFIG.defaultExitPolicyVersion,
+          trailingEnabled: row.trailingEnabled ?? DEFAULT_GRID_CONFIG.trailingEnabled,
+          stopLossEnabled: row.stopLossEnabled ?? DEFAULT_GRID_CONFIG.stopLossEnabled,
+          buyFeePct: parseFloat(row.buyFeePct ?? String(DEFAULT_GRID_CONFIG.buyFeePct)),
+          sellFeePct: parseFloat(row.sellFeePct ?? String(DEFAULT_GRID_CONFIG.sellFeePct)),
           netProfitTargetPct: parseFloat(row.netProfitTargetPct),
           bandPeriod: row.bandPeriod,
           bandStdDevMultiplier: parseFloat(row.bandStdDevMultiplier),
@@ -250,9 +261,12 @@ class GridIsolatedEngine {
       }
     } catch (error) {
       botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to load config: ${error}`);
+      // Fail-safe: a DB/schema/conexión error must NOT auto-create a default config.
+      // The caller decides whether to proceed; engine start is blocked.
+      throw error;
     }
 
-    // Create default config in DB
+    // No config row found — create a safe default config in DB.
     this.config = { ...DEFAULT_GRID_CONFIG, id: "", createdAt: new Date(), updatedAt: new Date() } as GridIsolatedConfig;
     await this.saveConfig();
     return this.config;
@@ -281,6 +295,11 @@ class GridIsolatedEngine {
           mode: row.mode as GridMode,
           capitalProfile: row.capitalProfile as any,
           executionPolicy: getEffectiveExecutionPolicy({ mode: row.mode as GridMode, executionPolicy: row.executionPolicy as any }),
+          defaultExitPolicyVersion: (row.defaultExitPolicyVersion as GridExitPolicyVersion | undefined) ?? DEFAULT_GRID_CONFIG.defaultExitPolicyVersion,
+          trailingEnabled: row.trailingEnabled ?? DEFAULT_GRID_CONFIG.trailingEnabled,
+          stopLossEnabled: row.stopLossEnabled ?? DEFAULT_GRID_CONFIG.stopLossEnabled,
+          buyFeePct: parseFloat(row.buyFeePct ?? String(DEFAULT_GRID_CONFIG.buyFeePct)),
+          sellFeePct: parseFloat(row.sellFeePct ?? String(DEFAULT_GRID_CONFIG.sellFeePct)),
           netProfitTargetPct: parseFloat(row.netProfitTargetPct),
           bandPeriod: row.bandPeriod,
           bandStdDevMultiplier: parseFloat(row.bandStdDevMultiplier),
@@ -395,52 +414,74 @@ class GridIsolatedEngine {
    * Default risk state for a newly created cycle.
    */
   private buildDefaultRiskState(): GridCycleRiskState {
-    return {
-      trailing: gridRiskManager.initTrailingState(),
-      stopLoss: gridRiskManager.initStopLossLayers(this.config as GridIsolatedConfig),
-      hodl: gridRiskManager.initHodlState(),
-      lastAction: null,
-      activeExitRoute: null,
-      pendingExitPrice: null,
-      lastEvaluatedAt: null,
-    };
+    return this.defaultRiskState();
   }
 
   /**
-   * Parse persisted risk_state_json into a typed object, falling back to defaults.
+   * Default empty risk state for a cycle with no persisted JSONB.
    */
-  private parseRiskState(cycle: GridCycle): GridCycleRiskState {
-    const defaults: GridCycleRiskState = {
+  private defaultRiskState(): GridCycleRiskState {
+    return {
       trailing: gridRiskManager.initTrailingState(),
       stopLoss: this.config ? gridRiskManager.initStopLossLayers(this.config) : [],
       hodl: gridRiskManager.initHodlState(),
       lastAction: null,
       activeExitRoute: null,
       pendingExitPrice: null,
+      protectiveExit: this.defaultMakerExit(),
+      stateVersion: 1,
       lastEvaluatedAt: null,
     };
-    const parsed = this.parseJsonbObject(cycle.riskStateJson);
-    if (!parsed) return defaults;
-    const validCloseRoute = (v: unknown): GridClosePath | null => {
-      if (v === "NORMAL_TARGET" || v === "TRAILING_MAKER" || v === "PROTECTIVE_MAKER" || v === "HODL_RECOVERY") return v;
-      return null;
-    };
+  }
+
+  private defaultMakerExit(): GridPendingMakerExit {
     return {
-      trailing: parsed?.trailing ? { ...defaults.trailing, ...(parsed.trailing as Record<string, unknown>) } : defaults.trailing,
-      stopLoss: Array.isArray(parsed?.stopLoss) ? parsed.stopLoss as StopLossLayer[] : defaults.stopLoss,
-      hodl: parsed?.hodl ? { ...defaults.hodl, ...(parsed.hodl as Record<string, unknown>) } : defaults.hodl,
-      lastAction: (parsed?.lastAction as RiskAction) ?? defaults.lastAction,
-      activeExitRoute: validCloseRoute(parsed?.activeExitRoute) ?? defaults.activeExitRoute,
-      pendingExitPrice: typeof parsed?.pendingExitPrice === "number" && Number.isFinite(parsed.pendingExitPrice) ? parsed.pendingExitPrice : null,
-      lastEvaluatedAt: parsed?.lastEvaluatedAt ? new Date(parsed.lastEvaluatedAt as string | number | Date) : defaults.lastEvaluatedAt,
+      state: "NONE",
+      route: null,
+      triggerPrice: null,
+      triggerDetectedAt: null,
+      bestBidAtTrigger: null,
+      bestAskAtTrigger: null,
+      requestedMakerPrice: null,
+      makerOrderCreatedAt: null,
+      makerEligibleAfter: null,
+      lastRepricedAt: null,
+      repriceAttempts: 0,
+      pendingQuantity: 0,
+      simulatedOrderId: null,
+      fillPrice: null,
+      filledAt: null,
+      bestBidAtFill: null,
+      bestAskAtFill: null,
+      cancellationReason: null,
+    };
+  }
+
+  /**
+   * Parse persisted risk_state_json into a typed object, validating domain rules.
+   * Corrupt JSONB returns a review-required state instead of silently resetting.
+   */
+  private parseRiskState(cycle: GridCycle): GridCycleRiskState {
+    const parsed = safeParseRiskStateJson(cycle.riskStateJson);
+    if (!parsed) return this.defaultRiskState();
+    // Ensure nested defaults exist even if the validator returned a partial state.
+    const defaults = this.defaultRiskState();
+    return {
+      ...defaults,
+      ...parsed,
+      trailing: { ...defaults.trailing, ...parsed.trailing },
+      stopLoss: parsed.stopLoss.length ? parsed.stopLoss : defaults.stopLoss,
+      hodl: { ...defaults.hodl, ...parsed.hodl },
+      protectiveExit: parsed.protectiveExit?.state ? parsed.protectiveExit : defaults.protectiveExit,
     };
   }
 
   /**
    * Parse persisted target_calculation_json into a typed object.
+   * Invalid JSONB returns null, blocking ambiguous target closure.
    */
   private parseTargetCalculation(cycle: GridCycle): GridTargetCalculation | null {
-    return this.parseJsonbObject(cycle.targetCalculationJson) as GridTargetCalculation | null;
+    return safeParseTargetCalculationJson(cycle.targetCalculationJson);
   }
 
   /**
@@ -506,6 +547,11 @@ class GridIsolatedEngine {
         mode: this.config.mode,
         capitalProfile: this.config.capitalProfile,
         executionPolicy: this.config.executionPolicy,
+        defaultExitPolicyVersion: this.config.defaultExitPolicyVersion,
+        trailingEnabled: this.config.trailingEnabled,
+        stopLossEnabled: this.config.stopLossEnabled,
+        buyFeePct: this.config.buyFeePct.toFixed(4),
+        sellFeePct: this.config.sellFeePct.toFixed(4),
         netProfitTargetPct: this.config.netProfitTargetPct.toFixed(3),
         bandPeriod: this.config.bandPeriod,
         bandStdDevMultiplier: this.config.bandStdDevMultiplier.toFixed(2),
@@ -1208,8 +1254,9 @@ class GridIsolatedEngine {
         netPnlPct: parseFloat(row.netPnlPct),
         exitPolicyVersion: row.exitPolicyVersion as GridExitPolicyVersion | null ?? null,
         targetKind: row.targetKind as GridTargetKind | null ?? null,
-        targetCalculationJson: this.parseJsonbObject(row.targetCalculationJson) as GridCycle["targetCalculationJson"],
-        riskStateJson: this.parseJsonbObject(row.riskStateJson) as GridCycle["riskStateJson"],
+        targetCalculationJson: safeParseTargetCalculationJson(row.targetCalculationJson),
+        riskStateJson: safeParseRiskStateJson(row.riskStateJson),
+        makerExitStateJson: safeParseTargetCalculationJson(row.makerExitStateJson) as any,
         buyClientOrderId: row.buyClientOrderId,
         sellClientOrderId: row.sellClientOrderId,
         buyFilledAt: row.buyFilledAt,
@@ -1289,6 +1336,8 @@ class GridIsolatedEngine {
             buyFillPrice: cycle.buyPrice ?? 0,
             buyFillQuantity: cycle.quantity,
             netProfitTargetPct: this.config.netProfitTargetPct,
+            buyFeePct: this.config.buyFeePct,
+            sellFeePct: this.config.sellFeePct,
             makerFeePct: FEE_BUFFER_BUY_PCT,
             takerFeePct: FEE_BUFFER_SELL_PCT,
             taxReservePct: TAX_RESERVE_PCT,
@@ -1678,46 +1727,39 @@ class GridIsolatedEngine {
 
   /**
    * Resolve the active exit for an open cycle.
-   * Returns the effective target price, quantity, sell level id and close path.
-   * Uses persisted risk state when a trailing/protective/HODL route is active,
-   * otherwise falls back to the explicit normal SELL target.
+   * Only returns a fillable exit when the maker lifecycle has reached
+   * MAKER_PENDING in a previous tick. This guarantees the order is not filled
+   * in the same tick it was created.
    */
-  private resolveExitForCycle(cycle: GridCycle): {
+  private resolveExitForCycle(
+    cycle: GridCycle,
+    priceResult: GridShadowExecutionPriceResult
+  ): {
     targetPrice: number | null;
     targetQty: number | null;
     sellLevelId: string | null;
     closePath: GridClosePath | null;
+    eligibleForFill: boolean;
   } {
     const risk = this.parseRiskState(cycle);
 
-    // If an active risk route exists, use the pending exit price calculated
-    // during the last risk evaluation.
-    if (risk.activeExitRoute && risk.pendingExitPrice != null) {
+    // HODL recovery without an active maker order cannot be closed by a normal target.
+    if (cycle.status === "hodl_recovery" && risk.protectiveExit.state !== "MAKER_PENDING") {
+      return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null, eligibleForFill: false };
+    }
+
+    // Once a maker exit is pending, that route takes precedence.
+    if (risk.protectiveExit.state === "MAKER_PENDING" && risk.activeExitRoute && risk.pendingExitPrice != null) {
       return {
         targetPrice: risk.pendingExitPrice,
-        targetQty: cycle.quantity,
-        sellLevelId: null,
+        targetQty: risk.protectiveExit.pendingQuantity || cycle.quantity,
+        sellLevelId: risk.activeExitRoute === "NORMAL_TARGET" ? cycle.targetSellLevelId : null,
         closePath: risk.activeExitRoute,
+        eligibleForFill: true,
       };
     }
 
-    // When a cycle is in HODL recovery without an active exit route it must not
-    // be closed by a normal target; it waits for the recovery target.
-    if (cycle.status === "hodl_recovery") {
-      return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null };
-    }
-
-    // Normal explicit SELL target (persisted or V2 synthetic).
-    if (cycle.targetSellPrice != null && cycle.targetSellQuantity != null) {
-      return {
-        targetPrice: cycle.targetSellPrice,
-        targetQty: cycle.targetSellQuantity,
-        sellLevelId: cycle.targetSellLevelId,
-        closePath: "NORMAL_TARGET",
-      };
-    }
-
-    return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null };
+    return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null, eligibleForFill: false };
   }
 
   /**
@@ -1759,10 +1801,13 @@ class GridIsolatedEngine {
       quantity: cycle.quantity,
       buyLiquidityRole: "maker",
       sellLiquidityRole: "maker",
-      makerFeePct: FEE_BUFFER_BUY_PCT,
-      takerFeePct: FEE_BUFFER_SELL_PCT,
+      buyFeePct: this.config.buyFeePct,
+      sellFeePct: this.config.sellFeePct,
       taxReservePct: TAX_RESERVE_PCT,
     });
+
+    if (this.closingCycleIds.has(cycle.id)) return false;
+    this.closingCycleIds.add(cycle.id);
 
     const sellClientOrderId = sellLevelId
       ? this.levels.find(l => l.id === sellLevelId)?.clientOrderId ?? null
@@ -1775,72 +1820,91 @@ class GridIsolatedEngine {
         ? "stop_loss_hit"
         : "completed";
 
-    await db.transaction(async (tx) => {
-      const cycleUpdate = await tx.update(gridIsolatedCycles)
-        .set({
-          status: finalStatus,
-          sellLevelId,
-          sellPrice: sellPrice.toFixed(8),
-          sellFilledAt: now,
-          grossPnlUsd: pnl.grossPnlUsd.toFixed(8),
-          feeTotalUsd: pnl.totalFeesUsd.toFixed(8),
-          taxReserveUsd: pnl.taxReserveUsd.toFixed(8),
-          netPnlUsd: pnl.netPnlUsd.toFixed(8),
-          netPnlPct: pnl.netPnlPct.toFixed(4),
-          holdTimeMinutes,
-          completedAt: now,
-          sellClientOrderId,
-        })
-        .where(and(
-          eq(gridIsolatedCycles.id, cycle.id),
-          inArray(gridIsolatedCycles.status, POSITION_OPEN_GRID_CYCLE_STATUSES as any),
-          isNull(gridIsolatedCycles.completedAt)
-        ))
-        .returning({ id: gridIsolatedCycles.id });
+    const currentRisk = this.parseRiskState(cycle);
+    const filledProtectiveExit: GridPendingMakerExit = {
+      ...currentRisk.protectiveExit,
+      state: "MAKER_FILLED",
+      fillPrice: sellPrice,
+      filledAt: now,
+      bestBidAtFill: priceResult.bid ?? null,
+      bestAskAtFill: priceResult.ask ?? null,
+    };
+    const filledRisk: GridCycleRiskState = {
+      ...currentRisk,
+      protectiveExit: filledProtectiveExit,
+    };
 
-      if (cycleUpdate.length !== 1) {
-        throw new Error(`Ciclo ${cycle.id} ya fue cerrado por otro proceso`);
-      }
-
-      // Persisted SELL target: mark level filled atomically.
-      if (sellLevelId) {
-        const levelUpdate = await tx.update(gridIsolatedLevels)
+    try {
+      await db.transaction(async (tx) => {
+        const cycleUpdate = await tx.update(gridIsolatedCycles)
           .set({
-            status: "filled",
-            filledPrice: sellPrice.toFixed(8),
-            filledQuantity: cycle.quantity.toFixed(8),
-            filledAt: now,
+            status: finalStatus,
+            sellLevelId,
+            sellPrice: sellPrice.toFixed(8),
+            sellFilledAt: now,
+            grossPnlUsd: pnl.grossPnlUsd.toFixed(8),
+            feeTotalUsd: pnl.totalFeesUsd.toFixed(8),
+            taxReserveUsd: pnl.taxReserveUsd.toFixed(8),
+            netPnlUsd: pnl.netPnlUsd.toFixed(8),
+            netPnlPct: pnl.netPnlPct.toFixed(4),
+            holdTimeMinutes,
+            completedAt: now,
+            sellClientOrderId,
+            riskStateJson: filledRisk,
           })
           .where(and(
-            eq(gridIsolatedLevels.id, sellLevelId),
-            eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
-            eq(gridIsolatedLevels.side, "SELL"),
-            isNull(gridIsolatedLevels.filledAt)
+            eq(gridIsolatedCycles.id, cycle.id),
+            inArray(gridIsolatedCycles.status, POSITION_OPEN_GRID_CYCLE_STATUSES as any),
+            isNull(gridIsolatedCycles.completedAt)
           ))
-          .returning({ id: gridIsolatedLevels.id });
+          .returning({ id: gridIsolatedCycles.id });
 
-        if (levelUpdate.length !== 1) {
-          throw new Error(`Nivel SELL ${sellLevelId} no está disponible para cerrar el ciclo ${cycle.id}`);
+        if (cycleUpdate.length !== 1) {
+          throw new Error(`Ciclo ${cycle.id} ya fue cerrado por otro proceso`);
         }
-      }
 
-      // Rearm the source BUY level so it can rotate again.
-      if (cycle.buyLevelId) {
-        await tx.update(gridIsolatedLevels)
-          .set({
-            status: "planned",
-            filledPrice: null,
-            filledQuantity: "0",
-            filledAt: null,
-          })
-          .where(and(
-            eq(gridIsolatedLevels.id, cycle.buyLevelId),
-            eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
-            eq(gridIsolatedLevels.side, "BUY"),
-            eq(gridIsolatedLevels.status, "filled")
-          ));
-      }
-    });
+        // Persisted SELL target: mark level filled atomically.
+        if (sellLevelId) {
+          const levelUpdate = await tx.update(gridIsolatedLevels)
+            .set({
+              status: "filled",
+              filledPrice: sellPrice.toFixed(8),
+              filledQuantity: cycle.quantity.toFixed(8),
+              filledAt: now,
+            })
+            .where(and(
+              eq(gridIsolatedLevels.id, sellLevelId),
+              eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
+              eq(gridIsolatedLevels.side, "SELL"),
+              isNull(gridIsolatedLevels.filledAt)
+            ))
+            .returning({ id: gridIsolatedLevels.id });
+
+          if (levelUpdate.length !== 1) {
+            throw new Error(`Nivel SELL ${sellLevelId} no está disponible para cerrar el ciclo ${cycle.id}`);
+          }
+        }
+
+        // Rearm the source BUY level so it can rotate again.
+        if (cycle.buyLevelId) {
+          await tx.update(gridIsolatedLevels)
+            .set({
+              status: "planned",
+              filledPrice: null,
+              filledQuantity: "0",
+              filledAt: null,
+            })
+            .where(and(
+              eq(gridIsolatedLevels.id, cycle.buyLevelId),
+              eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
+              eq(gridIsolatedLevels.side, "BUY"),
+              eq(gridIsolatedLevels.status, "filled")
+            ));
+        }
+      });
+    } finally {
+      this.closingCycleIds.delete(cycle.id);
+    }
 
     // In-memory sync
     cycle.status = finalStatus;
@@ -1855,6 +1919,7 @@ class GridIsolatedEngine {
     cycle.holdTimeMinutes = holdTimeMinutes;
     cycle.completedAt = now;
     cycle.sellClientOrderId = sellClientOrderId;
+    cycle.riskStateJson = filledRisk;
 
     const sellLevel = this.levels.find(l => l.id === sellLevelId);
     if (sellLevel) {
@@ -1947,6 +2012,10 @@ class GridIsolatedEngine {
       return 0;
     }
 
+    // Run risk/exit lifecycle so normal targets can transition from TRIGGERED
+    // to MAKER_PENDING before we check fills.
+    await this.evaluateRiskForOpenCycles(priceResult);
+
     // Ensure every open cycle has an explicit SELL target before checking fills.
     await this.resolveAndPersistOpenCycleTargets();
 
@@ -1955,8 +2024,8 @@ class GridIsolatedEngine {
       if (!POSITION_OPEN_GRID_CYCLE_STATUSES.includes(cycle.status as any)) continue;
       if (priceResult.pair != null && priceResult.pair !== cycle.pair) continue;
 
-      const exit = this.resolveExitForCycle(cycle);
-      if (!exit.targetPrice || !exit.targetQty || !exit.closePath) continue;
+      const exit = this.resolveExitForCycle(cycle, priceResult);
+      if (!exit.targetPrice || !exit.targetQty || !exit.closePath || !exit.eligibleForFill) continue;
       if (!this.canFillExit(bestBid, exit.targetPrice, exit.closePath)) continue;
 
       const closed = await this.completeCycleShadow(
@@ -2201,6 +2270,7 @@ class GridIsolatedEngine {
         targetKind: "UNKNOWN",
         targetCalculationJson: null,
         riskStateJson: this.buildDefaultRiskState(),
+        makerExitStateJson: null,
         buyClientOrderId: level.clientOrderId,
         sellClientOrderId: null,
         buyFilledAt: new Date(),
@@ -2220,6 +2290,8 @@ class GridIsolatedEngine {
             buyFillPrice: fillPrice,
             buyFillQuantity: level.quantity,
             netProfitTargetPct: this.config.netProfitTargetPct,
+            buyFeePct: this.config.buyFeePct,
+            sellFeePct: this.config.sellFeePct,
             makerFeePct: FEE_BUFFER_BUY_PCT,
             takerFeePct: FEE_BUFFER_SELL_PCT,
             taxReservePct: TAX_RESERVE_PCT,
@@ -2420,11 +2492,14 @@ class GridIsolatedEngine {
   }
 
   /**
-   * Evaluate trailing stop, stop-loss layers and HODL recovery for every open
-   * cycle. Persist the resulting risk_state_json so the state survives restarts.
-   * When a risk action implies a SHADOW maker exit, set activeExitRoute and
-   * pendingExitPrice so processOpenCyclesShadow can complete the cycle without
-   * taker orders. MAKER_ONLY execution is preserved.
+   * Evaluate exit lifecycle (trailing, stop-loss, HODL recovery and normal target)
+   * for every open cycle. Persist the resulting risk_state_json so the state
+   * survives restarts.
+   *
+   * Separates trigger detection from fill execution:
+   *   - tick N:   trigger detected -> protectiveExit state TRIGGERED
+   *   - tick N+1: pending maker order created -> state MAKER_PENDING
+   *   - tick N+2+: if bid reaches requested price, processOpenCyclesShadow fills.
    */
   private async evaluateRiskForOpenCycles(
     priceResult: GridShadowExecutionPriceResult
@@ -2436,6 +2511,7 @@ class GridIsolatedEngine {
       (this.config.stopLossEnabled ?? false);
 
     const currentPrice = priceResult.bid ?? priceResult.price ?? null;
+    const currentAsk = priceResult.ask ?? currentPrice;
     if (currentPrice == null) return;
 
     for (const cycle of this.cycles) {
@@ -2443,93 +2519,83 @@ class GridIsolatedEngine {
 
       const risk = this.parseRiskState(cycle);
 
-      // Keep evaluating cycles that already have an active risk state even when
-      // the global feature toggles are off, so we can deactivate/reset cleanly.
-      const shouldEvaluate =
+      const targetReached = cycle.targetSellPrice != null && cycle.targetSellPrice > 0 && currentPrice >= cycle.targetSellPrice;
+      const pendingExit = risk.protectiveExit.state !== "NONE";
+      const shouldEvaluateRisk =
         riskFeaturesEnabled ||
         risk.trailing.activated ||
         risk.hodl.active;
-      if (!shouldEvaluate) continue;
 
-      const evaluation = gridRiskManager.evaluateCycle(
-        cycle,
-        currentPrice,
-        this.config,
-        risk.trailing,
-        risk.stopLoss,
-        risk.hodl
-      );
+      if (!shouldEvaluateRisk && !targetReached && !pendingExit) continue;
+
+      let evaluation: { action: string; suggestedSellPrice: number | null; trailingState: TrailingProtectionState; hodlState: HodlRecoveryState; stopLossLayers: StopLossLayer[]; reason: string } | null = null;
+      if (shouldEvaluateRisk) {
+        const riskEval = gridRiskManager.evaluateCycle(
+          cycle,
+          currentPrice,
+          this.config,
+          risk.trailing,
+          risk.stopLoss,
+          risk.hodl
+        );
+        evaluation = riskEval;
+      }
 
       const nextRisk: GridCycleRiskState = {
-        trailing: evaluation.trailingState,
-        stopLoss: evaluation.stopLossLayers,
-        hodl: evaluation.hodlState,
-        lastAction: evaluation.action as RiskAction,
-        activeExitRoute: null,
-        pendingExitPrice: null,
+        trailing: evaluation?.trailingState ?? risk.trailing,
+        stopLoss: evaluation?.stopLossLayers ?? risk.stopLoss,
+        hodl: evaluation?.hodlState ?? risk.hodl,
+        lastAction: (evaluation?.action as RiskAction) ?? null,
+        activeExitRoute: risk.activeExitRoute,
+        pendingExitPrice: risk.pendingExitPrice,
+        protectiveExit: risk.protectiveExit,
+        stateVersion: 1,
         lastEvaluatedAt: new Date(),
       };
 
-      // Determine active exit route and pending maker exit price.
-      switch (evaluation.action) {
-        case "TRAILING_UPDATE":
-          // Trailing is active but not triggered yet; keep tracking.
-          break;
-        case "TRAILING_CLOSE":
-          nextRisk.activeExitRoute = "TRAILING_MAKER";
-          nextRisk.pendingExitPrice = evaluation.trailingState.currentStopPrice ?? evaluation.suggestedSellPrice;
-          break;
-        case "STOP_LOSS_SOFT":
-          nextRisk.activeExitRoute = "PROTECTIVE_MAKER";
-          nextRisk.pendingExitPrice = evaluation.suggestedSellPrice ?? currentPrice;
-          break;
-        case "STOP_LOSS_HARD":
-          nextRisk.activeExitRoute = "PROTECTIVE_MAKER";
-          nextRisk.pendingExitPrice = evaluation.suggestedSellPrice ?? currentPrice;
-          break;
-        case "STOP_LOSS_EMERGENCY":
-          nextRisk.activeExitRoute = "PROTECTIVE_MAKER";
-          nextRisk.pendingExitPrice = evaluation.suggestedSellPrice ?? currentPrice;
-          this.circuitBreakerOpen = true;
-          await this.logEvent("GRID_CIRCUIT_BREAKER_OPEN", `Stop-loss de emergencia activado para ciclo ${cycle.cycleNumber}. Se bloquean nuevas compras Grid hasta revisión.`, {
-            cycleId: cycle.id,
-            currentPrice,
-            pendingExitPrice: nextRisk.pendingExitPrice,
-            mode: "SHADOW",
-          });
-          break;
-        case "HODL_RECOVERY_ACTIVATE":
-          nextRisk.activeExitRoute = "HODL_RECOVERY";
-          nextRisk.pendingExitPrice = evaluation.hodlState.recoveryTargetPrice ?? null;
-          cycle.status = "hodl_recovery";
-          try {
-            await db.update(gridIsolatedCycles)
-              .set({ status: "hodl_recovery", riskStateJson: nextRisk })
-              .where(eq(gridIsolatedCycles.id, cycle.id));
-          } catch (err) {
-            botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to persist HODL recovery state for cycle ${cycle.id}: ${err}`);
-          }
-          break;
-        case "HODL_RECOVERY_SELL":
-          nextRisk.activeExitRoute = "HODL_RECOVERY";
-          nextRisk.pendingExitPrice = evaluation.hodlState.recoveryTargetPrice ?? currentPrice;
-          break;
-        default:
-          break;
+      const intended = this.resolveIntendedExit(cycle, evaluation, currentPrice);
+
+      // HODL activation is committed immediately so the cycle stops normal targeting.
+      if (evaluation?.action === "HODL_RECOVERY_ACTIVATE") {
+        cycle.status = "hodl_recovery";
+        nextRisk.activeExitRoute = "HODL_RECOVERY";
+        nextRisk.pendingExitPrice = intended.price;
       }
+
+      nextRisk.protectiveExit = this.advanceProtectiveExitLifecycle(
+        cycle,
+        nextRisk.protectiveExit,
+        intended,
+        currentPrice,
+        currentAsk,
+        priceResult
+      );
+      nextRisk.activeExitRoute = nextRisk.protectiveExit.route ?? null;
+      nextRisk.pendingExitPrice = nextRisk.protectiveExit.requestedMakerPrice ?? nextRisk.protectiveExit.triggerPrice ?? null;
 
       cycle.riskStateJson = nextRisk;
 
       try {
         await db.update(gridIsolatedCycles)
-          .set({ riskStateJson: nextRisk })
+          .set({ riskStateJson: nextRisk, status: cycle.status })
           .where(eq(gridIsolatedCycles.id, cycle.id));
       } catch (err) {
         botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to persist risk state for cycle ${cycle.id}: ${err}`);
       }
 
-      // Log meaningful state changes, avoiding HOLD spam.
-      if (evaluation.action !== "HOLD") {
+      // Circuit breaker only on emergency stop.
+      if (evaluation?.action === "STOP_LOSS_EMERGENCY") {
+        this.circuitBreakerOpen = true;
+        this.circuitBreakerOpenedAt = new Date();
+        await this.logEvent("GRID_CIRCUIT_BREAKER_OPEN", `Stop-loss de emergencia activado para ciclo ${cycle.cycleNumber}. Se bloquean nuevas compras Grid hasta revisión.`, {
+          cycleId: cycle.id,
+          currentPrice,
+          pendingExitPrice: nextRisk.pendingExitPrice,
+          mode: "SHADOW",
+        });
+      }
+
+      if (evaluation && evaluation.action !== "HOLD") {
         const eventType = this.riskActionEventType(evaluation.action);
         await this.logEvent(eventType, `[SHADOW RISK] Ciclo ${cycle.cycleNumber}: ${evaluation.action}@${currentPrice} — ${evaluation.reason}`, {
           cycleId: cycle.id,
@@ -2537,6 +2603,7 @@ class GridIsolatedEngine {
           currentPrice,
           activeExitRoute: nextRisk.activeExitRoute,
           pendingExitPrice: nextRisk.pendingExitPrice,
+          protectiveExitState: nextRisk.protectiveExit.state,
           suggestedSellPrice: evaluation.suggestedSellPrice,
           trailingActivated: evaluation.trailingState.activated,
           trailingStopPrice: evaluation.trailingState.currentStopPrice,
@@ -2547,6 +2614,96 @@ class GridIsolatedEngine {
         });
       }
     }
+  }
+
+  private resolveIntendedExit(
+    cycle: GridCycle,
+    evaluation: { action: string; suggestedSellPrice: number | null; trailingState: TrailingProtectionState; hodlState: HodlRecoveryState } | null,
+    currentPrice: number
+  ): { route: GridClosePath | null; price: number | null } {
+    if (evaluation) {
+      switch (evaluation.action) {
+        case "TRAILING_CLOSE":
+          return {
+            route: "TRAILING_MAKER",
+            price: evaluation.trailingState.currentStopPrice ?? evaluation.suggestedSellPrice ?? currentPrice,
+          };
+        case "STOP_LOSS_SOFT":
+        case "STOP_LOSS_HARD":
+        case "STOP_LOSS_EMERGENCY":
+          return {
+            route: "PROTECTIVE_MAKER",
+            price: evaluation.suggestedSellPrice ?? currentPrice,
+          };
+        case "HODL_RECOVERY_ACTIVATE":
+        case "HODL_RECOVERY_SELL":
+          return {
+            route: "HODL_RECOVERY",
+            price: evaluation.hodlState.recoveryTargetPrice ?? currentPrice,
+          };
+      }
+    }
+
+    // Normal explicit SELL target (legacy persisted level or V2 synthetic rung).
+    if (
+      cycle.status !== "hodl_recovery" &&
+      cycle.targetSellPrice != null &&
+      cycle.targetSellPrice > 0 &&
+      currentPrice >= cycle.targetSellPrice
+    ) {
+      return { route: "NORMAL_TARGET", price: cycle.targetSellPrice };
+    }
+
+    return { route: null, price: null };
+  }
+
+  private advanceProtectiveExitLifecycle(
+    cycle: GridCycle,
+    protectiveExit: GridPendingMakerExit,
+    intended: { route: GridClosePath | null; price: number | null },
+    currentBid: number,
+    currentAsk: number,
+    priceResult: GridShadowExecutionPriceResult
+  ): GridPendingMakerExit {
+    const now = new Date();
+
+    // No intended exit: keep any existing pending order alive; do not silently cancel.
+    if (!intended.route || intended.price == null) {
+      return protectiveExit;
+    }
+
+    // New trigger detected.
+    if (protectiveExit.state === "NONE" || protectiveExit.state === "ARMED") {
+      return {
+        ...this.defaultMakerExit(),
+        state: "TRIGGERED",
+        route: intended.route,
+        triggerPrice: intended.price,
+        triggerDetectedAt: now,
+        bestBidAtTrigger: currentBid,
+        bestAskAtTrigger: currentAsk,
+        requestedMakerPrice: null,
+        pendingQuantity: cycle.quantity,
+      };
+    }
+
+    // Trigger already detected in a previous tick -> create the resting maker order.
+    if (protectiveExit.state === "TRIGGERED") {
+      if (protectiveExit.route !== intended.route) return protectiveExit;
+      const makerPrice = protectiveExit.triggerPrice ?? intended.price;
+      return {
+        ...protectiveExit,
+        state: "MAKER_PENDING",
+        requestedMakerPrice: makerPrice,
+        makerOrderCreatedAt: now,
+        makerEligibleAfter: now,
+        pendingQuantity: cycle.quantity,
+        simulatedOrderId: `grid-shadow-${cycle.id}-${now.getTime()}`,
+      };
+    }
+
+    // Already pending -> nothing changes in the evaluation phase.
+    return protectiveExit;
   }
 
   /**

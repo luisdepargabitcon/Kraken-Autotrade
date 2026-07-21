@@ -106,7 +106,7 @@ export type ExecutionPolicy =
 /** Default policy for the Grid: maker-only, no taker fallback. */
 export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "MAKER_ONLY";
 
-/** SHADOW mode always uses maker-only, zero fees, no taker fallback. */
+/** SHADOW mode always uses maker-only, no taker fallback. Fees are simulated using configured buy/sell fee percentages. */
 export const SHADOW_EXECUTION_POLICY: ExecutionPolicy = "MAKER_ONLY";
 
 export const POST_ONLY_MAX_ATTEMPTS = 3;
@@ -254,11 +254,45 @@ export type GridTargetKind =
   | "SYNTHETIC_RUNG"
   | "UNKNOWN";
 
+export type GridMakerExitState =
+  | "NONE"
+  | "ARMED"
+  | "TRIGGERED"
+  | "MAKER_PENDING"
+  | "MAKER_FILLED"
+  | "CANCELLED"
+  | "REQUIRES_REVIEW";
+
+export interface GridPendingMakerExit {
+  state: GridMakerExitState;
+  route: GridClosePath | null;
+  triggerPrice: number | null;
+  triggerDetectedAt: Date | null;
+  bestBidAtTrigger: number | null;
+  bestAskAtTrigger: number | null;
+  requestedMakerPrice: number | null;
+  makerOrderCreatedAt: Date | null;
+  makerEligibleAfter: Date | null;
+  lastRepricedAt: Date | null;
+  repriceAttempts: number;
+  pendingQuantity: number;
+  simulatedOrderId: string | null;
+  fillPrice: number | null;
+  filledAt: Date | null;
+  bestBidAtFill: number | null;
+  bestAskAtFill: number | null;
+  cancellationReason: string | null;
+}
+
 export interface GridCycleRiskState {
   trailing: TrailingProtectionState;
   stopLoss: StopLossLayer[];
   hodl: HodlRecoveryState;
   lastAction: RiskAction | null;
+  activeExitRoute: GridClosePath | null;
+  pendingExitPrice: number | null;
+  protectiveExit: GridPendingMakerExit;
+  stateVersion: number;
   lastEvaluatedAt: Date | null;
 }
 
@@ -290,6 +324,7 @@ export interface GridTargetCalculation {
   selected: boolean;
   /** Policy version used to compute this target (legacy field kept for audits). */
   policyVersion?: "FIRST_PROFITABLE_HIGHER_RUNG_V2";
+  stateVersion: number;
   targetKind: GridTargetKind | null;
   targetSellLevelId: string | null;
   targetRungLevelId: string | null;
@@ -348,6 +383,8 @@ export interface GridCycle {
   targetCalculationJson: GridTargetCalculation | null;
   /** Estado de trailing, stops y HODL recovery. */
   riskStateJson: GridCycleRiskState | null;
+  /** Estado del ciclo de vida de la orden maker de salida (pending/filled). */
+  makerExitStateJson: GridPendingMakerExit | null;
   buyClientOrderId: string | null;
   sellClientOrderId: string | null;
   buyFilledAt: Date | null;
@@ -473,6 +510,10 @@ export interface GridIsolatedConfig {
   trailingEnabled?: boolean;
   /** Activa/desactiva las capas de stop-loss. */
   stopLossEnabled?: boolean;
+  /** Porcentaje de comisión simulada para la compra (maker en SHADOW). */
+  buyFeePct: number;
+  /** Porcentaje de comisión simulada para la venta (maker en SHADOW). */
+  sellFeePct: number;
   netProfitTargetPct: number;
   bandPeriod: number;
   bandStdDevMultiplier: number;
@@ -552,6 +593,8 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   defaultExitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
   trailingEnabled: false,
   stopLossEnabled: false,
+  buyFeePct: 0.09,
+  sellFeePct: 0.09,
   netProfitTargetPct: 0.8,
   bandPeriod: 20,
   bandStdDevMultiplier: 2,
@@ -725,6 +768,13 @@ export const GRID_EVENT_TYPES = [
   "GRID_PUMP_GUARD_ALLOWED_EXIT_ONLY",
   "GRID_CIRCUIT_BREAKER_OPEN",
   "GRID_CIRCUIT_BREAKER_BLOCKED_BUY",
+  "GRID_RISK_STATE_REVIEW_REQUIRED",
+  "GRID_TARGET_CALCULATION_REVIEW_REQUIRED",
+  "GRID_BUY_BLOCKED_NO_PROFITABLE_EXIT",
+  "GRID_MAKER_PENDING_PLACED",
+  "GRID_MAKER_PENDING_REPRICED",
+  "GRID_MAKER_PENDING_CANCELLED",
+  "GRID_MAKER_PENDING_FILLED",
   "GRID_SHADOW_CLEANUP_PREVIEWED",
   "GRID_SHADOW_CLEANUP_APPLIED",
   "GRID_SHADOW_CLEANUP_ABORTED",

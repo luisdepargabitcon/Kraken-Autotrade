@@ -20,6 +20,7 @@ import type {
   GridCycle,
   GridIsolatedConfig,
 } from "./gridIsolatedTypes";
+import { FEE_BUFFER_BUY_PCT, FEE_BUFFER_SELL_PCT } from "./gridIsolatedTypes";
 import { computeBreakEvenSellPrice } from "./gridNetCalculator";
 
 export interface RiskEvaluation {
@@ -136,7 +137,7 @@ class GridRiskManager {
     if (softTriggered) {
       // Soft stop loss — activate HODL recovery if enabled
       if (config.hodlRecoveryEnabled) {
-        const breakEvenPrice = computeBreakEvenSellPrice(buyPrice, cycle.quantity);
+        const breakEvenPrice = computeBreakEvenSellPrice(buyPrice, cycle.quantity, config.buyFeePct, config.sellFeePct);
         const newHodlState: HodlRecoveryState = {
           active: true,
           activatedAt: new Date(),
