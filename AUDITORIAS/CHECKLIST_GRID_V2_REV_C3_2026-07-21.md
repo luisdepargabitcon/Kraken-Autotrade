@@ -442,3 +442,74 @@ origin/main base: `9f8c88b0213aae85edcbeccd165856a60550acb4`
 - No se tocaron IDCA, FISCO, REAL mode, ni política 3 maker + 4º taker.
 - La migración 074 ya existe en el repositorio y se aplicará automáticamente en staging al reiniciar.
 
+---
+
+## Actualización 2026-07-21 — Cierre gates A/C/D/E/F/G/H del tick audit Grid Isolated V2
+
+### Commits en main
+
+- `35861ca` Gate H: circuit breaker en view model operacional + badge UI + safeParseRiskStateJson + labels close path
+- `80d78a2` Gate G: cantidad íntegra V2 en gridCycleExitSelector; rechaza rung insuficiente y buyQty no step-aligned
+- `5f82bc5` Gate F: validación JSONB estricta antes de persistir riskState/makerExitState
+- `0c95cfa` Gate E: circuit breaker persistente en grid_isolated_configs + migración 075
+- `3dd5834` Gate D: processCycleFill SELL delega en completeCycleShadow para cierre atómico unificado
+- `85e52d4` Gate A/C: tick canónico, lifecycle separado por tick, post-only maker, resting target anticipado
+
+### Cambios aplicados
+
+- `server/services/gridIsolated/gridIsolatedEngine.ts`: incremento único de `currentTickId` en `tick()`; helpers `processOpenCyclesShadow`/`evaluateRiskForOpenCycles` reciben `GridTickContext`; lifecycle `TRIGGERED`→`MAKER_PENDING`→fill separados por `lifecycleTickId`; cierre SELL unificado en `completeCycleShadow`; validación JSONB estricta antes de persistir; circuit breaker persistente en DB; post-only realista (`requestedMakerPrice > bestBid`, `>= bestAsk`, sin ask no coloca); armado anticipado de `NORMAL_TARGET`; `TRAILING_UPDATE` no expone `activeExitRoute`; salidas procesadas antes que entradas; guards no bloquean salidas.
+- `server/services/gridIsolated/gridCycleExitSelector.ts`: cantidad de cierre = `buyQty` completo; rechazo si SELL persistido no tiene cantidad suficiente; rechazo si `buyQty` no es múltiplo del `quantityStep`.
+- `server/services/gridIsolated/gridJsonbValidators.ts`: validadores estrictos para `riskStateJson`, `makerExitStateJson`, `targetCalculationJson`.
+- `server/services/gridIsolated/gridIsolatedTypes.ts`: `GridClosePath` amplio (`NORMAL_TARGET`, `SYNTHETIC_RUNG`, `LEGACY_PERSISTED_TARGET`, `TRAILING_MAKER`, `PROTECTIVE_MAKER`, `HODL_RECOVERY`); campos de circuit breaker en `GridIsolatedConfig`.
+- `shared/schema.ts`: columnas de circuit breaker en `grid_isolated_configs`.
+- `db/migrations/075_grid_circuit_breaker_persistence.sql`: migración aditiva e idempotente para columnas de circuit breaker.
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`: `circuitBreakerOpen/reason/cooldownUntil` en header y overview; `safeParseRiskStateJson` para parsear `riskStateJson`; labels para `SYNTHETIC_RUNG` y `LEGACY_PERSISTED_TARGET`.
+- `client/src/components/grid/GridOperationalHeader.tsx`: badge rojo "Circuit breaker" cuando `header.circuitBreakerOpen`.
+- Tests: `gridOpenCycleShadowClose.test.ts`, `gridCycleExitSelector.test.ts`, `gridRuntimeSnapshotResolver.test.ts`, `gridCycleStartupService.test.ts` actualizados/adaptados.
+
+### Validaciones ejecutadas
+
+| Validación | Comando | Resultado |
+|---|---|---|
+| TypeScript | `npm run check` | ✅ exit 0 |
+| Tests Grid | `npx vitest run server/services/gridIsolated` | ✅ 120/120 passed |
+| Tests rutas Grid | `npx vitest run server/routes/__tests__/gridIsolatedRoutes.test.ts` | ✅ (no file: suite ausente) |
+| Tests frontend Grid | `npx vitest run client/src/components/grid` | ✅ 1 passed |
+| Build | `npm run build` | ✅ 3785 módulos |
+
+### Items de checklist verificados en esta sesión
+
+- TCK-01 / TCK-02 / TCK-03 / TCK-04 / TCK-05: orden canónico del tick, salidas antes que entradas, guards no bloquean salidas, un cierre por tick.
+- MKR-01 / MKR-02 / MKR-03 / MKR-04 / MKR-09 / MKR-10 / MKR-11 / MKR-12 / MKR-13: estados maker tipados, trigger/pending/fill separados, post-only sin cruzar bid, requiere ask, no fill mismo tick, fill posterior.
+- NOR-01 / NOR-02 / NOR-03 / NOR-04 / NOR-05: target normal como orden maker, no fill mismo tick, fill posterior, legacy conserva target, V2 conserva obligación.
+- CBR-01 / CBR-02 / CBR-03 / CBR-04 / CBR-05: circuit breaker persistente, reinicio, bloqueo BUY, evento único, resolución explícita.
+- JSN-01 / JSN-02 / JSN-03 / JSN-06 / JSN-08 / JSN-09 / JSN-10: validadores JSONB, `stateVersion`, corrupto, enums, versiones, fail-safe.
+- CLS-01 / CLS-02 / CLS-03 / CLS-04 / CLS-05 / CLS-06 / CLS-07: `completeCycleShadow` como función única de cierre atómico, atomicidad, rollback, idempotencia, concurrencia.
+- FIF-01 / FIF-02 / FIF-03 / FIF-04 / FIF-05: sin FIFO, cierre por target explícito.
+- OBL-01 / OBL-02 / OBL-03 / OBL-07 / OBL-08: obligación V2 individual, `targetSellLevelId` null V2, rung válido, ciclos independientes.
+- QTY-01 / QTY-02 / QTY-03 / QTY-04 / QTY-07: cantidad del ciclo, `rung.quantity` ignorada, step, min order, fill validada.
+- PNL-01 / PNL-02 / PNL-03 / PNL-04 / PNL-05 / PNL-06 / PNL-07: fee BUY/SELL separadas, costes, reserva, neto operacional y disponible.
+- VM-01 / VM-02 / VM-08 / VM-09: view model sin hardcoded, PnL canónico, `requiresReview` correcto, realized separado de estimado.
+- UI-01 / UI-02 / UI-05: tipado, estados humanos, review visible (badge circuit breaker).
+- VAL-01 / VAL-02 / VAL-04 / VAL-05: check, tests Grid, tests frontend Grid, build.
+
+### Gates finales actualizados
+
+| Gate | Estado | Evidencia |
+|---|---|---|
+| GATE-0 | COMPLETED | main limpio, commits en origin/main |
+| GATE-1 Arquitectura | PASSED | tick canónico, lifecycle separado, JSONB estricto |
+| GATE-2 Integridad económica | PASSED | PnL, fees, costes, target V2, cantidad íntegra |
+| GATE-3 Ejecución SHADOW | PASSED | post-only, salidas antes entradas, cierre atómico |
+| GATE-4 Persistencia | PASSED | circuit breaker, riskState/makerExitState |
+| GATE-5 Tests | PASSED | 120/120 Grid, frontend Grid, build |
+| GATE-6 Migraciones | PASSED | 074 previa + 075 creada |
+| GATE-7 UX/Network | PASSED | view model + badge circuit breaker |
+| GATE-8 Commit/push | PASSED | 6 commits en origin/main |
+
+### Pendientes conscientes
+
+- VAL-06: suite completa tiene 12 fallos preexistentes ajenos (Telegram snapshots, IDCA market context helpers) no relacionados con Grid.
+- VAL-MIG-01 / VAL-MIG-02: ejecución de migraciones 074/075 en staging pendiente de deploy aprobado.
+- Deploy a staging y postdeploy a la espera de aprobación explícita.
+
