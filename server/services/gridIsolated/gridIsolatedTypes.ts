@@ -200,6 +200,7 @@ export type GridLevelStatus =
   | "planned"
   | "placed"
   | "open"
+  | "buy_maker_pending"
   | "partially_filled"
   | "filled"
   | "cancelled"
@@ -224,6 +225,12 @@ export interface GridLevel {
   netProfitTargetUsd: number;
   feeEstimateUsd: number;
   taxReserveUsd: number;
+  /** Timestamp when the BUY maker order was placed (BUY_MAKER_PENDING). */
+  buyMakerPendingAt: Date | null;
+  /** Canonical tick id when the BUY maker order was placed; fills require a later tick. */
+  buyMakerPendingTickId: number | null;
+  /** Requested maker price for the BUY order; must be below best ask to avoid taker fill. */
+  buyMakerRequestedPrice: number | null;
   createdAt: Date;
   placedAt: Date | null;
   filledAt: Date | null;
@@ -581,6 +588,12 @@ export interface GridIsolatedConfig {
   circuitBreakerOpenedAt?: Date | null;
   circuitBreakerReason?: string | null;
   circuitBreakerCooldownUntil?: Date | null;
+  circuitBreakerSourceCycleId?: string | null;
+  circuitBreakerSeverity?: "low" | "medium" | "high" | "critical" | null;
+  circuitBreakerReviewAfter?: Date | null;
+  circuitBreakerResolvedAt?: Date | null;
+  circuitBreakerResolvedBy?: string | null;
+  circuitBreakerResolutionReason?: string | null;
 }
 
 export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | "updatedAt"> = {
@@ -665,6 +678,12 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   circuitBreakerOpenedAt: null,
   circuitBreakerReason: null,
   circuitBreakerCooldownUntil: null,
+  circuitBreakerSourceCycleId: null,
+  circuitBreakerSeverity: null,
+  circuitBreakerReviewAfter: null,
+  circuitBreakerResolvedAt: null,
+  circuitBreakerResolvedBy: null,
+  circuitBreakerResolutionReason: null,
 };
 
 // ─── Mode Lock Safety Conditions ────────────────────────────────────
@@ -770,6 +789,7 @@ export const GRID_EVENT_TYPES = [
   "GRID_PUMP_GUARD_BLOCKED_REBUILD",
   "GRID_PUMP_GUARD_ALLOWED_EXIT_ONLY",
   "GRID_CIRCUIT_BREAKER_OPEN",
+  "GRID_CIRCUIT_BREAKER_RESOLVED",
   "GRID_CIRCUIT_BREAKER_BLOCKED_BUY",
   "GRID_RISK_STATE_REVIEW_REQUIRED",
   "GRID_TARGET_CALCULATION_REVIEW_REQUIRED",

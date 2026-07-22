@@ -9,7 +9,7 @@
  * no order placement, no state mutation. It only classifies and labels data.
  */
 
-import { executionPolicyLabel, type ExecutionPolicy, type GridCycleRiskState, type GridClosePath, TAX_RESERVE_PCT } from "./gridIsolatedTypes";
+import { executionPolicyLabel, type ExecutionPolicy, type GridCycleRiskState, type GridClosePath, TAX_RESERVE_PCT, DEFAULT_GRID_CONFIG } from "./gridIsolatedTypes";
 import { safeParseRiskStateJson } from "./gridJsonbValidators";
 import { buildGridMarketViewModel, type GridMarketViewModel } from "./buildGridMarketViewModel";
 import { computeCyclePnLWithRoles } from "./gridNetCalculator";
@@ -371,8 +371,8 @@ function computeCycleEstimates(
     quantity: qty,
     buyLiquidityRole: "maker",
     sellLiquidityRole: "maker",
-    buyFeePct: config?.buyFeePct ?? 0.09,
-    sellFeePct: config?.sellFeePct ?? 0.09,
+    buyFeePct: config?.buyFeePct ?? DEFAULT_GRID_CONFIG.buyFeePct,
+    sellFeePct: config?.sellFeePct ?? DEFAULT_GRID_CONFIG.sellFeePct,
     taxReservePct: TAX_RESERVE_PCT,
   });
 

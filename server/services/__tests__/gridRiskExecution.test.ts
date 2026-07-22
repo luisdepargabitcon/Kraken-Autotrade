@@ -178,7 +178,7 @@ describe("GridRiskManager — HOLD when no triggers", () => {
 });
 
 describe("GridRiskManager — Trailing Protection", () => {
-  const config = { ...DEFAULT_GRID_CONFIG, id: "1", createdAt: new Date(), updatedAt: new Date() } as GridIsolatedConfig;
+  const config = { ...DEFAULT_GRID_CONFIG, id: "1", createdAt: new Date(), updatedAt: new Date(), trailingEnabled: true } as GridIsolatedConfig;
 
   it("activates trailing when profit exceeds activation threshold", () => {
     const cycle: GridCycle = {
