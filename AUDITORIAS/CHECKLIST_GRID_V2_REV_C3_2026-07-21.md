@@ -393,15 +393,67 @@ origin/main base: `9f8c88b0213aae85edcbeccd165856a60550acb4`
 
 | Gate | Estado | Evidencia |
 |---|---|---|
-| GATE-0 | IN_PROGRESS | - |
-| GATE-1 Arquitectura | PENDING | - |
-| GATE-2 Integridad económica | PENDING | - |
-| GATE-3 Ejecución SHADOW | PENDING | - |
-| GATE-4 Persistencia | PENDING | - |
-| GATE-5 Tests | PENDING | - |
-| GATE-6 Migraciones | PENDING | - |
-| GATE-7 UX/Network | PENDING | - |
-| GATE-8 Commit/push | PENDING | - |
+| GATE-0 | COMPLETED | HEAD `02c1f8a` en main, origin/main limpio |
+| GATE-1 Arquitectura | PASSED | BUY lifecycle real, fail-safe JSONB, circuit breaker auditado |
+| GATE-2 Integridad económica | PASSED | PnL canónico, fees de config, target V2 |
+| GATE-3 Ejecución SHADOW | PASSED | post-only, BUY atómico, rearme seguro |
+| GATE-4 Persistencia | PASSED | migraciones 073-078 en `script/migrate.ts`, columnas persistentes |
+| GATE-5 Tests | PASSED | 148/148 tests Grid, `npm run check` y `npm run build` ✅ |
+| GATE-6 Migraciones | PASSED | 073-078 APPLIED en staging por `AutoMigrationRunner` |
+| GATE-7 UX/Network | PASSED | staging HTTP 200, endpoints Grid responden, `browser_preview` activo |
+| GATE-8 Commit/push | PASSED | `25b4b6c`, `eb7ee6c`, `02c1f8a` en origin/main |
+
+---
+
+# Actualización 2026-07-22 — Cierre REV-C9: BUY maker lifecycle, circuit breaker extendido y deploy staging
+
+## Resumen de cambios aplicados
+
+- `server/services/gridIsolated/gridIsolatedEngine.ts`: lifecycle BUY SHADOW (`buy_maker_pending`), fill atómico con `db.transaction`, rearme de BUY solo en rango activo, fail-safe JSONB con `REQUIRES_REVIEW`, `resolveCircuitBreaker` explícito.
+- `server/services/gridIsolated/gridIsolatedTypes.ts`: estado `buy_maker_pending`, campos de lifecycle BUY, campos completos de circuit breaker, evento `GRID_CIRCUIT_BREAKER_RESOLVED`.
+- `shared/schema.ts`: columnas `buy_maker_pending_*` en `grid_isolated_levels` y columnas circuit breaker en `grid_isolated_configs`.
+- `db/migrations/077_grid_circuit_breaker_full.sql` y `078_grid_buy_maker_lifecycle.sql`.
+- `script/migrate.ts`: trackeadas migraciones 073-078.
+- `db/migrations/074_grid_exit_runtime_config_and_maker_state.sql`: comentario 074 corregido.
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`: fallback `0.09` reemplazado por `DEFAULT_GRID_CONFIG`.
+- `server/services/__tests__/gridRiskExecution.test.ts`: config trailing habilitado para tests de trailing.
+
+## Validaciones ejecutadas
+
+| Validación | Comando/Acción | Resultado |
+|---|---|---|
+| TypeScript | `npm run check` | ✅ exit 0 |
+| Build | `npm run build` | ✅ |
+| Tests Grid | `npx vitest run server/services/gridIsolated server/services/__tests__/gridRiskExecution.test.ts server/services/__tests__/buildGridAuditViewModel.test.ts` | ✅ 10/10 archivos, 148/148 tests |
+| Backup staging | `pg_dump` de `grid_isolated_configs/levels/cycles` | ✅ `/opt/krakenbot-staging/backups/grid_pre_073_078.sql` |
+| Migraciones staging | `AutoMigrationRunner` en arranque contenedor | ✅ 073-078 APPLIED |
+| Endpoints staging | `GET /api/grid-isolated/status,cycles,levels,monitor/audit,shadow-open-cycles/diagnose` | ✅ SHADOW, priceFresh, 0 open cycles, 192 levels, 1 legacy completed |
+| Logs staging | `docker compose logs` | ✅ `GRID_CYCLES_RECOVERED` 0 errores, P&L 0 errores, sin FIFO/HOLD/mixture |
+| Visual | `browser_preview` en `http://5.250.184.18:3020` | ✅ sitio carga HTTP 200 |
+
+## Items de checklist verificados en esta sesión (C9)
+
+- C9-4 / C9-5 / C9-6: BUY SHADOW maker lifecycle real, fill atómico, rearme según rango activo.
+- C9-7: JSONB fail-safe review sin resetear estado.
+- C9-8: circuit breaker con migración 077 y `resolveCircuitBreaker`.
+- C9-10: obligación V2 (`SYNTHETIC_RUNG`, `targetSellLevelId` null).
+- C9-11 (parcial): fallback `0.09` eliminado; `any` en `buildGridAuditViewModel.ts` pendiente.
+- C9-12: migración 076 justificada (índice compuesto `range_version_id, status`); comentario 074 corregido.
+- C9-15 / C9-16 / C9-17: commit/push, backup, pull, deploy staging con migraciones.
+- C9-18 / C9-19: postdeploy endpoints, logs, Network, visual.
+- C9-20: BITACORA actualizada.
+
+## Pendientes conscientes
+
+- C9-9: SELL legacy lifecycle real (no bloqueante: SELL actual cierra atómicamente via `completeCycleShadow`).
+- C9-11: eliminar todos los `as any` de `buildGridAuditViewModel.ts`.
+- C9-13: tests TEST-001 a TEST-092 (placeholder actualmente vacío).
+- C9-3: cierre fila por fila completo del checklist base (se cierran gates y validaciones críticas en esta actualización).
+
+## Notas
+
+- No se tocaron IDCA, FISCO, REAL mode ni política 3 maker + 4º taker.
+- SSH a staging requiere `-o KexAlgorithms=diffie-hellman-group14-sha256 -o MACs=hmac-sha2-256 -o HostKeyAlgorithms=ssh-rsa,ssh-ed25519` desde este entorno.
 
 ---
 
