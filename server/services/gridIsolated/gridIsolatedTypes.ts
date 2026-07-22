@@ -201,6 +201,7 @@ export type GridLevelStatus =
   | "placed"
   | "open"
   | "buy_maker_pending"
+  | "sell_maker_pending"
   | "partially_filled"
   | "filled"
   | "cancelled"
@@ -391,6 +392,16 @@ export interface GridCycle {
   buyFilledAt: Date | null;
   sellFilledAt: Date | null;
   holdTimeMinutes: number | null;
+  /** True when one of the JSONB fields is invalid and requires manual review. */
+  requiresReview: boolean;
+  /** Human-readable reason why the cycle was marked for review. */
+  reviewReason: string | null;
+  /** Machine-readable review code (e.g. RISK_UNKNOWN_VERSION, TARGET_KIND_INVALID). */
+  reviewCode: string | null;
+  /** Timestamp when the review flag was set. */
+  reviewDetectedAt: Date | null;
+  /** Source JSONB field that caused the review (risk_state_json, maker_exit_state_json, target_calculation_json). */
+  reviewSource: string | null;
   createdAt: Date;
   completedAt: Date | null;
 }
@@ -801,6 +812,7 @@ export const GRID_EVENT_TYPES = [
   "GRID_SHADOW_CLEANUP_PREVIEWED",
   "GRID_SHADOW_CLEANUP_APPLIED",
   "GRID_SHADOW_CLEANUP_ABORTED",
+  "GRID_SELL_LIFECYCLE_ADVANCED",
 ] as const;
 
 export type GridEventType = (typeof GRID_EVENT_TYPES)[number];

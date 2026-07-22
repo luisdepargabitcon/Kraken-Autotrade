@@ -79,10 +79,14 @@ import {
 } from "./gridNetCalculator";
 import {
   safeParseMakerExitStateJson,
+  safeParseMakerExitStateJsonForensic,
   safeParseRiskStateJson,
+  safeParseRiskStateJsonForensic,
   safeParseTargetCalculationJson,
+  safeParseTargetCalculationJsonForensic,
   validateMakerExitStateJson,
   validateRiskStateJson,
+  validateTargetCalculationJson,
 } from "./gridJsonbValidators";
 import {
   DEFAULT_GRID_CONFIG,
@@ -100,6 +104,7 @@ import {
   type GridMode,
   type GridRangeVersion,
   type GridLevel,
+  type GridLevelStatus,
   type GridCycle,
   type GridCycleStatus,
   type GridExecutionStatus,
@@ -528,10 +533,18 @@ class GridIsolatedEngine {
    * Corrupt JSONB returns a review-required state instead of silently resetting.
    */
   private parseRiskState(cycle: GridCycle): GridCycleRiskState {
-    const parsed = safeParseRiskStateJson(cycle.riskStateJson);
-    if (!parsed) return this.defaultRiskState();
-    // makerExitStateJson is the source of truth for the protective exit lifecycle.
-    const makerExit = safeParseMakerExitStateJson(cycle.makerExitStateJson);
+    const riskForensic = safeParseRiskStateJsonForensic(cycle.riskStateJson);
+    const exitForensic = safeParseMakerExitStateJsonForensic(cycle.makerExitStateJson);
+
+    if (!riskForensic.valid && !cycle.requiresReview) {
+      this.markCycleForReview(cycle, riskForensic.reason, riskForensic.code, "risk_state_json");
+    }
+    if (!exitForensic.valid && !cycle.requiresReview) {
+      this.markCycleForReview(cycle, exitForensic.reason, exitForensic.code, "maker_exit_state_json");
+    }
+
+    const parsed = riskForensic.value ?? this.defaultRiskState();
+    const makerExit = exitForensic.value;
     if (makerExit) {
       parsed.protectiveExit = makerExit;
     }
@@ -552,7 +565,47 @@ class GridIsolatedEngine {
    * Invalid JSONB returns null, blocking ambiguous target closure.
    */
   private parseTargetCalculation(cycle: GridCycle): GridTargetCalculation | null {
-    return safeParseTargetCalculationJson(cycle.targetCalculationJson);
+    const targetForensic = safeParseTargetCalculationJsonForensic(cycle.targetCalculationJson);
+    if (!targetForensic.valid && !cycle.requiresReview) {
+      this.markCycleForReview(cycle, targetForensic.reason, targetForensic.code, "target_calculation_json");
+    }
+    return targetForensic.value;
+  }
+
+  /**
+   * Mark a cycle for manual forensic review. The original JSONB columns are left
+   * untouched; only the independent review columns are updated.
+   */
+  private markCycleForReview(
+    cycle: GridCycle,
+    reason: string | undefined,
+    code: string | undefined,
+    source: string
+  ): void {
+    cycle.requiresReview = true;
+    cycle.reviewReason = reason ? `${source}: ${reason}` : `Invalid ${source}`;
+    cycle.reviewCode = code ?? `${source.toUpperCase()}_INVALID`;
+    cycle.reviewDetectedAt = new Date();
+    cycle.reviewSource = source;
+  }
+
+  /**
+   * Persist review flags for a cycle without overwriting the raw JSONB fields.
+   */
+  private async persistReviewState(cycle: GridCycle): Promise<void> {
+    try {
+      await db.update(gridIsolatedCycles)
+        .set({
+          requiresReview: cycle.requiresReview,
+          reviewReason: cycle.reviewReason,
+          reviewCode: cycle.reviewCode,
+          reviewDetectedAt: cycle.reviewDetectedAt,
+          reviewSource: cycle.reviewSource,
+        })
+        .where(eq(gridIsolatedCycles.id, cycle.id));
+    } catch (err) {
+      botLogger.error("GRID_REVIEW_PERSIST_FAILED" as any, `[GridIsolatedEngine] Failed to persist review state for cycle ${cycle.id}: ${err}`, { cycleId: cycle.id });
+    }
   }
 
   /**
@@ -1393,9 +1446,42 @@ class GridIsolatedEngine {
         buyFilledAt: row.buyFilledAt,
         sellFilledAt: row.sellFilledAt,
         holdTimeMinutes: row.holdTimeMinutes,
+        requiresReview: row.requiresReview ?? false,
+        reviewReason: row.reviewReason ?? null,
+        reviewCode: row.reviewCode ?? null,
+        reviewDetectedAt: row.reviewDetectedAt ?? null,
+        reviewSource: row.reviewSource ?? null,
         createdAt: row.createdAt,
         completedAt: row.completedAt,
       }));
+
+      // Validate persisted JSONB and mark review on cycles loaded with corrupt data.
+      for (const cycle of this.cycles) {
+        const riskForensic = safeParseRiskStateJsonForensic(cycle.riskStateJson);
+        const exitForensic = safeParseMakerExitStateJsonForensic(cycle.makerExitStateJson);
+        const targetForensic = safeParseTargetCalculationJsonForensic(cycle.targetCalculationJson);
+        if (!riskForensic.valid && !cycle.requiresReview) {
+          cycle.requiresReview = true;
+          cycle.reviewReason = `risk_state_json: ${riskForensic.reason}`;
+          cycle.reviewCode = riskForensic.code ?? "RISK_INVALID";
+          cycle.reviewDetectedAt = new Date();
+          cycle.reviewSource = "risk_state_json";
+        }
+        if (!exitForensic.valid && !cycle.requiresReview) {
+          cycle.requiresReview = true;
+          cycle.reviewReason = `maker_exit_state_json: ${exitForensic.reason}`;
+          cycle.reviewCode = exitForensic.code ?? "MAKER_EXIT_INVALID";
+          cycle.reviewDetectedAt = new Date();
+          cycle.reviewSource = "maker_exit_state_json";
+        }
+        if (!targetForensic.valid && !cycle.requiresReview) {
+          cycle.requiresReview = true;
+          cycle.reviewReason = `target_calculation_json: ${targetForensic.reason}`;
+          cycle.reviewCode = targetForensic.code ?? "TARGET_INVALID";
+          cycle.reviewDetectedAt = new Date();
+          cycle.reviewSource = "target_calculation_json";
+        }
+      }
     } catch (error) {
       botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to load cycles: ${error}`);
     }
@@ -2172,6 +2258,18 @@ class GridIsolatedEngine {
       if (priceResult.pair != null && priceResult.pair !== cycle.pair) continue;
 
       const risk = this.parseRiskState(cycle);
+      if (cycle.requiresReview) {
+        await this.persistReviewState(cycle);
+        continue;
+      }
+
+      // Strict validation: do not close cycles whose target JSONB is invalid.
+      this.parseTargetCalculation(cycle);
+      if (cycle.requiresReview) {
+        await this.persistReviewState(cycle);
+        continue;
+      }
+
       const exit = this.resolveExitForCycle(cycle, priceResult, tickCtx);
       if (!exit.targetPrice || !exit.targetQty || !exit.closePath || !exit.eligibleForFill) continue;
       if (!this.canFillExit(bestBid, exit.targetPrice, exit.closePath)) continue;
@@ -2225,7 +2323,8 @@ class GridIsolatedEngine {
         continue;
       }
 
-      // SELL levels (legacy persisted targets or V2 rungs claimed by targetSellLevelId)
+      // SELL levels (legacy persisted targets or V2 rungs claimed by targetSellLevelId).
+      // Reconstruct the real maker lifecycle: TRIGGERED -> MAKER_PENDING -> MAKER_FILLED.
       const validation = this.canProcessShadowFill(level, activeRangeId, aux.pumpGuard, tickCtx, priceResult);
       if (!validation.ok) {
         await this.logEvent(validation.eventType!, validation.reason!, {
@@ -2235,11 +2334,11 @@ class GridIsolatedEngine {
         continue;
       }
 
-      const cycle = await this.processCycleFill(level, priceResult, tickCtx);
-      if (cycle) {
+      const result = await this.processSellLevelLifecycle(level, priceResult, tickCtx);
+      if (result) {
         fillsProcessed = true;
-        await this.logEvent("GRID_LEVEL_FILLED", `[SHADOW] SELL level filled at ${priceResult.price}`, {
-          levelId: level.id, side: level.side, price: priceResult.price, mode: "SHADOW",
+        await this.logEvent("GRID_SELL_LIFECYCLE_ADVANCED", `[SHADOW] SELL level ${level.id} lifecycle advanced: ${result}`, {
+          levelId: level.id, side: level.side, state: result, price: priceResult.price, mode: "SHADOW",
         });
       }
     }
@@ -2342,6 +2441,184 @@ class GridIsolatedEngine {
       botLogger.error("GRID_CYCLE_BUY_PLACED" as any, `[GridIsolatedEngine] Fallo al colocar BUY maker ${level.id}: ${err}`, { levelId: level.id });
       return null;
     }
+  }
+
+  /**
+   * SELL level lifecycle in SHADOW: reconstruct a real resting maker order for
+   * legacy persisted targets and V2 synthetic rungs. Trigger happens on the tick
+   * the level is crossed; the resting order (MAKER_PENDING) is placed on a later
+   * tick, and the fill is executed by processOpenCyclesShadow on a subsequent tick
+   * when the best bid reaches the requested price.
+   */
+  private async processSellLevelLifecycle(
+    level: GridLevel,
+    priceResult: GridShadowExecutionPriceResult,
+    tickCtx: GridTickContext
+  ): Promise<"triggered" | "pending" | null> {
+    if (!this.activeRangeVersion || !this.config) return null;
+    const activeRangeId = this.activeRangeVersion.id;
+    if (level.side !== "SELL") return null;
+
+    const openCycle = this.cycles.find(
+      c =>
+        (c.status === "buy_filled" || c.status === "sell_placed") &&
+        c.rangeVersionId === activeRangeId &&
+        c.targetSellLevelId === level.id
+    );
+    if (!openCycle) {
+      await this.logEvent("GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE", `[SHADOW] SELL level ${level.id} ignored: no cycle owns it as explicit target`, {
+        levelId: level.id, sellPrice: level.price, activeRangeId,
+      });
+      return null;
+    }
+
+    const closePath: GridClosePath =
+      openCycle.targetKind === "PERSISTED_SELL"
+        ? "LEGACY_PERSISTED_TARGET"
+        : openCycle.targetKind === "SYNTHETIC_RUNG"
+        ? "SYNTHETIC_RUNG"
+        : "NORMAL_TARGET";
+
+    const currentRisk = this.parseRiskState(openCycle);
+    const intendedPrice = openCycle.targetSellPrice ?? level.price;
+    const currentBid = priceResult.bid ?? tickCtx.bid ?? null;
+    const currentAsk = priceResult.ask ?? tickCtx.ask ?? null;
+
+    if (
+      currentRisk.protectiveExit.state === "NONE" ||
+      currentRisk.protectiveExit.state === "ARMED" ||
+      currentRisk.protectiveExit.state === "REQUIRES_REVIEW"
+    ) {
+      const nextExit: GridPendingMakerExit = {
+        ...this.defaultMakerExit(),
+        state: "TRIGGERED",
+        route: closePath,
+        triggerPrice: intendedPrice,
+        triggerDetectedAt: tickCtx.startedAt,
+        bestBidAtTrigger: currentBid,
+        bestAskAtTrigger: currentAsk,
+        requestedMakerPrice: null,
+        pendingQuantity: openCycle.quantity,
+        lifecycleTickId: tickCtx.tickId,
+      };
+      const nextRisk: GridCycleRiskState = {
+        ...currentRisk,
+        activeExitRoute: closePath,
+        pendingExitPrice: intendedPrice,
+        protectiveExit: nextExit,
+        lastEvaluatedAt: tickCtx.startedAt,
+      };
+      await this.persistSellLifecycle(openCycle, level, nextRisk, nextExit, "open");
+      return "triggered";
+    }
+
+    if (currentRisk.protectiveExit.state === "TRIGGERED") {
+      if (
+        currentRisk.protectiveExit.lifecycleTickId == null ||
+        tickCtx.tickId <= currentRisk.protectiveExit.lifecycleTickId
+      ) {
+        return null;
+      }
+      const requestedPrice = this.resolveSellMakerRequestPrice(closePath, intendedPrice, currentBid ?? 0, currentAsk, openCycle.pair);
+      if (requestedPrice == null || !Number.isFinite(requestedPrice)) {
+        await this.logEvent("GRID_LEVEL_POST_ONLY_REJECTED", `[SHADOW] SELL maker ${level.id} no colocado: no se puede reconstruir precio maker`, {
+          levelId: level.id, closePath, intendedPrice, currentBid, currentAsk,
+        });
+        return null;
+      }
+      const nextExit: GridPendingMakerExit = {
+        ...currentRisk.protectiveExit,
+        state: "MAKER_PENDING",
+        requestedMakerPrice: requestedPrice,
+        makerOrderCreatedAt: tickCtx.startedAt,
+        makerEligibleAfter: tickCtx.startedAt,
+        lifecycleTickId: tickCtx.tickId,
+        pendingQuantity: openCycle.quantity,
+        simulatedOrderId: `grid-shadow-sell-${openCycle.id}-${tickCtx.tickId}`,
+      };
+      const nextRisk: GridCycleRiskState = {
+        ...currentRisk,
+        activeExitRoute: closePath,
+        pendingExitPrice: requestedPrice,
+        protectiveExit: nextExit,
+        lastEvaluatedAt: tickCtx.startedAt,
+      };
+      await this.persistSellLifecycle(openCycle, level, nextRisk, nextExit, "sell_maker_pending");
+      return "pending";
+    }
+
+    // MAKER_PENDING and beyond are handled by processOpenCyclesShadow/completeCycleShadow.
+    return null;
+  }
+
+  /**
+   * Resolve the resting maker price for a SELL level depending on the close path.
+   * Legacy/fixed targets keep their exact target price; protective routes follow
+   * post-only rules.
+   */
+  private resolveSellMakerRequestPrice(
+    closePath: GridClosePath,
+    intendedPrice: number,
+    currentBid: number,
+    currentAsk: number | null,
+    pair: string
+  ): number | null {
+    if (
+      closePath === "LEGACY_PERSISTED_TARGET" ||
+      closePath === "SYNTHETIC_RUNG" ||
+      closePath === "NORMAL_TARGET"
+    ) {
+      return intendedPrice;
+    }
+    return this.computeShadowPostOnlySellPrice(closePath, intendedPrice, currentBid, currentAsk, pair);
+  }
+
+  /**
+   * Persist SELL lifecycle state to DB and in-memory without closing the cycle.
+   */
+  private async persistSellLifecycle(
+    cycle: GridCycle,
+    level: GridLevel,
+    risk: GridCycleRiskState,
+    exit: GridPendingMakerExit,
+    levelStatus: GridLevelStatus
+  ): Promise<void> {
+    if (!this.config) return;
+    try {
+      await db.transaction(async (tx) => {
+        await tx.update(gridIsolatedCycles)
+          .set({
+            status: "sell_placed",
+            riskStateJson: risk,
+            makerExitStateJson: exit,
+            sellClientOrderId: level.clientOrderId,
+          })
+          .where(and(
+            eq(gridIsolatedCycles.id, cycle.id),
+            inArray(gridIsolatedCycles.status, POSITION_OPEN_GRID_CYCLE_STATUSES as any)
+          ));
+        await tx.update(gridIsolatedLevels)
+          .set({
+            status: levelStatus,
+            placedAt: levelStatus === "sell_maker_pending" ? new Date() : level.placedAt,
+          })
+          .where(and(
+            eq(gridIsolatedLevels.id, level.id),
+            eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
+            eq(gridIsolatedLevels.side, "SELL")
+          ));
+      });
+    } catch (err) {
+      botLogger.error("GRID_SELL_LIFECYCLE_PERSIST_FAILED" as any, `[GridIsolatedEngine] Fallo al persistir lifecycle SELL para ciclo ${cycle.id}: ${err}`, { cycleId: cycle.id, levelId: level.id });
+      return;
+    }
+
+    cycle.status = "sell_placed";
+    cycle.riskStateJson = risk;
+    cycle.makerExitStateJson = exit;
+    cycle.sellClientOrderId = level.clientOrderId;
+    level.status = levelStatus;
+    if (levelStatus === "sell_maker_pending") level.placedAt = new Date();
   }
 
   /**
@@ -2540,7 +2817,7 @@ class GridIsolatedEngine {
       }
       const explicitCycle = this.cycles.find(
         c =>
-          c.status === "buy_filled" &&
+          (c.status === "buy_filled" || c.status === "sell_placed") &&
           c.rangeVersionId === activeRangeId &&
           c.targetSellLevelId === level.id
       );
@@ -2552,15 +2829,7 @@ class GridIsolatedEngine {
           details: { levelId: level.id, activeRangeId },
         };
       }
-      const bestBid = priceResult.bid ?? tickCtx.bid ?? null;
-      if (bestBid == null || bestBid < level.price) {
-        return {
-          ok: false,
-          eventType: "GRID_MAKER_PENDING_FILLED",
-          reason: `[SHADOW] SELL level ${level.id} no fill: bid ${bestBid} < price ${level.price}`,
-          details: { levelId: level.id, bestBid, levelPrice: level.price },
-        };
-      }
+      // SELL lifecycle does not fill immediately; placement is validated later.
     }
 
     return { ok: true };
@@ -2637,6 +2906,11 @@ class GridIsolatedEngine {
         buyFilledAt: tickCtx.startedAt,
         sellFilledAt: null,
         holdTimeMinutes: 0,
+        requiresReview: false,
+        reviewReason: null,
+        reviewCode: null,
+        reviewDetectedAt: null,
+        reviewSource: null,
         createdAt: tickCtx.startedAt,
         completedAt: null,
       };
@@ -2658,7 +2932,16 @@ class GridIsolatedEngine {
             taxReservePct: TAX_RESERVE_PCT,
           }
         );
-        if (selectorResult.selected) {
+        const targetValidation = validateTargetCalculationJson(selectorResult);
+        if (!targetValidation.valid) {
+          this.markCycleForReview(cycle, targetValidation.reason, targetValidation.code, "target_calculation_json");
+          await this.logEvent("GRID_TARGET_CALCULATION_REVIEW_REQUIRED", `[SHADOW] Ciclo ${cycle.cycleNumber}: target V2 con JSONB inválido: ${targetValidation.reason}`, {
+            cycleId: cycle.id,
+            reason: targetValidation.reason,
+            code: targetValidation.code,
+            exitPolicyVersion,
+          });
+        } else if (selectorResult.selected) {
           cycle.targetKind = selectorResult.targetKind;
           cycle.targetRungLevelId = selectorResult.targetRungLevelId;
           cycle.targetSellLevelId = selectorResult.targetSellLevelId;
@@ -2694,6 +2977,11 @@ class GridIsolatedEngine {
         riskStateJson: cycle.riskStateJson,
         buyClientOrderId: cycle.buyClientOrderId,
         buyFilledAt: now,
+        requiresReview: cycle.requiresReview,
+        reviewReason: cycle.reviewReason,
+        reviewCode: cycle.reviewCode,
+        reviewDetectedAt: cycle.reviewDetectedAt,
+        reviewSource: cycle.reviewSource,
       };
 
       // Atomic BUY fill: level update + cycle insert in a single transaction.
@@ -2749,35 +3037,10 @@ class GridIsolatedEngine {
       });
 
       return cycle;
-    } else if (level.side === "SELL") {
-      // Target-based SELL closing: the SELL level must be the explicit target of
-      // an open cycle. No FIFO fallback.
-      const openCycle = this.cycles.find(
-        c =>
-          c.status === "buy_filled" &&
-          c.rangeVersionId === activeRangeId &&
-          c.targetSellLevelId === level.id
-      );
-
-      if (!openCycle) {
-        await this.logEvent("GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE", `[SHADOW] SELL level ${level.id} ignored: no cycle owns it as explicit target`, {
-          levelId: level.id, sellPrice: level.price, activeRangeId,
-        });
-        return null;
-      }
-
-      const closePath: GridClosePath =
-        openCycle.targetKind === "PERSISTED_SELL"
-          ? "LEGACY_PERSISTED_TARGET"
-          : openCycle.targetKind === "SYNTHETIC_RUNG"
-          ? "SYNTHETIC_RUNG"
-          : "NORMAL_TARGET";
-
-      const sellFillPrice = priceResult.bid ?? level.price;
-      const closed = await this.completeCycleShadow(openCycle, sellFillPrice, level.id, closePath, priceResult);
-      return closed ? openCycle : null;
     }
 
+    // SELL lifecycle is handled by processSellLevelLifecycle in simulateShadowTick
+    // and filled later by processOpenCyclesShadow via completeCycleShadow.
     return null;
   }
 
@@ -2811,6 +3074,11 @@ class GridIsolatedEngine {
       if (!POSITION_OPEN_GRID_CYCLE_STATUSES.includes(cycle.status as any)) continue;
 
       const risk = this.parseRiskState(cycle);
+
+      if (cycle.requiresReview) {
+        await this.persistReviewState(cycle);
+        continue;
+      }
 
       const hasTarget = cycle.targetSellPrice != null && cycle.targetSellPrice > 0;
       const pendingExit = risk.protectiveExit.state !== "NONE";
@@ -2879,26 +3147,18 @@ class GridIsolatedEngine {
       // cycle as requiring manual review, block further automatic transitions
       // and preserve the original JSON for inspection.
       const riskValidation = validateRiskStateJson(nextRisk);
+      const exitValidation = validateMakerExitStateJson(nextRisk.protectiveExit);
       if (!riskValidation.valid) {
         botLogger.error("GRID_RISK_STATE_REVIEW_REQUIRED" as any, `[GridIsolatedEngine] riskStateJson inválido para ciclo ${cycle.id}: ${riskValidation.reason}`, { code: riskValidation.code });
-        nextRisk.protectiveExit = {
-          ...nextRisk.protectiveExit,
-          state: "REQUIRES_REVIEW",
-          cancellationReason: `RISK:${riskValidation.code}:${riskValidation.reason}`,
-        };
-        nextRisk.activeExitRoute = null;
-        nextRisk.pendingExitPrice = null;
+        this.markCycleForReview(cycle, riskValidation.reason, riskValidation.code, "risk_state_json");
+        await this.persistReviewState(cycle);
+        continue;
       }
-      const exitValidation = validateMakerExitStateJson(nextRisk.protectiveExit);
       if (!exitValidation.valid) {
         botLogger.error("GRID_MAKER_EXIT_STATE_REVIEW_REQUIRED" as any, `[GridIsolatedEngine] makerExitStateJson inválido para ciclo ${cycle.id}: ${exitValidation.reason}`, { code: exitValidation.code });
-        nextRisk.protectiveExit = {
-          ...nextRisk.protectiveExit,
-          state: "REQUIRES_REVIEW",
-          cancellationReason: `EXIT:${exitValidation.code}:${exitValidation.reason}`,
-        };
-        nextRisk.activeExitRoute = null;
-        nextRisk.pendingExitPrice = null;
+        this.markCycleForReview(cycle, exitValidation.reason, exitValidation.code, "maker_exit_state_json");
+        await this.persistReviewState(cycle);
+        continue;
       }
 
       cycle.riskStateJson = nextRisk;

@@ -1,6 +1,7 @@
 -- Migration 074: runtime Grid config toggles and per-side fee defaults
 -- Phase: 3C.5-A-REV-C3
--- Safe defaults: V2 policy disabled by default, trailing/stop disabled, 0.09 % (0.0009 decimal) per-side fees.
+-- default_exit_policy_version defaults to FIRST_PROFITABLE_HIGHER_RUNG_V2.
+-- Trailing/stop disabled by default; per-side fees default to 0.09 % (0.0009 decimal).
 
 DO $$
 BEGIN

@@ -10,7 +10,7 @@
  */
 
 import { executionPolicyLabel, type ExecutionPolicy, type GridCycleRiskState, type GridClosePath, TAX_RESERVE_PCT, DEFAULT_GRID_CONFIG } from "./gridIsolatedTypes";
-import { safeParseRiskStateJson } from "./gridJsonbValidators";
+import { safeParseRiskStateJson, safeParseTargetCalculationJson } from "./gridJsonbValidators";
 import { buildGridMarketViewModel, type GridMarketViewModel } from "./buildGridMarketViewModel";
 import { computeCyclePnLWithRoles } from "./gridNetCalculator";
 
@@ -264,18 +264,16 @@ function cycleRangeLabel(relation: CycleRangeRelation): string {
   return "Rango anterior (gestión activa)";
 }
 
-function extractTargetCalculation(cycle: any): { operationalCostsUsd?: number; exchangeFeesUsd?: number } | null {
-  if (!cycle?.targetCalculationJson) return null;
-  try {
-    return typeof cycle.targetCalculationJson === "string"
-      ? JSON.parse(cycle.targetCalculationJson)
-      : cycle.targetCalculationJson;
-  } catch {
-    return null;
-  }
+function extractTargetCalculation(cycle: { targetCalculationJson?: unknown }): { operationalCostsUsd?: number; exchangeFeesUsd?: number } | null {
+  const parsed = safeParseTargetCalculationJson(cycle.targetCalculationJson);
+  if (!parsed) return null;
+  return {
+    operationalCostsUsd: toNum(parsed.operationalCostsUsd) ?? undefined,
+    exchangeFeesUsd: toNum(parsed.exchangeFeesUsd) ?? undefined,
+  };
 }
 
-function parseRiskState(cycle: any): GridCycleRiskState | null {
+function parseRiskState(cycle: { riskStateJson?: unknown }): GridCycleRiskState | null {
   if (!cycle?.riskStateJson) return null;
   return safeParseRiskStateJson(cycle.riskStateJson);
 }
@@ -517,6 +515,10 @@ function translateLevelStatus(status: string | null): string {
       return "Ejecutado";
     case "replaced":
       return "Reemplazado";
+    case "buy_maker_pending":
+      return "BUY maker pendiente";
+    case "sell_maker_pending":
+      return "SELL maker pendiente";
     case "cancelled":
       return "Cancelado";
     case "expired":

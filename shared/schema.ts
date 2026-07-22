@@ -1836,6 +1836,11 @@ export const gridIsolatedCycles = pgTable("grid_isolated_cycles", {
   buyFilledAt:             timestamp("buy_filled_at", { withTimezone: true }),
   sellFilledAt:            timestamp("sell_filled_at", { withTimezone: true }),
   holdTimeMinutes:         integer("hold_time_minutes"),
+  requiresReview:          boolean("requires_review").notNull().default(false),
+  reviewReason:            text("review_reason"),
+  reviewCode:              text("review_code"),
+  reviewDetectedAt:        timestamp("review_detected_at", { withTimezone: true }),
+  reviewSource:            text("review_source"),
   createdAt:               timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt:             timestamp("completed_at", { withTimezone: true }),
 });

@@ -5,6 +5,49 @@
 
 ---
 
+## 2026-07-22 — GRID V2 REV-C10: SELL legacy lifecycle maker real, JSONB forense estricto, validación targetCalculationJson V2 y refactor view model
+
+### Resumen
+Implementación del ciclo de vida real para SELL en SHADOW (TRIGGERED → MAKER_PENDING → MAKER_FILLED → COMPLETED), preservación forense de JSONB con banderas de revisión independientes, validación estricta de `targetCalculationJson` y mejoras en el view model operacional. Migración 079 añade columnas de revisión; se corrigió el comentario de la migración 074; el índice 076 se justifica para consultas de ciclos abiertos.
+
+### Problema
+- La salida SELL en SHADOW cerraba ciclos de forma directa sin simular el ciclo maker real (trigger, colocación, fill).
+- JSONB corrupto (risk, maker, target) podía sobrescribirse o perderse sin traza.
+- `targetCalculationJson` V2 carecía de validación estricta al crearse/persistirse.
+- El view model parseaba `targetCalculationJson` con `JSON.parse` directo y no traducía `sell_maker_pending`.
+
+### Solución
+- `processSellLevelLifecycle` gestiona el lifecycle SELL: TRIGGERED, luego MAKER_PENDING, y el fill se delega a `processOpenCyclesShadow` → `completeCycleShadow`.
+- `processCycleFill` BUY ya no cierra SELL; la ruta SELL está unificada.
+- Parsers forenses `safeParse*Forensic` conservan el raw y devuelven reason/code.
+- `grid_isolated_cycles` añade `requires_review`, `review_reason`, `review_code`, `review_detected_at`, `review_source`; se registran en schema, types y loadCycles.
+- `evaluateRiskForOpenCycles` y `processOpenCyclesShadow` saltan ciclos en revisión y no sobrescriben JSONB inválido.
+- `targetCalculationJson` se valida con `validateTargetCalculationJson` en BUY fill.
+- `buildGridOperationalViewModel` usa `safeParseTargetCalculationJson` y `safeParseRiskStateJson`; traduce `buy_maker_pending` y `sell_maker_pending`.
+- Migración 079 `grid_cycle_forensic_review_state.sql` + registro en `script/migrate.ts`.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedEngine.ts` (lifecycle SELL, parseRiskState forense, review helpers, persistReviewState, target validation)
+- `server/services/gridIsolated/gridJsonbValidators.ts` (parsers forenses)
+- `server/services/gridIsolated/gridIsolatedTypes.ts` (`sell_maker_pending`, campos de revisión en `GridCycle`)
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts` (safeParse target/risk, status labels)
+- `shared/schema.ts` (columnas forenses en `grid_isolated_cycles`)
+- `db/migrations/079_grid_cycle_forensic_review_state.sql` (nueva)
+- `db/migrations/074_grid_exit_runtime_config_and_maker_state.sql` (comentario corregido)
+- `script/migrate.ts` (registro 079)
+- `server/services/gridIsolated/__tests__/gridForensicJsonb.test.ts` (nueva)
+
+### Validaciones
+- `npm run check` ✅
+- `npm run build` ✅
+- `npx vitest run server/services/gridIsolated` ✅ 125/125 (8 test files)
+- `npx vitest run` ejecutado; fallos preexistentes en módulos ajenos (Telegram snapshots, IDCA market-context helpers) no afectan a Grid.
+
+### Estado final
+Implementación REV-C10 cerrada localmente. Pendiente: deploy en staging con migración 079, validación visual/network, cierre documental del checklist.
+
+---
+
 ## 2026-07-22 — GRID V2 REV-C9: BUY SHADOW maker lifecycle real, circuit breaker con resolución explícita, JSONB fail-safe y deploy staging
 
 ### Resumen

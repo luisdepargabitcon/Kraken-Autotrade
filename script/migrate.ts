@@ -1326,6 +1326,7 @@ END $$;
       "076_grid_open_cycles_range_status_index",
       "077_grid_circuit_breaker_full",
       "078_grid_buy_maker_lifecycle",
+      "079_grid_cycle_forensic_review_state",
     ].map((name) => ({
       id: name,
       filePath: path.resolve(process.cwd(), "db", "migrations", `${name}.sql`),

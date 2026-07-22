@@ -288,11 +288,25 @@ export function validateTargetCalculationJson(raw: unknown): JsonbValidationResu
  * Safe parser used when loading cycles from DB. On corrupt JSONB returns a
  * review-required risk state instead of silently discarding data.
  */
-export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null {
-  if (raw == null) return null;
+export interface JsonbForensicParseResult<T> {
+  valid: boolean;
+  value: T | null;
+  raw: unknown;
+  reason?: string;
+  code?: string;
+}
+
+export function safeParseRiskStateJsonForensic(raw: unknown): JsonbForensicParseResult<GridCycleRiskState> {
+  if (raw == null) return { valid: true, value: null, raw };
   const result = validateRiskStateJson(raw);
-  if (result.valid) return result.value;
+  if (result.valid) return { valid: true, value: result.value, raw };
   botLogger.warn("GRID_RISK_STATE_REVIEW_REQUIRED" as any, result.reason, { code: result.code });
+  return { valid: false, value: null, raw, reason: result.reason, code: result.code };
+}
+
+export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null {
+  const forensic = safeParseRiskStateJsonForensic(raw);
+  if (forensic.valid) return forensic.value;
   const empty: GridCycleRiskState = {
     trailing: {
       activated: false,
@@ -332,7 +346,7 @@ export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null 
       filledAt: null,
       bestBidAtFill: null,
       bestAskAtFill: null,
-      cancellationReason: result.reason,
+      cancellationReason: forensic.reason ?? "unknown",
     },
     stateVersion: 1,
     lastEvaluatedAt: null,
@@ -340,11 +354,16 @@ export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null 
   return empty;
 }
 
-export function safeParseTargetCalculationJson(raw: unknown): GridTargetCalculation | null {
+export function safeParseTargetCalculationJsonForensic(raw: unknown): JsonbForensicParseResult<GridTargetCalculation> {
+  if (raw == null) return { valid: true, value: null, raw };
   const result = validateTargetCalculationJson(raw);
-  if (result.valid) return result.value;
+  if (result.valid) return { valid: true, value: result.value, raw };
   botLogger.warn("GRID_TARGET_CALCULATION_REVIEW_REQUIRED" as any, result.reason, { code: result.code });
-  return null;
+  return { valid: false, value: null, raw, reason: result.reason, code: result.code };
+}
+
+export function safeParseTargetCalculationJson(raw: unknown): GridTargetCalculation | null {
+  return safeParseTargetCalculationJsonForensic(raw).value;
 }
 
 function defaultReviewRequiredMakerExit(reason: string): GridPendingMakerExit {
@@ -384,10 +403,16 @@ export function validateMakerExitStateJson(raw: unknown): JsonbValidationResult<
   return { valid: true, value: validatePendingMakerExit(raw) };
 }
 
-export function safeParseMakerExitStateJson(raw: unknown): GridPendingMakerExit | null {
-  if (raw == null) return null;
+export function safeParseMakerExitStateJsonForensic(raw: unknown): JsonbForensicParseResult<GridPendingMakerExit> {
+  if (raw == null) return { valid: true, value: null, raw };
   const result = validateMakerExitStateJson(raw);
-  if (result.valid) return result.value;
+  if (result.valid) return { valid: true, value: result.value, raw };
   botLogger.warn("GRID_MAKER_EXIT_STATE_REVIEW_REQUIRED" as any, result.reason, { code: result.code });
-  return defaultReviewRequiredMakerExit(result.reason);
+  return { valid: false, value: null, raw, reason: result.reason, code: result.code };
+}
+
+export function safeParseMakerExitStateJson(raw: unknown): GridPendingMakerExit | null {
+  const forensic = safeParseMakerExitStateJsonForensic(raw);
+  if (forensic.valid) return forensic.value;
+  return defaultReviewRequiredMakerExit(forensic.reason ?? "unknown");
 }
