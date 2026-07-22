@@ -1320,6 +1320,12 @@ END $$;
       "070_grid_adaptive_smart_range",
       "071_grid_cycle_target_sell",
       "072_grid_maker_only_defaults",
+      "073_grid_cycle_exit_policy_v2",
+      "074_grid_exit_runtime_config_and_maker_state",
+      "075_grid_circuit_breaker_persistence",
+      "076_grid_open_cycles_range_status_index",
+      "077_grid_circuit_breaker_full",
+      "078_grid_buy_maker_lifecycle",
     ].map((name) => ({
       id: name,
       filePath: path.resolve(process.cwd(), "db", "migrations", `${name}.sql`),

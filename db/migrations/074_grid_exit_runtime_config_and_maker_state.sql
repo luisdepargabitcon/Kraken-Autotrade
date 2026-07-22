@@ -1,6 +1,6 @@
 -- Migration 074: runtime Grid config toggles and per-side fee defaults
 -- Phase: 3C.5-A-REV-C3
--- Safe defaults: V2 policy disabled by default, trailing/stop disabled, 0.09% maker/taker-like fees.
+-- Safe defaults: V2 policy disabled by default, trailing/stop disabled, 0.09 % (0.0009 decimal) per-side fees.
 
 DO $$
 BEGIN
