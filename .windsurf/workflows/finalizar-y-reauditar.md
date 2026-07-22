@@ -24,4 +24,14 @@
 - Reintentar solo READ_ONLY o IDEMPOTENT dentro de sus límites.
 - Verificar el estado antes de repetir STATEFUL.
 - Después de recuperarse, continuar desde NEXT_ACTION.
+
+## Verificación del plan persistente
+
+Antes de declarar DONE=TRUE confirma:
+
+- el plan persistente está actualizado;
+- `RESUME_CHECK_REQUIRED` no permanece en `TRUE`;
+- `LAST_COMMAND_RESULT` no permanece en `UNKNOWN`;
+- `NEXT_ACTION` no contiene una acción pendiente;
+- `DONE` solo pasa a `TRUE` después de resolver esos campos.
 - Una aprobación física de Windsurf requiere intervención del usuario, pero no constituye finalización ni HARD_BLOCKER.

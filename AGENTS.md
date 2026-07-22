@@ -66,3 +66,11 @@
 - Los comandos largos deben ejecutarse con timeout, heartbeat y recuperación según `.windsurf/rules/01-recuperacion-comandos.md`.
 - Las operaciones stateful nunca deben repetirse sin comprobar antes su estado.
 - Solo detenerse por un bloqueo crítico real y demostrado.
+
+## Continuidad entre modelos y sesiones
+
+- Toda tarea extensa debe mantener un plan persistente con NEXT_ACTION.
+- El contexto de conversación no sustituye al plan persistente.
+- Antes de una operación STATEFUL debe guardarse un punto de recuperación.
+- Después de cambiar de modelo o sesión, usar `/reanudar-tarea`.
+- Nunca repetir operaciones STATEFUL sin comprobar antes su estado real.
