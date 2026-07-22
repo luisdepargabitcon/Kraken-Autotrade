@@ -1,7 +1,64 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-21
+> Última actualización: 2026-07-22
+
+---
+
+## 2026-07-22 — GRID V2 REV-C9: BUY SHADOW maker lifecycle real, circuit breaker con resolución explícita, JSONB fail-safe y deploy staging
+
+### Resumen
+Se implementa el lifecycle real de compra SHADOW (`buy_maker_pending` con `buyMakerPendingAt`, `buyMakerPendingTickId`, `buyMakerRequestedPrice`), se hace atómico el fill BUY (nivel+ciclo en una transacción) y se corrige el rearme del nivel BUY solo dentro del rango activo. Se añade el fail-safe JSONB que marca ciclos para revisión manual sin resetear estado. Se amplía el circuit breaker con trazabilidad del ciclo causante, severidad, `reviewAfter` y resolución auditada (`resolveCircuitBreaker`). Se registran las migraciones 073-078 en `script/migrate.ts`, se justifica la 076 como índice compuesto `(range_version_id, status)` para consultas del lifecycle y se corrige el comentario de la 074. Se elimina el fallback `0.09` en `buildGridOperationalViewModel.ts` usando `DEFAULT_GRID_CONFIG`. Se despliega a staging; migraciones 073-078 aplicadas automáticamente.
+
+### Problema
+- `simulateShadowTick` no separaba `TRIGGERED` y `MAKER_PENDING` para compras, pudiendo fill en el mismo tick.
+- El fill BUY no era atómico (se actualizaba el nivel antes de insertar el ciclo).
+- El rearme de un nivel BUY no respetaba si el rango al que pertenecía seguía activo.
+- Los validadores JSONB podían descartar estados de riesgo/maker al parsear con fallback.
+- El circuit breaker tenía solo `open/reason/cooldown` y se cerraba por tiempo, sin resolución auditada.
+- `script/migrate.ts` no incluía las migraciones 073-078.
+- `buildGridOperationalViewModel.ts` usaba `0.09` como fallback de comisiones.
+
+### Solución
+1. `gridIsolatedTypes.ts` y `shared/schema.ts`: nuevo estado `buy_maker_pending`, campos `buy_maker_pending_at`, `buy_maker_pending_tick_id`, `buy_maker_requested_price`; campos de circuit breaker completos.
+2. `gridGeometricLevels.ts`: inicializa los nuevos campos del lifecycle BUY.
+3. `gridIsolatedEngine.ts`:
+   - `simulateShadowTick` coloca orden maker BUY en `buy_maker_pending` en un tick y la fill en el siguiente usando `GridTickContext`.
+   - `processCycleFill` ejecuta `BUY` en una transacción (`tx.update(gridIsolatedLevels)` + `tx.insert(gridIsolatedCycles)`) y actualiza lifecycle.
+   - El rearme de un nivel BUY solo ocurre si `isLevelInActiveRange` es `true`.
+   - Fail-safe JSONB: en caso de parseo/validación fallida, marca el ciclo con `REQUIRES_REVIEW` y loguea sin resetear estado.
+   - `resolveCircuitBreaker` expone resolución explícita y persistente.
+4. `gridJsonbValidators.ts`: validación estricta con modo `REQUIRES_REVIEW` y conservación de datos originales.
+5. `buildGridOperationalViewModel.ts`: fallback de comisiones con `DEFAULT_GRID_CONFIG.buyFeePct`/`sellFeePct`.
+6. `script/migrate.ts`: trackea migraciones 073-078.
+7. `db/migrations/077_grid_circuit_breaker_full.sql` y `078_grid_buy_maker_lifecycle.sql` añaden las columnas.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridGeometricLevels.ts`
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `server/services/gridIsolated/gridJsonbValidators.ts`
+- `shared/schema.ts`
+- `script/migrate.ts`
+- `db/migrations/074_grid_exit_runtime_config_and_maker_state.sql`
+- `db/migrations/077_grid_circuit_breaker_full.sql`
+- `db/migrations/078_grid_buy_maker_lifecycle.sql`
+- `server/services/__tests__/gridRiskExecution.test.ts`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check`: ✅
+- `npm run build`: ✅
+- `npx vitest run server/services/gridIsolated server/services/__tests__/gridRiskExecution.test.ts server/services/__tests__/buildGridAuditViewModel.test.ts`: ✅ 10/10 files, 148/148 tests
+- Migraciones 073-078 en staging: ✅ `APPLIED` por `AutoMigrationRunner`
+- Endpoints staging: `/api/grid-isolated/status`, `/api/grid-isolated/cycles`, `/api/grid-isolated/levels`, `/api/grid-isolated/monitor/audit`, `/api/grid-isolated/shadow-open-cycles/diagnose`: ✅
+- Logs staging: `GRID_CYCLES_RECOVERED` con 0 errores, P&L rebuild 0 errores, sin FIFO/HOLD/mixture.
+- Visual: `browser_preview` abierto en `http://5.250.184.18:3020`.
+
+### Estado final
+- Motor Grid SHADOW con lifecycle BUY maker real, fill atómico, rearme seguro, fail-safe JSONB y circuit breaker auditado.
+- Deploy en staging completado; pendientes: SELL legacy lifecycle, limpieza completa de `any` en `buildGridAuditViewModel.ts` y tests adicionales.
 
 ---
 
