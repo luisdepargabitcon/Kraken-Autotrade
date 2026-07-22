@@ -63,4 +63,6 @@
 - El primer resumen preparado al terminar es un borrador interno.
 - Antes de responder, releer las instrucciones y comprobar si realmente se terminó todo.
 - Si falta algo, continuar automáticamente.
+- Los comandos largos deben ejecutarse con timeout, heartbeat y recuperación según `.windsurf/rules/01-recuperacion-comandos.md`.
+- Las operaciones stateful nunca deben repetirse sin comprobar antes su estado.
 - Solo detenerse por un bloqueo crítico real y demostrado.

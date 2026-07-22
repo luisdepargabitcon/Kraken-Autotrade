@@ -15,3 +15,13 @@
 13. Ejecuta `scripts/verify-cascade-completion.ps1` en modo Final cuando exista un checklist.
 14. Solo entrega el informe con DONE=TRUE.
 15. Solo detente antes con HARD_BLOCKER=TRUE y evidencia técnica concreta.
+
+## Recuperación de comandos
+
+- Aplicar `.windsurf/rules/01-recuperacion-comandos.md`.
+- Ejecutar comandos largos con timeout.
+- Ante timeout, clasificar la operación.
+- Reintentar solo READ_ONLY o IDEMPOTENT dentro de sus límites.
+- Verificar el estado antes de repetir STATEFUL.
+- Después de recuperarse, continuar desde NEXT_ACTION.
+- Una aprobación física de Windsurf requiere intervención del usuario, pero no constituye finalización ni HARD_BLOCKER.
