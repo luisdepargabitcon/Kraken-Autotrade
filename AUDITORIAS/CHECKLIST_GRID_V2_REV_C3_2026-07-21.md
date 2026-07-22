@@ -566,3 +566,27 @@ origin/main base: `9f8c88b0213aae85edcbeccd165856a60550acb4`
 
 - R14/R16/R17: visual/network local, deploy a VPS/staging y postdeploy requieren entorno con `DATABASE_URL` y acceso VPS (no ejecutables en este entorno).
 
+---
+
+### Cierre REV-C10
+
+| Elemento | Estado | Evidencia |
+|---|---|---|
+| SELL lifecycle maker real | COMPLETED | `processSellLevelLifecycle` en `gridIsolatedEngine.ts` |
+| Ruta SELL unificada | COMPLETED | `processOpenCyclesShadow` → `completeCycleShadow` |
+| JSONB forense | COMPLETED | `safeParse*Forensic`, columnas `requires_review`, `persistReviewState` |
+| Validación targetCalculationJson V2 | COMPLETED | `validateTargetCalculationJson` en BUY fill |
+| View model sin JSON.parse directo | COMPLETED | `safeParseTargetCalculationJson` / `safeParseRiskStateJson` en `buildGridOperationalViewModel.ts` |
+| Migración 074 comentario | COMPLETED | comentario actualizado en `074_grid_exit_runtime_config_and_maker_state.sql` |
+| Índice 076 | JUSTIFIED | índice compuesto `(range_version_id, status)` para consultas de ciclos abiertos |
+| Migración 079 | CREATED | `079_grid_cycle_forensic_review_state.sql` registrada en `script/migrate.ts` |
+| Tests Grid | PASSED | `npx vitest run server/services/gridIsolated` 125/125 |
+| `npm run check` | PASSED | sin errores de tipado |
+| `npm run build` | PASSED | build completo |
+| Commit/push | PASSED | `af32d12` en origin/main |
+
+### Pendientes post-cierre
+
+- Deploy staging con migración 079.
+- Validación visual en 5 viewports y auditoría Network real.
+- Actualización completa fila por fila del checklist existente y TEST-001 a TEST-092 mapping si se requiere cobertura adicional.
