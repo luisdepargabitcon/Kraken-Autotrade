@@ -72,17 +72,35 @@ vi.mock("../../../db", () => {
   let txQueue = Promise.resolve();
 
   const db: any = {
-    _state: { cycles: [], levels: [] },
-    _resetState(newState: any) { db._state = newState; },
+    _state: { cycles: [], levels: [], _events: [] },
+    _resetState(newState: any) { db._state = { ...newState, _events: newState._events ?? [] }; },
     _resetTxQueue() { txQueue = Promise.resolve(); },
+    _getEvents() { return db._state._events ?? []; },
     update(table: any) { return makeUpdateBuilder(db._state, table); },
-    insert() { return { values: (vals: any) => Promise.resolve([]) }; },
+    insert(table?: any) {
+      return {
+        values: (vals: any) => {
+          if (table && table.__mockTable === "events" && vals) {
+            db._state._events.push({ ...vals });
+          }
+          return Promise.resolve([]);
+        }
+      };
+    },
     transaction: vi.fn().mockImplementation((callback: any) => {
       const p = txQueue.then(async () => {
         const txState = cloneState(db._state);
         const tx = {
           update: (table: any) => makeUpdateBuilder(txState, table),
-          insert: () => ({ values: (vals: any) => Promise.resolve([]) }),
+          insert: (table?: any) => ({
+            values: (vals: any) => {
+              if (table && table.__mockTable === "events" && vals) {
+                txState._events = txState._events || [];
+                txState._events.push({ ...vals });
+              }
+              return Promise.resolve([]);
+            }
+          }),
         };
         try {
           const result = await callback(tx);
@@ -101,7 +119,10 @@ vi.mock("../../../db", () => {
 });
 
 vi.mock("@shared/schema", () => ({
-  gridIsolatedEvents: { createdAt: "created_at" },
+  gridIsolatedEvents: (() => {
+    const table: any = { __mockTable: "events", createdAt: "created_at" };
+    return table;
+  })(),
   gridIsolatedConfigs: {},
   gridRangeVersions: {},
   gridIsolatedLevels: (() => {
@@ -369,6 +390,7 @@ function resetEngine(cycles: GridCycle[], levels: GridLevel[], configOverrides: 
   const rows = {
     cycles: cycles.map((c) => ({ ...c })),
     levels: levels.map((l) => ({ ...l })),
+    _events: [] as any[],
   };
   (db as any)._resetState(rows);
   return engine;
@@ -732,6 +754,15 @@ describe("GRID REV-C11 FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES", () => {
     expect(engine.cycles[1].targetSellQuantity).toBe(0.001);
     // B has no realized PnL yet
     expect(engine.cycles[1].grossPnlUsd).toBe(0);
+
+    // Event verification: exactly one GRID_CYCLE_COMPLETED event for cycle A
+    const events = (db as any)._getEvents();
+    const completedEvents = events.filter((e: any) => e.eventType === "GRID_CYCLE_COMPLETED");
+    expect(completedEvents).toHaveLength(1);
+    expect(completedEvents[0].cycleId).toBe("cA");
+    // No event for cycle B
+    const eventsForB = events.filter((e: any) => e.cycleId === "cB");
+    expect(eventsForB).toHaveLength(0);
   });
 
   // Test 9: Cerrar después el ciclo B — PnL independiente, evento independiente
@@ -827,6 +858,21 @@ describe("GRID REV-C11 FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES", () => {
     expect(engine.cycles[0].status).toBe("completed");
     expect(engine.cycles[0].grossPnlUsd).toBe(pnlABefore);
     expect(engine.cycles[0].completedAt).toBe(completedABefore);
+
+    // Event verification: exactly one new GRID_CYCLE_COMPLETED event for cycle B
+    const events = (db as any)._getEvents();
+    const completedEvents = events.filter((e: any) => e.eventType === "GRID_CYCLE_COMPLETED");
+    expect(completedEvents).toHaveLength(1);
+    expect(completedEvents[0].cycleId).toBe("cB");
+    // No event for cycle A (A was already completed before this tick)
+    const eventsForA = events.filter((e: any) => e.cycleId === "cA");
+    expect(eventsForA).toHaveLength(0);
+    // B event has its own quantity, sellPrice and PnL
+    const bMeta = JSON.parse(completedEvents[0].metadataJson);
+    expect(bMeta.quantity).toBe(0.001);
+    expect(bMeta.sellPrice).toBeGreaterThan(0);
+    expect(bMeta.grossPnlUsd).toBeGreaterThan(0);
+    expect(bMeta.grossPnlUsd).not.toBe(pnlABefore);
   });
 
   // Test 10: Fallo o rollback del ciclo A no modifica B
@@ -1287,5 +1333,81 @@ describe("GRID REV-C11 FASE 3 — DIAGNÓSTICO DIRECTO diagnoseShadowOpenCycles"
     // Original cycle not mutated
     expect(cycle.rangeVersionId).toBe(RANGE_ID_2);
     expect(cycle.targetKind).toBe("SYNTHETIC_RUNG");
+  });
+
+  it("D9. SYNTHETIC_RUNG incoherente con targetSellLevelId informado: missing, requiresReview, no resolver legacy", () => {
+    const cycle = makeCycle({
+      id: "c-inc-synth-d9", cycleNumber: 901,
+      targetKind: "SYNTHETIC_RUNG",
+      targetSellLevelId: "sell-should-not-be-here",
+      targetRungLevelId: "rung-d9",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const levels = [
+      makeLevel({ id: "rung-d9", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+      makeLevel({ id: "sell-should-not-be-here", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    const item = result.cycles[0];
+    expect(item.targetSource).toBe("missing");
+    expect(item.targetStructurallyValid).toBe(false);
+    expect(item.requiresReview).toBe(true);
+    expect(result.executableOpenCyclesCount).toBe(0);
+    expect(result.missingTarget).toBe(1);
+    expect(item.targetKind).toBe("SYNTHETIC_RUNG");
+    // No reinterpretation as PERSISTED_SELL
+    expect(item.targetSource).not.toBe("persisted_sell");
+    // targetResolutionReason explains the incoherency
+    expect(item.targetResolutionReason).toContain("incoherente");
+    expect(item.targetResolutionReason).toContain("targetSellLevelId");
+  });
+
+  it("D10. SYNTHETIC_RUNG incoherente sin targetRungLevelId: missing, requiresReview, reason explica ausencia de rung", () => {
+    const cycle = makeCycle({
+      id: "c-inc-synth-d10", cycleNumber: 1001,
+      targetKind: "SYNTHETIC_RUNG",
+      targetSellLevelId: null,
+      targetRungLevelId: null,
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const levels: GridLevel[] = [];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    const item = result.cycles[0];
+    expect(item.targetSource).toBe("missing");
+    expect(item.targetStructurallyValid).toBe(false);
+    expect(item.requiresReview).toBe(true);
+    expect(result.executableOpenCyclesCount).toBe(0);
+    expect(result.missingTarget).toBe(1);
+    expect(item.targetKind).toBe("SYNTHETIC_RUNG");
+    // targetResolutionReason explains the missing rung
+    expect(item.targetResolutionReason).toContain("incoherente");
+    expect(item.targetResolutionReason).toContain("targetRungLevelId");
+  });
+
+  it("D11. SYNTHETIC_RUNG válido continúa: targetSource=synthetic, structurallyValid=true, requiresReview=false, executable=1", () => {
+    const cycle = makeCycle({
+      id: "c-valid-synth-d11", cycleNumber: 1101,
+      targetKind: "SYNTHETIC_RUNG",
+      targetSellLevelId: null,
+      targetRungLevelId: "rung-d11",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const levels = [
+      makeLevel({ id: "rung-d11", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    const item = result.cycles[0];
+    expect(item.targetSource).toBe("synthetic");
+    expect(item.targetStructurallyValid).toBe(true);
+    expect(item.requiresReview).toBe(false);
+    expect(result.executableOpenCyclesCount).toBe(1);
+    expect(result.missingTarget).toBe(0);
+    expect(item.levelStatus).toBe("not_applicable");
   });
 });

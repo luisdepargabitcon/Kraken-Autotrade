@@ -181,11 +181,17 @@ export function diagnoseShadowOpenCycles(
     let targetQty = cycle.targetSellQuantity ?? null;
 
     // Strict classification: a cycle is only synthetic if it is explicitly
-    // tagged as SYNTHETIC_RUNG, or if it is a compatible V2 cycle with no
-    // persisted SELL level but a valid rung reference.
+    // tagged as SYNTHETIC_RUNG (with null sellLevelId and non-null rungId),
+    // or if it is a compatible V2 cycle with no persisted SELL level but a
+    // valid rung reference.
+    // A SYNTHETIC_RUNG with sellLevelId!=null or rungId==null is incoherent.
     // A legacy PERSISTED_SELL cycle with targetRungLevelId set must NOT be
     // reclassified as synthetic.
-    const isExplicitSynthetic = cycle.targetKind === "SYNTHETIC_RUNG";
+    const isInconsistentSynthetic =
+      cycle.targetKind === "SYNTHETIC_RUNG" &&
+      (cycle.targetSellLevelId != null || cycle.targetRungLevelId == null);
+    const isExplicitSynthetic =
+      cycle.targetKind === "SYNTHETIC_RUNG" && !isInconsistentSynthetic;
     const isCompatibleV2Synthetic =
       cycle.targetKind == null &&
       cycle.exitPolicyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2" &&
@@ -201,7 +207,16 @@ export function diagnoseShadowOpenCycles(
     let targetSource: "synthetic" | "persisted_sell" | "external" | "missing" | null;
     let targetResolutionReason: string | null = null;
 
-    if (isInconsistentLegacy) {
+    if (isInconsistentSynthetic) {
+      targetSource = "missing";
+      if (cycle.targetSellLevelId != null && cycle.targetRungLevelId == null) {
+        targetResolutionReason = "SYNTHETIC_RUNG con targetSellLevelId informado y targetRungLevelId=null: estado incoherente";
+      } else if (cycle.targetSellLevelId != null) {
+        targetResolutionReason = "SYNTHETIC_RUNG con targetSellLevelId informado: estado incoherente";
+      } else {
+        targetResolutionReason = "SYNTHETIC_RUNG sin targetRungLevelId: estado incoherente";
+      }
+    } else if (isInconsistentLegacy) {
       targetSource = "missing";
       targetResolutionReason = "PERSISTED_SELL con targetSellLevelId=null: estado inconsistente";
     } else if (isSyntheticRung) {
@@ -215,8 +230,8 @@ export function diagnoseShadowOpenCycles(
     }
 
     // If target not persisted, try to resolve from the active range for diagnostics only.
-    // Skip legacy resolver for V2 SYNTHETIC_RUNG cycles and inconsistent states.
-    if (!isSyntheticRung && !isInconsistentLegacy && (!targetLevelId || targetPrice == null || targetQty == null)) {
+    // Skip legacy resolver for V2 SYNTHETIC_RUNG cycles and all inconsistent states.
+    if (!isSyntheticRung && !isInconsistentLegacy && !isInconsistentSynthetic && (!targetLevelId || targetPrice == null || targetQty == null)) {
       const resolution = resolveTargetSellForCycle({
         cycle,
         levels,
@@ -237,7 +252,8 @@ export function diagnoseShadowOpenCycles(
       (isSyntheticRung || targetLevelId != null) &&
       targetPrice != null &&
       targetQty != null &&
-      !isInconsistentLegacy;
+      !isInconsistentLegacy &&
+      !isInconsistentSynthetic;
     const hasTarget = targetStructurallyValid;
     if (!hasTarget) missingTarget++;
 
@@ -281,7 +297,8 @@ export function diagnoseShadowOpenCycles(
       !isClosableStatus ||
       !hasTarget ||
       mode !== "SHADOW" ||
-      isInconsistentLegacy;
+      isInconsistentLegacy ||
+      isInconsistentSynthetic;
 
     if (itemRequiresReview) requiresReview++;
 

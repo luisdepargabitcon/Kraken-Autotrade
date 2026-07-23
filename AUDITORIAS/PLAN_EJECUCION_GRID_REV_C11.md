@@ -2,15 +2,15 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 2 CERRADA CON CONTRATO FORENSE VERIFICADO — parser canónico, raw expuesto en audit VM, defaults eliminados, 12 tests forenses exactos, pendiente commit y push
-NEXT_ACTION: FASE 3 (no iniciada — pendiente autorización)
-LAST_COMPLETED_ACTION: FASE 2 CONTRATO FORENSE — safeParseJsonObjectForAudit canónico, extractProfessionalGeneratorFromEvents propagar forense, professionalGeneratorForensics en GridLatestDiagnostic, 12 tests forenses con aserciones exactas, 233/233 tests grid verdes, tsc OK, build OK
-LAST_VALIDATION: 2026-07-23T19:22+02:00 tsc+build+vitest OK
-CURRENT_HEAD: pendiente commit
-ORIGIN_HEAD: 73eeeb3
+TASK_STATUS: FASE 3 CERRADA Y VALIDADA LOCALMENTE
+NEXT_ACTION: Siguiente fase pendiente de definición y autorización
+LAST_COMPLETED_ACTION: FASE 3 — targets V2, ciclos independientes y diagnóstico
+LAST_VALIDATION: 2026-07-24 — check, tests Grid y build OK
+CURRENT_HEAD: commit de cierre FASE 3; consultar git rev-parse HEAD
+ORIGIN_HEAD: sincronizado con main tras push
 EXPECTED_DEPLOY_HASH: pendiente
 DEPLOYED_HASH: pendiente
-UPDATED_AT: 2026-07-23T19:22+02:00
+UPDATED_AT: 2026-07-24
 
 ## FASE 1 — Cambios aplicados
 
@@ -332,16 +332,36 @@ La FASE 3 inicial implementó tests V2 y correcciones de diagnóstico, pero qued
 
 ### Validaciones
 - `npm run check` (tsc): OK
-- `npx vitest run gridV2IndependentCycles.test.ts`: 25/25 tests verdes (17 originales + 8 nuevos)
-- `npx vitest run server/services/gridIsolated/__tests__` (suite Grid completa): 10 archivos, 258 tests, 258 pasados, 0 fallidos
+- `npx vitest run gridV2IndependentCycles.test.ts`: 28/28 tests verdes (17 originales + 8 diagnóstico + 3 incoherente)
+- `npx vitest run server/services/gridIsolated/__tests__` (suite Grid completa): 10 archivos, 261 tests, 261 pasados, 0 fallidos
 - `npm run build`: OK
 - `git diff --check`: limpio
 
+### Correcciones adicionales — Cierre formal definitivo
+
+1. **Detección SYNTHETIC_RUNG incoherente**: Un ciclo con `targetKind === "SYNTHETIC_RUNG"` pero `targetSellLevelId != null` o `targetRungLevelId == null` se clasifica como `isInconsistentSynthetic`. No es sintético válido, no se resuelve con legacy, se marca `requiresReview=true`, `targetSource="missing"`, `targetStructurallyValid=false`, `targetResolutionReason` explica la incoherencia.
+
+2. **Fórmula final de clasificación**:
+   ```
+   isInconsistentSynthetic = targetKind === "SYNTHETIC_RUNG" && (targetSellLevelId != null || targetRungLevelId == null)
+   isExplicitSynthetic = targetKind === "SYNTHETIC_RUNG" && !isInconsistentSynthetic
+   isCompatibleV2Synthetic = targetKind == null && V2 policy && sellLevelId == null && rungId != null
+   isSyntheticRung = isExplicitSynthetic || isCompatibleV2Synthetic
+   ```
+
+3. **Tests 8 y 9 — verificación de eventos**: Mock DB instrumentado para capturar eventos `GRID_CYCLE_COMPLETED`. Test 8: exactamente 1 evento para ciclo A, 0 para B. Test 9: exactamente 1 evento para B, 0 para A. Verificación de quantity, sellPrice y PnL propios por evento.
+
+4. **3 tests directos adicionales (D9-D11)**:
+   - D9: SYNTHETIC_RUNG con sellLevelId informado → missing, requiresReview
+   - D10: SYNTHETIC_RUNG sin rungId → missing, requiresReview, reason explica ausencia
+   - D11: SYNTHETIC_RUNG válido continúa → synthetic, structurallyValid, executable=1
+
 ### Notas finales
-- FASE 3 CERRADA Y VALIDADA LOCALMENTE
+- FASE 3 CERRADA DEFINITIVAMENTE Y VALIDADA LOCALMENTE
 - No se accedió al VPS. No se hizo deploy.
 - Ciclo #26 intacto.
 - No se modificó `gridIsolatedEngine.ts` ni `gridShadowPolicy.ts`.
 - No se modificó selector V2, frontend, rutas, schema ni migraciones.
 - 0 tests nuevos en skip. 0 tests eliminados.
-- NEXT_ACTION: Pendiente de autorización para commit y push.
+- REV-C11 no está completamente terminada (faltan fases futuras por definir).
+- NEXT_ACTION: Siguiente fase pendiente de definición y autorización.
