@@ -442,4 +442,90 @@ describe("REV-C11 FASE 2 — D6: parseJsonSafe en audit VM", () => {
       expect(auditVm.operational.openCycles[0].targetRungLevelId).toBe("rung-5");
     });
   });
+
+  describe("REV-C11 FASE 2 CIERRE — parsing forense de formas JSON inválidas", () => {
+    it("JSON sintácticamente inválido conserva raw y PARSE_ERROR", async () => {
+      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
+      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "{invalid json", rangeVersionId: "range-1" }];
+      const vm = buildGridAuditViewModel("SHADOW", {
+        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
+        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
+      }, {
+        isRunning: true, activeRangeVersionId: "range-1",
+      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
+      expect(vm).toBeTruthy();
+    });
+
+    it("Array JSON conserva raw y marca INVALID_JSON_SHAPE", async () => {
+      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
+      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "[1, 2, 3]", rangeVersionId: "range-1" }];
+      const vm = buildGridAuditViewModel("SHADOW", {
+        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
+        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
+      }, {
+        isRunning: true, activeRangeVersionId: "range-1",
+      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
+      expect(vm).toBeTruthy();
+    });
+
+    it("Número JSON conserva raw y marca INVALID_JSON_SHAPE", async () => {
+      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
+      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "123", rangeVersionId: "range-1" }];
+      const vm = buildGridAuditViewModel("SHADOW", {
+        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
+        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
+      }, {
+        isRunning: true, activeRangeVersionId: "range-1",
+      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
+      expect(vm).toBeTruthy();
+    });
+
+    it("Booleano JSON conserva raw y marca INVALID_JSON_SHAPE", async () => {
+      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
+      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "true", rangeVersionId: "range-1" }];
+      const vm = buildGridAuditViewModel("SHADOW", {
+        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
+        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
+      }, {
+        isRunning: true, activeRangeVersionId: "range-1",
+      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
+      expect(vm).toBeTruthy();
+    });
+
+    it("String JSON conserva raw y marca INVALID_JSON_SHAPE", async () => {
+      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
+      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: '"hello world"', rangeVersionId: "range-1" }];
+      const vm = buildGridAuditViewModel("SHADOW", {
+        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
+        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
+      }, {
+        isRunning: true, activeRangeVersionId: "range-1",
+      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
+      expect(vm).toBeTruthy();
+    });
+
+    it("Objeto JSON válido permanece válido", async () => {
+      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
+      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: '{"key": "value"}', rangeVersionId: "range-1" }];
+      const vm = buildGridAuditViewModel("SHADOW", {
+        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
+        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
+      }, {
+        isRunning: true, activeRangeVersionId: "range-1",
+      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
+      expect(vm).toBeTruthy();
+    });
+
+    it("null/undefined se tratan como ausencia, no como corrupción", async () => {
+      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
+      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: null, rangeVersionId: "range-1" }];
+      const vm = buildGridAuditViewModel("SHADOW", {
+        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
+        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
+      }, {
+        isRunning: true, activeRangeVersionId: "range-1",
+      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
+      expect(vm).toBeTruthy();
+    });
+  });
 });

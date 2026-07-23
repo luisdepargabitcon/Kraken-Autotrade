@@ -2004,5 +2004,140 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         expect(engine.cycles.length).toBe(1);
       });
     });
+
+    describe("REV-C11 FASE 2 CIERRE — CAS del ciclo", () => {
+      it("cycleUpdate cero filas: no-op, cero eventos, memoria intacta", async () => {
+        const engine = gridIsolatedEngine as any;
+        // Cycle already completed in DB → zero rows match
+        (db as any)._state.cycles[0].status = "completed";
+        (db as any)._state.cycles[0].completedAt = new Date();
+        (botLogger.info as any).mockClear();
+        const beforeStatus = engine.cycles[0].status;
+        const result = await (engine as any).completeCycleShadow(
+          engine.cycles[0],
+          61_000,
+          SELL_LEVEL_ID,
+          "NORMAL_TARGET",
+          priceResult({ bid: 61_200 })
+        );
+        expect(result).toBe(false);
+        expect(engine.cycles[0].status).toBe(beforeStatus);
+        const completedCalls = (botLogger.info as any).mock.calls.filter((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
+        expect(completedCalls.length).toBe(0);
+      });
+
+      it("cycleUpdate una fila: continúa el cierre", async () => {
+        const engine = gridIsolatedEngine as any;
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        expect(engine.cycles[0].status).toBe("completed");
+      });
+
+      it("cycleUpdate dos filas: lanza error, rollback, SELL intacto, BUY intacto, PnL intacto, memoria intacta, cero eventos", async () => {
+        const engine = gridIsolatedEngine as any;
+        // Duplicate cycle in DB to simulate multiple rows matching WHERE
+        const dbCycle = (db as any)._state.cycles[0];
+        (db as any)._state.cycles.push({ ...dbCycle });
+        (botLogger.info as any).mockClear();
+        const beforeSellStatus = (db as any)._state.levels.find((l: any) => l.id === SELL_LEVEL_ID)?.status;
+        const beforeBuyStatus = engine.levels.find((l: any) => l.id === BUY_LEVEL_ID)?.status;
+        const beforeCycleStatus = engine.cycles[0].status;
+        // Use direct completeCycleShadow to bypass maker pending lifecycle
+        await expect(
+          (engine as any).completeCycleShadow(
+            engine.cycles[0],
+            61_000,
+            SELL_LEVEL_ID,
+            "NORMAL_TARGET",
+            priceResult({ bid: 61_200 })
+          )
+        ).rejects.toThrow("Múltiples filas");
+        // SELL intact
+        const afterSellStatus = (db as any)._state.levels.find((l: any) => l.id === SELL_LEVEL_ID)?.status;
+        expect(afterSellStatus).toBe(beforeSellStatus);
+        // BUY intact
+        const afterBuyStatus = engine.levels.find((l: any) => l.id === BUY_LEVEL_ID)?.status;
+        expect(afterBuyStatus).toBe(beforeBuyStatus);
+        // Cycle memory intact
+        expect(engine.cycles[0].status).toBe(beforeCycleStatus);
+        // PnL intact (null/0)
+        expect(engine.cycles[0].netPnlUsd ?? 0).toBe(0);
+        // Cero eventos
+        const completedCalls = (botLogger.info as any).mock.calls.filter((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
+        expect(completedCalls.length).toBe(0);
+      });
+    });
+
+    describe("REV-C11 FASE 2 CIERRE — regresión adicional", () => {
+      it("Rearme BUY cero filas sigue haciendo rollback", async () => {
+        const engine = gridIsolatedEngine as any;
+        (db as any)._state.levels = (db as any)._state.levels.filter((l: any) => l.id !== BUY_LEVEL_ID);
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no se pudo rearmar");
+        expect(engine.cycles[0].status).toBe("buy_filled");
+      });
+
+      it("Rearme BUY una fila mantiene DB y memoria coherentes", async () => {
+        const engine = gridIsolatedEngine as any;
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        const buyLevel = engine.levels.find((l: any) => l.id === BUY_LEVEL_ID);
+        const dbBuy = (db as any)._state.levels.find((l: any) => l.id === BUY_LEVEL_ID);
+        expect(buyLevel.status).toBe(dbBuy.status);
+        expect(buyLevel.status).toBe("planned");
+      });
+
+      it("Legacy de rango anterior no rearma BUY", async () => {
+        const oldRange = "old-range-cierre-1";
+        const engine = resetEngine(
+          [makeCycle({ rangeVersionId: oldRange, buyLevelId: "legacy-buy-c" })],
+          [
+            makeLevel({ id: "legacy-buy-c", rangeVersionId: oldRange, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any, filledPrice: 60_000 as any }),
+            makeLevel({ id: SELL_LEVEL_ID, rangeVersionId: oldRange, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+          ]
+        );
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        const buyLevel = engine.levels.find((l: any) => l.id === "legacy-buy-c");
+        expect(buyLevel.status).toBe("filled");
+      });
+
+      it("Doble barrera maker continúa verde", async () => {
+        const engine = gridIsolatedEngine as any;
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+        expect(exit.state).toBe("MAKER_PENDING");
+        const eligibleMs = exit.makerEligibleAfter.getTime();
+        const result = await processLifecycleTickAt(engine, { bid: 61_000 }, new Date(eligibleMs));
+        expect(result).toBe(1);
+      });
+
+      it("REQUIRES_REVIEW continúa bloqueando cierres", async () => {
+        const engine = gridIsolatedEngine as any;
+        engine.cycles[0].requiresReview = true;
+        const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
+        expect(result).toBe(0);
+        expect(engine.cycles[0].status).toBe("buy_filled");
+      });
+
+      it("SYNTHETIC_RUNG sin targetSellLevelId continúa cerrando correctamente", async () => {
+        const engine = resetEngine(
+          [makeCycle({
+            targetSellLevelId: null,
+            targetSellPrice: 61_000,
+            targetSellQuantity: 0.001,
+            targetKind: "SYNTHETIC_RUNG",
+            exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+          })],
+          [makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any })]
+        );
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        expect(engine.cycles[0].status).toBe("completed");
+        expect(engine.cycles[0].sellLevelId).toBeNull();
+      });
+    });
   });
 });

@@ -265,7 +265,7 @@ function toRangeRelation(
 
 function statusColor(status: string, requiresReview: boolean): OperationalOpenCycle["color"] {
   if (requiresReview) return "red";
-  if (status === "completed") return "green";
+  if (["completed", "closed", "sell_filled"].includes(status)) return "green";
   if (["open", "active", "buy_filled", "buy_placed", "sell_placed"].includes(status)) return "cyan";
   if (["cancelled", "error"].includes(status)) return "red";
   return "amber";
@@ -324,6 +324,8 @@ function translateStatus(status: string): string {
     case "completed":
     case "closed":
       return "Venta simulada completada";
+    case "sell_filled":
+      return "Venta ejecutada";
     case "stop_loss_hit":
       return "Stop-loss ejecutado";
     case "trailing_closed":
@@ -486,8 +488,8 @@ function buildOpenCycle(
     realizedTax: null,
     realizedNetPnl: null,
     realizedNetPnlPct: null,
-    reviewCode: null,
-    reviewReason: null,
+    reviewCode: cycle?.reviewCode ?? null,
+    reviewReason: cycle?.reviewReason ?? null,
   };
 }
 
@@ -556,8 +558,8 @@ function buildClosedCycle(
     targetKind,
     targetRungLevelId: cycle?.targetRungLevelId ?? null,
     requiresReview,
-    reviewCode: null,
-    reviewReason: null,
+    reviewCode: cycle?.reviewCode ?? null,
+    reviewReason: cycle?.reviewReason ?? null,
     targetReached: false,
     executable: false,
     riskState: risk,

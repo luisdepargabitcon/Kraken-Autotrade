@@ -144,12 +144,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function parseJsonSafe(v: any): any {
-  if (!v) return {};
-  if (typeof v === "object") return isPlainObject(v) ? v : {};
+  if (v == null) return {};
+  if (typeof v === "object") {
+    if (isPlainObject(v)) return v;
+    return { _parseError: true, _raw: v, requiresReview: true, reviewCode: "INVALID_JSON_SHAPE", reviewReason: "El JSON no contiene un objeto válido" };
+  }
   try {
     const parsed = JSON.parse(v);
-    if (!isPlainObject(parsed)) return {};
-    return parsed;
+    if (isPlainObject(parsed)) return parsed;
+    return { _parseError: true, _raw: v, requiresReview: true, reviewCode: "INVALID_JSON_SHAPE", reviewReason: "El JSON no contiene un objeto válido" };
   } catch {
     return { _parseError: true, _raw: v, requiresReview: true, reviewCode: "PARSE_ERROR", reviewReason: "JSON inválido" };
   }

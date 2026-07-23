@@ -620,4 +620,107 @@ describe("buildGridOperationalViewModel", () => {
       expect(vm.openCycles[0].targetRungLevelId).toBe("rung-3");
     });
   });
+
+  describe("REV-C11 FASE 2 CIERRE — metadatos de revisión y sell_filled", () => {
+    it("Ciclo abierto con requiresReview=true, reviewCode y reviewReason: Operational conserva los tres valores", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "buy_filled",
+          targetSellPrice: "95000",
+          quantity: "0.01",
+          buyPrice: "90000",
+          requiresReview: true,
+          reviewCode: "TEST_CODE",
+          reviewReason: "Motivo de prueba",
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      const c = vm.openCycles[0];
+      expect(c.requiresReview).toBe(true);
+      expect(c.reviewCode).toBe("TEST_CODE");
+      expect(c.reviewReason).toBe("Motivo de prueba");
+    });
+
+    it("Ciclo terminal conserva requiresReview, reviewCode y reviewReason", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "completed",
+          targetSellPrice: "95000",
+          sellPrice: "94700",
+          quantity: "0.01",
+          buyPrice: "90000",
+          grossPnlUsd: "4.70",
+          feeTotalUsd: "0.10",
+          taxReserveUsd: "0.94",
+          netPnlUsd: "3.66",
+          netPnlPct: "0.61",
+          sellFilledAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          requiresReview: true,
+          reviewCode: "TEST_CODE",
+          reviewReason: "Motivo de prueba",
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      const c = vm.closedCycles[0];
+      expect(c.requiresReview).toBe(true);
+      expect(c.reviewCode).toBe("TEST_CODE");
+      expect(c.reviewReason).toBe("Motivo de prueba");
+    });
+
+    it("Operational y Audit coinciden en metadatos de revisión", async () => {
+      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "buy_filled",
+          targetSellPrice: "95000",
+          quantity: "0.01",
+          buyPrice: "90000",
+          requiresReview: true,
+          reviewCode: "TEST_CODE",
+          reviewReason: "Motivo de prueba",
+        },
+      ];
+      const opVm = buildGridOperationalViewModel(input);
+      const auditVm = buildGridAuditViewModel("SHADOW", input.config, input.status, input.levels, input.cycles, input.events, { id: input.status.activeRangeVersionId, pair: "BTC/USD", status: "active" }, input.marketContext, { at: null, result: null }, { at: null, result: null });
+      expect(opVm.openCycles[0].requiresReview).toBe(auditVm.operational.openCycles[0].requiresReview);
+      expect(opVm.openCycles[0].reviewCode).toBe(auditVm.operational.openCycles[0].reviewCode);
+      expect(opVm.openCycles[0].reviewReason).toBe(auditVm.operational.openCycles[0].reviewReason);
+    });
+
+    it("sell_filled: aparece solo en closedCycles, tiene etiqueta humana, color terminal, sellPrice real, realizedNetPnl real, estimatedNetPnl=null", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "sell_filled",
+          targetSellPrice: "95000",
+          sellPrice: "94800",
+          quantity: "0.01",
+          buyPrice: "90000",
+          grossPnlUsd: "4.80",
+          feeTotalUsd: "0.10",
+          taxReserveUsd: "0.96",
+          netPnlUsd: "3.74",
+          netPnlPct: "4.16",
+          sellFilledAt: new Date().toISOString(),
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.openCycles.length).toBe(0);
+      const c = vm.closedCycles[0];
+      expect(c.statusLabel).toBe("Venta ejecutada");
+      expect(c.color).toBe("green");
+      expect(c.sellPrice).toBe(94800);
+      expect(c.realizedNetPnl).toBeCloseTo(3.74, 5);
+      expect(c.estimatedNetPnl).toBeNull();
+    });
+  });
 });

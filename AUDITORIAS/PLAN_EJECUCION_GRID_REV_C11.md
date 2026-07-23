@@ -2,15 +2,15 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 2 corregida — 5 defectos nuevos (A-E) corregidos, 25 tests añadidos, pendiente commit y push
+TASK_STATUS: FASE 2 CERRADA — CAS ciclo, metadatos forenses, sell_filled humanizado, 20 tests añadidos, pendiente commit y push
 NEXT_ACTION: FASE 3 (no iniciada — pendiente autorización)
-LAST_COMPLETED_ACTION: FASE 2 CORRECCIÓN — Defectos A-E corregidos, 155/155 tests grid verdes, tsc OK, build OK
-LAST_VALIDATION: 2026-07-23T12:22+02:00 tsc+build+vitest OK
+LAST_COMPLETED_ACTION: FASE 2 CIERRE — CAS cero/una/múltiples filas, reviewCode/reviewReason conservados, parsing forense completo, sell_filled humanizado, 235/235 tests grid verdes, tsc OK, build OK
+LAST_VALIDATION: 2026-07-23T16:58+02:00 tsc+build+vitest OK
 CURRENT_HEAD: pendiente commit
-ORIGIN_HEAD: 9b1b258
+ORIGIN_HEAD: 389ce990
 EXPECTED_DEPLOY_HASH: pendiente
 DEPLOYED_HASH: pendiente
-UPDATED_AT: 2026-07-23T12:22+02:00
+UPDATED_AT: 2026-07-23T16:58+02:00
 
 ## FASE 1 — Cambios aplicados
 
@@ -147,5 +147,75 @@ La FASE 2 anterior quedó incompleta. Se identificaron 5 defectos nuevos (A-E) r
 ### Notas
 - No se accedió al VPS. No se hizo deploy.
 - Ciclo #26 intacto — no se modificó schema, migraciones, ni datos.
+- No se inició FASE 3.
+- NEXT_ACTION: FASE 3 pendiente de autorización.
+
+## FASE 2 CIERRE — CAS del ciclo, metadatos forenses y sell_filled
+
+### Contexto
+La FASE 2 CORRECCIÓN anterior dejó pendientes: CAS del ciclo sin distinguir cero/una/múltiples filas, reviewCode/reviewReason hardcodeados a null, parseJsonSafe sin distinguir formas JSON inválidas, y sell_filled sin humanizar.
+
+### Defectos corregidos
+
+- **CAS del ciclo**: `completeCycleShadow` ahora distingue explícitamente `cycleUpdate.length === 0` (no-op controlado, committed=false), `=== 1` (continúa), `> 1` (throw dentro de la transacción → rollback completo). Anteriormente trataba cero y >1 como no-op indistinto.
+
+- **Metadatos de revisión conservados**: `buildOpenCycle` y `buildClosedCycle` ahora asignan `reviewCode: cycle?.reviewCode ?? null` y `reviewReason: cycle?.reviewReason ?? null` en lugar de hardcodear `null`. Operational y Audit coinciden en los tres campos.
+
+- **Parsing forense completo**: `parseJsonSafe` en audit VM ahora distingue:
+  - `null/undefined` → ausencia legítima (objeto vacío)
+  - Objeto JSON válido → conservar
+  - Array/número/boolean/string JSON → `{ _parseError: true, _raw, requiresReview: true, reviewCode: "INVALID_JSON_SHAPE", reviewReason: "El JSON no contiene un objeto válido" }`
+  - JSON sintácticamente inválido → `{ _parseError: true, _raw, requiresReview: true, reviewCode: "PARSE_ERROR", reviewReason: "JSON inválido" }`
+
+- **sell_filled humanizado**: `translateStatus` ahora devuelve `"Venta ejecutada"` para `sell_filled`. `statusColor` trata `sell_filled` como terminal (`green`).
+
+### Tests añadidos (20 nuevos)
+
+#### gridOpenCycleShadowClose.test.ts — 9 tests (3 CAS + 6 regresión)
+- CAS cero filas: no-op, cero eventos, memoria intacta
+- CAS una fila: continúa el cierre
+- CAS dos filas: lanza error, rollback, SELL/BUY/PnL/memoria intactos, cero eventos
+- Rearme BUY cero filas sigue haciendo rollback
+- Rearme BUY una fila mantiene DB y memoria coherentes
+- Legacy de rango anterior no rearma BUY
+- Doble barrera maker continúa verde
+- REQUIRES_REVIEW continúa bloqueando cierres
+- SYNTHETIC_RUNG sin targetSellLevelId continúa cerrando
+
+#### buildGridOperationalViewModel.test.ts — 4 tests
+- Ciclo abierto con requiresReview/reviewCode/reviewReason: conserva los tres
+- Ciclo terminal conserva los tres
+- Operational y Audit coinciden en metadatos de revisión
+- sell_filled: closedCycles, etiqueta humana, color terminal, sellPrice real, realizedNetPnl real, estimatedNetPnl=null
+
+#### gridForensicJsonb.test.ts — 7 tests
+- JSON inválido conserva raw y PARSE_ERROR
+- Array JSON conserva raw y marca INVALID_JSON_SHAPE
+- Número JSON conserva raw y marca INVALID_JSON_SHAPE
+- Booleano JSON conserva raw y marca INVALID_JSON_SHAPE
+- String JSON conserva raw y marca INVALID_JSON_SHAPE
+- Objeto JSON válido permanece válido
+- null/undefined se tratan como ausencia
+
+### Archivos modificados
+1. `server/services/gridIsolated/gridIsolatedEngine.ts` — CAS cero/una/múltiples filas
+2. `server/services/gridIsolated/buildGridOperationalViewModel.ts` — reviewCode/reviewReason conservados, sell_filled humanizado
+3. `server/services/gridIsolated/buildGridAuditViewModel.ts` — parseJsonSafe forense completo
+4. `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts` — 9 tests
+5. `server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts` — 4 tests
+6. `server/services/gridIsolated/__tests__/gridForensicJsonb.test.ts` — 7 tests
+7. `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md` — este documento
+
+### Validaciones
+- `npm run check` (tsc): OK
+- `npx vitest run` (3 archivos específicos): 175/175 tests verdes
+- `npx vitest run server/services/gridIsolated/__tests__` (suite Grid completa): 9 archivos, 235 tests, 235 pasados, 0 fallidos
+- `npm run build`: OK
+- `git diff --check`: limpio
+
+### Notas finales
+- FASE 2 CERRADA Y VALIDADA LOCALMENTE
+- No se accedió al VPS. No se hizo deploy.
+- Ciclo #26 intacto.
 - No se inició FASE 3.
 - NEXT_ACTION: FASE 3 pendiente de autorización.

@@ -2095,8 +2095,11 @@ class GridIsolatedEngine {
           ))
           .returning({ id: gridIsolatedCycles.id });
 
-        if (cycleUpdate.length !== 1) {
+        if (cycleUpdate.length === 0) {
           return { committed: false, buyLevelRearmed: false };
+        }
+        if (cycleUpdate.length > 1) {
+          throw new Error(`Múltiples filas afectadas al cerrar el ciclo ${cycle.id} (${cycleUpdate.length} filas) — rollback`);
         }
 
         // Persisted SELL target: mark level filled atomically.
