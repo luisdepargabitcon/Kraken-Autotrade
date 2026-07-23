@@ -2067,8 +2067,9 @@ class GridIsolatedEngine {
       protectiveExit: filledProtectiveExit,
     };
 
+    let committed = false;
     try {
-      await db.transaction(async (tx) => {
+      committed = await db.transaction(async (tx) => {
         const cycleUpdate = await tx.update(gridIsolatedCycles)
           .set({
             status: finalStatus,
@@ -2094,7 +2095,7 @@ class GridIsolatedEngine {
           .returning({ id: gridIsolatedCycles.id });
 
         if (cycleUpdate.length !== 1) {
-          throw new Error(`Ciclo ${cycle.id} ya fue cerrado por otro proceso`);
+          return false;
         }
 
         // Persisted SELL target: mark level filled atomically.
@@ -2110,6 +2111,7 @@ class GridIsolatedEngine {
               eq(gridIsolatedLevels.id, sellLevelId),
               eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
               eq(gridIsolatedLevels.side, "SELL"),
+              inArray(gridIsolatedLevels.status, ["planned", "open"] as any),
               isNull(gridIsolatedLevels.filledAt)
             ))
             .returning({ id: gridIsolatedLevels.id });
@@ -2143,10 +2145,14 @@ class GridIsolatedEngine {
             throw new Error(`Múltiples niveles BUY ${cycle.buyLevelId} al rearmar tras cierre del ciclo ${cycle.id}`);
           }
         }
+
+        return true;
       });
     } finally {
       this.closingCycleIds.delete(cycle.id);
     }
+
+    if (!committed) return false;
 
     // In-memory sync
     cycle.status = finalStatus;

@@ -281,4 +281,143 @@ describe("buildGridOperationalViewModel", () => {
     expect(vm.header.realizedNetPnlUsd).toBe(123.45);
     expect(typeof vm.header.openEstimatedNetPnlUsd).toBe("number");
   });
+
+  describe("REV-C11 FASE 2 — D5/D7: filtros de status", () => {
+    it("D7: ciclo hodl_recovery aparece en openCycles", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "hodl_recovery" },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles.length).toBe(1);
+      expect(vm.openCycles[0].status).toBe("hodl_recovery");
+    });
+
+    it("D5: ciclo stop_loss_hit aparece en closedCycles", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "stop_loss_hit", sellPrice: "93000", completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.closedCycles[0].status).toBe("stop_loss_hit");
+    });
+
+    it("D5: ciclo trailing_closed aparece en closedCycles", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "trailing_closed", sellPrice: "93500", completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.closedCycles[0].status).toBe("trailing_closed");
+    });
+
+    it("D5: ciclo completed sigue apareciendo en closedCycles", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", sellPrice: "95000", completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.closedCycles[0].status).toBe("completed");
+    });
+
+    it("D5+D7: mix de statuses se separan correctamente", () => {
+      const input = makeInput();
+      input.cycles = [
+        { id: "c1", cycleNumber: 1, pair: "BTC/USD", status: "open", rangeVersionId: "range-active-v1", buyLevelId: "b1", targetSellLevelId: "s1", buyPrice: "90000", targetSellPrice: "95000", quantity: "0.01", openedAt: new Date().toISOString() },
+        { id: "c2", cycleNumber: 2, pair: "BTC/USD", status: "hodl_recovery", rangeVersionId: "range-active-v1", buyLevelId: "b2", targetSellLevelId: "s2", buyPrice: "91000", targetSellPrice: "96000", quantity: "0.01", openedAt: new Date().toISOString() },
+        { id: "c3", cycleNumber: 3, pair: "BTC/USD", status: "completed", rangeVersionId: "range-active-v1", buyLevelId: "b3", targetSellLevelId: "s3", buyPrice: "90000", sellPrice: "95000", quantity: "0.01", openedAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+        { id: "c4", cycleNumber: 4, pair: "BTC/USD", status: "stop_loss_hit", rangeVersionId: "range-active-v1", buyLevelId: "b4", targetSellLevelId: "s4", buyPrice: "92000", sellPrice: "89000", quantity: "0.01", openedAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+        { id: "c5", cycleNumber: 5, pair: "BTC/USD", status: "trailing_closed", rangeVersionId: "range-active-v1", buyLevelId: "b5", targetSellLevelId: "s5", buyPrice: "91000", sellPrice: "93000", quantity: "0.01", openedAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+        { id: "c6", cycleNumber: 6, pair: "BTC/USD", status: "cancelled", rangeVersionId: "range-active-v1", buyLevelId: "b6", targetSellLevelId: "s6", buyPrice: "90000", quantity: "0.01", openedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles.length).toBe(2);
+      expect(vm.closedCycles.length).toBe(3);
+      expect(vm.cancelledCycles.length).toBe(1);
+    });
+
+    it("ciclo cancelled no aparece en openCycles ni closedCycles", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "cancelled" },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles.length).toBe(0);
+      expect(vm.closedCycles.length).toBe(0);
+    });
+
+    it("ciclo error no aparece en openCycles ni closedCycles", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "error" },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles.length).toBe(0);
+      expect(vm.closedCycles.length).toBe(0);
+    });
+
+    it("openEstimatedNetPnlUsd suma solo ciclos abiertos", () => {
+      const input = makeInput();
+      input.cycles = [
+        { id: "c1", cycleNumber: 1, pair: "BTC/USD", status: "open", rangeVersionId: "range-active-v1", buyLevelId: "b1", targetSellLevelId: "s1", buyPrice: "90000", targetSellPrice: "95000", quantity: "0.01", openedAt: new Date().toISOString() },
+        { id: "c2", cycleNumber: 2, pair: "BTC/USD", status: "completed", rangeVersionId: "range-active-v1", buyLevelId: "b2", targetSellLevelId: "s2", buyPrice: "90000", sellPrice: "95000", quantity: "0.01", openedAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles.length).toBe(1);
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.header.openEstimatedNetPnlUsd).toBeGreaterThan(0);
+    });
+
+    it("hodl_recovery con riskStateJson se parsea correctamente", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "hodl_recovery",
+          riskStateJson: JSON.stringify({ stateVersion: 1, stopLossTriggered: false, hodlActive: true, hodlReason: "soft_stop_recovery" }),
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles.length).toBe(1);
+      expect(vm.openCycles[0].status).toBe("hodl_recovery");
+    });
+
+    it("closedCycles con stop_loss_hit calcula PnL realizado negativo", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "stop_loss_hit",
+          buyPrice: "92000",
+          sellPrice: "89000",
+          quantity: "0.01",
+          netPnlUsd: "-0.30",
+          netPnlPct: "-3.26",
+          completedAt: new Date().toISOString(),
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.closedCycles[0].status).toBe("stop_loss_hit");
+    });
+
+    it("closedCycles con trailing_closed tiene openedAt", () => {
+      const completedAt = new Date().toISOString();
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "trailing_closed",
+          sellPrice: "93500",
+          completedAt,
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.closedCycles[0].openedAt).toBeTruthy();
+    });
+  });
 });

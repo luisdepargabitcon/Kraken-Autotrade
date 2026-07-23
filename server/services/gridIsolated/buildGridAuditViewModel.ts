@@ -139,11 +139,16 @@ function toNum(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function parseJsonSafe(v: any): any {
   if (!v) return {};
   if (typeof v === "object") return v;
   try {
-    return JSON.parse(v);
+    const parsed = JSON.parse(v);
+    return isPlainObject(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -433,8 +438,8 @@ function buildCounters(status: any, levels: any[], cycles: any[]): GridCounters 
     ? levels.filter((l: any) => l?.rangeVersionId !== activeRangeId).length
     : levels.length;
   const orphanPlannedLevels = status?.orphanPlannedLevelsCount ?? levels.filter((l: any) => l?.status === "planned" && (!activeRangeId || l?.rangeVersionId !== activeRangeId)).length;
-  const openCycles = cycles.filter((c: any) => ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)).length;
-  const historicalCycles = cycles.filter((c: any) => ["completed", "closed"].includes(c?.status)).length;
+  const openCycles = cycles.filter((c: any) => ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open", "hodl_recovery"].includes(c?.status)).length;
+  const historicalCycles = cycles.filter((c: any) => ["completed", "closed", "stop_loss_hit", "trailing_closed"].includes(c?.status)).length;
   const cancelledCycles = cycles.filter((c: any) => c?.status === "cancelled").length;
   const completedCycles = cycles.filter((c: any) => c?.status === "completed").length;
 

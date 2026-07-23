@@ -266,7 +266,13 @@ export function validateTargetCalculationJson(raw: unknown): JsonbValidationResu
     rejectedCandidates: Array.isArray(raw.rejectedCandidates)
       ? raw.rejectedCandidates.map((c: any) => {
           if (c == null || (c.side !== "BUY" && c.side !== "SELL")) {
-            throw new Error("invalid_candidate");
+            return {
+              levelId: String(c?.levelId ?? ""),
+              side: "BUY" as "BUY" | "SELL",
+              price: 0,
+              reasonCode: "INVALID_CANDIDATE",
+              reason: "Candidato inválido o sin lado definido",
+            };
           }
           return {
             levelId: String(c.levelId ?? ""),

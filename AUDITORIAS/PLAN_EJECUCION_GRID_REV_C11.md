@@ -2,15 +2,15 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 1 corrección post-commit, pendiente commit y push
+TASK_STATUS: FASE 2 completada — 8 defectos corregidos, 47 tests añadidos, pendiente commit y push
 NEXT_ACTION: commit selectivo y push a origin/main
-LAST_COMPLETED_ACTION: Corrección post FASE 1 — restaurada doble barrera temporal, 65/65 tests gridOpenCycleShadowClose verdes, 142/142 gridIsolated verdes, npm run check OK, npm run build OK
-LAST_VALIDATION: 2026-07-23T07:55+02:00 check+build+tests OK
+LAST_COMPLETED_ACTION: FASE 2 — D1-D8 corregidos, 190/190 tests gridIsolated verdes, tsc OK, build OK
+LAST_VALIDATION: 2026-07-23T10:52+02:00 tsc+build+vitest OK
 CURRENT_HEAD: 0b0b9bb (pendiente nuevo commit)
 ORIGIN_HEAD: 0b0b9bb
 EXPECTED_DEPLOY_HASH: pendiente
 DEPLOYED_HASH: pendiente
-UPDATED_AT: 2026-07-23T07:55+02:00
+UPDATED_AT: 2026-07-23T10:52+02:00
 
 ## FASE 1 — Cambios aplicados
 
@@ -42,3 +42,43 @@ UPDATED_AT: 2026-07-23T07:55+02:00
   10. tick posterior y elegible después del reprice: permitido
 - Tests anteriores mantenidos: quarantine, CAS, rollback, memoria, concurrencia, legacy SELL, legacy BUY.
 - Fix fixture: legacy BUY level con `filledPrice: 60_000`.
+
+## FASE 2 — Cierre atómico y view models canónicos
+
+### Defectos encontrados y corregidos
+
+- **D1 (Medium)**: `completeCycleShadow` lanzaba error cuando el ciclo ya estaba cerrado en DB (`cycleUpdate.length !== 1`). **Fix**: devuelve `false` (no-op) sin throw, sin mutar memoria, sin emitir evento.
+- **D2 (Low)**: SELL level CAS verificaba `isNull(filledAt)` pero no `status`. **Fix**: añadido `inArray(status, ["planned", "open"])` al WHERE del level update.
+- **D4 (Medium)**: `buildCounters` en audit VM no incluía `"hodl_recovery"` en openCycles. **Fix**: añadido al filtro. También `stop_loss_hit` y `trailing_closed` añadidos a historicalCycles.
+- **D5 (Medium)**: `buildGridOperationalViewModel` closedCycles solo filtraba `"completed"`. **Fix**: añadido `"stop_loss_hit"` y `"trailing_closed"` al filtro.
+- **D6 (Low)**: `parseJsonSafe` en audit VM retornaba JSON válido no-objeto (string/number) sin envolver. **Fix**: añadido helper `isPlainObject` y retorno de `{}` para valores no-objeto.
+- **D7 (Medium)**: `buildGridOperationalViewModel` openCycles no incluía `"hodl_recovery"`. **Fix**: añadido al filtro.
+- **D8 (Low)**: `validateTargetCalculationJson` lanzaba `Error("invalid_candidate")` en lugar de retornar resultado de validación. **Fix**: retorna objeto con `reasonCode: "INVALID_CANDIDATE"` para candidatos inválidos.
+
+### Tests añadidos (47 nuevos)
+
+#### gridOpenCycleShadowClose.test.ts — 21 tests cierre atómico
+- D1: 5 tests (no-op sin throw, concurrencia, no mutación, no evento)
+- D2: 7 tests (SELL status cancelled/replaced/buy_maker_pending → rollback; planned/open → éxito; filledAt sin status → rollback; no mutación; no evento)
+- CAS ciclo: 2 tests (status cancelled → no-op; completedAt set → no-op)
+- closingCycleIds: 2 tests (limpieza post-éxito y post-no-op)
+- Eventos PnL: 5 tests (GRID_CYCLE_COMPLETED roles, STOP_LOSS_HIT, TRAILING_CLOSED, SYNTHETIC_RUNG sin sellLevelId)
+
+#### buildGridOperationalViewModel.test.ts — 11 tests view model operational
+- D7: hodl_recovery en openCycles
+- D5: stop_loss_hit, trailing_closed, completed en closedCycles
+- Mix de statuses, cancelled/error excluidos
+- openEstimatedNetPnlUsd solo ciclos abiertos
+- hodl_recovery con riskStateJson
+- stop_loss_hit PnL negativo
+- trailing_closed con openedAt
+
+#### gridForensicJsonb.test.ts — 15 tests audit VM y JSONB
+- D8: 9 tests (side null/undefined/BOGUS/null-candidate → INVALID_CANDIDATE; side BUY/SELL válido; array vacío; no-array → valid:false; forensic preserva raw)
+- D6: 5 tests (parseJsonSafe string válido, string no-objeto, number, JSON inválido, null)
+- D4: 2 tests (buildCounters hodl_recovery en openCycles, stop_loss_hit+trailing_closed en historicalCycles)
+
+### Validaciones
+- `npx tsc --noEmit`: OK
+- `npx vitest run server/services/gridIsolated/__tests__/`: 190/190 tests en 9 archivos
+- `npm run build`: OK

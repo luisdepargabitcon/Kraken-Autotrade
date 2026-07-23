@@ -1513,4 +1513,303 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       expect(engine.cycles.length).toBe(0);
     });
   });
+
+  describe("REV-C11 FASE 2 — cierre atómico CAS y view models", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      (db as any)._resetTxQueue();
+      resetEngine([makeCycle()], [makeLevel()]);
+    });
+
+    describe("D1: cycle ya cerrado → no-op sin throw", () => {
+      it("completeCycleShadow devuelve false si el ciclo ya está completed en DB", async () => {
+        const engine = gridIsolatedEngine as any;
+        (db as any)._state.cycles[0].status = "completed";
+        (db as any)._state.cycles[0].completedAt = new Date();
+        const result = await (engine as any).completeCycleShadow(
+          engine.cycles[0],
+          61_000,
+          SELL_LEVEL_ID,
+          "NORMAL_TARGET",
+          priceResult({ bid: 61_200 })
+        );
+        expect(result).toBe(false);
+      });
+
+      it("processOpenCyclesShadow devuelve 0 sin throw si el ciclo ya está cerrado en DB", async () => {
+        const engine = gridIsolatedEngine as any;
+        (db as any)._state.cycles[0].status = "completed";
+        (db as any)._state.cycles[0].completedAt = new Date();
+        const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
+        expect(result).toBe(0);
+      });
+
+      it("concurrencia: segunda llamada devuelve 0, no reject", async () => {
+        const engine = gridIsolatedEngine as any;
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        const results = await Promise.allSettled([
+          callProcessOpenCyclesShadow(engine, { bid: 61_200 }),
+          callProcessOpenCyclesShadow(engine, { bid: 61_200 }),
+        ]);
+        const fulfilled = results.filter((r) => r.status === "fulfilled");
+        expect(fulfilled.length).toBe(2);
+        const successes = fulfilled.filter((r: any) => r.value === 1).length;
+        expect(successes).toBe(1);
+        const zeros = fulfilled.filter((r: any) => r.value === 0).length;
+        expect(zeros).toBe(1);
+      });
+
+      it("no muta memoria cuando el ciclo ya está cerrado en DB", async () => {
+        const engine = gridIsolatedEngine as any;
+        (db as any)._state.cycles[0].status = "completed";
+        (db as any)._state.cycles[0].completedAt = new Date();
+        const beforeStatus = engine.cycles[0].status;
+        const beforeSellPrice = engine.cycles[0].sellPrice;
+        await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
+        expect(engine.cycles[0].status).toBe(beforeStatus);
+        expect(engine.cycles[0].sellPrice).toBe(beforeSellPrice);
+      });
+
+      it("no emite evento GRID_CYCLE_COMPLETED cuando el ciclo ya está cerrado", async () => {
+        const engine = gridIsolatedEngine as any;
+        (db as any)._state.cycles[0].status = "completed";
+        (db as any)._state.cycles[0].completedAt = new Date();
+        await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
+        const completedCall = (botLogger.info as any).mock.calls.find((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
+        expect(completedCall).toBeFalsy();
+      });
+    });
+
+    describe("D2: SELL level CAS con status", () => {
+      it("SELL level status=cancelled → rollback y throw", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [makeLevel({ status: "cancelled" as any })]
+        );
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no está disponible");
+        expect(engine.cycles[0].status).toBe("buy_filled");
+      });
+
+      it("SELL level status=replaced → rollback y throw", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [makeLevel({ status: "replaced" as any })]
+        );
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no está disponible");
+        expect(engine.cycles[0].status).toBe("buy_filled");
+      });
+
+      it("SELL level status=buy_maker_pending → rollback y throw", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [makeLevel({ status: "buy_maker_pending" as any })]
+        );
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no está disponible");
+        expect(engine.cycles[0].status).toBe("buy_filled");
+      });
+
+      it("SELL level status=planned → éxito", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [makeLevel({ status: "planned" as any })]
+        );
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        expect(engine.cycles[0].status).toBe("completed");
+      });
+
+      it("SELL level status=open → éxito", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [makeLevel({ status: "open" as any })]
+        );
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        expect(engine.cycles[0].status).toBe("completed");
+      });
+
+      it("SELL level filledAt set pero status=planned → rollback por filledAt", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [makeLevel({ status: "planned" as any, filledAt: new Date() as any })]
+        );
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no está disponible");
+        expect(engine.cycles[0].status).toBe("buy_filled");
+      });
+
+      it("no muta memoria cuando SELL CAS falla", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [makeLevel({ status: "cancelled" as any })]
+        );
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        const beforeStatus = engine.cycles[0].status;
+        try {
+          await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
+        } catch {}
+        expect(engine.cycles[0].status).toBe(beforeStatus);
+        expect(engine.cycles[0].sellPrice).toBeNull();
+      });
+
+      it("no emite evento cuando SELL CAS falla", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [makeLevel({ status: "cancelled" as any })]
+        );
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        try {
+          await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
+        } catch {}
+        const completedCall = (botLogger.info as any).mock.calls.find((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
+        expect(completedCall).toBeFalsy();
+      });
+    });
+
+    describe("CAS de ciclo: estados intermedios", () => {
+      it("cycle status cambiado a cancelled en DB → no-op", async () => {
+        const engine = gridIsolatedEngine as any;
+        (db as any)._state.cycles[0].status = "cancelled";
+        const result = await (engine as any).completeCycleShadow(
+          engine.cycles[0],
+          61_000,
+          SELL_LEVEL_ID,
+          "NORMAL_TARGET",
+          priceResult({ bid: 61_200 })
+        );
+        expect(result).toBe(false);
+      });
+
+      it("cycle completedAt set en DB → no-op", async () => {
+        const engine = gridIsolatedEngine as any;
+        (db as any)._state.cycles[0].completedAt = new Date().toISOString();
+        const result = await (engine as any).completeCycleShadow(
+          engine.cycles[0],
+          61_000,
+          SELL_LEVEL_ID,
+          "NORMAL_TARGET",
+          priceResult({ bid: 61_200 })
+        );
+        expect(result).toBe(false);
+      });
+    });
+
+    describe("closingCycleIds", () => {
+      it("se limpia después de cierre exitoso", async () => {
+        const engine = gridIsolatedEngine as any;
+        await runUntilClosed(engine, { bid: 61_200 });
+        expect(engine.closingCycleIds.has(CYCLE_ID)).toBe(false);
+      });
+
+      it("se limpia después de no-op (ciclo ya cerrado)", async () => {
+        const engine = gridIsolatedEngine as any;
+        (db as any)._state.cycles[0].status = "completed";
+        (db as any)._state.cycles[0].completedAt = new Date();
+        await (engine as any).completeCycleShadow(
+          engine.cycles[0],
+          61_000,
+          SELL_LEVEL_ID,
+          "NORMAL_TARGET",
+          priceResult({ bid: 61_200 })
+        );
+        expect(engine.closingCycleIds.has(CYCLE_ID)).toBe(false);
+      });
+    });
+
+    describe("Eventos y roles PnL", () => {
+      it("GRID_CYCLE_COMPLETED emite roles maker/maker y executionPolicy MAKER_ONLY", async () => {
+        const engine = gridIsolatedEngine as any;
+        await runUntilClosed(engine, { bid: 61_200 });
+        const completedCall = (botLogger.info as any).mock.calls.find((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
+        expect(completedCall).toBeTruthy();
+        expect(completedCall[2]).toMatchObject({
+          buyLiquidityRole: "maker",
+          sellLiquidityRole: "maker",
+          executionPolicy: "MAKER_ONLY",
+          takerFallbackUsed: false,
+        });
+      });
+
+      it("GRID_CYCLE_STOP_LOSS_HIT se emite para closePath PROTECTIVE_MAKER", async () => {
+        const engine = resetEngine(
+          [makeCycle({
+            targetSellPrice: 70_000,
+            targetSellLevelId: null,
+            targetRungLevelId: null,
+            exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+            targetKind: "SYNTHETIC_RUNG",
+            riskStateJson: null,
+          })],
+          [makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any })],
+          { stopLossEnabled: true, stopLossSoftPct: 3, hodlRecoveryEnabled: false }
+        );
+        await processLifecycleTick(engine, { bid: 58_000 });
+        await processLifecycleTick(engine, { bid: 58_000 });
+        await processLifecycleTick(engine, { bid: 58_000.2 });
+        const stopCalls = (botLogger.info as any).mock.calls.filter((call: any[]) => call[0] === "GRID_CYCLE_STOP_LOSS_HIT");
+        const closureCall = stopCalls.find((c: any[]) => c[2]?.closePath === "PROTECTIVE_MAKER");
+        expect(closureCall).toBeTruthy();
+        expect(closureCall[2]).toMatchObject({
+          buyLiquidityRole: "maker",
+          sellLiquidityRole: "maker",
+          executionPolicy: "MAKER_ONLY",
+          takerFallbackUsed: false,
+        });
+      });
+
+      it("GRID_CYCLE_TRAILING_CLOSED se emite para closePath TRAILING_MAKER", async () => {
+        const engine = resetEngine(
+          [makeCycle({
+            targetSellPrice: 70_000,
+            targetSellLevelId: null,
+            targetRungLevelId: null,
+            exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+            targetKind: "SYNTHETIC_RUNG",
+            riskStateJson: null,
+          })],
+          [makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any })],
+          { trailingEnabled: true, trailingActivationPct: 1.0, trailingStopPct: 0.5 }
+        );
+        await processLifecycleTick(engine, { bid: 60_650 });
+        await processLifecycleTick(engine, { bid: 60_300 });
+        await processLifecycleTick(engine, { bid: 60_300 });
+        await processLifecycleTick(engine, { bid: 60_300.2 });
+        const trailingCalls = (botLogger.info as any).mock.calls.filter((call: any[]) => call[0] === "GRID_CYCLE_TRAILING_CLOSED");
+        const closureCall = trailingCalls.find((c: any[]) => c[2]?.closePath === "TRAILING_MAKER");
+        expect(closureCall).toBeTruthy();
+        expect(closureCall[2]).toMatchObject({
+          closePath: "TRAILING_MAKER",
+          buyLiquidityRole: "maker",
+          sellLiquidityRole: "maker",
+        });
+      });
+
+      it("SYNTHETIC_RUNG sin sellLevelId → éxito sin actualizar nivel SELL", async () => {
+        const engine = resetEngine(
+          [makeCycle({
+            targetSellLevelId: null,
+            targetSellPrice: 61_000,
+            targetSellQuantity: 0.001,
+            targetKind: "SYNTHETIC_RUNG",
+            exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+          })],
+          [makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any })]
+        );
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        expect(engine.cycles[0].status).toBe("completed");
+        expect(engine.cycles[0].sellLevelId).toBeNull();
+      });
+    });
+  });
 });

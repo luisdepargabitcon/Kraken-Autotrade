@@ -724,12 +724,12 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
 
   const openCycleObjects = cycles
     .filter((c: any) =>
-      ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)
+      ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open", "hodl_recovery"].includes(c?.status)
     )
     .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid, config));
 
   const closedCycleObjects = cycles
-    .filter((c: any) => c?.status === "completed")
+    .filter((c: any) => ["completed", "stop_loss_hit", "trailing_closed"].includes(c?.status))
     .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid, config));
 
   const cancelledCycleObjects = cycles
