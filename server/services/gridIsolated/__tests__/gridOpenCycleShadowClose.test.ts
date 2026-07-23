@@ -1093,4 +1093,214 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       expect(buyLevel?.filledPrice).toBeNull();
     });
   });
+
+  describe("REV-C11 FASE 1 — quarantine, CAS y legacy", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      (db as any)._resetTxQueue();
+    });
+
+    it("ciclo con requiresReview=true no avanza ni reemplaza su JSON de revisión", async () => {
+      const engine = resetEngine(
+        [makeCycle({
+          requiresReview: true,
+          riskStateJson: { sentinel: 1 } as any,
+          makerExitStateJson: { sentinel: 2 } as any,
+        })],
+        [makeLevel()]
+      );
+      await processLifecycleTick(engine, { bid: 61_200 });
+      const cycle = engine.cycles[0];
+      expect(cycle.status).toBe("buy_filled");
+      expect(cycle.requiresReview).toBe(true);
+      expect((cycle.riskStateJson as any)?.sentinel).toBe(1);
+      expect((cycle.makerExitStateJson as any)?.sentinel).toBe(2);
+      const completedCall = (botLogger.info as any).mock.calls.find((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
+      expect(completedCall).toBeFalsy();
+    });
+
+    it("protectiveExit.state=REQUIRES_REVIEW no avanza y marca el ciclo para revisión", async () => {
+      const engine = resetEngine(
+        [makeCycle({
+          requiresReview: false,
+          riskStateJson: { protectiveExit: { state: "REQUIRES_REVIEW" } } as any,
+        })],
+        [makeLevel()]
+      );
+      await processLifecycleTick(engine, { bid: 61_200 });
+      const cycle = engine.cycles[0];
+      expect(cycle.status).toBe("buy_filled");
+      expect(cycle.requiresReview).toBe(true);
+    });
+
+    it("persistSellLifecycle devuelve false y no muta memoria si el ciclo no está abierto", async () => {
+      const engine = resetEngine(
+        [makeCycle({ riskStateJson: { before: true } as any })],
+        [makeLevel()]
+      );
+      (db as any)._state.cycles[0].status = "completed";
+      const cycle = engine.cycles[0];
+      const level = engine.levels[0];
+      const originalCycleStatus = cycle.status;
+      const originalLevelStatus = level.status;
+
+      const result = await (engine as any).persistSellLifecycle(
+        cycle,
+        level,
+        (engine as any).defaultRiskState(),
+        (engine as any).defaultMakerExit(),
+        "open"
+      );
+
+      expect(result).toBe(false);
+      expect(cycle.status).toBe(originalCycleStatus);
+      expect(level.status).toBe(originalLevelStatus);
+      expect((db as any)._state.cycles[0].status).toBe("completed");
+      expect((db as any)._state.cycles[0].riskStateJson).toEqual({ before: true });
+    });
+
+    it("persistSellLifecycle devuelve false y realiza rollback completo si el SELL level no es planned/open", async () => {
+      const engine = resetEngine(
+        [makeCycle({ riskStateJson: { before: true } as any })],
+        [makeLevel()]
+      );
+      (db as any)._state.levels[0].status = "filled";
+      const before = JSON.parse(JSON.stringify((db as any)._state));
+      const cycle = engine.cycles[0];
+      const level = engine.levels[0];
+
+      const result = await (engine as any).persistSellLifecycle(
+        cycle,
+        level,
+        (engine as any).defaultRiskState(),
+        (engine as any).defaultMakerExit(),
+        "open"
+      );
+
+      expect(result).toBe(false);
+      expect(cycle.status).toBe("buy_filled");
+      expect(level.status).toBe("planned");
+      const after = (db as any)._state;
+      expect(after.cycles[0].status).toBe(before.cycles[0].status);
+      expect(after.cycles[0].riskStateJson).toEqual(before.cycles[0].riskStateJson);
+      expect(after.levels[0].status).toBe(before.levels[0].status);
+    });
+
+    it("dos ejecuciones concurrentes de persistSellLifecycle: una sola exitosa y memoria consistente", async () => {
+      const engine = resetEngine([makeCycle()], [makeLevel()]);
+      const cycle = engine.cycles[0];
+      const level = engine.levels[0];
+      const risk = (engine as any).defaultRiskState();
+      const exit = (engine as any).defaultMakerExit();
+
+      const results = await Promise.allSettled([
+        (engine as any).persistSellLifecycle(cycle, level, risk, exit, "open"),
+        (engine as any).persistSellLifecycle(cycle, level, risk, exit, "open"),
+      ]);
+
+      const successCount = results.filter((r: any) => r.status === "fulfilled" && r.value === true).length;
+      expect(successCount).toBe(1);
+      expect(cycle.status).toBe("sell_placed");
+      expect(level.status).toBe("open");
+    });
+
+    it("makerEligibleAfter es estrictamente posterior a makerOrderCreatedAt", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      await processLifecycleTick(engine, { bid: 60_900 });
+      await processLifecycleTick(engine, { bid: 60_900 });
+      const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      expect(exit?.state).toBe("MAKER_PENDING");
+      expect(exit?.makerOrderCreatedAt).toBeInstanceOf(Date);
+      expect(exit?.makerEligibleAfter).toBeInstanceOf(Date);
+      expect(exit?.makerEligibleAfter.getTime()).toBeGreaterThan(exit?.makerOrderCreatedAt.getTime());
+    });
+
+    it("mismo tick bloqueado y tick posterior permite el fill", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      await processLifecycleTick(engine, { bid: 60_900 }); // TRIGGERED
+      const tick2Result = await processLifecycleTick(engine, { bid: 60_900 }); // MAKER_PENDING, no fill
+      expect(tick2Result).toBe(0);
+      expect(engine.cycles[0].status).toBe("buy_filled");
+      expect((engine.cycles[0].riskStateJson as any)?.protectiveExit?.state).toBe("MAKER_PENDING");
+
+      const tick3Result = await processLifecycleTick(engine, { bid: 61_000 });
+      expect(tick3Result).toBe(1);
+      expect(engine.cycles[0].status).toBe("completed");
+    });
+
+    it("legacy SELL de rango anterior puede cerrar y no rearma el BUY", async () => {
+      const oldRange = "legacy-range";
+      const cycle = makeCycle({
+        id: "legacy-cycle",
+        rangeVersionId: oldRange,
+        buyLevelId: "legacy-buy",
+        buyPrice: 60_000,
+        targetSellLevelId: "legacy-sell",
+        targetSellPrice: 61_000,
+        targetSellQuantity: 0.001,
+        targetKind: "PERSISTED_SELL",
+      });
+      const buyLevel = makeLevel({
+        id: "legacy-buy",
+        rangeVersionId: oldRange,
+        side: "BUY",
+        price: 60_000,
+        quantity: 0.001,
+        status: "filled" as any,
+        filledPrice: 60_000 as any,
+      });
+      const sellLevel = makeLevel({
+        id: "legacy-sell",
+        rangeVersionId: oldRange,
+        side: "SELL",
+        price: 61_000,
+        quantity: 0.001,
+        status: "open" as any,
+      });
+      const engine = resetEngine([cycle], [buyLevel, sellLevel], {}, { id: "active-range", pair: "BTC/USD", status: "active" });
+      engine.referencedRangeVersions = [
+        makeRange({ id: oldRange, pair: "BTC/USD", status: "replaced" } as any),
+        makeRange({ id: "active-range", pair: "BTC/USD", status: "active" } as any),
+      ];
+
+      const result = await runUntilClosed(engine, { bid: 61_000 });
+      expect(result).toBe(1);
+      expect(engine.cycles[0].status).toBe("completed");
+      expect(engine.cycles[0].sellPrice).toBe(61_000);
+      const legacyBuy = engine.levels.find((l: any) => l.id === "legacy-buy");
+      expect(legacyBuy?.status).toBe("filled");
+      expect(legacyBuy?.filledPrice).toBe(60_000);
+    });
+
+    it("legacy BUY de rango anterior no puede abrir un nuevo ciclo", async () => {
+      const oldRange = "legacy-range";
+      const legacyBuy = makeLevel({
+        id: "legacy-buy",
+        rangeVersionId: oldRange,
+        side: "BUY",
+        price: 60_000,
+        quantity: 0.001,
+        status: "planned" as any,
+      });
+      const engine = resetEngine([], [legacyBuy], {}, { id: "active-range", pair: "BTC/USD", status: "active" });
+      engine.referencedRangeVersions = [
+        makeRange({ id: oldRange, pair: "BTC/USD", status: "replaced" } as any),
+        makeRange({ id: "active-range", pair: "BTC/USD", status: "active" } as any),
+      ];
+
+      const price = priceResult({ bid: 60_000 });
+      const tickId = ++engine.currentTickId;
+      const ctx = makeTickContext(engine, price, tickId);
+      const pumpGuard = { active: false, blockNewRangeGeneration: false, blockRangeRebuild: false, allowBuyFill: true, allowExistingCycleSellExit: true, allowSellWithoutOpenCycle: false };
+      const validation = await (engine as any).canProcessShadowFill(legacyBuy, "active-range", pumpGuard, ctx, price);
+      expect(validation.ok).toBe(false);
+      expect(engine.cycles.length).toBe(0);
+    });
+  });
 });

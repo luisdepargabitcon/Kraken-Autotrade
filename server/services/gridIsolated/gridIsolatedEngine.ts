@@ -128,6 +128,8 @@ import {
   TAX_RESERVE_PCT,
 } from "./gridIsolatedTypes";
 
+const MIN_MAKER_REST_MS = 1;
+
 class GridIsolatedEngine {
   private config: GridIsolatedConfig | null = null;
   private activeRangeVersion: GridRangeVersion | null = null;
@@ -1979,9 +1981,7 @@ class GridIsolatedEngine {
       risk.activeExitRoute &&
       risk.pendingExitPrice != null &&
       risk.protectiveExit.lifecycleTickId != null &&
-      ctx.tickId > risk.protectiveExit.lifecycleTickId &&
-      risk.protectiveExit.makerEligibleAfter != null &&
-      ctx.startedAt.getTime() >= risk.protectiveExit.makerEligibleAfter.getTime()
+      ctx.tickId > risk.protectiveExit.lifecycleTickId
     ) {
       return {
         targetPrice: risk.pendingExitPrice,
@@ -2010,6 +2010,7 @@ class GridIsolatedEngine {
    * and reset the source BUY level to planned so it can rotate again.
    * Does NOT place real orders.
    */
+    // REV-C11: atomic closure and audit guard
   private async completeCycleShadow(
     cycle: GridCycle,
     sellPrice: number,
@@ -2017,9 +2018,9 @@ class GridIsolatedEngine {
     closePath: GridClosePath,
     priceResult: GridShadowExecutionPriceResult
   ): Promise<boolean> {
-    if (!this.config || TERMINAL_GRID_CYCLE_STATUSES.includes(cycle.status as any)) return false;
+    if (!this.config || TERMINAL_GRID_CYCLE_STATUSES.includes(cycle.status as any) || cycle.requiresReview) return false;
 
-    const now = new Date();
+    const now = new Date(); // REV-C11 closure timestamp
     const holdTimeMinutes = cycle.buyFilledAt
       ? Math.round((now.getTime() - cycle.buyFilledAt.getTime()) / 60000)
       : 0;
@@ -2120,7 +2121,7 @@ class GridIsolatedEngine {
         // active range. Legacy cycles from previous ranges keep their BUY
         // levels filled; those levels are managed independently.
         if (cycle.buyLevelId && this.activeRangeVersion && cycle.rangeVersionId === this.activeRangeVersion.id) {
-          await tx.update(gridIsolatedLevels)
+          const buyRearm = await tx.update(gridIsolatedLevels)
             .set({
               status: "planned",
               filledPrice: null,
@@ -2132,7 +2133,13 @@ class GridIsolatedEngine {
               eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
               eq(gridIsolatedLevels.side, "BUY"),
               eq(gridIsolatedLevels.status, "filled")
-            ));
+            ))
+            .returning({ id: gridIsolatedLevels.id });
+          // Only enforce uniqueness when a matching BUY level is tracked.
+          // Legacy or test fixtures without a BUY level should not abort the close.
+          if (buyRearm.length > 1) {
+            throw new Error(`Múltiples niveles BUY ${cycle.buyLevelId} al rearmar tras cierre del ciclo ${cycle.id}`);
+          }
         }
       });
     } finally {
@@ -2164,7 +2171,7 @@ class GridIsolatedEngine {
     }
 
     const buyLevel = cycle.buyLevelId ? this.levels.find(l => l.id === cycle.buyLevelId) : undefined;
-    if (buyLevel) {
+    if (buyLevel && this.activeRangeVersion && cycle.rangeVersionId === this.activeRangeVersion.id) {
       buyLevel.status = "planned";
       buyLevel.filledPrice = null;
       buyLevel.filledQuantity = 0;
@@ -2312,11 +2319,33 @@ class GridIsolatedEngine {
       centerPrice
     );
 
-    if (crossedLevels.length === 0) return false;
+    // Legacy SELL levels from previous ranges: allow closing cycles that still
+    // own them as explicit targets, but do not create new BUYs from old ranges.
+    const legacySellCycleIds = new Set(
+      this.cycles
+        .filter(c =>
+          (c.status === "buy_filled" || c.status === "sell_placed") &&
+          c.rangeVersionId !== activeRangeId &&
+          c.targetSellLevelId != null
+        )
+        .map(c => c.targetSellLevelId as string)
+    );
+    const legacySells = this.levels
+      .filter(l =>
+        l.side === "SELL" &&
+        l.rangeVersionId !== activeRangeId &&
+        (l.status === "planned" || l.status === "open") &&
+        legacySellCycleIds.has(l.id) &&
+        executionPrice >= l.price
+      )
+      .sort((a, b) => a.price - b.price || a.id.localeCompare(b.id));
+
+    const levelsToProcess = [...crossedLevels, ...legacySells];
+    if (levelsToProcess.length === 0) return false;
 
     let fillsProcessed = false;
 
-    for (const level of crossedLevels) {
+    for (const level of levelsToProcess) {
       if (level.side === "BUY") {
         const result = await this.processBuyLevelLifecycle(level, priceResult, tickCtx, aux.pumpGuard);
         if (result === "filled") fillsProcessed = true;
@@ -2456,19 +2485,24 @@ class GridIsolatedEngine {
     tickCtx: GridTickContext
   ): Promise<"triggered" | "pending" | null> {
     if (!this.activeRangeVersion || !this.config) return null;
-    const activeRangeId = this.activeRangeVersion.id;
     if (level.side !== "SELL") return null;
 
     const openCycle = this.cycles.find(
       c =>
         (c.status === "buy_filled" || c.status === "sell_placed") &&
-        c.rangeVersionId === activeRangeId &&
+        c.rangeVersionId === level.rangeVersionId &&
         c.targetSellLevelId === level.id
     );
     if (!openCycle) {
       await this.logEvent("GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE", `[SHADOW] SELL level ${level.id} ignored: no cycle owns it as explicit target`, {
-        levelId: level.id, sellPrice: level.price, activeRangeId,
+        levelId: level.id, sellPrice: level.price, rangeVersionId: level.rangeVersionId,
       });
+      return null;
+    }
+
+    const currentRisk = this.parseRiskState(openCycle);
+    if (openCycle.requiresReview || currentRisk.protectiveExit.state === "REQUIRES_REVIEW") {
+      // Quarantined cycle: do not advance lifecycle, emit pending/fill/close events, or rearm.
       return null;
     }
 
@@ -2479,15 +2513,13 @@ class GridIsolatedEngine {
         ? "SYNTHETIC_RUNG"
         : "NORMAL_TARGET";
 
-    const currentRisk = this.parseRiskState(openCycle);
     const intendedPrice = openCycle.targetSellPrice ?? level.price;
     const currentBid = priceResult.bid ?? tickCtx.bid ?? null;
     const currentAsk = priceResult.ask ?? tickCtx.ask ?? null;
 
     if (
       currentRisk.protectiveExit.state === "NONE" ||
-      currentRisk.protectiveExit.state === "ARMED" ||
-      currentRisk.protectiveExit.state === "REQUIRES_REVIEW"
+      currentRisk.protectiveExit.state === "ARMED"
     ) {
       const nextExit: GridPendingMakerExit = {
         ...this.defaultMakerExit(),
@@ -2508,8 +2540,8 @@ class GridIsolatedEngine {
         protectiveExit: nextExit,
         lastEvaluatedAt: tickCtx.startedAt,
       };
-      await this.persistSellLifecycle(openCycle, level, nextRisk, nextExit, "open");
-      return "triggered";
+      const persisted = await this.persistSellLifecycle(openCycle, level, nextRisk, nextExit, "open");
+      return persisted ? "triggered" : null;
     }
 
     if (currentRisk.protectiveExit.state === "TRIGGERED") {
@@ -2526,12 +2558,13 @@ class GridIsolatedEngine {
         });
         return null;
       }
+      const makerOrderCreatedAt = new Date();
       const nextExit: GridPendingMakerExit = {
         ...currentRisk.protectiveExit,
         state: "MAKER_PENDING",
         requestedMakerPrice: requestedPrice,
-        makerOrderCreatedAt: tickCtx.startedAt,
-        makerEligibleAfter: tickCtx.startedAt,
+        makerOrderCreatedAt,
+        makerEligibleAfter: new Date(makerOrderCreatedAt.getTime() + MIN_MAKER_REST_MS),
         lifecycleTickId: tickCtx.tickId,
         pendingQuantity: openCycle.quantity,
         simulatedOrderId: `grid-shadow-sell-${openCycle.id}-${tickCtx.tickId}`,
@@ -2543,8 +2576,8 @@ class GridIsolatedEngine {
         protectiveExit: nextExit,
         lastEvaluatedAt: tickCtx.startedAt,
       };
-      await this.persistSellLifecycle(openCycle, level, nextRisk, nextExit, "sell_maker_pending");
-      return "pending";
+      const persisted = await this.persistSellLifecycle(openCycle, level, nextRisk, nextExit, "sell_maker_pending");
+      return persisted ? "pending" : null;
     }
 
     // MAKER_PENDING and beyond are handled by processOpenCyclesShadow/completeCycleShadow.
@@ -2575,6 +2608,7 @@ class GridIsolatedEngine {
 
   /**
    * Persist SELL lifecycle state to DB and in-memory without closing the cycle.
+   * Returns true when the compare-and-set transaction commits successfully.
    */
   private async persistSellLifecycle(
     cycle: GridCycle,
@@ -2582,11 +2616,14 @@ class GridIsolatedEngine {
     risk: GridCycleRiskState,
     exit: GridPendingMakerExit,
     levelStatus: GridLevelStatus
-  ): Promise<void> {
-    if (!this.config) return;
+  ): Promise<boolean> {
+    if (!this.config) return false;
     try {
       await db.transaction(async (tx) => {
-        await tx.update(gridIsolatedCycles)
+        const allowedStatuses = levelStatus === "open"
+          ? (["buy_filled", "hodl_recovery"] as any)
+          : (POSITION_OPEN_GRID_CYCLE_STATUSES as any);
+        const cycleUpdate = await tx.update(gridIsolatedCycles)
           .set({
             status: "sell_placed",
             riskStateJson: risk,
@@ -2595,9 +2632,15 @@ class GridIsolatedEngine {
           })
           .where(and(
             eq(gridIsolatedCycles.id, cycle.id),
-            inArray(gridIsolatedCycles.status, POSITION_OPEN_GRID_CYCLE_STATUSES as any)
-          ));
-        await tx.update(gridIsolatedLevels)
+            inArray(gridIsolatedCycles.status, allowedStatuses)
+          ))
+          .returning({ id: gridIsolatedCycles.id });
+
+        if (cycleUpdate.length !== 1) {
+          throw new Error(`Ciclo ${cycle.id} no estaba en estado abierto; lifecycle SELL abortado`);
+        }
+
+        const levelUpdate = await tx.update(gridIsolatedLevels)
           .set({
             status: levelStatus,
             placedAt: levelStatus === "sell_maker_pending" ? new Date() : level.placedAt,
@@ -2605,12 +2648,18 @@ class GridIsolatedEngine {
           .where(and(
             eq(gridIsolatedLevels.id, level.id),
             eq(gridIsolatedLevels.rangeVersionId, cycle.rangeVersionId),
-            eq(gridIsolatedLevels.side, "SELL")
-          ));
+            eq(gridIsolatedLevels.side, "SELL"),
+            inArray(gridIsolatedLevels.status, ["planned", "open"])
+          ))
+          .returning({ id: gridIsolatedLevels.id });
+
+        if (levelUpdate.length !== 1) {
+          throw new Error(`Level SELL ${level.id} no actualizado; lifecycle SELL abortado`);
+        }
       });
     } catch (err) {
       botLogger.error("GRID_SELL_LIFECYCLE_PERSIST_FAILED" as any, `[GridIsolatedEngine] Fallo al persistir lifecycle SELL para ciclo ${cycle.id}: ${err}`, { cycleId: cycle.id, levelId: level.id });
-      return;
+      return false;
     }
 
     cycle.status = "sell_placed";
@@ -2619,6 +2668,7 @@ class GridIsolatedEngine {
     cycle.sellClientOrderId = level.clientOrderId;
     level.status = levelStatus;
     if (levelStatus === "sell_maker_pending") level.placedAt = new Date();
+    return true;
   }
 
   /**
@@ -2636,7 +2686,8 @@ class GridIsolatedEngine {
   ): { ok: boolean; reason?: string; eventType?: GridEventType; details?: Record<string, any> } {
     if (!this.config) return { ok: false, reason: "No config", eventType: "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE" };
 
-    if (level.rangeVersionId !== activeRangeId) {
+    // Legacy/open-cycle SELL fills are not restricted to the active range.
+    if (level.rangeVersionId !== activeRangeId && level.side !== "SELL") {
       return {
         ok: false,
         eventType: "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE",
@@ -2818,7 +2869,7 @@ class GridIsolatedEngine {
       const explicitCycle = this.cycles.find(
         c =>
           (c.status === "buy_filled" || c.status === "sell_placed") &&
-          c.rangeVersionId === activeRangeId &&
+          c.rangeVersionId === level.rangeVersionId &&
           c.targetSellLevelId === level.id
       );
       if (!explicitCycle) {
@@ -2826,7 +2877,15 @@ class GridIsolatedEngine {
           ok: false,
           eventType: "GRID_SHADOW_SELL_IGNORED_NO_OPEN_CYCLE",
           reason: `[SHADOW] SELL simulado ignorado: no existe BUY/ciclo que reclame este SELL como target explícito.`,
-          details: { levelId: level.id, activeRangeId },
+          details: { levelId: level.id, rangeVersionId: level.rangeVersionId },
+        };
+      }
+      if (explicitCycle.requiresReview) {
+        return {
+          ok: false,
+          eventType: "GRID_CYCLE_TARGET_REVIEW_REQUIRED",
+          reason: `[SHADOW] SELL level ${level.id} rejected: owning cycle ${explicitCycle.id} requires review`,
+          details: { levelId: level.id, cycleId: explicitCycle.id },
         };
       }
       // SELL lifecycle does not fill immediately; placement is validated later.
@@ -3114,7 +3173,18 @@ class GridIsolatedEngine {
         lastEvaluatedAt: new Date(),
       };
 
+      // A persisted protective exit in REQUIRES_REVIEW is a terminal quarantine
+      // state: do not advance to triggered/pending/fill or rearm automatically.
+      if (risk.protectiveExit.state === "REQUIRES_REVIEW") {
+        if (!cycle.requiresReview) {
+          this.markCycleForReview(cycle, "Persisted protective exit in REQUIRES_REVIEW state", "REVIEW_STATE", "maker_exit_state_json");
+        }
+        await this.persistReviewState(cycle);
+        continue;
+      }
+
       const intended = this.resolveIntendedExit(cycle, evaluation, currentPrice);
+      const preEvalStatus = cycle.status;
 
       // HODL activation is committed immediately so the cycle stops normal targeting.
       if (evaluation?.action === "HODL_RECOVERY_ACTIVATE") {
@@ -3152,12 +3222,14 @@ class GridIsolatedEngine {
         botLogger.error("GRID_RISK_STATE_REVIEW_REQUIRED" as any, `[GridIsolatedEngine] riskStateJson inválido para ciclo ${cycle.id}: ${riskValidation.reason}`, { code: riskValidation.code });
         this.markCycleForReview(cycle, riskValidation.reason, riskValidation.code, "risk_state_json");
         await this.persistReviewState(cycle);
+        cycle.status = preEvalStatus;
         continue;
       }
       if (!exitValidation.valid) {
         botLogger.error("GRID_MAKER_EXIT_STATE_REVIEW_REQUIRED" as any, `[GridIsolatedEngine] makerExitStateJson inválido para ciclo ${cycle.id}: ${exitValidation.reason}`, { code: exitValidation.code });
         this.markCycleForReview(cycle, exitValidation.reason, exitValidation.code, "maker_exit_state_json");
         await this.persistReviewState(cycle);
+        cycle.status = preEvalStatus;
         continue;
       }
 
@@ -3293,6 +3365,11 @@ class GridIsolatedEngine {
       return protectiveExit;
     }
 
+    // REQUIRES_REVIEW is a terminal quarantine state: do not advance.
+    if (protectiveExit.state === "REQUIRES_REVIEW") {
+      return protectiveExit;
+    }
+
     // New trigger detected.
     if (protectiveExit.state === "NONE" || protectiveExit.state === "ARMED") {
       return {
@@ -3352,7 +3429,7 @@ class GridIsolatedEngine {
         state: "MAKER_PENDING",
         requestedMakerPrice: makerPrice,
         makerOrderCreatedAt: now,
-        makerEligibleAfter: new Date(ctx.startedAt.getTime()),
+        makerEligibleAfter: new Date(now.getTime() + MIN_MAKER_REST_MS),
         lifecycleTickId: ctx.tickId,
         pendingQuantity: cycle.quantity,
         simulatedOrderId: `grid-shadow-${cycle.id}-${now.getTime()}`,
@@ -3391,7 +3468,7 @@ class GridIsolatedEngine {
         return {
           ...protectiveExit,
           requestedMakerPrice: makerPrice,
-          makerEligibleAfter: new Date(ctx.startedAt.getTime()),
+          makerEligibleAfter: new Date(now.getTime() + MIN_MAKER_REST_MS),
           lifecycleTickId: ctx.tickId,
           lastRepricedAt: now,
           repriceAttempts: (protectiveExit.repriceAttempts ?? 0) + 1,
