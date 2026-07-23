@@ -1981,7 +1981,9 @@ class GridIsolatedEngine {
       risk.activeExitRoute &&
       risk.pendingExitPrice != null &&
       risk.protectiveExit.lifecycleTickId != null &&
-      ctx.tickId > risk.protectiveExit.lifecycleTickId
+      ctx.tickId > risk.protectiveExit.lifecycleTickId &&
+      risk.protectiveExit.makerEligibleAfter != null &&
+      ctx.startedAt.getTime() >= risk.protectiveExit.makerEligibleAfter.getTime()
     ) {
       return {
         targetPrice: risk.pendingExitPrice,
@@ -2558,7 +2560,7 @@ class GridIsolatedEngine {
         });
         return null;
       }
-      const makerOrderCreatedAt = new Date();
+      const makerOrderCreatedAt = tickCtx.startedAt;
       const nextExit: GridPendingMakerExit = {
         ...currentRisk.protectiveExit,
         state: "MAKER_PENDING",
@@ -3358,7 +3360,7 @@ class GridIsolatedEngine {
     priceResult: GridShadowExecutionPriceResult,
     ctx: GridTickContext
   ): GridPendingMakerExit {
-    const now = new Date();
+    const now = ctx.startedAt;
 
     // No intended exit: keep any existing pending order alive; do not silently cancel.
     if (!intended.route || intended.price == null) {
@@ -3468,6 +3470,7 @@ class GridIsolatedEngine {
         return {
           ...protectiveExit,
           requestedMakerPrice: makerPrice,
+          makerOrderCreatedAt: now,
           makerEligibleAfter: new Date(now.getTime() + MIN_MAKER_REST_MS),
           lifecycleTickId: ctx.tickId,
           lastRepricedAt: now,

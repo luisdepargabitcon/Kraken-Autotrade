@@ -294,10 +294,15 @@ function makeRange(overrides: Partial<GridRangeVersion> = {}): GridRangeVersion 
   } as GridRangeVersion;
 }
 
+let testClockMs = Date.now();
+const TICK_CLOCK_STEP_MS = 100;
+
 function makeTickContext(engine: any, price: GridShadowExecutionPriceResult, tickId: number) {
+  const startedAt = new Date(testClockMs);
+  testClockMs += TICK_CLOCK_STEP_MS;
   return {
     tickId,
-    startedAt: new Date(),
+    startedAt,
     pair: engine.config?.pair ?? "BTC/USD",
     bid: price.bid ?? null,
     ask: price.ask ?? null,
@@ -369,6 +374,18 @@ async function processLifecycleTick(
   return engine.processOpenCyclesShadow(price, ctx);
 }
 
+async function processLifecycleTickAt(
+  engine: any,
+  opts: Partial<GridShadowExecutionPriceResult>,
+  startedAt: Date
+): Promise<number> {
+  const price = priceResult(opts);
+  const tickId = ++engine.currentTickId;
+  const ctx = makeCtxAt(engine, price, tickId, startedAt);
+  await engine.evaluateRiskForOpenCycles(price, ctx);
+  return engine.processOpenCyclesShadow(price, ctx);
+}
+
 function priceResult(opts: Partial<GridShadowExecutionPriceResult>): GridShadowExecutionPriceResult {
   const bid = opts.bid ?? null;
   return {
@@ -380,6 +397,20 @@ function priceResult(opts: Partial<GridShadowExecutionPriceResult>): GridShadowE
     spreadPct: opts.spreadPct ?? null,
     timestamp: opts.timestamp ?? new Date().toISOString(),
   } as GridShadowExecutionPriceResult;
+}
+
+function makeCtxAt(engine: any, price: GridShadowExecutionPriceResult, tickId: number, startedAt: Date) {
+  return {
+    tickId,
+    startedAt,
+    pair: engine.config?.pair ?? "BTC/USD",
+    bid: price.bid ?? null,
+    ask: price.ask ?? null,
+    last: price.source === "ticker_last" ? price.price : null,
+    marketTimestamp: price.timestamp,
+    priceSource: price.source,
+    freshness: { isFresh: true, reason: null, ageMs: 0, maxAgeMs: 60000 },
+  };
 }
 
 function resetEngine(cycles: GridCycle[], levels: GridLevel[], configOverrides: Partial<GridIsolatedConfig> = {}, rangeOverrides: Partial<GridRangeVersion> = {}) {
@@ -394,6 +425,7 @@ function resetEngine(cycles: GridCycle[], levels: GridLevel[], configOverrides: 
   engine.tickSequence = 0;
   engine.currentTickId = 0;
   engine.closingCycleIds?.clear();
+  testClockMs = Date.now();
 
   const rows = {
     cycles: cycles.map((c) => ({ ...c })),
@@ -1218,19 +1250,197 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       expect(exit?.makerEligibleAfter.getTime()).toBeGreaterThan(exit?.makerOrderCreatedAt.getTime());
     });
 
-    it("mismo tick bloqueado y tick posterior permite el fill", async () => {
+    it("mismo tick lógico: bloqueado", async () => {
       const engine = resetEngine(
         [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
         [makeLevel({ status: "open" as any })]
       );
-      await processLifecycleTick(engine, { bid: 60_900 }); // TRIGGERED
-      const tick2Result = await processLifecycleTick(engine, { bid: 60_900 }); // MAKER_PENDING, no fill
-      expect(tick2Result).toBe(0);
-      expect(engine.cycles[0].status).toBe("buy_filled");
-      expect((engine.cycles[0].riskStateJson as any)?.protectiveExit?.state).toBe("MAKER_PENDING");
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+      const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      expect(exit?.state).toBe("MAKER_PENDING");
+      expect(exit?.lifecycleTickId).toBe(engine.currentTickId);
 
-      const tick3Result = await processLifecycleTick(engine, { bid: 61_000 });
-      expect(tick3Result).toBe(1);
+      // Mismo tickId: no puede avanzar a fill
+      const sameTickCtx = makeCtxAt(engine, priceResult({ bid: 61_000 }), engine.currentTickId, new Date(testClockMs + TICK_CLOCK_STEP_MS * 2));
+      const result = await engine.processOpenCyclesShadow(priceResult({ bid: 61_000 }), sameTickCtx);
+      expect(result).toBe(0);
+      expect(engine.cycles[0].status).toBe("buy_filled");
+    });
+
+    it("tick posterior pero 1 ms antes de makerEligibleAfter: bloqueado", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+      const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      const eligibleMs = exit.makerEligibleAfter.getTime();
+
+      // Tick posterior pero 1 ms antes de eligibleAfter
+      const beforeEligible = new Date(eligibleMs - 1);
+      const result = await processLifecycleTickAt(engine, { bid: 61_000 }, beforeEligible);
+      expect(result).toBe(0);
+      expect(engine.cycles[0].status).toBe("buy_filled");
+    });
+
+    it("exactamente en makerEligibleAfter: permitido", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+      const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      const eligibleMs = exit.makerEligibleAfter.getTime();
+
+      // Exactamente en eligibleAfter
+      const atEligible = new Date(eligibleMs);
+      const result = await processLifecycleTickAt(engine, { bid: 61_000 }, atEligible);
+      expect(result).toBe(1);
+      expect(engine.cycles[0].status).toBe("completed");
+    });
+
+    it("después de makerEligibleAfter: permitido", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+      const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      const eligibleMs = exit.makerEligibleAfter.getTime();
+
+      const afterEligible = new Date(eligibleMs + 50);
+      const result = await processLifecycleTickAt(engine, { bid: 61_000 }, afterEligible);
+      expect(result).toBe(1);
+      expect(engine.cycles[0].status).toBe("completed");
+    });
+
+    it("timestamp anterior al makerOrderCreatedAt: bloqueado", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+      const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      const createdMs = exit.makerOrderCreatedAt.getTime();
+
+      // Timestamp anterior a makerOrderCreatedAt (pero tickId posterior)
+      const beforeCreated = new Date(createdMs - 10);
+      const result = await processLifecycleTickAt(engine, { bid: 61_000 }, beforeCreated);
+      expect(result).toBe(0);
+      expect(engine.cycles[0].status).toBe("buy_filled");
+    });
+
+    it("reloj regresivo (tick posterior con timestamp menor al tick anterior): bloqueado", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+
+      // Reloj regresivo: tickId mayor pero timestamp mucho menor
+      const regressiveAt = new Date(testClockMs - 1000);
+      const result = await processLifecycleTickAt(engine, { bid: 61_000 }, regressiveAt);
+      expect(result).toBe(0);
+      expect(engine.cycles[0].status).toBe("buy_filled");
+    });
+
+    it("reprice actualiza makerOrderCreatedAt y crea makerEligibleAfter nuevo y posterior", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+      const exitBefore = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      const createdBefore = exitBefore.makerOrderCreatedAt.getTime();
+      const eligibleBefore = exitBefore.makerEligibleAfter.getTime();
+
+      // Forzar reprice: cambiar targetSellPrice para que difiera más de un tick
+      engine.cycles[0].targetSellPrice = 61_500;
+      (db as any)._state.cycles[0].targetSellPrice = 61_500;
+
+      // Avanzar reloj significativamente para que el reprice ocurra
+      const tick3At = new Date(testClockMs + TICK_CLOCK_STEP_MS * 10);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick3At);
+
+      const exitAfter = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      // Reprice debe actualizar makerOrderCreatedAt
+      expect(exitAfter.makerOrderCreatedAt.getTime()).toBeGreaterThan(createdBefore);
+      // makerEligibleAfter debe ser posterior al nuevo makerOrderCreatedAt
+      expect(exitAfter.makerEligibleAfter.getTime()).toBeGreaterThan(exitAfter.makerOrderCreatedAt.getTime());
+      // makerEligibleAfter debe ser posterior al anterior
+      expect(exitAfter.makerEligibleAfter.getTime()).toBeGreaterThan(eligibleBefore);
+    });
+
+    it("tick posterior al reprice pero antes de la nueva elegibilidad: bloqueado", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+
+      // Forzar reprice
+      engine.cycles[0].targetSellPrice = 61_500;
+      (db as any)._state.cycles[0].targetSellPrice = 61_500;
+      const tick3At = new Date(testClockMs + TICK_CLOCK_STEP_MS * 10);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick3At); // REPRICE
+
+      const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      const newEligibleMs = exit.makerEligibleAfter.getTime();
+
+      // Tick posterior al reprice pero antes de la nueva elegibilidad
+      const beforeNewEligible = new Date(newEligibleMs - 1);
+      const result = await processLifecycleTickAt(engine, { bid: 61_500 }, beforeNewEligible);
+      expect(result).toBe(0);
+      expect(engine.cycles[0].status).toBe("buy_filled");
+    });
+
+    it("tick posterior y elegible después del reprice: permitido", async () => {
+      const engine = resetEngine(
+        [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
+        [makeLevel({ status: "open" as any })]
+      );
+      const tick1At = new Date(testClockMs);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
+      const tick2At = new Date(testClockMs + TICK_CLOCK_STEP_MS);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick2At); // MAKER_PENDING
+
+      // Forzar reprice
+      engine.cycles[0].targetSellPrice = 61_500;
+      (db as any)._state.cycles[0].targetSellPrice = 61_500;
+      const tick3At = new Date(testClockMs + TICK_CLOCK_STEP_MS * 10);
+      await processLifecycleTickAt(engine, { bid: 60_900 }, tick3At); // REPRICE
+
+      const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+      const newEligibleMs = exit.makerEligibleAfter.getTime();
+
+      // Tick posterior y elegible
+      const afterNewEligible = new Date(newEligibleMs + 50);
+      const result = await processLifecycleTickAt(engine, { bid: 61_500 }, afterNewEligible);
+      expect(result).toBe(1);
       expect(engine.cycles[0].status).toBe("completed");
     });
 
