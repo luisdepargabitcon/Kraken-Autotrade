@@ -173,15 +173,24 @@ export function diagnoseShadowOpenCycles(
     let targetLevelId = cycle.targetSellLevelId ?? null;
     let targetPrice = cycle.targetSellPrice ?? null;
     let targetQty = cycle.targetSellQuantity ?? null;
-    let targetSource: "range" | "external" | "missing" | null = targetLevelId
-      ? isTargetFromRange(cycle, targetLevelId, levels)
-        ? "range"
-        : "external"
-      : "missing";
+
+    // V2 SYNTHETIC_RUNG cycles have targetSellLevelId=null but a valid synthetic
+    // target persisted via targetRungLevelId, targetSellPrice and targetSellQuantity.
+    // These must NOT be treated as "missing" nor routed through the legacy resolver.
+    const isSyntheticRung = cycle.targetKind === "SYNTHETIC_RUNG" || cycle.targetRungLevelId != null;
+
+    let targetSource: "range" | "external" | "missing" | null = isSyntheticRung
+      ? (targetPrice != null && targetQty != null ? "range" : "missing")
+      : targetLevelId
+        ? isTargetFromRange(cycle, targetLevelId, levels)
+          ? "range"
+          : "external"
+        : "missing";
     let targetResolutionReason: string | null = null;
 
-    // If target not persisted, try to resolve from the active range for diagnostics only
-    if (!targetLevelId || targetPrice == null || targetQty == null) {
+    // If target not persisted, try to resolve from the active range for diagnostics only.
+    // Skip legacy resolver for V2 SYNTHETIC_RUNG cycles — their target is already set.
+    if (!isSyntheticRung && (!targetLevelId || targetPrice == null || targetQty == null)) {
       const resolution = resolveTargetSellForCycle({
         cycle,
         levels,
@@ -198,7 +207,7 @@ export function diagnoseShadowOpenCycles(
       }
     }
 
-    const hasTarget = targetLevelId != null && targetPrice != null && targetQty != null;
+    const hasTarget = (isSyntheticRung || targetLevelId != null) && targetPrice != null && targetQty != null;
     if (!hasTarget) missingTarget++;
 
     const eligible =

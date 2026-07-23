@@ -1,6 +1,4 @@
-import type { GridCycle, GridLevel, PumpDumpState } from "./gridIsolatedTypes";
-
-export const SHADOW_SELL_PAIRING_POLICY = "FIFO_SAME_RANGE_PROFITABLE" as const;
+import type { GridLevel, PumpDumpState } from "./gridIsolatedTypes";
 
 export interface CrossedShadowLevelsResult {
   levels: GridLevel[];
@@ -63,37 +61,4 @@ export function getCrossedShadowLevels(
     ),
     ordering: "DISTANCE_TO_EXECUTION_PRICE",
   };
-}
-
-export interface SelectShadowCycleForSellInput {
-  sellLevel: GridLevel;
-  cycles: GridCycle[];
-  activeRangeId: string;
-  policy?: typeof SHADOW_SELL_PAIRING_POLICY;
-}
-
-function cycleTimestamp(cycle: GridCycle): number {
-  const value = cycle.buyFilledAt ?? cycle.createdAt;
-  const timestamp = value instanceof Date ? value.getTime() : new Date(value as any).getTime();
-  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
-}
-
-export function selectShadowCycleForSell({
-  sellLevel,
-  cycles,
-  activeRangeId,
-}: SelectShadowCycleForSellInput): GridCycle | null {
-  return cycles
-    .filter(cycle =>
-      cycle.rangeVersionId === activeRangeId &&
-      cycle.status === "buy_filled" &&
-      Number.isFinite(cycle.quantity) &&
-      cycle.quantity > 0 &&
-      cycle.buyPrice != null &&
-      Number.isFinite(cycle.buyPrice) &&
-      sellLevel.price > cycle.buyPrice &&
-      cycle.sellLevelId == null &&
-      cycle.completedAt == null
-    )
-    .sort((a, b) => cycleTimestamp(a) - cycleTimestamp(b) || a.id.localeCompare(b.id))[0] ?? null;
 }

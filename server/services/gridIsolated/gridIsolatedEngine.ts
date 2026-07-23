@@ -36,8 +36,6 @@ import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from
 import {
   getShadowPumpGuardPolicy,
   getCrossedShadowLevels,
-  selectShadowCycleForSell,
-  SHADOW_SELL_PAIRING_POLICY,
   type ShadowPumpGuardPolicy,
 } from "./gridShadowPolicy";
 import {
