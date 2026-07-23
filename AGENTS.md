@@ -1,4 +1,4 @@
-# Gobernanza general de Kraken-Autotrade
+﻿# Gobernanza general de Kraken-Autotrade
 
 ## Fuente de verdad
 
@@ -54,23 +54,14 @@
 - No ejecutar SQL manual si existe un runner oficial.
 - Solo hacer deploy cuando la tarea vigente lo autorice expresamente.
 
-## Finalización
+## Finalización y continuidad
 
-- No declarar una tarea terminada con requisitos obligatorios pendientes.
-- No convertir pendientes obligatorios en “no bloqueantes”.
-- No cerrar un checklist añadiendo solamente una tabla resumen.
-- Actualizar las filas originales.
-- El primer resumen preparado al terminar es un borrador interno.
-- Antes de responder, releer las instrucciones y comprobar si realmente se terminó todo.
-- Si falta algo, continuar automáticamente.
-- Los comandos largos deben ejecutarse con timeout, heartbeat y recuperación según `.windsurf/rules/01-recuperacion-comandos.md`.
-- Las operaciones stateful nunca deben repetirse sin comprobar antes su estado.
-- Solo detenerse por un bloqueo crítico real y demostrado.
-
-## Continuidad entre modelos y sesiones
-
-- Toda tarea extensa debe mantener un plan persistente con NEXT_ACTION.
-- El contexto de conversación no sustituye al plan persistente.
-- Antes de una operación STATEFUL debe guardarse un punto de recuperación.
-- Después de cambiar de modelo o sesión, usar `/reanudar-tarea`.
-- Nunca repetir operaciones STATEFUL sin comprobar antes su estado real.
+- BITACORA.md es la fuente documental vigente.
+- Las Rules always_on deben ser ligeras.
+- El plan persistente se usa solo para tareas largas.
+- Se actualiza únicamente en hitos relevantes.
+- El watchdog se usa solo para comandos largos.
+- `/reanudar-tarea` se usa después de una interrupción real.
+- `/finalizar-y-reauditar` se ejecuta una sola vez.
+- No repetir auditorías o pruebas sin que haya cambiado el código afectado.
+- No corregir módulos ajenos para hacer verde una tarea acotada.
