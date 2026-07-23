@@ -103,6 +103,8 @@ export interface OperationalOpenCycle {
   targetKind: string | null;
   targetRungLevelId: string | null;
   requiresReview: boolean;
+  reviewCode: string | null;
+  reviewReason: string | null;
   targetReached: boolean;
   executable: boolean;
   riskState: GridCycleRiskState | null;
@@ -112,6 +114,16 @@ export interface OperationalOpenCycle {
   buyLevelId: string | null;
   sellLevelId: string | null;
   targetSellLevelId: string | null;
+  // Realized fields — null for open cycles, populated for closed cycles
+  sellPrice: number | null;
+  sellFilledAt: string | null;
+  closedQuantity: number | null;
+  closePath: string | null;
+  realizedGrossPnl: number | null;
+  realizedFee: number | null;
+  realizedTax: number | null;
+  realizedNetPnl: number | null;
+  realizedNetPnlPct: number | null;
 }
 
 export interface OperationalLevel {
@@ -346,7 +358,7 @@ function computeCycleEstimates(
 > {
   const buy = toNum(cycle?.buyPrice);
   const qty = toNum(cycle?.quantity);
-  const sell = toNum(cycle?.targetSellPrice ?? cycle?.sellPrice);
+  const sell = toNum(cycle?.targetSellPrice);
   const price = currentBid ?? currentPrice;
 
   if (buy == null || qty == null || sell == null) {
@@ -434,7 +446,7 @@ function buildOpenCycle(
     color: statusColor(status, requiresReview),
     buyPrice: buy,
     quantity: qty,
-    targetSellPrice: toNum(cycle?.targetSellPrice ?? cycle?.sellPrice),
+    targetSellPrice: toNum(cycle?.targetSellPrice),
     targetSellQuantity: toNum(cycle?.targetSellQuantity ?? cycle?.quantity),
     currentPrice,
     currentBid,
@@ -465,6 +477,105 @@ function buildOpenCycle(
     buyLevelId: cycle?.buyLevelId ?? null,
     sellLevelId: cycle?.sellLevelId ?? null,
     targetSellLevelId: cycle?.targetSellLevelId ?? null,
+    sellPrice: null,
+    sellFilledAt: null,
+    closedQuantity: null,
+    closePath: null,
+    realizedGrossPnl: null,
+    realizedFee: null,
+    realizedTax: null,
+    realizedNetPnl: null,
+    realizedNetPnlPct: null,
+    reviewCode: null,
+    reviewReason: null,
+  };
+}
+
+function buildClosedCycle(
+  cycle: any,
+  activeRangeVersionId: string | null,
+): OperationalOpenCycle {
+  const relation = toRangeRelation(cycle, activeRangeVersionId);
+  const buy = toNum(cycle?.buyPrice);
+  const qty = toNum(cycle?.quantity);
+  const status = cycle?.status ?? "unknown";
+  const requiresReview = cycle?.requiresReview === true;
+
+  const targetKind = cycle?.targetKind ?? null;
+  const exitPolicyVersion = cycle?.exitPolicyVersion ?? null;
+  const targetSource =
+    cycle?.targetSource ??
+    (targetKind === "SYNTHETIC_RUNG"
+      ? "synthetic_rung"
+      : targetKind === "PERSISTED_SELL"
+        ? "persisted_sell"
+        : cycle?.targetSellLevelId
+          ? "range"
+          : null);
+
+  const risk = parseRiskState(cycle);
+  const sellPrice = toNum(cycle?.sellPrice);
+  const sellFilledAt = cycle?.sellFilledAt ?? null;
+  const closedQuantity = toNum(cycle?.filledQuantity ?? cycle?.quantity);
+  const closePath = cycle?.closePath ?? null;
+
+  const realizedGrossPnl = toNum(cycle?.grossPnlUsd);
+  const realizedFee = toNum(cycle?.feeTotalUsd);
+  const realizedTax = toNum(cycle?.taxReserveUsd);
+  const realizedNetPnl = toNum(cycle?.netPnlUsd);
+  const realizedNetPnlPct = toNum(cycle?.netPnlPct);
+
+  return {
+    id: cycle?.id ?? String(cycle?.cycleNumber ?? "?"),
+    cycleNumber: cycle?.cycleNumber ?? 0,
+    pair: cycle?.pair ?? "BTC/USD",
+    status,
+    statusLabel: translateStatus(status),
+    color: statusColor(status, requiresReview),
+    buyPrice: buy,
+    quantity: qty,
+    targetSellPrice: toNum(cycle?.targetSellPrice),
+    targetSellQuantity: toNum(cycle?.targetSellQuantity ?? cycle?.quantity),
+    currentPrice: null,
+    currentBid: null,
+    progressPct: null,
+    distanceUsd: null,
+    distancePct: null,
+    estimatedGrossPnl: null,
+    estimatedFee: null,
+    estimatedTax: null,
+    estimatedNetPnl: null,
+    estimatedOperationalCost: null,
+    openedAt: cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null,
+    durationLabel: fmtDuration(cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null),
+    rangeVersionId: cycle?.rangeVersionId ?? null,
+    rangeRelation: relation,
+    rangeLabel: cycleRangeLabel(relation),
+    targetSource,
+    exitPolicyVersion,
+    targetKind,
+    targetRungLevelId: cycle?.targetRungLevelId ?? null,
+    requiresReview,
+    reviewCode: null,
+    reviewReason: null,
+    targetReached: false,
+    executable: false,
+    riskState: risk,
+    riskStateLabel: riskStateSummary(risk),
+    activeExitRoute: risk?.activeExitRoute ?? null,
+    activeExitRouteLabel: closePathLabel(risk?.activeExitRoute ?? null),
+    buyLevelId: cycle?.buyLevelId ?? null,
+    sellLevelId: cycle?.sellLevelId ?? null,
+    targetSellLevelId: cycle?.targetSellLevelId ?? null,
+    sellPrice,
+    sellFilledAt,
+    closedQuantity,
+    closePath,
+    realizedGrossPnl,
+    realizedFee,
+    realizedTax,
+    realizedNetPnl,
+    realizedNetPnlPct,
   };
 }
 
@@ -729,8 +840,8 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid, config));
 
   const closedCycleObjects = cycles
-    .filter((c: any) => ["completed", "stop_loss_hit", "trailing_closed"].includes(c?.status))
-    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid, config));
+    .filter((c: any) => ["completed", "stop_loss_hit", "trailing_closed", "sell_filled"].includes(c?.status))
+    .map((c: any) => buildClosedCycle(c, activeRangeVersionId));
 
   const cancelledCycleObjects = cycles
     .filter((c: any) => c?.status === "cancelled" || c?.status === "error")

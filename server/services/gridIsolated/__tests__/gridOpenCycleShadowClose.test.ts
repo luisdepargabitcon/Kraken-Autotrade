@@ -439,7 +439,13 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (db as any)._resetTxQueue();
-    resetEngine([makeCycle()], [makeLevel()]);
+    resetEngine(
+      [makeCycle()],
+      [
+        makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+        makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+      ]
+    );
   });
 
   describe("MODO / ACTIVACIÓN", () => {
@@ -575,7 +581,7 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       expect(cycle.sellLevelId).toBe(SELL_LEVEL_ID);
       expect(cycle.completedAt).toBeInstanceOf(Date);
 
-      const level = engine.levels[0];
+      const level = engine.levels.find((l: any) => l.id === SELL_LEVEL_ID);
       expect(level.status).toBe("filled");
       expect(level.filledPrice).toBe(61_000);
       expect(level.filledAt).toBeInstanceOf(Date);
@@ -638,7 +644,10 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     it("resuelve target SELL faltante, persiste y cierra", async () => {
       const engine = resetEngine(
         [makeCycle({ targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null })],
-        [makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any })]
+        [
+          makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+          makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+        ]
       );
       const result = await runUntilClosed(engine, { bid: 61_200 });
       expect(result).toBe(1);
@@ -666,7 +675,10 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
           makeCycle({ id: "c1", cycleNumber: 1, targetSellLevelId: null, targetSellPrice: null, targetSellQuantity: null }),
           makeCycle({ id: "c2", cycleNumber: 2, targetSellLevelId: SELL_LEVEL_ID, targetSellPrice: 61_000, targetSellQuantity: 0.001 }),
         ],
-        [makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001 })]
+        [
+          makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+          makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001 }),
+        ]
       );
       const result = await runUntilClosed(engine, { bid: 61_200 });
       // c2 has target, c1 cannot resolve because SELL already claimed by c2
@@ -707,7 +719,10 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
           quantity: qty,
           targetSellLevelId: SELL_LEVEL_ID,
         })],
-        [makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: target, quantity: qty, status: "planned" as any })]
+        [
+          makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 63264.40, quantity: qty, status: "filled" as any }),
+          makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: target, quantity: qty, status: "planned" as any }),
+        ]
       );
       await runUntilClosed(engine, { bid: target });
       const cycle = engine.cycles[0];
@@ -1292,7 +1307,10 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     it("exactamente en makerEligibleAfter: permitido", async () => {
       const engine = resetEngine(
         [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
-        [makeLevel({ status: "open" as any })]
+        [
+          makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+          makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "open" as any }),
+        ]
       );
       const tick1At = new Date(testClockMs);
       await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
@@ -1311,7 +1329,10 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     it("después de makerEligibleAfter: permitido", async () => {
       const engine = resetEngine(
         [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
-        [makeLevel({ status: "open" as any })]
+        [
+          makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+          makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "open" as any }),
+        ]
       );
       const tick1At = new Date(testClockMs);
       await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
@@ -1421,7 +1442,10 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     it("tick posterior y elegible después del reprice: permitido", async () => {
       const engine = resetEngine(
         [makeCycle({ status: "buy_filled" as any, targetSellLevelId: SELL_LEVEL_ID })],
-        [makeLevel({ status: "open" as any })]
+        [
+          makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+          makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "open" as any }),
+        ]
       );
       const tick1At = new Date(testClockMs);
       await processLifecycleTickAt(engine, { bid: 60_900 }, tick1At); // TRIGGERED
@@ -1518,7 +1542,13 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
     beforeEach(() => {
       vi.clearAllMocks();
       (db as any)._resetTxQueue();
-      resetEngine([makeCycle()], [makeLevel()]);
+      resetEngine(
+        [makeCycle()],
+        [
+          makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+          makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+        ]
+      );
     });
 
     describe("D1: cycle ya cerrado → no-op sin throw", () => {
@@ -1618,7 +1648,10 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       it("SELL level status=planned → éxito", async () => {
         const engine = resetEngine(
           [makeCycle()],
-          [makeLevel({ status: "planned" as any })]
+          [
+            makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+            makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+          ]
         );
         const result = await runUntilClosed(engine, { bid: 61_200 });
         expect(result).toBe(1);
@@ -1628,7 +1661,10 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       it("SELL level status=open → éxito", async () => {
         const engine = resetEngine(
           [makeCycle()],
-          [makeLevel({ status: "open" as any })]
+          [
+            makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+            makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "open" as any }),
+          ]
         );
         const result = await runUntilClosed(engine, { bid: 61_200 });
         expect(result).toBe(1);
@@ -1809,6 +1845,163 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
         expect(result).toBe(1);
         expect(engine.cycles[0].status).toBe("completed");
         expect(engine.cycles[0].sellLevelId).toBeNull();
+      });
+    });
+
+    describe("REV-C11 FASE 2 CORRECCIÓN — rearme BUY transaccional", () => {
+      it("BUY de rango activo actualizado exactamente una vez: commit, DB planned, memoria planned", async () => {
+        const engine = gridIsolatedEngine as any;
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        const buyLevel = engine.levels.find((l: any) => l.id === BUY_LEVEL_ID);
+        expect(buyLevel.status).toBe("planned");
+        expect(buyLevel.filledPrice).toBeNull();
+        const dbBuy = (db as any)._state.levels.find((l: any) => l.id === BUY_LEVEL_ID);
+        expect(dbBuy.status).toBe("planned");
+      });
+
+      it("BUY de rango activo devuelve cero filas: rollback completo, ciclo abierto, SELL no filled, BUY DB filled, BUY memoria filled, cero PnL, cero eventos", async () => {
+        const engine = gridIsolatedEngine as any;
+        // Remove BUY level from DB to simulate zero rows
+        (db as any)._state.levels = (db as any)._state.levels.filter((l: any) => l.id !== BUY_LEVEL_ID);
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow("no se pudo rearmar");
+        expect(engine.cycles[0].status).toBe("buy_filled");
+        expect(engine.cycles[0].sellPrice).toBeNull();
+        expect(engine.cycles[0].netPnlUsd).toBe(0);
+        const buyLevel = engine.levels.find((l: any) => l.id === BUY_LEVEL_ID);
+        expect(buyLevel.status).toBe("filled");
+      });
+
+      it("BUY de rango activo devuelve más de una fila: rollback completo", async () => {
+        const engine = gridIsolatedEngine as any;
+        // Duplicate BUY level in DB to simulate multiple rows
+        const buyLevel = (db as any)._state.levels.find((l: any) => l.id === BUY_LEVEL_ID);
+        (db as any)._state.levels.push({ ...buyLevel });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await expect(callProcessOpenCyclesShadow(engine, { bid: 61_200 })).rejects.toThrow();
+        expect(engine.cycles[0].status).toBe("buy_filled");
+      });
+
+      it("Legacy de rango anterior: cierre permitido, BUY DB filled, BUY memoria filled, no rearme", async () => {
+        const oldRange = "old-range-1";
+        const engine = resetEngine(
+          [makeCycle({ rangeVersionId: oldRange, buyLevelId: "legacy-buy" })],
+          [
+            makeLevel({ id: "legacy-buy", rangeVersionId: oldRange, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+            makeLevel({ id: SELL_LEVEL_ID, rangeVersionId: oldRange, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+          ]
+        );
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        expect(engine.cycles[0].status).toBe("completed");
+        const buyLevel = engine.levels.find((l: any) => l.id === "legacy-buy");
+        expect(buyLevel.status).toBe("filled");
+        const dbBuy = (db as any)._state.levels.find((l: any) => l.id === "legacy-buy");
+        expect(dbBuy.status).toBe("filled");
+      });
+
+      it("buyLevelRearmed=false no rearma memoria", async () => {
+        const oldRange = "old-range-2";
+        const engine = resetEngine(
+          [makeCycle({ rangeVersionId: oldRange, buyLevelId: "legacy-buy-2" })],
+          [
+            makeLevel({ id: "legacy-buy-2", rangeVersionId: oldRange, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any, filledPrice: 60_000 as any }),
+            makeLevel({ id: SELL_LEVEL_ID, rangeVersionId: oldRange, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+          ]
+        );
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        const buyLevel = engine.levels.find((l: any) => l.id === "legacy-buy-2");
+        expect(buyLevel.status).toBe("filled");
+        expect(buyLevel.filledPrice).toBe(60_000);
+      });
+
+      it("Evento únicamente después de un rearme/commit correcto", async () => {
+        const engine = gridIsolatedEngine as any;
+        (botLogger.info as any).mockClear();
+        // Failed attempt (remove BUY from DB)
+        (db as any)._state.levels = (db as any)._state.levels.filter((l: any) => l.id !== BUY_LEVEL_ID);
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        try { await callProcessOpenCyclesShadow(engine, { bid: 61_200 }); } catch {}
+        // No event should be emitted for failed close
+        const completedCalls = (botLogger.info as any).mock.calls.filter((call: any[]) => call[0] === "GRID_CYCLE_COMPLETED");
+        expect(completedCalls.length).toBe(0);
+      });
+    });
+
+    describe("REV-C11 FASE 2 CORRECCIÓN — regresión", () => {
+      it("Doble barrera maker sigue verde", async () => {
+        const engine = gridIsolatedEngine as any;
+        // Tick anterior al makerEligibleAfter → bloqueado
+        await processLifecycleTick(engine, { bid: 60_900 });
+        await processLifecycleTick(engine, { bid: 60_900 });
+        const exit = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
+        expect(exit).toBeTruthy();
+        expect(exit.state).toBe("MAKER_PENDING");
+        // Tick en eligibleAfter → permitido
+        const eligibleMs = exit.makerEligibleAfter.getTime();
+        const result = await processLifecycleTickAt(engine, { bid: 61_000 }, new Date(eligibleMs));
+        expect(result).toBe(1);
+      });
+
+      it("REQUIRES_REVIEW sigue en cuarentena", async () => {
+        const engine = gridIsolatedEngine as any;
+        engine.cycles[0].requiresReview = true;
+        const result = await callProcessOpenCyclesShadow(engine, { bid: 61_200 });
+        expect(result).toBe(0);
+        expect(engine.cycles[0].status).toBe("buy_filled");
+      });
+
+      it("persistSellLifecycle mantiene CAS", async () => {
+        const engine = resetEngine(
+          [makeCycle()],
+          [
+            makeLevel({ id: BUY_LEVEL_ID, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+            makeLevel({ id: SELL_LEVEL_ID, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+          ]
+        );
+        const cycle = engine.cycles[0];
+        const level = engine.levels.find((l: any) => l.id === SELL_LEVEL_ID);
+        const risk = (engine as any).defaultRiskState();
+        const exit = (engine as any).defaultMakerExit();
+        const r1 = await (engine as any).persistSellLifecycle(cycle, level, risk, exit, "open");
+        expect(r1).toBe(true);
+        const r2 = await (engine as any).persistSellLifecycle(cycle, level, risk, exit, "open");
+        expect(r2).toBe(false);
+      });
+
+      it("SELL legacy sigue cerrando", async () => {
+        const oldRange = "old-range-3";
+        const engine = resetEngine(
+          [makeCycle({ rangeVersionId: oldRange, buyLevelId: "legacy-buy-3", targetSellLevelId: SELL_LEVEL_ID })],
+          [
+            makeLevel({ id: "legacy-buy-3", rangeVersionId: oldRange, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+            makeLevel({ id: SELL_LEVEL_ID, rangeVersionId: oldRange, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+          ]
+        );
+        const result = await runUntilClosed(engine, { bid: 61_200 });
+        expect(result).toBe(1);
+        expect(engine.cycles[0].status).toBe("completed");
+      });
+
+      it("BUY legacy no abre nuevos ciclos", async () => {
+        const oldRange = "old-range-4";
+        const engine = resetEngine(
+          [makeCycle({ rangeVersionId: oldRange, buyLevelId: "legacy-buy-4", targetSellLevelId: SELL_LEVEL_ID })],
+          [
+            makeLevel({ id: "legacy-buy-4", rangeVersionId: oldRange, side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
+            makeLevel({ id: SELL_LEVEL_ID, rangeVersionId: oldRange, side: "SELL", price: 61_000, quantity: 0.001, status: "planned" as any }),
+          ]
+        );
+        await runUntilClosed(engine, { bid: 61_200 });
+        // Legacy BUY should remain filled — no new cycle created
+        const buyLevel = engine.levels.find((l: any) => l.id === "legacy-buy-4");
+        expect(buyLevel.status).toBe("filled");
+        expect(engine.cycles.length).toBe(1);
       });
     });
   });

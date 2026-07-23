@@ -2,15 +2,15 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 2 completada — 8 defectos corregidos, 47 tests añadidos, pendiente commit y push
-NEXT_ACTION: commit selectivo y push a origin/main
-LAST_COMPLETED_ACTION: FASE 2 — D1-D8 corregidos, 190/190 tests gridIsolated verdes, tsc OK, build OK
-LAST_VALIDATION: 2026-07-23T10:52+02:00 tsc+build+vitest OK
-CURRENT_HEAD: 0b0b9bb (pendiente nuevo commit)
-ORIGIN_HEAD: 0b0b9bb
+TASK_STATUS: FASE 2 corregida — 5 defectos nuevos (A-E) corregidos, 25 tests añadidos, pendiente commit y push
+NEXT_ACTION: FASE 3 (no iniciada — pendiente autorización)
+LAST_COMPLETED_ACTION: FASE 2 CORRECCIÓN — Defectos A-E corregidos, 155/155 tests grid verdes, tsc OK, build OK
+LAST_VALIDATION: 2026-07-23T12:22+02:00 tsc+build+vitest OK
+CURRENT_HEAD: pendiente commit
+ORIGIN_HEAD: 9b1b258
 EXPECTED_DEPLOY_HASH: pendiente
 DEPLOYED_HASH: pendiente
-UPDATED_AT: 2026-07-23T10:52+02:00
+UPDATED_AT: 2026-07-23T12:22+02:00
 
 ## FASE 1 — Cambios aplicados
 
@@ -82,3 +82,70 @@ UPDATED_AT: 2026-07-23T10:52+02:00
 - `npx tsc --noEmit`: OK
 - `npx vitest run server/services/gridIsolated/__tests__/`: 190/190 tests en 9 archivos
 - `npm run build`: OK
+
+## FASE 2 CORRECCIÓN — Atomicidad del rearme BUY y contrato canónico
+
+### Contexto
+La FASE 2 anterior quedó incompleta. Se identificaron 5 defectos nuevos (A-E) relacionados con la atomicidad del rearme BUY, el contrato canónico de ciclos abiertos vs terminales, y el manejo forense de JSON inválido.
+
+### Defectos corregidos
+
+- **Defecto D — Rearme BUY transaccional**: `completeCycleShadow` ahora devuelve un resultado transaccional explícito `{ committed, buyLevelRearmed }`. Cero filas en el UPDATE del BUY activo provoca rollback completo (throw). Más de una fila también provoca rollback. La memoria solo rearma el BUY si `buyLevelRearmed === true`. Legacy de rango anterior cierra sin intentar rearmar.
+- **Defecto A — buildClosedCycle separado**: Creada función `buildClosedCycle` independiente de `buildOpenCycle`. Los ciclos terminales usan campos realizados (`sellPrice`, `sellFilledAt`, `realizedGrossPnl`, `realizedFee`, `realizedTax`, `realizedNetPnl`, `realizedNetPnlPct`) desde los campos persistidos. Campos `estimated*=null` para cerrados. Campos `realized*=null` para abiertos. Interfaz `OperationalOpenCycle` extendida con todos los campos comunes y de ejecución.
+- **Defecto B — computeCycleEstimates sin fallback**: `computeCycleEstimates` ahora usa exclusivamente `targetSellPrice` (no `cycle.sellPrice` como fallback). Si `targetSellPrice` es null, las estimaciones son null. `buildClosedCycle` no llama a `computeCycleEstimates`.
+- **Defecto C — sell_filled en closedCycles**: Añadido `"sell_filled"` al filtro de `closedCycleObjects` en el operational VM y al filtro de `historicalCycles` en `buildCounters` del audit VM.
+- **Defecto E — parseJsonSafe forense**: `parseJsonSafe` en audit VM ahora conserva `_parseError`, `_raw`, `requiresReview`, `reviewCode`, `reviewReason` cuando el JSON es inválido, en lugar de retornar `{}` silenciosamente.
+
+### Tests añadidos (25 nuevos)
+
+#### gridOpenCycleShadowClose.test.ts — 11 tests (6 rearme BUY + 5 regresión)
+- BUY de rango activo: commit, DB planned, memoria planned
+- BUY cero filas: rollback completo, ciclo abierto, SELL no filled, BUY memoria filled, cero PnL, cero eventos
+- BUY más de una fila: rollback completo
+- Legacy de rango anterior: cierre permitido, BUY no rearmado, DB filled, memoria filled
+- buyLevelRearmed=false: no rearma memoria
+- Evento solo después de commit correcto
+- Doble barrera maker sigue verde
+- REQUIRES_REVIEW sigue en cuarentena
+- persistSellLifecycle mantiene CAS
+- SELL legacy sigue cerrando
+- BUY legacy no abre nuevos ciclos
+
+#### buildGridOperationalViewModel.test.ts — 9 tests contrato canónico
+- Ciclo abierto: targetSellPrice presente, sellPrice=null, estimatedNetPnl no null, realizedNetPnl=null
+- Ciclo completed con target≠sellPrice: PnL realizado de sellPrice, estimated*=null
+- Ciclo stop_loss_hit: sellPrice real, PnL negativo, target histórico
+- Ciclo trailing_closed: sellPrice real, target no sustituye
+- Ciclo sell_filled: aparece en closedCycles, no en openCycles
+- Ciclo terminal con sellPrice=null: null, no fallback al target
+- Ciclo terminal con sellFilledAt=null: null, no fallback a completedAt
+- Ciclo abierto sin target: estimaciones=null
+- SYNTHETIC_RUNG: targetSellLevelId=null, targetRungLevelId conservado
+
+#### gridForensicJsonb.test.ts — 5 tests audit/JSON
+- JSON inválido conserva estado de revisión
+- JSON inválido no se convierte en objeto sano silencioso
+- Operational y Audit coinciden para ciclo cerrado con target≠sellPrice
+- Operational y Audit coinciden para sell_filled
+- Operational y Audit coinciden para SYNTHETIC_RUNG
+
+### Archivos modificados
+1. `server/services/gridIsolated/gridIsolatedEngine.ts` — Defecto D
+2. `server/services/gridIsolated/buildGridOperationalViewModel.ts` — Defectos A, B, C
+3. `server/services/gridIsolated/buildGridAuditViewModel.ts` — Defecto E + sell_filled en buildCounters
+4. `server/services/gridIsolated/__tests__/gridOpenCycleShadowClose.test.ts` — 11 tests + fixtures BUY level
+5. `server/services/gridIsolated/__tests__/buildGridOperationalViewModel.test.ts` — 9 tests
+6. `server/services/gridIsolated/__tests__/gridForensicJsonb.test.ts` — 5 tests
+7. `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md` — este documento
+
+### Validaciones
+- `npx tsc --noEmit`: OK
+- `npx vitest run` (3 archivos grid): 155/155 tests verdes
+- `npm run build`: OK
+- `git diff --check`: OK
+
+### Notas
+- No se accedió al VPS. No se hizo deploy.
+- Ciclo #26 intacto — no se modificó schema, migraciones, ni datos.
+- No se inició FASE 3.
+- NEXT_ACTION: FASE 3 pendiente de autorización.

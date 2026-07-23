@@ -2068,8 +2068,9 @@ class GridIsolatedEngine {
     };
 
     let committed = false;
+    let buyLevelRearmed = false;
     try {
-      committed = await db.transaction(async (tx) => {
+      const txResult = await db.transaction(async (tx) => {
         const cycleUpdate = await tx.update(gridIsolatedCycles)
           .set({
             status: finalStatus,
@@ -2095,7 +2096,7 @@ class GridIsolatedEngine {
           .returning({ id: gridIsolatedCycles.id });
 
         if (cycleUpdate.length !== 1) {
-          return false;
+          return { committed: false, buyLevelRearmed: false };
         }
 
         // Persisted SELL target: mark level filled atomically.
@@ -2124,6 +2125,7 @@ class GridIsolatedEngine {
         // Rearm the source BUY level only when it belongs to the currently
         // active range. Legacy cycles from previous ranges keep their BUY
         // levels filled; those levels are managed independently.
+        let rearmed = false;
         if (cycle.buyLevelId && this.activeRangeVersion && cycle.rangeVersionId === this.activeRangeVersion.id) {
           const buyRearm = await tx.update(gridIsolatedLevels)
             .set({
@@ -2139,22 +2141,26 @@ class GridIsolatedEngine {
               eq(gridIsolatedLevels.status, "filled")
             ))
             .returning({ id: gridIsolatedLevels.id });
-          // Only enforce uniqueness when a matching BUY level is tracked.
-          // Legacy or test fixtures without a BUY level should not abort the close.
+          if (buyRearm.length === 0) {
+            throw new Error(`BUY ${cycle.buyLevelId} no se pudo rearmar (cero filas) tras cierre del ciclo ${cycle.id}`);
+          }
           if (buyRearm.length > 1) {
             throw new Error(`Múltiples niveles BUY ${cycle.buyLevelId} al rearmar tras cierre del ciclo ${cycle.id}`);
           }
+          rearmed = true;
         }
 
-        return true;
+        return { committed: true, buyLevelRearmed: rearmed };
       });
+      committed = txResult.committed;
+      buyLevelRearmed = txResult.buyLevelRearmed;
     } finally {
       this.closingCycleIds.delete(cycle.id);
     }
 
     if (!committed) return false;
 
-    // In-memory sync
+    // In-memory sync — only mutate BUY if DB confirmed the rearme
     cycle.status = finalStatus;
     cycle.sellLevelId = sellLevelId;
     cycle.sellPrice = sellPrice;
@@ -2178,12 +2184,14 @@ class GridIsolatedEngine {
       sellLevel.filledAt = now;
     }
 
-    const buyLevel = cycle.buyLevelId ? this.levels.find(l => l.id === cycle.buyLevelId) : undefined;
-    if (buyLevel && this.activeRangeVersion && cycle.rangeVersionId === this.activeRangeVersion.id) {
-      buyLevel.status = "planned";
-      buyLevel.filledPrice = null;
-      buyLevel.filledQuantity = 0;
-      buyLevel.filledAt = null;
+    if (buyLevelRearmed) {
+      const buyLevel = cycle.buyLevelId ? this.levels.find(l => l.id === cycle.buyLevelId) : undefined;
+      if (buyLevel) {
+        buyLevel.status = "planned";
+        buyLevel.filledPrice = null;
+        buyLevel.filledQuantity = 0;
+        buyLevel.filledAt = null;
+      }
     }
 
     const eventType: GridEventType =

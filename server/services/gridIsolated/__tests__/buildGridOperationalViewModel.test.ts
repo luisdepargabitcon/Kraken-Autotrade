@@ -420,4 +420,204 @@ describe("buildGridOperationalViewModel", () => {
       expect(vm.closedCycles[0].openedAt).toBeTruthy();
     });
   });
+
+  describe("REV-C11 FASE 2 CORRECCIÓN — contrato canónico de ciclos", () => {
+    it("Ciclo abierto: targetSellPrice presente, sellPrice=null, estimatedNetPnl no null, realizedNetPnl=null", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "buy_filled", targetSellPrice: "95000", sellPrice: null, quantity: "0.01", buyPrice: "90000" },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles.length).toBe(1);
+      const c = vm.openCycles[0];
+      expect(c.targetSellPrice).toBe(95000);
+      expect(c.sellPrice).toBeNull();
+      expect(c.estimatedNetPnl).not.toBeNull();
+      expect(c.realizedNetPnl).toBeNull();
+    });
+
+    it("Ciclo completed con target=65000 y sellPrice=64700: PnL realizado corresponde a 64700, no a 65000, estimated*=null", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "completed",
+          targetSellPrice: "65000",
+          sellPrice: "64700",
+          quantity: "0.01",
+          buyPrice: "60000",
+          grossPnlUsd: "4.70",
+          feeTotalUsd: "0.10",
+          taxReserveUsd: "0.94",
+          netPnlUsd: "3.66",
+          netPnlPct: "0.61",
+          sellFilledAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      const c = vm.closedCycles[0];
+      expect(c.targetSellPrice).toBe(65000);
+      expect(c.sellPrice).toBe(64700);
+      expect(c.realizedNetPnl).toBeCloseTo(3.66, 5);
+      expect(c.estimatedNetPnl).toBeNull();
+      expect(c.estimatedGrossPnl).toBeNull();
+    });
+
+    it("Ciclo stop_loss_hit: sellPrice real del stop, PnL real negativo, target solo histórico", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "stop_loss_hit",
+          targetSellPrice: "95000",
+          sellPrice: "88000",
+          quantity: "0.01",
+          buyPrice: "90000",
+          grossPnlUsd: "-2.00",
+          feeTotalUsd: "0.10",
+          taxReserveUsd: "-0.40",
+          netPnlUsd: "-2.10",
+          netPnlPct: "-2.33",
+          sellFilledAt: new Date().toISOString(),
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      const c = vm.closedCycles[0];
+      expect(c.sellPrice).toBe(88000);
+      expect(c.realizedNetPnl).toBeCloseTo(-2.10, 5);
+      expect(c.targetSellPrice).toBe(95000);
+      expect(c.estimatedNetPnl).toBeNull();
+    });
+
+    it("Ciclo trailing_closed: sellPrice real del trailing, PnL real, target no sustituye ejecución", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "trailing_closed",
+          targetSellPrice: "95000",
+          sellPrice: "93500",
+          quantity: "0.01",
+          buyPrice: "90000",
+          grossPnlUsd: "3.50",
+          feeTotalUsd: "0.10",
+          taxReserveUsd: "0.70",
+          netPnlUsd: "2.70",
+          netPnlPct: "3.00",
+          sellFilledAt: new Date().toISOString(),
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      const c = vm.closedCycles[0];
+      expect(c.sellPrice).toBe(93500);
+      expect(c.realizedNetPnl).toBeCloseTo(2.70, 5);
+      expect(c.targetSellPrice).toBe(95000);
+      expect(c.estimatedNetPnl).toBeNull();
+    });
+
+    it("Ciclo sell_filled: aparece en closedCycles, no en openCycles, usa sellPrice real", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "sell_filled",
+          targetSellPrice: "95000",
+          sellPrice: "94800",
+          quantity: "0.01",
+          buyPrice: "90000",
+          grossPnlUsd: "4.80",
+          feeTotalUsd: "0.10",
+          taxReserveUsd: "0.96",
+          netPnlUsd: "3.74",
+          netPnlPct: "4.16",
+          sellFilledAt: new Date().toISOString(),
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.openCycles.length).toBe(0);
+      expect(vm.closedCycles[0].sellPrice).toBe(94800);
+    });
+
+    it("Ciclo terminal con sellPrice=null: sellPrice=null, no fallback al target", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "completed",
+          targetSellPrice: "95000",
+          sellPrice: null,
+          quantity: "0.01",
+          buyPrice: "90000",
+          grossPnlUsd: "0",
+          netPnlUsd: "0",
+          completedAt: new Date().toISOString(),
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles[0].sellPrice).toBeNull();
+      expect(vm.closedCycles[0].targetSellPrice).toBe(95000);
+    });
+
+    it("Ciclo terminal con sellFilledAt=null: sellFilledAt=null, no fallback a completedAt", () => {
+      const completedAt = new Date().toISOString();
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "completed",
+          targetSellPrice: "95000",
+          sellPrice: "95000",
+          sellFilledAt: null,
+          completedAt,
+          quantity: "0.01",
+          buyPrice: "90000",
+          grossPnlUsd: "5.00",
+          netPnlUsd: "4.00",
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles[0].sellFilledAt).toBeNull();
+    });
+
+    it("Ciclo abierto sin target: estimaciones=null, no usar sellPrice", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "buy_filled",
+          targetSellPrice: null,
+          sellPrice: null,
+          quantity: "0.01",
+          buyPrice: "90000",
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles[0].estimatedNetPnl).toBeNull();
+      expect(vm.openCycles[0].estimatedGrossPnl).toBeNull();
+    });
+
+    it("SYNTHETIC_RUNG: targetSellLevelId=null, targetRungLevelId conservado", () => {
+      const input = makeInput();
+      input.cycles = [
+        {
+          ...input.cycles[0],
+          status: "buy_filled",
+          targetKind: "SYNTHETIC_RUNG",
+          targetSellLevelId: null,
+          targetRungLevelId: "rung-3",
+          targetSellPrice: "96000",
+          quantity: "0.01",
+          buyPrice: "90000",
+        },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles[0].targetSellLevelId).toBeNull();
+      expect(vm.openCycles[0].targetRungLevelId).toBe("rung-3");
+    });
+  });
 });
