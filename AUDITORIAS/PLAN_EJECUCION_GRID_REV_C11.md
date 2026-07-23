@@ -285,3 +285,63 @@ Sustituidos los tests que solo hacían `expect(vm).toBeTruthy()` por aserciones 
 - Ciclo #26 intacto.
 - No se inició FASE 3.
 - NEXT_ACTION: FASE 3 pendiente de autorización.
+
+## FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES (Corrección obligatoria)
+
+### Contexto
+La FASE 3 inicial implementó tests V2 y correcciones de diagnóstico, pero quedaron defectos residuales:
+- `isSyntheticRung` era demasiado broad: cualquier ciclo con `targetRungLevelId != null` se clasificaba como sintético, incluyendo legacy PERSISTED_SELL.
+- `targetSource` usaba valor "range" que no distinguía synthetic de persisted_sell.
+- `levelStatus` no manejaba el caso "not_applicable" para sintéticos sin SELL level.
+- `executableOpenCyclesCount` usaba `targetSellLevelId != null`, excluyendo V2 sintéticos válidos con `targetSellLevelId=null`.
+- Tests 8 y 9 simulaban cierre simultáneo, no secuencial.
+- No existían tests directos de `diagnoseShadowOpenCycles`.
+- Test del ciclo #26 no usaba la ruta real de diagnóstico.
+
+### Defectos corregidos
+
+1. **Clasificación estricta `isSyntheticRung`**: Un ciclo es sintético solo si:
+   - `targetKind === "SYNTHETIC_RUNG"` (explícito), o
+   - `targetKind == null && exitPolicyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2" && targetSellLevelId == null && targetRungLevelId != null` (V2 compatible)
+   - Legacy PERSISTED_SELL con `targetRungLevelId` informado NO se reclasifica.
+
+2. **Detección de estado inconsistente**: `PERSISTED_SELL` con `targetSellLevelId=null` se marca como `requiresReview` con `targetSource="missing"`.
+
+3. **Extensión de `ShadowOpenCycleDiagnosisItem`**: Nuevos campos `exitPolicyVersion`, `targetKind`, `targetRungLevelId`, `targetStructurallyValid`. `targetSource` ahora distingue `"synthetic" | "persisted_sell" | "external" | "missing"`. `levelStatus` incluye `"not_applicable"`.
+
+4. **`executableOpenCyclesCount` corregido**: Ahora usa `targetStructurallyValid && !requiresReview` en lugar de `targetSellLevelId != null`.
+
+5. **Tests 8 y 9 — cierre secuencial**: Pre-seeding de `MAKER_PENDING` con `makerEligibleAfter` diferenciado (pasado para A, futuro para B). Test 8: solo A cierra, B permanece con estado preservado. Test 9: A ya completado, B cierra independientemente con PnL propio.
+
+6. **8 tests directos de `diagnoseShadowOpenCycles`** (D1-D8):
+   - D1: SYNTHETIC_RUNG explícito válido
+   - D2: Dos V2 comparten rung, ambos independientes
+   - D3: V2 sintético incompleto (falta precio)
+   - D4: Legacy PERSISTED_SELL con targetRungLevelId
+   - D5: No-V2 con targetKind=null y rungId no se convierte en sintético
+   - D6: Compatibilidad V2 antigua (targetKind=null, V2 policy)
+   - D7: Estado inconsistente PERSISTED_SELL con sellLevelId=null
+   - D8: Rango anterior con target sintético, diagnóstico read-only
+
+7. **Test ciclo #26 reforzado**: Usa `diagnoseShadowOpenCycles` en lugar de `selectFirstProfitableHigherRung`. Verifica `targetSource="persisted_sell"`, `targetStructurallyValid=true`, `requiresReview=false`, no mutación del ciclo original.
+
+### Archivos modificados
+1. `server/services/gridIsolated/gridShadowOpenCycleDiagnosis.ts` — clasificación estricta, interfaz extendida, `executableOpenCyclesCount` corregido, `levelStatusFor`, detección de inconsistente
+2. `server/services/gridIsolated/__tests__/gridV2IndependentCycles.test.ts` — tests 8 y 9 secuenciales, test 15 reforzado con ruta real, 8 tests directos D1-D8
+3. `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md` — este documento
+
+### Validaciones
+- `npm run check` (tsc): OK
+- `npx vitest run gridV2IndependentCycles.test.ts`: 25/25 tests verdes (17 originales + 8 nuevos)
+- `npx vitest run server/services/gridIsolated/__tests__` (suite Grid completa): 10 archivos, 258 tests, 258 pasados, 0 fallidos
+- `npm run build`: OK
+- `git diff --check`: limpio
+
+### Notas finales
+- FASE 3 CERRADA Y VALIDADA LOCALMENTE
+- No se accedió al VPS. No se hizo deploy.
+- Ciclo #26 intacto.
+- No se modificó `gridIsolatedEngine.ts` ni `gridShadowPolicy.ts`.
+- No se modificó selector V2, frontend, rutas, schema ni migraciones.
+- 0 tests nuevos en skip. 0 tests eliminados.
+- NEXT_ACTION: Pendiente de autorización para commit y push.

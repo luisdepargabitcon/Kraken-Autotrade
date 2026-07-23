@@ -29,8 +29,8 @@ export interface ShadowOpenCycleDiagnosisItem {
   targetSellLevelId: string | null;
   targetSellPrice: number | null;
   targetSellQuantity: number | null;
-  targetSource: "range" | "external" | "missing" | null;
-  levelStatus: "active" | "historical" | "missing";
+  targetSource: "synthetic" | "persisted_sell" | "external" | "missing" | null;
+  levelStatus: "active" | "historical" | "missing" | "not_applicable";
   currentBid: number | null;
   currentAsk: number | null;
   wouldCloseNow: boolean;
@@ -38,6 +38,10 @@ export interface ShadowOpenCycleDiagnosisItem {
   reason: string;
   requiresReview: boolean;
   targetResolutionReason: string | null;
+  exitPolicyVersion: string | null;
+  targetKind: string | null;
+  targetRungLevelId: string | null;
+  targetStructurallyValid: boolean;
 }
 
 export interface ShadowOpenCycleDiagnosisResult {
@@ -96,11 +100,13 @@ function isTargetFromRange(
   return level.rangeVersionId === cycle.rangeVersionId && level.side === "SELL";
 }
 
-function levelStatus(
+function levelStatusFor(
   targetLevelId: string | null,
   levels: GridLevel[],
-  activeRangeVersionId: string | null
-): "active" | "historical" | "missing" {
+  activeRangeVersionId: string | null,
+  isSyntheticRung: boolean
+): "active" | "historical" | "missing" | "not_applicable" {
+  if (isSyntheticRung && !targetLevelId) return "not_applicable";
   const level = findLevel(levels, targetLevelId);
   if (!level) return "missing";
   if (activeRangeVersionId && level.rangeVersionId === activeRangeVersionId) return "active";
@@ -174,23 +180,43 @@ export function diagnoseShadowOpenCycles(
     let targetPrice = cycle.targetSellPrice ?? null;
     let targetQty = cycle.targetSellQuantity ?? null;
 
-    // V2 SYNTHETIC_RUNG cycles have targetSellLevelId=null but a valid synthetic
-    // target persisted via targetRungLevelId, targetSellPrice and targetSellQuantity.
-    // These must NOT be treated as "missing" nor routed through the legacy resolver.
-    const isSyntheticRung = cycle.targetKind === "SYNTHETIC_RUNG" || cycle.targetRungLevelId != null;
+    // Strict classification: a cycle is only synthetic if it is explicitly
+    // tagged as SYNTHETIC_RUNG, or if it is a compatible V2 cycle with no
+    // persisted SELL level but a valid rung reference.
+    // A legacy PERSISTED_SELL cycle with targetRungLevelId set must NOT be
+    // reclassified as synthetic.
+    const isExplicitSynthetic = cycle.targetKind === "SYNTHETIC_RUNG";
+    const isCompatibleV2Synthetic =
+      cycle.targetKind == null &&
+      cycle.exitPolicyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2" &&
+      cycle.targetSellLevelId == null &&
+      cycle.targetRungLevelId != null;
+    const isSyntheticRung = isExplicitSynthetic || isCompatibleV2Synthetic;
 
-    let targetSource: "range" | "external" | "missing" | null = isSyntheticRung
-      ? (targetPrice != null && targetQty != null ? "range" : "missing")
-      : targetLevelId
-        ? isTargetFromRange(cycle, targetLevelId, levels)
-          ? "range"
-          : "external"
-        : "missing";
+    // Detect inconsistent states: PERSISTED_SELL with null targetSellLevelId
+    // should not be silently reinterpreted as V2.
+    const isInconsistentLegacy =
+      cycle.targetKind === "PERSISTED_SELL" && cycle.targetSellLevelId == null;
+
+    let targetSource: "synthetic" | "persisted_sell" | "external" | "missing" | null;
     let targetResolutionReason: string | null = null;
 
+    if (isInconsistentLegacy) {
+      targetSource = "missing";
+      targetResolutionReason = "PERSISTED_SELL con targetSellLevelId=null: estado inconsistente";
+    } else if (isSyntheticRung) {
+      targetSource = targetPrice != null && targetQty != null && cycle.targetRungLevelId != null
+        ? "synthetic"
+        : "missing";
+    } else if (targetLevelId) {
+      targetSource = isTargetFromRange(cycle, targetLevelId, levels) ? "persisted_sell" : "external";
+    } else {
+      targetSource = "missing";
+    }
+
     // If target not persisted, try to resolve from the active range for diagnostics only.
-    // Skip legacy resolver for V2 SYNTHETIC_RUNG cycles — their target is already set.
-    if (!isSyntheticRung && (!targetLevelId || targetPrice == null || targetQty == null)) {
+    // Skip legacy resolver for V2 SYNTHETIC_RUNG cycles and inconsistent states.
+    if (!isSyntheticRung && !isInconsistentLegacy && (!targetLevelId || targetPrice == null || targetQty == null)) {
       const resolution = resolveTargetSellForCycle({
         cycle,
         levels,
@@ -202,12 +228,17 @@ export function diagnoseShadowOpenCycles(
         targetLevelId = resolution.targetSellLevelId;
         targetPrice = resolution.targetSellPrice;
         targetQty = resolution.targetSellQuantity;
-        targetSource = "range";
+        targetSource = "persisted_sell";
         if (targetLevelId) claimedIds.add(targetLevelId);
       }
     }
 
-    const hasTarget = (isSyntheticRung || targetLevelId != null) && targetPrice != null && targetQty != null;
+    const targetStructurallyValid =
+      (isSyntheticRung || targetLevelId != null) &&
+      targetPrice != null &&
+      targetQty != null &&
+      !isInconsistentLegacy;
+    const hasTarget = targetStructurallyValid;
     if (!hasTarget) missingTarget++;
 
     const eligible =
@@ -249,7 +280,8 @@ export function diagnoseShadowOpenCycles(
       isHodl ||
       !isClosableStatus ||
       !hasTarget ||
-      mode !== "SHADOW";
+      mode !== "SHADOW" ||
+      isInconsistentLegacy;
 
     if (itemRequiresReview) requiresReview++;
 
@@ -271,7 +303,7 @@ export function diagnoseShadowOpenCycles(
       targetSellPrice: targetPrice,
       targetSellQuantity: targetQty,
       targetSource,
-      levelStatus: levelStatus(targetLevelId, levels, activeRangeVersionId),
+      levelStatus: levelStatusFor(targetLevelId, levels, activeRangeVersionId, isSyntheticRung),
       currentBid,
       currentAsk,
       wouldCloseNow: wouldClose,
@@ -279,11 +311,15 @@ export function diagnoseShadowOpenCycles(
       reason,
       requiresReview: itemRequiresReview,
       targetResolutionReason,
+      exitPolicyVersion: cycle.exitPolicyVersion ?? null,
+      targetKind: cycle.targetKind ?? null,
+      targetRungLevelId: cycle.targetRungLevelId ?? null,
+      targetStructurallyValid,
     });
   }
 
   const executableOpenCyclesCount = details.filter(
-    (d) => d.targetSellLevelId != null
+    (d) => d.targetStructurallyValid && !d.requiresReview
   ).length;
   const waitingSellCyclesCount = openCycles.length;
   const previousRangeOpenCyclesCount = activeRangeVersionId

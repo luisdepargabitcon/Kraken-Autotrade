@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { GridIsolatedConfig, GridCycle, GridLevel, GridRangeVersion } from "../gridIsolatedTypes";
 import type { GridShadowExecutionPriceResult } from "../gridShadowExecutionPrice";
 import { selectFirstProfitableHigherRung } from "../gridCycleExitSelector";
+import { diagnoseShadowOpenCycles } from "../gridShadowOpenCycleDiagnosis";
 
 // ─── Mock dependencies before importing engine ───────────────────────
 vi.mock("../../../db", () => {
@@ -611,20 +612,98 @@ describe("GRID REV-C11 FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES", () => {
     expect(engine.cycles[1].status).not.toBe("buy_filled");
   });
 
-  // Test 8: Cerrar el ciclo A — B permanece abierto
+  // Test 8: Cerrar únicamente el ciclo A mientras B permanece abierto
   it("8. Cerrar ciclo A: A queda terminal, B permanece abierto conservando makerExitStateJson y remainingQuantity", async () => {
     const rungId = "shared-rung";
+    const now = new Date();
+    const pastEligible = new Date(now.getTime() - 1000);
+    const futureEligible = new Date(now.getTime() + 60000);
+
     const cycleA = makeCycle({
       id: "cA", cycleNumber: 1, buyPrice: 60_000, quantity: 0.001, buyLevelId: "buy-A",
       targetSellPrice: 60_700, targetSellQuantity: 0.001,
       targetRungLevelId: rungId, targetKind: "SYNTHETIC_RUNG",
-      riskStateJson: null,
+      riskStateJson: {
+        trailing: { activated: false, currentStopPrice: null, activatedAt: null, peakPrice: null },
+        stopLoss: [],
+        hodl: { active: false, recoveryTargetPrice: null },
+        lastAction: null,
+        activeExitRoute: "SYNTHETIC_RUNG",
+        pendingExitPrice: 60_700,
+        protectiveExit: {
+          state: "MAKER_PENDING",
+          route: "SYNTHETIC_RUNG",
+          triggerPrice: 60_700,
+          triggerDetectedAt: pastEligible,
+          bestBidAtTrigger: 60_500,
+          bestAskAtTrigger: 60_501,
+          requestedMakerPrice: 60_700,
+          makerOrderCreatedAt: pastEligible,
+          makerEligibleAfter: pastEligible,
+          lifecycleTickId: 0,
+          pendingQuantity: 0.001,
+          simulatedOrderId: "grid-shadow-cA-past",
+        },
+        stateVersion: 1,
+        lastEvaluatedAt: pastEligible,
+      } as any,
+      makerExitStateJson: {
+        state: "MAKER_PENDING",
+        route: "SYNTHETIC_RUNG",
+        triggerPrice: 60_700,
+        triggerDetectedAt: pastEligible,
+        bestBidAtTrigger: 60_500,
+        bestAskAtTrigger: 60_501,
+        requestedMakerPrice: 60_700,
+        makerOrderCreatedAt: pastEligible,
+        makerEligibleAfter: pastEligible,
+        lifecycleTickId: 0,
+        pendingQuantity: 0.001,
+        simulatedOrderId: "grid-shadow-cA-past",
+      } as any,
     });
     const cycleB = makeCycle({
       id: "cB", cycleNumber: 2, buyPrice: 60_000, quantity: 0.001, buyLevelId: "buy-B",
       targetSellPrice: 60_700, targetSellQuantity: 0.001,
       targetRungLevelId: rungId, targetKind: "SYNTHETIC_RUNG",
-      riskStateJson: null,
+      riskStateJson: {
+        trailing: { activated: false, currentStopPrice: null, activatedAt: null, peakPrice: null },
+        stopLoss: [],
+        hodl: { active: false, recoveryTargetPrice: null },
+        lastAction: null,
+        activeExitRoute: "SYNTHETIC_RUNG",
+        pendingExitPrice: 60_700,
+        protectiveExit: {
+          state: "MAKER_PENDING",
+          route: "SYNTHETIC_RUNG",
+          triggerPrice: 60_700,
+          triggerDetectedAt: now,
+          bestBidAtTrigger: 60_500,
+          bestAskAtTrigger: 60_501,
+          requestedMakerPrice: 60_700,
+          makerOrderCreatedAt: now,
+          makerEligibleAfter: futureEligible,
+          lifecycleTickId: 0,
+          pendingQuantity: 0.001,
+          simulatedOrderId: "grid-shadow-cB-future",
+        },
+        stateVersion: 1,
+        lastEvaluatedAt: now,
+      } as any,
+      makerExitStateJson: {
+        state: "MAKER_PENDING",
+        route: "SYNTHETIC_RUNG",
+        triggerPrice: 60_700,
+        triggerDetectedAt: now,
+        bestBidAtTrigger: 60_500,
+        bestAskAtTrigger: 60_501,
+        requestedMakerPrice: 60_700,
+        makerOrderCreatedAt: now,
+        makerEligibleAfter: futureEligible,
+        lifecycleTickId: 0,
+        pendingQuantity: 0.001,
+        simulatedOrderId: "grid-shadow-cB-future",
+      } as any,
     });
     const levels = [
       makeLevel({ id: "buy-A", side: "BUY", price: 60_000, quantity: 0.001, status: "filled" as any }),
@@ -633,35 +712,91 @@ describe("GRID REV-C11 FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES", () => {
     ];
     const engine = resetEngine([cycleA, cycleB], levels);
 
-    // Advance lifecycle: trigger + pending (bid below target)
-    await processLifecycleTick(engine, { bid: 60_500 });
-    await processLifecycleTick(engine, { bid: 60_500 });
-
-    // Fill both (bid above target)
+    // Tick with bid above target: A is eligible (past makerEligibleAfter), B is not (future)
     const closed = await processLifecycleTick(engine, { bid: 60_800 });
-    expect(closed).toBe(2);
 
-    // Verify both are terminal with independent PnL
+    // Only A closes
+    expect(closed).toBe(1);
+    expect(engine.cycles[0].status).toBe("completed");
     expect(engine.cycles[0].completedAt).toBeTruthy();
-    expect(engine.cycles[1].completedAt).toBeTruthy();
     expect(engine.cycles[0].sellPrice).toBeGreaterThan(0);
-    expect(engine.cycles[1].sellPrice).toBeGreaterThan(0);
+
+    // B remains open, preserving its maker state and quantity
+    expect(engine.cycles[1].status).toBe("buy_filled");
+    expect(engine.cycles[1].completedAt).toBeNull();
+
+    const riskB = engine.cycles[1].riskStateJson as any;
+    expect(riskB?.protectiveExit?.state).toBe("MAKER_PENDING");
+    expect(riskB?.protectiveExit?.pendingQuantity).toBe(0.001);
+    expect(engine.cycles[1].quantity).toBe(0.001);
+    expect(engine.cycles[1].targetSellQuantity).toBe(0.001);
+    // B has no realized PnL yet
+    expect(engine.cycles[1].grossPnlUsd).toBe(0);
   });
 
   // Test 9: Cerrar después el ciclo B — PnL independiente, evento independiente
   it("9. Cerrar ciclo B después: PnL independiente, evento independiente", async () => {
     const rungId = "shared-rung";
+    const now = new Date();
+    const pastEligible = new Date(now.getTime() - 1000);
+
+    // Cycle A is already completed (closed in a previous tick)
     const cycleA = makeCycle({
       id: "cA", cycleNumber: 1, buyPrice: 60_000, quantity: 0.002, buyLevelId: "buy-A",
       targetSellPrice: 60_700, targetSellQuantity: 0.002,
       targetRungLevelId: rungId, targetKind: "SYNTHETIC_RUNG",
+      status: "completed" as any,
+      sellPrice: 60_800,
+      sellFilledAt: pastEligible,
+      completedAt: pastEligible,
+      grossPnlUsd: 1.6,
+      netPnlUsd: 1.28,
+      netPnlPct: 1.33,
       riskStateJson: null,
     });
+    // Cycle B is MAKER_PENDING and now eligible (makerEligibleAfter in the past)
     const cycleB = makeCycle({
       id: "cB", cycleNumber: 2, buyPrice: 60_000, quantity: 0.001, buyLevelId: "buy-B",
       targetSellPrice: 60_700, targetSellQuantity: 0.001,
       targetRungLevelId: rungId, targetKind: "SYNTHETIC_RUNG",
-      riskStateJson: null,
+      riskStateJson: {
+        trailing: { activated: false, currentStopPrice: null, activatedAt: null, peakPrice: null },
+        stopLoss: [],
+        hodl: { active: false, recoveryTargetPrice: null },
+        lastAction: null,
+        activeExitRoute: "SYNTHETIC_RUNG",
+        pendingExitPrice: 60_700,
+        protectiveExit: {
+          state: "MAKER_PENDING",
+          route: "SYNTHETIC_RUNG",
+          triggerPrice: 60_700,
+          triggerDetectedAt: pastEligible,
+          bestBidAtTrigger: 60_500,
+          bestAskAtTrigger: 60_501,
+          requestedMakerPrice: 60_700,
+          makerOrderCreatedAt: pastEligible,
+          makerEligibleAfter: pastEligible,
+          lifecycleTickId: 0,
+          pendingQuantity: 0.001,
+          simulatedOrderId: "grid-shadow-cB-eligible",
+        },
+        stateVersion: 1,
+        lastEvaluatedAt: pastEligible,
+      } as any,
+      makerExitStateJson: {
+        state: "MAKER_PENDING",
+        route: "SYNTHETIC_RUNG",
+        triggerPrice: 60_700,
+        triggerDetectedAt: pastEligible,
+        bestBidAtTrigger: 60_500,
+        bestAskAtTrigger: 60_501,
+        requestedMakerPrice: 60_700,
+        makerOrderCreatedAt: pastEligible,
+        makerEligibleAfter: pastEligible,
+        lifecycleTickId: 0,
+        pendingQuantity: 0.001,
+        simulatedOrderId: "grid-shadow-cB-eligible",
+      } as any,
     });
     const levels = [
       makeLevel({ id: "buy-A", side: "BUY", price: 60_000, quantity: 0.002, status: "filled" as any }),
@@ -670,18 +805,28 @@ describe("GRID REV-C11 FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES", () => {
     ];
     const engine = resetEngine([cycleA, cycleB], levels);
 
-    // Trigger + pending (bid below target)
-    await processLifecycleTick(engine, { bid: 60_500 });
-    await processLifecycleTick(engine, { bid: 60_500 });
-    // Fill (bid above target)
+    // Record A's state before B's tick
+    const pnlABefore = engine.cycles[0].grossPnlUsd;
+    const completedABefore = engine.cycles[0].completedAt;
+
+    // Tick with bid above target: B is now eligible and closes
     const closed = await processLifecycleTick(engine, { bid: 60_800 });
 
-    expect(closed).toBe(2);
-    // PnL must be independent: cycleA has 2x quantity
-    const pnlA = engine.cycles[0].grossPnlUsd;
+    // Only B closes (A was already completed)
+    expect(closed).toBe(1);
+    expect(engine.cycles[1].status).toBe("completed");
+    expect(engine.cycles[1].completedAt).toBeTruthy();
+    expect(engine.cycles[1].sellPrice).toBeGreaterThan(0);
+
+    // B has its own independent PnL (different quantity than A)
     const pnlB = engine.cycles[1].grossPnlUsd;
-    expect(pnlA).not.toBe(pnlB);
-    expect(pnlA).toBeGreaterThan(pnlB);
+    expect(pnlB).toBeGreaterThan(0);
+    expect(pnlB).not.toBe(pnlABefore);
+
+    // A is not mutated again — no second event, no second PnL
+    expect(engine.cycles[0].status).toBe("completed");
+    expect(engine.cycles[0].grossPnlUsd).toBe(pnlABefore);
+    expect(engine.cycles[0].completedAt).toBe(completedABefore);
   });
 
   // Test 10: Fallo o rollback del ciclo A no modifica B
@@ -823,8 +968,8 @@ describe("GRID REV-C11 FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES", () => {
     expect(sellLevel.status).toBe("filled");
   });
 
-  // Test 15: Ciclo #26 no se modifica, no se convierte, no recibe backfill
-  it("15. Ciclo legacy #26: no se convierte a V2, no recibe backfill de targetKind", () => {
+  // Test 15: Ciclo #26 no se modifica, no se convierte, no recibe backfill — ruta real de diagnóstico
+  it("15. Ciclo legacy #26: no se convierte a V2, no recibe backfill, diagnóstico preserva legacy", () => {
     const cycle26 = makeCycle({
       id: "cycle-26",
       cycleNumber: 26,
@@ -837,18 +982,47 @@ describe("GRID REV-C11 FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES", () => {
       targetSellPrice: 59_000,
       targetSellQuantity: 0.001,
     });
-    // Verify the cycle retains its legacy fields
-    expect(cycle26.targetKind).toBe("PERSISTED_SELL");
-    expect(cycle26.exitPolicyVersion).toBe("SYMMETRIC_INDEX_V1");
-    expect(cycle26.targetSellLevelId).toBe("legacy-sell-26");
-    expect(cycle26.targetSellPrice).toBe(59_000);
-    // Selector V2 should NOT be applied to this cycle
     const levels = [
-      makeLevel({ id: "legacy-sell-26", side: "SELL", price: 59_000, quantity: 0.001 }),
+      makeLevel({ id: "legacy-sell-26", side: "SELL", price: 59_000, quantity: 0.001, rangeVersionId: RANGE_ID }),
     ];
-    const result = selectFirstProfitableHigherRung(cycle26, levels, sharedRange, selectorParams);
-    // Even if selector runs, it returns SYNTHETIC_RUNG — but this cycle should never be passed to it
-    // The point is: the engine checks exitPolicyVersion before calling the selector
+    const price = priceResult({ bid: 59_500, pair: "BTC/USD" });
+
+    // Snapshot original fields to verify no mutation
+    const originalTargetKind = cycle26.targetKind;
+    const originalTargetSellLevelId = cycle26.targetSellLevelId;
+    const originalTargetRungLevelId = cycle26.targetRungLevelId;
+    const originalExitPolicyVersion = cycle26.exitPolicyVersion;
+    const originalTargetSellPrice = cycle26.targetSellPrice;
+
+    // Run through the real diagnosis path
+    const result = diagnoseShadowOpenCycles(
+      [cycle26], levels, RANGE_ID, price, "SHADOW",
+      makeRange(), [makeRange()]
+    );
+
+    // Cycle #26 stays PERSISTED_SELL — not reclassified as synthetic
+    const item = result.cycles[0];
+    expect(item.targetKind).toBe("PERSISTED_SELL");
+    expect(item.exitPolicyVersion).toBe("SYMMETRIC_INDEX_V1");
+    expect(item.targetSellLevelId).toBe("legacy-sell-26");
+    expect(item.targetRungLevelId).toBe("legacy-sell-26");
+    expect(item.targetSource).toBe("persisted_sell");
+    expect(item.levelStatus).not.toBe("missing");
+    expect(item.targetStructurallyValid).toBe(true);
+    expect(item.requiresReview).toBe(false);
+
+    // executableOpenCyclesCount counts this legacy cycle
+    expect(result.executableOpenCyclesCount).toBe(1);
+    expect(result.missingTarget).toBe(0);
+
+    // Original cycle object is not mutated
+    expect(cycle26.targetKind).toBe(originalTargetKind);
+    expect(cycle26.targetSellLevelId).toBe(originalTargetSellLevelId);
+    expect(cycle26.targetRungLevelId).toBe(originalTargetRungLevelId);
+    expect(cycle26.exitPolicyVersion).toBe(originalExitPolicyVersion);
+    expect(cycle26.targetSellPrice).toBe(originalTargetSellPrice);
+
+    // Selector V2 should NOT be applied to this cycle
     expect(cycle26.exitPolicyVersion).not.toBe("FIRST_PROFITABLE_HIGHER_RUNG_V2");
   });
 
@@ -908,5 +1082,210 @@ describe("GRID REV-C11 FASE 3 — TARGETS V2 Y CICLOS INDEPENDIENTES", () => {
     // Both are terminal regardless of creation order
     expect(engine.cycles[0].completedAt).toBeTruthy();
     expect(engine.cycles[1].completedAt).toBeTruthy();
+  });
+});
+
+// ─── Direct diagnosis tests ──────────────────────────────────────────
+describe("GRID REV-C11 FASE 3 — DIAGNÓSTICO DIRECTO diagnoseShadowOpenCycles", () => {
+  const diagRange = makeRange();
+  const diagPrice = priceResult({ bid: 60_800, pair: "BTC/USD" });
+
+  it("D1. SYNTHETIC_RUNG explícito válido: missingTarget=0, executable=1, targetSource=synthetic, levelStatus not missing", () => {
+    const cycle = makeCycle({
+      id: "c-v2-1", cycleNumber: 101,
+      targetKind: "SYNTHETIC_RUNG",
+      targetSellLevelId: null,
+      targetRungLevelId: "rung-1",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const levels = [
+      makeLevel({ id: "rung-1", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    expect(result.missingTarget).toBe(0);
+    expect(result.requiresReview).toBe(0);
+    expect(result.executableOpenCyclesCount).toBe(1);
+    const item = result.cycles[0];
+    expect(item.targetSource).toBe("synthetic");
+    expect(item.targetRungLevelId).toBe("rung-1");
+    expect(item.targetSellLevelId).toBeNull();
+    expect(item.levelStatus).not.toBe("missing");
+    expect(item.levelStatus).toBe("not_applicable");
+    expect(item.targetStructurallyValid).toBe(true);
+  });
+
+  it("D2. Dos V2 comparten targetRungLevelId: totalOpen=2, executable=2, ambos independientes", () => {
+    const cycleA = makeCycle({
+      id: "c-v2-a", cycleNumber: 201,
+      targetKind: "SYNTHETIC_RUNG",
+      targetSellLevelId: null,
+      targetRungLevelId: "shared-rung-d2",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const cycleB = makeCycle({
+      id: "c-v2-b", cycleNumber: 202,
+      targetKind: "SYNTHETIC_RUNG",
+      targetSellLevelId: null,
+      targetRungLevelId: "shared-rung-d2",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const levels = [
+      makeLevel({ id: "shared-rung-d2", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycleA, cycleB], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    expect(result.totalOpen).toBe(2);
+    expect(result.executableOpenCyclesCount).toBe(2);
+    expect(result.missingTarget).toBe(0);
+    expect(result.cycles[0].targetSource).toBe("synthetic");
+    expect(result.cycles[1].targetSource).toBe("synthetic");
+    expect(result.cycles[0].targetSellLevelId).toBeNull();
+    expect(result.cycles[1].targetSellLevelId).toBeNull();
+  });
+
+  it("D3. V2 sintético incompleto (falta precio): missingTarget=1, requiresReview=1, executable=0", () => {
+    const cycle = makeCycle({
+      id: "c-v2-inc", cycleNumber: 301,
+      targetKind: "SYNTHETIC_RUNG",
+      targetSellLevelId: null,
+      targetRungLevelId: "rung-inc",
+      targetSellPrice: null,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const levels = [
+      makeLevel({ id: "rung-inc", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    expect(result.missingTarget).toBe(1);
+    expect(result.requiresReview).toBe(1);
+    expect(result.executableOpenCyclesCount).toBe(0);
+    expect(result.cycles[0].targetSource).toBe("missing");
+    expect(result.cycles[0].targetStructurallyValid).toBe(false);
+  });
+
+  it("D4. Legacy PERSISTED_SELL con targetRungLevelId informado: diagnosticado como persisted_sell, no sintético", () => {
+    const cycle = makeCycle({
+      id: "c-legacy-d4", cycleNumber: 401,
+      targetKind: "PERSISTED_SELL",
+      targetSellLevelId: "sell-legacy-d4",
+      targetRungLevelId: "sell-legacy-d4",
+      targetSellPrice: 61_000,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "SYMMETRIC_INDEX_V1",
+    });
+    const levels = [
+      makeLevel({ id: "sell-legacy-d4", side: "SELL", price: 61_000, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    const item = result.cycles[0];
+    expect(item.targetSource).toBe("persisted_sell");
+    expect(item.targetKind).toBe("PERSISTED_SELL");
+    expect(item.exitPolicyVersion).toBe("SYMMETRIC_INDEX_V1");
+    expect(item.targetSellLevelId).toBe("sell-legacy-d4");
+    expect(item.targetStructurallyValid).toBe(true);
+    expect(item.levelStatus).not.toBe("not_applicable");
+    expect(result.executableOpenCyclesCount).toBe(1);
+  });
+
+  it("D5. Ciclo no-V2 con targetKind=null y targetRungLevelId informado: no se convierte en SYNTHETIC_RUNG", () => {
+    const cycle = makeCycle({
+      id: "c-nov2-d5", cycleNumber: 501,
+      targetKind: null,
+      targetSellLevelId: null,
+      targetRungLevelId: "rung-d5",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "SYMMETRIC_INDEX_V1",
+    });
+    const levels = [
+      makeLevel({ id: "rung-d5", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    const item = result.cycles[0];
+    expect(item.targetSource).not.toBe("synthetic");
+    expect(item.targetKind).toBeNull();
+    expect(item.exitPolicyVersion).toBe("SYMMETRIC_INDEX_V1");
+    expect(item.targetRungLevelId).toBe("rung-d5");
+  });
+
+  it("D6. Compatibilidad V2 antigua: targetKind=null, V2 policy, sellLevelId=null, rungId informado: reconocido como sintético", () => {
+    const cycle = makeCycle({
+      id: "c-compat-d6", cycleNumber: 601,
+      targetKind: null,
+      targetSellLevelId: null,
+      targetRungLevelId: "rung-d6",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const levels = [
+      makeLevel({ id: "rung-d6", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    const item = result.cycles[0];
+    expect(item.targetSource).toBe("synthetic");
+    expect(item.levelStatus).toBe("not_applicable");
+    expect(item.targetStructurallyValid).toBe(true);
+    expect(result.executableOpenCyclesCount).toBe(1);
+    expect(result.missingTarget).toBe(0);
+  });
+
+  it("D7. Estado inconsistente: PERSISTED_SELL con targetSellLevelId=null: marca revisión, no reinterpreta como V2", () => {
+    const cycle = makeCycle({
+      id: "c-incons-d7", cycleNumber: 701,
+      targetKind: "PERSISTED_SELL",
+      targetSellLevelId: null,
+      targetRungLevelId: "rung-d7",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "SYMMETRIC_INDEX_V1",
+    });
+    const levels = [
+      makeLevel({ id: "rung-d7", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID }),
+    ];
+    const result = diagnoseShadowOpenCycles([cycle], levels, RANGE_ID, diagPrice, "SHADOW", diagRange, [diagRange]);
+    const item = result.cycles[0];
+    expect(item.targetSource).toBe("missing");
+    expect(item.targetStructurallyValid).toBe(false);
+    expect(item.requiresReview).toBe(true);
+    expect(result.executableOpenCyclesCount).toBe(0);
+    expect(result.missingTarget).toBe(1);
+  });
+
+  it("D8. Rango anterior con target sintético: conserva rangeVersionId, targetSource sintético, diagnóstico read-only", () => {
+    const oldRange = makeRange({ id: RANGE_ID_2, status: "closed" as any });
+    const cycle = makeCycle({
+      id: "c-oldrange-d8", cycleNumber: 801,
+      rangeVersionId: RANGE_ID_2,
+      targetKind: "SYNTHETIC_RUNG",
+      targetSellLevelId: null,
+      targetRungLevelId: "rung-old-d8",
+      targetSellPrice: 60_700,
+      targetSellQuantity: 0.001,
+      exitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
+    });
+    const levels = [
+      makeLevel({ id: "rung-old-d8", side: "SELL", price: 60_700, rangeVersionId: RANGE_ID_2 }),
+    ];
+    const result = diagnoseShadowOpenCycles(
+      [cycle], levels, RANGE_ID, diagPrice, "SHADOW",
+      diagRange, [diagRange, oldRange]
+    );
+    const item = result.cycles[0];
+    expect(item.rangeVersionId).toBe(RANGE_ID_2);
+    expect(item.rangeRelation).toBe("previous");
+    expect(item.targetSource).toBe("synthetic");
+    expect(item.targetStructurallyValid).toBe(true);
+    expect(result.readOnly).toBe(true);
+    expect(result.realOrdersAffected).toBe(false);
+    // Original cycle not mutated
+    expect(cycle.rangeVersionId).toBe(RANGE_ID_2);
+    expect(cycle.targetKind).toBe("SYNTHETIC_RUNG");
   });
 });
