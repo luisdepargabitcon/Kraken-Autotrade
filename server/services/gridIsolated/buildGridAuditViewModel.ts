@@ -18,6 +18,7 @@ import {
   buildGridOperationalViewModel,
   type GridOperationalViewModel,
 } from "./buildGridOperationalViewModel";
+import { safeParseJsonObjectForAudit, type ForensicJsonObjectParseResult } from "./gridJsonbValidators";
 
 export interface GridDiagnosticBand {
   exists: boolean;
@@ -131,6 +132,13 @@ export interface GridLatestDiagnostic {
   professionalGeneratorAvailable: boolean;
   professionalGeneratorReason: string | null;
   professionalGeneratorGeneratedLevels: number;
+  professionalGeneratorForensics: {
+    status: "absent" | "valid" | "invalid";
+    raw: unknown;
+    requiresReview: boolean;
+    reviewCode: string | null;
+    reviewReason: string | null;
+  };
 }
 
 function toNum(v: any): number | null {
@@ -143,21 +151,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseJsonSafe(v: any): any {
-  if (v == null) return {};
-  if (typeof v === "object") {
-    if (isPlainObject(v)) return v;
-    return { _parseError: true, _raw: v, requiresReview: true, reviewCode: "INVALID_JSON_SHAPE", reviewReason: "El JSON no contiene un objeto válido" };
-  }
-  try {
-    const parsed = JSON.parse(v);
-    if (isPlainObject(parsed)) return parsed;
-    return { _parseError: true, _raw: v, requiresReview: true, reviewCode: "INVALID_JSON_SHAPE", reviewReason: "El JSON no contiene un objeto válido" };
-  } catch {
-    return { _parseError: true, _raw: v, requiresReview: true, reviewCode: "PARSE_ERROR", reviewReason: "JSON inválido" };
-  }
-}
-
 function extractProfessionalGeneratorFromEvents(events: any[], activeRangeId: string | null): any {
   const professionalEvents = events.filter((ev: any) =>
     ev.eventType === "GRID_PROFESSIONAL_GENERATOR_USED" ||
@@ -165,39 +158,97 @@ function extractProfessionalGeneratorFromEvents(events: any[], activeRangeId: st
     ev.eventType === "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE"
   );
   if (professionalEvents.length === 0) {
-    return { available: false, reason: "No professional generator event found" };
+    return {
+      available: false,
+      reason: "No professional generator event found",
+      forensic: { status: "absent", raw: null, requiresReview: false, reviewCode: null, reviewReason: null } as ForensicJsonObjectParseResult,
+    };
   }
   const activeRangeEvent = activeRangeId
     ? professionalEvents.find((ev: any) => ev.rangeVersionId === activeRangeId)
     : undefined;
   const event = activeRangeEvent || professionalEvents[0];
-  const meta = parseJsonSafe(event.metadataJson);
-  const pg = meta.professionalGenerator || {};
+  const forensic = safeParseJsonObjectForAudit(event.metadataJson);
+
+  if (forensic.status === "absent") {
+    return {
+      available: false,
+      reason: "Metadata del evento profesional ausente",
+      forensic,
+    };
+  }
+
+  if (forensic.status === "invalid") {
+    return {
+      available: false,
+      reason: `Metadata profesional inválida: ${forensic.reviewReason}`,
+      forensic,
+    };
+  }
+
+  // forensic.status === "valid" — metadata is a plain object
+  const meta = forensic.value;
+  const pgRaw = meta.professionalGenerator;
+
+  if (pgRaw == null) {
+    return {
+      available: false,
+      reason: "Metadata válido pero sin bloque professionalGenerator",
+      forensic: {
+        status: "invalid",
+        valid: false,
+        value: null,
+        raw: forensic.raw,
+        requiresReview: true,
+        reviewCode: "MISSING_PROFESSIONAL_GENERATOR",
+        reviewReason: "El metadata del evento profesional no contiene el bloque professionalGenerator",
+      } as ForensicJsonObjectParseResult,
+    };
+  }
+
+  if (!isPlainObject(pgRaw)) {
+    return {
+      available: false,
+      reason: "professionalGenerator no es un objeto válido",
+      forensic: {
+        status: "invalid",
+        valid: false,
+        value: null,
+        raw: forensic.raw,
+        requiresReview: true,
+        reviewCode: "INVALID_JSON_SHAPE",
+        reviewReason: "professionalGenerator no es un objeto plano",
+      } as ForensicJsonObjectParseResult,
+    };
+  }
+
+  const pg = pgRaw as Record<string, unknown>;
   return {
     available: true,
     source: "event",
-    mode: pg.mode || "shadow_generation",
-    formula: pg.formula || "accumulated_spacing",
-    legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
-    viabilityStatus: pg.viabilityStatus,
-    minSpacingPctReal: pg.minSpacingPctReal,
-    spacingPct: pg.spacingPct,
-    centerPrice: pg.centerPrice,
-    operationalLower: pg.operationalLower,
-    operationalUpper: pg.operationalUpper,
-    operationalBandWidthPct: pg.operationalBandWidthPct,
-    operationalSemiRangePct: pg.operationalSemiRangePct,
-    requestedBuyLevels: pg.requestedBuyLevels,
-    requestedSellLevels: pg.requestedSellLevels,
-    generatedBuyLevels: pg.generatedBuyLevels,
-    generatedSellLevels: pg.generatedSellLevels,
-    reductionApplied: pg.reductionApplied,
-    reason: pg.reason,
-    rangeAudit: pg.rangeAudit || null,
+    mode: typeof pg.mode === "string" ? pg.mode : null,
+    formula: typeof pg.formula === "string" ? pg.formula : null,
+    legacyGeneratorUsed: pg.legacyGeneratorUsed === true,
+    viabilityStatus: pg.viabilityStatus ?? undefined,
+    minSpacingPctReal: pg.minSpacingPctReal ?? undefined,
+    spacingPct: pg.spacingPct ?? undefined,
+    centerPrice: pg.centerPrice ?? undefined,
+    operationalLower: pg.operationalLower ?? undefined,
+    operationalUpper: pg.operationalUpper ?? undefined,
+    operationalBandWidthPct: pg.operationalBandWidthPct ?? undefined,
+    operationalSemiRangePct: pg.operationalSemiRangePct ?? undefined,
+    requestedBuyLevels: pg.requestedBuyLevels ?? undefined,
+    requestedSellLevels: pg.requestedSellLevels ?? undefined,
+    generatedBuyLevels: pg.generatedBuyLevels ?? undefined,
+    generatedSellLevels: pg.generatedSellLevels ?? undefined,
+    reductionApplied: pg.reductionApplied ?? undefined,
+    reason: pg.reason ?? undefined,
+    rangeAudit: pg.rangeAudit ?? null,
     eventId: event.id,
     eventCreatedAt: event.createdAt,
     rangeVersionId: event.rangeVersionId,
     stale: activeRangeId ? !activeRangeEvent : true,
+    forensic,
   };
 }
 
@@ -373,6 +424,13 @@ function buildLatestGridDiagnostic(
     professionalGeneratorAvailable: pg?.available ?? false,
     professionalGeneratorReason: pg?.available ? null : (pg?.reason ?? null),
     professionalGeneratorGeneratedLevels: pg?.available ? (pg.generatedBuyLevels || 0) + (pg.generatedSellLevels || 0) : 0,
+    professionalGeneratorForensics: {
+      status: pg?.forensic?.status ?? "absent",
+      raw: pg?.forensic?.raw ?? null,
+      requiresReview: pg?.forensic?.requiresReview ?? false,
+      reviewCode: pg?.forensic?.reviewCode ?? null,
+      reviewReason: pg?.forensic?.reviewReason ?? null,
+    },
   };
 }
 

@@ -223,66 +223,6 @@ describe("REV-C11 FASE 2 — D8: validateTargetCalculationJson no lanza", () => 
 });
 
 describe("REV-C11 FASE 2 — D6: parseJsonSafe en audit VM", () => {
-  it("parseJsonSafe con string JSON válido retorna objeto", async () => {
-    const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-    const vm = buildGridAuditViewModel("SHADOW", {
-      pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-      gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-    }, {
-      isRunning: true, activeRangeVersionId: "range-1",
-    }, [], [], [], { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-    expect(vm).toBeDefined();
-    expect(vm.counters).toBeDefined();
-  });
-
-  it("parseJsonSafe con string JSON no-objeto retorna objeto vacío", async () => {
-    const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-    const vm = buildGridAuditViewModel("SHADOW", {
-      pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-      gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      rawConfigJson: '"a-string"',
-    }, {
-      isRunning: true, activeRangeVersionId: "range-1",
-    }, [], [], [], { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-    expect(vm).toBeDefined();
-  });
-
-  it("parseJsonSafe con number JSON retorna objeto vacío", async () => {
-    const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-    const vm = buildGridAuditViewModel("SHADOW", {
-      pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-      gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      rawConfigJson: '42',
-    }, {
-      isRunning: true, activeRangeVersionId: "range-1",
-    }, [], [], [], { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-    expect(vm).toBeDefined();
-  });
-
-  it("parseJsonSafe con JSON inválido retorna objeto vacío", async () => {
-    const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-    const vm = buildGridAuditViewModel("SHADOW", {
-      pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-      gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      rawConfigJson: '{invalid json',
-    }, {
-      isRunning: true, activeRangeVersionId: "range-1",
-    }, [], [], [], { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-    expect(vm).toBeDefined();
-  });
-
-  it("parseJsonSafe con null retorna objeto vacío", async () => {
-    const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-    const vm = buildGridAuditViewModel("SHADOW", {
-      pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-      gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      rawConfigJson: null,
-    }, {
-      isRunning: true, activeRangeVersionId: "range-1",
-    }, [], [], [], { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-    expect(vm).toBeDefined();
-  });
-
   it("D4: buildCounters incluye hodl_recovery en openCycles", async () => {
     const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
     const cycles = [
@@ -317,32 +257,6 @@ describe("REV-C11 FASE 2 — D6: parseJsonSafe en audit VM", () => {
   });
 
   describe("REV-C11 FASE 2 CORRECCIÓN — audit y JSON forense", () => {
-    it("JSON inválido conserva estado de revisión (parseJsonSafe no oculta corrupción)", async () => {
-      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "{invalid json", rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
-        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      }, {
-        isRunning: true, activeRangeVersionId: "range-1",
-      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      // The audit VM should not crash and should still produce a valid view
-      expect(vm).toBeTruthy();
-      expect(vm.counters).toBeTruthy();
-    });
-
-    it("JSON inválido no se convierte en objeto sano silencioso", async () => {
-      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "not-json-at-all", rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
-        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      }, {
-        isRunning: true, activeRangeVersionId: "range-1",
-      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      expect(vm).toBeTruthy();
-    });
-
     it("Operational y Audit coinciden para un mismo ciclo cerrado cuyo target y ejecución son distintos", async () => {
       const { buildGridOperationalViewModel } = await import("../buildGridOperationalViewModel");
       const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
@@ -443,89 +357,130 @@ describe("REV-C11 FASE 2 — D6: parseJsonSafe en audit VM", () => {
     });
   });
 
-  describe("REV-C11 FASE 2 CIERRE — parsing forense de formas JSON inválidas", () => {
-    it("JSON sintácticamente inválido conserva raw y PARSE_ERROR", async () => {
+  describe("REV-C11 FASE 2 CIERRE — contrato forense del audit VM", () => {
+    async function makeAuditVm(events: any[]) {
       const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "{invalid json", rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
+      return buildGridAuditViewModel("SHADOW", {
         pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
         gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
       }, {
         isRunning: true, activeRangeVersionId: "range-1",
       }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      expect(vm).toBeTruthy();
+    }
+
+    it("1. JSON sintácticamente inválido: available=false, status=invalid, reviewCode=PARSE_ERROR, raw conservado, no defaults", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "{invalid json", rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.status).toBe("invalid");
+      expect(d.professionalGeneratorForensics.requiresReview).toBe(true);
+      expect(d.professionalGeneratorForensics.reviewCode).toBe("PARSE_ERROR");
+      expect(d.professionalGeneratorForensics.raw).toBe("{invalid json");
+      expect(d.professionalGeneratorGeneratedLevels).toBe(0);
+      expect(d.professionalGeneratorReason).toContain("inválida");
     });
 
-    it("Array JSON conserva raw y marca INVALID_JSON_SHAPE", async () => {
-      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "[1, 2, 3]", rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
-        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      }, {
-        isRunning: true, activeRangeVersionId: "range-1",
-      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      expect(vm).toBeTruthy();
+    it("2. Array JSON: available=false, reviewCode=INVALID_JSON_SHAPE, raw exacto", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "[1, 2, 3]", rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.status).toBe("invalid");
+      expect(d.professionalGeneratorForensics.reviewCode).toBe("INVALID_JSON_SHAPE");
+      expect(d.professionalGeneratorForensics.raw).toBe("[1, 2, 3]");
+      expect(d.professionalGeneratorForensics.requiresReview).toBe(true);
     });
 
-    it("Número JSON conserva raw y marca INVALID_JSON_SHAPE", async () => {
-      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "123", rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
-        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      }, {
-        isRunning: true, activeRangeVersionId: "range-1",
-      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      expect(vm).toBeTruthy();
+    it("3. Número JSON: available=false, reviewCode=INVALID_JSON_SHAPE, raw exacto", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "123", rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.reviewCode).toBe("INVALID_JSON_SHAPE");
+      expect(d.professionalGeneratorForensics.raw).toBe("123");
     });
 
-    it("Booleano JSON conserva raw y marca INVALID_JSON_SHAPE", async () => {
-      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "true", rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
-        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      }, {
-        isRunning: true, activeRangeVersionId: "range-1",
-      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      expect(vm).toBeTruthy();
+    it("4. Booleano JSON: available=false, reviewCode=INVALID_JSON_SHAPE, raw exacto", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "true", rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.reviewCode).toBe("INVALID_JSON_SHAPE");
+      expect(d.professionalGeneratorForensics.raw).toBe("true");
     });
 
-    it("String JSON conserva raw y marca INVALID_JSON_SHAPE", async () => {
-      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: '"hello world"', rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
-        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      }, {
-        isRunning: true, activeRangeVersionId: "range-1",
-      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      expect(vm).toBeTruthy();
+    it("5. String JSON: available=false, reviewCode=INVALID_JSON_SHAPE, raw exacto", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: '"hello world"', rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.reviewCode).toBe("INVALID_JSON_SHAPE");
+      expect(d.professionalGeneratorForensics.raw).toBe('"hello world"');
     });
 
-    it("Objeto JSON válido permanece válido", async () => {
-      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: '{"key": "value"}', rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
-        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      }, {
-        isRunning: true, activeRangeVersionId: "range-1",
-      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      expect(vm).toBeTruthy();
+    it("6. Objeto válido sin professionalGenerator: available=false, no defaults fabricados", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: '{"key": "value"}', rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.status).toBe("invalid");
+      expect(d.professionalGeneratorForensics.reviewCode).toBe("MISSING_PROFESSIONAL_GENERATOR");
+      expect(d.professionalGeneratorForensics.requiresReview).toBe(true);
+      expect(d.professionalGeneratorGeneratedLevels).toBe(0);
     });
 
-    it("null/undefined se tratan como ausencia, no como corrupción", async () => {
-      const { buildGridAuditViewModel } = await import("../buildGridAuditViewModel");
-      const events = [{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: null, rangeVersionId: "range-1" }];
-      const vm = buildGridAuditViewModel("SHADOW", {
-        pair: "BTC/USD", isActive: true, executionPolicy: "MAKER_ONLY",
-        gridWalletMaxUsd: "5000", netProfitTargetPct: "0.80",
-      }, {
-        isRunning: true, activeRangeVersionId: "range-1",
-      }, [], [], events, { id: "range-1", pair: "BTC/USD", status: "active" }, null, { at: null, result: null }, { at: null, result: null });
-      expect(vm).toBeTruthy();
+    it("7. professionalGenerator con forma inválida (array): available=false, shape inválido, raw conservado", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: '{"professionalGenerator": [1, 2]}', rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.status).toBe("invalid");
+      expect(d.professionalGeneratorForensics.reviewCode).toBe("INVALID_JSON_SHAPE");
+      expect(d.professionalGeneratorForensics.requiresReview).toBe(true);
+    });
+
+    it("8. professionalGenerator válido: available=true, status=valid, mode real, formula real, generatedLevels=6", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: JSON.stringify({
+        professionalGenerator: {
+          mode: "shadow_generation",
+          formula: "accumulated_spacing",
+          generatedBuyLevels: 3,
+          generatedSellLevels: 3,
+        },
+      }), rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(true);
+      expect(d.professionalGeneratorForensics.status).toBe("valid");
+      expect(d.professionalGeneratorForensics.requiresReview).toBe(false);
+      expect(d.professionalGeneratorGeneratedLevels).toBe(6);
+    });
+
+    it("9. null: available=false, status=absent, requiresReview=false, raw=null", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: null, rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.status).toBe("absent");
+      expect(d.professionalGeneratorForensics.requiresReview).toBe(false);
+      expect(d.professionalGeneratorForensics.raw).toBeNull();
+    });
+
+    it("10. undefined: mismo comportamiento de ausencia", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: undefined, rangeVersionId: "range-1" }]);
+      const d = vm.latestGridDiagnostic;
+      expect(d.professionalGeneratorAvailable).toBe(false);
+      expect(d.professionalGeneratorForensics.status).toBe("absent");
+      expect(d.professionalGeneratorForensics.requiresReview).toBe(false);
+      expect(d.professionalGeneratorForensics.raw).toBeNull();
+    });
+
+    it("11. El raw sobrevive hasta el GridAuditViewModel final (no se queda en variable local)", async () => {
+      const rawJson = "{corrupt";
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: rawJson, rangeVersionId: "range-1" }]);
+      expect(vm.latestGridDiagnostic.professionalGeneratorForensics.raw).toBe(rawJson);
+    });
+
+    it("12. latestGridDiagnostic expone el estado forense exacto", async () => {
+      const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: "42", rangeVersionId: "range-1" }]);
+      const f = vm.latestGridDiagnostic.professionalGeneratorForensics;
+      expect(f.status).toBe("invalid");
+      expect(f.requiresReview).toBe(true);
+      expect(f.reviewCode).toBe("INVALID_JSON_SHAPE");
+      expect(f.reviewReason).toBeTruthy();
+      expect(f.raw).toBe("42");
     });
   });
 });

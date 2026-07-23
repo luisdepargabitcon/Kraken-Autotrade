@@ -2,15 +2,15 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 2 CERRADA — CAS ciclo, metadatos forenses, sell_filled humanizado, 20 tests añadidos, pendiente commit y push
+TASK_STATUS: FASE 2 CERRADA CON CONTRATO FORENSE VERIFICADO — parser canónico, raw expuesto en audit VM, defaults eliminados, 12 tests forenses exactos, pendiente commit y push
 NEXT_ACTION: FASE 3 (no iniciada — pendiente autorización)
-LAST_COMPLETED_ACTION: FASE 2 CIERRE — CAS cero/una/múltiples filas, reviewCode/reviewReason conservados, parsing forense completo, sell_filled humanizado, 235/235 tests grid verdes, tsc OK, build OK
-LAST_VALIDATION: 2026-07-23T16:58+02:00 tsc+build+vitest OK
+LAST_COMPLETED_ACTION: FASE 2 CONTRATO FORENSE — safeParseJsonObjectForAudit canónico, extractProfessionalGeneratorFromEvents propagar forense, professionalGeneratorForensics en GridLatestDiagnostic, 12 tests forenses con aserciones exactas, 233/233 tests grid verdes, tsc OK, build OK
+LAST_VALIDATION: 2026-07-23T19:22+02:00 tsc+build+vitest OK
 CURRENT_HEAD: pendiente commit
-ORIGIN_HEAD: 389ce990
+ORIGIN_HEAD: 73eeeb3
 EXPECTED_DEPLOY_HASH: pendiente
 DEPLOYED_HASH: pendiente
-UPDATED_AT: 2026-07-23T16:58+02:00
+UPDATED_AT: 2026-07-23T19:22+02:00
 
 ## FASE 1 — Cambios aplicados
 
@@ -215,6 +215,72 @@ La FASE 2 CORRECCIÓN anterior dejó pendientes: CAS del ciclo sin distinguir ce
 
 ### Notas finales
 - FASE 2 CERRADA Y VALIDADA LOCALMENTE
+- No se accedió al VPS. No se hizo deploy.
+- Ciclo #26 intacto.
+- No se inició FASE 3.
+- NEXT_ACTION: FASE 3 pendiente de autorización.
+
+## FASE 2 CONTRATO FORENSE — Corrección del parser forense de auditoría
+
+### Contexto
+La FASE 2 CIERRE anterior afirmaba que el raw ya estaba preservado hasta el Audit View Model. Esto era FALSO: `parseJsonSafe` detectaba corrupción y generaba `_parseError`, `_raw`, `requiresReview`, `reviewCode`, `reviewReason`, pero `extractProfessionalGeneratorFromEvents` descartaba esos campos y devolvía `available=true`, `mode="shadow_generation"`, `formula="accumulated_spacing"` incluso cuando el `metadataJson` era corrupto. Los tests anteriores solo verificaban `expect(vm).toBeTruthy()`, no el contrato forense.
+
+### Defecto corregido
+
+- **Parser forense canónico**: Creado `safeParseJsonObjectForAudit` en `gridJsonbValidators.ts` con tipo `ForensicJsonObjectParseResult` que distingue `absent` / `valid` / `invalid` con `reviewCode` y `reviewReason` tipados.
+
+- **Eliminado parser local duplicado**: `parseJsonSafe` eliminado de `buildGridAuditViewModel.ts`. Se importa el parser canónico desde `gridJsonbValidators.ts`.
+
+- **Propagación forense al audit VM**: `extractProfessionalGeneratorFromEvents` ahora retorna un objeto `forensic` con `status`, `raw`, `requiresReview`, `reviewCode`, `reviewReason`. Este se propaga hasta `GridLatestDiagnostic.professionalGeneratorForensics` en la respuesta serializable.
+
+- **available=false en corrupción**: Cuando `metadataJson` es inválido, `professionalGeneratorAvailable=false`, no se fabrican `mode`/`formula`, `professionalGeneratorGeneratedLevels=0`.
+
+- **MISSING_PROFESSIONAL_GENERATOR**: Cuando el metadata es un objeto válido pero no contiene `professionalGenerator`, se devuelve `available=false` con `reviewCode="MISSING_PROFESSIONAL_GENERATOR"`. Decisión: tratar como inválido porque el evento profesional exige obligatoriamente ese bloque.
+
+- **professionalGenerator con forma inválida**: Si `professionalGenerator` existe pero no es un objeto plano (array, número, etc.), se devuelve `available=false` con `reviewCode="INVALID_JSON_SHAPE"`.
+
+- **No se fabrican defaults**: `mode` y `formula` ahora son `null` si no están presentes en el objeto real, no `"shadow_generation"` / `"accumulated_spacing"`.
+
+### Tests forenses — 12 tests con aserciones exactas
+
+Sustituidos los tests que solo hacían `expect(vm).toBeTruthy()` por aserciones exactas del contrato:
+
+1. JSON sintácticamente inválido: `available=false`, `status=invalid`, `reviewCode=PARSE_ERROR`, `raw="{invalid json"`, `generatedLevels=0`
+2. Array JSON: `available=false`, `reviewCode=INVALID_JSON_SHAPE`, `raw="[1, 2, 3]"`
+3. Número JSON: `available=false`, `reviewCode=INVALID_JSON_SHAPE`, `raw="123"`
+4. Booleano JSON: `available=false`, `reviewCode=INVALID_JSON_SHAPE`, `raw="true"`
+5. String JSON: `available=false`, `reviewCode=INVALID_JSON_SHAPE`, `raw='"hello world"'`
+6. Objeto válido sin professionalGenerator: `available=false`, `reviewCode=MISSING_PROFESSIONAL_GENERATOR`
+7. professionalGenerator array: `available=false`, `reviewCode=INVALID_JSON_SHAPE`
+8. professionalGenerator válido: `available=true`, `status=valid`, `generatedLevels=6`
+9. null: `available=false`, `status=absent`, `requiresReview=false`, `raw=null`
+10. undefined: mismo comportamiento de ausencia
+11. El raw sobrevive hasta el GridAuditViewModel final
+12. latestGridDiagnostic expone el estado forense exacto
+
+### Archivos modificados
+1. `server/services/gridIsolated/gridJsonbValidators.ts` — `safeParseJsonObjectForAudit` + `ForensicJsonObjectParseResult`
+2. `server/services/gridIsolated/buildGridAuditViewModel.ts` — eliminar `parseJsonSafe`, usar parser canónico, propagar `professionalGeneratorForensics`
+3. `server/services/gridIsolated/__tests__/gridForensicJsonb.test.ts` — 12 tests forenses con aserciones exactas, tests anteriores de regresión preservados
+4. `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md` — este documento
+
+### Validaciones
+- `npm run check` (tsc): OK
+- `npx vitest run` (forensic): 31/31 tests verdes
+- `npx vitest run server/services/gridIsolated/__tests__` (suite Grid completa): 9 archivos, 233 tests, 233 pasados, 0 fallidos
+- `npm run build`: OK
+- `git diff --check`: limpio
+
+### Corrección del registro anterior
+- La afirmación de que "el raw ya estaba preservado hasta el Audit View Model" era FALSA. El parser detectaba corrupción pero su resultado se descartaba.
+- Se creó parser forense canónico (`safeParseJsonObjectForAudit`).
+- El raw llega al contrato final (`professionalGeneratorForensics.raw`).
+- `available=false` cuando metadata es corrupto.
+- No se fabrican `mode`/`formula`.
+- Tests antiguos insuficientes (`expect(vm).toBeTruthy()`) sustituidos por aserciones exactas.
+
+### Notas finales del contrato forense
+- FASE 2 CERRADA CON CONTRATO FORENSE VERIFICADO
 - No se accedió al VPS. No se hizo deploy.
 - Ciclo #26 intacto.
 - No se inició FASE 3.

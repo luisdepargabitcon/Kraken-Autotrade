@@ -422,3 +422,55 @@ export function safeParseMakerExitStateJson(raw: unknown): GridPendingMakerExit 
   if (forensic.valid) return forensic.value;
   return defaultReviewRequiredMakerExit(forensic.reason ?? "unknown");
 }
+
+// ─── Canonical audit JSON object parser ──────────────────────────────
+
+export type ForensicJsonObjectParseResult =
+  | {
+      status: "absent";
+      valid: true;
+      value: null;
+      raw: null;
+      requiresReview: false;
+      reviewCode: null;
+      reviewReason: null;
+    }
+  | {
+      status: "valid";
+      valid: true;
+      value: Record<string, unknown>;
+      raw: unknown;
+      requiresReview: false;
+      reviewCode: null;
+      reviewReason: null;
+    }
+  | {
+      status: "invalid";
+      valid: false;
+      value: null;
+      raw: unknown;
+      requiresReview: true;
+      reviewCode: string;
+      reviewReason: string;
+    };
+
+export function safeParseJsonObjectForAudit(raw: unknown): ForensicJsonObjectParseResult {
+  if (raw == null) {
+    return { status: "absent", valid: true, value: null, raw: null, requiresReview: false, reviewCode: null, reviewReason: null };
+  }
+  if (typeof raw === "object") {
+    if (isPlainObject(raw)) {
+      return { status: "valid", valid: true, value: raw, raw, requiresReview: false, reviewCode: null, reviewReason: null };
+    }
+    return { status: "invalid", valid: false, value: null, raw, requiresReview: true, reviewCode: "INVALID_JSON_SHAPE", reviewReason: "El JSON no contiene un objeto válido" };
+  }
+  try {
+    const parsed = JSON.parse(raw as string);
+    if (isPlainObject(parsed)) {
+      return { status: "valid", valid: true, value: parsed, raw, requiresReview: false, reviewCode: null, reviewReason: null };
+    }
+    return { status: "invalid", valid: false, value: null, raw, requiresReview: true, reviewCode: "INVALID_JSON_SHAPE", reviewReason: "El JSON no contiene un objeto válido" };
+  } catch {
+    return { status: "invalid", valid: false, value: null, raw, requiresReview: true, reviewCode: "PARSE_ERROR", reviewReason: "JSON inválido" };
+  }
+}
