@@ -1158,7 +1158,7 @@ describe("buildGridOperationalViewModel", () => {
       };
       const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ riskStateJson: riskState })]));
       expect(vm.closedCycles[0].stopLossTriggered).toBe(true);
-      expect(vm.closedCycles[0].stopLossLayersTriggered).toContain("soft");
+      expect(vm.closedCycles[0].stopLossLayersTriggered.some((l: any) => l.layer === "soft")).toBe(true);
     });
 
     // 13. HODL histórico visible
@@ -1289,6 +1289,333 @@ describe("buildGridOperationalViewModel", () => {
       const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle(), makeCancelledCycle()]));
       expect(vm.closedCycles[0].estimatedNetPnl).toBeNull();
       expect(vm.cancelledCycles[0].estimatedNetPnl).toBeNull();
+    });
+  });
+
+  // ─── FASE 4D CORRECTION 1B: terminalKind, closedAt, cronología, stops ───
+  describe("REV-C11 FASE 4D CORRECTION 1B — terminalKind, closedAt, cronología (25 tests)", () => {
+    function makeCompleted(overrides: any = {}) {
+      return {
+        id: "c-comp-1b",
+        cycleNumber: 200,
+        pair: "BTC/USD",
+        status: "completed",
+        rangeVersionId: "range-old-v0",
+        buyLevelId: "buy-old-1",
+        sellLevelId: "sell-old-1",
+        targetSellLevelId: CYCLE_25_TARGET,
+        buyPrice: "90000",
+        sellPrice: "95000",
+        targetSellPrice: "95500",
+        quantity: "0.01",
+        grossPnlUsd: "50.00",
+        feeTotalUsd: "5.00",
+        taxReserveUsd: "10.00",
+        netPnlUsd: "35.00",
+        netPnlPct: "0.39",
+        closePath: "NORMAL_TARGET",
+        openedAt: new Date(Date.now() - 7200000).toISOString(),
+        buyFilledAt: new Date(Date.now() - 7100000).toISOString(),
+        sellFilledAt: new Date(Date.now() - 3600000).toISOString(),
+        completedAt: new Date(Date.now() - 3500000).toISOString(),
+        holdTimeMinutes: 60,
+        createdAt: new Date(Date.now() - 7200000).toISOString(),
+        ...overrides,
+      };
+    }
+
+    function makeCancelled(overrides: any = {}) {
+      return {
+        id: "c-canc-1b",
+        cycleNumber: 201,
+        pair: "BTC/USD",
+        status: "cancelled",
+        rangeVersionId: "range-old-v0",
+        buyLevelId: "buy-old-2",
+        buyPrice: "91000",
+        targetSellPrice: "96000",
+        quantity: "0.01",
+        grossPnlUsd: "0",
+        feeTotalUsd: "0",
+        taxReserveUsd: "0",
+        netPnlUsd: "0",
+        netPnlPct: "0",
+        createdAt: new Date(Date.now() - 5000000).toISOString(),
+        completedAt: new Date(Date.now() - 4000000).toISOString(),
+        ...overrides,
+      };
+    }
+
+    function makeError(overrides: any = {}) {
+      return {
+        ...makeCancelled(),
+        id: "c-err-1b",
+        cycleNumber: 202,
+        status: "error",
+        reviewReason: "RISK_UNKNOWN_VERSION",
+        ...overrides,
+      };
+    }
+
+    function inputWith(cycles: any[]) {
+      return makeInput({
+        cycles,
+        levels: [
+          { id: "buy-active-1", rangeVersionId: "range-active-v1", side: "BUY", price: "90000", quantity: "0.01", status: "planned", levelIndex: 0 },
+        ],
+      });
+    }
+
+    function riskStateWith(overrides: any = {}) {
+      return {
+        trailing: { activated: false, activatedAt: null, highestPriceSinceBuy: null, trailingStopPct: 0, currentStopPrice: null, reason: "" },
+        stopLoss: [],
+        hodl: { active: false, activatedAt: null, originalBuyPrice: null, recoveryTargetPrice: null, reason: "" },
+        lastAction: null,
+        activeExitRoute: null,
+        pendingExitPrice: null,
+        protectiveExit: { state: "NONE", route: null, triggerPrice: null, triggerDetectedAt: null, bestBidAtTrigger: null, bestAskAtTrigger: null, requestedMakerPrice: null, makerOrderCreatedAt: null, makerEligibleAfter: null, lifecycleTickId: null, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0, simulatedOrderId: null, fillPrice: null, filledAt: null, bestBidAtFill: null, bestAskAtFill: null, cancellationReason: null },
+        stateVersion: 1,
+        lastEvaluatedAt: null,
+        ...overrides,
+      };
+    }
+
+    // 1. status=error produce terminalKind=cancelled
+    it("1: status=error produce terminalKind=cancelled", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeError()]));
+      expect(vm.cancelledCycles[0].terminalKind).toBe("cancelled");
+    });
+
+    // 2. error entra en cancelledCycles
+    it("2: error entra en cancelledCycles", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeError()]));
+      expect(vm.cancelledCycles.length).toBe(1);
+      expect(vm.cancelledCycles[0].status).toBe("error");
+    });
+
+    // 3. error no entra en closedCycles
+    it("3: error no entra en closedCycles", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeError()]));
+      expect(vm.closedCycles.length).toBe(0);
+    });
+
+    // 4. filtro Completados excluye error
+    it("4: filtro Completados excluye error (terminalKind)", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted(), makeError()]));
+      const completed = [...vm.closedCycles, ...vm.cancelledCycles].filter(c => c.terminalKind === "completed");
+      expect(completed.length).toBe(1);
+      expect(completed[0].status).toBe("completed");
+    });
+
+    // 5. filtro Cancelados incluye error
+    it("5: filtro Cancelados incluye error (terminalKind)", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted(), makeError()]));
+      const cancelled = [...vm.closedCycles, ...vm.cancelledCycles].filter(c => c.terminalKind === "cancelled");
+      expect(cancelled.length).toBe(1);
+      expect(cancelled[0].status).toBe("error");
+    });
+
+    // 6. error utiliza semántica de cancelado
+    it("6: error utiliza semántica de cancelado (sellPrice null, realizedNetPnl null)", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeError({ sellPrice: "95000", netPnlUsd: "100" })]));
+      expect(vm.cancelledCycles[0].sellPrice).toBeNull();
+      expect(vm.cancelledCycles[0].realizedNetPnl).toBeNull();
+    });
+
+    // 7. cancelado no recibe hito Completado
+    it("7: cancelado no recibe hito Completado en cronología", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeCancelled()]));
+      expect(vm.cancelledCycles[0].terminalKind).toBe("cancelled");
+      expect(vm.cancelledCycles[0].statusLabel).toBe("Cancelado");
+    });
+
+    // 8. completado no recibe hito Cancelado
+    it("8: completado no recibe hito Cancelado en cronología", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted()]));
+      expect(vm.closedCycles[0].terminalKind).toBe("completed");
+      expect(vm.closedCycles[0].statusLabel).not.toBe("Cancelado");
+    });
+
+    // 9. cronología ordenada por timestamp (verificado via campos ordenados)
+    it("9: cronología campos ordenados — createdAt < buyFilledAt < sellFilledAt < completedAt", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted()]));
+      const c = vm.closedCycles[0];
+      const ts = [c.createdAt, c.buyFilledAt, c.sellFilledAt, c.completedAt].filter(Boolean) as string[];
+      const times = ts.map(t => new Date(t).getTime());
+      for (let i = 1; i < times.length; i++) {
+        expect(times[i]).toBeGreaterThanOrEqual(times[i - 1]);
+      }
+    });
+
+    // 10. stop soft conserva triggeredAt
+    it("10: stop soft conserva triggeredAt", () => {
+      const ts = new Date(Date.now() - 6000000).toISOString();
+      const risk = riskStateWith({
+        stopLoss: [{ layer: "soft", triggerPricePct: -3, triggered: true, triggeredAt: ts, reason: "SOFT_HIT" }],
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      const sl = vm.closedCycles[0].stopLossLayersTriggered;
+      expect(sl.length).toBe(1);
+      expect(sl[0].layer).toBe("soft");
+      expect(sl[0].triggeredAt).toBeTruthy();
+    });
+
+    // 11. stop hard conserva triggeredAt
+    it("11: stop hard conserva triggeredAt", () => {
+      const ts = new Date(Date.now() - 6000000).toISOString();
+      const risk = riskStateWith({
+        stopLoss: [{ layer: "hard", triggerPricePct: -5, triggered: true, triggeredAt: ts, reason: "HARD_HIT" }],
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      expect(vm.closedCycles[0].stopLossLayersTriggered[0].layer).toBe("hard");
+      expect(vm.closedCycles[0].stopLossLayersTriggered[0].triggeredAt).toBeTruthy();
+    });
+
+    // 12. stop emergency conserva triggeredAt
+    it("12: stop emergency conserva triggeredAt", () => {
+      const ts = new Date(Date.now() - 6000000).toISOString();
+      const risk = riskStateWith({
+        stopLoss: [{ layer: "emergency", triggerPricePct: -10, triggered: true, triggeredAt: ts, reason: "EMERGENCY_HIT" }],
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      expect(vm.closedCycles[0].stopLossLayersTriggered[0].layer).toBe("emergency");
+      expect(vm.closedCycles[0].stopLossLayersTriggered[0].triggeredAt).toBeTruthy();
+    });
+
+    // 13. stop conserva reason
+    it("13: stop conserva reason", () => {
+      const risk = riskStateWith({
+        stopLoss: [{ layer: "soft", triggerPricePct: -3, triggered: true, triggeredAt: new Date().toISOString(), reason: "SOFT_THRESHOLD_CROSSED" }],
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      expect(vm.closedCycles[0].stopLossLayersTriggered[0].reason).toBe("SOFT_THRESHOLD_CROSSED");
+    });
+
+    // 14. stop conserva triggerPricePct
+    it("14: stop conserva triggerPricePct", () => {
+      const risk = riskStateWith({
+        stopLoss: [{ layer: "soft", triggerPricePct: -3.5, triggered: true, triggeredAt: new Date().toISOString(), reason: "SOFT_HIT" }],
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      expect(vm.closedCycles[0].stopLossLayersTriggered[0].triggerPricePct).toBe(-3.5);
+    });
+
+    // 15. cronología incluye stop con fecha real
+    it("15: stopLossLayersTriggered incluye fecha real (triggeredAt no null)", () => {
+      const ts = new Date(Date.now() - 6000000).toISOString();
+      const risk = riskStateWith({
+        stopLoss: [{ layer: "soft", triggerPricePct: -3, triggered: true, triggeredAt: ts, reason: "SOFT_HIT" }],
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      expect(vm.closedCycles[0].stopLossLayersTriggered[0].triggeredAt).not.toBeNull();
+      expect(new Date(vm.closedCycles[0].stopLossLayersTriggered[0].triggeredAt!).getTime()).not.toBeNaN();
+    });
+
+    // 16. trailing muestra fecha, máximo y stop
+    it("16: trailing muestra fecha, máximo y stop", () => {
+      const ts = new Date(Date.now() - 6000000).toISOString();
+      const risk = riskStateWith({
+        trailing: { activated: true, activatedAt: ts, highestPriceSinceBuy: 94500, trailingStopPct: 1.5, currentStopPrice: 93000, reason: "TRAILING_ARMED" },
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      const c = vm.closedCycles[0];
+      expect(c.trailingActivated).toBe(true);
+      expect(c.trailingActivatedAt).toBeTruthy();
+      expect(c.trailingHighestPrice).toBe(94500);
+      expect(c.trailingStopPrice).toBe(93000);
+    });
+
+    // 17. HODL muestra fecha y target
+    it("17: HODL muestra fecha y target", () => {
+      const ts = new Date(Date.now() - 5000000).toISOString();
+      const risk = riskStateWith({
+        hodl: { active: true, activatedAt: ts, originalBuyPrice: 90000, recoveryTargetPrice: 93000, reason: "HODL_ACTIVATED" },
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      const c = vm.closedCycles[0];
+      expect(c.hodlActivated).toBe(true);
+      expect(c.hodlActivatedAt).toBeTruthy();
+      expect(c.hodlRecoveryTarget).toBe(93000);
+    });
+
+    // 18. maker muestra makerEligibleAfter
+    it("18: maker muestra makerEligibleAfter", () => {
+      const ts = new Date().toISOString();
+      const risk = riskStateWith({
+        protectiveExit: { state: "MAKER_PENDING", route: "TRAILING_MAKER", triggerPrice: 94500, triggerDetectedAt: ts, bestBidAtTrigger: 94490, bestAskAtTrigger: 94510, requestedMakerPrice: 94495, makerOrderCreatedAt: ts, makerEligibleAfter: ts, lifecycleTickId: 5, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0.01, simulatedOrderId: "sim-1", fillPrice: null, filledAt: null, bestBidAtFill: null, bestAskAtFill: null, cancellationReason: null },
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      expect(vm.closedCycles[0].makerEligibleAfter).toBeTruthy();
+    });
+
+    // 19. maker muestra requestedMakerPrice
+    it("19: maker muestra requestedMakerPrice", () => {
+      const ts = new Date().toISOString();
+      const risk = riskStateWith({
+        protectiveExit: { state: "MAKER_PENDING", route: "TRAILING_MAKER", triggerPrice: 94500, triggerDetectedAt: ts, bestBidAtTrigger: 94490, bestAskAtTrigger: 94510, requestedMakerPrice: 94495, makerOrderCreatedAt: ts, makerEligibleAfter: ts, lifecycleTickId: 5, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0.01, simulatedOrderId: "sim-1", fillPrice: null, filledAt: null, bestBidAtFill: null, bestAskAtFill: null, cancellationReason: null },
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      expect(vm.closedCycles[0].requestedMakerPrice).toBe(94495);
+    });
+
+    // 20. maker muestra makerFilledAt y fillPrice
+    it("20: maker muestra makerFilledAt y fillPrice", () => {
+      const ts = new Date().toISOString();
+      const risk = riskStateWith({
+        protectiveExit: { state: "MAKER_FILLED", route: "TRAILING_MAKER", triggerPrice: 94500, triggerDetectedAt: ts, bestBidAtTrigger: 94490, bestAskAtTrigger: 94510, requestedMakerPrice: 94495, makerOrderCreatedAt: ts, makerEligibleAfter: ts, lifecycleTickId: 5, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0.01, simulatedOrderId: "sim-1", fillPrice: 94498, filledAt: ts, bestBidAtFill: 94495, bestAskAtFill: 94505, cancellationReason: null },
+      });
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ riskStateJson: risk })]));
+      expect(vm.closedCycles[0].makerFillPrice).toBe(94498);
+      expect(vm.closedCycles[0].makerFilledAt).toBeTruthy();
+    });
+
+    // 21. closedAt de completado correcto
+    it("21: closedAt de completado = completedAt", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted()]));
+      expect(vm.closedCycles[0].closedAt).toBe(vm.closedCycles[0].completedAt);
+    });
+
+    // 22. closedAt de cancelado correcto
+    it("22: closedAt de cancelado = completedAt", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeCancelled()]));
+      expect(vm.cancelledCycles[0].closedAt).toBe(vm.cancelledCycles[0].completedAt);
+    });
+
+    // 23. orden histórico usa closedAt
+    it("23: orden histórico usa closedAt (desc)", () => {
+      const recent = makeCompleted({ id: "recent", completedAt: new Date(Date.now() - 1000000).toISOString() });
+      const older = makeCompleted({ id: "older", completedAt: new Date(Date.now() - 9000000).toISOString() });
+      const vm = buildGridOperationalViewModel(inputWith([older, recent]));
+      const all = [...vm.closedCycles].sort((a, b) => {
+        const aT = new Date(a.closedAt ?? 0).getTime();
+        const bT = new Date(b.closedAt ?? 0).getTime();
+        return bT - aT;
+      });
+      expect(all[0].id).toBe("recent");
+      expect(all[1].id).toBe("older");
+    });
+
+    // 24. ningún terminal usa Date.now()
+    it("24: ningún terminal usa Date.now() — duración frozen", () => {
+      const c = makeCompleted({
+        holdTimeMinutes: null,
+        openedAt: new Date("2026-01-01T00:00:00Z").toISOString(),
+        completedAt: new Date("2026-01-01T02:00:00Z").toISOString(),
+        sellFilledAt: new Date("2026-01-01T01:55:00Z").toISOString(),
+      });
+      const vm1 = buildGridOperationalViewModel(inputWith([c]));
+      const vm2 = buildGridOperationalViewModel(inputWith([c]));
+      expect(vm1.closedCycles[0].durationMinutes).toBe(120);
+      expect(vm2.closedCycles[0].durationMinutes).toBe(120);
+      expect(vm1.closedCycles[0].durationLabel).toBe(vm2.closedCycles[0].durationLabel);
+    });
+
+    // 25. sellPrice null no usa target como fill
+    it("25: sellPrice null no usa target como fill", () => {
+      const vm = buildGridOperationalViewModel(inputWith([makeCompleted({ sellPrice: null })]));
+      expect(vm.closedCycles[0].sellPrice).toBeNull();
+      expect(vm.closedCycles[0].targetSellPrice).toBe(95500);
     });
   });
 });

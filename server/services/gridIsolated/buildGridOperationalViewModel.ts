@@ -71,12 +71,23 @@ export interface OperationalRecommendation {
   ctaTarget?: string;
 }
 
+export interface StopLossLayerTriggered {
+  layer: string;
+  triggerPricePct: number | null;
+  triggeredAt: string | null;
+  reason: string | null;
+}
+
+export type TerminalKind = "completed" | "cancelled" | null;
+
 export interface OperationalOpenCycle {
   id: string;
   cycleNumber: number;
   pair: string;
   status: string;
   statusLabel: string;
+  terminalKind: TerminalKind;
+  closedAt: string | null;
   color: "green" | "cyan" | "amber" | "red";
   buyPrice: number | null;
   quantity: number | null;
@@ -140,7 +151,7 @@ export interface OperationalOpenCycle {
   trailingReason: string | null;
   // Stop-loss history
   stopLossTriggered: boolean;
-  stopLossLayersTriggered: string[];
+  stopLossLayersTriggered: StopLossLayerTriggered[];
   // HODL history
   hodlActivated: boolean;
   hodlActivatedAt: string | null;
@@ -388,7 +399,7 @@ function translateStatus(status: string): string {
     case "cancelled":
       return "Cancelado";
     case "error":
-      return "Error";
+      return "Error del ciclo";
     default:
       return status || "Desconocido";
   }
@@ -554,7 +565,12 @@ function buildOpenCycle(
     trailingStopPrice: toNum(risk?.trailing?.currentStopPrice) ?? null,
     trailingReason: risk?.trailing?.reason ?? null,
     stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
-    stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => l.layer),
+    stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => ({
+      layer: l.layer,
+      triggerPricePct: toNum(l.triggerPricePct) ?? null,
+      triggeredAt: safeIso(l.triggeredAt) ?? null,
+      reason: l.reason ?? null,
+    })),
     hodlActivated: risk?.hodl?.active ?? false,
     hodlActivatedAt: safeIso(risk?.hodl?.activatedAt) ?? null,
     hodlRecoveryTarget: toNum(risk?.hodl?.recoveryTargetPrice) ?? null,
@@ -571,6 +587,8 @@ function buildOpenCycle(
     makerFilledAt: safeIso(risk?.protectiveExit?.filledAt) ?? null,
     reviewCode: cycle?.reviewCode ?? null,
     reviewReason: cycle?.reviewReason ?? null,
+    terminalKind: null,
+    closedAt: null,
   };
 }
 
@@ -597,11 +615,11 @@ function buildClosedCycle(
           : null);
 
   const risk = parseRiskState(cycle);
-  const sellPrice = toNum(cycle?.sellPrice);
+  const isCancelled = status === "cancelled" || status === "error";
+  const sellPrice = isCancelled ? null : toNum(cycle?.sellPrice);
   const sellFilledAt = cycle?.sellFilledAt ?? null;
   const closedQuantity = toNum(cycle?.filledQuantity ?? cycle?.quantity);
   const closePath = cycle?.closePath ?? null;
-  const isCancelled = status === "cancelled" || status === "error";
 
   const completedAt = safeIso(cycle?.completedAt) ?? null;
 
@@ -694,7 +712,12 @@ function buildClosedCycle(
     trailingStopPrice: toNum(risk?.trailing?.currentStopPrice) ?? null,
     trailingReason: risk?.trailing?.reason ?? null,
     stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
-    stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => l.layer),
+    stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => ({
+      layer: l.layer,
+      triggerPricePct: toNum(l.triggerPricePct) ?? null,
+      triggeredAt: safeIso(l.triggeredAt) ?? null,
+      reason: l.reason ?? null,
+    })),
     hodlActivated: risk?.hodl?.active ?? false,
     hodlActivatedAt: safeIso(risk?.hodl?.activatedAt) ?? null,
     hodlRecoveryTarget: toNum(risk?.hodl?.recoveryTargetPrice) ?? null,
@@ -709,6 +732,8 @@ function buildClosedCycle(
     simulatedOrderId: risk?.protectiveExit?.simulatedOrderId ?? null,
     makerFillPrice: toNum(risk?.protectiveExit?.fillPrice) ?? null,
     makerFilledAt: safeIso(risk?.protectiveExit?.filledAt) ?? null,
+    terminalKind: isCancelled ? "cancelled" : "completed",
+    closedAt: completedAt ?? safeIso(sellFilledAt) ?? null,
   };
 }
 

@@ -158,20 +158,56 @@ function fmtDate(iso: string | null): string {
   return d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function stopLayerLabel(layer: string): string {
+  switch (layer) {
+    case "soft": return "Stop suave";
+    case "hard": return "Stop duro";
+    case "emergency": return "Stop de emergencia";
+    default: return layer;
+  }
+}
+
 function Cronologia({ cycle }: { cycle: any }) {
-  const hitos: { label: string; ts: string | null }[] = [
-    { label: "Ciclo creado", ts: cycle.createdAt },
-    { label: "BUY ejecutado", ts: cycle.buyFilledAt },
-  ];
-  if (cycle.trailingActivated) hitos.push({ label: "Trailing activado", ts: cycle.trailingActivatedAt });
-  if (cycle.stopLossTriggered) hitos.push({ label: "Stop-loss disparado", ts: null });
-  if (cycle.hodlActivated) hitos.push({ label: "HODL activado", ts: cycle.hodlActivatedAt });
-  if (cycle.makerOrderCreatedAt) hitos.push({ label: "Maker de salida creado", ts: cycle.makerOrderCreatedAt });
-  if (cycle.sellFilledAt) hitos.push({ label: "SELL ejecutado", ts: cycle.sellFilledAt });
-  if (cycle.completedAt) hitos.push({ label: "Completado", ts: cycle.completedAt });
-  if (cycle.status === "cancelled" && cycle.completedAt) hitos.push({ label: "Cancelado", ts: cycle.completedAt });
+  const tk = cycle.terminalKind;
+  const hitos: { label: string; ts: string | null }[] = [];
+
+  hitos.push({ label: "Ciclo creado", ts: cycle.createdAt });
+  if (cycle.buyFilledAt) hitos.push({ label: "BUY ejecutado", ts: cycle.buyFilledAt });
+
+  if (cycle.trailingActivated && cycle.trailingActivatedAt) {
+    hitos.push({ label: "Trailing activado", ts: cycle.trailingActivatedAt });
+  }
+
+  if (cycle.stopLossLayersTriggered) {
+    for (const sl of cycle.stopLossLayersTriggered) {
+      if (sl.triggeredAt) {
+        hitos.push({ label: stopLayerLabel(sl.layer), ts: sl.triggeredAt });
+      }
+    }
+  }
+
+  if (cycle.hodlActivated && cycle.hodlActivatedAt) {
+    hitos.push({ label: "HODL activado", ts: cycle.hodlActivatedAt });
+  }
+
+  if (cycle.makerOrderCreatedAt) {
+    hitos.push({ label: "Maker de salida creado", ts: cycle.makerOrderCreatedAt });
+  }
+  if (cycle.makerEligibleAfter) {
+    hitos.push({ label: "Maker elegible", ts: cycle.makerEligibleAfter });
+  }
+
+  if (tk === "completed") {
+    if (cycle.sellFilledAt) hitos.push({ label: "SELL ejecutado", ts: cycle.sellFilledAt });
+    if (cycle.completedAt) hitos.push({ label: "Ciclo completado", ts: cycle.completedAt });
+  } else if (tk === "cancelled") {
+    if (cycle.closedAt) {
+      hitos.push({ label: cycle.status === "error" ? "Error del ciclo" : "Ciclo cancelado", ts: cycle.closedAt });
+    }
+  }
 
   const valid = hitos.filter(h => h.ts != null);
+  valid.sort((a, b) => new Date(a.ts!).getTime() - new Date(b.ts!).getTime());
   if (valid.length === 0) return null;
 
   return (
@@ -244,6 +280,99 @@ function CompletedCycleHeader({ cycle }: { cycle: any }) {
   );
 }
 
+function ProteccionesDetail({ cycle }: { cycle: any }) {
+  const hasProtections = cycle.trailingActivated || cycle.stopLossTriggered || cycle.hodlActivated ||
+    (cycle.makerState && cycle.makerState !== "NONE");
+  if (!hasProtections) return null;
+
+  return (
+    <div className="space-y-2 pt-2">
+      <p className="text-xs font-semibold text-muted-foreground">Protecciones</p>
+
+      {cycle.trailingActivated && (
+        <div className="rounded border border-amber-500/20 bg-amber-500/5 p-2 text-xs space-y-1">
+          <div className="font-semibold text-amber-400">Trailing</div>
+          <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+            <span>Activación: <span className="font-mono text-foreground">{fmtDate(cycle.trailingActivatedAt)}</span></span>
+            <span>Precio máximo: <span className="font-mono text-foreground">{fmtPrice(cycle.trailingHighestPrice)}</span></span>
+            <span>Stop final: <span className="font-mono text-foreground">{fmtPrice(cycle.trailingStopPrice)}</span></span>
+            <span>Motivo: <span className="text-foreground">{cycle.trailingReason ?? "—"}</span></span>
+          </div>
+          {cycle.closePath === "TRAILING_MAKER" && (
+            <div className="text-amber-400/80">Cerrado mediante trailing maker</div>
+          )}
+        </div>
+      )}
+
+      {cycle.stopLossTriggered && cycle.stopLossLayersTriggered?.length > 0 && (
+        <div className="rounded border border-red-500/20 bg-red-500/5 p-2 text-xs space-y-1">
+          <div className="font-semibold text-red-400">Stop-loss</div>
+          {cycle.stopLossLayersTriggered.map((sl: any, i: number) => (
+            <div key={i} className="grid grid-cols-2 gap-1 text-muted-foreground">
+              <span>Capa: <span className="text-foreground">{stopLayerLabel(sl.layer)}</span></span>
+              <span>Fecha: <span className="font-mono text-foreground">{fmtDate(sl.triggeredAt)}</span></span>
+              <span>Umbral: <span className="font-mono text-foreground">{sl.triggerPricePct != null ? `${sl.triggerPricePct}%` : "—"}</span></span>
+              <span>Motivo: <span className="text-foreground">{sl.reason ?? "—"}</span></span>
+            </div>
+          ))}
+          {cycle.closePath === "PROTECTIVE_MAKER" && (
+            <div className="text-red-400/80">Cerrado mediante stop-loss maker</div>
+          )}
+        </div>
+      )}
+
+      {cycle.hodlActivated && (
+        <div className="rounded border border-blue-500/20 bg-blue-500/5 p-2 text-xs space-y-1">
+          <div className="font-semibold text-blue-400">HODL Recovery</div>
+          <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+            <span>Activación: <span className="font-mono text-foreground">{fmtDate(cycle.hodlActivatedAt)}</span></span>
+            <span>Objetivo: <span className="font-mono text-foreground">{fmtPrice(cycle.hodlRecoveryTarget)}</span></span>
+          </div>
+          {cycle.closePath === "HODL_RECOVERY" && (
+            <div className="text-blue-400/80">Cerrado mediante recuperación HODL</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MakerExecutionDetail({ cycle }: { cycle: any }) {
+  if (!cycle.makerState || cycle.makerState === "NONE") return null;
+  const hasData = cycle.triggerDetectedAt || cycle.requestedMakerPrice != null ||
+    cycle.makerOrderCreatedAt || cycle.makerEligibleAfter || cycle.makerFillPrice != null;
+  if (!hasData) return null;
+
+  const routeLabel = (route: string | null): string => {
+    switch (route) {
+      case "TRAILING_MAKER": return "Trailing maker";
+      case "PROTECTIVE_MAKER": return "Stop-loss maker";
+      case "HODL_RECOVERY": return "Recuperación HODL";
+      default: return route ?? "—";
+    }
+  };
+
+  return (
+    <div className="space-y-1 pt-2">
+      <p className="text-xs font-semibold text-muted-foreground">Ejecución maker</p>
+      <div className="rounded border border-purple-500/20 bg-purple-500/5 p-2 text-xs space-y-1">
+        <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+          <span>Estado: <span className="text-foreground">{cycle.makerState}</span></span>
+          <span>Ruta: <span className="text-foreground">{routeLabel(cycle.makerRoute)}</span></span>
+          {cycle.triggerDetectedAt && <span>Trigger: <span className="font-mono text-foreground">{fmtDate(cycle.triggerDetectedAt)}</span></span>}
+          {cycle.requestedMakerPrice != null && <span>Precio maker: <span className="font-mono text-foreground">{fmtPrice(cycle.requestedMakerPrice)}</span></span>}
+          {cycle.makerOrderCreatedAt && <span>Orden creada: <span className="font-mono text-foreground">{fmtDate(cycle.makerOrderCreatedAt)}</span></span>}
+          {cycle.makerEligibleAfter && <span>Elegible: <span className="font-mono text-foreground">{fmtDate(cycle.makerEligibleAfter)}</span></span>}
+          {cycle.lastRepricedAt && <span>Último reprice: <span className="font-mono text-foreground">{fmtDate(cycle.lastRepricedAt)}</span></span>}
+          {cycle.repriceAttempts != null && <span>Reintentos: <span className="font-mono text-foreground">{cycle.repriceAttempts}</span></span>}
+          {cycle.makerFillPrice != null && <span>Precio fill: <span className="font-mono text-foreground">{fmtPrice(cycle.makerFillPrice)}</span></span>}
+          {cycle.makerFilledAt && <span>Fill: <span className="font-mono text-foreground">{fmtDate(cycle.makerFilledAt)}</span></span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CompletedCycleDetail({ cycle }: { cycle: any }) {
   return (
     <div className="space-y-2 text-sm pt-2">
@@ -255,7 +384,7 @@ function CompletedCycleDetail({ cycle }: { cycle: any }) {
 
       <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
         <span>Fecha compra: <span className="font-mono text-foreground">{fmtDate(cycle.buyFilledAt ?? cycle.openedAt)}</span></span>
-        <span>Fecha venta: <span className="font-mono text-foreground">{fmtDate(cycle.sellFilledAt)}</span></span>
+        <span>Fecha cierre: <span className="font-mono text-foreground">{fmtDate(cycle.closedAt)}</span></span>
         <span>Duración: <span className="font-mono text-foreground">{cycle.durationLabel}</span></span>
         <span>Cantidad BTC: <span className="font-mono text-foreground">{fmtQty(cycle.closedQuantity ?? cycle.quantity)}</span></span>
         <span>Capital usado: <span className="font-mono text-foreground">{fmtUsd(cycle.capitalUsedUsd)}</span></span>
@@ -283,32 +412,8 @@ function CompletedCycleDetail({ cycle }: { cycle: any }) {
         )}
       </div>
 
-      {(cycle.trailingActivated || cycle.stopLossTriggered || cycle.hodlActivated || cycle.makerState) && (
-        <div className="flex flex-wrap gap-2 pt-1">
-          {cycle.trailingActivated && (
-            <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
-              Trailing {cycle.trailingStopPrice != null ? `@ ${fmtPrice(cycle.trailingStopPrice)}` : ""}
-            </Badge>
-          )}
-          {cycle.stopLossTriggered && (
-            <Badge variant="outline" className="text-[10px] text-red-400 border-red-500/30 bg-red-500/10">
-              Stop-loss {cycle.stopLossLayersTriggered?.length > 0 ? `(${cycle.stopLossLayersTriggered.join(", ")})` : ""}
-            </Badge>
-          )}
-          {cycle.hodlActivated && (
-            <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/30 bg-blue-500/10">
-              HODL {cycle.hodlRecoveryTarget != null ? `→ ${fmtPrice(cycle.hodlRecoveryTarget)}` : ""}
-            </Badge>
-          )}
-          {cycle.makerState && cycle.makerState !== "NONE" && (
-            <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-500/30 bg-purple-500/10">
-              Maker: {cycle.makerState}
-              {cycle.makerFillPrice != null ? ` @ ${fmtPrice(cycle.makerFillPrice)}` : ""}
-            </Badge>
-          )}
-        </div>
-      )}
-
+      <ProteccionesDetail cycle={cycle} />
+      <MakerExecutionDetail cycle={cycle} />
       <Cronologia cycle={cycle} />
       <TechnicalDetail cycle={cycle} />
     </div>
@@ -316,13 +421,14 @@ function CompletedCycleDetail({ cycle }: { cycle: any }) {
 }
 
 function CancelledCycleHeader({ cycle }: { cycle: any }) {
+  const isError = cycle.status === "error";
   return (
     <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 py-1">
       <div className="flex items-center gap-3 min-w-0">
-        <XCircle className="h-4 w-4 text-red-400 shrink-0" />
+        <XCircle className={cn("h-4 w-4 shrink-0", isError ? "text-red-500" : "text-red-400")} />
         <span className="font-semibold text-sm">Ciclo #{cycle.cycleNumber}</span>
         <Badge variant="outline" className={cn("text-xs", statusClasses(cycle.color))}>
-          {cycle.statusLabel}
+          {isError ? "Error del ciclo" : "Cancelado"}
         </Badge>
         {cycle.rangeRelation === "previous" && (
           <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
@@ -339,15 +445,24 @@ function CancelledCycleHeader({ cycle }: { cycle: any }) {
 }
 
 function CancelledCycleDetail({ cycle }: { cycle: any }) {
+  const isError = cycle.status === "error";
   return (
     <div className="space-y-2 text-sm pt-2">
       <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-400">
-        Este ciclo fue cancelado. No hubo venta ejecutada ni beneficio realizado.
+        {isError
+          ? "Este ciclo terminó con error. No hubo venta ejecutada ni beneficio realizado."
+          : "Este ciclo fue cancelado. No hubo venta ejecutada ni beneficio realizado."}
       </div>
+
+      {isError && cycle.reviewReason && (
+        <div className="rounded border border-red-500/30 bg-red-500/5 p-2 text-xs text-red-400">
+          <span className="font-semibold">Motivo:</span> {cycle.reviewReason}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
         <span>Fecha creación: <span className="font-mono text-foreground">{fmtDate(cycle.createdAt)}</span></span>
-        <span>Fecha cancelación: <span className="font-mono text-foreground">{fmtDate(cycle.completedAt)}</span></span>
+        <span>Fecha cierre: <span className="font-mono text-foreground">{fmtDate(cycle.closedAt)}</span></span>
         <span>Duración: <span className="font-mono text-foreground">{cycle.durationLabel}</span></span>
         <span>Cantidad BTC: <span className="font-mono text-foreground">{fmtQty(cycle.quantity)}</span></span>
         <span>Capital previsto: <span className="font-mono text-foreground">{fmtUsd(cycle.capitalUsedUsd)}</span></span>
@@ -361,26 +476,8 @@ function CancelledCycleDetail({ cycle }: { cycle: any }) {
         <span>Vía de cierre: <span className="font-mono text-foreground">{cycle.closePathLabel ?? "No registrada"}</span></span>
       </div>
 
-      {(cycle.trailingActivated || cycle.stopLossTriggered || cycle.hodlActivated) && (
-        <div className="flex flex-wrap gap-2 pt-1">
-          {cycle.trailingActivated && (
-            <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
-              Trailing {cycle.trailingStopPrice != null ? `@ ${fmtPrice(cycle.trailingStopPrice)}` : ""}
-            </Badge>
-          )}
-          {cycle.stopLossTriggered && (
-            <Badge variant="outline" className="text-[10px] text-red-400 border-red-500/30 bg-red-500/10">
-              Stop-loss
-            </Badge>
-          )}
-          {cycle.hodlActivated && (
-            <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/30 bg-blue-500/10">
-              HODL
-            </Badge>
-          )}
-        </div>
-      )}
-
+      <ProteccionesDetail cycle={cycle} />
+      <MakerExecutionDetail cycle={cycle} />
       <Cronologia cycle={cycle} />
       <TechnicalDetail cycle={cycle} />
     </div>
@@ -449,22 +546,22 @@ export function GridOpenCyclesPanel({ operational }: GridOpenCyclesPanelProps) {
   const allHistory = useMemo(() => {
     const combined = [...closedCycles, ...cancelledCycles];
     return combined.sort((a, b) => {
-      const aDate = a.completedAt ?? a.sellFilledAt ?? a.createdAt ?? 0;
-      const bDate = b.completedAt ?? b.sellFilledAt ?? b.createdAt ?? 0;
+      const aDate = a.closedAt ?? a.completedAt ?? a.createdAt ?? 0;
+      const bDate = b.closedAt ?? b.completedAt ?? b.createdAt ?? 0;
       return new Date(bDate).getTime() - new Date(aDate).getTime();
     });
   }, [closedCycles, cancelledCycles]);
 
   const filteredHistory = useMemo(() => {
-    if (historyFilter === "completed") return allHistory.filter(c => c.status !== "cancelled");
-    if (historyFilter === "cancelled") return allHistory.filter(c => c.status === "cancelled");
+    if (historyFilter === "completed") return allHistory.filter(c => c.terminalKind === "completed");
+    if (historyFilter === "cancelled") return allHistory.filter(c => c.terminalKind === "cancelled");
     return allHistory;
   }, [allHistory, historyFilter]);
 
   const visibleHistory = filteredHistory.slice(0, visibleCount);
   const hasMore = filteredHistory.length > visibleCount;
 
-  const isTerminal = (cycle: any) => cycle.status === "cancelled";
+  const isTerminal = (cycle: any) => cycle.terminalKind === "cancelled";
 
   return (
     <Card className="border-border/50">
