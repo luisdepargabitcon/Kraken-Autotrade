@@ -2,15 +2,20 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 3 CERRADA Y VALIDADA LOCALMENTE
-NEXT_ACTION: Siguiente fase pendiente de definición y autorización
-LAST_COMPLETED_ACTION: FASE 3 — targets V2, ciclos independientes y diagnóstico
-LAST_VALIDATION: 2026-07-24 — check, tests Grid y build OK
-CURRENT_HEAD: commit de cierre FASE 3; consultar git rev-parse HEAD
-ORIGIN_HEAD: sincronizado con main tras push
-EXPECTED_DEPLOY_HASH: pendiente
-DEPLOYED_HASH: pendiente
-UPDATED_AT: 2026-07-24
+TASK_STATUS: FASE 4D — CICLO DE CORRECCIÓN 1 EN EJECUCIÓN
+NEXT_ACTION: corregir histórico Grid y regresiones UX
+LAST_COMPLETED_ACTION: validación visual detectó PnL histórico ausente y UX incompleta
+LAST_VALIDATION: 2026-07-24T02:51+02:00 — control inicial OK, HEAD=ce016fb=origin/main
+CURRENT_HEAD: ce016fb6f3e627b68c9cb64dfbd389d4f78da9f0
+ORIGIN_HEAD: ce016fb6f3e627b68c9cb64dfbd389d4f78da9f0
+EXPECTED_DEPLOY_HASH: ce016fb6f3e627b68c9cb64dfbd389d4f78da9f0
+DEPLOYED_HASH: ce016fb6f3e627b68c9cb64dfbd389d4f78da9f0
+FINAL_DOCUMENTATION_HASH: pendiente
+LAST_COMMAND: deploy app-only + postdeploy validation
+LAST_COMMAND_TYPE: STATEFUL
+LAST_COMMAND_RESULT: SUCCESS
+RESUME_CHECK_REQUIRED: FALSE
+UPDATED_AT: 2026-07-24T02:30+02:00
 
 ## FASE 1 — Cambios aplicados
 

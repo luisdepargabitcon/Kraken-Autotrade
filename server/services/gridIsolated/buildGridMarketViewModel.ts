@@ -174,6 +174,18 @@ function toIso(v: unknown): string | null {
   }
 }
 
+function translateBandPosition(pos: string | null): string | null {
+  switch (pos) {
+    case "below": return "por debajo";
+    case "above": return "por encima";
+    case "lower": return "zona baja";
+    case "middle": return "zona media";
+    case "upper": return "zona alta";
+    case "unknown": return "desconocida";
+    default: return pos;
+  }
+}
+
 function clamp01Pct(pct: number | null): number | null {
   if (pct == null) return null;
   return Math.max(0, Math.min(100, pct));
@@ -331,7 +343,7 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
       center: bandCenter,
       upper: bandUpper,
       widthPct: bandWidthPct,
-      position,
+      position: translateBandPosition(position),
       positionPct,
       rawPositionPct,
       atrPct: toNum(marketContext?.atrPct ?? status?.bandAtrPct),

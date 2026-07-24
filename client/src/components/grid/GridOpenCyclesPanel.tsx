@@ -150,6 +150,73 @@ function CycleDetail({ cycle }: { cycle: any }) {
   );
 }
 
+function ClosedCycleHeader({ cycle }: { cycle: any }) {
+  const sellPrice = cycle.sellPrice ?? cycle.targetSellPrice;
+  return (
+    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 py-1">
+      <div className="flex items-center gap-3 min-w-0">
+        <History className="h-4 w-4 text-muted-foreground shrink-0" />
+        <span className="font-semibold text-sm">Ciclo #{cycle.cycleNumber}</span>
+        <Badge variant="outline" className={cn("text-xs", statusClasses(cycle.color))}>
+          {cycle.statusLabel}
+        </Badge>
+        {cycle.rangeRelation === "previous" && (
+          <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
+            Rango anterior
+          </Badge>
+        )}
+      </div>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+        <span>Compra: <span className="font-mono text-foreground">{fmtPrice(cycle.buyPrice)}</span></span>
+        <span>Venta: <span className="font-mono text-foreground">{fmtPrice(sellPrice)}</span></span>
+        <span className={cycle.realizedNetPnl != null && cycle.realizedNetPnl >= 0 ? "text-green-400" : "text-red-400"}>
+          {fmtUsd(cycle.realizedNetPnl)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ClosedCycleDetail({ cycle }: { cycle: any }) {
+  return (
+    <div className="space-y-2 text-sm pt-2">
+      {cycle.rangeRelation === "previous" && (
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-2 text-xs text-blue-400">
+          Este ciclo pertenecía a un rango anterior. Se completó su venta y está cerrado.
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+        <span>Fecha compra: <span className="font-mono text-foreground">{cycle.openedAt ? new Date(cycle.openedAt).toLocaleString("es-ES") : "—"}</span></span>
+        <span>Fecha venta: <span className="font-mono text-foreground">{cycle.sellFilledAt ? new Date(cycle.sellFilledAt).toLocaleString("es-ES") : "—"}</span></span>
+        <span>Duración: <span className="font-mono text-foreground">{cycle.durationLabel}</span></span>
+        <span>Cantidad BTC: <span className="font-mono text-foreground">{fmtQty(cycle.quantity)}</span></span>
+        <span>Precio BUY: <span className="font-mono text-foreground">{fmtPrice(cycle.buyPrice)}</span></span>
+        <span>Precio SELL ejecutado: <span className="font-mono text-foreground">{fmtPrice(cycle.sellPrice)}</span></span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+        <span>Objetivo SELL: <span className="font-mono text-foreground">{fmtPrice(cycle.targetSellPrice)}</span></span>
+        <span>Ruta de cierre: <span className="font-mono text-foreground">{cycle.closePath ?? "—"}</span></span>
+        <span>Beneficio bruto: <span className="font-mono text-foreground">{fmtUsd(cycle.realizedGrossPnl)}</span></span>
+        <span>Comisiones: <span className="font-mono text-foreground">{fmtUsd(cycle.realizedFee)}</span></span>
+        <span>Reserva fiscal: <span className="font-mono text-foreground">{fmtUsd(cycle.realizedTax)}</span></span>
+        <span className={cycle.realizedNetPnl != null && cycle.realizedNetPnl >= 0 ? "text-green-400" : "text-red-400"}>
+          Beneficio neto: {fmtUsd(cycle.realizedNetPnl)}
+        </span>
+      </div>
+
+      {cycle.realizedNetPnlPct != null && (
+        <div className="text-xs text-muted-foreground">
+          Rentabilidad: <span className={cycle.realizedNetPnlPct >= 0 ? "text-green-400" : "text-red-400"}>
+            {cycle.realizedNetPnlPct.toFixed(2)}%
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CycleHeader({ cycle }: { cycle: any }) {
   return (
     <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 py-1">
@@ -249,27 +316,19 @@ export function GridOpenCyclesPanel({ operational }: GridOpenCyclesPanelProps) {
               </span>
               <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", historyOpen && "rotate-180")} />
             </CollapsibleTrigger>
-            <CollapsibleContent className="pt-2 space-y-2">
-              {[...closedCycles, ...cancelledCycles].map((cycle) => (
-                <div
-                  key={cycle.id}
-                  className="rounded-lg border border-border/50 p-3 text-xs text-muted-foreground"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-foreground">Ciclo #{cycle.cycleNumber}</span>
-                    <Badge variant="outline" className={cn("text-[10px]", statusClasses(cycle.color))}>
-                      {cycle.statusLabel}
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 mt-2">
-                    <span>BUY: <span className="font-mono">{fmtPrice(cycle.buyPrice)}</span></span>
-                    <span>SELL: <span className="font-mono">{fmtPrice(cycle.targetSellPrice)}</span></span>
-                    <span className={cycle.estimatedNetPnl != null && cycle.estimatedNetPnl >= 0 ? "text-green-400" : "text-red-400"}>
-                      Neto: {fmtUsd(cycle.estimatedNetPnl)}
-                    </span>
-                  </div>
-                </div>
-              ))}
+            <CollapsibleContent className="pt-2">
+              <Accordion type="single" collapsible className="w-full">
+                {[...closedCycles, ...cancelledCycles].map((cycle) => (
+                  <AccordionItem key={cycle.id} value={cycle.id} className="border-b border-border/50">
+                    <AccordionTrigger className="hover:no-underline py-2">
+                      <ClosedCycleHeader cycle={cycle} />
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <ClosedCycleDetail cycle={cycle} />
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
             </CollapsibleContent>
           </Collapsible>
         )}

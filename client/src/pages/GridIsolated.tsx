@@ -175,6 +175,7 @@ export default function GridIsolated() {
               operational={operational}
               onGoToTab={(tab) => setActiveTab(tab)}
             />
+            <GridNotificationCenter operational={operational} />
           </TabsContent>
 
           <TabsContent value="mercado" className="space-y-3 pt-2">
@@ -202,8 +203,6 @@ export default function GridIsolated() {
             />
           </TabsContent>
         </Tabs>
-
-        <GridNotificationCenter operational={operational} />
       </div>
     </div>
   );

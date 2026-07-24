@@ -723,4 +723,253 @@ describe("buildGridOperationalViewModel", () => {
       expect(c.estimatedNetPnl).toBeNull();
     });
   });
+
+  describe("REV-C11 FASE 4D — Ciclo de Corrección 1", () => {
+    // Defecto A: PnL histórico usar realizedNetPnl
+    it("A1: closedCycle tiene realizedNetPnl poblado y estimatedNetPnl=null", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", sellPrice: "95000", quantity: "0.01", buyPrice: "90000",
+          grossPnlUsd: "5.00", feeTotalUsd: "0.10", taxReserveUsd: "1.00", netPnlUsd: "3.90", netPnlPct: "4.33",
+          sellFilledAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      const c = vm.closedCycles[0];
+      expect(c.realizedNetPnl).toBeCloseTo(3.90, 5);
+      expect(c.estimatedNetPnl).toBeNull();
+    });
+
+    it("A2: closedCycle con realizedNetPnl negativo se muestra negativo", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "stop_loss_hit", sellPrice: "88000", quantity: "0.01", buyPrice: "90000",
+          grossPnlUsd: "-2.00", feeTotalUsd: "0.10", taxReserveUsd: "-0.40", netPnlUsd: "-2.10", netPnlPct: "-2.33",
+          sellFilledAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles[0].realizedNetPnl).toBeLessThan(0);
+    });
+
+    // Defecto B: SELL ejecutado vs targetSellPrice
+    it("B1: closedCycle sellPrice es el precio ejecutado, no el target", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", targetSellPrice: "65000", sellPrice: "64700",
+          quantity: "0.01", buyPrice: "60000", grossPnlUsd: "4.70", netPnlUsd: "3.66",
+          sellFilledAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      const c = vm.closedCycles[0];
+      expect(c.sellPrice).toBe(64700);
+      expect(c.targetSellPrice).toBe(65000);
+      expect(c.sellPrice).not.toBe(c.targetSellPrice);
+    });
+
+    it("B2: closedCycle con sellPrice=null no usa targetSellPrice como fallback", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", targetSellPrice: "95000", sellPrice: null,
+          quantity: "0.01", buyPrice: "90000", grossPnlUsd: "0", netPnlUsd: "0",
+          completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles[0].sellPrice).toBeNull();
+      expect(vm.closedCycles[0].targetSellPrice).toBe(95000);
+    });
+
+    // Defecto C: Histórico expandible con detalle
+    it("C1: closedCycle expone closePath para mostrar en detalle", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", sellPrice: "95000", closePath: "NORMAL_TARGET",
+          quantity: "0.01", buyPrice: "90000", grossPnlUsd: "5", netPnlUsd: "4",
+          sellFilledAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles[0].closePath).toBe("NORMAL_TARGET");
+    });
+
+    it("C2: closedCycle expone realizedNetPnlPct para mostrar rentabilidad", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", sellPrice: "95000",
+          quantity: "0.01", buyPrice: "90000", grossPnlUsd: "5", netPnlUsd: "4", netPnlPct: "4.44",
+          sellFilledAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.closedCycles[0].realizedNetPnlPct).toBeCloseTo(4.44, 5);
+    });
+
+    it("C3: closedCycle expone realizedGrossPnl, realizedFee, realizedTax para detalle", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", sellPrice: "95000",
+          quantity: "0.01", buyPrice: "90000",
+          grossPnlUsd: "5.00", feeTotalUsd: "0.10", taxReserveUsd: "1.00", netPnlUsd: "3.90",
+          sellFilledAt: new Date().toISOString(), completedAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      const c = vm.closedCycles[0];
+      expect(c.realizedGrossPnl).toBeCloseTo(5.00, 5);
+      expect(c.realizedFee).toBeCloseTo(0.10, 5);
+      expect(c.realizedTax).toBeCloseTo(1.00, 5);
+    });
+
+    // Defecto D: Duración cerrada canónica
+    it("D1: closedCycle durationLabel usa completedAt como fin, no Date.now()", () => {
+      const openedAt = new Date(Date.now() - 7200000).toISOString(); // 2h ago
+      const completedAt = new Date(Date.now() - 3600000).toISOString(); // 1h ago
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", sellPrice: "95000",
+          quantity: "0.01", buyPrice: "90000", grossPnlUsd: "5", netPnlUsd: "4",
+          openedAt, sellFilledAt: completedAt, completedAt },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      const dur = vm.closedCycles[0].durationLabel;
+      expect(dur).toContain("1h");
+      expect(dur).not.toContain("2h");
+    });
+
+    it("D2: closedCycle durationLabel usa sellFilledAt cuando no hay completedAt", () => {
+      const openedAt = new Date(Date.now() - 3600000).toISOString(); // 1h ago
+      const sellFilledAt = new Date(Date.now() - 1800000).toISOString(); // 30m ago
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "sell_filled", sellPrice: "95000",
+          quantity: "0.01", buyPrice: "90000", grossPnlUsd: "5", netPnlUsd: "4",
+          openedAt, sellFilledAt, completedAt: null },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      const dur = vm.closedCycles[0].durationLabel;
+      expect(dur).toContain("30m");
+    });
+
+    it("D3: closedCycle sin completedAt ni sellFilledAt usa Date.now() como fallback", () => {
+      const openedAt = new Date(Date.now() - 3600000).toISOString(); // 1h ago
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "completed", sellPrice: "95000",
+          quantity: "0.01", buyPrice: "90000", grossPnlUsd: "5", netPnlUsd: "4",
+          openedAt, sellFilledAt: null, completedAt: null },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      const dur = vm.closedCycles[0].durationLabel;
+      expect(dur).toContain("1h");
+    });
+
+    // Defecto G: Mercado humanizar textos (band position translated)
+    it("G1: band position 'below' se traduce a 'por debajo'", () => {
+      const input = makeInput({
+        marketContext: {
+          currentPrice: 89000, bid: 88950, ask: 89050, priceFresh: true,
+          band: { lower: 90000, center: 95000, upper: 100000, widthPct: 10.53 },
+        },
+      });
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.market.current.band.position).toBe("por debajo");
+    });
+
+    it("G2: band position 'above' se traduce a 'por encima'", () => {
+      const input = makeInput({
+        marketContext: {
+          currentPrice: 105000, bid: 104950, ask: 105050, priceFresh: true,
+          band: { lower: 90000, center: 95000, upper: 100000, widthPct: 10.53 },
+        },
+      });
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.market.current.band.position).toBe("por encima");
+    });
+
+    it("G3: band position 'lower' se traduce a 'zona baja'", () => {
+      const input = makeInput({
+        marketContext: {
+          currentPrice: 91000, bid: 90950, ask: 91050, priceFresh: true,
+          band: { lower: 90000, center: 95000, upper: 100000, widthPct: 10.53 },
+        },
+      });
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.market.current.band.position).toBe("zona baja");
+    });
+
+    it("G4: band position 'middle' se traduce a 'zona media'", () => {
+      const input = makeInput({
+        marketContext: {
+          currentPrice: 95000, bid: 94950, ask: 95050, priceFresh: true,
+          band: { lower: 90000, center: 95000, upper: 100000, widthPct: 10.53 },
+        },
+      });
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.market.current.band.position).toBe("zona media");
+    });
+
+    it("G5: band position 'upper' se traduce a 'zona alta'", () => {
+      const input = makeInput({
+        marketContext: {
+          currentPrice: 99000, bid: 98950, ask: 99050, priceFresh: true,
+          band: { lower: 90000, center: 95000, upper: 100000, widthPct: 10.53 },
+        },
+      });
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.market.current.band.position).toBe("zona alta");
+    });
+
+    // Defecto H: CTA único
+    it("H1: overview CTA por defecto es 'Ver mercado' (no 'Analizar mercado ahora')", () => {
+      const input = makeInput({
+        recommendations: [{ id: "rec-1", title: "Bajar objetivo", plainExplanation: "Explicación" }],
+      });
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.overview.primaryRecommendation?.ctaLabel).toBe("Ver mercado");
+    });
+
+    it("H2: overview CTA target por defecto es 'mercado' (no 'ajustes')", () => {
+      const input = makeInput({
+        recommendations: [{ id: "rec-1", title: "Bajar objetivo", plainExplanation: "Explicación" }],
+      });
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.overview.primaryRecommendation?.ctaTarget).toBe("mercado");
+    });
+
+    it("H3: overview CTA respeta ctaApply del recommendation cuando viene definido", () => {
+      const input = makeInput({
+        recommendations: [{ id: "rec-1", title: "Bajar objetivo", plainExplanation: "Explicación", ctaApply: "Ir a ajustes" }],
+      });
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.overview.primaryRecommendation?.ctaLabel).toBe("Ir a ajustes");
+    });
+
+    // Defecto E: Avisos técnicos ocultos (view model still has technicalReason but UI hides it)
+    it("E1: notification technicalReason se preserva en el view model para diagnóstico interno", () => {
+      const events = [
+        { eventType: "GRID_PRICE_STALE", createdAt: new Date().toISOString() },
+      ];
+      const vm = buildGridOperationalViewModel(makeInput({ events }));
+      const warningGroup = vm.notifications.find((g: any) => g.severity === "warning");
+      expect(warningGroup).toBeDefined();
+      expect(warningGroup!.items[0].technicalReason).toBe("GRID_PRICE_STALE");
+    });
+
+    // Contract preservation: open cycles still work correctly
+    it("P1: openCycle estimatedNetPnl no es null cuando hay buy y target", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "buy_filled", targetSellPrice: "95000", buyPrice: "90000", quantity: "0.01" },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles[0].estimatedNetPnl).not.toBeNull();
+      expect(vm.openCycles[0].realizedNetPnl).toBeNull();
+    });
+
+    it("P2: cancelledCycle no aparece en closedCycles ni openCycles", () => {
+      const input = makeInput();
+      input.cycles = [
+        { ...input.cycles[0], status: "cancelled" },
+      ];
+      const vm = buildGridOperationalViewModel(input);
+      expect(vm.openCycles.length).toBe(0);
+      expect(vm.closedCycles.length).toBe(0);
+      expect(vm.cancelledCycles.length).toBe(1);
+    });
+  });
 });

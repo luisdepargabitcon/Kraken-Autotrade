@@ -96,14 +96,6 @@ function NotificationItem({ item }: { item: any }) {
             <span className="font-semibold text-foreground">Acción recomendada:</span>{" "}
             {item.recommendedAction}
           </div>
-          {item.technicalReason && (
-            <details className="pt-1">
-              <summary className="cursor-pointer hover:text-foreground transition-colors">Ver detalle técnico</summary>
-              <div className="mt-1 font-mono text-[10px] bg-muted/20 p-2 rounded">
-                {item.technicalReason}
-              </div>
-            </details>
-          )}
         </div>
       )}
     </div>

@@ -521,6 +521,12 @@ function buildClosedCycle(
   const closedQuantity = toNum(cycle?.filledQuantity ?? cycle?.quantity);
   const closePath = cycle?.closePath ?? null;
 
+  const closedAtMs = cycle?.completedAt
+    ? new Date(cycle.completedAt).getTime()
+    : sellFilledAt
+      ? new Date(sellFilledAt).getTime()
+      : null;
+
   const realizedGrossPnl = toNum(cycle?.grossPnlUsd);
   const realizedFee = toNum(cycle?.feeTotalUsd);
   const realizedTax = toNum(cycle?.taxReserveUsd);
@@ -549,7 +555,7 @@ function buildClosedCycle(
     estimatedNetPnl: null,
     estimatedOperationalCost: null,
     openedAt: cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null,
-    durationLabel: fmtDuration(cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null),
+    durationLabel: fmtDuration(cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null, closedAtMs),
     rangeVersionId: cycle?.rangeVersionId ?? null,
     rangeRelation: relation,
     rangeLabel: cycleRangeLabel(relation),
@@ -899,8 +905,8 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
           title: primaryRec.title ?? "Recomendación",
           explanation: primaryRec.plainExplanation ?? primaryRec.expectedImpact ?? "",
           severity: mapSeverity(primaryRec.severity),
-          ctaLabel: primaryRec.ctaApply || "Analizar mercado ahora",
-          ctaTarget: primaryRec.targetSection || "ajustes",
+          ctaLabel: primaryRec.ctaApply || "Ver mercado",
+          ctaTarget: primaryRec.targetSection || "mercado",
         }
       : null,
     circuitBreakerOpen: header.circuitBreakerOpen,

@@ -135,8 +135,8 @@ export function GridMarketPanel({ operational, onAnalyze, loading }: GridMarketP
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Metric label="Precio" value={fmtPrice(current.price)} sub={ageLabel(current.ageMs, current.maxAgeMs)} />
             <Metric label="Bid" value={fmtPrice(current.bid)} sub={current.source ? `Fuente: ${current.source}` : undefined} />
-            <Metric label="Ask" value={fmtPrice(current.ask)} sub={current.spreadPct != null ? `Spread ${fmtPct(current.spreadPct)}` : undefined} />
-            <Metric label="ATR" value={fmtPct(current.band?.atrPct)} sub="Banda actual" />
+            <Metric label="Ask" value={fmtPrice(current.ask)} sub={current.spreadPct != null ? `Diferencia ${fmtPct(current.spreadPct)}` : undefined} />
+            <Metric label="Volatilidad (ATR)" value={fmtPct(current.band?.atrPct)} sub="Banda actual" />
           </div>
 
           {current.band?.lower != null && current.band?.upper != null && (
@@ -152,7 +152,7 @@ export function GridMarketPanel({ operational, onAnalyze, loading }: GridMarketP
                 <span>{fmtPrice(current.band.upper)}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span>Banda {fmtPct(current.band.widthPct)}</span>
+                <span>Anchura de banda {fmtPct(current.band.widthPct)}</span>
                 <span className="capitalize">{current.band.position ?? "desconocida"}</span>
               </div>
             </div>
@@ -192,7 +192,7 @@ export function GridMarketPanel({ operational, onAnalyze, loading }: GridMarketP
             <Metric label="Separación" value={fmtPct(entryRange.spacingPct)} sub="Entre niveles" />
             <Metric label="Mínima rentable" value={fmtPct(entryRange.minimumProfitableSpacingPct)} sub="Por beneficio neto" />
             <Metric label="Objetivo neto" value={fmtPct(entryRange.netProfitTargetPct)} sub="Por nivel" />
-            <Metric label="ID rango" value={entryRange.activeRangeVersionId ? entryRange.activeRangeVersionId.slice(0, 8) : "—"} sub={entryRange.active ? "Activo" : "Inactivo"} />
+            <Metric label="Ref. rango" value={entryRange.activeRangeVersionId ? entryRange.activeRangeVersionId.slice(0, 8) : "—"} sub={entryRange.active ? "Activo" : "Inactivo"} />
           </div>
 
           {entryRange.reasonLabel && (
@@ -260,9 +260,6 @@ export function GridMarketPanel({ operational, onAnalyze, loading }: GridMarketP
             </div>
             {recommendation.lastDetectedAt && (
               <p className="text-xs text-muted-foreground">Detectado el {fmtDateShort(recommendation.lastDetectedAt)}</p>
-            )}
-            {recommendation.technicalCode && (
-              <p className="text-[10px] text-muted-foreground font-mono">Código técnico: {recommendation.technicalCode}</p>
             )}
           </CardContent>
         </Card>

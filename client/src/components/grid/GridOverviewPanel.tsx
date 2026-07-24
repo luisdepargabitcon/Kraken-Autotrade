@@ -140,7 +140,7 @@ export function GridOverviewPanel({ operational, onGoToTab }: GridOverviewPanelP
             <p className="text-sm font-medium">{overview.primaryRecommendation.title}</p>
             <p className="text-sm text-muted-foreground">{overview.primaryRecommendation.explanation}</p>
             {overview.primaryRecommendation.ctaLabel && onGoToTab && (
-              <Button size="sm" variant="outline" onClick={() => onGoToTab("ajustes")}>
+              <Button size="sm" variant="outline" onClick={() => onGoToTab(overview.primaryRecommendation.ctaTarget || "mercado")}>
                 {overview.primaryRecommendation.ctaLabel}
               </Button>
             )}
