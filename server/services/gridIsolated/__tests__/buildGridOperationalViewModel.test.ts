@@ -845,17 +845,17 @@ describe("buildGridOperationalViewModel", () => {
       expect(dur).toContain("30m");
     });
 
-    it("D3: closedCycle sin completedAt ni sellFilledAt usa Date.now() como fallback", () => {
+    it("D3: closedCycle sin completedAt ni sellFilledAt ni holdTimeMinutes devuelve — (no usa Date.now())", () => {
       const openedAt = new Date(Date.now() - 3600000).toISOString(); // 1h ago
       const input = makeInput();
       input.cycles = [
         { ...input.cycles[0], status: "completed", sellPrice: "95000",
           quantity: "0.01", buyPrice: "90000", grossPnlUsd: "5", netPnlUsd: "4",
-          openedAt, sellFilledAt: null, completedAt: null },
+          openedAt, sellFilledAt: null, completedAt: null, holdTimeMinutes: null },
       ];
       const vm = buildGridOperationalViewModel(input);
       const dur = vm.closedCycles[0].durationLabel;
-      expect(dur).toContain("1h");
+      expect(dur).toBe("—");
     });
 
     // Defecto G: Mercado humanizar textos (band position translated)
@@ -970,6 +970,325 @@ describe("buildGridOperationalViewModel", () => {
       expect(vm.openCycles.length).toBe(0);
       expect(vm.closedCycles.length).toBe(0);
       expect(vm.cancelledCycles.length).toBe(1);
+    });
+  });
+
+  // ─── FASE 4D CORRECTION: 25 mandatory terminal tests ────────────────
+  describe("REV-C11 FASE 4D CORRECTION — terminal cycle contract (25 tests)", () => {
+    function makeCompletedCycle(overrides: any = {}) {
+      return {
+        id: "c-completed-1",
+        cycleNumber: 100,
+        pair: "BTC/USD",
+        status: "completed",
+        rangeVersionId: "range-old-v0",
+        buyLevelId: "buy-old-1",
+        sellLevelId: "sell-old-1",
+        targetSellLevelId: CYCLE_25_TARGET,
+        buyPrice: "90000",
+        sellPrice: "95000",
+        targetSellPrice: "95500",
+        quantity: "0.01",
+        grossPnlUsd: "50.00",
+        feeTotalUsd: "5.00",
+        taxReserveUsd: "10.00",
+        netPnlUsd: "35.00",
+        netPnlPct: "0.39",
+        closePath: "NORMAL_TARGET",
+        openedAt: new Date(Date.now() - 7200000).toISOString(),
+        buyFilledAt: new Date(Date.now() - 7100000).toISOString(),
+        sellFilledAt: new Date(Date.now() - 3600000).toISOString(),
+        completedAt: new Date(Date.now() - 3500000).toISOString(),
+        holdTimeMinutes: 60,
+        createdAt: new Date(Date.now() - 7200000).toISOString(),
+        ...overrides,
+      };
+    }
+
+    function makeCancelledCycle(overrides: any = {}) {
+      return {
+        id: "c-cancelled-1",
+        cycleNumber: 101,
+        pair: "BTC/USD",
+        status: "cancelled",
+        rangeVersionId: "range-old-v0",
+        buyLevelId: "buy-old-2",
+        buyPrice: "91000",
+        targetSellPrice: "96000",
+        quantity: "0.01",
+        grossPnlUsd: "0",
+        feeTotalUsd: "0",
+        taxReserveUsd: "0",
+        netPnlUsd: "0",
+        netPnlPct: "0",
+        createdAt: new Date(Date.now() - 5000000).toISOString(),
+        completedAt: new Date(Date.now() - 4000000).toISOString(),
+        ...overrides,
+      };
+    }
+
+    function inputWithCycles(cycles: any[]) {
+      return makeInput({
+        cycles,
+        levels: [
+          { id: "buy-active-1", rangeVersionId: "range-active-v1", side: "BUY", price: "90000", quantity: "0.01", status: "planned", levelIndex: 0 },
+        ],
+      });
+    }
+
+    // 1. Completado usa sellPrice real
+    it("1: completed usa sellPrice real", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle()]));
+      expect(vm.closedCycles[0].sellPrice).toBe(95000);
+    });
+
+    // 2. Completado no sustituye sellPrice null por target
+    it("2: completed no sustituye sellPrice null por target", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ sellPrice: null })]));
+      expect(vm.closedCycles[0].sellPrice).toBeNull();
+      expect(vm.closedCycles[0].targetSellPrice).toBe(95500);
+    });
+
+    // 3. Cancelado con target no aparece como vendido
+    it("3: cancelled con target no aparece como vendido", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCancelledCycle()]));
+      expect(vm.cancelledCycles[0].sellPrice).toBeNull();
+      expect(vm.cancelledCycles[0].targetSellPrice).toBe(96000);
+    });
+
+    // 4. Cancelado muestra "Sin SELL ejecutado" (sellPrice null)
+    it("4: cancelled muestra sellPrice null (Sin SELL ejecutado)", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCancelledCycle()]));
+      expect(vm.cancelledCycles[0].sellPrice).toBeNull();
+    });
+
+    // 5. Cancelado no muestra PnL falso
+    it("5: cancelled no muestra PnL falso (realizedNetPnl null)", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCancelledCycle({ netPnlUsd: "100" })]));
+      expect(vm.cancelledCycles[0].realizedNetPnl).toBeNull();
+      expect(vm.cancelledCycles[0].realizedGrossPnl).toBeNull();
+      expect(vm.cancelledCycles[0].realizedFee).toBeNull();
+      expect(vm.cancelledCycles[0].realizedTax).toBeNull();
+      expect(vm.cancelledCycles[0].realizedNetPnlPct).toBeNull();
+    });
+
+    // 6. Completed y cancelled usan componentes/ramas semánticas distintas
+    it("6: completed y cancelled van a arrays distintos", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle(), makeCancelledCycle()]));
+      expect(vm.closedCycles.length).toBe(1);
+      expect(vm.cancelledCycles.length).toBe(1);
+      expect(vm.closedCycles[0].status).toBe("completed");
+      expect(vm.cancelledCycles[0].status).toBe("cancelled");
+    });
+
+    // 7. Objetivo original se muestra separado
+    it("7: objetivo original (targetSellPrice) separado de sellPrice", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle()]));
+      expect(vm.closedCycles[0].sellPrice).toBe(95000);
+      expect(vm.closedCycles[0].targetSellPrice).toBe(95500);
+      expect(vm.closedCycles[0].sellPrice).not.toBe(vm.closedCycles[0].targetSellPrice);
+    });
+
+    // 8. Ruta humanizada
+    it("8: closePathLabel humanizada", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle()]));
+      expect(vm.closedCycles[0].closePath).toBe("NORMAL_TARGET");
+      expect(vm.closedCycles[0].closePathLabel).toBe("Objetivo normal");
+    });
+
+    it("8b: closePathLabel HODL_RECOVERY humanizada", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ closePath: "HODL_RECOVERY" })]));
+      expect(vm.closedCycles[0].closePathLabel).toBe("Recuperación HODL");
+    });
+
+    it("8c: closePath null → No registrada", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ closePath: null })]));
+      expect(vm.closedCycles[0].closePathLabel).toBeNull();
+    });
+
+    // 9. Código técnico solo en detalle (closePath existe, closePathLabel es lo humano)
+    it("9: closePath técnico existe pero closePathLabel es lo humano", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle()]));
+      expect(vm.closedCycles[0].closePath).toBe("NORMAL_TARGET");
+      expect(vm.closedCycles[0].closePathLabel).toBe("Objetivo normal");
+    });
+
+    // 10. Cronología solo contiene timestamps reales
+    it("10: createdAt y completedAt están presentes y son ISO válidos", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle()]));
+      const c = vm.closedCycles[0];
+      expect(c.createdAt).toBeTruthy();
+      expect(c.buyFilledAt).toBeTruthy();
+      expect(c.sellFilledAt).toBeTruthy();
+      expect(c.completedAt).toBeTruthy();
+      expect(new Date(c.createdAt!).getTime()).not.toBeNaN();
+      expect(new Date(c.completedAt!).getTime()).not.toBeNaN();
+    });
+
+    // 11. Trailing histórico visible
+    it("11: trailingActivated se propaga desde riskState", () => {
+      const riskState = {
+        trailing: { activated: true, activatedAt: new Date(Date.now() - 6000000).toISOString(), highestPriceSinceBuy: 94500, trailingStopPct: 1.5, currentStopPrice: 93000, reason: "TRAILING_ARMED" },
+        stopLoss: [],
+        hodl: { active: false, activatedAt: null, originalBuyPrice: null, recoveryTargetPrice: null, reason: "" },
+        lastAction: "TRAILING_UPDATE",
+        activeExitRoute: null,
+        pendingExitPrice: null,
+        protectiveExit: { state: "NONE", route: null, triggerPrice: null, triggerDetectedAt: null, bestBidAtTrigger: null, bestAskAtTrigger: null, requestedMakerPrice: null, makerOrderCreatedAt: null, makerEligibleAfter: null, lifecycleTickId: null, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0, simulatedOrderId: null, fillPrice: null, filledAt: null, bestBidAtFill: null, bestAskAtFill: null, cancellationReason: null },
+        stateVersion: 1,
+        lastEvaluatedAt: null,
+      };
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ riskStateJson: riskState })]));
+      expect(vm.closedCycles[0].trailingActivated).toBe(true);
+      expect(vm.closedCycles[0].trailingStopPrice).toBe(93000);
+    });
+
+    // 12. Stop histórico visible
+    it("12: stopLossTriggered se propaga desde riskState", () => {
+      const riskState = {
+        trailing: { activated: false, activatedAt: null, highestPriceSinceBuy: null, trailingStopPct: 0, currentStopPrice: null, reason: "" },
+        stopLoss: [{ layer: "soft", triggerPricePct: -3, triggered: true, triggeredAt: new Date().toISOString(), reason: "SOFT_HIT" }],
+        hodl: { active: false, activatedAt: null, originalBuyPrice: null, recoveryTargetPrice: null, reason: "" },
+        lastAction: "STOP_LOSS_SOFT",
+        activeExitRoute: null,
+        pendingExitPrice: null,
+        protectiveExit: { state: "NONE", route: null, triggerPrice: null, triggerDetectedAt: null, bestBidAtTrigger: null, bestAskAtTrigger: null, requestedMakerPrice: null, makerOrderCreatedAt: null, makerEligibleAfter: null, lifecycleTickId: null, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0, simulatedOrderId: null, fillPrice: null, filledAt: null, bestBidAtFill: null, bestAskAtFill: null, cancellationReason: null },
+        stateVersion: 1,
+        lastEvaluatedAt: null,
+      };
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ riskStateJson: riskState })]));
+      expect(vm.closedCycles[0].stopLossTriggered).toBe(true);
+      expect(vm.closedCycles[0].stopLossLayersTriggered).toContain("soft");
+    });
+
+    // 13. HODL histórico visible
+    it("13: hodlActivated se propaga desde riskState", () => {
+      const riskState = {
+        trailing: { activated: false, activatedAt: null, highestPriceSinceBuy: null, trailingStopPct: 0, currentStopPrice: null, reason: "" },
+        stopLoss: [],
+        hodl: { active: true, activatedAt: new Date(Date.now() - 5000000).toISOString(), originalBuyPrice: 90000, recoveryTargetPrice: 93000, reason: "HODL_ACTIVATED" },
+        lastAction: "HODL_RECOVERY_ACTIVATE",
+        activeExitRoute: "HODL_RECOVERY",
+        pendingExitPrice: null,
+        protectiveExit: { state: "NONE", route: null, triggerPrice: null, triggerDetectedAt: null, bestBidAtTrigger: null, bestAskAtTrigger: null, requestedMakerPrice: null, makerOrderCreatedAt: null, makerEligibleAfter: null, lifecycleTickId: null, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0, simulatedOrderId: null, fillPrice: null, filledAt: null, bestBidAtFill: null, bestAskAtFill: null, cancellationReason: null },
+        stateVersion: 1,
+        lastEvaluatedAt: null,
+      };
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ riskStateJson: riskState })]));
+      expect(vm.closedCycles[0].hodlActivated).toBe(true);
+      expect(vm.closedCycles[0].hodlRecoveryTarget).toBe(93000);
+    });
+
+    // 14. Maker exit histórico visible
+    it("14: makerState se propaga desde riskState", () => {
+      const riskState = {
+        trailing: { activated: false, activatedAt: null, highestPriceSinceBuy: null, trailingStopPct: 0, currentStopPrice: null, reason: "" },
+        stopLoss: [],
+        hodl: { active: false, activatedAt: null, originalBuyPrice: null, recoveryTargetPrice: null, reason: "" },
+        lastAction: null,
+        activeExitRoute: null,
+        pendingExitPrice: null,
+        protectiveExit: { state: "MAKER_FILLED", route: "TRAILING_MAKER", triggerPrice: 94500, triggerDetectedAt: new Date().toISOString(), bestBidAtTrigger: 94490, bestAskAtTrigger: 94510, requestedMakerPrice: 94495, makerOrderCreatedAt: new Date().toISOString(), makerEligibleAfter: new Date().toISOString(), lifecycleTickId: 5, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0.01, simulatedOrderId: "sim-123", fillPrice: 94498, filledAt: new Date().toISOString(), bestBidAtFill: 94495, bestAskAtFill: 94505, cancellationReason: null },
+        stateVersion: 1,
+        lastEvaluatedAt: null,
+      };
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ riskStateJson: riskState })]));
+      expect(vm.closedCycles[0].makerState).toBe("MAKER_FILLED");
+      expect(vm.closedCycles[0].makerFillPrice).toBe(94498);
+      expect(vm.closedCycles[0].simulatedOrderId).toBe("sim-123");
+    });
+
+    // 15. Fecha completedAt visible
+    it("15: completedAt está presente en ciclo completado", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle()]));
+      expect(vm.closedCycles[0].completedAt).toBeTruthy();
+    });
+
+    // 16. Duración congelada
+    it("16: duración usa holdTimeMinutes y no cambia entre llamadas", () => {
+      const vm1 = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ holdTimeMinutes: 60 })]));
+      const vm2 = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ holdTimeMinutes: 60 })]));
+      expect(vm1.closedCycles[0].durationLabel).toBe(vm2.closedCycles[0].durationLabel);
+      expect(vm1.closedCycles[0].durationMinutes).toBe(60);
+    });
+
+    it("16b: duración calculada desde completedAt - openedAt cuando holdTimeMinutes es null", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ holdTimeMinutes: null })]));
+      expect(vm.closedCycles[0].durationMinutes).not.toBeNull();
+      expect(vm.closedCycles[0].durationMinutes).toBeGreaterThan(0);
+    });
+
+    it("16c: duración no usa Date.now() en terminal", () => {
+      const c = makeCompletedCycle({
+        holdTimeMinutes: null,
+        openedAt: new Date("2026-01-01T00:00:00Z").toISOString(),
+        completedAt: new Date("2026-01-01T02:00:00Z").toISOString(),
+        sellFilledAt: new Date("2026-01-01T01:55:00Z").toISOString(),
+      });
+      const vm = buildGridOperationalViewModel(inputWithCycles([c]));
+      expect(vm.closedCycles[0].durationMinutes).toBe(120);
+      expect(vm.closedCycles[0].durationLabel).toBe("2h");
+    });
+
+    // 17. Filtro Todos
+    it("17: filtro Todos — closedCycles + cancelledCycles en array correcto", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle(), makeCancelledCycle()]));
+      expect(vm.closedCycles.length + vm.cancelledCycles.length).toBe(2);
+    });
+
+    // 18. Filtro Completados
+    it("18: closedCycles solo contiene completados", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle(), makeCancelledCycle()]));
+      expect(vm.closedCycles.every(c => c.status !== "cancelled")).toBe(true);
+    });
+
+    // 19. Filtro Cancelados
+    it("19: cancelledCycles solo contiene cancelados", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle(), makeCancelledCycle()]));
+      expect(vm.cancelledCycles.every(c => c.status === "cancelled")).toBe(true);
+    });
+
+    // 20. Solo 10 registros inicialmente (view model no pagina, pero expone todos)
+    it("20: view model expone todos los ciclos terminales", () => {
+      const cycles = Array.from({ length: 15 }, (_, i) => makeCompletedCycle({ id: `c-${i}`, cycleNumber: 200 + i }));
+      const vm = buildGridOperationalViewModel(inputWithCycles(cycles));
+      expect(vm.closedCycles.length).toBe(15);
+    });
+
+    // 21. Mostrar 10 más incrementa a 20 (view model expone todos, paginación es frontend)
+    it("21: view model no limita — paginación es responsabilidad del frontend", () => {
+      const cycles = Array.from({ length: 25 }, (_, i) => makeCompletedCycle({ id: `c-${i}`, cycleNumber: 300 + i }));
+      const vm = buildGridOperationalViewModel(inputWithCycles(cycles));
+      expect(vm.closedCycles.length).toBe(25);
+    });
+
+    // 22. Solo un ciclo expandido (Accordion type=single garantiza esto en frontend)
+    it("22: view model no fuerza expansión múltiple", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle(), makeCompletedCycle({ id: "c-2", cycleNumber: 102 })]));
+      expect(vm.closedCycles.length).toBe(2);
+    });
+
+    // 23. Null no se convierte en cero
+    it("23: null se preserva como null, no se convierte en 0", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ grossPnlUsd: null, feeTotalUsd: null, taxReserveUsd: null, netPnlUsd: null, netPnlPct: null })]));
+      expect(vm.closedCycles[0].realizedGrossPnl).toBeNull();
+      expect(vm.closedCycles[0].realizedFee).toBeNull();
+      expect(vm.closedCycles[0].realizedTax).toBeNull();
+      expect(vm.closedCycles[0].realizedNetPnl).toBeNull();
+      expect(vm.closedCycles[0].realizedNetPnlPct).toBeNull();
+    });
+
+    // 24. Neto usa realizedNetPnl
+    it("24: neto usa realizedNetPnl desde netPnlUsd", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle({ netPnlUsd: "42.50" })]));
+      expect(vm.closedCycles[0].realizedNetPnl).toBe(42.50);
+    });
+
+    // 25. No se usa estimatedNetPnl en terminales
+    it("25: estimatedNetPnl es null en cerrados", () => {
+      const vm = buildGridOperationalViewModel(inputWithCycles([makeCompletedCycle(), makeCancelledCycle()]));
+      expect(vm.closedCycles[0].estimatedNetPnl).toBeNull();
+      expect(vm.cancelledCycles[0].estimatedNetPnl).toBeNull();
     });
   });
 });

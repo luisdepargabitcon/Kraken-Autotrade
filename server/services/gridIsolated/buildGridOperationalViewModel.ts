@@ -124,6 +124,39 @@ export interface OperationalOpenCycle {
   realizedTax: number | null;
   realizedNetPnl: number | null;
   realizedNetPnlPct: number | null;
+  // Terminal-only fields — null for open cycles
+  createdAt: string | null;
+  buyFilledAt: string | null;
+  completedAt: string | null;
+  holdTimeMinutes: number | null;
+  durationMinutes: number | null;
+  capitalUsedUsd: number | null;
+  closePathLabel: string | null;
+  // Trailing history
+  trailingActivated: boolean;
+  trailingActivatedAt: string | null;
+  trailingHighestPrice: number | null;
+  trailingStopPrice: number | null;
+  trailingReason: string | null;
+  // Stop-loss history
+  stopLossTriggered: boolean;
+  stopLossLayersTriggered: string[];
+  // HODL history
+  hodlActivated: boolean;
+  hodlActivatedAt: string | null;
+  hodlRecoveryTarget: number | null;
+  // Maker exit history
+  makerState: string | null;
+  makerRoute: string | null;
+  triggerDetectedAt: string | null;
+  requestedMakerPrice: number | null;
+  makerOrderCreatedAt: string | null;
+  makerEligibleAfter: string | null;
+  lastRepricedAt: string | null;
+  repriceAttempts: number | null;
+  simulatedOrderId: string | null;
+  makerFillPrice: number | null;
+  makerFilledAt: string | null;
 }
 
 export interface OperationalLevel {
@@ -255,6 +288,15 @@ function fmtDuration(fromIso: string | null, toMs: number | null = null): string
   return parts.join(" ");
 }
 
+function fmtDurationFromMinutes(totalMin: number): string {
+  const h = Math.floor(totalMin / 60);
+  const m = Math.round(totalMin % 60);
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0 || h === 0) parts.push(`${m}m`);
+  return parts.join(" ");
+}
+
 function toRangeRelation(
   cycle: any,
   activeRangeVersionId: string | null
@@ -301,13 +343,24 @@ function riskStateSummary(risk: GridCycleRiskState | null): string | null {
 
 function closePathLabel(path: GridClosePath | null): string | null {
   switch (path) {
-    case "NORMAL_TARGET": return "Target normal";
-    case "SYNTHETIC_RUNG": return "Rung sintético";
-    case "LEGACY_PERSISTED_TARGET": return "Target legacy persistido";
+    case "NORMAL_TARGET": return "Objetivo normal";
+    case "SYNTHETIC_RUNG": return "Escalón sintético";
+    case "LEGACY_PERSISTED_TARGET": return "Objetivo legacy persistido";
     case "TRAILING_MAKER": return "Trailing maker";
     case "PROTECTIVE_MAKER": return "Stop-loss maker";
     case "HODL_RECOVERY": return "Recuperación HODL";
     default: return null;
+  }
+}
+
+function safeIso(v: unknown): string | null {
+  if (!v) return null;
+  try {
+    const d = new Date(v as string | number | Date);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  } catch {
+    return null;
   }
 }
 
@@ -488,6 +541,34 @@ function buildOpenCycle(
     realizedTax: null,
     realizedNetPnl: null,
     realizedNetPnlPct: null,
+    createdAt: safeIso(cycle?.createdAt) ?? null,
+    buyFilledAt: safeIso(cycle?.buyFilledAt) ?? null,
+    completedAt: null,
+    holdTimeMinutes: null,
+    durationMinutes: null,
+    capitalUsedUsd: buy != null && qty != null ? buy * qty : null,
+    closePathLabel: null,
+    trailingActivated: risk?.trailing?.activated ?? false,
+    trailingActivatedAt: safeIso(risk?.trailing?.activatedAt) ?? null,
+    trailingHighestPrice: toNum(risk?.trailing?.highestPriceSinceBuy) ?? null,
+    trailingStopPrice: toNum(risk?.trailing?.currentStopPrice) ?? null,
+    trailingReason: risk?.trailing?.reason ?? null,
+    stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
+    stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => l.layer),
+    hodlActivated: risk?.hodl?.active ?? false,
+    hodlActivatedAt: safeIso(risk?.hodl?.activatedAt) ?? null,
+    hodlRecoveryTarget: toNum(risk?.hodl?.recoveryTargetPrice) ?? null,
+    makerState: risk?.protectiveExit?.state ?? null,
+    makerRoute: risk?.protectiveExit?.route ?? null,
+    triggerDetectedAt: safeIso(risk?.protectiveExit?.triggerDetectedAt) ?? null,
+    requestedMakerPrice: toNum(risk?.protectiveExit?.requestedMakerPrice) ?? null,
+    makerOrderCreatedAt: safeIso(risk?.protectiveExit?.makerOrderCreatedAt) ?? null,
+    makerEligibleAfter: safeIso(risk?.protectiveExit?.makerEligibleAfter) ?? null,
+    lastRepricedAt: safeIso(risk?.protectiveExit?.lastRepricedAt) ?? null,
+    repriceAttempts: toNum(risk?.protectiveExit?.repriceAttempts) ?? null,
+    simulatedOrderId: risk?.protectiveExit?.simulatedOrderId ?? null,
+    makerFillPrice: toNum(risk?.protectiveExit?.fillPrice) ?? null,
+    makerFilledAt: safeIso(risk?.protectiveExit?.filledAt) ?? null,
     reviewCode: cycle?.reviewCode ?? null,
     reviewReason: cycle?.reviewReason ?? null,
   };
@@ -520,6 +601,9 @@ function buildClosedCycle(
   const sellFilledAt = cycle?.sellFilledAt ?? null;
   const closedQuantity = toNum(cycle?.filledQuantity ?? cycle?.quantity);
   const closePath = cycle?.closePath ?? null;
+  const isCancelled = status === "cancelled" || status === "error";
+
+  const completedAt = safeIso(cycle?.completedAt) ?? null;
 
   const closedAtMs = cycle?.completedAt
     ? new Date(cycle.completedAt).getTime()
@@ -527,11 +611,24 @@ function buildClosedCycle(
       ? new Date(sellFilledAt).getTime()
       : null;
 
-  const realizedGrossPnl = toNum(cycle?.grossPnlUsd);
-  const realizedFee = toNum(cycle?.feeTotalUsd);
-  const realizedTax = toNum(cycle?.taxReserveUsd);
-  const realizedNetPnl = toNum(cycle?.netPnlUsd);
-  const realizedNetPnlPct = toNum(cycle?.netPnlPct);
+  const holdTimeMinutes = toNum(cycle?.holdTimeMinutes) ?? null;
+  const openedAtIso = cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null;
+  const openedAtMs = openedAtIso ? new Date(openedAtIso).getTime() : null;
+  const durationMinutes = holdTimeMinutes
+    ?? (closedAtMs != null && openedAtMs != null ? Math.max(0, Math.round((closedAtMs - openedAtMs) / 60000)) : null);
+
+  const durationLabel = durationMinutes != null
+    ? fmtDurationFromMinutes(durationMinutes)
+    : (closedAtMs != null
+      ? fmtDuration(openedAtIso, closedAtMs)
+      : "—");
+
+  // For cancelled cycles, realized PnL must be null unless persisted data is real and coherent
+  const realizedGrossPnl = isCancelled ? null : toNum(cycle?.grossPnlUsd);
+  const realizedFee = isCancelled ? null : toNum(cycle?.feeTotalUsd);
+  const realizedTax = isCancelled ? null : toNum(cycle?.taxReserveUsd);
+  const realizedNetPnl = isCancelled ? null : toNum(cycle?.netPnlUsd);
+  const realizedNetPnlPct = isCancelled ? null : toNum(cycle?.netPnlPct);
 
   return {
     id: cycle?.id ?? String(cycle?.cycleNumber ?? "?"),
@@ -554,8 +651,8 @@ function buildClosedCycle(
     estimatedTax: null,
     estimatedNetPnl: null,
     estimatedOperationalCost: null,
-    openedAt: cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null,
-    durationLabel: fmtDuration(cycle?.openedAt ?? cycle?.buyFilledAt ?? cycle?.createdAt ?? null, closedAtMs),
+    openedAt: openedAtIso,
+    durationLabel,
     rangeVersionId: cycle?.rangeVersionId ?? null,
     rangeRelation: relation,
     rangeLabel: cycleRangeLabel(relation),
@@ -576,7 +673,7 @@ function buildClosedCycle(
     sellLevelId: cycle?.sellLevelId ?? null,
     targetSellLevelId: cycle?.targetSellLevelId ?? null,
     sellPrice,
-    sellFilledAt,
+    sellFilledAt: safeIso(sellFilledAt) ?? null,
     closedQuantity,
     closePath,
     realizedGrossPnl,
@@ -584,6 +681,34 @@ function buildClosedCycle(
     realizedTax,
     realizedNetPnl,
     realizedNetPnlPct,
+    createdAt: safeIso(cycle?.createdAt) ?? null,
+    buyFilledAt: safeIso(cycle?.buyFilledAt) ?? null,
+    completedAt,
+    holdTimeMinutes,
+    durationMinutes,
+    capitalUsedUsd: buy != null && qty != null ? buy * qty : null,
+    closePathLabel: closePathLabel(closePath as GridClosePath | null),
+    trailingActivated: risk?.trailing?.activated ?? false,
+    trailingActivatedAt: safeIso(risk?.trailing?.activatedAt) ?? null,
+    trailingHighestPrice: toNum(risk?.trailing?.highestPriceSinceBuy) ?? null,
+    trailingStopPrice: toNum(risk?.trailing?.currentStopPrice) ?? null,
+    trailingReason: risk?.trailing?.reason ?? null,
+    stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
+    stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => l.layer),
+    hodlActivated: risk?.hodl?.active ?? false,
+    hodlActivatedAt: safeIso(risk?.hodl?.activatedAt) ?? null,
+    hodlRecoveryTarget: toNum(risk?.hodl?.recoveryTargetPrice) ?? null,
+    makerState: risk?.protectiveExit?.state ?? null,
+    makerRoute: risk?.protectiveExit?.route ?? null,
+    triggerDetectedAt: safeIso(risk?.protectiveExit?.triggerDetectedAt) ?? null,
+    requestedMakerPrice: toNum(risk?.protectiveExit?.requestedMakerPrice) ?? null,
+    makerOrderCreatedAt: safeIso(risk?.protectiveExit?.makerOrderCreatedAt) ?? null,
+    makerEligibleAfter: safeIso(risk?.protectiveExit?.makerEligibleAfter) ?? null,
+    lastRepricedAt: safeIso(risk?.protectiveExit?.lastRepricedAt) ?? null,
+    repriceAttempts: toNum(risk?.protectiveExit?.repriceAttempts) ?? null,
+    simulatedOrderId: risk?.protectiveExit?.simulatedOrderId ?? null,
+    makerFillPrice: toNum(risk?.protectiveExit?.fillPrice) ?? null,
+    makerFilledAt: safeIso(risk?.protectiveExit?.filledAt) ?? null,
   };
 }
 
@@ -853,7 +978,7 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
 
   const cancelledCycleObjects = cycles
     .filter((c: any) => c?.status === "cancelled" || c?.status === "error")
-    .map((c: any) => buildOpenCycle(c, activeRangeVersionId, currentPrice, currentBid, config));
+    .map((c: any) => buildClosedCycle(c, activeRangeVersionId));
 
   const openEstimatedNetPnlUsd = openCycleObjects.reduce((sum, c) => sum + (c.estimatedNetPnl ?? 0), 0);
 

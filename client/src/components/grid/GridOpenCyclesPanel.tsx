@@ -3,8 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { ChevronDown, History, Zap } from "lucide-react";
+import { ChevronDown, History, Zap, XCircle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 interface GridOpenCyclesPanelProps {
   operational?: any;
@@ -150,12 +151,78 @@ function CycleDetail({ cycle }: { cycle: any }) {
   );
 }
 
-function ClosedCycleHeader({ cycle }: { cycle: any }) {
-  const sellPrice = cycle.sellPrice ?? cycle.targetSellPrice;
+function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function Cronologia({ cycle }: { cycle: any }) {
+  const hitos: { label: string; ts: string | null }[] = [
+    { label: "Ciclo creado", ts: cycle.createdAt },
+    { label: "BUY ejecutado", ts: cycle.buyFilledAt },
+  ];
+  if (cycle.trailingActivated) hitos.push({ label: "Trailing activado", ts: cycle.trailingActivatedAt });
+  if (cycle.stopLossTriggered) hitos.push({ label: "Stop-loss disparado", ts: null });
+  if (cycle.hodlActivated) hitos.push({ label: "HODL activado", ts: cycle.hodlActivatedAt });
+  if (cycle.makerOrderCreatedAt) hitos.push({ label: "Maker de salida creado", ts: cycle.makerOrderCreatedAt });
+  if (cycle.sellFilledAt) hitos.push({ label: "SELL ejecutado", ts: cycle.sellFilledAt });
+  if (cycle.completedAt) hitos.push({ label: "Completado", ts: cycle.completedAt });
+  if (cycle.status === "cancelled" && cycle.completedAt) hitos.push({ label: "Cancelado", ts: cycle.completedAt });
+
+  const valid = hitos.filter(h => h.ts != null);
+  if (valid.length === 0) return null;
+
+  return (
+    <div className="space-y-1 pt-2">
+      <p className="text-xs font-semibold text-muted-foreground">Cronología</p>
+      <div className="space-y-1">
+        {valid.map((h, i) => (
+          <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-2 h-2 rounded-full bg-muted-foreground/40 shrink-0" />
+            <span>{h.label}</span>
+            <span className="font-mono text-foreground ml-auto">{fmtDate(h.ts)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TechnicalDetail({ cycle }: { cycle: any }) {
+  const hasTech = cycle.closePath || cycle.reviewCode || cycle.reviewReason ||
+    cycle.targetSource || cycle.exitPolicyVersion || cycle.targetKind ||
+    cycle.targetRungLevelId || cycle.targetSellLevelId ||
+    cycle.makerState || cycle.simulatedOrderId || cycle.repriceAttempts != null;
+  if (!hasTech) return null;
+  return (
+    <details className="pt-2">
+      <summary className="cursor-pointer hover:text-foreground transition-colors text-xs text-muted-foreground">
+        Detalle técnico
+      </summary>
+      <div className="mt-1 grid grid-cols-2 gap-1 font-mono text-[10px] bg-muted/20 p-2 rounded">
+        {cycle.closePath && <span>closePath: {cycle.closePath}</span>}
+        {cycle.targetSource && <span>targetSource: {cycle.targetSource}</span>}
+        {cycle.exitPolicyVersion && <span>exitPolicy: {cycle.exitPolicyVersion}</span>}
+        {cycle.targetKind && <span>targetKind: {cycle.targetKind}</span>}
+        {cycle.targetRungLevelId && <span>rungId: {cycle.targetRungLevelId}</span>}
+        {cycle.targetSellLevelId && <span>sellLevelId: {cycle.targetSellLevelId}</span>}
+        {cycle.makerState && <span>makerState: {cycle.makerState}</span>}
+        {cycle.simulatedOrderId && <span>simOrderId: {cycle.simulatedOrderId}</span>}
+        {cycle.repriceAttempts != null && <span>repriceAttempts: {cycle.repriceAttempts}</span>}
+        {cycle.reviewCode && <span>reviewCode: {cycle.reviewCode}</span>}
+        {cycle.reviewReason && <span>reviewReason: {cycle.reviewReason}</span>}
+      </div>
+    </details>
+  );
+}
+
+function CompletedCycleHeader({ cycle }: { cycle: any }) {
   return (
     <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 py-1">
       <div className="flex items-center gap-3 min-w-0">
-        <History className="h-4 w-4 text-muted-foreground shrink-0" />
+        <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
         <span className="font-semibold text-sm">Ciclo #{cycle.cycleNumber}</span>
         <Badge variant="outline" className={cn("text-xs", statusClasses(cycle.color))}>
           {cycle.statusLabel}
@@ -168,7 +235,7 @@ function ClosedCycleHeader({ cycle }: { cycle: any }) {
       </div>
       <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
         <span>Compra: <span className="font-mono text-foreground">{fmtPrice(cycle.buyPrice)}</span></span>
-        <span>Venta: <span className="font-mono text-foreground">{fmtPrice(sellPrice)}</span></span>
+        <span>Venta ejecutada: <span className="font-mono text-foreground">{fmtPrice(cycle.sellPrice)}</span></span>
         <span className={cycle.realizedNetPnl != null && cycle.realizedNetPnl >= 0 ? "text-green-400" : "text-red-400"}>
           {fmtUsd(cycle.realizedNetPnl)}
         </span>
@@ -177,7 +244,7 @@ function ClosedCycleHeader({ cycle }: { cycle: any }) {
   );
 }
 
-function ClosedCycleDetail({ cycle }: { cycle: any }) {
+function CompletedCycleDetail({ cycle }: { cycle: any }) {
   return (
     <div className="space-y-2 text-sm pt-2">
       {cycle.rangeRelation === "previous" && (
@@ -187,32 +254,135 @@ function ClosedCycleDetail({ cycle }: { cycle: any }) {
       )}
 
       <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-        <span>Fecha compra: <span className="font-mono text-foreground">{cycle.openedAt ? new Date(cycle.openedAt).toLocaleString("es-ES") : "—"}</span></span>
-        <span>Fecha venta: <span className="font-mono text-foreground">{cycle.sellFilledAt ? new Date(cycle.sellFilledAt).toLocaleString("es-ES") : "—"}</span></span>
+        <span>Fecha compra: <span className="font-mono text-foreground">{fmtDate(cycle.buyFilledAt ?? cycle.openedAt)}</span></span>
+        <span>Fecha venta: <span className="font-mono text-foreground">{fmtDate(cycle.sellFilledAt)}</span></span>
         <span>Duración: <span className="font-mono text-foreground">{cycle.durationLabel}</span></span>
-        <span>Cantidad BTC: <span className="font-mono text-foreground">{fmtQty(cycle.quantity)}</span></span>
+        <span>Cantidad BTC: <span className="font-mono text-foreground">{fmtQty(cycle.closedQuantity ?? cycle.quantity)}</span></span>
+        <span>Capital usado: <span className="font-mono text-foreground">{fmtUsd(cycle.capitalUsedUsd)}</span></span>
         <span>Precio BUY: <span className="font-mono text-foreground">{fmtPrice(cycle.buyPrice)}</span></span>
-        <span>Precio SELL ejecutado: <span className="font-mono text-foreground">{fmtPrice(cycle.sellPrice)}</span></span>
       </div>
 
       <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-        <span>Objetivo SELL: <span className="font-mono text-foreground">{fmtPrice(cycle.targetSellPrice)}</span></span>
-        <span>Ruta de cierre: <span className="font-mono text-foreground">{cycle.closePath ?? "—"}</span></span>
+        <span>SELL ejecutado: <span className="font-mono text-foreground">{fmtPrice(cycle.sellPrice)}</span></span>
+        <span>Objetivo original: <span className="font-mono text-foreground">{fmtPrice(cycle.targetSellPrice)}</span></span>
+        <span>Vía de cierre: <span className="font-mono text-foreground">{cycle.closePathLabel ?? "No registrada"}</span></span>
         <span>Beneficio bruto: <span className="font-mono text-foreground">{fmtUsd(cycle.realizedGrossPnl)}</span></span>
         <span>Comisiones: <span className="font-mono text-foreground">{fmtUsd(cycle.realizedFee)}</span></span>
         <span>Reserva fiscal: <span className="font-mono text-foreground">{fmtUsd(cycle.realizedTax)}</span></span>
-        <span className={cycle.realizedNetPnl != null && cycle.realizedNetPnl >= 0 ? "text-green-400" : "text-red-400"}>
-          Beneficio neto: {fmtUsd(cycle.realizedNetPnl)}
-        </span>
       </div>
 
-      {cycle.realizedNetPnlPct != null && (
-        <div className="text-xs text-muted-foreground">
-          Rentabilidad: <span className={cycle.realizedNetPnlPct >= 0 ? "text-green-400" : "text-red-400"}>
-            {cycle.realizedNetPnlPct.toFixed(2)}%
+      <div className="flex items-center gap-4 text-xs">
+        <span className="text-muted-foreground">Beneficio neto:</span>
+        <span className={cycle.realizedNetPnl != null && cycle.realizedNetPnl >= 0 ? "text-green-400 font-semibold" : "text-red-400 font-semibold"}>
+          {fmtUsd(cycle.realizedNetPnl)}
+        </span>
+        {cycle.realizedNetPnlPct != null && (
+          <span className={cycle.realizedNetPnlPct >= 0 ? "text-green-400" : "text-red-400"}>
+            ({cycle.realizedNetPnlPct.toFixed(2)}%)
           </span>
+        )}
+      </div>
+
+      {(cycle.trailingActivated || cycle.stopLossTriggered || cycle.hodlActivated || cycle.makerState) && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {cycle.trailingActivated && (
+            <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
+              Trailing {cycle.trailingStopPrice != null ? `@ ${fmtPrice(cycle.trailingStopPrice)}` : ""}
+            </Badge>
+          )}
+          {cycle.stopLossTriggered && (
+            <Badge variant="outline" className="text-[10px] text-red-400 border-red-500/30 bg-red-500/10">
+              Stop-loss {cycle.stopLossLayersTriggered?.length > 0 ? `(${cycle.stopLossLayersTriggered.join(", ")})` : ""}
+            </Badge>
+          )}
+          {cycle.hodlActivated && (
+            <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/30 bg-blue-500/10">
+              HODL {cycle.hodlRecoveryTarget != null ? `→ ${fmtPrice(cycle.hodlRecoveryTarget)}` : ""}
+            </Badge>
+          )}
+          {cycle.makerState && cycle.makerState !== "NONE" && (
+            <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-500/30 bg-purple-500/10">
+              Maker: {cycle.makerState}
+              {cycle.makerFillPrice != null ? ` @ ${fmtPrice(cycle.makerFillPrice)}` : ""}
+            </Badge>
+          )}
         </div>
       )}
+
+      <Cronologia cycle={cycle} />
+      <TechnicalDetail cycle={cycle} />
+    </div>
+  );
+}
+
+function CancelledCycleHeader({ cycle }: { cycle: any }) {
+  return (
+    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 py-1">
+      <div className="flex items-center gap-3 min-w-0">
+        <XCircle className="h-4 w-4 text-red-400 shrink-0" />
+        <span className="font-semibold text-sm">Ciclo #{cycle.cycleNumber}</span>
+        <Badge variant="outline" className={cn("text-xs", statusClasses(cycle.color))}>
+          {cycle.statusLabel}
+        </Badge>
+        {cycle.rangeRelation === "previous" && (
+          <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
+            Rango anterior
+          </Badge>
+        )}
+      </div>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+        <span>Compra: <span className="font-mono text-foreground">{fmtPrice(cycle.buyPrice)}</span></span>
+        <span className="text-muted-foreground/60">Sin SELL ejecutado</span>
+      </div>
+    </div>
+  );
+}
+
+function CancelledCycleDetail({ cycle }: { cycle: any }) {
+  return (
+    <div className="space-y-2 text-sm pt-2">
+      <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-400">
+        Este ciclo fue cancelado. No hubo venta ejecutada ni beneficio realizado.
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+        <span>Fecha creación: <span className="font-mono text-foreground">{fmtDate(cycle.createdAt)}</span></span>
+        <span>Fecha cancelación: <span className="font-mono text-foreground">{fmtDate(cycle.completedAt)}</span></span>
+        <span>Duración: <span className="font-mono text-foreground">{cycle.durationLabel}</span></span>
+        <span>Cantidad BTC: <span className="font-mono text-foreground">{fmtQty(cycle.quantity)}</span></span>
+        <span>Capital previsto: <span className="font-mono text-foreground">{fmtUsd(cycle.capitalUsedUsd)}</span></span>
+        <span>Precio BUY: <span className="font-mono text-foreground">{fmtPrice(cycle.buyPrice)}</span></span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+        <span>Objetivo SELL previsto: <span className="font-mono text-foreground">{fmtPrice(cycle.targetSellPrice)}</span></span>
+        <span>SELL ejecutado: <span className="font-mono text-muted-foreground/60">No hubo SELL ejecutado</span></span>
+        <span>Beneficio neto: <span className="font-mono text-muted-foreground/60">No aplica</span></span>
+        <span>Vía de cierre: <span className="font-mono text-foreground">{cycle.closePathLabel ?? "No registrada"}</span></span>
+      </div>
+
+      {(cycle.trailingActivated || cycle.stopLossTriggered || cycle.hodlActivated) && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {cycle.trailingActivated && (
+            <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">
+              Trailing {cycle.trailingStopPrice != null ? `@ ${fmtPrice(cycle.trailingStopPrice)}` : ""}
+            </Badge>
+          )}
+          {cycle.stopLossTriggered && (
+            <Badge variant="outline" className="text-[10px] text-red-400 border-red-500/30 bg-red-500/10">
+              Stop-loss
+            </Badge>
+          )}
+          {cycle.hodlActivated && (
+            <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/30 bg-blue-500/10">
+              HODL
+            </Badge>
+          )}
+        </div>
+      )}
+
+      <Cronologia cycle={cycle} />
+      <TechnicalDetail cycle={cycle} />
     </div>
   );
 }
@@ -271,8 +441,30 @@ export function GridOpenCyclesPanel({ operational }: GridOpenCyclesPanelProps) {
   const closedCycles = (operational?.closedCycles ?? []) as any[];
   const cancelledCycles = (operational?.cancelledCycles ?? []) as any[];
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "completed" | "cancelled">("all");
+  const [visibleCount, setVisibleCount] = useState(10);
 
   const hasHistory = closedCycles.length > 0 || cancelledCycles.length > 0;
+
+  const allHistory = useMemo(() => {
+    const combined = [...closedCycles, ...cancelledCycles];
+    return combined.sort((a, b) => {
+      const aDate = a.completedAt ?? a.sellFilledAt ?? a.createdAt ?? 0;
+      const bDate = b.completedAt ?? b.sellFilledAt ?? b.createdAt ?? 0;
+      return new Date(bDate).getTime() - new Date(aDate).getTime();
+    });
+  }, [closedCycles, cancelledCycles]);
+
+  const filteredHistory = useMemo(() => {
+    if (historyFilter === "completed") return allHistory.filter(c => c.status !== "cancelled");
+    if (historyFilter === "cancelled") return allHistory.filter(c => c.status === "cancelled");
+    return allHistory;
+  }, [allHistory, historyFilter]);
+
+  const visibleHistory = filteredHistory.slice(0, visibleCount);
+  const hasMore = filteredHistory.length > visibleCount;
+
+  const isTerminal = (cycle: any) => cycle.status === "cancelled";
 
   return (
     <Card className="border-border/50">
@@ -312,23 +504,65 @@ export function GridOpenCyclesPanel({ operational }: GridOpenCyclesPanelProps) {
             <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-border/50 p-3 text-sm hover:bg-muted/30 transition-colors">
               <span className="flex items-center gap-2">
                 <History className="h-4 w-4 text-muted-foreground" />
-                Histórico ({closedCycles.length + cancelledCycles.length})
+                Histórico ({allHistory.length})
               </span>
               <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", historyOpen && "rotate-180")} />
             </CollapsibleTrigger>
-            <CollapsibleContent className="pt-2">
+            <CollapsibleContent className="pt-2 space-y-3">
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant={historyFilter === "all" ? "default" : "outline"}
+                  onClick={() => { setHistoryFilter("all"); setVisibleCount(10); }}
+                  className="text-xs h-7"
+                >
+                  Todos ({allHistory.length})
+                </Button>
+                <Button
+                  size="sm"
+                  variant={historyFilter === "completed" ? "default" : "outline"}
+                  onClick={() => { setHistoryFilter("completed"); setVisibleCount(10); }}
+                  className="text-xs h-7"
+                >
+                  Completados ({closedCycles.length})
+                </Button>
+                <Button
+                  size="sm"
+                  variant={historyFilter === "cancelled" ? "default" : "outline"}
+                  onClick={() => { setHistoryFilter("cancelled"); setVisibleCount(10); }}
+                  className="text-xs h-7"
+                >
+                  Cancelados ({cancelledCycles.length})
+                </Button>
+              </div>
+
               <Accordion type="single" collapsible className="w-full">
-                {[...closedCycles, ...cancelledCycles].map((cycle) => (
+                {visibleHistory.map((cycle) => (
                   <AccordionItem key={cycle.id} value={cycle.id} className="border-b border-border/50">
                     <AccordionTrigger className="hover:no-underline py-2">
-                      <ClosedCycleHeader cycle={cycle} />
+                      {isTerminal(cycle)
+                        ? <CancelledCycleHeader cycle={cycle} />
+                        : <CompletedCycleHeader cycle={cycle} />}
                     </AccordionTrigger>
                     <AccordionContent>
-                      <ClosedCycleDetail cycle={cycle} />
+                      {isTerminal(cycle)
+                        ? <CancelledCycleDetail cycle={cycle} />
+                        : <CompletedCycleDetail cycle={cycle} />}
                     </AccordionContent>
                   </AccordionItem>
                 ))}
               </Accordion>
+
+              {hasMore && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setVisibleCount(c => c + 10)}
+                  className="w-full text-xs"
+                >
+                  Mostrar 10 más ({filteredHistory.length - visibleCount} restantes)
+                </Button>
+              )}
             </CollapsibleContent>
           </Collapsible>
         )}
