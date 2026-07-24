@@ -5,7 +5,7 @@
  * Grid "Mercado" tab. It is pure: no DB access, no side effects, no trading logic.
  */
 
-import { type ExecutionPolicy, executionPolicyLabel } from "./gridIsolatedTypes";
+import { type ExecutionPolicy, executionPolicyLabel, TAX_RESERVE_PCT } from "./gridIsolatedTypes";
 
 export type RangeMode = "MANUAL" | "ADAPTIVE" | null;
 
@@ -52,6 +52,17 @@ export interface GridMarketCurrent {
   band: GridMarketBand;
 }
 
+export interface LevelDiagnostic {
+  bandWidthPct: number | null;
+  operationalRangeMaxPct: number | null;
+  effectiveRangePct: number | null;
+  minSpacingPct: number | null;
+  maxLevelsPerSide: number | null;
+  maxTotalLevels: number | null;
+  requestedPerSide: number | null;
+  reason: string;
+}
+
 export interface GridMarketEntryRange {
   mode: RangeMode;
   active: boolean;
@@ -63,13 +74,21 @@ export interface GridMarketEntryRange {
   calculatedWidthPct: number | null;
   requestedLevels: number | null;
   viableLevels: number | null;
+  actualLevels: number | null;
   spacingPct: number | null;
   minimumProfitableSpacingPct: number | null;
   netProfitTargetPct: number | null;
+  buyFeePct: number | null;
+  sellFeePct: number | null;
+  taxReservePct: number | null;
+  gridRangeMaxPct: number | null;
+  enforceCompactRange: boolean | null;
   viability: EntryRangeViability;
   reasonCode: string | null;
   reasonLabel: string | null;
   explanation: string | null;
+  levelCountExplanation: string | null;
+  levelDiagnostic: LevelDiagnostic | null;
   calculatedAt: string | null;
 }
 
@@ -200,7 +219,7 @@ function fmtDateShort(iso: string | null): string {
 
 function translateRegimeCode(code: string | null | undefined): string {
   const c = (code ?? "").toString().toUpperCase().replace(/\s+/g, "_");
-  if (c.includes("LATERAL") || c === "RANGE" || c === "LATERAL") return "RANGE";
+  if (c.includes("LATERAL") || c === "RANGE" || c === "LATERAL" || c === "RANGING") return "RANGE";
   if (c.includes("TENDENCIA_ALCISTA") || c.includes("ALCISTA") || c.includes("BULLISH")) return "TREND_UP";
   if (c.includes("TENDENCIA_BAJISTA") || c.includes("BAJISTA") || c.includes("BEARISH")) return "TREND_DOWN";
   if (c.includes("TRANSICION") || c === "TRANSITION") return "TRANSITION";
@@ -369,6 +388,9 @@ function requestedLevelsFrom(adaptiveDecision: any, professionalGenerator: any, 
   if (professionalGenerator?.requestedBuyLevels != null && professionalGenerator?.requestedSellLevels != null) {
     return (toNum(professionalGenerator.requestedBuyLevels) ?? 0) + (toNum(professionalGenerator.requestedSellLevels) ?? 0);
   }
+  const cfgBuy = toNum(config?.buyLevels);
+  const cfgSell = toNum(config?.sellLevels);
+  if (cfgBuy != null && cfgSell != null) return cfgBuy + cfgSell;
   return toNum(config?.adaptiveRangeMinViableLevels);
 }
 
@@ -415,11 +437,39 @@ function buildEntryRange(input: BuildGridMarketViewModelInput): GridMarketEntryR
 
   const requestedLevels = requestedLevelsFrom(adaptiveDecision, professionalGenerator, config);
   const viableLevels = viableLevelsFrom(adaptiveDecision, professionalGenerator);
-  const spacingPct = toNum(adaptiveDecision?.spacingPct ?? professionalGenerator?.spacingPct);
+  const netProfitTargetPct = toNum(config?.netProfitTargetPct);
+  const buyFeePct = toNum(config?.buyFeePct);
+  const sellFeePct = toNum(config?.sellFeePct);
+  const taxReservePct = toNum(TAX_RESERVE_PCT) ?? 15;
+  const gridRangeMaxPct = toNum(config?.gridRangeMaxPct);
+  const enforceCompactRange = config?.enforceCompactRange ?? null;
+
   const minimumProfitableSpacingPct = toNum(
     adaptiveDecision?.minSpacingPctReal ?? professionalGenerator?.minSpacingPctReal
-  );
-  const netProfitTargetPct = toNum(config?.netProfitTargetPct);
+  ) ?? (netProfitTargetPct != null && buyFeePct != null && sellFeePct != null
+    ? netProfitTargetPct + buyFeePct + sellFeePct + (netProfitTargetPct * (taxReservePct ?? 15) / 100)
+    : null);
+
+  const bandWidthPct = toNum(marketContext?.band?.widthPct ?? calculatedWidthPct);
+  const operationalRangeMaxPct = gridRangeMaxPct;
+  const effectiveRangePct = enforceCompactRange && operationalRangeMaxPct != null && bandWidthPct != null
+    ? Math.min(bandWidthPct, operationalRangeMaxPct)
+    : bandWidthPct ?? calculatedWidthPct;
+
+  const maxLevelsPerSide = effectiveRangePct != null && minimumProfitableSpacingPct != null && minimumProfitableSpacingPct > 0
+    ? Math.floor(effectiveRangePct / minimumProfitableSpacingPct)
+    : null;
+  const maxTotalLevels = maxLevelsPerSide != null ? maxLevelsPerSide * 2 : null;
+  const requestedPerSide = requestedLevels != null ? Math.ceil(requestedLevels / 2) : null;
+
+  const actualLevels = input.levels
+    ? input.levels.filter((l: any) => l?.rangeVersionId === activeRangeVersionId && l?.status !== "cancelled" && l?.status !== "replaced").length
+    : null;
+
+  const spacingPct = toNum(adaptiveDecision?.spacingPct ?? professionalGenerator?.spacingPct)
+    ?? (effectiveRangePct != null && maxLevelsPerSide != null && maxLevelsPerSide > 0
+      ? effectiveRangePct / maxLevelsPerSide
+      : null);
 
   let viability: EntryRangeViability = "INSUFFICIENT_DATA";
   let reasonCode: string | null = null;
@@ -485,6 +535,34 @@ function buildEntryRange(input: BuildGridMarketViewModelInput): GridMarketEntryR
 
   const calculatedAt = toIso(lastProfessionalValidationAt) ?? toIso(professionalGenerator?.eventCreatedAt) ?? toIso(resolvedRange?.createdAt) ?? toIso(status?.lastTickAt);
 
+  const levelDiagnostic: LevelDiagnostic | null = {
+    bandWidthPct,
+    operationalRangeMaxPct,
+    effectiveRangePct,
+    minSpacingPct: minimumProfitableSpacingPct,
+    maxLevelsPerSide,
+    maxTotalLevels,
+    requestedPerSide,
+    reason: maxLevelsPerSide != null && requestedPerSide != null && maxLevelsPerSide < requestedPerSide
+      ? `El rango efectivo (${effectiveRangePct?.toFixed(2)}%) solo permite ${maxLevelsPerSide} niveles por lado, pero se solicitaron ${requestedPerSide}.`
+      : "Los niveles solicitados caben en el rango efectivo.",
+  };
+
+  let levelCountExplanation: string | null = null;
+  if (bandWidthPct != null && effectiveRangePct != null && minimumProfitableSpacingPct != null && maxLevelsPerSide != null) {
+    const parts: string[] = [];
+    parts.push(`La banda de Bollinger tiene ${bandWidthPct.toFixed(2)}% de anchura.`);
+    if (enforceCompactRange && operationalRangeMaxPct != null && operationalRangeMaxPct < bandWidthPct) {
+      parts.push(`Con rango compacto activado, el rango operativo se limita a ${operationalRangeMaxPct.toFixed(2)}%.`);
+    }
+    parts.push(`La separación mínima rentable es ${minimumProfitableSpacingPct.toFixed(2)}% (${netProfitTargetPct?.toFixed(2)}% beneficio + ${(buyFeePct ?? 0).toFixed(2)}% comisión compra + ${(sellFeePct ?? 0).toFixed(2)}% comisión venta + ${((netProfitTargetPct ?? 0) * (taxReservePct ?? 15) / 100).toFixed(2)}% reserva fiscal).`);
+    parts.push(`En ${effectiveRangePct.toFixed(2)}% caben ${maxLevelsPerSide} niveles por lado (${maxLevelsPerSide} BUY + ${maxLevelsPerSide} SELL = ${maxLevelsPerSide * 2} totales).`);
+    if (requestedLevels != null && requestedLevels > maxLevelsPerSide * 2) {
+      parts.push(`Se solicitaron ${requestedLevels} niveles pero solo caben ${maxLevelsPerSide * 2}.`);
+    }
+    levelCountExplanation = parts.join(" ");
+  }
+
   return {
     mode,
     active,
@@ -496,13 +574,21 @@ function buildEntryRange(input: BuildGridMarketViewModelInput): GridMarketEntryR
     calculatedWidthPct,
     requestedLevels,
     viableLevels,
+    actualLevels,
     spacingPct,
     minimumProfitableSpacingPct,
     netProfitTargetPct,
+    buyFeePct,
+    sellFeePct,
+    taxReservePct,
+    gridRangeMaxPct,
+    enforceCompactRange,
     viability,
     reasonCode,
     reasonLabel,
     explanation,
+    levelCountExplanation,
+    levelDiagnostic,
     calculatedAt,
   };
 }

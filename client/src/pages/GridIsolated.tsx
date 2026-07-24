@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Activity, RefreshCw } from "lucide-react";
+import { Activity, RefreshCw, Lightbulb } from "lucide-react";
 import { GridOperationalHeader } from "@/components/grid/GridOperationalHeader";
 import { GridOverviewPanel } from "@/components/grid/GridOverviewPanel";
 import { GridOpenCyclesPanel } from "@/components/grid/GridOpenCyclesPanel";
@@ -14,6 +14,8 @@ import { GridLevelsCompactPanel } from "@/components/grid/GridLevelsCompactPanel
 import { GridSettingsPanel } from "@/components/grid/GridSettingsPanel";
 import { GridNotificationCenter } from "@/components/grid/GridNotificationCenter";
 import { GridMarketPanel } from "@/components/grid/GridMarketPanel";
+import { GridRecommendationDialog, type RecommendationAlt } from "@/components/grid/GridRecommendationDialog";
+import { buildRecommendationAlternatives, type RecommendationContext } from "@shared/gridRecommendationHelper";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -21,6 +23,7 @@ export default function GridIsolated() {
   const queryClient = useQueryClient();
   const refreshAudit = () => queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
   const [activeTab, setActiveTab] = useState("resumen");
+  const [recDialogOpen, setRecDialogOpen] = useState(false);
 
   // ─── Queries ─────────────────────────────────────────────
   const { data: config, isLoading: configLoading } = useQuery({
@@ -53,6 +56,29 @@ export default function GridIsolated() {
   });
 
   const operational = auditData?.operational;
+
+  // Build recommendation alternatives from market data
+  const entryRange = operational?.market?.entryRange ?? {};
+  const currentPrice = operational?.market?.current?.price ?? null;
+  const recContext: RecommendationContext = {
+    bandWidthPct: entryRange.levelDiagnostic?.bandWidthPct ?? null,
+    effectiveRangePct: entryRange.levelDiagnostic?.effectiveRangePct ?? null,
+    minSpacingPct: entryRange.minimumProfitableSpacingPct ?? null,
+    maxLevelsPerSide: entryRange.levelDiagnostic?.maxLevelsPerSide ?? null,
+    requestedLevels: entryRange.requestedLevels ?? null,
+    actualLevels: entryRange.actualLevels ?? null,
+    netProfitTargetPct: entryRange.netProfitTargetPct ?? null,
+    buyFeePct: entryRange.buyFeePct ?? null,
+    sellFeePct: entryRange.sellFeePct ?? null,
+    taxReservePct: entryRange.taxReservePct ?? null,
+    gridRangeMaxPct: entryRange.gridRangeMaxPct ?? null,
+    enforceCompactRange: entryRange.enforceCompactRange ?? null,
+    currentPrice,
+  };
+  const alternatives = useMemo(() => buildRecommendationAlternatives(recContext), [entryRange, currentPrice]);
+  const actualLevels = entryRange.actualLevels ?? null;
+  const requestedLevels = entryRange.requestedLevels ?? null;
+  const showRecButton = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
 
   // ─── Mutations ───────────────────────────────────────────
   const activateMutation = useMutation({
@@ -155,6 +181,17 @@ export default function GridIsolated() {
                   <RefreshCw className="h-3 w-3 mr-1" />
                   Refrescar
                 </Button>
+                {showRecButton && (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="text-xs h-8"
+                    onClick={() => setRecDialogOpen(true)}
+                  >
+                    <Lightbulb className="h-3 w-3 mr-1" />
+                    Recomendaciones ({alternatives.length})
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>
@@ -183,6 +220,7 @@ export default function GridIsolated() {
               operational={operational}
               onAnalyze={() => shadowValidateMutation.mutate()}
               loading={shadowValidateMutation.isPending}
+              onGoToSettings={() => setActiveTab("ajustes")}
             />
           </TabsContent>
 
@@ -203,6 +241,18 @@ export default function GridIsolated() {
             />
           </TabsContent>
         </Tabs>
+
+        {/* Recommendation dialog */}
+        <GridRecommendationDialog
+          open={recDialogOpen}
+          onOpenChange={setRecDialogOpen}
+          alternatives={alternatives}
+          currentLevels={actualLevels}
+          requestedLevels={requestedLevels}
+          onApply={(alt: RecommendationAlt) => {
+            configMutation.mutate(alt.patch);
+          }}
+        />
       </div>
     </div>
   );

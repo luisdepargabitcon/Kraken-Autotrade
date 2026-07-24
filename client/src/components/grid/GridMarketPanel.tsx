@@ -20,6 +20,7 @@ import {
   Layers,
   Clock,
   ArrowRight,
+  Info,
 } from "lucide-react";
 
 function fmtUsd(v: number | null | undefined): string {
@@ -62,6 +63,7 @@ interface GridMarketPanelProps {
   operational?: any;
   onAnalyze?: () => void;
   loading?: boolean;
+  onGoToSettings?: () => void;
 }
 
 function ViabilityBadge({ viability }: { viability: string | null | undefined }) {
@@ -102,13 +104,19 @@ function RegimeBadge({ regime }: { regime: any }) {
   );
 }
 
-export function GridMarketPanel({ operational, onAnalyze, loading }: GridMarketPanelProps) {
+export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSettings }: GridMarketPanelProps) {
   const market = operational?.market ?? {};
   const current = market.current ?? {};
   const entryRange = market.entryRange ?? {};
   const exitRanges = market.exitObligationRanges ?? [];
   const recommendation = market.recommendation ?? null;
   const pair = market.pair ?? operational?.header?.pair ?? "BTC/USD";
+  const levelDiagnostic = entryRange.levelDiagnostic ?? null;
+  const levelCountExplanation = entryRange.levelCountExplanation ?? null;
+
+  const actualLevels = entryRange.actualLevels ?? null;
+  const requestedLevels = entryRange.requestedLevels ?? null;
+  const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
 
   return (
     <div className="space-y-4">
@@ -132,32 +140,66 @@ export function GridMarketPanel({ operational, onAnalyze, loading }: GridMarketP
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Price, Bid, Ask, Spread — separated clearly */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Metric label="Precio" value={fmtPrice(current.price)} sub={ageLabel(current.ageMs, current.maxAgeMs)} />
-            <Metric label="Bid" value={fmtPrice(current.bid)} sub={current.source ? `Fuente: ${current.source}` : undefined} />
-            <Metric label="Ask" value={fmtPrice(current.ask)} sub={current.spreadPct != null ? `Diferencia ${fmtPct(current.spreadPct)}` : undefined} />
-            <Metric label="Volatilidad (ATR)" value={fmtPct(current.band?.atrPct)} sub="Banda actual" />
+            <Metric
+              label="Precio"
+              value={fmtPrice(current.price)}
+              sub={current.source ? `Fuente: ${current.source}` : undefined}
+              highlight
+            />
+            <Metric label="Bid" value={fmtPrice(current.bid)} sub="Mejor compra" />
+            <Metric label="Ask" value={fmtPrice(current.ask)} sub="Mejor venta" />
+            <Metric
+              label="Spread"
+              value={fmtPct(current.spreadPct)}
+              sub="Diferencia Bid-Ask"
+            />
           </div>
 
+          {/* Freshness detail */}
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {ageLabel(current.ageMs, current.maxAgeMs)}
+            </span>
+            {current.updatedAt && (
+              <span>Actualizado: {fmtDateShort(current.updatedAt)}</span>
+            )}
+          </div>
+
+          {/* Bollinger Band */}
           {current.band?.lower != null && current.band?.upper != null && (
             <div className="rounded-lg border border-border/40 p-3 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Posición dentro de la banda</span>
-                <span className="text-xs font-medium">{current.band.positionPct != null ? `${Math.round(current.band.positionPct)}%` : "—"}</span>
+                <span className="text-xs text-muted-foreground uppercase tracking-wider">
+                  Banda de Bollinger (20, 2)
+                </span>
+                <span className="text-xs font-medium">
+                  Posición: {current.band.positionPct != null ? `${Math.round(current.band.positionPct)}%` : "—"}
+                </span>
               </div>
               <Progress value={current.band.positionPct ?? 0} className="h-2" />
               <div className="flex justify-between text-xs text-muted-foreground font-mono">
-                <span>{fmtPrice(current.band.lower)}</span>
-                <span>{fmtPrice(current.band.center)}</span>
-                <span>{fmtPrice(current.band.upper)}</span>
+                <span>Inferior: {fmtPrice(current.band.lower)}</span>
+                <span>Centro: {fmtPrice(current.band.center)}</span>
+                <span>Superior: {fmtPrice(current.band.upper)}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span>Anchura de banda {fmtPct(current.band.widthPct)}</span>
-                <span className="capitalize">{current.band.position ?? "desconocida"}</span>
+                <span className="text-muted-foreground">
+                  Anchura: {fmtPct(current.band.widthPct)}
+                </span>
+                <span className="text-muted-foreground">
+                  Posición: <span className="capitalize">{current.band.position ?? "desconocida"}</span>
+                </span>
+                <span className="text-muted-foreground">
+                  ATR: {fmtPct(current.band?.atrPct)}
+                </span>
               </div>
             </div>
           )}
 
+          {/* Regime explanation */}
           {current.regime?.reason && (
             <p className="text-sm text-muted-foreground flex items-start gap-2">
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -184,15 +226,80 @@ export function GridMarketPanel({ operational, onAnalyze, loading }: GridMarketP
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Range bounds */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Metric label="Inferior" value={fmtPrice(entryRange.calculatedLower)} sub="Calculado" />
             <Metric label="Superior" value={fmtPrice(entryRange.calculatedUpper)} sub="Calculado" />
-            <Metric label="Anchura" value={fmtPct(entryRange.calculatedWidthPct)} sub="Del centro" />
-            <Metric label="Niveles" value={`${fmtNumber(entryRange.viableLevels)}/${fmtNumber(entryRange.requestedLevels)}`} sub="Viables / pedidos" />
+            <Metric label="Anchura" value={fmtPct(entryRange.calculatedWidthPct)} sub="Total del rango" />
+            <Metric
+              label="Niveles reales"
+              value={actualLevels != null ? String(actualLevels) : "—"}
+              sub={requestedLevels != null ? `Solicitados: ${requestedLevels}` : undefined}
+              highlight={levelsMismatch}
+            />
+          </div>
+
+          {/* Level count diagnostic */}
+          {levelsMismatch && levelCountExplanation && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <Info className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-amber-400">
+                    {actualLevels} niveles activos en lugar de {requestedLevels} solicitados
+                  </p>
+                  <p className="text-sm text-muted-foreground">{levelCountExplanation}</p>
+                </div>
+              </div>
+              {onGoToSettings && (
+                <Button size="sm" variant="outline" className="text-xs h-7" onClick={onGoToSettings}>
+                  Ver recomendaciones de configuración
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* Level diagnostic detail (collapsible) */}
+          {levelDiagnostic && (
+            <Collapsible>
+              <CollapsibleTrigger asChild>
+                <button className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                  <Info className="h-3 w-3" />
+                  Diagnóstico matemático de niveles
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="rounded-lg border border-border/40 p-3 mt-2 space-y-2 text-xs">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <Metric label="Anchura banda" value={fmtPct(levelDiagnostic.bandWidthPct)} />
+                    <Metric label="Rango máx. config" value={fmtPct(levelDiagnostic.operationalRangeMaxPct)} />
+                    <Metric label="Rango efectivo" value={fmtPct(levelDiagnostic.effectiveRangePct)} />
+                    <Metric label="Separación mín." value={fmtPct(levelDiagnostic.minSpacingPct)} />
+                    <Metric label="Máx. niveles/lado" value={fmtNumber(levelDiagnostic.maxLevelsPerSide)} />
+                    <Metric label="Máx. total" value={fmtNumber(levelDiagnostic.maxTotalLevels)} />
+                    <Metric label="Solicitados/lado" value={fmtNumber(levelDiagnostic.requestedPerSide)} />
+                  </div>
+                  <p className="text-muted-foreground">{levelDiagnostic.reason}</p>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+
+          {/* Spacing and profitability */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Metric label="Separación" value={fmtPct(entryRange.spacingPct)} sub="Entre niveles" />
             <Metric label="Mínima rentable" value={fmtPct(entryRange.minimumProfitableSpacingPct)} sub="Por beneficio neto" />
             <Metric label="Objetivo neto" value={fmtPct(entryRange.netProfitTargetPct)} sub="Por nivel" />
             <Metric label="Ref. rango" value={entryRange.activeRangeVersionId ? entryRange.activeRangeVersionId.slice(0, 8) : "—"} sub={entryRange.active ? "Activo" : "Inactivo"} />
+          </div>
+
+          {/* Fees and tax breakdown */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <Metric label="Comisión compra" value={fmtPct(entryRange.buyFeePct)} />
+            <Metric label="Comisión venta" value={fmtPct(entryRange.sellFeePct)} />
+            <Metric label="Reserva fiscal" value={fmtPct(entryRange.taxReservePct)} />
+            <Metric label="Rango compacto" value={entryRange.enforceCompactRange ? "Activado" : "Desactivado"} />
           </div>
 
           {entryRange.reasonLabel && (
@@ -268,11 +375,11 @@ export function GridMarketPanel({ operational, onAnalyze, loading }: GridMarketP
   );
 }
 
-function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Metric({ label, value, sub, highlight }: { label: string; value: string; sub?: string; highlight?: boolean }) {
   return (
-    <div className="rounded-lg border border-border/40 p-2 md:p-3">
+    <div className={`rounded-lg border p-2 md:p-3 ${highlight ? "border-amber-500/30 bg-amber-500/5" : "border-border/40"}`}>
       <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">{label}</p>
-      <p className="text-sm md:text-base font-semibold font-mono truncate">{value}</p>
+      <p className={`text-sm md:text-base font-semibold font-mono truncate ${highlight ? "text-amber-400" : ""}`}>{value}</p>
       {sub && <p className="text-[10px] text-muted-foreground truncate">{sub}</p>}
     </div>
   );

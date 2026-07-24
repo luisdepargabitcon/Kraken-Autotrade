@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Layers, Target, History, Search } from "lucide-react";
+import { Layers, Target, History, Search, Info, AlertCircle } from "lucide-react";
 
 interface GridLevelsCompactPanelProps {
   operational?: any;
@@ -111,6 +111,12 @@ function LevelRow({ level, index }: LevelRowProps) {
 
 export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelProps) {
   const all = operational?.levels ?? {};
+  const market = operational?.market ?? {};
+  const entryRange = market.entryRange ?? {};
+  const levelDiagnostic = entryRange.levelDiagnostic ?? null;
+  const actualLevels = entryRange.actualLevels ?? null;
+  const requestedLevels = entryRange.requestedLevels ?? null;
+  const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
   const defaultFilter: LevelFilter =
     (all.activeRangeLevels?.length ?? 0) === 0 && (all.openCycleTargetLevels?.length ?? 0) > 0
       ? "ciclos"
@@ -151,6 +157,21 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Level count diagnostic */}
+        {levelsMismatch && levelDiagnostic && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-xs">
+              <p className="font-medium text-amber-400">
+                {actualLevels} niveles activos en lugar de {requestedLevels} solicitados
+              </p>
+              <p className="text-muted-foreground">
+                Rango efectivo: {levelDiagnostic.effectiveRangePct?.toFixed(2)}% · Separación mínima: {levelDiagnostic.minSpacingPct?.toFixed(2)}% · Máx. por lado: {levelDiagnostic.maxLevelsPerSide}
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col md:flex-row gap-2 md:items-center justify-between">
           <div className="flex flex-wrap gap-2">
             {FILTER_LABELS.map((f) => (

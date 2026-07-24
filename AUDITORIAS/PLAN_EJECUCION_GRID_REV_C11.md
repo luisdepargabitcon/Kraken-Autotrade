@@ -2,20 +2,17 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4D — CICLO DE CORRECCIÓN 1 EN EJECUCIÓN
-NEXT_ACTION: corregir histórico Grid y regresiones UX
-LAST_COMPLETED_ACTION: validación visual detectó PnL histórico ausente y UX incompleta
-LAST_VALIDATION: 2026-07-24T02:51+02:00 — control inicial OK, HEAD=ce016fb=origin/main
-CURRENT_HEAD: ce016fb6f3e627b68c9cb64dfbd389d4f78da9f0
-ORIGIN_HEAD: ce016fb6f3e627b68c9cb64dfbd389d4f78da9f0
-EXPECTED_DEPLOY_HASH: ce016fb6f3e627b68c9cb64dfbd389d4f78da9f0
-DEPLOYED_HASH: ce016fb6f3e627b68c9cb64dfbd389d4f78da9f0
+TASK_STATUS: FASE 4E — MERCADO, NIVELES Y RECOMENDACIONES
+NEXT_ACTION: auditoría read-only y corrección local
+LAST_COMPLETED_ACTION: deploy a90e626 y purga transaccional de ciclos #1–#24
+LAST_VALIDATION: 2026-07-24T10:08+02:00 — post-purga DB y API validadas, logs limpios
+CURRENT_HEAD: a90e626f67179b95dd86376c5a6fb309a1c86750
+ORIGIN_HEAD: a90e626f67179b95dd86376c5a6fb309a1c86750
+EXPECTED_DEPLOY_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
+DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
 FINAL_DOCUMENTATION_HASH: pendiente
-LAST_COMMAND: deploy app-only + postdeploy validation
-LAST_COMMAND_TYPE: STATEFUL
-LAST_COMMAND_RESULT: SUCCESS
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-24T02:30+02:00
+UPDATED_AT: 2026-07-24T12:19+02:00
 
 ## FASE 1 — Cambios aplicados
 
@@ -370,3 +367,71 @@ La FASE 3 inicial implementó tests V2 y correcciones de diagnóstico, pero qued
 - 0 tests nuevos en skip. 0 tests eliminados.
 - REV-C11 no está completamente terminada (faltan fases futuras por definir).
 - NEXT_ACTION: Siguiente fase pendiente de definición y autorización.
+
+## FASE 4D — DEPLOY Y PURGA DE CICLOS HISTÓRICOS
+
+### Deploy
+
+- **Commit desplegado**: `a90e626f67179b95dd86376c5a6fb309a1c86750`
+- **Staging antes**: `ce016fb`
+- **Staging después**: `a90e626` = `origin/main`
+- **Método**: `git pull --ff-only` + `docker compose up -d --build --no-deps krakenbot-staging-app`
+- **App container antes**: `1debcd5c26bc`
+- **App container después**: `b2305bb70f78`
+- **DB container**: `a2f9a3f275c3` — sin cambios, healthy, restartCount=0
+
+### Purga de ciclos #1–#24
+
+- **Ciclos eliminados**: 24 (cycleNumber 1–24, BTC/USD, todos `cancelled`, PnL=0)
+- **Events eliminados**: 24 (de `grid_isolated_events`, hija exclusiva)
+- **Ciclos protegidos**: #25, #26, #27 — intactos, sin modificación
+- **Método**: SQL transaccional con temp table de IDs exactos, `BEGIN ... COMMIT`
+- **Tablas afectadas**: `grid_isolated_events` (hija exclusiva), `grid_isolated_cycles`
+- **Tablas no afectadas**: `grid_isolated_levels`, `grid_isolated_configs`, `grid_range_versions` (compartidas)
+- **FKs huérfanos**: 0
+- **Dry-run ROLLBACK**: correcto — 27 ciclos restaurados tras rollback
+- **COMMIT**: confirmado
+
+### Métricas finales
+
+- **totalNetPnlUsd**: 22.38581541 (sin cambios — ciclos #1–24 tenían PnL=0)
+- **totalGrossPnl**: 27.98226926
+- **totalTaxReserve**: 5.59645386
+- **totalCyclesCompleted**: 3
+- **PnL derivado exclusivamente de #25, #26 y #27**
+- **No se requiere modificación manual de wallet, capital ni reserva fiscal**
+
+### Seguridad
+
+- **mode**: SHADOW
+- **executionPolicy**: MAKER_ONLY
+- **realOpenOrdersCount**: 0
+- **DB container sin cambios, restartCount=0, healthy**
+- **Producción no tocada**
+
+### Evidencia y backup
+
+- **Directorio**: `/opt/krakenbot-staging-backups/grid-rev-c11-purge/20260724T083414Z/`
+- **Backup DB**: `krakenbot-staging-before-cycle-purge.dump` (467,959,204 bytes)
+- **SHA256**: `62847cbdc01476f269ffdd259a6b2370e5e2db1a9908246af2e445cf2bd50424`
+- **pg_restore -l**: validado
+- **CSV ciclos #1–24**: `cycles-1-24.csv`
+- **IDs ciclos #1–24**: `cycles-1-24-ids.txt`
+- **CSV ciclos #25–27**: `cycles-25-27-before.csv`
+- **JSON antes/después**: `cycles/status/audit-before-purge.json` + `*-after-purge.json`
+- **SQL purga**: `purge-cycles-1-24.sql`
+- **Log dry-run**: `purge-dry-run.log`
+- **Log purga real**: `purge-real.log`
+
+### Logs post-purga
+
+- No FK violations, no TypeError, no ReferenceError, no restart loops
+- No REAL mode, no fallback taker, no destructive recovery
+- App funcionando normalmente (TIME_STOP_DEFERRED, SCAN_DISPATCH, SMART_EXIT)
+
+### Aclaración sobre "17/17 tasks done"
+
+- **"17/17 tasks done" se refiere exclusivamente al subprocedimiento de deploy y purga.**
+- **No significa que GRID REV-C11 esté cerrado.**
+- **Faltan validación visual responsive, Console y Network.**
+- **DONE solo podrá cambiar a TRUE después de esas validaciones y del cierre documental final.**

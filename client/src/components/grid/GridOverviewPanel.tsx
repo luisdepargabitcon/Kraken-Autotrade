@@ -1,7 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Info, CheckCircle2, AlertCircle, Clock, TrendingUp, Wallet, Layers } from "lucide-react";
+import { Info, CheckCircle2, AlertCircle, Clock, TrendingUp, Wallet, Layers, Target } from "lucide-react";
 
 interface GridOverviewPanelProps {
   operational?: any;
@@ -24,6 +25,11 @@ export function GridOverviewPanel({ operational, onGoToTab }: GridOverviewPanelP
   const capital = operational?.capital ?? {};
   const openCycles = (operational?.openCycles ?? []) as any[];
   const range = operational?.currentRange ?? {};
+  const market = operational?.market ?? {};
+  const entryRange = market.entryRange ?? {};
+  const actualLevels = entryRange.actualLevels ?? null;
+  const requestedLevels = entryRange.requestedLevels ?? null;
+  const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
 
   const stateColor = (overview.hasActiveRange || openCycles.length > 0)
     ? "text-cyan-400 bg-cyan-500/10 border-cyan-500/20"
@@ -50,9 +56,29 @@ export function GridOverviewPanel({ operational, onGoToTab }: GridOverviewPanelP
           <div className="flex items-center justify-between text-sm text-muted-foreground">
             <span className="flex items-center gap-2">
               <Clock className="h-4 w-4" />
-              {overview.nextAction || "—"}
+              {overview.nextAction || "No hay acciones pendientes"}
             </span>
           </div>
+
+          {/* Level count summary */}
+          {levelsMismatch && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-amber-400">
+                  {actualLevels} niveles activos en lugar de {requestedLevels} solicitados
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  El rango efectivo no permite más niveles rentables con la configuración actual.
+                </p>
+                {onGoToTab && (
+                  <Button size="sm" variant="outline" className="text-xs h-7 mt-1" onClick={() => onGoToTab("mercado")}>
+                    Ver diagnóstico en Mercado
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -109,7 +135,14 @@ export function GridOverviewPanel({ operational, onGoToTab }: GridOverviewPanelP
         <CardContent className="space-y-3">
           {range.exists ? (
             <div className="rounded-lg border border-green-500/20 bg-green-500/10 p-3">
-              <p className="text-sm font-medium text-green-400">Rango activo</p>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-green-400">Rango activo</p>
+                {actualLevels != null && (
+                  <Badge variant="outline" className="text-xs">
+                    {actualLevels} niveles
+                  </Badge>
+                )}
+              </div>
               <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground mt-2">
                 <span>Inferior: <span className="font-mono text-foreground">{fmtPrice(range.lowerPrice)}</span></span>
                 <span>Centro: <span className="font-mono text-foreground">{fmtPrice(range.centerPrice)}</span></span>
@@ -118,7 +151,7 @@ export function GridOverviewPanel({ operational, onGoToTab }: GridOverviewPanelP
             </div>
           ) : (
             <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
-              <p className="text-sm font-medium text-amber-400">{range.message || "No hay un rango nuevo de compras activo."}</p>
+              <p className="text-sm font-medium text-amber-400">{range.message || "No hay un rango de compras activo ahora"}</p>
               {range.subtitle && (
                 <p className="text-xs text-muted-foreground mt-1">{range.subtitle}</p>
               )}

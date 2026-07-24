@@ -928,6 +928,70 @@ function eventMeta(eventType: string, ev: any) {
         consequence: "El ciclo no se cerrará solo hasta que se revise.",
         action: "Revisa el ciclo y su rango de origen.",
       };
+    case "GRID_CYCLE_STOP_LOSS_HIT":
+      return {
+        title: "Stop-loss activado",
+        shortText: `Ciclo #${ev?.cycleNumber ?? "?"} activó stop-loss.`,
+        explanation: "El precio cayó por debajo del umbral de stop-loss configurado para el ciclo.",
+        consequence: "El ciclo entra en recuperación HODL o se cierra según la configuración.",
+        action: "Revisa el ciclo y la configuración de stop-loss.",
+      };
+    case "GRID_CYCLE_HODL_RECOVERY":
+      return {
+        title: "Recuperación HODL activada",
+        shortText: `Ciclo #${ev?.cycleNumber ?? "?"} entró en recuperación HODL.`,
+        explanation: "Tras un stop-loss suave, el ciclo busca recuperar el capital en break-even.",
+        consequence: "El ciclo no se cerrará hasta que el precio vuelva al punto de equilibrio.",
+        action: "Monitorea el precio para verificar la recuperación.",
+      };
+    case "GRID_TRAILING_ACTIVATED":
+      return {
+        title: "Trailing stop activado",
+        shortText: `Ciclo #${ev?.cycleNumber ?? "?"} activó trailing stop.`,
+        explanation: "El ciclo alcanzó el beneficio objetivo y activó un trailing stop para maximizar ganancias.",
+        consequence: "El ciclo se cerrará si el precio retrocede desde el máximo.",
+        action: "Monitorea el precio para verificar el cierre.",
+      };
+    case "GRID_RISK_STATE_REVIEW_REQUIRED":
+      return {
+        title: "Estado de riesgo requiere revisión",
+        shortText: "El estado de riesgo de un ciclo no pudo validarse.",
+        explanation: "Los datos de riesgo almacenados no superaron la validación.",
+        consequence: "El ciclo puede no aplicar correctamente las reglas de trailing o stop-loss.",
+        action: "Revisa el ciclo y su estado de riesgo.",
+      };
+    case "GRID_TARGET_CALCULATION_REVIEW_REQUIRED":
+      return {
+        title: "Cálculo de target requiere revisión",
+        shortText: "El cálculo de target de venta no pudo validarse.",
+        explanation: "Los datos de target almacenados no superaron la validación.",
+        consequence: "El ciclo puede no tener un target de venta válido.",
+        action: "Revisa el ciclo y su cálculo de target.",
+      };
+    case "GRID_MAKER_EXIT_STATE_REVIEW_REQUIRED":
+      return {
+        title: "Estado maker requiere revisión",
+        shortText: "El estado de salida maker no pudo validarse.",
+        explanation: "Los datos de salida maker almacenados no superaron la validación.",
+        consequence: "El ciclo puede no ejecutar correctamente la salida maker.",
+        action: "Revisa el ciclo y su estado maker.",
+      };
+    case "GRID_BACKTEST_STARTED":
+      return {
+        title: "Backtest iniciado",
+        shortText: "Se inició un backtest del Grid.",
+        explanation: "El motor está evaluando la configuración con datos históricos.",
+        consequence: "Sin impacto en operaciones en curso.",
+        action: "Espera a que termine el backtest.",
+      };
+    case "GRID_BACKTEST_COMPLETED":
+      return {
+        title: "Backtest completado",
+        shortText: "El backtest del Grid terminó.",
+        explanation: "El motor terminó la evaluación con datos históricos.",
+        consequence: "Sin impacto en operaciones en curso.",
+        action: "Revisa los resultados del backtest.",
+      };
     default:
       return {
         title: eventType,

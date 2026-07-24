@@ -1,6 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, AlertTriangle, Layers, TrendingUp, Wallet } from "lucide-react";
+import { Activity, AlertTriangle, Layers, TrendingUp, Wallet, Target } from "lucide-react";
 
 interface GridOperationalHeaderProps {
   operational?: any;
@@ -75,24 +75,34 @@ export function GridOperationalHeader({ operational }: GridOperationalHeaderProp
           </div>
 
           {/* Bottom row: metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 md:gap-3">
             <div className="rounded-lg border border-border/40 p-2 md:p-3">
               <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Par</p>
               <p className="text-sm md:text-base font-semibold font-mono truncate">
                 {header.pair ?? "BTC/USD"}
               </p>
               <p className="text-[10px] text-muted-foreground truncate">
-                {header.priceSource ? `Fuente: ${header.priceSource}` : "—"}
+                {header.priceSource ? `Fuente: ${header.priceSource}` : "Sin fuente"}
               </p>
             </div>
 
             <div className="rounded-lg border border-border/40 p-2 md:p-3">
-              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Precio actual</p>
-              <p className="text-sm md:text-base font-semibold font-mono truncate" title={header.priceSource ? `Fuente: ${header.priceSource}` : undefined}>
-                {fmtPrice(header.currentBid ?? header.currentPrice)}
+              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Precio</p>
+              <p className="text-sm md:text-base font-semibold font-mono truncate">
+                {fmtPrice(header.currentPrice)}
               </p>
               <p className="text-[10px] text-muted-foreground truncate">
                 {header.priceFresh ? "Fresco" : "Desactualizado"}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-border/40 p-2 md:p-3">
+              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Bid / Ask</p>
+              <p className="text-sm md:text-base font-semibold font-mono truncate">
+                {fmtPrice(header.currentBid)} / {fmtPrice(header.currentAsk)}
+              </p>
+              <p className="text-[10px] text-muted-foreground truncate">
+                Mejor compra / venta
               </p>
             </div>
 
@@ -118,7 +128,7 @@ export function GridOperationalHeader({ operational }: GridOperationalHeaderProp
             </div>
 
             <div className="rounded-lg border border-border/40 p-2 md:p-3">
-              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Beneficio estimado abierto</p>
+              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Beneficio estimado</p>
               <p className={`text-sm md:text-base font-semibold font-mono truncate ${(header.openEstimatedNetPnlUsd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                 <Wallet className="inline h-3 w-3 mr-1" />
                 {fmtUsd(header.openEstimatedNetPnlUsd)}
@@ -128,12 +138,17 @@ export function GridOperationalHeader({ operational }: GridOperationalHeaderProp
               </p>
             </div>
 
-            <div className="rounded-lg border border-border/40 p-2 md:p-3 md:col-span-5">
-              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Órdenes reales</p>
-              <p className="text-sm md:text-base font-semibold font-mono truncate">
-                {header.realOpenOrdersCount ?? 0}
-              </p>
-              <p className="text-[10px] text-muted-foreground truncate">
+            <div className="rounded-lg border border-border/40 p-2 md:p-3 md:col-span-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Target className="h-3 w-3 text-muted-foreground" />
+                  <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider">Órdenes reales</p>
+                </div>
+                <Badge variant={header.realOpenOrdersCount === 0 ? "secondary" : "default"} className="text-xs">
+                  {header.realOpenOrdersCount ?? 0}
+                </Badge>
+              </div>
+              <p className="text-[10px] text-muted-foreground truncate mt-1">
                 {header.realOpenOrdersCount === 0 ? "Sin exposición real" : "En mercado"}
               </p>
             </div>
