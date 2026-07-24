@@ -101,6 +101,9 @@ export interface MinSpacingInput {
   netProfitTargetPct?: number;
   spreadBufferPct: number;
   safetyBufferPct: number;
+  buyFeePct?: number;
+  sellFeePct?: number;
+  taxReservePct?: number;
 }
 
 export interface MinSpacingResult {
@@ -691,13 +694,17 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
  * IMPORTANT: grossTargetPct already includes feeBuy + feeSell. No double counting.
  */
 export function calculateMinSpacingPctReal(input: MinSpacingInput): MinSpacingResult {
-  const { grossTargetPct, netProfitTargetPct, spreadBufferPct, safetyBufferPct } = input;
+  const { grossTargetPct, netProfitTargetPct, spreadBufferPct, safetyBufferPct, buyFeePct, sellFeePct, taxReservePct } = input;
 
   let computedGrossTargetPct: number;
   if (grossTargetPct !== undefined) {
     computedGrossTargetPct = grossTargetPct;
   } else if (netProfitTargetPct !== undefined) {
-    const breakdown = computeGrossTargetFromNet(netProfitTargetPct);
+    const breakdown = computeGrossTargetFromNet(netProfitTargetPct, {
+      ...(buyFeePct != null && { buyFeePct }),
+      ...(sellFeePct != null && { sellFeePct }),
+      ...(taxReservePct != null && { taxReservePct }),
+    });
     computedGrossTargetPct = breakdown.grossTargetPct;
   } else {
     throw new Error("Either grossTargetPct or netProfitTargetPct must be provided");

@@ -5,7 +5,17 @@
  * Grid "Mercado" tab. It is pure: no DB access, no side effects, no trading logic.
  */
 
-import { type ExecutionPolicy, executionPolicyLabel, TAX_RESERVE_PCT } from "./gridIsolatedTypes";
+import { type ExecutionPolicy, executionPolicyLabel, TAX_RESERVE_PCT, FEE_BUFFER_BUY_PCT, FEE_BUFFER_SELL_PCT } from "./gridIsolatedTypes";
+import { computeGrossTargetFromNet } from "./gridNetCalculator";
+import { calculateMinSpacingPctReal, calculateSpacingPct, countViableLevelsIterative } from "./gridSpacingCalculator";
+import { buildConfigurationRecommendation } from "./gridRecommendationService";
+import type {
+  MarketBand as MarketBandType,
+  OperationalRange as OperationalRangeType,
+  ActiveRangeSnapshot as ActiveRangeSnapshotType,
+  CurrentConfigurationProjection as CurrentConfigurationProjectionType,
+  ConfigurationRecommendation as ConfigurationRecommendationType,
+} from "@shared/gridRecommendationHelper";
 
 export type RangeMode = "MANUAL" | "ADAPTIVE" | null;
 
@@ -33,9 +43,17 @@ export interface GridMarketBand {
   upper: number | null;
   widthPct: number | null;
   position: string | null;
-  positionPct: number | null; // clamped 0-100 for UI
+  positionPct: number | null;
   rawPositionPct: number | null;
   atrPct: number | null;
+  period: number | null;
+  stdDevMultiplier: number | null;
+  timeframe: string | null;
+  source: string | null;
+  calculatedAt: string | null;
+  available: boolean;
+  internallyConsistent: boolean;
+  inconsistencyReason: string | null;
 }
 
 export interface GridMarketCurrent {
@@ -47,9 +65,15 @@ export interface GridMarketCurrent {
   price: number | null;
   bid: number | null;
   ask: number | null;
+  spreadUsd: number | null;
   spreadPct: number | null;
   regime: GridMarketRegime;
   band: GridMarketBand;
+  marketBand: MarketBandType;
+  operationalRange: OperationalRangeType;
+  activeRangeSnapshot: ActiveRangeSnapshotType;
+  currentConfigurationProjection: CurrentConfigurationProjectionType | null;
+  configurationRecommendation: ConfigurationRecommendationType | null;
 }
 
 export interface LevelDiagnostic {
@@ -153,6 +177,7 @@ export interface GridMarketViewModel {
   entryRange: GridMarketEntryRange;
   exitObligationRanges: GridMarketExitObligationRange[];
   recommendation: GridMarketRecommendation | null;
+  configurationRecommendation: ConfigurationRecommendationType | null;
 }
 
 export interface BuildGridMarketViewModelInput {
@@ -219,11 +244,15 @@ function fmtDateShort(iso: string | null): string {
 
 function translateRegimeCode(code: string | null | undefined): string {
   const c = (code ?? "").toString().toUpperCase().replace(/\s+/g, "_");
-  if (c.includes("LATERAL") || c === "RANGE" || c === "LATERAL" || c === "RANGING") return "RANGE";
+  if (c.includes("LATERAL") || c === "RANGE" || c === "LATERAL" || c === "RANGING" || c === "NORMAL_LATERAL") return "RANGE";
   if (c.includes("TENDENCIA_ALCISTA") || c.includes("ALCISTA") || c.includes("BULLISH")) return "TREND_UP";
   if (c.includes("TENDENCIA_BAJISTA") || c.includes("BAJISTA") || c.includes("BEARISH")) return "TREND_DOWN";
   if (c.includes("TRANSICION") || c === "TRANSITION") return "TRANSITION";
   if (c.includes("PUMP") || c.includes("DUMP") || c.includes("UNSUITABLE")) return "UNSUITABLE";
+  if (c === "LOW_VOLATILITY") return "LOW_VOLATILITY";
+  if (c === "HIGH_VOLATILITY") return "HIGH_VOLATILITY";
+  if (c === "COMPRESSED") return "COMPRESSED";
+  if (c === "MODERATE") return "MODERATE";
   return c || "UNKNOWN";
 }
 
@@ -243,6 +272,14 @@ function regimeLabel(code: string | null): string {
       return "Transición";
     case "UNSUITABLE":
       return "Mercado no apto";
+    case "LOW_VOLATILITY":
+      return "Volatilidad baja";
+    case "HIGH_VOLATILITY":
+      return "Volatilidad alta";
+    case "COMPRESSED":
+      return "Mercado comprimido";
+    case "MODERATE":
+      return "Volatilidad moderada";
     default:
       return "Sin datos suficientes";
   }
@@ -293,27 +330,288 @@ function resolveRegime(
   };
 }
 
+function buildMarketBand(marketContext: any): MarketBandType {
+  const band = marketContext?.band ?? {};
+  const lower = toNum(band.lower);
+  const center = toNum(band.center);
+  const upper = toNum(band.upper);
+  const widthPct = toNum(band.widthPct);
+  const atr = toNum(band.atr ?? marketContext?.atr);
+  const atrPct = toNum(band.atrPct ?? marketContext?.atrPct);
+  const period = toNum(band.period ?? marketContext?.bandPeriod);
+  const stdDevMultiplier = toNum(band.stdDevMultiplier ?? marketContext?.bandStdDevMultiplier);
+  const timeframe = band.timeframe ?? marketContext?.bandTimeframe ?? null;
+  const source = band.source ?? marketContext?.bandSource ?? null;
+  const calculatedAt = toIso(band.calculatedAt ?? marketContext?.bandCalculatedAt);
+
+  const available = lower != null && upper != null && center != null;
+  let internallyConsistent = true;
+  let inconsistencyReason: string | null = null;
+
+  if (available && center > 0) {
+    const calculatedWidth = ((upper! - lower!) / center!) * 100;
+    if (widthPct != null && Math.abs(calculatedWidth - widthPct) > 0.02) {
+      internallyConsistent = false;
+      inconsistencyReason = `Anchura calculada (${calculatedWidth.toFixed(4)}%) no coincide con widthPct reportado (${widthPct.toFixed(4)}%)`;
+    }
+  } else if (!available) {
+    internallyConsistent = false;
+    inconsistencyReason = "Banda incompleta: faltan lower, center o upper";
+  }
+
+  return {
+    available,
+    lower,
+    center,
+    upper,
+    widthPct: available ? (widthPct ?? (((upper! - lower!) / center!) * 100)) : null,
+    atr,
+    atrPct,
+    period,
+    stdDevMultiplier,
+    timeframe,
+    source,
+    calculatedAt,
+    internallyConsistent,
+    inconsistencyReason,
+  };
+}
+
+function buildOperationalRange(
+  resolvedRange: any,
+  adaptiveDecision: any,
+  professionalGenerator: any,
+  status: any,
+): OperationalRangeType {
+  const rangeVersionId = resolvedRange?.activeRangeVersionId ?? status?.activeRangeVersionId ?? null;
+  const lower = toNum(adaptiveDecision?.operationalLower ?? professionalGenerator?.operationalLower ?? resolvedRange?.lowerPrice);
+  const upper = toNum(adaptiveDecision?.operationalUpper ?? professionalGenerator?.operationalUpper ?? resolvedRange?.upperPrice);
+  const center = toNum(adaptiveDecision?.centerPrice ?? professionalGenerator?.centerPrice ?? resolvedRange?.centerPrice);
+  const totalWidthPct = toNum(adaptiveDecision?.finalRangePct ?? professionalGenerator?.operationalBandWidthPct ?? resolvedRange?.widthPct);
+  const semiRangePct = totalWidthPct != null ? totalWidthPct / 2 : null;
+  const spacingPct = toNum(adaptiveDecision?.spacingPct ?? professionalGenerator?.spacingPct);
+  const requestedBuyLevels = toNum(adaptiveDecision?.requestedBuyLevels ?? professionalGenerator?.requestedBuyLevels);
+  const requestedSellLevels = toNum(adaptiveDecision?.requestedSellLevels ?? professionalGenerator?.requestedSellLevels);
+  const generatedBuyLevels = toNum(adaptiveDecision?.buyLevelsWouldFit ?? professionalGenerator?.generatedBuyLevels);
+  const generatedSellLevels = toNum(adaptiveDecision?.sellLevelsWouldFit ?? professionalGenerator?.generatedSellLevels);
+  const regimeMaxPct = toNum(adaptiveDecision?.regimeMaxPct);
+  const source = adaptiveDecision ? "adaptive_decision" : professionalGenerator ? "professional_generator" : resolvedRange ? "resolved_range" : null;
+  const calculatedAt = toIso(resolvedRange?.createdAt ?? status?.lastTickAt);
+
+  const available = lower != null && upper != null;
+
+  return {
+    available,
+    rangeVersionId,
+    lower,
+    center,
+    upper,
+    totalWidthPct,
+    semiRangePct,
+    spacingPct,
+    requestedBuyLevels,
+    requestedSellLevels,
+    generatedBuyLevels,
+    generatedSellLevels,
+    regimeMaxPct,
+    source,
+    calculatedAt,
+  };
+}
+
+function buildActiveRangeSnapshot(
+  resolvedRange: any,
+  adaptiveDecision: any,
+  professionalGenerator: any,
+  status: any,
+  config: any,
+): ActiveRangeSnapshotType {
+  const rangeVersionId = resolvedRange?.activeRangeVersionId ?? status?.activeRangeVersionId ?? null;
+  const lower = toNum(resolvedRange?.lowerPrice);
+  const center = toNum(resolvedRange?.centerPrice);
+  const upper = toNum(resolvedRange?.upperPrice);
+  const totalWidthPct = toNum(resolvedRange?.widthPct);
+  const semiRangePct = totalWidthPct != null ? totalWidthPct / 2 : null;
+  const spacingPct = toNum(adaptiveDecision?.spacingPct ?? professionalGenerator?.spacingPct);
+  const requestedBuyLevels = toNum(adaptiveDecision?.requestedBuyLevels ?? professionalGenerator?.requestedBuyLevels);
+  const requestedSellLevels = toNum(adaptiveDecision?.requestedSellLevels ?? professionalGenerator?.requestedSellLevels);
+  const generatedBuyLevels = toNum(adaptiveDecision?.buyLevelsWouldFit ?? professionalGenerator?.generatedBuyLevels);
+  const generatedSellLevels = toNum(adaptiveDecision?.sellLevelsWouldFit ?? professionalGenerator?.generatedSellLevels);
+  const rangeControlMode = config?.gridRangeControlMode ?? null;
+  const profile = config?.adaptiveRangeProfile ?? null;
+  const regime = resolvedRange?.regime ?? resolvedRange?.method ?? null;
+  const regimeMaxPct = toNum(adaptiveDecision?.regimeMaxPct);
+  const configSnapshot = resolvedRange?.configSnapshot ?? null;
+  const createdAt = toIso(resolvedRange?.createdAt);
+  const source = resolvedRange ? "resolved_range" : null;
+
+  return {
+    rangeVersionId,
+    lower,
+    center,
+    upper,
+    totalWidthPct,
+    semiRangePct,
+    spacingPct,
+    requestedBuyLevels,
+    requestedSellLevels,
+    generatedBuyLevels,
+    generatedSellLevels,
+    rangeControlMode,
+    profile,
+    regime,
+    regimeMaxPct,
+    configSnapshot,
+    createdAt,
+    source,
+  };
+}
+
+function buildCurrentConfigurationProjection(
+  config: any,
+  marketContext: any,
+): CurrentConfigurationProjectionType | null {
+  const price = toNum(marketContext?.currentPrice);
+  const bandLower = toNum(marketContext?.band?.lower);
+  const bandUpper = toNum(marketContext?.band?.upper);
+  const bandWidthPct = toNum(marketContext?.band?.widthPct);
+  const atrPct = toNum(marketContext?.atrPct);
+
+  const netProfitTargetPct = toNum(config?.netProfitTargetPct);
+  const buyFeePct = toNum(config?.buyFeePct) ?? FEE_BUFFER_BUY_PCT;
+  const sellFeePct = toNum(config?.sellFeePct) ?? FEE_BUFFER_SELL_PCT;
+  const taxReservePct = toNum(config?.taxReservePct) ?? TAX_RESERVE_PCT;
+  const gridRangeMaxPct = toNum(config?.gridRangeMaxPct);
+  const enforceCompactRange = config?.enforceCompactRange ?? true;
+  const buyLevels = toNum(config?.buyLevels) ?? 4;
+  const sellLevels = toNum(config?.sellLevels) ?? 4;
+
+  if (price == null || price <= 0 || bandWidthPct == null || bandWidthPct <= 0) {
+    return {
+      currentConfig: {
+        netProfitTargetPct,
+        buyFeePct,
+        sellFeePct,
+        taxReservePct,
+        gridRangeMaxPct,
+        enforceCompactRange,
+        buyLevels,
+        sellLevels,
+      },
+      marketSnapshot: { price, bandLower, bandUpper, bandWidthPct, atrPct },
+      projectedRange: null,
+      projectedSpacing: null,
+      projectedLevels: null,
+    };
+  }
+
+  const effectiveRangePct = enforceCompactRange && gridRangeMaxPct != null
+    ? Math.min(bandWidthPct, gridRangeMaxPct)
+    : bandWidthPct;
+
+  const semiRangePct = effectiveRangePct / 2;
+  const projectedLower = price * (1 - semiRangePct / 100);
+  const projectedUpper = price * (1 + semiRangePct / 100);
+
+  const minSpacingResult = calculateMinSpacingPctReal({
+    netProfitTargetPct: netProfitTargetPct ?? 0.8,
+    spreadBufferPct: 0.01,
+    safetyBufferPct: 0.10,
+    buyFeePct,
+    sellFeePct,
+    taxReservePct,
+  });
+
+  const atrMult = toNum(config?.gridStepAtrMultiplier) ?? 1.5;
+  const stepMax = toNum(config?.gridStepMaxPct) ?? 3.0;
+  const spacingResult = calculateSpacingPct({
+    atrPct: atrPct ?? 0.5,
+    gridStepAtrMultiplier: atrMult,
+    minSpacingPctReal: minSpacingResult.minSpacingPctReal,
+    gridStepMaxPct: stepMax,
+  });
+
+  const viable = countViableLevelsIterative({
+    centerPrice: price,
+    operationalLower: projectedLower,
+    operationalUpper: projectedUpper,
+    spacingPct: spacingResult.spacingPct,
+    configuredBuyLevels: buyLevels,
+    configuredSellLevels: sellLevels,
+  });
+
+  return {
+    currentConfig: {
+      netProfitTargetPct,
+      buyFeePct,
+      sellFeePct,
+      taxReservePct,
+      gridRangeMaxPct,
+      enforceCompactRange,
+      buyLevels,
+      sellLevels,
+    },
+    marketSnapshot: { price, bandLower, bandUpper, bandWidthPct, atrPct },
+    projectedRange: {
+      lower: projectedLower,
+      upper: projectedUpper,
+      totalWidthPct: effectiveRangePct,
+    },
+    projectedSpacing: spacingResult.spacingPct,
+    projectedLevels: viable.totalViableLevels,
+  };
+}
+
+function humanizeRegimeReason(reason: string | null): string | null {
+  if (!reason) return null;
+  const r = reason.toLowerCase();
+  if (r.includes("market_unsuitable") || r.includes("not_suitable")) return "Las condiciones de mercado no son adecuadas para operar el Grid.";
+  if (r.includes("compact") || r.includes("not_viable")) return "El rango calculado es demasiado estrecho para los niveles solicitados.";
+  if (r.includes("adaptive_ok")) return "El motor calculó un rango rentable válido.";
+  if (r.includes("adaptive_not_ok")) return "La configuración actual no permite un rango rentable.";
+  if (r.includes("transition")) return "El mercado está en transición entre regímenes.";
+  if (r.includes("low_volatility")) return "La volatilidad es baja, lo que reduce el número de niveles viables.";
+  if (r.includes("high_volatility")) return "La volatilidad es alta, lo que amplía el rango operativo.";
+  if (r.includes("compressed")) return "El mercado está comprimido, con banda estrecha.";
+  if (r.includes("ranging") || r.includes("lateral")) return "El mercado se mueve en rango lateral.";
+  if (r.includes("trend_up") || r.includes("bullish")) return "El mercado muestra tendencia alcista.";
+  if (r.includes("trend_down") || r.includes("bearish")) return "El mercado muestra tendencia bajista.";
+  if (r.includes("pending")) return "Pendiente de evaluación del motor.";
+  return null;
+}
+
 function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
-  const { marketContext, status } = input;
+  const { marketContext, status, config, resolvedRange, adaptiveDecision, professionalGenerator } = input;
   const currentPrice = toNum(marketContext?.currentPrice ?? status?.currentPrice ?? status?.lastPrice);
   const currentBid = toNum(marketContext?.currentBid ?? marketContext?.bid ?? status?.currentBid);
   const currentAsk = toNum(marketContext?.currentAsk ?? marketContext?.ask ?? status?.currentAsk);
-  const spreadPct = toNum(marketContext?.spreadPct);
   const source = marketContext?.priceSource ?? marketContext?.source ?? status?.priceSource ?? status?.currentPriceSource ?? null;
   const fresh = marketContext?.priceFresh ?? status?.priceFresh ?? false;
   const ageMs = toNum(marketContext?.priceAgeMs ?? status?.priceAgeMs);
   const maxAgeMs = toNum(marketContext?.priceMaxAgeMs ?? status?.priceMaxAgeMs);
   const updatedAt = toIso(marketContext?.updatedAt ?? status?.lastTickAt);
 
-  const bandFromContext = marketContext?.band ?? {};
-  const bandLower = toNum(bandFromContext.lower ?? input.resolvedRange?.lowerPrice);
-  const bandUpper = toNum(bandFromContext.upper ?? input.resolvedRange?.upperPrice);
-  const bandCenter = toNum(bandFromContext.center ?? input.resolvedRange?.centerPrice ??
-    (bandLower != null && bandUpper != null ? (bandLower + bandUpper) / 2 : null));
-  const bandWidthPct = toNum(bandFromContext.widthPct ?? input.resolvedRange?.widthPct ??
-    (bandLower != null && bandUpper != null && bandCenter != null && bandCenter > 0
-      ? ((bandUpper - bandLower) / bandCenter) * 100
-      : null));
+  // Canonical spread calculation
+  let spreadUsd: number | null = null;
+  let spreadPct: number | null = null;
+  if (currentBid != null && currentAsk != null) {
+    spreadUsd = currentAsk - currentBid;
+    if (currentBid > 0) {
+      spreadPct = (spreadUsd / currentBid) * 100;
+    }
+  }
+  if (spreadPct == null) {
+    spreadPct = toNum(marketContext?.spreadPct);
+  }
+
+  // Atomic marketBand — no resolvedRange fallbacks
+  const marketBand = buildMarketBand(marketContext);
+
+  // Use marketBand for band display (no mixing with resolvedRange)
+  const bandLower = marketBand.lower;
+  const bandUpper = marketBand.upper;
+  const bandCenter = marketBand.center;
+  const bandWidthPct = marketBand.widthPct;
 
   let position: string | null = marketContext?.bandPosition ?? "unknown";
   let rawPositionPct: number | null = toNum(marketContext?.bandPositionPct);
@@ -339,6 +637,29 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
 
   const positionPct = clamp01Pct(rawPositionPct);
 
+  // Operational range (separate from market band)
+  const operationalRange = buildOperationalRange(resolvedRange, adaptiveDecision, professionalGenerator, status);
+
+  // Active range snapshot (persisted range data only)
+  const activeRangeSnapshot = buildActiveRangeSnapshot(resolvedRange, adaptiveDecision, professionalGenerator, status, config);
+
+  // Current configuration projection (uses current config + market)
+  const currentConfigurationProjection = buildCurrentConfigurationProjection(config, marketContext);
+
+  // Configuration recommendation from server service
+  const configurationRecommendation = buildConfigurationRecommendation(input);
+
+  // Regime with humanized reason
+  const regime = resolveRegime(
+    marketContext,
+    adaptiveDecision,
+    professionalGenerator,
+    resolvedRange,
+    status,
+    input.lastProfessionalValidationAt
+  );
+  const humanizedReason = humanizeRegimeReason(regime.reason);
+
   return {
     updatedAt,
     fresh,
@@ -348,15 +669,12 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
     price: currentPrice,
     bid: currentBid,
     ask: currentAsk,
+    spreadUsd,
     spreadPct,
-    regime: resolveRegime(
-      marketContext,
-      input.adaptiveDecision,
-      input.professionalGenerator,
-      input.resolvedRange,
-      status,
-      input.lastProfessionalValidationAt
-    ),
+    regime: {
+      ...regime,
+      reason: humanizedReason ?? regime.reason,
+    },
     band: {
       lower: bandLower,
       center: bandCenter,
@@ -365,8 +683,21 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
       position: translateBandPosition(position),
       positionPct,
       rawPositionPct,
-      atrPct: toNum(marketContext?.atrPct ?? status?.bandAtrPct),
+      atrPct: marketBand.atrPct,
+      period: marketBand.period,
+      stdDevMultiplier: marketBand.stdDevMultiplier,
+      timeframe: marketBand.timeframe,
+      source: marketBand.source,
+      calculatedAt: marketBand.calculatedAt,
+      available: marketBand.available,
+      internallyConsistent: marketBand.internallyConsistent,
+      inconsistencyReason: marketBand.inconsistencyReason,
     },
+    marketBand,
+    operationalRange,
+    activeRangeSnapshot,
+    currentConfigurationProjection,
+    configurationRecommendation,
   };
 }
 
@@ -440,15 +771,24 @@ function buildEntryRange(input: BuildGridMarketViewModelInput): GridMarketEntryR
   const netProfitTargetPct = toNum(config?.netProfitTargetPct);
   const buyFeePct = toNum(config?.buyFeePct);
   const sellFeePct = toNum(config?.sellFeePct);
-  const taxReservePct = toNum(TAX_RESERVE_PCT) ?? 15;
+  const taxReservePct = toNum(config?.taxReservePct) ?? TAX_RESERVE_PCT;
   const gridRangeMaxPct = toNum(config?.gridRangeMaxPct);
   const enforceCompactRange = config?.enforceCompactRange ?? null;
 
+  // Use canonical function instead of duplicate formula
+  const minSpacingResult = (netProfitTargetPct != null)
+    ? calculateMinSpacingPctReal({
+        netProfitTargetPct,
+        spreadBufferPct: 0.01,
+        safetyBufferPct: 0.10,
+        buyFeePct: buyFeePct ?? undefined,
+        sellFeePct: sellFeePct ?? undefined,
+        taxReservePct: taxReservePct ?? undefined,
+      })
+    : null;
   const minimumProfitableSpacingPct = toNum(
     adaptiveDecision?.minSpacingPctReal ?? professionalGenerator?.minSpacingPctReal
-  ) ?? (netProfitTargetPct != null && buyFeePct != null && sellFeePct != null
-    ? netProfitTargetPct + buyFeePct + sellFeePct + (netProfitTargetPct * (taxReservePct ?? 15) / 100)
-    : null);
+  ) ?? minSpacingResult?.minSpacingPctReal ?? null;
 
   const bandWidthPct = toNum(marketContext?.band?.widthPct ?? calculatedWidthPct);
   const operationalRangeMaxPct = gridRangeMaxPct;
@@ -456,10 +796,33 @@ function buildEntryRange(input: BuildGridMarketViewModelInput): GridMarketEntryR
     ? Math.min(bandWidthPct, operationalRangeMaxPct)
     : bandWidthPct ?? calculatedWidthPct;
 
-  const maxLevelsPerSide = effectiveRangePct != null && minimumProfitableSpacingPct != null && minimumProfitableSpacingPct > 0
-    ? Math.floor(effectiveRangePct / minimumProfitableSpacingPct)
-    : null;
-  const maxTotalLevels = maxLevelsPerSide != null ? maxLevelsPerSide * 2 : null;
+  // Use iterative level counting instead of Math.floor
+  const centerForCount = calculatedCenter ?? toNum(marketContext?.currentPrice);
+  const lowerForCount = calculatedLower;
+  const upperForCount = calculatedUpper;
+  const spacingForCount = toNum(adaptiveDecision?.spacingPct ?? professionalGenerator?.spacingPct) ?? minimumProfitableSpacingPct;
+  const cfgBuy = toNum(config?.buyLevels) ?? 4;
+  const cfgSell = toNum(config?.sellLevels) ?? 4;
+
+  let maxLevelsPerSide: number | null = null;
+  let maxTotalLevels: number | null = null;
+  if (centerForCount != null && centerForCount > 0 && lowerForCount != null && upperForCount != null && spacingForCount != null && spacingForCount > 0) {
+    const viable = countViableLevelsIterative({
+      centerPrice: centerForCount,
+      operationalLower: lowerForCount,
+      operationalUpper: upperForCount,
+      spacingPct: spacingForCount,
+      configuredBuyLevels: cfgBuy,
+      configuredSellLevels: cfgSell,
+    });
+    maxLevelsPerSide = Math.max(viable.maxBuyLevels, viable.maxSellLevels);
+    maxTotalLevels = viable.totalViableLevels;
+  } else if (effectiveRangePct != null && minimumProfitableSpacingPct != null && minimumProfitableSpacingPct > 0) {
+    // Fallback only when we can't do iterative (missing prices)
+    const semiRange = effectiveRangePct / 2;
+    maxLevelsPerSide = Math.floor(semiRange / minimumProfitableSpacingPct);
+    maxTotalLevels = maxLevelsPerSide * 2;
+  }
   const requestedPerSide = requestedLevels != null ? Math.ceil(requestedLevels / 2) : null;
 
   const actualLevels = input.levels
@@ -555,7 +918,7 @@ function buildEntryRange(input: BuildGridMarketViewModelInput): GridMarketEntryR
     if (enforceCompactRange && operationalRangeMaxPct != null && operationalRangeMaxPct < bandWidthPct) {
       parts.push(`Con rango compacto activado, el rango operativo se limita a ${operationalRangeMaxPct.toFixed(2)}%.`);
     }
-    parts.push(`La separación mínima rentable es ${minimumProfitableSpacingPct.toFixed(2)}% (${netProfitTargetPct?.toFixed(2)}% beneficio + ${(buyFeePct ?? 0).toFixed(2)}% comisión compra + ${(sellFeePct ?? 0).toFixed(2)}% comisión venta + ${((netProfitTargetPct ?? 0) * (taxReservePct ?? 15) / 100).toFixed(2)}% reserva fiscal).`);
+    parts.push(`La separación mínima rentable es ${minimumProfitableSpacingPct.toFixed(2)}% (calculada con función canónica: gross target + spread buffer + safety buffer).`);
     parts.push(`En ${effectiveRangePct.toFixed(2)}% caben ${maxLevelsPerSide} niveles por lado (${maxLevelsPerSide} BUY + ${maxLevelsPerSide} SELL = ${maxLevelsPerSide * 2} totales).`);
     if (requestedLevels != null && requestedLevels > maxLevelsPerSide * 2) {
       parts.push(`Se solicitaron ${requestedLevels} niveles pero solo caben ${maxLevelsPerSide * 2}.`);
@@ -777,11 +1140,13 @@ function buildRecommendation(input: BuildGridMarketViewModelInput): GridMarketRe
 }
 
 export function buildGridMarketViewModel(input: BuildGridMarketViewModelInput): GridMarketViewModel {
+  const current = buildCurrent(input);
   return {
     pair: input.pair,
-    current: buildCurrent(input),
+    current,
     entryRange: buildEntryRange(input),
     exitObligationRanges: buildExitObligationRanges(input),
     recommendation: buildRecommendation(input),
+    configurationRecommendation: current.configurationRecommendation,
   };
 }

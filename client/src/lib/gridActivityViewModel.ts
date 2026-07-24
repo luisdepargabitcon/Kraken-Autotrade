@@ -122,7 +122,7 @@ export function toActivityViewModel(
     id: ev?.id ?? 0,
     timestamp: ev?.createdAt ?? "",
     eventType: et,
-    title: ev?.title ?? et.replace(/^GRID_/, "").replace(/_/g, " "),
+    title: ev?.title ?? (et.startsWith("GRID_") ? et.replace(/^GRID_/, "").replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : et),
     message: msg,
     category: categoryFromEventType(et),
     severity: severityFromEventType(et),

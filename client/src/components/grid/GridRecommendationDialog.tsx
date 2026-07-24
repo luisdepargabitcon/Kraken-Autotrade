@@ -12,27 +12,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { AlertCircle, CheckCircle2, ArrowRight, Lightbulb } from "lucide-react";
-
-export interface RecommendationAlt {
-  id: "A" | "B" | "C";
-  label: string;
-  title: string;
-  explanation: string;
-  patch: Record<string, any>;
-  expectedLevels: number;
-  expectedRangePct: number;
-  tradeoff: string;
-}
+import { AlertCircle, CheckCircle2, ArrowRight, Lightbulb, ShieldAlert, Lock } from "lucide-react";
+import type { ConfigurationRecommendation, RecommendationAlternative } from "@shared/gridRecommendationHelper";
 
 interface GridRecommendationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  alternatives: RecommendationAlt[];
-  currentLevels: number | null;
-  requestedLevels: number | null;
-  onApply: (alt: RecommendationAlt) => void;
+  recommendation: ConfigurationRecommendation | null;
+  onApply: (alt: RecommendationAlternative, recommendation: ConfigurationRecommendation) => Promise<void>;
 }
+
+type DialogState = "select" | "confirm" | "applying" | "success" | "error";
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -42,112 +32,219 @@ function fmtPct(v: number | null | undefined): string {
 export function GridRecommendationDialog({
   open,
   onOpenChange,
-  alternatives,
-  currentLevels,
-  requestedLevels,
+  recommendation,
   onApply,
 }: GridRecommendationDialogProps) {
-  const [selected, setSelected] = React.useState<RecommendationAlt | null>(null);
+  const [selected, setSelected] = React.useState<RecommendationAlternative | null>(null);
+  const [state, setState] = React.useState<DialogState>("select");
+  const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (open) setSelected(null);
+    if (open) {
+      setSelected(null);
+      setState("select");
+      setErrorMsg(null);
+    }
   }, [open]);
+
+  const isExpired = React.useMemo(() => {
+    if (!recommendation?.expiresAt) return false;
+    return new Date() > new Date(recommendation.expiresAt);
+  }, [recommendation?.expiresAt]);
+
+  const handleApply = async () => {
+    if (!selected || !recommendation) return;
+    setState("applying");
+    setErrorMsg(null);
+    try {
+      await onApply(selected, recommendation);
+      setState("success");
+    } catch (err: any) {
+      setErrorMsg(err?.message ?? "Error al aplicar la recomendación");
+      setState("error");
+    }
+  };
+
+  if (!recommendation) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Lightbulb className="h-5 w-5 text-primary" />
             Recomendaciones de configuración
           </DialogTitle>
           <DialogDescription>
-            El Grid tiene {currentLevels ?? "—"} niveles activos de {requestedLevels ?? "—"} solicitados.
-            Elige una alternativa para ajustar la configuración. Los cambios no se guardan hasta que pulses "Guardar cambios".
+            {state === "select" && recommendation.explanation}
+            {state === "confirm" && "Confirma que deseas aplicar esta configuración."}
+            {state === "applying" && "Aplicando cambios..."}
+            {state === "success" && "Configuración aplicada correctamente."}
+            {state === "error" && "Error al aplicar la configuración."}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          {alternatives.map((alt) => {
-            const isSelected = selected?.id === alt.id;
-            const isRecommended = alt.id === "C";
-            return (
-              <Card
-                key={alt.id}
-                className={`cursor-pointer transition-all ${
-                  isSelected
-                    ? "border-primary ring-2 ring-primary/20"
-                    : "border-border/50 hover:border-border"
-                }`}
-                onClick={() => setSelected(alt)}
-              >
-                <CardContent className="p-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Badge variant={isRecommended ? "default" : "outline"}>
-                        {alt.id}
-                      </Badge>
-                      <span className="text-sm font-medium">{alt.label}</span>
-                      {isRecommended && (
-                        <Badge variant="secondary" className="text-xs bg-primary/10 text-primary">
-                          Recomendado
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      <span>
-                        Niveles esperados: <span className="font-mono font-semibold text-foreground">{alt.expectedLevels}</span>
-                      </span>
-                      <span>
-                        Rango: <span className="font-mono font-semibold text-foreground">{fmtPct(alt.expectedRangePct)}</span>
-                      </span>
-                    </div>
-                  </div>
+        {recommendation.warnings.length > 0 && state === "select" && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-1">
+            {recommendation.warnings.map((w, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-600 dark:text-amber-400">{w}</p>
+              </div>
+            ))}
+          </div>
+        )}
 
-                  <p className="text-sm font-medium">{alt.title}</p>
-                  <p className="text-sm text-muted-foreground">{alt.explanation}</p>
+        {isExpired && state === "select" && (
+          <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 text-red-400 shrink-0" />
+            <p className="text-xs text-red-600 dark:text-red-400">
+              Esta recomendación ha caducado. Cierra y vuelve a analizar el mercado.
+            </p>
+          </div>
+        )}
 
-                  <div className="flex items-start gap-2 pt-1">
-                    <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
-                    <p className="text-xs text-muted-foreground">{alt.tradeoff}</p>
-                  </div>
-
-                  {isSelected && (
-                    <div className="pt-2 border-t">
-                      <p className="text-xs font-medium mb-1">Cambios que se aplicarán:</p>
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(alt.patch).map(([key, val]) => (
-                          <Badge key={key} variant="outline" className="text-xs font-mono">
-                            {key}: {String(val)}
+        {state === "select" && (
+          <div className="space-y-3">
+            {recommendation.alternatives.map((alt) => {
+              const isSelected = selected?.id === alt.id;
+              const isRecommended = alt.id === recommendation.recommendedAlternativeId;
+              return (
+                <Card
+                  key={alt.id}
+                  className={`cursor-pointer transition-all ${
+                    isSelected ? "border-primary ring-2 ring-primary/20" : "border-border/50 hover:border-border"
+                  } ${!alt.safeToApply ? "opacity-60" : ""}`}
+                  onClick={() => alt.safeToApply && !isExpired && setSelected(alt)}
+                >
+                  <CardContent className="p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={isRecommended ? "default" : "outline"}>{alt.id}</Badge>
+                        {isRecommended && (
+                          <Badge variant="secondary" className="text-xs bg-primary/10 text-primary">Recomendado</Badge>
+                        )}
+                        {!alt.safeToApply && (
+                          <Badge variant="destructive" className="text-xs">
+                            <Lock className="h-3 w-3 mr-1" />Bloqueado
                           </Badge>
-                        ))}
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <span>Niveles: <span className="font-mono font-semibold text-foreground">{alt.expectedAfter.levels}</span></span>
+                        <span>Spacing: <span className="font-mono font-semibold text-foreground">{fmtPct(alt.expectedAfter.spacingPct)}</span></span>
                       </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+                    <p className="text-sm font-medium">{alt.title}</p>
+                    <p className="text-sm text-muted-foreground">{alt.explanation}</p>
+                    {alt.warnings.map((w, i) => (
+                      <div key={i} className="flex items-start gap-2">
+                        <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <p className="text-xs text-muted-foreground">{w}</p>
+                      </div>
+                    ))}
+                    {alt.blockingReason && (
+                      <div className="flex items-start gap-2">
+                        <Lock className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+                        <p className="text-xs text-red-500">{alt.blockingReason}</p>
+                      </div>
+                    )}
+                    {isSelected && (
+                      <div className="pt-2 border-t">
+                        <p className="text-xs font-medium mb-1">Campos a modificar:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {alt.changedFields.map((field) => (
+                            <Badge key={field} variant="outline" className="text-xs font-mono">
+                              {field}: {String(alt.proposedConfig[field])}
+                            </Badge>
+                          ))}
+                        </div>
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          Antes: {alt.expectedBefore.levels} niveles, {fmtPct(alt.expectedBefore.spacingPct)} spacing, {fmtPct(alt.expectedBefore.netProfitPct)} beneficio
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Después: {alt.expectedAfter.levels} niveles, {fmtPct(alt.expectedAfter.spacingPct)} spacing, {fmtPct(alt.expectedAfter.netProfitPct)} beneficio
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+
+        {state === "confirm" && selected && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-amber-400" />
+              <p className="text-sm font-medium text-amber-600 dark:text-amber-400">Confirmación requerida</p>
+            </div>
+            <p className="text-sm text-muted-foreground">Alternativa <strong>{selected.id}</strong>: {selected.title}</p>
+            <div className="flex flex-wrap gap-1">
+              {selected.changedFields.map((field) => (
+                <Badge key={field} variant="outline" className="text-xs font-mono">
+                  {field}: {String(selected.proposedConfig[field])}
+                </Badge>
+              ))}
+            </div>
+            <div className="text-xs text-muted-foreground space-y-1">
+              <p>Niveles: {selected.expectedBefore.levels} → {selected.expectedAfter.levels}</p>
+              <p>Spacing: {fmtPct(selected.expectedBefore.spacingPct)} → {fmtPct(selected.expectedAfter.spacingPct)}</p>
+              <p>Beneficio: {fmtPct(selected.expectedBefore.netProfitPct)} → {fmtPct(selected.expectedAfter.netProfitPct)}</p>
+            </div>
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                El rango vigente no se modificará. Esta configuración se usará en futuros análisis.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {state === "success" && (
+          <div className="flex flex-col items-center justify-center py-8 space-y-3">
+            <CheckCircle2 className="h-12 w-12 text-green-500" />
+            <p className="text-sm font-medium">Configuración aplicada correctamente</p>
+          </div>
+        )}
+
+        {state === "error" && (
+          <div className="flex flex-col items-center justify-center py-8 space-y-3">
+            <AlertCircle className="h-12 w-12 text-red-500" />
+            <p className="text-sm font-medium">Error al aplicar</p>
+            <p className="text-xs text-muted-foreground">{errorMsg}</p>
+          </div>
+        )}
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancelar
-          </Button>
-          <Button
-            disabled={!selected}
-            onClick={() => {
-              if (selected) {
-                onApply(selected);
-                onOpenChange(false);
-              }
-            }}
-          >
-            <CheckCircle2 className="h-4 w-4 mr-2" />
-            Aplicar alternativa {selected?.id ?? ""}
-          </Button>
+          {state === "select" && (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+              <Button disabled={!selected || !selected.safeToApply || isExpired} onClick={() => setState("confirm")}>
+                Revisar alternativa {selected?.id ?? ""}
+              </Button>
+            </>
+          )}
+          {state === "confirm" && (
+            <>
+              <Button variant="outline" onClick={() => setState("select")}>Volver</Button>
+              <Button variant="destructive" disabled={isExpired} onClick={handleApply}>
+                <ShieldAlert className="h-4 w-4 mr-2" />Confirmar y aplicar
+              </Button>
+            </>
+          )}
+          {state === "success" && <Button onClick={() => onOpenChange(false)}>Cerrar</Button>}
+          {state === "error" && (
+            <>
+              <Button variant="outline" onClick={() => setState("select")}>Volver</Button>
+              <Button onClick={() => onOpenChange(false)}>Cerrar</Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
+export type { RecommendationAlternative };

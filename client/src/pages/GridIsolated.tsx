@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/dashboard/Nav";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,8 +14,8 @@ import { GridLevelsCompactPanel } from "@/components/grid/GridLevelsCompactPanel
 import { GridSettingsPanel } from "@/components/grid/GridSettingsPanel";
 import { GridNotificationCenter } from "@/components/grid/GridNotificationCenter";
 import { GridMarketPanel } from "@/components/grid/GridMarketPanel";
-import { GridRecommendationDialog, type RecommendationAlt } from "@/components/grid/GridRecommendationDialog";
-import { buildRecommendationAlternatives, type RecommendationContext } from "@shared/gridRecommendationHelper";
+import { GridRecommendationDialog } from "@/components/grid/GridRecommendationDialog";
+import type { ConfigurationRecommendation, RecommendationAlternative } from "@shared/gridRecommendationHelper";
 
 const API_BASE = "/api/grid-isolated";
 
@@ -57,28 +57,10 @@ export default function GridIsolated() {
 
   const operational = auditData?.operational;
 
-  // Build recommendation alternatives from market data
-  const entryRange = operational?.market?.entryRange ?? {};
-  const currentPrice = operational?.market?.current?.price ?? null;
-  const recContext: RecommendationContext = {
-    bandWidthPct: entryRange.levelDiagnostic?.bandWidthPct ?? null,
-    effectiveRangePct: entryRange.levelDiagnostic?.effectiveRangePct ?? null,
-    minSpacingPct: entryRange.minimumProfitableSpacingPct ?? null,
-    maxLevelsPerSide: entryRange.levelDiagnostic?.maxLevelsPerSide ?? null,
-    requestedLevels: entryRange.requestedLevels ?? null,
-    actualLevels: entryRange.actualLevels ?? null,
-    netProfitTargetPct: entryRange.netProfitTargetPct ?? null,
-    buyFeePct: entryRange.buyFeePct ?? null,
-    sellFeePct: entryRange.sellFeePct ?? null,
-    taxReservePct: entryRange.taxReservePct ?? null,
-    gridRangeMaxPct: entryRange.gridRangeMaxPct ?? null,
-    enforceCompactRange: entryRange.enforceCompactRange ?? null,
-    currentPrice,
-  };
-  const alternatives = useMemo(() => buildRecommendationAlternatives(recContext), [entryRange, currentPrice]);
-  const actualLevels = entryRange.actualLevels ?? null;
-  const requestedLevels = entryRange.requestedLevels ?? null;
-  const showRecButton = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
+  // Use server-provided configurationRecommendation
+  const configurationRecommendation: ConfigurationRecommendation | null =
+    operational?.market?.configurationRecommendation ?? null;
+  const showRecButton = configurationRecommendation != null && configurationRecommendation.alternatives.length > 0;
 
   // ─── Mutations ───────────────────────────────────────────
   const activateMutation = useMutation({
@@ -189,7 +171,7 @@ export default function GridIsolated() {
                     onClick={() => setRecDialogOpen(true)}
                   >
                     <Lightbulb className="h-3 w-3 mr-1" />
-                    Recomendaciones ({alternatives.length})
+                    Recomendaciones ({configurationRecommendation!.alternatives.length})
                   </Button>
                 )}
               </div>
@@ -246,11 +228,24 @@ export default function GridIsolated() {
         <GridRecommendationDialog
           open={recDialogOpen}
           onOpenChange={setRecDialogOpen}
-          alternatives={alternatives}
-          currentLevels={actualLevels}
-          requestedLevels={requestedLevels}
-          onApply={(alt: RecommendationAlt) => {
-            configMutation.mutate(alt.patch);
+          recommendation={configurationRecommendation}
+          onApply={async (alt: RecommendationAlternative, rec: ConfigurationRecommendation) => {
+            const res = await fetch(`${API_BASE}/config/recommendation/apply`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                recommendationId: rec.id,
+                alternativeId: alt.id,
+                snapshotFingerprint: rec.snapshotFingerprint,
+                confirmed: true,
+              }),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              throw new Error(data.reason ?? "Error al aplicar la recomendación");
+            }
+            queryClient.invalidateQueries({ queryKey: ["grid-config"] });
+            queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
           }}
         />
       </div>

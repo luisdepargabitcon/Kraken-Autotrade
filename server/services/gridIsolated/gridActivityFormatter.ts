@@ -475,14 +475,39 @@ const EVENT_MAPPINGS: Record<string, { category: GridCategory; severity: GridSev
       return `Limpieza SHADOW abortada: ${meta.reason ?? "motivo desconocido"}.`;
     },
   },
+  GRID_RECOMMENDATION_APPLIED: {
+    category: "SYSTEM",
+    severity: "INFO",
+    title: "Recomendación aplicada",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `Recomendación aplicada: alternativa ${meta.alternativeId ?? "?"}, campos: ${meta.appliedFields?.join(", ") ?? "?"}.`;
+    },
+  },
+  GRID_SHADOW_OPEN_CYCLE_DIAGNOSE: {
+    category: "SYSTEM",
+    severity: "INFO",
+    title: "Diagnóstico de ciclo abierto",
+    messageFn: (ev) => {
+      const meta = ev.metadataJson || {};
+      return `Diagnóstico de ciclo ${meta.cycleNumber ?? meta.cycleId ?? "?"}: ${meta.wouldCloseNow ? "se cerraría ahora" : "permanece abierto"}.`;
+    },
+  },
 };
+
+function humanizeGridEventType(eventType: string): string {
+  const readable = eventType.replace(/^GRID_/, "").replace(/_/g, " ").toLowerCase();
+  const words = readable.split(" ");
+  const capitalized = words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  return capitalized;
+}
 
 export function formatGridEvent(ev: RawGridEvent): FormattedGridEvent {
   const mapping = EVENT_MAPPINGS[ev.eventType];
   const category = mapping?.category || "SYSTEM";
   const severity = mapping?.severity || "INFO";
-  const title = mapping?.title || ev.eventType;
-  const message = mapping?.messageFn ? mapping.messageFn(ev) : (ev.eventType.startsWith("GRID_") ? `Evento Grid registrado: ${ev.eventType.replace(/^GRID_/, "").replace(/_/g, " ").toLowerCase()}.` : (ev.message || ev.eventType));
+  const title = mapping?.title || (ev.eventType.startsWith("GRID_") ? humanizeGridEventType(ev.eventType) : ev.eventType);
+  const message = mapping?.messageFn ? mapping.messageFn(ev) : (ev.eventType.startsWith("GRID_") ? `Evento Grid: ${humanizeGridEventType(ev.eventType)}.` : (ev.message || ev.eventType));
 
   let details: string | null = null;
   try {

@@ -75,10 +75,16 @@ export interface CyclePnLOptions {
  *
  * where taxReserveFraction = TAX_RESERVE_PCT / 100
  */
-export function computeGrossTargetFromNet(netProfitTargetPct: number): NetTargetBreakdown {
-  const buyFeePct = FEE_BUFFER_BUY_PCT;
-  const sellFeePct = FEE_BUFFER_SELL_PCT;
-  const taxReserveFraction = TAX_RESERVE_PCT / 100;
+export interface GrossTargetOptions {
+  buyFeePct?: number;
+  sellFeePct?: number;
+  taxReservePct?: number;
+}
+
+export function computeGrossTargetFromNet(netProfitTargetPct: number, options?: GrossTargetOptions): NetTargetBreakdown {
+  const buyFeePct = options?.buyFeePct ?? FEE_BUFFER_BUY_PCT;
+  const sellFeePct = options?.sellFeePct ?? FEE_BUFFER_SELL_PCT;
+  const taxReserveFraction = (options?.taxReservePct ?? TAX_RESERVE_PCT) / 100;
 
   // grossTargetPct is the price gap that, after fees and tax, yields netProfitTargetPct
   // netBeforeTax = grossGap - buyFee - sellFee
