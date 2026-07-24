@@ -894,6 +894,14 @@ function groupTitle(severity: OperationalNotification["severity"]): string {
   }
 }
 
+function humanizeGridEventCode(eventType: string): string {
+  if (!eventType) return "Evento desconocido";
+  let s = eventType;
+  if (s.startsWith("GRID_")) s = s.slice(5);
+  s = s.replace(/_/g, " ").toLowerCase();
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function eventMeta(eventType: string, ev: any) {
   switch (eventType) {
     case "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE":
@@ -992,11 +1000,83 @@ function eventMeta(eventType: string, ev: any) {
         consequence: "Sin impacto en operaciones en curso.",
         action: "Revisa los resultados del backtest.",
       };
+    case "GRID_CYCLES_RECOVERED":
+      return {
+        title: "Ciclos históricos recuperados",
+        shortText: "Se recuperaron ciclos de rangos anteriores.",
+        explanation: "El motor detectó y vinculó ciclos abiertos pertenecientes a rangos históricos.",
+        consequence: "Los ciclos recuperados mantienen sus obligaciones de salida originales.",
+        action: "Revisa los ciclos abiertos en la pestaña correspondiente.",
+      };
+    case "GRID_RANGE_ACTIVATED":
+      return {
+        title: "Rango Grid activado",
+        shortText: "Un nuevo rango de operaciones fue activado.",
+        explanation: "El motor activó un rango con niveles de compra y venta calculados.",
+        consequence: "Se generarán nuevas órdenes dentro del rango activado.",
+        action: "Revisa el rango activo en la pestaña Mercado.",
+      };
+    case "GRID_RANGE_PROPOSED":
+      return {
+        title: "Nuevo rango propuesto",
+        shortText: "El motor propuso un nuevo rango de operaciones.",
+        explanation: "Se calculó un rango candidato pero aún no ha sido activado.",
+        consequence: "Sin impacto hasta que el rango sea activado.",
+        action: "Revisa la propuesta en el diagnóstico de mercado.",
+      };
+    case "GRID_PROFESSIONAL_GENERATOR_USED":
+      return {
+        title: "Generador profesional utilizado",
+        shortText: "El generador profesional calculó el rango operativo.",
+        explanation: "Se utilizó el generador profesional para determinar límites y niveles del rango.",
+        consequence: "El rango activo refleja los parámetros calculados por el generador.",
+        action: "Revisa los detalles del rango en Mercado.",
+      };
+    case "GRID_SHADOW_EXECUTION_PRICE":
+      return {
+        title: "Precio de ejecución simulado",
+        shortText: `Precio simulado: ${ev?.price ?? "?"}`,
+        explanation: "Se registró un precio de ejecución en modo SHADOW.",
+        consequence: "Sin impacto en operaciones reales.",
+        action: "Revisa el historial de ejecuciones simuladas.",
+      };
+    case "GRID_SHADOW_RANGE_REUSED":
+      return {
+        title: "Rango vigente reutilizado",
+        shortText: "El motor reutilizó el rango activo existente.",
+        explanation: "Las condiciones de mercado permitieron reutilizar el rango actual sin generar uno nuevo.",
+        consequence: "Se mantienen los niveles y ciclos del rango actual.",
+        action: "Sin acción requerida.",
+      };
+    case "GRID_SHADOW_NO_VIABLE_RANGE":
+      return {
+        title: "No se encontró un rango viable",
+        shortText: "El motor no pudo encontrar un rango rentable en las condiciones actuales.",
+        explanation: "Las condiciones de mercado o la configuración no permiten construir un rango rentable.",
+        consequence: "No se generarán nuevas compras hasta que cambien las condiciones.",
+        action: "Revisa el objetivo neto o amplía el rango máximo.",
+      };
+    case "GRID_RECOMMENDATION_APPLIED":
+      return {
+        title: "Configuración recomendada aplicada",
+        shortText: "Se aplicó una recomendación de configuración.",
+        explanation: "Un usuario aplicó cambios de configuración sugeridos por el sistema de recomendaciones.",
+        consequence: "La configuración se actualizará para futuros análisis y generación de rangos.",
+        action: "Revisa los cambios en la pestaña Ajustes.",
+      };
+    case "GRID_PRICE_STALE":
+      return {
+        title: "Precio desactualizado",
+        shortText: "El precio de mercado no se ha actualizado recientemente.",
+        explanation: "Los datos de precio pueden no reflejar las condiciones actuales del mercado.",
+        consequence: "El motor puede pausar la generación de nuevas órdenes.",
+        action: "Verifica la conexión con el exchange.",
+      };
     default:
       return {
-        title: eventType,
-        shortText: ev?.message || "Evento del motor Grid.",
-        explanation: "Evento interno del motor.",
+        title: "Evento técnico del Grid",
+        shortText: "Se registró un evento interno. Consulta el detalle técnico.",
+        explanation: "Evento interno del motor Grid.",
         consequence: "Sin acción requerida salvo indicación contraria.",
         action: "Consulta el detalle técnico si es necesario.",
       };

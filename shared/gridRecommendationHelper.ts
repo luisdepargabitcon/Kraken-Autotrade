@@ -38,6 +38,9 @@ export interface ConfigurationRecommendation {
   generatedAt: string;
   expiresAt: string;
   snapshotFingerprint: string;
+  configFingerprint: string;
+  marketFingerprint: string;
+  referencePrice: number | null;
   fresh: boolean;
   confidence: number;
   title: string;

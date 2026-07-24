@@ -152,8 +152,14 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             <Metric label="Ask" value={fmtPrice(current.ask)} sub="Mejor venta" />
             <Metric
               label="Spread"
-              value={fmtPct(current.spreadPct)}
-              sub="Diferencia Bid-Ask"
+              value={(current.spreadUsd != null
+                ? `$${current.spreadUsd.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : (current.bid != null && current.ask != null
+                  ? `$${(current.ask - current.bid).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : "—"))}
+              sub={current.spreadPct != null
+                ? `${current.spreadPct.toLocaleString("es-ES", { minimumFractionDigits: current.spreadPct < 0.01 ? 5 : 4, maximumFractionDigits: current.spreadPct < 0.01 ? 5 : 4 })}%`
+                : undefined}
             />
           </div>
 
@@ -169,11 +175,11 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
           </div>
 
           {/* Bollinger Band */}
-          {current.band?.lower != null && current.band?.upper != null && (
+          {current.band?.lower != null && current.band?.upper != null ? (
             <div className="rounded-lg border border-border/40 p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                  Banda de Bollinger (20, 2)
+                  Banda de Bollinger ({current.band?.period ?? 20}, {current.band?.stdDevMultiplier ?? 2})
                 </span>
                 <span className="text-xs font-medium">
                   Posición: {current.band.positionPct != null ? `${Math.round(current.band.positionPct)}%` : "—"}
@@ -193,9 +199,26 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
                   Posición: <span className="capitalize">{current.band.position ?? "desconocida"}</span>
                 </span>
                 <span className="text-muted-foreground">
-                  ATR: {fmtPct(current.band?.atrPct)}
+                  ATR: {fmtPct(current.band?.atrPct)}{current.band?.atr != null ? ` ($${current.band.atr.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : ""}
                 </span>
               </div>
+              {(current.band?.timeframe || current.band?.source) && (
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Timeframe: {current.band?.timeframe ?? "—"}</span>
+                  <span>Fuente: {current.band?.source ?? "—"}</span>
+                  {current.band?.calculatedAt && <span>Calculada: {fmtDateShort(current.band.calculatedAt)}</span>}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+              <p className="text-sm text-amber-400 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4" />
+                Banda no disponible
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                No hay datos suficientes de Bollinger para mostrar la banda de mercado actual.
+              </p>
             </div>
           )}
 
@@ -205,6 +228,29 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
               {current.regime.reason}
             </p>
+          )}
+
+          {/* Regime technical details (collapsible) */}
+          {current.regime?.code && (
+            <Collapsible>
+              <CollapsibleTrigger asChild>
+                <button className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                  <Info className="h-3 w-3" />
+                  Detalles técnicos del régimen
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="rounded-lg border border-border/40 p-3 mt-2 space-y-2 text-xs">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <Metric label="Código" value={current.regime.code ?? "—"} />
+                    <Metric label="Dirección" value={current.regime.direction ?? "—"} />
+                    <Metric label="Confianza" value={current.regime.confidencePct != null ? `${current.regime.confidencePct.toFixed(1)}%` : "—"} />
+                    <Metric label="Actualizado" value={fmtDateShort(current.regime.updatedAt)} />
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           )}
         </CardContent>
       </Card>

@@ -118,6 +118,7 @@ describe("calculateMinSpacingPctReal — extended with optional fees/tax", () =>
 
 describe("buildConfigurationRecommendation", () => {
   function makeInput(overrides: any = {}) {
+    const { config: cfgOv = {}, marketContext: mktOv = {}, resolvedRange: rngOv = {}, ...rest } = overrides;
     return {
       mode: "SHADOW",
       pair: "BTC/USD",
@@ -126,13 +127,13 @@ describe("buildConfigurationRecommendation", () => {
         buyFeePct: 0.09,
         sellFeePct: 0.09,
         taxReservePct: 20,
-        gridRangeMaxPct: 2.5,
+        gridRangeMaxPct: 5.0,
         enforceCompactRange: true,
         buyLevels: 4,
         sellLevels: 4,
         gridStepAtrMultiplier: 1.5,
         gridStepMaxPct: 3.0,
-        ...overrides.config,
+        ...cfgOv,
       },
       marketContext: {
         currentPrice: 95000,
@@ -141,9 +142,11 @@ describe("buildConfigurationRecommendation", () => {
           center: 95000,
           upper: 97000,
           widthPct: 4.0,
+          source: "bollinger",
         },
         atrPct: 0.5,
-        ...overrides.marketContext,
+        regime: "normal",
+        ...mktOv,
       },
       resolvedRange: {
         activeRangeVersionId: "range-v1",
@@ -152,13 +155,13 @@ describe("buildConfigurationRecommendation", () => {
         upperPrice: 97000,
         widthPct: 4.0,
         configSnapshot: { netProfitTargetPct: 0.8 },
-        ...overrides.resolvedRange,
+        ...rngOv,
       },
       adaptiveDecision: null,
       professionalGenerator: null,
       levels: [],
       status: { activeRangeVersionId: "range-v1" },
-      ...overrides,
+      ...rest,
     };
   }
 
@@ -221,31 +224,36 @@ describe("buildConfigurationRecommendation", () => {
   it("tiene id, generatedAt y expiresAt", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
-    expect(r!.id).toMatch(/^rec-\d+-BTC\/USD$/);
+    expect(r!.id).toMatch(/^rec-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-BTC\/USD$/);
     expect(r!.generatedAt).toBeTruthy();
     expect(r!.expiresAt).toBeTruthy();
   });
 
-  it("tiene snapshotFingerprint único", () => {
+  it("tiene configFingerprint y marketFingerprint separados", () => {
     const r1 = buildConfigurationRecommendation(makeInput({ levels: [] }));
     const r2 = buildConfigurationRecommendation(makeInput({ levels: [], config: { netProfitTargetPct: 1.0 } }));
     expect(r1).not.toBeNull();
     expect(r2).not.toBeNull();
-    expect(r1!.snapshotFingerprint).not.toBe(r2!.snapshotFingerprint);
+    expect(r1!.configFingerprint).not.toBe(r2!.configFingerprint);
+    expect(r1!.marketFingerprint).toBe(r2!.marketFingerprint);
   });
 
-  it("retorna null cuando currentPrice es 0", () => {
+  it("retorna recomendación bloqueada cuando currentPrice es 0", () => {
     const r = buildConfigurationRecommendation(makeInput({
       marketContext: { currentPrice: 0, band: { lower: 1, center: 1, upper: 1, widthPct: 4 } },
     }));
-    expect(r).toBeNull();
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.blockingReason).toBeTruthy();
   });
 
-  it("retorna null cuando bandWidthPct es 0", () => {
+  it("retorna recomendación bloqueada cuando bandWidthPct es 0", () => {
     const r = buildConfigurationRecommendation(makeInput({
       marketContext: { currentPrice: 95000, band: { lower: 95000, center: 95000, upper: 95000, widthPct: 0 } },
     }));
-    expect(r).toBeNull();
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.blockingReason).toBeTruthy();
   });
 
   it("warnings incluye mensaje sobre rango vigente", () => {
@@ -284,7 +292,7 @@ describe("validateApplyPayload", () => {
         buyFeePct: 0.09,
         sellFeePct: 0.09,
         taxReservePct: 20,
-        gridRangeMaxPct: 2.5,
+        gridRangeMaxPct: 5.0,
         enforceCompactRange: true,
         buyLevels: 4,
         sellLevels: 4,
@@ -293,8 +301,9 @@ describe("validateApplyPayload", () => {
       },
       marketContext: {
         currentPrice: 95000,
-        band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.0 },
+        band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.0, source: "bollinger" },
         atrPct: 0.5,
+        regime: "normal",
       },
       resolvedRange: {
         activeRangeVersionId: "range-v1",
@@ -319,7 +328,6 @@ describe("validateApplyPayload", () => {
     const r = validateApplyPayload({
       recommendationId: rec.id,
       alternativeId: "A",
-      snapshotFingerprint: rec.snapshotFingerprint,
       confirmed: true,
     }, rec, "OFF");
     expect(r.valid).toBe(false);
@@ -331,7 +339,6 @@ describe("validateApplyPayload", () => {
     const r = validateApplyPayload({
       recommendationId: rec.id,
       alternativeId: "A",
-      snapshotFingerprint: rec.snapshotFingerprint,
       confirmed: false,
     }, rec, "SHADOW");
     expect(r.valid).toBe(false);
@@ -343,23 +350,22 @@ describe("validateApplyPayload", () => {
     const r = validateApplyPayload({
       recommendationId: "wrong-id",
       alternativeId: "A",
-      snapshotFingerprint: rec.snapshotFingerprint,
       confirmed: true,
     }, rec, "SHADOW");
     expect(r.valid).toBe(false);
     expect(r.reason).toContain("recommendationId");
   });
 
-  it("rechaza si snapshotFingerprint no coincide", () => {
+  it("aprueba con payload válido sin snapshotFingerprint del cliente", () => {
     const rec = makeRec();
+    const safeAlt = rec.alternatives.find(a => a.safeToApply);
+    expect(safeAlt).toBeDefined();
     const r = validateApplyPayload({
       recommendationId: rec.id,
-      alternativeId: "A",
-      snapshotFingerprint: "wrong-fingerprint",
+      alternativeId: safeAlt!.id,
       confirmed: true,
     }, rec, "SHADOW");
-    expect(r.valid).toBe(false);
-    expect(r.reason).toContain("Fingerprint");
+    expect(r.valid).toBe(true);
   });
 
   it("rechaza si alternativeId no existe", () => {
@@ -367,7 +373,6 @@ describe("validateApplyPayload", () => {
     const r = validateApplyPayload({
       recommendationId: rec.id,
       alternativeId: "Z",
-      snapshotFingerprint: rec.snapshotFingerprint,
       confirmed: true,
     }, rec, "SHADOW");
     expect(r.valid).toBe(false);
@@ -376,17 +381,14 @@ describe("validateApplyPayload", () => {
 
   it("rechaza si la alternativa no es safeToApply", () => {
     const rec = makeRec();
-    // Find a non-safe alternative or mock one
     const alt = rec.alternatives.find(a => !a.safeToApply);
     if (!alt) {
-      // If all are safe, test passes vacuously
       expect(true).toBe(true);
       return;
     }
     const r = validateApplyPayload({
       recommendationId: rec.id,
       alternativeId: alt.id,
-      snapshotFingerprint: rec.snapshotFingerprint,
       confirmed: true,
     }, rec, "SHADOW");
     expect(r.valid).toBe(false);
@@ -394,10 +396,11 @@ describe("validateApplyPayload", () => {
 
   it("aprueba con payload válido para alternativa A", () => {
     const rec = makeRec();
+    const safeAlt = rec.alternatives.find(a => a.safeToApply);
+    expect(safeAlt).toBeDefined();
     const r = validateApplyPayload({
       recommendationId: rec.id,
-      alternativeId: "A",
-      snapshotFingerprint: rec.snapshotFingerprint,
+      alternativeId: safeAlt!.id,
       confirmed: true,
     }, rec, "SHADOW");
     expect(r.valid).toBe(true);
@@ -406,7 +409,6 @@ describe("validateApplyPayload", () => {
 
   it("rechaza si la recomendación ha caducado", () => {
     const rec = makeRec();
-    // Manually expire the recommendation
     const expired = {
       ...rec,
       expiresAt: new Date(Date.now() - 10000).toISOString(),
@@ -414,7 +416,6 @@ describe("validateApplyPayload", () => {
     const r = validateApplyPayload({
       recommendationId: expired.id,
       alternativeId: "A",
-      snapshotFingerprint: expired.snapshotFingerprint,
       confirmed: true,
     }, expired, "SHADOW");
     expect(r.valid).toBe(false);

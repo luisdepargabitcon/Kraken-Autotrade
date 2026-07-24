@@ -20,6 +20,7 @@ interface GridRecommendationDialogProps {
   onOpenChange: (open: boolean) => void;
   recommendation: ConfigurationRecommendation | null;
   onApply: (alt: RecommendationAlternative, recommendation: ConfigurationRecommendation) => Promise<void>;
+  onConfigureManually?: () => void;
 }
 
 type DialogState = "select" | "confirm" | "applying" | "success" | "error";
@@ -34,6 +35,7 @@ export function GridRecommendationDialog({
   onOpenChange,
   recommendation,
   onApply,
+  onConfigureManually,
 }: GridRecommendationDialogProps) {
   const [selected, setSelected] = React.useState<RecommendationAlternative | null>(null);
   const [state, setState] = React.useState<DialogState>("select");
@@ -221,12 +223,17 @@ export function GridRecommendationDialog({
           {state === "select" && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+              {onConfigureManually && (
+                <Button variant="ghost" onClick={() => { onOpenChange(false); onConfigureManually(); }}>
+                  Configurar manualmente
+                </Button>
+              )}
               <Button disabled={!selected || !selected.safeToApply || isExpired} onClick={() => setState("confirm")}>
                 Revisar alternativa {selected?.id ?? ""}
               </Button>
             </>
           )}
-          {state === "confirm" && (
+          {state === "confirm" && selected && (
             <>
               <Button variant="outline" onClick={() => setState("select")}>Volver</Button>
               <Button variant="destructive" disabled={isExpired} onClick={handleApply}>

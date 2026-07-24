@@ -24,6 +24,7 @@ export default function GridIsolated() {
   const refreshAudit = () => queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
   const [activeTab, setActiveTab] = useState("resumen");
   const [recDialogOpen, setRecDialogOpen] = useState(false);
+  const [highlightedSettings, setHighlightedSettings] = useState<string[]>([]);
 
   // ─── Queries ─────────────────────────────────────────────
   const { data: config, isLoading: configLoading } = useQuery({
@@ -193,6 +194,15 @@ export default function GridIsolated() {
             <GridOverviewPanel
               operational={operational}
               onGoToTab={(tab) => setActiveTab(tab)}
+              onReviewProposal={() => setRecDialogOpen(true)}
+              onConfigureManually={() => {
+                const rec = configurationRecommendation;
+                if (rec) {
+                  const alt = rec.alternatives.find(a => a.id === rec.recommendedAlternativeId);
+                  setHighlightedSettings(alt?.changedFields ?? []);
+                }
+                setActiveTab("ajustes");
+              }}
             />
             <GridNotificationCenter operational={operational} />
           </TabsContent>
@@ -220,6 +230,7 @@ export default function GridIsolated() {
               operational={operational}
               onApply={(updates) => configMutation.mutate(updates)}
               applyPending={configMutation.isPending}
+              highlightedSettings={highlightedSettings}
             />
           </TabsContent>
         </Tabs>
@@ -229,6 +240,15 @@ export default function GridIsolated() {
           open={recDialogOpen}
           onOpenChange={setRecDialogOpen}
           recommendation={configurationRecommendation}
+          onConfigureManually={() => {
+            setRecDialogOpen(false);
+            const rec = configurationRecommendation;
+            if (rec) {
+              const alt = rec.alternatives.find(a => a.id === rec.recommendedAlternativeId);
+              setHighlightedSettings(alt?.changedFields ?? []);
+            }
+            setActiveTab("ajustes");
+          }}
           onApply={async (alt: RecommendationAlternative, rec: ConfigurationRecommendation) => {
             const res = await fetch(`${API_BASE}/config/recommendation/apply`, {
               method: "POST",
@@ -236,7 +256,6 @@ export default function GridIsolated() {
               body: JSON.stringify({
                 recommendationId: rec.id,
                 alternativeId: alt.id,
-                snapshotFingerprint: rec.snapshotFingerprint,
                 confirmed: true,
               }),
             });

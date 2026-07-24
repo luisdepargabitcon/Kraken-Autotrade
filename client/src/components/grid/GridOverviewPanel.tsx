@@ -7,6 +7,8 @@ import { Info, CheckCircle2, AlertCircle, Clock, TrendingUp, Wallet, Layers, Tar
 interface GridOverviewPanelProps {
   operational?: any;
   onGoToTab?: (tab: string) => void;
+  onReviewProposal?: () => void;
+  onConfigureManually?: () => void;
 }
 
 function fmtUsd(v: number | null | undefined): string {
@@ -20,7 +22,7 @@ function fmtPrice(v: number | null | undefined): string {
   return `$${v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function GridOverviewPanel({ operational, onGoToTab }: GridOverviewPanelProps) {
+export function GridOverviewPanel({ operational, onGoToTab, onReviewProposal, onConfigureManually }: GridOverviewPanelProps) {
   const overview = operational?.overview ?? {};
   const capital = operational?.capital ?? {};
   const openCycles = (operational?.openCycles ?? []) as any[];
@@ -172,11 +174,23 @@ export function GridOverviewPanel({ operational, onGoToTab }: GridOverviewPanelP
           <CardContent className="space-y-3">
             <p className="text-sm font-medium">{overview.primaryRecommendation.title}</p>
             <p className="text-sm text-muted-foreground">{overview.primaryRecommendation.explanation}</p>
-            {overview.primaryRecommendation.ctaLabel && onGoToTab && (
-              <Button size="sm" variant="outline" onClick={() => onGoToTab(overview.primaryRecommendation.ctaTarget || "mercado")}>
-                {overview.primaryRecommendation.ctaLabel}
-              </Button>
-            )}
+            <div className="flex flex-wrap gap-2">
+              {onReviewProposal && (
+                <Button size="sm" variant="default" onClick={onReviewProposal}>
+                  Revisar propuesta
+                </Button>
+              )}
+              {onConfigureManually && (
+                <Button size="sm" variant="outline" onClick={onConfigureManually}>
+                  Configurar manualmente
+                </Button>
+              )}
+              {!onReviewProposal && overview.primaryRecommendation.ctaLabel && onGoToTab && (
+                <Button size="sm" variant="outline" onClick={() => onGoToTab(overview.primaryRecommendation.ctaTarget || "mercado")}>
+                  {overview.primaryRecommendation.ctaLabel}
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

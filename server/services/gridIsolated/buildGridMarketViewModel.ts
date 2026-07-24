@@ -421,26 +421,23 @@ function buildOperationalRange(
 
 function buildActiveRangeSnapshot(
   resolvedRange: any,
-  adaptiveDecision: any,
-  professionalGenerator: any,
-  status: any,
   config: any,
 ): ActiveRangeSnapshotType {
-  const rangeVersionId = resolvedRange?.activeRangeVersionId ?? status?.activeRangeVersionId ?? null;
+  const rangeVersionId = resolvedRange?.activeRangeVersionId ?? null;
   const lower = toNum(resolvedRange?.lowerPrice);
   const center = toNum(resolvedRange?.centerPrice);
   const upper = toNum(resolvedRange?.upperPrice);
   const totalWidthPct = toNum(resolvedRange?.widthPct);
   const semiRangePct = totalWidthPct != null ? totalWidthPct / 2 : null;
-  const spacingPct = toNum(adaptiveDecision?.spacingPct ?? professionalGenerator?.spacingPct);
-  const requestedBuyLevels = toNum(adaptiveDecision?.requestedBuyLevels ?? professionalGenerator?.requestedBuyLevels);
-  const requestedSellLevels = toNum(adaptiveDecision?.requestedSellLevels ?? professionalGenerator?.requestedSellLevels);
-  const generatedBuyLevels = toNum(adaptiveDecision?.buyLevelsWouldFit ?? professionalGenerator?.generatedBuyLevels);
-  const generatedSellLevels = toNum(adaptiveDecision?.sellLevelsWouldFit ?? professionalGenerator?.generatedSellLevels);
+  const spacingPct = toNum(resolvedRange?.spacingPct);
+  const requestedBuyLevels = toNum(resolvedRange?.requestedBuyLevels);
+  const requestedSellLevels = toNum(resolvedRange?.requestedSellLevels);
+  const generatedBuyLevels = toNum(resolvedRange?.generatedBuyLevels);
+  const generatedSellLevels = toNum(resolvedRange?.generatedSellLevels);
   const rangeControlMode = config?.gridRangeControlMode ?? null;
   const profile = config?.adaptiveRangeProfile ?? null;
   const regime = resolvedRange?.regime ?? resolvedRange?.method ?? null;
-  const regimeMaxPct = toNum(adaptiveDecision?.regimeMaxPct);
+  const regimeMaxPct = toNum(resolvedRange?.regimeMaxPct);
   const configSnapshot = resolvedRange?.configSnapshot ?? null;
   const createdAt = toIso(resolvedRange?.createdAt);
   const source = resolvedRange ? "resolved_range" : null;
@@ -641,7 +638,7 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
   const operationalRange = buildOperationalRange(resolvedRange, adaptiveDecision, professionalGenerator, status);
 
   // Active range snapshot (persisted range data only)
-  const activeRangeSnapshot = buildActiveRangeSnapshot(resolvedRange, adaptiveDecision, professionalGenerator, status, config);
+  const activeRangeSnapshot = buildActiveRangeSnapshot(resolvedRange, config);
 
   // Current configuration projection (uses current config + market)
   const currentConfigurationProjection = buildCurrentConfigurationProjection(config, marketContext);

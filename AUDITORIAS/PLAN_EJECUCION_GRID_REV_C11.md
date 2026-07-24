@@ -2,17 +2,32 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4E — MERCADO, NIVELES Y RECOMENDACIONES
-NEXT_ACTION: auditoría read-only y corrección local
-LAST_COMPLETED_ACTION: deploy a90e626 y purga transaccional de ciclos #1–#24
-LAST_VALIDATION: 2026-07-24T10:08+02:00 — post-purga DB y API validadas, logs limpios
-CURRENT_HEAD: a90e626f67179b95dd86376c5a6fb309a1c86750
-ORIGIN_HEAD: a90e626f67179b95dd86376c5a6fb309a1c86750
-EXPECTED_DEPLOY_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
-DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
+TASK_STATUS: FASE 4E — CORRECCIÓN 2 EN EJECUCIÓN
+NEXT_ACTION: corregir ciclo de vida, datos de mercado y UX
+LAST_COMPLETED_ACTION: commit 90776a6 — refactor recommendation system (rechazado para deploy)
+LAST_VALIDATION: 2026-07-24T21:36+02:00 — tsc OK, vitest 44/44, build OK
+CURRENT_HEAD: 90776a67c3545158f7592bfbeea836561df45e9b
+ORIGIN_HEAD: 90776a67c3545158f7592bfbeea836561df45e9b
+EXPECTED_DEPLOY_HASH: pendiente — 90776a6 rechazado para deploy
+DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750 (staging previo)
 FINAL_DOCUMENTATION_HASH: pendiente
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-24T12:19+02:00
+UPDATED_AT: 2026-07-24T21:36+02:00
+
+## FASE 4E — CORRECCIÓN 2: Motivos de rechazo de 90776a6 para deploy
+
+El commit 90776a6 fue rechazado para deploy por los siguientes defectos:
+
+1. **Ciclo de vida de recomendación roto**: El GET genera recommendationId basado en Date.now(); el POST reconstruye otra recomendación; el nuevo ID nunca coincide; expiresAt se renueva durante el POST.
+2. **Mezcla de snapshots**: marketContext.band se construye con resolvedRange.lowerPrice/centerPrice/upperPrice (rango operativo), no con Bollinger canónico del mercado real.
+3. **activeRangeSnapshot contaminado**: usa config actual, adaptiveDecision actual y professionalGenerator no asociado al mismo rangeVersionId.
+4. **Alternativas no-op**: Alternativa A puede ser safeToApply=true sin changedFields; B usa solo newNetProfit >= minNetProfit; C usa fórmula lineal en vez de búsqueda iterativa.
+5. **Datos insuficientes no bloquean**: atrPct=0.5 inventado permite generar recomendaciones aplicables sin datos reales.
+6. **Endpoint accept proposedConfig del cliente**: el POST no usa el proposedConfig almacenado server-side.
+7. **Spread sin precisión**: spreadPct pequeño se muestra como 0,00%.
+8. **Bollinger hardcodeado**: muestra "Banda de Bollinger (20, 2)" sin params dinámicos.
+9. **Falta Configurar manualmente**: no hay botón de configuración manual en Resumen ni en diálogo.
+10. **Eventos GRID sin humanizar**: códigos GRID_* aparecen como títulos en notificaciones.
 
 ## FASE 1 — Cambios aplicados
 

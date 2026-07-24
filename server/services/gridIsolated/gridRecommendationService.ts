@@ -4,8 +4,19 @@
  * Server-side recommendation engine for Grid Isolated configuration.
  * Uses EXCLUSIVELY canonical functions from gridNetCalculator and gridSpacingCalculator.
  * No duplicate financial formulas. No trading logic. No DB access. Pure functions.
+ *
+ * Changes in Rev-C11 Phase 4E Correction 2:
+ *  - Separated configFingerprint and marketFingerprint
+ *  - referencePrice stored separately for drift validation
+ *  - crypto.randomUUID() for recommendation IDs
+ *  - Alternative A: blocked when no changedFields (no-op)
+ *  - Alternative B: requires actual improvement in total levels
+ *  - Alternative C: iterative search instead of linear formula
+ *  - Data insufficiency blocks recommendation generation
+ *  - recommendationMaxPriceDriftPct = 0.25% for price drift validation
  */
 
+import crypto from "crypto";
 import { computeGrossTargetFromNet } from "./gridNetCalculator";
 import {
   calculateMinSpacingPctReal,
@@ -34,6 +45,7 @@ export interface RecommendationServiceInput {
 const SPREAD_BUFFER_PCT = 0.01;
 const SAFETY_BUFFER_PCT = 0.10;
 const RECOMMENDATION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+export const RECOMMENDATION_MAX_PRICE_DRIFT_PCT = 0.25; // 0.25%
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -56,24 +68,92 @@ function toIso(v: unknown): string | null {
   }
 }
 
-function buildFingerprint(input: RecommendationServiceInput): string {
+/**
+ * Build a fingerprint from configuration fields only.
+ * Does NOT include market price or band data.
+ */
+function buildConfigFingerprint(input: RecommendationServiceInput): string {
   const parts = [
     input.pair,
+    input.mode,
     toNum(input.config?.netProfitTargetPct)?.toFixed(4) ?? "null",
     toNum(input.config?.buyFeePct)?.toFixed(4) ?? "null",
     toNum(input.config?.sellFeePct)?.toFixed(4) ?? "null",
+    toNum(input.config?.taxReservePct)?.toFixed(4) ?? "null",
     toNum(input.config?.gridRangeMaxPct)?.toFixed(4) ?? "null",
     input.config?.enforceCompactRange ?? "null",
     toNum(input.config?.buyLevels)?.toString() ?? "null",
     toNum(input.config?.sellLevels)?.toString() ?? "null",
-    toNum(input.marketContext?.currentPrice)?.toFixed(2) ?? "null",
-    toNum(input.marketContext?.band?.lower)?.toFixed(2) ?? "null",
-    toNum(input.marketContext?.band?.upper)?.toFixed(2) ?? "null",
-    toNum(input.marketContext?.band?.widthPct)?.toFixed(4) ?? "null",
-    toNum(input.marketContext?.atrPct)?.toFixed(4) ?? "null",
     input.resolvedRange?.activeRangeVersionId ?? "null",
   ];
   return parts.join("|");
+}
+
+/**
+ * Build a fingerprint from market band data only.
+ * Does NOT include config fields or exact price.
+ */
+function buildMarketFingerprint(input: RecommendationServiceInput): string {
+  const band = input.marketContext?.band ?? {};
+  const parts = [
+    toNum(band.lower)?.toFixed(2) ?? "null",
+    toNum(band.center)?.toFixed(2) ?? "null",
+    toNum(band.upper)?.toFixed(2) ?? "null",
+    toNum(band.widthPct)?.toFixed(4) ?? "null",
+    toNum(input.marketContext?.atrPct ?? band.atrPct)?.toFixed(4) ?? "null",
+    band.source ?? input.marketContext?.bandSource ?? "null",
+    input.marketContext?.regime ?? "null",
+  ];
+  return parts.join("|");
+}
+
+/**
+ * Check if all required market data is available for a safe recommendation.
+ */
+function checkDataSufficiency(input: RecommendationServiceInput): { sufficient: boolean; reason: string | null } {
+  const config = input.config;
+  const marketContext = input.marketContext;
+
+  const currentPrice = toNum(marketContext?.currentPrice);
+  if (currentPrice == null || currentPrice <= 0) {
+    return { sufficient: false, reason: "Falta precio válido" };
+  }
+
+  const band = marketContext?.band ?? {};
+  const bandLower = toNum(band.lower);
+  const bandUpper = toNum(band.upper);
+  const bandCenter = toNum(band.center);
+  const bandWidthPct = toNum(band.widthPct);
+
+  if (bandLower == null || bandUpper == null || bandCenter == null) {
+    return { sufficient: false, reason: "Falta banda de mercado actual coherente" };
+  }
+
+  if (bandWidthPct == null || bandWidthPct <= 0) {
+    return { sufficient: false, reason: "Falta anchura de banda válida" };
+  }
+
+  const atrPct = toNum(marketContext?.atrPct ?? band.atrPct);
+  if (atrPct == null || atrPct <= 0) {
+    return { sufficient: false, reason: "Falta ATR% válido" };
+  }
+
+  const regime = marketContext?.regime ?? input.adaptiveDecision?.regimeLabel ?? null;
+  if (!regime) {
+    return { sufficient: false, reason: "Falta régimen de mercado" };
+  }
+
+  const netProfitTargetPct = toNum(config?.netProfitTargetPct);
+  if (netProfitTargetPct == null || netProfitTargetPct <= 0) {
+    return { sufficient: false, reason: "Falta configuración de objetivo neto" };
+  }
+
+  const gridRangeMaxPct = toNum(config?.gridRangeMaxPct);
+  if (gridRangeMaxPct == null || gridRangeMaxPct <= 0) {
+    return { sufficient: false, reason: "Falta límite de rango configurado" };
+  }
+
+  return { sufficient: true, reason: null };
 }
 
 function getConfigFees(config: any) {
@@ -183,6 +263,31 @@ function isConfigOptimal(input: RecommendationServiceInput): boolean {
 
 export function buildConfigurationRecommendation(input: RecommendationServiceInput): ConfigurationRecommendation | null {
   if (input.mode !== "SHADOW") return null;
+
+  // Check data sufficiency first — block if anything is missing
+  const sufficiency = checkDataSufficiency(input);
+  if (!sufficiency.sufficient) {
+    return {
+      id: `rec-blocked-${crypto.randomUUID()}-${input.pair}`,
+      generatedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + RECOMMENDATION_TTL_MS).toISOString(),
+      snapshotFingerprint: "blocked",
+      configFingerprint: "blocked",
+      marketFingerprint: "blocked",
+      referencePrice: toNum(input.marketContext?.currentPrice),
+      fresh: false,
+      confidence: 0,
+      title: "Datos insuficientes",
+      explanation: sufficiency.reason ?? "Faltan datos de mercado suficientes para generar una configuración segura.",
+      currentConfig: {},
+      alternatives: [],
+      recommendedAlternativeId: "A",
+      warnings: [sufficiency.reason ?? "Faltan datos de mercado suficientes para generar una configuración segura."],
+      safeToApply: false,
+      blockingReason: "Faltan datos de mercado suficientes para generar una configuración segura.",
+    };
+  }
+
   if (isConfigOptimal(input)) return null;
 
   const config = input.config;
@@ -205,7 +310,8 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   const bandWidthPct = toNum(marketContext?.band?.widthPct) ?? 0;
   if (bandWidthPct <= 0) return null;
 
-  const atrPct = toNum(marketContext?.atrPct) ?? 0.5;
+  const atrPct = toNum(marketContext?.atrPct ?? marketContext?.band?.atrPct) ?? 0;
+  if (atrPct <= 0) return null;
   const { atrMultiplier, maxPct } = getGridStepParams(config);
   const regimeMaxPct = getRegimeMaxPct(adaptiveDecision, config);
 
@@ -244,17 +350,30 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
       atrPct, atrMultiplier, maxPct,
     );
     const changedFields: string[] = [];
-    if (currentCalc.buyLevels !== configuredBuyLevels) changedFields.push("buyLevels");
-    if (currentCalc.sellLevels !== configuredSellLevels) changedFields.push("sellLevels");
+    const proposedConfig: Record<string, any> = {};
+    if (currentCalc.buyLevels !== configuredBuyLevels) {
+      changedFields.push("buyLevels");
+      proposedConfig.buyLevels = currentCalc.buyLevels;
+    }
+    if (currentCalc.sellLevels !== configuredSellLevels) {
+      changedFields.push("sellLevels");
+      proposedConfig.sellLevels = currentCalc.sellLevels;
+    }
+
+    const hasChanges = changedFields.length > 0;
+    const hasMinLevels = aCalc.buyLevels >= 1 && aCalc.sellLevels >= 1;
+    const safeToApply = hasChanges && hasMinLevels;
+    const blockingReason = !hasChanges
+      ? "La configuración ya coincide con esta alternativa."
+      : !hasMinLevels
+        ? "La alternativa resultaría en cero niveles en algún lado."
+        : null;
 
     alternatives.push({
       id: "A",
       title: `Mantener beneficio (${netProfitTargetPct.toFixed(2)}%) y ajustar niveles`,
       explanation: `Mantiene el objetivo neto y el rango seguro. Ajusta buyLevels/sellLevels al número realmente viable (${aCalc.buyLevels} BUY + ${aCalc.sellLevels} SELL). Máxima prioridad de seguridad: no amplía riesgo.`,
-      proposedConfig: {
-        ...(currentCalc.buyLevels !== configuredBuyLevels && { buyLevels: currentCalc.buyLevels }),
-        ...(currentCalc.sellLevels !== configuredSellLevels && { sellLevels: currentCalc.sellLevels }),
-      },
+      proposedConfig,
       changedFields,
       expectedBefore,
       expectedAfter: {
@@ -264,8 +383,8 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
         netProfitPct: netProfitTargetPct,
       },
       warnings: [],
-      safeToApply: true,
-      blockingReason: null,
+      safeToApply,
+      blockingReason,
     });
   }
 
@@ -288,8 +407,22 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     }
 
     const bChangedFields = ["netProfitTargetPct"];
-    const bSafeToApply = newNetProfit >= minNetProfit;
-    const bBlockingReason = !bSafeToApply ? `Objetivo neto resultante (${newNetProfit.toFixed(2)}%) por debajo del mínimo (${minNetProfit}%)` : null;
+    const hasRealChange = newNetProfit !== netProfitTargetPct;
+    const hasImprovement = bCalc.totalLevels > currentCalc.totalLevels;
+    const newNetPositive = newNetProfit > 0;
+    const bSafeToApply = hasRealChange && hasImprovement && newNetPositive;
+    const bBlockingReason = !hasRealChange
+      ? "La configuración ya coincide con esta alternativa."
+      : !hasImprovement
+        ? "Reducir el objetivo no mejora el número de niveles dentro del rango actual."
+        : !newNetPositive
+          ? `Objetivo neto resultante (${newNetProfit.toFixed(2)}%) no es positivo.`
+          : null;
+
+    const bWarnings: string[] = [];
+    if (hasImprovement && bCalc.totalLevels < configuredBuyLevels + configuredSellLevels) {
+      bWarnings.push(`Mejora parcial: ${bCalc.totalLevels} niveles de ${configuredBuyLevels + configuredSellLevels} solicitados.`);
+    }
 
     alternatives.push({
       id: "B",
@@ -304,57 +437,64 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
         rangePct: effectiveRangePct,
         netProfitPct: newNetProfit,
       },
-      warnings: bSafeToApply ? [] : [`Objetivo neto reducido al mínimo de ${minNetProfit}%`],
+      warnings: bWarnings,
       safeToApply: bSafeToApply,
       blockingReason: bBlockingReason,
     });
   }
 
-  // ─── Alternative C: Expand range (up to regimeMaxPct) ───
+  // ─── Alternative C: Expand range (iterative search) ───
   {
-    const newRangeMax = Math.min(regimeMaxPct, bandWidthPct);
-    const cEffectiveRange = enforceCompactRange
-      ? Math.min(bandWidthPct, newRangeMax)
-      : bandWidthPct;
-    const cBounds = computeOperationalBounds(centerPrice, cEffectiveRange);
+    // Iterative search: find minimum totalWidthPct that allows all requested levels
+    let bestWidth = effectiveRangePct;
+    let bestCalc = currentCalc;
+    const step = 0.05; // 0.05% increments
+    const maxWidth = Math.min(regimeMaxPct, bandWidthPct);
 
-    const cCalc = computeSpacingAndLevels(
-      netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
-      centerPrice, cBounds.lower, cBounds.upper,
-      configuredBuyLevels, configuredSellLevels,
-      atrPct, atrMultiplier, maxPct,
-    );
+    for (let testWidth = effectiveRangePct + step; testWidth <= maxWidth; testWidth += step) {
+      const testBounds = computeOperationalBounds(centerPrice, testWidth);
+      const testCalc = computeSpacingAndLevels(
+        netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
+        centerPrice, testBounds.lower, testBounds.upper,
+        configuredBuyLevels, configuredSellLevels,
+        atrPct, atrMultiplier, maxPct,
+      );
+      if (testCalc.totalLevels > bestCalc.totalLevels) {
+        bestWidth = testWidth;
+        bestCalc = testCalc;
+      }
+      if (testCalc.totalLevels >= configuredBuyLevels + configuredSellLevels) break;
+    }
 
-    const cNeededWidth = netProfitTargetPct > 0
-      ? calculateMinSpacingPctReal({
-          netProfitTargetPct,
-          spreadBufferPct: SPREAD_BUFFER_PCT,
-          safetyBufferPct: SAFETY_BUFFER_PCT,
-          buyFeePct, sellFeePct, taxReservePct,
-        }).minSpacingPctReal * Math.max(configuredBuyLevels, configuredSellLevels) * 2
-      : 0;
-
-    const cExceedsRegime = cNeededWidth > regimeMaxPct;
     const cChangedFields = ["gridRangeMaxPct"];
+    const cExceedsRegime = bestWidth > regimeMaxPct;
+    const cWidthImproved = bestWidth > effectiveRangePct;
+    const cHasChanges = bestWidth !== gridRangeMaxPct;
+    const cCompactPreserved = enforceCompactRange;
+    const cSafeToApply = !cExceedsRegime && cWidthImproved && cHasChanges && cCompactPreserved;
     const cBlockingReason = cExceedsRegime
-      ? `Anchura necesaria (~${cNeededWidth.toFixed(2)}%) supera regimeMaxPct (${regimeMaxPct.toFixed(2)}%)`
-      : null;
+      ? `Anchura necesaria (${bestWidth.toFixed(2)}%) supera regimeMaxPct (${regimeMaxPct.toFixed(2)}%)`
+      : !cWidthImproved
+        ? "No se puede ampliar el rango dentro de los límites del régimen actual."
+        : !cHasChanges
+          ? "La configuración ya coincide con esta alternativa."
+          : null;
 
     alternatives.push({
       id: "C",
-      title: `Ampliar rango a ${newRangeMax.toFixed(2)}% (límite régimen: ${regimeMaxPct.toFixed(2)}%)`,
-      explanation: `Mantiene el objetivo neto. Amplia el rango solo hasta regimeMaxPct. Mantiene enforceCompactRange si sigue siendo la política vigente. ${cExceedsRegime ? "BLOQUEADO: la anchura necesaria supera el límite del régimen." : ""}`,
-      proposedConfig: { gridRangeMaxPct: newRangeMax },
+      title: `Ampliar rango a ${bestWidth.toFixed(2)}% (límite régimen: ${regimeMaxPct.toFixed(2)}%)`,
+      explanation: `Mantiene el objetivo neto. Amplía el rango mediante búsqueda iterativa hasta regimeMaxPct. Mantiene enforceCompactRange si sigue siendo la política vigente.`,
+      proposedConfig: { gridRangeMaxPct: bestWidth },
       changedFields: cChangedFields,
       expectedBefore,
       expectedAfter: {
-        levels: cCalc.totalLevels,
-        spacingPct: cCalc.spacingPct,
-        rangePct: cEffectiveRange,
+        levels: bestCalc.totalLevels,
+        spacingPct: bestCalc.spacingPct,
+        rangePct: bestWidth,
         netProfitPct: netProfitTargetPct,
       },
-      warnings: cExceedsRegime ? [`Anchura necesaria (~${cNeededWidth.toFixed(2)}%) supera regimeMaxPct (${regimeMaxPct.toFixed(2)}%)`] : [],
-      safeToApply: !cExceedsRegime,
+      warnings: cExceedsRegime ? [`Anchura necesaria (${bestWidth.toFixed(2)}%) supera regimeMaxPct (${regimeMaxPct.toFixed(2)}%)`] : [],
+      safeToApply: cSafeToApply,
       blockingReason: cBlockingReason,
     });
   }
@@ -381,13 +521,19 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
 
   const now = new Date();
   const expiresAt = new Date(now.getTime() + RECOMMENDATION_TTL_MS);
-  const fingerprint = buildFingerprint(input);
+  const configFingerprint = buildConfigFingerprint(input);
+  const marketFingerprint = buildMarketFingerprint(input);
+  const referencePrice = toNum(marketContext?.currentPrice);
+  const uuid = crypto.randomUUID();
 
   return {
-    id: `rec-${now.getTime()}-${input.pair}`,
+    id: `rec-${uuid}-${input.pair}`,
     generatedAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),
-    snapshotFingerprint: fingerprint,
+    snapshotFingerprint: `${configFingerprint}||${marketFingerprint}`,
+    configFingerprint,
+    marketFingerprint,
+    referencePrice,
     fresh: true,
     confidence: 0.85,
     title: "Recomendación de configuración",
@@ -454,10 +600,6 @@ export function validateApplyPayload(
     return { valid: false, reason: "La recomendación ha caducado" };
   }
 
-  if (payload.snapshotFingerprint !== recommendation.snapshotFingerprint) {
-    return { valid: false, reason: "Fingerprint no coincide — la configuración o el mercado han cambiado" };
-  }
-
   const alt = recommendation.alternatives.find(a => a.id === payload.alternativeId);
   if (!alt) {
     return { valid: false, reason: "alternativeId no encontrado en la recomendación" };
@@ -465,6 +607,10 @@ export function validateApplyPayload(
 
   if (!alt.safeToApply) {
     return { valid: false, reason: alt.blockingReason ?? "La alternativa no es safeToApply" };
+  }
+
+  if (alt.changedFields.length === 0) {
+    return { valid: false, reason: "La alternativa no tiene campos a modificar" };
   }
 
   // Check for blocklisted fields in proposedConfig

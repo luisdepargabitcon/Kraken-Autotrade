@@ -14,6 +14,7 @@ interface GridSettingsPanelProps {
   operational?: any;
   onApply: (updates: Record<string, any>) => void;
   applyPending?: boolean;
+  highlightedSettings?: string[];
 }
 
 type FieldType = "usd" | "percent" | "number" | "integer" | "boolean" | "select" | "text";
@@ -486,18 +487,33 @@ function FieldControl({
 function SimpleMode({
   draft,
   onChange,
+  highlightedSettings,
 }: {
   draft: Record<string, any>;
   onChange: (key: string, value: any) => void;
+  highlightedSettings?: string[];
 }) {
+  const isHighlighted = (key: string) => highlightedSettings?.includes(key);
   return (
     <div className="space-y-6">
-      <FieldControl fieldKey="gridWalletMaxUsd" value={draft.gridWalletMaxUsd} onChange={(v) => onChange("gridWalletMaxUsd", v)} />
-      <FieldControl fieldKey="adaptiveRangeMinViableLevels" value={draft.adaptiveRangeMinViableLevels} onChange={(v) => onChange("adaptiveRangeMinViableLevels", v)} />
-      <FieldControl fieldKey="netProfitTargetPct" value={draft.netProfitTargetPct} onChange={(v) => onChange("netProfitTargetPct", v)} />
-      <FieldControl fieldKey="adaptiveRangeProfile" value={draft.adaptiveRangeProfile} onChange={(v) => onChange("adaptiveRangeProfile", v)} />
-      <FieldControl fieldKey="hodlRecoveryEnabled" value={draft.hodlRecoveryEnabled} onChange={(v) => onChange("hodlRecoveryEnabled", v)} />
-      <FieldControl fieldKey="gridWalletCompoundProfits" value={draft.gridWalletCompoundProfits} onChange={(v) => onChange("gridWalletCompoundProfits", v)} />
+      <div className={isHighlighted("gridWalletMaxUsd") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+        <FieldControl fieldKey="gridWalletMaxUsd" value={draft.gridWalletMaxUsd} onChange={(v) => onChange("gridWalletMaxUsd", v)} />
+      </div>
+      <div className={isHighlighted("adaptiveRangeMinViableLevels") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+        <FieldControl fieldKey="adaptiveRangeMinViableLevels" value={draft.adaptiveRangeMinViableLevels} onChange={(v) => onChange("adaptiveRangeMinViableLevels", v)} />
+      </div>
+      <div className={isHighlighted("netProfitTargetPct") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+        <FieldControl fieldKey="netProfitTargetPct" value={draft.netProfitTargetPct} onChange={(v) => onChange("netProfitTargetPct", v)} />
+      </div>
+      <div className={isHighlighted("adaptiveRangeProfile") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+        <FieldControl fieldKey="adaptiveRangeProfile" value={draft.adaptiveRangeProfile} onChange={(v) => onChange("adaptiveRangeProfile", v)} />
+      </div>
+      <div className={isHighlighted("hodlRecoveryEnabled") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+        <FieldControl fieldKey="hodlRecoveryEnabled" value={draft.hodlRecoveryEnabled} onChange={(v) => onChange("hodlRecoveryEnabled", v)} />
+      </div>
+      <div className={isHighlighted("gridWalletCompoundProfits") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+        <FieldControl fieldKey="gridWalletCompoundProfits" value={draft.gridWalletCompoundProfits} onChange={(v) => onChange("gridWalletCompoundProfits", v)} />
+      </div>
 
       <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3 text-sm text-cyan-400">
         Política de ejecución fija: <strong>Solo maker</strong>. No se permite activar taker fallback en esta versión.
@@ -510,11 +526,14 @@ function ExpertMode({
   draft,
   expertBlocks,
   onChange,
+  highlightedSettings,
 }: {
   draft: Record<string, any>;
   expertBlocks: any[];
   onChange: (key: string, value: any) => void;
+  highlightedSettings?: string[];
 }) {
+  const isHighlighted = (key: string) => highlightedSettings?.includes(key);
   return (
     <Accordion type="multiple" className="w-full">
       {(expertBlocks ?? []).map((block) => (
@@ -531,7 +550,7 @@ function ExpertMode({
                 if (FIELD_META[fieldKey]?.hidden) return null;
                 if (draft[fieldKey] === undefined) return null;
                 return (
-                  <div key={fieldKey} className="rounded-lg border border-border/30 p-3 bg-muted/10">
+                  <div key={fieldKey} className={cn("rounded-lg border border-border/30 p-3 bg-muted/10", isHighlighted(fieldKey) && "border-amber-500/40 bg-amber-500/10")}>
                     <FieldControl fieldKey={fieldKey} value={draft[fieldKey]} onChange={(v) => onChange(fieldKey, v)} />
                   </div>
                 );
@@ -544,7 +563,7 @@ function ExpertMode({
   );
 }
 
-export function GridSettingsPanel({ config, operational, onApply, applyPending }: GridSettingsPanelProps) {
+export function GridSettingsPanel({ config, operational, onApply, applyPending, highlightedSettings }: GridSettingsPanelProps) {
   const [viewMode, setViewMode] = useState<"simple" | "expert">("simple");
   const [draft, setDraft] = useState<Record<string, any>>(deepClone(config ?? {}));
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -628,9 +647,9 @@ export function GridSettingsPanel({ config, operational, onApply, applyPending }
 
       <CardContent className="space-y-4">
         {viewMode === "simple" ? (
-          <SimpleMode draft={draft} onChange={handleChange} />
+          <SimpleMode draft={draft} onChange={handleChange} highlightedSettings={highlightedSettings} />
         ) : (
-          <ExpertMode draft={draft} expertBlocks={expertBlocks} onChange={handleChange} />
+          <ExpertMode draft={draft} expertBlocks={expertBlocks} onChange={handleChange} highlightedSettings={highlightedSettings} />
         )}
 
         {/* Draft actions */}

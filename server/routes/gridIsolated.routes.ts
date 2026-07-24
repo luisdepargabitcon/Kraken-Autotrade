@@ -43,7 +43,9 @@ import { getNaturalGridMessage, getNaturalGridTitle } from "../services/gridIsol
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
 import { evaluateActiveRangeLifecycle } from "../services/gridIsolated/gridRangeLifecycle";
 import { buildGridAuditViewModel } from "../services/gridIsolated/buildGridAuditViewModel";
-import { validateApplyPayload, RECOMMENDATION_APPLY_ALLOWLIST } from "../services/gridIsolated/gridRecommendationService";
+import { validateApplyPayload, RECOMMENDATION_APPLY_ALLOWLIST, RECOMMENDATION_MAX_PRICE_DRIFT_PCT } from "../services/gridIsolated/gridRecommendationService";
+import { gridRecommendationRegistry } from "../services/gridIsolated/gridRecommendationRegistry";
+import { getGridBandSnapshot } from "../services/gridIsolated/gridBandAdapter";
 
 // ─── Timing metadata helpers for audit/export ───────────────────────────────
 
@@ -866,122 +868,38 @@ export function registerGridIsolatedRoutes(app: Express): void {
         return res.status(403).json({ error: "Solo se puede aplicar en modo SHADOW", reason: "Solo se puede aplicar en modo SHADOW" });
       }
 
-      // Rebuild audit to get the current recommendation (same pattern as monitor/audit endpoint)
-      const snapshot = await gridIsolatedEngine.getRuntimeSnapshot();
-      const status = await gridIsolatedEngine.getStatusSafe();
-      const levels = snapshot.levels;
-      const cycles = snapshot.cycles;
+      const payload = req.body;
 
-      let events: any[] = [];
-      try {
-        events = await db.select()
-          .from(gridIsolatedEvents)
-          .orderBy(desc(gridIsolatedEvents.createdAt))
-          .limit(50);
-      } catch { /* table might not exist */ }
-
-      const resolvedRange = await resolveActiveRange(events, status, cycles.length);
-      const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
-      const lastProfessionalValidation = gridIsolatedEngine.getLastProfessionalGeneratorValidation();
-
-      // Extract professionalGenerator from events (same as audit endpoint)
-      const professionalGenerator = (() => {
-        const professionalEvents = events.filter((ev: any) =>
-          ev.eventType === "GRID_PROFESSIONAL_GENERATOR_USED" ||
-          ev.eventType === "GRID_PROFESSIONAL_GENERATOR_COMPACT" ||
-          ev.eventType === "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE"
-        );
-        if (professionalEvents.length === 0) return { available: false, reason: "No professional generator event found" };
-        const activeRangeEvent = professionalEvents.find((ev: any) => ev.rangeVersionId === status?.activeRangeVersionId);
-        const targetEvent = activeRangeEvent ?? professionalEvents[0];
-        try {
-          const metadata = targetEvent.metadataJson ? (typeof targetEvent.metadataJson === "string" ? JSON.parse(targetEvent.metadataJson) : targetEvent.metadataJson) : {};
-          return metadata.professionalGenerator ?? { available: false, reason: "No PG metadata" };
-        } catch { return { available: false, reason: "Parse error" }; }
-      })();
-
-      // Build market context (same as audit endpoint)
-      let marketContext: GridMarketContext | null = null;
-      try {
-        const pair = config?.pair || "BTC/USD";
-        const ticker = await MarketDataService.getTicker(pair);
-        if (ticker) {
-          marketContext = {
-            pair,
-            currentPrice: ticker.last,
-            bid: ticker.bid || null,
-            ask: ticker.ask || null,
-            currentBid: ticker.bid || null,
-            currentAsk: ticker.ask || null,
-            spreadPct: ticker.bid && ticker.ask ? ((ticker.ask - ticker.bid) / ticker.bid) * 100 : null,
-            source: "kraken",
-            priceSource: "kraken",
-            priceFresh: true,
-            priceAgeMs: 0,
-            priceMaxAgeMs: 5000,
-            updatedAt: new Date().toISOString(),
-            band: {
-              lower: resolvedRange?.lowerPrice ?? null,
-              center: resolvedRange?.centerPrice ?? null,
-              upper: resolvedRange?.upperPrice ?? null,
-              widthPct: resolvedRange?.widthPct ?? null,
-              status: resolvedRange?.status || "sin_rango_activo",
-            },
-          } as any;
-        }
-      } catch { /* market context optional */ }
-
-      const adaptiveDecision = (lastProfessionalValidation.result as any)?.adaptiveRangeDecision ?? null;
-      const openCyclesCount = cycles.filter((c: any) => c?.status === "open" || c?.status === "active").length;
-      const activeOpenCyclesCount = status?.activeRangeVersionId
-        ? cycles.filter((c: any) => c?.rangeVersionId === status.activeRangeVersionId && ["open", "active", "buy_filled", "buy_placed", "sell_placed", "cycle_open"].includes(c?.status)).length
-        : 0;
-
-      const rangeLifecycle = evaluateActiveRangeLifecycle({
-        mode: currentMode,
-        config,
-        activeRange: resolvedRange,
-        marketContext,
-        rangeIntelligence: null,
-        professionalGenerator,
-        openCyclesCount,
-        activeOpenCyclesCount,
-        globalOpenCyclesCount: openCyclesCount,
-        currentPrice: marketContext?.currentPrice ?? null,
-        atrPct: marketContext?.atrPct ?? null,
-        marketBollingerWidthPct: resolvedRange?.widthPct ?? null,
-        operationalRangeWidthPct: (professionalGenerator as any)?.operationalBandWidthPct ?? null,
-        activeRangePriceWidthPct: null,
-        rangeGenerationSource: resolvedRange?.method ?? null,
-        rangeGenerationMethod: resolvedRange?.method ?? null,
-        activeRangeCreatedAt: resolvedRange?.createdAt ?? null,
-        adaptiveDecision,
-      });
-
-      const gridViewModel = buildGridAuditViewModel(
-        currentMode,
-        config,
-        status,
-        levels,
-        cycles,
-        events,
-        resolvedRange,
-        marketContext,
-        lastShadowValidation,
-        lastProfessionalValidation,
-        professionalGenerator,
-        rangeLifecycle
-      );
-
-      const recommendation = gridViewModel?.operational?.market?.configurationRecommendation ?? null;
-
-      if (!recommendation) {
-        return res.status(404).json({ error: "No hay recomendación disponible", reason: "No hay recomendación disponible" });
+      // 1. Retrieve recommendation from in-memory registry by ID
+      const recommendationId = payload?.recommendationId;
+      if (!recommendationId || typeof recommendationId !== "string") {
+        return res.status(400).json({ error: "Falta recommendationId", reason: "Falta recommendationId" });
       }
 
-      const payload = req.body;
-      const validation = validateApplyPayload(payload, recommendation, currentMode);
+      // Reject if proposedConfig is sent from client
+      if (payload?.proposedConfig != null) {
+        return res.status(400).json({ error: "proposedConfig no permitido en el payload del cliente", reason: "proposedConfig no permitido en el payload del cliente" });
+      }
 
+      const recommendation = gridRecommendationRegistry.get(recommendationId);
+      if (!recommendation) {
+        return res.status(404).json({ error: "Recomendación no encontrada o expirada", reason: "Recomendación no encontrada o expirada" });
+      }
+
+      // 2. Check if already applied (single-use)
+      if (gridRecommendationRegistry.isApplied(recommendationId)) {
+        return res.status(409).json({ error: "Recomendación ya aplicada", reason: "Recomendación ya aplicada" });
+      }
+
+      // 3. Validate expiration using original expiresAt
+      const now = new Date();
+      const expiresAt = new Date(recommendation.expiresAt);
+      if (now > expiresAt) {
+        return res.status(410).json({ error: "La recomendación ha caducado", reason: "La recomendación ha caducado" });
+      }
+
+      // 4. Validate payload against recommendation
+      const validation = validateApplyPayload(payload, recommendation, currentMode);
       if (!validation.valid) {
         return res.status(400).json({ error: validation.reason, reason: validation.reason });
       }
@@ -991,10 +909,35 @@ export function registerGridIsolatedRoutes(app: Express): void {
         return res.status(400).json({ error: "Alternativa no encontrada", reason: "Alternativa no encontrada" });
       }
 
-      // Apply only allowlisted fields from proposedConfig
+      // 5. Validate price drift
+      const currentPrice = await (async () => {
+        try {
+          const pair = config?.pair || "BTC/USD";
+          const ticker = await MarketDataService.getTicker(pair);
+          return ticker?.last ?? null;
+        } catch { return null; }
+      })();
+
+      if (currentPrice != null && recommendation.referencePrice != null) {
+        const driftPct = Math.abs((currentPrice - recommendation.referencePrice) / recommendation.referencePrice) * 100;
+        if (driftPct > RECOMMENDATION_MAX_PRICE_DRIFT_PCT) {
+          return res.status(409).json({
+            error: `Deriva de precio (${driftPct.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`,
+            reason: `Deriva de precio (${driftPct.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`,
+          });
+        }
+      }
+
+      // 6. Apply only allowlisted fields from stored proposedConfig (not from client)
       const currentConfig = gridIsolatedEngine.getConfig();
       if (!currentConfig) {
         return res.status(500).json({ error: "Config no disponible", reason: "Config no disponible" });
+      }
+
+      // Capture before values
+      const beforeValues: Record<string, any> = {};
+      for (const field of alt.changedFields) {
+        beforeValues[field] = (currentConfig as any)[field] ?? null;
       }
 
       const appliedFields: string[] = [];
@@ -1005,12 +948,25 @@ export function registerGridIsolatedRoutes(app: Express): void {
         }
       }
 
-      await gridIsolatedEngine.saveConfig();
+      // Capture after values
+      const afterValues: Record<string, any> = {};
+      for (const field of alt.changedFields) {
+        afterValues[field] = (currentConfig as any)[field] ?? null;
+      }
+
+      try {
+        await gridIsolatedEngine.saveConfig();
+      } catch (saveError) {
+        return res.status(500).json({ error: "Error al guardar configuración", reason: String(saveError) });
+      }
+
+      // 7. Mark recommendation as applied (single-use enforcement)
+      gridRecommendationRegistry.markApplied(recommendationId);
 
       await botLogger.info(
         "GRID_RECOMMENDATION_APPLIED",
         `Recomendación aplicada: alt=${alt.id}, fields=${appliedFields.join(",")}`,
-        { recommendationId: recommendation.id, alternativeId: alt.id, appliedFields }
+        { recommendationId: recommendation.id, alternativeId: alt.id, appliedFields, beforeValues, afterValues }
       );
 
       res.json({
@@ -1018,6 +974,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
         appliedFields,
         alternativeId: alt.id,
         recommendationId: recommendation.id,
+        beforeValues,
+        afterValues,
       });
     } catch (error) {
       res.status(500).json({ error: String(error), reason: String(error) });
@@ -1375,25 +1333,25 @@ export function registerGridIsolatedRoutes(app: Express): void {
         const ticker = await MarketDataService.getTicker(pair);
         if (ticker) {
           const currentPrice = ticker.last;
-          // Use real range field names with robust fallbacks
-          const bandLower =
-            resolvedRange?.lowerPrice ??
-            resolvedRange?.bandLower ??
-            resolvedRange?.lower ??
-            null;
-          const bandUpper =
-            resolvedRange?.upperPrice ??
-            resolvedRange?.bandUpper ??
-            resolvedRange?.upper ??
-            null;
-          const bandCenter =
-            resolvedRange?.centerPrice ??
-            resolvedRange?.center ??
-            (bandLower && bandUpper ? (bandLower + bandUpper) / 2 : null);
-          const bandWidthPct =
-            resolvedRange?.widthPct ??
-            resolvedRange?.bandWidthPct ??
-            (bandLower && bandUpper && bandCenter ? ((bandUpper - bandLower) / bandCenter) * 100 : null);
+          // Use canonical Bollinger band snapshot from gridBandAdapter (real market data)
+          const bandPeriod = config?.bandPeriod ?? 20;
+          const bandStdDevMultiplier = config?.bandStdDevMultiplier ?? 2;
+          const atrPeriod = config?.atrPeriod ?? 14;
+          const atrTimeframe = config?.atrTimeframe ?? "1h";
+          const bandSnapshot = await getGridBandSnapshot({
+            pair,
+            bandPeriod,
+            bandStdDevMultiplier,
+            atrPeriod,
+            atrTimeframe,
+          });
+          const bandLower = bandSnapshot?.lower ?? null;
+          const bandUpper = bandSnapshot?.upper ?? null;
+          const bandCenter = bandSnapshot?.middle ?? null;
+          const bandWidthPct = bandSnapshot?.bandWidthPct ?? null;
+          const atrPct = bandSnapshot?.atrPct ?? null;
+          const atrValue = bandSnapshot?.atr ?? null;
+          const bandRegime = bandSnapshot?.regime ?? null;
 
           let bandPosition: "below" | "lower" | "middle" | "upper" | "above" | "unknown" = "unknown";
           let bandPositionPct: number | null = null;
@@ -1457,15 +1415,28 @@ export function registerGridIsolatedRoutes(app: Express): void {
             priceAgeMs: 0,
             priceMaxAgeMs: 5000,
             updatedAt: new Date().toISOString(),
+            regime: bandRegime,
+            atrPct,
+            atr: atrValue,
             band: {
               lower: bandLower,
               center: bandCenter,
               upper: bandUpper,
               widthPct: bandWidthPct,
-              status: resolvedRange?.status || "sin_rango_activo",
+              atrPct,
+              atr: atrValue,
+              period: bandPeriod,
+              stdDevMultiplier: bandStdDevMultiplier,
+              timeframe: atrTimeframe,
+              source: bandSnapshot ? "grid_band_adapter" : null,
+              calculatedAt: new Date().toISOString(),
             },
             bandPosition,
             bandPositionPct,
+            bandSource: bandSnapshot ? "grid_band_adapter" : null,
+            bandPeriod,
+            bandStdDevMultiplier,
+            bandTimeframe: atrTimeframe,
             nearestLevel: nearestLevel ? {
               id: nearestLevel.id,
               side: nearestLevel.side,
@@ -1473,7 +1444,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
               distanceUsd: nearestDistanceUsd,
               distancePct: nearestDistancePct,
             } : null,
-          };
+          } as any;
         }
       } catch (error) {
         // Market context is optional; log but don't fail the request
@@ -1986,6 +1957,16 @@ export function registerGridIsolatedRoutes(app: Express): void {
         rangeLifecycle,
         ...gridViewModel,
       });
+
+      // Register recommendation in the in-memory registry for the apply endpoint
+      const auditRecommendation = gridViewModel?.operational?.market?.configurationRecommendation ?? null;
+      if (auditRecommendation && auditRecommendation.id && !auditRecommendation.blockingReason) {
+        const hasSafeAlt = auditRecommendation.alternatives?.some(a => a.safeToApply) ?? false;
+        if (hasSafeAlt) {
+          gridRecommendationRegistry.deleteExpired();
+          gridRecommendationRegistry.register(auditRecommendation);
+        }
+      }
     } catch (error) {
       console.error("[/api/grid-isolated/monitor/audit] error:", error);
       res.status(500).json({
