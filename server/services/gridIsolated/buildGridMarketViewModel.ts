@@ -56,6 +56,7 @@ export interface GridMarketBand {
   available: boolean;
   internallyConsistent: boolean;
   inconsistencyReason: string | null;
+  status: string;
 }
 
 export interface GridMarketCurrent {
@@ -365,6 +366,8 @@ function buildMarketBand(marketContext: any): MarketBandType {
     inconsistencyReason = "Banda incompleta: faltan lower, center o upper";
   }
 
+  const status = !available ? "incomplete" : internallyConsistent ? "ok" : "inconsistent";
+
   return {
     available,
     lower,
@@ -381,6 +384,7 @@ function buildMarketBand(marketContext: any): MarketBandType {
     calculatedAt,
     internallyConsistent,
     inconsistencyReason,
+    status,
   };
 }
 
@@ -780,6 +784,7 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
       available: marketBand.available,
       internallyConsistent: marketBand.internallyConsistent,
       inconsistencyReason: marketBand.inconsistencyReason,
+      status: marketBand.status,
     },
     marketBand,
     operationalRange,

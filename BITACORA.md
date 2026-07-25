@@ -5,6 +5,54 @@
 
 ---
 
+## 2026-07-25 — GRID V2 REV-C11 FASE 4E CORRECCIÓN 5 FAIL-CLOSED: Validación estricta del contexto de mercado y límite de régimen
+
+### Resumen
+Se implementa el fail-closed en la aplicación de recomendaciones del grid: si no se puede reconstruir y verificar completamente el contexto de mercado, la aplicación se bloquea. Se añaden los códigos `MARKET_DATA_UNAVAILABLE` (503), `MARKET_SNAPSHOT_INCOMPLETE` (409), `MARKET_SNAPSHOT_INCONSISTENT` (409) y `REGIME_LIMIT_UNAVAILABLE` (409). `compareRecommendationMarketContext` ahora reporta `missingFields` y rechaza valores null en campos obligatorios. `resolveCurrentRegimeMaxPctStrict` resuelve el techo de régimen sin fallback silencioso a 5.0%, mapeando cada régimen a su campo config y aplicando `adaptiveRangeMaxPct` y el tope absoluto. El endpoint apply valida ticker, banda Bollinger, consistencia interna, contexto almacenado y, para alternativas que afectan al rango, exige tanto el `regimeMaxPct` almacenado como el actual.
+
+### Problema
+- El endpoint apply era fail-open si `MarketDataService.getTicker` o `getGridBandSnapshot` fallaban o devolvían datos incompletos.
+- `compareRecommendationMarketContext` no distinguía campos obligatorios nulos de campos simplemente cambiados.
+- No existía un resolvedor estricto de `regimeMaxPct`; faltas de configuración podían pasar desapercibidas.
+- La validación del límite de régimen no se ajustaba al impacto de cada alternativa (A/B/C).
+
+### Solución
+- `server/services/gridIsolated/gridRecommendationService.ts`:
+  - Añadidos `MARKET_DATA_UNAVAILABLE`, `MARKET_SNAPSHOT_INCOMPLETE`, `MARKET_SNAPSHOT_INCONSISTENT` a `ApplyValidationErrorCode`.
+  - `resolveCurrentRegimeMaxPctStrict` mapea LOW/NORMAL/HIGH a `adaptiveRangeLowVolMaxPct`/`adaptiveRangeNormalMaxPct`/`adaptiveRangeHighVolMaxPct`, aplica `adaptiveRangeMaxPct` como tope adicional y respeta `ABSOLUTE_GRID_RANGE_MAX_PCT` (20.0); devuelve `null` sin fallback silencioso.
+  - `compareRecommendationMarketContext` devuelve `missingFields` y considera null en cualquiera de los dos lados como falta de campo obligatorio.
+- `server/routes/gridIsolated.routes.ts`:
+  - El POST `/api/grid-isolated/config/recommendation/apply` exige ticker válido, banda Bollinger completa y consistente, y contexto de mercado almacenado.
+  - Orden de validaciones: payload → ticker → banda → fingerprints → contexto → régimen → apply atómico.
+  - Mensaje `RECOMMENDATION_NOT_FOUND` actualizado para indicar "expirada o eliminada tras reinicio".
+  - `effectiveRegimeMaxPct = min(storedRegimeMaxPct, currentRegimeMaxPct)`; solo obligatorio cuando la alternativa propone `gridRangeMaxPct` o desactiva `enforceCompactRange`.
+- Tests:
+  - `server/services/__tests__/gridRecommendationFingerprint.test.ts`: 12 nuevos tests para `compareRecommendationMarketContext` y `resolveCurrentRegimeMaxPctStrict`.
+  - `server/routes/__tests__/gridRecommendationApply.test.ts`: 16 tests ampliados con fallos de ticker, banda, campos nulos, inconsistencia, alternativas A/B/C y no-mutación ante fallo.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridRecommendationService.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `server/services/gridIsolated/gridBandAdapter.ts`
+- `server/services/gridIsolated/buildGridMarketViewModel.ts`
+- `shared/gridRecommendationHelper.ts`
+- `server/services/__tests__/gridRecommendationFingerprint.test.ts`
+- `server/routes/__tests__/gridRecommendationApply.test.ts`
+- `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check` ✅
+- `npm run build` ✅
+- `npx vitest run server/routes/__tests__/gridRecommendationApply.test.ts server/services/__tests__/gridRecommendationFingerprint.test.ts` ✅ 45/45
+- `npx vitest run server/routes/__tests__/gridRecommendationApply.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts server/services/__tests__/gridRecommendation` ✅ 255/255
+- `git diff --check` ✅
+
+### Estado final
+FASE 4E CORRECCIÓN 5 FAIL-CLOSED validada localmente. Lista para commit/push y deploy en staging.
+
+---
+
 ## 2026-07-25 — GRID V2 REV-C11 FASE 4E CORRECCIÓN 4 PREDEPLOY: Contexto almacenado, fingerprints separados, atomicidad y UI de mercado
 
 ### Resumen

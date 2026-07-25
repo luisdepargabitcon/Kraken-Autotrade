@@ -129,6 +129,7 @@ export interface MarketBand {
   calculatedAt: string | null;
   internallyConsistent: boolean;
   inconsistencyReason: string | null;
+  status: string;
 }
 
 export interface OperationalRange {

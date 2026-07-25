@@ -53,6 +53,7 @@ import {
   compareRecommendationMarketContext,
   calculatePriceDriftPct,
   getRegimeMaxPct,
+  resolveCurrentRegimeMaxPctStrict,
   RECOMMENDATION_APPLY_ALLOWLIST,
   RECOMMENDATION_MAX_PRICE_DRIFT_PCT,
 } from "../services/gridIsolated/gridRecommendationService";
@@ -912,7 +913,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
       const recommendation = gridRecommendationRegistry.get(recommendationId);
       if (!recommendation) {
-        return ERR("RECOMMENDATION_NOT_FOUND", 404, "Recomendación no encontrada o expirada");
+        return ERR("RECOMMENDATION_NOT_FOUND", 404, "Recomendación no disponible, expirada o eliminada tras reinicio.");
       }
 
       // 2. Check if already applied (single-use)
@@ -938,18 +939,32 @@ export function registerGridIsolatedRoutes(app: Express): void {
         return ERR("ALTERNATIVE_NOT_FOUND", 400, "Alternativa no encontrada");
       }
 
-      // 5. Rebuild current market context from live data
+      // 5. Market data is mandatory for applying a recommendation (fail-closed)
       const bandPeriod = runtimeConfig?.bandPeriod ?? 20;
       const bandStdDevMultiplier = toNum(runtimeConfig?.bandStdDevMultiplier) ?? 2;
       const atrPeriod = runtimeConfig?.atrPeriod ?? 14;
       const atrTimeframe = runtimeConfig?.atrTimeframe ?? "1h";
 
+      let ticker: any = null;
       let currentPrice: number | null = null;
-      let bandSnapshot: any = null;
-      let currentMarketContext: any = null;
       try {
-        const ticker = await MarketDataService.getTicker(pair);
-        currentPrice = ticker?.last ?? null;
+        ticker = await MarketDataService.getTicker(pair);
+      } catch {
+        return ERR("MARKET_DATA_UNAVAILABLE", 503, "No se pudieron obtener datos actuales de mercado. Actualiza la auditoría y vuelve a intentarlo.");
+      }
+
+      if (ticker == null) {
+        return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, "Ticker de mercado no disponible");
+      }
+      const rawLast = ticker?.last;
+      const parsedLast = toNum(rawLast);
+      if (parsedLast == null || parsedLast <= 0 || !Number.isFinite(parsedLast)) {
+        return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, "Precio actual no válido");
+      }
+      currentPrice = parsedLast;
+
+      let bandSnapshot: any = null;
+      try {
         bandSnapshot = await getGridBandSnapshot({
           pair,
           bandPeriod,
@@ -957,36 +972,62 @@ export function registerGridIsolatedRoutes(app: Express): void {
           atrPeriod,
           atrTimeframe,
         });
-        currentMarketContext = {
-          currentPrice,
-          band: bandSnapshot
-            ? {
-                available: true,
-                internallyConsistent: bandSnapshot.internallyConsistent !== false,
-                lower: bandSnapshot.lower ?? null,
-                center: bandSnapshot.middle ?? null,
-                upper: bandSnapshot.upper ?? null,
-                widthPct: bandSnapshot.bandWidthPct ?? null,
-                atrPct: bandSnapshot.atrPct ?? null,
-                atr: bandSnapshot.atr ?? null,
-                period: bandPeriod,
-                stdDevMultiplier: bandStdDevMultiplier,
-                timeframe: atrTimeframe,
-                source: "grid_band_adapter",
-                calculatedAt: new Date().toISOString(),
-              }
-            : { available: false, internallyConsistent: false, lower: null, center: null, upper: null, widthPct: null, atrPct: null, source: null },
-          regime: bandSnapshot?.regime ?? null,
-          atrPct: bandSnapshot?.atrPct ?? null,
-          bandSource: bandSnapshot ? "grid_band_adapter" : null,
-          bandPeriod,
-          bandStdDevMultiplier,
-          atrPeriod,
-          atrTimeframe,
-        };
       } catch {
-        // Market context is optional; continue with what we have
+        return ERR("MARKET_DATA_UNAVAILABLE", 503, "No se pudieron obtener datos actuales de mercado. Actualiza la auditoría y vuelve a intentarlo.");
       }
+
+      if (bandSnapshot == null) {
+        return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, "Snapshot de banda Bollinger no disponible");
+      }
+      if (bandSnapshot.internallyConsistent === false) {
+        return ERR("MARKET_SNAPSHOT_INCONSISTENT", 409, "La banda Bollinger actual es internamente inconsistente");
+      }
+
+      const bandLower = toNum(bandSnapshot.lower);
+      const bandCenter = toNum(bandSnapshot.middle);
+      const bandUpper = toNum(bandSnapshot.upper);
+      const bandWidthPct = toNum(bandSnapshot.bandWidthPct);
+      const atrPct = toNum(bandSnapshot.atrPct);
+      const regime = bandSnapshot.regime ?? null;
+
+      if (bandLower == null || bandCenter == null || bandUpper == null) {
+        return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, "Faltan límites de la banda Bollinger");
+      }
+      if (bandWidthPct == null) {
+        return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, "Falta bandWidthPct de la banda Bollinger");
+      }
+      if (atrPct == null) {
+        return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, "Falta ATR% de la banda Bollinger");
+      }
+      if (regime == null) {
+        return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, "Falta régimen de mercado");
+      }
+
+      const currentMarketContext = {
+        currentPrice,
+        band: {
+          available: true,
+          internallyConsistent: true,
+          lower: bandLower,
+          center: bandCenter,
+          upper: bandUpper,
+          widthPct: bandWidthPct,
+          atrPct,
+          atr: toNum(bandSnapshot.atr),
+          period: bandPeriod,
+          stdDevMultiplier: bandStdDevMultiplier,
+          timeframe: atrTimeframe,
+          source: "grid_band_adapter",
+          calculatedAt: new Date().toISOString(),
+        },
+        regime,
+        atrPct,
+        bandSource: "grid_band_adapter",
+        bandPeriod,
+        bandStdDevMultiplier,
+        atrPeriod,
+        atrTimeframe,
+      };
 
       // 6. Validate config fingerprint
       const fingerprintInput = {
@@ -1014,28 +1055,46 @@ export function registerGridIsolatedRoutes(app: Express): void {
       }
 
       // 8. Validate market context with explicit tolerances using stored context
-      if (recommendation.context && currentMarketContext) {
-        const comparison = compareRecommendationMarketContext(recommendation.context, currentMarketContext);
-        if (!comparison.valid) {
-          if (comparison.changedFields.includes("referencePrice")) {
-            const priceComparison = comparison.comparisons.referencePrice;
-            const drift = priceComparison.diff ?? 0;
-            return ERR("PRICE_DRIFT_EXCEEDED", 409, `Deriva de precio (${drift.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`);
-          }
-          return ERR("MARKET_SNAPSHOT_CHANGED", 409, `El snapshot de mercado cambió: ${comparison.changedFields.join(", ")}`);
-        }
+      if (!recommendation.context) {
+        return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, "La recomendación no contiene contexto de mercado almacenado");
       }
 
-      // 9. Determine regime limit: minimum of stored and current canonical values
+      const comparison = compareRecommendationMarketContext(recommendation.context, currentMarketContext);
+      if (!comparison.valid) {
+        if (comparison.missingFields.length > 0) {
+          return ERR("MARKET_SNAPSHOT_INCOMPLETE", 409, `Faltan campos obligatorios en el contexto de mercado: ${comparison.missingFields.join(", ")}`);
+        }
+        if (comparison.changedFields.includes("referencePrice")) {
+          const priceComparison = comparison.comparisons.referencePrice;
+          const drift = priceComparison.diff ?? 0;
+          return ERR("PRICE_DRIFT_EXCEEDED", 409, `Deriva de precio (${drift.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`);
+        }
+        return ERR("MARKET_SNAPSHOT_CHANGED", 409, `El snapshot de mercado cambió: ${comparison.changedFields.join(", ")}`);
+      }
+
+      // 9. Determine regime limit strictly when the alternative may widen range
       const storedRegimeMaxPct = recommendation.context?.regimeMaxPct ?? null;
-      const currentRegimeMaxPct = getRegimeMaxPct(null, runtimeConfig);
+      const currentRegime = currentMarketContext.regime;
+      const currentRegimeMaxPct = resolveCurrentRegimeMaxPctStrict(currentRegime, runtimeConfig, null);
+
       let effectiveRegimeMaxPct: number | null = null;
-      if (storedRegimeMaxPct != null && currentRegimeMaxPct != null) {
+      const altRequiresRegimeMax =
+        "gridRangeMaxPct" in alt.proposedConfig ||
+        alt.proposedConfig.enforceCompactRange === false;
+
+      if (altRequiresRegimeMax) {
+        if (storedRegimeMaxPct == null || currentRegimeMaxPct == null) {
+          return ERR("REGIME_LIMIT_UNAVAILABLE", 409, "No se puede determinar el límite máximo del régimen para ampliar el rango");
+        }
         effectiveRegimeMaxPct = Math.min(storedRegimeMaxPct, currentRegimeMaxPct);
-      } else if (storedRegimeMaxPct != null) {
-        effectiveRegimeMaxPct = storedRegimeMaxPct;
-      } else if (currentRegimeMaxPct != null) {
-        effectiveRegimeMaxPct = currentRegimeMaxPct;
+      } else {
+        if (storedRegimeMaxPct != null && currentRegimeMaxPct != null) {
+          effectiveRegimeMaxPct = Math.min(storedRegimeMaxPct, currentRegimeMaxPct);
+        } else if (storedRegimeMaxPct != null) {
+          effectiveRegimeMaxPct = storedRegimeMaxPct;
+        } else if (currentRegimeMaxPct != null) {
+          effectiveRegimeMaxPct = currentRegimeMaxPct;
+        }
       }
 
       // 10. Get current config object and validate/apply atomically
@@ -1443,6 +1502,8 @@ export function registerGridIsolatedRoutes(app: Express): void {
           const atrPct = bandSnapshot?.atrPct ?? null;
           const atrValue = bandSnapshot?.atr ?? null;
           const bandRegime = bandSnapshot?.regime ?? null;
+          const bandAvailable = bandSnapshot != null && bandLower != null && bandCenter != null && bandUpper != null;
+          const bandStatus = !bandAvailable ? "incomplete" : bandSnapshot?.internallyConsistent === false ? "inconsistent" : "ok";
 
           let bandPosition: "below" | "lower" | "middle" | "upper" | "above" | "unknown" = "unknown";
           let bandPositionPct: number | null = null;
@@ -1521,6 +1582,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
               timeframe: atrTimeframe,
               source: bandSnapshot ? "grid_band_adapter" : null,
               calculatedAt: new Date().toISOString(),
+              status: bandStatus,
             },
             bandPosition,
             bandPositionPct,

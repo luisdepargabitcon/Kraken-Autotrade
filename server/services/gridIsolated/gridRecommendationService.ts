@@ -46,6 +46,9 @@ const SPREAD_BUFFER_PCT = 0.01;
 const SAFETY_BUFFER_PCT = 0.10;
 const RECOMMENDATION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 export const RECOMMENDATION_MAX_PRICE_DRIFT_PCT = 0.25; // 0.25%
+const ABSOLUTE_GRID_RANGE_MAX_PCT = 20.0;
+const ABSOLUTE_NET_PROFIT_MAX_PCT = 20.0;
+const MAX_LEVELS_PER_SIDE = 50;
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -125,6 +128,7 @@ export function buildMarketFingerprint(input: RecommendationServiceInput): strin
 
 export interface MarketContextComparison {
   valid: boolean;
+  missingFields: string[];
   changedFields: string[];
   comparisons: Record<string, { stored: any; current: any; diff: number | null; passed: boolean }>;
 }
@@ -132,6 +136,11 @@ export interface MarketContextComparison {
 export function compareRecommendationMarketContext(stored: any, current: any): MarketContextComparison {
   const comparisons: MarketContextComparison["comparisons"] = {};
   const changedFields: string[] = [];
+  const missingFields: string[] = [];
+
+  function isMissing(a: unknown, b: unknown) {
+    return a == null || b == null;
+  }
 
   function cmp(
     key: string,
@@ -139,10 +148,16 @@ export function compareRecommendationMarketContext(stored: any, current: any): M
     b: unknown,
     test: (a: any, b: any) => boolean,
     diff: (a: any, b: any) => number | null,
+    required = true,
   ) {
-    const passed = test(a, b);
+    const missing = isMissing(a, b);
+    const passed = missing ? !required : test(a, b);
     comparisons[key] = { stored: a, current: b, diff: diff(a, b), passed };
-    if (!passed) changedFields.push(key);
+    if (missing) {
+      if (required) missingFields.push(key);
+    } else if (!passed) {
+      changedFields.push(key);
+    }
   }
 
   const exactKeys = ["regime", "bandSource", "bandPeriod", "bandStdDevMultiplier", "atrPeriod", "atrTimeframe"];
@@ -151,8 +166,9 @@ export function compareRecommendationMarketContext(stored: any, current: any): M
       key,
       stored?.[key],
       current?.[key],
-      (a, b) => (a == null && b == null) || a === b,
+      (a, b) => a === b,
       () => null,
+      true,
     );
   }
 
@@ -164,11 +180,9 @@ export function compareRecommendationMarketContext(stored: any, current: any): M
     "referencePrice",
     stored?.referencePrice,
     current?.currentPrice,
-    (a, b) => {
-      if (a == null || b == null || a === 0) return true;
-      return (priceDiff(a, b) ?? Infinity) <= RECOMMENDATION_MAX_PRICE_DRIFT_PCT;
-    },
+    (a, b) => (priceDiff(a, b) ?? Infinity) <= RECOMMENDATION_MAX_PRICE_DRIFT_PCT,
     priceDiff,
+    true,
   );
 
   const bandBoundsDiff = (a: any, b: any) => {
@@ -180,11 +194,9 @@ export function compareRecommendationMarketContext(stored: any, current: any): M
       key,
       stored?.[key],
       current?.band?.[key.replace("band", "").toLowerCase()] ?? current?.[key],
-      (a, b) => {
-        if (a == null || b == null || a === 0) return true;
-        return (bandBoundsDiff(a, b) ?? Infinity) <= 0.05;
-      },
+      (a, b) => (bandBoundsDiff(a, b) ?? Infinity) <= 0.05,
       bandBoundsDiff,
+      true,
     );
   }
 
@@ -193,25 +205,22 @@ export function compareRecommendationMarketContext(stored: any, current: any): M
     "bandWidthPct",
     stored?.bandWidthPct,
     current?.band?.widthPct,
-    (a, b) => {
-      if (a == null || b == null) return true;
-      return (pctPointDiff(a, b) ?? Infinity) <= 0.02;
-    },
+    (a, b) => (pctPointDiff(a, b) ?? Infinity) <= 0.02,
     pctPointDiff,
+    true,
   );
 
   cmp(
     "atrPct",
     stored?.atrPct,
     current?.atrPct ?? current?.band?.atrPct,
-    (a, b) => {
-      if (a == null || b == null) return true;
-      return (pctPointDiff(a, b) ?? Infinity) <= 0.02;
-    },
+    (a, b) => (pctPointDiff(a, b) ?? Infinity) <= 0.02,
     pctPointDiff,
+    true,
   );
 
-  return { valid: changedFields.length === 0, changedFields, comparisons };
+  const valid = changedFields.length === 0 && missingFields.length === 0;
+  return { valid, missingFields, changedFields, comparisons };
 }
 
 /**
@@ -359,6 +368,37 @@ export function getRegimeMaxPct(adaptiveDecision: any, config: any): number {
     toNum(config?.adaptiveRangeMaxPct) ??
     toNum(config?.adaptiveRangeNormalMaxPct) ??
     5.0;
+}
+
+export function resolveCurrentRegimeMaxPctStrict(
+  currentRegime: string | null | undefined,
+  config: any,
+  adaptiveDecision: any,
+): number | null {
+  const regime = typeof currentRegime === "string" ? currentRegime.trim().toUpperCase() : null;
+  if (!regime) return null;
+
+  let specificMax: number | null = null;
+  const cfg = config ?? {};
+
+  if (regime === "LOW" || regime === "LOW_VOLATILITY") {
+    specificMax = toNum(cfg.adaptiveRangeLowVolMaxPct);
+  } else if (regime === "NORMAL" || regime === "RANGE" || regime === "RANGING" || regime === "LATERAL") {
+    specificMax = toNum(cfg.adaptiveRangeNormalMaxPct);
+  } else if (regime === "HIGH" || regime === "HIGH_VOLATILITY" || regime === "VOLATILE") {
+    specificMax = toNum(cfg.adaptiveRangeHighVolMaxPct);
+  }
+
+  if (specificMax == null) return null;
+
+  const hardMax = toNum(cfg.adaptiveRangeMaxPct);
+  const absoluteMax = ABSOLUTE_GRID_RANGE_MAX_PCT;
+
+  const candidates = [specificMax];
+  if (hardMax != null) candidates.push(hardMax);
+  candidates.push(absoluteMax);
+
+  return Math.min(...candidates);
 }
 
 function getGridStepParams(config: any): { atrMultiplier: number; maxPct: number } {
@@ -743,9 +783,6 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
 }
 
 // Validation helpers for recommendation apply payload values
-const ABSOLUTE_GRID_RANGE_MAX_PCT = 20.0;
-const ABSOLUTE_NET_PROFIT_MAX_PCT = 20.0;
-const MAX_LEVELS_PER_SIDE = 50;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v) && Object.prototype.toString.call(v) === "[object Object]";
@@ -814,6 +851,9 @@ export type ApplyValidationErrorCode =
   | "CONFIG_CHANGED"
   | "ACTIVE_RANGE_CHANGED"
   | "MARKET_SNAPSHOT_CHANGED"
+  | "MARKET_DATA_UNAVAILABLE"
+  | "MARKET_SNAPSHOT_INCOMPLETE"
+  | "MARKET_SNAPSHOT_INCONSISTENT"
   | "PRICE_DRIFT_EXCEEDED"
   | "RECOMMENDATION_EXPIRED"
   | "RECOMMENDATION_ALREADY_USED"

@@ -25,6 +25,7 @@ export interface GridBandSnapshot {
   regime: string;
   suitableForGrid: boolean;
   reason: string;
+  internallyConsistent: boolean;
 }
 
 export interface GridBandConfig {
@@ -71,6 +72,17 @@ export async function getGridBandSnapshot(config: GridBandConfig): Promise<GridB
       bands.percentB
     );
 
+    const internallyConsistent =
+      Number.isFinite(bands.lower) &&
+      Number.isFinite(bands.middle) &&
+      Number.isFinite(bands.upper) &&
+      bands.lower < bands.middle &&
+      bands.middle < bands.upper &&
+      Number.isFinite(bandWidthPct) &&
+      bandWidthPct >= 0 &&
+      Number.isFinite(atrPct) &&
+      atrPct >= 0;
+
     return {
       upper: bands.upper,
       middle: bands.middle,
@@ -83,6 +95,7 @@ export async function getGridBandSnapshot(config: GridBandConfig): Promise<GridB
       regime,
       suitableForGrid,
       reason,
+      internallyConsistent,
     };
   } catch (error) {
     console.error("[GridBandAdapter] Error fetching band snapshot:", error);
