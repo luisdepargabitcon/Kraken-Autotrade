@@ -2,17 +2,17 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4E — CORRECCIÓN 5 FAIL-CLOSED validada localmente
-NEXT_ACTION: commit/push selectivo
-LAST_COMPLETED_ACTION: validaciones finales OK (check/build/diff --check + 255 tests grid)
+TASK_STATUS: FASE 4E — CORRECCIÓN 5 FAIL-CLOSED commit/push completado
+NEXT_ACTION: deploy en staging previa aprobación explícita
+LAST_COMPLETED_ACTION: commit + push a origin/main 1c0cfa3
 LAST_VALIDATION: 2026-07-25T23:50+02:00 — npm run check ✅, npm run build ✅, vitest grid 255/255 ✅, git diff --check ✅
-CURRENT_HEAD: 284b9382dc154c7f4373e52d5f687813073a85fa
-ORIGIN_HEAD: 284b9382dc154c7f4373e52d5f687813073a85fa
-EXPECTED_DEPLOY_HASH: pendiente
+CURRENT_HEAD: 1c0cfa3
+ORIGIN_HEAD: 1c0cfa3
+EXPECTED_DEPLOY_HASH: 1c0cfa3
 DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
 FINAL_DOCUMENTATION_HASH: pendiente
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-25T23:50+02:00
+UPDATED_AT: 2026-07-25T23:51+02:00
 BUILD_BASELINE_CONFIRMED: TRUE
 BUILD_REGRESSION_FROM_PHASE_4E: FALSE
 BUILD_NOTE: npm run build OK en 3fab204 y en 90776a6; npx vite build desde client falla en ambos por contexto de invocación, no por regresión de código
