@@ -5,6 +5,65 @@
 
 ---
 
+## 2026-07-25 — GRID V2 REV-C11 FASE 4E CORRECCIÓN 4 PREDEPLOY: Contexto almacenado, fingerprints separados, atomicidad y UI de mercado
+
+### Resumen
+Se refina el sistema de recomendaciones de configuración del grid para hacerlo robusto y atómico antes del deploy. Se amplía `ConfigurationRecommendation` con un `context` snapshot detallado y `activeRangeFingerprint`; se refinan `buildConfigFingerprint` y `buildActiveRangeFingerprint`; se implementa `compareRecommendationMarketContext` como función pura con tolerancias explícitas. Se robustece `applyRecommendationPatchAtomically` validando `patchKeys`, capturando `beforeValues` por patchKeys, verificando rollback y devolviendo `errorCode`. Se añade `REGIME_LIMIT_UNAVAILABLE` al límite de régimen. El endpoint `/api/grid-isolated/config/recommendation/apply` valida `context` rechazado del cliente, fingerprints de config/rango y mercado con tolerancias, deriva de precio y límite de régimen. La UI ajusta botones según `hasApplicableRecommendation`/`hasConfigurationDiagnostic`, separa ATR/ATR%, muestra fechas completas y detalla bandas inconsistentes con `calculatedWidthPct`.
+
+### Problema
+- `ConfigurationRecommendation` no almacenaba el contexto de mercado usado para generarla, impidiendo validaciones seguras en el apply.
+- Faltaba separar fingerprint de config, rango activo y mercado; el mercado se comparaba con igualdad exacta en lugar de tolerancias.
+- `applyRecommendationPatchAtomically` usaba `changedFields` en lugar de `patchKeys` y no verificaba rollback.
+- No se manejaba explícitamente la imposibilidad de determinar `regimeMaxPct`.
+- `checkDataSufficiency` no exigía `band.available` e `internallyConsistent`.
+- La UI no distinguía recomendación aplicable de simple diagnóstico y mostraba ATR/ATR% mezclados.
+
+### Solución
+- `shared/gridRecommendationHelper.ts`: nuevo `RecommendationContext` y campos `activeRangeFingerprint`/`context`/`calculatedWidthPct`.
+- `server/services/gridIsolated/gridRecommendationService.ts`:
+  - `buildConfigFingerprint` incluye más parámetros; `buildActiveRangeFingerprint` es separado.
+  - `compareRecommendationMarketContext` compara contexto almacenado vs actual con tolerancias (0.25% precio, 0.05% bandas, 0.02 puntos ATR%/width) y devuelve `MarketContextComparison`.
+  - `checkDataSufficiency` rechaza si `band.available === false` o `band.internallyConsistent === false`.
+  - `getRegimeMaxPct` exportado; `validateProposedValues` devuelve `REGIME_LIMIT_UNAVAILABLE` cuando falta.
+  - `applyRecommendationPatchAtomically` valida `patchKeys` vs `changedFields`, allowlist, duplicados, captura `beforeValues` por `patchKeys`, rollback con verificación y devuelve `errorCode`.
+- `server/routes/gridIsolated.routes.ts`:
+  - Rechaza `proposedConfig` y `context` desde el cliente.
+  - Valida `configFingerprint`, `activeRangeFingerprint` y `compareRecommendationMarketContext`.
+  - Deriva de precio mapea `referencePrice` a `PRICE_DRIFT_EXCEEDED`.
+  - Calcula `effectiveRegimeMaxPct = min(stored, current)` y lo pasa al apply atómico.
+- `server/services/gridIsolated/buildGridMarketViewModel.ts`: `buildMarketBand` calcula y expone `calculatedWidthPct`.
+- `client/src/components/grid/GridMarketPanel.tsx`: etiquetas "Último precio"/"Mejor BID"/"Mejor ASK", fuente Kraken/ejecución Revolut X, ATR y ATR% separados, fecha completa, banda inconsistente con valores detallados y detalle técnico colapsado.
+- `client/src/components/grid/GridOverviewPanel.tsx` y `client/src/pages/GridIsolated.tsx`: props `hasApplicableRecommendation`/`hasConfigurationDiagnostic` para controlar visibilidad de botones y caducidad.
+- 5 archivos de test nuevos: `gridRecommendationRegistry.test.ts`, `gridRecommendationApply.test.ts`, `GridRecommendationDialog.test.tsx`, `GridMarketPanel.test.tsx`, `GridOverviewPanel.test.tsx`.
+
+### Archivos afectados
+- `shared/gridRecommendationHelper.ts`
+- `server/services/gridIsolated/gridRecommendationService.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `server/services/gridIsolated/buildGridMarketViewModel.ts`
+- `client/src/components/grid/GridMarketPanel.tsx`
+- `client/src/components/grid/GridOverviewPanel.tsx`
+- `client/src/components/grid/GridRecommendationDialog.tsx`
+- `client/src/pages/GridIsolated.tsx`
+- `server/services/__tests__/gridRecommendationRegistry.test.ts` (nuevo)
+- `server/routes/__tests__/gridRecommendationApply.test.ts` (nuevo)
+- `client/src/components/grid/GridRecommendationDialog.test.tsx` (nuevo)
+- `client/src/components/grid/GridMarketPanel.test.tsx` (nuevo)
+- `client/src/components/grid/GridOverviewPanel.test.tsx` (nuevo)
+- `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md`
+
+### Validaciones
+- `npm run check` ✅
+- `npm run build` ✅
+- 5 nuevos test files ✅ 28/28
+- Tests existentes Grid (revisados) ✅
+- `git diff --check` ✅
+
+### Estado final
+FASE 4E CORRECCIÓN 4 PREDEPLOY cerrada localmente. REV-C11 sigue abierto pendiente de deploy en staging y validación visual/network del flujo apply/recomendaciones.
+
+---
+
 ## 2026-07-25 — GRID V2 REV-C11: Aplicación atómica de recomendaciones, fingerprints server-side, validación y refinado de alternativas A/B/C
 
 ### Resumen

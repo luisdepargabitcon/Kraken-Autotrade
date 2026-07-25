@@ -70,28 +70,44 @@ function toIso(v: unknown): string | null {
 
 /**
  * Build a fingerprint from configuration fields only.
- * Does NOT include market price or band data.
+ * Does NOT include market price, band data or activeRangeVersionId.
  */
 export function buildConfigFingerprint(input: RecommendationServiceInput): string {
+  const cfg = input.config ?? {};
   const parts = [
     input.pair,
     input.mode,
-    toNum(input.config?.netProfitTargetPct)?.toFixed(4) ?? "null",
-    toNum(input.config?.buyFeePct)?.toFixed(4) ?? "null",
-    toNum(input.config?.sellFeePct)?.toFixed(4) ?? "null",
-    toNum(input.config?.taxReservePct)?.toFixed(4) ?? "null",
-    toNum(input.config?.gridRangeMaxPct)?.toFixed(4) ?? "null",
-    input.config?.enforceCompactRange ?? "null",
-    toNum(input.config?.buyLevels)?.toString() ?? "null",
-    toNum(input.config?.sellLevels)?.toString() ?? "null",
-    input.resolvedRange?.activeRangeVersionId ?? "null",
+    toNum(cfg.netProfitTargetPct)?.toFixed(4) ?? "null",
+    toNum(cfg.buyFeePct)?.toFixed(4) ?? "null",
+    toNum(cfg.sellFeePct)?.toFixed(4) ?? "null",
+    toNum(cfg.taxReservePct)?.toFixed(4) ?? "null",
+    toNum(cfg.gridRangeMaxPct)?.toFixed(4) ?? "null",
+    cfg.enforceCompactRange ?? "null",
+    toNum(cfg.buyLevels)?.toString() ?? "null",
+    toNum(cfg.sellLevels)?.toString() ?? "null",
+    toNum(cfg.gridStepAtrMultiplier)?.toFixed(4) ?? "null",
+    toNum(cfg.gridStepMinPct)?.toFixed(4) ?? "null",
+    toNum(cfg.gridStepMaxPct)?.toFixed(4) ?? "null",
+    toNum(cfg.bandPeriod)?.toString() ?? "null",
+    toNum(cfg.bandStdDevMultiplier)?.toFixed(4) ?? "null",
+    toNum(cfg.atrPeriod)?.toString() ?? "null",
+    cfg.atrTimeframe ?? "null",
+    cfg.adaptiveRangeProfile ?? "null",
+    toNum(cfg.adaptiveRangeNormalMaxPct)?.toFixed(4) ?? "null",
+    toNum(cfg.adaptiveRangeMaxPct)?.toFixed(4) ?? "null",
   ];
   return parts.join("|");
+}
+
+export function buildActiveRangeFingerprint(activeRangeVersionId: string | null | undefined): string {
+  return activeRangeVersionId ?? "null";
 }
 
 /**
  * Build a fingerprint from market band data only.
  * Does NOT include config fields or exact price.
+ * NOTE: this is a legacy deterministic fingerprint. Prefer compareRecommendationMarketContext
+ * for validation with explicit tolerances.
  */
 export function buildMarketFingerprint(input: RecommendationServiceInput): string {
   const band = input.marketContext?.band ?? {};
@@ -107,6 +123,97 @@ export function buildMarketFingerprint(input: RecommendationServiceInput): strin
   return parts.join("|");
 }
 
+export interface MarketContextComparison {
+  valid: boolean;
+  changedFields: string[];
+  comparisons: Record<string, { stored: any; current: any; diff: number | null; passed: boolean }>;
+}
+
+export function compareRecommendationMarketContext(stored: any, current: any): MarketContextComparison {
+  const comparisons: MarketContextComparison["comparisons"] = {};
+  const changedFields: string[] = [];
+
+  function cmp(
+    key: string,
+    a: unknown,
+    b: unknown,
+    test: (a: any, b: any) => boolean,
+    diff: (a: any, b: any) => number | null,
+  ) {
+    const passed = test(a, b);
+    comparisons[key] = { stored: a, current: b, diff: diff(a, b), passed };
+    if (!passed) changedFields.push(key);
+  }
+
+  const exactKeys = ["regime", "bandSource", "bandPeriod", "bandStdDevMultiplier", "atrPeriod", "atrTimeframe"];
+  for (const key of exactKeys) {
+    cmp(
+      key,
+      stored?.[key],
+      current?.[key],
+      (a, b) => (a == null && b == null) || a === b,
+      () => null,
+    );
+  }
+
+  const priceDiff = (a: any, b: any) => {
+    if (a == null || b == null || a === 0) return null;
+    return Math.abs((b - a) / a) * 100;
+  };
+  cmp(
+    "referencePrice",
+    stored?.referencePrice,
+    current?.currentPrice,
+    (a, b) => {
+      if (a == null || b == null || a === 0) return true;
+      return (priceDiff(a, b) ?? Infinity) <= RECOMMENDATION_MAX_PRICE_DRIFT_PCT;
+    },
+    priceDiff,
+  );
+
+  const bandBoundsDiff = (a: any, b: any) => {
+    if (a == null || b == null || a === 0) return null;
+    return Math.abs((b - a) / a) * 100;
+  };
+  for (const key of ["bandLower", "bandCenter", "bandUpper"]) {
+    cmp(
+      key,
+      stored?.[key],
+      current?.band?.[key.replace("band", "").toLowerCase()] ?? current?.[key],
+      (a, b) => {
+        if (a == null || b == null || a === 0) return true;
+        return (bandBoundsDiff(a, b) ?? Infinity) <= 0.05;
+      },
+      bandBoundsDiff,
+    );
+  }
+
+  const pctPointDiff = (a: any, b: any) => (a == null || b == null ? null : Math.abs(b - a));
+  cmp(
+    "bandWidthPct",
+    stored?.bandWidthPct,
+    current?.band?.widthPct,
+    (a, b) => {
+      if (a == null || b == null) return true;
+      return (pctPointDiff(a, b) ?? Infinity) <= 0.02;
+    },
+    pctPointDiff,
+  );
+
+  cmp(
+    "atrPct",
+    stored?.atrPct,
+    current?.atrPct ?? current?.band?.atrPct,
+    (a, b) => {
+      if (a == null || b == null) return true;
+      return (pctPointDiff(a, b) ?? Infinity) <= 0.02;
+    },
+    pctPointDiff,
+  );
+
+  return { valid: changedFields.length === 0, changedFields, comparisons };
+}
+
 /**
  * Check if all required market data is available for a safe recommendation.
  */
@@ -120,6 +227,13 @@ function checkDataSufficiency(input: RecommendationServiceInput): { sufficient: 
   }
 
   const band = marketContext?.band ?? {};
+  if (band.available === false) {
+    return { sufficient: false, reason: "Banda de mercado no disponible" };
+  }
+  if (band.internallyConsistent === false) {
+    return { sufficient: false, reason: "Banda de mercado inconsistente" };
+  }
+
   const bandLower = toNum(band.lower);
   const bandUpper = toNum(band.upper);
   const bandCenter = toNum(band.center);
@@ -240,7 +354,7 @@ function getEffectiveRangePct(
   return bandWidthPct;
 }
 
-function getRegimeMaxPct(adaptiveDecision: any, config: any): number {
+export function getRegimeMaxPct(adaptiveDecision: any, config: any): number {
   return toNum(adaptiveDecision?.regimeMaxPct) ??
     toNum(config?.adaptiveRangeMaxPct) ??
     toNum(config?.adaptiveRangeNormalMaxPct) ??
@@ -272,6 +386,8 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   // Check data sufficiency first — block if anything is missing
   const sufficiency = checkDataSufficiency(input);
   if (!sufficiency.sufficient) {
+    const activeRangeVersionId = input.resolvedRange?.activeRangeVersionId ?? input.status?.activeRangeVersionId ?? null;
+    const band = input.marketContext?.band ?? {};
     return {
       id: `rec-blocked-${crypto.randomUUID()}-${input.pair}`,
       generatedAt: new Date().toISOString(),
@@ -279,6 +395,25 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
       snapshotFingerprint: "blocked",
       configFingerprint: "blocked",
       marketFingerprint: "blocked",
+      activeRangeFingerprint: buildActiveRangeFingerprint(activeRangeVersionId),
+      context: {
+        pair: input.pair,
+        mode: input.mode,
+        activeRangeVersionId,
+        regime: input.marketContext?.regime ?? input.adaptiveDecision?.regimeLabel ?? null,
+        regimeMaxPct: getRegimeMaxPct(input.adaptiveDecision, input.config),
+        bandPeriod: toNum(band.period ?? input.config?.bandPeriod),
+        bandStdDevMultiplier: toNum(band.stdDevMultiplier ?? input.config?.bandStdDevMultiplier),
+        atrPeriod: toNum(input.config?.atrPeriod),
+        atrTimeframe: input.config?.atrTimeframe ?? null,
+        bandSource: band.source ?? input.marketContext?.bandSource ?? null,
+        bandLower: toNum(band.lower),
+        bandCenter: toNum(band.center),
+        bandUpper: toNum(band.upper),
+        bandWidthPct: toNum(band.widthPct),
+        atrPct: toNum(input.marketContext?.atrPct ?? band.atrPct),
+        referencePrice: toNum(input.marketContext?.currentPrice),
+      },
       referencePrice: toNum(input.marketContext?.currentPrice),
       fresh: false,
       confidence: 0,
@@ -551,16 +686,39 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   const expiresAt = new Date(now.getTime() + RECOMMENDATION_TTL_MS);
   const configFingerprint = buildConfigFingerprint(input);
   const marketFingerprint = buildMarketFingerprint(input);
+  const activeRangeVersionId = resolvedRange?.activeRangeVersionId ?? input.status?.activeRangeVersionId ?? null;
+  const activeRangeFingerprint = buildActiveRangeFingerprint(activeRangeVersionId);
   const referencePrice = toNum(marketContext?.currentPrice);
+  const storedBand = marketContext?.band ?? {};
+  const context = {
+    pair: input.pair,
+    mode: input.mode,
+    activeRangeVersionId,
+    regime: marketContext?.regime ?? adaptiveDecision?.regimeLabel ?? null,
+    regimeMaxPct,
+    bandPeriod: toNum(storedBand.period ?? config?.bandPeriod),
+    bandStdDevMultiplier: toNum(storedBand.stdDevMultiplier ?? config?.bandStdDevMultiplier),
+    atrPeriod: toNum(config?.atrPeriod),
+    atrTimeframe: config?.atrTimeframe ?? null,
+    bandSource: storedBand.source ?? marketContext?.bandSource ?? null,
+    bandLower: toNum(storedBand.lower),
+    bandCenter: toNum(storedBand.center),
+    bandUpper: toNum(storedBand.upper),
+    bandWidthPct: toNum(storedBand.widthPct),
+    atrPct: toNum(marketContext?.atrPct ?? storedBand.atrPct),
+    referencePrice,
+  };
   const uuid = crypto.randomUUID();
 
   return {
     id: `rec-${uuid}-${input.pair}`,
     generatedAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),
-    snapshotFingerprint: `${configFingerprint}||${marketFingerprint}`,
+    snapshotFingerprint: `${configFingerprint}||${activeRangeFingerprint}||${marketFingerprint}`,
     configFingerprint,
     marketFingerprint,
+    activeRangeFingerprint,
+    context,
     referencePrice,
     fresh: true,
     confidence: 0.85,
@@ -665,7 +823,10 @@ export type ApplyValidationErrorCode =
   | "ALTERNATIVE_NOT_FOUND"
   | "ALTERNATIVE_BLOCKED"
   | "NO_CHANGED_FIELDS"
-  | "FIELD_NOT_ALLOWED";
+  | "FIELD_NOT_ALLOWED"
+  | "REGIME_LIMIT_UNAVAILABLE"
+  | "ROLLBACK_FAILED"
+  | "APPLY_FAILED";
 
 export interface ApplyValidationResult {
   valid: boolean;
@@ -722,7 +883,10 @@ export function validateProposedValues(
     } else if (key === "gridRangeMaxPct") {
       const r = validatePositiveFiniteNumber(key, value, ABSOLUTE_GRID_RANGE_MAX_PCT);
       if (!r.ok) return { valid: false, reason: r.reason, code: "INVALID_VALUE" };
-      if (regimeMaxPct != null && (value as number) > regimeMaxPct + 1e-9) {
+      if (regimeMaxPct == null) {
+        return { valid: false, reason: "No se puede determinar el límite máximo del régimen para ampliar el rango", code: "REGIME_LIMIT_UNAVAILABLE" };
+      }
+      if ((value as number) > regimeMaxPct + 1e-9) {
         return { valid: false, reason: `${key} no puede superar el máximo del régimen (${regimeMaxPct.toFixed(2)}%)`, code: "INVALID_VALUE" };
       }
     } else if (key === "enforceCompactRange") {
@@ -781,6 +945,7 @@ export interface ApplyRecommendationResult {
   beforeValues: Record<string, any>;
   afterValues: Record<string, any>;
   error?: string;
+  errorCode?: ApplyValidationErrorCode;
 }
 
 export async function applyRecommendationPatchAtomically(
@@ -790,51 +955,70 @@ export async function applyRecommendationPatchAtomically(
   regimeMaxPct: number | null,
 ): Promise<ApplyRecommendationResult> {
   if (!alt || !alt.proposedConfig) {
-    return { success: false, appliedFields: [], beforeValues: {}, afterValues: {}, error: "Alternativa sin proposedConfig" };
+    return { success: false, appliedFields: [], beforeValues: {}, afterValues: {}, error: "Alternativa sin proposedConfig", errorCode: "NO_CHANGED_FIELDS" };
   }
 
-  // 1. Capture before values
+  const patchKeys = Object.keys(alt.proposedConfig);
+
+  if (patchKeys.length === 0) {
+    return { success: false, appliedFields: [], beforeValues: {}, afterValues: {}, error: "La alternativa no tiene campos a modificar", errorCode: "NO_CHANGED_FIELDS" };
+  }
+
+  const sortedPatchKeys = [...patchKeys].sort();
+  const sortedChangedFields = [...alt.changedFields].sort();
+  if (sortedPatchKeys.length !== sortedChangedFields.length || sortedPatchKeys.some((k, i) => k !== sortedChangedFields[i])) {
+    return { success: false, appliedFields: [], beforeValues: {}, afterValues: {}, error: "changedFields no coincide con proposedConfig", errorCode: "INVALID_VALUE" };
+  }
+
+  const uniquePatchKeys = new Set(patchKeys);
+  if (uniquePatchKeys.size !== patchKeys.length) {
+    return { success: false, appliedFields: [], beforeValues: {}, afterValues: {}, error: "Campos duplicados en proposedConfig", errorCode: "INVALID_VALUE" };
+  }
+
+  for (const key of patchKeys) {
+    if (!RECOMMENDATION_APPLY_ALLOWLIST.includes(key as any)) {
+      return { success: false, appliedFields: [], beforeValues: {}, afterValues: {}, error: `Campo fuera de allowlist: ${key}`, errorCode: "FIELD_NOT_ALLOWED" };
+    }
+  }
+
+  // 1. Capture before values from patchKeys
   const beforeValues: Record<string, any> = {};
-  for (const field of alt.changedFields) {
-    beforeValues[field] = currentConfig[field] ?? null;
+  for (const key of patchKeys) {
+    beforeValues[key] = currentConfig[key] ?? null;
   }
 
   // 2. Validate proposed values server-side
   const valueValidation = validateProposedValues(alt.proposedConfig, regimeMaxPct);
   if (!valueValidation.valid) {
-    return { success: false, appliedFields: [], beforeValues, afterValues: beforeValues, error: valueValidation.reason ?? "Valor inválido" };
+    return { success: false, appliedFields: [], beforeValues, afterValues: beforeValues, error: valueValidation.reason ?? "Valor inválido", errorCode: valueValidation.code };
   }
 
-  // 3. Apply temporarily to runtime config
+  // 3. Apply temporarily to runtime config using patchKeys
   const appliedFields: string[] = [];
-  for (const [key, value] of Object.entries(alt.proposedConfig)) {
-    if (RECOMMENDATION_APPLY_ALLOWLIST.includes(key as any)) {
-      currentConfig[key] = value;
-      appliedFields.push(key);
-    }
-  }
-
-  // Capture tentative after values
-  const tentativeAfter: Record<string, any> = {};
-  for (const field of alt.changedFields) {
-    tentativeAfter[field] = currentConfig[field] ?? null;
+  for (const key of patchKeys) {
+    currentConfig[key] = alt.proposedConfig[key];
+    appliedFields.push(key);
   }
 
   // 4. Persist
   try {
     await saveConfig();
   } catch (saveError) {
-    // 5. Rollback: restore all beforeValues
-    for (const [key, value] of Object.entries(beforeValues)) {
-      currentConfig[key] = value;
+    // 5. Rollback: restore all beforeValues using patchKeys
+    for (const key of patchKeys) {
+      currentConfig[key] = beforeValues[key];
     }
 
     // 6. Verify runtime restored
     let restored = true;
-    for (const [key, expected] of Object.entries(beforeValues)) {
-      if (currentConfig[key] !== expected) {
+    for (const key of patchKeys) {
+      if (!Object.is(currentConfig[key], beforeValues[key])) {
         restored = false;
       }
+    }
+
+    if (!restored) {
+      return { success: false, appliedFields: [], beforeValues, afterValues: beforeValues, error: "ROLLBACK_FAILED", errorCode: "ROLLBACK_FAILED" };
     }
 
     return {
@@ -842,14 +1026,15 @@ export async function applyRecommendationPatchAtomically(
       appliedFields: [],
       beforeValues,
       afterValues: beforeValues,
-      error: `Error al guardar configuración: ${String(saveError)}${restored ? "" : " (runtime no restaurado completamente)"}`,
+      error: `Error al guardar configuración: ${String(saveError)}`,
+      errorCode: "APPLY_FAILED",
     };
   }
 
-  // 7. Confirm after values
+  // 7. Confirm after values using patchKeys
   const afterValues: Record<string, any> = {};
-  for (const field of alt.changedFields) {
-    afterValues[field] = currentConfig[field] ?? null;
+  for (const key of patchKeys) {
+    afterValues[key] = currentConfig[key] ?? null;
   }
 
   return { success: true, appliedFields, beforeValues, afterValues };

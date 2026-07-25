@@ -44,11 +44,11 @@ function fmtNumber(v: number | null | undefined): string {
   return v.toLocaleString("es-ES", { maximumFractionDigits: 2 });
 }
 
-function fmtDateShort(iso: string | null | undefined): string {
+function fmtDateFull(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function ageLabel(ms: number | null | undefined, maxMs: number | null | undefined): string {
@@ -143,13 +143,13 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
           {/* Price, Bid, Ask, Spread — separated clearly */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Metric
-              label="Precio"
+              label="Último precio"
               value={fmtPrice(current.price)}
               sub={current.source ? `Fuente: ${current.source}` : undefined}
               highlight
             />
-            <Metric label="Bid" value={fmtPrice(current.bid)} sub="Mejor compra" />
-            <Metric label="Ask" value={fmtPrice(current.ask)} sub="Mejor venta" />
+            <Metric label="Mejor BID" value={fmtPrice(current.bid)} sub="Mejor compra" />
+            <Metric label="Mejor ASK" value={fmtPrice(current.ask)} sub="Mejor venta" />
             <Metric
               label="Spread"
               value={(current.spreadUsd != null
@@ -163,6 +163,11 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             />
           </div>
 
+          <div className="text-xs text-muted-foreground space-y-0.5">
+            <p>Referencia de mercado: Kraken</p>
+            <p>Exchange previsto de ejecución: Revolut X</p>
+          </div>
+
           {/* Freshness detail */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
@@ -170,7 +175,7 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
               {ageLabel(current.ageMs, current.maxAgeMs)}
             </span>
             {current.updatedAt && (
-              <span>Actualizado: {fmtDateShort(current.updatedAt)}</span>
+              <span>Actualizado: {fmtDateFull(current.updatedAt)}</span>
             )}
           </div>
 
@@ -179,8 +184,13 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             <div className="rounded-lg border border-border/40 p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                  Banda de Bollinger ({current.band?.period ?? 20}, {current.band?.stdDevMultiplier ?? 2})
+                  {current.band?.period != null && current.band?.stdDevMultiplier != null
+                    ? `Banda de Bollinger (${current.band.period} períodos · ${current.band.stdDevMultiplier}σ)`
+                    : "Banda de Bollinger"}
                 </span>
+                {current.band?.period == null || current.band?.stdDevMultiplier == null ? (
+                  <span className="text-[10px] text-amber-400">Parámetros del indicador no disponibles</span>
+                ) : null}
                 <span className="text-xs font-medium">
                   Posición: {current.band.positionPct != null ? `${Math.round(current.band.positionPct)}%` : "—"}
                 </span>
@@ -198,15 +208,16 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
                 <span className="text-muted-foreground">
                   Posición: <span className="capitalize">{current.band.position ?? "desconocida"}</span>
                 </span>
-                <span className="text-muted-foreground">
-                  ATR: {fmtPct(current.band?.atrPct)}{current.band?.atr != null ? ` ($${current.band.atr.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : ""}
-                </span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">ATR: {current.band?.atr != null ? `$${current.band.atr.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</span>
+                <span className="text-muted-foreground">ATR%: {fmtPct(current.band?.atrPct)}</span>
               </div>
               {(current.band?.timeframe || current.band?.source) && (
                 <div className="flex justify-between text-[10px] text-muted-foreground">
                   <span>Timeframe: {current.band?.timeframe ?? "—"}</span>
                   <span>Fuente: {current.band?.source ?? "—"}</span>
-                  {current.band?.calculatedAt && <span>Calculada: {fmtDateShort(current.band.calculatedAt)}</span>}
+                  {current.band?.calculatedAt && <span>Calculada: {fmtDateFull(current.band.calculatedAt)}</span>}
                 </div>
               )}
               {current.band?.source && current.band.source.toLowerCase() !== "kraken" && current.band.source.toLowerCase() !== "revolut_x" && current.band.source.toLowerCase() !== "grid_band_adapter" && (
@@ -217,14 +228,35 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
               )}
             </div>
           ) : current.band?.lower != null && current.band?.upper != null && !current.band?.internallyConsistent ? (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
               <p className="text-sm text-amber-400 flex items-center gap-2">
                 <AlertCircle className="h-4 w-4" />
                 Banda inconsistente
               </p>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground">
                 {current.band.inconsistencyReason ?? "Los valores de Bollinger no son internamente consistentes."}
               </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-muted-foreground font-mono">
+                <span>Inferior: {fmtPrice(current.band.lower)}</span>
+                <span>Centro: {fmtPrice(current.band.center)}</span>
+                <span>Superior: {fmtPrice(current.band.upper)}</span>
+                <span>Anchura reportada: {fmtPct(current.band.widthPct)}</span>
+                <span>Anchura recalculada: {fmtPct(current.band.calculatedWidthPct)}</span>
+                <span>Fuente: {current.band.source ?? "—"}</span>
+                {current.band.calculatedAt && <span>Timestamp: {fmtDateFull(current.band.calculatedAt)}</span>}
+              </div>
+              <Collapsible>
+                <CollapsibleTrigger asChild>
+                  <button className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    Detalle técnico
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <p className="text-xs text-muted-foreground font-mono mt-2">{current.band.inconsistencyReason ?? "Sin razón detallada"}</p>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
           ) : (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
@@ -262,7 +294,7 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
                     <Metric label="Código" value={current.regime.code ?? "—"} />
                     <Metric label="Dirección" value={current.regime.direction ?? "—"} />
                     <Metric label="Confianza" value={current.regime.confidencePct != null ? `${current.regime.confidencePct.toFixed(1)}%` : "—"} />
-                    <Metric label="Actualizado" value={fmtDateShort(current.regime.updatedAt)} />
+                    <Metric label="Actualizado" value={fmtDateFull(current.regime.updatedAt)} />
                   </div>
                   {current.regime.technicalReason && (
                     <p className="text-xs text-muted-foreground font-mono">Razón técnica: {current.regime.technicalReason}</p>
@@ -376,7 +408,7 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
 
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              {entryRange.calculatedAt ? `Calculado el ${fmtDateShort(entryRange.calculatedAt)}` : "Sin cálculo reciente"}
+              {entryRange.calculatedAt ? `Calculado el ${fmtDateFull(entryRange.calculatedAt)}` : "Sin cálculo reciente"}
             </p>
             <Button onClick={onAnalyze} disabled={!onAnalyze || loading} size="sm">
               {loading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
@@ -431,7 +463,7 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
               <Metric label="Repeticiones" value={fmtNumber(recommendation.repetitionCount)} />
             </div>
             {recommendation.lastDetectedAt && (
-              <p className="text-xs text-muted-foreground">Detectado el {fmtDateShort(recommendation.lastDetectedAt)}</p>
+              <p className="text-xs text-muted-foreground">Detectado el {fmtDateFull(recommendation.lastDetectedAt)}</p>
             )}
           </CardContent>
         </Card>
@@ -487,7 +519,7 @@ function ExitObligationRangeCard({ range }: { range: any }) {
                 <Metric label="Régimen" value={snapshot.regime ?? "—"} />
                 <Metric label="ATR" value={fmtPct(snapshot.atrPct)} />
               </div>
-              {snapshot.calculatedAt && <p className="text-xs text-muted-foreground mt-2">Calculada el {fmtDateShort(snapshot.calculatedAt)}</p>}
+              {snapshot.calculatedAt && <p className="text-xs text-muted-foreground mt-2">Calculada el {fmtDateFull(snapshot.calculatedAt)}</p>}
             </div>
           ) : (
             <p className="text-xs text-muted-foreground mt-2">Banda histórica de referencia no disponible para este rango.</p>

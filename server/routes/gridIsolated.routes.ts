@@ -48,8 +48,11 @@ import {
   validateProposedValues,
   applyRecommendationPatchAtomically,
   buildConfigFingerprint,
+  buildActiveRangeFingerprint,
   buildMarketFingerprint,
+  compareRecommendationMarketContext,
   calculatePriceDriftPct,
+  getRegimeMaxPct,
   RECOMMENDATION_APPLY_ALLOWLIST,
   RECOMMENDATION_MAX_PRICE_DRIFT_PCT,
 } from "../services/gridIsolated/gridRecommendationService";
@@ -899,9 +902,12 @@ export function registerGridIsolatedRoutes(app: Express): void {
         return ERR("MISSING_RECOMMENDATION_ID", 400, "Falta recommendationId");
       }
 
-      // Reject if proposedConfig is sent from client
+      // Reject if client tries to send proposedConfig or any recommendation fields
       if (payload?.proposedConfig != null) {
         return ERR("CLIENT_PROPOSED_CONFIG_REJECTED", 400, "proposedConfig no permitido en el payload del cliente");
+      }
+      if (payload?.context != null) {
+        return ERR("CLIENT_CONTEXT_REJECTED", 400, "context no permitido en el payload del cliente");
       }
 
       const recommendation = gridRecommendationRegistry.get(recommendationId);
@@ -932,7 +938,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         return ERR("ALTERNATIVE_NOT_FOUND", 400, "Alternativa no encontrada");
       }
 
-      // 5. Rebuild current market context and fingerprints
+      // 5. Rebuild current market context from live data
       const bandPeriod = runtimeConfig?.bandPeriod ?? 20;
       const bandStdDevMultiplier = toNum(runtimeConfig?.bandStdDevMultiplier) ?? 2;
       const atrPeriod = runtimeConfig?.atrPeriod ?? 14;
@@ -940,7 +946,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
       let currentPrice: number | null = null;
       let bandSnapshot: any = null;
-      let marketContextForFingerprint: any = null;
+      let currentMarketContext: any = null;
       try {
         const ticker = await MarketDataService.getTicker(pair);
         currentPrice = ticker?.last ?? null;
@@ -951,10 +957,12 @@ export function registerGridIsolatedRoutes(app: Express): void {
           atrPeriod,
           atrTimeframe,
         });
-        marketContextForFingerprint = {
+        currentMarketContext = {
           currentPrice,
           band: bandSnapshot
             ? {
+                available: true,
+                internallyConsistent: bandSnapshot.internallyConsistent !== false,
                 lower: bandSnapshot.lower ?? null,
                 center: bandSnapshot.middle ?? null,
                 upper: bandSnapshot.upper ?? null,
@@ -967,62 +975,82 @@ export function registerGridIsolatedRoutes(app: Express): void {
                 source: "grid_band_adapter",
                 calculatedAt: new Date().toISOString(),
               }
-            : { lower: null, center: null, upper: null, widthPct: null, atrPct: null, source: null },
+            : { available: false, internallyConsistent: false, lower: null, center: null, upper: null, widthPct: null, atrPct: null, source: null },
           regime: bandSnapshot?.regime ?? null,
           atrPct: bandSnapshot?.atrPct ?? null,
           bandSource: bandSnapshot ? "grid_band_adapter" : null,
+          bandPeriod,
+          bandStdDevMultiplier,
+          atrPeriod,
+          atrTimeframe,
         };
       } catch {
         // Market context is optional; continue with what we have
       }
 
-      // 6. Price drift validation
-      if (currentPrice != null && recommendation.referencePrice != null) {
-        const driftPct = calculatePriceDriftPct(currentPrice, recommendation.referencePrice);
-        if (driftPct > RECOMMENDATION_MAX_PRICE_DRIFT_PCT) {
-          return ERR("PRICE_DRIFT_EXCEEDED", 409, `Deriva de precio (${driftPct.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`);
-        }
-      }
-
-      // 7. Fingerprint validation against stored recommendation
-      const runtimeStatus = await gridIsolatedEngine.getStatusSafe();
-      const activeRangeVersionId = runtimeStatus?.activeRangeVersionId ?? null;
+      // 6. Validate config fingerprint
       const fingerprintInput = {
         mode: currentMode,
         pair,
         config: runtimeConfig,
-        marketContext: marketContextForFingerprint,
-        resolvedRange: { activeRangeVersionId },
+        marketContext: null,
+        resolvedRange: { activeRangeVersionId: null },
         adaptiveDecision: null,
         professionalGenerator: null,
         levels: [],
         status: null,
       };
-
       const currentConfigFingerprint = buildConfigFingerprint(fingerprintInput as any);
-      const currentMarketFingerprint = buildMarketFingerprint(fingerprintInput as any);
-
       if (recommendation.configFingerprint && recommendation.configFingerprint !== currentConfigFingerprint) {
         return ERR("CONFIG_CHANGED", 409, "La configuración cambió desde que se generó la recomendación");
       }
-      if (recommendation.marketFingerprint && recommendation.marketFingerprint !== currentMarketFingerprint) {
-        return ERR("MARKET_SNAPSHOT_CHANGED", 409, "El snapshot de mercado cambió desde que se generó la recomendación");
+
+      // 7. Validate active range fingerprint
+      const runtimeStatus = await gridIsolatedEngine.getStatusSafe();
+      const currentActiveRangeVersionId = runtimeStatus?.activeRangeVersionId ?? null;
+      const currentActiveRangeFingerprint = buildActiveRangeFingerprint(currentActiveRangeVersionId);
+      if (recommendation.activeRangeFingerprint && recommendation.activeRangeFingerprint !== currentActiveRangeFingerprint) {
+        return ERR("ACTIVE_RANGE_CHANGED", 409, "El rango activo cambió desde que se generó la recomendación");
       }
 
-      // 8. Get current config object and validate/apply atomically
+      // 8. Validate market context with explicit tolerances using stored context
+      if (recommendation.context && currentMarketContext) {
+        const comparison = compareRecommendationMarketContext(recommendation.context, currentMarketContext);
+        if (!comparison.valid) {
+          if (comparison.changedFields.includes("referencePrice")) {
+            const priceComparison = comparison.comparisons.referencePrice;
+            const drift = priceComparison.diff ?? 0;
+            return ERR("PRICE_DRIFT_EXCEEDED", 409, `Deriva de precio (${drift.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`);
+          }
+          return ERR("MARKET_SNAPSHOT_CHANGED", 409, `El snapshot de mercado cambió: ${comparison.changedFields.join(", ")}`);
+        }
+      }
+
+      // 9. Determine regime limit: minimum of stored and current canonical values
+      const storedRegimeMaxPct = recommendation.context?.regimeMaxPct ?? null;
+      const currentRegimeMaxPct = getRegimeMaxPct(null, runtimeConfig);
+      let effectiveRegimeMaxPct: number | null = null;
+      if (storedRegimeMaxPct != null && currentRegimeMaxPct != null) {
+        effectiveRegimeMaxPct = Math.min(storedRegimeMaxPct, currentRegimeMaxPct);
+      } else if (storedRegimeMaxPct != null) {
+        effectiveRegimeMaxPct = storedRegimeMaxPct;
+      } else if (currentRegimeMaxPct != null) {
+        effectiveRegimeMaxPct = currentRegimeMaxPct;
+      }
+
+      // 10. Get current config object and validate/apply atomically
       const currentConfig = gridIsolatedEngine.getConfig();
       if (!currentConfig) {
         return ERR("CONFIG_NOT_AVAILABLE", 500, "Config no disponible");
       }
 
-      const regimeMaxPct = toNum(bandSnapshot?.regimeMaxPct) ?? null;
-      const applyResult = await applyRecommendationPatchAtomically(currentConfig, alt, () => gridIsolatedEngine.saveConfig(), regimeMaxPct);
+      const applyResult = await applyRecommendationPatchAtomically(currentConfig, alt, () => gridIsolatedEngine.saveConfig(), effectiveRegimeMaxPct);
 
       if (!applyResult.success) {
-        return ERR("APPLY_FAILED", 500, applyResult.error ?? "Error al aplicar la recomendación");
+        return ERR(applyResult.errorCode ?? "APPLY_FAILED", 500, applyResult.error ?? "Error al aplicar la recomendación");
       }
 
-      // 9. Mark recommendation as applied only after successful save
+      // 11. Mark recommendation as applied only after successful save
       gridRecommendationRegistry.markApplied(recommendationId);
 
       await botLogger.info(

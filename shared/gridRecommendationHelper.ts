@@ -33,6 +33,25 @@ export interface RecommendationAlternative {
   blockingReason: string | null;
 }
 
+export interface RecommendationContext {
+  pair: string;
+  mode: string;
+  activeRangeVersionId: string | null;
+  regime: string | null;
+  regimeMaxPct: number | null;
+  bandPeriod: number | null;
+  bandStdDevMultiplier: number | null;
+  atrPeriod: number | null;
+  atrTimeframe: string | null;
+  bandSource: string | null;
+  bandLower: number | null;
+  bandCenter: number | null;
+  bandUpper: number | null;
+  bandWidthPct: number | null;
+  atrPct: number | null;
+  referencePrice: number | null;
+}
+
 export interface ConfigurationRecommendation {
   id: string;
   generatedAt: string;
@@ -40,6 +59,8 @@ export interface ConfigurationRecommendation {
   snapshotFingerprint: string;
   configFingerprint: string;
   marketFingerprint: string;
+  activeRangeFingerprint: string;
+  context: RecommendationContext;
   referencePrice: number | null;
   fresh: boolean;
   confidence: number;
@@ -98,6 +119,7 @@ export interface MarketBand {
   center: number | null;
   upper: number | null;
   widthPct: number | null;
+  calculatedWidthPct: number | null;
   atr: number | null;
   atrPct: number | null;
   period: number | null;

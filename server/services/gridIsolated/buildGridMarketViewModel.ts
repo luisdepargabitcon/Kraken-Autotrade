@@ -352,12 +352,13 @@ function buildMarketBand(marketContext: any): MarketBandType {
   const available = lower != null && upper != null && center != null;
   let internallyConsistent = true;
   let inconsistencyReason: string | null = null;
+  let calculatedWidthPct: number | null = null;
 
   if (available && center > 0) {
-    const calculatedWidth = ((upper! - lower!) / center!) * 100;
-    if (widthPct != null && Math.abs(calculatedWidth - widthPct) > 0.02) {
+    calculatedWidthPct = ((upper! - lower!) / center!) * 100;
+    if (widthPct != null && Math.abs(calculatedWidthPct - widthPct) > 0.02) {
       internallyConsistent = false;
-      inconsistencyReason = `Anchura calculada (${calculatedWidth.toFixed(4)}%) no coincide con widthPct reportado (${widthPct.toFixed(4)}%)`;
+      inconsistencyReason = `Anchura calculada (${calculatedWidthPct.toFixed(4)}%) no coincide con widthPct reportado (${widthPct.toFixed(4)}%)`;
     }
   } else if (!available) {
     internallyConsistent = false;
@@ -369,7 +370,8 @@ function buildMarketBand(marketContext: any): MarketBandType {
     lower,
     center,
     upper,
-    widthPct: available ? (widthPct ?? (((upper! - lower!) / center!) * 100)) : null,
+    widthPct: available ? (widthPct ?? calculatedWidthPct) : null,
+    calculatedWidthPct,
     atr,
     atrPct,
     period,

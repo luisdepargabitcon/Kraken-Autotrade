@@ -9,6 +9,8 @@ interface GridOverviewPanelProps {
   onGoToTab?: (tab: string) => void;
   onReviewProposal?: () => void;
   onConfigureManually?: () => void;
+  hasApplicableRecommendation?: boolean;
+  hasConfigurationDiagnostic?: boolean;
 }
 
 function fmtUsd(v: number | null | undefined): string {
@@ -22,7 +24,7 @@ function fmtPrice(v: number | null | undefined): string {
   return `$${v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function GridOverviewPanel({ operational, onGoToTab, onReviewProposal, onConfigureManually }: GridOverviewPanelProps) {
+export function GridOverviewPanel({ operational, onGoToTab, onReviewProposal, onConfigureManually, hasApplicableRecommendation, hasConfigurationDiagnostic }: GridOverviewPanelProps) {
   const overview = operational?.overview ?? {};
   const capital = operational?.capital ?? {};
   const openCycles = (operational?.openCycles ?? []) as any[];
@@ -163,7 +165,7 @@ export function GridOverviewPanel({ operational, onGoToTab, onReviewProposal, on
       </Card>
 
       {/* Recomendación principal */}
-      {overview.primaryRecommendation && (
+      {(overview.primaryRecommendation || hasConfigurationDiagnostic) && (
         <Card className="border-border/50">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -172,25 +174,27 @@ export function GridOverviewPanel({ operational, onGoToTab, onReviewProposal, on
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <p className="text-sm font-medium">{overview.primaryRecommendation.title}</p>
-            <p className="text-sm text-muted-foreground">{overview.primaryRecommendation.explanation}</p>
+            {overview.primaryRecommendation && (
+              <>
+                <p className="text-sm font-medium">{overview.primaryRecommendation.title}</p>
+                <p className="text-sm text-muted-foreground">{overview.primaryRecommendation.explanation}</p>
+              </>
+            )}
+            {!overview.primaryRecommendation && hasConfigurationDiagnostic && (
+              <p className="text-sm text-muted-foreground">Hay un diagnóstico de configuración disponible. Puedes configurar manualmente los ajustes.</p>
+            )}
             <div className="flex flex-wrap gap-2">
-              {onReviewProposal && (
-                <Button
-                  size="sm"
-                  variant={overview.primaryRecommendation.safeToApply === false ? "outline" : "default"}
-                  disabled={overview.primaryRecommendation.safeToApply === false}
-                  onClick={onReviewProposal}
-                >
-                  {overview.primaryRecommendation.safeToApply === false ? "Revisar propuesta (bloqueada)" : "Revisar propuesta"}
+              {onReviewProposal && hasApplicableRecommendation && (
+                <Button size="sm" variant="default" onClick={onReviewProposal}>
+                  Revisar propuesta
                 </Button>
               )}
-              {onConfigureManually && (
+              {onConfigureManually && hasConfigurationDiagnostic && (
                 <Button size="sm" variant="outline" onClick={onConfigureManually}>
                   Configurar manualmente
                 </Button>
               )}
-              {!onReviewProposal && overview.primaryRecommendation.ctaLabel && onGoToTab && (
+              {!onReviewProposal && overview.primaryRecommendation?.ctaLabel && onGoToTab && (
                 <Button size="sm" variant="outline" onClick={() => onGoToTab(overview.primaryRecommendation.ctaTarget || "mercado")}>
                   {overview.primaryRecommendation.ctaLabel}
                 </Button>

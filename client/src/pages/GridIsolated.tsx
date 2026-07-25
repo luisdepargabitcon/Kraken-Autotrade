@@ -61,7 +61,25 @@ export default function GridIsolated() {
   // Use server-provided configurationRecommendation
   const configurationRecommendation: ConfigurationRecommendation | null =
     operational?.market?.configurationRecommendation ?? null;
-  const showRecButton = configurationRecommendation != null && configurationRecommendation.alternatives.length > 0;
+
+  const recommendationExpired =
+    !configurationRecommendation ||
+    new Date(configurationRecommendation.expiresAt).getTime() <= Date.now();
+
+  const safeAlternatives =
+    configurationRecommendation?.alternatives.filter(a => a.safeToApply) ?? [];
+
+  const hasApplicableRecommendation =
+    configurationRecommendation != null &&
+    !recommendationExpired &&
+    safeAlternatives.length > 0;
+
+  const hasConfigurationDiagnostic =
+    configurationRecommendation != null ||
+    (operational?.market?.levelDiagnostic != null) ||
+    (operational?.overview?.primaryRecommendation != null);
+
+  const showRecButton = hasApplicableRecommendation;
 
   // ─── Mutations ───────────────────────────────────────────
   const activateMutation = useMutation({
@@ -164,7 +182,7 @@ export default function GridIsolated() {
                   <RefreshCw className="h-3 w-3 mr-1" />
                   Refrescar
                 </Button>
-                {showRecButton && (
+                {showRecButton && configurationRecommendation && (
                   <Button
                     size="sm"
                     variant="default"
@@ -172,7 +190,7 @@ export default function GridIsolated() {
                     onClick={() => setRecDialogOpen(true)}
                   >
                     <Lightbulb className="h-3 w-3 mr-1" />
-                    Recomendaciones ({configurationRecommendation!.alternatives.length})
+                    Recomendaciones ({safeAlternatives.length})
                   </Button>
                 )}
               </div>
@@ -194,15 +212,17 @@ export default function GridIsolated() {
             <GridOverviewPanel
               operational={operational}
               onGoToTab={(tab) => setActiveTab(tab)}
-              onReviewProposal={() => setRecDialogOpen(true)}
-              onConfigureManually={() => {
+              onReviewProposal={hasApplicableRecommendation ? () => setRecDialogOpen(true) : undefined}
+              onConfigureManually={hasConfigurationDiagnostic ? () => {
                 const rec = configurationRecommendation;
                 if (rec) {
                   const alt = rec.alternatives.find(a => a.id === rec.recommendedAlternativeId);
                   setHighlightedSettings(alt?.changedFields ?? []);
                 }
                 setActiveTab("ajustes");
-              }}
+              } : undefined}
+              hasApplicableRecommendation={hasApplicableRecommendation}
+              hasConfigurationDiagnostic={hasConfigurationDiagnostic}
             />
             <GridNotificationCenter operational={operational} />
           </TabsContent>

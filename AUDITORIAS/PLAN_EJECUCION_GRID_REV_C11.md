@@ -2,12 +2,12 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4E — CORRECCIÓN 3 FINAL EN EJECUCIÓN
-NEXT_ACTION: fingerprints, rollback atómico, snapshots y tests específicos
-LAST_COMPLETED_ACTION: commit 3fab204 rechazado para deploy tras verificación independiente
-LAST_VALIDATION: tsc y 98 tests locales OK; build pendiente de comparación baseline
-CURRENT_HEAD: 3fab204c8acf6d762d433045224d7cfacc789903
-ORIGIN_HEAD: 3fab204c8acf6d762d433045224d7cfacc789903
+TASK_STATUS: FASE 4E — CORRECCIÓN 4 PREDEPLOY
+NEXT_ACTION: tolerancias de snapshot, régimen, atomicidad y tests reales
+LAST_COMPLETED_ACTION: precheck git OK, HEAD=origin/main=4b3b957
+LAST_VALIDATION: 2026-07-25T22:38+02:00 — precheck OK
+CURRENT_HEAD: 4b3b9579fdd2539b6ea100982863cc23052a6fa2
+ORIGIN_HEAD: 4b3b9579fdd2539b6ea100982863cc23052a6fa2
 EXPECTED_DEPLOY_HASH: pendiente
 DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
 FINAL_DOCUMENTATION_HASH: pendiente
