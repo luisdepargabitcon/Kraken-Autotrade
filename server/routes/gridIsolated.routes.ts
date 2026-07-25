@@ -43,7 +43,16 @@ import { getNaturalGridMessage, getNaturalGridTitle } from "../services/gridIsol
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
 import { evaluateActiveRangeLifecycle } from "../services/gridIsolated/gridRangeLifecycle";
 import { buildGridAuditViewModel } from "../services/gridIsolated/buildGridAuditViewModel";
-import { validateApplyPayload, RECOMMENDATION_APPLY_ALLOWLIST, RECOMMENDATION_MAX_PRICE_DRIFT_PCT } from "../services/gridIsolated/gridRecommendationService";
+import {
+  validateApplyPayload,
+  validateProposedValues,
+  applyRecommendationPatchAtomically,
+  buildConfigFingerprint,
+  buildMarketFingerprint,
+  calculatePriceDriftPct,
+  RECOMMENDATION_APPLY_ALLOWLIST,
+  RECOMMENDATION_MAX_PRICE_DRIFT_PCT,
+} from "../services/gridIsolated/gridRecommendationService";
 import { gridRecommendationRegistry } from "../services/gridIsolated/gridRecommendationRegistry";
 import { getGridBandSnapshot } from "../services/gridIsolated/gridBandAdapter";
 
@@ -67,6 +76,16 @@ const CYCLE_STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelado",
   error: "Error",
 };
+
+function toNum(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
 
 function fmtDateEs(v: unknown): string {
   if (!v) return "—";
@@ -860,12 +879,16 @@ export function registerGridIsolatedRoutes(app: Express): void {
   // ─── Recommendation Apply (secure, SHADOW only) ──────────
 
   app.post("/api/grid-isolated/config/recommendation/apply", async (req: Request, res: Response) => {
+    const ERR = (code: string, status: number, reason: string) =>
+      res.status(status).json({ error: reason, reason, code });
+
     try {
-      const config = await gridIsolatedEngine.loadConfig();
-      const currentMode = config?.mode ?? "OFF";
+      const runtimeConfig = await gridIsolatedEngine.loadConfig();
+      const currentMode = runtimeConfig?.mode ?? "OFF";
+      const pair = runtimeConfig?.pair || "BTC/USD";
 
       if (currentMode !== "SHADOW") {
-        return res.status(403).json({ error: "Solo se puede aplicar en modo SHADOW", reason: "Solo se puede aplicar en modo SHADOW" });
+        return ERR("NOT_SHADOW", 403, "Solo se puede aplicar en modo SHADOW");
       }
 
       const payload = req.body;
@@ -873,112 +896,152 @@ export function registerGridIsolatedRoutes(app: Express): void {
       // 1. Retrieve recommendation from in-memory registry by ID
       const recommendationId = payload?.recommendationId;
       if (!recommendationId || typeof recommendationId !== "string") {
-        return res.status(400).json({ error: "Falta recommendationId", reason: "Falta recommendationId" });
+        return ERR("MISSING_RECOMMENDATION_ID", 400, "Falta recommendationId");
       }
 
       // Reject if proposedConfig is sent from client
       if (payload?.proposedConfig != null) {
-        return res.status(400).json({ error: "proposedConfig no permitido en el payload del cliente", reason: "proposedConfig no permitido en el payload del cliente" });
+        return ERR("CLIENT_PROPOSED_CONFIG_REJECTED", 400, "proposedConfig no permitido en el payload del cliente");
       }
 
       const recommendation = gridRecommendationRegistry.get(recommendationId);
       if (!recommendation) {
-        return res.status(404).json({ error: "Recomendación no encontrada o expirada", reason: "Recomendación no encontrada o expirada" });
+        return ERR("RECOMMENDATION_NOT_FOUND", 404, "Recomendación no encontrada o expirada");
       }
 
       // 2. Check if already applied (single-use)
       if (gridRecommendationRegistry.isApplied(recommendationId)) {
-        return res.status(409).json({ error: "Recomendación ya aplicada", reason: "Recomendación ya aplicada" });
+        return ERR("RECOMMENDATION_ALREADY_USED", 409, "Recomendación ya aplicada");
       }
 
       // 3. Validate expiration using original expiresAt
       const now = new Date();
       const expiresAt = new Date(recommendation.expiresAt);
       if (now > expiresAt) {
-        return res.status(410).json({ error: "La recomendación ha caducado", reason: "La recomendación ha caducado" });
+        return ERR("RECOMMENDATION_EXPIRED", 410, "La recomendación ha caducado");
       }
 
       // 4. Validate payload against recommendation
-      const validation = validateApplyPayload(payload, recommendation, currentMode);
-      if (!validation.valid) {
-        return res.status(400).json({ error: validation.reason, reason: validation.reason });
+      const payloadValidation = validateApplyPayload(payload, recommendation, currentMode);
+      if (!payloadValidation.valid) {
+        return ERR(payloadValidation.code ?? "INVALID_PAYLOAD", 400, payloadValidation.reason ?? "Payload inválido");
       }
 
       const alt = recommendation.alternatives.find(a => a.id === payload.alternativeId);
       if (!alt) {
-        return res.status(400).json({ error: "Alternativa no encontrada", reason: "Alternativa no encontrada" });
+        return ERR("ALTERNATIVE_NOT_FOUND", 400, "Alternativa no encontrada");
       }
 
-      // 5. Validate price drift
-      const currentPrice = await (async () => {
-        try {
-          const pair = config?.pair || "BTC/USD";
-          const ticker = await MarketDataService.getTicker(pair);
-          return ticker?.last ?? null;
-        } catch { return null; }
-      })();
+      // 5. Rebuild current market context and fingerprints
+      const bandPeriod = runtimeConfig?.bandPeriod ?? 20;
+      const bandStdDevMultiplier = toNum(runtimeConfig?.bandStdDevMultiplier) ?? 2;
+      const atrPeriod = runtimeConfig?.atrPeriod ?? 14;
+      const atrTimeframe = runtimeConfig?.atrTimeframe ?? "1h";
 
+      let currentPrice: number | null = null;
+      let bandSnapshot: any = null;
+      let marketContextForFingerprint: any = null;
+      try {
+        const ticker = await MarketDataService.getTicker(pair);
+        currentPrice = ticker?.last ?? null;
+        bandSnapshot = await getGridBandSnapshot({
+          pair,
+          bandPeriod,
+          bandStdDevMultiplier,
+          atrPeriod,
+          atrTimeframe,
+        });
+        marketContextForFingerprint = {
+          currentPrice,
+          band: bandSnapshot
+            ? {
+                lower: bandSnapshot.lower ?? null,
+                center: bandSnapshot.middle ?? null,
+                upper: bandSnapshot.upper ?? null,
+                widthPct: bandSnapshot.bandWidthPct ?? null,
+                atrPct: bandSnapshot.atrPct ?? null,
+                atr: bandSnapshot.atr ?? null,
+                period: bandPeriod,
+                stdDevMultiplier: bandStdDevMultiplier,
+                timeframe: atrTimeframe,
+                source: "grid_band_adapter",
+                calculatedAt: new Date().toISOString(),
+              }
+            : { lower: null, center: null, upper: null, widthPct: null, atrPct: null, source: null },
+          regime: bandSnapshot?.regime ?? null,
+          atrPct: bandSnapshot?.atrPct ?? null,
+          bandSource: bandSnapshot ? "grid_band_adapter" : null,
+        };
+      } catch {
+        // Market context is optional; continue with what we have
+      }
+
+      // 6. Price drift validation
       if (currentPrice != null && recommendation.referencePrice != null) {
-        const driftPct = Math.abs((currentPrice - recommendation.referencePrice) / recommendation.referencePrice) * 100;
+        const driftPct = calculatePriceDriftPct(currentPrice, recommendation.referencePrice);
         if (driftPct > RECOMMENDATION_MAX_PRICE_DRIFT_PCT) {
-          return res.status(409).json({
-            error: `Deriva de precio (${driftPct.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`,
-            reason: `Deriva de precio (${driftPct.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`,
-          });
+          return ERR("PRICE_DRIFT_EXCEEDED", 409, `Deriva de precio (${driftPct.toFixed(3)}%) supera el máximo permitido (${RECOMMENDATION_MAX_PRICE_DRIFT_PCT}%)`);
         }
       }
 
-      // 6. Apply only allowlisted fields from stored proposedConfig (not from client)
+      // 7. Fingerprint validation against stored recommendation
+      const runtimeStatus = await gridIsolatedEngine.getStatusSafe();
+      const activeRangeVersionId = runtimeStatus?.activeRangeVersionId ?? null;
+      const fingerprintInput = {
+        mode: currentMode,
+        pair,
+        config: runtimeConfig,
+        marketContext: marketContextForFingerprint,
+        resolvedRange: { activeRangeVersionId },
+        adaptiveDecision: null,
+        professionalGenerator: null,
+        levels: [],
+        status: null,
+      };
+
+      const currentConfigFingerprint = buildConfigFingerprint(fingerprintInput as any);
+      const currentMarketFingerprint = buildMarketFingerprint(fingerprintInput as any);
+
+      if (recommendation.configFingerprint && recommendation.configFingerprint !== currentConfigFingerprint) {
+        return ERR("CONFIG_CHANGED", 409, "La configuración cambió desde que se generó la recomendación");
+      }
+      if (recommendation.marketFingerprint && recommendation.marketFingerprint !== currentMarketFingerprint) {
+        return ERR("MARKET_SNAPSHOT_CHANGED", 409, "El snapshot de mercado cambió desde que se generó la recomendación");
+      }
+
+      // 8. Get current config object and validate/apply atomically
       const currentConfig = gridIsolatedEngine.getConfig();
       if (!currentConfig) {
-        return res.status(500).json({ error: "Config no disponible", reason: "Config no disponible" });
+        return ERR("CONFIG_NOT_AVAILABLE", 500, "Config no disponible");
       }
 
-      // Capture before values
-      const beforeValues: Record<string, any> = {};
-      for (const field of alt.changedFields) {
-        beforeValues[field] = (currentConfig as any)[field] ?? null;
+      const regimeMaxPct = toNum(bandSnapshot?.regimeMaxPct) ?? null;
+      const applyResult = await applyRecommendationPatchAtomically(currentConfig, alt, () => gridIsolatedEngine.saveConfig(), regimeMaxPct);
+
+      if (!applyResult.success) {
+        return ERR("APPLY_FAILED", 500, applyResult.error ?? "Error al aplicar la recomendación");
       }
 
-      const appliedFields: string[] = [];
-      for (const field of Object.keys(alt.proposedConfig)) {
-        if (RECOMMENDATION_APPLY_ALLOWLIST.includes(field as any)) {
-          (currentConfig as any)[field] = alt.proposedConfig[field];
-          appliedFields.push(field);
-        }
-      }
-
-      // Capture after values
-      const afterValues: Record<string, any> = {};
-      for (const field of alt.changedFields) {
-        afterValues[field] = (currentConfig as any)[field] ?? null;
-      }
-
-      try {
-        await gridIsolatedEngine.saveConfig();
-      } catch (saveError) {
-        return res.status(500).json({ error: "Error al guardar configuración", reason: String(saveError) });
-      }
-
-      // 7. Mark recommendation as applied (single-use enforcement)
+      // 9. Mark recommendation as applied only after successful save
       gridRecommendationRegistry.markApplied(recommendationId);
 
       await botLogger.info(
         "GRID_RECOMMENDATION_APPLIED",
-        `Recomendación aplicada: alt=${alt.id}, fields=${appliedFields.join(",")}`,
-        { recommendationId: recommendation.id, alternativeId: alt.id, appliedFields, beforeValues, afterValues }
+        `Recomendación aplicada: alt=${alt.id}, fields=${applyResult.appliedFields.join(",")}`,
+        { recommendationId: recommendation.id, alternativeId: alt.id, appliedFields: applyResult.appliedFields, beforeValues: applyResult.beforeValues, afterValues: applyResult.afterValues }
       );
 
       res.json({
         success: true,
-        appliedFields,
+        appliedFields: applyResult.appliedFields,
         alternativeId: alt.id,
         recommendationId: recommendation.id,
-        beforeValues,
-        afterValues,
+        beforeValues: applyResult.beforeValues,
+        afterValues: applyResult.afterValues,
+        message: "Configuración guardada para futuros análisis. El rango vigente y sus niveles no se han modificado.",
       });
     } catch (error) {
-      res.status(500).json({ error: String(error), reason: String(error) });
+      res.status(500).json({ error: String(error), reason: String(error), code: "INTERNAL_ERROR" });
     }
   });
 

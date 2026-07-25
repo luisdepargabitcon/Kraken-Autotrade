@@ -19,11 +19,17 @@ interface GridRecommendationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   recommendation: ConfigurationRecommendation | null;
-  onApply: (alt: RecommendationAlternative, recommendation: ConfigurationRecommendation) => Promise<void>;
+  onApply: (alt: RecommendationAlternative, recommendation: ConfigurationRecommendation) => Promise<{ beforeValues: Record<string, any>; afterValues: Record<string, any>; appliedFields: string[] } | void>;
   onConfigureManually?: () => void;
 }
 
 type DialogState = "select" | "confirm" | "applying" | "success" | "error";
+
+interface ApplyResult {
+  beforeValues: Record<string, any>;
+  afterValues: Record<string, any>;
+  appliedFields: string[];
+}
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -40,6 +46,7 @@ export function GridRecommendationDialog({
   const [selected, setSelected] = React.useState<RecommendationAlternative | null>(null);
   const [state, setState] = React.useState<DialogState>("select");
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+  const [applyResult, setApplyResult] = React.useState<ApplyResult | null>(null);
 
   React.useEffect(() => {
     if (open) {
@@ -59,7 +66,8 @@ export function GridRecommendationDialog({
     setState("applying");
     setErrorMsg(null);
     try {
-      await onApply(selected, recommendation);
+      const result = await onApply(selected, recommendation);
+      setApplyResult(result ?? null);
       setState("success");
     } catch (err: any) {
       setErrorMsg(err?.message ?? "Error al aplicar la recomendación");
@@ -205,9 +213,40 @@ export function GridRecommendationDialog({
         )}
 
         {state === "success" && (
-          <div className="flex flex-col items-center justify-center py-8 space-y-3">
-            <CheckCircle2 className="h-12 w-12 text-green-500" />
-            <p className="text-sm font-medium">Configuración aplicada correctamente</p>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-6 w-6 text-green-500" />
+              <p className="text-sm font-medium">Configuración aplicada correctamente</p>
+            </div>
+            {applyResult && applyResult.appliedFields.length > 0 && (
+              <div className="rounded-md border border-border/40 p-3 space-y-2">
+                <p className="text-xs font-medium">Campos aplicados</p>
+                <div className="flex flex-wrap gap-1">
+                  {applyResult.appliedFields.map((field) => (
+                    <Badge key={field} variant="outline" className="text-xs font-mono">
+                      {field}
+                    </Badge>
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">Antes</p>
+                    {applyResult.appliedFields.map((field) => (
+                      <p key={`before-${field}`} className="font-mono">{field}: {String(applyResult.beforeValues[field] ?? "—")}</p>
+                    ))}
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Después</p>
+                    {applyResult.appliedFields.map((field) => (
+                      <p key={`after-${field}`} className="font-mono">{field}: {String(applyResult.afterValues[field] ?? "—")}</p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              El rango vigente y sus niveles no se han modificado. La nueva configuración se usará en futuros análisis.
+            </p>
           </div>
         )}
 

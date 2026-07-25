@@ -34,6 +34,8 @@ export interface GridMarketRegime {
   direction: string | null;
   confidencePct: number | null;
   reason: string | null;
+  humanReason: string | null;
+  technicalReason: string | null;
   updatedAt: string | null;
 }
 
@@ -314,18 +316,21 @@ function resolveRegime(
   ];
   const rawCode = codeCandidates.find((c) => c != null && c !== "");
   const code = translateRegimeCode(rawCode);
-  const reason =
+  const technicalReason =
     adaptiveDecision?.reason ??
     professionalGenerator?.reason ??
     resolvedRange?.naturalReason ??
     status?.lastTickReason ??
     null;
+  const humanReason = humanizeRegimeReason(technicalReason);
   return {
     code: code === "UNKNOWN" ? null : code,
     label: regimeLabel(code),
     direction: regimeDirection(code),
     confidencePct: marketContext?.regimeConfidencePct ?? adaptiveDecision?.confidencePct ?? null,
-    reason,
+    reason: humanReason ?? technicalReason,
+    humanReason,
+    technicalReason,
     updatedAt: toIso(lastProfessionalValidationAt) ?? toIso(status?.lastTickAt) ?? toIso(marketContext?.updatedAt),
   };
 }
@@ -383,26 +388,89 @@ function buildOperationalRange(
   professionalGenerator: any,
   status: any,
 ): OperationalRangeType {
-  const rangeVersionId = resolvedRange?.activeRangeVersionId ?? status?.activeRangeVersionId ?? null;
-  const lower = toNum(adaptiveDecision?.operationalLower ?? professionalGenerator?.operationalLower ?? resolvedRange?.lowerPrice);
-  const upper = toNum(adaptiveDecision?.operationalUpper ?? professionalGenerator?.operationalUpper ?? resolvedRange?.upperPrice);
-  const center = toNum(adaptiveDecision?.centerPrice ?? professionalGenerator?.centerPrice ?? resolvedRange?.centerPrice);
-  const totalWidthPct = toNum(adaptiveDecision?.finalRangePct ?? professionalGenerator?.operationalBandWidthPct ?? resolvedRange?.widthPct);
-  const semiRangePct = totalWidthPct != null ? totalWidthPct / 2 : null;
-  const spacingPct = toNum(adaptiveDecision?.spacingPct ?? professionalGenerator?.spacingPct);
-  const requestedBuyLevels = toNum(adaptiveDecision?.requestedBuyLevels ?? professionalGenerator?.requestedBuyLevels);
-  const requestedSellLevels = toNum(adaptiveDecision?.requestedSellLevels ?? professionalGenerator?.requestedSellLevels);
-  const generatedBuyLevels = toNum(adaptiveDecision?.buyLevelsWouldFit ?? professionalGenerator?.generatedBuyLevels);
-  const generatedSellLevels = toNum(adaptiveDecision?.sellLevelsWouldFit ?? professionalGenerator?.generatedSellLevels);
-  const regimeMaxPct = toNum(adaptiveDecision?.regimeMaxPct);
-  const source = adaptiveDecision ? "adaptive_decision" : professionalGenerator ? "professional_generator" : resolvedRange ? "resolved_range" : null;
-  const calculatedAt = toIso(resolvedRange?.createdAt ?? status?.lastTickAt);
+  const activeRangeVersionId = resolvedRange?.activeRangeVersionId ?? status?.activeRangeVersionId ?? null;
 
-  const available = lower != null && upper != null;
+  // Pick one complete source, not a mix
+  let source: string | null = null;
+  let sourceRangeVersionId: string | null = null;
+  let lower: number | null = null;
+  let upper: number | null = null;
+  let center: number | null = null;
+  let totalWidthPct: number | null = null;
+  let spacingPct: number | null = null;
+  let requestedBuyLevels: number | null = null;
+  let requestedSellLevels: number | null = null;
+  let generatedBuyLevels: number | null = null;
+  let generatedSellLevels: number | null = null;
+  let regimeMaxPct: number | null = null;
+  let calculatedAt: string | null = null;
+
+  const adVersionId = adaptiveDecision?.rangeVersionId ?? null;
+  const pgVersionId = professionalGenerator?.rangeVersionId ?? professionalGenerator?.activeRangeVersionId ?? null;
+
+  if (adaptiveDecision && adVersionId === activeRangeVersionId) {
+    source = "adaptive_decision";
+    sourceRangeVersionId = adVersionId;
+    lower = toNum(adaptiveDecision.operationalLower);
+    upper = toNum(adaptiveDecision.operationalUpper);
+    center = toNum(adaptiveDecision.centerPrice ?? ((toNum(adaptiveDecision.operationalLower) ?? 0) + (toNum(adaptiveDecision.operationalUpper) ?? 0)) / 2);
+    totalWidthPct = toNum(adaptiveDecision.finalRangePct);
+    spacingPct = toNum(adaptiveDecision.spacingPct);
+    requestedBuyLevels = toNum(adaptiveDecision.requestedBuyLevels);
+    requestedSellLevels = toNum(adaptiveDecision.requestedSellLevels);
+    generatedBuyLevels = toNum(adaptiveDecision.buyLevelsWouldFit);
+    generatedSellLevels = toNum(adaptiveDecision.sellLevelsWouldFit);
+    regimeMaxPct = toNum(adaptiveDecision.regimeMaxPct);
+    calculatedAt = toIso(adaptiveDecision.calculatedAt ?? adaptiveDecision.createdAt ?? status?.lastTickAt);
+  } else if (professionalGenerator && pgVersionId === activeRangeVersionId) {
+    source = "professional_generator";
+    sourceRangeVersionId = pgVersionId;
+    lower = toNum(professionalGenerator.operationalLower);
+    upper = toNum(professionalGenerator.operationalUpper);
+    center = toNum(professionalGenerator.centerPrice ?? ((toNum(professionalGenerator.operationalLower) ?? 0) + (toNum(professionalGenerator.operationalUpper) ?? 0)) / 2);
+    totalWidthPct = toNum(professionalGenerator.operationalBandWidthPct);
+    spacingPct = toNum(professionalGenerator.spacingPct);
+    requestedBuyLevels = toNum(professionalGenerator.requestedBuyLevels);
+    requestedSellLevels = toNum(professionalGenerator.requestedSellLevels);
+    generatedBuyLevels = toNum(professionalGenerator.generatedBuyLevels);
+    generatedSellLevels = toNum(professionalGenerator.generatedSellLevels);
+    regimeMaxPct = toNum(professionalGenerator.regimeMaxPct);
+    calculatedAt = toIso(professionalGenerator.eventCreatedAt ?? professionalGenerator.createdAt ?? status?.lastTickAt);
+  } else if (resolvedRange) {
+    source = "resolved_range";
+    sourceRangeVersionId = activeRangeVersionId;
+    lower = toNum(resolvedRange.lowerPrice);
+    upper = toNum(resolvedRange.upperPrice);
+    center = toNum(resolvedRange.centerPrice ?? ((toNum(resolvedRange.lowerPrice) ?? 0) + (toNum(resolvedRange.upperPrice) ?? 0)) / 2);
+    totalWidthPct = toNum(resolvedRange.widthPct);
+    spacingPct = toNum(resolvedRange.spacingPct);
+    requestedBuyLevels = toNum(resolvedRange.requestedBuyLevels);
+    requestedSellLevels = toNum(resolvedRange.requestedSellLevels);
+    generatedBuyLevels = toNum(resolvedRange.generatedBuyLevels);
+    generatedSellLevels = toNum(resolvedRange.generatedSellLevels);
+    regimeMaxPct = toNum(resolvedRange.regimeMaxPct);
+    calculatedAt = toIso(resolvedRange.createdAt);
+  }
+
+  const available = lower != null && upper != null && center != null && center > 0;
+
+  let internallyConsistent = true;
+  let inconsistencyReason: string | null = null;
+  if (available && totalWidthPct != null) {
+    const calculatedWidth = ((upper! - lower!) / center!) * 100;
+    if (Math.abs(calculatedWidth - totalWidthPct) > 0.02) {
+      internallyConsistent = false;
+      inconsistencyReason = `Anchura recalculada (${calculatedWidth.toFixed(4)}%) no coincide con la reportada (${totalWidthPct.toFixed(4)}%)`;
+    }
+  }
+
+  const semiRangePct = totalWidthPct != null ? totalWidthPct / 2 : null;
 
   return {
     available,
-    rangeVersionId,
+    rangeVersionId: activeRangeVersionId,
+    sourceRangeVersionId,
+    source,
     lower,
     center,
     upper,
@@ -414,31 +482,52 @@ function buildOperationalRange(
     generatedBuyLevels,
     generatedSellLevels,
     regimeMaxPct,
-    source,
+    internallyConsistent,
+    inconsistencyReason,
     calculatedAt,
   };
 }
 
+function levelSide(l: any): "buy" | "sell" | null {
+  const s = l?.side ? String(l.side).toUpperCase() : null;
+  if (s === "BUY" || s === "buy") return "buy";
+  if (s === "SELL" || s === "sell") return "sell";
+  const price = toNum(l?.price ?? l?.buyPrice ?? l?.sellPrice);
+  if (price == null) return null;
+  const center = toNum(l?.centerPrice);
+  if (center != null) return price < center ? "buy" : "sell";
+  return null;
+}
+
 function buildActiveRangeSnapshot(
   resolvedRange: any,
-  config: any,
+  levels: any[],
 ): ActiveRangeSnapshotType {
   const rangeVersionId = resolvedRange?.activeRangeVersionId ?? null;
+  const configSnapshot = resolvedRange?.configSnapshot ?? null;
   const lower = toNum(resolvedRange?.lowerPrice);
   const center = toNum(resolvedRange?.centerPrice);
   const upper = toNum(resolvedRange?.upperPrice);
   const totalWidthPct = toNum(resolvedRange?.widthPct);
   const semiRangePct = totalWidthPct != null ? totalWidthPct / 2 : null;
-  const spacingPct = toNum(resolvedRange?.spacingPct);
-  const requestedBuyLevels = toNum(resolvedRange?.requestedBuyLevels);
-  const requestedSellLevels = toNum(resolvedRange?.requestedSellLevels);
-  const generatedBuyLevels = toNum(resolvedRange?.generatedBuyLevels);
-  const generatedSellLevels = toNum(resolvedRange?.generatedSellLevels);
-  const rangeControlMode = config?.gridRangeControlMode ?? null;
-  const profile = config?.adaptiveRangeProfile ?? null;
+  const spacingPct = toNum(resolvedRange?.spacingPct ?? configSnapshot?.spacingPct);
+
+  const requestedBuyLevels = toNum(configSnapshot?.buyLevels ?? resolvedRange?.requestedBuyLevels);
+  const requestedSellLevels = toNum(configSnapshot?.sellLevels ?? resolvedRange?.requestedSellLevels);
+
+  // Count real levels associated with this rangeVersionId per side
+  let generatedBuyLevels: number | null = null;
+  let generatedSellLevels: number | null = null;
+  if (rangeVersionId != null && Array.isArray(levels)) {
+    const rangeLevels = levels.filter((l: any) => l?.rangeVersionId === rangeVersionId && l?.status !== "cancelled" && l?.status !== "replaced");
+    generatedBuyLevels = rangeLevels.filter((l: any) => levelSide(l) === "buy").length;
+    generatedSellLevels = rangeLevels.filter((l: any) => levelSide(l) === "sell").length;
+  }
+
+  const rangeControlMode = configSnapshot?.gridRangeControlMode ?? null;
+  const profile = configSnapshot?.adaptiveRangeProfile ?? null;
   const regime = resolvedRange?.regime ?? resolvedRange?.method ?? null;
   const regimeMaxPct = toNum(resolvedRange?.regimeMaxPct);
-  const configSnapshot = resolvedRange?.configSnapshot ?? null;
   const createdAt = toIso(resolvedRange?.createdAt);
   const source = resolvedRange ? "resolved_range" : null;
 
@@ -638,7 +727,7 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
   const operationalRange = buildOperationalRange(resolvedRange, adaptiveDecision, professionalGenerator, status);
 
   // Active range snapshot (persisted range data only)
-  const activeRangeSnapshot = buildActiveRangeSnapshot(resolvedRange, config);
+  const activeRangeSnapshot = buildActiveRangeSnapshot(resolvedRange, input.levels);
 
   // Current configuration projection (uses current config + market)
   const currentConfigurationProjection = buildCurrentConfigurationProjection(config, marketContext);

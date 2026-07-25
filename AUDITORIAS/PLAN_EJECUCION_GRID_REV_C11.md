@@ -2,17 +2,20 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4E — CORRECCIÓN 2 EN EJECUCIÓN
-NEXT_ACTION: corregir ciclo de vida, datos de mercado y UX
-LAST_COMPLETED_ACTION: commit 90776a6 — refactor recommendation system (rechazado para deploy)
-LAST_VALIDATION: 2026-07-24T21:36+02:00 — tsc OK, vitest 44/44, build OK
-CURRENT_HEAD: 90776a67c3545158f7592bfbeea836561df45e9b
-ORIGIN_HEAD: 90776a67c3545158f7592bfbeea836561df45e9b
-EXPECTED_DEPLOY_HASH: pendiente — 90776a6 rechazado para deploy
-DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750 (staging previo)
+TASK_STATUS: FASE 4E — CORRECCIÓN 3 FINAL EN EJECUCIÓN
+NEXT_ACTION: fingerprints, rollback atómico, snapshots y tests específicos
+LAST_COMPLETED_ACTION: commit 3fab204 rechazado para deploy tras verificación independiente
+LAST_VALIDATION: tsc y 98 tests locales OK; build pendiente de comparación baseline
+CURRENT_HEAD: 3fab204c8acf6d762d433045224d7cfacc789903
+ORIGIN_HEAD: 3fab204c8acf6d762d433045224d7cfacc789903
+EXPECTED_DEPLOY_HASH: pendiente
+DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
 FINAL_DOCUMENTATION_HASH: pendiente
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-24T21:36+02:00
+UPDATED_AT: 2026-07-25T19:45+02:00
+BUILD_BASELINE_CONFIRMED: TRUE
+BUILD_REGRESSION_FROM_PHASE_4E: FALSE
+BUILD_NOTE: npm run build OK en 3fab204 y en 90776a6; npx vite build desde client falla en ambos por contexto de invocación, no por regresión de código
 
 ## FASE 4E — CORRECCIÓN 2: Motivos de rechazo de 90776a6 para deploy
 

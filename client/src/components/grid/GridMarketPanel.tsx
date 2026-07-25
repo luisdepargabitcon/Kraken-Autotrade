@@ -174,8 +174,8 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             )}
           </div>
 
-          {/* Bollinger Band */}
-          {current.band?.lower != null && current.band?.upper != null ? (
+          {/* Bollinger Band — only render if internally consistent and sourced */}
+          {current.band?.lower != null && current.band?.upper != null && current.band?.internallyConsistent ? (
             <div className="rounded-lg border border-border/40 p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground uppercase tracking-wider">
@@ -209,6 +209,22 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
                   {current.band?.calculatedAt && <span>Calculada: {fmtDateShort(current.band.calculatedAt)}</span>}
                 </div>
               )}
+              {current.band?.source && current.band.source.toLowerCase() !== "kraken" && current.band.source.toLowerCase() !== "revolut_x" && current.band.source.toLowerCase() !== "grid_band_adapter" && (
+                <p className="text-xs text-amber-400 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  Fuente de banda no verificada ({current.band.source})
+                </p>
+              )}
+            </div>
+          ) : current.band?.lower != null && current.band?.upper != null && !current.band?.internallyConsistent ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+              <p className="text-sm text-amber-400 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4" />
+                Banda inconsistente
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {current.band.inconsistencyReason ?? "Los valores de Bollinger no son internamente consistentes."}
+              </p>
             </div>
           ) : (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
@@ -222,11 +238,11 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             </div>
           )}
 
-          {/* Regime explanation */}
-          {current.regime?.reason && (
+          {/* Regime human explanation */}
+          {current.regime?.humanReason && (
             <p className="text-sm text-muted-foreground flex items-start gap-2">
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-              {current.regime.reason}
+              {current.regime.humanReason}
             </p>
           )}
 
@@ -248,6 +264,9 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
                     <Metric label="Confianza" value={current.regime.confidencePct != null ? `${current.regime.confidencePct.toFixed(1)}%` : "—"} />
                     <Metric label="Actualizado" value={fmtDateShort(current.regime.updatedAt)} />
                   </div>
+                  {current.regime.technicalReason && (
+                    <p className="text-xs text-muted-foreground font-mono">Razón técnica: {current.regime.technicalReason}</p>
+                  )}
                 </div>
               </CollapsibleContent>
             </Collapsible>

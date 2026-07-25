@@ -123,11 +123,11 @@ describe("buildConfigurationRecommendation", () => {
       mode: "SHADOW",
       pair: "BTC/USD",
       config: {
-        netProfitTargetPct: 0.8,
+        netProfitTargetPct: 0.1,
         buyFeePct: 0.09,
         sellFeePct: 0.09,
         taxReservePct: 20,
-        gridRangeMaxPct: 5.0,
+        gridRangeMaxPct: 2.5,
         enforceCompactRange: true,
         buyLevels: 4,
         sellLevels: 4,
@@ -275,7 +275,7 @@ describe("buildConfigurationRecommendation", () => {
   it("currentConfig refleja los valores de entrada", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
-    expect(r!.currentConfig.netProfitTargetPct).toBe(0.8);
+    expect(r!.currentConfig.netProfitTargetPct).toBe(0.1);
     expect(r!.currentConfig.buyFeePct).toBe(0.09);
     expect(r!.currentConfig.sellFeePct).toBe(0.09);
     expect(r!.currentConfig.taxReservePct).toBe(20);
@@ -288,11 +288,11 @@ describe("validateApplyPayload", () => {
       mode: "SHADOW",
       pair: "BTC/USD",
       config: {
-        netProfitTargetPct: 0.8,
+        netProfitTargetPct: 0.1,
         buyFeePct: 0.09,
         sellFeePct: 0.09,
         taxReservePct: 20,
-        gridRangeMaxPct: 5.0,
+        gridRangeMaxPct: 2.5,
         enforceCompactRange: true,
         buyLevels: 4,
         sellLevels: 4,

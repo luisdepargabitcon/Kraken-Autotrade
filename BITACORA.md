@@ -1,7 +1,63 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-22
+> Última actualización: 2026-07-25
+
+---
+
+## 2026-07-25 — GRID V2 REV-C11: Aplicación atómica de recomendaciones, fingerprints server-side, validación y refinado de alternativas A/B/C
+
+### Resumen
+Se implementa la aplicación atómica de recomendaciones de configuración del grid (`applyRecommendationPatchAtomically`) con rollback automático, fingerprints server-side para detectar cambios de contexto, validación server-side detallada de valores propuestos y endpoint `/api/grid-isolated/config/recommendation/apply` con códigos de error específicos. Se actualizan `buildActiveRangeSnapshot` y `buildOperationalRange` para reflejar el rango activo y operacional basándose en el rango resuelto y los niveles generados. Se refina la generación de alternativas A/B/C para proponer cambios reales, declarar mejoras parciales y respetar límites de régimen. Se actualiza la UI (`GridMarketPanel`, `GridOverviewPanel`, `GridRecommendationDialog`, `GridIsolated`) para mostrar razones human/técnicas del régimen, condicionar la banda Bollinger por consistencia/fuente y presentar el resultado before/after de la aplicación.
+
+### Problema
+- La aplicación de recomendaciones no era atómica: podía quedar a medio aplicar si fallaba el guardado.
+- No existía fingerprint server-side para detectar que el mercado o la configuración cambiaron entre la generación y la aplicación.
+- La validación de valores propuestos era insuficiente y no devolvía códigos detallados.
+- `buildActiveRangeSnapshot` y `buildOperationalRange` no reflejaban correctamente el rango resuelto y los niveles generados.
+- Alternative C no proponía `gridRangeMaxPct` en escenarios de mejora parcial.
+- La UI no mostraba razones human/técnicas del régimen ni el resultado before/after tras aplicar.
+
+### Solución
+- `applyRecommendationPatchAtomically` aplica el parche a un objeto temporal, valida límites y guarda mediante `saveConfig`; si falla, hace rollback de los campos tocados.
+- `buildConfigFingerprint` y `buildMarketFingerprint` generan huellas deterministas de config y mercado; `calculatePriceDriftPct` detecta desviación de precio antes de aplicar.
+- `validateProposedValues` y `validateApplyPayload` validan allowlist/blocklist, tipos, rangos, modo SHADOW, expiración y `safeToApply`.
+- El endpoint POST `/api/grid-isolated/config/recommendation/apply` verifica registro, fingerprints, deriva de precio, valida payload y alternativa, aplica atómicamente y marca la recomendación como usada.
+- `buildActiveRangeSnapshot` acepta `levels` y cuenta `generatedBuyLevels`/`generatedSellLevels` filtrando por `rangeVersionId` activo.
+- `buildOperationalRange` unifica la selección de fuente por `activeRangeVersionId`, añade campos de consistencia (`sourceRangeVersionId`, `internallyConsistent`, `inconsistencyReason`, `calculatedAt`) y detecta discrepancias entre límites y `widthPct`.
+- Se actualiza `OperationalRange` en `shared/gridRecommendationHelper.ts` con los nuevos campos de consistencia.
+- `GridMarketRegime` ahora expone `humanReason` y `technicalReason`.
+- `GridMarketPanel` muestra la banda Bollinger solo si es internamente consistente y advierte si la fuente no es Kraken/Revolut X/grid_band_adapter; separa razón humana y técnica del régimen.
+- `GridOverviewPanel` deshabilita "Revisar propuesta" cuando `safeToApply` es false.
+- `GridRecommendationDialog` recibe el resultado de `onApply` y muestra before/after de campos aplicados.
+- `GridIsolated` devuelve `appliedFields`, `beforeValues` y `afterValues` del endpoint al diálogo.
+- 5 nuevos archivos de test cubren atomicidad, fingerprinting, validación, view model y alternativas.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridRecommendationService.ts` (`applyRecommendationPatchAtomically`, validación, fingerprints, alternativas A/B/C)
+- `server/routes/gridIsolated.routes.ts` (POST apply con fingerprints y validación)
+- `server/services/gridIsolated/buildGridMarketViewModel.ts` (`buildActiveRangeSnapshot`, `buildOperationalRange`, `GridMarketRegime` human/technical)
+- `shared/gridRecommendationHelper.ts` (nuevos campos `OperationalRange`)
+- `client/src/components/grid/GridMarketPanel.tsx` (Bollinger consistente, régimen human/technical)
+- `client/src/components/grid/GridOverviewPanel.tsx` (condición del botón de propuesta)
+- `client/src/components/grid/GridRecommendationDialog.tsx` (before/after en éxito)
+- `client/src/pages/GridIsolated.tsx` (devuelve resultado de apply)
+- `server/services/__tests__/gridRecommendationService.test.ts` (datos de test ajustados)
+- `server/services/__tests__/applyRecommendationPatchAtomically.test.ts` (nuevo)
+- `server/services/__tests__/buildGridMarketViewModel.test.ts` (nuevo)
+- `server/services/__tests__/gridRecommendationAlternatives.test.ts` (nuevo)
+- `server/services/__tests__/gridRecommendationFingerprint.test.ts` (nuevo)
+- `server/services/__tests__/gridRecommendationValidation.test.ts` (nuevo)
+- `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md` (plan de ejecución actualizado)
+
+### Validaciones
+- `npm run check` ✅
+- `npm run build` ✅
+- `npx vitest run server/services/__tests__/gridRecommendationService.test.ts server/services/__tests__/applyRecommendationPatchAtomically.test.ts server/services/__tests__/buildGridMarketViewModel.test.ts server/services/__tests__/gridRecommendationAlternatives.test.ts server/services/__tests__/gridRecommendationFingerprint.test.ts server/services/__tests__/gridRecommendationValidation.test.ts` ✅ 75/75
+- `git diff --check` ✅
+
+### Estado final
+Implementación REV-C11 cerrada localmente. Pendiente: deploy en staging y validación visual/network del flujo de aplicación de recomendaciones.
 
 ---
 

@@ -176,8 +176,13 @@ export function GridOverviewPanel({ operational, onGoToTab, onReviewProposal, on
             <p className="text-sm text-muted-foreground">{overview.primaryRecommendation.explanation}</p>
             <div className="flex flex-wrap gap-2">
               {onReviewProposal && (
-                <Button size="sm" variant="default" onClick={onReviewProposal}>
-                  Revisar propuesta
+                <Button
+                  size="sm"
+                  variant={overview.primaryRecommendation.safeToApply === false ? "outline" : "default"}
+                  disabled={overview.primaryRecommendation.safeToApply === false}
+                  onClick={onReviewProposal}
+                >
+                  {overview.primaryRecommendation.safeToApply === false ? "Revisar propuesta (bloqueada)" : "Revisar propuesta"}
                 </Button>
               )}
               {onConfigureManually && (

@@ -259,12 +259,17 @@ export default function GridIsolated() {
                 confirmed: true,
               }),
             });
+            const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-              const data = await res.json().catch(() => ({}));
               throw new Error(data.reason ?? "Error al aplicar la recomendación");
             }
             queryClient.invalidateQueries({ queryKey: ["grid-config"] });
             queryClient.invalidateQueries({ queryKey: ["grid-audit"] });
+            return {
+              appliedFields: data.appliedFields ?? [],
+              beforeValues: data.beforeValues ?? {},
+              afterValues: data.afterValues ?? {},
+            };
           }}
         />
       </div>

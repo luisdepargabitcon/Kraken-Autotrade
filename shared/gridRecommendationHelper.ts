@@ -112,6 +112,8 @@ export interface MarketBand {
 export interface OperationalRange {
   available: boolean;
   rangeVersionId: string | null;
+  sourceRangeVersionId: string | null;
+  source: string | null;
   lower: number | null;
   center: number | null;
   upper: number | null;
@@ -123,6 +125,7 @@ export interface OperationalRange {
   generatedBuyLevels: number | null;
   generatedSellLevels: number | null;
   regimeMaxPct: number | null;
-  source: string | null;
+  internallyConsistent: boolean;
+  inconsistencyReason: string | null;
   calculatedAt: string | null;
 }
