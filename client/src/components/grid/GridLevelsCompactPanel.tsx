@@ -8,7 +8,7 @@ interface GridLevelsCompactPanelProps {
   operational?: any;
 }
 
-type LevelFilter = "vigentes" | "ciclos" | "historico";
+type LevelFilter = "entradas" | "rungs" | "targets" | "historico";
 
 function fmtPrice(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -18,6 +18,12 @@ function fmtPrice(v: number | null | undefined): string {
 function fmtQty(v: number | null | undefined): string {
   if (v == null) return "—";
   return v.toLocaleString("es-ES", { minimumFractionDigits: 6, maximumFractionDigits: 8 });
+}
+
+function levelLabel(side: string, isTargetOfOpenCycle: boolean): string {
+  if (side === "BUY") return "BUY entrada";
+  if (isTargetOfOpenCycle) return "SELL objetivo de ciclo";
+  return "SELL referencia";
 }
 
 function statusColor(status: string): string {
@@ -50,12 +56,12 @@ function LevelRow({ level, index }: LevelRowProps) {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Badge variant="outline" className={statusColor(level.status)}>
-            {level.side === "SELL" ? "SELL referencia" : "BUY entrada"}
+            {levelLabel(level.side, level.targetOfOpenCycle)}
           </Badge>
           {level.targetOfOpenCycle && (
             <Badge variant="outline" className="text-cyan-400 border-cyan-500/30 bg-cyan-500/10 text-xs">
               <Target className="h-3 w-3 mr-1" />
-              Objetivo de venta activo
+              Vinculado a ciclo
             </Badge>
           )}
           {level.rangeRelation === "previous" && !level.targetOfOpenCycle && (
@@ -118,16 +124,17 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
   const requestedLevels = entryRange.requestedLevels ?? null;
   const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
   const defaultFilter: LevelFilter =
-    (all.activeRangeLevels?.length ?? 0) === 0 && (all.openCycleTargetLevels?.length ?? 0) > 0
-      ? "ciclos"
-      : "vigentes";
+    (all.entryLevels?.length ?? 0) === 0 && (all.legacyTargetLevels?.length ?? 0) > 0
+      ? "targets"
+      : "entradas";
   const [filter, setFilter] = useState<LevelFilter>(defaultFilter);
   const [search, setSearch] = useState("");
   const [historyLimit, setHistoryLimit] = useState(20);
 
   const levels = useMemo(() => {
-    if (filter === "vigentes") return (all.activeRangeLevels ?? []) as any[];
-    if (filter === "ciclos") return (all.openCycleTargetLevels ?? []) as any[];
+    if (filter === "entradas") return (all.entryLevels ?? []) as any[];
+    if (filter === "rungs") return (all.referenceRungs ?? []) as any[];
+    if (filter === "targets") return (all.legacyTargetLevels ?? []) as any[];
     return ((all.historicalLevels ?? []) as any[]).slice(0, historyLimit);
   }, [all, filter, historyLimit]);
 
@@ -143,8 +150,9 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
   }, [levels, search]);
 
   const FILTER_LABELS: { key: LevelFilter; label: string; count: number }[] = [
-    { key: "vigentes", label: "Vigentes", count: (operational?.levels?.activeRangeLevels ?? []).length },
-    { key: "ciclos", label: "Ciclos abiertos", count: (operational?.levels?.openCycleTargetLevels ?? []).length },
+    { key: "entradas", label: "Entradas (BUY)", count: (operational?.levels?.entryLevels ?? []).length },
+    { key: "rungs", label: "Rungs SELL de referencia", count: (operational?.levels?.referenceRungs ?? []).length },
+    { key: "targets", label: "Targets de ciclo", count: (operational?.levels?.legacyTargetLevels ?? []).length },
     { key: "historico", label: "Histórico", count: (operational?.levels?.historicalLevels ?? []).length },
   ];
 
@@ -199,9 +207,21 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
           </div>
         </div>
 
-        {filter === "ciclos" && (
+        {filter === "entradas" && (
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2 text-xs text-emerald-400">
+            Niveles BUY del rango activo. V3 genera un ciclo aislado por cada ejecución.
+          </div>
+        )}
+
+        {filter === "rungs" && (
+          <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/10 p-2 text-xs text-indigo-400">
+            Rungs SELL de referencia del rango activo. No son ejecuciones propias; cada ciclo V3 tiene su target canónico separado.
+          </div>
+        )}
+
+        {filter === "targets" && (
           <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2 text-xs text-cyan-400">
-            Cada ciclo V3 conserva su propia salida individual. Los rungs SELL son referencias no ejecutables y no pertenecen a ningún ciclo.
+            Targets SELL vinculados a ciclos abiertos (legacy o V3 cycle-owned). Cada uno pertenece a un único ciclo.
           </div>
         )}
 

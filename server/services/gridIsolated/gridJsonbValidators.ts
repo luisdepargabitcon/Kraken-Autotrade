@@ -249,11 +249,58 @@ export function validateTargetCalculationJson(raw: unknown): JsonbValidationResu
 
   const isV3 = version === 2 || raw.policyVersion === "CYCLE_OWNED_NET_TARGET_V3" || raw.targetKind === "CYCLE_OWNED_SYNTHETIC";
   if (isV3) {
-    const requiredNumbers = ["targetSellPrice", "targetSellQuantity", "actualGrossGapPct", "availablePnlAfterTaxPct", "netProfitTargetPct", "buyFeePct", "sellFeePct", "taxReservePct", "priceTickSize"];
-    const missing = requiredNumbers.filter(key => finiteNumber(raw[key]) == null);
-    if (raw.policyVersion !== "CYCLE_OWNED_NET_TARGET_V3" || raw.targetKind !== "CYCLE_OWNED_SYNTHETIC" || raw.targetSellLevelId != null || missing.length > 0 || typeof raw.explanation !== "string" || raw.explanation.length === 0) {
-      return { valid: false, reason: `Target V3 inválido: ${missing.length ? `faltan ${missing.join(", ")}` : "política, tipo, nivel SELL o explicación inválidos"}`, code: "TARGET_V3_INVALID" };
+    if (raw.stateVersion !== 2 || raw.policyVersion !== "CYCLE_OWNED_NET_TARGET_V3" || raw.targetKind !== "CYCLE_OWNED_SYNTHETIC" || raw.targetSellLevelId != null || raw.targetRungLevelId != null) {
+      return { valid: false, reason: "Target V3 inválido: stateVersion, policyVersion, targetKind o IDs de nivel no coinciden", code: "TARGET_V3_INVALID" };
     }
+    const requiredNumbers = [
+      "targetSellPrice", "targetSellQuantity", "grossExitGapPct", "actualGrossGapPct", "grossPnlUsd",
+      "buyFeePct", "sellFeePct", "spreadBufferPct", "safetyBufferPct", "taxReservePct",
+      "buyFeeUsd", "sellFeeUsd", "exchangeFeesUsd", "operationalCostsUsd", "netBeforeTaxUsd", "netBeforeTaxPct",
+      "taxReserveUsd", "availablePnlAfterTaxUsd", "availablePnlAfterTaxPct", "netProfitTargetPct",
+      "priceTickSize", "quantityStep", "minOrderBase", "minOrderQuote", "maxOrderBase"
+    ];
+    const missing = requiredNumbers.filter(key => finiteNumber(raw[key]) == null);
+    if (missing.length > 0) {
+      return { valid: false, reason: `Target V3 inválido: faltan ${missing.join(", ")}`, code: "TARGET_V3_MISSING_FIELDS" };
+    }
+    const requiredStrings = ["baseCurrency", "quoteCurrency", "constraintsSource", "constraintsFetchedAt", "explanation"];
+    const missingStrings = requiredStrings.filter(key => typeof raw[key] !== "string" || raw[key].length === 0);
+    if (missingStrings.length > 0) {
+      return { valid: false, reason: `Target V3 inválido: faltan strings ${missingStrings.join(", ")}`, code: "TARGET_V3_MISSING_STRINGS" };
+    }
+    if (raw.quoteCurrency === "USD" && finiteNumber(raw.minOrderUsd) == null) {
+      return { valid: false, reason: "Target V3 inválido: minOrderUsd obligatorio para quoteCurrency=USD", code: "TARGET_V3_MISSING_MIN_ORDER_USD" };
+    }
+
+    const targetSellPrice = finiteNumber(raw.targetSellPrice)!;
+    const targetSellQuantity = finiteNumber(raw.targetSellQuantity)!;
+    const priceTickSize = finiteNumber(raw.priceTickSize)!;
+    const quantityStep = finiteNumber(raw.quantityStep)!;
+    const minOrderBase = finiteNumber(raw.minOrderBase)!;
+    const minOrderQuote = finiteNumber(raw.minOrderQuote)!;
+    const maxOrderBase = finiteNumber(raw.maxOrderBase)!;
+    const netProfitTargetPct = finiteNumber(raw.netProfitTargetPct)!;
+    const availablePnlAfterTaxPct = finiteNumber(raw.availablePnlAfterTaxPct)!;
+    const buyFeeUsd = finiteNumber(raw.buyFeeUsd)!;
+    const sellFeeUsd = finiteNumber(raw.sellFeeUsd)!;
+    const exchangeFeesUsd = finiteNumber(raw.exchangeFeesUsd)!;
+    const grossPnlUsd = finiteNumber(raw.grossPnlUsd)!;
+    const operationalCostsUsd = finiteNumber(raw.operationalCostsUsd)!;
+    const netBeforeTaxUsd = finiteNumber(raw.netBeforeTaxUsd)!;
+    const taxReserveUsd = finiteNumber(raw.taxReserveUsd)!;
+    const availablePnlAfterTaxUsd = finiteNumber(raw.availablePnlAfterTaxUsd)!;
+
+    if (targetSellPrice <= 0 || targetSellQuantity <= 0) return { valid: false, reason: "Target V3 inválido: precio o cantidad no positivos", code: "TARGET_V3_NON_POSITIVE" };
+    if (Math.abs((targetSellPrice / priceTickSize) - Math.round(targetSellPrice / priceTickSize)) > 1e-10) return { valid: false, reason: "Target V3 inválido: precio no alineado con priceTickSize", code: "TARGET_V3_PRICE_NOT_ALIGNED" };
+    if (Math.abs((targetSellQuantity / quantityStep) - Math.round(targetSellQuantity / quantityStep)) > 1e-10) return { valid: false, reason: "Target V3 inválido: cantidad no alineada con quantityStep", code: "TARGET_V3_QTY_NOT_ALIGNED" };
+    if (targetSellQuantity < minOrderBase - 1e-12) return { valid: false, reason: "Target V3 inválido: cantidad inferior a minOrderBase", code: "TARGET_V3_QTY_BELOW_MIN" };
+    if (targetSellQuantity > maxOrderBase + 1e-12) return { valid: false, reason: "Target V3 inválido: cantidad superior a maxOrderBase", code: "TARGET_V3_QTY_ABOVE_MAX" };
+    if (targetSellPrice * targetSellQuantity < minOrderQuote - 1e-8) return { valid: false, reason: "Target V3 inválido: notional target inferior a minOrderQuote", code: "TARGET_V3_NOTIONAL_BELOW_MIN" };
+    if (raw.quoteCurrency === "USD" && Math.abs(finiteNumber(raw.minOrderUsd)! - minOrderQuote) > 1e-8) return { valid: false, reason: "Target V3 inválido: minOrderUsd debe coincidir con minOrderQuote para USD", code: "TARGET_V3_MIN_USD_MISMATCH" };
+    if (availablePnlAfterTaxPct + 1e-10 < netProfitTargetPct) return { valid: false, reason: "Target V3 inválido: beneficio neto inferior al objetivo", code: "TARGET_V3_NET_BELOW_TARGET" };
+    if (Math.abs(exchangeFeesUsd - (buyFeeUsd + sellFeeUsd)) > 1e-6) return { valid: false, reason: "Target V3 inválido: exchangeFeesUsd no coincide con buyFeeUsd+sellFeeUsd", code: "TARGET_V3_FEES_INCOHERENT" };
+    if (Math.abs(netBeforeTaxUsd - (grossPnlUsd - exchangeFeesUsd - operationalCostsUsd)) > 1e-6) return { valid: false, reason: "Target V3 inválido: netBeforeTaxUsd incoherente", code: "TARGET_V3_NET_BEFORE_TAX_INCOHERENT" };
+    if (Math.abs(availablePnlAfterTaxUsd - (netBeforeTaxUsd - taxReserveUsd)) > 1e-6) return { valid: false, reason: "Target V3 inválido: availablePnlAfterTaxUsd incoherente", code: "TARGET_V3_NET_AFTER_TAX_INCOHERENT" };
   }
 
   const calculation: GridTargetCalculation = {
@@ -283,6 +330,18 @@ export function validateTargetCalculationJson(raw: unknown): JsonbValidationResu
     safetyBufferPct: finiteNumber(raw.safetyBufferPct),
     priceTickSize: finiteNumber(raw.priceTickSize),
     quantityStep: finiteNumber(raw.quantityStep),
+    minOrderBase: finiteNumber(raw.minOrderBase),
+    minOrderQuote: finiteNumber(raw.minOrderQuote),
+    minOrderUsd: finiteNumber(raw.minOrderUsd),
+    maxOrderBase: finiteNumber(raw.maxOrderBase),
+    baseCurrency: typeof raw.baseCurrency === "string" ? raw.baseCurrency : null,
+    quoteCurrency: typeof raw.quoteCurrency === "string" ? raw.quoteCurrency : null,
+    constraintsSource: typeof raw.constraintsSource === "string" ? raw.constraintsSource : null,
+    constraintsFetchedAt: typeof raw.constraintsFetchedAt === "string" ? raw.constraintsFetchedAt : null,
+    buyFeeUsd: finiteNumber(raw.buyFeeUsd),
+    sellFeeUsd: finiteNumber(raw.sellFeeUsd),
+    netBeforeTaxUsd: finiteNumber(raw.netBeforeTaxUsd),
+    netBeforeTaxPct: finiteNumber(raw.netBeforeTaxPct),
     rejectedCandidates: Array.isArray(raw.rejectedCandidates)
       ? raw.rejectedCandidates.map((c: any) => {
           if (c == null || (c.side !== "BUY" && c.side !== "SELL")) {

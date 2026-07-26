@@ -5,6 +5,53 @@
 
 ---
 
+## 2026-07-26 — GRID REV-C11 FASE 4G C2: Corrección post-auditoría independiente
+
+### Resumen
+Se cierra la FASE 4G C2 endureciendo la microestructura, validación JSONB, economía canónica de cierre, recovery V3, lifecycle maker y el view model/UI profesional. Se requieren constraints Revolut X verificadas antes de cualquier BUY o rebuild. El cierre V3 usa exclusivamente el `targetCalculationJson` persistido. El ciclo protegido `a2a0b7ca-a710-4402-8a11-54222bf98455` se protege sin recálculo ni mutación.
+
+### Solución
+- `gridExecutionMarketSnapshot.ts`: snapshot estricto con validación de par, venue `REVOLUT_X`, constraints verificadas, timestamp de mercado vs adquisición local y frescura máxima 30 s.
+- `RevolutXService.resolveGridPairConstraints`: fallback estricto auth → público → cache → fail-closed; sin ocultar `inactive` con cache antigua.
+- `gridJsonbValidators.ts`: `validateTargetCalculationJson` V3 obliga `stateVersion=2`, `policyVersion=CYCLE_OWNED_NET_TARGET_V3`, `targetKind=CYCLE_OWNED_SYNTHETIC`, campos numéricos/string obligatorios, coherencia económica, `minOrderUsd` para pares USD y `availablePnlAfterTaxPct >= netProfitTargetPct`; conserva campos `constraintsSource`, `baseCurrency`, `quoteCurrency`, `buyFeeUsd`, `sellFeeUsd`, `netBeforeTax*`, `minOrder*`, `maxOrder*`.
+- `gridIsolatedEngine.ts`:
+  - `validateRecoveredV3CycleSnapshot` verifica que un ciclo V3 recuperado coincida con su snapshot inmutable (precio/cantidad/economía) y marca `requiresReview` con `V3_TARGET_SNAPSHOT_MISMATCH`.
+  - `loadCycles` aplica la validación V3 de recovery.
+  - `completeCycleShadow` usa `computeGridCycleEconomicPnl` con parámetros del `targetCalculationJson` persistido para ciclos V3.
+  - `computeShadowPostOnlySellPrice` aplica fórmula estricta post-only `ceilToTick(max(target, ask, bid+tickSize))` para `CYCLE_OWNED_TARGET`.
+- `buildGridOperationalViewModel.ts`: añade `levels.entryLevels`, `levels.referenceRungs`, `levels.legacyTargetLevels` y `cycleOwnedExits` con economía V3, `targetOwner` y campos maker.
+- `GridLevelsCompactPanel.tsx`: UI profesional con filtros Entradas (BUY), Rungs SELL de referencia, Targets de ciclo e Histórico; distingue SELL de referencia de target vinculado a ciclo.
+- Tests V3 creados y verificados: `gridCycleEconomicPnl.test.ts` (4/4), `gridCycleOwnedV3Engine.test.ts` (7/7), `gridV3OperationalViewModel.test.ts` (4/4) y `GridLevelsCompactPanel.v3.test.tsx` (2/2).
+- Se eliminaron tests duplicados obsoletos `buildGridMarketViewModel.test.ts` y `gridRecommendationHelper.test.ts` de `server/services/gridIsolated/__tests__/` (su lógica ya no corresponde a la implementación actual y fueron removidos previamente en la fase 4G).
+
+### Archivos afectados
+- `server/services/gridIsolated/gridExecutionMarketSnapshot.ts`
+- `server/services/gridIsolated/RevolutXService.ts`
+- `server/services/gridIsolated/gridJsonbValidators.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `client/src/components/grid/GridLevelsCompactPanel.tsx`
+- `server/services/gridIsolated/__tests__/gridCycleEconomicPnl.test.ts`
+- `server/services/gridIsolated/__tests__/gridCycleOwnedV3Engine.test.ts`
+- `server/services/gridIsolated/__tests__/gridV3OperationalViewModel.test.ts`
+- `client/src/components/grid/GridLevelsCompactPanel.v3.test.tsx`
+- `server/services/gridIsolated/__tests__/buildGridMarketViewModel.test.ts` (eliminado)
+- `server/services/gridIsolated/__tests__/gridRecommendationHelper.test.ts` (eliminado)
+- `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check` ✅
+- `npm run build` ✅
+- `npx vitest run server/services/gridIsolated/__tests__` ✅ 364/364
+- `npx vitest run client/src/components/grid/GridLevelsCompactPanel.v3.test.tsx` ✅ 2/2
+- `git diff --check` ✅
+
+### Estado final
+FASE 4G C2 cerrada localmente. Commit único y push listos. Deploy en staging queda pendiente de autorización.
+
+---
+
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 
 ### Resumen

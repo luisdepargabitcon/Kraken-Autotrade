@@ -187,11 +187,51 @@ export interface OperationalLevel {
   createdAt: string | null;
 }
 
+export interface OperationalLevelGroup {
+  entryLevels: OperationalLevel[];
+  referenceRungs: OperationalLevel[];
+  legacyTargetLevels: OperationalLevel[];
+}
+
 export interface OperationalLevels {
   activeRangeLevels: OperationalLevel[];
   openCycleTargetLevels: OperationalLevel[];
   historicalLevels: OperationalLevel[];
   allLevels: OperationalLevel[];
+  entryLevels: OperationalLevel[];
+  referenceRungs: OperationalLevel[];
+  legacyTargetLevels: OperationalLevel[];
+}
+
+export interface CycleOwnedExit {
+  cycleId: string;
+  cycleNumber: number;
+  policyVersion: string | null;
+  targetKind: string | null;
+  targetOwner: string;
+  buyPrice: number | null;
+  targetSellPrice: number | null;
+  targetDistancePctFromBuy: number | null;
+  quantity: number | null;
+  grossTargetPct: number | null;
+  netTargetPct: number | null;
+  buyFeePct: number | null;
+  sellFeePct: number | null;
+  buyFeeUsd: number | null;
+  sellFeeUsd: number | null;
+  exchangeFeesUsd: number | null;
+  operationalCostsUsd: number | null;
+  taxReserveUsd: number | null;
+  expectedNetUsd: number | null;
+  expectedNetPct: number | null;
+  targetSellLevelId: string | null;
+  targetRungLevelId: string | null;
+  makerState: string | null;
+  requestedMakerPrice: number | null;
+  rangeRelation: CycleRangeRelation;
+  executionMicrostructureSource: string | null;
+  constraintsSource: string | null;
+  requiresReview: boolean;
 }
 
 export interface OperationalCapital {
@@ -250,6 +290,7 @@ export interface GridOperationalViewModel {
   openCycles: OperationalOpenCycle[];
   closedCycles: OperationalOpenCycle[];
   cancelledCycles: OperationalOpenCycle[];
+  cycleOwnedExits: CycleOwnedExit[];
   currentRange: {
     exists: boolean;
     message: string;
@@ -797,6 +838,51 @@ function translateLevelStatus(status: string | null): string {
   }
 }
 
+function buildCycleOwnedExit(
+  cycle: any,
+  activeRangeVersionId: string | null
+): CycleOwnedExit {
+  const calc = safeParseTargetCalculationJson(cycle?.targetCalculationJson);
+  const relation = toRangeRelation(cycle, activeRangeVersionId);
+  const buy = toNum(cycle?.buyPrice);
+  const target = toNum(cycle?.targetSellPrice);
+  const qty = toNum(cycle?.quantity);
+  const targetDistancePctFromBuy = buy != null && buy > 0 && target != null ? ((target - buy) / buy) * 100 : null;
+  const grossTargetPct = buy != null && buy > 0 && target != null ? ((target - buy) / buy) * 100 : null;
+  const netTargetPct = calc?.netProfitTargetPct ?? grossTargetPct;
+  const risk = parseRiskState(cycle);
+  return {
+    cycleId: cycle?.id ?? String(cycle?.cycleNumber ?? "?"),
+    cycleNumber: cycle?.cycleNumber ?? 0,
+    policyVersion: cycle?.exitPolicyVersion ?? null,
+    targetKind: cycle?.targetKind ?? null,
+    targetOwner: cycle?.id ?? cycle?.cycleNumber ?? "unknown",
+    buyPrice: buy,
+    targetSellPrice: target,
+    targetDistancePctFromBuy,
+    quantity: qty,
+    grossTargetPct,
+    netTargetPct,
+    buyFeePct: calc?.buyFeePct ?? null,
+    sellFeePct: calc?.sellFeePct ?? null,
+    buyFeeUsd: calc?.buyFeeUsd ?? null,
+    sellFeeUsd: calc?.sellFeeUsd ?? null,
+    exchangeFeesUsd: calc?.exchangeFeesUsd ?? null,
+    operationalCostsUsd: calc?.operationalCostsUsd ?? null,
+    taxReserveUsd: calc?.taxReserveUsd ?? null,
+    expectedNetUsd: calc?.availablePnlAfterTaxUsd ?? null,
+    expectedNetPct: calc?.availablePnlAfterTaxPct ?? null,
+    targetSellLevelId: cycle?.targetSellLevelId ?? null,
+    targetRungLevelId: cycle?.targetRungLevelId ?? null,
+    makerState: risk?.protectiveExit?.state ?? null,
+    requestedMakerPrice: toNum(risk?.protectiveExit?.requestedMakerPrice),
+    rangeRelation: relation,
+    executionMicrostructureSource: calc?.constraintsSource ?? null,
+    constraintsSource: calc?.constraintsSource ?? null,
+    requiresReview: cycle?.requiresReview === true,
+  };
+}
+
 function buildCapital(config: any, status: any, openCycles: OperationalOpenCycle[]): OperationalCapital {
   const initial = toNum(config?.gridWalletInitialUsd) ?? 1000;
   const max = toNum(config?.gridWalletMaxUsd) ?? 5000;
@@ -1257,12 +1343,31 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     (l) => !activeRangeLevels.includes(l) && !openCycleTargetLevels.includes(l)
   );
 
+  const entryLevels = operationalLevels.filter((l) => l.side === "BUY" && l.rangeRelation === "current");
+  const legacyTargetLevels = operationalLevels.filter(
+    (l) => l.side === "SELL" && (l.targetOfOpenCycle || openCycleTargetLevelIds.has(l.id))
+  );
+  const referenceRungs = operationalLevels.filter(
+    (l) =>
+      l.side === "SELL" &&
+      !l.targetOfOpenCycle &&
+      !openCycleTargetLevelIds.has(l.id) &&
+      l.rangeRelation === "current"
+  );
+
   const levelsView: OperationalLevels = {
     activeRangeLevels: activeRangeExists ? activeRangeLevels : [],
     openCycleTargetLevels,
     historicalLevels,
     allLevels: operationalLevels,
+    entryLevels,
+    referenceRungs,
+    legacyTargetLevels,
   };
+
+  const cycleOwnedExits = (cycles || [])
+    .filter((c: any) => c?.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" || c?.targetKind === "CYCLE_OWNED_SYNTHETIC")
+    .map((c: any) => buildCycleOwnedExit(c, activeRangeVersionId));
 
   const capital = buildCapital(config, status, openCycleObjects);
 
@@ -1325,6 +1430,7 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     openCycles: openCycleObjects,
     closedCycles: closedCycleObjects,
     cancelledCycles: cancelledCycleObjects,
+    cycleOwnedExits,
     currentRange: activeRange,
     levels: levelsView,
     capital,

@@ -81,6 +81,7 @@ import {
   computeCyclePnL,
   computeCyclePnLWithRoles,
 } from "./gridNetCalculator";
+import { computeGridCycleEconomicPnl } from "./gridCycleEconomicPnl";
 import {
   safeParseMakerExitStateJson,
   safeParseMakerExitStateJsonForensic,
@@ -508,6 +509,53 @@ class GridIsolatedEngine {
       bestAskAtFill: null,
       cancellationReason: null,
     };
+  }
+
+  /**
+   * Validate that a recovered V3 cycle matches its persisted target snapshot.
+   * Never mutates the cycle; only returns a review reason when inconsistent.
+   */
+  private validateRecoveredV3CycleSnapshot(cycle: GridCycle): { valid: boolean; reason?: string } {
+    if (cycle.exitPolicyVersion !== "CYCLE_OWNED_NET_TARGET_V3") return { valid: true };
+    if (cycle.targetKind !== "CYCLE_OWNED_SYNTHETIC") return { valid: false, reason: `targetKind inválido: ${cycle.targetKind}` };
+    if (cycle.targetSellLevelId != null) return { valid: false, reason: "targetSellLevelId debe ser null para V3" };
+    if (cycle.targetRungLevelId != null) return { valid: false, reason: "targetRungLevelId debe ser null para V3" };
+    const calc = cycle.targetCalculationJson;
+    if (!calc || calc.stateVersion !== 2) return { valid: false, reason: "targetCalculationJson V3 ausente o con stateVersion incorrecta" };
+
+    const validation = validateTargetCalculationJson(calc);
+    if (!validation.valid) return { valid: false, reason: validation.reason };
+
+    const priceTickSize = calc.priceTickSize ?? 0;
+    const quantityStep = calc.quantityStep ?? 0;
+    const priceTol = Math.max(priceTickSize / 2, 1e-8);
+    const qtyTol = Math.max(quantityStep / 2, 1e-12);
+
+    if (cycle.targetSellPrice == null || Math.abs(cycle.targetSellPrice - calc.targetSellPrice!) > priceTol) {
+      return { valid: false, reason: `targetSellPrice no coincide con snapshot: ${cycle.targetSellPrice} vs ${calc.targetSellPrice}` };
+    }
+    if (cycle.targetSellQuantity == null || Math.abs(cycle.targetSellQuantity - calc.targetSellQuantity!) > qtyTol) {
+      return { valid: false, reason: `targetSellQuantity no coincide con snapshot: ${cycle.targetSellQuantity} vs ${calc.targetSellQuantity}` };
+    }
+    if (Math.abs(cycle.quantity - calc.targetSellQuantity!) > qtyTol) {
+      return { valid: false, reason: `cycle.quantity no coincide con targetSellQuantity` };
+    }
+
+    const economics = computeGridCycleEconomicPnl({
+      buyPrice: cycle.buyPrice ?? 0,
+      sellPrice: cycle.targetSellPrice ?? 0,
+      quantity: cycle.quantity,
+      buyFeePct: calc.buyFeePct ?? 0,
+      sellFeePct: calc.sellFeePct ?? 0,
+      spreadBufferPct: calc.spreadBufferPct ?? 0,
+      safetyBufferPct: calc.safetyBufferPct ?? 0,
+      taxReservePct: calc.taxReservePct ?? 0,
+    });
+    if (Math.abs(economics.netPnlUsd - (calc.availablePnlAfterTaxUsd ?? 0)) > 1e-6) {
+      return { valid: false, reason: "Economía V3 recalculada no coincide con el snapshot" };
+    }
+
+    return { valid: true };
   }
 
   /**
@@ -992,57 +1040,49 @@ class GridIsolatedEngine {
       await this.logShadowTickEvent("GRID_SHADOW_WAITING", `El Grid está en SHADOW esperando condiciones válidas. Motivo: ${bandSnapshot.reason}.`, { reason: bandSnapshot.reason });
     }
 
-    // In SHADOW mode: evaluate risk once, then close existing open cycles whose
-    // target SELL has been reached, before processing new entries or rebuilds.
+    // Las salidas existentes siempre se procesan antes de validar microestructura.
     if (this.config.mode === "SHADOW") {
       await this.evaluateRiskForOpenCycles(shadowExecutionPrice, ctx);
       const cyclesClosed = await this.processOpenCyclesShadow(shadowExecutionPrice, ctx);
       if (cyclesClosed > 0) {
         this.lastTickReason = `Cierres SHADOW de ciclos abiertos: ${cyclesClosed}. Rebuild aplazado para evitar solapamientos.`;
-        await this.logEvent("GRID_SHADOW_OPEN_CYCLES_CLOSED", `Cierres SHADOW de ciclos abiertos: ${cyclesClosed}. Banda conservada en este tick.`, {
-          cyclesClosed,
-          tickId: ctx.tickId,
-          shadowExecutionPrice: shadowExecutionPrice.price,
-          shadowExecutionPriceSource: shadowExecutionPrice.source,
-          bandSnapshotClose: bandSnapshot.midPrice,
-        });
+        await this.logEvent("GRID_SHADOW_OPEN_CYCLES_CLOSED", `Cierres SHADOW de ciclos abiertos: ${cyclesClosed}. Banda conservada en este tick.`, { cyclesClosed, tickId: ctx.tickId, shadowExecutionPrice: shadowExecutionPrice.price, shadowExecutionPriceSource: shadowExecutionPrice.source, bandSnapshotClose: bandSnapshot.midPrice });
         return;
       }
     }
 
-    // In SHADOW mode: process active-range fills BEFORE any range rebuild.
-    // A level from the active range that is touched by the market price has priority
-    // over replacing the band. If a fill occurs, we skip rebuild this tick.
+    let pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
+    let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
+    try {
+      pairConstraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
+      const acquiredAt = new Date();
+      const ticker = await revolutXService.getTicker(this.config.pair);
+      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints: pairConstraints, source: "REVOLUT_X_TICKER", acquiredAt });
+    } catch {
+      pairConstraints = { pair: this.config.pair, normalizedPair: this.config.pair.replace("/", "-").toUpperCase(), executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region: null, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE" };
+      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker: null, constraints: pairConstraints, source: "REVOLUT_X_UNAVAILABLE", acquiredAt: new Date() });
+    }
+
+    const allowCycleExits = true;
+    const allowRangeBuys = executionMarketSnapshot.verified === true && executionMarketSnapshot.fresh === true && pairConstraints.verified === true && !this.circuitBreakerOpen && !pumpGuard.active;
+    const allowRangeRebuild = allowRangeBuys && bandSnapshot.suitableForGrid;
+    const allowNewRange = allowRangeRebuild;
+    if (!allowRangeBuys) {
+      blockNewRangesAndBuys = true;
+      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Precios de ejecución no disponibles: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", { pair: this.config.pair, reasonCode: executionMarketSnapshot.reasonCode ?? pairConstraints.reasonCode, source: executionMarketSnapshot.source, allowCycleExits });
+    }
+
     if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
-      const fillsProcessed = await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard });
+      const fillsProcessed = await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard, allowRangeBuys });
       if (fillsProcessed) {
         this.lastTickReason = "Fills SHADOW procesados antes del rebuild. No se reemplaza la banda en este tick para proteger ciclos/niveles activos.";
-        await this.logEvent("GRID_SHADOW_FILL_BEFORE_REBUILD", "Fill SHADOW priorizado sobre rebuild. Banda conservada en este tick.", {
-          rangeVersionId: this.activeRangeVersion.id,
-          shadowExecutionPrice: shadowExecutionPrice.price,
-          shadowExecutionPriceSource: shadowExecutionPrice.source,
-          bandSnapshotClose: bandSnapshot.midPrice,
-          bandSnapshotTimeframe: this.config.atrTimeframe,
-        });
+        await this.logEvent("GRID_SHADOW_FILL_BEFORE_REBUILD", "Fill SHADOW priorizado sobre rebuild. Banda conservada en este tick.", { rangeVersionId: this.activeRangeVersion.id, shadowExecutionPrice: shadowExecutionPrice.price, shadowExecutionPriceSource: shadowExecutionPrice.source, bandSnapshotClose: bandSnapshot.midPrice, bandSnapshotTimeframe: this.config.atrTimeframe });
         return;
       }
-    }
-
-    let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot> | null = null;
-    try {
-      const constraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
-      const ticker = await revolutXService.getTicker(this.config.pair);
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints, source: "REVOLUT_X_TICKER" });
-    } catch {
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker: null, constraints: { pair: this.config.pair, normalizedPair: this.config.pair.replace("/", "-"), executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region: null, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE" }, source: "REVOLUT_X_UNAVAILABLE" });
-    }
-    if (!executionMarketSnapshot.verified) {
-      blockNewRangesAndBuys = true;
-      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Precios de ejecución no disponibles: se conservan salidas abiertas y se bloquean rangos nuevos.", { pair: this.config.pair, reasonCode: executionMarketSnapshot.reasonCode, source: executionMarketSnapshot.source });
     }
 
     // If no active range, propose one (only when not blocked by circuit breaker or guard).
-    if (!this.activeRangeVersion && !blockNewRangesAndBuys) {
+    if (!this.activeRangeVersion && allowNewRange && !blockNewRangesAndBuys) {
       await this.proposeRangeVersion(bandSnapshot, executionMarketSnapshot);
       if (!this.activeRangeVersion) {
         this.lastTickReason = "No se propuso rango activo: el generador no produjo niveles viables con la configuración actual.";
@@ -1050,11 +1090,11 @@ class GridIsolatedEngine {
       } else {
         this.lastTickReason = "Rango propuesto y activado en este tick.";
       }
-    } else if (this.activeRangeVersion && !blockNewRangesAndBuys && this.isBandDrifted(bandSnapshot)) {
+    } else if (this.activeRangeVersion && allowRangeRebuild && !blockNewRangesAndBuys && this.isBandDrifted(bandSnapshot)) {
       // Band has drifted significantly from active range
       const canRebuild = this.canRebuildLevels();
       if (canRebuild) {
-        await this.rebuildRangeAndLevels(bandSnapshot);
+        await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints);
         this.lastTickReason = "Banda desplazada — niveles planificados recalculados para el nuevo rango.";
       } else {
         this.lastTickReason = "Banda desplazada — niveles/ciclos reales conservados por seguridad.";
@@ -1071,7 +1111,7 @@ class GridIsolatedEngine {
     // Risk evaluation and exit processing for SHADOW happen earlier in the tick;
     // this path is reached when no fills occurred and no active range needs replacement.
     if (this.config.mode === "SHADOW" && !this.activeRangeVersion) {
-      await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard });
+      await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard, allowRangeBuys });
     }
   }
 
@@ -1234,8 +1274,8 @@ class GridIsolatedEngine {
    * SAFETY: Before marking old range as replaced, verify that the new professional generator
    * can generate viable levels. If not, abort rebuild and preserve old range.
    */
-  private async rebuildRangeAndLevels(bandSnapshot: any): Promise<void> {
-    if (!this.activeRangeVersion || !this.config) return;
+  private async rebuildRangeAndLevels(bandSnapshot: any, executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>, pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>): Promise<void> {
+    if (!this.activeRangeVersion || !this.config || !executionMarketSnapshot.verified || !executionMarketSnapshot.fresh || !pairConstraints.verified) return;
     const oldRange = this.activeRangeVersion;
     const activeLevels = this.levels.filter(l => l.rangeVersionId === oldRange.id);
     const replacedCount = activeLevels.length;
@@ -1500,6 +1540,17 @@ class GridIsolatedEngine {
           cycle.reviewCode = targetForensic.code ?? "TARGET_INVALID";
           cycle.reviewDetectedAt = new Date();
           cycle.reviewSource = "target_calculation_json";
+        }
+        // Strict recovery V3 validation: persisted cycle fields must match immutable snapshot.
+        if (cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" && !cycle.requiresReview) {
+          const v3Check = this.validateRecoveredV3CycleSnapshot(cycle);
+          if (!v3Check.valid) {
+            cycle.requiresReview = true;
+            cycle.reviewReason = v3Check.reason ?? "V3 target snapshot mismatch";
+            cycle.reviewCode = "V3_TARGET_SNAPSHOT_MISMATCH";
+            cycle.reviewDetectedAt = new Date();
+            cycle.reviewSource = "target_calculation_json";
+          }
         }
       }
     } catch (error) {
@@ -2060,16 +2111,54 @@ class GridIsolatedEngine {
       ? Math.round((now.getTime() - cycle.buyFilledAt.getTime()) / 60000)
       : 0;
 
-    const pnl = computeCyclePnLWithRoles({
-      buyPrice: cycle.buyPrice!,
-      sellPrice,
-      quantity: cycle.quantity,
-      buyLiquidityRole: "maker",
-      sellLiquidityRole: "maker",
-      buyFeePct: this.config.buyFeePct,
-      sellFeePct: this.config.sellFeePct,
-      taxReservePct: TAX_RESERVE_PCT,
-    });
+    const isV3 = cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" || cycle.targetKind === "CYCLE_OWNED_SYNTHETIC" || cycle.targetCalculationJson?.stateVersion === 2;
+    let pnl: {
+      grossPnlUsd: number;
+      totalFeesUsd: number;
+      feeTotalUsd: number;
+      taxReserveUsd: number;
+      netPnlUsd: number;
+      netPnlPct: number;
+      buyFeeUsd?: number;
+      sellFeeUsd?: number;
+      exchangeFeesUsd?: number;
+      operationalCostsUsd?: number;
+      netBeforeTaxUsd?: number;
+      netBeforeTaxPct?: number;
+    };
+    if (isV3 && cycle.targetCalculationJson && cycle.targetCalculationJson.stateVersion === 2) {
+      const calc = cycle.targetCalculationJson;
+      const v3 = computeGridCycleEconomicPnl({
+        buyPrice: cycle.buyPrice!,
+        sellPrice,
+        quantity: cycle.quantity,
+        buyFeePct: calc.buyFeePct ?? 0,
+        sellFeePct: calc.sellFeePct ?? 0,
+        spreadBufferPct: calc.spreadBufferPct ?? 0,
+        safetyBufferPct: calc.safetyBufferPct ?? 0,
+        taxReservePct: calc.taxReservePct ?? TAX_RESERVE_PCT,
+      });
+      pnl = { ...v3, totalFeesUsd: v3.exchangeFeesUsd, feeTotalUsd: v3.exchangeFeesUsd };
+    } else {
+      const legacy = computeCyclePnLWithRoles({
+        buyPrice: cycle.buyPrice!,
+        sellPrice,
+        quantity: cycle.quantity,
+        buyLiquidityRole: "maker",
+        sellLiquidityRole: "maker",
+        buyFeePct: this.config.buyFeePct,
+        sellFeePct: this.config.sellFeePct,
+        taxReservePct: TAX_RESERVE_PCT,
+      });
+      pnl = {
+        grossPnlUsd: legacy.grossPnlUsd,
+        totalFeesUsd: legacy.totalFeesUsd,
+        feeTotalUsd: legacy.totalFeesUsd,
+        taxReserveUsd: legacy.taxReserveUsd,
+        netPnlUsd: legacy.netPnlUsd,
+        netPnlPct: legacy.netPnlPct,
+      };
+    }
 
     if (this.closingCycleIds.has(cycle.id)) return false;
     this.closingCycleIds.add(cycle.id);
@@ -2248,8 +2337,14 @@ class GridIsolatedEngine {
       netPnlUsd: pnl.netPnlUsd,
       netPnlPct: pnl.netPnlPct,
       grossPnlUsd: pnl.grossPnlUsd,
-      feeTotalUsd: pnl.totalFeesUsd,
+      feeTotalUsd: pnl.feeTotalUsd,
       taxReserveUsd: pnl.taxReserveUsd,
+      buyFeeUsd: pnl.buyFeeUsd ?? null,
+      sellFeeUsd: pnl.sellFeeUsd ?? null,
+      exchangeFeesUsd: pnl.exchangeFeesUsd ?? pnl.feeTotalUsd,
+      operationalCostsUsd: pnl.operationalCostsUsd ?? null,
+      netBeforeTaxUsd: pnl.netBeforeTaxUsd ?? null,
+      netBeforeTaxPct: pnl.netBeforeTaxPct ?? null,
       buyLiquidityRole: "maker",
       sellLiquidityRole: "maker",
       executionPolicy: "MAKER_ONLY",
@@ -2356,7 +2451,7 @@ class GridIsolatedEngine {
   private async simulateShadowTick(
     priceResult: GridShadowExecutionPriceResult,
     tickCtx: GridTickContext,
-    aux: { bandSnapshot: any; pumpGuard: ShadowPumpGuardPolicy }
+    aux: { bandSnapshot: any; pumpGuard: ShadowPumpGuardPolicy; allowRangeBuys: boolean }
   ): Promise<boolean> {
     if (!this.activeRangeVersion || !this.config) return false;
 
@@ -2399,6 +2494,10 @@ class GridIsolatedEngine {
 
     for (const level of levelsToProcess) {
       if (level.side === "BUY") {
+        if (!aux.allowRangeBuys) {
+          await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "BUY SHADOW bloqueada: microestructura Revolut X no verificada o no fresca.", { levelId: level.id, tickId: tickCtx.tickId });
+          continue;
+        }
         const result = await this.processBuyLevelLifecycle(level, priceResult, tickCtx, aux.pumpGuard);
         if (result === "filled") fillsProcessed = true;
         continue;
@@ -3576,20 +3675,27 @@ class GridIsolatedEngine {
     }
 
     const tickSize = this.getPriceTickSize(pair);
-    const isFixedTargetRoute =
+    const minPostOnlyPrice = currentBid + tickSize;
+
+    if (route === "CYCLE_OWNED_TARGET") {
+      // V3 fixed target is placed post-only on the ask side, never below target.
+      const price = this.ceilToStep(Math.max(normalized, currentAsk, minPostOnlyPrice), tickSize);
+      if (price <= currentBid || price < normalized) return null;
+      return price;
+    }
+
+    const isLegacyFixedTargetRoute =
       route === "NORMAL_TARGET" ||
       route === "SYNTHETIC_RUNG" ||
-      route === "CYCLE_OWNED_TARGET" ||
       route === "LEGACY_PERSISTED_TARGET";
 
-    if (isFixedTargetRoute) {
+    if (isLegacyFixedTargetRoute) {
       // Fixed targets keep their price; they must be strictly above the best bid.
       if (normalized <= currentBid) return null;
       return normalized;
     }
 
     // Protective routes (trailing, stop, HODL): place above ask and bid+tickSize.
-    const minPostOnlyPrice = currentBid + tickSize;
     const price = this.ceilToStep(Math.max(normalized, currentAsk, minPostOnlyPrice), tickSize);
     return price > currentBid ? price : null;
   }

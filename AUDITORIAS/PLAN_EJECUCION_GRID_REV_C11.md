@@ -2,20 +2,20 @@
 
 DONE: TRUE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4G CERRADA — constraints oficiales Revolut X integradas, target V3, lifecycle maker, recovery y batería de tests verificada
-NEXT_ACTION: commit/push selectivo y autorizar deploy en staging
-LAST_COMPLETED_ACTION: limpieza de tests obsoletos, validación completa y documentación actualizada
-LAST_VALIDATION: 2026-07-26T22:05+02:00 — npm run check ✅; npm run build ✅; 457 tests en suites grid/recommendations/constraints/market view ✅; git diff --check ✅
-CURRENT_HEAD: f1b9c0b9bd2a14620813b8f4c3b68a8d79d9c870
-ORIGIN_HEAD: 23c43d45e2efb1625b59cb8b2b86092d1bbd3769
-EXPECTED_DEPLOY_HASH: f1b9c0b9bd2a14620813b8f4c3b68a8d79d9c870
+TASK_STATUS: FASE 4G C2 — cerrada localmente, pendiente deploy autorizado
+NEXT_ACTION: ejecutar git commit + push; deploy en staging bajo autorización del usuario
+LAST_COMPLETED_ACTION: corrección post-auditoría implementada y validada
+LAST_VALIDATION: 2026-07-27 — npm run check OK; npm run build OK; gridIsolated tests 364/364; GridLevelsCompactPanel V3 2/2; git diff --check OK
+CURRENT_HEAD_BEFORE_CORRECTION: 3b200147243cf67c2e3ff5c1d585a0c7e8924293
+ORIGIN_HEAD_BEFORE_CORRECTION: 3b200147243cf67c2e3ff5c1d585a0c7e8924293
+EXPECTED_DEPLOY_HASH: pendiente de verificación independiente
 DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
-FINAL_DOCUMENTATION_HASH: f1b9c0b9bd2a14620813b8f4c3b68a8d79d9c870
+FINAL_DOCUMENTATION_HASH: pendiente
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-26T22:05+02:00
+UPDATED_AT: 2026-07-27T00:54+02:00
 BUILD_BASELINE_CONFIRMED: TRUE
 BUILD_REGRESSION_FROM_PHASE_4E: FALSE
-BUILD_NOTE: npm run build OK; tests verdes; npx vite build desde client no ejecutado por contexto de invocación, sin regresión de código
+BUILD_NOTE: npm run check OK; npm run build OK; tests V3 y gridIsolated verdes; sin regresión de código
 
 ## FASE 4E — CORRECCIÓN 2: Motivos de rechazo de 90776a6 para deploy
 
