@@ -65,6 +65,10 @@ import {
 import {
   selectFirstProfitableHigherRung,
 } from "./gridCycleExitSelector";
+import {
+  computeCycleOwnedExitTarget,
+  resolveNewGridCycleExitPolicy,
+} from "./gridCycleOwnedTarget";
 import { gridRiskManager } from "./gridRiskManager";
 import {
   loadRangeVersionsForCycles,
@@ -1158,6 +1162,7 @@ class GridIsolatedEngine {
       atrPct: bandSnapshot.atrPct,
       netProfitTargetPct: this.config.netProfitTargetPct,
       gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
+      gridStepMinPct: this.config.gridStepMinPct,
       gridStepMaxPct: this.config.gridStepMaxPct,
       configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
       configuredSellLevels: Math.floor(allocation.levelsCount / 2),
@@ -1529,6 +1534,18 @@ class GridIsolatedEngine {
       if (cycle.exitPolicyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2" && cycle.targetSellPrice != null && cycle.targetSellQuantity != null && cycle.targetKind != null) {
         continue;
       }
+      if (cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3") {
+        if (cycle.targetSellPrice != null && cycle.targetSellQuantity != null && cycle.targetKind === "CYCLE_OWNED_SYNTHETIC" && cycle.targetCalculationJson != null) {
+          continue;
+        }
+        reviewRequired++;
+        await this.logEvent("GRID_CYCLE_TARGET_REVIEW_REQUIRED", `Recovery: ciclo ${cycle.cycleNumber} V3 no tiene target persistido y requiere revisión.`, {
+          cycleId: cycle.id,
+          exitPolicyVersion: cycle.exitPolicyVersion,
+          reason: "V3_TARGET_MISSING_AFTER_RECOVERY",
+        });
+        continue;
+      }
 
       const policyVersion = cycle.exitPolicyVersion ?? this.config.defaultExitPolicyVersion ?? "FIRST_PROFITABLE_HIGHER_RUNG_V2";
 
@@ -1672,6 +1689,7 @@ class GridIsolatedEngine {
       atrPct: bandSnapshot.atrPct,
       netProfitTargetPct: this.config.netProfitTargetPct,
       gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
+      gridStepMinPct: this.config.gridStepMinPct,
       gridStepMaxPct: this.config.gridStepMaxPct,
       configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
       configuredSellLevels: Math.floor(allocation.levelsCount / 2),
@@ -2951,7 +2969,7 @@ class GridIsolatedEngine {
       }
 
       const fillPrice = level.buyMakerRequestedPrice ?? level.price;
-      const exitPolicyVersion = this.config.defaultExitPolicyVersion ?? "FIRST_PROFITABLE_HIGHER_RUNG_V2";
+      const exitPolicyVersion = resolveNewGridCycleExitPolicy();
       const cycle: GridCycle = {
         id: randomUUID(),
         rangeVersionId: activeRangeId,
@@ -2991,47 +3009,35 @@ class GridIsolatedEngine {
         completedAt: null,
       };
 
-      // Pre-compute and persist the SELL obligation for V2 cycles immediately.
-      if (exitPolicyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2") {
-        const selectorResult = selectFirstProfitableHigherRung(
-          cycle,
-          this.levels,
-          this.activeRangeVersion,
-          {
-            buyFillPrice: fillPrice,
-            buyFillQuantity: level.quantity,
-            netProfitTargetPct: this.config.netProfitTargetPct,
-            buyFeePct: this.config.buyFeePct,
-            sellFeePct: this.config.sellFeePct,
-            makerFeePct: this.config.buyFeePct,
-            takerFeePct: this.config.sellFeePct,
-            taxReservePct: TAX_RESERVE_PCT,
-          }
-        );
-        const targetValidation = validateTargetCalculationJson(selectorResult);
-        if (!targetValidation.valid) {
-          this.markCycleForReview(cycle, targetValidation.reason, targetValidation.code, "target_calculation_json");
-          await this.logEvent("GRID_TARGET_CALCULATION_REVIEW_REQUIRED", `[SHADOW] Ciclo ${cycle.cycleNumber}: target V2 con JSONB inválido: ${targetValidation.reason}`, {
-            cycleId: cycle.id,
-            reason: targetValidation.reason,
-            code: targetValidation.code,
-            exitPolicyVersion,
-          });
-        } else if (selectorResult.selected) {
-          cycle.targetKind = selectorResult.targetKind;
-          cycle.targetRungLevelId = selectorResult.targetRungLevelId;
-          cycle.targetSellLevelId = selectorResult.targetSellLevelId;
-          cycle.targetSellPrice = selectorResult.targetSellPrice;
-          cycle.targetSellQuantity = selectorResult.targetSellQuantity;
-          cycle.targetCalculationJson = selectorResult;
-        } else {
-          await this.logEvent("GRID_CYCLE_TARGET_REVIEW_REQUIRED", `[SHADOW] Ciclo ${cycle.cycleNumber}: BUY rellenado pero no se encontró target V2 rentable.`, {
-            cycleId: cycle.id,
-            reason: selectorResult.explanation,
-            exitPolicyVersion,
-          });
-        }
+      const targetResult = computeCycleOwnedExitTarget({
+        buyFillPrice: fillPrice,
+        buyFillQuantity: level.quantity,
+        netProfitTargetPct: this.config.netProfitTargetPct,
+        buyFeePct: this.config.buyFeePct,
+        sellFeePct: this.config.sellFeePct,
+        taxReservePct: TAX_RESERVE_PCT,
+        spreadBufferPct: 0.01,
+        safetyBufferPct: 0.10,
+        priceTickSize: this.getPriceTickSize(this.config.pair),
+        quantityStep: 0.00000001,
+        minOrderUsd: 0,
+      });
+      const targetValidation = validateTargetCalculationJson(targetResult);
+      if (!targetValidation.valid || !targetResult.selected) {
+        await this.logEvent("GRID_TARGET_CALCULATION_REVIEW_REQUIRED", `[SHADOW] BUY ${level.id} no se confirma porque su salida individual V3 es inválida.`, {
+          levelId: level.id,
+          reason: targetValidation.valid ? targetResult.explanation : targetValidation.reason,
+          code: targetValidation.valid ? targetResult.reasonCode : targetValidation.code,
+          exitPolicyVersion,
+        });
+        return null;
       }
+      cycle.targetKind = targetResult.targetKind;
+      cycle.targetRungLevelId = null;
+      cycle.targetSellLevelId = null;
+      cycle.targetSellPrice = targetResult.targetSellPrice;
+      cycle.targetSellQuantity = targetResult.targetSellQuantity;
+      cycle.targetCalculationJson = targetResult;
 
       const now = tickCtx.startedAt;
       const insertValues: any = {
@@ -3110,6 +3116,14 @@ class GridIsolatedEngine {
         exitPolicyVersion,
         tickId: tickCtx.tickId,
         mode: "SHADOW",
+      });
+      await this.logEvent("GRID_CYCLE_OWNED_TARGET_CREATED", `Salida individual preparada: la compra del ciclo ${cycle.cycleNumber} se cerrará mediante una SELL propia a ${cycle.targetSellPrice}, con una distancia de ${cycle.targetCalculationJson?.actualGrossGapPct?.toFixed(4)}% desde su precio real de compra.`, {
+        cycleId: cycle.id,
+        cycleNumber: cycle.cycleNumber,
+        targetSellPrice: cycle.targetSellPrice,
+        targetSellQuantity: cycle.targetSellQuantity,
+        exitPolicyVersion,
+        targetKind: cycle.targetKind,
       });
 
       return cycle;
@@ -3359,6 +3373,8 @@ class GridIsolatedEngine {
           ? "LEGACY_PERSISTED_TARGET"
           : cycle.targetKind === "SYNTHETIC_RUNG"
           ? "SYNTHETIC_RUNG"
+          : cycle.targetKind === "CYCLE_OWNED_SYNTHETIC"
+          ? "CYCLE_OWNED_TARGET"
           : "NORMAL_TARGET";
       return { route, price: cycle.targetSellPrice };
     }
@@ -3532,6 +3548,7 @@ class GridIsolatedEngine {
     const isFixedTargetRoute =
       route === "NORMAL_TARGET" ||
       route === "SYNTHETIC_RUNG" ||
+      route === "CYCLE_OWNED_TARGET" ||
       route === "LEGACY_PERSISTED_TARGET";
 
     if (isFixedTargetRoute) {
@@ -4846,6 +4863,7 @@ class GridIsolatedEngine {
       atrPct: bandSnapshot.atrPct,
       netProfitTargetPct: configSnapshot.netProfitTargetPct,
       gridStepAtrMultiplier: configSnapshot.gridStepAtrMultiplier,
+      gridStepMinPct: configSnapshot.gridStepMinPct,
       gridStepMaxPct: configSnapshot.gridStepMaxPct,
       configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
       configuredSellLevels: Math.floor(allocation.levelsCount / 2),

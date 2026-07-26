@@ -1,7 +1,53 @@
 # BITÁCORA — WINDSURF CHESTER BOT
 
 > Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-25
+> Última actualización: 2026-07-26
+
+---
+
+## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
+
+### Resumen
+Se desacopla la separación de entradas del objetivo económico de cierre. Las nuevas BUY en SHADOW nacen con política `CYCLE_OWNED_NET_TARGET_V3`, target sintético propio, cantidad íntegra del ciclo y cálculo persistido desde el fill real. Los rungs SELL dejan de ser obligación económica para V3 y se presentan como referencias.
+
+### Solución
+- `calculateEntrySpacingPct` calcula la separación de entradas solo desde ATR, mínimos/máximos de configuración y microestructura disponible.
+- `computeCycleOwnedExitTarget` calcula el target desde el fill real, fees maker configuradas, reserva fiscal, buffers y tick con redondeo CEIL; rechaza cantidades no alineadas y órdenes bajo mínimo.
+- `processCycleFill` calcula y valida el target V3 antes de la transacción que confirma el fill e inserta el ciclo; un target inválido no modifica el nivel BUY ni crea ciclo abierto.
+- Recovery conserva V3 solo cuando su target persistido está completo; V3 incompleto queda en revisión sin reconstrucción.
+- La salida V3 usa `CYCLE_OWNED_TARGET`, no marca rungs SELL como filled y rearma solo la BUY tras el cierre confirmado.
+- Las recomendaciones B ajustan `gridStepAtrMultiplier`, sin proponer reducir `netProfitTargetPct` para ganar densidad.
+
+### Compatibilidad y schema
+- V1/V2 no se convierten ni se recalculan con V3.
+- Las columnas `exit_policy_version` y `target_kind` son `TEXT`, y `target_calculation_json` es `JSONB`; no requieren migración ni cambio de schema.
+- No se realizó backfill ni se modificó ningún ciclo existente, incluido el ciclo protegido `a2a0b7ca-a710-4402-8a11-54222bf98455`.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridSpacingCalculator.ts`
+- `server/services/gridIsolated/gridCycleOwnedTarget.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridJsonbValidators.ts`
+- `server/services/gridIsolated/gridRecommendationService.ts`
+- `server/services/gridIsolated/__tests__/gridEntrySpacing.test.ts`
+- `server/services/gridIsolated/__tests__/gridCycleOwnedTarget.test.ts`
+- `server/services/__tests__/gridRecommendationAlternatives.test.ts`
+- `server/services/__tests__/gridRecommendationService.test.ts`
+- `client/src/components/grid/GridLevelsCompactPanel.tsx`
+- `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md`
+- `BITACORA.md`
+
+### Validaciones
+- `npm run check` ✅
+- `npm run build` ✅
+- Tests entry spacing/target/selector ✅ 22/22
+- Tests motor V2 y JSONB forensic ✅ 165/165
+- Tests recomendaciones/apply ✅ 94/94
+- Tests frontend Grid: 21/22; fallo baseline no relacionado en `gridUxRender.test.tsx` por texto esperado `Beneficio estimado abierto` frente al render actual `Beneficio estimado`.
+
+### Estado final
+Implementación local sin deploy. Pendiente de validación independiente, completar la batería UI solicitada y commit/push selectivo.
 
 ---
 

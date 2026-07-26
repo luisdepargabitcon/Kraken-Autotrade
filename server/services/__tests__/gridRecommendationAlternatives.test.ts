@@ -59,12 +59,13 @@ describe("buildConfigurationRecommendation alternatives", () => {
     expect(altA!.proposedConfig.sellLevels).toBeDefined();
   });
 
-  it("alternative B reduce netProfitTargetPct y declara mejora parcial", () => {
+  it("alternative B ajusta densidad sin modificar netProfitTargetPct", () => {
     const rec = buildConfigurationRecommendation(makeInput({ levels: [] }));
     const altB = rec!.alternatives.find(a => a.id === "B");
     expect(altB).toBeDefined();
-    expect(altB!.proposedConfig.netProfitTargetPct).toBeDefined();
-    expect(altB!.proposedConfig.netProfitTargetPct).toBeLessThan(0.1);
+    expect(altB!.proposedConfig.gridStepAtrMultiplier).toBeDefined();
+    expect(altB!.proposedConfig.netProfitTargetPct).toBeUndefined();
+    expect(altB!.expectedAfter.netProfitPct).toBe(0.1);
   });
 
   it("alternative C propone gridRangeMaxPct cuando cabe mejora parcial", () => {

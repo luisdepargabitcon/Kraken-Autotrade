@@ -130,6 +130,28 @@ export interface SpacingResult {
   explanation: string;
 }
 
+export interface EntrySpacingInput {
+  atrPct: number;
+  gridStepAtrMultiplier: number;
+  gridStepMinPct: number;
+  gridStepMaxPct: number;
+  spreadPct?: number | null;
+  priceTickPct?: number | null;
+}
+
+export interface EntrySpacingResult {
+  entrySpacingPct: number;
+  atrSpacingPct: number;
+  microstructureFloorPct: number;
+  gridStepMinPct: number;
+  gridStepMaxPct: number;
+  spreadPct: number | null;
+  priceTickPct: number | null;
+  clampReason: ClampReason;
+  source: "atr_spread_tick" | "atr_config_floor";
+  explanation: string;
+}
+
 export interface CenterPriceInput {
   currentPrice: number;
   bollingerMiddle: number;
@@ -236,7 +258,10 @@ export interface ProfessionalLevelGenerationInput {
   atrPct: number;
   netProfitTargetPct: number;
   gridStepAtrMultiplier: number;
+  gridStepMinPct?: number;
   gridStepMaxPct: number;
+  spreadPct?: number | null;
+  priceTickPct?: number | null;
   configuredBuyLevels: number;
   configuredSellLevels: number;
   capitalPerLevelUsd: number;
@@ -299,6 +324,20 @@ export interface ProfessionalLevelGenerationResult {
     viabilityStatus: GridViabilityStatus;
     minSpacingPctReal: number;
     spacingPct: number;
+    entrySpacing: {
+      entrySpacingPct: number;
+      atrSpacingPct: number;
+      microstructureFloorPct: number;
+      clampReason: ClampReason;
+    };
+    cycleExitTarget: {
+      configuredNetTargetPct: number;
+      estimatedGrossExitGapPct: number;
+      feeAssumption: string;
+      taxReservePct: number;
+      spreadBufferPct: number;
+      safetyBufferPct: number;
+    };
     centerPrice: number;
     operationalLower: number;
     operationalUpper: number;
@@ -365,7 +404,10 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     atrPct,
     netProfitTargetPct,
     gridStepAtrMultiplier,
+    gridStepMinPct = 0.15,
     gridStepMaxPct,
+    spreadPct = null,
+    priceTickPct = null,
     configuredBuyLevels,
     configuredSellLevels,
     capitalPerLevelUsd,
@@ -406,12 +448,14 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     safetyBufferPct,
   });
 
-  // 2. Calculate applied spacing
-  const spacingResult = calculateSpacingPct({
+  // 2. Calculate entry spacing independently from exit profitability
+  const entrySpacingResult = calculateEntrySpacingPct({
     atrPct,
     gridStepAtrMultiplier,
-    minSpacingPctReal: minSpacingResult.minSpacingPctReal,
+    gridStepMinPct,
     gridStepMaxPct,
+    spreadPct,
+    priceTickPct,
   });
 
   // 3. Calculate center price
@@ -457,7 +501,7 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
       adaptiveRangeMinViableLevels,
       bollingerBandWidthPct,
       atrPct,
-      spacingPct: spacingResult.spacingPct,
+      spacingPct: entrySpacingResult.entrySpacingPct,
       minSpacingPctReal: minSpacingResult.minSpacingPctReal,
       requestedBuyLevels: configuredBuyLevels,
       requestedSellLevels: configuredSellLevels,
@@ -512,7 +556,7 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     centerPrice: centerPriceResult.centerPrice,
     operationalLower: operationalRangeResult.operationalLower,
     operationalUpper: operationalRangeResult.operationalUpper,
-    spacingPct: spacingResult.spacingPct,
+    spacingPct: entrySpacingResult.entrySpacingPct,
     configuredBuyLevels,
     configuredSellLevels,
   });
@@ -544,7 +588,7 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
       centerPrice: centerPriceResult.centerPrice,
       operationalLower: operationalRangeResult.operationalLower,
       operationalUpper: operationalRangeResult.operationalUpper,
-      spacingPct: spacingResult.spacingPct,
+      spacingPct: entrySpacingResult.entrySpacingPct,
       configuredBuyLevels: viableLevelsResult.maxBuyLevels,
       configuredSellLevels: viableLevelsResult.maxSellLevels,
       dynamicLevelReduction,
@@ -592,8 +636,8 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
   const sellToBuyGapPct = highestBuyPrice > 0 ? ((lowestSellPrice - highestBuyPrice) / highestBuyPrice) * 100 : 0;
 
   const avgSpacingPct = levels.length > 1 ? totalRangePct / (levels.length - 1) : 0;
-  const minSpacingPct = spacingResult.spacingPct;
-  const maxSpacingPct = spacingResult.spacingPct;
+  const minSpacingPct = entrySpacingResult.entrySpacingPct;
+  const maxSpacingPct = entrySpacingResult.entrySpacingPct;
 
   // Compact range validation
   let compactRangeOk = true;
@@ -616,11 +660,10 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
       compactRangeOk = false;
       rangeAuditWarnings.push(`Gap SELL-BUY (${sellToBuyGapPct.toFixed(2)}%) supera maxSellDistanceFromNearestBuyPct (${maxSellDistanceFromNearestBuyPct}%).`);
     }
-    // Check if net target forces spacing beyond compact range
-    const minRequiredRangePct = minSpacingResult.minSpacingPctReal * Math.max(configuredBuyLevels, configuredSellLevels) * 2;
-    if (minRequiredRangePct > gridRangeMaxPct) {
+    const requiredEntryRangePct = entrySpacingResult.entrySpacingPct * Math.max(configuredBuyLevels, configuredSellLevels) * 2;
+    if (requiredEntryRangePct > gridRangeMaxPct) {
       rangeAuditWarnings.push(
-        `Target neto (${netProfitTargetPct}%) requiere spacing mínimo acumulado ~${minRequiredRangePct.toFixed(2)}% que excede gridRangeMaxPct (${gridRangeMaxPct}%). Considerar bajar target neto o ampliar rango.`
+        `La separación de entradas (${entrySpacingResult.entrySpacingPct.toFixed(2)}%) requiere rango acumulado ~${requiredEntryRangePct.toFixed(2)}% y excede gridRangeMaxPct (${gridRangeMaxPct}%). Ajustar densidad de entradas o ampliar rango.`
       );
     }
   }
@@ -639,7 +682,21 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
       legacyGeneratorUsed: false,
       viabilityStatus: viabilityResult.status,
       minSpacingPctReal: minSpacingResult.minSpacingPctReal,
-      spacingPct: spacingResult.spacingPct,
+      spacingPct: entrySpacingResult.entrySpacingPct,
+      entrySpacing: {
+        entrySpacingPct: entrySpacingResult.entrySpacingPct,
+        atrSpacingPct: entrySpacingResult.atrSpacingPct,
+        microstructureFloorPct: entrySpacingResult.microstructureFloorPct,
+        clampReason: entrySpacingResult.clampReason,
+      },
+      cycleExitTarget: {
+        configuredNetTargetPct: netProfitTargetPct,
+        estimatedGrossExitGapPct: minSpacingResult.grossTargetPct + spreadBufferPct + safetyBufferPct,
+        feeAssumption: "configured fees",
+        taxReservePct: 0,
+        spreadBufferPct,
+        safetyBufferPct,
+      },
       centerPrice: centerPriceResult.centerPrice,
       operationalLower: operationalRangeResult.operationalLower,
       operationalUpper: operationalRangeResult.operationalUpper,
@@ -726,6 +783,32 @@ export function calculateMinSpacingPctReal(input: MinSpacingInput): MinSpacingRe
  *
  * Formula: spacingPct = clamp(atrPct * gridStepAtrMultiplier, minSpacingPctReal, gridStepMaxPct)
  */
+export function calculateEntrySpacingPct(input: EntrySpacingInput): EntrySpacingResult {
+  const { atrPct, gridStepAtrMultiplier, gridStepMinPct, gridStepMaxPct, spreadPct = null, priceTickPct = null } = input;
+  if (!Number.isFinite(atrPct) || !Number.isFinite(gridStepAtrMultiplier) || !Number.isFinite(gridStepMinPct) || !Number.isFinite(gridStepMaxPct) || gridStepMinPct <= 0 || gridStepMaxPct < gridStepMinPct) {
+    throw new Error("Invalid entry spacing parameters");
+  }
+  const atrSpacingPct = atrPct * gridStepAtrMultiplier;
+  const usableSpreadPct = spreadPct != null && Number.isFinite(spreadPct) && spreadPct > 0 ? spreadPct : null;
+  const usableTickPct = priceTickPct != null && Number.isFinite(priceTickPct) && priceTickPct > 0 ? priceTickPct : null;
+  const microstructureFloorPct = Math.max(gridStepMinPct, usableSpreadPct != null ? 2 * usableSpreadPct : gridStepMinPct, usableTickPct != null ? 2 * usableTickPct : gridStepMinPct);
+  const entrySpacingPct = Math.min(Math.max(atrSpacingPct, microstructureFloorPct), gridStepMaxPct);
+  const clampReason: ClampReason = atrSpacingPct < microstructureFloorPct ? "min" : atrSpacingPct > gridStepMaxPct ? "max" : "atr";
+  const source = usableSpreadPct == null && usableTickPct == null ? "atr_config_floor" : "atr_spread_tick";
+  return {
+    entrySpacingPct,
+    atrSpacingPct,
+    microstructureFloorPct,
+    gridStepMinPct,
+    gridStepMaxPct,
+    spreadPct: usableSpreadPct,
+    priceTickPct: usableTickPct,
+    clampReason,
+    source,
+    explanation: `Separación de entradas = clamp(${atrSpacingPct.toFixed(4)}%, ${microstructureFloorPct.toFixed(4)}%, ${gridStepMaxPct.toFixed(4)}%) = ${entrySpacingPct.toFixed(4)}% (${clampReason}).`,
+  };
+}
+
 export function calculateSpacingPct(input: SpacingInput): SpacingResult {
   const { atrPct, gridStepAtrMultiplier, minSpacingPctReal, gridStepMaxPct } = input;
 

@@ -2,17 +2,17 @@
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4E — CORRECCIÓN 5 FAIL-CLOSED commit/push completado
-NEXT_ACTION: deploy en staging previa aprobación explícita
-LAST_COMPLETED_ACTION: commit + push a origin/main 1c0cfa3
-LAST_VALIDATION: 2026-07-25T23:50+02:00 — npm run check ✅, npm run build ✅, vitest grid 255/255 ✅, git diff --check ✅
-CURRENT_HEAD: 3706071
-ORIGIN_HEAD: 3706071
-EXPECTED_DEPLOY_HASH: 3706071
+TASK_STATUS: FASE 4G — NIVELES PROFESIONALES V3 implementada localmente
+NEXT_ACTION: revisión independiente y commit/push selectivo sin deploy
+LAST_COMPLETED_ACTION: V3 integrado con targets individuales, entry spacing independiente y recomendaciones desacopladas
+LAST_VALIDATION: 2026-07-26T14:39+02:00 — check ✅, build ✅, tests V3 22/22, V2/JSONB 165/165, recomendaciones 94/94; frontend 21/22 con fallo baseline ajeno
+CURRENT_HEAD: 23936a1168d38f6f801a1f54aa242a70bb969836
+ORIGIN_HEAD: 23936a1168d38f6f801a1f54aa242a70bb969836
+EXPECTED_DEPLOY_HASH: pendiente
 DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
 FINAL_DOCUMENTATION_HASH: pendiente
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-25T23:51+02:00
+UPDATED_AT: 2026-07-26T14:20+02:00
 BUILD_BASELINE_CONFIRMED: TRUE
 BUILD_REGRESSION_FROM_PHASE_4E: FALSE
 BUILD_NOTE: npm run build OK en 3fab204 y en 90776a6; npx vite build desde client falla en ambos por contexto de invocación, no por regresión de código

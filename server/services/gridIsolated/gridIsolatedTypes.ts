@@ -255,11 +255,13 @@ export type GridCycleStatus =
 
 export type GridExitPolicyVersion =
   | "SYMMETRIC_INDEX_V1"
-  | "FIRST_PROFITABLE_HIGHER_RUNG_V2";
+  | "FIRST_PROFITABLE_HIGHER_RUNG_V2"
+  | "CYCLE_OWNED_NET_TARGET_V3";
 
 export type GridTargetKind =
   | "PERSISTED_SELL"
   | "SYNTHETIC_RUNG"
+  | "CYCLE_OWNED_SYNTHETIC"
   | "UNKNOWN";
 
 export type GridMakerExitState =
@@ -319,6 +321,7 @@ export type RiskAction =
 export type GridClosePath =
   | "NORMAL_TARGET"
   | "SYNTHETIC_RUNG"
+  | "CYCLE_OWNED_TARGET"
   | "LEGACY_PERSISTED_TARGET"
   | "TRAILING_MAKER"
   | "PROTECTIVE_MAKER"
@@ -334,14 +337,15 @@ export interface GridRejectedCandidate {
 
 export interface GridTargetCalculation {
   selected: boolean;
-  /** Policy version used to compute this target (legacy field kept for audits). */
-  policyVersion?: "FIRST_PROFITABLE_HIGHER_RUNG_V2";
+  policyVersion?: "FIRST_PROFITABLE_HIGHER_RUNG_V2" | "CYCLE_OWNED_NET_TARGET_V3";
   stateVersion: number;
   targetKind: GridTargetKind | null;
   targetSellLevelId: string | null;
   targetRungLevelId: string | null;
   targetSellPrice: number | null;
   targetSellQuantity: number | null;
+  grossExitGapPct?: number | null;
+  actualGrossGapPct?: number | null;
   grossPnlUsd: number | null;
   exchangeFeesUsd: number | null;
   operationalCostsUsd: number | null;
@@ -351,6 +355,13 @@ export interface GridTargetCalculation {
   availablePnlAfterTaxUsd: number | null;
   availablePnlAfterTaxPct: number | null;
   netProfitTargetPct: number | null;
+  buyFeePct?: number | null;
+  sellFeePct?: number | null;
+  taxReservePct?: number | null;
+  spreadBufferPct?: number | null;
+  safetyBufferPct?: number | null;
+  priceTickSize?: number | null;
+  quantityStep?: number | null;
   rejectedCandidates: GridRejectedCandidate[];
   explanation: string;
   reasonCode?: string;
@@ -813,6 +824,8 @@ export const GRID_EVENT_TYPES = [
   "GRID_SHADOW_CLEANUP_APPLIED",
   "GRID_SHADOW_CLEANUP_ABORTED",
   "GRID_SELL_LIFECYCLE_ADVANCED",
+  "GRID_CYCLE_OWNED_TARGET_CREATED",
+  "GRID_ENTRY_SPACING_CALCULATED",
 ] as const;
 
 export type GridEventType = (typeof GRID_EVENT_TYPES)[number];

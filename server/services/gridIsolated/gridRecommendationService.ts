@@ -19,8 +19,8 @@
 import crypto from "crypto";
 import { computeGrossTargetFromNet } from "./gridNetCalculator";
 import {
+  calculateEntrySpacingPct,
   calculateMinSpacingPctReal,
-  calculateSpacingPct,
   countViableLevelsIterative,
 } from "./gridSpacingCalculator";
 import { FEE_BUFFER_BUY_PCT, FEE_BUFFER_SELL_PCT, TAX_RESERVE_PCT } from "./gridIsolatedTypes";
@@ -304,6 +304,7 @@ function computeSpacingAndLevels(
   configuredSellLevels: number,
   atrPct: number,
   gridStepAtrMultiplier: number,
+  gridStepMinPct: number,
   gridStepMaxPct: number,
 ) {
   const minSpacingResult = calculateMinSpacingPctReal({
@@ -315,10 +316,10 @@ function computeSpacingAndLevels(
     taxReservePct,
   });
 
-  const spacingResult = calculateSpacingPct({
+  const spacingResult = calculateEntrySpacingPct({
     atrPct,
     gridStepAtrMultiplier,
-    minSpacingPctReal: minSpacingResult.minSpacingPctReal,
+    gridStepMinPct,
     gridStepMaxPct,
   });
 
@@ -326,7 +327,7 @@ function computeSpacingAndLevels(
     centerPrice,
     operationalLower,
     operationalUpper,
-    spacingPct: spacingResult.spacingPct,
+    spacingPct: spacingResult.entrySpacingPct,
     configuredBuyLevels,
     configuredSellLevels,
   });
@@ -334,7 +335,7 @@ function computeSpacingAndLevels(
   return {
     grossTargetPct: minSpacingResult.grossTargetPct,
     minSpacingPctReal: minSpacingResult.minSpacingPctReal,
-    spacingPct: spacingResult.spacingPct,
+    spacingPct: spacingResult.entrySpacingPct,
     buyLevels: viableResult.maxBuyLevels,
     sellLevels: viableResult.maxSellLevels,
     totalLevels: viableResult.totalViableLevels,
@@ -493,6 +494,7 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   const atrPct = toNum(marketContext?.atrPct ?? marketContext?.band?.atrPct) ?? 0;
   if (atrPct <= 0) return null;
   const { atrMultiplier, maxPct } = getGridStepParams(config);
+  const minPct = toNum(config?.gridStepMinPct) ?? 0.15;
   const regimeMaxPct = getRegimeMaxPct(adaptiveDecision, config);
 
   const effectiveRangePct = getEffectiveRangePct(bandWidthPct, gridRangeMaxPct, enforceCompactRange);
@@ -502,7 +504,7 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
     centerPrice, currentBounds.lower, currentBounds.upper,
     configuredBuyLevels, configuredSellLevels,
-    atrPct, atrMultiplier, maxPct,
+    atrPct, atrMultiplier, minPct, maxPct,
   );
 
   const expectedBefore = {
@@ -527,7 +529,7 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
       netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
       centerPrice, currentBounds.lower, currentBounds.upper,
       currentCalc.buyLevels, currentCalc.sellLevels,
-      atrPct, atrMultiplier, maxPct,
+      atrPct, atrMultiplier, minPct, maxPct,
     );
     const changedFields: string[] = [];
     const proposedConfig: Record<string, any> = {};
@@ -568,58 +570,37 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     });
   }
 
-  // ─── Alternative B: Maintain range, reduce target ───
+  // ─── Alternative B: Maintain cycle target, adjust entry density ───
   {
-    let newNetProfit = netProfitTargetPct;
-    let bCalc = currentCalc;
-    let attempts = 0;
-    // Real minimum derived from current configuration: 10% of current target, floor 0.01%
-    const minNetProfit = Math.max(0.01, netProfitTargetPct * 0.1);
-
-    while (bCalc.totalLevels < configuredBuyLevels + configuredSellLevels && newNetProfit > minNetProfit && attempts < 30) {
-      newNetProfit = Math.max(minNetProfit, newNetProfit - 0.05);
-      bCalc = computeSpacingAndLevels(
-        newNetProfit, buyFeePct, sellFeePct, taxReservePct,
-        centerPrice, currentBounds.lower, currentBounds.upper,
-        configuredBuyLevels, configuredSellLevels,
-        atrPct, atrMultiplier, maxPct,
-      );
-      attempts++;
-    }
-
-    const requestedTotal = configuredBuyLevels + configuredSellLevels;
-    const hasRealChange = newNetProfit !== netProfitTargetPct;
+    const newAtrMultiplier = Math.max(0.1, Math.min(atrMultiplier * 0.8, atrMultiplier - 0.05));
+    const bCalc = computeSpacingAndLevels(
+      netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
+      centerPrice, currentBounds.lower, currentBounds.upper,
+      configuredBuyLevels, configuredSellLevels,
+      atrPct, newAtrMultiplier, minPct, maxPct,
+    );
+    const hasRealChange = newAtrMultiplier !== atrMultiplier;
     const hasImprovement = bCalc.totalLevels > currentCalc.totalLevels;
-    const newNetPositive = newNetProfit > 0;
-    const isPartialImprovement = hasImprovement && bCalc.totalLevels < requestedTotal;
-    const bSafeToApply = hasRealChange && hasImprovement && newNetPositive;
+    const bSafeToApply = hasRealChange && hasImprovement;
     const bBlockingReason = !hasRealChange
       ? "La configuración ya coincide con esta alternativa."
       : !hasImprovement
-        ? "Reducir el objetivo no mejora el número de niveles dentro del rango actual."
-        : !newNetPositive
-          ? `Objetivo neto resultante (${newNetProfit.toFixed(2)}%) no es positivo.`
-          : null;
-
-    const bWarnings: string[] = [];
-    if (isPartialImprovement) {
-      bWarnings.push(`Mejora parcial: ${bCalc.totalLevels} niveles de ${requestedTotal} solicitados.`);
-    }
-
+        ? "Ajustar la densidad no mejora el número de entradas dentro del rango actual."
+        : null;
     alternatives.push({
       id: "B",
-      title: `Mantener rango y reducir objetivo a ${newNetProfit.toFixed(2)}%`,
-      explanation: `Mantiene los límites seguros. Reduce netProfitTargetPct solo lo necesario para que quepan más niveles. Recalcula gross target, spacing y niveles usando funciones canónicas. El beneficio neto siempre es positivo.`,
-      proposedConfig: { netProfitTargetPct: newNetProfit },
-      changedFields: ["netProfitTargetPct"],
+      title: `Ajustar densidad de entradas (ATR × ${newAtrMultiplier.toFixed(2)})`,
+      explanation: "La densidad de entradas y el beneficio por ciclo son parámetros independientes. Mantiene el objetivo neto y ajusta solo la sensibilidad ATR de las entradas.",
+      proposedConfig: { gridStepAtrMultiplier: newAtrMultiplier },
+      changedFields: ["gridStepAtrMultiplier"],
       expectedBefore,
       expectedAfter: {
         levels: bCalc.totalLevels,
         spacingPct: bCalc.spacingPct,
         rangePct: effectiveRangePct,
-        netProfitPct: newNetProfit,
+        netProfitPct: netProfitTargetPct,
       },
-      warnings: bWarnings,
+      warnings: [],
       safeToApply: bSafeToApply,
       blockingReason: bBlockingReason,
     });
@@ -642,7 +623,7 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
         netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
         centerPrice, testBounds.lower, testBounds.upper,
         configuredBuyLevels, configuredSellLevels,
-        atrPct, atrMultiplier, maxPct,
+        atrPct, atrMultiplier, minPct, maxPct,
       );
       if (testCalc.totalLevels > bestCalc.totalLevels) {
         bestWidth = testWidth;
@@ -878,6 +859,9 @@ export const RECOMMENDATION_APPLY_ALLOWLIST = [
   "buyLevels",
   "sellLevels",
   "netProfitTargetPct",
+  "gridStepAtrMultiplier",
+  "gridStepMinPct",
+  "gridStepMaxPct",
   "gridRangeMaxPct",
   "enforceCompactRange",
 ] as const;
@@ -919,6 +903,9 @@ export function validateProposedValues(
       if (!r.ok) return { valid: false, reason: r.reason, code: "INVALID_VALUE" };
     } else if (key === "netProfitTargetPct") {
       const r = validatePositiveFiniteNumber(key, value, ABSOLUTE_NET_PROFIT_MAX_PCT);
+      if (!r.ok) return { valid: false, reason: r.reason, code: "INVALID_VALUE" };
+    } else if (key === "gridStepAtrMultiplier" || key === "gridStepMinPct" || key === "gridStepMaxPct") {
+      const r = validatePositiveFiniteNumber(key, value, 20);
       if (!r.ok) return { valid: false, reason: r.reason, code: "INVALID_VALUE" };
     } else if (key === "gridRangeMaxPct") {
       const r = validatePositiveFiniteNumber(key, value, ABSOLUTE_GRID_RANGE_MAX_PCT);

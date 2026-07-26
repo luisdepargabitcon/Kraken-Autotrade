@@ -50,7 +50,7 @@ function LevelRow({ level, index }: LevelRowProps) {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Badge variant="outline" className={statusColor(level.status)}>
-            {level.side}
+            {level.side === "SELL" ? "SELL referencia" : "BUY entrada"}
           </Badge>
           {level.targetOfOpenCycle && (
             <Badge variant="outline" className="text-cyan-400 border-cyan-500/30 bg-cyan-500/10 text-xs">
@@ -201,7 +201,7 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
 
         {filter === "ciclos" && (
           <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2 text-xs text-cyan-400">
-            Los niveles SELL asociados a ciclos abiertos se marcan como &quot;Objetivo de venta activo&quot;, aunque pertenezcan a un rango anterior.
+            Cada ciclo V3 conserva su propia salida individual. Los rungs SELL son referencias no ejecutables y no pertenecen a ningún ciclo.
           </div>
         )}
 

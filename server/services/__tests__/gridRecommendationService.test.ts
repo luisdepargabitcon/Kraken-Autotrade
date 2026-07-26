@@ -198,13 +198,14 @@ describe("buildConfigurationRecommendation", () => {
     expect(altA!.blockingReason).toBeNull();
   });
 
-  it("alternativa B reduce netProfitTargetPct", () => {
+  it("alternativa B ajusta densidad sin reducir netProfitTargetPct", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
     const altB = r!.alternatives.find(a => a.id === "B");
     expect(altB).toBeDefined();
-    expect(altB!.proposedConfig.netProfitTargetPct).toBeDefined();
-    expect(altB!.proposedConfig.netProfitTargetPct).toBeLessThan(0.8);
+    expect(altB!.proposedConfig.gridStepAtrMultiplier).toBeDefined();
+    expect(altB!.proposedConfig.netProfitTargetPct).toBeUndefined();
+    expect(altB!.expectedAfter.netProfitPct).toBe(0.1);
   });
 
   it("alternativa C ajusta gridRangeMaxPct", () => {

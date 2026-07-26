@@ -28,6 +28,7 @@ export type JsonbValidationResult<T> =
 const VALID_GRID_CLOSE_PATHS: (GridClosePath | null)[] = [
   "NORMAL_TARGET",
   "SYNTHETIC_RUNG",
+  "CYCLE_OWNED_TARGET",
   "LEGACY_PERSISTED_TARGET",
   "TRAILING_MAKER",
   "PROTECTIVE_MAKER",
@@ -50,6 +51,7 @@ const VALID_RISK_ACTIONS: (RiskAction | null)[] = [
 const VALID_TARGET_KINDS: (GridTargetKind | null)[] = [
   "PERSISTED_SELL",
   "SYNTHETIC_RUNG",
+  "CYCLE_OWNED_SYNTHETIC",
   "UNKNOWN",
   null,
 ];
@@ -233,7 +235,7 @@ export function validateTargetCalculationJson(raw: unknown): JsonbValidationResu
   }
 
   const version = finiteNumber(raw.stateVersion);
-  if (version !== 1) {
+  if (version !== 1 && version !== 2) {
     return { valid: false, reason: `stateVersion desconocida: ${version}`, code: "TARGET_UNKNOWN_VERSION" };
   }
 
@@ -245,15 +247,26 @@ export function validateTargetCalculationJson(raw: unknown): JsonbValidationResu
     return { valid: false, reason: "rejectedCandidates no es un array", code: "TARGET_REJECTED_CANDIDATES_INVALID" };
   }
 
+  const isV3 = version === 2 || raw.policyVersion === "CYCLE_OWNED_NET_TARGET_V3" || raw.targetKind === "CYCLE_OWNED_SYNTHETIC";
+  if (isV3) {
+    const requiredNumbers = ["targetSellPrice", "targetSellQuantity", "actualGrossGapPct", "availablePnlAfterTaxPct", "netProfitTargetPct", "buyFeePct", "sellFeePct", "taxReservePct", "priceTickSize"];
+    const missing = requiredNumbers.filter(key => finiteNumber(raw[key]) == null);
+    if (raw.policyVersion !== "CYCLE_OWNED_NET_TARGET_V3" || raw.targetKind !== "CYCLE_OWNED_SYNTHETIC" || raw.targetSellLevelId != null || missing.length > 0 || typeof raw.explanation !== "string" || raw.explanation.length === 0) {
+      return { valid: false, reason: `Target V3 inválido: ${missing.length ? `faltan ${missing.join(", ")}` : "política, tipo, nivel SELL o explicación inválidos"}`, code: "TARGET_V3_INVALID" };
+    }
+  }
+
   const calculation: GridTargetCalculation = {
     selected: raw.selected === true,
-    policyVersion: raw.policyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2" ? "FIRST_PROFITABLE_HIGHER_RUNG_V2" : undefined,
-    stateVersion: 1,
+    policyVersion: raw.policyVersion === "FIRST_PROFITABLE_HIGHER_RUNG_V2" || raw.policyVersion === "CYCLE_OWNED_NET_TARGET_V3" ? raw.policyVersion : undefined,
+    stateVersion: version,
     targetKind: raw.targetKind as GridTargetKind | null,
     targetSellLevelId: typeof raw.targetSellLevelId === "string" ? raw.targetSellLevelId : null,
     targetRungLevelId: typeof raw.targetRungLevelId === "string" ? raw.targetRungLevelId : null,
     targetSellPrice: finiteNumber(raw.targetSellPrice),
     targetSellQuantity: finiteNumber(raw.targetSellQuantity),
+    grossExitGapPct: finiteNumber(raw.grossExitGapPct),
+    actualGrossGapPct: finiteNumber(raw.actualGrossGapPct),
     grossPnlUsd: finiteNumber(raw.grossPnlUsd),
     exchangeFeesUsd: finiteNumber(raw.exchangeFeesUsd),
     operationalCostsUsd: finiteNumber(raw.operationalCostsUsd),
@@ -263,6 +276,13 @@ export function validateTargetCalculationJson(raw: unknown): JsonbValidationResu
     availablePnlAfterTaxUsd: finiteNumber(raw.availablePnlAfterTaxUsd),
     availablePnlAfterTaxPct: finiteNumber(raw.availablePnlAfterTaxPct),
     netProfitTargetPct: finiteNumber(raw.netProfitTargetPct),
+    buyFeePct: finiteNumber(raw.buyFeePct),
+    sellFeePct: finiteNumber(raw.sellFeePct),
+    taxReservePct: finiteNumber(raw.taxReservePct),
+    spreadBufferPct: finiteNumber(raw.spreadBufferPct),
+    safetyBufferPct: finiteNumber(raw.safetyBufferPct),
+    priceTickSize: finiteNumber(raw.priceTickSize),
+    quantityStep: finiteNumber(raw.quantityStep),
     rejectedCandidates: Array.isArray(raw.rejectedCandidates)
       ? raw.rejectedCandidates.map((c: any) => {
           if (c == null || (c.side !== "BUY" && c.side !== "SELL")) {
