@@ -1,4 +1,5 @@
 import type { GridTargetCalculation } from "./gridIsolatedTypes";
+import { computeGridCycleEconomicPnl } from "./gridCycleEconomicPnl";
 
 export interface CycleOwnedExitTargetInput {
   buyFillPrice: number;
@@ -11,7 +12,14 @@ export interface CycleOwnedExitTargetInput {
   safetyBufferPct: number;
   priceTickSize: number;
   quantityStep: number;
-  minOrderUsd: number;
+  minOrderBase: number;
+  minOrderQuote: number;
+  minOrderUsd: number | null;
+  maxOrderBase: number;
+  constraintsSource: string;
+  constraintsFetchedAt: Date;
+  baseCurrency: string;
+  quoteCurrency: string;
 }
 
 function validPositive(value: number): boolean {
@@ -61,27 +69,22 @@ function rejected(input: CycleOwnedExitTargetInput, reasonCode: string, explanat
 }
 
 function calculatePnl(input: CycleOwnedExitTargetInput, targetSellPrice: number) {
-  const buyNotional = input.buyFillPrice * input.buyFillQuantity;
-  const sellNotional = targetSellPrice * input.buyFillQuantity;
-  const grossPnlUsd = sellNotional - buyNotional;
-  const buyFeeUsd = buyNotional * input.buyFeePct / 100;
-  const sellFeeUsd = sellNotional * input.sellFeePct / 100;
-  const exchangeFeesUsd = buyFeeUsd + sellFeeUsd;
-  const operationalCostsUsd = buyNotional * (input.spreadBufferPct + input.safetyBufferPct) / 100;
-  const operationalNetPnlUsd = grossPnlUsd - exchangeFeesUsd - operationalCostsUsd;
-  const taxReserveUsd = operationalNetPnlUsd > 0
-    ? operationalNetPnlUsd * input.taxReservePct / 100
-    : 0;
-  const availablePnlAfterTaxUsd = operationalNetPnlUsd - taxReserveUsd;
+  const pnl = computeGridCycleEconomicPnl({
+    buyPrice: input.buyFillPrice,
+    sellPrice: targetSellPrice,
+    quantity: input.buyFillQuantity,
+    buyFeePct: input.buyFeePct,
+    sellFeePct: input.sellFeePct,
+    spreadBufferPct: input.spreadBufferPct,
+    safetyBufferPct: input.safetyBufferPct,
+    taxReservePct: input.taxReservePct,
+  });
   return {
-    grossPnlUsd,
-    exchangeFeesUsd,
-    operationalCostsUsd,
-    operationalNetPnlUsd,
-    operationalNetPnlPct: buyNotional > 0 ? operationalNetPnlUsd / buyNotional * 100 : 0,
-    taxReserveUsd,
-    availablePnlAfterTaxUsd,
-    availablePnlAfterTaxPct: buyNotional > 0 ? availablePnlAfterTaxUsd / buyNotional * 100 : 0,
+    ...pnl,
+    operationalNetPnlUsd: pnl.netBeforeTaxUsd,
+    operationalNetPnlPct: pnl.netBeforeTaxPct,
+    availablePnlAfterTaxUsd: pnl.netPnlUsd,
+    availablePnlAfterTaxPct: pnl.netPnlPct,
   };
 }
 
@@ -90,8 +93,8 @@ export function resolveNewGridCycleExitPolicy(): "CYCLE_OWNED_NET_TARGET_V3" {
 }
 
 export function computeCycleOwnedExitTarget(input: CycleOwnedExitTargetInput): GridTargetCalculation {
-  const numericValues = Object.values(input);
-  if (numericValues.some(value => !Number.isFinite(value)) || !validPositive(input.buyFillPrice) || !validPositive(input.buyFillQuantity)) {
+  const numericValues = [input.buyFillPrice, input.buyFillQuantity, input.netProfitTargetPct, input.buyFeePct, input.sellFeePct, input.taxReservePct, input.spreadBufferPct, input.safetyBufferPct, input.priceTickSize, input.quantityStep, input.minOrderBase, input.minOrderQuote, input.maxOrderBase];
+  if (numericValues.some(value => !Number.isFinite(value)) || !validPositive(input.buyFillPrice) || !validPositive(input.buyFillQuantity) || !validPositive(input.priceTickSize) || !validPositive(input.quantityStep) || !validPositive(input.minOrderBase) || !validPositive(input.minOrderQuote) || !validPositive(input.maxOrderBase) || input.maxOrderBase < input.minOrderBase || !input.constraintsSource || !(input.constraintsFetchedAt instanceof Date) || !input.baseCurrency || !input.quoteCurrency) {
     return rejected(input, "INVALID_INPUT", "El fill de compra o los parámetros de salida individual no son válidos.");
   }
   if (input.netProfitTargetPct <= 0 || input.taxReservePct < 0 || input.taxReservePct >= 100 || input.buyFeePct < 0 || input.sellFeePct < 0 || input.spreadBufferPct < 0 || input.safetyBufferPct < 0) {
@@ -102,9 +105,10 @@ export function computeCycleOwnedExitTarget(input: CycleOwnedExitTargetInput): G
   }
 
   const buyNotional = input.buyFillPrice * input.buyFillQuantity;
-  if (input.minOrderUsd > 0 && buyNotional < input.minOrderUsd) {
-    return rejected(input, "MIN_ORDER_USD", "El nocional del ciclo es inferior al mínimo permitido para una salida individual.");
-  }
+  if (input.buyFillQuantity < input.minOrderBase) return rejected(input, "QUANTITY_BELOW_BASE_MINIMUM", "La cantidad del ciclo es inferior al mínimo base oficial.");
+  if (input.buyFillQuantity > input.maxOrderBase) return rejected(input, "QUANTITY_ABOVE_BASE_MAXIMUM", "La cantidad del ciclo supera el máximo base oficial.");
+  if (buyNotional < input.minOrderQuote) return rejected(input, "QUOTE_NOTIONAL_BELOW_MINIMUM", "El nocional quote del ciclo es inferior al mínimo oficial.");
+  if (input.quoteCurrency === "USD" && input.minOrderUsd != null && buyNotional < input.minOrderUsd) return rejected(input, "MIN_ORDER_USD", "El nocional USD del ciclo es inferior al mínimo oficial.");
 
   const netBeforeTaxPct = input.netProfitTargetPct / (1 - input.taxReservePct / 100);
   const grossExitGapPct = netBeforeTaxPct + input.buyFeePct + input.sellFeePct + input.spreadBufferPct + input.safetyBufferPct;
@@ -121,9 +125,9 @@ export function computeCycleOwnedExitTarget(input: CycleOwnedExitTargetInput): G
   if (targetSellPrice <= input.buyFillPrice || pnl.availablePnlAfterTaxPct + 1e-10 < input.netProfitTargetPct) {
     return rejected(input, "NET_TARGET_UNREACHABLE", "No se puede garantizar el objetivo neto tras el redondeo al tick.");
   }
-  if (input.minOrderUsd > 0 && targetSellPrice * input.buyFillQuantity < input.minOrderUsd) {
-    return rejected(input, "MIN_ORDER_USD", "El nocional de salida individual queda por debajo del mínimo permitido.");
-  }
+  const sellNotionalQuote = targetSellPrice * input.buyFillQuantity;
+  if (sellNotionalQuote < input.minOrderQuote) return rejected(input, "QUOTE_NOTIONAL_BELOW_MINIMUM", "El nocional quote de salida queda por debajo del mínimo oficial.");
+  if (input.quoteCurrency === "USD" && input.minOrderUsd != null && sellNotionalQuote < input.minOrderUsd) return rejected(input, "MIN_ORDER_USD", "El nocional USD de salida queda por debajo del mínimo oficial.");
 
   const actualGrossGapPct = (targetSellPrice - input.buyFillPrice) / input.buyFillPrice * 100;
   return {
@@ -153,6 +157,18 @@ export function computeCycleOwnedExitTarget(input: CycleOwnedExitTargetInput): G
     safetyBufferPct: input.safetyBufferPct,
     priceTickSize: input.priceTickSize,
     quantityStep: input.quantityStep,
+    minOrderBase: input.minOrderBase,
+    minOrderQuote: input.minOrderQuote,
+    minOrderUsd: input.minOrderUsd,
+    maxOrderBase: input.maxOrderBase,
+    baseCurrency: input.baseCurrency,
+    quoteCurrency: input.quoteCurrency,
+    constraintsSource: input.constraintsSource,
+    constraintsFetchedAt: input.constraintsFetchedAt.toISOString(),
+    buyFeeUsd: pnl.buyFeeUsd,
+    sellFeeUsd: pnl.sellFeeUsd,
+    netBeforeTaxUsd: pnl.netBeforeTaxUsd,
+    netBeforeTaxPct: pnl.netBeforeTaxPct,
     rejectedCandidates: [],
     reasonCode: "TARGET_FOUND",
     explanation: `Salida individual calculada desde la compra real: ${actualGrossGapPct.toFixed(4)}% bruto y ${pnl.availablePnlAfterTaxPct.toFixed(4)}% neto disponible.`,

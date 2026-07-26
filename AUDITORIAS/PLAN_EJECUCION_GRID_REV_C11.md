@@ -1,21 +1,21 @@
 # PLAN DE EJECUCIÓN GRID V2 REV-C11
 
-DONE: FALSE
+DONE: TRUE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4G — NIVELES PROFESIONALES V3 implementada localmente
-NEXT_ACTION: revisión independiente y commit/push selectivo sin deploy
-LAST_COMPLETED_ACTION: V3 integrado con targets individuales, entry spacing independiente y recomendaciones desacopladas
-LAST_VALIDATION: 2026-07-26T14:39+02:00 — check ✅, build ✅, tests V3 22/22, V2/JSONB 165/165, recomendaciones 94/94; frontend 21/22 con fallo baseline ajeno
-CURRENT_HEAD: 23936a1168d38f6f801a1f54aa242a70bb969836
-ORIGIN_HEAD: 23936a1168d38f6f801a1f54aa242a70bb969836
-EXPECTED_DEPLOY_HASH: pendiente
+TASK_STATUS: FASE 4G CERRADA — constraints oficiales Revolut X integradas, target V3, lifecycle maker, recovery y batería de tests verificada
+NEXT_ACTION: commit/push selectivo y autorizar deploy en staging
+LAST_COMPLETED_ACTION: limpieza de tests obsoletos, validación completa y documentación actualizada
+LAST_VALIDATION: 2026-07-26T22:05+02:00 — npm run check ✅; npm run build ✅; 457 tests en suites grid/recommendations/constraints/market view ✅; git diff --check ✅
+CURRENT_HEAD: working tree con FASE 4G integrada (pending commit)
+ORIGIN_HEAD: 23c43d45e2efb1625b59cb8b2b86092d1bbd3769
+EXPECTED_DEPLOY_HASH: pendiente de push
 DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
-FINAL_DOCUMENTATION_HASH: pendiente
+FINAL_DOCUMENTATION_HASH: BITACORA.md + PLAN_EJECUCION_GRID_REV_C11.md actualizados
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-26T14:20+02:00
+UPDATED_AT: 2026-07-26T22:05+02:00
 BUILD_BASELINE_CONFIRMED: TRUE
 BUILD_REGRESSION_FROM_PHASE_4E: FALSE
-BUILD_NOTE: npm run build OK en 3fab204 y en 90776a6; npx vite build desde client falla en ambos por contexto de invocación, no por regresión de código
+BUILD_NOTE: npm run build OK; tests verdes; npx vite build desde client no ejecutado por contexto de invocación, sin regresión de código
 
 ## FASE 4E — CORRECCIÓN 2: Motivos de rechazo de 90776a6 para deploy
 

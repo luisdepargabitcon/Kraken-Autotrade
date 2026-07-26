@@ -33,6 +33,21 @@ export interface PairMetadata {
   orderMin: number;
   pairDecimals: number;
   stepSize: number;
+  baseStep?: number | null;
+  quoteStep?: number | null;
+  minOrderBase?: number | null;
+  minOrderQuote?: number | null;
+  maxOrderBase?: number | null;
+  priceTickSize?: number | null;
+  quantityStep?: number | null;
+  minOrderUsd?: number | null;
+  baseCurrency?: string | null;
+  quoteCurrency?: string | null;
+  status?: string | null;
+  region?: string | null;
+  constraintsSource?: string | null;
+  constraintsFetchedAt?: Date | null;
+  constraintsVerified?: boolean;
 }
 
 export interface ExchangeConfig {

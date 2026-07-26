@@ -5,6 +5,41 @@ import { balanceCache } from './BalanceCache';
 
 const API_BASE_URL = 'https://revx.revolut.com';
 const REVOLUTX_MIN_TIME_MS = parseInt(process.env.REVOLUTX_MIN_TIME_MS || '250', 10);
+const PAIR_CONSTRAINTS_TTL_MS = 15 * 60 * 1000;
+
+export interface RevolutXPairConfigurationRaw {
+  base: string;
+  quote: string;
+  base_step: string;
+  quote_step: string;
+  min_order_size: string;
+  max_order_size: string;
+  min_order_size_quote: string;
+  status: string;
+}
+
+export interface RevolutXPairConstraints {
+  pair: string;
+  normalizedPair: string;
+  executionVenue: "REVOLUT_X";
+  baseCurrency: string | null;
+  quoteCurrency: string | null;
+  priceTickSize: number | null;
+  quantityStep: number | null;
+  minOrderBase: number | null;
+  minOrderQuote: number | null;
+  minOrderUsd: number | null;
+  maxOrderBase: number | null;
+  pricePrecision: number | null;
+  quantityPrecision: number | null;
+  status: string | null;
+  region: string | null;
+  source: string | null;
+  fetchedAt: Date | null;
+  expiresAt: Date | null;
+  verified: boolean;
+  reasonCode: string | null;
+}
 
 export class RevolutXService implements IExchangeService {
   private static instance: RevolutXService;
@@ -26,6 +61,7 @@ export class RevolutXService implements IExchangeService {
   }>();
 
   private pairMetadataCache: Map<string, PairMetadata> = new Map();
+  private pairConstraintsCache = new Map<string, { value: RevolutXPairConstraints; expiresAt: number }>();
 
   // Rate limiter — cola FIFO para serializar peticiones privadas
   private rlQueue: Array<{ fn: () => Promise<any>; resolve: (v: any) => void; reject: (e: any) => void; enqueuedAt: number }> = [];
@@ -707,6 +743,77 @@ export class RevolutXService implements IExchangeService {
       console.error('[revolutx] cancelOrder error:', error.message);
       return false;
     }
+  }
+
+  normalizeRevolutXPairKey(pair: string): string {
+    const normalized = pair.trim().toUpperCase().replace("/", "-");
+    if (!/^[A-Z0-9]+-[A-Z0-9]+$/.test(normalized)) throw new Error(`Par Revolut X inválido: ${pair}`);
+    return normalized;
+  }
+
+  private parseStrictDecimal(value: unknown, positive = true): number | null {
+    if (typeof value !== "string" || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value.trim())) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && (positive ? parsed > 0 : parsed >= 0) ? parsed : null;
+  }
+
+  private decimalPrecision(value: string): number {
+    return value.includes(".") ? value.split(".")[1].length : 0;
+  }
+
+  clearPairConstraintsCache(): void {
+    this.pairConstraintsCache.clear();
+  }
+
+  async getPairConfigurations(): Promise<RevolutXPairConfigurationRaw[]> {
+    const response = await this.signedGetJson<unknown>("/api/1.0/configuration/pairs");
+    const entries = Array.isArray(response) ? response : (response as any)?.pairs;
+    if (!Array.isArray(entries)) throw new Error("Respuesta inválida de configuration/pairs");
+    return entries as RevolutXPairConfigurationRaw[];
+  }
+
+  private async getPublicPairConfigurations(region: string): Promise<RevolutXPairConfigurationRaw[]> {
+    const response = await fetch(`${API_BASE_URL}/api/1.0/public/configuration/pairs?region=${encodeURIComponent(region)}`);
+    if (!response.ok) throw new Error(`RevolutX public configuration error ${response.status}`);
+    const body = await response.json() as unknown;
+    const entries = Array.isArray(body) ? body : (body as any)?.pairs;
+    if (!Array.isArray(entries)) throw new Error("Respuesta pública inválida de configuration/pairs");
+    return entries as RevolutXPairConfigurationRaw[];
+  }
+
+  async resolveGridPairConstraints(pair: string, region = process.env.REVOLUTX_REGION || "EEA"): Promise<RevolutXPairConstraints> {
+    const normalizedPair = this.normalizeRevolutXPairKey(pair);
+    const cacheKey = `${region}:${normalizedPair}`;
+    const cached = this.pairConstraintsCache.get(cacheKey);
+    const validCached = cached && cached.expiresAt > Date.now() && cached.value.verified ? cached.value : null;
+    const failed = (reasonCode: string): RevolutXPairConstraints => ({ pair, normalizedPair, executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode });
+    let raw: RevolutXPairConfigurationRaw | undefined;
+    let source: string;
+    try {
+      raw = (await this.getPairConfigurations()).find(item => `${item.base}-${item.quote}`.toUpperCase() === normalizedPair);
+      source = "revolut_x_authenticated_configuration_pairs";
+    } catch {
+      try {
+        raw = (await this.getPublicPairConfigurations(region)).find(item => `${item.base}-${item.quote}`.toUpperCase() === normalizedPair);
+        source = `revolut_x_public_configuration_pairs_${region.toLowerCase()}`;
+      } catch {
+        return validCached ?? failed("PAIR_CONSTRAINTS_UNAVAILABLE");
+      }
+    }
+    if (!raw) return validCached ?? failed("PAIR_CONSTRAINTS_UNAVAILABLE");
+    if (typeof raw.status !== "string") return failed("PAIR_CONSTRAINTS_UNAVAILABLE");
+    if (raw.status.toLowerCase() !== "active") return failed("PAIR_NOT_ACTIVE");
+    const baseStep = this.parseStrictDecimal(raw.base_step);
+    const quoteStep = this.parseStrictDecimal(raw.quote_step);
+    const minOrderBase = this.parseStrictDecimal(raw.min_order_size);
+    const minOrderQuote = this.parseStrictDecimal(raw.min_order_size_quote);
+    const maxOrderBase = this.parseStrictDecimal(raw.max_order_size);
+    if (!baseStep || !quoteStep || !minOrderBase || !minOrderQuote || !maxOrderBase || maxOrderBase < minOrderBase || raw.base !== normalizedPair.split("-")[0] || raw.quote !== normalizedPair.split("-")[1]) return failed("PAIR_CONSTRAINTS_UNAVAILABLE");
+    const fetchedAt = new Date();
+    const expiresAt = new Date(fetchedAt.getTime() + PAIR_CONSTRAINTS_TTL_MS);
+    const value: RevolutXPairConstraints = { pair, normalizedPair, executionVenue: "REVOLUT_X", baseCurrency: raw.base, quoteCurrency: raw.quote, priceTickSize: quoteStep, quantityStep: baseStep, minOrderBase, minOrderQuote, minOrderUsd: raw.quote === "USD" ? minOrderQuote : null, maxOrderBase, pricePrecision: this.decimalPrecision(raw.quote_step), quantityPrecision: this.decimalPrecision(raw.base_step), status: raw.status, region, source, fetchedAt, expiresAt, verified: true, reasonCode: null };
+    this.pairConstraintsCache.set(cacheKey, { value, expiresAt: expiresAt.getTime() });
+    return value;
   }
 
   async loadPairMetadata(pairs: string[]): Promise<void> {

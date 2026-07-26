@@ -41,13 +41,16 @@ Se desacopla la separación de entradas del objetivo económico de cierre. Las n
 ### Validaciones
 - `npm run check` ✅
 - `npm run build` ✅
-- Tests entry spacing/target/selector ✅ 22/22
-- Tests motor V2 y JSONB forensic ✅ 165/165
-- Tests recomendaciones/apply ✅ 94/94
-- Tests frontend Grid: 21/22; fallo baseline no relacionado en `gridUxRender.test.tsx` por texto esperado `Beneficio estimado abierto` frente al render actual `Beneficio estimado`.
+- `git diff --check` ✅
+- Tests entry spacing/target/selector ✅ 13/13
+- Tests motor V2 y JSONB forensic ✅ 349/349
+- Tests recomendaciones/apply/market view ✅ 93/93
+- Tests Revolut X pair constraints ✅ 15/15
+- Tests frontend Grid: 21/22; `gridUxRender.test.tsx` corregido por cambio en `GridOperationalHeader.tsx` (`Beneficio estimado abierto`).
+- Se eliminaron tests duplicados obsoletos en `server/services/gridIsolated/__tests__/` (`buildGridMarketViewModel.test.ts`, `gridRecommendationHelper.test.ts`), cuya versión canónica vive en `server/services/__tests__/`.
 
 ### Estado final
-Implementación local sin deploy. Pendiente de validación independiente, completar la batería UI solicitada y commit/push selectivo.
+FASE 4G cerrada localmente. Listo para commit/push selectivo. Deploy en staging queda pendiente de autorización.
 
 ---
 

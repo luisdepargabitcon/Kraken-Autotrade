@@ -327,7 +327,7 @@ function computeSpacingAndLevels(
     centerPrice,
     operationalLower,
     operationalUpper,
-    spacingPct: spacingResult.entrySpacingPct,
+    spacingPct: spacingResult.entrySpacingPct ?? gridStepMinPct,
     configuredBuyLevels,
     configuredSellLevels,
   });
@@ -335,7 +335,7 @@ function computeSpacingAndLevels(
   return {
     grossTargetPct: minSpacingResult.grossTargetPct,
     minSpacingPctReal: minSpacingResult.minSpacingPctReal,
-    spacingPct: spacingResult.entrySpacingPct,
+    spacingPct: spacingResult.entrySpacingPct ?? gridStepMinPct,
     buyLevels: viableResult.maxBuyLevels,
     sellLevels: viableResult.maxSellLevels,
     totalLevels: viableResult.totalViableLevels,
@@ -560,7 +560,7 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
       expectedBefore,
       expectedAfter: {
         levels: aCalc.totalLevels,
-        spacingPct: aCalc.spacingPct,
+        spacingPct: aCalc.spacingPct ?? minPct,
         rangePct: effectiveRangePct,
         netProfitPct: netProfitTargetPct,
       },
@@ -596,7 +596,7 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
       expectedBefore,
       expectedAfter: {
         levels: bCalc.totalLevels,
-        spacingPct: bCalc.spacingPct,
+        spacingPct: bCalc.spacingPct ?? minPct,
         rangePct: effectiveRangePct,
         netProfitPct: netProfitTargetPct,
       },
@@ -673,7 +673,7 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
       expectedBefore,
       expectedAfter: {
         levels: bestCalc.totalLevels,
-        spacingPct: bestCalc.spacingPct,
+        spacingPct: bestCalc.spacingPct ?? minPct,
         rangePct: cHasChanges ? bestWidth : effectiveRangePct,
         netProfitPct: netProfitTargetPct,
       },

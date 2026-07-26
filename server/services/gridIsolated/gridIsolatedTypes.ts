@@ -362,6 +362,18 @@ export interface GridTargetCalculation {
   safetyBufferPct?: number | null;
   priceTickSize?: number | null;
   quantityStep?: number | null;
+  minOrderBase?: number | null;
+  minOrderQuote?: number | null;
+  minOrderUsd?: number | null;
+  maxOrderBase?: number | null;
+  baseCurrency?: string | null;
+  quoteCurrency?: string | null;
+  constraintsSource?: string | null;
+  constraintsFetchedAt?: string | null;
+  buyFeeUsd?: number | null;
+  sellFeeUsd?: number | null;
+  netBeforeTaxUsd?: number | null;
+  netBeforeTaxPct?: number | null;
   rejectedCandidates: GridRejectedCandidate[];
   explanation: string;
   reasonCode?: string;

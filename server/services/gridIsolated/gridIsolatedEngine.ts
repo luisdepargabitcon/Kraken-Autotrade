@@ -28,11 +28,13 @@ import { randomUUID } from "crypto";
 import { botLogger } from "../botLogger";
 import { MarketDataService } from "../MarketDataService";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
+import { revolutXService } from "../exchanges/RevolutXService";
 import { gridModeLockService } from "./gridModeLockService";
 import { gridCapitalAllocator } from "./gridCapitalAllocator";
 import { getGridBandSnapshot } from "./gridBandAdapter";
 import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult, type GridTickContext } from "./gridShadowExecutionPrice";
 import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from "./gridShadowMarketPriceFreshness";
+import { buildGridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
 import {
   getShadowPumpGuardPolicy,
   getCrossedShadowLevels,
@@ -1026,9 +1028,22 @@ class GridIsolatedEngine {
       }
     }
 
+    let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot> | null = null;
+    try {
+      const constraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
+      const ticker = await revolutXService.getTicker(this.config.pair);
+      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints, source: "REVOLUT_X_TICKER" });
+    } catch {
+      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker: null, constraints: { pair: this.config.pair, normalizedPair: this.config.pair.replace("/", "-"), executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region: null, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE" }, source: "REVOLUT_X_UNAVAILABLE" });
+    }
+    if (!executionMarketSnapshot.verified) {
+      blockNewRangesAndBuys = true;
+      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Precios de ejecución no disponibles: se conservan salidas abiertas y se bloquean rangos nuevos.", { pair: this.config.pair, reasonCode: executionMarketSnapshot.reasonCode, source: executionMarketSnapshot.source });
+    }
+
     // If no active range, propose one (only when not blocked by circuit breaker or guard).
     if (!this.activeRangeVersion && !blockNewRangesAndBuys) {
-      await this.proposeRangeVersion(bandSnapshot);
+      await this.proposeRangeVersion(bandSnapshot, executionMarketSnapshot);
       if (!this.activeRangeVersion) {
         this.lastTickReason = "No se propuso rango activo: el generador no produjo niveles viables con la configuración actual.";
         await this.logShadowTickEvent("GRID_SHADOW_NO_VIABLE_RANGE", "El motor evaluó el mercado pero no pudo generar un rango viable.", { reason: "no_viable_range" });
@@ -1663,8 +1678,8 @@ class GridIsolatedEngine {
    * Propose a new range version based on band snapshot.
    * Uses professional generator (accumulated spacing) instead of geometric formula.
    */
-  private async proposeRangeVersion(bandSnapshot: any): Promise<void> {
-    if (!this.config) return;
+  private async proposeRangeVersion(bandSnapshot: any, executionMarketSnapshot?: ReturnType<typeof buildGridExecutionMarketSnapshot> | null): Promise<void> {
+    if (!this.config || !executionMarketSnapshot?.verified || !executionMarketSnapshot.fresh || executionMarketSnapshot.pair !== this.config.pair) return;
 
     const allocation = await gridCapitalAllocator.allocate(
       this.config.capitalProfile,
@@ -1694,6 +1709,8 @@ class GridIsolatedEngine {
       configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
       configuredSellLevels: Math.floor(allocation.levelsCount / 2),
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
+      spreadPct: executionMarketSnapshot.spreadPct,
+      priceTickPct: executionMarketSnapshot.priceTickPct,
       // Internal defaults for SHADOW mode (no DB migration yet)
       spreadBufferPct: 0.01,
       safetyBufferPct: 0.10,
@@ -3009,6 +3026,13 @@ class GridIsolatedEngine {
         completedAt: null,
       };
 
+      const constraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
+      if (!constraints.verified || !constraints.priceTickSize || !constraints.quantityStep || !constraints.minOrderBase || !constraints.minOrderQuote || !constraints.maxOrderBase || !constraints.source || !constraints.fetchedAt || !constraints.baseCurrency || !constraints.quoteCurrency) {
+        await this.logEvent("GRID_PAIR_CONSTRAINTS_UNAVAILABLE" as any, `[SHADOW] BUY ${level.id} no se confirma: restricciones oficiales Revolut X no disponibles.`, {
+          levelId: level.id, pair: this.config.pair, reasonCode: constraints.reasonCode,
+        });
+        return null;
+      }
       const targetResult = computeCycleOwnedExitTarget({
         buyFillPrice: fillPrice,
         buyFillQuantity: level.quantity,
@@ -3018,9 +3042,16 @@ class GridIsolatedEngine {
         taxReservePct: TAX_RESERVE_PCT,
         spreadBufferPct: 0.01,
         safetyBufferPct: 0.10,
-        priceTickSize: this.getPriceTickSize(this.config.pair),
-        quantityStep: 0.00000001,
-        minOrderUsd: 0,
+        priceTickSize: constraints.priceTickSize,
+        quantityStep: constraints.quantityStep,
+        minOrderBase: constraints.minOrderBase,
+        minOrderQuote: constraints.minOrderQuote,
+        minOrderUsd: constraints.minOrderUsd,
+        maxOrderBase: constraints.maxOrderBase,
+        constraintsSource: constraints.source,
+        constraintsFetchedAt: constraints.fetchedAt,
+        baseCurrency: constraints.baseCurrency,
+        quoteCurrency: constraints.quoteCurrency,
       });
       const targetValidation = validateTargetCalculationJson(targetResult);
       if (!targetValidation.valid || !targetResult.selected) {

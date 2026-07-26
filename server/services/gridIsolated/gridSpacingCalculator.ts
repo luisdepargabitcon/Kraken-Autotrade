@@ -137,17 +137,20 @@ export interface EntrySpacingInput {
   gridStepMaxPct: number;
   spreadPct?: number | null;
   priceTickPct?: number | null;
+  requireMicrostructure?: boolean;
 }
 
 export interface EntrySpacingResult {
-  entrySpacingPct: number;
+  viable: boolean;
+  reasonCode: string | null;
+  entrySpacingPct: number | null;
   atrSpacingPct: number;
   microstructureFloorPct: number;
   gridStepMinPct: number;
   gridStepMaxPct: number;
   spreadPct: number | null;
   priceTickPct: number | null;
-  clampReason: ClampReason;
+  clampReason: ClampReason | "blocked";
   source: "atr_spread_tick" | "atr_config_floor";
   explanation: string;
 }
@@ -328,7 +331,7 @@ export interface ProfessionalLevelGenerationResult {
       entrySpacingPct: number;
       atrSpacingPct: number;
       microstructureFloorPct: number;
-      clampReason: ClampReason;
+      clampReason: ClampReason | "blocked";
     };
     cycleExitTarget: {
       configuredNetTargetPct: number;
@@ -456,6 +459,7 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     gridStepMaxPct,
     spreadPct,
     priceTickPct,
+    requireMicrostructure: true,
   });
 
   // 3. Calculate center price
@@ -479,6 +483,35 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     atrRangeMultiplier,
     minOperationalBandWidthPct,
   });
+
+  if (!entrySpacingResult.viable || entrySpacingResult.entrySpacingPct == null) {
+    return {
+      levels: [],
+      viabilityStatus: "not_viable",
+      professionalGenerator: {
+        enabled: true,
+        mode: "shadow_generation",
+        formula: "accumulated_spacing",
+        legacyGeneratorUsed: false,
+        viabilityStatus: "not_viable",
+        minSpacingPctReal: minSpacingResult.minSpacingPctReal,
+        spacingPct: 0,
+        entrySpacing: { entrySpacingPct: 0, atrSpacingPct: entrySpacingResult.atrSpacingPct, microstructureFloorPct: entrySpacingResult.microstructureFloorPct, clampReason: entrySpacingResult.clampReason },
+        cycleExitTarget: { configuredNetTargetPct: netProfitTargetPct, estimatedGrossExitGapPct: minSpacingResult.grossTargetPct + spreadBufferPct + safetyBufferPct, feeAssumption: "configured fees", taxReservePct: 0, spreadBufferPct, safetyBufferPct },
+        centerPrice: centerPriceResult.centerPrice,
+        operationalLower: operationalRangeResult.operationalLower,
+        operationalUpper: operationalRangeResult.operationalUpper,
+        operationalBandWidthPct: operationalRangeResult.operationalBandWidthPct,
+        operationalSemiRangePct: operationalRangeResult.operationalSemiRangePct,
+        requestedBuyLevels: configuredBuyLevels,
+        requestedSellLevels: configuredSellLevels,
+        generatedBuyLevels: 0,
+        generatedSellLevels: 0,
+        reductionApplied: false,
+        reason: `${entrySpacingResult.reasonCode}: ${entrySpacingResult.explanation}`,
+      },
+    };
+  }
 
   // 4b. Compact Range Control (3C.3-A): clamp operational range to gridRangeMaxPct
   // 4c. Adaptive Smart Range (3C.3-C): calculate adaptive range and override if enabled
@@ -784,29 +817,17 @@ export function calculateMinSpacingPctReal(input: MinSpacingInput): MinSpacingRe
  * Formula: spacingPct = clamp(atrPct * gridStepAtrMultiplier, minSpacingPctReal, gridStepMaxPct)
  */
 export function calculateEntrySpacingPct(input: EntrySpacingInput): EntrySpacingResult {
-  const { atrPct, gridStepAtrMultiplier, gridStepMinPct, gridStepMaxPct, spreadPct = null, priceTickPct = null } = input;
-  if (!Number.isFinite(atrPct) || !Number.isFinite(gridStepAtrMultiplier) || !Number.isFinite(gridStepMinPct) || !Number.isFinite(gridStepMaxPct) || gridStepMinPct <= 0 || gridStepMaxPct < gridStepMinPct) {
-    throw new Error("Invalid entry spacing parameters");
-  }
+  const { atrPct, gridStepAtrMultiplier, gridStepMinPct, gridStepMaxPct, spreadPct = null, priceTickPct = null, requireMicrostructure = false } = input;
+  if (!Number.isFinite(atrPct) || atrPct < 0 || !Number.isFinite(gridStepAtrMultiplier) || gridStepAtrMultiplier <= 0 || !Number.isFinite(gridStepMinPct) || !Number.isFinite(gridStepMaxPct) || gridStepMinPct <= 0 || gridStepMaxPct < gridStepMinPct) throw new Error("Invalid entry spacing parameters");
   const atrSpacingPct = atrPct * gridStepAtrMultiplier;
-  const usableSpreadPct = spreadPct != null && Number.isFinite(spreadPct) && spreadPct > 0 ? spreadPct : null;
+  const usableSpreadPct = spreadPct != null && Number.isFinite(spreadPct) && spreadPct >= 0 ? spreadPct : null;
   const usableTickPct = priceTickPct != null && Number.isFinite(priceTickPct) && priceTickPct > 0 ? priceTickPct : null;
   const microstructureFloorPct = Math.max(gridStepMinPct, usableSpreadPct != null ? 2 * usableSpreadPct : gridStepMinPct, usableTickPct != null ? 2 * usableTickPct : gridStepMinPct);
+  if (requireMicrostructure && (usableSpreadPct == null || usableTickPct == null)) return { viable: false, reasonCode: "ENTRY_MICROSTRUCTURE_UNAVAILABLE", entrySpacingPct: null, atrSpacingPct, microstructureFloorPct, gridStepMinPct, gridStepMaxPct, spreadPct: usableSpreadPct, priceTickPct: usableTickPct, clampReason: "blocked", source: "atr_config_floor", explanation: "No se puede crear un rango seguro sin spread y tick de ejecución verificados." };
+  if (microstructureFloorPct > gridStepMaxPct) return { viable: false, reasonCode: "ENTRY_SPACING_FLOOR_EXCEEDS_MAX", entrySpacingPct: null, atrSpacingPct, microstructureFloorPct, gridStepMinPct, gridStepMaxPct, spreadPct: usableSpreadPct, priceTickPct: usableTickPct, clampReason: "blocked", source: "atr_spread_tick", explanation: "El suelo de microestructura supera el máximo permitido." };
   const entrySpacingPct = Math.min(Math.max(atrSpacingPct, microstructureFloorPct), gridStepMaxPct);
   const clampReason: ClampReason = atrSpacingPct < microstructureFloorPct ? "min" : atrSpacingPct > gridStepMaxPct ? "max" : "atr";
-  const source = usableSpreadPct == null && usableTickPct == null ? "atr_config_floor" : "atr_spread_tick";
-  return {
-    entrySpacingPct,
-    atrSpacingPct,
-    microstructureFloorPct,
-    gridStepMinPct,
-    gridStepMaxPct,
-    spreadPct: usableSpreadPct,
-    priceTickPct: usableTickPct,
-    clampReason,
-    source,
-    explanation: `Separación de entradas = clamp(${atrSpacingPct.toFixed(4)}%, ${microstructureFloorPct.toFixed(4)}%, ${gridStepMaxPct.toFixed(4)}%) = ${entrySpacingPct.toFixed(4)}% (${clampReason}).`,
-  };
+  return { viable: true, reasonCode: null, entrySpacingPct, atrSpacingPct, microstructureFloorPct, gridStepMinPct, gridStepMaxPct, spreadPct: usableSpreadPct, priceTickPct: usableTickPct, clampReason, source: usableSpreadPct == null && usableTickPct == null ? "atr_config_floor" : "atr_spread_tick", explanation: `Separación de entradas = clamp(${atrSpacingPct.toFixed(4)}%, ${microstructureFloorPct.toFixed(4)}%, ${gridStepMaxPct.toFixed(4)}%) = ${entrySpacingPct.toFixed(4)}% (${clampReason}).` };
 }
 
 export function calculateSpacingPct(input: SpacingInput): SpacingResult {

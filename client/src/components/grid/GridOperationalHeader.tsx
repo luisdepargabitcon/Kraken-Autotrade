@@ -128,7 +128,7 @@ export function GridOperationalHeader({ operational }: GridOperationalHeaderProp
             </div>
 
             <div className="rounded-lg border border-border/40 p-2 md:p-3">
-              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Beneficio estimado</p>
+              <p className="text-[10px] md:text-xs text-muted-foreground uppercase tracking-wider truncate">Beneficio estimado abierto</p>
               <p className={`text-sm md:text-base font-semibold font-mono truncate ${(header.openEstimatedNetPnlUsd ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
                 <Wallet className="inline h-3 w-3 mr-1" />
                 {fmtUsd(header.openEstimatedNetPnlUsd)}

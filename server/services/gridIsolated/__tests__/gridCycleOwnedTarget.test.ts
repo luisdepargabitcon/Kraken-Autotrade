@@ -13,7 +13,14 @@ const base = {
   safetyBufferPct: 0.1,
   priceTickSize: 0.01,
   quantityStep: 0.00000001,
+  minOrderBase: 0.0001,
+  minOrderQuote: 10,
   minOrderUsd: 10,
+  maxOrderBase: 10,
+  constraintsSource: "revolut_x_authenticated_configuration_pairs",
+  constraintsFetchedAt: new Date("2026-07-26T14:00:00.000Z"),
+  baseCurrency: "BTC",
+  quoteCurrency: "USD",
 };
 
 describe("computeCycleOwnedExitTarget", () => {
@@ -50,7 +57,7 @@ describe("computeCycleOwnedExitTarget", () => {
   it("falla cerrado si el nocional no alcanza el mínimo", () => {
     const target = computeCycleOwnedExitTarget({ ...base, buyFillQuantity: 0.00001, minOrderUsd: 100 });
     expect(target.selected).toBe(false);
-    expect(target.reasonCode).toBe("MIN_ORDER_USD");
+    expect(target.reasonCode).toBe("QUANTITY_BELOW_BASE_MINIMUM");
   });
 
   it("permite que una compra profunda cierre antes del centro", () => {
