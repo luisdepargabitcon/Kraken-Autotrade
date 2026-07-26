@@ -6,11 +6,11 @@ TASK_STATUS: FASE 4G CERRADA — constraints oficiales Revolut X integradas, tar
 NEXT_ACTION: commit/push selectivo y autorizar deploy en staging
 LAST_COMPLETED_ACTION: limpieza de tests obsoletos, validación completa y documentación actualizada
 LAST_VALIDATION: 2026-07-26T22:05+02:00 — npm run check ✅; npm run build ✅; 457 tests en suites grid/recommendations/constraints/market view ✅; git diff --check ✅
-CURRENT_HEAD: working tree con FASE 4G integrada (pending commit)
+CURRENT_HEAD: f8250cf528a752d9614a1c93319522aa05637d35
 ORIGIN_HEAD: 23c43d45e2efb1625b59cb8b2b86092d1bbd3769
-EXPECTED_DEPLOY_HASH: pendiente de push
+EXPECTED_DEPLOY_HASH: f8250cf528a752d9614a1c93319522aa05637d35
 DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
-FINAL_DOCUMENTATION_HASH: BITACORA.md + PLAN_EJECUCION_GRID_REV_C11.md actualizados
+FINAL_DOCUMENTATION_HASH: f8250cf528a752d9614a1c93319522aa05637d35
 RESUME_CHECK_REQUIRED: FALSE
 UPDATED_AT: 2026-07-26T22:05+02:00
 BUILD_BASELINE_CONFIRMED: TRUE
