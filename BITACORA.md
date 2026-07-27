@@ -12,7 +12,8 @@
 - `CORRECCIONES_Y_ACTUALIZACIONES.md` fue consolidado y eliminado.
 - No debe recrearse una segunda bitácora.
 - Si una entrada histórica contradice una regla posterior, prevalece la regla vigente más reciente.
-- Si código y documentación se contradicen, se debe detener la tarea y comunicar la discrepancia; no corregir silenciosamente uno para ajustarlo al otro.
+- Si código y documentación se contradicen, registrar la discrepancia y resolverla conforme al alcance de la tarea actual.
+- No alterar silenciosamente datos operativos o históricos para forzar coincidencia documental.
 
 ## Consolidación de Correcciones y Actualizaciones
 
@@ -154,7 +155,8 @@ Se crea un checkpoint parcial C3A con el subconjunto estable ya validado: rebuil
   - `canProcessShadowFill` rechaza BUY si no hay tick oficial verificado.
   - `placeBuyMakerPending` redondea con `priceTickSize` oficial y no usa `getLegacyPriceTickSize`.
   - Hunk lifecycle no validado (`CYCLE_OWNED_SYNTHETIC → CYCLE_OWNED_TARGET`) retirado para no incluir código sin validar en el checkpoint.
-- `gridCycleOwnedV3Engine.test.ts`: 17 tests reales del motor cubren T1–T10, rollback, preservación de ciclos y ciclo #26.
+- `gridCycleOwnedV3Engine.test.ts`: 17 tests verdes cubren el arnés real, rebuild atómico, rollbacks, preservación de niveles, T9 y T10.
+- La validación específica completa del ciclo protegido #26 permanece pendiente para C3B.
 - `GridLevelsCompactPanel.tsx` + `.v3.test.tsx`: presentación y filtros de "Salidas por ciclo", contador V3 + legacy, rungs no ejecutables y datos económicos V3.
 - `AGENTS.md`: reemplazado por versión ligera centrada en seguridad, continuidad, precedencia de la tarea actual y sin matrices/fases temporales.
 - `CORRECCIONES_Y_ACTUALIZACIONES.md`: eliminado tras consolidación en `BITACORA.md`.
