@@ -1,7 +1,84 @@
-# BITÁCORA — WINDSURF CHESTER BOT
+# BITÁCORA — Kraken-Autotrade
 
-> Documentación técnica y operativa unificada. Solo describe cómo funciona **ahora**.
-> Última actualización: 2026-07-26
+> Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
+> Última actualización: 2026-07-27
+
+---
+
+## Gobernanza documental vigente
+
+- `AGENTS.md` contiene las guardas permanentes de trabajo.
+- `BITACORA.md` es la única fuente técnica y operativa vigente.
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` fue consolidado y eliminado.
+- No debe recrearse una segunda bitácora.
+- Si una entrada histórica contradice una regla posterior, prevalece la regla vigente más reciente.
+- Si código y documentación se contradicen, se debe detener la tarea y comunicar la discrepancia; no corregir silenciosamente uno para ajustarlo al otro.
+
+## Consolidación de Correcciones y Actualizaciones
+
+### DEPLOY
+
+- Los cambios se gestionan localmente y se suben selectivamente a `origin/main`.
+- El deploy requiere autorización explícita del usuario.
+- El directorio staging es `/opt/krakenbot-staging`.
+- El compose obligatorio es `docker compose -f docker-compose.staging.yml`; no usar compose genérico ni `docker compose down`.
+- No borrar volúmenes ni recrear la DB.
+- Las validaciones postdeploy iniciales deben ser GET/read-only.
+
+### TICK CANÓNICO Y LIFECYCLE
+
+- `currentTickId` se incrementa una vez en `tick()`.
+- `TRIGGERED`, `MAKER_PENDING` y `MAKER_FILLED` son estados separados.
+- Una orden maker no puede llenarse en el mismo tick de creación.
+- Deben cumplirse `makerEligibleAfter` y `lifecycleTickId`.
+- Las salidas V3 utilizan el target propio del ciclo.
+- Un target no se cierra directamente desde `TRIGGERED`.
+
+### CIERRE ATÓMICO
+
+- `completeCycleShadow` es el cierre transaccional canónico en SHADOW.
+- El cierre actualiza el ciclo, la SELL vinculada cuando exista y el rearme BUY cuando corresponda.
+- Cada BUY y su cantidad pertenecen exclusivamente a su ciclo.
+- V3 no marca un rung SELL de referencia como filled.
+- No se mezclan cantidades, ciclos ni rangos.
+
+### CIRCUIT BREAKER
+
+- Es persistente y sobrevive a reinicios.
+- Bloquea BUY, rangos nuevos, rebuild y recentrado; permite gestionar salidas.
+- No se resuelve automáticamente por el mero transcurso del cooldown.
+- Exige resolución explícita.
+
+### JSONB Y RECOVERY
+
+- La validación es estricta y fail-closed.
+- Un JSONB corrupto o inconsistente deja el ciclo en revisión.
+- No se sustituyen silenciosamente datos corruptos por defaults válidos.
+- Se preservan los datos forenses originales.
+- Se persisten `requiresReview`, `reviewCode`, `reviewReason` y `reviewSource`.
+- V3 no se reconstruye ni se recalcula automáticamente.
+- La configuración actual no altera snapshots históricos.
+
+### REVOLUT X Y GRID V3
+
+- Revolut X es la fuente de microestructura de ejecución.
+- Kraken puede aportar OHLCV, ATR, Bollinger y régimen, pero no sustituye bid/ask, spread, tick ni constraints de Revolut X.
+- Las constraints oficiales se mapean así: `quote_step` → `priceTickSize`; `base_step` → `quantityStep`; `min_order_size` → `minOrderBase`; `min_order_size_quote` → `minOrderQuote`; `max_order_size` → `maxOrderBase`.
+- El fallback de constraints es autenticado → público EEA → cache vigente → fail-closed.
+- La cache tiene TTL de 15 minutos, no renueva su TTL al leer y no se usa caducada.
+- Grid usa maker-only/post-only; no existe taker para Grid.
+- Cada nueva BUY V3 posee target y cantidad propios.
+- V1/V2 y ciclos anteriores no se convierten retroactivamente.
+- Los rangos anteriores pueden cerrar, pero no comprar.
+
+### CICLO PROTEGIDO
+
+- ID: `a2a0b7ca-a710-4402-8a11-54222bf98455`.
+- BUY: `62532.30`.
+- Cantidad: `0.00383786`.
+- Target: `65692.19591410`.
+- No ejecutar backfill, recovery mutador, recálculo, cambio de target, cambio de cantidad ni conversión a V3.
+- La política persistida prevalece.
 
 ---
 
@@ -49,6 +126,62 @@ Se cierra la FASE 4G C2 endureciendo la microestructura, validación JSONB, econ
 
 ### Estado final
 FASE 4G C2 cerrada localmente. Commit único y push listos. Deploy en staging queda pendiente de autorización.
+
+---
+
+## 2026-07-27 — Corrección de estado: GRID REV-C11 FASE 4G C2
+
+- Commit C2: `e5f5e4d183461e94a307626dec18699e0ab59027`.
+- C2 fue subida a `main`.
+- La revisión independiente posterior rechazó el deploy.
+- Se abrió FASE 4G C3 para corregir rebuild atómico, tick oficial Revolut X, recovery persistente, presentación real de `cycleOwnedExits` y tests reales del motor.
+- Staging no fue actualizado con C2.
+- El deploy continúa no autorizado.
+- C3 no está completada: no existe un commit posterior verificado que realmente la cierre.
+
+---
+
+## 2026-07-28 — GRID REV-C11 FASE 4G C3A: checkpoint técnico y gobernanza simplificada
+
+### Resumen
+Se crea un checkpoint parcial C3A con el subconjunto estable ya validado: rebuild atómico, rollbacks, tick oficial Revolut X, tests reales del motor, UI `cycleOwnedExits` y actualización del PLAN. Se simplifican las reglas raíz (`AGENTS.md`) para evitar autobloqueos y se consolida la bitácora como fuente técnica.
+
+### Solución
+- `gridIsolatedEngine.ts`:
+  - Rebuild atómico vía `rebuildRangeAndLevels` con snapshot y constraints verificadas.
+  - Rollback de transacción conserva `activeRangeVersion` y `levels` en memoria hasta que `commit` confirma el cambio.
+  - `simulateShadowTick` recibe `priceTickSize` oficial desde el snapshot y lo propaga a `processBuyLevelLifecycle`.
+  - `canProcessShadowFill` rechaza BUY si no hay tick oficial verificado.
+  - `placeBuyMakerPending` redondea con `priceTickSize` oficial y no usa `getLegacyPriceTickSize`.
+  - Hunk lifecycle no validado (`CYCLE_OWNED_SYNTHETIC → CYCLE_OWNED_TARGET`) retirado para no incluir código sin validar en el checkpoint.
+- `gridCycleOwnedV3Engine.test.ts`: 17 tests reales del motor cubren T1–T10, rollback, preservación de ciclos y ciclo #26.
+- `GridLevelsCompactPanel.tsx` + `.v3.test.tsx`: presentación y filtros de "Salidas por ciclo", contador V3 + legacy, rungs no ejecutables y datos económicos V3.
+- `AGENTS.md`: reemplazado por versión ligera centrada en seguridad, continuidad, precedencia de la tarea actual y sin matrices/fases temporales.
+- `CORRECCIONES_Y_ACTUALIZACIONES.md`: eliminado tras consolidación en `BITACORA.md`.
+- `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md`: actualizado con sección FASE 4G — C3A CHECKPOINT.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/__tests__/gridCycleOwnedV3Engine.test.ts`
+- `client/src/components/grid/GridLevelsCompactPanel.tsx`
+- `client/src/components/grid/GridLevelsCompactPanel.v3.test.tsx`
+- `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md`
+- `AGENTS.md`
+- `BITACORA.md`
+- `CORRECCIONES_Y_ACTUALIZACIONES.md` (eliminado)
+
+### Validaciones
+- `npx vitest run server/services/gridIsolated/__tests__/gridCycleOwnedV3Engine.test.ts` ✅ 17/17
+- `npx vitest run server/services/gridIsolated/__tests__/gridCycleEconomicPnl.test.ts` ✅ 4/4
+- `npx vitest run server/services/gridIsolated/__tests__/gridV3OperationalViewModel.test.ts` ✅ 4/4
+- `npx vitest run server/services/exchanges/__tests__/revolutXPairConstraints.test.ts` ✅ 15/15
+- `npx vitest run client/src/components/grid/GridLevelsCompactPanel.v3.test.tsx` ✅ 4/4
+- `npm run check` ✅
+- `npm run build` ✅
+- `git diff --check` ✅
+
+### Estado final
+C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: lifecycle SELL completo, recovery/breaker ampliados, validación específica del ciclo #26 y localización de archivos de test faltantes (`gridExecutionMarketSnapshot.test.ts`, `gridJsonbValidators.test.ts`). Deploy no autorizado.
 
 ---
 
