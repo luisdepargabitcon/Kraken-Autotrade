@@ -8,7 +8,28 @@ interface GridLevelsCompactPanelProps {
   operational?: any;
 }
 
-type LevelFilter = "entradas" | "rungs" | "targets" | "historico";
+export type LevelFilter = "entradas" | "rungs" | "salidas" | "historico";
+
+export function buildGridLevelFilterCounts(operational: any) {
+  const levels = operational?.levels ?? {};
+  return {
+    entradas: (levels.entryLevels ?? []).length,
+    rungs: (levels.referenceRungs ?? []).length,
+    salidas: (operational?.cycleOwnedExits ?? []).length + (levels.legacyTargetLevels ?? []).length,
+    historico: (levels.historicalLevels ?? []).length,
+  };
+}
+
+export function resolveGridLevelRows(operational: any, filter: LevelFilter, historyLimit = 20): any[] | { cycleOwnedExits: any[]; legacyTargetLevels: any[] } {
+  const levels = operational?.levels ?? {};
+  if (filter === "entradas") return levels.entryLevels ?? [];
+  if (filter === "rungs") return levels.referenceRungs ?? [];
+  if (filter === "historico") return (levels.historicalLevels ?? []).slice(0, historyLimit);
+  return {
+    cycleOwnedExits: operational?.cycleOwnedExits ?? [],
+    legacyTargetLevels: levels.legacyTargetLevels ?? [],
+  };
+}
 
 function fmtPrice(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -48,6 +69,48 @@ function statusColor(status: string): string {
 interface LevelRowProps {
   level: any;
   index: number;
+}
+
+function CycleOwnedExitRow({ exit, index }: { exit: any; index: number }) {
+  return (
+    <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 text-sm">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-cyan-400 border-cyan-500/30 bg-cyan-500/10">
+            SELL objetivo V3
+          </Badge>
+          <Badge variant="outline" className={exit.requiresReview ? "text-amber-400 border-amber-500/30 bg-amber-500/10" : "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"}>
+            {exit.requiresReview ? "Revisión requerida" : exit.makerState ?? "Target calculado"}
+          </Badge>
+        </div>
+        <span className="text-[10px] text-muted-foreground">#{index + 1}</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-muted-foreground">
+        <div><span className="block text-[10px] uppercase tracking-wider">Compra</span><span className="font-mono text-foreground">{fmtPrice(exit.buyPrice)}</span></div>
+        <div><span className="block text-[10px] uppercase tracking-wider">Target SELL</span><span className="font-mono text-foreground">{fmtPrice(exit.targetSellPrice)}</span></div>
+        <div><span className="block text-[10px] uppercase tracking-wider">Cantidad</span><span className="font-mono text-foreground">{fmtQty(exit.quantity)}</span></div>
+        <div><span className="block text-[10px] uppercase tracking-wider">Ciclo asociado</span><span className="text-foreground">#{exit.cycleNumber}</span></div>
+        <div><span className="block text-[10px] uppercase tracking-wider">Neto esperado</span><span className={exit.expectedNetUsd != null && exit.expectedNetUsd >= 0 ? "text-green-400" : "text-red-400"}>{exit.expectedNetUsd == null ? "—" : `${exit.expectedNetUsd >= 0 ? "+" : ""}$${exit.expectedNetUsd.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span></div>
+        <div><span className="block text-[10px] uppercase tracking-wider">Neto objetivo</span><span className="text-foreground">{exit.netTargetPct == null ? "—" : `${exit.netTargetPct.toLocaleString("es-ES", { maximumFractionDigits: 4 })}%`}</span></div>
+        <div><span className="block text-[10px] uppercase tracking-wider">Maker solicitado</span><span className="font-mono text-foreground">{fmtPrice(exit.requestedMakerPrice)}</span></div>
+        <div><span className="block text-[10px] uppercase tracking-wider">Rango</span><span className="text-foreground">{exit.rangeRelation === "current" ? "Vigente" : "Anterior"}</span></div>
+      </div>
+      <details className="mt-2 text-xs text-muted-foreground">
+        <summary className="cursor-pointer hover:text-foreground transition-colors">Detalle económico y técnico</summary>
+        <div className="mt-1 space-y-0.5 font-mono text-[10px]">
+          <p>cycleId: {exit.cycleId}</p>
+          <p>policyVersion: {exit.policyVersion ?? "—"}</p>
+          <p>targetKind: {exit.targetKind ?? "—"}</p>
+          <p>owner: {exit.targetOwner}</p>
+          <p>Distancia objetivo: {exit.targetDistancePctFromBuy == null ? "—" : `${exit.targetDistancePctFromBuy.toLocaleString("es-ES", { maximumFractionDigits: 4 })}%`}</p>
+          <p>Fees exchange: {exit.exchangeFeesUsd == null ? "—" : `$${exit.exchangeFeesUsd.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
+          <p>Reserva fiscal: {exit.taxReserveUsd == null ? "—" : `$${exit.taxReserveUsd.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
+          <p>Microestructura: {exit.executionMicrostructureSource ?? "—"}</p>
+          <p>Constraints: {exit.constraintsSource ?? "—"}</p>
+        </div>
+      </details>
+    </div>
+  );
 }
 
 function LevelRow({ level, index }: LevelRowProps) {
@@ -123,37 +186,41 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
   const actualLevels = entryRange.actualLevels ?? null;
   const requestedLevels = entryRange.requestedLevels ?? null;
   const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
+  const filterCounts = buildGridLevelFilterCounts(operational);
+  const exitGroups = resolveGridLevelRows(operational, "salidas") as { cycleOwnedExits: any[]; legacyTargetLevels: any[] };
+  const targetItems = [
+    ...exitGroups.cycleOwnedExits.map((value) => ({ kind: "cycleOwned" as const, value })),
+    ...exitGroups.legacyTargetLevels.map((value) => ({ kind: "legacy" as const, value })),
+  ];
   const defaultFilter: LevelFilter =
-    (all.entryLevels?.length ?? 0) === 0 && (all.legacyTargetLevels?.length ?? 0) > 0
-      ? "targets"
+    (all.entryLevels?.length ?? 0) === 0 && targetItems.length > 0
+      ? "salidas"
       : "entradas";
   const [filter, setFilter] = useState<LevelFilter>(defaultFilter);
   const [search, setSearch] = useState("");
   const [historyLimit, setHistoryLimit] = useState(20);
 
-  const levels = useMemo(() => {
-    if (filter === "entradas") return (all.entryLevels ?? []) as any[];
-    if (filter === "rungs") return (all.referenceRungs ?? []) as any[];
-    if (filter === "targets") return (all.legacyTargetLevels ?? []) as any[];
-    return ((all.historicalLevels ?? []) as any[]).slice(0, historyLimit);
-  }, [all, filter, historyLimit]);
+  const levels = useMemo<any[]>(() => filter === "salidas" ? targetItems : resolveGridLevelRows(operational, filter, historyLimit) as any[], [operational, filter, historyLimit, targetItems]);
 
   const filteredLevels = useMemo(() => {
     if (!search.trim()) return levels;
     const q = search.trim().toLowerCase();
-    return levels.filter((l) =>
-      (l.side ?? "").toLowerCase().includes(q) ||
-      String(l.price ?? "").includes(q) ||
-      String(l.cycleNumber ?? "").includes(q) ||
-      (l.statusLabel ?? "").toLowerCase().includes(q)
-    );
+    return levels.filter((item) => {
+      const row = item.kind ? item.value : item;
+      return (
+        (item.kind === "cycleOwned" ? "sell" : row.side ?? "").toLowerCase().includes(q) ||
+        String(item.kind === "cycleOwned" ? row.targetSellPrice : row.price ?? "").includes(q) ||
+        String(row.cycleNumber ?? "").includes(q) ||
+        (item.kind === "cycleOwned" ? row.makerState ?? "" : row.statusLabel ?? "").toLowerCase().includes(q)
+      );
+    });
   }, [levels, search]);
 
   const FILTER_LABELS: { key: LevelFilter; label: string; count: number }[] = [
-    { key: "entradas", label: "Entradas (BUY)", count: (operational?.levels?.entryLevels ?? []).length },
-    { key: "rungs", label: "Rungs SELL de referencia", count: (operational?.levels?.referenceRungs ?? []).length },
-    { key: "targets", label: "Targets de ciclo", count: (operational?.levels?.legacyTargetLevels ?? []).length },
-    { key: "historico", label: "Histórico", count: (operational?.levels?.historicalLevels ?? []).length },
+    { key: "entradas", label: "Entradas (BUY)", count: filterCounts.entradas },
+    { key: "rungs", label: "Rungs SELL de referencia", count: filterCounts.rungs },
+    { key: "salidas", label: "Salidas por ciclo", count: filterCounts.salidas },
+    { key: "historico", label: "Histórico", count: filterCounts.historico },
   ];
 
   return (
@@ -215,13 +282,13 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
 
         {filter === "rungs" && (
           <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/10 p-2 text-xs text-indigo-400">
-            Rungs SELL de referencia del rango activo. No son ejecuciones propias; cada ciclo V3 tiene su target canónico separado.
+            Rungs SELL de referencia — No ejecutable. No consume capital, no reserva BTC y no impone quantity; cada ciclo V3 tiene su target canónico separado.
           </div>
         )}
 
-        {filter === "targets" && (
+        {filter === "salidas" && (
           <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2 text-xs text-cyan-400">
-            Targets SELL vinculados a ciclos abiertos (legacy o V3 cycle-owned). Cada uno pertenece a un único ciclo.
+            Salidas SELL vinculadas a ciclos abiertos (legacy o V3 cycle-owned). Cada una pertenece a un único ciclo.
           </div>
         )}
 
@@ -234,7 +301,9 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
         <div className="space-y-3">
           {filteredLevels.length > 0 ? (
             <>
-              {filteredLevels.map((level, i) => <LevelRow key={level.id || i} level={level} index={i} />)}
+              {filteredLevels.map((item: any, i: number) => filter === "salidas" && item.kind === "cycleOwned"
+                ? <CycleOwnedExitRow key={item.value.cycleId} exit={item.value} index={i} />
+                : <LevelRow key={filter === "salidas" ? item.value.id || i : item.id || i} level={filter === "salidas" ? item.value : item} index={i} />)}
               {filter === "historico" && (all.historicalLevels?.length ?? 0) > historyLimit && (
                 <Button
                   size="sm"

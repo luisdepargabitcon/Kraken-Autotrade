@@ -23,7 +23,7 @@ import {
   gridIsolatedCycles,
   gridIsolatedEvents,
 } from "@shared/schema";
-import { eq, desc, and, isNull, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, isNull, sql, inArray, notInArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { botLogger } from "../botLogger";
 import { MarketDataService } from "../MarketDataService";
@@ -135,7 +135,15 @@ import {
 
 const MIN_MAKER_REST_MS = 1;
 
-class GridIsolatedEngine {
+type GridRangeCandidate =
+  | { ok: true; rangeVersionId: string; gridLevels: import("./gridIsolatedTypes").GridLevel[]; professionalGenerator: any; allocation: any; generatedLevels: any[]; viabilityStatus: string }
+  | { ok: false; reasonCode: string; explanation: string };
+
+type GridRangeProposalResult =
+  | { ok: true; rangeVersion: GridRangeVersion; levels: GridLevel[] }
+  | { ok: false; reasonCode: string; explanation: string };
+
+export class GridIsolatedEngine {
   private config: GridIsolatedConfig | null = null;
   private activeRangeVersion: GridRangeVersion | null = null;
   private referencedRangeVersions: GridRangeVersion[] = [];
@@ -562,7 +570,7 @@ class GridIsolatedEngine {
    * Return the minimum price tick size for a given pair.
    * Defaults are chosen to match Kraken's precision for common pairs.
    */
-  private getPriceTickSize(pair: string): number {
+  private getLegacyPriceTickSize(pair: string): number {
     const normalized = (pair || "BTC/USD").toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (normalized.startsWith("BTCUSD") || normalized.startsWith("XBTUSD")) return 0.1;
     if (normalized.startsWith("BTCEUR") || normalized.startsWith("XBTEUR")) return 0.1;
@@ -570,6 +578,14 @@ class GridIsolatedEngine {
     if (normalized.startsWith("ETHUSD") || normalized.startsWith("ETHEUR")) return 0.01;
     if (normalized.startsWith("SOLUSD") || normalized.startsWith("SOLEUR")) return 0.001;
     return 0.01;
+  }
+
+  private resolveSellLifecycleTickSize(cycle: GridCycle, route: GridClosePath): number {
+    if (route === "CYCLE_OWNED_TARGET") {
+      const tickSize = cycle.targetCalculationJson?.priceTickSize;
+      return Number.isFinite(tickSize) && tickSize != null && tickSize > 0 ? tickSize : Number.NaN;
+    }
+    return this.getLegacyPriceTickSize(cycle.pair);
   }
 
   private ceilToStep(value: number, step: number): number {
@@ -1073,7 +1089,7 @@ class GridIsolatedEngine {
     }
 
     if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
-      const fillsProcessed = await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard, allowRangeBuys });
+      const fillsProcessed = await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard, allowRangeBuys, priceTickSize: executionMarketSnapshot.priceTickSize });
       if (fillsProcessed) {
         this.lastTickReason = "Fills SHADOW procesados antes del rebuild. No se reemplaza la banda en este tick para proteger ciclos/niveles activos.";
         await this.logEvent("GRID_SHADOW_FILL_BEFORE_REBUILD", "Fill SHADOW priorizado sobre rebuild. Banda conservada en este tick.", { rangeVersionId: this.activeRangeVersion.id, shadowExecutionPrice: shadowExecutionPrice.price, shadowExecutionPriceSource: shadowExecutionPrice.source, bandSnapshotClose: bandSnapshot.midPrice, bandSnapshotTimeframe: this.config.atrTimeframe });
@@ -1083,7 +1099,7 @@ class GridIsolatedEngine {
 
     // If no active range, propose one (only when not blocked by circuit breaker or guard).
     if (!this.activeRangeVersion && allowNewRange && !blockNewRangesAndBuys) {
-      await this.proposeRangeVersion(bandSnapshot, executionMarketSnapshot);
+      await this.proposeRangeVersion(bandSnapshot, executionMarketSnapshot, pairConstraints);
       if (!this.activeRangeVersion) {
         this.lastTickReason = "No se propuso rango activo: el generador no produjo niveles viables con la configuración actual.";
         await this.logShadowTickEvent("GRID_SHADOW_NO_VIABLE_RANGE", "El motor evaluó el mercado pero no pudo generar un rango viable.", { reason: "no_viable_range" });
@@ -1111,7 +1127,7 @@ class GridIsolatedEngine {
     // Risk evaluation and exit processing for SHADOW happen earlier in the tick;
     // this path is reached when no fills occurred and no active range needs replacement.
     if (this.config.mode === "SHADOW" && !this.activeRangeVersion) {
-      await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard, allowRangeBuys });
+      await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard, allowRangeBuys, priceTickSize: executionMarketSnapshot.priceTickSize });
     }
   }
 
@@ -1181,24 +1197,22 @@ class GridIsolatedEngine {
   }
 
   /**
-   * Pre-check if the professional generator can generate viable levels.
-   * Used by rebuildRangeAndLevels and rebuildPlannedLevels to avoid leaving the system
-   * without a valid range due to a rebuild that produces 0 levels.
+   * Build a complete range proposal candidate without mutating DB.
+   * Returns the candidate only when microstructure, constraints and generator are valid.
    */
-  private async precheckProfessionalGeneration(bandSnapshot: any): Promise<{
-    ok: boolean;
-    levelsCount: number;
-    viabilityStatus?: string;
-    professionalGenerator?: any;
-    reason?: string;
-  }> {
-    if (!this.config) {
-      return { ok: false, levelsCount: 0, reason: "No config loaded" };
-    }
+  private async buildRangeProposal(
+    bandSnapshot: any,
+    executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
+    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>
+  ): Promise<GridRangeCandidate> {
+    if (!this.config) return { ok: false, reasonCode: "NO_CONFIG", explanation: "No hay configuración cargada." };
+    if (!executionMarketSnapshot.verified || !executionMarketSnapshot.fresh) return { ok: false, reasonCode: "EXECUTION_MARKET_SNAPSHOT_INVALID", explanation: "Snapshot de microestructura no verificado o no fresco." };
+    if (!pairConstraints.verified) return { ok: false, reasonCode: "PAIR_CONSTRAINTS_INVALID", explanation: "Constraints del par no verificadas." };
+    if (executionMarketSnapshot.pair !== this.config.pair) return { ok: false, reasonCode: "EXECUTION_MARKET_PAIR_MISMATCH", explanation: "El par del snapshot no coincide con el par configurado." };
 
     const allocation = await gridCapitalAllocator.allocate(
       this.config.capitalProfile,
-      10, // initial estimate
+      10,
       this.config.netProfitTargetPct,
       {
         maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
@@ -1209,7 +1223,8 @@ class GridIsolatedEngine {
         minLevelUsd: this.config.gridMinLevelUsd ?? 30,
       }
     );
-    const professionalPrecheck = generateProfessionalGridLevels({
+
+    const professionalResult = generateProfessionalGridLevels({
       currentPrice: bandSnapshot.midPrice,
       bollingerMiddle: bandSnapshot.middle,
       bollingerUpper: bandSnapshot.upper,
@@ -1222,6 +1237,8 @@ class GridIsolatedEngine {
       configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
       configuredSellLevels: Math.floor(allocation.levelsCount / 2),
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
+      spreadPct: executionMarketSnapshot.spreadPct,
+      priceTickPct: executionMarketSnapshot.priceTickPct,
       spreadBufferPct: 0.01,
       safetyBufferPct: 0.10,
       minLevelsForViableGrid: 4,
@@ -1237,7 +1254,6 @@ class GridIsolatedEngine {
       gridRangeMaxPct: this.config.gridRangeMaxPct ?? 2.50,
       maxDistanceFromCenterPct: this.config.maxDistanceFromCenterPct ?? 1.25,
       maxSellDistanceFromNearestBuyPct: this.config.maxSellDistanceFromNearestBuyPct ?? 1.50,
-      // Adaptive Smart Range (3C.3-C)
       gridRangeControlMode: this.config.gridRangeControlMode ?? 'adaptive_smart',
       adaptiveRangeEnabled: this.config.adaptiveRangeEnabled ?? true,
       adaptiveRangeProfile: this.config.adaptiveRangeProfile ?? 'balanced',
@@ -1250,37 +1266,48 @@ class GridIsolatedEngine {
       adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
     });
 
-    if (professionalPrecheck.levels.length === 0) {
+    if (professionalResult.levels.length === 0) {
       return {
         ok: false,
-        levelsCount: 0,
-        viabilityStatus: professionalPrecheck.viabilityStatus,
-        professionalGenerator: professionalPrecheck.professionalGenerator,
-        reason: "professional_generator_zero_levels_precheck",
+        reasonCode: professionalResult.viabilityStatus === "compact" ? "PROFESSIONAL_GENERATOR_COMPACT" : "PROFESSIONAL_GENERATOR_ZERO_LEVELS",
+        explanation: professionalResult.viabilityStatus === "compact" ? "El generador profesional retornó compacto; no se generan niveles." : "El generador profesional no produjo niveles viables.",
       };
     }
 
+    applyWeightsToGeneratedLevels(
+      professionalResult.levels,
+      allocation.finalGridBudgetUsd,
+      this.config.gridAllocationMode ?? "uniform",
+      this.config.gridProgressiveIntensity ?? 0.30,
+      this.config.gridMaxLevelPct ?? 40,
+      this.config.gridMinLevelUsd ?? 30,
+      bandSnapshot.regime ?? "ranging",
+      this.config.netProfitTargetPct
+    );
+
+    const rangeVersionId = randomUUID();
+    const gridLevels = toGridLevels(professionalResult.levels, rangeVersionId);
+
     return {
       ok: true,
-      levelsCount: professionalPrecheck.levels.length,
-      viabilityStatus: professionalPrecheck.viabilityStatus,
-      professionalGenerator: professionalPrecheck.professionalGenerator,
+      rangeVersionId,
+      gridLevels,
+      professionalGenerator: professionalResult.professionalGenerator,
+      allocation,
+      generatedLevels: professionalResult.levels,
+      viabilityStatus: professionalResult.viabilityStatus,
     };
   }
 
   /**
-   * Replace the active range and its planned levels with a new band.
-   * Marks old range as replaced and old levels as replaced, then proposes a new range.
-   * SAFETY: Before marking old range as replaced, verify that the new professional generator
-   * can generate viable levels. If not, abort rebuild and preserve old range.
+   * Replace the active range and its planned levels with a new band atomically.
+   * The candidate is built first; only if viable the DB transaction replaces the range.
+   * No intermediate state exists where the old range is replaced and the new one is missing.
    */
   private async rebuildRangeAndLevels(bandSnapshot: any, executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>, pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>): Promise<void> {
-    if (!this.activeRangeVersion || !this.config || !executionMarketSnapshot.verified || !executionMarketSnapshot.fresh || !pairConstraints.verified) return;
+    if (!this.activeRangeVersion || !this.config) return;
     const oldRange = this.activeRangeVersion;
-    const activeLevels = this.levels.filter(l => l.rangeVersionId === oldRange.id);
-    const replacedCount = activeLevels.length;
 
-    // Calculate drift metrics
     const centerDriftPct = oldRange.midPrice > 0
       ? ((bandSnapshot.midPrice - oldRange.midPrice) / oldRange.midPrice) * 100
       : 0;
@@ -1288,49 +1315,142 @@ class GridIsolatedEngine {
       ? ((bandSnapshot.bandWidthPct - oldRange.bandWidthPct) / oldRange.bandWidthPct) * 100
       : 0;
 
-    // Count preserved levels (with real orders or open cycles)
-    const preservedLevels = activeLevels.filter(l =>
-      l.exchangeOrderId != null || l.status === "filled" || l.status === "open"
-    );
-    const preservedCycles = this.cycles.filter(c =>
-      c.rangeVersionId === oldRange.id && c.status !== "completed" && c.status !== "cancelled"
-    );
-
-    // SAFETY: Pre-check if professional generator can generate viable levels before marking old range as replaced
-    const precheck = await this.precheckProfessionalGeneration(bandSnapshot);
-    if (!precheck.ok) {
-      await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "El rebuild fue abortado porque el generador profesional no pudo generar niveles viables. Se conserva el rango anterior.", {
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    if (!proposal.ok) {
+      await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "El rebuild fue abortado: " + proposal.explanation, {
         rangeVersionId: oldRange.id,
-        reason: precheck.reason,
-        viabilityStatus: precheck.viabilityStatus,
-        professionalGenerator: precheck.professionalGenerator,
+        reasonCode: proposal.reasonCode,
         centerDriftPct,
         widthChangePct,
       });
       return;
     }
 
-    // Mark old range as replaced (only after pre-check passes)
-    await db.update(gridRangeVersions)
-      .set({ status: "replaced", closedAt: new Date() })
-      .where(eq(gridRangeVersions.id, oldRange.id));
+    const { rangeVersionId, gridLevels, professionalGenerator, allocation, generatedLevels, viabilityStatus } = proposal;
+    const ratio = 1.0;
 
-    // Mark old levels as replaced
-    if (activeLevels.length > 0) {
-      await db.update(gridIsolatedLevels)
-        .set({ status: "replaced" })
-        .where(eq(gridIsolatedLevels.rangeVersionId, oldRange.id));
-      for (const level of this.levels) {
-        if (level.rangeVersionId === oldRange.id) {
-          level.status = "replaced";
-        }
-      }
+    // IDs of levels from the old range that are still planned/open and not tied to an open cycle.
+    const openCycleLevelIds = new Set<string>();
+    for (const c of this.cycles) {
+      if (c.buyLevelId) openCycleLevelIds.add(c.buyLevelId);
+      if (c.targetSellLevelId) openCycleLevelIds.add(c.targetSellLevelId);
+      if (c.sellLevelId) openCycleLevelIds.add(c.sellLevelId);
     }
 
-    // Log range change with enriched metadata
+    const replaceableOldLevelStatuses = ["planned", "open"];
+
+    try {
+      await db.transaction(async (tx) => {
+        // Insert new range version already active; no 'proposed' intermediate state.
+        await tx.insert(gridRangeVersions).values({
+          id: rangeVersionId,
+          versionNumber: await this.getNextVersionNumber(),
+          pair: this.config!.pair,
+          status: "active",
+          activatedAt: new Date(),
+          midPrice: professionalGenerator.centerPrice.toFixed(8),
+          upperPrice: professionalGenerator.operationalUpper.toFixed(8),
+          lowerPrice: professionalGenerator.operationalLower.toFixed(8),
+          bandUpper: bandSnapshot.upper.toFixed(8),
+          bandMiddle: bandSnapshot.middle.toFixed(8),
+          bandLower: bandSnapshot.lower.toFixed(8),
+          bandWidthPct: bandSnapshot.bandWidthPct.toFixed(4),
+          atrPct: bandSnapshot.atrPct.toFixed(4),
+          regime: bandSnapshot.regime,
+          levelsCount: generatedLevels.length,
+          geometricRatio: ratio.toFixed(4),
+          capitalBudgetUsd: allocation.finalGridBudgetUsd.toFixed(2),
+          capitalPerLevelUsd: allocation.capitalPerLevelUsd.toFixed(2),
+          netProfitTargetPct: this.config!.netProfitTargetPct.toFixed(3),
+        });
+
+        // Insert new levels.
+        for (const level of gridLevels) {
+          await tx.insert(gridIsolatedLevels).values({
+            id: level.id,
+            rangeVersionId: level.rangeVersionId,
+            levelIndex: level.levelIndex,
+            side: level.side,
+            price: level.price.toFixed(8),
+            notionalUsd: level.notionalUsd.toFixed(2),
+            quantity: level.quantity.toFixed(8),
+            status: level.status,
+            filledQuantity: "0",
+            clientOrderId: level.clientOrderId,
+            postOnlyAttempts: 0,
+            usedTakerFallback: false,
+            netProfitTargetUsd: level.netProfitTargetUsd.toFixed(8),
+            feeEstimateUsd: level.feeEstimateUsd.toFixed(8),
+            taxReserveUsd: level.taxReserveUsd.toFixed(8),
+          });
+        }
+
+        // Mark old range as replaced in the same transaction.
+        await tx.update(gridRangeVersions)
+          .set({ status: "replaced", closedAt: new Date() })
+          .where(eq(gridRangeVersions.id, oldRange.id));
+
+        // Mark only replaceable old levels as replaced; preserve open-cycle levels.
+        await tx.update(gridIsolatedLevels)
+          .set({ status: "replaced" })
+          .where(and(
+            eq(gridIsolatedLevels.rangeVersionId, oldRange.id),
+            inArray(gridIsolatedLevels.status, replaceableOldLevelStatuses as any),
+            ...(openCycleLevelIds.size > 0 ? [notInArray(gridIsolatedLevels.id, Array.from(openCycleLevelIds))] : [])
+          ));
+      });
+    } catch (err) {
+      await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", `El rebuild falló y se hizo rollback: ${err}`, {
+        oldRangeVersionId: oldRange.id,
+        newRangeVersionId: rangeVersionId,
+        reasonCode: "REBUILD_TRANSACTION_FAILED",
+      });
+      return;
+    }
+
+    // In-memory update only after successful commit.
+    const newRange: GridRangeVersion = {
+      id: rangeVersionId,
+      versionNumber: 1,
+      pair: this.config.pair,
+      status: "active",
+      midPrice: professionalGenerator.centerPrice,
+      upperPrice: professionalGenerator.operationalUpper,
+      lowerPrice: professionalGenerator.operationalLower,
+      bandUpper: bandSnapshot.upper,
+      bandMiddle: bandSnapshot.middle,
+      bandLower: bandSnapshot.lower,
+      bandWidthPct: bandSnapshot.bandWidthPct,
+      atrPct: bandSnapshot.atrPct,
+      regime: bandSnapshot.regime,
+      levelsCount: generatedLevels.length,
+      geometricRatio: ratio,
+      capitalBudgetUsd: allocation.finalGridBudgetUsd,
+      capitalPerLevelUsd: allocation.capitalPerLevelUsd,
+      netProfitTargetPct: this.config.netProfitTargetPct,
+      createdAt: new Date(),
+      activatedAt: new Date(),
+      closedAt: null,
+    };
+
+    // Sync in-memory levels: mark replaceable old levels replaced, append new levels.
+    const nextLevels: GridLevel[] = [];
+    for (const level of this.levels) {
+      if (level.rangeVersionId === oldRange.id && replaceableOldLevelStatuses.includes(level.status as any) && !openCycleLevelIds.has(level.id)) {
+        nextLevels.push({ ...level, status: "replaced" });
+      } else {
+        nextLevels.push(level);
+      }
+    }
+    for (const level of gridLevels) {
+      nextLevels.push(level);
+    }
+    this.levels = nextLevels;
+    this.activeRangeVersion = newRange;
+
     await this.logEvent("GRID_RANGE_CHANGED", `El rango activo cambió de ${oldRange.bandLower.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}-${oldRange.bandUpper.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} a ${bandSnapshot.lower.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}-${bandSnapshot.upper.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`, {
       oldRangeVersionId: oldRange.id,
-      newRangeVersionId: this.activeRangeVersion?.id,
+      newRangeVersionId: rangeVersionId,
       oldLowerPrice: oldRange.bandLower,
       oldUpperPrice: oldRange.bandUpper,
       oldCenterPrice: oldRange.midPrice,
@@ -1345,37 +1465,21 @@ class GridIsolatedEngine {
       regime: bandSnapshot.regime || oldRange.regime,
       atrPct: bandSnapshot.atrPct ?? oldRange.atrPct,
       trigger: "band_drift",
-      replacedLevelsCount: replacedCount,
-      preservedLevelsCount: preservedLevels.length,
-      preservedCyclesCount: preservedCycles.length,
+      replacedLevelsCount: generatedLevels.length,
+      preservedLevelsCount: this.levels.length - generatedLevels.length,
       safetyDecision: "rebuild_planned_levels",
     });
 
-    // Log old levels replaced
-    await this.logEvent("GRID_LEVELS_REPLACED", `Los niveles planificados anteriores fueron sustituidos por una nueva banda (${replacedCount} niveles).`, {
+    await this.logEvent("GRID_LEVELS_REBUILT", `La banda cambió y el Grid recalculó ${generatedLevels.length} niveles planificados.`, {
+      newRangeVersionId: rangeVersionId,
       oldRangeVersionId: oldRange.id,
-      replacedLevelsCount: replacedCount,
-      preservedLevelsCount: preservedLevels.length,
-      preservedCyclesCount: preservedCycles.length,
-      pair: this.config.pair,
-    });
-
-    // Propose new range
-    await this.proposeRangeVersion(bandSnapshot);
-    const newLevels = this.levels.filter(l => l.rangeVersionId === this.activeRangeVersion!.id);
-
-    // Log new levels rebuilt
-    await this.logEvent("GRID_LEVELS_REBUILT", `La banda cambió y el Grid recalculó ${newLevels.length} niveles planificados.`, {
-      newRangeVersionId: this.activeRangeVersion!.id,
-      oldRangeVersionId: oldRange.id,
-      levelsCount: newLevels.length,
+      levelsCount: generatedLevels.length,
       pair: this.config.pair,
       regime: bandSnapshot.regime || oldRange.regime,
       centerDriftPct,
       widthChangePct,
     });
 
-    // Check for regime change
     const oldRegime = oldRange.regime;
     const newRegime = bandSnapshot.regime || bandSnapshot.method;
     if (newRegime && oldRegime && newRegime !== oldRegime) {
@@ -1515,42 +1619,30 @@ class GridIsolatedEngine {
         completedAt: row.completedAt,
       }));
 
-      // Validate persisted JSONB and mark review on cycles loaded with corrupt data.
+      // Validate persisted JSONB and persist any recovery quarantine before exposing cycles to the engine.
       for (const cycle of this.cycles) {
+        const requiredReviewBeforeRecovery = cycle.requiresReview;
         const riskForensic = safeParseRiskStateJsonForensic(cycle.riskStateJson);
         const exitForensic = safeParseMakerExitStateJsonForensic(cycle.makerExitStateJson);
         const targetForensic = safeParseTargetCalculationJsonForensic(cycle.targetCalculationJson);
         if (!riskForensic.valid && !cycle.requiresReview) {
-          cycle.requiresReview = true;
-          cycle.reviewReason = `risk_state_json: ${riskForensic.reason}`;
-          cycle.reviewCode = riskForensic.code ?? "RISK_INVALID";
-          cycle.reviewDetectedAt = new Date();
-          cycle.reviewSource = "risk_state_json";
+          this.markCycleForReview(cycle, riskForensic.reason, riskForensic.code ?? "RISK_INVALID", "risk_state_json");
         }
         if (!exitForensic.valid && !cycle.requiresReview) {
-          cycle.requiresReview = true;
-          cycle.reviewReason = `maker_exit_state_json: ${exitForensic.reason}`;
-          cycle.reviewCode = exitForensic.code ?? "MAKER_EXIT_INVALID";
-          cycle.reviewDetectedAt = new Date();
-          cycle.reviewSource = "maker_exit_state_json";
+          this.markCycleForReview(cycle, exitForensic.reason, exitForensic.code ?? "MAKER_EXIT_INVALID", "maker_exit_state_json");
         }
         if (!targetForensic.valid && !cycle.requiresReview) {
-          cycle.requiresReview = true;
-          cycle.reviewReason = `target_calculation_json: ${targetForensic.reason}`;
-          cycle.reviewCode = targetForensic.code ?? "TARGET_INVALID";
-          cycle.reviewDetectedAt = new Date();
-          cycle.reviewSource = "target_calculation_json";
+          this.markCycleForReview(cycle, targetForensic.reason, targetForensic.code ?? "TARGET_INVALID", "target_calculation_json");
         }
         // Strict recovery V3 validation: persisted cycle fields must match immutable snapshot.
         if (cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" && !cycle.requiresReview) {
           const v3Check = this.validateRecoveredV3CycleSnapshot(cycle);
           if (!v3Check.valid) {
-            cycle.requiresReview = true;
-            cycle.reviewReason = v3Check.reason ?? "V3 target snapshot mismatch";
-            cycle.reviewCode = "V3_TARGET_SNAPSHOT_MISMATCH";
-            cycle.reviewDetectedAt = new Date();
-            cycle.reviewSource = "target_calculation_json";
+            this.markCycleForReview(cycle, v3Check.reason ?? "V3 target snapshot mismatch", "V3_TARGET_SNAPSHOT_MISMATCH", "target_calculation_json");
           }
+        }
+        if (cycle.requiresReview && !requiredReviewBeforeRecovery) {
+          await this.persistReviewState(cycle);
         }
       }
     } catch (error) {
@@ -1729,169 +1821,88 @@ class GridIsolatedEngine {
    * Propose a new range version based on band snapshot.
    * Uses professional generator (accumulated spacing) instead of geometric formula.
    */
-  private async proposeRangeVersion(bandSnapshot: any, executionMarketSnapshot?: ReturnType<typeof buildGridExecutionMarketSnapshot> | null): Promise<void> {
-    if (!this.config || !executionMarketSnapshot?.verified || !executionMarketSnapshot.fresh || executionMarketSnapshot.pair !== this.config.pair) return;
+  private async proposeRangeVersion(
+    bandSnapshot: any,
+    executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
+    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>
+  ): Promise<GridRangeProposalResult> {
+    if (!this.config) return { ok: false, reasonCode: "NO_CONFIG", explanation: "No hay configuración cargada." };
 
-    const allocation = await gridCapitalAllocator.allocate(
-      this.config.capitalProfile,
-      10, // initial estimate
-      this.config.netProfitTargetPct,
-      {
-        maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
-        allocationMode: this.config.gridAllocationMode ?? "uniform",
-        deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
-        progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
-        maxLevelPct: this.config.gridMaxLevelPct ?? 40,
-        minLevelUsd: this.config.gridMinLevelUsd ?? 30,
-      }
-    );
-
-    // Use professional generator (accumulated spacing) instead of geometric formula
-    const professionalResult = generateProfessionalGridLevels({
-      currentPrice: bandSnapshot.midPrice,
-      bollingerMiddle: bandSnapshot.middle,
-      bollingerUpper: bandSnapshot.upper,
-      bollingerLower: bandSnapshot.lower,
-      atrPct: bandSnapshot.atrPct,
-      netProfitTargetPct: this.config.netProfitTargetPct,
-      gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
-      gridStepMinPct: this.config.gridStepMinPct,
-      gridStepMaxPct: this.config.gridStepMaxPct,
-      configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
-      configuredSellLevels: Math.floor(allocation.levelsCount / 2),
-      capitalPerLevelUsd: allocation.capitalPerLevelUsd,
-      spreadPct: executionMarketSnapshot.spreadPct,
-      priceTickPct: executionMarketSnapshot.priceTickPct,
-      // Internal defaults for SHADOW mode (no DB migration yet)
-      spreadBufferPct: 0.01,
-      safetyBufferPct: 0.10,
-      minLevelsForViableGrid: 4,
-      centerPriceMode: "hybrid",
-      centerClampPct: 0.25,
-      operationalRangeMode: "hybrid",
-      operationalBandWidthPct: 20.0,
-      atrRangeMultiplier: 8.0,
-      minOperationalBandWidthPct: 20.0,
-      dynamicLevelReduction: true,
-      gridViabilityMode: "strict",
-      enforceCompactRange: this.config.enforceCompactRange ?? true,
-      gridRangeMaxPct: this.config.gridRangeMaxPct ?? 2.50,
-      maxDistanceFromCenterPct: this.config.maxDistanceFromCenterPct ?? 1.25,
-      maxSellDistanceFromNearestBuyPct: this.config.maxSellDistanceFromNearestBuyPct ?? 1.50,
-      // Adaptive Smart Range (3C.3-C)
-      gridRangeControlMode: this.config.gridRangeControlMode ?? 'adaptive_smart',
-      adaptiveRangeEnabled: this.config.adaptiveRangeEnabled ?? true,
-      adaptiveRangeProfile: this.config.adaptiveRangeProfile ?? 'balanced',
-      adaptiveRangeMinPct: this.config.adaptiveRangeMinPct ?? 1.50,
-      adaptiveRangeMaxPct: this.config.adaptiveRangeMaxPct ?? 7.00,
-      adaptiveRangeLowVolMaxPct: this.config.adaptiveRangeLowVolMaxPct ?? 3.00,
-      adaptiveRangeNormalMaxPct: this.config.adaptiveRangeNormalMaxPct ?? 5.00,
-      adaptiveRangeHighVolMaxPct: this.config.adaptiveRangeHighVolMaxPct ?? 7.00,
-      adaptiveRangeTargetFullLevels: this.config.adaptiveRangeTargetFullLevels ?? false,
-      adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
-    });
-
-    const { levels: generatedLevels, viabilityStatus, professionalGenerator } = professionalResult;
-
-    // Strong guard: never persist range with 0 levels (compact or not_viable)
-    if (generatedLevels.length === 0) {
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    if (!proposal.ok) {
       await this.logEvent(
-        viabilityStatus === "compact"
+        proposal.reasonCode === "PROFESSIONAL_GENERATOR_COMPACT"
           ? "GRID_PROFESSIONAL_GENERATOR_COMPACT"
           : "GRID_PROFESSIONAL_GENERATOR_NOT_VIABLE",
-        viabilityStatus === "compact"
-          ? "No se generan niveles porque el Grid queda compacto en modo strict."
-          : "No se generan niveles porque no caben niveles rentables con la configuración actual.",
-        {
-          viabilityStatus,
-          professionalGenerator,
-          pair: this.config.pair,
-          generatedLevelsCount: 0,
-          reasonCode: "PROFESSIONAL_GENERATOR_ZERO_LEVELS",
-        }
+        proposal.explanation,
+        { pair: this.config.pair, reasonCode: proposal.reasonCode }
       );
-      return;
+      return proposal;
     }
 
-    // ─── Apply per-level weighted capital to BUY levels ───────────────
-    // After geometry is fixed, re-distribute budget using the configured
-    // allocation mode. SELL levels are marked "requires_base_asset_not_usd".
-    applyWeightsToGeneratedLevels(
-      generatedLevels,
-      allocation.finalGridBudgetUsd,
-      this.config.gridAllocationMode ?? "uniform",
-      this.config.gridProgressiveIntensity ?? 0.30,
-      this.config.gridMaxLevelPct ?? 40,
-      this.config.gridMinLevelUsd ?? 30,
-      bandSnapshot.regime ?? "ranging",
-      this.config.netProfitTargetPct
-    );
+    const { rangeVersionId, gridLevels, professionalGenerator, allocation, generatedLevels, viabilityStatus } = proposal;
+    const versionNumber = await this.getNextVersionNumber();
+    const activatedAt = new Date();
 
-    const rangeVersionId = randomUUID();
-    // Use 1.0 as placeholder for geometricRatio (linear spacing)
-    const ratio = 1.0;
-
-    // Persist range version
-    await db.insert(gridRangeVersions).values({
-      id: rangeVersionId,
-      versionNumber: await this.getNextVersionNumber(),
-      pair: this.config.pair,
-      status: "proposed",
-      midPrice: professionalGenerator.centerPrice.toFixed(8),
-      // Use operational range for Grid levels (not Bollinger macro)
-      upperPrice: professionalGenerator.operationalUpper.toFixed(8),
-      lowerPrice: professionalGenerator.operationalLower.toFixed(8),
-      // Keep Bollinger macro for diagnosis/regime
-      bandUpper: bandSnapshot.upper.toFixed(8),
-      bandMiddle: bandSnapshot.middle.toFixed(8),
-      bandLower: bandSnapshot.lower.toFixed(8),
-      bandWidthPct: bandSnapshot.bandWidthPct.toFixed(4),
-      atrPct: bandSnapshot.atrPct.toFixed(4),
-      regime: bandSnapshot.regime,
-      levelsCount: generatedLevels.length,
-      geometricRatio: ratio.toFixed(4),
-      capitalBudgetUsd: allocation.finalGridBudgetUsd.toFixed(2),
-      capitalPerLevelUsd: allocation.capitalPerLevelUsd.toFixed(2),
-      netProfitTargetPct: this.config.netProfitTargetPct.toFixed(3),
-    });
-
-    // Persist levels
-    const gridLevels = toGridLevels(generatedLevels, rangeVersionId);
-    for (const level of gridLevels) {
-      await db.insert(gridIsolatedLevels).values({
-        id: level.id,
-        rangeVersionId: level.rangeVersionId,
-        levelIndex: level.levelIndex,
-        side: level.side,
-        price: level.price.toFixed(8),
-        notionalUsd: level.notionalUsd.toFixed(2),
-        quantity: level.quantity.toFixed(8),
-        status: level.status,
-        filledQuantity: "0",
-        clientOrderId: level.clientOrderId,
-        postOnlyAttempts: 0,
-        usedTakerFallback: false,
-        netProfitTargetUsd: level.netProfitTargetUsd.toFixed(8),
-        feeEstimateUsd: level.feeEstimateUsd.toFixed(8),
-        taxReserveUsd: level.taxReserveUsd.toFixed(8),
+    try {
+      await db.transaction(async (tx) => {
+        await tx.insert(gridRangeVersions).values({
+          id: rangeVersionId,
+          versionNumber,
+          pair: this.config!.pair,
+          status: "active",
+          activatedAt,
+          midPrice: professionalGenerator.centerPrice.toFixed(8),
+          upperPrice: professionalGenerator.operationalUpper.toFixed(8),
+          lowerPrice: professionalGenerator.operationalLower.toFixed(8),
+          bandUpper: bandSnapshot.upper.toFixed(8),
+          bandMiddle: bandSnapshot.middle.toFixed(8),
+          bandLower: bandSnapshot.lower.toFixed(8),
+          bandWidthPct: bandSnapshot.bandWidthPct.toFixed(4),
+          atrPct: bandSnapshot.atrPct.toFixed(4),
+          regime: bandSnapshot.regime,
+          levelsCount: generatedLevels.length,
+          geometricRatio: "1.0000",
+          capitalBudgetUsd: allocation.finalGridBudgetUsd.toFixed(2),
+          capitalPerLevelUsd: allocation.capitalPerLevelUsd.toFixed(2),
+          netProfitTargetPct: this.config!.netProfitTargetPct.toFixed(3),
+        });
+        for (const level of gridLevels) {
+          await tx.insert(gridIsolatedLevels).values({
+            id: level.id,
+            rangeVersionId: level.rangeVersionId,
+            levelIndex: level.levelIndex,
+            side: level.side,
+            price: level.price.toFixed(8),
+            notionalUsd: level.notionalUsd.toFixed(2),
+            quantity: level.quantity.toFixed(8),
+            status: level.status,
+            filledQuantity: "0",
+            clientOrderId: level.clientOrderId,
+            postOnlyAttempts: 0,
+            usedTakerFallback: false,
+            netProfitTargetUsd: level.netProfitTargetUsd.toFixed(8),
+            feeEstimateUsd: level.feeEstimateUsd.toFixed(8),
+            taxReserveUsd: level.taxReserveUsd.toFixed(8),
+          });
+        }
       });
+    } catch (err) {
+      await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", `La propuesta de rango falló y se hizo rollback: ${err}`, {
+        rangeVersionId,
+        reasonCode: "RANGE_PROPOSAL_TRANSACTION_FAILED",
+      });
+      return { ok: false, reasonCode: "RANGE_PROPOSAL_TRANSACTION_FAILED", explanation: "La propuesta de rango no pudo persistirse." };
     }
-
-    // Activate immediately in SHADOW mode (no real orders)
-    await db.update(gridRangeVersions)
-      .set({ status: "active", activatedAt: new Date() })
-      .where(eq(gridRangeVersions.id, rangeVersionId));
 
     this.activeRangeVersion = {
       id: rangeVersionId,
-      versionNumber: 0, // will be corrected
+      versionNumber,
       pair: this.config.pair,
       status: "active",
       midPrice: professionalGenerator.centerPrice,
-      // Use operational range for Grid levels (not Bollinger macro)
       upperPrice: professionalGenerator.operationalUpper,
       lowerPrice: professionalGenerator.operationalLower,
-      // Keep Bollinger macro for diagnosis/regime
       bandUpper: bandSnapshot.upper,
       bandMiddle: bandSnapshot.middle,
       bandLower: bandSnapshot.lower,
@@ -1899,12 +1910,12 @@ class GridIsolatedEngine {
       atrPct: bandSnapshot.atrPct,
       regime: bandSnapshot.regime,
       levelsCount: generatedLevels.length,
-      geometricRatio: ratio,
+      geometricRatio: 1,
       capitalBudgetUsd: allocation.finalGridBudgetUsd,
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
       netProfitTargetPct: this.config.netProfitTargetPct,
-      createdAt: new Date(),
-      activatedAt: new Date(),
+      createdAt: activatedAt,
+      activatedAt,
       closedAt: null,
     };
     this.levels = gridLevels;
@@ -1920,8 +1931,6 @@ class GridIsolatedEngine {
       widthPct: professionalGenerator.operationalBandWidthPct,
       method: "professional_accumulated_spacing",
       reasonCode: "PROFESSIONAL_GENERATOR",
-      naturalReason: `El Grid generó ${generatedLevels.length} niveles usando fórmula profesional acumulativa con viabilidad ${viabilityStatus}.`,
-      impact: "Se generan niveles futuros; no se modifican ciclos abiertos.",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,
     });
@@ -1934,8 +1943,6 @@ class GridIsolatedEngine {
       widthPct: professionalGenerator.operationalBandWidthPct,
       method: "professional_accumulated_spacing",
       reasonCode: "BAND_VALID",
-      naturalReason: `${this.config.pair} está en régimen ${bandSnapshot.regime} y permite separar niveles Grid con margen suficiente.`,
-      impact: "Se generan niveles futuros; no se modifican ciclos abiertos.",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,
       volatilityState: bandSnapshot.regime,
@@ -1954,11 +1961,10 @@ class GridIsolatedEngine {
       widthPct: professionalGenerator.operationalBandWidthPct,
       method: "professional_accumulated_spacing",
       reasonCode: "SHADOW_ACTIVATION",
-      naturalReason: `El Grid activó este rango en ${this.config.mode} tras proponer una banda válida para ${this.config.pair}.`,
-      impact: "El rango queda disponible para generar niveles futuros. No hay ciclos abiertos todavía.",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,
     });
+    return { ok: true, rangeVersion: this.activeRangeVersion, levels: gridLevels };
   }
 
   /**
@@ -2451,7 +2457,7 @@ class GridIsolatedEngine {
   private async simulateShadowTick(
     priceResult: GridShadowExecutionPriceResult,
     tickCtx: GridTickContext,
-    aux: { bandSnapshot: any; pumpGuard: ShadowPumpGuardPolicy; allowRangeBuys: boolean }
+    aux: { bandSnapshot: any; pumpGuard: ShadowPumpGuardPolicy; allowRangeBuys: boolean; priceTickSize: number | null }
   ): Promise<boolean> {
     if (!this.activeRangeVersion || !this.config) return false;
 
@@ -2498,7 +2504,7 @@ class GridIsolatedEngine {
           await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "BUY SHADOW bloqueada: microestructura Revolut X no verificada o no fresca.", { levelId: level.id, tickId: tickCtx.tickId });
           continue;
         }
-        const result = await this.processBuyLevelLifecycle(level, priceResult, tickCtx, aux.pumpGuard);
+        const result = await this.processBuyLevelLifecycle(level, priceResult, tickCtx, aux.pumpGuard, aux.priceTickSize);
         if (result === "filled") fillsProcessed = true;
         continue;
       }
@@ -2535,7 +2541,8 @@ class GridIsolatedEngine {
     level: GridLevel,
     priceResult: GridShadowExecutionPriceResult,
     tickCtx: GridTickContext,
-    pumpGuard: ShadowPumpGuardPolicy
+    pumpGuard: ShadowPumpGuardPolicy,
+    priceTickSize: number | null
   ): Promise<"pending" | "filled" | null> {
     if (!this.activeRangeVersion || !this.config) return null;
     const activeRangeId = this.activeRangeVersion.id;
@@ -2544,7 +2551,7 @@ class GridIsolatedEngine {
 
     // Placement phase.
     if (level.status === "planned" || level.status === "open") {
-      const validation = this.canProcessShadowFill(level, activeRangeId, pumpGuard, tickCtx, priceResult);
+      const validation = this.canProcessShadowFill(level, activeRangeId, pumpGuard, tickCtx, priceResult, priceTickSize);
       if (!validation.ok) {
         await this.logEvent(validation.eventType!, validation.reason!, {
           levelId: level.id, side: level.side, mode: "SHADOW",
@@ -2552,12 +2559,12 @@ class GridIsolatedEngine {
         });
         return null;
       }
-      return await this.placeBuyMakerPending(level, tickCtx, priceResult);
+      return await this.placeBuyMakerPending(level, tickCtx, priceResult, priceTickSize);
     }
 
     // Fill phase (BUY_MAKER_PENDING).
     if (level.status === "buy_maker_pending") {
-      const validation = this.canProcessShadowFill(level, activeRangeId, pumpGuard, tickCtx, priceResult);
+      const validation = this.canProcessShadowFill(level, activeRangeId, pumpGuard, tickCtx, priceResult, priceTickSize);
       if (!validation.ok) {
         await this.logEvent(validation.eventType!, validation.reason!, {
           levelId: level.id, side: level.side, mode: "SHADOW",
@@ -2579,10 +2586,11 @@ class GridIsolatedEngine {
   private async placeBuyMakerPending(
     level: GridLevel,
     tickCtx: GridTickContext,
-    priceResult: GridShadowExecutionPriceResult
+    priceResult: GridShadowExecutionPriceResult,
+    priceTickSize: number | null
   ): Promise<"pending" | null> {
-    if (!this.config) return null;
-    const requestedPrice = this.floorToStep(level.price, this.getPriceTickSize(this.config.pair));
+    if (!this.config || !Number.isFinite(priceTickSize) || priceTickSize == null || priceTickSize <= 0) return null;
+    const requestedPrice = this.floorToStep(level.price, priceTickSize);
     const bestAsk = priceResult.ask ?? tickCtx.ask ?? null;
     if (bestAsk == null || requestedPrice >= bestAsk) {
       await this.logEvent("GRID_LEVEL_POST_ONLY_REJECTED", `[SHADOW] BUY maker ${level.id} no colocado: precio ${requestedPrice} cruzaría ask ${bestAsk}`, {
@@ -2754,7 +2762,7 @@ class GridIsolatedEngine {
     ) {
       return intendedPrice;
     }
-    return this.computeShadowPostOnlySellPrice(closePath, intendedPrice, currentBid, currentAsk, pair);
+    return this.computeShadowPostOnlySellPrice(closePath, intendedPrice, currentBid, currentAsk, this.getLegacyPriceTickSize(pair));
   }
 
   /**
@@ -2833,9 +2841,13 @@ class GridIsolatedEngine {
     activeRangeId: string,
     pumpGuard: ShadowPumpGuardPolicy,
     tickCtx: GridTickContext,
-    priceResult: GridShadowExecutionPriceResult
+    priceResult: GridShadowExecutionPriceResult,
+    priceTickSize?: number | null
   ): { ok: boolean; reason?: string; eventType?: GridEventType; details?: Record<string, any> } {
     if (!this.config) return { ok: false, reason: "No config", eventType: "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE" };
+    if (level.side === "BUY" && (!Number.isFinite(priceTickSize) || priceTickSize == null || priceTickSize <= 0)) {
+      return { ok: false, reason: "BUY SHADOW bloqueada: tick oficial Revolut X no verificado.", eventType: "EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as GridEventType };
+    }
 
     // Legacy/open-cycle SELL fills are not restricted to the active range.
     if (level.rangeVersionId !== activeRangeId && level.side !== "SELL") {
@@ -2977,7 +2989,7 @@ class GridIsolatedEngine {
 
       if (!isPending) {
         // Placement: requested BUY price must be below ask to be post-only.
-        const requestedPrice = this.floorToStep(level.price, this.getPriceTickSize(this.config.pair));
+        const requestedPrice = this.floorToStep(level.price, priceTickSize ?? Number.NaN);
         if (requestedPrice >= bestAsk) {
           return {
             ok: false,
@@ -3581,7 +3593,7 @@ class GridIsolatedEngine {
         rawPrice,
         currentBid,
         currentAsk,
-        cycle.pair
+        this.resolveSellLifecycleTickSize(cycle, intended.route)
       );
       if (makerPrice == null || !Number.isFinite(makerPrice)) {
         // bestAsk missing or price not post-only valid: keep TRIGGERED and retry next tick.
@@ -3616,14 +3628,14 @@ class GridIsolatedEngine {
         };
       }
       const currentMakerPrice = protectiveExit.requestedMakerPrice ?? protectiveExit.triggerPrice ?? 0;
-      const tickSize = this.getPriceTickSize(cycle.pair);
+      const tickSize = this.resolveSellLifecycleTickSize(cycle, intended.route);
       if (Math.abs((intended.price ?? 0) - currentMakerPrice) > tickSize) {
         const makerPrice = this.computeShadowPostOnlySellPrice(
           intended.route,
           intended.price,
           currentBid,
           currentAsk,
-          cycle.pair
+          this.resolveSellLifecycleTickSize(cycle, intended.route)
         );
         if (makerPrice == null || !Number.isFinite(makerPrice)) {
           return protectiveExit;
@@ -3663,7 +3675,7 @@ class GridIsolatedEngine {
     intendedExitPrice: number | string | null,
     currentBid: number,
     currentAsk: number | null,
-    pair: string
+    priceTickSize: number
   ): number | null {
     const normalized =
       typeof intendedExitPrice === "string" ? parseFloat(intendedExitPrice) : intendedExitPrice;
@@ -3674,7 +3686,8 @@ class GridIsolatedEngine {
       return null;
     }
 
-    const tickSize = this.getPriceTickSize(pair);
+    if (!Number.isFinite(priceTickSize) || priceTickSize <= 0) return null;
+    const tickSize = priceTickSize;
     const minPostOnlyPrice = currentBid + tickSize;
 
     if (route === "CYCLE_OWNED_TARGET") {
@@ -4650,70 +4663,37 @@ class GridIsolatedEngine {
       return { success: false, reason: "Could not fetch band snapshot from market data", dryRun };
     }
 
-    // SAFETY: Pre-check if professional generator can generate viable levels before marking old range as replaced
-    const precheck = await this.precheckProfessionalGeneration(bandSnapshot);
-    if (!precheck.ok) {
-      await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "Rebuild manual abortado porque el generador profesional no pudo generar niveles viables. Se conserva el rango anterior.", {
+    let pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
+    let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
+    try {
+      pairConstraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
+      const acquiredAt = new Date();
+      const ticker = await revolutXService.getTicker(this.config.pair);
+      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints: pairConstraints, source: "REVOLUT_X_TICKER", acquiredAt });
+    } catch {
+      return { success: false, reason: "Could not obtain verified Revolut X execution microstructure", dryRun };
+    }
+
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    if (!proposal.ok) {
+      await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", `Rebuild manual abortado: ${proposal.explanation}`, {
         rangeVersionId: oldRange.id,
-        reason: precheck.reason,
-        viabilityStatus: precheck.viabilityStatus,
-        professionalGenerator: precheck.professionalGenerator,
+        reasonCode: proposal.reasonCode,
         trigger: "manual_rebuild_planned_levels",
         manualReason: reason,
         dryRun,
       });
-      return {
-        success: false,
-        dryRun,
-        reason: precheck.reason,
-        oldRangeVersionId: oldRange.id,
-        replacedLevelsCount: 0,
-        newLevelsCount: 0,
-        beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal },
-      };
+      return { success: false, dryRun, reason: proposal.explanation, oldRangeVersionId: oldRange.id, replacedLevelsCount: 0, newLevelsCount: 0, beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal } };
     }
 
-    // If dryRun, return what would happen without touching DB
     if (dryRun) {
-      return {
-        success: true,
-        dryRun: true,
-        oldRangeVersionId: oldRange.id,
-        replacedLevelsCount: plannedLevels.length,
-        beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal },
-        reason,
-      };
+      return { success: true, dryRun: true, oldRangeVersionId: oldRange.id, replacedLevelsCount: plannedLevels.length, newLevelsCount: proposal.gridLevels.length, beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal }, reason };
     }
 
-    // Mark old range as replaced
-    await db.update(gridRangeVersions)
-      .set({ status: "replaced", closedAt: new Date() })
-      .where(eq(gridRangeVersions.id, oldRange.id));
-
-    // Mark old planned levels as replaced
-    if (plannedLevels.length > 0) {
-      await db.update(gridIsolatedLevels)
-        .set({ status: "replaced" })
-        .where(eq(gridIsolatedLevels.rangeVersionId, oldRange.id));
-      for (const level of this.levels) {
-        if (level.rangeVersionId === oldRange.id && level.status === "planned") {
-          level.status = "replaced";
-        }
-      }
+    await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    if (!this.activeRangeVersion || this.activeRangeVersion.id === oldRange.id) {
+      return { success: false, dryRun, reason: "Atomic rebuild did not commit", oldRangeVersionId: oldRange.id, replacedLevelsCount: 0, newLevelsCount: 0, beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal } };
     }
-
-    // Log old levels replaced
-    await this.logEvent("GRID_LEVELS_REPLACED", `Rebuild manual: ${plannedLevels.length} niveles planificados antiguos marcados como replaced.`, {
-      oldRangeVersionId: oldRange.id,
-      replacedLevelsCount: plannedLevels.length,
-      pair: this.config.pair,
-      trigger: "manual_rebuild_planned_levels",
-      reason,
-      dryRun,
-    });
-
-    // Generate new range + levels with current code
-    await this.proposeRangeVersion(bandSnapshot);
     const newLevels = this.levels.filter(l => l.rangeVersionId === this.activeRangeVersion!.id);
 
     // Log new levels rebuilt

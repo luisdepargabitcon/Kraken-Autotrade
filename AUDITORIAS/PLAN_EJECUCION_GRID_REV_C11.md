@@ -1,21 +1,22 @@
 # PLAN DE EJECUCIÓN GRID V2 REV-C11
 
-DONE: TRUE
+DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4G C2 — cerrada localmente, pendiente deploy autorizado
-NEXT_ACTION: ejecutar git commit + push; deploy en staging bajo autorización del usuario
-LAST_COMPLETED_ACTION: corrección post-auditoría implementada y validada
-LAST_VALIDATION: 2026-07-27 — npm run check OK; npm run build OK; gridIsolated tests 364/364; GridLevelsCompactPanel V3 2/2; git diff --check OK
-CURRENT_HEAD_BEFORE_CORRECTION: 3b200147243cf67c2e3ff5c1d585a0c7e8924293
-ORIGIN_HEAD_BEFORE_CORRECTION: 3b200147243cf67c2e3ff5c1d585a0c7e8924293
-EXPECTED_DEPLOY_HASH: pendiente de verificación independiente
+TASK_STATUS: FASE 4G C3A implementada y validada localmente; C3B pendiente
+NEXT_ACTION: revisión independiente del checkpoint C3A
+LAST_COMPLETED_ACTION: FASE 4G C3A validado y preparado para commit
+LAST_VALIDATION: 2026-07-28T00:34+02:00
+CURRENT_HEAD: e5f5e4d183461e94a307626dec18699e0ab59027
+ORIGIN_HEAD: e5f5e4d183461e94a307626dec18699e0ab59027
+EXPECTED_DEPLOY_HASH: pendiente de revisión independiente
 DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
-FINAL_DOCUMENTATION_HASH: pendiente
+FINAL_DOCUMENTATION_HASH: pendiente de revisión independiente
+DEPLOY_AUTHORIZED: FALSE
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-27T00:54+02:00
+UPDATED_AT: 2026-07-28T00:34+02:00
 BUILD_BASELINE_CONFIRMED: TRUE
 BUILD_REGRESSION_FROM_PHASE_4E: FALSE
-BUILD_NOTE: npm run check OK; npm run build OK; tests V3 y gridIsolated verdes; sin regresión de código
+BUILD_NOTE: base C2 confirmada; pendiente corrección C3
 
 ## FASE 4E — CORRECCIÓN 2: Motivos de rechazo de 90776a6 para deploy
 
@@ -453,3 +454,37 @@ La FASE 3 inicial implementó tests V2 y correcciones de diagnóstico, pero qued
 - **No significa que GRID REV-C11 esté cerrado.**
 - **Faltan validación visual responsive, Console y Network.**
 - **DONE solo podrá cambiar a TRUE después de esas validaciones y del cierre documental final.**
+
+## FASE 4G — C3A CHECKPOINT (2026-07-28)
+
+### Incluido en C3A
+
+- Rebuild atómico con snapshot y constraints verificadas de Revolut X.
+- Rollback completo al fallar insert de niveles o update del rango anterior.
+- Memoria solo actualizada tras commit confirmado; rollback preserva `activeRangeVersion` y `levels` anteriores.
+- Preservación exacta por IDs de niveles asociados a ciclos abiertos e históricos (`level-free`, `level-owned-open-cycle`, `level-historical`).
+- T9: `simulateShadowTick` bloquea BUY cuando `allowRangeBuys=false` sin tocar DB ni crear ciclos.
+- T10: `simulateShadowTick` propaga el tick oficial `0.50` de Revolut X al placement BUY y no usa `getLegacyPriceTickSize`.
+- Hunk lifecycle no validado (`CYCLE_OWNED_SYNTHETIC → CYCLE_OWNED_TARGET`) retirado del motor.
+- UI: `GridLevelsCompactPanel` muestra "Salidas por ciclo", separa `cycleOwnedExits` de legacy y presenta datos económicos V3.
+
+### Validaciones C3A
+
+- `gridCycleOwnedV3Engine.test.ts`: 17/17 verde.
+- `gridCycleEconomicPnl.test.ts`: 4/4 verde.
+- `gridV3OperationalViewModel.test.ts`: 4/4 verde.
+- `revolutXPairConstraints.test.ts`: 15/15 verde.
+- `GridLevelsCompactPanel.v3.test.tsx`: 4/4 verde.
+- `npm run check`: OK.
+- `npm run build`: OK.
+- `git diff --check`: OK.
+- Archivos `gridExecutionMarketSnapshot.test.ts` y `gridJsonbValidators.test.ts` no existen en el workspace; quedan pendientes de identificación/creación en C3B.
+
+### Pendiente C3B
+
+- Suite `server/services/gridIsolated/__tests__/gridCycleOwnedV3Lifecycle.test.ts` (WIP no validado, no incluida en C3A).
+- Lifecycle SELL V3 completo: TRIGGERED, MAKER_PENDING, MAKER_FILLED, post-only, tick de `targetCalculationJson`.
+- Recovery ampliado y circuit breaker ampliado.
+- Validación específica completa del ciclo protegido #26.
+- Archivos de test ausentes o su ubicación definitiva.
+- No se autoriza deploy hasta revisión independiente.
