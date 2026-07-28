@@ -1,45 +1,45 @@
 # PLAN DE EJECUCIÓN GRID V2 REV-C11
 
-DONE: FALSE
+DONE: TRUE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4G C3A implementada y validada localmente; C3B pendiente
-NEXT_ACTION: revisión independiente del checkpoint C3A
-LAST_COMPLETED_ACTION: FASE 4G C3A validado y preparado para commit
-LAST_VALIDATION: 2026-07-28T00:34+02:00
-CURRENT_HEAD: e5f5e4d183461e94a307626dec18699e0ab59027
-ORIGIN_HEAD: e5f5e4d183461e94a307626dec18699e0ab59027
-EXPECTED_DEPLOY_HASH: pendiente de revisión independiente
+TASK_STATUS: FASE 4G C3B completada — todos los gates cerrados, commits técnicos y documentales pushed
+NEXT_ACTION: deploy a staging (requiere autorización explícita)
+LAST_COMPLETED_ACTION: push de commits técnico y documental a origin/main
+LAST_VALIDATION: 2026-07-28T00:51+02:00
+CURRENT_HEAD: 95ffbe1
+ORIGIN_HEAD: 95ffbe1
+EXPECTED_DEPLOY_HASH: 95ffbe1
 DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
-FINAL_DOCUMENTATION_HASH: pendiente de revisión independiente
+FINAL_DOCUMENTATION_HASH: 95ffbe1
 DEPLOY_AUTHORIZED: FALSE
 RESUME_CHECK_REQUIRED: FALSE
-UPDATED_AT: 2026-07-28T00:34+02:00
+UPDATED_AT: 2026-07-28T00:51+02:00
 BUILD_BASELINE_CONFIRMED: TRUE
 BUILD_REGRESSION_FROM_PHASE_4E: FALSE
-BUILD_NOTE: base C2 confirmada; pendiente corrección C3
+BUILD_NOTE: base C2 confirmada; C3B completada y validada
 
 ## C3B_EXECUTION_STATE
 
-CURRENT_GATE: GATES_B_THROUGH_F_COMPLETED
+CURRENT_GATE: ALL_GATES_COMPLETED
 LAST_GREEN_COMMAND: `npx vitest run server/services/gridIsolated/__tests__/ --reporter=verbose` (18 files, 419/419)
 FIRST_CURRENT_FAILURE: NONE
-NEXT_EXACT_ACTION: selective commit and push.
+NEXT_EXACT_ACTION: deploy a staging (requiere autorización)
 LOCAL_FILES_IN_SCOPE:
   - `server/services/gridIsolated/__tests__/gridCycleOwnedV3Lifecycle.test.ts` (Gate B, 4 tests)
   - `server/services/gridIsolated/__tests__/gridCycleOwnedV3Recovery.test.ts` (Gate C, 2 tests)
-  - `server/services/gridIsolated/__tests__/gridCircuitBreakerV3.test.ts` (Gate D, 4 tests)
+  - `server/services/gridIsolated/__tests__/gridCircuitBreakerV3.test.ts` (Gate D, 4 tests — hardened)
   - `server/services/gridIsolated/__tests__/gridCycleOwnedV3Engine.test.ts` (Gate E, +35 tests)
   - `AUDITORIAS/PLAN_EJECUCION_GRID_REV_C11.md` (documentation)
   - `BITACORA.md` (documentation)
 PRODUCTION_CHANGED: FALSE
-COMMIT_CREATED: FALSE
-PUSH_COMPLETED: FALSE
+COMMIT_CREATED: TRUE (95ffbe1 — technical)
+PUSH_COMPLETED: TRUE
 
 ### C3B Gate Summary
 
 - **Gate B (Lifecycle)**: 4/4 tests — L1 placement, L2 maker fill with CAS, L3 tick alignment, L4 historical range close.
 - **Gate C (Recovery)**: 2/2 tests — R1 mismatch fail-closed, R2 protected cycle #26 preservation.
-- **Gate D (Circuit Breaker)**: 4/4 tests — D1 blocks new BUY, D2 allows exit lifecycle close, D3 cooldown no auto-close, D4 explicit resolution.
+- **Gate D (Circuit Breaker)**: 4/4 tests hardened — D1 blocks new BUY + proposeRangeVersion + rebuild, allows SELL exits and BUY_MAKER_PENDING; D2 full V3 close lifecycle with DB CAS assertions (cycle completed, BUY level rearmed, no SELL level created, transaction committed, breaker remains open); D3 real tick() with expired reviewAfter/cooldown does not auto-close, loadConfig confirms breaker persists open; D4 resolveCircuitBreaker with real saveConfig persists resolution to DB (in-memory + DB config verified).
 - **Gate E (Snapshot/JSONB)**: 35 new tests — 7 snapshot edge cases (BID/ASK/source/future-ts/last/stale-acquired/valid), 16 JSONB V3 validation codes, 8 risk state validation, 4 maker exit validation.
 - **Gate F (Matrix)**: 18 files, 419/419 tests passed.
 - **Gate G (Diff audit)**: No production code modified. Only test files and documentation changed.

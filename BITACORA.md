@@ -6766,3 +6766,37 @@ Auditoría final del tick canónico y lifecycle maker en el motor Grid SHADOW. S
 - Todos los gates A/C/D/E/F/G/H/J cerrados. Commit y push a `origin/main` completados.
 - Pendiente: deploy a staging y postdeploy (requiere aprobación explícita).
 - Pendiente: ejecución de migraciones 074/075 en staging tras deploy.
+
+---
+
+## 2026-07-28 — GRID V2 REV-C11 C3B: Circuit Breaker Hardening — tests D1-D4 con DB mock table-by-reference
+
+### Resumen
+Hardening del harness de tests del circuit breaker (`gridCircuitBreakerV3.test.ts`). Se reemplaza el mock DB simplista (basado en contador de llamadas) por un mock transaccional table-by-reference con trazabilidad de commits y rollbacks. Los 4 tests D1-D4 se reescriben para usar métodos reales de `GridIsolatedEngine` con assertions exhaustivas sobre el estado de la DB en memoria.
+
+### Problema
+- El mock DB anterior usaba un contador de llamadas (`calls++`) para distinguir entre tablas de ciclos y niveles, lo que era frágil y no reflejaba el comportamiento transaccional real.
+- Los tests D1-D4 eran superficiales: D1 solo probaba `canProcessShadowFill`, D2 no verificaba el estado DB tras el cierre, D3 solo comprobaba flags en memoria, D4 mockeaba `saveConfig` en lugar de probar la persistencia real.
+
+### Solución
+1. **DB Mock table-by-reference**: `resolveTableName()` identifica tablas por referencia directa a los símbolos de `@shared/schema` (`gridIsolatedCycles`, `gridIsolatedLevels`, `gridIsolatedConfigs`, `gridRangeVersions`). Mapas separados por tabla con clonado transaccional, `transactionTrace`, `committedTrace` y `rollbackTriggered`.
+2. **D1 — Breaker blocks all creation**: Verifica `canProcessShadowFill` bloquea BUY planned, `processBuyLevelLifecycle` retorna null sin mutar el nivel, `tick()` no llama `proposeRangeVersion` ni `rebuildRangeAndLevels`, SELL exits no bloqueadas por breaker, `BUY_MAKER_PENDING` no bloqueado.
+3. **D2 — V3 close with breaker open**: Ciclo V3 completo (TRIGGERED→MAKER_PENDING→MAKER_FILLED) con breaker abierto. Assertions DB: ciclo completado, nivel BUY rearmado a planned, ningún nivel SELL creado, `sellLevelId`/`targetSellLevelId`/`targetRungLevelId` null, transacción committed sin rollback, breaker permanece abierto.
+4. **D3 — No auto-close with real tick**: `tick()` real con `reviewAfter` y `cooldownUntil` vencidos no autocierra el breaker. `loadConfig` recarga config desde DB mock confirmando que el breaker persiste abierto tras reinicio.
+5. **D4 — Resolution with real saveConfig**: `resolveCircuitBreaker` ejecuta `saveConfig` real sobre DB mock. Verificación in-memory y DB: `circuitBreakerOpen=false`, `resolvedBy`, `resolutionReason`, `resolvedAt` persistidos; `openedAt`, `reason`, `cooldownUntil` limpiados.
+
+### Archivos afectados
+- `server/services/gridIsolated/__tests__/gridCircuitBreakerV3.test.ts` (rewrite completo, 631 líneas)
+
+### Validaciones
+- `npx vitest run gridCircuitBreakerV3.test.ts`: ✅ 4/4
+- `npx vitest run gridCycleOwnedV3Lifecycle.test.ts gridCycleOwnedV3Recovery.test.ts gridCycleOwnedV3Engine.test.ts`: ✅ 58/58
+- `npx vitest run server/services/gridIsolated/__tests__/`: ✅ 18 files, 419/419
+- `npm run check`: ✅ 0 errores TS
+- `npm run build`: ✅ (cliente + servidor)
+- `git diff --check`: ✅ sin errores
+
+### Estado final
+- C3B completada. Commit técnico `95ffbe1` pushed a `origin/main`.
+- No se modificó código de producción.
+- Pendiente: deploy a staging (requiere autorización explícita).
