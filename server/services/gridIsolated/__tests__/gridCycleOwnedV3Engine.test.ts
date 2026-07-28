@@ -66,7 +66,14 @@ import { db } from "../../../db";
 import { GridIsolatedEngine } from "../gridIsolatedEngine";
 import { gridRangeVersions, gridIsolatedLevels, gridIsolatedCycles } from "@shared/schema";
 import { buildGridExecutionMarketSnapshot } from "../gridExecutionMarketSnapshot";
-import { validateTargetCalculationJson } from "../gridJsonbValidators";
+import {
+  validateTargetCalculationJson,
+  validateRiskStateJson,
+  validateMakerExitStateJson,
+  safeParseRiskStateJsonForensic,
+  safeParseTargetCalculationJsonForensic,
+  safeParseMakerExitStateJsonForensic,
+} from "../gridJsonbValidators";
 import { computeGridCycleEconomicPnl } from "../gridCycleEconomicPnl";
 import { computeGrossTargetFromNet, computeSellPrice } from "../gridNetCalculator";
 
@@ -500,5 +507,428 @@ describe("Grid V3 cycle-owned engine logic", () => {
     expect(pnl.exchangeFeesUsd).toBeCloseTo(calc.exchangeFeesUsd, 2);
     expect(pnl.operationalCostsUsd).toBeCloseTo(calc.operationalCostsUsd, 2);
     expect(pnl.netPnlUsd).toBeCloseTo(calc.availablePnlAfterTaxUsd, 2);
+  });
+});
+
+// ─── Gate E — Snapshot edge cases ─────────────────────────────────────
+
+describe("Gate E — buildGridExecutionMarketSnapshot edge cases", () => {
+  function makeConstraints(overrides?: any) {
+    return {
+      pair: "BTC/USD",
+      normalizedPair: "BTC-USD",
+      executionVenue: "REVOLUT_X" as const,
+      baseCurrency: "BTC",
+      quoteCurrency: "USD",
+      priceTickSize: 0.5,
+      quantityStep: 0.00000001,
+      minOrderBase: 0.0001,
+      minOrderQuote: 10,
+      minOrderUsd: 10,
+      maxOrderBase: 10,
+      pricePrecision: 1,
+      quantityPrecision: 8,
+      status: "ACTIVE",
+      region: "EEA",
+      source: "revolut_x_authenticated_configuration_pairs",
+      fetchedAt: new Date(),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      verified: true,
+      reasonCode: null,
+      ...overrides,
+    };
+  }
+  function makeTicker(overrides?: any) {
+    return { bid: 92900.0, ask: 93000.0, last: 92950.0, ...overrides };
+  }
+
+  it("E-S1: rechaza BID inválido (null) con EXECUTION_MARKET_BID_INVALID", () => {
+    const now = new Date();
+    const snapshot = buildGridExecutionMarketSnapshot({
+      pair: "BTC/USD", ticker: makeTicker({ bid: null }), constraints: makeConstraints(),
+      source: "revolut_x_ticker", timestamp: now, acquiredAt: now, now,
+    });
+    expect(snapshot.verified).toBe(false);
+    expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_BID_INVALID");
+  });
+
+  it("E-S2: rechaza ASK ≤ BID con EXECUTION_MARKET_ASK_INVALID", () => {
+    const now = new Date();
+    const snapshot = buildGridExecutionMarketSnapshot({
+      pair: "BTC/USD", ticker: makeTicker({ bid: 93000, ask: 93000 }), constraints: makeConstraints(),
+      source: "revolut_x_ticker", timestamp: now, acquiredAt: now, now,
+    });
+    expect(snapshot.verified).toBe(false);
+    expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_ASK_INVALID");
+  });
+
+  it("E-S3: rechaza fuente sin REVOLUT con EXECUTION_MARKET_SOURCE_INVALID", () => {
+    const now = new Date();
+    const snapshot = buildGridExecutionMarketSnapshot({
+      pair: "BTC/USD", ticker: makeTicker(), constraints: makeConstraints(),
+      source: "kraken_ticker", timestamp: now, acquiredAt: now, now,
+    });
+    expect(snapshot.verified).toBe(false);
+    expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_SOURCE_INVALID");
+  });
+
+  it("E-S4: rechaza timestamp excesivamente futuro con EXECUTION_MARKET_FUTURE_TIMESTAMP", () => {
+    const now = new Date();
+    const futureTs = new Date(now.getTime() + 60_000);
+    const snapshot = buildGridExecutionMarketSnapshot({
+      pair: "BTC/USD", ticker: makeTicker(), constraints: makeConstraints(),
+      source: "revolut_x_ticker", timestamp: futureTs, acquiredAt: now, now,
+    });
+    expect(snapshot.verified).toBe(false);
+    expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_FUTURE_TIMESTAMP");
+  });
+
+  it("E-S5: rechaza last price inválido (negativo) con EXECUTION_MARKET_TIMESTAMP_INVALID", () => {
+    const now = new Date();
+    const snapshot = buildGridExecutionMarketSnapshot({
+      pair: "BTC/USD", ticker: makeTicker({ last: -1 }), constraints: makeConstraints(),
+      source: "revolut_x_ticker", timestamp: now, acquiredAt: now, now,
+    });
+    expect(snapshot.verified).toBe(false);
+    expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_TIMESTAMP_INVALID");
+  });
+
+  it("E-S6: rechaza por acquiredAt stale cuando no hay timestamp de mercado", () => {
+    const now = new Date();
+    const staleAcquired = new Date(now.getTime() - 60_000);
+    const snapshot = buildGridExecutionMarketSnapshot({
+      pair: "BTC/USD", ticker: makeTicker(), constraints: makeConstraints(),
+      source: "revolut_x_ticker", timestamp: null, acquiredAt: staleAcquired, now,
+    });
+    expect(snapshot.verified).toBe(false);
+    expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_STALE");
+  });
+
+  it("E-S7: snapshot válido produce spread, spreadPct y priceTickPct correctos", () => {
+    const now = new Date();
+    const snapshot = buildGridExecutionMarketSnapshot({
+      pair: "BTC/USD", ticker: makeTicker(), constraints: makeConstraints(),
+      source: "revolut_x_ticker", timestamp: now, acquiredAt: now, now,
+    });
+    expect(snapshot.verified).toBe(true);
+    expect(snapshot.fresh).toBe(true);
+    expect(snapshot.spreadUsd).toBe(100);
+    expect(snapshot.spreadPct).toBeCloseTo(100 / 92900 * 100, 6);
+    expect(snapshot.priceTickSize).toBe(0.5);
+    expect(snapshot.priceTickPct).toBeCloseTo(0.5 / 92950 * 100, 6);
+    expect(snapshot.venue).toBe("REVOLUT_X");
+  });
+});
+
+// ─── Gate E — JSONB V3 validation edge cases ──────────────────────────
+
+function validV3Calc(): Record<string, unknown> {
+  return {
+    selected: true,
+    stateVersion: 2,
+    policyVersion: "CYCLE_OWNED_NET_TARGET_V3",
+    targetKind: "CYCLE_OWNED_SYNTHETIC",
+    targetSellLevelId: null,
+    targetRungLevelId: null,
+    targetSellPrice: 97000.0,
+    targetSellQuantity: 0.01,
+    grossExitGapPct: 1.0,
+    actualGrossGapPct: 1.0,
+    grossPnlUsd: 5.0,
+    buyFeePct: 0,
+    sellFeePct: 0.09,
+    spreadBufferPct: 0.01,
+    safetyBufferPct: 0.10,
+    taxReservePct: 20,
+    buyFeeUsd: 0,
+    sellFeeUsd: 0.0873,
+    exchangeFeesUsd: 0.0873,
+    operationalCostsUsd: 0.1012,
+    netBeforeTaxUsd: 4.8115,
+    netBeforeTaxPct: 0.523,
+    taxReserveUsd: 0.9623,
+    availablePnlAfterTaxUsd: 3.8492,
+    availablePnlAfterTaxPct: 0.4185,
+    netProfitTargetPct: 0.4,
+    priceTickSize: 0.1,
+    quantityStep: 0.00001,
+    minOrderBase: 0.0001,
+    minOrderQuote: 1,
+    minOrderUsd: 1,
+    maxOrderBase: 100,
+    baseCurrency: "BTC",
+    quoteCurrency: "USD",
+    constraintsSource: "revolut_x_authenticated_configuration_pairs",
+    constraintsFetchedAt: new Date().toISOString(),
+    rejectedCandidates: [],
+    explanation: "Target V3 canónico",
+  };
+}
+
+describe("Gate E — validateTargetCalculationJson V3 edge cases", () => {
+  it("E-J1: raw no es objeto → TARGET_NOT_OBJECT", () => {
+    const result = validateTargetCalculationJson("not-an-object");
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_NOT_OBJECT");
+  });
+
+  it("E-J2: targetKind inválido → TARGET_KIND_INVALID", () => {
+    const calc = validV3Calc();
+    calc.targetKind = "BOGUS";
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_KIND_INVALID");
+  });
+
+  it("E-J3: V3 con stateVersion=1 → TARGET_V3_INVALID", () => {
+    const calc = validV3Calc();
+    calc.stateVersion = 1;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_INVALID");
+  });
+
+  it("E-J4: V3 con campos numéricos faltantes → TARGET_V3_MISSING_FIELDS", () => {
+    const calc = validV3Calc();
+    delete calc.targetSellPrice;
+    delete calc.grossPnlUsd;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_MISSING_FIELDS");
+  });
+
+  it("E-J5: V3 con strings faltantes → TARGET_V3_MISSING_STRINGS", () => {
+    const calc = validV3Calc();
+    delete calc.baseCurrency;
+    delete calc.explanation;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_MISSING_STRINGS");
+  });
+
+  it("E-J6: V3 con targetSellPrice negativo → TARGET_V3_NON_POSITIVE", () => {
+    const calc = validV3Calc();
+    calc.targetSellPrice = -100;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_NON_POSITIVE");
+  });
+
+  it("E-J7: V3 con precio no alineado a tick → TARGET_V3_PRICE_NOT_ALIGNED", () => {
+    const calc = validV3Calc();
+    calc.targetSellPrice = 97000.07;
+    calc.priceTickSize = 0.1;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_PRICE_NOT_ALIGNED");
+  });
+
+  it("E-J8: V3 con cantidad no alineada a step → TARGET_V3_QTY_NOT_ALIGNED", () => {
+    const calc = validV3Calc();
+    calc.targetSellQuantity = 0.0100001;
+    calc.quantityStep = 0.00001;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_QTY_NOT_ALIGNED");
+  });
+
+  it("E-J9: V3 con cantidad inferior a minOrderBase → TARGET_V3_QTY_BELOW_MIN", () => {
+    const calc = validV3Calc();
+    calc.targetSellQuantity = 0.00001;
+    calc.minOrderBase = 0.0001;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_QTY_BELOW_MIN");
+  });
+
+  it("E-J10: V3 con notional inferior a minOrderQuote → TARGET_V3_NOTIONAL_BELOW_MIN", () => {
+    const calc = validV3Calc();
+    calc.targetSellPrice = 0.1;
+    calc.targetSellQuantity = 0.0001;
+    calc.minOrderQuote = 10;
+    calc.minOrderUsd = 10;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_NOTIONAL_BELOW_MIN");
+  });
+
+  it("E-J11: V3 con exchangeFeesUsd incoherente → TARGET_V3_FEES_INCOHERENT", () => {
+    const calc = validV3Calc();
+    calc.exchangeFeesUsd = 999;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_FEES_INCOHERENT");
+  });
+
+  it("E-J12: V3 con netBeforeTaxUsd incoherente → TARGET_V3_NET_BEFORE_TAX_INCOHERENT", () => {
+    const calc = validV3Calc();
+    calc.netBeforeTaxUsd = 999;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_NET_BEFORE_TAX_INCOHERENT");
+  });
+
+  it("E-J13: V3 con availablePnlAfterTaxUsd incoherente → TARGET_V3_NET_AFTER_TAX_INCOHERENT", () => {
+    const calc = validV3Calc();
+    calc.availablePnlAfterTaxUsd = 999;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_NET_AFTER_TAX_INCOHERENT");
+  });
+
+  it("E-J14: V3 con minOrderUsd distinto a minOrderQuote para USD → TARGET_V3_MIN_USD_MISMATCH", () => {
+    const calc = validV3Calc();
+    calc.minOrderUsd = 5;
+    calc.minOrderQuote = 10;
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_MIN_USD_MISMATCH");
+  });
+
+  it("E-J15: V3 con targetSellLevelId no null → TARGET_V3_INVALID", () => {
+    const calc = validV3Calc();
+    calc.targetSellLevelId = "should-be-null";
+    const result = validateTargetCalculationJson(calc);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("TARGET_V3_INVALID");
+  });
+
+  it("E-J16: forensic parser preserva raw y code para V3 inválido", () => {
+    const calc = validV3Calc();
+    calc.targetSellPrice = -1;
+    const result = safeParseTargetCalculationJsonForensic(calc);
+    expect(result.valid).toBe(false);
+    expect(result.value).toBeNull();
+    expect(result.raw).toBe(calc);
+    expect(result.code).toBe("TARGET_V3_NON_POSITIVE");
+  });
+});
+
+// ─── Gate E — Risk state validation ───────────────────────────────────
+
+function validRiskState(): Record<string, unknown> {
+  return {
+    stateVersion: 1,
+    trailing: { activated: false, activatedAt: null, highestPriceSinceBuy: null, trailingStopPct: 0, currentStopPrice: null, reason: "" },
+    stopLoss: [{ layer: "soft", triggerPricePct: -5, triggered: false, triggeredAt: null, reason: "" }],
+    hodl: { active: false, activatedAt: null, originalBuyPrice: null, recoveryTargetPrice: null, reason: "" },
+    protectiveExit: { state: "NONE", route: null, triggerPrice: null, triggerDetectedAt: null, bestBidAtTrigger: null, bestAskAtTrigger: null, requestedMakerPrice: null, makerOrderCreatedAt: null, makerEligibleAfter: null, lifecycleTickId: null, lastRepricedAt: null, repriceAttempts: 0, pendingQuantity: 0, simulatedOrderId: null, fillPrice: null, filledAt: null, bestBidAtFill: null, bestAskAtFill: null, cancellationReason: null },
+    lastAction: null,
+    activeExitRoute: null,
+    pendingExitPrice: null,
+    lastEvaluatedAt: null,
+  };
+}
+
+describe("Gate E — validateRiskStateJson edge cases", () => {
+  it("E-R1: raw no es objeto → RISK_NOT_OBJECT", () => {
+    const result = validateRiskStateJson(42);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("RISK_NOT_OBJECT");
+  });
+
+  it("E-R2: trailing no es objeto → RISK_TRAILING_INVALID", () => {
+    const raw = validRiskState();
+    raw.trailing = "not-an-object";
+    const result = validateRiskStateJson(raw);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("RISK_TRAILING_INVALID");
+  });
+
+  it("E-R3: stopLoss no es array → RISK_STOPLOSS_INVALID", () => {
+    const raw = validRiskState();
+    raw.stopLoss = "not-an-array";
+    const result = validateRiskStateJson(raw);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("RISK_STOPLOSS_INVALID");
+  });
+
+  it("E-R4: stopLoss layer inválido → RISK_STOPLOSS_LAYER_INVALID", () => {
+    const raw = validRiskState();
+    raw.stopLoss = [{ layer: "BOGUS", triggerPricePct: 0, triggered: false, triggeredAt: null, reason: "" }];
+    const result = validateRiskStateJson(raw);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("RISK_STOPLOSS_LAYER_INVALID");
+  });
+
+  it("E-R5: protectiveExit.state inválido → RISK_PROTECTIVE_EXIT_STATE_INVALID", () => {
+    const raw = validRiskState();
+    (raw.protectiveExit as any).state = "BOGUS";
+    const result = validateRiskStateJson(raw);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("RISK_PROTECTIVE_EXIT_STATE_INVALID");
+  });
+
+  it("E-R6: activeExitRoute inválido → RISK_ACTIVE_EXIT_ROUTE_INVALID", () => {
+    const raw = validRiskState();
+    raw.activeExitRoute = "BOGUS_ROUTE";
+    const result = validateRiskStateJson(raw);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("RISK_ACTIVE_EXIT_ROUTE_INVALID");
+  });
+
+  it("E-R7: risk state válido produce valor tipado", () => {
+    const result = validateRiskStateJson(validRiskState());
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.value.stateVersion).toBe(1);
+      expect(result.value.protectiveExit.state).toBe("NONE");
+      expect(result.value.stopLoss).toHaveLength(1);
+      expect(result.value.stopLoss[0].layer).toBe("soft");
+    }
+  });
+
+  it("E-R8: forensic parser con risk state inválido preserva raw y code", () => {
+    const raw = { stateVersion: 99, protectiveExit: { state: "NONE" } };
+    const result = safeParseRiskStateJsonForensic(raw);
+    expect(result.valid).toBe(false);
+    expect(result.value).toBeNull();
+    expect(result.raw).toBe(raw);
+    expect(result.code).toBe("RISK_UNKNOWN_VERSION");
+  });
+});
+
+// ─── Gate E — Maker exit validation ───────────────────────────────────
+
+describe("Gate E — validateMakerExitStateJson edge cases", () => {
+  it("E-M1: raw no es objeto → MAKER_EXIT_NOT_OBJECT", () => {
+    const result = validateMakerExitStateJson("not-an-object");
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("MAKER_EXIT_NOT_OBJECT");
+  });
+
+  it("E-M2: route inválido → MAKER_EXIT_ROUTE_INVALID", () => {
+    const result = validateMakerExitStateJson({ state: "MAKER_PENDING", route: "BOGUS_ROUTE" });
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.code).toBe("MAKER_EXIT_ROUTE_INVALID");
+  });
+
+  it("E-M3: maker exit válido produce valor tipado con state MAKER_PENDING", () => {
+    const raw = {
+      state: "MAKER_PENDING",
+      route: "CYCLE_OWNED_TARGET",
+      requestedMakerPrice: 96500,
+      makerOrderCreatedAt: new Date().toISOString(),
+      makerEligibleAfter: new Date(Date.now() + 1000).toISOString(),
+      lifecycleTickId: 5,
+      pendingQuantity: 0.01,
+    };
+    const result = validateMakerExitStateJson(raw);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.value.state).toBe("MAKER_PENDING");
+      expect(result.value.route).toBe("CYCLE_OWNED_TARGET");
+      expect(result.value.requestedMakerPrice).toBe(96500);
+      expect(result.value.lifecycleTickId).toBe(5);
+    }
+  });
+
+  it("E-M4: forensic parser con state inválido preserva raw", () => {
+    const raw = { state: "BOGUS", route: null };
+    const result = safeParseMakerExitStateJsonForensic(raw);
+    expect(result.valid).toBe(false);
+    expect(result.value).toBeNull();
+    expect(result.raw).toBe(raw);
+    expect(result.code).toBe("MAKER_EXIT_STATE_INVALID");
   });
 });
