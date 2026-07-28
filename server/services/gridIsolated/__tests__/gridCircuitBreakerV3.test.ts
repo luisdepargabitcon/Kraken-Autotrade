@@ -12,6 +12,14 @@ const transactionTrace: Array<{ operation: string; table: string; payload?: any;
 const committedTrace: Array<{ operation: string; table: string; payload?: any; ids?: string[] }> = [];
 let rollbackTriggered = false;
 
+const expectedUpdateTargets: Record<string, { id: string; side?: string; status?: string; rangeVersionId?: string }> = {
+  gridIsolatedCycles: { id: "" },
+  gridIsolatedLevels: { id: "" },
+  gridIsolatedConfigs: { id: "" },
+};
+
+const updateTrace: Array<{ table: string; id: string; payload: any }> = [];
+
 function resolveTableName(table: unknown): string {
   if (table === gridIsolatedCycles) return "gridIsolatedCycles";
   if (table === gridIsolatedLevels) return "gridIsolatedLevels";
@@ -71,25 +79,25 @@ vi.mock("../../../db", () => {
         const applyUpdate = (): { id: string }[] => {
           const map = activeMap(tableName);
           if (!map) return [];
-          const candidates = [...map.values()].filter((row: any) => {
-            if (tableName === "gridIsolatedCycles") {
-              return row.status !== "completed" && row.status !== "cancelled" && row.completedAt == null;
-            }
-            if (tableName === "gridIsolatedLevels") {
-              return true; // specific filtering done by caller conditions
-            }
-            if (tableName === "gridIsolatedConfigs") {
-              return true;
-            }
-            return false;
-          });
-          if (candidates.length === 0) return [];
-          const target = candidates[0];
-          Object.assign(target, payload);
-          if (inTransaction) {
-            transactionTrace.push({ operation: "update", table: tableName, payload, ids: [target.id] });
+          const expected = expectedUpdateTargets[tableName];
+          if (!expected || !expected.id) return [];
+          const target = map.get(expected.id);
+          if (!target) return [];
+          // Validate based on table type before applying update
+          if (tableName === "gridIsolatedCycles") {
+            if (target.status === "completed" || target.status === "cancelled" || target.completedAt != null) return [];
           }
-          return [{ id: target.id }];
+          if (tableName === "gridIsolatedLevels") {
+            if (expected.side && target.side !== expected.side) return [];
+            if (expected.status && target.status !== expected.status) return [];
+            if (expected.rangeVersionId && target.rangeVersionId !== expected.rangeVersionId) return [];
+          }
+          Object.assign(target, payload);
+          updateTrace.push({ table: tableName, id: expected.id, payload });
+          if (inTransaction) {
+            transactionTrace.push({ operation: "update", table: tableName, payload, ids: [expected.id] });
+          }
+          return [{ id: expected.id }];
         };
         return {
           where: () => ({
@@ -216,6 +224,7 @@ vi.mock("../../exchanges/RevolutXService", () => ({
 }));
 
 import { GridIsolatedEngine } from "../gridIsolatedEngine";
+import { getGridBandSnapshot } from "../gridBandAdapter";
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -285,17 +294,21 @@ describe("GridIsolatedEngine circuit breaker V3 — hardened", () => {
   beforeEach(() => {
     cycleRows.clear(); levelRows.clear(); configRows.clear(); rangeRows.clear();
     transactionTrace.length = 0; committedTrace.length = 0; rollbackTriggered = false;
+    updateTrace.length = 0;
+    expectedUpdateTargets.gridIsolatedCycles = { id: "" };
+    expectedUpdateTargets.gridIsolatedLevels = { id: "" };
+    expectedUpdateTargets.gridIsolatedConfigs = { id: "" };
     vi.clearAllMocks();
   });
 
-  // ── D1: Breaker blocks all creation ───────────────────────────────
+  // ── D1: Breaker blocks all BUY (planned + pending), rebuild, range; allows SELL ──
 
-  it("D1 bloquea BUY nueva, impide proposeRangeVersion, impide rebuild y permite salidas", async () => {
+  it("D1 bloquea BUY nueva y pendiente, impide rebuild con deriva real, permite salidas", async () => {
     const engine = new GridIsolatedEngine();
     const internal = engine as any;
     setupEngineWithBreakerOpen(internal);
 
-    // D1.a: canProcessShadowFill blocks new BUY (planned, not pending)
+    // D1.a: canProcessShadowFill blocks new BUY (planned)
     const buyLevel = { id: "buy-1", side: "BUY", status: "planned", price: 99, quantity: 0.01, rangeVersionId: "range-1" };
     const buyResult = internal.canProcessShadowFill(
       buyLevel, "range-1", { active: false, allowBuyFill: false },
@@ -313,25 +326,35 @@ describe("GridIsolatedEngine circuit breaker V3 — hardened", () => {
     expect(buyLifecycleResult).toBeNull();
     expect(buyLevel.status).toBe("planned");
 
-    // D1.c: tick with no active range does NOT call proposeRangeVersion
-    internal.activeRangeVersion = null;
-    internal.cycles = [];
-    internal.levels = [];
-    const proposeSpy = vi.spyOn(internal, "proposeRangeVersion");
-    vi.spyOn(internal, "rebuildRangeAndLevels");
-    await internal.tick();
-    expect(proposeSpy).not.toHaveBeenCalled();
-
-    // D1.d: tick with active range and drifted band does NOT call rebuildRangeAndLevels
-    internal.activeRangeVersion = {
-      id: "range-1", midPrice: 100, bandLower: 95, bandUpper: 105, bandWidthPct: 10,
+    // D1.c: BUY_MAKER_PENDING is also blocked by circuit breaker
+    const pendingBuy = {
+      id: "buy-pending", side: "BUY", status: "buy_maker_pending",
+      price: 99, quantity: 0.01, rangeVersionId: "range-1",
+      buyMakerPendingAt: new Date("2026-07-28T00:00:00.000Z"),
+      buyMakerPendingTickId: 0, buyMakerRequestedPrice: 99,
     };
-    const rebuildSpy = vi.spyOn(internal, "rebuildRangeAndLevels");
-    await internal.tick();
-    expect(rebuildSpy).not.toHaveBeenCalled();
+    const pendingResult = internal.canProcessShadowFill(
+      pendingBuy, "range-1", { active: false, allowBuyFill: false },
+      { tickId: 2, pair: "BTC/USD", freshness: { isFresh: true } },
+      makePrice(), 0.1,
+    );
+    expect(pendingResult).toMatchObject({ ok: false, eventType: "GRID_CIRCUIT_BREAKER_BLOCKED_BUY" });
 
-    // D1.e: existing exits (SELL) are NOT blocked by circuit breaker
-    // SELL may fail for other reasons (no claiming cycle) but must NOT be blocked by breaker
+    // D1.d: processBuyLevelLifecycle on pending BUY returns null — no fill, no cycle, no level write
+    internal.levels = [pendingBuy];
+    const pendingLifecycleResult = await internal.processBuyLevelLifecycle(
+      pendingBuy, makePrice(), makeTickCtx(2), { active: false, allowBuyFill: false }, 0.1,
+    );
+    expect(pendingLifecycleResult).toBeNull();
+    expect(pendingBuy.status).toBe("buy_maker_pending");
+    // No cycle created
+    expect(internal.cycles.length).toBe(0);
+    // No level rows written
+    expect(levelRows.size).toBe(0);
+    // No cycle rows written
+    expect(cycleRows.size).toBe(0);
+
+    // D1.e: SELL exits are NOT blocked by circuit breaker
     const sellLevel = { id: "sell-1", side: "SELL", status: "planned", price: 105, quantity: 0.01, rangeVersionId: "range-1" };
     const sellResult = internal.canProcessShadowFill(
       sellLevel, "range-1", { active: false, allowBuyFill: false },
@@ -340,14 +363,50 @@ describe("GridIsolatedEngine circuit breaker V3 — hardened", () => {
     );
     expect(sellResult.eventType).not.toBe("GRID_CIRCUIT_BREAKER_BLOCKED_BUY");
 
-    // D1.f: BUY_MAKER_PENDING (existing pending) is NOT blocked by breaker
-    const pendingBuy = { id: "buy-pending", side: "BUY", status: "buy_maker_pending", price: 99, quantity: 0.01, rangeVersionId: "range-1" };
-    const pendingResult = internal.canProcessShadowFill(
-      pendingBuy, "range-1", { active: false, allowBuyFill: false },
-      { tickId: 1, pair: "BTC/USD", freshness: { isFresh: true } },
-      makePrice(), 0.1,
-    );
-    expect(pendingResult.ok).not.toMatchObject({ eventType: "GRID_CIRCUIT_BREAKER_BLOCKED_BUY" });
+    // ── D1.f: CONTROL — rebuild IS called when breaker is closed and band drifts ──
+    const controlEngine = new GridIsolatedEngine();
+    const control = controlEngine as any;
+    setupEngineWithBreakerOpen(control, { circuitBreakerOpen: false });
+    control.circuitBreakerOpen = false;
+    control.circuitBreakerOpenedAt = null;
+    control.circuitBreakerReason = null;
+    control.activeRangeVersion = {
+      id: "range-1", midPrice: 80, bandLower: 76, bandUpper: 84, bandWidthPct: 10,
+    };
+    control.cycles = [];
+    control.levels = [];
+    // Mock band snapshot with midPrice=100 — drifted from range midPrice=80
+    vi.mocked(getGridBandSnapshot).mockResolvedValueOnce({
+      suitableForGrid: true,
+      midPrice: 100, bandUpper: 105, bandLower: 95, bandMiddle: 100,
+      bandWidthPct: 10, atrPct: 5, reason: null,
+    } as any);
+    const controlRebuildSpy = vi.spyOn(control, "rebuildRangeAndLevels").mockResolvedValue(undefined);
+    vi.spyOn(control, "proposeRangeVersion");
+    await control.tick();
+    expect(controlRebuildSpy).toHaveBeenCalled();
+
+    // ── D1.g: WITH BREAKER — same drift, rebuild NOT called ──
+    internal.activeRangeVersion = {
+      id: "range-1", midPrice: 80, bandLower: 76, bandUpper: 84, bandWidthPct: 10,
+    };
+    internal.cycles = [];
+    internal.levels = [];
+    // Same drifted band snapshot
+    vi.mocked(getGridBandSnapshot).mockResolvedValueOnce({
+      suitableForGrid: true,
+      midPrice: 100, bandUpper: 105, bandLower: 95, bandMiddle: 100,
+      bandWidthPct: 10, atrPct: 5, reason: null,
+    } as any);
+    const rebuildSpy = vi.spyOn(internal, "rebuildRangeAndLevels");
+    const proposeSpy = vi.spyOn(internal, "proposeRangeVersion");
+    await internal.tick();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+    expect(proposeSpy).not.toHaveBeenCalled();
+    // Active range preserved
+    expect(internal.activeRangeVersion).toBeDefined();
+    expect(internal.activeRangeVersion.id).toBe("range-1");
+    expect(internal.activeRangeVersion.midPrice).toBe(80);
   });
 
   // ── D2: V3 close with breaker open, full DB assertions ─────────────
@@ -377,9 +436,18 @@ describe("GridIsolatedEngine circuit breaker V3 — hardened", () => {
     };
     internal.cycles = [cycle];
 
-    // Seed DB rows
+    // Seed DB rows — primary targets
     cycleRows.set(cycle.id, { id: cycle.id, status: "sell_placed", completedAt: null });
     levelRows.set("buy-src", { id: "buy-src", side: "BUY", status: "filled", rangeVersionId: "range-1" });
+
+    // Seed decoy rows — must remain intact after V3 close
+    cycleRows.set("decoy-cycle", { id: "decoy-cycle", status: "buy_filled", completedAt: null, pair: "BTC/USD" });
+    levelRows.set("decoy-level", { id: "decoy-level", side: "SELL", status: "planned", rangeVersionId: "range-1" });
+    configRows.set("decoy-config", { id: "decoy-config", circuitBreakerOpen: true });
+
+    // Configure expected update targets
+    expectedUpdateTargets.gridIsolatedCycles = { id: cycle.id };
+    expectedUpdateTargets.gridIsolatedLevels = { id: "buy-src", side: "BUY", status: "filled", rangeVersionId: "range-1" };
 
     const now = new Date();
     const price = makePrice("BTC/USD", 100.1, 100.3, 100.1);
@@ -424,7 +492,9 @@ describe("GridIsolatedEngine circuit breaker V3 — hardened", () => {
 
     // No SELL level was created or updated
     const sellLevelEntries = [...levelRows.values()].filter((r: any) => r.side === "SELL");
-    expect(sellLevelEntries.length).toBe(0);
+    expect(sellLevelEntries.length).toBe(1); // only the decoy SELL
+    expect(sellLevelEntries[0].id).toBe("decoy-level");
+    expect(sellLevelEntries[0].status).toBe("planned"); // decoy intact
 
     // sellLevelId, targetSellLevelId, targetRungLevelId all null
     expect(cycle.sellLevelId).toBeNull();
@@ -437,6 +507,26 @@ describe("GridIsolatedEngine circuit breaker V3 — hardened", () => {
     // Transaction committed, no rollback
     expect(rollbackTriggered).toBe(false);
     expect(committedTrace.some((e: any) => e.table === "gridIsolatedCycles")).toBe(true);
+
+    // Decoy cycle intact — not mutated
+    const decoyCycle = cycleRows.get("decoy-cycle");
+    expect(decoyCycle).toBeDefined();
+    expect(decoyCycle.status).toBe("buy_filled");
+    expect(decoyCycle.completedAt).toBeNull();
+
+    // Decoy config intact
+    const decoyConfig = configRows.get("decoy-config");
+    expect(decoyConfig).toBeDefined();
+    expect(decoyConfig.circuitBreakerOpen).toBe(true);
+
+    // Update trace: all cycle updates target only the primary cycle, never the decoy
+    const cycleUpdates = updateTrace.filter((t) => t.table === "gridIsolatedCycles");
+    expect(cycleUpdates.length).toBeGreaterThan(0);
+    expect(cycleUpdates.every((t) => t.id === cycle.id)).toBe(true);
+
+    const levelUpdates = updateTrace.filter((t) => t.table === "gridIsolatedLevels");
+    expect(levelUpdates.length).toBe(1);
+    expect(levelUpdates[0].id).toBe("buy-src");
   });
 
   // ── D3: No auto-close with real tick ───────────────────────────────
@@ -580,6 +670,16 @@ describe("GridIsolatedEngine circuit breaker V3 — hardened", () => {
       createdAt: new Date(), updatedAt: new Date(),
     });
 
+    // Seed decoy config — must remain intact after saveConfig
+    configRows.set("decoy-cfg-d4", {
+      id: 2, pair: "ETH/USD", mode: "SHADOW",
+      circuitBreakerOpen: false, circuitBreakerResolvedAt: new Date(),
+      createdAt: new Date(), updatedAt: new Date(),
+    });
+
+    // Set expected update target to the primary config
+    expectedUpdateTargets.gridIsolatedConfigs = { id: cfgId };
+
     const engine = new GridIsolatedEngine();
     const internal = engine as any;
 
@@ -627,5 +727,16 @@ describe("GridIsolatedEngine circuit breaker V3 — hardened", () => {
     // No auto-close happened before explicit resolution
     // (no prior config writes with circuitBreakerOpen=false)
     expect(rollbackTriggered).toBe(false);
+
+    // Decoy config intact — not mutated by saveConfig
+    const decoyCfg = configRows.get("decoy-cfg-d4");
+    expect(decoyCfg).toBeDefined();
+    expect(decoyCfg.pair).toBe("ETH/USD");
+    expect(decoyCfg.circuitBreakerOpen).toBe(false);
+
+    // Update trace: only the primary config was updated
+    const configUpdates = updateTrace.filter((t) => t.table === "gridIsolatedConfigs");
+    expect(configUpdates.length).toBe(1);
+    expect(configUpdates[0].id).toBe(cfgId);
   });
 });

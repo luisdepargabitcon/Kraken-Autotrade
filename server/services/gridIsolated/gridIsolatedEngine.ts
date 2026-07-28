@@ -2883,13 +2883,14 @@ export class GridIsolatedEngine {
         return { ok: false, reason: "BUY level not planned/open/pending", eventType: "GRID_SHADOW_LEVEL_IGNORED_OUT_OF_ACTIVE_RANGE" };
       }
 
-      // Circuit breaker blocks new BUY placements; existing pending orders may fill.
-      if (!isPending && this.circuitBreakerOpen) {
+      // Circuit breaker blocks ALL BUY (planned and pending) while open.
+      // SELL exits are not blocked. Pump guard may keep its own pending behaviour.
+      if (this.circuitBreakerOpen) {
         return {
           ok: false,
           eventType: "GRID_CIRCUIT_BREAKER_BLOCKED_BUY",
           reason: `[SHADOW] BUY level ${level.id} blocked: circuit breaker open`,
-          details: { levelId: level.id, circuitBreakerOpen: this.circuitBreakerOpen },
+          details: { levelId: level.id, circuitBreakerOpen: this.circuitBreakerOpen, isPending },
         };
       }
 
