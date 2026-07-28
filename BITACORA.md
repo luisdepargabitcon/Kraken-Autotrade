@@ -6807,3 +6807,59 @@ Hardening del harness de tests del circuit breaker (`gridCircuitBreakerV3.test.t
 - C3B corregida. Commit técnico `6b073ed` pushed a `origin/main`.
 - Producción modificada: `canProcessShadowFill` ahora bloquea toda BUY incluida `buy_maker_pending`.
 - Pendiente: deploy a staging (requiere autorización explícita).
+
+## GRID REV-C11 — DEPLOY Y CIERRE FINAL EN STAGING
+
+### Resumen
+Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@5.250.184.18:/opt/krakenbot-staging`). Solo app, `--no-deps`, DB preservada. Postdeploy validado con logs, endpoints, artefacto productivo, UI y network.
+
+### Deploy
+- **Fecha**: 2026-07-28T15:32:13Z
+- **Hash**: `24518a1af91ddc64b338fffc3b250bf1414a72ec`
+- **Compose**: `docker-compose.staging.yml`
+- **Comando**: `docker compose -f docker-compose.staging.yml up -d --build --no-deps krakenbot-staging-app`
+- **APP_BEFORE**: `b2305bb7...` → **APP_AFTER**: `27f3156a...`
+- **APP_RESTARTS**: 0
+- **DB_BEFORE = DB_AFTER**: `a2f9a3f2...` (idéntico, sin reinicio)
+- **DB_STARTED**: `2026-05-03T21:10:46Z` (sin cambios)
+- **DB_RESTARTS**: 0/0
+- **DB_HEALTH**: healthy
+- **Puerto**: 3020:5000
+
+### Migraciones y schema
+- `git diff --name-only a90e626..origin/main -- migrations drizzle shared/schema.ts` → vacío
+- No se ejecutaron migraciones ni SQL
+
+### Logs postdeploy
+- Sin TypeError, SyntaxError, PostgreSQL error, migration error, restart loop
+- Sin REAL_LIMITED, REAL_FULL, taker fallback efectivo, ErrorBoundary
+- Sin TARGET corrupto, missingTarget, circuit breaker autocerrado
+- Sin excepciones no controladas
+
+### Endpoints GET (HTTP 200)
+- `/api/grid-isolated/status`: SHADOW, isActive=true, realOpenOrdersCount=0, openCycles=0, circuitBreakerOpen=false
+- `/api/grid-isolated/monitor/audit`: SHADOW, recomendación con alternativas
+- `/api/grid-isolated/shadow-open-cycles/diagnose`: SHADOW, totalOpen=0, missingTarget=0, requiresReview=0
+
+### Artefacto productivo
+- `if (this.circuitBreakerOpen)` línea 2888: bloquea toda BUY incluida `buy_maker_pending`
+- SELL fuera del bloqueo
+- Pump guard política separada
+
+### Ciclo #26
+- ID `a2a0b7ca-a710-4402-8a11-54222bf98455`: cerrado, sin missingTarget/requiresReview, valores no recalculados
+
+### UI
+- Escritorio 1280×800: carga OK, SHADOW, MAKER_ONLY, sin ErrorBoundary, sin scroll horizontal
+- Móvil 390×844: legible, pestañas accesibles, sin cortes, sin ErrorBoundary
+- Network: 0 POST automáticos, 0 cambios de modo, 0 guardados, 0 órdenes
+
+### Riesgos residuales
+- `activeRangeVersionId=null`: motor en espera sin rango activo
+- `orphanPlannedLevelsCount=69`: niveles huérfanos sin generar BUY nuevas
+- Circuit breaker cerrado en staging; corrección validada por matriz local 419/419
+- No hay GitHub Actions; validación manual postdeploy
+
+### Estado final
+- REV-C11 completada, desplegada y validada en staging.
+- Sin órdenes reales y sin modificar la DB.

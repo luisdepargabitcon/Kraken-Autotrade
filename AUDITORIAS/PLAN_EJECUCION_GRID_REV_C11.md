@@ -1,12 +1,12 @@
 # PLAN DE EJECUCIÓN GRID V2 REV-C11
 
-DONE: FALSE
+DONE: TRUE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE 4G C3B corregida y subida; pendiente revisión independiente final
-NEXT_ACTION: revisión independiente del commit final C3B antes de autorizar deploy
-LAST_COMPLETED_ACTION: corrección de BUY pendiente y hardening final del circuit breaker
-EXPECTED_DEPLOY_HASH: pendiente de revisión independiente
-DEPLOYED_HASH: a90e626f67179b95dd86376c5a6fb309a1c86750
+TASK_STATUS: REV-C11 completada, desplegada y validada en staging
+NEXT_ACTION: ninguna dentro de REV-C11
+LAST_COMPLETED_ACTION: deploy y postdeploy del hash 24518a1
+EXPECTED_DEPLOY_HASH: 24518a1af91ddc64b338fffc3b250bf1414a72ec
+DEPLOYED_HASH: 24518a1af91ddc64b338fffc3b250bf1414a72ec
 FINAL_DOCUMENTATION_HASH: pendiente de verificación externa
 DEPLOY_AUTHORIZED: FALSE
 RESUME_CHECK_REQUIRED: FALSE
@@ -61,8 +61,89 @@ BUILD_REGRESSION_FROM_PHASE_4E: FALSE
 ### Ausencia de GitHub Actions
 - No hay GitHub Actions configuradas en este repositorio.
 
-### Deploy
-- No autorizado. Pendiente revisión independiente final.
+## FASE 4G C3C — DEPLOY STAGING Y POSTDEPLOY
+
+### Datos del deploy
+- **Fecha y hora**: 2026-07-28T15:32:13Z (APP_STARTED)
+- **Hash desplegado**: `24518a1af91ddc64b338fffc3b250bf1414a72ec`
+- **Compose utilizado**: `docker-compose.staging.yml`
+- **Comando**: `docker compose -f docker-compose.staging.yml up -d --build --no-deps krakenbot-staging-app`
+
+### Contenedores
+- **APP_BEFORE**: `b2305bb70f78442d502d4ef1b7cff9017fa86790aa9d20ae2fa2261d67da3e4f`
+- **APP_AFTER**: `27f3156a5f3939318eeefa7fcdfad1409ab46a1404d04edf75a99c585ff029ee`
+- **APP_STARTED**: `2026-07-28T15:32:13.861643321Z`
+- **APP_RESTARTS**: 0
+- **APP_STATUS**: running
+- **DB_BEFORE**: `a2f9a3f275c34e37b3800bbc00a0ae694387473d523503fbefb34cbb3483be1c`
+- **DB_AFTER**: `a2f9a3f275c34e37b3800bbc00a0ae694387473d523503fbefb34cbb3483be1c` (idéntico)
+- **DB_STARTED antes/después**: `2026-05-03T21:10:46.164388528Z` (sin cambios)
+- **DB_RESTARTS antes/después**: 0/0 (sin cambios)
+- **DB_STATUS**: running
+- **DB_HEALTH**: healthy
+- **Puerto**: 3020:5000
+
+### Migraciones y schema
+- `git diff --name-only a90e626..origin/main -- migrations drizzle shared/schema.ts shared/schema` → vacío (sin cambios)
+- No se ejecutaron migraciones
+- No se ejecutó SQL
+- No se reinició la DB
+
+### Logs postdeploy
+- Sin TypeError, SyntaxError, PostgreSQL error, migration error, restart loop
+- Sin REAL_LIMITED, REAL_FULL, taker fallback efectivo
+- Sin ErrorBoundary, TARGET JSONB corrupto, missingTarget
+- Sin circuit breaker autocerrado
+- Sin excepciones no controladas
+- Logs normales: SCAN_DISPATCH, SMART_EXIT, TIME_STOP_DEFERRED, MDS CACHE_HIT
+
+### Endpoints GET
+- `/api/grid-isolated/status`: HTTP 200 — mode=SHADOW, isActive=true, isRunning=true, realOpenOrdersCount=0, openCycles=0, reviewRequiredCyclesCount=0, circuitBreakerOpen=false, totalCyclesCompleted=3
+- `/api/grid-isolated/monitor/audit`: HTTP 200 — mode=SHADOW, recomendación con alternativas
+- `/api/grid-isolated/shadow-open-cycles/diagnose`: HTTP 200 — mode=SHADOW, totalOpen=0, missingTarget=0, requiresReview=0, realOrdersAffected=false, readOnly=true
+
+### Artefacto productivo
+- `grep` en VPS confirma `if (this.circuitBreakerOpen)` en línea 2888 de `gridIsolatedEngine.ts`
+- Bloquea toda BUY incluida `buy_maker_pending`
+- No hay `!isPending` en la condición del breaker
+- SELL queda fuera del bloqueo
+- Pump guard mantiene política separada (línea 2897)
+
+### Ciclo #26
+- ID: `a2a0b7ca-a710-4402-8a11-54222bf98455`
+- Estado: cerrado (totalOpen=0, sin ciclos abiertos)
+- No hay missingTarget ni requiresReview inesperados
+- Valores protegidos no recalculados retrospectivamente
+
+### UI escritorio (1280×800)
+- Página carga: OK
+- Sin ErrorBoundary: OK
+- SHADOW activo: OK
+- MAKER_ONLY: OK
+- Sin REAL activo: OK
+- Ciclos y niveles visibles: OK
+- Auditoría visible: OK
+- Sin scroll horizontal: OK
+- Console sin errores rojos: OK
+
+### UI móvil (390×844)
+- Diseño legible: OK
+- Pestañas accesibles: OK
+- Sin cortes importantes: OK
+- Sin scroll horizontal: OK
+- Sin ErrorBoundary: OK
+
+### Network
+- POST automáticos: 0
+- Cambios de modo: 0
+- Guardados automáticos: 0
+- Órdenes: 0
+
+### Riesgos residuales
+- `activeRangeVersionId=null`: no hay rango activo en staging; el motor está en espera.
+- `orphanPlannedLevelsCount=69`: niveles planificados huérfanos de rangos anteriores; no generan BUY nuevas.
+- El circuit breaker está cerrado (`circuitBreakerOpen=false`) en staging; la corrección productiva queda validada por la matriz local 419/419.
+- No hay GitHub Actions; la validación CI/CD recae en tests locales y verificación manual postdeploy.
 
 ## FASE 4E — CORRECCIÓN 2: Motivos de rechazo de 90776a6 para deploy
 
