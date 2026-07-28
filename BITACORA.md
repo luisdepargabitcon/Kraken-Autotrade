@@ -81,6 +81,30 @@
 - No ejecutar backfill, recovery mutador, recálculo, cambio de target, cambio de cantidad ni conversión a V3.
 - La política persistida prevalece.
 
+### RENOMBRADO OFICIAL DEL MODO HOLD A AMA
+
+- El modo denominado provisionalmente `HOLD` pasa a llamarse oficialmente `AMA — Acumulación Macro Adaptativa`.
+- `HOLD` y `AMA` representan el mismo modo; no deben tratarse como estrategias, carteras o inventarios diferentes.
+- El identificador canónico nuevo será:
+  - `mode = AMA`
+  - `strategyCode = ADAPTIVE_MACRO_ACCUMULATION`
+  - `strategyVersion = 1.0.0`
+- Las referencias históricas a:
+  - modo HOLD;
+  - saldo HOLD;
+  - cartera HOLD;
+  - inventario HOLD;
+  - ciclo HOLD;
+  - trailing HOLD;
+
+  deben interpretarse como referencias al modo AMA.
+
+- No crear una categoría separada `LEGACY_HOLD`, `LEGACY_HOLD_PROTECTED` ni equivalente salvo que una auditoría futura encuentre datos reales pertenecientes a otro origen.
+- La Cartera Global deberá atribuir ese saldo al modo AMA cuando la atribución esté verificada contra fills, ciclos y saldos de Revolut X.
+- Las nuevas implementaciones, tablas, endpoints, configuraciones y escrituras utilizarán exclusivamente la denominación `AMA`.
+- No vender, transferir, consumir ni reclasificar saldo atribuido o reservado a AMA sin autorización, fill confirmado y trazabilidad por ciclo, tranche y modo.
+- Las referencias históricas podrán conservarse únicamente como trazabilidad documental, indicando que `HOLD` era el nombre provisional de AMA.
+
 ---
 
 ## 2026-07-26 — GRID REV-C11 FASE 4G C2: Corrección post-auditoría independiente
