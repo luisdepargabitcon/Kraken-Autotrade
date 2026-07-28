@@ -6777,26 +6777,33 @@ Hardening del harness de tests del circuit breaker (`gridCircuitBreakerV3.test.t
 ### Problema
 - El mock DB anterior usaba un contador de llamadas (`calls++`) para distinguir entre tablas de ciclos y niveles, lo que era frágil y no reflejaba el comportamiento transaccional real.
 - Los tests D1-D4 eran superficiales: D1 solo probaba `canProcessShadowFill`, D2 no verificaba el estado DB tras el cierre, D3 solo comprobaba flags en memoria, D4 mockeaba `saveConfig` en lugar de probar la persistencia real.
+- **Corrección C3B-FINAL**: `canProcessShadowFill` permitía que `buy_maker_pending` llegara a fill con el breaker abierto, violando el contrato canónico. D1 permitía explícitamente `BUY_MAKER_PENDING`. El mock DB seleccionaba `candidates[0]` sin validar ID, side, status o rangeVersionId.
 
 ### Solución
 1. **DB Mock table-by-reference**: `resolveTableName()` identifica tablas por referencia directa a los símbolos de `@shared/schema` (`gridIsolatedCycles`, `gridIsolatedLevels`, `gridIsolatedConfigs`, `gridRangeVersions`). Mapas separados por tabla con clonado transaccional, `transactionTrace`, `committedTrace` y `rollbackTriggered`.
-2. **D1 — Breaker blocks all creation**: Verifica `canProcessShadowFill` bloquea BUY planned, `processBuyLevelLifecycle` retorna null sin mutar el nivel, `tick()` no llama `proposeRangeVersion` ni `rebuildRangeAndLevels`, SELL exits no bloqueadas por breaker, `BUY_MAKER_PENDING` no bloqueado.
-3. **D2 — V3 close with breaker open**: Ciclo V3 completo (TRIGGERED→MAKER_PENDING→MAKER_FILLED) con breaker abierto. Assertions DB: ciclo completado, nivel BUY rearmado a planned, ningún nivel SELL creado, `sellLevelId`/`targetSellLevelId`/`targetRungLevelId` null, transacción committed sin rollback, breaker permanece abierto.
-4. **D3 — No auto-close with real tick**: `tick()` real con `reviewAfter` y `cooldownUntil` vencidos no autocierra el breaker. `loadConfig` recarga config desde DB mock confirmando que el breaker persiste abierto tras reinicio.
-5. **D4 — Resolution with real saveConfig**: `resolveCircuitBreaker` ejecuta `saveConfig` real sobre DB mock. Verificación in-memory y DB: `circuitBreakerOpen=false`, `resolvedBy`, `resolutionReason`, `resolvedAt` persistidos; `openedAt`, `reason`, `cooldownUntil` limpiados.
+2. **expectedUpdateTargets**: El update resuelve la tabla por referencia, busca `map.get(expectedId)`, valida `side`/`status`/`rangeVersionId` según tabla. `updateTrace` registra tabla, ID y payload.
+3. **Filas señuelo**: Decoy rows (decoy-cycle, decoy-level, decoy-config) sembradas en D2 y D4, verificadas intactas tras las operaciones.
+4. **Corrección productiva**: `canProcessShadowFill` en `gridIsolatedEngine.ts` ahora bloquea **toda BUY**, incluida `buy_maker_pending`, cuando el circuit breaker está abierto. SELL y cierres V3 continúan permitidos.
+5. **D1 — Breaker blocks all BUY (planned + pending), rebuild, range; allows SELL**: Verifica `canProcessShadowFill` bloquea BUY planned y `buy_maker_pending`. `processBuyLevelLifecycle` retorna null sin mutar el nivel, sin crear ciclo, sin escribir nivel. **Control sin breaker**: con deriva real (midPrice=80 vs banda=100), `rebuildRangeAndLevels` **sí** se llama. **Con breaker**: mismo drift, `rebuildRangeAndLevels` y `proposeRangeVersion` **no** se llaman. SELL exits no bloqueadas por breaker.
+6. **D2 — V3 close with breaker open**: Ciclo V3 completo (TRIGGERED→MAKER_PENDING→MAKER_FILLED) con breaker abierto. Assertions DB: ciclo completado, nivel BUY rearmado a planned, ningún nivel SELL creado (solo decoy-level intacto), `sellLevelId`/`targetSellLevelId`/`targetRungLevelId` null, transacción committed sin rollback, breaker permanece abierto. Decoy cycle y config intactos. `updateTrace` verifica que solo el ciclo primario y buy-src fueron actualizados.
+7. **D3 — No auto-close with real tick**: `tick()` real con `reviewAfter` y `cooldownUntil` vencidos no autocierra el breaker. `loadConfig` recarga config desde DB mock confirmando que el breaker persiste abierto tras reinicio.
+8. **D4 — Resolution with real saveConfig**: `resolveCircuitBreaker` ejecuta `saveConfig` real sobre DB mock. Verificación in-memory y DB: `circuitBreakerOpen=false`, `resolvedBy`, `resolutionReason`, `resolvedAt` persistidos; `openedAt`, `reason`, `cooldownUntil` limpiados. Decoy config intacto. `updateTrace` verifica que solo el config primario fue actualizado.
 
 ### Archivos afectados
-- `server/services/gridIsolated/__tests__/gridCircuitBreakerV3.test.ts` (rewrite completo, 631 líneas)
+- `server/services/gridIsolated/gridIsolatedEngine.ts` (corrección productiva: `canProcessShadowFill` bloquea `buy_maker_pending`)
+- `server/services/gridIsolated/__tests__/gridCircuitBreakerV3.test.ts` (rewrite completo con expectedUpdateTargets, decoy rows, rebuild con deriva real, BUY_MAKER_PENDING bloqueado)
 
 ### Validaciones
-- `npx vitest run gridCircuitBreakerV3.test.ts`: ✅ 4/4
-- `npx vitest run gridCycleOwnedV3Lifecycle.test.ts gridCycleOwnedV3Recovery.test.ts gridCycleOwnedV3Engine.test.ts`: ✅ 58/58
-- `npx vitest run server/services/gridIsolated/__tests__/`: ✅ 18 files, 419/419
-- `npm run check`: ✅ 0 errores TS
-- `npm run build`: ✅ (cliente + servidor)
-- `git diff --check`: ✅ sin errores
+- `npx vitest run gridCircuitBreakerV3.test.ts`: 4/4 verde
+- `npx vitest run gridCycleOwnedV3Lifecycle.test.ts`: 4/4 verde
+- `npx vitest run gridCycleOwnedV3Recovery.test.ts`: 2/2 verde
+- `npx vitest run gridCycleOwnedV3Engine.test.ts`: 54/54 verde
+- `npx vitest run server/services/gridIsolated/__tests__/`: 18 files, 419/419 verde
+- `npm run check`: 0 errores TS
+- `npm run build`: cliente + servidor OK
+- `git diff --check`: sin errores
 
 ### Estado final
-- C3B completada. Commit técnico `95ffbe1` pushed a `origin/main`.
-- No se modificó código de producción.
+- C3B corregida. Commit técnico `6b073ed` pushed a `origin/main`.
+- Producción modificada: `canProcessShadowFill` ahora bloquea toda BUY incluida `buy_maker_pending`.
 - Pendiente: deploy a staging (requiere autorización explícita).
