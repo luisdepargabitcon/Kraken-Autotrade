@@ -21,6 +21,7 @@ import AiMl from "@/pages/AiMl";
 import Autotuning from "@/pages/Autotuning";
 import InstitutionalDca from "@/pages/InstitutionalDca";
 import GridIsolated from "@/pages/GridIsolated";
+import Ama from "@/pages/Ama";
 import Telegram from "@/pages/Telegram";
 import NotFound from "@/pages/not-found";
 
@@ -40,6 +41,9 @@ function Router() {
 
       {/* Grid Isolated */}
       <Route path="/grid-isolated" component={GridIsolated} />
+
+      {/* AMA — Acumulación Macro Adaptativa */}
+      <Route path="/ama" component={Ama} />
 
       {/* Fiscal Crypto */}
       <Route path="/fiscal" component={FiscoDashboard} />
