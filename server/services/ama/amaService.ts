@@ -152,7 +152,7 @@ class AmaService {
       deployedUsd: 0,
       reservedUsd: 0,
       freeUsd: 0,
-      btcAccumulated: 0,
+      accumulatedQuantity: 0,
       averageCostBasis: null,
       currentValueUsd: null,
       unrealizedPnlUsd: null,

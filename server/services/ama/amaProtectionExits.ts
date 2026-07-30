@@ -13,76 +13,151 @@ import { computeDropPct, computeReboundPct } from "./amaHwmBar";
 
 export type ProtectionAction =
   | "NONE"
+  | "REDUCE_SIZE"
+  | "INCREASE_CONFIRMATIONS"
   | "PAUSE_ACCUMULATION"
   | "FREEZE_CYCLE"
   | "EMERGENCY_EXIT"
   | "THESIS_INVALIDATED"
   | "DE_RISK_TRIGGERED";
 
+export type DrawdownType =
+  | "PRICE_DRAWDOWN_EXPECTED"
+  | "SYSTEMIC_RISK"
+  | "PROTOCOL_RISK"
+  | "CUSTODY_RISK"
+  | "DATA_FAILURE"
+  | "THESIS_INVALIDATION";
+
 export interface ProtectionAssessment {
   action: ProtectionAction;
   reason: string;
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   details: string;
+  drawdownType: DrawdownType;
+  canSell: boolean;
+  canPause: boolean;
+  canReduceSize: boolean;
+  canIncreaseConfirmations: boolean;
+}
+
+export interface CycleProtectionInput {
+  cycle: AmaCycle;
+  currentPrice: number;
+  parameters: AmaResolvedParameters;
+  maxDrawdownPct?: number;
+  systemicRiskDetected?: boolean;
+  protocolRiskDetected?: boolean;
+  custodyRiskDetected?: boolean;
+  dataFailureDetected?: boolean;
 }
 
 export function assessCycleProtection(
-  cycle: AmaCycle,
-  currentPrice: number,
-  parameters: AmaResolvedParameters,
-  maxDrawdownPct: number = 60,
+  input: CycleProtectionInput,
 ): ProtectionAssessment {
+  const { cycle, currentPrice, parameters, maxDrawdownPct = 60 } = input;
   const dropPct = cycle.highWaterMark !== null
     ? computeDropPct(cycle.highWaterMark, currentPrice)
     : 0;
 
-  // Thesis invalidation: extreme drop
-  if (dropPct >= maxDrawdownPct) {
-    return {
-      action: "THESIS_INVALIDATED",
-      reason: "EXTREME_DRAWDOWN_EXCEEDED",
-      severity: "CRITICAL",
-      details: `Drop ${dropPct.toFixed(1)}% exceeds max drawdown ${maxDrawdownPct}%`,
-    };
-  }
-
-  // Emergency exit: severe drop with deployed capital
-  if (dropPct >= 50 && cycle.deployedUsd > 0) {
+  // Non-price risks can trigger severe actions
+  if (input.custodyRiskDetected) {
     return {
       action: "EMERGENCY_EXIT",
-      reason: "SEVERE_DRAWDOWN_WITH_POSITION",
+      reason: "CUSTODY_RISK_DETECTED",
       severity: "CRITICAL",
-      details: `Drop ${dropPct.toFixed(1)}% with $${cycle.deployedUsd} deployed`,
+      details: "Custody risk detected — emergency exit warranted",
+      drawdownType: "CUSTODY_RISK",
+      canSell: true,
+      canPause: true,
+      canReduceSize: true,
+      canIncreaseConfirmations: false,
     };
   }
 
-  // De-risk: significant drop
-  if (dropPct >= 40 && cycle.deployedUsd > 0) {
-    return {
-      action: "DE_RISK_TRIGGERED",
-      reason: "SIGNIFICANT_DRAWDOWN",
-      severity: "HIGH",
-      details: `Drop ${dropPct.toFixed(1)}%, de-risk policy: ${parameters.deRiskPolicy}`,
-    };
-  }
-
-  // Freeze: moderate drop with deployed capital
-  if (dropPct >= 30 && cycle.deployedUsd > 0) {
+  if (input.protocolRiskDetected) {
     return {
       action: "FREEZE_CYCLE",
-      reason: "MODERATE_DRAWDOWN_FREEZE",
-      severity: "MEDIUM",
-      details: `Drop ${dropPct.toFixed(1)}%, freezing new tranches`,
+      reason: "PROTOCOL_RISK_DETECTED",
+      severity: "CRITICAL",
+      details: "Protocol risk detected — freezing cycle",
+      drawdownType: "PROTOCOL_RISK",
+      canSell: false,
+      canPause: true,
+      canReduceSize: true,
+      canIncreaseConfirmations: true,
     };
   }
 
-  // Pause: minor drop with deployed capital
-  if (dropPct >= 20 && cycle.deployedUsd > 0) {
+  if (input.systemicRiskDetected) {
+    return {
+      action: "DE_RISK_TRIGGERED",
+      reason: "SYSTEMIC_RISK_DETECTED",
+      severity: "HIGH",
+      details: "Systemic risk detected — de-risking position",
+      drawdownType: "SYSTEMIC_RISK",
+      canSell: false,
+      canPause: true,
+      canReduceSize: true,
+      canIncreaseConfirmations: true,
+    };
+  }
+
+  if (input.dataFailureDetected) {
     return {
       action: "PAUSE_ACCUMULATION",
-      reason: "MINOR_DRAWDOWN_PAUSE",
+      reason: "DATA_FAILURE_DETECTED",
+      severity: "HIGH",
+      details: "Data failure detected — pausing accumulation",
+      drawdownType: "DATA_FAILURE",
+      canSell: false,
+      canPause: true,
+      canReduceSize: false,
+      canIncreaseConfirmations: true,
+    };
+  }
+
+  // Price drawdown alone: can reduce size, increase confirmations, respect reserve
+  // but CANNOT sell, invalidate thesis, or activate emergency exit
+  if (dropPct >= 40 && cycle.deployedUsd > 0) {
+    return {
+      action: "REDUCE_SIZE",
+      reason: "SIGNIFICANT_PRICE_DRAWDOWN",
+      severity: "HIGH",
+      details: `Price drop ${dropPct.toFixed(1)}% — reducing tranche size, increasing confirmations`,
+      drawdownType: "PRICE_DRAWDOWN_EXPECTED",
+      canSell: false,
+      canPause: false,
+      canReduceSize: true,
+      canIncreaseConfirmations: true,
+    };
+  }
+
+  if (dropPct >= 30 && cycle.deployedUsd > 0) {
+    return {
+      action: "INCREASE_CONFIRMATIONS",
+      reason: "MODERATE_PRICE_DRAWDOWN",
+      severity: "MEDIUM",
+      details: `Price drop ${dropPct.toFixed(1)}% — increasing confirmation requirements`,
+      drawdownType: "PRICE_DRAWDOWN_EXPECTED",
+      canSell: false,
+      canPause: false,
+      canReduceSize: true,
+      canIncreaseConfirmations: true,
+    };
+  }
+
+  if (dropPct >= 20 && cycle.deployedUsd > 0) {
+    return {
+      action: "REDUCE_SIZE",
+      reason: "MINOR_PRICE_DRAWDOWN",
       severity: "LOW",
-      details: `Drop ${dropPct.toFixed(1)}%, pausing accumulation`,
+      details: `Price drop ${dropPct.toFixed(1)}% — reducing tranche size`,
+      drawdownType: "PRICE_DRAWDOWN_EXPECTED",
+      canSell: false,
+      canPause: false,
+      canReduceSize: true,
+      canIncreaseConfirmations: false,
     };
   }
 
@@ -91,15 +166,32 @@ export function assessCycleProtection(
     reason: "WITHIN_NORMAL_RANGE",
     severity: "LOW",
     details: `Drop ${dropPct.toFixed(1)}% within normal parameters`,
+    drawdownType: "PRICE_DRAWDOWN_EXPECTED",
+    canSell: false,
+    canPause: false,
+    canReduceSize: false,
+    canIncreaseConfirmations: false,
   };
 }
 
 export function shouldBlockNewTranche(assessment: ProtectionAssessment): boolean {
-  return assessment.action !== "NONE" && assessment.action !== "DE_RISK_TRIGGERED";
+  return assessment.action === "FREEZE_CYCLE" || assessment.action === "PAUSE_ACCUMULATION" || assessment.action === "EMERGENCY_EXIT" || assessment.action === "THESIS_INVALIDATED";
 }
 
 export function shouldTriggerEmergencyExit(assessment: ProtectionAssessment): boolean {
   return assessment.action === "EMERGENCY_EXIT" || assessment.action === "THESIS_INVALIDATED";
+}
+
+export function shouldSell(assessment: ProtectionAssessment): boolean {
+  return assessment.canSell;
+}
+
+export function shouldReduceSize(assessment: ProtectionAssessment): boolean {
+  return assessment.canReduceSize;
+}
+
+export function shouldIncreaseConfirmations(assessment: ProtectionAssessment): boolean {
+  return assessment.canIncreaseConfirmations;
 }
 
 // ─── Exits & Trailing (Fase 14) ─────────────────────────────────────
@@ -125,7 +217,7 @@ export function determineExitPhase(
   currentPrice: number,
   parameters: AmaResolvedParameters,
 ): ExitPhase {
-  if (cycle.btcAccumulated <= 0) return "EXITED";
+  if (cycle.accumulatedQuantity <= 0) return "EXITED";
   if (cycle.state === "DISTRIBUTING") return "DISTRIBUTING";
   if (cycle.state === "CLOSING" || cycle.state === "CLOSED") return "EXITED";
 
@@ -181,8 +273,15 @@ export function createExitStrategy(
   cycle: AmaCycle,
   parameters: AmaResolvedParameters,
 ): ExitStrategy {
-  const profitTargetUsd = cycle.deployedUsd * 1.5; // 50% profit target
-  const trailingStopPct = 10; // 10% trailing
+  const profitMultiplier = parameters.profitRecoveryPolicy === "immediate" ? 1.2
+    : parameters.profitRecoveryPolicy === "hold" ? 3.0
+    : 1.5;
+  const profitTargetUsd = cycle.deployedUsd * profitMultiplier;
+
+  const trailingStopPct = parameters.trailingPolicy === "atr_based" ? 15
+    : parameters.trailingPolicy === "fixed" ? 10
+    : 10;
+
   const runnerPct = parameters.runnerPolicy === "100_pct" ? 100
     : parameters.runnerPolicy === "50_pct" ? 50
     : parameters.runnerPolicy === "0_pct" ? 0

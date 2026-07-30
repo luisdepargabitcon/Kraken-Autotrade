@@ -7,22 +7,22 @@
 **Documento:** seguimiento operativo y continuidad autónoma
 **Estado:** ACTIVO
 **Fecha de creación:** 2026-07-29
-**Última actualización:** 2026-07-29T19:05:00+02:00
+**Última actualización:** 2026-07-30T06:05:00+02:00
 **Cambio de alcance activo:** AMA-CC-2026-07-29-SEED-V2.2
 
 ---
 
 ## ESTADO OPERATIVO
 
-- TASK_STATUS: FASE_27_VALIDADA
-- CURRENT_PHASE: Fase 27
-- CURRENT_SUBPHASE: Completada
-- LAST_COMPLETED_ACTION: Fase 27 validada — 529 tests AMA+portfolio ✅, npm run check ✅. Fases 1-25 validadas. Fases 26/28/29 pendientes de autorización.
-- NEXT_ACTION: commit/push (pendiente autorización), Fase 26 (REAL_LIMITED), Fase 28 (deploy staging), Fase 29 (archivo)
-- BLOCKERS: ninguno
-- PENDING_GATES: commit (pendiente autorización), push (pendiente autorización), deploy staging (pendiente autorización), aplicar migración 080 en staging (pendiente autorización), Fase 26 REAL_LIMITED (pendiente autorización)
-- LAST_VALIDATION: npm run check ✅, 529 tests AMA+portfolio ✅, git diff --check ✅
-- UPDATED_AT: 2026-07-29T21:57:00+02:00
+- TASK_STATUS: R1_CORRECCIONES_APLICADAS_EN_VALIDACION
+- CURRENT_PHASE: Fase 27 (R1)
+- CURRENT_SUBPHASE: Correcciones R1 aplicadas, documentación actualizada, auditoría R1 física creada, pendiente autorización commit
+- LAST_COMPLETED_ACTION: R1 — 17 fases de corrección aplicadas (venues, HWM, SHA-256, SHADOW gate, mutation guards, maker simulator, IA RISK_DOWN_ONLY, dataset manifests). PLAN y FASES actualizados. Auditoría R1 creada. 519 tests AMA ✅, tsc ✅, git diff --check ✅
+- NEXT_ACTION: Autorización commit/push en rama de revisión. Pendiente: PostgreSQL desechable, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
+- BLOCKERS: PostgreSQL desechable no disponible (GATE_BLOCKED_NO_SAFE_ENVIRONMENT). Migración 080 NOT_REGISTERED, NOT_AUTOAPPLY. Integración real de persistencia, logging, portfolio, SHADOW pendiente
+- PENDING_GATES: PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
+- LAST_VALIDATION: 2026-07-30 — npm run check ✅, 519/519 AMA tests ✅, git diff --check ✅
+- UPDATED_AT: 2026-07-30T06:05:00+02:00
 
 ---
 
@@ -241,44 +241,44 @@ o cuando todas las tareas restantes dependan de un gate duro.
 | Fase | Descripción | Estado | Última validación | Gate |
 |---:|---|---|---|---|
 | 0 | Auditoría | VALIDADA | 2026-07-29 | — |
-| 1 | Contratos y dominio | VALIDADA | 2026-07-29 | — |
-| 2A | Perfiles, políticas, fuentes y tiempo | VALIDADA | 2026-07-29 | — |
-| 2B | Point-in-time y calidad | VALIDADA | 2026-07-29 | — |
-| 2C | Precio canónico | VALIDADA | 2026-07-29 | — |
-| 2D | Coin Metrics | VALIDADA | 2026-07-29 | — |
-| 2E | Bitcoin Core | VALIDADA | 2026-07-29 | — |
-| 2F | Ethereum (eras, ETH/BTC filter) | VALIDADA | 2026-07-29 | — |
-| 2G | Macro (FRED, vintages) | VALIDADA | 2026-07-29 | — |
-| 2H | ETF (SEC holdings) | VALIDADA | 2026-07-29 | — |
-| 2I | Derivados (CME, funding) | VALIDADA | 2026-07-29 | — |
-| 2J | L2 y DeFi | VALIDADA | 2026-07-29 | — |
-| 2K | Dataset manifests | VALIDADA | 2026-07-29 | — |
-| 2L | Replay readiness | VALIDADA | 2026-07-29 | — |
-| 3 | Cartera Global backend | VALIDADA | 2026-07-29 | — |
-| 4 | Ledger y atribución | VALIDADA | 2026-07-29 | — |
-| 5 | Reservas y coordinación | VALIDADA | 2026-07-29 | — |
-| 6 | UI Cartera Global | VALIDADA | 2026-07-29 | — |
-| 7 | Dominio AMA persistente | VALIDADA | 2026-07-29 | — |
-| 8 | AMA Mandate Studio | VALIDADA | 2026-07-29 | — |
-| 9 | HWM y barra macro | VALIDADA | 2026-07-29 | — |
-| 10 | Motor determinista | VALIDADA | 2026-07-29 | — |
-| 11 | Planificador adaptativo | VALIDADA | 2026-07-29 | — |
-| 12 | Portfolio AMA | VALIDADA | 2026-07-29 | — |
-| 13 | Protección del ciclo | VALIDADA | 2026-07-29 | — |
-| 14 | Salidas y trailing | VALIDADA | 2026-07-29 | — |
-| 15 | IA observadora | VALIDADA | 2026-07-29 | — |
-| 16 | Logging estructurado | VALIDADA | 2026-07-29 | — |
-| 17 | Eventos y auditoría | VALIDADA | 2026-07-29 | — |
-| 18 | Retención y ciclo de vida | VALIDADA | 2026-07-29 | — |
-| 19 | Capacidad y panel | VALIDADA | 2026-07-29 | — |
-| 20 | Research Lab | VALIDADA | 2026-07-29 | — |
-| 21 | Simulador maker | VALIDADA | 2026-07-29 | — |
-| 22 | Panel AMA completo | VALIDADA | 2026-07-29 | — |
-| 23 | SHADOW | VALIDADA | 2026-07-29 | — |
-| 24 | Executor Revolut X bloqueado | VALIDADA | 2026-07-29 | — |
-| 25 | Seguridad y recovery | VALIDADA | 2026-07-29 | — |
+| 1 | Contratos y dominio | EN_VALIDACION | 2026-07-30 | PostgreSQL desechable |
+| 2A | Perfiles, políticas, fuentes y tiempo | EN_VALIDACION | 2026-07-30 | Corrección contratos Seed |
+| 2B | Point-in-time y calidad | EN_VALIDACION | 2026-07-30 | SHA-256 real |
+| 2C | Precio canónico | EN_VALIDACION | 2026-07-30 | — |
+| 2D | Coin Metrics | EN_VALIDACION | 2026-07-30 | Freshness derivada |
+| 2E | Bitcoin Core | EN_VALIDACION | 2026-07-30 | — |
+| 2F | Ethereum (eras, ETH/BTC filter) | EN_VALIDACION | 2026-07-30 | ATR 3,5 / 5 cierres |
+| 2G | Macro (FRED, vintages) | EN_VALIDACION | 2026-07-30 | — |
+| 2H | ETF (SEC holdings) | EN_VALIDACION | 2026-07-30 | — |
+| 2I | Derivados (CME, funding) | EN_VALIDACION | 2026-07-30 | — |
+| 2J | L2 y DeFi | EN_VALIDACION | 2026-07-30 | — |
+| 2K | Dataset manifests | EN_VALIDACION | 2026-07-30 | SHA-256 real |
+| 2L | Replay readiness | EN_VALIDACION | 2026-07-30 | Validación completa |
+| 3 | Cartera Global backend | SCAFFOLD | 2026-07-30 | Persistencia real |
+| 4 | Ledger y atribución | SCAFFOLD | 2026-07-30 | Persistencia real |
+| 5 | Reservas y coordinación | SCAFFOLD | 2026-07-30 | Persistencia real |
+| 6 | UI Cartera Global | SCAFFOLD | 2026-07-30 | Backend coherente |
+| 7 | Dominio AMA persistente | SCAFFOLD | 2026-07-30 | Repositorio real |
+| 8 | AMA Mandate Studio | EN_VALIDACION | 2026-07-30 | Asset + envelope |
+| 9 | HWM y barra macro | EN_VALIDACION | 2026-07-30 | Umbral más exigente |
+| 10 | Motor determinista | EN_VALIDACION | 2026-07-30 | Hash, acumulación, límites |
+| 11 | Planificador adaptativo | EN_VALIDACION | 2026-07-30 | UTC, SIMULATE |
+| 12 | Portfolio AMA | SCAFFOLD | 2026-07-30 | Quantidades asset-neutral |
+| 13 | Protección del ciclo | EN_VALIDACION | 2026-07-30 | Drawdown != emergency |
+| 14 | Salidas y trailing | SCAFFOLD | 2026-07-30 | Hipótesis de laboratorio |
+| 15 | IA observadora | EN_VALIDACION | 2026-07-30 | RISK_DOWN_ONLY |
+| 16 | Logging estructurado | SCAFFOLD | 2026-07-30 | Persistencia real |
+| 17 | Eventos y auditoría | SCAFFOLD | 2026-07-30 | Persistencia real |
+| 18 | Retención y ciclo de vida | SCAFFOLD | 2026-07-30 | Evidencia protegida |
+| 19 | Capacidad y panel | SCAFFOLD | 2026-07-30 | Integración real |
+| 20 | Research Lab (AmaReplaySmokeSimulator) | SCAFFOLD_R1 | 2026-07-30 | Smoke simulator, no Research Lab completo |
+| 21 | Simulador maker (parametrizado) | SCAFFOLD_R1 | 2026-07-30 | Fees/postOnly/fillSimulated, SHA-256 IDs |
+| 22 | Panel AMA completo | SCAFFOLD | 2026-07-30 | Integración real |
+| 23 | SHADOW (readiness gate) | BLOQUEADO_R1 | 2026-07-30 | checkShadowReadiness: HWM, budget, price, coverage >= 90% |
+| 24 | Executor Revolut X bloqueado | BLOQUEADO | 2026-07-30 | REAL/SHADOW gates |
+| 25 | Seguridad y recovery | EN_VALIDACION | 2026-07-30 | — |
 | 26 | REAL_LIMITED | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
-| 27 | Validación final local | VALIDADA | 2026-07-29 | — |
+| 27 | Validación final local | R1_APLICADA | 2026-07-30 | Auditoría R1 creada, documentación actualizada |
 | 28 | Deploy staging | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 | 29 | Archivo | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 

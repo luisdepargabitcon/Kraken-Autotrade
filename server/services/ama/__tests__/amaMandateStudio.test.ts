@@ -15,11 +15,14 @@ import {
   rejectMandate,
   activateMandate,
   canTransitionToApprovalState,
+  getAssetEnvelope,
+  validateAgainstEnvelope,
 } from "../amaMandateStudio";
 import type { AmaMandateInput } from "../amaTypes";
 
 
 const makeInput = (overrides: Partial<AmaMandateInput> = {}): AmaMandateInput => ({
+  asset: "BTC",
   maxCapitalUsd: 10000,
   riskMandate: "PRUDENTE",
   accumulationStyle: "ADAPTATIVO",
@@ -67,13 +70,15 @@ describe("Fase 8 — Policy Resolver", () => {
     expect(params.spacingAtrMultiplier).toBe(3.0);
   });
 
-  it("resolves OPORTUNISTA with aggressive params", () => {
+  it("resolves OPORTUNISTA with aggressive params clamped to BTC envelope", () => {
     const params = resolvePolicyParameters(makeInput({ riskMandate: "OPORTUNISTA" }));
-    expect(params.mandatoryReservePct).toBe(10);
-    expect(params.maxSingleTranchePct).toBe(30);
+    // OPORTUNISTA would set 10% reserve, 30% tranche, 12 tranches
+    // but BTC envelope clamps to 25% reserve, 15% tranche, 6 tranches
+    expect(params.mandatoryReservePct).toBe(25);
+    expect(params.maxSingleTranchePct).toBe(15);
     expect(params.spacingAtrMultiplier).toBe(1.5);
     expect(params.requiredConfirmationStrength).toBe(1);
-    expect(params.maximumCandidateTranches).toBe(12);
+    expect(params.maximumCandidateTranches).toBe(6);
   });
 
   it("adjusts for ENTRAR_ANTES style", () => {
@@ -99,21 +104,23 @@ describe("Fase 8 — Policy Resolver", () => {
     expect(params.runnerPolicy).toBe("100_pct");
   });
 
-  it("sets absoluteSafetyCap to maxCapitalUsd", () => {
+  it("sets absoluteCapitalCapUsd to maxCapitalUsd", () => {
     const params = resolvePolicyParameters(makeInput({ maxCapitalUsd: 25000 }));
-    expect(params.absoluteSafetyCap).toBe(25000);
+    expect(params.absoluteCapitalCapUsd).toBe(25000);
   });
 });
 
 // ─── Preview ────────────────────────────────────────────────────────
 
 describe("Fase 8 — Mandate Preview", () => {
-  it("generates preview with warnings", () => {
+  it("generates preview with warnings — OPORTUNISTA clamped to BTC envelope", () => {
     const preview = generateMandatePreview(makeInput({ riskMandate: "OPORTUNISTA" }));
     expect(preview.warnings).toContain("Riesgo OPORTUNISTA: alta exposición por tranche");
-    expect(preview.estimatedMaxDeploymentUsd).toBe(9000); // 90% of 10000
-    expect(preview.estimatedReserveUsd).toBe(1000); // 10% of 10000
-    expect(preview.estimatedTrancheCount).toBe(12);
+    // OPORTUNISTA would be 90% deploy / 10% reserve / 12 tranches
+    // But BTC envelope clamps to 75% deploy / 25% reserve / 6 tranches
+    expect(preview.estimatedMaxDeploymentUsd).toBe(7500); // 75% of 10000
+    expect(preview.estimatedReserveUsd).toBe(2500); // 25% of 10000
+    expect(preview.estimatedTrancheCount).toBe(6);
   });
 
   it("warns on high capital", () => {
@@ -216,5 +223,84 @@ describe("Fase 8 — Approval Flow", () => {
     expect(canTransitionToApprovalState("DRAFT", "APPROVED")).toBe(false);
     expect(canTransitionToApprovalState("REJECTED", "DRAFT")).toBe(false);
     expect(canTransitionToApprovalState("ACTIVATED", "DRAFT")).toBe(false);
+  });
+});
+
+// ─── Asset Envelope Constraints ─────────────────────────────────────
+
+describe("R1 — Asset Envelope Constraints", () => {
+  it("BTC envelope has 25% reserve, 75% deploy, 6 tranches", () => {
+    const env = getAssetEnvelope("BTC");
+    expect(env.minReservePct).toBe(25);
+    expect(env.maxDeploymentPct).toBe(75);
+    expect(env.maxTrancheCount).toBe(6);
+  });
+
+  it("ETH envelope has 35% reserve, 65% deploy, 7 tranches", () => {
+    const env = getAssetEnvelope("ETH");
+    expect(env.minReservePct).toBe(35);
+    expect(env.maxDeploymentPct).toBe(65);
+    expect(env.maxTrancheCount).toBe(7);
+  });
+
+  it("OPORTUNISTA BTC is clamped to envelope — no 10% reserve, 90% deploy, 12 tranches", () => {
+    const params = resolvePolicyParameters(makeInput({ riskMandate: "OPORTUNISTA" }));
+    expect(params.mandatoryReservePct).toBe(25); // not 10
+    expect(params.maxCycleDeploymentPct).toBe(75); // not 90
+    expect(params.maxSingleTranchePct).toBe(15); // not 30
+    expect(params.maximumCandidateTranches).toBe(6); // not 12
+    expect(params.absoluteTrancheCountCap).toBe(6); // not 12
+  });
+
+  it("OPORTUNISTA ETH is clamped to ETH envelope", () => {
+    const params = resolvePolicyParameters(makeInput({ asset: "ETH", riskMandate: "OPORTUNISTA" }));
+    expect(params.mandatoryReservePct).toBe(35); // not 10
+    expect(params.maxCycleDeploymentPct).toBe(65); // not 90
+    expect(params.maximumCandidateTranches).toBe(7); // not 12
+  });
+
+  it("validateAgainstEnvelope returns ACTIVE_POLICY for PRUDENTE BTC", () => {
+    const params = resolvePolicyParameters(makeInput({ riskMandate: "PRUDENTE" }));
+    const result = validateAgainstEnvelope(params, "BTC");
+    expect(result.withinEnvelope).toBe(true);
+    expect(result.classification).toBe("ACTIVE_POLICY");
+  });
+
+  it("validateAgainstEnvelope returns CHALLENGER_RESEARCH_ONLY for unclamped OPORTUNISTA", () => {
+    const params: import("../amaTypes").AmaResolvedParameters = {
+      mandatoryReservePct: 10,
+      maxSingleTranchePct: 30,
+      maxCycleDeploymentPct: 90,
+      maxWeeklyDeploymentPct: 30,
+      maxMonthlyDeploymentPct: 60,
+      minimumSpacingPct: 5,
+      spacingAtrMultiplier: 1.5,
+      minimumDataCoveragePct: 90,
+      requiredConfirmationStrength: 1,
+      cooldownPolicy: "1_daily",
+      maximumCandidateTranches: 12,
+      absoluteSafetyCap: 10000,
+      absoluteCapitalCapUsd: 10000,
+      absoluteTrancheCountCap: 12,
+      spreadTolerancePct: 0.5,
+      crossVenueBasisTolerancePct: 1.0,
+      profitRecoveryPolicy: "trailing",
+      deRiskPolicy: "gradual",
+      runnerPolicy: "50_pct",
+      trailingPolicy: "atr_based",
+      thesisInvalidationPolicy: "strict",
+      asset: "BTC",
+    };
+    const result = validateAgainstEnvelope(params, "BTC");
+    expect(result.withinEnvelope).toBe(false);
+    expect(result.classification).toBe("CHALLENGER_RESEARCH_ONLY");
+    expect(result.violations.length).toBeGreaterThan(0);
+  });
+
+  it("ETH does not use BTC envelope", () => {
+    const btcEnv = getAssetEnvelope("BTC");
+    const ethEnv = getAssetEnvelope("ETH");
+    expect(ethEnv.minReservePct).not.toBe(btcEnv.minReservePct);
+    expect(ethEnv.maxDeploymentPct).not.toBe(btcEnv.maxDeploymentPct);
   });
 });

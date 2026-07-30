@@ -17,6 +17,69 @@ import type {
 } from "./amaTypes";
 import { AMA_STRATEGY_VERSION } from "./amaTypes";
 import { createPolicy, activatePolicy, supersedePolicy } from "./amaDomainPersistent";
+import { BTC_SEED_POLICY, ETH_SEED_POLICY } from "./amaSeedTypes";
+
+// ─── Asset Envelope ──────────────────────────────────────────────────
+
+export interface AssetEnvelope {
+  minReservePct: number;
+  maxDeploymentPct: number;
+  maxTrancheCount: number;
+  maxSingleTranchePct: number;
+}
+
+export function getAssetEnvelope(asset: "BTC" | "ETH"): AssetEnvelope {
+  if (asset === "BTC") {
+    return {
+      minReservePct: BTC_SEED_POLICY.capitalReservePct,
+      maxDeploymentPct: BTC_SEED_POLICY.capitalDeploymentPct,
+      maxTrancheCount: BTC_SEED_POLICY.trancheCount,
+      maxSingleTranchePct: 15,
+    };
+  }
+  return {
+    minReservePct: ETH_SEED_POLICY.capitalReservePct,
+    maxDeploymentPct: ETH_SEED_POLICY.capitalDeploymentPct,
+    maxTrancheCount: ETH_SEED_POLICY.trancheCount,
+    maxSingleTranchePct: 15,
+  };
+}
+
+export interface EnvelopeValidationResult {
+  withinEnvelope: boolean;
+  violations: string[];
+  classification: "ACTIVE_POLICY" | "CHALLENGER_RESEARCH_ONLY";
+}
+
+export function validateAgainstEnvelope(
+  params: AmaResolvedParameters,
+  asset: "BTC" | "ETH",
+): EnvelopeValidationResult {
+  const envelope = getAssetEnvelope(asset);
+  const violations: string[] = [];
+
+  if (params.mandatoryReservePct < envelope.minReservePct) {
+    violations.push(`RESERVE_BELOW_ENVELOPE: ${params.mandatoryReservePct}% < ${envelope.minReservePct}%`);
+  }
+  if (params.maxCycleDeploymentPct > envelope.maxDeploymentPct) {
+    violations.push(`DEPLOYMENT_ABOVE_ENVELOPE: ${params.maxCycleDeploymentPct}% > ${envelope.maxDeploymentPct}%`);
+  }
+  if (params.maximumCandidateTranches > envelope.maxTrancheCount) {
+    violations.push(`TRANCHE_COUNT_ABOVE_ENVELOPE: ${params.maximumCandidateTranches} > ${envelope.maxTrancheCount}`);
+  }
+  if (params.absoluteTrancheCountCap > envelope.maxTrancheCount) {
+    violations.push(`TRANCHE_CAP_ABOVE_ENVELOPE: ${params.absoluteTrancheCountCap} > ${envelope.maxTrancheCount}`);
+  }
+  if (params.maxSingleTranchePct > envelope.maxSingleTranchePct) {
+    violations.push(`SINGLE_TRANCHE_ABOVE_ENVELOPE: ${params.maxSingleTranchePct}% > ${envelope.maxSingleTranchePct}%`);
+  }
+
+  return {
+    withinEnvelope: violations.length === 0,
+    violations,
+    classification: violations.length === 0 ? "ACTIVE_POLICY" : "CHALLENGER_RESEARCH_ONLY",
+  };
+}
 
 // ─── Mandate Validation ─────────────────────────────────────────────
 
@@ -64,6 +127,8 @@ export function resolvePolicyParameters(
     cooldownPolicy: "1_daily",
     maximumCandidateTranches: 6,
     absoluteSafetyCap: input.maxCapitalUsd,
+    absoluteCapitalCapUsd: input.maxCapitalUsd,
+    absoluteTrancheCountCap: 6,
     spreadTolerancePct: 0.5,
     crossVenueBasisTolerancePct: 1.0,
     profitRecoveryPolicy: "trailing",
@@ -71,6 +136,7 @@ export function resolvePolicyParameters(
     runnerPolicy: "50_pct",
     trailingPolicy: "atr_based",
     thesisInvalidationPolicy: "strict",
+    asset: input.asset,
   };
 
   // Adjust based on risk mandate
@@ -83,6 +149,7 @@ export function resolvePolicyParameters(
       baseParams.spacingAtrMultiplier = 4.0;
       baseParams.requiredConfirmationStrength = 5;
       baseParams.maximumCandidateTranches = 4;
+      baseParams.absoluteTrancheCountCap = 4;
       break;
     case "PRUDENTE":
       baseParams.mandatoryReservePct = 25;
@@ -91,6 +158,7 @@ export function resolvePolicyParameters(
       baseParams.spacingAtrMultiplier = 3.0;
       baseParams.requiredConfirmationStrength = 3;
       baseParams.maximumCandidateTranches = 6;
+      baseParams.absoluteTrancheCountCap = 6;
       break;
     case "EQUILIBRADO":
       baseParams.mandatoryReservePct = 20;
@@ -99,6 +167,7 @@ export function resolvePolicyParameters(
       baseParams.spacingAtrMultiplier = 2.5;
       baseParams.requiredConfirmationStrength = 2;
       baseParams.maximumCandidateTranches = 8;
+      baseParams.absoluteTrancheCountCap = 8;
       break;
     case "DINAMICO":
       baseParams.mandatoryReservePct = 15;
@@ -107,6 +176,7 @@ export function resolvePolicyParameters(
       baseParams.spacingAtrMultiplier = 2.0;
       baseParams.requiredConfirmationStrength = 2;
       baseParams.maximumCandidateTranches = 10;
+      baseParams.absoluteTrancheCountCap = 10;
       break;
     case "OPORTUNISTA":
       baseParams.mandatoryReservePct = 10;
@@ -115,7 +185,26 @@ export function resolvePolicyParameters(
       baseParams.spacingAtrMultiplier = 1.5;
       baseParams.requiredConfirmationStrength = 1;
       baseParams.maximumCandidateTranches = 12;
+      baseParams.absoluteTrancheCountCap = 12;
       break;
+  }
+
+  // Clamp to asset envelope — parameters outside envelope are capped, not silently passed
+  const envelope = getAssetEnvelope(input.asset);
+  if (baseParams.mandatoryReservePct < envelope.minReservePct) {
+    baseParams.mandatoryReservePct = envelope.minReservePct;
+  }
+  if (baseParams.maxCycleDeploymentPct > envelope.maxDeploymentPct) {
+    baseParams.maxCycleDeploymentPct = envelope.maxDeploymentPct;
+  }
+  if (baseParams.maximumCandidateTranches > envelope.maxTrancheCount) {
+    baseParams.maximumCandidateTranches = envelope.maxTrancheCount;
+  }
+  if (baseParams.absoluteTrancheCountCap > envelope.maxTrancheCount) {
+    baseParams.absoluteTrancheCountCap = envelope.maxTrancheCount;
+  }
+  if (baseParams.maxSingleTranchePct > envelope.maxSingleTranchePct) {
+    baseParams.maxSingleTranchePct = envelope.maxSingleTranchePct;
   }
 
   // Adjust based on accumulation style
@@ -156,6 +245,10 @@ export function generateMandatePreview(
   const warnings: string[] = [];
 
   if (input.riskMandate === "OPORTUNISTA") {
+    const envelopeCheck = validateAgainstEnvelope(params, input.asset);
+    if (!envelopeCheck.withinEnvelope) {
+      warnings.push(`OPORTUNISTA clamped to asset envelope: ${envelopeCheck.violations.join(", ")}`);
+    }
     warnings.push("Riesgo OPORTUNISTA: alta exposición por tranche");
   }
   if (input.autonomyLevel === "AUTOPILOT") {

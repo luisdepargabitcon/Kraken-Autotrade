@@ -9,10 +9,45 @@
 
 import type { AmaMode, AmaTrancheCandidate } from "./amaTypes";
 import { isModeReal } from "./amaTypes";
+import { createHash } from "crypto";
 
 // ─── SHADOW Mode (Fase 23) ──────────────────────────────────────────
 
 export type ShadowStatus = "PENDING" | "SIMULATED_EXECUTED" | "SIMULATED_FILLED" | "SIMULATED_REJECTED" | "EXPIRED";
+
+export interface ShadowReadiness {
+  ready: boolean;
+  blockers: string[];
+}
+
+export function checkShadowReadiness(
+  mode: AmaMode,
+  hasHwm: boolean,
+  hasBudget: boolean,
+  hasCurrentPrice: boolean,
+  dataCoveragePct: number,
+  minimumDataCoveragePct: number,
+): ShadowReadiness {
+  const blockers: string[] = [];
+
+  if (mode !== "SHADOW") {
+    blockers.push("MODE_IS_NOT_SHADOW");
+  }
+  if (!hasHwm) {
+    blockers.push("NO_HIGH_WATER_MARK");
+  }
+  if (!hasBudget) {
+    blockers.push("NO_BUDGET_ALLOCATED");
+  }
+  if (!hasCurrentPrice) {
+    blockers.push("NO_CURRENT_PRICE");
+  }
+  if (dataCoveragePct < minimumDataCoveragePct) {
+    blockers.push(`DATA_COVERAGE_BELOW_MINIMUM:${dataCoveragePct}%<${minimumDataCoveragePct}%`);
+  }
+
+  return { ready: blockers.length === 0, blockers };
+}
 
 export interface ShadowOrder {
   orderId: string;
@@ -38,8 +73,10 @@ export function createShadowOrder(
   currentPrice: number,
 ): ShadowOrder {
   const quantity = tranche.amountUsd / currentPrice;
+  const payload = JSON.stringify({ cycleId, trancheId: tranche.trancheId, pair, price: currentPrice, amountUsd: tranche.amountUsd });
+  const hash = createHash("sha256").update(payload).digest("hex").slice(0, 12);
   return {
-    orderId: `shadow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    orderId: `shadow-${hash}`,
     cycleId,
     trancheId: tranche.trancheId,
     pair,
@@ -166,6 +203,11 @@ export function validateOrderIntent(
     errors.push("REAL_MODE_NOT_AUTHORIZED_FOR_EXECUTOR");
   }
 
+  // Force LIMIT_MAKER only — no taker orders
+  if (intent.type === "LIMIT_TAKER") {
+    errors.push("LIMIT_TAKER_NOT_ALLOWED_AMA_MAKER_ONLY");
+  }
+
   // Validate price within spread tolerance
   const priceDiffPct = Math.abs((intent.price - currentPrice) / currentPrice) * 100;
   if (priceDiffPct > spreadTolerancePct) {
@@ -204,12 +246,14 @@ export function executeOrderIntent(
   }
 
   // Simulate execution (no real orders)
+  const payload = JSON.stringify({ intentId: intent.intentId, pair: intent.pair, price: intent.price, quantity: intent.quantity });
+  const simId = createHash("sha256").update(payload).digest("hex").slice(0, 12);
   return {
     intentId: intent.intentId,
     status: "COMPLETED",
     reason: "SIMULATED_EXECUTION",
     executedAt: new Date().toISOString(),
-    exchangeOrderId: `sim-${Date.now()}`,
+    exchangeOrderId: `sim-${simId}`,
   };
 }
 
@@ -276,7 +320,7 @@ export interface RecoveryProcedure {
 
 export function createKillSwitchRecovery(): RecoveryProcedure {
   return {
-    procedureId: `recovery-kill-switch-${Date.now()}`,
+    procedureId: "recovery-kill-switch",
     type: "KILL_SWITCH",
     steps: [
       "1. Verify kill switch is active",
@@ -291,7 +335,7 @@ export function createKillSwitchRecovery(): RecoveryProcedure {
 
 export function createReconciliationRecovery(): RecoveryProcedure {
   return {
-    procedureId: `recovery-reconciliation-${Date.now()}`,
+    procedureId: "recovery-reconciliation",
     type: "RECONCILIATION",
     steps: [
       "1. Export current portfolio state",
@@ -306,7 +350,7 @@ export function createReconciliationRecovery(): RecoveryProcedure {
 
 export function createKeyRotationRecovery(): RecoveryProcedure {
   return {
-    procedureId: `recovery-key-rotation-${Date.now()}`,
+    procedureId: "recovery-key-rotation",
     type: "KEY_ROTATION",
     steps: [
       "1. Generate new API key pair",

@@ -35,6 +35,8 @@ const makeParams = (): AmaResolvedParameters => ({
   cooldownPolicy: "1_daily",
   maximumCandidateTranches: 6,
   absoluteSafetyCap: 10000,
+  absoluteCapitalCapUsd: 10000,
+  absoluteTrancheCountCap: 6,
   spreadTolerancePct: 0.5,
   crossVenueBasisTolerancePct: 1.0,
   profitRecoveryPolicy: "trailing",
@@ -42,6 +44,7 @@ const makeParams = (): AmaResolvedParameters => ({
   runnerPolicy: "50_pct",
   trailingPolicy: "atr_based",
   thesisInvalidationPolicy: "strict",
+  asset: "BTC",
 });
 
 const makeInput = (overrides: Partial<TranchePlanInput> = {}): TranchePlanInput => ({
@@ -202,13 +205,13 @@ describe("Fase 11 — Eligibility Filter", () => {
 });
 
 describe("Fase 11 — Adaptive Decision", () => {
-  it("returns EXECUTE when all checks pass", () => {
+  it("returns SIMULATE when all checks pass (no real execution)", () => {
     const input = makeInput();
     const plan = planTranches(input, [45000])!;
     const cooldown = createCooldownState("1_daily");
     const period = createPeriodLimitState();
     const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
-    expect(decision.action).toBe("EXECUTE");
+    expect(decision.action).toBe("SIMULATE");
     expect(decision.reason).toBe("ALL_CHECKS_PASSED");
   });
 

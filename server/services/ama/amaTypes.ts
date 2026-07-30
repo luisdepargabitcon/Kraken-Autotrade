@@ -8,6 +8,8 @@
  * Safety: REAL_LIMITED and REAL_FULL modes are LOCKED until explicit authorization.
  */
 
+import type { AssetSymbol } from "./amaSeedTypes";
+
 // ─── Identity ────────────────────────────────────────────────────────
 
 export const AMA_DISPLAY_NAME = "AMA — Acumulación Macro Adaptativa";
@@ -349,6 +351,7 @@ export interface AmaMarketView {
 }
 
 export interface AmaMandateInput {
+  asset: AssetSymbol;
   maxCapitalUsd: number;
   riskMandate: RiskMandate;
   accumulationStyle: AccumulationStyle;
@@ -383,7 +386,9 @@ export interface AmaResolvedParameters {
   requiredConfirmationStrength: number;
   cooldownPolicy: string;
   maximumCandidateTranches: number;
-  absoluteSafetyCap: number;
+  absoluteSafetyCap: number; // deprecated alias
+  absoluteCapitalCapUsd: number;
+  absoluteTrancheCountCap: number;
   spreadTolerancePct: number;
   crossVenueBasisTolerancePct: number;
   profitRecoveryPolicy: string;
@@ -391,6 +396,7 @@ export interface AmaResolvedParameters {
   runnerPolicy: string;
   trailingPolicy: string;
   thesisInvalidationPolicy: string;
+  asset: AssetSymbol;
 }
 
 export interface AmaTranchePlan {
@@ -417,6 +423,7 @@ export interface AmaTrancheCandidate {
 
 export interface AmaCycle {
   cycleId: string;
+  asset: AssetSymbol;
   pair: string;
   mode: AmaMode;
   state: AmaState;
@@ -431,8 +438,9 @@ export interface AmaCycle {
   deployedUsd: number;
   reservedUsd: number;
   freeUsd: number;
-  btcAccumulated: number;
+  accumulatedQuantity: number;
   averageCostBasis: number | null;
+  activePolicyId: string | null;
   createdAt: string;
   closedAt: string | null;
 }
@@ -444,7 +452,7 @@ export interface AmaTranche {
   status: OrderIntentStatus;
   plannedAmountUsd: number;
   executedAmountUsd: number;
-  btcQuantity: number;
+  assetQuantity: number;
   fillPrice: number | null;
   costBasis: number | null;
   sleeveAllocation: SleeveType;
@@ -460,7 +468,7 @@ export interface AmaPortfolioSummary {
   deployedUsd: number;
   reservedUsd: number;
   freeUsd: number;
-  btcAccumulated: number;
+  accumulatedQuantity: number;
   averageCostBasis: number | null;
   currentValueUsd: number | null;
   unrealizedPnlUsd: number | null;
@@ -470,7 +478,7 @@ export interface AmaPortfolioSummary {
 
 export interface AmaSleeveSummary {
   sleeve: SleeveType;
-  btcQuantity: number;
+  assetQuantity: number;
   realizedQuantity: number;
   remainingQuantity: number;
   costBasisUsd: number;

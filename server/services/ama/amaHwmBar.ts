@@ -74,25 +74,33 @@ export function computeATRPercentage(
 export function bootstrapHWM(
   dailyCloses: { timestamp: string; close: number }[],
   requiredConfirmations: number = 3,
+  reversalThresholdPct: number = 5.0,
 ): HighWaterMark | null {
   if (dailyCloses.length === 0) return null;
 
+  // Sort by timestamp ascending (UTC)
+  const sorted = [...dailyCloses].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+
   // Find the highest close
   let highestIdx = 0;
-  for (let i = 1; i < dailyCloses.length; i++) {
-    if (dailyCloses[i].close > dailyCloses[highestIdx].close) {
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].close > sorted[highestIdx].close) {
       highestIdx = i;
     }
   }
 
-  const subsequentCloses = dailyCloses.slice(highestIdx + 1);
+  const hwmPrice = sorted[highestIdx].close;
+  const hwmTimestamp = sorted[highestIdx].timestamp;
+  const subsequentCloses = sorted.slice(highestIdx + 1);
 
   // Not enough subsequent closes to confirm → CANDIDATE
   if (subsequentCloses.length < requiredConfirmations) {
     return {
-      hwmId: `hwm-${Date.now()}`,
-      price: dailyCloses[highestIdx].close,
-      timestamp: dailyCloses[highestIdx].timestamp,
+      hwmId: `hwm-${hwmTimestamp}`,
+      price: hwmPrice,
+      timestamp: hwmTimestamp,
       status: "CANDIDATE",
       confirmedAt: null,
       supersededBy: null,
@@ -101,24 +109,28 @@ export function bootstrapHWM(
 
   // Check if the high is confirmed by `requiredConfirmations` subsequent lower closes
   const confirmationCloses = subsequentCloses.slice(0, requiredConfirmations);
-  const allLower = confirmationCloses.every((c) => c.close < dailyCloses[highestIdx].close);
+  const allLower = confirmationCloses.every((c) => c.close < hwmPrice);
 
-  if (allLower) {
+  // Require actual reversal: at least one close must be below the reversal threshold
+  const reversalThresholdPrice = hwmPrice * (1 - reversalThresholdPct / 100);
+  const hasReversal = confirmationCloses.some((c) => c.close <= reversalThresholdPrice);
+
+  if (allLower && hasReversal) {
     return {
-      hwmId: `hwm-${Date.now()}`,
-      price: dailyCloses[highestIdx].close,
-      timestamp: dailyCloses[highestIdx].timestamp,
+      hwmId: `hwm-${hwmTimestamp}`,
+      price: hwmPrice,
+      timestamp: hwmTimestamp,
       status: "CONFIRMED",
       confirmedAt: confirmationCloses[requiredConfirmations - 1].timestamp,
       supersededBy: null,
     };
   }
 
-  // Enough subsequent closes but not all are lower → CONFIRMING
+  // Enough subsequent closes but not all are lower or no reversal → CONFIRMING
   return {
-    hwmId: `hwm-${Date.now()}`,
-    price: dailyCloses[highestIdx].close,
-    timestamp: dailyCloses[highestIdx].timestamp,
+    hwmId: `hwm-${hwmTimestamp}`,
+    price: hwmPrice,
+    timestamp: hwmTimestamp,
     status: "CONFIRMING",
     confirmedAt: null,
     supersededBy: null,
@@ -231,13 +243,23 @@ export function computeReversalThreshold(
   atr: number | null,
   atrMultiplier: number = 3.0,
   fixedThresholdPct: number = 10.0,
+  minimumReversalPct: number = 5.0,
+  maximumReversalPct: number = 50.0,
 ): number {
-  if (atr === null || hwm <= 0) {
-    return hwm * (1 - fixedThresholdPct / 100);
+  if (hwm <= 0) return hwm;
+
+  let thresholdPct: number;
+  if (atr === null || atr <= 0) {
+    thresholdPct = fixedThresholdPct;
+  } else {
+    const atrPct = (atr / hwm) * 100;
+    thresholdPct = Math.max(fixedThresholdPct, atrPct * atrMultiplier);
   }
-  const atrThreshold = hwm - (atr * atrMultiplier);
-  const fixedThreshold = hwm * (1 - fixedThresholdPct / 100);
-  return Math.max(atrThreshold, fixedThreshold);
+
+  // Clamp between minimum and maximum
+  thresholdPct = Math.max(minimumReversalPct, Math.min(thresholdPct, maximumReversalPct));
+
+  return hwm * (1 - thresholdPct / 100);
 }
 
 export function isReversalConfirmed(

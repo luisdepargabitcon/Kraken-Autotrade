@@ -6,6 +6,7 @@
  * Same inputs → same outputs, always.
  */
 
+import { createHash } from "crypto";
 import type {
   AmaResolvedParameters,
   AmaTranchePlan,
@@ -86,7 +87,9 @@ export function generateTrancheCandidate(
   const trancheType = zoneToTrancheType(macroZone);
   const baseTrancheUsd = budgetUsd * (parameters.maxSingleTranchePct / 100);
   const zoneMultiplier = getZoneMultiplier(macroZone);
-  const amountUsd = baseTrancheUsd * zoneMultiplier;
+  const rawAmountUsd = baseTrancheUsd * zoneMultiplier;
+  // maxSingleTranchePct is a HARD limit — cannot exceed it
+  const amountUsd = Math.min(rawAmountUsd, baseTrancheUsd);
 
   const eligibilityReasons: string[] = [];
   let eligible = true;
@@ -110,14 +113,19 @@ export function generateTrancheCandidate(
     eligibilityReasons.push("MANDATORY_RESERVE_WOULD_BE_VIOLATED");
   }
 
-  if (input.deployedUsd + amountUsd > parameters.absoluteSafetyCap) {
+  if (input.deployedUsd + amountUsd > parameters.absoluteCapitalCapUsd) {
     eligible = false;
-    eligibilityReasons.push("ABSOLUTE_SAFETY_CAP_EXCEEDED");
+    eligibilityReasons.push("ABSOLUTE_CAPITAL_CAP_EXCEEDED");
   }
 
   if (trancheIndex >= parameters.maximumCandidateTranches) {
     eligible = false;
     eligibilityReasons.push("MAX_CANDIDATE_TRANCHES_REACHED");
+  }
+
+  if (trancheIndex >= parameters.absoluteTrancheCountCap) {
+    eligible = false;
+    eligibilityReasons.push("ABSOLUTE_TRANCHE_COUNT_CAP_EXCEEDED");
   }
 
   return {
@@ -164,8 +172,10 @@ export function planTranches(
   const mandatoryReserveUsd = budgetUsd * (parameters.mandatoryReservePct / 100);
   const deployableCycleCapitalUsd = budgetUsd - mandatoryReserveUsd;
 
+  const planId = computePlanId(cycleId, candidates);
+
   return {
-    planId: `plan-${cycleId}-${Date.now()}`,
+    planId,
     cycleId,
     version: 1,
     plannedPurchaseCount: eligibleCount,
@@ -205,8 +215,8 @@ export function validateGuardrails(
       violations.push(`CYCLE_DEPLOYMENT_EXCEEDS_LIMIT:${candidate.trancheId}`);
     }
 
-    if (deployedUsd + candidate.amountUsd > parameters.absoluteSafetyCap) {
-      violations.push(`ABSOLUTE_SAFETY_CAP_EXCEEDED:${candidate.trancheId}`);
+    if (deployedUsd + candidate.amountUsd > parameters.absoluteCapitalCapUsd) {
+      violations.push(`ABSOLUTE_CAPITAL_CAP_EXCEEDED:${candidate.trancheId}`);
     }
 
     if (candidate.activationZone === "CAPITULACION" || candidate.activationZone === "CAPITULACION_EXTREMA") {
@@ -227,15 +237,40 @@ export function validateGuardrails(
 
 // ─── Deterministic Hash ─────────────────────────────────────────────
 
+function canonicalPlanPayload(plan: AmaTranchePlan): string {
+  const payload = {
+    cycleId: plan.cycleId,
+    version: plan.version,
+    plannedPurchaseCount: plan.plannedPurchaseCount,
+    candidateTranches: plan.candidateTranches.map((c) => ({
+      trancheId: c.trancheId,
+      type: c.type,
+      activationZone: c.activationZone,
+      activationDropPct: c.activationDropPct,
+      amountUsd: Number(c.amountUsd.toFixed(8)),
+      eligible: c.eligible,
+    })),
+    mandatoryReserveUsd: Number(plan.mandatoryReserveUsd.toFixed(8)),
+    deployableCycleCapitalUsd: Number(plan.deployableCycleCapitalUsd.toFixed(8)),
+  };
+  return JSON.stringify(payload);
+}
+
+function computePlanId(cycleId: string, candidates: AmaTrancheCandidate[]): string {
+  const payload = JSON.stringify({
+    cycleId,
+    candidates: candidates.map((c) => ({
+      id: c.trancheId,
+      amt: Number(c.amountUsd.toFixed(8)),
+    })),
+  });
+  const hash = createHash("sha256").update(payload).digest("hex").slice(0, 16);
+  return `plan-${cycleId}-${hash}`;
+}
+
 export function computePlanHash(plan: AmaTranchePlan): string {
-  const data = [
-    plan.planId,
-    plan.cycleId,
-    plan.version,
-    plan.plannedPurchaseCount,
-    plan.candidateTranches.map((c) => `${c.trancheId}:${c.amountUsd.toFixed(2)}`).join(","),
-  ].join("|");
-  return `hash-${data.length}-${data.slice(0, 32)}`;
+  const payload = canonicalPlanPayload(plan);
+  return createHash("sha256").update(payload).digest("hex");
 }
 
 // ─── Idempotency Check ──────────────────────────────────────────────

@@ -11,6 +11,7 @@ import { computeDropPct, getMacroZone } from "./amaHwmBar";
 import { planTranches, type TranchePlanInput } from "./amaDeterministicEngine";
 import { computeCyclePnL } from "./amaPortfolio";
 import { computeCycleHealth } from "./amaAIObserver";
+import { createHash } from "crypto";
 
 // ─── Capacity Planning (Fase 19) ────────────────────────────────────
 
@@ -63,10 +64,13 @@ export function computeCapacity(
   };
 }
 
-// ─── Research Lab (Fase 20) ─────────────────────────────────────────
+// ─── Research Lab — AmaReplaySmokeSimulator (Fase 20) ──────────────
+// Reclassified: this is NOT a backtest engine. It is a replay smoke simulator
+// that verifies the deterministic engine produces sane output on historical data.
+// No look-ahead. No real execution. No order placement.
 
-export interface BacktestResult {
-  backtestId: string;
+export interface ReplaySmokeResult {
+  smokeId: string;
   pair: string;
   startPrice: number;
   endPrice: number;
@@ -74,23 +78,27 @@ export interface BacktestResult {
   maxDropPct: number;
   tranchesExecuted: number;
   totalDeployedUsd: number;
-  btcAccumulated: number;
+  accumulatedQuantity: number;
   averageCostBasis: number;
   finalValueUsd: number;
   pnlUsd: number;
   pnlPct: number;
   reserveMaintained: boolean;
+  classification: "REPLAY_SMOKE";
 }
 
-export function runBacktest(
+// Backward compat alias
+export type BacktestResult = ReplaySmokeResult;
+
+export function runReplaySmoke(
   pair: string,
   prices: number[],
   hwmPrice: number,
   parameters: AmaResolvedParameters,
   budgetUsd: number,
-): BacktestResult {
+): ReplaySmokeResult {
   let deployedUsd = 0;
-  let btcAccumulated = 0;
+  let accumulatedQuantity = 0;
   let previousTranchePrice: number | null = null;
   let tranchesExecuted = 0;
   let maxDropPct = 0;
@@ -123,21 +131,24 @@ export function runBacktest(
     if (deployedUsd + trancheUsd > maxCycleDeploymentUsd) continue;
 
     deployedUsd += trancheUsd;
-    btcAccumulated += trancheUsd / price;
+    accumulatedQuantity += trancheUsd / price;
     previousTranchePrice = price;
     tranchesExecuted++;
   }
 
-  const averageCostBasis = btcAccumulated > 0 ? deployedUsd / btcAccumulated : 0;
+  const averageCostBasis = accumulatedQuantity > 0 ? deployedUsd / accumulatedQuantity : 0;
   const endPrice = prices[prices.length - 1] ?? 0;
-  const finalValueUsd = btcAccumulated * endPrice;
+  const finalValueUsd = accumulatedQuantity * endPrice;
   const pnlUsd = finalValueUsd - deployedUsd;
   const pnlPct = deployedUsd > 0 ? (pnlUsd / deployedUsd) * 100 : 0;
   const totalDropPct = computeDropPct(hwmPrice, endPrice);
   const reserveMaintained = (budgetUsd - deployedUsd) >= mandatoryReserveUsd;
 
+  const payload = JSON.stringify({ pair, hwmPrice, budgetUsd, tranchesExecuted, deployedUsd, prices: prices.length });
+  const smokeId = `smoke-${createHash("sha256").update(payload).digest("hex").slice(0, 12)}`;
+
   return {
-    backtestId: `bt-${Date.now()}`,
+    smokeId,
     pair,
     startPrice: hwmPrice,
     endPrice,
@@ -145,14 +156,18 @@ export function runBacktest(
     maxDropPct,
     tranchesExecuted,
     totalDeployedUsd: deployedUsd,
-    btcAccumulated,
+    accumulatedQuantity,
     averageCostBasis,
     finalValueUsd,
     pnlUsd,
     pnlPct,
     reserveMaintained,
+    classification: "REPLAY_SMOKE",
   };
 }
+
+// Backward compat alias
+export const runBacktest = runReplaySmoke;
 
 function getZoneMultiplierForBacktest(zone: string): number {
   switch (zone) {
@@ -168,6 +183,9 @@ function getZoneMultiplierForBacktest(zone: string): number {
 }
 
 // ─── Maker Simulator (Fase 21) ──────────────────────────────────────
+// Parametrized fees, post-only enforcement, no-fill simulation.
+// This simulator does NOT place real orders. It simulates what would happen
+// if a maker order were placed and filled.
 
 export interface MakerSimulationResult {
   simulationId: string;
@@ -183,6 +201,8 @@ export interface MakerSimulationResult {
   grossPnlUsd: number;
   netPnlUsd: number;
   spreadCapturedUsd: number;
+  postOnly: boolean;
+  fillSimulated: boolean; // Always false — we never assume fill in simulation
 }
 
 export function simulateMakerOrder(
@@ -192,6 +212,7 @@ export function simulateMakerOrder(
   quantity: number,
   makerFeePct: number = 0.16,
   takerFeePct: number = 0.26,
+  postOnly: boolean = true,
 ): MakerSimulationResult {
   const notionalUsd = quantity * entryPrice;
   const makerFeeUsd = notionalUsd * (makerFeePct / 100);
@@ -203,10 +224,13 @@ export function simulateMakerOrder(
 
   const grossPnlUsd = exitNotionalUsd - notionalUsd;
   const netPnlUsd = grossPnlUsd - makerFeeUsd - exitMakerFeeUsd;
-  const spreadCapturedUsd = feeSavingsUsd; // Maker captures the spread difference
+  const spreadCapturedUsd = feeSavingsUsd;
+
+  const payload = JSON.stringify({ pair, entryPrice, exitPrice, quantity, makerFeePct });
+  const simulationId = `sim-${createHash("sha256").update(payload).digest("hex").slice(0, 12)}`;
 
   return {
-    simulationId: `sim-${Date.now()}`,
+    simulationId,
     pair,
     entryPrice,
     exitPrice,
@@ -219,6 +243,8 @@ export function simulateMakerOrder(
     grossPnlUsd,
     netPnlUsd,
     spreadCapturedUsd,
+    postOnly,
+    fillSimulated: false, // Never assume fill in simulation
   };
 }
 

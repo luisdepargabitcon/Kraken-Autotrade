@@ -38,10 +38,13 @@ import {
 // ─── Asset Profiles ─────────────────────────────────────────────────
 
 describe("AMA Seed V2.2 — Asset Profiles", () => {
-  it("BTC profile is LAB_ONLY", () => {
+  it("BTC profile is LAB_ONLY with separated venues", () => {
     expect(BTC_ASSET_PROFILE.asset).toBe("BTC");
     expect(BTC_ASSET_PROFILE.mode).toBe("LAB_ONLY");
-    expect(BTC_ASSET_PROFILE.executionVenue).toBe("KRAKEN_SPOT");
+    expect(BTC_ASSET_PROFILE.analysisVenue).toBe("KRAKEN");
+    expect(BTC_ASSET_PROFILE.futureExecutionVenue).toBe("REVOLUT_X");
+    expect(BTC_ASSET_PROFILE.executionEnabled).toBe(false);
+    expect(BTC_ASSET_PROFILE.executionStatus).toBe("LAB_ONLY");
     expect(BTC_ASSET_PROFILE.pipeline).toBe("BTC_LAB");
   });
 
@@ -52,10 +55,13 @@ describe("AMA Seed V2.2 — Asset Profiles", () => {
     expect(BTC_ASSET_PROFILE.canUseRevolutX).toBe(false);
   });
 
-  it("ETH profile is RESEARCH_ONLY with DISABLED venue", () => {
+  it("ETH profile is RESEARCH_ONLY with separated venues", () => {
     expect(ETH_ASSET_PROFILE.asset).toBe("ETH");
     expect(ETH_ASSET_PROFILE.mode).toBe("RESEARCH_ONLY");
-    expect(ETH_ASSET_PROFILE.executionVenue).toBe("DISABLED");
+    expect(ETH_ASSET_PROFILE.analysisVenue).toBe("KRAKEN");
+    expect(ETH_ASSET_PROFILE.futureExecutionVenue).toBe("DISABLED");
+    expect(ETH_ASSET_PROFILE.executionEnabled).toBe(false);
+    expect(ETH_ASSET_PROFILE.executionStatus).toBe("RESEARCH_ONLY");
     expect(ETH_ASSET_PROFILE.pipeline).toBe("ETH_RESEARCH");
   });
 
@@ -112,9 +118,10 @@ describe("AMA Seed V2.2 — Seed Policy ETH", () => {
     expect(ETH_SEED_POLICY.asset).toBe("ETH");
   });
 
-  it("is RESEARCH_ONLY with DISABLED venue and 7 tranches", () => {
+  it("is RESEARCH_ONLY with DISABLED future venue and 7 tranches", () => {
     expect(ETH_SEED_POLICY.status).toBe("RESEARCH_ONLY");
-    expect(ETH_SEED_POLICY.executionVenue).toBe("DISABLED");
+    expect(ETH_SEED_POLICY.futureExecutionVenue).toBe("DISABLED");
+    expect(ETH_SEED_POLICY.executionEnabled).toBe(false);
     expect(ETH_SEED_POLICY.trancheCount).toBe(7);
   });
 

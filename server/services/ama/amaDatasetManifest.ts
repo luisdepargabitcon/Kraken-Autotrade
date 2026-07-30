@@ -5,6 +5,8 @@
  * Integrity validation.
  */
 
+import { createHash } from "crypto";
+
 export interface DatasetManifest {
   datasetId: string;
   schemaHash: string;
@@ -34,13 +36,7 @@ export function validateManifest(manifest: DatasetManifest): string[] {
 }
 
 export function computeSchemaHash(schema: string): string {
-  let hash = 0;
-  for (let i = 0; i < schema.length; i++) {
-    const char = schema.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return `schema_${Math.abs(hash)}`;
+  return `schema_${createHash("sha256").update(schema).digest("hex").slice(0, 16)}`;
 }
 
 export function isManifestCoherent(

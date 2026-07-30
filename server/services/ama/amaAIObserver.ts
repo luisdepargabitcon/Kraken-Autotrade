@@ -7,6 +7,7 @@
 
 import type { AmaCycle, AmaResolvedParameters } from "./amaTypes";
 import { computeDropPct, computeReboundPct, getMacroZone } from "./amaHwmBar";
+import { createHash } from "crypto";
 
 // ─── Insight Types ──────────────────────────────────────────────────
 
@@ -15,7 +16,9 @@ export type InsightType =
   | "WARNING"
   | "ALERT"
   | "OPPORTUNITY"
-  | "ANOMALY";
+  | "ANOMALY"
+  | "RISK_DOWN_ONLY"
+  | "AI_INSUFFICIENT_DATA";
 
 export type InsightCategory =
   | "PRICE_ACTION"
@@ -24,6 +27,18 @@ export type InsightCategory =
   | "CYCLE_HEALTH"
   | "DATA_QUALITY"
   | "MARKET_CONDITION";
+
+// ─── Deterministic ID generation ────────────────────────────────────
+
+function deterministicInsightId(
+  cycleId: string,
+  category: InsightCategory,
+  index: number,
+): string {
+  const payload = JSON.stringify({ cycleId, category, index });
+  const hash = createHash("sha256").update(payload).digest("hex").slice(0, 12);
+  return `insight-${hash}`;
+}
 
 export interface AIInsight {
   insightId: string;
@@ -122,17 +137,33 @@ export function generateCycleInsights(
 ): AIInsight[] {
   const insights: AIInsight[] = [];
   const now = new Date().toISOString();
+  let insightIndex = 0;
 
-  const dropPct = cycle.highWaterMark !== null
-    ? computeDropPct(cycle.highWaterMark, currentPrice)
-    : 0;
+  // AI_INSUFFICIENT_DATA: validate minimum data before generating insights
+  if (cycle.highWaterMark === null || cycle.budgetUsd <= 0 || currentPrice <= 0) {
+    insights.push({
+      insightId: deterministicInsightId(cycle.cycleId, "DATA_QUALITY", insightIndex++),
+      type: "AI_INSUFFICIENT_DATA",
+      category: "DATA_QUALITY",
+      title: "Insufficient data for analysis",
+      message: "Cycle lacks HWM, budget, or current price — cannot generate reliable insights",
+      cycleId: cycle.cycleId,
+      confidence: 1.0,
+      actionable: false,
+      recommendation: "Wait for data pipeline to provide HWM, budget, and price before acting.",
+      createdAt: now,
+    });
+    return insights;
+  }
+
+  const dropPct = computeDropPct(cycle.highWaterMark, currentPrice);
   const macroZone = getMacroZone(dropPct);
 
-  // Price action insight
+  // Price action insight — RISK_DOWN_ONLY for significant drops (no sell recommendation)
   if (dropPct > 0) {
     insights.push({
-      insightId: `insight-${Date.now()}-1`,
-      type: dropPct > 40 ? "ALERT" : dropPct > 20 ? "WARNING" : "INFO",
+      insightId: deterministicInsightId(cycle.cycleId, "PRICE_ACTION", insightIndex++),
+      type: dropPct > 40 ? "RISK_DOWN_ONLY" : dropPct > 20 ? "WARNING" : "INFO",
       category: "PRICE_ACTION",
       title: `Drop: ${dropPct.toFixed(1)}%`,
       message: `Current price ${currentPrice} is ${dropPct.toFixed(1)}% below HWM ${cycle.highWaterMark}`,
@@ -140,9 +171,9 @@ export function generateCycleInsights(
       confidence: 0.95,
       actionable: dropPct > 20,
       recommendation: dropPct > 40
-        ? "Consider de-risking or emergency exit"
+        ? "RISK_DOWN_ONLY: reduce tranche size, increase confirmations. Do NOT sell — price drawdown is expected in accumulation."
         : dropPct > 20
-        ? "Monitor closely, pause new tranches if needed"
+        ? "Monitor closely, reduce tranche size if needed. No selling."
         : null,
       createdAt: now,
     });
@@ -151,7 +182,7 @@ export function generateCycleInsights(
   // Macro zone insight
   if (macroZone === "VALUE" || macroZone === "DEEP_VALUE") {
     insights.push({
-      insightId: `insight-${Date.now()}-2`,
+      insightId: deterministicInsightId(cycle.cycleId, "MARKET_CONDITION", insightIndex++),
       type: "OPPORTUNITY",
       category: "MARKET_CONDITION",
       title: `Value zone: ${macroZone}`,
@@ -166,15 +197,15 @@ export function generateCycleInsights(
 
   if (macroZone === "CAPITULACION" || macroZone === "CAPITULACION_EXTREMA") {
     insights.push({
-      insightId: `insight-${Date.now()}-3`,
-      type: "ALERT",
+      insightId: deterministicInsightId(cycle.cycleId, "MARKET_CONDITION", insightIndex++),
+      type: "RISK_DOWN_ONLY",
       category: "MARKET_CONDITION",
       title: `Capitulation zone: ${macroZone}`,
       message: `Price is in ${macroZone} zone, high risk but potential max opportunity`,
       cycleId: cycle.cycleId,
       confidence: 0.8,
       actionable: true,
-      recommendation: "Exercise extreme caution. Check thesis validity.",
+      recommendation: "RISK_DOWN_ONLY: exercise extreme caution. Reduce size, increase confirmations. Do NOT sell.",
       createdAt: now,
     });
   }
@@ -183,7 +214,7 @@ export function generateCycleInsights(
   const budgetAnomaly = detectBudgetAnomaly(cycle);
   if (budgetAnomaly.isAnomaly) {
     insights.push({
-      insightId: `insight-${Date.now()}-4`,
+      insightId: deterministicInsightId(cycle.cycleId, "BUDGET_UTILIZATION", insightIndex++),
       type: budgetAnomaly.severity === "HIGH" ? "ALERT" : "WARNING",
       category: "BUDGET_UTILIZATION",
       title: budgetAnomaly.anomalyType!,
@@ -203,7 +234,7 @@ export function generateCycleInsights(
     const reboundPct = computeReboundPct(cycle.cycleLow, currentPrice);
     if (reboundPct > 15) {
       insights.push({
-        insightId: `insight-${Date.now()}-5`,
+        insightId: deterministicInsightId(cycle.cycleId, "CYCLE_HEALTH", insightIndex++),
         type: "INFO",
         category: "CYCLE_HEALTH",
         title: `Rebound: ${reboundPct.toFixed(1)}%`,
@@ -221,7 +252,7 @@ export function generateCycleInsights(
   const reserveUsd = cycle.budgetUsd * (parameters.mandatoryReservePct / 100);
   if (cycle.freeUsd < reserveUsd) {
     insights.push({
-      insightId: `insight-${Date.now()}-6`,
+      insightId: deterministicInsightId(cycle.cycleId, "RISK_MANAGEMENT", insightIndex++),
       type: "ALERT",
       category: "RISK_MANAGEMENT",
       title: "Mandatory reserve breached",
@@ -274,7 +305,7 @@ export function computeCycleHealth(
   // Factor 3: Position profitability
   const avgCost = cycle.averageCostBasis;
   let profitScore = 50;
-  if (avgCost !== null && avgCost > 0 && cycle.btcAccumulated > 0) {
+  if (avgCost !== null && avgCost > 0 && cycle.accumulatedQuantity > 0) {
     const profitPct = ((currentPrice - avgCost) / avgCost) * 100;
     profitScore = Math.max(0, Math.min(100, 50 + profitPct * 2));
   }

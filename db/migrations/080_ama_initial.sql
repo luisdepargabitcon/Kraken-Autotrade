@@ -1,10 +1,13 @@
 -- 080_ama_initial.sql — AMA Phase 1: Core domain tables
 -- Idempotent: uses CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS
+-- Safety: NOT_REGISTERED, NOT_AUTOAPPLY, NOT_APPLIED_STAGING, NOT_APPLIED_PRODUCTION
+-- Asset-aware: accumulated_quantity / asset_quantity replace btc-specific names.
 
 -- ─── AMA User Mandates ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ama_user_mandates (
   id SERIAL PRIMARY KEY,
   mandate_id TEXT NOT NULL UNIQUE,
+  asset TEXT NOT NULL DEFAULT 'BTC',
   max_capital_usd NUMERIC(18, 2) NOT NULL DEFAULT 0 CHECK (max_capital_usd >= 0),
   risk_mandate TEXT NOT NULL DEFAULT 'PRUDENTE',
   accumulation_style TEXT NOT NULL DEFAULT 'ADAPTATIVO',
@@ -20,6 +23,7 @@ CREATE TABLE IF NOT EXISTS ama_resolved_policies (
   id SERIAL PRIMARY KEY,
   policy_id TEXT NOT NULL UNIQUE,
   mandate_id TEXT NOT NULL,
+  asset TEXT NOT NULL DEFAULT 'BTC',
   policy_version INTEGER NOT NULL DEFAULT 1 CHECK (policy_version > 0),
   user_inputs JSONB NOT NULL,
   resolved_parameters JSONB NOT NULL,
@@ -38,6 +42,7 @@ CREATE TABLE IF NOT EXISTS ama_resolved_policies (
 CREATE TABLE IF NOT EXISTS ama_cycles (
   id SERIAL PRIMARY KEY,
   cycle_id TEXT NOT NULL UNIQUE,
+  asset TEXT NOT NULL DEFAULT 'BTC',
   pair TEXT NOT NULL DEFAULT 'BTC/USD',
   mode TEXT NOT NULL DEFAULT 'OFF',
   state TEXT NOT NULL DEFAULT 'OBSERVING',
@@ -51,7 +56,7 @@ CREATE TABLE IF NOT EXISTS ama_cycles (
   budget_usd NUMERIC(18, 2) NOT NULL DEFAULT 0 CHECK (budget_usd >= 0),
   deployed_usd NUMERIC(18, 2) NOT NULL DEFAULT 0 CHECK (deployed_usd >= 0),
   reserved_usd NUMERIC(18, 2) NOT NULL DEFAULT 0 CHECK (reserved_usd >= 0),
-  btc_accumulated NUMERIC(18, 8) NOT NULL DEFAULT 0 CHECK (btc_accumulated >= 0),
+  accumulated_quantity NUMERIC(18, 8) NOT NULL DEFAULT 0 CHECK (accumulated_quantity >= 0),
   average_cost_basis NUMERIC(18, 8),
   active_policy_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -60,6 +65,7 @@ CREATE TABLE IF NOT EXISTS ama_cycles (
 
 CREATE INDEX IF NOT EXISTS idx_ama_cycles_state ON ama_cycles (state);
 CREATE INDEX IF NOT EXISTS idx_ama_cycles_pair ON ama_cycles (pair);
+CREATE INDEX IF NOT EXISTS idx_ama_cycles_asset ON ama_cycles (asset);
 
 -- ─── AMA Tranche Plans ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ama_tranche_plans (
@@ -85,7 +91,7 @@ CREATE TABLE IF NOT EXISTS ama_tranches (
   status TEXT NOT NULL DEFAULT 'CREATED',
   planned_amount_usd NUMERIC(18, 2) NOT NULL DEFAULT 0 CHECK (planned_amount_usd >= 0),
   executed_amount_usd NUMERIC(18, 2) NOT NULL DEFAULT 0 CHECK (executed_amount_usd >= 0),
-  btc_quantity NUMERIC(18, 8) NOT NULL DEFAULT 0 CHECK (btc_quantity >= 0),
+  asset_quantity NUMERIC(18, 8) NOT NULL DEFAULT 0 CHECK (asset_quantity >= 0),
   fill_price NUMERIC(18, 8),
   cost_basis NUMERIC(18, 8),
   sleeve_allocation TEXT NOT NULL DEFAULT 'RECOVER_PRINCIPAL',
@@ -97,6 +103,7 @@ CREATE TABLE IF NOT EXISTS ama_tranches (
 
 CREATE INDEX IF NOT EXISTS idx_ama_tranches_cycle ON ama_tranches (cycle_id);
 CREATE INDEX IF NOT EXISTS idx_ama_tranches_status ON ama_tranches (status);
+CREATE INDEX IF NOT EXISTS idx_ama_tranches_type ON ama_tranches (type);
 
 -- ─── AMA State Transitions ──────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ama_state_transitions (
@@ -183,7 +190,14 @@ CREATE INDEX IF NOT EXISTS idx_portfolio_ledger_created ON portfolio_ledger_entr
 -- No ON DELETE CASCADE on any financial, audit, or inventory table.
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_policies_mandate') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_policies_mandate'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_resolved_policies'
+  ) THEN
     ALTER TABLE ama_resolved_policies
       ADD CONSTRAINT fk_ama_policies_mandate
       FOREIGN KEY (mandate_id) REFERENCES ama_user_mandates(mandate_id)
@@ -192,7 +206,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_plans_cycle') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_plans_cycle'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_tranche_plans'
+  ) THEN
     ALTER TABLE ama_tranche_plans
       ADD CONSTRAINT fk_ama_plans_cycle
       FOREIGN KEY (cycle_id) REFERENCES ama_cycles(cycle_id)
@@ -201,7 +222,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_tranches_cycle') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_tranches_cycle'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_tranches'
+  ) THEN
     ALTER TABLE ama_tranches
       ADD CONSTRAINT fk_ama_tranches_cycle
       FOREIGN KEY (cycle_id) REFERENCES ama_cycles(cycle_id)
@@ -210,7 +238,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_tranches_plan') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_tranches_plan'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_tranches'
+  ) THEN
     ALTER TABLE ama_tranches
       ADD CONSTRAINT fk_ama_tranches_plan
       FOREIGN KEY (plan_id) REFERENCES ama_tranche_plans(plan_id)
@@ -219,7 +254,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_transitions_cycle') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_transitions_cycle'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_state_transitions'
+  ) THEN
     ALTER TABLE ama_state_transitions
       ADD CONSTRAINT fk_ama_transitions_cycle
       FOREIGN KEY (cycle_id) REFERENCES ama_cycles(cycle_id)
@@ -228,7 +270,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_audit_cycle') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_audit_cycle'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_audit_events'
+  ) THEN
     ALTER TABLE ama_audit_events
       ADD CONSTRAINT fk_ama_audit_cycle
       FOREIGN KEY (cycle_id) REFERENCES ama_cycles(cycle_id)
@@ -237,7 +286,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_audit_tranche') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_audit_tranche'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_audit_events'
+  ) THEN
     ALTER TABLE ama_audit_events
       ADD CONSTRAINT fk_ama_audit_tranche
       FOREIGN KEY (tranche_id) REFERENCES ama_tranches(tranche_id)
@@ -246,7 +302,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_audit_mandate') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_audit_mandate'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_audit_events'
+  ) THEN
     ALTER TABLE ama_audit_events
       ADD CONSTRAINT fk_ama_audit_mandate
       FOREIGN KEY (mandate_id) REFERENCES ama_user_mandates(mandate_id)
@@ -255,7 +318,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ama_audit_policy') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_ama_audit_policy'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'ama_audit_events'
+  ) THEN
     ALTER TABLE ama_audit_events
       ADD CONSTRAINT fk_ama_audit_policy
       FOREIGN KEY (policy_id) REFERENCES ama_resolved_policies(policy_id)
@@ -264,7 +334,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_portfolio_ledger_cycle') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_portfolio_ledger_cycle'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'portfolio_ledger_entries'
+  ) THEN
     ALTER TABLE portfolio_ledger_entries
       ADD CONSTRAINT fk_portfolio_ledger_cycle
       FOREIGN KEY (cycle_id) REFERENCES ama_cycles(cycle_id)
@@ -273,7 +350,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_portfolio_ledger_tranche') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE con.conname = 'fk_portfolio_ledger_tranche'
+      AND ns.nspname = 'public'
+      AND rel.relname = 'portfolio_ledger_entries'
+  ) THEN
     ALTER TABLE portfolio_ledger_entries
       ADD CONSTRAINT fk_portfolio_ledger_tranche
       FOREIGN KEY (tranche_id) REFERENCES ama_tranches(tranche_id)

@@ -131,7 +131,7 @@ describe("AMA Service — Scaffold Safety", () => {
 
     it("returns zero BTC accumulated", () => {
       const p = amaService.getPortfolioSummary();
-      expect(p.btcAccumulated).toBe(0);
+      expect(p.accumulatedQuantity).toBe(0);
     });
 
     it("returns empty sleeves", () => {
@@ -165,6 +165,7 @@ describe("AMA Service — Scaffold Safety", () => {
 
     it("saveMandateDraft returns a mandateId", () => {
       const result = amaService.saveMandateDraft({
+        asset: "BTC",
         maxCapitalUsd: 1000,
         riskMandate: "PRUDENTE",
         accumulationStyle: "ADAPTATIVO",

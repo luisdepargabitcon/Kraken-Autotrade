@@ -9,11 +9,14 @@ import {
   createAmaHolding,
   validateAmaBudget,
   aggregateAmaPortfolio,
+  canMutateCycle,
+  freezeCycleBudget,
 } from "../amaPortfolio";
 import type { AmaCycle } from "../amaTypes";
 
 const makeCycle = (overrides: Partial<AmaCycle> = {}): AmaCycle => ({
   cycleId: "cycle-1",
+  asset: "BTC",
   pair: "BTC/USD",
   mode: "REPLAY",
   state: "ACCUMULATING",
@@ -28,8 +31,9 @@ const makeCycle = (overrides: Partial<AmaCycle> = {}): AmaCycle => ({
   deployedUsd: 3000,
   reservedUsd: 500,
   freeUsd: 6500,
-  btcAccumulated: 0.06,
+  accumulatedQuantity: 0.06,
   averageCostBasis: 50000,
+  activePolicyId: null,
   createdAt: "2026-07-29T00:00:00Z",
   closedAt: null,
   ...overrides,
@@ -73,7 +77,7 @@ describe("Fase 12 — Budget Allocation", () => {
 
 describe("Fase 12 — Cycle PnL", () => {
   it("computes PnL with current price", () => {
-    const cycle = makeCycle({ deployedUsd: 3000, btcAccumulated: 0.06 });
+    const cycle = makeCycle({ deployedUsd: 3000, accumulatedQuantity: 0.06 });
     const pnl = computeCyclePnL(cycle, 55000);
     expect(pnl.totalInvestedUsd).toBe(3000);
     expect(pnl.currentValueUsd).toBe(3300); // 0.06 * 55000
@@ -90,7 +94,7 @@ describe("Fase 12 — Cycle PnL", () => {
   });
 
   it("handles zero BTC accumulated", () => {
-    const cycle = makeCycle({ btcAccumulated: 0, deployedUsd: 0 });
+    const cycle = makeCycle({ accumulatedQuantity: 0, deployedUsd: 0 });
     const pnl = computeCyclePnL(cycle, 50000);
     expect(pnl.currentValueUsd).toBe(0);
     expect(pnl.unrealizedPnlUsd).toBe(0);
@@ -105,7 +109,7 @@ describe("Fase 12 — Cycle PnL", () => {
 
 describe("Fase 12 — AMA Holding", () => {
   it("creates holding from cycle", () => {
-    const cycle = makeCycle({ btcAccumulated: 0.06, deployedUsd: 3000 });
+    const cycle = makeCycle({ accumulatedQuantity: 0.06, deployedUsd: 3000 });
     const holding = createAmaHolding(cycle, 55000);
     expect(holding.asset).toBe("BTC");
     expect(holding.exchange).toBe("kraken");
@@ -145,9 +149,9 @@ describe("Fase 12 — Budget Validation", () => {
 describe("Fase 12 — Portfolio Aggregation", () => {
   it("aggregates multiple cycles", () => {
     const cycles = [
-      makeCycle({ cycleId: "c1", budgetUsd: 10000, deployedUsd: 3000, reservedUsd: 500, freeUsd: 6500, btcAccumulated: 0.06, state: "ACCUMULATING" }),
-      makeCycle({ cycleId: "c2", budgetUsd: 5000, deployedUsd: 2000, reservedUsd: 0, freeUsd: 3000, btcAccumulated: 0.04, state: "ACCUMULATING", pair: "BTC/USD" }),
-      makeCycle({ cycleId: "c3", budgetUsd: 3000, deployedUsd: 3000, reservedUsd: 0, freeUsd: 0, btcAccumulated: 0.05, state: "CLOSED", pair: "BTC/USD" }),
+      makeCycle({ cycleId: "c1", budgetUsd: 10000, deployedUsd: 3000, reservedUsd: 500, freeUsd: 6500, accumulatedQuantity: 0.06, state: "ACCUMULATING" }),
+      makeCycle({ cycleId: "c2", budgetUsd: 5000, deployedUsd: 2000, reservedUsd: 0, freeUsd: 3000, accumulatedQuantity: 0.04, state: "ACCUMULATING", pair: "BTC/USD" }),
+      makeCycle({ cycleId: "c3", budgetUsd: 3000, deployedUsd: 3000, reservedUsd: 0, freeUsd: 0, accumulatedQuantity: 0.05, state: "CLOSED", pair: "BTC/USD" }),
     ];
     const prices = new Map([["BTC/USD", 55000]]);
     const summary = aggregateAmaPortfolio(cycles, prices);
@@ -155,7 +159,7 @@ describe("Fase 12 — Portfolio Aggregation", () => {
     expect(summary.totalDeployedUsd).toBe(8000);
     expect(summary.totalReservedUsd).toBe(500);
     expect(summary.totalFreeUsd).toBe(9500);
-    expect(summary.totalBtcAccumulated).toBeCloseTo(0.15, 8);
+    expect(summary.totalAccumulatedQuantity).toBeCloseTo(0.15, 8);
     expect(summary.totalCurrentValueUsd).toBeCloseTo(8250, 0); // 0.15 * 55000
     expect(summary.totalUnrealizedPnlUsd).toBeCloseTo(250, 0); // 8250 - 8000
     expect(summary.activeCycleCount).toBe(2);
@@ -169,9 +173,49 @@ describe("Fase 12 — Portfolio Aggregation", () => {
   });
 
   it("handles missing price", () => {
-    const cycles = [makeCycle({ btcAccumulated: 0.06 })];
+    const cycles = [makeCycle({ accumulatedQuantity: 0.06 })];
     const summary = aggregateAmaPortfolio(cycles, new Map());
     expect(summary.totalCurrentValueUsd).toBe(0);
     expect(summary.totalUnrealizedPnlUsd).toBe(-3000); // 0 - 3000
+  });
+});
+
+describe("Fase 12 — Mutation Guards (block mutables on closed cycles)", () => {
+  it("canMutateCycle returns true for active cycle", () => {
+    expect(canMutateCycle(makeCycle({ state: "ACCUMULATING" }))).toBe(true);
+    expect(canMutateCycle(makeCycle({ state: "OBSERVING" }))).toBe(true);
+    expect(canMutateCycle(makeCycle({ state: "VALUE_ZONE" }))).toBe(true);
+  });
+
+  it("canMutateCycle returns false for closed cycle", () => {
+    expect(canMutateCycle(makeCycle({ state: "CLOSED" }))).toBe(false);
+  });
+
+  it("canMutateCycle returns false for abandoned cycle", () => {
+    expect(canMutateCycle(makeCycle({ state: "ABANDONED_NO_INVENTORY" }))).toBe(false);
+  });
+
+  it("freezeCycleBudget freezes closed cycle allocation", () => {
+    const cycle = makeCycle({ state: "CLOSED" });
+    const alloc = allocateAmaBudget(cycle, 10000, 25);
+    const frozen = freezeCycleBudget(cycle, alloc);
+    expect(frozen.modeBudget.status).toBe("DISABLED");
+    expect(frozen.availableForDeployment).toBe(0);
+  });
+
+  it("freezeCycleBudget does not freeze active cycle", () => {
+    const cycle = makeCycle({ state: "ACCUMULATING" });
+    const alloc = allocateAmaBudget(cycle, 10000, 25);
+    const frozen = freezeCycleBudget(cycle, alloc);
+    expect(frozen.modeBudget.status).toBe("ACTIVE");
+    expect(frozen.availableForDeployment).toBe(7500);
+  });
+
+  it("freezeCycleBudget does not mutate original allocation", () => {
+    const cycle = makeCycle({ state: "CLOSED" });
+    const alloc = allocateAmaBudget(cycle, 10000, 25);
+    const frozen = freezeCycleBudget(cycle, alloc);
+    expect(frozen).not.toBe(alloc);
+    expect(frozen.modeBudget).not.toBe(alloc.modeBudget);
   });
 });

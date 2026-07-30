@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  checkShadowReadiness,
   createShadowOrder,
   simulateFill,
   simulateReject,
@@ -44,7 +45,43 @@ const makeIntent = (overrides: Partial<OrderIntent> = {}): OrderIntent => ({
   ...overrides,
 });
 
-describe("Fase 23 — SHADOW Mode", () => {
+describe("Fase 23 — SHADOW Mode (readiness + deterministic IDs)", () => {
+  it("checkShadowReadiness blocks when mode is not SHADOW", () => {
+    const result = checkShadowReadiness("REPLAY", true, true, true, 95, 90);
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toContain("MODE_IS_NOT_SHADOW");
+  });
+
+  it("checkShadowReadiness blocks when no HWM", () => {
+    const result = checkShadowReadiness("SHADOW", false, true, true, 95, 90);
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toContain("NO_HIGH_WATER_MARK");
+  });
+
+  it("checkShadowReadiness blocks when no budget", () => {
+    const result = checkShadowReadiness("SHADOW", true, false, true, 95, 90);
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toContain("NO_BUDGET_ALLOCATED");
+  });
+
+  it("checkShadowReadiness blocks when no price", () => {
+    const result = checkShadowReadiness("SHADOW", true, true, false, 95, 90);
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toContain("NO_CURRENT_PRICE");
+  });
+
+  it("checkShadowReadiness blocks when data coverage below minimum", () => {
+    const result = checkShadowReadiness("SHADOW", true, true, true, 80, 90);
+    expect(result.ready).toBe(false);
+    expect(result.blockers.some((b) => b.startsWith("DATA_COVERAGE_BELOW_MINIMUM"))).toBe(true);
+  });
+
+  it("checkShadowReadiness passes when all conditions met", () => {
+    const result = checkShadowReadiness("SHADOW", true, true, true, 95, 90);
+    expect(result.ready).toBe(true);
+    expect(result.blockers).toHaveLength(0);
+  });
+
   it("creates shadow order from tranche", () => {
     const order = createShadowOrder("c1", makeTranche(), "BTC/USD", 45000);
     expect(order.cycleId).toBe("c1");
@@ -116,6 +153,13 @@ describe("Fase 24 — Executor", () => {
     expect(result.errors).toContain("REAL_MODE_NOT_AUTHORIZED_FOR_EXECUTOR");
   });
 
+  it("blocks LIMIT_TAKER — AMA is maker-only", () => {
+    const intent = makeIntent({ type: "LIMIT_TAKER" });
+    const result = validateOrderIntent(intent, "REPLAY", 0.5, 45000);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("LIMIT_TAKER_NOT_ALLOWED_AMA_MAKER_ONLY");
+  });
+
   it("blocks price outside spread tolerance", () => {
     const intent = makeIntent({ price: 46000 }); // 2.2% from 45000
     const result = validateOrderIntent(intent, "REPLAY", 0.5, 45000);
@@ -138,11 +182,19 @@ describe("Fase 24 — Executor", () => {
     expect(result.errors).toContain("INVALID_AMOUNT");
   });
 
-  it("executes valid intent in simulation", () => {
+  it("executes valid intent in simulation with deterministic ID", () => {
     const intent = makeIntent();
     const result = executeOrderIntent(intent, "REPLAY", 0.5, 45000);
     expect(result.status).toBe("COMPLETED");
     expect(result.exchangeOrderId).not.toBeNull();
+    expect(result.exchangeOrderId).toMatch(/^sim-[a-f0-9]{12}$/);
+  });
+
+  it("execution ID is deterministic (same input = same ID)", () => {
+    const intent = makeIntent();
+    const result1 = executeOrderIntent(intent, "REPLAY", 0.5, 45000);
+    const result2 = executeOrderIntent(intent, "REPLAY", 0.5, 45000);
+    expect(result1.exchangeOrderId).toBe(result2.exchangeOrderId);
   });
 
   it("fails invalid intent", () => {
@@ -178,11 +230,12 @@ describe("Fase 25 — Security & Recovery", () => {
     expect(assessment.issues.length).toBe(2);
   });
 
-  it("creates kill switch recovery procedure", () => {
+  it("creates kill switch recovery procedure with deterministic ID", () => {
     const proc = createKillSwitchRecovery();
     expect(proc.type).toBe("KILL_SWITCH");
     expect(proc.requiresAuthorization).toBe(true);
     expect(proc.steps.length).toBeGreaterThan(0);
+    expect(proc.procedureId).toBe("recovery-kill-switch");
   });
 
   it("creates reconciliation recovery procedure", () => {

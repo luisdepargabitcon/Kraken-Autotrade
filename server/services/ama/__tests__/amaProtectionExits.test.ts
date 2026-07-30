@@ -7,11 +7,15 @@ import {
   assessCycleProtection,
   shouldBlockNewTranche,
   shouldTriggerEmergencyExit,
+  shouldSell,
+  shouldReduceSize,
+  shouldIncreaseConfirmations,
   determineExitPhase,
   computeTrailingStop,
   shouldTriggerTrailingStop,
   computeDistributionSize,
   createExitStrategy,
+  type CycleProtectionInput,
 } from "../amaProtectionExits";
 import type { AmaCycle, AmaResolvedParameters } from "../amaTypes";
 
@@ -28,6 +32,8 @@ const makeParams = (): AmaResolvedParameters => ({
   cooldownPolicy: "1_daily",
   maximumCandidateTranches: 6,
   absoluteSafetyCap: 10000,
+  absoluteCapitalCapUsd: 10000,
+  absoluteTrancheCountCap: 6,
   spreadTolerancePct: 0.5,
   crossVenueBasisTolerancePct: 1.0,
   profitRecoveryPolicy: "trailing",
@@ -35,10 +41,12 @@ const makeParams = (): AmaResolvedParameters => ({
   runnerPolicy: "50_pct",
   trailingPolicy: "atr_based",
   thesisInvalidationPolicy: "strict",
+  asset: "BTC",
 });
 
 const makeCycle = (overrides: Partial<AmaCycle> = {}): AmaCycle => ({
   cycleId: "c1",
+  asset: "BTC",
   pair: "BTC/USD",
   mode: "REPLAY",
   state: "ACCUMULATING",
@@ -53,79 +61,129 @@ const makeCycle = (overrides: Partial<AmaCycle> = {}): AmaCycle => ({
   deployedUsd: 3000,
   reservedUsd: 500,
   freeUsd: 6500,
-  btcAccumulated: 0.06,
+  accumulatedQuantity: 0.06,
   averageCostBasis: 50000,
+  activePolicyId: null,
   createdAt: "2026-07-29T00:00:00Z",
   closedAt: null,
   ...overrides,
 });
 
-describe("Fase 13 — Cycle Protection", () => {
+const makeProtectionInput = (overrides: Partial<CycleProtectionInput> = {}): CycleProtectionInput => ({
+  cycle: makeCycle(),
+  currentPrice: 46000,
+  parameters: makeParams(),
+  ...overrides,
+});
+
+describe("Fase 13 — Cycle Protection (R1: separated drawdown types)", () => {
   it("returns NONE for normal range", () => {
-    const cycle = makeCycle();
-    const assessment = assessCycleProtection(cycle, 46000, makeParams());
+    const assessment = assessCycleProtection(makeProtectionInput({ currentPrice: 46000 }));
     expect(assessment.action).toBe("NONE");
     expect(assessment.severity).toBe("LOW");
+    expect(assessment.drawdownType).toBe("PRICE_DRAWDOWN_EXPECTED");
   });
 
-  it("returns PAUSE for minor drawdown", () => {
-    const cycle = makeCycle();
-    const assessment = assessCycleProtection(cycle, 39000, makeParams()); // 22% drop
-    expect(assessment.action).toBe("PAUSE_ACCUMULATION");
-    expect(assessment.severity).toBe("LOW");
+  it("returns REDUCE_SIZE for minor price drawdown (20%+)", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ currentPrice: 39000 })); // 22% drop
+    expect(assessment.action).toBe("REDUCE_SIZE");
+    expect(assessment.drawdownType).toBe("PRICE_DRAWDOWN_EXPECTED");
+    expect(assessment.canSell).toBe(false);
   });
 
-  it("returns FREEZE for moderate drawdown", () => {
-    const cycle = makeCycle();
-    const assessment = assessCycleProtection(cycle, 34000, makeParams()); // 32% drop
-    expect(assessment.action).toBe("FREEZE_CYCLE");
-    expect(assessment.severity).toBe("MEDIUM");
+  it("returns INCREASE_CONFIRMATIONS for moderate price drawdown (30%+)", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ currentPrice: 34000 })); // 32% drop
+    expect(assessment.action).toBe("INCREASE_CONFIRMATIONS");
+    expect(assessment.drawdownType).toBe("PRICE_DRAWDOWN_EXPECTED");
+    expect(assessment.canSell).toBe(false);
   });
 
-  it("returns DE_RISK for significant drawdown", () => {
-    const cycle = makeCycle();
-    const assessment = assessCycleProtection(cycle, 29000, makeParams()); // 42% drop
-    expect(assessment.action).toBe("DE_RISK_TRIGGERED");
-    expect(assessment.severity).toBe("HIGH");
+  it("returns REDUCE_SIZE+INCREASE_CONFIRMATIONS for significant price drawdown (40%+)", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ currentPrice: 29000 })); // 42% drop
+    expect(assessment.action).toBe("REDUCE_SIZE");
+    expect(assessment.drawdownType).toBe("PRICE_DRAWDOWN_EXPECTED");
+    expect(assessment.canSell).toBe(false);
+    expect(assessment.canReduceSize).toBe(true);
+    expect(assessment.canIncreaseConfirmations).toBe(true);
   });
 
-  it("returns EMERGENCY_EXIT for severe drawdown", () => {
-    const cycle = makeCycle();
-    const assessment = assessCycleProtection(cycle, 24000, makeParams()); // 52% drop
+  it("price drawdown alone does NOT trigger EMERGENCY_EXIT even at 52%", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ currentPrice: 24000 })); // 52% drop
+    expect(assessment.action).not.toBe("EMERGENCY_EXIT");
+    expect(assessment.action).not.toBe("THESIS_INVALIDATED");
+    expect(assessment.canSell).toBe(false);
+  });
+
+  it("price drawdown alone does NOT trigger THESIS_INVALIDATED even at 64%", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ currentPrice: 18000 })); // 64% drop
+    expect(assessment.action).not.toBe("THESIS_INVALIDATED");
+    expect(assessment.canSell).toBe(false);
+  });
+
+  it("CUSTODY_RISK triggers EMERGENCY_EXIT with canSell=true", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ custodyRiskDetected: true }));
     expect(assessment.action).toBe("EMERGENCY_EXIT");
-    expect(assessment.severity).toBe("CRITICAL");
+    expect(assessment.drawdownType).toBe("CUSTODY_RISK");
+    expect(assessment.canSell).toBe(true);
   });
 
-  it("returns THESIS_INVALIDATED for extreme drawdown", () => {
-    const cycle = makeCycle();
-    const assessment = assessCycleProtection(cycle, 18000, makeParams(), 60); // 64% drop
-    expect(assessment.action).toBe("THESIS_INVALIDATED");
-    expect(assessment.severity).toBe("CRITICAL");
+  it("PROTOCOL_RISK triggers FREEZE_CYCLE", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ protocolRiskDetected: true }));
+    expect(assessment.action).toBe("FREEZE_CYCLE");
+    expect(assessment.drawdownType).toBe("PROTOCOL_RISK");
+    expect(assessment.canSell).toBe(false);
   });
 
-  it("does not trigger actions with no deployed capital", () => {
-    const cycle = makeCycle({ deployedUsd: 0, btcAccumulated: 0 });
-    const assessment = assessCycleProtection(cycle, 24000, makeParams()); // 52% drop
-    expect(assessment.action).toBe("NONE"); // No deployed capital, no protection needed
+  it("SYSTEMIC_RISK triggers DE_RISK_TRIGGERED", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ systemicRiskDetected: true }));
+    expect(assessment.action).toBe("DE_RISK_TRIGGERED");
+    expect(assessment.drawdownType).toBe("SYSTEMIC_RISK");
+    expect(assessment.canSell).toBe(false);
   });
 
-  it("shouldBlockNewTranche blocks except NONE and DE_RISK", () => {
-    expect(shouldBlockNewTranche({ action: "NONE", reason: "", severity: "LOW", details: "" })).toBe(false);
-    expect(shouldBlockNewTranche({ action: "DE_RISK_TRIGGERED", reason: "", severity: "HIGH", details: "" })).toBe(false);
-    expect(shouldBlockNewTranche({ action: "PAUSE_ACCUMULATION", reason: "", severity: "LOW", details: "" })).toBe(true);
-    expect(shouldBlockNewTranche({ action: "FREEZE_CYCLE", reason: "", severity: "MEDIUM", details: "" })).toBe(true);
+  it("DATA_FAILURE triggers PAUSE_ACCUMULATION", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ dataFailureDetected: true }));
+    expect(assessment.action).toBe("PAUSE_ACCUMULATION");
+    expect(assessment.drawdownType).toBe("DATA_FAILURE");
+    expect(assessment.canSell).toBe(false);
   });
 
-  it("shouldTriggerEmergencyExit for critical actions", () => {
-    expect(shouldTriggerEmergencyExit({ action: "EMERGENCY_EXIT", reason: "", severity: "CRITICAL", details: "" })).toBe(true);
-    expect(shouldTriggerEmergencyExit({ action: "THESIS_INVALIDATED", reason: "", severity: "CRITICAL", details: "" })).toBe(true);
-    expect(shouldTriggerEmergencyExit({ action: "NONE", reason: "", severity: "LOW", details: "" })).toBe(false);
+  it("does not trigger price drawdown actions with no deployed capital", () => {
+    const cycle = makeCycle({ deployedUsd: 0, accumulatedQuantity: 0 });
+    const assessment = assessCycleProtection(makeProtectionInput({ cycle, currentPrice: 24000 }));
+    expect(assessment.action).toBe("NONE");
+  });
+
+  it("shouldBlockNewTranche blocks FREEZE/PAUSE/EMERGENCY/THESIS only", () => {
+    const base = { reason: "", severity: "LOW" as const, details: "", drawdownType: "PRICE_DRAWDOWN_EXPECTED" as const, canSell: false, canPause: false, canReduceSize: false, canIncreaseConfirmations: false };
+    expect(shouldBlockNewTranche({ ...base, action: "NONE" })).toBe(false);
+    expect(shouldBlockNewTranche({ ...base, action: "REDUCE_SIZE" })).toBe(false);
+    expect(shouldBlockNewTranche({ ...base, action: "DE_RISK_TRIGGERED" })).toBe(false);
+    expect(shouldBlockNewTranche({ ...base, action: "PAUSE_ACCUMULATION" })).toBe(true);
+    expect(shouldBlockNewTranche({ ...base, action: "FREEZE_CYCLE" })).toBe(true);
+  });
+
+  it("shouldTriggerEmergencyExit for EMERGENCY_EXIT and THESIS_INVALIDATED", () => {
+    const base = { reason: "", severity: "CRITICAL" as const, details: "", drawdownType: "CUSTODY_RISK" as const, canSell: true, canPause: true, canReduceSize: true, canIncreaseConfirmations: false };
+    expect(shouldTriggerEmergencyExit({ ...base, action: "EMERGENCY_EXIT" })).toBe(true);
+    expect(shouldTriggerEmergencyExit({ ...base, action: "THESIS_INVALIDATED" })).toBe(true);
+    expect(shouldTriggerEmergencyExit({ ...base, action: "NONE" })).toBe(false);
+  });
+
+  it("price drawdown does not cause sell", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ currentPrice: 24000 })); // 52% drop
+    expect(shouldSell(assessment)).toBe(false);
+  });
+
+  it("custody risk causes sell", () => {
+    const assessment = assessCycleProtection(makeProtectionInput({ custodyRiskDetected: true }));
+    expect(shouldSell(assessment)).toBe(true);
   });
 });
 
 describe("Fase 14 — Exit Phase Determination", () => {
   it("returns EXITED when no BTC", () => {
-    const cycle = makeCycle({ btcAccumulated: 0 });
+    const cycle = makeCycle({ accumulatedQuantity: 0 });
     expect(determineExitPhase(cycle, 50000, makeParams())).toBe("EXITED");
   });
 
@@ -205,11 +263,11 @@ describe("Fase 14 — Distribution Size", () => {
 });
 
 describe("Fase 14 — Exit Strategy", () => {
-  it("creates exit strategy with correct defaults", () => {
+  it("creates exit strategy with parametrized values", () => {
     const cycle = makeCycle({ deployedUsd: 3000 });
     const strategy = createExitStrategy(cycle, makeParams());
-    expect(strategy.profitTargetUsd).toBe(4500); // 3000 * 1.5
-    expect(strategy.trailingStopPct).toBe(10);
+    expect(strategy.profitTargetUsd).toBe(4500); // 3000 * 1.5 (trailing policy)
+    expect(strategy.trailingStopPct).toBe(15); // atr_based = 15%
     expect(strategy.runnerPct).toBe(50);
     expect(strategy.distributionRate).toBe("GRADUAL");
   });

@@ -85,23 +85,23 @@ import {
 
 describe("AMA 2D — Coin Metrics", () => {
   it("GitHub Archive is enabled, research-only, no decision impact", () => {
-    expect(COIN_METRICS_TIERS.GITHUB_ARCHIVE.enabled).toBe(true);
-    expect(COIN_METRICS_TIERS.GITHUB_ARCHIVE.decisionImpactAllowed).toBe(false);
+    expect(COIN_METRICS_TIERS.COINMETRICS_GITHUB_ARCHIVE.enabled).toBe(true);
+    expect(COIN_METRICS_TIERS.COINMETRICS_GITHUB_ARCHIVE.decisionImpactAllowed).toBe(false);
   });
 
   it("Community API is disabled by default", () => {
-    expect(COIN_METRICS_TIERS.COMMUNITY_API.enabled).toBe(false);
+    expect(COIN_METRICS_TIERS.COINMETRICS_COMMUNITY_API.enabled).toBe(false);
   });
 
   it("Pro API is DISABLED", () => {
     expect(isCoinMetricsProEnabled()).toBe(false);
-    expect(COIN_METRICS_TIERS.PRO_API.licenseStatus).toBe("BLOCKED");
+    expect(COIN_METRICS_TIERS.COINMETRICS_PRO_API.licenseStatus).toBe("BLOCKED");
   });
 
   it("cannot impact decisions for any tier", () => {
-    expect(canCoinMetricsImpactDecisions("GITHUB_ARCHIVE")).toBe(false);
-    expect(canCoinMetricsImpactDecisions("COMMUNITY_API")).toBe(false);
-    expect(canCoinMetricsImpactDecisions("PRO_API")).toBe(false);
+    expect(canCoinMetricsImpactDecisions("COINMETRICS_GITHUB_ARCHIVE")).toBe(false);
+    expect(canCoinMetricsImpactDecisions("COINMETRICS_COMMUNITY_API")).toBe(false);
+    expect(canCoinMetricsImpactDecisions("COINMETRICS_PRO_API")).toBe(false);
   });
 
   it("creates snapshot with correct fields", () => {
@@ -388,9 +388,9 @@ describe("AMA 2K — Dataset Manifest", () => {
     })).toContain("TIME_RANGE_START_AFTER_END");
   });
 
-  it("computes schema hash", () => {
+  it("computes schema hash (SHA-256)", () => {
     const hash = computeSchemaHash("open,high,low,close,volume");
-    expect(hash).toMatch(/^schema_\d+$/);
+    expect(hash).toMatch(/^schema_[a-f0-9]{16}$/);
   });
 
   it("checks manifest coherence", () => {

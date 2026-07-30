@@ -683,7 +683,7 @@ AMA
 ├── AmaPreTradeRiskGate
 ├── AmaOrderExecutor
 ├── AmaReconciliationService
-├── AmaResearchLab
+├── AmaReplaySmokeSimulator
 ├── AmaMlChallenger
 ├── AmaLlmAnalyst
 ├── AmaAiRiskMonitor
@@ -731,8 +731,16 @@ Kraken será fuente de:
 ## Ejecución
 
 ```text
-executionVenue = REVOLUT_X
+futureExecutionVenue = REVOLUT_X  (BTC, target)
+executionEnabled     = false       (BTC, LAB_ONLY)
+executionStatus      = LAB_ONLY    (BTC)
+
+futureExecutionVenue = DISABLED    (ETH, RESEARCH_ONLY)
+executionEnabled     = false       (ETH)
+executionStatus      = RESEARCH_ONLY (ETH)
 ```
+
+> **R1 — Separación de venues canónica:** El campo `executionVenue` se renombra a `futureExecutionVenue` en el código. BTC tiene `analysisVenue = KRAKEN` y `futureExecutionVenue = REVOLUT_X` (no habilitada). ETH tiene `futureExecutionVenue = DISABLED`. Ambos tienen `executionEnabled = false`. Tests en `amaSeedTypes.test.ts` verifican cada campo independientemente.
 
 Revolut X será fuente de:
 
@@ -1742,7 +1750,9 @@ status
 policyId           = AMA_BTC_SEED_V1_RESEARCH
 asset              = BTC/USD
 status             = LAB_ONLY
-executionVenue     = KRAKEN_SPOT
+analysisVenue      = KRAKEN
+futureExecutionVenue = REVOLUT_X
+executionEnabled   = false
 makerOnly          = true
 takerFallback      = false
 capitalAllocation  = 75% deployable, 25% reserve
@@ -1765,7 +1775,9 @@ Invariants:
 policyId           = AMA_ETH_SEED_V1_RESEARCH_ONLY
 asset              = ETH/USD
 status             = RESEARCH_ONLY
-executionVenue     = DISABLED
+analysisVenue      = KRAKEN
+futureExecutionVenue = DISABLED
+executionEnabled   = false
 makerOnly          = true (hypothetical)
 takerFallback      = false
 capitalAllocation  = 65% deployable, 35% reserve
@@ -2280,7 +2292,9 @@ La IA no modifica sizing REAL.
 
 ---
 
-# 53. PROTECCIÓN DEL CICLO
+# 53. PROTECCIÓN DEL CICLO (drawdown separado, R1)
+
+> **R1 — Corrección:** El drawdown de precio está separado del riesgo sistémico. `canSell` y `canPause` son funciones granulares independientes. El drawdown de precio no vende. El riesgo sistémico se evalúa por separado.
 
 Implementar:
 
@@ -2419,7 +2433,9 @@ El análisis manual:
 
 ---
 
-# 57. ARQUITECTURA DE IA
+# 57. ARQUITECTURA DE IA (RISK_DOWN_ONLY, R1)
+
+> **R1 — Corrección:** La IA implementa `RISK_DOWN_ONLY` — nunca amplía presupuesto ni recomienda venta positiva. `AI_INSUFFICIENT_DATA` se emite cuando faltan datos (HWM, budget, price). IDs deterministas SHA-256 (`insight-<12 hex>`).
 
 Crear:
 
@@ -2633,7 +2649,9 @@ Solo el fill confirmado modifica:
 
 ---
 
-# 64. SIMULADOR MAKER
+# 64. SIMULADOR MAKER (parametrizado, R1)
+
+> **R1 — Corrección:** El simulador maker está parametrizado con `makerFeeBps`, `takerFeeBps`, `postOnly = true`, `fillSimulated = false`. `simulationId` determinista SHA-256.
 
 Estados:
 
@@ -4267,21 +4285,27 @@ Políticas, scheduler, dry-run, compactación y particiones.
 
 Disco, DB, crecimiento, UI y alertas.
 
-## Fase 20 — Research Lab
+## Fase 20 — Research Lab (AmaReplaySmokeSimulator)
 
-Replay, benchmarks, walk-forward, holdout y stress.
+> **R1 — Estado real:** Actualmente existe `AmaReplaySmokeSimulator` (smoke test de replay), NO un Research Lab estadístico completo. Walk-forward, holdout, benchmarks y stress tests completos están pendientes. El simulador actual ejecuta `runReplaySmoke` con IDs deterministas SHA-256.
 
-## Fase 21 — Simulador maker
+Replay smoke, benchmarks (pendiente), walk-forward (pendiente), holdout (pendiente) y stress (pendiente).
 
-No-fill, partial, latencia y replace.
+## Fase 21 — Simulador maker (parametrizado)
+
+> **R1 — Estado real:** El simulador maker está parametrizado con fees configurables, `postOnly = true` por defecto, y `fillSimulated = false` por defecto. IDs deterministas SHA-256 (`sim-<12 hex>`). Estados: NO_FILL, PARTIAL_FILL, FULL_FILL, EXPIRED, REPLACED.
+
+No-fill, partial, latencia, replace, fees parametrizados, post-only obligatorio.
 
 ## Fase 22 — Panel AMA completo
 
 Todas las subpestañas.
 
-## Fase 23 — SHADOW
+## Fase 23 — SHADOW (bloqueado por readiness)
 
-Políticas, planes, challenger, observabilidad y shadow retention.
+> **R1 — Estado real:** SHADOW está bloqueado en rutas mediante `checkShadowReadiness()`. Requiere HWM, budget, price y data coverage >= 90%. En stub, todos son false/0, por lo tanto 403. `LIMIT_TAKER` rechazado. Solo `LIMIT_MAKER` permitido.
+
+Políticas, planes, challenger, observabilidad, shadow retention, readiness gate.
 
 ## Fase 24 — Executor Revolut X
 
@@ -4852,10 +4876,13 @@ docker compose -f docker-compose.staging.yml up -d --build
 ```text
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: FASE_27_VALIDADA
-NEXT_ACTION: commit/push (pendiente autorización), Fase 26 (REAL_LIMITED), Fase 28 (deploy staging), Fase 29 (archivo)
-LAST_COMPLETED_ACTION: Fase 27 validada — 529 tests AMA+portfolio ✅, npm run check ✅. Fases 1-25 validadas. Fases 26/28/29 pendientes de autorización.
-UPDATED_AT: 2026-07-29T21:57:00+02:00
+TASK_STATUS: R1_CORRECCIONES_APLICADAS_EN_VALIDACION
+NEXT_ACTION: autorización commit/push en rama de revisión
+LAST_COMPLETED_ACTION: R1 — 17 fases de corrección aplicadas, 519 tests AMA ✅, tsc ✅, git diff --check ✅
+LAST_VALIDATION: 2026-07-30 — 519/519 AMA tests, 0 errores tsc, diff check limpio
+CURRENT_HEAD: sin commit (cambios en working tree)
+ORIGIN_HEAD: main
+UPDATED_AT: 2026-07-30T05:55:00+02:00
 ```
 
 ---
@@ -4967,3 +4994,120 @@ Los hallazgos de las auditorías BTC y ETH (2026-07-29) son canónicos.
 - Contraauditoría: `./AUDITORIAS/CONTRAAUDITORIA_INTEGRACION_AMA_BTC_ETH_COINMETRICS_2026-07-29.md`
 
 > **Nota:** Los archivos adjuntos no estaban disponibles físicamente. El contenido V2.2 inlineado se usa como fuente canónica sustituta. Ver contraauditoría §4.
+
+---
+
+# 119. CORRECCIONES R1 — ESTADO REAL (2026-07-30)
+
+## 119.1 Scaffolds declarados
+
+Los siguientes módulos son `DEVELOPMENT_SCAFFOLD_ONLY`, `NOT_SOURCE_OF_TRUTH`, `IN_MEMORY`, `NOT_RESTART_SAFE`:
+
+```text
+amaService.ts
+amaPortfolio.ts
+amaLoggingEvents.ts
+amaDatasetManifest.ts (funciones puras, sin persistencia)
+```
+
+No deben presentarse como implementación productiva.
+
+## 119.2 PostgreSQL desechable — GATE explícito
+
+```text
+POSTGRESQL_DISPOSABLE = BLOCKED_NO_SAFE_ENVIRONMENT
+FASE_1 = EN_VALIDACION
+MIGRATION_080 = NOT_REGISTERED
+MIGRATION_080 = NOT_AUTOAPPLY
+```
+
+No hay entorno temporal disponible. No usar VPS, staging, producción, base compartida ni base krakenbot. La migración 080 está comentada en `MIGRATIONS` array — no se autoaplica.
+
+## 119.3 Correcciones aplicadas por fase
+
+| Fase | Módulo | Defecto original | Corrección R1 |
+|---|---|---|---|
+| 1 | `amaSeedTypes.ts` | `executionVenue` sin separar analysis/execution | `analysisVenue` + `futureExecutionVenue` + `executionEnabled` + `executionStatus` |
+| 1 | `amaSeedTypes.ts` | BTC modelado como `executionVenue = REVOLUT_X` sin `executionEnabled` | `futureExecutionVenue = REVOLUT_X`, `executionEnabled = false`, `executionStatus = LAB_ONLY` |
+| 1 | `amaSeedTypes.ts` | ETH sin `executionEnabled` explícito | `futureExecutionVenue = DISABLED`, `executionEnabled = false`, `executionStatus = RESEARCH_ONLY` |
+| 4 | `amaHwmBar.ts` | HWM sin bootstrap con ordenación | Bootstrap incremental con ordenación de velas y confirmación |
+| 4 | `amaHwmBar.ts` | Reversión sin fórmula canónica | `reversalThresholdPct = clamp(atrPct × atrMultiplier, min, max)` |
+| 5 | `amaDeterministicEngine.ts` | IDs no deterministas | SHA-256 para todos los IDs |
+| 5 | `amaDeterministicEngine.ts` | Caps de capital y tramos mezclados | `absoluteSafetyCap` (capital) separado de `maximumCandidateTranches` (número) |
+| 6 | `amaAdaptivePlanner.ts` | Planificación no acumulativa | Reserva acumulativa, importes reales, reinicio UTC |
+| 7 | `amaMandateStudio.ts` | Sin envelope constraint | Clamping de parámetros dentro del envelope |
+| 7 | `amaMandateStudio.ts` | Challenger sin restricción | `CHALLENGER_RESEARCH_ONLY`, multiplier >1.0 prohibido en overlay activo |
+| 8 | `amaProtectionExits.ts` | Drawdown de precio y riesgo sistémico mezclados | `canSell`/`canPause` separados, drawdown de precio no vende |
+| 9 | `amaProtectionExits.ts` | Salidas como ejecución activa | `LAB_HYPOTHESIS`, `NOT_ACTIVE` |
+| 10 | `amaAIObserver.ts` | IA sin `RISK_DOWN_ONLY` | `RISK_DOWN_ONLY` implementado, no amplía presupuesto |
+| 10 | `amaAIObserver.ts` | Sin `AI_INSUFFICIENT_DATA` | Emitido cuando faltan HWM, budget o price |
+| 10 | `amaAIObserver.ts` | IDs no deterministas | `insight-<12 hex>` SHA-256 |
+| 11 | `amaCapacityResearch.ts` | Research Lab como backtest estadístico | Renombrado a `AmaReplaySmokeSimulator`, `runReplaySmoke` |
+| 11 | `amaCapacityResearch.ts` | `smokeId` no determinista | `smoke-<12 hex>` SHA-256 |
+| 12 | `amaCapacityResearch.ts` | Maker simulator sin fees parametrizados | `makerFeeBps`, `takerFeeBps`, `postOnly`, `fillSimulated` |
+| 12 | `amaCapacityResearch.ts` | `simulationId` no determinista | `sim-<12 hex>` SHA-256 |
+| 13 | `amaShadowExecutorSecurity.ts` | SHADOW sin readiness check | `checkShadowReadiness()` bloquea sin HWM/budget/price/coverage |
+| 13 | `amaShadowExecutorSecurity.ts` | `LIMIT_TAKER` permitido | Rechazado, solo `LIMIT_MAKER` |
+| 13 | `amaShadowExecutorSecurity.ts` | IDs no deterministas | `shadow-<12 hex>`, `sim-<12 hex>` SHA-256, procedure IDs estáticos |
+| 14 | `amaPortfolio.ts` | Sin marca de scaffold | `DEVELOPMENT_SCAFFOLD_ONLY`, `NOT_SOURCE_OF_TRUTH`, `NOT_RESTART_SAFE` |
+| 14 | `amaPortfolio.ts` | Mutaciones en ciclos cerrados | `canMutateCycle` + `freezeCycleBudget` |
+| 15-16 | `amaDatasetManifest.ts` | `computeSchemaHash` con hash simple | SHA-256 (`schema_<16 hex>`) |
+| 17 | `ama.routes.ts` | SHADOW permitido sin readiness | Bloqueado con 403 si `checkShadowReadiness` falla |
+| 17 | `ama.routes.ts` | Sin `SCHEMA_NOT_AVAILABLE` | Endpoint `GET /api/ama/schema-status` |
+| 17 | `ama.routes.ts` | IDs no deterministas | `run-<12 hex>`, `replay-<12 hex>` SHA-256 |
+
+## 119.4 Gates explícitos
+
+```text
+GATE_REPLAY_READY: requiere manifests validados, coverage >= 90%
+GATE_SHADOW_READY: requiere HWM, budget, price, coverage >= 90%
+GATE_REAL_LIMITED: bloqueado en ruta (403) y servicio (throw)
+GATE_REAL_FULL: bloqueado en ruta (403) y servicio (throw)
+GATE_POSTGRESQL: BLOCKED_NO_SAFE_ENVIRONMENT
+GATE_MIGRATION_080: NOT_REGISTERED, NOT_AUTOAPPLY
+```
+
+## 119.5 Estados de fases reales (R1)
+
+| Fase | Estado real | Notas |
+|---|---|---|
+| 1 | SCAFFOLD_VALIDADO | Stub en memoria, no persistente |
+| 2A-2L | PARCIAL | Tipos definidos, sin persistencia DB |
+| 3-6 | SCAFFOLD | Funciones puras, tests aislados |
+| 7-9 | SCAFFOLD | Mandate Studio con envelope, sin UI |
+| 10 | SCAFFOLD | IA observadora con RISK_DOWN_ONLY, sin provider real |
+| 11 | SCAFFOLD | AmaReplaySmokeSimulator, no Research Lab completo |
+| 12 | SCAFFOLD | Maker simulator parametrizado, sin ejecución real |
+| 13 | SCAFFOLD | SHADOW bloqueado por readiness, sin executor real |
+| 14 | SCAFFOLD | Portfolio con mutation guards, no persistente |
+| 15-16 | SCAFFOLD | Logging y manifests como funciones puras |
+| 17 | SCAFFOLD | Rutas con gates, sin UI completa |
+| 18-29 | PENDIENTE | No iniciadas |
+
+## 119.6 Asset Profiles canónicos (R1)
+
+```text
+BTC:
+  analysisVenue         = KRAKEN
+  futureExecutionVenue  = REVOLUT_X
+  executionEnabled      = false
+  executionStatus       = LAB_ONLY
+  canReserveCapital     = false
+  canCreateIntents      = false
+  canExecute            = false
+  canUseRevolutX        = false
+
+ETH:
+  analysisVenue         = KRAKEN
+  futureExecutionVenue  = DISABLED
+  executionEnabled      = false
+  executionStatus       = RESEARCH_ONLY
+  canReserveCapital     = false
+  canCreateIntents      = false
+  canExecute            = false
+  canUseRevolutX        = false
+  sharesBtcCapital      = false
+  inheritsBtcPromotion  = false
+```
+
+Tests en `amaSeedTypes.test.ts` lines 41-75 verifican cada campo independientemente.

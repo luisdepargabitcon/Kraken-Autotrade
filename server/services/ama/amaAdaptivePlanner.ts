@@ -116,9 +116,9 @@ export function resetWeeklyIfNeeded(
 ): PeriodLimitState {
   const weekStart = new Date(state.weekStart);
   const now = new Date(currentTimestamp);
-  const daysSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24);
-
-  if (daysSinceWeekStart >= 7) {
+  // UTC-based week boundary: reset if >= 7 days elapsed
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  if (now.getTime() - weekStart.getTime() >= msPerWeek) {
     return { ...state, weeklyDeployedUsd: 0, weekStart: currentTimestamp };
   }
   return state;
@@ -130,9 +130,13 @@ export function resetMonthlyIfNeeded(
 ): PeriodLimitState {
   const monthStart = new Date(state.monthStart);
   const now = new Date(currentTimestamp);
-  const daysSinceMonthStart = (now.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24);
+  // UTC-based month boundary: reset if calendar month changed or >= 28 days elapsed
+  const isDifferentMonth = now.getUTCFullYear() !== monthStart.getUTCFullYear() ||
+    now.getUTCMonth() !== monthStart.getUTCMonth();
+  const msPerMonth = 28 * 24 * 60 * 60 * 1000;
+  const isPastMinDays = now.getTime() - monthStart.getTime() >= msPerMonth;
 
-  if (daysSinceMonthStart >= 30) {
+  if (isDifferentMonth || isPastMinDays) {
     return { ...state, monthlyDeployedUsd: 0, monthStart: currentTimestamp };
   }
   return state;
@@ -150,10 +154,15 @@ export interface ReplanContext {
 export function replanTranches(ctx: ReplanContext): AmaTranchePlan | null {
   const { originalPlan, newPricePoints, input, executedTrancheCount } = ctx;
 
-  // Update input with executed tranches
+  // Use actual executed amounts from the original plan, not estimate by count × maxPct
+  const executedTranches = originalPlan.candidateTranches
+    .filter((c) => c.eligible)
+    .slice(0, executedTrancheCount);
+  const actualExecutedUsd = executedTranches.reduce((sum, t) => sum + t.amountUsd, 0);
+
   const updatedInput: TranchePlanInput = {
     ...input,
-    deployedUsd: input.deployedUsd + executedTrancheCount * (input.budgetUsd * (input.parameters.maxSingleTranchePct / 100)),
+    deployedUsd: input.deployedUsd + actualExecutedUsd,
   };
 
   const newPlan = planTranches(updatedInput, newPricePoints);
@@ -163,7 +172,6 @@ export function replanTranches(ctx: ReplanContext): AmaTranchePlan | null {
   return {
     ...newPlan,
     version: originalPlan.version + 1,
-    planId: `plan-${input.cycleId}-${Date.now()}-v${originalPlan.version + 1}`,
   };
 }
 
@@ -180,7 +188,7 @@ export function filterIneligibleCandidates(plan: AmaTranchePlan): AmaTrancheCand
 // ─── Adaptive Decision ──────────────────────────────────────────────
 
 export interface AdaptiveDecision {
-  action: "EXECUTE" | "WAIT" | "REPLAN" | "ABORT";
+  action: "SIMULATE" | "WAIT" | "REPLAN" | "ABORT";
   reason: string;
   eligibleTrancheCount: number;
   guardrailPassed: boolean;
@@ -253,7 +261,7 @@ export function makeAdaptiveDecision(
   }
 
   return {
-    action: "EXECUTE",
+    action: "SIMULATE",
     reason: "ALL_CHECKS_PASSED",
     eligibleTrancheCount: eligibleCount,
     guardrailPassed: true,

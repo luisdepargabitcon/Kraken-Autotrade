@@ -23,6 +23,7 @@ import {
 import type { AmaMandateInput, AmaResolvedParameters } from "../amaTypes";
 
 const makeMandate = (): AmaMandateInput => ({
+  asset: "BTC",
   maxCapitalUsd: 10000,
   riskMandate: "PRUDENTE",
   accumulationStyle: "ADAPTATIVO",
@@ -43,6 +44,8 @@ const makeParams = (): AmaResolvedParameters => ({
   cooldownPolicy: "1_daily",
   maximumCandidateTranches: 6,
   absoluteSafetyCap: 10000,
+  absoluteCapitalCapUsd: 10000,
+  absoluteTrancheCountCap: 6,
   spreadTolerancePct: 0.5,
   crossVenueBasisTolerancePct: 1.0,
   profitRecoveryPolicy: "trailing",
@@ -50,6 +53,7 @@ const makeParams = (): AmaResolvedParameters => ({
   runnerPolicy: "50_pct",
   trailingPolicy: "atr_based",
   thesisInvalidationPolicy: "strict",
+  asset: "BTC",
 });
 
 // ─── State Machine ──────────────────────────────────────────────────
@@ -91,6 +95,7 @@ describe("Fase 7 — State Machine", () => {
 describe("Fase 7 — Cycle Management", () => {
   it("creates a cycle with correct defaults", () => {
     const cycle = createCycle({
+      asset: "BTC",
       pair: "BTC/USD",
       mode: "REPLAY",
       budgetUsd: 10000,
@@ -102,24 +107,24 @@ describe("Fase 7 — Cycle Management", () => {
     expect(cycle.deployedUsd).toBe(0);
     expect(cycle.reservedUsd).toBe(0);
     expect(cycle.freeUsd).toBe(10000);
-    expect(cycle.btcAccumulated).toBe(0);
+    expect(cycle.accumulatedQuantity).toBe(0);
     expect(cycle.closedAt).toBeNull();
     expect(cycle.createdAt).not.toBeNull();
   });
 
   it("can close cycle in CLOSING state", () => {
-    const cycle = createCycle({ pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
+    const cycle = createCycle({ asset: "BTC", pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
     expect(canCloseCycle(cycle)).toBe(false); // OBSERVING
   });
 
   it("can close cycle in ABANDONED state", () => {
-    let cycle = createCycle({ pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
+    let cycle = createCycle({ asset: "BTC", pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
     cycle = { ...cycle, state: "CLOSING" };
     expect(canCloseCycle(cycle)).toBe(true);
   });
 
   it("closes cycle correctly", () => {
-    let cycle = createCycle({ pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
+    let cycle = createCycle({ asset: "BTC", pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
     cycle = { ...cycle, state: "CLOSING" };
     const closed = closeCycle(cycle, "completed");
     expect(closed.state).toBe("CLOSED");
@@ -127,12 +132,12 @@ describe("Fase 7 — Cycle Management", () => {
   });
 
   it("throws when closing non-closable cycle", () => {
-    const cycle = createCycle({ pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
+    const cycle = createCycle({ asset: "BTC", pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
     expect(() => closeCycle(cycle, "test")).toThrow();
   });
 
   it("abandons cycle", () => {
-    const cycle = createCycle({ pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
+    const cycle = createCycle({ asset: "BTC", pair: "BTC/USD", mode: "REPLAY", budgetUsd: 10000, highWaterMark: 50000 });
     const abandoned = abandonCycle(cycle);
     expect(abandoned.state).toBe("ABANDONED_NO_INVENTORY");
   });

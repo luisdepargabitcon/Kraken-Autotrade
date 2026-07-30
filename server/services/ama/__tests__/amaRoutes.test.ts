@@ -108,7 +108,7 @@ describe("AMA Routes — API", () => {
       const res = await req(server, "GET", "/api/ama/portfolio");
       expect(res.status).toBe(200);
       expect(res.body.data.budgetUsd).toBe(0);
-      expect(res.body.data.btcAccumulated).toBe(0);
+      expect(res.body.data.accumulatedQuantity).toBe(0);
     });
   });
 
@@ -141,10 +141,11 @@ describe("AMA Routes — API", () => {
       expect(res.body.data.mode).toBe("REPLAY");
     });
 
-    it("allows SHADOW", async () => {
+    it("BLOCKS SHADOW with 403 (readiness not met in stub)", async () => {
       const res = await req(server, "POST", "/api/ama/mode", { mode: "SHADOW" });
-      expect(res.status).toBe(200);
-      expect(res.body.data.mode).toBe("SHADOW");
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toContain("SHADOW mode blocked");
     });
 
     it("BLOCKS REAL_LIMITED with 403", async () => {
@@ -188,9 +189,9 @@ describe("AMA Routes — API", () => {
     });
 
     it("does not change mode", async () => {
-      await req(server, "POST", "/api/ama/mode", { mode: "SHADOW" });
+      await req(server, "POST", "/api/ama/mode", { mode: "REPLAY" });
       await req(server, "POST", "/api/ama/analyze-now");
-      expect(amaService.getMode()).toBe("SHADOW");
+      expect(amaService.getMode()).toBe("REPLAY");
     });
 
     it("does not change kill switch", async () => {
@@ -285,6 +286,15 @@ describe("AMA Routes — API", () => {
       expect(res.status).toBe(200);
       expect(res.body.data.available).toBe(false);
       expect(res.body.data.state).toBe("AI_PROVIDER_UNAVAILABLE");
+    });
+  });
+
+  describe("GET /api/ama/schema-status", () => {
+    it("responds 200 with SCHEMA_NOT_AVAILABLE", async () => {
+      const res = await req(server, "GET", "/api/ama/schema-status");
+      expect(res.status).toBe(200);
+      expect(res.body.data.schemaAvailable).toBe(false);
+      expect(res.body.data.state).toBe("SCHEMA_NOT_AVAILABLE");
     });
   });
 

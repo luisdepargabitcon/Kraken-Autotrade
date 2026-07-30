@@ -59,15 +59,15 @@ describe("Fase 9 — ATR", () => {
 });
 
 describe("Fase 9 — HWM Bootstrap", () => {
-  it("bootstraps CONFIRMED HWM with enough lower closes", () => {
+  it("bootstraps CONFIRMED HWM with enough lower closes and reversal", () => {
     const closes = [
       { timestamp: "2026-07-01T00:00:00Z", close: 50000 },
       { timestamp: "2026-07-02T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 51000 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 50500 },
-      { timestamp: "2026-07-05T00:00:00Z", close: 50000 },
+      { timestamp: "2026-07-03T00:00:00Z", close: 49000 },
+      { timestamp: "2026-07-04T00:00:00Z", close: 48500 },
+      { timestamp: "2026-07-05T00:00:00Z", close: 48000 },
     ];
-    const hwm = bootstrapHWM(closes, 3);
+    const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm).not.toBeNull();
     expect(hwm!.price).toBe(52000);
     expect(hwm!.status).toBe("CONFIRMED");
@@ -83,6 +83,18 @@ describe("Fase 9 — HWM Bootstrap", () => {
     expect(hwm!.status).toBe("CANDIDATE");
   });
 
+  it("returns CONFIRMING when no reversal threshold met", () => {
+    const closes = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 50000 },
+      { timestamp: "2026-07-02T00:00:00Z", close: 52000 },
+      { timestamp: "2026-07-03T00:00:00Z", close: 51900 },
+      { timestamp: "2026-07-04T00:00:00Z", close: 51800 },
+      { timestamp: "2026-07-05T00:00:00Z", close: 51700 },
+    ];
+    const hwm = bootstrapHWM(closes, 3, 5.0);
+    expect(hwm!.status).toBe("CONFIRMING");
+  });
+
   it("returns CONFIRMING when a subsequent close equals the high", () => {
     const closes = [
       { timestamp: "2026-07-01T00:00:00Z", close: 50000 },
@@ -92,8 +104,22 @@ describe("Fase 9 — HWM Bootstrap", () => {
       { timestamp: "2026-07-05T00:00:00Z", close: 52000 },
       { timestamp: "2026-07-06T00:00:00Z", close: 51000 },
     ];
-    const hwm = bootstrapHWM(closes, 3);
+    const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).toBe("CONFIRMING");
+  });
+
+  it("sorts closes by timestamp before processing", () => {
+    const closes = [
+      { timestamp: "2026-07-05T00:00:00Z", close: 48000 },
+      { timestamp: "2026-07-03T00:00:00Z", close: 49000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 50000 },
+      { timestamp: "2026-07-02T00:00:00Z", close: 52000 },
+      { timestamp: "2026-07-04T00:00:00Z", close: 48500 },
+    ];
+    const hwm = bootstrapHWM(closes, 3, 5.0);
+    expect(hwm).not.toBeNull();
+    expect(hwm!.price).toBe(52000);
+    expect(hwm!.status).toBe("CONFIRMED");
   });
 
   it("returns null with no data", () => {
@@ -206,17 +232,50 @@ describe("Fase 9 — Macro Zones", () => {
   });
 });
 
-describe("Fase 9 — Reversal Threshold", () => {
-  it("computes ATR-based reversal threshold", () => {
+describe("Fase 9 — Reversal Threshold (canonical formula)", () => {
+  it("computes threshold as max(fixedPct, atrPct×multiplier) clamped", () => {
+    // hwm=50000, atr=500 → atrPct=1.0%, atrPct×3=3.0%, fixed=10.0%
+    // max(10.0, 3.0) = 10.0% → threshold = 50000×(1-0.10) = 45000
     const threshold = computeReversalThreshold(50000, 500, 3.0, 10.0);
-    const atrThreshold = 50000 - 500 * 3.0; // 48500
-    const fixedThreshold = 50000 * 0.9; // 45000
-    expect(threshold).toBe(Math.max(atrThreshold, fixedThreshold));
+    expect(threshold).toBe(45000);
+  });
+
+  it("uses ATR-based threshold when atrPct×multiplier > fixedPct", () => {
+    // hwm=50000, atr=2000 → atrPct=4.0%, atrPct×3=12.0%, fixed=10.0%
+    // max(10.0, 12.0) = 12.0% → threshold = 50000×(1-0.12) = 44000
+    const threshold = computeReversalThreshold(50000, 2000, 3.0, 10.0);
+    expect(threshold).toBe(44000);
+  });
+
+  it("clamps to minimum reversal pct", () => {
+    // hwm=50000, atr=100, atrMultiplier=1, fixed=1, min=5
+    // atrPct=0.2%, atrPct×1=0.2%, max(1.0, 0.2)=1.0%, clamp to min=5.0%
+    // threshold = 50000×(1-0.05) = 47500
+    const threshold = computeReversalThreshold(50000, 100, 1.0, 1.0, 5.0, 50.0);
+    expect(threshold).toBe(47500);
+  });
+
+  it("clamps to maximum reversal pct", () => {
+    // hwm=50000, atr=30000, atrMultiplier=5, fixed=10, max=50
+    // atrPct=60%, atrPct×5=300%, max(10, 300)=300%, clamp to max=50%
+    // threshold = 50000×(1-0.50) = 25000
+    const threshold = computeReversalThreshold(50000, 30000, 5.0, 10.0, 5.0, 50.0);
+    expect(threshold).toBe(25000);
   });
 
   it("uses fixed threshold when ATR is null", () => {
     const threshold = computeReversalThreshold(50000, null, 3.0, 10.0);
     expect(threshold).toBe(45000);
+  });
+
+  it("does not pick the least deep price (old bug)", () => {
+    // Old formula: Math.max(hwm - atr*mult, hwm*(1-fixed/100))
+    // With hwm=50000, atr=500, mult=3, fixed=10:
+    //   old: Math.max(48500, 45000) = 48500 (less deep — WRONG)
+    //   new: max(10%, 3%) = 10% → 45000 (deeper — CORRECT)
+    const threshold = computeReversalThreshold(50000, 500, 3.0, 10.0);
+    expect(threshold).toBe(45000);
+    expect(threshold).toBeLessThan(48500);
   });
 
   it("confirms reversal with consecutive closes below threshold", () => {

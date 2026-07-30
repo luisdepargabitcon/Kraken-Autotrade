@@ -27,6 +27,8 @@ const makeParams = (): AmaResolvedParameters => ({
   cooldownPolicy: "1_daily",
   maximumCandidateTranches: 6,
   absoluteSafetyCap: 10000,
+  absoluteCapitalCapUsd: 10000,
+  absoluteTrancheCountCap: 6,
   spreadTolerancePct: 0.5,
   crossVenueBasisTolerancePct: 1.0,
   profitRecoveryPolicy: "trailing",
@@ -34,6 +36,7 @@ const makeParams = (): AmaResolvedParameters => ({
   runnerPolicy: "50_pct",
   trailingPolicy: "atr_based",
   thesisInvalidationPolicy: "strict",
+  asset: "BTC",
 });
 
 const makeInput = (overrides: Partial<TranchePlanInput> = {}): TranchePlanInput => ({
@@ -99,11 +102,12 @@ describe("Fase 10 — Candidate Generation", () => {
     expect(candidate!.eligibilityReasons).toContain("MAX_CANDIDATE_TRANCHES_REACHED");
   });
 
-  it("scales amount by zone multiplier", () => {
+  it("scales amount by zone multiplier but capped at maxSingleTranchePct", () => {
     const candidate = generateTrancheCandidate(makeInput(), 35000, 0);
     // Drop: 30% → VALUE zone → multiplier 1.5
-    // Base: 10000 * 0.15 = 1500 → 1500 * 1.5 = 2250
-    expect(candidate!.amountUsd).toBe(2250);
+    // Base: 10000 * 0.15 = 1500 → raw 1500 * 1.5 = 2250
+    // But maxSingleTranchePct is a HARD limit → capped at 1500
+    expect(candidate!.amountUsd).toBe(1500);
   });
 });
 
@@ -165,15 +169,21 @@ describe("Fase 10 — Guardrail Validation", () => {
 });
 
 describe("Fase 10 — Hash & Idempotency", () => {
-  it("computes plan hash", () => {
+  it("computes SHA-256 plan hash", () => {
     const plan = planTranches(makeInput(), [45000])!;
     const hash = computePlanHash(plan);
-    expect(hash).toMatch(/^hash-/);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("hash is deterministic — same plan = same hash", () => {
+    const plan1 = planTranches(makeInput(), [45000])!;
+    const plan2 = { ...plan1 };
+    expect(computePlanHash(plan1)).toBe(computePlanHash(plan2));
   });
 
   it("detects duplicate plans", () => {
     const plan1 = planTranches(makeInput(), [45000])!;
-    const plan2 = { ...plan1 }; // Same plan
+    const plan2 = { ...plan1 };
     expect(isDuplicatePlan(plan2, [plan1])).toBe(true);
   });
 
@@ -181,5 +191,20 @@ describe("Fase 10 — Hash & Idempotency", () => {
     const plan1 = planTranches(makeInput(), [45000])!;
     const plan2 = planTranches(makeInput({ cycleId: "cycle-2" }), [45000])!;
     expect(isDuplicatePlan(plan2, [plan1])).toBe(false);
+  });
+
+  it("planId does not use Date.now()", () => {
+    const plan1 = planTranches(makeInput(), [45000])!;
+    const plan2 = planTranches(makeInput(), [45000])!;
+    expect(plan1.planId).toBe(plan2.planId);
+  });
+
+  it("absoluteTrancheCountCap blocks excess tranches", () => {
+    const params = makeParams();
+    params.absoluteTrancheCountCap = 2;
+    const input = makeInput({ parameters: params });
+    const candidate = generateTrancheCandidate(input, 30000, 3);
+    expect(candidate).not.toBeNull();
+    expect(candidate!.eligibilityReasons).toContain("ABSOLUTE_TRANCHE_COUNT_CAP_EXCEEDED");
   });
 });

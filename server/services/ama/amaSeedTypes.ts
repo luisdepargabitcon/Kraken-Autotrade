@@ -18,13 +18,18 @@ export type AssetSymbol = "BTC" | "ETH";
 
 export type AssetMode = "LAB_ONLY" | "RESEARCH_ONLY" | "SHADOW" | "REAL_LIMITED" | "REAL_FULL";
 
-export type ExecutionVenue = "KRAKEN_SPOT" | "REVOLUT_X" | "DISABLED";
+export type AnalysisVenue = "KRAKEN";
+export type FutureExecutionVenue = "REVOLUT_X" | "DISABLED";
+export type ExecutionStatus = "LAB_ONLY" | "RESEARCH_ONLY" | "SHADOW_READY" | "REAL_READY";
 
 export interface AmaAssetProfile {
   asset: AssetSymbol;
   pair: string;
   mode: AssetMode;
-  executionVenue: ExecutionVenue;
+  analysisVenue: AnalysisVenue;
+  futureExecutionVenue: FutureExecutionVenue;
+  executionEnabled: boolean;
+  executionStatus: ExecutionStatus;
   pipeline: "BTC_LAB" | "ETH_RESEARCH";
   canReserveCapital: boolean;
   canCreateIntents: boolean;
@@ -38,9 +43,12 @@ export const BTC_ASSET_PROFILE: AmaAssetProfile = {
   asset: "BTC",
   pair: "BTC/USD",
   mode: "LAB_ONLY",
-  executionVenue: "KRAKEN_SPOT",
+  analysisVenue: "KRAKEN",
+  futureExecutionVenue: "REVOLUT_X",
+  executionEnabled: false,
+  executionStatus: "LAB_ONLY",
   pipeline: "BTC_LAB",
-  canReserveCapital: false, // LAB_ONLY: no real capital
+  canReserveCapital: false,
   canCreateIntents: false,
   canExecute: false,
   canUseRevolutX: false,
@@ -52,7 +60,10 @@ export const ETH_ASSET_PROFILE: AmaAssetProfile = {
   asset: "ETH",
   pair: "ETH/USD",
   mode: "RESEARCH_ONLY",
-  executionVenue: "DISABLED",
+  analysisVenue: "KRAKEN",
+  futureExecutionVenue: "DISABLED",
+  executionEnabled: false,
+  executionStatus: "RESEARCH_ONLY",
   pipeline: "ETH_RESEARCH",
   canReserveCapital: false,
   canCreateIntents: false,
@@ -78,7 +89,9 @@ export interface SeedPolicyBtc {
   asset: "BTC";
   pair: string;
   status: AssetMode;
-  executionVenue: ExecutionVenue;
+  analysisVenue: AnalysisVenue;
+  futureExecutionVenue: FutureExecutionVenue;
+  executionEnabled: boolean;
   makerOnly: boolean;
   takerFallback: boolean;
   capitalDeploymentPct: number; // 75
@@ -94,7 +107,9 @@ export const BTC_SEED_POLICY: SeedPolicyBtc = {
   asset: "BTC",
   pair: "BTC/USD",
   status: "LAB_ONLY",
-  executionVenue: "KRAKEN_SPOT",
+  analysisVenue: "KRAKEN",
+  futureExecutionVenue: "REVOLUT_X",
+  executionEnabled: false,
   makerOnly: true,
   takerFallback: false,
   capitalDeploymentPct: 75,
@@ -112,15 +127,17 @@ export interface SeedPolicyEth {
   asset: "ETH";
   pair: string;
   status: AssetMode;
-  executionVenue: ExecutionVenue;
+  analysisVenue: AnalysisVenue;
+  futureExecutionVenue: FutureExecutionVenue;
+  executionEnabled: boolean;
   makerOnly: boolean;
   takerFallback: boolean;
   capitalDeploymentPct: number; // 65
   capitalReservePct: number; // 35
   trancheCount: number; // 7
   fixedReversalCenterPct: number; // 14.0
-  atrMultiplier: number; // 3.0
-  requiredDailyCloses: number; // 3
+  atrMultiplierCenter: number; // 3.5
+  requiredDailyCloses: number; // 5
   ethBtcFilterRequired: boolean;
   relativePair: string;
 }
@@ -130,15 +147,17 @@ export const ETH_SEED_POLICY: SeedPolicyEth = {
   asset: "ETH",
   pair: "ETH/USD",
   status: "RESEARCH_ONLY",
-  executionVenue: "DISABLED",
+  analysisVenue: "KRAKEN",
+  futureExecutionVenue: "DISABLED",
+  executionEnabled: false,
   makerOnly: true, // hypothetical
   takerFallback: false,
   capitalDeploymentPct: 65,
   capitalReservePct: 35,
   trancheCount: 7,
   fixedReversalCenterPct: 14.0,
-  atrMultiplier: 3.0,
-  requiredDailyCloses: 3,
+  atrMultiplierCenter: 3.5,
+  requiredDailyCloses: 5,
   ethBtcFilterRequired: true,
   relativePair: "ETH/BTC",
 };
@@ -319,7 +338,7 @@ export const REVOLUT_X_SOURCE: SourceTaxonomy = {
 };
 
 export const COIN_METRICS_ARCHIVE_SOURCE: SourceTaxonomy = {
-  sourceId: "COIN_METRICS_GITHUB_ARCHIVE",
+  sourceId: "COINMETRICS_GITHUB_ARCHIVE",
   sourceClass: "RESEARCH",
   capabilities: ["ONCHAIN"],
   authority: "RESEARCH_ONLY",
@@ -329,7 +348,7 @@ export const COIN_METRICS_ARCHIVE_SOURCE: SourceTaxonomy = {
 };
 
 export const COIN_METRICS_PRO_SOURCE: SourceTaxonomy = {
-  sourceId: "COIN_METRICS_PRO",
+  sourceId: "COINMETRICS_PRO",
   sourceClass: "RESEARCH",
   capabilities: ["ONCHAIN", "MACRO"],
   authority: "DISABLED",
@@ -341,8 +360,8 @@ export const COIN_METRICS_PRO_SOURCE: SourceTaxonomy = {
 export const SOURCE_TAXONOMIES: Record<string, SourceTaxonomy> = {
   KRAKEN: KRAKEN_SOURCE,
   REVOLUT_X: REVOLUT_X_SOURCE,
-  COIN_METRICS_GITHUB_ARCHIVE: COIN_METRICS_ARCHIVE_SOURCE,
-  COIN_METRICS_PRO: COIN_METRICS_PRO_SOURCE,
+  COINMETRICS_GITHUB_ARCHIVE: COIN_METRICS_ARCHIVE_SOURCE,
+  COINMETRICS_PRO: COIN_METRICS_PRO_SOURCE,
 };
 
 // ─── Coin Metrics Snapshot ──────────────────────────────────────────

@@ -20,6 +20,7 @@ import type {
   AmaMandateInput,
   PolicyStatus,
 } from "./amaTypes";
+import type { AssetSymbol } from "./amaSeedTypes";
 import { AMA_STATE_VALUES, AMA_STRATEGY_VERSION, isModeReal } from "./amaTypes";
 
 // ─── State Machine ──────────────────────────────────────────────────
@@ -62,6 +63,7 @@ export function validateState(state: string): state is AmaState {
 
 export interface CycleCreateInput {
   pair: string;
+  asset: AssetSymbol;
   mode: AmaMode;
   budgetUsd: number;
   highWaterMark: number | null;
@@ -70,6 +72,7 @@ export interface CycleCreateInput {
 export function createCycle(input: CycleCreateInput): AmaCycle {
   return {
     cycleId: `cycle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    asset: input.asset,
     pair: input.pair,
     mode: input.mode,
     state: "OBSERVING",
@@ -84,8 +87,9 @@ export function createCycle(input: CycleCreateInput): AmaCycle {
     deployedUsd: 0,
     reservedUsd: 0,
     freeUsd: input.budgetUsd,
-    btcAccumulated: 0,
+    accumulatedQuantity: 0,
     averageCostBasis: null,
+    activePolicyId: null,
     createdAt: new Date().toISOString(),
     closedAt: null,
   };

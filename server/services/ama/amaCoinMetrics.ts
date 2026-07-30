@@ -11,24 +11,24 @@
 
 import type { CoinMetricsSourceSnapshot, FreshnessStatus, LicenseStatus } from "./amaSeedTypes";
 
-export type CoinMetricsTier = "GITHUB_ARCHIVE" | "COMMUNITY_API" | "PRO_API";
+export type CoinMetricsTier = "COINMETRICS_GITHUB_ARCHIVE" | "COINMETRICS_COMMUNITY_API" | "COINMETRICS_PRO_API";
 
 export const COIN_METRICS_TIERS: Record<CoinMetricsTier, {
   enabled: boolean;
   licenseStatus: LicenseStatus;
   decisionImpactAllowed: boolean;
 }> = {
-  GITHUB_ARCHIVE: {
+  COINMETRICS_GITHUB_ARCHIVE: {
     enabled: true,
     licenseStatus: "REVIEW_REQUIRED",
     decisionImpactAllowed: false,
   },
-  COMMUNITY_API: {
+  COINMETRICS_COMMUNITY_API: {
     enabled: false, // disabled by default
     licenseStatus: "REVIEW_REQUIRED",
     decisionImpactAllowed: false,
   },
-  PRO_API: {
+  COINMETRICS_PRO_API: {
     enabled: false,
     licenseStatus: "BLOCKED",
     decisionImpactAllowed: false,
@@ -36,7 +36,7 @@ export const COIN_METRICS_TIERS: Record<CoinMetricsTier, {
 };
 
 export function isCoinMetricsProEnabled(): boolean {
-  return COIN_METRICS_TIERS.PRO_API.enabled;
+  return COIN_METRICS_TIERS.COINMETRICS_PRO_API.enabled;
 }
 
 export function canCoinMetricsImpactDecisions(tier: CoinMetricsTier): boolean {

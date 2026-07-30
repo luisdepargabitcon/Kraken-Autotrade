@@ -12,7 +12,9 @@
 
 import type { Express } from "express";
 import { z } from "zod";
+import { createHash } from "crypto";
 import { amaService } from "../services/ama/amaService";
+import { checkShadowReadiness } from "../services/ama/amaShadowExecutorSecurity";
 import type { AmaApiResponse, AmaMandateInput, AmaMode } from "../services/ama/amaTypes";
 import { AMA_MODE_VALUES, AMA_STRATEGY_VERSION, isModeReal } from "../services/ama/amaTypes";
 
@@ -36,6 +38,7 @@ const modeSchema = z.object({
 });
 
 const mandateDraftSchema = z.object({
+  asset: z.enum(["BTC", "ETH"]).default("BTC"),
   maxCapitalUsd: z.number().nonnegative(),
   riskMandate: z.enum(["MUY_PRUDENTE", "PRUDENTE", "EQUILIBRADO", "DINAMICO", "OPORTUNISTA"]),
   accumulationStyle: z.enum(["ENTRAR_ANTES", "ADAPTATIVO", "ESPERAR_MAS_VALOR"]),
@@ -71,6 +74,21 @@ export function registerAmaRoutes(app: Express): void {
     // Gate 1 (route layer): block REAL modes
     if (isModeReal(mode)) {
       return res.status(403).json(err(`${mode} requires explicit authorization. Gate locked.`));
+    }
+
+    // Gate 1b: block SHADOW if readiness not met
+    if (mode === "SHADOW") {
+      const readiness = checkShadowReadiness(
+        "SHADOW",
+        false, // no HWM in stub
+        false, // no budget in stub
+        false, // no current price in stub
+        0,     // no data coverage in stub
+        90,    // minimum data coverage
+      );
+      if (!readiness.ready) {
+        return res.status(403).json(err(`SHADOW mode blocked: ${readiness.blockers.join(", ")}`));
+      }
     }
 
     // Gate 2 (service layer): setMode throws if REAL
@@ -149,8 +167,9 @@ export function registerAmaRoutes(app: Express): void {
   // STRICTLY side-effect free: no orders, no reservations, no mode change,
   // no exchange calls, no cycle activation, no policy modification.
   app.post("/api/ama/analyze-now", (_req, res) => {
+    const runId = `run-${createHash("sha256").update(`analyze-${Date.now()}`).digest("hex").slice(0, 12)}`;
     res.json(ok({
-      analysisRunId: `run-${Date.now()}`,
+      analysisRunId: runId,
       message: "Analysis requested. No orders, no reservations, no mode change.",
     }));
   });
@@ -161,8 +180,9 @@ export function registerAmaRoutes(app: Express): void {
     if (!parsed.success) {
       return res.status(400).json(err(`Invalid replay config: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
     }
+    const replayId = `replay-${createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex").slice(0, 12)}`;
     res.json(ok({
-      replayRunId: `replay-${Date.now()}`,
+      replayRunId: replayId,
       status: "QUEUED",
       message: "Replay queued. No real orders will be placed.",
     }));
@@ -174,6 +194,15 @@ export function registerAmaRoutes(app: Express): void {
       available: false,
       state: "AI_PROVIDER_UNAVAILABLE",
       message: "AI not configured in Phase 1",
+    }));
+  });
+
+  // ── Schema availability ─────────────────────────────────────────
+  app.get("/api/ama/schema-status", (_req, res) => {
+    res.json(ok({
+      schemaAvailable: false,
+      state: "SCHEMA_NOT_AVAILABLE",
+      message: "AMA DB schema not deployed. Persistence is not available.",
     }));
   });
 

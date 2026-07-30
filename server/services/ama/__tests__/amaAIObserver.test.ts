@@ -25,6 +25,8 @@ const makeParams = (): AmaResolvedParameters => ({
   cooldownPolicy: "1_daily",
   maximumCandidateTranches: 6,
   absoluteSafetyCap: 10000,
+  absoluteCapitalCapUsd: 10000,
+  absoluteTrancheCountCap: 6,
   spreadTolerancePct: 0.5,
   crossVenueBasisTolerancePct: 1.0,
   profitRecoveryPolicy: "trailing",
@@ -32,10 +34,12 @@ const makeParams = (): AmaResolvedParameters => ({
   runnerPolicy: "50_pct",
   trailingPolicy: "atr_based",
   thesisInvalidationPolicy: "strict",
+  asset: "BTC",
 });
 
 const makeCycle = (overrides: Partial<AmaCycle> = {}): AmaCycle => ({
   cycleId: "c1",
+  asset: "BTC",
   pair: "BTC/USD",
   mode: "REPLAY",
   state: "ACCUMULATING",
@@ -50,8 +54,9 @@ const makeCycle = (overrides: Partial<AmaCycle> = {}): AmaCycle => ({
   deployedUsd: 3000,
   reservedUsd: 500,
   freeUsd: 6500,
-  btcAccumulated: 0.06,
+  accumulatedQuantity: 0.06,
   averageCostBasis: 50000,
+  activePolicyId: null,
   createdAt: "2026-07-29T00:00:00Z",
   closedAt: null,
   ...overrides,
@@ -117,10 +122,13 @@ describe("Fase 15 — Cycle Insights", () => {
     expect(insights.some((i) => i.type === "OPPORTUNITY")).toBe(true);
   });
 
-  it("generates alert for capitulation", () => {
+  it("generates RISK_DOWN_ONLY for capitulation (no sell recommendation)", () => {
     const cycle = makeCycle();
     const insights = generateCycleInsights(cycle, 22000, makeParams()); // 56% drop = CAPITULACION
-    expect(insights.some((i) => i.type === "ALERT" && i.category === "MARKET_CONDITION")).toBe(true);
+    expect(insights.some((i) => i.type === "RISK_DOWN_ONLY" && i.category === "MARKET_CONDITION")).toBe(true);
+    // Ensure no sell recommendation
+    const capInsight = insights.find((i) => i.type === "RISK_DOWN_ONLY" && i.category === "MARKET_CONDITION");
+    expect(capInsight?.recommendation).toContain("Do NOT sell");
   });
 
   it("generates budget alert for high utilization", () => {
@@ -141,14 +149,69 @@ describe("Fase 15 — Cycle Insights", () => {
     expect(insights.some((i) => i.category === "CYCLE_HEALTH")).toBe(true);
   });
 
-  it("all insights have valid structure", () => {
+  it("all insights have valid structure and deterministic IDs", () => {
     const cycle = makeCycle();
     const insights = generateCycleInsights(cycle, 45000, makeParams());
     for (const insight of insights) {
-      expect(insight.insightId).toMatch(/^insight-/);
+      expect(insight.insightId).toMatch(/^insight-[a-f0-9]{12}$/);
       expect(insight.confidence).toBeGreaterThanOrEqual(0);
       expect(insight.confidence).toBeLessThanOrEqual(1);
       expect(insight.createdAt).not.toBeNull();
+    }
+  });
+
+  it("insight IDs are deterministic (same input = same ID)", () => {
+    const cycle = makeCycle();
+    const insights1 = generateCycleInsights(cycle, 45000, makeParams());
+    const insights2 = generateCycleInsights(cycle, 45000, makeParams());
+    expect(insights1.length).toBe(insights2.length);
+    for (let i = 0; i < insights1.length; i++) {
+      expect(insights1[i].insightId).toBe(insights2[i].insightId);
+    }
+  });
+
+  it("generates AI_INSUFFICIENT_DATA when HWM is null", () => {
+    const cycle = makeCycle({ highWaterMark: null });
+    const insights = generateCycleInsights(cycle, 45000, makeParams());
+    expect(insights.length).toBe(1);
+    expect(insights[0].type).toBe("AI_INSUFFICIENT_DATA");
+    expect(insights[0].category).toBe("DATA_QUALITY");
+    expect(insights[0].actionable).toBe(false);
+  });
+
+  it("generates AI_INSUFFICIENT_DATA when budget is 0", () => {
+    const cycle = makeCycle({ budgetUsd: 0 });
+    const insights = generateCycleInsights(cycle, 45000, makeParams());
+    expect(insights.length).toBe(1);
+    expect(insights[0].type).toBe("AI_INSUFFICIENT_DATA");
+  });
+
+  it("generates AI_INSUFFICIENT_DATA when price is 0", () => {
+    const cycle = makeCycle();
+    const insights = generateCycleInsights(cycle, 0, makeParams());
+    expect(insights.length).toBe(1);
+    expect(insights[0].type).toBe("AI_INSUFFICIENT_DATA");
+  });
+
+  it("generates RISK_DOWN_ONLY for price drop > 40%", () => {
+    const cycle = makeCycle();
+    const insights = generateCycleInsights(cycle, 28000, makeParams()); // 44% drop
+    const riskInsight = insights.find((i) => i.type === "RISK_DOWN_ONLY" && i.category === "PRICE_ACTION");
+    expect(riskInsight).toBeDefined();
+    expect(riskInsight?.recommendation).toContain("Do NOT sell");
+  });
+
+  it("price drawdown insights never recommend selling as a positive action", () => {
+    const cycle = makeCycle();
+    const insights = generateCycleInsights(cycle, 22000, makeParams()); // 56% drop
+    for (const insight of insights) {
+      if (insight.recommendation) {
+        const rec = insight.recommendation.toLowerCase();
+        // "Do NOT sell" is OK, but "Consider selling" or "emergency exit" is not
+        expect(rec).not.toContain("consider selling");
+        expect(rec).not.toContain("emergency exit");
+        expect(rec).not.toContain("de-risking or emergency");
+      }
     }
   });
 });
