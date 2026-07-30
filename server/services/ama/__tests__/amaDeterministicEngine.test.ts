@@ -50,8 +50,10 @@ const makeInput = (overrides: Partial<TranchePlanInput> = {}): TranchePlanInput 
   previousTranchePrice: null,
   parameters: makeParams(),
   cycleId: "cycle-1",
+  asset: "BTC",
+  riskOverlayMultiplier: 1.0,
   ...overrides,
-});
+} as TranchePlanInput);
 
 describe("Fase 10 — Zone to Tranche Type", () => {
   it("maps zones correctly", () => {

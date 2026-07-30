@@ -4876,13 +4876,13 @@ docker compose -f docker-compose.staging.yml up -d --build
 ```text
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: R1_CORRECCIONES_APLICADAS_EN_VALIDACION
-NEXT_ACTION: autorización commit/push en rama de revisión
-LAST_COMPLETED_ACTION: R1 — 17 fases de corrección aplicadas, 519 tests AMA ✅, tsc ✅, git diff --check ✅
-LAST_VALIDATION: 2026-07-30 — 519/519 AMA tests, 0 errores tsc, diff check limpio
-CURRENT_HEAD: sin commit (cambios en working tree)
-ORIGIN_HEAD: main
-UPDATED_AT: 2026-07-30T05:55:00+02:00
+TASK_STATUS: R2_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+NEXT_ACTION: presentar gate precommit R2, luego autorización commit/push en rama de revisión
+LAST_COMPLETED_ACTION: R2 — 13 correcciones aplicadas (plan acumulativo, ResolvedSeedTranche, límites seed/user/effective, validateSeedPolicy, bootstrap HWM every-close, evaluateConfirmation canónica, processIncrementalClose, weekly disabled, computeIdempotencyKey, planTranchesFromSeeds). 560 tests AMA ✅, tsc ✅
+LAST_VALIDATION: 2026-07-30 — 560/560 AMA tests (41 R2), 0 errores tsc
+CURRENT_HEAD: 05a8344 (R1 commit en rama revisión)
+ORIGIN_HEAD: review/ama-seed-v2-2-20260729
+UPDATED_AT: 2026-07-30T10:00:00+02:00
 ```
 
 ---
@@ -5111,3 +5111,89 @@ ETH:
 ```
 
 Tests en `amaSeedTypes.test.ts` lines 41-75 verifican cada campo independientemente.
+
+---
+
+## CORRECCIONES R2 — Plan acumulativo, Seed Tranches, HWM canónico, IDs
+
+**Fecha:** 2026-07-30
+**Rama:** `review/ama-seed-v2-2-20260729`
+**Base:** R1 commit `05a8344`
+
+### R2.1 — Planificador acumulativo
+
+- `planTranches()` ahora acumula `plannedEligibleUsd` y `plannedEligibleCount` al iterar candidatos.
+- Cada candidato se re-evalúa contra `projectedDeployedUsd = input.deployedUsd + plannedEligibleUsd + candidate.amountUsd`.
+- Nuevos reasons: `CUMULATIVE_CYCLE_DEPLOYMENT_LIMIT`, `CUMULATIVE_RESERVE_VIOLATION`, `CUMULATIVE_CAPITAL_CAP_EXCEEDED`, `CUMULATIVE_MAX_TRANCHES_REACHED`, `CUMULATIVE_TRANCHE_COUNT_CAP_EXCEEDED`.
+- Nuevo `planTranchesFromSeeds()` usa tramos canónicos con tracking acumulativo desde el inicio.
+
+### R2.2 — ResolvedSeedTranche
+
+- Interface `ResolvedSeedTranche` con `index`, `asset`, `triggerDropPct`, `capitalPct`, `trancheType`, `policyId`, `policyVersion`.
+- `BTC_SEED_TRANCHES`: 6 tramos, triggers [18,25,33,42,52,63], capital [7,9,12,14,15,18], sum=75.
+- `ETH_SEED_TRANCHES`: 7 tramos, triggers [24,32,41,51,61,71,80], capital [5,7,8,10,11,12,12], sum=65.
+- `getSeedTranches(asset)` devuelve tramos canónicos.
+
+### R2.3 — Límites seed vs user vs effective
+
+- `SEED_MAXIMUM_TRANCHE_PCT`: BTC=18, ETH=12.
+- `getSeedMaximumTranchePct(asset)` → máximo de la política.
+- `computeEffectiveMaximumTranchePct(asset, userMax)` = `Math.min(seedMax, userMax)`.
+- El tramo BTC 18% no se recorta silenciosamente.
+
+### R2.4 — validateSeedPolicy (fail-closed)
+
+- Verifica tranche count, suma capital, deployment+reserve=100, triggers únicos y crecientes, ETH executionEnabled=false, max tranche <= seed max.
+- Devuelve array de errores (vacío = válido).
+
+### R2.5 — Bootstrap HWM every-close
+
+- `evaluateConfirmation()` requiere `every(close <= reversalThresholdPrice)` AND `every(close < hwmPrice)`.
+- Antes: `some()` (al menos uno). Ahora: `every()` (todos).
+- Deduplicación por timestamp. Ordenamiento estricto.
+
+### R2.6 — Función canónica compartida
+
+- `evaluateConfirmation()` usada por `bootstrapHWM()` y `processIncrementalClose()`.
+- Tests verifican mismo dataset → mismo HWM, estado, fecha, umbral.
+
+### R2.7 — Confirmación semanal deshabilitada
+
+- `WeeklyConfirmationConfig` con `weeklyOverrideEnabled=false` por defecto.
+- `isWeeklyConfirmationEnabled()` devuelve false.
+- Documentada como deshabilitada. No afecta operación diaria.
+
+### R2.8 — Clasificación de IDs
+
+| Tipo | Patrón | Determinismo |
+|------|--------|--------------|
+| Domain ID | `hwm-${timestamp}`, `cycle-${id}` | No determinista |
+| Reproducible hash | `computePlanHash()` SHA-256 64 hex | Determinista |
+| Idempotency key | `computeIdempotencyKey()` SHA-256 24 hex | Determinista |
+
+- `computeIdempotencyKey(asset, cycleId, policyVersion, trancheIndex, confirmedCandleTimestamp, action)` — no usa `Date.now()`.
+- `computePlanHash()` excluye `planId` y `createdAt` del payload canónico.
+
+### R2.9 — PostgreSQL desechable
+
+- Docker no disponible. `BLOCKED_NO_SAFE_ENVIRONMENT`.
+- Migración 080: `NOT_REGISTERED, NOT_AUTOAPPLY`.
+- Script `ama_migration_validate.mjs` preparado.
+
+### R2.10 — Tests R2
+
+- `amaR2Corrections.test.ts`: 41 tests cubriendo todas las correcciones.
+- Total AMA: 560/560 pass.
+
+### Archivos modificados R2
+
+- `server/services/ama/amaSeedTypes.ts` — ResolvedSeedTranche, seed tranches, validation
+- `server/services/ama/amaHwmBar.ts` — evaluateConfirmation, processIncrementalClose, weekly config
+- `server/services/ama/amaDeterministicEngine.ts` — cumulative planning, seed-based generation, idempotency key
+- `server/services/ama/__tests__/amaR2Corrections.test.ts` — NUEVO, 41 tests
+- `server/services/ama/__tests__/amaDeterministicEngine.test.ts` — makeInput actualizado
+- `server/services/ama/__tests__/amaAdaptivePlanner.test.ts` — makeInput actualizado
+- `AUDITORIAS/VALIDACION_POSTGRESQL_DESECHABLE_AMA_080_2026-07-30.md` — actualizado R2
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R2_2026-07-30.md` — NUEVO
+- `FASES MODO AMA.md` — estado R2
+- `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R2

@@ -7,22 +7,22 @@
 **Documento:** seguimiento operativo y continuidad autónoma
 **Estado:** ACTIVO
 **Fecha de creación:** 2026-07-29
-**Última actualización:** 2026-07-30T06:05:00+02:00
+**Última actualización:** 2026-07-30T10:00:00+02:00
 **Cambio de alcance activo:** AMA-CC-2026-07-29-SEED-V2.2
 
 ---
 
 ## ESTADO OPERATIVO
 
-- TASK_STATUS: R1_CORRECCIONES_APLICADAS_EN_VALIDACION
-- CURRENT_PHASE: Fase 27 (R1)
-- CURRENT_SUBPHASE: Correcciones R1 aplicadas, documentación actualizada, auditoría R1 física creada, pendiente autorización commit
-- LAST_COMPLETED_ACTION: R1 — 17 fases de corrección aplicadas (venues, HWM, SHA-256, SHADOW gate, mutation guards, maker simulator, IA RISK_DOWN_ONLY, dataset manifests). PLAN y FASES actualizados. Auditoría R1 creada. 519 tests AMA ✅, tsc ✅, git diff --check ✅
-- NEXT_ACTION: Autorización commit/push en rama de revisión. Pendiente: PostgreSQL desechable, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
-- BLOCKERS: PostgreSQL desechable no disponible (GATE_BLOCKED_NO_SAFE_ENVIRONMENT). Migración 080 NOT_REGISTERED, NOT_AUTOAPPLY. Integración real de persistencia, logging, portfolio, SHADOW pendiente
-- PENDING_GATES: PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
-- LAST_VALIDATION: 2026-07-30 — npm run check ✅, 519/519 AMA tests ✅, git diff --check ✅
-- UPDATED_AT: 2026-07-30T06:05:00+02:00
+- TASK_STATUS: R2_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- CURRENT_PHASE: Fase 27 (R2)
+- CURRENT_SUBPHASE: Correcciones R2 aplicadas, tests R2 41/41 ✅, auditoría R2 creada, pendiente gate precommit R2
+- LAST_COMPLETED_ACTION: R2 — 13 correcciones aplicadas (plan acumulativo, ResolvedSeedTranche, límites seed/user/effective, validateSeedPolicy fail-closed, bootstrap HWM every-close, evaluateConfirmation canónica, processIncrementalClose, weekly disabled, computeIdempotencyKey, planTranchesFromSeeds). 560 tests AMA ✅, tsc ✅
+- NEXT_ACTION: Presentar gate precommit R2. Pendiente autorización commit/push en rama de revisión
+- BLOCKERS: PostgreSQL desechable no disponible (BLOCKED_NO_SAFE_ENVIRONMENT). Migración 080 NOT_REGISTERED, NOT_AUTOAPPLY. Integración real de persistencia, logging, portfolio, SHADOW pendiente
+- PENDING_GATES: Gate precommit R2, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
+- LAST_VALIDATION: 2026-07-30 — npm run check ✅, 560/560 AMA tests ✅ (incluye 41 R2)
+- UPDATED_AT: 2026-07-30T10:00:00+02:00
 
 ---
 
@@ -278,7 +278,7 @@ o cuando todas las tareas restantes dependan de un gate duro.
 | 24 | Executor Revolut X bloqueado | BLOQUEADO | 2026-07-30 | REAL/SHADOW gates |
 | 25 | Seguridad y recovery | EN_VALIDACION | 2026-07-30 | — |
 | 26 | REAL_LIMITED | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
-| 27 | Validación final local | R1_APLICADA | 2026-07-30 | Auditoría R1 creada, documentación actualizada |
+| 27 | Validación final local | R2_APLICADA | 2026-07-30 | R2: plan acumulativo, seed tranches, HWM canónico, IDs, 560 tests ✅ |
 | 28 | Deploy staging | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 | 29 | Archivo | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 

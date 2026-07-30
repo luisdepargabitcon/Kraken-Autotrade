@@ -69,6 +69,70 @@ export function computeATRPercentage(
   return (atr / currentPrice) * 100;
 }
 
+// ─── Canonical Confirmation Logic (R2 — shared by bootstrap and incremental) ──
+
+export interface ConfirmationInput {
+  hwmPrice: number;
+  hwmTimestamp: string;
+  subsequentCloses: { timestamp: string; close: number }[];
+  requiredConfirmations: number;
+  reversalThresholdPct: number;
+}
+
+export interface ConfirmationResult {
+  confirmed: boolean;
+  status: HwmStatus;
+  confirmedAt: string | null;
+  reversalThresholdPrice: number;
+  confirmationCloses: { timestamp: string; close: number }[];
+}
+
+export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResult {
+  const { hwmPrice, hwmTimestamp, subsequentCloses, requiredConfirmations, reversalThresholdPct } = input;
+
+  const reversalThresholdPrice = hwmPrice * (1 - reversalThresholdPct / 100);
+
+  if (subsequentCloses.length < requiredConfirmations) {
+    return {
+      confirmed: false,
+      status: "CANDIDATE",
+      confirmedAt: null,
+      reversalThresholdPrice,
+      confirmationCloses: [],
+    };
+  }
+
+  const confirmationCloses = subsequentCloses.slice(0, requiredConfirmations);
+
+  // R2: ALL confirmation closes must be <= reversalThresholdPrice
+  const allBelowThreshold = confirmationCloses.every(
+    (c) => c.close <= reversalThresholdPrice,
+  );
+
+  // R2: Also require all closes to be below HWM
+  const allBelowHwm = confirmationCloses.every(
+    (c) => c.close < hwmPrice,
+  );
+
+  if (allBelowThreshold && allBelowHwm) {
+    return {
+      confirmed: true,
+      status: "CONFIRMED",
+      confirmedAt: confirmationCloses[requiredConfirmations - 1].timestamp,
+      reversalThresholdPrice,
+      confirmationCloses,
+    };
+  }
+
+  return {
+    confirmed: false,
+    status: "CONFIRMING",
+    confirmedAt: null,
+    reversalThresholdPrice,
+    confirmationCloses,
+  };
+}
+
 // ─── HWM Bootstrap ──────────────────────────────────────────────────
 
 export function bootstrapHWM(
@@ -83,56 +147,41 @@ export function bootstrapHWM(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
 
+  // Deduplicate by timestamp
+  const seen = new Set<string>();
+  const deduped = sorted.filter((c) => {
+    if (seen.has(c.timestamp)) return false;
+    seen.add(c.timestamp);
+    return true;
+  });
+
   // Find the highest close
   let highestIdx = 0;
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].close > sorted[highestIdx].close) {
+  for (let i = 1; i < deduped.length; i++) {
+    if (deduped[i].close > deduped[highestIdx].close) {
       highestIdx = i;
     }
   }
 
-  const hwmPrice = sorted[highestIdx].close;
-  const hwmTimestamp = sorted[highestIdx].timestamp;
-  const subsequentCloses = sorted.slice(highestIdx + 1);
+  const hwmPrice = deduped[highestIdx].close;
+  const hwmTimestamp = deduped[highestIdx].timestamp;
+  const subsequentCloses = deduped.slice(highestIdx + 1);
 
-  // Not enough subsequent closes to confirm → CANDIDATE
-  if (subsequentCloses.length < requiredConfirmations) {
-    return {
-      hwmId: `hwm-${hwmTimestamp}`,
-      price: hwmPrice,
-      timestamp: hwmTimestamp,
-      status: "CANDIDATE",
-      confirmedAt: null,
-      supersededBy: null,
-    };
-  }
+  // R2: Use canonical shared evaluation function
+  const result = evaluateConfirmation({
+    hwmPrice,
+    hwmTimestamp,
+    subsequentCloses,
+    requiredConfirmations,
+    reversalThresholdPct,
+  });
 
-  // Check if the high is confirmed by `requiredConfirmations` subsequent lower closes
-  const confirmationCloses = subsequentCloses.slice(0, requiredConfirmations);
-  const allLower = confirmationCloses.every((c) => c.close < hwmPrice);
-
-  // Require actual reversal: at least one close must be below the reversal threshold
-  const reversalThresholdPrice = hwmPrice * (1 - reversalThresholdPct / 100);
-  const hasReversal = confirmationCloses.some((c) => c.close <= reversalThresholdPrice);
-
-  if (allLower && hasReversal) {
-    return {
-      hwmId: `hwm-${hwmTimestamp}`,
-      price: hwmPrice,
-      timestamp: hwmTimestamp,
-      status: "CONFIRMED",
-      confirmedAt: confirmationCloses[requiredConfirmations - 1].timestamp,
-      supersededBy: null,
-    };
-  }
-
-  // Enough subsequent closes but not all are lower or no reversal → CONFIRMING
   return {
     hwmId: `hwm-${hwmTimestamp}`,
     price: hwmPrice,
     timestamp: hwmTimestamp,
-    status: "CONFIRMING",
-    confirmedAt: null,
+    status: result.status,
+    confirmedAt: result.confirmedAt,
     supersededBy: null,
   };
 }
@@ -262,6 +311,73 @@ export function computeReversalThreshold(
   return hwm * (1 - thresholdPct / 100);
 }
 
+// ─── Incremental HWM Processing (R2 — uses canonical evaluateConfirmation) ──
+
+export function processIncrementalClose(
+  hwm: HighWaterMark,
+  newClose: { timestamp: string; close: number },
+  allCloses: { timestamp: string; close: number }[],
+  requiredConfirmations: number,
+  reversalThresholdPct: number,
+): HighWaterMark {
+  if (hwm.status === "FROZEN" || hwm.status === "INVALIDATED") return hwm;
+
+  // If new close exceeds HWM, HWM is superseded
+  if (newClose.close > hwm.price) {
+    return {
+      hwmId: `hwm-${newClose.timestamp}`,
+      price: newClose.close,
+      timestamp: newClose.timestamp,
+      status: "CANDIDATE",
+      confirmedAt: null,
+      supersededBy: null,
+    };
+  }
+
+  if (hwm.status === "CONFIRMED" || hwm.status === "SUPERSEDED") return hwm;
+
+  // For CANDIDATE and CONFIRMING: gather subsequent closes and evaluate
+  const subsequentCloses = allCloses
+    .filter((c) => c.timestamp > hwm.timestamp)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  const result = evaluateConfirmation({
+    hwmPrice: hwm.price,
+    hwmTimestamp: hwm.timestamp,
+    subsequentCloses,
+    requiredConfirmations,
+    reversalThresholdPct,
+  });
+
+  return {
+    ...hwm,
+    status: result.status,
+    confirmedAt: result.confirmedAt,
+  };
+}
+
+// ─── Weekly Confirmation (R2 — explicitly disabled) ──────────────────
+
+export interface WeeklyConfirmationConfig {
+  weeklyOverrideEnabled: boolean;
+  requiredWeeklyCloses: number;
+  weeklyBoundaryUtc: string;
+  weeklyThresholdPrice: number | null;
+}
+
+export const DEFAULT_WEEKLY_CONFIG: WeeklyConfirmationConfig = {
+  weeklyOverrideEnabled: false,
+  requiredWeeklyCloses: 0,
+  weeklyBoundaryUtc: "00:00:00Z",
+  weeklyThresholdPrice: null,
+};
+
+export function isWeeklyConfirmationEnabled(config: WeeklyConfirmationConfig): boolean {
+  return config.weeklyOverrideEnabled && config.requiredWeeklyCloses > 0;
+}
+
+// ─── Reversal Confirmation (uses canonical logic) ───────────────────
+
 export function isReversalConfirmed(
   hwm: number,
   currentPrice: number,
@@ -271,7 +387,6 @@ export function isReversalConfirmed(
 ): boolean {
   if (currentPrice > reversalThreshold) return false;
 
-  // Check for required consecutive closes below threshold
   const recentCloses = dailyCloses.slice(-requiredDailyCloses);
   if (recentCloses.length < requiredDailyCloses) return false;
 

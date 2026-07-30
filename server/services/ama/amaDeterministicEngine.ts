@@ -15,6 +15,8 @@ import type {
   TrancheType,
 } from "./amaTypes";
 import { computeDropPct, getMacroZone } from "./amaHwmBar";
+import type { ResolvedSeedTranche, AssetSymbol } from "./amaSeedTypes";
+import { getSeedTranches, getSeedMaximumTranchePct, isWeightMultiplierValid } from "./amaSeedTypes";
 
 // ─── Tranche Plan Input ─────────────────────────────────────────────
 
@@ -29,6 +31,8 @@ export interface TranchePlanInput {
   previousTranchePrice: number | null;
   parameters: AmaResolvedParameters;
   cycleId: string;
+  asset: AssetSymbol;
+  riskOverlayMultiplier: number;
 }
 
 // ─── Zone → Tranche Type Mapping ────────────────────────────────────
@@ -59,7 +63,90 @@ function getZoneMultiplier(zone: MacroZone): number {
   }
 }
 
-// ─── Candidate Generation ───────────────────────────────────────────
+// ─── Seed-based Candidate Generation (R2) ───────────────────────────
+
+export function generateTrancheCandidateFromSeed(
+  input: TranchePlanInput,
+  pricePoint: number,
+  tranche: ResolvedSeedTranche,
+  trancheIndex: number,
+  cumulativeDeployedUsd: number,
+  cumulativeEligibleCount: number,
+): AmaTrancheCandidate | null {
+  const { hwmPrice, budgetUsd, parameters, cycleId, previousTranchePrice, atr, asset, riskOverlayMultiplier } = input;
+
+  const dropPct = computeDropPct(hwmPrice, pricePoint);
+  if (dropPct <= 0) return null;
+
+  // Check minimum spacing from previous tranche
+  if (previousTranchePrice !== null) {
+    const spacingFromPrevious = computeDropPct(previousTranchePrice, pricePoint);
+    if (spacingFromPrevious < parameters.minimumSpacingPct) return null;
+  }
+
+  // Check ATR-based spacing
+  if (atr !== null && previousTranchePrice !== null) {
+    const atrSpacing = (previousTranchePrice - pricePoint) / atr;
+    if (atrSpacing < parameters.spacingAtrMultiplier) return null;
+  }
+
+  // R2: Amount from seed tranche capitalPct, reduced by overlay multiplier (<= 1.0)
+  const baseAmountUsd = budgetUsd * (tranche.capitalPct / 100);
+  const effectiveMultiplier = Math.min(riskOverlayMultiplier, 1.0);
+  const amountUsd = baseAmountUsd * effectiveMultiplier;
+
+  const eligibilityReasons: string[] = [];
+  let eligible = true;
+
+  // R2: Cumulative budget check
+  const projectedDeployedUsd = input.deployedUsd + cumulativeDeployedUsd + amountUsd;
+  const projectedFreeUsd = input.budgetUsd - projectedDeployedUsd - input.reservedUsd;
+  const mandatoryReserveUsd = budgetUsd * (parameters.mandatoryReservePct / 100);
+  const maxCycleDeploymentUsd = budgetUsd * (parameters.maxCycleDeploymentPct / 100);
+
+  if (projectedFreeUsd < amountUsd) {
+    eligible = false;
+    eligibilityReasons.push("INSUFFICIENT_FREE_BUDGET");
+  }
+
+  if (projectedDeployedUsd > maxCycleDeploymentUsd) {
+    eligible = false;
+    eligibilityReasons.push("CYCLE_DEPLOYMENT_LIMIT_REACHED");
+  }
+
+  if (projectedFreeUsd - amountUsd < mandatoryReserveUsd) {
+    eligible = false;
+    eligibilityReasons.push("MANDATORY_RESERVE_WOULD_BE_VIOLATED");
+  }
+
+  if (projectedDeployedUsd > parameters.absoluteCapitalCapUsd) {
+    eligible = false;
+    eligibilityReasons.push("ABSOLUTE_CAPITAL_CAP_EXCEEDED");
+  }
+
+  if (cumulativeEligibleCount >= parameters.maximumCandidateTranches) {
+    eligible = false;
+    eligibilityReasons.push("MAX_CANDIDATE_TRANCHES_REACHED");
+  }
+
+  if (cumulativeEligibleCount >= parameters.absoluteTrancheCountCap) {
+    eligible = false;
+    eligibilityReasons.push("ABSOLUTE_TRANCHE_COUNT_CAP_EXCEEDED");
+  }
+
+  return {
+    trancheId: `tranche-${cycleId}-${trancheIndex}`,
+    type: tranche.trancheType,
+    activationZone: getMacroZone(dropPct),
+    activationDropPct: dropPct,
+    amountUsd,
+    spacingPct: parameters.minimumSpacingPct,
+    eligible,
+    eligibilityReasons,
+  };
+}
+
+// ─── Legacy Candidate Generation (kept for backward compat) ──────────
 
 export function generateTrancheCandidate(
   input: TranchePlanInput,
@@ -140,7 +227,67 @@ export function generateTrancheCandidate(
   };
 }
 
-// ─── Deterministic Tranche Planner ──────────────────────────────────
+// ─── Deterministic Tranche Planner (R2 — cumulative + seed-based) ───
+
+export function planTranchesFromSeeds(
+  input: TranchePlanInput,
+  pricePoints: number[],
+): AmaTranchePlan | null {
+  const { budgetUsd, parameters, cycleId, asset } = input;
+  const seedTranches = getSeedTranches(asset);
+
+  const candidates: AmaTrancheCandidate[] = [];
+  let previousPrice = input.previousTranchePrice;
+  let plannedEligibleUsd = 0;
+  let plannedEligibleCount = 0;
+
+  for (let i = 0; i < seedTranches.length && i < pricePoints.length; i++) {
+    const tranche = seedTranches[i];
+    const price = pricePoints[i];
+
+    const candidate = generateTrancheCandidateFromSeed(
+      { ...input, previousTranchePrice: previousPrice },
+      price,
+      tranche,
+      i,
+      plannedEligibleUsd,
+      plannedEligibleCount,
+    );
+
+    if (candidate === null) continue;
+
+    candidates.push(candidate);
+
+    // R2: Only add to cumulative if eligible
+    if (candidate.eligible) {
+      plannedEligibleUsd += candidate.amountUsd;
+      plannedEligibleCount++;
+    }
+
+    previousPrice = price;
+  }
+
+  if (candidates.length === 0) return null;
+
+  const eligibleCount = candidates.filter((c) => c.eligible).length;
+  const mandatoryReserveUsd = budgetUsd * (parameters.mandatoryReservePct / 100);
+  const deployableCycleCapitalUsd = budgetUsd - mandatoryReserveUsd;
+
+  const planId = computePlanId(cycleId, candidates);
+
+  return {
+    planId,
+    cycleId,
+    version: 1,
+    plannedPurchaseCount: eligibleCount,
+    candidateTranches: candidates,
+    mandatoryReserveUsd,
+    deployableCycleCapitalUsd,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+// ─── Legacy Tranche Planner (kept for backward compat) ──────────────
 
 export function planTranches(
   input: TranchePlanInput,
@@ -151,6 +298,9 @@ export function planTranches(
   const candidates: AmaTrancheCandidate[] = [];
   let previousPrice = input.previousTranchePrice;
   let trancheIndex = 0;
+  // R2: Cumulative tracking
+  let plannedEligibleUsd = 0;
+  let plannedEligibleCount = 0;
 
   for (const price of pricePoints) {
     const candidate = generateTrancheCandidate(
@@ -161,7 +311,43 @@ export function planTranches(
 
     if (candidate === null) continue;
 
+    // R2: Re-check eligibility with cumulative amounts
+    if (candidate.eligible) {
+      const projectedDeployedUsd = input.deployedUsd + plannedEligibleUsd + candidate.amountUsd;
+      const projectedFreeUsd = input.budgetUsd - projectedDeployedUsd - input.reservedUsd;
+      const mandatoryReserveUsd = budgetUsd * (parameters.mandatoryReservePct / 100);
+      const maxCycleDeploymentUsd = budgetUsd * (parameters.maxCycleDeploymentPct / 100);
+
+      if (projectedDeployedUsd > maxCycleDeploymentUsd) {
+        candidate.eligible = false;
+        candidate.eligibilityReasons.push("CUMULATIVE_CYCLE_DEPLOYMENT_LIMIT");
+      }
+      if (projectedFreeUsd - candidate.amountUsd < mandatoryReserveUsd) {
+        candidate.eligible = false;
+        candidate.eligibilityReasons.push("CUMULATIVE_RESERVE_VIOLATION");
+      }
+      if (projectedDeployedUsd > parameters.absoluteCapitalCapUsd) {
+        candidate.eligible = false;
+        candidate.eligibilityReasons.push("CUMULATIVE_CAPITAL_CAP_EXCEEDED");
+      }
+      if (plannedEligibleCount >= parameters.maximumCandidateTranches) {
+        candidate.eligible = false;
+        candidate.eligibilityReasons.push("CUMULATIVE_MAX_TRANCHES_REACHED");
+      }
+      if (plannedEligibleCount >= parameters.absoluteTrancheCountCap) {
+        candidate.eligible = false;
+        candidate.eligibilityReasons.push("CUMULATIVE_TRANCHE_COUNT_CAP_EXCEEDED");
+      }
+    }
+
     candidates.push(candidate);
+
+    // R2: Only accumulate if still eligible after cumulative check
+    if (candidate.eligible) {
+      plannedEligibleUsd += candidate.amountUsd;
+      plannedEligibleCount++;
+    }
+
     previousPrice = price;
     trancheIndex++;
   }
@@ -271,6 +457,27 @@ function computePlanId(cycleId: string, candidates: AmaTrancheCandidate[]): stri
 export function computePlanHash(plan: AmaTranchePlan): string {
   const payload = canonicalPlanPayload(plan);
   return createHash("sha256").update(payload).digest("hex");
+}
+
+// ─── Idempotency Key (R2 — deterministic, no Date.now()) ─────────────
+
+export function computeIdempotencyKey(
+  asset: AssetSymbol,
+  cycleId: string,
+  policyVersion: number,
+  trancheIndex: number,
+  confirmedCandleTimestamp: string,
+  action: string,
+): string {
+  const payload = JSON.stringify({
+    asset,
+    cycleId,
+    policyVersion,
+    trancheIndex,
+    confirmedCandleTimestamp,
+    action,
+  });
+  return createHash("sha256").update(payload).digest("hex").slice(0, 24);
 }
 
 // ─── Idempotency Check ──────────────────────────────────────────────

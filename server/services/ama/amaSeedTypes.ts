@@ -162,6 +162,111 @@ export const ETH_SEED_POLICY: SeedPolicyEth = {
   relativePair: "ETH/BTC",
 };
 
+// ─── Resolved Seed Tranches (R2) ─────────────────────────────────────
+
+import type { TrancheType } from "./amaTypes";
+
+export interface ResolvedSeedTranche {
+  index: number;
+  asset: AssetSymbol;
+  triggerDropPct: number;
+  capitalPct: number;
+  trancheType: TrancheType;
+  policyId: string;
+  policyVersion: number;
+}
+
+export const BTC_SEED_TRANCHES: ResolvedSeedTranche[] = [
+  { index: 0, asset: "BTC", triggerDropPct: 18, capitalPct: 7,  trancheType: "PROBE",        policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1 },
+  { index: 1, asset: "BTC", triggerDropPct: 25, capitalPct: 9,  trancheType: "PROBE",        policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1 },
+  { index: 2, asset: "BTC", triggerDropPct: 33, capitalPct: 12, trancheType: "VALUE",        policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1 },
+  { index: 3, asset: "BTC", triggerDropPct: 42, capitalPct: 14, trancheType: "VALUE",        policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1 },
+  { index: 4, asset: "BTC", triggerDropPct: 52, capitalPct: 15, trancheType: "DEEP_VALUE",   policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1 },
+  { index: 5, asset: "BTC", triggerDropPct: 63, capitalPct: 18, trancheType: "CAPITULATION", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1 },
+];
+
+export const ETH_SEED_TRANCHES: ResolvedSeedTranche[] = [
+  { index: 0, asset: "ETH", triggerDropPct: 24, capitalPct: 5,  trancheType: "PROBE",        policyId: "AMA_ETH_SEED_V1_RESEARCH_ONLY", policyVersion: 1 },
+  { index: 1, asset: "ETH", triggerDropPct: 32, capitalPct: 7,  trancheType: "PROBE",        policyId: "AMA_ETH_SEED_V1_RESEARCH_ONLY", policyVersion: 1 },
+  { index: 2, asset: "ETH", triggerDropPct: 41, capitalPct: 8,  trancheType: "VALUE",        policyId: "AMA_ETH_SEED_V1_RESEARCH_ONLY", policyVersion: 1 },
+  { index: 3, asset: "ETH", triggerDropPct: 51, capitalPct: 10, trancheType: "VALUE",        policyId: "AMA_ETH_SEED_V1_RESEARCH_ONLY", policyVersion: 1 },
+  { index: 4, asset: "ETH", triggerDropPct: 61, capitalPct: 11, trancheType: "DEEP_VALUE",   policyId: "AMA_ETH_SEED_V1_RESEARCH_ONLY", policyVersion: 1 },
+  { index: 5, asset: "ETH", triggerDropPct: 71, capitalPct: 12, trancheType: "CAPITULATION", policyId: "AMA_ETH_SEED_V1_RESEARCH_ONLY", policyVersion: 1 },
+  { index: 6, asset: "ETH", triggerDropPct: 80, capitalPct: 12, trancheType: "CAPITULATION", policyId: "AMA_ETH_SEED_V1_RESEARCH_ONLY", policyVersion: 1 },
+];
+
+export const SEED_TRANCHES: Record<AssetSymbol, ResolvedSeedTranche[]> = {
+  BTC: BTC_SEED_TRANCHES,
+  ETH: ETH_SEED_TRANCHES,
+};
+
+export function getSeedTranches(asset: AssetSymbol): ResolvedSeedTranche[] {
+  return SEED_TRANCHES[asset];
+}
+
+// ─── Seed Maximum Tranche Pct (R2) ───────────────────────────────────
+
+export const SEED_MAXIMUM_TRANCHE_PCT: Record<AssetSymbol, number> = {
+  BTC: 18,
+  ETH: 12,
+};
+
+export function getSeedMaximumTranchePct(asset: AssetSymbol): number {
+  return SEED_MAXIMUM_TRANCHE_PCT[asset];
+}
+
+export function computeEffectiveMaximumTranchePct(
+  asset: AssetSymbol,
+  userConfiguredMaximumTranchePct: number,
+): number {
+  const seedMax = SEED_MAXIMUM_TRANCHE_PCT[asset];
+  return Math.min(seedMax, userConfiguredMaximumTranchePct);
+}
+
+// ─── Seed Policy Validation (R2 — fail-closed) ──────────────────────
+
+export function validateSeedPolicy(asset: AssetSymbol): string[] {
+  const errors: string[] = [];
+  const tranches = getSeedTranches(asset);
+  const policy = asset === "BTC" ? BTC_SEED_POLICY : ETH_SEED_POLICY;
+
+  if (tranches.length !== policy.trancheCount) {
+    errors.push(`Tranche count mismatch: expected ${policy.trancheCount}, got ${tranches.length}`);
+  }
+
+  const capitalPcts = tranches.map((t) => t.capitalPct);
+  const sumCapital = capitalPcts.reduce((a, b) => a + b, 0);
+  if (sumCapital !== policy.capitalDeploymentPct) {
+    errors.push(`Capital sum mismatch: expected ${policy.capitalDeploymentPct}, got ${sumCapital}`);
+  }
+
+  if (policy.capitalDeploymentPct + policy.capitalReservePct !== 100) {
+    errors.push(`Deployment + reserve != 100: ${policy.capitalDeploymentPct} + ${policy.capitalReservePct}`);
+  }
+
+  const triggers = tranches.map((t) => t.triggerDropPct);
+  if (new Set(triggers).size !== triggers.length) {
+    errors.push("Triggers must be unique");
+  }
+
+  for (let i = 1; i < triggers.length; i++) {
+    if (triggers[i] <= triggers[i - 1]) {
+      errors.push(`Trigger at index ${i} must be strictly greater (deeper) than index ${i - 1}`);
+    }
+  }
+
+  if (asset === "ETH" && policy.executionEnabled) {
+    errors.push("ETH must not have execution enabled");
+  }
+
+  const maxTranche = Math.max(...capitalPcts);
+  if (maxTranche > SEED_MAXIMUM_TRANCHE_PCT[asset]) {
+    errors.push(`Max tranche ${maxTranche} exceeds seed maximum ${SEED_MAXIMUM_TRANCHE_PCT[asset]}`);
+  }
+
+  return errors;
+}
+
 // ─── Envelopes ───────────────────────────────────────────────────────
 
 /**

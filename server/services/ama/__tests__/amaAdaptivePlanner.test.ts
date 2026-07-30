@@ -58,8 +58,10 @@ const makeInput = (overrides: Partial<TranchePlanInput> = {}): TranchePlanInput 
   previousTranchePrice: null,
   parameters: makeParams(),
   cycleId: "cycle-1",
+  asset: "BTC",
+  riskOverlayMultiplier: 1.0,
   ...overrides,
-});
+} as TranchePlanInput);
 
 describe("Fase 11 — Cooldown", () => {
   it("creates cooldown state", () => {
