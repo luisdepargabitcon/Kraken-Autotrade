@@ -14,15 +14,15 @@
 
 ## ESTADO OPERATIVO
 
-- TASK_STATUS: R2_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
-- CURRENT_PHASE: Fase 27 (R2)
-- CURRENT_SUBPHASE: Correcciones R2 aplicadas, tests R2 41/41 ✅, auditoría R2 creada, pendiente gate precommit R2
-- LAST_COMPLETED_ACTION: R2 — 13 correcciones aplicadas (plan acumulativo, ResolvedSeedTranche, límites seed/user/effective, validateSeedPolicy fail-closed, bootstrap HWM every-close, evaluateConfirmation canónica, processIncrementalClose, weekly disabled, computeIdempotencyKey, planTranchesFromSeeds). 560 tests AMA ✅, tsc ✅
-- NEXT_ACTION: Presentar gate precommit R2. Pendiente autorización commit/push en rama de revisión
+- TASK_STATUS: R3_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- CURRENT_PHASE: Fase 27 (R3)
+- CURRENT_SUBPHASE: Correcciones R3 aplicadas, tests R3 79/79 ✅, auditoría R3 creada, pendiente gate precommit R3
+- LAST_COMPLETED_ACTION: R3 — 8 correcciones aplicadas (doble descuento reserva, overlay fail-closed, triggers Seed canónicos, no-lookahead incremental, normalizeClosedDailyCloses compartida, isClosed modelado, test migración real, equality exacta). 598 tests AMA ✅, tsc ✅
+- NEXT_ACTION: Presentar gate precommit R3. Pendiente autorización commit/push en rama de revisión
 - BLOCKERS: PostgreSQL desechable no disponible (BLOCKED_NO_SAFE_ENVIRONMENT). Migración 080 NOT_REGISTERED, NOT_AUTOAPPLY. Integración real de persistencia, logging, portfolio, SHADOW pendiente
-- PENDING_GATES: Gate precommit R2, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
-- LAST_VALIDATION: 2026-07-30 — npm run check ✅, 560/560 AMA tests ✅ (incluye 41 R2)
-- UPDATED_AT: 2026-07-30T10:00:00+02:00
+- PENDING_GATES: Gate precommit R3, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
+- LAST_VALIDATION: 2026-07-30 — npm run check ✅, 598/598 AMA tests ✅ (incluye 79 R2+R3)
+- UPDATED_AT: 2026-07-30T17:20:00+02:00
 
 ---
 
@@ -278,7 +278,7 @@ o cuando todas las tareas restantes dependan de un gate duro.
 | 24 | Executor Revolut X bloqueado | BLOQUEADO | 2026-07-30 | REAL/SHADOW gates |
 | 25 | Seguridad y recovery | EN_VALIDACION | 2026-07-30 | — |
 | 26 | REAL_LIMITED | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
-| 27 | Validación final local | R2_APLICADA | 2026-07-30 | R2: plan acumulativo, seed tranches, HWM canónico, IDs, 560 tests ✅ |
+| 27 | Validación final local | R3_APLICADA | 2026-07-30 | R3: doble descuento, overlay fail-closed, triggers canónicos, no-lookahead, isClosed, 598 tests ✅ |
 | 28 | Deploy staging | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 | 29 | Archivo | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 

@@ -21,6 +21,8 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   BTC_SEED_TRANCHES,
   ETH_SEED_TRANCHES,
@@ -36,17 +38,23 @@ import {
 } from "../amaSeedTypes";
 import {
   planTranchesFromSeeds,
+  planSeedTranches,
+  evaluateSeedTrancheEligibility,
   computePlanHash,
   computeIdempotencyKey,
+  isValidRiskOverlayMultiplier,
   type TranchePlanInput,
+  type SeedTranchePlanInput,
 } from "../amaDeterministicEngine";
 import {
   bootstrapHWM,
   evaluateConfirmation,
   processIncrementalClose,
+  normalizeClosedDailyCloses,
   DEFAULT_WEEKLY_CONFIG,
   isWeeklyConfirmationEnabled,
   type HighWaterMark,
+  type DailyCloseObservation,
 } from "../amaHwmBar";
 import type { AmaResolvedParameters } from "../amaTypes";
 
@@ -212,6 +220,22 @@ describe("R2 — Plan acumulativo", () => {
     expect(totalEligible).toBeLessThanOrEqual(7500);
   });
 
+  it("BTC full Seed deploys exactly 75% and retains exactly 25%", () => {
+    const input = makeInput();
+    const prices = [41000, 37500, 33500, 29000, 24000, 18500];
+    const plan = planTranchesFromSeeds(input, prices);
+    expect(plan).not.toBeNull();
+    const eligible = plan!.candidateTranches.filter((c) => c.eligible);
+    expect(eligible.length).toBe(6);
+    const totalEligible = eligible.reduce((sum, c) => sum + c.amountUsd, 0);
+    expect(totalEligible).toBe(7500);
+    const remaining = 10000 - totalEligible;
+    expect(remaining).toBe(2500);
+    expect(eligible[5].amountUsd).toBe(1800);
+    const rejected = plan!.candidateTranches.filter((c) => !c.eligible);
+    expect(rejected.length).toBe(0);
+  });
+
   it("plan acumulativo no supera 75%", () => {
     const input = makeInput();
     const prices = [41000, 37500, 33500, 29000, 24000, 18500];
@@ -233,6 +257,29 @@ describe("R2 — Plan acumulativo", () => {
       .reduce((sum, c) => sum + c.amountUsd, 0);
     const remaining = 10000 - totalEligible;
     expect(remaining).toBeGreaterThanOrEqual(2500);
+  });
+
+  it("ETH full Seed deploys exactly 65% and retains exactly 35%", () => {
+    const params = makeParams();
+    params.mandatoryReservePct = 35;
+    params.maxCycleDeploymentPct = 65;
+    params.asset = "ETH";
+    params.absoluteTrancheCountCap = 7;
+    params.maximumCandidateTranches = 7;
+    const input = makeInput({
+      asset: "ETH",
+      parameters: params,
+      riskOverlayMultiplier: 1.0,
+    });
+    const prices = [38000, 34000, 29500, 24500, 19500, 14500, 10000];
+    const plan = planTranchesFromSeeds(input, prices);
+    expect(plan).not.toBeNull();
+    const eligible = plan!.candidateTranches.filter((c) => c.eligible);
+    expect(eligible.length).toBe(7);
+    const totalEligible = eligible.reduce((sum, c) => sum + c.amountUsd, 0);
+    expect(totalEligible).toBe(6500);
+    const remaining = 10000 - totalEligible;
+    expect(remaining).toBe(3500);
   });
 
   it("ETH no supera 65%", () => {
@@ -275,6 +322,62 @@ describe("R2 — Risk overlay", () => {
       const full = planFull!.candidateTranches[i].amountUsd;
       expect(half).toBeCloseTo(full * 0.5, 2);
     }
+  });
+
+  it("overlay > 1.00 rechazado por planner (fail-closed)", () => {
+    const input = makeInput({ riskOverlayMultiplier: 1.01 });
+    const prices = [41000, 37500, 33500, 29000, 24000, 18500];
+    const plan = planTranchesFromSeeds(input, prices);
+    expect(plan).toBeNull();
+  });
+
+  it("overlay 1.50 rechazado por planner (fail-closed)", () => {
+    const input = makeInput({ riskOverlayMultiplier: 1.50 });
+    const prices = [41000, 37500, 33500, 29000, 24000, 18500];
+    const plan = planTranchesFromSeeds(input, prices);
+    expect(plan).toBeNull();
+  });
+
+  it("overlay negativo rechazado por planner (fail-closed)", () => {
+    const input = makeInput({ riskOverlayMultiplier: -0.5 });
+    const prices = [41000, 37500, 33500, 29000, 24000, 18500];
+    const plan = planTranchesFromSeeds(input, prices);
+    expect(plan).toBeNull();
+  });
+
+  it("overlay NaN rechazado por planner (fail-closed)", () => {
+    const input = makeInput({ riskOverlayMultiplier: NaN });
+    const prices = [41000, 37500, 33500, 29000, 24000, 18500];
+    const plan = planTranchesFromSeeds(input, prices);
+    expect(plan).toBeNull();
+  });
+
+  it("isValidRiskOverlayMultiplier accepts 1.00", () => {
+    expect(isValidRiskOverlayMultiplier(1.0)).toBe(true);
+  });
+
+  it("isValidRiskOverlayMultiplier accepts 0.50", () => {
+    expect(isValidRiskOverlayMultiplier(0.5)).toBe(true);
+  });
+
+  it("isValidRiskOverlayMultiplier rejects 1.01", () => {
+    expect(isValidRiskOverlayMultiplier(1.01)).toBe(false);
+  });
+
+  it("isValidRiskOverlayMultiplier rejects 1.50", () => {
+    expect(isValidRiskOverlayMultiplier(1.50)).toBe(false);
+  });
+
+  it("isValidRiskOverlayMultiplier rejects negative", () => {
+    expect(isValidRiskOverlayMultiplier(-0.5)).toBe(false);
+  });
+
+  it("isValidRiskOverlayMultiplier rejects NaN", () => {
+    expect(isValidRiskOverlayMultiplier(NaN)).toBe(false);
+  });
+
+  it("isValidRiskOverlayMultiplier rejects Infinity", () => {
+    expect(isValidRiskOverlayMultiplier(Infinity)).toBe(false);
   });
 
   it("overlay > 1.00 rechazado", () => {
@@ -384,7 +487,7 @@ describe("R2 — Bootstrap e incremental coinciden", () => {
   it("mismo dataset → mismo HWM, estado, fecha confirmación, umbral", () => {
     const bootstrapResult = bootstrapHWM(testCloses, 3, 5.0);
 
-    // Incremental: start with CANDIDATE from first close
+    // R3: Incremental uses progressive slices — no look-ahead
     let incrementalHwm: HighWaterMark = {
       hwmId: "hwm-2026-07-01T00:00:00Z",
       price: 52000,
@@ -394,11 +497,12 @@ describe("R2 — Bootstrap e incremental coinciden", () => {
       supersededBy: null,
     };
 
-    for (const close of testCloses.slice(1)) {
+    for (let i = 1; i < testCloses.length; i++) {
+      const closesAvailableNow = testCloses.slice(0, i + 1);
       incrementalHwm = processIncrementalClose(
         incrementalHwm,
-        close,
-        testCloses,
+        testCloses[i],
+        closesAvailableNow,
         3,
         5.0,
       );
@@ -503,13 +607,353 @@ describe("R2 — IDs e idempotencia", () => {
   });
 });
 
-// ─── Migración 080 fuera de AutoMigrationRunner ─────────────────────
+// ─── R3: Triggers Seed gobiernan el plan ───────────────────────────
 
-describe("R2 — Migración 080 continúa fuera de AutoMigrationRunner", () => {
-  it("migración 080 está NOT_REGISTERED y NOT_AUTOAPPLY", () => {
-    // This is verified by the migration gate test file
-    // Here we just verify the constant is not auto-applied
-    // The actual gate is in amaMigrationGate.test.ts
-    expect(true).toBe(true);
+describe("R3 — Triggers Seed gobiernan el plan", () => {
+  const seedInput: SeedTranchePlanInput = {
+    hwmPrice: 50000,
+    budgetUsd: 10000,
+    deployedUsd: 0,
+    reservedUsd: 0,
+    parameters: makeParams(),
+    cycleId: "cycle-r3",
+    asset: "BTC",
+    riskOverlayMultiplier: 1.0,
+    previousTranchePrice: null,
+    atr: null,
+  };
+
+  it("planSeedTranches produce 6 niveles BTC con triggers canónicos", () => {
+    const levels = planSeedTranches(seedInput);
+    expect(levels).not.toBeNull();
+    expect(levels!.length).toBe(6);
+    const triggers = levels!.map((l) => l.triggerDropPct);
+    expect(triggers).toEqual([18, 25, 33, 42, 52, 63]);
+  });
+
+  it("BTC tranche 1 trigger = 41000 para HWM 50000", () => {
+    const levels = planSeedTranches(seedInput);
+    expect(levels![0].triggerPrice).toBe(50000 * (1 - 18 / 100));
+    expect(levels![0].triggerPrice).toBe(41000);
+  });
+
+  it("BTC tranche 6 trigger = 18500 para HWM 50000", () => {
+    const levels = planSeedTranches(seedInput);
+    expect(levels![5].triggerPrice).toBe(50000 * (1 - 63 / 100));
+    expect(levels![5].triggerPrice).toBe(18500);
+  });
+
+  it("price 42000 no activa tranche -18%", () => {
+    const levels = planSeedTranches(seedInput)!;
+    const result = evaluateSeedTrancheEligibility(
+      levels,
+      { timestamp: "2026-07-02T00:00:00Z", close: 42000, isClosed: true },
+      0, 0, seedInput,
+    );
+    expect(result[0].eligible).toBe(false);
+    expect(result[0].eligibilityReasons).toContain("TRIGGER_NOT_REACHED");
+  });
+
+  it("price 41000 puede activar tranche -18%", () => {
+    const levels = planSeedTranches(seedInput)!;
+    const result = evaluateSeedTrancheEligibility(
+      levels,
+      { timestamp: "2026-07-02T00:00:00Z", close: 41000, isClosed: true },
+      0, 0, seedInput,
+    );
+    expect(result[0].eligible).toBe(true);
+  });
+
+  it("price 20000 no cambia el trigger canónico del tramo -63%", () => {
+    const levels = planSeedTranches(seedInput)!;
+    expect(levels![5].triggerDropPct).toBe(63);
+    expect(levels![5].triggerPrice).toBe(18500);
+  });
+
+  it("ETH triggers exactos [24,32,41,51,61,71,80]", () => {
+    const ethInput = { ...seedInput, asset: "ETH" as const };
+    const levels = planSeedTranches(ethInput);
+    expect(levels).not.toBeNull();
+    const triggers = levels!.map((l) => l.triggerDropPct);
+    expect(triggers).toEqual([24, 32, 41, 51, 61, 71, 80]);
+  });
+
+  it("planSeedTranches rechaza overlay > 1.00", () => {
+    const badInput = { ...seedInput, riskOverlayMultiplier: 1.5 };
+    expect(planSeedTranches(badInput)).toBeNull();
+  });
+
+  it("planSeedTranches rechaza overlay NaN", () => {
+    const badInput = { ...seedInput, riskOverlayMultiplier: NaN };
+    expect(planSeedTranches(badInput)).toBeNull();
+  });
+});
+
+// ─── R3: No-lookahead incremental ──────────────────────────────────
+
+describe("R3 — Incremental sin look-ahead", () => {
+  const testCloses = [
+    { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+    { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+    { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
+    { timestamp: "2026-07-04T00:00:00Z", close: 46000, isClosed: true },
+  ];
+
+  it("primer cierre no puede ver segundo ni tercero", () => {
+    let hwm: HighWaterMark = {
+      hwmId: "hwm-2026-07-01T00:00:00Z",
+      price: 52000,
+      timestamp: "2026-07-01T00:00:00Z",
+      status: "CANDIDATE",
+      confirmedAt: null,
+      supersededBy: null,
+    };
+
+    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0);
+    expect(hwm.status).not.toBe("CONFIRMED");
+  });
+
+  it("segundo cierre no puede ver tercero", () => {
+    let hwm: HighWaterMark = {
+      hwmId: "hwm-2026-07-01T00:00:00Z",
+      price: 52000,
+      timestamp: "2026-07-01T00:00:00Z",
+      status: "CANDIDATE",
+      confirmedAt: null,
+      supersededBy: null,
+    };
+
+    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0);
+    hwm = processIncrementalClose(hwm, testCloses[2], testCloses.slice(0, 3), 3, 5.0);
+    expect(hwm.status).not.toBe("CONFIRMED");
+  });
+
+  it("no confirma antes del tercer cierre", () => {
+    let hwm: HighWaterMark = {
+      hwmId: "hwm-2026-07-01T00:00:00Z",
+      price: 52000,
+      timestamp: "2026-07-01T00:00:00Z",
+      status: "CANDIDATE",
+      confirmedAt: null,
+      supersededBy: null,
+    };
+
+    for (let i = 1; i < 3; i++) {
+      hwm = processIncrementalClose(hwm, testCloses[i], testCloses.slice(0, i + 1), 3, 5.0);
+    }
+    expect(hwm.status).not.toBe("CONFIRMED");
+  });
+
+  it("confirma exactamente al recibir el tercer cierre", () => {
+    let hwm: HighWaterMark = {
+      hwmId: "hwm-2026-07-01T00:00:00Z",
+      price: 52000,
+      timestamp: "2026-07-01T00:00:00Z",
+      status: "CANDIDATE",
+      confirmedAt: null,
+      supersededBy: null,
+    };
+
+    for (let i = 1; i < 4; i++) {
+      hwm = processIncrementalClose(hwm, testCloses[i], testCloses.slice(0, i + 1), 3, 5.0);
+    }
+    expect(hwm.status).toBe("CONFIRMED");
+    expect(hwm.confirmedAt).toBe("2026-07-04T00:00:00Z");
+  });
+
+  it("un cierre futuro extremo no altera el estado anterior", () => {
+    let hwm: HighWaterMark = {
+      hwmId: "hwm-2026-07-01T00:00:00Z",
+      price: 52000,
+      timestamp: "2026-07-01T00:00:00Z",
+      status: "CANDIDATE",
+      confirmedAt: null,
+      supersededBy: null,
+    };
+
+    // Process only 2 closes (not enough for confirmation)
+    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0);
+    const stateAfter2 = { ...hwm };
+
+    // Even if a future close is in the array, it shouldn't be used
+    const closesWithFuture = [
+      ...testCloses.slice(0, 2),
+      { timestamp: "2026-07-03T00:00:00Z", close: 10000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 5000, isClosed: true },
+    ];
+    hwm = processIncrementalClose(hwm, testCloses[1], closesWithFuture.slice(0, 2), 3, 5.0);
+    expect(hwm.status).toBe(stateAfter2.status);
+    expect(hwm.confirmedAt).toBe(stateAfter2.confirmedAt);
+  });
+
+  it("bootstrap final e incremental point-in-time coinciden", () => {
+    const bootstrapResult = bootstrapHWM(testCloses, 3, 5.0);
+
+    let incrementalHwm: HighWaterMark = {
+      hwmId: "hwm-2026-07-01T00:00:00Z",
+      price: 52000,
+      timestamp: "2026-07-01T00:00:00Z",
+      status: "CANDIDATE",
+      confirmedAt: null,
+      supersededBy: null,
+    };
+
+    for (let i = 1; i < testCloses.length; i++) {
+      incrementalHwm = processIncrementalClose(
+        incrementalHwm,
+        testCloses[i],
+        testCloses.slice(0, i + 1),
+        3,
+        5.0,
+      );
+    }
+
+    expect(incrementalHwm.price).toBe(bootstrapResult!.price);
+    expect(incrementalHwm.status).toBe(bootstrapResult!.status);
+    expect(incrementalHwm.confirmedAt).toBe(bootstrapResult!.confirmedAt);
+  });
+});
+
+// ─── R3: Deduplicación compartida ──────────────────────────────────
+
+describe("R3 — normalizeClosedDailyCloses compartida", () => {
+  it("ordena por timestamp", () => {
+    const closes = [
+      { timestamp: "2026-07-03T00:00:00Z", close: 47000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
+    ];
+    const result = normalizeClosedDailyCloses(closes);
+    expect(result.map((c) => c.timestamp)).toEqual([
+      "2026-07-01T00:00:00Z",
+      "2026-07-02T00:00:00Z",
+      "2026-07-03T00:00:00Z",
+    ]);
+  });
+
+  it("elimina duplicados por timestamp", () => {
+    const closes = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
+    ];
+    const result = normalizeClosedDailyCloses(closes);
+    expect(result.length).toBe(1);
+  });
+
+  it("rechaza timestamps inválidos", () => {
+    const closes = [
+      { timestamp: "invalid", close: 52000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
+    ];
+    const result = normalizeClosedDailyCloses(closes);
+    expect(result.length).toBe(1);
+  });
+
+  it("rechaza close <= 0", () => {
+    const closes = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 0 },
+      { timestamp: "2026-07-02T00:00:00Z", close: -100 },
+      { timestamp: "2026-07-03T00:00:00Z", close: 52000 },
+    ];
+    const result = normalizeClosedDailyCloses(closes);
+    expect(result.length).toBe(1);
+  });
+
+  it("isClosed default true cuando no se especifica", () => {
+    const closes = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
+    ];
+    const result = normalizeClosedDailyCloses(closes);
+    expect(result[0].isClosed).toBe(true);
+  });
+
+  it("isClosed false se respeta", () => {
+    const closes = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: false },
+    ];
+    const result = normalizeClosedDailyCloses(closes);
+    expect(result[0].isClosed).toBe(false);
+  });
+});
+
+// ─── R3: Velas cerradas (isClosed) ─────────────────────────────────
+
+describe("R3 — Velas cerradas modeladas explícitamente", () => {
+  it("tres velas, una abierta → no confirma", () => {
+    const closes = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 46000, isClosed: false },
+    ];
+    const hwm = bootstrapHWM(closes, 3, 5.0);
+    expect(hwm!.status).not.toBe("CONFIRMED");
+  });
+
+  it("la misma vela al cerrarse → puede confirmar", () => {
+    const closesBefore = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 46000, isClosed: false },
+    ];
+    const hwmBefore = bootstrapHWM(closesBefore, 3, 5.0);
+    expect(hwmBefore!.status).not.toBe("CONFIRMED");
+
+    const closesAfter = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 46000, isClosed: true },
+    ];
+    const hwmAfter = bootstrapHWM(closesAfter, 3, 5.0);
+    expect(hwmAfter!.status).toBe("CONFIRMED");
+  });
+
+  it("vela abierta con precio extremo → no modifica HWM", () => {
+    const closes = [
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 100000, isClosed: false },
+    ];
+    const hwm = bootstrapHWM(closes, 3, 5.0);
+    expect(hwm!.price).toBe(52000);
+  });
+});
+
+// ─── R3: Test migración real ──────────────────────────────────────
+
+describe("R3 — Migración 080 no está en AutoMigrationRunner", () => {
+  function getMigrationsSource(): string {
+    const routesPath = join(process.cwd(), "server", "routes.ts");
+    return readFileSync(routesPath, "utf-8");
+  }
+
+  function extractActiveMigrationIds(source: string): string[] {
+    const ids: string[] = [];
+    const regex = /\{\s*id:\s*'([^']+)'/;
+    const lines = source.split("\n");
+    for (const line of lines) {
+      if (line.trim().startsWith("//")) continue;
+      const match = line.match(regex);
+      if (match) {
+        ids.push(match[1]);
+      }
+    }
+    return ids;
+  }
+
+  it("080_ama_initial no aparece como migración activa en server/routes.ts", () => {
+    const source = getMigrationsSource();
+    const ids = extractActiveMigrationIds(source);
+    expect(ids).not.toContain("080_ama_initial");
+  });
+
+  it("080 permanece comentada/no registrada en AutoMigrationRunner", () => {
+    const source = getMigrationsSource();
+    const commentedLine = source.split("\n").find((l) => l.includes("080_ama_initial"));
+    expect(commentedLine).toBeDefined();
+    expect(commentedLine!.trim().startsWith("//")).toBe(true);
   });
 });

@@ -4876,13 +4876,13 @@ docker compose -f docker-compose.staging.yml up -d --build
 ```text
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: R2_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
-NEXT_ACTION: presentar gate precommit R2, luego autorización commit/push en rama de revisión
-LAST_COMPLETED_ACTION: R2 — 13 correcciones aplicadas (plan acumulativo, ResolvedSeedTranche, límites seed/user/effective, validateSeedPolicy, bootstrap HWM every-close, evaluateConfirmation canónica, processIncrementalClose, weekly disabled, computeIdempotencyKey, planTranchesFromSeeds). 560 tests AMA ✅, tsc ✅
-LAST_VALIDATION: 2026-07-30 — 560/560 AMA tests (41 R2), 0 errores tsc
-CURRENT_HEAD: 05a8344 (R1 commit en rama revisión)
+TASK_STATUS: R3_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+NEXT_ACTION: presentar gate precommit R3, luego autorización commit/push en rama de revisión
+LAST_COMPLETED_ACTION: R3 — 8 correcciones aplicadas (doble descuento reserva, overlay fail-closed, triggers Seed canónicos, no-lookahead incremental, normalizeClosedDailyCloses compartida, isClosed modelado, test migración real, equality exacta). 598 tests AMA ✅, tsc ✅
+LAST_VALIDATION: 2026-07-30 — 598/598 AMA tests (79 R2+R3), 0 errores tsc
+CURRENT_HEAD: a74f550 (R2 commit en rama revisión)
 ORIGIN_HEAD: review/ama-seed-v2-2-20260729
-UPDATED_AT: 2026-07-30T10:00:00+02:00
+UPDATED_AT: 2026-07-30T17:20:00+02:00
 ```
 
 ---
@@ -5197,3 +5197,42 @@ Tests en `amaSeedTypes.test.ts` lines 41-75 verifican cada campo independienteme
 - `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R2_2026-07-30.md` — NUEVO
 - `FASES MODO AMA.md` — estado R2
 - `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R2
+
+---
+
+## CORRECCIONES R3 — Reserva, Triggers Seed y No-Lookahead
+
+**Fecha:** 2026-07-30
+**Base:** R2 publicada en `a74f550`
+**Rama:** `review/ama-seed-v2-2-20260729`
+
+### Defectos corregidos
+
+1. **Doble descuento de reserva** — `projectedFreeUsd - amountUsd` restaba dos veces el candidato. Corregido a `projectedFreeAfterCandidateUsd` que ya incluye el descuento.
+2. **Overlay silenciosamente clamped** — `Math.min(riskOverlayMultiplier, 1.0)` aceptaba `1.50`. Corregido con `isValidRiskOverlayMultiplier()` fail-closed.
+3. **Triggers Seed no vinculantes** — Planner aceptaba pricePoints externos sin verificar trigger canónico. Añadido `planSeedTranches()` y `evaluateSeedTrancheEligibility()`.
+4. **Look-ahead en HWM incremental** — `processIncrementalClose()` usaba `allCloses` con cierres futuros. Corregido a `closesAvailableAsOfNewClose` con filtro `timestamp <= asOf`.
+5. **Vela incompleta no modelada** — Añadido `DailyCloseObservation` con `isClosed`. Bootstrap, evaluate e incremental filtran velas no cerradas.
+6. **Deduplicación no compartida** — Añadido `normalizeClosedDailyCloses()` usada desde bootstrap, incremental y evaluate.
+7. **Test trivial de migración** — `expect(true).toBe(true)` reemplazado por test real que lee `server/routes.ts`.
+8. **Falsos verdes `<= 75%`** — Reemplazado por equality exacta `=== 7500` y `=== 6500` con assertions sobre tramos, importes y reason codes.
+
+### Tests R3 nuevos (+38)
+
+- BTC exacto 75% / 25% (6 tramos, 7500, 2500, último 1800)
+- ETH exacto 65% / 35% (7 tramos, 6500, 3500)
+- Overlay fail-closed (1.01, 1.50, negativo, NaN, Infinity)
+- Triggers canónicos BTC [18,25,33,42,52,63] y ETH [24,32,41,51,61,71,80]
+- Incremental sin look-ahead (6 tests: progresivo, no futuro, confirma en 3er cierre)
+- normalizeClosedDailyCloses (6 tests: ordena, dedup, valida, isClosed)
+- Velas cerradas (3 tests: abierta no confirma, cierra confirma, extremo no modifica)
+- Migración real (2 tests: 080 no activa, 080 comentada)
+
+### Archivos modificados R3
+
+- `server/services/ama/amaDeterministicEngine.ts` — isValidRiskOverlayMultiplier, planSeedTranches, evaluateSeedTrancheEligibility, fix doble descuento, trigger canónico
+- `server/services/ama/amaHwmBar.ts` — DailyCloseObservation, normalizeClosedDailyCloses, no-lookahead, isClosed
+- `server/services/ama/__tests__/amaR2Corrections.test.ts` — +38 tests R3, equality exacta, migración real
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R3_2026-07-30.md` — NUEVO
+- `FASES MODO AMA.md` — estado R3
+- `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R3

@@ -8,6 +8,45 @@
 import type { MacroZone } from "./amaTypes";
 import { MACRO_ZONE_RANGES } from "./amaTypes";
 
+// ─── Daily Close Observation (R3 — explicit isClosed) ────────────────
+
+export interface DailyCloseObservation {
+  timestamp: string;
+  close: number;
+  isClosed: boolean;
+}
+
+// ─── Shared Normalization (R3 — used by bootstrap, incremental, evaluate) ──
+
+export function normalizeClosedDailyCloses(
+  closes: { timestamp: string; close: number; isClosed?: boolean }[],
+): DailyCloseObservation[] {
+  const validated = closes.filter((c) => {
+    const ts = new Date(c.timestamp).getTime();
+    if (Number.isNaN(ts)) return false;
+    if (typeof c.close !== "number" || !Number.isFinite(c.close)) return false;
+    if (c.close <= 0) return false;
+    return true;
+  });
+
+  const mapped: DailyCloseObservation[] = validated.map((c) => ({
+    timestamp: c.timestamp,
+    close: c.close,
+    isClosed: c.isClosed !== false,
+  }));
+
+  mapped.sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+
+  const seen = new Set<string>();
+  return mapped.filter((c) => {
+    if (seen.has(c.timestamp)) return false;
+    seen.add(c.timestamp);
+    return true;
+  });
+}
+
 // ─── HWM Types ──────────────────────────────────────────────────────
 
 export type HwmStatus =
@@ -92,7 +131,11 @@ export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResu
 
   const reversalThresholdPrice = hwmPrice * (1 - reversalThresholdPct / 100);
 
-  if (subsequentCloses.length < requiredConfirmations) {
+  // R3: Use shared normalization
+  const normalized = normalizeClosedDailyCloses(subsequentCloses);
+  const closedCloses = normalized.filter((c) => c.isClosed);
+
+  if (closedCloses.length < requiredConfirmations) {
     return {
       confirmed: false,
       status: "CANDIDATE",
@@ -102,7 +145,7 @@ export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResu
     };
   }
 
-  const confirmationCloses = subsequentCloses.slice(0, requiredConfirmations);
+  const confirmationCloses = closedCloses.slice(0, requiredConfirmations);
 
   // R2: ALL confirmation closes must be <= reversalThresholdPrice
   const allBelowThreshold = confirmationCloses.every(
@@ -136,36 +179,29 @@ export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResu
 // ─── HWM Bootstrap ──────────────────────────────────────────────────
 
 export function bootstrapHWM(
-  dailyCloses: { timestamp: string; close: number }[],
+  dailyCloses: { timestamp: string; close: number; isClosed?: boolean }[],
   requiredConfirmations: number = 3,
   reversalThresholdPct: number = 5.0,
 ): HighWaterMark | null {
-  if (dailyCloses.length === 0) return null;
+  // R3: Use shared normalization
+  const deduped = normalizeClosedDailyCloses(dailyCloses);
+  if (deduped.length === 0) return null;
 
-  // Sort by timestamp ascending (UTC)
-  const sorted = [...dailyCloses].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-  );
+  // R3: Only consider closed candles for HWM detection
+  const closedOnly = deduped.filter((c) => c.isClosed);
+  if (closedOnly.length === 0) return null;
 
-  // Deduplicate by timestamp
-  const seen = new Set<string>();
-  const deduped = sorted.filter((c) => {
-    if (seen.has(c.timestamp)) return false;
-    seen.add(c.timestamp);
-    return true;
-  });
-
-  // Find the highest close
+  // Find the highest close among closed candles
   let highestIdx = 0;
-  for (let i = 1; i < deduped.length; i++) {
-    if (deduped[i].close > deduped[highestIdx].close) {
+  for (let i = 1; i < closedOnly.length; i++) {
+    if (closedOnly[i].close > closedOnly[highestIdx].close) {
       highestIdx = i;
     }
   }
 
-  const hwmPrice = deduped[highestIdx].close;
-  const hwmTimestamp = deduped[highestIdx].timestamp;
-  const subsequentCloses = deduped.slice(highestIdx + 1);
+  const hwmPrice = closedOnly[highestIdx].close;
+  const hwmTimestamp = closedOnly[highestIdx].timestamp;
+  const subsequentCloses = closedOnly.slice(highestIdx + 1);
 
   // R2: Use canonical shared evaluation function
   const result = evaluateConfirmation({
@@ -315,15 +351,29 @@ export function computeReversalThreshold(
 
 export function processIncrementalClose(
   hwm: HighWaterMark,
-  newClose: { timestamp: string; close: number },
-  allCloses: { timestamp: string; close: number }[],
+  newClose: { timestamp: string; close: number; isClosed?: boolean },
+  closesAvailableAsOfNewClose: { timestamp: string; close: number; isClosed?: boolean }[],
   requiredConfirmations: number,
   reversalThresholdPct: number,
 ): HighWaterMark {
   if (hwm.status === "FROZEN" || hwm.status === "INVALIDATED") return hwm;
 
-  // If new close exceeds HWM, HWM is superseded
-  if (newClose.close > hwm.price) {
+  // R3: No look-ahead — only use closes up to newClose timestamp
+  const asOf = new Date(newClose.timestamp).getTime();
+  const hwmTimestamp = new Date(hwm.timestamp).getTime();
+
+  // R3: Validate no future closes in the provided array
+  const validCloses = closesAvailableAsOfNewClose.filter((c) => {
+    const ts = new Date(c.timestamp).getTime();
+    return ts <= asOf;
+  });
+
+  // R3: Use shared normalization
+  const normalized = normalizeClosedDailyCloses(validCloses);
+  const closedOnly = normalized.filter((c) => c.isClosed);
+
+  // If new close exceeds HWM, HWM is superseded (only if closed)
+  if (newClose.isClosed !== false && newClose.close > hwm.price) {
     return {
       hwmId: `hwm-${newClose.timestamp}`,
       price: newClose.close,
@@ -336,10 +386,10 @@ export function processIncrementalClose(
 
   if (hwm.status === "CONFIRMED" || hwm.status === "SUPERSEDED") return hwm;
 
-  // For CANDIDATE and CONFIRMING: gather subsequent closes and evaluate
-  const subsequentCloses = allCloses
-    .filter((c) => c.timestamp > hwm.timestamp)
-    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  // For CANDIDATE and CONFIRMING: gather subsequent closes up to asOf and evaluate
+  const subsequentCloses = closedOnly.filter(
+    (c) => new Date(c.timestamp).getTime() > hwmTimestamp,
+  );
 
   const result = evaluateConfirmation({
     hwmPrice: hwm.price,

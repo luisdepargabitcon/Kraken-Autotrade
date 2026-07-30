@@ -18,6 +18,149 @@ import { computeDropPct, getMacroZone } from "./amaHwmBar";
 import type { ResolvedSeedTranche, AssetSymbol } from "./amaSeedTypes";
 import { getSeedTranches, getSeedMaximumTranchePct, isWeightMultiplierValid } from "./amaSeedTypes";
 
+// ─── Risk Overlay Validation (R3 — fail-closed) ─────────────────────
+
+export function isValidRiskOverlayMultiplier(value: number): boolean {
+  if (typeof value !== "number") return false;
+  if (!Number.isFinite(value)) return false;
+  if (Number.isNaN(value)) return false;
+  if (value <= 0) return false;
+  if (value > 1.0) return false;
+  return true;
+}
+
+export interface SeedTranchePlanInput {
+  hwmPrice: number;
+  budgetUsd: number;
+  deployedUsd: number;
+  reservedUsd: number;
+  parameters: AmaResolvedParameters;
+  cycleId: string;
+  asset: AssetSymbol;
+  riskOverlayMultiplier: number;
+  previousTranchePrice: number | null;
+  atr: number | null;
+}
+
+export interface SeedTrancheLevel {
+  trancheIndex: number;
+  asset: AssetSymbol;
+  triggerDropPct: number;
+  triggerPrice: number;
+  capitalPct: number;
+  amountUsd: number;
+  trancheType: TrancheType;
+  policyId: string;
+  policyVersion: number;
+}
+
+export interface SeedTrancheEligibilityResult {
+  trancheIndex: number;
+  eligible: boolean;
+  eligibilityReasons: string[];
+  confirmedClosePrice: number | null;
+}
+
+export function planSeedTranches(input: SeedTranchePlanInput): SeedTrancheLevel[] | null {
+  if (!isValidRiskOverlayMultiplier(input.riskOverlayMultiplier)) {
+    return null;
+  }
+
+  const seedTranches = getSeedTranches(input.asset);
+  const { hwmPrice, budgetUsd, riskOverlayMultiplier } = input;
+
+  return seedTranches.map((t) => {
+    const triggerPrice = hwmPrice * (1 - t.triggerDropPct / 100);
+    const baseAmountUsd = budgetUsd * (t.capitalPct / 100);
+    const amountUsd = baseAmountUsd * riskOverlayMultiplier;
+    return {
+      trancheIndex: t.index,
+      asset: t.asset,
+      triggerDropPct: t.triggerDropPct,
+      triggerPrice,
+      capitalPct: t.capitalPct,
+      amountUsd,
+      trancheType: t.trancheType,
+      policyId: t.policyId,
+      policyVersion: t.policyVersion,
+    };
+  });
+}
+
+export function evaluateSeedTrancheEligibility(
+  levels: SeedTrancheLevel[],
+  confirmedClose: { timestamp: string; close: number; isClosed: boolean },
+  cumulativeDeployedUsd: number,
+  cumulativeEligibleCount: number,
+  input: SeedTranchePlanInput,
+): SeedTrancheEligibilityResult[] {
+  const { budgetUsd, deployedUsd, reservedUsd, parameters } = input;
+  const mandatoryReserveUsd = budgetUsd * (parameters.mandatoryReservePct / 100);
+  const maxCycleDeploymentUsd = budgetUsd * (parameters.maxCycleDeploymentPct / 100);
+  const results: SeedTrancheEligibilityResult[] = [];
+  let runningDeployedUsd = cumulativeDeployedUsd;
+  let runningCount = cumulativeEligibleCount;
+
+  for (const level of levels) {
+    const reasons: string[] = [];
+    let eligible = true;
+
+    if (!confirmedClose.isClosed) {
+      eligible = false;
+      reasons.push("CANDLE_NOT_CLOSED");
+    }
+
+    if (confirmedClose.close > level.triggerPrice) {
+      eligible = false;
+      reasons.push("TRIGGER_NOT_REACHED");
+    }
+
+    if (eligible) {
+      const projectedDeployedUsd = deployedUsd + runningDeployedUsd + level.amountUsd;
+      const projectedFreeAfterCandidateUsd = budgetUsd - projectedDeployedUsd - reservedUsd;
+
+      if (projectedFreeAfterCandidateUsd < 0) {
+        eligible = false;
+        reasons.push("INSUFFICIENT_FREE_BUDGET");
+      }
+      if (projectedDeployedUsd > maxCycleDeploymentUsd) {
+        eligible = false;
+        reasons.push("CYCLE_DEPLOYMENT_LIMIT_REACHED");
+      }
+      if (projectedFreeAfterCandidateUsd < mandatoryReserveUsd) {
+        eligible = false;
+        reasons.push("MANDATORY_RESERVE_WOULD_BE_VIOLATED");
+      }
+      if (projectedDeployedUsd > parameters.absoluteCapitalCapUsd) {
+        eligible = false;
+        reasons.push("ABSOLUTE_CAPITAL_CAP_EXCEEDED");
+      }
+      if (runningCount >= parameters.maximumCandidateTranches) {
+        eligible = false;
+        reasons.push("MAX_CANDIDATE_TRANCHES_REACHED");
+      }
+      if (runningCount >= parameters.absoluteTrancheCountCap) {
+        eligible = false;
+        reasons.push("ABSOLUTE_TRANCHE_COUNT_CAP_EXCEEDED");
+      }
+    }
+
+    results.push({
+      trancheIndex: level.trancheIndex,
+      eligible,
+      eligibilityReasons: reasons,
+      confirmedClosePrice: confirmedClose.isClosed ? confirmedClose.close : null,
+    });
+
+    if (eligible) {
+      runningDeployedUsd += level.amountUsd;
+      runningCount++;
+    }
+  }
+
+  return results;
+}
+
 // ─── Tranche Plan Input ─────────────────────────────────────────────
 
 export interface TranchePlanInput {
@@ -90,21 +233,25 @@ export function generateTrancheCandidateFromSeed(
     if (atrSpacing < parameters.spacingAtrMultiplier) return null;
   }
 
-  // R2: Amount from seed tranche capitalPct, reduced by overlay multiplier (<= 1.0)
+  // R3: Validate overlay — no silent clamping
+  if (!isValidRiskOverlayMultiplier(riskOverlayMultiplier)) {
+    return null;
+  }
+
+  // R3: Amount from seed tranche capitalPct, overlay already validated <= 1.0
   const baseAmountUsd = budgetUsd * (tranche.capitalPct / 100);
-  const effectiveMultiplier = Math.min(riskOverlayMultiplier, 1.0);
-  const amountUsd = baseAmountUsd * effectiveMultiplier;
+  const amountUsd = baseAmountUsd * riskOverlayMultiplier;
 
   const eligibilityReasons: string[] = [];
   let eligible = true;
 
-  // R2: Cumulative budget check
+  // R3: Cumulative budget check — no double discount
   const projectedDeployedUsd = input.deployedUsd + cumulativeDeployedUsd + amountUsd;
-  const projectedFreeUsd = input.budgetUsd - projectedDeployedUsd - input.reservedUsd;
+  const projectedFreeAfterCandidateUsd = input.budgetUsd - projectedDeployedUsd - input.reservedUsd;
   const mandatoryReserveUsd = budgetUsd * (parameters.mandatoryReservePct / 100);
   const maxCycleDeploymentUsd = budgetUsd * (parameters.maxCycleDeploymentPct / 100);
 
-  if (projectedFreeUsd < amountUsd) {
+  if (projectedFreeAfterCandidateUsd < 0) {
     eligible = false;
     eligibilityReasons.push("INSUFFICIENT_FREE_BUDGET");
   }
@@ -114,7 +261,7 @@ export function generateTrancheCandidateFromSeed(
     eligibilityReasons.push("CYCLE_DEPLOYMENT_LIMIT_REACHED");
   }
 
-  if (projectedFreeUsd - amountUsd < mandatoryReserveUsd) {
+  if (projectedFreeAfterCandidateUsd < mandatoryReserveUsd) {
     eligible = false;
     eligibilityReasons.push("MANDATORY_RESERVE_WOULD_BE_VIOLATED");
   }
@@ -233,7 +380,12 @@ export function planTranchesFromSeeds(
   input: TranchePlanInput,
   pricePoints: number[],
 ): AmaTranchePlan | null {
-  const { budgetUsd, parameters, cycleId, asset } = input;
+  // R3: Validate overlay before any planning
+  if (!isValidRiskOverlayMultiplier(input.riskOverlayMultiplier)) {
+    return null;
+  }
+
+  const { budgetUsd, parameters, cycleId, asset, hwmPrice } = input;
   const seedTranches = getSeedTranches(asset);
 
   const candidates: AmaTrancheCandidate[] = [];
@@ -243,6 +395,8 @@ export function planTranchesFromSeeds(
 
   for (let i = 0; i < seedTranches.length && i < pricePoints.length; i++) {
     const tranche = seedTranches[i];
+    // R3: Derive trigger price from canonical seed trigger, not from external pricePoint
+    const canonicalTriggerPrice = hwmPrice * (1 - tranche.triggerDropPct / 100);
     const price = pricePoints[i];
 
     const candidate = generateTrancheCandidateFromSeed(
@@ -256,9 +410,15 @@ export function planTranchesFromSeeds(
 
     if (candidate === null) continue;
 
+    // R3: Verify the price point actually reaches the canonical trigger
+    if (candidate.eligible && price > canonicalTriggerPrice + 1e-6) {
+      candidate.eligible = false;
+      candidate.eligibilityReasons.push("TRIGGER_NOT_REACHED");
+    }
+
     candidates.push(candidate);
 
-    // R2: Only add to cumulative if eligible
+    // R3: Only add to cumulative if eligible
     if (candidate.eligible) {
       plannedEligibleUsd += candidate.amountUsd;
       plannedEligibleCount++;
@@ -311,10 +471,10 @@ export function planTranches(
 
     if (candidate === null) continue;
 
-    // R2: Re-check eligibility with cumulative amounts
+    // R3: Re-check eligibility with cumulative amounts — no double discount
     if (candidate.eligible) {
       const projectedDeployedUsd = input.deployedUsd + plannedEligibleUsd + candidate.amountUsd;
-      const projectedFreeUsd = input.budgetUsd - projectedDeployedUsd - input.reservedUsd;
+      const projectedFreeAfterCandidateUsd = input.budgetUsd - projectedDeployedUsd - input.reservedUsd;
       const mandatoryReserveUsd = budgetUsd * (parameters.mandatoryReservePct / 100);
       const maxCycleDeploymentUsd = budgetUsd * (parameters.maxCycleDeploymentPct / 100);
 
@@ -322,7 +482,7 @@ export function planTranches(
         candidate.eligible = false;
         candidate.eligibilityReasons.push("CUMULATIVE_CYCLE_DEPLOYMENT_LIMIT");
       }
-      if (projectedFreeUsd - candidate.amountUsd < mandatoryReserveUsd) {
+      if (projectedFreeAfterCandidateUsd < mandatoryReserveUsd) {
         candidate.eligible = false;
         candidate.eligibilityReasons.push("CUMULATIVE_RESERVE_VIOLATION");
       }
