@@ -21,6 +21,7 @@ import {
   Clock,
   ArrowRight,
   Info,
+  CheckCircle2,
 } from "lucide-react";
 
 function fmtUsd(v: number | null | undefined): string {
@@ -110,6 +111,7 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
   const entryRange = market.entryRange ?? {};
   const exitRanges = market.exitObligationRanges ?? [];
   const recommendation = market.recommendation ?? null;
+  const configRecommendation = current.configurationRecommendation ?? null;
   const pair = market.pair ?? operational?.header?.pair ?? "BTC/USD";
   const levelDiagnostic = entryRange.levelDiagnostic ?? null;
   const levelCountExplanation = entryRange.levelCountExplanation ?? null;
@@ -117,6 +119,14 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
   const actualLevels = entryRange.actualLevels ?? null;
   const requestedLevels = entryRange.requestedLevels ?? null;
   const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
+
+  // Revolut X gate: detect if any alternative is blocked due to microstructure
+  // Gate is "passed" if at least one alternative is safeToApply (canonical validation succeeded).
+  // Gate is "blocked" if NO alternative is safeToApply AND at least one has a microstructure blocking reason.
+  const anySafe = configRecommendation?.alternatives?.some((a: any) => a.safeToApply) ?? false;
+  const microstructureBlocked = !anySafe && (configRecommendation?.alternatives?.some(
+    (a: any) => !a.safeToApply && a.blockingReason && a.blockingReason.includes("microestructura")
+  ) ?? false);
 
   return (
     <div className="space-y-4">
@@ -167,6 +177,34 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             <p>Referencia de mercado: Kraken</p>
             <p>Exchange previsto de ejecución: Revolut X</p>
           </div>
+
+          {/* Revolut X gate visibility — microstructure validation status */}
+          {configRecommendation && (
+            <div className={`rounded-lg border p-3 space-y-1 ${microstructureBlocked ? "border-amber-500/30 bg-amber-500/5" : anySafe ? "border-emerald-500/30 bg-emerald-500/5" : "border-border/40"}`}>
+              <div className="flex items-center gap-2">
+                {microstructureBlocked ? (
+                  <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                ) : anySafe ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                ) : (
+                  <Activity className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                )}
+                <span className="text-xs font-medium">
+                  {microstructureBlocked
+                    ? "Gate Revolut X: microestructura no verificada"
+                    : anySafe
+                      ? "Gate Revolut X: validación canónica superada"
+                      : "Gate Revolut X: pendiente de validación"}
+                </span>
+              </div>
+              {microstructureBlocked && (
+                <p className="text-[10px] text-muted-foreground">
+                  Las alternativas B y C requieren spread y tick de ejecución verificados de Revolut X.
+                  Sin microestructura verificada, no se puede validar de forma segura una configuración aplicable.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Freshness detail */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground">

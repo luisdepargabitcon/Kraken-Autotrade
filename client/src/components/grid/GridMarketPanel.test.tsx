@@ -109,4 +109,56 @@ describe("GridMarketPanel render", () => {
     expect(html).toContain("10,50%");
     expect(html).toContain("Detalle técnico");
   });
+
+  it("renders Revolut X gate as pending when no configurationRecommendation", () => {
+    const html = renderToString(<GridMarketPanel operational={baseOperational} />);
+    // No configurationRecommendation in baseOperational — gate section not rendered
+    expect(html).not.toContain("Gate Revolut X");
+  });
+
+  it("renders Revolut X gate as blocked when microstructure unavailable", () => {
+    const operational = {
+      ...baseOperational,
+      market: {
+        ...baseOperational.market,
+        current: {
+          ...baseOperational.market.current,
+          configurationRecommendation: {
+            id: "rec-test",
+            alternatives: [
+              { id: "A", safeToApply: false, blockingReason: "Informativa" },
+              { id: "B", safeToApply: false, blockingReason: "No se puede validar de forma segura con la microestructura actual." },
+              { id: "C", safeToApply: false, blockingReason: "No se puede validar de forma segura con la microestructura actual." },
+            ],
+          },
+        },
+      },
+    };
+    const html = renderToString(<GridMarketPanel operational={operational} />);
+    expect(html).toContain("Gate Revolut X");
+    expect(html).toContain("microestructura no verificada");
+  });
+
+  it("renders Revolut X gate as passed when at least one alternative is safeToApply", () => {
+    const operational = {
+      ...baseOperational,
+      market: {
+        ...baseOperational.market,
+        current: {
+          ...baseOperational.market.current,
+          configurationRecommendation: {
+            id: "rec-test",
+            alternatives: [
+              { id: "A", safeToApply: false, blockingReason: "Informativa" },
+              { id: "B", safeToApply: true, blockingReason: null },
+              { id: "C", safeToApply: false, blockingReason: "No se puede validar de forma segura con la microestructura actual." },
+            ],
+          },
+        },
+      },
+    };
+    const html = renderToString(<GridMarketPanel operational={operational} />);
+    expect(html).toContain("Gate Revolut X");
+    expect(html).toContain("validación canónica superada");
+  });
 });

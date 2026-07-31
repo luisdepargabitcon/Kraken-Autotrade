@@ -253,6 +253,8 @@ describe("buildConfigurationRecommendation", () => {
     expect(r).not.toBeNull();
     expect(r!.safeToApply).toBe(false);
     expect(r!.blockingReason).toBeTruthy();
+    // REV-C12A: recommendedAlternativeId must be null in blocked states
+    expect(r!.recommendedAlternativeId).toBeNull();
   });
 
   it("retorna recomendación bloqueada cuando bandWidthPct es 0", () => {
@@ -262,6 +264,59 @@ describe("buildConfigurationRecommendation", () => {
     expect(r).not.toBeNull();
     expect(r!.safeToApply).toBe(false);
     expect(r!.blockingReason).toBeTruthy();
+    // REV-C12A: recommendedAlternativeId must be null in blocked states
+    expect(r!.recommendedAlternativeId).toBeNull();
+  });
+
+  it("REV-C12A: recommendedAlternativeId es null cuando datos son insuficientes", () => {
+    // Missing atrPct — data sufficiency check should block
+    const r = buildConfigurationRecommendation(makeInput({
+      marketContext: { currentPrice: 95000, band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.0 }, atrPct: null as any },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+  });
+
+  it("REV-C12A: resolveRequestedLevels fail-closed — blocked cuando requestedBuyLevels es 0", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: 0, requestedSellLevels: 4 },
+    }));
+    // 0 is invalid — should return blocked recommendation, not a valid one
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12A: resolveRequestedLevels fail-closed — blocked cuando requestedBuyLevels es decimal", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: 4.5, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12A: resolveRequestedLevels fail-closed — blocked cuando requestedBuyLevels es string no numérico", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: "abc" as any, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12A: resolveRequestedLevels fail-closed — blocked cuando solo buyLevels está presente", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: 4 } as any,
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
   });
 
   it("warnings incluye mensaje sobre rango vigente", () => {
@@ -294,43 +349,85 @@ describe("buildConfigurationRecommendation", () => {
 
 describe("validateApplyPayload", () => {
   function makeRec(overrides: any = {}): ConfigurationRecommendation {
-    const base = buildConfigurationRecommendation({
-      mode: "SHADOW",
-      pair: "BTC/USD",
-      config: {
-        netProfitTargetPct: 0.1,
-        buyFeePct: 0.09,
-        sellFeePct: 0.09,
-        taxReservePct: 20,
-        gridRangeMaxPct: 2.5,
-        enforceCompactRange: true,
-        gridStepAtrMultiplier: 1.5,
-        gridStepMaxPct: 3.0,
-      },
-      marketContext: {
-        currentPrice: 95000,
-        band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.0, source: "bollinger" },
-        atrPct: 0.5,
-        regime: "normal",
-      },
-      professionalGenerator: {
-        requestedBuyLevels: 4,
-        requestedSellLevels: 4,
-      },
-      resolvedRange: {
+    // Construct a recommendation directly with a mix of safe and non-safe alternatives.
+    // This tests validateApplyPayload logic, not recommendation generation.
+    const now = new Date();
+    const base: ConfigurationRecommendation = {
+      id: "rec-test-validate",
+      generatedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+      snapshotFingerprint: "cfg||ar||mkt",
+      configFingerprint: "cfg",
+      marketFingerprint: "mkt",
+      activeRangeFingerprint: "ar",
+      context: {
+        pair: "BTC/USD",
+        mode: "SHADOW",
         activeRangeVersionId: "range-v1",
-        lowerPrice: 93000,
-        centerPrice: 95000,
-        upperPrice: 97000,
-        widthPct: 4.0,
-        configSnapshot: { netProfitTargetPct: 0.8 },
+        regime: "normal",
+        regimeMaxPct: 5,
+        bandPeriod: 20,
+        bandStdDevMultiplier: 2,
+        atrPeriod: 14,
+        atrTimeframe: "1h",
+        bandSource: "bollinger",
+        bandLower: 93000,
+        bandCenter: 95000,
+        bandUpper: 97000,
+        bandWidthPct: 4.0,
+        atrPct: 0.5,
+        referencePrice: 95000,
       },
-      adaptiveDecision: null,
-      levels: [],
-      ...overrides,
-    });
-    if (!base) throw new Error("Failed to build recommendation");
-    return base;
+      referencePrice: 95000,
+      fresh: true,
+      confidence: 0.85,
+      title: "Recomendación de configuración",
+      explanation: "Test recommendation",
+      currentConfig: { netProfitTargetPct: 0.1 },
+      alternatives: [
+        {
+          id: "A",
+          title: "Informativa",
+          explanation: "Solo informativa",
+          proposedConfig: {},
+          changedFields: [],
+          expectedBefore: { levels: 2, spacingPct: 0.75, rangePct: 2.5, netProfitPct: 0.1 },
+          expectedAfter: { levels: 2, spacingPct: 0.75, rangePct: 2.5, netProfitPct: 0.1 },
+          warnings: [],
+          safeToApply: false,
+          blockingReason: "Informativa, no aplicable",
+        },
+        {
+          id: "B",
+          title: "Ajustar densidad",
+          explanation: "Ajusta densidad",
+          proposedConfig: { gridStepAtrMultiplier: 1.2 },
+          changedFields: ["gridStepAtrMultiplier"],
+          expectedBefore: { levels: 2, spacingPct: 0.75, rangePct: 2.5, netProfitPct: 0.1 },
+          expectedAfter: { levels: 6, spacingPct: 0.6, rangePct: 2.5, netProfitPct: 0.1 },
+          warnings: [],
+          safeToApply: true,
+          blockingReason: null,
+        },
+        {
+          id: "C",
+          title: "Ampliar rango",
+          explanation: "Amplía rango",
+          proposedConfig: { gridRangeMaxPct: 4.0 },
+          changedFields: ["gridRangeMaxPct"],
+          expectedBefore: { levels: 2, spacingPct: 0.75, rangePct: 2.5, netProfitPct: 0.1 },
+          expectedAfter: { levels: 8, spacingPct: 0.75, rangePct: 4.0, netProfitPct: 0.1 },
+          warnings: [],
+          safeToApply: false,
+          blockingReason: "No se puede validar de forma segura con la microestructura actual.",
+        },
+      ],
+      recommendedAlternativeId: "B",
+      warnings: [],
+      safeToApply: true,
+      blockingReason: null,
+    };
+    return { ...base, ...overrides };
   }
 
   it("rechaza si mode no es SHADOW", () => {
@@ -404,7 +501,7 @@ describe("validateApplyPayload", () => {
     expect(r.valid).toBe(false);
   });
 
-  it("aprueba con payload válido para alternativa A", () => {
+  it("aprueba con payload válido para alternativa safeToApply", () => {
     const rec = makeRec();
     const safeAlt = rec.alternatives.find(a => a.safeToApply);
     expect(safeAlt).toBeDefined();
