@@ -68,7 +68,7 @@ export interface ConfigurationRecommendation {
   explanation: string;
   currentConfig: Record<string, any>;
   alternatives: RecommendationAlternative[];
-  recommendedAlternativeId: "A" | "B" | "C";
+  recommendedAlternativeId: "A" | "B" | "C" | null;
   warnings: string[];
   safeToApply: boolean;
   blockingReason: string | null;

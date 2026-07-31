@@ -835,6 +835,7 @@ export class GridIsolatedEngine {
       }
     } catch (error) {
       botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to save config: ${error}`);
+      throw error;
     }
   }
 

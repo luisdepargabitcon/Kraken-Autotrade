@@ -1125,7 +1125,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         recommendationId: recommendation.id,
         beforeValues: applyResult.beforeValues,
         afterValues: applyResult.afterValues,
-        message: "Configuración guardada para futuros análisis. El rango vigente y sus niveles no se han modificado.",
+        message: "Configuración guardada correctamente. No se ha creado ni modificado ningún rango. Pulsa \"Analizar mercado ahora\" cuando quieras ejecutar un nuevo análisis SHADOW.",
       });
     } catch (error) {
       res.status(500).json({ error: String(error), reason: String(error), code: "INTERNAL_ERROR" });

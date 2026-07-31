@@ -44,10 +44,10 @@ function makeAlt(id: "A" | "B" | "C", overrides: Partial<RecommendationAlternati
   const base: Record<string, RecommendationAlternative> = {
     A: {
       id: "A",
-      title: "Reducir niveles",
+      title: "Reducir densidad",
       explanation: "",
-      proposedConfig: { buyLevels: 2 },
-      changedFields: ["buyLevels"],
+      proposedConfig: { gridStepAtrMultiplier: 1.0 },
+      changedFields: ["gridStepAtrMultiplier"],
       expectedBefore: { levels: 1, spacingPct: 1, rangePct: 1, netProfitPct: 0.8 },
       expectedAfter: { levels: 2, spacingPct: 1, rangePct: 1, netProfitPct: 0.8 },
       warnings: [],
@@ -560,9 +560,9 @@ describe("Recommendation apply endpoint", () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.appliedFields).toContain("buyLevels");
-    expect(res.body.beforeValues).toHaveProperty("buyLevels");
-    expect(res.body.afterValues).toHaveProperty("buyLevels");
+    expect(res.body.appliedFields).toContain("gridStepAtrMultiplier");
+    expect(res.body.beforeValues).toHaveProperty("gridStepAtrMultiplier");
+    expect(res.body.afterValues).toHaveProperty("gridStepAtrMultiplier");
     expect(gridRecommendationRegistry.markApplied).toHaveBeenCalledWith("rec-apply-test");
   });
 });

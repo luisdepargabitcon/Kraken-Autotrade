@@ -49,6 +49,7 @@ export const RECOMMENDATION_MAX_PRICE_DRIFT_PCT = 0.25; // 0.25%
 const ABSOLUTE_GRID_RANGE_MAX_PCT = 20.0;
 const ABSOLUTE_NET_PROFIT_MAX_PCT = 20.0;
 const MAX_LEVELS_PER_SIDE = 50;
+const MIN_LEVELS_FOR_VIABLE_GRID = 4;
 
 function toNum(v: unknown): number | null {
   if (v == null) return null;
@@ -86,8 +87,6 @@ export function buildConfigFingerprint(input: RecommendationServiceInput): strin
     toNum(cfg.taxReservePct)?.toFixed(4) ?? "null",
     toNum(cfg.gridRangeMaxPct)?.toFixed(4) ?? "null",
     cfg.enforceCompactRange ?? "null",
-    toNum(cfg.buyLevels)?.toString() ?? "null",
-    toNum(cfg.sellLevels)?.toString() ?? "null",
     toNum(cfg.gridStepAtrMultiplier)?.toFixed(4) ?? "null",
     toNum(cfg.gridStepMinPct)?.toFixed(4) ?? "null",
     toNum(cfg.gridStepMaxPct)?.toFixed(4) ?? "null",
@@ -409,6 +408,61 @@ function getGridStepParams(config: any): { atrMultiplier: number; maxPct: number
   };
 }
 
+function resolveRequestedLevels(input: RecommendationServiceInput): { buyLevels: number; sellLevels: number } | null {
+  const pg = input.professionalGenerator;
+  if (pg?.requestedBuyLevels != null && pg?.requestedSellLevels != null) {
+    return { buyLevels: Math.max(1, Math.floor(toNum(pg.requestedBuyLevels) ?? 1)), sellLevels: Math.max(1, Math.floor(toNum(pg.requestedSellLevels) ?? 1)) };
+  }
+  const rr = input.resolvedRange;
+  if (rr?.requestedBuyLevels != null && rr?.requestedSellLevels != null) {
+    return { buyLevels: Math.max(1, Math.floor(toNum(rr.requestedBuyLevels) ?? 1)), sellLevels: Math.max(1, Math.floor(toNum(rr.requestedSellLevels) ?? 1)) };
+  }
+  const st = input.status;
+  if (st?.requestedBuyLevels != null && st?.requestedSellLevels != null) {
+    return { buyLevels: Math.max(1, Math.floor(toNum(st.requestedBuyLevels) ?? 1)), sellLevels: Math.max(1, Math.floor(toNum(st.requestedSellLevels) ?? 1)) };
+  }
+  // No canonical source for requested levels — cannot generate recommendations
+  return null;
+}
+
+function buildCurrentConfigSummary(config: any): Record<string, any> {
+  if (!config) return {};
+  return {
+    netProfitTargetPct: config.netProfitTargetPct,
+    buyFeePct: config.buyFeePct,
+    sellFeePct: config.sellFeePct,
+    taxReservePct: config.taxReservePct,
+    gridRangeMaxPct: config.gridRangeMaxPct,
+    enforceCompactRange: config.enforceCompactRange,
+    gridStepAtrMultiplier: config.gridStepAtrMultiplier,
+    gridStepMinPct: config.gridStepMinPct,
+    gridStepMaxPct: config.gridStepMaxPct,
+  };
+}
+
+function buildRecommendationContext(input: RecommendationServiceInput, regimeMaxPct: number): any {
+  const band = input.marketContext?.band ?? {};
+  const adaptiveDecision = input.adaptiveDecision;
+  return {
+    pair: input.pair,
+    mode: input.mode,
+    activeRangeVersionId: input.resolvedRange?.activeRangeVersionId ?? input.status?.activeRangeVersionId ?? null,
+    regime: input.marketContext?.regime ?? adaptiveDecision?.regimeLabel ?? null,
+    regimeMaxPct,
+    bandPeriod: toNum(band.period ?? input.config?.bandPeriod),
+    bandStdDevMultiplier: toNum(band.stdDevMultiplier ?? input.config?.bandStdDevMultiplier),
+    atrPeriod: toNum(input.config?.atrPeriod),
+    atrTimeframe: input.config?.atrTimeframe ?? null,
+    bandSource: band.source ?? input.marketContext?.bandSource ?? null,
+    bandLower: toNum(band.lower),
+    bandCenter: toNum(band.center),
+    bandUpper: toNum(band.upper),
+    bandWidthPct: toNum(band.widthPct),
+    atrPct: toNum(input.marketContext?.atrPct ?? band.atrPct),
+    referencePrice: toNum(input.marketContext?.currentPrice),
+  };
+}
+
 function isConfigOptimal(input: RecommendationServiceInput): boolean {
   const actualLevels = input.levels
     ? input.levels.filter((l: any) =>
@@ -416,9 +470,9 @@ function isConfigOptimal(input: RecommendationServiceInput): boolean {
         l?.status !== "cancelled" && l?.status !== "replaced"
       ).length
     : 0;
-  const requestedBuy = toNum(input.config?.buyLevels) ?? 0;
-  const requestedSell = toNum(input.config?.sellLevels) ?? 0;
-  return actualLevels >= requestedBuy + requestedSell && (requestedBuy + requestedSell) > 0;
+  const resolved = resolveRequestedLevels(input);
+  if (!resolved) return false;
+  return actualLevels >= resolved.buyLevels + resolved.sellLevels && (resolved.buyLevels + resolved.sellLevels) > 0;
 }
 
 export function buildConfigurationRecommendation(input: RecommendationServiceInput): ConfigurationRecommendation | null {
@@ -480,8 +534,34 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   const { buyFeePct, sellFeePct, taxReservePct } = getConfigFees(config);
   const gridRangeMaxPct = toNum(config?.gridRangeMaxPct) ?? 2.5;
   const enforceCompactRange = config?.enforceCompactRange ?? true;
-  const configuredBuyLevels = toNum(config?.buyLevels) ?? 4;
-  const configuredSellLevels = toNum(config?.sellLevels) ?? 4;
+
+  // Resolve requested levels from canonical sources; do not use config.buyLevels / config.sellLevels
+  const resolvedRequested = resolveRequestedLevels(input);
+  if (resolvedRequested == null) {
+    return {
+      id: `rec-insufficient-${crypto.randomUUID()}-${input.pair}`,
+      generatedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + RECOMMENDATION_TTL_MS).toISOString(),
+      snapshotFingerprint: "insufficient",
+      configFingerprint: "insufficient",
+      marketFingerprint: "insufficient",
+      activeRangeFingerprint: buildActiveRangeFingerprint(input.resolvedRange?.activeRangeVersionId ?? input.status?.activeRangeVersionId ?? null),
+      context: buildRecommendationContext(input, getRegimeMaxPct(input.adaptiveDecision, config)),
+      referencePrice: toNum(marketContext?.currentPrice) ?? null,
+      fresh: false,
+      confidence: 0,
+      title: "Datos insuficientes",
+      explanation: "No se puede resolver el número de niveles solicitados. Falta professionalGenerator, resolvedRange o proyección canónica.",
+      currentConfig: buildCurrentConfigSummary(config),
+      alternatives: [],
+      recommendedAlternativeId: null,
+      warnings: ["No se dispone del contexto de niveles canónico."],
+      safeToApply: false,
+      blockingReason: "Falta el contexto de niveles canónico del allocator o del generador profesional.",
+    };
+  }
+  const configuredBuyLevels = resolvedRequested.buyLevels;
+  const configuredSellLevels = resolvedRequested.sellLevels;
 
   const centerPrice = toNum(marketContext?.currentPrice) ??
     toNum(marketContext?.band?.center) ??
@@ -523,50 +603,26 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
 
   const alternatives: RecommendationAlternative[] = [];
 
-  // ─── Alternative A: Maintain profit, accept/reduce levels ───
+  // ─── Alternative A: Informational only (allocator controls requested levels) ───
   {
-    const aCalc = computeSpacingAndLevels(
-      netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
-      centerPrice, currentBounds.lower, currentBounds.upper,
-      currentCalc.buyLevels, currentCalc.sellLevels,
-      atrPct, atrMultiplier, minPct, maxPct,
-    );
-    const changedFields: string[] = [];
-    const proposedConfig: Record<string, any> = {};
-    if (currentCalc.buyLevels !== configuredBuyLevels) {
-      changedFields.push("buyLevels");
-      proposedConfig.buyLevels = currentCalc.buyLevels;
-    }
-    if (currentCalc.sellLevels !== configuredSellLevels) {
-      changedFields.push("sellLevels");
-      proposedConfig.sellLevels = currentCalc.sellLevels;
-    }
-
-    const hasChanges = changedFields.length > 0;
-    const hasMinLevels = aCalc.buyLevels >= 1 && aCalc.sellLevels >= 1;
-    const safeToApply = hasChanges && hasMinLevels;
-    const blockingReason = !hasChanges
-      ? "La configuración ya coincide con esta alternativa."
-      : !hasMinLevels
-        ? "La alternativa resultaría en cero niveles en algún lado."
-        : null;
+    const aBlockingReason = `Diagnóstico: caben ${currentCalc.buyLevels} BUY + ${currentCalc.sellLevels} SELL (${currentCalc.totalLevels} total). El motor exige al menos ${MIN_LEVELS_FOR_VIABLE_GRID} niveles. El allocator es la única fuente del número solicitado de niveles. No existe ningún parámetro buyLevels/sellLevels aplicable. El Grid no creará un rango mientras el resultado sea compact.`;
 
     alternatives.push({
       id: "A",
-      title: `Mantener beneficio (${netProfitTargetPct.toFixed(2)}%) y ajustar niveles`,
-      explanation: `Mantiene el objetivo neto y el rango seguro. Ajusta buyLevels/sellLevels al número realmente viable (${aCalc.buyLevels} BUY + ${aCalc.sellLevels} SELL). Máxima prioridad de seguridad: no amplía riesgo.`,
-      proposedConfig,
-      changedFields,
+      title: "Esperar condiciones compatibles con el Grid estricto",
+      explanation: aBlockingReason,
+      proposedConfig: {},
+      changedFields: [],
       expectedBefore,
       expectedAfter: {
-        levels: aCalc.totalLevels,
-        spacingPct: aCalc.spacingPct ?? minPct,
+        levels: currentCalc.totalLevels,
+        spacingPct: currentCalc.spacingPct ?? minPct,
         rangePct: effectiveRangePct,
         netProfitPct: netProfitTargetPct,
       },
       warnings: [],
-      safeToApply,
-      blockingReason,
+      safeToApply: false,
+      blockingReason: aBlockingReason,
     });
   }
 
@@ -581,12 +637,16 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     );
     const hasRealChange = newAtrMultiplier !== atrMultiplier;
     const hasImprovement = bCalc.totalLevels > currentCalc.totalLevels;
-    const bSafeToApply = hasRealChange && hasImprovement;
-    const bBlockingReason = !hasRealChange
-      ? "La configuración ya coincide con esta alternativa."
-      : !hasImprovement
-        ? "Ajustar la densidad no mejora el número de entradas dentro del rango actual."
-        : null;
+    const isViable = bCalc.totalLevels >= MIN_LEVELS_FOR_VIABLE_GRID;
+    const bSafeToApply = hasRealChange && hasImprovement && isViable;
+    let bBlockingReason: string | null = null;
+    if (!hasRealChange) {
+      bBlockingReason = "La configuración ya coincide con esta alternativa.";
+    } else if (!hasImprovement) {
+      bBlockingReason = "Ajustar la densidad no mejora el número de entradas dentro del rango actual.";
+    } else if (!isViable) {
+      bBlockingReason = `La proyección da ${bCalc.totalLevels} niveles, menos del mínimo ${MIN_LEVELS_FOR_VIABLE_GRID} exigido.`;
+    }
     alternatives.push({
       id: "B",
       title: `Ajustar densidad de entradas (ATR × ${newAtrMultiplier.toFixed(2)})`,
@@ -642,11 +702,14 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     const cExceedsRegime = bestWidth > regimeMaxPct;
     const cExceedsAbsolute = bestWidth > absoluteMaxWidth;
     const cCompactPreserved = enforceCompactRange;
-    const cSafeToApply = foundFullFit && !cExceedsRegime && !cExceedsAbsolute && cWidthImproved && cHasChanges && cCompactPreserved;
+    const cIsViable = bestCalc.totalLevels >= MIN_LEVELS_FOR_VIABLE_GRID;
+    const cSafeToApply = foundFullFit && cIsViable && !cExceedsRegime && !cExceedsAbsolute && cWidthImproved && cHasChanges && cCompactPreserved;
 
     let cBlockingReason: string | null = null;
     if (!foundFullFit) {
       cBlockingReason = `No se puede ajustar el rango para albergar ${requestedTotal} niveles solicitados dentro del régimen actual.`;
+    } else if (!cIsViable) {
+      cBlockingReason = `La proyección ampliada da ${bestCalc.totalLevels} niveles, menos del mínimo ${MIN_LEVELS_FOR_VIABLE_GRID} exigido.`;
     } else if (cExceedsRegime) {
       cBlockingReason = `Anchura necesaria (${bestWidth.toFixed(2)}%) supera regimeMaxPct (${regimeMaxPct.toFixed(2)}%)`;
     } else if (cExceedsAbsolute) {
@@ -684,22 +747,20 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   }
 
   // ─── Select recommended alternative by priority ───
-  // 1. No increase risk  2. Maintain profit  3. Maintain levels  4. Minimize changed fields
   const safeAlts = alternatives.filter(a => a.safeToApply);
-  let recommendedId: "A" | "B" | "C" = "A";
+  let recommendedId: "A" | "B" | "C" | null = null;
 
   if (safeAlts.length > 0) {
     const a = alternatives.find(a => a.id === "A")!;
     const b = alternatives.find(a => a.id === "B")!;
     const c = alternatives.find(a => a.id === "C")!;
 
-    // Prefer A if it doesn't increase risk (always true by design)
-    if (a.safeToApply) {
-      recommendedId = "A";
-    } else if (b.safeToApply) {
+    if (b.safeToApply) {
       recommendedId = "B";
     } else if (c.safeToApply) {
       recommendedId = "C";
+    } else if (a.safeToApply) {
+      recommendedId = "A";
     }
   }
 
@@ -710,26 +771,9 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   const activeRangeVersionId = resolvedRange?.activeRangeVersionId ?? input.status?.activeRangeVersionId ?? null;
   const activeRangeFingerprint = buildActiveRangeFingerprint(activeRangeVersionId);
   const referencePrice = toNum(marketContext?.currentPrice);
-  const storedBand = marketContext?.band ?? {};
-  const context = {
-    pair: input.pair,
-    mode: input.mode,
-    activeRangeVersionId,
-    regime: marketContext?.regime ?? adaptiveDecision?.regimeLabel ?? null,
-    regimeMaxPct,
-    bandPeriod: toNum(storedBand.period ?? config?.bandPeriod),
-    bandStdDevMultiplier: toNum(storedBand.stdDevMultiplier ?? config?.bandStdDevMultiplier),
-    atrPeriod: toNum(config?.atrPeriod),
-    atrTimeframe: config?.atrTimeframe ?? null,
-    bandSource: storedBand.source ?? marketContext?.bandSource ?? null,
-    bandLower: toNum(storedBand.lower),
-    bandCenter: toNum(storedBand.center),
-    bandUpper: toNum(storedBand.upper),
-    bandWidthPct: toNum(storedBand.widthPct),
-    atrPct: toNum(marketContext?.atrPct ?? storedBand.atrPct),
-    referencePrice,
-  };
+  const context = buildRecommendationContext(input, regimeMaxPct);
   const uuid = crypto.randomUUID();
+  const anySafe = safeAlts.length > 0;
 
   return {
     id: `rec-${uuid}-${input.pair}`,
@@ -742,24 +786,17 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     context,
     referencePrice,
     fresh: true,
-    confidence: 0.85,
-    title: "Recomendación de configuración",
-    explanation: `El diagnóstico actual indica ${currentCalc.totalLevels} niveles viables de ${configuredBuyLevels + configuredSellLevels} solicitados. Revisa las alternativas para futuros análisis.`,
-    currentConfig: {
-      netProfitTargetPct,
-      buyFeePct,
-      sellFeePct,
-      taxReservePct,
-      gridRangeMaxPct,
-      enforceCompactRange,
-      buyLevels: configuredBuyLevels,
-      sellLevels: configuredSellLevels,
-    },
+    confidence: anySafe ? 0.85 : 0.5,
+    title: anySafe ? "Recomendación de configuración" : "No hay ajuste seguro aplicable",
+    explanation: anySafe
+      ? `El diagnóstico actual indica ${currentCalc.totalLevels} niveles viables de ${configuredBuyLevels + configuredSellLevels} solicitados. Revisa las alternativas para futuros análisis.`
+      : `El diagnóstico actual indica ${currentCalc.totalLevels} niveles viables, menos del mínimo ${MIN_LEVELS_FOR_VIABLE_GRID} que exige el motor estricto. No se ofrece ninguna alternativa aplicable.`,
+    currentConfig: buildCurrentConfigSummary(config),
     alternatives,
     recommendedAlternativeId: recommendedId,
     warnings,
-    safeToApply: true,
-    blockingReason: null,
+    safeToApply: anySafe,
+    blockingReason: anySafe ? null : `Ninguna alternativa produce un Grid viable (mínimo ${MIN_LEVELS_FOR_VIABLE_GRID} niveles).`,
   };
 }
 
@@ -856,8 +893,6 @@ export interface ApplyValidationResult {
 }
 
 export const RECOMMENDATION_APPLY_ALLOWLIST = [
-  "buyLevels",
-  "sellLevels",
   "netProfitTargetPct",
   "gridStepAtrMultiplier",
   "gridStepMinPct",
@@ -898,10 +933,7 @@ export function validateProposedValues(
   }
 
   for (const [key, value] of Object.entries(proposedConfig)) {
-    if (key === "buyLevels" || key === "sellLevels") {
-      const r = validateIntegerInRange(key, value, 1, MAX_LEVELS_PER_SIDE);
-      if (!r.ok) return { valid: false, reason: r.reason, code: "INVALID_VALUE" };
-    } else if (key === "netProfitTargetPct") {
+    if (key === "netProfitTargetPct") {
       const r = validatePositiveFiniteNumber(key, value, ABSOLUTE_NET_PROFIT_MAX_PCT);
       if (!r.ok) return { valid: false, reason: r.reason, code: "INVALID_VALUE" };
     } else if (key === "gridStepAtrMultiplier" || key === "gridStepMinPct" || key === "gridStepMaxPct") {

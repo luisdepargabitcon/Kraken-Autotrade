@@ -23,21 +23,21 @@ describe("applyRecommendationPatchAtomically", () => {
   }
 
   it("aplica campos permitidos y devuelve before/after", async () => {
-    const current = { netProfitTargetPct: 0.5, buyLevels: 4, sellLevels: 4 };
+    const current = { netProfitTargetPct: 0.5, gridRangeMaxPct: 2.5 };
     let saved = false;
     const result = await applyRecommendationPatchAtomically(
       current,
-      makeAlt({ netProfitTargetPct: 0.8, buyLevels: 6 }),
+      makeAlt({ netProfitTargetPct: 0.8, gridRangeMaxPct: 3.0 }),
       async () => { saved = true; },
       20,
     );
     expect(result.success).toBe(true);
-    expect(result.appliedFields).toEqual(["netProfitTargetPct", "buyLevels"]);
-    expect(result.beforeValues).toEqual({ netProfitTargetPct: 0.5, buyLevels: 4 });
-    expect(result.afterValues).toEqual({ netProfitTargetPct: 0.8, buyLevels: 6 });
+    expect(result.appliedFields).toEqual(["netProfitTargetPct", "gridRangeMaxPct"]);
+    expect(result.beforeValues).toEqual({ netProfitTargetPct: 0.5, gridRangeMaxPct: 2.5 });
+    expect(result.afterValues).toEqual({ netProfitTargetPct: 0.8, gridRangeMaxPct: 3.0 });
     expect(saved).toBe(true);
     expect(current.netProfitTargetPct).toBe(0.8);
-    expect(current.buyLevels).toBe(6);
+    expect(current.gridRangeMaxPct).toBe(3.0);
   });
 
   it("rechaza campos de la blocklist", async () => {

@@ -9,8 +9,6 @@ import type { ConfigurationRecommendation, RecommendationAlternative } from "@sh
 describe("validateProposedValues", () => {
   it("acepta valores permitidos dentro de rangos", () => {
     const result = validateProposedValues({
-      buyLevels: 10,
-      sellLevels: 10,
       netProfitTargetPct: 1.5,
       gridRangeMaxPct: 10.0,
       enforceCompactRange: true,
@@ -32,10 +30,10 @@ describe("validateProposedValues", () => {
     expect(result.reason).toMatch(/20/);
   });
 
-  it("rechaza buyLevels excesivos", () => {
+  it("rechaza campos fantasma como buyLevels", () => {
     const result = validateProposedValues({ buyLevels: 100 }, 20.0);
     expect(result.valid).toBe(false);
-    expect(result.code).toBe("INVALID_VALUE");
+    expect(result.code).toBe("FIELD_NOT_ALLOWED");
     expect(result.reason).toMatch(/buyLevels/);
   });
 
@@ -113,10 +111,10 @@ describe("validateApplyPayload", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("allowlist contiene los campos modificables", () => {
+  it("allowlist contiene los campos reales y NO contiene buyLevels/sellLevels", () => {
     expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("netProfitTargetPct");
-    expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("buyLevels");
-    expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("sellLevels");
+    expect(RECOMMENDATION_APPLY_ALLOWLIST).not.toContain("buyLevels");
+    expect(RECOMMENDATION_APPLY_ALLOWLIST).not.toContain("sellLevels");
     expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("gridRangeMaxPct");
     expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("enforceCompactRange");
   });

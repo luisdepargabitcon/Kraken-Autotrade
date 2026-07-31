@@ -148,6 +148,10 @@ describe("buildConfigurationRecommendation", () => {
         regime: "normal",
         ...mktOv,
       },
+      professionalGenerator: {
+        requestedBuyLevels: 4,
+        requestedSellLevels: 4,
+      },
       resolvedRange: {
         activeRangeVersionId: "range-v1",
         lowerPrice: 93000,
@@ -158,7 +162,6 @@ describe("buildConfigurationRecommendation", () => {
         ...rngOv,
       },
       adaptiveDecision: null,
-      professionalGenerator: null,
       levels: [],
       status: { activeRangeVersionId: "range-v1" },
       ...rest,
@@ -189,13 +192,15 @@ describe("buildConfigurationRecommendation", () => {
     expect(r!.alternatives.length).toBe(3);
   });
 
-  it("alternativa A es safeToApply", () => {
+  it("alternativa A es informativa y no safeToApply", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
     const altA = r!.alternatives.find(a => a.id === "A");
     expect(altA).toBeDefined();
-    expect(altA!.safeToApply).toBe(true);
-    expect(altA!.blockingReason).toBeNull();
+    expect(altA!.safeToApply).toBe(false);
+    expect(altA!.blockingReason).toBeTruthy();
+    expect(altA!.changedFields).toEqual([]);
+    expect(Object.keys(altA!.proposedConfig).length).toBe(0);
   });
 
   it("alternativa B ajusta densidad sin reducir netProfitTargetPct", () => {
@@ -216,10 +221,12 @@ describe("buildConfigurationRecommendation", () => {
     expect(altC!.proposedConfig.gridRangeMaxPct).toBeDefined();
   });
 
-  it("recommendedAlternativeId es A por defecto (prioridad seguridad)", () => {
+  it("recommendedAlternativeId es B o C cuando hay alternativa segura, nunca A", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
-    expect(r!.recommendedAlternativeId).toBe("A");
+    if (r!.recommendedAlternativeId != null) {
+      expect(["B", "C"]).toContain(r!.recommendedAlternativeId);
+    }
   });
 
   it("tiene id, generatedAt y expiresAt", () => {
@@ -273,13 +280,15 @@ describe("buildConfigurationRecommendation", () => {
     expect(r!.warnings.some((w: string) => w.includes("configuración original") || w.includes("Configuración original"))).toBe(true);
   });
 
-  it("currentConfig refleja los valores de entrada", () => {
+  it("currentConfig refleja los valores reales y no publica buyLevels/sellLevels", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
     expect(r!.currentConfig.netProfitTargetPct).toBe(0.1);
     expect(r!.currentConfig.buyFeePct).toBe(0.09);
     expect(r!.currentConfig.sellFeePct).toBe(0.09);
     expect(r!.currentConfig.taxReservePct).toBe(20);
+    expect(r!.currentConfig.buyLevels).toBeUndefined();
+    expect(r!.currentConfig.sellLevels).toBeUndefined();
   });
 });
 
@@ -295,8 +304,6 @@ describe("validateApplyPayload", () => {
         taxReservePct: 20,
         gridRangeMaxPct: 2.5,
         enforceCompactRange: true,
-        buyLevels: 4,
-        sellLevels: 4,
         gridStepAtrMultiplier: 1.5,
         gridStepMaxPct: 3.0,
       },
@@ -305,6 +312,10 @@ describe("validateApplyPayload", () => {
         band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.0, source: "bollinger" },
         atrPct: 0.5,
         regime: "normal",
+      },
+      professionalGenerator: {
+        requestedBuyLevels: 4,
+        requestedSellLevels: 4,
       },
       resolvedRange: {
         activeRangeVersionId: "range-v1",
@@ -315,9 +326,7 @@ describe("validateApplyPayload", () => {
         configSnapshot: { netProfitTargetPct: 0.8 },
       },
       adaptiveDecision: null,
-      professionalGenerator: null,
       levels: [],
-      status: { activeRangeVersionId: "range-v1" },
       ...overrides,
     });
     if (!base) throw new Error("Failed to build recommendation");
@@ -425,12 +434,12 @@ describe("validateApplyPayload", () => {
 });
 
 describe("RECOMMENDATION_APPLY_ALLOWLIST y BLOCKLIST", () => {
-  it("allowlist contiene buyLevels", () => {
-    expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("buyLevels");
+  it("allowlist NO contiene buyLevels", () => {
+    expect(RECOMMENDATION_APPLY_ALLOWLIST).not.toContain("buyLevels");
   });
 
-  it("allowlist contiene sellLevels", () => {
-    expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("sellLevels");
+  it("allowlist NO contiene sellLevels", () => {
+    expect(RECOMMENDATION_APPLY_ALLOWLIST).not.toContain("sellLevels");
   });
 
   it("allowlist contiene netProfitTargetPct", () => {
