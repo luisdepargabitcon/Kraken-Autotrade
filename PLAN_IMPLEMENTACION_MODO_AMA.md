@@ -4876,13 +4876,13 @@ docker compose -f docker-compose.staging.yml up -d --build
 ```text
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: R3_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
-NEXT_ACTION: presentar gate precommit R3, luego autorización commit/push en rama de revisión
-LAST_COMPLETED_ACTION: R3 — 8 correcciones aplicadas (doble descuento reserva, overlay fail-closed, triggers Seed canónicos, no-lookahead incremental, normalizeClosedDailyCloses compartida, isClosed modelado, test migración real, equality exacta). 598 tests AMA ✅, tsc ✅
-LAST_VALIDATION: 2026-07-30 — 598/598 AMA tests (79 R2+R3), 0 errores tsc
-CURRENT_HEAD: a74f550 (R2 commit en rama revisión)
+TASK_STATUS: R4_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+NEXT_ACTION: presentar gate precommit R4, luego autorización commit/push en rama de revisión
+LAST_COMPLETED_ACTION: R4 — 17 correcciones aplicadas (canonical seed planner, executed evidence, single tranche, gap policy, UTC cooldown/limits, reset before sum, isClosed mandatory, UTC normalization, deterministic duplicates, consecutive days, param validation, incremental fail-closed, reversal parity, seed validation). 637 tests AMA ✅, npm run check ✅, npm run build ✅
+LAST_VALIDATION: 2026-07-30 — 637/637 AMA tests (38 R4 nuevos), 59/59 Portfolio, suite completa 3752 passed / 31 failed / 29 skipped, 0 errores tsc, build ✅
+CURRENT_HEAD: f5cd254 (R3 commit en rama revisión)
 ORIGIN_HEAD: review/ama-seed-v2-2-20260729
-UPDATED_AT: 2026-07-30T17:20:00+02:00
+UPDATED_AT: 2026-07-30T20:56:00+02:00
 ```
 
 ---
@@ -5236,3 +5236,55 @@ Tests en `amaSeedTypes.test.ts` lines 41-75 verifican cada campo independienteme
 - `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R3_2026-07-30.md` — NUEVO
 - `FASES MODO AMA.md` — estado R3
 - `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R3
+
+---
+
+## R4 — Correcciones Adaptativas (2026-07-30)
+
+### Correcciones aplicadas (17)
+
+1. **Planificador Seed canónico** — `buildCanonicalSeedPlan()` combina validación, planificación, elegibilidad y guardrails. `planTranches()` deprecado para flujo adaptativo.
+2. **Metadatos canónicos en candidatos** — `AmaTrancheCandidate` extendido con `asset`, `seedTrancheIndex`, `canonicalTriggerDropPct`, `canonicalTriggerPrice`, `capitalPct`, `policyId`, `policyVersion`, `riskOverlayMultiplier`, `confirmedCloseTimestamp`.
+3. **Executed evidence real** — `ExecutedTrancheEvidence` reemplaza `executedTrancheCount`. Detecta duplicados, no asume orden, marca fully executed.
+4. **Single tranche selection** — `makeAdaptiveDecision()` selecciona exactamente un tramo con `selectedTrancheId`, `selectedAmountUsd`, `selectedTriggerPrice`.
+5. **Gap policy** — `crossedLevels` y `pendingCooldownLevels` en `AdaptiveDecision`.
+6. **Cooldown UTC epoch ms** — `applyCooldown()` usa `Date.parse() + ms` en lugar de `setHours()`. DST-safe.
+7. **Límites UTC canónicos** — `startOfUtcWeek()` (Lunes), `startOfUtcMonth()` (día 1). Eliminado reset por 28 días.
+8. **Reset antes de sumar** — `applyTrancheToPeriod()` resetea weekly/monthly antes de añadir tramo.
+9. **isClosed obligatorio** — `normalizeClosedDailyClosesStrict()` y `processIncrementalClose()` rechazan candles sin `isClosed`.
+10. **UTC canonical timestamps** — `normalizeClosedDailyCloses()` convierte a `toISOString()`. Deduplicación por instant UTC.
+11. **Deterministic duplicates** — `NormalizationResult` con errors. Closed prevalece, conflicto bloquea.
+12. **Consecutive UTC days** — `evaluateConfirmation()` requiere closes consecutivos. Gap resetea.
+13. **Parameter validation** — `evaluateConfirmation()` valida `requiredConfirmations`, `reversalThresholdPct`, `hwmPrice`, `hwmTimestamp`.
+14. **Incremental fail-closed** — `processIncrementalClose()` valida timestamp, close, isClosed, timestamp > HWM.
+15. **Reversal parity** — `isReversalConfirmed()` delega a `evaluateConfirmation()`.
+16. **Seed validation** — `validateSeedBeforePlanning()` valida asset, budget, HWM, deployed, reserved, overlay.
+17. **Scaffold** — Rutas y servicio sin cambios, siguen bloqueados.
+
+### Tests R4 nuevos (+38)
+
+- Canonical seed planner (6 tests: BTC, ETH, replan, executed IDs, order independence, partial fill)
+- Gap policy (2 tests: deep gap, remaining pending)
+- Period limits on selected (2 tests: weekly, monthly)
+- Cooldown UTC (4 tests: blocks, DST, invalid, boundary)
+- UTC period boundaries (5 tests: day 28, month change, Monday, Dec-Jan, leap year)
+- Candle normalization (4 tests: missing isClosed, open+closed, conflict, offset dedup)
+- Consecutive days (2 tests: non-consecutive, consecutive)
+- Parameter validation (3 tests: requiredConfirmations=0, threshold>=100, HWM<=0)
+- Incremental fail-closed (4 tests: invalid timestamp, before HWM, no lookahead, missing isClosed)
+- Confirmation parity (2 tests: isReversalConfirmed, bootstrapHWM)
+- Seed validation (2 tests: invalid HWM, deployed+reserved>budget)
+- Plan hash metadata (2 tests: includes seed metadata, excludes createdAt)
+
+### Archivos modificados R4
+
+- `server/services/ama/amaTypes.ts` — AmaTrancheCandidate extendido
+- `server/services/ama/amaDeterministicEngine.ts` — buildCanonicalSeedPlan, validateSeedBeforePlanning, hash con metadatos
+- `server/services/ama/amaAdaptivePlanner.ts` — ExecutedTrancheEvidence, single tranche, gap policy, UTC cooldown/limits, reset before sum
+- `server/services/ama/amaHwmBar.ts` — strict normalization, consecutive days, param validation, incremental fail-closed, reversal parity
+- `server/services/ama/__tests__/amaR4Integration.test.ts` — NUEVO, 30 tests
+- `server/services/ama/__tests__/amaR2Corrections.test.ts` — fix isClosed, timestamp format
+- `server/services/ama/__tests__/amaAdaptivePlanner.test.ts` — fix ReplanContext, UTC tests, single tranche
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R4_2026-07-30.md` — NUEVO
+- `FASES MODO AMA.md` — estado R4
+- `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R4

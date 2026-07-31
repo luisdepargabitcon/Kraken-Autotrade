@@ -16,7 +16,7 @@ import type {
 } from "./amaTypes";
 import { computeDropPct, getMacroZone } from "./amaHwmBar";
 import type { ResolvedSeedTranche, AssetSymbol } from "./amaSeedTypes";
-import { getSeedTranches, getSeedMaximumTranchePct, isWeightMultiplierValid } from "./amaSeedTypes";
+import { getSeedTranches, getSeedMaximumTranchePct, isWeightMultiplierValid, validateSeedPolicy } from "./amaSeedTypes";
 
 // ─── Risk Overlay Validation (R3 — fail-closed) ─────────────────────
 
@@ -290,6 +290,15 @@ export function generateTrancheCandidateFromSeed(
     spacingPct: parameters.minimumSpacingPct,
     eligible,
     eligibilityReasons,
+    // R4.2: Canonical seed metadata
+    asset: asset,
+    seedTrancheIndex: tranche.index,
+    canonicalTriggerDropPct: tranche.triggerDropPct,
+    canonicalTriggerPrice: hwmPrice * (1 - tranche.triggerDropPct / 100),
+    capitalPct: tranche.capitalPct,
+    policyId: tranche.policyId,
+    policyVersion: tranche.policyVersion,
+    riskOverlayMultiplier: riskOverlayMultiplier,
   };
 }
 
@@ -589,12 +598,21 @@ function canonicalPlanPayload(plan: AmaTranchePlan): string {
     version: plan.version,
     plannedPurchaseCount: plan.plannedPurchaseCount,
     candidateTranches: plan.candidateTranches.map((c) => ({
-      trancheId: c.trancheId,
+      // R4.2: Include canonical seed metadata in hash
+      asset: c.asset,
+      seedTrancheIndex: c.seedTrancheIndex,
+      canonicalTriggerDropPct: c.canonicalTriggerDropPct,
+      canonicalTriggerPrice: c.canonicalTriggerPrice !== undefined ? Number(c.canonicalTriggerPrice.toFixed(8)) : undefined,
+      capitalPct: c.capitalPct,
+      policyId: c.policyId,
+      policyVersion: c.policyVersion,
+      riskOverlayMultiplier: c.riskOverlayMultiplier,
       type: c.type,
       activationZone: c.activationZone,
       activationDropPct: c.activationDropPct,
       amountUsd: Number(c.amountUsd.toFixed(8)),
       eligible: c.eligible,
+      // R4.2: Exclude createdAt, planId, timestamps
     })),
     mandatoryReserveUsd: Number(plan.mandatoryReserveUsd.toFixed(8)),
     deployableCycleCapitalUsd: Number(plan.deployableCycleCapitalUsd.toFixed(8)),
@@ -648,4 +666,121 @@ export function isDuplicatePlan(
 ): boolean {
   const newHash = computePlanHash(newPlan);
   return existingPlans.some((p) => computePlanHash(p) === newHash);
+}
+
+// ─── R4.16: Validate Seed before planning ───────────────────────────
+
+export function validateSeedBeforePlanning(input: SeedTranchePlanInput): string[] {
+  const errors: string[] = [];
+
+  // Validate seed policy
+  const seedErrors = validateSeedPolicy(input.asset);
+  errors.push(...seedErrors);
+
+  // Validate asset match
+  if (input.asset !== "BTC" && input.asset !== "ETH") {
+    errors.push(`Invalid asset: ${input.asset}`);
+  }
+
+  // Validate budget
+  if (typeof input.budgetUsd !== "number" || !Number.isFinite(input.budgetUsd) || input.budgetUsd <= 0) {
+    errors.push("Budget must be > 0 and finite");
+  }
+
+  // Validate HWM
+  if (typeof input.hwmPrice !== "number" || !Number.isFinite(input.hwmPrice) || input.hwmPrice <= 0) {
+    errors.push("HWM must be > 0 and finite");
+  }
+
+  // Validate deployed
+  if (typeof input.deployedUsd !== "number" || !Number.isFinite(input.deployedUsd) || input.deployedUsd < 0) {
+    errors.push("Deployed must be >= 0 and finite");
+  }
+
+  // Validate reserved
+  if (typeof input.reservedUsd !== "number" || !Number.isFinite(input.reservedUsd) || input.reservedUsd < 0) {
+    errors.push("Reserved must be >= 0 and finite");
+  }
+
+  // Validate deployed + reserved <= budget
+  if (Number.isFinite(input.deployedUsd) && Number.isFinite(input.reservedUsd) && Number.isFinite(input.budgetUsd)) {
+    if (input.deployedUsd + input.reservedUsd > input.budgetUsd) {
+      errors.push("deployed + reserved > budget");
+    }
+  }
+
+  // Validate overlay
+  if (!isValidRiskOverlayMultiplier(input.riskOverlayMultiplier)) {
+    errors.push("Invalid riskOverlayMultiplier");
+  }
+
+  return errors;
+}
+
+// ─── R4.1: buildCanonicalSeedPlan — canonical constructor ──────────
+
+export function buildCanonicalSeedPlan(
+  input: SeedTranchePlanInput,
+  confirmedClose: { timestamp: string; close: number; isClosed: boolean },
+): AmaTranchePlan | null {
+  // R4.16: Validate seed before planning
+  const validationErrors = validateSeedBeforePlanning(input);
+  if (validationErrors.length > 0) {
+    return null;
+  }
+
+  // R4.1: Plan seed tranches
+  const levels = planSeedTranches(input);
+  if (levels === null) return null;
+
+  // R4.1: Evaluate eligibility
+  const eligibilityResults = evaluateSeedTrancheEligibility(
+    levels,
+    confirmedClose,
+    0, // cumulativeDeployedUsd
+    0, // cumulativeEligibleCount
+    input,
+  );
+
+  // Build candidates with canonical metadata
+  const candidates: AmaTrancheCandidate[] = levels.map((level, i) => {
+    const eligibility = eligibilityResults[i];
+    return {
+      trancheId: `tranche-${input.cycleId}-${level.trancheIndex}`,
+      type: level.trancheType,
+      activationZone: getMacroZone(computeDropPct(input.hwmPrice, confirmedClose.close)),
+      activationDropPct: computeDropPct(input.hwmPrice, confirmedClose.close),
+      amountUsd: level.amountUsd,
+      spacingPct: input.parameters.minimumSpacingPct,
+      eligible: eligibility.eligible,
+      eligibilityReasons: eligibility.eligibilityReasons,
+      // R4.2: Canonical seed metadata
+      asset: level.asset,
+      seedTrancheIndex: level.trancheIndex,
+      canonicalTriggerDropPct: level.triggerDropPct,
+      canonicalTriggerPrice: level.triggerPrice,
+      capitalPct: level.capitalPct,
+      policyId: level.policyId,
+      policyVersion: level.policyVersion,
+      riskOverlayMultiplier: input.riskOverlayMultiplier,
+      confirmedCloseTimestamp: confirmedClose.isClosed ? confirmedClose.timestamp : undefined,
+    };
+  });
+
+  const eligibleCount = candidates.filter((c) => c.eligible).length;
+  const mandatoryReserveUsd = input.budgetUsd * (input.parameters.mandatoryReservePct / 100);
+  const deployableCycleCapitalUsd = input.budgetUsd - mandatoryReserveUsd;
+
+  const planId = computePlanId(input.cycleId, candidates);
+
+  return {
+    planId,
+    cycleId: input.cycleId,
+    version: 1,
+    plannedPurchaseCount: eligibleCount,
+    candidateTranches: candidates,
+    mandatoryReserveUsd,
+    deployableCycleCapitalUsd,
+    createdAt: new Date().toISOString(),
+  };
 }

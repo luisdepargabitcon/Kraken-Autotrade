@@ -14,15 +14,19 @@
 
 ## ESTADO OPERATIVO
 
-- TASK_STATUS: R3_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
-- CURRENT_PHASE: Fase 27 (R3)
-- CURRENT_SUBPHASE: Correcciones R3 aplicadas, tests R3 79/79 ✅, auditoría R3 creada, pendiente gate precommit R3
-- LAST_COMPLETED_ACTION: R3 — 8 correcciones aplicadas (doble descuento reserva, overlay fail-closed, triggers Seed canónicos, no-lookahead incremental, normalizeClosedDailyCloses compartida, isClosed modelado, test migración real, equality exacta). 598 tests AMA ✅, tsc ✅
-- NEXT_ACTION: Presentar gate precommit R3. Pendiente autorización commit/push en rama de revisión
+- TASK_STATUS: R4_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- CURRENT_PHASE: Fase 28 (R4)
+- CURRENT_SUBPHASE: Correcciones R4 aplicadas, tests R4 38/38 ✅, auditoría R4 creada, pendiente gate precommit R4
+- LAST_COMPLETED_ACTION: R4 — 17 correcciones aplicadas (canonical seed planner, executed evidence, single tranche, gap policy, UTC cooldown/limits, reset before sum, isClosed mandatory, UTC normalization, deterministic duplicates, consecutive days, param validation, incremental fail-closed, reversal parity, seed validation). 637 tests AMA ✅, npm run check ✅, npm run build ✅
+- NEXT_ACTION: Presentar gate precommit R4. Pendiente autorización commit/push en rama de revisión
+- R3_STATUS: COMMITTED_AND_PUSHED
+- HEAD_R3: f5cd254be4593d3a57ebe2b819baba051410e107
+- origin/review: f5cd254be4593d3a57ebe2b819baba051410e107
+- origin/main: 44cd46ff3a6e195556987968a87c8e795d66cd02
 - BLOCKERS: PostgreSQL desechable no disponible (BLOCKED_NO_SAFE_ENVIRONMENT). Migración 080 NOT_REGISTERED, NOT_AUTOAPPLY. Integración real de persistencia, logging, portfolio, SHADOW pendiente
-- PENDING_GATES: Gate precommit R3, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
-- LAST_VALIDATION: 2026-07-30 — npm run check ✅, 598/598 AMA tests ✅ (incluye 79 R2+R3)
-- UPDATED_AT: 2026-07-30T17:20:00+02:00
+- PENDING_GATES: Gate precommit R4, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
+- LAST_VALIDATION: 2026-07-30 — npm run check ✅, npm run build ✅, 637/637 AMA tests ✅ (incluye 38 R4 nuevos), 59/59 Portfolio ✅, suite completa 3752 passed / 31 failed / 29 skipped
+- UPDATED_AT: 2026-07-30T22:15:00+02:00
 
 ---
 

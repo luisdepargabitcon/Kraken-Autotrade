@@ -478,10 +478,10 @@ describe("R2 — HWM Bootstrap requiere todos los cierres bajo umbral", () => {
 
 describe("R2 — Bootstrap e incremental coinciden", () => {
   const testCloses = [
-    { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-    { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
-    { timestamp: "2026-07-03T00:00:00Z", close: 47000 },
-    { timestamp: "2026-07-04T00:00:00Z", close: 46000 },
+    { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+    { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+    { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
+    { timestamp: "2026-07-04T00:00:00Z", close: 46000, isClosed: true },
   ];
 
   it("mismo dataset → mismo HWM, estado, fecha confirmación, umbral", () => {
@@ -758,7 +758,7 @@ describe("R3 — Incremental sin look-ahead", () => {
       hwm = processIncrementalClose(hwm, testCloses[i], testCloses.slice(0, i + 1), 3, 5.0);
     }
     expect(hwm.status).toBe("CONFIRMED");
-    expect(hwm.confirmedAt).toBe("2026-07-04T00:00:00Z");
+    expect(hwm.confirmedAt).toBe("2026-07-04T00:00:00.000Z");
   });
 
   it("un cierre futuro extremo no altera el estado anterior", () => {
@@ -825,9 +825,9 @@ describe("R3 — normalizeClosedDailyCloses compartida", () => {
     ];
     const result = normalizeClosedDailyCloses(closes);
     expect(result.map((c) => c.timestamp)).toEqual([
-      "2026-07-01T00:00:00Z",
-      "2026-07-02T00:00:00Z",
-      "2026-07-03T00:00:00Z",
+      "2026-07-01T00:00:00.000Z",
+      "2026-07-02T00:00:00.000Z",
+      "2026-07-03T00:00:00.000Z",
     ]);
   });
 

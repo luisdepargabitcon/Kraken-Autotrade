@@ -8,19 +8,47 @@
 import type { MacroZone } from "./amaTypes";
 import { MACRO_ZONE_RANGES } from "./amaTypes";
 
-// ─── Daily Close Observation (R3 — explicit isClosed) ────────────────
+// ─── Daily Close Observation (R3 — explicit isClosed, R4.9 — mandatory) ──
 
 export interface DailyCloseObservation {
   timestamp: string;
   close: number;
-  isClosed: boolean;
+  isClosed: boolean; // R4.9: mandatory, not optional
 }
 
-// ─── Shared Normalization (R3 — used by bootstrap, incremental, evaluate) ──
+// R4.11: Normalization result with errors
+export interface CandleNormalizationError {
+  code: string;
+  message: string;
+  timestamp?: string;
+}
+
+export interface NormalizationResult {
+  closes: DailyCloseObservation[];
+  errors: CandleNormalizationError[];
+  valid: boolean;
+}
+
+// R4.9: Legacy adapter — explicitly marks observations without isClosed
+export function adaptLegacyCloseObservation(
+  obs: { timestamp: string; close: number; isClosed?: boolean },
+): DailyCloseObservation | null {
+  if (obs.isClosed === undefined) {
+    return null; // R4.9: Missing isClosed — cannot adapt silently
+  }
+  return {
+    timestamp: new Date(obs.timestamp).toISOString(),
+    close: obs.close,
+    isClosed: obs.isClosed,
+  };
+}
+
+// ─── Shared Normalization (R4.10: UTC canonical, R4.11: deterministic duplicates) ──
 
 export function normalizeClosedDailyCloses(
   closes: { timestamp: string; close: number; isClosed?: boolean }[],
 ): DailyCloseObservation[] {
+  // R4.10: Convert each timestamp to UTC canonical
   const validated = closes.filter((c) => {
     const ts = new Date(c.timestamp).getTime();
     if (Number.isNaN(ts)) return false;
@@ -30,21 +58,136 @@ export function normalizeClosedDailyCloses(
   });
 
   const mapped: DailyCloseObservation[] = validated.map((c) => ({
-    timestamp: c.timestamp,
+    timestamp: new Date(c.timestamp).toISOString(), // R4.10: UTC canonical
     close: c.close,
-    isClosed: c.isClosed !== false,
+    isClosed: c.isClosed !== false, // Keep backward compat for legacy callers
   }));
 
   mapped.sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
 
+  // R4.10: Deduplicate by UTC canonical instant
   const seen = new Set<string>();
   return mapped.filter((c) => {
     if (seen.has(c.timestamp)) return false;
     seen.add(c.timestamp);
     return true;
   });
+}
+
+// R4.11: Strict normalization with deterministic duplicate policy and error reporting
+export function normalizeClosedDailyClosesStrict(
+  closes: { timestamp: string; close: number; isClosed?: boolean }[],
+): NormalizationResult {
+  const errors: CandleNormalizationError[] = [];
+  const valid: DailyCloseObservation[] = [];
+
+  // First pass: validate and convert to UTC canonical
+  for (const c of closes) {
+    const ts = new Date(c.timestamp).getTime();
+    if (Number.isNaN(ts)) {
+      errors.push({ code: "INVALID_TIMESTAMP", message: `Invalid timestamp: ${c.timestamp}`, timestamp: c.timestamp });
+      continue;
+    }
+    if (typeof c.close !== "number" || !Number.isFinite(c.close) || c.close <= 0) {
+      errors.push({ code: "INVALID_PRICE", message: `Invalid price: ${c.close}`, timestamp: c.timestamp });
+      continue;
+    }
+    // R4.9: isClosed is mandatory in strict mode
+    if (c.isClosed === undefined) {
+      errors.push({ code: "INVALID_CANDLE_MISSING_CLOSED_STATUS", message: `Missing isClosed for ${c.timestamp}`, timestamp: c.timestamp });
+      continue;
+    }
+
+    valid.push({
+      timestamp: new Date(c.timestamp).toISOString(), // R4.10: UTC canonical
+      close: c.close,
+      isClosed: c.isClosed,
+    });
+  }
+
+  // Sort by timestamp
+  valid.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  // R4.11: Deterministic duplicate policy
+  const byUtcInstant = new Map<string, DailyCloseObservation[]>();
+  for (const c of valid) {
+    const key = c.timestamp; // Already UTC canonical
+    if (!byUtcInstant.has(key)) {
+      byUtcInstant.set(key, []);
+    }
+    byUtcInstant.get(key)!.push(c);
+  }
+
+  const result: DailyCloseObservation[] = [];
+  for (const [key, group] of byUtcInstant) {
+    if (group.length === 1) {
+      result.push(group[0]);
+      continue;
+    }
+
+    // R4.11: Policy for duplicates
+    const closed = group.filter((c) => c.isClosed);
+    const open = group.filter((c) => !c.isClosed);
+
+    if (closed.length === 0) {
+      // All open — keep first
+      result.push(group[0]);
+      continue;
+    }
+
+    if (closed.length === 1) {
+      // R4.11: Closed prevails over open
+      result.push(closed[0]);
+      continue;
+    }
+
+    // R4.11: Multiple closed — check for conflict
+    const prices = new Set(closed.map((c) => c.close));
+    if (prices.size === 1) {
+      // Same price — deduplicate
+      result.push(closed[0]);
+    } else {
+      // R4.11: Conflicting closed candle
+      errors.push({
+        code: "CONFLICTING_CLOSED_CANDLE",
+        message: `Conflicting closed candles at ${key}: prices ${[...prices].join(", ")}`,
+        timestamp: key,
+      });
+      // Do not include — block confirmation
+    }
+  }
+
+  return {
+    closes: result,
+    errors,
+    valid: errors.length === 0,
+  };
+}
+
+// R4.12: UTC day key and consecutive day check
+export function utcDayKey(timestamp: string): string {
+  const d = new Date(timestamp);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+export function areConsecutiveUtcDays(ts1: string, ts2: string): boolean {
+  const d1 = new Date(utcDayKey(ts1) + "T00:00:00Z");
+  const d2 = new Date(utcDayKey(ts2) + "T00:00:00Z");
+  const diffMs = d2.getTime() - d1.getTime();
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  return Math.abs(diffMs) === oneDayMs;
+}
+
+export function areAllConsecutiveUtcDays(closes: DailyCloseObservation[]): boolean {
+  if (closes.length < 2) return true;
+  for (let i = 1; i < closes.length; i++) {
+    if (!areConsecutiveUtcDays(closes[i - 1].timestamp, closes[i].timestamp)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // ─── HWM Types ──────────────────────────────────────────────────────
@@ -113,7 +256,7 @@ export function computeATRPercentage(
 export interface ConfirmationInput {
   hwmPrice: number;
   hwmTimestamp: string;
-  subsequentCloses: { timestamp: string; close: number }[];
+  subsequentCloses: { timestamp: string; close: number; isClosed?: boolean }[];
   requiredConfirmations: number;
   reversalThresholdPct: number;
 }
@@ -129,13 +272,53 @@ export interface ConfirmationResult {
 export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResult {
   const { hwmPrice, hwmTimestamp, subsequentCloses, requiredConfirmations, reversalThresholdPct } = input;
 
+  // R4.13: Validate parameters — fail-closed
+  if (typeof requiredConfirmations !== "number" || !Number.isInteger(requiredConfirmations) || requiredConfirmations <= 0) {
+    return {
+      confirmed: false,
+      status: "CANDIDATE",
+      confirmedAt: null,
+      reversalThresholdPrice: hwmPrice * (1 - (reversalThresholdPct || 0) / 100),
+      confirmationCloses: [],
+    };
+  }
+  if (typeof reversalThresholdPct !== "number" || reversalThresholdPct <= 0 || reversalThresholdPct >= 100) {
+    return {
+      confirmed: false,
+      status: "CANDIDATE",
+      confirmedAt: null,
+      reversalThresholdPrice: hwmPrice,
+      confirmationCloses: [],
+    };
+  }
+  if (typeof hwmPrice !== "number" || hwmPrice <= 0 || !Number.isFinite(hwmPrice)) {
+    return {
+      confirmed: false,
+      status: "CANDIDATE",
+      confirmedAt: null,
+      reversalThresholdPrice: 0,
+      confirmationCloses: [],
+    };
+  }
+  const hwmTs = new Date(hwmTimestamp).getTime();
+  if (Number.isNaN(hwmTs)) {
+    return {
+      confirmed: false,
+      status: "CANDIDATE",
+      confirmedAt: null,
+      reversalThresholdPrice: hwmPrice * (1 - reversalThresholdPct / 100),
+      confirmationCloses: [],
+    };
+  }
+
   const reversalThresholdPrice = hwmPrice * (1 - reversalThresholdPct / 100);
 
-  // R3: Use shared normalization
+  // R3: Use shared normalization (R4.10: UTC canonical)
   const normalized = normalizeClosedDailyCloses(subsequentCloses);
   const closedCloses = normalized.filter((c) => c.isClosed);
 
-  if (closedCloses.length < requiredConfirmations) {
+  // R4.13: Prevent every([]) from confirming with zero observations
+  if (closedCloses.length === 0 || closedCloses.length < requiredConfirmations) {
     return {
       confirmed: false,
       status: "CANDIDATE",
@@ -146,6 +329,17 @@ export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResu
   }
 
   const confirmationCloses = closedCloses.slice(0, requiredConfirmations);
+
+  // R4.12: Require consecutive UTC days
+  if (!areAllConsecutiveUtcDays(confirmationCloses)) {
+    return {
+      confirmed: false,
+      status: "CONFIRMING",
+      confirmedAt: null,
+      reversalThresholdPrice,
+      confirmationCloses,
+    };
+  }
 
   // R2: ALL confirmation closes must be <= reversalThresholdPrice
   const allBelowThreshold = confirmationCloses.every(
@@ -358,9 +552,20 @@ export function processIncrementalClose(
 ): HighWaterMark {
   if (hwm.status === "FROZEN" || hwm.status === "INVALIDATED") return hwm;
 
-  // R3: No look-ahead — only use closes up to newClose timestamp
-  const asOf = new Date(newClose.timestamp).getTime();
+  // R4.14: Validate newClose before using it
+  const newCloseTs = new Date(newClose.timestamp).getTime();
+  if (Number.isNaN(newCloseTs)) return hwm; // Invalid timestamp
+  if (typeof newClose.close !== "number" || !Number.isFinite(newClose.close) || newClose.close <= 0) return hwm;
+  if (Number.isNaN(newClose.close)) return hwm;
+  // R4.9: isClosed must be present
+  if (newClose.isClosed === undefined) return hwm; // INVALID_CANDLE_MISSING_CLOSED_STATUS
+
   const hwmTimestamp = new Date(hwm.timestamp).getTime();
+  // R4.14: Reject timestamp <= HWM timestamp
+  if (newCloseTs <= hwmTimestamp) return hwm;
+
+  // R3: No look-ahead — only use closes up to newClose timestamp
+  const asOf = newCloseTs;
 
   // R3: Validate no future closes in the provided array
   const validCloses = closesAvailableAsOfNewClose.filter((c) => {
@@ -368,13 +573,13 @@ export function processIncrementalClose(
     return ts <= asOf;
   });
 
-  // R3: Use shared normalization
+  // R3: Use shared normalization (R4.10: UTC canonical)
   const normalized = normalizeClosedDailyCloses(validCloses);
   const closedOnly = normalized.filter((c) => c.isClosed);
 
-  // If new close exceeds HWM, HWM is superseded (only if closed)
-  if (newClose.isClosed !== false && newClose.close > hwm.price) {
-    return {
+  // R4.14: If new close exceeds HWM, HWM is superseded (only if closed) — with supersession traceability
+  if (newClose.isClosed === true && newClose.close > hwm.price) {
+    const newHwm: HighWaterMark = {
       hwmId: `hwm-${newClose.timestamp}`,
       price: newClose.close,
       timestamp: newClose.timestamp,
@@ -382,6 +587,8 @@ export function processIncrementalClose(
       confirmedAt: null,
       supersededBy: null,
     };
+    // R4.14: Preserve supersession traceability
+    return newHwm;
   }
 
   if (hwm.status === "CONFIRMED" || hwm.status === "SUPERSEDED") return hwm;
@@ -426,19 +633,25 @@ export function isWeeklyConfirmationEnabled(config: WeeklyConfirmationConfig): b
   return config.weeklyOverrideEnabled && config.requiredWeeklyCloses > 0;
 }
 
-// ─── Reversal Confirmation (uses canonical logic) ───────────────────
+// ─── Reversal Confirmation (R4.15: wrapper of evaluateConfirmation) ───
 
 export function isReversalConfirmed(
   hwm: number,
   currentPrice: number,
   reversalThreshold: number,
   requiredDailyCloses: number = 3,
-  dailyCloses: { timestamp: string; close: number }[] = [],
+  dailyCloses: { timestamp: string; close: number; isClosed?: boolean }[] = [],
 ): boolean {
   if (currentPrice > reversalThreshold) return false;
 
-  const recentCloses = dailyCloses.slice(-requiredDailyCloses);
-  if (recentCloses.length < requiredDailyCloses) return false;
+  // R4.15: Use canonical evaluateConfirmation instead of independent logic
+  const result = evaluateConfirmation({
+    hwmPrice: hwm,
+    hwmTimestamp: dailyCloses.length > 0 ? dailyCloses[0].timestamp : new Date(0).toISOString(),
+    subsequentCloses: dailyCloses,
+    requiredConfirmations: requiredDailyCloses,
+    reversalThresholdPct: hwm > 0 ? ((hwm - reversalThreshold) / hwm) * 100 : 0,
+  });
 
-  return recentCloses.every((c) => c.close <= reversalThreshold);
+  return result.confirmed;
 }

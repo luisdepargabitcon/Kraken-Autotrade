@@ -19,7 +19,7 @@ import {
   type CooldownState,
   type PeriodLimitState,
 } from "../amaAdaptivePlanner";
-import { planTranches, type TranchePlanInput } from "../amaDeterministicEngine";
+import { planTranches, buildCanonicalSeedPlan, type TranchePlanInput, type SeedTranchePlanInput } from "../amaDeterministicEngine";
 import type { AmaResolvedParameters } from "../amaTypes";
 
 const makeParams = (): AmaResolvedParameters => ({
@@ -62,6 +62,20 @@ const makeInput = (overrides: Partial<TranchePlanInput> = {}): TranchePlanInput 
   riskOverlayMultiplier: 1.0,
   ...overrides,
 } as TranchePlanInput);
+
+const makeSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranchePlanInput => ({
+  hwmPrice: 50000,
+  budgetUsd: 10000,
+  deployedUsd: 0,
+  reservedUsd: 0,
+  parameters: makeParams(),
+  cycleId: "cycle-1",
+  asset: "BTC",
+  riskOverlayMultiplier: 1.0,
+  previousTranchePrice: null,
+  atr: 1000,
+  ...overrides,
+} as SeedTranchePlanInput);
 
 describe("Fase 11 — Cooldown", () => {
   it("creates cooldown state", () => {
@@ -140,53 +154,68 @@ describe("Fase 11 — Period Limits", () => {
     expect(updated.monthlyDeployedUsd).toBe(1500);
   });
 
-  it("resets weekly after 7 days", () => {
+  it("resets weekly on new UTC week", () => {
     const state = createPeriodLimitState();
-    state.weekStart = "2026-07-01T00:00:00Z";
+    state.weekStart = "2026-07-06T00:00:00Z"; // Monday
     state.weeklyDeployedUsd = 2000;
-    const reset = resetWeeklyIfNeeded(state, "2026-07-10T00:00:00Z");
+    // 2026-07-13 is the next Monday — new UTC week
+    const reset = resetWeeklyIfNeeded(state, "2026-07-13T00:00:00Z");
     expect(reset.weeklyDeployedUsd).toBe(0);
   });
 
-  it("does not reset weekly within 7 days", () => {
+  it("does not reset weekly within same UTC week", () => {
     const state = createPeriodLimitState();
-    state.weekStart = "2026-07-01T00:00:00Z";
+    state.weekStart = "2026-07-06T00:00:00Z"; // Monday
     state.weeklyDeployedUsd = 2000;
-    const reset = resetWeeklyIfNeeded(state, "2026-07-05T00:00:00Z");
+    // 2026-07-08 is Wednesday — same UTC week
+    const reset = resetWeeklyIfNeeded(state, "2026-07-08T00:00:00Z");
     expect(reset.weeklyDeployedUsd).toBe(2000);
   });
 
-  it("resets monthly after 30 days", () => {
+  it("resets monthly on new UTC month", () => {
     const state = createPeriodLimitState();
     state.monthStart = "2026-07-01T00:00:00Z";
     state.monthlyDeployedUsd = 5000;
-    const reset = resetMonthlyIfNeeded(state, "2026-08-05T00:00:00Z");
+    const reset = resetMonthlyIfNeeded(state, "2026-08-01T00:00:00Z");
     expect(reset.monthlyDeployedUsd).toBe(0);
+  });
+
+  it("does not reset monthly on day 28 of same month", () => {
+    const state = createPeriodLimitState();
+    state.monthStart = "2026-07-01T00:00:00Z";
+    state.monthlyDeployedUsd = 5000;
+    const reset = resetMonthlyIfNeeded(state, "2026-07-28T00:00:00Z");
+    expect(reset.monthlyDeployedUsd).toBe(5000);
   });
 });
 
 describe("Fase 11 — Replanning", () => {
-  it("replans with updated deployed amount", () => {
-    const input = makeInput();
-    const original = planTranches(input, [45000, 40000])!;
+  it("replans with updated deployed amount using executed evidence", () => {
+    const seedInput = makeSeedInput();
+    const original = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const replanned = replanTranches({
       originalPlan: original,
-      newPricePoints: [38000, 35000],
-      input,
-      executedTrancheCount: 1,
+      seedInput,
+      confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true },
+      executedTranches: [
+        { trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-1" },
+      ],
     });
     expect(replanned).not.toBeNull();
     expect(replanned!.version).toBe(original.version + 1);
   });
 
-  it("returns null when no valid candidates in replan", () => {
-    const input = makeInput();
-    const original = planTranches(input, [45000])!;
+  it("returns null for duplicate tranche IDs in executed evidence", () => {
+    const seedInput = makeSeedInput();
+    const original = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const replanned = replanTranches({
       originalPlan: original,
-      newPricePoints: [51000], // Above HWM, no drop
-      input,
-      executedTrancheCount: 0,
+      seedInput,
+      confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true },
+      executedTranches: [
+        { trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-1" },
+        { trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T11:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-2" },
+      ],
     });
     expect(replanned).toBeNull();
   });
@@ -207,7 +236,7 @@ describe("Fase 11 — Eligibility Filter", () => {
 });
 
 describe("Fase 11 — Adaptive Decision", () => {
-  it("returns SIMULATE when all checks pass (no real execution)", () => {
+  it("returns SIMULATE when all checks pass — single tranche selected", () => {
     const input = makeInput();
     const plan = planTranches(input, [45000])!;
     const cooldown = createCooldownState("1_daily");
@@ -215,6 +244,9 @@ describe("Fase 11 — Adaptive Decision", () => {
     const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
     expect(decision.action).toBe("SIMULATE");
     expect(decision.reason).toBe("ALL_CHECKS_PASSED");
+    // R4.4: Single tranche selection
+    expect(decision.selectedTrancheId).not.toBeNull();
+    expect(decision.selectedAmountUsd).not.toBeNull();
   });
 
   it("returns WAIT when cooldown active", () => {
@@ -233,10 +265,10 @@ describe("Fase 11 — Adaptive Decision", () => {
     const cooldown = createCooldownState("1_daily");
     const period = createPeriodLimitState();
     const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
-    if (plan.candidateTranches.every((c) => !c.eligible)) {
-      expect(decision.action).toBe("WAIT");
-      expect(decision.reason).toBe("NO_ELIGIBLE_TRANCHES");
-    }
+    const eligibleCount = filterEligibleCandidates(plan).length;
+    expect(eligibleCount).toBe(0);
+    expect(decision.action).toBe("WAIT");
+    expect(decision.reason).toBe("NO_ELIGIBLE_TRANCHES");
   });
 
   it("returns WAIT when weekly limit exceeded", () => {
@@ -246,10 +278,10 @@ describe("Fase 11 — Adaptive Decision", () => {
     const period = createPeriodLimitState();
     period.weeklyDeployedUsd = 2900; // Near 30% limit
     const firstEligible = filterEligibleCandidates(plan)[0];
-    if (firstEligible && 2900 + firstEligible.amountUsd > 3000) {
-      const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
-      expect(decision.action).toBe("WAIT");
-      expect(decision.reason).toBe("WEEKLY_LIMIT_EXCEEDED");
-    }
+    expect(firstEligible).toBeDefined();
+    expect(2900 + firstEligible.amountUsd).toBeGreaterThan(3000);
+    const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
+    expect(decision.action).toBe("WAIT");
+    expect(decision.reason).toBe("WEEKLY_LIMIT_EXCEEDED");
   });
 });

@@ -419,6 +419,16 @@ export interface AmaTrancheCandidate {
   spacingPct: number;
   eligible: boolean;
   eligibilityReasons: string[];
+  // R4.2: Canonical seed metadata
+  asset?: string;
+  seedTrancheIndex?: number;
+  canonicalTriggerDropPct?: number;
+  canonicalTriggerPrice?: number;
+  capitalPct?: number;
+  policyId?: string;
+  policyVersion?: number;
+  riskOverlayMultiplier?: number;
+  confirmedCloseTimestamp?: string;
 }
 
 export interface AmaCycle {
