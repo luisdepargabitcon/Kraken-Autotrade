@@ -860,7 +860,12 @@ export function buildGridAuditViewModel(
   lastShadowValidation: { at: Date | null; result: any },
   lastProfessionalValidation: { at: Date | null; result: any },
   providedProfessionalGenerator: any = null,
-  providedRangeLifecycle: any = null
+  providedRangeLifecycle: any = null,
+  // REV-C12A: Real execution gate + microstructure + allocation
+  executionGate: any = null,
+  executionMarketSnapshot: any = null,
+  pairConstraints: any = null,
+  allocation: any = null,
 ): GridAuditViewModel {
   const activeRange = buildActiveRangeView(status, resolvedRange, marketContext?.currentPrice ?? null);
   const counters = buildCounters(status, levels, cycles);
@@ -943,6 +948,11 @@ export function buildGridAuditViewModel(
     professionalGenerator,
     lastProfessionalValidationAt: lastProfessionalValidation.at,
     lastShadowValidationAt: lastShadowValidation.at,
+    // REV-C12A: Pass real execution gate + microstructure + allocation
+    executionGate,
+    executionMarketSnapshot,
+    pairConstraints,
+    allocation,
   });
 
   return {

@@ -77,6 +77,8 @@ export interface GridMarketCurrent {
   activeRangeSnapshot: ActiveRangeSnapshotType;
   currentConfigurationProjection: CurrentConfigurationProjectionType | null;
   configurationRecommendation: ConfigurationRecommendationType | null;
+  // REV-C12A: Real Revolut X execution gate (always present, never null)
+  executionGate: ExecutionGateType;
 }
 
 export interface LevelDiagnostic {
@@ -181,6 +183,35 @@ export interface GridMarketViewModel {
   exitObligationRanges: GridMarketExitObligationRange[];
   recommendation: GridMarketRecommendation | null;
   configurationRecommendation: ConfigurationRecommendationType | null;
+  // REV-C12A: Real Revolut X execution gate (always present)
+  executionGate: ExecutionGateType;
+}
+
+/** REV-C12A: Real Revolut X execution gate type (in-memory, not persisted). */
+export interface ExecutionGateType {
+  canCreateRange: boolean;
+  evaluatedAt: string | null;
+  executionMarketSnapshot: {
+    available: boolean;
+    verified: boolean;
+    fresh: boolean;
+    pair: string | null;
+    executionVenue: string | null;
+    source: string | null;
+    reasonCode: string | null;
+    explanation: string | null;
+  };
+  pairConstraints: {
+    available: boolean;
+    verified: boolean;
+    fresh: boolean | null;
+    pair: string | null;
+    source: string | null;
+    reasonCode: string | null;
+    explanation: string | null;
+  };
+  blockers: string[];
+  allowCycleExits: boolean;
 }
 
 export interface BuildGridMarketViewModelInput {
@@ -198,6 +229,11 @@ export interface BuildGridMarketViewModelInput {
   levels: any[]; // raw levels for historical range envelope calculation
   lastProfessionalValidationAt?: Date | string | null;
   lastShadowValidationAt?: Date | string | null;
+  // REV-C12A: Real execution gate + microstructure + allocation for canonical projection
+  executionGate?: any | null;
+  executionMarketSnapshot?: any | null;
+  pairConstraints?: any | null;
+  allocation?: any | null;
 }
 
 function toNum(v: unknown): number | null {
@@ -739,7 +775,41 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
   const currentConfigurationProjection = buildCurrentConfigurationProjection(config, marketContext);
 
   // Configuration recommendation from server service
-  const configurationRecommendation = buildConfigurationRecommendation(input);
+  // REV-C12A: Pass real execution microstructure and allocation for canonical projection.
+  const configurationRecommendation = buildConfigurationRecommendation({
+    ...input,
+    executionMarketSnapshot: input.executionMarketSnapshot ?? null,
+    pairConstraints: input.pairConstraints ?? null,
+    allocation: input.allocation ?? null,
+  });
+
+  // REV-C12A: Real Revolut X execution gate (always present, never null).
+  // When no evaluation exists, the gate shows SIN_EVALUACION_RECIENTE.
+  const executionGate: ExecutionGateType = input.executionGate ?? {
+    canCreateRange: false,
+    evaluatedAt: null,
+    executionMarketSnapshot: {
+      available: false,
+      verified: false,
+      fresh: false,
+      pair: input.pair,
+      executionVenue: null,
+      source: null,
+      reasonCode: "SIN_EVALUACION_RECIENTE",
+      explanation: "No existe una evaluación reciente del gate de ejecución.",
+    },
+    pairConstraints: {
+      available: false,
+      verified: false,
+      fresh: null,
+      pair: input.pair,
+      source: null,
+      reasonCode: "SIN_EVALUACION_RECIENTE",
+      explanation: "No existe una evaluación reciente de las constraints del par.",
+    },
+    blockers: ["SIN_EVALUACION_RECIENTE"],
+    allowCycleExits: true,
+  };
 
   // Regime with humanized reason
   const regime = resolveRegime(
@@ -791,6 +861,7 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
     activeRangeSnapshot,
     currentConfigurationProjection,
     configurationRecommendation,
+    executionGate,
   };
 }
 
@@ -1241,5 +1312,6 @@ export function buildGridMarketViewModel(input: BuildGridMarketViewModelInput): 
     exitObligationRanges: buildExitObligationRanges(input),
     recommendation: buildRecommendation(input),
     configurationRecommendation: current.configurationRecommendation,
+    executionGate: current.executionGate,
   };
 }

@@ -35,6 +35,7 @@ import { getGridBandSnapshot } from "./gridBandAdapter";
 import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult, type GridTickContext } from "./gridShadowExecutionPrice";
 import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from "./gridShadowMarketPriceFreshness";
 import { buildGridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
+import { resolveGridProfessionalProjectionContext, buildProfessionalGeneratorInput } from "./gridProfessionalProjectionContext";
 import {
   getShadowPumpGuardPolicy,
   getCrossedShadowLevels,
@@ -135,6 +136,114 @@ import {
 
 const MIN_MAKER_REST_MS = 1;
 
+/**
+ * REV-C12A: Real Revolut X execution gate state (in-memory only, not persisted).
+ * Updated during real tick/proposeRangeVersion evaluation.
+ * After restart, if no recent evaluation exists, canCreateRange=false.
+ */
+export interface ExecutionGateState {
+  canCreateRange: boolean;
+  evaluatedAt: string | null;
+  executionMarketSnapshot: {
+    available: boolean;
+    verified: boolean;
+    fresh: boolean;
+    pair: string | null;
+    executionVenue: string | null;
+    source: string | null;
+    reasonCode: string | null;
+    explanation: string | null;
+  };
+  pairConstraints: {
+    available: boolean;
+    verified: boolean;
+    fresh: boolean | null;
+    pair: string | null;
+    source: string | null;
+    reasonCode: string | null;
+    explanation: string | null;
+  };
+  blockers: string[];
+  allowCycleExits: boolean;
+}
+
+function buildExecutionGateState(
+  snapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
+  constraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>,
+  configPair: string,
+  evaluatedAt: Date,
+): ExecutionGateState {
+  const blockers: string[] = [];
+  const snapshotOk =
+    snapshot.verified === true &&
+    snapshot.fresh === true &&
+    snapshot.venue === "REVOLUT_X" &&
+    snapshot.pair === configPair;
+  const constraintsFresh = constraints.expiresAt == null || constraints.expiresAt.getTime() > evaluatedAt.getTime();
+  const constraintsOk = constraints.verified === true && constraintsFresh && constraints.pair === configPair;
+
+  if (!snapshotOk) {
+    blockers.push(snapshot.reasonCode ?? "EXECUTION_MARKET_SNAPSHOT_INVALID");
+  }
+  if (!constraintsOk) {
+    blockers.push(constraints.reasonCode ?? "PAIR_CONSTRAINTS_INVALID");
+  }
+
+  return {
+    canCreateRange: snapshotOk && constraintsOk,
+    evaluatedAt: evaluatedAt.toISOString(),
+    executionMarketSnapshot: {
+      available: snapshot.pair === configPair,
+      verified: snapshot.verified === true,
+      fresh: snapshot.fresh === true,
+      pair: snapshot.pair,
+      executionVenue: snapshot.venue,
+      source: snapshot.source,
+      reasonCode: snapshot.reasonCode,
+      explanation: snapshot.explanation,
+    },
+    pairConstraints: {
+      available: constraints.pair === configPair,
+      verified: constraints.verified === true,
+      fresh: constraintsFresh,
+      pair: constraints.pair,
+      source: constraints.source,
+      reasonCode: constraints.reasonCode,
+      explanation: constraints.reasonCode ? `Constraints no verificadas: ${constraints.reasonCode}` : null,
+    },
+    blockers,
+    allowCycleExits: true, // cycle exits are always allowed even during block
+  };
+}
+
+function buildNoEvaluationGateState(configPair: string): ExecutionGateState {
+  return {
+    canCreateRange: false,
+    evaluatedAt: null,
+    executionMarketSnapshot: {
+      available: false,
+      verified: false,
+      fresh: false,
+      pair: configPair,
+      executionVenue: null,
+      source: null,
+      reasonCode: "SIN_EVALUACION_RECIENTE",
+      explanation: "No existe una evaluación reciente del gate de ejecución.",
+    },
+    pairConstraints: {
+      available: false,
+      verified: false,
+      fresh: null,
+      pair: configPair,
+      source: null,
+      reasonCode: "SIN_EVALUACION_RECIENTE",
+      explanation: "No existe una evaluación reciente de las constraints del par.",
+    },
+    blockers: ["SIN_EVALUACION_RECIENTE"],
+    allowCycleExits: true,
+  };
+}
+
 type GridRangeCandidate =
   | { ok: true; rangeVersionId: string; gridLevels: import("./gridIsolatedTypes").GridLevel[]; professionalGenerator: any; allocation: any; generatedLevels: any[]; viabilityStatus: string }
   | { ok: false; reasonCode: string; explanation: string };
@@ -179,6 +288,10 @@ export class GridIsolatedEngine {
   private lastShadowExecutionPrice: GridShadowExecutionPriceResult | null = null;
   private lastPausedEventKey: string | null = null;
   private lastPausedEventAt: Date | null = null;
+  // REV-C12A: In-memory execution gate state (not persisted to DB, no migration).
+  // Updated during real tick/proposeRangeVersion evaluation. After restart, if no
+  // recent evaluation exists, canCreateRange=false with SIN_EVALUACION_RECIENTE.
+  private lastExecutionGate: ExecutionGateState | null = null;
 
   /**
    * Load config from DB or create default.
@@ -1089,6 +1202,10 @@ export class GridIsolatedEngine {
       await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Precios de ejecución no disponibles: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", { pair: this.config.pair, reasonCode: executionMarketSnapshot.reasonCode ?? pairConstraints.reasonCode, source: executionMarketSnapshot.source, allowCycleExits });
     }
 
+    // REV-C12A: Store in-memory execution gate state after real tick evaluation.
+    // This is the only place where the gate is updated — no persistence, no DB.
+    this.lastExecutionGate = buildExecutionGateState(executionMarketSnapshot, pairConstraints, this.config.pair, new Date());
+
     if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
       const fillsProcessed = await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard, allowRangeBuys, priceTickSize: executionMarketSnapshot.priceTickSize });
       if (fillsProcessed) {
@@ -1225,47 +1342,30 @@ export class GridIsolatedEngine {
       }
     );
 
-    const professionalResult = generateProfessionalGridLevels({
+    // REV-C12A: Use shared professional projection context — single source of truth.
+    // No duplicated parameter lists, no hardcoded config, no invented estimates.
+    const configuredBuyLevels = Math.floor(allocation.levelsCount / 2);
+    const configuredSellLevels = Math.floor(allocation.levelsCount / 2);
+    const projectionCtx = resolveGridProfessionalProjectionContext({
       currentPrice: bandSnapshot.midPrice,
       bollingerMiddle: bandSnapshot.middle,
       bollingerUpper: bandSnapshot.upper,
       bollingerLower: bandSnapshot.lower,
       atrPct: bandSnapshot.atrPct,
-      netProfitTargetPct: this.config.netProfitTargetPct,
-      gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
-      gridStepMinPct: this.config.gridStepMinPct,
-      gridStepMaxPct: this.config.gridStepMaxPct,
-      configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
-      configuredSellLevels: Math.floor(allocation.levelsCount / 2),
-      capitalPerLevelUsd: allocation.capitalPerLevelUsd,
-      spreadPct: executionMarketSnapshot.spreadPct,
-      priceTickPct: executionMarketSnapshot.priceTickPct,
-      spreadBufferPct: 0.01,
-      safetyBufferPct: 0.10,
-      minLevelsForViableGrid: 4,
-      centerPriceMode: "hybrid",
-      centerClampPct: 0.25,
-      operationalRangeMode: "hybrid",
-      operationalBandWidthPct: 20.0,
-      atrRangeMultiplier: 8.0,
-      minOperationalBandWidthPct: 20.0,
-      dynamicLevelReduction: true,
-      gridViabilityMode: "strict",
-      enforceCompactRange: this.config.enforceCompactRange ?? true,
-      gridRangeMaxPct: this.config.gridRangeMaxPct ?? 2.50,
-      maxDistanceFromCenterPct: this.config.maxDistanceFromCenterPct ?? 1.25,
-      maxSellDistanceFromNearestBuyPct: this.config.maxSellDistanceFromNearestBuyPct ?? 1.50,
-      gridRangeControlMode: this.config.gridRangeControlMode ?? 'adaptive_smart',
-      adaptiveRangeEnabled: this.config.adaptiveRangeEnabled ?? true,
-      adaptiveRangeProfile: this.config.adaptiveRangeProfile ?? 'balanced',
-      adaptiveRangeMinPct: this.config.adaptiveRangeMinPct ?? 1.50,
-      adaptiveRangeMaxPct: this.config.adaptiveRangeMaxPct ?? 7.00,
-      adaptiveRangeLowVolMaxPct: this.config.adaptiveRangeLowVolMaxPct ?? 3.00,
-      adaptiveRangeNormalMaxPct: this.config.adaptiveRangeNormalMaxPct ?? 5.00,
-      adaptiveRangeHighVolMaxPct: this.config.adaptiveRangeHighVolMaxPct ?? 7.00,
-      adaptiveRangeTargetFullLevels: this.config.adaptiveRangeTargetFullLevels ?? false,
-      adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
+      config: this.config,
+      configuredBuyLevels,
+      configuredSellLevels,
+      allocation,
+      executionMarketSnapshot,
+      pairConstraints,
+      regimeLabel: bandSnapshot.regime ?? "ranging",
+      marketSuitable: bandSnapshot.suitableForGrid ?? true,
     });
+    if (projectionCtx == null) {
+      return { ok: false, reasonCode: "PROJECTION_CONTEXT_INVALID", explanation: "No se puede construir el contexto de proyección canónica con datos reales verificados." };
+    }
+
+    const professionalResult = generateProfessionalGridLevels(buildProfessionalGeneratorInput(projectionCtx));
 
     if (professionalResult.levels.length === 0) {
       return {
@@ -4774,6 +4874,18 @@ export class GridIsolatedEngine {
    */
   getLastTickReason(): string | null {
     return this.lastTickReason;
+  }
+
+  /**
+   * REV-C12A: Get the in-memory execution gate state (read-only).
+   * Returns null if no evaluation has occurred since startup (SIN_EVALUACION_RECIENTE).
+   * The caller is responsible for rendering the SIN_EVALUACION_RECIENTE state when null.
+   */
+  getExecutionGate(): ExecutionGateState | null {
+    if (this.lastExecutionGate) return this.lastExecutionGate;
+    // No evaluation since startup — return SIN_EVALUACION_RECIENTE state
+    const pair = this.config?.pair ?? "BTC/USD";
+    return buildNoEvaluationGateState(pair);
   }
 
   /**

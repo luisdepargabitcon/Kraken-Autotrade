@@ -120,13 +120,14 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
   const requestedLevels = entryRange.requestedLevels ?? null;
   const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
 
-  // Revolut X gate: detect if any alternative is blocked due to microstructure
-  // Gate is "passed" if at least one alternative is safeToApply (canonical validation succeeded).
-  // Gate is "blocked" if NO alternative is safeToApply AND at least one has a microstructure blocking reason.
-  const anySafe = configRecommendation?.alternatives?.some((a: any) => a.safeToApply) ?? false;
-  const microstructureBlocked = !anySafe && (configRecommendation?.alternatives?.some(
-    (a: any) => !a.safeToApply && a.blockingReason && a.blockingReason.includes("microestructura")
-  ) ?? false);
+  // REV-C12A: Real Revolut X execution gate from view model (always present, never null).
+  // NOT derived from alternative.safeToApply — a safeToApply result never converts the gate to verified.
+  // The gate is only verified when executionMarketSnapshot and pairConstraints are both verified.
+  const executionGate = current.executionGate ?? null;
+  const gateVerified = executionGate?.canCreateRange === true;
+  const gateBlocked = executionGate != null && !gateVerified && (executionGate.blockers?.length ?? 0) > 0
+    && !(executionGate.blockers ?? []).includes("SIN_EVALUACION_RECIENTE");
+  const gateNoEvaluation = executionGate == null || (executionGate.blockers ?? []).includes("SIN_EVALUACION_RECIENTE");
 
   return (
     <div className="space-y-4">
@@ -178,33 +179,41 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             <p>Exchange previsto de ejecución: Revolut X</p>
           </div>
 
-          {/* Revolut X gate visibility — microstructure validation status */}
-          {configRecommendation && (
-            <div className={`rounded-lg border p-3 space-y-1 ${microstructureBlocked ? "border-amber-500/30 bg-amber-500/5" : anySafe ? "border-emerald-500/30 bg-emerald-500/5" : "border-border/40"}`}>
-              <div className="flex items-center gap-2">
-                {microstructureBlocked ? (
-                  <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                ) : anySafe ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                ) : (
-                  <Activity className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                )}
-                <span className="text-xs font-medium">
-                  {microstructureBlocked
-                    ? "Gate Revolut X: microestructura no verificada"
-                    : anySafe
-                      ? "Gate Revolut X: validación canónica superada"
-                      : "Gate Revolut X: pendiente de validación"}
-                </span>
-              </div>
-              {microstructureBlocked && (
-                <p className="text-[10px] text-muted-foreground">
-                  Las alternativas B y C requieren spread y tick de ejecución verificados de Revolut X.
-                  Sin microestructura verificada, no se puede validar de forma segura una configuración aplicable.
-                </p>
+          {/* REV-C12A: Real Revolut X execution gate — always visible, not derived from safeToApply */}
+          <div className={`rounded-lg border p-3 space-y-1 ${gateVerified ? "border-emerald-500/30 bg-emerald-500/5" : gateBlocked ? "border-amber-500/30 bg-amber-500/5" : "border-border/40"}`}>
+            <div className="flex items-center gap-2">
+              {gateVerified ? (
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              ) : gateBlocked ? (
+                <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              ) : (
+                <Activity className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               )}
+              <span className="text-xs font-medium">
+                {gateVerified
+                  ? "Gate Revolut X: VERIFICADO"
+                  : gateBlocked
+                    ? "Gate Revolut X: BLOQUEADO"
+                    : "Gate Revolut X: SIN EVALUACIÓN RECIENTE"}
+              </span>
             </div>
-          )}
+            {gateBlocked && executionGate?.executionMarketSnapshot?.reasonCode && (
+              <p className="text-[10px] text-muted-foreground">
+                {executionGate.executionMarketSnapshot.reasonCode}
+                {executionGate.pairConstraints?.reasonCode ? ` · ${executionGate.pairConstraints.reasonCode}` : ""}
+              </p>
+            )}
+            {gateNoEvaluation && (
+              <p className="text-[10px] text-muted-foreground">
+                No existe una evaluación reciente del gate de ejecución. El motor evaluará la microestructura de Revolut X en el próximo tick.
+              </p>
+            )}
+            {gateVerified && (
+              <p className="text-[10px] text-muted-foreground">
+                Microestructura y constraints de Revolut X verificadas. Evaluado: {executionGate?.evaluatedAt ?? "—"}
+              </p>
+            )}
+          </div>
 
           {/* Freshness detail */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground">

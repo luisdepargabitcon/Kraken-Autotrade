@@ -110,55 +110,91 @@ describe("GridMarketPanel render", () => {
     expect(html).toContain("Detalle técnico");
   });
 
-  it("renders Revolut X gate as pending when no configurationRecommendation", () => {
+  it("renders Revolut X gate as SIN EVALUACIÓN RECIENTE when no executionGate", () => {
     const html = renderToString(<GridMarketPanel operational={baseOperational} />);
-    // No configurationRecommendation in baseOperational — gate section not rendered
-    expect(html).not.toContain("Gate Revolut X");
+    // REV-C12A: Gate is always visible. Without executionGate, shows SIN EVALUACIÓN RECIENTE.
+    expect(html).toContain("Gate Revolut X");
+    expect(html).toContain("SIN EVALUACIÓN RECIENTE");
   });
 
-  it("renders Revolut X gate as blocked when microstructure unavailable", () => {
+  it("renders Revolut X gate as BLOQUEADO when executionGate has blockers", () => {
     const operational = {
       ...baseOperational,
       market: {
         ...baseOperational.market,
         current: {
           ...baseOperational.market.current,
-          configurationRecommendation: {
-            id: "rec-test",
-            alternatives: [
-              { id: "A", safeToApply: false, blockingReason: "Informativa" },
-              { id: "B", safeToApply: false, blockingReason: "No se puede validar de forma segura con la microestructura actual." },
-              { id: "C", safeToApply: false, blockingReason: "No se puede validar de forma segura con la microestructura actual." },
-            ],
+          executionGate: {
+            canCreateRange: false,
+            evaluatedAt: "2026-01-15T12:34:56.000Z",
+            executionMarketSnapshot: {
+              available: false,
+              verified: false,
+              fresh: false,
+              pair: "BTC/USD",
+              executionVenue: "REVOLUT_X",
+              source: "REVOLUT_X_UNAVAILABLE",
+              reasonCode: "EXECUTION_MARKET_SNAPSHOT_INVALID",
+              explanation: "Snapshot no verificado",
+            },
+            pairConstraints: {
+              available: true,
+              verified: true,
+              fresh: true,
+              pair: "BTC/USD",
+              source: "revolutx",
+              reasonCode: null,
+              explanation: null,
+            },
+            blockers: ["EXECUTION_MARKET_SNAPSHOT_INVALID"],
+            allowCycleExits: true,
           },
         },
       },
     };
     const html = renderToString(<GridMarketPanel operational={operational} />);
     expect(html).toContain("Gate Revolut X");
-    expect(html).toContain("microestructura no verificada");
+    expect(html).toContain("BLOQUEADO");
+    expect(html).toContain("EXECUTION_MARKET_SNAPSHOT_INVALID");
   });
 
-  it("renders Revolut X gate as passed when at least one alternative is safeToApply", () => {
+  it("renders Revolut X gate as VERIFICADO when executionGate.canCreateRange is true", () => {
     const operational = {
       ...baseOperational,
       market: {
         ...baseOperational.market,
         current: {
           ...baseOperational.market.current,
-          configurationRecommendation: {
-            id: "rec-test",
-            alternatives: [
-              { id: "A", safeToApply: false, blockingReason: "Informativa" },
-              { id: "B", safeToApply: true, blockingReason: null },
-              { id: "C", safeToApply: false, blockingReason: "No se puede validar de forma segura con la microestructura actual." },
-            ],
+          executionGate: {
+            canCreateRange: true,
+            evaluatedAt: "2026-01-15T12:34:56.000Z",
+            executionMarketSnapshot: {
+              available: true,
+              verified: true,
+              fresh: true,
+              pair: "BTC/USD",
+              executionVenue: "REVOLUT_X",
+              source: "REVOLUT_X_TICKER",
+              reasonCode: null,
+              explanation: null,
+            },
+            pairConstraints: {
+              available: true,
+              verified: true,
+              fresh: true,
+              pair: "BTC/USD",
+              source: "revolutx",
+              reasonCode: null,
+              explanation: null,
+            },
+            blockers: [],
+            allowCycleExits: true,
           },
         },
       },
     };
     const html = renderToString(<GridMarketPanel operational={operational} />);
     expect(html).toContain("Gate Revolut X");
-    expect(html).toContain("validación canónica superada");
+    expect(html).toContain("VERIFICADO");
   });
 });

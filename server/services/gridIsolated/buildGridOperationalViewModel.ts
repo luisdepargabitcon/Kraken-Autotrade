@@ -1184,6 +1184,11 @@ export interface BuildGridOperationalViewModelInput {
   professionalGenerator?: any;
   lastProfessionalValidationAt?: Date | string | null;
   lastShadowValidationAt?: Date | string | null;
+  // REV-C12A: Real execution gate + microstructure + allocation for canonical projection
+  executionGate?: any | null;
+  executionMarketSnapshot?: any | null;
+  pairConstraints?: any | null;
+  allocation?: any | null;
 }
 
 export function buildGridOperationalViewModel(input: BuildGridOperationalViewModelInput): GridOperationalViewModel {
@@ -1402,6 +1407,11 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
     levels,
     lastProfessionalValidationAt: lastProfessionalValidationAt ?? null,
     lastShadowValidationAt: lastShadowValidationAt ?? null,
+    // REV-C12A: Pass real execution gate + microstructure + allocation
+    executionGate: input.executionGate ?? null,
+    executionMarketSnapshot: input.executionMarketSnapshot ?? null,
+    pairConstraints: input.pairConstraints ?? null,
+    allocation: input.allocation ?? null,
   });
 
   const settings: OperationalSettingsProfile = {

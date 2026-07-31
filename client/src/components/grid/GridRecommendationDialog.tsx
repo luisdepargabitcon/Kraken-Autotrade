@@ -245,11 +245,11 @@ export function GridRecommendationDialog({
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              El rango vigente y sus niveles no se han modificado. La nueva configuración se usará en futuros análisis.
+              El rango vigente y sus niveles no se han modificado. La nueva configuración se usará en futuros análisis y rangos.
             </p>
             <p className="text-xs text-muted-foreground flex items-start gap-2">
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
-              Validación canónica superada: el generador profesional verificó la viabilidad con la microestructura de Revolut X.
+              Validación canónica superada: el generador profesional verificó la viabilidad con la microestructura de Revolut X. La configuración se guardó en DB y se aplicará en el próximo tick del motor.
             </p>
           </div>
         )}

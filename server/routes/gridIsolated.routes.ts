@@ -1776,7 +1776,12 @@ export function registerGridIsolatedRoutes(app: Express): void {
         lastShadowValidation,
         lastProfessionalValidation,
         professionalGenerator,
-        rangeLifecycle
+        rangeLifecycle,
+        // REV-C12A: Real execution gate + microstructure + allocation from engine
+        gridIsolatedEngine.getExecutionGate(),
+        null, // executionMarketSnapshot — gate already captures the snapshot state
+        null, // pairConstraints — gate already captures the constraints state
+        null, // allocation — recommendation service handles allocation via input
       );
 
       res.json({
@@ -2345,7 +2350,11 @@ export function registerGridIsolatedRoutes(app: Express): void {
         resolvedRange,
         marketContext,
         lastShadowValidation,
-        lastProfessionalValidation
+        lastProfessionalValidation,
+        null, // providedProfessionalGenerator
+        null, // providedRangeLifecycle
+        // REV-C12A: Real execution gate from engine
+        gridIsolatedEngine.getExecutionGate(),
       );
 
       res.setHeader("Content-Type", "application/json; charset=utf-8");

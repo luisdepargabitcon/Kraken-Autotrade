@@ -217,3 +217,55 @@ describe("GridIsolatedEngine — Geometric Level Generation Integration", () => 
     expect(orderIds.size).toBe(gridLevels.length);
   });
 });
+
+describe("GridIsolatedEngine — Execution Gate (REV-C12A)", () => {
+  it("getExecutionGate returns SIN_EVALUACION_RECIENTE before any tick", () => {
+    const gate = gridIsolatedEngine.getExecutionGate();
+    expect(gate).not.toBeNull();
+    expect(gate!.canCreateRange).toBe(false);
+    expect(gate!.evaluatedAt).toBeNull();
+    expect(gate!.blockers).toContain("SIN_EVALUACION_RECIENTE");
+    expect(gate!.executionMarketSnapshot.reasonCode).toBe("SIN_EVALUACION_RECIENTE");
+    expect(gate!.pairConstraints.reasonCode).toBe("SIN_EVALUACION_RECIENTE");
+    expect(gate!.allowCycleExits).toBe(true);
+  });
+
+  it("getExecutionGate pair reflects configured pair", () => {
+    const gate = gridIsolatedEngine.getExecutionGate();
+    expect(gate).not.toBeNull();
+    // Default pair is BTC/USD when no config loaded
+    expect(gate!.executionMarketSnapshot.pair).toBe("BTC/USD");
+    expect(gate!.pairConstraints.pair).toBe("BTC/USD");
+  });
+});
+
+describe("GridIsolatedEngine — saveConfig real call sites (REV-C12A)", () => {
+  it("saveConfig persists loaded config to DB via update", async () => {
+    // Load a config first (mocked DB returns [] so default config is created)
+    const config = await gridIsolatedEngine.loadConfig();
+    expect(config).toBeDefined();
+    expect(config!.mode).toBe("OFF");
+
+    // Modify a field and save
+    config!.netProfitTargetPct = 0.75;
+    await gridIsolatedEngine.saveConfig();
+
+    // Verify getConfig returns the updated value
+    const current = gridIsolatedEngine.getConfig();
+    expect(current).not.toBeNull();
+    expect(current!.netProfitTargetPct).toBe(0.75);
+  });
+
+  it("saveConfig is the callback used by applyRecommendationPatchAtomically", async () => {
+    // This test verifies the real saveConfig signature matches the callback contract:
+    // () => Promise<void>
+    const config = await gridIsolatedEngine.loadConfig();
+    config!.gridStepAtrMultiplier = 1.2;
+
+    const saveCallback = () => gridIsolatedEngine.saveConfig();
+    await expect(saveCallback()).resolves.toBeUndefined();
+
+    const current = gridIsolatedEngine.getConfig();
+    expect(current!.gridStepAtrMultiplier).toBe(1.2);
+  });
+});

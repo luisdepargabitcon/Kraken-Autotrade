@@ -29,6 +29,11 @@ import type {
   ConfigurationRecommendation,
   RecommendationAlternative,
 } from "@shared/gridRecommendationHelper";
+import {
+  resolveGridProfessionalProjectionContext,
+  buildProfessionalGeneratorInput,
+  type GridProfessionalProjectionContext,
+} from "./gridProfessionalProjectionContext";
 
 export interface RecommendationServiceInput {
   mode: string;
@@ -41,6 +46,11 @@ export interface RecommendationServiceInput {
   levels: any[];
   status: any;
   lastProfessionalValidationAt?: Date | string | null;
+  // REV-C12A: Real execution microstructure and allocation for canonical projection.
+  // When null/missing, B and C are blocked (no invented estimates).
+  executionMarketSnapshot?: any | null;
+  pairConstraints?: any | null;
+  allocation?: any | null;
 }
 
 const SPREAD_BUFFER_PCT = 0.01;
@@ -410,56 +420,22 @@ function getGridStepParams(config: any): { atrMultiplier: number; maxPct: number
 }
 
 /**
- * Typed helper to resolve the input for canonical professional grid level projection.
- * Extracts all required fields from the RecommendationServiceInput using strict validation.
- * Returns null if any required field is missing or invalid.
+ * REV-C12A: Resolve the canonical professional projection context from real, verified data.
+ * Uses the shared helper gridProfessionalProjectionContext — single source of truth.
+ * No invented estimates. No hardcoded config. No Kraken fallback for microstructure.
  *
- * Required fields:
- * - currentPrice (from marketContext)
- * - bollingerMiddle/Upper/Lower (from marketContext.band)
- * - atrPct (from marketContext)
- * - spreadPct (from marketContext — Revolut X microstructure)
- * - priceTickPct (from marketContext — Revolut X microstructure)
- * - capitalPerLevelUsd (canonical projection from config)
- * - requestedBuyLevels/requestedSellLevels (from professionalGenerator/resolvedRange/status)
- * - regimeLabel (from marketContext or adaptiveDecision)
+ * Returns null if:
+ *  - allocation is missing or capitalPerLevelUsd <= 0
+ *  - executionMarketSnapshot is not verified/fresh/REVOLUT_X/pair-matching
+ *  - pairConstraints are not verified/pair-matching
+ *  - any required field is missing or invalid
  */
-interface ProjectionInput {
-  currentPrice: number;
-  bollingerMiddle: number;
-  bollingerUpper: number;
-  bollingerLower: number;
-  atrPct: number;
-  netProfitTargetPct: number;
-  gridStepAtrMultiplier: number;
-  gridStepMinPct: number;
-  gridStepMaxPct: number;
-  spreadPct: number | null;
-  priceTickPct: number | null;
-  configuredBuyLevels: number;
-  configuredSellLevels: number;
-  capitalPerLevelUsd: number;
-  enforceCompactRange: boolean;
-  gridRangeMaxPct: number;
-  maxDistanceFromCenterPct: number;
-  maxSellDistanceFromNearestBuyPct: number;
-  adaptiveRangeProfile: string;
-  adaptiveRangeMinPct: number;
-  adaptiveRangeMaxPct: number;
-  adaptiveRangeLowVolMaxPct: number;
-  adaptiveRangeNormalMaxPct: number;
-  adaptiveRangeHighVolMaxPct: number;
-  adaptiveRangeMinViableLevels: number;
-  regimeLabel: string;
-  marketSuitable: boolean;
-}
-
-function resolveProjectionInput(
+function resolveProjectionContext(
   input: RecommendationServiceInput,
   config: any,
   marketContext: any,
   resolved: { buyLevels: number; sellLevels: number },
-): ProjectionInput | null {
+): GridProfessionalProjectionContext | null {
   const currentPrice = toNum(marketContext?.currentPrice);
   if (currentPrice == null || currentPrice <= 0) return null;
 
@@ -472,140 +448,50 @@ function resolveProjectionInput(
   const atrPct = toNum(marketContext?.atrPct ?? band.atrPct);
   if (atrPct == null || atrPct <= 0) return null;
 
-  const netProfitTargetPct = toNum(config?.netProfitTargetPct);
-  if (netProfitTargetPct == null || netProfitTargetPct <= 0) return null;
-
-  const gridStepAtrMultiplier = toNum(config?.gridStepAtrMultiplier) ?? 1.5;
-  const gridStepMinPct = toNum(config?.gridStepMinPct) ?? 0.15;
-  const gridStepMaxPct = toNum(config?.gridStepMaxPct) ?? 3.0;
-
-  // Microstructure: spread and tick from Revolut X execution snapshot.
-  // Do NOT infer from Kraken data. If not available, pass null — the professional
-  // generator will fail-closed (compact/blocked) when requireMicrostructure=true.
-  const spreadPct = toNum(marketContext?.executionSpreadPct) ?? toNum(marketContext?.spreadPct) ?? null;
-  const priceTickPct = toNum(marketContext?.executionPriceTickPct) ?? toNum(marketContext?.priceTickPct) ?? null;
-
-  // Capital per level: canonical projection from config.
-  // Uses gridMaxCapitalPerCycleUsd divided by total requested levels as a canonical estimate.
-  const maxCapitalPerCycle = toNum(config?.gridMaxCapitalPerCycleUsd) ?? 0;
-  const totalRequested = resolved.buyLevels + resolved.sellLevels;
-  const capitalPerLevelUsd = maxCapitalPerCycle > 0 && totalRequested > 0
-    ? maxCapitalPerCycle / totalRequested
-    : 0;
-
-  const enforceCompactRange = config?.enforceCompactRange ?? true;
-  const gridRangeMaxPct = toNum(config?.gridRangeMaxPct) ?? 2.5;
-  const maxDistanceFromCenterPct = toNum(config?.maxDistanceFromCenterPct) ?? 1.25;
-  const maxSellDistanceFromNearestBuyPct = toNum(config?.maxSellDistanceFromNearestBuyPct) ?? 1.50;
-
-  const adaptiveRangeProfile = config?.adaptiveRangeProfile ?? "balanced";
-  const adaptiveRangeMinPct = toNum(config?.adaptiveRangeMinPct) ?? 1.50;
-  const adaptiveRangeMaxPct = toNum(config?.adaptiveRangeMaxPct) ?? 7.00;
-  const adaptiveRangeLowVolMaxPct = toNum(config?.adaptiveRangeLowVolMaxPct) ?? 3.00;
-  const adaptiveRangeNormalMaxPct = toNum(config?.adaptiveRangeNormalMaxPct) ?? 5.00;
-  const adaptiveRangeHighVolMaxPct = toNum(config?.adaptiveRangeHighVolMaxPct) ?? 7.00;
-  const adaptiveRangeMinViableLevels = toNum(config?.adaptiveRangeMinViableLevels) ?? 4;
-
   const regimeLabel = marketContext?.regime ?? input.adaptiveDecision?.regimeLabel ?? "RANGE";
-  const marketSuitable = true; // data sufficiency already verified market is suitable
+  const marketSuitable = marketContext?.suitableForGrid ?? true;
 
-  return {
+  return resolveGridProfessionalProjectionContext({
     currentPrice,
     bollingerMiddle,
     bollingerUpper,
     bollingerLower,
     atrPct,
-    netProfitTargetPct,
-    gridStepAtrMultiplier,
-    gridStepMinPct,
-    gridStepMaxPct,
-    spreadPct,
-    priceTickPct,
+    config,
     configuredBuyLevels: resolved.buyLevels,
     configuredSellLevels: resolved.sellLevels,
-    capitalPerLevelUsd,
-    enforceCompactRange,
-    gridRangeMaxPct,
-    maxDistanceFromCenterPct,
-    maxSellDistanceFromNearestBuyPct,
-    adaptiveRangeProfile,
-    adaptiveRangeMinPct,
-    adaptiveRangeMaxPct,
-    adaptiveRangeLowVolMaxPct,
-    adaptiveRangeNormalMaxPct,
-    adaptiveRangeHighVolMaxPct,
-    adaptiveRangeMinViableLevels,
+    allocation: input.allocation ?? null,
+    executionMarketSnapshot: input.executionMarketSnapshot ?? null,
+    pairConstraints: input.pairConstraints ?? null,
     regimeLabel,
     marketSuitable,
-  };
+  });
 }
 
 /**
- * Run canonical professional grid level generation with the given projection input
+ * Run canonical professional grid level generation with the given projection context
  * and optional overrides (e.g., different gridStepAtrMultiplier for B, different gridRangeMaxPct for C).
+ * Uses the shared buildProfessionalGeneratorInput — no duplicated parameter lists.
  */
 function projectCanonicalLevels(
-  projInput: ProjectionInput,
-  overrides: Partial<Pick<ProjectionInput, "gridStepAtrMultiplier" | "gridRangeMaxPct">>,
+  ctx: GridProfessionalProjectionContext,
+  overrides: Partial<Pick<GridProfessionalProjectionContext, "gridStepAtrMultiplier" | "gridRangeMaxPct">>,
 ): { viable: boolean; levels: number; spacingPct: number; rangePct: number; viabilityStatus: string } {
-  const merged = { ...projInput, ...overrides };
   try {
-    const result = generateProfessionalGridLevels({
-      currentPrice: merged.currentPrice,
-      bollingerMiddle: merged.bollingerMiddle,
-      bollingerUpper: merged.bollingerUpper,
-      bollingerLower: merged.bollingerLower,
-      atrPct: merged.atrPct,
-      netProfitTargetPct: merged.netProfitTargetPct,
-      gridStepAtrMultiplier: merged.gridStepAtrMultiplier,
-      gridStepMinPct: merged.gridStepMinPct,
-      gridStepMaxPct: merged.gridStepMaxPct,
-      spreadPct: merged.spreadPct,
-      priceTickPct: merged.priceTickPct,
-      configuredBuyLevels: merged.configuredBuyLevels,
-      configuredSellLevels: merged.configuredSellLevels,
-      capitalPerLevelUsd: merged.capitalPerLevelUsd,
-      spreadBufferPct: SPREAD_BUFFER_PCT,
-      safetyBufferPct: SAFETY_BUFFER_PCT,
-      minLevelsForViableGrid: MIN_LEVELS_FOR_VIABLE_GRID,
-      centerPriceMode: "hybrid",
-      centerClampPct: 0.25,
-      operationalRangeMode: "hybrid",
-      operationalBandWidthPct: 20.0,
-      atrRangeMultiplier: 8.0,
-      minOperationalBandWidthPct: 20.0,
-      dynamicLevelReduction: true,
-      gridViabilityMode: "strict",
-      enforceCompactRange: merged.enforceCompactRange,
-      gridRangeMaxPct: merged.gridRangeMaxPct,
-      maxDistanceFromCenterPct: merged.maxDistanceFromCenterPct,
-      maxSellDistanceFromNearestBuyPct: merged.maxSellDistanceFromNearestBuyPct,
-      gridRangeControlMode: "adaptive_smart",
-      adaptiveRangeEnabled: true,
-      adaptiveRangeProfile: merged.adaptiveRangeProfile as any,
-      adaptiveRangeMinPct: merged.adaptiveRangeMinPct,
-      adaptiveRangeMaxPct: merged.adaptiveRangeMaxPct,
-      adaptiveRangeLowVolMaxPct: merged.adaptiveRangeLowVolMaxPct,
-      adaptiveRangeNormalMaxPct: merged.adaptiveRangeNormalMaxPct,
-      adaptiveRangeHighVolMaxPct: merged.adaptiveRangeHighVolMaxPct,
-      adaptiveRangeTargetFullLevels: false,
-      adaptiveRangeMinViableLevels: merged.adaptiveRangeMinViableLevels,
-      marketSuitable: merged.marketSuitable,
-      regimeLabel: merged.regimeLabel,
-    });
+    const result = generateProfessionalGridLevels(buildProfessionalGeneratorInput(ctx, overrides));
     return {
       viable: result.viabilityStatus === "viable" && result.levels.length >= MIN_LEVELS_FOR_VIABLE_GRID,
       levels: result.levels.length,
-      spacingPct: result.professionalGenerator?.spacingPct ?? merged.gridStepMinPct,
-      rangePct: result.professionalGenerator?.operationalBandWidthPct ?? merged.gridRangeMaxPct,
+      spacingPct: result.professionalGenerator?.spacingPct ?? ctx.gridStepMinPct,
+      rangePct: result.professionalGenerator?.operationalBandWidthPct ?? ctx.gridRangeMaxPct,
       viabilityStatus: result.viabilityStatus,
     };
   } catch {
     return {
       viable: false,
       levels: 0,
-      spacingPct: merged.gridStepMinPct,
-      rangePct: merged.gridRangeMaxPct,
+      spacingPct: ctx.gridStepMinPct,
+      rangePct: ctx.gridRangeMaxPct,
       viabilityStatus: "not_viable",
     };
   }
@@ -825,12 +711,18 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   // Resolve canonical projection input for B and C validation.
   // If microstructure (spread/tick from Revolut X) is missing, this returns null
   // and B/C will be safeToApply=false with the microstructure blocking reason.
-  const projectionInput = resolveProjectionInput(input, config, marketContext, resolvedRequested);
+  const projectionInput = resolveProjectionContext(input, config, marketContext, resolvedRequested);
 
+  // REV-C12A: expectedBefore from canonical projection (not computeSpacingAndLevels).
+  // When projection context is available, use the professional generator's current
+  // projection. Otherwise fall back to computeSpacingAndLevels diagnosis.
+  const currentProjection = projectionInput && projectionInput.microstructureVerified
+    ? projectCanonicalLevels(projectionInput, {})
+    : null;
   const expectedBefore = {
-    levels: currentCalc.totalLevels,
-    spacingPct: currentCalc.spacingPct,
-    rangePct: effectiveRangePct,
+    levels: currentProjection?.levels ?? currentCalc.totalLevels,
+    spacingPct: currentProjection?.spacingPct ?? currentCalc.spacingPct,
+    rangePct: currentProjection?.rangePct ?? effectiveRangePct,
     netProfitPct: netProfitTargetPct,
   };
 
@@ -894,6 +786,8 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     if (!hasRealChange) {
       bBlockingReason = "La configuración ya coincide con esta alternativa.";
     } else if (projectionInput == null) {
+      bBlockingReason = "No existe una asignación de capital canónica disponible para validar esta alternativa.";
+    } else if (!projectionInput.microstructureVerified) {
       bBlockingReason = "No se puede validar de forma segura con la microestructura actual.";
     } else {
       const bProjection = projectCanonicalLevels(projectionInput, { gridStepAtrMultiplier: newAtrMultiplier });
@@ -930,38 +824,68 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
   }
 
   // ─── Alternative C: Expand range (iterative search with canonical validation) ───
-  // Each candidate width is validated with generateProfessionalGridLevels.
-  // computeSpacingAndLevels is used only for preliminary search, NOT for safeToApply.
+  // REV-C12A: Each candidate width is validated with generateProfessionalGridLevels.
+  // Selects the first canonically viable width that represents the minimum safe change.
+  // computeSpacingAndLevels is used only for preliminary diagnosis, NOT for safeToApply.
   {
     const requestedTotal = configuredBuyLevels + configuredSellLevels;
     const step = 0.05; // 0.05% increments
     const absoluteMaxWidth = ABSOLUTE_GRID_RANGE_MAX_PCT;
     const maxWidth = Math.min(regimeMaxPct, bandWidthPct, absoluteMaxWidth);
 
-    // Preliminary search for best width (not authoritative)
+    // REV-C12A: Iterate each candidate width through the professional generator.
+    // Select the first canonically viable width (minimum safe change).
     let bestWidth = effectiveRangePct;
-    let bestPreliminary = currentCalc;
-    let foundFullFit = false;
+    let bestProjection: { viable: boolean; levels: number; spacingPct: number; rangePct: number; viabilityStatus: string } | null = null;
+    let foundCanonicallyViable = false;
 
-    for (let testWidth = effectiveRangePct + step; testWidth <= maxWidth + 1e-9; testWidth += step) {
-      const testBounds = computeOperationalBounds(centerPrice, testWidth);
-      const testCalc = computeSpacingAndLevels(
-        netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
-        centerPrice, testBounds.lower, testBounds.upper,
-        configuredBuyLevels, configuredSellLevels,
-        atrPct, atrMultiplier, minPct, maxPct,
-      );
-      if (testCalc.totalLevels > bestPreliminary.totalLevels) {
-        bestWidth = testWidth;
-        bestPreliminary = testCalc;
+    if (projectionInput != null && projectionInput.microstructureVerified) {
+      for (let testWidth = effectiveRangePct + step; testWidth <= maxWidth + 1e-9; testWidth += step) {
+        // Check limits before running the generator
+        if (testWidth > regimeMaxPct) break;
+        if (testWidth > absoluteMaxWidth) break;
+        if (testWidth > bandWidthPct) break;
+
+        const candidateConfig = { ...config, gridRangeMaxPct: testWidth };
+        const candidateCtx = resolveProjectionContext(input, candidateConfig, marketContext, resolvedRequested);
+        if (candidateCtx == null || !candidateCtx.microstructureVerified) continue;
+
+        const testProjection = projectCanonicalLevels(candidateCtx, { gridRangeMaxPct: testWidth });
+        if (testProjection.viable && testProjection.levels >= MIN_LEVELS_FOR_VIABLE_GRID) {
+          bestWidth = testWidth;
+          bestProjection = testProjection;
+          foundCanonicallyViable = true;
+          break; // Select first viable (minimum safe change)
+        } else if (bestProjection == null || testProjection.levels > bestProjection.levels) {
+          bestWidth = testWidth;
+          bestProjection = testProjection;
+        }
       }
-      if (testCalc.buyLevels >= configuredBuyLevels && testCalc.sellLevels >= configuredSellLevels) {
-        foundFullFit = true;
-        break;
+    } else {
+      // Fallback: preliminary search only (not authoritative for safeToApply)
+      let bestPreliminary = currentCalc;
+      for (let testWidth = effectiveRangePct + step; testWidth <= maxWidth + 1e-9; testWidth += step) {
+        const testBounds = computeOperationalBounds(centerPrice, testWidth);
+        const testCalc = computeSpacingAndLevels(
+          netProfitTargetPct, buyFeePct, sellFeePct, taxReservePct,
+          centerPrice, testBounds.lower, testBounds.upper,
+          configuredBuyLevels, configuredSellLevels,
+          atrPct, atrMultiplier, minPct, maxPct,
+        );
+        if (testCalc.totalLevels > bestPreliminary.totalLevels) {
+          bestWidth = testWidth;
+          bestPreliminary = testCalc;
+        }
       }
+      bestProjection = {
+        viable: false,
+        levels: bestPreliminary.totalLevels,
+        spacingPct: bestPreliminary.spacingPct ?? minPct,
+        rangePct: bestWidth,
+        viabilityStatus: "not_viable",
+      };
     }
 
-    // Canonical validation of the best candidate width
     const cWidthImproved = bestWidth > effectiveRangePct;
     const proposedGridRangeMaxPct = cWidthImproved ? Math.min(bestWidth, bandWidthPct) : gridRangeMaxPct;
     const cHasChanges = proposedGridRangeMaxPct !== gridRangeMaxPct;
@@ -972,45 +896,41 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     let cSafeToApply = false;
     let cBlockingReason: string | null = null;
     let cExpectedAfter = {
-      levels: bestPreliminary.totalLevels,
-      spacingPct: bestPreliminary.spacingPct ?? minPct,
+      levels: bestProjection?.levels ?? currentCalc.totalLevels,
+      spacingPct: bestProjection?.spacingPct ?? minPct,
       rangePct: cHasChanges ? bestWidth : effectiveRangePct,
       netProfitPct: netProfitTargetPct,
     };
 
-    if (!foundFullFit) {
-      cBlockingReason = `No se puede ajustar el rango para albergar ${requestedTotal} niveles solicitados dentro del régimen actual.`;
+    if (!cWidthImproved) {
+      cBlockingReason = "No se puede ampliar el rango dentro de los límites del régimen actual.";
     } else if (cExceedsRegime) {
       cBlockingReason = `Anchura necesaria (${bestWidth.toFixed(2)}%) supera regimeMaxPct (${regimeMaxPct.toFixed(2)}%)`;
     } else if (cExceedsAbsolute) {
       cBlockingReason = `Anchura necesaria (${bestWidth.toFixed(2)}%) supera el máximo absoluto permitido (${absoluteMaxWidth.toFixed(2)}%)`;
-    } else if (!cWidthImproved) {
-      cBlockingReason = "No se puede ampliar el rango dentro de los límites del régimen actual.";
     } else if (!cHasChanges) {
       cBlockingReason = "La configuración ya coincide con esta alternativa.";
     } else if (projectionInput == null) {
+      cBlockingReason = "No existe una asignación de capital canónica disponible para validar esta alternativa.";
+    } else if (!projectionInput.microstructureVerified) {
       cBlockingReason = "No se puede validar de forma segura con la microestructura actual.";
+    } else if (!foundCanonicallyViable || !bestProjection?.viable) {
+      cBlockingReason = bestProjection?.viabilityStatus === "compact"
+        ? `El generador profesional retornó compacto para ${proposedGridRangeMaxPct.toFixed(2)}%. No se puede validar de forma segura.`
+        : `El generador profesional no produjo un resultado viable para ${proposedGridRangeMaxPct.toFixed(2)}% (${bestProjection?.viabilityStatus ?? "not_viable"}). No se puede validar de forma segura con la microestructura actual.`;
     } else {
-      // Canonical validation with the proposed gridRangeMaxPct
-      const cProjection = projectCanonicalLevels(projectionInput, { gridRangeMaxPct: proposedGridRangeMaxPct });
+      cSafeToApply = true;
       cExpectedAfter = {
-        levels: cProjection.levels,
-        spacingPct: cProjection.spacingPct,
-        rangePct: cProjection.rangePct,
+        levels: bestProjection.levels,
+        spacingPct: bestProjection.spacingPct,
+        rangePct: bestProjection.rangePct,
         netProfitPct: netProfitTargetPct,
       };
-      if (!cProjection.viable) {
-        cBlockingReason = cProjection.viabilityStatus === "compact"
-          ? `El generador profesional retornó compacto para ${proposedGridRangeMaxPct.toFixed(2)}%. No se puede validar de forma segura.`
-          : `El generador profesional no produjo un resultado viable para ${proposedGridRangeMaxPct.toFixed(2)}% (${cProjection.viabilityStatus}). No se puede validar de forma segura con la microestructura actual.`;
-      } else {
-        cSafeToApply = true;
-      }
     }
 
     const cWarnings: string[] = [];
-    if (cHasChanges && !foundFullFit) {
-      cWarnings.push(`Mejora parcial: ${bestPreliminary.totalLevels} niveles de ${requestedTotal} solicitados.`);
+    if (cHasChanges && !foundCanonicallyViable) {
+      cWarnings.push(`Mejora parcial: ${bestProjection?.levels ?? 0} niveles de ${requestedTotal} solicitados.`);
     }
 
     alternatives.push({
