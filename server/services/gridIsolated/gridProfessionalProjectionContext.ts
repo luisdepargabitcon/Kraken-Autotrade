@@ -181,6 +181,20 @@ export function resolveGridProfessionalProjectionContext(
   const allocationLevelsCount = toStrictInt(allocation.levelsCount);
   if (allocationLevelsCount == null || allocationLevelsCount <= 0) return null;
 
+  // REV-C12B: Allocation consistency — finalGridBudgetUsd must be > 0.
+  const allocationFinalGridBudgetUsd = toStrictNum(allocation.finalGridBudgetUsd);
+  if (allocationFinalGridBudgetUsd == null || allocationFinalGridBudgetUsd <= 0) return null;
+  // REV-C12B: capitalPerLevelUsd * levelsCount must not exceed finalGridBudgetUsd outside tolerance.
+  const budgetCheck = capitalPerLevelUsd * allocationLevelsCount;
+  const budgetTolerance = allocationFinalGridBudgetUsd * 0.10; // 10% tolerance
+  if (budgetCheck > allocationFinalGridBudgetUsd + budgetTolerance) return null;
+
+  // ── REV-C12B: Market suitability and regime fail-closed ──
+  // No suitableForGrid ?? true, no regime ?? "ranging".
+  if (typeof input.marketSuitable !== "boolean") return null;
+  if (input.marketSuitable !== true) return null;
+  if (typeof input.regimeLabel !== "string" || input.regimeLabel.trim() === "") return null;
+
   // ── Strict Revolut X microstructure ──
   // Only use executionMarketSnapshot when:
   //  available=true, verified=true, fresh=true, executionVenue="REVOLUT_X", pair matches.
@@ -253,7 +267,7 @@ export function resolveGridProfessionalProjectionContext(
     regimeLabel: input.regimeLabel,
     marketSuitable: input.marketSuitable,
     allocationLevelsCount,
-    allocationFinalGridBudgetUsd: toStrictNum(allocation.finalGridBudgetUsd) ?? 0,
+    allocationFinalGridBudgetUsd,
     allocationMode: allocation.allocationMode ?? "uniform",
     deploymentMode: allocation.deploymentMode ?? "capped",
     microstructureVerified,

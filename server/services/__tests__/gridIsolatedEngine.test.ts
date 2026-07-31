@@ -218,12 +218,16 @@ describe("GridIsolatedEngine — Geometric Level Generation Integration", () => 
   });
 });
 
-describe("GridIsolatedEngine — Execution Gate (REV-C12A)", () => {
-  it("getExecutionGate returns SIN_EVALUACION_RECIENTE before any tick", () => {
+describe("GridIsolatedEngine — Execution Gate (REV-C12A/REV-C12B)", () => {
+  it("getExecutionGate returns NO_RECENT_EVALUATION before any tick", () => {
     const gate = gridIsolatedEngine.getExecutionGate();
     expect(gate).not.toBeNull();
     expect(gate!.canCreateRange).toBe(false);
+    expect(gate!.status).toBe("NO_RECENT_EVALUATION");
     expect(gate!.evaluatedAt).toBeNull();
+    expect(gate!.ageMs).toBeNull();
+    expect(gate!.maxAgeMs).toBeNull();
+    expect(gate!.validUntil).toBeNull();
     expect(gate!.blockers).toContain("SIN_EVALUACION_RECIENTE");
     expect(gate!.executionMarketSnapshot.reasonCode).toBe("SIN_EVALUACION_RECIENTE");
     expect(gate!.pairConstraints.reasonCode).toBe("SIN_EVALUACION_RECIENTE");
@@ -236,6 +240,13 @@ describe("GridIsolatedEngine — Execution Gate (REV-C12A)", () => {
     // Default pair is BTC/USD when no config loaded
     expect(gate!.executionMarketSnapshot.pair).toBe("BTC/USD");
     expect(gate!.pairConstraints.pair).toBe("BTC/USD");
+  });
+});
+
+describe("GridIsolatedEngine — Recommendation Projection State (REV-C12B)", () => {
+  it("getRecommendationProjectionState returns null before any tick", () => {
+    const state = gridIsolatedEngine.getRecommendationProjectionState();
+    expect(state).toBeNull();
   });
 });
 
@@ -267,5 +278,27 @@ describe("GridIsolatedEngine — saveConfig real call sites (REV-C12A)", () => {
 
     const current = gridIsolatedEngine.getConfig();
     expect(current!.gridStepAtrMultiplier).toBe(1.2);
+  });
+
+  it("saveConfig throws DB_WRITE_FAILED when DB update throws (REV-C12B)", async () => {
+    // Load config first to populate this.config
+    const config = await gridIsolatedEngine.loadConfig();
+    expect(config).toBeDefined();
+
+    // Set an id so saveConfig uses the update path
+    config!.id = "999";
+
+    // Temporarily mock db.update to throw
+    const dbModule = await import("../../db");
+    const originalUpdate = dbModule.db.update;
+    dbModule.db.update = vi.fn().mockImplementation(() => {
+      throw new Error("DB_WRITE_FAILED: connection refused");
+    });
+
+    // saveConfig should throw (it re-throws after logging)
+    await expect(gridIsolatedEngine.saveConfig()).rejects.toThrow("DB_WRITE_FAILED");
+
+    // Restore original mock
+    dbModule.db.update = originalUpdate;
   });
 });

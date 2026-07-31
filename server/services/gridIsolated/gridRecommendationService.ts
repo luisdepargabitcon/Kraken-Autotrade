@@ -503,13 +503,15 @@ function projectCanonicalLevels(
  * Never converts an invalid value into 1.
  */
 function validateStrictLevelValue(key: string, value: unknown): { ok: true; value: number } | { ok: false; reason: string } {
+  // REV-C12B: Strict validation — no Number() coercion.
+  // Rejects: null, undefined, strings ("4", "4.0"), NaN, Infinity, 0, -1, 4.5, objects, arrays.
   if (value == null) return { ok: false, reason: `${key} is null or undefined` };
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return { ok: false, reason: `${key} is not finite (NaN/Infinity)` };
-  if (!Number.isInteger(n)) return { ok: false, reason: `${key} is not an integer (${n})` };
-  if (n < 1) return { ok: false, reason: `${key} is less than 1 (${n})` };
-  if (n > MAX_LEVELS_PER_SIDE) return { ok: false, reason: `${key} exceeds maximum (${n} > ${MAX_LEVELS_PER_SIDE})` };
-  return { ok: true, value: n };
+  if (typeof value !== "number") return { ok: false, reason: `${key} is not a number (type: ${typeof value})` };
+  if (!Number.isFinite(value)) return { ok: false, reason: `${key} is not finite (NaN/Infinity)` };
+  if (!Number.isInteger(value)) return { ok: false, reason: `${key} is not an integer (${value})` };
+  if (value < 1) return { ok: false, reason: `${key} is less than 1 (${value})` };
+  if (value > MAX_LEVELS_PER_SIDE) return { ok: false, reason: `${key} exceeds maximum (${value} > ${MAX_LEVELS_PER_SIDE})` };
+  return { ok: true, value };
 }
 
 /**

@@ -126,7 +126,11 @@ describe("GridMarketPanel render", () => {
           ...baseOperational.market.current,
           executionGate: {
             canCreateRange: false,
+            status: "BLOCKED",
             evaluatedAt: "2026-01-15T12:34:56.000Z",
+            ageMs: 5000,
+            maxAgeMs: 30000,
+            validUntil: "2026-01-15T12:35:26.000Z",
             executionMarketSnapshot: {
               available: false,
               verified: false,
@@ -167,7 +171,11 @@ describe("GridMarketPanel render", () => {
           ...baseOperational.market.current,
           executionGate: {
             canCreateRange: true,
+            status: "VERIFIED",
             evaluatedAt: "2026-01-15T12:34:56.000Z",
+            ageMs: 5000,
+            maxAgeMs: 30000,
+            validUntil: "2026-01-15T12:35:26.000Z",
             executionMarketSnapshot: {
               available: true,
               verified: true,

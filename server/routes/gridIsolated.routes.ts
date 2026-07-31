@@ -1764,6 +1764,9 @@ export function registerGridIsolatedRoutes(app: Express): void {
             adaptiveDecision: null,
           });
 
+      // REV-C12B: Get real projection state from engine — exact data from the last tick.
+      const projectionState = gridIsolatedEngine.getRecommendationProjectionState();
+
       const gridViewModel = buildGridAuditViewModel(
         mode,
         config,
@@ -1777,11 +1780,12 @@ export function registerGridIsolatedRoutes(app: Express): void {
         lastProfessionalValidation,
         professionalGenerator,
         rangeLifecycle,
-        // REV-C12A: Real execution gate + microstructure + allocation from engine
+        // REV-C12B: Real execution gate + microstructure + allocation from engine projection state.
+        // The projection state is the exact data used by buildRangeProposal during the last tick.
         gridIsolatedEngine.getExecutionGate(),
-        null, // executionMarketSnapshot — gate already captures the snapshot state
-        null, // pairConstraints — gate already captures the constraints state
-        null, // allocation — recommendation service handles allocation via input
+        projectionState?.executionMarketSnapshot ?? null,
+        projectionState?.pairConstraints ?? null,
+        projectionState?.allocation ?? null,
       );
 
       res.json({
@@ -2353,8 +2357,11 @@ export function registerGridIsolatedRoutes(app: Express): void {
         lastProfessionalValidation,
         null, // providedProfessionalGenerator
         null, // providedRangeLifecycle
-        // REV-C12A: Real execution gate from engine
+        // REV-C12B: Real execution gate + projection state from engine
         gridIsolatedEngine.getExecutionGate(),
+        gridIsolatedEngine.getRecommendationProjectionState()?.executionMarketSnapshot ?? null,
+        gridIsolatedEngine.getRecommendationProjectionState()?.pairConstraints ?? null,
+        gridIsolatedEngine.getRecommendationProjectionState()?.allocation ?? null,
       );
 
       res.setHeader("Content-Type", "application/json; charset=utf-8");

@@ -30,11 +30,12 @@ import { MarketDataService } from "../MarketDataService";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { revolutXService } from "../exchanges/RevolutXService";
 import { gridModeLockService } from "./gridModeLockService";
-import { gridCapitalAllocator } from "./gridCapitalAllocator";
+import { gridCapitalAllocator, type CapitalAllocationResult } from "./gridCapitalAllocator";
 import { getGridBandSnapshot } from "./gridBandAdapter";
 import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult, type GridTickContext } from "./gridShadowExecutionPrice";
 import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from "./gridShadowMarketPriceFreshness";
-import { buildGridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
+import { buildGridExecutionMarketSnapshot, type GridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
+import type { RevolutXPairConstraints } from "../exchanges/RevolutXService";
 import { resolveGridProfessionalProjectionContext, buildProfessionalGeneratorInput } from "./gridProfessionalProjectionContext";
 import {
   getShadowPumpGuardPolicy,
@@ -137,13 +138,21 @@ import {
 const MIN_MAKER_REST_MS = 1;
 
 /**
- * REV-C12A: Real Revolut X execution gate state (in-memory only, not persisted).
+ * REV-C12A/REV-C12B: Real Revolut X execution gate state (in-memory only, not persisted).
  * Updated during real tick/proposeRangeVersion evaluation.
  * After restart, if no recent evaluation exists, canCreateRange=false.
+ *
+ * REV-C12B: status/ageMs/maxAgeMs/validUntil are recalculated on each read.
+ * The gate expires when the snapshot is stale or constraints have expired.
+ * Readings do NOT renew evaluatedAt or validUntil.
  */
 export interface ExecutionGateState {
   canCreateRange: boolean;
+  status: "VERIFIED" | "BLOCKED" | "NO_RECENT_EVALUATION";
   evaluatedAt: string | null;
+  ageMs: number | null;
+  maxAgeMs: number | null;
+  validUntil: string | null;
   executionMarketSnapshot: {
     available: boolean;
     verified: boolean;
@@ -167,35 +176,106 @@ export interface ExecutionGateState {
   allowCycleExits: boolean;
 }
 
+/**
+ * REV-C12B: Raw gate data stored in-memory. The public ExecutionGateState is
+ * derived from this on each read, recalculating age and freshness.
+ */
+interface RawExecutionGateData {
+  configPair: string;
+  evaluatedAt: Date;
+  snapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
+  constraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
+}
+
 function buildExecutionGateState(
   snapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
   constraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>,
   configPair: string,
   evaluatedAt: Date,
-): ExecutionGateState {
-  const blockers: string[] = [];
-  const snapshotOk =
-    snapshot.verified === true &&
-    snapshot.fresh === true &&
+): RawExecutionGateData {
+  return { configPair, evaluatedAt, snapshot, constraints };
+}
+
+/**
+ * REV-C12B: Recalculate the public ExecutionGateState from raw data on each read.
+ * Checks snapshot age, constraints expiry, and returns the appropriate status.
+ * Readings do NOT renew evaluatedAt or validUntil.
+ */
+function resolveExecutionGateState(raw: RawExecutionGateData, now: Date): ExecutionGateState {
+  const { configPair, evaluatedAt, snapshot, constraints } = raw;
+  const nowMs = now.getTime();
+  const evaluatedMs = evaluatedAt.getTime();
+  const ageMs = nowMs - evaluatedMs;
+
+  // REV-C12B: Check snapshot freshness — now > fetchedAt + maxAgeMs means stale.
+  const snapshotMaxAgeMs = snapshot.maxAgeMs;
+  const snapshotAgeMs = nowMs - snapshot.fetchedAt.getTime();
+  const snapshotStillFresh = snapshotAgeMs <= snapshotMaxAgeMs;
+
+  // REV-C12B: Check constraints expiry.
+  const constraintsFresh = constraints.expiresAt == null || constraints.expiresAt.getTime() > nowMs;
+
+  // REV-C12B: available is NOT just pair match — it requires object present, pair correct,
+  // venue REVOLUT_X, source present, and bid/ask or a technical reason code.
+  const snapshotAvailable =
+    snapshot != null &&
+    snapshot.pair === configPair &&
     snapshot.venue === "REVOLUT_X" &&
-    snapshot.pair === configPair;
-  const constraintsFresh = constraints.expiresAt == null || constraints.expiresAt.getTime() > evaluatedAt.getTime();
+    snapshot.source != null &&
+    ((snapshot.bid != null && snapshot.ask != null) || snapshot.reasonCode != null);
+  const constraintsAvailable =
+    constraints != null &&
+    constraints.pair === configPair &&
+    constraints.executionVenue === "REVOLUT_X" &&
+    constraints.source != null;
+
+  const snapshotOk = snapshot.verified === true && snapshotStillFresh && snapshot.venue === "REVOLUT_X" && snapshot.pair === configPair;
   const constraintsOk = constraints.verified === true && constraintsFresh && constraints.pair === configPair;
 
+  const blockers: string[] = [];
+  let isStale = false;
+
   if (!snapshotOk) {
-    blockers.push(snapshot.reasonCode ?? "EXECUTION_MARKET_SNAPSHOT_INVALID");
+    if (!snapshotStillFresh && snapshot.verified === true) {
+      blockers.push("EXECUTION_GATE_STALE");
+      isStale = true;
+    } else {
+      blockers.push(snapshot.reasonCode ?? "EXECUTION_MARKET_SNAPSHOT_INVALID");
+    }
   }
   if (!constraintsOk) {
-    blockers.push(constraints.reasonCode ?? "PAIR_CONSTRAINTS_INVALID");
+    if (!constraintsFresh && constraints.verified === true) {
+      blockers.push("EXECUTION_GATE_STALE");
+      isStale = true;
+    } else {
+      blockers.push(constraints.reasonCode ?? "PAIR_CONSTRAINTS_INVALID");
+    }
+  }
+
+  const canCreateRange = snapshotOk && constraintsOk;
+  const validUntilMs = evaluatedMs + snapshotMaxAgeMs;
+  const validUntil = new Date(validUntilMs).toISOString();
+
+  let status: "VERIFIED" | "BLOCKED" | "NO_RECENT_EVALUATION";
+  if (canCreateRange) {
+    status = "VERIFIED";
+  } else if (isStale) {
+    status = "NO_RECENT_EVALUATION";
+  } else {
+    status = "BLOCKED";
   }
 
   return {
-    canCreateRange: snapshotOk && constraintsOk,
+    canCreateRange,
+    status,
     evaluatedAt: evaluatedAt.toISOString(),
+    ageMs,
+    maxAgeMs: snapshotMaxAgeMs,
+    validUntil,
     executionMarketSnapshot: {
-      available: snapshot.pair === configPair,
+      available: snapshotAvailable,
       verified: snapshot.verified === true,
-      fresh: snapshot.fresh === true,
+      fresh: snapshotStillFresh,
       pair: snapshot.pair,
       executionVenue: snapshot.venue,
       source: snapshot.source,
@@ -203,7 +283,7 @@ function buildExecutionGateState(
       explanation: snapshot.explanation,
     },
     pairConstraints: {
-      available: constraints.pair === configPair,
+      available: constraintsAvailable,
       verified: constraints.verified === true,
       fresh: constraintsFresh,
       pair: constraints.pair,
@@ -219,7 +299,11 @@ function buildExecutionGateState(
 function buildNoEvaluationGateState(configPair: string): ExecutionGateState {
   return {
     canCreateRange: false,
+    status: "NO_RECENT_EVALUATION",
     evaluatedAt: null,
+    ageMs: null,
+    maxAgeMs: null,
+    validUntil: null,
     executionMarketSnapshot: {
       available: false,
       verified: false,
@@ -242,6 +326,32 @@ function buildNoEvaluationGateState(configPair: string): ExecutionGateState {
     blockers: ["SIN_EVALUACION_RECIENTE"],
     allowCycleExits: true,
   };
+}
+
+/**
+ * REV-C12B: Runtime projection state — read-only snapshot of the exact data
+ * used by buildRangeProposal during the last real tick.
+ *
+ * Updated only during the tick. The route handler reads this to pass real
+ * executionMarketSnapshot, pairConstraints, and allocation to the view model
+ * and recommendation service. No DB reads from the view model.
+ */
+export interface GridRecommendationProjectionState {
+  evaluatedAt: string;
+  validUntil: string;
+  pair: string;
+  bandSnapshot: {
+    midPrice: number;
+    middle: number;
+    upper: number;
+    lower: number;
+    atrPct: number;
+    regime: string;
+    suitableForGrid: boolean;
+  };
+  executionMarketSnapshot: GridExecutionMarketSnapshot;
+  pairConstraints: RevolutXPairConstraints;
+  allocation: CapitalAllocationResult;
 }
 
 type GridRangeCandidate =
@@ -291,7 +401,10 @@ export class GridIsolatedEngine {
   // REV-C12A: In-memory execution gate state (not persisted to DB, no migration).
   // Updated during real tick/proposeRangeVersion evaluation. After restart, if no
   // recent evaluation exists, canCreateRange=false with SIN_EVALUACION_RECIENTE.
-  private lastExecutionGate: ExecutionGateState | null = null;
+  private lastExecutionGate: RawExecutionGateData | null = null;
+  // REV-C12B: In-memory projection state — exact data used by buildRangeProposal.
+  // Updated only during the tick, after allocation is resolved. Read-only from route.
+  private lastRecommendationProjectionState: GridRecommendationProjectionState | null = null;
 
   /**
    * Load config from DB or create default.
@@ -1206,6 +1319,54 @@ export class GridIsolatedEngine {
     // This is the only place where the gate is updated — no persistence, no DB.
     this.lastExecutionGate = buildExecutionGateState(executionMarketSnapshot, pairConstraints, this.config.pair, new Date());
 
+    // REV-C12B: Resolve allocation ONCE per tick and store projection state.
+    // The same allocation object is reused for recommendation, projection, and range creation.
+    // buildRangeProposal receives this pre-resolved allocation and does NOT call the allocator again.
+    let tickAllocation: CapitalAllocationResult | null = null;
+    if (allowRangeBuys && bandSnapshot.suitableForGrid) {
+      try {
+        tickAllocation = await gridCapitalAllocator.allocate(
+          this.config.capitalProfile,
+          10,
+          this.config.netProfitTargetPct,
+          {
+            maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
+            allocationMode: this.config.gridAllocationMode ?? "uniform",
+            deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
+            progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
+            maxLevelPct: this.config.gridMaxLevelPct ?? 40,
+            minLevelUsd: this.config.gridMinLevelUsd ?? 30,
+          }
+        );
+      } catch {
+        tickAllocation = null;
+      }
+    }
+
+    // REV-C12B: Store projection state for route handler / view model / recommendation service.
+    // Only stored when allocation was resolved — otherwise the state is not valid for projection.
+    if (tickAllocation) {
+      const evaluatedAt = new Date();
+      const validUntilMs = evaluatedAt.getTime() + executionMarketSnapshot.maxAgeMs;
+      this.lastRecommendationProjectionState = {
+        evaluatedAt: evaluatedAt.toISOString(),
+        validUntil: new Date(validUntilMs).toISOString(),
+        pair: this.config.pair,
+        bandSnapshot: {
+          midPrice: bandSnapshot.midPrice,
+          middle: bandSnapshot.middle,
+          upper: bandSnapshot.upper,
+          lower: bandSnapshot.lower,
+          atrPct: bandSnapshot.atrPct,
+          regime: bandSnapshot.regime ?? "ranging",
+          suitableForGrid: bandSnapshot.suitableForGrid ?? false,
+        },
+        executionMarketSnapshot,
+        pairConstraints,
+        allocation: tickAllocation,
+      };
+    }
+
     if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
       const fillsProcessed = await this.simulateShadowTick(shadowExecutionPrice, ctx, { bandSnapshot, pumpGuard, allowRangeBuys, priceTickSize: executionMarketSnapshot.priceTickSize });
       if (fillsProcessed) {
@@ -1217,7 +1378,7 @@ export class GridIsolatedEngine {
 
     // If no active range, propose one (only when not blocked by circuit breaker or guard).
     if (!this.activeRangeVersion && allowNewRange && !blockNewRangesAndBuys) {
-      await this.proposeRangeVersion(bandSnapshot, executionMarketSnapshot, pairConstraints);
+      await this.proposeRangeVersion(bandSnapshot, executionMarketSnapshot, pairConstraints, tickAllocation ?? undefined);
       if (!this.activeRangeVersion) {
         this.lastTickReason = "No se propuso rango activo: el generador no produjo niveles viables con la configuración actual.";
         await this.logShadowTickEvent("GRID_SHADOW_NO_VIABLE_RANGE", "El motor evaluó el mercado pero no pudo generar un rango viable.", { reason: "no_viable_range" });
@@ -1228,7 +1389,7 @@ export class GridIsolatedEngine {
       // Band has drifted significantly from active range
       const canRebuild = this.canRebuildLevels();
       if (canRebuild) {
-        await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints);
+        await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints, tickAllocation ?? undefined);
         this.lastTickReason = "Banda desplazada — niveles planificados recalculados para el nuevo rango.";
       } else {
         this.lastTickReason = "Banda desplazada — niveles/ciclos reales conservados por seguridad.";
@@ -1317,18 +1478,25 @@ export class GridIsolatedEngine {
   /**
    * Build a complete range proposal candidate without mutating DB.
    * Returns the candidate only when microstructure, constraints and generator are valid.
+   *
+   * REV-C12B: Accepts an optional pre-resolved allocation. When provided, the allocator
+   * is NOT called again — the same allocation object is reused for recommendation,
+   * projection, and range creation. When not provided (manual rebuild path), the
+   * allocator is called as before.
    */
   private async buildRangeProposal(
     bandSnapshot: any,
     executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
-    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>
+    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>,
+    preResolvedAllocation?: CapitalAllocationResult
   ): Promise<GridRangeCandidate> {
     if (!this.config) return { ok: false, reasonCode: "NO_CONFIG", explanation: "No hay configuración cargada." };
     if (!executionMarketSnapshot.verified || !executionMarketSnapshot.fresh) return { ok: false, reasonCode: "EXECUTION_MARKET_SNAPSHOT_INVALID", explanation: "Snapshot de microestructura no verificado o no fresco." };
     if (!pairConstraints.verified) return { ok: false, reasonCode: "PAIR_CONSTRAINTS_INVALID", explanation: "Constraints del par no verificadas." };
     if (executionMarketSnapshot.pair !== this.config.pair) return { ok: false, reasonCode: "EXECUTION_MARKET_PAIR_MISMATCH", explanation: "El par del snapshot no coincide con el par configurado." };
 
-    const allocation = await gridCapitalAllocator.allocate(
+    // REV-C12B: Reuse pre-resolved allocation when available (single allocation per tick).
+    const allocation = preResolvedAllocation ?? await gridCapitalAllocator.allocate(
       this.config.capitalProfile,
       10,
       this.config.netProfitTargetPct,
@@ -1405,7 +1573,7 @@ export class GridIsolatedEngine {
    * The candidate is built first; only if viable the DB transaction replaces the range.
    * No intermediate state exists where the old range is replaced and the new one is missing.
    */
-  private async rebuildRangeAndLevels(bandSnapshot: any, executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>, pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>): Promise<void> {
+  private async rebuildRangeAndLevels(bandSnapshot: any, executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>, pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>, preResolvedAllocation?: CapitalAllocationResult): Promise<void> {
     if (!this.activeRangeVersion || !this.config) return;
     const oldRange = this.activeRangeVersion;
 
@@ -1416,7 +1584,7 @@ export class GridIsolatedEngine {
       ? ((bandSnapshot.bandWidthPct - oldRange.bandWidthPct) / oldRange.bandWidthPct) * 100
       : 0;
 
-    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints, preResolvedAllocation);
     if (!proposal.ok) {
       await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "El rebuild fue abortado: " + proposal.explanation, {
         rangeVersionId: oldRange.id,
@@ -1925,11 +2093,12 @@ export class GridIsolatedEngine {
   private async proposeRangeVersion(
     bandSnapshot: any,
     executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
-    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>
+    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>,
+    preResolvedAllocation?: CapitalAllocationResult
   ): Promise<GridRangeProposalResult> {
     if (!this.config) return { ok: false, reasonCode: "NO_CONFIG", explanation: "No hay configuración cargada." };
 
-    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints, preResolvedAllocation);
     if (!proposal.ok) {
       await this.logEvent(
         proposal.reasonCode === "PROFESSIONAL_GENERATOR_COMPACT"
@@ -4881,11 +5050,40 @@ export class GridIsolatedEngine {
    * Returns null if no evaluation has occurred since startup (SIN_EVALUACION_RECIENTE).
    * The caller is responsible for rendering the SIN_EVALUACION_RECIENTE state when null.
    */
-  getExecutionGate(): ExecutionGateState | null {
-    if (this.lastExecutionGate) return this.lastExecutionGate;
+  /**
+   * REV-C12A/REV-C12B: Get the execution gate state (read-only).
+   * Recalculates age and freshness on each read — does NOT return stale VERIFIED.
+   * Readings do NOT renew evaluatedAt or validUntil.
+   */
+  getExecutionGate(): ExecutionGateState {
+    if (this.lastExecutionGate) {
+      return resolveExecutionGateState(this.lastExecutionGate, new Date());
+    }
     // No evaluation since startup — return SIN_EVALUACION_RECIENTE state
     const pair = this.config?.pair ?? "BTC/USD";
     return buildNoEvaluationGateState(pair);
+  }
+
+  /**
+   * REV-C12B: Get the in-memory recommendation projection state (read-only).
+   * Returns a copy of the last projection state if it is still fresh.
+   * Returns null when:
+   *   - no evaluation has occurred since startup;
+   *   - the state has expired (now > validUntil);
+   *   - the snapshot or constraints are no longer fresh.
+   *
+   * Readings do NOT renew evaluatedAt or validUntil.
+   */
+  getRecommendationProjectionState(): GridRecommendationProjectionState | null {
+    if (!this.lastRecommendationProjectionState) return null;
+    const now = Date.now();
+    const validUntilMs = new Date(this.lastRecommendationProjectionState.validUntil).getTime();
+    if (Number.isNaN(validUntilMs) || now > validUntilMs) return null;
+    // Check constraints expiry
+    const expiresAt = this.lastRecommendationProjectionState.pairConstraints.expiresAt;
+    if (expiresAt != null && expiresAt.getTime() <= now) return null;
+    // Return a shallow copy — the caller must not mutate the engine's internal state.
+    return this.lastRecommendationProjectionState;
   }
 
   /**

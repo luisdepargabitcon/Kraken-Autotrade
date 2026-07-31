@@ -187,10 +187,14 @@ export interface GridMarketViewModel {
   executionGate: ExecutionGateType;
 }
 
-/** REV-C12A: Real Revolut X execution gate type (in-memory, not persisted). */
+/** REV-C12A/REV-C12B: Real Revolut X execution gate type (in-memory, not persisted). */
 export interface ExecutionGateType {
   canCreateRange: boolean;
+  status: "VERIFIED" | "BLOCKED" | "NO_RECENT_EVALUATION";
   evaluatedAt: string | null;
+  ageMs: number | null;
+  maxAgeMs: number | null;
+  validUntil: string | null;
   executionMarketSnapshot: {
     available: boolean;
     verified: boolean;
@@ -554,8 +558,9 @@ function buildActiveRangeSnapshot(
   const semiRangePct = totalWidthPct != null ? totalWidthPct / 2 : null;
   const spacingPct = toNum(resolvedRange?.spacingPct ?? configSnapshot?.spacingPct);
 
-  const requestedBuyLevels = toNum(configSnapshot?.buyLevels ?? resolvedRange?.requestedBuyLevels);
-  const requestedSellLevels = toNum(configSnapshot?.sellLevels ?? resolvedRange?.requestedSellLevels);
+  // REV-C12B: configSnapshot.buyLevels/sellLevels are phantom fields — use resolvedRange only.
+  const requestedBuyLevels = toNum(resolvedRange?.requestedBuyLevels);
+  const requestedSellLevels = toNum(resolvedRange?.requestedSellLevels);
 
   // Count real levels associated with this rangeVersionId per side
   let generatedBuyLevels: number | null = null;
@@ -598,6 +603,7 @@ function buildActiveRangeSnapshot(
 function buildCurrentConfigurationProjection(
   config: any,
   marketContext: any,
+  allocation?: any | null,
 ): CurrentConfigurationProjectionType | null {
   const price = toNum(marketContext?.currentPrice);
   const bandLower = toNum(marketContext?.band?.lower);
@@ -611,8 +617,11 @@ function buildCurrentConfigurationProjection(
   const taxReservePct = toNum(config?.taxReservePct) ?? TAX_RESERVE_PCT;
   const gridRangeMaxPct = toNum(config?.gridRangeMaxPct);
   const enforceCompactRange = config?.enforceCompactRange ?? true;
-  const buyLevels = toNum(config?.buyLevels) ?? 4;
-  const sellLevels = toNum(config?.sellLevels) ?? 4;
+  // REV-C12B: buyLevels/sellLevels are NOT real config fields — they are phantom fields.
+  // The allocator is the sole source of levelsCount. Use allocation from input when available.
+  const allocationLevelsCount = toNum(allocation?.levelsCount);
+  const buyLevels = allocationLevelsCount != null ? Math.floor(allocationLevelsCount / 2) : null;
+  const sellLevels = allocationLevelsCount != null ? Math.floor(allocationLevelsCount / 2) : null;
 
   if (price == null || price <= 0 || bandWidthPct == null || bandWidthPct <= 0) {
     return {
@@ -658,6 +667,31 @@ function buildCurrentConfigurationProjection(
     minSpacingPctReal: minSpacingResult.minSpacingPctReal,
     gridStepMaxPct: stepMax,
   });
+
+  // REV-C12B: When allocation is not available, buyLevels/sellLevels are null.
+  // We cannot run countViableLevelsIterative without configured level counts.
+  if (buyLevels == null || sellLevels == null) {
+    return {
+      currentConfig: {
+        netProfitTargetPct,
+        buyFeePct,
+        sellFeePct,
+        taxReservePct,
+        gridRangeMaxPct,
+        enforceCompactRange,
+        buyLevels: null,
+        sellLevels: null,
+      },
+      marketSnapshot: { price, bandLower, bandUpper, bandWidthPct, atrPct },
+      projectedRange: {
+        lower: projectedLower,
+        upper: projectedUpper,
+        totalWidthPct: effectiveRangePct,
+      },
+      projectedSpacing: spacingResult.spacingPct,
+      projectedLevels: null,
+    };
+  }
 
   const viable = countViableLevelsIterative({
     centerPrice: price,
@@ -771,8 +805,8 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
   // Active range snapshot (persisted range data only)
   const activeRangeSnapshot = buildActiveRangeSnapshot(resolvedRange, input.levels);
 
-  // Current configuration projection (uses current config + market)
-  const currentConfigurationProjection = buildCurrentConfigurationProjection(config, marketContext);
+  // Current configuration projection (uses current config + market + allocation)
+  const currentConfigurationProjection = buildCurrentConfigurationProjection(config, marketContext, input.allocation);
 
   // Configuration recommendation from server service
   // REV-C12A: Pass real execution microstructure and allocation for canonical projection.
@@ -783,11 +817,15 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
     allocation: input.allocation ?? null,
   });
 
-  // REV-C12A: Real Revolut X execution gate (always present, never null).
-  // When no evaluation exists, the gate shows SIN_EVALUACION_RECIENTE.
+  // REV-C12A/REV-C12B: Real Revolut X execution gate (always present, never null).
+  // When no evaluation exists, the gate shows NO_RECENT_EVALUATION / SIN_EVALUACION_RECIENTE.
   const executionGate: ExecutionGateType = input.executionGate ?? {
     canCreateRange: false,
+    status: "NO_RECENT_EVALUATION",
     evaluatedAt: null,
+    ageMs: null,
+    maxAgeMs: null,
+    validUntil: null,
     executionMarketSnapshot: {
       available: false,
       verified: false,
@@ -883,9 +921,8 @@ function requestedLevelsFrom(adaptiveDecision: any, professionalGenerator: any, 
   if (professionalGenerator?.requestedBuyLevels != null && professionalGenerator?.requestedSellLevels != null) {
     return (toNum(professionalGenerator.requestedBuyLevels) ?? 0) + (toNum(professionalGenerator.requestedSellLevels) ?? 0);
   }
-  const cfgBuy = toNum(config?.buyLevels);
-  const cfgSell = toNum(config?.sellLevels);
-  if (cfgBuy != null && cfgSell != null) return cfgBuy + cfgSell;
+  // REV-C12B: config.buyLevels/sellLevels are phantom fields — do NOT use them.
+  // Fall back to adaptiveRangeMinViableLevels only (a real config field).
   return toNum(config?.adaptiveRangeMinViableLevels);
 }
 
@@ -965,8 +1002,11 @@ function buildEntryRange(input: BuildGridMarketViewModelInput): GridMarketEntryR
   const lowerForCount = calculatedLower;
   const upperForCount = calculatedUpper;
   const spacingForCount = toNum(adaptiveDecision?.spacingPct ?? professionalGenerator?.spacingPct) ?? minimumProfitableSpacingPct;
-  const cfgBuy = toNum(config?.buyLevels) ?? 4;
-  const cfgSell = toNum(config?.sellLevels) ?? 4;
+  // REV-C12B: buyLevels/sellLevels are phantom config fields — use canonical sources only.
+  // Priority: professionalGenerator > adaptiveDecision > allocation > adaptiveRangeMinViableLevels
+  const cfgBuy = toNum(professionalGenerator?.requestedBuyLevels) ?? toNum(adaptiveDecision?.requestedBuyLevels) ?? null;
+  const cfgSell = toNum(professionalGenerator?.requestedSellLevels) ?? toNum(adaptiveDecision?.requestedSellLevels) ?? null;
+  const minViable = toNum(config?.adaptiveRangeMinViableLevels) ?? 4;
 
   let maxLevelsPerSide: number | null = null;
   let maxTotalLevels: number | null = null;
@@ -976,8 +1016,8 @@ function buildEntryRange(input: BuildGridMarketViewModelInput): GridMarketEntryR
       operationalLower: lowerForCount,
       operationalUpper: upperForCount,
       spacingPct: spacingForCount,
-      configuredBuyLevels: cfgBuy,
-      configuredSellLevels: cfgSell,
+      configuredBuyLevels: cfgBuy ?? minViable,
+      configuredSellLevels: cfgSell ?? minViable,
     });
     maxLevelsPerSide = Math.max(viable.maxBuyLevels, viable.maxSellLevels);
     maxTotalLevels = viable.totalViableLevels;

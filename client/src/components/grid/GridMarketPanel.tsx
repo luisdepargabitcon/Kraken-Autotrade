@@ -120,14 +120,15 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
   const requestedLevels = entryRange.requestedLevels ?? null;
   const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
 
-  // REV-C12A: Real Revolut X execution gate from view model (always present, never null).
-  // NOT derived from alternative.safeToApply — a safeToApply result never converts the gate to verified.
-  // The gate is only verified when executionMarketSnapshot and pairConstraints are both verified.
+  // REV-C12A/REV-C12B: Real Revolut X execution gate from view model (always present, never null).
+  // Uses the status field from the engine: VERIFIED | BLOCKED | NO_RECENT_EVALUATION.
+  // NOT derived from alternative.safeToApply — the gate is independent state from the engine.
+  // The gate expires by age — readings do NOT renew evaluatedAt or validUntil.
   const executionGate = current.executionGate ?? null;
-  const gateVerified = executionGate?.canCreateRange === true;
-  const gateBlocked = executionGate != null && !gateVerified && (executionGate.blockers?.length ?? 0) > 0
-    && !(executionGate.blockers ?? []).includes("SIN_EVALUACION_RECIENTE");
-  const gateNoEvaluation = executionGate == null || (executionGate.blockers ?? []).includes("SIN_EVALUACION_RECIENTE");
+  const gateStatus = executionGate?.status ?? "NO_RECENT_EVALUATION";
+  const gateVerified = gateStatus === "VERIFIED";
+  const gateBlocked = gateStatus === "BLOCKED";
+  const gateNoEvaluation = gateStatus === "NO_RECENT_EVALUATION";
 
   return (
     <div className="space-y-4">
@@ -211,6 +212,8 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             {gateVerified && (
               <p className="text-[10px] text-muted-foreground">
                 Microestructura y constraints de Revolut X verificadas. Evaluado: {executionGate?.evaluatedAt ?? "—"}
+                {executionGate?.ageMs != null && executionGate?.maxAgeMs != null && ` · Edad: ${Math.round(executionGate.ageMs / 1000)}s/${Math.round(executionGate.maxAgeMs / 1000)}s`}
+                {executionGate?.validUntil && ` · Válido hasta: ${new Date(executionGate.validUntil).toLocaleTimeString()}`}
               </p>
             )}
           </div>

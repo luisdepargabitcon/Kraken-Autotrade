@@ -319,6 +319,46 @@ describe("buildConfigurationRecommendation", () => {
     expect(r!.alternatives).toEqual([]);
   });
 
+  it("REV-C12B: validateStrictLevelValue rejects numeric string '4' (no Number() coercion)", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: "4" as any, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12B: validateStrictLevelValue rejects NaN", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: NaN, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12B: validateStrictLevelValue rejects Infinity", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: Infinity, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12B: validateStrictLevelValue rejects boolean true", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: true as any, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
   it("warnings incluye mensaje sobre rango vigente", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();

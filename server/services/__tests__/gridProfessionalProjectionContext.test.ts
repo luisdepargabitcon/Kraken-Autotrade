@@ -441,4 +441,144 @@ describe("gridProfessionalProjectionContext — REV-C12A", () => {
       expect(input.gridStepAtrMultiplier).toBe(1.5); // unchanged
     });
   });
+
+  describe("REV-C12B: Market suitability and regime fail-closed", () => {
+    it("returns null when marketSuitable is false (fail-closed)", () => {
+      const result = resolveGridProfessionalProjectionContext({
+        currentPrice: 95000,
+        bollingerMiddle: 95000,
+        bollingerUpper: 100000,
+        bollingerLower: 90000,
+        atrPct: 2,
+        config: validConfig,
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+        allocation: validAllocation,
+        executionMarketSnapshot: validSnapshot,
+        pairConstraints: validConstraints,
+        regimeLabel: "RANGE",
+        marketSuitable: false,
+      });
+      expect(result).toBeNull();
+    });
+
+    it("returns null when marketSuitable is not a boolean (fail-closed)", () => {
+      const result = resolveGridProfessionalProjectionContext({
+        currentPrice: 95000,
+        bollingerMiddle: 95000,
+        bollingerUpper: 100000,
+        bollingerLower: 90000,
+        atrPct: 2,
+        config: validConfig,
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+        allocation: validAllocation,
+        executionMarketSnapshot: validSnapshot,
+        pairConstraints: validConstraints,
+        regimeLabel: "RANGE",
+        marketSuitable: undefined as any,
+      });
+      expect(result).toBeNull();
+    });
+
+    it("returns null when regimeLabel is empty string (fail-closed)", () => {
+      const result = resolveGridProfessionalProjectionContext({
+        currentPrice: 95000,
+        bollingerMiddle: 95000,
+        bollingerUpper: 100000,
+        bollingerLower: 90000,
+        atrPct: 2,
+        config: validConfig,
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+        allocation: validAllocation,
+        executionMarketSnapshot: validSnapshot,
+        pairConstraints: validConstraints,
+        regimeLabel: "",
+        marketSuitable: true,
+      });
+      expect(result).toBeNull();
+    });
+
+    it("returns null when regimeLabel is not a string (fail-closed)", () => {
+      const result = resolveGridProfessionalProjectionContext({
+        currentPrice: 95000,
+        bollingerMiddle: 95000,
+        bollingerUpper: 100000,
+        bollingerLower: 90000,
+        atrPct: 2,
+        config: validConfig,
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+        allocation: validAllocation,
+        executionMarketSnapshot: validSnapshot,
+        pairConstraints: validConstraints,
+        regimeLabel: null as any,
+        marketSuitable: true,
+      });
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("REV-C12B: Allocation consistency", () => {
+    it("returns null when finalGridBudgetUsd is missing or <= 0", () => {
+      const result = resolveGridProfessionalProjectionContext({
+        currentPrice: 95000,
+        bollingerMiddle: 95000,
+        bollingerUpper: 100000,
+        bollingerLower: 90000,
+        atrPct: 2,
+        config: validConfig,
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+        allocation: { ...validAllocation, finalGridBudgetUsd: 0 },
+        executionMarketSnapshot: validSnapshot,
+        pairConstraints: validConstraints,
+        regimeLabel: "RANGE",
+        marketSuitable: true,
+      });
+      expect(result).toBeNull();
+    });
+
+    it("returns null when capitalPerLevel * levelsCount exceeds budget beyond tolerance", () => {
+      const result = resolveGridProfessionalProjectionContext({
+        currentPrice: 95000,
+        bollingerMiddle: 95000,
+        bollingerUpper: 100000,
+        bollingerLower: 90000,
+        atrPct: 2,
+        config: validConfig,
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+        // 100 * 10 = 1000, but budget is only 500 — exceeds 10% tolerance
+        allocation: { ...validAllocation, finalGridBudgetUsd: 500 },
+        executionMarketSnapshot: validSnapshot,
+        pairConstraints: validConstraints,
+        regimeLabel: "RANGE",
+        marketSuitable: true,
+      });
+      expect(result).toBeNull();
+    });
+
+    it("accepts allocation within tolerance (capitalPerLevel * levelsCount ≈ budget)", () => {
+      const result = resolveGridProfessionalProjectionContext({
+        currentPrice: 95000,
+        bollingerMiddle: 95000,
+        bollingerUpper: 100000,
+        bollingerLower: 90000,
+        atrPct: 2,
+        config: validConfig,
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+        // 100 * 10 = 1000, budget = 1050 — within 10% tolerance
+        allocation: { ...validAllocation, finalGridBudgetUsd: 1050 },
+        executionMarketSnapshot: validSnapshot,
+        pairConstraints: validConstraints,
+        regimeLabel: "RANGE",
+        marketSuitable: true,
+      });
+      expect(result).not.toBeNull();
+      expect(result!.allocationFinalGridBudgetUsd).toBe(1050);
+    });
+  });
 });
