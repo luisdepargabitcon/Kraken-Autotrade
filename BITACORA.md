@@ -211,6 +211,19 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 
 ---
 
+## GRID REV-C12A — RECOMENDACIONES Y PERSISTENCIA
+
+- `buyLevels` y `sellLevels` eliminados del allowlist, fingerprint, proposedConfig, changedFields y currentConfig.
+- El allocator/generador profesional continúa siendo la única fuente canónica del número de niveles solicitados.
+- Alternativa A convertida en informativa y bloqueada (`safeToApply=false`, `proposedConfig={}`, `changedFields=[]`).
+- `recommendedAlternativeId` ahora `A | B | C | null`; sin alternativa segura es `null` y la UI no muestra "Recomendado".
+- Validación de alternativas B y C exige proyección con al menos `minLevelsForViableGrid=4`.
+- `saveConfig` en `GridIsolatedEngine` relanza el error; el endpoint no marca applied ni emite `GRID_RECOMMENDATION_APPLIED` si la persistencia falla.
+- Mensaje post-apply aclara que no se ha creado ni modificado ningún rango.
+- Strict, `minLevelsForViableGrid=4` y el allocator se mantienen. 1 BUY + 1 SELL no se autoriza.
+- Tests actualizados para validar que `buyLevels`/`sellLevels` ya no son aplicables.
+- Sin migración, sin DB, sin deploy. Gate Revolut X visible queda pendiente para REV-C12B.
+
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 
 ### Resumen
