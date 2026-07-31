@@ -238,6 +238,20 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - Matriz Grid (9 archivos): 260/260 ✅. `npx tsc` ✅. `npm run build` ✅.
 - Datos reales de `executionMarketSnapshot` en view model queda pendiente para REV-C12B.
 
+### Cascada REV-C12B (2026-07-31) — profesional input + microstructure + gate real
+
+- Helper profesional compartido `gridProfessionalProjectionContext.ts`: single source of truth para `generateProfessionalGridLevels`. `resolveGridProfessionalProjectionContext` valida datos reales verificados. `buildProfessionalGeneratorInput` construye el input con overrides opcionales. Sin estimaciones inventadas, sin config hardcodeada, sin fallback a Kraken.
+- Microestructura Revolut X estricta: `spreadPct` y `priceTickPct` solo de `executionMarketSnapshot` cuando `verified=true`, `fresh=true`, `venue=REVOLUT_X`, `pair` coincide. `pairConstraints` deben estar `verified=true` y no expiradas. Sin microestructura verificada, B y C quedan bloqueados con `microstructureVerified=false`.
+- Configuración real, no hardcodeada: todos los campos se leen del objeto `config` real. `configuredBuyLevels`/`configuredSellLevels` deben ser enteros (rechaza strings numéricos).
+- Alternativa B canónica con allocation real: `resolveProjectionContext` usa `allocation.capitalPerLevelUsd` real. Sin allocation, B queda bloqueado. `expectedBefore` procede de proyección canónica actual.
+- Alternativa C iterativa por candidato: cada anchura candidata se valida con `generateProfessionalGridLevels`. Se selecciona la primera anchura canónicamente viable (cambio mínimo seguro).
+- Gate Revolut X real tipado en view model: `ExecutionGateState` en `GridIsolatedEngine` (in-memory, no persistido). `getExecutionGate()` expone el gate. `ExecutionGateType` en `GridMarketViewModel`, siempre presente. `GridMarketPanel` muestra "VERIFICADO", "BLOQUEADO" o "SIN EVALUACIÓN RECIENTE". El gate NO se deriva de `safeToApply`.
+- Mensaje post-apply exacto: "Validación canónica superada... La configuración se guardó en DB y se aplicará en el próximo tick del motor."
+- Tests reales `GridIsolatedEngine.saveConfig` + call sites: `gridIsolatedEngine.test.ts` con tests de `getExecutionGate` y `saveConfig` real. `gridProfessionalProjectionContext.test.ts` con 18 tests del helper.
+- Mojibake MD reparado: `AUDITORIA_GRID_REV_C12_RECOMENDACIONES_SIN_EFECTO_2026-07-30.md` con UTF-8 decode → Windows-1252 encode → bytes correctos. Em-dashes y caracteres españoles restaurados.
+- `GridMarketPanel.test.tsx` actualizado para gate real (VERIFICADO/BLOQUEADO/SIN EVALUACIÓN RECIENTE).
+- Tests: 128/128 pasan (recomendación + view model + market panel + route apply). `npx tsc` ✅.
+
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 
 ### Resumen

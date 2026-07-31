@@ -2,7 +2,7 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12A cascada post-verificación implementada en rama de revisión; pendiente commit y push**
+- **TASK_STATUS: REV-C12B cascada profesional input + Revolut X microstructure + gate real implementada; pendiente commit y push**
 - **NEXT_ACTION: commit técnico + documental, push a rama de revisión**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
@@ -107,6 +107,53 @@ Corrección del flujo `diagnóstico → recomendación → aplicación → persi
 
 - Datos reales de `executionMarketSnapshot` / `pairConstraints` en el view model (persistencia del último snapshot).
 - Causa raíz de `REVOLUT_X_UNAVAILABLE` en staging.
+
+## Cambios aplicados (cascada REV-C12B — profesional input + microstructure + gate real)
+
+16. Helper profesional compartido `gridProfessionalProjectionContext.ts`:
+    - Single source of truth para `generateProfessionalGridLevels` input.
+    - `resolveGridProfessionalProjectionContext` valida datos reales verificados.
+    - `buildProfessionalGeneratorInput` construye el input con overrides opcionales.
+    - Sin estimaciones inventadas, sin config hardcodeada, sin fallback a Kraken.
+
+17. Microestructura Revolut X estricta (eliminar fallbacks):
+    - `spreadPct` y `priceTickPct` solo de `executionMarketSnapshot` cuando `verified=true`, `fresh=true`, `venue=REVOLUT_X`, `pair` coincide.
+    - `pairConstraints` deben estar `verified=true` y `expiresAt` no expirado.
+    - Nunca usa `marketContext.spreadPct`/`marketContext.priceTickPct` como fallback.
+    - Sin microestructura verificada, B y C quedan bloqueados con `microstructureVerified=false`.
+
+18. Configuración real, no hardcodeada:
+    - Todos los campos de config se leen del objeto `config` real.
+    - Defaults solo cuando el campo es null/undefined, no como override de valores reales.
+    - `configuredBuyLevels`/`configuredSellLevels` deben ser enteros (rechaza strings numéricos).
+
+19. Alternativa B canónica con allocation real:
+    - `resolveProjectionContext` usa `allocation.capitalPerLevelUsd` real del allocator.
+    - Sin allocation, B queda bloqueado (no usa estimación inventada).
+    - `expectedBefore` procede de proyección canónica actual, no de `computeSpacingAndLevels`.
+
+20. Alternativa C iterativa por candidato:
+    - Cada anchura candidata se valida con `generateProfessionalGridLevels`.
+    - Se selecciona la primera anchura canónicamente viable (cambio mínimo seguro).
+    - Sin microestructura verificada, C queda bloqueado.
+
+21. Gate Revolut X real tipado en view model:
+    - `ExecutionGateState` en `GridIsolatedEngine` (in-memory, no persistido).
+    - `getExecutionGate()` expone el gate al route handler.
+    - `ExecutionGateType` en `GridMarketViewModel`, siempre presente (nunca null).
+    - `GridMarketPanel` muestra "VERIFICADO", "BLOQUEADO" o "SIN EVALUACIÓN RECIENTE".
+    - El gate NO se deriva de `safeToApply` — es estado independiente del motor.
+
+22. Mensaje post-apply exacto:
+    - "Validación canónica superada: el generador profesional verificó la viabilidad con la microestructura de Revolut X. La configuración se guardó en DB y se aplicará en el próximo tick del motor."
+
+23. Tests reales `GridIsolatedEngine.saveConfig` + call sites:
+    - `gridIsolatedEngine.test.ts`: tests de `getExecutionGate` (SIN_EVALUACION_RECIENTE) y `saveConfig` real.
+    - `gridProfessionalProjectionContext.test.ts`: 18 tests del helper compartido.
+
+24. Mojibake MD reparado:
+    - `AUDITORIA_GRID_REV_C12_RECOMENDACIONES_SIN_EFECTO_2026-07-30.md`: UTF-8 decode → Windows-1252 encode → bytes correctos.
+    - Em-dashes y caracteres españoles restaurados.
 
 ## Rama
 
