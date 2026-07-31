@@ -77,6 +77,7 @@ const makeParams = (): AmaResolvedParameters => ({
 
 const makeSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranchePlanInput => ({
   hwmPrice: 50000,
+  hwmTimestamp: "2026-06-01T00:00:00Z",
   budgetUsd: 100000,
   deployedUsd: 0,
   reservedUsd: 0,
@@ -91,6 +92,7 @@ const makeSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranc
 
 const makeEthSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranchePlanInput => ({
   hwmPrice: 3000,
+  hwmTimestamp: "2026-06-01T00:00:00Z",
   budgetUsd: 100000,
   deployedUsd: 0,
   reservedUsd: 0,
@@ -369,12 +371,13 @@ describe("R5.5 — Single deployedUsd source", () => {
     expect(replanned).not.toBeNull();
     // The plan should be built with deployedUsd=10000 (portfolioDeployedUsd)
     // Verify by checking that tranche amounts reflect the higher deployment
+    // R6.4: portfolioDeployedUsd must be >= sum(evidence), so use 7000 for comparison
     const originalWith3000 = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput({ deployedUsd: 3000 }),
       confirmedClose,
       executedTranches: evidence,
-      portfolioDeployedUsd: 3000,
+      portfolioDeployedUsd: 7000,
     })!;
     // With portfolioDeployedUsd=10000, more budget is deployed so fewer tranches are eligible
     const eligibleReplanned = replanned.candidateTranches.filter((c) => c.eligible).length;
@@ -637,7 +640,8 @@ describe("R5.11 — Pending cooldown levels with states", () => {
 describe("R5.12 — Confirmed close in decision", () => {
   it("47. Plan has asOfConfirmedCloseTimestamp and asOfConfirmedClosePrice", () => {
     const plan = buildCanonicalSeedPlan(makeSeedInput(), confirmedClose)!;
-    expect(plan.asOfConfirmedCloseTimestamp).toBe("2026-07-29T00:00:00Z");
+    // R6.7: Timestamp is normalized to UTC canonical via .toISOString()
+    expect(plan.asOfConfirmedCloseTimestamp).toBe("2026-07-29T00:00:00.000Z");
     expect(plan.asOfConfirmedClosePrice).toBe(40000);
   });
 

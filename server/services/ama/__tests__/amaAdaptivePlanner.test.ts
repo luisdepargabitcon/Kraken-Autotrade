@@ -65,6 +65,7 @@ const makeInput = (overrides: Partial<TranchePlanInput> = {}): TranchePlanInput 
 
 const makeSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranchePlanInput => ({
   hwmPrice: 50000,
+  hwmTimestamp: "2026-06-01T00:00:00Z",
   budgetUsd: 10000,
   deployedUsd: 0,
   reservedUsd: 0,
@@ -239,8 +240,9 @@ describe("Fase 11 — Eligibility Filter", () => {
 
 describe("Fase 11 — Adaptive Decision", () => {
   it("returns SIMULATE when all checks pass — single tranche selected", () => {
+    const seedInput = makeSeedInput();
+    const plan = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const input = makeInput();
-    const plan = planTranches(input, [45000])!;
     const cooldown = createCooldownState("1_daily");
     const period = createPeriodLimitState();
     const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
@@ -252,8 +254,9 @@ describe("Fase 11 — Adaptive Decision", () => {
   });
 
   it("returns WAIT when cooldown active", () => {
+    const seedInput = makeSeedInput();
+    const plan = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const input = makeInput();
-    const plan = planTranches(input, [45000])!;
     const cooldown = applyCooldown(createCooldownState("1_daily"), "2026-07-29T09:00:00Z");
     const period = createPeriodLimitState();
     const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
@@ -262,8 +265,9 @@ describe("Fase 11 — Adaptive Decision", () => {
   });
 
   it("returns WAIT when no eligible tranches", () => {
+    const seedInput = makeSeedInput({ deployedUsd: 9500, reservedUsd: 500 });
+    const plan = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const input = makeInput({ deployedUsd: 9500, reservedUsd: 500 });
-    const plan = planTranches(input, [45000])!;
     const cooldown = createCooldownState("1_daily");
     const period = createPeriodLimitState();
     const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
@@ -274,8 +278,9 @@ describe("Fase 11 — Adaptive Decision", () => {
   });
 
   it("returns WAIT when weekly limit exceeded", () => {
+    const seedInput = makeSeedInput();
+    const plan = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const input = makeInput();
-    const plan = planTranches(input, [45000])!;
     const cooldown = createCooldownState("1_daily");
     const period = createPeriodLimitState();
     period.weeklyDeployedUsd = 2900; // Near 30% limit

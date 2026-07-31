@@ -422,6 +422,27 @@ export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResu
     };
   }
 
+  // R6.9: Validate all closes have timestamp > hwmTimestamp
+  for (const c of normResult.closes) {
+    const cTs = new Date(c.timestamp).getTime();
+    if (!Number.isNaN(cTs) && cTs <= hwmTs) {
+      reasonCodes.push("INVALID_SUBSEQUENT_CLOSE_TIMESTAMP");
+      return {
+        confirmed: false,
+        status: "CANDIDATE",
+        confirmedAt: null,
+        reversalThresholdPrice,
+        confirmationCloses: [],
+        normalizationValid: false,
+        normalizationErrors: [],
+        reasonCodes,
+      };
+    }
+  }
+
+  // R6.10: Pass ALL observations (open+closed) to findConsecutiveConfirmationWindow
+  // so that open candles actually reset the sequence
+  const allCloses = normResult.closes;
   const closedCloses = normResult.closes.filter((c) => c.isClosed);
 
   // R4.13: Prevent every([]) from confirming with zero observations
@@ -439,9 +460,9 @@ export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResu
     };
   }
 
-  // R5.13: Use findConsecutiveConfirmationWindow instead of slice(0, N)
+  // R5.13: Use findConsecutiveConfirmationWindow with ALL observations (R6.10)
   const windowResult = findConsecutiveConfirmationWindow(
-    closedCloses,
+    allCloses,
     requiredConfirmations,
     reversalThresholdPrice,
     hwmPrice,
@@ -530,9 +551,10 @@ export function supersedeHWM(
   oldHwm: HighWaterMark,
   newHwm: HighWaterMark,
 ): { oldHwm: HighWaterMark; newHwm: HighWaterMark } {
+  // R6.11: Unify supersession semantics — new HWM is CANDIDATE, not CONFIRMED
   return {
     oldHwm: { ...oldHwm, status: "SUPERSEDED" as HwmStatus, supersededBy: newHwm.hwmId },
-    newHwm: { ...newHwm, status: "CONFIRMED" as HwmStatus },
+    newHwm: { ...newHwm, status: "CANDIDATE" as HwmStatus },
   };
 }
 

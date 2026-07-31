@@ -19,15 +19,20 @@ export type AssetSymbol = "BTC" | "ETH";
 export type AssetMode = "LAB_ONLY" | "RESEARCH_ONLY" | "SHADOW" | "REAL_LIMITED" | "REAL_FULL";
 
 export type AnalysisVenue = "KRAKEN";
+/** @deprecated R6.16: Use TargetExecutionVenue instead. */
 export type FutureExecutionVenue = "REVOLUT_X" | "DISABLED";
+export type TargetExecutionVenue = "REVOLUT_X" | null;
 export type ExecutionStatus = "LAB_ONLY" | "RESEARCH_ONLY" | "SHADOW_READY" | "REAL_READY";
+export type CurrentAdapter = "SHADOW" | null;
 
 export interface AmaAssetProfile {
   asset: AssetSymbol;
   pair: string;
   mode: AssetMode;
   analysisVenue: AnalysisVenue;
+  /** @deprecated R6.16: Use targetExecutionVenue instead. */
   futureExecutionVenue: FutureExecutionVenue;
+  targetExecutionVenue: TargetExecutionVenue;
   executionEnabled: boolean;
   executionStatus: ExecutionStatus;
   pipeline: "BTC_LAB" | "ETH_RESEARCH";
@@ -37,6 +42,11 @@ export interface AmaAssetProfile {
   canUseRevolutX: boolean;
   sharesBtcCapital: boolean;
   inheritsBtcPromotion: boolean;
+  postOnly: boolean;
+  takerFallback: boolean;
+  currentAdapter: CurrentAdapter;
+  realAdapterConfigured: boolean;
+  realAdapterAuthorized: boolean;
 }
 
 export const BTC_ASSET_PROFILE: AmaAssetProfile = {
@@ -45,6 +55,7 @@ export const BTC_ASSET_PROFILE: AmaAssetProfile = {
   mode: "LAB_ONLY",
   analysisVenue: "KRAKEN",
   futureExecutionVenue: "REVOLUT_X",
+  targetExecutionVenue: "REVOLUT_X",
   executionEnabled: false,
   executionStatus: "LAB_ONLY",
   pipeline: "BTC_LAB",
@@ -54,6 +65,11 @@ export const BTC_ASSET_PROFILE: AmaAssetProfile = {
   canUseRevolutX: false,
   sharesBtcCapital: false,
   inheritsBtcPromotion: false,
+  postOnly: true,
+  takerFallback: false,
+  currentAdapter: "SHADOW",
+  realAdapterConfigured: false,
+  realAdapterAuthorized: false,
 };
 
 export const ETH_ASSET_PROFILE: AmaAssetProfile = {
@@ -62,6 +78,7 @@ export const ETH_ASSET_PROFILE: AmaAssetProfile = {
   mode: "RESEARCH_ONLY",
   analysisVenue: "KRAKEN",
   futureExecutionVenue: "DISABLED",
+  targetExecutionVenue: null,
   executionEnabled: false,
   executionStatus: "RESEARCH_ONLY",
   pipeline: "ETH_RESEARCH",
@@ -71,6 +88,11 @@ export const ETH_ASSET_PROFILE: AmaAssetProfile = {
   canUseRevolutX: false,
   sharesBtcCapital: false,
   inheritsBtcPromotion: false,
+  postOnly: true,
+  takerFallback: false,
+  currentAdapter: null,
+  realAdapterConfigured: false,
+  realAdapterAuthorized: false,
 };
 
 export const ASSET_PROFILES: Record<AssetSymbol, AmaAssetProfile> = {
@@ -90,9 +112,12 @@ export interface SeedPolicyBtc {
   pair: string;
   status: AssetMode;
   analysisVenue: AnalysisVenue;
+  /** @deprecated R6.16: Use targetExecutionVenue instead. */
   futureExecutionVenue: FutureExecutionVenue;
+  targetExecutionVenue: TargetExecutionVenue;
   executionEnabled: boolean;
   makerOnly: boolean;
+  postOnly: boolean;
   takerFallback: boolean;
   capitalDeploymentPct: number; // 75
   capitalReservePct: number; // 25
@@ -109,8 +134,10 @@ export const BTC_SEED_POLICY: SeedPolicyBtc = {
   status: "LAB_ONLY",
   analysisVenue: "KRAKEN",
   futureExecutionVenue: "REVOLUT_X",
+  targetExecutionVenue: "REVOLUT_X",
   executionEnabled: false,
   makerOnly: true,
+  postOnly: true,
   takerFallback: false,
   capitalDeploymentPct: 75,
   capitalReservePct: 25,
@@ -128,9 +155,12 @@ export interface SeedPolicyEth {
   pair: string;
   status: AssetMode;
   analysisVenue: AnalysisVenue;
+  /** @deprecated R6.16: Use targetExecutionVenue instead. */
   futureExecutionVenue: FutureExecutionVenue;
+  targetExecutionVenue: TargetExecutionVenue;
   executionEnabled: boolean;
   makerOnly: boolean;
+  postOnly: boolean;
   takerFallback: boolean;
   capitalDeploymentPct: number; // 65
   capitalReservePct: number; // 35
@@ -149,8 +179,10 @@ export const ETH_SEED_POLICY: SeedPolicyEth = {
   status: "RESEARCH_ONLY",
   analysisVenue: "KRAKEN",
   futureExecutionVenue: "DISABLED",
+  targetExecutionVenue: null,
   executionEnabled: false,
-  makerOnly: true, // hypothetical
+  makerOnly: true,
+  postOnly: true,
   takerFallback: false,
   capitalDeploymentPct: 65,
   capitalReservePct: 35,

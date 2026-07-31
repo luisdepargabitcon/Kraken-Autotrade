@@ -5387,3 +5387,105 @@ Clasificación por bloque:
 - REAL_FULL = BLOQUEADO
 - merge = NO AUTORIZADO
 - deploy = NO AUTORIZADO
+
+---
+
+## R6 — Replan Atómico, Evidencia Agregada e Identidad Canónica (2026-07-31)
+
+**Fecha:** 2026-07-31
+**Base:** R5 commit `f8edc55b43db517683dc3e2c7c9e1305be27dc33`
+**Rama:** `review/ama-seed-v2-2-20260729`
+
+### Correcciones aplicadas (16)
+
+1. **Replan atómico con fills ejecutados** — `replanTranches()` aplica evidence ejecutada antes de calcular elegibilidad. Los candidatos con fills parciales preservan remanente (`remainingAmountUsd`). Los fully executed quedan inelegibles. La elegibilidad se calcula sobre el estado post-fill, no sobre el plan original.
+
+2. **Evidencia agregada validada** — `validateExecutedEvidence()` ahora valida campos adicionales: `cycleId`, `asset`, `policyId`, `policyVersion`, `fillStatus`, `executedAt` (timestamp). Verifica que `executedAt` ≤ `confirmedCloseTimestamp` (no future fills). `fillStatus` debe ser `FILLED` o `PARTIALLY_FILLED`.
+
+3. **Overfill agregado por tranche** — La validación detecta si la suma de `executedAmountUsd` de múltiples evidencias sobre el mismo `trancheId` excede `plannedAmountUsd`. Motivo: `AGGREGATE_OVERFILL`.
+
+4. **Reconciliación de portfolioDeployedUsd** — `replanTranches()` reconcilia `portfolioDeployedUsd` con la suma de evidence y el budget. Si `portfolioDeployedUsd < sum(evidence)`, se ajusta a `sum(evidence)` (fail-closed: no se puede desplegar menos de lo ya ejecutado). Si `portfolioDeployedUsd > budget`, se ajusta al budget.
+
+5. **Validación de evidencia endurecida** — `validateExecutedEvidence()` extendida con validación de campos R6.2 y agregación R6.3. Nuevos reason codes: `MISSING_CYCLE_ID`, `ASSET_MISMATCH`, `MISSING_POLICY_ID`, `MISSING_POLICY_VERSION`, `MISSING_FILL_STATUS`, `INVALID_FILL_STATUS`, `EXECUTED_AT_AFTER_CONFIRMED_CLOSE`, `AGGREGATE_OVERFILL`.
+
+6. **Confirmed close price/timestamp en deterministic engine** — `buildCanonicalSeedPlan()` ahora requiere `asOfConfirmedClosePrice` y `asOfConfirmedCloseTimestamp` presentes y válidos. Sin confirmed close, retorna `null`.
+
+7. **Plan identity con confirmed close** — `computePlanId()` incluye `asOfConfirmedCloseTimestamp` y `asOfConfirmedClosePrice` en el payload canónico. Planes con mismo contenido pero distinto confirmed close tienen distinto planId.
+
+8. **IdempotencyKey con confirmed close** — `computeIdempotencyKey()` incluye `confirmedCloseTimestamp` para garantizar unicidad por cierre confirmado.
+
+9. **Confirmed close price y timestamp normalization** — `amaHwmBar.ts` normaliza confirmed close timestamp a UTC canónico vía `toISOString()`. Valida que el timestamp del confirmed close sea ≤ HWM timestamp (no look-ahead).
+
+10. **HWM confirmedClose validation** — `processIncrementalClose()` valida que el confirmed close price sea > 0, finito, y timestamp parseable. Rechaza si inválido.
+
+11. **HWM supersede → CANDIDATE** — `supersedeHWM()` ahora establece `newHwm.status = CANDIDATE` (no `CONFIRMED`). Un nuevo HWM debe pasar por el flujo de confirmación antes de ser autoritativo.
+
+12. **Fail-closed period limits** — `checkPeriodLimits()` valida `weeklyDeployedUsd` y `monthlyDeployedUsd` sean números finitos ≥ 0 antes de comprobar límites. Si inválido, retorna `{ allowed: false, reason: "INVALID_WEEKLY_DEPLOYED" }` o `"INVALID_MONTHLY_DEPLOYED"`.
+
+13. **Fail-closed cooldown policy** — `applyCooldown()` y `checkCooldownFailClosed()` validan el formato de `cooldownPolicy` (`<n>_<daily|hourly|weekly>`) antes de aplicar o comprobar. Policy inválida → no aplica cooldown / retorna invalid.
+
+14. **No fallback a precio live** — `makeAdaptiveDecision()` usa exclusivamente `plan.asOfConfirmedClosePrice` para detectar crossed levels. Si `asOfConfirmedClosePrice` es `undefined` o `null`, retorna `ABORT` con reason `NO_CONFIRMED_CLOSE_PRICE`. No hay fallback a precio live.
+
+15. **BLOCKED_GUARDRAIL level state** — En `makeAdaptiveDecision()`, cuando guardrail falla, los candidatos elegibles crossed se marcan como `BLOCKED_GUARDRAIL` en `levelStates` y se aborta la decisión con `GUARDRAIL_VIOLATION:<violations>`.
+
+16. **Venue y post-only semantics** — `amaSeedTypes.ts` refuerza `makerOnly = true` y `takerFallback = false` para BTC. ETH mantiene `futureExecutionVenue = DISABLED`. `postOnly = true` es obligatorio. Validación en `validateSeedPolicy()` verifica estos campos.
+
+### Tests R6 nuevos (+32)
+
+Archivo: `server/services/ama/__tests__/amaR6AtomicReplan.test.ts`
+
+Clasificación por bloque:
+- R6.1 Atomic replan (4 tests: 1-4)
+- R6.2 Aggregated evidence validation (5 tests: 5-9)
+- R6.3 Aggregate overfill (2 tests: 10-11)
+- R6.4 portfolioDeployedUsd reconciliation (3 tests: 12-14)
+- R6.5 Evidence validation hardened (4 tests: 15-18)
+- R6.6-R6.8 Confirmed close in deterministic engine (3 tests: 19-21)
+- R6.9-R6.11 HWM confirmedClose and supersede (4 tests: 22-25)
+- R6.12 Fail-closed period limits (3 tests: 26-28)
+- R6.13 Fail-closed cooldown policy (2 tests: 29-30)
+- R6.14 No fallback to live price (2 tests: 31-32)
+- R6.15 BLOCKED_GUARDRAIL (1 test: 32)
+- R6.16 Venue/post-only (1 test: 32)
+
+### Tests R5/R4/R2/HWM actualizados
+
+- `amaAdaptivePlanner.test.ts` — Fix: usar `buildCanonicalSeedPlan` con confirmed close price (R6.14)
+- `amaHwmBar.test.ts` — Fix: `supersedeHWM` retorna `CANDIDATE` no `CONFIRMED` (R6.11)
+- `amaR5Invariants.test.ts` — Fix: timestamp format `.000Z` (R6.9), `portfolioDeployedUsd` ≥ sum(evidence) (R6.4)
+
+### Archivos modificados R6
+
+- `server/services/ama/amaAdaptivePlanner.ts` — R6.1, R6.2, R6.3, R6.4, R6.5, R6.12, R6.13, R6.14, R6.15: replanTranches atómico, validateExecutedEvidence extendida, checkPeriodLimits fail-closed, applyCooldown/checkCooldownFailClosed fail-closed, makeAdaptiveDecision sin fallback live, BLOCKED_GUARDRAIL
+- `server/services/ama/amaDeterministicEngine.ts` — R6.6, R6.7, R6.8: buildCanonicalSeedPlan requiere confirmedClose, computePlanId con confirmedClose, computeIdempotencyKey con confirmedClose
+- `server/services/ama/amaHwmBar.ts` — R6.9, R6.10, R6.11: confirmedClose normalization, HWM confirmedClose validation, supersedeHWM → CANDIDATE
+- `server/services/ama/amaSeedTypes.ts` — R6.16: venue/post-only semantics reforzados
+- `server/services/ama/amaTypes.ts` — R6.2: campos de evidence extendidos (cycleId, asset, policyId, policyVersion, fillStatus, executedAt)
+- `server/services/ama/__tests__/amaR6AtomicReplan.test.ts` — **NUEVO**, 32 tests
+- `server/services/ama/__tests__/amaAdaptivePlanner.test.ts` — Fix: buildCanonicalSeedPlan con confirmedClose
+- `server/services/ama/__tests__/amaHwmBar.test.ts` — Fix: supersedeHWM → CANDIDATE
+- `server/services/ama/__tests__/amaR5Invariants.test.ts` — Fix: timestamp format, portfolioDeployedUsd reconciliation
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R6_2026-07-31.md` — **NUEVO**
+- `FASES MODO AMA.md` — estado R6
+- `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R6
+
+### Estado
+
+- R5 = COMMITTED_AND_PUSHED
+- HEAD_R5 = f8edc55b43db517683dc3e2c7c9e1305be27dc33
+- origin/review = f8edc55b43db517683dc3e2c7c9e1305be27dc33
+- origin/main = 44cd46ff3a6e195556987968a87c8e795d66cd02
+- R6 = CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- R6_AMA_TESTS = 727/727 PASS
+- R6_AMA_TEST_FILES = 23
+- R6_NEW_TESTS = 32
+- PostgreSQL = BLOCKED_NO_SAFE_ENVIRONMENT
+- Docker local = NOT_AVAILABLE
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
+- amaService = DEVELOPMENT_SCAFFOLD_ONLY
+- Research Lab completo = NO IMPLEMENTADO
+- SHADOW = BLOQUEADO
+- REAL_LIMITED = BLOQUEADO
+- REAL_FULL = BLOQUEADO
+- merge = NO AUTORIZADO
+- deploy = NO AUTORIZADO

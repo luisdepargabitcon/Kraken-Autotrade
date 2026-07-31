@@ -134,7 +134,7 @@ describe("Fase 9 — HWM Lifecycle", () => {
     const { oldHwm, newHwm } = supersedeHWM(old, newH);
     expect(oldHwm.status).toBe("SUPERSEDED");
     expect(oldHwm.supersededBy).toBe("h2");
-    expect(newHwm.status).toBe("CONFIRMED");
+    expect(newHwm.status).toBe("CANDIDATE"); // R6.11: supersede sets CANDIDATE, not CONFIRMED
   });
 
   it("invalidates HWM", () => {

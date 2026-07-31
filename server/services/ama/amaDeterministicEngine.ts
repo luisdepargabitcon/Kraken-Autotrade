@@ -96,22 +96,32 @@ export function getCanonicalSeedEnvelope(asset: AssetSymbol): CanonicalSeedEnvel
   };
 }
 
+// R6.6: EffectiveSeedConstraints
+export interface EffectiveSeedConstraints {
+  deploymentPct: number;
+  reservePct: number;
+  deployablePct: number;
+  trancheCount: number;
+}
+
 export function validateAgainstSeedEnvelope(
   input: SeedTranchePlanInput,
-): { valid: boolean; effective: { deploymentPct: number; reservePct: number; trancheCount: number }; reasonCodes: string[] } {
+): { valid: boolean; effective: EffectiveSeedConstraints; reasonCodes: string[] } {
   const reasonCodes: string[] = [];
   const envelope = getCanonicalSeedEnvelope(input.asset);
 
   // R5.3: Validate asset match
   if (input.parameters.asset !== input.asset) {
     reasonCodes.push("ASSET_MISMATCH");
-    return { valid: false, effective: { deploymentPct: 0, reservePct: 0, trancheCount: 0 }, reasonCodes };
+    return { valid: false, effective: { deploymentPct: 0, reservePct: 0, deployablePct: 0, trancheCount: 0 }, reasonCodes };
   }
 
   // R5.3: User parameters can only be more conservative
   const effectiveDeploymentPct = Math.min(envelope.deploymentPct, input.parameters.maxCycleDeploymentPct);
   const effectiveReservePct = Math.max(envelope.reservePct, input.parameters.mandatoryReservePct);
   const effectiveTrancheCount = Math.min(envelope.trancheCount, input.parameters.absoluteTrancheCountCap);
+  // R6.6: deployablePct = min(effectiveDeployment, 100 - effectiveReserve)
+  const effectiveDeployablePct = Math.min(effectiveDeploymentPct, 100 - effectiveReservePct);
 
   // R5.3: Check that user params don't relax seed
   if (input.parameters.mandatoryReservePct < envelope.reservePct) {
@@ -123,7 +133,7 @@ export function validateAgainstSeedEnvelope(
 
   return {
     valid: reasonCodes.length === 0,
-    effective: { deploymentPct: effectiveDeploymentPct, reservePct: effectiveReservePct, trancheCount: effectiveTrancheCount },
+    effective: { deploymentPct: effectiveDeploymentPct, reservePct: effectiveReservePct, deployablePct: effectiveDeployablePct, trancheCount: effectiveTrancheCount },
     reasonCodes,
   };
 }
@@ -141,6 +151,7 @@ export function isValidRiskOverlayMultiplier(value: number): boolean {
 
 export interface SeedTranchePlanInput {
   hwmPrice: number;
+  hwmTimestamp: string;
   budgetUsd: number;
   deployedUsd: number;
   reservedUsd: number;
@@ -203,10 +214,14 @@ export function evaluateSeedTrancheEligibility(
   cumulativeDeployedUsd: number,
   cumulativeEligibleCount: number,
   input: SeedTranchePlanInput,
+  effectiveConstraints?: EffectiveSeedConstraints,
 ): SeedTrancheEligibilityResult[] {
   const { budgetUsd, deployedUsd, reservedUsd, parameters } = input;
-  const mandatoryReserveUsd = budgetUsd * (parameters.mandatoryReservePct / 100);
-  const maxCycleDeploymentUsd = budgetUsd * (parameters.maxCycleDeploymentPct / 100);
+  // R6.6: Use effective constraints if provided, otherwise fall back to parameters
+  const effectiveDeploymentPct = effectiveConstraints?.deploymentPct ?? parameters.maxCycleDeploymentPct;
+  const effectiveReservePct = effectiveConstraints?.reservePct ?? parameters.mandatoryReservePct;
+  const mandatoryReserveUsd = budgetUsd * (effectiveReservePct / 100);
+  const maxCycleDeploymentUsd = budgetUsd * (effectiveDeploymentPct / 100);
   const results: SeedTrancheEligibilityResult[] = [];
   let runningDeployedUsd = cumulativeDeployedUsd;
   let runningCount = cumulativeEligibleCount;
@@ -730,6 +745,42 @@ function canonicalPlanPayload(plan: AmaTranchePlan): string {
   return JSON.stringify(payload);
 }
 
+// R6.8: Unified canonical plan identity payload
+export function buildCanonicalPlanIdentityPayload(plan: AmaTranchePlan): string {
+  const payload = {
+    cycleId: plan.cycleId,
+    version: plan.version,
+    asset: plan.candidateTranches[0]?.asset,
+    policyId: plan.candidateTranches[0]?.policyId,
+    policyVersion: plan.candidateTranches[0]?.policyVersion,
+    hwmTimestamp: plan.hwmTimestamp,
+    confirmedCloseTimestamp: plan.asOfConfirmedCloseTimestamp,
+    confirmedClosePrice: plan.asOfConfirmedClosePrice !== undefined ? Number(plan.asOfConfirmedClosePrice.toFixed(8)) : undefined,
+    effectiveDeploymentPct: plan.effectiveDeploymentPct,
+    effectiveReservePct: plan.effectiveReservePct,
+    effectiveDeployablePct: plan.effectiveDeployablePct,
+    riskOverlayMultiplier: plan.candidateTranches[0]?.riskOverlayMultiplier,
+    candidates: plan.candidateTranches
+      .slice()
+      .sort((a, b) => (a.seedTrancheIndex ?? 0) - (b.seedTrancheIndex ?? 0))
+      .map((c) => ({
+        trancheId: c.trancheId,
+        seedTrancheIndex: c.seedTrancheIndex,
+        plannedAmountUsd: c.plannedAmountUsd !== undefined ? Number(c.plannedAmountUsd.toFixed(8)) : undefined,
+        executedAmountUsd: c.executedAmountUsd !== undefined ? Number(c.executedAmountUsd.toFixed(8)) : undefined,
+        remainingAmountUsd: c.remainingAmountUsd !== undefined ? Number(c.remainingAmountUsd.toFixed(8)) : undefined,
+        executionState: c.executionState,
+        eligible: c.eligible,
+        eligibilityReasons: [...c.eligibilityReasons].sort(),
+        canonicalTriggerDropPct: c.canonicalTriggerDropPct,
+        canonicalTriggerPrice: c.canonicalTriggerPrice !== undefined ? Number(c.canonicalTriggerPrice.toFixed(8)) : undefined,
+        capitalPct: c.capitalPct,
+        amountUsd: Number(c.amountUsd.toFixed(8)),
+      })),
+  };
+  return JSON.stringify(payload);
+}
+
 export function computePlanId(cycleId: string, candidates: AmaTrancheCandidate[], confirmedClose?: { timestamp: string; close: number }): string {
   // R5.8: Derive planId from full canonical payload
   const payload = JSON.stringify({
@@ -754,7 +805,8 @@ export function computePlanId(cycleId: string, candidates: AmaTrancheCandidate[]
 }
 
 export function computePlanHash(plan: AmaTranchePlan): string {
-  const payload = canonicalPlanPayload(plan);
+  // R6.8: Use unified identity payload
+  const payload = buildCanonicalPlanIdentityPayload(plan);
   return createHash("sha256").update(payload).digest("hex");
 }
 
@@ -813,6 +865,11 @@ export function validateSeedBeforePlanning(input: SeedTranchePlanInput): string[
     errors.push("HWM must be > 0 and finite");
   }
 
+  // R6.7: Validate hwmTimestamp
+  if (typeof input.hwmTimestamp !== "string" || Number.isNaN(Date.parse(input.hwmTimestamp))) {
+    errors.push("hwmTimestamp must be a valid timestamp");
+  }
+
   // Validate deployed
   if (typeof input.deployedUsd !== "number" || !Number.isFinite(input.deployedUsd) || input.deployedUsd < 0) {
     errors.push("Deployed must be >= 0 and finite");
@@ -850,6 +907,15 @@ export function buildCanonicalSeedPlan(
     return null;
   }
 
+  // R6.7: Validate confirmedClose.timestamp > hwmTimestamp
+  const confirmedCloseTs = new Date(confirmedClose.timestamp).getTime();
+  const hwmTs = new Date(input.hwmTimestamp).getTime();
+  if (!Number.isNaN(hwmTs) && confirmedCloseTs <= hwmTs) {
+    return null;
+  }
+  // R6.7: Normalize confirmedClose timestamp to UTC canonical
+  const canonicalConfirmedCloseTimestamp = new Date(confirmedClose.timestamp).toISOString();
+
   // R4.16: Validate seed before planning
   const validationErrors = validateSeedBeforePlanning(input);
   if (validationErrors.length > 0) {
@@ -862,17 +928,21 @@ export function buildCanonicalSeedPlan(
     return null;
   }
 
+  // R6.6: Use effective constraints
+  const effectiveConstraints = envelopeCheck.effective;
+
   // R4.1: Plan seed tranches
   const levels = planSeedTranches(input);
   if (levels === null) return null;
 
-  // R4.1: Evaluate eligibility
+  // R4.1: Evaluate eligibility with effective constraints
   const eligibilityResults = evaluateSeedTrancheEligibility(
     levels,
     confirmedClose,
     0, // cumulativeDeployedUsd
     0, // cumulativeEligibleCount
     input,
+    effectiveConstraints,
   );
 
   // Build candidates with canonical metadata
@@ -896,7 +966,7 @@ export function buildCanonicalSeedPlan(
       policyId: level.policyId,
       policyVersion: level.policyVersion,
       riskOverlayMultiplier: input.riskOverlayMultiplier,
-      confirmedCloseTimestamp: confirmedClose.isClosed ? confirmedClose.timestamp : undefined,
+      confirmedCloseTimestamp: confirmedClose.isClosed ? canonicalConfirmedCloseTimestamp : undefined,
       // R5.4: Fill tracking — initial state
       plannedAmountUsd: level.amountUsd,
       executedAmountUsd: 0,
@@ -906,12 +976,12 @@ export function buildCanonicalSeedPlan(
   });
 
   const eligibleCount = candidates.filter((c) => c.eligible).length;
-  // R5.3: Use envelope effective values
-  const mandatoryReserveUsd = input.budgetUsd * (envelopeCheck.effective.reservePct / 100);
-  const deployableCycleCapitalUsd = input.budgetUsd - mandatoryReserveUsd;
+  // R6.6: Use effective constraints for reserve and deployable
+  const mandatoryReserveUsd = input.budgetUsd * (effectiveConstraints.reservePct / 100);
+  const deployableCycleCapitalUsd = input.budgetUsd * (effectiveConstraints.deployablePct / 100);
 
   // R5.8: Compute planId with full canonical payload including confirmedClose
-  const planId = computePlanId(input.cycleId, candidates, confirmedClose);
+  const planId = computePlanId(input.cycleId, candidates, { timestamp: canonicalConfirmedCloseTimestamp, close: confirmedClose.close });
 
   return {
     planId,
@@ -922,8 +992,12 @@ export function buildCanonicalSeedPlan(
     mandatoryReserveUsd,
     deployableCycleCapitalUsd,
     createdAt: new Date().toISOString(),
-    // R5.12: Confirmed close reference
-    asOfConfirmedCloseTimestamp: confirmedClose.timestamp,
+    // R5.12: Confirmed close reference (R6.7: UTC canonical)
+    asOfConfirmedCloseTimestamp: canonicalConfirmedCloseTimestamp,
     asOfConfirmedClosePrice: confirmedClose.close,
+    // R6.6: Effective constraints
+    effectiveDeploymentPct: effectiveConstraints.deploymentPct,
+    effectiveReservePct: effectiveConstraints.reservePct,
+    effectiveDeployablePct: effectiveConstraints.deployablePct,
   };
 }

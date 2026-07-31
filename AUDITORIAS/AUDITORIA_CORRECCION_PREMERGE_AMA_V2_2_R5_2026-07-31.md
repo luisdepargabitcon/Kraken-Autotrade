@@ -309,3 +309,13 @@ No declarar:
 - migración 080 lista para aplicarse
 - SHADOW operativo
 - REAL preparado
+
+---
+
+## Actualización posterior — R6
+
+**Fecha:** 2026-07-31
+**Estado R5:** COMMITTED_AND_PUSHED
+**HEAD R5:** `f8edc55b43db517683dc3e2c7c9e1305be27dc33`
+
+R5 ha sido committeado y pusheado a `origin/review/ama-seed-v2-2-20260729`. Las correcciones R6 se aplican sobre la base R5. Ver `AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R6_2026-07-31.md` para el detalle de R6.

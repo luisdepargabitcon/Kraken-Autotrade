@@ -411,6 +411,12 @@ export interface AmaTranchePlan {
   // R5.12: Confirmed close reference for decision
   asOfConfirmedCloseTimestamp?: string;
   asOfConfirmedClosePrice?: number;
+  // R6.6: Effective constraints from envelope
+  effectiveDeploymentPct?: number;
+  effectiveReservePct?: number;
+  effectiveDeployablePct?: number;
+  // R6.7: HWM timestamp for validation
+  hwmTimestamp?: string;
 }
 
 export type TrancheExecutionState =

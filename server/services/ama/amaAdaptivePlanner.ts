@@ -50,6 +50,12 @@ export function applyCooldown(
   state: CooldownState,
   trancheTimestamp: string,
 ): CooldownState {
+  // R6.13: Validate policy first before applying
+  const policyMatch = state.cooldownPolicy.match(/^(\d+)_(daily|hourly|weekly)$/);
+  if (!policyMatch) {
+    return state; // R6.13: Invalid policy — no cooldown applied
+  }
+
   // R4.6: Validate timestamp
   const tsMs = Date.parse(trancheTimestamp);
   if (Number.isNaN(tsMs)) {
@@ -83,21 +89,16 @@ export function checkCooldownFailClosed(
   state: CooldownState,
   currentTimestamp: string,
 ): CooldownCheckResult {
+  // R6.13: Validate cooldown policy FIRST, before checking cooldownEndsAt
+  const policyMatch = state.cooldownPolicy.match(/^(\d+)_(daily|hourly|weekly)$/);
+  if (!policyMatch) {
+    return { valid: false, active: false, reason: "INVALID_COOLDOWN_POLICY" };
+  }
+
   // Validate currentTimestamp
   const currentMs = Date.parse(currentTimestamp);
   if (Number.isNaN(currentMs)) {
     return { valid: false, active: false, reason: "INVALID_CURRENT_TIMESTAMP" };
-  }
-
-  // No cooldown set — not active
-  if (!state.cooldownEndsAt) {
-    return { valid: true, active: false, reason: "NO_COOLDOWN_SET" };
-  }
-
-  // Validate cooldownEndsAt
-  const endsMs = Date.parse(state.cooldownEndsAt);
-  if (Number.isNaN(endsMs)) {
-    return { valid: false, active: false, reason: "INVALID_COOLDOWN_ENDS_AT" };
   }
 
   // Validate lastTrancheAt if present
@@ -112,10 +113,15 @@ export function checkCooldownFailClosed(
     }
   }
 
-  // Validate cooldown policy
-  const policyMatch = state.cooldownPolicy.match(/^(\d+)_(daily|hourly|weekly)$/);
-  if (!policyMatch) {
-    return { valid: false, active: false, reason: "INVALID_COOLDOWN_POLICY" };
+  // No cooldown set — not active
+  if (!state.cooldownEndsAt) {
+    return { valid: true, active: false, reason: "NO_COOLDOWN_SET" };
+  }
+
+  // Validate cooldownEndsAt
+  const endsMs = Date.parse(state.cooldownEndsAt);
+  if (Number.isNaN(endsMs)) {
+    return { valid: false, active: false, reason: "INVALID_COOLDOWN_ENDS_AT" };
   }
 
   return {
@@ -177,6 +183,20 @@ export function checkPeriodLimits(
   budgetUsd: number,
   parameters: AmaResolvedParameters,
 ): { allowed: boolean; reason: string } {
+  // R6.12: Fail-closed — validate state before checking
+  if (typeof state.weeklyDeployedUsd !== "number" || !Number.isFinite(state.weeklyDeployedUsd) || state.weeklyDeployedUsd < 0) {
+    return { allowed: false, reason: "INVALID_WEEKLY_DEPLOYED" };
+  }
+  if (typeof state.monthlyDeployedUsd !== "number" || !Number.isFinite(state.monthlyDeployedUsd) || state.monthlyDeployedUsd < 0) {
+    return { allowed: false, reason: "INVALID_MONTHLY_DEPLOYED" };
+  }
+  if (typeof state.weekStart !== "string" || Number.isNaN(Date.parse(state.weekStart))) {
+    return { allowed: false, reason: "INVALID_WEEK_START" };
+  }
+  if (typeof state.monthStart !== "string" || Number.isNaN(Date.parse(state.monthStart))) {
+    return { allowed: false, reason: "INVALID_MONTH_START" };
+  }
+
   const weeklyLimit = budgetUsd * (parameters.maxWeeklyDeploymentPct / 100);
   const monthlyLimit = budgetUsd * (parameters.maxMonthlyDeploymentPct / 100);
 
@@ -310,8 +330,34 @@ export function validateExecutedEvidence(
   const seenIdempotencyKeys = new Set<string>();
   const validTrancheIds = new Set(originalPlan.candidateTranches.map((c) => c.trancheId));
   const seedIndices = new Set(originalPlan.candidateTranches.map((c) => c.seedTrancheIndex));
+  // R6.5: Validate cycleId, asset, policyId from plan
+  const planCycleId = originalPlan.cycleId;
+  const planAsset = originalPlan.candidateTranches[0]?.asset;
+  const planPolicyId = originalPlan.candidateTranches[0]?.policyId;
+  const planPolicyVersion = originalPlan.candidateTranches[0]?.policyVersion;
+  const planConfirmedCloseTs = originalPlan.asOfConfirmedCloseTimestamp;
 
   for (const e of evidence) {
+    // R6.5: Validate cycleId matches plan
+    if (e.cycleId !== planCycleId) {
+      reasonCodes.push(`CYCLE_ID_MISMATCH:${e.cycleId}:${planCycleId}`);
+      continue;
+    }
+    // R6.5: Validate asset matches plan
+    if (e.asset !== planAsset) {
+      reasonCodes.push(`ASSET_MISMATCH:${e.asset}:${planAsset}`);
+      continue;
+    }
+    // R6.5: Validate policyId matches plan
+    if (e.policyId !== planPolicyId) {
+      reasonCodes.push(`POLICY_ID_MISMATCH:${e.policyId}:${planPolicyId}`);
+      continue;
+    }
+    // R6.5: Validate policyVersion matches plan
+    if (e.policyVersion !== planPolicyVersion) {
+      reasonCodes.push(`POLICY_VERSION_MISMATCH:${e.policyVersion}:${planPolicyVersion}`);
+      continue;
+    }
     // trancheId empty
     if (!e.trancheId || e.trancheId.trim() === "") {
       reasonCodes.push("EMPTY_TRANCHE_ID");
@@ -373,20 +419,36 @@ export function validateExecutedEvidence(
       reasonCodes.push(`INVALID_EXECUTED_AT:${e.trancheId}`);
       continue;
     }
-    // Amount exceeds planned
+    // R6.5: executedAt must be >= confirmedCloseTimestamp
+    if (planConfirmedCloseTs) {
+      const confirmedTs = Date.parse(planConfirmedCloseTs);
+      if (!Number.isNaN(confirmedTs) && execTs < confirmedTs) {
+        reasonCodes.push(`EXECUTED_BEFORE_CONFIRMED_CLOSE:${e.trancheId}`);
+        continue;
+      }
+    }
+    // R6.3: Validate fillStatus is a valid value
+    if (e.fillStatus !== "PARTIAL" && e.fillStatus !== "FILLED") {
+      reasonCodes.push(`INVALID_FILL_STATUS:${e.trancheId}:${e.fillStatus}`);
+      continue;
+    }
+    // Amount exceeds planned (per individual evidence)
     if (candidate.plannedAmountUsd !== undefined && e.executedAmountUsd > candidate.plannedAmountUsd + 1e-6) {
       reasonCodes.push(`OVERFILL:${e.trancheId}:${e.executedAmountUsd}>${candidate.plannedAmountUsd}`);
       continue;
     }
-    // policyId incompatibility
-    if (candidate.policyId !== undefined && e.policyId !== candidate.policyId) {
-      reasonCodes.push(`POLICY_ID_MISMATCH:${e.trancheId}`);
-      continue;
-    }
-    // policyVersion incompatibility
-    if (candidate.policyVersion !== undefined && e.policyVersion !== candidate.policyVersion) {
-      reasonCodes.push(`POLICY_VERSION_MISMATCH:${e.trancheId}`);
-      continue;
+  }
+
+  // R6.2: Validate aggregate overfill per tranche
+  const aggregatedByIndex = new Map<number, number>();
+  for (const e of evidence) {
+    const existing = aggregatedByIndex.get(e.seedTrancheIndex) ?? 0;
+    aggregatedByIndex.set(e.seedTrancheIndex, existing + e.executedAmountUsd);
+  }
+  for (const [idx, totalExecuted] of aggregatedByIndex) {
+    const candidate = originalPlan.candidateTranches.find((c) => c.seedTrancheIndex === idx);
+    if (candidate && candidate.plannedAmountUsd !== undefined && totalExecuted > candidate.plannedAmountUsd + 1e-6) {
+      reasonCodes.push(`AGGREGATE_OVERFILL:${candidate.trancheId}:${totalExecuted}>${candidate.plannedAmountUsd}`);
     }
   }
 
@@ -402,6 +464,17 @@ export function replanTranches(ctx: ReplanContext): AmaTranchePlan | null {
     return null;
   }
 
+  // R6.4: Reconcile portfolioDeployedUsd with evidence and budget constraints
+  const totalEvidenceUsd = executedTranches.reduce((sum, e) => sum + e.executedAmountUsd, 0);
+  // R6.4: portfolioDeployedUsd must be >= sum of evidence (evidence is subset of deployed)
+  if (portfolioDeployedUsd < totalEvidenceUsd - 1e-6) {
+    return null;
+  }
+  // R6.4: portfolioDeployedUsd must not exceed budget
+  if (portfolioDeployedUsd > seedInput.budgetUsd) {
+    return null;
+  }
+
   // R5.5: Use portfolioDeployedUsd as authoritative source, not seedInput.deployedUsd + sum(evidence)
   const updatedInput: SeedTranchePlanInput = {
     ...seedInput,
@@ -412,7 +485,7 @@ export function replanTranches(ctx: ReplanContext): AmaTranchePlan | null {
   const newPlan = buildCanonicalSeedPlan(updatedInput, confirmedClose);
   if (!newPlan) return null;
 
-  // R5.4: Apply fills to candidates — compute remaining amounts
+  // R6.1: Apply fills to candidates — compute remaining amounts BEFORE eligibility
   const evidenceByIndex = new Map<number, ExecutedTrancheEvidence[]>();
   for (const e of executedTranches) {
     const existing = evidenceByIndex.get(e.seedTrancheIndex) || [];
@@ -430,6 +503,7 @@ export function replanTranches(ctx: ReplanContext): AmaTranchePlan | null {
     // R5.4: Aggregate all evidence for this seedTrancheIndex
     const totalExecuted = evidences.reduce((sum, e) => sum + e.executedAmountUsd, 0);
     const planned = candidate.plannedAmountUsd ?? candidate.amountUsd;
+    // R6.1: Compute remaining = planned - aggregate executed
     const remaining = Math.max(0, planned - totalExecuted);
 
     candidate.executedAmountUsd = totalExecuted;
@@ -443,7 +517,7 @@ export function replanTranches(ctx: ReplanContext): AmaTranchePlan | null {
       }
     } else if (totalExecuted > 0) {
       candidate.executionState = "PARTIALLY_EXECUTED" as TrancheExecutionState;
-      // R5.4: Replan with remaining amount, not full amount
+      // R6.1: Replan with remaining amount, not full amount — BEFORE eligibility check
       candidate.amountUsd = remaining;
     }
   }
@@ -552,8 +626,31 @@ export function makeAdaptiveDecision(
     currentTimestamp,
   );
 
-  // R5.12: Use confirmed close from plan, not live price
-  const confirmedPrice = plan.asOfConfirmedClosePrice ?? input.currentPrice;
+  // R5.12/R6.14: Use confirmed close from plan ONLY — no fallback to live price
+  const confirmedPrice = plan.asOfConfirmedClosePrice;
+  if (confirmedPrice === undefined || confirmedPrice === null) {
+    // R6.14: No confirmed close — ABORT, do not fall back to input.currentPrice
+    return {
+      action: "ABORT",
+      reason: "NO_CONFIRMED_CLOSE_PRICE",
+      eligibleTrancheCount: eligibleCount,
+      guardrailPassed: guardrailCheck.passed,
+      cooldownActive,
+      periodLimitAllowed: true,
+      selectedTrancheId: null,
+      selectedSeedTrancheIndex: null,
+      selectedAmountUsd: null,
+      selectedTriggerPrice: null,
+      selectedPolicyId: null,
+      crossedLevels: [],
+      pendingCooldownLevels: [],
+      effectiveWeekStart: normalizedPeriodState.weekStart,
+      effectiveMonthStart: normalizedPeriodState.monthStart,
+      effectiveWeeklyDeployedUsd: normalizedPeriodState.weeklyDeployedUsd,
+      effectiveMonthlyDeployedUsd: normalizedPeriodState.monthlyDeployedUsd,
+      levelStates: {},
+    };
+  }
 
   // R5.11: Track level states
   const levelStates: Record<number, TrancheLevelState> = {};
@@ -609,6 +706,12 @@ export function makeAdaptiveDecision(
   };
 
   if (!guardrailCheck.passed) {
+    // R6.15: Mark all eligible candidates as BLOCKED_GUARDRAIL
+    for (const c of plan.candidateTranches) {
+      if (c.seedTrancheIndex !== undefined && c.eligible) {
+        levelStates[c.seedTrancheIndex] = "BLOCKED_GUARDRAIL";
+      }
+    }
     return {
       ...baseDecision,
       action: "ABORT",

@@ -72,6 +72,7 @@ const makeParams = (): AmaResolvedParameters => ({
 
 const makeSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranchePlanInput => ({
   hwmPrice: 50000,
+  hwmTimestamp: "2026-06-01T00:00:00Z",
   budgetUsd: 100000,
   deployedUsd: 0,
   reservedUsd: 0,
@@ -86,6 +87,7 @@ const makeSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranc
 
 const makeEthSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranchePlanInput => ({
   hwmPrice: 3000,
+  hwmTimestamp: "2026-06-01T00:00:00Z",
   budgetUsd: 100000,
   deployedUsd: 0,
   reservedUsd: 0,

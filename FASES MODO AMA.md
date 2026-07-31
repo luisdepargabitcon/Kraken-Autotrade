@@ -7,26 +7,26 @@
 **Documento:** seguimiento operativo y continuidad autónoma
 **Estado:** ACTIVO
 **Fecha de creación:** 2026-07-29
-**Última actualización:** 2026-07-31T05:30:00+02:00
+**Última actualización:** 2026-07-31T12:00:00+02:00
 **Cambio de alcance activo:** AMA-CC-2026-07-29-SEED-V2.2
 
 ---
 
 ## ESTADO OPERATIVO
 
-- TASK_STATUS: R5_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
-- CURRENT_PHASE: Fase 28 (R5)
-- CURRENT_SUBPHASE: Correcciones R5 aplicadas, tests R5 58/58 ✅, auditoría R5 creada, pendiente gate precommit R5
-- LAST_COMPLETED_ACTION: R5 — 15 correcciones aplicadas (strict normalization, confirmedClose validation, canonical seed envelope, partial fills, single deployedUsd source, evidence validation, metadata reconstruction, plan identity, reset before decide, cooldown fail-closed, level states, confirmed close in decision, consecutive window with gaps, HwmTransition traceability, API parity). 695 tests AMA ✅, npm run check ✅, npm run build ✅
-- NEXT_ACTION: Presentar gate precommit R5. Pendiente autorización commit/push en rama de revisión
-- R4_STATUS: COMMITTED_AND_PUSHED
-- HEAD_R4: 9c86c148aecb980682e41ebc7719fbae3eaf7db9
-- origin/review: 9c86c148aecb980682e41ebc7719fbae3eaf7db9
+- TASK_STATUS: R6_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- CURRENT_PHASE: Fase 28 (R6)
+- CURRENT_SUBPHASE: Correcciones R6 aplicadas, tests R6 32/32 ✅, auditoría R6 creada, pendiente gate precommit R6
+- LAST_COMPLETED_ACTION: R6 — 16 correcciones aplicadas (atomic replan, aggregated evidence, overfill detection, portfolioDeployedUsd reconciliation, confirmed close required, HWM supersede CANDIDATE, fail-closed period limits, fail-closed cooldown policy, no live price fallback, BLOCKED_GUARDRAIL, venue/post-only). 727 tests AMA ✅, npm run check ✅, npm run build ✅
+- NEXT_ACTION: Presentar gate precommit R6. Pendiente autorización commit/push en rama de revisión
+- R5_STATUS: COMMITTED_AND_PUSHED
+- HEAD_R5: f8edc55b43db517683dc3e2c7c9e1305be27dc33
+- origin/review: f8edc55b43db517683dc3e2c7c9e1305be27dc33
 - origin/main: 44cd46ff3a6e195556987968a87c8e795d66cd02
 - BLOCKERS: PostgreSQL desechable no disponible (BLOCKED_NO_SAFE_ENVIRONMENT). Migración 080 NOT_REGISTERED, NOT_AUTOAPPLY. Integración real de persistencia, logging, portfolio, SHADOW pendiente
-- PENDING_GATES: Gate precommit R5, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
-- LAST_VALIDATION: 2026-07-31 — npm run check ✅, npm run build ✅, 695/695 AMA tests ✅ (incluye 58 R5 nuevos), 59/59 Portfolio ✅, suite completa pendiente de ejecución final R5.18
-- UPDATED_AT: 2026-07-31T05:30:00+02:00
+- PENDING_GATES: Gate precommit R6, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
+- LAST_VALIDATION: 2026-07-31 — npm run check ✅, npm run build ✅, 727/727 AMA tests ✅ (incluye 32 R6 nuevos), 59/59 Portfolio ✅, suite completa pendiente de ejecución final R6.19
+- UPDATED_AT: 2026-07-31T12:00:00+02:00
 
 ---
 
@@ -282,7 +282,7 @@ o cuando todas las tareas restantes dependan de un gate duro.
 | 24 | Executor Revolut X bloqueado | BLOQUEADO | 2026-07-30 | REAL/SHADOW gates |
 | 25 | Seguridad y recovery | EN_VALIDACION | 2026-07-30 | — |
 | 26 | REAL_LIMITED | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
-| 27 | Validación final local | R5_APLICADA | 2026-07-31 | R5: strict normalization, confirmedClose, seed envelope, partial fills, evidence validation, plan identity, cooldown fail-closed, HwmTransition, API parity, 695 tests ✅ |
+| 27 | Validación final local | R6_APLICADA | 2026-07-31 | R6: atomic replan, aggregated evidence, overfill detection, portfolioDeployedUsd reconciliation, confirmed close required, HWM supersede CANDIDATE, fail-closed period limits/cooldown, no live price fallback, BLOCKED_GUARDRAIL, venue/post-only, 727 tests ✅ |
 | 28 | Deploy staging | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 | 29 | Archivo | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 
