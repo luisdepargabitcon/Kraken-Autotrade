@@ -222,7 +222,21 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - Mensaje post-apply aclara que no se ha creado ni modificado ningún rango.
 - Strict, `minLevelsForViableGrid=4` y el allocator se mantienen. 1 BUY + 1 SELL no se autoriza.
 - Tests actualizados para validar que `buyLevels`/`sellLevels` ya no son aplicables.
-- Sin migración, sin DB, sin deploy. Gate Revolut X visible queda pendiente para REV-C12B.
+- Sin migración, sin DB, sin deploy.
+
+### Cascada post-verificación REV-C12A (2026-07-31)
+
+- `recommendedAlternativeId=null` corregido en `checkDataSufficiency` blocked return (antes era `"A"`).
+- `resolveRequestedLevels` reescrito como validador estricto fail-closed: `validateStrictLevelValue` rechaza null, NaN, Infinity, cero, negativos, decimales y valores excesivos. Nunca convierte un valor inválido a 1.
+- Proyección canónica B/C mediante `generateProfessionalGridLevels`: `resolveProjectionInput` extrae todos los campos requeridos; `projectCanonicalLevels` ejecuta el generador profesional con overrides. B y C solo son `safeToApply=true` si la proyección canónica retorna viable. `computeSpacingAndLevels` queda como diagnóstico preliminar.
+- Gate Revolut X visible en `GridMarketPanel`: muestra estado del gate (microestructura no verificada / validación canónica superada / pendiente) según `configurationRecommendation.alternatives`.
+- UX post-apply en `GridRecommendationDialog`: mensaje de éxito incluye confirmación de validación canónica con Revolut X.
+- `gridUxRender.test.tsx` corregido: fixture V3 (`entryLevels`, `referenceRungs`, `legacyTargetLevels`) y aserciones V3. 10/10 pasan.
+- `gridRecommendationAlternatives.test.ts` actualizado para REV-C12A.
+- Codificación MD auditoría reparada: UTF-8 sin BOM, LF.
+- Tests saveConfig fail-closed: error message incluye DB error, rollback completo, restauración de null values.
+- Matriz Grid (9 archivos): 260/260 ✅. `npx tsc` ✅. `npm run build` ✅.
+- Datos reales de `executionMarketSnapshot` en view model queda pendiente para REV-C12B.
 
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 

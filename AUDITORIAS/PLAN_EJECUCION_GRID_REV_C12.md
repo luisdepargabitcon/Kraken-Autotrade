@@ -2,8 +2,8 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12A implementada en rama de revisión; pendiente verificación independiente**
-- **NEXT_ACTION: revisión independiente del commit REV-C12A antes de merge a main**
+- **TASK_STATUS: REV-C12A cascada post-verificación implementada en rama de revisión; pendiente commit y push**
+- **NEXT_ACTION: commit técnico + documental, push a rama de revisión**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
@@ -11,7 +11,7 @@
 
 Corrección del flujo `diagnóstico → recomendación → aplicación → persistencia → recarga` para el Grid Isolated.
 
-## Cambios aplicados
+## Cambios aplicados (initial commit ba25ec7 + 15e2714)
 
 1. Eliminación de `buyLevels`/`sellLevels` como campos aplicables:
    - `RECOMMENDATION_APPLY_ALLOWLIST` sin `buyLevels`/`sellLevels`.
@@ -44,18 +44,55 @@ Corrección del flujo `diagnóstico → recomendación → aplicación → persi
    - Mensaje: "Configuración guardada correctamente. No se ha creado ni modificado ningún rango..."
    - Aplicar y analizar continúan siendo acciones distintas.
 
+## Cambios aplicados (cascada post-verificación REV-C12A)
+
+8. `recommendedAlternativeId=null` en estados bloqueados:
+   - `checkDataSufficiency` blocked return ahora usa `recommendedAlternativeId: null`.
+   - Tests verifican que estados bloqueados no recomiendan A.
+
+9. `resolveRequestedLevels` fail-closed estricto:
+   - `validateStrictLevelValue` rechaza null, NaN, Infinity, cero, negativos, decimales y valores excesivos.
+   - Nunca convierte un valor inválido a 1.
+   - Retorna null si cualquier fuente es inválida, incompleta o inconsistente.
+
+10. Proyección canónica B/C con `generateProfessionalGridLevels`:
+    - `resolveProjectionInput` extrae todos los campos requeridos de `RecommendationServiceInput`.
+    - `projectCanonicalLevels` ejecuta `generateProfessionalGridLevels` con overrides.
+    - B y C solo son `safeToApply=true` si la proyección canónica retorna viable.
+    - `computeSpacingAndLevels` se usa solo para diagnóstico preliminar, no para `safeToApply`.
+    - Sin microestructura Revolut X (spread/tick), B y C quedan bloqueados.
+
+11. Gate Revolut X visible en view model y `GridMarketPanel`:
+    - `GridMarketPanel` muestra estado del gate: "microestructura no verificada", "validación canónica superada" o "pendiente".
+    - `configurationRecommendation` ya está en el view model (`market.current.configurationRecommendation`).
+
+12. UX post-apply en `GridRecommendationDialog`:
+    - Mensaje de éxito incluye confirmación de validación canónica con Revolut X.
+
+13. `gridUxRender.test.tsx` corregido:
+    - Fixture actualizado a V3 (`entryLevels`, `referenceRungs`, `legacyTargetLevels`).
+    - Aserciones actualizadas a etiquetas V3.
+    - 10/10 tests pasan (antes 9/10 con fallo preexistente).
+
+14. `gridRecommendationAlternatives.test.ts` actualizado:
+    - Tests alineados con REV-C12A (A informativa, sin buyLevels/sellLevels, B/C bloqueados sin microestructura).
+
+15. Codificación MD auditoría reparada:
+    - `AUDITORIA_GRID_REV_C12_RECOMENDACIONES_SIN_EFECTO_2026-07-30.md`: UTF-8 sin BOM, LF.
+
 ## Tests validados
 
-- `npx vitest run server/services/__tests__/gridRecommendationService.test.ts` ✅
+- `npx vitest run server/services/__tests__/gridRecommendationService.test.ts` ✅ (49/49)
 - `npx vitest run server/services/__tests__/gridRecommendationValidation.test.ts` ✅
-- `npx vitest run server/services/__tests__/applyRecommendationPatchAtomically.test.ts` ✅
+- `npx vitest run server/services/__tests__/applyRecommendationPatchAtomically.test.ts` ✅ (7/7)
 - `npx vitest run server/routes/__tests__/gridRecommendationApply.test.ts` ✅
 - `npx vitest run client/src/components/grid/GridRecommendationDialog.test.tsx` ✅
-- `npx vitest run client/src/components/grid/GridMarketPanel.test.tsx` ✅
-- `npx vitest run server/services/gridIsolated ... client/src/components/grid` ✅ (530/531; fallo aislado preexistente en `gridUxRender.test.tsx` no relacionado con el alcance)
-- `npx tsc` ✅
+- `npx vitest run client/src/components/grid/GridMarketPanel.test.tsx` ✅ (8/8)
+- `npx vitest run client/src/components/grid/__tests__/gridUxRender.test.tsx` ✅ (10/10)
+- `npx vitest run server/services/__tests__/gridRecommendationAlternatives.test.ts` ✅ (6/6)
+- Matriz Grid (9 archivos): 260/260 ✅
+- `npx tsc --noEmit` ✅
 - `npm run build` ✅
-- `git diff --check` ✅
 
 ## Invariantes mantenidas
 
@@ -64,10 +101,11 @@ Corrección del flujo `diagnóstico → recomendación → aplicación → persi
 - Allocator como fuente de niveles.
 - 1+1 no autorizado.
 - Sin modificaciones de DB, schema, migraciones, deploy, VPS o credenciales.
+- origin/main intacto en `44cd46ff3a6e195556987968a87c8e795d66cd02`.
 
 ## Pendiente REV-C12B
 
-- Extensión del gate Revolut X en view model y `GridMarketPanel` (datos reales de `executionMarketSnapshot` / `pairConstraints`).
+- Datos reales de `executionMarketSnapshot` / `pairConstraints` en el view model (persistencia del último snapshot).
 - Causa raíz de `REVOLUT_X_UNAVAILABLE` en staging.
 
 ## Rama

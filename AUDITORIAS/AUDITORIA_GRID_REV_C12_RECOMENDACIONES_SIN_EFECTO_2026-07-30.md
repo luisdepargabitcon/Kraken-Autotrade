@@ -1,4 +1,4 @@
-﻿# AUDITORIA GRID REV-C12 â€” Recomendaciones sin efecto y cero niveles
+# AUDITORIA GRID REV-C12 â€” Recomendaciones sin efecto y cero niveles
 
 **Fecha:** 2026-07-30
 **Veredicto:** A. BUG CONFIRMADO â€” CAMPOS FANTASMA Y GENERADOR DESCONECTADO
