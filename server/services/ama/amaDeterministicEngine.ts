@@ -578,6 +578,14 @@ export function planTranchesFromSeeds(
     mandatoryReserveUsd,
     deployableCycleCapitalUsd,
     createdAt: new Date().toISOString(),
+    // R7.6: Mandatory HWM/effective fields — defaults for legacy builder
+    asOfConfirmedCloseTimestamp: new Date().toISOString(),
+    asOfConfirmedClosePrice: 0,
+    effectiveDeploymentPct: parameters.maxCycleDeploymentPct,
+    effectiveReservePct: parameters.mandatoryReservePct,
+    effectiveDeployablePct: 100 - parameters.mandatoryReservePct,
+    hwmPrice: input.hwmPrice,
+    hwmTimestamp: new Date().toISOString(),
   };
 }
 
@@ -663,6 +671,14 @@ export function planTranches(
     mandatoryReserveUsd,
     deployableCycleCapitalUsd,
     createdAt: new Date().toISOString(),
+    // R7.6: Mandatory HWM/effective fields — defaults for legacy builder
+    asOfConfirmedCloseTimestamp: new Date().toISOString(),
+    asOfConfirmedClosePrice: 0,
+    effectiveDeploymentPct: parameters.maxCycleDeploymentPct,
+    effectiveReservePct: parameters.mandatoryReservePct,
+    effectiveDeployablePct: 100 - parameters.mandatoryReservePct,
+    hwmPrice: input.hwmPrice,
+    hwmTimestamp: new Date().toISOString(),
   };
 }
 
@@ -745,7 +761,7 @@ function canonicalPlanPayload(plan: AmaTranchePlan): string {
   return JSON.stringify(payload);
 }
 
-// R6.8: Unified canonical plan identity payload
+// R6.8/R7.7: Unified canonical plan identity payload — single source of truth
 export function buildCanonicalPlanIdentityPayload(plan: AmaTranchePlan): string {
   const payload = {
     cycleId: plan.cycleId,
@@ -753,9 +769,10 @@ export function buildCanonicalPlanIdentityPayload(plan: AmaTranchePlan): string 
     asset: plan.candidateTranches[0]?.asset,
     policyId: plan.candidateTranches[0]?.policyId,
     policyVersion: plan.candidateTranches[0]?.policyVersion,
+    hwmPrice: plan.hwmPrice,
     hwmTimestamp: plan.hwmTimestamp,
-    confirmedCloseTimestamp: plan.asOfConfirmedCloseTimestamp,
     confirmedClosePrice: plan.asOfConfirmedClosePrice !== undefined ? Number(plan.asOfConfirmedClosePrice.toFixed(8)) : undefined,
+    confirmedCloseTimestamp: plan.asOfConfirmedCloseTimestamp,
     effectiveDeploymentPct: plan.effectiveDeploymentPct,
     effectiveReservePct: plan.effectiveReservePct,
     effectiveDeployablePct: plan.effectiveDeployablePct,
@@ -781,27 +798,29 @@ export function buildCanonicalPlanIdentityPayload(plan: AmaTranchePlan): string 
   return JSON.stringify(payload);
 }
 
+// R7.7: computePlanId derives from the same hash as computePlanHash
 export function computePlanId(cycleId: string, candidates: AmaTrancheCandidate[], confirmedClose?: { timestamp: string; close: number }): string {
-  // R5.8: Derive planId from full canonical payload
-  const payload = JSON.stringify({
+  // R7.7: Build a temporary plan to compute hash via unified payload
+  // This is used only by legacy callers; canonical flow uses finalizePlanIdentity
+  const tempPlan: AmaTranchePlan = {
+    planId: "",
     cycleId,
-    confirmedCloseTimestamp: confirmedClose?.timestamp,
-    confirmedClosePrice: confirmedClose ? Number(confirmedClose.close.toFixed(8)) : undefined,
-    candidates: candidates.map((c) => ({
-      id: c.trancheId,
-      amt: Number(c.amountUsd.toFixed(8)),
-      eligible: c.eligible,
-      seedTrancheIndex: c.seedTrancheIndex,
-      canonicalTriggerPrice: c.canonicalTriggerPrice !== undefined ? Number(c.canonicalTriggerPrice.toFixed(8)) : undefined,
-      remainingAmountUsd: c.remainingAmountUsd !== undefined ? Number(c.remainingAmountUsd.toFixed(8)) : undefined,
-      executionState: c.executionState,
-      policyId: c.policyId,
-      policyVersion: c.policyVersion,
-      asset: c.asset,
-    })),
-  });
-  const hash = createHash("sha256").update(payload).digest("hex").slice(0, 16);
-  return `plan-${cycleId}-${hash}`;
+    version: 1,
+    plannedPurchaseCount: candidates.filter((c) => c.eligible).length,
+    candidateTranches: candidates,
+    mandatoryReserveUsd: 0,
+    deployableCycleCapitalUsd: 0,
+    createdAt: new Date().toISOString(),
+    asOfConfirmedCloseTimestamp: confirmedClose?.timestamp ?? "",
+    asOfConfirmedClosePrice: confirmedClose?.close ?? 0,
+    effectiveDeploymentPct: 0,
+    effectiveReservePct: 0,
+    effectiveDeployablePct: 0,
+    hwmPrice: 0,
+    hwmTimestamp: "",
+  };
+  const hash = computePlanHash(tempPlan);
+  return `plan-${cycleId}-${hash.slice(0, 24)}`;
 }
 
 export function computePlanHash(plan: AmaTranchePlan): string {
@@ -810,23 +829,19 @@ export function computePlanHash(plan: AmaTranchePlan): string {
   return createHash("sha256").update(payload).digest("hex");
 }
 
-// ─── Idempotency Key (R2 — deterministic, no Date.now()) ─────────────
+// ─── Idempotency Key (R7.8: derived from planHash, not independent params) ──
 
 export function computeIdempotencyKey(
-  asset: AssetSymbol,
-  cycleId: string,
-  policyVersion: number,
-  trancheIndex: number,
-  confirmedCandleTimestamp: string,
+  planHash: string,
+  trancheId: string,
   action: string,
+  canonicalAsOfTimestamp: string,
 ): string {
   const payload = JSON.stringify({
-    asset,
-    cycleId,
-    policyVersion,
-    trancheIndex,
-    confirmedCandleTimestamp,
+    planHash,
+    trancheId,
     action,
+    canonicalAsOfTimestamp,
   });
   return createHash("sha256").update(payload).digest("hex").slice(0, 24);
 }
@@ -980,11 +995,9 @@ export function buildCanonicalSeedPlan(
   const mandatoryReserveUsd = input.budgetUsd * (effectiveConstraints.reservePct / 100);
   const deployableCycleCapitalUsd = input.budgetUsd * (effectiveConstraints.deployablePct / 100);
 
-  // R5.8: Compute planId with full canonical payload including confirmedClose
-  const planId = computePlanId(input.cycleId, candidates, { timestamp: canonicalConfirmedCloseTimestamp, close: confirmedClose.close });
-
-  return {
-    planId,
+  // R5.8/R7.7: Compute planId from the final plan (unified identity)
+  const finalPlan: AmaTranchePlan = {
+    planId: "",
     cycleId: input.cycleId,
     version: 1,
     plannedPurchaseCount: eligibleCount,
@@ -992,12 +1005,19 @@ export function buildCanonicalSeedPlan(
     mandatoryReserveUsd,
     deployableCycleCapitalUsd,
     createdAt: new Date().toISOString(),
-    // R5.12: Confirmed close reference (R6.7: UTC canonical)
     asOfConfirmedCloseTimestamp: canonicalConfirmedCloseTimestamp,
     asOfConfirmedClosePrice: confirmedClose.close,
-    // R6.6: Effective constraints
     effectiveDeploymentPct: effectiveConstraints.deploymentPct,
     effectiveReservePct: effectiveConstraints.reservePct,
     effectiveDeployablePct: effectiveConstraints.deployablePct,
+    hwmPrice: input.hwmPrice,
+    hwmTimestamp: new Date(input.hwmTimestamp).toISOString(),
+  };
+  const planHash = computePlanHash(finalPlan);
+  const planId = `plan-${input.cycleId}-${planHash.slice(0, 24)}`;
+
+  return {
+    ...finalPlan,
+    planId,
   };
 }

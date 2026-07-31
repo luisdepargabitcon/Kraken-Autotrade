@@ -30,7 +30,7 @@ export interface AmaAssetProfile {
   pair: string;
   mode: AssetMode;
   analysisVenue: AnalysisVenue;
-  /** @deprecated R6.16: Use targetExecutionVenue instead. */
+  /** @deprecated R6.16: Use targetExecutionVenue instead. LEGACY_COMPATIBILITY_ONLY NOT_FOR_CANONICAL_SEED_FLOW */
   futureExecutionVenue: FutureExecutionVenue;
   targetExecutionVenue: TargetExecutionVenue;
   executionEnabled: boolean;
@@ -42,6 +42,7 @@ export interface AmaAssetProfile {
   canUseRevolutX: boolean;
   sharesBtcCapital: boolean;
   inheritsBtcPromotion: boolean;
+  makerOnly: boolean;
   postOnly: boolean;
   takerFallback: boolean;
   currentAdapter: CurrentAdapter;
@@ -65,6 +66,7 @@ export const BTC_ASSET_PROFILE: AmaAssetProfile = {
   canUseRevolutX: false,
   sharesBtcCapital: false,
   inheritsBtcPromotion: false,
+  makerOnly: true,
   postOnly: true,
   takerFallback: false,
   currentAdapter: "SHADOW",
@@ -88,6 +90,7 @@ export const ETH_ASSET_PROFILE: AmaAssetProfile = {
   canUseRevolutX: false,
   sharesBtcCapital: false,
   inheritsBtcPromotion: false,
+  makerOnly: true,
   postOnly: true,
   takerFallback: false,
   currentAdapter: null,

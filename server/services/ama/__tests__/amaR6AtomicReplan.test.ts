@@ -83,6 +83,7 @@ const makeSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTranc
 } as SeedTranchePlanInput);
 
 const confirmedClose = { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true };
+const replanClose = { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true };
 
 const makeEvidence = (overrides: Partial<ExecutedTrancheEvidence> = {}): ExecutedTrancheEvidence => ({
   cycleId: "cycle-r6",
@@ -108,7 +109,7 @@ describe("R6.1 — Atomic replan with remainders before eligibility", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 3000,
     })!;
@@ -126,7 +127,7 @@ describe("R6.1 — Atomic replan with remainders before eligibility", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 7000,
     })!;
@@ -142,7 +143,7 @@ describe("R6.1 — Atomic replan with remainders before eligibility", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 3000,
     })!;
@@ -242,7 +243,7 @@ describe("R6.4 — portfolioDeployedUsd reconciliation", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 7000,
     })!;
@@ -274,7 +275,7 @@ describe("R6.5 — Enhanced evidence validation", () => {
     const evidence = [makeEvidence({ executedAt: "2026-07-28T10:00:00Z" })];
     const result = validateExecutedEvidence(evidence, original);
     expect(result.valid).toBe(false);
-    expect(result.reasonCodes.some((r) => r.startsWith("EXECUTED_BEFORE_CONFIRMED_CLOSE"))).toBe(true);
+    expect(result.reasonCodes.some((r) => r.startsWith("EXECUTED_BEFORE_PLAN_AS_OF"))).toBe(true);
   });
 
   it("15. policyId mismatch is rejected", () => {
@@ -474,8 +475,9 @@ describe("R6.13 — Cooldown policy validation first", () => {
 
   it("32. applyCooldown with invalid policy does not apply cooldown", () => {
     const state = createCooldownState("bad_policy");
-    const newState = applyCooldown(state, "2026-07-29T10:00:00Z");
-    expect(newState.cooldownEndsAt).toBeNull();
-    expect(newState.lastTrancheAt).toBeNull();
+    const result = applyCooldown(state, "2026-07-29T10:00:00Z");
+    expect(result.valid).toBe(false);
+    expect(result.cooldownEndsAt).toBeNull();
+    expect(result.lastTrancheAt).toBeNull();
   });
 });

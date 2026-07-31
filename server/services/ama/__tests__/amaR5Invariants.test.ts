@@ -13,6 +13,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildCanonicalSeedPlan,
   computePlanId,
+  computePlanHash,
   validateConfirmedDailyClose,
   getCanonicalSeedEnvelope,
   validateAgainstSeedEnvelope,
@@ -137,6 +138,7 @@ const makeEvidence = (overrides: Partial<ExecutedTrancheEvidence> = {}): Execute
 });
 
 const confirmedClose = { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true };
+const replanClose = { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true };
 
 // ─── R5.1: Strict normalization ──────────────────────────────────────
 
@@ -313,7 +315,7 @@ describe("R5.4 — Partial fills correction", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 3500,
     })!;
@@ -330,7 +332,7 @@ describe("R5.4 — Partial fills correction", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 7000,
     })!;
@@ -350,7 +352,7 @@ describe("R5.5 — Single deployedUsd source", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 7000,
     })!;
@@ -364,7 +366,7 @@ describe("R5.5 — Single deployedUsd source", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput({ deployedUsd: 3000 }),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 10000,
     })!;
@@ -375,7 +377,7 @@ describe("R5.5 — Single deployedUsd source", () => {
     const originalWith3000 = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput({ deployedUsd: 3000 }),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 7000,
     })!;
@@ -450,7 +452,7 @@ describe("R5.7 — Metadata reconstruction after replan", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 7000,
     })!;
@@ -464,13 +466,14 @@ describe("R5.7 — Metadata reconstruction after replan", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 7000,
     })!;
     expect(replanned.planId).not.toBe(original.planId);
-    // Verify planId is deterministic
-    const expectedId = computePlanId(replanned.cycleId, replanned.candidateTranches, confirmedClose);
+    // R7.7: planId is now derived from the full plan hash (including HWM fields)
+    const expectedHash = computePlanHash(replanned);
+    const expectedId = `plan-${replanned.cycleId}-${expectedHash.slice(0, 24)}`;
     expect(replanned.planId).toBe(expectedId);
   });
 
@@ -480,7 +483,7 @@ describe("R5.7 — Metadata reconstruction after replan", () => {
     const replanned = replanTranches({
       originalPlan: original,
       seedInput: makeSeedInput(),
-      confirmedClose,
+      confirmedClose: replanClose,
       executedTranches: evidence,
       portfolioDeployedUsd: 7000,
     })!;
@@ -524,7 +527,7 @@ describe("R5.9 — Reset period limits before deciding", () => {
     const input = makePlanInput();
     const cooldown = createCooldownState("1_daily");
     const period = createPeriodLimitState();
-    period.weekStart = "2026-06-23T00:00:00Z"; // Old week
+    period.weekStart = "2026-06-22T00:00:00Z"; // Old week (Monday)
     period.weeklyDeployedUsd = 28000;
     const decision = makeAdaptiveDecision(plan, input, cooldown, period, "2026-07-29T10:00:00Z");
     // After reset, weeklyDeployedUsd should be 0

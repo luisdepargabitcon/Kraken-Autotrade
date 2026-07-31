@@ -14,19 +14,19 @@
 
 ## ESTADO OPERATIVO
 
-- TASK_STATUS: R6_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
-- CURRENT_PHASE: Fase 28 (R6)
-- CURRENT_SUBPHASE: Correcciones R6 aplicadas, tests R6 32/32 ✅, auditoría R6 creada, pendiente gate precommit R6
-- LAST_COMPLETED_ACTION: R6 — 16 correcciones aplicadas (atomic replan, aggregated evidence, overfill detection, portfolioDeployedUsd reconciliation, confirmed close required, HWM supersede CANDIDATE, fail-closed period limits, fail-closed cooldown policy, no live price fallback, BLOCKED_GUARDRAIL, venue/post-only). 727 tests AMA ✅, npm run check ✅, npm run build ✅
-- NEXT_ACTION: Presentar gate precommit R6. Pendiente autorización commit/push en rama de revisión
-- R5_STATUS: COMMITTED_AND_PUSHED
-- HEAD_R5: f8edc55b43db517683dc3e2c7c9e1305be27dc33
-- origin/review: f8edc55b43db517683dc3e2c7c9e1305be27dc33
+- TASK_STATUS: R7_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- CURRENT_PHASE: Fase 28 (R7)
+- CURRENT_SUBPHASE: Correcciones R7 aplicadas, tests R7 49/49 ✅, auditoría R7 creada, pendiente gate precommit R7
+- LAST_COMPLETED_ACTION: R7 — 12 correcciones aplicadas (replan atómico verdadero, elegibilidad post-fill, intervalo temporal evidence, semántica PARTIAL/FILLED, portfolioDeployedUsd fail-closed, HWM obligatorio, planId/planHash unificado, idempotencia desde plan final, paridad HWM velas abiertas, PeriodLimitState validado, cooldown resultado explícito, venue canónico). 776 tests AMA ✅, npm run check ✅, npm run build ✅
+- NEXT_ACTION: Presentar gate precommit R7. Pendiente autorización commit/push en rama de revisión
+- R6_STATUS: COMMITTED_AND_PUSHED
+- HEAD_R6: 7d6cbffcc688690c380b5903f3dc2a7c9a5381e3
+- origin/review: 7d6cbffcc688690c380b5903f3dc2a7c9a5381e3
 - origin/main: 44cd46ff3a6e195556987968a87c8e795d66cd02
 - BLOCKERS: PostgreSQL desechable no disponible (BLOCKED_NO_SAFE_ENVIRONMENT). Migración 080 NOT_REGISTERED, NOT_AUTOAPPLY. Integración real de persistencia, logging, portfolio, SHADOW pendiente
-- PENDING_GATES: Gate precommit R6, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
-- LAST_VALIDATION: 2026-07-31 — npm run check ✅, npm run build ✅, 727/727 AMA tests ✅ (incluye 32 R6 nuevos), 59/59 Portfolio ✅, suite completa pendiente de ejecución final R6.19
-- UPDATED_AT: 2026-07-31T12:00:00+02:00
+- PENDING_GATES: Gate precommit R7, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
+- LAST_VALIDATION: 2026-07-31 — npm run check ✅, npm run build ✅, 776/776 AMA tests ✅ (incluye 49 R7 nuevos), 59/59 Portfolio ✅, suite completa pendiente de ejecución final R7.15
+- UPDATED_AT: 2026-07-31T19:40:00+02:00
 
 ---
 

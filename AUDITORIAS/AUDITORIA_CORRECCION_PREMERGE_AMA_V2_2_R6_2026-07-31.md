@@ -231,3 +231,14 @@ No declarar:
 - migración 080 lista para aplicarse
 - SHADOW operativo
 - REAL preparado
+
+---
+
+## Actualización R7 — 2026-07-31
+
+- R6 = COMMITTED_AND_PUSHED
+- HEAD_R6 = 7d6cbffcc688690c380b5903f3dc2a7c9a5381e3
+- origin/review = 7d6cbffcc688690c380b5903f3dc2a7c9a5381e3
+- R7 = CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- R7 AMA tests = 776/776 (incluye 49 R7 nuevos)
+- Ver auditoría R7: `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R7_2026-07-31.md`

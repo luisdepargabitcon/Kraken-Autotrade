@@ -523,13 +523,16 @@ export function bootstrapHWM(
 
   const hwmPrice = closedOnly[highestIdx].close;
   const hwmTimestamp = closedOnly[highestIdx].timestamp;
-  const subsequentCloses = closedOnly.slice(highestIdx + 1);
+  // R7.9: Pass ALL observations (open+closed) after HWM for confirmation
+  // so that open candles can reset the sequence (parity with processIncrementalClose)
+  const hwmTsMs = new Date(hwmTimestamp).getTime();
+  const subsequentAll = normResult.closes.filter((c) => new Date(c.timestamp).getTime() > hwmTsMs);
 
-  // R2: Use canonical shared evaluation function (R5.1: strict)
+  // R2: Use canonical shared evaluation function (R5.1: strict, R7.9: pass all observations)
   const result = evaluateConfirmation({
     hwmPrice,
     hwmTimestamp,
-    subsequentCloses,
+    subsequentCloses: subsequentAll,
     requiredConfirmations,
     reversalThresholdPct,
   });
@@ -765,15 +768,16 @@ export function processIncrementalClose(
     return { previous: hwm, current: hwm, transition: "UNCHANGED", reasonCodes };
   }
 
-  // For CANDIDATE and CONFIRMING: gather subsequent closes up to asOf and evaluate
-  const subsequentCloses = closedOnly.filter(
+  // R7.9: Pass ALL observations (open+closed) after HWM for confirmation
+  // so that open candles can reset the sequence (parity with bootstrapHWM)
+  const subsequentAll = normResult.closes.filter(
     (c) => new Date(c.timestamp).getTime() > hwmTimestamp,
   );
 
   const result = evaluateConfirmation({
     hwmPrice: hwm.price,
     hwmTimestamp: hwm.timestamp,
-    subsequentCloses,
+    subsequentCloses: subsequentAll,
     requiredConfirmations,
     reversalThresholdPct,
   });

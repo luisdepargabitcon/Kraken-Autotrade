@@ -6863,3 +6863,81 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 ### Estado final
 - REV-C11 completada, desplegada y validada en staging.
 - Sin órdenes reales y sin modificar la DB.
+
+---
+
+## 2026-07-31 — AMA V2.2 R7: Atomicidad verdadera, identidad unificada y HWM parity
+
+### Resumen
+R7 implementa 12 correcciones sobre el pipeline adaptativo AMA, transformando el replan en un pipeline atómico real con pipeline ordenado estricto (validación → agregación → construcción → elegibilidad → identidad), intervalo temporal completo de evidence, semántica agregada PARTIAL/FILLED, reconciliación fail-closed de portfolioDeployedUsd, HWM obligatorio en planes canónicos, planId y planHash con identidad única desde el plan final, idempotencia derivada del plan final, paridad HWM con velas abiertas, validación de PeriodLimitState antes de reset, cooldown con resultado explícito, y venue canónico con makerOnly/postOnly/takerFallback.
+
+### Estado R6 previo
+- R6 = COMMITTED_AND_PUSHED
+- HEAD_R6 = 7d6cbffcc688690c380b5903f3dc2a7c9a5381e3
+- origin/review = 7d6cbffcc688690c380b5903f3dc2a7c9a5381e3
+- origin/main = 44cd46ff3a6e195556987968a87c8e795d66cd02
+- R6 AMA = 727/727
+- R6 Portfolio = 59/59
+- R6 suite completa = 3842 passed / 31 failed / 29 skipped
+- R6 fallos nuevos = 0
+- R6 skipped nuevos = 0
+
+### Correcciones R7 aplicadas
+
+- **R7.1 — Replan verdaderamente atómico:** `replanTranches` reescrito como pipeline ordenado: validar plan original → validar evidence → agregar evidence por tranche → reconciliar portfolioDeployedUsd → construir remaining seed levels → evaluar elegibilidad → finalizar plan con identidad unificada.
+- **R7.2 — Elegibilidad post-fill recalculada:** La elegibilidad se evalúa después de aplicar fills, no antes. Los candidatos con partial fill preservan `remainingAmountUsd` y se evalúan con el remanente.
+- **R7.3 — Intervalo temporal completo de evidence:** `validateExecutedEvidence` ahora valida que `executedAt` esté entre `planAsOfConfirmedCloseTimestamp` y `currentConfirmedClose.timestamp`. Reason code `EXECUTED_BEFORE_PLAN_AS_OF` reemplaza `EXECUTED_BEFORE_CONFIRMED_CLOSE`.
+- **R7.4 — Semántica agregada PARTIAL/FILLED:** Valida secuencia de fillStatus: FILLED con remanente > 0 → rechazado; PARTIAL que alcanza full amount → rechazado; múltiples FILLED → rechazado; evento después de FILLED → rechazado.
+- **R7.5 — portfolioDeployedUsd fail-closed:** Reconciliación estricta: `portfolioDeployedUsd < sum(evidence)` → null; `portfolioDeployedUsd > budget` → null.
+- **R7.6 — HWM obligatorio en planes canónicos:** `AmaTranchePlan` requiere `hwmPrice` y `hwmTimestamp`. Los builders legacy los añaden con defaults.
+- **R7.7 — planId y planHash con identidad única:** `planId = plan-${cycleId}-${planHash.slice(0,24)}` donde `planHash = computePlanHash(plan)` sobre el plan final completo.
+- **R7.8 — Idempotencia derivada del plan final:** `computeIdempotencyKey(planHash, trancheId, action, canonicalAsOfTimestamp)`.
+- **R7.9 — Paridad HWM con velas abiertas:** `bootstrapHWM` y `processIncrementalClose` pasan todas las observaciones (open+closed) después del HWM para confirmación, permitiendo que velas abiertas reseteen la secuencia.
+- **R7.10 — PeriodLimitState validado antes de reset:** `validatePeriodLimitState` verifica weekStart (Monday UTC), monthStart (día 1 UTC), deployedUsd ≥ 0 antes de cualquier reset.
+- **R7.11 — Cooldown con resultado explícito:** `applyCooldown` retorna `CooldownApplyResult extends CooldownState` con `valid` y `reasonCodes`. Backward compatible: los callers existentes siguen funcionando.
+- **R7.12 — Venue canónico:** `makerOnly = true`, `postOnly = true`, `takerFallback = false` en BTC y ETH. `targetExecutionVenue` canónico.
+
+### Archivos modificados
+
+- `server/services/ama/amaAdaptivePlanner.ts` — R7.1–R7.5, R7.10, R7.11: pipeline atómico, validateExecutedEvidence con intervalo temporal y fillStatus, validatePeriodLimitState, applyCooldown con CooldownApplyResult
+- `server/services/ama/amaDeterministicEngine.ts` — R7.6, R7.7, R7.8: HWM obligatorio, planId desde planHash, computeIdempotencyKey desde plan final
+- `server/services/ama/amaHwmBar.ts` — R7.9: paridad HWM con velas abiertas
+- `server/services/ama/amaSeedTypes.ts` — R7.12: makerOnly en asset profiles
+- `server/services/ama/amaTypes.ts` — tipos actualizados
+- `server/services/ama/__tests__/amaR7TrueAtomicity.test.ts` — **NUEVO**, 49 tests
+- `server/services/ama/__tests__/amaR5Invariants.test.ts` — Fix: replanClose, computePlanHash, weekStart Monday
+- `server/services/ama/__tests__/amaR6AtomicReplan.test.ts` — Fix: replanClose, EXECUTED_BEFORE_PLAN_AS_OF, CooldownApplyResult
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R7_2026-07-31.md` — **NUEVO**
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R6_2026-07-31.md` — actualizado con estado R7
+- `BITACORA.md` — entrada R7
+- `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R7
+- `FASES MODO AMA.md` — estado R7
+
+### Validaciones
+
+- `npm run check` ✅
+- `npm run build` ✅
+- Tests R7: 49/49 ✅
+- Tests AMA: 776/776 ✅ (24 archivos)
+- Tests Portfolio: 59/59 ✅
+- Suite completa: pendiente de ejecución final R7.15
+- Fallos nuevos esperados: 0
+- Skipped nuevos esperados: 0
+
+### Bloqueos vigentes
+
+- PostgreSQL = BLOCKED_NO_SAFE_ENVIRONMENT
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
+- amaService = DEVELOPMENT_SCAFFOLD_ONLY
+- SHADOW = BLOQUEADO
+- REAL_LIMITED = BLOQUEADO
+- REAL_FULL = BLOQUEADO
+
+### Estado final
+
+- R7 = CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- Commit = NO
+- Push = NO
+- Merge = NO
+- Deploy = NO
+- Migraciones = NO

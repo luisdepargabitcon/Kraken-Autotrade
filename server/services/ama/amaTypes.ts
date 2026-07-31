@@ -408,15 +408,16 @@ export interface AmaTranchePlan {
   mandatoryReserveUsd: number;
   deployableCycleCapitalUsd: number;
   createdAt: string;
-  // R5.12: Confirmed close reference for decision
-  asOfConfirmedCloseTimestamp?: string;
-  asOfConfirmedClosePrice?: number;
-  // R6.6: Effective constraints from envelope
-  effectiveDeploymentPct?: number;
-  effectiveReservePct?: number;
-  effectiveDeployablePct?: number;
-  // R6.7: HWM timestamp for validation
-  hwmTimestamp?: string;
+  // R5.12/R7.6: Confirmed close reference — mandatory in canonical plans
+  asOfConfirmedCloseTimestamp: string;
+  asOfConfirmedClosePrice: number;
+  // R6.6/R7.6: Effective constraints from envelope — mandatory
+  effectiveDeploymentPct: number;
+  effectiveReservePct: number;
+  effectiveDeployablePct: number;
+  // R7.6: HWM context — mandatory in canonical plans
+  hwmPrice: number;
+  hwmTimestamp: string;
 }
 
 export type TrancheExecutionState =
