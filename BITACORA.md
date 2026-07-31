@@ -252,6 +252,20 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - `GridMarketPanel.test.tsx` actualizado para gate real (VERIFICADO/BLOQUEADO/SIN EVALUACIÓN RECIENTE).
 - Tests: 128/128 pasan (recomendación + view model + market panel + route apply). `npx tsc` ✅.
 
+### Cascada REV-C12B (2026-07-31) — runtime integration + gate edad + campos fantasma + validadores estrictos
+
+- `GridRecommendationProjectionState` en `GridIsolatedEngine`: interface tipada con `evaluatedAt`, `validUntil`, `pair`, `bandSnapshot`, `executionMarketSnapshot`, `pairConstraints`, `allocation`. `lastRecommendationProjectionState` in-memory, actualizado solo durante el tick. `getRecommendationProjectionState()` devuelve copia si fresca, null si expirada. Lecturas no renuevan `evaluatedAt` ni `validUntil`.
+- Allocation resuelta una vez por tick: `buildRangeProposal` acepta `preResolvedAllocation` opcional — no llama al allocator cuando se proporciona. `proposeRangeVersion` y `rebuildRangeAndLevels` reciben y pasan el allocation pre-resuelto. Misma instancia de allocation usada para recomendación, proyección y creación de rango.
+- Ruta corregida: `gridIsolated.routes.ts` pasa `projectionState.executionMarketSnapshot`, `pairConstraints`, `allocation` reales a `buildGridAuditViewModel`. Export JSON endpoint también. Sin nulls — el view model recibe el contexto runtime exacto del último tick.
+- Gate invalidado por edad: `ExecutionGateState` incluye `status` (`VERIFIED` | `BLOCKED` | `NO_RECENT_EVALUATION`), `ageMs`, `maxAgeMs`, `validUntil`. `resolveExecutionGateState` recalcula en cada lectura — no devuelve VERIFIED stale. `RawExecutionGateData` almacena datos crudos; `getExecutionGate()` deriva el estado público. `GridMarketPanel` usa `status` y muestra edad/validez cuando VERIFIED.
+- `available` separado de `verified`/`fresh`: `snapshotAvailable` requiere par correcto, venue REVOLUT_X, source presente, bid/ask o reasonCode. `constraintsAvailable` requiere par correcto, venue REVOLUT_X, source presente. `available` no es solo pair match — es presencia + estructura mínima.
+- Campos fantasma eliminados del view model: `config.buyLevels`/`config.sellLevels` eliminados de `buildGridMarketViewModel.ts`. `buildCurrentConfigurationProjection` usa `allocation.levelsCount`. `requestedLevelsFrom` no usa `config.buyLevels`/`config.sellLevels`. `buildEntryRange` usa `professionalGenerator`/`adaptiveDecision`/`adaptiveRangeMinViableLevels`. `buildActiveRangeSnapshot` no usa `configSnapshot.buyLevels`/`configSnapshot.sellLevels`.
+- Validadores estrictos sin `Number()`: `validateStrictLevelValue` rechaza strings (`"4"`), booleanos, NaN, Infinity. Solo acepta `typeof value === "number"` + `Number.isFinite` + `Number.isInteger`.
+- Market suitability y régimen fail-closed: `resolveGridProfessionalProjectionContext` rechaza `marketSuitable !== true` y `regimeLabel` vacío o no-string. No hay default `suitableForGrid ?? true` ni `regime ?? "ranging"`.
+- Consistencia de allocation: `finalGridBudgetUsd` debe ser > 0. `capitalPerLevelUsd * levelsCount` no debe exceder `finalGridBudgetUsd` + 10% tolerancia.
+- Tests nuevos: `gridIsolatedEngine.test.ts` (ProjectionState null, saveConfig DB_WRITE_FAILED, gate status), `gridProfessionalProjectionContext.test.ts` (7 tests: marketSuitable, regimeLabel, allocation consistency), `gridRecommendationService.test.ts` (4 tests: strict validation string/NaN/Infinity/boolean), `GridMarketPanel.test.tsx` (fixtures con status/ageMs/maxAgeMs/validUntil).
+- Tests: 291/291 pasan (10 archivos relevantes). `npx tsc` ✅.
+
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 
 ### Resumen

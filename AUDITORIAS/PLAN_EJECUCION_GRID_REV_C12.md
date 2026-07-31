@@ -2,7 +2,7 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12B cascada profesional input + Revolut X microstructure + gate real implementada; pendiente commit y push**
+- **TASK_STATUS: REV-C12B cascada runtime integration implementada (ProjectionState, gate edad, campos fantasma, validadores estrictos, fail-closed); pendiente commit y push**
 - **NEXT_ACTION: commit técnico + documental, push a rama de revisión**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
@@ -105,8 +105,7 @@ Corrección del flujo `diagnóstico → recomendación → aplicación → persi
 
 ## Pendiente REV-C12B
 
-- Datos reales de `executionMarketSnapshot` / `pairConstraints` en el view model (persistencia del último snapshot).
-- Causa raíz de `REVOLUT_X_UNAVAILABLE` en staging.
+- Causa raíz de `REVOLUT_X_UNAVAILABLE` en staging (no bloquea merge — es un problema de conectividad/credenciales del entorno).
 
 ## Cambios aplicados (cascada REV-C12B — profesional input + microstructure + gate real)
 
@@ -154,6 +153,64 @@ Corrección del flujo `diagnóstico → recomendación → aplicación → persi
 24. Mojibake MD reparado:
     - `AUDITORIA_GRID_REV_C12_RECOMENDACIONES_SIN_EFECTO_2026-07-30.md`: UTF-8 decode → Windows-1252 encode → bytes correctos.
     - Em-dashes y caracteres españoles restaurados.
+
+## Cambios aplicados (cascada REV-C12B — runtime integration + gate edad + campos fantasma + validadores estrictos)
+
+25. `GridRecommendationProjectionState` en `GridIsolatedEngine`:
+    - Interface tipada con `evaluatedAt`, `validUntil`, `pair`, `bandSnapshot`, `executionMarketSnapshot`, `pairConstraints`, `allocation`.
+    - `lastRecommendationProjectionState` in-memory, actualizado solo durante el tick.
+    - `getRecommendationProjectionState()` devuelve copia si fresca, null si expirada o sin evaluación.
+    - Lecturas no renuevan `evaluatedAt` ni `validUntil`.
+
+26. Allocation resuelta una vez por tick:
+    - `buildRangeProposal` acepta `preResolvedAllocation` opcional — no llama al allocator cuando se proporciona.
+    - `proposeRangeVersion` y `rebuildRangeAndLevels` reciben y pasan el allocation pre-resuelto.
+    - Misma instancia de allocation usada para recomendación, proyección y creación de rango.
+
+27. Ruta corregida — datos reales al view model:
+    - `gridIsolated.routes.ts` pasa `projectionState.executionMarketSnapshot`, `pairConstraints`, `allocation` reales a `buildGridAuditViewModel`.
+    - Export JSON endpoint también pasa los datos reales.
+    - Sin nulls — el view model recibe el contexto runtime exacto del último tick.
+
+28. Gate invalidado por edad:
+    - `ExecutionGateState` incluye `status` (`VERIFIED` | `BLOCKED` | `NO_RECENT_EVALUATION`), `ageMs`, `maxAgeMs`, `validUntil`.
+    - `resolveExecutionGateState` recalcula en cada lectura — no devuelve VERIFIED stale.
+    - `RawExecutionGateData` almacena datos crudos; `getExecutionGate()` deriva el estado público.
+    - `GridMarketPanel` usa `status` para mostrar VERIFICADO/BLOQUEADO/SIN EVALUACIÓN RECIENTE.
+    - Muestra edad (`ageMs/maxAgeMs`) y validez (`validUntil`) cuando VERIFIED.
+
+29. `available` separado de `verified`/`fresh`:
+    - `snapshotAvailable` requiere par correcto, venue REVOLUT_X, source presente, bid/ask o reasonCode.
+    - `constraintsAvailable` requiere par correcto, venue REVOLUT_X, source presente.
+    - `available` no es solo pair match — es presencia + estructura mínima.
+
+30. Campos fantasma eliminados del view model:
+    - `buildGridMarketViewModel.ts`: `config.buyLevels`/`config.sellLevels` eliminados.
+    - `buildCurrentConfigurationProjection` usa `allocation.levelsCount` como fuente de niveles.
+    - `requestedLevelsFrom` no usa `config.buyLevels`/`config.sellLevels` — solo fuentes canónicas.
+    - `buildEntryRange` usa `professionalGenerator`/`adaptiveDecision`/`adaptiveRangeMinViableLevels`.
+    - `buildActiveRangeSnapshot` no usa `configSnapshot.buyLevels`/`configSnapshot.sellLevels`.
+
+31. Validadores estrictos sin `Number()`:
+    - `validateStrictLevelValue` rechaza strings (`"4"`), booleanos, NaN, Infinity.
+    - Solo acepta `typeof value === "number"` + `Number.isFinite` + `Number.isInteger`.
+    - Tests: string `"4"`, NaN, Infinity, boolean true — todos blocked.
+
+32. Market suitability y régimen fail-closed:
+    - `resolveGridProfessionalProjectionContext` rechaza `marketSuitable !== true`.
+    - Rechaza `regimeLabel` vacío o no-string.
+    - No hay default `suitableForGrid ?? true` ni `regime ?? "ranging"`.
+
+33. Consistencia de allocation:
+    - `finalGridBudgetUsd` debe ser > 0.
+    - `capitalPerLevelUsd * levelsCount` no debe exceder `finalGridBudgetUsd` + 10% tolerancia.
+    - Tests: budget=0 blocked, budget=500 con 1000 requerido blocked, budget=1050 con 1000 aceptado.
+
+34. Tests nuevos:
+    - `gridIsolatedEngine.test.ts`: `getRecommendationProjectionState` null antes de tick, `saveConfig` DB_WRITE_FAILED, gate `status` field.
+    - `gridProfessionalProjectionContext.test.ts`: 7 tests nuevos (marketSuitable, regimeLabel, allocation consistency).
+    - `gridRecommendationService.test.ts`: 4 tests nuevos (strict validation: string, NaN, Infinity, boolean).
+    - `GridMarketPanel.test.tsx`: fixtures actualizadas con `status`, `ageMs`, `maxAgeMs`, `validUntil`.
 
 ## Rama
 
