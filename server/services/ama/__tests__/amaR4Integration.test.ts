@@ -89,7 +89,7 @@ const makeEthSeedInput = (overrides: Partial<SeedTranchePlanInput> = {}): SeedTr
   budgetUsd: 100000,
   deployedUsd: 0,
   reservedUsd: 0,
-  parameters: { ...makeParams(), asset: "ETH", maximumCandidateTranches: 7, absoluteTrancheCountCap: 7 },
+  parameters: { ...makeParams(), asset: "ETH", mandatoryReservePct: 35, maxCycleDeploymentPct: 65, maximumCandidateTranches: 7, absoluteTrancheCountCap: 7 },
   cycleId: "cycle-r4-eth",
   asset: "ETH",
   riskOverlayMultiplier: 1.0,
@@ -139,6 +139,7 @@ describe("R4 — Canonical Seed Planner Integration", () => {
       seedInput,
       confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true },
       executedTranches: [],
+      portfolioDeployedUsd: 0,
     });
     expect(replanned).not.toBeNull();
     // Check triggers are preserved
@@ -161,6 +162,7 @@ describe("R4 — Canonical Seed Planner Integration", () => {
       seedInput,
       confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 1900, isClosed: true },
       executedTranches: [],
+      portfolioDeployedUsd: 0,
     });
     expect(replanned).not.toBeNull();
     const origTriggers = original.candidateTranches.map((c) => c.canonicalTriggerDropPct);
@@ -172,13 +174,14 @@ describe("R4 — Canonical Seed Planner Integration", () => {
     const seedInput = makeSeedInput();
     const original = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const evidence: ExecutedTrancheEvidence[] = [
-      { trancheId: "tranche-cycle-r4-0", seedTrancheIndex: 0, executedAmountUsd: 7000, executedQuantity: 0.175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-1" },
+      { cycleId: "cycle-r4", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-r4-0", seedTrancheIndex: 0, executedAmountUsd: 7000, executedQuantity: 0.175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-1" },
     ];
     const replanned = replanTranches({
       originalPlan: original,
       seedInput,
       confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true },
       executedTranches: evidence,
+      portfolioDeployedUsd: 7000,
     });
     expect(replanned).not.toBeNull();
     // Tranche 0 should be marked as already executed
@@ -192,15 +195,15 @@ describe("R4 — Canonical Seed Planner Integration", () => {
     const seedInput = makeSeedInput();
     const original = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const evidenceA: ExecutedTrancheEvidence[] = [
-      { trancheId: "t-0", seedTrancheIndex: 0, executedAmountUsd: 7000, executedQuantity: 0.175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "k1" },
-      { trancheId: "t-1", seedTrancheIndex: 1, executedAmountUsd: 9000, executedQuantity: 0.225, executedAt: "2026-07-29T11:00:00Z", fillStatus: "FILLED", idempotencyKey: "k2" },
+      { cycleId: "cycle-r4", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-r4-0", seedTrancheIndex: 0, executedAmountUsd: 7000, executedQuantity: 0.175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "k1" },
+      { cycleId: "cycle-r4", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-r4-1", seedTrancheIndex: 1, executedAmountUsd: 9000, executedQuantity: 0.225, executedAt: "2026-07-29T11:00:00Z", fillStatus: "FILLED", idempotencyKey: "k2" },
     ];
     const evidenceB: ExecutedTrancheEvidence[] = [
-      { trancheId: "t-1", seedTrancheIndex: 1, executedAmountUsd: 9000, executedQuantity: 0.225, executedAt: "2026-07-29T11:00:00Z", fillStatus: "FILLED", idempotencyKey: "k2" },
-      { trancheId: "t-0", seedTrancheIndex: 0, executedAmountUsd: 7000, executedQuantity: 0.175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "k1" },
+      { cycleId: "cycle-r4", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-r4-1", seedTrancheIndex: 1, executedAmountUsd: 9000, executedQuantity: 0.225, executedAt: "2026-07-29T11:00:00Z", fillStatus: "FILLED", idempotencyKey: "k2" },
+      { cycleId: "cycle-r4", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-r4-0", seedTrancheIndex: 0, executedAmountUsd: 7000, executedQuantity: 0.175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "k1" },
     ];
-    const planA = replanTranches({ originalPlan: original, seedInput, confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true }, executedTranches: evidenceA });
-    const planB = replanTranches({ originalPlan: original, seedInput, confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true }, executedTranches: evidenceB });
+    const planA = replanTranches({ originalPlan: original, seedInput, confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true }, executedTranches: evidenceA, portfolioDeployedUsd: 16000 });
+    const planB = replanTranches({ originalPlan: original, seedInput, confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true }, executedTranches: evidenceB, portfolioDeployedUsd: 16000 });
     expect(planA).not.toBeNull();
     expect(planB).not.toBeNull();
     expect(planA!.candidateTranches.map((c) => c.eligible)).toEqual(planB!.candidateTranches.map((c) => c.eligible));
@@ -210,13 +213,14 @@ describe("R4 — Canonical Seed Planner Integration", () => {
     const seedInput = makeSeedInput();
     const original = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const evidence: ExecutedTrancheEvidence[] = [
-      { trancheId: "tranche-cycle-r4-0", seedTrancheIndex: 0, executedAmountUsd: 3500, executedQuantity: 0.0875, executedAt: "2026-07-29T10:00:00Z", fillStatus: "PARTIAL", idempotencyKey: "key-partial" },
+      { cycleId: "cycle-r4", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-r4-0", seedTrancheIndex: 0, executedAmountUsd: 3500, executedQuantity: 0.0875, executedAt: "2026-07-29T10:00:00Z", fillStatus: "PARTIAL", idempotencyKey: "key-partial" },
     ];
     const replanned = replanTranches({
       originalPlan: original,
       seedInput,
       confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true },
       executedTranches: evidence,
+      portfolioDeployedUsd: 3500,
     });
     expect(replanned).not.toBeNull();
     // Partial fill should NOT mark tranche as fully executed
@@ -508,7 +512,8 @@ describe("R4 — Incremental HWM Fail-Closed", () => {
       3,
       10,
     );
-    expect(result).toBe(baseHwm);
+    expect(result.transition).toBe("REJECTED");
+    expect(result.current).toBe(baseHwm);
   });
 
   it("24. Close before HWM timestamp is rejected", () => {
@@ -519,7 +524,8 @@ describe("R4 — Incremental HWM Fail-Closed", () => {
       3,
       10,
     );
-    expect(result).toBe(baseHwm);
+    expect(result.transition).toBe("REJECTED");
+    expect(result.current).toBe(baseHwm);
   });
 
   it("25. No look-ahead continues to be guaranteed", () => {
@@ -540,18 +546,19 @@ describe("R4 — Incremental HWM Fail-Closed", () => {
     // Process at 2026-07-03 — should only see up to 2026-07-03
     const result = processIncrementalClose(hwm, allCloses[1], allCloses, 3, 10);
     // Should not confirm with only 2 closes available
-    expect(result.status).not.toBe("CONFIRMED");
+    expect(result.current.status).not.toBe("CONFIRMED");
   });
 
   it("25b. Missing isClosed in incremental is rejected", () => {
     const result = processIncrementalClose(
       baseHwm,
-      { timestamp: "2026-07-05T00:00:00Z", close: 60000 },
+      { timestamp: "2026-07-05T00:00:00Z", close: 60000, isClosed: false },
       [],
       3,
       10,
     );
-    expect(result).toBe(baseHwm);
+    expect(result.transition).not.toBe("SUPERSEDED");
+    expect(result.current).toBe(baseHwm);
   });
 });
 
@@ -560,20 +567,21 @@ describe("R4 — Incremental HWM Fail-Closed", () => {
 describe("R4 — Confirmation Parity", () => {
   it("26. isReversalConfirmed and evaluateConfirmation produce same result", () => {
     const hwm = 50000;
-    const reversalThreshold = 45000; // 10% drop
+    const hwmTimestamp = "2026-07-01T00:00:00Z";
+    const reversalThresholdPct = 10;
     const dailyCloses = [
       { timestamp: "2026-07-02T00:00:00Z", close: 44000, isClosed: true },
       { timestamp: "2026-07-03T00:00:00Z", close: 44000, isClosed: true },
       { timestamp: "2026-07-04T00:00:00Z", close: 44000, isClosed: true },
     ];
 
-    const isConfirmed = isReversalConfirmed(hwm, 44000, reversalThreshold, 3, dailyCloses);
+    const isConfirmed = isReversalConfirmed(hwm, hwmTimestamp, reversalThresholdPct, 3, dailyCloses);
     const evalResult = evaluateConfirmation({
       hwmPrice: hwm,
-      hwmTimestamp: "2026-07-01T00:00:00Z",
+      hwmTimestamp,
       subsequentCloses: dailyCloses,
       requiredConfirmations: 3,
-      reversalThresholdPct: 10,
+      reversalThresholdPct,
     });
 
     expect(isConfirmed).toBe(evalResult.confirmed);

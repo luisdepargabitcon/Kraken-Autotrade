@@ -398,10 +398,10 @@ describe("R2 — Risk overlay", () => {
 describe("R2 — HWM Bootstrap requiere todos los cierres bajo umbral", () => {
   it("tres cierres consecutivos bajo umbral → CONFIRMED", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 47000 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 46000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 46000, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).toBe("CONFIRMED");
@@ -409,10 +409,10 @@ describe("R2 — HWM Bootstrap requiere todos los cierres bajo umbral", () => {
 
   it("solo uno de tres bajo umbral → no CONFIRMED", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 51900 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 51800 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 51900, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 51800, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).not.toBe("CONFIRMED");
@@ -420,10 +420,10 @@ describe("R2 — HWM Bootstrap requiere todos los cierres bajo umbral", () => {
 
   it("dos de tres bajo umbral → no CONFIRMED", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 47000 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 51900 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 51900, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).not.toBe("CONFIRMED");
@@ -432,10 +432,10 @@ describe("R2 — HWM Bootstrap requiere todos los cierres bajo umbral", () => {
   it("cierre exactamente en el umbral → cuenta como bajo", () => {
     // hwm = 52000, threshold = 52000 * 0.95 = 49400
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 49400 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 49400 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 49400 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 49400, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 49400, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 49400, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).toBe("CONFIRMED");
@@ -443,8 +443,8 @@ describe("R2 — HWM Bootstrap requiere todos los cierres bajo umbral", () => {
 
   it("vela incompleta no confirma", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).toBe("CANDIDATE");
@@ -452,10 +452,10 @@ describe("R2 — HWM Bootstrap requiere todos los cierres bajo umbral", () => {
 
   it("velas duplicadas no causan confirmación falsa", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).not.toBe("CONFIRMED");
@@ -463,10 +463,10 @@ describe("R2 — HWM Bootstrap requiere todos los cierres bajo umbral", () => {
 
   it("velas desordenadas se ordenan correctamente", () => {
     const closes = [
-      { timestamp: "2026-07-04T00:00:00Z", close: 46000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 47000 },
+      { timestamp: "2026-07-04T00:00:00Z", close: 46000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 47000, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.price).toBe(52000);
@@ -499,13 +499,14 @@ describe("R2 — Bootstrap e incremental coinciden", () => {
 
     for (let i = 1; i < testCloses.length; i++) {
       const closesAvailableNow = testCloses.slice(0, i + 1);
-      incrementalHwm = processIncrementalClose(
+      const transition = processIncrementalClose(
         incrementalHwm,
         testCloses[i],
         closesAvailableNow,
         3,
         5.0,
       );
+      incrementalHwm = transition.current;
     }
 
     expect(incrementalHwm.price).toBe(bootstrapResult!.price);
@@ -515,9 +516,9 @@ describe("R2 — Bootstrap e incremental coinciden", () => {
 
   it("nuevo máximo durante confirmación → supersede", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 48000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 53000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 53000, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.price).toBe(53000);
@@ -529,9 +530,9 @@ describe("R2 — Bootstrap e incremental coinciden", () => {
       hwmPrice: 52000,
       hwmTimestamp: "2026-07-01T00:00:00Z",
       subsequentCloses: [
-        { timestamp: "2026-07-02T00:00:00Z", close: 46000 },
-        { timestamp: "2026-07-03T00:00:00Z", close: 45000 },
-        { timestamp: "2026-07-04T00:00:00Z", close: 44000 },
+        { timestamp: "2026-07-02T00:00:00Z", close: 46000, isClosed: true },
+        { timestamp: "2026-07-03T00:00:00Z", close: 45000, isClosed: true },
+        { timestamp: "2026-07-04T00:00:00Z", close: 44000, isClosed: true },
       ],
       requiredConfirmations: 3,
       reversalThresholdPct: 10.0,
@@ -548,9 +549,9 @@ describe("R2 — Bootstrap e incremental coinciden", () => {
       hwmPrice: 50000,
       hwmTimestamp: "2026-07-01T00:00:00Z",
       subsequentCloses: [
-        { timestamp: "2026-07-02T00:00:00Z", close: 24000 },
-        { timestamp: "2026-07-03T00:00:00Z", close: 23000 },
-        { timestamp: "2026-07-04T00:00:00Z", close: 22000 },
+        { timestamp: "2026-07-02T00:00:00Z", close: 24000, isClosed: true },
+        { timestamp: "2026-07-03T00:00:00Z", close: 23000, isClosed: true },
+        { timestamp: "2026-07-04T00:00:00Z", close: 22000, isClosed: true },
       ],
       requiredConfirmations: 3,
       reversalThresholdPct: 50.0,
@@ -709,7 +710,7 @@ describe("R3 — Incremental sin look-ahead", () => {
       supersededBy: null,
     };
 
-    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0);
+    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0).current;
     expect(hwm.status).not.toBe("CONFIRMED");
   });
 
@@ -723,8 +724,8 @@ describe("R3 — Incremental sin look-ahead", () => {
       supersededBy: null,
     };
 
-    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0);
-    hwm = processIncrementalClose(hwm, testCloses[2], testCloses.slice(0, 3), 3, 5.0);
+    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0).current;
+    hwm = processIncrementalClose(hwm, testCloses[2], testCloses.slice(0, 3), 3, 5.0).current;
     expect(hwm.status).not.toBe("CONFIRMED");
   });
 
@@ -739,7 +740,7 @@ describe("R3 — Incremental sin look-ahead", () => {
     };
 
     for (let i = 1; i < 3; i++) {
-      hwm = processIncrementalClose(hwm, testCloses[i], testCloses.slice(0, i + 1), 3, 5.0);
+      hwm = processIncrementalClose(hwm, testCloses[i], testCloses.slice(0, i + 1), 3, 5.0).current;
     }
     expect(hwm.status).not.toBe("CONFIRMED");
   });
@@ -755,7 +756,7 @@ describe("R3 — Incremental sin look-ahead", () => {
     };
 
     for (let i = 1; i < 4; i++) {
-      hwm = processIncrementalClose(hwm, testCloses[i], testCloses.slice(0, i + 1), 3, 5.0);
+      hwm = processIncrementalClose(hwm, testCloses[i], testCloses.slice(0, i + 1), 3, 5.0).current;
     }
     expect(hwm.status).toBe("CONFIRMED");
     expect(hwm.confirmedAt).toBe("2026-07-04T00:00:00.000Z");
@@ -772,7 +773,7 @@ describe("R3 — Incremental sin look-ahead", () => {
     };
 
     // Process only 2 closes (not enough for confirmation)
-    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0);
+    hwm = processIncrementalClose(hwm, testCloses[1], testCloses.slice(0, 2), 3, 5.0).current;
     const stateAfter2 = { ...hwm };
 
     // Even if a future close is in the array, it shouldn't be used
@@ -781,7 +782,7 @@ describe("R3 — Incremental sin look-ahead", () => {
       { timestamp: "2026-07-03T00:00:00Z", close: 10000, isClosed: true },
       { timestamp: "2026-07-04T00:00:00Z", close: 5000, isClosed: true },
     ];
-    hwm = processIncrementalClose(hwm, testCloses[1], closesWithFuture.slice(0, 2), 3, 5.0);
+    hwm = processIncrementalClose(hwm, testCloses[1], closesWithFuture.slice(0, 2), 3, 5.0).current;
     expect(hwm.status).toBe(stateAfter2.status);
     expect(hwm.confirmedAt).toBe(stateAfter2.confirmedAt);
   });
@@ -799,13 +800,14 @@ describe("R3 — Incremental sin look-ahead", () => {
     };
 
     for (let i = 1; i < testCloses.length; i++) {
-      incrementalHwm = processIncrementalClose(
+      const transition = processIncrementalClose(
         incrementalHwm,
         testCloses[i],
         testCloses.slice(0, i + 1),
         3,
         5.0,
       );
+      incrementalHwm = transition.current;
     }
 
     expect(incrementalHwm.price).toBe(bootstrapResult!.price);

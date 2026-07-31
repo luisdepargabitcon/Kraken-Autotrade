@@ -7,26 +7,26 @@
 **Documento:** seguimiento operativo y continuidad autónoma
 **Estado:** ACTIVO
 **Fecha de creación:** 2026-07-29
-**Última actualización:** 2026-07-30T10:00:00+02:00
+**Última actualización:** 2026-07-31T05:30:00+02:00
 **Cambio de alcance activo:** AMA-CC-2026-07-29-SEED-V2.2
 
 ---
 
 ## ESTADO OPERATIVO
 
-- TASK_STATUS: R4_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
-- CURRENT_PHASE: Fase 28 (R4)
-- CURRENT_SUBPHASE: Correcciones R4 aplicadas, tests R4 38/38 ✅, auditoría R4 creada, pendiente gate precommit R4
-- LAST_COMPLETED_ACTION: R4 — 17 correcciones aplicadas (canonical seed planner, executed evidence, single tranche, gap policy, UTC cooldown/limits, reset before sum, isClosed mandatory, UTC normalization, deterministic duplicates, consecutive days, param validation, incremental fail-closed, reversal parity, seed validation). 637 tests AMA ✅, npm run check ✅, npm run build ✅
-- NEXT_ACTION: Presentar gate precommit R4. Pendiente autorización commit/push en rama de revisión
-- R3_STATUS: COMMITTED_AND_PUSHED
-- HEAD_R3: f5cd254be4593d3a57ebe2b819baba051410e107
-- origin/review: f5cd254be4593d3a57ebe2b819baba051410e107
+- TASK_STATUS: R5_CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- CURRENT_PHASE: Fase 28 (R5)
+- CURRENT_SUBPHASE: Correcciones R5 aplicadas, tests R5 58/58 ✅, auditoría R5 creada, pendiente gate precommit R5
+- LAST_COMPLETED_ACTION: R5 — 15 correcciones aplicadas (strict normalization, confirmedClose validation, canonical seed envelope, partial fills, single deployedUsd source, evidence validation, metadata reconstruction, plan identity, reset before decide, cooldown fail-closed, level states, confirmed close in decision, consecutive window with gaps, HwmTransition traceability, API parity). 695 tests AMA ✅, npm run check ✅, npm run build ✅
+- NEXT_ACTION: Presentar gate precommit R5. Pendiente autorización commit/push en rama de revisión
+- R4_STATUS: COMMITTED_AND_PUSHED
+- HEAD_R4: 9c86c148aecb980682e41ebc7719fbae3eaf7db9
+- origin/review: 9c86c148aecb980682e41ebc7719fbae3eaf7db9
 - origin/main: 44cd46ff3a6e195556987968a87c8e795d66cd02
 - BLOCKERS: PostgreSQL desechable no disponible (BLOCKED_NO_SAFE_ENVIRONMENT). Migración 080 NOT_REGISTERED, NOT_AUTOAPPLY. Integración real de persistencia, logging, portfolio, SHADOW pendiente
-- PENDING_GATES: Gate precommit R4, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
-- LAST_VALIDATION: 2026-07-30 — npm run check ✅, npm run build ✅, 637/637 AMA tests ✅ (incluye 38 R4 nuevos), 59/59 Portfolio ✅, suite completa 3752 passed / 31 failed / 29 skipped
-- UPDATED_AT: 2026-07-30T22:15:00+02:00
+- PENDING_GATES: Gate precommit R5, PostgreSQL desechable para Fase 1, integración real Fases 3-25, Fase 26 REAL_LIMITED, Fase 28 deploy staging, Fase 29 archivo
+- LAST_VALIDATION: 2026-07-31 — npm run check ✅, npm run build ✅, 695/695 AMA tests ✅ (incluye 58 R5 nuevos), 59/59 Portfolio ✅, suite completa pendiente de ejecución final R5.18
+- UPDATED_AT: 2026-07-31T05:30:00+02:00
 
 ---
 
@@ -282,7 +282,7 @@ o cuando todas las tareas restantes dependan de un gate duro.
 | 24 | Executor Revolut X bloqueado | BLOQUEADO | 2026-07-30 | REAL/SHADOW gates |
 | 25 | Seguridad y recovery | EN_VALIDACION | 2026-07-30 | — |
 | 26 | REAL_LIMITED | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
-| 27 | Validación final local | R3_APLICADA | 2026-07-30 | R3: doble descuento, overlay fail-closed, triggers canónicos, no-lookahead, isClosed, 598 tests ✅ |
+| 27 | Validación final local | R5_APLICADA | 2026-07-31 | R5: strict normalization, confirmedClose, seed envelope, partial fills, evidence validation, plan identity, cooldown fail-closed, HwmTransition, API parity, 695 tests ✅ |
 | 28 | Deploy staging | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 | 29 | Archivo | PENDIENTE_DE_AUTORIZACION | — | AUTORIZACIÓN |
 

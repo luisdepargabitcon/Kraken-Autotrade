@@ -408,7 +408,15 @@ export interface AmaTranchePlan {
   mandatoryReserveUsd: number;
   deployableCycleCapitalUsd: number;
   createdAt: string;
+  // R5.12: Confirmed close reference for decision
+  asOfConfirmedCloseTimestamp?: string;
+  asOfConfirmedClosePrice?: number;
 }
+
+export type TrancheExecutionState =
+  | "NOT_EXECUTED"
+  | "PARTIALLY_EXECUTED"
+  | "FULLY_EXECUTED";
 
 export interface AmaTrancheCandidate {
   trancheId: string;
@@ -429,6 +437,11 @@ export interface AmaTrancheCandidate {
   policyVersion?: number;
   riskOverlayMultiplier?: number;
   confirmedCloseTimestamp?: string;
+  // R5.4: Fill tracking
+  plannedAmountUsd?: number;
+  executedAmountUsd?: number;
+  remainingAmountUsd?: number;
+  executionState?: TrancheExecutionState;
 }
 
 export interface AmaCycle {

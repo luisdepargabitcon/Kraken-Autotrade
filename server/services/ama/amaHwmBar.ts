@@ -44,7 +44,10 @@ export function adaptLegacyCloseObservation(
 }
 
 // ─── Shared Normalization (R4.10: UTC canonical, R4.11: deterministic duplicates) ──
+// R5.1: @deprecated LEGACY_COMPATIBILITY_ONLY NOT_FOR_CANONICAL_HWM_FLOW
+// Use normalizeClosedDailyClosesStrict() in all canonical HWM flows.
 
+/** @deprecated R5.1: Use normalizeClosedDailyClosesStrict() instead. Legacy compatibility only. */
 export function normalizeClosedDailyCloses(
   closes: { timestamp: string; close: number; isClosed?: boolean }[],
 ): DailyCloseObservation[] {
@@ -256,7 +259,8 @@ export function computeATRPercentage(
 export interface ConfirmationInput {
   hwmPrice: number;
   hwmTimestamp: string;
-  subsequentCloses: { timestamp: string; close: number; isClosed?: boolean }[];
+  // R5.1: isClosed mandatory in canonical flow
+  subsequentCloses: DailyCloseObservation[];
   requiredConfirmations: number;
   reversalThresholdPct: number;
 }
@@ -267,98 +271,198 @@ export interface ConfirmationResult {
   confirmedAt: string | null;
   reversalThresholdPrice: number;
   confirmationCloses: { timestamp: string; close: number }[];
+  // R5.1: Normalization traceability
+  normalizationValid: boolean;
+  normalizationErrors: CandleNormalizationError[];
+  reasonCodes: string[];
+}
+
+// R5.13: Find first valid consecutive confirmation window (point-in-time)
+export interface ConsecutiveWindowResult {
+  window: DailyCloseObservation[];
+  confirmedAt: string | null;
+  resetCount: number;
+  reasonCodes: string[];
+}
+
+export function findConsecutiveConfirmationWindow(
+  closes: DailyCloseObservation[],
+  requiredConfirmations: number,
+  reversalThresholdPrice: number,
+  hwmPrice: number,
+): ConsecutiveWindowResult {
+  const reasonCodes: string[] = [];
+  let resetCount = 0;
+  let window: DailyCloseObservation[] = [];
+
+  for (let i = 0; i < closes.length; i++) {
+    const c = closes[i];
+
+    // R5.13: A candle that is open, above threshold, or above HWM resets the sequence
+    if (!c.isClosed) {
+      if (window.length > 0) { resetCount++; reasonCodes.push("OPEN_CANDLE_RESET"); }
+      window = [];
+      continue;
+    }
+    if (c.close > reversalThresholdPrice) {
+      if (window.length > 0) { resetCount++; reasonCodes.push("ABOVE_THRESHOLD_RESET"); }
+      window = [];
+      continue;
+    }
+    if (c.close >= hwmPrice) {
+      if (window.length > 0) { resetCount++; reasonCodes.push("ABOVE_HWM_RESET"); }
+      window = [];
+      continue;
+    }
+
+    // Check consecutiveness with previous candle in window
+    if (window.length > 0) {
+      if (!areConsecutiveUtcDays(window[window.length - 1].timestamp, c.timestamp)) {
+        if (window.length > 0) { resetCount++; reasonCodes.push("GAP_RESET"); }
+        window = [];
+      }
+    }
+
+    window.push(c);
+
+    if (window.length === requiredConfirmations) {
+      return {
+        window,
+        confirmedAt: window[requiredConfirmations - 1].timestamp,
+        resetCount,
+        reasonCodes,
+      };
+    }
+  }
+
+  if (window.length < requiredConfirmations && window.length > 0) {
+    reasonCodes.push("INSUFFICIENT_CLOSED_CANDLES");
+  }
+
+  return { window, confirmedAt: null, resetCount, reasonCodes };
 }
 
 export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResult {
   const { hwmPrice, hwmTimestamp, subsequentCloses, requiredConfirmations, reversalThresholdPct } = input;
+  const reasonCodes: string[] = [];
 
   // R4.13: Validate parameters — fail-closed
   if (typeof requiredConfirmations !== "number" || !Number.isInteger(requiredConfirmations) || requiredConfirmations <= 0) {
+    reasonCodes.push("INVALID_CONFIRMATION_PARAMETERS");
     return {
       confirmed: false,
       status: "CANDIDATE",
       confirmedAt: null,
       reversalThresholdPrice: hwmPrice * (1 - (reversalThresholdPct || 0) / 100),
       confirmationCloses: [],
+      normalizationValid: true,
+      normalizationErrors: [],
+      reasonCodes,
     };
   }
   if (typeof reversalThresholdPct !== "number" || reversalThresholdPct <= 0 || reversalThresholdPct >= 100) {
+    reasonCodes.push("INVALID_CONFIRMATION_PARAMETERS");
     return {
       confirmed: false,
       status: "CANDIDATE",
       confirmedAt: null,
       reversalThresholdPrice: hwmPrice,
       confirmationCloses: [],
+      normalizationValid: true,
+      normalizationErrors: [],
+      reasonCodes,
     };
   }
   if (typeof hwmPrice !== "number" || hwmPrice <= 0 || !Number.isFinite(hwmPrice)) {
+    reasonCodes.push("INVALID_CONFIRMATION_PARAMETERS");
     return {
       confirmed: false,
       status: "CANDIDATE",
       confirmedAt: null,
       reversalThresholdPrice: 0,
       confirmationCloses: [],
+      normalizationValid: true,
+      normalizationErrors: [],
+      reasonCodes,
     };
   }
   const hwmTs = new Date(hwmTimestamp).getTime();
   if (Number.isNaN(hwmTs)) {
+    reasonCodes.push("INVALID_TIMESTAMP");
     return {
       confirmed: false,
       status: "CANDIDATE",
       confirmedAt: null,
       reversalThresholdPrice: hwmPrice * (1 - reversalThresholdPct / 100),
       confirmationCloses: [],
+      normalizationValid: true,
+      normalizationErrors: [],
+      reasonCodes,
     };
   }
 
   const reversalThresholdPrice = hwmPrice * (1 - reversalThresholdPct / 100);
 
-  // R3: Use shared normalization (R4.10: UTC canonical)
-  const normalized = normalizeClosedDailyCloses(subsequentCloses);
-  const closedCloses = normalized.filter((c) => c.isClosed);
-
-  // R4.13: Prevent every([]) from confirming with zero observations
-  if (closedCloses.length === 0 || closedCloses.length < requiredConfirmations) {
+  // R5.1: Use strict normalization in canonical HWM flow
+  const normResult = normalizeClosedDailyClosesStrict(subsequentCloses);
+  if (!normResult.valid) {
+    reasonCodes.push("NORMALIZATION_FAILED");
+    for (const err of normResult.errors) {
+      reasonCodes.push(err.code);
+    }
     return {
       confirmed: false,
       status: "CANDIDATE",
       confirmedAt: null,
       reversalThresholdPrice,
       confirmationCloses: [],
+      normalizationValid: false,
+      normalizationErrors: normResult.errors,
+      reasonCodes,
     };
   }
 
-  const confirmationCloses = closedCloses.slice(0, requiredConfirmations);
+  const closedCloses = normResult.closes.filter((c) => c.isClosed);
 
-  // R4.12: Require consecutive UTC days
-  if (!areAllConsecutiveUtcDays(confirmationCloses)) {
+  // R4.13: Prevent every([]) from confirming with zero observations
+  if (closedCloses.length === 0 || closedCloses.length < requiredConfirmations) {
+    reasonCodes.push("INSUFFICIENT_CLOSED_CANDLES");
     return {
       confirmed: false,
-      status: "CONFIRMING",
+      status: "CANDIDATE",
       confirmedAt: null,
       reversalThresholdPrice,
-      confirmationCloses,
+      confirmationCloses: [],
+      normalizationValid: true,
+      normalizationErrors: [],
+      reasonCodes,
     };
   }
 
-  // R2: ALL confirmation closes must be <= reversalThresholdPrice
-  const allBelowThreshold = confirmationCloses.every(
-    (c) => c.close <= reversalThresholdPrice,
+  // R5.13: Use findConsecutiveConfirmationWindow instead of slice(0, N)
+  const windowResult = findConsecutiveConfirmationWindow(
+    closedCloses,
+    requiredConfirmations,
+    reversalThresholdPrice,
+    hwmPrice,
   );
 
-  // R2: Also require all closes to be below HWM
-  const allBelowHwm = confirmationCloses.every(
-    (c) => c.close < hwmPrice,
-  );
-
-  if (allBelowThreshold && allBelowHwm) {
+  if (windowResult.confirmedAt !== null && windowResult.window.length === requiredConfirmations) {
     return {
       confirmed: true,
       status: "CONFIRMED",
-      confirmedAt: confirmationCloses[requiredConfirmations - 1].timestamp,
+      confirmedAt: windowResult.confirmedAt,
       reversalThresholdPrice,
-      confirmationCloses,
+      confirmationCloses: windowResult.window.map((c) => ({ timestamp: c.timestamp, close: c.close })),
+      normalizationValid: true,
+      normalizationErrors: [],
+      reasonCodes: windowResult.reasonCodes,
     };
+  }
+
+  reasonCodes.push(...windowResult.reasonCodes);
+  if (windowResult.window.length > 0 && windowResult.window.length < requiredConfirmations) {
+    reasonCodes.push("NON_CONSECUTIVE_DAILY_SEQUENCE");
   }
 
   return {
@@ -366,23 +470,26 @@ export function evaluateConfirmation(input: ConfirmationInput): ConfirmationResu
     status: "CONFIRMING",
     confirmedAt: null,
     reversalThresholdPrice,
-    confirmationCloses,
+    confirmationCloses: windowResult.window.map((c) => ({ timestamp: c.timestamp, close: c.close })),
+    normalizationValid: true,
+    normalizationErrors: [],
+    reasonCodes,
   };
 }
 
-// ─── HWM Bootstrap ──────────────────────────────────────────────────
+// ─── HWM Bootstrap (R5.1: strict normalization, isClosed mandatory) ──
 
 export function bootstrapHWM(
-  dailyCloses: { timestamp: string; close: number; isClosed?: boolean }[],
+  dailyCloses: DailyCloseObservation[],
   requiredConfirmations: number = 3,
   reversalThresholdPct: number = 5.0,
 ): HighWaterMark | null {
-  // R3: Use shared normalization
-  const deduped = normalizeClosedDailyCloses(dailyCloses);
-  if (deduped.length === 0) return null;
+  // R5.1: Use strict normalization
+  const normResult = normalizeClosedDailyClosesStrict(dailyCloses);
+  if (!normResult.valid || normResult.closes.length === 0) return null;
 
   // R3: Only consider closed candles for HWM detection
-  const closedOnly = deduped.filter((c) => c.isClosed);
+  const closedOnly = normResult.closes.filter((c) => c.isClosed);
   if (closedOnly.length === 0) return null;
 
   // Find the highest close among closed candles
@@ -397,7 +504,7 @@ export function bootstrapHWM(
   const hwmTimestamp = closedOnly[highestIdx].timestamp;
   const subsequentCloses = closedOnly.slice(highestIdx + 1);
 
-  // R2: Use canonical shared evaluation function
+  // R2: Use canonical shared evaluation function (R5.1: strict)
   const result = evaluateConfirmation({
     hwmPrice,
     hwmTimestamp,
@@ -406,10 +513,13 @@ export function bootstrapHWM(
     reversalThresholdPct,
   });
 
+  // R5.14: Use UTC canonical timestamp for hwmId
+  const canonicalTs = new Date(hwmTimestamp).toISOString();
+
   return {
-    hwmId: `hwm-${hwmTimestamp}`,
+    hwmId: `hwm-${canonicalTs}`,
     price: hwmPrice,
-    timestamp: hwmTimestamp,
+    timestamp: canonicalTs,
     status: result.status,
     confirmedAt: result.confirmedAt,
     supersededBy: null,
@@ -541,28 +651,52 @@ export function computeReversalThreshold(
   return hwm * (1 - thresholdPct / 100);
 }
 
-// ─── Incremental HWM Processing (R2 — uses canonical evaluateConfirmation) ──
+// ─── Incremental HWM Processing (R5.1: strict, R5.14: HwmTransition) ──
+
+// R5.14: Explicit transition result
+export interface HwmTransition {
+  previous: HighWaterMark;
+  current: HighWaterMark;
+  transition: "UNCHANGED" | "UPDATED" | "CONFIRMED" | "SUPERSEDED" | "REJECTED";
+  reasonCodes: string[];
+}
 
 export function processIncrementalClose(
   hwm: HighWaterMark,
-  newClose: { timestamp: string; close: number; isClosed?: boolean },
-  closesAvailableAsOfNewClose: { timestamp: string; close: number; isClosed?: boolean }[],
+  newClose: DailyCloseObservation,
+  closesAvailableAsOfNewClose: DailyCloseObservation[],
   requiredConfirmations: number,
   reversalThresholdPct: number,
-): HighWaterMark {
-  if (hwm.status === "FROZEN" || hwm.status === "INVALIDATED") return hwm;
+): HwmTransition {
+  const reasonCodes: string[] = [];
+
+  if (hwm.status === "FROZEN" || hwm.status === "INVALIDATED") {
+    reasonCodes.push("HWM_FROZEN_OR_INVALIDATED");
+    return { previous: hwm, current: hwm, transition: "REJECTED", reasonCodes };
+  }
 
   // R4.14: Validate newClose before using it
   const newCloseTs = new Date(newClose.timestamp).getTime();
-  if (Number.isNaN(newCloseTs)) return hwm; // Invalid timestamp
-  if (typeof newClose.close !== "number" || !Number.isFinite(newClose.close) || newClose.close <= 0) return hwm;
-  if (Number.isNaN(newClose.close)) return hwm;
-  // R4.9: isClosed must be present
-  if (newClose.isClosed === undefined) return hwm; // INVALID_CANDLE_MISSING_CLOSED_STATUS
+  if (Number.isNaN(newCloseTs)) {
+    reasonCodes.push("INVALID_TIMESTAMP");
+    return { previous: hwm, current: hwm, transition: "REJECTED", reasonCodes };
+  }
+  if (typeof newClose.close !== "number" || !Number.isFinite(newClose.close) || newClose.close <= 0) {
+    reasonCodes.push("INVALID_PRICE");
+    return { previous: hwm, current: hwm, transition: "REJECTED", reasonCodes };
+  }
+  // R5.1: isClosed must be present (mandatory in DailyCloseObservation)
+  if (newClose.isClosed === undefined) {
+    reasonCodes.push("INVALID_CANDLE_MISSING_CLOSED_STATUS");
+    return { previous: hwm, current: hwm, transition: "REJECTED", reasonCodes };
+  }
 
   const hwmTimestamp = new Date(hwm.timestamp).getTime();
   // R4.14: Reject timestamp <= HWM timestamp
-  if (newCloseTs <= hwmTimestamp) return hwm;
+  if (newCloseTs <= hwmTimestamp) {
+    reasonCodes.push("TIMESTAMP_BEFORE_HWM");
+    return { previous: hwm, current: hwm, transition: "REJECTED", reasonCodes };
+  }
 
   // R3: No look-ahead — only use closes up to newClose timestamp
   const asOf = newCloseTs;
@@ -573,25 +707,41 @@ export function processIncrementalClose(
     return ts <= asOf;
   });
 
-  // R3: Use shared normalization (R4.10: UTC canonical)
-  const normalized = normalizeClosedDailyCloses(validCloses);
-  const closedOnly = normalized.filter((c) => c.isClosed);
+  // R5.1: Use strict normalization
+  const normResult = normalizeClosedDailyClosesStrict(validCloses);
+  if (!normResult.valid) {
+    for (const err of normResult.errors) {
+      reasonCodes.push(err.code);
+    }
+    return { previous: hwm, current: hwm, transition: "REJECTED", reasonCodes };
+  }
+  const closedOnly = normResult.closes.filter((c) => c.isClosed);
 
-  // R4.14: If new close exceeds HWM, HWM is superseded (only if closed) — with supersession traceability
+  // R5.14: If new close exceeds HWM, HWM is superseded (only if closed)
   if (newClose.isClosed === true && newClose.close > hwm.price) {
+    // R5.14: Normalize timestamp to UTC canonical for hwmId
+    const canonicalTs = new Date(newClose.timestamp).toISOString();
     const newHwm: HighWaterMark = {
-      hwmId: `hwm-${newClose.timestamp}`,
+      hwmId: `hwm-${canonicalTs}`,
       price: newClose.close,
-      timestamp: newClose.timestamp,
+      timestamp: canonicalTs,
       status: "CANDIDATE",
       confirmedAt: null,
       supersededBy: null,
     };
-    // R4.14: Preserve supersession traceability
-    return newHwm;
+    const previousHwm: HighWaterMark = {
+      ...hwm,
+      status: "SUPERSEDED" as HwmStatus,
+      supersededBy: newHwm.hwmId,
+    };
+    reasonCodes.push("HWM_SUPERSEDED");
+    return { previous: previousHwm, current: newHwm, transition: "SUPERSEDED", reasonCodes };
   }
 
-  if (hwm.status === "CONFIRMED" || hwm.status === "SUPERSEDED") return hwm;
+  if (hwm.status === "CONFIRMED" || hwm.status === "SUPERSEDED") {
+    reasonCodes.push("HWM_ALREADY_CONFIRMED_OR_SUPERSEDED");
+    return { previous: hwm, current: hwm, transition: "UNCHANGED", reasonCodes };
+  }
 
   // For CANDIDATE and CONFIRMING: gather subsequent closes up to asOf and evaluate
   const subsequentCloses = closedOnly.filter(
@@ -606,11 +756,16 @@ export function processIncrementalClose(
     reversalThresholdPct,
   });
 
-  return {
+  const updatedHwm: HighWaterMark = {
     ...hwm,
     status: result.status,
     confirmedAt: result.confirmedAt,
   };
+
+  const transition = result.confirmed ? "CONFIRMED" : "UPDATED";
+  reasonCodes.push(...result.reasonCodes);
+
+  return { previous: hwm, current: updatedHwm, transition, reasonCodes };
 }
 
 // ─── Weekly Confirmation (R2 — explicitly disabled) ──────────────────
@@ -633,24 +788,22 @@ export function isWeeklyConfirmationEnabled(config: WeeklyConfirmationConfig): b
   return config.weeklyOverrideEnabled && config.requiredWeeklyCloses > 0;
 }
 
-// ─── Reversal Confirmation (R4.15: wrapper of evaluateConfirmation) ───
+// ─── Reversal Confirmation (R5.15: proper contract, delegates to strict engine) ──
 
 export function isReversalConfirmed(
-  hwm: number,
-  currentPrice: number,
-  reversalThreshold: number,
-  requiredDailyCloses: number = 3,
-  dailyCloses: { timestamp: string; close: number; isClosed?: boolean }[] = [],
+  hwmPrice: number,
+  hwmTimestamp: string,
+  reversalThresholdPct: number,
+  requiredDailyCloses: number,
+  dailyCloses: DailyCloseObservation[],
 ): boolean {
-  if (currentPrice > reversalThreshold) return false;
-
-  // R4.15: Use canonical evaluateConfirmation instead of independent logic
+  // R5.15: Delegate to same strict engine as evaluateConfirmation
   const result = evaluateConfirmation({
-    hwmPrice: hwm,
-    hwmTimestamp: dailyCloses.length > 0 ? dailyCloses[0].timestamp : new Date(0).toISOString(),
+    hwmPrice,
+    hwmTimestamp,
     subsequentCloses: dailyCloses,
     requiredConfirmations: requiredDailyCloses,
-    reversalThresholdPct: hwm > 0 ? ((hwm - reversalThreshold) / hwm) * 100 : 0,
+    reversalThresholdPct,
   });
 
   return result.confirmed;

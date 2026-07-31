@@ -16,7 +16,117 @@ import type {
 } from "./amaTypes";
 import { computeDropPct, getMacroZone } from "./amaHwmBar";
 import type { ResolvedSeedTranche, AssetSymbol } from "./amaSeedTypes";
-import { getSeedTranches, getSeedMaximumTranchePct, isWeightMultiplierValid, validateSeedPolicy } from "./amaSeedTypes";
+import { getSeedTranches, getSeedMaximumTranchePct, isWeightMultiplierValid, validateSeedPolicy, BTC_SEED_POLICY, ETH_SEED_POLICY } from "./amaSeedTypes";
+
+// ─── R5.2: ConfirmedDailyClose ───────────────────────────────────────
+
+export interface ConfirmedDailyClose {
+  timestamp: string;
+  close: number;
+  isClosed: true;
+}
+
+export function validateConfirmedDailyClose(
+  close: { timestamp: string; close: number; isClosed: boolean },
+): { valid: boolean; reasonCodes: string[] } {
+  const reasonCodes: string[] = [];
+
+  // Validate isClosed
+  if (close.isClosed !== true) {
+    reasonCodes.push("CANDLE_NOT_CLOSED");
+    return { valid: false, reasonCodes };
+  }
+
+  // Validate close price
+  if (typeof close.close !== "number" || Number.isNaN(close.close)) {
+    reasonCodes.push("INVALID_PRICE_NAN");
+    return { valid: false, reasonCodes };
+  }
+  if (!Number.isFinite(close.close)) {
+    reasonCodes.push("INVALID_PRICE_INFINITY");
+    return { valid: false, reasonCodes };
+  }
+  if (close.close <= 0) {
+    reasonCodes.push("INVALID_PRICE_ZERO_OR_NEGATIVE");
+    return { valid: false, reasonCodes };
+  }
+
+  // Validate timestamp
+  const ts = new Date(close.timestamp).getTime();
+  if (Number.isNaN(ts)) {
+    reasonCodes.push("INVALID_TIMESTAMP");
+    return { valid: false, reasonCodes };
+  }
+
+  return { valid: true, reasonCodes };
+}
+
+// ─── R5.3: CanonicalSeedEnvelope ─────────────────────────────────────
+
+export interface CanonicalSeedEnvelope {
+  asset: AssetSymbol;
+  deploymentPct: number;
+  reservePct: number;
+  trancheCount: number;
+  maxSeedTranchePct: number;
+  policyId: string;
+  policyVersion: number;
+}
+
+export function getCanonicalSeedEnvelope(asset: AssetSymbol): CanonicalSeedEnvelope {
+  if (asset === "BTC") {
+    return {
+      asset: "BTC",
+      deploymentPct: BTC_SEED_POLICY.capitalDeploymentPct,
+      reservePct: BTC_SEED_POLICY.capitalReservePct,
+      trancheCount: BTC_SEED_POLICY.trancheCount,
+      maxSeedTranchePct: 18,
+      policyId: BTC_SEED_POLICY.policyId,
+      policyVersion: 1,
+    };
+  }
+  return {
+    asset: "ETH",
+    deploymentPct: ETH_SEED_POLICY.capitalDeploymentPct,
+    reservePct: ETH_SEED_POLICY.capitalReservePct,
+    trancheCount: ETH_SEED_POLICY.trancheCount,
+    maxSeedTranchePct: 12,
+    policyId: ETH_SEED_POLICY.policyId,
+    policyVersion: 1,
+  };
+}
+
+export function validateAgainstSeedEnvelope(
+  input: SeedTranchePlanInput,
+): { valid: boolean; effective: { deploymentPct: number; reservePct: number; trancheCount: number }; reasonCodes: string[] } {
+  const reasonCodes: string[] = [];
+  const envelope = getCanonicalSeedEnvelope(input.asset);
+
+  // R5.3: Validate asset match
+  if (input.parameters.asset !== input.asset) {
+    reasonCodes.push("ASSET_MISMATCH");
+    return { valid: false, effective: { deploymentPct: 0, reservePct: 0, trancheCount: 0 }, reasonCodes };
+  }
+
+  // R5.3: User parameters can only be more conservative
+  const effectiveDeploymentPct = Math.min(envelope.deploymentPct, input.parameters.maxCycleDeploymentPct);
+  const effectiveReservePct = Math.max(envelope.reservePct, input.parameters.mandatoryReservePct);
+  const effectiveTrancheCount = Math.min(envelope.trancheCount, input.parameters.absoluteTrancheCountCap);
+
+  // R5.3: Check that user params don't relax seed
+  if (input.parameters.mandatoryReservePct < envelope.reservePct) {
+    reasonCodes.push(`RESERVE_BELOW_SEED_MIN:${input.parameters.mandatoryReservePct}<${envelope.reservePct}`);
+  }
+  if (input.parameters.maxCycleDeploymentPct > envelope.deploymentPct) {
+    reasonCodes.push(`DEPLOYMENT_ABOVE_SEED_MAX:${input.parameters.maxCycleDeploymentPct}>${envelope.deploymentPct}`);
+  }
+
+  return {
+    valid: reasonCodes.length === 0,
+    effective: { deploymentPct: effectiveDeploymentPct, reservePct: effectiveReservePct, trancheCount: effectiveTrancheCount },
+    reasonCodes,
+  };
+}
 
 // ─── Risk Overlay Validation (R3 — fail-closed) ─────────────────────
 
@@ -620,12 +730,23 @@ function canonicalPlanPayload(plan: AmaTranchePlan): string {
   return JSON.stringify(payload);
 }
 
-function computePlanId(cycleId: string, candidates: AmaTrancheCandidate[]): string {
+export function computePlanId(cycleId: string, candidates: AmaTrancheCandidate[], confirmedClose?: { timestamp: string; close: number }): string {
+  // R5.8: Derive planId from full canonical payload
   const payload = JSON.stringify({
     cycleId,
+    confirmedCloseTimestamp: confirmedClose?.timestamp,
+    confirmedClosePrice: confirmedClose ? Number(confirmedClose.close.toFixed(8)) : undefined,
     candidates: candidates.map((c) => ({
       id: c.trancheId,
       amt: Number(c.amountUsd.toFixed(8)),
+      eligible: c.eligible,
+      seedTrancheIndex: c.seedTrancheIndex,
+      canonicalTriggerPrice: c.canonicalTriggerPrice !== undefined ? Number(c.canonicalTriggerPrice.toFixed(8)) : undefined,
+      remainingAmountUsd: c.remainingAmountUsd !== undefined ? Number(c.remainingAmountUsd.toFixed(8)) : undefined,
+      executionState: c.executionState,
+      policyId: c.policyId,
+      policyVersion: c.policyVersion,
+      asset: c.asset,
     })),
   });
   const hash = createHash("sha256").update(payload).digest("hex").slice(0, 16);
@@ -723,9 +844,21 @@ export function buildCanonicalSeedPlan(
   input: SeedTranchePlanInput,
   confirmedClose: { timestamp: string; close: number; isClosed: boolean },
 ): AmaTranchePlan | null {
+  // R5.2: Validate confirmedClose before planning
+  const closeValidation = validateConfirmedDailyClose(confirmedClose);
+  if (!closeValidation.valid) {
+    return null;
+  }
+
   // R4.16: Validate seed before planning
   const validationErrors = validateSeedBeforePlanning(input);
   if (validationErrors.length > 0) {
+    return null;
+  }
+
+  // R5.3: Validate against canonical seed envelope
+  const envelopeCheck = validateAgainstSeedEnvelope(input);
+  if (!envelopeCheck.valid) {
     return null;
   }
 
@@ -764,14 +897,21 @@ export function buildCanonicalSeedPlan(
       policyVersion: level.policyVersion,
       riskOverlayMultiplier: input.riskOverlayMultiplier,
       confirmedCloseTimestamp: confirmedClose.isClosed ? confirmedClose.timestamp : undefined,
+      // R5.4: Fill tracking — initial state
+      plannedAmountUsd: level.amountUsd,
+      executedAmountUsd: 0,
+      remainingAmountUsd: level.amountUsd,
+      executionState: "NOT_EXECUTED" as const,
     };
   });
 
   const eligibleCount = candidates.filter((c) => c.eligible).length;
-  const mandatoryReserveUsd = input.budgetUsd * (input.parameters.mandatoryReservePct / 100);
+  // R5.3: Use envelope effective values
+  const mandatoryReserveUsd = input.budgetUsd * (envelopeCheck.effective.reservePct / 100);
   const deployableCycleCapitalUsd = input.budgetUsd - mandatoryReserveUsd;
 
-  const planId = computePlanId(input.cycleId, candidates);
+  // R5.8: Compute planId with full canonical payload including confirmedClose
+  const planId = computePlanId(input.cycleId, candidates, confirmedClose);
 
   return {
     planId,
@@ -782,5 +922,8 @@ export function buildCanonicalSeedPlan(
     mandatoryReserveUsd,
     deployableCycleCapitalUsd,
     createdAt: new Date().toISOString(),
+    // R5.12: Confirmed close reference
+    asOfConfirmedCloseTimestamp: confirmedClose.timestamp,
+    asOfConfirmedClosePrice: confirmedClose.close,
   };
 }

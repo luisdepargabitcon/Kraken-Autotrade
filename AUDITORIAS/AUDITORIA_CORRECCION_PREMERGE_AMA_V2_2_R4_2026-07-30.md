@@ -118,3 +118,9 @@ R4 implementa 17 correcciones estructurales sobre el flujo adaptativo AMA, unifi
 - **Suite completa:** `vitest run` — 3752 passed, 31 failed (preexistentes), 29 skipped (preexistentes)
 - **Fallos nuevos:** 0
 - **Skipped nuevos:** 0
+
+---
+
+## Actualización R5 (2026-07-31)
+
+R4 ha sido committed y pushed a `origin/review/ama-seed-v2-2-20260729` en `9c86c148aecb980682e41ebc7719fbae3eaf7db9`. Las correcciones R5 se aplican sobre R4. Ver auditoría R5 para el estado actual.

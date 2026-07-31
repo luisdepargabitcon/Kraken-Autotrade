@@ -5288,3 +5288,102 @@ Tests en `amaSeedTypes.test.ts` lines 41-75 verifican cada campo independienteme
 - `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R4_2026-07-30.md` — NUEVO
 - `FASES MODO AMA.md` — estado R4
 - `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R4
+
+---
+
+## R5 — Correcciones de Invariantes y Endurecimiento (2026-07-31)
+
+### Correcciones aplicadas (15)
+
+1. **Normalización strict en flujo canónico HWM** — `normalizeClosedDailyClosesStrict()` es el normalizador obligatorio en `evaluateConfirmation()`, `bootstrapHWM()`, `processIncrementalClose()`. Rechaza candles sin `isClosed`, con timestamp inválido, precio negativo, o duplicados conflictivos. El normalizador permisivo `normalizeClosedDailyCloses()` queda solo para compatibilidad legacy.
+
+2. **Validación de ConfirmedDailyClose** — `validateConfirmedDailyClose()` valida que el close tenga `isClosed: true`, timestamp parseable, precio > 0 finito. `buildCanonicalSeedPlan()` rechaza closes inválidos o no cerrados.
+
+3. **Canonical Seed Envelope** — `getCanonicalSeedEnvelope(asset)` retorna envelope inmutable por activo (BTC: 75/25/6 tramos, ETH: 65/35/7 tramos). `validateAgainstSeedEnvelope()` bloquea parámetros de otro activo, reserve below minimum, deployment above max. `buildCanonicalSeedPlan()` usa envelope effective values.
+
+4. **Fills parciales con remanente real** — `AmaTrancheCandidate` extendido con `plannedAmountUsd`, `executedAmountUsd`, `remainingAmountUsd`, `executionState` (NOT_EXECUTED, PARTIALLY_EXECUTED, FULLY_EXECUTED). Replan aplica fills preservando remanente.
+
+5. **Fuente contable única de deployedUsd** — `ReplanContext` usa `portfolioDeployedUsd` como fuente autoritativa. No se suma `seedInput.deployedUsd` + evidence. El plan se construye con `portfolioDeployedUsd` directamente.
+
+6. **Validación de evidencia ejecutada** — `validateExecutedEvidence()` valida: trancheId no vacío, existe en plan original, seedTrancheIndex en rango, idempotencyKey no vacío, sin duplicados, executedAmountUsd > 0, sin overfill.
+
+7. **Reconstrucción de metadatos tras replan** — `replanTranches()` recalcula `plannedPurchaseCount` = elegibles, `planId` con payload final, `version` incrementada, `createdAt` nueva.
+
+8. **Identidad canónica de plan** — `computePlanId()` incluye `cycleId`, `confirmedClose` (timestamp + price), y por candidato: `trancheId`, `amountUsd`, `eligible`, `seedTrancheIndex`, `canonicalTriggerPrice`, `remainingAmountUsd`, `executionState`, `policyId`, `policyVersion`. Excluye `createdAt`.
+
+9. **Reset de límites temporales antes de decidir** — `makeAdaptiveDecision()` normaliza `PeriodLimitState` (reset semanal/mensual UTC) antes de comprobar límites.
+
+10. **Cooldown fail-closed** — `checkCooldownFailClosed()` valida timestamp actual, cooldownEndsAt, y policy. Timestamp inválido → ABORT. Out-of-order → invalid. `makeAdaptiveDecision()` aborta si cooldown inválido.
+
+11. **Estados por nivel** — `AdaptiveDecision.levelStates` clasifica cada candidato: SELECTED, PENDING_COOLDOWN, PENDING_PERIOD_LIMIT, GUARDRAIL_BLOCKED, o sin estado si no crossed.
+
+12. **Decisión basada en cierre confirmado** — `makeAdaptiveDecision()` usa `plan.asOfConfirmedClosePrice` para detectar crossed levels, no precio live. `buildCanonicalSeedPlan()` almacena `asOfConfirmedCloseTimestamp` y `asOfConfirmedClosePrice`.
+
+13. **Búsqueda de ventanas consecutivas con gaps** — `findConsecutiveConfirmationWindow()` busca primera secuencia de N cierres consecutivos UTC que cumplan threshold. Gap resetea ventana. No usa cierres posteriores al confirmado.
+
+14. **Transición HWM con previous/current** — `processIncrementalClose()` retorna `HwmTransition` con `previous`, `current`, `transition` (UNCHANGED, UPDATED, CONFIRMED, SUPERSEDED, REJECTED), `reasonCodes`. SUPERSEDED marca previous.status=SUPERSEDED, previous.supersededBy=current.hwmId.
+
+15. **Paridad de APIs HWM** — `isReversalConfirmed()` delega a `evaluateConfirmation()`. Ambas producen mismo resultado para mismos inputs.
+
+### Tests R5 nuevos (+58)
+
+Archivo: `server/services/ama/__tests__/amaR5Invariants.test.ts`
+
+Clasificación por bloque:
+- R5.1 Strict normalization (6 tests: 1-6)
+- R5.2 ConfirmedDailyClose validation (6 tests: 7-12)
+- R5.3 Canonical seed envelope (6 tests: 13-18)
+- R5.4 Partial fills (3 tests: 19-21)
+- R5.5 Single deployedUsd source (2 tests: 22-23)
+- R5.6 Evidence validation (7 tests: 24-30)
+- R5.7 Metadata reconstruction (3 tests: 31-33)
+- R5.8 Plan identity (3 tests: 34-36)
+- R5.9 Reset before decide (2 tests: 37-38)
+- R5.10 Cooldown fail-closed (5 tests: 39-43)
+- R5.11 Level states (3 tests: 44-46)
+- R5.12 Confirmed close in decision (2 tests: 47-48)
+- R5.13 Consecutive window with gaps (4 tests: 49-52)
+- R5.14 HwmTransition traceability (4 tests: 53-56)
+- R5.15 API parity (2 tests: 57-58)
+
+### Tests R4/R2/HWM actualizados
+
+- `amaR2Corrections.test.ts` — fix: `processIncrementalClose` retorna `HwmTransition`, usar `.current`; `isClosed: true` en closes para `bootstrapHWM` y `evaluateConfirmation`
+- `amaHwmBar.test.ts` — fix: `isClosed: true` en closes, `isReversalConfirmed` con nueva firma R5.15
+- `amaR4Integration.test.ts` — fix: `ReplanContext.portfolioDeployedUsd`, `ExecutedTrancheEvidence` con `cycleId/asset/policyId/policyVersion`, `processIncrementalClose` retorna `HwmTransition`, ETH seed params 65/35
+- `amaAdaptivePlanner.test.ts` — fix: `portfolioDeployedUsd` en ReplanContext, campos R5 en evidence
+
+### Archivos modificados R5
+
+- `server/services/ama/amaDeterministicEngine.ts` — R5.2, R5.3, R5.7, R5.8: ConfirmedDailyClose, CanonicalSeedEnvelope, validateAgainstSeedEnvelope, computePlanId con confirmedClose, buildCanonicalSeedPlan con envelope
+- `server/services/ama/amaAdaptivePlanner.ts` — R5.4, R5.5, R5.6, R5.7, R5.9, R5.10, R5.11, R5.12: ExecutedTrancheEvidence extendido, ReplanContext con portfolioDeployedUsd, validateExecutedEvidence, replanTranches con fills, makeAdaptiveDecision con reset/cooldown/levelStates/confirmedClose
+- `server/services/ama/amaTypes.ts` — R5.4, R5.12: TrancheExecutionState, campos de fill parcial, asOfConfirmedClose
+- `server/services/ama/amaHwmBar.ts` — R5.1, R5.13, R5.14, R5.15: normalizeClosedDailyClosesStrict en flujo canónico, findConsecutiveConfirmationWindow, HwmTransition, isReversalConfirmed nueva firma
+- `server/services/ama/__tests__/amaR5Invariants.test.ts` — NUEVO, 58 tests
+- `server/services/ama/__tests__/amaR2Corrections.test.ts` — fix HwmTransition e isClosed
+- `server/services/ama/__tests__/amaHwmBar.test.ts` — fix isClosed e isReversalConfirmed
+- `server/services/ama/__tests__/amaR4Integration.test.ts` — fix R5 API en tests R4
+- `server/services/ama/__tests__/amaAdaptivePlanner.test.ts` — fix R5 campos en evidence y replan
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R5_2026-07-31.md` — NUEVO
+- `FASES MODO AMA.md` — estado R5
+- `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R5
+
+### Estado
+
+- R4 = COMMITTED_AND_PUSHED
+- HEAD_R4 = 9c86c148aecb980682e41ebc7719fbae3eaf7db9
+- origin/review = 9c86c148aecb980682e41ebc7719fbae3eaf7db9
+- origin/main = 44cd46ff3a6e195556987968a87c8e795d66cd02
+- R5 = CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- R5_AMA_TESTS = 695/695 PASS
+- R5_AMA_TEST_FILES = 22
+- PostgreSQL = BLOCKED_NO_SAFE_ENVIRONMENT
+- Docker local = NOT_AVAILABLE
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
+- amaService = DEVELOPMENT_SCAFFOLD_ONLY
+- Research Lab completo = NO IMPLEMENTADO
+- SHADOW = BLOQUEADO
+- REAL_LIMITED = BLOQUEADO
+- REAL_FULL = BLOQUEADO
+- merge = NO AUTORIZADO
+- deploy = NO AUTORIZADO

@@ -61,11 +61,11 @@ describe("Fase 9 — ATR", () => {
 describe("Fase 9 — HWM Bootstrap", () => {
   it("bootstraps CONFIRMED HWM with enough lower closes and reversal", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 50000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 49000 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 48500 },
-      { timestamp: "2026-07-05T00:00:00Z", close: 48000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 50000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 49000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 48500, isClosed: true },
+      { timestamp: "2026-07-05T00:00:00Z", close: 48000, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm).not.toBeNull();
@@ -75,8 +75,8 @@ describe("Fase 9 — HWM Bootstrap", () => {
 
   it("returns CANDIDATE with insufficient confirmations", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 51000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 51000, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3);
     expect(hwm).not.toBeNull();
@@ -85,11 +85,11 @@ describe("Fase 9 — HWM Bootstrap", () => {
 
   it("returns CONFIRMING when no reversal threshold met", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 50000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 51900 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 51800 },
-      { timestamp: "2026-07-05T00:00:00Z", close: 51700 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 50000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 51900, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 51800, isClosed: true },
+      { timestamp: "2026-07-05T00:00:00Z", close: 51700, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).toBe("CONFIRMING");
@@ -97,12 +97,12 @@ describe("Fase 9 — HWM Bootstrap", () => {
 
   it("returns CONFIRMING when a subsequent close equals the high", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 50000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 54000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 54000 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 53000 },
-      { timestamp: "2026-07-05T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-06T00:00:00Z", close: 51000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 50000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 54000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 54000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 53000, isClosed: true },
+      { timestamp: "2026-07-05T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-06T00:00:00Z", close: 51000, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm!.status).toBe("CONFIRMING");
@@ -110,11 +110,11 @@ describe("Fase 9 — HWM Bootstrap", () => {
 
   it("sorts closes by timestamp before processing", () => {
     const closes = [
-      { timestamp: "2026-07-05T00:00:00Z", close: 48000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 49000 },
-      { timestamp: "2026-07-01T00:00:00Z", close: 50000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 52000 },
-      { timestamp: "2026-07-04T00:00:00Z", close: 48500 },
+      { timestamp: "2026-07-05T00:00:00Z", close: 48000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 49000, isClosed: true },
+      { timestamp: "2026-07-01T00:00:00Z", close: 50000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 52000, isClosed: true },
+      { timestamp: "2026-07-04T00:00:00Z", close: 48500, isClosed: true },
     ];
     const hwm = bootstrapHWM(closes, 3, 5.0);
     expect(hwm).not.toBeNull();
@@ -280,22 +280,22 @@ describe("Fase 9 — Reversal Threshold (canonical formula)", () => {
 
   it("confirms reversal with consecutive closes below threshold", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 44000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 43000 },
-      { timestamp: "2026-07-03T00:00:00Z", close: 42000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 44000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 43000, isClosed: true },
+      { timestamp: "2026-07-03T00:00:00Z", close: 42000, isClosed: true },
     ];
-    expect(isReversalConfirmed(50000, 42000, 45000, 3, closes)).toBe(true);
+    expect(isReversalConfirmed(50000, "2026-06-30T00:00:00Z", 10, 3, closes)).toBe(true);
   });
 
   it("rejects reversal with insufficient closes", () => {
     const closes = [
-      { timestamp: "2026-07-01T00:00:00Z", close: 44000 },
-      { timestamp: "2026-07-02T00:00:00Z", close: 43000 },
+      { timestamp: "2026-07-01T00:00:00Z", close: 44000, isClosed: true },
+      { timestamp: "2026-07-02T00:00:00Z", close: 43000, isClosed: true },
     ];
-    expect(isReversalConfirmed(50000, 43000, 45000, 3, closes)).toBe(false);
+    expect(isReversalConfirmed(50000, "2026-06-30T00:00:00Z", 10, 3, closes)).toBe(false);
   });
 
   it("rejects reversal when price above threshold", () => {
-    expect(isReversalConfirmed(50000, 46000, 45000, 3, [])).toBe(false);
+    expect(isReversalConfirmed(50000, "2026-06-30T00:00:00Z", 10, 3, [])).toBe(false);
   });
 });

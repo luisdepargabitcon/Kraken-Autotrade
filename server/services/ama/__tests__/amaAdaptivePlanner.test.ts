@@ -198,8 +198,9 @@ describe("Fase 11 — Replanning", () => {
       seedInput,
       confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true },
       executedTranches: [
-        { trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-1" },
+        { cycleId: "cycle-1", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-1" },
       ],
+      portfolioDeployedUsd: 700,
     });
     expect(replanned).not.toBeNull();
     expect(replanned!.version).toBe(original.version + 1);
@@ -213,9 +214,10 @@ describe("Fase 11 — Replanning", () => {
       seedInput,
       confirmedClose: { timestamp: "2026-07-30T00:00:00Z", close: 38000, isClosed: true },
       executedTranches: [
-        { trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-1" },
-        { trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T11:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-2" },
+        { cycleId: "cycle-1", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T10:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-1" },
+        { cycleId: "cycle-1", asset: "BTC", policyId: "AMA_BTC_SEED_V1_RESEARCH", policyVersion: 1, trancheId: "tranche-cycle-1-0", seedTrancheIndex: 0, executedAmountUsd: 700, executedQuantity: 0.0175, executedAt: "2026-07-29T11:00:00Z", fillStatus: "FILLED", idempotencyKey: "key-2" },
       ],
+      portfolioDeployedUsd: 1400,
     });
     expect(replanned).toBeNull();
   });
