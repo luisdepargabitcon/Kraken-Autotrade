@@ -500,32 +500,93 @@ describe("gridProfessionalProjectionContext — REV-C12A/REV-C12B", () => {
       if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_BUDGET_INVALID");
     });
 
-    it("fails with ALLOCATION_LEVEL_COUNT_MISMATCH when buy+sell != levelsCount (9 levels, 5+5)", () => {
+    // REV-C12B: 9 mandatory symmetric split tests
+    it("1. levelsCount=10, BUY=5, SELL=5 → ok", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+      }));
+      expect(result.ok).toBe(true);
+    });
+
+    it("2. levelsCount=9, BUY=4, SELL=5 → INVALID (odd)", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({
+        allocation: { ...validAllocation, levelsCount: 9 },
+        configuredBuyLevels: 4,
+        configuredSellLevels: 5,
+      }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_LEVEL_COUNT_INVALID");
+    });
+
+    it("3. levelsCount=9, BUY=5, SELL=4 → INVALID (odd)", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({
+        allocation: { ...validAllocation, levelsCount: 9 },
+        configuredBuyLevels: 5,
+        configuredSellLevels: 4,
+      }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_LEVEL_COUNT_INVALID");
+    });
+
+    it("4. levelsCount=9, BUY=5, SELL=5 → INVALID (odd total)", () => {
       const result = resolveGridProfessionalProjectionContext(makeValidInput({
         allocation: { ...validAllocation, levelsCount: 9 },
         configuredBuyLevels: 5,
         configuredSellLevels: 5,
       }));
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_LEVEL_COUNT_MISMATCH");
+      if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_LEVEL_COUNT_INVALID");
     });
 
-    it("fails with ALLOCATION_LEVEL_COUNT_MISMATCH when 10 levels but 4+4", () => {
+    it("5. levelsCount=10, BUY=4, SELL=6 → MISMATCH", () => {
       const result = resolveGridProfessionalProjectionContext(makeValidInput({
         configuredBuyLevels: 4,
-        configuredSellLevels: 4,
+        configuredSellLevels: 6,
       }));
-      // 4+4=8 != 10
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_LEVEL_COUNT_MISMATCH");
     });
 
-    it("accepts 10 levels with 5+5 (symmetric)", () => {
+    it("6. levelsCount=10, BUY=4, SELL=4 → MISMATCH", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({
+        configuredBuyLevels: 4,
+        configuredSellLevels: 4,
+      }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_LEVEL_COUNT_MISMATCH");
+    });
+
+    it("7. levelsCount=10, BUY=5, SELL=5 → no pérdida", () => {
       const result = resolveGridProfessionalProjectionContext(makeValidInput({
         configuredBuyLevels: 5,
         configuredSellLevels: 5,
       }));
       expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.context.configuredBuyLevels).toBe(5);
+        expect(result.context.configuredSellLevels).toBe(5);
+      }
+    });
+
+    it("8. string '10' → INVALID", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({
+        allocation: { ...validAllocation, levelsCount: "10" as any },
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+      }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_LEVEL_COUNT_INVALID");
+    });
+
+    it("9. decimal 10.5 → INVALID", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({
+        allocation: { ...validAllocation, levelsCount: 10.5 },
+        configuredBuyLevels: 5,
+        configuredSellLevels: 5,
+      }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasonCode).toBe("ALLOCATION_LEVEL_COUNT_INVALID");
     });
   });
 

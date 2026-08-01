@@ -9,6 +9,7 @@ import { type ExecutionPolicy, executionPolicyLabel, TAX_RESERVE_PCT, FEE_BUFFER
 import { computeGrossTargetFromNet } from "./gridNetCalculator";
 import { calculateMinSpacingPctReal, calculateSpacingPct, countViableLevelsIterative } from "./gridSpacingCalculator";
 import { buildConfigurationRecommendation } from "./gridRecommendationService";
+import { splitSymmetricLevels } from "./gridProfessionalProjectionContext";
 import type {
   MarketBand as MarketBandType,
   OperationalRange as OperationalRangeType,
@@ -619,9 +620,11 @@ function buildCurrentConfigurationProjection(
   const enforceCompactRange = config?.enforceCompactRange ?? true;
   // REV-C12B: buyLevels/sellLevels are NOT real config fields — they are phantom fields.
   // The allocator is the sole source of levelsCount. Use allocation from input when available.
+  // REV-C12B: Use canonical symmetric split — no Math.floor, odd totals → null.
   const allocationLevelsCount = toNum(allocation?.levelsCount);
-  const buyLevels = allocationLevelsCount != null ? Math.floor(allocationLevelsCount / 2) : null;
-  const sellLevels = allocationLevelsCount != null ? Math.floor(allocationLevelsCount / 2) : null;
+  const split = allocationLevelsCount != null ? splitSymmetricLevels(allocationLevelsCount) : null;
+  const buyLevels = split?.ok ? split.buyLevels : null;
+  const sellLevels = split?.ok ? split.sellLevels : null;
 
   if (price == null || price <= 0 || bandWidthPct == null || bandWidthPct <= 0) {
     return {

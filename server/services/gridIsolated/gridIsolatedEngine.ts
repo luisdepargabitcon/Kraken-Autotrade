@@ -37,7 +37,7 @@ import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from
 import { buildGridExecutionMarketSnapshot, type GridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
 import type { RevolutXPairConstraints } from "../exchanges/RevolutXService";
 import { computeGateTtl, type GateTtlResult } from "./gridExecutionGateTtl";
-import { resolveGridProfessionalProjectionContext, buildProfessionalGeneratorInput } from "./gridProfessionalProjectionContext";
+import { resolveGridProfessionalProjectionContext, buildProfessionalGeneratorInput, splitSymmetricLevels } from "./gridProfessionalProjectionContext";
 import {
   getShadowPumpGuardPolicy,
   getCrossedShadowLevels,
@@ -1384,48 +1384,53 @@ export class GridIsolatedEngine {
     // resolves ok=true AND ttl.fresh=true AND ttl.validUntil !== null.
     // No fallback to evaluatedAt when validUntil is null — fail-closed.
     // No fallback to "ranging" for regime — pass real regime, let the helper decide.
+    // REV-C12B: Use canonical symmetric split — no Math.floor, no remainder.
+    // Odd levelsCount → split fails → state stays null, no generator, no range.
     if (tickAllocation) {
       const evaluatedAt = new Date();
       const ttl = computeGateTtl(executionMarketSnapshot, pairConstraints, evaluatedAt);
-      // Derive canonical levels from allocation — no Math.floor, no level loss.
-      const configuredBuyLevels = Math.floor(tickAllocation.levelsCount / 2);
-      const configuredSellLevels = tickAllocation.levelsCount - configuredBuyLevels;
-      const projectionCtxResult = resolveGridProfessionalProjectionContext({
-        currentPrice: bandSnapshot.midPrice,
-        bollingerMiddle: bandSnapshot.middle,
-        bollingerUpper: bandSnapshot.upper,
-        bollingerLower: bandSnapshot.lower,
-        atrPct: bandSnapshot.atrPct,
-        config: this.config,
-        configuredBuyLevels,
-        configuredSellLevels,
-        allocation: tickAllocation,
-        executionMarketSnapshot,
-        pairConstraints,
-        regimeLabel: bandSnapshot.regime ?? "",
-        marketSuitable: bandSnapshot.suitableForGrid ?? false,
-      });
-      if (projectionCtxResult.ok && ttl.fresh && ttl.validUntil) {
-        this.lastRecommendationProjectionState = {
-          evaluatedAt: evaluatedAt.toISOString(),
-          validUntil: ttl.validUntil.toISOString(),
-          pair: this.config.pair,
-          bandSnapshot: {
-            midPrice: bandSnapshot.midPrice,
-            middle: bandSnapshot.middle,
-            upper: bandSnapshot.upper,
-            lower: bandSnapshot.lower,
-            atrPct: bandSnapshot.atrPct,
-            regime: bandSnapshot.regime ?? "",
-            suitableForGrid: bandSnapshot.suitableForGrid ?? false,
-          },
+      const split = splitSymmetricLevels(tickAllocation.levelsCount);
+      if (!split.ok) {
+        // Odd/invalid levelsCount — do not publish state, do not throw (exits still process).
+        this.lastRecommendationProjectionState = null;
+      } else {
+        const projectionCtxResult = resolveGridProfessionalProjectionContext({
+          currentPrice: bandSnapshot.midPrice,
+          bollingerMiddle: bandSnapshot.middle,
+          bollingerUpper: bandSnapshot.upper,
+          bollingerLower: bandSnapshot.lower,
+          atrPct: bandSnapshot.atrPct,
+          config: this.config,
+          configuredBuyLevels: split.buyLevels,
+          configuredSellLevels: split.sellLevels,
+          allocation: tickAllocation,
           executionMarketSnapshot,
           pairConstraints,
-          allocation: tickAllocation,
-        };
-      } else {
-        // REV-C12B Step 4: If context fails or ttl has no validUntil, do NOT publish.
-        this.lastRecommendationProjectionState = null;
+          regimeLabel: bandSnapshot.regime ?? "",
+          marketSuitable: bandSnapshot.suitableForGrid ?? false,
+        });
+        if (projectionCtxResult.ok && ttl.fresh && ttl.validUntil) {
+          this.lastRecommendationProjectionState = {
+            evaluatedAt: evaluatedAt.toISOString(),
+            validUntil: ttl.validUntil.toISOString(),
+            pair: this.config.pair,
+            bandSnapshot: {
+              midPrice: bandSnapshot.midPrice,
+              middle: bandSnapshot.middle,
+              upper: bandSnapshot.upper,
+              lower: bandSnapshot.lower,
+              atrPct: bandSnapshot.atrPct,
+              regime: bandSnapshot.regime ?? "",
+              suitableForGrid: bandSnapshot.suitableForGrid ?? false,
+            },
+            executionMarketSnapshot,
+            pairConstraints,
+            allocation: tickAllocation,
+          };
+        } else {
+          // REV-C12B Step 4: If context fails or ttl has no validUntil, do NOT publish.
+          this.lastRecommendationProjectionState = null;
+        }
       }
     }
 

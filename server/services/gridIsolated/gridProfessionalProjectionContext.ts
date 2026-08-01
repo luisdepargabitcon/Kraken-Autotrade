@@ -52,6 +52,91 @@ function toStrictInt(v: unknown): number | null {
   return v;
 }
 
+// ─── REV-C12B: Symmetric BUY/SELL level split ────────────────────────
+
+/**
+ * REV-C12B: Canonical symmetric level split helper.
+ * Grid policy requires BUY count === SELL count. Odd totals are rejected.
+ * No Math.floor, no remainder distribution — 9 is NOT split as 4+5.
+ *
+ * Returns ok=true with buyLevels=sellLevels=levelsCount/2 when levelsCount
+ * is a positive even integer. Returns ok=false with a typed reasonCode
+ * for zero, negative, decimal, non-number, or odd values.
+ */
+export type SymmetricLevelSplitResult =
+  | {
+      ok: true;
+      buyLevels: number;
+      sellLevels: number;
+      totalLevels: number;
+    }
+  | {
+      ok: false;
+      reasonCode: "ALLOCATION_LEVEL_COUNT_INVALID" | "ALLOCATION_LEVEL_COUNT_MISMATCH";
+      explanation: string;
+    };
+
+export function splitSymmetricLevels(levelsCount: unknown): SymmetricLevelSplitResult {
+  const n = toStrictInt(levelsCount);
+  if (n == null || n <= 0) {
+    return {
+      ok: false,
+      reasonCode: "ALLOCATION_LEVEL_COUNT_INVALID",
+      explanation: `levelsCount inválido (no es entero positivo finito): ${String(levelsCount)}`,
+    };
+  }
+  if (n % 2 !== 0) {
+    return {
+      ok: false,
+      reasonCode: "ALLOCATION_LEVEL_COUNT_INVALID",
+      explanation: `levelsCount=${n} es impar — la política del Grid exige BUY=SELL (par).`,
+    };
+  }
+  const half = n / 2;
+  return {
+    ok: true,
+    buyLevels: half,
+    sellLevels: half,
+    totalLevels: n,
+  };
+}
+
+/**
+ * REV-C12B: Validate that configuredBuyLevels and configuredSellLevels match
+ * the symmetric split of allocation.levelsCount. Used by resolveGridProfessionalProjectionContext.
+ */
+export function validateSymmetricSplit(
+  levelsCount: unknown,
+  configuredBuyLevels: number,
+  configuredSellLevels: number,
+): SymmetricLevelSplitResult {
+  const split = splitSymmetricLevels(levelsCount);
+  if (!split.ok) return split;
+  // Now check that configured values match the canonical split.
+  if (configuredBuyLevels !== split.buyLevels || configuredSellLevels !== split.sellLevels) {
+    return {
+      ok: false,
+      reasonCode: "ALLOCATION_LEVEL_COUNT_MISMATCH",
+      explanation: `configuredBuy=${configuredBuyLevels}/Sell=${configuredSellLevels} != split BUY=${split.buyLevels}/SELL=${split.sellLevels} (levelsCount=${split.totalLevels}).`,
+    };
+  }
+  if (configuredBuyLevels !== configuredSellLevels) {
+    return {
+      ok: false,
+      reasonCode: "ALLOCATION_LEVEL_COUNT_MISMATCH",
+      explanation: `configuredBuy=${configuredBuyLevels} !== configuredSell=${configuredSellLevels} — la política exige paridad exacta.`,
+    };
+  }
+  if (configuredBuyLevels + configuredSellLevels !== split.totalLevels) {
+    return {
+      ok: false,
+      reasonCode: "ALLOCATION_LEVEL_COUNT_MISMATCH",
+      explanation: `BUY+SELL=${configuredBuyLevels + configuredSellLevels} !== levelsCount=${split.totalLevels}.`,
+    };
+  }
+  return split;
+}
+
 // ─── REV-C12B Step 7: Canonical regime list ──────────────────────────
 
 export type OperableRegime = "low_volatility" | "normal_lateral" | "high_volatility";
@@ -374,15 +459,21 @@ export function resolveGridProfessionalProjectionContext(
     return { ok: false, reasonCode: "ALLOCATION_LEVEL_COUNT_INVALID", explanation: "allocation.levelsCount inválido." };
   }
 
+  // REV-C12B: levelsCount must be even (BUY=SELL policy). Odd → INVALID.
+  if (allocationLevelsCount % 2 !== 0) {
+    return { ok: false, reasonCode: "ALLOCATION_LEVEL_COUNT_INVALID", explanation: `allocation.levelsCount=${allocationLevelsCount} es impar — la política exige BUY=SELL (par).` };
+  }
+
   const allocationFinalGridBudgetUsd = toStrictNum(allocation.finalGridBudgetUsd);
   if (allocationFinalGridBudgetUsd == null || allocationFinalGridBudgetUsd <= 0) {
     return { ok: false, reasonCode: "ALLOCATION_BUDGET_INVALID", explanation: "finalGridBudgetUsd inválido o cero." };
   }
 
-  // REV-C12B Step 6: configuredBuyLevels + configuredSellLevels must equal allocation.levelsCount.
-  const configuredTotal = configuredBuyLevels + configuredSellLevels;
-  if (configuredTotal !== allocationLevelsCount) {
-    return { ok: false, reasonCode: "ALLOCATION_LEVEL_COUNT_MISMATCH", explanation: `configuredBuy+Sell=${configuredTotal} != allocation.levelsCount=${allocationLevelsCount}.` };
+  // REV-C12B: Canonical symmetric split validation — BUY must equal SELL,
+  // and both must equal levelsCount/2. No Math.floor, no remainder.
+  const splitValidation = validateSymmetricSplit(allocationLevelsCount, configuredBuyLevels, configuredSellLevels);
+  if (!splitValidation.ok) {
+    return { ok: false, reasonCode: splitValidation.reasonCode, explanation: splitValidation.explanation };
   }
 
   // REV-C12B Step 6: requiredCapital = capitalPerLevelUsd * levelsCount.

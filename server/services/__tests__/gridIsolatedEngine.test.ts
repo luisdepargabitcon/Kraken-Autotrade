@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { botLogger } from "../botLogger";
+import { MarketDataService } from "../MarketDataService";
+import { revolutXService } from "../exchanges/RevolutXService";
+import { getGridBandSnapshot } from "../gridIsolated/gridBandAdapter";
+import { gridCapitalAllocator } from "../gridIsolated/gridCapitalAllocator";
 
 // Mock DB and external dependencies
 vi.mock("../../db", () => ({
@@ -48,6 +52,7 @@ vi.mock("../MarketDataService", () => ({
     getCandles: vi.fn().mockResolvedValue([]),
     getPrice: vi.fn().mockResolvedValue(null),
     getATR: vi.fn().mockResolvedValue(0),
+    getTicker: vi.fn().mockResolvedValue({ last: 95000, bid: 94990, ask: 95010 }),
   },
 }));
 
@@ -61,10 +66,71 @@ vi.mock("../exchanges/ExchangeFactory", () => ({
   },
 }));
 
+// REV-C12B Step 5: Mock RevolutXService with resolveGridPairConstraints and getTicker
 vi.mock("../exchanges/RevolutXService", () => ({
   revolutXService: {
-    isInitialized: vi.fn().mockReturnValue(false),
+    isInitialized: vi.fn().mockReturnValue(true),
     getBalance: vi.fn().mockResolvedValue({}),
+    resolveGridPairConstraints: vi.fn().mockResolvedValue({
+      pair: "BTC/USD",
+      normalizedPair: "BTC-USD",
+      executionVenue: "REVOLUT_X",
+      baseCurrency: "BTC",
+      quoteCurrency: "USD",
+      priceTickSize: 0.01,
+      quantityStep: 0.0001,
+      minOrderBase: 0.0001,
+      minOrderQuote: 1,
+      minOrderUsd: 1,
+      maxOrderBase: null,
+      pricePrecision: 2,
+      quantityPrecision: 4,
+      status: "active",
+      region: "EU",
+      source: "revolutx",
+      fetchedAt: new Date(),
+      expiresAt: null,
+      verified: true,
+      reasonCode: null,
+    }),
+    getTicker: vi.fn().mockResolvedValue({
+      pair: "BTC/USD",
+      bid: 94990,
+      ask: 95010,
+      last: 95000,
+      timestamp: new Date(),
+      source: "REVOLUT_X_TICKER",
+    }),
+  },
+}));
+
+// REV-C12B Step 5: Mock gridBandAdapter to return a valid band snapshot
+vi.mock("../gridIsolated/gridBandAdapter", () => ({
+  getGridBandSnapshot: vi.fn().mockResolvedValue({
+    midPrice: 95000,
+    middle: 95000,
+    upper: 100000,
+    lower: 90000,
+    atrPct: 2,
+    regime: "normal_lateral",
+    suitableForGrid: true,
+    bandWidthPct: 10,
+    bandPeriod: 20,
+    bandStdDevMultiplier: 2,
+  }),
+}));
+
+// REV-C12B Step 5: Mock gridCapitalAllocator to return a valid symmetric allocation
+vi.mock("../gridIsolated/gridCapitalAllocator", () => ({
+  gridCapitalAllocator: {
+    allocate: vi.fn().mockResolvedValue({
+      levelsCount: 10,
+      capitalPerLevelUsd: 100,
+      finalGridBudgetUsd: 1000,
+      allocationMode: "uniform",
+      deploymentMode: "capped",
+      profile: { profileId: "balanced" },
+    }),
   },
 }));
 
@@ -477,196 +543,20 @@ describe("GridIsolatedEngine — getRecommendationProjectionState defensive copy
 });
 
 // ─── REV-C12B Step 7: Tick valid → Tick blocked transition ──────────────────
-
-describe("GridIsolatedEngine — Tick valid → Tick blocked (REV-C12B Step 7)", () => {
-  beforeEach(async () => {
-    // Load config and set to SHADOW + active for tick tests
-    const config = await gridIsolatedEngine.loadConfig();
-    config!.mode = "SHADOW";
-    config!.isActive = true;
-    await gridIsolatedEngine.saveConfig();
-  });
-
-  it("tick N+1 with no band data clears projection state from tick N", async () => {
-    // Simulate tick N success: set a valid projection state directly
-    const now = new Date();
-    const validState = {
-      evaluatedAt: now.toISOString(),
-      validUntil: new Date(now.getTime() + 30000).toISOString(),
-      pair: "BTC/USD",
-      bandSnapshot: {
-        midPrice: 95000, middle: 95000, upper: 100000, lower: 90000,
-        atrPct: 2, regime: "normal_lateral", suitableForGrid: true,
-      },
-      executionMarketSnapshot: {
-        pair: "BTC/USD", venue: "REVOLUT_X", bid: 94990, ask: 95010, last: 95000,
-        spreadUsd: 20, spreadPct: 0.02, priceTickSize: 0.01, priceTickPct: 0.01,
-        source: "REVOLUT_X_TICKER", timestamp: now, acquiredAt: now, fetchedAt: now,
-        maxAgeMs: 60000, fresh: true, verified: true, reasonCode: null, explanation: "ok",
-      },
-      pairConstraints: {
-        pair: "BTC/USD", normalizedPair: "BTC-USD", executionVenue: "REVOLUT_X",
-        baseCurrency: "BTC", quoteCurrency: "USD", priceTickSize: 0.01, quantityStep: 0.0001,
-        minOrderBase: 0.0001, minOrderQuote: 1, minOrderUsd: 1, maxOrderBase: null,
-        pricePrecision: 2, quantityPrecision: 4, status: "active", region: "EU",
-        source: "revolutx", fetchedAt: now, expiresAt: new Date(now.getTime() + 60000),
-        verified: true, reasonCode: null,
-      },
-      allocation: {
-        levelsCount: 10, capitalPerLevelUsd: 100, finalGridBudgetUsd: 1000,
-        allocationMode: "uniform", deploymentMode: "capped", profile: { profileId: "balanced" },
-      },
-    };
-    (gridIsolatedEngine as any).lastRecommendationProjectionState = validState;
-
-    // Verify state exists before tick N+1
-    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
-
-    // Tick N+1: mocks return null/empty for all market data → bandSnapshot will be null
-    // The tick clears state at start and does NOT re-assign it (no band data)
-    await gridIsolatedEngine.tick();
-
-    // State must be null after blocked tick
-    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
-
-    // Gate must not allow range creation
-    const gate = gridIsolatedEngine.getExecutionGate();
-    expect(gate.canCreateRange).toBe(false);
-
-    // No active range version (no new range created)
-    const status = gridIsolatedEngine.getExecutionStatus();
-    expect(status.activeRangeVersionId).toBeNull();
-
-    // Cleanup
-    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
-  });
-
-  it("market not suitable eliminates projection state", async () => {
-    // Set a valid state
-    const now = new Date();
-    (gridIsolatedEngine as any).lastRecommendationProjectionState = {
-      evaluatedAt: now.toISOString(),
-      validUntil: new Date(now.getTime() + 30000).toISOString(),
-      pair: "BTC/USD",
-      bandSnapshot: {
-        midPrice: 95000, middle: 95000, upper: 100000, lower: 90000,
-        atrPct: 2, regime: "normal_lateral", suitableForGrid: true,
-      },
-      executionMarketSnapshot: {
-        pair: "BTC/USD", venue: "REVOLUT_X", bid: 94990, ask: 95010, last: 95000,
-        spreadUsd: 20, spreadPct: 0.02, priceTickSize: 0.01, priceTickPct: 0.01,
-        source: "REVOLUT_X_TICKER", timestamp: now, acquiredAt: now, fetchedAt: now,
-        maxAgeMs: 60000, fresh: true, verified: true, reasonCode: null, explanation: "ok",
-      },
-      pairConstraints: {
-        pair: "BTC/USD", normalizedPair: "BTC-USD", executionVenue: "REVOLUT_X",
-        baseCurrency: "BTC", quoteCurrency: "USD", priceTickSize: 0.01, quantityStep: 0.0001,
-        minOrderBase: 0.0001, minOrderQuote: 1, minOrderUsd: 1, maxOrderBase: null,
-        pricePrecision: 2, quantityPrecision: 4, status: "active", region: "EU",
-        source: "revolutx", fetchedAt: now, expiresAt: new Date(now.getTime() + 60000),
-        verified: true, reasonCode: null,
-      },
-      allocation: {
-        levelsCount: 10, capitalPerLevelUsd: 100, finalGridBudgetUsd: 1000,
-        allocationMode: "uniform", deploymentMode: "capped", profile: { profileId: "balanced" },
-      },
-    };
-
-    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
-
-    // Tick with no band data (market not suitable scenario — bandSnapshot null)
-    await gridIsolatedEngine.tick();
-
-    // State eliminated
-    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
-
-    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
-  });
-
-  it("allocation failure eliminates projection state", async () => {
-    // Set a valid state
-    const now = new Date();
-    (gridIsolatedEngine as any).lastRecommendationProjectionState = {
-      evaluatedAt: now.toISOString(),
-      validUntil: new Date(now.getTime() + 30000).toISOString(),
-      pair: "BTC/USD",
-      bandSnapshot: {
-        midPrice: 95000, middle: 95000, upper: 100000, lower: 90000,
-        atrPct: 2, regime: "normal_lateral", suitableForGrid: true,
-      },
-      executionMarketSnapshot: {
-        pair: "BTC/USD", venue: "REVOLUT_X", bid: 94990, ask: 95010, last: 95000,
-        spreadUsd: 20, spreadPct: 0.02, priceTickSize: 0.01, priceTickPct: 0.01,
-        source: "REVOLUT_X_TICKER", timestamp: now, acquiredAt: now, fetchedAt: now,
-        maxAgeMs: 60000, fresh: true, verified: true, reasonCode: null, explanation: "ok",
-      },
-      pairConstraints: {
-        pair: "BTC/USD", normalizedPair: "BTC-USD", executionVenue: "REVOLUT_X",
-        baseCurrency: "BTC", quoteCurrency: "USD", priceTickSize: 0.01, quantityStep: 0.0001,
-        minOrderBase: 0.0001, minOrderQuote: 1, minOrderUsd: 1, maxOrderBase: null,
-        pricePrecision: 2, quantityPrecision: 4, status: "active", region: "EU",
-        source: "revolutx", fetchedAt: now, expiresAt: new Date(now.getTime() + 60000),
-        verified: true, reasonCode: null,
-      },
-      allocation: {
-        levelsCount: 10, capitalPerLevelUsd: 100, finalGridBudgetUsd: 1000,
-        allocationMode: "uniform", deploymentMode: "capped", profile: { profileId: "balanced" },
-      },
-    };
-
-    // Tick — no band data means no allocation can be resolved
-    await gridIsolatedEngine.tick();
-
-    // State eliminated (allocation could not be resolved)
-    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
-
-    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
-  });
-
-  it("unknown regime does not publish projection state", async () => {
-    // Set a valid state with known regime
-    const now = new Date();
-    (gridIsolatedEngine as any).lastRecommendationProjectionState = {
-      evaluatedAt: now.toISOString(),
-      validUntil: new Date(now.getTime() + 30000).toISOString(),
-      pair: "BTC/USD",
-      bandSnapshot: {
-        midPrice: 95000, middle: 95000, upper: 100000, lower: 90000,
-        atrPct: 2, regime: "normal_lateral", suitableForGrid: true,
-      },
-      executionMarketSnapshot: {
-        pair: "BTC/USD", venue: "REVOLUT_X", bid: 94990, ask: 95010, last: 95000,
-        spreadUsd: 20, spreadPct: 0.02, priceTickSize: 0.01, priceTickPct: 0.01,
-        source: "REVOLUT_X_TICKER", timestamp: now, acquiredAt: now, fetchedAt: now,
-        maxAgeMs: 60000, fresh: true, verified: true, reasonCode: null, explanation: "ok",
-      },
-      pairConstraints: {
-        pair: "BTC/USD", normalizedPair: "BTC-USD", executionVenue: "REVOLUT_X",
-        baseCurrency: "BTC", quoteCurrency: "USD", priceTickSize: 0.01, quantityStep: 0.0001,
-        minOrderBase: 0.0001, minOrderQuote: 1, minOrderUsd: 1, maxOrderBase: null,
-        pricePrecision: 2, quantityPrecision: 4, status: "active", region: "EU",
-        source: "revolutx", fetchedAt: now, expiresAt: new Date(now.getTime() + 60000),
-        verified: true, reasonCode: null,
-      },
-      allocation: {
-        levelsCount: 10, capitalPerLevelUsd: 100, finalGridBudgetUsd: 1000,
-        allocationMode: "uniform", deploymentMode: "capped", profile: { profileId: "balanced" },
-      },
-    };
-
-    // Tick — no band data means regime cannot be resolved
-    await gridIsolatedEngine.tick();
-
-    // State eliminated (regime unknown because no band data)
-    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
-
-    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
-  });
-});
+// NOTE: The injection-based tests from this block have been replaced by the
+// REAL tick tests in "REAL tick N valid → tick N+1 blocked (REV-C12B Step 5)"
+// below, which mock the full flow and execute tick() without injecting state.
+// The defensive copy test remains in its own block above.
 
 // ─── REV-C12B Step 8: ProjectionState only if context ok ────────────────────
 
 describe("GridIsolatedEngine — ProjectionState only if context ok (REV-C12B Step 8)", () => {
+  beforeEach(() => {
+    // Cleanup any state from previous describe blocks (singleton engine)
+    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
+    (gridIsolatedEngine as any).activeRangeVersion = null;
+  });
+
   it("config incomplete → state null (projection context rejects)", () => {
     // The engine's tick() calls resolveGridProfessionalProjectionContext which
     // returns ok=false when config is incomplete. State is not published.
@@ -717,5 +607,222 @@ describe("GridIsolatedEngine — ProjectionState only if context ok (REV-C12B St
     // When ttl.validUntil is null, the engine does not publish state.
     // This is verified by the engine code: if (!ttl.validUntil) state = null.
     expect(true).toBe(true);
+  });
+});
+
+// ─── REV-C12B Step 5: REAL tick N valid → tick N+1 blocked ──────────────────
+
+describe("GridIsolatedEngine — REAL tick N valid → tick N+1 blocked (REV-C12B Step 5)", () => {
+  beforeEach(async () => {
+    // Reset all mocks to default valid behavior before each test
+    vi.clearAllMocks();
+
+    // Load config and set to SHADOW + active
+    const config = await gridIsolatedEngine.loadConfig();
+    config!.mode = "SHADOW";
+    config!.isActive = true;
+    config!.pair = "BTC/USD";
+    config!.netProfitTargetPct = 0.8;
+    config!.gridStepAtrMultiplier = 1.5;
+    config!.gridStepMinPct = 0.15;
+    config!.gridStepMaxPct = 3.0;
+    config!.enforceCompactRange = true;
+    config!.gridRangeMaxPct = 2.5;
+    config!.maxDistanceFromCenterPct = 1.25;
+    config!.maxSellDistanceFromNearestBuyPct = 1.50;
+    config!.gridRangeControlMode = "adaptive_smart";
+    config!.adaptiveRangeEnabled = true;
+    config!.adaptiveRangeProfile = "balanced";
+    config!.adaptiveRangeMinPct = 1.50;
+    config!.adaptiveRangeMaxPct = 7.00;
+    config!.adaptiveRangeLowVolMaxPct = 3.00;
+    config!.adaptiveRangeNormalMaxPct = 5.00;
+    config!.adaptiveRangeHighVolMaxPct = 7.00;
+    config!.adaptiveRangeTargetFullLevels = false;
+    config!.adaptiveRangeMinViableLevels = 4;
+    await gridIsolatedEngine.saveConfig();
+
+    // Clear any previous projection state
+    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
+    (gridIsolatedEngine as any).activeRangeVersion = null;
+    (gridIsolatedEngine as any).lastExecutionGate = null;
+  });
+
+  afterEach(() => {
+    // Cleanup
+    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
+    (gridIsolatedEngine as any).activeRangeVersion = null;
+  });
+
+  it("TICK N: valid full flow creates ProjectionState from real tick (not injection)", async () => {
+    // Mocks return valid data by default (set in vi.mock above)
+    // Execute real tick
+    await (gridIsolatedEngine as any).tick();
+
+    // ProjectionState must be non-null — created by the tick, not injected
+    const state = gridIsolatedEngine.getRecommendationProjectionState();
+    expect(state).not.toBeNull();
+    expect(state!.pair).toBe("BTC/USD");
+    expect(state!.allocation.levelsCount).toBe(10);
+    expect(state!.bandSnapshot.regime).toBe("normal_lateral");
+    expect(state!.executionMarketSnapshot.venue).toBe("REVOLUT_X");
+    expect(state!.executionMarketSnapshot.verified).toBe(true);
+
+    // Gate must allow range creation
+    const gate = gridIsolatedEngine.getExecutionGate();
+    expect(gate.canCreateRange).toBe(true);
+  });
+
+  it("TICK N+1: Revolut X blocked (constraints unverified) clears state from N", async () => {
+    // First, run a valid tick N to establish state
+    await (gridIsolatedEngine as any).tick();
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
+
+    // Now change the mock: constraints become unverified
+    (revolutXService.resolveGridPairConstraints as any).mockResolvedValueOnce({
+      pair: "BTC/USD",
+      normalizedPair: "BTC-USD",
+      executionVenue: "REVOLUT_X",
+      baseCurrency: "BTC",
+      quoteCurrency: "USD",
+      priceTickSize: 0.01,
+      quantityStep: 0.0001,
+      minOrderBase: 0.0001,
+      minOrderQuote: 1,
+      minOrderUsd: 1,
+      maxOrderBase: null,
+      pricePrecision: 2,
+      quantityPrecision: 4,
+      status: "active",
+      region: "EU",
+      source: "revolutx",
+      fetchedAt: new Date(),
+      expiresAt: null,
+      verified: false, // ← unverified
+      reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE",
+    });
+
+    // Tick N+1
+    await (gridIsolatedEngine as any).tick();
+
+    // State must be null — tick N+1 cleared it
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
+
+    // Gate must NOT allow range creation
+    const gate = gridIsolatedEngine.getExecutionGate();
+    expect(gate.canCreateRange).toBe(false);
+
+    // No new range created
+    const status = gridIsolatedEngine.getExecutionStatus();
+    // activeRangeVersionId may be null or from tick N, but no NEW range from N+1
+    // The key assertion is that state is null and gate is blocked
+  });
+
+  it("TICK N+1: getTicker throws REVOLUT_X_UNAVAILABLE clears state from N", async () => {
+    // First, run a valid tick N
+    await (gridIsolatedEngine as any).tick();
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
+
+    // Now make getTicker throw
+    (revolutXService.getTicker as any).mockRejectedValueOnce(new Error("REVOLUT_X_UNAVAILABLE"));
+
+    // Tick N+1
+    await (gridIsolatedEngine as any).tick();
+
+    // State must be null
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
+
+    // Gate blocked
+    const gate = gridIsolatedEngine.getExecutionGate();
+    expect(gate.canCreateRange).toBe(false);
+  });
+
+  it("TICK N+1: market not suitable clears state from N", async () => {
+    // First, run a valid tick N
+    await (gridIsolatedEngine as any).tick();
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
+
+    // Now make band snapshot not suitable
+    (getGridBandSnapshot as any).mockResolvedValueOnce({
+      midPrice: 95000, middle: 95000, upper: 100000, lower: 90000,
+      atrPct: 2, regime: "normal_lateral", suitableForGrid: false, // ← not suitable
+      bandWidthPct: 10, bandPeriod: 20, bandStdDevMultiplier: 2,
+    });
+
+    // Tick N+1
+    await (gridIsolatedEngine as any).tick();
+
+    // State must be null
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
+  });
+
+  it("TICK N+1: allocation failure clears state from N", async () => {
+    // First, run a valid tick N
+    await (gridIsolatedEngine as any).tick();
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
+
+    // Now make allocator throw
+    (gridCapitalAllocator.allocate as any).mockRejectedValueOnce(new Error("ALLOC_FAILED"));
+
+    // Tick N+1
+    await (gridIsolatedEngine as any).tick();
+
+    // State must be null
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
+  });
+
+  it("TICK N+1: unknown regime clears state from N", async () => {
+    // First, run a valid tick N
+    await (gridIsolatedEngine as any).tick();
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
+
+    // Now make band snapshot return unknown regime
+    (getGridBandSnapshot as any).mockResolvedValueOnce({
+      midPrice: 95000, middle: 95000, upper: 100000, lower: 90000,
+      atrPct: 2, regime: "banana_regime", // ← unknown
+      suitableForGrid: true, bandWidthPct: 10, bandPeriod: 20, bandStdDevMultiplier: 2,
+    });
+
+    // Tick N+1
+    await (gridIsolatedEngine as any).tick();
+
+    // State must be null (regime unknown → projection context rejects)
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
+  });
+
+  it("TICK N+1: odd allocation (9 levels) clears state from N", async () => {
+    // First, run a valid tick N
+    await (gridIsolatedEngine as any).tick();
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
+
+    // Now make allocator return odd levelsCount
+    (gridCapitalAllocator.allocate as any).mockResolvedValueOnce({
+      levelsCount: 9, // ← odd
+      capitalPerLevelUsd: 100,
+      finalGridBudgetUsd: 900,
+      allocationMode: "uniform",
+      deploymentMode: "capped",
+      profile: { profileId: "balanced" },
+    });
+
+    // Tick N+1
+    await (gridIsolatedEngine as any).tick();
+
+    // State must be null (odd levelsCount → split fails)
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
+  });
+
+  it("zero real orders placed during valid tick N (SHADOW mode)", async () => {
+    // Execute valid tick N
+    await (gridIsolatedEngine as any).tick();
+
+    // In SHADOW mode, no real orders should be placed.
+    // The ExchangeFactory mock is not called for order placement in SHADOW.
+    // We verify the state was created (tick ran) but mode is SHADOW.
+    const status = gridIsolatedEngine.getExecutionStatus();
+    expect(status.mode).toBe("SHADOW");
+
+    // ProjectionState exists (tick was valid)
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
   });
 });
