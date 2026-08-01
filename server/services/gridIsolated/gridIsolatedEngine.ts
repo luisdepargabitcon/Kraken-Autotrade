@@ -36,6 +36,7 @@ import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult, t
 import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from "./gridShadowMarketPriceFreshness";
 import { buildGridExecutionMarketSnapshot, type GridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
 import type { RevolutXPairConstraints } from "../exchanges/RevolutXService";
+import { computeGateTtl, type GateTtlResult } from "./gridExecutionGateTtl";
 import { resolveGridProfessionalProjectionContext, buildProfessionalGeneratorInput } from "./gridProfessionalProjectionContext";
 import {
   getShadowPumpGuardPolicy,
@@ -198,7 +199,7 @@ function buildExecutionGateState(
 
 /**
  * REV-C12B: Recalculate the public ExecutionGateState from raw data on each read.
- * Checks snapshot age, constraints expiry, and returns the appropriate status.
+ * Uses the shared computeGateTtl helper for canonical TTL/freshness.
  * Readings do NOT renew evaluatedAt or validUntil.
  */
 function resolveExecutionGateState(raw: RawExecutionGateData, now: Date): ExecutionGateState {
@@ -207,13 +208,10 @@ function resolveExecutionGateState(raw: RawExecutionGateData, now: Date): Execut
   const evaluatedMs = evaluatedAt.getTime();
   const ageMs = nowMs - evaluatedMs;
 
-  // REV-C12B: Check snapshot freshness — now > fetchedAt + maxAgeMs means stale.
-  const snapshotMaxAgeMs = snapshot.maxAgeMs;
-  const snapshotAgeMs = nowMs - snapshot.fetchedAt.getTime();
-  const snapshotStillFresh = snapshotAgeMs <= snapshotMaxAgeMs;
-
-  // REV-C12B: Check constraints expiry.
-  const constraintsFresh = constraints.expiresAt == null || constraints.expiresAt.getTime() > nowMs;
+  // REV-C12B: Use shared TTL helper — same logic as getRecommendationProjectionState.
+  const ttl: GateTtlResult = computeGateTtl(snapshot, constraints, now);
+  const snapshotStillFresh = ttl.fresh || (ttl.staleReason !== "SNAPSHOT_STALE" && ttl.staleReason !== "TIMESTAMP_INVALID");
+  const constraintsFresh = ttl.fresh || (ttl.staleReason !== "CONSTRAINTS_STALE" && ttl.staleReason !== "TIMESTAMP_INVALID");
 
   // REV-C12B: available is NOT just pair match — it requires object present, pair correct,
   // venue REVOLUT_X, source present, and bid/ask or a technical reason code.
@@ -253,8 +251,8 @@ function resolveExecutionGateState(raw: RawExecutionGateData, now: Date): Execut
   }
 
   const canCreateRange = snapshotOk && constraintsOk;
-  const validUntilMs = evaluatedMs + snapshotMaxAgeMs;
-  const validUntil = new Date(validUntilMs).toISOString();
+  // REV-C12B: validUntil from shared helper — min(snapshot, constraints).
+  const validUntil = ttl.validUntil ? ttl.validUntil.toISOString() : null;
 
   let status: "VERIFIED" | "BLOCKED" | "NO_RECENT_EVALUATION";
   if (canCreateRange) {
@@ -270,7 +268,7 @@ function resolveExecutionGateState(raw: RawExecutionGateData, now: Date): Execut
     status,
     evaluatedAt: evaluatedAt.toISOString(),
     ageMs,
-    maxAgeMs: snapshotMaxAgeMs,
+    maxAgeMs: ttl.maxAgeMs,
     validUntil,
     executionMarketSnapshot: {
       available: snapshotAvailable,
@@ -352,6 +350,38 @@ export interface GridRecommendationProjectionState {
   executionMarketSnapshot: GridExecutionMarketSnapshot;
   pairConstraints: RevolutXPairConstraints;
   allocation: CapitalAllocationResult;
+}
+
+/**
+ * REV-C12B: Deep clone of GridRecommendationProjectionState.
+ * Uses structuredClone when available (Node >= 17), otherwise manual clone.
+ * Preserves Date objects (fetchedAt, acquiredAt, timestamp, expiresAt).
+ * The caller receives a completely independent copy.
+ */
+function deepCloneProjectionState(state: GridRecommendationProjectionState): GridRecommendationProjectionState {
+  // structuredClone is available in Node >= 17 and preserves Date objects correctly.
+  if (typeof structuredClone === "function") {
+    return structuredClone(state);
+  }
+  // Manual fallback: JSON round-trip does NOT preserve Date — use manual clone.
+  return {
+    evaluatedAt: state.evaluatedAt,
+    validUntil: state.validUntil,
+    pair: state.pair,
+    bandSnapshot: { ...state.bandSnapshot },
+    executionMarketSnapshot: {
+      ...state.executionMarketSnapshot,
+      timestamp: state.executionMarketSnapshot.timestamp ? new Date(state.executionMarketSnapshot.timestamp) : null,
+      acquiredAt: new Date(state.executionMarketSnapshot.acquiredAt),
+      fetchedAt: new Date(state.executionMarketSnapshot.fetchedAt),
+    },
+    pairConstraints: {
+      ...state.pairConstraints,
+      fetchedAt: state.pairConstraints.fetchedAt ? new Date(state.pairConstraints.fetchedAt) : null,
+      expiresAt: state.pairConstraints.expiresAt ? new Date(state.pairConstraints.expiresAt) : null,
+    },
+    allocation: { ...state.allocation, profile: { ...state.allocation.profile } },
+  };
 }
 
 type GridRangeCandidate =
@@ -1189,6 +1219,13 @@ export class GridIsolatedEngine {
   private async tick(): Promise<void> {
     this.lastTickAt = new Date();
 
+    // REV-C12B: Clear projection state at the START of each tick.
+    // The state is only re-assigned when the CURRENT tick obtains simultaneously:
+    // valid band, suitableForGrid=true, operable regime, verified+fresh Revolut X snapshot,
+    // verified+fresh constraints, valid+coherent allocation, same pair.
+    // If any of those fail, the state stays null — the previous tick's state is NOT preserved.
+    this.lastRecommendationProjectionState = null;
+
     if (!this.config || this.config.mode === "OFF") {
       this.lastTickReason = "Modo OFF — el motor no ejecuta ticks.";
       return;
@@ -1345,12 +1382,13 @@ export class GridIsolatedEngine {
 
     // REV-C12B: Store projection state for route handler / view model / recommendation service.
     // Only stored when allocation was resolved — otherwise the state is not valid for projection.
+    // validUntil is computed via the shared TTL helper: min(snapshotValidUntil, constraintsValidUntil).
     if (tickAllocation) {
       const evaluatedAt = new Date();
-      const validUntilMs = evaluatedAt.getTime() + executionMarketSnapshot.maxAgeMs;
+      const ttl = computeGateTtl(executionMarketSnapshot, pairConstraints, evaluatedAt);
       this.lastRecommendationProjectionState = {
         evaluatedAt: evaluatedAt.toISOString(),
-        validUntil: new Date(validUntilMs).toISOString(),
+        validUntil: ttl.validUntil ? ttl.validUntil.toISOString() : evaluatedAt.toISOString(),
         pair: this.config.pair,
         bandSnapshot: {
           midPrice: bandSnapshot.midPrice,
@@ -1510,11 +1548,13 @@ export class GridIsolatedEngine {
       }
     );
 
-    // REV-C12A: Use shared professional projection context — single source of truth.
+    // REV-C12A/REV-C12B: Use shared professional projection context — single source of truth.
     // No duplicated parameter lists, no hardcoded config, no invented estimates.
+    // REV-C12B Step 6: No Math.floor — allocation.levelsCount must equal configuredBuy+Sell.
+    // If levelsCount is odd, it's an allocator mismatch — the projection context will reject it.
     const configuredBuyLevels = Math.floor(allocation.levelsCount / 2);
-    const configuredSellLevels = Math.floor(allocation.levelsCount / 2);
-    const projectionCtx = resolveGridProfessionalProjectionContext({
+    const configuredSellLevels = allocation.levelsCount - configuredBuyLevels;
+    const projectionCtxResult = resolveGridProfessionalProjectionContext({
       currentPrice: bandSnapshot.midPrice,
       bollingerMiddle: bandSnapshot.middle,
       bollingerUpper: bandSnapshot.upper,
@@ -1526,12 +1566,13 @@ export class GridIsolatedEngine {
       allocation,
       executionMarketSnapshot,
       pairConstraints,
-      regimeLabel: bandSnapshot.regime ?? "ranging",
-      marketSuitable: bandSnapshot.suitableForGrid ?? true,
+      regimeLabel: bandSnapshot.regime ?? "",
+      marketSuitable: bandSnapshot.suitableForGrid ?? false,
     });
-    if (projectionCtx == null) {
-      return { ok: false, reasonCode: "PROJECTION_CONTEXT_INVALID", explanation: "No se puede construir el contexto de proyección canónica con datos reales verificados." };
+    if (!projectionCtxResult.ok) {
+      return { ok: false, reasonCode: projectionCtxResult.reasonCode, explanation: projectionCtxResult.explanation };
     }
+    const projectionCtx = projectionCtxResult.context;
 
     const professionalResult = generateProfessionalGridLevels(buildProfessionalGeneratorInput(projectionCtx));
 
@@ -5066,24 +5107,29 @@ export class GridIsolatedEngine {
 
   /**
    * REV-C12B: Get the in-memory recommendation projection state (read-only).
-   * Returns a copy of the last projection state if it is still fresh.
+   * Returns a DEEP COPY of the last projection state if it is still fresh.
    * Returns null when:
    *   - no evaluation has occurred since startup;
    *   - the state has expired (now > validUntil);
    *   - the snapshot or constraints are no longer fresh.
    *
+   * Uses the shared computeGateTtl helper — same logic as getExecutionGate.
    * Readings do NOT renew evaluatedAt or validUntil.
+   * The caller receives a completely independent copy — mutating it does not
+   * affect the engine's internal state.
    */
   getRecommendationProjectionState(): GridRecommendationProjectionState | null {
     if (!this.lastRecommendationProjectionState) return null;
-    const now = Date.now();
-    const validUntilMs = new Date(this.lastRecommendationProjectionState.validUntil).getTime();
-    if (Number.isNaN(validUntilMs) || now > validUntilMs) return null;
-    // Check constraints expiry
-    const expiresAt = this.lastRecommendationProjectionState.pairConstraints.expiresAt;
-    if (expiresAt != null && expiresAt.getTime() <= now) return null;
-    // Return a shallow copy — the caller must not mutate the engine's internal state.
-    return this.lastRecommendationProjectionState;
+    const now = new Date();
+    const ttl = computeGateTtl(
+      this.lastRecommendationProjectionState.executionMarketSnapshot,
+      this.lastRecommendationProjectionState.pairConstraints,
+      now,
+    );
+    if (!ttl.fresh) return null;
+    // REV-C12B: Deep copy — structuredClone preserves Date objects correctly.
+    // The caller must not be able to mutate the engine's internal state.
+    return deepCloneProjectionState(this.lastRecommendationProjectionState);
   }
 
   /**

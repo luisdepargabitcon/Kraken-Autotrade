@@ -9,9 +9,10 @@
  *  - `gridRecommendationService` for alternatives B and C (recommendation canonical path)
  *
  * No duplicated parameter lists. No invented estimates. No hardcoded config.
+ * No silent defaults — config fields must be present and valid, or CONFIG_INCOMPLETE.
  *
- * REV-C12A cascade post-verificacion: single source of truth for professional
- * grid level projection input.
+ * REV-C12B cascade: typed ProjectionContextResult, canonical regime list,
+ * strict allocator consistency, fail-closed config.
  */
 
 import type { GridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
@@ -29,11 +30,10 @@ import type {
 function toStrictNum(v: unknown): number | null {
   if (v == null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  // Reject strings that aren't strictly numeric — "4" is accepted by Number() but
-  // canonical levels must be numbers, not numeric strings. However, config values
-  // from DB are often strings (decimal/numeric columns), so we accept numeric strings
-  // only when they parse to a finite number. The strict level validator (validateStrictLevelValue)
-  // is the one that rejects numeric strings for level counts.
+  // Config values from DB are often strings (decimal/numeric columns), so we accept
+  // numeric strings only when they parse to a finite number. The strict level
+  // validator (validateStrictLevelValue) is the one that rejects numeric strings
+  // for level counts.
   if (typeof v === "string") {
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
@@ -49,6 +49,79 @@ function toStrictInt(v: unknown): number | null {
   if (!Number.isInteger(v)) return null;
   return v;
 }
+
+// ─── REV-C12B Step 7: Canonical regime list ──────────────────────────
+
+export type OperableRegime = "low_volatility" | "normal_lateral" | "high_volatility";
+export type NonOperableRegime = "unsuitable_trend" | "pump_dump" | "unknown";
+
+const OPERABLE_REGIMES: ReadonlySet<string> = new Set([
+  "low_volatility",
+  "normal_lateral",
+  "high_volatility",
+]);
+
+const NON_OPERABLE_REGIMES: ReadonlySet<string> = new Set([
+  "unsuitable_trend",
+  "pump_dump",
+  "unknown",
+]);
+
+// Aliases that map to canonical regime names. These are the ONLY accepted
+// non-canonical strings; everything else is MARKET_REGIME_UNKNOWN.
+const REGIME_ALIASES: Record<string, string> = {
+  // Operable aliases
+  ranging: "normal_lateral",
+  range: "normal_lateral",
+  sideways: "normal_lateral",
+  lateral: "normal_lateral",
+  low_vol: "low_volatility",
+  lowvol: "low_volatility",
+  high_vol: "high_volatility",
+  highvol: "high_volatility",
+  volatile: "high_volatility",
+  // Non-operable aliases
+  trending: "unsuitable_trend",
+  trend: "unsuitable_trend",
+  pump: "pump_dump",
+  dump: "pump_dump",
+};
+
+function normalizeRegime(label: string): OperableRegime | NonOperableRegime | null {
+  if (label == null || typeof label !== "string") return null;
+  const trimmed = label.trim();
+  if (trimmed === "") return null;
+  if (OPERABLE_REGIMES.has(trimmed)) return trimmed as OperableRegime;
+  if (NON_OPERABLE_REGIMES.has(trimmed)) return trimmed as NonOperableRegime;
+  const alias = REGIME_ALIASES[trimmed.toLowerCase()];
+  if (alias) {
+    if (OPERABLE_REGIMES.has(alias)) return alias as OperableRegime;
+    if (NON_OPERABLE_REGIMES.has(alias)) return alias as NonOperableRegime;
+  }
+  return null;
+}
+
+// ─── REV-C12B Step 5: Typed ProjectionContextResult ─────────────────
+
+export type ProjectionContextFailureReason =
+  | "BAND_DATA_INVALID"
+  | "CONFIG_INCOMPLETE"
+  | "REQUESTED_LEVELS_INVALID"
+  | "ALLOCATION_MISSING"
+  | "ALLOCATION_LEVEL_COUNT_INVALID"
+  | "ALLOCATION_LEVEL_COUNT_MISMATCH"
+  | "ALLOCATION_CAPITAL_PER_LEVEL_INVALID"
+  | "ALLOCATION_BUDGET_INVALID"
+  | "MARKET_SUITABILITY_UNKNOWN"
+  | "MARKET_UNSUITABLE"
+  | "MARKET_REGIME_UNKNOWN"
+  | "MARKET_REGIME_UNSUITABLE"
+  | "MICROSTRUCTURE_UNAVAILABLE"
+  | "PAIR_CONSTRAINTS_UNAVAILABLE";
+
+export type ProjectionContextResult =
+  | { ok: true; context: GridProfessionalProjectionContext }
+  | { ok: false; reasonCode: ProjectionContextFailureReason; explanation: string };
 
 export interface GridProfessionalProjectionContext {
   currentPrice: number;
@@ -115,90 +188,236 @@ export interface ResolveProjectionContextInput {
   marketSuitable: boolean;
 }
 
+// ─── REV-C12B Step 8: Valid config field names ───────────────────────
+
+const REQUIRED_CONFIG_FIELDS: ReadonlyArray<keyof any> = [
+  "netProfitTargetPct",
+  "gridStepAtrMultiplier",
+  "gridStepMinPct",
+  "gridStepMaxPct",
+  "enforceCompactRange",
+  "gridRangeMaxPct",
+  "maxDistanceFromCenterPct",
+  "maxSellDistanceFromNearestBuyPct",
+  "gridRangeControlMode",
+  "adaptiveRangeEnabled",
+  "adaptiveRangeProfile",
+  "adaptiveRangeMinPct",
+  "adaptiveRangeMaxPct",
+  "adaptiveRangeLowVolMaxPct",
+  "adaptiveRangeNormalMaxPct",
+  "adaptiveRangeHighVolMaxPct",
+  "adaptiveRangeTargetFullLevels",
+  "adaptiveRangeMinViableLevels",
+];
+
+const VALID_RANGE_CONTROL_MODES: ReadonlySet<string> = new Set([
+  "adaptive_smart",
+  "fixed",
+  "atr_based",
+]);
+
+const VALID_ADAPTIVE_PROFILES: ReadonlySet<string> = new Set([
+  "conservative",
+  "balanced",
+  "aggressive",
+]);
+
 /**
  * Resolve the canonical professional projection context from real, verified data.
- * Returns null if any required field is missing, invalid, or not verified.
+ * Returns a typed ProjectionContextResult — never loses the failure reason.
  *
- * Strict rules (REV-C12A cascade):
- *  - Microstructure: only from executionMarketSnapshot when available+verified+fresh+REVOLUT_X+pair matches.
- *    Never falls back to Kraken data or marketContext.spreadPct/priceTickPct.
- *  - Pair constraints: must be available+verified+pair matches. fresh !== false.
- *  - Allocation: must be present with capitalPerLevelUsd > 0. No invented estimates.
- *  - Config: uses real config fields, no hardcoding.
- *  - Level counts: must be real numbers (not numeric strings).
+ * REV-C12B cascade:
+ *  - No silent defaults: config fields must be present and valid, or CONFIG_INCOMPLETE.
+ *  - Canonical regime list: only operable regimes accepted; aliases normalized explicitly.
+ *  - Strict allocator consistency: levelsCount must match configuredBuy+Sell, budget exact.
+ *  - Market suitability and regime fail-closed.
  */
 export function resolveGridProfessionalProjectionContext(
   input: ResolveProjectionContextInput,
-): GridProfessionalProjectionContext | null {
+): ProjectionContextResult {
   // ── Real band data ──
   const currentPrice = toStrictNum(input.currentPrice);
-  if (currentPrice == null || currentPrice <= 0) return null;
+  if (currentPrice == null || currentPrice <= 0) {
+    return { ok: false, reasonCode: "BAND_DATA_INVALID", explanation: "currentPrice inválido o ausente." };
+  }
 
   const bollingerMiddle = toStrictNum(input.bollingerMiddle);
   const bollingerUpper = toStrictNum(input.bollingerUpper);
   const bollingerLower = toStrictNum(input.bollingerLower);
-  if (bollingerMiddle == null || bollingerUpper == null || bollingerLower == null) return null;
+  if (bollingerMiddle == null || bollingerUpper == null || bollingerLower == null) {
+    return { ok: false, reasonCode: "BAND_DATA_INVALID", explanation: "Bandas de Bollinger inválidas o ausentes." };
+  }
 
   const atrPct = toStrictNum(input.atrPct);
-  if (atrPct == null || atrPct <= 0) return null;
+  if (atrPct == null || atrPct <= 0) {
+    return { ok: false, reasonCode: "BAND_DATA_INVALID", explanation: "atrPct inválido o ausente." };
+  }
 
-  // ── Real config ──
+  // ── REV-C12B Step 8: Real config — no silent defaults ──
   const config = input.config ?? {};
+  const missing: string[] = [];
+  for (const field of REQUIRED_CONFIG_FIELDS) {
+    if (config[field] === undefined || config[field] === null) {
+      missing.push(String(field));
+    }
+  }
+  if (missing.length > 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: `Campos de config ausentes: ${missing.join(", ")}.` };
+  }
+
   const netProfitTargetPct = toStrictNum(config.netProfitTargetPct);
-  if (netProfitTargetPct == null || netProfitTargetPct <= 0) return null;
+  if (netProfitTargetPct == null || netProfitTargetPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "netProfitTargetPct inválido." };
+  }
 
-  const gridStepAtrMultiplier = toStrictNum(config.gridStepAtrMultiplier) ?? 1.5;
-  const gridStepMinPct = toStrictNum(config.gridStepMinPct) ?? 0.15;
-  const gridStepMaxPct = toStrictNum(config.gridStepMaxPct) ?? 3.0;
+  const gridStepAtrMultiplier = toStrictNum(config.gridStepAtrMultiplier);
+  if (gridStepAtrMultiplier == null || gridStepAtrMultiplier <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "gridStepAtrMultiplier inválido." };
+  }
 
-  const enforceCompactRange = config.enforceCompactRange ?? true;
-  const gridRangeMaxPct = toStrictNum(config.gridRangeMaxPct) ?? 2.5;
-  const maxDistanceFromCenterPct = toStrictNum(config.maxDistanceFromCenterPct) ?? 1.25;
-  const maxSellDistanceFromNearestBuyPct = toStrictNum(config.maxSellDistanceFromNearestBuyPct) ?? 1.50;
+  const gridStepMinPct = toStrictNum(config.gridStepMinPct);
+  if (gridStepMinPct == null || gridStepMinPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "gridStepMinPct inválido." };
+  }
 
-  const gridRangeControlMode: RangeControlMode = (config.gridRangeControlMode ?? "adaptive_smart") as RangeControlMode;
-  const adaptiveRangeEnabled = config.adaptiveRangeEnabled ?? true;
-  const adaptiveRangeProfile: AdaptiveRangeProfile = (config.adaptiveRangeProfile ?? "balanced") as AdaptiveRangeProfile;
-  const adaptiveRangeMinPct = toStrictNum(config.adaptiveRangeMinPct) ?? 1.50;
-  const adaptiveRangeMaxPct = toStrictNum(config.adaptiveRangeMaxPct) ?? 7.00;
-  const adaptiveRangeLowVolMaxPct = toStrictNum(config.adaptiveRangeLowVolMaxPct) ?? 3.00;
-  const adaptiveRangeNormalMaxPct = toStrictNum(config.adaptiveRangeNormalMaxPct) ?? 5.00;
-  const adaptiveRangeHighVolMaxPct = toStrictNum(config.adaptiveRangeHighVolMaxPct) ?? 7.00;
-  const adaptiveRangeTargetFullLevels = config.adaptiveRangeTargetFullLevels ?? false;
-  const adaptiveRangeMinViableLevels = toStrictNum(config.adaptiveRangeMinViableLevels) ?? 4;
+  const gridStepMaxPct = toStrictNum(config.gridStepMaxPct);
+  if (gridStepMaxPct == null || gridStepMaxPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "gridStepMaxPct inválido." };
+  }
+
+  // enforceCompactRange: boolean false is valid — only reject undefined/null/non-boolean.
+  if (typeof config.enforceCompactRange !== "boolean") {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "enforceCompactRange no es boolean." };
+  }
+  const enforceCompactRange: boolean = config.enforceCompactRange;
+
+  const gridRangeMaxPct = toStrictNum(config.gridRangeMaxPct);
+  if (gridRangeMaxPct == null || gridRangeMaxPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "gridRangeMaxPct inválido." };
+  }
+
+  const maxDistanceFromCenterPct = toStrictNum(config.maxDistanceFromCenterPct);
+  if (maxDistanceFromCenterPct == null || maxDistanceFromCenterPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "maxDistanceFromCenterPct inválido." };
+  }
+
+  const maxSellDistanceFromNearestBuyPct = toStrictNum(config.maxSellDistanceFromNearestBuyPct);
+  if (maxSellDistanceFromNearestBuyPct == null || maxSellDistanceFromNearestBuyPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "maxSellDistanceFromNearestBuyPct inválido." };
+  }
+
+  if (typeof config.gridRangeControlMode !== "string" || !VALID_RANGE_CONTROL_MODES.has(config.gridRangeControlMode)) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: `gridRangeControlMode desconocido: ${String(config.gridRangeControlMode)}.` };
+  }
+  const gridRangeControlMode = config.gridRangeControlMode as RangeControlMode;
+
+  if (typeof config.adaptiveRangeEnabled !== "boolean") {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "adaptiveRangeEnabled no es boolean." };
+  }
+  const adaptiveRangeEnabled: boolean = config.adaptiveRangeEnabled;
+
+  if (typeof config.adaptiveRangeProfile !== "string" || !VALID_ADAPTIVE_PROFILES.has(config.adaptiveRangeProfile)) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: `adaptiveRangeProfile desconocido: ${String(config.adaptiveRangeProfile)}.` };
+  }
+  const adaptiveRangeProfile = config.adaptiveRangeProfile as AdaptiveRangeProfile;
+
+  const adaptiveRangeMinPct = toStrictNum(config.adaptiveRangeMinPct);
+  if (adaptiveRangeMinPct == null || adaptiveRangeMinPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "adaptiveRangeMinPct inválido." };
+  }
+
+  const adaptiveRangeMaxPct = toStrictNum(config.adaptiveRangeMaxPct);
+  if (adaptiveRangeMaxPct == null || adaptiveRangeMaxPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "adaptiveRangeMaxPct inválido." };
+  }
+
+  const adaptiveRangeLowVolMaxPct = toStrictNum(config.adaptiveRangeLowVolMaxPct);
+  if (adaptiveRangeLowVolMaxPct == null || adaptiveRangeLowVolMaxPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "adaptiveRangeLowVolMaxPct inválido." };
+  }
+
+  const adaptiveRangeNormalMaxPct = toStrictNum(config.adaptiveRangeNormalMaxPct);
+  if (adaptiveRangeNormalMaxPct == null || adaptiveRangeNormalMaxPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "adaptiveRangeNormalMaxPct inválido." };
+  }
+
+  const adaptiveRangeHighVolMaxPct = toStrictNum(config.adaptiveRangeHighVolMaxPct);
+  if (adaptiveRangeHighVolMaxPct == null || adaptiveRangeHighVolMaxPct <= 0) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "adaptiveRangeHighVolMaxPct inválido." };
+  }
+
+  if (typeof config.adaptiveRangeTargetFullLevels !== "boolean") {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "adaptiveRangeTargetFullLevels no es boolean." };
+  }
+  const adaptiveRangeTargetFullLevels: boolean = config.adaptiveRangeTargetFullLevels;
+
+  const adaptiveRangeMinViableLevels = toStrictNum(config.adaptiveRangeMinViableLevels);
+  if (adaptiveRangeMinViableLevels == null || adaptiveRangeMinViableLevels <= 0 || !Number.isInteger(adaptiveRangeMinViableLevels)) {
+    return { ok: false, reasonCode: "CONFIG_INCOMPLETE", explanation: "adaptiveRangeMinViableLevels inválido." };
+  }
 
   // ── Real requested levels (must be numbers, not strings) ──
   const configuredBuyLevels = toStrictInt(input.configuredBuyLevels);
   const configuredSellLevels = toStrictInt(input.configuredSellLevels);
-  if (configuredBuyLevels == null || configuredBuyLevels <= 0) return null;
-  if (configuredSellLevels == null || configuredSellLevels <= 0) return null;
+  if (configuredBuyLevels == null || configuredBuyLevels <= 0 || configuredSellLevels == null || configuredSellLevels <= 0) {
+    return { ok: false, reasonCode: "REQUESTED_LEVELS_INVALID", explanation: "configuredBuyLevels/configuredSellLevels inválidos." };
+  }
 
-  // ── Real allocation ──
+  // ── REV-C12B Step 6: Strict allocator consistency ──
   const allocation = input.allocation;
-  if (!allocation) return null;
+  if (!allocation) {
+    return { ok: false, reasonCode: "ALLOCATION_MISSING", explanation: "Allocation ausente." };
+  }
+
   const capitalPerLevelUsd = toStrictNum(allocation.capitalPerLevelUsd);
-  if (capitalPerLevelUsd == null || capitalPerLevelUsd <= 0) return null;
+  if (capitalPerLevelUsd == null || capitalPerLevelUsd <= 0) {
+    return { ok: false, reasonCode: "ALLOCATION_CAPITAL_PER_LEVEL_INVALID", explanation: "capitalPerLevelUsd inválido o cero." };
+  }
+
   const allocationLevelsCount = toStrictInt(allocation.levelsCount);
-  if (allocationLevelsCount == null || allocationLevelsCount <= 0) return null;
+  if (allocationLevelsCount == null || allocationLevelsCount <= 0) {
+    return { ok: false, reasonCode: "ALLOCATION_LEVEL_COUNT_INVALID", explanation: "allocation.levelsCount inválido." };
+  }
 
-  // REV-C12B: Allocation consistency — finalGridBudgetUsd must be > 0.
   const allocationFinalGridBudgetUsd = toStrictNum(allocation.finalGridBudgetUsd);
-  if (allocationFinalGridBudgetUsd == null || allocationFinalGridBudgetUsd <= 0) return null;
-  // REV-C12B: capitalPerLevelUsd * levelsCount must not exceed finalGridBudgetUsd outside tolerance.
-  const budgetCheck = capitalPerLevelUsd * allocationLevelsCount;
-  const budgetTolerance = allocationFinalGridBudgetUsd * 0.10; // 10% tolerance
-  if (budgetCheck > allocationFinalGridBudgetUsd + budgetTolerance) return null;
+  if (allocationFinalGridBudgetUsd == null || allocationFinalGridBudgetUsd <= 0) {
+    return { ok: false, reasonCode: "ALLOCATION_BUDGET_INVALID", explanation: "finalGridBudgetUsd inválido o cero." };
+  }
 
-  // ── REV-C12B: Market suitability and regime fail-closed ──
-  // No suitableForGrid ?? true, no regime ?? "ranging".
-  if (typeof input.marketSuitable !== "boolean") return null;
-  if (input.marketSuitable !== true) return null;
-  if (typeof input.regimeLabel !== "string" || input.regimeLabel.trim() === "") return null;
+  // REV-C12B Step 6: configuredBuyLevels + configuredSellLevels must equal allocation.levelsCount.
+  const configuredTotal = configuredBuyLevels + configuredSellLevels;
+  if (configuredTotal !== allocationLevelsCount) {
+    return { ok: false, reasonCode: "ALLOCATION_LEVEL_COUNT_MISMATCH", explanation: `configuredBuy+Sell=${configuredTotal} != allocation.levelsCount=${allocationLevelsCount}.` };
+  }
+
+  // REV-C12B Step 6: requiredCapital = capitalPerLevelUsd * levelsCount.
+  // gridCapitalAllocator returns finalGridBudgetUsd = capitalPerLevelUsd * effectiveLevels (exact).
+  // No arbitrary tolerance — the allocator contract is exact.
+  // Allow a tiny floating-point epsilon (1 cent) for rounding.
+  const requiredCapital = capitalPerLevelUsd * allocationLevelsCount;
+  const epsilon = 0.01; // 1 cent floating-point tolerance
+  if (requiredCapital > allocationFinalGridBudgetUsd + epsilon) {
+    return { ok: false, reasonCode: "ALLOCATION_BUDGET_INVALID", explanation: `requiredCapital=${requiredCapital.toFixed(2)} > finalGridBudgetUsd=${allocationFinalGridBudgetUsd.toFixed(2)}.` };
+  }
+
+  // ── REV-C12B Step 7: Market suitability and regime fail-closed ──
+  if (typeof input.marketSuitable !== "boolean") {
+    return { ok: false, reasonCode: "MARKET_SUITABILITY_UNKNOWN", explanation: "marketSuitable no es boolean." };
+  }
+  if (input.marketSuitable !== true) {
+    return { ok: false, reasonCode: "MARKET_UNSUITABLE", explanation: "Mercado no apto para grid." };
+  }
+
+  const normalizedRegime = normalizeRegime(input.regimeLabel);
+  if (normalizedRegime == null) {
+    return { ok: false, reasonCode: "MARKET_REGIME_UNKNOWN", explanation: `Régimen no reconocido: ${String(input.regimeLabel)}.` };
+  }
+  if (!OPERABLE_REGIMES.has(normalizedRegime)) {
+    return { ok: false, reasonCode: "MARKET_REGIME_UNSUITABLE", explanation: `Régimen no operable: ${normalizedRegime}.` };
+  }
 
   // ── Strict Revolut X microstructure ──
-  // Only use executionMarketSnapshot when:
-  //  available=true, verified=true, fresh=true, executionVenue="REVOLUT_X", pair matches.
-  // Never fall back to Kraken data or marketContext spread/tick.
   const snapshot = input.executionMarketSnapshot;
   const constraints = input.pairConstraints;
   let spreadPct: number | null = null;
@@ -212,8 +431,6 @@ export function resolveGridProfessionalProjectionContext(
       snapshot.fresh === true &&
       snapshot.venue === "REVOLUT_X" &&
       snapshot.pair === config.pair;
-    // RevolutXPairConstraints has no `available`/`fresh` fields; use `verified` as
-    // availability and `expiresAt` for freshness (null expiresAt = no expiry = fresh).
     const constraintsFresh = constraints.expiresAt == null || constraints.expiresAt.getTime() > Date.now();
     const constraintsOk =
       constraints.verified === true &&
@@ -233,45 +450,52 @@ export function resolveGridProfessionalProjectionContext(
         ? (snapshot?.reasonCode ?? "EXECUTION_MARKET_SNAPSHOT_INVALID")
         : (constraints?.reasonCode ?? "PAIR_CONSTRAINTS_INVALID");
     }
+  } else if (!snapshot) {
+    microstructureReasonCode = "MICROSTRUCTURE_UNAVAILABLE";
+  } else if (!constraints) {
+    microstructureReasonCode = "PAIR_CONSTRAINTS_UNAVAILABLE";
   }
 
   return {
-    currentPrice,
-    bollingerMiddle,
-    bollingerUpper,
-    bollingerLower,
-    atrPct,
-    netProfitTargetPct,
-    gridStepAtrMultiplier,
-    gridStepMinPct,
-    gridStepMaxPct,
-    spreadPct,
-    priceTickPct,
-    configuredBuyLevels,
-    configuredSellLevels,
-    capitalPerLevelUsd,
-    enforceCompactRange,
-    gridRangeMaxPct,
-    maxDistanceFromCenterPct,
-    maxSellDistanceFromNearestBuyPct,
-    gridRangeControlMode,
-    adaptiveRangeEnabled,
-    adaptiveRangeProfile,
-    adaptiveRangeMinPct,
-    adaptiveRangeMaxPct,
-    adaptiveRangeLowVolMaxPct,
-    adaptiveRangeNormalMaxPct,
-    adaptiveRangeHighVolMaxPct,
-    adaptiveRangeTargetFullLevels,
-    adaptiveRangeMinViableLevels,
-    regimeLabel: input.regimeLabel,
-    marketSuitable: input.marketSuitable,
-    allocationLevelsCount,
-    allocationFinalGridBudgetUsd,
-    allocationMode: allocation.allocationMode ?? "uniform",
-    deploymentMode: allocation.deploymentMode ?? "capped",
-    microstructureVerified,
-    microstructureReasonCode,
+    ok: true,
+    context: {
+      currentPrice,
+      bollingerMiddle,
+      bollingerUpper,
+      bollingerLower,
+      atrPct,
+      netProfitTargetPct,
+      gridStepAtrMultiplier,
+      gridStepMinPct,
+      gridStepMaxPct,
+      spreadPct,
+      priceTickPct,
+      configuredBuyLevels,
+      configuredSellLevels,
+      capitalPerLevelUsd,
+      enforceCompactRange,
+      gridRangeMaxPct,
+      maxDistanceFromCenterPct,
+      maxSellDistanceFromNearestBuyPct,
+      gridRangeControlMode,
+      adaptiveRangeEnabled,
+      adaptiveRangeProfile,
+      adaptiveRangeMinPct,
+      adaptiveRangeMaxPct,
+      adaptiveRangeLowVolMaxPct,
+      adaptiveRangeNormalMaxPct,
+      adaptiveRangeHighVolMaxPct,
+      adaptiveRangeTargetFullLevels,
+      adaptiveRangeMinViableLevels,
+      regimeLabel: normalizedRegime,
+      marketSuitable: input.marketSuitable,
+      allocationLevelsCount,
+      allocationFinalGridBudgetUsd,
+      allocationMode: allocation.allocationMode ?? "uniform",
+      deploymentMode: allocation.deploymentMode ?? "capped",
+      microstructureVerified,
+      microstructureReasonCode,
+    },
   };
 }
 

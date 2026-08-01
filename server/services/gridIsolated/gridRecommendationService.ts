@@ -33,6 +33,8 @@ import {
   resolveGridProfessionalProjectionContext,
   buildProfessionalGeneratorInput,
   type GridProfessionalProjectionContext,
+  type ProjectionContextResult,
+  type ProjectionContextFailureReason,
 } from "./gridProfessionalProjectionContext";
 
 export interface RecommendationServiceInput {
@@ -420,36 +422,40 @@ function getGridStepParams(config: any): { atrMultiplier: number; maxPct: number
 }
 
 /**
- * REV-C12A: Resolve the canonical professional projection context from real, verified data.
+ * REV-C12A/REV-C12B: Resolve the canonical professional projection context from real, verified data.
  * Uses the shared helper gridProfessionalProjectionContext — single source of truth.
  * No invented estimates. No hardcoded config. No Kraken fallback for microstructure.
+ * No silent defaults for regimeLabel or marketSuitable.
  *
- * Returns null if:
- *  - allocation is missing or capitalPerLevelUsd <= 0
- *  - executionMarketSnapshot is not verified/fresh/REVOLUT_X/pair-matching
- *  - pairConstraints are not verified/pair-matching
- *  - any required field is missing or invalid
+ * REV-C12B: Returns ProjectionContextResult (typed failure reason, never loses cause).
  */
 function resolveProjectionContext(
   input: RecommendationServiceInput,
   config: any,
   marketContext: any,
   resolved: { buyLevels: number; sellLevels: number },
-): GridProfessionalProjectionContext | null {
+): ProjectionContextResult {
   const currentPrice = toNum(marketContext?.currentPrice);
-  if (currentPrice == null || currentPrice <= 0) return null;
+  if (currentPrice == null || currentPrice <= 0) {
+    return { ok: false, reasonCode: "BAND_DATA_INVALID", explanation: "currentPrice inválido." };
+  }
 
   const band = marketContext?.band ?? {};
   const bollingerMiddle = toNum(band.center);
   const bollingerUpper = toNum(band.upper);
   const bollingerLower = toNum(band.lower);
-  if (bollingerMiddle == null || bollingerUpper == null || bollingerLower == null) return null;
+  if (bollingerMiddle == null || bollingerUpper == null || bollingerLower == null) {
+    return { ok: false, reasonCode: "BAND_DATA_INVALID", explanation: "Bandas de Bollinger inválidas." };
+  }
 
   const atrPct = toNum(marketContext?.atrPct ?? band.atrPct);
-  if (atrPct == null || atrPct <= 0) return null;
+  if (atrPct == null || atrPct <= 0) {
+    return { ok: false, reasonCode: "BAND_DATA_INVALID", explanation: "atrPct inválido." };
+  }
 
-  const regimeLabel = marketContext?.regime ?? input.adaptiveDecision?.regimeLabel ?? "RANGE";
-  const marketSuitable = marketContext?.suitableForGrid ?? true;
+  // REV-C12B: No silent defaults — regimeLabel and marketSuitable must come from real data.
+  const regimeLabel = marketContext?.regime ?? input.adaptiveDecision?.regimeLabel ?? "";
+  const marketSuitable = marketContext?.suitableForGrid ?? false;
 
   return resolveGridProfessionalProjectionContext({
     currentPrice,
@@ -710,10 +716,11 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     atrPct, atrMultiplier, minPct, maxPct,
   );
 
-  // Resolve canonical projection input for B and C validation.
-  // If microstructure (spread/tick from Revolut X) is missing, this returns null
-  // and B/C will be safeToApply=false with the microstructure blocking reason.
-  const projectionInput = resolveProjectionContext(input, config, marketContext, resolvedRequested);
+  // REV-C12B: Resolve canonical projection input for B and C validation.
+  // Returns ProjectionContextResult — typed failure reason, never loses cause.
+  const projectionResult = resolveProjectionContext(input, config, marketContext, resolvedRequested);
+  const projectionInput = projectionResult.ok ? projectionResult.context : null;
+  const projectionFailure: ProjectionContextResult = projectionResult;
 
   // REV-C12A: expectedBefore from canonical projection (not computeSpacingAndLevels).
   // When projection context is available, use the professional generator's current
@@ -788,7 +795,11 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
     if (!hasRealChange) {
       bBlockingReason = "La configuración ya coincide con esta alternativa.";
     } else if (projectionInput == null) {
-      bBlockingReason = "No existe una asignación de capital canónica disponible para validar esta alternativa.";
+      // REV-C12B: Use typed failure reason from ProjectionContextResult.
+      const fail = projectionFailure.ok ? null : projectionFailure;
+      bBlockingReason = fail
+        ? `${fail.reasonCode}: ${fail.explanation}`
+        : "No existe una asignación de capital canónica disponible para validar esta alternativa.";
     } else if (!projectionInput.microstructureVerified) {
       bBlockingReason = "No se puede validar de forma segura con la microestructura actual.";
     } else {
@@ -849,8 +860,9 @@ export function buildConfigurationRecommendation(input: RecommendationServiceInp
         if (testWidth > bandWidthPct) break;
 
         const candidateConfig = { ...config, gridRangeMaxPct: testWidth };
-        const candidateCtx = resolveProjectionContext(input, candidateConfig, marketContext, resolvedRequested);
-        if (candidateCtx == null || !candidateCtx.microstructureVerified) continue;
+        const candidateResult = resolveProjectionContext(input, candidateConfig, marketContext, resolvedRequested);
+        if (!candidateResult.ok || !candidateResult.context.microstructureVerified) continue;
+        const candidateCtx = candidateResult.context;
 
         const testProjection = projectCanonicalLevels(candidateCtx, { gridRangeMaxPct: testWidth });
         if (testProjection.viable && testProjection.levels >= MIN_LEVELS_FOR_VIABLE_GRID) {

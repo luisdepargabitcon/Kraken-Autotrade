@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { botLogger } from "../botLogger";
 
 // Mock DB and external dependencies
 vi.mock("../../db", () => ({
@@ -280,7 +281,7 @@ describe("GridIsolatedEngine — saveConfig real call sites (REV-C12A)", () => {
     expect(current!.gridStepAtrMultiplier).toBe(1.2);
   });
 
-  it("saveConfig throws DB_WRITE_FAILED when DB update throws (REV-C12B)", async () => {
+  it("saveConfig throws the exact same Error object when DB update throws (REV-C12B Step 10)", async () => {
     // Load config first to populate this.config
     const config = await gridIsolatedEngine.loadConfig();
     expect(config).toBeDefined();
@@ -288,17 +289,27 @@ describe("GridIsolatedEngine — saveConfig real call sites (REV-C12A)", () => {
     // Set an id so saveConfig uses the update path
     config!.id = "999";
 
-    // Temporarily mock db.update to throw
+    // REV-C12B Step 10: Use the exact same Error object — toBe, not toThrow.
+    const expectedError = new Error("DB_WRITE_FAILED");
     const dbModule = await import("../../db");
     const originalUpdate = dbModule.db.update;
     dbModule.db.update = vi.fn().mockImplementation(() => {
-      throw new Error("DB_WRITE_FAILED: connection refused");
+      throw expectedError;
     });
 
-    // saveConfig should throw (it re-throws after logging)
-    await expect(gridIsolatedEngine.saveConfig()).rejects.toThrow("DB_WRITE_FAILED");
+    try {
+      // saveConfig should re-throw the exact same Error object
+      await expect(gridIsolatedEngine.saveConfig()).rejects.toBe(expectedError);
 
-    // Restore original mock
-    dbModule.db.update = originalUpdate;
+      // REV-C12B Step 10: botLogger.error called once with "Failed to save config"
+      expect(botLogger.error).toHaveBeenCalledTimes(1);
+      const logCall = (botLogger.error as any).mock.calls[0];
+      expect(logCall[0]).toBe("SYSTEM_ERROR");
+      expect(String(logCall[1])).toContain("Failed to save config");
+    } finally {
+      // Restore original mock — no contamination of other tests
+      dbModule.db.update = originalUpdate;
+      vi.clearAllMocks();
+    }
   });
 });

@@ -249,7 +249,7 @@ export function GridRecommendationDialog({
             </p>
             <p className="text-xs text-muted-foreground flex items-start gap-2">
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
-              Validación canónica superada: el generador profesional verificó la viabilidad con la microestructura de Revolut X. La configuración se guardó en DB y se aplicará en el próximo tick del motor.
+              Configuración guardada correctamente. No se ha creado ni modificado ningún rango. Pulsa «Analizar mercado ahora» cuando quieras ejecutar un nuevo análisis SHADOW.
             </p>
           </div>
         )}

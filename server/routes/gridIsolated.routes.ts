@@ -2344,6 +2344,10 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
       const lastProfessionalValidation = gridIsolatedEngine.getLastProfessionalGeneratorValidation();
       const marketContext: GridMarketContext | null = null; // Export endpoint uses minimal view model without live market data
+      // REV-C12B Step 11: Single read of projection state — reused for all 3 fields.
+      // This prevents the state from expiring between multiple reads of the same response.
+      const exportProjectionState = gridIsolatedEngine.getRecommendationProjectionState();
+      const exportExecutionGate = gridIsolatedEngine.getExecutionGate();
       const gridViewModel = buildGridAuditViewModel(
         mode,
         config,
@@ -2357,11 +2361,11 @@ export function registerGridIsolatedRoutes(app: Express): void {
         lastProfessionalValidation,
         null, // providedProfessionalGenerator
         null, // providedRangeLifecycle
-        // REV-C12B: Real execution gate + projection state from engine
-        gridIsolatedEngine.getExecutionGate(),
-        gridIsolatedEngine.getRecommendationProjectionState()?.executionMarketSnapshot ?? null,
-        gridIsolatedEngine.getRecommendationProjectionState()?.pairConstraints ?? null,
-        gridIsolatedEngine.getRecommendationProjectionState()?.allocation ?? null,
+        // REV-C12B: Real execution gate + projection state from engine.
+        exportExecutionGate,
+        exportProjectionState?.executionMarketSnapshot ?? null,
+        exportProjectionState?.pairConstraints ?? null,
+        exportProjectionState?.allocation ?? null,
       );
 
       res.setHeader("Content-Type", "application/json; charset=utf-8");
