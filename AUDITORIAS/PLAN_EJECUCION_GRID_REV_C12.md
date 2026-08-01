@@ -278,10 +278,10 @@ npx vitest run server/services/gridIsolated server/services/__tests__/gridRecomm
 ```
 
 - Archivos ejecutados: 32
-- Tests ejecutados: 795
-- Tests pasados: 795
+- Tests ejecutados: 805
+- Tests pasados: 805
 - Tests fallidos: 0
-- Duración: ~17s
+- Duración: ~9s
 
 ## Historial de iteraciones
 
@@ -291,6 +291,7 @@ npx vitest run server/services/gridIsolated server/services/__tests__/gridRecomm
 ### REV-C12B
 - Helper profesional, ProjectionState, allocation, gate, TTL compartido, view model, régimen canónico, config fail-closed, copia defensiva, limpieza tick, mensaje post-apply, saveConfig exacto, export una lectura.
 - Corrección final: modos canónicos (adaptive_smart, fixed_compact, legacy_hybrid), eliminación de fallback "ranging", ProjectionState solo con ProjectionContextResult ok, validUntil fail-closed (sin fallback a evaluatedAt), tests TTL directos (14), copia defensiva probada, transición tick válido → tick bloqueado, 0 órdenes.
+- Microcorrección final: helper simétrico `splitSymmetricLevels` (BUY=SELL, par obligatorio), eliminación de `Math.floor` en engine y view model, 9 tests obligatorios de paridad (10=5+5 ok, 9=4+5 INVALID, 9=5+4 INVALID, 9=5+5 INVALID, 10=4+6 MISMATCH, 10=4+4 MISMATCH, 10=5+5 no pérdida, "10" INVALID, 10.5 INVALID), test REAL tick N válido con mocks del flujo completo (getGridBandSnapshot, resolveGridPairConstraints, getTicker, allocate), tick N+1 Revolut X bloqueado limpia estado, variantes (mercado no apto, allocation falla, régimen desconocido, allocation impar), cero órdenes reales en SHADOW.
 
 ### REV-C12C (pendiente)
 - Causa raíz de REVOLUT_X_UNAVAILABLE en staging.

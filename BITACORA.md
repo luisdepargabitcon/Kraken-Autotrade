@@ -293,6 +293,20 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - Test ProjectionState solo si context ok: config incompleta, fixed_compact válido, legacy_hybrid válido, fixed inválido, allocation impar, allocation mismatch, régimen no operable, ttl sin validUntil.
 - Tests: 795/795 pasan (32 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
 
+### Microcorrección final REV-C12B (2026-08-01) — paridad BUY/SELL y transición real de tick
+
+- Helper simétrico `splitSymmetricLevels` en `gridProfessionalProjectionContext.ts`: levelsCount debe ser entero positivo par. BUY=SELL=levelsCount/2. Sin `Math.floor`, sin remainder. 9 no se reparte como 4+5.
+- `validateSymmetricSplit` valida que configuredBuy/Sell coincidan con el split canónico.
+- Engine usa `splitSymmetricLevels` en tick() — si split.ok=false, estado permanece null, no se llama al generador, no se propone rango, no se generan niveles. No lanza excepción (salidas de ciclos abiertos siguen procesándose).
+- View model (`buildGridMarketViewModel.ts`) usa `splitSymmetricLevels` — eliminado `Math.floor`.
+- Projection context valida `allocation.levelsCount % 2 === 0` explícitamente. Impar → ALLOCATION_LEVEL_COUNT_INVALID.
+- 9 tests obligatorios de paridad: 10=5+5 ok, 9=4+5 INVALID, 9=5+4 INVALID, 9=5+5 INVALID, 10=4+6 MISMATCH, 10=4+4 MISMATCH, 10=5+5 no pérdida, "10" INVALID, 10.5 INVALID.
+- Test REAL tick N válido: mocks de `getGridBandSnapshot`, `resolveGridPairConstraints`, `getTicker`, `allocate` devuelven datos válidos. `tick()` crea ProjectionState sin inyección directa. allocation.levelsCount=10, régimen normal_lateral, venue REVOLUT_X, gate canCreateRange=true.
+- Test REAL tick N+1 bloqueado: constraints no verificadas → state null, gate canCreateRange=false. getTicker lanza REVOLUT_X_UNAVAILABLE → state null. Variantes: mercado no apto, allocation falla, régimen desconocido, allocation impar (9 niveles) — todas limpian estado.
+- Cero órdenes reales en SHADOW mode.
+- Corrección de afirmaciones anteriores: allocation impar NO estaba bloqueada antes (se usaba Math.floor), tick N válido NO se ejecutaba realmente (se inyectaba estado).
+- Tests: 805/805 pasan (32 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
+
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 
 ### Resumen
