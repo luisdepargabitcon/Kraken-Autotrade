@@ -262,9 +262,23 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - Campos fantasma eliminados del view model: `config.buyLevels`/`config.sellLevels` eliminados de `buildGridMarketViewModel.ts`. `buildCurrentConfigurationProjection` usa `allocation.levelsCount`. `requestedLevelsFrom` no usa `config.buyLevels`/`config.sellLevels`. `buildEntryRange` usa `professionalGenerator`/`adaptiveDecision`/`adaptiveRangeMinViableLevels`. `buildActiveRangeSnapshot` no usa `configSnapshot.buyLevels`/`configSnapshot.sellLevels`.
 - Validadores estrictos sin `Number()`: `validateStrictLevelValue` rechaza strings (`"4"`), booleanos, NaN, Infinity. Solo acepta `typeof value === "number"` + `Number.isFinite` + `Number.isInteger`.
 - Market suitability y régimen fail-closed: `resolveGridProfessionalProjectionContext` rechaza `marketSuitable !== true` y `regimeLabel` vacío o no-string. No hay default `suitableForGrid ?? true` ni `regime ?? "ranging"`.
-- Consistencia de allocation: `finalGridBudgetUsd` debe ser > 0. `capitalPerLevelUsd * levelsCount` no debe exceder `finalGridBudgetUsd` + 10% tolerancia.
+- Consistencia de allocation: `finalGridBudgetUsd` debe ser > 0. `capitalPerLevelUsd * levelsCount` no debe exceder `finalGridBudgetUsd` + epsilon 1 cent.
 - Tests nuevos: `gridIsolatedEngine.test.ts` (ProjectionState null, saveConfig DB_WRITE_FAILED, gate status), `gridProfessionalProjectionContext.test.ts` (7 tests: marketSuitable, regimeLabel, allocation consistency), `gridRecommendationService.test.ts` (4 tests: strict validation string/NaN/Infinity/boolean), `GridMarketPanel.test.tsx` (fixtures con status/ageMs/maxAgeMs/validUntil).
 - Tests: 291/291 pasan (10 archivos relevantes). `npx tsc` ✅.
+
+### Cascada REV-C12B (2026-08-01) — cierre estricto: copia defensiva, TTL compartido, ProjectionContextResult, régimen canónico, config fail-closed
+
+- Copia defensiva de ProjectionState: `getRecommendationProjectionState()` devuelve `structuredClone` del estado interno. Modificar el resultado no afecta el engine. Preserva Date objects.
+- Limpieza al comenzar tick: `lastRecommendationProjectionState = null` al inicio de `tick()`. Solo se reasigna cuando el tick actual obtiene banda válida + suitableForGrid + régimen operable + snapshot verificado + constraints verificadas + allocation válida. Si cualquier bloqueo ocurre, el estado anterior NO se conserva.
+- TTL canónico compartido (`gridExecutionGateTtl.ts`): helper puro `computeGateTtl(snapshot, constraints, now)` usado por `getExecutionGate()` y `getRecommendationProjectionState()`. `validUntil = min(snapshotValidUntil, constraintsValidUntil)`. Las lecturas nunca renuevan TTL.
+- ProjectionContextResult tipado: `resolveGridProfessionalProjectionContext` devuelve `{ ok: true, context } | { ok: false, reasonCode, explanation }`. 14 reasonCodes. Engine y recommendation service actualizados.
+- Consistencia estricta del allocator: `configuredBuy+Sell === allocation.levelsCount`. `requiredCapital = capitalPerLevelUsd * levelsCount` no supera `finalGridBudgetUsd` + epsilon 1 cent. No `Math.floor` que pierde un nivel.
+- Régimen reconocido y operable: lista canónica (low_volatility, normal_lateral, high_volatility = operables; unsuitable_trend, pump_dump, unknown = no operables). Aliases normalizados explícitamente. No defaults inventados.
+- Configuración fail-closed: 18 campos obligatorios. Sin defaults silenciosos. `enforceCompactRange=false` válido. `gridRangeControlMode` y `adaptiveRangeProfile` validados contra sets canónicos.
+- Mensaje post-apply exacto: "Configuración guardada correctamente. No se ha creado ni modificado ningún rango. Pulsa «Analizar mercado ahora» cuando quieras ejecutar un nuevo análisis SHADOW."
+- saveConfig mismo objeto Error: test usa `.rejects.toBe(expectedError)`. `botLogger.error` llamado una vez con "Failed to save config". Mock restaurado en `finally`. Call sites auditados.
+- Export JSON una única lectura: `exportProjectionState` leído una vez, reutilizado para los 3 campos.
+- Tests: 760/760 pasan (31 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
 
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 

@@ -2,8 +2,8 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12B cascada runtime integration implementada (ProjectionState, gate edad, campos fantasma, validadores estrictos, fail-closed); pendiente commit y push**
-- **NEXT_ACTION: commit técnico + documental, push a rama de revisión**
+- **TASK_STATUS: REV-C12B corregida y subida a rama de revisión; pendiente verificación independiente final**
+- **NEXT_ACTION: revisión independiente de los commits finales antes de merge**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
@@ -105,7 +105,9 @@ Corrección del flujo `diagnóstico → recomendación → aplicación → persi
 
 ## Pendiente REV-C12B
 
-- Causa raíz de `REVOLUT_X_UNAVAILABLE` en staging (no bloquea merge — es un problema de conectividad/credenciales del entorno).
+- **REV-C12C: Causa raíz de `REVOLUT_X_UNAVAILABLE` en staging.**
+  - REV-C12C ES FUNCIONALMENTE BLOQUEANTE PARA CREAR NUEVOS RANGOS Y NIVELES.
+  - Puede no bloquear el merge técnico, pero sí bloquea la funcionalidad observada por el usuario.
 
 ## Cambios aplicados (cascada REV-C12B — profesional input + microstructure + gate real)
 
@@ -211,6 +213,87 @@ Corrección del flujo `diagnóstico → recomendación → aplicación → persi
     - `gridProfessionalProjectionContext.test.ts`: 7 tests nuevos (marketSuitable, regimeLabel, allocation consistency).
     - `gridRecommendationService.test.ts`: 4 tests nuevos (strict validation: string, NaN, Infinity, boolean).
     - `GridMarketPanel.test.tsx`: fixtures actualizadas con `status`, `ageMs`, `maxAgeMs`, `validUntil`.
+
+## Cambios aplicados (cascada REV-C12B — cierre estricto: copia defensiva, TTL compartido, ProjectionContextResult, régimen canónico, config fail-closed)
+
+35. Copia defensiva de ProjectionState:
+    - `getRecommendationProjectionState()` devuelve `structuredClone` (o clone manual fallback) del estado interno.
+    - Modificar el resultado no afecta el estado interno del engine.
+    - Preserva Date objects (fetchedAt, acquiredAt, timestamp, expiresAt).
+
+36. Limpieza al comenzar tick:
+    - `this.lastRecommendationProjectionState = null` al inicio de `tick()`, antes de resolver constraints/ticker/snapshot/allocation.
+    - Solo se reasigna cuando el tick ACTUAL obtiene banda válida + suitableForGrid + régimen operable + snapshot verificado + constraints verificadas + allocation válida.
+    - Si cualquier bloqueo ocurre, el estado anterior NO se conserva.
+
+37. TTL canónico compartido (`gridExecutionGateTtl.ts`):
+    - Helper puro `computeGateTtl(snapshot, constraints, now)` usado por `getExecutionGate()` y `getRecommendationProjectionState()`.
+    - `snapshotValidUntil = fetchedAt + maxAgeMs`; `constraintsValidUntil = expiresAt`; `validUntil = min(snapshot, constraints)`.
+    - Devuelve `{ fresh, ageMs, maxAgeMs, snapshotValidUntil, constraintsValidUntil, validUntil, staleReason }`.
+    - Las lecturas nunca renuevan `evaluatedAt`, `fetchedAt`, `acquiredAt`, `validUntil`.
+
+38. ProjectionContextResult tipado:
+    - `resolveGridProfessionalProjectionContext` devuelve `{ ok: true, context } | { ok: false, reasonCode, explanation }`.
+    - 14 reasonCodes: BAND_DATA_INVALID, CONFIG_INCOMPLETE, REQUESTED_LEVELS_INVALID, ALLOCATION_MISSING, ALLOCATION_LEVEL_COUNT_INVALID, ALLOCATION_LEVEL_COUNT_MISMATCH, ALLOCATION_CAPITAL_PER_LEVEL_INVALID, ALLOCATION_BUDGET_INVALID, MARKET_SUITABILITY_UNKNOWN, MARKET_UNSUITABLE, MARKET_REGIME_UNKNOWN, MARKET_REGIME_UNSUITABLE, MICROSTRUCTURE_UNAVAILABLE, PAIR_CONSTRAINTS_UNAVAILABLE.
+    - Engine y recommendation service actualizados para usar el resultado tipado.
+
+39. Consistencia estricta del allocator:
+    - `configuredBuyLevels + configuredSellLevels === allocation.levelsCount` (ALLOCATION_LEVEL_COUNT_MISMATCH).
+    - `requiredCapital = capitalPerLevelUsd * levelsCount` no puede superar `finalGridBudgetUsd` + epsilon 1 cent (ALLOCATION_BUDGET_INVALID).
+    - No `Math.floor(levelsCount / 2)` que pierde un nivel — si es impar, es mismatch.
+    - Auditoría de `gridCapitalAllocator.ts`: `finalGridBudgetUsd = capitalPerLevelUsd * effectiveLevels` (exacto, sin tolerancia arbitraria).
+
+40. Régimen reconocido y operable:
+    - Lista canónica: OPERABLES = {low_volatility, normal_lateral, high_volatility}; NO OPERABLES = {unsuitable_trend, pump_dump, unknown}.
+    - Aliases normalizados explícitamente: ranging→normal_lateral, RANGE→normal_lateral, sideways→normal_lateral, etc.
+    - Régimen ausente/desconocido → MARKET_REGIME_UNKNOWN; conocido pero no operable → MARKET_REGIME_UNSUITABLE.
+    - No `undefined`/`null`/`""`/`"RANGE"` inventado → régimen apto sin normalización canónica.
+
+41. Configuración fail-closed:
+    - 18 campos de config obligatorios: netProfitTargetPct, gridStepAtrMultiplier, gridStepMinPct, gridStepMaxPct, enforceCompactRange, gridRangeMaxPct, maxDistanceFromCenterPct, maxSellDistanceFromNearestBuyPct, gridRangeControlMode, adaptiveRangeEnabled, adaptiveRangeProfile, adaptiveRangeMinPct, adaptiveRangeMaxPct, adaptiveRangeLowVolMaxPct, adaptiveRangeNormalMaxPct, adaptiveRangeHighVolMaxPct, adaptiveRangeTargetFullLevels, adaptiveRangeMinViableLevels.
+    - Sin defaults silenciosos — si falta uno o es inválido → CONFIG_INCOMPLETE.
+    - `enforceCompactRange=false` válido (boolean false no se sustituye).
+    - `gridRangeControlMode` y `adaptiveRangeProfile` validados contra sets canónicos.
+
+42. Mensaje post-apply exacto:
+    - "Configuración guardada correctamente. No se ha creado ni modificado ningún rango. Pulsa «Analizar mercado ahora» cuando quieras ejecutar un nuevo análisis SHADOW."
+    - Eliminada la promesa de creación automática y DB save.
+
+43. saveConfig mismo objeto Error:
+    - Test usa `await expect(saveConfig()).rejects.toBe(expectedError)` — exactamente el mismo objeto.
+    - `botLogger.error` llamado una vez con "Failed to save config".
+    - Mock restaurado en bloque `finally` — no contaminación.
+    - Call sites auditados: `gridIsolated.routes.ts:874` (try/catch), `gridRecommendationService.ts:1280` (try/catch + rollback), engine internal (try/catch + re-throw).
+
+44. Export JSON una única lectura:
+    - `exportProjectionState = gridIsolatedEngine.getRecommendationProjectionState()` leído una vez.
+    - Reutilizado para `executionMarketSnapshot`, `pairConstraints`, `allocation`.
+    - No tres lecturas que pueden caducar entre sí.
+
+## MATRIZ FINAL REV-C12B
+
+Comando exacto:
+```
+npx vitest run server/services/gridIsolated server/services/__tests__/gridRecommendationService.test.ts server/services/__tests__/gridRecommendationValidation.test.ts server/services/__tests__/gridRecommendationAlternatives.test.ts server/services/__tests__/applyRecommendationPatchAtomically.test.ts server/services/__tests__/gridIsolatedEngine.test.ts server/services/__tests__/gridProfessionalProjectionContext.test.ts server/routes/__tests__/gridRecommendationApply.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts client/src/components/grid --reporter=verbose
+```
+
+- Archivos ejecutados: 31
+- Tests ejecutados: 760
+- Tests pasados: 760
+- Tests fallidos: 0
+- Duración: ~11s
+
+## Historial de iteraciones
+
+### REV-C12A
+- Campos fantasma (buyLevels/sellLevels), recomendaciones y persistencia.
+
+### REV-C12B
+- Helper profesional, ProjectionState, allocation, gate, TTL compartido, view model, régimen canónico, config fail-closed, copia defensiva, limpieza tick, mensaje post-apply, saveConfig exacto, export una lectura.
+
+### REV-C12C (pendiente)
+- Causa raíz de REVOLUT_X_UNAVAILABLE en staging.
+- REV-C12C ES FUNCIONALMENTE BLOQUEANTE PARA CREAR NUEVOS RANGOS Y NIVELES.
 
 ## Rama
 
