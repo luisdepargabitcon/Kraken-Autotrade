@@ -405,6 +405,43 @@ describe("gridProfessionalProjectionContext — REV-C12A/REV-C12B", () => {
       if (!result.ok) expect(result.reasonCode).toBe("CONFIG_INCOMPLETE");
     });
 
+    // REV-C12B: Canonical range control modes (adaptive_smart, fixed_compact, legacy_hybrid)
+    it("accepts adaptive_smart range control mode", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({ config: { ...validConfig, gridRangeControlMode: "adaptive_smart" } }));
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.context.gridRangeControlMode).toBe("adaptive_smart");
+    });
+
+    it("accepts fixed_compact range control mode", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({ config: { ...validConfig, gridRangeControlMode: "fixed_compact" } }));
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.context.gridRangeControlMode).toBe("fixed_compact");
+    });
+
+    it("accepts legacy_hybrid range control mode", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({ config: { ...validConfig, gridRangeControlMode: "legacy_hybrid" } }));
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.context.gridRangeControlMode).toBe("legacy_hybrid");
+    });
+
+    it("rejects 'fixed' (old mode, not canonical)", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({ config: { ...validConfig, gridRangeControlMode: "fixed" } }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasonCode).toBe("CONFIG_INCOMPLETE");
+    });
+
+    it("rejects 'atr_based' (old mode, not canonical)", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({ config: { ...validConfig, gridRangeControlMode: "atr_based" } }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasonCode).toBe("CONFIG_INCOMPLETE");
+    });
+
+    it("rejects empty string range control mode", () => {
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({ config: { ...validConfig, gridRangeControlMode: "" } }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasonCode).toBe("CONFIG_INCOMPLETE");
+    });
+
     it("fails with CONFIG_INCOMPLETE when adaptiveRangeMinViableLevels is 0", () => {
       const result = resolveGridProfessionalProjectionContext(makeValidInput({ config: { ...validConfig, adaptiveRangeMinViableLevels: 0 } }));
       expect(result.ok).toBe(false);

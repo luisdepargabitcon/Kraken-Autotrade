@@ -18,12 +18,14 @@
 import type { GridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
 import type { RevolutXPairConstraints } from "../exchanges/RevolutXService";
 import type { CapitalAllocationResult } from "./gridCapitalAllocator";
-import type {
-  ProfessionalLevelGenerationInput,
-  RangeControlMode,
-  AdaptiveRangeProfile,
-  CenterPriceMode,
-  OperationalRangeMode,
+import {
+  RANGE_CONTROL_MODES,
+  ADAPTIVE_RANGE_PROFILES,
+  type ProfessionalLevelGenerationInput,
+  type RangeControlMode,
+  type AdaptiveRangeProfile,
+  type CenterPriceMode,
+  type OperationalRangeMode,
 } from "./gridSpacingCalculator";
 
 /** Strict numeric validator: rejects null, undefined, non-numeric strings, NaN, Infinity. */
@@ -211,17 +213,9 @@ const REQUIRED_CONFIG_FIELDS: ReadonlyArray<keyof any> = [
   "adaptiveRangeMinViableLevels",
 ];
 
-const VALID_RANGE_CONTROL_MODES: ReadonlySet<string> = new Set([
-  "adaptive_smart",
-  "fixed",
-  "atr_based",
-]);
-
-const VALID_ADAPTIVE_PROFILES: ReadonlySet<string> = new Set([
-  "conservative",
-  "balanced",
-  "aggressive",
-]);
+// REV-C12B: Derive validation sets from canonical constants — no divergent manual lists.
+const VALID_RANGE_CONTROL_MODES: ReadonlySet<string> = new Set(RANGE_CONTROL_MODES);
+const VALID_ADAPTIVE_PROFILES: ReadonlySet<string> = new Set(ADAPTIVE_RANGE_PROFILES);
 
 /**
  * Resolve the canonical professional projection context from real, verified data.

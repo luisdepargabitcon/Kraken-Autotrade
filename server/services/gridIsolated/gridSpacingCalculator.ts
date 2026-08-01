@@ -33,9 +33,32 @@ export type ClampReason = "atr" | "min" | "max";
 
 // ─── Adaptive Smart Range (3C.3-C) ─────────────────────────────────────
 
-export type RangeControlMode = 'adaptive_smart' | 'fixed_compact' | 'legacy_hybrid';
-export type AdaptiveRangeProfile = 'conservative' | 'balanced' | 'aggressive';
-export type RegimeBucket = 'low_volatility' | 'normal_lateral' | 'high_volatility' | 'unsuitable_trend' | 'pump_dump' | 'unknown';
+export const RANGE_CONTROL_MODES = [
+  "adaptive_smart",
+  "fixed_compact",
+  "legacy_hybrid",
+] as const;
+
+export type RangeControlMode = typeof RANGE_CONTROL_MODES[number];
+
+export const ADAPTIVE_RANGE_PROFILES = [
+  "conservative",
+  "balanced",
+  "aggressive",
+] as const;
+
+export type AdaptiveRangeProfile = typeof ADAPTIVE_RANGE_PROFILES[number];
+
+export const REGIME_BUCKETS = [
+  "low_volatility",
+  "normal_lateral",
+  "high_volatility",
+  "unsuitable_trend",
+  "pump_dump",
+  "unknown",
+] as const;
+
+export type RegimeBucket = typeof REGIME_BUCKETS[number];
 
 export interface AdaptiveSmartRangeInput {
   gridRangeControlMode: RangeControlMode;

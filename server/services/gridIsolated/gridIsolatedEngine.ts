@@ -1380,29 +1380,53 @@ export class GridIsolatedEngine {
       }
     }
 
-    // REV-C12B: Store projection state for route handler / view model / recommendation service.
-    // Only stored when allocation was resolved — otherwise the state is not valid for projection.
-    // validUntil is computed via the shared TTL helper: min(snapshotValidUntil, constraintsValidUntil).
+    // REV-C12B Step 3/4: Store projection state ONLY when the projection context
+    // resolves ok=true AND ttl.fresh=true AND ttl.validUntil !== null.
+    // No fallback to evaluatedAt when validUntil is null — fail-closed.
+    // No fallback to "ranging" for regime — pass real regime, let the helper decide.
     if (tickAllocation) {
       const evaluatedAt = new Date();
       const ttl = computeGateTtl(executionMarketSnapshot, pairConstraints, evaluatedAt);
-      this.lastRecommendationProjectionState = {
-        evaluatedAt: evaluatedAt.toISOString(),
-        validUntil: ttl.validUntil ? ttl.validUntil.toISOString() : evaluatedAt.toISOString(),
-        pair: this.config.pair,
-        bandSnapshot: {
-          midPrice: bandSnapshot.midPrice,
-          middle: bandSnapshot.middle,
-          upper: bandSnapshot.upper,
-          lower: bandSnapshot.lower,
-          atrPct: bandSnapshot.atrPct,
-          regime: bandSnapshot.regime ?? "ranging",
-          suitableForGrid: bandSnapshot.suitableForGrid ?? false,
-        },
+      // Derive canonical levels from allocation — no Math.floor, no level loss.
+      const configuredBuyLevels = Math.floor(tickAllocation.levelsCount / 2);
+      const configuredSellLevels = tickAllocation.levelsCount - configuredBuyLevels;
+      const projectionCtxResult = resolveGridProfessionalProjectionContext({
+        currentPrice: bandSnapshot.midPrice,
+        bollingerMiddle: bandSnapshot.middle,
+        bollingerUpper: bandSnapshot.upper,
+        bollingerLower: bandSnapshot.lower,
+        atrPct: bandSnapshot.atrPct,
+        config: this.config,
+        configuredBuyLevels,
+        configuredSellLevels,
+        allocation: tickAllocation,
         executionMarketSnapshot,
         pairConstraints,
-        allocation: tickAllocation,
-      };
+        regimeLabel: bandSnapshot.regime ?? "",
+        marketSuitable: bandSnapshot.suitableForGrid ?? false,
+      });
+      if (projectionCtxResult.ok && ttl.fresh && ttl.validUntil) {
+        this.lastRecommendationProjectionState = {
+          evaluatedAt: evaluatedAt.toISOString(),
+          validUntil: ttl.validUntil.toISOString(),
+          pair: this.config.pair,
+          bandSnapshot: {
+            midPrice: bandSnapshot.midPrice,
+            middle: bandSnapshot.middle,
+            upper: bandSnapshot.upper,
+            lower: bandSnapshot.lower,
+            atrPct: bandSnapshot.atrPct,
+            regime: bandSnapshot.regime ?? "",
+            suitableForGrid: bandSnapshot.suitableForGrid ?? false,
+          },
+          executionMarketSnapshot,
+          pairConstraints,
+          allocation: tickAllocation,
+        };
+      } else {
+        // REV-C12B Step 4: If context fails or ttl has no validUntil, do NOT publish.
+        this.lastRecommendationProjectionState = null;
+      }
     }
 
     if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
