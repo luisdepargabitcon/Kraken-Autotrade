@@ -280,6 +280,19 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - Export JSON una única lectura: `exportProjectionState` leído una vez, reutilizado para los 3 campos.
 - Tests: 760/760 pasan (31 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
 
+### Corrección final REV-C12B (2026-08-01) — modos canónicos y cobertura runtime
+
+- Modos canónicos RangeControlMode corregidos: `adaptive_smart`, `fixed_compact`, `legacy_hybrid`. Eliminados `fixed` y `atr_based` divergentes. Constante `RANGE_CONTROL_MODES` exportada desde `gridSpacingCalculator.ts` y usada en `gridProfessionalProjectionContext.ts`.
+- ProjectionState solo se publica cuando `resolveGridProfessionalProjectionContext` devuelve `ok=true` Y `ttl.fresh=true` Y `ttl.validUntil !== null`. Si falla cualquiera, estado = null.
+- Eliminado fallback `regime ?? "ranging"` — ahora se pasa el régimen real (`regime ?? ""`) y el helper tipado decide si es válido, alias reconocido o bloqueado.
+- Eliminado fallback `validUntil: evaluatedAt.toISOString()` cuando `ttl.validUntil` es null — ahora fail-closed, no se publica estado.
+- Niveles derivados canónicamente del allocation: `configuredBuyLevels = floor(levelsCount / 2)`, `configuredSellLevels = levelsCount - configuredBuyLevels`. Nunca `Math.floor` que pierde un nivel.
+- Tests TTL directos (14): snapshot/constraints válidas, caducidad, sin expiresAt, fetchedAt inválido, maxAgeMs inválido, lectura antes/después del límite, múltiples lecturas no renuevan validUntil, validUntil es mínimo, staleReason, objetos no modificados.
+- Test copia defensiva: mutar pair, midPrice, bid, fetchedAt, priceTickSize, expiresAt, levelsCount, capitalPerLevelUsd en la copia no afecta el estado interno. Date continúa siendo Date. Copias no comparten objetos anidados.
+- Test tick válido → tick bloqueado: tick N establece estado, tick N+1 sin datos de mercado lo elimina. Gate canCreateRange=false. No rango nuevo, no BUY, no orden real. Variantes: mercado no apto, allocation falla, régimen desconocido.
+- Test ProjectionState solo si context ok: config incompleta, fixed_compact válido, legacy_hybrid válido, fixed inválido, allocation impar, allocation mismatch, régimen no operable, ttl sin validUntil.
+- Tests: 795/795 pasan (32 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
+
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 
 ### Resumen

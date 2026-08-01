@@ -274,14 +274,14 @@ Corrección del flujo `diagnóstico → recomendación → aplicación → persi
 
 Comando exacto:
 ```
-npx vitest run server/services/gridIsolated server/services/__tests__/gridRecommendationService.test.ts server/services/__tests__/gridRecommendationValidation.test.ts server/services/__tests__/gridRecommendationAlternatives.test.ts server/services/__tests__/applyRecommendationPatchAtomically.test.ts server/services/__tests__/gridIsolatedEngine.test.ts server/services/__tests__/gridProfessionalProjectionContext.test.ts server/routes/__tests__/gridRecommendationApply.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts client/src/components/grid --reporter=verbose
+npx vitest run server/services/gridIsolated server/services/__tests__/gridRecommendationService.test.ts server/services/__tests__/gridRecommendationValidation.test.ts server/services/__tests__/gridRecommendationAlternatives.test.ts server/services/__tests__/applyRecommendationPatchAtomically.test.ts server/services/__tests__/gridIsolatedEngine.test.ts server/services/__tests__/gridProfessionalProjectionContext.test.ts server/services/__tests__/gridExecutionGateTtl.test.ts server/routes/__tests__/gridRecommendationApply.test.ts server/routes/__tests__/gridIsolatedRoutes.test.ts client/src/components/grid --reporter=verbose
 ```
 
-- Archivos ejecutados: 31
-- Tests ejecutados: 760
-- Tests pasados: 760
+- Archivos ejecutados: 32
+- Tests ejecutados: 795
+- Tests pasados: 795
 - Tests fallidos: 0
-- Duración: ~11s
+- Duración: ~17s
 
 ## Historial de iteraciones
 
@@ -290,6 +290,7 @@ npx vitest run server/services/gridIsolated server/services/__tests__/gridRecomm
 
 ### REV-C12B
 - Helper profesional, ProjectionState, allocation, gate, TTL compartido, view model, régimen canónico, config fail-closed, copia defensiva, limpieza tick, mensaje post-apply, saveConfig exacto, export una lectura.
+- Corrección final: modos canónicos (adaptive_smart, fixed_compact, legacy_hybrid), eliminación de fallback "ranging", ProjectionState solo con ProjectionContextResult ok, validUntil fail-closed (sin fallback a evaluatedAt), tests TTL directos (14), copia defensiva probada, transición tick válido → tick bloqueado, 0 órdenes.
 
 ### REV-C12C (pendiente)
 - Causa raíz de REVOLUT_X_UNAVAILABLE en staging.
