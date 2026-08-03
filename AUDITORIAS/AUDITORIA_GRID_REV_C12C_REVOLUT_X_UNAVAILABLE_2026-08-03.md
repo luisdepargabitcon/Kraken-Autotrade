@@ -1,8 +1,8 @@
 # AUDITORÍA — REV-C12C: Causa raíz REVOLUT_X_UNAVAILABLE en staging
 
-**Fecha:** 2026-08-03  
-**Rama:** `review/grid-rev-c12a-20260731`  
-**HEAD antes del commit:** `58f25c090c5a107c20472c648bc5612aa48cb64c`  
+**Fecha:** 2026-08-03
+**Rama:** `review/grid-rev-c12a-20260731`
+**HEAD antes del commit:** `58f25c090c5a107c20472c648bc5612aa48cb64c`
 **Clasificación:** Observabilidad + corrección mínima de colapso de errores
 
 ---
@@ -169,20 +169,20 @@ export type RevolutXGridFailureStage =
 
 ## 7. Validación
 
-- `npx tsc --noEmit` ✅  
-- `npm run build` ✅  
-- `git diff --check` ✅ (sin whitespace errors)  
-- Tests Grid (32 archivos, comando baseline): **819/819 pasados**, 0 fallidos  
+- `npx tsc --noEmit` ✅
+- `npm run build` ✅
+- `git diff --check` ✅ (sin whitespace errors)
+- Tests Grid (32 archivos, comando baseline): **819/819 pasados**, 0 fallidos
 - Tests pre-existentes fallados (pre-REV-C12C): `gridShadowPolicy`, `gridCompactRange`, `gridSpacingCalculator`, `gridAdaptiveSmartRange` — sin cambios en esos archivos, fallos no causados por esta cascada
 
 ---
 
 ## 8. Estado post-corrección
 
-- **Implementado**: ✅  
-- **Validado**: ✅  
-- **Comprometido**: pendiente (ver S12)  
-- **Subido**: pendiente  
-- **Desplegado en staging**: NO (requiere autorización)  
+- **Implementado**: ✅
+- **Validado**: ✅
+- **Comprometido**: pendiente (ver S12)
+- **Subido**: pendiente
+- **Desplegado en staging**: NO (requiere autorización)
 
 El error real de ticker seguirá ocurriendo en staging hasta que se despliegue el código + se confirme que los endpoints de Revolut X están accesibles. Esta corrección garantiza que cuando el error ocurra, quede registrado en los logs con el mensaje exacto, y que las constraints no sean descartadas innecesariamente.
