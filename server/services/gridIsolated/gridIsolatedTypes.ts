@@ -995,3 +995,16 @@ export interface GridMarketContext {
     distancePct: number | null;
   } | null;
 }
+
+// ─── REV-C12C: Revolut X Grid Failure Stage classification ───────────────────
+// Used to differentiate failure modes that previously collapsed into REVOLUT_X_UNAVAILABLE.
+export type RevolutXGridFailureStage =
+  | "INITIALIZATION"      // Service not initialized (no credentials loaded)
+  | "AUTHENTICATION"      // Credentials present but auth rejected (401/403)
+  | "PAIR_NORMALIZATION"  // Pair string is invalid or not found in exchange
+  | "PAIR_CONSTRAINTS"    // Configuration/pairs endpoint failed or returned invalid data
+  | "TICKER_FETCH"        // Order book or trades endpoint unreachable / returned no data
+  | "TICKER_VALIDATION"   // Bid/ask null, bid >= ask, non-finite values
+  | "FRESHNESS"           // Snapshot or constraints TTL expired
+  | "NETWORK"             // DNS, TLS, timeout, connection refused
+  | "UNKNOWN";            // Uncategorized exception

@@ -826,3 +826,314 @@ describe("GridIsolatedEngine — REAL tick N valid → tick N+1 blocked (REV-C12
     expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
   });
 });
+
+// ─── REV-C12C: Differentiated failure mode tests ─────────────────────────────
+// Each test verifies that a specific Revolut X failure mode produces:
+//   - ProjectionState = null
+//   - canCreateRange = false
+//   - allowCycleExits = true (never blocked)
+//   - SHADOW mode: no real orders
+// And verifies that constraints result is preserved when only the ticker fails.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("GridIsolatedEngine — REV-C12C: Differentiated Revolut X failure modes", () => {
+  beforeEach(async () => {
+    const config = await gridIsolatedEngine.loadConfig();
+    config!.mode = "SHADOW";
+    config!.isActive = true;
+    config!.pair = "BTC/USD";
+    config!.netProfitTargetPct = 0.8;
+    config!.gridStepAtrMultiplier = 1.5;
+    config!.gridStepMinPct = 0.15;
+    config!.gridStepMaxPct = 3.0;
+    config!.enforceCompactRange = true;
+    config!.gridRangeMaxPct = 2.5;
+    config!.maxDistanceFromCenterPct = 1.25;
+    config!.maxSellDistanceFromNearestBuyPct = 1.50;
+    config!.gridRangeControlMode = "adaptive_smart";
+    config!.adaptiveRangeEnabled = true;
+    config!.adaptiveRangeProfile = "balanced";
+    config!.adaptiveRangeMinPct = 1.50;
+    config!.adaptiveRangeMaxPct = 7.00;
+    config!.adaptiveRangeLowVolMaxPct = 3.00;
+    config!.adaptiveRangeNormalMaxPct = 5.00;
+    config!.adaptiveRangeHighVolMaxPct = 7.00;
+    config!.adaptiveRangeTargetFullLevels = false;
+    config!.adaptiveRangeMinViableLevels = 4;
+    await gridIsolatedEngine.saveConfig();
+    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
+    (gridIsolatedEngine as any).activeRangeVersion = null;
+    (gridIsolatedEngine as any).lastExecutionGate = null;
+  });
+
+  afterEach(() => {
+    (gridIsolatedEngine as any).lastRecommendationProjectionState = null;
+    (gridIsolatedEngine as any).activeRangeVersion = null;
+    vi.clearAllMocks();
+  });
+
+  // ─── Helper: assert fail-closed state ───────────────────────────────────
+  function assertFailClosed() {
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
+    const gate = gridIsolatedEngine.getExecutionGate();
+    expect(gate.canCreateRange).toBe(false);
+    expect(gate.allowCycleExits).toBe(true);
+    expect(gridIsolatedEngine.getExecutionStatus().mode).toBe("SHADOW");
+  }
+
+  // ─── T1: getTicker throws "not initialized" ─────────────────────────────
+  it("TICKER_FETCH: service throws 'not initialized' → fail-closed, constraints preserved", async () => {
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("Revolut X client not initialized")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+
+    // REV-C12C: botLogger.warn must be called with structured failure info
+    expect(botLogger.warn).toHaveBeenCalledWith(
+      "GRID_REVOLUTX_TICKER_FAILED",
+      expect.stringContaining("not initialized"),
+      expect.objectContaining({
+        stage: "TICKER_FETCH",
+        pair: "BTC/USD",
+        canCreateRange: false,
+        allowCycleExits: true,
+      })
+    );
+  });
+
+  // ─── T2: getTicker throws HTTP 401 ──────────────────────────────────────
+  it("AUTHENTICATION: getTicker throws 401 → fail-closed", async () => {
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("RevolutX API error 401: Unauthorized")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+    expect(botLogger.warn).toHaveBeenCalledWith(
+      "GRID_REVOLUTX_TICKER_FAILED",
+      expect.stringContaining("401"),
+      expect.objectContaining({ stage: "TICKER_FETCH", canCreateRange: false })
+    );
+  });
+
+  // ─── T3: getTicker throws HTTP 403 ──────────────────────────────────────
+  it("AUTHENTICATION: getTicker throws 403 → fail-closed", async () => {
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("RevolutX API error 403: Forbidden")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+    expect(botLogger.warn).toHaveBeenCalledWith(
+      "GRID_REVOLUTX_TICKER_FAILED",
+      expect.stringContaining("403"),
+      expect.objectContaining({ stage: "TICKER_FETCH" })
+    );
+  });
+
+  // ─── T4: getTicker throws HTTP 404 ──────────────────────────────────────
+  it("TICKER_FETCH: getTicker throws 404 (endpoint not found) → fail-closed", async () => {
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("RevolutX ticker unavailable for BTC/USD: RevolutX API error 404: Endpoint not found")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+    expect(botLogger.warn).toHaveBeenCalledWith(
+      "GRID_REVOLUTX_TICKER_FAILED",
+      expect.stringContaining("404"),
+      expect.objectContaining({ stage: "TICKER_FETCH" })
+    );
+  });
+
+  // ─── T5: getTicker throws HTTP 429 ──────────────────────────────────────
+  it("NETWORK: getTicker throws 429 (rate limited) → fail-closed", async () => {
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("RevolutX API error 429: Too Many Requests")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+  });
+
+  // ─── T6: getTicker throws timeout / network error ───────────────────────
+  it("NETWORK: getTicker throws timeout → fail-closed", async () => {
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("Network timeout: ETIMEDOUT")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+    expect(botLogger.warn).toHaveBeenCalledWith(
+      "GRID_REVOLUTX_TICKER_FAILED",
+      expect.stringContaining("ETIMEDOUT"),
+      expect.objectContaining({ stage: "TICKER_FETCH", canCreateRange: false, allowCycleExits: true })
+    );
+  });
+
+  // ─── T7: getTicker throws unknown error ─────────────────────────────────
+  it("UNKNOWN: getTicker throws unknown error → fail-closed", async () => {
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("Unexpected error in ticker pipeline")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+  });
+
+  // ─── T8: constraints return verified=false, getTicker succeeds ──────────
+  it("PAIR_CONSTRAINTS: constraints unverified, ticker ok → fail-closed (snapshot invalid)", async () => {
+    (revolutXService.resolveGridPairConstraints as any).mockResolvedValueOnce({
+      pair: "BTC/USD",
+      normalizedPair: "BTC-USD",
+      executionVenue: "REVOLUT_X",
+      baseCurrency: null,
+      quoteCurrency: null,
+      priceTickSize: null,
+      quantityStep: null,
+      minOrderBase: null,
+      minOrderQuote: null,
+      minOrderUsd: null,
+      maxOrderBase: null,
+      pricePrecision: null,
+      quantityPrecision: null,
+      status: null,
+      region: "EEA",
+      source: null,
+      fetchedAt: null,
+      expiresAt: null,
+      verified: false,
+      reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE",
+    });
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+    // botLogger.warn should NOT be called for ticker failure (ticker did not throw)
+    expect(botLogger.warn).not.toHaveBeenCalledWith(
+      "GRID_REVOLUTX_TICKER_FAILED",
+      expect.any(String),
+      expect.any(Object)
+    );
+  });
+
+  // ─── T9: constraints verified, ticker fails → constraints preserved in log ──
+  it("TICKER_FETCH: constraints verified=true preserved when ticker fails", async () => {
+    // Constraints succeed (default mock returns verified=true)
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("RevolutX ticker unavailable for BTC/USD")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+
+    // The structured log must show constraintsVerified=true (not discarded)
+    expect(botLogger.warn).toHaveBeenCalledWith(
+      "GRID_REVOLUTX_TICKER_FAILED",
+      expect.any(String),
+      expect.objectContaining({
+        constraintsVerified: true,
+        constraintsSource: "revolutx",
+        stage: "TICKER_FETCH",
+      })
+    );
+  });
+
+  // ─── T10: constraints throw (invalid pair format edge case) ─────────────
+  it("PAIR_NORMALIZATION: resolveGridPairConstraints throws → fail-closed", async () => {
+    (revolutXService.resolveGridPairConstraints as any).mockRejectedValueOnce(
+      new Error("Par Revolut X inválido: INVALID")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+  });
+
+  // ─── T11: getTicker returns null-bid/null-ask (snapshot BID_INVALID) ────
+  it("TICKER_VALIDATION: ticker bid=null → snapshot BID_INVALID → fail-closed", async () => {
+    (revolutXService.getTicker as any).mockResolvedValueOnce({
+      bid: null,
+      ask: null,
+      last: 95000,
+    });
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+    // No botLogger.warn for ticker (did not throw), but gate still blocked
+  });
+
+  // ─── T12: getTicker bid >= ask ───────────────────────────────────────────
+  it("TICKER_VALIDATION: ticker bid >= ask → snapshot ASK_INVALID → fail-closed", async () => {
+    (revolutXService.getTicker as any).mockResolvedValueOnce({
+      bid: 95010,
+      ask: 95000, // ask < bid
+      last: 95005,
+    });
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+  });
+
+  // ─── T13: allowCycleExits always true even when fully blocked ───────────
+  it("allowCycleExits=true even when fully blocked (service not init + constraints fail)", async () => {
+    (revolutXService.resolveGridPairConstraints as any).mockResolvedValueOnce({
+      pair: "BTC/USD",
+      normalizedPair: "BTC-USD",
+      executionVenue: "REVOLUT_X",
+      baseCurrency: null,
+      quoteCurrency: null,
+      priceTickSize: null,
+      quantityStep: null,
+      minOrderBase: null,
+      minOrderQuote: null,
+      minOrderUsd: null,
+      maxOrderBase: null,
+      pricePrecision: null,
+      quantityPrecision: null,
+      status: null,
+      region: "EEA",
+      source: null,
+      fetchedAt: null,
+      expiresAt: null,
+      verified: false,
+      reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE",
+    });
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("Revolut X client not initialized")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    // Even with both constraints and ticker failed, exits must be allowed
+    const gate = gridIsolatedEngine.getExecutionGate();
+    expect(gate.canCreateRange).toBe(false);
+    expect(gate.allowCycleExits).toBe(true);
+    expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
+  });
+
+  // ─── T14: SHADOW — no real orders under any failure mode ────────────────
+  it("SHADOW: no real orders placed regardless of failure mode", async () => {
+    (revolutXService.getTicker as any).mockRejectedValueOnce(
+      new Error("Revolut X client not initialized")
+    );
+
+    await (gridIsolatedEngine as any).tick();
+
+    // SHADOW mode: no exchange order calls
+    const status = gridIsolatedEngine.getExecutionStatus();
+    expect(status.mode).toBe("SHADOW");
+    expect(gridIsolatedEngine.getLevels().every(l => l.exchangeOrderId == null)).toBe(true);
+  });
+});

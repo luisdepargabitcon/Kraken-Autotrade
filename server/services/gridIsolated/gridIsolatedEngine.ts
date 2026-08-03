@@ -134,6 +134,7 @@ import {
   FEE_BUFFER_BUY_PCT,
   FEE_BUFFER_SELL_PCT,
   TAX_RESERVE_PCT,
+  type RevolutXGridFailureStage,
 } from "./gridIsolatedTypes";
 
 const MIN_MAKER_REST_MS = 1;
@@ -1333,14 +1334,35 @@ export class GridIsolatedEngine {
 
     let pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
     let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
+    // REV-C12C: resolveGridPairConstraints never throws in practice (all exceptions caught internally).
+    // Safety catch handles the edge case of an invalid pair format string.
     try {
       pairConstraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
+    } catch {
+      pairConstraints = { pair: this.config.pair, normalizedPair: this.config.pair.replace("/", "-").toUpperCase(), executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region: null, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE" };
+    }
+    // REV-C12C: getTicker is in its own try/catch to preserve pairConstraints resolved above
+    // and emit a structured log with the real error message and failure stage.
+    // Previously a single catch block overwrote valid constraints and swallowed the real error.
+    try {
       const acquiredAt = new Date();
       const ticker = await revolutXService.getTicker(this.config.pair);
       executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints: pairConstraints, source: "REVOLUT_X_TICKER", acquiredAt });
-    } catch {
-      pairConstraints = { pair: this.config.pair, normalizedPair: this.config.pair.replace("/", "-").toUpperCase(), executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region: null, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE" };
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker: null, constraints: pairConstraints, source: "REVOLUT_X_UNAVAILABLE", acquiredAt: new Date() });
+    } catch (tickerErr) {
+      const failureStage: RevolutXGridFailureStage = "TICKER_FETCH";
+      botLogger.warn("GRID_REVOLUTX_TICKER_FAILED", `RevolutX ticker no disponible para ${this.config.pair}: ${tickerErr instanceof Error ? tickerErr.message : String(tickerErr)}`, {
+        event: "GRID_REVOLUTX_PROJECTION_BLOCKED",
+        pair: this.config.pair,
+        stage: failureStage,
+        reasonCode: "REVOLUT_X_TICKER_FETCH_FAILED",
+        executionVenue: "REVOLUT_X",
+        constraintsVerified: pairConstraints.verified,
+        constraintsSource: pairConstraints.source,
+        constraintsReasonCode: pairConstraints.reasonCode,
+        canCreateRange: false,
+        allowCycleExits: true,
+      });
+      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker: null, constraints: pairConstraints, source: "REVOLUT_X_TICKER_FETCH_FAILED", acquiredAt: new Date() });
     }
 
     const allowCycleExits = true;
