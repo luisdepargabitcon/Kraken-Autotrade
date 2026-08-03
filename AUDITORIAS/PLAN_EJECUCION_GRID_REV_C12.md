@@ -2,8 +2,8 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12B corregida y subida a rama de revisión; pendiente verificación independiente final**
-- **NEXT_ACTION: revisión independiente de los commits finales antes de merge**
+- **TASK_STATUS: REV-C12C implementada y validada; pendiente commit y verificación independiente final**
+- **NEXT_ACTION: commit REV-C12C, luego revisión independiente de los commits antes de merge**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
@@ -278,8 +278,8 @@ npx vitest run server/services/gridIsolated server/services/__tests__/gridRecomm
 ```
 
 - Archivos ejecutados: 32
-- Tests ejecutados: 805
-- Tests pasados: 805
+- Tests ejecutados: 819 (805 REV-C12B + 14 nuevos REV-C12C)
+- Tests pasados: 819
 - Tests fallidos: 0
 - Duración: ~9s
 
@@ -293,9 +293,16 @@ npx vitest run server/services/gridIsolated server/services/__tests__/gridRecomm
 - Corrección final: modos canónicos (adaptive_smart, fixed_compact, legacy_hybrid), eliminación de fallback "ranging", ProjectionState solo con ProjectionContextResult ok, validUntil fail-closed (sin fallback a evaluatedAt), tests TTL directos (14), copia defensiva probada, transición tick válido → tick bloqueado, 0 órdenes.
 - Microcorrección final: helper simétrico `splitSymmetricLevels` (BUY=SELL, par obligatorio), eliminación de `Math.floor` en engine y view model, 9 tests obligatorios de paridad (10=5+5 ok, 9=4+5 INVALID, 9=5+4 INVALID, 9=5+5 INVALID, 10=4+6 MISMATCH, 10=4+4 MISMATCH, 10=5+5 no pérdida, "10" INVALID, 10.5 INVALID), test REAL tick N válido con mocks del flujo completo (getGridBandSnapshot, resolveGridPairConstraints, getTicker, allocate), tick N+1 Revolut X bloqueado limpia estado, variantes (mercado no apto, allocation falla, régimen desconocido, allocation impar), cero órdenes reales en SHADOW.
 
-### REV-C12C (pendiente)
-- Causa raíz de REVOLUT_X_UNAVAILABLE en staging.
-- REV-C12C ES FUNCIONALMENTE BLOQUEANTE PARA CREAR NUEVOS RANGOS Y NIVELES.
+### REV-C12C (implementada 2026-08-03)
+- Causa raíz de REVOLUT_X_UNAVAILABLE en staging confirmada: single try/catch en tick() fusionaba resolveGridPairConstraints con getTicker; cualquier excepción de getTicker descartaba constraints ya resueltas y silenciaba el error real.
+- Corrección mínima: separación en dos try/catch independientes. Constraints resueltas se preservan aunque ticker falle.
+- Observabilidad: botLogger.warn("GRID_REVOLUTX_TICKER_FAILED") con stage=TICKER_FETCH, constraintsVerified, constraintsSource, constraintsReasonCode, canCreateRange, allowCycleExits, error message real.
+- Nuevos EventType en botLogger: GRID_REVOLUTX_TICKER_FAILED, GRID_REVOLUTX_PROJECTION_BLOCKED.
+- Nuevo tipo RevolutXGridFailureStage en gridIsolatedTypes.ts (INITIALIZATION, AUTHENTICATION, PAIR_NORMALIZATION, PAIR_CONSTRAINTS, TICKER_FETCH, TICKER_VALIDATION, FRESHNESS, NETWORK, UNKNOWN).
+- 14 tests dirigidos REV-C12C en gridIsolatedEngine.test.ts: T1–T7 getTicker throws variadas (not init, 401, 403, 404, 429, timeout, unknown), T8 constraints unverified, T9 constraints verificadas preservadas cuando ticker falla, T10 resolveGridPairConstraints throws, T11–T12 bid/ask inválido, T13 allowCycleExits siempre true, T14 cero órdenes reales.
+- Tests Grid: 693/693 pasan (32 archivos baseline, sin nuevos fallos). tsc ✅. build ✅. diff --check ✅.
+- Staging SHA: 44cd46f (origin/main = pre-REV-C12A); staging NO tiene REV-C12C aún (STAGING_CODE_OUTDATED).
+- REV-C12C ES FUNCIONALMENTE BLOQUEANTE PARA CREAR NUEVOS RANGOS Y NIVELES hasta deploy.
 
 ## Rama
 

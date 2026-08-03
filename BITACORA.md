@@ -1,7 +1,7 @@
 # BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-07-27
+> Última actualización: 2026-08-03
 
 ---
 
@@ -292,6 +292,17 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - Test tick válido → tick bloqueado: tick N establece estado, tick N+1 sin datos de mercado lo elimina. Gate canCreateRange=false. No rango nuevo, no BUY, no orden real. Variantes: mercado no apto, allocation falla, régimen desconocido.
 - Test ProjectionState solo si context ok: config incompleta, fixed_compact válido, legacy_hybrid válido, fixed inválido, allocation impar, allocation mismatch, régimen no operable, ttl sin validUntil.
 - Tests: 795/795 pasan (32 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
+
+### Cascada REV-C12C (2026-08-03) — causa raíz REVOLUT_X_UNAVAILABLE + observabilidad diferenciada
+
+- **Causa raíz confirmada** en staging (SHA 44cd46f / origin/main): single try/catch fusionaba `resolveGridPairConstraints` con `getTicker`. Cualquier excepción de `getTicker` (404, 401, timeout, red) descartaba silenciosamente las constraints ya resueltas y colapsaba todo en `source: "REVOLUT_X_UNAVAILABLE"` sin logging del error real.
+- **Corrección mínima** (`gridIsolatedEngine.ts` líneas 1334–1371): separación en dos try/catch independientes. `resolveGridPairConstraints` en su propio bloque (safety net para par inválido). `getTicker` en bloque separado que preserva el resultado de constraints y emite log estructurado con el mensaje de error real.
+- **Observabilidad**: `botLogger.warn("GRID_REVOLUTX_TICKER_FAILED", mensaje_real_del_error, { stage, constraintsVerified, constraintsSource, constraintsReasonCode, canCreateRange, allowCycleExits, error })`. Ahora el error HTTP real (404, 401, timeout, etc.) es observable en logs sin acceso a consola del contenedor.
+- **Nuevo tipo** `RevolutXGridFailureStage` en `gridIsolatedTypes.ts`: INITIALIZATION, AUTHENTICATION, PAIR_NORMALIZATION, PAIR_CONSTRAINTS, TICKER_FETCH, TICKER_VALIDATION, FRESHNESS, NETWORK, UNKNOWN. Permite clasificar causas en logging/alertas futuras.
+- **Nuevos EventType** en `botLogger.ts`: `GRID_REVOLUTX_TICKER_FAILED`, `GRID_REVOLUTX_PROJECTION_BLOCKED`.
+- **14 tests dirigidos** en `gridIsolatedEngine.test.ts` (T1–T14): not-initialized, 401, 403, 404, 429, timeout, unknown, constraints-unverified, constraints-verified-preservadas, resolveConstraints-throws, bid-null, bid>=ask, allowCycleExits-always-true, cero-órdenes-SHADOW.
+- **Tests Grid baseline**: 32 archivos / 819 tests / 819 pasados / 0 fallidos (805 anteriores + 14 nuevos). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
+- Staging SHA 44cd46f = pre-REV-C12A; staging NO tiene REV-C12C. `STAGING_CODE_OUTDATED`. Funcionalmente bloqueante hasta deploy.
 
 ### Microcorrección final REV-C12B (2026-08-01) — paridad BUY/SELL y transición real de tick
 
