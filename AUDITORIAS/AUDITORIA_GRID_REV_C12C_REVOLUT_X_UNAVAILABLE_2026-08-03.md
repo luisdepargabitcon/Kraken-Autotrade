@@ -198,3 +198,20 @@ exclusivo de ejecución.
 
 Ver `AUDITORIAS/AUDITORIA_GRID_REV_C12E_ARQUITECTURA_DATOS_EJECUCION_2026-08-03.md`
 para el detalle completo de la separación arquitectónica.
+
+## 10. Correcciones tras segunda verificación independiente (2026-08-04)
+
+Commits anteriores: 33094e5 (técnico), 7ff42bd (documental).
+
+Defectos corregidos en REV-C12E:
+- Rebuild manual reutiliza allocation y projection context pre-resuelto.
+- buildRangeProposal fail-closed: allocation y projection context obligatorios.
+- Gate canCreateRange fail-closed: exige allocation + split + projection + TTL + 0 blockers.
+- Frescura invertida corregida en buildGridExecutionMarketSnapshot.
+- UX fuentes correctas: executionGate.executionMarketSnapshot.executionVenue, pairConstraints.source.
+- Encoding UTF-8 reparado: sin BOM, sin mojibake.
+
+Matriz nueva real: 37 archivos, 934 tests, 0 failures.
+npm run check: exit 0. npm run build: exit 0. git diff --check: exit 0.
+
+Sin deploy. Sin merge. Sin VPS. Sin DB.

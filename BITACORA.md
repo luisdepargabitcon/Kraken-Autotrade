@@ -311,6 +311,19 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - **Recuentos estáticos**: revolutXService.getTicker operativo=0, allow_taker operativo=0, GRID_LEVEL_TAKER_FALLBACK operativo=0, usedTakerFallback:true=0, _taker IDs=0, REVOLUT_X_TICKER source nuevo=0, órdenes market=0.
 - **Estado**: REV-C12E implementada localmente y validada; pendiente commit y verificación independiente. DONE=FALSE, HARD_BLOCKER=FALSE. MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, órdenes reales=0.
 
+### Correcciones REV-C12E tras segunda verificación independiente (2026-08-04)
+
+- **Commits anteriores**: 33094e5 (técnico), 7ff42bd (documental).
+- **Rebuild manual**: manualRebuildPlannedLevels ahora extrae rebuildAllocation y rebuildProjectionContext del orquestador. Valida allocation, projectionContext, ttl.fresh, validUntil, gate.canCreateRange. buildRangeProposal y rebuildRangeAndLevels reciben ambos parámetros pre-resueltos.
+- **buildRangeProposal fail-closed**: allocation y projection context obligatorios. Sin fallbacks a gridCapitalAllocator.allocate o resolveGridProfessionalProjectionContext. Eliminado Math.floor(allocation.levelsCount / 2).
+- **Gate canCreateRange fail-closed**: exige marketAndCapabilityReady + allocation + split + projection + TTL + 0 blockers. Nuevos blockers: ALLOCATION_INPUT_MISSING, ALLOCATION_FAILED, SYMMETRIC_SPLIT_FAILED, TTL_STALE, TTL_VALID_UNTIL_MISSING.
+- **Frescura invertida corregida**: buildGridExecutionMarketSnapshot camino sin timestamp ahora usa `acquiredAt - fetchedAt >= maxAgeMs` (dirección correcta).
+- **UX fuentes correctas**: buildDataSourceInfo usa executionGate.executionMarketSnapshot.executionVenue y executionGate.pairConstraints.source (rutas reales ExecutionGateType).
+- **Encoding UTF-8 reparado**: AUDITORIA_GRID_REV_C12E reescrita sin BOM, sin mojibake. UTF-8 LF.
+- **Matriz nueva real**: 37 archivos, 934 tests, 0 failures. `npm run check` EXIT=0. `npm run build` EXIT=0. `git diff --check` EXIT=0.
+- **Verificación orquestador único**: gridCapitalAllocator.allocate en gridIsolatedEngine.ts (flujo productivo) = 0. resolveGridProfessionalProjectionContext en gridIsolatedEngine.ts (flujo productivo) = 0. Math.floor(allocation.levelsCount en gridIsolatedEngine.ts (flujo productivo) = 0.
+- **Estado**: REV-C12E corregida tras segunda verificación independiente; pendiente commit y push de corrección. DONE=FALSE, HARD_BLOCKER=FALSE. MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, órdenes reales=0.
+
 ### Cascada REV-C12C (2026-08-03) — causa raíz REVOLUT_X_UNAVAILABLE + observabilidad diferenciada
 
 - **Causa raíz confirmada** en staging (SHA 44cd46f / origin/main): single try/catch fusionaba `resolveGridPairConstraints` con `getTicker`. Cualquier excepción de `getTicker` (404, 401, timeout, red) descartaba silenciosamente las constraints ya resueltas y colapsaba todo en `source: "REVOLUT_X_UNAVAILABLE"` sin logging del error real.
