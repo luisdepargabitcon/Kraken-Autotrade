@@ -1,15 +1,15 @@
-# AUDITORÃA â€” REV-C12E: Arquitectura Kraken-Datos / Revolut X-EjecuciÃ³n
+﻿# AUDITORÃƒÂA Ã¢â‚¬â€ REV-C12E: Arquitectura Kraken-Datos / Revolut X-EjecuciÃƒÂ³n
 
 **Fecha:** 2026-08-03
 **Rama:** `review/grid-rev-c12a-20260731`
 **HEAD base:** `d230635b1af976790fd5d5408db941978475c46a`
-**Fase:** REV-C12E â€” SeparaciÃ³n arquitectÃ³nica datos/ejecuciÃ³n
+**Fase:** REV-C12E Ã¢â‚¬â€ SeparaciÃƒÂ³n arquitectÃƒÂ³nica datos/ejecuciÃƒÂ³n
 
 ---
 
 ## 1. Matriz comparativa Momentum/IDCA/Grid
 
-| MÃ³dulo | Datos (ticker/bid/ask/last) | EjecuciÃ³n | ConfirmaciÃ³n fills |
+| MÃƒÂ³dulo | Datos (ticker/bid/ask/last) | EjecuciÃƒÂ³n | ConfirmaciÃƒÂ³n fills |
 |--------|----------------------------|-----------|-------------------|
 | **Momentum** | Kraken / MarketDataService | Exchange configurado | Respuesta del exchange |
 | **IDCA** | Kraken / MarketDataService | Trading exchange (Revolut X cuando configurado) | getOrder / getFills |
@@ -18,22 +18,22 @@
 
 ---
 
-## 2. Causa arquitectÃ³nica
+## 2. Causa arquitectÃƒÂ³nica
 
 `GRID_NATIVE_TICKER_DEPENDENCY = ARCHITECTURAL_DIVERGENCE`
 
-El Grid era el Ãºnico mÃ³dulo que llamaba `revolutXService.getTicker()` directamente para obtener bid/ask/last. Cuando el endpoint de order-book/trades de Revolut X falla (404, timeout, etc.), el Grid quedaba bloqueado aunque:
-- Las constraints del par sÃ­ estuvieran disponibles
-- Las bandas Kraken sÃ­ estuvieran calculadas
-- Las funciones de ejecuciÃ³n (placeOrder, cancelOrder) sÃ­ estuvieran operativas
+El Grid era el ÃƒÂºnico mÃƒÂ³dulo que llamaba `revolutXService.getTicker()` directamente para obtener bid/ask/last. Cuando el endpoint de order-book/trades de Revolut X falla (404, timeout, etc.), el Grid quedaba bloqueado aunque:
+- Las constraints del par sÃƒÂ­ estuvieran disponibles
+- Las bandas Kraken sÃƒÂ­ estuvieran calculadas
+- Las funciones de ejecuciÃƒÂ³n (placeOrder, cancelOrder) sÃƒÂ­ estuvieran operativas
 
-`REVOLUT_X_GENERAL_FAILURE = FALSE` â€” Revolut X no estÃ¡ averiado. El servicio estÃ¡ inicializado y las constraints se resuelven. El problema era que el Grid dependÃ­a de un endpoint de ticker pÃºblico que no es necesario para la planificaciÃ³n.
+`REVOLUT_X_GENERAL_FAILURE = FALSE` Ã¢â‚¬â€ Revolut X no estÃƒÂ¡ averiado. El servicio estÃƒÂ¡ inicializado y las constraints se resuelven. El problema era que el Grid dependÃƒÂ­a de un endpoint de ticker pÃƒÂºblico que no es necesario para la planificaciÃƒÂ³n.
 
 ---
 
 ## 3. Llamadas directas encontradas inicialmente
 
-| Call site | Archivo | LÃ­nea | PropÃ³sito |
+| Call site | Archivo | LÃƒÂ­nea | PropÃƒÂ³sito |
 |-----------|---------|-------|-----------|
 | `revolutXService.getTicker` | gridIsolatedEngine.ts | 1349 | tick() normal |
 | `revolutXService.getTicker` | gridIsolatedEngine.ts | 5034 | rebuild manual |
@@ -49,13 +49,13 @@ El Grid era el Ãºnico mÃ³dulo que llamaba `revolutXService.getTicker()` dire
 
 | Call site | Estado post-REV-C12E |
 |-----------|---------------------|
-| `revolutXService.getTicker` en tick() | **ELIMINADO** â€” reemplazado por `MarketDataService.getFreshTickerSnapshot` |
-| `revolutXService.getTicker` en rebuild | **ELIMINADO** â€” reemplazado por `MarketDataService.getFreshTickerSnapshot` |
-| `allow_taker` executionInstruction | **ELIMINADO** â€” solo `post_only` |
-| `GRID_LEVEL_TAKER_FALLBACK` log | **ELIMINADO** â€” reemplazado por `GRID_LEVEL_POST_ONLY_EXHAUSTED` |
-| `_taker` clientOrderId | **ELIMINADO** â€” nunca se genera |
-| `usedTakerFallback: true` | **ELIMINADO** â€” siempre `false` |
-| `source: "REVOLUT_X_TICKER"` | **ELIMINADO** â€” reemplazado por `source: "KRAKEN_MARKET_DATA"` |
+| `revolutXService.getTicker` en tick() | **ELIMINADO** Ã¢â‚¬â€ reemplazado por `MarketDataService.getFreshTickerSnapshot` |
+| `revolutXService.getTicker` en rebuild | **ELIMINADO** Ã¢â‚¬â€ reemplazado por `MarketDataService.getFreshTickerSnapshot` |
+| `allow_taker` executionInstruction | **ELIMINADO** Ã¢â‚¬â€ solo `post_only` |
+| `GRID_LEVEL_TAKER_FALLBACK` log | **ELIMINADO** Ã¢â‚¬â€ reemplazado por `GRID_LEVEL_POST_ONLY_EXHAUSTED` |
+| `_taker` clientOrderId | **ELIMINADO** Ã¢â‚¬â€ nunca se genera |
+| `usedTakerFallback: true` | **ELIMINADO** Ã¢â‚¬â€ siempre `false` |
+| `source: "REVOLUT_X_TICKER"` | **ELIMINADO** Ã¢â‚¬â€ reemplazado por `source: "KRAKEN_MARKET_DATA"` |
 
 ---
 
@@ -81,10 +81,10 @@ async getFreshTickerSnapshot(pair: string, maxAgeMs?: number): Promise<MarketTic
 
 - Usa `ExchangeFactory.getDataExchange()` (siempre Kraken)
 - Verifica `ExchangeFactory.getDataExchangeType() === "kraken"`
-- Reutiliza cachÃ© existente (`priceCache`)
+- Reutiliza cachÃƒÂ© existente (`priceCache`)
 - Reutiliza single-flight (`pendingPrices`)
-- Lectura de cachÃ© NO renueva `fetchedAt`
-- CachÃ© stale NO se trata como fresh
+- Lectura de cachÃƒÂ© NO renueva `fetchedAt`
+- CachÃƒÂ© stale NO se trata como fresh
 - TTL inicial 45.000 ms
 - Inyectable en tests via `maxAgeMs`
 - Devuelve `null` fail-closed cuando faltan datos
@@ -100,12 +100,12 @@ Valida estrictamente:
 - bid finito y > 0
 - ask finito y > bid
 - last finito y > 0
-- timestamp Date vÃ¡lida
+- timestamp Date vÃƒÂ¡lida
 - fresh=true
 - source=KRAKEN_MARKET_DATA
 - marketDataVenue=KRAKEN
 
-`authoritativeForVenueCrossing=false` â€” la referencia Kraken NO garantiza que una orden sea maker en Revolut X.
+`authoritativeForVenueCrossing=false` Ã¢â‚¬â€ la referencia Kraken NO garantiza que una orden sea maker en Revolut X.
 
 ---
 
@@ -127,12 +127,12 @@ NO llama a `revolutXService.getTicker()`.
 
 **Archivo:** `server/services/gridIsolated/gridPlanningContextResolver.ts`
 
-Flujo canÃ³nico Ãºnico:
-1. `getGridBandSnapshot()` â€” Kraken
-2. `MarketDataService.getFreshTickerSnapshot()` â€” Kraken
-3. `resolveGridReferenceMarketSnapshot()` â€” validar Kraken
-4. `resolveGridPairConstraints()` â€” Revolut X
-5. `resolveGridExecutionCapability()` â€” Revolut X
+Flujo canÃƒÂ³nico ÃƒÂºnico:
+1. `getGridBandSnapshot()` Ã¢â‚¬â€ Kraken
+2. `MarketDataService.getFreshTickerSnapshot()` Ã¢â‚¬â€ Kraken
+3. `resolveGridReferenceMarketSnapshot()` Ã¢â‚¬â€ validar Kraken
+4. `resolveGridPairConstraints()` Ã¢â‚¬â€ Revolut X
+5. `resolveGridExecutionCapability()` Ã¢â‚¬â€ Revolut X
 6. Build `GridPlanningGate`
 
 ---
@@ -152,7 +152,7 @@ export interface GridPlanningGate {
 }
 ```
 
-- `canPlanRange`: banda Kraken + ticker Kraken fresh + bid/ask vÃ¡lidos + rÃ©gimen apto
+- `canPlanRange`: banda Kraken + ticker Kraken fresh + bid/ask vÃƒÂ¡lidos + rÃƒÂ©gimen apto
 - `canCreateRange`: canPlanRange + constraints Revolut X verificadas + MAKER_ONLY + post_only
 - `canSubmitMakerOrder`: capability verificada + post_only + no legacy policy
 - `allowCycleExits`: siempre `true`
@@ -185,10 +185,10 @@ export interface GridPlanningGate {
 
 ## 11. post_only obligatorio
 
-- `executionInstruction: "post_only"` es el Ãºnico instruction usado
+- `executionInstruction: "post_only"` es el ÃƒÂºnico instruction usado
 - BUY: cuantizar precio con `priceTickSize`, no cruzar, no market
 - SELL: cuantizar precio, no reducir por debajo del target, no market
-- Rechazo post_only â†’ `POST_ONLY_REJECTED_REPRICE_REQUIRED`, no fill, no PnL
+- Rechazo post_only Ã¢â€ â€™ `POST_ONLY_REJECTED_REPRICE_REQUIRED`, no fill, no PnL
 
 ---
 
@@ -197,15 +197,15 @@ export interface GridPlanningGate {
 - `takerFallbackAllowed` siempre `false` en `GridExecutionCapabilitySnapshot`
 - `usedTakerFallback` siempre `false` en `GridOrderResult`
 - Fase 2 (taker fallback) eliminada completamente de `gridExecutionService.placeOrder`
-- `GRID_LEVEL_TAKER_FALLBACK` EventType mantenido en union solo para compatibilidad histÃ³rica
+- `GRID_LEVEL_TAKER_FALLBACK` EventType mantenido en union solo para compatibilidad histÃƒÂ³rica
 
 ---
 
 ## 13. Fills exclusivamente getOrder/getFills
 
 - No se infieren fills desde precio Kraken
-- ConfirmaciÃ³n exclusivamente via Revolut X `getOrder()` / `getFills()`
-- Sin confirmaciÃ³n: no abrir ciclo, no cerrar ciclo, no actualizar quantityFilled, no PnL
+- ConfirmaciÃƒÂ³n exclusivamente via Revolut X `getOrder()` / `getFills()`
+- Sin confirmaciÃƒÂ³n: no abrir ciclo, no cerrar ciclo, no actualizar quantityFilled, no PnL
 
 ---
 
@@ -225,28 +225,28 @@ export interface GridPlanningGate {
 
 ## 15. Archivos nuevos
 
-| Archivo | PropÃ³sito |
+| Archivo | PropÃƒÂ³sito |
 |---------|-----------|
 | `server/services/gridIsolated/gridReferenceMarketResolver.ts` | Resolver mercado referencia Kraken |
-| `server/services/gridIsolated/gridExecutionCapabilityResolver.ts` | Resolver capacidad ejecuciÃ³n Revolut X |
-| `server/services/gridIsolated/gridPlanningContextResolver.ts` | Resolver contexto planificaciÃ³n Ãºnico |
+| `server/services/gridIsolated/gridExecutionCapabilityResolver.ts` | Resolver capacidad ejecuciÃƒÂ³n Revolut X |
+| `server/services/gridIsolated/gridPlanningContextResolver.ts` | Resolver contexto planificaciÃƒÂ³n ÃƒÂºnico |
 | `server/services/gridIsolated/__tests__/gridReferenceMarketResolver.test.ts` | 15 tests |
 | `server/services/gridIsolated/__tests__/gridExecutionCapabilityResolver.test.ts` | 12 tests |
 | `server/services/gridIsolated/__tests__/gridExecutionServiceTakerFallback.test.ts` | 11 tests |
 
 ## 16. Archivos excluidos
 
-- `server/services/exchanges/ExchangeFactory.ts` â€” NO modificado
-- `server/services/exchanges/RevolutXService.ts` â€” NO modificado
-- `server/services/institutionalDca/*` â€” NO modificado
-- Momentum â€” NO modificado
-- Telegram â€” NO modificado
-- FISCO â€” NO modificado
-- SPOT â€” NO modificado
-- `shared/schema.ts` â€” NO modificado
-- migrations â€” NO modificadas
-- docker â€” NO modificado
-- credenciales â€” NO modificadas
+- `server/services/exchanges/ExchangeFactory.ts` Ã¢â‚¬â€ NO modificado
+- `server/services/exchanges/RevolutXService.ts` Ã¢â‚¬â€ NO modificado
+- `server/services/institutionalDca/*` Ã¢â‚¬â€ NO modificado
+- Momentum Ã¢â‚¬â€ NO modificado
+- Telegram Ã¢â‚¬â€ NO modificado
+- FISCO Ã¢â‚¬â€ NO modificado
+- SPOT Ã¢â‚¬â€ NO modificado
+- `shared/schema.ts` Ã¢â‚¬â€ NO modificado
+- migrations Ã¢â‚¬â€ NO modificadas
+- docker Ã¢â‚¬â€ NO modificado
+- credenciales Ã¢â‚¬â€ NO modificadas
 
 ---
 
@@ -254,17 +254,17 @@ export interface GridPlanningGate {
 
 | Suite | Tests | Estado |
 |-------|-------|--------|
-| gridReferenceMarketResolver.test.ts | 15 | âœ… |
-| gridExecutionCapabilityResolver.test.ts | 12 | âœ… |
-| gridExecutionServiceTakerFallback.test.ts | 11 | âœ… |
-| gridIsolatedEngine.test.ts (REV-C12E block) | 14 | âœ… |
-| **Total nuevos** | **52** | âœ… |
+| gridReferenceMarketResolver.test.ts | 15 | Ã¢Å“â€¦ |
+| gridExecutionCapabilityResolver.test.ts | 12 | Ã¢Å“â€¦ |
+| gridExecutionServiceTakerFallback.test.ts | 11 | Ã¢Å“â€¦ |
+| gridIsolatedEngine.test.ts (REV-C12E block) | 14 | Ã¢Å“â€¦ |
+| **Total nuevos** | **52** | Ã¢Å“â€¦ |
 
 ---
 
 ## 18. Matriz Grid completa
 
-| MÃ©trica | Valor |
+| MÃƒÂ©trica | Valor |
 |---------|-------|
 | Archivos | 22 |
 | Tests | 507 |
@@ -277,15 +277,15 @@ export interface GridPlanningGate {
 
 | Check | Resultado |
 |-------|-----------|
-| `npx tsc --noEmit` | âœ… limpio |
-| `npm run build` | âœ… success |
-| `git diff --check` | âœ… sin whitespace errors |
+| `npx tsc --noEmit` | Ã¢Å“â€¦ limpio |
+| `npm run build` | Ã¢Å“â€¦ success |
+| `git diff --check` | Ã¢Å“â€¦ sin whitespace errors |
 
 ---
 
-## 20. Recuentos estÃ¡ticos finales (cÃ³digo productivo Grid)
+## 20. Recuentos estÃƒÂ¡ticos finales (cÃƒÂ³digo productivo Grid)
 
-| PatrÃ³n | Operativo | Comentarios | Tests | Total |
+| PatrÃƒÂ³n | Operativo | Comentarios | Tests | Total |
 |--------|-----------|-------------|-------|-------|
 | `revolutXService.getTicker` | **0** | 4 | 0 | 4 |
 | `allow_taker` | **0** | 3 | 2 | 5 |
@@ -303,7 +303,7 @@ export interface GridPlanningGate {
 - **DEPLOY:** NO
 - **VPS:** NO
 - **DB:** NO
-- **Ã“RDENES REALES:** 0
+- **Ãƒâ€œRDENES REALES:** 0
 - **DEPLOY_AUTHORIZED:** FALSE
 - **MIGRATION_REQUIRED:** FALSE
 
@@ -311,9 +311,9 @@ export interface GridPlanningGate {
 
 ## 22. Riesgos pendientes
 
-1. El error HTTP exacto del ticker Revolut X solo podrÃ¡ confirmarse tras desplegar la observabilidad REV-C12C en staging.
-2. ~~`gridPlanningContextResolver.ts` estÃ¡ creado pero no integrado en el flujo productivo del engine~~ â€” **RESUELTO**: `resolveGridMarketAndConstraints` estÃ¡ integrado en `tick()` (lÃ­nea 1340) y `rebuildRangeAndLevels` (lÃ­nea 5034) como orquestador Ãºnico.
-3. ~~El view model React no fue modificado para mostrar "Kraken como referencia"~~ â€” **RESUELTO**: `GridMarketPanel.tsx` ahora muestra "Fuente de precios: Kraken" y "Venue de ejecuciÃ³n: Revolut X" con tests UX dedicados.
+1. El error HTTP exacto del ticker Revolut X solo podrÃƒÂ¡ confirmarse tras desplegar la observabilidad REV-C12C en staging.
+2. ~~`gridPlanningContextResolver.ts` estÃƒÂ¡ creado pero no integrado en el flujo productivo del engine~~ Ã¢â‚¬â€ **RESUELTO**: `resolveGridMarketAndConstraints` estÃƒÂ¡ integrado en `tick()` (lÃƒÂ­nea 1340) y `rebuildRangeAndLevels` (lÃƒÂ­nea 5034) como orquestador ÃƒÂºnico.
+3. ~~El view model React no fue modificado para mostrar "Kraken como referencia"~~ Ã¢â‚¬â€ **RESUELTO**: `GridMarketPanel.tsx` ahora muestra "Fuente de precios: Kraken" y "Venue de ejecuciÃƒÂ³n: Revolut X" con tests UX dedicados.
 
 ---
 
@@ -322,10 +322,52 @@ export interface GridPlanningGate {
 ```
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: REV-C12E implementada localmente y validada; pendiente commit y verificaciÃ³n independiente
-NEXT_ACTION: commit selectivo y revisiÃ³n independiente en GitHub
+TASK_STATUS: REV-C12E implementada localmente y validada; pendiente commit y verificaciÃƒÂ³n independiente
+NEXT_ACTION: commit selectivo y revisiÃƒÂ³n independiente en GitHub
 DEPLOY_AUTHORIZED: FALSE
 MIGRATION_REQUIRED: FALSE
 ```
 
 **APTO_PARA_COMMIT_REV-C12E_EN_RAMA_DE_REVISION**
+
+
+---
+
+## 23. Correcciones post-verificacion independiente (2026-08-04)
+
+### 23.1 Orquestador unico real (resolveGridPlanningContext)
+
+Problema: resolveGridMarketAndConstraints solo resolvia mercado + constraints, pero allocation, split, projection context y TTL se llamaban por separado.
+
+Correccion: resolveGridPlanningContext ahora es el orquestador canonico unico que resuelve exactamente una vez: band, ticker Kraken, reference market, constraints Revolut X, execution capability, execution snapshot, allocation, split, projection context, TTL y gate. tick() y rebuildRangeAndLevels lo reutilizan.
+
+### 23.2 Trazabilidad cache Kraken (CachedPrice provenance)
+
+CachedPrice ahora incluye marketDataVenue y source. putPrice manual se marca MANUAL_OR_UNKNOWN y no se acepta como fuente Kraken.
+
+### 23.3 Frescura y TTL unicos 45s
+
+Default cambiado a 45_000. Validacion de maxAgeMs (finite, > 0).
+
+### 23.4 Reference market fail-closed
+
+Recalcula ageMs independientemente. Valida todos los campos fail-closed.
+
+### 23.5 Execution capability fail-closed
+
+expiresAt=null bloquea. Valida priceTickSize/quantityStep. isInitialized() se captura una vez.
+
+### 23.6 Codigos Kraken/Revolut X diferenciados
+
+REFERENCE_MARKET_* cuando fuente es Kraken. Nuevos codigos: REVOLUT_X_CONSTRAINTS_PAIR_MISMATCH, REVOLUT_X_PRICE_TICK_INVALID, REVOLUT_X_QUANTITY_STEP_INVALID.
+
+### 23.7 UX sin fallbacks inventados
+
+GridMarketPanel elimina fallbacks ?? "Kraken", ?? "Revolut X" y muestra "?" cuando no hay datos.
+
+### 23.8 Validacion
+
+- npm run check: limpio
+- npm run build: success
+- Matriz Grid (26 files, 734 tests): 0 failures
+- Client Grid (5 files, 39 tests): 0 failures
