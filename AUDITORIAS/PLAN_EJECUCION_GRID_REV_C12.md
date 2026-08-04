@@ -2,7 +2,7 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12G corregida en rama review; pendiente verificación independiente**
+- **TASK_STATUS: REV-C12G corregida tras verificación independiente; pendiente nueva verificación**
 - **NEXT_ACTION: verificar commits antes de fast-forward**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
@@ -492,3 +492,32 @@ npx vitest run server/services/gridIsolated server/services/__tests__/gridRecomm
 ## Main intacto
 
 `origin/main` permanece en `44cd46ff3a6e195556987968a87c8e795d66cd02`.
+
+## REV-C12G post-verificación (2026-08-05) — Cierre de política efectiva y metadata de blockers
+
+Corrección de cuatro defectos detectados en verificación independiente:
+
+1. **PAIR_CONSTRAINTS precede a EXECUTION_CAPABILITY**: el helper
+   `resolveGridPlanningBlockerMetadata` prioriza constraints inválidas sobre
+   capability inválida, porque una capability inválida puede ser consecuencia
+   directa de constraints inválidas.
+
+2. **Circuit breaker y Pump Guard identificados**: el helper soporta
+   CIRCUIT_BREAKER y PUMP_GUARD como componentes distintos con reasonCode no
+   nulo y explicación no vacía.
+
+3. **Política efectiva compartida**: tick y rebuild ahora usan
+   `getEffectiveExecutionPolicy` además de `getEffectiveTakerFallbackEnabled`.
+   El audit también usa `getEffectiveExecutionPolicy`. Los tres call sites
+   comparten las mismas funciones canónicas.
+
+4. **Boolean innecesario eliminado**: se restauró
+   `takerFallbackEnabled: this.config.takerFallbackEnabled` en saveConfig.
+   La normalización efectiva ocurre solo al construir el planning context.
+
+Helper puro: `gridPlanningBlockerMetadata.ts` con `resolveGridPlanningBlockerMetadata`.
+Prioridad: REFERENCE_MARKET > PAIR_CONSTRAINTS > EXECUTION_CAPABILITY >
+EXECUTION_MARKET_SNAPSHOT > CIRCUIT_BREAKER > PUMP_GUARD > PLANNING_GATE.
+
+Tests: 95 + 84 tests dirigidos pasados. CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+DB no modificada. Stored flags no modificados. No deploy.

@@ -97,11 +97,68 @@ DEPLOY_REQUIRED = TRUE_AFTER_REVIEW_AND_MERGE
 GRID_MODE = SHADOW
 REAL_ORDERS = 0
 
+## Corrección post-verificación independiente (2026-08-05)
+
+EFFECTIVE_EXECUTION_POLICY_SHARED = TRUE
+TICK_EFFECTIVE_POLICY = MAKER_ONLY_IN_SHADOW
+REBUILD_EFFECTIVE_POLICY = MAKER_ONLY_IN_SHADOW
+AUDIT_EFFECTIVE_POLICY = MAKER_ONLY_IN_SHADOW
+PAIR_CONSTRAINTS_PRECEDES_EXECUTION_CAPABILITY = TRUE
+CIRCUIT_BREAKER_COMPONENT_SUPPORTED = TRUE
+PUMP_GUARD_COMPONENT_SUPPORTED = TRUE
+BLOCKER_REASON_CODE_ALWAYS_NON_NULL = TRUE
+BLOCKER_EXPLANATION_ALWAYS_NON_EMPTY = TRUE
+UNNECESSARY_BOOLEAN_NORMALIZATION_REMOVED = TRUE
+
+Cuatro defectos corregidos tras verificación independiente:
+
+1. PAIR_CONSTRAINTS ahora precede a EXECUTION_CAPABILITY en la prioridad del
+   blocker. Una capability inválida puede ser consecuencia directa de
+   constraints inválidas, por lo que las constraints deben identificarse primero.
+
+2. Circuit breaker y Pump Guard ahora se identifican en blockerComponent.
+   El helper `resolveGridPlanningBlockerMetadata` soporta CIRCUIT_BREAKER y
+   PUMP_GUARD como componentes distintos, con reasonCode siempre no nulo y
+   explicación siempre no vacía.
+
+3. Tick y rebuild ahora usan `getEffectiveExecutionPolicy` además de
+   `getEffectiveTakerFallbackEnabled`. Antes pasaban la policy almacenada al
+   resolver; ahora pasan la policy efectiva (MAKER_ONLY en SHADOW).
+
+4. Se restauró `takerFallbackEnabled: this.config.takerFallbackEnabled` en
+   saveConfig (representación del valor almacenado). El cambio innecesario
+   `Boolean(...)` fue eliminado. La normalización efectiva ocurre solo al
+   construir el planning context.
+
+Helper puro de metadata de bloqueo: `gridPlanningBlockerMetadata.ts`
+- Función `resolveGridPlanningBlockerMetadata(input)` devuelve
+  `{ blockerComponent, reasonCode, blockerExplanation }`.
+- Prioridad: REFERENCE_MARKET > PAIR_CONSTRAINTS > EXECUTION_CAPABILITY >
+  EXECUTION_MARKET_SNAPSHOT > CIRCUIT_BREAKER > PUMP_GUARD > PLANNING_GATE.
+- reasonCode siempre no nulo; blockerExplanation siempre no vacía.
+- No usa explicación positiva de componente verificado como explicación de bloqueo.
+
+Aclaraciones:
+- El helper del taker original se mantiene.
+- stored takerFallbackEnabled=true no se modifica.
+- executionPolicy almacenada tampoco se modifica.
+- Solo se normalizan valores efectivos en runtime.
+- No se desplegó.
+- No se modificó DB.
+
+Tests post-verificación:
+- 14 tests helper política efectiva (gridEffectiveExecutionPolicy.test.ts).
+- 10 tests blocker metadata (gridPlanningBlockerMetadata.test.ts).
+- 50 tests planning context (gridPlanningContextResolver.test.ts, +1 I15).
+- 21 tests capability resolver.
+- 84 tests Revolut X/Grid relacionados.
+- CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+
 ## Estado
 
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: REV-C12G corregida en rama review; pendiente verificación independiente
+TASK_STATUS: REV-C12G corregida tras verificación independiente; pendiente nueva verificación
 NEXT_ACTION: verificar commits antes de fast-forward
 DEPLOY_AUTHORIZED: FALSE
 MIGRATION_REQUIRED: FALSE

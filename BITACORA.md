@@ -7049,3 +7049,14 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - **Rama**: review/grid-rev-c12g-20260805 (base 482d3e4).
 - **Tests**: 91 + 73 tests dirigidos pasados; CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
 - **Estado**: Corregida en rama review; pendiente verificación independiente, fast-forward y deploy.
+
+## REV-C12G post-verificación (2026-08-05) — Cierre de política efectiva y metadata de blockers
+
+- **Defecto 1**: PAIR_CONSTRAINTS ahora precede a EXECUTION_CAPABILITY en la prioridad del blocker. Una capability inválida puede ser consecuencia directa de constraints inválidas.
+- **Defecto 2**: Circuit breaker y Pump Guard ahora se identifican en blockerComponent con reasonCode no nulo y explicación no vacía.
+- **Defecto 3**: Tick y rebuild ahora usan getEffectiveExecutionPolicy además de getEffectiveTakerFallbackEnabled. El audit también usa getEffectiveExecutionPolicy. Los tres call sites comparten las mismas funciones canónicas.
+- **Defecto 4**: Se restauró takerFallbackEnabled: this.config.takerFallbackEnabled en saveConfig. El cambio innecesario Boolean(...) fue eliminado. La normalización efectiva ocurre solo al construir el planning context.
+- **Helper puro**: gridPlanningBlockerMetadata.ts con resolveGridPlanningBlockerMetadata. Prioridad: REFERENCE_MARKET > PAIR_CONSTRAINTS > EXECUTION_CAPABILITY > EXECUTION_MARKET_SNAPSHOT > CIRCUIT_BREAKER > PUMP_GUARD > PLANNING_GATE.
+- **DB**: No modificada. Stored takerFallbackEnabled=true y stored executionPolicy permanecen.
+- **Tests**: 95 + 84 tests dirigidos pasados; CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+- **Estado**: Corregida tras verificación independiente; pendiente nueva verificación, fast-forward y deploy.
