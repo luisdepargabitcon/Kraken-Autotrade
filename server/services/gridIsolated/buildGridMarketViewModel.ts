@@ -5,7 +5,7 @@
  * Grid "Mercado" tab. It is pure: no DB access, no side effects, no trading logic.
  */
 
-import { type ExecutionPolicy, executionPolicyLabel, TAX_RESERVE_PCT, FEE_BUFFER_BUY_PCT, FEE_BUFFER_SELL_PCT } from "./gridIsolatedTypes";
+import { type ExecutionPolicy, executionPolicyLabel, isLegacyExecutionPolicy, TAX_RESERVE_PCT, FEE_BUFFER_BUY_PCT, FEE_BUFFER_SELL_PCT } from "./gridIsolatedTypes";
 import { computeGrossTargetFromNet } from "./gridNetCalculator";
 import { calculateMinSpacingPctReal, calculateSpacingPct, countViableLevelsIterative } from "./gridSpacingCalculator";
 import { buildConfigurationRecommendation } from "./gridRecommendationService";
@@ -875,8 +875,9 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
   const humanizedReason = humanizeRegimeReason(regime.reason);
 
   // REV-C12E: explicit, server-derived data source / execution venue labels.
-  // Kraken is the market data reference; Revolut X is the exclusive execution venue.
-  const dataSourceInfo = buildDataSourceInfo(config);
+  // Derives from execution gate and config — NOT unconditional constants.
+  // When gate data is missing, labels show "—" (No disponible), never invented.
+  const dataSourceInfo = buildDataSourceInfo(config, input.executionGate, input.executionMarketSnapshot);
 
   return {
     updatedAt,
@@ -923,18 +924,46 @@ function buildCurrent(input: BuildGridMarketViewModelInput): GridMarketCurrent {
 }
 
 // REV-C12E: Explicit, server-derived labels for the Kraken-data / Revolut X-execution
-// architecture. Values are computed here — React must not deduce them.
-function buildDataSourceInfo(config: any): GridMarketDataSourceInfo {
+// architecture. Values are derived from the execution gate and config — NOT constants.
+// When gate data is missing, labels show "—" (No disponible), never invented.
+function buildDataSourceInfo(config: any, executionGate?: any, executionMarketSnapshot?: any): GridMarketDataSourceInfo {
   const policy: string = config?.executionPolicy ?? "MAKER_ONLY";
   const isMakerOnly = policy === "MAKER_ONLY";
   const takerFallbackEnabled = config?.takerFallbackEnabled === true;
+  const isLegacy = isLegacyExecutionPolicy(policy);
+
+  // Derive market data source from execution market snapshot source, not a constant.
+  const snapshotSource = executionMarketSnapshot?.source ?? null;
+  const hasKrakenSource = snapshotSource != null && snapshotSource.toUpperCase().includes("KRAKEN");
+  const marketDataSourceLabel = hasKrakenSource ? "Kraken" : (snapshotSource ? "No disponible" : "—");
+
+  // Derive execution venue from gate or snapshot.
+  const gateVenue = executionGate?.executionVenue ?? executionMarketSnapshot?.executionVenue ?? null;
+  const executionVenueLabel = gateVenue === "REVOLUT_X" ? "Revolut X" : (gateVenue ? "No disponible" : "—");
+
+  // Derive policy label from config.
+  const policyLabel = isLegacy ? "Bloqueada (legacy)" : (isMakerOnly ? "Maker-only / Post-only" : executionPolicyLabel(policy as ExecutionPolicy));
+
+  // Derive taker fallback label from config — do NOT show "Desactivado" when enabled.
+  const takerFallbackLabel = takerFallbackEnabled ? "Habilitado" : "Desactivado";
+
+  // Derive constraints source from gate or snapshot.
+  const constraintsSource = executionGate?.constraintsSource ?? executionMarketSnapshot?.source ?? null;
+  const constraintsSourceLabel = constraintsSource?.toUpperCase().includes("KRAKEN")
+    ? "Kraken"
+    : (constraintsSource?.toUpperCase().includes("REVOLUT") ? "Revolut X" : "—");
+
+  const infoText = hasKrakenSource
+    ? "Kraken se utiliza como referencia de mercado. La garantía maker definitiva se aplica en Revolut X mediante post_only."
+    : "No disponible";
+
   return {
-    marketDataSourceLabel: "Kraken",
-    executionVenueLabel: "Revolut X",
-    executionPolicyLabel: isMakerOnly ? "Maker-only / Post-only" : executionPolicyLabel(policy as ExecutionPolicy),
-    takerFallbackLabel: takerFallbackEnabled ? "Habilitado" : "Desactivado",
-    constraintsSourceLabel: "Revolut X",
-    infoText: "Kraken se utiliza como referencia de mercado. La garantía maker definitiva se aplica en Revolut X mediante post_only.",
+    marketDataSourceLabel,
+    executionVenueLabel,
+    executionPolicyLabel: policyLabel,
+    takerFallbackLabel,
+    constraintsSourceLabel,
+    infoText,
   };
 }
 

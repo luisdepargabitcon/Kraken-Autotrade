@@ -176,4 +176,121 @@ describe("MarketDataService.getFreshTickerSnapshot — REV-C12E", () => {
     const snapshot = await MarketDataService.getFreshTickerSnapshot("ETH/USD");
     expect(await MarketDataService.getPrice("BTC/USD")).toBe(12345);
   });
+
+  // ── REV-C12E correction: Provenance, TTL, and fail-closed tests ──
+
+  it("21. putPrice manual no se acepta como fuente Kraken", async () => {
+    MarketDataService.putPrice("BTC/USD", 99999);
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD");
+    // putPrice sets source=MANUAL_OR_UNKNOWN → getFreshTickerSnapshot must reject it
+    // and fetch fresh from Kraken instead
+    expect(snapshot).not.toBeNull();
+    if (snapshot) {
+      expect(snapshot.source).toBe("KRAKEN_MARKET_DATA");
+      expect(snapshot.ticker.last).not.toBe(99999);
+    }
+  });
+
+  it("22. maxAgeMs cero → null (fail-closed)", async () => {
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD", 0);
+    expect(snapshot).toBeNull();
+  });
+
+  it("23. maxAgeMs negativo → null (fail-closed)", async () => {
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD", -1000);
+    expect(snapshot).toBeNull();
+  });
+
+  it("24. maxAgeMs NaN → null (fail-closed)", async () => {
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD", NaN);
+    expect(snapshot).toBeNull();
+  });
+
+  it("25. ticker con 29 segundos → válido (ageMs < maxAgeMs)", async () => {
+    MarketDataService.clearAll();
+    const ticker = { bid: 94990, ask: 95010, last: 95000 };
+    getDataExchangeMock.mockReturnValue(krakenExchange(ticker));
+    // First fetch to populate cache
+    await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    // Manually set cache fetchedAt to 29 seconds ago
+    const cached = (MarketDataService as any).priceCache.get("BTC/USD");
+    cached.fetchedAt = Date.now() - 29_000;
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    expect(snapshot).not.toBeNull();
+    if (snapshot) {
+      expect(snapshot.fresh).toBe(true);
+      expect(snapshot.ageMs).toBeLessThan(45_000);
+    }
+  });
+
+  it("26. ticker con 44 segundos → válido (ageMs < maxAgeMs)", async () => {
+    MarketDataService.clearAll();
+    const ticker = { bid: 94990, ask: 95010, last: 95000 };
+    getDataExchangeMock.mockReturnValue(krakenExchange(ticker));
+    await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    const cached = (MarketDataService as any).priceCache.get("BTC/USD");
+    cached.fetchedAt = Date.now() - 44_000;
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    expect(snapshot).not.toBeNull();
+    if (snapshot) expect(snapshot.fresh).toBe(true);
+  });
+
+  it("27. ticker con 45 segundos o más → cache miss, fetch fresh", async () => {
+    MarketDataService.clearAll();
+    const ticker = { bid: 94990, ask: 95010, last: 95000 };
+    getDataExchangeMock.mockReturnValue(krakenExchange(ticker));
+    await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    const cached = (MarketDataService as any).priceCache.get("BTC/USD");
+    cached.fetchedAt = Date.now() - 45_000;
+    // Cache is stale → code fetches fresh from Kraken
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    expect(snapshot).not.toBeNull();
+    if (snapshot) {
+      expect(snapshot.fresh).toBe(true);
+      expect(snapshot.cached).toBe(false);
+    }
+  });
+
+  it("28. cache hit no cambia fetchedAt", async () => {
+    MarketDataService.clearAll();
+    const ticker = { bid: 94990, ask: 95010, last: 95000 };
+    getDataExchangeMock.mockReturnValue(krakenExchange(ticker));
+    const first = await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    expect(first).not.toBeNull();
+    const firstFetchedAt = first!.fetchedAt.getTime();
+    // Second call should be a cache hit
+    const second = await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    expect(second).not.toBeNull();
+    expect(second!.fetchedAt.getTime()).toBe(firstFetchedAt);
+  });
+
+  it("29. fetchedAt futuro excesivo → cache miss, fetch fresh (fail-closed on cache)", async () => {
+    MarketDataService.clearAll();
+    const ticker = { bid: 94990, ask: 95010, last: 95000 };
+    getDataExchangeMock.mockReturnValue(krakenExchange(ticker));
+    await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    // Set fetchedAt to the future — cache check rejects (ageMs < 0)
+    const cached = (MarketDataService as any).priceCache.get("BTC/USD");
+    cached.fetchedAt = Date.now() + 60_000; // 60s in the future
+    // Cache rejected → code fetches fresh from Kraken
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    expect(snapshot).not.toBeNull();
+    if (snapshot) {
+      expect(snapshot.fresh).toBe(true);
+      expect(snapshot.ageMs).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("30. cache muy stale → fetch fresh, no devuelve fresh=false", async () => {
+    MarketDataService.clearAll();
+    const ticker = { bid: 94990, ask: 95010, last: 95000 };
+    getDataExchangeMock.mockReturnValue(krakenExchange(ticker));
+    await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    const cached = (MarketDataService as any).priceCache.get("BTC/USD");
+    cached.fetchedAt = Date.now() - 100_000; // very stale
+    // Cache is stale → fetch fresh
+    const snapshot = await MarketDataService.getFreshTickerSnapshot("BTC/USD", 45000);
+    expect(snapshot).not.toBeNull();
+    if (snapshot) expect(snapshot.fresh).toBe(true);
+  });
 });

@@ -179,11 +179,11 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
           </div>
 
           <div className="text-xs text-muted-foreground space-y-0.5">
-            <p>{`Fuente de precios: ${dataSourceInfo?.marketDataSourceLabel ?? "Kraken"}`}</p>
-            <p>{`Venue de ejecución: ${dataSourceInfo?.executionVenueLabel ?? "Revolut X"}`}</p>
-            <p>{`Política: ${dataSourceInfo?.executionPolicyLabel ?? "Maker-only / Post-only"}`}</p>
-            <p>{`Fallback taker: ${dataSourceInfo?.takerFallbackLabel ?? "Desactivado"}`}</p>
-            <p>{`Constraints: ${dataSourceInfo?.constraintsSourceLabel ?? "Revolut X"}`}</p>
+            <p>{`Fuente de precios: ${dataSourceInfo?.marketDataSourceLabel ?? "—"}`}</p>
+            <p>{`Venue de ejecución: ${dataSourceInfo?.executionVenueLabel ?? "—"}`}</p>
+            <p>{`Política: ${dataSourceInfo?.executionPolicyLabel ?? "—"}`}</p>
+            <p>{`Fallback taker: ${dataSourceInfo?.takerFallbackLabel ?? "—"}`}</p>
+            <p>{`Constraints: ${dataSourceInfo?.constraintsSourceLabel ?? "—"}`}</p>
             {dataSourceInfo?.infoText && (
               <p className="pt-1 italic text-[10px]">{dataSourceInfo.infoText}</p>
             )}

@@ -75,7 +75,8 @@ function validConstraints(overrides: Partial<any> = {}) {
     region: "EU",
     source: "revolutx",
     fetchedAt: new Date(),
-    expiresAt: null,
+    // REV-C12E: expiresAt must be a valid future date — null is now blocked.
+    expiresAt: new Date(Date.now() + 900_000),
     verified: true,
     reasonCode: null,
     ...overrides,

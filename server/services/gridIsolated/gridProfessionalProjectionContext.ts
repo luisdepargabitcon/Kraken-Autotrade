@@ -514,7 +514,7 @@ export function resolveGridProfessionalProjectionContext(
     const snapshotOk =
       snapshot.verified === true &&
       snapshot.fresh === true &&
-      snapshot.venue === "REVOLUT_X" &&
+      snapshot.executionVenue === "REVOLUT_X" &&
       snapshot.pair === config.pair;
     const constraintsFresh = constraints.expiresAt == null || constraints.expiresAt.getTime() > Date.now();
     const constraintsOk =
