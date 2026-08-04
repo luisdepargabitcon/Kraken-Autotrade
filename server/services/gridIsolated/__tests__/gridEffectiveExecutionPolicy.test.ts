@@ -68,4 +68,39 @@ describe("getEffectiveTakerFallbackEnabled — REV-C12G", () => {
       "MAKER_ONLY",
     );
   });
+
+  // REV-C12G post-verificación: effective execution policy shared helper.
+  it("11. SHADOW + executionPolicy legacy → getEffectiveExecutionPolicy = MAKER_ONLY", () => {
+    const policy: ExecutionPolicy = "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK";
+    expect(getEffectiveExecutionPolicy({ mode: "SHADOW", executionPolicy: policy })).toBe(
+      "MAKER_ONLY",
+    );
+  });
+
+  it("12. REAL_LIMITED + executionPolicy legacy → conserva la policy almacenada", () => {
+    const policy: ExecutionPolicy = "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK";
+    expect(getEffectiveExecutionPolicy({ mode: "REAL_LIMITED", executionPolicy: policy })).toBe(
+      "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK",
+    );
+  });
+
+  it("13. combinación SHADOW: effectiveExecutionPolicy=MAKER_ONLY y effectiveTakerFallbackEnabled=false", () => {
+    const config = {
+      mode: "SHADOW" as GridMode,
+      executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK" as ExecutionPolicy,
+      takerFallbackEnabled: true,
+    };
+    expect(getEffectiveExecutionPolicy(config)).toBe("MAKER_ONLY");
+    expect(getEffectiveTakerFallbackEnabled(config)).toBe(false);
+  });
+
+  it("14. no muta config (política efectiva)", () => {
+    const config = {
+      mode: "SHADOW" as GridMode,
+      executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK" as ExecutionPolicy,
+    };
+    const snapshot = { ...config };
+    getEffectiveExecutionPolicy(config);
+    expect(config).toEqual(snapshot);
+  });
 });

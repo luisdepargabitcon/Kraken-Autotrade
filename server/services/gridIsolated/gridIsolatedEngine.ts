@@ -97,6 +97,7 @@ import {
   validateTargetCalculationJson,
 } from "./gridJsonbValidators";
 import { resolveGridMarketAndConstraints, resolveGridPlanningContext, type GridPlanningContextResult } from "./gridPlanningContextResolver";
+import { resolveGridPlanningBlockerMetadata } from "./gridPlanningBlockerMetadata";
 import {
   DEFAULT_GRID_CONFIG,
   DAILY_ORDER_REQUEST_LIMIT,
@@ -1033,7 +1034,7 @@ export class GridIsolatedEngine {
         isActive: this.config.isActive,
         // Execution: Maker/Taker
         makerAttemptsBeforeTaker: this.config.makerAttemptsBeforeTaker,
-        takerFallbackEnabled: Boolean(this.config.takerFallbackEnabled),
+        takerFallbackEnabled: this.config.takerFallbackEnabled,
         takerFallbackAttemptNumber: this.config.takerFallbackAttemptNumber,
         maxTakerFallbackPerCycle: this.config.maxTakerFallbackPerCycle,
         takerFallbackRequiresNetProfit: this.config.takerFallbackRequiresNetProfit,
@@ -1339,8 +1340,10 @@ export class GridIsolatedEngine {
     // execution capability, execution market snapshot, allocation, split,
     // projection context, TTL, and gate — all exactly once.
     // revolutXService.getTicker() is NOT called anywhere in this flow.
-    // REV-C12G: Apply the SHADOW override for taker fallback via the shared
-    // helper so the tick uses the effective value, not the stored DB row.
+    // REV-C12G: Apply the SHADOW override for taker fallback and execution
+    // policy via the shared helpers so the tick uses effective runtime values,
+    // not the stored DB row.
+    const effectiveExecutionPolicy = getEffectiveExecutionPolicy(this.config);
     const effectiveTakerFallbackEnabled = getEffectiveTakerFallbackEnabled(this.config);
     const planningContext = await resolveGridPlanningContext({
       pair: this.config.pair,
@@ -1351,7 +1354,7 @@ export class GridIsolatedEngine {
         bandPeriod: this.config.bandPeriod ?? 89,
         bandStdDevMultiplier: this.config.bandStdDevMultiplier ?? 2.0,
       },
-      executionPolicy: this.config.executionPolicy,
+      executionPolicy: effectiveExecutionPolicy,
       takerFallbackEnabled: effectiveTakerFallbackEnabled,
       allocationInput: {
         capitalProfile: this.config.capitalProfile,
@@ -1400,40 +1403,33 @@ export class GridIsolatedEngine {
     const allowNewRange = allowRangeRebuild;
     if (!allowRangeBuys) {
       blockNewRangesAndBuys = true;
-      // REV-C12E: Prioritize reason codes: referenceMarket > executionCapability > pairConstraints > legacy snapshot.
-      const reasonCode = referenceMarket.reasonCode ?? executionCapability.reasonCode ?? pairConstraints.reasonCode ?? executionMarketSnapshot.reasonCode;
-      // REV-C12G: Identify the blocking component and explanation so the event
-      // metadata is not misleading. The event type stays historical for compatibility.
-      const blockerComponent =
-        !referenceMarket.verifiedForPlanning
-          ? "REFERENCE_MARKET"
-          : !executionCapability.verified
-            ? "EXECUTION_CAPABILITY"
-            : !pairConstraints.verified
-              ? "PAIR_CONSTRAINTS"
-              : !executionMarketSnapshot.verified
-                ? "EXECUTION_MARKET_SNAPSHOT"
-                : "PLANNING_GATE";
-      const blockerExplanation =
-        !referenceMarket.verifiedForPlanning
-          ? referenceMarket.explanation
-          : !executionCapability.verified
-            ? executionCapability.explanation
-            : !pairConstraints.verified
-              ? pairConstraints.reasonCode
-              : executionMarketSnapshot.explanation;
+      // REV-C12G: Use the pure blocker metadata helper so the event identifies
+      // the real blocking component with correct priority (referenceMarket >
+      // pairConstraints > executionCapability > snapshot > circuitBreaker >
+      // pumpGuard > fallback). The event type stays historical for compatibility.
+      const blocker = resolveGridPlanningBlockerMetadata({
+        referenceMarket,
+        pairConstraints,
+        executionCapability,
+        executionMarketSnapshot,
+        circuitBreakerOpen: this.circuitBreakerOpen,
+        circuitBreakerReason: this.config.circuitBreakerReason ?? null,
+        pumpGuardActive: pumpGuard.active,
+        pumpGuardReason: this.pumpDumpState.reason ?? null,
+      });
       await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Gate de planificación Grid bloqueado: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", {
         pair: this.config.pair,
-        reasonCode,
+        reasonCode: blocker.reasonCode,
         source: executionMarketSnapshot.source,
         allowCycleExits,
-        blockerComponent,
-        blockerExplanation,
+        blockerComponent: blocker.blockerComponent,
+        blockerExplanation: blocker.blockerExplanation,
         referenceMarketVerified: referenceMarket.verifiedForPlanning,
+        pairConstraintsVerified: pairConstraints.verified,
         executionCapabilityVerified: executionCapability.verified,
         executionMarketSnapshotVerified: executionMarketSnapshot.verified,
-        pairConstraintsVerified: pairConstraints.verified,
         effectiveTakerFallbackEnabled,
+        effectiveExecutionPolicy,
       });
     }
 
@@ -5019,8 +5015,10 @@ export class GridIsolatedEngine {
 
     // REV-C12E: Manual rebuild uses the single canonical orchestrator —
     // resolveGridPlanningContext. No duplicated logic between call sites.
-    // REV-C12G: Apply the SHADOW override for taker fallback via the shared
-    // helper so rebuild uses the effective value, not the stored DB row.
+    // REV-C12G: Apply the SHADOW override for taker fallback and execution
+    // policy via the shared helpers so rebuild uses effective runtime values,
+    // not the stored DB row.
+    const effectiveExecutionPolicyRebuild = getEffectiveExecutionPolicy(this.config);
     const effectiveTakerFallbackEnabledRebuild = getEffectiveTakerFallbackEnabled(this.config);
     const planningContextRebuild = await resolveGridPlanningContext({
       pair: this.config.pair,
@@ -5031,7 +5029,7 @@ export class GridIsolatedEngine {
         bandPeriod: this.config.bandPeriod ?? 89,
         bandStdDevMultiplier: this.config.bandStdDevMultiplier ?? 2.0,
       },
-      executionPolicy: this.config.executionPolicy,
+      executionPolicy: effectiveExecutionPolicyRebuild,
       takerFallbackEnabled: effectiveTakerFallbackEnabledRebuild,
       allocationInput: {
         capitalProfile: this.config.capitalProfile,

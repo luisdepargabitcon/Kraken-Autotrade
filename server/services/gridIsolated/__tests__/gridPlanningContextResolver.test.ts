@@ -44,7 +44,7 @@ import {
   resolveGridPlanningContext,
   resolveGridMarketAndConstraints,
 } from "../gridPlanningContextResolver";
-import { getEffectiveTakerFallbackEnabled } from "../gridIsolatedTypes";
+import { getEffectiveExecutionPolicy, getEffectiveTakerFallbackEnabled } from "../gridIsolatedTypes";
 import { revolutXService } from "../../exchanges/RevolutXService";
 import { MarketDataService } from "../../MarketDataService";
 import { getGridBandSnapshot } from "../gridBandAdapter";
@@ -680,6 +680,36 @@ describe("resolveGridMarketAndConstraints — integration: single-call guarantee
       bandConfig: { pair: "BTC/USD", bandPeriod: 89, bandStdDevMultiplier: 2, atrPeriod: 14, atrTimeframe: "1h" },
       executionPolicy: "MAKER_ONLY",
       takerFallbackEnabled: effective,
+    });
+
+    expect(result.executionCapability.verified).toBe(true);
+    expect(result.executionCapability.reasonCode).toBeNull();
+  });
+
+  // REV-C12G post-verificación: SHADOW con stored legacy policy + stored taker=true
+  // debe normalizarse a effectivePolicy=MAKER_ONLY y effectiveTaker=false antes
+  // de llamar al resolver. El resolver no se modifica para aceptar policies legacy.
+  it("I15. REV-C12G post-verificación: SHADOW con stored legacy policy + taker=true → effectivePolicy=MAKER_ONLY, effectiveTaker=false → executionCapability.verified=true", async () => {
+    const storedConfig = {
+      mode: "SHADOW" as const,
+      executionPolicy: "MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK" as const,
+      takerFallbackEnabled: true,
+    };
+    const effectivePolicy = getEffectiveExecutionPolicy(storedConfig);
+    const effectiveTaker = getEffectiveTakerFallbackEnabled(storedConfig);
+    expect(effectivePolicy).toBe("MAKER_ONLY");
+    expect(effectiveTaker).toBe(false);
+
+    getFreshTickerSnapshotMock.mockResolvedValueOnce(validTicker());
+    resolveGridPairConstraintsMock.mockResolvedValueOnce(validConstraints());
+    isInitializedMock.mockReturnValue(true);
+    getGridBandSnapshotMock.mockResolvedValueOnce(validBand());
+
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD",
+      bandConfig: { pair: "BTC/USD", bandPeriod: 89, bandStdDevMultiplier: 2, atrPeriod: 14, atrTimeframe: "1h" },
+      executionPolicy: effectivePolicy,
+      takerFallbackEnabled: effectiveTaker,
     });
 
     expect(result.executionCapability.verified).toBe(true);
