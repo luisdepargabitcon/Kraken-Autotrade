@@ -335,6 +335,20 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - **Encoding UTF-8**: sin BOM, sin mojibake.
 - **Estado final**: REV-C12E corregida, publicada y validada en rama de revisión; pendiente merge controlado a main. DONE=FALSE, HARD_BLOCKER=FALSE. MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, órdenes reales=0. APTA PARA VERIFICACIÓN PRE-MERGE.
 
+### Integración en main y deploy staging REV-C12E (2026-08-04)
+
+- **Integración main**: fast-forward puro, 24 commits integrados, sin merge commit. MAIN_PREVIOUS_SHA=44cd46ff, DEPLOYED_CODE_SHA=8d5617fd, MERGE_COMMIT_CREATED=FALSE.
+- **Deploy staging**: VPS root@5.250.184.18, /opt/krakenbot-staging, docker-compose.staging.yml. PRE_DEPLOY_SHA=24518a1, DEPLOY_SOURCE_SHA=8d5617f. Solo app recreada, DB intacta.
+- **DB intacta**: DB_ID_BEFORE=DB_ID_AFTER=a2f9a3f2, DB_STARTED_BEFORE=DB_STARTED_AFTER=2026-05-03T21:10:46Z. DB_RESTARTED=FALSE, SQL=FALSE, MIGRATIONS=FALSE.
+- **Validación HTTP**: 8 endpoints GET 200 (root, config, status, levels, cycles, events, unlock-status, monitor/audit). MODE_BEFORE=SHADOW, MODE_AFTER=SHADOW, PAIR=BTC/USD.
+- **Arquitectura observada**: MARKET_DATA_SOURCE=KRAKEN_MARKET_DATA, EXECUTION_VENUE=REVOLUT_X, EXECUTION_POLICY=MAKER_ONLY, POST_ONLY_EFFECTIVE=TRUE.
+- **Taker fallback**: EFFECTIVE_TAKER_FALLBACK_ENABLED=FALSE, EFFECTIVE_TAKER_FALLBACK_ALLOWED=FALSE, TAKER_FALLBACK_USED=FALSE. DB mantiene storedTakerFallbackEnabled=true (legacy), runtime overridea con effective=false.
+- **Órdenes reales**: REAL_OPEN_ORDERS_COUNT=0, DAILY_ORDER_COUNT=0, REAL_ORDERS_CREATED=0. FATAL_ERRORS=0, UNEXPECTED_RESTARTS=0.
+- **Riesgo residual 1**: REVOLUT_X_CONSTRAINTS_UNAVAILABLE persiste en staging. BUY/rebuild/rangos bloqueados, allowCycleExits=true. FAIL_CLOSED_EXPECTED, NO_REGRESSION_REV_C12E. Próxima fase: REV-C12F.
+- **Riesgo residual 2**: storedTakerFallbackEnabled=true en DB (legacy), pero effective=false en runtime. LEGACY_CONFIGURATION_DEBT, NO_IMMEDIATE_SAFETY_BLOCKER.
+- **Backup local preservado**: C:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE_LOCAL_BACKUPS\REV-C12E_PRE_FF_20260804_201206, SHA256=5CC20EB5.
+- **Estado final**: REV-C12E_COMPLETADA=TRUE, DONE=TRUE, HARD_BLOCKER=FALSE. GRID_NEW_ENTRIES_AVAILABLE=FALSE, GRID_NEW_ENTRIES_BLOCKER=REVOLUT_X_CONSTRAINTS_UNAVAILABLE, ALLOW_CYCLE_EXITS=TRUE. NEXT_ACTION=REV-C12F.
+
 ### Cascada REV-C12C (2026-08-03) — causa raíz REVOLUT_X_UNAVAILABLE + observabilidad diferenciada
 
 - **Causa raíz confirmada** en staging (SHA 44cd46f / origin/main): single try/catch fusionaba `resolveGridPairConstraints` con `getTicker`. Cualquier excepción de `getTicker` (404, 401, timeout, red) descartaba silenciosamente las constraints ya resueltas y colapsaba todo en `source: "REVOLUT_X_UNAVAILABLE"` sin logging del error real.
