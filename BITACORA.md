@@ -293,6 +293,24 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - Test ProjectionState solo si context ok: config incompleta, fixed_compact válido, legacy_hybrid válido, fixed inválido, allocation impar, allocation mismatch, régimen no operable, ttl sin validUntil.
 - Tests: 795/795 pasan (32 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
 
+### Cascada REV-C12E (2026-08-03) — separación arquitectónica Kraken-datos / Revolut X-ejecución
+
+- **Causa arquitectónica**: `GRID_NATIVE_TICKER_DEPENDENCY = ARCHITECTURAL_DIVERGENCE`. El Grid era el único módulo que llamaba `revolutXService.getTicker()` directamente. Cuando el endpoint de order-book/trades de Revolut X falla, el Grid quedaba bloqueado aunque constraints, bandas y ejecución estuvieran operativas.
+- **Corrección**: tick() y rebuild usan `MarketDataService.getFreshTickerSnapshot()` (Kraken) como referencia de mercado. `revolutXService.getTicker()` eliminado del flujo productivo Grid (0 llamadas operativas).
+- **MarketDataService.getFreshTickerSnapshot**: nueva API estricta con `MarketTickerSnapshot` tipado (venue=KRAKEN, source=KRAKEN_MARKET_DATA, fresh, cached, ageMs, maxAgeMs). Reutiliza caché y single-flight existentes. TTL 45s. Fail-closed null.
+- **gridReferenceMarketResolver.ts**: valida Kraken ticker → `GridReferenceMarketSnapshot`. `authoritativeForVenueCrossing=false` (Kraken no garantiza maker en Revolut X).
+- **gridExecutionCapabilityResolver.ts**: deriva `GridExecutionCapabilitySnapshot` de init + constraints + MAKER_ONLY + takerFallback=false. NO llama getTicker.
+- **gridPlanningContextResolver.ts**: flujo canónico único para contexto de planificación.
+- **GridPlanningGate**: separa canPlanRange, canCreateRange, canSubmitMakerOrder, allowCycleExits=true.
+- **Taker fallback eliminado**: `gridExecutionService.ts` fase 2 removida. Solo post_only. Rechazo → `POST_ONLY_REJECTED_REPRICE_REQUIRED`. No allow_taker, no _taker, no market, no usedTakerFallback:true.
+- **Reason codes diferenciados**: REFERENCE_MARKET_* (Kraken), REVOLUT_X_* (ejecución), POST_ONLY_*, LEGACY_TAKER_POLICY_BLOCKED.
+- **Políticas legacy bloqueadas**: MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK y MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK no se ejecutan. reasonCode=LEGACY_TAKER_POLICY_BLOCKED.
+- **90 tests nuevos**: 17 fresh ticker snapshot + 15 reference market + 12 execution capability + 11 taker fallback + 10 fills confirmation + 25 planning context resolver.
+- **Tests Grid modificados REV-C12E**: gridCircuitBreakerV3 (4/4), gridCycleOwnedV3Engine (52/52), gridIsolatedEngine (50/50), GridMarketPanel UX (18/18) — todos pasan.
+- **Tests Grid**: archivos modificados/nuevos REV-C12E = 0 fallidos. `tsc --noEmit` EXIT=0 ✅. `npm run build` EXIT=0 ✅. `git diff --check` EXIT=0 ✅.
+- **Recuentos estáticos**: revolutXService.getTicker operativo=0, allow_taker operativo=0, GRID_LEVEL_TAKER_FALLBACK operativo=0, usedTakerFallback:true=0, _taker IDs=0, REVOLUT_X_TICKER source nuevo=0, órdenes market=0.
+- **Estado**: REV-C12E implementada localmente y validada; pendiente commit y verificación independiente. DONE=FALSE, HARD_BLOCKER=FALSE. MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, órdenes reales=0.
+
 ### Cascada REV-C12C (2026-08-03) — causa raíz REVOLUT_X_UNAVAILABLE + observabilidad diferenciada
 
 - **Causa raíz confirmada** en staging (SHA 44cd46f / origin/main): single try/catch fusionaba `resolveGridPairConstraints` con `getTicker`. Cualquier excepción de `getTicker` (404, 401, timeout, red) descartaba silenciosamente las constraints ya resueltas y colapsaba todo en `source: "REVOLUT_X_UNAVAILABLE"` sin logging del error real.

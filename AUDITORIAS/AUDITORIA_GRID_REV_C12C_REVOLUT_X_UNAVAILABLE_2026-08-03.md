@@ -181,8 +181,20 @@ export type RevolutXGridFailureStage =
 
 - **Implementado**: ✅
 - **Validado**: ✅
-- **Comprometido**: pendiente (ver S12)
-- **Subido**: pendiente
+- **Comprometido**: ✅ (commits `8e8f127` + `d28d6c6` + `d230635`)
+- **Subido**: ✅ (origin/review/grid-rev-c12a-20260731 = `d230635`)
 - **Desplegado en staging**: NO (requiere autorización)
 
 El error real de ticker seguirá ocurriendo en staging hasta que se despliegue el código + se confirme que los endpoints de Revolut X están accesibles. Esta corrección garantiza que cuando el error ocurra, quede registrado en los logs con el mensaje exacto, y que las constraints no sean descartadas innecesariamente.
+
+---
+
+## 9. Adenda REV-C12E (2026-08-03)
+
+REV-C12C corrigió observabilidad y preservación de constraints. REV-C12E
+elimina el ticker nativo Revolut X como dependencia operativa. Kraken es la
+fuente central de datos de mercado y Revolut X continúa siendo el venue
+exclusivo de ejecución.
+
+Ver `AUDITORIAS/AUDITORIA_GRID_REV_C12E_ARQUITECTURA_DATOS_EJECUCION_2026-08-03.md`
+para el detalle completo de la separación arquitectónica.

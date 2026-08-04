@@ -2,8 +2,8 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12C implementada y validada; pendiente commit y verificación independiente final**
-- **NEXT_ACTION: commit REV-C12C, luego revisión independiente de los commits antes de merge**
+- **TASK_STATUS: REV-C12E implementada localmente y validada; pendiente commit y verificación independiente**
+- **NEXT_ACTION: commit selectivo y revisión independiente en GitHub**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
