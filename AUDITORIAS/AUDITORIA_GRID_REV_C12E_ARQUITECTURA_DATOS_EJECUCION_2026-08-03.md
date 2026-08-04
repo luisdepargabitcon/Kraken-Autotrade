@@ -1,9 +1,9 @@
-# AUDITORIA - REV-C12E: Arquitectura Kraken-Datos / Revolut X-Ejecucion
+# AUDITORIA — REV-C12E: Arquitectura Kraken-Datos / Revolut X-Ejecucion
 
 **Fecha:** 2026-08-03
 **Rama:** `review/grid-rev-c12a-20260731`
 **HEAD base:** `d230635b1af976790fd5d5408db941978475c46a`
-**Fase:** REV-C12E - Separacion arquitectonica datos/ejecucion
+**Fase:** REV-C12E — Separacion arquitectonica datos/ejecucion
 
 ---
 
@@ -27,7 +27,7 @@ El Grid era el unico modulo que llamaba `revolutXService.getTicker()` directamen
 - Las bandas Kraken si estuvieran calculadas
 - Las funciones de ejecucion (placeOrder, cancelOrder) si estuvieran operativas
 
-`REVOLUT_X_GENERAL_FAILURE = FALSE` - Revolut X no esta averiado. El servicio esta inicializado y las constraints se resuelven. El problema era que el Grid dependia de un endpoint de ticker publico que no es necesario para la planificacion.
+`REVOLUT_X_GENERAL_FAILURE = FALSE` — Revolut X no esta averiado. El servicio esta inicializado y las constraints se resuelven. El problema era que el Grid dependia de un endpoint de ticker publico que no es necesario para la planificacion.
 
 ---
 
@@ -49,13 +49,13 @@ El Grid era el unico modulo que llamaba `revolutXService.getTicker()` directamen
 
 | Call site | Estado post-REV-C12E |
 |-----------|---------------------|
-| `revolutXService.getTicker` en tick() | **ELIMINADO** - reemplazado por `MarketDataService.getFreshTickerSnapshot` |
-| `revolutXService.getTicker` en rebuild | **ELIMINADO** - reemplazado por `MarketDataService.getFreshTickerSnapshot` |
-| `allow_taker` executionInstruction | **ELIMINADO** - solo `post_only` |
-| `GRID_LEVEL_TAKER_FALLBACK` log | **ELIMINADO** - reemplazado por `GRID_LEVEL_POST_ONLY_EXHAUSTED` |
-| `_taker` clientOrderId | **ELIMINADO** - nunca se genera |
-| `usedTakerFallback: true` | **ELIMINADO** - siempre `false` |
-| `source: "REVOLUT_X_TICKER"` | **ELIMINADO** - reemplazado por `source: "KRAKEN_MARKET_DATA"` |
+| `revolutXService.getTicker` en tick() | **ELIMINADO** — reemplazado por `MarketDataService.getFreshTickerSnapshot` |
+| `revolutXService.getTicker` en rebuild | **ELIMINADO** — reemplazado por `MarketDataService.getFreshTickerSnapshot` |
+| `allow_taker` executionInstruction | **ELIMINADO** — solo `post_only` |
+| `GRID_LEVEL_TAKER_FALLBACK` log | **ELIMINADO** — reemplazado por `GRID_LEVEL_POST_ONLY_EXHAUSTED` |
+| `_taker` clientOrderId | **ELIMINADO** — nunca se genera |
+| `usedTakerFallback: true` | **ELIMINADO** — siempre `false` |
+| `source: "REVOLUT_X_TICKER"` | **ELIMINADO** — reemplazado por `source: "KRAKEN_MARKET_DATA"` |
 
 ---
 
@@ -105,7 +105,7 @@ Valida estrictamente:
 - source=KRAKEN_MARKET_DATA
 - marketDataVenue=KRAKEN
 
-`authoritativeForVenueCrossing=false` - la referencia Kraken NO garantiza que una orden sea maker en Revolut X.
+`authoritativeForVenueCrossing=false` — la referencia Kraken NO garantiza que una orden sea maker en Revolut X.
 
 ---
 
@@ -128,16 +128,16 @@ NO llama a `revolutXService.getTicker()`.
 **Archivo:** `server/services/gridIsolated/gridPlanningContextResolver.ts`
 
 Flujo canonico unico:
-1. `getGridBandSnapshot()` - Kraken
-2. `MarketDataService.getFreshTickerSnapshot()` - Kraken
-3. `resolveGridReferenceMarketSnapshot()` - validar Kraken
-4. `resolveGridPairConstraints()` - Revolut X
-5. `resolveGridExecutionCapability()` - Revolut X
-6. `buildGridExecutionMarketSnapshot()` - execution snapshot
-7. `gridCapitalAllocator.allocate()` - allocation
-8. `splitSymmetricLevels()` - split simetrico
-9. `resolveGridProfessionalProjectionContext()` - projection context
-10. `computeGateTtl()` - TTL
+1. `getGridBandSnapshot()` — Kraken
+2. `MarketDataService.getFreshTickerSnapshot()` — Kraken
+3. `resolveGridReferenceMarketSnapshot()` — validar Kraken
+4. `resolveGridPairConstraints()` — Revolut X
+5. `resolveGridExecutionCapability()` — Revolut X
+6. `buildGridExecutionMarketSnapshot()` — execution snapshot
+7. `gridCapitalAllocator.allocate()` — allocation
+8. `splitSymmetricLevels()` — split simetrico
+9. `resolveGridProfessionalProjectionContext()` — projection context
+10. `computeGateTtl()` — TTL
 11. Build `GridPlanningGate` con blockers
 
 ---
@@ -346,7 +346,7 @@ REFERENCE_MARKET_* cuando fuente es Kraken. Nuevos codigos: REVOLUT_X_CONSTRAINT
 
 ### 21.7 UX sin fallbacks inventados
 
-GridMarketPanel elimina fallbacks y muestra "-" cuando no hay datos.
+GridMarketPanel elimina fallbacks y muestra "—" cuando no hay datos.
 
 ---
 
@@ -401,7 +401,7 @@ Resultados:
 
 ### 22.6 Encoding UTF-8 reparado
 
-Problema: Auditoria con BOM U+FEFF y mojibake.
+Problema: Auditoria con BOM U+FEFF y mojibake (caracteres corruptos de doble codificacion).
 
 Correccion: Archivo reescrito desde texto limpio. UTF-8 sin BOM, LF. Validado con Node: sin BOM, sin mojibake.
 
@@ -423,7 +423,7 @@ Correccion: Archivo reescrito desde texto limpio. UTF-8 sin BOM, LF. Validado co
 ### 23.1 Tests gate canCreateRange fail-closed
 
 1. sin allocationInput -> canCreateRange=false (ALLOCATION_INPUT_MISSING)
-2. allocation valida -> continua
+2. allocation valida -> continúa
 3. allocation throw -> canCreateRange=false (ALLOCATION_FAILED)
 4. levelsCount impar -> canCreateRange=false (SYMMETRIC_SPLIT_FAILED)
 5. projection context fail -> canCreateRange=false
@@ -483,3 +483,34 @@ MIGRATION_REQUIRED: FALSE
 - docker
 - credenciales
 - deploy scripts
+
+---
+
+## 27. Validacion global final (2026-08-04)
+
+- Commit tecnico: 39db52b6299e9a9f15a361d5324bb4e2b713c6be
+- Commit documental: d8d56d5c6c6f274a788ae4f78000e52a0e416840
+- Matriz Grid: 37 archivos, 934 tests, 0 fallos.
+- Suite completa: 856 archivos, 3389 tests, 3330 pasados, 30 fallos historicos, 29 skipped.
+- Fallos historicos exactos (30, 6 archivos):
+  - telegram/templates.test.ts: 9
+  - gridCompactRange.test.ts: 9
+  - gridAdaptiveSmartRange.test.ts: 4
+  - gridShadowPolicy.test.ts: 4
+  - idcaMarketContextHelpers.test.ts: 3
+  - gridSpacingCalculator.test.ts: 1
+- Cero fallos nuevos.
+- CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+- Encoding UTF-8: sin BOM, sin mojibake.
+- MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, ordenes reales=0.
+
+```
+DONE: FALSE
+HARD_BLOCKER: FALSE
+TASK_STATUS: REV-C12E corregida, publicada y validada en rama de revision; pendiente merge controlado a main
+NEXT_ACTION: verificacion independiente final y autorizacion de fast-forward a main
+DEPLOY_AUTHORIZED: FALSE
+MIGRATION_REQUIRED: FALSE
+```
+
+**APTA PARA VERIFICACION PRE-MERGE, SIN MERGE Y SIN DEPLOY**

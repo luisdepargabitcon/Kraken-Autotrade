@@ -2,8 +2,8 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12E corregida tras segunda verificación independiente; pendiente commit y push de corrección**
-- **NEXT_ACTION: commit y posterior verificación independiente**
+- **TASK_STATUS: REV-C12E corregida, publicada y validada en rama de revisión; pendiente merge controlado a main**
+- **NEXT_ACTION: verificación independiente final y autorización de fast-forward a main**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
@@ -21,6 +21,23 @@ Defectos corregidos:
 
 Matriz nueva real: 37 archivos, 934 tests, 0 failures.
 npm run check: exit 0. npm run build: exit 0. git diff --check: exit 0.
+
+## Validación global final (2026-08-04)
+
+- Commit técnico: 39db52b6299e9a9f15a361d5324bb4e2b713c6be
+- Commit documental: d8d56d5c6c6f274a788ae4f78000e52a0e416840
+- Matriz Grid: 37 archivos, 934 tests, 0 fallos.
+- Suite completa: 856 archivos, 3389 tests, 3330 pasados, 30 fallos históricos, 29 skipped.
+- Fallos históricos exactos (30, 6 archivos):
+  - telegram/templates.test.ts: 9
+  - gridCompactRange.test.ts: 9
+  - gridAdaptiveSmartRange.test.ts: 4
+  - gridShadowPolicy.test.ts: 4
+  - idcaMarketContextHelpers.test.ts: 3
+  - gridSpacingCalculator.test.ts: 1
+- Cero fallos nuevos.
+- CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+- MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, órdenes reales=0.
 
 ## Alcance REV-C12A
 
