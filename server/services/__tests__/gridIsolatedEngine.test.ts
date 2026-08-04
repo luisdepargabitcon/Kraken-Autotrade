@@ -53,6 +53,18 @@ vi.mock("../MarketDataService", () => ({
     getPrice: vi.fn().mockResolvedValue(null),
     getATR: vi.fn().mockResolvedValue(0),
     getTicker: vi.fn().mockResolvedValue({ last: 95000, bid: 94990, ask: 95010 }),
+    // REV-C12E: Kraken reference market ticker snapshot
+    getFreshTickerSnapshot: vi.fn().mockResolvedValue({
+      pair: "BTC/USD",
+      ticker: { bid: 94990, ask: 95010, last: 95000 },
+      marketDataVenue: "KRAKEN",
+      source: "KRAKEN_MARKET_DATA",
+      fetchedAt: new Date(),
+      ageMs: 0,
+      maxAgeMs: 45000,
+      fresh: true,
+      cached: false,
+    }),
   },
 }));
 
@@ -63,6 +75,12 @@ vi.mock("../exchanges/ExchangeFactory", () => ({
       getBalance: vi.fn().mockResolvedValue({}),
       getTicker: vi.fn().mockResolvedValue({ last: 100000 }),
     }),
+    getDataExchange: vi.fn().mockReturnValue({
+      isInitialized: vi.fn().mockReturnValue(true),
+      getTicker: vi.fn().mockResolvedValue({ bid: 94990, ask: 95010, last: 95000 }),
+    }),
+    getDataExchangeType: vi.fn().mockReturnValue("kraken"),
+    getTradingExchangeType: vi.fn().mockReturnValue("revolutx"),
   },
 }));
 
@@ -723,8 +741,9 @@ describe("GridIsolatedEngine — REAL tick N valid → tick N+1 blocked (REV-C12
     await (gridIsolatedEngine as any).tick();
     expect(gridIsolatedEngine.getRecommendationProjectionState()).not.toBeNull();
 
-    // Now make getTicker throw
-    (revolutXService.getTicker as any).mockRejectedValueOnce(new Error("REVOLUT_X_UNAVAILABLE"));
+    // REV-C12E: tick() now uses MarketDataService.getFreshTickerSnapshot (Kraken)
+    // instead of revolutXService.getTicker. Mock the Kraken snapshot to return null.
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce(null);
 
     // Tick N+1
     await (gridIsolatedEngine as any).tick();
@@ -827,15 +846,13 @@ describe("GridIsolatedEngine — REAL tick N valid → tick N+1 blocked (REV-C12
   });
 });
 
-// ─── REV-C12C: Differentiated failure mode tests ─────────────────────────────
-// Each test verifies that a specific Revolut X failure mode produces:
-//   - ProjectionState = null
-//   - canCreateRange = false
-//   - allowCycleExits = true (never blocked)
-//   - SHADOW mode: no real orders
-// And verifies that constraints result is preserved when only the ticker fails.
+// ─── REV-C12C/REV-C12E: Differentiated failure mode tests ────────────────────
+// REV-C12E: tick() now uses MarketDataService.getFreshTickerSnapshot (Kraken)
+// instead of revolutXService.getTicker. Tests mock the Kraken snapshot.
+// Each test verifies: ProjectionState = null, canCreateRange = false,
+// allowCycleExits = true, SHADOW mode: no real orders.
 // ─────────────────────────────────────────────────────────────────────────────
-describe("GridIsolatedEngine — REV-C12C: Differentiated Revolut X failure modes", () => {
+describe("GridIsolatedEngine — REV-C12C/E: Differentiated failure modes", () => {
   beforeEach(async () => {
     const config = await gridIsolatedEngine.loadConfig();
     config!.mode = "SHADOW";
@@ -871,7 +888,6 @@ describe("GridIsolatedEngine — REV-C12C: Differentiated Revolut X failure mode
     vi.clearAllMocks();
   });
 
-  // ─── Helper: assert fail-closed state ───────────────────────────────────
   function assertFailClosed() {
     expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
     const gate = gridIsolatedEngine.getExecutionGate();
@@ -880,22 +896,17 @@ describe("GridIsolatedEngine — REV-C12C: Differentiated Revolut X failure mode
     expect(gridIsolatedEngine.getExecutionStatus().mode).toBe("SHADOW");
   }
 
-  // ─── T1: getTicker throws "not initialized" ─────────────────────────────
-  it("TICKER_FETCH: service throws 'not initialized' → fail-closed, constraints preserved", async () => {
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("Revolut X client not initialized")
-    );
+  // ─── T1: Kraken ticker snapshot returns null (unavailable) ────────────
+  it("REFERENCE_MARKET_UNAVAILABLE: Kraken ticker null → fail-closed", async () => {
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce(null);
 
     await (gridIsolatedEngine as any).tick();
 
     assertFailClosed();
-
-    // REV-C12C: botLogger.warn must be called with structured failure info
     expect(botLogger.warn).toHaveBeenCalledWith(
-      "GRID_REVOLUTX_TICKER_FAILED",
-      expect.stringContaining("not initialized"),
+      "GRID_REFERENCE_MARKET_UNAVAILABLE",
+      expect.any(String),
       expect.objectContaining({
-        stage: "TICKER_FETCH",
         pair: "BTC/USD",
         canCreateRange: false,
         allowCycleExits: true,
@@ -903,94 +914,103 @@ describe("GridIsolatedEngine — REV-C12C: Differentiated Revolut X failure mode
     );
   });
 
-  // ─── T2: getTicker throws HTTP 401 ──────────────────────────────────────
-  it("AUTHENTICATION: getTicker throws 401 → fail-closed", async () => {
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("RevolutX API error 401: Unauthorized")
-    );
-
-    await (gridIsolatedEngine as any).tick();
-
-    assertFailClosed();
-    expect(botLogger.warn).toHaveBeenCalledWith(
-      "GRID_REVOLUTX_TICKER_FAILED",
-      expect.stringContaining("401"),
-      expect.objectContaining({ stage: "TICKER_FETCH", canCreateRange: false })
-    );
-  });
-
-  // ─── T3: getTicker throws HTTP 403 ──────────────────────────────────────
-  it("AUTHENTICATION: getTicker throws 403 → fail-closed", async () => {
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("RevolutX API error 403: Forbidden")
-    );
-
-    await (gridIsolatedEngine as any).tick();
-
-    assertFailClosed();
-    expect(botLogger.warn).toHaveBeenCalledWith(
-      "GRID_REVOLUTX_TICKER_FAILED",
-      expect.stringContaining("403"),
-      expect.objectContaining({ stage: "TICKER_FETCH" })
-    );
-  });
-
-  // ─── T4: getTicker throws HTTP 404 ──────────────────────────────────────
-  it("TICKER_FETCH: getTicker throws 404 (endpoint not found) → fail-closed", async () => {
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("RevolutX ticker unavailable for BTC/USD: RevolutX API error 404: Endpoint not found")
-    );
-
-    await (gridIsolatedEngine as any).tick();
-
-    assertFailClosed();
-    expect(botLogger.warn).toHaveBeenCalledWith(
-      "GRID_REVOLUTX_TICKER_FAILED",
-      expect.stringContaining("404"),
-      expect.objectContaining({ stage: "TICKER_FETCH" })
-    );
-  });
-
-  // ─── T5: getTicker throws HTTP 429 ──────────────────────────────────────
-  it("NETWORK: getTicker throws 429 (rate limited) → fail-closed", async () => {
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("RevolutX API error 429: Too Many Requests")
-    );
+  // ─── T2: Kraken ticker stale ──────────────────────────────────────────
+  it("REFERENCE_MARKET_STALE: Kraken ticker stale → fail-closed", async () => {
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce({
+      pair: "BTC/USD",
+      ticker: { bid: 94990, ask: 95010, last: 95000 },
+      marketDataVenue: "KRAKEN",
+      source: "KRAKEN_MARKET_DATA",
+      fetchedAt: new Date(Date.now() - 120000), // 2 min ago, stale
+      ageMs: 120000,
+      maxAgeMs: 45000,
+      fresh: false,
+      cached: true,
+    });
 
     await (gridIsolatedEngine as any).tick();
 
     assertFailClosed();
   });
 
-  // ─── T6: getTicker throws timeout / network error ───────────────────────
-  it("NETWORK: getTicker throws timeout → fail-closed", async () => {
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("Network timeout: ETIMEDOUT")
-    );
-
-    await (gridIsolatedEngine as any).tick();
-
-    assertFailClosed();
-    expect(botLogger.warn).toHaveBeenCalledWith(
-      "GRID_REVOLUTX_TICKER_FAILED",
-      expect.stringContaining("ETIMEDOUT"),
-      expect.objectContaining({ stage: "TICKER_FETCH", canCreateRange: false, allowCycleExits: true })
-    );
-  });
-
-  // ─── T7: getTicker throws unknown error ─────────────────────────────────
-  it("UNKNOWN: getTicker throws unknown error → fail-closed", async () => {
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("Unexpected error in ticker pipeline")
-    );
+  // ─── T3: Kraken ticker bid <= 0 ───────────────────────────────────────
+  it("REFERENCE_MARKET_BID_INVALID: bid <= 0 → fail-closed", async () => {
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce({
+      pair: "BTC/USD",
+      ticker: { bid: 0, ask: 95010, last: 95000 },
+      marketDataVenue: "KRAKEN",
+      source: "KRAKEN_MARKET_DATA",
+      fetchedAt: new Date(),
+      ageMs: 0,
+      maxAgeMs: 45000,
+      fresh: true,
+      cached: false,
+    });
 
     await (gridIsolatedEngine as any).tick();
 
     assertFailClosed();
   });
 
-  // ─── T8: constraints return verified=false, getTicker succeeds ──────────
-  it("PAIR_CONSTRAINTS: constraints unverified, ticker ok → fail-closed (snapshot invalid)", async () => {
+  // ─── T4: Kraken ticker ask <= bid ─────────────────────────────────────
+  it("REFERENCE_MARKET_ASK_INVALID: ask <= bid → fail-closed", async () => {
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce({
+      pair: "BTC/USD",
+      ticker: { bid: 95010, ask: 95000, last: 95005 },
+      marketDataVenue: "KRAKEN",
+      source: "KRAKEN_MARKET_DATA",
+      fetchedAt: new Date(),
+      ageMs: 0,
+      maxAgeMs: 45000,
+      fresh: true,
+      cached: false,
+    });
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+  });
+
+  // ─── T5: Kraken ticker last <= 0 ──────────────────────────────────────
+  it("REFERENCE_MARKET_LAST_INVALID: last <= 0 → fail-closed", async () => {
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce({
+      pair: "BTC/USD",
+      ticker: { bid: 94990, ask: 95010, last: 0 },
+      marketDataVenue: "KRAKEN",
+      source: "KRAKEN_MARKET_DATA",
+      fetchedAt: new Date(),
+      ageMs: 0,
+      maxAgeMs: 45000,
+      fresh: true,
+      cached: false,
+    });
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+  });
+
+  // ─── T6: Kraken ticker pair mismatch ──────────────────────────────────
+  it("REFERENCE_MARKET_PAIR_MISMATCH: pair mismatch → fail-closed", async () => {
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce({
+      pair: "ETH/USD",
+      ticker: { bid: 2990, ask: 3010, last: 3000 },
+      marketDataVenue: "KRAKEN",
+      source: "KRAKEN_MARKET_DATA",
+      fetchedAt: new Date(),
+      ageMs: 0,
+      maxAgeMs: 45000,
+      fresh: true,
+      cached: false,
+    });
+
+    await (gridIsolatedEngine as any).tick();
+
+    assertFailClosed();
+  });
+
+  // ─── T7: constraints unverified, Kraken ticker ok → fail-closed ───────
+  it("PAIR_CONSTRAINTS: constraints unverified, Kraken ok → fail-closed", async () => {
     (revolutXService.resolveGridPairConstraints as any).mockResolvedValueOnce({
       pair: "BTC/USD",
       normalizedPair: "BTC-USD",
@@ -1017,38 +1037,19 @@ describe("GridIsolatedEngine — REV-C12C: Differentiated Revolut X failure mode
     await (gridIsolatedEngine as any).tick();
 
     assertFailClosed();
-    // botLogger.warn should NOT be called for ticker failure (ticker did not throw)
-    expect(botLogger.warn).not.toHaveBeenCalledWith(
-      "GRID_REVOLUTX_TICKER_FAILED",
-      expect.any(String),
-      expect.any(Object)
-    );
   });
 
-  // ─── T9: constraints verified, ticker fails → constraints preserved in log ──
-  it("TICKER_FETCH: constraints verified=true preserved when ticker fails", async () => {
+  // ─── T8: constraints verified, Kraken ticker null → fail-closed ───────
+  it("TICKER_FETCH: constraints verified=true, Kraken null → fail-closed", async () => {
     // Constraints succeed (default mock returns verified=true)
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("RevolutX ticker unavailable for BTC/USD")
-    );
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce(null);
 
     await (gridIsolatedEngine as any).tick();
 
     assertFailClosed();
-
-    // The structured log must show constraintsVerified=true (not discarded)
-    expect(botLogger.warn).toHaveBeenCalledWith(
-      "GRID_REVOLUTX_TICKER_FAILED",
-      expect.any(String),
-      expect.objectContaining({
-        constraintsVerified: true,
-        constraintsSource: "revolutx",
-        stage: "TICKER_FETCH",
-      })
-    );
   });
 
-  // ─── T10: constraints throw (invalid pair format edge case) ─────────────
+  // ─── T9: resolveGridPairConstraints throws ────────────────────────────
   it("PAIR_NORMALIZATION: resolveGridPairConstraints throws → fail-closed", async () => {
     (revolutXService.resolveGridPairConstraints as any).mockRejectedValueOnce(
       new Error("Par Revolut X inválido: INVALID")
@@ -1059,35 +1060,8 @@ describe("GridIsolatedEngine — REV-C12C: Differentiated Revolut X failure mode
     assertFailClosed();
   });
 
-  // ─── T11: getTicker returns null-bid/null-ask (snapshot BID_INVALID) ────
-  it("TICKER_VALIDATION: ticker bid=null → snapshot BID_INVALID → fail-closed", async () => {
-    (revolutXService.getTicker as any).mockResolvedValueOnce({
-      bid: null,
-      ask: null,
-      last: 95000,
-    });
-
-    await (gridIsolatedEngine as any).tick();
-
-    assertFailClosed();
-    // No botLogger.warn for ticker (did not throw), but gate still blocked
-  });
-
-  // ─── T12: getTicker bid >= ask ───────────────────────────────────────────
-  it("TICKER_VALIDATION: ticker bid >= ask → snapshot ASK_INVALID → fail-closed", async () => {
-    (revolutXService.getTicker as any).mockResolvedValueOnce({
-      bid: 95010,
-      ask: 95000, // ask < bid
-      last: 95005,
-    });
-
-    await (gridIsolatedEngine as any).tick();
-
-    assertFailClosed();
-  });
-
-  // ─── T13: allowCycleExits always true even when fully blocked ───────────
-  it("allowCycleExits=true even when fully blocked (service not init + constraints fail)", async () => {
+  // ─── T10: allowCycleExits always true even when fully blocked ─────────
+  it("allowCycleExits=true even when fully blocked (Kraken null + constraints fail)", async () => {
     (revolutXService.resolveGridPairConstraints as any).mockResolvedValueOnce({
       pair: "BTC/USD",
       normalizedPair: "BTC-USD",
@@ -1110,30 +1084,53 @@ describe("GridIsolatedEngine — REV-C12C: Differentiated Revolut X failure mode
       verified: false,
       reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE",
     });
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("Revolut X client not initialized")
-    );
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce(null);
 
     await (gridIsolatedEngine as any).tick();
 
-    // Even with both constraints and ticker failed, exits must be allowed
     const gate = gridIsolatedEngine.getExecutionGate();
     expect(gate.canCreateRange).toBe(false);
     expect(gate.allowCycleExits).toBe(true);
     expect(gridIsolatedEngine.getRecommendationProjectionState()).toBeNull();
   });
 
-  // ─── T14: SHADOW — no real orders under any failure mode ────────────────
+  // ─── T11: SHADOW — no real orders under any failure mode ──────────────
   it("SHADOW: no real orders placed regardless of failure mode", async () => {
-    (revolutXService.getTicker as any).mockRejectedValueOnce(
-      new Error("Revolut X client not initialized")
-    );
+    (MarketDataService.getFreshTickerSnapshot as any).mockResolvedValueOnce(null);
 
     await (gridIsolatedEngine as any).tick();
 
-    // SHADOW mode: no exchange order calls
     const status = gridIsolatedEngine.getExecutionStatus();
     expect(status.mode).toBe("SHADOW");
     expect(gridIsolatedEngine.getLevels().every(l => l.exchangeOrderId == null)).toBe(true);
+  });
+
+  // ─── T12: REV-C12E static — tick does NOT call revolutXService.getTicker ─
+  it("REV-C12E: tick() does not call revolutXService.getTicker", async () => {
+    await (gridIsolatedEngine as any).tick();
+
+    // revolutXService.getTicker should never be called in the tick flow
+    expect(revolutXService.getTicker).not.toHaveBeenCalled();
+  });
+
+  // ─── T13: REV-C12E — tick uses MarketDataService.getFreshTickerSnapshot ──
+  it("REV-C12E: tick() calls MarketDataService.getFreshTickerSnapshot", async () => {
+    await (gridIsolatedEngine as any).tick();
+
+    expect(MarketDataService.getFreshTickerSnapshot).toHaveBeenCalledWith("BTC/USD", undefined);
+  });
+
+  // ─── T14: valid full flow with Kraken ticker creates ProjectionState ──
+  it("REV-C12E: valid Kraken ticker + constraints → ProjectionState created", async () => {
+    await (gridIsolatedEngine as any).tick();
+
+    const state = gridIsolatedEngine.getRecommendationProjectionState();
+    expect(state).not.toBeNull();
+    expect(state!.pair).toBe("BTC/USD");
+    expect(state!.executionMarketSnapshot.venue).toBe("REVOLUT_X");
+    expect(state!.executionMarketSnapshot.verified).toBe(true);
+
+    const gate = gridIsolatedEngine.getExecutionGate();
+    expect(gate.canCreateRange).toBe(true);
   });
 });

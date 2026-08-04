@@ -53,6 +53,22 @@ export interface MarketDataStats {
   }[];
 }
 
+// ─── REV-C12E: Kraken reference market ticker snapshot ──────────────────────
+// Strict, typed snapshot for Grid planning. Source is always KRAKEN via
+// ExchangeFactory.getDataExchange(). Reuses the existing price cache and
+// single-flight mechanism — no duplicate concurrent calls.
+export interface MarketTickerSnapshot {
+  pair: string;
+  ticker: Ticker;
+  marketDataVenue: "KRAKEN";
+  source: "KRAKEN_MARKET_DATA";
+  fetchedAt: Date;
+  ageMs: number;
+  maxAgeMs: number;
+  fresh: boolean;
+  cached: boolean;
+}
+
 // ─── Timeframe helpers ────────────────────────────────────────────
 
 const TIMEFRAME_INTERVAL_MINUTES: Record<string, number> = {
@@ -472,6 +488,104 @@ class MarketDataServiceClass {
     this.pendingCandles.clear();
     this.pendingPrices.clear();
     this.resetCounters();
+  }
+
+  // ── REV-C12E: Fresh ticker snapshot for Grid planning ─────────────
+  // Returns a typed snapshot with venue=KRAKEN, source=KRAKEN_MARKET_DATA.
+  // Reuses the existing priceCache and single-flight pendingPrices.
+  // Reading from cache does NOT renew fetchedAt.
+  // Stale cache is NOT treated as fresh.
+  // Returns null fail-closed when data is unavailable or exchange is not Kraken.
+  async getFreshTickerSnapshot(pair: string, maxAgeMs?: number): Promise<MarketTickerSnapshot | null> {
+    const ttl = maxAgeMs ?? 45_000;
+    const now = Date.now();
+    const cached = this.priceCache.get(pair);
+
+    // Cache hit: fresh within TTL
+    if (cached && now - cached.fetchedAt < ttl) {
+      this._hits++;
+      // Verify data exchange is Kraken
+      const exchange = ExchangeFactory.getDataExchange();
+      if (ExchangeFactory.getDataExchangeType() !== "kraken") {
+        return null;
+      }
+      return {
+        pair,
+        ticker: cached.ticker,
+        marketDataVenue: "KRAKEN",
+        source: "KRAKEN_MARKET_DATA",
+        fetchedAt: new Date(cached.fetchedAt),
+        ageMs: now - cached.fetchedAt,
+        maxAgeMs: ttl,
+        fresh: true,
+        cached: true,
+      };
+    }
+
+    // Single-flight: share in-flight fetch
+    const pending = this.pendingPrices.get(pair);
+    if (pending) {
+      this._shared++;
+      try {
+        const ticker = await pending;
+        const fetchedAt = this.priceCache.get(pair)?.fetchedAt ?? now;
+        return {
+          pair,
+          ticker,
+          marketDataVenue: "KRAKEN",
+          source: "KRAKEN_MARKET_DATA",
+          fetchedAt: new Date(fetchedAt),
+          ageMs: Date.now() - fetchedAt,
+          maxAgeMs: ttl,
+          fresh: Date.now() - fetchedAt < ttl,
+          cached: true,
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    // Cache miss or stale: fetch from data exchange
+    this._misses++;
+
+    // Verify data exchange is Kraken before fetching
+    if (ExchangeFactory.getDataExchangeType() !== "kraken") {
+      console.warn("[MDS] getFreshTickerSnapshot: data exchange is not Kraken, returning null");
+      return null;
+    }
+
+    const exchange = ExchangeFactory.getDataExchange();
+    if (!exchange.isInitialized()) {
+      return null;
+    }
+
+    const fetch = (async (): Promise<Ticker> => {
+      const ticker = await exchange.getTicker(pair);
+      this.priceCache.set(pair, { ticker, fetchedAt: Date.now() });
+      return ticker;
+    })();
+
+    this.pendingPrices.set(pair, fetch);
+    fetch.finally(() => this.pendingPrices.delete(pair)).catch(() => {});
+
+    try {
+      const ticker = await fetch;
+      const fetchedAtMs = this.priceCache.get(pair)?.fetchedAt ?? Date.now();
+      return {
+        pair,
+        ticker,
+        marketDataVenue: "KRAKEN",
+        source: "KRAKEN_MARKET_DATA",
+        fetchedAt: new Date(fetchedAtMs),
+        ageMs: Date.now() - fetchedAtMs,
+        maxAgeMs: ttl,
+        fresh: Date.now() - fetchedAtMs < ttl,
+        cached: false,
+      };
+    } catch (e: unknown) {
+      console.warn(`[MDS] getFreshTickerSnapshot(${pair}) error: ${(e as Error).message}`);
+      return null;
+    }
   }
 }
 

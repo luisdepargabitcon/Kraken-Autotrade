@@ -47,7 +47,7 @@ export function buildGridExecutionMarketSnapshot(input: {
   if (!Number.isFinite(bid) || bid == null || bid <= 0) return invalid("EXECUTION_MARKET_BID_INVALID", "El BID de Revolut X no es válido.");
   if (!Number.isFinite(ask) || ask == null || ask <= bid) return invalid("EXECUTION_MARKET_ASK_INVALID", "El ASK de Revolut X no es válido o no supera al BID.");
   if (last != null && (!Number.isFinite(last) || last <= 0)) return invalid("EXECUTION_MARKET_TIMESTAMP_INVALID", "El último precio de Revolut X no es válido.");
-  if (!input.source.toUpperCase().includes("REVOLUT")) return invalid("EXECUTION_MARKET_SOURCE_INVALID", "La fuente no identifica Revolut X de forma inequívoca.");
+  if (!input.source.toUpperCase().includes("REVOLUT") && !input.source.toUpperCase().includes("KRAKEN")) return invalid("EXECUTION_MARKET_SOURCE_INVALID", "La fuente no identifica ni Revolut X ni Kraken de forma inequívoca.");
   if (timestamp != null) {
     if (!Number.isFinite(timestamp.getTime())) return invalid("EXECUTION_MARKET_TIMESTAMP_INVALID", "El timestamp de mercado no es válido.");
     if (timestamp.getTime() > fetchedAt.getTime() + maxFutureSkewMs) return invalid("EXECUTION_MARKET_FUTURE_TIMESTAMP", "El timestamp de mercado está excesivamente en el futuro.");
@@ -57,5 +57,9 @@ export function buildGridExecutionMarketSnapshot(input: {
   }
   const referencePrice = last ?? (bid + ask) / 2;
   const spreadUsd = ask - bid;
-  return { pair: input.pair, venue: "REVOLUT_X", bid, ask, last, spreadUsd, spreadPct: spreadUsd / bid * 100, priceTickSize: input.constraints.priceTickSize, priceTickPct: input.constraints.priceTickSize / referencePrice * 100, source: input.source, timestamp, acquiredAt, fetchedAt, maxAgeMs, fresh: true, verified: true, reasonCode: null, explanation: "Snapshot de microestructura Revolut X verificado." };
+  const isKrakenSource = input.source.toUpperCase().includes("KRAKEN");
+  const explanation = isKrakenSource
+    ? "Ticker de referencia Kraken verificado para planificación Grid. Constraints Revolut X verificadas."
+    : "Snapshot de microestructura Revolut X verificado.";
+  return { pair: input.pair, venue: "REVOLUT_X", bid, ask, last, spreadUsd, spreadPct: spreadUsd / bid * 100, priceTickSize: input.constraints.priceTickSize, priceTickPct: input.constraints.priceTickSize / referencePrice * 100, source: input.source, timestamp, acquiredAt, fetchedAt, maxAgeMs, fresh: true, verified: true, reasonCode: null, explanation };
 }

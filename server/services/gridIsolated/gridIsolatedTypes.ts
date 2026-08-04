@@ -1008,3 +1008,94 @@ export type RevolutXGridFailureStage =
   | "FRESHNESS"           // Snapshot or constraints TTL expired
   | "NETWORK"             // DNS, TLS, timeout, connection refused
   | "UNKNOWN";            // Uncategorized exception
+
+// ─── REV-C12E: Kraken reference market + Revolut X execution capability ──────
+// Architectural separation: Kraken provides market data for planning;
+// Revolut X provides execution constraints and order placement only.
+
+// REV-C12E: Reference market reason codes (Kraken data failures)
+export type GridReferenceMarketReasonCode =
+  | "REFERENCE_MARKET_UNAVAILABLE"
+  | "REFERENCE_MARKET_STALE"
+  | "REFERENCE_MARKET_BID_INVALID"
+  | "REFERENCE_MARKET_ASK_INVALID"
+  | "REFERENCE_MARKET_LAST_INVALID"
+  | "REFERENCE_MARKET_PAIR_MISMATCH"
+  | "REFERENCE_MARKET_SOURCE_INVALID";
+
+// REV-C12E: Execution capability reason codes (Revolut X execution readiness)
+export type GridExecutionCapabilityReasonCode =
+  | "REVOLUT_X_NOT_INITIALIZED"
+  | "REVOLUT_X_CONSTRAINTS_UNAVAILABLE"
+  | "REVOLUT_X_CONSTRAINTS_STALE"
+  | "POST_ONLY_NOT_ENFORCED"
+  | "TAKER_FALLBACK_NOT_DISABLED"
+  | "LEGACY_TAKER_POLICY_BLOCKED";
+
+// REV-C12E: Post-only rejection reason (when all maker attempts exhausted)
+export type GridPostOnlyRejectionReasonCode =
+  | "POST_ONLY_REJECTED_REPRICE_REQUIRED";
+
+// REV-C12E: Reference market snapshot from Kraken
+export interface GridReferenceMarketSnapshot {
+  pair: string;
+  marketDataVenue: "KRAKEN";
+  executionVenue: "REVOLUT_X";
+  source: "KRAKEN_MARKET_DATA";
+
+  bid: number;
+  ask: number;
+  last: number;
+
+  spreadUsd: number;
+  spreadPct: number;
+
+  timestamp: Date;
+  fetchedAt: Date;
+  ageMs: number;
+  maxAgeMs: number;
+  fresh: boolean;
+
+  verifiedForPlanning: boolean;
+  authoritativeForVenueCrossing: false;
+
+  reasonCode: GridReferenceMarketReasonCode | null;
+  explanation: string;
+}
+
+// REV-C12E: Execution capability snapshot from Revolut X
+export interface GridExecutionCapabilitySnapshot {
+  executionVenue: "REVOLUT_X";
+
+  initialized: boolean;
+
+  pairConstraintsVerified: boolean;
+  pairConstraintsFresh: boolean;
+
+  priceTickSize: number | null;
+  quantityStep: number | null;
+  minOrderBase: number | null;
+  minOrderQuote: number | null;
+  minOrderUsd: number | null;
+
+  postOnlyRequired: true;
+  takerFallbackAllowed: false;
+
+  verified: boolean;
+  reasonCode: GridExecutionCapabilityReasonCode | null;
+  explanation: string;
+}
+
+// REV-C12E: Planning gate — separates canPlanRange, canCreateRange, canSubmitMakerOrder
+export interface GridPlanningGate {
+  canPlanRange: boolean;
+  canCreateRange: boolean;
+  canSubmitMakerOrder: boolean;
+  allowCycleExits: true;
+
+  referenceMarket: GridReferenceMarketSnapshot | null;
+  executionCapability: GridExecutionCapabilitySnapshot | null;
+
+  blockers: string[];
+  evaluatedAt: string;
+}

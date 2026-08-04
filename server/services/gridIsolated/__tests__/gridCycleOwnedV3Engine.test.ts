@@ -562,11 +562,11 @@ describe("Gate E — buildGridExecutionMarketSnapshot edge cases", () => {
     expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_ASK_INVALID");
   });
 
-  it("E-S3: rechaza fuente sin REVOLUT con EXECUTION_MARKET_SOURCE_INVALID", () => {
+  it("E-S3: rechaza fuente sin REVOLUT ni KRAKEN con EXECUTION_MARKET_SOURCE_INVALID", () => {
     const now = new Date();
     const snapshot = buildGridExecutionMarketSnapshot({
       pair: "BTC/USD", ticker: makeTicker(), constraints: makeConstraints(),
-      source: "kraken_ticker", timestamp: now, acquiredAt: now, now,
+      source: "binance_ticker", timestamp: now, acquiredAt: now, now,
     });
     expect(snapshot.verified).toBe(false);
     expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_SOURCE_INVALID");

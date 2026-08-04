@@ -96,6 +96,7 @@ import {
   validateRiskStateJson,
   validateTargetCalculationJson,
 } from "./gridJsonbValidators";
+import { resolveGridMarketAndConstraints } from "./gridPlanningContextResolver";
 import {
   DEFAULT_GRID_CONFIG,
   DAILY_ORDER_REQUEST_LIMIT,
@@ -1332,46 +1333,48 @@ export class GridIsolatedEngine {
       }
     }
 
-    let pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
-    let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
-    // REV-C12C: resolveGridPairConstraints never throws in practice (all exceptions caught internally).
-    // Safety catch handles the edge case of an invalid pair format string.
-    try {
-      pairConstraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
-    } catch {
-      pairConstraints = { pair: this.config.pair, normalizedPair: this.config.pair.replace("/", "-").toUpperCase(), executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region: null, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE" };
-    }
-    // REV-C12C: getTicker is in its own try/catch to preserve pairConstraints resolved above
-    // and emit a structured log with the real error message and failure stage.
-    // Previously a single catch block overwrote valid constraints and swallowed the real error.
-    try {
-      const acquiredAt = new Date();
-      const ticker = await revolutXService.getTicker(this.config.pair);
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints: pairConstraints, source: "REVOLUT_X_TICKER", acquiredAt });
-    } catch (tickerErr) {
-      const failureStage: RevolutXGridFailureStage = "TICKER_FETCH";
-      botLogger.warn("GRID_REVOLUTX_TICKER_FAILED", `RevolutX ticker no disponible para ${this.config.pair}: ${tickerErr instanceof Error ? tickerErr.message : String(tickerErr)}`, {
-        event: "GRID_REVOLUTX_PROJECTION_BLOCKED",
+    // REV-C12E: Single shared implementation resolves pair constraints (Revolut X),
+    // Kraken reference market, execution capability, and execution market snapshot.
+    // Used identically here and in manual rebuild — no duplicated logic.
+    // revolutXService.getTicker() is NOT called anywhere in this flow.
+    const marketAndConstraints = await resolveGridMarketAndConstraints({
+      pair: this.config.pair,
+      executionPolicy: this.config.executionPolicy,
+      takerFallbackEnabled: this.config.takerFallbackEnabled,
+    });
+    const pairConstraints = marketAndConstraints.pairConstraints;
+    const referenceMarket = marketAndConstraints.referenceMarket;
+    const executionCapability = marketAndConstraints.executionCapability;
+    const executionMarketSnapshot = marketAndConstraints.executionMarketSnapshot;
+
+    if (!referenceMarket.verifiedForPlanning) {
+      botLogger.warn("GRID_REFERENCE_MARKET_UNAVAILABLE", `Ticker de referencia Kraken no disponible para ${this.config.pair}: ${referenceMarket.explanation}`, {
         pair: this.config.pair,
-        stage: failureStage,
-        reasonCode: "REVOLUT_X_TICKER_FETCH_FAILED",
-        executionVenue: "REVOLUT_X",
+        reasonCode: referenceMarket.reasonCode,
+        source: "KRAKEN_MARKET_DATA",
         constraintsVerified: pairConstraints.verified,
-        constraintsSource: pairConstraints.source,
-        constraintsReasonCode: pairConstraints.reasonCode,
         canCreateRange: false,
         allowCycleExits: true,
       });
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker: null, constraints: pairConstraints, source: "REVOLUT_X_TICKER_FETCH_FAILED", acquiredAt: new Date() });
+    }
+
+    // REV-C12E: legacy taker policies are blocked from creating new entries.
+    if (!executionCapability.verified && executionCapability.reasonCode === "LEGACY_TAKER_POLICY_BLOCKED") {
+      botLogger.warn("GRID_LEGACY_POLICY_BLOCKED", executionCapability.explanation, {
+        pair: this.config.pair,
+        executionPolicy: this.config.executionPolicy,
+        canCreateRange: false,
+        allowCycleExits: true,
+      });
     }
 
     const allowCycleExits = true;
-    const allowRangeBuys = executionMarketSnapshot.verified === true && executionMarketSnapshot.fresh === true && pairConstraints.verified === true && !this.circuitBreakerOpen && !pumpGuard.active;
+    const allowRangeBuys = executionMarketSnapshot.verified === true && executionMarketSnapshot.fresh === true && pairConstraints.verified === true && executionCapability.verified === true && !this.circuitBreakerOpen && !pumpGuard.active;
     const allowRangeRebuild = allowRangeBuys && bandSnapshot.suitableForGrid;
     const allowNewRange = allowRangeRebuild;
     if (!allowRangeBuys) {
       blockNewRangesAndBuys = true;
-      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Precios de ejecución no disponibles: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", { pair: this.config.pair, reasonCode: executionMarketSnapshot.reasonCode ?? pairConstraints.reasonCode, source: executionMarketSnapshot.source, allowCycleExits });
+      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Precios de ejecución no disponibles: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", { pair: this.config.pair, reasonCode: executionMarketSnapshot.reasonCode ?? pairConstraints.reasonCode ?? executionCapability.reasonCode, source: executionMarketSnapshot.source, allowCycleExits });
     }
 
     // REV-C12A: Store in-memory execution gate state after real tick evaluation.
@@ -5026,15 +5029,25 @@ export class GridIsolatedEngine {
       return { success: false, reason: "Could not fetch band snapshot from market data", dryRun };
     }
 
-    let pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
-    let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
-    try {
-      pairConstraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
-      const acquiredAt = new Date();
-      const ticker = await revolutXService.getTicker(this.config.pair);
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints: pairConstraints, source: "REVOLUT_X_TICKER", acquiredAt });
-    } catch {
-      return { success: false, reason: "Could not obtain verified Revolut X execution microstructure", dryRun };
+    // REV-C12E: Manual rebuild uses the same shared implementation as tick() —
+    // resolveGridMarketAndConstraints. No duplicated logic between call sites.
+    const marketAndConstraintsRebuild = await resolveGridMarketAndConstraints({
+      pair: this.config.pair,
+      executionPolicy: this.config.executionPolicy,
+      takerFallbackEnabled: this.config.takerFallbackEnabled,
+    });
+    const pairConstraints = marketAndConstraintsRebuild.pairConstraints;
+    const referenceMarketRebuild = marketAndConstraintsRebuild.referenceMarket;
+    const executionCapabilityRebuild = marketAndConstraintsRebuild.executionCapability;
+    const executionMarketSnapshot = marketAndConstraintsRebuild.executionMarketSnapshot;
+    if (!pairConstraints.verified) {
+      return { success: false, reason: "Could not resolve Revolut X pair constraints", dryRun };
+    }
+    if (!referenceMarketRebuild.verifiedForPlanning) {
+      return { success: false, reason: `Kraken reference market unavailable: ${referenceMarketRebuild.explanation}`, dryRun };
+    }
+    if (!executionCapabilityRebuild.verified) {
+      return { success: false, reason: `Revolut X execution capability unavailable: ${executionCapabilityRebuild.explanation}`, dryRun };
     }
 
     const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);

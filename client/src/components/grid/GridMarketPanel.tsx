@@ -130,6 +130,9 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
   const gateBlocked = gateStatus === "BLOCKED";
   const gateNoEvaluation = gateStatus === "NO_RECENT_EVALUATION";
 
+  // REV-C12E: labels come from the view model (server-derived) — never deduced in React.
+  const dataSourceInfo = current.dataSourceInfo ?? null;
+
   return (
     <div className="space-y-4">
       {/* Current market */}
@@ -176,8 +179,14 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
           </div>
 
           <div className="text-xs text-muted-foreground space-y-0.5">
-            <p>Referencia de mercado: Kraken</p>
-            <p>Exchange previsto de ejecución: Revolut X</p>
+            <p>{`Fuente de precios: ${dataSourceInfo?.marketDataSourceLabel ?? "Kraken"}`}</p>
+            <p>{`Venue de ejecución: ${dataSourceInfo?.executionVenueLabel ?? "Revolut X"}`}</p>
+            <p>{`Política: ${dataSourceInfo?.executionPolicyLabel ?? "Maker-only / Post-only"}`}</p>
+            <p>{`Fallback taker: ${dataSourceInfo?.takerFallbackLabel ?? "Desactivado"}`}</p>
+            <p>{`Constraints: ${dataSourceInfo?.constraintsSourceLabel ?? "Revolut X"}`}</p>
+            {dataSourceInfo?.infoText && (
+              <p className="pt-1 italic text-[10px]">{dataSourceInfo.infoText}</p>
+            )}
           </div>
 
           {/* REV-C12A: Real Revolut X execution gate — always visible, not derived from safeToApply */}
@@ -206,12 +215,12 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
             )}
             {gateNoEvaluation && (
               <p className="text-[10px] text-muted-foreground">
-                No existe una evaluación reciente del gate de ejecución. El motor evaluará la microestructura de Revolut X en el próximo tick.
+                No existe una evaluación reciente del gate de ejecución. El motor evaluará el ticker de referencia Kraken y las constraints de Revolut X en el próximo tick.
               </p>
             )}
             {gateVerified && (
               <p className="text-[10px] text-muted-foreground">
-                Microestructura y constraints de Revolut X verificadas. Evaluado: {executionGate?.evaluatedAt ?? "—"}
+                Ticker de referencia Kraken y constraints de Revolut X verificadas. Evaluado: {executionGate?.evaluatedAt ?? "—"}
                 {executionGate?.ageMs != null && executionGate?.maxAgeMs != null && ` · Edad: ${Math.round(executionGate.ageMs / 1000)}s/${Math.round(executionGate.maxAgeMs / 1000)}s`}
                 {executionGate?.validUntil && ` · Válido hasta: ${new Date(executionGate.validUntil).toLocaleTimeString()}`}
               </p>
