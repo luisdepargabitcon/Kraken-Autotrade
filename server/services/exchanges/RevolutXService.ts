@@ -39,31 +39,20 @@ export function extractRevolutXPairConfigurationEntries(
 
   // A. Root array.
   if (Array.isArray(response)) {
-    if (response.length === 0) {
-      throw new Error("Respuesta inválida de configuration/pairs");
-    }
-    return response.filter(isCandidatePairEntry) as RevolutXPairConfigurationRaw[];
+    return filterAndRequirePairEntries(response);
   }
 
   // B. Wrapper { pairs: [...] }.
   if (typeof response === "object") {
     const wrapperPairs = (response as any).pairs;
     if (Array.isArray(wrapperPairs)) {
-      if (wrapperPairs.length === 0) {
-        throw new Error("Respuesta inválida de configuration/pairs");
-      }
-      return wrapperPairs.filter(isCandidatePairEntry) as RevolutXPairConfigurationRaw[];
+      return filterAndRequirePairEntries(wrapperPairs);
     }
   }
 
   // C. Official root pair map: { "BTC/USD": { base, quote, ... }, ... }.
   if (typeof response === "object" && !Array.isArray(response)) {
-    const values = Object.values(response as Record<string, unknown>);
-    const entries = values.filter(isCandidatePairEntry);
-    if (entries.length === 0) {
-      throw new Error("Respuesta inválida de configuration/pairs");
-    }
-    return entries as RevolutXPairConfigurationRaw[];
+    return filterAndRequirePairEntries(Object.values(response as Record<string, unknown>));
   }
 
   throw new Error("Respuesta inválida de configuration/pairs");
@@ -75,6 +64,21 @@ function isCandidatePairEntry(value: unknown): boolean {
   if (typeof value !== "object") return false;
   const obj = value as Record<string, unknown>;
   return typeof obj.base === "string" && typeof obj.quote === "string";
+}
+
+function filterAndRequirePairEntries(
+  values: unknown[],
+): RevolutXPairConfigurationRaw[] {
+  const entries = values.filter(isCandidatePairEntry) as RevolutXPairConfigurationRaw[];
+  if (entries.length === 0) {
+    throw new Error("Respuesta inválida de configuration/pairs");
+  }
+  return entries;
+}
+
+function sanitizeRevolutXConstraintError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/[\r\n\t]+/g, " ").slice(0, 240);
 }
 
 export interface RevolutXPairConstraints {
@@ -138,8 +142,12 @@ export class RevolutXService implements IExchangeService {
     try {
       const response = await fetch(fullUrl, { headers });
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
+        const statusText = typeof response.statusText === "string" ? response.statusText.trim() : "";
+        throw new Error(
+          statusText
+            ? `RevolutX API error ${response.status} ${statusText}`
+            : `RevolutX API error ${response.status}`,
+        );
       }
       return (await response.json()) as T;
     } catch (error: any) {
@@ -875,7 +883,7 @@ export class RevolutXService implements IExchangeService {
     } catch (authErr) {
       console.warn("[revolutx] pair constraints authenticated resolution failed", {
         pair: normalizedPair,
-        reason: authErr instanceof Error ? authErr.message : String(authErr),
+        reason: sanitizeRevolutXConstraintError(authErr),
       });
     }
 
@@ -888,7 +896,7 @@ export class RevolutXService implements IExchangeService {
       console.warn("[revolutx] pair constraints public resolution failed", {
         pair: normalizedPair,
         region,
-        reason: publicErr instanceof Error ? publicErr.message : String(publicErr),
+        reason: sanitizeRevolutXConstraintError(publicErr),
       });
     }
 

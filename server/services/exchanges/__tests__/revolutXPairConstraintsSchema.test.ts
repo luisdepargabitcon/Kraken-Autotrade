@@ -153,6 +153,44 @@ describe("extractRevolutXPairConfigurationEntries", () => {
   it("no acepta pairs vacío", () => {
     expect(() => extractRevolutXPairConfigurationEntries({ pairs: [] })).toThrow();
   });
+
+  it("array no vacío sin entries válidas → throw", () => {
+    expect(() =>
+      extractRevolutXPairConfigurationEntries([
+        null,
+        "invalid",
+        { error: "bad response" },
+      ]),
+    ).toThrow();
+  });
+
+  it("wrapper no vacío sin entries válidas → throw", () => {
+    expect(() =>
+      extractRevolutXPairConfigurationEntries({
+        pairs: [null, "invalid", { error: "bad response" }],
+      }),
+    ).toThrow();
+  });
+
+  it("array mixto conserva solo el par válido", () => {
+    const entries = extractRevolutXPairConfigurationEntries([
+      null,
+      { error: "ignored" },
+      officialBtcUsd,
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].base).toBe("BTC");
+    expect(entries[0].quote).toBe("USD");
+  });
+
+  it("wrapper mixto conserva solo el par válido", () => {
+    const entries = extractRevolutXPairConfigurationEntries({
+      pairs: [null, { error: "ignored" }, officialBtcUsd],
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].base).toBe("BTC");
+    expect(entries[0].quote).toBe("USD");
+  });
 });
 
 describe("RevolutXService.resolveGridPairConstraints — schema integration", () => {
@@ -163,16 +201,22 @@ describe("RevolutXService.resolveGridPairConstraints — schema integration", ()
   };
   let fetchMock: ReturnType<typeof vi.fn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let previousInitialized: boolean;
+  let previousGetHeaders: () => Record<string, string>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     service.clearPairConstraintsCache();
+    previousInitialized = asInternal.initialized;
+    previousGetHeaders = asInternal.getHeaders;
     asInternal.initialized = true;
     asInternal.getHeaders = () => ({});
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -180,18 +224,21 @@ describe("RevolutXService.resolveGridPairConstraints — schema integration", ()
     vi.restoreAllMocks();
     vi.useRealTimers();
     service.clearPairConstraintsCache();
+    asInternal.initialized = previousInitialized;
+    asInternal.getHeaders = previousGetHeaders;
   });
 
-  const jsonResponse = (body: unknown, ok = true) => ({
+  const jsonResponse = (body: unknown, ok = true, status = ok ? 200 : 500, statusText = ok ? "OK" : "Internal Server Error") => ({
     ok,
-    status: ok ? 200 : 500,
+    status,
+    statusText,
     json: async () => body,
-    text: async () => "error",
+    text: async () => typeof body === "string" ? body : JSON.stringify(body),
   });
-  const mockAuthenticated = (body: unknown, ok = true) =>
-    fetchMock.mockResolvedValueOnce(jsonResponse(body, ok));
-  const mockPublic = (body: unknown, ok = true) =>
-    fetchMock.mockResolvedValueOnce(jsonResponse(body, ok));
+  const mockAuthenticated = (body: unknown, ok = true, status?: number, statusText?: string) =>
+    fetchMock.mockResolvedValueOnce(jsonResponse(body, ok, status, statusText));
+  const mockPublic = (body: unknown, ok = true, status?: number, statusText?: string) =>
+    fetchMock.mockResolvedValueOnce(jsonResponse(body, ok, status, statusText));
 
   it("auth devuelve mapa raíz oficial: verified=true con constraints correctas", async () => {
     mockAuthenticated({ "BTC/USD": officialBtcUsd, "ETH/USD": officialEthUsd });
@@ -294,31 +341,67 @@ describe("RevolutXService.resolveGridPairConstraints — schema integration", ()
     expect(result.reasonCode).toBe("PAIR_CONSTRAINTS_UNAVAILABLE");
   });
 
-  it("log auth sanitizado se emite cuando auth falla", async () => {
-    mockAuthenticated({}, false);
+  it("error autenticado HTTP 401 con body sensible no aparece en ningún log", async () => {
+    const SENSITIVE = "SECRET_BODY_SENTINEL_PRIVATE_KEY_TOKEN";
+    mockAuthenticated(SENSITIVE, false, 401, "Unauthorized");
     mockPublic({ "BTC/USD": officialBtcUsd });
-    await service.resolveGridPairConstraints("BTC/USD");
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[revolutx] pair constraints authenticated resolution failed",
-      expect.objectContaining({ pair: "BTC-USD" }),
-    );
-    const logged = warnSpy.mock.calls.find(
-      (c) => c[0] === "[revolutx] pair constraints authenticated resolution failed",
-    );
-    expect(logged).toBeDefined();
-    const meta = logged![1] as Record<string, unknown>;
-    expect(meta).toHaveProperty("reason");
-    expect(meta).not.toHaveProperty("apiKey");
-    expect(meta).not.toHaveProperty("privateKey");
+    await service.resolveGridPairConstraints("BTC/USD", "EEA");
+
+    const serializedLogs = JSON.stringify([
+      ...errorSpy.mock.calls,
+      ...warnSpy.mock.calls,
+    ]);
+
+    expect(serializedLogs).not.toContain(SENSITIVE);
+    expect(serializedLogs).not.toContain("PRIVATE KEY");
+    expect(serializedLogs).not.toContain("PRIVATE_KEY_TOKEN");
+    expect(serializedLogs).toContain("401");
+    expect(serializedLogs).toContain("BTC-USD");
   });
 
-  it("log público sanitizado se emite cuando público falla", async () => {
-    mockAuthenticated({}, false);
-    mockPublic({}, false);
-    await service.resolveGridPairConstraints("BTC/USD", "EEA");
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[revolutx] pair constraints public resolution failed",
-      expect.objectContaining({ pair: "BTC-USD", region: "EEA" }),
+  it("reason no contiene saltos de línea", async () => {
+    const multiLineError = new Error("line1\nline2\tline3\nline4");
+    mockAuthenticated({}, false, 500, "Internal Server Error");
+    mockPublic({ "BTC/USD": officialBtcUsd });
+    // Override getPairConfigurations to throw a multi-line error
+    const original = (service as any).getPairConfigurations.bind(service);
+    (service as any).getPairConfigurations = vi.fn().mockRejectedValueOnce(multiLineError);
+    try {
+      await service.resolveGridPairConstraints("BTC/USD", "EEA");
+    } finally {
+      (service as any).getPairConfigurations = original;
+    }
+
+    const authLog = warnSpy.mock.calls.find(
+      (c) => c[0] === "[revolutx] pair constraints authenticated resolution failed",
     );
+    expect(authLog).toBeDefined();
+    const meta = authLog![1] as Record<string, unknown>;
+    const reason = meta.reason as string;
+    expect(reason).not.toContain("\n");
+    expect(reason).not.toContain("\t");
+    expect(reason).not.toContain("\r");
+  });
+
+  it("reason tiene longitud máxima 240", async () => {
+    const longMessage = "A".repeat(500);
+    const longError = new Error(longMessage);
+    mockAuthenticated({}, false, 500, "Internal Server Error");
+    mockPublic({ "BTC/USD": officialBtcUsd });
+    const original = (service as any).getPairConfigurations.bind(service);
+    (service as any).getPairConfigurations = vi.fn().mockRejectedValueOnce(longError);
+    try {
+      await service.resolveGridPairConstraints("BTC/USD", "EEA");
+    } finally {
+      (service as any).getPairConfigurations = original;
+    }
+
+    const authLog = warnSpy.mock.calls.find(
+      (c) => c[0] === "[revolutx] pair constraints authenticated resolution failed",
+    );
+    expect(authLog).toBeDefined();
+    const meta = authLog![1] as Record<string, unknown>;
+    const reason = meta.reason as string;
+    expect(reason.length).toBeLessThanOrEqual(240);
   });
 });
