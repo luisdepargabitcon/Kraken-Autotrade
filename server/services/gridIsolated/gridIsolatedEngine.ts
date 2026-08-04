@@ -1567,50 +1567,17 @@ export class GridIsolatedEngine {
     if (!pairConstraints.verified) return { ok: false, reasonCode: "PAIR_CONSTRAINTS_INVALID", explanation: "Constraints del par no verificadas." };
     if (executionMarketSnapshot.pair !== this.config.pair) return { ok: false, reasonCode: "EXECUTION_MARKET_PAIR_MISMATCH", explanation: "El par del snapshot no coincide con el par configurado." };
 
-    // REV-C12B: Reuse pre-resolved allocation when available (single allocation per tick).
-    const allocation = preResolvedAllocation ?? await gridCapitalAllocator.allocate(
-      this.config.capitalProfile,
-      10,
-      this.config.netProfitTargetPct,
-      {
-        maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
-        allocationMode: this.config.gridAllocationMode ?? "uniform",
-        deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
-        progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
-        maxLevelPct: this.config.gridMaxLevelPct ?? 40,
-        minLevelUsd: this.config.gridMinLevelUsd ?? 30,
-      }
-    );
-
-    // REV-C12E: Reuse pre-resolved projection context when available.
-    // When not provided, resolve it here (fallback for non-orchestrator callers).
-    let projectionCtx: GridProfessionalProjectionContext;
-    if (preResolvedProjectionContext) {
-      projectionCtx = preResolvedProjectionContext;
-    } else {
-      // REV-C12A/REV-C12B: Use shared professional projection context — single source of truth.
-      const configuredBuyLevels = Math.floor(allocation.levelsCount / 2);
-      const configuredSellLevels = allocation.levelsCount - configuredBuyLevels;
-      const projectionCtxResult = resolveGridProfessionalProjectionContext({
-        currentPrice: bandSnapshot.midPrice,
-        bollingerMiddle: bandSnapshot.middle,
-        bollingerUpper: bandSnapshot.upper,
-        bollingerLower: bandSnapshot.lower,
-        atrPct: bandSnapshot.atrPct,
-        config: this.config,
-        configuredBuyLevels,
-        configuredSellLevels,
-        allocation,
-        executionMarketSnapshot,
-        pairConstraints,
-        regimeLabel: bandSnapshot.regime ?? "",
-        marketSuitable: bandSnapshot.suitableForGrid ?? false,
-      });
-      if (!projectionCtxResult.ok) {
-        return { ok: false, reasonCode: projectionCtxResult.reasonCode, explanation: projectionCtxResult.explanation };
-      }
-      projectionCtx = projectionCtxResult.context;
+    // REV-C12E: Allocation and projection context are mandatory — they must be
+    // pre-resolved by the orchestrator (resolveGridPlanningContext). No fallback
+    // to gridCapitalAllocator.allocate or resolveGridProfessionalProjectionContext.
+    if (!preResolvedAllocation) {
+      return { ok: false, reasonCode: "PLANNING_CONTEXT_INCOMPLETE", explanation: "Falta allocation pre-resuelto del orquestador." };
     }
+    if (!preResolvedProjectionContext) {
+      return { ok: false, reasonCode: "PLANNING_CONTEXT_INCOMPLETE", explanation: "Falta projection context pre-resuelto del orquestador." };
+    }
+    const allocation = preResolvedAllocation;
+    const projectionCtx = preResolvedProjectionContext;
 
     const professionalResult = generateProfessionalGridLevels(buildProfessionalGeneratorInput(projectionCtx));
 
@@ -5044,7 +5011,11 @@ export class GridIsolatedEngine {
     const referenceMarketRebuild = planningContextRebuild.referenceMarket;
     const executionCapabilityRebuild = planningContextRebuild.executionCapability;
     const executionMarketSnapshot = planningContextRebuild.executionMarketSnapshot;
+    // REV-C12E: Extract pre-resolved allocation and projection context from orchestrator.
     const rebuildAllocation = planningContextRebuild.allocation;
+    const rebuildProjectionContext = planningContextRebuild.projectionContextResult?.ok
+      ? planningContextRebuild.projectionContextResult.context
+      : null;
     if (!pairConstraints.verified) {
       return { success: false, reason: "Could not resolve Revolut X pair constraints", dryRun };
     }
@@ -5054,8 +5025,24 @@ export class GridIsolatedEngine {
     if (!executionCapabilityRebuild.verified) {
       return { success: false, reason: `Revolut X execution capability unavailable: ${executionCapabilityRebuild.explanation}`, dryRun };
     }
+    // REV-C12E: Mandatory pre-resolved context — abort if incomplete.
+    if (!rebuildAllocation) {
+      return { success: false, reason: "Planning context incomplete: allocation missing", dryRun };
+    }
+    if (!rebuildProjectionContext) {
+      return { success: false, reason: "Planning context incomplete: projection context missing", dryRun };
+    }
+    if (!planningContextRebuild.ttl.fresh) {
+      return { success: false, reason: "Planning context stale: TTL expired", dryRun };
+    }
+    if (!planningContextRebuild.validUntil) {
+      return { success: false, reason: "Planning context incomplete: validUntil missing", dryRun };
+    }
+    if (!planningContextRebuild.gate.canCreateRange) {
+      return { success: false, reason: `Planning context gate blocked: ${planningContextRebuild.blockers.join(", ")}`, dryRun };
+    }
 
-    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints, rebuildAllocation ?? undefined);
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints, rebuildAllocation, rebuildProjectionContext);
     if (!proposal.ok) {
       await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", `Rebuild manual abortado: ${proposal.explanation}`, {
         rangeVersionId: oldRange.id,
@@ -5071,7 +5058,8 @@ export class GridIsolatedEngine {
       return { success: true, dryRun: true, oldRangeVersionId: oldRange.id, replacedLevelsCount: plannedLevels.length, newLevelsCount: proposal.gridLevels.length, beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal }, reason };
     }
 
-    await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    // REV-C12E: Rebuild real reuses pre-resolved allocation and projection context.
+    await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints, rebuildAllocation, rebuildProjectionContext);
     if (!this.activeRangeVersion || this.activeRangeVersion.id === oldRange.id) {
       return { success: false, dryRun, reason: "Atomic rebuild did not commit", oldRangeVersionId: oldRange.id, replacedLevelsCount: 0, newLevelsCount: 0, beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal } };
     }

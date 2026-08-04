@@ -41,6 +41,8 @@ const now = new Date();
 
 const validSnapshot: GridExecutionMarketSnapshot = {
   pair: "BTC/USD",
+  marketDataVenue: "REVOLUT_X",
+  executionVenue: "REVOLUT_X",
   venue: "REVOLUT_X",
   bid: 94990,
   ask: 95010,
@@ -177,7 +179,7 @@ describe("gridProfessionalProjectionContext — REV-C12A/REV-C12B", () => {
     });
 
     it("returns context with microstructureVerified=false when snapshot venue is not REVOLUT_X", () => {
-      const result = resolveGridProfessionalProjectionContext(makeValidInput({ executionMarketSnapshot: { ...validSnapshot, venue: "KRAKEN" as any } }));
+      const result = resolveGridProfessionalProjectionContext(makeValidInput({ executionMarketSnapshot: { ...validSnapshot, executionVenue: "KRAKEN" as any, venue: "KRAKEN" as any } }));
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.context.microstructureVerified).toBe(false);
     });

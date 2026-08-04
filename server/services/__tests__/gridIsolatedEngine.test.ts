@@ -107,7 +107,7 @@ vi.mock("../exchanges/RevolutXService", () => ({
       region: "EU",
       source: "revolutx",
       fetchedAt: new Date(),
-      expiresAt: null,
+      expiresAt: new Date(Date.now() + 900_000),
       verified: true,
       reasonCode: null,
     }),

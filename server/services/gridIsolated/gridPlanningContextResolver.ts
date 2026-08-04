@@ -238,36 +238,44 @@ export async function resolveGridPlanningContext(
     blockers.push(executionCapability.reasonCode ?? "EXECUTION_CAPABILITY_UNAVAILABLE");
   }
 
-  // Determine if we can plan/create range
+  // REV-C12E: Separate market+capability readiness from full canCreateRange.
+  // canPlanRange only requires band + reference market.
+  // canCreateRange requires market+capability AND allocation+split+projection+TTL.
+  const marketAndCapabilityReady =
+    bandSnapshot != null &&
+    bandSnapshot.suitableForGrid &&
+    referenceMarket.verifiedForPlanning &&
+    executionCapability.verified;
+
   const canPlanRange =
     bandSnapshot != null &&
     bandSnapshot.suitableForGrid &&
     referenceMarket.verifiedForPlanning;
 
-  const canCreateRange =
-    canPlanRange &&
-    executionCapability.verified;
-
-  // 7. Allocation — resolve only once, only when allowed
+  // 7. Allocation — resolve only once, only when marketAndCapabilityReady
   let allocation: CapitalAllocationResult | null = null;
-  if (canCreateRange && input.allocationInput) {
-    try {
-      allocation = await gridCapitalAllocator.allocate(
-        input.allocationInput.capitalProfile as any,
-        10,
-        input.allocationInput.netProfitTargetPct,
-        {
-          maxCapitalPerCycleUsd: input.allocationInput.maxCapitalPerCycleUsd,
-          allocationMode: input.allocationInput.allocationMode as any,
-          deploymentMode: input.allocationInput.deploymentMode as any,
-          progressiveIntensity: input.allocationInput.progressiveIntensity,
-          maxLevelPct: input.allocationInput.maxLevelPct,
-          minLevelUsd: input.allocationInput.minLevelUsd,
-        },
-      );
-    } catch {
-      allocation = null;
-      blockers.push("ALLOCATION_FAILED");
+  if (marketAndCapabilityReady) {
+    if (!input.allocationInput) {
+      blockers.push("ALLOCATION_INPUT_MISSING");
+    } else {
+      try {
+        allocation = await gridCapitalAllocator.allocate(
+          input.allocationInput.capitalProfile as any,
+          10,
+          input.allocationInput.netProfitTargetPct,
+          {
+            maxCapitalPerCycleUsd: input.allocationInput.maxCapitalPerCycleUsd,
+            allocationMode: input.allocationInput.allocationMode as any,
+            deploymentMode: input.allocationInput.deploymentMode as any,
+            progressiveIntensity: input.allocationInput.progressiveIntensity,
+            maxLevelPct: input.allocationInput.maxLevelPct,
+            minLevelUsd: input.allocationInput.minLevelUsd,
+          },
+        );
+      } catch {
+        allocation = null;
+        blockers.push("ALLOCATION_FAILED");
+      }
     }
   }
 
@@ -306,12 +314,29 @@ export async function resolveGridPlanningContext(
 
   // 10. TTL — compute once
   const ttl = computeGateTtl(executionMarketSnapshot, pairConstraints, evaluatedAt);
+  if (!ttl.fresh) {
+    blockers.push(ttl.staleReason ?? "TTL_STALE");
+  }
+  if (!ttl.validUntil) {
+    blockers.push("TTL_VALID_UNTIL_MISSING");
+  }
 
-  // 11. Build gate
+  // 11. Build gate — canCreateRange requires ALL conditions
   const canSubmitMakerOrder =
     executionCapability.verified &&
     executionCapability.postOnlyRequired &&
     !executionCapability.takerFallbackAllowed;
+
+  // REV-C12E: canCreateRange is fail-closed — requires market+capability+
+  // allocation+split+projection+TTL+no blockers.
+  const canCreateRange =
+    marketAndCapabilityReady &&
+    allocation !== null &&
+    symmetricSplit?.ok === true &&
+    projectionContextResult?.ok === true &&
+    ttl.fresh === true &&
+    ttl.validUntil !== null &&
+    blockers.length === 0;
 
   const gate: GridPlanningGate = {
     canPlanRange,

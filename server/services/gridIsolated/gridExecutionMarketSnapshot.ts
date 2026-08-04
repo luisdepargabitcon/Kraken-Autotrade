@@ -100,6 +100,17 @@ export function buildGridExecutionMarketSnapshot(input: {
   if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
     return invalid("EXECUTION_MARKET_STALE", "maxAgeMs no es válido.");
   }
+  // REV-C12E: Validate fetchedAt and acquiredAt are valid Dates.
+  if (!Number.isFinite(fetchedAt.getTime())) {
+    return invalid("EXECUTION_MARKET_TIMESTAMP_INVALID", "fetchedAt no es una fecha válida.");
+  }
+  if (!Number.isFinite(acquiredAt.getTime())) {
+    return invalid("EXECUTION_MARKET_TIMESTAMP_INVALID", "acquiredAt no es una fecha válida.");
+  }
+  // REV-C12E: fetchedAt must not be excessively in the future.
+  if (fetchedAt.getTime() > acquiredAt.getTime() + maxFutureSkewMs) {
+    return invalid("EXECUTION_MARKET_FUTURE_TIMESTAMP", "fetchedAt está excesivamente en el futuro.");
+  }
   if (timestamp != null) {
     if (!Number.isFinite(timestamp.getTime())) {
       return invalid("EXECUTION_MARKET_TIMESTAMP_INVALID", "El timestamp de mercado no es válido.");
@@ -110,7 +121,8 @@ export function buildGridExecutionMarketSnapshot(input: {
     if (acquiredAt.getTime() - timestamp.getTime() > maxAgeMs) {
       return invalid("EXECUTION_MARKET_STALE", isKrakenSource ? "El ticker de referencia de Kraken está caducado." : "El snapshot de Revolut X está caducado.");
     }
-  } else if (!Number.isFinite(fetchedAt.getTime()) || fetchedAt.getTime() - acquiredAt.getTime() > maxAgeMs) {
+  } else if (acquiredAt.getTime() - fetchedAt.getTime() >= maxAgeMs) {
+    // REV-C12E: Correct direction — acquiredAt - fetchedAt >= maxAgeMs → stale.
     return invalid("EXECUTION_MARKET_STALE", isKrakenSource ? "El ticker de referencia de Kraken se recibió fuera de la ventana de frescura." : "La respuesta de Revolut X se recibió fuera de la ventana de frescura.");
   }
 

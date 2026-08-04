@@ -593,12 +593,12 @@ describe("Gate E — buildGridExecutionMarketSnapshot edge cases", () => {
     expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_TIMESTAMP_INVALID");
   });
 
-  it("E-S6: rechaza por acquiredAt stale cuando no hay timestamp de mercado", () => {
+  it("E-S6: rechaza por fetchedAt stale cuando no hay timestamp de mercado", () => {
     const now = new Date();
-    const staleAcquired = new Date(now.getTime() - 60_000);
+    const staleFetched = new Date(now.getTime() - 60_000);
     const snapshot = buildGridExecutionMarketSnapshot({
       pair: "BTC/USD", ticker: makeTicker(), constraints: makeConstraints(),
-      source: "revolut_x_ticker", timestamp: null, acquiredAt: staleAcquired, now,
+      source: "revolut_x_ticker", timestamp: null, fetchedAt: staleFetched, acquiredAt: now, now,
     });
     expect(snapshot.verified).toBe(false);
     expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_STALE");

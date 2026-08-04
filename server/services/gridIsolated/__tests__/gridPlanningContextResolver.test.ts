@@ -28,6 +28,18 @@ vi.mock("../gridBandAdapter", () => ({
   getGridBandSnapshot: vi.fn(),
 }));
 
+vi.mock("../gridCapitalAllocator", () => ({
+  gridCapitalAllocator: {
+    allocate: vi.fn(),
+  },
+}));
+
+vi.mock("../gridProfessionalProjectionContext", () => ({
+  resolveGridProfessionalProjectionContext: vi.fn(),
+  splitSymmetricLevels: vi.fn(),
+  buildProfessionalGeneratorInput: vi.fn(),
+}));
+
 import {
   resolveGridPlanningContext,
   resolveGridMarketAndConstraints,
@@ -35,11 +47,16 @@ import {
 import { revolutXService } from "../../exchanges/RevolutXService";
 import { MarketDataService } from "../../MarketDataService";
 import { getGridBandSnapshot } from "../gridBandAdapter";
+import { gridCapitalAllocator } from "../gridCapitalAllocator";
+import { resolveGridProfessionalProjectionContext, splitSymmetricLevels } from "../gridProfessionalProjectionContext";
 
 const getFreshTickerSnapshotMock = MarketDataService.getFreshTickerSnapshot as any;
 const resolveGridPairConstraintsMock = revolutXService.resolveGridPairConstraints as any;
 const isInitializedMock = revolutXService.isInitialized as any;
 const getGridBandSnapshotMock = getGridBandSnapshot as any;
+const allocateMock = gridCapitalAllocator.allocate as any;
+const resolveProjectionMock = resolveGridProfessionalProjectionContext as any;
+const splitMock = splitSymmetricLevels as any;
 
 function validTicker(overrides: Partial<any> = {}) {
   return {
@@ -92,6 +109,72 @@ function validBand(overrides: Partial<any> = {}) {
     ...overrides,
   };
 }
+
+function validAllocation(overrides: Partial<any> = {}) {
+  return {
+    levelsCount: 10,
+    capitalPerLevelUsd: 100,
+    finalGridBudgetUsd: 1000,
+    totalBudgetUsd: 1000,
+    ...overrides,
+  };
+}
+
+function validProjectionContext(overrides: Partial<any> = {}) {
+  return {
+    currentPrice: 95000,
+    bollingerMiddle: 95000,
+    bollingerUpper: 96000,
+    bollingerLower: 94000,
+    atrPct: 1.2,
+    netProfitTargetPct: 0.5,
+    gridStepAtrMultiplier: 1.0,
+    gridStepMinPct: 0.1,
+    gridStepMaxPct: 2.0,
+    spreadPct: 0.02,
+    priceTickPct: 0.01,
+    configuredBuyLevels: 5,
+    configuredSellLevels: 5,
+    capitalPerLevelUsd: 100,
+    enforceCompactRange: false,
+    gridRangeMaxPct: 20,
+    maxDistanceFromCenterPct: 10,
+    maxSellDistanceFromNearestBuyPct: 5,
+    gridRangeControlMode: "auto",
+    adaptiveRangeEnabled: false,
+    adaptiveRangeProfile: "normal",
+    adaptiveRangeMinPct: 5,
+    adaptiveRangeMaxPct: 20,
+    adaptiveRangeLowVolMaxPct: 10,
+    adaptiveRangeNormalMaxPct: 20,
+    ...overrides,
+  };
+}
+
+const validConfig = {
+  pair: "BTC/USD",
+  executionPolicy: "MAKER_ONLY",
+  takerFallbackEnabled: false,
+  capitalProfile: "balanced",
+  netProfitTargetPct: 0.5,
+  gridMaxCapitalPerCycleUsd: 1000,
+  gridAllocationMode: "uniform",
+  gridCapitalDeploymentMode: "capped",
+  gridProgressiveIntensity: 0.30,
+  gridMaxLevelPct: 40,
+  gridMinLevelUsd: 30,
+};
+
+const validAllocationInput = {
+  capitalProfile: "balanced",
+  netProfitTargetPct: 0.5,
+  maxCapitalPerCycleUsd: 1000,
+  allocationMode: "uniform",
+  deploymentMode: "capped",
+  progressiveIntensity: 0.30,
+  maxLevelPct: 40,
+  minLevelUsd: 30,
+};
 
 describe("resolveGridMarketAndConstraints — REV-C12E", () => {
   beforeEach(() => {
@@ -246,6 +329,9 @@ describe("resolveGridPlanningContext — REV-C12E", () => {
     getFreshTickerSnapshotMock.mockResolvedValue(validTicker());
     resolveGridPairConstraintsMock.mockResolvedValue(validConstraints());
     getGridBandSnapshotMock.mockResolvedValue(validBand());
+    allocateMock.mockResolvedValue(validAllocation());
+    splitMock.mockReturnValue({ ok: true, buyLevels: 5, sellLevels: 5 });
+    resolveProjectionMock.mockReturnValue({ ok: true, context: validProjectionContext() });
   });
 
   const bandConfig = {
@@ -255,29 +341,116 @@ describe("resolveGridPlanningContext — REV-C12E", () => {
   it("1. Kraken fresh + constraints válidas + config válida → canPlanRange=true", async () => {
     const result = await resolveGridPlanningContext({
       pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
     });
     expect(result.gate.canPlanRange).toBe(true);
   });
 
-  it("2. Kraken fresh + constraints válidas → canCreateRange=true", async () => {
+  it("2. contexto íntegro → canCreateRange=true", async () => {
     const result = await resolveGridPlanningContext({
       pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
     });
     expect(result.gate.canCreateRange).toBe(true);
   });
 
-  it("14. allocation inválida no se resuelve aquí (delegada al engine) → canCreateRange no depende de allocation en este resolver", async () => {
+  it("3. allocation throw → canCreateRange=false (ALLOCATION_FAILED)", async () => {
+    allocateMock.mockRejectedValueOnce(new Error("alloc failed"));
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(result.gate.canCreateRange).toBe(false);
+    expect(result.gate.blockers).toContain("ALLOCATION_FAILED");
+  });
+
+  it("4. levelsCount impar → canCreateRange=false (SYMMETRIC_SPLIT_FAILED)", async () => {
+    allocateMock.mockResolvedValueOnce(validAllocation({ levelsCount: 11 }));
+    splitMock.mockReturnValueOnce({ ok: false });
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(result.gate.canCreateRange).toBe(false);
+    expect(result.gate.blockers).toContain("SYMMETRIC_SPLIT_FAILED");
+  });
+
+  it("5. projection context fail → canCreateRange=false", async () => {
+    resolveProjectionMock.mockReturnValueOnce({ ok: false, reasonCode: "PROJECTION_INVALID", explanation: "fail" });
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(result.gate.canCreateRange).toBe(false);
+    expect(result.gate.blockers).toContain("PROJECTION_INVALID");
+  });
+
+  it("6. TTL stale → canCreateRange=false", async () => {
+    // Make constraints expired so TTL is stale
+    resolveGridPairConstraintsMock.mockResolvedValueOnce(validConstraints({ expiresAt: new Date(Date.now() - 60000) }));
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(result.gate.canCreateRange).toBe(false);
+  });
+
+  it("7. validUntil null → canCreateRange=false", async () => {
+    // Both snapshot and constraints without valid dates → validUntil null
+    resolveGridPairConstraintsMock.mockResolvedValueOnce(validConstraints({ expiresAt: null }));
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(result.gate.canCreateRange).toBe(false);
+  });
+
+  it("8. contexto íntegro → canCreateRange=true (verificación completa)", async () => {
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(result.gate.canCreateRange).toBe(true);
+    expect(result.gate.blockers).toHaveLength(0);
+  });
+
+  it("9. blockers no vacíos → canCreateRange=false", async () => {
+    getGridBandSnapshotMock.mockResolvedValueOnce(validBand({ suitableForGrid: false, reason: "too volatile" }));
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(result.gate.canCreateRange).toBe(false);
+    expect(result.gate.blockers.length).toBeGreaterThan(0);
+  });
+
+  it("10. allowCycleExits=true en todos los fallos", async () => {
+    getGridBandSnapshotMock.mockResolvedValueOnce(null);
+    getFreshTickerSnapshotMock.mockResolvedValueOnce(null);
+    isInitializedMock.mockReturnValueOnce(false);
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(result.gate.allowCycleExits).toBe(true);
+    expect(result.gate.canPlanRange).toBe(false);
+    expect(result.gate.canCreateRange).toBe(false);
+  });
+
+  it("14. sin allocationInput → canCreateRange=false (ALLOCATION_INPUT_MISSING)", async () => {
     const result = await resolveGridPlanningContext({
       pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
     });
-    // El resolver no conoce la allocation (parámetros específicos los tiene el engine)
-    expect(result.gate.canCreateRange).toBe(true);
+    // REV-C12E: canCreateRange requires allocation — without allocationInput it is false.
+    expect(result.gate.canCreateRange).toBe(false);
+    expect(result.gate.blockers).toContain("ALLOCATION_INPUT_MISSING");
   });
 
   it("15. régimen no apto → canPlanRange=false", async () => {
     getGridBandSnapshotMock.mockResolvedValueOnce(validBand({ suitableForGrid: false, reason: "too volatile" }));
     const result = await resolveGridPlanningContext({
       pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
     });
     expect(result.gate.canPlanRange).toBe(false);
     expect(result.gate.blockers).toContain("BAND_NOT_SUITABLE_FOR_GRID");
@@ -289,6 +462,7 @@ describe("resolveGridPlanningContext — REV-C12E", () => {
     isInitializedMock.mockReturnValueOnce(false);
     const result = await resolveGridPlanningContext({
       pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
     });
     expect(result.gate.allowCycleExits).toBe(true);
     expect(result.gate.canPlanRange).toBe(false);
@@ -299,6 +473,7 @@ describe("resolveGridPlanningContext — REV-C12E", () => {
     getGridBandSnapshotMock.mockResolvedValueOnce(null);
     const result = await resolveGridPlanningContext({
       pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
     });
     expect(result.gate.blockers).toContain("BAND_SNAPSHOT_UNAVAILABLE");
     expect(result.bandSnapshot).toBeNull();
@@ -307,6 +482,7 @@ describe("resolveGridPlanningContext — REV-C12E", () => {
   it("evaluatedAt es un ISO timestamp válido", async () => {
     const result = await resolveGridPlanningContext({
       pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
     });
     expect(() => new Date(result.gate.evaluatedAt).toISOString()).not.toThrow();
   });
@@ -314,8 +490,25 @@ describe("resolveGridPlanningContext — REV-C12E", () => {
   it("canSubmitMakerOrder=true cuando executionCapability verificado y post_only requerido", async () => {
     const result = await resolveGridPlanningContext({
       pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
     });
     expect(result.gate.canSubmitMakerOrder).toBe(true);
+  });
+
+  it("allocator se llama exactamente una vez por evaluación", async () => {
+    await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(allocateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("projection context se llama exactamente una vez por evaluación", async () => {
+    await resolveGridPlanningContext({
+      pair: "BTC/USD", bandConfig, executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
+      allocationInput: validAllocationInput, config: validConfig,
+    });
+    expect(resolveProjectionMock).toHaveBeenCalledTimes(1);
   });
 });
 
