@@ -88,7 +88,7 @@ autenticado → público → caché → fail-closed.
 
 ## 5. Tests
 
-### Helper tests (15)
+### Helper tests (19)
 
 1. acepta array directo
 2. acepta `{pairs:[...]}`
@@ -105,8 +105,12 @@ autenticado → público → caché → fail-closed.
 13. mantiene strings decimales sin transformarlos
 14. no acepta arrays vacíos
 15. no acepta pairs vacío
+16. array no vacío sin entries válidas → throw
+17. wrapper no vacío sin entries válidas → throw
+18. array mixto conserva solo el par válido
+19. wrapper mixto conserva solo el par válido
 
-### Integración tests (13)
+### Integración tests (14)
 
 1. auth devuelve mapa raíz oficial: verified=true con constraints correctas
 2. auth falla y público devuelve mapa raíz: verified=true con source público
@@ -118,9 +122,10 @@ autenticado → público → caché → fail-closed.
 8. max_order_size menor que min_order_size: verified=false
 9. objeto de error no produce constraints verificadas
 10. el mapa oficial no relaja la validación estricta
-11. log auth sanitizado se emite cuando auth falla
-12. log público sanitizado se emite cuando público falla
-13. (incluido en 11/12) no expone credenciales en logs
+11. error HTTP 401 con body sensible no aparece en ningún log
+12. reason no contiene saltos de línea
+13. reason tiene longitud máxima 240
+14. restauración del singleton (initialized y getHeaders)
 
 ### Tests Grid relacionados (105, 5 archivos)
 
@@ -140,6 +145,22 @@ autenticado → público → caché → fail-closed.
 - BUILD_EXIT = 0
 - DIFF_EXIT = 0
 - `git grep "Array.isArray(response).*pairs"` = 0 resultados (helper único confirmado)
+- `signedGetJson` no contiene `response.text()` en su error (body no se incorpora al mensaje ni log)
+
+## 6b. Corrección post-verificación
+
+ARRAY_INVALID_NONEMPTY_REJECTED = TRUE
+WRAPPER_INVALID_NONEMPTY_REJECTED = TRUE
+SIGNED_GET_RESPONSE_BODY_LOGGED = FALSE
+CONSTRAINT_REASON_MAX_LENGTH = 240
+SENSITIVE_SENTINEL_LOGGED = FALSE
+
+Defectos corregidos:
+1. Arrays y wrappers no vacíos pero sin entries válidas ahora lanzan (antes devolvían []).
+2. `signedGetJson` no incluye el body en el mensaje de error (usa statusText, no response.text()).
+3. `sanitizeRevolutXConstraintError` limita reason a 240 chars y elimina saltos de línea/tabs.
+4. Restauración correcta del singleton (initialized y getHeaders) en afterEach.
+5. Conteo de tests corregido: 19 helper + 14 integración = 33 total nuevos.
 
 ## 7. Validación read-only del payload público real
 
@@ -175,8 +196,8 @@ autenticado → público → caché → fail-closed.
 ```
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: REV-C12F corregida en rama de revisión; pendiente verificación independiente
-NEXT_ACTION: verificar commits y después autorizar merge
+TASK_STATUS: REV-C12F corregida tras verificación independiente; pendiente commit y nueva verificación
+NEXT_ACTION: verificar commits y autorizar fast-forward
 DEPLOY_AUTHORIZED: FALSE
 MIGRATION_REQUIRED: FALSE
 ```

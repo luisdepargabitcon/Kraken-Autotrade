@@ -2,8 +2,8 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12F corregida en rama de revisión; pendiente verificación independiente**
-- **NEXT_ACTION: verificar commits y después autorizar merge**
+- **TASK_STATUS: REV-C12F corregida tras verificación independiente; pendiente commit y nueva verificación**
+- **NEXT_ACTION: verificar commits y autorizar fast-forward**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
@@ -159,7 +159,17 @@ Corrección: helper `extractRevolutXPairConfigurationEntries` que acepta los tre
 (array raíz, wrapper `pairs`, mapa raíz oficial). Usado en `getPairConfigurations` y
 `getPublicPairConfigurations`. Logs sanitizados añadidos en `resolveGridPairConstraints`.
 
-Tests: 28 tests nuevos (helper + integración), 105 tests Grid relacionados, 15 tests existentes.
+Corrección post-verificación: `filterAndRequirePairEntries` fail-closed (array/wrapper no vacío
+sin entries válidas → throw). `signedGetJson` no incluye body en error (usa statusText).
+`sanitizeRevolutXConstraintError` limita reason a 240 chars sin saltos de línea.
+
+ARRAY_INVALID_NONEMPTY_REJECTED = TRUE
+WRAPPER_INVALID_NONEMPTY_REJECTED = TRUE
+SIGNED_GET_RESPONSE_BODY_LOGGED = FALSE
+CONSTRAINT_REASON_MAX_LENGTH = 240
+SENSITIVE_SENTINEL_LOGGED = FALSE
+
+Tests: 33 tests nuevos (19 helper + 14 integración), 105 tests Grid relacionados, 15 tests existentes.
 CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
 
 ## Alcance REV-C12A
