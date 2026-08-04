@@ -1,9 +1,9 @@
 # PLAN_EJECUCION_GRID_REV_C12
 
-- **DONE: TRUE**
+- **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12E integrada en main, desplegada y validada en staging**
-- **NEXT_ACTION: REV-C12F — diagnóstico read-only de REVOLUT_X_CONSTRAINTS_UNAVAILABLE**
+- **TASK_STATUS: REV-C12F corregida en rama de revisión; pendiente verificación independiente**
+- **NEXT_ACTION: verificar commits y después autorizar merge**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
@@ -134,6 +134,33 @@ Clasificación: LEGACY_CONFIGURATION_DEBT, NO_EFFECTIVE_TAKER_PERMISSION, NO_IMM
 - BACKUP_PATH = C:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE_LOCAL_BACKUPS\REV-C12E_PRE_FF_20260804_201206
 - BACKUP_SHA256 = 5CC20EB599C03DB7DA91ED8635A406851BF3B7A7BCF60A7FB4E2994B741EC80B
 - TRACKED_SHA256 = D223841AE0462FE43BAE067EA769D5ACD9CFFCDC8A79D532C1826711229434C1
+
+## REV-C12F — Corrección del schema de configuration/pairs (2026-08-04)
+
+REV-C12F_CAUSE = G_PUBLIC_SCHEMA_MISMATCH
+OFFICIAL_RESPONSE_SHAPE = ROOT_PAIR_MAP
+EXAMPLE_KEY = BTC/USD
+PUBLIC_HTTP = 200
+PUBLIC_JSON_VALID = TRUE
+PARSER_BEFORE = ARRAY_OR_PAIRS_WRAPPER_ONLY
+PARSER_AFTER = ARRAY_OR_PAIRS_WRAPPER_OR_ROOT_PAIR_MAP
+DB_REQUIRED = FALSE
+MIGRATION_REQUIRED = FALSE
+DEPLOY_REQUIRED = TRUE_AFTER_REVIEW_AND_MERGE
+GRID_MODE = SHADOW
+REAL_ORDERS = 0
+
+Causa raíz: el endpoint oficial `https://revx.revolut.com/api/1.0/public/configuration/pairs?region=EEA`
+devuelve un objeto raíz cuyas claves son nombres de pares (`{"BTC/USD": {...}, ...}`), no un array
+ni `{pairs: [...]}`. El parser anterior solo aceptaba array raíz o wrapper `pairs`, por lo que
+rechazaba la respuesta oficial antes de encontrar BTC/USD.
+
+Corrección: helper `extractRevolutXPairConfigurationEntries` que acepta los tres formatos
+(array raíz, wrapper `pairs`, mapa raíz oficial). Usado en `getPairConfigurations` y
+`getPublicPairConfigurations`. Logs sanitizados añadidos en `resolveGridPairConstraints`.
+
+Tests: 28 tests nuevos (helper + integración), 105 tests Grid relacionados, 15 tests existentes.
+CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
 
 ## Alcance REV-C12A
 

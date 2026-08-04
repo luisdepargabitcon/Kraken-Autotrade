@@ -349,6 +349,17 @@ C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: 
 - **Backup local preservado**: C:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE_LOCAL_BACKUPS\REV-C12E_PRE_FF_20260804_201206, SHA256=5CC20EB5.
 - **Estado final**: REV-C12E_COMPLETADA=TRUE, DONE=TRUE, HARD_BLOCKER=FALSE. GRID_NEW_ENTRIES_AVAILABLE=FALSE, GRID_NEW_ENTRIES_BLOCKER=REVOLUT_X_CONSTRAINTS_UNAVAILABLE, ALLOW_CYCLE_EXITS=TRUE. NEXT_ACTION=REV-C12F.
 
+### REV-C12F — Corrección del schema de configuration/pairs Revolut X (2026-08-04)
+
+- **Causa raíz confirmada** (REV-C12F diagnóstico read-only en staging): el endpoint oficial `https://revx.revolut.com/api/1.0/public/configuration/pairs?region=EEA` devuelve un objeto raíz cuyas claves son nombres de pares (`{"BTC/USD": {...}, "ETH/USD": {...}, ...}`), no un array ni `{pairs: [...]}`. El parser anterior solo aceptaba array raíz o wrapper `pairs`, por lo que rechazaba la respuesta oficial antes de encontrar BTC/USD. Clasificación: G_PUBLIC_SCHEMA_MISMATCH.
+- **Evidencia**: HTTP 200 desde host y contenedor, 87279 bytes, JSON válido, 382 entries extraídas con el helper nuevo. BTC/USD encontrado con status=active, base_step="0.00000001", quote_step="0.01", min_order_size="0.00000001", min_order_size_quote="1", max_order_size="200". Host y contenedor reciben respuestas idénticas (mismo SHA256).
+- **Corrección mínima** (`RevolutXService.ts`): helper exportado `extractRevolutXPairConfigurationEntries` que acepta tres formatos: array raíz, wrapper `{pairs: [...]}`, y mapa raíz oficial `{pair: {...}}`. Filtra entries no-pair (null, primitives, arrays, metadata sin base/quote strings). No muta el input. No relaja `parseStrictDecimal`, status active, base/quote exactos, min/max o step. Usado en `getPairConfigurations` y `getPublicPairConfigurations`.
+- **Observabilidad**: logs sanitizados añadidos en `resolveGridPairConstraints` para fallos autenticado y público. Solo emiten pair, region y reason (mensaje de error). No exponen API key, private key, firma, headers, body, cookies ni tokens.
+- **Tests**: 28 tests nuevos en `revolutXPairConstraintsSchema.test.ts` (15 helper + 13 integración). 105 tests Grid relacionados pasados. 15 tests existentes de `revolutXPairConstraints.test.ts` pasados. CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+- **Validación read-only del payload público real**: 382 entries, BTC/USD encontrado, status=active.
+- **Rama**: review/grid-rev-c12f-20260804, base origin/main=d375601. Sin merge, sin deploy, sin DB, sin migraciones.
+- **Estado**: DONE=FALSE, HARD_BLOCKER=FALSE. TASK_STATUS=REV-C12F corregida en rama de revisión; pendiente verificación independiente. NEXT_ACTION=verificar commits y autorizar merge.
+
 ### Cascada REV-C12C (2026-08-03) — causa raíz REVOLUT_X_UNAVAILABLE + observabilidad diferenciada
 
 - **Causa raíz confirmada** en staging (SHA 44cd46f / origin/main): single try/catch fusionaba `resolveGridPairConstraints` con `getTicker`. Cualquier excepción de `getTicker` (404, 401, timeout, red) descartaba silenciosamente las constraints ya resueltas y colapsaba todo en `source: "REVOLUT_X_UNAVAILABLE"` sin logging del error real.
