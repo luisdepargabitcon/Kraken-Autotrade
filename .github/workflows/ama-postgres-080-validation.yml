@@ -104,7 +104,8 @@ jobs:
       - name: Validate migration 080 (disposable DB)
         run: |
           mkdir -p artifacts
-          npm run validate:ama:postgres 2>&1 | tee artifacts/ama-postgres-080-validation.log || true
+          set -o pipefail
+          npm run validate:ama:postgres 2>&1 | tee artifacts/ama-postgres-080-validation.log
 
       - name: Upload validation report
         if: always()
@@ -134,5 +135,11 @@ jobs:
             "
           else
             echo "No report file found."
+            echo "=== Validator log ==="
+            if [ -f artifacts/ama-postgres-080-validation.log ]; then
+              cat artifacts/ama-postgres-080-validation.log
+            else
+              echo "No validator log found."
+            fi
             exit 1
           fi
