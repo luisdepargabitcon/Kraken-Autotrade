@@ -1,15 +1,17 @@
 /**
- * AMA Migration 080 — Disposable PostgreSQL Validation
+ * AMA Migration 080 — Disposable PostgreSQL Validation (R8A)
  *
- * Creates a temporary database (not just a schema), applies the migration,
- * validates tables/indexes/constraints/CHECK/FK, tests negative cases,
- * uniqueness, idempotency, data preservation, and column types.
+ * Creates a temporary database, applies migration 080, verifies the exact
+ * R7 contract: tables, columns, named CHECKs, FKs (ON DELETE RESTRICT),
+ * indexes. Runs positive inserts, negative cases (constraint violations),
+ * composite uniqueness, idempotency (double-apply). Writes a machine-readable
+ * JSON report to artifacts/ama-postgres-080-validation.json.
  *
- * Requirements:
- * - A disposable PostgreSQL instance reachable via environment variables.
- * - The temporary database name must start with "ama_disposable_test_".
- * - The script refuses to run against production, staging, or krakenbot DBs.
- * - It drops the temporary database at the end.
+ * Safety:
+ * - Strict DB name regex: ^ama_disposable_test_[a-zA-Z0-9_]+$
+ * - Refuses to connect to krakenbot, staging, or system databases.
+ * - Drops temp DB in finally — cleanup guaranteed even on failure.
+ * - No secrets in the JSON report.
  *
  * Usage:
  *   PG_HOST=127.0.0.1 PG_PORT=5432 PG_USER=postgres PG_PASSWORD=secret \
@@ -18,36 +20,34 @@
 
 import pg from "pg";
 import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
 import crypto from "crypto";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
+import {
+  validateTempDbName,
+  R7_EXPECTED_TABLES,
+  R7_EXPECTED_CHECKS,
+  R7_EXPECTED_FOREIGN_KEYS,
+  R7_EXPECTED_INDEXES,
+  R7_PLANS_REQUIRED_COLUMNS,
+  R7_FILL_EVENTS_REQUIRED_COLUMNS,
+} from "./ama_migration_validation_helpers.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ROOT = path.resolve(__dirname, "..");
 
-const PROHIBITED_DATABASES = new Set([
-  "krakenbot",
-  "krakenbot_staging",
-  "krakenbot_production",
-  "krakenbot_prod",
-  "postgres",
-  "template0",
-  "template1",
-]);
 
 function getRequiredEnv(key) {
   const value = process.env[key];
   if (!value) {
     throw new Error(
-      `[AMA-VALIDATE] Missing required environment variable: ${key}. ` +
-        `This script must target a disposable PostgreSQL instance.`,
+      `[AMA-VALIDATE] Missing required env var: ${key}. ` +
+        `Set PG_HOST, PG_PORT, PG_USER, PG_PASSWORD for a disposable PostgreSQL instance.`,
     );
   }
   return value;
-}
-
-function isDisposableDatabaseName(name) {
-  return name.startsWith("ama_disposable_test_");
 }
 
 function buildConfig(database) {
@@ -57,59 +57,46 @@ function buildConfig(database) {
     user: getRequiredEnv("PG_USER"),
     password: process.env.PG_PASSWORD || "",
     database,
-    connectionTimeoutMillis: 5000,
+    connectionTimeoutMillis: 8000,
   };
 }
 
-const tempDbName =
-  process.env.PG_TEMP_DATABASE || `ama_disposable_test_${Date.now()}`;
+// ─── R7 Contract: derived from canonical helpers ─────────────────────
 
-if (!isDisposableDatabaseName(tempDbName)) {
-  throw new Error(
-    `[AMA-VALIDATE] PG_TEMP_DATABASE must start with "ama_disposable_test_". ` +
-      `Got: ${tempDbName}`,
-  );
+const EXPECTED_TABLES = R7_EXPECTED_TABLES;
+const EXPECTED_INDEXES = R7_EXPECTED_INDEXES.map((i) => i.name);
+const EXPECTED_CHECKS = R7_EXPECTED_CHECKS;
+const EXPECTED_FOREIGN_KEYS = R7_EXPECTED_FOREIGN_KEYS.map((fk) => ({
+  name: fk.name,
+  sourceTable: fk.sourceTable,
+  onDelete: "r",
+}));
+const REQUIRED_PLANS_COLUMNS = R7_PLANS_REQUIRED_COLUMNS.map((c) => c.column);
+const REQUIRED_FILL_COLUMNS = R7_FILL_EVENTS_REQUIRED_COLUMNS.map((c) => c.column);
+
+// ─── Helpers ──────────────────────────────────────────────────────────
+
+const steps = [];
+
+function pass(step, detail) {
+  steps.push({ step, status: "PASS", detail });
+  console.log(`[AMA-VALIDATE] ✅ ${step}${detail ? ": " + detail : ""}`);
 }
-if (PROHIBITED_DATABASES.has(tempDbName)) {
-  throw new Error(
-    `[AMA-VALIDATE] Refusing to use protected database name: ${tempDbName}`,
-  );
+
+function fail(step, detail, missing) {
+  steps.push({ step, status: "FAIL", detail, missing });
+  console.error(`[AMA-VALIDATE] ❌ ${step}: ${detail}`);
 }
 
-const maintenanceConfig = buildConfig("postgres");
-const targetConfig = buildConfig(tempDbName);
-const MIGRATION_PATH = path.resolve(
-  process.cwd(),
-  "db",
-  "migrations",
-  "080_ama_initial.sql",
-);
-
-const expectedTables = [
-  "ama_user_mandates",
-  "ama_resolved_policies",
-  "ama_cycles",
-  "ama_tranche_plans",
-  "ama_tranches",
-  "ama_state_transitions",
-  "ama_audit_events",
-  "portfolio_mode_budgets",
-  "portfolio_ledger_entries",
-];
-
-const expectedIndexes = [
-  "idx_ama_cycles_state",
-  "idx_ama_cycles_pair",
-  "idx_ama_tranches_cycle",
-  "idx_ama_tranches_status",
-  "idx_ama_state_transitions_cycle",
-  "idx_ama_audit_events_name",
-  "idx_ama_audit_events_cycle",
-  "idx_ama_audit_events_created",
-  "idx_portfolio_ledger_mode",
-  "idx_portfolio_ledger_asset",
-  "idx_portfolio_ledger_created",
-];
+async function runNegativeCase(client, name, fn) {
+  try {
+    await fn();
+    return { name, rejected: false };
+  } catch {
+    console.log(`[AMA-VALIDATE]   ✅ REJECTED ${name}`);
+    return { name, rejected: true };
+  }
+}
 
 async function dropDatabaseIfExists(adminClient, dbName) {
   await adminClient.query(
@@ -119,411 +106,424 @@ async function dropDatabaseIfExists(adminClient, dbName) {
   await adminClient.query(`DROP DATABASE IF EXISTS "${dbName}"`);
 }
 
-async function createTempDatabase(adminClient, dbName) {
-  await adminClient.query(`CREATE DATABASE "${dbName}"`);
-}
+// ─── Verification functions ───────────────────────────────────────────
 
 async function verifyTables(client) {
   const res = await client.query(
     `SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`,
   );
-  const actual = res.rows.map((r) => r.tablename);
-  const missing = expectedTables.filter((t) => !actual.includes(t));
+  const actual = new Set(res.rows.map((r) => r.tablename));
+  const missing = EXPECTED_TABLES.filter((t) => !actual.has(t));
   if (missing.length > 0) {
-    throw new Error(`Missing tables: ${missing.join(", ")}`);
+    fail("tables", `Missing: ${missing.join(", ")}`, missing);
+    throw new Error("Table verification failed");
   }
-  console.log(`[AMA-VALIDATE] Tables OK: ${expectedTables.length}`);
+  pass("tables", `${EXPECTED_TABLES.length} tables present`);
+}
+
+async function verifyColumns(client) {
+  const res = await client.query(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+    ORDER BY table_name, column_name
+  `);
+  const actual = new Map();
+  for (const row of res.rows) {
+    if (!actual.has(row.table_name)) actual.set(row.table_name, new Set());
+    actual.get(row.table_name).add(row.column_name);
+  }
+
+  const plansActual = actual.get("ama_tranche_plans") || new Set();
+  const missingPlans = REQUIRED_PLANS_COLUMNS.filter((c) => !plansActual.has(c));
+  if (missingPlans.length > 0) {
+    fail("columns:ama_tranche_plans", `Missing R7 columns: ${missingPlans.join(", ")}`, missingPlans);
+    throw new Error("Column verification failed for ama_tranche_plans");
+  }
+  pass("columns:ama_tranche_plans", `All ${REQUIRED_PLANS_COLUMNS.length} R7 columns present`);
+
+  const fillActual = actual.get("ama_tranche_fill_events") || new Set();
+  const missingFill = REQUIRED_FILL_COLUMNS.filter((c) => !fillActual.has(c));
+  if (missingFill.length > 0) {
+    fail("columns:ama_tranche_fill_events", `Missing columns: ${missingFill.join(", ")}`, missingFill);
+    throw new Error("Column verification failed for ama_tranche_fill_events");
+  }
+  pass("columns:ama_tranche_fill_events", `All ${REQUIRED_FILL_COLUMNS.length} columns present`);
 }
 
 async function verifyIndexes(client) {
   const res = await client.query(
     `SELECT indexname FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname`,
   );
-  const actual = res.rows.map((r) => r.indexname);
-  const missing = expectedIndexes.filter((i) => !actual.includes(i));
+  const actual = new Set(res.rows.map((r) => r.indexname));
+  const missing = EXPECTED_INDEXES.filter((i) => !actual.has(i));
   if (missing.length > 0) {
-    throw new Error(`Missing indexes: ${missing.join(", ")}`);
+    fail("indexes", `Missing: ${missing.join(", ")}`, missing);
+    throw new Error("Index verification failed");
   }
-  console.log(`[AMA-VALIDATE] Indexes OK: ${expectedIndexes.length}`);
+  pass("indexes", `${EXPECTED_INDEXES.length} indexes present`);
 }
 
 async function verifyCheckConstraints(client) {
   const res = await client.query(`
-    SELECT con.conname, con.contype, rel.relname AS table_name
+    SELECT con.conname, rel.relname AS table_name
     FROM pg_constraint con
     JOIN pg_class rel ON rel.oid = con.conrelid
     JOIN pg_namespace ns ON ns.oid = rel.relnamespace
     WHERE con.contype = 'c' AND ns.nspname = 'public'
     ORDER BY rel.relname, con.conname
   `);
-  if (res.rows.length === 0) throw new Error("No CHECK constraints found");
-  console.log(`[AMA-VALIDATE] CHECK constraints OK: ${res.rows.length}`);
-  return res.rows.length;
+  const actual = new Set(res.rows.map((r) => r.conname.toLowerCase()));
+  const missing = EXPECTED_CHECKS.filter((c) => !actual.has(c.name.toLowerCase()));
+  if (missing.length > 0) {
+    fail("check_constraints", `Missing: ${missing.map((c) => c.name).join(", ")}`, missing.map((c) => c.name));
+    throw new Error("CHECK constraint verification failed");
+  }
+  pass("check_constraints", `${EXPECTED_CHECKS.length} named CHECKs present`);
 }
 
 async function verifyForeignKeys(client) {
   const res = await client.query(`
-    SELECT con.conname, conrel.relname AS table_name, confrel.relname AS referenced_table
+    SELECT con.conname, conrel.relname AS source_table, con.confdeltype AS on_delete
     FROM pg_constraint con
     JOIN pg_class conrel ON conrel.oid = con.conrelid
-    JOIN pg_class confrel ON confrel.oid = con.confrelid
     JOIN pg_namespace ns ON ns.oid = conrel.relnamespace
     WHERE con.contype = 'f' AND ns.nspname = 'public'
     ORDER BY conrel.relname, con.conname
   `);
-  if (res.rows.length === 0) throw new Error("No FOREIGN KEY constraints found");
-  console.log(`[AMA-VALIDATE] Foreign keys OK: ${res.rows.length}`);
-  for (const row of res.rows) {
-    console.log(`[AMA-VALIDATE]   FK ${row.conname}: ${row.table_name} -> ${row.referenced_table}`);
+  const actualMap = new Map(res.rows.map((r) => [r.conname.toLowerCase(), r]));
+  const missing = [];
+  const onDeleteMismatch = [];
+  for (const exp of EXPECTED_FOREIGN_KEYS) {
+    const found = actualMap.get(exp.name.toLowerCase());
+    if (!found) {
+      missing.push(exp.name);
+    } else if (found.on_delete !== exp.onDelete) {
+      onDeleteMismatch.push(`${exp.name} (expected ON DELETE RESTRICT='r', got '${found.on_delete}')`);
+    }
   }
-  return res.rows.length;
+  if (missing.length > 0 || onDeleteMismatch.length > 0) {
+    const detail = [...missing.map((n) => `MISSING:${n}`), ...onDeleteMismatch].join(", ");
+    fail("foreign_keys", detail, missing);
+    throw new Error("Foreign key verification failed");
+  }
+  pass("foreign_keys", `${EXPECTED_FOREIGN_KEYS.length} FKs present, all ON DELETE RESTRICT`);
 }
 
+// ─── Data Tests ───────────────────────────────────────────────────────
+
 async function testValidInsertions(client) {
-  const mandateId = `mandate-test-${Date.now()}`;
+  const uid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  const mandateId = `mandate-r8a-${uid()}`;
+  const policyId = `policy-r8a-${uid()}`;
+  const cycleId = `cycle-r8a-${uid()}`;
+  const planId = `plan-r8a-${uid()}`;
+  const trancheId = `tranche-r8a-${uid()}`;
+  const fillEventId = `fill-r8a-${uid()}`;
+  const idemKey = `idem-r8a-${uid()}`;
+  const ledgerEventId = `ledger-r8a-${uid()}`;
+  const policyHash = crypto.createHash("sha256").update(policyId).digest("hex");
+
   await client.query(
-    `INSERT INTO ama_user_mandates (mandate_id, max_capital_usd, risk_mandate, accumulation_style, exit_objective, autonomy_level, status, asset)
-     VALUES ($1, 5000, 'PRUDENTE', 'ADAPTATIVO', 'RECUPERAR_CAPITAL', 'SOLO_ANALISIS', 'DRAFT', 'BTC')`,
+    `INSERT INTO ama_user_mandates (mandate_id, asset, max_capital_usd, status)
+     VALUES ($1, 'BTC', 5000, 'ACTIVE')`,
     [mandateId],
   );
 
-  const policyId = `policy-test-${Date.now()}`;
   await client.query(
-    `INSERT INTO ama_resolved_policies (policy_id, mandate_id, policy_version, user_inputs, resolved_parameters, policy_hash, status, asset)
-     VALUES ($1, $2, 1, '{}'::jsonb, '{}'::jsonb, $3, 'DRAFT', 'BTC')`,
-    [policyId, mandateId, crypto.createHash("sha256").update("test").digest("hex")],
+    `INSERT INTO ama_resolved_policies (policy_id, mandate_id, asset, policy_version, user_inputs, resolved_parameters, policy_hash, status)
+     VALUES ($1, $2, 'BTC', 1, '{}'::jsonb, '{}'::jsonb, $3, 'ACTIVE')`,
+    [policyId, mandateId, policyHash],
   );
 
-  const cycleId = `cycle-test-${Date.now()}`;
   await client.query(
-    `INSERT INTO ama_cycles (cycle_id, pair, asset, mode, state, budget_usd, deployed_usd, reserved_usd, accumulated_quantity)
-     VALUES ($1, 'BTC/USD', 'BTC', 'OFF', 'OBSERVING', 5000, 0, 0, 0)`,
+    `INSERT INTO ama_cycles (cycle_id, asset, pair, mode, state, budget_usd, deployed_usd, reserved_usd, accumulated_quantity, active_policy_id)
+     VALUES ($1, 'BTC', 'BTC/USD', 'OFF', 'OBSERVING', 5000, 0, 0, 0, NULL)`,
     [cycleId],
   );
 
-  const planId = `plan-test-${Date.now()}`;
   await client.query(
-    `INSERT INTO ama_tranche_plans (plan_id, cycle_id, version, planned_purchase_count, mandatory_reserve_usd, deployable_cycle_capital_usd)
-     VALUES ($1, $2, 1, 5, 1000, 4000)`,
-    [planId, cycleId],
+    `INSERT INTO ama_tranche_plans (
+       plan_id, cycle_id, asset, policy_id, policy_version, version,
+       planned_purchase_count, mandatory_reserve_usd, deployable_cycle_capital_usd,
+       hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp,
+       effective_deployment_pct, effective_reserve_pct, effective_deployable_pct,
+       risk_overlay_multiplier, plan_hash
+     ) VALUES (
+       $1, $2, 'BTC', $3, 1, 1,
+       5, 1000.00, 4000.00,
+       50000.0, '2025-01-01T00:00:00Z', 45000.0, '2025-01-02T00:00:00Z',
+       80.0, 20.0, 75.0,
+       0.9, 'plan-hash-r8a-001'
+     )`,
+    [planId, cycleId, policyId],
   );
 
-  const trancheId = `tranche-test-${Date.now()}`;
   await client.query(
-    `INSERT INTO ama_tranches (tranche_id, cycle_id, type, status, planned_amount_usd, executed_amount_usd, asset_quantity, sleeve_allocation, remaining_quantity, realized_quantity)
-     VALUES ($1, $2, 'PROBE', 'CREATED', 500, 0, 0, 'RECOVER_PRINCIPAL', 0, 0)`,
-    [trancheId, cycleId],
+    `INSERT INTO ama_tranches (tranche_id, cycle_id, plan_id, type, status, planned_amount_usd, executed_amount_usd, asset_quantity, sleeve_allocation, remaining_quantity, realized_quantity)
+     VALUES ($1, $2, $3, 'PROBE', 'CREATED', 500, 0, 0, 'RECOVER_PRINCIPAL', 0, 0)`,
+    [trancheId, cycleId, planId],
   );
 
   await client.query(
-    `INSERT INTO ama_audit_events (event_name, cycle_id, severity, data)
-     VALUES ('TEST_EVENT', $1, 'INFO', '{}'::jsonb)`,
+    `INSERT INTO ama_tranche_fill_events (fill_event_id, idempotency_key, tranche_id, cycle_id, asset, policy_id, policy_version, seed_tranche_index, executed_amount_usd, executed_quantity, executed_at, fill_status)
+     VALUES ($1, $2, $3, $4, 'BTC', $5, 1, 0, 100.00, 0.002, NOW(), 'PARTIAL')`,
+    [fillEventId, idemKey, trancheId, cycleId, policyId],
+  );
+
+  await client.query(
+    `INSERT INTO ama_state_transitions (cycle_id, from_state, to_state, reason) VALUES ($1, 'OBSERVING', 'CEILING_BOOTSTRAPPING', 'TEST')`,
+    [cycleId],
+  );
+
+  await client.query(
+    `INSERT INTO ama_audit_events (event_name, cycle_id, severity, data) VALUES ('TEST_EVENT', $1, 'INFO', '{}'::jsonb)`,
     [cycleId],
   );
 
   await client.query(
     `INSERT INTO portfolio_mode_budgets (mode, exchange, asset, budgeted_usd, deployed_usd, reserved_usd, allocation_type, status)
-     VALUES ('AMA', 'kraken', 'BTC', 5000, 0, 0, 'MANUAL_FIXED_ALLOCATION', 'DISABLED')`,
+     VALUES ('AMA', 'revolutx', 'BTC', 5000, 0, 0, 'MANUAL_FIXED_ALLOCATION', 'DISABLED')`,
   );
 
-  const ledgerEventId = `ledger-test-${Date.now()}`;
   await client.query(
     `INSERT INTO portfolio_ledger_entries (event_id, idempotency_key, entry_type, exchange, asset, quantity)
-     VALUES ($1, $2, 'DEPOSIT', 'kraken', 'BTC', 0.001)`,
-    [ledgerEventId, `idem-${Date.now()}`],
+     VALUES ($1, $2, 'DEPOSIT', 'revolutx', 'BTC', 0.001)`,
+    [ledgerEventId, `ledger-idem-${uid()}`],
   );
 
-  console.log("[AMA-VALIDATE] Valid insertions OK");
-  return { mandateId, policyId, cycleId, planId, trancheId, ledgerEventId };
+  pass("valid_insertions", "All 10 tables accept valid R7 data");
+  return { mandateId, policyId, cycleId, planId, trancheId, fillEventId, idemKey, ledgerEventId };
 }
 
 async function testNegativeCases(client, ids) {
+  const { mandateId, policyId, cycleId, planId, trancheId, idemKey } = ids;
+  const uid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+
   const cases = [
-    {
-      name: "max_capital_usd < 0",
-      sql: "INSERT INTO ama_user_mandates (mandate_id, max_capital_usd) VALUES ('neg-test-1', -100)",
-    },
-    {
-      name: "policy_version <= 0",
-      sql: `INSERT INTO ama_resolved_policies (policy_id, mandate_id, policy_version, user_inputs, resolved_parameters, policy_hash, status, asset)
-            VALUES ('neg-policy-1', '${ids.mandateId}', 0, '{}'::jsonb, '{}'::jsonb, 'hash', 'DRAFT', 'BTC')`,
-    },
-    {
-      name: "budget_usd < 0",
-      sql: `INSERT INTO ama_cycles (cycle_id, pair, asset, mode, state, budget_usd) VALUES ('neg-cycle-1', 'BTC/USD', 'BTC', 'OFF', 'OBSERVING', -100)`,
-    },
-    {
-      name: "deployed_usd < 0",
-      sql: `INSERT INTO ama_cycles (cycle_id, pair, asset, mode, state, budget_usd, deployed_usd) VALUES ('neg-cycle-2', 'BTC/USD', 'BTC', 'OFF', 'OBSERVING', 0, -100)`,
-    },
-    {
-      name: "reserved_usd < 0",
-      sql: `INSERT INTO ama_cycles (cycle_id, pair, asset, mode, state, budget_usd, reserved_usd) VALUES ('neg-cycle-3', 'BTC/USD', 'BTC', 'OFF', 'OBSERVING', 0, -50)`,
-    },
-    {
-      name: "accumulated_quantity < 0",
-      sql: `INSERT INTO ama_cycles (cycle_id, pair, asset, mode, state, budget_usd, accumulated_quantity) VALUES ('neg-cycle-4', 'BTC/USD', 'BTC', 'OFF', 'OBSERVING', 0, -0.001)`,
-    },
-    {
-      name: "planned_purchase_count < 0",
-      sql: `INSERT INTO ama_tranche_plans (plan_id, cycle_id, planned_purchase_count) VALUES ('neg-plan-1', '${ids.cycleId}', -1)`,
-    },
-    {
-      name: "mandatory_reserve_usd < 0",
-      sql: `INSERT INTO ama_tranche_plans (plan_id, cycle_id, mandatory_reserve_usd) VALUES ('neg-plan-2', '${ids.cycleId}', -100)`,
-    },
-    {
-      name: "planned_amount_usd < 0 (tranche)",
-      sql: `INSERT INTO ama_tranches (tranche_id, cycle_id, type, planned_amount_usd) VALUES ('neg-tranche-1', '${ids.cycleId}', 'PROBE', -100)`,
-    },
-    {
-      name: "asset_quantity < 0 (tranche)",
-      sql: `INSERT INTO ama_tranches (tranche_id, cycle_id, type, asset_quantity) VALUES ('neg-tranche-2', '${ids.cycleId}', 'PROBE', -0.001)`,
-    },
-    {
-      name: "remaining_quantity < 0",
-      sql: `INSERT INTO ama_tranches (tranche_id, cycle_id, type, remaining_quantity) VALUES ('neg-tranche-3', '${ids.cycleId}', 'PROBE', -0.001)`,
-    },
-    {
-      name: "realized_quantity < 0",
-      sql: `INSERT INTO ama_tranches (tranche_id, cycle_id, type, realized_quantity) VALUES ('neg-tranche-4', '${ids.cycleId}', 'PROBE', -0.001)`,
-    },
+    // existing basic constraints
+    ["max_capital_usd < 0", () => client.query(`INSERT INTO ama_user_mandates (mandate_id, asset, max_capital_usd) VALUES ('n1-${uid()}', 'BTC', -100)`)],
+    ["asset NOT IN domain (mandate)", () => client.query(`INSERT INTO ama_user_mandates (mandate_id, asset, max_capital_usd) VALUES ('n2-${uid()}', 'SOL', 0)`)],
+    ["budget_usd < 0 (cycle)", () => client.query(`INSERT INTO ama_cycles (cycle_id, asset, pair, mode, state, budget_usd) VALUES ('n3-${uid()}', 'BTC', 'BTC/USD', 'OFF', 'OBSERVING', -100)`)],
+    ["chk_ama_cycles_budget: deployed+reserved > budget", () => client.query(`INSERT INTO ama_cycles (cycle_id, asset, pair, mode, state, budget_usd, deployed_usd, reserved_usd) VALUES ('n4-${uid()}', 'BTC', 'BTC/USD', 'OFF', 'OBSERVING', 100, 80, 30)`)],
+    ["asset NOT IN domain (cycle)", () => client.query(`INSERT INTO ama_cycles (cycle_id, asset, pair, mode, state, budget_usd) VALUES ('n5-${uid()}', 'ETH', 'ETH/USD', 'OFF', 'OBSERVING', 0)`)],
+    // R7: ama_tranche_plans constraints
+    ["hwm_price <= 0 (plan)", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('np1-${uid()}', '${cycleId}', 'BTC', '${policyId}', 1, 2, 0, '2025-01-01T00:00:00Z', 45000, '2025-01-02T00:00:00Z', 80, 20, 75, 'h')`)],
+    ["as_of_close_price <= 0 (plan)", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('np2-${uid()}', '${cycleId}', 'BTC', '${policyId}', 1, 3, 50000, '2025-01-01T00:00:00Z', 0, '2025-01-02T00:00:00Z', 80, 20, 75, 'h')`)],
+    ["chk_ama_plans_ts_order: as_of <= hwm", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('np3-${uid()}', '${cycleId}', 'BTC', '${policyId}', 1, 4, 50000, '2025-01-02T00:00:00Z', 45000, '2025-01-01T00:00:00Z', 80, 20, 75, 'h')`)],
+    ["chk_ama_plans_deployable_le_deployment: deployable > deployment", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('np4-${uid()}', '${cycleId}', 'BTC', '${policyId}', 1, 5, 50000, '2025-01-01T00:00:00Z', 45000, '2025-01-02T00:00:00Z', 60, 20, 70, 'h')`)],
+    ["chk_ama_plans_deployable_le_100_minus_reserve: deployable+reserve > 100", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('np5-${uid()}', '${cycleId}', 'BTC', '${policyId}', 1, 6, 50000, '2025-01-01T00:00:00Z', 45000, '2025-01-02T00:00:00Z', 90, 50, 90, 'h')`)],
+    ["version <= 0 (plan)", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('np6-${uid()}', '${cycleId}', 'BTC', '${policyId}', 1, 0, 50000, '2025-01-01T00:00:00Z', 45000, '2025-01-02T00:00:00Z', 80, 20, 75, 'h')`)],
+    // ama_tranches
+    ["chk_ama_tranches_executed_le_planned", () => client.query(`INSERT INTO ama_tranches (tranche_id, cycle_id, type, planned_amount_usd, executed_amount_usd) VALUES ('nt1-${uid()}', '${cycleId}', 'PROBE', 100, 200)`)],
+    // ama_tranche_fill_events
+    ["fill_status NOT IN domain", () => client.query(`INSERT INTO ama_tranche_fill_events (fill_event_id, idempotency_key, tranche_id, cycle_id, asset, policy_id, policy_version, seed_tranche_index, executed_amount_usd, executed_quantity, executed_at, fill_status) VALUES ('nf1-${uid()}', 'ik-${uid()}', '${trancheId}', '${cycleId}', 'BTC', '${policyId}', 1, 0, 100, 0.002, NOW(), 'INVALID')`)],
+    ["asset NOT IN domain (fill)", () => client.query(`INSERT INTO ama_tranche_fill_events (fill_event_id, idempotency_key, tranche_id, cycle_id, asset, policy_id, policy_version, seed_tranche_index, executed_amount_usd, executed_quantity, executed_at, fill_status) VALUES ('nf2-${uid()}', 'ik-${uid()}', '${trancheId}', '${cycleId}', 'SOL', '${policyId}', 1, 0, 100, 0.002, NOW(), 'FILLED')`)],
+    ["executed_amount_usd <= 0 (fill)", () => client.query(`INSERT INTO ama_tranche_fill_events (fill_event_id, idempotency_key, tranche_id, cycle_id, asset, policy_id, policy_version, seed_tranche_index, executed_amount_usd, executed_quantity, executed_at, fill_status) VALUES ('nf3-${uid()}', 'ik-${uid()}', '${trancheId}', '${cycleId}', 'BTC', '${policyId}', 1, 0, 0, 0.002, NOW(), 'FILLED')`)],
+    ["seed_tranche_index < 0 (fill)", () => client.query(`INSERT INTO ama_tranche_fill_events (fill_event_id, idempotency_key, tranche_id, cycle_id, asset, policy_id, policy_version, seed_tranche_index, executed_amount_usd, executed_quantity, executed_at, fill_status) VALUES ('nf4-${uid()}', 'ik-${uid()}', '${trancheId}', '${cycleId}', 'BTC', '${policyId}', 1, -1, 100, 0.002, NOW(), 'FILLED')`)],
+    // portfolio
+    ["chk_portfolio_budgets_total: deployed+reserved > budgeted", () => client.query(`INSERT INTO portfolio_mode_budgets (mode, exchange, asset, budgeted_usd, deployed_usd, reserved_usd, allocation_type, status) VALUES ('GRID', 'revolutx', 'BTC', 100, 70, 40, 'MANUAL_FIXED_ALLOCATION', 'DISABLED')`)],
+    // FK violations
+    ["plan->cycle FK (nonexistent cycle)", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('fk1-${uid()}', 'ghost-cycle', 'BTC', '${policyId}', 1, 7, 50000, '2025-01-01T00:00:00Z', 45000, '2025-01-02T00:00:00Z', 80, 20, 75, 'h')`)],
+    ["fill->tranche FK (nonexistent tranche)", () => client.query(`INSERT INTO ama_tranche_fill_events (fill_event_id, idempotency_key, tranche_id, cycle_id, asset, policy_id, policy_version, seed_tranche_index, executed_amount_usd, executed_quantity, executed_at, fill_status) VALUES ('fk2-${uid()}', 'ik-${uid()}', 'ghost-tranche', '${cycleId}', 'BTC', '${policyId}', 1, 0, 100, 0.002, NOW(), 'FILLED')`)],
+    ["plan->policy FK (nonexistent policy)", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('fk3-${uid()}', '${cycleId}', 'BTC', 'ghost-policy', 1, 8, 50000, '2025-01-01T00:00:00Z', 45000, '2025-01-02T00:00:00Z', 80, 20, 75, 'h')`)],
   ];
 
   let passed = 0;
-  for (const tc of cases) {
-    try {
-      await client.query(tc.sql);
-      throw new Error(`NEGATIVE CASE FAILED: ${tc.name}`);
-    } catch (e) {
-      if (e.message.startsWith("NEGATIVE CASE FAILED")) throw e;
-      passed++;
-      console.log(`[AMA-VALIDATE]   ✅ ${tc.name}: rejected`);
-    }
+  const failedCases = [];
+  for (const [name, fn] of cases) {
+    const r = await runNegativeCase(client, name, fn);
+    if (r.rejected) passed++;
+    else failedCases.push(name);
   }
-  console.log(`[AMA-VALIDATE] Negative cases OK: ${passed}/${cases.length}`);
+
+  if (failedCases.length > 0) {
+    fail("negative_cases", `${failedCases.length} cases NOT rejected: ${failedCases.join(", ")}`, failedCases);
+    throw new Error("Negative case verification failed");
+  }
+  pass("negative_cases", `${passed}/${cases.length} constraint violations correctly rejected`);
   return passed;
 }
 
 async function testUniqueness(client, ids) {
+  const { mandateId, policyId, cycleId, planId, trancheId, fillEventId, idemKey, ledgerEventId } = ids;
+  const uid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+
   const cases = [
-    {
-      name: "mandate_id unique",
-      sql: `INSERT INTO ama_user_mandates (mandate_id, max_capital_usd) VALUES ('${ids.mandateId}', 1000)`,
-    },
-    {
-      name: "policy_id unique",
-      sql: `INSERT INTO ama_resolved_policies (policy_id, mandate_id, policy_version, user_inputs, resolved_parameters, policy_hash, status, asset)
-            VALUES ('${ids.policyId}', '${ids.mandateId}', 2, '{}'::jsonb, '{}'::jsonb, 'hash2', 'DRAFT', 'BTC')`,
-    },
-    {
-      name: "cycle_id unique",
-      sql: `INSERT INTO ama_cycles (cycle_id, pair, asset, mode, state) VALUES ('${ids.cycleId}', 'BTC/USD', 'BTC', 'OFF', 'OBSERVING')`,
-    },
-    {
-      name: "plan_id unique",
-      sql: `INSERT INTO ama_tranche_plans (plan_id, cycle_id, version) VALUES ('${ids.planId}', '${ids.cycleId}', 2)`,
-    },
-    {
-      name: "tranche_id unique",
-      sql: `INSERT INTO ama_tranches (tranche_id, cycle_id, type) VALUES ('${ids.trancheId}', '${ids.cycleId}', 'PROBE')`,
-    },
-    {
-      name: "event_id unique (ledger)",
-      sql: `INSERT INTO portfolio_ledger_entries (event_id, idempotency_key, entry_type, exchange, asset, quantity)
-            VALUES ('${ids.ledgerEventId}', 'idem-dup-1', 'DEPOSIT', 'kraken', 'BTC', 0.001)`,
-    },
-    {
-      name: "idempotency_key unique (ledger)",
-      sql: `INSERT INTO portfolio_ledger_entries (event_id, idempotency_key, entry_type, exchange, asset, quantity)
-            VALUES ('ledger-dup-2', (SELECT idempotency_key FROM portfolio_ledger_entries LIMIT 1), 'DEPOSIT', 'kraken', 'BTC', 0.001)`,
-    },
-    {
-      name: "mode+exchange+asset unique (portfolio_budgets)",
-      sql: `INSERT INTO portfolio_mode_budgets (mode, exchange, asset, budgeted_usd) VALUES ('AMA', 'kraken', 'BTC', 1000)`,
-    },
+    ["mandate_id UNIQUE", () => client.query(`INSERT INTO ama_user_mandates (mandate_id, asset, max_capital_usd) VALUES ('${mandateId}', 'BTC', 0)`)],
+    ["policy_id UNIQUE", () => client.query(`INSERT INTO ama_resolved_policies (policy_id, mandate_id, asset, policy_version, user_inputs, resolved_parameters, policy_hash, status) VALUES ('${policyId}', '${mandateId}', 'BTC', 9, '{}', '{}', 'h', 'DRAFT')`)],
+    ["cycle_id UNIQUE", () => client.query(`INSERT INTO ama_cycles (cycle_id, asset, pair, mode, state, budget_usd) VALUES ('${cycleId}', 'BTC', 'BTC/USD', 'OFF', 'OBSERVING', 0)`)],
+    ["plan_id UNIQUE", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('${planId}', '${cycleId}', 'BTC', '${policyId}', 1, 99, 50000, '2025-01-01T00:00:00Z', 45000, '2025-01-02T00:00:00Z', 80, 20, 75, 'h')`)],
+    ["cycle_id+version UNIQUE (plans)", () => client.query(`INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, hwm_price, hwm_timestamp, as_of_confirmed_close_price, as_of_confirmed_close_timestamp, effective_deployment_pct, effective_reserve_pct, effective_deployable_pct, plan_hash) VALUES ('newplan-${uid()}', '${cycleId}', 'BTC', '${policyId}', 1, 1, 50000, '2025-01-01T00:00:00Z', 45000, '2025-01-02T00:00:00Z', 80, 20, 75, 'h')`)],
+    ["tranche_id UNIQUE", () => client.query(`INSERT INTO ama_tranches (tranche_id, cycle_id, type, planned_amount_usd) VALUES ('${trancheId}', '${cycleId}', 'PROBE', 500)`)],
+    ["fill_event_id UNIQUE", () => client.query(`INSERT INTO ama_tranche_fill_events (fill_event_id, idempotency_key, tranche_id, cycle_id, asset, policy_id, policy_version, seed_tranche_index, executed_amount_usd, executed_quantity, executed_at, fill_status) VALUES ('${fillEventId}', 'ik-new-${uid()}', '${trancheId}', '${cycleId}', 'BTC', '${policyId}', 1, 1, 50, 0.001, NOW(), 'FILLED')`)],
+    ["idempotency_key UNIQUE (fill)", () => client.query(`INSERT INTO ama_tranche_fill_events (fill_event_id, idempotency_key, tranche_id, cycle_id, asset, policy_id, policy_version, seed_tranche_index, executed_amount_usd, executed_quantity, executed_at, fill_status) VALUES ('new-fill-${uid()}', '${idemKey}', '${trancheId}', '${cycleId}', 'BTC', '${policyId}', 1, 1, 50, 0.001, NOW(), 'FILLED')`)],
+    ["ledger event_id UNIQUE", () => client.query(`INSERT INTO portfolio_ledger_entries (event_id, idempotency_key, entry_type, exchange, asset, quantity) VALUES ('${ledgerEventId}', 'ik-new-${uid()}', 'DEPOSIT', 'revolutx', 'BTC', 0.001)`)],
+    ["mode+exchange+asset UNIQUE (portfolio_budgets)", () => client.query(`INSERT INTO portfolio_mode_budgets (mode, exchange, asset, budgeted_usd) VALUES ('AMA', 'revolutx', 'BTC', 1000)`)],
+    ["mandate_id+policy_version UNIQUE (policies)", () => client.query(`INSERT INTO ama_resolved_policies (policy_id, mandate_id, asset, policy_version, user_inputs, resolved_parameters, policy_hash, status) VALUES ('dup-pol-${uid()}', '${mandateId}', 'BTC', 1, '{}', '{}', 'h', 'DRAFT')`)],
   ];
 
   let passed = 0;
-  for (const tc of cases) {
-    try {
-      await client.query(tc.sql);
-      throw new Error(`UNIQUENESS CASE FAILED: ${tc.name}`);
-    } catch (e) {
-      if (e.message.startsWith("UNIQUENESS CASE FAILED")) throw e;
-      passed++;
-      console.log(`[AMA-VALIDATE]   ✅ ${tc.name}: rejected`);
-    }
+  const failedCases = [];
+  for (const [name, fn] of cases) {
+    const r = await runNegativeCase(client, name, fn);
+    if (r.rejected) passed++;
+    else failedCases.push(name);
   }
-  console.log(`[AMA-VALIDATE] Uniqueness cases OK: ${passed}/${cases.length}`);
+
+  if (failedCases.length > 0) {
+    fail("uniqueness", `${failedCases.length} uniqueness violations not rejected: ${failedCases.join(", ")}`, failedCases);
+    throw new Error("Uniqueness verification failed");
+  }
+  pass("uniqueness", `${passed}/${cases.length} duplicate attempts correctly rejected`);
   return passed;
 }
 
-async function testForeignKeys(client, ids) {
-  const cases = [
-    {
-      name: "tranche -> cycle FK",
-      sql: `INSERT INTO ama_tranches (tranche_id, cycle_id, type) VALUES ('fk-tranche-1', 'nonexistent-cycle', 'PROBE')`,
-    },
-    {
-      name: "plan -> cycle FK",
-      sql: `INSERT INTO ama_tranche_plans (plan_id, cycle_id, version) VALUES ('fk-plan-1', 'nonexistent-cycle', 1)`,
-    },
-    {
-      name: "policy -> mandate FK",
-      sql: `INSERT INTO ama_resolved_policies (policy_id, mandate_id, policy_version, user_inputs, resolved_parameters, policy_hash, status, asset)
-            VALUES ('fk-policy-1', 'nonexistent-mandate', 1, '{}'::jsonb, '{}'::jsonb, 'hash', 'DRAFT', 'BTC')`,
-    },
-    {
-      name: "cycle -> policy FK",
-      sql: `UPDATE ama_cycles SET active_policy_id = 'nonexistent-policy' WHERE cycle_id = '${ids.cycleId}'`,
-    },
-  ];
-
-  for (const tc of cases) {
-    try {
-      await client.query(tc.sql);
-      throw new Error(`FK CASE FAILED: ${tc.name}`);
-    } catch (e) {
-      if (e.message.startsWith("FK CASE FAILED")) throw e;
-      console.log(`[AMA-VALIDATE]   ✅ ${tc.name}: rejected`);
-    }
+async function testIdempotency(client, sql, ids) {
+  await client.query(sql);
+  const mandateCount = await client.query("SELECT COUNT(*) FROM ama_user_mandates");
+  const fillCount = await client.query("SELECT COUNT(*) FROM ama_tranche_fill_events");
+  if (parseInt(mandateCount.rows[0].count) !== 1) {
+    fail("idempotency", `mandates count = ${mandateCount.rows[0].count}, expected 1`);
+    throw new Error("Idempotency failed");
   }
-  console.log("[AMA-VALIDATE] Foreign key negative cases OK");
+  if (parseInt(fillCount.rows[0].count) !== 1) {
+    fail("idempotency", `fill_events count = ${fillCount.rows[0].count}, expected 1`);
+    throw new Error("Idempotency failed");
+  }
+  pass("idempotency", "Second migration apply — data preserved, counts unchanged");
 }
 
-async function testCompositeUniqueness(client, ids) {
-  try {
-    await client.query(
-      `INSERT INTO ama_resolved_policies (policy_id, mandate_id, policy_version, user_inputs, resolved_parameters, policy_hash, status, asset)
-       VALUES ('policy-dup-comp', '${ids.mandateId}', 1, '{}'::jsonb, '{}'::jsonb, 'hash3', 'DRAFT', 'BTC')`,
-    );
-    throw new Error("COMPOSITE UNIQUE FAILED: mandate_id + policy_version");
-  } catch (e) {
-    if (e.message.startsWith("COMPOSITE UNIQUE FAILED")) throw e;
-    console.log("[AMA-VALIDATE]   ✅ mandate_id + policy_version composite: rejected");
-  }
+// ─── Report ───────────────────────────────────────────────────────────
 
-  try {
-    await client.query(
-      `INSERT INTO ama_tranche_plans (plan_id, cycle_id, version, planned_purchase_count)
-       VALUES ('plan-dup-comp', '${ids.cycleId}', 1, 3)`,
-    );
-    throw new Error("COMPOSITE UNIQUE FAILED: cycle_id + version");
-  } catch (e) {
-    if (e.message.startsWith("COMPOSITE UNIQUE FAILED")) throw e;
-    console.log("[AMA-VALIDATE]   ✅ cycle_id + version composite: rejected");
-  }
-  console.log("[AMA-VALIDATE] Composite uniqueness OK");
+async function writeReport(overallStatus, pgHost, pgPort, tempDatabase) {
+  const report = {
+    runId: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+    migrationFile: "db/migrations/080_ama_initial.sql",
+    postgresHost: pgHost,
+    postgresPort: pgPort,
+    tempDatabase,
+    overallStatus,
+    steps,
+    summary: {
+      passed: steps.filter((s) => s.status === "PASS").length,
+      failed: steps.filter((s) => s.status === "FAIL").length,
+      total: steps.length,
+    },
+  };
+
+  const artifactsDir = path.resolve(ROOT, "artifacts");
+  await fsp.mkdir(artifactsDir, { recursive: true });
+  const reportPath = path.join(artifactsDir, "ama-postgres-080-validation.json");
+  await fsp.writeFile(reportPath, JSON.stringify(report, null, 2), "utf-8");
+  console.log(`[AMA-VALIDATE] Report written: ${reportPath}`);
+  return report;
 }
 
-async function verifyColumnTypes(client) {
-  const res = await client.query(`
-    SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS type
-    FROM pg_attribute a
-    JOIN pg_class c ON c.oid = a.attrelid
-    JOIN pg_namespace ns ON ns.oid = c.relnamespace
-    WHERE c.relname = 'ama_cycles' AND a.attnum > 0 AND NOT a.attisdropped
-    ORDER BY a.attnum
-  `);
-  const accumulatedCol = res.rows.find((r) => r.attname === "accumulated_quantity");
-  if (!accumulatedCol || !accumulatedCol.type.includes("numeric(18,8)")) {
-    throw new Error(
-      `accumulated_quantity should be numeric(18,8), got ${accumulatedCol?.type}`,
-    );
-  }
-  const assetCol = res.rows.find((r) => r.attname === "asset");
-  if (!assetCol || !assetCol.type.includes("text")) {
-    throw new Error(`asset column should be text, got ${assetCol?.type}`);
-  }
-  console.log("[AMA-VALIDATE] Column types OK (accumulated_quantity, asset)");
-}
+// ─── Main ─────────────────────────────────────────────────────────────
 
 async function runValidation() {
+  const rawTempDb =
+    process.env.PG_TEMP_DATABASE ||
+    `ama_disposable_test_${crypto.randomUUID().replace(/-/g, "_")}`;
+  const nameCheck = validateTempDbName(rawTempDb);
+  if (!nameCheck.valid) {
+    throw new Error(
+      `[AMA-VALIDATE] Invalid PG_TEMP_DATABASE "${rawTempDb}": ${nameCheck.reason}`,
+    );
+  }
+  const tempDbName = rawTempDb;
+  const maintenanceConfig = buildConfig("postgres");
+  const MIGRATION_PATH = path.resolve(
+    process.cwd(),
+    "db",
+    "migrations",
+    "080_ama_initial.sql",
+  );
+
   if (!fs.existsSync(MIGRATION_PATH)) {
     throw new Error(`Migration file not found: ${MIGRATION_PATH}`);
   }
 
   const sql = fs.readFileSync(MIGRATION_PATH, "utf-8");
+  const pgHost = getRequiredEnv("PG_HOST");
+  const pgPort = parseInt(process.env.PG_PORT || "5432", 10);
 
   const adminClient = new pg.Client(maintenanceConfig);
   await adminClient.connect();
-  console.log("[AMA-VALIDATE] Connected to maintenance DB (postgres)");
+  console.log(`[AMA-VALIDATE] Connected to maintenance DB (postgres) at ${pgHost}:${pgPort}`);
 
   try {
-    await dropDatabaseIfExists(adminClient, tempDbName);
-    await createTempDatabase(adminClient, tempDbName);
+    await adminClient.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`,
+      [tempDbName],
+    );
+    await adminClient.query(`DROP DATABASE IF EXISTS "${tempDbName}"`);
+    await adminClient.query(`CREATE DATABASE "${tempDbName}"`);
     console.log(`[AMA-VALIDATE] Created temp database: ${tempDbName}`);
   } finally {
     await adminClient.end();
   }
 
-  const client = new pg.Client(targetConfig);
+  const client = new pg.Client(buildConfig(tempDbName));
   await client.connect();
   console.log(`[AMA-VALIDATE] Connected to temp database: ${tempDbName}`);
 
+  let overallStatus = "PASS";
+
   try {
     await client.query(sql);
-    console.log("[AMA-VALIDATE] First migration application: OK");
+    pass("migration_apply_1", "080_ama_initial.sql applied successfully");
 
     await verifyTables(client);
+    await verifyColumns(client);
     await verifyIndexes(client);
-    const checkCount = await verifyCheckConstraints(client);
-    const fkCount = await verifyForeignKeys(client);
+    await verifyCheckConstraints(client);
+    await verifyForeignKeys(client);
 
     const ids = await testValidInsertions(client);
-    const negativePassed = await testNegativeCases(client, ids);
-    const uniquenessPassed = await testUniqueness(client, ids);
-    await testForeignKeys(client, ids);
-    await testCompositeUniqueness(client, ids);
-
-    await client.query(sql);
-    console.log("[AMA-VALIDATE] Second migration application: OK");
-
-    const mandateCount = await client.query("SELECT COUNT(*) FROM ama_user_mandates");
-    const cycleCount = await client.query("SELECT COUNT(*) FROM ama_cycles");
-    const ledgerCount = await client.query("SELECT COUNT(*) FROM portfolio_ledger_entries");
-
-    if (parseInt(mandateCount.rows[0].count) !== 1) {
-      throw new Error(`Idempotency failed: mandates = ${mandateCount.rows[0].count}`);
-    }
-    if (parseInt(cycleCount.rows[0].count) !== 1) {
-      throw new Error(`Idempotency failed: cycles = ${cycleCount.rows[0].count}`);
-    }
-    if (parseInt(ledgerCount.rows[0].count) !== 1) {
-      throw new Error(`Idempotency failed: ledger = ${ledgerCount.rows[0].count}`);
-    }
-    console.log("[AMA-VALIDATE] Idempotency OK: data preserved");
-
-    await verifyColumnTypes(client);
+    await testNegativeCases(client, ids);
+    await testUniqueness(client, ids);
+    await testIdempotency(client, sql, ids);
 
     console.log("");
-    console.log("========================================");
-    console.log("[AMA-VALIDATE] ALL VALIDATIONS PASSED");
-    console.log("========================================");
-    console.log(`Temp database: ${tempDbName}`);
-    console.log(`Tables: ${expectedTables.length}`);
-    console.log(`Indexes: ${expectedIndexes.length}`);
-    console.log(`CHECK constraints: ${checkCount}`);
-    console.log(`Foreign keys: ${fkCount}`);
-    console.log(`Negative cases: ${negativePassed}`);
-    console.log(`Uniqueness cases: ${uniquenessPassed}`);
-    console.log("");
+    console.log("=========================================");
+    console.log("[AMA-VALIDATE] ALL VALIDATIONS PASSED ✅");
+    console.log("=========================================");
+  } catch (err) {
+    overallStatus = "FAIL";
+    console.error(`[AMA-VALIDATE] VALIDATION FAILED: ${err.message}`);
   } finally {
     await client.end();
 
     const cleanupClient = new pg.Client(maintenanceConfig);
     await cleanupClient.connect();
     try {
-      await dropDatabaseIfExists(cleanupClient, tempDbName);
+      await cleanupClient.query(
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`,
+        [tempDbName],
+      );
+      await cleanupClient.query(`DROP DATABASE IF EXISTS "${tempDbName}"`);
       console.log(`[AMA-VALIDATE] Dropped temp database: ${tempDbName}`);
     } finally {
       await cleanupClient.end();
     }
+
+    const report = await writeReport(overallStatus, pgHost, pgPort, tempDbName);
+    if (report.overallStatus === "FAIL") {
+      process.exitCode = 1;
+    }
   }
 }
 
-runValidation().catch((err) => {
-  console.error("[AMA-VALIDATE] FAILED:", err.message);
-  process.exitCode = 1;
-});
+const isMainModule =
+  Boolean(process.argv[1]) &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMainModule) {
+  runValidation().catch((err) => {
+    console.error("[AMA-VALIDATE] FATAL:", err.message);
+    process.exitCode = 1;
+  });
+}

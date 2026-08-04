@@ -1,0 +1,132 @@
+# ama-postgres-080-validation.yml
+#
+# Disposable PostgreSQL 16 validation for migration 080_ama_initial.sql.
+# R8A: Verifies the full R7 contract (tables, columns, CHECKs, FKs, indexes).
+#
+# Safety guarantees:
+# - Runs ONLY against the service PostgreSQL 16 container (never VPS/staging/production).
+# - PG_TEMP_DATABASE is uniquely named with run_id+attempt to avoid collisions.
+# - No secrets committed or exposed in artifacts.
+# - Drops the temp DB at the end (guaranteed by the validator's finally block).
+# - Migration 080 is NOT registered in AutoMigrationRunner; this CI is validation-only.
+#
+# Trigger: push/PR on the review/ama-seed-v2-2-* branches, or manual dispatch.
+
+name: AMA Migration 080 — Disposable PostgreSQL 16 Validation
+
+on:
+  push:
+    branches:
+      - "review/ama-seed-v2-2-*"
+    paths:
+      - "db/migrations/080_ama_initial.sql"
+      - "scripts/ama_migration_validate.mjs"
+      - "scripts/ama_migration_validation_helpers.mjs"
+  pull_request:
+    branches:
+      - "review/ama-seed-v2-2-*"
+    paths:
+      - "db/migrations/080_ama_initial.sql"
+      - "scripts/ama_migration_validate.mjs"
+      - "scripts/ama_migration_validation_helpers.mjs"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Manual trigger reason"
+        required: false
+        default: "manual"
+
+concurrency:
+  group: ama-postgres-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-migration-080:
+    name: Validate 080_ama_initial.sql on PostgreSQL 16
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pguser
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      PG_HOST: 127.0.0.1
+      PG_PORT: 5432
+      PG_USER: pguser
+      PG_PASSWORD: pgpass
+      PG_TEMP_DATABASE: ama_disposable_test_ci_${{ github.run_id }}_${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Wait for PostgreSQL 16
+        run: |
+          until pg_isready -h 127.0.0.1 -p 5432 -U pguser; do
+            echo "Waiting for PostgreSQL..."
+            sleep 1
+          done
+          echo "PostgreSQL is ready."
+
+      - name: TypeScript check
+        run: npm run check
+
+      - name: Validate migration 080 (disposable DB)
+        run: |
+          mkdir -p artifacts
+          npm run validate:ama:postgres 2>&1 | tee artifacts/ama-postgres-080-validation.log || true
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ama-postgres-080-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ama-postgres-080-validation.json
+            artifacts/ama-postgres-080-validation.log
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Show validation summary
+        if: always()
+        run: |
+          if [ -f artifacts/ama-postgres-080-validation.json ]; then
+            echo "=== Validation Report Summary ==="
+            node -e "
+              const r = JSON.parse(require('fs').readFileSync('artifacts/ama-postgres-080-validation.json','utf8'));
+              console.log('Status:', r.overallStatus);
+              console.log('Passed:', r.summary.passed, '/', r.summary.total);
+              if (r.summary.failed > 0) {
+                const failed = r.steps.filter(s => s.status === 'FAIL');
+                console.log('Failed steps:', failed.map(s => s.step).join(', '));
+                process.exitCode = 1;
+              }
+            "
+          else
+            echo "No report file found."
+            exit 1
+          fi
