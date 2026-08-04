@@ -2,8 +2,8 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12F corregida tras verificación independiente; pendiente commit y nueva verificación**
-- **NEXT_ACTION: verificar commits y autorizar fast-forward**
+- **TASK_STATUS: REV-C12F corregida, publicada y verificada independientemente en rama review**
+- **NEXT_ACTION: fast-forward controlado de review a main**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
@@ -169,8 +169,23 @@ SIGNED_GET_RESPONSE_BODY_LOGGED = FALSE
 CONSTRAINT_REASON_MAX_LENGTH = 240
 SENSITIVE_SENTINEL_LOGGED = FALSE
 
-Tests: 33 tests nuevos (19 helper + 14 integración), 105 tests Grid relacionados, 15 tests existentes.
+Tests: 33 tests nuevos (20 helper + 13 integración), 105 tests Grid relacionados, 15 tests existentes.
 CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+
+SINGLETON_RESTORATION_IMPLEMENTED = TRUE
+SINGLETON_RESTORATION_LOCATION = afterEach
+SINGLETON_RESTORATION_COUNTED_AS_TEST = FALSE
+
+TECH_INITIAL_SHA = c35cdb4ae4e48b142d851c88dcb9904c97aa211a
+DOC_INITIAL_SHA = dd5109119786c5b2a420c5b159685ef578ade6e7
+TECH_FIX_SHA = 1e309fef3bdba34ddfb36d3fd0d334f4764b4b6a
+DOC_FIX_SHA = b2290411537df62a59728ffbf8c793aa7fe1886c
+INDEPENDENT_VERIFICATION = PASSED_WITH_DOCUMENTATION_CORRECTION_ONLY
+TECHNICAL_BLOCKERS = 0
+MERGE = NO
+DEPLOY = NO
+DB = NO
+REAL_ORDERS = 0
 
 ## Alcance REV-C12A
 

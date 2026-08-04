@@ -88,29 +88,30 @@ autenticado → público → caché → fail-closed.
 
 ## 5. Tests
 
-### Helper tests (19)
+### Helper tests (20)
 
 1. acepta array directo
 2. acepta `{pairs:[...]}`
 3. acepta mapa raíz oficial
 4. extrae BTC/USD del mapa oficial
 5. conserva ETH/USD junto a BTC/USD
-6. rechaza null
-7. rechaza string
-8. rechaza número
-9. rechaza objeto vacío
-10. rechaza objeto de error
-11. ignora metadata que no contiene base/quote
-12. no muta el objeto original
-13. mantiene strings decimales sin transformarlos
-14. no acepta arrays vacíos
-15. no acepta pairs vacío
-16. array no vacío sin entries válidas → throw
-17. wrapper no vacío sin entries válidas → throw
-18. array mixto conserva solo el par válido
-19. wrapper mixto conserva solo el par válido
+6. rechaza null (it.each)
+7. rechaza undefined (it.each)
+8. rechaza string
+9. rechaza número
+10. rechaza objeto vacío
+11. rechaza objeto de error
+12. ignora metadata que no contiene base/quote
+13. no muta el objeto original
+14. mantiene strings decimales sin transformarlos
+15. no acepta arrays vacíos
+16. no acepta pairs vacío
+17. array no vacío sin entries válidas → throw
+18. wrapper no vacío sin entries válidas → throw
+19. array mixto conserva solo el par válido
+20. wrapper mixto conserva solo el par válido
 
-### Integración tests (14)
+### Integración tests (13)
 
 1. auth devuelve mapa raíz oficial: verified=true con constraints correctas
 2. auth falla y público devuelve mapa raíz: verified=true con source público
@@ -125,7 +126,8 @@ autenticado → público → caché → fail-closed.
 11. error HTTP 401 con body sensible no aparece en ningún log
 12. reason no contiene saltos de línea
 13. reason tiene longitud máxima 240
-14. restauración del singleton (initialized y getHeaders)
+
+Nota: la restauración del singleton (initialized y getHeaders) está implementada en afterEach, no es un test independiente.
 
 ### Tests Grid relacionados (105, 5 archivos)
 
@@ -160,7 +162,24 @@ Defectos corregidos:
 2. `signedGetJson` no incluye el body en el mensaje de error (usa statusText, no response.text()).
 3. `sanitizeRevolutXConstraintError` limita reason a 240 chars y elimina saltos de línea/tabs.
 4. Restauración correcta del singleton (initialized y getHeaders) en afterEach.
-5. Conteo de tests corregido: 19 helper + 14 integración = 33 total nuevos.
+5. Conteo de tests corregido: 20 helper + 13 integración = 33 total nuevos.
+
+SINGLETON_RESTORATION_IMPLEMENTED = TRUE
+SINGLETON_RESTORATION_LOCATION = afterEach
+SINGLETON_RESTORATION_COUNTED_AS_TEST = FALSE
+
+## 6c. Estado documental pre-merge
+
+TECH_INITIAL_SHA = c35cdb4ae4e48b142d851c88dcb9904c97aa211a
+DOC_INITIAL_SHA = dd5109119786c5b2a420c5b159685ef578ade6e7
+TECH_FIX_SHA = 1e309fef3bdba34ddfb36d3fd0d334f4764b4b6a
+DOC_FIX_SHA = b2290411537df62a59728ffbf8c793aa7fe1886c
+INDEPENDENT_VERIFICATION = PASSED_WITH_DOCUMENTATION_CORRECTION_ONLY
+TECHNICAL_BLOCKERS = 0
+MERGE = NO
+DEPLOY = NO
+DB = NO
+REAL_ORDERS = 0
 
 ## 7. Validación read-only del payload público real
 
@@ -196,8 +215,8 @@ Defectos corregidos:
 ```
 DONE: FALSE
 HARD_BLOCKER: FALSE
-TASK_STATUS: REV-C12F corregida tras verificación independiente; pendiente commit y nueva verificación
-NEXT_ACTION: verificar commits y autorizar fast-forward
+TASK_STATUS: REV-C12F corregida, publicada y verificada independientemente en rama review
+NEXT_ACTION: fast-forward controlado de review a main
 DEPLOY_AUTHORIZED: FALSE
 MIGRATION_REQUIRED: FALSE
 ```
