@@ -75,3 +75,27 @@ Para completar esta validación se requiere:
 4. Documentar resultados reales en este archivo
 
 **Veredicto:** BLOCKED_NO_SAFE_ENVIRONMENT
+
+---
+
+## R8A — Actualización (2026-08-03)
+
+**Estado R8A:** VALIDADOR_ENDURECIDO_Y_CI_CONFIGURADA
+
+### Cambios R8A
+
+- Helpers canónicos migrados a `scripts/ama_migration_validation_helpers.mjs` (JS puro, 15 exports)
+- `scripts/ama_migration_validate.mjs` — main module guard, imports desde .mjs, no ejecuta en import
+- CI: `.github/workflows/ama-postgres-080-validation.yml` — PostgreSQL 16 desechable, `npm run check` + `validate:ama:postgres`
+- npm script: `validate:ama:postgres` → `node scripts/ama_migration_validate.mjs`
+- Tests unitarios: 46/46 PASS (validación de helpers sin conexión PostgreSQL)
+
+### Estado actual
+
+- PostgreSQL local = NO DISPONIBLE (sin Docker ni PG local)
+- CI GitHub Actions = CONFIGURADA (PostgreSQL 16 service container, DB desechable)
+- Validador = LISTO para ejecución runtime cuando exista entorno PG
+- Smoke test import = OK (sin conexión PG en import)
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
+
+**Veredicto R8A:** VALIDADOR_LISTO_CI_CONFIGURADA_EJECUCION_RUNTIME_PENDIENTE

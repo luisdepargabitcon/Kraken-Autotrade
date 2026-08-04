@@ -685,6 +685,40 @@ leer estado operativo
 
 ---
 
+## R8A — Alineación migración 080 + CI PostgreSQL desechable (2026-08-03)
+
+**Estado:** CORRECCIONES_APLICADAS_Y_VALIDADAS_EN_LOCAL
+**Veredicto:** APTO_PARA_COMMIT_R8A_Y_EJECUCION_CI_EN_RAMA_DE_REVISION
+
+### Cambios clave
+
+- Helpers canónicos migrados a `scripts/ama_migration_validation_helpers.mjs` (JS puro)
+- `amaMigrationValidatorHelpers.ts` → stub deprecado (`export {}`)
+- Validator `.mjs` con main module guard (no ejecuta en import)
+- Test suite: 46/46 tests importando desde `.mjs`
+- CI: workflow PostgreSQL 16 desechable con `npm run check` + `validate:ama:postgres`
+- npm script: `validate:ama:postgres`
+
+### Validaciones
+
+- `npm run check` ✅ | `npm run build` ✅
+- `vitest amaR8MigrationValidator` ✅ 46/46
+- `vitest server/services/ama` ✅ 822 passed (776 R7 + 46 R8A)
+- `vitest server/services/portfolio` ✅ 59/59
+- `vitest run` ✅ 3934 passed / 34 failed (preexistentes) / 29 skipped
+- Smoke: HELPERS_IMPORT_OK ✅, VALIDATOR_IMPORT_OK ✅
+
+### Bloqueos
+
+- commit = PENDIENTE AUTORIZACIÓN
+- merge = NO AUTORIZADO
+- deploy = NO AUTORIZADO
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
+- SHADOW = BLOQUEADO
+- REAL = BLOQUEADO
+
+---
+
 ## PERMANENCIA Y ARCHIVO
 
 `FASES MODO AMA.md` permanecerá en la raíz mientras:

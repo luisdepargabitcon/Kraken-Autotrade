@@ -211,3 +211,25 @@ No declarar:
 - migración 080 lista para aplicarse
 - SHADOW operativo
 - REAL preparado
+
+---
+
+## Actualización R8A (2026-08-03)
+
+R8A completa la alineación de la migración 080 con los contratos R7 y configura CI PostgreSQL desechable.
+
+**Cambios R8A sobre baseline R7:**
+- Migración 080 rediseñada con contratos R7 completos (tablas, columnas, CHECKs, FKs, indexes)
+- Helpers canónicos migrados a `scripts/ama_migration_validation_helpers.mjs` (JS puro)
+- Validator endurecido con main module guard (no ejecuta en import)
+- 46 tests unitarios nuevos (total AMA: 822 = 776 R7 + 46 R8A)
+- CI: workflow PostgreSQL 16 desechable con `npm run check` + `validate:ama:postgres`
+
+**Validaciones R8A:**
+- `npm run check` ✅ | `npm run build` ✅
+- `vitest amaR8MigrationValidator` ✅ 46/46
+- `vitest server/services/ama` ✅ 822 passed
+- `vitest server/services/portfolio` ✅ 59/59
+- `vitest run` ✅ 3934 passed / 34 failed (preexistentes) / 29 skipped
+
+**Veredicto R8A:** APTO_PARA_COMMIT_R8A_Y_EJECUCION_CI_EN_RAMA_DE_REVISION

@@ -6941,3 +6941,51 @@ R7 implementa 12 correcciones sobre el pipeline adaptativo AMA, transformando el
 - Merge = NO
 - Deploy = NO
 - Migraciones = NO
+
+---
+
+## AMA V2.2 — R8A: Alineación migración 080 con contratos R7 + CI PostgreSQL desechable
+
+**Fecha:** 2026-08-03
+**Rama:** `review/ama-seed-v2-2-20260729`
+**Base HEAD:** `b2129c7a4e1af054d8e2f5254ca292b9d18e0f82`
+
+### Objetivo
+
+Alinear `080_ama_initial.sql` con los contratos R7, endurecer el validador PostgreSQL,
+crear helpers puros testables, tests sin DB, y añadir un workflow GitHub Actions para
+validación CI en PostgreSQL 16 desechable. Gate precommit antes de cualquier commit.
+
+### Archivos modificados
+
+- `db/migrations/080_ama_initial.sql` — R7: nuevas columnas en `ama_tranche_plans`,
+  tabla `ama_tranche_fill_events`, CHECKs nombrados (`chk_ama_cycles_budget`,
+  `chk_ama_plans_ts_order`, `chk_ama_plans_deployable_le_deployment`,
+  `chk_ama_plans_deployable_le_100_minus_reserve`, `chk_ama_tranches_executed_le_planned`,
+  `chk_portfolio_budgets_total`), FKs nuevos (`fk_ama_cycles_active_policy`,
+  `fk_ama_plans_policy`, `fk_ama_fill_events_{tranche,cycle,policy}`), 8 índices nuevos.
+  Checks `asset IN ('BTC', 'ETH')` en todas las tablas relevantes.
+- `scripts/ama_migration_validate.mjs` — Reescritura R8A: nombre DB con UUID, regex estricto,
+  verificación exacta de columnas/CHECKs/FKs/índices, 20 casos negativos R7, 11 casos de
+  unicidad, idempotencia, JSON report a `artifacts/`, cleanup garantizado en `finally`.
+- `package.json` — script `validate:ama:postgres`
+
+### Archivos creados
+
+- `server/services/ama/amaMigrationValidatorHelpers.ts` — helpers puros (sin DB, testables)
+- `server/services/ama/__tests__/amaR8MigrationValidator.test.ts` — 28 tests puros
+- `.github/workflows/ama-postgres-080-validation.yml` — CI PostgreSQL 16 desechable
+
+### Bloqueos vigentes
+
+- PostgreSQL local = BLOCKED_NO_SAFE_ENVIRONMENT (sin Docker ni psql local)
+- CI workflow = PREPARADO, pendiente de ejecutar tras commit R8B autorizado
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY, NOT_APPLIED_STAGING, NOT_APPLIED_PRODUCTION
+
+### Estado R8A
+
+- Implementación = COMPLETADA_EN_LOCAL
+- Commit = NO (pendiente de gate precommit)
+- Push = NO
+- Merge = NO
+- Deploy = NO

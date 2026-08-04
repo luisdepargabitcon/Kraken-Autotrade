@@ -5612,3 +5612,41 @@ Clasificación por bloque:
 - REAL_FULL = BLOQUEADO
 - merge = NO AUTORIZADO
 - deploy = NO AUTORIZADO
+
+---
+
+## R8A — Alineación migración 080 + CI PostgreSQL desechable (2026-08-03)
+
+### Cambios
+
+- `db/migrations/080_ama_initial.sql` — rediseñado con contratos R7 completos
+- `scripts/ama_migration_validate.mjs` — validator endurecido, main module guard, imports desde .mjs
+- `scripts/ama_migration_validation_helpers.mjs` — **NUEVO**, helpers canónicos JS puro
+- `server/services/ama/amaMigrationValidatorHelpers.ts` — **STUB** deprecado (export {})
+- `server/services/ama/__tests__/amaR8MigrationValidator.test.ts` — **NUEVO**, 46 tests
+- `.github/workflows/ama-postgres-080-validation.yml` — CI PostgreSQL 16 desechable
+- `package.json` — script `validate:ama:postgres`
+
+### Validaciones
+
+- `npm run check` ✅
+- `npm run build` ✅
+- `vitest amaR8MigrationValidator` ✅ 46/46
+- `vitest server/services/ama` ✅ 822 passed (776 R7 + 46 R8A)
+- `vitest server/services/portfolio` ✅ 59/59
+- `vitest run` ✅ 3934 passed / 34 failed (preexistentes) / 29 skipped
+- Smoke: HELPERS_IMPORT_OK ✅, VALIDATOR_IMPORT_OK ✅ (sin conexión PG)
+
+### Estado
+
+- R8A = CORRECCIONES_APLICADAS_Y_VALIDADAS_EN_LOCAL
+- R8A_TESTS = 46/46 PASS
+- R8A_AMA_TESTS_TOTAL = 822 (776 + 46)
+- PostgreSQL local = VALIDADOR_LISTO (sin ejecutar — no hay PG local)
+- CI PostgreSQL 16 = WORKFLOW_CONFIGURADO
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
+- SHADOW = BLOQUEADO
+- REAL = BLOQUEADO
+- merge = NO AUTORIZADO
+- deploy = NO AUTORIZADO
+- commit = PENDIENTE AUTORIZACIÓN
