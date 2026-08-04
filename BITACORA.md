@@ -7038,3 +7038,14 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 ### Estado final
 - REV-C11 completada, desplegada y validada en staging.
 - Sin órdenes reales y sin modificar la DB.
+
+## REV-C12G (2026-08-05) — Taker fallback efectivo en SHADOW
+
+- **Causa raíz**: A_STORED_FLAG_PASSED_INSTEAD_OF_EFFECTIVE. El tick automático y el rebuild manual pasaban this.config.takerFallbackEnabled (stored=true) al resolver resolveGridExecutionCapability, sin aplicar el override SHADOW. El audit usaba un ternario local duplicado.
+- **Síntoma**: TAKER_FALLBACK_NOT_DISABLED en cada tick SHADOW, bloqueando generación de niveles. Audit mostraba effectiveTakerFallbackEnabled=false (correcto) pero el tick usaba stored=true (incorrecto).
+- **Corrección**: Helper canónico getEffectiveTakerFallbackEnabled en gridIsolatedTypes.ts, usado por tick (gridIsolatedEngine.ts:1344), rebuild (gridIsolatedEngine.ts:5024) y audit (gridIsolated.routes.ts:1333). SHADOW siempre devuelve false; OFF/REAL_LIMITED/REAL_FULL usan el stored.
+- **Metadata evento**: EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE mantiene tipo histórico pero ahora expone blockerComponent, blockerExplanation, flags de verificación por componente y effectiveTakerFallbackEnabled.
+- **DB**: No modificada. Stored takerFallbackEnabled=true permanece.
+- **Rama**: review/grid-rev-c12g-20260805 (base 482d3e4).
+- **Tests**: 91 + 73 tests dirigidos pasados; CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+- **Estado**: Corregida en rama review; pendiente verificación independiente, fast-forward y deploy.

@@ -2,14 +2,15 @@
 
 - **DONE: FALSE**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: REV-C12F corregida, publicada y verificada independientemente en rama review**
-- **NEXT_ACTION: fast-forward controlado de review a main**
+- **TASK_STATUS: REV-C12G corregida en rama review; pendiente verificación independiente**
+- **NEXT_ACTION: verificar commits antes de fast-forward**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
 REV-C12E_COMPLETADA = TRUE
+REV-C12F_COMPLETADA = TRUE
 GRID_NEW_ENTRIES_AVAILABLE = FALSE
-GRID_NEW_ENTRIES_BLOCKER = REVOLUT_X_CONSTRAINTS_UNAVAILABLE
+GRID_NEW_ENTRIES_BLOCKER = TAKER_FALLBACK_NOT_DISABLED
 ALLOW_CYCLE_EXITS = TRUE
 
 ## Correcciones tras segunda verificación independiente (2026-08-04)
