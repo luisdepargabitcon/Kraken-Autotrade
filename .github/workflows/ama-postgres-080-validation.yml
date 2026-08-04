@@ -19,16 +19,22 @@ on:
     branches:
       - "review/ama-seed-v2-2-*"
     paths:
+      - ".github/workflows/ama-postgres-080-validation.yml"
       - "db/migrations/080_ama_initial.sql"
       - "scripts/ama_migration_validate.mjs"
       - "scripts/ama_migration_validation_helpers.mjs"
+      - "server/services/ama/__tests__/amaR8MigrationValidator.test.ts"
+      - "package.json"
   pull_request:
     branches:
       - "review/ama-seed-v2-2-*"
     paths:
+      - ".github/workflows/ama-postgres-080-validation.yml"
       - "db/migrations/080_ama_initial.sql"
       - "scripts/ama_migration_validate.mjs"
       - "scripts/ama_migration_validation_helpers.mjs"
+      - "server/services/ama/__tests__/amaR8MigrationValidator.test.ts"
+      - "package.json"
   workflow_dispatch:
     inputs:
       reason:
