@@ -5621,8 +5621,7 @@ Clasificación por bloque:
 
 - `db/migrations/080_ama_initial.sql` — rediseñado con contratos R7 completos
 - `scripts/ama_migration_validate.mjs` — validator endurecido, main module guard, imports desde .mjs
-- `scripts/ama_migration_validation_helpers.mjs` — **NUEVO**, helpers canónicos JS puro
-- `server/services/ama/amaMigrationValidatorHelpers.ts` — **STUB** deprecado (export {})
+- `scripts/ama_migration_validation_helpers.mjs` — **NUEVO**, helpers canónicos JS puro (15 exports)
 - `server/services/ama/__tests__/amaR8MigrationValidator.test.ts` — **NUEVO**, 46 tests
 - `.github/workflows/ama-postgres-080-validation.yml` — CI PostgreSQL 16 desechable
 - `package.json` — script `validate:ama:postgres`
@@ -5632,21 +5631,25 @@ Clasificación por bloque:
 - `npm run check` ✅
 - `npm run build` ✅
 - `vitest amaR8MigrationValidator` ✅ 46/46
-- `vitest server/services/ama` ✅ 822 passed (776 R7 + 46 R8A)
+- `vitest server/services/ama` — 822 tests AMA: 819 passed, 3 failed preexistentes, 0 fallos nuevos R8A
 - `vitest server/services/portfolio` ✅ 59/59
-- `vitest run` ✅ 3934 passed / 34 failed (preexistentes) / 29 skipped
+- `vitest run` — 3900 passed / 34 failed (preexistentes) / 29 skipped — 3934 total no-skipped
+- Reconciliación R7 vs R8A: FAILURE_SETS_IDENTICAL = YES, R8A_NEW_FAILURES = 0
 - Smoke: HELPERS_IMPORT_OK ✅, VALIDATOR_IMPORT_OK ✅ (sin conexión PG)
 
 ### Estado
 
-- R8A = CORRECCIONES_APLICADAS_Y_VALIDADAS_EN_LOCAL
+- R8A = COMMITTED_AND_PUSHED
 - R8A_TESTS = 46/46 PASS
-- R8A_AMA_TESTS_TOTAL = 822 (776 + 46)
+- R8A_AMA_TESTS = 822 tests: 819 passed, 3 failed preexistentes, 0 fallos nuevos
+- R8A_FULL_SUITE = 3900 passed / 34 failed (preexistentes) / 29 skipped
+- Commit técnico = 27f7c3ad77350460d3dbe20bba379e48ea37b5df
+- Commit documental = ef8f837e93bae2e0f3a4d7fd5e0aba502edd2c04
+- Push = FAST_FORWARD a origin/review/ama-seed-v2-2-20260729
 - PostgreSQL local = VALIDADOR_LISTO (sin ejecutar — no hay PG local)
-- CI PostgreSQL 16 = WORKFLOW_CONFIGURADO
+- CI PostgreSQL 16 = PENDIENTE_DE_VERIFICACION
 - Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
 - SHADOW = BLOQUEADO
 - REAL = BLOQUEADO
-- merge = NO AUTORIZADO
-- deploy = NO AUTORIZADO
-- commit = PENDIENTE AUTORIZACIÓN
+- merge = NO
+- deploy = NO

@@ -80,7 +80,7 @@ Para completar esta validación se requiere:
 
 ## R8A — Actualización (2026-08-03)
 
-**Estado R8A:** VALIDADOR_ENDURECIDO_Y_CI_CONFIGURADA
+**Estado R8A:** COMMITTED_AND_PUSHED — CI PENDIENTE_DE_VERIFICACION
 
 ### Cambios R8A
 
@@ -93,9 +93,17 @@ Para completar esta validación se requiere:
 ### Estado actual
 
 - PostgreSQL local = NO DISPONIBLE (sin Docker ni PG local)
-- CI GitHub Actions = CONFIGURADA (PostgreSQL 16 service container, DB desechable)
+- CI GitHub Actions = COMMITTED_AND_PUSHED (PostgreSQL 16 service container, DB desechable)
 - Validador = LISTO para ejecución runtime cuando exista entorno PG
 - Smoke test import = OK (sin conexión PG en import)
 - Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
+- Commit técnico = 27f7c3ad77350460d3dbe20bba379e48ea37b5df
+- Commit documental = ef8f837e93bae2e0f3a4d7fd5e0aba502edd2c04
+- Push = FAST_FORWARD a origin/review/ama-seed-v2-2-20260729
 
-**Veredicto R8A:** VALIDADOR_LISTO_CI_CONFIGURADA_EJECUCION_RUNTIME_PENDIENTE
+El trigger `workflow_dispatch` permanece definido, pero GitHub solo permite
+dispararlo manualmente cuando el workflow existe en la rama predeterminada.
+Durante R8A, la validación se dispara mediante push a la rama de revisión.
+No se requiere merge para ejecutar el push-trigger.
+
+**Veredicto R8A:** AMA R8A COMMITTED_AND_PUSHED — POSTGRESQL_16_DISPOSABLE_VALIDATION = PENDING_MANUAL_VERIFICATION

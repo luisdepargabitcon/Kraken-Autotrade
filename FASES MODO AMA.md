@@ -687,13 +687,12 @@ leer estado operativo
 
 ## R8A — Alineación migración 080 + CI PostgreSQL desechable (2026-08-03)
 
-**Estado:** CORRECCIONES_APLICADAS_Y_VALIDADAS_EN_LOCAL
-**Veredicto:** APTO_PARA_COMMIT_R8A_Y_EJECUCION_CI_EN_RAMA_DE_REVISION
+**Estado:** COMMITTED_AND_PUSHED
+**Veredicto:** AMA R8A COMMITTED_AND_PUSHED — POSTGRESQL_16_DISPOSABLE_VALIDATION = PENDING_MANUAL_VERIFICATION
 
 ### Cambios clave
 
-- Helpers canónicos migrados a `scripts/ama_migration_validation_helpers.mjs` (JS puro)
-- `amaMigrationValidatorHelpers.ts` → stub deprecado (`export {}`)
+- Helpers canónicos en `scripts/ama_migration_validation_helpers.mjs` (JS puro, 15 exports)
 - Validator `.mjs` con main module guard (no ejecuta en import)
 - Test suite: 46/46 tests importando desde `.mjs`
 - CI: workflow PostgreSQL 16 desechable con `npm run check` + `validate:ama:postgres`
@@ -703,16 +702,19 @@ leer estado operativo
 
 - `npm run check` ✅ | `npm run build` ✅
 - `vitest amaR8MigrationValidator` ✅ 46/46
-- `vitest server/services/ama` ✅ 822 passed (776 R7 + 46 R8A)
+- `vitest server/services/ama` — 822 tests AMA: 819 passed, 3 failed preexistentes, 0 fallos nuevos R8A
 - `vitest server/services/portfolio` ✅ 59/59
-- `vitest run` ✅ 3934 passed / 34 failed (preexistentes) / 29 skipped
+- `vitest run` — 3900 passed / 34 failed (preexistentes) / 29 skipped — 3934 total no-skipped
+- Reconciliación R7 vs R8A: FAILURE_SETS_IDENTICAL = YES, R8A_NEW_FAILURES = 0
 - Smoke: HELPERS_IMPORT_OK ✅, VALIDATOR_IMPORT_OK ✅
 
 ### Bloqueos
 
-- commit = PENDIENTE AUTORIZACIÓN
-- merge = NO AUTORIZADO
-- deploy = NO AUTORIZADO
+- commit = COMPLETED (27f7c3a + ef8f837)
+- push = COMPLETED (FAST_FORWARD)
+- merge = NO
+- deploy = NO
+- CI PostgreSQL 16 = PENDIENTE_DE_VERIFICACION
 - Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
 - SHADOW = BLOQUEADO
 - REAL = BLOQUEADO

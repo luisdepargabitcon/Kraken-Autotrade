@@ -18,7 +18,7 @@
 | Aplicada en producción | NO |
 | Aplicada en entorno local | NO |
 
-Fuente: `@c:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE\server\routes.ts` — MIGRATIONS array con comentario explícito.
+Fuente: `server/routes.ts` — MIGRATIONS array con comentario explícito.
 
 ---
 
@@ -87,8 +87,9 @@ Fuente: `@c:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE\server\routes.ts` — MIGRA
 
 ---
 
-### R8A.5 — `server/services/ama/amaMigrationValidatorHelpers.ts`
+### R8A.5 — `scripts/ama_migration_validation_helpers.mjs`
 
+- JS puro, 15 exports, sin conexión DB, fuente canónica única
 - Helpers puros (sin DB, sin efectos secundarios)
 - `validateTempDbName`, `isDisposableDatabaseName`, `isProhibitedDatabaseName`
 - `compareColumns`, `compareCheckConstraints`, `compareForeignKeys`, `compareIndexes`
@@ -96,9 +97,9 @@ Fuente: `@c:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE\server\routes.ts` — MIGRA
 - Contratos exportados: `R7_EXPECTED_TABLES`, `R7_EXPECTED_CHECKS`, `R7_EXPECTED_FOREIGN_KEYS`,
   `R7_EXPECTED_INDEXES`, `R7_PLANS_REQUIRED_COLUMNS`, `R7_FILL_EVENTS_REQUIRED_COLUMNS`
 
-### R8A.5 — `server/services/ama/__tests__/amaR8MigrationValidator.test.ts`
+### R8A.5b — `server/services/ama/__tests__/amaR8MigrationValidator.test.ts`
 
-- 28 tests puros (0 conexiones DB)
+- 46 tests puros (0 conexiones DB)
 - Cubre: validación nombre DB, comparación columnas/checks/FKs/índices, buildReport, redactConfig,
   completitud contratos R7 (10 tablas, HWM fields, fill events columns, 9 FKs, asset domain)
 
@@ -108,7 +109,8 @@ Fuente: `@c:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE\server\routes.ts` — MIGRA
 
 - PostgreSQL 16 como service container (`postgres:16`)
 - `PG_TEMP_DATABASE=ama_disposable_test_ci_<run_id>_<attempt>`
-- Trigger: push/PR en `review/ama-seed-v2-2-*` sobre archivos de migración/validador
+- Trigger: push/PR en `review/ama-seed-v2-2-*` sobre archivos de migración/validador/workflow/tests/package
+- `workflow_dispatch` definido pero solo disponible cuando el workflow exista en la rama predeterminada
 - Artefacto: `artifacts/ama-postgres-080-validation.json`, retención 30 días
 - Resumen en console con `node -e "..."` al final
 
@@ -128,7 +130,7 @@ Fuente: `@c:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE\server\routes.ts` — MIGRA
 |---------|--------|
 | PostgreSQL local | BLOCKED_NO_SAFE_ENVIRONMENT |
 | Migración 080 | NOT_REGISTERED / NOT_AUTOAPPLY |
-| CI workflow | PREPARADO — pendiente commit en rama de revisión |
+| CI workflow | COMMITTED_AND_PUSHED — pendiente verificación en GitHub Actions |
 | SHADOW mode | BLOQUEADO |
 | REAL mode | BLOQUEADO |
 
@@ -146,15 +148,14 @@ git diff --stat HEAD
 
 Resultado esperado:
 - `npm run check`: sin errores TypeScript
-- `vitest`: 28/28 tests PASS
+- `vitest`: 46/46 tests PASS
 - `git diff --stat HEAD`: únicamente los archivos R8A modificados/creados
 
-Archivos alcance del commit R8A (cuando se autorice):
+Archivos alcance del commit R8A:
 ```
 db/migrations/080_ama_initial.sql
 scripts/ama_migration_validate.mjs
 scripts/ama_migration_validation_helpers.mjs  ← NUEVO (canónico .mjs)
-server/services/ama/amaMigrationValidatorHelpers.ts  ← STUB (deprecado, export {} only)
 server/services/ama/__tests__/amaR8MigrationValidator.test.ts
 .github/workflows/ama-postgres-080-validation.yml
 package.json
@@ -175,17 +176,20 @@ AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R8A_2026-08-03.md
 | Smoke: `VALIDATOR_IMPORT_OK` | ✅ sin conexión PostgreSQL |
 | Smoke: `validate:ama:postgres` script | ✅ `node scripts/ama_migration_validate.mjs` |
 | `vitest amaR8MigrationValidator.test.ts` | ✅ **46/46** |
-| `vitest server/services/ama` | ✅ **822 passed** (776 R7 + 46 R8A), 3 fallos preexistentes |
+| `vitest server/services/ama` | **822 tests AMA: 819 passed, 3 failed preexistentes, 0 fallos nuevos R8A** |
 | `vitest server/services/portfolio` | ✅ **59/59** |
-| `vitest run` (suite completa) | ✅ **3934 passed / 34 failed / 29 skipped** |
+| `vitest run` (suite completa) | **3900 passed / 34 failed (preexistentes) / 29 skipped — 3934 total no-skipped** |
 
 ### Análisis de fallos suite completa
 
 - **Fallos preexistentes (no R8A):** 34 total
-  - Los 3 fallos nuevos vs baseline (31→34) corresponden a `amaAdaptivePlanner.test.ts` y `amaR4Integration.test.ts` — tests date-sensitive con fecha fija "2026-07-29" que no fueron tocados por R8A
-  - `git diff --name-status HEAD` confirma estos archivos NO aparecen como modificados
-- **Fallos nuevos introducidos por R8A:** 0 ✅
-- **Skipped nuevos:** 0 ✅
+- La reproducción de R7 en worktree limpio y en el mismo entorno obtuvo
+  los mismos 34 fallos que R8A.
+- Los conjuntos exactos de tests fallidos son idénticos.
+- Por tanto, R8A no introduce fallos nuevos.
+- **FAILURE_SETS_IDENTICAL = YES**
+- **R8A_NEW_FAILURES = 0** ✅
+- **R8A_NEW_SKIPPED = 0** ✅
 
 ---
 
@@ -193,14 +197,21 @@ AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R8A_2026-08-03.md
 
 | Campo | Valor |
 |-------|-------|
-| Implementación | COMPLETADA_Y_VALIDADA_EN_LOCAL |
-| Commit | NO — pendiente autorización |
-| Push | NO |
+| Implementación | COMMITTED_AND_PUSHED |
+| Commit técnico | 27f7c3ad77350460d3dbe20bba379e48ea37b5df |
+| Commit documental | ef8f837e93bae2e0f3a4d7fd5e0aba502edd2c04 |
+| Push | FAST_FORWARD a origin/review/ama-seed-v2-2-20260729 |
 | Merge | NO |
 | Deploy | NO |
 | Migraciones aplicadas | NO |
 | Entornos afectados | NINGUNO |
+| CI PostgreSQL 16 | PENDIENTE_DE_VERIFICACION |
 
-### Veredicto pre-commit
+### Veredicto
 
-`APTO_PARA_COMMIT_R8A_Y_EJECUCION_CI_EN_RAMA_DE_REVISION`
+`AMA R8A COMMITTED_AND_PUSHED — POSTGRESQL_16_DISPOSABLE_VALIDATION = PENDING_MANUAL_VERIFICATION`
+
+El trigger `workflow_dispatch` permanece definido, pero GitHub solo permite
+dispararlo manualmente cuando el workflow existe en la rama predeterminada.
+Durante R8A, la validación se dispara mediante push a la rama de revisión.
+No se requiere merge para ejecutar el push-trigger.

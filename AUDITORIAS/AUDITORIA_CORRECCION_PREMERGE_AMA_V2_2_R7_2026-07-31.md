@@ -222,14 +222,22 @@ R8A completa la alineación de la migración 080 con los contratos R7 y configur
 - Migración 080 rediseñada con contratos R7 completos (tablas, columnas, CHECKs, FKs, indexes)
 - Helpers canónicos migrados a `scripts/ama_migration_validation_helpers.mjs` (JS puro)
 - Validator endurecido con main module guard (no ejecuta en import)
-- 46 tests unitarios nuevos (total AMA: 822 = 776 R7 + 46 R8A)
+- 46 tests unitarios nuevos (total AMA: 822 tests = 819 passed + 3 failed preexistentes)
 - CI: workflow PostgreSQL 16 desechable con `npm run check` + `validate:ama:postgres`
 
 **Validaciones R8A:**
 - `npm run check` ✅ | `npm run build` ✅
 - `vitest amaR8MigrationValidator` ✅ 46/46
-- `vitest server/services/ama` ✅ 822 passed
+- `vitest server/services/ama` — 822 tests AMA: 819 passed, 3 failed preexistentes, 0 fallos nuevos R8A
 - `vitest server/services/portfolio` ✅ 59/59
-- `vitest run` ✅ 3934 passed / 34 failed (preexistentes) / 29 skipped
+- `vitest run` — 3900 passed / 34 failed (preexistentes) / 29 skipped — 3934 total no-skipped
+- Reconciliación R7 vs R8A: FAILURE_SETS_IDENTICAL = YES, R8A_NEW_FAILURES = 0
 
-**Veredicto R8A:** APTO_PARA_COMMIT_R8A_Y_EJECUCION_CI_EN_RAMA_DE_REVISION
+**Estado R8A:**
+- Implementación = COMMITTED_AND_PUSHED
+- Commit técnico = 27f7c3ad77350460d3dbe20bba379e48ea37b5df
+- Commit documental = ef8f837e93bae2e0f3a4d7fd5e0aba502edd2c04
+- Push = FAST_FORWARD a origin/review/ama-seed-v2-2-20260729
+- CI PostgreSQL 16 = PENDIENTE_DE_VERIFICACION
+
+**Veredicto R8A:** AMA R8A COMMITTED_AND_PUSHED — POSTGRESQL_16_DISPOSABLE_VALIDATION = PENDING_MANUAL_VERIFICATION

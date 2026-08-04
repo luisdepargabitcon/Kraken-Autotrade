@@ -6972,20 +6972,22 @@ validación CI en PostgreSQL 16 desechable. Gate precommit antes de cualquier co
 
 ### Archivos creados
 
-- `server/services/ama/amaMigrationValidatorHelpers.ts` — helpers puros (sin DB, testables)
-- `server/services/ama/__tests__/amaR8MigrationValidator.test.ts` — 28 tests puros
+- `scripts/ama_migration_validation_helpers.mjs` — helpers canónicos JS puro (15 exports, sin DB)
+- `server/services/ama/__tests__/amaR8MigrationValidator.test.ts` — 46 tests puros
 - `.github/workflows/ama-postgres-080-validation.yml` — CI PostgreSQL 16 desechable
 
 ### Bloqueos vigentes
 
 - PostgreSQL local = BLOCKED_NO_SAFE_ENVIRONMENT (sin Docker ni psql local)
-- CI workflow = PREPARADO, pendiente de ejecutar tras commit R8B autorizado
+- CI workflow = COMMITTED_AND_PUSHED, pendiente de verificación en GitHub Actions
 - Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY, NOT_APPLIED_STAGING, NOT_APPLIED_PRODUCTION
 
 ### Estado R8A
 
-- Implementación = COMPLETADA_EN_LOCAL
-- Commit = NO (pendiente de gate precommit)
-- Push = NO
+- Implementación = COMMITTED_AND_PUSHED
+- Commit técnico = 27f7c3ad77350460d3dbe20bba379e48ea37b5df
+- Commit documental = ef8f837e93bae2e0f3a4d7fd5e0aba502edd2c04
+- Push = FAST_FORWARD a origin/review/ama-seed-v2-2-20260729
 - Merge = NO
 - Deploy = NO
+- CI PostgreSQL 16 = PENDIENTE_DE_VERIFICACION
