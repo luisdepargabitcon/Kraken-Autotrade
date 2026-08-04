@@ -38,7 +38,7 @@ import { db } from "../db";
 import { gridIsolatedConfigs, gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy, GridMarketContext } from "../services/gridIsolated/gridIsolatedTypes";
-import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
+import { executionPolicyLabel, getEffectiveTakerFallbackEnabled } from "../services/gridIsolated/gridIsolatedTypes";
 import { getNaturalGridMessage, getNaturalGridTitle } from "../services/gridIsolated/gridActivityFormatter";
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
 import { evaluateActiveRangeLifecycle } from "../services/gridIsolated/gridRangeLifecycle";
@@ -1330,8 +1330,11 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const storedExecutionPolicy = storedConfig?.executionPolicy as string | null;
       const storedTakerFallbackEnabled = storedConfig?.takerFallbackEnabled ?? true;
       const storedTakerFallbackAllowed = storedTakerFallbackEnabled;
-      const effectiveTakerFallbackEnabled = mode === "SHADOW" ? false : storedTakerFallbackEnabled;
-      const effectiveTakerFallbackAllowed = mode === "SHADOW" ? false : storedTakerFallbackEnabled;
+      const effectiveTakerFallbackEnabled = getEffectiveTakerFallbackEnabled({
+        mode: mode as GridMode,
+        takerFallbackEnabled: storedTakerFallbackEnabled,
+      });
+      const effectiveTakerFallbackAllowed = effectiveTakerFallbackEnabled;
       const effectiveMakerOnly = mode === "SHADOW" ? true : effectivePolicy === "MAKER_ONLY";
       const takerFallbackUsed = (snapshot.levels || []).some((l: any) => l?.usedTakerFallback === true);
       const takerFallbackPolicyLabel = effectiveTakerFallbackEnabled

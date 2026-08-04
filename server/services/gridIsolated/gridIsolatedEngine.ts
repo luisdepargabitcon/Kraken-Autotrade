@@ -108,6 +108,7 @@ import {
   TERMINAL_GRID_CYCLE_STATUSES,
   SHADOW_EXECUTION_POLICY,
   getEffectiveExecutionPolicy,
+  getEffectiveTakerFallbackEnabled,
   isLegacyExecutionPolicy,
   type GridIsolatedConfig,
   type GridMode,
@@ -1032,7 +1033,7 @@ export class GridIsolatedEngine {
         isActive: this.config.isActive,
         // Execution: Maker/Taker
         makerAttemptsBeforeTaker: this.config.makerAttemptsBeforeTaker,
-        takerFallbackEnabled: this.config.takerFallbackEnabled,
+        takerFallbackEnabled: Boolean(this.config.takerFallbackEnabled),
         takerFallbackAttemptNumber: this.config.takerFallbackAttemptNumber,
         maxTakerFallbackPerCycle: this.config.maxTakerFallbackPerCycle,
         takerFallbackRequiresNetProfit: this.config.takerFallbackRequiresNetProfit,
@@ -1338,6 +1339,9 @@ export class GridIsolatedEngine {
     // execution capability, execution market snapshot, allocation, split,
     // projection context, TTL, and gate — all exactly once.
     // revolutXService.getTicker() is NOT called anywhere in this flow.
+    // REV-C12G: Apply the SHADOW override for taker fallback via the shared
+    // helper so the tick uses the effective value, not the stored DB row.
+    const effectiveTakerFallbackEnabled = getEffectiveTakerFallbackEnabled(this.config);
     const planningContext = await resolveGridPlanningContext({
       pair: this.config.pair,
       bandConfig: {
@@ -1348,7 +1352,7 @@ export class GridIsolatedEngine {
         bandStdDevMultiplier: this.config.bandStdDevMultiplier ?? 2.0,
       },
       executionPolicy: this.config.executionPolicy,
-      takerFallbackEnabled: this.config.takerFallbackEnabled,
+      takerFallbackEnabled: effectiveTakerFallbackEnabled,
       allocationInput: {
         capitalProfile: this.config.capitalProfile,
         netProfitTargetPct: this.config.netProfitTargetPct,
@@ -1398,7 +1402,39 @@ export class GridIsolatedEngine {
       blockNewRangesAndBuys = true;
       // REV-C12E: Prioritize reason codes: referenceMarket > executionCapability > pairConstraints > legacy snapshot.
       const reasonCode = referenceMarket.reasonCode ?? executionCapability.reasonCode ?? pairConstraints.reasonCode ?? executionMarketSnapshot.reasonCode;
-      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Precios de ejecución no disponibles: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", { pair: this.config.pair, reasonCode, source: executionMarketSnapshot.source, allowCycleExits });
+      // REV-C12G: Identify the blocking component and explanation so the event
+      // metadata is not misleading. The event type stays historical for compatibility.
+      const blockerComponent =
+        !referenceMarket.verifiedForPlanning
+          ? "REFERENCE_MARKET"
+          : !executionCapability.verified
+            ? "EXECUTION_CAPABILITY"
+            : !pairConstraints.verified
+              ? "PAIR_CONSTRAINTS"
+              : !executionMarketSnapshot.verified
+                ? "EXECUTION_MARKET_SNAPSHOT"
+                : "PLANNING_GATE";
+      const blockerExplanation =
+        !referenceMarket.verifiedForPlanning
+          ? referenceMarket.explanation
+          : !executionCapability.verified
+            ? executionCapability.explanation
+            : !pairConstraints.verified
+              ? pairConstraints.reasonCode
+              : executionMarketSnapshot.explanation;
+      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Gate de planificación Grid bloqueado: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", {
+        pair: this.config.pair,
+        reasonCode,
+        source: executionMarketSnapshot.source,
+        allowCycleExits,
+        blockerComponent,
+        blockerExplanation,
+        referenceMarketVerified: referenceMarket.verifiedForPlanning,
+        executionCapabilityVerified: executionCapability.verified,
+        executionMarketSnapshotVerified: executionMarketSnapshot.verified,
+        pairConstraintsVerified: pairConstraints.verified,
+        effectiveTakerFallbackEnabled,
+      });
     }
 
     // REV-C12A: Store in-memory execution gate state after real tick evaluation.
@@ -4983,6 +5019,9 @@ export class GridIsolatedEngine {
 
     // REV-C12E: Manual rebuild uses the single canonical orchestrator —
     // resolveGridPlanningContext. No duplicated logic between call sites.
+    // REV-C12G: Apply the SHADOW override for taker fallback via the shared
+    // helper so rebuild uses the effective value, not the stored DB row.
+    const effectiveTakerFallbackEnabledRebuild = getEffectiveTakerFallbackEnabled(this.config);
     const planningContextRebuild = await resolveGridPlanningContext({
       pair: this.config.pair,
       bandConfig: {
@@ -4993,7 +5032,7 @@ export class GridIsolatedEngine {
         bandStdDevMultiplier: this.config.bandStdDevMultiplier ?? 2.0,
       },
       executionPolicy: this.config.executionPolicy,
-      takerFallbackEnabled: this.config.takerFallbackEnabled,
+      takerFallbackEnabled: effectiveTakerFallbackEnabledRebuild,
       allocationInput: {
         capitalProfile: this.config.capitalProfile,
         netProfitTargetPct: this.config.netProfitTargetPct,

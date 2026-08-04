@@ -148,6 +148,20 @@ export function getEffectiveExecutionPolicy(config: { mode: GridMode; executionP
   if (config.mode === "SHADOW") return "MAKER_ONLY";
   return config.executionPolicy;
 }
+
+/**
+ * REV-C12G: Returns the effective taker fallback flag for a loaded config.
+ * SHADOW always forces false (maker-only). REAL modes use the stored value.
+ * Does not mutate the input and does not modify the persisted DB row.
+ */
+export function getEffectiveTakerFallbackEnabled(
+  config: { mode: GridMode; takerFallbackEnabled: boolean },
+): boolean {
+  if (config.mode === "SHADOW") {
+    return false;
+  }
+  return config.takerFallbackEnabled;
+}
 export const CIRCUIT_BREAKER_RETRY_DELAY_MS = 5 * 60 * 1000;
 export const DAILY_ORDER_REQUEST_LIMIT = 300;
 export const DAILY_ORDER_WARNING_THRESHOLD = 200;

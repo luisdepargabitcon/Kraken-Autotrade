@@ -44,6 +44,7 @@ import {
   resolveGridPlanningContext,
   resolveGridMarketAndConstraints,
 } from "../gridPlanningContextResolver";
+import { getEffectiveTakerFallbackEnabled } from "../gridIsolatedTypes";
 import { revolutXService } from "../../exchanges/RevolutXService";
 import { MarketDataService } from "../../MarketDataService";
 import { getGridBandSnapshot } from "../gridBandAdapter";
@@ -660,5 +661,28 @@ describe("resolveGridMarketAndConstraints — integration: single-call guarantee
       executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
     });
     expect(result.gate.allowCycleExits).toBe(true);
+  });
+
+  // REV-C12G: SHADOW effective taker fallback — stored=true must be overridden to false
+  // by getEffectiveTakerFallbackEnabled before being passed to the planning context.
+  it("I14. REV-C12G: SHADOW con stored=true → effective=false → executionCapability.verified=true", async () => {
+    const storedConfig = { mode: "SHADOW" as const, takerFallbackEnabled: true };
+    const effective = getEffectiveTakerFallbackEnabled(storedConfig);
+    expect(effective).toBe(false);
+
+    getFreshTickerSnapshotMock.mockResolvedValueOnce(validTicker());
+    resolveGridPairConstraintsMock.mockResolvedValueOnce(validConstraints());
+    isInitializedMock.mockReturnValue(true);
+    getGridBandSnapshotMock.mockResolvedValueOnce(validBand());
+
+    const result = await resolveGridPlanningContext({
+      pair: "BTC/USD",
+      bandConfig: { pair: "BTC/USD", bandPeriod: 89, bandStdDevMultiplier: 2, atrPeriod: 14, atrTimeframe: "1h" },
+      executionPolicy: "MAKER_ONLY",
+      takerFallbackEnabled: effective,
+    });
+
+    expect(result.executionCapability.verified).toBe(true);
+    expect(result.executionCapability.reasonCode).toBeNull();
   });
 });
