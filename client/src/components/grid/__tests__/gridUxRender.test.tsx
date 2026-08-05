@@ -200,14 +200,15 @@ describe("Grid UX render", () => {
     expect(html).toContain(">3<");
   });
 
-  it("GridLevelsCompactPanel renders active and target levels with filter counts", () => {
+  it("GridLevelsCompactPanel renders unified ladder with filter counts", () => {
     const html = renderToString(<GridLevelsCompactPanel operational={levelsOperational} />);
     const text = cleanHtml(html);
-    // V3 filter labels with counts
-    expect(text).toContain("Entradas (BUY) (1)");
-    expect(text).toContain("Rungs SELL de referencia (1)");
-    expect(text).toContain("Salidas por ciclo (1)");
-    expect(text).toContain("Histórico (1)");
+    // Unified ladder filter labels with counts
+    expect(text).toContain("Todos");
+    expect(text).toContain("BUY");
+    expect(text).toContain("SELL / rungs");
+    expect(text).toContain("Con ciclo");
+    expect(text).toContain("Histórico");
   });
 
   it("GridOpenCyclesPanel renders open cycle and history summary", () => {

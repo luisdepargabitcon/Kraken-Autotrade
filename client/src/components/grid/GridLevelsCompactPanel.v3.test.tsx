@@ -34,23 +34,23 @@ describe("GridLevelsCompactPanel V3", () => {
     expect(rows.legacyTargetLevels[0]).toMatchObject({ id: "target-1" });
   });
 
-  it("renderiza filtros V3: Entradas, Rungs, Targets, Histórico", () => {
+  it("renderiza filtros unificados: Todos, BUY, SELL/rungs, Con ciclo, Histórico", () => {
     const html = renderToString(<GridLevelsCompactPanel operational={makeOperational()} />);
-    expect(html).toContain("Entradas (BUY)");
-    expect(html).toContain("Rungs SELL de referencia");
-    expect(html).toContain("Salidas por ciclo");
+    expect(html).toContain("Todos");
+    expect(html).toContain("BUY");
+    expect(html).toContain("SELL / rungs");
+    expect(html).toContain("Con ciclo");
     expect(html).toContain("Histórico");
   });
 
-  it("muestra BUY entradas por defecto y oculta rungs/targets", () => {
+  it("muestra BUY y SELL juntos por defecto en la escalera unificada", () => {
     const html = renderToString(<GridLevelsCompactPanel operational={makeOperational()} />);
     expect(html).toContain("BUY entrada");
     expect(html).toContain("$90.000,00");
-    expect(html).not.toContain("SELL referencia");
-    expect(html).not.toContain("SELL objetivo de ciclo");
+    expect(html).toContain("Rung de referencia");
   });
 
-  it("renderiza el target V3 cycle-owned real con sus datos económicos", () => {
+  it("renderiza el target V3 cycle-owned como fila sintética en la escalera", () => {
     const operational = makeOperational();
     operational.levels.entryLevels = [];
     operational.cycleOwnedExits = [{
@@ -76,11 +76,10 @@ describe("GridLevelsCompactPanel V3", () => {
     }];
 
     const html = renderToString(<GridLevelsCompactPanel operational={operational} />);
-    expect(html).toContain("Salidas por ciclo");
-    expect(html).toContain("SELL objetivo V3");
-    expect(html).toContain("Ciclo asociado");
+    expect(html).toContain("Escalera del rango actual");
+    expect(html).toContain("SELL de ciclo");
+    expect(html).toContain("Ciclo #101");
     expect(html).toContain("$91.000,00");
     expect(html).toContain("MAKER_PENDING");
-    expect(html).toContain("Detalle económico y técnico");
   });
 });
