@@ -7071,3 +7071,12 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - **Seguridad**: Órdenes reales=0, DB no modificada, maker-only, taker fallback deshabilitado.
 - **Rama**: `review/grid-shadow-close-r1-20260805-102358` (base `0d0f517`).
 - **Estado**: Fixes publicados en review; pendiente verificación limpia, fast-forward y deploy app-only.
+
+## Grid Shadow Cierre Final (2026-08-05) — Deploy y validación de persistencia
+
+- **Integración**: Fast-forward a main sin merge commit. Main final=`473fc43`.
+- **Deploy**: App-only recreate en staging. PRE_DEPLOY_SHA=`0d0f517`, DEPLOY_SOURCE_SHA=`473fc43`. DB intacta.
+- **Runtime**: mode=SHADOW, pair=BTC/USD, MAKER_ONLY, taker=false, realOrders=0. Active range 937f406d con 4 niveles planned. Precio fresco desde Kraken.
+- **Persistencia**: App-only restart validado. Rango, niveles y ciclos recuperados. 0 duplicados, 0 terminales reabiertos. Ciclo protegido a2a0b7ca sin cambios.
+- **Clasificación**: GRID_SHADOW_READY_WAITING_MARKET_VALIDATED. Motor operativo, esperando condiciones de mercado.
+- **GRID_SHADOW_COMPLETADO**: TRUE.

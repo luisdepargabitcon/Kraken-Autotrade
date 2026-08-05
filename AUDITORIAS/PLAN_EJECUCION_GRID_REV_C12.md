@@ -1,9 +1,9 @@
 # PLAN_EJECUCION_GRID_REV_C12
 
-- **DONE: FALSE**
+- **DONE: TRUE para Grid SHADOW**
 - **HARD_BLOCKER: FALSE**
-- **TASK_STATUS: fixes de cierre SHADOW publicados en review; pendientes integración y deploy**
-- **NEXT_ACTION: verificación limpia, fast-forward y deploy app-only**
+- **TASK_STATUS: Grid SHADOW cerrado y validado en staging**
+- **NEXT_ACTION: observación prolongada SHADOW; modos REAL bloqueados**
 - **DEPLOY_AUTHORIZED: FALSE**
 - **MIGRATION_REQUIRED: FALSE**
 
@@ -547,3 +547,15 @@ Validación:
 - Órdenes reales: 0
 - DB no modificada
 - Deploy pendiente
+
+## Grid Shadow Cierre Final (2026-08-05) — Deploy y validación de persistencia
+
+- Deploy app-only en staging: DEPLOY_SOURCE_SHA=`473fc43`
+- PRE_DEPLOY_SHA=`0d0f517` (ancestro limpio)
+- App recreate exit 0, DB intacta
+- Runtime: mode=SHADOW, pair=BTC/USD, MAKER_ONLY, taker=false, realOrders=0
+- Active range: 937f406d (4 niveles planned, 2 BUY + 2 SELL)
+- Persistencia: app-only restart validado, 0 duplicados, 0 terminales reabiertos
+- Ciclo protegido a2a0b7ca: sin cambios (completed)
+- Clasificación: GRID_SHADOW_READY_WAITING_MARKET_VALIDATED
+- GRID_SHADOW_COMPLETADO=TRUE
