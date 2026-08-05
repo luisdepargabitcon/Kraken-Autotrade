@@ -7092,4 +7092,13 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - **Validación**: `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅, suite gridIsolated 612/612 tests ✅.
 - **Seguridad**: Órdenes reales=0, DB no modificada, maker-only, taker fallback deshabilitado, sin schema/migration changes.
 - **Rama**: `review/grid-shadow-close-r2-20260805-114240` (base `2260f11`).
-- **Estado**: Fixes validados en review; pendiente verificación limpia, fast-forward y deploy app-only.
+- **Commits**: `0334322` (técnico: fix + tests), `ad9798e` (docs: BITACORA R2).
+- **Verificación limpia**: Worktree detached `ad9798e`, 62/62 tests dirigidos ✅.
+- **Fast-forward**: `main` actualizado de `2260f11` a `ad9798e` y pushed.
+- **Deploy app-only staging**: Build ✅, `up -d --no-deps krakenbot-staging-app` ✅.
+- **DB intacta**: ID y StartedAt idénticos pre/post deploy ✅.
+- **24 polls runtime**: mode=SHADOW, realOrders=0, circuitBreaker=false, plannedLevels=4 en todos los polls ✅.
+- **Constraints por nivel activo**: 4 niveles (2 BUY + 2 SELL), qty>0, notional≥400 USD, ACTIVE_CONSTRAINT_VIOLATIONS=0, ZERO_QUANTITY_LEVELS=0 ✅.
+- **Persistencia app-only restart**: `--force-recreate` app, DB intacta, rango/niveles/ciclos recuperados idénticos ✅.
+- **Suite global local**: 30 fallos históricos conocidos, 3451 passed, 0 nuevos fallos ✅. `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅.
+- **Estado**: GRID_SHADOW_CLOSE_R2 COMPLETADO. Deploy staging validado, persistencia confirmada, sin órdenes reales, sin schema changes.
