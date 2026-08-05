@@ -7080,3 +7080,16 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - **Persistencia**: App-only restart validado. Rango, niveles y ciclos recuperados. 0 duplicados, 0 terminales reabiertos. Ciclo protegido a2a0b7ca sin cambios.
 - **Clasificación**: GRID_SHADOW_READY_WAITING_MARKET_VALIDATED. Motor operativo, esperando condiciones de mercado.
 - **GRID_SHADOW_COMPLETADO**: TRUE.
+
+## Grid Shadow Close R2 (2026-08-05) — Fail-closed normalization y E2E hardening
+
+- **Defecto 1 — buildRangeProposal devolvía gridLevels en vez de viableLevels** (`gridIsolatedEngine.ts`): `buildRangeProposal` generaba `gridLevels`, alineaba cantidades a `quantityStep`, filtraba a `viableLevels`, pero retornaba `gridLevels` (incluyendo niveles con cantidad cero). Ahora se aplica `normalizeGridLevelsForExecutionConstraints` que valida cada nivel contra `quantityStep`, `minOrderBase`, `minOrderQuote`, `minOrderUsd` y `maxOrderBase`, retornando `{acceptedLevels, rejectedLevels}` con razón de rechazo. El rango se rechaza si < 4 niveles aceptados. `levelsCount` en DB e in-memory usa `gridLevels.length` (aceptados).
+- **Defecto 2 — E2E permitía pasar sin status=completed** (`gridShadowEndToEndClosure.test.ts`): Tests usaban `if (done)` que permitía skip cuando el ciclo no cerraba, y aceptaban `buy_filled` como estado final. Ahora todos los tests exigen `status === "completed"` estrictamente, sin condicionales. SELL lifecycle usa 3 ticks: TRIGGERED → MAKER_PENDING → fill. Delay de 2ms entre ticks para garantizar `makerEligibleAfter`.
+- **Archivo nuevo — gridLevelConstraintNormalizer.ts**: Función fail-closed `normalizeGridLevelsForExecutionConstraints(levels, constraints)` que alinea cantidades con `Math.floor` (evita floating-point rounding up), valida constraints, retorna niveles aceptados/rechazados con razón. Inmutable: no muta el array de entrada.
+- **Tests nuevos — gridLevelConstraintNormalizer.test.ts**: 18 tests cubriendo alineación, rechazos por constraint, inmutabilidad, edge cases.
+- **Tests endurecidos — gridShadowEndToEndClosure.test.ts**: 34 tests (antes 29). Ciclos BUY→SELL completos con `status=completed`. Nuevos tests: ownership del ciclo, maker SELL lifecycle, seguridad (cero market orders, cero allow_taker).
+- **Tests ampliados — gridShadowMakerPendingLifecycle.test.ts**: 10 tests (antes 6). Nuevos: no double fill, tick posterior obligatorio, inclusión de planned/open.
+- **Validación**: `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅, suite gridIsolated 612/612 tests ✅.
+- **Seguridad**: Órdenes reales=0, DB no modificada, maker-only, taker fallback deshabilitado, sin schema/migration changes.
+- **Rama**: `review/grid-shadow-close-r2-20260805-114240` (base `2260f11`).
+- **Estado**: Fixes validados en review; pendiente verificación limpia, fast-forward y deploy app-only.
