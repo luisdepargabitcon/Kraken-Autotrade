@@ -7060,3 +7060,14 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - **DB**: No modificada. Stored takerFallbackEnabled=true y stored executionPolicy permanecen.
 - **Tests**: 95 + 84 tests dirigidos pasados; CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
 - **Estado**: Corregida tras verificación independiente; pendiente nueva verificación, fast-forward y deploy.
+
+## Grid Shadow Close R1 (2026-08-05) — Fixes de lifecycle, timestamp y quantity step
+
+- **Fix 1 — Maker Pending Lifecycle** (`gridShadowPolicy.ts`): `getCrossedShadowLevels` no incluía niveles `buy_maker_pending`, impidiendo la transición `buy_maker_pending → filled`. Ahora los incluye con umbral `buyMakerRequestedPrice`. Estados terminales excluidos. SELL pending no afectado.
+- **Fix 2 — Timestamp Canónico** (`gridIsolatedEngine.ts:968`): `resolveGridShadowExecutionPrice` usaba `new Date()` para el timestamp, causando `future_timestamp` en el freshness check. Ahora recibe `now: this.lastTickAt ?? undefined`.
+- **Fix 3 — Quantity Step Alignment** (`gridIsolatedEngine.ts:1639-1654`): Las cantidades generadas no estaban alineadas a `quantityStep`, causando rechazo en `computeCycleOwnedExitTarget` por `isStepAligned`. Ahora se alinean con `Math.floor(qty / step) * step` tras `toGridLevels`. Niveles con cantidad cero son filtrados. Rango rechazado si < 4 niveles viables.
+- **Tests nuevos**: `gridShadowEndToEndClosure.test.ts` (29 tests E2E), `gridShadowMakerPendingLifecycle.test.ts` (6 tests lifecycle).
+- **Validación**: Tests dirigidos 127/127, Revolut X 48/48, CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0, full suite 3483 tests con 30 fallos históricos y 0 nuevos.
+- **Seguridad**: Órdenes reales=0, DB no modificada, maker-only, taker fallback deshabilitado.
+- **Rama**: `review/grid-shadow-close-r1-20260805-102358` (base `0d0f517`).
+- **Estado**: Fixes publicados en review; pendiente verificación limpia, fast-forward y deploy app-only.
