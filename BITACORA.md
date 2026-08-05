@@ -7126,3 +7126,29 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - **Deploy app-only staging**: Build ✅, `up -d --no-deps` ✅, DB intacta ✅, HTTP 200 ✅, runtime sin errores ✅.
 - **Alcance**: Solo frontend. Sin cambios en server, shared, migrations, Docker, package.json.
 - **Estado**: COMPLETADO. Deploy staging validado, sin órdenes reales, sin schema changes.
+
+---
+
+## 2026-08-05 — Grid UI: Corrección contractual escalera unificada
+
+- **Módulo**: Grid Isolated UI (`client/src/components/grid/`)
+- **Problema**: `gridLevelLadderViewModel.ts` usaba `currentRange.id` (campo inexistente en el contrato canónico) como `activeRangeId`. El campo real es `market.entryRange.activeRangeVersionId`. Esto provocaba `activeRangeId=null` en runtime, filtrado incorrecto, asociación ciclo→rung con fallback por precio incluso con ID inválido, `makerState` mostrando códigos técnicos, y sin búsqueda histórica separada.
+- **Solución**:
+  1. Eliminado `currentRange.id`; añadido `market.entryRange.activeRangeVersionId` como fuente canónica.
+  2. `filterCurrentLevels<T>()`: filtra por `rangeRelation="current"` (primario) o `rangeVersionId` (fallback).
+  3. `matchCycleToRung` corregido: si `targetRungLevelId` existe pero no coincide, no cae a precio; retorna warning `RUNG_NOT_FOUND`.
+  4. `humanizeMakerState()`: mapea códigos técnicos a etiquetas legibles (MAKER_PENDING → "SELL maker pendiente").
+  5. `searchHistoricalRows()`: búsqueda independiente para subview Histórico con input propio.
+  6. Eliminado import `ChevronDown` sin uso.
+- **Archivos modificados** (4, +469/-37 líneas):
+  - `client/src/components/grid/gridLevelLadderViewModel.ts`
+  - `client/src/components/grid/GridUnifiedLevelLadder.tsx`
+  - `client/src/components/grid/__tests__/gridLevelLadderViewModel.test.ts`
+  - `client/src/components/grid/__tests__/GridUnifiedLevelLadder.test.tsx`
+- **Tests**: 74/74 PASS (42 view model + 32 componente). Suite completa: 3525 passed, 30 pre-existentes, 0 nuevos fallos.
+- **Validación**: `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅, worktree limpio verificado.
+- **Commit técnico**: `da6524816970a6fb8c14a8265f3ad4ec6e0fff7f` (fast-forward desde `3d43c83`).
+- **Deploy app-only staging**: `--no-deps` ✅, DB intacta ✅, HTTP 200 ✅, `mode=SHADOW` ✅, `MAKER_ONLY` ✅, `realOpenOrdersCount=0` ✅, `fatalErrors=0` ✅.
+- **Validación visual Playwright**: Desktop 1440×900 20/20 PASS, Mobile 390×844 20/20 PASS. `VISUAL_VALIDATION=PASS`. Búsqueda histórica filtra (20→0), Mostrar más incrementa (20→40), precio actual una vez, sin MAKER_PENDING operativo, sin overflow horizontal, sin errores consola.
+- **Alcance**: Solo frontend. Sin cambios en server, shared, migrations, Docker, compose, package files.
+- **Estado**: COMPLETADO. `CLEAN_VERIFY_UI=PASS`, `FULL_SUITE_NEW_FAILURES=0`, `VISUAL_VALIDATION=PASS`.
