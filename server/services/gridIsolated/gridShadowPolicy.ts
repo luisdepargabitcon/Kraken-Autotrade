@@ -35,9 +35,14 @@ export function getCrossedShadowLevels(
   const buys = levels
     .filter(level =>
       level.rangeVersionId === activeRangeId &&
-      (level.status === "planned" || level.status === "open") &&
       level.side === "BUY" &&
-      executionPrice <= level.price
+      (
+        (level.status === "planned" || level.status === "open")
+          ? executionPrice <= level.price
+          : level.status === "buy_maker_pending"
+            ? executionPrice <= (level.buyMakerRequestedPrice ?? level.price)
+            : false
+      )
     )
     .sort((a, b) => b.price - a.price || a.id.localeCompare(b.id));
   const sells = levels

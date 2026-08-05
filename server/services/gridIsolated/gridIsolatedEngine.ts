@@ -965,6 +965,7 @@ export class GridIsolatedEngine {
       ask: ticker?.ask,
       marketContextPrice,
       bandSnapshotClose: bandSnapshot?.midPrice ?? null,
+      now: this.lastTickAt ?? undefined,
     });
 
     this.lastShadowExecutionPrice = result;
@@ -1634,6 +1635,23 @@ export class GridIsolatedEngine {
 
     const rangeVersionId = randomUUID();
     const gridLevels = toGridLevels(professionalResult.levels, rangeVersionId);
+
+    const qtyStep = pairConstraints?.quantityStep;
+    if (qtyStep && Number.isFinite(qtyStep) && qtyStep > 0) {
+      for (const level of gridLevels) {
+        level.quantity = Math.floor(level.quantity / qtyStep) * qtyStep;
+        level.notionalUsd = level.quantity * level.price;
+      }
+    }
+
+    const viableLevels = gridLevels.filter(l => l.quantity > 0);
+    if (viableLevels.length < 4) {
+      return {
+        ok: false,
+        reasonCode: "QUANTITY_STEP_ALIGNMENT_REJECTED_ZERO",
+        explanation: "Tras alinear cantidades a quantityStep, algunos niveles quedaron en cero y el rango no tiene suficientes niveles viables.",
+      };
+    }
 
     return {
       ok: true,
