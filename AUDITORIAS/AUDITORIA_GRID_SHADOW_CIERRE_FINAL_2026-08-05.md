@@ -1,114 +1,122 @@
-# AUDITORÍA GRID SHADOW CIERRE FINAL — 2026-08-05
+# AUDITORÍA GRID SHADOW CIERRE FINAL R2 — 2026-08-05
 
 ## Resumen
 
-Grid SHADOW cerrado y validado en staging tras aplicar 3 fixes de motor, verificar tests, build, suite completa, deploy app-only y validación de persistencia.
+Grid SHADOW R2 cerrado y validado en staging. Fail-closed normalization de niveles, E2E estricto con status=completed, deploy app-only, 24 polls runtime, persistencia app-only restart y suite global con cero fallos nuevos.
 
-## Fixes aplicados
+## Commits R2
 
-### 1. Maker Pending Lifecycle (`gridShadowPolicy.ts`)
-- `getCrossedShadowLevels` ahora incluye niveles `buy_maker_pending`
-- Umbral: `buyMakerRequestedPrice` para pending, `price` para planned/open
-- Estados terminales excluidos
-- Tick guard existente bloquea fill en mismo tick
+- TECH_R2_SHA: `03343221522868600f5554571406817360a91343`
+- DOC_R2_PREDEPLOY_SHA: `ad9798ef8a72ea59776bd980e5d45f5cdb4ba5df`
+- DOC_R2_FINAL_SHA_PREVIOUS: `45730ab05fe8948825ddc63a54e92f7abfe4a240`
+- DEPLOY_SOURCE_SHA: `ad9798ef8a72ea59776bd980e5d45f5cdb4ba5df`
 
-### 2. Timestamp Canónico (`gridIsolatedEngine.ts:968`)
-- `resolveGridShadowExecutionPrice` recibe `now: this.lastTickAt ?? undefined`
-- Evita `future_timestamp` en freshness check
+## Fixes R2
 
-### 3. Quantity Step Alignment (`gridIsolatedEngine.ts:1639-1654`)
-- Cantidades alineadas a `quantityStep` tras `toGridLevels`
-- Redondeo hacia abajo (floor)
-- Niveles con cantidad cero filtrados
-- Rango rechazado si < 4 niveles viables
-
-## Commits
-
-- TECH_SHA: `12fdaf2d0db5cfafeebb0ad94b924a6c7201ee49`
-- DOC_SHA (predeploy): `473fc43512418270b6ad0c441750aa134ddff17f`
-- Main final: `473fc43512418270b6ad0c441750aa134ddff17f`
+1. Normalizacion fail-closed de niveles (`gridLevelConstraintNormalizer.ts`): validacion de cada nivel contra `quantityStep`, `minOrderBase`, `minOrderQuote`, `minOrderUsd`, `maxOrderBase` con razon de rechazo detallada.
+2. Retorno exclusivo de `acceptedLevels` en `buildRangeProposal`: el rango se rechaza si < 4 niveles aceptados. `levelsCount` en DB e in-memory usa solo niveles aceptados.
+3. Validacion de `quantityStep` con `Math.floor` (evita floating-point rounding up).
+4. `minOrderBase`: niveles con cantidad inferior al minimo son rechazados.
+5. `minOrderQuote`: niveles cuyo notional (price * quantity) es inferior al minimo son rechazados.
+6. `minOrderUsd`: niveles cuyo notional en USD es inferior al minimo son rechazados.
+7. `maxOrderBase`: niveles con cantidad superior al maximo son rechazados.
+8. E2E estricto con `status=completed`: eliminados `if(done)` y aceptacion de `buy_filled`. SELL lifecycle con 3 ticks: TRIGGERED -> MAKER_PENDING -> fill. Delay de 2ms entre ticks.
+9. Maker BUY y SELL con tick posterior obligatorio: `lifecycleTickId` enforce, no double fill, repricing reset.
 
 ## Tests
 
-- E2E: 29/29 ✅
-- Maker Pending Lifecycle: 6/6 ✅
-- Tests dirigidos: 127/127 ✅
-- Revolut X: 48/48 ✅
+- NORMALIZER_TESTS=18/18
+- E2E_TESTS=34/34
+- MAKER_PENDING_TESTS=10/10
+- DIRECTED_TESTS=62/62
+- GRID_ISOLATED_TESTS=612/612
+
+## Full suite real
+
+- TOTAL_TESTS=3510
+- PASSED=3451
+- FAILED_HISTORICAL=30
+- SKIPPED=29
+- NEW_FAILURES=0
 - CHECK_EXIT=0
 - BUILD_EXIT=0
 - DIFF_EXIT=0
-- Full suite real: 3483 tests, 30 fallos históricos, 0 fallos nuevos
 
 ## Deploy
 
-- PRE_DEPLOY_SHA: `0d0f517f01dbe60df451d536235f3cd4f65620bd`
-- DEPLOY_SOURCE_SHA: `473fc43512418270b6ad0c441750aa134ddff17f`
-- App ID antes: `6e425fab61df`
-- App ID después: `f453814167b5`
-- App image antes: `sha256:b7ccd866ac92`
-- App image después: `sha256:27d92030c71d`
-- App StartedAt antes: `2026-08-04T23:10:34Z`
-- App StartedAt después: `2026-08-05T08:42:50Z`
-- DB ID antes/después: `a2f9a3f275c3` (sin cambios)
-- DB StartedAt antes/después: `2026-05-03T21:10:46Z` (sin cambios)
-- DB reiniciada: No
+- PRE_APP_ID_PREFIX=61fe394484
+- POST_APP_ID_PREFIX=ce46ea2d55
+- PRE_APP_STARTED=2026-08-05T08:47:29
+- POST_APP_STARTED=2026-08-05T10:48:35
+- DB_ID_PREFIX=a2f9a3f275
+- DB_STARTED=2026-05-03T21:10:46
+- DB_RESTARTED=FALSE
 
-## Runtime
+## Runtime — 24 polls
 
-- mode=SHADOW
-- pair=BTC/USD
-- marketDataSource=kraken
-- priceFresh=True
-- effectiveExecutionPolicy=MAKER_ONLY
-- effectiveTakerFallbackEnabled=False
-- effectiveTakerFallbackAllowed=False
-- takerFallbackUsed=False
-- realOpenOrdersCount=0
-- circuitBreakerOpen=False
-- pumpDumpState=normal
-- activeRange=937f406d (active)
-- Active levels: 4 (2 BUY planned, 2 SELL planned)
-- Open cycles: 0
-- Completed cycles: 3
-- Total net PnL: $22.39
+- MODE=SHADOW
+- PAIR=BTC/USD
+- REAL_OPEN_ORDERS=0
+- CIRCUIT_BREAKER_OPEN=FALSE
+- OPEN_CYCLES=0
+- PLANNED_LEVELS=4
+
+## Niveles activos
+
+- BUY 63416.14 / 0.00630754 / 400.00 USD
+- BUY 62818.51 / 0.00636755 / 400.00 USD
+- SELL 64622.78 / 0.00630754 / 407.69 USD
+- SELL 65231.78 / 0.00636755 / 415.53 USD
+
+## Constraints por nivel
+
+- ACTIVE_CONSTRAINT_VIOLATIONS=0
+- ZERO_QUANTITY_LEVELS=0
+- DUPLICATE_LEVELS=0
+- ORPHAN_SELLS=0
+- OLD_RANGE_NEW_BUYS=0
 
 ## Persistencia
 
-- App-only restart validado
-- Rango recuperado: 937f406d
-- Niveles recuperados: 4
-- Ciclos recuperados: 3
-- Duplicados después de restart: 0
-- Ciclos terminales reabiertos: 0
-- Ciclo protegido a2a0b7ca: sin cambios (completed)
-- DB intacta
+- APP_ONLY_RESTART_VALIDATED=TRUE
+- DB_UNCHANGED=TRUE
+- ACTIVE_RANGE_ID=937f406d-3abe-461e-9bfc-6ebfc96ff119
+- ACTIVE_LEVELS_RECOVERED=4
+- COMPLETED_CYCLES_RECOVERED=3
+- OPEN_CYCLES_RECOVERED=0
+- TERMINAL_CYCLES_REOPENED=0
+- PROTECTED_CYCLE_MUTATIONS=0
 
 ## Seguridad
 
-- Órdenes reales: 0
-- Taker events: 0
-- Fatal errors: 0
-- Market orders: 0
-- DB no modificada
-- Sin migraciones
-- Sin cambios en Docker/compose/package
+- EFFECTIVE_EXECUTION_POLICY=MAKER_ONLY
+- EFFECTIVE_TAKER_FALLBACK_ENABLED=FALSE
+- EFFECTIVE_TAKER_FALLBACK_ALLOWED=FALSE
+- TAKER_FALLBACK_USED=FALSE
+- REAL_ORDERS_CREATED=0
+- MARKET_ORDERS_CREATED=0
+- FATAL_ERRORS=0
+- MANUAL_SQL=FALSE
+- NEW_MIGRATIONS=FALSE
+- PRODUCTION=FALSE
+- REAL_LIMITED=FALSE
+- REAL_FULL=FALSE
 
-## Clasificación
+## Clasificacion
 
 GRID_SHADOW_READY_WAITING_MARKET_VALIDATED
 
-El rango está activo con 4 niveles planned. El motor funciona correctamente, resolviendo precios SHADOW y reutilizando el rango. Esperando condiciones de mercado para que el precio cruce los niveles BUY.
+El rango esta activo con 4 niveles planned (2 BUY + 2 SELL). El motor funciona correctamente con normalizacion fail-closed. Esperando condiciones de mercado para que el precio cruce los niveles BUY.
 
-## Plan
+## Estado final
 
 DONE: TRUE para Grid SHADOW
 HARD_BLOCKER: FALSE
-TASK_STATUS: Grid SHADOW cerrado y validado en staging
-NEXT_ACTION: observación prolongada SHADOW; modos REAL bloqueados
+TASK_STATUS: Grid SHADOW R2 cerrado y validado en staging
+NEXT_ACTION: observacion prolongada SHADOW; modos REAL permanecen bloqueados
 DEPLOY_AUTHORIZED: FALSE
 MIGRATION_REQUIRED: FALSE
 
-## Correction loops
+## Antecedente historico R1
 
-- Loop 1: 3 fixes de motor + ajustes de test mock. Validado en worktree limpio.
-- No fueron necesarios loops adicionales.
+R1 (2026-08-05, commit `12fdaf2`) aplico 3 fixes iniciales: maker pending lifecycle, timestamp canonico y quantity step alignment. R1 fue desplegado y validado en staging. R2 sustituye a R1 como cierre final al corregir el defecto de buildRangeProposal que devolvia gridLevels en vez de viableLevels y endurecer los tests E2E con status=completed estricto.
