@@ -88,4 +88,39 @@ describe("getCrossedShadowLevels — maker pending lifecycle", () => {
     expect(ids).toContain("b2");
     expect(ids).toContain("b3");
   });
+
+  it("no doble fill: buy_filled excluido del resultado", () => {
+    const levels: GridLevel[] = [
+      makeLevel({ id: "b1", price: 62500, side: "BUY", status: "buy_filled", rangeVersionId: RANGE_ID }),
+      makeLevel({ id: "b2", price: 63000, side: "BUY", status: "buy_maker_pending", rangeVersionId: RANGE_ID, buyMakerRequestedPrice: 62999.9 }),
+    ];
+    const result = getCrossedShadowLevels(levels, 62999.9, RANGE_ID, CENTER);
+    expect(result.levels.length).toBe(1);
+    expect(result.levels[0].id).toBe("b2");
+  });
+
+  it("tick posterior obligatorio: buy_maker_pending con buyMakerPendingTickId no se rellena en mismo tick", () => {
+    const levels: GridLevel[] = [
+      makeLevel({ id: "b1", price: 62500, side: "BUY", status: "buy_maker_pending", rangeVersionId: RANGE_ID, buyMakerRequestedPrice: 62499.9, buyMakerPendingTickId: 5 }),
+    ];
+    const result = getCrossedShadowLevels(levels, 62499.9, RANGE_ID, CENTER);
+    expect(result.levels.length).toBe(1);
+    expect(result.levels[0].id).toBe("b1");
+  });
+
+  it("planned incluido cuando executionPrice <= price", () => {
+    const levels: GridLevel[] = [
+      makeLevel({ id: "b1", price: 63000, side: "BUY", status: "planned", rangeVersionId: RANGE_ID }),
+    ];
+    const result = getCrossedShadowLevels(levels, 63000, RANGE_ID, CENTER);
+    expect(result.levels.length).toBe(1);
+  });
+
+  it("open incluido cuando executionPrice <= price", () => {
+    const levels: GridLevel[] = [
+      makeLevel({ id: "b1", price: 63000, side: "BUY", status: "open", rangeVersionId: RANGE_ID }),
+    ];
+    const result = getCrossedShadowLevels(levels, 63000, RANGE_ID, CENTER);
+    expect(result.levels.length).toBe(1);
+  });
 });

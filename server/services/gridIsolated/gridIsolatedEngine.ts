@@ -50,6 +50,7 @@ import {
   generateProfessionalGridLevels,
 } from "./gridSpacingCalculator";
 import { applyWeightsToGeneratedLevels } from "./gridAllocationEngine";
+import { normalizeGridLevelsForExecutionConstraints } from "./gridLevelConstraintNormalizer";
 import {
   diagnoseShadowOrphanCycles,
   type ShadowOrphanDiagnosisResult,
@@ -389,7 +390,7 @@ function deepCloneProjectionState(state: GridRecommendationProjectionState): Gri
 }
 
 type GridRangeCandidate =
-  | { ok: true; rangeVersionId: string; gridLevels: import("./gridIsolatedTypes").GridLevel[]; professionalGenerator: any; allocation: any; generatedLevels: any[]; viabilityStatus: string }
+  | { ok: true; rangeVersionId: string; gridLevels: import("./gridIsolatedTypes").GridLevel[]; professionalGenerator: any; allocation: any; generatedLevels: any[]; viabilityStatus: string; rejectedLevels: import("./gridLevelConstraintNormalizer").RejectedGridLevel[] }
   | { ok: false; reasonCode: string; explanation: string };
 
 type GridRangeProposalResult =
@@ -1636,31 +1637,40 @@ export class GridIsolatedEngine {
     const rangeVersionId = randomUUID();
     const gridLevels = toGridLevels(professionalResult.levels, rangeVersionId);
 
-    const qtyStep = pairConstraints?.quantityStep;
-    if (qtyStep && Number.isFinite(qtyStep) && qtyStep > 0) {
-      for (const level of gridLevels) {
-        level.quantity = Math.floor(level.quantity / qtyStep) * qtyStep;
-        level.notionalUsd = level.quantity * level.price;
-      }
-    }
+    const normalization = normalizeGridLevelsForExecutionConstraints(gridLevels, {
+      quantityStep: pairConstraints?.quantityStep ?? null,
+      minOrderBase: pairConstraints?.minOrderBase ?? null,
+      minOrderQuote: pairConstraints?.minOrderQuote ?? null,
+      minOrderUsd: pairConstraints?.minOrderUsd ?? null,
+      maxOrderBase: pairConstraints?.maxOrderBase ?? null,
+      quantityPrecision: pairConstraints?.quantityPrecision ?? null,
+    });
 
-    const viableLevels = gridLevels.filter(l => l.quantity > 0);
-    if (viableLevels.length < 4) {
+    const acceptedLevels = normalization.acceptedLevels;
+    const rejectedLevels = normalization.rejectedLevels;
+
+    const minLevelsForViableGrid = 4;
+    if (acceptedLevels.length < minLevelsForViableGrid) {
+      const reasonCounts: Record<string, number> = {};
+      for (const r of rejectedLevels) {
+        reasonCounts[r.reasonCode] = (reasonCounts[r.reasonCode] ?? 0) + 1;
+      }
       return {
         ok: false,
-        reasonCode: "QUANTITY_STEP_ALIGNMENT_REJECTED_ZERO",
-        explanation: "Tras alinear cantidades a quantityStep, algunos niveles quedaron en cero y el rango no tiene suficientes niveles viables.",
+        reasonCode: "GRID_LEVEL_CONSTRAINT_NORMALIZATION_INSUFFICIENT_LEVELS",
+        explanation: `generatedCount=${gridLevels.length}, acceptedCount=${acceptedLevels.length}, rejectedCount=${rejectedLevels.length}, reasonCodes=${JSON.stringify(reasonCounts)}`,
       };
     }
 
     return {
       ok: true,
       rangeVersionId,
-      gridLevels,
+      gridLevels: acceptedLevels,
       professionalGenerator: professionalResult.professionalGenerator,
       allocation,
       generatedLevels: professionalResult.levels,
       viabilityStatus: professionalResult.viabilityStatus,
+      rejectedLevels,
     };
   }
 
@@ -1722,7 +1732,7 @@ export class GridIsolatedEngine {
           bandWidthPct: bandSnapshot.bandWidthPct.toFixed(4),
           atrPct: bandSnapshot.atrPct.toFixed(4),
           regime: bandSnapshot.regime,
-          levelsCount: generatedLevels.length,
+          levelsCount: gridLevels.length,
           geometricRatio: ratio.toFixed(4),
           capitalBudgetUsd: allocation.finalGridBudgetUsd.toFixed(2),
           capitalPerLevelUsd: allocation.capitalPerLevelUsd.toFixed(2),
@@ -1788,7 +1798,7 @@ export class GridIsolatedEngine {
       bandWidthPct: bandSnapshot.bandWidthPct,
       atrPct: bandSnapshot.atrPct,
       regime: bandSnapshot.regime,
-      levelsCount: generatedLevels.length,
+      levelsCount: gridLevels.length,
       geometricRatio: ratio,
       capitalBudgetUsd: allocation.finalGridBudgetUsd,
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
@@ -2228,7 +2238,7 @@ export class GridIsolatedEngine {
           bandWidthPct: bandSnapshot.bandWidthPct.toFixed(4),
           atrPct: bandSnapshot.atrPct.toFixed(4),
           regime: bandSnapshot.regime,
-          levelsCount: generatedLevels.length,
+          levelsCount: gridLevels.length,
           geometricRatio: "1.0000",
           capitalBudgetUsd: allocation.finalGridBudgetUsd.toFixed(2),
           capitalPerLevelUsd: allocation.capitalPerLevelUsd.toFixed(2),
@@ -2276,7 +2286,7 @@ export class GridIsolatedEngine {
       bandWidthPct: bandSnapshot.bandWidthPct,
       atrPct: bandSnapshot.atrPct,
       regime: bandSnapshot.regime,
-      levelsCount: generatedLevels.length,
+      levelsCount: gridLevels.length,
       geometricRatio: 1,
       capitalBudgetUsd: allocation.finalGridBudgetUsd,
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,

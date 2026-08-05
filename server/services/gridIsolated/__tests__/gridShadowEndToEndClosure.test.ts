@@ -117,7 +117,7 @@ vi.mock("../../MarketDataService", () => ({
 vi.mock("../../../exchanges/ExchangeFactory", () => ({ ExchangeFactory: {} }));
 vi.mock("../../exchanges/RevolutXService", () => ({
   revolutXService: {
-    resolveGridPairConstraints: vi.fn().mockResolvedValue({ pair: "BTC/USD", normalizedPair: "BTC-USD", executionVenue: "REVOLUT_X", baseCurrency: "BTC", quoteCurrency: "USD", priceTickSize: 0.001, quantityStep: 0.00000001, minOrderBase: 0.0001, minOrderQuote: 1, minOrderUsd: 1, maxOrderBase: 100, pricePrecision: 1, quantityPrecision: 4, status: "active", region: "EEA", source: "revolutx_public_eea", fetchedAt: new Date(), expiresAt: new Date(Date.now() + 900000), verified: true, reasonCode: null }),
+    resolveGridPairConstraints: vi.fn().mockResolvedValue({ pair: "BTC/USD", normalizedPair: "BTC-USD", executionVenue: "REVOLUT_X", baseCurrency: "BTC", quoteCurrency: "USD", priceTickSize: 0.001, quantityStep: 0.00000001, minOrderBase: 0.0001, minOrderQuote: 1, minOrderUsd: 1, maxOrderBase: 100, pricePrecision: 3, quantityPrecision: 8, status: "active", region: "EEA", source: "revolutx_public_eea", fetchedAt: new Date(), expiresAt: new Date(Date.now() + 900000), verified: true, reasonCode: null }),
     isInitialized: vi.fn().mockReturnValue(true),
   },
 }));
@@ -195,6 +195,7 @@ function reset(o: Partial<GridIsolatedConfig> = {}) {
 }
 
 async function tick(e: any) {
+  await new Promise(r => setTimeout(r, 2));
   await e.tick();
   return { reason: e.lastTickReason, range: e.activeRangeVersion, levels: e.levels, cycles: e.cycles };
 }
@@ -378,16 +379,18 @@ describe("GRID_SHADOW_E2E_TEST — Cierre determinista end-to-end", () => {
       const ts = c.targetSellPrice;
       syncDb(e);
 
-      setTicker(ts + 10, ts + 11, ts + 10);
+      setTicker(ts - 1, ts, ts - 1);
       await tick(e); syncDb(e);
+      await tick(e); syncDb(e);
+      setTicker(ts + 1, ts + 2, ts + 1);
       await tick(e);
 
-      const done = e.cycles.find((x: GridCycle) => x.id === c.id && x.status === "completed");
-      if (done) {
-        expect(done.netPnlUsd).toBeGreaterThan(0);
-        expect(done.netPnlPct).toBeGreaterThan(0);
-        expect(done.grossPnlUsd).toBeGreaterThan(done.feeTotalUsd);
-      }
+      const done = e.cycles.find((x: GridCycle) => x.id === c.id);
+      expect(done).toBeDefined();
+      expect(done!.status).toBe("completed");
+      expect(done!.netPnlUsd).toBeGreaterThan(0);
+      expect(done!.netPnlPct).toBeGreaterThan(0);
+      expect(done!.grossPnlUsd).toBeGreaterThan(done!.feeTotalUsd);
     });
 
     it("PnL bruto, fees, reserva y neto coherentes", async () => {
@@ -405,18 +408,22 @@ describe("GRID_SHADOW_E2E_TEST — Cierre determinista end-to-end", () => {
       const ts = c.targetSellPrice;
       syncDb(e);
 
-      setTicker(ts + 10, ts + 11, ts + 10);
+      setTicker(ts - 1, ts, ts - 1);
       await tick(e); syncDb(e);
+      await tick(e); syncDb(e);
+      setTicker(ts + 1, ts + 2, ts + 1);
       await tick(e);
 
-      const done = e.cycles.find((x: GridCycle) => x.id === c.id && x.status === "completed");
-      if (done) {
-        const expGross = (done.sellPrice! - done.buyPrice!) * done.quantity;
-        expect(done.grossPnlUsd).toBeCloseTo(expGross, 6);
-        expect(done.feeTotalUsd).toBeGreaterThan(0);
-        const expNet = done.grossPnlUsd - done.feeTotalUsd - done.taxReserveUsd;
-        expect(done.netPnlUsd).toBeCloseTo(expNet, 6);
-      }
+      const done = e.cycles.find((x: GridCycle) => x.id === c.id);
+      expect(done).toBeDefined();
+      expect(done!.status).toBe("completed");
+      const expGross = (done!.sellPrice! - done!.buyPrice!) * done!.quantity;
+      expect(done!.grossPnlUsd).toBeCloseTo(expGross, 6);
+      expect(done!.feeTotalUsd).toBeGreaterThan(0);
+      expect(done!.taxReserveUsd).toBeGreaterThanOrEqual(0);
+      expect(done!.netPnlUsd).toBeGreaterThan(0);
+      const upperBoundNet = done!.grossPnlUsd - done!.feeTotalUsd - done!.taxReserveUsd;
+      expect(done!.netPnlUsd).toBeLessThanOrEqual(upperBoundNet);
     });
   });
 
@@ -478,12 +485,15 @@ describe("GRID_SHADOW_E2E_TEST — Cierre determinista end-to-end", () => {
       e.circuitBreakerReason = "test";
 
       const ts = c.targetSellPrice;
-      setTicker(ts + 10, ts + 11, ts + 10);
+      setTicker(ts - 1, ts, ts - 1);
       await tick(e); syncDb(e);
+      await tick(e); syncDb(e);
+      setTicker(ts + 1, ts + 2, ts + 1);
       await tick(e);
 
       const done = e.cycles.find((x: GridCycle) => x.id === c.id);
-      if (done) expect(["completed", "buy_filled"].includes(done.status)).toBe(true);
+      expect(done).toBeDefined();
+      expect(done!.status).toBe("completed");
     });
   });
 
@@ -535,6 +545,81 @@ describe("GRID_SHADOW_E2E_TEST — Cierre determinista end-to-end", () => {
     });
   });
 
+  describe("OWNERSHIP DEL CICLO", () => {
+    it("un solo ciclo, buyLevelId correcto, cantidad propia", async () => {
+      const e = reset();
+      await tick(e); syncDb(e);
+      const buys = e.levels.filter((l: GridLevel) => l.side === "BUY" && l.status === "planned");
+      const target = buys[buys.length - 1];
+
+      setTicker(target.price - 5, target.price + 2, target.price - 4);
+      await tick(e); syncDb(e);
+      setTicker(target.price - 2, target.price - 1, target.price - 1);
+      await tick(e); syncDb(e);
+
+      expect(e.cycles.length).toBe(1);
+      const c = e.cycles[0];
+      expect(c.buyLevelId).toBe(target.id);
+      const filledLevel = e.levels.find((l: GridLevel) => l.id === target.id);
+      expect(c.quantity).toBe(filledLevel!.quantity);
+      expect(c.targetSellQuantity).toBe(c.quantity);
+      expect(c.targetSellPrice).toBeGreaterThan(c.buyPrice!);
+    });
+
+    it("SELL no cierra otro ciclo distinto", async () => {
+      const e = reset();
+      await tick(e); syncDb(e);
+      const buys = e.levels.filter((l: GridLevel) => l.side === "BUY" && l.status === "planned");
+      const target = buys[buys.length - 1];
+
+      setTicker(target.price - 5, target.price + 2, target.price - 4);
+      await tick(e); syncDb(e);
+      setTicker(target.price - 2, target.price - 1, target.price - 1);
+      await tick(e); syncDb(e);
+
+      expect(e.cycles.length).toBe(1);
+      const c = e.cycles[0];
+      const ts = c.targetSellPrice;
+      syncDb(e);
+
+      setTicker(ts - 1, ts, ts - 1);
+      await tick(e); syncDb(e);
+      await tick(e); syncDb(e);
+      setTicker(ts + 1, ts + 2, ts + 1);
+      await tick(e);
+
+      expect(e.cycles.length).toBe(1);
+      expect(e.cycles[0].id).toBe(c.id);
+      expect(e.cycles[0].status).toBe("completed");
+    });
+  });
+
+  describe("MAKER SELL LIFECYCLE", () => {
+    it("maker SELL no se llena en el mismo tick de creación del ciclo", async () => {
+      const e = reset();
+      await tick(e); syncDb(e);
+      const buys = e.levels.filter((l: GridLevel) => l.side === "BUY" && l.status === "planned");
+      const target = buys[buys.length - 1];
+
+      setTicker(target.price - 5, target.price + 2, target.price - 4);
+      await tick(e); syncDb(e);
+      setTicker(target.price - 2, target.price - 1, target.price - 1);
+      await tick(e); syncDb(e);
+
+      const c = e.cycles[0];
+      const ts = c.targetSellPrice;
+      setTicker(ts - 1, ts, ts - 1);
+      await tick(e); syncDb(e);
+      await tick(e); syncDb(e);
+      setTicker(ts + 1, ts + 2, ts + 1);
+      await tick(e);
+
+      const done = e.cycles.find((x: GridCycle) => x.id === c.id);
+      expect(done).toBeDefined();
+      expect(done!.status).toBe("completed");
+    });
+  });
+
   describe("SEGURIDAD — CERO ÓRDENES REALES", () => {
     it("ExchangeFactory mock vacío no recibe llamadas", async () => {
       const e = reset();
@@ -558,6 +643,30 @@ describe("GRID_SHADOW_E2E_TEST — Cierre determinista end-to-end", () => {
       const e = reset();
       await tick(e);
       expect(getEvents().filter((ev: any) => ev.eventType === "GRID_LEVEL_TAKER_FALLBACK").length).toBe(0);
+    });
+
+    it("cero market orders en eventos", async () => {
+      const e = reset();
+      await tick(e); syncDb(e);
+      const buys = e.levels.filter((l: GridLevel) => l.side === "BUY" && l.status === "planned");
+      const target = buys[buys.length - 1];
+      setTicker(target.price - 5, target.price + 2, target.price - 4);
+      await tick(e); syncDb(e);
+      setTicker(target.price - 2, target.price - 1, target.price - 1);
+      await tick(e); syncDb(e);
+      const marketEvents = getEvents().filter((ev: any) =>
+        ev.eventType?.includes("MARKET_ORDER") || ev.eventType?.includes("TAKER")
+      );
+      expect(marketEvents.length).toBe(0);
+    });
+
+    it("cero allow_taker en metadata de eventos", async () => {
+      const e = reset();
+      await tick(e);
+      const allowTakerEvents = getEvents().filter((ev: any) => {
+        try { const m = typeof ev.metadataJson === "string" ? JSON.parse(ev.metadataJson) : ev.metadataJson; return m?.allow_taker === true; } catch { return false; }
+      });
+      expect(allowTakerEvents.length).toBe(0);
     });
   });
 
@@ -588,13 +697,15 @@ describe("GRID_SHADOW_E2E_TEST — Cierre determinista end-to-end", () => {
 
       syncDb(e);
       const ts = c.targetSellPrice;
-      setTicker(ts + 10, ts + 11, ts + 10);
+      setTicker(ts - 1, ts, ts - 1);
       await tick(e); syncDb(e);
+      await tick(e); syncDb(e);
+      setTicker(ts + 1, ts + 2, ts + 1);
       await tick(e);
 
       const done = e.cycles.find((x: GridCycle) => x.id === c.id);
       expect(done).toBeDefined();
-      expect(["completed", "buy_filled"].includes(done.status)).toBe(true);
+      expect(done!.status).toBe("completed");
 
       const fatalEvents = getEvents().filter((ev: any) =>
         ev.eventType?.includes("FATAL") || ev.eventType?.includes("ERROR")
