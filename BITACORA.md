@@ -7102,3 +7102,27 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - **Persistencia app-only restart**: `--force-recreate` app, DB intacta, rango/niveles/ciclos recuperados idénticos ✅.
 - **Suite global local**: 30 fallos históricos conocidos, 3451 passed, 0 nuevos fallos ✅. `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅.
 - **Estado**: GRID_SHADOW_CLOSE_R2 COMPLETADO. Deploy staging validado, persistencia confirmada, sin órdenes reales, sin schema changes.
+
+---
+
+## 2026-08-05 — Grid UI: Escalera unificada y trazabilidad BUY→SELL
+
+- **Módulo**: Grid Isolated UI (`client/src/components/grid/`)
+- **Problema**: La vista de Niveles separaba BUY, SELL/rungs y salidas de ciclo en pestañas distintas, sin mostrar la escalera completa ordenada por precio.
+- **Solución**: Vista unificada con escalera descendente por precio, marcador de precio actual, subvistas (Escalera/Ciclos/Histórico), filtros (Todos/BUY/SELL/Con ciclo) y búsqueda.
+- **Archivos nuevos**:
+  - `client/src/components/grid/gridLevelLadderViewModel.ts` — Función pura `buildGridLevelLadderViewModel(operational)`.
+  - `client/src/components/grid/GridUnifiedLevelLadder.tsx` — Componente React con subvistas, filtros y búsqueda.
+  - `client/src/components/grid/__tests__/gridLevelLadderViewModel.test.ts` — 30 tests unitarios.
+  - `client/src/components/grid/__tests__/GridUnifiedLevelLadder.test.tsx` — 20 tests de componente.
+- **Archivos modificados**:
+  - `client/src/components/grid/GridLevelsCompactPanel.tsx` — Cuerpo reemplazado por `GridUnifiedLevelLadder`.
+  - `client/src/components/grid/GridLevelsCompactPanel.v3.test.tsx` — Tests actualizados.
+  - `client/src/components/grid/__tests__/gridUxRender.test.tsx` — Test de filtros actualizado.
+- **Reglas de asociación**: Ciclo→Rung por `targetRungLevelId` (prioridad) o `targetSellPrice` con tolerancia ±0.01. Múltiples ciclos por rung permitidos. Sin emparejamiento por cantidad o índice.
+- **Tests**: 50 nuevos (30 view model + 20 componente), 89/89 grid UI suite, 3501/3560 full suite (30 históricos, 0 nuevos fallos).
+- **Validación**: `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅, worktree independiente verificado.
+- **Commit**: `3d43c83` (fast-forward desde `abe6f90`).
+- **Deploy app-only staging**: Build ✅, `up -d --no-deps` ✅, DB intacta ✅, HTTP 200 ✅, runtime sin errores ✅.
+- **Alcance**: Solo frontend. Sin cambios en server, shared, migrations, Docker, package.json.
+- **Estado**: COMPLETADO. Deploy staging validado, sin órdenes reales, sin schema changes.
