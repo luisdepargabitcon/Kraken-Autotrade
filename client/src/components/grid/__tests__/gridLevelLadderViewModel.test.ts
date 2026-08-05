@@ -3,28 +3,45 @@ import {
   buildGridLevelLadderViewModel,
   filterAndSearchRows,
   insertCurrentPriceMarker,
+  searchHistoricalRows,
+  humanizeMakerState,
   type OperationalInput,
 } from "../gridLevelLadderViewModel";
 
 function makeOperational(): OperationalInput {
   return {
     header: { currentPrice: 92000 },
-    currentRange: { exists: true, id: "range-uuid-1234" },
+    currentRange: { exists: true, message: "Rango activo cargado." },
+    market: { entryRange: { activeRangeVersionId: "range-uuid-1234", active: true } },
     levels: {
       entryLevels: [
-        { id: "buy-1", side: "BUY", price: 90000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current" },
-        { id: "buy-2", side: "BUY", price: 85000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current" },
+        { id: "buy-1", side: "BUY", price: 90000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+        { id: "buy-2", side: "BUY", price: 85000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
       ],
       referenceRungs: [
-        { id: "rung-1", side: "SELL", price: 95000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", targetOfOpenCycle: false },
-        { id: "rung-2", side: "SELL", price: 100000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", targetOfOpenCycle: false },
+        { id: "rung-1", side: "SELL", price: 95000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", targetOfOpenCycle: false, rangeVersionId: "range-uuid-1234" },
+        { id: "rung-2", side: "SELL", price: 100000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", targetOfOpenCycle: false, rangeVersionId: "range-uuid-1234" },
       ],
       legacyTargetLevels: [],
       historicalLevels: [
-        { id: "hist-1", side: "BUY", price: 80000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous" },
+        { id: "hist-1", side: "BUY", price: 80000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous", rangeVersionId: "range-old-5678" },
       ],
     },
     cycleOwnedExits: [],
+  };
+}
+
+function makeCanonicalOperational(): OperationalInput {
+  const base = makeOperational();
+  return {
+    ...base,
+    currentRange: { exists: true, message: "Rango activo cargado.", subtitle: null, lowerPrice: 85000, centerPrice: 92500, upperPrice: 100000, widthPct: 17.6 },
+    market: { entryRange: { activeRangeVersionId: "937f406d-3abe-461e-9bfc-6ebfc96ff119", active: true } },
+    levels: {
+      ...base.levels!,
+      entryLevels: base.levels!.entryLevels!.map((e) => ({ ...e, rangeVersionId: "937f406d-3abe-461e-9bfc-6ebfc96ff119" })),
+      referenceRungs: base.levels!.referenceRungs!.map((r) => ({ ...r, rangeVersionId: "937f406d-3abe-461e-9bfc-6ebfc96ff119" })),
+    },
   };
 }
 
@@ -341,5 +358,169 @@ describe("gridLevelLadderViewModel — 30 mandatory cases", () => {
     const filtered = filterAndSearchRows(vm.rows, "all", "95000");
     expect(filtered.length).toBe(1);
     expect(filtered[0].price).toBe(95000);
+  });
+});
+
+describe("gridLevelLadderViewModel — contract alignment and corrections", () => {
+  // 31. Fixture canónico sin currentRange.id
+  it("31: canonical fixture does not contain currentRange.id", () => {
+    const op = makeCanonicalOperational();
+    expect((op.currentRange as any).id).toBeUndefined();
+  });
+
+  // 32. activeRangeVersionId se obtiene de market.entryRange
+  it("32: activeRangeId resolved from market.entryRange.activeRangeVersionId", () => {
+    const op = makeCanonicalOperational();
+    const vm = buildGridLevelLadderViewModel(op);
+    expect(vm.activeRangeId).toBe("937f406d-3abe-461e-9bfc-6ebfc96ff119");
+    expect(vm.activeRangeLabel).toContain("Rango vigente");
+    expect(vm.activeRangeLabel).toContain("937f406d");
+  });
+
+  // 33. Current range existente sin UUID muestra "Rango vigente"
+  it("33: current range exists without UUID shows 'Rango vigente' not 'Sin rango activo'", () => {
+    const op = makeOperational();
+    op.market = { entryRange: { activeRangeVersionId: null, active: true } };
+    op.currentRange = { exists: true };
+    op.levels!.entryLevels!.forEach((e) => { e.rangeVersionId = undefined; });
+    op.levels!.referenceRungs!.forEach((r) => { r.rangeVersionId = undefined; });
+    const vm = buildGridLevelLadderViewModel(op);
+    expect(vm.activeRangeLabel).toBe("Rango vigente");
+    expect(vm.activeRangeLabel).not.toContain("Sin rango activo");
+  });
+
+  // 34. ID de rung incorrecto no cae a coincidencia por precio
+  it("34: incorrect targetRungLevelId does not fall back to price match", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c-bad",
+      cycleNumber: 99,
+      targetOwner: "cycle",
+      targetSellPrice: 95000,
+      targetRungLevelId: "rung-inexistente",
+      buyPrice: 90000,
+      quantity: 0.01,
+    }];
+    const vm = buildGridLevelLadderViewModel(op);
+    const rung1 = vm.rows.find((r) => r.levelId === "rung-1");
+    expect(rung1).toBeDefined();
+    expect(rung1!.linkedCycles.length).toBe(0);
+    const synth = vm.rows.find((r) => r.kind === "CYCLE_SELL_TARGET" && r.cycleId === "c-bad");
+    expect(synth).toBeDefined();
+    expect(vm.warnings.some((w) => w.code === "RUNG_NOT_FOUND")).toBe(true);
+  });
+
+  // 35. Ciclo sin ID sí puede asociarse por precio dentro de tolerancia
+  it("35: cycle without ID associates by price within tolerance", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c-price",
+      cycleNumber: 5,
+      targetOwner: "cycle",
+      targetSellPrice: 95000.005,
+      targetRungLevelId: null,
+      buyPrice: 90000,
+      quantity: 0.01,
+    }];
+    const vm = buildGridLevelLadderViewModel(op);
+    const rung1 = vm.rows.find((r) => r.levelId === "rung-1");
+    expect(rung1).toBeDefined();
+    expect(rung1!.linkedCycles.length).toBe(1);
+    expect(rung1!.linkedCycles[0].cycleId).toBe("c-price");
+  });
+
+  // 36. makerState técnico se humaniza
+  it("36: MAKER_PENDING is humanized to 'SELL maker pendiente'", () => {
+    expect(humanizeMakerState("MAKER_PENDING")).toBe("SELL maker pendiente");
+    expect(humanizeMakerState("maker_pending")).toBe("SELL maker pendiente");
+    expect(humanizeMakerState(null)).toBe(null);
+    expect(humanizeMakerState("UNKNOWN_STATE")).toBe("UNKNOWN_STATE");
+  });
+
+  // 37. Synthetic target humanizes makerState
+  it("37: synthetic target row shows humanized makerState", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c-maker",
+      cycleNumber: 7,
+      targetOwner: "cycle",
+      targetSellPrice: 97000,
+      targetRungLevelId: null,
+      buyPrice: 90000,
+      quantity: 0.01,
+      makerState: "MAKER_PENDING",
+    }];
+    const vm = buildGridLevelLadderViewModel(op);
+    const synth = vm.rows.find((r) => r.kind === "CYCLE_SELL_TARGET" && r.cycleId === "c-maker");
+    expect(synth).toBeDefined();
+    expect(synth!.statusLabel).toBe("SELL maker pendiente");
+    expect(synth!.statusLabel).not.toBe("MAKER_PENDING");
+  });
+
+  // 38. Búsqueda histórica por cycleId
+  it("38: historical search by cycleId", () => {
+    const op = makeOperational();
+    op.levels!.historicalLevels = [
+      { id: "h1", side: "BUY", price: 80000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous", cycleId: "cycle-abc", cycleNumber: 3, rangeVersionId: "rv-old" },
+      { id: "h2", side: "SELL", price: 81000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous", cycleId: "cycle-xyz", cycleNumber: 4, rangeVersionId: "rv-old" },
+    ];
+    const vm = buildGridLevelLadderViewModel(op);
+    const filtered = searchHistoricalRows(vm.historicalRows, "cycle-abc");
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].cycleId).toBe("cycle-abc");
+  });
+
+  // 39. Búsqueda histórica por rangeVersionId
+  it("39: historical search by rangeVersionId", () => {
+    const op = makeOperational();
+    op.levels!.historicalLevels = [
+      { id: "h1", side: "BUY", price: 80000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous", rangeVersionId: "rv-old-111" },
+      { id: "h2", side: "SELL", price: 81000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous", rangeVersionId: "rv-old-222" },
+    ];
+    const vm = buildGridLevelLadderViewModel(op);
+    const filtered = searchHistoricalRows(vm.historicalRows, "rv-old-222");
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].rangeVersionId).toBe("rv-old-222");
+  });
+
+  // 40. Búsqueda histórica por precio
+  it("40: historical search by price", () => {
+    const op = makeOperational();
+    op.levels!.historicalLevels = [
+      { id: "h1", side: "BUY", price: 80000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous" },
+      { id: "h2", side: "SELL", price: 81000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous" },
+    ];
+    const vm = buildGridLevelLadderViewModel(op);
+    const filtered = searchHistoricalRows(vm.historicalRows, "81000");
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].price).toBe(81000);
+  });
+
+  // 41. FALSE_BUY_SELL_PAIRINGS = 0 con ID incorrecto
+  it("41: no false buy-sell pairings when targetRungLevelId doesn't match", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c-bad",
+      cycleNumber: 99,
+      targetOwner: "cycle",
+      targetSellPrice: 95000,
+      targetRungLevelId: "rung-inexistente",
+      buyPrice: 90000,
+      quantity: 0.01,
+    }];
+    const vm = buildGridLevelLadderViewModel(op);
+    const rungsWithCycles = vm.rows.filter((r) => r.kind === "REFERENCE_RUNG" && r.linkedCycles.length > 0);
+    expect(rungsWithCycles.length).toBe(0);
+  });
+
+  // 42. Refetch con nuevos objetos no duplica filas
+  it("42: refetch with new objects does not duplicate rows", () => {
+    const op1 = makeOperational();
+    const vm1 = buildGridLevelLadderViewModel(op1);
+    const op2 = makeOperational();
+    const vm2 = buildGridLevelLadderViewModel(op2);
+    expect(vm2.rows.length).toBe(vm1.rows.length);
+    const keys2 = vm2.rows.map((r) => r.key);
+    expect(new Set(keys2).size).toBe(keys2.length);
   });
 });

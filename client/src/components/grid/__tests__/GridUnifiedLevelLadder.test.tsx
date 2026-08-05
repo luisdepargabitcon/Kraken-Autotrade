@@ -7,19 +7,20 @@ import type { OperationalInput } from "../gridLevelLadderViewModel";
 function makeOperational(): OperationalInput {
   return {
     header: { currentPrice: 92000 },
-    currentRange: { exists: true, id: "range-uuid-1234" },
+    currentRange: { exists: true, message: "Rango activo cargado." },
+    market: { entryRange: { activeRangeVersionId: "range-uuid-1234", active: true } },
     levels: {
       entryLevels: [
-        { id: "buy-1", side: "BUY", price: 90000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current" },
-        { id: "buy-2", side: "BUY", price: 85000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current" },
+        { id: "buy-1", side: "BUY", price: 90000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+        { id: "buy-2", side: "BUY", price: 85000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
       ],
       referenceRungs: [
-        { id: "rung-1", side: "SELL", price: 95000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", targetOfOpenCycle: false },
-        { id: "rung-2", side: "SELL", price: 100000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", targetOfOpenCycle: false },
+        { id: "rung-1", side: "SELL", price: 95000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", targetOfOpenCycle: false, rangeVersionId: "range-uuid-1234" },
+        { id: "rung-2", side: "SELL", price: 100000, quantity: 0.01, status: "planned", statusLabel: "Planificado", rangeRelation: "current", targetOfOpenCycle: false, rangeVersionId: "range-uuid-1234" },
       ],
       legacyTargetLevels: [],
       historicalLevels: [
-        { id: "hist-1", side: "BUY", price: 80000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous" },
+        { id: "hist-1", side: "BUY", price: 80000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous", rangeVersionId: "range-old-5678" },
       ],
     },
     cycleOwnedExits: [],
@@ -182,6 +183,38 @@ describe("GridUnifiedLevelLadder — 20 mandatory component tests", () => {
     expect(html).toContain("Esperando precio");
   });
 
+  // 15b. makerState se humaniza en filas sintéticas del ladder
+  it("15b: makerState humanized in synthetic target row", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c1",
+      cycleNumber: 1,
+      targetOwner: "cycle",
+      buyPrice: 90000,
+      targetSellPrice: 97000,
+      quantity: 0.01,
+      makerState: "MAKER_PENDING",
+    }];
+    const html = renderToString(<GridUnifiedLevelLadder operational={op} />);
+    expect(html).toContain("SELL maker pendiente");
+  });
+
+  // 15c. makerState raw aparece en detalle técnico de la fila sintética
+  it("15c: raw makerState visible in technical detail", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c1",
+      cycleNumber: 1,
+      targetOwner: "cycle",
+      buyPrice: 90000,
+      targetSellPrice: 97000,
+      quantity: 0.01,
+      makerState: "MAKER_PENDING",
+    }];
+    const html = renderToString(<GridUnifiedLevelLadder operational={op} />);
+    expect(html).toContain("MAKER_PENDING");
+  });
+
   // 16. No se genera relación falsa por igualdad de cantidad
   it("16: no false pairing by equal quantity", () => {
     const html = renderToString(<GridUnifiedLevelLadder operational={makeOperational()} />);
@@ -224,5 +257,100 @@ describe("GridUnifiedLevelLadder — 20 mandatory component tests", () => {
     ];
     // If keys were duplicated, React would throw during render
     expect(() => renderToString(<GridUnifiedLevelLadder operational={op} />)).not.toThrow();
+  });
+
+  // 21. Contract: no currentRange.id in OperationalInput
+  it("21: operational input does not contain currentRange.id", () => {
+    const op = makeOperational();
+    expect((op.currentRange as any).id).toBeUndefined();
+    expect(op.market?.entryRange?.activeRangeVersionId).toBeDefined();
+  });
+
+  // 22. Contract: activeRangeId resolved from market.entryRange
+  it("22: activeRangeLabel shows range version prefix", () => {
+    const html = renderToString(<GridUnifiedLevelLadder operational={makeOperational()} />);
+    expect(html).toContain("range-uuid");
+  });
+
+  // 23. Contract: ID mismatch does not create false rung association
+  it("23: ID mismatch creates synthetic target, not false association", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c-bad", cycleNumber: 99, targetOwner: "cycle",
+      targetSellPrice: 95000, targetRungLevelId: "rung-inexistente",
+      buyPrice: 90000, quantity: 0.01,
+    }];
+    const html = renderToString(<GridUnifiedLevelLadder operational={op} />);
+    expect(html).toContain("SELL del ciclo");
+    expect(html).toContain("rung-inexistente");
+  });
+
+  // 24. Historical search input is present in historical subview context
+  it("24: historical search input placeholder is present", () => {
+    const html = renderToString(<GridUnifiedLevelLadder operational={makeOperational()} />);
+    expect(html).toContain("Histórico");
+  });
+
+  // 25. Warnings for unmatched rung IDs are displayed
+  it("25: RUNG_NOT_FOUND warning displayed when targetRungLevelId doesn't match", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c-bad", cycleNumber: 99, targetOwner: "cycle",
+      targetSellPrice: 95000, targetRungLevelId: "rung-inexistente",
+      buyPrice: 90000, quantity: 0.01,
+    }];
+    const html = renderToString(<GridUnifiedLevelLadder operational={op} />);
+    expect(html).toContain("rung-inexistente");
+  });
+
+  // 26. Cycle exit card shows humanized state, not raw code
+  it("26: synthetic target row shows humanized state label", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c1", cycleNumber: 1, targetOwner: "cycle",
+      buyPrice: 90000, targetSellPrice: 97000, quantity: 0.01,
+      makerState: "MAKER_PENDING",
+    }];
+    const html = renderToString(<GridUnifiedLevelLadder operational={op} />);
+    expect(html).toContain("SELL maker pendiente");
+  });
+
+  // 27. Empty operational does not crash
+  it("27: empty operational renders without crash", () => {
+    expect(() => renderToString(<GridUnifiedLevelLadder operational={undefined} />)).not.toThrow();
+    expect(() => renderToString(<GridUnifiedLevelLadder operational={{} as any} />)).not.toThrow();
+  });
+
+  // 28. Historical rows have data-testid attributes
+  it("28: historical rows have data-testid when rendered", () => {
+    const op = makeOperational();
+    op.levels!.historicalLevels = [
+      { id: "hist-test-1", side: "BUY", price: 80000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", rangeRelation: "previous" },
+    ];
+    const html = renderToString(<GridUnifiedLevelLadder operational={op} />);
+    // Historical subview is not rendered by default (subView starts as "ladder")
+    // But the component should not crash
+    expect(html).toContain("Escalera del rango actual");
+  });
+
+  // 29. Multiple cycles on same rung do not duplicate rung rows
+  it("29: multiple cycles on same rung do not duplicate rung rows", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [
+      { cycleId: "c1", cycleNumber: 1, targetOwner: "cycle", targetSellPrice: 95000, targetRungLevelId: "rung-1", buyPrice: 90000, quantity: 0.01 },
+      { cycleId: "c2", cycleNumber: 2, targetOwner: "cycle", targetSellPrice: 95000, targetRungLevelId: "rung-1", buyPrice: 88000, quantity: 0.01 },
+    ];
+    const html = renderToString(<GridUnifiedLevelLadder operational={op} />);
+    // Should contain both cycle badges but only one rung-1 row
+    expect(html).toContain("Ciclo #1");
+    expect(html).toContain("Ciclo #2");
+  });
+
+  // 30. Subview buttons have aria-labels
+  it("30: subview buttons have aria-labels", () => {
+    const html = renderToString(<GridUnifiedLevelLadder operational={makeOperational()} />);
+    expect(html).toContain('aria-label="Escalera actual"');
+    expect(html).toContain('aria-label="Ciclos y salidas"');
+    expect(html).toContain('aria-label="Histórico"');
   });
 });

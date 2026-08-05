@@ -100,7 +100,18 @@ export interface OperationalInput {
   cycleOwnedExits?: CycleOwnedExitInput[];
   currentRange?: {
     exists?: boolean;
-    id?: string | null;
+    message?: string;
+    subtitle?: string | null;
+    lowerPrice?: number | null;
+    centerPrice?: number | null;
+    upperPrice?: number | null;
+    widthPct?: number | null;
+  };
+  market?: {
+    entryRange?: {
+      activeRangeVersionId?: string | null;
+      active?: boolean;
+    };
   };
 }
 
@@ -205,28 +216,64 @@ function statusLabelFromStatus(status: string, fallback?: string): string {
   return map[status] ?? fallback ?? status;
 }
 
+export function humanizeMakerState(state: string | null | undefined): string | null {
+  if (state == null || state === "") return null;
+  const map: Record<string, string> = {
+    MAKER_PENDING: "SELL maker pendiente",
+    maker_pending: "SELL maker pendiente",
+    MAKER_FILLED: "SELL maker ejecutado",
+    maker_filled: "SELL maker ejecutado",
+    MAKER_REPRICED: "SELL maker reprecio",
+    maker_repriced: "SELL maker reprecio",
+    TRIGGER_DETECTED: "SELL activado",
+    trigger_detected: "SELL activado",
+    IDLE: "Esperando target",
+    idle: "Esperando target",
+  };
+  return map[state] ?? state;
+}
+
 function isCurrentRange(rel: string | undefined): boolean {
   return rel === "current";
+}
+
+function filterCurrentLevels<T extends { rangeRelation?: string; rangeVersionId?: string | null }>(
+  items: T[],
+  activeRangeId: string | null,
+): T[] {
+  const hasRangeRelation = items.some((i) => i.rangeRelation != null);
+  if (hasRangeRelation) {
+    return items.filter((i) => i.rangeRelation === "current");
+  }
+  if (activeRangeId) {
+    return items.filter((i) => i.rangeVersionId === activeRangeId);
+  }
+  return items;
 }
 
 function matchCycleToRung(
   cycle: CycleOwnedExitInput,
   rungs: RungLevelInput[],
-): RungLevelInput | null {
-  if (cycle.targetRungLevelId) {
-    const byId = rungs.find((r) => r.id === cycle.targetRungLevelId);
-    if (byId) return byId;
+): { rung: RungLevelInput | null; warning: string | null } {
+  const rungId = cycle.targetRungLevelId;
+  if (rungId && rungId.trim() !== "") {
+    const byId = rungs.find((r) => r.id === rungId);
+    if (byId) return { rung: byId, warning: null };
+    return {
+      rung: null,
+      warning: `targetRungLevelId "${rungId}" no encontrado entre los rungs visibles del rango vigente`,
+    };
   }
   const targetPrice = safeNum(cycle.targetSellPrice);
-  if (targetPrice == null) return null;
+  if (targetPrice == null) return { rung: null, warning: null };
   for (const rung of rungs) {
     const rungPrice = safeNum(rung.price);
     if (rungPrice == null) continue;
     if (Math.abs(rungPrice - targetPrice) <= PRICE_TICK_TOLERANCE) {
-      return rung;
+      return { rung, warning: null };
     }
   }
-  return null;
+  return { rung: null, warning: null };
 }
 
 function sortRows(rows: LadderRow[]): LadderRow[] {
@@ -272,6 +319,24 @@ function searchRows(rows: LadderRow[], query: string): LadderRow[] {
   });
 }
 
+export function searchHistoricalRows(rows: HistoricalRow[], query: string): HistoricalRow[] {
+  if (!query.trim()) return rows;
+  const q = query.trim().toLowerCase();
+  return rows.filter((r) => {
+    const fields = [
+      r.side,
+      r.status,
+      r.statusLabel,
+      String(r.price ?? ""),
+      String(r.cycleNumber ?? ""),
+      String(r.cycleId ?? ""),
+      String(r.rangeVersionId ?? ""),
+      r.rangeRelation,
+    ].map((s) => s.toLowerCase());
+    return fields.some((f) => f.includes(q));
+  });
+}
+
 export function buildGridLevelLadderViewModel(operational: OperationalInput | null | undefined): GridLevelLadderViewModel {
   if (operational == null) {
     return {
@@ -287,10 +352,28 @@ export function buildGridLevelLadderViewModel(operational: OperationalInput | nu
   }
 
   const currentPrice = safeNum(operational.header?.currentPrice);
-  const activeRangeId = operational.currentRange?.id ?? null;
-  const activeRangeLabel = activeRangeId
-    ? `Rango vigente · ${activeRangeId.slice(0, 8)}`
-    : "Sin rango activo";
+
+  const activeRangeId = operational.market?.entryRange?.activeRangeVersionId ?? null;
+  const rangeExists = operational.currentRange?.exists === true;
+
+  let resolvedRangeId = activeRangeId;
+  if (!resolvedRangeId) {
+    const levels = operational.levels ?? {};
+    const allCurrentCandidates = [
+      ...(levels.entryLevels ?? []),
+      ...(levels.referenceRungs ?? []),
+    ].filter((l) => l.rangeRelation === "current" && l.rangeVersionId);
+    const versionIds = new Set(allCurrentCandidates.map((l) => l.rangeVersionId));
+    if (versionIds.size === 1) {
+      resolvedRangeId = allCurrentCandidates[0].rangeVersionId ?? null;
+    }
+  }
+
+  const activeRangeLabel = resolvedRangeId
+    ? `Rango vigente · ${resolvedRangeId.slice(0, 8)}`
+    : rangeExists
+      ? "Rango vigente"
+      : "Sin rango activo";
 
   const levels = operational.levels ?? {};
   const entryLevels = levels.entryLevels ?? [];
@@ -304,14 +387,17 @@ export function buildGridLevelLadderViewModel(operational: OperationalInput | nu
     warnings.push({ code: "NO_CURRENT_PRICE", message: "Precio actual no disponible" });
   }
 
-  const rungsCurrent = referenceRungs.filter((r) => isCurrentRange(r.rangeRelation));
-  const entriesCurrent = entryLevels.filter((e) => isCurrentRange(e.rangeRelation));
+  const rungsCurrent = filterCurrentLevels(referenceRungs, resolvedRangeId);
+  const entriesCurrent = filterCurrentLevels(entryLevels, resolvedRangeId);
 
   const cycleByRung = new Map<string, LinkedCycleInfo[]>();
   const matchedCycleIds = new Set<string>();
 
   for (const cycle of cycleOwnedExits) {
-    const matched = matchCycleToRung(cycle, rungsCurrent);
+    const { rung: matched, warning } = matchCycleToRung(cycle, rungsCurrent);
+    if (warning) {
+      warnings.push({ code: "RUNG_NOT_FOUND", message: warning });
+    }
     if (matched) {
       const existing = cycleByRung.get(matched.id) ?? [];
       existing.push({
@@ -395,7 +481,7 @@ export function buildGridLevelLadderViewModel(operational: OperationalInput | nu
       quantity: qty,
       notionalUsd: computeNotional(targetPrice, qty),
       status: cycle.makerState ?? "planned",
-      statusLabel: cycle.makerState ?? "Target de ciclo",
+      statusLabel: humanizeMakerState(cycle.makerState) ?? statusLabelFromStatus(cycle.makerState ?? "planned") ?? "Target de ciclo",
       rangeVersionId: null,
       rangeRelation: cycle.rangeRelation ?? "current",
       levelId: null,

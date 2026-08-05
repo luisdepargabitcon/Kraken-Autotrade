@@ -1,11 +1,13 @@
 import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Search, History, ChevronDown } from "lucide-react";
+import { Search, History } from "lucide-react";
 import {
   buildGridLevelLadderViewModel,
   filterAndSearchRows,
   insertCurrentPriceMarker,
+  searchHistoricalRows,
+  humanizeMakerState,
   type LadderFilter,
   type LadderRow,
   type CycleExitCard,
@@ -169,13 +171,14 @@ function CycleExitCardItem({ exit }: { exit: CycleExitCard }) {
 
       <div className="mt-1.5 text-xs text-muted-foreground">
         <span>Estado: </span>
-        <span className="text-foreground">{exit.makerState ?? "Esperando target"}</span>
+        <span className="text-foreground">{humanizeMakerState(exit.makerState) ?? "Esperando target"}</span>
       </div>
 
-      <details className="mt-2 text-xs text-muted-foreground">
+      <details className="mt-2 text-xs text-muted-foreground" data-testid={`cycle-exit-detail-${exit.cycleId}`}>
         <summary className="cursor-pointer hover:text-foreground transition-colors">Detalle técnico</summary>
         <div className="mt-1 space-y-0.5 font-mono text-[10px]">
           <p>cycleId: {exit.cycleId}</p>
+          <p>makerState: {exit.makerState ?? "—"}</p>
           <p>policyVersion: {exit.policyVersion ?? "—"}</p>
           <p>targetKind: {exit.targetKind ?? "—"}</p>
           <p>targetOwner: {exit.targetOwner}</p>
@@ -198,6 +201,7 @@ export function GridUnifiedLevelLadder({ operational }: { operational?: Operatio
   const [filter, setFilter] = useState<LadderFilter>("all");
   const [search, setSearch] = useState("");
   const [historyLimit, setHistoryLimit] = useState(20);
+  const [historySearch, setHistorySearch] = useState("");
 
   const visibleRows = useMemo(
     () => filterAndSearchRows(vm.rows, filter, search),
@@ -207,6 +211,11 @@ export function GridUnifiedLevelLadder({ operational }: { operational?: Operatio
   const rowsWithMarker = useMemo(
     () => insertCurrentPriceMarker(visibleRows, vm.currentPrice),
     [visibleRows, vm.currentPrice],
+  );
+
+  const visibleHistory = useMemo(
+    () => searchHistoricalRows(vm.historicalRows, historySearch),
+    [vm.historicalRows, historySearch],
   );
 
   const FILTER_LABELS: { key: LadderFilter; label: string; count: number }[] = [
@@ -340,10 +349,24 @@ export function GridUnifiedLevelLadder({ operational }: { operational?: Operatio
           <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-xs text-amber-400">
             Los niveles históricos son solo de referencia; no se reconstruye la banda original.
           </div>
-          {vm.historicalRows.length > 0 ? (
+
+          {/* Historical search */}
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              value={historySearch}
+              onChange={(e) => setHistorySearch(e.target.value)}
+              placeholder="Buscar en histórico..."
+              className="pl-7 pr-3 py-1 text-xs rounded-md border border-border/50 bg-background outline-none focus:ring-1 focus:ring-primary w-full md:w-56"
+              aria-label="Buscar en histórico"
+            />
+          </div>
+
+          {visibleHistory.length > 0 ? (
             <div className="space-y-2">
-              {vm.historicalRows.slice(0, historyLimit).map((h) => (
-                <div key={h.id} className="rounded-lg border border-border/50 p-3 text-sm">
+              {visibleHistory.slice(0, historyLimit).map((h) => (
+                <div key={h.id} className="rounded-lg border border-border/50 p-3 text-sm" data-testid={`historical-row-${h.id}`}>
                   <div className="flex items-center justify-between mb-1">
                     <Badge variant="outline" className="text-xs text-muted-foreground">
                       {h.side === "BUY" ? "BUY" : "SELL"} · {h.statusLabel}
@@ -364,22 +387,36 @@ export function GridUnifiedLevelLadder({ operational }: { operational?: Operatio
                       <span className="text-foreground">{h.cycleNumber != null ? `#${h.cycleNumber}` : "—"}</span>
                     </div>
                   </div>
+                  <details className="mt-2 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer hover:text-foreground transition-colors">Detalle técnico</summary>
+                    <div className="mt-1 space-y-0.5 font-mono text-[10px]">
+                      <p>id: {h.id}</p>
+                      <p>status: {h.status}</p>
+                      {h.cycleId && <p>cycleId: {h.cycleId}</p>}
+                      {h.rangeVersionId && <p>rangeVersionId: {h.rangeVersionId}</p>}
+                      {h.createdAt && <p>createdAt: {h.createdAt}</p>}
+                    </div>
+                  </details>
                 </div>
               ))}
-              {vm.historicalRows.length > historyLimit && (
+              {visibleHistory.length > historyLimit && (
                 <Button
                   size="sm"
                   variant="outline"
                   className="w-full text-xs h-8"
                   onClick={() => setHistoryLimit((l) => l + 20)}
+                  aria-label="Mostrar más histórico"
                 >
-                  Mostrar más ({vm.historicalRows.length - historyLimit} restantes)
+                  Mostrar más ({visibleHistory.length - historyLimit} restantes)
                 </Button>
               )}
+              <p className="text-[10px] text-muted-foreground text-center">
+                Mostrando {Math.min(historyLimit, visibleHistory.length)} de {visibleHistory.length} niveles históricos
+              </p>
             </div>
           ) : (
             <div className="text-sm text-muted-foreground py-8 text-center">
-              No hay niveles históricos.
+              {historySearch ? "No se encontraron niveles históricos para la búsqueda." : "No hay niveles históricos."}
             </div>
           )}
         </div>
