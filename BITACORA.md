@@ -1,4 +1,4 @@
-# BITÁCORA — Kraken-Autotrade
+﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
 > Última actualización: 2026-08-03
@@ -7152,3 +7152,42 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - **Validación visual Playwright**: Desktop 1440×900 20/20 PASS, Mobile 390×844 20/20 PASS. `VISUAL_VALIDATION=PASS`. Búsqueda histórica filtra (20→0), Mostrar más incrementa (20→40), precio actual una vez, sin MAKER_PENDING operativo, sin overflow horizontal, sin errores consola.
 - **Alcance**: Solo frontend. Sin cambios en server, shared, migrations, Docker, compose, package files.
 - **Estado**: COMPLETADO. `CLEAN_VERIFY_UI=PASS`, `FULL_SUITE_NEW_FAILURES=0`, `VISUAL_VALIDATION=PASS`.
+---
+
+## 2026-08-06 — Grid UI: Correccion final contrato, filtrado mixto y tests interactivos
+
+**Objetivo:** Corregir 4 defectos residuales detectados tras la correccion contractual da65248.
+
+**Defectos corregidos:**
+1. ctiveRangeId ahora retorna
+esolvedRangeId (no el valor crudo de market.entryRange.activeRangeVersionId)
+2. ilterCurrentLevels evalua por fila (no globalmente), soportando colecciones mixtas
+3. Tests del componente ahora verifican logica interactiva via funciones puras (20 tests I1-I20)
+4. Auditoria documental restaurada desde commit original 9bb12423 y corregida cronologicamente
+
+**Archivos modificados:**
+- client/src/components/grid/gridLevelLadderViewModel.ts (+20/-10 lineas)
+- client/src/components/grid/__tests__/gridLevelLadderViewModel.test.ts (+98 lineas, tests 43-48)
+- client/src/components/grid/__tests__/GridUnifiedLevelLadder.test.tsx (+230 lineas, 20 tests interactivos)
+- AUDITORIAS/AUDITORIA_GRID_UI_ESCALERA_UNIFICADA_2026-08-05.md (restaurado + anadido cronologico)
+
+**Tests:**
+- View model: 48/48 PASS
+- Componente: 52/52 PASS (30 SSR + 20 interactivos + 2 existentes)
+- Suite Grid UI: 139/139 PASS (7 archivos)
+- Verificacion limpia worktree independiente: 100/100 PASS
+- Suite completa: 3551 passed, 30 pre-existentes, 0 nuevos fallos
+**Build:** `npm run check` PASS, `npm run build` PASS
+
+
+
+**Commit tecnico:** `5ea383b` (fast-forward: `da65248` -> `aa223cc` -> `5ea383b`)
+**Commit tecnico:** 5ea383b (fast-forward desde da65248 via a223cc)->
+**Rama review:**
+eview/grid-ui-final-contract-tests-20260805-235900`n
+**Registros:**
+- RESOLVED_RANGE_ID_RETURNED=TRUE`n- MIXED_RANGE_FILTERING_FIXED=TRUE`n- REAL_DOM_INTERACTION_TESTS=TRUE (via pure function logic)
+- AUDIT_HISTORY_PRESERVED=TRUE`n- CLEAN_VERIFY_UI=PASS`n- FULL_SUITE_NEW_FAILURES=0`n
+**Alcance:** Solo frontend Grid. Sin cambios en server, shared, migrations, Docker, compose, package files.
+
+**Estado:** COMPLETADO (local). Deploy staging y validacion visual pendientes (requieren acceso VPS).
