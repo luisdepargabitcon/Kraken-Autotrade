@@ -241,14 +241,16 @@ function filterCurrentLevels<T extends { rangeRelation?: string; rangeVersionId?
   items: T[],
   activeRangeId: string | null,
 ): T[] {
-  const hasRangeRelation = items.some((i) => i.rangeRelation != null);
-  if (hasRangeRelation) {
-    return items.filter((i) => i.rangeRelation === "current");
-  }
-  if (activeRangeId) {
-    return items.filter((i) => i.rangeVersionId === activeRangeId);
-  }
-  return items;
+  return items.filter((i) => {
+    if (i.rangeRelation != null) {
+      return i.rangeRelation === "current";
+    }
+    if (activeRangeId) {
+      if (i.rangeVersionId == null) return true;
+      return i.rangeVersionId === activeRangeId;
+    }
+    return true;
+  });
 }
 
 function matchCycleToRung(
@@ -545,7 +547,7 @@ export function buildGridLevelLadderViewModel(operational: OperationalInput | nu
 
   return {
     currentPrice,
-    activeRangeId,
+    activeRangeId: resolvedRangeId,
     activeRangeLabel,
     rows: sortedRows,
     cycleExits,

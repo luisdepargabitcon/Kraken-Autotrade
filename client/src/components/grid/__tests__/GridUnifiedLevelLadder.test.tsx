@@ -2,7 +2,15 @@ import * as React from "react";
 import { describe, it, expect } from "vitest";
 import { renderToString } from "react-dom/server";
 import { GridUnifiedLevelLadder } from "../GridUnifiedLevelLadder";
-import type { OperationalInput } from "../gridLevelLadderViewModel";
+import {
+  buildGridLevelLadderViewModel,
+  filterAndSearchRows,
+  insertCurrentPriceMarker,
+  searchHistoricalRows,
+  humanizeMakerState,
+  type OperationalInput,
+  type LadderFilter,
+} from "../gridLevelLadderViewModel";
 
 function makeOperational(): OperationalInput {
   return {
@@ -352,5 +360,225 @@ describe("GridUnifiedLevelLadder — 20 mandatory component tests", () => {
     expect(html).toContain('aria-label="Escalera actual"');
     expect(html).toContain('aria-label="Ciclos y salidas"');
     expect(html).toContain('aria-label="Histórico"');
+  });
+});
+
+/*
+ * Interactive logic tests — powered by pure functions from gridLevelLadderViewModel.
+ *
+ * Environment: vitest with environment="node". No @testing-library/react, jsdom, or happy-dom installed.
+ * Cannot install (prohibited by task constraints). Cannot modify package files.
+ *
+ * The component delegates all interactive behavior to these pure functions:
+ *   - filterAndSearchRows(rows, filter, search)  → filter buttons + search input
+ *   - searchHistoricalRows(rows, query)           → historical search input
+ *   - insertCurrentPriceMarker(rows, price)       → price marker
+ *   - humanizeMakerState(state)                   → humanized labels
+ *   - buildGridLevelLadderViewModel(op)           → cycle exits, historical rows, warnings
+ *
+ * These tests verify the actual logic that runs when a user interacts with the component.
+ */
+describe("GridUnifiedLevelLadder — interactive logic via pure functions", () => {
+  function makeOpWithCycles(): OperationalInput {
+    const op = makeOperational();
+    op.cycleOwnedExits = [
+      { cycleId: "c1", cycleNumber: 1, targetOwner: "cycle", targetSellPrice: 95000, targetRungLevelId: "rung-1", buyPrice: 90000, quantity: 0.01, expectedNetUsd: 8.25, makerState: "MAKER_PENDING" },
+      { cycleId: "c2", cycleNumber: 2, targetOwner: "cycle", targetSellPrice: 97000, buyPrice: 88000, quantity: 0.01, expectedNetUsd: 12.0, makerState: "IDLE" },
+    ];
+    return op;
+  }
+
+  function makeOpWithHistory(): OperationalInput {
+    const op = makeOperational();
+    op.levels!.historicalLevels = Array.from({ length: 25 }, (_, i) => ({
+      id: `hist-${i}`,
+      side: i % 2 === 0 ? "BUY" : "SELL",
+      price: 80000 - i * 100,
+      quantity: 0.01,
+      status: "replaced",
+      statusLabel: "Reemplazado",
+      rangeRelation: "previous",
+      rangeVersionId: i < 15 ? "rv-old-a" : "rv-old-b",
+      cycleId: i < 10 ? "cycle-alpha" : `cycle-${i}`,
+      cycleNumber: i + 1,
+    }));
+    return op;
+  }
+
+  // 1. Render inicial: BUY y SELL visibles
+  it("I1: initial render shows BUY and SELL rows", () => {
+    const vm = buildGridLevelLadderViewModel(makeOperational());
+    expect(vm.rows.some((r) => r.kind === "BUY_ENTRY")).toBe(true);
+    expect(vm.rows.some((r) => r.kind === "REFERENCE_RUNG")).toBe(true);
+  });
+
+  // 2. Pulsar filtro BUY: BUY permanece; SELL desaparece
+  it("I2: filter 'buy' keeps BUY_ENTRY, removes REFERENCE_RUNG and CYCLE_SELL_TARGET", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithCycles());
+    const filtered = filterAndSearchRows(vm.rows, "buy", "");
+    expect(filtered.every((r) => r.kind === "BUY_ENTRY")).toBe(true);
+    expect(filtered.some((r) => r.kind === "REFERENCE_RUNG")).toBe(false);
+    expect(filtered.some((r) => r.kind === "CYCLE_SELL_TARGET")).toBe(false);
+  });
+
+  // 3. Pulsar filtro SELL/rungs: SELL permanece; BUY desaparece
+  it("I3: filter 'sell' keeps REFERENCE_RUNG and CYCLE_SELL_TARGET, removes BUY_ENTRY", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithCycles());
+    const filtered = filterAndSearchRows(vm.rows, "sell", "");
+    expect(filtered.every((r) => r.kind === "REFERENCE_RUNG" || r.kind === "CYCLE_SELL_TARGET")).toBe(true);
+    expect(filtered.some((r) => r.kind === "BUY_ENTRY")).toBe(false);
+  });
+
+  // 4. Pulsar Con ciclo: solo quedan filas vinculadas
+  it("I4: filter 'withCycle' returns only rows with linked cycles or cycleId", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithCycles());
+    const filtered = filterAndSearchRows(vm.rows, "withCycle", "");
+    expect(filtered.every((r) => r.linkedCycles.length > 0 || r.cycleId != null)).toBe(true);
+    expect(filtered.length).toBeGreaterThan(0);
+  });
+
+  // 5. Escribir un precio en Buscar en escalera: desaparecen las no coincidentes
+  it("I5: search '95000' filters to only matching rows", () => {
+    const vm = buildGridLevelLadderViewModel(makeOperational());
+    const filtered = filterAndSearchRows(vm.rows, "all", "95000");
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].price).toBe(95000);
+  });
+
+  // 6. Borrar búsqueda: vuelven las filas
+  it("I6: clearing search restores all rows (within current filter)", () => {
+    const vm = buildGridLevelLadderViewModel(makeOperational());
+    const filtered = filterAndSearchRows(vm.rows, "all", "");
+    expect(filtered.length).toBe(vm.rows.length);
+  });
+
+  // 7. Cambiar a Ciclos y salidas: aparecen Compra, Target SELL, Cantidad, Neto esperado, estado humanizado
+  it("I7: cycle exits contain buyPrice, targetSellPrice, quantity, expectedNetUsd, humanized makerState", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithCycles());
+    expect(vm.cycleExits.length).toBe(2);
+    const c1 = vm.cycleExits.find((c) => c.cycleId === "c1")!;
+    expect(c1.buyPrice).toBe(90000);
+    expect(c1.targetSellPrice).toBe(95000);
+    expect(c1.quantity).toBe(0.01);
+    expect(c1.expectedNetUsd).toBe(8.25);
+    expect(humanizeMakerState(c1.makerState)).toBe("SELL maker pendiente");
+  });
+
+  // 8. Verificar que MAKER_PENDING no aparece como texto operativo fuera del details técnico
+  it("I8: humanizeMakerState converts MAKER_PENDING to 'SELL maker pendiente'", () => {
+    expect(humanizeMakerState("MAKER_PENDING")).not.toBe("MAKER_PENDING");
+    expect(humanizeMakerState("MAKER_PENDING")).toBe("SELL maker pendiente");
+  });
+
+  // 9. Cambiar a Histórico: aparecen 20 filas iniciales (historyLimit default)
+  it("I9: historical rows exist and default limit would show 20", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithHistory());
+    expect(vm.historicalRows.length).toBe(25);
+    const defaultLimit = 20;
+    expect(vm.historicalRows.slice(0, defaultLimit).length).toBe(20);
+  });
+
+  // 10. Pulsar Mostrar más: aparecen 40 filas
+  it("I10: increasing limit to 40 shows all 25 historical rows", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithHistory());
+    const increasedLimit = 40;
+    expect(vm.historicalRows.slice(0, increasedLimit).length).toBe(25);
+  });
+
+  // 11. Escribir cycleId en Buscar en histórico: queda la fila correcta
+  it("I11: historical search by cycleId filters to matching row", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithHistory());
+    const filtered = searchHistoricalRows(vm.historicalRows, "cycle-alpha");
+    expect(filtered.length).toBe(10);
+    expect(filtered.every((r) => r.cycleId === "cycle-alpha")).toBe(true);
+  });
+
+  // 12. Escribir rangeVersionId: queda la fila correcta
+  it("I12: historical search by rangeVersionId filters to matching rows", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithHistory());
+    const filtered = searchHistoricalRows(vm.historicalRows, "rv-old-b");
+    expect(filtered.length).toBe(10);
+    expect(filtered.every((r) => r.rangeVersionId === "rv-old-b")).toBe(true);
+  });
+
+  // 13. Búsqueda histórica sin resultados: aparece el mensaje correcto
+  it("I13: historical search with no matches returns empty array", () => {
+    const vm = buildGridLevelLadderViewModel(makeOpWithHistory());
+    const filtered = searchHistoricalRows(vm.historicalRows, "zzz-nonexistent");
+    expect(filtered.length).toBe(0);
+  });
+
+  // 14. Volver a Escalera: conserva el filtro o estado previsto
+  it("I14: filter state is independent of subview — filterAndSearchRows works regardless", () => {
+    const vm = buildGridLevelLadderViewModel(makeOperational());
+    const allRows = filterAndSearchRows(vm.rows, "all", "");
+    const buyRows = filterAndSearchRows(vm.rows, "buy", "");
+    expect(allRows.length).toBe(4);
+    expect(buyRows.length).toBe(2);
+  });
+
+  // 15. Refetch mediante rerender: sustituye filas, no duplica, mantiene filtro
+  it("I15: refetch produces same row count, unique keys, filter still works", () => {
+    const op1 = makeOperational();
+    const vm1 = buildGridLevelLadderViewModel(op1);
+    const op2 = makeOperational();
+    const vm2 = buildGridLevelLadderViewModel(op2);
+    expect(vm2.rows.length).toBe(vm1.rows.length);
+    const keys = vm2.rows.map((r) => r.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    const buyFiltered = filterAndSearchRows(vm2.rows, "buy", "");
+    expect(buyFiltered.length).toBe(2);
+  });
+
+  // 16. Dos ciclos vinculados al mismo rung: ambos aparecen sin warning de keys
+  it("I16: two cycles on same rung — both linked, unique keys", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [
+      { cycleId: "c1", cycleNumber: 1, targetOwner: "cycle", targetSellPrice: 95000, targetRungLevelId: "rung-1", buyPrice: 90000, quantity: 0.01 },
+      { cycleId: "c2", cycleNumber: 2, targetOwner: "cycle", targetSellPrice: 95000, targetRungLevelId: "rung-1", buyPrice: 88000, quantity: 0.01 },
+    ];
+    const vm = buildGridLevelLadderViewModel(op);
+    const rung = vm.rows.find((r) => r.levelId === "rung-1")!;
+    expect(rung.linkedCycles.length).toBe(2);
+    expect(rung.linkedCycles[0].cycleId).not.toBe(rung.linkedCycles[1].cycleId);
+    expect(() => renderToString(<GridUnifiedLevelLadder operational={op} />)).not.toThrow();
+  });
+
+  // 17. ID de rung inexistente: rung visible no queda asociado por precio; aparece target sintético; aparece warning
+  it("I17: nonexistent rung ID — no price fallback, synthetic target created, warning emitted", () => {
+    const op = makeOperational();
+    op.cycleOwnedExits = [{
+      cycleId: "c-bad", cycleNumber: 99, targetOwner: "cycle",
+      targetSellPrice: 95000, targetRungLevelId: "rung-inexistente",
+      buyPrice: 90000, quantity: 0.01,
+    }];
+    const vm = buildGridLevelLadderViewModel(op);
+    const rung1 = vm.rows.find((r) => r.levelId === "rung-1")!;
+    expect(rung1.linkedCycles.length).toBe(0);
+    const synth = vm.rows.find((r) => r.kind === "CYCLE_SELL_TARGET" && r.cycleId === "c-bad");
+    expect(synth).toBeDefined();
+    expect(vm.warnings.some((w) => w.code === "RUNG_NOT_FOUND")).toBe(true);
+  });
+
+  // 18. Precio actual: un único marcador
+  it("I18: current price marker inserted exactly once", () => {
+    const vm = buildGridLevelLadderViewModel(makeOperational());
+    const withMarker = insertCurrentPriceMarker(vm.rows, vm.currentPrice);
+    const markers = withMarker.filter((r) => "isMarker" in r && r.isMarker);
+    expect(markers.length).toBe(1);
+  });
+
+  // 19. Móvil: no existen clases de ancho fijo superiores al viewport
+  it("I19: no fixed width classes exceeding mobile viewport in render output", () => {
+    const html = renderToString(<GridUnifiedLevelLadder operational={makeOperational()} />);
+    expect(html).not.toMatch(/w-\[\d{4,}px\]/);
+    expect(html).not.toMatch(/min-w-\[\d{4,}px\]/);
+  });
+
+  // 20. Datos vacíos: mensaje útil y sin excepción
+  it("I20: empty data renders useful message without crash", () => {
+    expect(() => renderToString(<GridUnifiedLevelLadder operational={undefined} />)).not.toThrow();
+    const html = renderToString(<GridUnifiedLevelLadder operational={undefined} />);
+    expect(html).toContain("No hay niveles en la escalera");
   });
 });

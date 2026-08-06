@@ -524,3 +524,101 @@ describe("gridLevelLadderViewModel — contract alignment and corrections", () =
     expect(new Set(keys2).size).toBe(keys2.length);
   });
 });
+
+describe("gridLevelLadderViewModel — resolvedRangeId and mixed filtering", () => {
+  // 43: vm.activeRangeId returns resolvedRangeId when inferred from levels
+  it("43: vm.activeRangeId returns resolvedRangeId when inferred from levels", () => {
+    const op = makeOperational();
+    op.market = { entryRange: { activeRangeVersionId: null, active: true } };
+    op.currentRange = { exists: true };
+    op.levels!.entryLevels!.forEach((e) => { e.rangeVersionId = "range-inferred"; e.rangeRelation = "current"; });
+    op.levels!.referenceRungs!.forEach((r) => { r.rangeVersionId = "range-inferred"; r.rangeRelation = "current"; });
+    const vm = buildGridLevelLadderViewModel(op);
+    expect(vm.activeRangeId).toBe("range-inferred");
+    expect(vm.activeRangeLabel).toContain("range-in");
+    expect(vm.rows.length).toBe(4);
+  });
+
+  // 44: inconsistent rangeVersionIds → activeRangeId null, label "Rango vigente"
+  it("44: inconsistent current rangeVersionIds → activeRangeId null, label 'Rango vigente'", () => {
+    const op = makeOperational();
+    op.market = { entryRange: { activeRangeVersionId: null, active: true } };
+    op.currentRange = { exists: true };
+    op.levels!.entryLevels![0].rangeVersionId = "range-a";
+    op.levels!.entryLevels![1].rangeVersionId = "range-b";
+    op.levels!.referenceRungs!.forEach((r) => { r.rangeVersionId = "range-a"; });
+    op.levels!.entryLevels!.forEach((e) => { e.rangeRelation = "current"; });
+    op.levels!.referenceRungs!.forEach((r) => { r.rangeRelation = "current"; });
+    const vm = buildGridLevelLadderViewModel(op);
+    expect(vm.activeRangeId).toBeNull();
+    expect(vm.activeRangeLabel).toBe("Rango vigente");
+  });
+
+  // 45: mixed collection — current + no-relation with matching rangeVersionId both included
+  it("45: mixed collection — current and no-relation with matching rangeVersionId both included", () => {
+    const op = makeOperational();
+    op.market = { entryRange: { activeRangeVersionId: "range-uuid-1234", active: true } };
+    op.levels!.entryLevels = [
+      { id: "buy-1", side: "BUY", price: 90000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+      { id: "buy-2", side: "BUY", price: 85000, quantity: 0.01, status: "planned", rangeVersionId: "range-uuid-1234" },
+    ];
+    op.levels!.referenceRungs = [
+      { id: "rung-1", side: "SELL", price: 95000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+      { id: "rung-2", side: "SELL", price: 100000, quantity: 0.01, status: "planned", rangeVersionId: "range-uuid-1234" },
+    ];
+    const vm = buildGridLevelLadderViewModel(op);
+    expect(vm.rows.length).toBe(4);
+    expect(vm.rows.some((r) => r.levelId === "buy-1")).toBe(true);
+    expect(vm.rows.some((r) => r.levelId === "buy-2")).toBe(true);
+  });
+
+  // 46: mixed collection — current included, no-relation with different rangeVersionId excluded
+  it("46: mixed collection — current included, no-relation with different rangeVersionId excluded", () => {
+    const op = makeOperational();
+    op.market = { entryRange: { activeRangeVersionId: "range-uuid-1234", active: true } };
+    op.levels!.entryLevels = [
+      { id: "buy-1", side: "BUY", price: 90000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+      { id: "buy-2", side: "BUY", price: 85000, quantity: 0.01, status: "planned", rangeVersionId: "range-other-9999" },
+    ];
+    op.levels!.referenceRungs = [
+      { id: "rung-1", side: "SELL", price: 95000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+      { id: "rung-2", side: "SELL", price: 100000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+    ];
+    const vm = buildGridLevelLadderViewModel(op);
+    expect(vm.rows.some((r) => r.levelId === "buy-1")).toBe(true);
+    expect(vm.rows.some((r) => r.levelId === "buy-2")).toBe(false);
+  });
+
+  // 47: previous with matching rangeVersionId excluded (explicit rangeRelation has priority)
+  it("47: previous with matching rangeVersionId excluded due to explicit rangeRelation", () => {
+    const op = makeOperational();
+    op.market = { entryRange: { activeRangeVersionId: "range-uuid-1234", active: true } };
+    op.levels!.entryLevels = [
+      { id: "buy-1", side: "BUY", price: 90000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+      { id: "buy-2", side: "BUY", price: 85000, quantity: 0.01, status: "planned", rangeRelation: "previous", rangeVersionId: "range-uuid-1234" },
+    ];
+    op.levels!.referenceRungs = [
+      { id: "rung-1", side: "SELL", price: 95000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+      { id: "rung-2", side: "SELL", price: 100000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+    ];
+    const vm = buildGridLevelLadderViewModel(op);
+    expect(vm.rows.some((r) => r.levelId === "buy-1")).toBe(true);
+    expect(vm.rows.some((r) => r.levelId === "buy-2")).toBe(false);
+  });
+
+  // 48: row without rangeRelation and without rangeVersionId is preserved
+  it("48: row without rangeRelation and without rangeVersionId is preserved", () => {
+    const op = makeOperational();
+    op.market = { entryRange: { activeRangeVersionId: "range-uuid-1234", active: true } };
+    op.levels!.entryLevels = [
+      { id: "buy-1", side: "BUY", price: 90000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+      { id: "buy-2", side: "BUY", price: 85000, quantity: 0.01, status: "planned" },
+    ];
+    op.levels!.referenceRungs = [
+      { id: "rung-1", side: "SELL", price: 95000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+      { id: "rung-2", side: "SELL", price: 100000, quantity: 0.01, status: "planned", rangeRelation: "current", rangeVersionId: "range-uuid-1234" },
+    ];
+    const vm = buildGridLevelLadderViewModel(op);
+    expect(vm.rows.some((r) => r.levelId === "buy-2")).toBe(true);
+  });
+});
