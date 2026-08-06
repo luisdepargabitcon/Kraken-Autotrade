@@ -7159,9 +7159,8 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 **Objetivo:** Corregir 4 defectos residuales detectados tras la correccion contractual da65248.
 
 **Defectos corregidos:**
-1. ctiveRangeId ahora retorna
-esolvedRangeId (no el valor crudo de market.entryRange.activeRangeVersionId)
-2. ilterCurrentLevels evalua por fila (no globalmente), soportando colecciones mixtas
+1. activeRangeId ahora retorna resolvedRangeId (no el valor crudo de market.entryRange.activeRangeVersionId)
+2. filterCurrentLevels evalua por fila (no globalmente), soportando colecciones mixtas
 3. Tests del componente ahora verifican logica interactiva via funciones puras (20 tests I1-I20)
 4. Auditoria documental restaurada desde commit original 9bb12423 y corregida cronologicamente
 
@@ -7182,7 +7181,6 @@ esolvedRangeId (no el valor crudo de market.entryRange.activeRangeVersionId)
 
 
 **Commit tecnico:** `5ea383b` (fast-forward: `da65248` -> `aa223cc` -> `5ea383b`)
-**Commit tecnico:** 5ea383b (fast-forward desde da65248 via a223cc)->
 - RESOLVED_RANGE_ID_RETURNED=TRUE
 - MIXED_RANGE_FILTERING_FIXED=TRUE
 - INTERACTION_LOGIC_TESTS=TRUE (20 tests via pure functions, entorno Node)
@@ -7247,12 +7245,17 @@ esolvedRangeId (no el valor crudo de market.entryRange.activeRangeVersionId)
 - REAL_BROWSER_INTERACTION_VALIDATION=TRUE
 
 **Registros finales:**
-- DEPLOY_SOURCE_SHA: 0a604d8
+- APP_DEPLOYED_SOURCE=0a604d8a85b586dfbab6f0672e91a99c46f38d75
+- FINAL_DOCUMENTATION_SHA=rellenar tras commit
+- APP_REBUILT_FOR_DOCS=FALSE
+- APP_RESTARTED_FOR_DOCS=FALSE
 - DB_RESTARTED=FALSE
 - DESKTOP_VALIDATED=TRUE
 - MOBILE_VALIDATED=TRUE
 - REAL_BROWSER_INTERACTION_VALIDATION=TRUE
 
+**Nota:** La imagen de aplicacion desplegada corresponde a `0a604d8`. El checkout Git del VPS fue actualizado hasta el commit documental final sin rebuild ni reinicio. Los commits documentales no modifican codigo, server, client, shared, migrations, Docker, compose ni package files.
+
 **Alcance:** Solo frontend Grid. DB intacta. Sin cambios en server, shared, migrations, Docker, compose, package files.
 
-**Estado:** COMPLETADO. Deploy validado. Interaccion real validada en staging.
+**Estado:** COMPLETADO. Deploy validado. Interaccion real validada en staging. Checkout VPS sincronizado. Documentacion limpia y honesta. Pendientes: ninguno.
