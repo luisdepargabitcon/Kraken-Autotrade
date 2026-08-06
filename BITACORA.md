@@ -7183,11 +7183,76 @@ esolvedRangeId (no el valor crudo de market.entryRange.activeRangeVersionId)
 
 **Commit tecnico:** `5ea383b` (fast-forward: `da65248` -> `aa223cc` -> `5ea383b`)
 **Commit tecnico:** 5ea383b (fast-forward desde da65248 via a223cc)->
-**Rama review:**
-eview/grid-ui-final-contract-tests-20260805-235900`n
-**Registros:**
-- RESOLVED_RANGE_ID_RETURNED=TRUE`n- MIXED_RANGE_FILTERING_FIXED=TRUE`n- REAL_DOM_INTERACTION_TESTS=TRUE (via pure function logic)
-- AUDIT_HISTORY_PRESERVED=TRUE`n- CLEAN_VERIFY_UI=PASS`n- FULL_SUITE_NEW_FAILURES=0`n
-**Alcance:** Solo frontend Grid. Sin cambios en server, shared, migrations, Docker, compose, package files.
-
+- RESOLVED_RANGE_ID_RETURNED=TRUE
+- MIXED_RANGE_FILTERING_FIXED=TRUE
+- INTERACTION_LOGIC_TESTS=TRUE (20 tests via pure functions, entorno Node)
+- REAL_DOM_UNIT_TESTS=FALSE (sin Testing Library, jsdom ni happy-dom)
+- AUDIT_HISTORY_PRESERVED=TRUE
+- CLEAN_VERIFY_UI=PASS
+- FULL_SUITE_NEW_FAILURES=0
 **Estado:** COMPLETADO (local). Deploy staging y validacion visual pendientes (requieren acceso VPS).
+
+---
+
+## 2026-08-06 — Grid UI: Deploy final y validacion interactiva real en staging
+
+**Objetivo:** Desplegar commit final `0a604d8` en staging y validar interaccion real en navegador.
+
+**Pre-deploy:**
+- PRE_DEPLOY_SHA: aa223cc
+- APP_ID_BEFORE: d16d636e76b9
+- DB_ID_BEFORE: a2f9a3f275c3 (postgres:16-alpine, Up 3 months, healthy)
+- mode=SHADOW, pair=BTC/USD, MAKER_ONLY, realOpenOrdersCount=0
+
+**Deploy:**
+- git merge --ff-only origin/main: aa223cc -> 0a604d8
+- docker compose build krakenbot-staging-app: OK (2599 modulos, 8.72s)
+- docker compose up -d --no-deps krakenbot-staging-app: OK
+- POST_DEPLOY_SHA: 0a604d8
+- APP_ID_AFTER: 62d48682c0f5 (recreado)
+- DB_ID_AFTER: a2f9a3f275c3 (= DB_ID_BEFORE)
+- DB_RESTARTED=FALSE
+
+**Validacion HTTP:**
+- GET /: 200
+- GET /grid-isolated: 200
+- GET /api/grid-isolated/config: 200
+- GET /api/grid-isolated/status: 200
+- GET /api/grid-isolated/monitor/audit: 200
+
+**Validacion runtime:**
+- MODE=SHADOW, PAIR=BTC/USD, MAKER_ONLY=TRUE, REAL_OPEN_ORDERS=0, FATAL_ERRORS=0
+- Logs: sin crash, sin error React, sin taker fallback, sin orden real
+
+**Validacion interactiva real (Playwright headless en VPS):**
+- Desktop 1440x900: 25/25 PASS
+- Mobile 390x844: 9/9 PASS
+- Total: 34/34 PASS — ALL_PASS=TRUE
+- CONSOLE_ERRORS=0, REACT_KEY_WARNINGS=0, HORIZONTAL_OVERFLOW=FALSE
+- Filtros BUY/SELL/Con ciclo funcionales
+- Busqueda de escalera filtra y restaura
+- Historico: 20 filas iniciales, Mostrar mas incrementa a 40
+- Busqueda historica por cycleId y rangeVersionId
+- Subvistas Escalera/Ciclos/Historico navegables
+- PRECIO ACTUAL marker exactamente uno
+- Sin MAKER_PENDING como estado operativo
+- Sin keys duplicadas
+
+**Correccion documental:**
+- REAL_DOM_INTERACTION_TESTS=TRUE corregido a:
+- INTERACTION_LOGIC_TESTS=TRUE
+- INTERACTION_LOGIC_TEST_COUNT=20
+- INTERACTION_LOGIC_TEST_METHOD=PURE_FUNCTIONS_NODE
+- REAL_DOM_UNIT_TESTS=FALSE
+- REAL_BROWSER_INTERACTION_VALIDATION=TRUE
+
+**Registros finales:**
+- DEPLOY_SOURCE_SHA: 0a604d8
+- DB_RESTARTED=FALSE
+- DESKTOP_VALIDATED=TRUE
+- MOBILE_VALIDATED=TRUE
+- REAL_BROWSER_INTERACTION_VALIDATION=TRUE
+
+**Alcance:** Solo frontend Grid. DB intacta. Sin cambios en server, shared, migrations, Docker, compose, package files.
+
+**Estado:** COMPLETADO. Deploy validado. Interaccion real validada en staging.
