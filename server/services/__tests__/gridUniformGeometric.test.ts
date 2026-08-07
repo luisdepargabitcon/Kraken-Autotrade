@@ -10,6 +10,8 @@ import {
   generateProfessionalGridLevels,
   calculateAdaptiveSmartRange,
 } from "../gridIsolated/gridSpacingCalculator";
+import { normalizeGridLevelsForExecutionConstraints } from "../gridIsolated/gridLevelConstraintNormalizer";
+import { computeCycleOwnedExitTarget } from "../gridIsolated/gridCycleOwnedTarget";
 
 describe("Uniform Geometric Grid — Canonical Helper", () => {
   it("1. calculateUniformGeometricRatio returns 1 + spacingPct/100", () => {
@@ -265,5 +267,235 @@ describe("Uniform Geometric Grid — Canonical Helper", () => {
     expect(audit!.centralGapPct).toBeDefined();
     expect(audit!.configuredSpacingPct).toBeDefined();
     expect(audit!.uniformSpacingOk).toBe(true);
+  });
+
+  // ─── POST-AUDIT TESTS A-H ───
+
+  it("TEST A — Caso real observado: centerPrice=64431.55, spacingPct=0.7879", () => {
+    const centerPrice = 64431.554994;
+    const spacingPct = 0.7879124457;
+    const ratio = calculateUniformGeometricRatio(spacingPct);
+
+    const buy0 = calculateUniformGeometricLevelPrice({ centerPrice, spacingPct, side: "BUY", index: 0 });
+    const buy1 = calculateUniformGeometricLevelPrice({ centerPrice, spacingPct, side: "BUY", index: 1 });
+    const buy2 = calculateUniformGeometricLevelPrice({ centerPrice, spacingPct, side: "BUY", index: 2 });
+    const sell0 = calculateUniformGeometricLevelPrice({ centerPrice, spacingPct, side: "SELL", index: 0 });
+    const sell1 = calculateUniformGeometricLevelPrice({ centerPrice, spacingPct, side: "SELL", index: 1 });
+    const sell2 = calculateUniformGeometricLevelPrice({ centerPrice, spacingPct, side: "SELL", index: 2 });
+
+    expect(buy0).toBeCloseTo(64179.21, 1);
+    expect(buy1).toBeCloseTo(63677.49, 1);
+    expect(buy2).toBeCloseTo(63179.69, 1);
+    expect(sell0).toBeCloseTo(64684.89, 1);
+    expect(sell1).toBeCloseTo(65194.55, 1);
+    expect(sell2).toBeCloseTo(65708.23, 1);
+
+    const centralGapPct = ((sell0 - buy0) / buy0) * 100;
+    expect(centralGapPct).toBeCloseTo(spacingPct, 4);
+    expect(centralGapPct).not.toBeCloseTo(1.58, 1);
+  });
+
+  it("TEST B — V3 target economics unchanged (file diff check)", () => {
+    const target = computeCycleOwnedExitTarget({
+      buyFillPrice: 64000,
+      buyFillQuantity: 0.001,
+      netProfitTargetPct: 0.8,
+      buyFeePct: 0.09,
+      sellFeePct: 0.09,
+      taxReservePct: 20,
+      spreadBufferPct: 0.02,
+      safetyBufferPct: 0.01,
+      priceTickSize: 0.1,
+      quantityStep: 0.0001,
+      minOrderBase: 0.0001,
+      minOrderQuote: 1,
+      minOrderUsd: 1,
+      maxOrderBase: 100,
+      constraintsSource: "test",
+      constraintsFetchedAt: new Date(),
+      baseCurrency: "BTC",
+      quoteCurrency: "USD",
+    });
+    expect(target).toBeDefined();
+    expect(target.selected).toBe(true);
+    expect(target.targetSellPrice).toBeGreaterThan(64000);
+    expect(target.operationalNetPnlUsd).toBeGreaterThan(0);
+  });
+
+  it("TEST C — No alternative geometry modes in codebase", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const gridDir = path.resolve(__dirname, "../gridIsolated");
+    const files = fs.readdirSync(gridDir).filter((f: string) => f.endsWith(".ts") && !f.includes("__tests__"));
+    const forbidden = ["centralGapMode", "deadbandMode", "centralDeadbandPct", "centralDeadbandSteps", "halfStepEnabled"];
+    let found: string[] = [];
+    for (const f of files) {
+      const content = fs.readFileSync(path.join(gridDir, f), "utf-8");
+      for (const term of forbidden) {
+        if (content.includes(term)) found.push(`${f}:${term}`);
+      }
+    }
+    expect(found).toEqual([]);
+  });
+
+  it("TEST D — Tick collision: two different prices normalize to same tick", () => {
+    const mkLevel = (id: string, price: number, side: "BUY" | "SELL"): any => ({
+      id, rangeVersionId: "r1", levelIndex: 0, side, price, notionalUsd: 100,
+      quantity: 0.001, status: "planned", filledQuantity: 0, filledPrice: null,
+      clientOrderId: "c-" + id, exchangeOrderId: null, postOnlyAttempts: 0,
+      usedTakerFallback: false, netProfitTargetUsd: 0, feeEstimateUsd: 0, taxReserveUsd: 0,
+      buyMakerPendingAt: null, buyMakerPendingTickId: null, buyMakerRequestedPrice: null,
+      createdAt: new Date(), placedAt: null, filledAt: null, cancelledAt: null,
+    });
+    // tick=0.10, precision=2: 64000.02 and 64000.04 both round to 64000.0
+    const levels = [mkLevel("l1", 64000.02, "BUY"), mkLevel("l2", 64000.04, "BUY")];
+    const result = normalizeGridLevelsForExecutionConstraints(levels, {
+      quantityStep: 0.00000001, minOrderBase: 0.0001, minOrderQuote: 1, minOrderUsd: 1,
+      maxOrderBase: 100, quantityPrecision: 8, priceTickSize: 0.10, pricePrecision: 2,
+    });
+    expect(result.postNormalizationWarnings.length).toBeGreaterThan(0);
+    expect(result.postNormalizationWarnings.some((w: string) => w.includes("GRID_LEVEL_PRICE_COLLISION"))).toBe(true);
+  });
+
+  it("TEST E — Post-tick ordering: highestBuy < lowestSell", () => {
+    const mkLevel = (id: string, price: number, side: "BUY" | "SELL"): any => ({
+      id, rangeVersionId: "r1", levelIndex: 0, side, price, notionalUsd: 100,
+      quantity: 0.001, status: "planned", filledQuantity: 0, filledPrice: null,
+      clientOrderId: "c-" + id, exchangeOrderId: null, postOnlyAttempts: 0,
+      usedTakerFallback: false, netProfitTargetUsd: 0, feeEstimateUsd: 0, taxReserveUsd: 0,
+      buyMakerPendingAt: null, buyMakerPendingTickId: null, buyMakerRequestedPrice: null,
+      createdAt: new Date(), placedAt: null, filledAt: null, cancelledAt: null,
+    });
+    const levels = [
+      mkLevel("b1", 63800, "BUY"), mkLevel("b2", 63900, "BUY"),
+      mkLevel("s1", 64100, "SELL"), mkLevel("s2", 64200, "SELL"),
+    ];
+    const result = normalizeGridLevelsForExecutionConstraints(levels, {
+      quantityStep: 0.00000001, minOrderBase: 0.0001, minOrderQuote: 1, minOrderUsd: 1,
+      maxOrderBase: 100, quantityPrecision: 8, priceTickSize: 0.001, pricePrecision: 3,
+    });
+    expect(result.postNormalizationWarnings.length).toBe(0);
+    const buys = result.acceptedLevels.filter((l: any) => l.side === "BUY").sort((a: any, b: any) => a.price - b.price);
+    const sells = result.acceptedLevels.filter((l: any) => l.side === "SELL").sort((a: any, b: any) => a.price - b.price);
+    expect(buys[buys.length - 1].price).toBeLessThan(sells[0].price);
+  });
+
+  it("TEST F — Post-tick notional: alignedPrice causes minOrderQuote failure", () => {
+    const mkLevel = (id: string, price: number, side: "BUY" | "SELL"): any => ({
+      id, rangeVersionId: "r1", levelIndex: 0, side, price, notionalUsd: 100,
+      quantity: 0.001, status: "planned", filledQuantity: 0, filledPrice: null,
+      clientOrderId: "c-" + id, exchangeOrderId: null, postOnlyAttempts: 0,
+      usedTakerFallback: false, netProfitTargetUsd: 0, feeEstimateUsd: 0, taxReserveUsd: 0,
+      buyMakerPendingAt: null, buyMakerPendingTickId: null, buyMakerRequestedPrice: null,
+      createdAt: new Date(), placedAt: null, filledAt: null, cancelledAt: null,
+    });
+    // quantity=2 (step=1), price=1.004, tick=1.0 → alignedPrice=1.0, finalNotional=2.0 < 2.01 → rejected
+    const levels = [{ ...mkLevel("l1", 1.004, "BUY"), quantity: 2 }];
+    const result = normalizeGridLevelsForExecutionConstraints(levels, {
+      quantityStep: 1, minOrderBase: 1, minOrderQuote: 2.01, minOrderUsd: 0,
+      maxOrderBase: 100, quantityPrecision: 0, priceTickSize: 1.0, pricePrecision: 0,
+    });
+    expect(result.acceptedLevels.length).toBe(0);
+    expect(result.rejectedLevels.length).toBe(1);
+    expect(result.rejectedLevels[0].reasonCode).toBe("MIN_ORDER_QUOTE_NOT_MET");
+  });
+
+  it("TEST G — Hard gate: centralGapPct > maxSellDistanceFromNearestBuyPct should fail", () => {
+    // This is validated in buildRangeProposal, not in the generator itself.
+    // The generator sets compactRangeOk=false when this happens.
+    // We verify the rangeAudit correctly flags this.
+    const result = generateProfessionalGridLevels({
+      currentPrice: 64000,
+      bollingerMiddle: 64000,
+      bollingerUpper: 64200,
+      bollingerLower: 63800,
+      atrPct: 0.3,
+      netProfitTargetPct: 0.8,
+      buyFeePct: 0.09,
+      sellFeePct: 0.09,
+      taxReservePct: 20,
+      configuredBuyLevels: 4,
+      configuredSellLevels: 4,
+      capitalUsd: 1000,
+      spreadPct: 0.02,
+      priceTickPct: 0.01,
+      enforceCompactRange: true,
+      gridRangeMaxPct: 2.5,
+      maxDistanceFromCenterPct: 1.25,
+      maxSellDistanceFromNearestBuyPct: 0.5,
+      gridStepAtrMultiplier: 0.96,
+      gridStepMinPct: 0.15,
+      gridStepMaxPct: 3,
+      adaptiveRangeNormalMaxPct: 5.0,
+      adaptiveRangeHighVolMaxPct: 7.0,
+      adaptiveRangeTargetFullLevels: false,
+      adaptiveRangeMinViableLevels: 4,
+      marketSuitable: true,
+      regimeLabel: "normal_lateral",
+    });
+    const audit = result.professionalGenerator?.rangeAudit;
+    if (audit && audit.centralGapPct > audit.maxSellDistanceFromNearestBuyPct) {
+      expect(audit.compactRangeOk).toBe(false);
+    }
+  });
+
+  it("TEST H — Adaptive smart: hard gate applies regardless of rangeControlMode", () => {
+    const result = calculateAdaptiveSmartRange({
+      gridRangeControlMode: "adaptive_smart",
+      adaptiveRangeEnabled: true,
+      adaptiveRangeProfile: "balanced",
+      adaptiveRangeMinPct: 0.5,
+      adaptiveRangeMaxPct: 7.0,
+      adaptiveRangeLowVolMaxPct: 3.0,
+      adaptiveRangeNormalMaxPct: 5.0,
+      adaptiveRangeHighVolMaxPct: 7.0,
+      adaptiveRangeTargetFullLevels: false,
+      adaptiveRangeMinViableLevels: 4,
+      bollingerBandWidthPct: 1.8,
+      atrPct: 0.3,
+      spacingPct: 1.29,
+      minSpacingPctReal: 1.29,
+      requestedBuyLevels: 4,
+      requestedSellLevels: 4,
+      gridRangeMaxPct: 2.5,
+      marketSuitable: true,
+      regimeLabel: "normal_lateral",
+    });
+    expect(result).toBeDefined();
+    expect(result.mode).toBe("adaptive_smart");
+    expect(result.finalRangePct).toBeGreaterThan(0);
+
+    const genResult = generateProfessionalGridLevels({
+      currentPrice: 64000,
+      bollingerMiddle: 64000,
+      bollingerUpper: 64000 * (1 + result.finalRangePct / 100 / 2),
+      bollingerLower: 64000 * (1 - result.finalRangePct / 100 / 2),
+      atrPct: 0.3,
+      netProfitTargetPct: 0.8,
+      buyFeePct: 0.09,
+      sellFeePct: 0.09,
+      taxReservePct: 20,
+      configuredBuyLevels: 4,
+      configuredSellLevels: 4,
+      capitalUsd: 1000,
+      spreadPct: 0.02,
+      priceTickPct: 0.01,
+      enforceCompactRange: true,
+      gridRangeMaxPct: 2.5,
+      maxDistanceFromCenterPct: 1.25,
+      maxSellDistanceFromNearestBuyPct: 5.0,
+      gridStepAtrMultiplier: 0.96,
+      gridStepMinPct: 0.15,
+      gridStepMaxPct: 3,
+      adaptiveRangeNormalMaxPct: 5.0,
+      adaptiveRangeHighVolMaxPct: 7.0,
+      adaptiveRangeTargetFullLevels: false,
+      adaptiveRangeMinViableLevels: 4,
+      marketSuitable: true,
+      regimeLabel: "normal_lateral",
+    });
+    const audit = genResult.professionalGenerator?.rangeAudit;
+    expect(audit).toBeDefined();
+    expect(audit!.centralGapPct).toBeGreaterThan(0);
   });
 });

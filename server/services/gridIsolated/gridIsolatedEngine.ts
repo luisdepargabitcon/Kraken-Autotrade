@@ -1664,6 +1664,107 @@ export class GridIsolatedEngine {
       };
     }
 
+    if (normalization.postNormalizationWarnings.length > 0) {
+      return {
+        ok: false,
+        reasonCode: "GRID_LEVEL_PRICE_COLLISION_AFTER_NORMALIZATION",
+        explanation: `Post-normalization validation failed: ${normalization.postNormalizationWarnings.join("; ")}`,
+      };
+    }
+
+    const rangeAudit = professionalResult.professionalGenerator?.rangeAudit;
+    if (!rangeAudit) {
+      return {
+        ok: false,
+        reasonCode: "GRID_UNIFORM_GEOMETRY_INVALID",
+        explanation: "rangeAudit no existe en el resultado del generador profesional.",
+      };
+    }
+
+    if (!rangeAudit.uniformSpacingOk) {
+      return {
+        ok: false,
+        reasonCode: "GRID_NON_UNIFORM_SPACING",
+        explanation: `uniformSpacingOk=false: adjacentGapMinPct=${rangeAudit.adjacentGapMinPct}, adjacentGapMaxPct=${rangeAudit.adjacentGapMaxPct}, configuredSpacingPct=${rangeAudit.configuredSpacingPct}`,
+      };
+    }
+
+    if (!(rangeAudit.centralGapPct > 0)) {
+      return {
+        ok: false,
+        reasonCode: "GRID_UNIFORM_GEOMETRY_INVALID",
+        explanation: `centralGapPct no es positivo: ${rangeAudit.centralGapPct}`,
+      };
+    }
+
+    const spacingTolerance = rangeAudit.configuredSpacingPct * 0.1;
+    if (Math.abs(rangeAudit.centralGapPct - rangeAudit.configuredSpacingPct) > spacingTolerance) {
+      return {
+        ok: false,
+        reasonCode: "GRID_CENTRAL_GAP_EXCEEDS_LIMIT",
+        explanation: `centralGapPct=${rangeAudit.centralGapPct.toFixed(4)} no coincide con configuredSpacingPct=${rangeAudit.configuredSpacingPct.toFixed(4)} dentro de tolerancia ${spacingTolerance.toFixed(4)}`,
+      };
+    }
+
+    if (rangeAudit.centralGapPct > rangeAudit.maxSellDistanceFromNearestBuyPct) {
+      return {
+        ok: false,
+        reasonCode: "GRID_CENTRAL_GAP_EXCEEDS_LIMIT",
+        explanation: `centralGapPct=${rangeAudit.centralGapPct.toFixed(4)} supera maxSellDistanceFromNearestBuyPct=${rangeAudit.maxSellDistanceFromNearestBuyPct}`,
+      };
+    }
+
+    const tickSize = pairConstraints?.priceTickSize ?? null;
+    if (tickSize && tickSize > 0 && acceptedLevels.length >= 2) {
+      const buys = acceptedLevels.filter(l => l.side === "BUY").sort((a, b) => a.price - b.price);
+      const sells = acceptedLevels.filter(l => l.side === "SELL").sort((a, b) => a.price - b.price);
+      const configuredSpacingPct = rangeAudit.configuredSpacingPct;
+      const maxTickDeviationPct = (tickSize / rangeAudit.centerPrice) * 100;
+
+      const checkUniform = (levels: typeof buys, label: string) => {
+        for (let i = 1; i < levels.length; i++) {
+          const gapPct = ((levels[i].price - levels[i - 1].price) / levels[i - 1].price) * 100;
+          const deviation = Math.abs(gapPct - configuredSpacingPct);
+          if (deviation > Math.max(configuredSpacingPct * 0.1, maxTickDeviationPct)) {
+            return { ok: false, gapPct, deviation, label, index: i };
+          }
+        }
+        return { ok: true };
+      };
+
+      const buyCheck = checkUniform(buys, "BUY");
+      if (!buyCheck.ok) {
+        return {
+          ok: false,
+          reasonCode: "GRID_NON_UNIFORM_SPACING",
+          explanation: `Post-normalization ${buyCheck.label} gap at index ${buyCheck.index}: gapPct=${buyCheck.gapPct?.toFixed(6)}, configuredSpacingPct=${configuredSpacingPct.toFixed(6)}, maxTickDeviationPct=${maxTickDeviationPct.toFixed(6)}`,
+        };
+      }
+
+      const sellCheck = checkUniform(sells, "SELL");
+      if (!sellCheck.ok) {
+        return {
+          ok: false,
+          reasonCode: "GRID_NON_UNIFORM_SPACING",
+          explanation: `Post-normalization ${sellCheck.label} gap at index ${sellCheck.index}: gapPct=${sellCheck.gapPct?.toFixed(6)}, configuredSpacingPct=${configuredSpacingPct.toFixed(6)}, maxTickDeviationPct=${maxTickDeviationPct.toFixed(6)}`,
+        };
+      }
+
+      if (buys.length > 0 && sells.length > 0) {
+        const highestBuy = buys[buys.length - 1].price;
+        const lowestSell = sells[0].price;
+        const postCentralGapPct = ((lowestSell - highestBuy) / highestBuy) * 100;
+        const centralDeviation = Math.abs(postCentralGapPct - configuredSpacingPct);
+        if (centralDeviation > Math.max(configuredSpacingPct * 0.1, maxTickDeviationPct)) {
+          return {
+            ok: false,
+            reasonCode: "GRID_CENTRAL_GAP_EXCEEDS_LIMIT",
+            explanation: `Post-normalization central gap: ${postCentralGapPct.toFixed(6)}%, configuredSpacingPct=${configuredSpacingPct.toFixed(6)}, maxTickDeviationPct=${maxTickDeviationPct.toFixed(6)}`,
+          };
+        }
+      }
+    }
+
     return {
       ok: true,
       rangeVersionId,
