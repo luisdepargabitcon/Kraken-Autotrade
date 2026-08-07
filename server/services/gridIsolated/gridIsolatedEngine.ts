@@ -1644,6 +1644,8 @@ export class GridIsolatedEngine {
       minOrderUsd: pairConstraints?.minOrderUsd ?? null,
       maxOrderBase: pairConstraints?.maxOrderBase ?? null,
       quantityPrecision: pairConstraints?.quantityPrecision ?? null,
+      priceTickSize: pairConstraints?.priceTickSize ?? null,
+      pricePrecision: pairConstraints?.pricePrecision ?? null,
     });
 
     const acceptedLevels = normalization.acceptedLevels;
@@ -1702,7 +1704,9 @@ export class GridIsolatedEngine {
     }
 
     const { rangeVersionId, gridLevels, professionalGenerator, allocation, generatedLevels, viabilityStatus } = proposal;
-    const ratio = 1.0;
+    const ratio = professionalGenerator.spacingPct > 0
+      ? 1 + professionalGenerator.spacingPct / 100
+      : 1.0;
 
     // IDs of levels from the old range that are still planned/open and not tied to an open cycle.
     const openCycleLevelIds = new Set<string>();
@@ -2220,6 +2224,9 @@ export class GridIsolatedEngine {
     const { rangeVersionId, gridLevels, professionalGenerator, allocation, generatedLevels, viabilityStatus } = proposal;
     const versionNumber = await this.getNextVersionNumber();
     const activatedAt = new Date();
+    const shadowRatio = professionalGenerator.spacingPct > 0
+      ? 1 + professionalGenerator.spacingPct / 100
+      : 1.0;
 
     try {
       await db.transaction(async (tx) => {
@@ -2239,7 +2246,7 @@ export class GridIsolatedEngine {
           atrPct: bandSnapshot.atrPct.toFixed(4),
           regime: bandSnapshot.regime,
           levelsCount: gridLevels.length,
-          geometricRatio: "1.0000",
+          geometricRatio: shadowRatio.toFixed(4),
           capitalBudgetUsd: allocation.finalGridBudgetUsd.toFixed(2),
           capitalPerLevelUsd: allocation.capitalPerLevelUsd.toFixed(2),
           netProfitTargetPct: this.config!.netProfitTargetPct.toFixed(3),
@@ -2287,7 +2294,9 @@ export class GridIsolatedEngine {
       atrPct: bandSnapshot.atrPct,
       regime: bandSnapshot.regime,
       levelsCount: gridLevels.length,
-      geometricRatio: 1,
+      geometricRatio: professionalGenerator.spacingPct > 0
+        ? 1 + professionalGenerator.spacingPct / 100
+        : 1.0,
       capitalBudgetUsd: allocation.finalGridBudgetUsd,
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
       netProfitTargetPct: this.config.netProfitTargetPct,
@@ -2306,7 +2315,7 @@ export class GridIsolatedEngine {
       upperPrice: professionalGenerator.operationalUpper,
       centerPrice: professionalGenerator.centerPrice,
       widthPct: professionalGenerator.operationalBandWidthPct,
-      method: "professional_accumulated_spacing",
+      method: "professional_uniform_geometric_spacing",
       reasonCode: "PROFESSIONAL_GENERATOR",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,
@@ -2318,7 +2327,7 @@ export class GridIsolatedEngine {
       upperPrice: professionalGenerator.operationalUpper,
       centerPrice: professionalGenerator.centerPrice,
       widthPct: professionalGenerator.operationalBandWidthPct,
-      method: "professional_accumulated_spacing",
+      method: "professional_uniform_geometric_spacing",
       reasonCode: "BAND_VALID",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,
@@ -2336,7 +2345,7 @@ export class GridIsolatedEngine {
       upperPrice: professionalGenerator.operationalUpper,
       centerPrice: professionalGenerator.centerPrice,
       widthPct: professionalGenerator.operationalBandWidthPct,
-      method: "professional_accumulated_spacing",
+      method: "professional_uniform_geometric_spacing",
       reasonCode: "SHADOW_ACTIVATION",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,

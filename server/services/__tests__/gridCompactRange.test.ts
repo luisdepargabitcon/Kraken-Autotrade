@@ -21,6 +21,8 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
     // Use fixed_compact mode to test 3C.3-A compact range path
     gridRangeControlMode: 'fixed_compact' as const,
     adaptiveRangeEnabled: false,
+    spreadPct: 0.02,
+    priceTickPct: 0.01,
   };
 
   // Viable compact input: small spacing fits levels within 2.5%
@@ -79,7 +81,7 @@ describe("GridSpacingCalculator — Compact Range Control (3C.3-A)", () => {
 
     const audit = result.professionalGenerator.rangeAudit!;
     const hasTargetWarning = audit.warnings.some((w: string) =>
-      w.includes("Target neto") && w.includes("excede gridRangeMaxPct")
+      w.includes("separación de entradas") && w.includes("excede gridRangeMaxPct")
     );
     expect(hasTargetWarning).toBe(true);
     // Must not produce misleading levels: either compactRangeOk=false, or no levels, or not viable

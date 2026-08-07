@@ -437,7 +437,7 @@ describe("REV-C11 FASE 2 — D6: parseJsonSafe en audit VM", () => {
       const vm = await makeAuditVm([{ eventType: "GRID_PROFESSIONAL_GENERATOR_USED", metadataJson: JSON.stringify({
         professionalGenerator: {
           mode: "shadow_generation",
-          formula: "accumulated_spacing",
+          formula: "uniform_geometric_spacing",
           generatedBuyLevels: 3,
           generatedSellLevels: 3,
         },

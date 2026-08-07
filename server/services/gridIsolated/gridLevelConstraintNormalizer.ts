@@ -7,6 +7,8 @@ export interface GridPairConstraintsForNormalization {
   minOrderUsd: number | null;
   maxOrderBase: number | null;
   quantityPrecision: number | null;
+  priceTickSize: number | null;
+  pricePrecision: number | null;
 }
 
 export interface RejectedGridLevel {
@@ -41,6 +43,17 @@ function alignQuantityDown(qty: number, step: number, precision: number | null):
   const stepScaled = Math.round(step * factor);
   if (stepScaled <= 0) return NaN;
   const alignedScaled = Math.floor(qtyScaled / stepScaled) * stepScaled;
+  return alignedScaled / factor;
+}
+
+function alignPriceToTick(price: number, tickSize: number | null, precision: number | null): number {
+  if (tickSize === null || !Number.isFinite(tickSize) || tickSize <= 0) return price;
+  const dp = precision ?? decimalPlacesFromStep(tickSize);
+  const factor = Math.pow(10, dp);
+  const priceScaled = Math.round(price * factor);
+  const tickScaled = Math.round(tickSize * factor);
+  if (tickScaled <= 0) return price;
+  const alignedScaled = Math.round(priceScaled / tickScaled) * tickScaled;
   return alignedScaled / factor;
 }
 
@@ -109,7 +122,9 @@ export function normalizeGridLevelsForExecutionConstraints(
       continue;
     }
 
-    acceptedLevels.push({ ...level, quantity: alignedQuantity, notionalUsd });
+    const alignedPrice = alignPriceToTick(price, constraints.priceTickSize, constraints.pricePrecision);
+    const finalNotionalUsd = alignedQuantity * alignedPrice;
+    acceptedLevels.push({ ...level, price: alignedPrice, quantity: alignedQuantity, notionalUsd: finalNotionalUsd });
   }
 
   return { acceptedLevels, rejectedLevels };

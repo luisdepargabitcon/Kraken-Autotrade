@@ -276,7 +276,7 @@ function buildRangeLifecycle(
   const pgAny = professionalGenerator as any;
   const operationalRangeWidthPct = pgAny?.available && pgAny.operationalBandWidthPct != null ? pgAny.operationalBandWidthPct : null;
   const rGenMethod = r.method ?? null;
-  const rGenSource = rGenMethod === "professional_accumulated_spacing" ? "pre_adaptive"
+  const rGenSource = rGenMethod === "professional_uniform_geometric_spacing" ? "pre_adaptive"
     : rGenMethod === "adaptive_smart" ? "adaptive_smart"
     : rGenMethod ?? "unknown";
 
@@ -470,7 +470,7 @@ function buildActiveRangeView(
   const method = r.method ?? null;
   const source: GridActiveRangeView["source"] =
     method === "adaptive_smart" ? "adaptive"
-    : method === "professional_accumulated_spacing" ? "pre_adaptive"
+    : method === "professional_uniform_geometric_spacing" ? "pre_adaptive"
     : "unknown";
 
   return {

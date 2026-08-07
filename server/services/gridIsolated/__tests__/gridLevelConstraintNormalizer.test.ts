@@ -20,6 +20,8 @@ const BASE_CONSTRAINTS = {
   minOrderUsd: 1,
   maxOrderBase: 100,
   quantityPrecision: 8,
+  priceTickSize: 0.001,
+  pricePrecision: 3,
 };
 
 describe("normalizeGridLevelsForExecutionConstraints", () => {

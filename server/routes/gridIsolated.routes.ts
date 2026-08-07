@@ -1403,7 +1403,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
             available: true,
             source: "event",
             mode: pg.mode || "shadow_generation",
-            formula: pg.formula || "accumulated_spacing",
+            formula: pg.formula || "uniform_geometric_spacing",
             legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
             viabilityStatus: pg.viabilityStatus,
             minSpacingPctReal: pg.minSpacingPctReal,
@@ -1448,7 +1448,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
             available: true,
             source: "event",
             mode: pg.mode || "shadow_generation",
-            formula: pg.formula || "accumulated_spacing",
+            formula: pg.formula || "uniform_geometric_spacing",
             legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
             viabilityStatus: pg.viabilityStatus,
             minSpacingPctReal: pg.minSpacingPctReal,
@@ -1722,7 +1722,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const pgAny = professionalGenerator as any;
       const opRangeWidthPct = pgAny?.available && pgAny.operationalBandWidthPct != null ? pgAny.operationalBandWidthPct : null;
       const rGenMethod = r?.method ?? null;
-      const rGenSource = rGenMethod === "professional_accumulated_spacing" ? "pre_adaptive"
+      const rGenSource = rGenMethod === "professional_uniform_geometric_spacing" ? "pre_adaptive"
         : rGenMethod === "adaptive_smart" ? "adaptive_smart"
         : rGenMethod ?? "unknown";
 
@@ -1913,7 +1913,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
           const rangeGenerationMethod = r.method ?? null;
           const rangeGenerationSource =
-            rangeGenerationMethod === "professional_accumulated_spacing"
+            rangeGenerationMethod === "professional_uniform_geometric_spacing"
               ? "pre_adaptive"
               : rangeGenerationMethod === "adaptive_smart"
                 ? "adaptive_smart"

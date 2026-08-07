@@ -23,6 +23,11 @@
 
 import { computeGrossTargetFromNet } from "./gridNetCalculator";
 import { randomUUID } from "crypto";
+import {
+  calculateUniformGeometricRatio,
+  calculateUniformGeometricLevelPrice,
+  calculateUniformGeometricRangeRequirement,
+} from "./gridUniformGeometric";
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -345,7 +350,7 @@ export interface ProfessionalLevelGenerationResult {
   professionalGenerator: {
     enabled: true;
     mode: "shadow_generation";
-    formula: "accumulated_spacing";
+    formula: "uniform_geometric_spacing";
     legacyGeneratorUsed: false;
     viabilityStatus: GridViabilityStatus;
     minSpacingPctReal: number;
@@ -397,6 +402,12 @@ export interface ProfessionalLevelGenerationResult {
       warnings: string[];
       sellToBuyGapPct: number;
       avgSpacingPct: number;
+      adjacentGapMinPct: number;
+      adjacentGapMaxPct: number;
+      adjacentGapAvgPct: number;
+      centralGapPct: number;
+      configuredSpacingPct: number;
+      uniformSpacingOk: boolean;
       reason: string;
     };
     // ─── Adaptive Smart Range Decision (3C.3-C) ───
@@ -514,7 +525,7 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
       professionalGenerator: {
         enabled: true,
         mode: "shadow_generation",
-        formula: "accumulated_spacing",
+        formula: "uniform_geometric_spacing",
         legacyGeneratorUsed: false,
         viabilityStatus: "not_viable",
         minSpacingPctReal: minSpacingResult.minSpacingPctReal,
@@ -663,7 +674,7 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
         notionalUsd: capitalPerLevelUsd,
         quantity,
         distanceFromMidPct,
-        geometricRatio: 1.0, // Placeholder for compatibility (linear spacing)
+        geometricRatio: calculateUniformGeometricRatio(entrySpacingResult.entrySpacingPct ?? 0.15),
         netProfitTargetUsd: capitalPerLevelUsd * (netProfitTargetPct / 100),
         feeEstimateUsd: capitalPerLevelUsd * 0.0009, // 0.09% taker fee
         taxReserveUsd: capitalPerLevelUsd * (netProfitTargetPct / 100) * 0.20,
@@ -691,9 +702,23 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
   const lowestSellPrice = sellLevels.length > 0 ? Math.min(...sellLevels.map(l => l.price)) : centerPriceResult.centerPrice;
   const sellToBuyGapPct = highestBuyPrice > 0 ? ((lowestSellPrice - highestBuyPrice) / highestBuyPrice) * 100 : 0;
 
-  const avgSpacingPct = levels.length > 1 ? totalRangePct / (levels.length - 1) : 0;
-  const minSpacingPct = entrySpacingResult.entrySpacingPct;
-  const maxSpacingPct = entrySpacingResult.entrySpacingPct;
+  // Adjacent gap measurement: sort all levels by price ascending, measure each adjacent pair
+  const sortedByPrice = [...levels].sort((a, b) => a.price - b.price);
+  const adjacentGapsPct: number[] = [];
+  for (let i = 1; i < sortedByPrice.length; i++) {
+    const lower = sortedByPrice[i - 1].price;
+    const higher = sortedByPrice[i].price;
+    if (lower > 0) {
+      adjacentGapsPct.push((higher / lower - 1) * 100);
+    }
+  }
+  const adjacentGapMinPct = adjacentGapsPct.length > 0 ? Math.min(...adjacentGapsPct) : 0;
+  const adjacentGapMaxPct = adjacentGapsPct.length > 0 ? Math.max(...adjacentGapsPct) : 0;
+  const adjacentGapAvgPct = adjacentGapsPct.length > 0 ? adjacentGapsPct.reduce((s, v) => s + v, 0) / adjacentGapsPct.length : 0;
+
+  const avgSpacingPct = adjacentGapAvgPct;
+  const minSpacingPct = adjacentGapMinPct;
+  const maxSpacingPct = adjacentGapMaxPct;
 
   // Compact range validation
   let compactRangeOk = true;
@@ -734,7 +759,7 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
     professionalGenerator: {
       enabled: true,
       mode: "shadow_generation",
-      formula: "accumulated_spacing",
+      formula: "uniform_geometric_spacing",
       legacyGeneratorUsed: false,
       viabilityStatus: viabilityResult.status,
       minSpacingPctReal: minSpacingResult.minSpacingPctReal,
@@ -785,6 +810,15 @@ export function generateProfessionalGridLevels(input: ProfessionalLevelGeneratio
         warnings: rangeAuditWarnings,
         sellToBuyGapPct,
         avgSpacingPct,
+        adjacentGapMinPct,
+        adjacentGapMaxPct,
+        adjacentGapAvgPct,
+        centralGapPct: sellToBuyGapPct,
+        configuredSpacingPct: entrySpacingResult.entrySpacingPct,
+        uniformSpacingOk: adjacentGapsPct.length > 0
+          ? adjacentGapMinPct > 0 && Math.abs(adjacentGapMinPct - entrySpacingResult.entrySpacingPct) < entrySpacingResult.entrySpacingPct * 0.1
+            && Math.abs(adjacentGapMaxPct - entrySpacingResult.entrySpacingPct) < entrySpacingResult.entrySpacingPct * 0.1
+          : true,
         reason: rangeAuditReason,
       },
       adaptiveRangeDecision,
@@ -995,10 +1029,10 @@ export function calculateOperationalRange(input: OperationalRangeInput): Operati
 }
 
 /**
- * Count viable levels iteratively (not linear approximation).
+ * Count viable levels iteratively using uniform geometric formula.
  *
- * BUY: price = centerPrice * (1 - spacingPct/100), then multiply by (1 - spacingPct/100) repeatedly
- * SELL: price = centerPrice * (1 + spacingPct/100), then multiply by (1 + spacingPct/100) repeatedly
+ * BUY[i]  = centerPrice / ratio^(i + 0.5)
+ * SELL[i] = centerPrice * ratio^(i + 0.5)
  *
  * Stops when price goes outside operational range or configured limit is reached.
  */
@@ -1012,20 +1046,36 @@ export function countViableLevelsIterative(input: ViableLevelsInput): ViableLeve
     configuredSellLevels,
   } = input;
 
-  // Count BUY levels
-  let buyPrice = centerPrice * (1 - spacingPct / 100);
+  // Count BUY levels using uniform geometric formula
   let buyCount = 0;
-  while (buyPrice >= operationalLower && buyCount < configuredBuyLevels) {
-    buyCount++;
-    buyPrice = buyPrice * (1 - spacingPct / 100);
+  for (let i = 0; i < configuredBuyLevels; i++) {
+    const buyPrice = calculateUniformGeometricLevelPrice({
+      centerPrice,
+      spacingPct,
+      side: "BUY",
+      index: i,
+    });
+    if (buyPrice >= operationalLower) {
+      buyCount++;
+    } else {
+      break;
+    }
   }
 
-  // Count SELL levels
-  let sellPrice = centerPrice * (1 + spacingPct / 100);
+  // Count SELL levels using uniform geometric formula
   let sellCount = 0;
-  while (sellPrice <= operationalUpper && sellCount < configuredSellLevels) {
-    sellCount++;
-    sellPrice = sellPrice * (1 + spacingPct / 100);
+  for (let i = 0; i < configuredSellLevels; i++) {
+    const sellPrice = calculateUniformGeometricLevelPrice({
+      centerPrice,
+      spacingPct,
+      side: "SELL",
+      index: i,
+    });
+    if (sellPrice <= operationalUpper) {
+      sellCount++;
+    } else {
+      break;
+    }
   }
 
   const totalViableLevels = buyCount + sellCount;
@@ -1088,17 +1138,16 @@ export function classifyGridViability(input: ViabilityInput): ViabilityResult {
 }
 
 /**
- * Generate accumulated grid level preview (theoretical, no DB, no orders).
+ * Generate uniform geometric grid level preview (theoretical, no DB, no orders).
  *
- * BUY[0] = centerPrice * (1 - spacingPct/100)
- * BUY[i] = BUY[i-1] * (1 - spacingPct/100)
- *
- * SELL[0] = centerPrice * (1 + spacingPct/100)
- * SELL[i] = SELL[i-1] * (1 + spacingPct/100)
+ * BUY[i]  = centerPrice / ratio^(i + 0.5)
+ * SELL[i] = centerPrice * ratio^(i + 0.5)
  *
  * Respects operational range limits and dynamic level reduction.
+ *
+ * Also exported as generateUniformGeometricGridLevelsPreview for clarity.
  */
-export function generateAccumulatedGridLevelsPreview(input: AccumulatedLevelsInput): AccumulatedLevelsResult {
+export function generateUniformGeometricGridLevelsPreview(input: AccumulatedLevelsInput): AccumulatedLevelsResult {
   const {
     centerPrice,
     operationalLower,
@@ -1110,18 +1159,24 @@ export function generateAccumulatedGridLevelsPreview(input: AccumulatedLevelsInp
   } = input;
 
   const levels: GridLevelPreview[] = [];
+  const ratio = calculateUniformGeometricRatio(spacingPct);
 
-  // Generate BUY levels
-  let buyPrice = centerPrice * (1 - spacingPct / 100);
+  // Generate BUY levels using uniform geometric formula
   let buyCount = 0;
   for (let i = 0; i < configuredBuyLevels; i++) {
+    const buyPrice = calculateUniformGeometricLevelPrice({
+      centerPrice,
+      spacingPct,
+      side: "BUY",
+      index: i,
+    });
     const withinRange = buyPrice >= operationalLower;
     if (!withinRange && dynamicLevelReduction) {
       break;
     }
 
     const distancePctFromCenter = ((centerPrice - buyPrice) / centerPrice) * 100;
-    const gapPctFromPrevious = i === 0 ? spacingPct : spacingPct; // Linear spacing
+    const gapPctFromPrevious = spacingPct;
 
     levels.push({
       side: "BUY",
@@ -1133,20 +1188,24 @@ export function generateAccumulatedGridLevelsPreview(input: AccumulatedLevelsInp
     });
 
     buyCount++;
-    buyPrice = buyPrice * (1 - spacingPct / 100);
   }
 
-  // Generate SELL levels
-  let sellPrice = centerPrice * (1 + spacingPct / 100);
+  // Generate SELL levels using uniform geometric formula
   let sellCount = 0;
   for (let i = 0; i < configuredSellLevels; i++) {
+    const sellPrice = calculateUniformGeometricLevelPrice({
+      centerPrice,
+      spacingPct,
+      side: "SELL",
+      index: i,
+    });
     const withinRange = sellPrice <= operationalUpper;
     if (!withinRange && dynamicLevelReduction) {
       break;
     }
 
     const distancePctFromCenter = ((sellPrice - centerPrice) / centerPrice) * 100;
-    const gapPctFromPrevious = i === 0 ? spacingPct : spacingPct; // Linear spacing
+    const gapPctFromPrevious = spacingPct;
 
     levels.push({
       side: "SELL",
@@ -1158,7 +1217,6 @@ export function generateAccumulatedGridLevelsPreview(input: AccumulatedLevelsInp
     });
 
     sellCount++;
-    sellPrice = sellPrice * (1 + spacingPct / 100);
   }
 
   const totalLevelsCount = buyCount + sellCount;
@@ -1171,6 +1229,12 @@ export function generateAccumulatedGridLevelsPreview(input: AccumulatedLevelsInp
     explanation: `Generated ${buyCount} BUY + ${sellCount} SELL levels (total: ${totalLevelsCount}) with spacing ${spacingPct.toFixed(2)}%`,
   };
 }
+
+/**
+ * Backward-compatible alias for generateUniformGeometricGridLevelsPreview.
+ * Kept for consumers that import the old name.
+ */
+export const generateAccumulatedGridLevelsPreview = generateUniformGeometricGridLevelsPreview;
 
 // ─── Adaptive Smart Range (3C.3-C) ──────────────────────────────────────
 
@@ -1232,17 +1296,14 @@ export function calculateAdaptiveSmartRange(input: AdaptiveSmartRangeInput): Ada
   // 3. Range by volatility: max(bollingerBandWidth, atrPct * multiplier)
   const rangeByVolatilityPct = Math.max(bollingerBandWidthPct, atrPct * profileMultiplier);
 
-  // 4. Calculate range needed for min viable levels (iterative, not approximation)
-  // Each level is spaced by spacingPct compounding: level[i] = center * (1 - spacing/100)^i
-  // Total range for N levels on one side = (1 - (1-spacing/100)^N) * 100 (approx)
-  // But more precisely: the distance from center to the Nth level is:
-  //   center - center*(1-spacing/100)^N = center * (1 - (1-spacing/100)^N)
-  //   As percentage: (1 - (1-spacing/100)^N) * 100
-  // Total range (both sides) = 2 * (1 - (1-spacing/100)^N) * 100
+  // 4. Calculate range needed for levels using uniform geometric formula
+  // Uses exponent n - 0.5 for the farthest level, per uniform geometric grid.
   const calcRangeForLevels = (n: number): number => {
     if (n <= 0) return 0;
-    const factor = Math.pow(1 - spacingPct / 100, n);
-    return 2 * (1 - factor) * 100;
+    return calculateUniformGeometricRangeRequirement({
+      spacingPct,
+      levelsPerSide: n,
+    }).requiredTotalRangePct;
   };
 
   const minLevelsOneSide = Math.ceil(adaptiveRangeMinViableLevels / 2);
@@ -1322,24 +1383,30 @@ export function calculateAdaptiveSmartRange(input: AdaptiveSmartRangeInput): Ada
   const operationalLower = 0;
   const operationalUpper = 0;
 
-  // 10. Count how many levels would fit at finalRangePct
+  // 10. Count how many levels would fit at finalRangePct using uniform geometric formula
   const semiRangePct = operationalSemiRangePct;
+  const ratio = calculateUniformGeometricRatio(spacingPct);
+
   let buyLevelsWouldFit = 0;
-  let buyFactor = 1 - spacingPct / 100;
-  let buyDistancePct = (1 - buyFactor) * 100;
-  while (buyDistancePct <= semiRangePct && buyLevelsWouldFit < requestedBuyLevels) {
-    buyLevelsWouldFit++;
-    buyFactor = buyFactor * (1 - spacingPct / 100);
-    buyDistancePct = (1 - buyFactor) * 100;
+  for (let i = 0; i < requestedBuyLevels; i++) {
+    const buyFactor = Math.pow(ratio, -(i + 0.5));
+    const buyDistancePct = (1 - buyFactor) * 100;
+    if (buyDistancePct <= semiRangePct) {
+      buyLevelsWouldFit++;
+    } else {
+      break;
+    }
   }
 
   let sellLevelsWouldFit = 0;
-  let sellFactor = 1 + spacingPct / 100;
-  let sellDistancePct = (sellFactor - 1) * 100;
-  while (sellDistancePct <= semiRangePct && sellLevelsWouldFit < requestedSellLevels) {
-    sellLevelsWouldFit++;
-    sellFactor = sellFactor * (1 + spacingPct / 100);
-    sellDistancePct = (sellFactor - 1) * 100;
+  for (let i = 0; i < requestedSellLevels; i++) {
+    const sellFactor = Math.pow(ratio, i + 0.5);
+    const sellDistancePct = (sellFactor - 1) * 100;
+    if (sellDistancePct <= semiRangePct) {
+      sellLevelsWouldFit++;
+    } else {
+      break;
+    }
   }
 
   const levelsWouldFitAtFinalRange = buyLevelsWouldFit + sellLevelsWouldFit;
