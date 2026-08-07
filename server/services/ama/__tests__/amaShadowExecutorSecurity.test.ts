@@ -53,31 +53,31 @@ describe("Fase 23 — SHADOW Mode (readiness + deterministic IDs)", () => {
   });
 
   it("checkShadowReadiness blocks when no HWM", () => {
-    const result = checkShadowReadiness("SHADOW", false, true, true, 95, 90);
+    const result = checkShadowReadiness("SHADOW_SCENARIO", false, true, true, 95, 90);
     expect(result.ready).toBe(false);
     expect(result.blockers).toContain("NO_HIGH_WATER_MARK");
   });
 
   it("checkShadowReadiness blocks when no budget", () => {
-    const result = checkShadowReadiness("SHADOW", true, false, true, 95, 90);
+    const result = checkShadowReadiness("SHADOW_SCENARIO", true, false, true, 95, 90);
     expect(result.ready).toBe(false);
     expect(result.blockers).toContain("NO_BUDGET_ALLOCATED");
   });
 
   it("checkShadowReadiness blocks when no price", () => {
-    const result = checkShadowReadiness("SHADOW", true, true, false, 95, 90);
+    const result = checkShadowReadiness("SHADOW_SCENARIO", true, true, false, 95, 90);
     expect(result.ready).toBe(false);
     expect(result.blockers).toContain("NO_CURRENT_PRICE");
   });
 
   it("checkShadowReadiness blocks when data coverage below minimum", () => {
-    const result = checkShadowReadiness("SHADOW", true, true, true, 80, 90);
+    const result = checkShadowReadiness("SHADOW_SCENARIO", true, true, true, 80, 90);
     expect(result.ready).toBe(false);
     expect(result.blockers.some((b) => b.startsWith("DATA_COVERAGE_BELOW_MINIMUM"))).toBe(true);
   });
 
   it("checkShadowReadiness passes when all conditions met", () => {
-    const result = checkShadowReadiness("SHADOW", true, true, true, 95, 90);
+    const result = checkShadowReadiness("SHADOW_SCENARIO", true, true, true, 95, 90);
     expect(result.ready).toBe(true);
     expect(result.blockers).toHaveLength(0);
   });

@@ -282,7 +282,7 @@ describe("Fase 11 — Adaptive Decision", () => {
     const plan = buildCanonicalSeedPlan(seedInput, { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const input = makeInput();
     const cooldown = createCooldownState("1_daily");
-    const period = createPeriodLimitState();
+    const period = createPeriodLimitState("2026-07-29T10:00:00Z");
     period.weeklyDeployedUsd = 2900; // Near 30% limit
     const firstEligible = filterEligibleCandidates(plan)[0];
     expect(firstEligible).toBeDefined();

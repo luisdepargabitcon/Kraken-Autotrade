@@ -271,7 +271,7 @@ describe("R4 — Period Limits on Selected Tranche", () => {
     const input = makePlanInput({ currentPrice: 40000 });
     const plan = buildCanonicalSeedPlan(makeSeedInput(), { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const cooldown = createCooldownState("1_daily");
-    const period = createPeriodLimitState();
+    const period = createPeriodLimitState("2026-07-29T10:00:00Z");
     period.weeklyDeployedUsd = 28000; // 28% of 100k, limit 30%
     const eligible = filterEligibleCandidates(plan);
     expect(eligible.length).toBeGreaterThan(0);
@@ -286,7 +286,7 @@ describe("R4 — Period Limits on Selected Tranche", () => {
     const input = makePlanInput({ currentPrice: 40000 });
     const plan = buildCanonicalSeedPlan(makeSeedInput(), { timestamp: "2026-07-29T00:00:00Z", close: 40000, isClosed: true })!;
     const cooldown = createCooldownState("1_daily");
-    const period = createPeriodLimitState();
+    const period = createPeriodLimitState("2026-07-29T10:00:00Z");
     period.monthlyDeployedUsd = 58000; // 58% of 100k, limit 60%
     const eligible = filterEligibleCandidates(plan);
     expect(eligible.length).toBeGreaterThan(0);

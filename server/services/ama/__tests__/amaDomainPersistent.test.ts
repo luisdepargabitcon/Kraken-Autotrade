@@ -242,8 +242,9 @@ describe("Fase 7 — Mode Validation", () => {
 
   it("allows safe transitions", () => {
     expect(validateModeTransition("OFF", "REPLAY").valid).toBe(true);
-    expect(validateModeTransition("REPLAY", "SHADOW").valid).toBe(true);
-    expect(validateModeTransition("SHADOW", "OFF").valid).toBe(true);
+    expect(validateModeTransition("OFF", "LAB").valid).toBe(true);
+    expect(validateModeTransition("REPLAY", "SHADOW_SCENARIO").valid).toBe(true);
+    expect(validateModeTransition("SHADOW_SCENARIO", "OFF").valid).toBe(true);
   });
 
   it("rejects REAL to non-REAL without kill switch", () => {

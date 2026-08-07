@@ -12,11 +12,117 @@
  * Uses Node http + express (no supertest dependency).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import http from "http";
+
+// Mock the runtime service to avoid DB calls in tests
+const { mockRuntime } = vi.hoisted(() => ({
+  mockRuntime: {
+    getMode: vi.fn().mockReturnValue("OFF"),
+    setMode: vi.fn(),
+    canSetMode: vi.fn().mockReturnValue(true),
+    isKillSwitchActive: vi.fn().mockReturnValue(false),
+    setKillSwitch: vi.fn(),
+    getStatus: vi.fn().mockResolvedValue({
+      mode: "OFF",
+      state: "OBSERVING",
+      protectionState: null,
+      pair: "BTC/USD",
+      strategyVersion: "1.0.0",
+      cycleId: null,
+      activePolicyId: null,
+      mandateId: null,
+      killSwitchActive: false,
+      lastUpdated: new Date().toISOString(),
+    }),
+    getMarketView: vi.fn().mockReturnValue({
+      pair: "BTC/USD",
+      analysisPrice: null,
+      analysisTimestamp: null,
+      executionBid: null,
+      executionAsk: null,
+      executionMid: null,
+      spreadPct: null,
+      crossVenueBasisPct: null,
+      executionTimestamp: null,
+      highWaterMark: null,
+      cycleLow: null,
+      currentDropPct: null,
+      maxDropPct: null,
+      reboundFromLowPct: null,
+      macroZone: null,
+      daysSinceCeiling: null,
+      daysSinceLow: null,
+      dataQuality: "UNAVAILABLE",
+    }),
+    getMandate: vi.fn().mockReturnValue(null),
+    saveMandateDraft: vi.fn().mockResolvedValue({ mandateId: `mandate-test` }),
+    getActivePolicyRuntime: vi.fn().mockResolvedValue(null),
+    getTranchePlan: vi.fn().mockResolvedValue(null),
+    getCycles: vi.fn().mockResolvedValue([]),
+    getTranches: vi.fn().mockResolvedValue([]),
+    getPortfolioSummary: vi.fn().mockResolvedValue({
+      mode: "OFF",
+      budgetUsd: 0,
+      deployedUsd: 0,
+      reservedUsd: 0,
+      freeUsd: 0,
+      accumulatedQuantity: 0,
+      averageCostBasis: null,
+      currentValueUsd: null,
+      unrealizedPnlUsd: null,
+      realizedPnlUsd: null,
+      sleeves: [],
+    }),
+    getDisplayName: vi.fn().mockReturnValue("AMA — Acumulación Macro Adaptativa"),
+    getShortName: vi.fn().mockReturnValue("AMA"),
+    getStrategyCode: vi.fn().mockReturnValue("ADAPTIVE_MACRO_ACCUMULATION"),
+    getStrategyVersion: vi.fn().mockReturnValue("1.0.0"),
+  },
+}));
+
+vi.mock("../amaRuntimeService", () => mockRuntime);
+vi.mock("../amaRepository", () => ({
+  checkAmaSchemaAvailable: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("../amaLabService", () => ({
+  startLabSession: vi.fn().mockResolvedValue("lab-test"),
+  listLabSessions: vi.fn().mockResolvedValue([]),
+  getLabSession: vi.fn().mockResolvedValue(null),
+  completeLabSession: vi.fn().mockResolvedValue(undefined),
+  failLabSession: vi.fn().mockResolvedValue(undefined),
+  simulateLabScenario: vi.fn().mockReturnValue({}),
+}));
+vi.mock("../amaReplayService", () => ({
+  startReplayRun: vi.fn().mockResolvedValue("replay-test"),
+  listReplayRuns: vi.fn().mockResolvedValue([]),
+  getReplayRun: vi.fn().mockResolvedValue(null),
+  executeReplayRun: vi.fn().mockResolvedValue({}),
+}));
+vi.mock("../amaShadowExecutor", () => ({
+  getShadowOrders: vi.fn().mockResolvedValue([]),
+  generateShadowReport: vi.fn().mockResolvedValue({}),
+  createShadowScenario: vi.fn().mockResolvedValue(undefined),
+  listShadowScenarios: vi.fn().mockResolvedValue([]),
+  closeShadowScenario: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../amaRealLimitedService", () => ({
+  getAuthorizationStatus: vi.fn().mockResolvedValue({ isActive: false, operationalState: "NOT_READY" }),
+  grantAuthorization: vi.fn().mockResolvedValue(undefined),
+  revokeAuthorization: vi.fn().mockResolvedValue(undefined),
+  getGateHistory: vi.fn().mockResolvedValue([]),
+  getPendingReconciliations: vi.fn().mockResolvedValue([]),
+  pauseOperations: vi.fn().mockResolvedValue(undefined),
+  resumeOperations: vi.fn().mockResolvedValue(undefined),
+  deactivate: vi.fn().mockResolvedValue(undefined),
+  emergencyStop: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../amaPortfolioLedger", () => ({
+  getLedgerEntries: vi.fn().mockResolvedValue([]),
+}));
+
 import { registerAmaRoutes } from "../../../routes/ama.routes";
-import { amaService } from "../amaService";
 
 function createServer() {
   const app = express();
@@ -65,8 +171,37 @@ describe("AMA Routes — API", () => {
   beforeEach(async () => {
     server = createServer();
     await listen(server);
-    amaService.setMode("OFF");
-    amaService.setKillSwitch(false);
+    mockRuntime.getMode.mockReturnValue("OFF");
+    mockRuntime.isKillSwitchActive.mockReturnValue(false);
+    mockRuntime.setMode.mockReset();
+    mockRuntime.setKillSwitch.mockReset();
+    mockRuntime.getStatus.mockResolvedValue({
+      mode: "OFF",
+      state: "OBSERVING",
+      protectionState: null,
+      pair: "BTC/USD",
+      strategyVersion: "1.0.0",
+      cycleId: null,
+      activePolicyId: null,
+      mandateId: null,
+      killSwitchActive: false,
+      lastUpdated: new Date().toISOString(),
+    });
+    // Make setMode update getStatus to reflect the new mode
+    mockRuntime.setMode.mockImplementation((mode: string) => {
+      mockRuntime.getStatus.mockResolvedValue({
+        mode,
+        state: "OBSERVING",
+        protectionState: null,
+        pair: "BTC/USD",
+        strategyVersion: "1.0.0",
+        cycleId: null,
+        activePolicyId: null,
+        mandateId: null,
+        killSwitchActive: false,
+        lastUpdated: new Date().toISOString(),
+      });
+    });
   });
 
   afterEach(() => {
@@ -90,7 +225,7 @@ describe("AMA Routes — API", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.displayName).toContain("AMA");
-      expect(res.body.data.modes).toHaveLength(5);
+      expect(res.body.data.modes).toHaveLength(7);
     });
   });
 
@@ -141,11 +276,11 @@ describe("AMA Routes — API", () => {
       expect(res.body.data.mode).toBe("REPLAY");
     });
 
-    it("BLOCKS SHADOW with 403 (readiness not met in stub)", async () => {
-      const res = await req(server, "POST", "/api/ama/mode", { mode: "SHADOW" });
+    it("BLOCKS SHADOW_SCENARIO with 403 (readiness not met in stub)", async () => {
+      const res = await req(server, "POST", "/api/ama/mode", { mode: "SHADOW_SCENARIO" });
       expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
-      expect(res.body.error).toContain("SHADOW mode blocked");
+      expect(res.body.error).toContain("SHADOW_SCENARIO blocked");
     });
 
     it("BLOCKS REAL_LIMITED with 403", async () => {
@@ -176,7 +311,7 @@ describe("AMA Routes — API", () => {
 
     it("does not change mode when REAL blocked", async () => {
       await req(server, "POST", "/api/ama/mode", { mode: "REAL_LIMITED" });
-      expect(amaService.getMode()).toBe("OFF");
+      expect(mockRuntime.setMode).not.toHaveBeenCalled();
     });
   });
 
@@ -189,28 +324,41 @@ describe("AMA Routes — API", () => {
     });
 
     it("does not change mode", async () => {
+      mockRuntime.getStatus.mockResolvedValue({
+        mode: "REPLAY",
+        state: "OBSERVING",
+        protectionState: null,
+        pair: "BTC/USD",
+        strategyVersion: "1.0.0",
+        cycleId: null,
+        activePolicyId: null,
+        mandateId: null,
+        killSwitchActive: false,
+        lastUpdated: new Date().toISOString(),
+      });
       await req(server, "POST", "/api/ama/mode", { mode: "REPLAY" });
       await req(server, "POST", "/api/ama/analyze-now");
-      expect(amaService.getMode()).toBe("REPLAY");
+      expect(mockRuntime.setMode).toHaveBeenCalledWith("REPLAY", "API");
     });
 
     it("does not change kill switch", async () => {
-      amaService.setKillSwitch(false);
+      mockRuntime.isKillSwitchActive.mockReturnValue(false);
       await req(server, "POST", "/api/ama/analyze-now");
-      expect(amaService.isKillSwitchActive()).toBe(false);
+      expect(mockRuntime.isKillSwitchActive()).toBe(false);
     });
   });
 
   describe("POST /api/ama/kill-switch", () => {
     it("activates kill switch", async () => {
+      mockRuntime.isKillSwitchActive.mockReturnValue(true);
       const res = await req(server, "POST", "/api/ama/kill-switch", { active: true });
       expect(res.status).toBe(200);
       expect(res.body.data.killSwitchActive).toBe(true);
-      expect(amaService.isKillSwitchActive()).toBe(true);
+      expect(mockRuntime.setKillSwitch).toHaveBeenCalledWith(true);
     });
 
     it("deactivates kill switch", async () => {
-      amaService.setKillSwitch(true);
+      mockRuntime.isKillSwitchActive.mockReturnValue(false);
       const res = await req(server, "POST", "/api/ama/kill-switch", { active: false });
       expect(res.status).toBe(200);
       expect(res.body.data.killSwitchActive).toBe(false);
@@ -222,9 +370,10 @@ describe("AMA Routes — API", () => {
     });
 
     it("does NOT activate REAL when deactivated", async () => {
-      amaService.setKillSwitch(true);
+      mockRuntime.getMode.mockReturnValue("OFF");
+      mockRuntime.isKillSwitchActive.mockReturnValue(false);
       await req(server, "POST", "/api/ama/kill-switch", { active: false });
-      expect(amaService.getMode()).toBe("OFF");
+      expect(mockRuntime.getMode()).toBe("OFF");
     });
   });
 
@@ -311,6 +460,36 @@ describe("AMA Routes — API", () => {
       expect(res.status).toBe(400);
       expect(JSON.stringify(res.body)).not.toContain("C:\\");
       expect(JSON.stringify(res.body)).not.toContain("/home/");
+    });
+  });
+
+  describe("REAL_LIMITED operational controls", () => {
+    it("POST /api/ama/real/pause responds 200", async () => {
+      const res = await req(server, "POST", "/api/ama/real/pause", { reason: "test" });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.paused).toBe(true);
+    });
+
+    it("POST /api/ama/real/resume responds 200", async () => {
+      const res = await req(server, "POST", "/api/ama/real/resume");
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.resumed).toBe(true);
+    });
+
+    it("POST /api/ama/real/deactivate responds 200", async () => {
+      const res = await req(server, "POST", "/api/ama/real/deactivate", { reason: "test" });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.deactivated).toBe(true);
+    });
+
+    it("POST /api/ama/real/kill-switch responds 200", async () => {
+      const res = await req(server, "POST", "/api/ama/real/kill-switch", { active: true, reason: "emergency" });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.killSwitchActive).toBe(true);
     });
   });
 });

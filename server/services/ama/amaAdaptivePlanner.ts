@@ -176,8 +176,8 @@ export interface PeriodLimitState {
   monthStart: string;
 }
 
-export function createPeriodLimitState(): PeriodLimitState {
-  const now = new Date();
+export function createPeriodLimitState(referenceTimestamp?: string): PeriodLimitState {
+  const now = referenceTimestamp ? new Date(referenceTimestamp) : new Date();
   return {
     weeklyDeployedUsd: 0,
     monthlyDeployedUsd: 0,

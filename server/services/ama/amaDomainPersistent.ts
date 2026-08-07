@@ -264,6 +264,11 @@ export function validateModeTransition(
     return { valid: false, reason: "REAL_MODE_EXIT_REQUIRES_KILL_SWITCH" };
   }
 
+  // REAL_FULL is always locked — even from REAL_LIMITED
+  if (newMode === "REAL_FULL") {
+    return { valid: false, reason: "REAL_FULL_PERMANENTLY_LOCKED" };
+  }
+
   return { valid: true, reason: "OK" };
 }
 

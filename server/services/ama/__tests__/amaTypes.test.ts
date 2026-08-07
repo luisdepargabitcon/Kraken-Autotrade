@@ -68,11 +68,13 @@ describe("AMA Types — Identity", () => {
 });
 
 describe("AMA Types — Operational Modes", () => {
-  it("contains all 5 modes", () => {
-    expect(AMA_MODE_VALUES).toHaveLength(5);
+  it("contains all 7 modes", () => {
+    expect(AMA_MODE_VALUES).toHaveLength(7);
     expect(AMA_MODE_VALUES).toContain("OFF");
+    expect(AMA_MODE_VALUES).toContain("LAB");
     expect(AMA_MODE_VALUES).toContain("REPLAY");
-    expect(AMA_MODE_VALUES).toContain("SHADOW");
+    expect(AMA_MODE_VALUES).toContain("SHADOW_SCENARIO");
+    expect(AMA_MODE_VALUES).toContain("SHADOW_LIVE");
     expect(AMA_MODE_VALUES).toContain("REAL_LIMITED");
     expect(AMA_MODE_VALUES).toContain("REAL_FULL");
   });
@@ -82,20 +84,24 @@ describe("AMA Types — Operational Modes", () => {
     expect(isModeReal("REAL_FULL")).toBe(true);
     expect(isModeReal("OFF")).toBe(false);
     expect(isModeReal("REPLAY")).toBe(false);
-    expect(isModeReal("SHADOW")).toBe(false);
+    expect(isModeReal("SHADOW_SCENARIO")).toBe(false);
+    expect(isModeReal("SHADOW_LIVE")).toBe(false);
+    expect(isModeReal("LAB")).toBe(false);
   });
 
   it("isModeActive identifies non-OFF modes", () => {
     expect(isModeActive("OFF")).toBe(false);
     expect(isModeActive("REPLAY")).toBe(true);
-    expect(isModeActive("SHADOW")).toBe(true);
+    expect(isModeActive("SHADOW_SCENARIO")).toBe(true);
+    expect(isModeActive("LAB")).toBe(true);
     expect(isModeActive("REAL_LIMITED")).toBe(true);
   });
 
   it("isModeExecutionEnabled only for REAL", () => {
     expect(isModeExecutionEnabled("REAL_LIMITED")).toBe(true);
     expect(isModeExecutionEnabled("REAL_FULL")).toBe(true);
-    expect(isModeExecutionEnabled("SHADOW")).toBe(false);
+    expect(isModeExecutionEnabled("SHADOW_SCENARIO")).toBe(false);
+    expect(isModeExecutionEnabled("LAB")).toBe(false);
     expect(isModeExecutionEnabled("REPLAY")).toBe(false);
     expect(isModeExecutionEnabled("OFF")).toBe(false);
   });

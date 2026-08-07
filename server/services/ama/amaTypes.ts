@@ -24,9 +24,24 @@ export const AMA_PAIR = "BTC/USD";
 
 // ─── Operational Modes ───────────────────────────────────────────────
 
-export type AmaMode = "OFF" | "REPLAY" | "SHADOW" | "REAL_LIMITED" | "REAL_FULL";
+export type AmaMode =
+  | "OFF"
+  | "LAB"
+  | "REPLAY"
+  | "SHADOW_SCENARIO"
+  | "SHADOW_LIVE"
+  | "REAL_LIMITED"
+  | "REAL_FULL";
 
-export const AMA_MODE_VALUES: AmaMode[] = ["OFF", "REPLAY", "SHADOW", "REAL_LIMITED", "REAL_FULL"];
+export const AMA_MODE_VALUES: AmaMode[] = [
+  "OFF",
+  "LAB",
+  "REPLAY",
+  "SHADOW_SCENARIO",
+  "SHADOW_LIVE",
+  "REAL_LIMITED",
+  "REAL_FULL",
+];
 
 export function isModeReal(mode: AmaMode): boolean {
   return mode === "REAL_LIMITED" || mode === "REAL_FULL";
@@ -38,6 +53,14 @@ export function isModeActive(mode: AmaMode): boolean {
 
 export function isModeExecutionEnabled(mode: AmaMode): boolean {
   return mode === "REAL_LIMITED" || mode === "REAL_FULL";
+}
+
+export function isModeShadow(mode: AmaMode): boolean {
+  return mode === "SHADOW_SCENARIO" || mode === "SHADOW_LIVE";
+}
+
+export function isModeSimulation(mode: AmaMode): boolean {
+  return mode === "LAB" || mode === "REPLAY" || isModeShadow(mode);
 }
 
 // ─── State Machine ──────────────────────────────────────────────────
@@ -129,7 +152,7 @@ export const EXIT_OBJECTIVES: ExitObjective[] = ["RECUPERAR_CAPITAL", "EQUILIBRA
 export const AUTONOMY_LEVELS: AutonomyLevel[] = ["SOLO_ANALISIS", "SUPERVISADO", "AUTOPILOT"];
 
 export function isAutonomyAllowed(mode: AmaMode, autonomy: AutonomyLevel): boolean {
-  if (mode === "REPLAY" || mode === "SHADOW") return true;
+  if (mode === "LAB" || mode === "REPLAY" || mode === "SHADOW_SCENARIO" || mode === "SHADOW_LIVE") return true;
   if (mode === "REAL_LIMITED") return autonomy === "SUPERVISADO";
   if (mode === "REAL_FULL") return false;
   return false;

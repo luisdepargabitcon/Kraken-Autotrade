@@ -33,9 +33,9 @@ describe("AMA Service — Scaffold Safety", () => {
       expect(amaService.getMode()).toBe("REPLAY");
     });
 
-    it("allows SHADOW", () => {
-      amaService.setMode("SHADOW");
-      expect(amaService.getMode()).toBe("SHADOW");
+    it("allows SHADOW_SCENARIO", () => {
+      amaService.setMode("SHADOW_SCENARIO");
+      expect(amaService.getMode()).toBe("SHADOW_SCENARIO");
     });
 
     it("BLOCKS REAL_LIMITED at service layer", () => {
@@ -56,7 +56,8 @@ describe("AMA Service — Scaffold Safety", () => {
     it("canSetMode returns true for non-REAL modes", () => {
       expect(amaService.canSetMode("OFF")).toBe(true);
       expect(amaService.canSetMode("REPLAY")).toBe(true);
-      expect(amaService.canSetMode("SHADOW")).toBe(true);
+      expect(amaService.canSetMode("SHADOW_SCENARIO")).toBe(true);
+      expect(amaService.canSetMode("LAB")).toBe(true);
     });
   });
 

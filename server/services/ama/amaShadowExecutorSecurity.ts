@@ -30,7 +30,7 @@ export function checkShadowReadiness(
 ): ShadowReadiness {
   const blockers: string[] = [];
 
-  if (mode !== "SHADOW") {
+  if (mode !== "SHADOW_SCENARIO" && mode !== "SHADOW_LIVE") {
     blockers.push("MODE_IS_NOT_SHADOW");
   }
   if (!hasHwm) {

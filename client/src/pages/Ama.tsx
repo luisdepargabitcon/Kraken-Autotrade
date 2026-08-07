@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Shield, Activity, TrendingDown, Wallet, AlertTriangle, Power } from "lucide-react";
+import { AmaTabs } from "@/components/ama/AmaTabs";
 
 interface AmaStatus {
   mode: string;
@@ -42,7 +43,7 @@ interface AmaPortfolio {
   deployedUsd: number;
   reservedUsd: number;
   freeUsd: number;
-  btcAccumulated: number;
+  accumulatedQuantity: number;
   averageCostBasis: number | null;
   currentValueUsd: number | null;
   unrealizedPnlUsd: number | null;
@@ -51,8 +52,10 @@ interface AmaPortfolio {
 
 const MODE_COLORS: Record<string, string> = {
   OFF: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  LAB: "bg-purple-500/20 text-purple-400 border-purple-500/30",
   REPLAY: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  SHADOW: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  SHADOW_SCENARIO: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  SHADOW_LIVE: "bg-amber-500/20 text-amber-400 border-amber-500/30",
   REAL_LIMITED: "bg-orange-500/20 text-orange-400 border-orange-500/30",
   REAL_FULL: "bg-red-500/20 text-red-400 border-red-500/30",
 };
@@ -179,7 +182,7 @@ export default function Ama() {
               {status?.mode || "OFF"}
             </Badge>
             <div className="mt-3 flex flex-wrap gap-2">
-              {["OFF", "REPLAY", "SHADOW"].map((m) => (
+              {["OFF", "LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"].map((m) => (
                 <Button
                   key={m}
                   size="sm"
@@ -239,6 +242,28 @@ export default function Ama() {
             <Badge className={status?.killSwitchActive ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400"}>
               {status?.killSwitchActive ? "ACTIVO" : "INACTIVO"}
             </Badge>
+            <Button
+              size="sm"
+              variant={status?.killSwitchActive ? "default" : "outline"}
+              className="mt-3 text-xs h-7"
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/ama/kill-switch", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ active: !status?.killSwitchActive }),
+                  });
+                  const json = await res.json();
+                  if (json.success) {
+                    setStatus((prev) => prev ? { ...prev, killSwitchActive: json.data.killSwitchActive } : prev);
+                  }
+                } catch (e: any) {
+                  setError(e.message);
+                }
+              }}
+            >
+              {status?.killSwitchActive ? "Desactivar" : "Activar"}
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -319,20 +344,14 @@ export default function Ama() {
             </div>
             <div>
               <div className="text-muted-foreground text-xs">BTC Acumulado</div>
-              <div className="font-mono">{portfolio?.btcAccumulated.toFixed(8) || "0"}</div>
+              <div className="font-mono">{portfolio?.accumulatedQuantity.toFixed(8) || "0"}</div>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Placeholder for future sub-tabs */}
-      <Card className="border-dashed">
-        <CardContent className="pt-6">
-          <div className="text-center text-muted-foreground text-sm py-8">
-            Mandate Studio, Plan de Acumulación, Ciclos, Auditoría y Salidas estarán disponibles en fases posteriores.
-          </div>
-        </CardContent>
-      </Card>
+      {/* Sub-tabs */}
+      <AmaTabs />
     </div>
   );
 }
