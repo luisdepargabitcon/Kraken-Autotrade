@@ -4,7 +4,7 @@ import { Ticker } from "@/components/dashboard/Ticker";
 import generatedImage from '../assets/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Wallet as WalletIcon, TrendingUp, TrendingDown, PieChart, RefreshCw, Server, Zap, AlertCircle } from "lucide-react";
+import { Wallet as WalletIcon, TrendingUp, TrendingDown, PieChart, RefreshCw, Server, Zap, AlertCircle, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -206,7 +206,7 @@ export default function Wallet() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-4">
+            <TabsList className="grid w-full grid-cols-4 mb-4">
               <TabsTrigger value="all" className="flex items-center gap-2" data-testid="tab-all">
                 <WalletIcon className="h-4 w-4" />
                 Todas
@@ -229,6 +229,10 @@ export default function Wallet() {
                   <Badge variant="outline" className="ml-1 text-xs">${revolutxTotal.toFixed(0)}</Badge>
                 )}
                 {tradingExchange === 'revolutx' && <Badge className="ml-1 bg-green-600 text-xs">Trading</Badge>}
+              </TabsTrigger>
+              <TabsTrigger value="global" className="flex items-center gap-2" data-testid="tab-global">
+                <Layers className="h-4 w-4 text-cyan-400" />
+                Cartera Global
               </TabsTrigger>
             </TabsList>
 
@@ -387,9 +391,200 @@ export default function Wallet() {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            {/* ─── Cartera Global Tab ─────────────────────────────────── */}
+            <TabsContent value="global" className="space-y-4">
+              <WalletGlobalTab />
+            </TabsContent>
           </Tabs>
         </main>
       </div>
+    </div>
+  );
+}
+
+// ─── Wallet Global Tab ───────────────────────────────────────────────
+
+interface DbBudget {
+  mode: string;
+  exchange: string;
+  asset: string;
+  budgetedUsd: number;
+  deployedUsd: number;
+  reservedUsd: number;
+  freeUsd: number;
+  allocationType: string;
+  status: string;
+}
+
+interface DbSnapshot {
+  snapshotId: string;
+  timestamp: string;
+  totalValueUsd: number;
+  cashUsd: number;
+  totalDeployedUsd: number;
+  totalReservedUsd: number;
+  totalFreeUsd: number;
+  totalUnrealizedPnlUsd: number | null;
+  reconciliationStatus: string;
+}
+
+const MODE_TRANSLATIONS: Record<string, string> = {
+  AMA: "AMA",
+  IDCA: "IDCA",
+  GRID: "Grid",
+  SPOT_NORMAL: "Trading Activo",
+  MANUAL: "Manual",
+};
+
+function WalletGlobalTab() {
+  const { data: budgets, isLoading: budgetsLoading } = useQuery<DbBudget[]>({
+    queryKey: ["portfolio-db-budgets"],
+    queryFn: async () => {
+      const res = await fetch("/api/portfolio/db/budgets");
+      const json = await res.json();
+      return json.data || [];
+    },
+    refetchInterval: 30000,
+  });
+
+  const { data: snapshot } = useQuery<DbSnapshot | null>({
+    queryKey: ["portfolio-db-snapshot"],
+    queryFn: async () => {
+      const res = await fetch("/api/portfolio/db/snapshot");
+      const json = await res.json();
+      return json.data || null;
+    },
+    refetchInterval: 30000,
+  });
+
+  if (budgetsLoading) {
+    return <div className="text-muted-foreground text-sm py-8 text-center">Cargando cartera global...</div>;
+  }
+
+  const totalBudget = budgets?.reduce((s, b) => s + b.budgetedUsd, 0) ?? 0;
+  const totalDeployed = budgets?.reduce((s, b) => s + b.deployedUsd, 0) ?? 0;
+  const totalReserved = budgets?.reduce((s, b) => s + b.reservedUsd, 0) ?? 0;
+  const totalFree = budgets?.reduce((s, b) => s + b.freeUsd, 0) ?? 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className="border-border/50">
+          <CardContent className="pt-4">
+            <div className="text-xs text-muted-foreground">Capital total asignado</div>
+            <div className="text-xl font-bold font-mono">${totalBudget.toFixed(2)}</div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="pt-4">
+            <div className="text-xs text-muted-foreground">Desplegado</div>
+            <div className="text-xl font-bold font-mono text-orange-400">${totalDeployed.toFixed(2)}</div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="pt-4">
+            <div className="text-xs text-muted-foreground">Reservado</div>
+            <div className="text-xl font-bold font-mono text-amber-400">${totalReserved.toFixed(2)}</div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="pt-4">
+            <div className="text-xs text-muted-foreground">Disponible</div>
+            <div className="text-xl font-bold font-mono text-green-400">${totalFree.toFixed(2)}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Snapshot info */}
+      {snapshot && (
+        <Card className="border-cyan-500/20 bg-cyan-500/5">
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm">
+                <span className="text-muted-foreground">Última instantánea: </span>
+                <span className="font-mono">{new Date(snapshot.timestamp).toLocaleString("es-ES")}</span>
+              </div>
+              <Badge variant="outline" className={`text-xs ${
+                snapshot.reconciliationStatus === "RECONCILED" ? "border-green-500/30 text-green-400" :
+                snapshot.reconciliationStatus === "PENDING" ? "border-yellow-500/30 text-yellow-400" :
+                "border-red-500/30 text-red-400"
+              }`}>
+                {snapshot.reconciliationStatus === "RECONCILED" ? "Reconciliado" :
+                 snapshot.reconciliationStatus === "PENDING" ? "Pendiente" :
+                 snapshot.reconciliationStatus === "DISCREPANCY_DETECTED" ? "Discrepancia" : "Fallido"}
+              </Badge>
+            </div>
+            {snapshot.totalUnrealizedPnlUsd != null && (
+              <div className="mt-2 text-sm">
+                <span className="text-muted-foreground">PnL no realizado: </span>
+                <span className={`font-mono ${snapshot.totalUnrealizedPnlUsd >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  ${snapshot.totalUnrealizedPnlUsd.toFixed(2)}
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Budgets per mode */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Layers className="h-4 w-4" /> Presupuestos por estrategia
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {budgets && budgets.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-muted-foreground border-b">
+                    <th className="text-left py-2">Estrategia</th>
+                    <th className="text-left">Exchange</th>
+                    <th className="text-left">Activo</th>
+                    <th className="text-right">Presupuesto</th>
+                    <th className="text-right">Desplegado</th>
+                    <th className="text-right">Reservado</th>
+                    <th className="text-right">Disponible</th>
+                    <th className="text-center">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {budgets.map((b, i) => (
+                    <tr key={i} className="border-b border-border/30">
+                      <td className="py-2 font-medium">{MODE_TRANSLATIONS[b.mode] ?? b.mode}</td>
+                      <td>{b.exchange}</td>
+                      <td>{b.asset}</td>
+                      <td className="text-right font-mono">${b.budgetedUsd.toFixed(2)}</td>
+                      <td className="text-right font-mono text-orange-400">${b.deployedUsd.toFixed(2)}</td>
+                      <td className="text-right font-mono text-amber-400">${b.reservedUsd.toFixed(2)}</td>
+                      <td className="text-right font-mono text-green-400">${b.freeUsd.toFixed(2)}</td>
+                      <td className="text-center">
+                        <Badge variant="outline" className={`text-[10px] ${
+                          b.status === "ACTIVE" ? "border-green-500/30 text-green-400" :
+                          b.status === "PAUSED" ? "border-yellow-500/30 text-yellow-400" :
+                          b.status === "EXHAUSTED" ? "border-red-500/30 text-red-400" :
+                          "border-gray-500/30 text-gray-400"
+                        }`}>
+                          {b.status === "ACTIVE" ? "Activo" :
+                           b.status === "PAUSED" ? "Pausado" :
+                           b.status === "EXHAUSTED" ? "Agotado" : "Desactivado"}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center text-muted-foreground text-sm py-8">
+              No hay presupuestos configurados. Asigna capital desde la configuración de cada estrategia.
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

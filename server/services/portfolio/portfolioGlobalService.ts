@@ -1,11 +1,8 @@
 /**
- * Portfolio Global Service — Fase 3
+ * Portfolio Global Service — Fase 3+11
  *
- * In-memory implementation for Phase 3.
- * Snapshots, valuation, budgets, and API support.
- *
- * DEVELOPMENT_SCAFFOLD_ONLY
- * NOT_SOURCE_OF_TRUTH — will be replaced by DB-backed implementation.
+ * Dual-read/dual-write layer: in-memory + PostgreSQL.
+ * PostgreSQL is the source of truth. In-memory serves as cache.
  * No real exchange calls, no real capital management.
  */
 
@@ -30,6 +27,7 @@ import {
   detectDoubleCounting,
   ALL_STRATEGY_MODES,
 } from "./portfolioTypes";
+import * as dbRepo from "./portfolioDbRepository";
 
 class PortfolioGlobalService {
   private budgets: Map<string, ModeBudget> = new Map();
@@ -268,6 +266,148 @@ class PortfolioGlobalService {
     this.holdings = [];
     this.ledger = [];
     this.snapshots = [];
+  }
+
+  // ─── DB-backed methods (PostgreSQL source of truth) ──────────────
+
+  async dbGetBudget(mode: StrategyMode, exchange: string, asset: string): Promise<ModeBudget | null> {
+    return dbRepo.dbGetBudget(mode, exchange, asset);
+  }
+
+  async dbGetAllBudgets(): Promise<ModeBudget[]> {
+    return dbRepo.dbGetAllBudgets();
+  }
+
+  async dbSetBudget(
+    mode: StrategyMode,
+    exchange: string,
+    asset: string,
+    budgetedUsd: number,
+    allocationType?: AllocationType,
+  ): Promise<ModeBudget> {
+    const budget = await dbRepo.dbSetBudget(mode, exchange, asset, budgetedUsd, allocationType);
+    this.budgets.set(this.budgetKey(mode, exchange, asset), budget);
+    return budget;
+  }
+
+  async dbSetBudgetStatus(
+    mode: StrategyMode,
+    exchange: string,
+    asset: string,
+    status: BudgetStatus,
+  ): Promise<void> {
+    await dbRepo.dbSetBudgetStatus(mode, exchange, asset, status);
+    const budget = this.budgets.get(this.budgetKey(mode, exchange, asset));
+    if (budget) budget.status = status;
+  }
+
+  async dbReserveAmount(
+    mode: StrategyMode,
+    exchange: string,
+    asset: string,
+    amountUsd: number,
+  ): Promise<boolean> {
+    const ok = await dbRepo.dbReserveAmount(mode, exchange, asset, amountUsd);
+    if (ok) {
+      const budget = this.budgets.get(this.budgetKey(mode, exchange, asset));
+      if (budget) {
+        budget.reservedUsd += amountUsd;
+        budget.freeUsd = computeFreeBudget(budget);
+      }
+    }
+    return ok;
+  }
+
+  async dbReleaseReservation(
+    mode: StrategyMode,
+    exchange: string,
+    asset: string,
+    amountUsd: number,
+  ): Promise<boolean> {
+    const ok = await dbRepo.dbReleaseReservation(mode, exchange, asset, amountUsd);
+    if (ok) {
+      const budget = this.budgets.get(this.budgetKey(mode, exchange, asset));
+      if (budget) {
+        budget.reservedUsd -= amountUsd;
+        budget.freeUsd = computeFreeBudget(budget);
+      }
+    }
+    return ok;
+  }
+
+  async dbDeployAmount(
+    mode: StrategyMode,
+    exchange: string,
+    asset: string,
+    amountUsd: number,
+  ): Promise<boolean> {
+    const ok = await dbRepo.dbDeployAmount(mode, exchange, asset, amountUsd);
+    if (ok) {
+      const budget = this.budgets.get(this.budgetKey(mode, exchange, asset));
+      if (budget) {
+        budget.deployedUsd += amountUsd;
+        budget.freeUsd = computeFreeBudget(budget);
+      }
+    }
+    return ok;
+  }
+
+  async dbGetHoldings(): Promise<AssetHolding[]> {
+    return dbRepo.dbGetHoldings();
+  }
+
+  async dbSetHolding(holding: AssetHolding): Promise<void> {
+    await dbRepo.dbSetHolding(holding);
+    const idx = this.holdings.findIndex(
+      (h) => h.asset === holding.asset && h.exchange === holding.exchange,
+    );
+    if (idx >= 0) this.holdings[idx] = holding;
+    else this.holdings.push(holding);
+  }
+
+  async dbAppendLedgerEntry(entry: LedgerEntry): Promise<boolean> {
+    const ok = await dbRepo.dbAppendLedgerEntry(entry);
+    if (ok) this.ledger.push(entry);
+    return ok;
+  }
+
+  async dbGetLedgerEntries(limit?: number): Promise<LedgerEntry[]> {
+    return dbRepo.dbGetLedgerEntries(limit);
+  }
+
+  async dbGetLedgerByMode(mode: StrategyMode): Promise<LedgerEntry[]> {
+    return dbRepo.dbGetLedgerByMode(mode);
+  }
+
+  async dbTakeSnapshot(
+    valuations: ValuationResult[],
+    reconciliationStatus?: ReconciliationStatus,
+  ): Promise<PortfolioSnapshot> {
+    for (const h of this.holdings) {
+      const val = valuations.find((v) => v.asset === h.asset);
+      if (val) {
+        h.currentPriceUsd = val.priceUsd;
+        h.currentValueUsd = h.quantity * val.priceUsd;
+        if (h.costBasisUsd > 0 && h.currentValueUsd !== null) {
+          h.unrealizedPnlUsd = h.currentValueUsd - h.costBasisUsd;
+          h.unrealizedPnlPct = (h.unrealizedPnlUsd / h.costBasisUsd) * 100;
+        }
+      }
+    }
+    const totalUnrealized = this.holdings.reduce((s, h) => s + (h.unrealizedPnlUsd ?? 0), 0);
+    const snapshot = await dbRepo.dbTakeSnapshot(
+      this.holdings, this.getAllBudgets(), totalUnrealized, reconciliationStatus,
+    );
+    this.snapshots.push(snapshot);
+    return snapshot;
+  }
+
+  async dbGetLatestSnapshot(): Promise<PortfolioSnapshot | null> {
+    return dbRepo.dbGetLatestSnapshot();
+  }
+
+  async dbGetSnapshotHistory(limit?: number): Promise<PortfolioSnapshot[]> {
+    return dbRepo.dbGetSnapshotHistory(limit);
   }
 }
 

@@ -169,4 +169,76 @@ export function registerPortfolioRoutes(app: Express): void {
       hasIssues: budgetErrors.length > 0 || doubleCounting.length > 0,
     }));
   });
+
+  // ── DB-backed endpoints (PostgreSQL source of truth) ──────────────
+
+  app.get("/api/portfolio/db/snapshot", async (_req, res) => {
+    try {
+      const snapshot = await portfolioGlobalService.dbGetLatestSnapshot();
+      res.json(ok(snapshot));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  app.get("/api/portfolio/db/budgets", async (_req, res) => {
+    try {
+      const budgets = await portfolioGlobalService.dbGetAllBudgets();
+      res.json(ok(budgets));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  app.post("/api/portfolio/db/budgets", async (req, res) => {
+    try {
+      const parsed = setBudgetSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(err(`Invalid budget: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
+      }
+      const { mode, exchange, asset, budgetedUsd, allocationType } = parsed.data;
+      const budget = await portfolioGlobalService.dbSetBudget(mode, exchange, asset, budgetedUsd, allocationType);
+      res.json(ok(budget));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  app.get("/api/portfolio/db/holdings", async (_req, res) => {
+    try {
+      const holdings = await portfolioGlobalService.dbGetHoldings();
+      res.json(ok(holdings));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  app.get("/api/portfolio/db/ledger", async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const entries = await portfolioGlobalService.dbGetLedgerEntries(limit);
+      res.json(ok(entries));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  app.post("/api/portfolio/db/snapshot/take", async (_req, res) => {
+    try {
+      const snapshot = await portfolioGlobalService.dbTakeSnapshot([]);
+      res.json(ok(snapshot));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  app.get("/api/portfolio/db/snapshots", async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const snapshots = await portfolioGlobalService.dbGetSnapshotHistory(limit);
+      res.json(ok(snapshots));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
 }

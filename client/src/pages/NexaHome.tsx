@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/layouts/AppShell";
 import { WorldCard } from "@/components/home/WorldCard";
 import { Link } from "wouter";
-import { TrendingUp, BarChart3, FileText, Settings, Monitor, Wallet, Bell } from "lucide-react";
+import { TrendingUp, BarChart3, FileText, Settings, Monitor, Wallet, Bell, Layers, Grid3x3 } from "lucide-react";
 
 interface DashboardData {
   exchangeConnected?: boolean;
@@ -147,6 +147,37 @@ export default function NexaHome() {
             accentColor="bg-purple-500/10"
             stats={fiscoStats}
             ctaLabel="Entrar en Fiscal Crypto"
+          />
+        </div>
+
+        {/* AMA + Grid — secondary worlds */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+          <WorldCard
+            title="AMA — Acumulación Macro"
+            subtitle="AMA · Acumulación adaptativa BTC"
+            description="Estrategia profesional de acumulación BTC con laboratorio, reproducción histórica, simulación y operación real limitada."
+            href="/ama"
+            icon={<Layers className="h-5 w-5 text-cyan-400" />}
+            accentColor="bg-cyan-500/10"
+            stats={[
+              { label: "Modo", value: "Ver panel AMA" },
+              { label: "Cartera", value: "Ver panel AMA" },
+            ]}
+            ctaLabel="Entrar en AMA"
+          />
+
+          <WorldCard
+            title="Grid Isolated"
+            subtitle="GRID · Rejilla de órdenes aislada"
+            description="Bot de trading con rejilla de órdenes aisladas por par, con configuración de niveles y gestión automática."
+            href="/grid-isolated"
+            icon={<Grid3x3 className="h-5 w-5 text-teal-400" />}
+            accentColor="bg-teal-500/10"
+            stats={[
+              { label: "Estado", value: "Ver panel Grid" },
+              { label: "Pares", value: "Ver panel Grid" },
+            ]}
+            ctaLabel="Entrar en Grid"
           />
         </div>
 
