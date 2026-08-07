@@ -1,7 +1,7 @@
 ﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-08-03
+> Última actualización: 2026-08-07
 
 ---
 
@@ -7259,3 +7259,57 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 **Alcance:** Solo frontend Grid. DB intacta. Sin cambios en server, shared, migrations, Docker, compose, package files.
 
 **Estado:** COMPLETADO. Deploy validado. Interaccion real validada en staging. Checkout VPS sincronizado. Documentacion limpia y honesta. Pendientes: ninguno.
+
+---
+
+## 2026-08-07 — Grid: Malla Geométrica Uniforme Canónica
+
+**Módulo:** Grid Isolated — generador profesional de niveles  
+**Commit:** `57fd074`  
+**Branch:** `review/grid-uniform-geometric-20260806` → `main`  
+**Auditoría:** `AUDITORIAS/AUDITORIA_GRID_UNIFORME_GEOMETRICO_2026-08-06.md`
+
+### Problema
+
+El sistema Grid usaba espaciado acumulativo lineal que producía un doble gap central entre BUY[0] y SELL[0], sin garantizar uniformidad geométrica entre niveles adyacentes.
+
+### Solución
+
+Refactor a malla geométrica uniforme canónica:
+- `ratio = 1 + spacingPct/100`
+- `BUY[i] = centerPrice / ratio^(i + 0.5)`
+- `SELL[i] = centerPrice * ratio^(i + 0.5)`
+- Invariante: `SELL[0] / BUY[0] = ratio` (un único gap central)
+- Gap adyacente uniforme: razón entre niveles adyacentes del mismo lado = `ratio`
+
+### Archivos afectados
+
+**Nuevos:**
+- `server/services/gridIsolated/gridUniformGeometric.ts`
+- `server/services/__tests__/gridUniformGeometric.test.ts` (14 tests)
+
+**Modificados:**
+- `gridSpacingCalculator.ts` — fórmula `uniform_geometric_spacing`, refactor de counting, preview, adaptive range, range audit
+- `gridIsolatedEngine.ts` — geometricRatio real, method actualizado
+- `gridLevelConstraintNormalizer.ts` — alineación de precio a tick size
+- `gridIsolated.routes.ts`, `buildGridAuditViewModel.ts` — identificador de fórmula
+- `gridForensicJsonb.test.ts`, `gridSpacingCalculator.test.ts`, `gridAdaptiveSmartRange.test.ts`, `gridCompactRange.test.ts`, `gridLevelConstraintNormalizer.test.ts` — tests actualizados
+
+### Validaciones
+
+- Tests dirigidos: 85/85 pass
+- Tests grid completos: 697/697 pass
+- TypeScript: 0 errors
+- Build: OK
+- Suite completa: 3579 pass, 16 fail (pre-existing, no relacionados)
+
+### Deploy staging
+
+- App-only con `--no-deps`, DB intacta
+- DB_ID_BEFORE = DB_ID_AFTER, DB_RESTARTED = FALSE
+- MODE=SHADOW, realOpenOrdersCount=0, isActive=true, isRunning=true
+
+### Estado
+
+- Implementado, validado, commiteado, subido, desplegado y operacional.
+- Pendientes: ninguno.
