@@ -1,7 +1,7 @@
-# BITÁCORA — Kraken-Autotrade
+﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-07-27
+> Última actualización: 2026-08-07
 
 ---
 
@@ -210,6 +210,181 @@ Se crea un checkpoint parcial C3A con el subconjunto estable ya validado: rebuil
 C3A validada localmente y preparada como commit selectivo. C3B queda pendiente: lifecycle SELL completo, recovery/breaker ampliados, validación específica del ciclo #26 y localización de archivos de test faltantes (`gridExecutionMarketSnapshot.test.ts`, `gridJsonbValidators.test.ts`). Deploy no autorizado.
 
 ---
+
+## GRID REV-C12A — RECOMENDACIONES Y PERSISTENCIA
+
+- `buyLevels` y `sellLevels` eliminados del allowlist, fingerprint, proposedConfig, changedFields y currentConfig.
+- El allocator/generador profesional continúa siendo la única fuente canónica del número de niveles solicitados.
+- Alternativa A convertida en informativa y bloqueada (`safeToApply=false`, `proposedConfig={}`, `changedFields=[]`).
+- `recommendedAlternativeId` ahora `A | B | C | null`; sin alternativa segura es `null` y la UI no muestra "Recomendado".
+- Validación de alternativas B y C exige proyección con al menos `minLevelsForViableGrid=4`.
+- `saveConfig` en `GridIsolatedEngine` relanza el error; el endpoint no marca applied ni emite `GRID_RECOMMENDATION_APPLIED` si la persistencia falla.
+- Mensaje post-apply aclara que no se ha creado ni modificado ningún rango.
+- Strict, `minLevelsForViableGrid=4` y el allocator se mantienen. 1 BUY + 1 SELL no se autoriza.
+- Tests actualizados para validar que `buyLevels`/`sellLevels` ya no son aplicables.
+- Sin migración, sin DB, sin deploy.
+
+### Cascada post-verificación REV-C12A (2026-07-31)
+
+- `recommendedAlternativeId=null` corregido en `checkDataSufficiency` blocked return (antes era `"A"`).
+- `resolveRequestedLevels` reescrito como validador estricto fail-closed: `validateStrictLevelValue` rechaza null, NaN, Infinity, cero, negativos, decimales y valores excesivos. Nunca convierte un valor inválido a 1.
+- Proyección canónica B/C mediante `generateProfessionalGridLevels`: `resolveProjectionInput` extrae todos los campos requeridos; `projectCanonicalLevels` ejecuta el generador profesional con overrides. B y C solo son `safeToApply=true` si la proyección canónica retorna viable. `computeSpacingAndLevels` queda como diagnóstico preliminar.
+- Gate Revolut X visible en `GridMarketPanel`: muestra estado del gate (microestructura no verificada / validación canónica superada / pendiente) según `configurationRecommendation.alternatives`.
+- UX post-apply en `GridRecommendationDialog`: mensaje de éxito incluye confirmación de validación canónica con Revolut X.
+- `gridUxRender.test.tsx` corregido: fixture V3 (`entryLevels`, `referenceRungs`, `legacyTargetLevels`) y aserciones V3. 10/10 pasan.
+- `gridRecommendationAlternatives.test.ts` actualizado para REV-C12A.
+- Codificación MD auditoría reparada: UTF-8 sin BOM, LF.
+- Tests saveConfig fail-closed: error message incluye DB error, rollback completo, restauración de null values.
+- Matriz Grid (9 archivos): 260/260 ✅. `npx tsc` ✅. `npm run build` ✅.
+- Datos reales de `executionMarketSnapshot` en view model queda pendiente para REV-C12B.
+
+### Cascada REV-C12B (2026-07-31) — profesional input + microstructure + gate real
+
+- Helper profesional compartido `gridProfessionalProjectionContext.ts`: single source of truth para `generateProfessionalGridLevels`. `resolveGridProfessionalProjectionContext` valida datos reales verificados. `buildProfessionalGeneratorInput` construye el input con overrides opcionales. Sin estimaciones inventadas, sin config hardcodeada, sin fallback a Kraken.
+- Microestructura Revolut X estricta: `spreadPct` y `priceTickPct` solo de `executionMarketSnapshot` cuando `verified=true`, `fresh=true`, `venue=REVOLUT_X`, `pair` coincide. `pairConstraints` deben estar `verified=true` y no expiradas. Sin microestructura verificada, B y C quedan bloqueados con `microstructureVerified=false`.
+- Configuración real, no hardcodeada: todos los campos se leen del objeto `config` real. `configuredBuyLevels`/`configuredSellLevels` deben ser enteros (rechaza strings numéricos).
+- Alternativa B canónica con allocation real: `resolveProjectionContext` usa `allocation.capitalPerLevelUsd` real. Sin allocation, B queda bloqueado. `expectedBefore` procede de proyección canónica actual.
+- Alternativa C iterativa por candidato: cada anchura candidata se valida con `generateProfessionalGridLevels`. Se selecciona la primera anchura canónicamente viable (cambio mínimo seguro).
+- Gate Revolut X real tipado en view model: `ExecutionGateState` en `GridIsolatedEngine` (in-memory, no persistido). `getExecutionGate()` expone el gate. `ExecutionGateType` en `GridMarketViewModel`, siempre presente. `GridMarketPanel` muestra "VERIFICADO", "BLOQUEADO" o "SIN EVALUACIÓN RECIENTE". El gate NO se deriva de `safeToApply`.
+- Mensaje post-apply exacto: "Validación canónica superada... La configuración se guardó en DB y se aplicará en el próximo tick del motor."
+- Tests reales `GridIsolatedEngine.saveConfig` + call sites: `gridIsolatedEngine.test.ts` con tests de `getExecutionGate` y `saveConfig` real. `gridProfessionalProjectionContext.test.ts` con 18 tests del helper.
+- Mojibake MD reparado: `AUDITORIA_GRID_REV_C12_RECOMENDACIONES_SIN_EFECTO_2026-07-30.md` con UTF-8 decode → Windows-1252 encode → bytes correctos. Em-dashes y caracteres españoles restaurados.
+- `GridMarketPanel.test.tsx` actualizado para gate real (VERIFICADO/BLOQUEADO/SIN EVALUACIÓN RECIENTE).
+- Tests: 128/128 pasan (recomendación + view model + market panel + route apply). `npx tsc` ✅.
+
+### Cascada REV-C12B (2026-07-31) — runtime integration + gate edad + campos fantasma + validadores estrictos
+
+- `GridRecommendationProjectionState` en `GridIsolatedEngine`: interface tipada con `evaluatedAt`, `validUntil`, `pair`, `bandSnapshot`, `executionMarketSnapshot`, `pairConstraints`, `allocation`. `lastRecommendationProjectionState` in-memory, actualizado solo durante el tick. `getRecommendationProjectionState()` devuelve copia si fresca, null si expirada. Lecturas no renuevan `evaluatedAt` ni `validUntil`.
+- Allocation resuelta una vez por tick: `buildRangeProposal` acepta `preResolvedAllocation` opcional — no llama al allocator cuando se proporciona. `proposeRangeVersion` y `rebuildRangeAndLevels` reciben y pasan el allocation pre-resuelto. Misma instancia de allocation usada para recomendación, proyección y creación de rango.
+- Ruta corregida: `gridIsolated.routes.ts` pasa `projectionState.executionMarketSnapshot`, `pairConstraints`, `allocation` reales a `buildGridAuditViewModel`. Export JSON endpoint también. Sin nulls — el view model recibe el contexto runtime exacto del último tick.
+- Gate invalidado por edad: `ExecutionGateState` incluye `status` (`VERIFIED` | `BLOCKED` | `NO_RECENT_EVALUATION`), `ageMs`, `maxAgeMs`, `validUntil`. `resolveExecutionGateState` recalcula en cada lectura — no devuelve VERIFIED stale. `RawExecutionGateData` almacena datos crudos; `getExecutionGate()` deriva el estado público. `GridMarketPanel` usa `status` y muestra edad/validez cuando VERIFIED.
+- `available` separado de `verified`/`fresh`: `snapshotAvailable` requiere par correcto, venue REVOLUT_X, source presente, bid/ask o reasonCode. `constraintsAvailable` requiere par correcto, venue REVOLUT_X, source presente. `available` no es solo pair match — es presencia + estructura mínima.
+- Campos fantasma eliminados del view model: `config.buyLevels`/`config.sellLevels` eliminados de `buildGridMarketViewModel.ts`. `buildCurrentConfigurationProjection` usa `allocation.levelsCount`. `requestedLevelsFrom` no usa `config.buyLevels`/`config.sellLevels`. `buildEntryRange` usa `professionalGenerator`/`adaptiveDecision`/`adaptiveRangeMinViableLevels`. `buildActiveRangeSnapshot` no usa `configSnapshot.buyLevels`/`configSnapshot.sellLevels`.
+- Validadores estrictos sin `Number()`: `validateStrictLevelValue` rechaza strings (`"4"`), booleanos, NaN, Infinity. Solo acepta `typeof value === "number"` + `Number.isFinite` + `Number.isInteger`.
+- Market suitability y régimen fail-closed: `resolveGridProfessionalProjectionContext` rechaza `marketSuitable !== true` y `regimeLabel` vacío o no-string. No hay default `suitableForGrid ?? true` ni `regime ?? "ranging"`.
+- Consistencia de allocation: `finalGridBudgetUsd` debe ser > 0. `capitalPerLevelUsd * levelsCount` no debe exceder `finalGridBudgetUsd` + epsilon 1 cent.
+- Tests nuevos: `gridIsolatedEngine.test.ts` (ProjectionState null, saveConfig DB_WRITE_FAILED, gate status), `gridProfessionalProjectionContext.test.ts` (7 tests: marketSuitable, regimeLabel, allocation consistency), `gridRecommendationService.test.ts` (4 tests: strict validation string/NaN/Infinity/boolean), `GridMarketPanel.test.tsx` (fixtures con status/ageMs/maxAgeMs/validUntil).
+- Tests: 291/291 pasan (10 archivos relevantes). `npx tsc` ✅.
+
+### Cascada REV-C12B (2026-08-01) — cierre estricto: copia defensiva, TTL compartido, ProjectionContextResult, régimen canónico, config fail-closed
+
+- Copia defensiva de ProjectionState: `getRecommendationProjectionState()` devuelve `structuredClone` del estado interno. Modificar el resultado no afecta el engine. Preserva Date objects.
+- Limpieza al comenzar tick: `lastRecommendationProjectionState = null` al inicio de `tick()`. Solo se reasigna cuando el tick actual obtiene banda válida + suitableForGrid + régimen operable + snapshot verificado + constraints verificadas + allocation válida. Si cualquier bloqueo ocurre, el estado anterior NO se conserva.
+- TTL canónico compartido (`gridExecutionGateTtl.ts`): helper puro `computeGateTtl(snapshot, constraints, now)` usado por `getExecutionGate()` y `getRecommendationProjectionState()`. `validUntil = min(snapshotValidUntil, constraintsValidUntil)`. Las lecturas nunca renuevan TTL.
+- ProjectionContextResult tipado: `resolveGridProfessionalProjectionContext` devuelve `{ ok: true, context } | { ok: false, reasonCode, explanation }`. 14 reasonCodes. Engine y recommendation service actualizados.
+- Consistencia estricta del allocator: `configuredBuy+Sell === allocation.levelsCount`. `requiredCapital = capitalPerLevelUsd * levelsCount` no supera `finalGridBudgetUsd` + epsilon 1 cent. No `Math.floor` que pierde un nivel.
+- Régimen reconocido y operable: lista canónica (low_volatility, normal_lateral, high_volatility = operables; unsuitable_trend, pump_dump, unknown = no operables). Aliases normalizados explícitamente. No defaults inventados.
+- Configuración fail-closed: 18 campos obligatorios. Sin defaults silenciosos. `enforceCompactRange=false` válido. `gridRangeControlMode` y `adaptiveRangeProfile` validados contra sets canónicos.
+- Mensaje post-apply exacto: "Configuración guardada correctamente. No se ha creado ni modificado ningún rango. Pulsa «Analizar mercado ahora» cuando quieras ejecutar un nuevo análisis SHADOW."
+- saveConfig mismo objeto Error: test usa `.rejects.toBe(expectedError)`. `botLogger.error` llamado una vez con "Failed to save config". Mock restaurado en `finally`. Call sites auditados.
+- Export JSON una única lectura: `exportProjectionState` leído una vez, reutilizado para los 3 campos.
+- Tests: 760/760 pasan (31 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
+
+### Corrección final REV-C12B (2026-08-01) — modos canónicos y cobertura runtime
+
+- Modos canónicos RangeControlMode corregidos: `adaptive_smart`, `fixed_compact`, `legacy_hybrid`. Eliminados `fixed` y `atr_based` divergentes. Constante `RANGE_CONTROL_MODES` exportada desde `gridSpacingCalculator.ts` y usada en `gridProfessionalProjectionContext.ts`.
+- ProjectionState solo se publica cuando `resolveGridProfessionalProjectionContext` devuelve `ok=true` Y `ttl.fresh=true` Y `ttl.validUntil !== null`. Si falla cualquiera, estado = null.
+- Eliminado fallback `regime ?? "ranging"` — ahora se pasa el régimen real (`regime ?? ""`) y el helper tipado decide si es válido, alias reconocido o bloqueado.
+- Eliminado fallback `validUntil: evaluatedAt.toISOString()` cuando `ttl.validUntil` es null — ahora fail-closed, no se publica estado.
+- Niveles derivados canónicamente del allocation: `configuredBuyLevels = floor(levelsCount / 2)`, `configuredSellLevels = levelsCount - configuredBuyLevels`. Nunca `Math.floor` que pierde un nivel.
+- Tests TTL directos (14): snapshot/constraints válidas, caducidad, sin expiresAt, fetchedAt inválido, maxAgeMs inválido, lectura antes/después del límite, múltiples lecturas no renuevan validUntil, validUntil es mínimo, staleReason, objetos no modificados.
+- Test copia defensiva: mutar pair, midPrice, bid, fetchedAt, priceTickSize, expiresAt, levelsCount, capitalPerLevelUsd en la copia no afecta el estado interno. Date continúa siendo Date. Copias no comparten objetos anidados.
+- Test tick válido → tick bloqueado: tick N establece estado, tick N+1 sin datos de mercado lo elimina. Gate canCreateRange=false. No rango nuevo, no BUY, no orden real. Variantes: mercado no apto, allocation falla, régimen desconocido.
+- Test ProjectionState solo si context ok: config incompleta, fixed_compact válido, legacy_hybrid válido, fixed inválido, allocation impar, allocation mismatch, régimen no operable, ttl sin validUntil.
+- Tests: 795/795 pasan (32 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
+
+### Cascada REV-C12E (2026-08-03) — separación arquitectónica Kraken-datos / Revolut X-ejecución
+
+- **Causa arquitectónica**: `GRID_NATIVE_TICKER_DEPENDENCY = ARCHITECTURAL_DIVERGENCE`. El Grid era el único módulo que llamaba `revolutXService.getTicker()` directamente. Cuando el endpoint de order-book/trades de Revolut X falla, el Grid quedaba bloqueado aunque constraints, bandas y ejecución estuvieran operativas.
+- **Corrección**: tick() y rebuild usan `MarketDataService.getFreshTickerSnapshot()` (Kraken) como referencia de mercado. `revolutXService.getTicker()` eliminado del flujo productivo Grid (0 llamadas operativas).
+- **MarketDataService.getFreshTickerSnapshot**: nueva API estricta con `MarketTickerSnapshot` tipado (venue=KRAKEN, source=KRAKEN_MARKET_DATA, fresh, cached, ageMs, maxAgeMs). Reutiliza caché y single-flight existentes. TTL 45s. Fail-closed null.
+- **gridReferenceMarketResolver.ts**: valida Kraken ticker → `GridReferenceMarketSnapshot`. `authoritativeForVenueCrossing=false` (Kraken no garantiza maker en Revolut X).
+- **gridExecutionCapabilityResolver.ts**: deriva `GridExecutionCapabilitySnapshot` de init + constraints + MAKER_ONLY + takerFallback=false. NO llama getTicker.
+- **gridPlanningContextResolver.ts**: flujo canónico único para contexto de planificación.
+- **GridPlanningGate**: separa canPlanRange, canCreateRange, canSubmitMakerOrder, allowCycleExits=true.
+- **Taker fallback eliminado**: `gridExecutionService.ts` fase 2 removida. Solo post_only. Rechazo → `POST_ONLY_REJECTED_REPRICE_REQUIRED`. No allow_taker, no _taker, no market, no usedTakerFallback:true.
+- **Reason codes diferenciados**: REFERENCE_MARKET_* (Kraken), REVOLUT_X_* (ejecución), POST_ONLY_*, LEGACY_TAKER_POLICY_BLOCKED.
+- **Políticas legacy bloqueadas**: MAKER_FIRST_THEN_LIMIT_TAKER_FALLBACK y MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK no se ejecutan. reasonCode=LEGACY_TAKER_POLICY_BLOCKED.
+- **90 tests nuevos**: 17 fresh ticker snapshot + 15 reference market + 12 execution capability + 11 taker fallback + 10 fills confirmation + 25 planning context resolver.
+- **Tests Grid modificados REV-C12E**: gridCircuitBreakerV3 (4/4), gridCycleOwnedV3Engine (52/52), gridIsolatedEngine (50/50), GridMarketPanel UX (18/18) — todos pasan.
+- **Tests Grid**: archivos modificados/nuevos REV-C12E = 0 fallidos. `tsc --noEmit` EXIT=0 ✅. `npm run build` EXIT=0 ✅. `git diff --check` EXIT=0 ✅.
+- **Recuentos estáticos**: revolutXService.getTicker operativo=0, allow_taker operativo=0, GRID_LEVEL_TAKER_FALLBACK operativo=0, usedTakerFallback:true=0, _taker IDs=0, REVOLUT_X_TICKER source nuevo=0, órdenes market=0.
+- **Estado**: REV-C12E implementada localmente y validada; pendiente commit y verificación independiente. DONE=FALSE, HARD_BLOCKER=FALSE. MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, órdenes reales=0.
+
+### Correcciones REV-C12E tras segunda verificación independiente (2026-08-04)
+
+- **Commits anteriores**: 33094e5 (técnico), 7ff42bd (documental).
+- **Rebuild manual**: manualRebuildPlannedLevels ahora extrae rebuildAllocation y rebuildProjectionContext del orquestador. Valida allocation, projectionContext, ttl.fresh, validUntil, gate.canCreateRange. buildRangeProposal y rebuildRangeAndLevels reciben ambos parámetros pre-resueltos.
+- **buildRangeProposal fail-closed**: allocation y projection context obligatorios. Sin fallbacks a gridCapitalAllocator.allocate o resolveGridProfessionalProjectionContext. Eliminado Math.floor(allocation.levelsCount / 2).
+- **Gate canCreateRange fail-closed**: exige marketAndCapabilityReady + allocation + split + projection + TTL + 0 blockers. Nuevos blockers: ALLOCATION_INPUT_MISSING, ALLOCATION_FAILED, SYMMETRIC_SPLIT_FAILED, TTL_STALE, TTL_VALID_UNTIL_MISSING.
+- **Frescura invertida corregida**: buildGridExecutionMarketSnapshot camino sin timestamp ahora usa `acquiredAt - fetchedAt >= maxAgeMs` (dirección correcta).
+- **UX fuentes correctas**: buildDataSourceInfo usa executionGate.executionMarketSnapshot.executionVenue y executionGate.pairConstraints.source (rutas reales ExecutionGateType).
+- **Encoding UTF-8 reparado**: AUDITORIA_GRID_REV_C12E reescrita sin BOM, sin mojibake. UTF-8 LF.
+- **Matriz nueva real**: 37 archivos, 934 tests, 0 failures. `npm run check` EXIT=0. `npm run build` EXIT=0. `git diff --check` EXIT=0.
+- **Verificación orquestador único**: gridCapitalAllocator.allocate en gridIsolatedEngine.ts (flujo productivo) = 0. resolveGridProfessionalProjectionContext en gridIsolatedEngine.ts (flujo productivo) = 0. Math.floor(allocation.levelsCount en gridIsolatedEngine.ts (flujo productivo) = 0.
+- **Estado**: REV-C12E corregida tras segunda verificación independiente; pendiente commit y push de corrección. DONE=FALSE, HARD_BLOCKER=FALSE. MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, órdenes reales=0.
+
+### Validación global final REV-C12E (2026-08-04)
+
+- **Commits**: técnico 39db52b6299e9a9f15a361d5324bb4e2b713c6be, documental d8d56d5c6c6f274a788ae4f78000e52a0e416840.
+- **Matriz Grid**: 37 archivos, 934 tests, 0 fallos.
+- **Suite completa**: 856 archivos, 3389 tests, 3330 pasados, 30 fallos históricos, 29 skipped.
+- **Fallos históricos exactos (30, 6 archivos)**: telegram/templates.test.ts (9), gridCompactRange.test.ts (9), gridAdaptiveSmartRange.test.ts (4), gridShadowPolicy.test.ts (4), idcaMarketContextHelpers.test.ts (3), gridSpacingCalculator.test.ts (1).
+- **Cero fallos nuevos.**
+- **CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.**
+- **Encoding UTF-8**: sin BOM, sin mojibake.
+- **Estado final**: REV-C12E corregida, publicada y validada en rama de revisión; pendiente merge controlado a main. DONE=FALSE, HARD_BLOCKER=FALSE. MERGE=NO, DEPLOY=NO, VPS=NO, DB=NO, órdenes reales=0. APTA PARA VERIFICACIÓN PRE-MERGE.
+
+### Integración en main y deploy staging REV-C12E (2026-08-04)
+
+- **Integración main**: fast-forward puro, 24 commits integrados, sin merge commit. MAIN_PREVIOUS_SHA=44cd46ff, DEPLOYED_CODE_SHA=8d5617fd, MERGE_COMMIT_CREATED=FALSE.
+- **Deploy staging**: VPS root@5.250.184.18, /opt/krakenbot-staging, docker-compose.staging.yml. PRE_DEPLOY_SHA=24518a1, DEPLOY_SOURCE_SHA=8d5617f. Solo app recreada, DB intacta.
+- **DB intacta**: DB_ID_BEFORE=DB_ID_AFTER=a2f9a3f2, DB_STARTED_BEFORE=DB_STARTED_AFTER=2026-05-03T21:10:46Z. DB_RESTARTED=FALSE, SQL=FALSE, MIGRATIONS=FALSE.
+- **Validación HTTP**: 8 endpoints GET 200 (root, config, status, levels, cycles, events, unlock-status, monitor/audit). MODE_BEFORE=SHADOW, MODE_AFTER=SHADOW, PAIR=BTC/USD.
+- **Arquitectura observada**: MARKET_DATA_SOURCE=KRAKEN_MARKET_DATA, EXECUTION_VENUE=REVOLUT_X, EXECUTION_POLICY=MAKER_ONLY, POST_ONLY_EFFECTIVE=TRUE.
+- **Taker fallback**: EFFECTIVE_TAKER_FALLBACK_ENABLED=FALSE, EFFECTIVE_TAKER_FALLBACK_ALLOWED=FALSE, TAKER_FALLBACK_USED=FALSE. DB mantiene storedTakerFallbackEnabled=true (legacy), runtime overridea con effective=false.
+- **Órdenes reales**: REAL_OPEN_ORDERS_COUNT=0, DAILY_ORDER_COUNT=0, REAL_ORDERS_CREATED=0. FATAL_ERRORS=0, UNEXPECTED_RESTARTS=0.
+- **Riesgo residual 1**: REVOLUT_X_CONSTRAINTS_UNAVAILABLE persiste en staging. BUY/rebuild/rangos bloqueados, allowCycleExits=true. FAIL_CLOSED_EXPECTED, NO_REGRESSION_REV_C12E. Próxima fase: REV-C12F.
+- **Riesgo residual 2**: storedTakerFallbackEnabled=true en DB (legacy), pero effective=false en runtime. LEGACY_CONFIGURATION_DEBT, NO_IMMEDIATE_SAFETY_BLOCKER.
+- **Backup local preservado**: C:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE_LOCAL_BACKUPS\REV-C12E_PRE_FF_20260804_201206, SHA256=5CC20EB5.
+- **Estado final**: REV-C12E_COMPLETADA=TRUE, DONE=TRUE, HARD_BLOCKER=FALSE. GRID_NEW_ENTRIES_AVAILABLE=FALSE, GRID_NEW_ENTRIES_BLOCKER=REVOLUT_X_CONSTRAINTS_UNAVAILABLE, ALLOW_CYCLE_EXITS=TRUE. NEXT_ACTION=REV-C12F.
+
+### REV-C12F — Corrección del schema de configuration/pairs Revolut X (2026-08-04)
+
+- **Causa raíz confirmada** (REV-C12F diagnóstico read-only en staging): el endpoint oficial `https://revx.revolut.com/api/1.0/public/configuration/pairs?region=EEA` devuelve un objeto raíz cuyas claves son nombres de pares (`{"BTC/USD": {...}, "ETH/USD": {...}, ...}`), no un array ni `{pairs: [...]}`. El parser anterior solo aceptaba array raíz o wrapper `pairs`, por lo que rechazaba la respuesta oficial antes de encontrar BTC/USD. Clasificación: G_PUBLIC_SCHEMA_MISMATCH.
+- **Evidencia**: HTTP 200 desde host y contenedor, 87279 bytes, JSON válido, 382 entries extraídas con el helper nuevo. BTC/USD encontrado con status=active, base_step="0.00000001", quote_step="0.01", min_order_size="0.00000001", min_order_size_quote="1", max_order_size="200". Host y contenedor reciben respuestas idénticas (mismo SHA256).
+- **Corrección mínima** (`RevolutXService.ts`): helper exportado `extractRevolutXPairConfigurationEntries` que acepta tres formatos: array raíz, wrapper `{pairs: [...]}`, y mapa raíz oficial `{pair: {...}}`. Filtra entries no-pair (null, primitives, arrays, metadata sin base/quote strings). No muta el input. No relaja `parseStrictDecimal`, status active, base/quote exactos, min/max o step. Usado en `getPairConfigurations` y `getPublicPairConfigurations`.
+- **Observabilidad**: logs sanitizados añadidos en `resolveGridPairConstraints` para fallos autenticado y público. Solo emiten pair, region y reason (mensaje de error). No exponen API key, private key, firma, headers, body, cookies ni tokens.
+- **Tests**: 33 tests nuevos en `revolutXPairConstraintsSchema.test.ts` (20 helper + 13 integración). 105 tests Grid relacionados pasados. 15 tests existentes de `revolutXPairConstraints.test.ts` pasados. CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+- **Corrección post-verificación**: `filterAndRequirePairEntries` fail-closed (array/wrapper no vacío sin entries válidas → throw). `signedGetJson` no incluye body en error (usa statusText, no response.text()). `sanitizeRevolutXConstraintError` limita reason a 240 chars sin saltos de línea. Restauración correcta del singleton en afterEach.
+- **Validación read-only del payload público real**: 382 entries, BTC/USD encontrado, status=active.
+- **Rama**: review/grid-rev-c12f-20260804, base origin/main=d375601. Sin merge, sin deploy, sin DB, sin migraciones.
+- **Estado**: DONE=FALSE, HARD_BLOCKER=FALSE. TASK_STATUS=REV-C12F corregida, publicada y verificada independientemente en rama review. NEXT_ACTION=fast-forward controlado de review a main. SINGLETON_RESTORATION_IMPLEMENTED=TRUE, SINGLETON_RESTORATION_LOCATION=afterEach, SINGLETON_RESTORATION_COUNTED_AS_TEST=FALSE.
+
+### Cascada REV-C12C (2026-08-03) — causa raíz REVOLUT_X_UNAVAILABLE + observabilidad diferenciada
+
+- **Causa raíz confirmada** en staging (SHA 44cd46f / origin/main): single try/catch fusionaba `resolveGridPairConstraints` con `getTicker`. Cualquier excepción de `getTicker` (404, 401, timeout, red) descartaba silenciosamente las constraints ya resueltas y colapsaba todo en `source: "REVOLUT_X_UNAVAILABLE"` sin logging del error real.
+- **Corrección mínima** (`gridIsolatedEngine.ts` líneas 1334–1371): separación en dos try/catch independientes. `resolveGridPairConstraints` en su propio bloque (safety net para par inválido). `getTicker` en bloque separado que preserva el resultado de constraints y emite log estructurado con el mensaje de error real.
+- **Observabilidad**: `botLogger.warn("GRID_REVOLUTX_TICKER_FAILED", mensaje_real_del_error, { stage, constraintsVerified, constraintsSource, constraintsReasonCode, canCreateRange, allowCycleExits, error })`. Ahora el error HTTP real (404, 401, timeout, etc.) es observable en logs sin acceso a consola del contenedor.
+- **Nuevo tipo** `RevolutXGridFailureStage` en `gridIsolatedTypes.ts`: INITIALIZATION, AUTHENTICATION, PAIR_NORMALIZATION, PAIR_CONSTRAINTS, TICKER_FETCH, TICKER_VALIDATION, FRESHNESS, NETWORK, UNKNOWN. Permite clasificar causas en logging/alertas futuras.
+- **Nuevos EventType** en `botLogger.ts`: `GRID_REVOLUTX_TICKER_FAILED`, `GRID_REVOLUTX_PROJECTION_BLOCKED`.
+- **14 tests dirigidos** en `gridIsolatedEngine.test.ts` (T1–T14): not-initialized, 401, 403, 404, 429, timeout, unknown, constraints-unverified, constraints-verified-preservadas, resolveConstraints-throws, bid-null, bid>=ask, allowCycleExits-always-true, cero-órdenes-SHADOW.
+- **Tests Grid baseline**: 32 archivos / 819 tests / 819 pasados / 0 fallidos (805 anteriores + 14 nuevos). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
+- Staging SHA 44cd46f = pre-REV-C12A; staging NO tiene REV-C12C. `STAGING_CODE_OUTDATED`. Funcionalmente bloqueante hasta deploy.
+
+### Microcorrección final REV-C12B (2026-08-01) — paridad BUY/SELL y transición real de tick
+
+- Helper simétrico `splitSymmetricLevels` en `gridProfessionalProjectionContext.ts`: levelsCount debe ser entero positivo par. BUY=SELL=levelsCount/2. Sin `Math.floor`, sin remainder. 9 no se reparte como 4+5.
+- `validateSymmetricSplit` valida que configuredBuy/Sell coincidan con el split canónico.
+- Engine usa `splitSymmetricLevels` en tick() — si split.ok=false, estado permanece null, no se llama al generador, no se propone rango, no se generan niveles. No lanza excepción (salidas de ciclos abiertos siguen procesándose).
+- View model (`buildGridMarketViewModel.ts`) usa `splitSymmetricLevels` — eliminado `Math.floor`.
+- Projection context valida `allocation.levelsCount % 2 === 0` explícitamente. Impar → ALLOCATION_LEVEL_COUNT_INVALID.
+- 9 tests obligatorios de paridad: 10=5+5 ok, 9=4+5 INVALID, 9=5+4 INVALID, 9=5+5 INVALID, 10=4+6 MISMATCH, 10=4+4 MISMATCH, 10=5+5 no pérdida, "10" INVALID, 10.5 INVALID.
+- Test REAL tick N válido: mocks de `getGridBandSnapshot`, `resolveGridPairConstraints`, `getTicker`, `allocate` devuelven datos válidos. `tick()` crea ProjectionState sin inyección directa. allocation.levelsCount=10, régimen normal_lateral, venue REVOLUT_X, gate canCreateRange=true.
+- Test REAL tick N+1 bloqueado: constraints no verificadas → state null, gate canCreateRange=false. getTicker lanza REVOLUT_X_UNAVAILABLE → state null. Variantes: mercado no apto, allocation falla, régimen desconocido, allocation impar (9 niveles) — todas limpian estado.
+- Cero órdenes reales en SHADOW mode.
+- Corrección de afirmaciones anteriores: allocation impar NO estaba bloqueada antes (se usaba Math.floor), tick N válido NO se ejecutaba realmente (se inyectaba estado).
+- Tests: 805/805 pasan (32 archivos Grid). `npm run check` ✅. `npm run build` ✅. `git diff --check` ✅.
 
 ## 2026-07-26 — GRID REV-C11 FASE 4G: Niveles profesionales V3 con salida individual por ciclo
 
@@ -7054,3 +7229,280 @@ El runtime AMA usaba stubs en memoria. Sin persistencia, sin Lab, sin Replay, si
 - Merge = NO
 - Deploy = NO
 - CI PostgreSQL 16 = WORKFLOW_CREATED (pendiente ejecución en GitHub Actions)
+
+---
+
+## REV-C12G (2026-08-05) — Taker fallback efectivo en SHADOW
+
+- **Causa raíz**: A_STORED_FLAG_PASSED_INSTEAD_OF_EFFECTIVE. El tick automático y el rebuild manual pasaban this.config.takerFallbackEnabled (stored=true) al resolver resolveGridExecutionCapability, sin aplicar el override SHADOW. El audit usaba un ternario local duplicado.
+- **Síntoma**: TAKER_FALLBACK_NOT_DISABLED en cada tick SHADOW, bloqueando generación de niveles. Audit mostraba effectiveTakerFallbackEnabled=false (correcto) pero el tick usaba stored=true (incorrecto).
+- **Corrección**: Helper canónico getEffectiveTakerFallbackEnabled en gridIsolatedTypes.ts, usado por tick (gridIsolatedEngine.ts:1344), rebuild (gridIsolatedEngine.ts:5024) y audit (gridIsolated.routes.ts:1333). SHADOW siempre devuelve false; OFF/REAL_LIMITED/REAL_FULL usan el stored.
+- **Metadata evento**: EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE mantiene tipo histórico pero ahora expone blockerComponent, blockerExplanation, flags de verificación por componente y effectiveTakerFallbackEnabled.
+- **DB**: No modificada. Stored takerFallbackEnabled=true permanece.
+- **Rama**: review/grid-rev-c12g-20260805 (base 482d3e4).
+- **Tests**: 91 + 73 tests dirigidos pasados; CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+- **Estado**: Corregida en rama review; pendiente verificación independiente, fast-forward y deploy.
+
+## REV-C12G post-verificación (2026-08-05) — Cierre de política efectiva y metadata de blockers
+
+- **Defecto 1**: PAIR_CONSTRAINTS ahora precede a EXECUTION_CAPABILITY en la prioridad del blocker. Una capability inválida puede ser consecuencia directa de constraints inválidas.
+- **Defecto 2**: Circuit breaker y Pump Guard ahora se identifican en blockerComponent con reasonCode no nulo y explicación no vacía.
+- **Defecto 3**: Tick y rebuild ahora usan getEffectiveExecutionPolicy además de getEffectiveTakerFallbackEnabled. El audit también usa getEffectiveExecutionPolicy. Los tres call sites comparten las mismas funciones canónicas.
+- **Defecto 4**: Se restauró takerFallbackEnabled: this.config.takerFallbackEnabled en saveConfig. El cambio innecesario Boolean(...) fue eliminado. La normalización efectiva ocurre solo al construir el planning context.
+- **Helper puro**: gridPlanningBlockerMetadata.ts con resolveGridPlanningBlockerMetadata. Prioridad: REFERENCE_MARKET > PAIR_CONSTRAINTS > EXECUTION_CAPABILITY > EXECUTION_MARKET_SNAPSHOT > CIRCUIT_BREAKER > PUMP_GUARD > PLANNING_GATE.
+- **DB**: No modificada. Stored takerFallbackEnabled=true y stored executionPolicy permanecen.
+- **Tests**: 95 + 84 tests dirigidos pasados; CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0.
+- **Estado**: Corregida tras verificación independiente; pendiente nueva verificación, fast-forward y deploy.
+
+## Grid Shadow Close R1 (2026-08-05) — Fixes de lifecycle, timestamp y quantity step
+
+- **Fix 1 — Maker Pending Lifecycle** (`gridShadowPolicy.ts`): `getCrossedShadowLevels` no incluía niveles `buy_maker_pending`, impidiendo la transición `buy_maker_pending → filled`. Ahora los incluye con umbral `buyMakerRequestedPrice`. Estados terminales excluidos. SELL pending no afectado.
+- **Fix 2 — Timestamp Canónico** (`gridIsolatedEngine.ts:968`): `resolveGridShadowExecutionPrice` usaba `new Date()` para el timestamp, causando `future_timestamp` en el freshness check. Ahora recibe `now: this.lastTickAt ?? undefined`.
+- **Fix 3 — Quantity Step Alignment** (`gridIsolatedEngine.ts:1639-1654`): Las cantidades generadas no estaban alineadas a `quantityStep`, causando rechazo en `computeCycleOwnedExitTarget` por `isStepAligned`. Ahora se alinean con `Math.floor(qty / step) * step` tras `toGridLevels`. Niveles con cantidad cero son filtrados. Rango rechazado si < 4 niveles viables.
+- **Tests nuevos**: `gridShadowEndToEndClosure.test.ts` (29 tests E2E), `gridShadowMakerPendingLifecycle.test.ts` (6 tests lifecycle).
+- **Validación**: Tests dirigidos 127/127, Revolut X 48/48, CHECK_EXIT=0, BUILD_EXIT=0, DIFF_EXIT=0, full suite 3483 tests con 30 fallos históricos y 0 nuevos.
+- **Seguridad**: Órdenes reales=0, DB no modificada, maker-only, taker fallback deshabilitado.
+- **Rama**: `review/grid-shadow-close-r1-20260805-102358` (base `0d0f517`).
+- **Estado**: Fixes publicados en review; pendiente verificación limpia, fast-forward y deploy app-only.
+
+## Grid Shadow Cierre Final (2026-08-05) — Deploy y validación de persistencia
+
+- **Integración**: Fast-forward a main sin merge commit. Main final=`473fc43`.
+- **Deploy**: App-only recreate en staging. PRE_DEPLOY_SHA=`0d0f517`, DEPLOY_SOURCE_SHA=`473fc43`. DB intacta.
+- **Runtime**: mode=SHADOW, pair=BTC/USD, MAKER_ONLY, taker=false, realOrders=0. Active range 937f406d con 4 niveles planned. Precio fresco desde Kraken.
+- **Persistencia**: App-only restart validado. Rango, niveles y ciclos recuperados. 0 duplicados, 0 terminales reabiertos. Ciclo protegido a2a0b7ca sin cambios.
+- **Clasificación**: GRID_SHADOW_READY_WAITING_MARKET_VALIDATED. Motor operativo, esperando condiciones de mercado.
+- **GRID_SHADOW_COMPLETADO**: TRUE.
+
+## Grid Shadow Close R2 (2026-08-05) — Fail-closed normalization y E2E hardening
+
+- **Defecto 1 — buildRangeProposal devolvía gridLevels en vez de viableLevels** (`gridIsolatedEngine.ts`): `buildRangeProposal` generaba `gridLevels`, alineaba cantidades a `quantityStep`, filtraba a `viableLevels`, pero retornaba `gridLevels` (incluyendo niveles con cantidad cero). Ahora se aplica `normalizeGridLevelsForExecutionConstraints` que valida cada nivel contra `quantityStep`, `minOrderBase`, `minOrderQuote`, `minOrderUsd` y `maxOrderBase`, retornando `{acceptedLevels, rejectedLevels}` con razón de rechazo. El rango se rechaza si < 4 niveles aceptados. `levelsCount` en DB e in-memory usa `gridLevels.length` (aceptados).
+- **Defecto 2 — E2E permitía pasar sin status=completed** (`gridShadowEndToEndClosure.test.ts`): Tests usaban `if (done)` que permitía skip cuando el ciclo no cerraba, y aceptaban `buy_filled` como estado final. Ahora todos los tests exigen `status === "completed"` estrictamente, sin condicionales. SELL lifecycle usa 3 ticks: TRIGGERED → MAKER_PENDING → fill. Delay de 2ms entre ticks para garantizar `makerEligibleAfter`.
+- **Archivo nuevo — gridLevelConstraintNormalizer.ts**: Función fail-closed `normalizeGridLevelsForExecutionConstraints(levels, constraints)` que alinea cantidades con `Math.floor` (evita floating-point rounding up), valida constraints, retorna niveles aceptados/rechazados con razón. Inmutable: no muta el array de entrada.
+- **Tests nuevos — gridLevelConstraintNormalizer.test.ts**: 18 tests cubriendo alineación, rechazos por constraint, inmutabilidad, edge cases.
+- **Tests endurecidos — gridShadowEndToEndClosure.test.ts**: 34 tests (antes 29). Ciclos BUY→SELL completos con `status=completed`. Nuevos tests: ownership del ciclo, maker SELL lifecycle, seguridad (cero market orders, cero allow_taker).
+- **Tests ampliados — gridShadowMakerPendingLifecycle.test.ts**: 10 tests (antes 6). Nuevos: no double fill, tick posterior obligatorio, inclusión de planned/open.
+- **Validación**: `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅, suite gridIsolated 612/612 tests ✅.
+- **Seguridad**: Órdenes reales=0, DB no modificada, maker-only, taker fallback deshabilitado, sin schema/migration changes.
+- **Rama**: `review/grid-shadow-close-r2-20260805-114240` (base `2260f11`).
+- **Commits**: `0334322` (técnico: fix + tests), `ad9798e` (docs: BITACORA R2).
+- **Verificación limpia**: Worktree detached `ad9798e`, 62/62 tests dirigidos ✅.
+- **Fast-forward**: `main` actualizado de `2260f11` a `ad9798e` y pushed.
+- **Deploy app-only staging**: Build ✅, `up -d --no-deps krakenbot-staging-app` ✅.
+- **DB intacta**: ID y StartedAt idénticos pre/post deploy ✅.
+- **24 polls runtime**: mode=SHADOW, realOrders=0, circuitBreaker=false, plannedLevels=4 en todos los polls ✅.
+- **Constraints por nivel activo**: 4 niveles (2 BUY + 2 SELL), qty>0, notional≥400 USD, ACTIVE_CONSTRAINT_VIOLATIONS=0, ZERO_QUANTITY_LEVELS=0 ✅.
+- **Persistencia app-only restart**: `--force-recreate` app, DB intacta, rango/niveles/ciclos recuperados idénticos ✅.
+- **Suite global local**: 30 fallos históricos conocidos, 3451 passed, 0 nuevos fallos ✅. `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅.
+- **Estado**: GRID_SHADOW_CLOSE_R2 COMPLETADO. Deploy staging validado, persistencia confirmada, sin órdenes reales, sin schema changes.
+
+---
+
+## 2026-08-05 — Grid UI: Escalera unificada y trazabilidad BUY→SELL
+
+- **Módulo**: Grid Isolated UI (`client/src/components/grid/`)
+- **Problema**: La vista de Niveles separaba BUY, SELL/rungs y salidas de ciclo en pestañas distintas, sin mostrar la escalera completa ordenada por precio.
+- **Solución**: Vista unificada con escalera descendente por precio, marcador de precio actual, subvistas (Escalera/Ciclos/Histórico), filtros (Todos/BUY/SELL/Con ciclo) y búsqueda.
+- **Archivos nuevos**:
+  - `client/src/components/grid/gridLevelLadderViewModel.ts` — Función pura `buildGridLevelLadderViewModel(operational)`.
+  - `client/src/components/grid/GridUnifiedLevelLadder.tsx` — Componente React con subvistas, filtros y búsqueda.
+  - `client/src/components/grid/__tests__/gridLevelLadderViewModel.test.ts` — 30 tests unitarios.
+  - `client/src/components/grid/__tests__/GridUnifiedLevelLadder.test.tsx` — 20 tests de componente.
+- **Archivos modificados**:
+  - `client/src/components/grid/GridLevelsCompactPanel.tsx` — Cuerpo reemplazado por `GridUnifiedLevelLadder`.
+  - `client/src/components/grid/GridLevelsCompactPanel.v3.test.tsx` — Tests actualizados.
+  - `client/src/components/grid/__tests__/gridUxRender.test.tsx` — Test de filtros actualizado.
+- **Reglas de asociación**: Ciclo→Rung por `targetRungLevelId` (prioridad) o `targetSellPrice` con tolerancia ±0.01. Múltiples ciclos por rung permitidos. Sin emparejamiento por cantidad o índice.
+- **Tests**: 50 nuevos (30 view model + 20 componente), 89/89 grid UI suite, 3501/3560 full suite (30 históricos, 0 nuevos fallos).
+- **Validación**: `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅, worktree independiente verificado.
+- **Commit**: `3d43c83` (fast-forward desde `abe6f90`).
+- **Deploy app-only staging**: Build ✅, `up -d --no-deps` ✅, DB intacta ✅, HTTP 200 ✅, runtime sin errores ✅.
+- **Alcance**: Solo frontend. Sin cambios en server, shared, migrations, Docker, package.json.
+- **Estado**: COMPLETADO. Deploy staging validado, sin órdenes reales, sin schema changes.
+
+---
+
+## 2026-08-05 — Grid UI: Corrección contractual escalera unificada
+
+- **Módulo**: Grid Isolated UI (`client/src/components/grid/`)
+- **Problema**: `gridLevelLadderViewModel.ts` usaba `currentRange.id` (campo inexistente en el contrato canónico) como `activeRangeId`. El campo real es `market.entryRange.activeRangeVersionId`. Esto provocaba `activeRangeId=null` en runtime, filtrado incorrecto, asociación ciclo→rung con fallback por precio incluso con ID inválido, `makerState` mostrando códigos técnicos, y sin búsqueda histórica separada.
+- **Solución**:
+  1. Eliminado `currentRange.id`; añadido `market.entryRange.activeRangeVersionId` como fuente canónica.
+  2. `filterCurrentLevels<T>()`: filtra por `rangeRelation="current"` (primario) o `rangeVersionId` (fallback).
+  3. `matchCycleToRung` corregido: si `targetRungLevelId` existe pero no coincide, no cae a precio; retorna warning `RUNG_NOT_FOUND`.
+  4. `humanizeMakerState()`: mapea códigos técnicos a etiquetas legibles (MAKER_PENDING → "SELL maker pendiente").
+  5. `searchHistoricalRows()`: búsqueda independiente para subview Histórico con input propio.
+  6. Eliminado import `ChevronDown` sin uso.
+- **Archivos modificados** (4, +469/-37 líneas):
+  - `client/src/components/grid/gridLevelLadderViewModel.ts`
+  - `client/src/components/grid/GridUnifiedLevelLadder.tsx`
+  - `client/src/components/grid/__tests__/gridLevelLadderViewModel.test.ts`
+  - `client/src/components/grid/__tests__/GridUnifiedLevelLadder.test.tsx`
+- **Tests**: 74/74 PASS (42 view model + 32 componente). Suite completa: 3525 passed, 30 pre-existentes, 0 nuevos fallos.
+- **Validación**: `npm run check` ✅, `npm run build` ✅, `git diff --check` ✅, worktree limpio verificado.
+- **Commit técnico**: `da6524816970a6fb8c14a8265f3ad4ec6e0fff7f` (fast-forward desde `3d43c83`).
+- **Deploy app-only staging**: `--no-deps` ✅, DB intacta ✅, HTTP 200 ✅, `mode=SHADOW` ✅, `MAKER_ONLY` ✅, `realOpenOrdersCount=0` ✅, `fatalErrors=0` ✅.
+- **Validación visual Playwright**: Desktop 1440×900 20/20 PASS, Mobile 390×844 20/20 PASS. `VISUAL_VALIDATION=PASS`. Búsqueda histórica filtra (20→0), Mostrar más incrementa (20→40), precio actual una vez, sin MAKER_PENDING operativo, sin overflow horizontal, sin errores consola.
+- **Alcance**: Solo frontend. Sin cambios en server, shared, migrations, Docker, compose, package files.
+- **Estado**: COMPLETADO. `CLEAN_VERIFY_UI=PASS`, `FULL_SUITE_NEW_FAILURES=0`, `VISUAL_VALIDATION=PASS`.
+---
+
+## 2026-08-06 — Grid UI: Correccion final contrato, filtrado mixto y tests interactivos
+
+**Objetivo:** Corregir 4 defectos residuales detectados tras la correccion contractual da65248.
+
+**Defectos corregidos:**
+1. activeRangeId ahora retorna resolvedRangeId (no el valor crudo de market.entryRange.activeRangeVersionId)
+2. filterCurrentLevels evalua por fila (no globalmente), soportando colecciones mixtas
+3. Tests del componente ahora verifican logica interactiva via funciones puras (20 tests I1-I20)
+4. Auditoria documental restaurada desde commit original 9bb12423 y corregida cronologicamente
+
+**Archivos modificados:**
+- client/src/components/grid/gridLevelLadderViewModel.ts (+20/-10 lineas)
+- client/src/components/grid/__tests__/gridLevelLadderViewModel.test.ts (+98 lineas, tests 43-48)
+- client/src/components/grid/__tests__/GridUnifiedLevelLadder.test.tsx (+230 lineas, 20 tests interactivos)
+- AUDITORIAS/AUDITORIA_GRID_UI_ESCALERA_UNIFICADA_2026-08-05.md (restaurado + anadido cronologico)
+
+**Tests:**
+- View model: 48/48 PASS
+- Componente: 52/52 PASS (30 SSR + 20 interactivos + 2 existentes)
+- Suite Grid UI: 139/139 PASS (7 archivos)
+- Verificacion limpia worktree independiente: 100/100 PASS
+- Suite completa: 3551 passed, 30 pre-existentes, 0 nuevos fallos
+**Build:** `npm run check` PASS, `npm run build` PASS
+
+
+
+**Commit tecnico:** `5ea383b` (fast-forward: `da65248` -> `aa223cc` -> `5ea383b`)
+- RESOLVED_RANGE_ID_RETURNED=TRUE
+- MIXED_RANGE_FILTERING_FIXED=TRUE
+- INTERACTION_LOGIC_TESTS=TRUE (20 tests via pure functions, entorno Node)
+- REAL_DOM_UNIT_TESTS=FALSE (sin Testing Library, jsdom ni happy-dom)
+- AUDIT_HISTORY_PRESERVED=TRUE
+- CLEAN_VERIFY_UI=PASS
+- FULL_SUITE_NEW_FAILURES=0
+**Estado:** COMPLETADO (local). Deploy staging y validacion visual pendientes (requieren acceso VPS).
+
+---
+
+## 2026-08-06 — Grid UI: Deploy final y validacion interactiva real en staging
+
+**Objetivo:** Desplegar commit final `0a604d8` en staging y validar interaccion real en navegador.
+
+**Pre-deploy:**
+- PRE_DEPLOY_SHA: aa223cc
+- APP_ID_BEFORE: d16d636e76b9
+- DB_ID_BEFORE: a2f9a3f275c3 (postgres:16-alpine, Up 3 months, healthy)
+- mode=SHADOW, pair=BTC/USD, MAKER_ONLY, realOpenOrdersCount=0
+
+**Deploy:**
+- git merge --ff-only origin/main: aa223cc -> 0a604d8
+- docker compose build krakenbot-staging-app: OK (2599 modulos, 8.72s)
+- docker compose up -d --no-deps krakenbot-staging-app: OK
+- POST_DEPLOY_SHA: 0a604d8
+- APP_ID_AFTER: 62d48682c0f5 (recreado)
+- DB_ID_AFTER: a2f9a3f275c3 (= DB_ID_BEFORE)
+- DB_RESTARTED=FALSE
+
+**Validacion HTTP:**
+- GET /: 200
+- GET /grid-isolated: 200
+- GET /api/grid-isolated/config: 200
+- GET /api/grid-isolated/status: 200
+- GET /api/grid-isolated/monitor/audit: 200
+
+**Validacion runtime:**
+- MODE=SHADOW, PAIR=BTC/USD, MAKER_ONLY=TRUE, REAL_OPEN_ORDERS=0, FATAL_ERRORS=0
+- Logs: sin crash, sin error React, sin taker fallback, sin orden real
+
+**Validacion interactiva real (Playwright headless en VPS):**
+- Desktop 1440x900: 25/25 PASS
+- Mobile 390x844: 9/9 PASS
+- Total: 34/34 PASS — ALL_PASS=TRUE
+- CONSOLE_ERRORS=0, REACT_KEY_WARNINGS=0, HORIZONTAL_OVERFLOW=FALSE
+- Filtros BUY/SELL/Con ciclo funcionales
+- Busqueda de escalera filtra y restaura
+- Historico: 20 filas iniciales, Mostrar mas incrementa a 40
+- Busqueda historica por cycleId y rangeVersionId
+- Subvistas Escalera/Ciclos/Historico navegables
+- PRECIO ACTUAL marker exactamente uno
+- Sin MAKER_PENDING como estado operativo
+- Sin keys duplicadas
+
+**Correccion documental:**
+- REAL_DOM_INTERACTION_TESTS=TRUE corregido a:
+- INTERACTION_LOGIC_TESTS=TRUE
+- INTERACTION_LOGIC_TEST_COUNT=20
+- INTERACTION_LOGIC_TEST_METHOD=PURE_FUNCTIONS_NODE
+- REAL_DOM_UNIT_TESTS=FALSE
+- REAL_BROWSER_INTERACTION_VALIDATION=TRUE
+
+**Registros finales:**
+- APP_DEPLOYED_SOURCE=0a604d8a85b586dfbab6f0672e91a99c46f38d75
+- FINAL_DOCUMENTATION_SHA=rellenar tras commit
+- APP_REBUILT_FOR_DOCS=FALSE
+- APP_RESTARTED_FOR_DOCS=FALSE
+- DB_RESTARTED=FALSE
+- DESKTOP_VALIDATED=TRUE
+- MOBILE_VALIDATED=TRUE
+- REAL_BROWSER_INTERACTION_VALIDATION=TRUE
+
+**Nota:** La imagen de aplicacion desplegada corresponde a `0a604d8`. El checkout Git del VPS fue actualizado hasta el commit documental final sin rebuild ni reinicio. Los commits documentales no modifican codigo, server, client, shared, migrations, Docker, compose ni package files.
+
+**Alcance:** Solo frontend Grid. DB intacta. Sin cambios en server, shared, migrations, Docker, compose, package files.
+
+**Estado:** COMPLETADO. Deploy validado. Interaccion real validada en staging. Checkout VPS sincronizado. Documentacion limpia y honesta. Pendientes: ninguno.
+
+---
+
+## 2026-08-07 — Grid: Malla Geométrica Uniforme Canónica
+
+**Módulo:** Grid Isolated — generador profesional de niveles  
+**Commit:** `57fd074`  
+**Branch:** `review/grid-uniform-geometric-20260806` → `main`  
+**Auditoría:** `AUDITORIAS/AUDITORIA_GRID_UNIFORME_GEOMETRICO_2026-08-06.md`
+
+### Problema
+
+El sistema Grid usaba espaciado acumulativo lineal que producía un doble gap central entre BUY[0] y SELL[0], sin garantizar uniformidad geométrica entre niveles adyacentes.
+
+### Solución
+
+Refactor a malla geométrica uniforme canónica:
+- `ratio = 1 + spacingPct/100`
+- `BUY[i] = centerPrice / ratio^(i + 0.5)`
+- `SELL[i] = centerPrice * ratio^(i + 0.5)`
+- Invariante: `SELL[0] / BUY[0] = ratio` (un único gap central)
+- Gap adyacente uniforme: razón entre niveles adyacentes del mismo lado = `ratio`
+
+### Archivos afectados
+
+**Nuevos:**
+- `server/services/gridIsolated/gridUniformGeometric.ts`
+- `server/services/__tests__/gridUniformGeometric.test.ts` (14 tests)
+
+**Modificados:**
+- `gridSpacingCalculator.ts` — fórmula `uniform_geometric_spacing`, refactor de counting, preview, adaptive range, range audit
+- `gridIsolatedEngine.ts` — geometricRatio real, method actualizado
+- `gridLevelConstraintNormalizer.ts` — alineación de precio a tick size
+- `gridIsolated.routes.ts`, `buildGridAuditViewModel.ts` — identificador de fórmula
+- `gridForensicJsonb.test.ts`, `gridSpacingCalculator.test.ts`, `gridAdaptiveSmartRange.test.ts`, `gridCompactRange.test.ts`, `gridLevelConstraintNormalizer.test.ts` — tests actualizados
+
+### Validaciones
+
+- Tests dirigidos: 85/85 pass
+- Tests grid completos: 697/697 pass
+- TypeScript: 0 errors
+- Build: OK
+- Suite completa: 3579 pass, 16 fail (pre-existing, no relacionados)
+
+### Deploy staging
+
+- App-only con `--no-deps`, DB intacta
+- DB_ID_BEFORE = DB_ID_AFTER, DB_RESTARTED = FALSE
+- MODE=SHADOW, realOpenOrdersCount=0, isActive=true, isRunning=true
+
+### Estado
+
+- Implementado, validado, commiteado, subido, desplegado y operacional.
+- Pendientes: ninguno.

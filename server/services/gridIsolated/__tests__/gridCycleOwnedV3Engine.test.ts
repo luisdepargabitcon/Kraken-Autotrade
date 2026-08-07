@@ -562,11 +562,11 @@ describe("Gate E — buildGridExecutionMarketSnapshot edge cases", () => {
     expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_ASK_INVALID");
   });
 
-  it("E-S3: rechaza fuente sin REVOLUT con EXECUTION_MARKET_SOURCE_INVALID", () => {
+  it("E-S3: rechaza fuente sin REVOLUT ni KRAKEN con EXECUTION_MARKET_SOURCE_INVALID", () => {
     const now = new Date();
     const snapshot = buildGridExecutionMarketSnapshot({
       pair: "BTC/USD", ticker: makeTicker(), constraints: makeConstraints(),
-      source: "kraken_ticker", timestamp: now, acquiredAt: now, now,
+      source: "binance_ticker", timestamp: now, acquiredAt: now, now,
     });
     expect(snapshot.verified).toBe(false);
     expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_SOURCE_INVALID");
@@ -593,12 +593,12 @@ describe("Gate E — buildGridExecutionMarketSnapshot edge cases", () => {
     expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_TIMESTAMP_INVALID");
   });
 
-  it("E-S6: rechaza por acquiredAt stale cuando no hay timestamp de mercado", () => {
+  it("E-S6: rechaza por fetchedAt stale cuando no hay timestamp de mercado", () => {
     const now = new Date();
-    const staleAcquired = new Date(now.getTime() - 60_000);
+    const staleFetched = new Date(now.getTime() - 60_000);
     const snapshot = buildGridExecutionMarketSnapshot({
       pair: "BTC/USD", ticker: makeTicker(), constraints: makeConstraints(),
-      source: "revolut_x_ticker", timestamp: null, acquiredAt: staleAcquired, now,
+      source: "revolut_x_ticker", timestamp: null, fetchedAt: staleFetched, acquiredAt: now, now,
     });
     expect(snapshot.verified).toBe(false);
     expect(snapshot.reasonCode).toBe("EXECUTION_MARKET_STALE");

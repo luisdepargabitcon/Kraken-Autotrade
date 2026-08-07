@@ -204,11 +204,24 @@ vi.mock("../gridBandAdapter", () => ({
 vi.mock("../../MarketDataService", () => ({
   MarketDataService: {
     getTicker: vi.fn(async () => ({ bid: 100, ask: 101, last: 100.5 })),
+    // REV-C12E: Kraken reference market ticker snapshot
+    getFreshTickerSnapshot: vi.fn(async () => ({
+      pair: "BTC/USD",
+      ticker: { bid: 100, ask: 101, last: 100.5 },
+      marketDataVenue: "KRAKEN",
+      source: "KRAKEN_MARKET_DATA",
+      fetchedAt: new Date(),
+      ageMs: 0,
+      maxAgeMs: 45000,
+      fresh: true,
+      cached: false,
+    })),
   },
 }));
 
 vi.mock("../../exchanges/RevolutXService", () => ({
   revolutXService: {
+    isInitialized: vi.fn(() => true),
     resolveGridPairConstraints: vi.fn(async () => ({
       pair: "BTC/USD", normalizedPair: "BTC-USD", executionVenue: "REVOLUT_X",
       baseCurrency: "BTC", quoteCurrency: "USD",
@@ -268,6 +281,7 @@ function setupEngineWithBreakerOpen(engine: any, overrides: Record<string, unkno
     netProfitTargetPct: 1, buyFeePct: 0, sellFeePct: 0,
     maxOpenCycles: 5, maxDailyOrders: 100,
     gridMinLevelUsd: 1, gridWalletMode: "automatic",
+    executionPolicy: "MAKER_ONLY", takerFallbackEnabled: false,
     circuitBreakerOpen: true,
     circuitBreakerOpenedAt: new Date(),
     circuitBreakerReason: "test breaker",

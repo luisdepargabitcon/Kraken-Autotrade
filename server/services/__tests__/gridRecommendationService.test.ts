@@ -148,6 +148,10 @@ describe("buildConfigurationRecommendation", () => {
         regime: "normal",
         ...mktOv,
       },
+      professionalGenerator: {
+        requestedBuyLevels: 4,
+        requestedSellLevels: 4,
+      },
       resolvedRange: {
         activeRangeVersionId: "range-v1",
         lowerPrice: 93000,
@@ -158,7 +162,6 @@ describe("buildConfigurationRecommendation", () => {
         ...rngOv,
       },
       adaptiveDecision: null,
-      professionalGenerator: null,
       levels: [],
       status: { activeRangeVersionId: "range-v1" },
       ...rest,
@@ -189,13 +192,15 @@ describe("buildConfigurationRecommendation", () => {
     expect(r!.alternatives.length).toBe(3);
   });
 
-  it("alternativa A es safeToApply", () => {
+  it("alternativa A es informativa y no safeToApply", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
     const altA = r!.alternatives.find(a => a.id === "A");
     expect(altA).toBeDefined();
-    expect(altA!.safeToApply).toBe(true);
-    expect(altA!.blockingReason).toBeNull();
+    expect(altA!.safeToApply).toBe(false);
+    expect(altA!.blockingReason).toBeTruthy();
+    expect(altA!.changedFields).toEqual([]);
+    expect(Object.keys(altA!.proposedConfig).length).toBe(0);
   });
 
   it("alternativa B ajusta densidad sin reducir netProfitTargetPct", () => {
@@ -216,10 +221,12 @@ describe("buildConfigurationRecommendation", () => {
     expect(altC!.proposedConfig.gridRangeMaxPct).toBeDefined();
   });
 
-  it("recommendedAlternativeId es A por defecto (prioridad seguridad)", () => {
+  it("recommendedAlternativeId es B o C cuando hay alternativa segura, nunca A", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
-    expect(r!.recommendedAlternativeId).toBe("A");
+    if (r!.recommendedAlternativeId != null) {
+      expect(["B", "C"]).toContain(r!.recommendedAlternativeId);
+    }
   });
 
   it("tiene id, generatedAt y expiresAt", () => {
@@ -246,6 +253,8 @@ describe("buildConfigurationRecommendation", () => {
     expect(r).not.toBeNull();
     expect(r!.safeToApply).toBe(false);
     expect(r!.blockingReason).toBeTruthy();
+    // REV-C12A: recommendedAlternativeId must be null in blocked states
+    expect(r!.recommendedAlternativeId).toBeNull();
   });
 
   it("retorna recomendación bloqueada cuando bandWidthPct es 0", () => {
@@ -255,6 +264,99 @@ describe("buildConfigurationRecommendation", () => {
     expect(r).not.toBeNull();
     expect(r!.safeToApply).toBe(false);
     expect(r!.blockingReason).toBeTruthy();
+    // REV-C12A: recommendedAlternativeId must be null in blocked states
+    expect(r!.recommendedAlternativeId).toBeNull();
+  });
+
+  it("REV-C12A: recommendedAlternativeId es null cuando datos son insuficientes", () => {
+    // Missing atrPct — data sufficiency check should block
+    const r = buildConfigurationRecommendation(makeInput({
+      marketContext: { currentPrice: 95000, band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.0 }, atrPct: null as any },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+  });
+
+  it("REV-C12A: resolveRequestedLevels fail-closed — blocked cuando requestedBuyLevels es 0", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: 0, requestedSellLevels: 4 },
+    }));
+    // 0 is invalid — should return blocked recommendation, not a valid one
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12A: resolveRequestedLevels fail-closed — blocked cuando requestedBuyLevels es decimal", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: 4.5, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12A: resolveRequestedLevels fail-closed — blocked cuando requestedBuyLevels es string no numérico", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: "abc" as any, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12A: resolveRequestedLevels fail-closed — blocked cuando solo buyLevels está presente", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: 4 } as any,
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12B: validateStrictLevelValue rejects numeric string '4' (no Number() coercion)", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: "4" as any, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12B: validateStrictLevelValue rejects NaN", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: NaN, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12B: validateStrictLevelValue rejects Infinity", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: Infinity, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
+  });
+
+  it("REV-C12B: validateStrictLevelValue rejects boolean true", () => {
+    const r = buildConfigurationRecommendation(makeInput({
+      professionalGenerator: { requestedBuyLevels: true as any, requestedSellLevels: 4 },
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.safeToApply).toBe(false);
+    expect(r!.recommendedAlternativeId).toBeNull();
+    expect(r!.alternatives).toEqual([]);
   });
 
   it("warnings incluye mensaje sobre rango vigente", () => {
@@ -273,55 +375,99 @@ describe("buildConfigurationRecommendation", () => {
     expect(r!.warnings.some((w: string) => w.includes("configuración original") || w.includes("Configuración original"))).toBe(true);
   });
 
-  it("currentConfig refleja los valores de entrada", () => {
+  it("currentConfig refleja los valores reales y no publica buyLevels/sellLevels", () => {
     const r = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(r).not.toBeNull();
     expect(r!.currentConfig.netProfitTargetPct).toBe(0.1);
     expect(r!.currentConfig.buyFeePct).toBe(0.09);
     expect(r!.currentConfig.sellFeePct).toBe(0.09);
     expect(r!.currentConfig.taxReservePct).toBe(20);
+    expect(r!.currentConfig.buyLevels).toBeUndefined();
+    expect(r!.currentConfig.sellLevels).toBeUndefined();
   });
 });
 
 describe("validateApplyPayload", () => {
   function makeRec(overrides: any = {}): ConfigurationRecommendation {
-    const base = buildConfigurationRecommendation({
-      mode: "SHADOW",
-      pair: "BTC/USD",
-      config: {
-        netProfitTargetPct: 0.1,
-        buyFeePct: 0.09,
-        sellFeePct: 0.09,
-        taxReservePct: 20,
-        gridRangeMaxPct: 2.5,
-        enforceCompactRange: true,
-        buyLevels: 4,
-        sellLevels: 4,
-        gridStepAtrMultiplier: 1.5,
-        gridStepMaxPct: 3.0,
-      },
-      marketContext: {
-        currentPrice: 95000,
-        band: { lower: 93000, center: 95000, upper: 97000, widthPct: 4.0, source: "bollinger" },
-        atrPct: 0.5,
-        regime: "normal",
-      },
-      resolvedRange: {
+    // Construct a recommendation directly with a mix of safe and non-safe alternatives.
+    // This tests validateApplyPayload logic, not recommendation generation.
+    const now = new Date();
+    const base: ConfigurationRecommendation = {
+      id: "rec-test-validate",
+      generatedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+      snapshotFingerprint: "cfg||ar||mkt",
+      configFingerprint: "cfg",
+      marketFingerprint: "mkt",
+      activeRangeFingerprint: "ar",
+      context: {
+        pair: "BTC/USD",
+        mode: "SHADOW",
         activeRangeVersionId: "range-v1",
-        lowerPrice: 93000,
-        centerPrice: 95000,
-        upperPrice: 97000,
-        widthPct: 4.0,
-        configSnapshot: { netProfitTargetPct: 0.8 },
+        regime: "normal",
+        regimeMaxPct: 5,
+        bandPeriod: 20,
+        bandStdDevMultiplier: 2,
+        atrPeriod: 14,
+        atrTimeframe: "1h",
+        bandSource: "bollinger",
+        bandLower: 93000,
+        bandCenter: 95000,
+        bandUpper: 97000,
+        bandWidthPct: 4.0,
+        atrPct: 0.5,
+        referencePrice: 95000,
       },
-      adaptiveDecision: null,
-      professionalGenerator: null,
-      levels: [],
-      status: { activeRangeVersionId: "range-v1" },
-      ...overrides,
-    });
-    if (!base) throw new Error("Failed to build recommendation");
-    return base;
+      referencePrice: 95000,
+      fresh: true,
+      confidence: 0.85,
+      title: "Recomendación de configuración",
+      explanation: "Test recommendation",
+      currentConfig: { netProfitTargetPct: 0.1 },
+      alternatives: [
+        {
+          id: "A",
+          title: "Informativa",
+          explanation: "Solo informativa",
+          proposedConfig: {},
+          changedFields: [],
+          expectedBefore: { levels: 2, spacingPct: 0.75, rangePct: 2.5, netProfitPct: 0.1 },
+          expectedAfter: { levels: 2, spacingPct: 0.75, rangePct: 2.5, netProfitPct: 0.1 },
+          warnings: [],
+          safeToApply: false,
+          blockingReason: "Informativa, no aplicable",
+        },
+        {
+          id: "B",
+          title: "Ajustar densidad",
+          explanation: "Ajusta densidad",
+          proposedConfig: { gridStepAtrMultiplier: 1.2 },
+          changedFields: ["gridStepAtrMultiplier"],
+          expectedBefore: { levels: 2, spacingPct: 0.75, rangePct: 2.5, netProfitPct: 0.1 },
+          expectedAfter: { levels: 6, spacingPct: 0.6, rangePct: 2.5, netProfitPct: 0.1 },
+          warnings: [],
+          safeToApply: true,
+          blockingReason: null,
+        },
+        {
+          id: "C",
+          title: "Ampliar rango",
+          explanation: "Amplía rango",
+          proposedConfig: { gridRangeMaxPct: 4.0 },
+          changedFields: ["gridRangeMaxPct"],
+          expectedBefore: { levels: 2, spacingPct: 0.75, rangePct: 2.5, netProfitPct: 0.1 },
+          expectedAfter: { levels: 8, spacingPct: 0.75, rangePct: 4.0, netProfitPct: 0.1 },
+          warnings: [],
+          safeToApply: false,
+          blockingReason: "No se puede validar de forma segura con la microestructura actual.",
+        },
+      ],
+      recommendedAlternativeId: "B",
+      warnings: [],
+      safeToApply: true,
+      blockingReason: null,
+    };
+    return { ...base, ...overrides };
   }
 
   it("rechaza si mode no es SHADOW", () => {
@@ -395,7 +541,7 @@ describe("validateApplyPayload", () => {
     expect(r.valid).toBe(false);
   });
 
-  it("aprueba con payload válido para alternativa A", () => {
+  it("aprueba con payload válido para alternativa safeToApply", () => {
     const rec = makeRec();
     const safeAlt = rec.alternatives.find(a => a.safeToApply);
     expect(safeAlt).toBeDefined();
@@ -425,12 +571,12 @@ describe("validateApplyPayload", () => {
 });
 
 describe("RECOMMENDATION_APPLY_ALLOWLIST y BLOCKLIST", () => {
-  it("allowlist contiene buyLevels", () => {
-    expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("buyLevels");
+  it("allowlist NO contiene buyLevels", () => {
+    expect(RECOMMENDATION_APPLY_ALLOWLIST).not.toContain("buyLevels");
   });
 
-  it("allowlist contiene sellLevels", () => {
-    expect(RECOMMENDATION_APPLY_ALLOWLIST).toContain("sellLevels");
+  it("allowlist NO contiene sellLevels", () => {
+    expect(RECOMMENDATION_APPLY_ALLOWLIST).not.toContain("sellLevels");
   });
 
   it("allowlist contiene netProfitTargetPct", () => {

@@ -18,6 +18,69 @@ export interface RevolutXPairConfigurationRaw {
   status: string;
 }
 
+/**
+ * REV-C12F: Extracts pair configuration entries from any of the three known
+ * Revolut X response shapes:
+ *   A. Root array:            [{ base, quote, ... }]
+ *   B. Wrapper object:        { pairs: [{ base, quote, ... }] }
+ *   C. Official root pair map: { "BTC/USD": { base, quote, ... }, ... }
+ *
+ * Filters out non-pair values (null, primitives, arrays, metadata without
+ * base/quote strings). Does NOT relax parseStrictDecimal, status, base/quote
+ * exactness, min/max or step validation — those remain in parseAndValidate.
+ * Does NOT mutate the input.
+ */
+export function extractRevolutXPairConfigurationEntries(
+  response: unknown,
+): RevolutXPairConfigurationRaw[] {
+  if (response === null || response === undefined) {
+    throw new Error("Respuesta inválida de configuration/pairs");
+  }
+
+  // A. Root array.
+  if (Array.isArray(response)) {
+    return filterAndRequirePairEntries(response);
+  }
+
+  // B. Wrapper { pairs: [...] }.
+  if (typeof response === "object") {
+    const wrapperPairs = (response as any).pairs;
+    if (Array.isArray(wrapperPairs)) {
+      return filterAndRequirePairEntries(wrapperPairs);
+    }
+  }
+
+  // C. Official root pair map: { "BTC/USD": { base, quote, ... }, ... }.
+  if (typeof response === "object" && !Array.isArray(response)) {
+    return filterAndRequirePairEntries(Object.values(response as Record<string, unknown>));
+  }
+
+  throw new Error("Respuesta inválida de configuration/pairs");
+}
+
+function isCandidatePairEntry(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return false;
+  if (typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  return typeof obj.base === "string" && typeof obj.quote === "string";
+}
+
+function filterAndRequirePairEntries(
+  values: unknown[],
+): RevolutXPairConfigurationRaw[] {
+  const entries = values.filter(isCandidatePairEntry) as RevolutXPairConfigurationRaw[];
+  if (entries.length === 0) {
+    throw new Error("Respuesta inválida de configuration/pairs");
+  }
+  return entries;
+}
+
+function sanitizeRevolutXConstraintError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/[\r\n\t]+/g, " ").slice(0, 240);
+}
+
 export interface RevolutXPairConstraints {
   pair: string;
   normalizedPair: string;
@@ -79,8 +142,12 @@ export class RevolutXService implements IExchangeService {
     try {
       const response = await fetch(fullUrl, { headers });
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`RevolutX API error ${response.status}: ${errorText}`);
+        const statusText = typeof response.statusText === "string" ? response.statusText.trim() : "";
+        throw new Error(
+          statusText
+            ? `RevolutX API error ${response.status} ${statusText}`
+            : `RevolutX API error ${response.status}`,
+        );
       }
       return (await response.json()) as T;
     } catch (error: any) {
@@ -767,18 +834,14 @@ export class RevolutXService implements IExchangeService {
 
   async getPairConfigurations(): Promise<RevolutXPairConfigurationRaw[]> {
     const response = await this.signedGetJson<unknown>("/api/1.0/configuration/pairs");
-    const entries = Array.isArray(response) ? response : (response as any)?.pairs;
-    if (!Array.isArray(entries)) throw new Error("Respuesta inválida de configuration/pairs");
-    return entries as RevolutXPairConfigurationRaw[];
+    return extractRevolutXPairConfigurationEntries(response);
   }
 
   private async getPublicPairConfigurations(region: string): Promise<RevolutXPairConfigurationRaw[]> {
     const response = await fetch(`${API_BASE_URL}/api/1.0/public/configuration/pairs?region=${encodeURIComponent(region)}`);
     if (!response.ok) throw new Error(`RevolutX public configuration error ${response.status}`);
     const body = await response.json() as unknown;
-    const entries = Array.isArray(body) ? body : (body as any)?.pairs;
-    if (!Array.isArray(entries)) throw new Error("Respuesta pública inválida de configuration/pairs");
-    return entries as RevolutXPairConfigurationRaw[];
+    return extractRevolutXPairConfigurationEntries(body);
   }
 
   async resolveGridPairConstraints(pair: string, region = process.env.REVOLUTX_REGION || "EEA"): Promise<RevolutXPairConstraints> {
@@ -818,7 +881,10 @@ export class RevolutXService implements IExchangeService {
       const authRaw = matchRaw(authList);
       if (authRaw) return parseAndValidate(authRaw, "revolut_x_authenticated_configuration_pairs");
     } catch (authErr) {
-      // Fall through to public endpoint.
+      console.warn("[revolutx] pair constraints authenticated resolution failed", {
+        pair: normalizedPair,
+        reason: sanitizeRevolutXConstraintError(authErr),
+      });
     }
 
     // 2. Endpoint público EEA si auth falla o no contiene el par / es inválido.
@@ -826,8 +892,12 @@ export class RevolutXService implements IExchangeService {
       const publicList = await this.getPublicPairConfigurations(region);
       const publicRaw = matchRaw(publicList);
       if (publicRaw) return parseAndValidate(publicRaw, `revolut_x_public_configuration_pairs_${region.toLowerCase()}`);
-    } catch {
-      // Fall through to cache.
+    } catch (publicErr) {
+      console.warn("[revolutx] pair constraints public resolution failed", {
+        pair: normalizedPair,
+        region,
+        reason: sanitizeRevolutXConstraintError(publicErr),
+      });
     }
 
     // 3. Cache vigente verificada (sin renovar, sin usar tras expiresAt).

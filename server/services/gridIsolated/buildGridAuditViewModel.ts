@@ -276,7 +276,7 @@ function buildRangeLifecycle(
   const pgAny = professionalGenerator as any;
   const operationalRangeWidthPct = pgAny?.available && pgAny.operationalBandWidthPct != null ? pgAny.operationalBandWidthPct : null;
   const rGenMethod = r.method ?? null;
-  const rGenSource = rGenMethod === "professional_accumulated_spacing" ? "pre_adaptive"
+  const rGenSource = rGenMethod === "professional_uniform_geometric_spacing" ? "pre_adaptive"
     : rGenMethod === "adaptive_smart" ? "adaptive_smart"
     : rGenMethod ?? "unknown";
 
@@ -470,7 +470,7 @@ function buildActiveRangeView(
   const method = r.method ?? null;
   const source: GridActiveRangeView["source"] =
     method === "adaptive_smart" ? "adaptive"
-    : method === "professional_accumulated_spacing" ? "pre_adaptive"
+    : method === "professional_uniform_geometric_spacing" ? "pre_adaptive"
     : "unknown";
 
   return {
@@ -860,7 +860,12 @@ export function buildGridAuditViewModel(
   lastShadowValidation: { at: Date | null; result: any },
   lastProfessionalValidation: { at: Date | null; result: any },
   providedProfessionalGenerator: any = null,
-  providedRangeLifecycle: any = null
+  providedRangeLifecycle: any = null,
+  // REV-C12A: Real execution gate + microstructure + allocation
+  executionGate: any = null,
+  executionMarketSnapshot: any = null,
+  pairConstraints: any = null,
+  allocation: any = null,
 ): GridAuditViewModel {
   const activeRange = buildActiveRangeView(status, resolvedRange, marketContext?.currentPrice ?? null);
   const counters = buildCounters(status, levels, cycles);
@@ -943,6 +948,11 @@ export function buildGridAuditViewModel(
     professionalGenerator,
     lastProfessionalValidationAt: lastProfessionalValidation.at,
     lastShadowValidationAt: lastShadowValidation.at,
+    // REV-C12A: Pass real execution gate + microstructure + allocation
+    executionGate,
+    executionMarketSnapshot,
+    pairConstraints,
+    allocation,
   });
 
   return {

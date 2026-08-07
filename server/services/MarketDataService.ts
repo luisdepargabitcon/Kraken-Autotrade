@@ -36,6 +36,11 @@ export interface CachedCandles {
 export interface CachedPrice {
   ticker: Ticker;
   fetchedAt: number;
+  // REV-C12E: Provenance metadata for cache traceability.
+  // Kraken fetches: marketDataVenue="KRAKEN", source="KRAKEN_MARKET_DATA".
+  // Manual putPrice: marketDataVenue=null, source="MANUAL_OR_UNKNOWN".
+  marketDataVenue: "KRAKEN" | null;
+  source: "KRAKEN_MARKET_DATA" | "MANUAL_OR_UNKNOWN";
 }
 
 export interface MarketDataStats {
@@ -51,6 +56,22 @@ export interface MarketDataStats {
     ttlMs: number;
     stale: boolean;
   }[];
+}
+
+// ─── REV-C12E: Kraken reference market ticker snapshot ──────────────────────
+// Strict, typed snapshot for Grid planning. Source is always KRAKEN via
+// ExchangeFactory.getDataExchange(). Reuses the existing price cache and
+// single-flight mechanism — no duplicate concurrent calls.
+export interface MarketTickerSnapshot {
+  pair: string;
+  ticker: Ticker;
+  marketDataVenue: "KRAKEN";
+  source: "KRAKEN_MARKET_DATA";
+  fetchedAt: Date;
+  ageMs: number;
+  maxAgeMs: number;
+  fresh: boolean;
+  cached: boolean;
 }
 
 // ─── Timeframe helpers ────────────────────────────────────────────
@@ -232,7 +253,14 @@ class MarketDataServiceClass {
       const exchange = ExchangeFactory.getDataExchange();
       if (!exchange.isInitialized()) throw new Error("exchange not ready");
       const ticker = await exchange.getTicker(pair);
-      this.priceCache.set(pair, { ticker, fetchedAt: Date.now() });
+      // REV-C12E: Persist Kraken provenance when data exchange is Kraken.
+      const isKraken = ExchangeFactory.getDataExchangeType() === "kraken";
+      this.priceCache.set(pair, {
+        ticker,
+        fetchedAt: Date.now(),
+        marketDataVenue: isKraken ? "KRAKEN" : null,
+        source: isKraken ? "KRAKEN_MARKET_DATA" : "MANUAL_OR_UNKNOWN",
+      });
       return ticker;
     })();
 
@@ -270,7 +298,14 @@ class MarketDataServiceClass {
       const exchange = ExchangeFactory.getDataExchange();
       if (!exchange.isInitialized()) throw new Error("exchange not ready");
       const ticker = await exchange.getTicker(pair);
-      this.priceCache.set(pair, { ticker, fetchedAt: Date.now() });
+      // REV-C12E: Persist Kraken provenance when data exchange is Kraken.
+      const isKraken = ExchangeFactory.getDataExchangeType() === "kraken";
+      this.priceCache.set(pair, {
+        ticker,
+        fetchedAt: Date.now(),
+        marketDataVenue: isKraken ? "KRAKEN" : null,
+        source: isKraken ? "KRAKEN_MARKET_DATA" : "MANUAL_OR_UNKNOWN",
+      });
       return ticker;
     })();
 
@@ -285,11 +320,14 @@ class MarketDataServiceClass {
 
   putPrice(pair: string, price: number): void {
     const existing = this.priceCache.get(pair);
+    // REV-C12E: Manual putPrice is NOT Kraken — mark as MANUAL_OR_UNKNOWN.
     this.priceCache.set(pair, {
       ticker: existing?.ticker
         ? { ...existing.ticker, last: price }
         : { bid: price, ask: price, last: price },
       fetchedAt: Date.now(),
+      marketDataVenue: null,
+      source: "MANUAL_OR_UNKNOWN",
     });
   }
 
@@ -472,6 +510,166 @@ class MarketDataServiceClass {
     this.pendingCandles.clear();
     this.pendingPrices.clear();
     this.resetCounters();
+  }
+
+  // ── REV-C12E: Fresh ticker snapshot for Grid planning ─────────────
+  // Returns a typed snapshot with venue=KRAKEN, source=KRAKEN_MARKET_DATA.
+  // Reuses the existing priceCache and single-flight pendingPrices.
+  // Reading from cache does NOT renew fetchedAt.
+  // Stale cache is NOT treated as fresh — returns null.
+  // Returns null fail-closed when data is unavailable, exchange is not Kraken,
+  // cache provenance is not KRAKEN_MARKET_DATA, or TTL is invalid.
+  // Never returns an object with fresh=false.
+  async getFreshTickerSnapshot(pair: string, maxAgeMs?: number): Promise<MarketTickerSnapshot | null> {
+    const ttl = maxAgeMs ?? 45_000;
+    // Validate maxAgeMs: must be a finite, positive number.
+    if (!Number.isFinite(ttl) || ttl <= 0) {
+      return null;
+    }
+    const now = Date.now();
+    const cached = this.priceCache.get(pair);
+
+    // Cache hit: only accept if provenance is KRAKEN_MARKET_DATA and venue is KRAKEN
+    // and data exchange is still Kraken and ticker is fresh and ageMs >= 0.
+    if (cached && now - cached.fetchedAt < ttl && now - cached.fetchedAt >= 0) {
+      // Verify data exchange is still Kraken
+      if (ExchangeFactory.getDataExchangeType() !== "kraken") {
+        return null;
+      }
+      // Verify cache provenance is Kraken — do NOT accept manual/unknown as Kraken.
+      // If provenance is wrong, fall through to fetch fresh (do NOT return null).
+      if (cached.source === "KRAKEN_MARKET_DATA" && cached.marketDataVenue === "KRAKEN") {
+        // Verify ticker is valid
+        if (!cached.ticker || !Number.isFinite(cached.ticker.last) || cached.ticker.last <= 0) {
+          return null;
+        }
+        // Verify fetchedAt is valid
+        if (!Number.isFinite(cached.fetchedAt)) {
+          return null;
+        }
+        this._hits++;
+        return {
+          pair,
+          ticker: cached.ticker,
+          marketDataVenue: "KRAKEN",
+          source: "KRAKEN_MARKET_DATA",
+          fetchedAt: new Date(cached.fetchedAt),
+          ageMs: now - cached.fetchedAt,
+          maxAgeMs: ttl,
+          fresh: true,
+          cached: true,
+        };
+      }
+      // Provenance mismatch — fall through to fetch fresh from Kraken.
+    }
+
+    // Single-flight: share in-flight fetch — but verify Kraken before waiting.
+    const pending = this.pendingPrices.get(pair);
+    if (pending) {
+      // Verify data exchange is Kraken before waiting on pending fetch.
+      if (ExchangeFactory.getDataExchangeType() !== "kraken") {
+        return null;
+      }
+      this._shared++;
+      try {
+        const ticker = await pending;
+        // After resolve, check that cache entry has Kraken metadata.
+        const entry = this.priceCache.get(pair);
+        if (!entry || entry.source !== "KRAKEN_MARKET_DATA" || entry.marketDataVenue !== "KRAKEN") {
+          return null;
+        }
+        const fetchedAtMs = entry.fetchedAt;
+        if (!Number.isFinite(fetchedAtMs)) {
+          return null;
+        }
+        const ageMs = Date.now() - fetchedAtMs;
+        // If stale after pending resolved, return null (do NOT return fresh=false).
+        if (ageMs >= ttl) {
+          return null;
+        }
+        // Negative ageMs (future timestamp) — block.
+        if (ageMs < 0) {
+          return null;
+        }
+        return {
+          pair,
+          ticker,
+          marketDataVenue: "KRAKEN",
+          source: "KRAKEN_MARKET_DATA",
+          fetchedAt: new Date(fetchedAtMs),
+          ageMs,
+          maxAgeMs: ttl,
+          fresh: true,
+          cached: true,
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    // Cache miss or stale: fetch from data exchange
+    this._misses++;
+
+    // Verify data exchange is Kraken before fetching
+    if (ExchangeFactory.getDataExchangeType() !== "kraken") {
+      console.warn("[MDS] getFreshTickerSnapshot: data exchange is not Kraken, returning null");
+      return null;
+    }
+
+    const exchange = ExchangeFactory.getDataExchange();
+    if (!exchange.isInitialized()) {
+      return null;
+    }
+
+    const fetch = (async (): Promise<Ticker> => {
+      const ticker = await exchange.getTicker(pair);
+      // REV-C12E: Persist Kraken provenance.
+      this.priceCache.set(pair, {
+        ticker,
+        fetchedAt: Date.now(),
+        marketDataVenue: "KRAKEN",
+        source: "KRAKEN_MARKET_DATA",
+      });
+      return ticker;
+    })();
+
+    this.pendingPrices.set(pair, fetch);
+    fetch.finally(() => this.pendingPrices.delete(pair)).catch(() => {});
+
+    try {
+      const ticker = await fetch;
+      const entry = this.priceCache.get(pair);
+      if (!entry || entry.source !== "KRAKEN_MARKET_DATA" || entry.marketDataVenue !== "KRAKEN") {
+        return null;
+      }
+      const fetchedAtMs = entry.fetchedAt;
+      if (!Number.isFinite(fetchedAtMs)) {
+        return null;
+      }
+      const ageMs = Date.now() - fetchedAtMs;
+      // If stale after fetch, return null (do NOT return fresh=false).
+      if (ageMs >= ttl) {
+        return null;
+      }
+      // Negative ageMs (future timestamp) — block.
+      if (ageMs < 0) {
+        return null;
+      }
+      return {
+        pair,
+        ticker,
+        marketDataVenue: "KRAKEN",
+        source: "KRAKEN_MARKET_DATA",
+        fetchedAt: new Date(fetchedAtMs),
+        ageMs,
+        maxAgeMs: ttl,
+        fresh: true,
+        cached: false,
+      };
+    } catch (e: unknown) {
+      console.warn(`[MDS] getFreshTickerSnapshot(${pair}) error: ${(e as Error).message}`);
+      return null;
+    }
   }
 }
 

@@ -38,7 +38,7 @@ import { db } from "../db";
 import { gridIsolatedConfigs, gridIsolatedEvents, gridRangeVersions } from "@shared/schema";
 import { desc, eq, and, sql } from "drizzle-orm";
 import type { GridMode, GridIsolatedConfig, GridBacktestConfig, ExecutionPolicy, GridMarketContext } from "../services/gridIsolated/gridIsolatedTypes";
-import { executionPolicyLabel } from "../services/gridIsolated/gridIsolatedTypes";
+import { executionPolicyLabel, getEffectiveExecutionPolicy, getEffectiveTakerFallbackEnabled } from "../services/gridIsolated/gridIsolatedTypes";
 import { getNaturalGridMessage, getNaturalGridTitle } from "../services/gridIsolated/gridActivityFormatter";
 import { buildCapitalAllocationSummary } from "../services/gridIsolated/gridAllocationEngine";
 import { evaluateActiveRangeLifecycle } from "../services/gridIsolated/gridRangeLifecycle";
@@ -1125,7 +1125,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
         recommendationId: recommendation.id,
         beforeValues: applyResult.beforeValues,
         afterValues: applyResult.afterValues,
-        message: "Configuración guardada para futuros análisis. El rango vigente y sus niveles no se han modificado.",
+        message: "Configuración guardada correctamente. No se ha creado ni modificado ningún rango. Pulsa \"Analizar mercado ahora\" cuando quieras ejecutar un nuevo análisis SHADOW.",
       });
     } catch (error) {
       res.status(500).json({ error: String(error), reason: String(error), code: "INTERNAL_ERROR" });
@@ -1323,15 +1323,19 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const realModesBlocked = blockingReasons.length > 0;
       const mode = status?.mode ?? config?.mode ?? "OFF";
 
-      const effectivePolicy = mode === "SHADOW"
-        ? "MAKER_ONLY" as ExecutionPolicy
-        : (config?.executionPolicy ?? "MAKER_ONLY" as ExecutionPolicy);
+      const effectivePolicy = getEffectiveExecutionPolicy({
+        mode: mode as GridMode,
+        executionPolicy: (config?.executionPolicy ?? "MAKER_ONLY") as ExecutionPolicy,
+      });
       const effectivePolicyLabel = executionPolicyLabel(effectivePolicy);
       const storedExecutionPolicy = storedConfig?.executionPolicy as string | null;
       const storedTakerFallbackEnabled = storedConfig?.takerFallbackEnabled ?? true;
       const storedTakerFallbackAllowed = storedTakerFallbackEnabled;
-      const effectiveTakerFallbackEnabled = mode === "SHADOW" ? false : storedTakerFallbackEnabled;
-      const effectiveTakerFallbackAllowed = mode === "SHADOW" ? false : storedTakerFallbackEnabled;
+      const effectiveTakerFallbackEnabled = getEffectiveTakerFallbackEnabled({
+        mode: mode as GridMode,
+        takerFallbackEnabled: storedTakerFallbackEnabled,
+      });
+      const effectiveTakerFallbackAllowed = effectiveTakerFallbackEnabled;
       const effectiveMakerOnly = mode === "SHADOW" ? true : effectivePolicy === "MAKER_ONLY";
       const takerFallbackUsed = (snapshot.levels || []).some((l: any) => l?.usedTakerFallback === true);
       const takerFallbackPolicyLabel = effectiveTakerFallbackEnabled
@@ -1399,7 +1403,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
             available: true,
             source: "event",
             mode: pg.mode || "shadow_generation",
-            formula: pg.formula || "accumulated_spacing",
+            formula: pg.formula || "uniform_geometric_spacing",
             legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
             viabilityStatus: pg.viabilityStatus,
             minSpacingPctReal: pg.minSpacingPctReal,
@@ -1444,7 +1448,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
             available: true,
             source: "event",
             mode: pg.mode || "shadow_generation",
-            formula: pg.formula || "accumulated_spacing",
+            formula: pg.formula || "uniform_geometric_spacing",
             legacyGeneratorUsed: pg.legacyGeneratorUsed || false,
             viabilityStatus: pg.viabilityStatus,
             minSpacingPctReal: pg.minSpacingPctReal,
@@ -1718,7 +1722,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const pgAny = professionalGenerator as any;
       const opRangeWidthPct = pgAny?.available && pgAny.operationalBandWidthPct != null ? pgAny.operationalBandWidthPct : null;
       const rGenMethod = r?.method ?? null;
-      const rGenSource = rGenMethod === "professional_accumulated_spacing" ? "pre_adaptive"
+      const rGenSource = rGenMethod === "professional_uniform_geometric_spacing" ? "pre_adaptive"
         : rGenMethod === "adaptive_smart" ? "adaptive_smart"
         : rGenMethod ?? "unknown";
 
@@ -1764,6 +1768,9 @@ export function registerGridIsolatedRoutes(app: Express): void {
             adaptiveDecision: null,
           });
 
+      // REV-C12B: Get real projection state from engine — exact data from the last tick.
+      const projectionState = gridIsolatedEngine.getRecommendationProjectionState();
+
       const gridViewModel = buildGridAuditViewModel(
         mode,
         config,
@@ -1776,7 +1783,13 @@ export function registerGridIsolatedRoutes(app: Express): void {
         lastShadowValidation,
         lastProfessionalValidation,
         professionalGenerator,
-        rangeLifecycle
+        rangeLifecycle,
+        // REV-C12B: Real execution gate + microstructure + allocation from engine projection state.
+        // The projection state is the exact data used by buildRangeProposal during the last tick.
+        gridIsolatedEngine.getExecutionGate(),
+        projectionState?.executionMarketSnapshot ?? null,
+        projectionState?.pairConstraints ?? null,
+        projectionState?.allocation ?? null,
       );
 
       res.json({
@@ -1900,7 +1913,7 @@ export function registerGridIsolatedRoutes(app: Express): void {
 
           const rangeGenerationMethod = r.method ?? null;
           const rangeGenerationSource =
-            rangeGenerationMethod === "professional_accumulated_spacing"
+            rangeGenerationMethod === "professional_uniform_geometric_spacing"
               ? "pre_adaptive"
               : rangeGenerationMethod === "adaptive_smart"
                 ? "adaptive_smart"
@@ -2335,6 +2348,10 @@ export function registerGridIsolatedRoutes(app: Express): void {
       const lastShadowValidation = gridIsolatedEngine.getLastShadowValidation();
       const lastProfessionalValidation = gridIsolatedEngine.getLastProfessionalGeneratorValidation();
       const marketContext: GridMarketContext | null = null; // Export endpoint uses minimal view model without live market data
+      // REV-C12B Step 11: Single read of projection state — reused for all 3 fields.
+      // This prevents the state from expiring between multiple reads of the same response.
+      const exportProjectionState = gridIsolatedEngine.getRecommendationProjectionState();
+      const exportExecutionGate = gridIsolatedEngine.getExecutionGate();
       const gridViewModel = buildGridAuditViewModel(
         mode,
         config,
@@ -2345,7 +2362,14 @@ export function registerGridIsolatedRoutes(app: Express): void {
         resolvedRange,
         marketContext,
         lastShadowValidation,
-        lastProfessionalValidation
+        lastProfessionalValidation,
+        null, // providedProfessionalGenerator
+        null, // providedRangeLifecycle
+        // REV-C12B: Real execution gate + projection state from engine.
+        exportExecutionGate,
+        exportProjectionState?.executionMarketSnapshot ?? null,
+        exportProjectionState?.pairConstraints ?? null,
+        exportProjectionState?.allocation ?? null,
       );
 
       res.setHeader("Content-Type", "application/json; charset=utf-8");

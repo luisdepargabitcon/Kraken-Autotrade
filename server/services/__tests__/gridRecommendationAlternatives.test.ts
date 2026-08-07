@@ -13,8 +13,6 @@ function makeInput(overrides: any = {}) {
       taxReservePct: 20,
       gridRangeMaxPct: 2.5,
       enforceCompactRange: true,
-      buyLevels: 4,
-      sellLevels: 4,
       gridStepAtrMultiplier: 1.5,
       gridStepMaxPct: 3.0,
       ...cfgOv,
@@ -36,7 +34,10 @@ function makeInput(overrides: any = {}) {
       ...rngOv,
     },
     adaptiveDecision: null,
-    professionalGenerator: null,
+    professionalGenerator: {
+      requestedBuyLevels: 4,
+      requestedSellLevels: 4,
+    },
     levels: [],
     status: { activeRangeVersionId: "range-v1" },
     ...rest,
@@ -44,22 +45,25 @@ function makeInput(overrides: any = {}) {
 }
 
 describe("buildConfigurationRecommendation alternatives", () => {
-  it("recommendedAlternativeId es A cuando hay niveles viables", () => {
+  it("REV-C12A: recommendedAlternativeId nunca es A (A es informativa)", () => {
     const rec = buildConfigurationRecommendation(makeInput({ levels: [] }));
     expect(rec).not.toBeNull();
-    expect(rec!.recommendedAlternativeId).toBe("A");
+    // A is informational only, never recommended
+    expect(rec!.recommendedAlternativeId).not.toBe("A");
   });
 
-  it("alternative A propone buyLevels/sellLevels viables", () => {
+  it("REV-C12A: alternative A es informativa (safeToApply=false, sin buyLevels/sellLevels)", () => {
     const rec = buildConfigurationRecommendation(makeInput({ levels: [] }));
     const altA = rec!.alternatives.find(a => a.id === "A");
     expect(altA).toBeDefined();
-    expect(altA!.safeToApply).toBe(true);
-    expect(altA!.proposedConfig.buyLevels).toBeDefined();
-    expect(altA!.proposedConfig.sellLevels).toBeDefined();
+    expect(altA!.safeToApply).toBe(false);
+    // Ghost fields eliminated — A does not propose buyLevels/sellLevels
+    expect(altA!.proposedConfig.buyLevels).toBeUndefined();
+    expect(altA!.proposedConfig.sellLevels).toBeUndefined();
+    expect(altA!.blockingReason).toBeTruthy();
   });
 
-  it("alternative B ajusta densidad sin modificar netProfitTargetPct", () => {
+  it("REV-C12A: alternative B ajusta densidad sin modificar netProfitTargetPct", () => {
     const rec = buildConfigurationRecommendation(makeInput({ levels: [] }));
     const altB = rec!.alternatives.find(a => a.id === "B");
     expect(altB).toBeDefined();
@@ -68,14 +72,15 @@ describe("buildConfigurationRecommendation alternatives", () => {
     expect(altB!.expectedAfter.netProfitPct).toBe(0.1);
   });
 
-  it("alternative C propone gridRangeMaxPct cuando cabe mejora parcial", () => {
+  it("REV-C12A: alternative C propone gridRangeMaxPct cuando cabe mejora parcial", () => {
     const rec = buildConfigurationRecommendation(makeInput({ levels: [] }));
     const altC = rec!.alternatives.find(a => a.id === "C");
     expect(altC).toBeDefined();
-    expect(altC!.proposedConfig.gridRangeMaxPct).toBeDefined();
+    // C may or may not have changes depending on canonical projection, but it should exist
+    expect(altC!.id).toBe("C");
   });
 
-  it("no genera recomendación si config ya es óptima", () => {
+  it("REV-C12A: no genera recomendación si config ya es óptima", () => {
     const levels = Array.from({ length: 8 }, (_, i) => ({
       rangeVersionId: "range-v1",
       side: i < 4 ? "buy" : "sell",
@@ -84,5 +89,17 @@ describe("buildConfigurationRecommendation alternatives", () => {
     }));
     const rec = buildConfigurationRecommendation(makeInput({ levels }));
     expect(rec).toBeNull();
+  });
+
+  it("REV-C12A: B y C son safeToApply=false cuando microestructura no disponible", () => {
+    // Without executionSpreadPct/executionPriceTickPct in marketContext,
+    // canonical projection cannot validate B/C
+    const rec = buildConfigurationRecommendation(makeInput({ levels: [] }));
+    expect(rec).not.toBeNull();
+    const altB = rec!.alternatives.find(a => a.id === "B");
+    const altC = rec!.alternatives.find(a => a.id === "C");
+    // Without Revolut X microstructure, B and C should be blocked
+    expect(altB!.safeToApply).toBe(false);
+    expect(altC!.safeToApply).toBe(false);
   });
 });

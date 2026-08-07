@@ -300,6 +300,8 @@ describe("generateProfessionalGridLevels with adaptive_smart mode", () => {
     adaptiveRangeMinViableLevels: 4,
     marketSuitable: true,
     regimeLabel: 'normal_lateral',
+    spreadPct: 0.02,
+    priceTickPct: 0.01,
   };
 
   it("should produce adaptiveRangeDecision in professionalGenerator result", () => {

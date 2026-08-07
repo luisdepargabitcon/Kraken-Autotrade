@@ -23,21 +23,21 @@ describe("applyRecommendationPatchAtomically", () => {
   }
 
   it("aplica campos permitidos y devuelve before/after", async () => {
-    const current = { netProfitTargetPct: 0.5, buyLevels: 4, sellLevels: 4 };
+    const current = { netProfitTargetPct: 0.5, gridRangeMaxPct: 2.5 };
     let saved = false;
     const result = await applyRecommendationPatchAtomically(
       current,
-      makeAlt({ netProfitTargetPct: 0.8, buyLevels: 6 }),
+      makeAlt({ netProfitTargetPct: 0.8, gridRangeMaxPct: 3.0 }),
       async () => { saved = true; },
       20,
     );
     expect(result.success).toBe(true);
-    expect(result.appliedFields).toEqual(["netProfitTargetPct", "buyLevels"]);
-    expect(result.beforeValues).toEqual({ netProfitTargetPct: 0.5, buyLevels: 4 });
-    expect(result.afterValues).toEqual({ netProfitTargetPct: 0.8, buyLevels: 6 });
+    expect(result.appliedFields).toEqual(["netProfitTargetPct", "gridRangeMaxPct"]);
+    expect(result.beforeValues).toEqual({ netProfitTargetPct: 0.5, gridRangeMaxPct: 2.5 });
+    expect(result.afterValues).toEqual({ netProfitTargetPct: 0.8, gridRangeMaxPct: 3.0 });
     expect(saved).toBe(true);
     expect(current.netProfitTargetPct).toBe(0.8);
-    expect(current.buyLevels).toBe(6);
+    expect(current.gridRangeMaxPct).toBe(3.0);
   });
 
   it("rechaza campos de la blocklist", async () => {
@@ -64,6 +64,42 @@ describe("applyRecommendationPatchAtomically", () => {
     );
     expect(result.success).toBe(false);
     expect(current.netProfitTargetPct).toBe(0.5);
+  });
+
+  it("saveConfig fail-closed: error message includes DB error and rollback is complete", async () => {
+    const current = { netProfitTargetPct: 0.5, gridRangeMaxPct: 2.5 };
+    const result = await applyRecommendationPatchAtomically(
+      current,
+      makeAlt({ netProfitTargetPct: 0.8, gridRangeMaxPct: 3.0 }),
+      async () => { throw new Error("ECONNREFUSED: database unreachable"); },
+      20,
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("APPLY_FAILED");
+    expect(result.error).toContain("ECONNREFUSED");
+    expect(result.error).toContain("database unreachable");
+    // Rollback: both fields restored to before values
+    expect(current.netProfitTargetPct).toBe(0.5);
+    expect(current.gridRangeMaxPct).toBe(2.5);
+    // beforeValues and afterValues reflect the rollback
+    expect(result.beforeValues).toEqual({ netProfitTargetPct: 0.5, gridRangeMaxPct: 2.5 });
+    expect(result.afterValues).toEqual({ netProfitTargetPct: 0.5, gridRangeMaxPct: 2.5 });
+    expect(result.appliedFields).toEqual([]);
+  });
+
+  it("saveConfig fail-closed: rollback restores null values correctly", async () => {
+    const current = { netProfitTargetPct: null as any, gridRangeMaxPct: 2.5 };
+    const result = await applyRecommendationPatchAtomically(
+      current,
+      makeAlt({ netProfitTargetPct: 0.8 }),
+      async () => { throw new Error("serialization error"); },
+      20,
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("APPLY_FAILED");
+    // Rollback: netProfitTargetPct restored to null (not undefined or 0)
+    expect(current.netProfitTargetPct).toBeNull();
+    expect(current.gridRangeMaxPct).toBe(2.5);
   });
 
   it("valida límites de gridRangeMaxPct", async () => {

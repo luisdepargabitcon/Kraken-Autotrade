@@ -1,14 +1,15 @@
 /**
- * GridExecutionService — Low-API maker-first order execution for Grid Isolated.
+ * GridExecutionService — Low-API maker-only order execution for Grid Isolated.
  *
- * Revolut X supports post_only and allow_taker execution instructions.
- * The placeOrder method sends execution_instruction in the limit order configuration.
+ * REV-C12E: Taker fallback has been completely removed. Only post_only
+ * limit orders are placed. When all maker attempts are exhausted, the
+ * service returns POST_ONLY_REJECTED_REPRICE_REQUIRED — no aggressive
+ * order, no market order, no allow_taker, no _taker clientOrderId.
  *
- * Execution Policy (MAKER_3_ATTEMPTS_THEN_TAKER_FALLBACK):
+ * Execution Policy (MAKER_ONLY):
  *   1. Try post_only limit order (maker, 0% fee on Revolut X) — attempts 1, 2, 3
- *   2. If post_only rejected, retry up to makerAttemptsBeforeTaker (default 3)
- *   3. On final rejection, place allow_taker limit order (0.09% fee) — attempt 4
- *   4. NEVER use market orders in normal flow
+ *   2. If all post_only attempts rejected, return POST_ONLY_REJECTED_REPRICE_REQUIRED
+ *   3. NEVER use market orders or allow_taker
  *
  * Error handling:
  *   - Post-only rejections → retry (these are expected, price moved)
@@ -301,43 +302,14 @@ class GridExecutionService {
       }
     }
 
-    // Phase 2: All post-only attempts exhausted — fallback to limit taker
-    await botLogger.warn("GRID_LEVEL_TAKER_FALLBACK", `Falling back to limit taker after ${POST_ONLY_MAX_ATTEMPTS} post-only rejections`, {
+    // REV-C12E: All post-only attempts exhausted — NO taker fallback.
+    // Return POST_ONLY_REJECTED_REPRICE_REQUIRED. No aggressive order,
+    // no market order, no allow_taker, no _taker clientOrderId.
+    await botLogger.warn("GRID_LEVEL_POST_ONLY_EXHAUSTED", `Post-only agotado tras ${POST_ONLY_MAX_ATTEMPTS} intentos — repricing requerido`, {
       clientOrderId: request.clientOrderId, side: request.side, price: request.price,
     });
 
-    try {
-      this.incrementOrderCount();
-
-      const takerPrice = request.side === "BUY" ? request.price * 1.001 : request.price * 0.999;
-      const orderResult = await revolutXService.placeOrder({
-        pair: request.pair,
-        type: request.side.toLowerCase() as "buy" | "sell",
-        ordertype: "limit",
-        price: String(takerPrice),
-        volume: String(request.quantity),
-        clientOrderId: request.clientOrderId + "_taker",
-        executionInstruction: "allow_taker",
-      });
-
-      if (orderResult.success) {
-        return {
-          success: true,
-          clientOrderId: request.clientOrderId + "_taker",
-          exchangeOrderId: orderResult.orderId || null,
-          filledQuantity: orderResult.volume || 0,
-          filledPrice: orderResult.price || null,
-          usedTakerFallback: true,
-          postOnlyAttempts: POST_ONLY_MAX_ATTEMPTS,
-          pendingFill: orderResult.pendingFill || false,
-        };
-      }
-
-      return this.failResult(request, `Taker fallback failed: ${orderResult.error}`, POST_ONLY_MAX_ATTEMPTS, true);
-    } catch (error) {
-      this.openCircuitBreaker(`Taker fallback exception: ${(error as Error).message}`);
-      return this.failResult(request, `Taker fallback exception: ${(error as Error).message}`, POST_ONLY_MAX_ATTEMPTS, true);
-    }
+    return this.failResult(request, "POST_ONLY_REJECTED_REPRICE_REQUIRED", postOnlyAttempts);
   }
 
   /**
@@ -358,7 +330,9 @@ class GridExecutionService {
     request: GridOrderRequest,
     error: string,
     postOnlyAttempts: number = 0,
-    usedTakerFallback: boolean = false
+    // REV-C12E: usedTakerFallback is always false — taker fallback removed.
+    // Parameter kept for API compatibility but value is always false.
+    _usedTakerFallback: boolean = false
   ): GridOrderResult {
     return {
       success: false,
@@ -366,7 +340,7 @@ class GridExecutionService {
       exchangeOrderId: null,
       filledQuantity: 0,
       filledPrice: null,
-      usedTakerFallback,
+      usedTakerFallback: false,
       postOnlyAttempts,
       pendingFill: false,
       error,

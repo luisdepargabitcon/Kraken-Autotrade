@@ -30,11 +30,14 @@ import { MarketDataService } from "../MarketDataService";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { revolutXService } from "../exchanges/RevolutXService";
 import { gridModeLockService } from "./gridModeLockService";
-import { gridCapitalAllocator } from "./gridCapitalAllocator";
+import { gridCapitalAllocator, type CapitalAllocationResult } from "./gridCapitalAllocator";
 import { getGridBandSnapshot } from "./gridBandAdapter";
 import { resolveGridShadowExecutionPrice, type GridShadowExecutionPriceResult, type GridTickContext } from "./gridShadowExecutionPrice";
 import { evaluateShadowMarketPriceFreshness, GRID_SHADOW_PRICE_MAX_AGE_MS } from "./gridShadowMarketPriceFreshness";
-import { buildGridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
+import { buildGridExecutionMarketSnapshot, type GridExecutionMarketSnapshot } from "./gridExecutionMarketSnapshot";
+import type { RevolutXPairConstraints } from "../exchanges/RevolutXService";
+import { computeGateTtl, type GateTtlResult } from "./gridExecutionGateTtl";
+import { resolveGridProfessionalProjectionContext, buildProfessionalGeneratorInput, splitSymmetricLevels, type GridProfessionalProjectionContext } from "./gridProfessionalProjectionContext";
 import {
   getShadowPumpGuardPolicy,
   getCrossedShadowLevels,
@@ -47,6 +50,7 @@ import {
   generateProfessionalGridLevels,
 } from "./gridSpacingCalculator";
 import { applyWeightsToGeneratedLevels } from "./gridAllocationEngine";
+import { normalizeGridLevelsForExecutionConstraints } from "./gridLevelConstraintNormalizer";
 import {
   diagnoseShadowOrphanCycles,
   type ShadowOrphanDiagnosisResult,
@@ -93,6 +97,8 @@ import {
   validateRiskStateJson,
   validateTargetCalculationJson,
 } from "./gridJsonbValidators";
+import { resolveGridMarketAndConstraints, resolveGridPlanningContext, type GridPlanningContextResult } from "./gridPlanningContextResolver";
+import { resolveGridPlanningBlockerMetadata } from "./gridPlanningBlockerMetadata";
 import {
   DEFAULT_GRID_CONFIG,
   DAILY_ORDER_REQUEST_LIMIT,
@@ -104,6 +110,7 @@ import {
   TERMINAL_GRID_CYCLE_STATUSES,
   SHADOW_EXECUTION_POLICY,
   getEffectiveExecutionPolicy,
+  getEffectiveTakerFallbackEnabled,
   isLegacyExecutionPolicy,
   type GridIsolatedConfig,
   type GridMode,
@@ -131,12 +138,259 @@ import {
   FEE_BUFFER_BUY_PCT,
   FEE_BUFFER_SELL_PCT,
   TAX_RESERVE_PCT,
+  type RevolutXGridFailureStage,
 } from "./gridIsolatedTypes";
 
 const MIN_MAKER_REST_MS = 1;
 
+/**
+ * REV-C12A/REV-C12B: Real Revolut X execution gate state (in-memory only, not persisted).
+ * Updated during real tick/proposeRangeVersion evaluation.
+ * After restart, if no recent evaluation exists, canCreateRange=false.
+ *
+ * REV-C12B: status/ageMs/maxAgeMs/validUntil are recalculated on each read.
+ * The gate expires when the snapshot is stale or constraints have expired.
+ * Readings do NOT renew evaluatedAt or validUntil.
+ */
+export interface ExecutionGateState {
+  canCreateRange: boolean;
+  status: "VERIFIED" | "BLOCKED" | "NO_RECENT_EVALUATION";
+  evaluatedAt: string | null;
+  ageMs: number | null;
+  maxAgeMs: number | null;
+  validUntil: string | null;
+  executionMarketSnapshot: {
+    available: boolean;
+    verified: boolean;
+    fresh: boolean;
+    pair: string | null;
+    executionVenue: string | null;
+    source: string | null;
+    reasonCode: string | null;
+    explanation: string | null;
+  };
+  pairConstraints: {
+    available: boolean;
+    verified: boolean;
+    fresh: boolean | null;
+    pair: string | null;
+    source: string | null;
+    reasonCode: string | null;
+    explanation: string | null;
+  };
+  blockers: string[];
+  allowCycleExits: boolean;
+}
+
+/**
+ * REV-C12B: Raw gate data stored in-memory. The public ExecutionGateState is
+ * derived from this on each read, recalculating age and freshness.
+ */
+interface RawExecutionGateData {
+  configPair: string;
+  evaluatedAt: Date;
+  snapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
+  constraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
+}
+
+function buildExecutionGateState(
+  snapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
+  constraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>,
+  configPair: string,
+  evaluatedAt: Date,
+): RawExecutionGateData {
+  return { configPair, evaluatedAt, snapshot, constraints };
+}
+
+/**
+ * REV-C12B: Recalculate the public ExecutionGateState from raw data on each read.
+ * Uses the shared computeGateTtl helper for canonical TTL/freshness.
+ * Readings do NOT renew evaluatedAt or validUntil.
+ */
+function resolveExecutionGateState(raw: RawExecutionGateData, now: Date): ExecutionGateState {
+  const { configPair, evaluatedAt, snapshot, constraints } = raw;
+  const nowMs = now.getTime();
+  const evaluatedMs = evaluatedAt.getTime();
+  const ageMs = nowMs - evaluatedMs;
+
+  // REV-C12B: Use shared TTL helper — same logic as getRecommendationProjectionState.
+  const ttl: GateTtlResult = computeGateTtl(snapshot, constraints, now);
+  const snapshotStillFresh = ttl.fresh || (ttl.staleReason !== "SNAPSHOT_STALE" && ttl.staleReason !== "TIMESTAMP_INVALID");
+  const constraintsFresh = ttl.fresh || (ttl.staleReason !== "CONSTRAINTS_STALE" && ttl.staleReason !== "TIMESTAMP_INVALID");
+
+  // REV-C12B: available is NOT just pair match — it requires object present, pair correct,
+  // venue REVOLUT_X, source present, and bid/ask or a technical reason code.
+  const snapshotAvailable =
+    snapshot != null &&
+    snapshot.pair === configPair &&
+    snapshot.executionVenue === "REVOLUT_X" &&
+    snapshot.source != null &&
+    ((snapshot.bid != null && snapshot.ask != null) || snapshot.reasonCode != null);
+  const constraintsAvailable =
+    constraints != null &&
+    constraints.pair === configPair &&
+    constraints.executionVenue === "REVOLUT_X" &&
+    constraints.source != null;
+
+  const snapshotOk = snapshot.verified === true && snapshotStillFresh && snapshot.executionVenue === "REVOLUT_X" && snapshot.pair === configPair;
+  const constraintsOk = constraints.verified === true && constraintsFresh && constraints.pair === configPair;
+
+  const blockers: string[] = [];
+  let isStale = false;
+
+  if (!snapshotOk) {
+    if (!snapshotStillFresh && snapshot.verified === true) {
+      blockers.push("EXECUTION_GATE_STALE");
+      isStale = true;
+    } else {
+      blockers.push(snapshot.reasonCode ?? "EXECUTION_MARKET_SNAPSHOT_INVALID");
+    }
+  }
+  if (!constraintsOk) {
+    if (!constraintsFresh && constraints.verified === true) {
+      blockers.push("EXECUTION_GATE_STALE");
+      isStale = true;
+    } else {
+      blockers.push(constraints.reasonCode ?? "PAIR_CONSTRAINTS_INVALID");
+    }
+  }
+
+  const canCreateRange = snapshotOk && constraintsOk;
+  // REV-C12B: validUntil from shared helper — min(snapshot, constraints).
+  const validUntil = ttl.validUntil ? ttl.validUntil.toISOString() : null;
+
+  let status: "VERIFIED" | "BLOCKED" | "NO_RECENT_EVALUATION";
+  if (canCreateRange) {
+    status = "VERIFIED";
+  } else if (isStale) {
+    status = "NO_RECENT_EVALUATION";
+  } else {
+    status = "BLOCKED";
+  }
+
+  return {
+    canCreateRange,
+    status,
+    evaluatedAt: evaluatedAt.toISOString(),
+    ageMs,
+    maxAgeMs: ttl.maxAgeMs,
+    validUntil,
+    executionMarketSnapshot: {
+      available: snapshotAvailable,
+      verified: snapshot.verified === true,
+      fresh: snapshotStillFresh,
+      pair: snapshot.pair,
+      executionVenue: snapshot.executionVenue,
+      source: snapshot.source,
+      reasonCode: snapshot.reasonCode,
+      explanation: snapshot.explanation,
+    },
+    pairConstraints: {
+      available: constraintsAvailable,
+      verified: constraints.verified === true,
+      fresh: constraintsFresh,
+      pair: constraints.pair,
+      source: constraints.source,
+      reasonCode: constraints.reasonCode,
+      explanation: constraints.reasonCode ? `Constraints no verificadas: ${constraints.reasonCode}` : null,
+    },
+    blockers,
+    allowCycleExits: true, // cycle exits are always allowed even during block
+  };
+}
+
+function buildNoEvaluationGateState(configPair: string): ExecutionGateState {
+  return {
+    canCreateRange: false,
+    status: "NO_RECENT_EVALUATION",
+    evaluatedAt: null,
+    ageMs: null,
+    maxAgeMs: null,
+    validUntil: null,
+    executionMarketSnapshot: {
+      available: false,
+      verified: false,
+      fresh: false,
+      pair: configPair,
+      executionVenue: null,
+      source: null,
+      reasonCode: "SIN_EVALUACION_RECIENTE",
+      explanation: "No existe una evaluación reciente del gate de ejecución.",
+    },
+    pairConstraints: {
+      available: false,
+      verified: false,
+      fresh: null,
+      pair: configPair,
+      source: null,
+      reasonCode: "SIN_EVALUACION_RECIENTE",
+      explanation: "No existe una evaluación reciente de las constraints del par.",
+    },
+    blockers: ["SIN_EVALUACION_RECIENTE"],
+    allowCycleExits: true,
+  };
+}
+
+/**
+ * REV-C12B: Runtime projection state — read-only snapshot of the exact data
+ * used by buildRangeProposal during the last real tick.
+ *
+ * Updated only during the tick. The route handler reads this to pass real
+ * executionMarketSnapshot, pairConstraints, and allocation to the view model
+ * and recommendation service. No DB reads from the view model.
+ */
+export interface GridRecommendationProjectionState {
+  evaluatedAt: string;
+  validUntil: string;
+  pair: string;
+  bandSnapshot: {
+    midPrice: number;
+    middle: number;
+    upper: number;
+    lower: number;
+    atrPct: number;
+    regime: string;
+    suitableForGrid: boolean;
+  };
+  executionMarketSnapshot: GridExecutionMarketSnapshot;
+  pairConstraints: RevolutXPairConstraints;
+  allocation: CapitalAllocationResult;
+}
+
+/**
+ * REV-C12B: Deep clone of GridRecommendationProjectionState.
+ * Uses structuredClone when available (Node >= 17), otherwise manual clone.
+ * Preserves Date objects (fetchedAt, acquiredAt, timestamp, expiresAt).
+ * The caller receives a completely independent copy.
+ */
+function deepCloneProjectionState(state: GridRecommendationProjectionState): GridRecommendationProjectionState {
+  // structuredClone is available in Node >= 17 and preserves Date objects correctly.
+  if (typeof structuredClone === "function") {
+    return structuredClone(state);
+  }
+  // Manual fallback: JSON round-trip does NOT preserve Date — use manual clone.
+  return {
+    evaluatedAt: state.evaluatedAt,
+    validUntil: state.validUntil,
+    pair: state.pair,
+    bandSnapshot: { ...state.bandSnapshot },
+    executionMarketSnapshot: {
+      ...state.executionMarketSnapshot,
+      timestamp: state.executionMarketSnapshot.timestamp ? new Date(state.executionMarketSnapshot.timestamp) : null,
+      acquiredAt: new Date(state.executionMarketSnapshot.acquiredAt),
+      fetchedAt: new Date(state.executionMarketSnapshot.fetchedAt),
+    },
+    pairConstraints: {
+      ...state.pairConstraints,
+      fetchedAt: state.pairConstraints.fetchedAt ? new Date(state.pairConstraints.fetchedAt) : null,
+      expiresAt: state.pairConstraints.expiresAt ? new Date(state.pairConstraints.expiresAt) : null,
+    },
+    allocation: { ...state.allocation, profile: { ...state.allocation.profile } },
+  };
+}
+
 type GridRangeCandidate =
-  | { ok: true; rangeVersionId: string; gridLevels: import("./gridIsolatedTypes").GridLevel[]; professionalGenerator: any; allocation: any; generatedLevels: any[]; viabilityStatus: string }
+  | { ok: true; rangeVersionId: string; gridLevels: import("./gridIsolatedTypes").GridLevel[]; professionalGenerator: any; allocation: any; generatedLevels: any[]; viabilityStatus: string; rejectedLevels: import("./gridLevelConstraintNormalizer").RejectedGridLevel[] }
   | { ok: false; reasonCode: string; explanation: string };
 
 type GridRangeProposalResult =
@@ -179,6 +433,13 @@ export class GridIsolatedEngine {
   private lastShadowExecutionPrice: GridShadowExecutionPriceResult | null = null;
   private lastPausedEventKey: string | null = null;
   private lastPausedEventAt: Date | null = null;
+  // REV-C12A: In-memory execution gate state (not persisted to DB, no migration).
+  // Updated during real tick/proposeRangeVersion evaluation. After restart, if no
+  // recent evaluation exists, canCreateRange=false with SIN_EVALUACION_RECIENTE.
+  private lastExecutionGate: RawExecutionGateData | null = null;
+  // REV-C12B: In-memory projection state — exact data used by buildRangeProposal.
+  // Updated only during the tick, after allocation is resolved. Read-only from route.
+  private lastRecommendationProjectionState: GridRecommendationProjectionState | null = null;
 
   /**
    * Load config from DB or create default.
@@ -705,6 +966,7 @@ export class GridIsolatedEngine {
       ask: ticker?.ask,
       marketContextPrice,
       bandSnapshotClose: bandSnapshot?.midPrice ?? null,
+      now: this.lastTickAt ?? undefined,
     });
 
     this.lastShadowExecutionPrice = result;
@@ -835,6 +1097,7 @@ export class GridIsolatedEngine {
       }
     } catch (error) {
       botLogger.error("SYSTEM_ERROR", `[GridIsolatedEngine] Failed to save config: ${error}`);
+      throw error;
     }
   }
 
@@ -962,6 +1225,13 @@ export class GridIsolatedEngine {
   private async tick(): Promise<void> {
     this.lastTickAt = new Date();
 
+    // REV-C12B: Clear projection state at the START of each tick.
+    // The state is only re-assigned when the CURRENT tick obtains simultaneously:
+    // valid band, suitableForGrid=true, operable regime, verified+fresh Revolut X snapshot,
+    // verified+fresh constraints, valid+coherent allocation, same pair.
+    // If any of those fail, the state stays null — the previous tick's state is NOT preserved.
+    this.lastRecommendationProjectionState = null;
+
     if (!this.config || this.config.mode === "OFF") {
       this.lastTickReason = "Modo OFF — el motor no ejecuta ticks.";
       return;
@@ -1067,25 +1337,133 @@ export class GridIsolatedEngine {
       }
     }
 
-    let pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
-    let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
-    try {
-      pairConstraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
-      const acquiredAt = new Date();
-      const ticker = await revolutXService.getTicker(this.config.pair);
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints: pairConstraints, source: "REVOLUT_X_TICKER", acquiredAt });
-    } catch {
-      pairConstraints = { pair: this.config.pair, normalizedPair: this.config.pair.replace("/", "-").toUpperCase(), executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region: null, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode: "PAIR_CONSTRAINTS_UNAVAILABLE" };
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker: null, constraints: pairConstraints, source: "REVOLUT_X_UNAVAILABLE", acquiredAt: new Date() });
+    // REV-C12E: Single canonical orchestrator resolves the complete planning
+    // context: band, Kraken ticker, reference market, Revolut X constraints,
+    // execution capability, execution market snapshot, allocation, split,
+    // projection context, TTL, and gate — all exactly once.
+    // revolutXService.getTicker() is NOT called anywhere in this flow.
+    // REV-C12G: Apply the SHADOW override for taker fallback and execution
+    // policy via the shared helpers so the tick uses effective runtime values,
+    // not the stored DB row.
+    const effectiveExecutionPolicy = getEffectiveExecutionPolicy(this.config);
+    const effectiveTakerFallbackEnabled = getEffectiveTakerFallbackEnabled(this.config);
+    const planningContext = await resolveGridPlanningContext({
+      pair: this.config.pair,
+      bandConfig: {
+        pair: this.config.pair,
+        atrPeriod: this.config.atrPeriod ?? 14,
+        atrTimeframe: this.config.atrTimeframe ?? "1h",
+        bandPeriod: this.config.bandPeriod ?? 89,
+        bandStdDevMultiplier: this.config.bandStdDevMultiplier ?? 2.0,
+      },
+      executionPolicy: effectiveExecutionPolicy,
+      takerFallbackEnabled: effectiveTakerFallbackEnabled,
+      allocationInput: {
+        capitalProfile: this.config.capitalProfile,
+        netProfitTargetPct: this.config.netProfitTargetPct,
+        maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
+        allocationMode: this.config.gridAllocationMode ?? "uniform",
+        deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
+        progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
+        maxLevelPct: this.config.gridMaxLevelPct ?? 40,
+        minLevelUsd: this.config.gridMinLevelUsd ?? 30,
+      },
+      config: this.config,
+      preResolvedBandSnapshot: bandSnapshot,
+    });
+    const pairConstraints = planningContext.pairConstraints;
+    const referenceMarket = planningContext.referenceMarket;
+    const executionCapability = planningContext.executionCapability;
+    const executionMarketSnapshot = planningContext.executionMarketSnapshot;
+    const tickAllocation = planningContext.allocation;
+    const ttl = planningContext.ttl;
+
+    if (!referenceMarket.verifiedForPlanning) {
+      botLogger.warn("GRID_REFERENCE_MARKET_UNAVAILABLE", `Ticker de referencia Kraken no disponible para ${this.config.pair}: ${referenceMarket.explanation}`, {
+        pair: this.config.pair,
+        reasonCode: referenceMarket.reasonCode,
+        source: "KRAKEN_MARKET_DATA",
+        constraintsVerified: pairConstraints.verified,
+        canCreateRange: false,
+        allowCycleExits: true,
+      });
+    }
+
+    // REV-C12E: legacy taker policies are blocked from creating new entries.
+    if (!executionCapability.verified && executionCapability.reasonCode === "LEGACY_TAKER_POLICY_BLOCKED") {
+      botLogger.warn("GRID_LEGACY_POLICY_BLOCKED", executionCapability.explanation, {
+        pair: this.config.pair,
+        executionPolicy: this.config.executionPolicy,
+        canCreateRange: false,
+        allowCycleExits: true,
+      });
     }
 
     const allowCycleExits = true;
-    const allowRangeBuys = executionMarketSnapshot.verified === true && executionMarketSnapshot.fresh === true && pairConstraints.verified === true && !this.circuitBreakerOpen && !pumpGuard.active;
+    const allowRangeBuys = executionMarketSnapshot.verified === true && executionMarketSnapshot.fresh === true && pairConstraints.verified === true && executionCapability.verified === true && !this.circuitBreakerOpen && !pumpGuard.active;
     const allowRangeRebuild = allowRangeBuys && bandSnapshot.suitableForGrid;
     const allowNewRange = allowRangeRebuild;
     if (!allowRangeBuys) {
       blockNewRangesAndBuys = true;
-      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Precios de ejecución no disponibles: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", { pair: this.config.pair, reasonCode: executionMarketSnapshot.reasonCode ?? pairConstraints.reasonCode, source: executionMarketSnapshot.source, allowCycleExits });
+      // REV-C12G: Use the pure blocker metadata helper so the event identifies
+      // the real blocking component with correct priority (referenceMarket >
+      // pairConstraints > executionCapability > snapshot > circuitBreaker >
+      // pumpGuard > fallback). The event type stays historical for compatibility.
+      const blocker = resolveGridPlanningBlockerMetadata({
+        referenceMarket,
+        pairConstraints,
+        executionCapability,
+        executionMarketSnapshot,
+        circuitBreakerOpen: this.circuitBreakerOpen,
+        circuitBreakerReason: this.config.circuitBreakerReason ?? null,
+        pumpGuardActive: pumpGuard.active,
+        pumpGuardReason: this.pumpDumpState.reason ?? null,
+      });
+      await this.logEvent("EXECUTION_MARKET_SNAPSHOT_UNAVAILABLE" as any, "Gate de planificación Grid bloqueado: se conservan salidas abiertas y se bloquean BUY, rebuild y rangos nuevos.", {
+        pair: this.config.pair,
+        reasonCode: blocker.reasonCode,
+        source: executionMarketSnapshot.source,
+        allowCycleExits,
+        blockerComponent: blocker.blockerComponent,
+        blockerExplanation: blocker.blockerExplanation,
+        referenceMarketVerified: referenceMarket.verifiedForPlanning,
+        pairConstraintsVerified: pairConstraints.verified,
+        executionCapabilityVerified: executionCapability.verified,
+        executionMarketSnapshotVerified: executionMarketSnapshot.verified,
+        effectiveTakerFallbackEnabled,
+        effectiveExecutionPolicy,
+      });
+    }
+
+    // REV-C12A: Store in-memory execution gate state after real tick evaluation.
+    // This is the only place where the gate is updated — no persistence, no DB.
+    this.lastExecutionGate = buildExecutionGateState(executionMarketSnapshot, pairConstraints, this.config.pair, planningContext.evaluatedAt);
+
+    // REV-C12B Step 3/4: Store projection state ONLY when the projection context
+    // resolves ok=true AND ttl.fresh=true AND ttl.validUntil !== null.
+    // No fallback to evaluatedAt when validUntil is null — fail-closed.
+    // No fallback to "ranging" for regime — pass real regime, let the helper decide.
+    // REV-C12E: Projection context is already resolved by the orchestrator — do NOT call again.
+    if (tickAllocation && planningContext.projectionContextResult?.ok && ttl.fresh && ttl.validUntil) {
+      this.lastRecommendationProjectionState = {
+        evaluatedAt: planningContext.evaluatedAt.toISOString(),
+        validUntil: ttl.validUntil.toISOString(),
+        pair: this.config.pair,
+        bandSnapshot: {
+          midPrice: bandSnapshot.midPrice,
+          middle: bandSnapshot.middle,
+          upper: bandSnapshot.upper,
+          lower: bandSnapshot.lower,
+          atrPct: bandSnapshot.atrPct,
+          regime: bandSnapshot.regime ?? "",
+          suitableForGrid: bandSnapshot.suitableForGrid ?? false,
+        },
+        executionMarketSnapshot,
+        pairConstraints,
+        allocation: tickAllocation,
+      };
+    } else {
+      this.lastRecommendationProjectionState = null;
     }
 
     if (this.config.mode === "SHADOW" && this.activeRangeVersion) {
@@ -1097,9 +1475,12 @@ export class GridIsolatedEngine {
       }
     }
 
+    // REV-C12E: Extract pre-resolved projection context from orchestrator (if ok).
+    const tickProjectionContext = planningContext.projectionContextResult?.ok ? planningContext.projectionContextResult.context : null;
+
     // If no active range, propose one (only when not blocked by circuit breaker or guard).
     if (!this.activeRangeVersion && allowNewRange && !blockNewRangesAndBuys) {
-      await this.proposeRangeVersion(bandSnapshot, executionMarketSnapshot, pairConstraints);
+      await this.proposeRangeVersion(bandSnapshot, executionMarketSnapshot, pairConstraints, tickAllocation ?? undefined, tickProjectionContext);
       if (!this.activeRangeVersion) {
         this.lastTickReason = "No se propuso rango activo: el generador no produjo niveles viables con la configuración actual.";
         await this.logShadowTickEvent("GRID_SHADOW_NO_VIABLE_RANGE", "El motor evaluó el mercado pero no pudo generar un rango viable.", { reason: "no_viable_range" });
@@ -1110,7 +1491,7 @@ export class GridIsolatedEngine {
       // Band has drifted significantly from active range
       const canRebuild = this.canRebuildLevels();
       if (canRebuild) {
-        await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints);
+        await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints, tickAllocation ?? undefined, tickProjectionContext);
         this.lastTickReason = "Banda desplazada — niveles planificados recalculados para el nuevo rango.";
       } else {
         this.lastTickReason = "Banda desplazada — niveles/ciclos reales conservados por seguridad.";
@@ -1199,72 +1580,40 @@ export class GridIsolatedEngine {
   /**
    * Build a complete range proposal candidate without mutating DB.
    * Returns the candidate only when microstructure, constraints and generator are valid.
+   *
+   * REV-C12B: Accepts an optional pre-resolved allocation. When provided, the allocator
+   * is NOT called again — the same allocation object is reused for recommendation,
+   * projection, and range creation. When not provided (manual rebuild path), the
+   * allocator is called as before.
+   *
+   * REV-C12E: Accepts an optional pre-resolved projection context. When provided,
+   * resolveGridProfessionalProjectionContext is NOT called again.
    */
   private async buildRangeProposal(
     bandSnapshot: any,
     executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
-    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>
+    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>,
+    preResolvedAllocation?: CapitalAllocationResult,
+    preResolvedProjectionContext?: GridProfessionalProjectionContext | null,
   ): Promise<GridRangeCandidate> {
     if (!this.config) return { ok: false, reasonCode: "NO_CONFIG", explanation: "No hay configuración cargada." };
     if (!executionMarketSnapshot.verified || !executionMarketSnapshot.fresh) return { ok: false, reasonCode: "EXECUTION_MARKET_SNAPSHOT_INVALID", explanation: "Snapshot de microestructura no verificado o no fresco." };
     if (!pairConstraints.verified) return { ok: false, reasonCode: "PAIR_CONSTRAINTS_INVALID", explanation: "Constraints del par no verificadas." };
     if (executionMarketSnapshot.pair !== this.config.pair) return { ok: false, reasonCode: "EXECUTION_MARKET_PAIR_MISMATCH", explanation: "El par del snapshot no coincide con el par configurado." };
 
-    const allocation = await gridCapitalAllocator.allocate(
-      this.config.capitalProfile,
-      10,
-      this.config.netProfitTargetPct,
-      {
-        maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
-        allocationMode: this.config.gridAllocationMode ?? "uniform",
-        deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
-        progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
-        maxLevelPct: this.config.gridMaxLevelPct ?? 40,
-        minLevelUsd: this.config.gridMinLevelUsd ?? 30,
-      }
-    );
+    // REV-C12E: Allocation and projection context are mandatory — they must be
+    // pre-resolved by the orchestrator (resolveGridPlanningContext). No fallback
+    // to gridCapitalAllocator.allocate or resolveGridProfessionalProjectionContext.
+    if (!preResolvedAllocation) {
+      return { ok: false, reasonCode: "PLANNING_CONTEXT_INCOMPLETE", explanation: "Falta allocation pre-resuelto del orquestador." };
+    }
+    if (!preResolvedProjectionContext) {
+      return { ok: false, reasonCode: "PLANNING_CONTEXT_INCOMPLETE", explanation: "Falta projection context pre-resuelto del orquestador." };
+    }
+    const allocation = preResolvedAllocation;
+    const projectionCtx = preResolvedProjectionContext;
 
-    const professionalResult = generateProfessionalGridLevels({
-      currentPrice: bandSnapshot.midPrice,
-      bollingerMiddle: bandSnapshot.middle,
-      bollingerUpper: bandSnapshot.upper,
-      bollingerLower: bandSnapshot.lower,
-      atrPct: bandSnapshot.atrPct,
-      netProfitTargetPct: this.config.netProfitTargetPct,
-      gridStepAtrMultiplier: this.config.gridStepAtrMultiplier,
-      gridStepMinPct: this.config.gridStepMinPct,
-      gridStepMaxPct: this.config.gridStepMaxPct,
-      configuredBuyLevels: Math.floor(allocation.levelsCount / 2),
-      configuredSellLevels: Math.floor(allocation.levelsCount / 2),
-      capitalPerLevelUsd: allocation.capitalPerLevelUsd,
-      spreadPct: executionMarketSnapshot.spreadPct,
-      priceTickPct: executionMarketSnapshot.priceTickPct,
-      spreadBufferPct: 0.01,
-      safetyBufferPct: 0.10,
-      minLevelsForViableGrid: 4,
-      centerPriceMode: "hybrid",
-      centerClampPct: 0.25,
-      operationalRangeMode: "hybrid",
-      operationalBandWidthPct: 20.0,
-      atrRangeMultiplier: 8.0,
-      minOperationalBandWidthPct: 20.0,
-      dynamicLevelReduction: true,
-      gridViabilityMode: "strict",
-      enforceCompactRange: this.config.enforceCompactRange ?? true,
-      gridRangeMaxPct: this.config.gridRangeMaxPct ?? 2.50,
-      maxDistanceFromCenterPct: this.config.maxDistanceFromCenterPct ?? 1.25,
-      maxSellDistanceFromNearestBuyPct: this.config.maxSellDistanceFromNearestBuyPct ?? 1.50,
-      gridRangeControlMode: this.config.gridRangeControlMode ?? 'adaptive_smart',
-      adaptiveRangeEnabled: this.config.adaptiveRangeEnabled ?? true,
-      adaptiveRangeProfile: this.config.adaptiveRangeProfile ?? 'balanced',
-      adaptiveRangeMinPct: this.config.adaptiveRangeMinPct ?? 1.50,
-      adaptiveRangeMaxPct: this.config.adaptiveRangeMaxPct ?? 7.00,
-      adaptiveRangeLowVolMaxPct: this.config.adaptiveRangeLowVolMaxPct ?? 3.00,
-      adaptiveRangeNormalMaxPct: this.config.adaptiveRangeNormalMaxPct ?? 5.00,
-      adaptiveRangeHighVolMaxPct: this.config.adaptiveRangeHighVolMaxPct ?? 7.00,
-      adaptiveRangeTargetFullLevels: this.config.adaptiveRangeTargetFullLevels ?? false,
-      adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
-    });
+    const professionalResult = generateProfessionalGridLevels(buildProfessionalGeneratorInput(projectionCtx));
 
     if (professionalResult.levels.length === 0) {
       return {
@@ -1288,14 +1637,143 @@ export class GridIsolatedEngine {
     const rangeVersionId = randomUUID();
     const gridLevels = toGridLevels(professionalResult.levels, rangeVersionId);
 
+    const normalization = normalizeGridLevelsForExecutionConstraints(gridLevels, {
+      quantityStep: pairConstraints?.quantityStep ?? null,
+      minOrderBase: pairConstraints?.minOrderBase ?? null,
+      minOrderQuote: pairConstraints?.minOrderQuote ?? null,
+      minOrderUsd: pairConstraints?.minOrderUsd ?? null,
+      maxOrderBase: pairConstraints?.maxOrderBase ?? null,
+      quantityPrecision: pairConstraints?.quantityPrecision ?? null,
+      priceTickSize: pairConstraints?.priceTickSize ?? null,
+      pricePrecision: pairConstraints?.pricePrecision ?? null,
+    });
+
+    const acceptedLevels = normalization.acceptedLevels;
+    const rejectedLevels = normalization.rejectedLevels;
+
+    const minLevelsForViableGrid = 4;
+    if (acceptedLevels.length < minLevelsForViableGrid) {
+      const reasonCounts: Record<string, number> = {};
+      for (const r of rejectedLevels) {
+        reasonCounts[r.reasonCode] = (reasonCounts[r.reasonCode] ?? 0) + 1;
+      }
+      return {
+        ok: false,
+        reasonCode: "GRID_LEVEL_CONSTRAINT_NORMALIZATION_INSUFFICIENT_LEVELS",
+        explanation: `generatedCount=${gridLevels.length}, acceptedCount=${acceptedLevels.length}, rejectedCount=${rejectedLevels.length}, reasonCodes=${JSON.stringify(reasonCounts)}`,
+      };
+    }
+
+    if (normalization.postNormalizationWarnings.length > 0) {
+      return {
+        ok: false,
+        reasonCode: "GRID_LEVEL_PRICE_COLLISION_AFTER_NORMALIZATION",
+        explanation: `Post-normalization validation failed: ${normalization.postNormalizationWarnings.join("; ")}`,
+      };
+    }
+
+    const rangeAudit = professionalResult.professionalGenerator?.rangeAudit;
+    if (!rangeAudit) {
+      return {
+        ok: false,
+        reasonCode: "GRID_UNIFORM_GEOMETRY_INVALID",
+        explanation: "rangeAudit no existe en el resultado del generador profesional.",
+      };
+    }
+
+    if (!rangeAudit.uniformSpacingOk) {
+      return {
+        ok: false,
+        reasonCode: "GRID_NON_UNIFORM_SPACING",
+        explanation: `uniformSpacingOk=false: adjacentGapMinPct=${rangeAudit.adjacentGapMinPct}, adjacentGapMaxPct=${rangeAudit.adjacentGapMaxPct}, configuredSpacingPct=${rangeAudit.configuredSpacingPct}`,
+      };
+    }
+
+    if (!(rangeAudit.centralGapPct > 0)) {
+      return {
+        ok: false,
+        reasonCode: "GRID_UNIFORM_GEOMETRY_INVALID",
+        explanation: `centralGapPct no es positivo: ${rangeAudit.centralGapPct}`,
+      };
+    }
+
+    const spacingTolerance = rangeAudit.configuredSpacingPct * 0.1;
+    if (Math.abs(rangeAudit.centralGapPct - rangeAudit.configuredSpacingPct) > spacingTolerance) {
+      return {
+        ok: false,
+        reasonCode: "GRID_CENTRAL_GAP_EXCEEDS_LIMIT",
+        explanation: `centralGapPct=${rangeAudit.centralGapPct.toFixed(4)} no coincide con configuredSpacingPct=${rangeAudit.configuredSpacingPct.toFixed(4)} dentro de tolerancia ${spacingTolerance.toFixed(4)}`,
+      };
+    }
+
+    if (rangeAudit.centralGapPct > rangeAudit.maxSellDistanceFromNearestBuyPct) {
+      return {
+        ok: false,
+        reasonCode: "GRID_CENTRAL_GAP_EXCEEDS_LIMIT",
+        explanation: `centralGapPct=${rangeAudit.centralGapPct.toFixed(4)} supera maxSellDistanceFromNearestBuyPct=${rangeAudit.maxSellDistanceFromNearestBuyPct}`,
+      };
+    }
+
+    const tickSize = pairConstraints?.priceTickSize ?? null;
+    if (tickSize && tickSize > 0 && acceptedLevels.length >= 2) {
+      const buys = acceptedLevels.filter(l => l.side === "BUY").sort((a, b) => a.price - b.price);
+      const sells = acceptedLevels.filter(l => l.side === "SELL").sort((a, b) => a.price - b.price);
+      const configuredSpacingPct = rangeAudit.configuredSpacingPct;
+      const maxTickDeviationPct = (tickSize / rangeAudit.centerPrice) * 100;
+
+      const checkUniform = (levels: typeof buys, label: string) => {
+        for (let i = 1; i < levels.length; i++) {
+          const gapPct = ((levels[i].price - levels[i - 1].price) / levels[i - 1].price) * 100;
+          const deviation = Math.abs(gapPct - configuredSpacingPct);
+          if (deviation > Math.max(configuredSpacingPct * 0.1, maxTickDeviationPct)) {
+            return { ok: false, gapPct, deviation, label, index: i };
+          }
+        }
+        return { ok: true };
+      };
+
+      const buyCheck = checkUniform(buys, "BUY");
+      if (!buyCheck.ok) {
+        return {
+          ok: false,
+          reasonCode: "GRID_NON_UNIFORM_SPACING",
+          explanation: `Post-normalization ${buyCheck.label} gap at index ${buyCheck.index}: gapPct=${buyCheck.gapPct?.toFixed(6)}, configuredSpacingPct=${configuredSpacingPct.toFixed(6)}, maxTickDeviationPct=${maxTickDeviationPct.toFixed(6)}`,
+        };
+      }
+
+      const sellCheck = checkUniform(sells, "SELL");
+      if (!sellCheck.ok) {
+        return {
+          ok: false,
+          reasonCode: "GRID_NON_UNIFORM_SPACING",
+          explanation: `Post-normalization ${sellCheck.label} gap at index ${sellCheck.index}: gapPct=${sellCheck.gapPct?.toFixed(6)}, configuredSpacingPct=${configuredSpacingPct.toFixed(6)}, maxTickDeviationPct=${maxTickDeviationPct.toFixed(6)}`,
+        };
+      }
+
+      if (buys.length > 0 && sells.length > 0) {
+        const highestBuy = buys[buys.length - 1].price;
+        const lowestSell = sells[0].price;
+        const postCentralGapPct = ((lowestSell - highestBuy) / highestBuy) * 100;
+        const centralDeviation = Math.abs(postCentralGapPct - configuredSpacingPct);
+        if (centralDeviation > Math.max(configuredSpacingPct * 0.1, maxTickDeviationPct)) {
+          return {
+            ok: false,
+            reasonCode: "GRID_CENTRAL_GAP_EXCEEDS_LIMIT",
+            explanation: `Post-normalization central gap: ${postCentralGapPct.toFixed(6)}%, configuredSpacingPct=${configuredSpacingPct.toFixed(6)}, maxTickDeviationPct=${maxTickDeviationPct.toFixed(6)}`,
+          };
+        }
+      }
+    }
+
     return {
       ok: true,
       rangeVersionId,
-      gridLevels,
+      gridLevels: acceptedLevels,
       professionalGenerator: professionalResult.professionalGenerator,
       allocation,
       generatedLevels: professionalResult.levels,
       viabilityStatus: professionalResult.viabilityStatus,
+      rejectedLevels,
     };
   }
 
@@ -1304,7 +1782,7 @@ export class GridIsolatedEngine {
    * The candidate is built first; only if viable the DB transaction replaces the range.
    * No intermediate state exists where the old range is replaced and the new one is missing.
    */
-  private async rebuildRangeAndLevels(bandSnapshot: any, executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>, pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>): Promise<void> {
+  private async rebuildRangeAndLevels(bandSnapshot: any, executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>, pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>, preResolvedAllocation?: CapitalAllocationResult, preResolvedProjectionContext?: GridProfessionalProjectionContext | null): Promise<void> {
     if (!this.activeRangeVersion || !this.config) return;
     const oldRange = this.activeRangeVersion;
 
@@ -1315,7 +1793,7 @@ export class GridIsolatedEngine {
       ? ((bandSnapshot.bandWidthPct - oldRange.bandWidthPct) / oldRange.bandWidthPct) * 100
       : 0;
 
-    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints, preResolvedAllocation, preResolvedProjectionContext);
     if (!proposal.ok) {
       await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", "El rebuild fue abortado: " + proposal.explanation, {
         rangeVersionId: oldRange.id,
@@ -1327,7 +1805,9 @@ export class GridIsolatedEngine {
     }
 
     const { rangeVersionId, gridLevels, professionalGenerator, allocation, generatedLevels, viabilityStatus } = proposal;
-    const ratio = 1.0;
+    const ratio = professionalGenerator.spacingPct > 0
+      ? 1 + professionalGenerator.spacingPct / 100
+      : 1.0;
 
     // IDs of levels from the old range that are still planned/open and not tied to an open cycle.
     const openCycleLevelIds = new Set<string>();
@@ -1357,7 +1837,7 @@ export class GridIsolatedEngine {
           bandWidthPct: bandSnapshot.bandWidthPct.toFixed(4),
           atrPct: bandSnapshot.atrPct.toFixed(4),
           regime: bandSnapshot.regime,
-          levelsCount: generatedLevels.length,
+          levelsCount: gridLevels.length,
           geometricRatio: ratio.toFixed(4),
           capitalBudgetUsd: allocation.finalGridBudgetUsd.toFixed(2),
           capitalPerLevelUsd: allocation.capitalPerLevelUsd.toFixed(2),
@@ -1423,7 +1903,7 @@ export class GridIsolatedEngine {
       bandWidthPct: bandSnapshot.bandWidthPct,
       atrPct: bandSnapshot.atrPct,
       regime: bandSnapshot.regime,
-      levelsCount: generatedLevels.length,
+      levelsCount: gridLevels.length,
       geometricRatio: ratio,
       capitalBudgetUsd: allocation.finalGridBudgetUsd,
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
@@ -1824,11 +2304,13 @@ export class GridIsolatedEngine {
   private async proposeRangeVersion(
     bandSnapshot: any,
     executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>,
-    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>
+    pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>,
+    preResolvedAllocation?: CapitalAllocationResult,
+    preResolvedProjectionContext?: GridProfessionalProjectionContext | null,
   ): Promise<GridRangeProposalResult> {
     if (!this.config) return { ok: false, reasonCode: "NO_CONFIG", explanation: "No hay configuración cargada." };
 
-    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints, preResolvedAllocation, preResolvedProjectionContext);
     if (!proposal.ok) {
       await this.logEvent(
         proposal.reasonCode === "PROFESSIONAL_GENERATOR_COMPACT"
@@ -1843,6 +2325,9 @@ export class GridIsolatedEngine {
     const { rangeVersionId, gridLevels, professionalGenerator, allocation, generatedLevels, viabilityStatus } = proposal;
     const versionNumber = await this.getNextVersionNumber();
     const activatedAt = new Date();
+    const shadowRatio = professionalGenerator.spacingPct > 0
+      ? 1 + professionalGenerator.spacingPct / 100
+      : 1.0;
 
     try {
       await db.transaction(async (tx) => {
@@ -1861,8 +2346,8 @@ export class GridIsolatedEngine {
           bandWidthPct: bandSnapshot.bandWidthPct.toFixed(4),
           atrPct: bandSnapshot.atrPct.toFixed(4),
           regime: bandSnapshot.regime,
-          levelsCount: generatedLevels.length,
-          geometricRatio: "1.0000",
+          levelsCount: gridLevels.length,
+          geometricRatio: shadowRatio.toFixed(4),
           capitalBudgetUsd: allocation.finalGridBudgetUsd.toFixed(2),
           capitalPerLevelUsd: allocation.capitalPerLevelUsd.toFixed(2),
           netProfitTargetPct: this.config!.netProfitTargetPct.toFixed(3),
@@ -1909,8 +2394,10 @@ export class GridIsolatedEngine {
       bandWidthPct: bandSnapshot.bandWidthPct,
       atrPct: bandSnapshot.atrPct,
       regime: bandSnapshot.regime,
-      levelsCount: generatedLevels.length,
-      geometricRatio: 1,
+      levelsCount: gridLevels.length,
+      geometricRatio: professionalGenerator.spacingPct > 0
+        ? 1 + professionalGenerator.spacingPct / 100
+        : 1.0,
       capitalBudgetUsd: allocation.finalGridBudgetUsd,
       capitalPerLevelUsd: allocation.capitalPerLevelUsd,
       netProfitTargetPct: this.config.netProfitTargetPct,
@@ -1929,7 +2416,7 @@ export class GridIsolatedEngine {
       upperPrice: professionalGenerator.operationalUpper,
       centerPrice: professionalGenerator.centerPrice,
       widthPct: professionalGenerator.operationalBandWidthPct,
-      method: "professional_accumulated_spacing",
+      method: "professional_uniform_geometric_spacing",
       reasonCode: "PROFESSIONAL_GENERATOR",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,
@@ -1941,7 +2428,7 @@ export class GridIsolatedEngine {
       upperPrice: professionalGenerator.operationalUpper,
       centerPrice: professionalGenerator.centerPrice,
       widthPct: professionalGenerator.operationalBandWidthPct,
-      method: "professional_accumulated_spacing",
+      method: "professional_uniform_geometric_spacing",
       reasonCode: "BAND_VALID",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,
@@ -1959,7 +2446,7 @@ export class GridIsolatedEngine {
       upperPrice: professionalGenerator.operationalUpper,
       centerPrice: professionalGenerator.centerPrice,
       widthPct: professionalGenerator.operationalBandWidthPct,
-      method: "professional_accumulated_spacing",
+      method: "professional_uniform_geometric_spacing",
       reasonCode: "SHADOW_ACTIVATION",
       levelsCount: generatedLevels.length,
       regime: bandSnapshot.regime,
@@ -4664,18 +5151,73 @@ export class GridIsolatedEngine {
       return { success: false, reason: "Could not fetch band snapshot from market data", dryRun };
     }
 
-    let pairConstraints: Awaited<ReturnType<typeof revolutXService.resolveGridPairConstraints>>;
-    let executionMarketSnapshot: ReturnType<typeof buildGridExecutionMarketSnapshot>;
-    try {
-      pairConstraints = await revolutXService.resolveGridPairConstraints(this.config.pair);
-      const acquiredAt = new Date();
-      const ticker = await revolutXService.getTicker(this.config.pair);
-      executionMarketSnapshot = buildGridExecutionMarketSnapshot({ pair: this.config.pair, ticker, constraints: pairConstraints, source: "REVOLUT_X_TICKER", acquiredAt });
-    } catch {
-      return { success: false, reason: "Could not obtain verified Revolut X execution microstructure", dryRun };
+    // REV-C12E: Manual rebuild uses the single canonical orchestrator —
+    // resolveGridPlanningContext. No duplicated logic between call sites.
+    // REV-C12G: Apply the SHADOW override for taker fallback and execution
+    // policy via the shared helpers so rebuild uses effective runtime values,
+    // not the stored DB row.
+    const effectiveExecutionPolicyRebuild = getEffectiveExecutionPolicy(this.config);
+    const effectiveTakerFallbackEnabledRebuild = getEffectiveTakerFallbackEnabled(this.config);
+    const planningContextRebuild = await resolveGridPlanningContext({
+      pair: this.config.pair,
+      bandConfig: {
+        pair: this.config.pair,
+        atrPeriod: this.config.atrPeriod ?? 14,
+        atrTimeframe: this.config.atrTimeframe ?? "1h",
+        bandPeriod: this.config.bandPeriod ?? 89,
+        bandStdDevMultiplier: this.config.bandStdDevMultiplier ?? 2.0,
+      },
+      executionPolicy: effectiveExecutionPolicyRebuild,
+      takerFallbackEnabled: effectiveTakerFallbackEnabledRebuild,
+      allocationInput: {
+        capitalProfile: this.config.capitalProfile,
+        netProfitTargetPct: this.config.netProfitTargetPct,
+        maxCapitalPerCycleUsd: this.config.gridMaxCapitalPerCycleUsd ?? 0,
+        allocationMode: this.config.gridAllocationMode ?? "uniform",
+        deploymentMode: this.config.gridCapitalDeploymentMode ?? "capped",
+        progressiveIntensity: this.config.gridProgressiveIntensity ?? 0.30,
+        maxLevelPct: this.config.gridMaxLevelPct ?? 40,
+        minLevelUsd: this.config.gridMinLevelUsd ?? 30,
+      },
+      config: this.config,
+      preResolvedBandSnapshot: bandSnapshot,
+    });
+    const pairConstraints = planningContextRebuild.pairConstraints;
+    const referenceMarketRebuild = planningContextRebuild.referenceMarket;
+    const executionCapabilityRebuild = planningContextRebuild.executionCapability;
+    const executionMarketSnapshot = planningContextRebuild.executionMarketSnapshot;
+    // REV-C12E: Extract pre-resolved allocation and projection context from orchestrator.
+    const rebuildAllocation = planningContextRebuild.allocation;
+    const rebuildProjectionContext = planningContextRebuild.projectionContextResult?.ok
+      ? planningContextRebuild.projectionContextResult.context
+      : null;
+    if (!pairConstraints.verified) {
+      return { success: false, reason: "Could not resolve Revolut X pair constraints", dryRun };
+    }
+    if (!referenceMarketRebuild.verifiedForPlanning) {
+      return { success: false, reason: `Kraken reference market unavailable: ${referenceMarketRebuild.explanation}`, dryRun };
+    }
+    if (!executionCapabilityRebuild.verified) {
+      return { success: false, reason: `Revolut X execution capability unavailable: ${executionCapabilityRebuild.explanation}`, dryRun };
+    }
+    // REV-C12E: Mandatory pre-resolved context — abort if incomplete.
+    if (!rebuildAllocation) {
+      return { success: false, reason: "Planning context incomplete: allocation missing", dryRun };
+    }
+    if (!rebuildProjectionContext) {
+      return { success: false, reason: "Planning context incomplete: projection context missing", dryRun };
+    }
+    if (!planningContextRebuild.ttl.fresh) {
+      return { success: false, reason: "Planning context stale: TTL expired", dryRun };
+    }
+    if (!planningContextRebuild.validUntil) {
+      return { success: false, reason: "Planning context incomplete: validUntil missing", dryRun };
+    }
+    if (!planningContextRebuild.gate.canCreateRange) {
+      return { success: false, reason: `Planning context gate blocked: ${planningContextRebuild.blockers.join(", ")}`, dryRun };
     }
 
-    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    const proposal = await this.buildRangeProposal(bandSnapshot, executionMarketSnapshot, pairConstraints, rebuildAllocation, rebuildProjectionContext);
     if (!proposal.ok) {
       await this.logEvent("GRID_LEVELS_PRESERVED_DUE_TO_CYCLE", `Rebuild manual abortado: ${proposal.explanation}`, {
         rangeVersionId: oldRange.id,
@@ -4691,7 +5233,8 @@ export class GridIsolatedEngine {
       return { success: true, dryRun: true, oldRangeVersionId: oldRange.id, replacedLevelsCount: plannedLevels.length, newLevelsCount: proposal.gridLevels.length, beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal }, reason };
     }
 
-    await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints);
+    // REV-C12E: Rebuild real reuses pre-resolved allocation and projection context.
+    await this.rebuildRangeAndLevels(bandSnapshot, executionMarketSnapshot, pairConstraints, rebuildAllocation, rebuildProjectionContext);
     if (!this.activeRangeVersion || this.activeRangeVersion.id === oldRange.id) {
       return { success: false, dryRun, reason: "Atomic rebuild did not commit", oldRangeVersionId: oldRange.id, replacedLevelsCount: 0, newLevelsCount: 0, beforeSummary: { buyTotal: beforeBuyTotal, sellTotal: beforeSellTotal } };
     }
@@ -4773,6 +5316,52 @@ export class GridIsolatedEngine {
    */
   getLastTickReason(): string | null {
     return this.lastTickReason;
+  }
+
+  /**
+   * REV-C12A: Get the in-memory execution gate state (read-only).
+   * Returns null if no evaluation has occurred since startup (SIN_EVALUACION_RECIENTE).
+   * The caller is responsible for rendering the SIN_EVALUACION_RECIENTE state when null.
+   */
+  /**
+   * REV-C12A/REV-C12B: Get the execution gate state (read-only).
+   * Recalculates age and freshness on each read — does NOT return stale VERIFIED.
+   * Readings do NOT renew evaluatedAt or validUntil.
+   */
+  getExecutionGate(): ExecutionGateState {
+    if (this.lastExecutionGate) {
+      return resolveExecutionGateState(this.lastExecutionGate, new Date());
+    }
+    // No evaluation since startup — return SIN_EVALUACION_RECIENTE state
+    const pair = this.config?.pair ?? "BTC/USD";
+    return buildNoEvaluationGateState(pair);
+  }
+
+  /**
+   * REV-C12B: Get the in-memory recommendation projection state (read-only).
+   * Returns a DEEP COPY of the last projection state if it is still fresh.
+   * Returns null when:
+   *   - no evaluation has occurred since startup;
+   *   - the state has expired (now > validUntil);
+   *   - the snapshot or constraints are no longer fresh.
+   *
+   * Uses the shared computeGateTtl helper — same logic as getExecutionGate.
+   * Readings do NOT renew evaluatedAt or validUntil.
+   * The caller receives a completely independent copy — mutating it does not
+   * affect the engine's internal state.
+   */
+  getRecommendationProjectionState(): GridRecommendationProjectionState | null {
+    if (!this.lastRecommendationProjectionState) return null;
+    const now = new Date();
+    const ttl = computeGateTtl(
+      this.lastRecommendationProjectionState.executionMarketSnapshot,
+      this.lastRecommendationProjectionState.pairConstraints,
+      now,
+    );
+    if (!ttl.fresh) return null;
+    // REV-C12B: Deep copy — structuredClone preserves Date objects correctly.
+    // The caller must not be able to mutate the engine's internal state.
+    return deepCloneProjectionState(this.lastRecommendationProjectionState);
   }
 
   /**

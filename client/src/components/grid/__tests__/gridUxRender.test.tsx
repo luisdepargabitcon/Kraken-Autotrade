@@ -78,17 +78,21 @@ const notificationOperational = {
 
 const levelsOperational = {
   levels: {
-    activeRangeLevels: [
+    entryLevels: [
       { id: "l1", side: "BUY", price: 94000, quantity: 0.01, status: "planned", statusLabel: "Planificado", targetOfOpenCycle: false, rangeRelation: "current", rangeLabel: "Rango vigente" },
-      { id: "l1s", side: "SELL", price: 96000, quantity: 0.01, status: "open", statusLabel: "Objetivo", targetOfOpenCycle: true, cycleNumber: 1, rangeRelation: "current", rangeLabel: "Rango vigente" },
     ],
-    openCycleTargetLevels: [
+    referenceRungs: [
+      { id: "l1s", side: "SELL", price: 96000, quantity: 0.01, status: "open", statusLabel: "Objetivo", targetOfOpenCycle: false, rangeRelation: "current", rangeLabel: "Rango vigente" },
+    ],
+    legacyTargetLevels: [
       { id: "l2", side: "SELL", price: 96000, quantity: 0.01, status: "open", statusLabel: "Objetivo", targetOfOpenCycle: true, cycleNumber: 1, rangeRelation: "current", rangeLabel: "Ciclo 1" },
     ],
     historicalLevels: [
       { id: "l3", side: "BUY", price: 90000, quantity: 0.01, status: "replaced", statusLabel: "Reemplazado", targetOfOpenCycle: false, rangeRelation: "previous", rangeLabel: "Histórico" },
     ],
+    allLevels: [],
   },
+  cycleOwnedExits: [],
 };
 
 const cyclesOperational = {
@@ -196,13 +200,15 @@ describe("Grid UX render", () => {
     expect(html).toContain(">3<");
   });
 
-  it("GridLevelsCompactPanel renders active and target levels with filter counts", () => {
+  it("GridLevelsCompactPanel renders unified ladder with filter counts", () => {
     const html = renderToString(<GridLevelsCompactPanel operational={levelsOperational} />);
     const text = cleanHtml(html);
-    expect(text).toContain("Vigentes (2)");
-    expect(text).toContain("Ciclos abiertos (1)");
-    expect(text).toContain("Histórico (1)");
-    expect(text).toContain("Objetivo de venta activo");
+    // Unified ladder filter labels with counts
+    expect(text).toContain("Todos");
+    expect(text).toContain("BUY");
+    expect(text).toContain("SELL / rungs");
+    expect(text).toContain("Con ciclo");
+    expect(text).toContain("Histórico");
   });
 
   it("GridOpenCyclesPanel renders open cycle and history summary", () => {

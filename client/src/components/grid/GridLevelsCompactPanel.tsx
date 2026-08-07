@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Layers, Target, History, Search, Info, AlertCircle } from "lucide-react";
+import { GridUnifiedLevelLadder } from "./GridUnifiedLevelLadder";
 
 interface GridLevelsCompactPanelProps {
   operational?: any;
@@ -179,49 +180,12 @@ function LevelRow({ level, index }: LevelRowProps) {
 }
 
 export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelProps) {
-  const all = operational?.levels ?? {};
   const market = operational?.market ?? {};
   const entryRange = market.entryRange ?? {};
   const levelDiagnostic = entryRange.levelDiagnostic ?? null;
   const actualLevels = entryRange.actualLevels ?? null;
   const requestedLevels = entryRange.requestedLevels ?? null;
   const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
-  const filterCounts = buildGridLevelFilterCounts(operational);
-  const exitGroups = resolveGridLevelRows(operational, "salidas") as { cycleOwnedExits: any[]; legacyTargetLevels: any[] };
-  const targetItems = [
-    ...exitGroups.cycleOwnedExits.map((value) => ({ kind: "cycleOwned" as const, value })),
-    ...exitGroups.legacyTargetLevels.map((value) => ({ kind: "legacy" as const, value })),
-  ];
-  const defaultFilter: LevelFilter =
-    (all.entryLevels?.length ?? 0) === 0 && targetItems.length > 0
-      ? "salidas"
-      : "entradas";
-  const [filter, setFilter] = useState<LevelFilter>(defaultFilter);
-  const [search, setSearch] = useState("");
-  const [historyLimit, setHistoryLimit] = useState(20);
-
-  const levels = useMemo<any[]>(() => filter === "salidas" ? targetItems : resolveGridLevelRows(operational, filter, historyLimit) as any[], [operational, filter, historyLimit, targetItems]);
-
-  const filteredLevels = useMemo(() => {
-    if (!search.trim()) return levels;
-    const q = search.trim().toLowerCase();
-    return levels.filter((item) => {
-      const row = item.kind ? item.value : item;
-      return (
-        (item.kind === "cycleOwned" ? "sell" : row.side ?? "").toLowerCase().includes(q) ||
-        String(item.kind === "cycleOwned" ? row.targetSellPrice : row.price ?? "").includes(q) ||
-        String(row.cycleNumber ?? "").includes(q) ||
-        (item.kind === "cycleOwned" ? row.makerState ?? "" : row.statusLabel ?? "").toLowerCase().includes(q)
-      );
-    });
-  }, [levels, search]);
-
-  const FILTER_LABELS: { key: LevelFilter; label: string; count: number }[] = [
-    { key: "entradas", label: "Entradas (BUY)", count: filterCounts.entradas },
-    { key: "rungs", label: "Rungs SELL de referencia", count: filterCounts.rungs },
-    { key: "salidas", label: "Salidas por ciclo", count: filterCounts.salidas },
-    { key: "historico", label: "Histórico", count: filterCounts.historico },
-  ];
 
   return (
     <Card className="border-border/50">
@@ -247,80 +211,7 @@ export function GridLevelsCompactPanel({ operational }: GridLevelsCompactPanelPr
           </div>
         )}
 
-        <div className="flex flex-col md:flex-row gap-2 md:items-center justify-between">
-          <div className="flex flex-wrap gap-2">
-            {FILTER_LABELS.map((f) => (
-              <Button
-                key={f.key}
-                size="sm"
-                variant={filter === f.key ? "default" : "outline"}
-                className="text-xs h-7"
-                onClick={() => setFilter(f.key)}
-              >
-                {f.label} ({f.count})
-              </Button>
-            ))}
-          </div>
-
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar..."
-              className="pl-7 pr-3 py-1 text-xs rounded-md border border-border/50 bg-background outline-none focus:ring-1 focus:ring-primary w-full md:w-56"
-            />
-          </div>
-        </div>
-
-        {filter === "entradas" && (
-          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2 text-xs text-emerald-400">
-            Niveles BUY del rango activo. V3 genera un ciclo aislado por cada ejecución.
-          </div>
-        )}
-
-        {filter === "rungs" && (
-          <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/10 p-2 text-xs text-indigo-400">
-            Rungs SELL de referencia — No ejecutable. No consume capital, no reserva BTC y no impone quantity; cada ciclo V3 tiene su target canónico separado.
-          </div>
-        )}
-
-        {filter === "salidas" && (
-          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2 text-xs text-cyan-400">
-            Salidas SELL vinculadas a ciclos abiertos (legacy o V3 cycle-owned). Cada una pertenece a un único ciclo.
-          </div>
-        )}
-
-        {filter === "historico" && (
-          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-xs text-amber-400">
-            Los niveles históricos son solo de referencia; no se reconstruye la banda original.
-          </div>
-        )}
-
-        <div className="space-y-3">
-          {filteredLevels.length > 0 ? (
-            <>
-              {filteredLevels.map((item: any, i: number) => filter === "salidas" && item.kind === "cycleOwned"
-                ? <CycleOwnedExitRow key={item.value.cycleId} exit={item.value} index={i} />
-                : <LevelRow key={filter === "salidas" ? item.value.id || i : item.id || i} level={filter === "salidas" ? item.value : item} index={i} />)}
-              {filter === "historico" && (all.historicalLevels?.length ?? 0) > historyLimit && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full text-xs h-8"
-                  onClick={() => setHistoryLimit((l) => l + 20)}
-                >
-                  Mostrar más ({(all.historicalLevels?.length ?? 0) - historyLimit} restantes)
-                </Button>
-              )}
-            </>
-          ) : (
-            <div className="text-sm text-muted-foreground py-8 text-center">
-              No hay niveles en esta categoría.
-            </div>
-          )}
-        </div>
+        <GridUnifiedLevelLadder operational={operational} />
       </CardContent>
     </Card>
   );

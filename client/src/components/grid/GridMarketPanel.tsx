@@ -21,6 +21,7 @@ import {
   Clock,
   ArrowRight,
   Info,
+  CheckCircle2,
 } from "lucide-react";
 
 function fmtUsd(v: number | null | undefined): string {
@@ -110,6 +111,7 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
   const entryRange = market.entryRange ?? {};
   const exitRanges = market.exitObligationRanges ?? [];
   const recommendation = market.recommendation ?? null;
+  const configRecommendation = current.configurationRecommendation ?? null;
   const pair = market.pair ?? operational?.header?.pair ?? "BTC/USD";
   const levelDiagnostic = entryRange.levelDiagnostic ?? null;
   const levelCountExplanation = entryRange.levelCountExplanation ?? null;
@@ -117,6 +119,19 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
   const actualLevels = entryRange.actualLevels ?? null;
   const requestedLevels = entryRange.requestedLevels ?? null;
   const levelsMismatch = actualLevels != null && requestedLevels != null && actualLevels < requestedLevels;
+
+  // REV-C12A/REV-C12B: Real Revolut X execution gate from view model (always present, never null).
+  // Uses the status field from the engine: VERIFIED | BLOCKED | NO_RECENT_EVALUATION.
+  // NOT derived from alternative.safeToApply — the gate is independent state from the engine.
+  // The gate expires by age — readings do NOT renew evaluatedAt or validUntil.
+  const executionGate = current.executionGate ?? null;
+  const gateStatus = executionGate?.status ?? "NO_RECENT_EVALUATION";
+  const gateVerified = gateStatus === "VERIFIED";
+  const gateBlocked = gateStatus === "BLOCKED";
+  const gateNoEvaluation = gateStatus === "NO_RECENT_EVALUATION";
+
+  // REV-C12E: labels come from the view model (server-derived) — never deduced in React.
+  const dataSourceInfo = current.dataSourceInfo ?? null;
 
   return (
     <div className="space-y-4">
@@ -164,8 +179,52 @@ export function GridMarketPanel({ operational, onAnalyze, loading, onGoToSetting
           </div>
 
           <div className="text-xs text-muted-foreground space-y-0.5">
-            <p>Referencia de mercado: Kraken</p>
-            <p>Exchange previsto de ejecución: Revolut X</p>
+            <p>{`Fuente de precios: ${dataSourceInfo?.marketDataSourceLabel ?? "—"}`}</p>
+            <p>{`Venue de ejecución: ${dataSourceInfo?.executionVenueLabel ?? "—"}`}</p>
+            <p>{`Política: ${dataSourceInfo?.executionPolicyLabel ?? "—"}`}</p>
+            <p>{`Fallback taker: ${dataSourceInfo?.takerFallbackLabel ?? "—"}`}</p>
+            <p>{`Constraints: ${dataSourceInfo?.constraintsSourceLabel ?? "—"}`}</p>
+            {dataSourceInfo?.infoText && (
+              <p className="pt-1 italic text-[10px]">{dataSourceInfo.infoText}</p>
+            )}
+          </div>
+
+          {/* REV-C12A: Real Revolut X execution gate — always visible, not derived from safeToApply */}
+          <div className={`rounded-lg border p-3 space-y-1 ${gateVerified ? "border-emerald-500/30 bg-emerald-500/5" : gateBlocked ? "border-amber-500/30 bg-amber-500/5" : "border-border/40"}`}>
+            <div className="flex items-center gap-2">
+              {gateVerified ? (
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              ) : gateBlocked ? (
+                <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              ) : (
+                <Activity className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              )}
+              <span className="text-xs font-medium">
+                {gateVerified
+                  ? "Gate Revolut X: VERIFICADO"
+                  : gateBlocked
+                    ? "Gate Revolut X: BLOQUEADO"
+                    : "Gate Revolut X: SIN EVALUACIÓN RECIENTE"}
+              </span>
+            </div>
+            {gateBlocked && executionGate?.executionMarketSnapshot?.reasonCode && (
+              <p className="text-[10px] text-muted-foreground">
+                {executionGate.executionMarketSnapshot.reasonCode}
+                {executionGate.pairConstraints?.reasonCode ? ` · ${executionGate.pairConstraints.reasonCode}` : ""}
+              </p>
+            )}
+            {gateNoEvaluation && (
+              <p className="text-[10px] text-muted-foreground">
+                No existe una evaluación reciente del gate de ejecución. El motor evaluará el ticker de referencia Kraken y las constraints de Revolut X en el próximo tick.
+              </p>
+            )}
+            {gateVerified && (
+              <p className="text-[10px] text-muted-foreground">
+                Ticker de referencia Kraken y constraints de Revolut X verificadas. Evaluado: {executionGate?.evaluatedAt ?? "—"}
+                {executionGate?.ageMs != null && executionGate?.maxAgeMs != null && ` · Edad: ${Math.round(executionGate.ageMs / 1000)}s/${Math.round(executionGate.maxAgeMs / 1000)}s`}
+                {executionGate?.validUntil && ` · Válido hasta: ${new Date(executionGate.validUntil).toLocaleTimeString()}`}
+              </p>
+            )}
           </div>
 
           {/* Freshness detail */}
