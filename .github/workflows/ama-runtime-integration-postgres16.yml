@@ -1,0 +1,120 @@
+name: AMA Runtime PostgreSQL 16 Integration
+
+on:
+  push:
+    branches: [main, "review/*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ama-runtime-postgres16:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: amaci
+          POSTGRES_PASSWORD: amaci_pass
+          POSTGRES_DB: ama_runtime_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U amaci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://amaci:amaci_pass@localhost:5432/ama_runtime_ci
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Run AMA unit tests
+        run: npx vitest run server/services/ama/ --reporter=json --outputFile=artifacts/ama-unit-results.json
+        continue-on-error: true
+
+      - name: Run Portfolio tests
+        run: npx vitest run server/services/portfolio/ --reporter=json --outputFile=artifacts/portfolio-results.json
+        continue-on-error: true
+
+      - name: Apply AMA migrations to PostgreSQL 16
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/080_ama_initial.sql 2>&1 | tee artifacts/migration-080.log
+          for f in db/migrations/081_*.sql db/migrations/082_*.sql db/migrations/083_*.sql; do
+            if [ -f "$f" ]; then
+              echo "Applying $f..."
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f" 2>&1 | tee -a artifacts/migration-runtime.log
+            fi
+          done
+          echo "Migrations applied successfully" | tee artifacts/migration-status.log
+
+      - name: Verify PostgreSQL version
+        run: |
+          psql "$DATABASE_URL" -c "SELECT version();" | tee artifacts/postgres-version.log
+          psql "$DATABASE_URL" -c "SELECT current_database();" | tee -a artifacts/postgres-version.log
+
+      - name: Run AMA Runtime PostgreSQL Validation
+        run: |
+          set -o pipefail
+          npx tsx scripts/ama-runtime-postgres-validation.ts 2>&1 | tee artifacts/ama-runtime-postgres16-validation.log
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ama-runtime-postgres16-validation
+          path: artifacts/
+          retention-days: 30
+
+      - name: Cleanup PostgreSQL database
+        if: always()
+        run: |
+          # Drop all AMA tables to verify cleanup works (service container is ephemeral)
+          psql "$DATABASE_URL" -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;" 2>&1 | tee artifacts/cleanup.log
+          # Verify tables are gone
+          RESULT=$(psql "$DATABASE_URL" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" | xargs)
+          echo "tables_after_cleanup: $RESULT" | tee -a artifacts/cleanup.log
+          if [ "$RESULT" != "0" ]; then
+            echo "CLEANUP_POSTCHECK=FAIL" >> artifacts/cleanup.log
+            exit 1
+          fi
+          echo "CLEANUP_POSTCHECK=PASS" >> artifacts/cleanup.log
+
+      - name: Final gate
+        if: always()
+        run: |
+          set -o pipefail
+          if [ ! -f artifacts/ama-runtime-postgres16-validation.json ]; then
+            echo "FAIL: artifact missing"
+            exit 1
+          fi
+          STATUS=$(jq -r '.overallStatus' artifacts/ama-runtime-postgres16-validation.json 2>/dev/null || echo "FAIL")
+          FAILED=$(jq -r '.summary.failed // 0' artifacts/ama-runtime-postgres16-validation.json 2>/dev/null || echo "1")
+          CLEANUP=$(jq -r '.cleanup.passed // false' artifacts/ama-runtime-postgres16-validation.json 2>/dev/null || echo "false")
+          # Also check cleanup log
+          if grep -q "CLEANUP_POSTCHECK=PASS" artifacts/cleanup.log 2>/dev/null; then
+            CLEANUP="true"
+          fi
+          echo "overallStatus: $STATUS"
+          echo "summary.failed: $FAILED"
+          echo "cleanup_postcheck: $CLEANUP"
+          if [ "$STATUS" != "PASS" ] || [ "$FAILED" != "0" ] || [ "$CLEANUP" != "true" ]; then
+            echo "GATE FAILED"
+            exit 1
+          fi
+          echo "GATE PASSED"

@@ -36,7 +36,7 @@ const migrationsDir = (() => {
   }
 })();
 
-const MIGRATIONS = [
+export const MIGRATIONS = [
   { id: '049_telegram_alert_dedupe', filePath: path.join(migrationsDir, '049_telegram_alert_dedupe.sql') },
   { id: '052_smart_exit_state', filePath: path.join(migrationsDir, '052_smart_exit_state.sql') },
   { id: '053_add_telegram_alert_config_to_bot_config', filePath: path.join(migrationsDir, '053_add_telegram_alert_config_to_bot_config.sql') },
@@ -57,6 +57,12 @@ const MIGRATIONS = [
   { id: '070_grid_adaptive_smart_range', filePath: path.join(migrationsDir, '070_grid_adaptive_smart_range.sql') },
   { id: '071_grid_cycle_target_sell', filePath: path.join(migrationsDir, '071_grid_cycle_target_sell.sql') },
   { id: '072_grid_maker_only_defaults', filePath: path.join(migrationsDir, '072_grid_maker_only_defaults.sql') },
+  // AMA MIGRATION GATE:
+  // 080_ama_initial.sql permanece sin registrar en AutoMigrationRunner.
+  // Solo debe incorporarse al array MIGRATIONS cuando exista autorización
+  // expresa para aplicar migraciones AMA en staging.
+  // AMA_MIGRATION_080_AUTOAPPLY = false
+  // { id: '080_ama_initial', filePath: path.join(migrationsDir, '080_ama_initial.sql') },
 ];
 
 
@@ -1754,6 +1760,17 @@ export async function registerRoutes(
     console.log('[startup] Grid Isolated routes registered');
   } catch (e: any) {
     console.error('[startup] Failed to register Grid Isolated routes:', e?.message || e);
+  }
+
+  // ============================================================
+  // AMA ENDPOINTS — Acumulación Macro Adaptativa
+  // ============================================================
+  try {
+    const { registerAmaRoutes } = await import('./routes/ama.routes');
+    registerAmaRoutes(app);
+    console.log('[startup] AMA routes registered');
+  } catch (e: any) {
+    console.error('[startup] Failed to register AMA routes:', e?.message || e);
   }
 
   // Grid SHADOW startup (only starts if mode=SHADOW and isActive=true)

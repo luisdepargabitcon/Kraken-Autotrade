@@ -7039,6 +7039,199 @@ Deploy del hash `24518a1af91ddc64b338fffc3b250bf1414a72ec` a staging VPS (`root@
 - REV-C11 completada, desplegada y validada en staging.
 - Sin órdenes reales y sin modificar la DB.
 
+---
+
+## 2026-07-31 — AMA V2.2 R7: Atomicidad verdadera, identidad unificada y HWM parity
+
+### Resumen
+R7 implementa 12 correcciones sobre el pipeline adaptativo AMA, transformando el replan en un pipeline atómico real con pipeline ordenado estricto (validación → agregación → construcción → elegibilidad → identidad), intervalo temporal completo de evidence, semántica agregada PARTIAL/FILLED, reconciliación fail-closed de portfolioDeployedUsd, HWM obligatorio en planes canónicos, planId y planHash con identidad única desde el plan final, idempotencia derivada del plan final, paridad HWM con velas abiertas, validación de PeriodLimitState antes de reset, cooldown con resultado explícito, y venue canónico con makerOnly/postOnly/takerFallback.
+
+### Estado R6 previo
+- R6 = COMMITTED_AND_PUSHED
+- HEAD_R6 = 7d6cbffcc688690c380b5903f3dc2a7c9a5381e3
+- origin/review = 7d6cbffcc688690c380b5903f3dc2a7c9a5381e3
+- origin/main = 44cd46ff3a6e195556987968a87c8e795d66cd02
+- R6 AMA = 727/727
+- R6 Portfolio = 59/59
+- R6 suite completa = 3842 passed / 31 failed / 29 skipped
+- R6 fallos nuevos = 0
+- R6 skipped nuevos = 0
+
+### Correcciones R7 aplicadas
+
+- **R7.1 — Replan verdaderamente atómico:** `replanTranches` reescrito como pipeline ordenado: validar plan original → validar evidence → agregar evidence por tranche → reconciliar portfolioDeployedUsd → construir remaining seed levels → evaluar elegibilidad → finalizar plan con identidad unificada.
+- **R7.2 — Elegibilidad post-fill recalculada:** La elegibilidad se evalúa después de aplicar fills, no antes. Los candidatos con partial fill preservan `remainingAmountUsd` y se evalúan con el remanente.
+- **R7.3 — Intervalo temporal completo de evidence:** `validateExecutedEvidence` ahora valida que `executedAt` esté entre `planAsOfConfirmedCloseTimestamp` y `currentConfirmedClose.timestamp`. Reason code `EXECUTED_BEFORE_PLAN_AS_OF` reemplaza `EXECUTED_BEFORE_CONFIRMED_CLOSE`.
+- **R7.4 — Semántica agregada PARTIAL/FILLED:** Valida secuencia de fillStatus: FILLED con remanente > 0 → rechazado; PARTIAL que alcanza full amount → rechazado; múltiples FILLED → rechazado; evento después de FILLED → rechazado.
+- **R7.5 — portfolioDeployedUsd fail-closed:** Reconciliación estricta: `portfolioDeployedUsd < sum(evidence)` → null; `portfolioDeployedUsd > budget` → null.
+- **R7.6 — HWM obligatorio en planes canónicos:** `AmaTranchePlan` requiere `hwmPrice` y `hwmTimestamp`. Los builders legacy los añaden con defaults.
+- **R7.7 — planId y planHash con identidad única:** `planId = plan-${cycleId}-${planHash.slice(0,24)}` donde `planHash = computePlanHash(plan)` sobre el plan final completo.
+- **R7.8 — Idempotencia derivada del plan final:** `computeIdempotencyKey(planHash, trancheId, action, canonicalAsOfTimestamp)`.
+- **R7.9 — Paridad HWM con velas abiertas:** `bootstrapHWM` y `processIncrementalClose` pasan todas las observaciones (open+closed) después del HWM para confirmación, permitiendo que velas abiertas reseteen la secuencia.
+- **R7.10 — PeriodLimitState validado antes de reset:** `validatePeriodLimitState` verifica weekStart (Monday UTC), monthStart (día 1 UTC), deployedUsd ≥ 0 antes de cualquier reset.
+- **R7.11 — Cooldown con resultado explícito:** `applyCooldown` retorna `CooldownApplyResult extends CooldownState` con `valid` y `reasonCodes`. Backward compatible: los callers existentes siguen funcionando.
+- **R7.12 — Venue canónico:** `makerOnly = true`, `postOnly = true`, `takerFallback = false` en BTC y ETH. `targetExecutionVenue` canónico.
+
+### Archivos modificados
+
+- `server/services/ama/amaAdaptivePlanner.ts` — R7.1–R7.5, R7.10, R7.11: pipeline atómico, validateExecutedEvidence con intervalo temporal y fillStatus, validatePeriodLimitState, applyCooldown con CooldownApplyResult
+- `server/services/ama/amaDeterministicEngine.ts` — R7.6, R7.7, R7.8: HWM obligatorio, planId desde planHash, computeIdempotencyKey desde plan final
+- `server/services/ama/amaHwmBar.ts` — R7.9: paridad HWM con velas abiertas
+- `server/services/ama/amaSeedTypes.ts` — R7.12: makerOnly en asset profiles
+- `server/services/ama/amaTypes.ts` — tipos actualizados
+- `server/services/ama/__tests__/amaR7TrueAtomicity.test.ts` — **NUEVO**, 49 tests
+- `server/services/ama/__tests__/amaR5Invariants.test.ts` — Fix: replanClose, computePlanHash, weekStart Monday
+- `server/services/ama/__tests__/amaR6AtomicReplan.test.ts` — Fix: replanClose, EXECUTED_BEFORE_PLAN_AS_OF, CooldownApplyResult
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R7_2026-07-31.md` — **NUEVO**
+- `AUDITORIAS/AUDITORIA_CORRECCION_PREMERGE_AMA_V2_2_R6_2026-07-31.md` — actualizado con estado R7
+- `BITACORA.md` — entrada R7
+- `PLAN_IMPLEMENTACION_MODO_AMA.md` — registro R7
+- `FASES MODO AMA.md` — estado R7
+
+### Validaciones
+
+- `npm run check` ✅
+- `npm run build` ✅
+- Tests R7: 49/49 ✅
+- Tests AMA: 776/776 ✅ (24 archivos)
+- Tests Portfolio: 59/59 ✅
+- Suite completa: pendiente de ejecución final R7.15
+- Fallos nuevos esperados: 0
+- Skipped nuevos esperados: 0
+
+### Bloqueos vigentes
+
+- PostgreSQL = BLOCKED_NO_SAFE_ENVIRONMENT
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY
+- amaService = DEVELOPMENT_SCAFFOLD_ONLY
+- SHADOW = BLOQUEADO
+- REAL_LIMITED = BLOQUEADO
+- REAL_FULL = BLOQUEADO
+
+### Estado final
+
+- R7 = CORRECCIONES_APLICADAS_EN_GATE_PRECOMMIT
+- Commit = NO
+- Push = NO
+- Merge = NO
+- Deploy = NO
+- Migraciones = NO
+
+---
+
+## AMA V2.2 — R8A: Alineación migración 080 con contratos R7 + CI PostgreSQL desechable
+
+**Fecha:** 2026-08-03
+**Rama:** `review/ama-seed-v2-2-20260729`
+**Base HEAD:** `b2129c7a4e1af054d8e2f5254ca292b9d18e0f82`
+
+### Objetivo
+
+Alinear `080_ama_initial.sql` con los contratos R7, endurecer el validador PostgreSQL,
+crear helpers puros testables, tests sin DB, y añadir un workflow GitHub Actions para
+validación CI en PostgreSQL 16 desechable. Gate precommit antes de cualquier commit.
+
+### Archivos modificados
+
+- `db/migrations/080_ama_initial.sql` — R7: nuevas columnas en `ama_tranche_plans`,
+  tabla `ama_tranche_fill_events`, CHECKs nombrados (`chk_ama_cycles_budget`,
+  `chk_ama_plans_ts_order`, `chk_ama_plans_deployable_le_deployment`,
+  `chk_ama_plans_deployable_le_100_minus_reserve`, `chk_ama_tranches_executed_le_planned`,
+  `chk_portfolio_budgets_total`), FKs nuevos (`fk_ama_cycles_active_policy`,
+  `fk_ama_plans_policy`, `fk_ama_fill_events_{tranche,cycle,policy}`), 8 índices nuevos.
+  Checks `asset IN ('BTC', 'ETH')` en todas las tablas relevantes.
+- `scripts/ama_migration_validate.mjs` — Reescritura R8A: nombre DB con UUID, regex estricto,
+  verificación exacta de columnas/CHECKs/FKs/índices, 20 casos negativos R7, 11 casos de
+  unicidad, idempotencia, JSON report a `artifacts/`, cleanup garantizado en `finally`.
+- `package.json` — script `validate:ama:postgres`
+
+### Archivos creados
+
+- `scripts/ama_migration_validation_helpers.mjs` — helpers canónicos JS puro (15 exports, sin DB)
+- `server/services/ama/__tests__/amaR8MigrationValidator.test.ts` — 46 tests puros
+- `.github/workflows/ama-postgres-080-validation.yml` — CI PostgreSQL 16 desechable
+
+### Bloqueos vigentes
+
+- PostgreSQL local = BLOCKED_NO_SAFE_ENVIRONMENT (sin Docker ni psql local)
+- CI workflow = COMMITTED_AND_PUSHED, pendiente de verificación en GitHub Actions
+- Migración 080 = NOT_REGISTERED, NOT_AUTOAPPLY, NOT_APPLIED_STAGING, NOT_APPLIED_PRODUCTION
+
+### Estado R8A
+
+- Implementación = COMMITTED_AND_PUSHED
+- Commit técnico = 27f7c3ad77350460d3dbe20bba379e48ea37b5df
+- Commit documental = ef8f837e93bae2e0f3a4d7fd5e0aba502edd2c04
+- Push = FAST_FORWARD a origin/review/ama-seed-v2-2-20260729
+- Merge = NO
+- Deploy = NO
+- CI PostgreSQL 16 = PENDIENTE_DE_VERIFICACION
+
+---
+
+## 2026-08-06 — AMA Runtime Completion (R8A-RTC)
+
+### Módulo
+AMA Runtime — persistencia PostgreSQL, Lab, Replay, Shadow, REAL_LIMITED, UI, CI
+
+### Problema
+El runtime AMA usaba stubs en memoria. Sin persistencia, sin Lab, sin Replay, sin Shadow, sin REAL_LIMITED, sin UI. Los tests de period limits fallaban por dependencia de fecha real.
+
+### Solución
+- **Migraciones 081-083**: Tablas runtime, replay/shadow, real authorization
+- **Repositorios**: amaRepository, amaShadowReplayRepository, amaRealAuthorizationRepository
+- **Servicios**: amaRuntimeService, amaLabService, amaReplayService, amaShadowExecutor, amaRealLimitedService, amaPortfolioLedger
+- **API**: Endpoints completos incluyendo operational controls (pause/resume/deactivate/kill-switch)
+- **UI**: AmaTabs con 6 tabs, kill switch toggle, 7 modos, REAL_FULL locked
+- **REAL_LIMITED**: 9 pre-trade gates (maker-only, post-only añadidos)
+- **Fix date-sensitive test**: `createPeriodLimitState` acepta `referenceTimestamp` opcional
+- **CI**: GitHub Actions workflow para PostgreSQL 16 integration validation
+
+### Archivos afectados
+- `db/migrations/081_ama_runtime_integration.sql` (nuevo)
+- `db/migrations/082_ama_replay_shadow.sql` (nuevo)
+- `db/migrations/083_ama_real_authorization.sql` (nuevo)
+- `server/services/ama/amaRepository.ts` (nuevo)
+- `server/services/ama/amaShadowReplayRepository.ts` (nuevo)
+- `server/services/ama/amaRealAuthorizationRepository.ts` (nuevo)
+- `server/services/ama/amaRuntimeService.ts` (nuevo)
+- `server/services/ama/amaLabService.ts` (nuevo)
+- `server/services/ama/amaReplayService.ts` (nuevo)
+- `server/services/ama/amaShadowExecutor.ts` (nuevo)
+- `server/services/ama/amaRealLimitedService.ts` (nuevo)
+- `server/services/ama/amaPortfolioLedger.ts` (nuevo)
+- `server/services/ama/amaAdaptivePlanner.ts` (fix: createPeriodLimitState)
+- `server/routes/ama.routes.ts` (endpoints nuevos)
+- `client/src/components/ama/AmaTabs.tsx` (nuevo)
+- `client/src/pages/Ama.tsx` (UI update)
+- `.github/workflows/ama-runtime-integration-postgres16.yml` (nuevo)
+- `scripts/ama-runtime-postgres-validation.ts` (nuevo)
+- Tests: 6 archivos nuevos, 7 archivos modificados
+
+### Validaciones
+- `tsc`: clean
+- AMA tests: 870 passed, 0 failed
+- Portfolio tests: 59 passed, 0 failed
+- Route tests: 34 passed, 0 failed
+- Total: 929 passed, 0 failed
+
+### No-Real-Order Evidence
+- Shadow executor no importa módulos de exchange
+- Lab simulation es pura (precios como input)
+- Replay usa datos históricos deterministas
+- FailIfCalledRealExchangeGateway pattern en tests
+
+### Estado
+- Implementación = COMMITTED_AND_PUSHED
+- Commit = 7730c26
+- Branch = review/ama-runtime-completion-20260806
+- Push = origin/review/ama-runtime-completion-20260806
+- Merge = NO
+- Deploy = NO
+- CI PostgreSQL 16 = WORKFLOW_CREATED (pendiente ejecución en GitHub Actions)
+
+---
+
 ## REV-C12G (2026-08-05) — Taker fallback efectivo en SHADOW
 
 - **Causa raíz**: A_STORED_FLAG_PASSED_INSTEAD_OF_EFFECTIVE. El tick automático y el rebuild manual pasaban this.config.takerFallbackEnabled (stored=true) al resolver resolveGridExecutionCapability, sin aplicar el override SHADOW. El audit usaba un ternario local duplicado.

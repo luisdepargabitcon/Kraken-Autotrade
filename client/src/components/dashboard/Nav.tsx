@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Activity, Settings, Wallet, Bell, Plug, Menu, X, BookOpen, BarChart3, Monitor, HardDrive, Calculator, Brain, CircleDollarSign, Grid3x3, MessageSquare } from "lucide-react";
+import { LayoutDashboard, Activity, Settings, Wallet, Bell, Plug, Menu, X, BookOpen, BarChart3, Monitor, HardDrive, Calculator, Brain, CircleDollarSign, Grid3x3, MessageSquare, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type NavLink = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
@@ -22,6 +22,7 @@ export function Nav() {
     { href: "/dca", label: "DCA", icon: CircleDollarSign },
     { href: "/trading", label: "TRADING", icon: Activity },
     { href: "/grid-isolated", label: "GRID", icon: Grid3x3 },
+    { href: "/ama", label: "AMA", icon: TrendingDown },
     { href: "/terminal", label: "TERMINAL", icon: BarChart3 },
     // ANÁLISIS
     { separator: true, label: "ANÁLISIS" },
