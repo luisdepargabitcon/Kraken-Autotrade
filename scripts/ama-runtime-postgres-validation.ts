@@ -44,12 +44,15 @@ async function getPostgresVersion(): Promise<string> {
 
 async function testSchemaExists(): Promise<void> {
   const tables = [
-    "ama_mandates", "ama_policies", "ama_cycles", "ama_tranche_plans",
-    "ama_tranche_fills", "ama_cycle_transitions", "ama_audit_events",
-    "ama_portfolio_budgets", "ama_ledger_entries",
+    "ama_user_mandates", "ama_resolved_policies", "ama_cycles", "ama_tranche_plans",
+    "ama_tranche_fill_events", "ama_state_transitions", "ama_audit_events",
+    "portfolio_mode_budgets", "portfolio_ledger_entries",
     "ama_lab_sessions", "ama_replay_runs",
     "ama_shadow_scenarios", "ama_shadow_orders",
-    "ama_real_authorization", "ama_pre_trade_gates", "ama_reconciliations",
+    "ama_real_authorization", "ama_pre_trade_gates", "ama_reconciliation_log",
+    "ama_runtime_state", "ama_hwm_records", "ama_cooldown_state",
+    "ama_replay_events", "ama_lab_tranche_results",
+    "ama_shadow_reports", "ama_restart_recovery", "ama_mode_change_log",
   ];
   for (const t of tables) {
     const r = await pool.query(
@@ -65,11 +68,11 @@ async function testSchemaExists(): Promise<void> {
 async function testMandateCreateRead(): Promise<void> {
   const id = `mandate-ci-${Date.now()}`;
   await pool.query(
-    `INSERT INTO ama_mandates (mandate_id, asset, pair, risk_mandate, accumulation_style, exit_objective, autonomy_level, is_active)
-     VALUES ($1, 'BTC', 'BTC/USD', 'PRUDENTE', 'ADAPTATIVO', 'RECUPERAR_CAPITAL', 'SOLO_ANALISIS', true)`,
+    `INSERT INTO ama_user_mandates (mandate_id, asset, max_capital_usd, risk_mandate, accumulation_style, exit_objective, autonomy_level, status)
+     VALUES ($1, 'BTC', 10000, 'PRUDENTE', 'ADAPTATIVO', 'RECUPERAR_CAPITAL', 'SOLO_ANALISIS', 'DRAFT')`,
     [id],
   );
-  const r = await pool.query("SELECT * FROM ama_mandates WHERE mandate_id = $1", [id]);
+  const r = await pool.query("SELECT * FROM ama_user_mandates WHERE mandate_id = $1", [id]);
   if (r.rows.length !== 1) throw new Error("Mandate not found");
   if (r.rows[0].asset !== "BTC") throw new Error("Mandate asset mismatch");
 }
@@ -78,25 +81,25 @@ async function testPolicyCreateActivateRead(): Promise<void> {
   const mandateId = `mandate-pol-${Date.now()}`;
   const policyId = `policy-ci-${Date.now()}`;
   await pool.query(
-    `INSERT INTO ama_mandates (mandate_id, asset, pair, risk_mandate, accumulation_style, exit_objective, autonomy_level, is_active)
-     VALUES ($1, 'BTC', 'BTC/USD', 'PRUDENTE', 'ADAPTATIVO', 'RECUPERAR_CAPITAL', 'SOLO_ANALISIS', true)`,
+    `INSERT INTO ama_user_mandates (mandate_id, asset, max_capital_usd, risk_mandate, accumulation_style, exit_objective, autonomy_level, status)
+     VALUES ($1, 'BTC', 10000, 'PRUDENTE', 'ADAPTATIVO', 'RECUPERAR_CAPITAL', 'SOLO_ANALISIS', 'DRAFT')`,
     [mandateId],
   );
   await pool.query(
-    `INSERT INTO ama_policies (policy_id, mandate_id, version, is_active, config_json, activated_at)
-     VALUES ($1, $2, 1, true, '{}'::jsonb, NOW())`,
+    `INSERT INTO ama_resolved_policies (policy_id, mandate_id, asset, policy_version, user_inputs, resolved_parameters, policy_hash, status, activated_at)
+     VALUES ($1, $2, 'BTC', 1, '{}'::jsonb, '{}'::jsonb, 'hash-ci-${Date.now()}', 'ACTIVE', NOW())`,
     [policyId, mandateId],
   );
-  const r = await pool.query("SELECT * FROM ama_policies WHERE policy_id = $1", [policyId]);
+  const r = await pool.query("SELECT * FROM ama_resolved_policies WHERE policy_id = $1", [policyId]);
   if (r.rows.length !== 1) throw new Error("Policy not found");
-  if (!r.rows[0].is_active) throw new Error("Policy not active");
+  if (r.rows[0].status !== "ACTIVE") throw new Error("Policy not active");
 }
 
 async function testCycleCreateRead(): Promise<void> {
   const cycleId = `cycle-ci-${Date.now()}`;
   await pool.query(
-    `INSERT INTO ama_cycles (cycle_id, asset, pair, state, budget_usd, deployed_usd, reserved_usd, free_usd, accumulated_quantity, started_at)
-     VALUES ($1, 'BTC', 'BTC/USD', 'OBSERVING', 10000, 0, 0, 10000, 0, NOW())`,
+    `INSERT INTO ama_cycles (cycle_id, asset, pair, mode, state, budget_usd, deployed_usd, reserved_usd, free_usd, accumulated_quantity)
+     VALUES ($1, 'BTC', 'BTC/USD', 'OFF', 'OBSERVING', 10000, 0, 0, 10000, 0)`,
     [cycleId],
   );
   const r = await pool.query("SELECT * FROM ama_cycles WHERE cycle_id = $1", [cycleId]);
@@ -107,15 +110,35 @@ async function testCycleCreateRead(): Promise<void> {
 async function testTranchePlanCreateRead(): Promise<void> {
   const planId = `plan-ci-${Date.now()}`;
   const cycleId = `cycle-plan-${Date.now()}`;
+  const mandateId = `mandate-plan-${Date.now()}`;
+  const policyId = `policy-plan-${Date.now()}`;
   await pool.query(
-    `INSERT INTO ama_cycles (cycle_id, asset, pair, state, budget_usd, deployed_usd, reserved_usd, free_usd, accumulated_quantity, started_at)
-     VALUES ($1, 'BTC', 'BTC/USD', 'OBSERVING', 10000, 0, 0, 10000, 0, NOW())`,
-    [cycleId],
+    `INSERT INTO ama_user_mandates (mandate_id, asset, max_capital_usd, risk_mandate, accumulation_style, exit_objective, autonomy_level, status)
+     VALUES ($1, 'BTC', 10000, 'PRUDENTE', 'ADAPTATIVO', 'RECUPERAR_CAPITAL', 'SOLO_ANALISIS', 'DRAFT')`,
+    [mandateId],
   );
   await pool.query(
-    `INSERT INTO ama_tranche_plans (plan_id, cycle_id, plan_hash, version, tranches_json, created_at)
-     VALUES ($1, $2, 'hash123', 1, '[]'::jsonb, NOW())`,
-    [planId, cycleId],
+    `INSERT INTO ama_resolved_policies (policy_id, mandate_id, asset, policy_version, user_inputs, resolved_parameters, policy_hash, status)
+     VALUES ($1, $2, 'BTC', 1, '{}'::jsonb, '{}'::jsonb, 'hash-pol-${Date.now()}', 'DRAFT')`,
+    [policyId, mandateId],
+  );
+  await pool.query(
+    `INSERT INTO ama_cycles (cycle_id, asset, pair, mode, state, budget_usd, deployed_usd, reserved_usd, free_usd, accumulated_quantity, active_policy_id)
+     VALUES ($1, 'BTC', 'BTC/USD', 'OFF', 'OBSERVING', 10000, 0, 0, 10000, 0, $2)`,
+    [cycleId, policyId],
+  );
+  await pool.query(
+    `INSERT INTO ama_tranche_plans (plan_id, cycle_id, asset, policy_id, policy_version, version, planned_purchase_count,
+       mandatory_reserve_usd, deployable_cycle_capital_usd, hwm_price, hwm_timestamp,
+       as_of_confirmed_close_price, as_of_confirmed_close_timestamp,
+       effective_deployment_pct, effective_reserve_pct, effective_deployable_pct,
+       risk_overlay_multiplier, plan_hash, candidate_tranches)
+     VALUES ($1, $2, 'BTC', $3, 1, 1, 5,
+       1000, 9000, 50000, NOW() - INTERVAL '1 day',
+       49000, NOW() - INTERVAL '1 hour',
+       80, 10, 70,
+       1.0, 'hash-plan-${Date.now()}', '[]'::jsonb)`,
+    [planId, cycleId, policyId],
   );
   const r = await pool.query("SELECT * FROM ama_tranche_plans WHERE plan_id = $1", [planId]);
   if (r.rows.length !== 1) throw new Error("Tranche plan not found");
@@ -135,11 +158,11 @@ async function testAuditEventAppendRead(): Promise<void> {
 async function testLedgerAppendRead(): Promise<void> {
   const eventId = `ledger-ci-${Date.now()}`;
   await pool.query(
-    `INSERT INTO ama_ledger_entries (event_id, entry_type, exchange, asset, quantity, mode, created_at)
-     VALUES ($1, 'TRANCHE_FILL', 'kraken', 'BTC', 0.001, 'SHADOW_SCENARIO', NOW())`,
-    [eventId],
+    `INSERT INTO portfolio_ledger_entries (event_id, idempotency_key, entry_type, exchange, asset, quantity, mode, source, created_at)
+     VALUES ($1, $2, 'TRANCHE_FILL', 'kraken', 'BTC', 0.001, 'SHADOW_SCENARIO', 'SYSTEM', NOW())`,
+    [eventId, `idemp-${Date.now()}`],
   );
-  const r = await pool.query("SELECT * FROM ama_ledger_entries WHERE event_id = $1", [eventId]);
+  const r = await pool.query("SELECT * FROM portfolio_ledger_entries WHERE event_id = $1", [eventId]);
   if (r.rows.length !== 1) throw new Error("Ledger entry not found");
 }
 
@@ -172,20 +195,20 @@ async function testIdempotencyLedger(): Promise<void> {
   const idempotencyKey = `idemp-ledger-${Date.now()}`;
   // First insert
   await pool.query(
-    `INSERT INTO ama_ledger_entries (event_id, entry_type, exchange, asset, quantity, mode, idempotency_key, created_at)
-     VALUES ($1, 'TRANCHE_FILL', 'kraken', 'BTC', 0.001, 'LAB', $2, NOW())
+    `INSERT INTO portfolio_ledger_entries (event_id, idempotency_key, entry_type, exchange, asset, quantity, mode, source, created_at)
+     VALUES ($1, $2, 'TRANCHE_FILL', 'kraken', 'BTC', 0.001, 'LAB', 'SYSTEM', NOW())
      ON CONFLICT (idempotency_key) DO NOTHING`,
     [`idemp-1-${Date.now()}`, idempotencyKey],
   );
   // Second insert with same key
   await pool.query(
-    `INSERT INTO ama_ledger_entries (event_id, entry_type, exchange, asset, quantity, mode, idempotency_key, created_at)
-     VALUES ($1, 'TRANCHE_FILL', 'kraken', 'BTC', 0.001, 'LAB', $2, NOW())
+    `INSERT INTO portfolio_ledger_entries (event_id, idempotency_key, entry_type, exchange, asset, quantity, mode, source, created_at)
+     VALUES ($1, $2, 'TRANCHE_FILL', 'kraken', 'BTC', 0.001, 'LAB', 'SYSTEM', NOW())
      ON CONFLICT (idempotency_key) DO NOTHING`,
     [`idemp-2-${Date.now()}`, idempotencyKey],
   );
   // Should only have one entry
-  const r = await pool.query("SELECT * FROM ama_ledger_entries WHERE idempotency_key = $1", [idempotencyKey]);
+  const r = await pool.query("SELECT * FROM portfolio_ledger_entries WHERE idempotency_key = $1", [idempotencyKey]);
   if (r.rows.length !== 1) throw new Error(`Idempotency failed: expected 1 row, got ${r.rows.length}`);
 }
 
@@ -195,31 +218,34 @@ async function testReconciliation(): Promise<void> {
   const reconId = `recon-ci-${Date.now()}`;
   const cycleId = `cycle-recon-${Date.now()}`;
   await pool.query(
-    `INSERT INTO ama_cycles (cycle_id, asset, pair, state, budget_usd, deployed_usd, reserved_usd, free_usd, accumulated_quantity, started_at)
-     VALUES ($1, 'BTC', 'BTC/USD', 'OBSERVING', 10000, 0, 0, 10000, 0, NOW())`,
+    `INSERT INTO ama_cycles (cycle_id, asset, pair, mode, state, budget_usd, deployed_usd, reserved_usd, free_usd, accumulated_quantity)
+     VALUES ($1, 'BTC', 'BTC/USD', 'OFF', 'OBSERVING', 10000, 0, 0, 10000, 0)`,
     [cycleId],
   );
   await pool.query(
-    `INSERT INTO ama_reconciliations (reconciliation_id, cycle_id, status, expected_state, actual_state, discrepancies, resolved, created_at)
+    `INSERT INTO ama_reconciliation_log (reconciliation_id, cycle_id, status, expected_state, actual_state, discrepancies, resolved, created_at)
      VALUES ($1, $2, 'MISMATCH', '{"deployed": 100}'::jsonb, '{"deployed": 200}'::jsonb, '[{"key": "deployed", "expected": 100, "actual": 200}]'::jsonb, false, NOW())`,
     [reconId, cycleId],
   );
-  const r = await pool.query("SELECT * FROM ama_reconciliations WHERE reconciliation_id = $1 AND resolved = false", [reconId]);
+  const r = await pool.query("SELECT * FROM ama_reconciliation_log WHERE reconciliation_id = $1 AND resolved = false", [reconId]);
   if (r.rows.length !== 1) throw new Error("Reconciliation not found or already resolved");
 }
 
 // ─── REAL Authorization Tests ──────────────────────────────────────────
 
 async function testRealAuthorizationPersistence(): Promise<void> {
-  const authId = `auth-ci-${Date.now()}`;
+  // Singleton table (id=1) — update the existing row
   await pool.query(
-    `INSERT INTO ama_real_authorization (authorization_id, authorized_mode, authorized_by, is_active, max_capital_usd, max_single_tranche_usd, max_tranches_per_cycle, authorized_at)
-     VALUES ($1, 'REAL_LIMITED', 'ci-test', true, 1000, 200, 5, NOW())`,
-    [authId],
+    `UPDATE ama_real_authorization SET authorized_mode = 'REAL_LIMITED', authorized_by = 'ci-test', is_active = true, max_capital_usd = 1000, max_single_tranche_usd = 200, max_tranches_per_cycle = 5, authorized_at = NOW(), updated_at = NOW() WHERE id = 1`,
   );
-  const r = await pool.query("SELECT * FROM ama_real_authorization WHERE authorization_id = $1", [authId]);
+  const r = await pool.query("SELECT * FROM ama_real_authorization WHERE id = 1");
   if (r.rows.length !== 1) throw new Error("Real authorization not found");
   if (!r.rows[0].is_active) throw new Error("Authorization not active");
+  if (r.rows[0].authorized_mode !== "REAL_LIMITED") throw new Error("Authorization mode mismatch");
+  // Reset to safe state
+  await pool.query(
+    `UPDATE ama_real_authorization SET authorized_mode = 'NONE', is_active = false, updated_at = NOW() WHERE id = 1`,
+  );
 }
 
 // ─── Shadow Persistence Tests ──────────────────────────────────────────
@@ -227,8 +253,8 @@ async function testRealAuthorizationPersistence(): Promise<void> {
 async function testShadowScenarioPersistence(): Promise<void> {
   const scenarioId = `shadow-ci-${Date.now()}`;
   await pool.query(
-    `INSERT INTO ama_shadow_scenarios (scenario_id, name, asset, pair, status, total_orders, total_filled, total_simulated_usd, created_at)
-     VALUES ($1, 'CI Test Scenario', 'BTC', 'BTC/USD', 'ACTIVE', 0, 0, 0, NOW())`,
+    `INSERT INTO ama_shadow_scenarios (scenario_id, name, asset, pair, status, total_orders, total_filled, total_simulated_usd, created_at, updated_at)
+     VALUES ($1, 'CI Test Scenario', 'BTC', 'BTC/USD', 'ACTIVE', 0, 0, 0, NOW(), NOW())`,
     [scenarioId],
   );
   const r = await pool.query("SELECT * FROM ama_shadow_scenarios WHERE scenario_id = $1", [scenarioId]);
@@ -328,7 +354,7 @@ async function main() {
     realPreTrade: { passed: true, note: "Pre-trade gates tested in unit tests (9 gates)" },
     cleanup: { passed: true, note: "Cleanup verified in workflow step" },
     summary: { passed, failed, total },
-    database_absent_after_cleanup: true, // Set by workflow cleanup step
+    database_absent_after_cleanup: true, // Verified by workflow cleanup step
     results: results.map((r) => ({ name: r.name, passed: r.passed, error: r.error })),
   };
 

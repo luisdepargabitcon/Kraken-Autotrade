@@ -73,11 +73,6 @@ jobs:
           set -o pipefail
           npx tsx scripts/ama-runtime-postgres-validation.ts 2>&1 | tee artifacts/ama-runtime-postgres16-validation.log
 
-      - name: Generate validation JSON
-        if: always()
-        run: |
-          npx tsx scripts/ama-runtime-postgres-artifact.ts 2>&1 || true
-
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -89,11 +84,11 @@ jobs:
       - name: Cleanup PostgreSQL database
         if: always()
         run: |
-          # Drop the test database
-          psql "postgres://amaci:amaci_pass@localhost:5432/postgres" -c "DROP DATABASE IF EXISTS ama_runtime_ci;" 2>&1 | tee artifacts/cleanup.log
-          # Verify database is gone
-          RESULT=$(psql "postgres://amaci:amaci_pass@localhost:5432/postgres" -t -c "SELECT count(*) FROM pg_database WHERE datname = 'ama_runtime_ci';")
-          echo "database_absent_after_cleanup: $RESULT" | tee -a artifacts/cleanup.log
+          # Drop all AMA tables to verify cleanup works (service container is ephemeral)
+          psql "$DATABASE_URL" -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;" 2>&1 | tee artifacts/cleanup.log
+          # Verify tables are gone
+          RESULT=$(psql "$DATABASE_URL" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';")
+          echo "tables_after_cleanup: $RESULT" | tee -a artifacts/cleanup.log
           if [ "$RESULT" != "0" ]; then
             echo "CLEANUP_POSTCHECK=FAIL" >> artifacts/cleanup.log
             exit 1
@@ -110,7 +105,11 @@ jobs:
           fi
           STATUS=$(jq -r '.overallStatus' artifacts/ama-runtime-postgres16-validation.json 2>/dev/null || echo "FAIL")
           FAILED=$(jq -r '.summary.failed // 0' artifacts/ama-runtime-postgres16-validation.json 2>/dev/null || echo "1")
-          CLEANUP=$(jq -r '.database_absent_after_cleanup // false' artifacts/ama-runtime-postgres16-validation.json 2>/dev/null || echo "false")
+          CLEANUP=$(jq -r '.cleanup.passed // false' artifacts/ama-runtime-postgres16-validation.json 2>/dev/null || echo "false")
+          # Also check cleanup log
+          if grep -q "CLEANUP_POSTCHECK=PASS" artifacts/cleanup.log 2>/dev/null; then
+            CLEANUP="true"
+          fi
           echo "overallStatus: $STATUS"
           echo "summary.failed: $FAILED"
           echo "cleanup_postcheck: $CLEANUP"
