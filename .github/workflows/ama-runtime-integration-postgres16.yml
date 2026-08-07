@@ -87,7 +87,7 @@ jobs:
           # Drop all AMA tables to verify cleanup works (service container is ephemeral)
           psql "$DATABASE_URL" -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;" 2>&1 | tee artifacts/cleanup.log
           # Verify tables are gone
-          RESULT=$(psql "$DATABASE_URL" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';")
+          RESULT=$(psql "$DATABASE_URL" -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" | xargs)
           echo "tables_after_cleanup: $RESULT" | tee -a artifacts/cleanup.log
           if [ "$RESULT" != "0" ]; then
             echo "CLEANUP_POSTCHECK=FAIL" >> artifacts/cleanup.log
