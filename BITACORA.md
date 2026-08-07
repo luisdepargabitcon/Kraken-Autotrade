@@ -6991,3 +6991,66 @@ validación CI en PostgreSQL 16 desechable. Gate precommit antes de cualquier co
 - Merge = NO
 - Deploy = NO
 - CI PostgreSQL 16 = PENDIENTE_DE_VERIFICACION
+
+---
+
+## 2026-08-06 — AMA Runtime Completion (R8A-RTC)
+
+### Módulo
+AMA Runtime — persistencia PostgreSQL, Lab, Replay, Shadow, REAL_LIMITED, UI, CI
+
+### Problema
+El runtime AMA usaba stubs en memoria. Sin persistencia, sin Lab, sin Replay, sin Shadow, sin REAL_LIMITED, sin UI. Los tests de period limits fallaban por dependencia de fecha real.
+
+### Solución
+- **Migraciones 081-083**: Tablas runtime, replay/shadow, real authorization
+- **Repositorios**: amaRepository, amaShadowReplayRepository, amaRealAuthorizationRepository
+- **Servicios**: amaRuntimeService, amaLabService, amaReplayService, amaShadowExecutor, amaRealLimitedService, amaPortfolioLedger
+- **API**: Endpoints completos incluyendo operational controls (pause/resume/deactivate/kill-switch)
+- **UI**: AmaTabs con 6 tabs, kill switch toggle, 7 modos, REAL_FULL locked
+- **REAL_LIMITED**: 9 pre-trade gates (maker-only, post-only añadidos)
+- **Fix date-sensitive test**: `createPeriodLimitState` acepta `referenceTimestamp` opcional
+- **CI**: GitHub Actions workflow para PostgreSQL 16 integration validation
+
+### Archivos afectados
+- `db/migrations/081_ama_runtime_integration.sql` (nuevo)
+- `db/migrations/082_ama_replay_shadow.sql` (nuevo)
+- `db/migrations/083_ama_real_authorization.sql` (nuevo)
+- `server/services/ama/amaRepository.ts` (nuevo)
+- `server/services/ama/amaShadowReplayRepository.ts` (nuevo)
+- `server/services/ama/amaRealAuthorizationRepository.ts` (nuevo)
+- `server/services/ama/amaRuntimeService.ts` (nuevo)
+- `server/services/ama/amaLabService.ts` (nuevo)
+- `server/services/ama/amaReplayService.ts` (nuevo)
+- `server/services/ama/amaShadowExecutor.ts` (nuevo)
+- `server/services/ama/amaRealLimitedService.ts` (nuevo)
+- `server/services/ama/amaPortfolioLedger.ts` (nuevo)
+- `server/services/ama/amaAdaptivePlanner.ts` (fix: createPeriodLimitState)
+- `server/routes/ama.routes.ts` (endpoints nuevos)
+- `client/src/components/ama/AmaTabs.tsx` (nuevo)
+- `client/src/pages/Ama.tsx` (UI update)
+- `.github/workflows/ama-runtime-integration-postgres16.yml` (nuevo)
+- `scripts/ama-runtime-postgres-validation.ts` (nuevo)
+- Tests: 6 archivos nuevos, 7 archivos modificados
+
+### Validaciones
+- `tsc`: clean
+- AMA tests: 870 passed, 0 failed
+- Portfolio tests: 59 passed, 0 failed
+- Route tests: 34 passed, 0 failed
+- Total: 929 passed, 0 failed
+
+### No-Real-Order Evidence
+- Shadow executor no importa módulos de exchange
+- Lab simulation es pura (precios como input)
+- Replay usa datos históricos deterministas
+- FailIfCalledRealExchangeGateway pattern en tests
+
+### Estado
+- Implementación = COMMITTED_AND_PUSHED
+- Commit = 7730c26
+- Branch = review/ama-runtime-completion-20260806
+- Push = origin/review/ama-runtime-completion-20260806
+- Merge = NO
+- Deploy = NO
+- CI PostgreSQL 16 = WORKFLOW_CREATED (pendiente ejecución en GitHub Actions)
