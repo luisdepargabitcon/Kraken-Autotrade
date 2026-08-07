@@ -13,7 +13,8 @@
     "db:push": "drizzle-kit push",
     "spot-dryrun:cleanup:audit": "tsx script/spot-dryrun-cleanup.ts --audit",
     "spot-dryrun:cleanup:apply": "tsx script/spot-dryrun-cleanup.ts --apply",
-    "validate:ama:postgres": "node scripts/ama_migration_validate.mjs"
+    "validate:ama:postgres": "node scripts/ama_migration_validate.mjs",
+    "ama:migrate:staging": "node scripts/ama_apply_staging_migrations.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
