@@ -15,12 +15,16 @@ import { z } from "zod";
 import { createHash } from "crypto";
 import * as runtime from "../services/ama/amaRuntimeService";
 import { checkShadowReadiness } from "../services/ama/amaShadowExecutorSecurity";
+import { evaluateShadowReadiness } from "../services/ama/amaShadowReadinessService";
 import { checkAmaSchemaAvailable } from "../services/ama/amaRepository";
 import * as labService from "../services/ama/amaLabService";
 import * as replayService from "../services/ama/amaReplayService";
+import { runLabSession, runReplaySession } from "../services/ama/amaLabReplayRunner";
 import * as shadowExecutor from "../services/ama/amaShadowExecutor";
 import * as realLimited from "../services/ama/amaRealLimitedService";
 import * as portfolioLedger from "../services/ama/amaPortfolioLedger";
+import { executeHwmBootstrap } from "../services/ama/amaMarketRuntimeService";
+import { amaHwmBootstrapService, amaSchedulerStateService } from "../services/ama/amaFunctionalClosure";
 import type { AmaApiResponse, AmaMandateInput, AmaMode } from "../services/ama/amaTypes";
 import { AMA_MODE_VALUES, AMA_STRATEGY_VERSION, isModeReal } from "../services/ama/amaTypes";
 
@@ -87,16 +91,9 @@ export function registerAmaRoutes(app: Express): void {
       return res.status(403).json(err(`${mode} requires explicit authorization. Gate locked.`));
     }
 
-    // Gate 1b: block SHADOW if readiness not met
+    // Gate 1b: block SHADOW if readiness not met (real evaluation)
     if (mode === "SHADOW_SCENARIO" || mode === "SHADOW_LIVE") {
-      const readiness = checkShadowReadiness(
-        mode,
-        false, // no HWM in stub
-        false, // no budget in stub
-        false, // no current price in stub
-        0,     // no data coverage in stub
-        90,    // minimum data coverage
-      );
+      const readiness = await evaluateShadowReadiness(mode);
       if (!readiness.ready) {
         return res.status(403).json(err(`${mode} blocked: ${readiness.blockers.join(", ")}`));
       }
@@ -113,13 +110,23 @@ export function registerAmaRoutes(app: Express): void {
   });
 
   // ── Market View ─────────────────────────────────────────────────
-  app.get("/api/ama/market-view", (_req, res) => {
-    res.json(ok(runtime.getMarketView()));
+  app.get("/api/ama/market-view", async (_req, res) => {
+    try {
+      const view = await runtime.getMarketView();
+      res.json(ok(view));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
   });
 
   // ── Mandate ─────────────────────────────────────────────────────
-  app.get("/api/ama/mandate", (_req, res) => {
-    res.json(ok(runtime.getMandate()));
+  app.get("/api/ama/mandate", async (_req, res) => {
+    try {
+      const mandate = await runtime.getMandate();
+      res.json(ok(mandate));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
   });
 
   app.post("/api/ama/mandate/drafts", async (req, res) => {
@@ -130,6 +137,55 @@ export function registerAmaRoutes(app: Express): void {
     const input: AmaMandateInput = parsed.data;
     try {
       const result = await runtime.saveMandateDraft(input);
+      res.json(ok(result));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // Mandate approve
+  const approveSchema = z.object({
+    mandateId: z.string().min(1),
+    approvedBy: z.string().min(1).default("API"),
+  });
+  app.post("/api/ama/mandate/approve", async (req, res) => {
+    const parsed = approveSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(err(`Invalid approve input: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
+    }
+    try {
+      const result = await runtime.approveMandateRuntime(parsed.data.mandateId, parsed.data.approvedBy);
+      res.json(ok(result));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // Mandate activate (resolves + activates policy)
+  const activateSchema = z.object({
+    mandateId: z.string().min(1),
+  });
+  app.post("/api/ama/mandate/activate", async (req, res) => {
+    const parsed = activateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(err(`Invalid activate input: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
+    }
+    try {
+      const result = await runtime.activateMandateRuntime(parsed.data.mandateId);
+      res.json(ok(result));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // Mandate supersede
+  app.post("/api/ama/mandate/supersede", async (req, res) => {
+    const parsed = activateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(err(`Invalid supersede input: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
+    }
+    try {
+      const result = await runtime.supersedeMandateRuntime(parsed.data.mandateId);
       res.json(ok(result));
     } catch (e) {
       res.status(500).json(err(sanitizeError(e)));
@@ -228,16 +284,26 @@ export function registerAmaRoutes(app: Express): void {
       return res.status(400).json(err(`Invalid replay config: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
     }
     try {
-      const replayRunId = await replayService.startReplayRun({
+      // Fetch historical prices from MarketDataService for the replay period
+      const { MarketDataService } = await import("../services/MarketDataService");
+      const candles = await MarketDataService.getCandles(parsed.data.pair, "1d");
+      const historicalPrices = candles.map(c => ({
+        timestamp: new Date(c.time * 1000).toISOString(),
+        price: c.close,
+      }));
+
+      // Execute replay via runner (handles start + execute + complete)
+      const { replayRunId } = await runReplaySession({
         startDate: parsed.data.startDate,
         endDate: parsed.data.endDate,
         pair: parsed.data.pair,
         initialCapitalUsd: parsed.data.initialCapitalUsd,
-      });
+      }, historicalPrices);
+
       res.json(ok({
         replayRunId,
-        status: "QUEUED",
-        message: "Replay queued. No real orders will be placed.",
+        status: "COMPLETED",
+        message: "Replay executed. No real orders were placed.",
       }));
     } catch (e) {
       res.status(500).json(err(sanitizeError(e)));
@@ -286,8 +352,21 @@ export function registerAmaRoutes(app: Express): void {
       return res.status(400).json(err(`Invalid lab config: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
     }
     try {
-      const labSessionId = await labService.startLabSession(parsed.data);
-      res.json(ok({ labSessionId, status: "RUNNING" }));
+      // Generate prices: use custom prices if provided, otherwise synthesize from drop percentages
+      const dropPcts = parsed.data.config.customDropPcts ?? [5, 10, 15, 25, 35, 45];
+      const customPrices = parsed.data.config.customPrices;
+      let prices: number[];
+      if (customPrices && customPrices.length > 0) {
+        prices = customPrices;
+      } else {
+        // Synthesize prices from drop percentages using a base price of 100000 for BTC
+        const basePrice = parsed.data.asset === "BTC" ? 100000 : 3000;
+        prices = dropPcts.map(drop => basePrice * (1 - drop / 100));
+      }
+
+      // Execute lab via runner (handles start + simulate + complete)
+      const labSessionId = await runLabSession(parsed.data, prices);
+      res.json(ok({ labSessionId, status: "COMPLETED" }));
     } catch (e) {
       res.status(500).json(err(sanitizeError(e)));
     }
@@ -524,6 +603,57 @@ export function registerAmaRoutes(app: Express): void {
         state: "SCHEMA_CHECK_FAILED",
         message: "Unable to check AMA DB schema availability.",
       }));
+    }
+  });
+
+  // ── HWM Bootstrap ────────────────────────────────────────────────
+  app.get("/api/ama/hwm/bootstrap", async (_req, res) => {
+    try {
+      const state = await amaHwmBootstrapService.getState();
+      res.json(ok(state));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  app.post("/api/ama/hwm/bootstrap", async (req, res) => {
+    try {
+      const pair = (req.body?.pair as string) || "BTC/USD";
+      const candleCount = (req.body?.candleCount as number) || 200;
+      const result = await executeHwmBootstrap(pair, candleCount);
+      res.json(ok(result));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // ── Readiness ────────────────────────────────────────────────────
+  app.get("/api/ama/readiness", async (_req, res) => {
+    try {
+      const hwmState = await amaHwmBootstrapService.getState();
+      const schedulerState = await amaSchedulerStateService.getState();
+      const shadowScenario = await evaluateShadowReadiness("SHADOW_SCENARIO");
+      const shadowLive = await evaluateShadowReadiness("SHADOW_LIVE");
+      res.json(ok({
+        hwmBootstrap: hwmState,
+        scheduler: schedulerState,
+        shadowScenarioReady: shadowScenario.ready,
+        shadowScenarioBlockers: shadowScenario.blockers,
+        shadowLiveReady: shadowLive.ready,
+        shadowLiveBlockers: shadowLive.blockers,
+      }));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // ── Scheduler State ──────────────────────────────────────────────
+  app.get("/api/ama/scheduler/state", async (_req, res) => {
+    try {
+      const state = await amaSchedulerStateService.getState();
+      res.json(ok(state));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
     }
   });
 
