@@ -54,6 +54,22 @@ import {
 } from "./amaRepository";
 import { isRealLimitedAuthorized } from "./amaRealAuthorizationRepository";
 import type { AssetSymbol } from "./amaSeedTypes";
+import { getRealMarketView } from "./amaMarketRuntimeService";
+import {
+  insertMandateDraft,
+  getMandateById,
+  getActiveMandate,
+  getLatestMandate,
+  approveMandate as dbApproveMandate,
+  activateMandate as dbActivateMandate,
+  supersedeMandate as dbSupersedeMandate,
+  type AmaMandateRow,
+} from "./amaMandateRepository";
+import {
+  resolveAndPersistPolicy,
+  activatePersistedPolicy,
+} from "./amaPolicyResolver";
+import { getPolicyById, updatePolicyStatus } from "./amaRepository";
 
 // ─── Runtime State (in-memory cache, backed by DB) ───────────────────
 
@@ -203,47 +219,89 @@ export async function getStatus(): Promise<AmaStatus> {
 
 // ─── Market View ─────────────────────────────────────────────────────
 
-export function getMarketView(): AmaMarketView {
-  return {
-    pair: AMA_PAIR,
-    analysisPrice: null,
-    analysisTimestamp: null,
-    executionBid: null,
-    executionAsk: null,
-    executionMid: null,
-    spreadPct: null,
-    crossVenueBasisPct: null,
-    executionTimestamp: null,
-    highWaterMark: null,
-    cycleLow: null,
-    currentDropPct: null,
-    maxDropPct: null,
-    reboundFromLowPct: null,
-    macroZone: null,
-    daysSinceCeiling: null,
-    daysSinceLow: null,
-    dataQuality: "UNAVAILABLE",
-  };
+export async function getMarketView(): Promise<AmaMarketView> {
+  return await getRealMarketView();
 }
 
 // ─── Mandate ─────────────────────────────────────────────────────────
 
-export function getMandate(): AmaMandateInput | null {
-  return null;
+export async function getMandate(): Promise<AmaMandateRow | null> {
+  await initializeRuntime();
+  if (cache.mandateId) {
+    const mandate = await getMandateById(cache.mandateId);
+    if (mandate) return mandate;
+  }
+  // Fall back to latest mandate if active mandate ID not set or not found
+  return await getLatestMandate();
 }
 
 export async function saveMandateDraft(input: AmaMandateInput): Promise<{ mandateId: string }> {
-  const mandateId = `mandate-${Date.now()}`;
+  const mandateId = `mandate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const row = await insertMandateDraft(mandateId, input);
   cache.mandateId = mandateId;
   await updateRuntimeState({ activeMandateId: mandateId });
-  await insertAuditEvent("MANDATE_DRAFT_SAVED", "INFO", { mandateId, input });
-  return { mandateId };
+  await insertAuditEvent("MANDATE_DRAFT_SAVED", "INFO", { mandateId, input }, { mandateId });
+  return { mandateId: row.mandateId };
+}
+
+export async function approveMandateRuntime(
+  mandateId: string,
+  approvedBy: string = "API",
+): Promise<AmaMandateRow> {
+  await initializeRuntime();
+  const row = await dbApproveMandate(mandateId, approvedBy);
+  await insertAuditEvent("MANDATE_APPROVED", "INFO", { mandateId, approvedBy }, { mandateId });
+  return row;
+}
+
+export async function activateMandateRuntime(
+  mandateId: string,
+): Promise<{ mandate: AmaMandateRow; policy: AmaResolvedPolicy }> {
+  await initializeRuntime();
+
+  // Activate the mandate
+  const mandate = await dbActivateMandate(mandateId);
+  cache.mandateId = mandateId;
+  await updateRuntimeState({ activeMandateId: mandateId });
+
+  // Resolve and persist policy
+  const policyInput: AmaMandateInput = {
+    asset: mandate.asset as AssetSymbol,
+    maxCapitalUsd: mandate.maxCapitalUsd,
+    riskMandate: mandate.riskMandate as AmaMandateInput["riskMandate"],
+    accumulationStyle: mandate.accumulationStyle as AmaMandateInput["accumulationStyle"],
+    exitObjective: mandate.exitObjective as AmaMandateInput["exitObjective"],
+    autonomyLevel: mandate.autonomyLevel as AmaMandateInput["autonomyLevel"],
+  };
+  const policy = await resolveAndPersistPolicy(mandateId, policyInput);
+
+  // Activate the policy
+  await activatePersistedPolicy(policy.policyId);
+  cache.activePolicyId = policy.policyId;
+  await updateRuntimeState({ activePolicyId: policy.policyId });
+
+  await insertAuditEvent("MANDATE_ACTIVATED", "INFO", { mandateId, policyId: policy.policyId }, { mandateId, policyId: policy.policyId });
+
+  return { mandate, policy };
+}
+
+export async function supersedeMandateRuntime(
+  mandateId: string,
+): Promise<AmaMandateRow> {
+  await initializeRuntime();
+  const row = await dbSupersedeMandate(mandateId);
+  await insertAuditEvent("MANDATE_SUPERSEDED", "INFO", { mandateId }, { mandateId });
+  return row;
 }
 
 // ─── Policy ──────────────────────────────────────────────────────────
 
 export async function getActivePolicyRuntime(): Promise<AmaResolvedPolicy | null> {
-  if (!cache.activePolicyId) return null;
+  if (cache.activePolicyId) {
+    const policy = await getPolicyById(cache.activePolicyId);
+    if (policy) return policy;
+  }
+  // Fall back to querying active policy from DB
   return await getActivePolicy();
 }
 

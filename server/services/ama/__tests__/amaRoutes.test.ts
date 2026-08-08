@@ -36,7 +36,7 @@ const { mockRuntime } = vi.hoisted(() => ({
       killSwitchActive: false,
       lastUpdated: new Date().toISOString(),
     }),
-    getMarketView: vi.fn().mockReturnValue({
+    getMarketView: vi.fn().mockResolvedValue({
       pair: "BTC/USD",
       analysisPrice: null,
       analysisTimestamp: null,
@@ -56,8 +56,11 @@ const { mockRuntime } = vi.hoisted(() => ({
       daysSinceLow: null,
       dataQuality: "UNAVAILABLE",
     }),
-    getMandate: vi.fn().mockReturnValue(null),
+    getMandate: vi.fn().mockResolvedValue(null),
     saveMandateDraft: vi.fn().mockResolvedValue({ mandateId: `mandate-test` }),
+    approveMandateRuntime: vi.fn().mockResolvedValue({ mandateId: "mandate-test", status: "APPROVED" }),
+    activateMandateRuntime: vi.fn().mockResolvedValue({ mandate: { mandateId: "mandate-test", status: "ACTIVE" }, policy: { policyId: "policy-test" } }),
+    supersedeMandateRuntime: vi.fn().mockResolvedValue({ mandateId: "mandate-test", status: "SUPERSEDED" }),
     getActivePolicyRuntime: vi.fn().mockResolvedValue(null),
     getTranchePlan: vi.fn().mockResolvedValue(null),
     getCycles: vi.fn().mockResolvedValue([]),
@@ -85,6 +88,76 @@ const { mockRuntime } = vi.hoisted(() => ({
 vi.mock("../amaRuntimeService", () => mockRuntime);
 vi.mock("../amaRepository", () => ({
   checkAmaSchemaAvailable: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("../amaShadowReadinessService", () => ({
+  evaluateShadowReadiness: vi.fn().mockResolvedValue({ ready: false, blockers: ["NO_HIGH_WATER_MARK"] }),
+}));
+vi.mock("../amaLabReplayRunner", () => ({
+  runLabSession: vi.fn().mockResolvedValue("lab-test"),
+  runReplaySession: vi.fn().mockResolvedValue({ replayRunId: "replay-test", result: null }),
+}));
+vi.mock("../amaMarketRuntimeService", () => ({
+  getRealMarketView: vi.fn().mockResolvedValue({
+    pair: "BTC/USD",
+    analysisPrice: null,
+    analysisTimestamp: null,
+    executionBid: null,
+    executionAsk: null,
+    executionMid: null,
+    spreadPct: null,
+    crossVenueBasisPct: null,
+    executionTimestamp: null,
+    highWaterMark: null,
+    cycleLow: null,
+    currentDropPct: null,
+    maxDropPct: null,
+    reboundFromLowPct: null,
+    macroZone: null,
+    daysSinceCeiling: null,
+    daysSinceLow: null,
+    dataQuality: "UNAVAILABLE",
+  }),
+  executeHwmBootstrap: vi.fn().mockResolvedValue({ hwm: 100000, hwmTimestamp: new Date().toISOString(), candlesProcessed: 200 }),
+}));
+vi.mock("../amaFunctionalClosure", () => ({
+  amaHwmBootstrapService: {
+    getState: vi.fn().mockResolvedValue({
+      pair: "BTC/USD",
+      hwm: null,
+      hwmTimestamp: null,
+      bootstrapStatus: "PENDING",
+      dataCoveragePct: 0,
+      candlesProcessed: 0,
+      candlesTotal: 0,
+      errorMessage: null,
+      updatedAt: new Date().toISOString(),
+    }),
+    startBootstrap: vi.fn().mockResolvedValue(undefined),
+    updateProgress: vi.fn().mockResolvedValue(undefined),
+    completeBootstrap: vi.fn().mockResolvedValue(undefined),
+    failBootstrap: vi.fn().mockResolvedValue(undefined),
+    isReady: vi.fn().mockResolvedValue(false),
+  },
+  amaSchedulerStateService: {
+    getState: vi.fn().mockResolvedValue({
+      currentMode: "OFF",
+      lastTickAt: null,
+      lastCycleId: null,
+      tickCount: 0,
+      errorCount: 0,
+      lastError: null,
+      advisoryLockHeld: false,
+      updatedAt: new Date().toISOString(),
+    }),
+    recordTick: vi.fn().mockResolvedValue(undefined),
+    recordError: vi.fn().mockResolvedValue(undefined),
+    setMode: vi.fn().mockResolvedValue(undefined),
+    acquireAdvisoryLock: vi.fn().mockResolvedValue(true),
+    releaseAdvisoryLock: vi.fn().mockResolvedValue(undefined),
+  },
+  amaRealStateService: {
+    getState: vi.fn().mockResolvedValue({ operationalState: "NOT_READY" }),
+  },
 }));
 vi.mock("../amaLabService", () => ({
   startLabSession: vi.fn().mockResolvedValue("lab-test"),
@@ -230,7 +303,7 @@ describe("AMA Routes — API", () => {
   });
 
   describe("GET /api/ama/market-view", () => {
-    it("responds 200 with stub market view", async () => {
+    it("responds 200 with market view", async () => {
       const res = await req(server, "GET", "/api/ama/market-view");
       expect(res.status).toBe(200);
       expect(res.body.data.analysisPrice).toBeNull();
@@ -420,7 +493,7 @@ describe("AMA Routes — API", () => {
         endDate: "2025-06-01",
       });
       expect(res.status).toBe(200);
-      expect(res.body.data.status).toBe("QUEUED");
+      expect(res.body.data.status).toBe("COMPLETED");
     });
 
     it("rejects missing dates with 400", async () => {
