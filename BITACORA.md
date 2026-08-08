@@ -7592,3 +7592,71 @@ Migration audit test false positive en `081_ama_runtime_integration.sql` (ADD CO
 
 - Implementado, validado, commiteado, subido, desplegado y operacional.
 - Pendientes: ninguno.
+
+---
+
+## 2026-08-09 — AMA Final Runtime Wiring (completar wiring runtime market lab replay shadow)
+
+### Módulo
+AMA (Automated Market Accumulator) — runtime wiring completo.
+
+### Problema
+Los endpoints AMA usaban stubs hardcoded: `getMarketView()` devolvía nulls, `getMandate()` devolvía null constante, shadow readiness usaba `false // HWM`, lab/replay no ejecutaban runners, no había endpoints de ciclo de vida de mandato ni policy resolution.
+
+### Solución
+5 servicios nuevos + 3 archivos modificados:
+- `amaShadowReadinessService.ts`: evaluación real de readiness (HWM, budget, price, coverage)
+- `amaMarketRuntimeService.ts`: integración con Kraken MarketDataService + HWM bootstrap con closed candles
+- `amaMandateRepository.ts`: CRUD completo sobre `ama_user_mandates` (draft, approve, activate, supersede)
+- `amaPolicyResolver.ts`: mapeo mandate inputs → resolved policy parameters, persistencia y activación
+- `amaSchedulerRunner.ts`: scheduler periódico con advisory lock
+- `amaRuntimeService.ts`: stubs reemplazados por implementaciones reales
+- `ama.routes.ts`: readiness real para SHADOW, endpoints approve/activate/supersede, HWM bootstrap, readiness global, scheduler state, lab/replay via runners
+- Tests actualizados con mocks para nuevos imports
+
+### Archivos afectados
+- `server/services/ama/amaShadowReadinessService.ts` (nuevo)
+- `server/services/ama/amaMarketRuntimeService.ts` (nuevo)
+- `server/services/ama/amaMandateRepository.ts` (nuevo)
+- `server/services/ama/amaPolicyResolver.ts` (nuevo)
+- `server/services/ama/amaSchedulerRunner.ts` (nuevo)
+- `server/services/ama/amaRuntimeService.ts` (modificado)
+- `server/routes/ama.routes.ts` (modificado)
+- `server/services/ama/__tests__/amaRoutes.test.ts` (modificado)
+
+### Validaciones
+- TypeScript: 0 errores
+- AMA tests: 935/935 PASS (34 archivos)
+- Full suite: 4682 PASS, 16 baseline failures (no AMA), 0 new failures
+- Staging: market-view real (price=64922.4, HWM=126198.1, zone=DEEP_VALUE, quality=FRESH)
+- Staging: HWM bootstrap COMPLETED (720 candles, coverage=100%)
+- Staging: mandato ACTIVE + policy ACTIVE en PostgreSQL, persistente tras restart
+- Staging: Lab COMPLETED, Replay COMPLETED (determinista: 6 tranches, 0.14267300 qty en ambas ejecuciones)
+- Staging: SHADOW_SCENARIO activado, SHADOW_LIVE activado, persistente tras restart
+- Staging: ZERO real orders, ZERO private exchange calls
+
+### Commit
+- `787826e` en rama `review/ama-final-runtime-wiring-20260808`
+- Merge a main: `752d57d` (no-ff)
+- Push a origin/main confirmado
+
+### Estado final
+- AMA_MARKET_RUNTIME=OPERATIONAL
+- AMA_HWM=OPERATIONAL
+- AMA_MANDATE=ACTIVE
+- AMA_POLICY=ACTIVE
+- LAB=OPERATIONAL (COMPLETED)
+- REPLAY=OPERATIONAL (COMPLETED, DETERMINISTIC)
+- SHADOW_SCENARIO=OPERATIONAL
+- SHADOW_LIVE=OPERATIONAL
+- AMA_SCHEDULER=EXISTENTE
+- REAL_LIMITED=DISABLED
+- AMA_REAL_EXECUTION_ENABLED=false
+- REAL_FULL=LOCKED
+- REAL_ORDERS=0
+- NEW_FAILURES=0
+
+### Pendientes
+- PR formal en GitHub (gh no instalado, rama pushed)
+- CI workflow: añadir paths de wiring si se requiere cobertura automatizada adicional
+- UI: actualizar para consumir nuevos endpoints (pendiente separado)
