@@ -2,7 +2,7 @@
 /**
  * AMA Staging Migration Applier — FAIL-CLOSED
  *
- * Applies migrations 080-083 in order to a STAGING PostgreSQL database.
+ * Applies migrations 080-085 in order to a STAGING PostgreSQL database.
  * Refuses to run unless ALL guard conditions are met simultaneously.
  *
  * Guards:
@@ -35,12 +35,15 @@ const MIGRATIONS = [
   "081_ama_runtime_integration.sql",
   "082_ama_replay_shadow.sql",
   "083_ama_real_authorization.sql",
+  "084_ama_functional_closure.sql",
+  "085_portfolio_global_runtime.sql",
 ];
 
 const MIGRATIONS_DIR = join(PROJECT_ROOT, "db", "migrations");
 const ARTIFACTS_DIR = join(PROJECT_ROOT, "artifacts");
 
 const EXPECTED_TABLES = [
+  // 080
   "ama_user_mandates",
   "ama_resolved_policies",
   "ama_cycles",
@@ -51,21 +54,35 @@ const EXPECTED_TABLES = [
   "ama_audit_events",
   "portfolio_mode_budgets",
   "portfolio_ledger_entries",
+  // 081
   "ama_runtime_state",
   "ama_hwm_records",
   "ama_shadow_orders",
   "ama_cooldown_state",
+  // 082
   "ama_replay_runs",
   "ama_replay_events",
   "ama_lab_sessions",
   "ama_lab_tranche_results",
   "ama_shadow_scenarios",
   "ama_shadow_reports",
+  // 083
   "ama_real_authorization",
   "ama_pre_trade_gates",
   "ama_reconciliation_log",
   "ama_restart_recovery",
   "ama_mode_change_log",
+  // 084
+  "ama_real_state",
+  "ama_scheduler_state",
+  "ama_hwm_bootstrap",
+  // 085
+  "portfolio_holdings",
+  "portfolio_inventory_attribution",
+  "portfolio_reservations",
+  "portfolio_order_locks",
+  "portfolio_snapshots",
+  "portfolio_reconciliation_runs",
 ];
 
 function getEnv(name) {
@@ -190,7 +207,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("\n[3/5] Applying migrations 080-083...");
+  console.log("\n[3/5] Applying migrations 080-085...");
   const migrationResults = [];
   let allPassed = true;
 

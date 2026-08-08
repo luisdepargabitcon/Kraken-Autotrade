@@ -1773,6 +1773,17 @@ export async function registerRoutes(
     console.error('[startup] Failed to register AMA routes:', e?.message || e);
   }
 
+  // ============================================================
+  // PORTFOLIO GLOBAL ENDPOINTS — Capital attribution, budgets, inventory
+  // ============================================================
+  try {
+    const { registerPortfolioRoutes } = await import('./routes/portfolio.routes');
+    registerPortfolioRoutes(app);
+    console.log('[startup] Portfolio Global routes registered');
+  } catch (e: any) {
+    console.error('[startup] Failed to register Portfolio Global routes:', e?.message || e);
+  }
+
   // Grid SHADOW startup (only starts if mode=SHADOW and isActive=true)
   try {
     const { initializeGridShadowAtStartup } = await import('./services/gridIsolated/gridCycleStartupService');
