@@ -75,12 +75,61 @@ SELL[i] = centerPrice * ratio^(i + 0.5)
 ## Estado final
 
 - **Implementado:** ✅
-- **Validado:** ✅ (tests + tsc + build)
-- **Commiteado:** ✅ (`57fd074`)
-- **Subido:** ✅ (`origin/main`)
-- **Desplegado:** ✅ (staging app-only, DB intacta)
-- **Operacional:** ✅ (SHADOW activo, 0 órdenes reales)
+- **Validado:** ✅ (22 tests A-H + 612 grid tests + tsc + build)
+- **Commiteado:** ✅ (`49ec105` — fix(grid): cerrar geometria uniforme y restaurar dependencias)
+- **Subido:** ✅ (`origin/main` + `review/grid-uniform-geometric-final-audit-20260807`)
+- **Desplegado:** ✅ (staging app-only, DB intacta, --no-deps)
+- **Operacional:** ✅ (SHADOW activo, 0 órdenes reales, DB sin restart)
+
+## Deploy staging — 2026-08-09
+
+### Pre-deploy
+- VPS_SHA_BEFORE: 752d57d
+- ORIGIN_MAIN: ff4a139
+- APP_ID_BEFORE: d70c0c37e3c0
+- DB_ID_BEFORE: a2f9a3f275c3
+- DB_HEALTH: healthy (Up 3 months)
+- Branch: main, checkout limpio
+
+### Deploy
+- git merge --ff-only origin/main → ff4a139
+- docker compose build krakenbot-staging-app → exitoso
+- docker compose up -d --no-deps krakenbot-staging-app → exitoso
+
+### Post-deploy
+- APP_ID_AFTER: 16ef332176a6
+- DB_ID_AFTER: a2f9a3f275c3 (= BEFORE, intacta)
+- DB_RESTARTED: FALSE
+- DB_HEALTH: healthy
+- Endpoints: / /grid-isolated /api/grid-isolated/config /api/grid-isolated/status /api/grid-isolated/monitor/audit → todos HTTP 200
+- MODE: SHADOW
+- PAIR: BTC/USD
+- isActive: true, isRunning: true
+- realOpenOrdersCount: 0
+- circuitBreakerOpen: false
+- openCycles: 0
+- pairConstraints: verified + fresh
+- executionGate: VERIFIED
+
+### Rebuild shadow range
+- REBUILD_EXECUTED: FALSE
+- REBUILD_BLOCKER: shadow_compact_not_viable — banda Bollinger 1.65% + compact range max 2.5% solo permite 2 niveles (1 por lado) vs 8 solicitados; spacing mínimo rentable 1.29%
+- Guardas pre-check: TODAS pasaron
+- El bloqueo es por condiciones de mercado (banda estrecha), no por código
+- professional-generator/validate: viabilityStatus=not_viable, sideEffectsDetected=false, readOnly=true
+
+### Métricas finales
+- FINAL_TECH_SHA: 49ec105704a0cbde1b6391337b479b01a46dd89e
+- VITEST_VERSION: 4.0.17
+- PACKAGE_FILES_RESTORED: TRUE
+- UNIFORM_GEOMETRIC_GRID: TRUE
+- ALTERNATIVE_GEOMETRY_MODES: FALSE
+- CENTRAL_DEADBAND: FALSE
+- NEW_GEOMETRY_CONFIG_FIELDS: 0
+- V3_TARGET_ECONOMICS_CHANGED: FALSE
+- HISTORICAL_LEVELS_MUTATED: FALSE
 
 ## Pendientes
 
-- Ninguno para esta tarea.
+- Rebuild del rango shadow cuando las condiciones de mercado lo permitan (banda suficientemente ancha)
+- Validación UI real cuando exista un rango activo generado por la nueva geometría

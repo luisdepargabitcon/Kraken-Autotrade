@@ -1,7 +1,7 @@
 ﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-08-08
+> Última actualización: 2026-08-09
 
 ---
 
@@ -7660,3 +7660,79 @@ Los endpoints AMA usaban stubs hardcoded: `getMarketView()` devolvía nulls, `ge
 - PR formal en GitHub (gh no instalado, rama pushed)
 - CI workflow: añadir paths de wiring si se requiere cobertura automatizada adicional
 - UI: actualizar para consumir nuevos endpoints (pendiente separado)
+
+---
+
+## 2026-08-09 — Grid Uniform Geométrico: Cierre Definitivo
+
+### Módulo
+Grid Isolated — geometría uniforme y validación operativa.
+
+### Problema
+La geometría del grid no era uniforme: el gap central era distinto del spacing entre niveles adyacentes, produciendo un doble gap que distorsionaba la economía del ciclo.
+
+### Solución
+- Fórmula canónica uniform_geometric_spacing: `ratio = 1 + spacingPct/100`, niveles a `ratio^(index+0.5)`.
+- Hard gate en `buildRangeProposal`: rechaza propuestas con `uniformSpacingOk=false`, `centralGapPct=0`, o `centralGapPct` distinto del spacing configurado.
+- Post-normalización con tick alignment: alinea precios a tick size, valida colisiones, ordenamiento BUY<SELL, y notional post-tick.
+- Tolerancia de uniformidad derivada del tick size oficial del exchange.
+- Tests A-H cubriendo caso real, target V3 intacto, sin modos alternativos, colisión tick, orden post-tick, notional post-tick, hard gate gap, adaptive smart.
+
+### Archivos afectados
+- `server/services/gridIsolated/gridUniformGeometric.ts` — helper canónico
+- `server/services/gridIsolated/gridSpacingCalculator.ts` — integración fórmula
+- `server/services/gridIsolated/gridIsolatedEngine.ts` — hard gate + post-norm validation
+- `server/services/gridIsolated/gridLevelConstraintNormalizer.ts` — tick alignment + post-norm checks
+- `server/services/__tests__/gridUniformGeometric.test.ts` — tests A-H (22 tests)
+- `server/services/__tests__/gridSpacingCalculator.test.ts` — ajustes expectativas
+- `server/services/__tests__/gridAdaptiveSmartRange.test.ts` — microstructure params
+- `server/services/__tests__/gridCompactRange.test.ts` — fix warning text
+- `server/routes/gridIsolated.routes.ts` — rename formula identifier
+- `server/services/gridIsolated/buildGridAuditViewModel.ts` — rename formula identifier
+- `package.json` / `package-lock.json` — restaurados a f9dd026 (Vitest 4.0.17)
+
+### Validaciones
+- Tests dirigidos gridUniformGeometric: 22/22 ✅
+- Tests grid spacing/compact/adaptive/normalizer: 89/89 ✅
+- Tests grid isolated completos: 612/612 ✅
+- TypeScript: tsc --noEmit sin errores ✅
+- Suite completa: 3587 passed, 16 failed (preexistentes, no relacionados con grid) ✅
+
+### Deploy staging
+- Commit tech: `49ec105` (fix(grid): cerrar geometria uniforme y restaurar dependencias)
+- VPS_SHA_BEFORE: 752d57d
+- VPS_SHA_AFTER: ff4a139 (ff merge, solo BITACORA.md adicional)
+- APP_ID_BEFORE: d70c0c37e3c0
+- APP_ID_AFTER: 16ef332176a6
+- DB_ID: a2f9a3f275c3 (intacta, sin restart)
+- DB_HEALTH: healthy
+- Build: exitoso, app-only, --no-deps
+- Endpoints post-deploy: todos HTTP 200
+- MODE: SHADOW, isActive: true, isRunning: true
+- realOpenOrdersCount: 0, circuitBreakerOpen: false
+
+### Rebuild shadow range
+- REBUILD_EXECUTED=FALSE
+- REBUILD_BLOCKER=shadow_compact_not_viable — banda Bollinger 1.65% + compact range max 2.5% solo permite 2 niveles (1 por lado) vs 8 solicitados; spacing mínimo rentable 1.29%
+- Guardas pre-check: todas pasaron (MODE=SHADOW, OPEN_CYCLES=0, CIRCUIT_BREAKER=FALSE, PAIR_CONSTRAINTS=VERIFIED+FRESH, REAL_OPEN_ORDERS=0)
+- El bloqueo es por condiciones de mercado (banda estrecha), no por código
+- El generador profesional validó correctamente la geometría: viabilityStatus=not_viable, sideEffectsDetected=false
+
+### Estado final
+- UNIFORM_GEOMETRIC_GRID=TRUE
+- ALTERNATIVE_GEOMETRY_MODES=FALSE
+- CENTRAL_DEADBAND=FALSE
+- NEW_GEOMETRY_CONFIG_FIELDS=0
+- V3_TARGET_ECONOMICS_CHANGED=FALSE
+- HISTORICAL_LEVELS_MUTATED=FALSE
+- DB_RESTARTED=FALSE
+- MODE=SHADOW
+- MAKER_ONLY=TRUE
+- TAKER_FALLBACK=FALSE (configurado pero no ejecutado en SHADOW)
+- REAL_OPEN_ORDERS=0
+- VITEST_VERSION=4.0.17
+- PACKAGE_FILES_RESTORED=TRUE
+
+### Pendientes
+- Rebuild del rango shadow cuando las condiciones de mercado lo permitan (banda suficientemente ancha para 8 niveles con spacing 1.29% y compact range 2.5%)
+- Validación UI real cuando exista un rango activo generado por la nueva geometría
