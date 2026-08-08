@@ -3,8 +3,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Shield, Activity, TrendingDown, Wallet, AlertTriangle, Power } from "lucide-react";
+import {
+  Shield, TrendingDown, Wallet, AlertTriangle, Power,
+  Zap, Clock, Database, CheckCircle2, XCircle, HelpCircle,
+} from "lucide-react";
 import { AmaTabs } from "@/components/ama/AmaTabs";
+import { AmaModeGuide } from "@/components/ama/AmaModeGuide";
+import { AmaReadinessPanel, type ReadinessItem } from "@/components/ama/AmaReadinessPanel";
+import { AmaDropIndicator } from "@/components/ama/AmaDropIndicator";
+import {
+  translateMode, translateCycleState, translateMacroZone, translateDataQuality,
+  MODE_LABELS,
+} from "@/components/ama/amaLabels";
 
 interface AmaStatus {
   mode: string;
@@ -60,21 +70,7 @@ const MODE_COLORS: Record<string, string> = {
   REAL_FULL: "bg-red-500/20 text-red-400 border-red-500/30",
 };
 
-const STATE_COLORS: Record<string, string> = {
-  OBSERVING: "bg-gray-500/20 text-gray-400",
-  CEILING_BOOTSTRAPPING: "bg-blue-500/20 text-blue-400",
-  CEILING_CANDIDATE: "bg-cyan-500/20 text-cyan-400",
-  CEILING_CONFIRMING: "bg-indigo-500/20 text-indigo-400",
-  VALUE_ZONE: "bg-green-500/20 text-green-400",
-  PLAN_ELIGIBLE: "bg-teal-500/20 text-teal-400",
-  ACCUMULATING: "bg-emerald-500/20 text-emerald-400",
-  POSITION_OPEN: "bg-purple-500/20 text-purple-400",
-  RECOVERY_MONITORING: "bg-amber-500/20 text-amber-400",
-  DISTRIBUTING: "bg-orange-500/20 text-orange-400",
-  CLOSING: "bg-pink-500/20 text-pink-400",
-  CLOSED: "bg-slate-500/20 text-slate-400",
-  ABANDONED_NO_INVENTORY: "bg-red-500/20 text-red-400",
-};
+const SELECTABLE_MODES = ["OFF", "LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"];
 
 export default function Ama() {
   const [status, setStatus] = useState<AmaStatus | null>(null);
@@ -94,8 +90,8 @@ export default function Ama() {
       setMarketView((await marketRes.json()).data);
       setPortfolio((await portfolioRes.json()).data);
       setError(null);
-    } catch (e: any) {
-      setError(e.message || "Failed to fetch AMA data");
+    } catch {
+      setError("No se pudieron cargar los datos de AMA. Compruebe la conexión o vuelva a intentarlo.");
     } finally {
       setLoading(false);
     }
@@ -117,8 +113,8 @@ export default function Ama() {
       const json = await res.json();
       if (json.success && json.data) setStatus(json.data);
       else if (json.error) setError(json.error);
-    } catch (e: any) {
-      setError(e.message);
+    } catch {
+      setError("No se pudo cambiar el modo. Compruebe la conexión.");
     }
   }
 
@@ -130,33 +126,115 @@ export default function Ama() {
     );
   }
 
+  const currentMode = status?.mode || "OFF";
+  const isOperational = currentMode !== "OFF";
+  const isShadow = currentMode === "SHADOW_SCENARIO" || currentMode === "SHADOW_LIVE";
+  const isReal = currentMode === "REAL_LIMITED" || currentMode === "REAL_FULL";
+
+  const readinessItems: ReadinessItem[] = [
+    { key: "schema", label: "Esquema de base de datos", ready: true },
+    { key: "market", label: "Datos de mercado", ready: !!marketView?.analysisPrice },
+    { key: "history", label: "Histórico suficiente", ready: false, blockerCode: "DATA_COVERAGE_BELOW_MINIMUM" },
+    { key: "hwm", label: "Máximo de referencia (HWM)", ready: !!marketView?.highWaterMark, blockerCode: marketView?.highWaterMark ? undefined : "NO_HIGH_WATER_MARK" },
+    { key: "mandate", label: "Mandato", ready: !!status?.mandateId, blockerCode: status?.mandateId ? undefined : "NO_MANDATE" },
+    { key: "policy", label: "Política", ready: !!status?.activePolicyId, blockerCode: status?.activePolicyId ? undefined : "NO_POLICY" },
+    { key: "portfolio", label: "Cartera", ready: !!portfolio && portfolio.budgetUsd > 0, blockerCode: portfolio?.budgetUsd ? undefined : "NO_BUDGET_ALLOCATED" },
+    { key: "reserve", label: "Reserva", ready: !!portfolio && portfolio.freeUsd > 0 },
+    { key: "reconciliation", label: "Reconciliación", ready: true },
+    { key: "gateway", label: "Gateway", ready: false, blockerCode: "GATEWAY_UNAVAILABLE" },
+    { key: "killswitch", label: "Kill switch", ready: !status?.killSwitchActive, blockerCode: status?.killSwitchActive ? "KILL_SWITCH_ACTIVE" : undefined },
+  ];
+
   return (
     <div className="container mx-auto p-4 space-y-6 max-w-7xl">
-      {/* Construction Phase Banners */}
-      <div className="flex flex-wrap gap-2">
-        <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs">
-          FASE DE CONSTRUCCIÓN
-        </Badge>
-        <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-xs">
-          DATOS PROVISIONALES
-        </Badge>
-        <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs">
-          REAL BLOQUEADO
-        </Badge>
-      </div>
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">AMA — Acumulación Macro Adaptativa</h1>
-          <p className="text-sm text-muted-foreground">
-            Estrategia profesional de acumulación BTC/USD · v{status?.strategyVersion || "1.0.0"}
-          </p>
-        </div>
-        <Badge variant="outline" className="text-xs">
-          {status?.pair || "BTC/USD"}
-        </Badge>
-      </div>
+      {/* ─── A. Hero/Status ─────────────────────────────────────────── */}
+      <Card className="border-border/50 bg-gradient-to-br from-card/80 to-muted/20">
+        <CardContent className="pt-6">
+          <div className="flex flex-col lg:flex-row gap-6">
+            <div className="flex-1 space-y-3">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">AMA</h1>
+                <p className="text-sm text-muted-foreground">Acumulación Macro Adaptativa</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Badge variant="outline" className="text-xs">{status?.pair || "BTC/USD"}</Badge>
+                <Badge className={`text-sm ${MODE_COLORS[currentMode]}`}>
+                  {translateMode(currentMode)}
+                </Badge>
+                <Badge variant="outline" className="text-xs">
+                  {translateCycleState(status?.state)}
+                </Badge>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {isOperational ? (
+                  <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
+                    <Zap className="h-3 w-3 mr-1" /> Operativo
+                  </Badge>
+                ) : (
+                  <Badge className="bg-gray-500/20 text-gray-400 border-gray-500/30 text-xs">
+                    <Power className="h-3 w-3 mr-1" /> Desactivado
+                  </Badge>
+                )}
+                {isShadow && (
+                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs">Simulación</Badge>
+                )}
+                {isReal && (
+                  <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30 text-xs">Real desactivado</Badge>
+                )}
+                {marketView?.analysisTimestamp && (
+                  <Badge variant="outline" className="text-xs text-muted-foreground">
+                    <Clock className="h-3 w-3 mr-1" />
+                    {new Date(marketView.analysisTimestamp).toLocaleTimeString("es-ES")}
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <div className="flex-shrink-0 space-y-2 lg:text-right">
+              <div>
+                <div className="text-[11px] text-muted-foreground">Precio BTC</div>
+                <div className="text-2xl font-bold font-mono">
+                  {marketView?.analysisPrice ? `$${marketView.analysisPrice.toLocaleString()}` : "—"}
+                </div>
+              </div>
+              {marketView?.currentDropPct != null && (
+                <div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {marketView.currentDropPct < 0 ? "Caída" : "Subida"} desde máximo
+                  </div>
+                  <div className={`text-lg font-semibold ${marketView.currentDropPct < 0 ? "text-red-400" : "text-green-400"}`}>
+                    {marketView.currentDropPct < 0 ? "↓" : "↑"} {Math.abs(marketView.currentDropPct).toFixed(1)}%
+                  </div>
+                </div>
+              )}
+              <div>
+                <div className="text-[11px] text-muted-foreground">Zona macro</div>
+                <div className="text-sm font-medium">{translateMacroZone(marketView?.macroZone)}</div>
+              </div>
+            </div>
+          </div>
+          <Separator className="my-4" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Wallet className="h-3 w-3" /> Capital asignado
+              </div>
+              <div className="font-mono text-sm">${portfolio?.budgetUsd?.toFixed(2) || "0.00"}</div>
+            </div>
+            <div>
+              <div className="text-[11px] text-muted-foreground">Disponible</div>
+              <div className="font-mono text-sm text-green-400">${portfolio?.freeUsd?.toFixed(2) || "0.00"}</div>
+            </div>
+            <div>
+              <div className="text-[11px] text-muted-foreground">Desplegado</div>
+              <div className="font-mono text-sm text-orange-400">${portfolio?.deployedUsd?.toFixed(2) || "0.00"}</div>
+            </div>
+            <div>
+              <div className="text-[11px] text-muted-foreground">Reservado</div>
+              <div className="font-mono text-sm text-amber-400">${portfolio?.reservedUsd?.toFixed(2) || "0.00"}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {error && (
         <Card className="border-red-500/30 bg-red-500/5">
@@ -169,83 +247,167 @@ export default function Ama() {
         </Card>
       )}
 
-      {/* Status & Mode */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Power className="h-4 w-4" /> Modo Operativo
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Badge className={`text-sm ${MODE_COLORS[status?.mode || "OFF"] || MODE_COLORS.OFF}`}>
-              {status?.mode || "OFF"}
-            </Badge>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {["OFF", "LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"].map((m) => (
-                <Button
-                  key={m}
-                  size="sm"
-                  variant={status?.mode === m ? "default" : "outline"}
-                  onClick={() => setMode(m)}
-                  className="text-xs h-7"
-                >
-                  {m}
-                </Button>
-              ))}
-              {["REAL_LIMITED", "REAL_FULL"].map((m) => (
-                <Button
-                  key={m}
-                  size="sm"
-                  variant="outline"
-                  disabled
-                  className="text-xs h-7 opacity-50"
-                  title="Requiere autorización explícita"
-                >
-                  {m}
-                </Button>
-              ))}
+      {/* ─── B. Mode Guide ──────────────────────────────────────────── */}
+      <AmaModeGuide />
+
+      {/* ─── C. Mode Selector ───────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Power className="h-4 w-4" /> Selector de modo
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            {SELECTABLE_MODES.map((m) => (
+              <Button
+                key={m}
+                size="sm"
+                variant={currentMode === m ? "default" : "outline"}
+                onClick={() => setMode(m)}
+                className="text-xs h-8"
+              >
+                {MODE_LABELS[m]}
+              </Button>
+            ))}
+            <Button size="sm" variant="outline" disabled className="text-xs h-8 opacity-50" title="Requiere autorización explícita">
+              {MODE_LABELS.REAL_LIMITED}
+            </Button>
+            <Button size="sm" variant="outline" disabled className="text-xs h-8 opacity-50" title="Bloqueado — reservado para el futuro">
+              {MODE_LABELS.REAL_FULL}
+            </Button>
+          </div>
+          {currentMode === "REAL_LIMITED" && (
+            <div className="mt-3 text-xs text-orange-400/80 flex items-start gap-2">
+              <HelpCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+              <span>Activar Real limitado no ejecutará ninguna compra inmediatamente. AMA quedará armado y esperará una señal válida.</span>
             </div>
-          </CardContent>
-        </Card>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Activity className="h-4 w-4" /> Estado del Ciclo
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Badge className={`text-sm ${STATE_COLORS[status?.state || "OBSERVING"] || STATE_COLORS.OBSERVING}`}>
-              {status?.state || "OBSERVING"}
-            </Badge>
-            {status?.protectionState && (
-              <div className="mt-2 text-xs text-amber-400">
-                ⚠ {status.protectionState}
-              </div>
-            )}
-            {status?.cycleId && (
-              <div className="mt-2 text-xs text-muted-foreground">
-                Ciclo: {status.cycleId.slice(0, 12)}...
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {/* ─── D. Readiness Panel ─────────────────────────────────────── */}
+      <AmaReadinessPanel items={readinessItems} />
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Shield className="h-4 w-4" /> Kill Switch
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+      {/* ─── E. Drop Indicator ──────────────────────────────────────── */}
+      <AmaDropIndicator
+        currentDropPct={marketView?.currentDropPct ?? null}
+        hwm={marketView?.highWaterMark ?? null}
+        currentPrice={marketView?.analysisPrice ?? null}
+        cycleLow={marketView?.cycleLow ?? null}
+      />
+
+      {/* ─── F. Market View ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2">
+            <TrendingDown className="h-4 w-4" /> Vista de mercado
+            <span title="Datos de precio en tiempo real desde Kraken y Revolut X"><HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" /></span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <div className="text-muted-foreground text-xs">Precio de análisis (Kraken)</div>
+              <div className="font-mono">{marketView?.analysisPrice ? `$${marketView.analysisPrice.toLocaleString()}` : "—"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Bid ejecución (Revolut X)</div>
+              <div className="font-mono">{marketView?.executionBid ? `$${marketView.executionBid.toLocaleString()}` : "—"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Ask ejecución (Revolut X)</div>
+              <div className="font-mono">{marketView?.executionAsk ? `$${marketView.executionAsk.toLocaleString()}` : "—"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Spread</div>
+              <div className="font-mono">{marketView?.spreadPct != null ? `${marketView.spreadPct.toFixed(3)}%` : "—"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs flex items-center gap-1">
+                Máximo de referencia
+                <span title="Máximo de referencia desde el que AMA mide cuánto ha caído BTC"><HelpCircle className="h-3 w-3 cursor-help" /></span>
+              </div>
+              <div className="font-mono">{marketView?.highWaterMark ? `$${marketView.highWaterMark.toLocaleString()}` : "—"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Mínimo del ciclo</div>
+              <div className="font-mono">{marketView?.cycleLow ? `$${marketView.cycleLow.toLocaleString()}` : "—"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Caída actual</div>
+              <div className="font-mono">{marketView?.currentDropPct != null ? `${marketView.currentDropPct.toFixed(2)}%` : "—"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Zona macro</div>
+              <div className="font-mono">{translateMacroZone(marketView?.macroZone)}</div>
+            </div>
+          </div>
+          <Separator className="my-4" />
+          <div className="text-xs text-muted-foreground flex items-center gap-2">
+            <Database className="h-3 w-3" />
+            Calidad de datos:
+            <Badge variant="outline" className="text-xs">{translateDataQuality(marketView?.dataQuality)}</Badge>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ─── G. Portfolio ───────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Wallet className="h-4 w-4" /> Cartera AMA
+            <a href="/wallet" className="ml-auto text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+              Ver en Cartera Global →
+            </a>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+            <div>
+              <div className="text-muted-foreground text-xs">Presupuesto</div>
+              <div className="font-mono">${portfolio?.budgetUsd?.toFixed(2) || "0.00"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Desplegado</div>
+              <div className="font-mono">${portfolio?.deployedUsd?.toFixed(2) || "0.00"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Reservado</div>
+              <div className="font-mono">${portfolio?.reservedUsd?.toFixed(2) || "0.00"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">Libre</div>
+              <div className="font-mono">${portfolio?.freeUsd?.toFixed(2) || "0.00"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">BTC acumulado</div>
+              <div className="font-mono">{portfolio?.accumulatedQuantity?.toFixed(8) || "0"}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ─── H. Kill Switch ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Shield className="h-4 w-4" /> Parada de emergencia
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
             <Badge className={status?.killSwitchActive ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400"}>
-              {status?.killSwitchActive ? "ACTIVO" : "INACTIVO"}
+              {status?.killSwitchActive ? (
+                <><XCircle className="h-3 w-3 mr-1" /> Activa</>
+              ) : (
+                <><CheckCircle2 className="h-3 w-3 mr-1" /> Inactiva</>
+              )}
             </Badge>
             <Button
               size="sm"
               variant={status?.killSwitchActive ? "default" : "outline"}
-              className="mt-3 text-xs h-7"
+              className="text-xs h-7"
               onClick={async () => {
                 try {
                   const res = await fetch("/api/ama/kill-switch", {
@@ -257,100 +419,18 @@ export default function Ama() {
                   if (json.success) {
                     setStatus((prev) => prev ? { ...prev, killSwitchActive: json.data.killSwitchActive } : prev);
                   }
-                } catch (e: any) {
-                  setError(e.message);
+                } catch {
+                  setError("No se pudo cambiar el kill switch.");
                 }
               }}
             >
               {status?.killSwitchActive ? "Desactivar" : "Activar"}
             </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Market View */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <TrendingDown className="h-4 w-4" /> Vista de Mercado
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <div className="text-muted-foreground text-xs">Precio Análisis (Kraken)</div>
-              <div className="font-mono">{marketView?.analysisPrice ? `$${marketView.analysisPrice.toLocaleString()}` : "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Bid Ejecución (RevolutX)</div>
-              <div className="font-mono">{marketView?.executionBid ? `$${marketView.executionBid.toLocaleString()}` : "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Ask Ejecución (RevolutX)</div>
-              <div className="font-mono">{marketView?.executionAsk ? `$${marketView.executionAsk.toLocaleString()}` : "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Spread %</div>
-              <div className="font-mono">{marketView?.spreadPct != null ? `${marketView.spreadPct.toFixed(3)}%` : "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">High Water Mark</div>
-              <div className="font-mono">{marketView?.highWaterMark ? `$${marketView.highWaterMark.toLocaleString()}` : "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Cycle Low</div>
-              <div className="font-mono">{marketView?.cycleLow ? `$${marketView.cycleLow.toLocaleString()}` : "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Caída Actual %</div>
-              <div className="font-mono">{marketView?.currentDropPct != null ? `${marketView.currentDropPct.toFixed(2)}%` : "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Zona Macro</div>
-              <div className="font-mono">{marketView?.macroZone || "—"}</div>
-            </div>
-          </div>
-          <Separator className="my-4" />
-          <div className="text-xs text-muted-foreground">
-            Calidad de datos: <Badge variant="outline" className="text-xs">{marketView?.dataQuality || "UNAVAILABLE"}</Badge>
           </div>
         </CardContent>
       </Card>
 
-      {/* Portfolio */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Wallet className="h-4 w-4" /> Cartera AMA
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-            <div>
-              <div className="text-muted-foreground text-xs">Presupuesto</div>
-              <div className="font-mono">${portfolio?.budgetUsd.toFixed(2) || "0.00"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Desplegado</div>
-              <div className="font-mono">${portfolio?.deployedUsd.toFixed(2) || "0.00"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Reservado</div>
-              <div className="font-mono">${portfolio?.reservedUsd.toFixed(2) || "0.00"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Libre</div>
-              <div className="font-mono">${portfolio?.freeUsd.toFixed(2) || "0.00"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">BTC Acumulado</div>
-              <div className="font-mono">{portfolio?.accumulatedQuantity.toFixed(8) || "0"}</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Sub-tabs */}
+      {/* ─── I. Functional Tabs ─────────────────────────────────────── */}
       <AmaTabs />
     </div>
   );

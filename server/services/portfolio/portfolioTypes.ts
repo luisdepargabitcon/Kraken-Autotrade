@@ -1,14 +1,16 @@
 /**
- * Portfolio Global — Fase 3
+ * Portfolio Global — R2 Architectural Overhaul
  *
  * Types for global portfolio management across all strategies.
- * Independent from AMA, IDCA, Grid, FISCO — but tracks all of them.
+ * PostgreSQL is the single source of truth. No in-memory state.
  *
  * Safety: Snapshots are read-only. Budgets are per-mode. No cross-mode capital sharing.
+ * FISCO is reporting-only: no budget reservation, deployment, or capital management.
  */
 
 // ─── Mode Identifiers ────────────────────────────────────────────────
 
+/** All strategy modes including FISCO (for display/reporting only). */
 export type StrategyMode =
   | "AMA"
   | "IDCA"
@@ -25,6 +27,26 @@ export const ALL_STRATEGY_MODES: StrategyMode[] = [
   "SPOT_NORMAL",
   "MANUAL",
 ];
+
+/** Modes that can reserve and deploy capital. FISCO is excluded. */
+export type OperationalMode =
+  | "AMA"
+  | "IDCA"
+  | "GRID"
+  | "SPOT_NORMAL"
+  | "MANUAL";
+
+export const OPERATIONAL_MODES: OperationalMode[] = [
+  "AMA",
+  "IDCA",
+  "GRID",
+  "SPOT_NORMAL",
+  "MANUAL",
+];
+
+export function isOperationalMode(mode: StrategyMode): mode is OperationalMode {
+  return mode !== "FISCO";
+}
 
 // ─── Budget Status ───────────────────────────────────────────────────
 
@@ -48,7 +70,7 @@ export interface AssetHolding {
 // ─── Mode Budget ─────────────────────────────────────────────────────
 
 export interface ModeBudget {
-  mode: StrategyMode;
+  mode: OperationalMode;
   exchange: string;
   asset: string;
   budgetedUsd: number;
@@ -57,6 +79,9 @@ export interface ModeBudget {
   freeUsd: number;
   allocationType: AllocationType;
   status: BudgetStatus;
+  updatedBy?: string | null;
+  version?: number;
+  lastReconciledAt?: string | null;
 }
 
 // ─── Portfolio Snapshot ──────────────────────────────────────────────
@@ -95,6 +120,8 @@ export type LedgerEntryType =
   | "RESERVATION"
   | "RELEASE";
 
+export type LedgerEnvironment = "LIVE" | "SHADOW" | "LAB" | "REPLAY";
+
 export interface LedgerEntry {
   eventId: string;
   idempotencyKey: string;
@@ -102,11 +129,19 @@ export interface LedgerEntry {
   exchange: string;
   asset: string;
   quantity: number;
+  amountUsd: number;
+  priceUsd: number | null;
+  feeUsd: number;
   fromBucket: string | null;
   toBucket: string | null;
-  mode: StrategyMode | null;
+  mode: OperationalMode | null;
   cycleId: string | null;
   trancheId: string | null;
+  reservationId: string | null;
+  orderId: string | null;
+  realizedPnlUsd: number | null;
+  environment: LedgerEnvironment;
+  simulationSource: string | null;
   source: string;
   metadataHash: string | null;
   createdAt: string;
@@ -181,6 +216,125 @@ export function computeTotalValue(snapshot: PortfolioSnapshot): number {
     return sum + (h.currentValueUsd ?? 0);
   }, 0);
   return holdingsValue + snapshot.cashUsd;
+}
+
+// ─── Inventory Attribution ───────────────────────────────────────────
+
+export type AttributionSourceType =
+  | "GRID_FILL"
+  | "IDCA_LOT"
+  | "AMA_TRANCHE"
+  | "TRADING_POSITION"
+  | "MANUAL"
+  | "BOOTSTRAP";
+
+export type AttributionStatus = "ACTIVE" | "REDUCED" | "CLOSED" | "TRANSFERRED";
+
+export interface InventoryAttribution {
+  attributionId: string;
+  exchange: string;
+  asset: string;
+  mode: OperationalMode;
+  quantity: number;
+  costBasisUsd: number;
+  sourceType: AttributionSourceType;
+  sourceId: string | null;
+  cycleId: string | null;
+  trancheId: string | null;
+  lotId: string | null;
+  status: AttributionStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── Reservation ─────────────────────────────────────────────────────
+
+export type ReservationStatus =
+  | "PENDING"
+  | "CONFIRMED"
+  | "CONVERTED"
+  | "RELEASED"
+  | "EXPIRED";
+
+export interface Reservation {
+  reservationId: string;
+  idempotencyKey: string;
+  mode: OperationalMode;
+  exchange: string;
+  asset: string;
+  amountUsd: number;
+  status: ReservationStatus;
+  logicalIntentId: string | null;
+  orderId: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  confirmedAt: string | null;
+  releasedAt: string | null;
+  releaseReason: string | null;
+}
+
+// ─── Order Lock ──────────────────────────────────────────────────────
+
+export type LockStatus = "ACQUIRED" | "RELEASED" | "EXPIRED";
+
+export interface OrderLock {
+  lockId: string;
+  lockKey: string;
+  mode: OperationalMode;
+  exchange: string;
+  asset: string;
+  logicalIntentId: string | null;
+  status: LockStatus;
+  ownerInstance: string | null;
+  acquiredAt: string;
+  expiresAt: string | null;
+  releasedAt: string | null;
+}
+
+// ─── Reconciliation Run ──────────────────────────────────────────────
+
+export interface ReconciliationRun {
+  reconciliationId: string;
+  status: ReconciliationStatus;
+  exchange: string;
+  asset: string;
+  physicalBalance: number;
+  attributedBalance: number;
+  budgetedUsd: number;
+  deployedUsd: number;
+  reservedUsd: number;
+  discrepancyQty: number;
+  discrepancyUsd: number;
+  discrepancyPct: number;
+  detailsJson: Record<string, unknown>;
+  blockersJson: unknown[];
+  startedAt: string;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+// ─── Portfolio Summary ───────────────────────────────────────────────
+
+export interface PortfolioSummary {
+  totalValueUsd: number;
+  physicalCashUsd: number;
+  allocatedUsd: number;
+  unallocatedUsd: number;
+  deployedUsd: number;
+  reservedUsd: number;
+  freeAssignedUsd: number;
+  inventoryValueUsd: number;
+  totalDeployedUsd: number;
+  totalReservedUsd: number;
+  totalFreeUsd: number;
+  totalUnrealizedPnlUsd: number | null;
+  totalRealizedPnlUsd: number | null;
+  modeCount: number;
+  activeBudgets: number;
+  attributionCount: number;
+  pendingReservations: number;
+  lastReconciliationStatus: ReconciliationStatus | null;
+  lastSnapshotAt: string | null;
 }
 
 export function detectDoubleCounting(

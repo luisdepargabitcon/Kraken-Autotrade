@@ -4,11 +4,12 @@ import { Ticker } from "@/components/dashboard/Ticker";
 import generatedImage from '../assets/dark_digital_hex_grid_background.png';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Wallet as WalletIcon, TrendingUp, TrendingDown, PieChart, RefreshCw, Server, Zap, AlertCircle } from "lucide-react";
+import { Wallet as WalletIcon, TrendingUp, TrendingDown, PieChart, RefreshCw, Server, Zap, AlertCircle, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useState } from "react";
+import { WalletGlobalTabs } from "@/components/portfolio/WalletGlobalTabs";
 
 interface MultiExchangeBalances {
   kraken: { connected: boolean; balances: Record<string, number>; error?: string };
@@ -206,7 +207,7 @@ export default function Wallet() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-4">
+            <TabsList className="grid w-full grid-cols-4 mb-4">
               <TabsTrigger value="all" className="flex items-center gap-2" data-testid="tab-all">
                 <WalletIcon className="h-4 w-4" />
                 Todas
@@ -229,6 +230,10 @@ export default function Wallet() {
                   <Badge variant="outline" className="ml-1 text-xs">${revolutxTotal.toFixed(0)}</Badge>
                 )}
                 {tradingExchange === 'revolutx' && <Badge className="ml-1 bg-green-600 text-xs">Trading</Badge>}
+              </TabsTrigger>
+              <TabsTrigger value="global" className="flex items-center gap-2" data-testid="tab-global">
+                <Layers className="h-4 w-4 text-cyan-400" />
+                Cartera Global
               </TabsTrigger>
             </TabsList>
 
@@ -387,9 +392,17 @@ export default function Wallet() {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            {/* ─── Cartera Global Tab ─────────────────────────────────── */}
+            <TabsContent value="global" className="space-y-4">
+              <WalletGlobalTabs />
+            </TabsContent>
           </Tabs>
         </main>
       </div>
     </div>
   );
 }
+
+// ─── Wallet Global Tab ───────────────────────────────────────────────
+// Replaced by WalletGlobalTabs component (8 subtabs)

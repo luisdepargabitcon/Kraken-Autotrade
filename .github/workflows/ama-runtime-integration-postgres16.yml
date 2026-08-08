@@ -55,7 +55,7 @@ jobs:
           set -o pipefail
           mkdir -p artifacts
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/080_ama_initial.sql 2>&1 | tee artifacts/migration-080.log
-          for f in db/migrations/081_*.sql db/migrations/082_*.sql db/migrations/083_*.sql; do
+          for f in db/migrations/081_*.sql db/migrations/082_*.sql db/migrations/083_*.sql db/migrations/084_*.sql db/migrations/085_*.sql; do
             if [ -f "$f" ]; then
               echo "Applying $f..."
               psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f" 2>&1 | tee -a artifacts/migration-runtime.log
@@ -67,6 +67,12 @@ jobs:
         run: |
           psql "$DATABASE_URL" -c "SELECT version();" | tee artifacts/postgres-version.log
           psql "$DATABASE_URL" -c "SELECT current_database();" | tee -a artifacts/postgres-version.log
+
+      - name: Run concurrency integration tests (R2.37-R2.40)
+        run: |
+          npx vitest run server/services/portfolio/__tests__/portfolioConcurrency.integration.test.ts --reporter=json --outputFile=artifacts/concurrency-results.json
+        env:
+          DATABASE_URL: postgres://amaci:amaci_pass@localhost:5432/ama_runtime_ci
 
       - name: Run AMA Runtime PostgreSQL Validation
         run: |
