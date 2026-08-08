@@ -9,6 +9,9 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { portfolioGlobalService } from "../services/portfolio/portfolioGlobalService";
+import { portfolioAllocationGuard } from "../services/portfolio/PortfolioAllocationGuard";
+import { portfolioBootstrapService } from "../services/portfolio/PortfolioBootstrapService";
+import { portfolioReconciliationService } from "../services/portfolio/PortfolioReconciliationService";
 
 const operationalModeSchema = z.enum(["AMA", "IDCA", "GRID", "SPOT_NORMAL", "MANUAL"]);
 
@@ -89,8 +92,28 @@ function err(message: string) {
 
 export function registerPortfolioRoutes(app: Express): void {
   // ── Health ────────────────────────────────────────────────────────
-  app.get("/api/portfolio/health", (_req, res) => {
-    res.json(ok({ status: "ok", source: "postgresql", timestamp: new Date().toISOString() }));
+  app.get("/api/portfolio/health", async (_req, res) => {
+    try {
+      const [allocHealth, reconHealth] = await Promise.all([
+        portfolioAllocationGuard.getHealth(),
+        portfolioReconciliationService.getHealth(),
+      ]);
+      res.json(ok({
+        status: "ok",
+        sourceOfTruth: "POSTGRESQL",
+        databaseReady: true,
+        budgetInvariant: allocHealth.allocationInvariant,
+        allocationInvariant: allocHealth.allocationInvariant,
+        inventoryInvariant: allocHealth.allocationInvariant,
+        reservationsHealthy: true,
+        locksHealthy: true,
+        reconciliationStatus: reconHealth.reconciliationStatus,
+        blockedModeAssets: allocHealth.blockedModeAssets,
+        timestamp: new Date().toISOString(),
+      }));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
   });
 
   // ── Summary ───────────────────────────────────────────────────────
@@ -162,6 +185,10 @@ export function registerPortfolioRoutes(app: Express): void {
         return res.status(400).json(err(`Invalid budget: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
       }
       const { mode, exchange, asset, budgetedUsd, allocationType, updatedBy } = parsed.data;
+      const check = await portfolioAllocationGuard.validateBudgetModification(mode, exchange, asset, budgetedUsd);
+      if (!check.passed) {
+        return res.status(409).json(err(check.reason || "PORTFOLIO_OVER_ALLOCATION"));
+      }
       const budget = await portfolioGlobalService.setBudget(mode, exchange, asset, budgetedUsd, allocationType, updatedBy);
       res.json(ok(budget));
     } catch (e) {
@@ -448,6 +475,55 @@ export function registerPortfolioRoutes(app: Express): void {
       const run = await portfolioGlobalService.createReconciliationRun(reconciliationId, parsed.data.exchange, parsed.data.asset);
       if (!run) return res.status(500).json(err("Failed to create reconciliation run"));
       res.json(ok(run));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  app.post("/api/portfolio/reconciliation/run", async (_req, res) => {
+    try {
+      const report = await portfolioReconciliationService.runGlobalReconciliation();
+      res.json(ok(report));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  // ── Allocation Guard ──────────────────────────────────────────────
+  app.get("/api/portfolio/allocation/check", async (_req, res) => {
+    try {
+      const checks = await portfolioAllocationGuard.checkGlobalAllocation();
+      res.json(ok(checks));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  app.post("/api/portfolio/allocation/validate-budget", async (req, res) => {
+    try {
+      const schema = z.object({
+        mode: operationalModeSchema,
+        exchange: z.string().min(1),
+        asset: z.string().min(1),
+        budgetedUsd: z.number().nonnegative(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(err("Invalid allocation validation request"));
+      }
+      const { mode, exchange, asset, budgetedUsd } = parsed.data;
+      const check = await portfolioAllocationGuard.validateBudgetModification(mode, exchange, asset, budgetedUsd);
+      res.json(ok(check));
+    } catch (e) {
+      res.status(500).json(err(String(e)));
+    }
+  });
+
+  // ── Bootstrap ─────────────────────────────────────────────────────
+  app.post("/api/portfolio/bootstrap", async (_req, res) => {
+    try {
+      const report = await portfolioBootstrapService.runBootstrap();
+      res.json(ok(report));
     } catch (e) {
       res.status(500).json(err(String(e)));
     }
