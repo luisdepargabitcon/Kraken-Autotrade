@@ -110,6 +110,13 @@ const mockLedgerEntry: LedgerEntry = {
 
 const mockSummary: PortfolioSummary = {
   totalValueUsd: 50000,
+  physicalCashUsd: 35000,
+  allocatedUsd: 15000,
+  unallocatedUsd: 35000,
+  deployedUsd: 5000,
+  reservedUsd: 2000,
+  freeAssignedUsd: 8000,
+  inventoryValueUsd: 30000,
   totalDeployedUsd: 5000,
   totalReservedUsd: 2000,
   totalFreeUsd: 3000,

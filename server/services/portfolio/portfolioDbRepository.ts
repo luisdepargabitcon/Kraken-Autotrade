@@ -533,12 +533,14 @@ export async function dbGetReconciliationRuns(limit?: number): Promise<Reconcili
 // ─── Portfolio Summary ───────────────────────────────────────────────
 
 export async function dbGetPortfolioSummary(): Promise<PortfolioSummary> {
-  const [budgetsRes, holdingsRes, attrRes, resvRes, snapRes] = await Promise.all([
+  const [budgetsRes, holdingsRes, attrRes, resvRes, snapRes, allocatedRes] = await Promise.all([
     pool.query(`SELECT COUNT(*) as count, COALESCE(SUM(deployed_usd),0) as deployed,
                        COALESCE(SUM(reserved_usd),0) as reserved,
                        COALESCE(SUM(free_usd),0) as free,
+                       COALESCE(SUM(budgeted_usd),0) as budgeted,
                        COUNT(*) FILTER (WHERE status = 'ACTIVE') as active
-                FROM portfolio_mode_budgets`),
+                FROM portfolio_mode_budgets
+                WHERE mode != 'MANUAL'`),
     pool.query(`SELECT COALESCE(SUM(current_value_usd),0) as holdings_value,
                        COALESCE(SUM(unrealized_pnl_usd),0) as unrealized
                 FROM portfolio_holdings`),
@@ -548,6 +550,9 @@ export async function dbGetPortfolioSummary(): Promise<PortfolioSummary> {
                 FROM portfolio_reservations`),
     pool.query(`SELECT timestamp, reconciliation_status FROM portfolio_snapshots
                 ORDER BY timestamp DESC LIMIT 1`),
+    pool.query(`SELECT COALESCE(SUM(budgeted_usd),0) as allocated
+                FROM portfolio_mode_budgets
+                WHERE mode != 'MANUAL' AND status = 'ACTIVE'`),
   ]);
 
   const b = budgetsRes.rows[0];
@@ -555,14 +560,27 @@ export async function dbGetPortfolioSummary(): Promise<PortfolioSummary> {
   const a = attrRes.rows[0];
   const r = resvRes.rows[0];
   const s = snapRes.rows[0];
+  const al = allocatedRes.rows[0];
 
   const totalFree = parseFloat(b.free);
   const holdingsValue = parseFloat(h.holdings_value);
+  const allocatedUsd = parseFloat(al.allocated);
+  const deployedUsd = parseFloat(b.deployed);
+  const reservedUsd = parseFloat(b.reserved);
+  const totalValue = holdingsValue + totalFree;
+  const physicalCashUsd = totalValue - allocatedUsd;
 
   return {
-    totalValueUsd: holdingsValue + totalFree,
-    totalDeployedUsd: parseFloat(b.deployed),
-    totalReservedUsd: parseFloat(b.reserved),
+    totalValueUsd: totalValue,
+    physicalCashUsd: Math.max(0, physicalCashUsd),
+    allocatedUsd,
+    unallocatedUsd: Math.max(0, physicalCashUsd),
+    deployedUsd,
+    reservedUsd,
+    freeAssignedUsd: Math.max(0, allocatedUsd - deployedUsd - reservedUsd),
+    inventoryValueUsd: holdingsValue,
+    totalDeployedUsd: deployedUsd,
+    totalReservedUsd: reservedUsd,
     totalFreeUsd: totalFree,
     totalUnrealizedPnlUsd: parseFloat(h.unrealized) || null,
     totalRealizedPnlUsd: null,

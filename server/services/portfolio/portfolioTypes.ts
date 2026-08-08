@@ -317,6 +317,13 @@ export interface ReconciliationRun {
 
 export interface PortfolioSummary {
   totalValueUsd: number;
+  physicalCashUsd: number;
+  allocatedUsd: number;
+  unallocatedUsd: number;
+  deployedUsd: number;
+  reservedUsd: number;
+  freeAssignedUsd: number;
+  inventoryValueUsd: number;
   totalDeployedUsd: number;
   totalReservedUsd: number;
   totalFreeUsd: number;
