@@ -1,7 +1,7 @@
 ﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-08-07
+> Última actualización: 2026-08-08
 
 ---
 
@@ -7501,6 +7501,92 @@ Refactor a malla geométrica uniforme canónica:
 - App-only con `--no-deps`, DB intacta
 - DB_ID_BEFORE = DB_ID_AFTER, DB_RESTARTED = FALSE
 - MODE=SHADOW, realOpenOrdersCount=0, isActive=true, isRunning=true
+
+### Estado
+
+- Implementado, validado, commiteado, subido, desplegado y operacional.
+- Pendientes: ninguno.
+
+---
+
+## 2026-08-08 — PR #4 Merge + Staging Deploy: AMA Portfolio Integration R2.1-R2.89
+
+### Módulo
+
+AMA Portfolio Integration — True Final Completion (R2.1 a R2.89)
+
+### Problema
+
+Migration audit test false positive en `081_ama_runtime_integration.sql` (ADD COLUMN dentro de DO $$ block flaggeado como unsafe). Test obsoleto `portfolioGlobal.test.ts` (Fase 3) usando API sync in-memory (`reset()`, `setBudget()` sync) que ya no existe tras refactor PostgreSQL-only.
+
+### Solución
+
+1. **Migration audit test fix**: Ajustado regex y lógica en `migrationAudit.test.ts` para trackear estado de DO $$ block por línea y solo flaggear ALTER TABLE ADD COLUMN fuera de bloques DO $$.
+2. **Old service tests removal**: Eliminados 16 tests obsoletos del `server/services/portfolio/__tests__/portfolioGlobal.test.ts` (sección Service). Tests de pure functions (11) retenidos. Service tests cubiertos por nuevo `server/services/__tests__/portfolioGlobal.test.ts` (31 tests, async API con mocked dbRepository).
+
+### Archivos afectados
+
+- `server/services/portfolio/__tests__/migrationAudit.test.ts` — fix DO $$ block detection
+- `server/services/portfolio/__tests__/portfolioGlobal.test.ts` — removed obsolete sync service tests
+- `server/services/__tests__/portfolioGlobal.test.ts` — new async service tests (pre-existing in PR)
+- `db/migrations/084_ama_functional_closure.sql` — new migration
+- `db/migrations/085_portfolio_global_runtime.sql` — new migration
+- `server/services/portfolio/portfolioDbRepository.ts` — new atomic DB operations
+- `server/services/portfolio/portfolioGlobalService.ts` — PostgreSQL-only refactor
+- `server/services/portfolio/PortfolioAllocationGuard.ts` — new
+- `server/services/portfolio/PortfolioBootstrapService.ts` — new
+- `server/services/portfolio/PortfolioReconciliationService.ts` — new
+- `server/services/portfolio/PortfolioIntegrationAdapter.ts` — new
+- `server/services/ama/amaFunctionalClosure.ts` — new
+- `server/services/ama/amaRealExecutionGateway.ts` — new (disabled by default)
+- `server/services/ama/amaLabReplayRunner.ts` — new
+- `client/src/components/portfolio/WalletGlobalTabs.tsx` — new (8 subtabs)
+- `client/src/pages/Wallet.tsx` — updated to use WalletGlobalTabs
+- `server/routes/portfolio.routes.ts` — expanded with full CRUD endpoints
+- `.github/workflows/ama-runtime-integration-postgres16.yml` — added migrations 084-085 + concurrency tests
+
+### Commits
+
+- `9a81575` — PR #4 branch HEAD (11 commits, 39 files, +10124/-560)
+- `64e7f38` — fix(test): remove obsolete sync service tests
+- `eff2a52` — Merge PR #4 to main (merge commit, --no-ff)
+
+### Validaciones
+
+- **CI GitHub Actions**: Run #31256530301 (9a81575) → success. Run #31257005253 (64e7f38) → success.
+- **TypeScript**: 0 errors
+- **Build**: OK (dist/index.cjs 4.3mb)
+- **Full test suite**: 4682 passed, 16 pre-existing failures (telegram/grid/IDCA — no relation), 35 skipped
+- **NEW_FAILURES**: 0
+- **Safety gate**: `AMA_REAL_EXECUTION_ENABLED` defaults to `false` (only `"true"` enables). `isRealExecutionEnabled()` confirmed.
+- **Migration pass 1**: 6/6 APPLIED, 34/34 tables, Overall=PASS
+- **Migration pass 2 (idempotency)**: 6/6 APPLIED, 34/34 tables, Overall=PASS — no duplicates, no constraint failures
+- **Schema verification**: All 34 expected tables present with correct columns (verified via information_schema.columns)
+- **Portfolio health**: sourceOfTruth=POSTGRESQL, databaseReady=true, all invariants=true
+- **Portfolio bootstrap**: 2 exchanges, 24 assets, invariantsPassed=true
+- **Portfolio reconciliation**: RECONCILED for dust, DISCREPANCY_DETECTED for unattributed balances (expected), blockedModeAssets=[]
+- **AMA schema-status**: schemaAvailable=true, SCHEMA_AVAILABLE
+- **AMA status**: mode=LAB, state=OBSERVING, killSwitchActive=false
+- **AMA mandate**: Created mandate-1786192366501 (BTC, PRUDENTE, 5000 USD)
+- **Lab sessions**: 3 sessions from previous staging tests (bull, lateral, drawdown)
+- **Replay runs**: 4 runs from previous staging tests (all QUEUED)
+- **Shadow scenarios**: empty (no scenarios created)
+- **Real authorization**: authorizedMode=NONE, isActive=false, maxCapitalUsd=0
+- **Real state**: operational_state=NOT_READY, kill_switch_active=false
+- **Real orders in DB**: 0
+- **UI routes**: / → 200, /wallet → 200, /ama → 200
+- **Portfolio API endpoints**: /health → 200, /summary → 200, /budgets → 200, /holdings → 200, /ledger → 200, /inventory → 200, /reservations → 200, /reconciliation → 200
+- **AMA API endpoints**: /status → 200, /market-view → 200, /schema-status → 200, /mandate → 200, /policy/active → 200, /lab/sessions → 200, /replay/runs → 200, /shadow/scenarios → 200, /real/authorization → 200
+- **Container logs**: Clean, normal scan cycles, no errors, AMA routes responding 200
+
+### Deploy staging
+
+- **Pre-deploy SHA**: c6dbd201d94c03becc06299e07dd208783e4b60f
+- **Post-deploy SHA**: eff2a52fb47fd98a3a1f431f6cc389c223dbb82d (= origin/main)
+- **Backup**: backups/pre_deploy_20260808_122404/staging_db.dump (468MB, 1242 TOC entries, gzip)
+- **DB container**: krakenbot-staging-db (postgres:16-alpine, healthy, not restarted)
+- **App container**: krakenbot-staging-app (rebuilt, started, port 3020)
+- **PostgreSQL version**: 16.11 on x86_64-pc-linux-musl
 
 ### Estado
 
