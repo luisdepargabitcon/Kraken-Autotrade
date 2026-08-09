@@ -18,6 +18,7 @@ import {
   getRealAuthorization,
   grantRealLimitedAuthorization,
   revokeRealAuthorization,
+  restoreRealAuthorizationSnapshot,
   insertPreTradeGate,
   getPreTradeGatesByCycle,
   insertReconciliation,
@@ -26,9 +27,11 @@ import {
   type RealAuthorizationRow,
   type PreTradeGateRow,
 } from "./amaRealAuthorizationRepository";
-import { amaRealStateService } from "./amaFunctionalClosure";
+import { amaRealStateService, amaHwmBootstrapService, amaSchedulerStateService } from "./amaFunctionalClosure";
 import * as runtime from "./amaRuntimeService";
-import { insertAuditEvent } from "./amaRepository";
+import { insertAuditEvent, checkAmaSchemaAvailable, getActivePolicy } from "./amaRepository";
+import { AMA_PAIR } from "./amaTypes";
+import { BTC_ASSET_PROFILE } from "./amaSeedTypes";
 import { createHash } from "crypto";
 
 // ─── Authorization Management ────────────────────────────────────────
@@ -104,12 +107,12 @@ export async function evaluateRealActivationReadiness(): Promise<RealActivationR
   const checks: Record<string, ReadinessCheck> = {};
   const blockers: string[] = [];
 
-  // Check 1: Feature flag
+  // ── 1. Feature flag ───────────────────────────────────────────────
   const featureEnabled = process.env.AMA_REAL_EXECUTION_ENABLED === "true";
   checks.featureFlag = { ok: featureEnabled, detail: featureEnabled ? "enabled" : "disabled in this environment" };
   if (!featureEnabled) blockers.push("FEATURE_FLAG_DISABLED");
 
-  // Check 2: Kill switch
+  // ── 2. Kill switch ────────────────────────────────────────────────
   try {
     const ks = runtime.isKillSwitchActive();
     checks.killSwitch = { ok: !ks, detail: ks ? "kill switch is active" : "not active" };
@@ -119,35 +122,135 @@ export async function evaluateRealActivationReadiness(): Promise<RealActivationR
     blockers.push("KILL_SWITCH_UNREADABLE");
   }
 
-  // Check 3: Runtime state compatibility
+  // ── 3. Schema / database ──────────────────────────────────────────
   try {
-    const realState = await amaRealStateService.getState();
-    const incompatibleStates = ["KILL_SWITCHED", "AUTO_BLOCKED", "ACTIVE", "ARMED"];
-    const compatible = !incompatibleStates.includes(realState.operationalState);
-    checks.realStateCompatible = {
-      ok: compatible,
-      detail: compatible
-        ? `state=${realState.operationalState}`
-        : `incompatible state: ${realState.operationalState}`,
+    const schemaOk = await checkAmaSchemaAvailable();
+    checks.schema = { ok: schemaOk, detail: schemaOk ? "available" : "AMA schema tables not found" };
+    if (!schemaOk) blockers.push("SCHEMA_NOT_AVAILABLE");
+  } catch {
+    checks.schema = { ok: false, detail: "could not query schema availability" };
+    blockers.push("SCHEMA_UNAVAILABLE");
+  }
+
+  // ── 4 & 5. Market freshness + valid price (single fetch, shared) ──
+  try {
+    const { getRealMarketView } = await import("./amaMarketRuntimeService");
+    const mv = await getRealMarketView();
+    const marketOk = mv.dataQuality !== "UNAVAILABLE";
+    const STALE_MS = 5 * 60 * 1000;
+    const fresh = mv.analysisTimestamp !== null
+      ? Date.now() - new Date(mv.analysisTimestamp).getTime() < STALE_MS
+      : false;
+    checks.marketFresh = {
+      ok: marketOk && fresh,
+      detail: !marketOk
+        ? "market data unavailable from gateway"
+        : !fresh
+          ? `stale: last=${mv.analysisTimestamp}`
+          : `quality=${mv.dataQuality}, ts=${mv.analysisTimestamp}`,
     };
-    if (!compatible) blockers.push("REAL_STATE_INCOMPATIBLE");
+    if (!marketOk || !fresh) blockers.push("MARKET_STALE");
+
+    const priceOk = mv.analysisPrice !== null && mv.analysisPrice > 0;
+    checks.validPrice = {
+      ok: priceOk,
+      detail: priceOk ? `price=${mv.analysisPrice}` : "no valid analysis price",
+    };
+    if (!priceOk) blockers.push("NO_VALID_PRICE");
   } catch {
-    checks.realStateCompatible = { ok: false, detail: "could not read real state" };
-    blockers.push("REAL_STATE_UNREADABLE");
+    checks.marketFresh = { ok: false, detail: "market data fetch failed" };
+    checks.validPrice = { ok: false, detail: "market data fetch failed" };
+    blockers.push("MARKET_STALE");
+    blockers.push("NO_VALID_PRICE");
   }
 
-  // Check 4: Current mode must not be REAL_FULL
+  // ── 6. HWM bootstrap completed ───────────────────────────────────
   try {
-    const mode = runtime.getMode();
-    const modeOk = mode !== "REAL_FULL";
-    checks.currentMode = { ok: modeOk, detail: `mode=${mode}` };
-    if (!modeOk) blockers.push("REAL_FULL_BLOCKED");
+    const hwm = await amaHwmBootstrapService.getState();
+    const hwmOk = hwm.bootstrapStatus === "COMPLETED" && hwm.hwm !== null;
+    checks.hwm = {
+      ok: hwmOk,
+      detail: hwmOk
+        ? `hwm=${hwm.hwm}, coverage=${hwm.dataCoveragePct}%`
+        : `bootstrapStatus=${hwm.bootstrapStatus}, hwm=${hwm.hwm}`,
+    };
+    if (!hwmOk) blockers.push("NO_HIGH_WATER_MARK");
   } catch {
-    checks.currentMode = { ok: false, detail: "could not read current mode" };
-    blockers.push("MODE_UNREADABLE");
+    checks.hwm = { ok: false, detail: "could not read HWM state" };
+    blockers.push("HWM_UNAVAILABLE");
   }
 
-  // Check 5: Unresolved reconciliations
+  // ── 7. Mandate active ─────────────────────────────────────────────
+  try {
+    const mandate = await runtime.getMandate();
+    const mandateOk = mandate !== null && mandate.status === "ACTIVE";
+    checks.mandateActive = {
+      ok: mandateOk,
+      detail: mandate === null
+        ? "no mandate found"
+        : `status=${mandate.status}, id=${mandate.mandateId}`,
+    };
+    if (!mandateOk) blockers.push("NO_ACTIVE_MANDATE");
+  } catch {
+    checks.mandateActive = { ok: false, detail: "could not read mandate" };
+    blockers.push("MANDATE_UNAVAILABLE");
+  }
+
+  // ── 8. Policy active ──────────────────────────────────────────────
+  try {
+    const policy = await getActivePolicy();
+    const policyOk = policy !== null;
+    checks.policyActive = {
+      ok: policyOk,
+      detail: policyOk ? `policyId=${policy!.policyId}` : "no active policy",
+    };
+    if (!policyOk) blockers.push("NO_ACTIVE_POLICY");
+  } catch {
+    checks.policyActive = { ok: false, detail: "could not read active policy" };
+    blockers.push("POLICY_UNAVAILABLE");
+  }
+
+  // ── 9 & 10. Portfolio budget + free capital ───────────────────────
+  try {
+    const { pool } = await import("../../db");
+    const budgetRes = await pool.query(
+      `SELECT budgeted_usd, deployed_usd, reserved_usd
+       FROM portfolio_mode_budgets
+       WHERE mode = 'AMA' AND asset = 'BTC' AND status = 'ACTIVE'
+       LIMIT 1`,
+    );
+    if (budgetRes.rows.length === 0) {
+      checks.portfolioBudget = { ok: false, detail: "no AMA/BTC budget row found" };
+      checks.freeCapital = { ok: false, detail: "no AMA/BTC budget row found" };
+      blockers.push("NO_BUDGET_ALLOCATED");
+      blockers.push("NO_FREE_CAPITAL");
+    } else {
+      const r = budgetRes.rows[0];
+      const budgeted = Number(r.budgeted_usd);
+      const deployed = Number(r.deployed_usd);
+      const reserved = Number(r.reserved_usd);
+      const free = budgeted - deployed - reserved;
+      const budgetOk = budgeted > 0;
+      const freeOk = free > 0;
+      checks.portfolioBudget = {
+        ok: budgetOk,
+        detail: `budgeted=${budgeted}`,
+      };
+      checks.freeCapital = {
+        ok: freeOk,
+        detail: `free=${free} (budgeted=${budgeted}, deployed=${deployed}, reserved=${reserved})`,
+      };
+      if (!budgetOk) blockers.push("NO_BUDGET_ALLOCATED");
+      if (!freeOk) blockers.push("NO_FREE_CAPITAL");
+    }
+  } catch {
+    checks.portfolioBudget = { ok: false, detail: "could not query portfolio budget" };
+    checks.freeCapital = { ok: false, detail: "could not query portfolio budget" };
+    blockers.push("BUDGET_UNAVAILABLE");
+    blockers.push("FREE_CAPITAL_UNAVAILABLE");
+  }
+
+  // ── 11. Reconciliation — FAIL-CLOSED ────────────────────────────
   try {
     const unresolved = await getUnresolvedReconciliations();
     const reconcOk = unresolved.length === 0;
@@ -157,7 +260,93 @@ export async function evaluateRealActivationReadiness(): Promise<RealActivationR
     };
     if (!reconcOk) blockers.push("UNRESOLVED_RECONCILIATION");
   } catch {
-    checks.reconciliation = { ok: true, detail: "reconciliation check skipped (table may not exist)" };
+    // FAIL-CLOSED: never authorize REAL if reconciliation cannot be verified
+    checks.reconciliation = { ok: false, detail: "reconciliation query failed — cannot verify" };
+    blockers.push("RECONCILIATION_UNAVAILABLE");
+  }
+
+  // ── 12. Gateway available ─────────────────────────────────────────
+  try {
+    const { MarketDataService } = await import("../MarketDataService");
+    const ticker = await MarketDataService.getTicker(AMA_PAIR);
+    const gwOk = ticker !== null && Number.isFinite(ticker.bid) && Number.isFinite(ticker.ask)
+      && ticker.bid! > 0 && ticker.ask! > 0;
+    checks.gatewayAvailable = {
+      ok: gwOk,
+      detail: gwOk
+        ? `bid=${ticker.bid}, ask=${ticker.ask}`
+        : "gateway returned invalid or missing bid/ask",
+    };
+    if (!gwOk) blockers.push("GATEWAY_UNAVAILABLE");
+  } catch {
+    checks.gatewayAvailable = { ok: false, detail: "gateway unreachable" };
+    blockers.push("GATEWAY_UNAVAILABLE");
+  }
+
+  // ── 13. Maker-only enforcement (asset profile invariant) ──────────
+  const makerOnlyOk = BTC_ASSET_PROFILE.makerOnly;
+  checks.makerOnly = {
+    ok: makerOnlyOk,
+    detail: makerOnlyOk
+      ? "enforced via pre-trade gate (Gate 8)"
+      : "asset profile does not enforce maker-only",
+  };
+  if (!makerOnlyOk) blockers.push("MAKER_ONLY_NOT_ENFORCED");
+
+  // ── 14. Post-only enforcement (asset profile invariant) ───────────
+  const postOnlyOk = BTC_ASSET_PROFILE.postOnly;
+  checks.postOnly = {
+    ok: postOnlyOk,
+    detail: postOnlyOk
+      ? "enforced via pre-trade gate (Gate 9)"
+      : "asset profile does not enforce post-only",
+  };
+  if (!postOnlyOk) blockers.push("POST_ONLY_NOT_ENFORCED");
+
+  // ── 15. Scheduler operational ─────────────────────────────────────
+  try {
+    const sched = await amaSchedulerStateService.getState();
+    const SCHED_STALE_MS = 10 * 60 * 1000;
+    const schedFresh = sched.lastTickAt !== null
+      ? Date.now() - new Date(sched.lastTickAt).getTime() < SCHED_STALE_MS
+      : true; // never ticked yet — acceptable pre-launch
+    const schedOk = schedFresh && sched.currentMode !== "KILL_SWITCHED";
+    checks.schedulerOperational = {
+      ok: schedOk,
+      detail: `mode=${sched.currentMode}, lastTickAt=${sched.lastTickAt}, errorCount=${sched.errorCount}`,
+    };
+    if (!schedOk) blockers.push("SCHEDULER_STALE");
+  } catch {
+    checks.schedulerOperational = { ok: false, detail: "could not read scheduler state" };
+    blockers.push("SCHEDULER_UNAVAILABLE");
+  }
+
+  // ── 16. Real state compatibility ──────────────────────────────────
+  try {
+    const realState = await amaRealStateService.getState();
+    const incompatible = ["KILL_SWITCHED", "AUTO_BLOCKED", "ACTIVE", "ARMED"];
+    const compatible = !incompatible.includes(realState.operationalState);
+    checks.realStateCompatible = {
+      ok: compatible,
+      detail: compatible
+        ? `state=${realState.operationalState}`
+        : `incompatible state: ${realState.operationalState}`,
+    };
+    if (!compatible) blockers.push("REAL_STATE_INCOMPATIBLE");
+  } catch {
+    checks.realStateCompatible = { ok: false, detail: "could not read real operational state" };
+    blockers.push("REAL_STATE_UNREADABLE");
+  }
+
+  // ── 17. REAL_FULL permanently locked ─────────────────────────────
+  try {
+    const mode = runtime.getMode();
+    const modeOk = mode !== "REAL_FULL";
+    checks.realFullLocked = { ok: modeOk, detail: `currentMode=${mode}` };
+    if (!modeOk) blockers.push("REAL_FULL_BLOCKED");
+  } catch {
+    checks.realFullLocked = { ok: false, detail: "could not read current mode" };
+    blockers.push("MODE_UNREADABLE");
   }
 
   return {
@@ -180,16 +369,17 @@ export interface ActivateRealInput {
 }
 
 export async function activateReal(input: ActivateRealInput): Promise<{ activated: boolean; mode: string; operationalState: string }> {
+  // Gate A: Explicit confirmation — no mutations without it
   if (!input.confirm) {
     throw new Error("[AMA] Activation requires explicit user confirmation");
   }
 
-  // Gate 1: Staging block — no mutations if flag is off
+  // Gate B: Staging / environment block — no mutations if flag is off
   if (process.env.AMA_REAL_EXECUTION_ENABLED !== "true") {
     throw new Error("[AMA] Operación real deshabilitada en este entorno.");
   }
 
-  // Gate 2: Readiness evaluation — no mutations if not ready
+  // Gate C: Full readiness evaluation — no mutations if any check fails
   const readiness = await evaluateRealActivationReadiness();
   if (!readiness.ready) {
     await insertAuditEvent("REAL_ACTIVATION_BLOCKED", "WARN", {
@@ -200,8 +390,8 @@ export async function activateReal(input: ActivateRealInput): Promise<{ activate
     throw new Error(`[AMA] Activation blocked: ${readiness.blockers.join(", ")}`);
   }
 
-  // Snapshot previous state for rollback
-  let previousAuthActive = false;
+  // Gate D: Full state snapshot for exact rollback
+  let authSnapshot: RealAuthorizationRow | null = null;
   let previousMode: string = "OFF";
   let previousRealState: string = "NOT_READY";
 
@@ -210,19 +400,19 @@ export async function activateReal(input: ActivateRealInput): Promise<{ activate
       getRealAuthorization().catch(() => null),
       amaRealStateService.getState().catch(() => null),
     ]);
-    previousAuthActive = auth?.isActive ?? false;
+    authSnapshot = auth;
     previousMode = runtime.getMode();
     previousRealState = realState?.operationalState ?? "NOT_READY";
   } catch {
-    // Non-fatal: rollback state may be incomplete
+    // Snapshot read failed — proceed but rollback will be best-effort
   }
 
   let authGranted = false;
-  let stateTransitioned = false;
   let modeChanged = false;
+  let stateTransitioned = false;
 
   try {
-    // Step A: Grant authorization
+    // Step E: Grant authorization (first mutation — all others depend on this)
     await grantRealLimitedAuthorization(
       input.authorizedBy,
       input.maxCapitalUsd,
@@ -233,17 +423,17 @@ export async function activateReal(input: ActivateRealInput): Promise<{ activate
     );
     authGranted = true;
 
-    // Step B: Transition real state to ARMED
-    await amaRealStateService.transition("ARMED", input.reason || "Manual activation", input.authorizedBy);
-    stateTransitioned = true;
-
-    // Step C: Set mode to REAL_LIMITED (setMode checks authorization internally)
+    // Step F: Set mode to REAL_LIMITED (setMode validates auth internally)
     if (previousMode !== "REAL_LIMITED") {
       await runtime.setMode("REAL_LIMITED", input.authorizedBy, input.reason || "Manual activation");
       modeChanged = true;
     }
 
-    // Step D: Audit event
+    // Step G: Transition real operational state to ARMED
+    await amaRealStateService.transition("ARMED", input.reason || "Manual activation", input.authorizedBy);
+    stateTransitioned = true;
+
+    // Step H: Audit success — non-fatal if this fails (everything else succeeded)
     await insertAuditEvent(
       "REAL_LIMITED_ACTIVATED",
       "WARN",
@@ -254,35 +444,45 @@ export async function activateReal(input: ActivateRealInput): Promise<{ activate
         maxTranchesPerCycle: input.maxTranchesPerCycle,
         reason: input.reason,
       },
-    );
+    ).catch(() => undefined);
 
     const state = await amaRealStateService.getState();
     return { activated: true, mode: "REAL_LIMITED", operationalState: state.operationalState };
   } catch (err) {
-    // Rollback: compensating actions in reverse order
+    // Rollback: compensating actions in strict reverse order (G → F → E)
     const rollbackErrors: string[] = [];
-
-    if (modeChanged) {
-      try {
-        await runtime.setMode(previousMode as any, "SYSTEM", "REAL_ACTIVATION_FAILED rollback");
-      } catch (re) {
-        rollbackErrors.push(`mode rollback: ${(re as Error).message}`);
-      }
-    }
 
     if (stateTransitioned) {
       try {
-        await amaRealStateService.transition(previousRealState as any, "REAL_ACTIVATION_FAILED rollback", "SYSTEM");
+        await amaRealStateService.transition(
+          previousRealState as Parameters<typeof amaRealStateService.transition>[0],
+          "REAL_ACTIVATION_FAILED rollback",
+          "SYSTEM",
+        );
       } catch (re) {
         rollbackErrors.push(`state rollback: ${(re as Error).message}`);
       }
     }
 
-    if (authGranted && !previousAuthActive) {
+    if (modeChanged) {
       try {
-        await revokeRealAuthorization("SYSTEM", "REAL_ACTIVATION_FAILED rollback");
+        await runtime.setMode(previousMode as Parameters<typeof runtime.setMode>[0], "SYSTEM", "REAL_ACTIVATION_FAILED rollback");
       } catch (re) {
-        rollbackErrors.push(`auth revoke: ${(re as Error).message}`);
+        rollbackErrors.push(`mode rollback: ${(re as Error).message}`);
+      }
+    }
+
+    if (authGranted) {
+      try {
+        if (authSnapshot !== null && authSnapshot.isActive) {
+          // Restore exact previous authorization
+          await restoreRealAuthorizationSnapshot(authSnapshot);
+        } else {
+          // No previous active auth — revoke the newly granted one
+          await revokeRealAuthorization("SYSTEM", "REAL_ACTIVATION_FAILED rollback");
+        }
+      } catch (re) {
+        rollbackErrors.push(`auth rollback: ${(re as Error).message}`);
       }
     }
 
@@ -291,8 +491,9 @@ export async function activateReal(input: ActivateRealInput): Promise<{ activate
       error: (err as Error).message,
       rollbackErrors,
       authGranted,
-      stateTransitioned,
       modeChanged,
+      stateTransitioned,
+      hadPreviousAuth: authSnapshot?.isActive ?? false,
     }).catch(() => undefined);
 
     throw err;

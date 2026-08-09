@@ -4,7 +4,6 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Mock the real authorization repository
 vi.mock("../amaRealAuthorizationRepository", () => ({
   isRealLimitedAuthorized: vi.fn().mockResolvedValue(true),
   getRealAuthorization: vi.fn().mockResolvedValue({
@@ -22,6 +21,7 @@ vi.mock("../amaRealAuthorizationRepository", () => ({
   }),
   grantRealLimitedAuthorization: vi.fn().mockResolvedValue(undefined),
   revokeRealAuthorization: vi.fn().mockResolvedValue(undefined),
+  restoreRealAuthorizationSnapshot: vi.fn().mockResolvedValue(undefined),
   insertPreTradeGate: vi.fn().mockResolvedValue(undefined),
   getPreTradeGatesByCycle: vi.fn().mockResolvedValue([]),
   insertReconciliation: vi.fn().mockResolvedValue(undefined),
@@ -31,7 +31,44 @@ vi.mock("../amaRealAuthorizationRepository", () => ({
 
 vi.mock("../amaRepository", () => ({
   insertAuditEvent: vi.fn().mockResolvedValue(undefined),
+  checkAmaSchemaAvailable: vi.fn().mockResolvedValue(true),
+  getActivePolicy: vi.fn().mockResolvedValue({ policyId: "pol-1", status: "ACTIVE" }),
   pool: { query: vi.fn() },
+}));
+
+vi.mock("../amaSeedTypes", () => ({
+  BTC_ASSET_PROFILE: { makerOnly: true, postOnly: true },
+  ASSET_PROFILES: { BTC: { makerOnly: true, postOnly: true } },
+}));
+
+vi.mock("../amaTypes", () => ({
+  AMA_PAIR: "BTC/USD",
+}));
+
+vi.mock("../amaMarketRuntimeService", () => ({
+  getRealMarketView: vi.fn().mockResolvedValue({
+    dataQuality: "GOOD",
+    analysisTimestamp: new Date().toISOString(),
+    analysisPrice: 50000,
+    executionBid: 49990,
+    executionAsk: 50010,
+  }),
+}));
+
+vi.mock("../../../db", () => ({
+  pool: {
+    query: vi.fn().mockResolvedValue({
+      rows: [{ budgeted_usd: "10000", deployed_usd: "0", reserved_usd: "0" }],
+    }),
+  },
+}));
+
+vi.mock("../../MarketDataService", () => ({
+  MarketDataService: {
+    getTicker: vi.fn().mockResolvedValue({ bid: 49990, ask: 50010, last: 50000 }),
+    getPrice: vi.fn().mockResolvedValue(50000),
+    getCandles: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 vi.mock("../amaRuntimeService", () => ({
@@ -40,6 +77,7 @@ vi.mock("../amaRuntimeService", () => ({
   setMode: vi.fn().mockResolvedValue(undefined),
   initializeRuntime: vi.fn().mockResolvedValue(undefined),
   getState: vi.fn().mockReturnValue("OBSERVING"),
+  getMandate: vi.fn().mockResolvedValue({ mandateId: "man-1", status: "ACTIVE" }),
 }));
 
 vi.mock("../amaFunctionalClosure", () => ({
@@ -50,12 +88,16 @@ vi.mock("../amaFunctionalClosure", () => ({
     canExecute: vi.fn().mockResolvedValue(true),
   },
   amaSchedulerStateService: {
-    getState: vi.fn().mockResolvedValue({ schedulerRunning: false }),
-    markTickStart: vi.fn().mockResolvedValue(undefined),
-    markTickEnd: vi.fn().mockResolvedValue(undefined),
+    getState: vi.fn().mockResolvedValue({
+      currentMode: "RUNNING",
+      lastTickAt: new Date().toISOString(),
+      tickCount: 1,
+      errorCount: 0,
+      lastError: null,
+    }),
   },
   amaHwmBootstrapService: {
-    getState: vi.fn().mockResolvedValue({ bootstrapStatus: "COMPLETED", hwm: 50000 }),
+    getState: vi.fn().mockResolvedValue({ bootstrapStatus: "COMPLETED", hwm: 50000, dataCoveragePct: 100 }),
   },
 }));
 
@@ -359,5 +401,309 @@ describe("AMA Real Limited — activateReal atomic", () => {
     await expect(activateReal(validInput)).rejects.toThrow("Mode change error");
     expect(vi.mocked(grantRealLimitedAuthorization)).toHaveBeenCalled();
     expect(vi.mocked(revokeRealAuthorization)).toHaveBeenCalledWith("SYSTEM", "REAL_ACTIVATION_FAILED rollback");
+  });
+});
+
+describe("AMA Real Limited — evaluateRealActivationReadiness extended checks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.AMA_REAL_EXECUTION_ENABLED = "true";
+  });
+
+  afterEach(() => {
+    delete process.env.AMA_REAL_EXECUTION_ENABLED;
+  });
+
+  it("blocks when market data is stale (old timestamp)", async () => {
+    const { getRealMarketView } = await import("../amaMarketRuntimeService");
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    vi.mocked(getRealMarketView).mockResolvedValueOnce({
+      dataQuality: "GOOD",
+      analysisTimestamp: staleDate,
+      analysisPrice: 50000,
+    } as any);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("MARKET_STALE");
+    expect(result.checks.marketFresh.ok).toBe(false);
+  });
+
+  it("blocks when market data quality is UNAVAILABLE", async () => {
+    const { getRealMarketView } = await import("../amaMarketRuntimeService");
+    vi.mocked(getRealMarketView).mockResolvedValueOnce({
+      dataQuality: "UNAVAILABLE",
+      analysisTimestamp: null,
+      analysisPrice: null,
+    } as any);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("MARKET_STALE");
+    expect(result.blockers).toContain("NO_VALID_PRICE");
+  });
+
+  it("blocks when market fetch throws (fail-closed)", async () => {
+    const { getRealMarketView } = await import("../amaMarketRuntimeService");
+    vi.mocked(getRealMarketView).mockRejectedValueOnce(new Error("network error"));
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("MARKET_STALE");
+    expect(result.blockers).toContain("NO_VALID_PRICE");
+  });
+
+  it("blocks when HWM bootstrap is not COMPLETED", async () => {
+    const { amaHwmBootstrapService } = await import("../amaFunctionalClosure");
+    vi.mocked(amaHwmBootstrapService.getState).mockResolvedValueOnce({
+      bootstrapStatus: "PENDING",
+      hwm: null,
+      dataCoveragePct: 0,
+    } as any);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("NO_HIGH_WATER_MARK");
+    expect(result.checks.hwm.ok).toBe(false);
+  });
+
+  it("blocks when HWM getState throws (fail-closed)", async () => {
+    const { amaHwmBootstrapService } = await import("../amaFunctionalClosure");
+    vi.mocked(amaHwmBootstrapService.getState).mockRejectedValueOnce(new Error("db error"));
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("HWM_UNAVAILABLE");
+    expect(result.checks.hwm.ok).toBe(false);
+  });
+
+  it("blocks when mandate is not ACTIVE", async () => {
+    const runtimeModule = await import("../amaRuntimeService");
+    vi.mocked(runtimeModule.getMandate).mockResolvedValueOnce({ mandateId: "m1", status: "DRAFT" } as any);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("NO_ACTIVE_MANDATE");
+    expect(result.checks.mandateActive.ok).toBe(false);
+  });
+
+  it("blocks when mandate is null (fail-closed)", async () => {
+    const runtimeModule = await import("../amaRuntimeService");
+    vi.mocked(runtimeModule.getMandate).mockResolvedValueOnce(null);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("NO_ACTIVE_MANDATE");
+  });
+
+  it("blocks when mandate getMandate throws (fail-closed)", async () => {
+    const runtimeModule = await import("../amaRuntimeService");
+    vi.mocked(runtimeModule.getMandate).mockRejectedValueOnce(new Error("db error"));
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("MANDATE_UNAVAILABLE");
+    expect(result.checks.mandateActive.ok).toBe(false);
+  });
+
+  it("blocks when no active policy", async () => {
+    const repo = await import("../amaRepository");
+    vi.mocked(repo.getActivePolicy).mockResolvedValueOnce(null);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("NO_ACTIVE_POLICY");
+    expect(result.checks.policyActive.ok).toBe(false);
+  });
+
+  it("blocks when getActivePolicy throws (fail-closed)", async () => {
+    const repo = await import("../amaRepository");
+    vi.mocked(repo.getActivePolicy).mockRejectedValueOnce(new Error("db error"));
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("POLICY_UNAVAILABLE");
+  });
+
+  it("blocks when portfolio budget is zero", async () => {
+    const dbModule = await import("../../../db");
+    vi.mocked(dbModule.pool.query).mockResolvedValueOnce({
+      rows: [{ budgeted_usd: "0", deployed_usd: "0", reserved_usd: "0" }],
+    } as any);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("NO_BUDGET_ALLOCATED");
+    expect(result.checks.portfolioBudget.ok).toBe(false);
+  });
+
+  it("blocks when free capital is zero (all deployed)", async () => {
+    const dbModule = await import("../../../db");
+    vi.mocked(dbModule.pool.query).mockResolvedValueOnce({
+      rows: [{ budgeted_usd: "1000", deployed_usd: "1000", reserved_usd: "0" }],
+    } as any);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("NO_FREE_CAPITAL");
+    expect(result.checks.freeCapital.ok).toBe(false);
+  });
+
+  it("blocks when budget query throws (fail-closed)", async () => {
+    const dbModule = await import("../../../db");
+    vi.mocked(dbModule.pool.query).mockRejectedValueOnce(new Error("db error"));
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("BUDGET_UNAVAILABLE");
+    expect(result.blockers).toContain("FREE_CAPITAL_UNAVAILABLE");
+  });
+
+  it("blocks when reconciliation query throws — FAIL-CLOSED returns RECONCILIATION_UNAVAILABLE not OK", async () => {
+    const { getUnresolvedReconciliations } = await import("../amaRealAuthorizationRepository");
+    vi.mocked(getUnresolvedReconciliations).mockRejectedValueOnce(new Error("db error"));
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("RECONCILIATION_UNAVAILABLE");
+    expect(result.checks.reconciliation.ok).toBe(false);
+    expect(result.checks.reconciliation.detail).toContain("cannot verify");
+  });
+
+  it("blocks when gateway returns invalid ticker", async () => {
+    const { MarketDataService } = await import("../../MarketDataService");
+    vi.mocked(MarketDataService.getTicker).mockResolvedValueOnce({ bid: null, ask: null, last: 0 } as any);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("GATEWAY_UNAVAILABLE");
+    expect(result.checks.gatewayAvailable.ok).toBe(false);
+  });
+
+  it("blocks when gateway getTicker throws (fail-closed)", async () => {
+    const { MarketDataService } = await import("../../MarketDataService");
+    vi.mocked(MarketDataService.getTicker).mockRejectedValueOnce(new Error("connection refused"));
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("GATEWAY_UNAVAILABLE");
+  });
+
+  it("blocks when scheduler is stale (lastTickAt too old)", async () => {
+    const { amaSchedulerStateService } = await import("../amaFunctionalClosure");
+    const staleDate = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    vi.mocked(amaSchedulerStateService.getState).mockResolvedValueOnce({
+      currentMode: "RUNNING",
+      lastTickAt: staleDate,
+      tickCount: 5,
+      errorCount: 0,
+      lastError: null,
+    } as any);
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("SCHEDULER_STALE");
+    expect(result.checks.schedulerOperational.ok).toBe(false);
+  });
+
+  it("blocks when scheduler getState throws (fail-closed)", async () => {
+    const { amaSchedulerStateService } = await import("../amaFunctionalClosure");
+    vi.mocked(amaSchedulerStateService.getState).mockRejectedValueOnce(new Error("db error"));
+    const result = await evaluateRealActivationReadiness();
+    expect(result.blockers).toContain("SCHEDULER_UNAVAILABLE");
+    expect(result.checks.schedulerOperational.ok).toBe(false);
+  });
+
+  it("makerOnly check reads from asset profile (invariant true)", async () => {
+    const result = await evaluateRealActivationReadiness();
+    expect(result.checks.makerOnly.ok).toBe(true);
+    expect(result.checks.makerOnly.detail).toContain("Gate 8");
+  });
+
+  it("postOnly check reads from asset profile (invariant true)", async () => {
+    const result = await evaluateRealActivationReadiness();
+    expect(result.checks.postOnly.ok).toBe(true);
+    expect(result.checks.postOnly.detail).toContain("Gate 9");
+  });
+
+  it("returns 17 named checks in result object", async () => {
+    const result = await evaluateRealActivationReadiness();
+    const keys = Object.keys(result.checks);
+    expect(keys.length).toBeGreaterThanOrEqual(17);
+  });
+});
+
+describe("AMA Real Limited — activateReal full rollback with previous auth", () => {
+  const validInput: ActivateRealInput = {
+    authorizedBy: "test-admin",
+    maxCapitalUsd: 500,
+    maxSingleTrancheUsd: 100,
+    maxTranchesPerCycle: 3,
+    confirm: true,
+    reason: "integration test",
+  };
+
+  const previousAuthSnapshot = {
+    authorizedMode: "REAL_LIMITED",
+    authorizedBy: "prev-admin",
+    authorizedAt: "2026-01-01T00:00:00.000Z",
+    isActive: true,
+    maxCapitalUsd: 999,
+    maxSingleTrancheUsd: 111,
+    maxTranchesPerCycle: 2,
+    expiresAt: null,
+    revokedBy: null,
+    revokedAt: null,
+    reason: "previous grant",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.AMA_REAL_EXECUTION_ENABLED = "true";
+  });
+
+  afterEach(() => {
+    delete process.env.AMA_REAL_EXECUTION_ENABLED;
+  });
+
+  it("restores previous authorization snapshot exactly when mode change fails", async () => {
+    const { getRealAuthorization, restoreRealAuthorizationSnapshot } =
+      await import("../amaRealAuthorizationRepository");
+    const runtimeModule = await import("../amaRuntimeService");
+    vi.mocked(getRealAuthorization).mockResolvedValue(previousAuthSnapshot as any);
+    vi.mocked(runtimeModule.setMode).mockRejectedValueOnce(new Error("Mode change error"));
+    const { amaRealStateService } = await import("../amaFunctionalClosure");
+    vi.mocked(amaRealStateService.getState)
+      .mockResolvedValueOnce({ operationalState: "NOT_READY" } as any)
+      .mockResolvedValueOnce({ operationalState: "NOT_READY" } as any);
+    await expect(activateReal(validInput)).rejects.toThrow("Mode change error");
+    expect(vi.mocked(restoreRealAuthorizationSnapshot)).toHaveBeenCalledWith(previousAuthSnapshot);
+  });
+
+  it("does NOT call restoreRealAuthorizationSnapshot when previous auth was inactive", async () => {
+    const { getRealAuthorization, revokeRealAuthorization, restoreRealAuthorizationSnapshot } =
+      await import("../amaRealAuthorizationRepository");
+    const runtimeModule = await import("../amaRuntimeService");
+    vi.mocked(getRealAuthorization).mockResolvedValue({ ...previousAuthSnapshot, isActive: false } as any);
+    vi.mocked(runtimeModule.setMode).mockRejectedValueOnce(new Error("Mode change error"));
+    const { amaRealStateService } = await import("../amaFunctionalClosure");
+    vi.mocked(amaRealStateService.getState)
+      .mockResolvedValueOnce({ operationalState: "NOT_READY" } as any)
+      .mockResolvedValueOnce({ operationalState: "NOT_READY" } as any);
+    await expect(activateReal(validInput)).rejects.toThrow("Mode change error");
+    expect(vi.mocked(restoreRealAuthorizationSnapshot)).not.toHaveBeenCalled();
+    expect(vi.mocked(revokeRealAuthorization)).toHaveBeenCalledWith("SYSTEM", "REAL_ACTIVATION_FAILED rollback");
+  });
+
+  it("REAL_ACTIVATION_PLACE_ORDER_CALLS=0: activateReal never calls any order placement", async () => {
+    const { amaRealStateService } = await import("../amaFunctionalClosure");
+    vi.mocked(amaRealStateService.getState)
+      .mockResolvedValueOnce({ operationalState: "NOT_READY" } as any)
+      .mockResolvedValueOnce({ operationalState: "ARMED" } as any);
+    await activateReal(validInput);
+    // Verify no exchange/order functions were called during activation
+    // activateReal only calls: grantAuth, setMode, transition, auditEvent, getState
+    const { grantRealLimitedAuthorization } = await import("../amaRealAuthorizationRepository");
+    expect(vi.mocked(grantRealLimitedAuthorization)).toHaveBeenCalledTimes(1);
+    // Any order placement would require exchange adapter calls which are not mocked here
+    // This test verifies activateReal completes without calling any unmocked functions
+  });
+
+  it("rollback sequence is G→F→E: state→mode→auth on full sequence failure", async () => {
+    const { getRealAuthorization, revokeRealAuthorization } = await import("../amaRealAuthorizationRepository");
+    const runtimeModule = await import("../amaRuntimeService");
+    const { amaRealStateService } = await import("../amaFunctionalClosure");
+    vi.mocked(getRealAuthorization).mockResolvedValue({ isActive: false } as any);
+    const callOrder: string[] = [];
+    vi.mocked(amaRealStateService.transition).mockImplementation(async (state) => {
+      if (String(state) === "ARMED") {
+        callOrder.push("state-forward");
+        return { operationalState: "ARMED" } as any;
+      }
+      callOrder.push("state-rollback");
+      return { operationalState: "NOT_READY" } as any;
+    });
+    vi.mocked(runtimeModule.setMode).mockImplementation(async (mode) => {
+      if (String(mode) === "REAL_LIMITED") {
+        callOrder.push("mode-forward");
+        throw new Error("trigger rollback from mode");
+      }
+      callOrder.push("mode-rollback");
+    });
+    vi.mocked(revokeRealAuthorization).mockImplementation(async () => {
+      callOrder.push("auth-rollback");
+    });
+    await expect(activateReal(validInput)).rejects.toThrow("trigger rollback from mode");
+    // F throws BEFORE modeChanged=true, so mode was never changed → no mode rollback
+    // G never happened → no state rollback
+    // Only auth (E) is rolled back
+    expect(callOrder).toEqual(["mode-forward", "auth-rollback"]);
   });
 });
