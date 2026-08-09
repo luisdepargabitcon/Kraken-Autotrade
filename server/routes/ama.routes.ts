@@ -23,7 +23,7 @@ import { runLabSession, runReplaySession } from "../services/ama/amaLabReplayRun
 import * as shadowExecutor from "../services/ama/amaShadowExecutor";
 import * as realLimited from "../services/ama/amaRealLimitedService";
 import * as portfolioLedger from "../services/ama/amaPortfolioLedger";
-import { getAuditEvents } from "../services/ama/amaRepository";
+import { getAuditEvents, type AuditEventFilters } from "../services/ama/amaRepository";
 import { executeHwmBootstrap } from "../services/ama/amaMarketRuntimeService";
 import { runShadowScenario } from "../services/ama/amaShadowScenarioRunner";
 import { amaHwmBootstrapService, amaSchedulerStateService } from "../services/ama/amaFunctionalClosure";
@@ -599,6 +599,16 @@ export function registerAmaRoutes(app: Express): void {
     }
   });
 
+  // ── REAL_LIMITED readiness check ───────────────────────────────────
+  app.get("/api/ama/real/readiness", async (_req, res) => {
+    try {
+      const readiness = await realLimited.evaluateRealActivationReadiness();
+      res.json(ok(readiness));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
   // ── REAL_LIMITED explicit activation ───────────────────────────────
   const activateRealSchema = z.object({
     authorizedBy: z.string().min(1),
@@ -626,19 +636,31 @@ export function registerAmaRoutes(app: Express): void {
   // ── Events ────────────────────────────────────────────────────────
   app.get("/api/ama/events", async (req, res) => {
     try {
-      const limit = parseInt(req.query.limit as string) || 100;
-      const cycleId = req.query.cycleId as string | undefined;
-      const rows = await getAuditEvents(limit, cycleId);
+      const q = req.query as Record<string, string>;
+      const limit = Math.min(parseInt(q.limit) || 100, 500);
+      const filters: AuditEventFilters = {
+        limit,
+        cursor: q.cursor || undefined,
+        cycleId: q.cycleId || undefined,
+        trancheId: q.trancheId || undefined,
+        severity: q.severity || undefined,
+        eventType: q.eventType || undefined,
+        mode: q.mode || undefined,
+        from: q.from || undefined,
+        to: q.to || undefined,
+      };
+      const rows = await getAuditEvents(filters);
       const events = rows.map((r: any) => ({
-        eventId: r.event_id,
-        eventName: r.event_name,
-        cycleId: r.cycle_id,
-        trancheId: r.tranche_id,
+        event_id: r.event_id,
+        event_name: r.event_name,
+        cycle_id: r.cycle_id,
+        tranche_id: r.tranche_id,
         severity: r.severity,
         data: typeof r.data === "string" ? JSON.parse(r.data) : r.data,
-        createdAt: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at,
+        created_at: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at,
       }));
-      res.json(ok(events));
+      const nextCursor = events.length === limit ? events[events.length - 1]?.event_id : null;
+      res.json({ ...ok(events), meta: { limit, count: events.length, nextCursor } });
     } catch (e) {
       res.status(500).json(err(sanitizeError(e)));
     }

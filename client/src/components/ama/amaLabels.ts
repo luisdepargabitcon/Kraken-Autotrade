@@ -16,10 +16,10 @@ export const ENVIRONMENT_LABELS: Record<string, string> = {
 
 export const MODE_LABELS: Record<string, string> = {
   OFF: "Desactivado",
-  LAB: "Prueba rápida",
+  LAB: "Laboratorio",
   REPLAY: "Reproducción histórica",
-  SHADOW_SCENARIO: "Simulación completa",
-  SHADOW_LIVE: "Mercado en vivo — sin dinero real",
+  SHADOW_SCENARIO: "Simulación de escenario",
+  SHADOW_LIVE: "Simulación en vivo",
   REAL_LIMITED: "Real limitado",
   REAL_FULL: "Real completo — bloqueado",
 };
@@ -28,8 +28,8 @@ export const MODE_DESCRIPTIONS: Record<string, string> = {
   OFF: "AMA está detenido. Puede consultar información y resultados anteriores, pero no analiza ni ejecuta nuevas decisiones.",
   LAB: "Permite comprobar qué haría AMA ante una caída del 10 %, 20 %, 40 %, un rebote, un mercado lateral o cualquier otro escenario controlado.",
   REPLAY: "Reproduce el mercado real del pasado vela a vela como si AMA hubiera estado funcionando en ese momento.",
-  SHADOW_SCENARIO: "Ejecuta todo el sistema real de AMA —base de datos, ciclos, cartera, tramos, órdenes simuladas, fills, reinicios y auditoría— pero con un mercado controlado.",
-  SHADOW_LIVE: "AMA observa el mercado BTC real actual en Kraken y decide en tiempo real, pero las órdenes se simulan.",
+  SHADOW_SCENARIO: "Simula un escenario de mercado controlado con todo el sistema real de AMA activo —ciclos, cartera, tramos, órdenes simuladas, auditoría— pero sin dinero real.",
+  SHADOW_LIVE: "AMA observa el mercado BTC real en Kraken y decide en tiempo real, pero las órdenes se simulan sin usar dinero real.",
   REAL_LIMITED: "AMA puede utilizar dinero real exclusivamente dentro de los límites que configure y autorice manualmente el usuario.",
   REAL_FULL: "Modo reservado para una fase futura. No debe tener handler ni endpoint operativo.",
 };
@@ -87,13 +87,13 @@ export const CYCLE_STATE_LABELS: Record<string, string> = {
 export const REAL_STATE_LABELS: Record<string, string> = {
   NOT_READY: "No preparado",
   READY_DISABLED: "Preparado, pero desactivado",
-  ARMED: "Armado — esperando señal",
-  ACTIVE: "Activo",
+  ARMED: "Armado · esperando señal",
+  ACTIVE: "Operando",
   PAUSED_BY_USER: "Pausado manualmente",
   PAUSED_BY_RESTART: "Pausado tras reinicio",
   DISABLED_BY_USER: "Desactivado",
   AUTO_BLOCKED: "Bloqueado automáticamente",
-  KILL_SWITCHED: "Parada de emergencia activa",
+  KILL_SWITCHED: "Parada de emergencia",
   EXPIRED: "Autorización caducada",
 };
 

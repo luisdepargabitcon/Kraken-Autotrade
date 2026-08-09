@@ -87,6 +87,86 @@ export async function isAuthorized(): Promise<boolean> {
   return await isRealLimitedAuthorized();
 }
 
+// ─── REAL_LIMITED Readiness Evaluation ───────────────────────────────
+
+export interface ReadinessCheck {
+  ok: boolean;
+  detail?: string;
+}
+
+export interface RealActivationReadiness {
+  ready: boolean;
+  checks: Record<string, ReadinessCheck>;
+  blockers: string[];
+}
+
+export async function evaluateRealActivationReadiness(): Promise<RealActivationReadiness> {
+  const checks: Record<string, ReadinessCheck> = {};
+  const blockers: string[] = [];
+
+  // Check 1: Feature flag
+  const featureEnabled = process.env.AMA_REAL_EXECUTION_ENABLED === "true";
+  checks.featureFlag = { ok: featureEnabled, detail: featureEnabled ? "enabled" : "disabled in this environment" };
+  if (!featureEnabled) blockers.push("FEATURE_FLAG_DISABLED");
+
+  // Check 2: Kill switch
+  try {
+    const ks = runtime.isKillSwitchActive();
+    checks.killSwitch = { ok: !ks, detail: ks ? "kill switch is active" : "not active" };
+    if (ks) blockers.push("KILL_SWITCH_ACTIVE");
+  } catch {
+    checks.killSwitch = { ok: false, detail: "could not read kill switch state" };
+    blockers.push("KILL_SWITCH_UNREADABLE");
+  }
+
+  // Check 3: Runtime state compatibility
+  try {
+    const realState = await amaRealStateService.getState();
+    const incompatibleStates = ["KILL_SWITCHED", "AUTO_BLOCKED", "ACTIVE", "ARMED"];
+    const compatible = !incompatibleStates.includes(realState.operationalState);
+    checks.realStateCompatible = {
+      ok: compatible,
+      detail: compatible
+        ? `state=${realState.operationalState}`
+        : `incompatible state: ${realState.operationalState}`,
+    };
+    if (!compatible) blockers.push("REAL_STATE_INCOMPATIBLE");
+  } catch {
+    checks.realStateCompatible = { ok: false, detail: "could not read real state" };
+    blockers.push("REAL_STATE_UNREADABLE");
+  }
+
+  // Check 4: Current mode must not be REAL_FULL
+  try {
+    const mode = runtime.getMode();
+    const modeOk = mode !== "REAL_FULL";
+    checks.currentMode = { ok: modeOk, detail: `mode=${mode}` };
+    if (!modeOk) blockers.push("REAL_FULL_BLOCKED");
+  } catch {
+    checks.currentMode = { ok: false, detail: "could not read current mode" };
+    blockers.push("MODE_UNREADABLE");
+  }
+
+  // Check 5: Unresolved reconciliations
+  try {
+    const unresolved = await getUnresolvedReconciliations();
+    const reconcOk = unresolved.length === 0;
+    checks.reconciliation = {
+      ok: reconcOk,
+      detail: reconcOk ? "none pending" : `${unresolved.length} unresolved reconciliations`,
+    };
+    if (!reconcOk) blockers.push("UNRESOLVED_RECONCILIATION");
+  } catch {
+    checks.reconciliation = { ok: true, detail: "reconciliation check skipped (table may not exist)" };
+  }
+
+  return {
+    ready: blockers.length === 0,
+    checks,
+    blockers,
+  };
+}
+
 // ─── REAL_LIMITED Activation Flow ────────────────────────────────────
 
 export interface ActivateRealInput {
@@ -104,41 +184,119 @@ export async function activateReal(input: ActivateRealInput): Promise<{ activate
     throw new Error("[AMA] Activation requires explicit user confirmation");
   }
 
+  // Gate 1: Staging block — no mutations if flag is off
   if (process.env.AMA_REAL_EXECUTION_ENABLED !== "true") {
-    throw new Error("[AMA] Real execution is disabled in this environment");
+    throw new Error("[AMA] Operación real deshabilitada en este entorno.");
   }
 
-  await grantAuthorization(
-    input.authorizedBy,
-    input.maxCapitalUsd,
-    input.maxSingleTrancheUsd,
-    input.maxTranchesPerCycle,
-    input.expiresAt,
-    input.reason,
-  );
-
-  await amaRealStateService.transition("ARMED", input.reason || "Manual activation", input.authorizedBy);
-
-  const currentMode = runtime.getMode();
-  if (currentMode !== "REAL_LIMITED") {
-    await runtime.setMode("REAL_LIMITED", input.authorizedBy, input.reason || "Manual activation");
-  }
-
-  await insertAuditEvent(
-    "REAL_LIMITED_ACTIVATED",
-    "WARN",
-    {
+  // Gate 2: Readiness evaluation — no mutations if not ready
+  const readiness = await evaluateRealActivationReadiness();
+  if (!readiness.ready) {
+    await insertAuditEvent("REAL_ACTIVATION_BLOCKED", "WARN", {
+      blockers: readiness.blockers,
+      checks: readiness.checks,
       authorizedBy: input.authorizedBy,
-      maxCapitalUsd: input.maxCapitalUsd,
-      maxSingleTrancheUsd: input.maxSingleTrancheUsd,
-      maxTranchesPerCycle: input.maxTranchesPerCycle,
-      reason: input.reason,
-      environment: process.env.AMA_REAL_EXECUTION_ENABLED ? "enabled" : "disabled",
-    },
-  );
+    }).catch(() => undefined);
+    throw new Error(`[AMA] Activation blocked: ${readiness.blockers.join(", ")}`);
+  }
 
-  const state = await amaRealStateService.getState();
-  return { activated: true, mode: "REAL_LIMITED", operationalState: state.operationalState };
+  // Snapshot previous state for rollback
+  let previousAuthActive = false;
+  let previousMode: string = "OFF";
+  let previousRealState: string = "NOT_READY";
+
+  try {
+    const [auth, realState] = await Promise.all([
+      getRealAuthorization().catch(() => null),
+      amaRealStateService.getState().catch(() => null),
+    ]);
+    previousAuthActive = auth?.isActive ?? false;
+    previousMode = runtime.getMode();
+    previousRealState = realState?.operationalState ?? "NOT_READY";
+  } catch {
+    // Non-fatal: rollback state may be incomplete
+  }
+
+  let authGranted = false;
+  let stateTransitioned = false;
+  let modeChanged = false;
+
+  try {
+    // Step A: Grant authorization
+    await grantRealLimitedAuthorization(
+      input.authorizedBy,
+      input.maxCapitalUsd,
+      input.maxSingleTrancheUsd,
+      input.maxTranchesPerCycle,
+      input.expiresAt,
+      input.reason,
+    );
+    authGranted = true;
+
+    // Step B: Transition real state to ARMED
+    await amaRealStateService.transition("ARMED", input.reason || "Manual activation", input.authorizedBy);
+    stateTransitioned = true;
+
+    // Step C: Set mode to REAL_LIMITED (setMode checks authorization internally)
+    if (previousMode !== "REAL_LIMITED") {
+      await runtime.setMode("REAL_LIMITED", input.authorizedBy, input.reason || "Manual activation");
+      modeChanged = true;
+    }
+
+    // Step D: Audit event
+    await insertAuditEvent(
+      "REAL_LIMITED_ACTIVATED",
+      "WARN",
+      {
+        authorizedBy: input.authorizedBy,
+        maxCapitalUsd: input.maxCapitalUsd,
+        maxSingleTrancheUsd: input.maxSingleTrancheUsd,
+        maxTranchesPerCycle: input.maxTranchesPerCycle,
+        reason: input.reason,
+      },
+    );
+
+    const state = await amaRealStateService.getState();
+    return { activated: true, mode: "REAL_LIMITED", operationalState: state.operationalState };
+  } catch (err) {
+    // Rollback: compensating actions in reverse order
+    const rollbackErrors: string[] = [];
+
+    if (modeChanged) {
+      try {
+        await runtime.setMode(previousMode as any, "SYSTEM", "REAL_ACTIVATION_FAILED rollback");
+      } catch (re) {
+        rollbackErrors.push(`mode rollback: ${(re as Error).message}`);
+      }
+    }
+
+    if (stateTransitioned) {
+      try {
+        await amaRealStateService.transition(previousRealState as any, "REAL_ACTIVATION_FAILED rollback", "SYSTEM");
+      } catch (re) {
+        rollbackErrors.push(`state rollback: ${(re as Error).message}`);
+      }
+    }
+
+    if (authGranted && !previousAuthActive) {
+      try {
+        await revokeRealAuthorization("SYSTEM", "REAL_ACTIVATION_FAILED rollback");
+      } catch (re) {
+        rollbackErrors.push(`auth revoke: ${(re as Error).message}`);
+      }
+    }
+
+    await insertAuditEvent("REAL_ACTIVATION_FAILED", "ERROR", {
+      authorizedBy: input.authorizedBy,
+      error: (err as Error).message,
+      rollbackErrors,
+      authGranted,
+      stateTransitioned,
+      modeChanged,
+    }).catch(() => undefined);
+
+    throw err;
+  }
 }
 
 // ─── Pre-Trade Gates ─────────────────────────────────────────────────

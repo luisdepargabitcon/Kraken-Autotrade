@@ -34,6 +34,9 @@ const LEVEL_COLORS = {
   ERROR: "bg-red-500/10 text-red-400 border-red-500/30",
 };
 
+const LAB_MODES = ["LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"];
+const REAL_MODES = ["REAL_LIMITED"];
+
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";
   return new Date(s).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
@@ -45,9 +48,20 @@ export function AmaEventsPanel({ limit = 100, modeFilter, hideModeFilter = false
   const [activeLevel, setActiveLevel] = useState<string>("all");
   const [modeFilterValue, setModeFilterValue] = useState<string>("all");
 
+  const modeFilterKey = modeFilter ? modeFilter.join(",") : "";
+
+  const buildUrl = useCallback(() => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (activeLevel !== "all") params.set("severity", activeLevel);
+    if (modeFilterKey) params.set("mode", modeFilterKey);
+    else if (modeFilterValue === "lab") params.set("mode", LAB_MODES.join(","));
+    else if (modeFilterValue === "real") params.set("mode", REAL_MODES.join(","));
+    return `/api/ama/events?${params.toString()}`;
+  }, [limit, activeLevel, modeFilterValue, modeFilterKey]);
+
   const fetchEvents = useCallback(async () => {
     try {
-      const res = await fetch(`/api/ama/events?limit=${limit}`);
+      const res = await fetch(buildUrl());
       const json = await res.json();
       setEvents((json.data || []) as AmaEvent[]);
     } catch {
@@ -55,7 +69,7 @@ export function AmaEventsPanel({ limit = 100, modeFilter, hideModeFilter = false
     } finally {
       setLoading(false);
     }
-  }, [limit]);
+  }, [buildUrl]);
 
   useEffect(() => {
     fetchEvents();
@@ -63,15 +77,7 @@ export function AmaEventsPanel({ limit = 100, modeFilter, hideModeFilter = false
     return () => clearInterval(interval);
   }, [fetchEvents]);
 
-  const filtered = events.filter((e) => {
-    if (activeLevel !== "all" && e.severity !== activeLevel) return false;
-    if (modeFilterValue !== "all") {
-      const mode = (e.data?.mode as string) || "";
-      if (modeFilterValue === "lab" && !["LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"].includes(mode)) return false;
-      if (modeFilterValue === "real" && mode !== "REAL_LIMITED") return false;
-    }
-    return true;
-  });
+  const filtered = events;
 
   if (loading) return <div className="text-muted-foreground text-sm">Cargando eventos...</div>;
 

@@ -582,20 +582,105 @@ export async function insertAuditEvent(
   );
 }
 
+export interface AuditEventFilters {
+  limit?: number;
+  cursor?: string;
+  cycleId?: string;
+  trancheId?: string;
+  severity?: string;
+  eventType?: string;
+  mode?: string;
+  from?: string;
+  to?: string;
+}
+
 export async function getAuditEvents(
-  limit: number = 100,
+  filters: AuditEventFilters | number = {},
   cycleId?: string,
 ): Promise<Record<string, unknown>[]> {
-  if (cycleId) {
+  // Backward-compat: legacy (limit: number, cycleId?: string)
+  if (typeof filters === "number") {
+    const limit = filters;
+    if (cycleId) {
+      const result = await pool.query(
+        `SELECT * FROM ama_audit_events WHERE cycle_id = $1 ORDER BY created_at DESC LIMIT $2`,
+        [cycleId, limit],
+      );
+      return result.rows;
+    }
     const result = await pool.query(
-      `SELECT * FROM ama_audit_events WHERE cycle_id = $1 ORDER BY created_at DESC LIMIT $2`,
-      [cycleId, limit],
+      `SELECT * FROM ama_audit_events ORDER BY created_at DESC LIMIT $1`,
+      [limit],
     );
     return result.rows;
   }
+
+  const {
+    limit = 100,
+    cursor,
+    cycleId: filterCycleId,
+    trancheId,
+    severity,
+    eventType,
+    mode,
+    from,
+    to,
+  } = filters;
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (filterCycleId) {
+    conditions.push(`cycle_id = $${idx++}`);
+    params.push(filterCycleId);
+  }
+  if (trancheId) {
+    conditions.push(`tranche_id = $${idx++}`);
+    params.push(trancheId);
+  }
+  if (severity) {
+    conditions.push(`severity = $${idx++}`);
+    params.push(severity.toUpperCase());
+  }
+  if (eventType) {
+    conditions.push(`event_name = $${idx++}`);
+    params.push(eventType);
+  }
+  if (mode) {
+    const modeValues = mode.split(",").map((m) => m.trim()).filter(Boolean);
+    if (modeValues.length === 1) {
+      conditions.push(`(data->>'mode' = $${idx} OR data->>'from' = $${idx} OR data->>'to' = $${idx})`);
+      params.push(modeValues[0]);
+      idx++;
+    } else if (modeValues.length > 1) {
+      const placeholders = modeValues.map(() => `$${idx++}`).join(", ");
+      conditions.push(
+        `(data->>'mode' IN (${placeholders}) OR data->>'from' IN (${placeholders}) OR data->>'to' IN (${placeholders}))`,
+      );
+      params.push(...modeValues, ...modeValues, ...modeValues);
+      idx += modeValues.length * 2;
+    }
+  }
+  if (from) {
+    conditions.push(`created_at >= $${idx++}`);
+    params.push(from);
+  }
+  if (to) {
+    conditions.push(`created_at <= $${idx++}`);
+    params.push(to);
+  }
+  if (cursor) {
+    conditions.push(`created_at < (SELECT created_at FROM ama_audit_events WHERE event_id = $${idx++})`);
+    params.push(cursor);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  params.push(Math.min(limit, 500));
+
   const result = await pool.query(
-    `SELECT * FROM ama_audit_events ORDER BY created_at DESC LIMIT $1`,
-    [limit],
+    `SELECT * FROM ama_audit_events ${where} ORDER BY created_at DESC LIMIT $${idx}`,
+    params,
   );
   return result.rows;
 }
