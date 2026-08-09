@@ -5,11 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Layers, FlaskConical, RotateCcw, Ghost, ShieldCheck, BookOpen, Eye, AlertTriangle, Lock } from "lucide-react";
+import { FlaskConical, RotateCcw, Ghost, ShieldCheck, Eye, AlertTriangle, Lock } from "lucide-react";
 import {
   translateCycleState, translateTrancheType, translateTrancheStatus, translateSleeve,
   translateLabStatus, translateReplayStatus, translateShadowStatus, translateRealState,
-  MODE_LABELS, REAL_STATE_LABELS,
+  MODE_LABELS,
 } from "./amaLabels";
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ function fmtDate(s: string | null | undefined): string {
 
 // ─── Cycles Tab ──────────────────────────────────────────────────────
 
-function CyclesTab() {
+export function CyclesTab() {
   const [cycles, setCycles] = useState<AmaCycle[]>([]);
   const [selectedCycle, setSelectedCycle] = useState<string | null>(null);
   const [tranches, setTranches] = useState<AmaTranche[]>([]);
@@ -275,7 +275,7 @@ function CyclesTab() {
 
 // ─── Lab Tab ─────────────────────────────────────────────────────────
 
-function LabTab() {
+export function LabTab() {
   const [sessions, setSessions] = useState<LabSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPreset, setSelectedPreset] = useState(0);
@@ -412,7 +412,7 @@ function LabTab() {
 
 // ─── Replay Tab ──────────────────────────────────────────────────────
 
-function ReplayTab() {
+export function ReplayTab() {
   const [runs, setRuns] = useState<ReplayRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPreset, setSelectedPreset] = useState(0);
@@ -546,7 +546,7 @@ function ReplayTab() {
 
 // ─── Shadow Tab ──────────────────────────────────────────────────────
 
-function ShadowTab() {
+export function ShadowTab() {
   const [scenarios, setScenarios] = useState<ShadowScenario[]>([]);
   const [loading, setLoading] = useState(true);
   const [scenarioName, setScenarioName] = useState("");
@@ -589,7 +589,12 @@ function ShadowTab() {
     fetchScenarios();
   }
 
-  if (loading) return <div className="text-muted-foreground text-sm">Cargando simulación...</div>;
+  async function runScenario(id: string) {
+    await api(`/api/ama/shadow/scenarios/${id}/run`, { method: "POST" });
+    fetchScenarios();
+  }
+
+  if (loading) return <div className="text-muted-foreground text-sm py-8 text-center">Cargando simulación...</div>;
 
   return (
     <div className="space-y-4">
@@ -652,9 +657,14 @@ function ShadowTab() {
                     <div className="mt-2 flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">{fmtDate(s.createdAt)}</span>
                       {s.status === "ACTIVE" && (
-                        <Button size="sm" variant="outline" className="text-xs h-6" onClick={() => closeScenario(s.scenarioId)}>
-                          Cerrar
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="outline" className="text-xs h-6" onClick={() => runScenario(s.scenarioId)}>
+                            Ejecutar
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-xs h-6" onClick={() => closeScenario(s.scenarioId)}>
+                            Cerrar
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </CardContent>
@@ -693,7 +703,7 @@ function ShadowTab() {
 
 // ─── Real Auth Tab ───────────────────────────────────────────────────
 
-function RealAuthTab() {
+export function OperationTab() {
   const [auth, setAuth] = useState<RealAuth | null>(null);
   const [loading, setLoading] = useState(true);
   const [showGrantForm, setShowGrantForm] = useState(false);
@@ -909,7 +919,7 @@ function RealAuthTab() {
 
 // ─── Ledger Tab ──────────────────────────────────────────────────────
 
-function LedgerTab() {
+export function LedgerTab() {
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -969,50 +979,5 @@ function LedgerTab() {
   );
 }
 
-// ─── Main AmaTabs Component ──────────────────────────────────────────
-
-export function AmaTabs() {
-  return (
-    <Tabs defaultValue="cycles" className="w-full">
-      <TabsList className="grid w-full grid-cols-3 md:grid-cols-6">
-        <TabsTrigger value="cycles" className="text-xs">
-          <Layers className="h-3.5 w-3.5 mr-1" /> Ciclos
-        </TabsTrigger>
-        <TabsTrigger value="lab" className="text-xs">
-          <FlaskConical className="h-3.5 w-3.5 mr-1" /> Laboratorio
-        </TabsTrigger>
-        <TabsTrigger value="replay" className="text-xs">
-          <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reproducción
-        </TabsTrigger>
-        <TabsTrigger value="shadow" className="text-xs">
-          <Ghost className="h-3.5 w-3.5 mr-1" /> Simulación
-        </TabsTrigger>
-        <TabsTrigger value="real" className="text-xs">
-          <ShieldCheck className="h-3.5 w-3.5 mr-1" /> Operación
-        </TabsTrigger>
-        <TabsTrigger value="ledger" className="text-xs">
-          <BookOpen className="h-3.5 w-3.5 mr-1" /> Ledger
-        </TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="cycles" className="mt-4">
-        <CyclesTab />
-      </TabsContent>
-      <TabsContent value="lab" className="mt-4">
-        <LabTab />
-      </TabsContent>
-      <TabsContent value="replay" className="mt-4">
-        <ReplayTab />
-      </TabsContent>
-      <TabsContent value="shadow" className="mt-4">
-        <ShadowTab />
-      </TabsContent>
-      <TabsContent value="real" className="mt-4">
-        <RealAuthTab />
-      </TabsContent>
-      <TabsContent value="ledger" className="mt-4">
-        <LedgerTab />
-      </TabsContent>
-    </Tabs>
-  );
-}
+// Individual tab components are exported above.
+// Ama.tsx handles tab switching via AmaPrimaryNav.
