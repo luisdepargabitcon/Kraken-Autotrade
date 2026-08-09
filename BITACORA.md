@@ -7812,3 +7812,78 @@ El wiring previo `787826e → 752d57d` entró mediante merge directo sin PR como
 - AMA_UI_READINESS_FROM_BACKEND=YES
 - Staging validation pendiente de acceso VPS.
 
+---
+
+## AMA R3 — Cierre Operacional Final (2026-08-10)
+
+### PR #5
+- PR: merged (merge commit)
+- HEAD previo: `ae781857ffeee7ec7dfa6e18a54f3a830b59ec04`
+- MERGE_SHA: `02ca403bd5229ee6ecbfcf831c0be2c87f6f1f9e`
+- MAIN_SHA: `02ca403bd5229ee6ecbfcf831c0be2c87f6f1f9e`
+- STAGING_SHA: `02ca403bd5229ee6ecbfcf831c0be2c87f6f1f9e`
+- CI: `31337687713` — SUCCESS
+
+### Tests
+- AMA tests: 1016/1016 PASS
+- UX R3: PASS (Playwright visual validation 1920, 1366, 390)
+- AMA events: PASS (filtros server-side, separación Lab/Real)
+- Monitor AMA: PASS (tab AMA integrada y funcional)
+
+### REAL readiness — 17 checks fail-closed
+1. Feature flag (AMA_REAL_EXECUTION_ENABLED)
+2. Kill switch
+3. Schema/DB disponible
+4. Market freshness (< 5 min)
+5. Precio válido
+6. HWM bootstrap completado
+7. Mandato activo
+8. Política activa
+9. Budget asignado > 0
+10. Capital libre > 0
+11. Reconciliación sin pendientes
+12. Gateway disponible (bid/ask válidos)
+13. Maker-only (Gate 8)
+14. Post-only (Gate 9)
+15. Scheduler operacional
+16. Real state compatible
+17. REAL_FULL locked
+
+### REAL activation — atómica + rollback
+- Secuencia E→F→G→H (auth → mode → state → audit)
+- Rollback inverso G→F→E con `restoreRealAuthorizationSnapshot`
+- Activar REAL NO compra inmediatamente — AMA queda ARMADO
+
+### UI R3
+- Tabs principales: Resumen, Laboratorio, Real, Ayuda
+- Laboratorio (6 subtabs): Prueba rápida, Reproducción histórica, Simulación completa, Mercado en vivo, Historial de pruebas, Eventos
+- Real (9 subtabs): Estado, Activación, Estrategia, Ciclo y tramos, Órdenes, Movimientos, Historial, Eventos, Seguridad
+- Banner "Operación real deshabilitada en este entorno" cuando featureFlag=false
+- Botón activación bloqueado con candado cuando featureFlag=false
+- Sin términos técnicos ingleses como labels principales
+- Mobile 390px: sin overflow horizontal en /ama
+
+### Staging post-merge
+- APP_RECREATED=YES (app-only rebuild)
+- DB_RESTARTED=NO
+- AMA_REAL_EXECUTION_ENABLED=false (no definida → default false)
+- REAL_ACTIVATION_BLOCKED=PASS (`"Operación real deshabilitada en este entorno"`)
+- AUTHORIZATION_DELTA=0
+- MODE_DELTA=0 (mode=LAB)
+- REAL_STATE_DELTA=0 (NOT_READY)
+- REAL_ORDERS=0 (pre_trade_gates=0)
+- REAL_FILLS=0 (tabla ama_real_orders no existe)
+- PRODUCTION=NOT_TOUCHED
+
+### Archivos clave modificados
+- `server/services/ama/amaRealLimitedService.ts` — 17 readiness checks + activateReal atómica
+- `server/services/ama/amaRealAuthorizationRepository.ts` — restoreRealAuthorizationSnapshot
+- `server/services/ama/__tests__/amaRealLimitedService.test.ts` — 52 tests (+25 nuevos)
+- `client/src/components/ama/AmaTabs.tsx` — Banner deshabilitada + botón bloqueado
+- `server/routes/ama.routes.ts` — GET /api/ama/real/readiness
+- `client/src/components/ama/AmaEventsPanel.tsx` — Filtros server-side
+- `client/src/components/ama/amaLabels.ts` — Etiquetas ES corregidas
+
+### Estado final
+- AMA_TRUE_FINAL_COMPLETION=PASS
+
