@@ -26,6 +26,16 @@
 - No borrar volúmenes ni recrear la DB.
 - Las validaciones postdeploy iniciales deben ser GET/read-only.
 
+### GRID — FIX RÉGIMEN "moderate" BLOQUEABA EL GENERADOR PROFESIONAL (2026-08-09)
+
+- **Síntoma reportado**: el Grid Isolated en SHADOW no generaba rangos/niveles pese a `dynamicLevelReduction=true` y Adaptive Smart Range configurado; se asumía inicialmente que la causa era el ancho de banda Bollinger insuficiente (~1.65%) frente a `adaptiveRangeMinViableLevels=8`.
+- **Causa raíz real**: `gridBandAdapter.ts::assessGridSuitability` emite `regime="moderate"` con `suitableForGrid=true` como fallback válido para condiciones fuera de la ventana estricta "ranging" (2%-10% bandwidth / 0.5%-3% ATR). `gridProfessionalProjectionContext.ts::normalizeRegime()` no reconocía `"moderate"` como alias operable, por lo que devolvía `MARKET_REGIME_UNKNOWN` y bloqueaba `resolveGridProfessionalProjectionContext` **antes** de llegar a `generateProfessionalGridLevels` / `calculateAdaptiveSmartRange`. El evento real repetido cada tick era `PLANNING_CONTEXT_INCOMPLETE` ("Falta projection context pre-resuelto del orquestador"), no un problema de geometría ni de bandwidth.
+- **Corrección aplicada**: alias `moderate -> normal_lateral` en `REGIME_ALIASES` (`server/services/gridIsolated/gridProfessionalProjectionContext.ts`). Cambio de una línea, sin nueva configuración, sin tocar geometría uniforme, spacing, V3, DB/schema/migraciones.
+- **Validación runtime post-deploy** (staging, VPS `5.250.184.18`, app-only, DB intacta): tras el fix el mismo régimen `moderate` (bandWidthPct≈1.60%, atrPct≈0.435%) llegó a `calculateAdaptiveSmartRange` → `regimeBucket=low_volatility`, `finalRangePct=3%` (clamp por `regimeMaxPct` de régimen low_volatility), `levelsWouldFitAtFinalRange=8` (4 BUY + 4 SELL) → `generateProfessionalGridLevels` con `viabilityStatus=viable`, `reductionApplied=true` (reducido de 5+5 solicitados a 4+4 que caben) → rango real activado (`GRID_RANGE_ACTIVATED`, `rangeVersionId=d68e02e4-...`, versión 30) con 8 niveles uniformes (`uniformSpacingOk=true`, `centralGapPct≈entrySpacingPct≈0.4174%`).
+- **Commits**: `708c8e6` (fix + tests) sobre `main` (`9f5c39e -> 708c8e6`).
+- **Tests de regresión**: `server/services/gridIsolated/__tests__/gridRegimeNormalization.test.ts` (normalización de alias, fail-closed de regímenes no aptos y de strings desconocidos) y `gridModerateRegimePipeline.test.ts` (integración completa del pipeline con régimen `moderate` real).
+- **Alcance explícitamente NO tocado**: MODE sigue SHADOW, MAKER_ONLY=true, TAKER_FALLBACK=false, sin órdenes reales, sin cambios en DB ni en contenedor de base de datos (mismo container ID antes/después del deploy).
+
 ### TICK CANÓNICO Y LIFECYCLE
 
 - `currentTickId` se incrementa una vez en `tick()`.
