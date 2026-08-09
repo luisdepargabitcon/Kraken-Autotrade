@@ -79,28 +79,16 @@ describe("AmaCommandBar", () => {
 // ─── AmaModeSelector ─────────────────────────────────────────────────
 
 describe("AmaModeSelector", () => {
-  it("renders all selectable modes", () => {
-    const html = render(<AmaModeSelector currentMode="OFF" onSelectMode={() => {}} />);
+  it("renders all environment options", () => {
+    const html = render(<AmaModeSelector environment="OFF" onSelectEnvironment={() => {}} />);
     expect(html).toContain("Desactivado");
     expect(html).toContain("Laboratorio");
-    expect(html).toContain("Reproducci");
-    expect(html).toContain("Simulaci");
+    expect(html).toContain("Real");
   });
 
-  it("marks current mode as active", () => {
-    const html = render(<AmaModeSelector currentMode="LAB" onSelectMode={() => {}} />);
-    expect(html).toContain("Laboratorio");
-  });
-
-  it("real completo is always locked", () => {
-    const html = render(<AmaModeSelector currentMode="OFF" onSelectMode={() => {}} />);
-    expect(html).toContain("Real completo");
-    expect(html).toContain("disabled");
-  });
-
-  it("real limitado is disabled by default", () => {
-    const html = render(<AmaModeSelector currentMode="OFF" onSelectMode={() => {}} realLimitedDisabled={true} />);
-    expect(html).toContain("Real limitado");
+  it("marks current environment as active", () => {
+    const html = render(<AmaModeSelector environment="REAL" onSelectEnvironment={() => {}} />);
+    expect(html).toContain("Real");
   });
 });
 
@@ -109,26 +97,26 @@ describe("AmaModeSelector", () => {
 describe("AmaPrimaryNav", () => {
   it("renders all nav items in order", () => {
     const html = render(<AmaPrimaryNav activeTab="overview" onTabChange={() => {}} />);
-    const items = ["Resumen", "Ciclos", "Laboratorio", "Hist", "Simulaci", "Operaci", "Ledger", "Ayuda"];
+    const items = ["Resumen", "Laboratorio", "Real", "Ayuda"];
     items.forEach((item) => {
       expect(html).toContain(item);
     });
   });
 
-  it("overview appears before cycles", () => {
+  it("overview appears before lab", () => {
     const html = render(<AmaPrimaryNav activeTab="overview" onTabChange={() => {}} />);
     const idxOverview = html.indexOf("Resumen");
-    const idxCycles = html.indexOf("Ciclos");
+    const idxLab = html.indexOf("Laboratorio");
     expect(idxOverview).toBeGreaterThan(-1);
-    expect(idxCycles).toBeGreaterThan(-1);
-    expect(idxOverview).toBeLessThan(idxCycles);
+    expect(idxLab).toBeGreaterThan(-1);
+    expect(idxOverview).toBeLessThan(idxLab);
   });
 
   it("help appears last", () => {
     const html = render(<AmaPrimaryNav activeTab="overview" onTabChange={() => {}} />);
     const idxHelp = html.indexOf("Ayuda");
-    const idxLedger = html.indexOf("Ledger");
-    expect(idxHelp).toBeGreaterThan(idxLedger);
+    const idxReal = html.indexOf("Real");
+    expect(idxHelp).toBeGreaterThan(idxReal);
   });
 });
 
@@ -317,7 +305,7 @@ describe("AMA page layout order", () => {
     const html = render(<AmaPrimaryNav activeTab="overview" onTabChange={() => {}} />);
     // First nav button should be Resumen (overview)
     const firstButtonIdx = html.indexOf("Resumen");
-    const secondButtonIdx = html.indexOf("Ciclos");
+    const secondButtonIdx = html.indexOf("Laboratorio");
     expect(firstButtonIdx).toBeGreaterThan(-1);
     expect(firstButtonIdx).toBeLessThan(secondButtonIdx);
   });

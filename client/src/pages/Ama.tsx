@@ -5,7 +5,14 @@ import { AmaModeSelector } from "@/components/ama/AmaModeSelector";
 import { AmaPrimaryNav, type AmaTabKey } from "@/components/ama/AmaPrimaryNav";
 import { AmaOverview } from "@/components/ama/AmaOverview";
 import { AmaHelpTab } from "@/components/ama/AmaHelpTab";
-import { CyclesTab, LabTab, ReplayTab, ShadowTab, OperationTab, LedgerTab } from "@/components/ama/AmaTabs";
+import { AmaLabPanel } from "@/components/ama/AmaLabPanel";
+import { AmaRealPanel } from "@/components/ama/AmaRealPanel";
+
+function environmentFromMode(mode: string): "OFF" | "LAB" | "REAL" {
+  if (mode === "REAL_LIMITED" || mode === "REAL_FULL") return "REAL";
+  if (mode === "OFF") return "OFF";
+  return "LAB";
+}
 
 interface AmaStatus {
   mode: string;
@@ -122,10 +129,37 @@ export default function Ama() {
         body: JSON.stringify({ mode }),
       });
       const json = await res.json();
-      if (json.success && json.data) setStatus(json.data);
-      else if (json.error) setError(json.error);
+      if (json.success && json.data) {
+        setStatus(json.data);
+        setError(null);
+        return true;
+      } else if (json.error) {
+        setError(json.error);
+        return false;
+      }
+      return false;
     } catch {
       setError("No se pudo cambiar el modo. Compruebe la conexión.");
+      return false;
+    }
+  }
+
+  function handleTabChange(tab: AmaTabKey) {
+    setActiveTab(tab);
+  }
+
+  function handleEnvironmentChange(env: "OFF" | "LAB" | "REAL") {
+    const currentMode = status?.mode || "OFF";
+    if (env === "OFF") {
+      void setMode("OFF");
+      setActiveTab("overview");
+    } else if (env === "LAB") {
+      if (!["LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"].includes(currentMode)) {
+        void setMode("LAB");
+      }
+      setActiveTab("lab");
+    } else if (env === "REAL") {
+      setActiveTab("real");
     }
   }
 
@@ -154,6 +188,7 @@ export default function Ama() {
   }
 
   const currentMode = status?.mode || "OFF";
+  const environment = environmentFromMode(currentMode);
 
   // Readiness summary for command bar
   const readinessItems = readiness?.checks
@@ -189,14 +224,14 @@ export default function Ama() {
         onToggleKillSwitch={toggleKillSwitch}
       />
 
-      {/* B. Mode Selector */}
+      {/* B. Mode Selector (environment) */}
       <AmaModeSelector
-        currentMode={currentMode}
-        onSelectMode={setMode}
+        environment={environment}
+        onSelectEnvironment={handleEnvironmentChange}
       />
 
       {/* C. Primary Navigation */}
-      <AmaPrimaryNav activeTab={activeTab} onTabChange={setActiveTab} />
+      <AmaPrimaryNav activeTab={activeTab} onTabChange={handleTabChange} />
 
       {/* D. Error display */}
       {error && (
@@ -216,12 +251,10 @@ export default function Ama() {
             readinessChecks={readiness?.checks ?? null}
           />
         )}
-        {activeTab === "cycles" && <CyclesTab />}
-        {activeTab === "lab" && <LabTab />}
-        {activeTab === "replay" && <ReplayTab />}
-        {activeTab === "shadow" && <ShadowTab />}
-        {activeTab === "operation" && <OperationTab />}
-        {activeTab === "ledger" && <LedgerTab />}
+        {activeTab === "lab" && (
+          <AmaLabPanel currentMode={currentMode} onSetMode={setMode} />
+        )}
+        {activeTab === "real" && <AmaRealPanel currentMode={currentMode} />}
         {activeTab === "help" && <AmaHelpTab />}
       </div>
     </div>

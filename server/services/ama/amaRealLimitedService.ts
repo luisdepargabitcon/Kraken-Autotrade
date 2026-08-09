@@ -26,13 +26,19 @@ import {
   type RealAuthorizationRow,
   type PreTradeGateRow,
 } from "./amaRealAuthorizationRepository";
+import { amaRealStateService } from "./amaFunctionalClosure";
+import * as runtime from "./amaRuntimeService";
 import { insertAuditEvent } from "./amaRepository";
 import { createHash } from "crypto";
 
 // ─── Authorization Management ────────────────────────────────────────
 
-export async function getAuthorizationStatus(): Promise<RealAuthorizationRow> {
-  return await getRealAuthorization();
+export async function getAuthorizationStatus(): Promise<RealAuthorizationRow & { operationalState: string }> {
+  const [auth, realState] = await Promise.all([
+    getRealAuthorization(),
+    amaRealStateService.getState().catch(() => ({ operationalState: "NOT_READY" as const })),
+  ]);
+  return { ...auth, operationalState: realState.operationalState };
 }
 
 export async function grantAuthorization(
@@ -79,6 +85,60 @@ export async function revokeAuthorization(
 
 export async function isAuthorized(): Promise<boolean> {
   return await isRealLimitedAuthorized();
+}
+
+// ─── REAL_LIMITED Activation Flow ────────────────────────────────────
+
+export interface ActivateRealInput {
+  authorizedBy: string;
+  maxCapitalUsd: number;
+  maxSingleTrancheUsd: number;
+  maxTranchesPerCycle: number;
+  confirm: boolean;
+  expiresAt?: string;
+  reason?: string;
+}
+
+export async function activateReal(input: ActivateRealInput): Promise<{ activated: boolean; mode: string; operationalState: string }> {
+  if (!input.confirm) {
+    throw new Error("[AMA] Activation requires explicit user confirmation");
+  }
+
+  if (process.env.AMA_REAL_EXECUTION_ENABLED !== "true") {
+    throw new Error("[AMA] Real execution is disabled in this environment");
+  }
+
+  await grantAuthorization(
+    input.authorizedBy,
+    input.maxCapitalUsd,
+    input.maxSingleTrancheUsd,
+    input.maxTranchesPerCycle,
+    input.expiresAt,
+    input.reason,
+  );
+
+  await amaRealStateService.transition("ARMED", input.reason || "Manual activation", input.authorizedBy);
+
+  const currentMode = runtime.getMode();
+  if (currentMode !== "REAL_LIMITED") {
+    await runtime.setMode("REAL_LIMITED", input.authorizedBy, input.reason || "Manual activation");
+  }
+
+  await insertAuditEvent(
+    "REAL_LIMITED_ACTIVATED",
+    "WARN",
+    {
+      authorizedBy: input.authorizedBy,
+      maxCapitalUsd: input.maxCapitalUsd,
+      maxSingleTrancheUsd: input.maxSingleTrancheUsd,
+      maxTranchesPerCycle: input.maxTranchesPerCycle,
+      reason: input.reason,
+      environment: process.env.AMA_REAL_EXECUTION_ENABLED ? "enabled" : "disabled",
+    },
+  );
+
+  const state = await amaRealStateService.getState();
+  return { activated: true, mode: "REAL_LIMITED", operationalState: state.operationalState };
 }
 
 // ─── Pre-Trade Gates ─────────────────────────────────────────────────

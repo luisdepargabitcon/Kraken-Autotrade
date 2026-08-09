@@ -1,6 +1,6 @@
-import { LayoutDashboard, Layers, FlaskConical, RotateCcw, Ghost, ShieldCheck, BookOpen, HelpCircle } from "lucide-react";
+import { LayoutDashboard, FlaskConical, ShieldCheck, HelpCircle } from "lucide-react";
 
-export type AmaTabKey = "overview" | "cycles" | "lab" | "replay" | "shadow" | "operation" | "ledger" | "help";
+export type AmaTabKey = "overview" | "lab" | "real" | "help";
 
 interface AmaPrimaryNavProps {
   activeTab: AmaTabKey;
@@ -9,12 +9,8 @@ interface AmaPrimaryNavProps {
 
 const NAV_ITEMS: { key: AmaTabKey; label: string; icon: React.ReactNode }[] = [
   { key: "overview", label: "Resumen", icon: <LayoutDashboard className="h-4 w-4" /> },
-  { key: "cycles", label: "Ciclos", icon: <Layers className="h-4 w-4" /> },
   { key: "lab", label: "Laboratorio", icon: <FlaskConical className="h-4 w-4" /> },
-  { key: "replay", label: "Histórico", icon: <RotateCcw className="h-4 w-4" /> },
-  { key: "shadow", label: "Simulación", icon: <Ghost className="h-4 w-4" /> },
-  { key: "operation", label: "Operación", icon: <ShieldCheck className="h-4 w-4" /> },
-  { key: "ledger", label: "Ledger", icon: <BookOpen className="h-4 w-4" /> },
+  { key: "real", label: "Real", icon: <ShieldCheck className="h-4 w-4" /> },
   { key: "help", label: "Ayuda", icon: <HelpCircle className="h-4 w-4" /> },
 ];
 

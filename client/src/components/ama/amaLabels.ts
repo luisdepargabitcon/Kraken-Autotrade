@@ -7,12 +7,19 @@
 
 // ─── Modos ───────────────────────────────────────────────────────────
 
-export const MODE_LABELS: Record<string, string> = {
+// Selector de entorno visible (3 opciones). Los modos internos siguen en MODE_LABELS.
+export const ENVIRONMENT_LABELS: Record<string, string> = {
   OFF: "Desactivado",
   LAB: "Laboratorio",
+  REAL: "Real",
+};
+
+export const MODE_LABELS: Record<string, string> = {
+  OFF: "Desactivado",
+  LAB: "Prueba rápida",
   REPLAY: "Reproducción histórica",
-  SHADOW_SCENARIO: "Simulación de escenario",
-  SHADOW_LIVE: "Simulación en vivo",
+  SHADOW_SCENARIO: "Simulación completa",
+  SHADOW_LIVE: "Mercado en vivo — sin dinero real",
   REAL_LIMITED: "Real limitado",
   REAL_FULL: "Real completo — bloqueado",
 };
@@ -79,14 +86,14 @@ export const CYCLE_STATE_LABELS: Record<string, string> = {
 
 export const REAL_STATE_LABELS: Record<string, string> = {
   NOT_READY: "No preparado",
-  READY_DISABLED: "Preparado · desactivado",
-  ARMED: "Armado · esperando señal",
-  ACTIVE: "Operando",
-  PAUSED_BY_USER: "Pausado por usuario",
+  READY_DISABLED: "Preparado, pero desactivado",
+  ARMED: "Armado — esperando señal",
+  ACTIVE: "Activo",
+  PAUSED_BY_USER: "Pausado manualmente",
   PAUSED_BY_RESTART: "Pausado tras reinicio",
   DISABLED_BY_USER: "Desactivado",
   AUTO_BLOCKED: "Bloqueado automáticamente",
-  KILL_SWITCHED: "Parada de emergencia",
+  KILL_SWITCHED: "Parada de emergencia activa",
   EXPIRED: "Autorización caducada",
 };
 
@@ -140,15 +147,89 @@ export const DATA_QUALITY_LABELS: Record<string, string> = {
 
 export const READINESS_BLOCKER_LABELS: Record<string, string> = {
   MODE_IS_NOT_SHADOW: "El modo no es de simulación",
-  NO_HIGH_WATER_MARK: "No se ha calculado todavía el máximo de referencia",
+  NO_HIGH_WATER_MARK: "No se ha calculado todavía el máximo de referencia (HWM)",
   NO_BUDGET_ALLOCATED: "No hay capital asignado al presupuesto",
   NO_CURRENT_PRICE: "No hay precio actual disponible",
   DATA_COVERAGE_BELOW_MINIMUM: "Cobertura de datos insuficiente",
   NO_MANDATE: "No hay mandato configurado",
   NO_POLICY: "No hay política activa",
   NO_RECONCILIATION: "Reconciliación pendiente",
-  GATEWAY_UNAVAILABLE: "Gateway no disponible",
+  GATEWAY_UNAVAILABLE: "Pasarela de ejecución no disponible",
   KILL_SWITCH_ACTIVE: "Parada de emergencia activa",
+};
+
+// ─── Subpestañas de Laboratorio ─────────────────────────────────────
+
+export const LAB_SUBTAB_LABELS: Record<string, string> = {
+  quick: "Prueba rápida",
+  replay: "Reproducción histórica",
+  shadowScenario: "Simulación completa",
+  shadowLive: "Mercado en vivo",
+  history: "Historial de pruebas",
+  events: "Eventos",
+};
+
+// ─── Subpestañas de REAL ────────────────────────────────────────────
+
+export const REAL_SUBTAB_LABELS: Record<string, string> = {
+  status: "Estado",
+  activation: "Activación",
+  strategy: "Estrategia",
+  cycle: "Ciclo y tramos",
+  orders: "Órdenes",
+  movements: "Movimientos",
+  history: "Historial",
+  events: "Eventos",
+  security: "Seguridad",
+};
+
+// ─── Traducciones de eventos AMA ────────────────────────────────────
+
+export const AMA_EVENT_LABELS: Record<string, string> = {
+  REAL_AUTHORIZATION_GRANTED: "Autorización REAL concedida",
+  REAL_AUTHORIZATION_REVOKED: "Autorización REAL revocada",
+  REAL_PAUSED_BY_USER: "REAL pausado manualmente",
+  REAL_RESUMED_BY_USER: "REAL reanudado manualmente",
+  REAL_DEACTIVATED_BY_USER: "REAL desactivado manualmente",
+  REAL_KILL_SWITCH: "Parada de emergencia REAL",
+  STATE_TRANSITION: "AMA cambió de estado",
+  PRE_TRADE_GATES_FAILED: "Una comprobación de seguridad impidió la operación",
+  PRE_TRADE_GATES_PASSED: "Comprobaciones de seguridad superadas",
+  HWM_BOOTSTRAP_COMPLETED: "Máximo de referencia actualizado",
+  HWM_BOOTSTRAP_FAILED: "Error al calcular el máximo de referencia",
+  MODE_CHANGE: "Cambio de modo AMA",
+  KILL_SWITCH_ACTIVATED: "Parada de emergencia activada",
+  KILL_SWITCH_DEACTIVATED: "Parada de emergencia desactivada",
+  SHADOW_ORDER_FILLED: "Compra simulada completada",
+  SHADOW_ORDER_REJECTED: "Orden simulada rechazada",
+  REPLAY_COMPLETED: "Reproducción histórica completada",
+  LAB_COMPLETED: "Prueba de laboratorio completada",
+  RECONCILIATION_MATCH: "Reconciliación correcta",
+  RECONCILIATION_MISMATCH: "Diferencia en reconciliación",
+  RECONCILIATION_RESOLVED: "Reconciliación resuelta",
+};
+
+// ─── Términos UX (evitar inglés técnico visible) ───────────────────
+
+export const UX_TERM_LABELS: Record<string, string> = {
+  HWM: "Máximo de referencia (HWM)",
+  HWM_SHORT: "Máximo de referencia",
+  READINESS: "Preparación",
+  GATEWAY: "Pasarela de ejecución",
+  SCHEDULER: "Planificador automático",
+  KILL_SWITCH: "Parada de emergencia",
+  TRANCHE: "Tramo",
+  POLICY: "Política",
+  MANDATE: "Mandato",
+  DATASET: "Conjunto de datos",
+  DATASET_HASH: "Huella del conjunto de datos",
+  FILL: "Ejecución",
+  ORDER: "Orden",
+  MAKER_ONLY: "Solo órdenes pasivas (maker)",
+  POST_ONLY: "Solo publicación (post-only)",
+  LEDGER: "Movimientos",
+  SHADOW: "Simulación",
+  REPLAY: "Reproducción histórica",
 };
 
 export const READINESS_BLOCKER_ACTIONS: Record<string, string> = {
@@ -262,6 +343,20 @@ export function translateMacroZone(zone: string | null | undefined): string {
 export function translateDataQuality(quality: string | null | undefined): string {
   if (!quality) return "No disponible";
   return DATA_QUALITY_LABELS[quality] ?? quality;
+}
+
+export function translateEnvironment(env: string | null | undefined): string {
+  if (!env) return "Desactivado";
+  return ENVIRONMENT_LABELS[env] ?? env;
+}
+
+export function translateAmaEvent(eventType: string | null | undefined): string {
+  if (!eventType) return "Evento AMA";
+  return AMA_EVENT_LABELS[eventType] ?? eventType;
+}
+
+export function translateUxTerm(term: string): string {
+  return UX_TERM_LABELS[term] ?? term;
 }
 
 export function translateReadinessBlocker(blocker: string): string {

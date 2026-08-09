@@ -23,6 +23,7 @@ import { runLabSession, runReplaySession } from "../services/ama/amaLabReplayRun
 import * as shadowExecutor from "../services/ama/amaShadowExecutor";
 import * as realLimited from "../services/ama/amaRealLimitedService";
 import * as portfolioLedger from "../services/ama/amaPortfolioLedger";
+import { getAuditEvents } from "../services/ama/amaRepository";
 import { executeHwmBootstrap } from "../services/ama/amaMarketRuntimeService";
 import { runShadowScenario } from "../services/ama/amaShadowScenarioRunner";
 import { amaHwmBootstrapService, amaSchedulerStateService } from "../services/ama/amaFunctionalClosure";
@@ -593,6 +594,51 @@ export function registerAmaRoutes(app: Express): void {
     try {
       const recs = await realLimited.getPendingReconciliations();
       res.json(ok(recs));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // ── REAL_LIMITED explicit activation ───────────────────────────────
+  const activateRealSchema = z.object({
+    authorizedBy: z.string().min(1),
+    maxCapitalUsd: z.number().positive(),
+    maxSingleTrancheUsd: z.number().positive(),
+    maxTranchesPerCycle: z.number().int().min(1),
+    confirm: z.literal(true),
+    expiresAt: z.string().optional(),
+    reason: z.string().optional(),
+  });
+
+  app.post("/api/ama/real/activate", async (req, res) => {
+    const parsed = activateRealSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(err(`Invalid activation input: confirm must be true and fields valid`));
+    }
+    try {
+      const result = await realLimited.activateReal(parsed.data);
+      res.json(ok(result));
+    } catch (e) {
+      res.status(403).json(err(sanitizeError(e)));
+    }
+  });
+
+  // ── Events ────────────────────────────────────────────────────────
+  app.get("/api/ama/events", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const cycleId = req.query.cycleId as string | undefined;
+      const rows = await getAuditEvents(limit, cycleId);
+      const events = rows.map((r: any) => ({
+        eventId: r.event_id,
+        eventName: r.event_name,
+        cycleId: r.cycle_id,
+        trancheId: r.tranche_id,
+        severity: r.severity,
+        data: typeof r.data === "string" ? JSON.parse(r.data) : r.data,
+        createdAt: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at,
+      }));
+      res.json(ok(events));
     } catch (e) {
       res.status(500).json(err(sanitizeError(e)));
     }

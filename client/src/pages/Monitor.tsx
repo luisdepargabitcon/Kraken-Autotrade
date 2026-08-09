@@ -20,6 +20,7 @@ import {
 import { AuditTradingPanel } from "@/components/audit/AuditTradingPanel";
 import { AuditIdcaPanel } from "@/components/audit/AuditIdcaPanel";
 import { GridMonitorPanel } from "@/components/grid/GridMonitorPanel";
+import { AmaMonitorPanel } from "@/components/ama/AmaMonitorPanel";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
@@ -105,6 +106,10 @@ export default function Monitor() {
                 <Activity className="h-4 w-4" />
                 Grid Isolated
               </TabsTrigger>
+              <TabsTrigger value="ama" className="gap-1" data-testid="tab-ama">
+                <TrendingDown className="h-4 w-4" />
+                AMA
+              </TabsTrigger>
             </TabsList>
           </div>
           
@@ -134,6 +139,10 @@ export default function Monitor() {
 
           <TabsContent value="grid-isolated" className="mt-0">
             <GridMonitorPanel />
+          </TabsContent>
+
+          <TabsContent value="ama" className="mt-0">
+            <AmaMonitorPanel />
           </TabsContent>
         </Tabs>
       </div>

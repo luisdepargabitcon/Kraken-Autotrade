@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RefreshCw, Shield, ShieldAlert, CheckCircle2, XCircle } from "lucide-react";
-import { translateMode, translateCycleState, translateMacroZone, translateDataQuality } from "./amaLabels";
+import { translateMode, translateCycleState, translateMacroZone, translateDataQuality, translateUxTerm } from "./amaLabels";
 
 interface AmaStatus {
   mode: string;
@@ -120,7 +120,7 @@ export function AmaCommandBar({
 
         {/* HWM */}
         <div>
-          <div className="text-xs text-muted-foreground">HWM</div>
+          <div className="text-xs text-muted-foreground" title={translateUxTerm("HWM")}>Máximo de referencia</div>
           <div className="text-lg font-semibold font-mono leading-tight">
             {fmtPrice(marketView?.highWaterMark)}
           </div>

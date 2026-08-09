@@ -195,6 +195,7 @@ vi.mock("../amaRealLimitedService", () => ({
   getAuthorizationStatus: vi.fn().mockResolvedValue({ isActive: false, operationalState: "NOT_READY" }),
   grantAuthorization: vi.fn().mockResolvedValue(undefined),
   revokeAuthorization: vi.fn().mockResolvedValue(undefined),
+  activateReal: vi.fn().mockResolvedValue({ activated: true, mode: "REAL_LIMITED", operationalState: "ARMED" }),
   getGateHistory: vi.fn().mockResolvedValue([]),
   getPendingReconciliations: vi.fn().mockResolvedValue([]),
   pauseOperations: vi.fn().mockResolvedValue(undefined),
