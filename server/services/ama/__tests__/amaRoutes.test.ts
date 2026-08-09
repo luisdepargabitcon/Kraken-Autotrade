@@ -88,6 +88,7 @@ const { mockRuntime } = vi.hoisted(() => ({
 vi.mock("../amaRuntimeService", () => mockRuntime);
 vi.mock("../amaRepository", () => ({
   checkAmaSchemaAvailable: vi.fn().mockResolvedValue(false),
+  getActivePolicy: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("../amaShadowReadinessService", () => ({
   evaluateShadowReadiness: vi.fn().mockResolvedValue({ ready: false, blockers: ["NO_HIGH_WATER_MARK"] }),
@@ -180,6 +181,16 @@ vi.mock("../amaShadowExecutor", () => ({
   listShadowScenarios: vi.fn().mockResolvedValue([]),
   closeShadowScenario: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../amaShadowScenarioRunner", () => ({
+  runShadowScenario: vi.fn().mockResolvedValue({
+    scenarioId: "test-scenario",
+    status: "COMPLETED",
+    ordersCreated: 6,
+    ordersFilled: 6,
+    ordersRejected: 0,
+    totalSimulatedUsd: 10000,
+  }),
+}));
 vi.mock("../amaRealLimitedService", () => ({
   getAuthorizationStatus: vi.fn().mockResolvedValue({ isActive: false, operationalState: "NOT_READY" }),
   grantAuthorization: vi.fn().mockResolvedValue(undefined),
@@ -193,6 +204,34 @@ vi.mock("../amaRealLimitedService", () => ({
 }));
 vi.mock("../amaPortfolioLedger", () => ({
   getLedgerEntries: vi.fn().mockResolvedValue([]),
+}));
+vi.mock("../../../db", () => ({
+  pool: {
+    query: vi.fn().mockResolvedValue({ rows: [] }),
+  },
+  db: {
+    execute: vi.fn().mockResolvedValue({ rows: [] }),
+  },
+}));
+vi.mock("../../../services/MarketDataService", () => ({
+  MarketDataService: {
+    getPrice: vi.fn().mockResolvedValue(0),
+    getCandles: vi.fn().mockResolvedValue([]),
+  },
+}));
+vi.mock("../amaHistoricalDataProvider", () => ({
+  getCandlesForRange: vi.fn().mockResolvedValue({
+    candles: [
+      { time: 1735689600, open: 95000, high: 96000, low: 94000, close: 95000, volume: 1000 },
+      { time: 1735776000, open: 95000, high: 97000, low: 93000, close: 93000, volume: 1200 },
+    ],
+    actualStart: new Date("2025-01-01"),
+    actualEnd: new Date("2025-01-02"),
+    candleCount: 2,
+    datasetHash: "abc123",
+    coveragePct: 100,
+    insufficient: false,
+  }),
 }));
 
 import { registerAmaRoutes } from "../../../routes/ama.routes";

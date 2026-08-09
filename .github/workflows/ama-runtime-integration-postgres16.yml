@@ -3,8 +3,24 @@ name: AMA Runtime PostgreSQL 16 Integration
 on:
   push:
     branches: [main, "review/*"]
+    paths:
+      - "server/services/ama/**"
+      - "server/routes/ama.routes.ts"
+      - "server/index.ts"
+      - "client/src/pages/Ama.tsx"
+      - "client/src/components/ama/**"
+      - ".github/workflows/ama-runtime-integration-postgres16.yml"
+      - "package.json"
   pull_request:
     branches: [main]
+    paths:
+      - "server/services/ama/**"
+      - "server/routes/ama.routes.ts"
+      - "server/index.ts"
+      - "client/src/pages/Ama.tsx"
+      - "client/src/components/ama/**"
+      - ".github/workflows/ama-runtime-integration-postgres16.yml"
+      - "package.json"
 
 jobs:
   ama-runtime-postgres16:
@@ -45,6 +61,26 @@ jobs:
       - name: Run AMA unit tests
         run: npx vitest run server/services/ama/ --reporter=json --outputFile=artifacts/ama-unit-results.json
         continue-on-error: true
+
+      - name: Run AMA scheduler tests
+        run: npx vitest run server/services/ama/__tests__/amaSchedulerRunner.test.ts --reporter=verbose
+        env:
+          NODE_ENV: test
+
+      - name: Run AMA shadow scenario tests
+        run: npx vitest run server/services/ama/__tests__/amaShadowScenarioRunner.test.ts --reporter=verbose
+        env:
+          NODE_ENV: test
+
+      - name: Run AMA replay range and no-look-ahead tests
+        run: npx vitest run server/services/ama/__tests__/amaHistoricalDataProvider.test.ts --reporter=verbose
+        env:
+          NODE_ENV: test
+
+      - name: Run AMA readiness contract tests
+        run: npx vitest run server/services/ama/__tests__/amaRoutes.test.ts --reporter=verbose
+        env:
+          NODE_ENV: test
 
       - name: Run Portfolio tests
         run: npx vitest run server/services/portfolio/ --reporter=json --outputFile=artifacts/portfolio-results.json

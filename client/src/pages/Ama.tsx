@@ -6,6 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   Shield, TrendingDown, Wallet, AlertTriangle, Power,
   Zap, Clock, Database, CheckCircle2, XCircle, HelpCircle,
+  Activity, FileText, Layers, Gauge,
 } from "lucide-react";
 import { AmaTabs } from "@/components/ama/AmaTabs";
 import { AmaModeGuide } from "@/components/ama/AmaModeGuide";
@@ -60,6 +61,33 @@ interface AmaPortfolio {
   realizedPnlUsd: number | null;
 }
 
+interface ReadinessChecks {
+  schema: { ready: boolean; blockerCode?: string };
+  database: { ready: boolean; blockerCode?: string };
+  market: { ready: boolean; blockerCode?: string };
+  hwm: { ready: boolean; hwmValue: number | null; bootstrapStatus: string; dataCoveragePct: number; blockerCode?: string };
+  mandate: { ready: boolean; mandateId: string | null; status: string | null; blockerCode?: string };
+  policy: { ready: boolean; policyId: string | null; status: string | null; blockerCode?: string };
+  budget: { ready: boolean; budgetedUsd: number; freeUsd: number; blockerCode?: string };
+  reconciliation: { ready: boolean; blockerCode?: string };
+  killSwitch: { ready: boolean; active: boolean; blockerCode?: string };
+  gateway: { ready: boolean; blockerCode?: string };
+  scheduler: { ready: boolean; currentMode: string | null; lastTickAt: string | null; tickCount: number; errorCount: number; lastError: string | null; blockerCode?: string };
+  shadowScenario: { ready: boolean; blockers: string[] };
+  shadowLive: { ready: boolean; blockers: string[] };
+  realExecutionGate: { ready: boolean; locked: boolean; message: string; blockerCode?: string };
+}
+
+interface AmaReadiness {
+  hwmBootstrap: { hwm: number | null; bootstrapStatus: string; dataCoveragePct: number };
+  scheduler: { currentMode: string | null; lastTickAt: string | null; tickCount: number; errorCount: number; lastError: string | null };
+  shadowScenarioReady: boolean;
+  shadowScenarioBlockers: string[];
+  shadowLiveReady: boolean;
+  shadowLiveBlockers: string[];
+  checks: ReadinessChecks;
+}
+
 const MODE_COLORS: Record<string, string> = {
   OFF: "bg-gray-500/20 text-gray-400 border-gray-500/30",
   LAB: "bg-purple-500/20 text-purple-400 border-purple-500/30",
@@ -76,19 +104,23 @@ export default function Ama() {
   const [status, setStatus] = useState<AmaStatus | null>(null);
   const [marketView, setMarketView] = useState<AmaMarketView | null>(null);
   const [portfolio, setPortfolio] = useState<AmaPortfolio | null>(null);
+  const [readiness, setReadiness] = useState<AmaReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   async function fetchData() {
     try {
-      const [statusRes, marketRes, portfolioRes] = await Promise.all([
+      const [statusRes, marketRes, portfolioRes, readinessRes] = await Promise.all([
         fetch("/api/ama/status"),
         fetch("/api/ama/market-view"),
         fetch("/api/ama/portfolio"),
+        fetch("/api/ama/readiness"),
       ]);
       setStatus((await statusRes.json()).data);
       setMarketView((await marketRes.json()).data);
       setPortfolio((await portfolioRes.json()).data);
+      const readinessJson = await readinessRes.json();
+      setReadiness(readinessJson.data ?? null);
       setError(null);
     } catch {
       setError("No se pudieron cargar los datos de AMA. Compruebe la conexión o vuelva a intentarlo.");
@@ -131,19 +163,23 @@ export default function Ama() {
   const isShadow = currentMode === "SHADOW_SCENARIO" || currentMode === "SHADOW_LIVE";
   const isReal = currentMode === "REAL_LIMITED" || currentMode === "REAL_FULL";
 
-  const readinessItems: ReadinessItem[] = [
-    { key: "schema", label: "Esquema de base de datos", ready: true },
-    { key: "market", label: "Datos de mercado", ready: !!marketView?.analysisPrice },
-    { key: "history", label: "Histórico suficiente", ready: false, blockerCode: "DATA_COVERAGE_BELOW_MINIMUM" },
-    { key: "hwm", label: "Máximo de referencia (HWM)", ready: !!marketView?.highWaterMark, blockerCode: marketView?.highWaterMark ? undefined : "NO_HIGH_WATER_MARK" },
-    { key: "mandate", label: "Mandato", ready: !!status?.mandateId, blockerCode: status?.mandateId ? undefined : "NO_MANDATE" },
-    { key: "policy", label: "Política", ready: !!status?.activePolicyId, blockerCode: status?.activePolicyId ? undefined : "NO_POLICY" },
-    { key: "portfolio", label: "Cartera", ready: !!portfolio && portfolio.budgetUsd > 0, blockerCode: portfolio?.budgetUsd ? undefined : "NO_BUDGET_ALLOCATED" },
-    { key: "reserve", label: "Reserva", ready: !!portfolio && portfolio.freeUsd > 0 },
-    { key: "reconciliation", label: "Reconciliación", ready: true },
-    { key: "gateway", label: "Gateway", ready: false, blockerCode: "GATEWAY_UNAVAILABLE" },
-    { key: "killswitch", label: "Kill switch", ready: !status?.killSwitchActive, blockerCode: status?.killSwitchActive ? "KILL_SWITCH_ACTIVE" : undefined },
-  ];
+  const readinessItems: ReadinessItem[] = readiness?.checks
+    ? [
+        { key: "schema", label: "Esquema de base de datos", ready: readiness.checks.schema.ready, blockerCode: readiness.checks.schema.blockerCode },
+        { key: "database", label: "Conexión a base de datos", ready: readiness.checks.database.ready, blockerCode: readiness.checks.database.blockerCode },
+        { key: "market", label: "Datos de mercado", ready: readiness.checks.market.ready, blockerCode: readiness.checks.market.blockerCode },
+        { key: "hwm", label: "Máximo de referencia (HWM)", ready: readiness.checks.hwm.ready, blockerCode: readiness.checks.hwm.blockerCode },
+        { key: "mandate", label: "Mandato", ready: readiness.checks.mandate.ready, blockerCode: readiness.checks.mandate.blockerCode },
+        { key: "policy", label: "Política", ready: readiness.checks.policy.ready, blockerCode: readiness.checks.policy.blockerCode },
+        { key: "portfolio", label: "Cartera", ready: readiness.checks.budget.ready, blockerCode: readiness.checks.budget.blockerCode },
+        { key: "reconciliation", label: "Reconciliación", ready: readiness.checks.reconciliation.ready, blockerCode: readiness.checks.reconciliation.blockerCode },
+        { key: "gateway", label: "Gateway", ready: readiness.checks.gateway.ready, blockerCode: readiness.checks.gateway.blockerCode },
+        { key: "killswitch", label: "Kill switch", ready: readiness.checks.killSwitch.ready, blockerCode: readiness.checks.killSwitch.blockerCode },
+        { key: "shadowScenario", label: "Simulación de escenario", ready: readiness.checks.shadowScenario.ready, blockerCode: readiness.checks.shadowScenario.blockers[0] },
+        { key: "shadowLive", label: "Simulación en vivo", ready: readiness.checks.shadowLive.ready, blockerCode: readiness.checks.shadowLive.blockers[0] },
+        { key: "realGate", label: "Puerta de ejecución real", ready: readiness.checks.realExecutionGate.ready, blockerCode: readiness.checks.realExecutionGate.blockerCode },
+      ]
+    : [];
 
   return (
     <div className="container mx-auto p-4 space-y-6 max-w-7xl">
@@ -288,6 +324,188 @@ export default function Ama() {
 
       {/* ─── D. Readiness Panel ─────────────────────────────────────── */}
       <AmaReadinessPanel items={readinessItems} />
+
+      {/* ─── D2. Mandate & Policy Info ──────────────────────────────── */}
+      {readiness?.checks && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <FileText className="h-4 w-4" /> Mandato
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground text-xs">Estado</span>
+                <Badge variant="outline" className="text-xs">
+                  {readiness.checks.mandate.ready ? "Configurado" : "No configurado"}
+                </Badge>
+              </div>
+              {readiness.checks.mandate.mandateId && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">ID</span>
+                  <span className="font-mono text-xs">{readiness.checks.mandate.mandateId.substring(0, 12)}...</span>
+                </div>
+              )}
+              {readiness.checks.mandate.status && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">Estado del mandato</span>
+                  <span className="text-xs">{readiness.checks.mandate.status}</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Layers className="h-4 w-4" /> Política
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground text-xs">Estado</span>
+                <Badge variant="outline" className="text-xs">
+                  {readiness.checks.policy.ready ? "Activa" : "No activa"}
+                </Badge>
+              </div>
+              {readiness.checks.policy.policyId && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">ID</span>
+                  <span className="font-mono text-xs">{readiness.checks.policy.policyId.substring(0, 12)}...</span>
+                </div>
+              )}
+              {readiness.checks.policy.status && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">Estado de política</span>
+                  <span className="text-xs">{readiness.checks.policy.status}</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ─── D3. HWM & Scheduler Info ──────────────────────────────── */}
+      {readiness?.checks && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Gauge className="h-4 w-4" /> Máximo de referencia (HWM)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground text-xs">Bootstrap</span>
+                <Badge variant="outline" className="text-xs">
+                  {readiness.checks.hwm.bootstrapStatus === "COMPLETED" ? "Completado" :
+                   readiness.checks.hwm.bootstrapStatus === "PENDING" ? "Pendiente" :
+                   readiness.checks.hwm.bootstrapStatus === "FAILED" ? "Fallido" :
+                   readiness.checks.hwm.bootstrapStatus}
+                </Badge>
+              </div>
+              {readiness.checks.hwm.hwmValue != null && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">Valor HWM</span>
+                  <span className="font-mono text-xs">${readiness.checks.hwm.hwmValue.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground text-xs">Cobertura de datos</span>
+                <span className="font-mono text-xs">{readiness.checks.hwm.dataCoveragePct.toFixed(1)}%</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Activity className="h-4 w-4" /> Planificador (Scheduler)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground text-xs">Modo actual</span>
+                <Badge variant="outline" className="text-xs">
+                  {readiness.checks.scheduler.currentMode
+                    ? translateMode(readiness.checks.scheduler.currentMode)
+                    : "—"}
+                </Badge>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground text-xs">Ticks ejecutados</span>
+                <span className="font-mono text-xs">{readiness.checks.scheduler.tickCount}</span>
+              </div>
+              {readiness.checks.scheduler.lastTickAt && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">Último tick</span>
+                  <span className="text-xs">{new Date(readiness.checks.scheduler.lastTickAt).toLocaleString("es-ES")}</span>
+                </div>
+              )}
+              {readiness.checks.scheduler.errorCount > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">Errores</span>
+                  <span className="font-mono text-xs text-red-400">{readiness.checks.scheduler.errorCount}</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ─── D4. Shadow Info ────────────────────────────────────────── */}
+      {readiness?.checks && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Shield className="h-4 w-4" /> Estado de simulación (Shadow)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">Simulación de escenario</span>
+                  <Badge className={`text-xs ${readiness.checks.shadowScenario.ready ? "bg-green-500/20 text-green-400" : "bg-amber-500/20 text-amber-400"}`}>
+                    {readiness.checks.shadowScenario.ready ? "Listo" : "No listo"}
+                  </Badge>
+                </div>
+                {readiness.checks.shadowScenario.blockers.length > 0 && (
+                  <div className="text-[11px] text-muted-foreground">
+                    Bloqueantes: {readiness.checks.shadowScenario.blockers.join(", ")}
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-xs">Simulación en vivo</span>
+                  <Badge className={`text-xs ${readiness.checks.shadowLive.ready ? "bg-green-500/20 text-green-400" : "bg-amber-500/20 text-amber-400"}`}>
+                    {readiness.checks.shadowLive.ready ? "Listo" : "No listo"}
+                  </Badge>
+                </div>
+                {readiness.checks.shadowLive.blockers.length > 0 && (
+                  <div className="text-[11px] text-muted-foreground">
+                    Bloqueantes: {readiness.checks.shadowLive.blockers.join(", ")}
+                  </div>
+                )}
+              </div>
+            </div>
+            <Separator className="my-3" />
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground text-xs">Ejecución real</span>
+              <div className="flex items-center gap-2">
+                <Badge className="bg-red-500/20 text-red-400 text-xs">
+                  <XCircle className="h-3 w-3 mr-1" /> Bloqueado
+                </Badge>
+                <span className="text-[11px] text-muted-foreground">
+                  {readiness.checks.realExecutionGate.message}
+                </span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ─── E. Drop Indicator ──────────────────────────────────────── */}
       <AmaDropIndicator
