@@ -717,6 +717,7 @@ export function OperationTab() {
   const [auth, setAuth] = useState<RealAuth | null>(null);
   const [loading, setLoading] = useState(true);
   const [showGrantForm, setShowGrantForm] = useState(false);
+  const [realEnabled, setRealEnabled] = useState<boolean | null>(null);
   const [grantData, setGrantData] = useState({
     authorizedBy: "",
     maxCapitalUsd: "1000",
@@ -736,6 +737,13 @@ export function OperationTab() {
 
   useEffect(() => {
     fetchAuth();
+    fetch("/api/ama/real/readiness")
+      .then((res) => res.json())
+      .then((json) => {
+        const flagOk = json?.data?.checks?.featureFlag?.ok ?? false;
+        setRealEnabled(flagOk);
+      })
+      .catch(() => setRealEnabled(false));
   }, [fetchAuth]);
 
   async function callRealEndpoint(action: string, body?: Record<string, unknown>) {
@@ -787,6 +795,14 @@ export function OperationTab() {
 
   return (
     <div className="space-y-4">
+      {/* Real Disabled Banner */}
+      {realEnabled === false && (
+        <div className="rounded-md bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-300 flex items-center gap-2">
+          <Lock className="h-4 w-4 flex-shrink-0" />
+          <span>Operación real deshabilitada en este entorno. La activación no está disponible.</span>
+        </div>
+      )}
+
       {/* Operational State Card */}
       <Card className={isActive ? "border-green-500/30" : isArmed ? "border-orange-500/30" : isBlocked ? "border-red-500/30" : ""}>
         <CardHeader>
@@ -824,13 +840,18 @@ export function OperationTab() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {/* ACTIVAR REAL_LIMITED — from DISABLED/NOT_READY → ARMED */}
-                  {isDisabled && (
+                  {isDisabled && realEnabled !== false && (
                     <Button
                       size="sm"
                       className="text-xs h-7 bg-orange-500/80 hover:bg-orange-500"
                       onClick={() => setShowGrantForm(!showGrantForm)}
                     >
                       {showGrantForm ? "Cancelar" : "Activar real limitado"}
+                    </Button>
+                  )}
+                  {isDisabled && realEnabled === false && (
+                    <Button size="sm" disabled className="text-xs h-7 opacity-50 cursor-not-allowed">
+                      <Lock className="h-3 w-3 mr-1" /> Activación bloqueada
                     </Button>
                   )}
 
@@ -886,9 +907,15 @@ export function OperationTab() {
           ) : (
             <div className="space-y-3">
               <div className="text-muted-foreground text-sm">No hay autorización activa. El estado es No preparado.</div>
-              <Button size="sm" onClick={() => setShowGrantForm(!showGrantForm)}>
-                {showGrantForm ? "Cancelar" : "Activar real limitado"}
-              </Button>
+              {realEnabled === false ? (
+                <Button size="sm" disabled className="opacity-50 cursor-not-allowed">
+                  <Lock className="h-3 w-3 mr-1" /> Activación bloqueada
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => setShowGrantForm(!showGrantForm)}>
+                  {showGrantForm ? "Cancelar" : "Activar real limitado"}
+                </Button>
+              )}
             </div>
           )}
         </CardContent>
