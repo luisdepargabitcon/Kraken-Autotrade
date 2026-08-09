@@ -7736,3 +7736,69 @@ La geometría del grid no era uniforme: el gap central era distinto del spacing 
 ### Pendientes
 - Rebuild del rango shadow cuando las condiciones de mercado lo permitan (banda suficientemente ancha para 8 niveles con spacing 1.29% y compact range 2.5%)
 - Validación UI real cuando exista un rango activo generado por la nueva geometría
+
+---
+
+## 2026-08-09 — AMA OPERATIONAL FINAL CLOSURE
+
+### Resumen
+Cierre operacional definitivo del sistema AMA: scheduler con tick real, shadow scenario runner con órdenes simuladas, replay con rango histórico estricto, readiness expandido y UI consumiendo datos del backend.
+
+### Scheduler
+- `amaSchedulerRunner.ts`: `executeSchedulerTick()` con advisory lock, runtime tick, market refresh, HWM auto-bootstrap, mode evaluation, SHADOW_LIVE tick execution, error recording y lock release.
+- `server/index.ts`: `startAmaScheduler()` tras `httpServer.listen()`. `SIGTERM`/`SIGINT` llaman `stopAmaScheduler()` + `httpServer.close()`.
+- Guard de superposición: un solo tick ejecuta a la vez.
+- Doble `startScheduler()` produce un solo interval (idempotente).
+- Tests: 5/5 PASS (lock exclusión, double start, stop, tick recording, error recording).
+
+### Shadow Scenario Runner
+- `amaShadowScenarioRunner.ts`: genera dataset sintético, crea tranches, itera precios, llama `executeShadowTick` para tranches elegibles, actualiza totales del escenario.
+- `POST /api/ama/shadow/scenarios/:id/run` endpoint.
+- `amaShadowReadinessService.ts`: SHADOW_SCENARIO no requiere HWM ni mercado live.
+- Tests: 4/4 PASS (ordersCreated>0, ordersFilled>0, totalSimulatedUsd>0, persistencia DB, 0 real exchange calls).
+
+### Historical Data Provider (Replay Range)
+- `amaHistoricalDataProvider.ts`: `getCandlesForRange()` con filtrado estricto start/end, sin look-ahead, deduplicación, sort ascendente, dataset hash SHA-256, coverage %.
+- Replay route retorna metadata: requestedStart/End, actualStart/End, candleCount, datasetHash, coveragePct.
+- Tests: 7/7 PASS (range filtering, no look-ahead, hash determinism, dedup, ascending, invalid range, no data).
+
+### Readiness Endpoint
+- `GET /api/ama/readiness` expandido con checks estructurados: schema, database, market, HWM, mandate, policy, budget, reconciliation, killSwitch, gateway, scheduler, shadowScenario, shadowLive, realExecutionGate.
+
+### UI
+- `Ama.tsx` fetches `/api/ama/readiness` from backend. Sin booleans hardcodeados.
+- Nuevas cards: Mandato, Política, HWM, Scheduler, Shadow — todo en español.
+
+### CI
+- `ama-runtime-integration-postgres16.yml`: path filters para AMA + tests explícitos (scheduler, shadow scenario, replay range, readiness).
+
+### Validaciones
+- `npm run check` (tsc) ✅
+- `npm run build` ✅
+- AMA suite: 951/951 PASS ✅
+- Full suite: 16 baseline failures (non-AMA), 0 new failures ✅
+- `git diff --check` ✅
+
+### Commit y rama
+- Rama: `review/ama-operational-final-closure-20260809`
+- Commit: `ddf4de2` — `fix(ama): cerrar scheduler shadow replay y readiness ui`
+- Push: `origin/review/ama-operational-final-closure-20260809` = `ddf4de2`
+- PR: pendiente de creación via GitHub (sin `gh` CLI ni token en env).
+
+### Excepción histórica
+El wiring previo `787826e → 752d57d` entró mediante merge directo sin PR como excepción histórica. Este cierre sigue el proceso normal con PR.
+
+### Seguridad real
+- AMA_REAL_EXECUTION_ENABLED=false
+- REAL_LIMITED=DISABLED_BY_USER
+- REAL_FULL=LOCKED
+- REAL_ORDERS=0
+- PRODUCTION=NOT_TOUCHED
+
+### Estado
+- AMA_SCHEDULER=OPERATIONAL (demostrado con tests: tick, lock, idempotencia, stop, error recording)
+- SHADOW_SCENARIO=OPERATIONAL (demostrado: orders>0, fills>0, simulatedUsd>0)
+- REPLAY=OPERATIONAL (demostrado: range correcto, no look-ahead, hash determinista)
+- AMA_UI_READINESS_FROM_BACKEND=YES
+- Staging validation pendiente de acceso VPS.
+
