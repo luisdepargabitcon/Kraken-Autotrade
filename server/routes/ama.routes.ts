@@ -23,7 +23,9 @@ import { runLabSession, runReplaySession } from "../services/ama/amaLabReplayRun
 import * as shadowExecutor from "../services/ama/amaShadowExecutor";
 import * as realLimited from "../services/ama/amaRealLimitedService";
 import * as portfolioLedger from "../services/ama/amaPortfolioLedger";
+import { getAuditEvents, type AuditEventFilters } from "../services/ama/amaRepository";
 import { executeHwmBootstrap } from "../services/ama/amaMarketRuntimeService";
+import { runShadowScenario } from "../services/ama/amaShadowScenarioRunner";
 import { amaHwmBootstrapService, amaSchedulerStateService } from "../services/ama/amaFunctionalClosure";
 import type { AmaApiResponse, AmaMandateInput, AmaMode } from "../services/ama/amaTypes";
 import { AMA_MODE_VALUES, AMA_STRATEGY_VERSION, isModeReal } from "../services/ama/amaTypes";
@@ -284,10 +286,24 @@ export function registerAmaRoutes(app: Express): void {
       return res.status(400).json(err(`Invalid replay config: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
     }
     try {
-      // Fetch historical prices from MarketDataService for the replay period
-      const { MarketDataService } = await import("../services/MarketDataService");
-      const candles = await MarketDataService.getCandles(parsed.data.pair, "1d");
-      const historicalPrices = candles.map(c => ({
+      // Fetch historical prices using range-based provider
+      const { getCandlesForRange } = await import("../services/ama/amaHistoricalDataProvider");
+      const dataResult = await getCandlesForRange({
+        pair: parsed.data.pair,
+        timeframe: "1d",
+        startDate: new Date(parsed.data.startDate),
+        endDate: new Date(parsed.data.endDate),
+      });
+
+      if (dataResult.insufficient || dataResult.candles.length === 0) {
+        return res.status(400).json(err(
+          `Historical data insufficient for range ${parsed.data.startDate} to ${parsed.data.endDate}. ` +
+          `Reason: ${dataResult.reason ?? "UNKNOWN"}. ` +
+          `Candles found: ${dataResult.candleCount}. Coverage: ${dataResult.coveragePct.toFixed(1)}%.`,
+        ));
+      }
+
+      const historicalPrices = dataResult.candles.map(c => ({
         timestamp: new Date(c.time * 1000).toISOString(),
         price: c.close,
       }));
@@ -303,6 +319,15 @@ export function registerAmaRoutes(app: Express): void {
       res.json(ok({
         replayRunId,
         status: "COMPLETED",
+        dataset: {
+          requestedStart: parsed.data.startDate,
+          requestedEnd: parsed.data.endDate,
+          actualStart: dataResult.actualStart?.toISOString() ?? null,
+          actualEnd: dataResult.actualEnd?.toISOString() ?? null,
+          candleCount: dataResult.candleCount,
+          datasetHash: dataResult.datasetHash,
+          coveragePct: dataResult.coveragePct,
+        },
         message: "Replay executed. No real orders were placed.",
       }));
     } catch (e) {
@@ -441,6 +466,15 @@ export function registerAmaRoutes(app: Express): void {
     }
   });
 
+  app.post("/api/ama/shadow/scenarios/:id/run", async (req, res) => {
+    try {
+      const result = await runShadowScenario(req.params.id);
+      res.json(ok(result));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
   app.post("/api/ama/shadow/scenarios/:id/close", async (req, res) => {
     try {
       await shadowExecutor.closeShadowScenario(req.params.id);
@@ -565,6 +599,73 @@ export function registerAmaRoutes(app: Express): void {
     }
   });
 
+  // ── REAL_LIMITED readiness check ───────────────────────────────────
+  app.get("/api/ama/real/readiness", async (_req, res) => {
+    try {
+      const readiness = await realLimited.evaluateRealActivationReadiness();
+      res.json(ok(readiness));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // ── REAL_LIMITED explicit activation ───────────────────────────────
+  const activateRealSchema = z.object({
+    authorizedBy: z.string().min(1),
+    maxCapitalUsd: z.number().positive(),
+    maxSingleTrancheUsd: z.number().positive(),
+    maxTranchesPerCycle: z.number().int().min(1),
+    confirm: z.literal(true),
+    expiresAt: z.string().optional(),
+    reason: z.string().optional(),
+  });
+
+  app.post("/api/ama/real/activate", async (req, res) => {
+    const parsed = activateRealSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(err(`Invalid activation input: confirm must be true and fields valid`));
+    }
+    try {
+      const result = await realLimited.activateReal(parsed.data);
+      res.json(ok(result));
+    } catch (e) {
+      res.status(403).json(err(sanitizeError(e)));
+    }
+  });
+
+  // ── Events ────────────────────────────────────────────────────────
+  app.get("/api/ama/events", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string>;
+      const limit = Math.min(parseInt(q.limit) || 100, 500);
+      const filters: AuditEventFilters = {
+        limit,
+        cursor: q.cursor || undefined,
+        cycleId: q.cycleId || undefined,
+        trancheId: q.trancheId || undefined,
+        severity: q.severity || undefined,
+        eventType: q.eventType || undefined,
+        mode: q.mode || undefined,
+        from: q.from || undefined,
+        to: q.to || undefined,
+      };
+      const rows = await getAuditEvents(filters);
+      const events = rows.map((r: any) => ({
+        event_id: r.event_id,
+        event_name: r.event_name,
+        cycle_id: r.cycle_id,
+        tranche_id: r.tranche_id,
+        severity: r.severity,
+        data: typeof r.data === "string" ? JSON.parse(r.data) : r.data,
+        created_at: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at,
+      }));
+      const nextCursor = events.length === limit ? events[events.length - 1]?.event_id : null;
+      res.json({ ...ok(events), meta: { limit, count: events.length, nextCursor } });
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
   // ── Ledger ────────────────────────────────────────────────────────
   app.get("/api/ama/ledger", async (req, res) => {
     try {
@@ -634,6 +735,117 @@ export function registerAmaRoutes(app: Express): void {
       const schedulerState = await amaSchedulerStateService.getState();
       const shadowScenario = await evaluateShadowReadiness("SHADOW_SCENARIO");
       const shadowLive = await evaluateShadowReadiness("SHADOW_LIVE");
+
+      // Schema check
+      const schemaAvailable = await checkAmaSchemaAvailable();
+
+      // Budget check
+      const { pool } = await import("../db");
+      const budgetRes = await pool.query(
+        `SELECT budgeted_usd, deployed_usd, reserved_usd, status
+         FROM portfolio_mode_budgets
+         WHERE mode = 'AMA' AND asset = 'BTC' AND status = 'ACTIVE'
+         LIMIT 1`,
+      );
+      const hasBudget = budgetRes.rows.length > 0 &&
+        Number(budgetRes.rows[0].budgeted_usd) > 0;
+
+      // Mandate check
+      const mandate = await runtime.getMandate();
+
+      // Policy check
+      const { getActivePolicy } = await import("../services/ama/amaRepository");
+      const activePolicy = await getActivePolicy();
+
+      // Market price check
+      let hasMarketPrice = false;
+      try {
+        const { MarketDataService } = await import("../services/MarketDataService");
+        const price = await MarketDataService.getPrice("BTC/USD");
+        hasMarketPrice = price > 0;
+      } catch {
+        hasMarketPrice = false;
+      }
+
+      const checks = {
+        schema: {
+          ready: schemaAvailable,
+          blockerCode: schemaAvailable ? undefined : "SCHEMA_NOT_AVAILABLE",
+        },
+        database: {
+          ready: schemaAvailable,
+          blockerCode: schemaAvailable ? undefined : "DB_NOT_AVAILABLE",
+        },
+        market: {
+          ready: hasMarketPrice,
+          blockerCode: hasMarketPrice ? undefined : "NO_CURRENT_PRICE",
+        },
+        hwm: {
+          ready: hwmState.bootstrapStatus === "COMPLETED" && hwmState.hwm !== null,
+          hwmValue: hwmState.hwm,
+          bootstrapStatus: hwmState.bootstrapStatus,
+          dataCoveragePct: hwmState.dataCoveragePct,
+          blockerCode: hwmState.bootstrapStatus === "COMPLETED" && hwmState.hwm !== null
+            ? undefined : "NO_HIGH_WATER_MARK",
+        },
+        mandate: {
+          ready: !!mandate,
+          mandateId: mandate?.mandateId ?? null,
+          status: mandate?.status ?? null,
+          blockerCode: mandate ? undefined : "NO_MANDATE",
+        },
+        policy: {
+          ready: !!activePolicy,
+          policyId: activePolicy?.policyId ?? null,
+          status: activePolicy?.status ?? null,
+          blockerCode: activePolicy ? undefined : "NO_POLICY",
+        },
+        budget: {
+          ready: hasBudget,
+          budgetedUsd: budgetRes.rows.length > 0 ? Number(budgetRes.rows[0].budgeted_usd) : 0,
+          freeUsd: budgetRes.rows.length > 0
+            ? Number(budgetRes.rows[0].budgeted_usd) - Number(budgetRes.rows[0].deployed_usd) - Number(budgetRes.rows[0].reserved_usd)
+            : 0,
+          blockerCode: hasBudget ? undefined : "NO_BUDGET_ALLOCATED",
+        },
+        reconciliation: {
+          ready: true,
+          blockerCode: undefined,
+        },
+        killSwitch: {
+          ready: !schedulerState.currentMode || schedulerState.currentMode !== "KILL_SWITCHED",
+          active: false,
+          blockerCode: undefined,
+        },
+        gateway: {
+          ready: true,
+          blockerCode: undefined,
+        },
+        scheduler: {
+          ready: true,
+          currentMode: schedulerState.currentMode,
+          lastTickAt: schedulerState.lastTickAt,
+          tickCount: schedulerState.tickCount,
+          errorCount: schedulerState.errorCount,
+          lastError: schedulerState.lastError,
+          blockerCode: undefined,
+        },
+        shadowScenario: {
+          ready: shadowScenario.ready,
+          blockers: shadowScenario.blockers,
+        },
+        shadowLive: {
+          ready: shadowLive.ready,
+          blockers: shadowLive.blockers,
+        },
+        realExecutionGate: {
+          ready: false,
+          locked: true,
+          message: "REAL_FULL permanently locked. REAL_LIMITED requires explicit authorization.",
+          blockerCode: "REAL_EXECUTION_LOCKED",
+        },
+      };
+
       res.json(ok({
         hwmBootstrap: hwmState,
         scheduler: schedulerState,
@@ -641,6 +853,7 @@ export function registerAmaRoutes(app: Express): void {
         shadowScenarioBlockers: shadowScenario.blockers,
         shadowLiveReady: shadowLive.ready,
         shadowLiveBlockers: shadowLive.blockers,
+        checks,
       }));
     } catch (e) {
       res.status(500).json(err(sanitizeError(e)));

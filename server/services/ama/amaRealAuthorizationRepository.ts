@@ -95,6 +95,40 @@ export async function revokeRealAuthorization(
   );
 }
 
+export async function restoreRealAuthorizationSnapshot(
+  snapshot: RealAuthorizationRow,
+): Promise<void> {
+  await pool.query(
+    `UPDATE ama_real_authorization
+     SET authorized_mode = $1,
+         authorized_by = $2,
+         authorized_at = $3,
+         revoked_by = $4,
+         revoked_at = $5,
+         is_active = $6,
+         max_capital_usd = $7,
+         max_single_tranche_usd = $8,
+         max_tranches_per_cycle = $9,
+         expires_at = $10,
+         reason = $11,
+         updated_at = NOW()
+     WHERE id = 1`,
+    [
+      snapshot.authorizedMode,
+      snapshot.authorizedBy,
+      snapshot.authorizedAt,
+      snapshot.revokedBy,
+      snapshot.revokedAt,
+      snapshot.isActive,
+      snapshot.maxCapitalUsd,
+      snapshot.maxSingleTrancheUsd,
+      snapshot.maxTranchesPerCycle,
+      snapshot.expiresAt,
+      snapshot.reason,
+    ],
+  );
+}
+
 export async function isRealLimitedAuthorized(): Promise<boolean> {
   const result = await pool.query(
     `SELECT is_active, expires_at FROM ama_real_authorization WHERE id = 1`,

@@ -250,23 +250,26 @@ export function createAuditEvent(
 export function validateModeTransition(
   currentMode: AmaMode,
   newMode: AmaMode,
+  authorized: boolean = false,
 ): { valid: boolean; reason: string } {
   if (currentMode === newMode) {
     return { valid: false, reason: "MODE_SAME_AS_CURRENT" };
   }
 
-  if (isModeReal(newMode)) {
+  // REAL_LIMITED transition is gated at the service layer (setMode checks authorization).
+  // The domain function rejects it unless the caller explicitly passes authorized=true.
+  if (newMode === "REAL_LIMITED" && !authorized) {
     return { valid: false, reason: "REAL_MODE_REQUIRES_AUTHORIZATION" };
+  }
+
+  // REAL_FULL is permanently locked — even from REAL_LIMITED
+  if (newMode === "REAL_FULL") {
+    return { valid: false, reason: "REAL_FULL_PERMANENTLY_LOCKED" };
   }
 
   // Cannot go from REAL back to non-REAL without explicit kill switch
   if (isModeReal(currentMode) && !isModeReal(newMode)) {
     return { valid: false, reason: "REAL_MODE_EXIT_REQUIRES_KILL_SWITCH" };
-  }
-
-  // REAL_FULL is always locked — even from REAL_LIMITED
-  if (newMode === "REAL_FULL") {
-    return { valid: false, reason: "REAL_FULL_PERMANENTLY_LOCKED" };
   }
 
   return { valid: true, reason: "OK" };

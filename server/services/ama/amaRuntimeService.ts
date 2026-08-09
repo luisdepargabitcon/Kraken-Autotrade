@@ -143,15 +143,16 @@ export async function setMode(
   }
 
   // REAL_LIMITED requires authorization
+  let authorized = false;
   if (mode === "REAL_LIMITED") {
-    const authorized = await isRealLimitedAuthorized();
+    authorized = await isRealLimitedAuthorized();
     if (!authorized) {
       throw new Error(`[AMA] REAL_LIMITED requires explicit authorization. Gate locked.`);
     }
   }
 
   // Validate transition
-  const transition = validateModeTransition(cache.mode, mode);
+  const transition = validateModeTransition(cache.mode, mode, authorized);
   if (!transition.valid) {
     throw new Error(`[AMA] Mode transition blocked: ${transition.reason}`);
   }

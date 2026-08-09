@@ -5,11 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Layers, FlaskConical, RotateCcw, Ghost, ShieldCheck, BookOpen, Eye, AlertTriangle, Lock } from "lucide-react";
+import { FlaskConical, RotateCcw, Ghost, ShieldCheck, Eye, AlertTriangle, Lock } from "lucide-react";
 import {
   translateCycleState, translateTrancheType, translateTrancheStatus, translateSleeve,
   translateLabStatus, translateReplayStatus, translateShadowStatus, translateRealState,
-  MODE_LABELS, REAL_STATE_LABELS,
+  MODE_LABELS,
 } from "./amaLabels";
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ function fmtDate(s: string | null | undefined): string {
 
 // ─── Cycles Tab ──────────────────────────────────────────────────────
 
-function CyclesTab() {
+export function CyclesTab() {
   const [cycles, setCycles] = useState<AmaCycle[]>([]);
   const [selectedCycle, setSelectedCycle] = useState<string | null>(null);
   const [tranches, setTranches] = useState<AmaTranche[]>([]);
@@ -275,7 +275,7 @@ function CyclesTab() {
 
 // ─── Lab Tab ─────────────────────────────────────────────────────────
 
-function LabTab() {
+export function LabTab() {
   const [sessions, setSessions] = useState<LabSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPreset, setSelectedPreset] = useState(0);
@@ -412,7 +412,7 @@ function LabTab() {
 
 // ─── Replay Tab ──────────────────────────────────────────────────────
 
-function ReplayTab() {
+export function ReplayTab() {
   const [runs, setRuns] = useState<ReplayRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPreset, setSelectedPreset] = useState(0);
@@ -546,12 +546,11 @@ function ReplayTab() {
 
 // ─── Shadow Tab ──────────────────────────────────────────────────────
 
-function ShadowTab() {
+export function ShadowScenarioTab() {
   const [scenarios, setScenarios] = useState<ShadowScenario[]>([]);
   const [loading, setLoading] = useState(true);
   const [scenarioName, setScenarioName] = useState("");
   const [scenarioId, setScenarioId] = useState("");
-  const [shadowSubtab, setShadowSubtab] = useState<string>("scenario");
 
   const fetchScenarios = useCallback(() => {
     api<ShadowScenario[]>("/api/ama/shadow/scenarios").then((r) => {
@@ -589,11 +588,109 @@ function ShadowTab() {
     fetchScenarios();
   }
 
-  if (loading) return <div className="text-muted-foreground text-sm">Cargando simulación...</div>;
+  async function runScenario(id: string) {
+    await api(`/api/ama/shadow/scenarios/${id}/run`, { method: "POST" });
+    fetchScenarios();
+  }
+
+  if (loading) return <div className="text-muted-foreground text-sm py-8 text-center">Cargando simulación...</div>;
 
   return (
     <div className="space-y-4">
-      {/* Sub-tabs for Shadow */}
+      <Card className="border-yellow-500/20 bg-yellow-500/5">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Ghost className="h-4 w-4 text-yellow-400" /> Simulación de escenario
+          </CardTitle>
+          <p className="text-[11px] text-muted-foreground">
+            Ejecuta todo el sistema real de AMA —base de datos, ciclos, cartera, tramos, órdenes simuladas, ejecuciones, reinicios y auditoría— pero con un mercado controlado.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <Label className="text-xs">ID</Label>
+              <Input value={scenarioId} onChange={(e) => setScenarioId(e.target.value)} placeholder="shadow-btc-drop" className="w-48" />
+            </div>
+            <div>
+              <Label className="text-xs">Nombre</Label>
+              <Input value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Caída BTC 40%" className="w-48" />
+            </div>
+            <Button size="sm" onClick={createScenario} disabled={!scenarioName || !scenarioId} className="bg-yellow-500/80 hover:bg-yellow-500">Crear escenario</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {scenarios.length === 0 ? (
+        <div className="text-center text-muted-foreground text-sm py-8">
+          No hay escenarios. Crea uno para simular órdenes.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {scenarios.map((s) => (
+            <Card key={s.scenarioId}>
+              <CardContent className="pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-sm">{s.name}</span>
+                  <Badge variant="outline" className="text-xs">{translateShadowStatus(s.status)}</Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div><span className="text-muted-foreground">Órdenes: </span>{s.totalOrders}</div>
+                  <div><span className="text-muted-foreground">Ejecuciones: </span>{s.totalFilled}</div>
+                  <div><span className="text-muted-foreground">USD sim: </span>{fmtUsd(s.totalSimulatedUsd)}</div>
+                  <div><span className="text-muted-foreground">Par: </span>{s.pair}</div>
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">{fmtDate(s.createdAt)}</span>
+                  {s.status === "ACTIVE" && (
+                    <div className="flex gap-1">
+                      <Button size="sm" variant="outline" className="text-xs h-6" onClick={() => runScenario(s.scenarioId)}>
+                        Ejecutar
+                      </Button>
+                      <Button size="sm" variant="outline" className="text-xs h-6" onClick={() => closeScenario(s.scenarioId)}>
+                        Cerrar
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ShadowLiveTab() {
+  return (
+    <div className="space-y-4">
+      <Card className="border-amber-500/20 bg-amber-500/5">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Eye className="h-4 w-4 text-amber-400" /> Simulación en vivo
+          </CardTitle>
+          <p className="text-[11px] text-muted-foreground">
+            AMA observa el mercado BTC real actual en Kraken y decide en tiempo real, pero las órdenes se simulan.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/20">
+            <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
+            <div className="text-xs text-muted-foreground">
+              En este modo AMA vigila el mercado real y genera órdenes simuladas. No se usa dinero real.
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export function ShadowTab() {
+  const [shadowSubtab, setShadowSubtab] = useState<string>("scenario");
+  return (
+    <div className="space-y-4">
       <Tabs value={shadowSubtab} onValueChange={setShadowSubtab}>
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="scenario" className="text-xs">
@@ -603,88 +700,11 @@ function ShadowTab() {
             <Eye className="h-3.5 w-3.5 mr-1" /> En vivo
           </TabsTrigger>
         </TabsList>
-
-        {/* Scenario sub-tab */}
-        <TabsContent value="scenario" className="mt-4 space-y-4">
-          <Card className="border-yellow-500/20 bg-yellow-500/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Ghost className="h-4 w-4 text-yellow-400" /> Simulación de escenario
-              </CardTitle>
-              <p className="text-[11px] text-muted-foreground">
-                Ejecuta todo el sistema real de AMA —base de datos, ciclos, cartera, tramos, órdenes simuladas, ejecuciones, reinicios y auditoría— pero con un mercado controlado.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-3 items-end">
-                <div>
-                  <Label className="text-xs">ID</Label>
-                  <Input value={scenarioId} onChange={(e) => setScenarioId(e.target.value)} placeholder="shadow-btc-drop" className="w-48" />
-                </div>
-                <div>
-                  <Label className="text-xs">Nombre</Label>
-                  <Input value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Caída BTC 40%" className="w-48" />
-                </div>
-                <Button size="sm" onClick={createScenario} disabled={!scenarioName || !scenarioId} className="bg-yellow-500/80 hover:bg-yellow-500">Crear escenario</Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {scenarios.length === 0 ? (
-            <div className="text-center text-muted-foreground text-sm py-8">
-              No hay escenarios. Crea uno para simular órdenes.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {scenarios.map((s) => (
-                <Card key={s.scenarioId}>
-                  <CardContent className="pt-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium text-sm">{s.name}</span>
-                      <Badge variant="outline" className="text-xs">{translateShadowStatus(s.status)}</Badge>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div><span className="text-muted-foreground">Órdenes: </span>{s.totalOrders}</div>
-                      <div><span className="text-muted-foreground">Ejecuciones: </span>{s.totalFilled}</div>
-                      <div><span className="text-muted-foreground">USD sim: </span>{fmtUsd(s.totalSimulatedUsd)}</div>
-                      <div><span className="text-muted-foreground">Par: </span>{s.pair}</div>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">{fmtDate(s.createdAt)}</span>
-                      {s.status === "ACTIVE" && (
-                        <Button size="sm" variant="outline" className="text-xs h-6" onClick={() => closeScenario(s.scenarioId)}>
-                          Cerrar
-                        </Button>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+        <TabsContent value="scenario" className="mt-4">
+          <ShadowScenarioTab />
         </TabsContent>
-
-        {/* Live sub-tab */}
-        <TabsContent value="live" className="mt-4 space-y-4">
-          <Card className="border-amber-500/20 bg-amber-500/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Eye className="h-4 w-4 text-amber-400" /> Simulación en vivo
-              </CardTitle>
-              <p className="text-[11px] text-muted-foreground">
-                AMA observa el mercado BTC real actual en Kraken y decide en tiempo real, pero las órdenes se simulan.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/20">
-                <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
-                <div className="text-xs text-muted-foreground">
-                  Para activar la simulación en vivo, cambia al modo <strong>Simulación en vivo</strong> en el selector de modo superior.
-                  AMA empezará a observar el mercado y generará órdenes simuladas que aparecerán aquí.
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        <TabsContent value="live" className="mt-4">
+          <ShadowLiveTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -693,10 +713,11 @@ function ShadowTab() {
 
 // ─── Real Auth Tab ───────────────────────────────────────────────────
 
-function RealAuthTab() {
+export function OperationTab() {
   const [auth, setAuth] = useState<RealAuth | null>(null);
   const [loading, setLoading] = useState(true);
   const [showGrantForm, setShowGrantForm] = useState(false);
+  const [realEnabled, setRealEnabled] = useState<boolean | null>(null);
   const [grantData, setGrantData] = useState({
     authorizedBy: "",
     maxCapitalUsd: "1000",
@@ -705,6 +726,8 @@ function RealAuthTab() {
     expiresAt: "",
     reason: "",
   });
+  const [confirmed, setConfirmed] = useState(false);
+  const [activationError, setActivationError] = useState<string | null>(null);
 
   const fetchAuth = useCallback(async () => {
     const r = await api<RealAuth>("/api/ama/real/authorization");
@@ -714,6 +737,13 @@ function RealAuthTab() {
 
   useEffect(() => {
     fetchAuth();
+    fetch("/api/ama/real/readiness")
+      .then((res) => res.json())
+      .then((json) => {
+        const flagOk = json?.data?.checks?.featureFlag?.ok ?? false;
+        setRealEnabled(flagOk);
+      })
+      .catch(() => setRealEnabled(false));
   }, [fetchAuth]);
 
   async function callRealEndpoint(action: string, body?: Record<string, unknown>) {
@@ -726,15 +756,32 @@ function RealAuthTab() {
   }
 
   async function grant() {
-    await callRealEndpoint("authorization/grant", {
-      ...grantData,
-      maxCapitalUsd: Number(grantData.maxCapitalUsd),
-      maxSingleTrancheUsd: Number(grantData.maxSingleTrancheUsd),
-      maxTranchesPerCycle: Number(grantData.maxTranchesPerCycle),
-      expiresAt: grantData.expiresAt || undefined,
-      reason: grantData.reason || undefined,
+    setActivationError(null);
+    if (!confirmed) {
+      setActivationError("Debes confirmar que entiendes el riesgo y que se activará modo Real limitado.");
+      return;
+    }
+    const res = await fetch("/api/ama/real/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...grantData,
+        maxCapitalUsd: Number(grantData.maxCapitalUsd),
+        maxSingleTrancheUsd: Number(grantData.maxSingleTrancheUsd),
+        maxTranchesPerCycle: Number(grantData.maxTranchesPerCycle),
+        confirm: true,
+        expiresAt: grantData.expiresAt || undefined,
+        reason: grantData.reason || "Manual activation",
+      }),
     });
+    const json = await res.json();
+    if (!json.success) {
+      setActivationError(json.error || "No se pudo activar Real limitado.");
+      return;
+    }
     setShowGrantForm(false);
+    setConfirmed(false);
+    await fetchAuth();
   }
 
   if (loading) return <div className="text-muted-foreground text-sm">Cargando autorización...</div>;
@@ -748,6 +795,14 @@ function RealAuthTab() {
 
   return (
     <div className="space-y-4">
+      {/* Real Disabled Banner */}
+      {realEnabled === false && (
+        <div className="rounded-md bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-300 flex items-center gap-2">
+          <Lock className="h-4 w-4 flex-shrink-0" />
+          <span>Operación real deshabilitada en este entorno. La activación no está disponible.</span>
+        </div>
+      )}
+
       {/* Operational State Card */}
       <Card className={isActive ? "border-green-500/30" : isArmed ? "border-orange-500/30" : isBlocked ? "border-red-500/30" : ""}>
         <CardHeader>
@@ -785,13 +840,18 @@ function RealAuthTab() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {/* ACTIVAR REAL_LIMITED — from DISABLED/NOT_READY → ARMED */}
-                  {isDisabled && (
+                  {isDisabled && realEnabled !== false && (
                     <Button
                       size="sm"
                       className="text-xs h-7 bg-orange-500/80 hover:bg-orange-500"
                       onClick={() => setShowGrantForm(!showGrantForm)}
                     >
                       {showGrantForm ? "Cancelar" : "Activar real limitado"}
+                    </Button>
+                  )}
+                  {isDisabled && realEnabled === false && (
+                    <Button size="sm" disabled className="text-xs h-7 opacity-50 cursor-not-allowed">
+                      <Lock className="h-3 w-3 mr-1" /> Activación bloqueada
                     </Button>
                   )}
 
@@ -847,9 +907,15 @@ function RealAuthTab() {
           ) : (
             <div className="space-y-3">
               <div className="text-muted-foreground text-sm">No hay autorización activa. El estado es No preparado.</div>
-              <Button size="sm" onClick={() => setShowGrantForm(!showGrantForm)}>
-                {showGrantForm ? "Cancelar" : "Activar real limitado"}
-              </Button>
+              {realEnabled === false ? (
+                <Button size="sm" disabled className="opacity-50 cursor-not-allowed">
+                  <Lock className="h-3 w-3 mr-1" /> Activación bloqueada
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => setShowGrantForm(!showGrantForm)}>
+                  {showGrantForm ? "Cancelar" : "Activar real limitado"}
+                </Button>
+              )}
             </div>
           )}
         </CardContent>
@@ -888,8 +954,23 @@ function RealAuthTab() {
                 <Input value={grantData.reason} onChange={(e) => setGrantData({ ...grantData, reason: e.target.value })} placeholder="Testing" />
               </div>
             </div>
-            <Button size="sm" className="mt-3" onClick={grant} disabled={!grantData.authorizedBy}>
-              Confirmar autorización → Armado
+            <div className="flex items-start gap-2 mt-3">
+              <input
+                id="confirm-activate"
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                className="mt-0.5"
+              />
+              <label htmlFor="confirm-activate" className="text-xs text-muted-foreground cursor-pointer">
+                Entiendo que esto activa el modo <strong>Real limitado</strong>. No se crearán órdenes hasta que el sistema esté armado y haya una señal válida.
+              </label>
+            </div>
+            {activationError && (
+              <div className="text-xs text-red-400 mt-2">{activationError}</div>
+            )}
+            <Button size="sm" className="mt-3" onClick={grant} disabled={!grantData.authorizedBy || !confirmed}>
+              Confirmar activación → Armado
             </Button>
           </CardContent>
         </Card>
@@ -909,7 +990,7 @@ function RealAuthTab() {
 
 // ─── Ledger Tab ──────────────────────────────────────────────────────
 
-function LedgerTab() {
+export function LedgerTab() {
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -969,50 +1050,5 @@ function LedgerTab() {
   );
 }
 
-// ─── Main AmaTabs Component ──────────────────────────────────────────
-
-export function AmaTabs() {
-  return (
-    <Tabs defaultValue="cycles" className="w-full">
-      <TabsList className="grid w-full grid-cols-3 md:grid-cols-6">
-        <TabsTrigger value="cycles" className="text-xs">
-          <Layers className="h-3.5 w-3.5 mr-1" /> Ciclos
-        </TabsTrigger>
-        <TabsTrigger value="lab" className="text-xs">
-          <FlaskConical className="h-3.5 w-3.5 mr-1" /> Laboratorio
-        </TabsTrigger>
-        <TabsTrigger value="replay" className="text-xs">
-          <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reproducción
-        </TabsTrigger>
-        <TabsTrigger value="shadow" className="text-xs">
-          <Ghost className="h-3.5 w-3.5 mr-1" /> Simulación
-        </TabsTrigger>
-        <TabsTrigger value="real" className="text-xs">
-          <ShieldCheck className="h-3.5 w-3.5 mr-1" /> Operación
-        </TabsTrigger>
-        <TabsTrigger value="ledger" className="text-xs">
-          <BookOpen className="h-3.5 w-3.5 mr-1" /> Ledger
-        </TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="cycles" className="mt-4">
-        <CyclesTab />
-      </TabsContent>
-      <TabsContent value="lab" className="mt-4">
-        <LabTab />
-      </TabsContent>
-      <TabsContent value="replay" className="mt-4">
-        <ReplayTab />
-      </TabsContent>
-      <TabsContent value="shadow" className="mt-4">
-        <ShadowTab />
-      </TabsContent>
-      <TabsContent value="real" className="mt-4">
-        <RealAuthTab />
-      </TabsContent>
-      <TabsContent value="ledger" className="mt-4">
-        <LedgerTab />
-      </TabsContent>
-    </Tabs>
-  );
-}
+// Individual tab components are exported above.
+// Ama.tsx handles tab switching via AmaPrimaryNav.

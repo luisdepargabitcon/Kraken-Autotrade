@@ -5,6 +5,7 @@ import { createServer } from "http";
 import { logStreamService } from "./services/logStreamService";
 import { log } from "./utils/logger";
 import { MarketDataService } from "./services/MarketDataService";
+import { startScheduler as startAmaScheduler, stopScheduler as stopAmaScheduler } from "./services/ama/amaSchedulerRunner";
 import fs from "fs";
 import path from "path";
 
@@ -110,6 +111,22 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      // Start AMA scheduler after server is listening
+      startAmaScheduler();
     },
   );
+
+  // Graceful shutdown — stop AMA scheduler cleanly
+  function gracefulShutdown(signal: string) {
+    console.log(`[shutdown] ${signal} received, stopping AMA scheduler...`);
+    stopAmaScheduler();
+    httpServer.close(() => {
+      console.log("[shutdown] HTTP server closed");
+      process.exit(0);
+    });
+    // Force exit after 10s if close hangs
+    setTimeout(() => process.exit(1), 10_000);
+  }
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 })();
