@@ -162,6 +162,12 @@ const REGIME_ALIASES: Record<string, string> = {
   range: "normal_lateral",
   sideways: "normal_lateral",
   lateral: "normal_lateral",
+  // "moderate" is emitted by gridBandAdapter.assessGridSuitability as the
+  // fallback for suitableForGrid=true conditions outside the strict 2-10%
+  // bandwidth / 0.5-3% ATR "ranging" window. It is an operable regime and
+  // must map to normal_lateral, otherwise every "moderate" tick is rejected
+  // with MARKET_REGIME_UNKNOWN before generateProfessionalGridLevels runs.
+  moderate: "normal_lateral",
   low_vol: "low_volatility",
   lowvol: "low_volatility",
   high_vol: "high_volatility",
