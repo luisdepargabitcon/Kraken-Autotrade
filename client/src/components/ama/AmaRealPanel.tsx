@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import {
   Activity, ShieldCheck, TrendingDown, Layers, List, BookOpen, History, Terminal, Lock,
@@ -9,24 +8,16 @@ import {
 } from "lucide-react";
 import { OperationTab, CyclesTab, LedgerTab } from "./AmaTabs";
 import { AmaEventsPanel } from "./AmaEventsPanel";
+import { AmaHelpTab } from "./AmaHelpTab";
+import type { AmaRealSubtab } from "./AmaContextualNav";
 import {
-  REAL_SUBTAB_LABELS, translateRealState, translateMode,
+  translateRealState, translateMode,
   translateRealAuthorizedMode, translateTrancheType, translateTrancheStatus,
 } from "./amaLabels";
 
-export type AmaRealSubtab =
-  | "status"
-  | "activation"
-  | "strategy"
-  | "cycle"
-  | "orders"
-  | "movements"
-  | "history"
-  | "events"
-  | "security";
-
 interface AmaRealPanelProps {
   currentMode: string;
+  subtab: AmaRealSubtab;
 }
 
 interface RealAuth {
@@ -68,59 +59,37 @@ function fmtDate(s: string | null | undefined): string {
   return new Date(s).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
 }
 
-export function AmaRealPanel({ currentMode }: AmaRealPanelProps) {
-  const [subtab, setSubtab] = useState<AmaRealSubtab>("status");
-
-  return (
-    <Tabs value={subtab} onValueChange={(v) => setSubtab(v as AmaRealSubtab)} className="space-y-4">
-      <TabsList className="flex flex-wrap h-auto min-h-10 gap-1">
-        {([
-          ["status", <Activity key="i1" className="h-3.5 w-3.5" />],
-          ["activation", <ShieldCheck key="i2" className="h-3.5 w-3.5" />],
-          ["strategy", <TrendingDown key="i3" className="h-3.5 w-3.5" />],
-          ["cycle", <Layers key="i4" className="h-3.5 w-3.5" />],
-          ["orders", <List key="i5" className="h-3.5 w-3.5" />],
-          ["movements", <BookOpen key="i6" className="h-3.5 w-3.5" />],
-          ["history", <History key="i7" className="h-3.5 w-3.5" />],
-          ["events", <Terminal key="i8" className="h-3.5 w-3.5" />],
-          ["security", <Lock key="i9" className="h-3.5 w-3.5" />],
-        ] as [AmaRealSubtab, React.ReactNode][]).map(([key, icon]) => (
-          <TabsTrigger key={key} value={key} className="text-xs gap-1">
-            {icon}
-            {REAL_SUBTAB_LABELS[key]}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-
-      <TabsContent value="status" className="mt-2">
-        <RealStatusPanel currentMode={currentMode} />
-      </TabsContent>
-      <TabsContent value="activation" className="mt-2">
-        <OperationTab />
-      </TabsContent>
-      <TabsContent value="strategy" className="mt-2">
-        <RealStrategyPanel />
-      </TabsContent>
-      <TabsContent value="cycle" className="mt-2">
-        <CyclesTab />
-      </TabsContent>
-      <TabsContent value="orders" className="mt-2">
-        <RealOrdersPanel />
-      </TabsContent>
-      <TabsContent value="movements" className="mt-2">
-        <LedgerTab />
-      </TabsContent>
-      <TabsContent value="history" className="mt-2">
-        <RealHistoryPanel />
-      </TabsContent>
-      <TabsContent value="events" className="mt-2">
-        <AmaEventsPanel modeFilter={["REAL_LIMITED"]} hideModeFilter />
-      </TabsContent>
-      <TabsContent value="security" className="mt-2">
-        <RealSecurityPanel />
-      </TabsContent>
-    </Tabs>
-  );
+/**
+ * Contenido de la sección Real. La navegación de nivel superior (Estado /
+ * Activación / Estrategia / ... / Ayuda) viene controlada por
+ * AmaContextualNav (prop `subtab`); este componente ya NO gestiona su propia
+ * barra de pestañas para evitar un segundo nivel de navegación duplicado.
+ */
+export function AmaRealPanel({ currentMode, subtab }: AmaRealPanelProps) {
+  switch (subtab) {
+    case "status":
+      return <RealStatusPanel currentMode={currentMode} />;
+    case "activation":
+      return <OperationTab />;
+    case "strategy":
+      return <RealStrategyPanel />;
+    case "cycle":
+      return <CyclesTab />;
+    case "orders":
+      return <RealOrdersPanel />;
+    case "movements":
+      return <LedgerTab />;
+    case "history":
+      return <RealHistoryPanel />;
+    case "events":
+      return <AmaEventsPanel modeFilter={["REAL_LIMITED"]} hideModeFilter />;
+    case "security":
+      return <RealSecurityPanel />;
+    case "help":
+      return <AmaHelpTab />;
+    default:
+      return null;
+  }
 }
 
 function RealStatusPanel({ currentMode }: { currentMode: string }) {
@@ -474,7 +443,7 @@ function RealSecurityPanel() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <div>• Solo órdenes maker/post-only.</div>
+          <div>• Solo órdenes pasivas (sin cruzar el mercado directamente).</div>
           <div>• Capital máximo, tramo máximo y tramos por ciclo controlados.</div>
           <div>• Cada orden pasa por comprobaciones de seguridad previas.</div>
           <div>• Reconciliación automática y auditoría persistente.</div>

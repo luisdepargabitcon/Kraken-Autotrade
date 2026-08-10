@@ -2,11 +2,77 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Lock, ShieldCheck, AlertTriangle, CheckCircle2, X } from "lucide-react";
+import { Lock, ShieldCheck, AlertTriangle, CheckCircle2, X, XCircle } from "lucide-react";
+
+interface ReadinessCheck {
+  ok: boolean;
+  detail?: string;
+}
 
 interface Readiness {
-  overallReady: boolean;
-  checks?: Record<string, { ok: boolean; message?: string }>;
+  ready: boolean;
+  checks?: Record<string, ReadinessCheck>;
+  blockers?: string[];
+}
+
+/**
+ * Etiquetas humanas para cada check de preparación Real. Nunca se muestra la
+ * clave técnica cruda (p.ej. "marketFresh") ni el `detail` interno del
+ * backend directamente: solo una explicación en español.
+ */
+const CHECK_LABELS: Record<string, { label: string; explain: string }> = {
+  featureFlag: {
+    label: "Capacidad de operación real habilitada",
+    explain: "Este servidor debe tener habilitada la operación real.",
+  },
+  killSwitch: {
+    label: "Sin parada de emergencia activa",
+    explain: "No puede activarse Real mientras la parada de emergencia esté activa.",
+  },
+  schema: {
+    label: "Base de datos preparada",
+    explain: "Las tablas necesarias deben existir y estar accesibles.",
+  },
+  marketFresh: {
+    label: "Datos de mercado recientes",
+    explain: "El precio de mercado debe estar actualizado.",
+  },
+  validPrice: {
+    label: "Precio de mercado válido",
+    explain: "Debe existir un precio de análisis válido.",
+  },
+  hwm: {
+    label: "Máximo de referencia calculado",
+    explain: "El sistema necesita haber calculado el máximo de referencia (HWM).",
+  },
+  mandateActive: {
+    label: "Mandato activo",
+    explain: "Debe existir un mandato aprobado y activo.",
+  },
+  policyActive: {
+    label: "Política activa",
+    explain: "Debe existir una política de ejecución activa.",
+  },
+  portfolioBudget: {
+    label: "Capital presupuestado",
+    explain: "Debe existir capital asignado al presupuesto.",
+  },
+  freeCapital: {
+    label: "Capital libre disponible",
+    explain: "Debe existir capital libre para operar.",
+  },
+  reconciliation: {
+    label: "Sin reconciliaciones pendientes",
+    explain: "No debe haber reconciliaciones sin resolver.",
+  },
+  realStateCompatible: {
+    label: "Estado Real compatible",
+    explain: "El estado operativo actual debe permitir una nueva activación.",
+  },
+};
+
+function checkLabel(key: string): { label: string; explain: string } {
+  return CHECK_LABELS[key] ?? { label: key, explain: "" };
 }
 
 interface AmaRealActivationWizardProps {
@@ -107,18 +173,52 @@ export function AmaRealActivationWizard({ onClose, onActivated }: AmaRealActivat
               <h3 className="text-sm font-semibold">Preparación</h3>
               {loadingReadiness ? (
                 <div className="text-sm text-muted-foreground">Comprobando estado del sistema...</div>
-              ) : realEnabled === false ? (
-                <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 text-sm text-muted-foreground flex items-start gap-2">
-                  <Lock className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
-                  <span>
-                    Este servidor no tiene habilitada todavía la capacidad de operación real.
-                  </span>
-                </div>
               ) : (
-                <div className="rounded-md border border-green-500/30 bg-green-500/5 p-3 text-sm text-muted-foreground flex items-start gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-400 flex-shrink-0 mt-0.5" />
-                  <span>El sistema puede iniciar el proceso de activación de Real limitado.</span>
-                </div>
+                <>
+                  {realEnabled === false && (
+                    <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 text-sm text-muted-foreground flex items-start gap-2">
+                      <Lock className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
+                      <span>
+                        Este servidor no tiene habilitada todavía la capacidad de operación real.
+                        Puedes revisar la configuración y las comprobaciones, pero no puedes armar
+                        AMA Real en este entorno.
+                      </span>
+                    </div>
+                  )}
+                  {readiness?.checks && (
+                    <div className="space-y-1.5">
+                      {Object.entries(readiness.checks).map(([key, check]) => {
+                        const { label, explain } = checkLabel(key);
+                        return (
+                          <div
+                            key={key}
+                            className="flex items-start gap-2 rounded-md border border-border/20 bg-muted/5 px-2.5 py-1.5 text-xs"
+                          >
+                            {check.ok ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 text-green-400 flex-shrink-0 mt-0.5" />
+                            ) : (
+                              <XCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+                            )}
+                            <div>
+                              <div className={check.ok ? "text-foreground/90" : "text-red-300"}>
+                                {check.ok ? "Preparado" : "Bloqueado"} — {label}
+                              </div>
+                              {!check.ok && explain && (
+                                <div className="text-muted-foreground mt-0.5">{explain}</div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {readiness?.ready && (
+                    <div className="rounded-md border border-green-500/30 bg-green-500/5 p-3 text-sm text-muted-foreground flex items-start gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-400 flex-shrink-0 mt-0.5" />
+                      <span>El sistema puede iniciar el proceso de activación de Real limitado.</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

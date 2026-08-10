@@ -68,20 +68,35 @@ describe("AmaModeSelector — backend truth only", () => {
 });
 
 describe("AmaLabPanel source — no mode side-effects wired to tab navigation", () => {
-  it("handleSubtabChange no longer references onSetMode (source-level regression guard)", async () => {
-    // Import the raw source and assert the tab-change handler body contains
-    // no call to onSetMode. This guards against reintroducing the R4 bug
-    // where switching Lab subtabs silently changed the backend AMA mode.
+  it("AmaLabPanel.tsx never calls onSetMode directly (only ShadowLiveTab's explicit start/stop CTA does)", async () => {
+    // Regression guard for the R4 bug where switching Lab subtabs (or the
+    // 4 home cards) silently changed the backend AMA mode. AmaLabPanel now
+    // only navigates local view state (activeFlow/subtab); the only place
+    // allowed to call onSetMode is the explicit "Iniciar/Detener simulación"
+    // CTA inside ShadowLiveTab (AmaTabs.tsx), which is passed down as a prop.
     const fs = await import("fs");
     const path = await import("path");
     const src = fs.readFileSync(
       path.resolve(__dirname, "../AmaLabPanel.tsx"),
       "utf-8",
     );
-    const handlerMatch = src.match(/function handleSubtabChange\([^)]*\)\s*{([\s\S]*?)\n  }/);
-    expect(handlerMatch).not.toBeNull();
-    const handlerBody = handlerMatch ? handlerMatch[1] : "";
-    expect(handlerBody).not.toContain("onSetMode");
+    expect(src).not.toContain("onSetMode(");
+    // onSetMode must still be forwarded as a prop to ShadowLiveTab (the only
+    // legitimate consumer), not swallowed.
+    expect(src).toContain("onSetMode={onSetMode}");
+  });
+});
+
+describe("AmaRealPanel source — single-level navigation, no internal Tabs bar", () => {
+  it("no longer imports/renders its own Tabs/TabsList (nav is fully delegated to AmaContextualNav)", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../AmaRealPanel.tsx"),
+      "utf-8",
+    );
+    expect(src).not.toContain("TabsList");
+    expect(src).not.toContain("TabsTrigger");
   });
 });
 

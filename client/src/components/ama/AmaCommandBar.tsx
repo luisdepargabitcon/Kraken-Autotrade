@@ -33,6 +33,8 @@ interface AmaCommandBarProps {
   marketView: AmaMarketView | null;
   portfolio: AmaPortfolio | null;
   readiness: ReadinessSummary | null;
+  /** Etiqueta contextual, p.ej. "Preparación Laboratorio" / "Preparación Real". */
+  readinessLabel?: string;
   onRefresh: () => void;
   onToggleKillSwitch: () => void;
 }
@@ -47,6 +49,7 @@ export function AmaCommandBar({
   marketView,
   portfolio,
   readiness,
+  readinessLabel = "Preparación",
   onRefresh,
   onToggleKillSwitch,
 }: AmaCommandBarProps) {
@@ -149,7 +152,7 @@ export function AmaCommandBar({
 
         {/* Readiness */}
         <div>
-          <div className="text-xs text-muted-foreground">Preparación</div>
+          <div className="text-xs text-muted-foreground">{readinessLabel}</div>
           <div className="flex items-center gap-1.5">
             {readiness && (
               <>
