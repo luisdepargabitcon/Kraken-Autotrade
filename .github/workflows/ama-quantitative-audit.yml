@@ -6,6 +6,7 @@ on:
     paths:
       - "scripts/amaQuantitativeAudit.ts"
       - "scripts/amaQuantitativeAuditV2.ts"
+      - "scripts/runAmaQuantitativeAuditV3.mjs"
       - "server/services/ama/**"
       - ".github/workflows/ama-quantitative-audit.yml"
   workflow_dispatch:
@@ -36,35 +37,25 @@ jobs:
             server/services/ama/__tests__/amaProtectionExits.test.ts \
             --reporter=verbose
 
-      - name: Run corrected AMA quantitative audit V2
+      - name: Run final AMA quantitative audit V3
         run: |
           mkdir -p artifacts
           set -o pipefail
-          sed -i 's/`amaReplayService.ts`/amaReplayService.ts/g; s/`replanTranches`/replanTranches/g' scripts/amaQuantitativeAuditV2.ts
-          node - <<'NODE'
-          const fs = require('fs');
-          const p = 'scripts/amaQuantitativeAuditV2.ts';
-          let s = fs.readFileSync(p, 'utf8');
-          const old = 'if(JSON.stringify(got)!==JSON.stringify(expected)||deployed!==7500)throw new Error(`staircase mismatch got=${got} deployed=${deployed}`);';
-          const neu = 'if(got.some((v,i)=>Math.abs(v-expected[i])>1e-6)||Math.abs(deployed-7500)>1e-6)throw new Error(`staircase mismatch got=${got} deployed=${deployed}`);';
-          if (!s.includes(old)) throw new Error('staircase invariant source pattern not found');
-          fs.writeFileSync(p, s.replace(old, neu));
-          NODE
-          npx tsx scripts/amaQuantitativeAuditV2.ts | tee artifacts/ama-quant-audit-v2.log
+          node scripts/runAmaQuantitativeAuditV3.mjs | tee artifacts/ama-quant-audit-v3.log
 
       - name: Verify audit artifacts
         run: |
-          test -s artifacts/ama-quant-audit-v2/AUDITORIA_CUANTITATIVA_AMA_BTC_V2.md
-          test -s artifacts/ama-quant-audit-v2/runs.json
-          test -s artifacts/ama-quant-audit-v2/trades.csv
-          grep -q "AMA_QUANT_AUDIT_V2=PASS" artifacts/ama-quant-audit-v2.log
+          test -s artifacts/ama-quant-audit-v3/AUDITORIA_CUANTITATIVA_AMA_BTC_V3.md
+          test -s artifacts/ama-quant-audit-v3/runs.json
+          test -s artifacts/ama-quant-audit-v3/trades.csv
+          grep -q "AMA_QUANT_AUDIT_V3=PASS" artifacts/ama-quant-audit-v3.log
 
       - name: Upload quantitative audit artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ama-quantitative-audit-v2
+          name: ama-quantitative-audit-v3
           path: |
-            artifacts/ama-quant-audit-v2/
-            artifacts/ama-quant-audit-v2.log
+            artifacts/ama-quant-audit-v3/
+            artifacts/ama-quant-audit-v3.log
           retention-days: 30
