@@ -36,7 +36,10 @@ jobs:
             --reporter=verbose
 
       - name: Run AMA quantitative audit
-        run: npx tsx scripts/amaQuantitativeAudit.ts | tee artifacts/ama-quant-audit.log
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          npx tsx scripts/amaQuantitativeAudit.ts | tee artifacts/ama-quant-audit.log
 
       - name: Verify audit artifacts
         run: |
