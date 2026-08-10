@@ -69,6 +69,26 @@ const CHECK_LABELS: Record<string, { label: string; explain: string }> = {
     label: "Estado Real compatible",
     explain: "El estado operativo actual debe permitir una nueva activación.",
   },
+  gatewayAvailable: {
+    label: "Conexión con el exchange operativa",
+    explain: "Debe existir un precio de compra/venta válido y disponible.",
+  },
+  makerOnly: {
+    label: "Órdenes pasivas exigidas",
+    explain: "El perfil del activo debe exigir órdenes pasivas antes de operar.",
+  },
+  postOnly: {
+    label: "Publicación exclusiva en el libro exigida",
+    explain: "El perfil del activo debe exigir que las órdenes solo se publiquen, nunca se ejecuten al instante.",
+  },
+  schedulerOperational: {
+    label: "Planificador automático operativo",
+    explain: "El planificador que revisa AMA periódicamente debe estar activo y sin errores recientes.",
+  },
+  realFullLocked: {
+    label: "Real completo permanece bloqueado",
+    explain: "Real completo está reservado para el futuro; solo se permite activar Real limitado.",
+  },
 };
 
 function checkLabel(key: string): { label: string; explain: string } {

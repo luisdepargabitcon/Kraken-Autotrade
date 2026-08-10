@@ -146,6 +146,27 @@ describe("AmaTabs source — API buttons validate response.ok/json.success (§3 
   });
 });
 
+describe("AmaRealActivationWizard — CHECK_LABELS covers every backend readiness key", () => {
+  it("every checks.<key> produced by evaluateRealActivationReadiness has a CHECK_LABELS entry (regression: gatewayAvailable/makerOnly/postOnly/schedulerOperational/realFullLocked leaked raw in staging)", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const backendSrc = fs.readFileSync(
+      path.resolve(__dirname, "../../../../../server/services/ama/amaRealLimitedService.ts"),
+      "utf-8",
+    );
+    const wizardSrc = fs.readFileSync(
+      path.resolve(__dirname, "../AmaRealActivationWizard.tsx"),
+      "utf-8",
+    );
+    const backendKeys = new Set(
+      [...backendSrc.matchAll(/checks\.(\w+)\s*=/g)].map((m) => m[1]),
+    );
+    expect(backendKeys.size).toBeGreaterThanOrEqual(15); // sanity: evita un regex roto que no encuentre nada
+    const missing = [...backendKeys].filter((key) => !wizardSrc.includes(`  ${key}: {`));
+    expect(missing, `CHECK_LABELS le falta traducir: ${missing.join(", ")}`).toEqual([]);
+  });
+});
+
 describe("amaLabels — macro zone translation never leaks raw enums", () => {
   it("translates every real backend MacroZone value (see amaTypes.ts)", () => {
     expect(translateMacroZone("NORMAL")).toBe("Normal");
