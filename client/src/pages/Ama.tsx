@@ -7,6 +7,7 @@ import { AmaOverview } from "@/components/ama/AmaOverview";
 import { AmaHelpTab } from "@/components/ama/AmaHelpTab";
 import { AmaLabPanel } from "@/components/ama/AmaLabPanel";
 import { AmaRealPanel } from "@/components/ama/AmaRealPanel";
+import { AmaRealActivationWizard } from "@/components/ama/AmaRealActivationWizard";
 
 function environmentFromMode(mode: string): "OFF" | "LAB" | "REAL" {
   if (mode === "REAL_LIMITED" || mode === "REAL_FULL") return "REAL";
@@ -93,6 +94,8 @@ export default function Ama() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AmaTabKey>("overview");
+  const [showRealWizard, setShowRealWizard] = useState(false);
+  const [modeActionPending, setModeActionPending] = useState(false);
 
   async function fetchData() {
     try {
@@ -121,46 +124,90 @@ export default function Ama() {
     return () => clearInterval(interval);
   }, []);
 
-  async function setMode(mode: string) {
+  /**
+   * Único punto de cambio de modo backend. Nunca actualiza el estado local
+   * de forma optimista: solo aplica el nuevo status tras confirmación
+   * explícita del servidor (json.success === true).
+   */
+  async function setMode(mode: string): Promise<boolean> {
+    if (modeActionPending) return false; // evita doble clic / llamadas concurrentes
+    setModeActionPending(true);
     try {
       const res = await fetch("/api/ama/mode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode }),
       });
-      const json = await res.json();
-      if (json.success && json.data) {
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        setError("Respuesta inválida del servidor al cambiar de modo.");
+        return false;
+      }
+      if (res.ok && json?.success && json.data) {
         setStatus(json.data);
         setError(null);
         return true;
-      } else if (json.error) {
-        setError(json.error);
-        return false;
       }
+      setError(json?.error || "No se pudo cambiar el modo.");
       return false;
     } catch {
       setError("No se pudo cambiar el modo. Compruebe la conexión.");
       return false;
+    } finally {
+      setModeActionPending(false);
     }
   }
 
   function handleTabChange(tab: AmaTabKey) {
+    // La navegación entre pestañas NUNCA debe producir llamadas a /api/ama/mode.
     setActiveTab(tab);
   }
 
-  function handleEnvironmentChange(env: "OFF" | "LAB" | "REAL") {
+  async function handleEnvironmentChange(env: "OFF" | "LAB" | "REAL") {
     const currentMode = status?.mode || "OFF";
+    const currentEnv = environmentFromMode(currentMode);
+
     if (env === "OFF") {
-      void setMode("OFF");
-      setActiveTab("overview");
-    } else if (env === "LAB") {
-      if (!["LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"].includes(currentMode)) {
-        void setMode("LAB");
+      if (currentEnv === "OFF") {
+        setActiveTab("overview");
+        return;
       }
-      setActiveTab("lab");
-    } else if (env === "REAL") {
-      setActiveTab("real");
+      const success = await setMode("OFF");
+      if (success) setActiveTab("overview");
+      // Si falla, el modo activo real (backend) sigue siendo el anterior;
+      // el error ya quedó reflejado en `error` y el selector se recalcula
+      // en el próximo render a partir de `status.mode`.
+      return;
     }
+
+    if (env === "LAB") {
+      if (["LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"].includes(currentMode)) {
+        setActiveTab("lab");
+        return;
+      }
+      const success = await setMode("LAB");
+      if (success) setActiveTab("lab");
+      return;
+    }
+
+    if (env === "REAL") {
+      // Si el backend ya está en REAL_LIMITED/REAL_FULL, solo navegamos.
+      // Si no, NUNCA cambiamos el modo aquí: se abre el asistente y es el
+      // asistente quien, tras éxito confirmado por el backend, activa REAL.
+      if (currentEnv === "REAL") {
+        setActiveTab("real");
+        return;
+      }
+      setShowRealWizard(true);
+    }
+  }
+
+  async function handleRealActivated() {
+    setShowRealWizard(false);
+    await fetchData();
+    setActiveTab("real");
   }
 
   async function toggleKillSwitch() {
@@ -257,6 +304,13 @@ export default function Ama() {
         {activeTab === "real" && <AmaRealPanel currentMode={currentMode} />}
         {activeTab === "help" && <AmaHelpTab />}
       </div>
+
+      {showRealWizard && (
+        <AmaRealActivationWizard
+          onClose={() => setShowRealWizard(false)}
+          onActivated={handleRealActivated}
+        />
+      )}
     </div>
   );
 }

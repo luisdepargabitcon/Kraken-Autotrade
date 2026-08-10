@@ -48,8 +48,8 @@ describe("AMA UX Contract — Spanish Labels", () => {
       expect(translateMode("REAL_LIMITED")).toBe("Real limitado");
     });
 
-    it("translateMode returns original for unknown modes", () => {
-      expect(translateMode("UNKNOWN")).toBe("UNKNOWN");
+    it("translateMode returns safe fallback for unknown modes (never a raw enum)", () => {
+      expect(translateMode("UNKNOWN")).toBe("Sin clasificar");
     });
   });
 
@@ -62,7 +62,7 @@ describe("AMA UX Contract — Spanish Labels", () => {
 
     it("translateCycleState works for known and unknown", () => {
       expect(translateCycleState("OBSERVING")).toBe("Observando mercado");
-      expect(translateCycleState("UNKNOWN_STATE")).toBe("UNKNOWN_STATE");
+      expect(translateCycleState("UNKNOWN_STATE")).toBe("Sin clasificar");
     });
   });
 
@@ -76,7 +76,7 @@ describe("AMA UX Contract — Spanish Labels", () => {
 
     it("translateRealState works for known and unknown", () => {
       expect(translateRealState("ARMED")).toBe("Armado · esperando señal");
-      expect(translateRealState("UNKNOWN")).toBe("UNKNOWN");
+      expect(translateRealState("UNKNOWN")).toBe("Sin clasificar");
     });
   });
 
@@ -89,7 +89,7 @@ describe("AMA UX Contract — Spanish Labels", () => {
 
     it("translateLabStatus works", () => {
       expect(translateLabStatus("COMPLETED")).toBe("Completado");
-      expect(translateLabStatus("UNKNOWN")).toBe("UNKNOWN");
+      expect(translateLabStatus("UNKNOWN")).toBe("Sin clasificar");
     });
   });
 
@@ -102,7 +102,7 @@ describe("AMA UX Contract — Spanish Labels", () => {
 
     it("translateReplayStatus works", () => {
       expect(translateReplayStatus("COMPLETED")).toBe("Completado");
-      expect(translateReplayStatus("UNKNOWN")).toBe("UNKNOWN");
+      expect(translateReplayStatus("UNKNOWN")).toBe("Sin clasificar");
     });
   });
 
@@ -114,7 +114,7 @@ describe("AMA UX Contract — Spanish Labels", () => {
 
     it("translateShadowStatus works", () => {
       expect(translateShadowStatus("ACTIVE")).toBe("Activa");
-      expect(translateShadowStatus("UNKNOWN")).toBe("UNKNOWN");
+      expect(translateShadowStatus("UNKNOWN")).toBe("Sin clasificar");
     });
   });
 
@@ -133,7 +133,7 @@ describe("AMA UX Contract — Spanish Labels", () => {
     it("translateTrancheType and translateTrancheStatus work", () => {
       expect(translateTrancheType("PROBE")).toBe("Sonda");
       expect(translateTrancheStatus("EXECUTED")).toBe("Ejecutado");
-      expect(translateTrancheType("UNKNOWN")).toBe("UNKNOWN");
+      expect(translateTrancheType("UNKNOWN")).toBe("Sin clasificar");
     });
   });
 
@@ -145,21 +145,30 @@ describe("AMA UX Contract — Spanish Labels", () => {
 
     it("translateSleeve works", () => {
       expect(translateSleeve("DE_RISK")).toBe("Reducir riesgo");
-      expect(translateSleeve("UNKNOWN")).toBe("UNKNOWN");
+      expect(translateSleeve("UNKNOWN")).toBe("Sin clasificar");
     });
   });
 
   describe("Macro Zone Labels", () => {
-    it("translates macro zones to Spanish", () => {
-      expect(MACRO_ZONE_LABELS.NEUTRAL).toBe("Neutral");
-      expect(MACRO_ZONE_LABELS.VALUE_MODERATE).toBe("Valor moderado");
-      expect(MACRO_ZONE_LABELS.VALUE_DEEP).toBe("Valor profundo");
+    it("translates real backend macro zones to Spanish (MacroZone enum in amaTypes.ts)", () => {
+      expect(MACRO_ZONE_LABELS.NORMAL).toBe("Normal");
+      expect(MACRO_ZONE_LABELS.RETROCESO).toBe("Retroceso");
+      expect(MACRO_ZONE_LABELS.CORRECCION).toBe("Corrección");
+      expect(MACRO_ZONE_LABELS.VALUE).toBe("Zona de valor");
+      expect(MACRO_ZONE_LABELS.DEEP_VALUE).toBe("Valor profundo");
+      expect(MACRO_ZONE_LABELS.CAPITULACION).toBe("Capitulación");
+      expect(MACRO_ZONE_LABELS.CAPITULACION_EXTREMA).toBe("Capitulación extrema");
     });
 
-    it("translateMacroZone works", () => {
-      expect(translateMacroZone("NEUTRAL")).toBe("Neutral");
+    it("translateMacroZone works for every real backend zone, including DEEP_VALUE", () => {
+      expect(translateMacroZone("NORMAL")).toBe("Normal");
+      expect(translateMacroZone("DEEP_VALUE")).toBe("Valor profundo");
+      expect(translateMacroZone("CAPITULACION_EXTREMA")).toBe("Capitulación extrema");
       expect(translateMacroZone(null)).toBe("Sin clasificar");
-      expect(translateMacroZone("NON_EXISTENT_ZONE")).toBe("NON_EXISTENT_ZONE");
+    });
+
+    it("translateMacroZone never returns a raw unknown enum", () => {
+      expect(translateMacroZone("NON_EXISTENT_ZONE")).toBe("Sin clasificar");
     });
   });
 
@@ -172,7 +181,7 @@ describe("AMA UX Contract — Spanish Labels", () => {
 
     it("translateDataQuality works", () => {
       expect(translateDataQuality("GOOD")).toBe("Buena");
-      expect(translateDataQuality("UNKNOWN")).toBe("UNKNOWN");
+      expect(translateDataQuality("UNKNOWN")).toBe("No disponible");
     });
   });
 

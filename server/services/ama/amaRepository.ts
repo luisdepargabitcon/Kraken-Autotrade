@@ -262,6 +262,19 @@ export async function getCyclesByAsset(asset: AssetSymbol): Promise<AmaCycle[]> 
   return result.rows.map(mapCycleRow);
 }
 
+/**
+ * Ciclos ejecutados exclusivamente en modo REAL_LIMITED. Fuente distinta
+ * de los eventos de auditoría: representa el historial operativo real
+ * (ciclos, compras, ventas, resultado), no logs técnicos.
+ */
+export async function getRealLimitedCycles(limit = 50): Promise<AmaCycle[]> {
+  const result = await pool.query(
+    `SELECT * FROM ama_cycles WHERE mode = 'REAL_LIMITED' ORDER BY created_at DESC LIMIT $1`,
+    [limit],
+  );
+  return result.rows.map(mapCycleRow);
+}
+
 function mapCycleRow(r: any): AmaCycle {
   return {
     cycleId: r.cycle_id as string,
@@ -326,6 +339,23 @@ export async function getTranchesByCycle(cycleId: string): Promise<AmaTranche[]>
   const result = await pool.query(
     `SELECT * FROM ama_tranches WHERE cycle_id = $1 ORDER BY created_at ASC`,
     [cycleId],
+  );
+  return result.rows.map(mapTrancheRow);
+}
+
+/**
+ * Tramos (=órdenes) ejecutados exclusivamente en ciclos de modo REAL_LIMITED.
+ * Es la única fuente de verdad para "Órdenes reales" en la UI: si nunca
+ * se ha operado en REAL_LIMITED, devuelve un array vacío (no placeholder).
+ */
+export async function getRealLimitedTranches(limit = 100): Promise<AmaTranche[]> {
+  const result = await pool.query(
+    `SELECT t.* FROM ama_tranches t
+     INNER JOIN ama_cycles c ON c.cycle_id = t.cycle_id
+     WHERE c.mode = 'REAL_LIMITED'
+     ORDER BY t.created_at DESC
+     LIMIT $1`,
+    [limit],
   );
   return result.rows.map(mapTrancheRow);
 }

@@ -11,22 +11,21 @@ const COMPARATOR_DATA: Record<string, { data: string; engine: string; db: string
   REPLAY: { data: "Pasado real", engine: "Sí", db: "Aislado", orders: "Simuladas", capital: "No", purpose: "Ver qué habría hecho AMA en otro período" },
   SHADOW_SCENARIO: { data: "Mercado controlado", engine: "Sí", db: "Sí", orders: "Simuladas", capital: "No", purpose: "Probar el sistema completo con mercado sintético" },
   SHADOW_LIVE: { data: "Mercado actual real", engine: "Sí", db: "Sí", orders: "Simuladas", capital: "No", purpose: "Observar decisiones en tiempo real sin riesgo" },
-  REAL_LIMITED: { data: "Mercado actual real", engine: "Sí", db: "Sí", orders: "Maker reales (post-only)", capital: "Sí", purpose: "Ejecutar con dinero real dentro de límites estrictos" },
+  REAL_LIMITED: { data: "Mercado actual real", engine: "Sí", db: "Sí", orders: "Reales (órdenes pasivas)", capital: "Sí", purpose: "Ejecutar con dinero real dentro de límites estrictos" },
 };
 
 const GLOSSARY: { term: string; def: string }[] = [
-  { term: "HWM", def: "Máximo de referencia — el precio más alto reciente desde el que AMA mide la caída." },
-  { term: "Caída", def: "Porcentaje que BTC ha bajado desde el HWM. Cuanto mayor, mayor oportunidad." },
-  { term: "Zona macro", def: "Clasificación del mercado según la caída: normal, corrección, valor, valor profundo, crisis." },
+  { term: "Máximo de referencia", def: "El precio más alto reciente desde el que AMA mide la caída." },
+  { term: "Caída", def: "Porcentaje que BTC ha bajado desde el máximo de referencia. Cuanto mayor, mayor oportunidad." },
+  { term: "Zona macro", def: "Clasificación del mercado según la caída: normal, corrección, valor, valor profundo, capitulación." },
   { term: "Tramo", def: "Cada una de las entradas en que AMA divide el capital. No invierte todo de golpe." },
   { term: "Mandato", def: "Configuración que define los objetivos y restricciones de AMA." },
   { term: "Política", def: "Resolución del mandato en parámetros concretos: tramos, porcentajes, estilos." },
-  { term: "Replay", def: "Reproducción del mercado histórico vela a vela para ver qué habría hecho AMA." },
-  { term: "Shadow", def: "Simulación completa: AMA decide y genera órdenes, pero ninguna es real." },
-  { term: "Maker", def: "Orden que aporta liquidez al libro de órdenes. Siempre post-only." },
-  { term: "Post-only", def: "Orden que nunca cruza con el spread. Si no cabe, se cancela en lugar de ejecutarse como taker." },
+  { term: "Reproducción histórica", def: "Reproduce el mercado histórico vela a vela para ver qué habría hecho AMA." },
+  { term: "Simulación", def: "Prueba completa: AMA decide y genera órdenes, pero ninguna es real." },
+  { term: "Órdenes pasivas", def: "Órdenes que se publican sin cruzar inmediatamente el mercado, para no pagar comisión de mercado." },
   { term: "Reconciliación", def: "Verificación de que el estado interno coincide con la base de datos y el exchange." },
-  { term: "Kill switch", def: "Parada de emergencia que detiene todas las operaciones de AMA inmediatamente." },
+  { term: "Parada de emergencia", def: "Detiene todas las operaciones de AMA inmediatamente hasta que se restablezca manualmente." },
 ];
 
 const MODE_ICONS: Record<string, React.ReactNode> = {
@@ -119,7 +118,7 @@ export function AmaHelpTab() {
           <li>• El capital máximo está gobernado por el mandato y la Cartera Global.</li>
           <li>• Antes de cada orden se verifica la <strong>reserva</strong> disponible.</li>
           <li>• Toda compra se atribuye al modo <strong>AMA</strong> en la Cartera Global.</li>
-          <li>• En modo REAL, las órdenes son <strong>maker / post-only</strong>. Nunca market ni taker.</li>
+          <li>• En modo Real, las órdenes son siempre <strong>órdenes pasivas</strong>. Nunca se cruza el mercado directamente.</li>
         </ul>
         <div className="mt-3 rounded-md bg-muted/10 border border-border/20 px-3 py-2 text-xs text-muted-foreground">
           <AlertTriangle className="h-3.5 w-3.5 inline mr-1 text-amber-400/70" />
@@ -162,28 +161,28 @@ export function AmaHelpTab() {
           </div>
           <div className="rounded-md border border-border/20 bg-card/20 px-3 py-2">
             <Lock className="h-4 w-4 text-orange-400 mb-1" />
-            <div className="font-medium">Maker / Post-only</div>
-            <div className="text-xs text-muted-foreground">En REAL, solo órdenes maker. Sin market ni taker.</div>
+            <div className="font-medium">Órdenes pasivas</div>
+            <div className="text-xs text-muted-foreground">En Real, solo se publican órdenes que no cruzan el mercado directamente.</div>
           </div>
           <div className="rounded-md border border-border/20 bg-card/20 px-3 py-2">
             <AlertTriangle className="h-4 w-4 text-red-400 mb-1" />
-            <div className="font-medium">Kill switch</div>
-            <div className="text-xs text-muted-foreground">Parada de emergencia que detiene todo inmediatamente.</div>
+            <div className="font-medium">Parada de emergencia</div>
+            <div className="text-xs text-muted-foreground">Detiene todas las operaciones de AMA inmediatamente.</div>
           </div>
           <div className="rounded-md border border-border/20 bg-card/20 px-3 py-2">
             <Database className="h-4 w-4 text-blue-400 mb-1" />
             <div className="font-medium">Reconciliación</div>
-            <div className="text-xs text-muted-foreground">Verifica que el estado interno coincide con DB y exchange.</div>
+            <div className="text-xs text-muted-foreground">Verifica que el estado interno coincide con la base de datos y el exchange.</div>
           </div>
           <div className="rounded-md border border-border/20 bg-card/20 px-3 py-2">
             <ShieldCheck className="h-4 w-4 text-amber-400 mb-1" />
-            <div className="font-medium">Restart safety</div>
-            <div className="text-xs text-muted-foreground">REAL no se reactiva solo tras un reinicio. Requiere acción manual.</div>
+            <div className="font-medium">Seguridad tras reinicio</div>
+            <div className="text-xs text-muted-foreground">Real no se reactiva solo tras un reinicio. Requiere acción manual.</div>
           </div>
         </div>
         <div className="mt-3 rounded-md bg-red-500/5 border border-red-500/20 px-3 py-2 text-xs text-muted-foreground">
           <Lock className="h-3.5 w-3.5 inline mr-1 text-red-400" />
-          <strong>REAL_FULL</strong> está bloqueado. Reservado para el futuro — sin handler ni endpoint de activación.
+          <strong>Modo real completo</strong> está bloqueado. Reservado para una fase futura del proyecto.
         </div>
       </section>
 

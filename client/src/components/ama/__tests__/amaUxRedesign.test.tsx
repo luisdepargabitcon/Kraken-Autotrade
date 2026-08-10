@@ -272,18 +272,26 @@ describe("AmaHelpTab", () => {
   it("renders glossary section", () => {
     const html = render(<AmaHelpTab />);
     expect(html).toContain("Glosario");
-    expect(html).toContain("HWM");
+    expect(html).toContain("Máximo de referencia");
     expect(html).toContain("Tramo");
-    expect(html).toContain("Kill switch");
+    expect(html).toContain("Parada de emergencia");
   });
 
   it("renders protections section", () => {
     const html = render(<AmaHelpTab />);
     expect(html).toContain("Protecciones");
     expect(html).toContain("Cartera Global");
-    expect(html).toContain("Maker");
+    expect(html).toContain("Órdenes pasivas");
     expect(html).toContain("Reconciliaci");
-    expect(html).toContain("Kill switch");
+    expect(html).toContain("Parada de emergencia");
+  });
+
+  it("does not render raw English technical terms (HWM, Kill switch, Maker, Post-only)", () => {
+    const html = render(<AmaHelpTab />);
+    expect(html).not.toContain(">HWM<");
+    expect(html).not.toContain("Kill switch");
+    expect(html).not.toMatch(/\bMaker\b/);
+    expect(html).not.toMatch(/Post-only/i);
   });
 
   it("renders flow steps", () => {

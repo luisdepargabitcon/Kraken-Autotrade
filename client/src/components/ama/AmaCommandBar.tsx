@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { RefreshCw, Shield, ShieldAlert, CheckCircle2, XCircle } from "lucide-react";
+import { RefreshCw, Shield, ShieldAlert, CheckCircle2, XCircle, X } from "lucide-react";
 import { translateMode, translateCycleState, translateMacroZone, translateDataQuality, translateUxTerm } from "./amaLabels";
 
 interface AmaStatus {
@@ -53,6 +54,12 @@ export function AmaCommandBar({
   const killActive = status?.killSwitchActive ?? false;
   const dropPct = marketView?.currentDropPct;
   const absDrop = dropPct != null ? Math.abs(dropPct) : null;
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  function confirmToggle() {
+    setShowConfirm(false);
+    onToggleKillSwitch();
+  }
 
   return (
     <div className="rounded-lg border border-border/40 bg-gradient-to-br from-card/80 to-muted/10 px-4 py-3 md:px-6 md:py-4">
@@ -74,17 +81,17 @@ export function AmaCommandBar({
               variant="destructive"
               size="sm"
               className="h-9"
-              onClick={onToggleKillSwitch}
+              onClick={() => setShowConfirm(true)}
             >
               <ShieldAlert className="h-4 w-4 mr-1.5" />
-              Emergencia activa
+              Emergencia activa — Restablecer
             </Button>
           ) : (
             <Button
               variant="outline"
               size="sm"
               className="h-9 border-red-500/30 text-red-400 hover:bg-red-500/10"
-              onClick={onToggleKillSwitch}
+              onClick={() => setShowConfirm(true)}
             >
               <Shield className="h-4 w-4 mr-1.5" />
               Parada de emergencia
@@ -159,6 +166,39 @@ export function AmaCommandBar({
           </div>
         </div>
       </div>
+
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-background shadow-xl">
+            <div className="flex items-center justify-between border-b border-border/30 px-4 py-3">
+              <div className="text-sm font-semibold flex items-center gap-2">
+                {killActive ? <Shield className="h-4 w-4 text-orange-400" /> : <ShieldAlert className="h-4 w-4 text-red-400" />}
+                {killActive ? "Restablecer operación" : "Confirmar parada de emergencia"}
+              </div>
+              <button onClick={() => setShowConfirm(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-4 py-3 text-sm text-muted-foreground">
+              {killActive
+                ? "Esto restablece la operación de AMA tras la parada de emergencia. AMA podrá volver a operar."
+                : "Esto detendrá inmediatamente todas las operaciones de AMA. Deberá restablecerse manualmente."}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-border/30 px-4 py-3">
+              <Button variant="outline" size="sm" onClick={() => setShowConfirm(false)}>
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                variant={killActive ? "default" : "destructive"}
+                onClick={confirmToggle}
+              >
+                {killActive ? "Restablecer operación" : "Confirmar parada de emergencia"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

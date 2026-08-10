@@ -9,7 +9,10 @@ import {
 } from "lucide-react";
 import { OperationTab, CyclesTab, LedgerTab } from "./AmaTabs";
 import { AmaEventsPanel } from "./AmaEventsPanel";
-import { REAL_SUBTAB_LABELS, translateRealState, translateMode } from "./amaLabels";
+import {
+  REAL_SUBTAB_LABELS, translateRealState, translateMode,
+  translateRealAuthorizedMode, translateTrancheType, translateTrancheStatus,
+} from "./amaLabels";
 
 export type AmaRealSubtab =
   | "status"
@@ -102,13 +105,13 @@ export function AmaRealPanel({ currentMode }: AmaRealPanelProps) {
         <CyclesTab />
       </TabsContent>
       <TabsContent value="orders" className="mt-2">
-        <RealOrdersPlaceholder />
+        <RealOrdersPanel />
       </TabsContent>
       <TabsContent value="movements" className="mt-2">
         <LedgerTab />
       </TabsContent>
       <TabsContent value="history" className="mt-2">
-        <AmaEventsPanel modeFilter={["REAL_LIMITED"]} hideModeFilter />
+        <RealHistoryPanel />
       </TabsContent>
       <TabsContent value="events" className="mt-2">
         <AmaEventsPanel modeFilter={["REAL_LIMITED"]} hideModeFilter />
@@ -144,6 +147,7 @@ function RealStatusPanel({ currentMode }: { currentMode: string }) {
 
   const opState = auth?.operationalState ?? "NOT_READY";
   const colorClass = OP_STATE_COLORS[opState] ?? OP_STATE_COLORS.NOT_READY;
+  const hasActiveAuthorization = auth?.isActive === true;
 
   return (
     <div className="space-y-4">
@@ -165,7 +169,7 @@ function RealStatusPanel({ currentMode }: { currentMode: string }) {
             <div className="rounded-md border border-border/30 bg-muted/10 p-3">
               <div className="text-xs text-muted-foreground mb-1">Autorización activa</div>
               <div className="flex items-center gap-2">
-                {auth?.isActive ? (
+                {hasActiveAuthorization ? (
                   <>
                     <CheckCircle2 className="h-4 w-4 text-green-400" /> Sí
                   </>
@@ -177,22 +181,48 @@ function RealStatusPanel({ currentMode }: { currentMode: string }) {
               </div>
             </div>
             <div className="rounded-md border border-border/30 bg-muted/10 p-3">
-              <div className="text-xs text-muted-foreground mb-1">Capital autorizado</div>
-              <div className="font-mono">${auth?.maxCapitalUsd?.toLocaleString() ?? "0"}</div>
-            </div>
-            <div className="rounded-md border border-border/30 bg-muted/10 p-3">
-              <div className="text-xs text-muted-foreground mb-1">Tramo máximo</div>
-              <div className="font-mono">${auth?.maxSingleTrancheUsd?.toLocaleString() ?? "0"}</div>
-            </div>
-            <div className="rounded-md border border-border/30 bg-muted/10 p-3">
-              <div className="text-xs text-muted-foreground mb-1">Tramos/ciclo</div>
-              <div className="font-mono">{auth?.maxTranchesPerCycle ?? 0}</div>
+              <div className="text-xs text-muted-foreground mb-1">Modo Real</div>
+              <div className="font-medium">
+                {hasActiveAuthorization ? translateRealAuthorizedMode(auth?.authorizedMode) : "Desactivado"}
+              </div>
             </div>
           </div>
 
+          {hasActiveAuthorization && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+              <div className="rounded-md border border-border/30 bg-muted/10 p-3">
+                <div className="text-xs text-muted-foreground mb-1">Capital autorizado</div>
+                <div className="font-mono">${auth?.maxCapitalUsd?.toLocaleString() ?? "0"}</div>
+              </div>
+              <div className="rounded-md border border-border/30 bg-muted/10 p-3">
+                <div className="text-xs text-muted-foreground mb-1">Tramo máximo</div>
+                <div className="font-mono">${auth?.maxSingleTrancheUsd?.toLocaleString() ?? "0"}</div>
+              </div>
+              <div className="rounded-md border border-border/30 bg-muted/10 p-3">
+                <div className="text-xs text-muted-foreground mb-1">Tramos/ciclo</div>
+                <div className="font-mono">{auth?.maxTranchesPerCycle ?? 0}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Autorización actual vs. último evento de seguridad: conceptos separados.
+              "reason" en auth describe el ÚLTIMO evento (p.ej. una parada de emergencia
+              pasada), no necesariamente la causa de la autorización activa actual. */}
+          {auth?.reason && (
+            <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground">
+              <span className="font-medium text-amber-400/90">Último evento de seguridad: </span>
+              {auth.reason}
+              {!hasActiveAuthorization && (
+                <span className="block mt-1">
+                  No existe una autorización activa actualmente. Este evento corresponde al historial.
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="rounded-md bg-red-500/5 border border-red-500/20 p-3 text-xs text-muted-foreground">
             <AlertTriangle className="h-3.5 w-3.5 inline mr-1 text-red-400" />
-            <strong>Real limitado</strong> solo permite órdenes pasivas (maker/post-only). No usa market ni taker.
+            <strong>Real limitado</strong> solo permite órdenes pasivas. Nunca cruza el mercado directamente.
           </div>
         </CardContent>
       </Card>
@@ -247,7 +277,54 @@ function RealStrategyPanel() {
   );
 }
 
-function RealOrdersPlaceholder() {
+interface RealTranche {
+  trancheId: string;
+  cycleId: string;
+  trancheType: string;
+  status: string;
+  plannedAmountUsd: number;
+  executedAmountUsd: number;
+  assetQuantity: number;
+  fillPrice: number | null;
+  createdAt?: string;
+}
+
+function fmtUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * Visor read-only de órdenes REAL. Conectado a /api/ama/real/orders,
+ * que consulta tramos ejecutados exclusivamente en ciclos REAL_LIMITED.
+ * No es un texto estático: si la API devuelve un array vacío porque
+ * nunca se ha operado, se muestra el estado vacío correspondiente.
+ */
+function RealOrdersPanel() {
+  const [orders, setOrders] = useState<RealTranche[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchOrders = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ama/real/orders");
+      const json = await res.json();
+      if (json.success) {
+        setOrders(json.data || []);
+        setError(null);
+      } else {
+        setError(json.error || "No se pudieron cargar las órdenes reales.");
+      }
+    } catch {
+      setError("No se pudo conectar con el servidor.");
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchOrders();
+    const interval = setInterval(fetchOrders, 10000);
+    return () => clearInterval(interval);
+  }, [fetchOrders]);
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -256,12 +333,126 @@ function RealOrdersPlaceholder() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="text-sm text-muted-foreground">
-          Las órdenes reales aparecerán aquí cuando AMA esté activo y el sistema decida una entrada.
-          Mientras tanto, las órdenes se supervisan en <strong>Seguridad</strong> y <strong>Eventos</strong>.
-        </div>
+        {error && <div className="text-sm text-red-400 mb-2">{error}</div>}
+        {orders === null ? (
+          <div className="text-sm text-muted-foreground">Cargando órdenes reales...</div>
+        ) : orders.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No existen órdenes reales registradas.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted-foreground border-b">
+                  <th className="text-left py-2">Tipo</th>
+                  <th className="text-left">Estado</th>
+                  <th className="text-right">Planificado</th>
+                  <th className="text-right">Ejecutado</th>
+                  <th className="text-right">Precio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((o) => (
+                  <tr key={o.trancheId} className="border-b border-border/50">
+                    <td className="py-2">{translateTrancheType(o.trancheType)}</td>
+                    <td><Badge variant="outline" className="text-xs">{translateTrancheStatus(o.status)}</Badge></td>
+                    <td className="text-right font-mono">{fmtUsd(o.plannedAmountUsd)}</td>
+                    <td className="text-right font-mono">{fmtUsd(o.executedAmountUsd)}</td>
+                    <td className="text-right font-mono">{o.fillPrice ? `$${o.fillPrice.toLocaleString()}` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+interface RealCycleSummary {
+  cycleId: string;
+  state: string;
+  budgetUsd: number;
+  deployedUsd: number;
+  accumulatedQuantity: number;
+  averageCostBasis: number | null;
+  createdAt: string;
+  closedAt: string | null;
+}
+
+/**
+ * Historial operativo REAL: ciclos, compras y ventas ejecutados en
+ * REAL_LIMITED. Distinto de la pestaña Eventos (logs técnicos de
+ * auditoría): aquí se muestra el resultado operativo real.
+ */
+function RealHistoryPanel() {
+  const [data, setData] = useState<{ cycles: RealCycleSummary[]; tranches: RealTranche[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/ama/real/history")
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.success) setData(json.data);
+        else setError(json.error || "No se pudo cargar el historial real.");
+      })
+      .catch(() => setError("No se pudo conectar con el servidor."));
+  }, []);
+
+  if (error) return <div className="text-sm text-red-400">{error}</div>;
+  if (!data) return <div className="text-sm text-muted-foreground">Cargando historial real...</div>;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Ciclos en modo Real</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {data.cycles.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No existen ciclos reales registrados.</div>
+          ) : (
+            <div className="space-y-2">
+              {data.cycles.map((c) => (
+                <div key={c.cycleId} className="rounded-md border border-border/30 bg-muted/10 p-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <Badge variant="outline" className="text-xs">{c.state}</Badge>
+                    <span className="text-xs text-muted-foreground">{fmtDate(c.createdAt)}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs mt-1">
+                    <div><span className="text-muted-foreground">Capital: </span>{fmtUsd(c.budgetUsd)}</div>
+                    <div><span className="text-muted-foreground">Desplegado: </span>{fmtUsd(c.deployedUsd)}</div>
+                    <div><span className="text-muted-foreground">Coste medio: </span>{c.averageCostBasis ? `$${c.averageCostBasis.toLocaleString()}` : "—"}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Compras y ventas registradas</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {data.tranches.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No existen compras ni ventas reales registradas.</div>
+          ) : (
+            <div className="space-y-1 text-xs">
+              {data.tranches.map((t) => (
+                <div key={t.trancheId} className="flex items-center justify-between border-b border-border/20 py-1">
+                  <span>{translateTrancheType(t.trancheType)}</span>
+                  <Badge variant="outline" className="text-[10px]">{translateTrancheStatus(t.status)}</Badge>
+                  <span className="font-mono">{fmtUsd(t.executedAmountUsd)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

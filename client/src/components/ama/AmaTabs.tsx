@@ -1001,18 +1001,18 @@ export function LedgerTab() {
     });
   }, []);
 
-  if (loading) return <div className="text-muted-foreground text-sm">Cargando ledger...</div>;
+  if (loading) return <div className="text-muted-foreground text-sm">Cargando movimientos...</div>;
 
   return (
     <div className="space-y-4">
       {entries.length === 0 ? (
         <div className="text-center text-muted-foreground text-sm py-8">
-          No hay entradas en el ledger. Las entradas se crean cuando AMA ejecuta tranches.
+          No hay movimientos registrados. Los movimientos se crean cuando AMA ejecuta tramos.
         </div>
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Entradas del Ledger (últimas 50)</CardTitle>
+            <CardTitle className="text-sm">Movimientos registrados (últimos 50)</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">

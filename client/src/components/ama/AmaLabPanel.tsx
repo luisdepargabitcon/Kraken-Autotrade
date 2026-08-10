@@ -101,21 +101,14 @@ export function AmaLabPanel({ currentMode, onSetMode }: AmaLabPanelProps) {
   });
   const { items, loading } = useTestHistory();
 
-  async function handleSubtabChange(next: AmaLabSubtab) {
-    const mode = SUBTAB_MODES[next];
-    if (mode && mode !== currentMode) {
-      const ok = await onSetMode(mode);
-      if (!ok) return;
-    }
+  // Navegar entre subpestañas del Laboratorio NUNCA debe cambiar el modo AMA
+  // en backend. Las sesiones de Laboratorio/Reproducción/Simulación son
+  // aisladas (runLabSession, runReplaySession, etc.) y no dependen del modo
+  // global; el modo solo cambia cuando el usuario pulsa un CTA explícito
+  // (p.ej. "Ejecutar" dentro de cada subpestaña), no al navegar.
+  function handleSubtabChange(next: AmaLabSubtab) {
     setSubtab(next);
   }
-
-  useEffect(() => {
-    if (currentMode === "LAB") setSubtab("quick");
-    else if (currentMode === "REPLAY") setSubtab("replay");
-    else if (currentMode === "SHADOW_SCENARIO") setSubtab("shadowScenario");
-    else if (currentMode === "SHADOW_LIVE") setSubtab("shadowLive");
-  }, [currentMode]);
 
   return (
     <Tabs value={subtab} onValueChange={(v) => handleSubtabChange(v as AmaLabSubtab)} className="space-y-4">
