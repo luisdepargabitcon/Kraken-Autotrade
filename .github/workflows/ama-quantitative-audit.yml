@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "scripts/amaQuantitativeAudit.ts"
+      - "scripts/amaQuantitativeAuditV2.ts"
       - "server/services/ama/**"
       - ".github/workflows/ama-quantitative-audit.yml"
   workflow_dispatch:
@@ -35,25 +36,25 @@ jobs:
             server/services/ama/__tests__/amaProtectionExits.test.ts \
             --reporter=verbose
 
-      - name: Run AMA quantitative audit
+      - name: Run corrected AMA quantitative audit V2
         run: |
           mkdir -p artifacts
           set -o pipefail
-          npx tsx scripts/amaQuantitativeAudit.ts | tee artifacts/ama-quant-audit.log
+          npx tsx scripts/amaQuantitativeAuditV2.ts | tee artifacts/ama-quant-audit-v2.log
 
       - name: Verify audit artifacts
         run: |
-          test -s artifacts/ama-quant-audit/AUDITORIA_CUANTITATIVA_AMA_BTC.md
-          test -s artifacts/ama-quant-audit/runs.json
-          test -s artifacts/ama-quant-audit/trades.csv
-          grep -q "AMA_QUANT_AUDIT=PASS" artifacts/ama-quant-audit.log
+          test -s artifacts/ama-quant-audit-v2/AUDITORIA_CUANTITATIVA_AMA_BTC_V2.md
+          test -s artifacts/ama-quant-audit-v2/runs.json
+          test -s artifacts/ama-quant-audit-v2/trades.csv
+          grep -q "AMA_QUANT_AUDIT_V2=PASS" artifacts/ama-quant-audit-v2.log
 
       - name: Upload quantitative audit artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ama-quantitative-audit
+          name: ama-quantitative-audit-v2
           path: |
-            artifacts/ama-quant-audit/
-            artifacts/ama-quant-audit.log
+            artifacts/ama-quant-audit-v2/
+            artifacts/ama-quant-audit-v2.log
           retention-days: 30
