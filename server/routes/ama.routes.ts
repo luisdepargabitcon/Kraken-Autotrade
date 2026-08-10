@@ -23,7 +23,7 @@ import { runLabSession, runReplaySession } from "../services/ama/amaLabReplayRun
 import * as shadowExecutor from "../services/ama/amaShadowExecutor";
 import * as realLimited from "../services/ama/amaRealLimitedService";
 import * as portfolioLedger from "../services/ama/amaPortfolioLedger";
-import { getAuditEvents, type AuditEventFilters } from "../services/ama/amaRepository";
+import { getAuditEvents, type AuditEventFilters, getRealLimitedTranches, getRealLimitedCycles } from "../services/ama/amaRepository";
 import { executeHwmBootstrap } from "../services/ama/amaMarketRuntimeService";
 import { runShadowScenario } from "../services/ama/amaShadowScenarioRunner";
 import { amaHwmBootstrapService, amaSchedulerStateService } from "../services/ama/amaFunctionalClosure";
@@ -594,6 +594,32 @@ export function registerAmaRoutes(app: Express): void {
     try {
       const recs = await realLimited.getPendingReconciliations();
       res.json(ok(recs));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // Visor de órdenes REAL — read-only, conectado a la fuente persistente real.
+  // Si nunca se ha operado en REAL_LIMITED, devuelve un array vacío (no placeholder).
+  app.get("/api/ama/real/orders", async (_req, res) => {
+    try {
+      const limit = 100;
+      const tranches = await getRealLimitedTranches(limit);
+      res.json(ok(tranches));
+    } catch (e) {
+      res.status(500).json(err(sanitizeError(e)));
+    }
+  });
+
+  // Historial operativo REAL — ciclos, compras, ventas y resultado.
+  // Distinto de /api/ama/events (que son logs técnicos de auditoría).
+  app.get("/api/ama/real/history", async (_req, res) => {
+    try {
+      const [cycles, tranches] = await Promise.all([
+        getRealLimitedCycles(50),
+        getRealLimitedTranches(200),
+      ]);
+      res.json(ok({ cycles, tranches }));
     } catch (e) {
       res.status(500).json(err(sanitizeError(e)));
     }

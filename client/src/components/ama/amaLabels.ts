@@ -16,6 +16,7 @@ export const ENVIRONMENT_LABELS: Record<string, string> = {
 
 export const MODE_LABELS: Record<string, string> = {
   OFF: "Desactivado",
+  NONE: "Desactivado",
   LAB: "Laboratorio",
   REPLAY: "Reproducción histórica",
   SHADOW_SCENARIO: "Simulación de escenario",
@@ -31,7 +32,7 @@ export const MODE_DESCRIPTIONS: Record<string, string> = {
   SHADOW_SCENARIO: "Simula un escenario de mercado controlado con todo el sistema real de AMA activo —ciclos, cartera, tramos, órdenes simuladas, auditoría— pero sin dinero real.",
   SHADOW_LIVE: "AMA observa el mercado BTC real en Kraken y decide en tiempo real, pero las órdenes se simulan sin usar dinero real.",
   REAL_LIMITED: "AMA puede utilizar dinero real exclusivamente dentro de los límites que configure y autorice manualmente el usuario.",
-  REAL_FULL: "Modo reservado para una fase futura. No debe tener handler ni endpoint operativo.",
+  REAL_FULL: "Modo reservado para una fase futura. Todavía no existe ninguna forma de activarlo.",
 };
 
 export const MODE_RISK: Record<string, string> = {
@@ -50,7 +51,7 @@ export const MODE_ORDERS: Record<string, string> = {
   REPLAY: "Simuladas",
   SHADOW_SCENARIO: "Simuladas",
   SHADOW_LIVE: "Simuladas",
-  REAL_LIMITED: "Maker reales (post-only)",
+  REAL_LIMITED: "Órdenes reales pasivas",
   REAL_FULL: "Bloqueado",
 };
 
@@ -169,6 +170,22 @@ export const LAB_SUBTAB_LABELS: Record<string, string> = {
   events: "Eventos",
 };
 
+// ─── Modo Real autorizado (authorizedMode) ──────────────────────────
+// Distinto de MODE_LABELS: se usa exclusivamente para el campo
+// authorizedMode de la autorización REAL, donde "NONE" significa
+// que no existe ninguna autorización activa.
+
+export const REAL_AUTHORIZED_MODE_LABELS: Record<string, string> = {
+  NONE: "Desactivado",
+  REAL_LIMITED: "Real limitado",
+  REAL_FULL: "Real completo — bloqueado",
+};
+
+export function translateRealAuthorizedMode(mode: string | null | undefined): string {
+  if (!mode) return "Desactivado";
+  return REAL_AUTHORIZED_MODE_LABELS[mode] ?? "Desactivado";
+}
+
 // ─── Subpestañas de REAL ────────────────────────────────────────────
 
 export const REAL_SUBTAB_LABELS: Record<string, string> = {
@@ -225,8 +242,8 @@ export const UX_TERM_LABELS: Record<string, string> = {
   DATASET_HASH: "Huella del conjunto de datos",
   FILL: "Ejecución",
   ORDER: "Orden",
-  MAKER_ONLY: "Solo órdenes pasivas (maker)",
-  POST_ONLY: "Solo publicación (post-only)",
+  MAKER_ONLY: "Solo órdenes pasivas",
+  POST_ONLY: "Solo publicación en el libro de órdenes",
   LEDGER: "Movimientos",
   SHADOW: "Simulación",
   REPLAY: "Reproducción histórica",
@@ -254,10 +271,19 @@ export const RECONCILIATION_LABELS: Record<string, string> = {
 };
 
 // ─── Macro Zones ─────────────────────────────────────────────────────
+// Debe coincidir EXACTAMENTE con MacroZone en server/services/ama/amaTypes.ts
 
 export const MACRO_ZONE_LABELS: Record<string, string> = {
-  NEUTRAL: "Neutral",
-  VALUE_MODERATE: "Valor moderado",
+  NORMAL: "Normal",
+  RETROCESO: "Retroceso",
+  CORRECCION: "Corrección",
+  VALUE: "Zona de valor",
+  DEEP_VALUE: "Valor profundo",
+  CAPITULACION: "Capitulación",
+  CAPITULACION_EXTREMA: "Capitulación extrema",
+  // Alias legacy tolerados (no deben aparecer desde backend actual)
+  NEUTRAL: "Normal",
+  VALUE_MODERATE: "Zona de valor",
   VALUE_DEEP: "Valor profundo",
   ACCUMULATION_ZONE: "Zona de acumulación",
   RECOVERY: "Recuperación",
@@ -290,59 +316,85 @@ export const SHADOW_STATUS_LABELS: Record<string, string> = {
 
 // ─── Helper Functions ────────────────────────────────────────────────
 
+/**
+ * Traduce un valor de enum usando un mapa de etiquetas. Si no existe traducción,
+ * registra un aviso de diagnóstico y devuelve un fallback seguro en vez del
+ * enum técnico crudo. Nunca debe mostrarse un enum interno sin traducir al usuario.
+ */
+function translateWithFallback(
+  mapName: string,
+  map: Record<string, string>,
+  value: string,
+  fallback: string,
+): string {
+  const label = map[value];
+  if (!label) {
+    // eslint-disable-next-line no-console
+    console.warn(`[amaLabels] "${value}" sin traducción en ${mapName}. Añadir entrada.`);
+    return fallback;
+  }
+  return label;
+}
+
 export function translateMode(mode: string | null | undefined): string {
   if (!mode) return "Desactivado";
-  return MODE_LABELS[mode] ?? mode;
+  return translateWithFallback("MODE_LABELS", MODE_LABELS, mode, "Sin clasificar");
 }
 
 export function translateCycleState(state: string | null | undefined): string {
   if (!state) return "Observando mercado";
-  return CYCLE_STATE_LABELS[state] ?? state;
+  return translateWithFallback("CYCLE_STATE_LABELS", CYCLE_STATE_LABELS, state, "Sin clasificar");
 }
 
 export function translateRealState(state: string | null | undefined): string {
   if (!state) return "No preparado";
-  return REAL_STATE_LABELS[state] ?? state;
+  return translateWithFallback("REAL_STATE_LABELS", REAL_STATE_LABELS, state, "Sin clasificar");
 }
 
 export function translateLabStatus(status: string | null | undefined): string {
   if (!status) return "—";
-  return LAB_STATUS_LABELS[status] ?? status;
+  return translateWithFallback("LAB_STATUS_LABELS", LAB_STATUS_LABELS, status, "Sin clasificar");
 }
 
 export function translateReplayStatus(status: string | null | undefined): string {
   if (!status) return "—";
-  return REPLAY_STATUS_LABELS[status] ?? status;
+  return translateWithFallback("REPLAY_STATUS_LABELS", REPLAY_STATUS_LABELS, status, "Sin clasificar");
 }
 
 export function translateTrancheType(type: string | null | undefined): string {
   if (!type) return "—";
-  return TRANCHE_TYPE_LABELS[type] ?? type;
+  return translateWithFallback("TRANCHE_TYPE_LABELS", TRANCHE_TYPE_LABELS, type, "Sin clasificar");
 }
 
 export function translateTrancheStatus(status: string | null | undefined): string {
   if (!status) return "—";
-  return TRANCHE_STATUS_LABELS[status] ?? status;
+  return translateWithFallback("TRANCHE_STATUS_LABELS", TRANCHE_STATUS_LABELS, status, "Sin clasificar");
 }
 
 export function translateSleeve(sleeve: string | null | undefined): string {
   if (!sleeve) return "—";
-  return SLEEVE_LABELS[sleeve] ?? sleeve;
+  return translateWithFallback("SLEEVE_LABELS", SLEEVE_LABELS, sleeve, "Sin clasificar");
 }
 
 export function translateShadowStatus(status: string | null | undefined): string {
   if (!status) return "—";
-  return SHADOW_STATUS_LABELS[status] ?? status;
+  return translateWithFallback("SHADOW_STATUS_LABELS", SHADOW_STATUS_LABELS, status, "Sin clasificar");
 }
 
 export function translateMacroZone(zone: string | null | undefined): string {
   if (!zone) return "Sin clasificar";
-  return MACRO_ZONE_LABELS[zone] ?? zone;
+  const label = MACRO_ZONE_LABELS[zone];
+  if (!label) {
+    // eslint-disable-next-line no-console
+    console.warn(`[amaLabels] Zona macro sin traducción: "${zone}". Añadir a MACRO_ZONE_LABELS.`);
+    return "Sin clasificar";
+  }
+  return label;
 }
 
 export function translateDataQuality(quality: string | null | undefined): string {
   if (!quality) return "No disponible";
-  return DATA_QUALITY_LABELS[quality] ?? quality;
+  return translateWithFallback("DATA_QUALITY_LABELS", DATA_QUALITY_LABELS, quality, "No disponible");
 }
 
 export function translateEnvironment(env: string | null | undefined): string {

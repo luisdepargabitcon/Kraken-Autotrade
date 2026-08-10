@@ -1,14 +1,20 @@
 import { useState, useEffect } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, History as HistoryIcon } from "lucide-react";
 import { AmaCommandBar } from "@/components/ama/AmaCommandBar";
 import { AmaModeSelector } from "@/components/ama/AmaModeSelector";
-import { AmaPrimaryNav, type AmaTabKey } from "@/components/ama/AmaPrimaryNav";
+import {
+  AmaContextualNav, defaultSubtabForEnvironment,
+  type AmaEnvironment, type AmaAnySubtab,
+} from "@/components/ama/AmaContextualNav";
 import { AmaOverview } from "@/components/ama/AmaOverview";
 import { AmaHelpTab } from "@/components/ama/AmaHelpTab";
+import { AmaEventsPanel } from "@/components/ama/AmaEventsPanel";
 import { AmaLabPanel } from "@/components/ama/AmaLabPanel";
 import { AmaRealPanel } from "@/components/ama/AmaRealPanel";
+import { AmaRealActivationWizard } from "@/components/ama/AmaRealActivationWizard";
+import { getContextualReadiness } from "@/components/ama/amaContextualReadiness";
 
-function environmentFromMode(mode: string): "OFF" | "LAB" | "REAL" {
+function environmentFromMode(mode: string): AmaEnvironment {
   if (mode === "REAL_LIMITED" || mode === "REAL_FULL") return "REAL";
   if (mode === "OFF") return "OFF";
   return "LAB";
@@ -92,7 +98,10 @@ export default function Ama() {
   const [readiness, setReadiness] = useState<AmaReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<AmaTabKey>("overview");
+  const [subtab, setSubtab] = useState<AmaAnySubtab>("overview");
+  const [showRealWizard, setShowRealWizard] = useState(false);
+  const [modeActionPending, setModeActionPending] = useState(false);
+  const [killSwitchPending, setKillSwitchPending] = useState(false);
 
   async function fetchData() {
     try {
@@ -121,61 +130,119 @@ export default function Ama() {
     return () => clearInterval(interval);
   }, []);
 
-  async function setMode(mode: string) {
+  /**
+   * Único punto de cambio de modo backend. Nunca actualiza el estado local
+   * de forma optimista: solo aplica el nuevo status tras confirmación
+   * explícita del servidor (json.success === true).
+   */
+  async function setMode(mode: string): Promise<boolean> {
+    if (modeActionPending) return false; // evita doble clic / llamadas concurrentes
+    setModeActionPending(true);
     try {
       const res = await fetch("/api/ama/mode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode }),
       });
-      const json = await res.json();
-      if (json.success && json.data) {
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        setError("Respuesta inválida del servidor al cambiar de modo.");
+        return false;
+      }
+      if (res.ok && json?.success && json.data) {
         setStatus(json.data);
         setError(null);
         return true;
-      } else if (json.error) {
-        setError(json.error);
-        return false;
       }
+      setError(json?.error || "No se pudo cambiar el modo.");
       return false;
     } catch {
       setError("No se pudo cambiar el modo. Compruebe la conexión.");
       return false;
+    } finally {
+      setModeActionPending(false);
     }
   }
 
-  function handleTabChange(tab: AmaTabKey) {
-    setActiveTab(tab);
+  function handleSubtabChange(next: AmaAnySubtab) {
+    // La navegación entre pestañas contextuales NUNCA debe producir llamadas
+    // a /api/ama/mode. MODE_CHANGE_CALLS=0 al navegar.
+    setSubtab(next);
   }
 
-  function handleEnvironmentChange(env: "OFF" | "LAB" | "REAL") {
+  async function handleEnvironmentChange(env: AmaEnvironment) {
     const currentMode = status?.mode || "OFF";
+    const currentEnv = environmentFromMode(currentMode);
+
     if (env === "OFF") {
-      void setMode("OFF");
-      setActiveTab("overview");
-    } else if (env === "LAB") {
-      if (!["LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"].includes(currentMode)) {
-        void setMode("LAB");
+      if (currentEnv === "OFF") {
+        setSubtab(defaultSubtabForEnvironment("OFF"));
+        return;
       }
-      setActiveTab("lab");
-    } else if (env === "REAL") {
-      setActiveTab("real");
+      const success = await setMode("OFF");
+      if (success) setSubtab(defaultSubtabForEnvironment("OFF"));
+      // Si falla, el modo activo real (backend) sigue siendo el anterior;
+      // el error ya quedó reflejado en `error` y el selector se recalcula
+      // en el próximo render a partir de `status.mode`.
+      return;
     }
+
+    if (env === "LAB") {
+      if (["LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"].includes(currentMode)) {
+        setSubtab(defaultSubtabForEnvironment("LAB"));
+        return;
+      }
+      const success = await setMode("LAB");
+      if (success) setSubtab(defaultSubtabForEnvironment("LAB"));
+      return;
+    }
+
+    if (env === "REAL") {
+      // Si el backend ya está en REAL_LIMITED/REAL_FULL, solo navegamos.
+      // Si no, NUNCA cambiamos el modo aquí: se abre el asistente y es el
+      // asistente quien, tras éxito confirmado por el backend, activa REAL.
+      if (currentEnv === "REAL") {
+        setSubtab(defaultSubtabForEnvironment("REAL"));
+        return;
+      }
+      setShowRealWizard(true);
+    }
+  }
+
+  async function handleRealActivated() {
+    setShowRealWizard(false);
+    await fetchData();
+    setSubtab(defaultSubtabForEnvironment("REAL"));
   }
 
   async function toggleKillSwitch() {
+    if (killSwitchPending) return; // evita doble clic
+    setKillSwitchPending(true);
     try {
       const res = await fetch("/api/ama/kill-switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ active: !status?.killSwitchActive }),
       });
-      const json = await res.json();
-      if (json.success) {
-        setStatus((prev) => prev ? { ...prev, killSwitchActive: json.data.killSwitchActive } : prev);
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        setError("Respuesta inválida del servidor al cambiar la parada de emergencia.");
+        return;
       }
+      if (!res.ok || !json?.success) {
+        setError(json?.error || "No se pudo cambiar la parada de emergencia.");
+        return;
+      }
+      setStatus((prev) => prev ? { ...prev, killSwitchActive: json.data.killSwitchActive } : prev);
+      setError(null);
     } catch {
-      setError("No se pudo cambiar el kill switch.");
+      setError("No se pudo conectar con el servidor.");
+    } finally {
+      setKillSwitchPending(false);
     }
   }
 
@@ -190,27 +257,13 @@ export default function Ama() {
   const currentMode = status?.mode || "OFF";
   const environment = environmentFromMode(currentMode);
 
-  // Readiness summary for command bar
-  const readinessItems = readiness?.checks
-    ? [
-        readiness.checks.schema.ready,
-        readiness.checks.database.ready,
-        readiness.checks.market.ready,
-        readiness.checks.hwm.ready,
-        readiness.checks.mandate.ready,
-        readiness.checks.policy.ready,
-        readiness.checks.budget.ready,
-        readiness.checks.reconciliation.ready,
-        readiness.checks.gateway.ready,
-        readiness.checks.killSwitch.ready,
-        readiness.checks.scheduler.ready,
-        readiness.checks.shadowScenario.ready,
-        readiness.checks.shadowLive.ready,
-        readiness.checks.realExecutionGate.ready,
-      ]
-    : [];
-  const readyCount = readinessItems.filter(Boolean).length;
-  const totalCount = readinessItems.length;
+  // Preparación contextual: solo cuenta los checks relevantes para el
+  // entorno activo (OFF/Laboratorio/Real). Evita cifras engañosas como
+  // "13/14" en Laboratorio por checks exclusivos de Real (realExecutionGate).
+  const { label: readinessLabel, readyCount, totalCount } = getContextualReadiness(
+    environment,
+    readiness?.checks ?? null,
+  );
 
   return (
     <div className="container mx-auto p-4 space-y-3 max-w-[1500px]">
@@ -220,18 +273,20 @@ export default function Ama() {
         marketView={marketView}
         portfolio={portfolio}
         readiness={{ readyCount, totalCount }}
+        readinessLabel={readinessLabel}
         onRefresh={fetchData}
         onToggleKillSwitch={toggleKillSwitch}
+        killSwitchPending={killSwitchPending}
       />
 
-      {/* B. Mode Selector (environment) */}
+      {/* B. Selector único de modo AMA (verdad backend) */}
       <AmaModeSelector
         environment={environment}
         onSelectEnvironment={handleEnvironmentChange}
       />
 
-      {/* C. Primary Navigation */}
-      <AmaPrimaryNav activeTab={activeTab} onTabChange={handleTabChange} />
+      {/* C. Navegación contextual (única, cambia según el entorno activo) */}
+      <AmaContextualNav environment={environment} subtab={subtab} onSubtabChange={handleSubtabChange} />
 
       {/* D. Error display */}
       {error && (
@@ -241,9 +296,9 @@ export default function Ama() {
         </div>
       )}
 
-      {/* E. Tab Content */}
+      {/* E. Contenido según entorno + subpestaña contextual */}
       <div className="pt-2">
-        {activeTab === "overview" && (
+        {environment === "OFF" && subtab === "overview" && (
           <AmaOverview
             status={status}
             marketView={marketView}
@@ -251,12 +306,33 @@ export default function Ama() {
             readinessChecks={readiness?.checks ?? null}
           />
         )}
-        {activeTab === "lab" && (
-          <AmaLabPanel currentMode={currentMode} onSetMode={setMode} />
+        {environment === "OFF" && subtab === "history" && (
+          <div className="rounded-lg border border-border/30 p-6 text-center text-sm text-muted-foreground">
+            <HistoryIcon className="h-5 w-5 mx-auto mb-2" />
+            No hay historial mientras AMA está desactivado. Actívalo en Laboratorio o Real para generar historial.
+          </div>
         )}
-        {activeTab === "real" && <AmaRealPanel currentMode={currentMode} />}
-        {activeTab === "help" && <AmaHelpTab />}
+        {environment === "OFF" && subtab === "events" && (
+          <AmaEventsPanel />
+        )}
+
+        {environment === "LAB" && subtab !== "help" && (
+          <AmaLabPanel currentMode={currentMode} onSetMode={setMode} subtab={subtab as any} />
+        )}
+
+        {environment === "REAL" && subtab !== "help" && (
+          <AmaRealPanel currentMode={currentMode} subtab={subtab as any} />
+        )}
+
+        {subtab === "help" && <AmaHelpTab />}
       </div>
+
+      {showRealWizard && (
+        <AmaRealActivationWizard
+          onClose={() => setShowRealWizard(false)}
+          onActivated={handleRealActivated}
+        />
+      )}
     </div>
   );
 }

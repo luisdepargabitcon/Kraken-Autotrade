@@ -79,7 +79,7 @@ const COMPARATOR_DATA: Record<string, Record<string, string>> = {
   REPLAY: { data: "Histórico real", engine: "Sí", db: "Aislado", orders: "Simuladas", capital: "No" },
   SHADOW_SCENARIO: { data: "Controlado", engine: "Sí", db: "Sí", orders: "Simuladas", capital: "No" },
   SHADOW_LIVE: { data: "Mercado actual", engine: "Sí", db: "Sí", orders: "Simuladas", capital: "No" },
-  REAL_LIMITED: { data: "Mercado actual", engine: "Sí", db: "Sí", orders: "Maker reales", capital: "Sí" },
+  REAL_LIMITED: { data: "Mercado actual", engine: "Sí", db: "Sí", orders: "Órdenes reales pasivas", capital: "Sí" },
 };
 
 export function AmaModeGuide() {
@@ -166,7 +166,7 @@ export function AmaModeGuide() {
                               ? "border-green-500/30 text-green-400"
                               : values[r.key] === "No"
                               ? "border-gray-500/30 text-gray-400"
-                              : values[r.key] === "Maker reales"
+                              : values[r.key] === "Órdenes reales pasivas"
                               ? "border-orange-500/30 text-orange-400"
                               : "border-border/50"
                           }`}

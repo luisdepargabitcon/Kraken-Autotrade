@@ -9,7 +9,7 @@ import { FlaskConical, RotateCcw, Ghost, ShieldCheck, Eye, AlertTriangle, Lock }
 import {
   translateCycleState, translateTrancheType, translateTrancheStatus, translateSleeve,
   translateLabStatus, translateReplayStatus, translateShadowStatus, translateRealState,
-  MODE_LABELS,
+  translateMacroZone, translateMode, MODE_LABELS,
 } from "./amaLabels";
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -282,6 +282,8 @@ export function LabTab() {
   const [scenarioName, setScenarioName] = useState("");
   const [maxCapital, setMaxCapital] = useState("5000");
   const [customDrops, setCustomDrops] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   const fetchSessions = useCallback(() => {
     api<LabSession[]>("/api/ama/lab/sessions").then((r) => {
@@ -297,29 +299,43 @@ export function LabTab() {
   }, [fetchSessions]);
 
   async function startLab() {
+    if (starting) return; // evita doble clic
+    setStarting(true);
+    setStartError(null);
     const preset = LAB_PRESETS[selectedPreset];
     const name = scenarioName || preset.name;
     const drops = preset.drops.length > 0 ? preset.drops : (customDrops ? customDrops.split(",").map(Number) : [5, 10, 15, 25, 35]);
-    await api("/api/ama/lab/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        asset: "BTC",
-        pair: "BTC/USD",
-        scenarioName: name,
-        initialCapitalUsd: Number(maxCapital),
-        config: {
-          maxCapitalUsd: Number(maxCapital),
-          riskMandate: "PRUDENTE",
-          accumulationStyle: "ADAPTATIVO",
-          exitObjective: "RECUPERAR_CAPITAL",
-          autonomyLevel: "SOLO_ANALISIS",
-          customDropPcts: drops,
-        },
-      }),
-    });
-    setScenarioName("");
-    fetchSessions();
+    try {
+      const res = await fetch("/api/ama/lab/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asset: "BTC",
+          pair: "BTC/USD",
+          scenarioName: name,
+          initialCapitalUsd: Number(maxCapital),
+          config: {
+            maxCapitalUsd: Number(maxCapital),
+            riskMandate: "PRUDENTE",
+            accumulationStyle: "ADAPTATIVO",
+            exitObjective: "RECUPERAR_CAPITAL",
+            autonomyLevel: "SOLO_ANALISIS",
+            customDropPcts: drops,
+          },
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        setStartError(json?.error || "No se pudo iniciar la prueba.");
+        return;
+      }
+      setScenarioName("");
+      fetchSessions();
+    } catch {
+      setStartError("No se pudo conectar con el servidor.");
+    } finally {
+      setStarting(false);
+    }
   }
 
   if (loading) return <div className="text-muted-foreground text-sm">Cargando laboratorio...</div>;
@@ -370,8 +386,11 @@ export function LabTab() {
                 <Input value={customDrops} onChange={(e) => setCustomDrops(e.target.value)} placeholder="5,10,15,25,35" className="w-48" />
               </div>
             )}
-            <Button size="sm" onClick={startLab} className="bg-purple-500/80 hover:bg-purple-500">Iniciar experimento</Button>
+            <Button size="sm" onClick={startLab} disabled={starting} className="bg-purple-500/80 hover:bg-purple-500">
+              {starting ? "Iniciando..." : "Iniciar experimento"}
+            </Button>
           </div>
+          {startError && <div className="text-xs text-red-400 mt-2">{startError}</div>}
         </CardContent>
       </Card>
 
@@ -419,6 +438,8 @@ export function ReplayTab() {
   const [startDate, setStartDate] = useState("2025-01-01");
   const [endDate, setEndDate] = useState("2025-06-01");
   const [capital, setCapital] = useState("10000");
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   const fetchRuns = useCallback(() => {
     api<ReplayRun[]>("/api/ama/replay/runs").then((r) => {
@@ -434,20 +455,34 @@ export function ReplayTab() {
   }, [fetchRuns]);
 
   async function startReplay() {
+    if (starting) return; // evita doble clic
+    setStarting(true);
+    setStartError(null);
     const preset = REPLAY_PRESETS[selectedPreset];
     const start = preset.start || startDate;
     const end = preset.end || endDate;
-    await api("/api/ama/replay/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        startDate: start,
-        endDate: end,
-        pair: "BTC/USD",
-        initialCapitalUsd: Number(capital),
-      }),
-    });
-    fetchRuns();
+    try {
+      const res = await fetch("/api/ama/replay/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startDate: start,
+          endDate: end,
+          pair: "BTC/USD",
+          initialCapitalUsd: Number(capital),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        setStartError(json?.error || "No se pudo iniciar la reproducción.");
+        return;
+      }
+      fetchRuns();
+    } catch {
+      setStartError("No se pudo conectar con el servidor.");
+    } finally {
+      setStarting(false);
+    }
   }
 
   if (loading) return <div className="text-muted-foreground text-sm">Cargando reproducciones...</div>;
@@ -503,8 +538,11 @@ export function ReplayTab() {
               <Label className="text-xs">Capital inicial USD</Label>
               <Input type="number" value={capital} onChange={(e) => setCapital(e.target.value)} className="w-32" />
             </div>
-            <Button size="sm" onClick={startReplay} className="bg-blue-500/80 hover:bg-blue-500">Iniciar reproducción</Button>
+            <Button size="sm" onClick={startReplay} disabled={starting} className="bg-blue-500/80 hover:bg-blue-500">
+              {starting ? "Iniciando..." : "Iniciar reproducción"}
+            </Button>
           </div>
+          {startError && <div className="text-xs text-red-400 mt-2">{startError}</div>}
         </CardContent>
       </Card>
 
@@ -546,11 +584,31 @@ export function ReplayTab() {
 
 // ─── Shadow Tab ──────────────────────────────────────────────────────
 
+const SCENARIO_PRESETS = [
+  { label: "Caída rápida", desc: "Descenso brusco en poco tiempo" },
+  { label: "Caída progresiva", desc: "Descenso gradual y sostenido" },
+  { label: "Capitulación", desc: "Caída extrema con pánico de mercado" },
+  { label: "Caída + rebote", desc: "Descenso seguido de recuperación" },
+  { label: "Lateral", desc: "Mercado sin tendencia clara" },
+  { label: "Personalizado", desc: "Define tu propio nombre" },
+];
+
+function generateScenarioId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `scenario-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function ShadowScenarioTab() {
   const [scenarios, setScenarios] = useState<ShadowScenario[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedPreset, setSelectedPreset] = useState(0);
   const [scenarioName, setScenarioName] = useState("");
-  const [scenarioId, setScenarioId] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [busyScenarioId, setBusyScenarioId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchScenarios = useCallback(() => {
     api<ShadowScenario[]>("/api/ama/shadow/scenarios").then((r) => {
@@ -566,31 +624,73 @@ export function ShadowScenarioTab() {
   }, [fetchScenarios]);
 
   async function createScenario() {
-    if (!scenarioName || !scenarioId) return;
-    await api("/api/ama/shadow/scenarios", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scenarioId,
-        name: scenarioName,
-        asset: "BTC",
-        pair: "BTC/USD",
-        config: {},
-      }),
-    });
-    setScenarioName("");
-    setScenarioId("");
-    fetchScenarios();
+    if (creating) return; // evita doble clic
+    const preset = SCENARIO_PRESETS[selectedPreset];
+    const name = scenarioName || preset.label;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const res = await fetch("/api/ama/shadow/scenarios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scenarioId: generateScenarioId(),
+          name,
+          asset: "BTC",
+          pair: "BTC/USD",
+          config: {},
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        setCreateError(json?.error || "No se pudo crear la simulación.");
+        return;
+      }
+      setScenarioName("");
+      fetchScenarios();
+    } catch {
+      setCreateError("No se pudo conectar con el servidor.");
+    } finally {
+      setCreating(false);
+    }
   }
 
   async function closeScenario(id: string) {
-    await api(`/api/ama/shadow/scenarios/${id}/close`, { method: "POST" });
-    fetchScenarios();
+    if (busyScenarioId) return; // evita doble clic
+    setBusyScenarioId(id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/ama/shadow/scenarios/${id}/close`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        setActionError(json?.error || "No se pudo cerrar la simulación.");
+        return;
+      }
+      fetchScenarios();
+    } catch {
+      setActionError("No se pudo conectar con el servidor.");
+    } finally {
+      setBusyScenarioId(null);
+    }
   }
 
   async function runScenario(id: string) {
-    await api(`/api/ama/shadow/scenarios/${id}/run`, { method: "POST" });
-    fetchScenarios();
+    if (busyScenarioId) return; // evita doble clic
+    setBusyScenarioId(id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/ama/shadow/scenarios/${id}/run`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        setActionError(json?.error || "No se pudo ejecutar la simulación.");
+        return;
+      }
+      fetchScenarios();
+    } catch {
+      setActionError("No se pudo conectar con el servidor.");
+    } finally {
+      setBusyScenarioId(null);
+    }
   }
 
   if (loading) return <div className="text-muted-foreground text-sm py-8 text-center">Cargando simulación...</div>;
@@ -603,23 +703,38 @@ export function ShadowScenarioTab() {
             <Ghost className="h-4 w-4 text-yellow-400" /> Simulación de escenario
           </CardTitle>
           <p className="text-[11px] text-muted-foreground">
-            Ejecuta todo el sistema real de AMA —base de datos, ciclos, cartera, tramos, órdenes simuladas, ejecuciones, reinicios y auditoría— pero con un mercado controlado.
+            Ejecuta todo el sistema completo de AMA —ciclos, cartera, tramos, órdenes simuladas, ejecuciones, reinicios y auditoría— pero con un mercado controlado.
           </p>
         </CardHeader>
         <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
+            {SCENARIO_PRESETS.map((p, i) => (
+              <button
+                key={i}
+                onClick={() => setSelectedPreset(i)}
+                className={`p-2 rounded-md text-left border transition-colors ${
+                  selectedPreset === i ? "border-yellow-500/50 bg-yellow-500/10" : "border-border/30 hover:border-border/50"
+                }`}
+              >
+                <div className="text-xs font-medium">{p.label}</div>
+                <div className="text-[10px] text-muted-foreground">{p.desc}</div>
+              </button>
+            ))}
+          </div>
+          {createError && <div className="text-xs text-red-400 mb-2">{createError}</div>}
           <div className="flex flex-wrap gap-3 items-end">
             <div>
-              <Label className="text-xs">ID</Label>
-              <Input value={scenarioId} onChange={(e) => setScenarioId(e.target.value)} placeholder="shadow-btc-drop" className="w-48" />
+              <Label className="text-xs">Nombre (opcional)</Label>
+              <Input value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder={SCENARIO_PRESETS[selectedPreset].label} className="w-48" />
             </div>
-            <div>
-              <Label className="text-xs">Nombre</Label>
-              <Input value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Caída BTC 40%" className="w-48" />
-            </div>
-            <Button size="sm" onClick={createScenario} disabled={!scenarioName || !scenarioId} className="bg-yellow-500/80 hover:bg-yellow-500">Crear escenario</Button>
+            <Button size="sm" onClick={createScenario} disabled={creating} className="bg-yellow-500/80 hover:bg-yellow-500">
+              {creating ? "Creando..." : "Crear escenario"}
+            </Button>
           </div>
         </CardContent>
       </Card>
+
+      {actionError && <div className="text-xs text-red-400">{actionError}</div>}
 
       {scenarios.length === 0 ? (
         <div className="text-center text-muted-foreground text-sm py-8">
@@ -644,11 +759,19 @@ export function ShadowScenarioTab() {
                   <span className="text-xs text-muted-foreground">{fmtDate(s.createdAt)}</span>
                   {s.status === "ACTIVE" && (
                     <div className="flex gap-1">
-                      <Button size="sm" variant="outline" className="text-xs h-6" onClick={() => runScenario(s.scenarioId)}>
-                        Ejecutar
+                      <Button
+                        size="sm" variant="outline" className="text-xs h-6"
+                        disabled={busyScenarioId !== null}
+                        onClick={() => runScenario(s.scenarioId)}
+                      >
+                        {busyScenarioId === s.scenarioId ? "Ejecutando..." : "Ejecutar"}
                       </Button>
-                      <Button size="sm" variant="outline" className="text-xs h-6" onClick={() => closeScenario(s.scenarioId)}>
-                        Cerrar
+                      <Button
+                        size="sm" variant="outline" className="text-xs h-6"
+                        disabled={busyScenarioId !== null}
+                        onClick={() => closeScenario(s.scenarioId)}
+                      >
+                        {busyScenarioId === s.scenarioId ? "Cerrando..." : "Cerrar"}
                       </Button>
                     </div>
                   )}
@@ -662,51 +785,109 @@ export function ShadowScenarioTab() {
   );
 }
 
-export function ShadowLiveTab() {
+interface ShadowLiveTabProps {
+  currentMode: string;
+  onSetMode: (mode: string) => Promise<boolean>;
+}
+
+/**
+ * Simulación en vivo con activación/parada explícita (nunca automática al
+ * entrar en la pantalla). Detener vuelve a LAB de forma explícita y
+ * confirmada por backend (mismo contrato que cualquier otro cambio de modo).
+ */
+export function ShadowLiveTab({ currentMode, onSetMode }: ShadowLiveTabProps) {
+  const isLive = currentMode === "SHADOW_LIVE";
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [market, setMarket] = useState<{ analysisPrice: number | null; macroZone: string | null; lastUpdated?: string } | null>(null);
+
+  const fetchMarket = useCallback(() => {
+    fetch("/api/ama/market-view")
+      .then((r) => r.json())
+      .then((j) => setMarket(j.data ?? null))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!isLive) return;
+    fetchMarket();
+    const interval = setInterval(fetchMarket, 5000);
+    return () => clearInterval(interval);
+  }, [isLive, fetchMarket]);
+
+  async function handleStart() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const ok = await onSetMode("SHADOW_LIVE");
+    if (!ok) setError("No se pudo iniciar la simulación en vivo. Inténtalo de nuevo.");
+    setBusy(false);
+  }
+
+  async function handleStop() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const ok = await onSetMode("LAB");
+    if (!ok) setError("No se pudo detener la simulación en vivo. Inténtalo de nuevo.");
+    setBusy(false);
+  }
+
   return (
     <div className="space-y-4">
       <Card className="border-amber-500/20 bg-amber-500/5">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
-            <Eye className="h-4 w-4 text-amber-400" /> Simulación en vivo
+            <Eye className="h-4 w-4 text-amber-400" /> Observar el mercado actual
           </CardTitle>
           <p className="text-[11px] text-muted-foreground">
-            AMA observa el mercado BTC real actual en Kraken y decide en tiempo real, pero las órdenes se simulan.
+            AMA analiza el BTC real de ahora, pero cualquier operación se simula. No se usa dinero real.
           </p>
         </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/20">
-            <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
-            <div className="text-xs text-muted-foreground">
-              En este modo AMA vigila el mercado real y genera órdenes simuladas. No se usa dinero real.
-            </div>
-          </div>
+        <CardContent className="space-y-3">
+          {!isLive ? (
+            <>
+              <Badge variant="outline" className="text-xs border-gray-500/30 text-gray-400">
+                Simulación en vivo inactiva
+              </Badge>
+              {error && <div className="text-xs text-red-400">{error}</div>}
+              <div>
+                <Button size="sm" onClick={handleStart} disabled={busy} className="bg-amber-500/80 hover:bg-amber-500">
+                  {busy ? "Iniciando..." : "Iniciar simulación en vivo"}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <Badge className="text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  Simulación en vivo activa
+                </Badge>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                <div className="rounded-md border border-border/30 bg-muted/10 p-2">
+                  <div className="text-xs text-muted-foreground">Precio BTC</div>
+                  <div className="font-mono">{market?.analysisPrice ? `$${market.analysisPrice.toLocaleString()}` : "No disponible"}</div>
+                </div>
+                <div className="rounded-md border border-border/30 bg-muted/10 p-2">
+                  <div className="text-xs text-muted-foreground">Zona de mercado</div>
+                  <div>{translateMacroZone(market?.macroZone)}</div>
+                </div>
+                <div className="rounded-md border border-border/30 bg-muted/10 p-2">
+                  <div className="text-xs text-muted-foreground">Última actualización</div>
+                  <div className="text-xs">{market?.lastUpdated ? new Date(market.lastUpdated).toLocaleTimeString("es-ES") : "No disponible"}</div>
+                </div>
+              </div>
+              {error && <div className="text-xs text-red-400">{error}</div>}
+              <div>
+                <Button size="sm" variant="outline" onClick={handleStop} disabled={busy} className="border-red-500/30 text-red-400 hover:bg-red-500/10">
+                  {busy ? "Deteniendo..." : "Detener simulación"}
+                </Button>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-export function ShadowTab() {
-  const [shadowSubtab, setShadowSubtab] = useState<string>("scenario");
-  return (
-    <div className="space-y-4">
-      <Tabs value={shadowSubtab} onValueChange={setShadowSubtab}>
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="scenario" className="text-xs">
-            <Ghost className="h-3.5 w-3.5 mr-1" /> Escenario
-          </TabsTrigger>
-          <TabsTrigger value="live" className="text-xs">
-            <Eye className="h-3.5 w-3.5 mr-1" /> En vivo
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="scenario" className="mt-4">
-          <ShadowScenarioTab />
-        </TabsContent>
-        <TabsContent value="live" className="mt-4">
-          <ShadowLiveTab />
-        </TabsContent>
-      </Tabs>
     </div>
   );
 }
@@ -728,6 +909,10 @@ export function OperationTab() {
   });
   const [confirmed, setConfirmed] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmingKillSwitch, setConfirmingKillSwitch] = useState(false);
+  const [granting, setGranting] = useState(false);
 
   const fetchAuth = useCallback(async () => {
     const r = await api<RealAuth>("/api/ama/real/authorization");
@@ -747,41 +932,76 @@ export function OperationTab() {
   }, [fetchAuth]);
 
   async function callRealEndpoint(action: string, body?: Record<string, unknown>) {
-    await api(`/api/ama/real/${action}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body ?? {}),
-    });
-    await fetchAuth();
+    if (actionBusy) return; // evita doble clic / llamadas concurrentes
+    setActionBusy(action);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/ama/real/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+      });
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        setActionError("Respuesta inválida del servidor.");
+        return;
+      }
+      if (!res.ok || !json?.success) {
+        setActionError(json?.error || "No se pudo completar la acción.");
+        return;
+      }
+      // Solo refrescamos el estado tras confirmación explícita de éxito.
+      await fetchAuth();
+    } catch {
+      setActionError("No se pudo conectar con el servidor.");
+    } finally {
+      setActionBusy(null);
+    }
   }
 
   async function grant() {
+    if (granting) return; // evita doble clic
     setActivationError(null);
     if (!confirmed) {
       setActivationError("Debes confirmar que entiendes el riesgo y que se activará modo Real limitado.");
       return;
     }
-    const res = await fetch("/api/ama/real/activate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...grantData,
-        maxCapitalUsd: Number(grantData.maxCapitalUsd),
-        maxSingleTrancheUsd: Number(grantData.maxSingleTrancheUsd),
-        maxTranchesPerCycle: Number(grantData.maxTranchesPerCycle),
-        confirm: true,
-        expiresAt: grantData.expiresAt || undefined,
-        reason: grantData.reason || "Manual activation",
-      }),
-    });
-    const json = await res.json();
-    if (!json.success) {
-      setActivationError(json.error || "No se pudo activar Real limitado.");
-      return;
+    setGranting(true);
+    try {
+      const res = await fetch("/api/ama/real/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...grantData,
+          maxCapitalUsd: Number(grantData.maxCapitalUsd),
+          maxSingleTrancheUsd: Number(grantData.maxSingleTrancheUsd),
+          maxTranchesPerCycle: Number(grantData.maxTranchesPerCycle),
+          confirm: true,
+          expiresAt: grantData.expiresAt || undefined,
+          reason: grantData.reason || "Manual activation",
+        }),
+      });
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        setActivationError("Respuesta inválida del servidor.");
+        return;
+      }
+      if (!res.ok || !json?.success) {
+        setActivationError(json?.error || "No se pudo activar Real limitado.");
+        return;
+      }
+      setShowGrantForm(false);
+      setConfirmed(false);
+      await fetchAuth();
+    } catch {
+      setActivationError("No se pudo conectar con el servidor.");
+    } finally {
+      setGranting(false);
     }
-    setShowGrantForm(false);
-    setConfirmed(false);
-    await fetchAuth();
   }
 
   if (loading) return <div className="text-muted-foreground text-sm">Cargando autorización...</div>;
@@ -838,6 +1058,9 @@ export function OperationTab() {
                 <div className="text-[11px] text-muted-foreground mb-2">
                   La activación pasa a <strong>Armado</strong>. NO crea órdenes inmediatamente. AMA queda armado y esperará una señal válida.
                 </div>
+                {actionError && (
+                  <div className="text-xs text-red-400 mb-2">{actionError}</div>
+                )}
                 <div className="flex flex-wrap gap-2">
                   {/* ACTIVAR REAL_LIMITED — from DISABLED/NOT_READY → ARMED */}
                   {isDisabled && realEnabled !== false && (
@@ -860,9 +1083,10 @@ export function OperationTab() {
                       size="sm"
                       variant="outline"
                       className="text-xs h-7 border-yellow-500/30 text-yellow-400"
+                      disabled={actionBusy !== null}
                       onClick={() => callRealEndpoint("pause", { reason: "Pausa manual" })}
                     >
-                      Pausar nuevas operaciones
+                      {actionBusy === "pause" ? "Pausando..." : "Pausar nuevas operaciones"}
                     </Button>
                   )}
 
@@ -870,9 +1094,10 @@ export function OperationTab() {
                     <Button
                       size="sm"
                       className="text-xs h-7 bg-orange-500/80 hover:bg-orange-500"
+                      disabled={actionBusy !== null}
                       onClick={() => callRealEndpoint("resume")}
                     >
-                      Reanudar
+                      {actionBusy === "resume" ? "Reanudando..." : "Reanudar"}
                     </Button>
                   )}
 
@@ -881,20 +1106,48 @@ export function OperationTab() {
                       size="sm"
                       variant="outline"
                       className="text-xs h-7"
+                      disabled={actionBusy !== null}
                       onClick={() => callRealEndpoint("deactivate", { reason: "Desactivación manual" })}
                     >
-                      Desactivar
+                      {actionBusy === "deactivate" ? "Desactivando..." : "Desactivar"}
                     </Button>
                   )}
 
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    className="text-xs h-7"
-                    onClick={() => callRealEndpoint("kill-switch", { active: true, reason: "Parada de emergencia" })}
-                  >
-                    Parada de emergencia
-                  </Button>
+                  {!confirmingKillSwitch ? (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="text-xs h-7"
+                      disabled={actionBusy !== null}
+                      onClick={() => setConfirmingKillSwitch(true)}
+                    >
+                      Parada de emergencia
+                    </Button>
+                  ) : (
+                    <div className="flex items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-1">
+                      <span className="text-[11px] text-red-300">¿Confirmar parada de emergencia?</span>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="text-xs h-6"
+                        disabled={actionBusy !== null}
+                        onClick={async () => {
+                          await callRealEndpoint("kill-switch", { active: true, reason: "Parada de emergencia" });
+                          setConfirmingKillSwitch(false);
+                        }}
+                      >
+                        {actionBusy === "kill-switch" ? "Deteniendo..." : "Sí, detener"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-6"
+                        onClick={() => setConfirmingKillSwitch(false)}
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -969,8 +1222,8 @@ export function OperationTab() {
             {activationError && (
               <div className="text-xs text-red-400 mt-2">{activationError}</div>
             )}
-            <Button size="sm" className="mt-3" onClick={grant} disabled={!grantData.authorizedBy || !confirmed}>
-              Confirmar activación → Armado
+            <Button size="sm" className="mt-3" onClick={grant} disabled={!grantData.authorizedBy || !confirmed || granting}>
+              {granting ? "Activando..." : "Confirmar activación → Armado"}
             </Button>
           </CardContent>
         </Card>
@@ -980,7 +1233,7 @@ export function OperationTab() {
         <CardContent className="pt-4">
           <div className="flex items-center gap-2 text-xs">
             <Lock className="h-3.5 w-3.5 text-red-400" />
-            <span className="text-muted-foreground">Real completo está bloqueado. Reservado para el futuro — sin handler, sin endpoint de activación.</span>
+            <span className="text-muted-foreground">Real completo está bloqueado. Reservado para el futuro — no existe ninguna forma de activarlo todavía.</span>
           </div>
         </CardContent>
       </Card>
@@ -1001,18 +1254,18 @@ export function LedgerTab() {
     });
   }, []);
 
-  if (loading) return <div className="text-muted-foreground text-sm">Cargando ledger...</div>;
+  if (loading) return <div className="text-muted-foreground text-sm">Cargando movimientos...</div>;
 
   return (
     <div className="space-y-4">
       {entries.length === 0 ? (
         <div className="text-center text-muted-foreground text-sm py-8">
-          No hay entradas en el ledger. Las entradas se crean cuando AMA ejecuta tranches.
+          No hay movimientos registrados. Los movimientos se crean cuando AMA ejecuta tramos.
         </div>
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Entradas del Ledger (últimas 50)</CardTitle>
+            <CardTitle className="text-sm">Movimientos registrados (últimos 50)</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -1020,8 +1273,8 @@ export function LedgerTab() {
                 <thead>
                   <tr className="text-muted-foreground border-b">
                     <th className="text-left py-2">Tipo</th>
-                    <th className="text-left">Exchange</th>
-                    <th className="text-left">Asset</th>
+                    <th className="text-left">Origen</th>
+                    <th className="text-left">Activo</th>
                     <th className="text-right">Cantidad</th>
                     <th className="text-left">Modo</th>
                     <th className="text-left">Ciclo</th>
@@ -1035,7 +1288,7 @@ export function LedgerTab() {
                       <td>{e.exchange}</td>
                       <td>{e.asset}</td>
                       <td className="text-right font-mono">{e.quantity.toFixed(8)}</td>
-                      <td>{e.mode || "—"}</td>
+                      <td>{e.mode ? translateMode(e.mode) : "—"}</td>
                       <td className="font-mono">{e.cycle_id ? e.cycle_id.slice(0, 12) + "..." : "—"}</td>
                       <td className="text-muted-foreground">{fmtDate(e.created_at)}</td>
                     </tr>
@@ -1051,4 +1304,4 @@ export function LedgerTab() {
 }
 
 // Individual tab components are exported above.
-// Ama.tsx handles tab switching via AmaPrimaryNav.
+// Ama.tsx handles tab switching via AmaContextualNav (see AmaContextualNav.tsx).

@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { renderToString } from "react-dom/server";
 import { AmaCommandBar } from "../AmaCommandBar";
 import { AmaModeSelector } from "../AmaModeSelector";
-import { AmaPrimaryNav } from "../AmaPrimaryNav";
+import { AmaContextualNav } from "../AmaContextualNav";
 import { AmaCycleProgress } from "../AmaCycleProgress";
 import { AmaOverview } from "../AmaOverview";
 import { AmaHelpTab } from "../AmaHelpTab";
@@ -92,31 +92,34 @@ describe("AmaModeSelector", () => {
   });
 });
 
-// ─── AmaPrimaryNav ───────────────────────────────────────────────────
+// ─── AmaContextualNav ────────────────────────────────────────────────
 
-describe("AmaPrimaryNav", () => {
-  it("renders all nav items in order", () => {
-    const html = render(<AmaPrimaryNav activeTab="overview" onTabChange={() => {}} />);
-    const items = ["Resumen", "Laboratorio", "Real", "Ayuda"];
-    items.forEach((item) => {
-      expect(html).toContain(item);
-    });
+describe("AmaContextualNav", () => {
+  it("OFF: muestra Resumen, Historial, Eventos, Ayuda (en ese orden) y nada de Laboratorio/Real", () => {
+    const html = render(<AmaContextualNav environment="OFF" subtab="overview" onSubtabChange={() => {}} />);
+    ["Resumen", "Historial", "Eventos", "Ayuda"].forEach((item) => expect(html).toContain(item));
+    expect(html).not.toContain("Laboratorio");
+    expect(html).not.toContain(">Real<");
+    const idxResumen = html.indexOf("Resumen");
+    const idxAyuda = html.indexOf("Ayuda");
+    expect(idxResumen).toBeGreaterThan(-1);
+    expect(idxAyuda).toBeGreaterThan(idxResumen);
   });
 
-  it("overview appears before lab", () => {
-    const html = render(<AmaPrimaryNav activeTab="overview" onTabChange={() => {}} />);
-    const idxOverview = html.indexOf("Resumen");
-    const idxLab = html.indexOf("Laboratorio");
-    expect(idxOverview).toBeGreaterThan(-1);
-    expect(idxLab).toBeGreaterThan(-1);
-    expect(idxOverview).toBeLessThan(idxLab);
+  it("LAB: muestra únicamente Inicio, Resultados, Eventos, Ayuda (no seis motores técnicos)", () => {
+    const html = render(<AmaContextualNav environment="LAB" subtab="home" onSubtabChange={() => {}} />);
+    ["Inicio", "Resultados", "Eventos", "Ayuda"].forEach((item) => expect(html).toContain(item));
+    expect(html).not.toContain("Reproducción histórica");
+    expect(html).not.toContain("Simulación de escenario");
   });
 
-  it("help appears last", () => {
-    const html = render(<AmaPrimaryNav activeTab="overview" onTabChange={() => {}} />);
-    const idxHelp = html.indexOf("Ayuda");
-    const idxReal = html.indexOf("Real");
-    expect(idxHelp).toBeGreaterThan(idxReal);
+  it("REAL: muestra las 10 subpestañas requeridas en orden, con Ayuda al final", () => {
+    const html = render(<AmaContextualNav environment="REAL" subtab="status" onSubtabChange={() => {}} />);
+    const items = ["Estado", "Activación", "Estrategia", "Ciclo y tramos", "Órdenes", "Movimientos", "Historial", "Eventos", "Seguridad", "Ayuda"];
+    items.forEach((item) => expect(html).toContain(item));
+    const idxAyuda = html.indexOf("Ayuda");
+    const idxSeguridad = html.indexOf("Seguridad");
+    expect(idxAyuda).toBeGreaterThan(idxSeguridad);
   });
 });
 
@@ -272,18 +275,26 @@ describe("AmaHelpTab", () => {
   it("renders glossary section", () => {
     const html = render(<AmaHelpTab />);
     expect(html).toContain("Glosario");
-    expect(html).toContain("HWM");
+    expect(html).toContain("Máximo de referencia");
     expect(html).toContain("Tramo");
-    expect(html).toContain("Kill switch");
+    expect(html).toContain("Parada de emergencia");
   });
 
   it("renders protections section", () => {
     const html = render(<AmaHelpTab />);
     expect(html).toContain("Protecciones");
     expect(html).toContain("Cartera Global");
-    expect(html).toContain("Maker");
+    expect(html).toContain("Órdenes pasivas");
     expect(html).toContain("Reconciliaci");
-    expect(html).toContain("Kill switch");
+    expect(html).toContain("Parada de emergencia");
+  });
+
+  it("does not render raw English technical terms (HWM, Kill switch, Maker, Post-only)", () => {
+    const html = render(<AmaHelpTab />);
+    expect(html).not.toContain(">HWM<");
+    expect(html).not.toContain("Kill switch");
+    expect(html).not.toMatch(/\bMaker\b/);
+    expect(html).not.toMatch(/Post-only/i);
   });
 
   it("renders flow steps", () => {
@@ -301,11 +312,10 @@ describe("AmaHelpTab", () => {
 describe("AMA page layout order", () => {
   // We test that the component names appear in the correct order
   // by checking the import structure in Ama.tsx
-  it("AmaPrimaryNav has overview as first item", () => {
-    const html = render(<AmaPrimaryNav activeTab="overview" onTabChange={() => {}} />);
-    // First nav button should be Resumen (overview)
+  it("AmaContextualNav (OFF) has Resumen as first item", () => {
+    const html = render(<AmaContextualNav environment="OFF" subtab="overview" onSubtabChange={() => {}} />);
     const firstButtonIdx = html.indexOf("Resumen");
-    const secondButtonIdx = html.indexOf("Laboratorio");
+    const secondButtonIdx = html.indexOf("Historial");
     expect(firstButtonIdx).toBeGreaterThan(-1);
     expect(firstButtonIdx).toBeLessThan(secondButtonIdx);
   });
