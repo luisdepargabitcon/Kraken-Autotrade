@@ -34,6 +34,12 @@ const LEVEL_COLORS = {
   ERROR: "bg-red-500/10 text-red-400 border-red-500/30",
 };
 
+const LEVEL_LABELS: Record<string, string> = {
+  INFO: "Información",
+  WARN: "Aviso",
+  ERROR: "Error",
+};
+
 const LAB_MODES = ["LAB", "REPLAY", "SHADOW_SCENARIO", "SHADOW_LIVE"];
 const REAL_MODES = ["REAL_LIMITED"];
 
@@ -124,7 +130,7 @@ export function AmaEventsPanel({ limit = 100, modeFilter, hideModeFilter = false
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{translateAmaEvent(e.event_name)}</span>
                         <Badge variant="outline" className={`text-[10px] h-5 ${LEVEL_COLORS[e.severity]}`}>
-                          {e.severity}
+                          {LEVEL_LABELS[e.severity] ?? e.severity}
                         </Badge>
                       </div>
                       <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">

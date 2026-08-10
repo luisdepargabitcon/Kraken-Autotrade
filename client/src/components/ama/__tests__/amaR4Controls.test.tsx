@@ -100,6 +100,52 @@ describe("AmaRealPanel source — single-level navigation, no internal Tabs bar"
   });
 });
 
+describe("Terminología global AMA — sin términos técnicos prohibidos visibles", () => {
+  // Regresión: se detectaron y corrigieron "Maker"/"post-only"/"handler"/
+  // "endpoint" visibles en amaLabels.ts y AmaModeGuide.tsx (§11 auditoría R4).
+  // "Ledger" se excluye intencionalmente: es un identificador interno de
+  // código (LedgerTab/LedgerEntry en AmaTabs.tsx), nunca texto visible — el
+  // texto visible ya usa "Movimientos" (verificado manualmente).
+  const FORBIDDEN = ["handler", "endpoint", "post-only", "Maker", "Kill Switch"];
+  const FILES = [
+    "../amaLabels.ts",
+    "../AmaModeGuide.tsx",
+    "../AmaHelpTab.tsx",
+    "../AmaTabs.tsx",
+    "../AmaRealPanel.tsx",
+    "../AmaCommandBar.tsx",
+    "../AmaEventsPanel.tsx",
+  ];
+
+  it.each(FILES)("%s contains no forbidden raw technical term", async (relPath) => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const src = fs.readFileSync(path.resolve(__dirname, relPath), "utf-8");
+    for (const term of FORBIDDEN) {
+      expect(src, `${relPath} should not contain "${term}"`).not.toContain(term);
+    }
+  });
+});
+
+describe("AmaTabs source — API buttons validate response.ok/json.success (§3 R4)", () => {
+  it("startLab/startReplay/createScenario/runScenario/closeScenario check res.ok before treating as success", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const src = fs.readFileSync(path.resolve(__dirname, "../AmaTabs.tsx"), "utf-8");
+    // Regression: these previously used a bare `api()` helper that never
+    // checked res.ok, silently treating network/server errors as success.
+    const okChecks = (src.match(/!res\.ok \|\| !json\?\.success/g) || []).length;
+    expect(okChecks).toBeGreaterThanOrEqual(5);
+  });
+
+  it("grant() (Activar real limitado) has double-click protection via a busy flag", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const src = fs.readFileSync(path.resolve(__dirname, "../AmaTabs.tsx"), "utf-8");
+    expect(src).toContain("if (granting) return;");
+  });
+});
+
 describe("amaLabels — macro zone translation never leaks raw enums", () => {
   it("translates every real backend MacroZone value (see amaTypes.ts)", () => {
     expect(translateMacroZone("NORMAL")).toBe("Normal");

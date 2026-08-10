@@ -37,6 +37,8 @@ interface AmaCommandBarProps {
   readinessLabel?: string;
   onRefresh: () => void;
   onToggleKillSwitch: () => void;
+  /** True mientras la llamada a /api/ama/kill-switch está en curso. */
+  killSwitchPending?: boolean;
 }
 
 function fmtPrice(n: number | null | undefined): string {
@@ -52,6 +54,7 @@ export function AmaCommandBar({
   readinessLabel = "Preparación",
   onRefresh,
   onToggleKillSwitch,
+  killSwitchPending = false,
 }: AmaCommandBarProps) {
   const mode = status?.mode || "OFF";
   const killActive = status?.killSwitchActive ?? false;
@@ -84,6 +87,7 @@ export function AmaCommandBar({
               variant="destructive"
               size="sm"
               className="h-9"
+              disabled={killSwitchPending}
               onClick={() => setShowConfirm(true)}
             >
               <ShieldAlert className="h-4 w-4 mr-1.5" />
@@ -94,6 +98,7 @@ export function AmaCommandBar({
               variant="outline"
               size="sm"
               className="h-9 border-red-500/30 text-red-400 hover:bg-red-500/10"
+              disabled={killSwitchPending}
               onClick={() => setShowConfirm(true)}
             >
               <Shield className="h-4 w-4 mr-1.5" />
@@ -188,15 +193,18 @@ export function AmaCommandBar({
                 : "Esto detendrá inmediatamente todas las operaciones de AMA. Deberá restablecerse manualmente."}
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-border/30 px-4 py-3">
-              <Button variant="outline" size="sm" onClick={() => setShowConfirm(false)}>
+              <Button variant="outline" size="sm" onClick={() => setShowConfirm(false)} disabled={killSwitchPending}>
                 Cancelar
               </Button>
               <Button
                 size="sm"
                 variant={killActive ? "default" : "destructive"}
+                disabled={killSwitchPending}
                 onClick={confirmToggle}
               >
-                {killActive ? "Restablecer operación" : "Confirmar parada de emergencia"}
+                {killSwitchPending
+                  ? "Procesando..."
+                  : killActive ? "Restablecer operación" : "Confirmar parada de emergencia"}
               </Button>
             </div>
           </div>

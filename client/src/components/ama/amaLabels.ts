@@ -32,7 +32,7 @@ export const MODE_DESCRIPTIONS: Record<string, string> = {
   SHADOW_SCENARIO: "Simula un escenario de mercado controlado con todo el sistema real de AMA activo —ciclos, cartera, tramos, órdenes simuladas, auditoría— pero sin dinero real.",
   SHADOW_LIVE: "AMA observa el mercado BTC real en Kraken y decide en tiempo real, pero las órdenes se simulan sin usar dinero real.",
   REAL_LIMITED: "AMA puede utilizar dinero real exclusivamente dentro de los límites que configure y autorice manualmente el usuario.",
-  REAL_FULL: "Modo reservado para una fase futura. No debe tener handler ni endpoint operativo.",
+  REAL_FULL: "Modo reservado para una fase futura. Todavía no existe ninguna forma de activarlo.",
 };
 
 export const MODE_RISK: Record<string, string> = {
@@ -51,7 +51,7 @@ export const MODE_ORDERS: Record<string, string> = {
   REPLAY: "Simuladas",
   SHADOW_SCENARIO: "Simuladas",
   SHADOW_LIVE: "Simuladas",
-  REAL_LIMITED: "Maker reales (post-only)",
+  REAL_LIMITED: "Órdenes reales pasivas",
   REAL_FULL: "Bloqueado",
 };
 
@@ -242,8 +242,8 @@ export const UX_TERM_LABELS: Record<string, string> = {
   DATASET_HASH: "Huella del conjunto de datos",
   FILL: "Ejecución",
   ORDER: "Orden",
-  MAKER_ONLY: "Solo órdenes pasivas (maker)",
-  POST_ONLY: "Solo publicación (post-only)",
+  MAKER_ONLY: "Solo órdenes pasivas",
+  POST_ONLY: "Solo publicación en el libro de órdenes",
   LEDGER: "Movimientos",
   SHADOW: "Simulación",
   REPLAY: "Reproducción histórica",

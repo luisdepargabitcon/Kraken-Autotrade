@@ -101,6 +101,7 @@ export default function Ama() {
   const [subtab, setSubtab] = useState<AmaAnySubtab>("overview");
   const [showRealWizard, setShowRealWizard] = useState(false);
   const [modeActionPending, setModeActionPending] = useState(false);
+  const [killSwitchPending, setKillSwitchPending] = useState(false);
 
   async function fetchData() {
     try {
@@ -217,18 +218,31 @@ export default function Ama() {
   }
 
   async function toggleKillSwitch() {
+    if (killSwitchPending) return; // evita doble clic
+    setKillSwitchPending(true);
     try {
       const res = await fetch("/api/ama/kill-switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ active: !status?.killSwitchActive }),
       });
-      const json = await res.json();
-      if (json.success) {
-        setStatus((prev) => prev ? { ...prev, killSwitchActive: json.data.killSwitchActive } : prev);
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        setError("Respuesta inválida del servidor al cambiar la parada de emergencia.");
+        return;
       }
+      if (!res.ok || !json?.success) {
+        setError(json?.error || "No se pudo cambiar la parada de emergencia.");
+        return;
+      }
+      setStatus((prev) => prev ? { ...prev, killSwitchActive: json.data.killSwitchActive } : prev);
+      setError(null);
     } catch {
-      setError("No se pudo cambiar el kill switch.");
+      setError("No se pudo conectar con el servidor.");
+    } finally {
+      setKillSwitchPending(false);
     }
   }
 
@@ -262,6 +276,7 @@ export default function Ama() {
         readinessLabel={readinessLabel}
         onRefresh={fetchData}
         onToggleKillSwitch={toggleKillSwitch}
+        killSwitchPending={killSwitchPending}
       />
 
       {/* B. Selector único de modo AMA (verdad backend) */}

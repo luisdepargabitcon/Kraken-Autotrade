@@ -8,6 +8,7 @@ import {
 import { LabTab, ReplayTab, ShadowScenarioTab, ShadowLiveTab } from "./AmaTabs";
 import { AmaEventsPanel } from "./AmaEventsPanel";
 import { AmaFallMiniChart } from "./AmaFallMiniChart";
+import { AmaResultDetail, type ResultSummaryItem } from "./AmaResultDetail";
 
 export type AmaLabHomeSubtab = "home" | "results" | "events";
 
@@ -26,6 +27,7 @@ interface TestRunItem {
   status: string;
   createdAt: string;
   detail?: string;
+  raw?: Record<string, unknown>;
 }
 
 function fmtDate(s: string | null | undefined): string {
@@ -68,6 +70,7 @@ function useTestHistory() {
         status: s.status,
         createdAt: s.createdAt,
         detail: `Órdenes: ${s.totalOrders}, ejecutadas: ${s.totalFilled}`,
+        raw: s,
       }));
       const all = [...lab, ...replay, ...shadow].sort((a, b) =>
         new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
@@ -104,6 +107,7 @@ export function AmaLabPanel({ currentMode, onSetMode, subtab }: AmaLabPanelProps
   const [activeFlow, setActiveFlow] = useState<LabFlow | null>(null);
   const { items, loading } = useTestHistory();
   const [resultFilter, setResultFilter] = useState<"all" | "lab" | "replay" | "shadow">("all");
+  const [openResult, setOpenResult] = useState<ResultSummaryItem | null>(null);
 
   // Si el backend sale de la familia Laboratorio (p.ej. al desactivar AMA),
   // no forzamos ningún flujo abierto.
@@ -120,6 +124,8 @@ export function AmaLabPanel({ currentMode, onSetMode, subtab }: AmaLabPanelProps
   if (subtab === "results") {
     const filtered = resultFilter === "all" ? items : items.filter((i) => i.type === resultFilter);
     return (
+      <>
+      {openResult && <AmaResultDetail item={openResult} onClose={() => setOpenResult(null)} />}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
@@ -167,13 +173,22 @@ export function AmaLabPanel({ currentMode, onSetMode, subtab }: AmaLabPanelProps
                     <span className="text-xs text-muted-foreground">{fmtDate(item.createdAt)}</span>
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">{item.detail}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">Estado: {item.status}</div>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <span className="text-xs text-muted-foreground">Estado: {item.status}</span>
+                    <Button
+                      size="sm" variant="outline" className="text-xs h-6"
+                      onClick={() => setOpenResult({ id: item.id, name: item.name, type: item.type, status: item.status, createdAt: item.createdAt, raw: item.raw })}
+                    >
+                      Ver resultado
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </CardContent>
       </Card>
+      </>
     );
   }
 
