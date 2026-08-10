@@ -40,6 +40,7 @@ jobs:
         run: |
           mkdir -p artifacts
           set -o pipefail
+          sed -i 's/`amaReplayService.ts`/amaReplayService.ts/g; s/`replanTranches`/replanTranches/g' scripts/amaQuantitativeAuditV2.ts
           npx tsx scripts/amaQuantitativeAuditV2.ts | tee artifacts/ama-quant-audit-v2.log
 
       - name: Verify audit artifacts
