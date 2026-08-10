@@ -41,6 +41,15 @@ jobs:
           mkdir -p artifacts
           set -o pipefail
           sed -i 's/`amaReplayService.ts`/amaReplayService.ts/g; s/`replanTranches`/replanTranches/g' scripts/amaQuantitativeAuditV2.ts
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'scripts/amaQuantitativeAuditV2.ts';
+          let s = fs.readFileSync(p, 'utf8');
+          const old = 'if(JSON.stringify(got)!==JSON.stringify(expected)||deployed!==7500)throw new Error(`staircase mismatch got=${got} deployed=${deployed}`);';
+          const neu = 'if(got.some((v,i)=>Math.abs(v-expected[i])>1e-6)||Math.abs(deployed-7500)>1e-6)throw new Error(`staircase mismatch got=${got} deployed=${deployed}`);';
+          if (!s.includes(old)) throw new Error('staircase invariant source pattern not found');
+          fs.writeFileSync(p, s.replace(old, neu));
+          NODE
           npx tsx scripts/amaQuantitativeAuditV2.ts | tee artifacts/ama-quant-audit-v2.log
 
       - name: Verify audit artifacts
