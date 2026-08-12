@@ -1060,21 +1060,13 @@ export default function Terminal() {
                   <Activity className="h-3.5 w-3.5 mr-1.5" />
                   HISTORIAL
                 </TabsTrigger>
-                <TabsTrigger 
-                  value="dryrun" 
-                  className="font-mono text-xs data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-400"
-                  data-testid="tab-dryrun"
+                <TabsTrigger
+                  value="spot"
+                  className="font-mono text-xs data-[state=active]:bg-violet-500/20 data-[state=active]:text-violet-400"
+                  data-testid="tab-spot"
                 >
                   <Zap className="h-3.5 w-3.5 mr-1.5" />
-                  DRY RUN
-                </TabsTrigger>
-                <TabsTrigger 
-                  value="dryrun-history" 
-                  className="font-mono text-xs data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-400"
-                  data-testid="tab-dryrun-history"
-                >
-                  <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                  HIST. DRY
+                  SPOT
                 </TabsTrigger>
               </TabsList>
 
@@ -1677,8 +1669,41 @@ export default function Terminal() {
               </Card>
             </TabsContent>
 
-            {/* ==================== DRY RUN POSITIONS ==================== */}
-            <TabsContent value="dryrun" className="mt-0">
+            {/* ==================== SPOT ENGINE (replaces DRY RUN) ==================== */}
+            <TabsContent value="spot" className="mt-0">
+              <Card className="bg-card/40 border-violet-500/30 backdrop-blur-sm">
+                <CardHeader className="py-3 px-4 border-b border-violet-500/20">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-violet-400" />
+                      <CardTitle className="text-sm font-mono">SPOT CANONICAL ENGINE</CardTitle>
+                      <Badge variant="outline" className="text-[10px] font-mono text-violet-400 border-violet-500/30">SHADOW</Badge>
+                    </div>
+                    <a href="/spot" className="text-xs text-violet-400 hover:text-violet-300 underline">Ir al panel SPOT →</a>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                      El motor SPOT canónico unifica los modos Normal y DRY RUN en un único sistema
+                      con modos OFF / SHADOW / REAL (REAL bloqueado durante refactor).
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Las posiciones simuladas (SHADOW) y reales (REAL) se gestionan desde el panel SPOT dedicado,
+                      que incluye estado del motor, posiciones abiertas, historial de trades, intenciones de entrada
+                      y auditoría MFE/MAE.
+                    </p>
+                    <a href="/spot" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-500/20 border border-violet-500/30 text-violet-400 hover:bg-violet-500/30 transition-colors text-sm font-mono">
+                      <Zap className="h-4 w-4" />
+                      Abrir Panel SPOT
+                    </a>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ==================== LEGACY DRY RUN POSITIONS (hidden, replaced by SPOT) ==================== */}
+            {false && (<TabsContent value="dryrun" className="mt-0">
               <Card className="bg-card/40 border-amber-500/30 backdrop-blur-sm">
                 <CardHeader className="py-3 px-4 border-b border-amber-500/20">
                   <div className="flex items-center justify-between">
@@ -2129,10 +2154,10 @@ export default function Terminal() {
                   )}
                 </CardContent>
               </Card>
-            </TabsContent>
+            </TabsContent>)}
 
-            {/* ==================== DRY RUN HISTORY ==================== */}
-            <TabsContent value="dryrun-history" className="mt-0">
+            {/* ==================== LEGACY DRY RUN HISTORY (hidden, replaced by SPOT) ==================== */}
+            {false && (<TabsContent value="dryrun-history" className="mt-0">
               <Card className="bg-card/40 border-amber-500/30 backdrop-blur-sm">
                 <CardHeader className="py-3 px-4 border-b border-amber-500/20">
                   <div className="flex items-center justify-between">
@@ -2699,7 +2724,7 @@ export default function Terminal() {
                   )}
                 </CardContent>
               </Card>
-            </TabsContent>
+            </TabsContent>)}
 
           </Tabs>
         </main>

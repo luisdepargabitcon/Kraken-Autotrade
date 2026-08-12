@@ -5,9 +5,9 @@
  *
  * Endpoints:
  *   GET  /api/spot/status           — Execution mode, active pairs, health
- *   GET  /api/spot/positions         — Open SPOT positions (SHADOW + REAL)
- *   GET  /api/spot/history           — Closed SPOT trades with PnL breakdown
- *   GET  /api/spot/summary           — Aggregate stats (win rate, net PnL, etc.)
+ *   GET  /api/spot/positions         — Open SPOT positions from DB (SHADOW + REAL)
+ *   GET  /api/spot/history           — Closed SPOT trades with PnL breakdown from DB
+ *   GET  /api/spot/summary           — Aggregate stats from DB (win rate, net PnL, etc.)
  *   GET  /api/spot/intents           — Active entry intents
  *   GET  /api/spot/audit/:lotId      — MFE/MAE/Profit Capture for a position
  *   GET  /api/spot/audit             — Aggregate audit metrics
@@ -15,43 +15,26 @@
  *   POST /api/spot/mode              — Set execution mode (OFF/SHADOW only; REAL blocked)
  *
  * INVARIANT: REAL mode cannot be activated via API.
+ * INVARIANT: No placeholders. All data comes from DB or SpotEngine.
  */
 
 import type { Express } from "express";
 import type { RegisterRoutes } from "./types";
 import { ExecutionMode, resolveExecutionMode, REAL_ACTIVATION_ALLOWED } from "../services/spot/spotTypes";
-import { SpotEntryIntentStore } from "../services/spot/spotEntryIntent";
-import { SpotAuditTracker, computeAggregateAudit } from "../services/spot/spotAuditTracker";
 import { getTradingFeeModel } from "../services/spot/feeModel";
-
-// ─── In-memory state (will be backed by DB in production) ───────────────────
-
-const intentStore = new SpotEntryIntentStore();
-const auditTracker = new SpotAuditTracker();
-
-// Current execution mode — defaults to OFF, can be set to SHADOW
-let currentExecutionMode: ExecutionMode = ExecutionMode.OFF;
-
-/**
- * Get the current execution mode.
- */
-export function getSpotExecutionMode(): ExecutionMode {
-  return currentExecutionMode;
-}
-
-/**
- * Get the intent store (for engine integration).
- */
-export function getSpotIntentStore(): SpotEntryIntentStore {
-  return intentStore;
-}
-
-/**
- * Get the audit tracker (for engine integration).
- */
-export function getSpotAuditTracker(): SpotAuditTracker {
-  return auditTracker;
-}
+import {
+  getExecutionMode,
+  setExecutionMode,
+  getIntentStore,
+  getAuditTracker,
+  getOpenPositions,
+  getClosedTrades,
+  getSummaryStats,
+  getLastScanResults,
+  getLastScanTime,
+  SPOT_RUNTIME_OWNER,
+} from "../services/spot/spotEngine";
+import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
 
 // ─── Route registration ─────────────────────────────────────────────────────
 
@@ -59,14 +42,23 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   // ─── GET /api/spot/status ─────────────────────────────────────────────────
   app.get("/api/spot/status", async (_req, res) => {
     try {
+      const mode = await getExecutionMode();
       const feeModel = getTradingFeeModel();
+      const intents = getIntentStore().getAll();
+      const auditPositions = getAuditTracker().getAll();
+      const scanResults = getLastScanResults();
+      const lastScan = getLastScanTime();
+
       res.json({
-        executionMode: currentExecutionMode,
+        executionMode: mode,
         realActivationAllowed: REAL_ACTIVATION_ALLOWED,
+        runtimeOwner: SPOT_RUNTIME_OWNER,
         feeModel,
-        activeIntents: intentStore.getAll().length,
-        trackedPositions: auditTracker.getAll().length,
+        activeIntents: intents.length,
+        trackedPositions: auditPositions.length,
         policyVersion: "SPOT-1.0.0-20260812",
+        lastScanTime: lastScan,
+        lastScanResults: scanResults,
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get SPOT status", detail: err.message });
@@ -76,10 +68,9 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   // ─── GET /api/spot/positions ──────────────────────────────────────────────
   app.get("/api/spot/positions", async (_req, res) => {
     try {
-      // In production, fetch from DB (spot_positions table)
-      // For now, return empty array — positions are managed by the engine
-      const positions: any[] = [];
-      res.json({ positions, count: positions.length, executionMode: currentExecutionMode });
+      const mode = await getExecutionMode();
+      const positions = await getOpenPositions();
+      res.json({ positions, count: positions.length, executionMode: mode });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get SPOT positions", detail: err.message });
     }
@@ -89,8 +80,7 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   app.get("/api/spot/history", async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
-      // In production, fetch from DB (spot_trades table)
-      const trades: any[] = [];
+      const trades = await getClosedTrades(limit);
       res.json({ trades, count: trades.length, limit });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get SPOT history", detail: err.message });
@@ -100,18 +90,11 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   // ─── GET /api/spot/summary ────────────────────────────────────────────────
   app.get("/api/spot/summary", async (_req, res) => {
     try {
-      // In production, compute from DB
+      const mode = await getExecutionMode();
+      const stats = await getSummaryStats();
       res.json({
-        executionMode: currentExecutionMode,
-        totalTrades: 0,
-        openPositions: 0,
-        netPnlUsd: 0,
-        winRate: 0,
-        avgHoldTimeMinutes: 0,
-        bestTrade: 0,
-        worstTrade: 0,
-        profitFactor: 0,
-        note: "SPOT engine initialized — no trades yet",
+        executionMode: mode,
+        ...stats,
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get SPOT summary", detail: err.message });
@@ -121,7 +104,7 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   // ─── GET /api/spot/intents ────────────────────────────────────────────────
   app.get("/api/spot/intents", async (_req, res) => {
     try {
-      const intents = intentStore.getAll();
+      const intents = getIntentStore().getAll();
       res.json({ intents, count: intents.length });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get SPOT intents", detail: err.message });
@@ -132,7 +115,7 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   app.get("/api/spot/audit/:lotId", async (req, res) => {
     try {
       const { lotId } = req.params;
-      const metrics = auditTracker.getMetrics(lotId);
+      const metrics = getAuditTracker().getMetrics(lotId);
       if (!metrics) {
         res.status(404).json({ error: `No audit metrics for lot ${lotId}` });
         return;
@@ -146,10 +129,11 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   // ─── GET /api/spot/audit ──────────────────────────────────────────────────
   app.get("/api/spot/audit", async (_req, res) => {
     try {
-      const allMetrics = auditTracker.getAll();
+      const allMetrics = getAuditTracker().getAll();
       const exits = allMetrics
         .map((m) => m.exitAudit)
         .filter((e): e is NonNullable<typeof e> => e !== undefined);
+      const { computeAggregateAudit } = await import("../services/spot/spotAuditTracker");
       const aggregate = computeAggregateAudit(exits);
       res.json({
         positionCount: allMetrics.length,
@@ -174,12 +158,26 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   app.get("/api/spot/regime/:pair", async (req, res) => {
     try {
       const { pair } = req.params;
-      // In production, build from MarketDataService
-      // For now, return a placeholder indicating the endpoint is available
+      const mode = await getExecutionMode();
+      const ctx = await buildSpotMarketContext({ pair });
       res.json({
         pair,
-        note: "Regime context requires live market data. Use the engine scan endpoint to trigger evaluation.",
-        executionMode: currentExecutionMode,
+        regime: ctx.regimeContext.regime,
+        direction: ctx.regimeContext.direction,
+        volatility: ctx.regimeContext.volatility,
+        macroBias: ctx.regimeContext.macroBias,
+        adx: ctx.regimeContext.adx,
+        ema20: ctx.regimeContext.ema20,
+        ema50: ctx.regimeContext.ema50,
+        ema200: ctx.regimeContext.ema200,
+        emaAlignment: ctx.regimeContext.emaAlignment,
+        bollingerWidth: ctx.regimeContext.bollingerWidth,
+        atrPct: ctx.regimeContext.atrPct,
+        confidence: ctx.regimeContext.confidence,
+        dataHealth: ctx.dataHealth,
+        ticker: ctx.ticker,
+        spreadPct: ctx.spreadPct,
+        executionMode: mode,
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get regime context", detail: err.message });
@@ -197,24 +195,24 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
         res.status(403).json({
           error: "REAL execution mode is not authorized",
           realActivationAllowed: false,
-          currentMode: currentExecutionMode,
         });
         return;
       }
 
-      const previousMode = currentExecutionMode;
-      currentExecutionMode = resolved;
+      const previousMode = await getExecutionMode();
+      await setExecutionMode(resolved);
 
       // Clear intents when switching to OFF
       if (resolved === ExecutionMode.OFF) {
-        for (const intent of intentStore.getAll()) {
-          intentStore.remove(intent.pair);
+        const store = getIntentStore();
+        for (const intent of store.getAll()) {
+          store.remove(intent.pair);
         }
       }
 
       res.json({
         previousMode,
-        currentMode: currentExecutionMode,
+        currentMode: resolved,
         realActivationAllowed: REAL_ACTIVATION_ALLOWED,
       });
     } catch (err: any) {

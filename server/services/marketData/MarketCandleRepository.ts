@@ -20,6 +20,7 @@
 
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
+import { normalizeCandleTimestampMs, getCandleCloseTimeMs } from "../spot/candleTimestamp";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -93,9 +94,18 @@ export async function upsertCandles(
     let inserted = 0;
     
     for (const candle of candles) {
-      const openTime = new Date(candle.time);
-      const closeTime = candle.isClosed 
-        ? new Date(candle.time + getTimeframeMs(timeframe) - 1)
+      // FASE 4: normalize sec/ms timestamp at repository boundary.
+      // Kraken returns seconds; DB stores Date (ms). Without normalization,
+      // seconds produce 1970-era dates.
+      const openMs = normalizeCandleTimestampMs(candle.time);
+      if (openMs === null) {
+        // Skip invalid candle instead of persisting corrupt 1970 rows.
+        continue;
+      }
+      const openTime = new Date(openMs);
+      const closeMs = getCandleCloseTimeMs(openMs, timeframe);
+      const closeTime = candle.isClosed && closeMs !== null
+        ? new Date(closeMs - 1)
         : null;
       
       // Upsert usando INSERT ... ON CONFLICT

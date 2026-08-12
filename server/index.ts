@@ -118,8 +118,13 @@ app.use((req, res, next) => {
 
   // Graceful shutdown — stop AMA scheduler cleanly
   function gracefulShutdown(signal: string) {
-    console.log(`[shutdown] ${signal} received, stopping AMA scheduler...`);
+    console.log(`[shutdown] ${signal} received, stopping schedulers...`);
     stopAmaScheduler();
+    // Stop SPOT Engine if running
+    import("./services/spot/spotEngine").then(({ stopSpotEngine }) => {
+      stopSpotEngine();
+      console.log("[shutdown] SPOT Engine stopped");
+    }).catch(() => {});
     httpServer.close(() => {
       console.log("[shutdown] HTTP server closed");
       process.exit(0);

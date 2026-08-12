@@ -373,6 +373,21 @@ export async function registerRoutes(
       tradingEngine.start();
     }
 
+    // SPOT Engine auto-start: check if spot_execution_mode is SHADOW in DB
+    try {
+      const { startSpotEngine, isSpotActive, SPOT_RUNTIME_OWNER } = await import('./services/spot/spotEngine');
+      const { loadExecutionMode } = await import('./services/spot/spotExecutionModeStore');
+      const spotMode = await loadExecutionMode();
+      if (spotMode === 'SHADOW') {
+        console.log(`[startup] Starting SPOT Engine (mode=SHADOW, owner=${SPOT_RUNTIME_OWNER})...`);
+        await startSpotEngine();
+      } else {
+        console.log(`[startup] SPOT Engine idle (mode=${spotMode})`);
+      }
+    } catch (e: any) {
+      console.error('[startup] Failed to start SPOT Engine:', e?.message || e);
+    }
+
     // IDCA Scheduler auto-start (routes already registered above)
     try {
       const { IdcaRepository, IdcaEngine } = await import('./services/institutionalDca');

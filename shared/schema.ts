@@ -189,6 +189,8 @@ export const botConfig = pgTable("bot_config", {
   idcaHybridConfig: jsonb("idca_hybrid_config"),
   // IDCA Hybrid alert config (JSONB) — verbosity, dedupe, event toggles
   idcaHybridAlertConfig: jsonb("idca_hybrid_alert_config"),
+  // SPOT Canonical Engine: persistent execution mode (OFF/SHADOW/REAL)
+  spotExecutionMode: text("spot_execution_mode").notNull().default("OFF"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -281,6 +283,26 @@ export const trades = pgTable("trades", {
   realizedPnlPct: decimal("realized_pnl_pct", { precision: 10, scale: 4 }),
   executedAt: timestamp("executed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // SPOT Canonical Engine fields
+  executionMode: text("execution_mode").default("REAL"),
+  policyVersion: text("policy_version"),
+  setupTag: text("setup_tag"),
+  signalId: text("signal_id"),
+  marketContextId: text("market_context_id"),
+  grossPnlUsd: decimal("gross_pnl_usd", { precision: 18, scale: 8 }),
+  entryFeeUsd: decimal("entry_fee_usd", { precision: 18, scale: 8 }),
+  exitFeeUsd: decimal("exit_fee_usd", { precision: 18, scale: 8 }),
+  executionCostUsd: decimal("execution_cost_usd", { precision: 18, scale: 8 }),
+  netPnlUsd: decimal("net_pnl_usd", { precision: 18, scale: 8 }),
+  feeQuality: text("fee_quality"),
+  mfe: decimal("mfe", { precision: 18, scale: 8 }).default("0"),
+  mae: decimal("mae", { precision: 18, scale: 8 }).default("0"),
+  mfeR: decimal("mfe_r", { precision: 10, scale: 4 }).default("0"),
+  maeR: decimal("mae_r", { precision: 10, scale: 4 }).default("0"),
+  profitCapturePct: decimal("profit_capture_pct", { precision: 8, scale: 4 }),
+  exitReasonType: text("exit_reason_type"),
+  lotId: text("lot_id"),
+  holdTimeMinutes: integer("hold_time_minutes"),
 }, (table) => ({
   exchangePairTradeIdUnique: unique().on(table.exchange, table.pair, table.tradeId),
 }));
@@ -601,6 +623,24 @@ export const openPositions = pgTable("open_positions", {
   firstFillAt: timestamp("first_fill_at"),
   lastFillAt: timestamp("last_fill_at"),
   // === END NEW ===
+  // SPOT Canonical Engine fields
+  executionMode: text("execution_mode").default("REAL"),
+  policyVersion: text("policy_version"),
+  setupTag: text("setup_tag"),
+  signalId: text("signal_id"),
+  marketContextId: text("market_context_id"),
+  regimeAtEntry: text("regime_at_entry"),
+  directionAtEntry: text("direction_at_entry"),
+  macroAtEntry: text("macro_at_entry"),
+  atrPctAtEntry: decimal("atr_pct_at_entry", { precision: 8, scale: 4 }),
+  initialStopPrice: decimal("initial_stop_price", { precision: 18, scale: 8 }),
+  initialStopDistancePct: decimal("initial_stop_distance_pct", { precision: 8, scale: 4 }),
+  initialStopDistanceUsd: decimal("initial_stop_distance_usd", { precision: 18, scale: 8 }),
+  riskUsd: decimal("risk_usd", { precision: 18, scale: 8 }),
+  mfe: decimal("mfe", { precision: 18, scale: 8 }).default("0"),
+  mae: decimal("mae", { precision: 18, scale: 8 }).default("0"),
+  mfeR: decimal("mfe_r", { precision: 10, scale: 4 }).default("0"),
+  maeR: decimal("mae_r", { precision: 10, scale: 4 }).default("0"),
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
