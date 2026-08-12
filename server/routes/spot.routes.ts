@@ -33,6 +33,8 @@ import {
   getLastScanResults,
   getLastScanTime,
   SPOT_RUNTIME_OWNER,
+  startSpotEngine,
+  stopSpotEngine,
 } from "../services/spot/spotEngine";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
 
@@ -200,14 +202,30 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
       }
 
       const previousMode = await getExecutionMode();
-      await setExecutionMode(resolved);
 
-      // Clear intents when switching to OFF
-      if (resolved === ExecutionMode.OFF) {
-        const store = getIntentStore();
-        for (const intent of store.getAll()) {
-          store.remove(intent.pair);
+      // B05: Lifecycle management with atomic revert
+      if (resolved === ExecutionMode.SHADOW && previousMode !== ExecutionMode.SHADOW) {
+        // OFF → SHADOW: persist mode, then start engine, revert on failure
+        await setExecutionMode(resolved);
+        const started = await startSpotEngine();
+        if (!started) {
+          // Revert to previous mode
+          await setExecutionMode(previousMode);
+          res.status(500).json({
+            error: "Failed to start SPOT engine",
+            previousMode,
+            currentMode: previousMode,
+            realActivationAllowed: REAL_ACTIVATION_ALLOWED,
+          });
+          return;
         }
+      } else if (resolved === ExecutionMode.OFF && previousMode !== ExecutionMode.OFF) {
+        // SHADOW → OFF: persist mode (stops entry scanning, keeps supervisor if positions exist)
+        await setExecutionMode(resolved);
+        // stopSpotEngine is NOT called here — setExecutionMode(OFF) handles stopping entry scan
+        // while keeping position supervisor running if there are open SPOT positions
+      } else {
+        await setExecutionMode(resolved);
       }
 
       res.json({

@@ -35,7 +35,7 @@ import { ExecutionMode, REAL_ACTIVATION_ALLOWED, SPOT_POLICY_VERSION,
   type SpotExecutionIntent, type SpotExitState, type SpotExitDecision,
   type SpotExecutionResult,
   SetupTag, Regime, RegimeDirection, MacroBias } from "./spotTypes";
-import { loadExecutionMode, saveExecutionMode, getCachedExecutionMode } from "./spotExecutionModeStore";
+import { loadExecutionMode, saveExecutionMode, getCachedExecutionMode, invalidateExecutionModeCache } from "./spotExecutionModeStore";
 import { buildSpotMarketContext } from "./spotMarketContext";
 import { evaluateSpotCanonical, type SpotSignalResult } from "./spotCanonicalStrategy";
 import { createEntryIntent, evaluateEntryIntent, SpotEntryIntentStore,
@@ -47,11 +47,22 @@ import { SpotAuditTracker, type SpotAuditMetrics, type ExitAuditMetrics } from "
 import { computePnlBreakdown, getTradingFeeModel } from "./feeModel";
 import { DataHealth } from "./candleTimestamp";
 
+// ─── Engine Owner & Provenance ────────────────────────────────────────────────
+
+export const SPOT_ENGINE_OWNER = "SPOT_CANONICAL" as const;
+export const SPOT_ORIGIN = "spot_engine" as const;
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 export const SPOT_RUNTIME_OWNER = "SpotEngine";
 const SCAN_INTERVAL_MS = 60_000; // 60 seconds
 const MAX_OPEN_POSITIONS = 10;
+
+// ─── Engine Runtime State ────────────────────────────────────────────────────
+
+let engineRunning = false;
+let entryScanningEnabled = true;
+let positionSupervisorRunning = false;
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -69,6 +80,7 @@ interface OpenPositionRow {
   signalReason: string;
   executionMode: string;
   policyVersion: string | null;
+  engineOwner: string | null;
   setupTag: string | null;
   signalId: string | null;
   marketContextId: string | null;
@@ -94,10 +106,54 @@ interface OpenPositionRow {
 const intentStore = new SpotEntryIntentStore();
 const auditTracker = new SpotAuditTracker();
 const exitStates = new Map<string, SpotExitState>();
+const signalResultCache = new Map<string, SpotSignalResult>();
 let scanIntervalId: NodeJS.Timeout | null = null;
+let supervisorIntervalId: NodeJS.Timeout | null = null;
 let isScanning = false;
 let lastScanTime = 0;
 let lastScanResults: Array<{ pair: string; signal: string; reason: string; mode: string }> = [];
+
+// ─── Shadow Capital Ledger ───────────────────────────────────────────────────
+
+interface ShadowLedger {
+  initialCapitalUsd: number;
+  reservedUsd: number;
+  realizedPnlUsd: number;
+  totalFeesUsd: number;
+}
+
+let shadowLedger: ShadowLedger = {
+  initialCapitalUsd: 10_000,
+  reservedUsd: 0,
+  realizedPnlUsd: 0,
+  totalFeesUsd: 0,
+};
+
+async function loadShadowLedger(): Promise<void> {
+  try {
+    const result = await db.execute(sql`
+      SELECT spot_shadow_capital_usd FROM bot_config LIMIT 1
+    `);
+    if (result.rows.length > 0) {
+      shadowLedger.initialCapitalUsd = Number(result.rows[0].spot_shadow_capital_usd ?? 10_000);
+    }
+  } catch { /* default */ }
+}
+
+function getShadowAvailableCapital(): number {
+  return shadowLedger.initialCapitalUsd - shadowLedger.reservedUsd + shadowLedger.realizedPnlUsd - shadowLedger.totalFeesUsd;
+}
+
+function reserveShadowCapital(notionalUsd: number, entryFeeUsd: number): void {
+  shadowLedger.reservedUsd += notionalUsd;
+  shadowLedger.totalFeesUsd += entryFeeUsd;
+}
+
+function releaseShadowCapital(notionalUsd: number, netPnlUsd: number, exitFeeUsd: number): void {
+  shadowLedger.reservedUsd -= notionalUsd;
+  shadowLedger.realizedPnlUsd += netPnlUsd;
+  shadowLedger.totalFeesUsd += exitFeeUsd;
+}
 
 // ─── Execution Mode ─────────────────────────────────────────────────────────
 
@@ -111,6 +167,7 @@ export async function getExecutionMode(): Promise<ExecutionMode> {
 /**
  * Set execution mode (persisted to DB).
  * REAL is blocked.
+ * OFF = entry disabled, position supervisor continues while SPOT positions exist.
  */
 export async function setExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
   if (mode === ExecutionMode.REAL && !REAL_ACTIVATION_ALLOWED) {
@@ -118,10 +175,26 @@ export async function setExecutionMode(mode: ExecutionMode): Promise<ExecutionMo
   }
   await saveExecutionMode(mode);
   if (mode === ExecutionMode.OFF) {
-    // Clear all intents when switching to OFF
+    // OFF: disable new entries, clear intents, but keep position supervisor running
+    entryScanningEnabled = false;
     for (const intent of intentStore.getAll()) {
       intentStore.remove(intent.pair);
     }
+    // Stop scan loop but keep supervisor if positions exist
+    if (scanIntervalId) {
+      clearInterval(scanIntervalId);
+      scanIntervalId = null;
+    }
+    const hasPositions = await hasOpenSpotPositions();
+    if (!hasPositions && supervisorIntervalId) {
+      clearInterval(supervisorIntervalId);
+      supervisorIntervalId = null;
+      positionSupervisorRunning = false;
+    }
+    engineRunning = false;
+    console.log(`[SpotEngine] Mode set to OFF. Entry scanning disabled. Supervisor ${hasPositions ? 'running' : 'stopped'}.`);
+  } else {
+    entryScanningEnabled = true;
   }
   console.log(`[SpotEngine] Execution mode set to ${mode}`);
   return mode;
@@ -139,48 +212,74 @@ export function isSpotActive(): boolean {
 
 /**
  * Start the SpotEngine scan loop.
+ * Returns true if engine started successfully, false otherwise.
  */
-export async function startSpotEngine(): Promise<void> {
-  if (scanIntervalId) {
+export async function startSpotEngine(): Promise<boolean> {
+  if (engineRunning && scanIntervalId) {
     console.log("[SpotEngine] Already running");
-    return;
+    return true;
   }
 
   const mode = await getExecutionMode();
   if (mode === ExecutionMode.OFF) {
     console.log("[SpotEngine] Execution mode is OFF, not starting");
-    return;
+    return false;
   }
 
   console.log(`[SpotEngine] Starting with mode=${mode}, owner=${SPOT_RUNTIME_OWNER}`);
 
+  // Load shadow ledger
+  await loadShadowLedger();
+
   // Load open positions from DB
   await loadOpenPositionsFromDB();
+
+  entryScanningEnabled = true;
+  engineRunning = true;
 
   // Start scan loop
   scanIntervalId = setInterval(() => runScanCycle().catch(console.error), SCAN_INTERVAL_MS);
 
+  // Start position supervisor (runs even when entry scanning is OFF)
+  if (!supervisorIntervalId) {
+    positionSupervisorRunning = true;
+    supervisorIntervalId = setInterval(() => runPositionSupervisor().catch(console.error), SCAN_INTERVAL_MS);
+  }
+
   // Run first scan immediately
   runScanCycle().catch(console.error);
+  return true;
 }
 
 /**
- * Stop the SpotEngine scan loop.
+ * Stop the SpotEngine scan loop and position supervisor.
  */
 export function stopSpotEngine(): void {
   if (scanIntervalId) {
     clearInterval(scanIntervalId);
     scanIntervalId = null;
-    console.log("[SpotEngine] Stopped");
   }
+  if (supervisorIntervalId) {
+    clearInterval(supervisorIntervalId);
+    supervisorIntervalId = null;
+  }
+  engineRunning = false;
+  entryScanningEnabled = false;
+  positionSupervisorRunning = false;
+  console.log("[SpotEngine] Stopped (scan + supervisor)");
 }
 
 /**
- * Single scan cycle: evaluate all active pairs.
+ * Single scan cycle: evaluate all active pairs for new entries.
+ * Respects entryScanningEnabled flag (OFF = no new entries).
  */
 async function runScanCycle(): Promise<void> {
   if (isScanning) {
     console.log("[SpotEngine] Scan already in progress, skipping");
+    return;
+  }
+
+  if (!entryScanningEnabled) {
     return;
   }
 
@@ -224,10 +323,58 @@ async function runScanCycle(): Promise<void> {
 }
 
 /**
+ * Position supervisor: manages open SPOT positions (exit evaluation) independently of entry scanning.
+ * Runs even when mode=OFF to avoid orphaning positions.
+ */
+async function runPositionSupervisor(): Promise<void> {
+  try {
+    const mode = await getExecutionMode();
+    const pairs = await getActivePairs();
+    for (const pair of pairs) {
+      try {
+        let ctx: SpotMarketContext;
+        try {
+          ctx = await buildSpotMarketContext({ pair });
+        } catch {
+          continue; // skip pairs with data errors
+        }
+        // Use position's executionMode for exit, not global mode
+        await manageOpenPositions(pair, ctx);
+      } catch (error: any) {
+        console.error(`[SpotEngine] Supervisor error for ${pair}:`, error.message);
+      }
+    }
+  } catch (error: any) {
+    console.error('[SpotEngine] Supervisor cycle error:', error.message);
+  }
+}
+
+/**
+ * Check if there are any open SPOT canonical positions.
+ */
+async function hasOpenSpotPositions(): Promise<boolean> {
+  try {
+    const result = await db.execute(sql`
+      SELECT COUNT(*) as count FROM open_positions
+      WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
+    `);
+    return Number(result.rows[0]?.count ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Scan a single pair: build context, evaluate strategy, manage positions.
+ * FIXED FLOW (B01):
+ *   A. Build context
+ *   B. Manage open positions (exits)
+ *   C. Check for active intent → re-evaluate it ALWAYS
+ *   D. If no active intent → evaluate strategy → if BUY, create intent → evaluate immediately
+ *   E. Execute only if all gates pass
  */
 async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: string; signal: string; reason: string; mode: string }> {
-  // 1. Build market context
+  // A. Build market context
   let ctx: SpotMarketContext;
   try {
     ctx = await buildSpotMarketContext({ pair });
@@ -235,36 +382,17 @@ async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: stri
     return { pair, signal: "SKIP", reason: `MarketData error: ${error.message}`, mode };
   }
 
-  // 2. Check data health
+  // B. Manage existing open positions for this pair (exit evaluation)
+  await manageOpenPositions(pair, ctx);
+
+  // C. Check data health — if stale, skip entry evaluation but positions are managed
   if (ctx.dataHealth === DataHealth.STALE || ctx.dataHealth === DataHealth.INSUFFICIENT) {
-    // Still manage open positions even with stale data (for exit safety)
-    await manageOpenPositions(pair, ctx, mode);
     return { pair, signal: "HOLD", reason: `DataHealth=${ctx.dataHealth}`, mode };
   }
 
-  // 3. Manage existing open positions for this pair (exit evaluation)
-  await manageOpenPositions(pair, ctx, mode);
-
-  // 4. Check for new entry signal
-  const signal = evaluateSpotCanonical(ctx);
-
-  if (signal.signal === "BUY" && signal.setupTag) {
-    // Create entry intent
-    const intent = createEntryIntent(signal, ctx);
-
-    // Check if we already have an active intent for this pair
-    const existing = intentStore.get(pair);
-    if (!existing) {
-      intentStore.put(intent);
-      console.log(`[SpotEngine] Entry intent created for ${pair}, setup=${signal.setupTag}, confidence=${signal.confidence}`);
-    }
-
-    return { pair, signal: "BUY", reason: signal.reason, mode };
-  }
-
-  // 5. Evaluate existing intents
+  // D. Check for active intent → re-evaluate it ALWAYS in this scan
   const activeIntent = intentStore.get(pair);
-  if (activeIntent && activeIntent.state !== "EXECUTED" && activeIntent.state !== "EXPIRED" && activeIntent.state !== "INVALIDATED") {
+  if (activeIntent && activeIntent.state !== "EXECUTED" && activeIntent.state !== "EXPIRED" && activeIntent.state !== "INVALIDATED" && activeIntent.state !== "CANCELLED") {
     const evaluation = evaluateEntryIntent(activeIntent, ctx);
     activeIntent.state = evaluation.newState;
     activeIntent.lastBlockReason = evaluation.reason;
@@ -272,25 +400,69 @@ async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: stri
     intentStore.update(activeIntent);
 
     if (evaluation.shouldExecute) {
-      // Execute entry
-      const executed = await executeEntry(activeIntent, ctx, mode);
+      const executed = await executeEntry(activeIntent, ctx, mode, signalResultCache.get(pair));
       if (executed) {
         activeIntent.state = "EXECUTED" as any;
         intentStore.update(activeIntent);
+        signalResultCache.delete(pair);
         return { pair, signal: "EXECUTED", reason: "Entry executed", mode };
       }
     }
 
-    return { pair, signal: "INTENT", reason: evaluation.reason, mode };
+    // Intent expired or invalidated — clean up and fall through to new signal evaluation
+    if (activeIntent.state === "EXPIRED" || activeIntent.state === "INVALIDATED") {
+      intentStore.remove(pair);
+      signalResultCache.delete(pair);
+    }
+
+    // If intent is still active (WAITING/APPROVED/CHASED), do NOT create a new one
+    // Origin snapshot stays frozen — we don't reset it each scan
+    if (activeIntent.state !== "EXPIRED" && activeIntent.state !== "INVALIDATED") {
+      return { pair, signal: "INTENT", reason: evaluation.reason, mode };
+    }
   }
+
+  // E. No active intent — evaluate SPOT_CANONICAL strategy
+  const signal = evaluateSpotCanonical(ctx);
+
+  if (signal.signal === "BUY" && signal.setupTag) {
+    // F. Create intent and evaluate it immediately against current context
+    const intent = createEntryIntent(signal, ctx);
+    intentStore.put(intent);
+    signalResultCache.set(pair, signal);
+    console.log(`[SpotEngine] Entry intent created for ${pair}, setup=${signal.setupTag}, confidence=${signal.confidence}`);
+
+    // Evaluate immediately — don't wait for next scan
+    const evaluation = evaluateEntryIntent(intent, ctx);
+    intent.state = evaluation.newState;
+    intent.lastBlockReason = evaluation.reason;
+    intent.lastEvaluatedAt = Date.now();
+    intentStore.update(intent);
+
+    if (evaluation.shouldExecute) {
+      const executed = await executeEntry(intent, ctx, mode, signal);
+      if (executed) {
+        intent.state = "EXECUTED" as any;
+        intentStore.update(intent);
+        signalResultCache.delete(pair);
+        return { pair, signal: "EXECUTED", reason: "Entry executed (immediate)", mode };
+      }
+    }
+
+    return { pair, signal: "BUY", reason: signal.reason, mode };
+  }
+
+  // No signal — clean up any stale signal cache
+  signalResultCache.delete(pair);
 
   return { pair, signal: "HOLD", reason: signal.reason || signal.blockReason || "No signal", mode };
 }
 
 /**
  * Execute entry: sizing → adapter → persist position.
+ * Propagates signalConfidence from SpotSignalResult (B14).
  */
-async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode): Promise<boolean> {
+async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode, signal?: SpotSignalResult): Promise<boolean> {
   // Get available capital
   const availableCapital = await getAvailableCapital();
 
@@ -346,8 +518,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     openedAt: now,
     entryStrategyId: "SPOT_CANONICAL",
     entrySignalTf: "15m",
-    signalConfidence: 0,
-    signalReason: intent.setupTag,
+    signalConfidence: signal?.confidence ?? 0,
+    signalReason: signal?.reason ?? intent.setupTag,
     setupTag: intent.setupTag,
     signalId: intent.signalId,
     marketContextId: ctx.marketContextId,
@@ -375,6 +547,11 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   // Persist to DB
   await persistOpenPosition(position, result);
 
+  // B12: Reserve shadow capital
+  if (mode === ExecutionMode.SHADOW) {
+    reserveShadowCapital(sizing.notionalUsd, result.feeUsd ?? 0);
+  }
+
   // Init audit tracking
   auditTracker.initPosition(position);
 
@@ -388,12 +565,15 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
 
 /**
  * Manage open positions for a pair: update MFE/MAE, evaluate exits, close if needed.
+ * B03: Only manages SPOT_CANONICAL positions. Uses position.executionMode (immutable) for exit adapter.
  */
-async function manageOpenPositions(pair: string, ctx: SpotMarketContext, mode: ExecutionMode): Promise<void> {
+async function manageOpenPositions(pair: string, ctx: SpotMarketContext): Promise<void> {
   const positions = await getOpenPositionsForPair(pair);
 
   for (const row of positions) {
-    if (row.executionMode !== "SHADOW" && row.executionMode !== "REAL") continue;
+    // B03: Only manage SPOT_CANONICAL positions — filter by policy_version and engine_owner
+    if (row.policyVersion !== SPOT_POLICY_VERSION) continue;
+    if (row.engineOwner && row.engineOwner !== SPOT_ENGINE_OWNER) continue;
 
     const position = rowToPosition(row);
     const currentPrice = ctx.ticker.last;
@@ -401,13 +581,27 @@ async function manageOpenPositions(pair: string, ctx: SpotMarketContext, mode: E
     // Update audit tracker
     auditTracker.updatePrice(position, currentPrice, Date.now());
 
-    // Update highest price in DB
-    if (currentPrice > row.highestPrice) {
-      await db.execute(sql`
-        UPDATE open_positions SET highest_price = ${currentPrice}, updated_at = NOW()
-        WHERE lot_id = ${row.lotId}
-      `);
-    }
+    // B13: Persist position state (MFE/MAE/highest/BE/trailing/stop) in each scan
+    const auditMetrics = auditTracker.getMetrics(position.lotId);
+    const mfeUsd = auditMetrics?.mfeUsd ?? row.mfe;
+    const maeUsd = auditMetrics?.maeUsd ?? row.mae;
+    const mfeR = auditMetrics?.mfeR ?? row.mfeR;
+    const maeR = auditMetrics?.maeR ?? row.maeR;
+    const newHighest = Math.max(row.highestPrice, currentPrice);
+
+    await db.execute(sql`
+      UPDATE open_positions SET
+        highest_price = ${newHighest},
+        mfe = ${mfeUsd},
+        mae = ${maeUsd},
+        mfe_r = ${mfeR},
+        mae_r = ${maeR},
+        sg_break_even_activated = ${position.sgBreakEvenActivated},
+        sg_trailing_activated = ${position.sgTrailingActivated},
+        sg_current_stop_price = ${position.sgCurrentStopPrice},
+        updated_at = NOW()
+      WHERE lot_id = ${row.lotId}
+    `);
 
     // Get or create exit state
     let exitState = exitStates.get(row.lotId);
@@ -419,7 +613,8 @@ async function manageOpenPositions(pair: string, ctx: SpotMarketContext, mode: E
     // Evaluate exit
     const exitDecision = evaluateExit(position, exitState, ctx);
     if (exitDecision.shouldExit && exitDecision.reasonType) {
-      await closePosition(position, exitDecision, ctx, mode);
+      // B03: Use position.executionMode (immutable), NOT global mode
+      await closePosition(position, exitDecision, ctx);
 
       // Clean up state
       exitStates.delete(row.lotId);
@@ -430,14 +625,15 @@ async function manageOpenPositions(pair: string, ctx: SpotMarketContext, mode: E
 
 /**
  * Close a position: execute exit, persist trade, finalize audit.
+ * B03: Uses position.executionMode (immutable) for exit adapter — never global mode.
  */
 async function closePosition(
   position: SpotPosition,
   exitDecision: SpotExitDecision,
   ctx: SpotMarketContext,
-  mode: ExecutionMode,
 ): Promise<void> {
-  const adapter = createExecutionAdapter(mode);
+  // B03: Use position's immutable executionMode, not global mode
+  const adapter = createExecutionAdapter(position.executionMode);
 
   const execIntent: SpotExecutionIntent = {
     intentId: `exit-${position.lotId}-${Date.now().toString(36)}`,
@@ -450,7 +646,7 @@ async function closePosition(
     reason: exitDecision.reason,
     reasonType: exitDecision.reasonType!,
     positionLotId: position.lotId,
-    executionMode: mode,
+    executionMode: position.executionMode,
     ttlMs: 30_000,
     createdAt: Date.now(),
   };
@@ -486,6 +682,11 @@ async function closePosition(
     DELETE FROM open_positions WHERE lot_id = ${position.lotId}
   `);
 
+  // B12: Release shadow capital
+  if (position.executionMode === ExecutionMode.SHADOW) {
+    releaseShadowCapital(position.notionalUsd, pnl.netPnlUsd, pnl.exitFeeUsd);
+  }
+
   const am = auditMetrics ?? auditTracker.getMetrics(position.lotId);
   console.log(
     `[SpotEngine] Position closed: ${position.lotId} ${position.pair} @ ${result.fillPrice}, ` +
@@ -514,11 +715,11 @@ async function getActivePairs(): Promise<string[]> {
 }
 
 /**
- * Get available capital (simplified: uses cached balance or 10000 for SHADOW).
+ * Get available capital — B12: uses configurable shadow ledger, not hardcode 10_000.
  */
 async function getAvailableCapital(): Promise<number> {
   if (getCachedExecutionMode() === ExecutionMode.SHADOW) {
-    return 10_000; // SHADOW sandbox capital
+    return getShadowAvailableCapital();
   }
   try {
     const result = await db.execute(sql`
@@ -534,13 +735,14 @@ async function getAvailableCapital(): Promise<number> {
 }
 
 /**
- * Count open positions for a pair.
+ * Count open SPOT positions for a pair (B03: only SPOT_CANONICAL).
  */
 async function countOpenLotsForPair(pair: string): Promise<number> {
   try {
     const result = await db.execute(sql`
       SELECT COUNT(*) as count FROM open_positions
       WHERE pair = ${pair} AND status != 'CLOSED'
+        AND policy_version = ${SPOT_POLICY_VERSION}
     `);
     return Number(result.rows[0]?.count ?? 0);
   } catch {
@@ -549,7 +751,7 @@ async function countOpenLotsForPair(pair: string): Promise<number> {
 }
 
 /**
- * Get open positions for a pair from DB.
+ * Get open positions for a pair from DB — B03: only SPOT_CANONICAL positions.
  */
 async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]> {
   try {
@@ -557,7 +759,7 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
       SELECT
         lot_id, pair, entry_price, amount, qty_remaining, highest_price,
         entry_fee, entry_strategy_id, entry_signal_tf, signal_confidence,
-        signal_reason, execution_mode, policy_version, setup_tag, signal_id,
+        signal_reason, execution_mode, policy_version, engine_owner, setup_tag, signal_id,
         market_context_id, regime_at_entry, direction_at_entry, macro_at_entry,
         atr_pct_at_entry, initial_stop_price, initial_stop_distance_pct,
         initial_stop_distance_usd, risk_usd, mfe, mae, mfe_r, mae_r,
@@ -565,6 +767,7 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
         EXTRACT(EPOCH FROM opened_at) * 1000 as opened_at_ms
       FROM open_positions
       WHERE pair = ${pair} AND status != 'CLOSED'
+        AND policy_version = ${SPOT_POLICY_VERSION}
     `);
     return result.rows.map((r: any) => ({
       lotId: r.lot_id,
@@ -580,6 +783,7 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
       signalReason: r.signal_reason,
       executionMode: r.execution_mode ?? "REAL",
       policyVersion: r.policy_version,
+      engineOwner: r.engine_owner,
       setupTag: r.setup_tag,
       signalId: r.signal_id,
       marketContextId: r.market_context_id,
@@ -613,7 +817,7 @@ async function loadOpenPositionsFromDB(): Promise<void> {
   try {
     const result = await db.execute(sql`
       SELECT lot_id, pair FROM open_positions
-      WHERE execution_mode IN ('SHADOW', 'REAL') AND status != 'CLOSED'
+      WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
     `);
     console.log(`[SpotEngine] Loaded ${result.rows.length} open positions from DB`);
 
@@ -636,25 +840,28 @@ async function loadOpenPositionsFromDB(): Promise<void> {
 
 /**
  * Persist a new open position to DB.
+ * B09: exchange uses real venue (revolutx/kraken), NOT 'spot'.
+ * B08: engine_owner and origin identify the SPOT engine.
  */
 async function persistOpenPosition(position: SpotPosition, execResult: SpotExecutionResult): Promise<void> {
+  const venue = getTradingVenue();
   await db.execute(sql`
     INSERT INTO open_positions (
       lot_id, exchange, pair, entry_price, amount, qty_remaining, highest_price,
       entry_strategy_id, entry_signal_tf, signal_confidence, signal_reason,
       entry_fee, status, opened_at,
-      execution_mode, policy_version, setup_tag, signal_id, market_context_id,
+      execution_mode, policy_version, engine_owner, origin, setup_tag, signal_id, market_context_id,
       regime_at_entry, direction_at_entry, macro_at_entry, atr_pct_at_entry,
       initial_stop_price, initial_stop_distance_pct, initial_stop_distance_usd,
       risk_usd, mfe, mae, mfe_r, mae_r,
       sg_break_even_activated, sg_trailing_activated, sg_current_stop_price
     ) VALUES (
-      ${position.lotId}, 'spot', ${position.pair}, ${position.entryPrice},
+      ${position.lotId}, ${venue}, ${position.pair}, ${position.entryPrice},
       ${position.amount}, ${position.qtyRemaining}, ${position.highestPrice},
       ${position.entryStrategyId}, ${position.entrySignalTf},
       ${position.signalConfidence}, ${position.signalReason},
       ${position.entryFee}, 'OPEN', NOW(),
-      ${position.executionMode}, ${position.policyVersion},
+      ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER}, ${SPOT_ORIGIN},
       ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
       ${position.regimeAtEntry}, ${position.directionAtEntry}, ${position.macroAtEntry},
       ${position.atrPctAtEntry}, ${position.initialStopPrice},
@@ -668,6 +875,7 @@ async function persistOpenPosition(position: SpotPosition, execResult: SpotExecu
 
 /**
  * Persist a closed trade to the trades table.
+ * B09: exchange uses real venue. B08: engine_owner and origin.
  */
 async function persistClosedTrade(
   position: SpotPosition,
@@ -678,22 +886,23 @@ async function persistClosedTrade(
 ): Promise<void> {
   const tradeId = `spot-trade-${position.lotId}`;
   const holdTimeMinutes = Math.round((Date.now() - position.openedAt) / 60000);
+  const venue = getTradingVenue();
 
   await db.execute(sql`
     INSERT INTO trades (
       trade_id, exchange, origin, executed_by_bot, pair, type, price, amount,
       status, entry_price, realized_pnl_usd, realized_pnl_pct, executed_at,
-      execution_mode, policy_version, setup_tag, signal_id, market_context_id,
+      execution_mode, policy_version, engine_owner, setup_tag, signal_id, market_context_id,
       gross_pnl_usd, entry_fee_usd, exit_fee_usd, execution_cost_usd, net_pnl_usd,
       fee_quality, mfe, mae, mfe_r, mae_r, profit_capture_pct, exit_reason_type,
       lot_id, hold_time_minutes
     ) VALUES (
-      ${tradeId}, 'spot', 'spot_engine', true, ${position.pair}, 'sell',
+      ${tradeId}, ${venue}, ${SPOT_ORIGIN}, true, ${position.pair}, 'sell',
       ${execResult.fillPrice}, ${position.qtyRemaining},
       'closed', ${position.entryPrice}, ${pnl.netPnlUsd},
       ${position.entryPrice > 0 ? ((execResult.fillPrice! - position.entryPrice) / position.entryPrice) * 100 : 0},
       NOW(),
-      ${position.executionMode}, ${position.policyVersion},
+      ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER},
       ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
       ${pnl.grossPnlUsd}, ${pnl.entryFeeUsd}, ${pnl.exitFeeUsd}, ${pnl.executionCostUsd},
       ${pnl.netPnlUsd}, ${execResult.fillQuality},
@@ -707,6 +916,22 @@ async function persistClosedTrade(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Get the real trading venue from api_config (B09).
+ * SPOT is not an exchange — we use revolutx, kraken, etc.
+ */
+async function getTradingVenue(): Promise<string> {
+  try {
+    const result = await db.execute(sql`
+      SELECT trading_exchange FROM api_config LIMIT 1
+    `);
+    const venue = result.rows[0]?.trading_exchange as string | undefined;
+    return venue || "kraken";
+  } catch {
+    return "kraken";
+  }
+}
 
 function rowToPosition(row: OpenPositionRow): SpotPosition {
   return {
@@ -787,14 +1012,14 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
       SELECT
         lot_id, pair, entry_price, amount, qty_remaining, highest_price,
         entry_fee, entry_strategy_id, entry_signal_tf, signal_confidence,
-        signal_reason, execution_mode, policy_version, setup_tag, signal_id,
+        signal_reason, execution_mode, policy_version, engine_owner, setup_tag, signal_id,
         market_context_id, regime_at_entry, direction_at_entry, macro_at_entry,
         atr_pct_at_entry, initial_stop_price, initial_stop_distance_pct,
         initial_stop_distance_usd, risk_usd, mfe, mae, mfe_r, mae_r,
         sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
         EXTRACT(EPOCH FROM opened_at) * 1000 as opened_at_ms
       FROM open_positions
-      WHERE execution_mode IN ('SHADOW', 'REAL') AND status != 'CLOSED'
+      WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
       ORDER BY opened_at DESC
     `);
     return result.rows.map((r: any) => ({
@@ -811,6 +1036,7 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
       signalReason: r.signal_reason,
       executionMode: r.execution_mode ?? "REAL",
       policyVersion: r.policy_version,
+      engineOwner: r.engine_owner,
       setupTag: r.setup_tag,
       signalId: r.signal_id,
       marketContextId: r.market_context_id,
@@ -851,7 +1077,7 @@ export async function getClosedTrades(limit: number = 100): Promise<any[]> {
         fee_quality, mfe, mae, mfe_r, mae_r, profit_capture_pct, exit_reason_type,
         lot_id, hold_time_minutes
       FROM trades
-      WHERE execution_mode IN ('SHADOW', 'REAL')
+      WHERE policy_version = ${SPOT_POLICY_VERSION}
       ORDER BY executed_at DESC NULLS LAST
       LIMIT ${limit}
     `);
@@ -882,7 +1108,7 @@ export async function getSummaryStats(): Promise<any> {
         COALESCE(AVG(mfe), 0) as avg_mfe,
         COALESCE(AVG(mae), 0) as avg_mae
       FROM trades
-      WHERE execution_mode IN ('SHADOW', 'REAL')
+      WHERE policy_version = ${SPOT_POLICY_VERSION}
     `);
 
     const row = result.rows[0] as any;
@@ -893,7 +1119,7 @@ export async function getSummaryStats(): Promise<any> {
 
     const openCount = await db.execute(sql`
       SELECT COUNT(*) as count FROM open_positions
-      WHERE execution_mode IN ('SHADOW', 'REAL') AND status != 'CLOSED'
+      WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
     `);
 
     return {

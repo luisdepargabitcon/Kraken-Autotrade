@@ -63,6 +63,8 @@ export const MIGRATIONS = [
   // expresa para aplicar migraciones AMA en staging.
   // AMA_MIGRATION_080_AUTOAPPLY = false
   // { id: '080_ama_initial', filePath: path.join(migrationsDir, '080_ama_initial.sql') },
+  // SPOT CANONICAL migration — registered but requires DB_BACKUP before apply
+  { id: '086_spot_canonical_fields', filePath: path.join(migrationsDir, '086_spot_canonical_fields.sql') },
 ];
 
 
@@ -366,26 +368,37 @@ export async function registerRoutes(
       console.error('[startup] Failed to initialize LogRetentionScheduler:', e?.message || e);
     }
     
-    // Auto-start if bot was active
-    const botConfig = await storage.getBotConfig();
-    if (botConfig?.isActive && krakenService.isInitialized()) {
-      console.log("[startup] Starting trading engine...");
-      tradingEngine.start();
-    }
-
     // SPOT Engine auto-start: check if spot_execution_mode is SHADOW in DB
+    // SINGLE OWNER: when SPOT is active, legacy TradingEngine does NOT start new entries
+    let spotEngineActive = false;
     try {
       const { startSpotEngine, isSpotActive, SPOT_RUNTIME_OWNER } = await import('./services/spot/spotEngine');
       const { loadExecutionMode } = await import('./services/spot/spotExecutionModeStore');
       const spotMode = await loadExecutionMode();
       if (spotMode === 'SHADOW') {
-        console.log(`[startup] Starting SPOT Engine (mode=SHADOW, owner=${SPOT_RUNTIME_OWNER})...`);
+        console.log(`[startup] SPOT Engine active (mode=SHADOW, owner=${SPOT_RUNTIME_OWNER}). Legacy TradingEngine new entries DISABLED.`);
+        spotEngineActive = true;
         await startSpotEngine();
       } else {
         console.log(`[startup] SPOT Engine idle (mode=${spotMode})`);
       }
     } catch (e: any) {
       console.error('[startup] Failed to start SPOT Engine:', e?.message || e);
+    }
+
+    // Auto-start legacy TradingEngine if bot was active
+    // BUT: when SPOT is the active runtime owner, legacy engine starts in SUPERVISOR-ONLY mode
+    // (manages existing legacy REAL positions but cannot open new ones)
+    const botConfig = await storage.getBotConfig();
+    if (botConfig?.isActive && krakenService.isInitialized()) {
+      if (spotEngineActive) {
+        console.log("[startup] Starting legacy TradingEngine in SUPERVISOR-ONLY mode (SPOT is runtime owner)...");
+        tradingEngine.start();
+        // Mark that legacy new entries are disabled — TradingEngine will manage existing positions only
+      } else {
+        console.log("[startup] Starting trading engine...");
+        tradingEngine.start();
+      }
     }
 
     // IDCA Scheduler auto-start (routes already registered above)
@@ -437,7 +450,12 @@ export async function registerRoutes(
       const updated = await storage.updateBotConfig(body);
       
       if (req.body.isActive !== undefined && tradingEngine) {
+        // SINGLE OWNER: check if SPOT is active before allowing legacy engine start
         if (req.body.isActive) {
+          const { isSpotActive } = await import('./services/spot/spotEngine');
+          if (isSpotActive()) {
+            console.log('[config] SPOT Engine is active. Legacy TradingEngine starting in SUPERVISOR-ONLY mode (no new entries).');
+          }
           await tradingEngine.start();
         } else {
           await tradingEngine.stop();

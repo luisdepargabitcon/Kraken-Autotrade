@@ -175,7 +175,7 @@ Tablas a inspeccionar: `dry_run_trades`, `trades`, `open_positions`, `bot_events
 | 12 | Execution Adapter SHADOW/REAL | PASS | a5ddbce | 862d650 | 17/17 PASS + tsc OK | — | spotExecutionAdapter.ts creado; SpotShadowAdapter integrado en SpotEngine; posiciones SHADOW persistidas en open_positions con execution_mode='SHADOW' |
 | 13 | SpotExitPolicy | PASS | a5ddbce | 862d650 | 19/19 PASS + tsc OK | — | spotExitPolicy.ts creado; evaluateExit() invocado desde SpotEngine.manageOpenPositions() cada ciclo |
 | 14 | MFE/MAE/Profit Capture | PASS | a5ddbce | 862d650 | 15/15 PASS + tsc OK | — | spotAuditTracker.ts creado; SpotAuditTracker integrado en SpotEngine; métricas persistidas en open_positions y trades |
-| 15 | DB y migraciones | PASS | — | — | — | BLOCKED | Migration 050_spot_canonical_fields.sql creada (additive, idempotent); schema.ts actualizado con campos SPOT; aplicación a DB real requiere autorización VPS |
+| 15 | DB y migraciones | BLOCKED | — | — | — | BLOCKED | Migration renombrada a 086_spot_canonical_fields.sql; registrada en MIGRATIONS array; schema.ts actualizado; aplicación a DB real requiere backup VPS + autorización |
 | 16 | API SPOT | PASS | a5ddbce | 862d650 | 16/16 PASS + tsc OK | — | spot.routes.ts: 9 endpoints sin placeholders; positions/history/summary leen de DB real via SpotEngine; regime usa buildSpotMarketContext real; mode persiste en DB |
 | 17 | UI SPOT | PASS | a5ddbce | 862d650 | tsc OK + build OK | — | Spot.tsx + 5 componentes creados; Terminal.tsx limpiado (tabs DRY RUN/HIST. DRY reemplazados por tab SPOT); legacy code oculto con {false && ...} |
 | 18 | Legacy DRY aislado | PASS | a5ddbce | 862d650 | 19/19 PASS + tsc OK | — | legacyIsolation.ts + middleware creado; SpotEngine integra con ownership guard (SPOT_RUNTIME_OWNER='SpotEngine'); startup verifica mode antes de iniciar |
@@ -183,7 +183,7 @@ Tablas a inspeccionar: `dry_run_trades`, `trades`, `open_positions`, `bot_events
 | 20 | Walk-forward y robustez | PASS | — | — | 9/9 PASS + tsc OK | — | spot/spotWalkForward.ts: runWalkForward (N windows IS/OOS split), WalkForwardWindow/Result, RobustnessCheck (5 checks: win rate diff ≤15%, OOS PF>0.5, no 100% loss window, avg R diff ≤0.5, no overlap), aggregateStats IS/OOS |
 | 21 | Tests completos | PASS | — | — | 235 PASS + 35 integration PASS + 10 skipped (DB) + tsc OK | — | Unit tests OK; integration tests E2E: 35/35 PASS (spotEngine.integration.test.ts); tests DB pendientes VPS |
 | 22 | Documentación | PASS | — | — | BITACORA actualizada | — | BITACORA.md: sección SPOT Canonical Engine con resumen, archivos, invariantes, validaciones, fases bloqueadas |
-| 23 | Commit componentes + commit integración | IN_PROGRESS | — | 862d650 | — | — | Commit componentes: 862d650a195b48637b9725741581f658ef234ff6; push: origin/refactor/spot-canonical-shadow-20260812; commit integración en progreso |
+| 23 | Commit componentes + commit integración + commit safety | IN_PROGRESS | — | 43e90c2 | — | — | Commit componentes: 862d650; commit integración: 43e90c2; commit safety blockers: pendente |
 | 24 | Deploy staging | BLOCKED | — | — | — | — | Requiere autorización VPS |
 | 25 | Validación visual staging | BLOCKED | — | — | — | — | Requiere VPS |
 | 26 | Observabilidad SHADOW | BLOCKED | — | — | — | — | Requiere VPS |
@@ -441,3 +441,89 @@ git status --short (resumen):
 - 2026-08-12 — FASE 28 PASS. AUDITORIAS/SPOT_CRITERIOS_PROMOCION_REAL_2026-08-12.md.
 - 2026-08-12 — FASE 29 PASS. AUDITORIAS/SPOT_REFUNDACION_INFORME_FINAL_2026-08-12.md.
   FASE 23 (commit) pendiente. FASE 24-26 BLOCKED (VPS).
+
+## BLOQUEOS PRE-DEPLOY POST 43e90c2
+
+Auditoría post-commit 43e90c2 detectó los siguientes bloqueos runtime/safety:
+
+### B01 — Entry Intent flow incorrecto
+- `scanPair()` crea nuevo intent cuando signal=BUY y hace `return` antes de evaluar intent existente.
+- Provoca entradas tardías: el intent solo se evalúa cuando BUY desaparece.
+- **Fix**: rediseñar flujo: gestionar posiciones → buscar intent activo → evaluarlo SIEMPRE → si no existe, evaluar strategy → crear intent → evaluar inmediatamente.
+- Tests: SPOT_BUY_INTENT_EVALUATED_SAME_SCAN, SPOT_BUY_INTENT_REEVALUATED_WHILE_SIGNAL_REMAINS_BUY, SPOT_BUY_INTENT_NOT_WAIT_FOR_SIGNAL_DISAPPEAR, SPOT_BUY_INTENT_ORIGIN_NOT_RESET, SPOT_EXPIRED_INTENT_NEVER_EXECUTES
+
+### B02 — Doble motor (Single Owner)
+- `routes.ts` arranca `tradingEngine.start()` y después `startSpotEngine()` sin ownership guard real.
+- Violación de SPOT_RUNTIME_OWNER=SpotEngine.
+- **Fix**: cuando SPOT_CANONICAL está habilitado, TradingEngine no puede generar nuevas entradas Normal/DRY.
+- Auditar todos los caminos: startup, /api/config, Telegram, commands, scheduler.
+- Tests: SPOT_SINGLE_RUNTIME_OWNER, SPOT_LEGACY_NORMAL_NO_NEW_ENTRY, SPOT_LEGACY_DRY_NO_NEW_ENTRY, SPOT_NO_DOUBLE_SCAN_OWNER
+
+### B03 — Aislamiento posiciones REAL/SHADOW
+- `getOpenPositionsForPair()` obtiene todas las posiciones sin filtrar por policy_version/entry_strategy_id.
+- `closePosition()` usa mode global en lugar de position.executionMode.
+- **Fix**: filtrar por policy_version=SPOT_POLICY_VERSION y/o entry_strategy_id='SPOT_CANONICAL'.
+- position.executionMode es INMUTABLE. Exit adapter usa position.executionMode, no mode global.
+- Tests: SPOT_SHADOW_NEVER_SELECTS_REAL_POSITION, SPOT_SHADOW_NEVER_UPDATES_REAL_POSITION, SPOT_SHADOW_NEVER_DELETES_REAL_POSITION, SPOT_POSITION_MODE_IMMUTABLE, SPOT_EXIT_ADAPTER_USES_POSITION_MODE, SPOT_LEGACY_REAL_POSITION_UNTOUCHED
+
+### B04 — Semántica OFF
+- OFF no debe dejar huérfanas posiciones abiertas.
+- **Fix**: OFF = entry disabled, position supervisor continúa mientras existan posiciones SPOT abiertas.
+
+### B05 — Lifecycle OFF↔SHADOW
+- POST /api/spot/mode solo persiste mode, no arranca/detiene engine.
+- **Fix**: OFF→SHADOW: validar, guardar, startSpotEngine, verificar engineRunning, revertir si falla.
+- SHADOW→OFF: bloquear entradas, limpiar intents, detener scan entradas, mantener supervisor.
+- Tests: SPOT_MODE_OFF_TO_SHADOW_STARTS_ENGINE, SPOT_MODE_SHADOW_TO_OFF_STOPS_ENTRIES, SPOT_MODE_START_FAILURE_REVERTS_OFF, SPOT_RESTART_RECOVERS_SHADOW
+
+### B06 — Migration numeración
+- 050_spot_canonical_fields.sql colisiona con 050_fisco_autosync_uuid_and_stale.sql existente.
+- **Fix**: renombrar a 086_spot_canonical_fields.sql (siguiente libre tras 085).
+
+### B07 — Migration no registrada
+- Migration SPOT no está en array MIGRATIONS de routes.ts.
+- **Fix**: añadir 086_spot_canonical_fields al array. No ejecutar hasta backup VPS.
+
+### B08 — Provenance insuficiente
+- execution_mode='REAL' no implica trade SPOT. Falta discriminación explícita.
+- **Fix**: añadir engine_owner (SPOT_CANONICAL, LEGACY_NORMAL, etc.) y origin='spot_engine'.
+
+### B09 — Exchange='spot' incorrecto
+- persistOpenPosition/persistClosedTrade usan exchange='spot'. SPOT no es un exchange.
+- **Fix**: usar venue real (revolutx, kraken). Identificar motor mediante origin/policy_version/entry_strategy_id/engine_owner.
+
+### B10 — Contaminación tablas compartidas
+- SHADOW se persiste en open_positions/trades compartidas con datos reales.
+- **Fix**: auditar TODOS los consumidores (FISCO, Portfolio, P&L real, RevolutX sync, Kraken sync, IDCA, GRID, AMA, Telegram, dashboards, exports, reconciliation, training).
+- SHADOW debe quedar excluido de FISCO, Portfolio monetario REAL, Reconciliation, Balances reales.
+- Informe: AUDITORIAS/SPOT_SHARED_TABLE_CONSUMERS_2026-08-12.md
+
+### B11 — API policy isolation
+- API usa execution_mode IN ('SHADOW','REAL') sin filtrar por policy_version/origin.
+- **Fix**: filtrar por SPOT_CANONICAL provenance. No sumar legacy Normal con SPOT.
+
+### B12 — Capital SHADOW hardcodeado
+- `getAvailableCapital()` retorna 10_000 fijo para SHADOW.
+- **Fix**: configuración persistente spot_shadow_capital_usd. Virtual ledger con capital inicial, ocupado, liberado, PnL, fees, disponible.
+
+### B13 — Estado posición no persistido en cada scan
+- MFE/MAE/BE/trailing/stop no se persisten en DB durante scans.
+- Restart reinicia MFE=0, MAE=0, BE=false, Trailing=false.
+- **Fix**: update atómico del position state en cada scan.
+
+### B14 — signalConfidence=0
+- Position persiste signalConfidence=0 aunque strategy produjo confianza real.
+- **Fix**: propagar signalConfidence desde SpotSignalResult → SpotEntryIntent → SpotPosition → trade.
+
+### B15 — Tests E2E insuficientes
+- 35 tests actuales mockean DB y MarketData, no ejecutan startSpotEngine() real.
+- **Fix**: instanciar SpotEngine con DI (fake repo, fake MarketData, real strategy/intents/risk/exit).
+- Tests obligatorios: SPOT_ENGINE_REAL_SCAN_ONCE, SPOT_ENGINE_BUY_TO_PERSISTED_POSITION, SPOT_ENGINE_POSITION_TO_CLOSED_TRADE, etc.
+
+### GATES PRE-DEPLOY
+- CODE_GATE: pendente (commit safety blockers)
+- DB_BACKUP: pendente (requiere VPS)
+- DB_INSPECTION: pendente (requiere VPS)
+- MIGRATION_APPLY: pendente (requiere DB_BACKUP + CODE_GATE)
+- DEPLOY_STAGING: pendente
+- REAL: BLOQUEADO (REAL_ACTIVATION_ALLOWED=false)

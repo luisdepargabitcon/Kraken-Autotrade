@@ -666,7 +666,8 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(tradesTable.pair, pair),
         eq(tradesTable.type, 'buy'),
-        eq(tradesTable.status, 'filled')
+        eq(tradesTable.status, 'filled'),
+        or(isNull(tradesTable.engineOwner), ne(tradesTable.engineOwner, 'SPOT_CANONICAL')),
       ))
       .orderBy(tradesTable.executedAt);
   }
@@ -676,7 +677,8 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(tradesTable.status, 'filled'),
         gt(tradesTable.price, '0'),
-        gt(tradesTable.amount, '0')
+        gt(tradesTable.amount, '0'),
+        or(isNull(tradesTable.engineOwner), ne(tradesTable.engineOwner, 'SPOT_CANONICAL')),
       ))
       .orderBy(tradesTable.executedAt)
       .limit(limit);
@@ -690,7 +692,8 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(tradesTable.status, 'filled'),
         gt(tradesTable.price, '0'),
-        gt(tradesTable.amount, '0')
+        gt(tradesTable.amount, '0'),
+        or(isNull(tradesTable.engineOwner), ne(tradesTable.engineOwner, 'SPOT_CANONICAL')),
       ))
       .orderBy(tradesTable.executedAt);
 
@@ -851,6 +854,7 @@ export class DatabaseStorage implements IStorage {
       eq(tradesTable.status, 'filled'),
       gt(tradesTable.price, '0'),
       gt(tradesTable.amount, '0'),
+      or(isNull(tradesTable.engineOwner), ne(tradesTable.engineOwner, 'SPOT_CANONICAL')),
     ));
 
     const row = result[0];
@@ -871,9 +875,12 @@ export class DatabaseStorage implements IStorage {
     // Hide invalid historical artifacts (e.g. filled trades with price=0) from API/UI.
     // Keep pending trades visible.
     return await db.select().from(tradesTable)
-      .where(or(
-        ne(tradesTable.status, 'filled'),
-        and(gt(tradesTable.price, '0'), gt(tradesTable.amount, '0'))
+      .where(and(
+        or(
+          ne(tradesTable.status, 'filled'),
+          and(gt(tradesTable.price, '0'), gt(tradesTable.amount, '0'))
+        ),
+        or(isNull(tradesTable.engineOwner), ne(tradesTable.engineOwner, 'SPOT_CANONICAL')),
       ))
       .orderBy(desc(tradesTable.createdAt))
       .limit(limit);
@@ -1368,7 +1375,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOpenPositions(): Promise<OpenPosition[]> {
-    return await db.select().from(openPositionsTable);
+    return await db.select().from(openPositionsTable)
+      .where(or(isNull(openPositionsTable.engineOwner), ne(openPositionsTable.engineOwner, 'SPOT_CANONICAL')));
   }
 
   async getOpenPosition(pair: string): Promise<OpenPosition | undefined> {
@@ -1387,7 +1395,10 @@ export class DatabaseStorage implements IStorage {
 
   async getOpenPositionsByPair(pair: string): Promise<OpenPosition[]> {
     return await db.select().from(openPositionsTable)
-      .where(eq(openPositionsTable.pair, pair));
+      .where(and(
+        eq(openPositionsTable.pair, pair),
+        or(isNull(openPositionsTable.engineOwner), ne(openPositionsTable.engineOwner, 'SPOT_CANONICAL')),
+      ));
   }
 
   async saveOpenPosition(position: InsertOpenPosition): Promise<OpenPosition> {
@@ -1459,8 +1470,12 @@ export class DatabaseStorage implements IStorage {
 
   async getOpenPositionsWithQtyRemaining(): Promise<OpenPosition[]> {
     // Returns only positions with qtyRemaining > 0 (or null which means not yet initialized)
+    // Excludes SPOT_CANONICAL positions to prevent legacy engine from managing SPOT positions.
     return await db.select().from(openPositionsTable)
-      .where(sql`${openPositionsTable.qtyRemaining} > 0 OR ${openPositionsTable.qtyRemaining} IS NULL`)
+      .where(and(
+        sql`${openPositionsTable.qtyRemaining} > 0 OR ${openPositionsTable.qtyRemaining} IS NULL`,
+        or(isNull(openPositionsTable.engineOwner), ne(openPositionsTable.engineOwner, 'SPOT_CANONICAL')),
+      ))
       .orderBy(openPositionsTable.openedAt);
   }
 
@@ -2904,7 +2919,8 @@ export class DatabaseStorage implements IStorage {
           eq(openPositionsTable.pair, normalizedPair),
           eq(openPositionsTable.pair, altPair)
         ),
-        eq(openPositionsTable.status, 'OPEN')
+        eq(openPositionsTable.status, 'OPEN'),
+        or(isNull(openPositionsTable.engineOwner), ne(openPositionsTable.engineOwner, 'SPOT_CANONICAL')),
       ));
     
     // Count PENDING_FILL positions
@@ -2916,7 +2932,8 @@ export class DatabaseStorage implements IStorage {
           eq(openPositionsTable.pair, normalizedPair),
           eq(openPositionsTable.pair, altPair)
         ),
-        eq(openPositionsTable.status, 'PENDING_FILL')
+        eq(openPositionsTable.status, 'PENDING_FILL'),
+        or(isNull(openPositionsTable.engineOwner), ne(openPositionsTable.engineOwner, 'SPOT_CANONICAL')),
       ));
     
     // Count pending order intents (BUY only)
@@ -3063,7 +3080,8 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(openPositionsTable.status, 'OPEN'),
         sql`total_amount_base = 0`,
-        isNull(openPositionsTable.clientOrderId)
+        isNull(openPositionsTable.clientOrderId),
+        or(isNull(openPositionsTable.engineOwner), ne(openPositionsTable.engineOwner, 'SPOT_CANONICAL')),
       ));
   }
 
@@ -3126,7 +3144,8 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(openPositionsTable.status, 'OPEN'),
         sql`total_amount_base = 0`,
-        isNull(openPositionsTable.clientOrderId)
+        isNull(openPositionsTable.clientOrderId),
+        or(isNull(openPositionsTable.engineOwner), ne(openPositionsTable.engineOwner, 'SPOT_CANONICAL')),
       ));
     const [backfilledResult] = await db.select({ count: sql`count(*)` }).from(openPositionsTable)
       .where(and(

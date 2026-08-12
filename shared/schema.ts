@@ -191,6 +191,8 @@ export const botConfig = pgTable("bot_config", {
   idcaHybridAlertConfig: jsonb("idca_hybrid_alert_config"),
   // SPOT Canonical Engine: persistent execution mode (OFF/SHADOW/REAL)
   spotExecutionMode: text("spot_execution_mode").notNull().default("OFF"),
+  // SPOT Canonical Engine: virtual capital for SHADOW mode (USD)
+  spotShadowCapitalUsd: decimal("spot_shadow_capital_usd", { precision: 18, scale: 2 }).default("10000"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -286,6 +288,7 @@ export const trades = pgTable("trades", {
   // SPOT Canonical Engine fields
   executionMode: text("execution_mode").default("REAL"),
   policyVersion: text("policy_version"),
+  engineOwner: text("engine_owner"),
   setupTag: text("setup_tag"),
   signalId: text("signal_id"),
   marketContextId: text("market_context_id"),
@@ -626,6 +629,8 @@ export const openPositions = pgTable("open_positions", {
   // SPOT Canonical Engine fields
   executionMode: text("execution_mode").default("REAL"),
   policyVersion: text("policy_version"),
+  engineOwner: text("engine_owner"),
+  origin: text("origin"),
   setupTag: text("setup_tag"),
   signalId: text("signal_id"),
   marketContextId: text("market_context_id"),

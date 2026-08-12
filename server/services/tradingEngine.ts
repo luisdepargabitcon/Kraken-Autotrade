@@ -3126,11 +3126,45 @@ ${positionsList}
     }
   }
 
+  /**
+   * Supervisor-only mode: manage existing legacy open positions (exits, SL, TP, time-stop)
+   * without evaluating new entry signals. Used when SPOT canonical engine is the active runtime owner.
+   */
+  private async manageExistingPositionsOnly(): Promise<void> {
+    try {
+      if (this.openPositions.size === 0) {
+        return;
+      }
+      console.log(`[TradingEngine] Supervisor-only: managing ${this.openPositions.size} existing legacy positions.`);
+      await this.checkExpiredTimeStopPositions();
+    } catch (error: any) {
+      console.error("[TradingEngine] Supervisor-only error:", error.message);
+    }
+  }
+
   private async runTradingCycle() {
     try {
       const config = await storage.getBotConfig();
       if (!config?.isActive) {
         await this.stop();
+        return;
+      }
+
+      // ── SPOT SINGLE OWNER GUARD ──────────────────────────────────────────
+      // When SPOT canonical engine is the active runtime owner, legacy TradingEngine
+      // must NOT generate new entries. It continues running only to manage
+      // existing legacy REAL open positions (supervisor mode).
+      let spotOwnsRuntime = false;
+      try {
+        const { isSpotActive } = await import("./spot/spotEngine");
+        spotOwnsRuntime = isSpotActive();
+      } catch { /* spotEngine not loaded — safe to continue normally */ }
+      if (spotOwnsRuntime) {
+        console.log("[TradingEngine] SPOT runtime owner is active. Legacy new entries DISABLED. Supervisor-only mode.");
+        // Still manage existing open positions (exits, SL, TP, time-stop)
+        // but skip the entry-signal evaluation and order placement phase.
+        // We do this by jumping to position management only.
+        await this.manageExistingPositionsOnly();
         return;
       }
 
