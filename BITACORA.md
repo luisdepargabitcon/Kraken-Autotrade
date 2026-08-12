@@ -1,7 +1,7 @@
 ﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-08-09
+> Última actualización: 2026-08-12
 
 ---
 
@@ -7787,6 +7787,60 @@ Cierre operacional definitivo del sistema AMA: scheduler con tick real, shadow s
 - `npm run build` ✅
 - AMA suite: 951/951 PASS ✅
 - Full suite: 16 baseline failures (non-AMA), 0 new failures ✅
+
+---
+
+## 2026-08-12 — Refundación SPOT Canonical Engine (FASES 0-29)
+
+### Contexto
+Refactorización completa del motor de trading: fusión de "Modo Normal" y "DRY-RUN"
+en un único motor canónico SPOT con dos adaptadores de ejecución (SHADOW/REAL).
+REAL bloqueado durante toda la refactorización.
+
+### Archivos creados (28)
+- `server/services/spot/` — 15 módulos: candleTimestamp, feeModel, spotTypes,
+  spotRegimeEngine, spotMarketContext, spotCanonicalStrategy, spotEntryIntent,
+  spotRiskManager, spotExecutionAdapter, spotExitPolicy, spotAuditTracker,
+  legacyIsolation, spotReplayEngine, spotWalkForward, spotNoAutoOptimization
+- `server/routes/spot.routes.ts` — 9 endpoints /api/spot/*
+- `client/src/pages/Spot.tsx` + 5 componentes spot UI
+- 6 archivos de tests (235 PASS + 10 skipped DB-dependent)
+- `AUDITORIAS/SPOT_CRITERIOS_PROMOCION_REAL_2026-08-12.md`
+- `AUDITORIAS/SPOT_REFUNDACION_INFORME_FINAL_2026-08-12.md`
+- `PLAN_TRABAJO_MODO_NORMAL_DRY_RUN_A_SPOT_2026-08-12.md`
+
+### Archivos modificados (4)
+- `server/routes.ts` — registro spot.routes
+- `server/routes/dryrun.routes.ts` — legacy deprecation middleware
+- `client/src/App.tsx` — ruta /spot
+- `client/src/components/dashboard/Nav.tsx` — nav link SPOT
+
+### Invariantes verificadas
+1. Una sola estrategia SPOT_CANONICAL, LONG ONLY
+2. SHADOW no puede llamar exchange.placeOrder()
+3. PnL canónico es NET (gross - fees)
+4. Replay sin lookahead (señal al cierre, fill posterior)
+5. Legacy DRY aislado como LEGACY_DRY_RUN
+6. REAL_PROMOTION_STATUS = NOT_AUTHORIZED
+7. No auto-optimización post-deploy (policy frozen)
+
+### Validaciones
+- tsc: ✅ limpio
+- build: ✅ 2625 módulos
+- Tests SPOT: 235 PASS + 10 skipped (DB-dependent)
+- 0 regresiones en código SPOT
+
+### Fases bloqueadas (VPS)
+- FASE 3: Backup DB (HARD_BLOCKER)
+- FASE 15: DB migraciones (HARD_BLOCKER)
+- FASE 24-26: Deploy/Validación/Observabilidad staging (HARD_BLOCKER)
+
+### Estado final
+- Motor SPOT canónico: construido y testeado localmente
+- UI SPOT: funcional (5 tabs)
+- API: 9 endpoints registrados
+- Criterios REAL: documentados
+- Próximo paso: autorizar VPS para deploy staging
 - `git diff --check` ✅
 
 ### Commit y rama

@@ -1746,6 +1746,12 @@ export async function registerRoutes(
   registerDryRunRoutes(app, routerDeps);
 
   // ============================================================
+  // SPOT ENDPOINTS — Unified SPOT canonical engine (replaces Normal/DRY split)
+  // ============================================================
+  const { registerSpotRoutes } = await import('./routes/spot.routes');
+  registerSpotRoutes(app, routerDeps);
+
+  // ============================================================
   // AUDIT ENDPOINTS — Trading + IDCA (read-only)
   // ============================================================
   const { registerAuditRoutes } = await import('./routes/audit.routes');

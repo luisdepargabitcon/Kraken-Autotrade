@@ -6,11 +6,18 @@ import { eq, desc, and, sql } from "drizzle-orm";
 import { classifyExitReason, type NormalizedExitReason } from "../utils/exitReasonClassifier";
 import { MarketDataService } from "../services/MarketDataService";
 import { getCandlesSince } from "../services/marketData/MarketCandleRepository";
+import { legacyDeprecationMiddleware, applyLegacyHeaders } from "../services/spot/legacyIsolation";
 
 export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
+  // LEGACY_DRY_RUN — All /api/dryrun/* endpoints are deprecated.
+  // They remain accessible for audit/parity comparison but should not
+  // be used for new integrations. Use /api/spot/* instead.
+  app.use("/api/dryrun", legacyDeprecationMiddleware());
+
   // GET /api/dryrun/positions - Open dry run positions (status = 'open')
   app.get("/api/dryrun/positions", async (_req, res) => {
+    applyLegacyHeaders(res);
     try {
       const positions = await db.select().from(dryRunTrades)
         .where(and(eq(dryRunTrades.status, "open"), eq(dryRunTrades.type, "buy")))
@@ -25,6 +32,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
   // GET /api/dryrun/history - Closed dry run trades (sells with optional excluded filter)
   app.get("/api/dryrun/history", async (req, res) => {
+    applyLegacyHeaders(res);
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
       const offset = parseInt(req.query.offset as string) || 0;
@@ -105,6 +113,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
   // GET /api/dryrun/summary - Smart Strategy Score + comprehensive metrics
   app.get("/api/dryrun/summary", async (_req, res) => {
+    applyLegacyHeaders(res);
     try {
       // 1. Open positions (for floating PnL and capital calculation)
       const openPositions = await db.select().from(dryRunTrades)
@@ -536,6 +545,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
   // DELETE /api/dryrun/clear - Clear all dry run trades (reset DB + in-memory positions)
   app.delete("/api/dryrun/clear", async (_req, res) => {
+    applyLegacyHeaders(res);
     try {
       await db.delete(dryRunTrades);
       // Also clear in-memory positions so ExitManager doesn't try to sell ghost positions
@@ -552,6 +562,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
 
   // POST /api/dryrun/backfill - Recover historical dry run trades from bot_events
   app.post("/api/dryrun/backfill", async (req, res) => {
+    applyLegacyHeaders(res);
     try {
       // Defensive filters: only recent events (last 30 days by default)
       const daysBack = parseInt(req.body?.daysBack as string) || 30;
@@ -702,6 +713,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
   // GET /api/dryrun/exit-audit - Exit audit: stats grouped by reason, pair, duplicates
   // FASE 2/3/8 — Provides data for the SmartGuard exit audit dashboard
   app.get("/api/dryrun/exit-audit", async (_req, res) => {
+    applyLegacyHeaders(res);
     try {
       // Fetch all sell records
       const sells = await db.select().from(dryRunTrades)
@@ -863,6 +875,7 @@ export const registerDryRunRoutes: RegisterRoutes = (app, deps) => {
   // READ-ONLY. No changes to trading logic, DB, or history.
   // ============================================================
   app.get("/api/dryrun/timestop-audit", async (_req, res) => {
+    applyLegacyHeaders(res);
     try {
       // Helper: normalize Kraken time (seconds) or DB time (ms) → always ms
       const toMs = (t: number) => t < 1e11 ? t * 1000 : t;

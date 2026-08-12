@@ -22,6 +22,7 @@ import Autotuning from "@/pages/Autotuning";
 import InstitutionalDca from "@/pages/InstitutionalDca";
 import GridIsolated from "@/pages/GridIsolated";
 import Ama from "@/pages/Ama";
+import Spot from "@/pages/Spot";
 import Telegram from "@/pages/Telegram";
 import NotFound from "@/pages/not-found";
 
@@ -41,6 +42,9 @@ function Router() {
 
       {/* Grid Isolated */}
       <Route path="/grid-isolated" component={GridIsolated} />
+
+      {/* SPOT — Motor canónico unificado */}
+      <Route path="/spot" component={Spot} />
 
       {/* AMA — Acumulación Macro Adaptativa */}
       <Route path="/ama" component={Ama} />

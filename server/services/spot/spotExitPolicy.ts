@@ -1,0 +1,424 @@
+/**
+ * SpotExitPolicy — Unified exit policy for SPOT.
+ *
+ * PROBLEM (FASE 1 audit):
+ *   - exitManager.ts is 1897 lines, monolithic.
+ *   - SmartExitEngine.ts, SmartTimeStopV2.ts, TimeStopService.ts are separate.
+ *   - DRY uses SmartTimeStopV2 (DRY-only), Normal uses TimeStopService.
+ *   - Two regime vocabularies (TREND/CHOP/VOLATILE vs TREND/RANGE/TRANSITION).
+ *   - Exit decisions don't use the same SpotRegimeContext as entry.
+ *
+ * SOLUTION:
+ *   Single SpotExitPolicy with 7 exit reasons in priority order:
+ *     1. EMERGENCY (hard stop hit)
+ *     2. STRUCTURE_INVALIDATION (EMA breakdown)
+ *     3. DEFENSIVE (adverse momentum)
+ *     4. BREAK_EVEN (SmartGuard BE activated)
+ *     5. TRAILING (SmartGuard trailing)
+ *     6. PROFIT (TP hit, net PnL > 0)
+ *     7. TIME_EFFICIENCY (time stop with market awareness)
+ *
+ *   All decisions consume the SAME SpotRegimeContext as entry.
+ *   No separate regime computation.
+ *
+ * INVARIANT: SpotExitPolicy MUST NOT create its own regime.
+ */
+
+import {
+  ExitReasonType,
+  ExitPriority,
+  Regime,
+  RegimeDirection,
+  MacroBias,
+  type SpotPosition,
+  type SpotMarketContext,
+  type SpotExitDecision,
+  type SpotExitState,
+  type SpotRegimeContext,
+} from "./spotTypes";
+import { computePnlBreakdown, isValidProfitExit } from "./feeModel";
+import { SPOT_POLICY_VERSION } from "./spotTypes";
+import { calculateEMA } from "../indicators";
+
+// ─── Config ─────────────────────────────────────────────────────────────────
+
+export interface SpotExitConfig {
+  // Emergency stop (hard SL)
+  emergencyStopEnabled: boolean;
+  // Structure invalidation
+  structureInvalidationEnabled: boolean;
+  structureEmaPeriod: number;
+  structureMinCandlesBelow: number; // min candles below EMA to confirm
+  // Defensive exit
+  defensiveEnabled: boolean;
+  defensiveAdxThreshold: number; // ADX below this = momentum loss
+  defensiveMaxAdversePctR: number; // max adverse move in R before defensive
+  // Break-even (SmartGuard)
+  breakEvenEnabled: boolean;
+  breakEvenActivateAtPctR: number; // activate BE at this R multiple
+  breakEvenStopPctR: number; // BE stop at this R (e.g., 0 = entry price)
+  // Trailing (SmartGuard)
+  trailingEnabled: boolean;
+  trailingActivateAtPctR: number;
+  trailingDistancePct: number;
+  trailingStepPct: number;
+  // Profit exit (TP)
+  profitExitEnabled: boolean;
+  profitTargetR: number; // TP at this R multiple
+  profitTargetFixedPct: number; // alternative: fixed % from entry
+  // Time efficiency
+  timeEfficiencyEnabled: boolean;
+  timeEfficiencyMinHoldMinutes: number;
+  timeEfficiencyMaxHoldHours: number;
+  timeEfficiencyNoProgressMinutes: number; // exit if no MFE progress
+  // Regime-based exit
+  regimeExitEnabled: boolean;
+  regimeExitAdxThreshold: number; // exit if ADX drops below this
+  regimeExitHardAdxThreshold: number; // hard exit if ADX drops below this
+}
+
+export const DEFAULT_SPOT_EXIT_CONFIG: SpotExitConfig = {
+  emergencyStopEnabled: true,
+  structureInvalidationEnabled: true,
+  structureEmaPeriod: 20,
+  structureMinCandlesBelow: 2,
+  defensiveEnabled: true,
+  defensiveAdxThreshold: 19,
+  defensiveMaxAdversePctR: 100, // 1R adverse
+  breakEvenEnabled: true,
+  breakEvenActivateAtPctR: 1.0,
+  breakEvenStopPctR: 0,
+  trailingEnabled: true,
+  trailingActivateAtPctR: 1.5,
+  trailingDistancePct: 2.0,
+  trailingStepPct: 0.5,
+  profitExitEnabled: true,
+  profitTargetR: 3.0,
+  profitTargetFixedPct: 0,
+  timeEfficiencyEnabled: true,
+  timeEfficiencyMinHoldMinutes: 20,
+  timeEfficiencyMaxHoldHours: 72,
+  timeEfficiencyNoProgressMinutes: 180,
+  regimeExitEnabled: true,
+  regimeExitAdxThreshold: 23,
+  regimeExitHardAdxThreshold: 19,
+};
+
+// ─── Exit state initialization ──────────────────────────────────────────────
+
+export function createExitState(position: SpotPosition): SpotExitState {
+  return {
+    positionLotId: position.lotId,
+    emergencyStopPrice: position.initialStopPrice,
+    structureInvalidationPrice: null,
+    breakEvenStopPrice: null,
+    trailingStopPrice: null,
+    trailingHighestPrice: position.entryPrice,
+    profitExitTarget: null,
+    timeEfficiencyArmed: false,
+    lastExitEvaluation: null,
+    currentExitReason: null,
+  };
+}
+
+// ─── R-multiple calculation ─────────────────────────────────────────────────
+
+export function computeRMultiple(currentPrice: number, position: SpotPosition): number {
+  if (position.initialStopDistanceUsd <= 0) return 0;
+  const profitUsd = (currentPrice - position.entryPrice) * position.amount;
+  return profitUsd / position.riskUsd;
+}
+
+// ─── Exit evaluations (in priority order) ───────────────────────────────────
+
+/**
+ * 1. EMERGENCY: hard stop hit
+ */
+export function evaluateEmergencyStop(
+  position: SpotPosition,
+  state: SpotExitState,
+  currentPrice: number,
+  config: SpotExitConfig,
+): SpotExitDecision {
+  if (!config.emergencyStopEnabled) {
+    return noExit("Emergency stop disabled");
+  }
+  if (currentPrice <= state.emergencyStopPrice) {
+    return exitNow(ExitReasonType.EMERGENCY, ExitPriority.EMERGENCY,
+      `Emergency stop hit: ${currentPrice} ≤ ${state.emergencyStopPrice}`,
+      currentPrice, state.emergencyStopPrice);
+  }
+  return noExit("Emergency stop not hit");
+}
+
+/**
+ * 2. STRUCTURE_INVALIDATION: price below EMA for N candles
+ */
+export function evaluateStructureInvalidation(
+  position: SpotPosition,
+  ctx: SpotMarketContext,
+  config: SpotExitConfig,
+): SpotExitDecision {
+  if (!config.structureInvalidationEnabled) {
+    return noExit("Structure invalidation disabled");
+  }
+  const candles = ctx.candles15m;
+  if (candles.length < config.structureEmaPeriod + config.structureMinCandlesBelow) {
+    return noExit("Insufficient candles for structure check");
+  }
+  // Check if last N candles are below EMA20
+  const closes = candles.map(c => c.close);
+  const ema = calculateEMA(closes.slice(-config.structureEmaPeriod * 3), config.structureEmaPeriod);
+  const lastN = candles.slice(-config.structureMinCandlesBelow);
+  const allBelow = lastN.every(c => c.close < ema);
+
+  if (allBelow) {
+    return exitNow(ExitReasonType.STRUCTURE_INVALIDATION, ExitPriority.STRUCTURE_INVALIDATION,
+      `Structure invalidation: ${config.structureMinCandlesBelow} candles below EMA${config.structureEmaPeriod}`,
+      ctx.ticker.last, ctx.ticker.last);
+  }
+  return noExit("Structure intact");
+}
+
+/**
+ * 3. DEFENSIVE: adverse momentum / regime deterioration
+ */
+export function evaluateDefensive(
+  position: SpotPosition,
+  ctx: SpotMarketContext,
+  rMultiple: number,
+  config: SpotExitConfig,
+): SpotExitDecision {
+  if (!config.defensiveEnabled) {
+    return noExit("Defensive disabled");
+  }
+  const rc = ctx.regimeContext;
+
+  // ADX dropped below defensive threshold
+  if (rc.adx < config.defensiveAdxThreshold && rMultiple < 0) {
+    return exitNow(ExitReasonType.DEFENSIVE, ExitPriority.DEFENSIVE,
+      `Defensive: ADX ${rc.adx.toFixed(0)} < ${config.defensiveAdxThreshold} + adverse R ${rMultiple.toFixed(2)}`,
+      ctx.ticker.last, ctx.ticker.last);
+  }
+
+  // Direction flipped to bearish
+  if (rc.direction === RegimeDirection.BEARISH && rMultiple < 0.5) {
+    return exitNow(ExitReasonType.DEFENSIVE, ExitPriority.DEFENSIVE,
+      `Defensive: direction flipped bearish, R ${rMultiple.toFixed(2)}`,
+      ctx.ticker.last, ctx.ticker.last);
+  }
+
+  return noExit("Defensive conditions not met");
+}
+
+/**
+ * 4. BREAK_EVEN: SmartGuard BE activation
+ */
+export function evaluateBreakEven(
+  position: SpotPosition,
+  state: SpotExitState,
+  rMultiple: number,
+  currentPrice: number,
+  config: SpotExitConfig,
+): SpotExitDecision {
+  if (!config.breakEvenEnabled) {
+    return noExit("Break-even disabled");
+  }
+  // Activate BE if R multiple reaches threshold
+  if (rMultiple >= config.breakEvenActivateAtPctR && !state.breakEvenStopPrice) {
+    // BE stop at entry price (0R)
+    const beStop = position.entryPrice * (1 + config.breakEvenStopPctR / 100);
+    // If price comes back to BE stop, exit
+    if (currentPrice <= beStop) {
+      return exitNow(ExitReasonType.BREAK_EVEN, ExitPriority.BREAK_EVEN,
+        `Break-even exit: ${currentPrice} ≤ BE ${beStop}`,
+        currentPrice, beStop);
+    }
+  }
+  // If BE already activated, check if price hit BE stop
+  if (state.breakEvenStopPrice && currentPrice <= state.breakEvenStopPrice) {
+    return exitNow(ExitReasonType.BREAK_EVEN, ExitPriority.BREAK_EVEN,
+      `Break-even exit: ${currentPrice} ≤ BE ${state.breakEvenStopPrice}`,
+      currentPrice, state.breakEvenStopPrice);
+  }
+  return noExit("Break-even not triggered");
+}
+
+/**
+ * 5. TRAILING: SmartGuard trailing stop
+ */
+export function evaluateTrailing(
+  position: SpotPosition,
+  state: SpotExitState,
+  rMultiple: number,
+  currentPrice: number,
+  config: SpotExitConfig,
+): SpotExitDecision {
+  if (!config.trailingEnabled) {
+    return noExit("Trailing disabled");
+  }
+  // Update trailing highest price
+  const highest = Math.max(state.trailingHighestPrice, currentPrice);
+
+  // Activate trailing if R reaches threshold
+  if (rMultiple >= config.trailingActivateAtPctR) {
+    const trailingStop = highest * (1 - config.trailingDistancePct / 100);
+    if (currentPrice <= trailingStop) {
+      return exitNow(ExitReasonType.TRAILING, ExitPriority.TRAILING,
+        `Trailing exit: ${currentPrice} ≤ trail ${trailingStop} (highest ${highest})`,
+        currentPrice, trailingStop);
+    }
+  }
+  return noExit("Trailing not triggered");
+}
+
+/**
+ * 6. PROFIT: take profit target hit (net PnL > 0)
+ */
+export function evaluateProfitExit(
+  position: SpotPosition,
+  ctx: SpotMarketContext,
+  rMultiple: number,
+  config: SpotExitConfig,
+): SpotExitDecision {
+  if (!config.profitExitEnabled) {
+    return noExit("Profit exit disabled");
+  }
+  const targetR = config.profitTargetR;
+  if (rMultiple >= targetR) {
+    // Verify net PnL > 0 (not just gross)
+    const pnl = computePnlBreakdown({
+      entryPrice: position.entryPrice,
+      exitPrice: ctx.ticker.last,
+      volume: position.amount,
+      entryFeeUsd: position.entryFee,
+    });
+    if (isValidProfitExit(pnl.netPnlUsd)) {
+      return exitNow(ExitReasonType.PROFIT, ExitPriority.PROFIT,
+        `Profit exit: R ${rMultiple.toFixed(2)} ≥ ${targetR}, net PnL ${pnl.netPnlUsd.toFixed(2)}`,
+        ctx.ticker.last, ctx.ticker.last);
+    } else {
+      // Gross winner but net loser — don't exit as PROFIT, let trailing handle it
+      return noExit(`R ${rMultiple.toFixed(2)} reached but net PnL negative — deferring to trailing`);
+    }
+  }
+  return noExit(`Profit target not reached (R ${rMultiple.toFixed(2)} < ${targetR})`);
+}
+
+/**
+ * 7. TIME_EFFICIENCY: time stop with market awareness
+ */
+export function evaluateTimeEfficiency(
+  position: SpotPosition,
+  ctx: SpotMarketContext,
+  rMultiple: number,
+  now: number,
+  config: SpotExitConfig,
+): SpotExitDecision {
+  if (!config.timeEfficiencyEnabled) {
+    return noExit("Time efficiency disabled");
+  }
+  const holdMinutes = (now - position.openedAt) / (60 * 1000);
+
+  // Min hold period
+  if (holdMinutes < config.timeEfficiencyMinHoldMinutes) {
+    return noExit(`Min hold not reached (${holdMinutes.toFixed(0)} < ${config.timeEfficiencyMinHoldMinutes}min)`);
+  }
+
+  // Max hold period — force exit
+  if (holdMinutes > config.timeEfficiencyMaxHoldHours * 60) {
+    return exitNow(ExitReasonType.TIME_EFFICIENCY, ExitPriority.TIME_EFFICIENCY,
+      `Time efficiency: max hold ${config.timeEfficiencyMaxHoldHours}h exceeded (${holdMinutes.toFixed(0)}min)`,
+      ctx.ticker.last, ctx.ticker.last);
+  }
+
+  // No progress (MFE not improving for N minutes)
+  const noProgressMs = config.timeEfficiencyNoProgressMinutes * 60 * 1000;
+  if (now - position.openedAt > noProgressMs && rMultiple < 0.5) {
+    // If after 3h and R < 0.5, exit for capital efficiency
+    return exitNow(ExitReasonType.TIME_EFFICIENCY, ExitPriority.TIME_EFFICIENCY,
+      `Time efficiency: no progress after ${config.timeEfficiencyNoProgressMinutes}min, R ${rMultiple.toFixed(2)}`,
+      ctx.ticker.last, ctx.ticker.last);
+  }
+
+  return noExit("Time efficiency conditions not met");
+}
+
+// ─── Full exit evaluation ───────────────────────────────────────────────────
+
+/**
+ * Evaluate all exit reasons in priority order.
+ * Returns the first triggered exit, or noExit if none triggered.
+ */
+export function evaluateExit(
+  position: SpotPosition,
+  state: SpotExitState,
+  ctx: SpotMarketContext,
+  config: SpotExitConfig = DEFAULT_SPOT_EXIT_CONFIG,
+): SpotExitDecision {
+  const currentPrice = ctx.ticker.last;
+  const rMultiple = computeRMultiple(currentPrice, position);
+  const now = Date.now();
+
+  // 1. EMERGENCY
+  const emergency = evaluateEmergencyStop(position, state, currentPrice, config);
+  if (emergency.shouldExit) return emergency;
+
+  // 2. STRUCTURE_INVALIDATION
+  const structure = evaluateStructureInvalidation(position, ctx, config);
+  if (structure.shouldExit) return structure;
+
+  // 3. DEFENSIVE
+  const defensive = evaluateDefensive(position, ctx, rMultiple, config);
+  if (defensive.shouldExit) return defensive;
+
+  // 4. BREAK_EVEN
+  const be = evaluateBreakEven(position, state, rMultiple, currentPrice, config);
+  if (be.shouldExit) return be;
+
+  // 5. TRAILING
+  const trailing = evaluateTrailing(position, state, rMultiple, currentPrice, config);
+  if (trailing.shouldExit) return trailing;
+
+  // 6. PROFIT
+  const profit = evaluateProfitExit(position, ctx, rMultiple, config);
+  if (profit.shouldExit) return profit;
+
+  // 7. TIME_EFFICIENCY
+  const time = evaluateTimeEfficiency(position, ctx, rMultiple, now, config);
+  if (time.shouldExit) return time;
+
+  return noExit("No exit conditions met");
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function exitNow(
+  reasonType: ExitReasonType,
+  priority: ExitPriority,
+  reason: string,
+  price: number,
+  stopPrice: number,
+): SpotExitDecision {
+  return {
+    shouldExit: true,
+    reasonType,
+    reason,
+    price,
+    volume: null, // full position
+    priority,
+    evaluatedAt: Date.now(),
+  };
+}
+
+function noExit(reason: string): SpotExitDecision {
+  return {
+    shouldExit: false,
+    reasonType: null,
+    reason,
+    price: 0,
+    volume: null,
+    priority: null,
+    evaluatedAt: Date.now(),
+  };
+}
