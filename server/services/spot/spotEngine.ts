@@ -172,118 +172,12 @@ async function loadShadowLedger(): Promise<void> {
   } catch { /* default */ }
 }
 
-async function persistShadowLedger(): Promise<void> {
-  await db.execute(sql`
-    UPDATE bot_config SET
-      spot_shadow_reserved_usd = ${shadowLedger.reservedUsd},
-      spot_shadow_realized_pnl_usd = ${shadowLedger.realizedNetPnlUsd},
-      spot_shadow_total_fees_usd = ${shadowLedger.totalFeesUsd},
-      updated_at = NOW()
-  `);
-}
-
 function getShadowEquity(): number {
   return shadowLedger.initialCapitalUsd + shadowLedger.realizedNetPnlUsd;
 }
 
 function getShadowAvailableCapital(): number {
   return getShadowEquity() - shadowLedger.reservedUsd;
-}
-
-/**
- * Reserve shadow capital inside a DB transaction with row-level lock.
- * Reads ledger under FOR UPDATE, validates available, updates, and returns new state.
- * Does NOT mutate in-memory cache until COMMIT.
- */
-async function reserveShadowCapitalTx(
-  notionalUsd: number,
-  entryFeeUsd: number,
-): Promise<ShadowLedger> {
-  return await db.transaction(async (tx) => {
-    const result = await tx.execute(sql`
-      SELECT spot_shadow_capital_usd,
-             spot_shadow_reserved_usd,
-             spot_shadow_realized_pnl_usd,
-             spot_shadow_total_fees_usd
-      FROM bot_config
-      FOR UPDATE
-      LIMIT 1
-    `);
-    if (result.rows.length === 0) {
-      throw new Error("No bot_config row found for shadow ledger");
-    }
-    const r = result.rows[0];
-    const initial = Number(r.spot_shadow_capital_usd ?? 10_000);
-    const reserved = Number(r.spot_shadow_reserved_usd ?? 0);
-    const realized = Number(r.spot_shadow_realized_pnl_usd ?? 0);
-    const fees = Number(r.spot_shadow_total_fees_usd ?? 0);
-    const equity = initial + realized;
-    const available = equity - reserved;
-    if (notionalUsd > available) {
-      throw new Error(`Insufficient shadow capital: need ${notionalUsd}, available ${available}`);
-    }
-    const newReserved = reserved + notionalUsd;
-    const newFees = fees + entryFeeUsd;
-    await tx.execute(sql`
-      UPDATE bot_config SET
-        spot_shadow_reserved_usd = ${newReserved},
-        spot_shadow_total_fees_usd = ${newFees},
-        updated_at = NOW()
-    `);
-    return {
-      initialCapitalUsd: initial,
-      reservedUsd: newReserved,
-      realizedNetPnlUsd: realized,
-      totalFeesUsd: newFees,
-    };
-  });
-}
-
-/**
- * Release shadow capital inside a DB transaction with row-level lock.
- * Atomically: insert trade, update ledger, delete position.
- * Does NOT mutate in-memory cache until COMMIT.
- */
-async function releaseShadowCapitalTx(
-  notionalUsd: number,
-  netPnlUsd: number,
-  exitFeeUsd: number,
-): Promise<ShadowLedger> {
-  return await db.transaction(async (tx) => {
-    const result = await tx.execute(sql`
-      SELECT spot_shadow_capital_usd,
-             spot_shadow_reserved_usd,
-             spot_shadow_realized_pnl_usd,
-             spot_shadow_total_fees_usd
-      FROM bot_config
-      FOR UPDATE
-      LIMIT 1
-    `);
-    if (result.rows.length === 0) {
-      throw new Error("No bot_config row found for shadow ledger");
-    }
-    const r = result.rows[0];
-    const initial = Number(r.spot_shadow_capital_usd ?? 10_000);
-    const reserved = Number(r.spot_shadow_reserved_usd ?? 0);
-    const realized = Number(r.spot_shadow_realized_pnl_usd ?? 0);
-    const fees = Number(r.spot_shadow_total_fees_usd ?? 0);
-    const newReserved = reserved - notionalUsd;
-    const newRealized = realized + netPnlUsd;
-    const newFees = fees + exitFeeUsd;
-    await tx.execute(sql`
-      UPDATE bot_config SET
-        spot_shadow_reserved_usd = ${newReserved},
-        spot_shadow_realized_pnl_usd = ${newRealized},
-        spot_shadow_total_fees_usd = ${newFees},
-        updated_at = NOW()
-    `);
-    return {
-      initialCapitalUsd: initial,
-      reservedUsd: newReserved,
-      realizedNetPnlUsd: newRealized,
-      totalFeesUsd: newFees,
-    };
-  });
 }
 
 // ─── R4: Shared SQL helpers (accept tx or db) ───────────────────────────────
@@ -293,8 +187,8 @@ async function insertOpenPositionSql(
   position: SpotPosition,
   venue: string,
   filledNotionalUsd: number,
-): Promise<void> {
-  await executor.execute(sql`
+): Promise<{ rows: any[] }> {
+  return await executor.execute(sql`
     INSERT INTO open_positions (
       lot_id, exchange, pair, entry_price, amount, qty_remaining, highest_price,
       entry_strategy_id, entry_signal_tf, signal_confidence, signal_reason,
@@ -322,7 +216,7 @@ async function insertOpenPositionSql(
       null, null, ${position.highestPrice}, ${position.entryPrice},
       ${filledNotionalUsd}
     )
-    ON CONFLICT (lot_id) DO NOTHING
+    RETURNING lot_id
   `);
 }
 
@@ -334,10 +228,10 @@ async function insertClosedTradeSql(
   exitDecision: SpotExitDecision,
   auditMetrics: SpotAuditMetrics | null,
   venue: string,
-): Promise<void> {
+): Promise<{ rows: any[] }> {
   const tradeId = `spot-trade-${position.lotId}`;
   const holdTimeMinutes = Math.round((Date.now() - position.openedAt) / 60000);
-  await executor.execute(sql`
+  return await executor.execute(sql`
     INSERT INTO trades (
       trade_id, exchange, origin, executed_by_bot, pair, type, price, amount,
       status, entry_price, realized_pnl_usd, realized_pnl_pct, executed_at,
@@ -360,7 +254,7 @@ async function insertClosedTradeSql(
       ${auditMetrics?.exitAudit?.profitCapturePct ?? null},
       ${exitDecision.reasonType}, ${position.lotId}, ${holdTimeMinutes}
     )
-    ON CONFLICT (exchange, pair, trade_id) DO NOTHING
+    RETURNING trade_id
   `);
 }
 
@@ -402,8 +296,11 @@ export async function persistShadowEntryAtomic(
       throw new Error(`Insufficient shadow capital: need ${filledNotionalUsd}, available ${available}`);
     }
 
-    // 3. INSERT open_positions using tx
-    await insertOpenPositionSql(tx, position, venue, filledNotionalUsd);
+    // 3. INSERT open_positions using tx — RETURNING ensures exactly 1 row inserted
+    const insertResult = await insertOpenPositionSql(tx, position, venue, filledNotionalUsd);
+    if (!insertResult || insertResult.rows.length !== 1) {
+      throw new Error(`Entry INSERT failed: expected 1 row, got ${insertResult?.rows?.length ?? 0} (lot_id=${position.lotId})`);
+    }
 
     // 4. UPDATE bot_config ledger using tx
     const newReserved = reserved + filledNotionalUsd;
@@ -474,17 +371,21 @@ export async function persistShadowExitAtomic(
     const fees = Number(r.spot_shadow_total_fees_usd ?? 0);
 
     // 5. Validate: reserved >= filledNotionalUsd (within tolerance) — NO negative reserved
-    if (filledNotionalUsd > reserved + DECIMAL_TOLERANCE) {
+    const delta = reserved - filledNotionalUsd;
+    if (delta < -DECIMAL_TOLERANCE) {
       throw new Error(
-        `Invariant violation: filledNotionalUsd=${filledNotionalUsd} > reserved=${reserved} (tolerance=${DECIMAL_TOLERANCE})`
+        `Invariant violation: filledNotionalUsd=${filledNotionalUsd} > reserved=${reserved} (delta=${delta}, tolerance=${DECIMAL_TOLERANCE})`
       );
     }
 
-    // 6. INSERT closed trade using tx
-    await insertClosedTradeSql(tx, position, execResult, pnl, exitDecision, auditMetrics, venue);
+    // 6. INSERT closed trade using tx — RETURNING ensures exactly 1 row inserted
+    const tradeInsertResult = await insertClosedTradeSql(tx, position, execResult, pnl, exitDecision, auditMetrics, venue);
+    if (!tradeInsertResult || tradeInsertResult.rows.length !== 1) {
+      throw new Error(`Exit trade INSERT failed: expected 1 row, got ${tradeInsertResult?.rows?.length ?? 0} (lot_id=${position.lotId})`);
+    }
 
-    // 7. UPDATE bot_config ledger using tx
-    const newReserved = reserved - filledNotionalUsd;
+    // 7. UPDATE bot_config ledger using tx — normalize reserved to 0 within tolerance
+    const newReserved = Math.abs(delta) <= DECIMAL_TOLERANCE ? 0 : delta;
     const newRealized = realized + pnl.netPnlUsd;
     const newFees = fees + pnl.exitFeeUsd;
     await tx.execute(sql`
@@ -681,13 +582,35 @@ async function runScanCycle(): Promise<void> {
 }
 
 /**
+ * R5: Get DISTINCT pairs from open SPOT canonical positions.
+ * activePairs defines the universe for NEW ENTRIES, not for position protection.
+ * Open positions must receive protection regardless of activePairs.
+ */
+export async function getOpenSpotPositionPairs(): Promise<string[]> {
+  try {
+    const result = await db.execute(sql`
+      SELECT DISTINCT pair FROM open_positions
+      WHERE policy_version = ${SPOT_POLICY_VERSION}
+        AND engine_owner = ${SPOT_ENGINE_OWNER}
+        AND status != 'CLOSED'
+    `);
+    return result.rows.map((r: any) => r.pair as string);
+  } catch (error) {
+    console.error("[SpotEngine] Failed to get open position pairs:", error);
+    return [];
+  }
+}
+
+/**
  * Position supervisor: manages open SPOT positions (exit evaluation) independently of entry scanning.
  * Runs even when mode=OFF to avoid orphaning positions.
+ * R5: Iterates over pairs with open positions, NOT activePairs.
+ * This ensures positions on pairs removed from activePairs still receive protection.
  */
 async function runPositionSupervisor(): Promise<void> {
   try {
     const mode = await getExecutionMode();
-    const pairs = await getActivePairs();
+    const pairs = await getOpenSpotPositionPairs();
     for (const pair of pairs) {
       try {
         let ctx: SpotMarketContext;

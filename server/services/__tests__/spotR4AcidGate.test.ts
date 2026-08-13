@@ -171,14 +171,14 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
               policy_version: SPOT_POLICY_VERSION,
               execution_mode: String(params[14] ?? "SHADOW"),
             };
-            return { rows: [] };
+            return { rows: [{ lot_id: params[0] }] };
           }
 
           // INSERT INTO trades inside transaction
           if (sqlText.includes("INSERT INTO trades")) {
             if (state.failOnTradeInsert) throw new Error("Injected: trade insert failure");
             pendingTradeInsert = { trade_id: params[0] };
-            return { rows: [] };
+            return { rows: [{ trade_id: params[0] }] };
           }
 
           // UPDATE bot_config ledger inside transaction
