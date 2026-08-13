@@ -66,6 +66,9 @@ export interface OpenPosition {
   timeStopDisabled?: boolean;
   timeStopExpiredAt?: number;
   beProgressiveLevel?: number;
+  // R9: Immutable per-position provenance — "REAL" or "DRY_RUN"
+  // Set at construction, never changed by global mode toggles.
+  executionProvenance?: "REAL" | "DRY_RUN";
   // Allow arbitrary fields for forward compat
   clientOrderId?: string;
   exchange?: string;
@@ -124,7 +127,7 @@ export interface IExitManagerHost {
     adjustmentInfo?: any,
     strategyMeta?: any,
     executionMeta?: any,
-    sellContext?: { entryPrice: number; entryFee?: number; sellAmount?: number; positionAmount?: number; aiSampleId?: number; openedAt?: number | Date | null }
+    sellContext?: { entryPrice: number; entryFee?: number; sellAmount?: number; positionAmount?: number; aiSampleId?: number; openedAt?: number | Date | null; executionProvenance?: "REAL" | "DRY_RUN" }
   ): Promise<boolean>;
 
   // Cooldowns
@@ -1077,7 +1080,8 @@ export class ExitManager {
           positionAmount: position.amount,
           aiSampleId: position.aiSampleId,
           openedAt: position.openedAt,
-          lotId
+          lotId,
+          executionProvenance: position.executionProvenance,
         };
         await botLogger.info("EXIT_TRIGGERED", `Salida disparada en ${pair}`, {
           posId: lotId, pair,
@@ -1322,7 +1326,8 @@ export class ExitManager {
                 positionAmount: position.amount,
                 aiSampleId: position.aiSampleId,
                 openedAt: position.openedAt,
-                lotId
+                lotId,
+                executionProvenance: position.executionProvenance,
               };
 
               await botLogger.info("TIME_STOP_CLOSE", `TimeStop cierre forzado en ${pair} [SMART_GUARD]`, {
@@ -1796,7 +1801,8 @@ export class ExitManager {
           positionAmount: position.amount,
           aiSampleId: position.aiSampleId,
           openedAt: position.openedAt,
-          lotId
+          lotId,
+          executionProvenance: position.executionProvenance,
         };
         await botLogger.info("EXIT_ORDER_PLACED", `SMART_GUARD intentando orden SELL en ${pair}`, {
           posId: lotId, pair, orderType: "market", side: "sell", qty: sellAmount,

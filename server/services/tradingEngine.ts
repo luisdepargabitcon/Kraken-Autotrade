@@ -415,6 +415,9 @@ interface OpenPosition {
   beProgressiveLevel?: number; // Break-even progressive level (0, 1, 2, 3)
   // Smart Exit Engine: entry context snapshot
   entryContext?: EntryContext;
+  // R9: Immutable per-position provenance — "REAL" or "DRY_RUN"
+  // Set at construction, never changed by global mode toggles.
+  executionProvenance?: "REAL" | "DRY_RUN";
 }
 
 // === ADAPTIVE EXIT ENGINE TYPES ===
@@ -2605,6 +2608,7 @@ El motor de trading ha sido desactivado.
           sgScaleOutDone: pos.sgScaleOutDone ?? false,
           // Smart Exit Engine entry context (restored from DB)
           entryContext: (pos as any).entryContextJson ?? undefined,
+          executionProvenance: "REAL",
         };
         
         this.openPositions.set(lotId, openPosition);
@@ -2732,6 +2736,7 @@ ${positionsList}
         sgBreakEvenActivated: false,
         sgTrailingActivated: false,
         sgScaleOutDone: false,
+        executionProvenance: "DRY_RUN",
       };
       this.openPositions.set(trade.simTxid, position);
       log(`[DRY_RUN] Posición recuperada: ${trade.pair} (${trade.simTxid}) — ${amountNum.toFixed(8)} @ $${priceNum.toFixed(2)}`, "trading");
@@ -3097,6 +3102,7 @@ ${positionsList}
                 aiSampleId: position.aiSampleId,
                 openedAt: position.openedAt,
                 lotId,
+                executionProvenance: position.executionProvenance,
               };
 
               const success = await this.executeTrade(
@@ -4761,7 +4767,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
         }
 
         const sellContext = existingPosition 
-          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt, lotId: existingPosition.lotId }
+          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt, lotId: existingPosition.lotId, executionProvenance: existingPosition.executionProvenance }
           : undefined;
         const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, signal.reason, undefined, undefined, undefined, sellContext);
         if (success) {
@@ -5898,7 +5904,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
         }
 
         const sellContext = existingPosition 
-          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt, lotId: existingPosition.lotId }
+          ? { entryPrice: existingPosition.entryPrice, aiSampleId: existingPosition.aiSampleId, openedAt: existingPosition.openedAt, lotId: existingPosition.lotId, executionProvenance: existingPosition.executionProvenance }
           : undefined;
         const success = await this.executeTrade(pair, "sell", sellVolume.toFixed(8), currentPrice, `${signal.reason} [${selectedStrategyId}]`, undefined, undefined, undefined, sellContext);
         if (success) {
@@ -6360,7 +6366,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
     adjustmentInfo?: { wasAdjusted: boolean; originalAmountUsd: number; adjustedAmountUsd: number },
     strategyMeta?: { strategyId: string; timeframe: string; confidence: number; regime?: string; regimeReason?: string; routerStrategy?: string },
     executionMeta?: { mode: string; usdDisponible: number; orderUsdProposed: number; orderUsdFinal: number; sgMinEntryUsd: number; sgAllowUnderMin_DEPRECATED: boolean; dryRun: boolean; env?: string; floorUsd?: number; availableAfterCushion?: number; sgReasonCode?: SmartGuardReasonCode; minOrderUsd?: number; allowUnderMin?: boolean },
-    sellContext?: { entryPrice: number; entryFee?: number; sellAmount?: number; positionAmount?: number; aiSampleId?: number; openedAt?: number | Date | null; lotId?: string } // For sells: pass entry price and optional fee/amounts for accurate P&L tracking
+    sellContext?: { entryPrice: number; entryFee?: number; sellAmount?: number; positionAmount?: number; aiSampleId?: number; openedAt?: number | Date | null; lotId?: string; executionProvenance?: "REAL" | "DRY_RUN" } // R9: provenance travels from position to executeTrade
   ): Promise<boolean> {
     try {
       // === VALIDACIÓN: Bloquear pares no-USD ===
@@ -6402,7 +6408,23 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
       }
       
       // === DRY_RUN MODE: Simular sin enviar orden real ===
-      if (this.dryRunMode) {
+      // R9: For SELL, use per-position provenance instead of global dryRunMode.
+      // A DRY_RUN position must always exit as DRY_RUN even if global mode changed to LIVE.
+      // Unknown provenance on SELL → fail-closed (no real order).
+      const isDryRunForThisTrade = type === "sell"
+        ? (sellContext?.executionProvenance === "DRY_RUN" || this.dryRunMode)
+        : this.dryRunMode;
+
+      // R9: Fail-closed for SELL with unknown provenance when not in global DRY_RUN mode
+      if (type === "sell" && !this.dryRunMode && sellContext?.executionProvenance === undefined) {
+        console.error(`[TradingEngine] CRITICAL: LEGACY_POSITION_PROVENANCE_UNKNOWN_FAIL_CLOSED — SELL blocked for ${pair} lotId=${sellContext?.lotId || 'unknown'}. No real order sent.`);
+        await botLogger.error("PROVENANCE_UNKNOWN_FAIL_CLOSED", `SELL bloqueado — provenance desconocida para ${pair}`, {
+          pair, type, lotId: sellContext?.lotId, reason,
+        });
+        return false;
+      }
+
+      if (isDryRunForThisTrade) {
         const envPrefix = `[${environment.envTag}][DRY\\_RUN]`;
         const envPrefixLog = `[${environment.envTag}][DRY_RUN]`;
         
@@ -6544,6 +6566,7 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
                 sgBreakEvenActivated: false,
                 sgTrailingActivated: false,
                 sgScaleOutDone: false,
+                executionProvenance: "DRY_RUN",
               };
               this.openPositions.set(simTxid, dryPos);
               log(`${envPrefixLog} Posición DRY_RUN añadida al tracker: ${simTxid} (${pair} ${volumeNum.toFixed(8)} @ $${price.toFixed(2)})`, "trading");
@@ -7300,6 +7323,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                 sgTrailingActivated: false,
                 sgScaleOutDone: false,
                 entryContext,
+                executionProvenance: "REAL",
               };
               this.openPositions.set(lotId, newPosition);
               
@@ -7695,6 +7719,7 @@ ${emoji} <b>SEÑAL: ${tipoLabel} ${pair}</b> ${emoji}
                 timeStopDisabled: (dbPosition as any).timeStopDisabled ?? undefined,
                 timeStopExpiredAt: (dbPosition as any).timeStopExpiredAt ? new Date((dbPosition as any).timeStopExpiredAt).getTime() : undefined,
                 beProgressiveLevel: (dbPosition as any).beProgressiveLevel ?? undefined,
+                executionProvenance: "REAL",
               };
               this.openPositions.set(lotId, position);
             }
