@@ -286,6 +286,233 @@ async function releaseShadowCapitalTx(
   });
 }
 
+// ─── R4: Shared SQL helpers (accept tx or db) ───────────────────────────────
+
+async function insertOpenPositionSql(
+  executor: { execute: (q: any) => Promise<any> },
+  position: SpotPosition,
+  venue: string,
+  filledNotionalUsd: number,
+): Promise<void> {
+  await executor.execute(sql`
+    INSERT INTO open_positions (
+      lot_id, exchange, pair, entry_price, amount, qty_remaining, highest_price,
+      entry_strategy_id, entry_signal_tf, signal_confidence, signal_reason,
+      entry_fee, status, opened_at,
+      execution_mode, policy_version, engine_owner, origin, setup_tag, signal_id, market_context_id,
+      regime_at_entry, direction_at_entry, macro_at_entry, atr_pct_at_entry,
+      initial_stop_price, initial_stop_distance_pct, initial_stop_distance_usd,
+      risk_usd, mfe, mae, mfe_r, mae_r,
+      sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
+      break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
+      filled_notional_usd
+    ) VALUES (
+      ${position.lotId}, ${venue}, ${position.pair}, ${position.entryPrice},
+      ${position.amount}, ${position.qtyRemaining}, ${position.highestPrice},
+      ${position.entryStrategyId}, ${position.entrySignalTf},
+      ${position.signalConfidence}, ${position.signalReason},
+      ${position.entryFee}, 'OPEN', NOW(),
+      ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER}, ${SPOT_ORIGIN},
+      ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
+      ${position.regimeAtEntry}, ${position.directionAtEntry}, ${position.macroAtEntry},
+      ${position.atrPctAtEntry}, ${position.initialStopPrice},
+      ${position.initialStopDistancePct}, ${position.initialStopDistanceUsd},
+      ${position.riskUsd}, 0, 0, 0, 0,
+      false, false, ${position.sgCurrentStopPrice},
+      null, null, ${position.highestPrice}, ${position.entryPrice},
+      ${filledNotionalUsd}
+    )
+    ON CONFLICT (lot_id) DO NOTHING
+  `);
+}
+
+async function insertClosedTradeSql(
+  executor: { execute: (q: any) => Promise<any> },
+  position: SpotPosition,
+  execResult: SpotExecutionResult,
+  pnl: { grossPnlUsd: number; netPnlUsd: number; entryFeeUsd: number; exitFeeUsd: number; executionCostUsd: number },
+  exitDecision: SpotExitDecision,
+  auditMetrics: SpotAuditMetrics | null,
+  venue: string,
+): Promise<void> {
+  const tradeId = `spot-trade-${position.lotId}`;
+  const holdTimeMinutes = Math.round((Date.now() - position.openedAt) / 60000);
+  await executor.execute(sql`
+    INSERT INTO trades (
+      trade_id, exchange, origin, executed_by_bot, pair, type, price, amount,
+      status, entry_price, realized_pnl_usd, realized_pnl_pct, executed_at,
+      execution_mode, policy_version, engine_owner, setup_tag, signal_id, market_context_id,
+      gross_pnl_usd, entry_fee_usd, exit_fee_usd, execution_cost_usd, net_pnl_usd,
+      fee_quality, mfe, mae, mfe_r, mae_r, profit_capture_pct, exit_reason_type,
+      lot_id, hold_time_minutes
+    ) VALUES (
+      ${tradeId}, ${venue}, ${SPOT_ORIGIN}, true, ${position.pair}, 'sell',
+      ${execResult.fillPrice}, ${position.qtyRemaining},
+      'closed', ${position.entryPrice}, ${pnl.netPnlUsd},
+      ${position.entryPrice > 0 ? ((execResult.fillPrice! - position.entryPrice) / position.entryPrice) * 100 : 0},
+      NOW(),
+      ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER},
+      ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
+      ${pnl.grossPnlUsd}, ${pnl.entryFeeUsd}, ${pnl.exitFeeUsd}, ${pnl.executionCostUsd},
+      ${pnl.netPnlUsd}, ${execResult.fillQuality},
+      ${auditMetrics?.mfeUsd ?? 0}, ${auditMetrics?.maeUsd ?? 0},
+      ${auditMetrics?.mfeR ?? 0}, ${auditMetrics?.maeR ?? 0},
+      ${auditMetrics?.exitAudit?.profitCapturePct ?? null},
+      ${exitDecision.reasonType}, ${position.lotId}, ${holdTimeMinutes}
+    )
+    ON CONFLICT (exchange, pair, trade_id) DO NOTHING
+  `);
+}
+
+// ─── R4: Atomic shadow entry — INSERT position + UPDATE ledger in ONE tx ─────
+
+export async function persistShadowEntryAtomic(
+  position: SpotPosition,
+  filledNotionalUsd: number,
+  entryFeeUsd: number,
+): Promise<ShadowLedger> {
+  const venue = await getTradingVenue();
+  return await db.transaction(async (tx) => {
+    // 1. SELECT ledger FOR UPDATE
+    const ledgerResult = await tx.execute(sql`
+      SELECT spot_shadow_capital_usd,
+             spot_shadow_reserved_usd,
+             spot_shadow_realized_pnl_usd,
+             spot_shadow_total_fees_usd
+      FROM bot_config
+      FOR UPDATE
+      LIMIT 1
+    `);
+    if (ledgerResult.rows.length === 0) {
+      throw new Error("No bot_config row found for shadow ledger");
+    }
+    const r = ledgerResult.rows[0];
+    const initial = Number(r.spot_shadow_capital_usd ?? 10_000);
+    const reserved = Number(r.spot_shadow_reserved_usd ?? 0);
+    const realized = Number(r.spot_shadow_realized_pnl_usd ?? 0);
+    const fees = Number(r.spot_shadow_total_fees_usd ?? 0);
+
+    // 2. Validate filledNotionalUsd
+    const equity = initial + realized;
+    const available = equity - reserved;
+    if (!Number.isFinite(filledNotionalUsd) || filledNotionalUsd <= 0) {
+      throw new Error(`Invalid filledNotionalUsd=${filledNotionalUsd}`);
+    }
+    if (filledNotionalUsd > available) {
+      throw new Error(`Insufficient shadow capital: need ${filledNotionalUsd}, available ${available}`);
+    }
+
+    // 3. INSERT open_positions using tx
+    await insertOpenPositionSql(tx, position, venue, filledNotionalUsd);
+
+    // 4. UPDATE bot_config ledger using tx
+    const newReserved = reserved + filledNotionalUsd;
+    const newFees = fees + entryFeeUsd;
+    await tx.execute(sql`
+      UPDATE bot_config SET
+        spot_shadow_reserved_usd = ${newReserved},
+        spot_shadow_total_fees_usd = ${newFees},
+        updated_at = NOW()
+    `);
+
+    // 5. Return committed state
+    return {
+      initialCapitalUsd: initial,
+      reservedUsd: newReserved,
+      realizedNetPnlUsd: realized,
+      totalFeesUsd: newFees,
+    };
+  });
+}
+
+// ─── R4: Atomic shadow exit — SELECT pos FOR UPDATE + INSERT trade + UPDATE ledger + DELETE ──
+
+export async function persistShadowExitAtomic(
+  lotId: string,
+  position: SpotPosition,
+  execResult: SpotExecutionResult,
+  pnl: { grossPnlUsd: number; netPnlUsd: number; entryFeeUsd: number; exitFeeUsd: number; executionCostUsd: number },
+  exitDecision: SpotExitDecision,
+  auditMetrics: SpotAuditMetrics | null,
+): Promise<{ ledger: ShadowLedger; filledNotionalUsd: number }> {
+  const venue = await getTradingVenue();
+  const DECIMAL_TOLERANCE = 0.01; // 1 cent tolerance for DECIMAL comparison
+
+  return await db.transaction(async (tx) => {
+    // 1. SELECT position FOR UPDATE — prevents double close
+    const posResult = await tx.execute(sql`
+      SELECT filled_notional_usd FROM open_positions
+      WHERE lot_id = ${lotId}
+        AND policy_version = ${SPOT_POLICY_VERSION}
+        AND execution_mode = 'SHADOW'
+      FOR UPDATE
+    `);
+    if (posResult.rows.length === 0) {
+      throw new Error(`ALREADY_CLOSED: position ${lotId} not found or already closed`);
+    }
+
+    // 3. Read filled_notional_usd from the locked DB row (NOT from memory)
+    const filledNotionalUsd = Number(posResult.rows[0].filled_notional_usd ?? position.notionalUsd);
+
+    // 4. SELECT bot_config ledger FOR UPDATE
+    const ledgerResult = await tx.execute(sql`
+      SELECT spot_shadow_capital_usd,
+             spot_shadow_reserved_usd,
+             spot_shadow_realized_pnl_usd,
+             spot_shadow_total_fees_usd
+      FROM bot_config
+      FOR UPDATE
+      LIMIT 1
+    `);
+    if (ledgerResult.rows.length === 0) {
+      throw new Error("No bot_config row found for shadow ledger");
+    }
+    const r = ledgerResult.rows[0];
+    const initial = Number(r.spot_shadow_capital_usd ?? 10_000);
+    const reserved = Number(r.spot_shadow_reserved_usd ?? 0);
+    const realized = Number(r.spot_shadow_realized_pnl_usd ?? 0);
+    const fees = Number(r.spot_shadow_total_fees_usd ?? 0);
+
+    // 5. Validate: reserved >= filledNotionalUsd (within tolerance) — NO negative reserved
+    if (filledNotionalUsd > reserved + DECIMAL_TOLERANCE) {
+      throw new Error(
+        `Invariant violation: filledNotionalUsd=${filledNotionalUsd} > reserved=${reserved} (tolerance=${DECIMAL_TOLERANCE})`
+      );
+    }
+
+    // 6. INSERT closed trade using tx
+    await insertClosedTradeSql(tx, position, execResult, pnl, exitDecision, auditMetrics, venue);
+
+    // 7. UPDATE bot_config ledger using tx
+    const newReserved = reserved - filledNotionalUsd;
+    const newRealized = realized + pnl.netPnlUsd;
+    const newFees = fees + pnl.exitFeeUsd;
+    await tx.execute(sql`
+      UPDATE bot_config SET
+        spot_shadow_reserved_usd = ${newReserved},
+        spot_shadow_realized_pnl_usd = ${newRealized},
+        spot_shadow_total_fees_usd = ${newFees},
+        updated_at = NOW()
+    `);
+
+    // 8. DELETE open_position using tx
+    await tx.execute(sql`
+      DELETE FROM open_positions WHERE lot_id = ${lotId}
+    `);
+
+    // 9. Return committed state
+    return {
+      ledger: {
+        initialCapitalUsd: initial,
+        reservedUsd: newReserved,
+        realizedNetPnlUsd: newRealized,
+        totalFeesUsd: newFees,
+      },
+      filledNotionalUsd,
+    };
+  });
+}
+
 // ─── Execution Mode ─────────────────────────────────────────────────────────
 
 /**
@@ -685,20 +912,20 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   }
   position.notionalUsd = filledNotionalUsd;
 
-  // R3-1: Atomic entry transaction — reserve capital + insert position in a single DB transaction
+  // R4: Atomic entry — INSERT position + UPDATE ledger in ONE transaction
   if (mode === ExecutionMode.SHADOW) {
     try {
-      const newLedger = await reserveShadowCapitalTx(filledNotionalUsd, result.feeUsd ?? 0);
+      const newLedger = await persistShadowEntryAtomic(position, filledNotionalUsd, result.feeUsd ?? 0);
       // Sync in-memory cache only after successful COMMIT
       shadowLedger = newLedger;
     } catch (error: any) {
-      console.error(`[SpotEngine] Shadow capital reservation failed for ${intent.pair}: ${error.message}`);
+      console.error(`[SpotEngine] Shadow entry atomic persistence failed for ${intent.pair}: ${error.message}`);
       return false;
     }
+  } else {
+    // Non-SHADOW: persist position without ledger transaction
+    await persistOpenPosition(position, result, filledNotionalUsd);
   }
-
-  // Persist to DB
-  await persistOpenPosition(position, result, filledNotionalUsd);
 
   // Init audit tracking
   auditTracker.initPosition(position);
@@ -842,25 +1069,24 @@ async function closePosition(
   );
   const auditMetrics = auditTracker.getMetrics(position.lotId);
 
-  // Persist closed trade to trades table
-  await persistClosedTrade(position, result, pnl, exitDecision, auditMetrics ?? auditTracker.getMetrics(position.lotId));
-
-  // B12: Release shadow capital and remove position atomically
-  // R3-1: Atomic exit transaction — release capital + delete position in a single DB transaction
+  // R4: Atomic exit — SELECT pos FOR UPDATE + INSERT trade + UPDATE ledger + DELETE in ONE transaction
   if (position.executionMode === ExecutionMode.SHADOW) {
     try {
-      const newLedger = await releaseShadowCapitalTx(position.notionalUsd, pnl.netPnlUsd, pnl.exitFeeUsd);
+      const { ledger: newLedger, filledNotionalUsd: dbFilledNotional } = await persistShadowExitAtomic(
+        position.lotId, position, result, pnl, exitDecision, auditMetrics ?? auditTracker.getMetrics(position.lotId),
+      );
       shadowLedger = newLedger;
     } catch (error: any) {
-      console.error(`[SpotEngine] Shadow capital release failed for ${position.lotId}: ${error.message}`);
+      console.error(`[SpotEngine] Shadow exit atomic persistence failed for ${position.lotId}: ${error.message}`);
       return;
     }
+  } else {
+    // Non-SHADOW: persist trade, delete position separately
+    await persistClosedTrade(position, result, pnl, exitDecision, auditMetrics ?? auditTracker.getMetrics(position.lotId));
+    await db.execute(sql`
+      DELETE FROM open_positions WHERE lot_id = ${position.lotId}
+    `);
   }
-
-  // Remove from open_positions
-  await db.execute(sql`
-    DELETE FROM open_positions WHERE lot_id = ${position.lotId}
-  `);
 
   const am = auditMetrics ?? auditTracker.getMetrics(position.lotId);
   console.log(
@@ -1038,36 +1264,7 @@ async function loadOpenPositionsFromDB(): Promise<void> {
  */
 async function persistOpenPosition(position: SpotPosition, execResult: SpotExecutionResult, filledNotionalUsd: number): Promise<void> {
   const venue = await getTradingVenue();
-  await db.execute(sql`
-    INSERT INTO open_positions (
-      lot_id, exchange, pair, entry_price, amount, qty_remaining, highest_price,
-      entry_strategy_id, entry_signal_tf, signal_confidence, signal_reason,
-      entry_fee, status, opened_at,
-      execution_mode, policy_version, engine_owner, origin, setup_tag, signal_id, market_context_id,
-      regime_at_entry, direction_at_entry, macro_at_entry, atr_pct_at_entry,
-      initial_stop_price, initial_stop_distance_pct, initial_stop_distance_usd,
-      risk_usd, mfe, mae, mfe_r, mae_r,
-      sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
-      break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
-      filled_notional_usd
-    ) VALUES (
-      ${position.lotId}, ${venue}, ${position.pair}, ${position.entryPrice},
-      ${position.amount}, ${position.qtyRemaining}, ${position.highestPrice},
-      ${position.entryStrategyId}, ${position.entrySignalTf},
-      ${position.signalConfidence}, ${position.signalReason},
-      ${position.entryFee}, 'OPEN', NOW(),
-      ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER}, ${SPOT_ORIGIN},
-      ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
-      ${position.regimeAtEntry}, ${position.directionAtEntry}, ${position.macroAtEntry},
-      ${position.atrPctAtEntry}, ${position.initialStopPrice},
-      ${position.initialStopDistancePct}, ${position.initialStopDistanceUsd},
-      ${position.riskUsd}, 0, 0, 0, 0,
-      false, false, ${position.sgCurrentStopPrice},
-      null, null, ${position.highestPrice}, ${position.entryPrice},
-      ${filledNotionalUsd}
-    )
-    ON CONFLICT (lot_id) DO NOTHING
-  `);
+  await insertOpenPositionSql(db, position, venue, filledNotionalUsd);
 }
 
 /**
@@ -1081,35 +1278,8 @@ async function persistClosedTrade(
   exitDecision: SpotExitDecision,
   auditMetrics: SpotAuditMetrics | null,
 ): Promise<void> {
-  const tradeId = `spot-trade-${position.lotId}`;
-  const holdTimeMinutes = Math.round((Date.now() - position.openedAt) / 60000);
   const venue = await getTradingVenue();
-
-  await db.execute(sql`
-    INSERT INTO trades (
-      trade_id, exchange, origin, executed_by_bot, pair, type, price, amount,
-      status, entry_price, realized_pnl_usd, realized_pnl_pct, executed_at,
-      execution_mode, policy_version, engine_owner, setup_tag, signal_id, market_context_id,
-      gross_pnl_usd, entry_fee_usd, exit_fee_usd, execution_cost_usd, net_pnl_usd,
-      fee_quality, mfe, mae, mfe_r, mae_r, profit_capture_pct, exit_reason_type,
-      lot_id, hold_time_minutes
-    ) VALUES (
-      ${tradeId}, ${venue}, ${SPOT_ORIGIN}, true, ${position.pair}, 'sell',
-      ${execResult.fillPrice}, ${position.qtyRemaining},
-      'closed', ${position.entryPrice}, ${pnl.netPnlUsd},
-      ${position.entryPrice > 0 ? ((execResult.fillPrice! - position.entryPrice) / position.entryPrice) * 100 : 0},
-      NOW(),
-      ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER},
-      ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
-      ${pnl.grossPnlUsd}, ${pnl.entryFeeUsd}, ${pnl.exitFeeUsd}, ${pnl.executionCostUsd},
-      ${pnl.netPnlUsd}, ${execResult.fillQuality},
-      ${auditMetrics?.mfeUsd ?? 0}, ${auditMetrics?.maeUsd ?? 0},
-      ${auditMetrics?.mfeR ?? 0}, ${auditMetrics?.maeR ?? 0},
-      ${auditMetrics?.exitAudit?.profitCapturePct ?? null},
-      ${exitDecision.reasonType}, ${position.lotId}, ${holdTimeMinutes}
-    )
-    ON CONFLICT (exchange, pair, trade_id) DO NOTHING
-  `);
+  await insertClosedTradeSql(db, position, execResult, pnl, exitDecision, auditMetrics, venue);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
