@@ -3184,16 +3184,16 @@ ${positionsList}
       }
 
       // ── SPOT SINGLE OWNER GUARD ──────────────────────────────────────────
-      // When SPOT canonical engine is the active runtime owner, legacy TradingEngine
-      // must NOT generate new entries. It continues running only to manage
-      // existing legacy REAL open positions (supervisor mode).
+      // R7: Use isSpotRuntimeOwner() instead of the old active check.
+      // SPOT_CANONICAL is always the runtime owner once deployed, even in OFF mode.
+      // Legacy TradingEngine must NEVER re-acquire entry ownership.
       let spotOwnsRuntime = false;
       try {
-        const { isSpotActive } = await import("./spot/spotEngine");
-        spotOwnsRuntime = isSpotActive();
+        const { isSpotRuntimeOwner } = await import("./spot/spotEngine");
+        spotOwnsRuntime = isSpotRuntimeOwner();
       } catch { /* spotEngine not loaded — safe to continue normally */ }
       if (spotOwnsRuntime) {
-        console.log("[TradingEngine] SPOT runtime owner is active. Legacy new entries DISABLED. Supervisor-only mode.");
+        console.log("[TradingEngine] SPOT runtime owner is active (canonical ownership). Legacy new entries DISABLED. Supervisor-only mode.");
         // Still manage existing open positions (exits, SL, TP, time-stop)
         // but skip the entry-signal evaluation and order placement phase.
         // We do this by jumping to position management only.

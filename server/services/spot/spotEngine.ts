@@ -55,6 +55,12 @@ export const SPOT_ORIGIN = "spot_engine" as const;
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 export const SPOT_RUNTIME_OWNER = "SpotEngine";
+
+// R7: Canonical deployment flag — once SPOT_CANONICAL code is deployed,
+// it is ALWAYS the runtime owner. Execution mode (OFF/SHADOW/REAL) only
+// controls entry behavior, not ownership.
+const SPOT_CANONICAL_DEPLOYED = true;
+
 const SCAN_INTERVAL_MS = 60_000; // 60 seconds
 const MAX_OPEN_POSITIONS = 10;
 
@@ -461,11 +467,27 @@ export async function setExecutionMode(mode: ExecutionMode): Promise<ExecutionMo
 }
 
 /**
- * Check if SpotEngine should be running.
+ * Check if SpotEngine should be running (entry scanning active).
+ * Returns true only when mode is SHADOW or REAL.
+ * This is NOT the same as runtime ownership — use isSpotRuntimeOwner() for that.
  */
 export function isSpotActive(): boolean {
   const mode = getCachedExecutionMode();
   return mode === ExecutionMode.SHADOW || mode === ExecutionMode.REAL;
+}
+
+/**
+ * R7: Canonical runtime ownership — always true once SPOT_CANONICAL is deployed.
+ *
+ * This is SEPARATE from execution mode:
+ *   - isSpotRuntimeOwner() = which engine owns new entries (always SPOT_CANONICAL)
+ *   - executionMode = whether entries are allowed (OFF=0, SHADOW=simulated, REAL=real)
+ *
+ * Invariant: SPOT_RUNTIME_OWNER = SPOT_CANONICAL in OFF, SHADOW, and REAL.
+ * Legacy TradingEngine must NEVER re-acquire entry ownership, even in OFF mode.
+ */
+export function isSpotRuntimeOwner(): boolean {
+  return SPOT_CANONICAL_DEPLOYED;
 }
 
 // ─── Scan Cycle ─────────────────────────────────────────────────────────────
@@ -481,10 +503,6 @@ export async function startSpotEngine(): Promise<boolean> {
   }
 
   const mode = await getExecutionMode();
-  if (mode === ExecutionMode.OFF) {
-    console.log("[SpotEngine] Execution mode is OFF, not starting");
-    return false;
-  }
 
   console.log(`[SpotEngine] Starting with mode=${mode}, owner=${SPOT_RUNTIME_OWNER}`);
 
@@ -494,6 +512,28 @@ export async function startSpotEngine(): Promise<boolean> {
   // Load open positions from DB
   await loadOpenPositionsFromDB();
 
+  // R7: OFF mode — no entry scanner, but supervisor if positions exist
+  if (mode === ExecutionMode.OFF) {
+    entryScanningEnabled = false;
+    engineRunning = false;
+
+    const hasPositions = await hasOpenSpotPositions();
+    if (hasPositions) {
+      // Start position supervisor only
+      if (!supervisorIntervalId) {
+        positionSupervisorRunning = true;
+        supervisorIntervalId = setInterval(() => runPositionSupervisor().catch(console.error), SCAN_INTERVAL_MS);
+      }
+      // R7: Await first supervisor pass before returning
+      console.log("[SpotEngine] OFF mode: entry scanner=0, position supervisor=1 (open positions exist)");
+      await runPositionSupervisor().catch(err => console.error("[SpotEngine] Initial supervisor error:", err.message));
+    } else {
+      console.log("[SpotEngine] OFF mode: entry scanner=0, position supervisor=0 (no open positions)");
+    }
+    return true;
+  }
+
+  // SHADOW or REAL mode
   entryScanningEnabled = true;
   engineRunning = true;
 
@@ -506,10 +546,12 @@ export async function startSpotEngine(): Promise<boolean> {
     supervisorIntervalId = setInterval(() => runPositionSupervisor().catch(console.error), SCAN_INTERVAL_MS);
   }
 
-  // R6: Run first supervisor pass immediately to avoid initial protection gap
-  runPositionSupervisor().catch(console.error);
+  // R7: Await first supervisor pass BEFORE first scan — literal ordering guarantee
+  console.log("[SpotEngine] Supervisor first pass starting (before scan)");
+  await runPositionSupervisor().catch(err => console.error("[SpotEngine] Initial supervisor error:", err.message));
+  console.log("[SpotEngine] Supervisor first pass completed, starting scan");
 
-  // Run first scan immediately
+  // Run first scan immediately (after supervisor)
   runScanCycle().catch(console.error);
   return true;
 }
@@ -603,6 +645,44 @@ export function _isSupervisingForTest(): boolean {
 // R6: Exported for testing — set supervisor state (for reentrancy test)
 export function _setSupervisingForTest(value: boolean): void {
   isSupervising = value;
+}
+
+// R7: Exported for testing — engine state inspection
+export function _isEngineRunningForTest(): boolean {
+  return engineRunning;
+}
+
+export function _isEntryScanningEnabledForTest(): boolean {
+  return entryScanningEnabled;
+}
+
+export function _isSupervisorRunningForTest(): boolean {
+  return positionSupervisorRunning;
+}
+
+export function _hasScanIntervalForTest(): boolean {
+  return scanIntervalId !== null;
+}
+
+export function _hasSupervisorIntervalForTest(): boolean {
+  return supervisorIntervalId !== null;
+}
+
+// R7: Exported for testing — full stop and reset
+export function _stopSpotEngineForTest(): void {
+  if (scanIntervalId) {
+    clearInterval(scanIntervalId);
+    scanIntervalId = null;
+  }
+  if (supervisorIntervalId) {
+    clearInterval(supervisorIntervalId);
+    supervisorIntervalId = null;
+  }
+  engineRunning = false;
+  entryScanningEnabled = true;
+  positionSupervisorRunning = false;
+  isScanning = false;
+  isSupervising = false;
 }
 
 /**

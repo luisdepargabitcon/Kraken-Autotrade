@@ -457,10 +457,12 @@ describe("B15 — SPOT Canonical Engine Comprehensive Tests", () => {
       stopSpotEngine();
     });
 
-    it("OFF mode: engine does not start", async () => {
+    it("OFF mode: engine starts but without entry scanner (R7: returns true, supervisor-only)", async () => {
       mockModeState.mode = "OFF";
       const started = await startSpotEngine();
-      expect(started).toBe(false);
+      // R7: startSpotEngine returns true even in OFF mode — it starts supervisor-only if positions exist
+      expect(started).toBe(true);
+      stopSpotEngine();
     });
 
     it("stopSpotEngine clears intervals", () => {

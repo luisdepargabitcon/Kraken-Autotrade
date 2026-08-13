@@ -410,7 +410,7 @@ describe("R6 — Single Position Supervisor", () => {
 
       // Must call runPositionSupervisor (immediate) before runScanCycle (immediate)
       // The setInterval callbacks appear earlier, so look for the R6 comment marker
-      const r6MarkerIdx = startBody.indexOf("R6: Run first supervisor");
+      const r6MarkerIdx = startBody.indexOf("Await first supervisor");
       expect(r6MarkerIdx).toBeGreaterThan(-1);
       const afterMarker = startBody.substring(r6MarkerIdx);
       const supervisorIdx = afterMarker.indexOf("runPositionSupervisor");

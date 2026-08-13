@@ -204,8 +204,9 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
       const previousMode = await getExecutionMode();
 
       // B05: Lifecycle management with atomic revert
+      // R7: Ownership is ALWAYS SPOT_CANONICAL — mode transitions only affect entry behavior.
       if (resolved === ExecutionMode.SHADOW && previousMode !== ExecutionMode.SHADOW) {
-        // OFF → SHADOW: persist mode, then start engine, revert on failure
+        // OFF → SHADOW: persist mode, then start engine (scan + supervisor), revert on failure
         await setExecutionMode(resolved);
         const started = await startSpotEngine();
         if (!started) {
@@ -220,10 +221,9 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
           return;
         }
       } else if (resolved === ExecutionMode.OFF && previousMode !== ExecutionMode.OFF) {
-        // SHADOW → OFF: persist mode (stops entry scanning, keeps supervisor if positions exist)
+        // R7: SHADOW → OFF: persist mode (stops entry scanning, keeps supervisor if positions exist)
+        // Legacy TradingEngine does NOT re-acquire entry ownership — SPOT_CANONICAL remains owner.
         await setExecutionMode(resolved);
-        // stopSpotEngine is NOT called here — setExecutionMode(OFF) handles stopping entry scan
-        // while keeping position supervisor running if there are open SPOT positions
       } else {
         await setExecutionMode(resolved);
       }
