@@ -115,6 +115,7 @@ const signalResultCache = new Map<string, SpotSignalResult>();
 let scanIntervalId: NodeJS.Timeout | null = null;
 let supervisorIntervalId: NodeJS.Timeout | null = null;
 let isScanning = false;
+let isSupervising = false;
 let lastScanTime = 0;
 let lastScanResults: Array<{ pair: string; signal: string; reason: string; mode: string }> = [];
 
@@ -505,6 +506,9 @@ export async function startSpotEngine(): Promise<boolean> {
     supervisorIntervalId = setInterval(() => runPositionSupervisor().catch(console.error), SCAN_INTERVAL_MS);
   }
 
+  // R6: Run first supervisor pass immediately to avoid initial protection gap
+  runPositionSupervisor().catch(console.error);
+
   // Run first scan immediately
   runScanCycle().catch(console.error);
   return true;
@@ -581,6 +585,26 @@ async function runScanCycle(): Promise<void> {
   }
 }
 
+// R6: Exported for testing — verify single owner invariant
+export async function _runScanCycleForTest(): Promise<void> {
+  return runScanCycle();
+}
+
+// R6: Exported for testing — verify reentrancy guard
+export async function _runPositionSupervisorForTest(): Promise<void> {
+  return runPositionSupervisor();
+}
+
+// R6: Exported for testing — check supervisor state
+export function _isSupervisingForTest(): boolean {
+  return isSupervising;
+}
+
+// R6: Exported for testing — set supervisor state (for reentrancy test)
+export function _setSupervisingForTest(value: boolean): void {
+  isSupervising = value;
+}
+
 /**
  * R5: Get DISTINCT pairs from open SPOT canonical positions.
  * activePairs defines the universe for NEW ENTRIES, not for position protection.
@@ -605,9 +629,14 @@ export async function getOpenSpotPositionPairs(): Promise<string[]> {
  * Position supervisor: manages open SPOT positions (exit evaluation) independently of entry scanning.
  * Runs even when mode=OFF to avoid orphaning positions.
  * R5: Iterates over pairs with open positions, NOT activePairs.
- * This ensures positions on pairs removed from activePairs still receive protection.
+ * R6: Reentrancy guard prevents overlapping cycles.
  */
 async function runPositionSupervisor(): Promise<void> {
+  if (isSupervising) {
+    console.log("[SpotEngine] Supervisor already in progress, skipping");
+    return;
+  }
+  isSupervising = true;
   try {
     const mode = await getExecutionMode();
     const pairs = await getOpenSpotPositionPairs();
@@ -627,6 +656,8 @@ async function runPositionSupervisor(): Promise<void> {
     }
   } catch (error: any) {
     console.error('[SpotEngine] Supervisor cycle error:', error.message);
+  } finally {
+    isSupervising = false;
   }
 }
 
@@ -663,10 +694,8 @@ async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: stri
     return { pair, signal: "SKIP", reason: `MarketData error: ${error.message}`, mode };
   }
 
-  // B. Manage existing open positions for this pair (exit evaluation)
-  await manageOpenPositions(pair, ctx);
-
-  // C. Check data health — if stale, skip entry evaluation but positions are managed
+  // R6: Position management removed from scanPair — runPositionSupervisor is the single owner.
+  // C. Check data health — if stale, skip entry evaluation
   if (ctx.dataHealth === DataHealth.STALE || ctx.dataHealth === DataHealth.INSUFFICIENT) {
     return { pair, signal: "HOLD", reason: `DataHealth=${ctx.dataHealth}`, mode };
   }
