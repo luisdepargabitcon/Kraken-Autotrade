@@ -6407,19 +6407,19 @@ Compra bloqueada en <code>${pair}</code> por datos de mercado degradados.
         }
       }
       
-      // === DRY_RUN MODE: Simular sin enviar orden real ===
-      // R9: For SELL, use per-position provenance instead of global dryRunMode.
-      // A DRY_RUN position must always exit as DRY_RUN even if global mode changed to LIVE.
-      // Unknown provenance on SELL → fail-closed (no real order).
+      // R9.1: For SELL, execution path depends EXCLUSIVELY on per-position provenance.
+      // DRY_RUN → simulation, REAL → real order, undefined/unknown → fail-closed.
+      // Global dryRunMode is NOT consulted for SELL decisions.
+      // For BUY, keep using this.dryRunMode (legacy new entries blocked by ownership).
       const isDryRunForThisTrade = type === "sell"
-        ? (sellContext?.executionProvenance === "DRY_RUN" || this.dryRunMode)
+        ? sellContext?.executionProvenance === "DRY_RUN"
         : this.dryRunMode;
 
-      // R9: Fail-closed for SELL with unknown provenance when not in global DRY_RUN mode
-      if (type === "sell" && !this.dryRunMode && sellContext?.executionProvenance === undefined) {
-        console.error(`[TradingEngine] CRITICAL: LEGACY_POSITION_PROVENANCE_UNKNOWN_FAIL_CLOSED — SELL blocked for ${pair} lotId=${sellContext?.lotId || 'unknown'}. No real order sent.`);
+      // R9.1: Fail-closed for SELL with unknown/missing provenance — ALWAYS, regardless of dryRunMode
+      if (type === "sell" && sellContext?.executionProvenance === undefined) {
+        console.error(`[TradingEngine] CRITICAL: LEGACY_POSITION_PROVENANCE_UNKNOWN_FAIL_CLOSED — SELL blocked for ${pair} lotId=${sellContext?.lotId || 'unknown'} dryRunMode=${this.dryRunMode}. No order sent.`);
         await botLogger.error("PROVENANCE_UNKNOWN_FAIL_CLOSED", `SELL bloqueado — provenance desconocida para ${pair}`, {
-          pair, type, lotId: sellContext?.lotId, reason,
+          pair, type, lotId: sellContext?.lotId, reason, dryRunMode: this.dryRunMode,
         });
         return false;
       }
