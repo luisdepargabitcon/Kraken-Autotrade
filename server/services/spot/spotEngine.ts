@@ -47,19 +47,21 @@ import { SpotAuditTracker, type SpotAuditMetrics, type ExitAuditMetrics } from "
 import { computePnlBreakdown, getTradingFeeModel } from "./feeModel";
 import { DataHealth } from "./candleTimestamp";
 
+// R8: Re-export ownership from pure module (no heavy deps)
+import {
+  isSpotRuntimeOwner as _isSpotRuntimeOwner,
+  SPOT_RUNTIME_OWNER as _SPOT_RUNTIME_OWNER,
+  SPOT_ENGINE_OWNER as _SPOT_ENGINE_OWNER,
+} from "./spotOwnership";
+
 // ─── Engine Owner & Provenance ────────────────────────────────────────────────
 
-export const SPOT_ENGINE_OWNER = "SPOT_CANONICAL" as const;
+export const SPOT_ENGINE_OWNER = _SPOT_ENGINE_OWNER;
 export const SPOT_ORIGIN = "spot_engine" as const;
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-export const SPOT_RUNTIME_OWNER = "SpotEngine";
-
-// R7: Canonical deployment flag — once SPOT_CANONICAL code is deployed,
-// it is ALWAYS the runtime owner. Execution mode (OFF/SHADOW/REAL) only
-// controls entry behavior, not ownership.
-const SPOT_CANONICAL_DEPLOYED = true;
+export const SPOT_RUNTIME_OWNER = _SPOT_RUNTIME_OWNER;
 
 const SCAN_INTERVAL_MS = 60_000; // 60 seconds
 const MAX_OPEN_POSITIONS = 10;
@@ -477,7 +479,7 @@ export function isSpotActive(): boolean {
 }
 
 /**
- * R7: Canonical runtime ownership — always true once SPOT_CANONICAL is deployed.
+ * R8: Canonical runtime ownership — delegated to pure module spotOwnership.ts.
  *
  * This is SEPARATE from execution mode:
  *   - isSpotRuntimeOwner() = which engine owns new entries (always SPOT_CANONICAL)
@@ -485,9 +487,10 @@ export function isSpotActive(): boolean {
  *
  * Invariant: SPOT_RUNTIME_OWNER = SPOT_CANONICAL in OFF, SHADOW, and REAL.
  * Legacy TradingEngine must NEVER re-acquire entry ownership, even in OFF mode.
+ * R8: FAIL-CLOSED — if ownership resolution fails, legacy entries stay blocked.
  */
 export function isSpotRuntimeOwner(): boolean {
-  return SPOT_CANONICAL_DEPLOYED;
+  return _isSpotRuntimeOwner();
 }
 
 // ─── Scan Cycle ─────────────────────────────────────────────────────────────

@@ -368,26 +368,36 @@ export async function registerRoutes(
       console.error('[startup] Failed to initialize LogRetentionScheduler:', e?.message || e);
     }
     
-    // SPOT Engine auto-start: R7 — always initialize SPOT canonical lifecycle.
-    // Runtime ownership is ALWAYS SPOT_CANONICAL once deployed.
-    // Execution mode (OFF/SHADOW/REAL) only controls entry behavior.
-    // startSpotEngine handles OFF mode internally (supervisor-only if positions exist).
-    let spotRuntimeOwner = false;
+    // SPOT Engine auto-start: R8 — FAIL-CLOSED ownership.
+    // Runtime ownership is resolved from pure module (no heavy deps).
+    // It is ALWAYS SPOT_CANONICAL once deployed, independent of startSpotEngine success.
+    // If startSpotEngine fails, ownership does NOT change — legacy stays supervisor-only.
+    let spotRuntimeOwner = true;
     try {
-      const { startSpotEngine, isSpotRuntimeOwner, SPOT_RUNTIME_OWNER } = await import('./services/spot/spotEngine');
+      const { isSpotRuntimeOwner } = await import('./services/spot/spotOwnership');
+      spotRuntimeOwner = isSpotRuntimeOwner();
+    } catch (error: any) {
+      // R8: FAIL-CLOSED — ownership resolution failed, assume SPOT_CANONICAL owns
+      console.error('[startup] CRITICAL: SPOT_OWNERSHIP_RESOLUTION_FAILED_FAIL_CLOSED — legacy entries remain BLOCKED.', error?.message || error);
+    }
+
+    // Log ownership and start SPOT engine
+    try {
+      const { startSpotEngine, SPOT_RUNTIME_OWNER } = await import('./services/spot/spotEngine');
       const { loadExecutionMode } = await import('./services/spot/spotExecutionModeStore');
       const spotMode = await loadExecutionMode();
-      spotRuntimeOwner = isSpotRuntimeOwner();
       console.log(`[startup] SPOT Engine: runtimeOwner=${SPOT_RUNTIME_OWNER}, mode=${spotMode}, canonical=${spotRuntimeOwner}`);
       await startSpotEngine();
     } catch (e: any) {
-      console.error('[startup] Failed to start SPOT Engine:', e?.message || e);
+      // R8: startSpotEngine failure does NOT change ownership
+      console.error('[startup] CRITICAL: SPOT_STARTUP_FAILED_CANONICAL_OWNER_RETAINED — legacy stays SUPERVISOR-ONLY.', e?.message || e);
     }
 
     // Auto-start legacy TradingEngine if bot was active
-    // R7: When SPOT_CANONICAL is runtime owner (always true after deploy),
+    // R8: When SPOT_CANONICAL is runtime owner (always true after deploy),
     // legacy engine starts in SUPERVISOR-ONLY mode regardless of execution mode.
     // It manages existing legacy positions but can NEVER open new entries.
+    // There is NO path where startSpotEngine failure → legacy full entry engine.
     const botConfig = await storage.getBotConfig();
     if (botConfig?.isActive && krakenService.isInitialized()) {
       if (spotRuntimeOwner) {
@@ -448,10 +458,10 @@ export async function registerRoutes(
       const updated = await storage.updateBotConfig(body);
       
       if (req.body.isActive !== undefined && tradingEngine) {
-        // R7: SPOT_CANONICAL is always runtime owner once deployed.
+        // R8: SPOT_CANONICAL is always runtime owner once deployed.
         // Legacy TradingEngine always starts in SUPERVISOR-ONLY mode.
         if (req.body.isActive) {
-          const { isSpotRuntimeOwner } = await import('./services/spot/spotEngine');
+          const { isSpotRuntimeOwner } = await import('./services/spot/spotOwnership');
           if (isSpotRuntimeOwner()) {
             console.log('[config] SPOT_CANONICAL is runtime owner. Legacy TradingEngine starting in SUPERVISOR-ONLY mode (no new entries).');
           }

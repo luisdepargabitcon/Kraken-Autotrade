@@ -3184,14 +3184,16 @@ ${positionsList}
       }
 
       // ── SPOT SINGLE OWNER GUARD ──────────────────────────────────────────
-      // R7: Use isSpotRuntimeOwner() instead of the old active check.
-      // SPOT_CANONICAL is always the runtime owner once deployed, even in OFF mode.
-      // Legacy TradingEngine must NEVER re-acquire entry ownership.
-      let spotOwnsRuntime = false;
+      // R8: FAIL-CLOSED — if ownership resolution fails, legacy entries stay BLOCKED.
+      // Default is true (canonical owns). Import failure does NOT re-enable legacy.
+      let spotOwnsRuntime = true;
       try {
-        const { isSpotRuntimeOwner } = await import("./spot/spotEngine");
+        const { isSpotRuntimeOwner } = await import("./spot/spotOwnership");
         spotOwnsRuntime = isSpotRuntimeOwner();
-      } catch { /* spotEngine not loaded — safe to continue normally */ }
+      } catch (error: any) {
+        // R8: FAIL-CLOSED — ownership check failed, assume SPOT_CANONICAL owns
+        console.error("[TradingEngine] CRITICAL: SPOT_OWNERSHIP_RESOLUTION_FAILED_FAIL_CLOSED — legacy entries remain BLOCKED.", error?.message || error);
+      }
       if (spotOwnsRuntime) {
         console.log("[TradingEngine] SPOT runtime owner is active (canonical ownership). Legacy new entries DISABLED. Supervisor-only mode.");
         // Still manage existing open positions (exits, SL, TP, time-stop)
