@@ -42,7 +42,7 @@ import { createEntryIntent, evaluateEntryIntent, SpotEntryIntentStore,
   DEFAULT_ANTI_LATE_ENTRY_CONFIG, type IntentEvaluationResult } from "./spotEntryIntent";
 import { evaluateSizing, DEFAULT_SPOT_RISK_CONFIG, type SizingResult } from "./spotRiskManager";
 import { createExecutionAdapter, type SpotExecutionAdapter } from "./spotExecutionAdapter";
-import { evaluateExit, createExitState, DEFAULT_SPOT_EXIT_CONFIG, computeRMultiple } from "./spotExitPolicy";
+import { evaluateExit, createExitState, restoreExitState, DEFAULT_SPOT_EXIT_CONFIG, computeRMultiple } from "./spotExitPolicy";
 import { SpotAuditTracker, type SpotAuditMetrics, type ExitAuditMetrics } from "./spotAuditTracker";
 import { computePnlBreakdown, getTradingFeeModel } from "./feeModel";
 import { DataHealth } from "./candleTimestamp";
@@ -99,6 +99,10 @@ interface OpenPositionRow {
   sgBreakEvenActivated: boolean;
   sgTrailingActivated: boolean;
   sgCurrentStopPrice: number | null;
+  breakEvenStopPrice: number | null;
+  trailingStopPrice: number | null;
+  trailingHighestPrice: number | null;
+  lowestPrice: number | null;
   openedAt: number;
 }
 
@@ -115,44 +119,91 @@ let lastScanResults: Array<{ pair: string; signal: string; reason: string; mode:
 
 // ─── Shadow Capital Ledger ───────────────────────────────────────────────────
 
+/**
+ * Shadow Capital Ledger — DB-persistent.
+ *
+ * Accounting contract:
+ *   equity = initialCapitalUsd + realizedNetPnlUsd
+ *   available = equity - reservedUsd
+ *
+ * realizedNetPnlUsd is NET (already includes entry+exit fees).
+ * totalFeesUsd is a METRIC ONLY — never subtracted from equity again.
+ *
+ * Example:
+ *   initial = 10000
+ *   BUY notional = 1000, entry fee = 0.90
+ *   → reserved = 1000, fees = 0.90 (metric)
+ *   Close: gross = 10, entry fee = 0.90, exit fee = 0.90
+ *   → net = 8.20
+ *   → reserved = 0, realizedNetPnl = 8.20
+ *   → equity = 10008.20 (NOT 10006.40 — no double fee)
+ */
 interface ShadowLedger {
   initialCapitalUsd: number;
   reservedUsd: number;
-  realizedPnlUsd: number;
-  totalFeesUsd: number;
+  realizedNetPnlUsd: number;
+  totalFeesUsd: number; // metric only
 }
 
 let shadowLedger: ShadowLedger = {
   initialCapitalUsd: 10_000,
   reservedUsd: 0,
-  realizedPnlUsd: 0,
+  realizedNetPnlUsd: 0,
   totalFeesUsd: 0,
 };
 
 async function loadShadowLedger(): Promise<void> {
   try {
     const result = await db.execute(sql`
-      SELECT spot_shadow_capital_usd FROM bot_config LIMIT 1
+      SELECT spot_shadow_capital_usd,
+             spot_shadow_reserved_usd,
+             spot_shadow_realized_pnl_usd,
+             spot_shadow_total_fees_usd
+      FROM bot_config LIMIT 1
     `);
     if (result.rows.length > 0) {
-      shadowLedger.initialCapitalUsd = Number(result.rows[0].spot_shadow_capital_usd ?? 10_000);
+      const r = result.rows[0];
+      shadowLedger.initialCapitalUsd = Number(r.spot_shadow_capital_usd ?? 10_000);
+      shadowLedger.reservedUsd = Number(r.spot_shadow_reserved_usd ?? 0);
+      shadowLedger.realizedNetPnlUsd = Number(r.spot_shadow_realized_pnl_usd ?? 0);
+      shadowLedger.totalFeesUsd = Number(r.spot_shadow_total_fees_usd ?? 0);
     }
   } catch { /* default */ }
 }
 
-function getShadowAvailableCapital(): number {
-  return shadowLedger.initialCapitalUsd - shadowLedger.reservedUsd + shadowLedger.realizedPnlUsd - shadowLedger.totalFeesUsd;
+async function persistShadowLedger(): Promise<void> {
+  try {
+    await db.execute(sql`
+      UPDATE bot_config SET
+        spot_shadow_reserved_usd = ${shadowLedger.reservedUsd},
+        spot_shadow_realized_pnl_usd = ${shadowLedger.realizedNetPnlUsd},
+        spot_shadow_total_fees_usd = ${shadowLedger.totalFeesUsd},
+        updated_at = NOW()
+    `);
+  } catch (error) {
+    console.error("[SpotEngine] Failed to persist shadow ledger:", error);
+  }
 }
 
-function reserveShadowCapital(notionalUsd: number, entryFeeUsd: number): void {
+function getShadowEquity(): number {
+  return shadowLedger.initialCapitalUsd + shadowLedger.realizedNetPnlUsd;
+}
+
+function getShadowAvailableCapital(): number {
+  return getShadowEquity() - shadowLedger.reservedUsd;
+}
+
+async function reserveShadowCapital(notionalUsd: number, entryFeeUsd: number): Promise<void> {
   shadowLedger.reservedUsd += notionalUsd;
   shadowLedger.totalFeesUsd += entryFeeUsd;
+  await persistShadowLedger();
 }
 
-function releaseShadowCapital(notionalUsd: number, netPnlUsd: number, exitFeeUsd: number): void {
+async function releaseShadowCapital(notionalUsd: number, netPnlUsd: number, exitFeeUsd: number): Promise<void> {
   shadowLedger.reservedUsd -= notionalUsd;
-  shadowLedger.realizedPnlUsd += netPnlUsd;
+  shadowLedger.realizedNetPnlUsd += netPnlUsd;
   shadowLedger.totalFeesUsd += exitFeeUsd;
+  await persistShadowLedger();
 }
 
 // ─── Execution Mode ─────────────────────────────────────────────────────────
@@ -544,13 +595,13 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     maeR: 0,
   };
 
+  // B12: Reserve shadow capital FIRST (atomic: if DB persist fails, capital not reserved)
+  if (mode === ExecutionMode.SHADOW) {
+    await reserveShadowCapital(sizing.notionalUsd, result.feeUsd ?? 0);
+  }
+
   // Persist to DB
   await persistOpenPosition(position, result);
-
-  // B12: Reserve shadow capital
-  if (mode === ExecutionMode.SHADOW) {
-    reserveShadowCapital(sizing.notionalUsd, result.feeUsd ?? 0);
-  }
 
   // Init audit tracking
   auditTracker.initPosition(position);
@@ -578,40 +629,60 @@ async function manageOpenPositions(pair: string, ctx: SpotMarketContext): Promis
     const position = rowToPosition(row);
     const currentPrice = ctx.ticker.last;
 
-    // Update audit tracker
+    // B13: Restore audit tracker from DB if not already in memory (restart case)
+    if (!auditTracker.getMetrics(position.lotId)) {
+      auditTracker.restorePosition(position, {
+        mfeUsd: row.mfe,
+        maeUsd: row.mae,
+        mfeR: row.mfeR,
+        maeR: row.maeR,
+        highestPrice: row.highestPrice,
+        lowestPrice: row.lowestPrice ?? position.entryPrice,
+        mfeTimestamp: position.openedAt,
+        maeTimestamp: position.openedAt,
+      });
+    }
+
+    // Update audit tracker with current price
     auditTracker.updatePrice(position, currentPrice, Date.now());
 
-    // B13: Persist position state (MFE/MAE/highest/BE/trailing/stop) in each scan
+    // B13: Restore exit state from DB if not already in memory (restart case)
+    let exitState = exitStates.get(row.lotId);
+    if (!exitState) {
+      exitState = restoreExitState(position, row);
+      exitStates.set(row.lotId, exitState);
+    }
+
+    // Evaluate exit (this mutates exitState: arms BE, trailing, etc.)
+    const exitDecision = evaluateExit(position, exitState, ctx);
+
+    // B13: Persist updated protection state AFTER evaluateExit
     const auditMetrics = auditTracker.getMetrics(position.lotId);
     const mfeUsd = auditMetrics?.mfeUsd ?? row.mfe;
     const maeUsd = auditMetrics?.maeUsd ?? row.mae;
     const mfeR = auditMetrics?.mfeR ?? row.mfeR;
     const maeR = auditMetrics?.maeR ?? row.maeR;
     const newHighest = Math.max(row.highestPrice, currentPrice);
+    const newLowest = Math.min(row.lowestPrice ?? position.entryPrice, currentPrice);
 
     await db.execute(sql`
       UPDATE open_positions SET
         highest_price = ${newHighest},
+        lowest_price = ${newLowest},
         mfe = ${mfeUsd},
         mae = ${maeUsd},
         mfe_r = ${mfeR},
         mae_r = ${maeR},
-        sg_break_even_activated = ${position.sgBreakEvenActivated},
-        sg_trailing_activated = ${position.sgTrailingActivated},
-        sg_current_stop_price = ${position.sgCurrentStopPrice},
+        sg_break_even_activated = ${exitState.breakEvenStopPrice !== null},
+        sg_trailing_activated = ${exitState.trailingStopPrice !== null},
+        sg_current_stop_price = ${exitState.trailingStopPrice ?? exitState.breakEvenStopPrice ?? position.sgCurrentStopPrice},
+        break_even_stop_price = ${exitState.breakEvenStopPrice},
+        trailing_stop_price = ${exitState.trailingStopPrice},
+        trailing_highest_price = ${exitState.trailingHighestPrice},
         updated_at = NOW()
       WHERE lot_id = ${row.lotId}
     `);
 
-    // Get or create exit state
-    let exitState = exitStates.get(row.lotId);
-    if (!exitState) {
-      exitState = createExitState(position);
-      exitStates.set(row.lotId, exitState);
-    }
-
-    // Evaluate exit
-    const exitDecision = evaluateExit(position, exitState, ctx);
     if (exitDecision.shouldExit && exitDecision.reasonType) {
       // B03: Use position.executionMode (immutable), NOT global mode
       await closePosition(position, exitDecision, ctx);
@@ -677,15 +748,15 @@ async function closePosition(
   // Persist closed trade to trades table
   await persistClosedTrade(position, result, pnl, exitDecision, auditMetrics ?? auditTracker.getMetrics(position.lotId));
 
+  // B12: Release shadow capital and remove position atomically
+  if (position.executionMode === ExecutionMode.SHADOW) {
+    await releaseShadowCapital(position.notionalUsd, pnl.netPnlUsd, pnl.exitFeeUsd);
+  }
+
   // Remove from open_positions
   await db.execute(sql`
     DELETE FROM open_positions WHERE lot_id = ${position.lotId}
   `);
-
-  // B12: Release shadow capital
-  if (position.executionMode === ExecutionMode.SHADOW) {
-    releaseShadowCapital(position.notionalUsd, pnl.netPnlUsd, pnl.exitFeeUsd);
-  }
 
   const am = auditMetrics ?? auditTracker.getMetrics(position.lotId);
   console.log(
@@ -764,6 +835,7 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
         atr_pct_at_entry, initial_stop_price, initial_stop_distance_pct,
         initial_stop_distance_usd, risk_usd, mfe, mae, mfe_r, mae_r,
         sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
+        break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
         EXTRACT(EPOCH FROM opened_at) * 1000 as opened_at_ms
       FROM open_positions
       WHERE pair = ${pair} AND status != 'CLOSED'
@@ -802,6 +874,10 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
       sgBreakEvenActivated: Boolean(r.sg_break_even_activated),
       sgTrailingActivated: Boolean(r.sg_trailing_activated),
       sgCurrentStopPrice: r.sg_current_stop_price ? Number(r.sg_current_stop_price) : null,
+      breakEvenStopPrice: r.break_even_stop_price ? Number(r.break_even_stop_price) : null,
+      trailingStopPrice: r.trailing_stop_price ? Number(r.trailing_stop_price) : null,
+      trailingHighestPrice: r.trailing_highest_price ? Number(r.trailing_highest_price) : null,
+      lowestPrice: r.lowest_price ? Number(r.lowest_price) : null,
       openedAt: Number(r.opened_at_ms),
     }));
   } catch (error) {
@@ -821,14 +897,25 @@ async function loadOpenPositionsFromDB(): Promise<void> {
     `);
     console.log(`[SpotEngine] Loaded ${result.rows.length} open positions from DB`);
 
-    // Rebuild exit states for loaded positions
+    // Rebuild exit states and audit metrics for loaded positions (B13: restore from DB)
     for (const row of result.rows) {
       const positions = await getOpenPositionsForPair(row.pair as string);
       for (const p of positions) {
         if (p.lotId === row.lot_id) {
           const position = rowToPosition(p);
-          auditTracker.initPosition(position);
-          const exitState = createExitState(position);
+          // B13: Restore audit metrics from DB, not reinitialize to zero
+          auditTracker.restorePosition(position, {
+            mfeUsd: p.mfe,
+            maeUsd: p.mae,
+            mfeR: p.mfeR,
+            maeR: p.maeR,
+            highestPrice: p.highestPrice,
+            lowestPrice: p.lowestPrice ?? position.entryPrice,
+            mfeTimestamp: position.openedAt,
+            maeTimestamp: position.openedAt,
+          });
+          // B13: Restore exit state from DB, not reinitialize to defaults
+          const exitState = restoreExitState(position, p);
           exitStates.set(p.lotId, exitState);
         }
       }
@@ -844,7 +931,7 @@ async function loadOpenPositionsFromDB(): Promise<void> {
  * B08: engine_owner and origin identify the SPOT engine.
  */
 async function persistOpenPosition(position: SpotPosition, execResult: SpotExecutionResult): Promise<void> {
-  const venue = getTradingVenue();
+  const venue = await getTradingVenue();
   await db.execute(sql`
     INSERT INTO open_positions (
       lot_id, exchange, pair, entry_price, amount, qty_remaining, highest_price,
@@ -854,7 +941,8 @@ async function persistOpenPosition(position: SpotPosition, execResult: SpotExecu
       regime_at_entry, direction_at_entry, macro_at_entry, atr_pct_at_entry,
       initial_stop_price, initial_stop_distance_pct, initial_stop_distance_usd,
       risk_usd, mfe, mae, mfe_r, mae_r,
-      sg_break_even_activated, sg_trailing_activated, sg_current_stop_price
+      sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
+      break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price
     ) VALUES (
       ${position.lotId}, ${venue}, ${position.pair}, ${position.entryPrice},
       ${position.amount}, ${position.qtyRemaining}, ${position.highestPrice},
@@ -867,7 +955,8 @@ async function persistOpenPosition(position: SpotPosition, execResult: SpotExecu
       ${position.atrPctAtEntry}, ${position.initialStopPrice},
       ${position.initialStopDistancePct}, ${position.initialStopDistanceUsd},
       ${position.riskUsd}, 0, 0, 0, 0,
-      false, false, ${position.sgCurrentStopPrice}
+      false, false, ${position.sgCurrentStopPrice},
+      null, null, ${position.highestPrice}, ${position.entryPrice}
     )
     ON CONFLICT (lot_id) DO NOTHING
   `);
@@ -886,7 +975,7 @@ async function persistClosedTrade(
 ): Promise<void> {
   const tradeId = `spot-trade-${position.lotId}`;
   const holdTimeMinutes = Math.round((Date.now() - position.openedAt) / 60000);
-  const venue = getTradingVenue();
+  const venue = await getTradingVenue();
 
   await db.execute(sql`
     INSERT INTO trades (
@@ -1017,6 +1106,7 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
         atr_pct_at_entry, initial_stop_price, initial_stop_distance_pct,
         initial_stop_distance_usd, risk_usd, mfe, mae, mfe_r, mae_r,
         sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
+        break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
         EXTRACT(EPOCH FROM opened_at) * 1000 as opened_at_ms
       FROM open_positions
       WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
@@ -1055,6 +1145,10 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
       sgBreakEvenActivated: Boolean(r.sg_break_even_activated),
       sgTrailingActivated: Boolean(r.sg_trailing_activated),
       sgCurrentStopPrice: r.sg_current_stop_price ? Number(r.sg_current_stop_price) : null,
+      breakEvenStopPrice: r.break_even_stop_price ? Number(r.break_even_stop_price) : null,
+      trailingStopPrice: r.trailing_stop_price ? Number(r.trailing_stop_price) : null,
+      trailingHighestPrice: r.trailing_highest_price ? Number(r.trailing_highest_price) : null,
+      lowestPrice: r.lowest_price ? Number(r.lowest_price) : null,
       openedAt: Number(r.opened_at_ms),
     }));
   } catch (error) {

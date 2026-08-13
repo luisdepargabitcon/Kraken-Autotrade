@@ -164,6 +164,27 @@ export class SpotAuditTracker {
   }
 
   /**
+   * Restore audit metrics from DB on restart.
+   * Unlike initPosition which starts at zero, this preserves
+   * previously computed MFE/MAE/highest/lowest from DB.
+   */
+  restorePosition(position: SpotPosition, saved: Partial<SpotAuditMetrics>): SpotAuditMetrics {
+    const m: SpotAuditMetrics = {
+      positionLotId: position.lotId,
+      mfeUsd: saved.mfeUsd ?? 0,
+      maeUsd: saved.maeUsd ?? 0,
+      mfeR: saved.mfeR ?? 0,
+      maeR: saved.maeR ?? 0,
+      highestPrice: saved.highestPrice ?? position.entryPrice,
+      lowestPrice: saved.lowestPrice ?? position.entryPrice,
+      mfeTimestamp: saved.mfeTimestamp ?? position.openedAt,
+      maeTimestamp: saved.maeTimestamp ?? position.openedAt,
+    };
+    this.metrics.set(position.lotId, m);
+    return m;
+  }
+
+  /**
    * Get current metrics for a position.
    */
   getMetrics(lotId: string): SpotAuditMetrics | null {

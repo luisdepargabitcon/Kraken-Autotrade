@@ -121,6 +121,24 @@ export function createExitState(position: SpotPosition): SpotExitState {
   };
 }
 
+/**
+ * Restore exit state from DB on restart.
+ * Preserves armed BE/trailing stops and trailing highest price.
+ */
+export function restoreExitState(position: SpotPosition, row: {
+  breakEvenStopPrice: number | null;
+  trailingStopPrice: number | null;
+  trailingHighestPrice: number | null;
+  sgCurrentStopPrice: number | null;
+  highestPrice: number;
+}): SpotExitState {
+  const state = createExitState(position);
+  state.breakEvenStopPrice = row.breakEvenStopPrice;
+  state.trailingStopPrice = row.trailingStopPrice;
+  state.trailingHighestPrice = row.trailingHighestPrice ?? Math.max(row.highestPrice, position.entryPrice);
+  return state;
+}
+
 // ─── R-multiple calculation ─────────────────────────────────────────────────
 
 export function computeRMultiple(currentPrice: number, position: SpotPosition): number {
@@ -224,18 +242,14 @@ export function evaluateBreakEven(
   if (!config.breakEvenEnabled) {
     return noExit("Break-even disabled");
   }
-  // Activate BE if R multiple reaches threshold
+  // Arm BE stop if R multiple reaches threshold and not yet armed
   if (rMultiple >= config.breakEvenActivateAtPctR && !state.breakEvenStopPrice) {
-    // BE stop at entry price (0R)
     const beStop = position.entryPrice * (1 + config.breakEvenStopPctR / 100);
-    // If price comes back to BE stop, exit
-    if (currentPrice <= beStop) {
-      return exitNow(ExitReasonType.BREAK_EVEN, ExitPriority.BREAK_EVEN,
-        `Break-even exit: ${currentPrice} ≤ BE ${beStop}`,
-        currentPrice, beStop);
-    }
+    state.breakEvenStopPrice = beStop;
+    // Do NOT exit immediately — the stop is now armed.
+    // Exit only if price subsequently falls back to BE stop.
   }
-  // If BE already activated, check if price hit BE stop
+  // If BE already armed, check if price hit BE stop
   if (state.breakEvenStopPrice && currentPrice <= state.breakEvenStopPrice) {
     return exitNow(ExitReasonType.BREAK_EVEN, ExitPriority.BREAK_EVEN,
       `Break-even exit: ${currentPrice} ≤ BE ${state.breakEvenStopPrice}`,
@@ -257,17 +271,21 @@ export function evaluateTrailing(
   if (!config.trailingEnabled) {
     return noExit("Trailing disabled");
   }
-  // Update trailing highest price
-  const highest = Math.max(state.trailingHighestPrice, currentPrice);
+  // Update trailing highest price (monotonic — never decreases)
+  state.trailingHighestPrice = Math.max(state.trailingHighestPrice, currentPrice);
 
-  // Activate trailing if R reaches threshold
+  // Arm trailing stop if R reaches threshold and not yet armed
   if (rMultiple >= config.trailingActivateAtPctR) {
-    const trailingStop = highest * (1 - config.trailingDistancePct / 100);
-    if (currentPrice <= trailingStop) {
-      return exitNow(ExitReasonType.TRAILING, ExitPriority.TRAILING,
-        `Trailing exit: ${currentPrice} ≤ trail ${trailingStop} (highest ${highest})`,
-        currentPrice, trailingStop);
-    }
+    const trailingStop = state.trailingHighestPrice * (1 - config.trailingDistancePct / 100);
+    state.trailingStopPrice = trailingStop;
+    // Do NOT exit immediately — the stop is now armed.
+    // Exit only if price subsequently falls to trailing stop.
+  }
+  // If trailing already armed, check if price hit trailing stop
+  if (state.trailingStopPrice && currentPrice <= state.trailingStopPrice) {
+    return exitNow(ExitReasonType.TRAILING, ExitPriority.TRAILING,
+      `Trailing exit: ${currentPrice} ≤ trail ${state.trailingStopPrice} (highest ${state.trailingHighestPrice})`,
+      currentPrice, state.trailingStopPrice);
   }
   return noExit("Trailing not triggered");
 }

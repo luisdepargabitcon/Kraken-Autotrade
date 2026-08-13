@@ -15,7 +15,10 @@
 -- Default: OFF. Fail-safe: corrupt/unknown → OFF at runtime.
 ALTER TABLE bot_config
   ADD COLUMN IF NOT EXISTS spot_execution_mode text NOT NULL DEFAULT 'OFF',
-  ADD COLUMN IF NOT EXISTS spot_shadow_capital_usd decimal(18,2) DEFAULT 10000;
+  ADD COLUMN IF NOT EXISTS spot_shadow_capital_usd decimal(18,2) DEFAULT 10000,
+  ADD COLUMN IF NOT EXISTS spot_shadow_reserved_usd decimal(18,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS spot_shadow_realized_pnl_usd decimal(18,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS spot_shadow_total_fees_usd decimal(18,2) DEFAULT 0;
 
 -- ─── open_positions: SPOT fields ──────────────────────────────────────────
 -- Allows SHADOW positions to coexist with REAL in the same table.
@@ -38,7 +41,14 @@ ALTER TABLE open_positions
   ADD COLUMN IF NOT EXISTS mfe decimal(18,8) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS mae decimal(18,8) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS mfe_r decimal(10,4) DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS mae_r decimal(10,4) DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS mae_r decimal(10,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS sg_break_even_activated boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS sg_trailing_activated boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS sg_current_stop_price decimal(18,8),
+  ADD COLUMN IF NOT EXISTS break_even_stop_price decimal(18,8),
+  ADD COLUMN IF NOT EXISTS trailing_stop_price decimal(18,8),
+  ADD COLUMN IF NOT EXISTS trailing_highest_price decimal(18,8),
+  ADD COLUMN IF NOT EXISTS lowest_price decimal(18,8);
 
 -- ─── trades: SPOT fields for closed positions ─────────────────────────────
 -- Allows SHADOW trades to coexist with REAL in the same table.

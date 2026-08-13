@@ -3127,7 +3127,7 @@ ${positionsList}
   }
 
   /**
-   * Supervisor-only mode: manage existing legacy open positions (exits, SL, TP, time-stop)
+   * Supervisor-only mode: manage existing legacy open positions (exits, SL, TP, trailing, SmartExit, time-stop)
    * without evaluating new entry signals. Used when SPOT canonical engine is the active runtime owner.
    */
   private async manageExistingPositionsOnly(): Promise<void> {
@@ -3136,6 +3136,32 @@ ${positionsList}
         return;
       }
       console.log(`[TradingEngine] Supervisor-only: managing ${this.openPositions.size} existing legacy positions.`);
+
+      const config = await storage.getBotConfig();
+      if (!config) return;
+
+      // Fetch balances for SL/TP checks
+      let balances: any;
+      try {
+        balances = await this.getTradingExchange().getBalance();
+      } catch {
+        balances = {};
+      }
+
+      const stopLossPercent = parseFloat(config.stopLossPercent?.toString() || "5");
+      const takeProfitPercent = parseFloat(config.takeProfitPercent?.toString() || "7");
+      const trailingStopEnabled = config.trailingStopEnabled ?? false;
+      const trailingStopPercent = parseFloat(config.trailingStopPercent?.toString() || "2");
+
+      // 1. Stop-Loss / Take-Profit / Trailing
+      for (const pair of (config.activePairs || [])) {
+        await this.exitManager.checkStopLossTakeProfit(pair, stopLossPercent, takeProfitPercent, trailingStopEnabled, trailingStopPercent, balances);
+      }
+
+      // 2. Smart Exit Engine
+      await this.evaluateOpenPositionsWithSmartExit(config, balances);
+
+      // 3. Time-Stop
       await this.checkExpiredTimeStopPositions();
     } catch (error: any) {
       console.error("[TradingEngine] Supervisor-only error:", error.message);
