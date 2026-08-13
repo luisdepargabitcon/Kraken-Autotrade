@@ -48,7 +48,8 @@ ALTER TABLE open_positions
   ADD COLUMN IF NOT EXISTS break_even_stop_price decimal(18,8),
   ADD COLUMN IF NOT EXISTS trailing_stop_price decimal(18,8),
   ADD COLUMN IF NOT EXISTS trailing_highest_price decimal(18,8),
-  ADD COLUMN IF NOT EXISTS lowest_price decimal(18,8);
+  ADD COLUMN IF NOT EXISTS lowest_price decimal(18,8),
+  ADD COLUMN IF NOT EXISTS filled_notional_usd decimal(18,8);
 
 -- ─── trades: SPOT fields for closed positions ─────────────────────────────
 -- Allows SHADOW trades to coexist with REAL in the same table.

@@ -3153,8 +3153,15 @@ ${positionsList}
       const trailingStopEnabled = config.trailingStopEnabled ?? false;
       const trailingStopPercent = parseFloat(config.trailingStopPercent?.toString() || "2");
 
-      // 1. Stop-Loss / Take-Profit / Trailing
-      for (const pair of (config.activePairs || [])) {
+      // R3-4: Use pairs from actual open positions, NOT config.activePairs.
+      // A position must remain protected even if its pair was deactivated for new entries.
+      const legacyOpenPositionPairs = new Set<string>();
+      for (const pos of this.openPositions.values()) {
+        if (pos.pair) legacyOpenPositionPairs.add(pos.pair);
+      }
+
+      // 1. Stop-Loss / Take-Profit / Trailing — protect all open position pairs
+      for (const pair of legacyOpenPositionPairs) {
         await this.exitManager.checkStopLossTakeProfit(pair, stopLossPercent, takeProfitPercent, trailingStopEnabled, trailingStopPercent, balances);
       }
 

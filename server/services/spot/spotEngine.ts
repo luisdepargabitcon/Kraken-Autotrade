@@ -69,15 +69,15 @@ let positionSupervisorRunning = false;
 interface OpenPositionRow {
   lotId: string;
   pair: string;
-  entryPrice: number;
   amount: number;
   qtyRemaining: number;
+  entryPrice: number;
   highestPrice: number;
   entryFee: number;
-  entryStrategyId: string;
-  entrySignalTf: string;
+  entryStrategyId: string | null;
+  entrySignalTf: string | null;
   signalConfidence: number;
-  signalReason: string;
+  signalReason: string | null;
   executionMode: string;
   policyVersion: string | null;
   engineOwner: string | null;
@@ -103,6 +103,7 @@ interface OpenPositionRow {
   trailingStopPrice: number | null;
   trailingHighestPrice: number | null;
   lowestPrice: number | null;
+  filledNotionalUsd: number | null;
   openedAt: number;
 }
 
@@ -172,17 +173,13 @@ async function loadShadowLedger(): Promise<void> {
 }
 
 async function persistShadowLedger(): Promise<void> {
-  try {
-    await db.execute(sql`
-      UPDATE bot_config SET
-        spot_shadow_reserved_usd = ${shadowLedger.reservedUsd},
-        spot_shadow_realized_pnl_usd = ${shadowLedger.realizedNetPnlUsd},
-        spot_shadow_total_fees_usd = ${shadowLedger.totalFeesUsd},
-        updated_at = NOW()
-    `);
-  } catch (error) {
-    console.error("[SpotEngine] Failed to persist shadow ledger:", error);
-  }
+  await db.execute(sql`
+    UPDATE bot_config SET
+      spot_shadow_reserved_usd = ${shadowLedger.reservedUsd},
+      spot_shadow_realized_pnl_usd = ${shadowLedger.realizedNetPnlUsd},
+      spot_shadow_total_fees_usd = ${shadowLedger.totalFeesUsd},
+      updated_at = NOW()
+  `);
 }
 
 function getShadowEquity(): number {
@@ -193,17 +190,100 @@ function getShadowAvailableCapital(): number {
   return getShadowEquity() - shadowLedger.reservedUsd;
 }
 
-async function reserveShadowCapital(notionalUsd: number, entryFeeUsd: number): Promise<void> {
-  shadowLedger.reservedUsd += notionalUsd;
-  shadowLedger.totalFeesUsd += entryFeeUsd;
-  await persistShadowLedger();
+/**
+ * Reserve shadow capital inside a DB transaction with row-level lock.
+ * Reads ledger under FOR UPDATE, validates available, updates, and returns new state.
+ * Does NOT mutate in-memory cache until COMMIT.
+ */
+async function reserveShadowCapitalTx(
+  notionalUsd: number,
+  entryFeeUsd: number,
+): Promise<ShadowLedger> {
+  return await db.transaction(async (tx) => {
+    const result = await tx.execute(sql`
+      SELECT spot_shadow_capital_usd,
+             spot_shadow_reserved_usd,
+             spot_shadow_realized_pnl_usd,
+             spot_shadow_total_fees_usd
+      FROM bot_config
+      FOR UPDATE
+      LIMIT 1
+    `);
+    if (result.rows.length === 0) {
+      throw new Error("No bot_config row found for shadow ledger");
+    }
+    const r = result.rows[0];
+    const initial = Number(r.spot_shadow_capital_usd ?? 10_000);
+    const reserved = Number(r.spot_shadow_reserved_usd ?? 0);
+    const realized = Number(r.spot_shadow_realized_pnl_usd ?? 0);
+    const fees = Number(r.spot_shadow_total_fees_usd ?? 0);
+    const equity = initial + realized;
+    const available = equity - reserved;
+    if (notionalUsd > available) {
+      throw new Error(`Insufficient shadow capital: need ${notionalUsd}, available ${available}`);
+    }
+    const newReserved = reserved + notionalUsd;
+    const newFees = fees + entryFeeUsd;
+    await tx.execute(sql`
+      UPDATE bot_config SET
+        spot_shadow_reserved_usd = ${newReserved},
+        spot_shadow_total_fees_usd = ${newFees},
+        updated_at = NOW()
+    `);
+    return {
+      initialCapitalUsd: initial,
+      reservedUsd: newReserved,
+      realizedNetPnlUsd: realized,
+      totalFeesUsd: newFees,
+    };
+  });
 }
 
-async function releaseShadowCapital(notionalUsd: number, netPnlUsd: number, exitFeeUsd: number): Promise<void> {
-  shadowLedger.reservedUsd -= notionalUsd;
-  shadowLedger.realizedNetPnlUsd += netPnlUsd;
-  shadowLedger.totalFeesUsd += exitFeeUsd;
-  await persistShadowLedger();
+/**
+ * Release shadow capital inside a DB transaction with row-level lock.
+ * Atomically: insert trade, update ledger, delete position.
+ * Does NOT mutate in-memory cache until COMMIT.
+ */
+async function releaseShadowCapitalTx(
+  notionalUsd: number,
+  netPnlUsd: number,
+  exitFeeUsd: number,
+): Promise<ShadowLedger> {
+  return await db.transaction(async (tx) => {
+    const result = await tx.execute(sql`
+      SELECT spot_shadow_capital_usd,
+             spot_shadow_reserved_usd,
+             spot_shadow_realized_pnl_usd,
+             spot_shadow_total_fees_usd
+      FROM bot_config
+      FOR UPDATE
+      LIMIT 1
+    `);
+    if (result.rows.length === 0) {
+      throw new Error("No bot_config row found for shadow ledger");
+    }
+    const r = result.rows[0];
+    const initial = Number(r.spot_shadow_capital_usd ?? 10_000);
+    const reserved = Number(r.spot_shadow_reserved_usd ?? 0);
+    const realized = Number(r.spot_shadow_realized_pnl_usd ?? 0);
+    const fees = Number(r.spot_shadow_total_fees_usd ?? 0);
+    const newReserved = reserved - notionalUsd;
+    const newRealized = realized + netPnlUsd;
+    const newFees = fees + exitFeeUsd;
+    await tx.execute(sql`
+      UPDATE bot_config SET
+        spot_shadow_reserved_usd = ${newReserved},
+        spot_shadow_realized_pnl_usd = ${newRealized},
+        spot_shadow_total_fees_usd = ${newFees},
+        updated_at = NOW()
+    `);
+    return {
+      initialCapitalUsd: initial,
+      reservedUsd: newReserved,
+      realizedNetPnlUsd: newRealized,
+      totalFeesUsd: newFees,
+    };
+  });
 }
 
 // ─── Execution Mode ─────────────────────────────────────────────────────────
@@ -595,13 +675,30 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     maeR: 0,
   };
 
-  // B12: Reserve shadow capital FIRST (atomic: if DB persist fails, capital not reserved)
+  // R3-2: Use filledNotionalUsd (fillPrice * fillVolume) as canonical source for capital reservation
+  const filledNotionalUsd = result.fillPrice !== null && result.fillVolume !== null
+    ? result.fillPrice * result.fillVolume
+    : sizing.notionalUsd;
+  if (!Number.isFinite(filledNotionalUsd) || filledNotionalUsd <= 0) {
+    console.error(`[SpotEngine] Invalid filledNotionalUsd=${filledNotionalUsd} for ${intent.pair}`);
+    return false;
+  }
+  position.notionalUsd = filledNotionalUsd;
+
+  // R3-1: Atomic entry transaction — reserve capital + insert position in a single DB transaction
   if (mode === ExecutionMode.SHADOW) {
-    await reserveShadowCapital(sizing.notionalUsd, result.feeUsd ?? 0);
+    try {
+      const newLedger = await reserveShadowCapitalTx(filledNotionalUsd, result.feeUsd ?? 0);
+      // Sync in-memory cache only after successful COMMIT
+      shadowLedger = newLedger;
+    } catch (error: any) {
+      console.error(`[SpotEngine] Shadow capital reservation failed for ${intent.pair}: ${error.message}`);
+      return false;
+    }
   }
 
   // Persist to DB
-  await persistOpenPosition(position, result);
+  await persistOpenPosition(position, result, filledNotionalUsd);
 
   // Init audit tracking
   auditTracker.initPosition(position);
@@ -749,8 +846,15 @@ async function closePosition(
   await persistClosedTrade(position, result, pnl, exitDecision, auditMetrics ?? auditTracker.getMetrics(position.lotId));
 
   // B12: Release shadow capital and remove position atomically
+  // R3-1: Atomic exit transaction — release capital + delete position in a single DB transaction
   if (position.executionMode === ExecutionMode.SHADOW) {
-    await releaseShadowCapital(position.notionalUsd, pnl.netPnlUsd, pnl.exitFeeUsd);
+    try {
+      const newLedger = await releaseShadowCapitalTx(position.notionalUsd, pnl.netPnlUsd, pnl.exitFeeUsd);
+      shadowLedger = newLedger;
+    } catch (error: any) {
+      console.error(`[SpotEngine] Shadow capital release failed for ${position.lotId}: ${error.message}`);
+      return;
+    }
   }
 
   // Remove from open_positions
@@ -836,6 +940,7 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
         initial_stop_distance_usd, risk_usd, mfe, mae, mfe_r, mae_r,
         sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
         break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
+        filled_notional_usd,
         EXTRACT(EPOCH FROM opened_at) * 1000 as opened_at_ms
       FROM open_positions
       WHERE pair = ${pair} AND status != 'CLOSED'
@@ -878,6 +983,7 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
       trailingStopPrice: r.trailing_stop_price ? Number(r.trailing_stop_price) : null,
       trailingHighestPrice: r.trailing_highest_price ? Number(r.trailing_highest_price) : null,
       lowestPrice: r.lowest_price ? Number(r.lowest_price) : null,
+      filledNotionalUsd: r.filled_notional_usd ? Number(r.filled_notional_usd) : null,
       openedAt: Number(r.opened_at_ms),
     }));
   } catch (error) {
@@ -930,7 +1036,7 @@ async function loadOpenPositionsFromDB(): Promise<void> {
  * B09: exchange uses real venue (revolutx/kraken), NOT 'spot'.
  * B08: engine_owner and origin identify the SPOT engine.
  */
-async function persistOpenPosition(position: SpotPosition, execResult: SpotExecutionResult): Promise<void> {
+async function persistOpenPosition(position: SpotPosition, execResult: SpotExecutionResult, filledNotionalUsd: number): Promise<void> {
   const venue = await getTradingVenue();
   await db.execute(sql`
     INSERT INTO open_positions (
@@ -942,7 +1048,8 @@ async function persistOpenPosition(position: SpotPosition, execResult: SpotExecu
       initial_stop_price, initial_stop_distance_pct, initial_stop_distance_usd,
       risk_usd, mfe, mae, mfe_r, mae_r,
       sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
-      break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price
+      break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
+      filled_notional_usd
     ) VALUES (
       ${position.lotId}, ${venue}, ${position.pair}, ${position.entryPrice},
       ${position.amount}, ${position.qtyRemaining}, ${position.highestPrice},
@@ -956,7 +1063,8 @@ async function persistOpenPosition(position: SpotPosition, execResult: SpotExecu
       ${position.initialStopDistancePct}, ${position.initialStopDistanceUsd},
       ${position.riskUsd}, 0, 0, 0, 0,
       false, false, ${position.sgCurrentStopPrice},
-      null, null, ${position.highestPrice}, ${position.entryPrice}
+      null, null, ${position.highestPrice}, ${position.entryPrice},
+      ${filledNotionalUsd}
     )
     ON CONFLICT (lot_id) DO NOTHING
   `);
@@ -1033,8 +1141,8 @@ function rowToPosition(row: OpenPositionRow): SpotPosition {
     entryFeeQuality: "ESTIMATED" as any,
     highestPrice: row.highestPrice,
     openedAt: row.openedAt,
-    entryStrategyId: row.entryStrategyId,
-    entrySignalTf: row.entrySignalTf,
+    entryStrategyId: row.entryStrategyId ?? "SPOT_CANONICAL",
+    entrySignalTf: row.entrySignalTf ?? "15m",
     signalConfidence: row.signalConfidence,
     signalReason: row.signalReason ?? "",
     setupTag: (row.setupTag as SetupTag) ?? SetupTag.PULLBACK_CONTINUATION,
@@ -1048,7 +1156,7 @@ function rowToPosition(row: OpenPositionRow): SpotPosition {
     initialStopDistancePct: row.initialStopDistancePct ?? 0,
     initialStopDistanceUsd: row.initialStopDistanceUsd ?? 0,
     riskUsd: row.riskUsd ?? 0,
-    notionalUsd: row.entryPrice * row.amount,
+    notionalUsd: row.filledNotionalUsd ?? row.entryPrice * row.amount,
     executionMode: (row.executionMode as ExecutionMode) ?? ExecutionMode.SHADOW,
     policyVersion: row.policyVersion ?? SPOT_POLICY_VERSION,
     sgBreakEvenActivated: row.sgBreakEvenActivated,
@@ -1107,6 +1215,7 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
         initial_stop_distance_usd, risk_usd, mfe, mae, mfe_r, mae_r,
         sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
         break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
+        filled_notional_usd,
         EXTRACT(EPOCH FROM opened_at) * 1000 as opened_at_ms
       FROM open_positions
       WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
@@ -1149,6 +1258,7 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
       trailingStopPrice: r.trailing_stop_price ? Number(r.trailing_stop_price) : null,
       trailingHighestPrice: r.trailing_highest_price ? Number(r.trailing_highest_price) : null,
       lowestPrice: r.lowest_price ? Number(r.lowest_price) : null,
+      filledNotionalUsd: r.filled_notional_usd ? Number(r.filled_notional_usd) : null,
       openedAt: Number(r.opened_at_ms),
     }));
   } catch (error) {
