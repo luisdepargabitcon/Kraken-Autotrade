@@ -8,8 +8,6 @@ import { MobileTabBar } from "@/components/mobile/MobileTabBar";
 import NexaHome from "@/pages/NexaHome";
 import Dashboard from "@/pages/Dashboard";
 import Settings from "@/pages/Settings";
-import Terminal from "@/pages/Terminal";
-import Strategies from "@/pages/Strategies";
 import Wallet from "@/pages/Wallet";
 import Integrations from "@/pages/Integrations";
 import Notifications from "@/pages/Notifications";

@@ -98,20 +98,14 @@ export default function Settings() {
   const queryClient = useQueryClient();
   
   const [wsAdminToken, setWsAdminToken] = useState("");
-  const [terminalToken, setTerminalToken] = useState("");
   const [showWsToken, setShowWsToken] = useState(false);
-  const [showTerminalToken, setShowTerminalToken] = useState(false);
   const [wsTokenSaved, setWsTokenSaved] = useState(false);
-  const [terminalTokenSaved, setTerminalTokenSaved] = useState(false);
 
   useEffect(() => {
     try {
       const savedWsToken = localStorage.getItem("WS_ADMIN_TOKEN") || "";
-      const savedTerminalToken = localStorage.getItem("TERMINAL_TOKEN") || "";
       setWsAdminToken(savedWsToken);
-      setTerminalToken(savedTerminalToken);
       setWsTokenSaved(!!savedWsToken);
-      setTerminalTokenSaved(!!savedTerminalToken);
     } catch (e) {
       console.warn("localStorage no disponible:", e);
     }
@@ -126,18 +120,10 @@ export default function Settings() {
         localStorage.removeItem("WS_ADMIN_TOKEN");
         setWsTokenSaved(false);
       }
-      if (terminalToken) {
-        localStorage.setItem("TERMINAL_TOKEN", terminalToken);
-        setTerminalTokenSaved(true);
-      } else {
-        localStorage.removeItem("TERMINAL_TOKEN");
-        setTerminalTokenSaved(false);
-      }
-      
       // Dispatch custom event for same-tab WebSocket reconnection (cross-browser compatible)
       try {
         window.dispatchEvent(new CustomEvent("ws-tokens-updated", {
-          detail: { wsToken: !!wsAdminToken, terminalToken: !!terminalToken }
+          detail: { wsToken: !!wsAdminToken }
         }));
       } catch (eventErr) {
         console.warn("CustomEvent dispatch failed:", eventErr);
@@ -433,33 +419,6 @@ export default function Settings() {
                     <p className="text-xs text-muted-foreground">Opcional en desarrollo, requerido en producción.</p>
                   </div>
                   
-                  <div className="grid gap-2">
-                    <Label htmlFor="terminal-token">TERMINAL_TOKEN (Terminal)</Label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Input
-                          id="terminal-token"
-                          type={showTerminalToken ? "text" : "password"}
-                          value={terminalToken}
-                          onChange={(e) => setTerminalToken(e.target.value)}
-                          placeholder="Token para /ws/logs"
-                          className="font-mono pr-10"
-                          data-testid="input-terminal-token"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowTerminalToken(!showTerminalToken)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        >
-                          {showTerminalToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                      {terminalTokenSaved && (
-                        <Check className="h-5 w-5 text-green-500 self-center" data-testid="check-terminal-token" />
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">Obligatorio para ver logs del servidor.</p>
-                  </div>
                 </div>
                 
                 <Button onClick={handleSaveTokens} className="w-full" data-testid="button-save-tokens">

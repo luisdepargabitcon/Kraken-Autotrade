@@ -26,12 +26,23 @@ interface RealReadiness {
     realActivationAllowed: boolean;
     exchangeInitialized: boolean;
     exchangeName: string | null;
+    balanceReachable: boolean;
     feeModelValid: boolean;
     takerFeePct: number | null;
     makerFeePct: number | null;
+    activePairsConfigured: boolean;
+    activePairsCount: number;
+    pairMetadataLoaded: boolean;
+    uncertainPositionsCount: number;
+    pendingFillPositionsCount: number;
+    exitPendingPositionsCount: number;
+    legacyEntriesCount: number;
     shadowPositionsOpen: boolean;
     shadowPositionsCount: number;
     apiCredentialsConfigured: boolean;
+    realAdapterImplemented: boolean;
+    entryScannerCount: number;
+    positionSupervisorCount: number;
   };
 }
 
@@ -168,17 +179,25 @@ export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) 
                   </p>
                   {readinessLoading && <p className="text-xs text-muted-foreground">Verificando preparación...</p>}
                   {readiness && (
-                    <div className="space-y-2">
+                    <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                       <div className="space-y-1">
-                        <p className="text-xs font-semibold">Verificaciones:</p>
+                        <p className="text-xs font-semibold">Verificaciones comprehensivas:</p>
                         <ReadinessCheck label="REAL autorizado" ok={readiness.checks.realActivationAllowed} />
                         <ReadinessCheck label={`Exchange: ${readiness.checks.exchangeName ?? "—"}`} ok={readiness.checks.exchangeInitialized} />
+                        <ReadinessCheck label="Balance reachable" ok={readiness.checks.balanceReachable} />
                         <ReadinessCheck label="Fee model válido" ok={readiness.checks.feeModelValid} />
+                        <ReadinessCheck label={`Pares activos (${readiness.checks.activePairsCount})`} ok={readiness.checks.activePairsConfigured} />
+                        <ReadinessCheck label="Metadata de pares" ok={readiness.checks.pairMetadataLoaded} />
+                        <ReadinessCheck label="Sin posiciones UNCERTAIN" ok={readiness.checks.uncertainPositionsCount === 0} />
+                        <ReadinessCheck label="Sin PENDING_FILL" ok={readiness.checks.pendingFillPositionsCount === 0} />
+                        <ReadinessCheck label="Sin EXIT_PENDING" ok={readiness.checks.exitPendingPositionsCount === 0} />
+                        <ReadinessCheck label="Sin entradas legacy" ok={readiness.checks.legacyEntriesCount === 0} />
                         <ReadinessCheck label="Credenciales API" ok={readiness.checks.apiCredentialsConfigured} />
+                        <ReadinessCheck label="RealAdapter implementado" ok={readiness.checks.realAdapterImplemented} />
                       </div>
                       {readiness.blockers.length > 0 && (
                         <div className="space-y-1">
-                          <p className="text-xs font-semibold text-red-400">Bloqueantes:</p>
+                          <p className="text-xs font-semibold text-red-400">Bloqueantes ({readiness.blockers.length}):</p>
                           {readiness.blockers.map((b, i) => (
                             <p key={i} className="text-xs text-red-400">• {b}</p>
                           ))}
@@ -186,7 +205,7 @@ export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) 
                       )}
                       {readiness.warnings.length > 0 && (
                         <div className="space-y-1">
-                          <p className="text-xs font-semibold text-yellow-400">Advertencias:</p>
+                          <p className="text-xs font-semibold text-yellow-400">Advertencias ({readiness.warnings.length}):</p>
                           {readiness.warnings.map((w, i) => (
                             <p key={i} className="text-xs text-yellow-400">• {w}</p>
                           ))}

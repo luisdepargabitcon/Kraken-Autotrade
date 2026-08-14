@@ -81,8 +81,8 @@ describe("SPOT_UNKNOWN_EXECUTION_MODE_FAILSAFE", () => {
 });
 
 describe("SPOT_REAL_REQUIRES_EXPLICIT_ACTIVATION", () => {
-  it("REAL_ACTIVATION_ALLOWED is false during refactor", () => {
-    expect(REAL_ACTIVATION_ALLOWED).toBe(false);
+  it("REAL_ACTIVATION_ALLOWED is true (R10 enabled)", () => {
+    expect(REAL_ACTIVATION_ALLOWED).toBe(true);
   });
 
   it("dryRunMode=false + active=true maps to REAL (but activation blocked elsewhere)", () => {

@@ -583,18 +583,17 @@ describe("R7 — Canonical Ownership / OFF Fail-Safe", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("REAL_REMAINS_BLOCKED", () => {
-    it("REAL_REMAINS_BLOCKED — REAL_ACTIVATION_ALLOWED is false", () => {
-      expect(REAL_ACTIVATION_ALLOWED).toBe(false);
+    it("REAL_ACTIVATION_ALLOWED is true (R10 enabled)", () => {
+      expect(REAL_ACTIVATION_ALLOWED).toBe(true);
     });
 
-    it("REAL_REMAINS_BLOCKED — setExecutionMode(REAL) throws", async () => {
-      await expect(setExecutionMode(ExecutionMode.REAL)).rejects.toThrow(/not authorized/);
+    it("setExecutionMode(REAL) succeeds when REAL_ACTIVATION_ALLOWED=true (R10)", async () => {
+      await expect(setExecutionMode(ExecutionMode.REAL)).resolves.toBe(ExecutionMode.REAL);
     });
 
-    it("REAL_REMAINS_BLOCKED — isSpotRuntimeOwner is true but REAL is still blocked", () => {
-      // Ownership being true doesn't mean REAL is allowed
+    it("isSpotRuntimeOwner is true and REAL is allowed (R10)", () => {
       expect(isSpotRuntimeOwner()).toBe(true);
-      expect(REAL_ACTIVATION_ALLOWED).toBe(false);
+      expect(REAL_ACTIVATION_ALLOWED).toBe(true);
     });
   });
 

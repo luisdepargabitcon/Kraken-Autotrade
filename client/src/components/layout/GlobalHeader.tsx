@@ -9,7 +9,9 @@ export function GlobalHeader() {
   const navItems = [
     { href: "/", label: "Home", labelShort: "Home" },
     { href: "/dca", label: "DCA Inteligente", labelShort: "DCA", aliases: ["/institutional-dca"] },
-    { href: "/trading", label: "Trading Activo", labelShort: "Trading", aliases: ["/strategies"] },
+    { href: "/spot", label: "SPOT", labelShort: "SPOT", aliases: ["/trading", "/strategies"] },
+    { href: "/grid-isolated", label: "Grid Isolated", labelShort: "Grid" },
+    { href: "/ama", label: "AMA", labelShort: "AMA" },
     { href: "/fiscal", label: "Fiscal Crypto", labelShort: "Fiscal", aliases: ["/fisco"] },
   ];
 

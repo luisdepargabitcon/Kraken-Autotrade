@@ -369,12 +369,12 @@ describe("B15 — SPOT Canonical Engine Comprehensive Tests", () => {
       expect(isSpotActive()).toBe(true);
     });
 
-    it("REAL activation is blocked by REAL_ACTIVATION_ALLOWED=false", () => {
-      expect(REAL_ACTIVATION_ALLOWED).toBe(false);
+    it("REAL activation is allowed (R10: REAL_ACTIVATION_ALLOWED=true)", () => {
+      expect(REAL_ACTIVATION_ALLOWED).toBe(true);
     });
 
-    it("setExecutionMode(REAL) throws when REAL_ACTIVATION_ALLOWED=false", async () => {
-      await expect(setExecutionMode(ExecutionMode.REAL)).rejects.toThrow(/not authorized/);
+    it("setExecutionMode(REAL) succeeds when REAL_ACTIVATION_ALLOWED=true (R10)", async () => {
+      await expect(setExecutionMode(ExecutionMode.REAL)).resolves.toBe(ExecutionMode.REAL);
     });
   });
 
@@ -573,7 +573,7 @@ describe("B15 — SPOT Canonical Engine Comprehensive Tests", () => {
         ttlMs: 30000,
         createdAt: Date.now(),
       };
-      const result = await adapter.executeEntry(execIntent, mockContext as any);
+      const result = await adapter.executeEntry(execIntent, mockContext as any, "test-client-id");
       expect(result.success).toBe(true);
       expect(result.fillPrice).toBeGreaterThan(0);
     });

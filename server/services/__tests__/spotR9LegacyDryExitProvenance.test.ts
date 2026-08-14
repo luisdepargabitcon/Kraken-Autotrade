@@ -367,8 +367,8 @@ describe("R9 — Legacy DRY Exit Provenance Fail-Closed", () => {
       expect(SPOT_CANONICAL_OWNS_ENTRIES).toBe(true);
     });
 
-    it("D3: REAL_ACTIVATION_ALLOWED is false", () => {
-      expect(REAL_ACTIVATION_ALLOWED).toBe(false);
+    it("D3: REAL_ACTIVATION_ALLOWED is true (R10 enabled)", () => {
+      expect(REAL_ACTIVATION_ALLOWED).toBe(true);
     });
 
     it("D4: spotOwnership.ts is still pure (no heavy deps)", () => {

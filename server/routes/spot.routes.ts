@@ -40,7 +40,7 @@ import {
 import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
 import { checkRealReadiness } from "../services/spot/spotRealReadiness";
-import { getActivityEvents, humanizeSeverity, humanizeCategory, formatTimeAgo } from "../services/spot/spotActivityLogger";
+import { getActivityEvents, getActivityEventsFiltered, humanizeSeverity, humanizeCategory, formatTimeAgo } from "../services/spot/spotActivityLogger";
 
 // ─── Route registration ─────────────────────────────────────────────────────
 
@@ -213,11 +213,27 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   });
 
   // ─── GET /api/spot/activity ───────────────────────────────────────────────
+  // R10.1: Enhanced with filters: limit, pair, category, severity, mode
   app.get("/api/spot/activity", async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
       const category = req.query.category as string | undefined;
-      const events = getActivityEvents(limit, category as any);
+      const pair = req.query.pair as string | undefined;
+      const severity = req.query.severity as string | undefined;
+      const mode = req.query.mode as string | undefined;
+
+      // R10.1: Use filtered query if any filter beyond limit/category is provided
+      const hasAdvancedFilters = pair || severity || mode;
+      const events = hasAdvancedFilters
+        ? getActivityEventsFiltered({
+            limit,
+            pair: pair || undefined,
+            category: category as any || undefined,
+            severity: severity as any || undefined,
+            mode: mode as any || undefined,
+          })
+        : getActivityEvents(limit, category as any);
+
       res.json({
         events: events.map((e) => ({
           ...e,

@@ -349,7 +349,7 @@ describe("R3 — Pre-Deploy SPOT Engine Tests", () => {
         executionMode: ExecutionMode.SHADOW,
         ttlMs: 30000,
         createdAt: Date.now(),
-      }, ctx);
+      }, ctx, "test-client-id");
 
       expect(result.success).toBe(true);
       expect(result.fillPrice).toBeGreaterThan(101); // ask + slippage

@@ -303,6 +303,8 @@ export interface SpotExitState {
 export interface SpotExecutionResult {
   success: boolean;
   orderId: string | null;
+  clientOrderId: string | null;
+  venueOrderId: string | null;
   fillPrice: number | null;
   fillVolume: number | null;
   fillQuality: FeeQuality;
@@ -375,6 +377,8 @@ export interface RealOrderRecord {
   pair: string;
   side: ExecutionSide;
   requestedQty: number;
+  requestedPrice: number | null;
+  orderType: ExecutionOrderType;
   submittedAt: number;
   status: RealOrderState;
   policyVersion: string;

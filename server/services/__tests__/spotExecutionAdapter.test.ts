@@ -103,7 +103,7 @@ describe("SPOT_SHADOW_NEVER_REAL_ORDER", () => {
     const adapter = new SpotShadowAdapter();
     const ctx = makeMarketContext();
     const intent = makeEntryIntent();
-    const result = await adapter.executeEntry(intent, ctx);
+    const result = await adapter.executeEntry(intent, ctx, "test-client-id");
     // Should succeed with phantom fill
     expect(result.success).toBe(true);
     expect(result.orderId).toContain("shadow-");
@@ -115,7 +115,7 @@ describe("SPOT_SHADOW_NEVER_REAL_ORDER", () => {
     const adapter = new SpotShadowAdapter();
     const ctx = makeMarketContext();
     const intent = makeEntryIntent();
-    const result = await adapter.executeEntry(intent, ctx);
+    const result = await adapter.executeEntry(intent, ctx, "test-client-id");
     expect(result.fillPrice).not.toBeNull();
     expect(result.fillVolume).toBe(intent.volume);
     expect(result.fillQuality).toBe("ESTIMATED");
@@ -130,7 +130,7 @@ describe("SPOT_REAL_IMPLEMENTED", () => {
     const intent = makeEntryIntent();
     // R10: REAL adapter now calls exchange instead of throwing
     // In test env without mock, it will return a failure result (no exchange)
-    const result = await adapter.executeEntry(intent, ctx);
+    const result = await adapter.executeEntry(intent, ctx, "test-client-id");
     expect(result.success).toBe(false); // Expected: no exchange in test env
     expect(result.error).toBeDefined();
   });
@@ -139,7 +139,7 @@ describe("SPOT_REAL_IMPLEMENTED", () => {
     const adapter = new SpotRealAdapter();
     const ctx = makeMarketContext();
     const intent = makeExitIntent();
-    const result = await adapter.executeExit(intent, ctx);
+    const result = await adapter.executeExit(intent, ctx, "test-client-id");
     expect(result.success).toBe(false); // Expected: no exchange in test env
     expect(result.error).toBeDefined();
   });
@@ -150,7 +150,7 @@ describe("SPOT_PHANTOM_FILL", () => {
     const adapter = new SpotShadowAdapter();
     const ctx = makeMarketContext();
     const intent = makeEntryIntent();
-    const result = await adapter.executeEntry(intent, ctx);
+    const result = await adapter.executeEntry(intent, ctx, "test-client-id");
     expect(result.success).toBe(true);
     // Ask = 100025, slippage ~0.02% → fillPrice > ask
     expect(result.fillPrice!).toBeGreaterThan(100_025);
@@ -162,7 +162,7 @@ describe("SPOT_PHANTOM_FILL", () => {
     const adapter = new SpotShadowAdapter();
     const ctx = makeMarketContext();
     const intent = makeExitIntent();
-    const result = await adapter.executeExit(intent, ctx);
+    const result = await adapter.executeExit(intent, ctx, "test-client-id");
     expect(result.success).toBe(true);
     // Bid = 99975, slippage ~0.02% → fillPrice < bid
     expect(result.fillPrice!).toBeLessThan(99_975);
@@ -173,7 +173,7 @@ describe("SPOT_PHANTOM_FILL", () => {
     const adapter = new SpotShadowAdapter();
     const ctx = makeMarketContext();
     const intent = makeEntryIntent();
-    const result = await adapter.executeEntry(intent, ctx);
+    const result = await adapter.executeEntry(intent, ctx, "test-client-id");
     // Fee = notional × takerPct = (fillPrice × 0.1) × 0.0009
     const expectedFee = result.fillPrice! * 0.1 * 0.0009;
     expect(result.feeUsd).toBeCloseTo(expectedFee, 4);
@@ -184,8 +184,8 @@ describe("SPOT_PHANTOM_FILL", () => {
     const ctx = makeMarketContext();
     const smallIntent = { ...makeEntryIntent(), notionalUsd: 500, volume: 0.005 };
     const largeIntent = { ...makeEntryIntent(), notionalUsd: 10_000, volume: 0.1 };
-    const smallResult = await adapter.executeEntry(smallIntent, ctx);
-    const largeResult = await adapter.executeEntry(largeIntent, ctx);
+    const smallResult = await adapter.executeEntry(smallIntent, ctx, "test-client-id");
+    const largeResult = await adapter.executeEntry(largeIntent, ctx, "test-client-id");
     // Large order should have more slippage
     const smallSlippagePct = (smallResult.fillPrice! - 100_025) / 100_025 * 100;
     const largeSlippagePct = (largeResult.fillPrice! - 100_025) / 100_025 * 100;
@@ -198,7 +198,7 @@ describe("SPOT_ADAPTER_VALIDATION", () => {
     const adapter = new SpotShadowAdapter();
     const ctx = makeMarketContext();
     const intent = { ...makeEntryIntent(), side: "SELL" as const };
-    const result = await adapter.executeEntry(intent, ctx);
+    const result = await adapter.executeEntry(intent, ctx, "test-client-id");
     expect(result.success).toBe(false);
     expect(result.error).toContain("BUY");
   });
@@ -207,7 +207,7 @@ describe("SPOT_ADAPTER_VALIDATION", () => {
     const adapter = new SpotShadowAdapter();
     const ctx = makeMarketContext();
     const intent = { ...makeExitIntent(), side: "BUY" as const };
-    const result = await adapter.executeExit(intent, ctx);
+    const result = await adapter.executeExit(intent, ctx, "test-client-id");
     expect(result.success).toBe(false);
     expect(result.error).toContain("SELL");
   });

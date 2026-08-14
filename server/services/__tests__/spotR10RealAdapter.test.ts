@@ -107,16 +107,19 @@ describe("R10: SpotRealAdapter", () => {
       });
 
       const adapter = new SpotRealAdapter();
-      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext());
+      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext(), "test-client-id-123");
 
       expect(result.success).toBe(true);
       expect(result.fillPrice).toBe(100_050);
       expect(result.fillVolume).toBe(0.1);
       expect(result.pendingFill).toBe(false);
       expect(result.orderId).toBe("exchange-order-123");
+      expect(result.clientOrderId).toBe("test-client-id-123");
+      expect(result.venueOrderId).toBe("exchange-order-123");
       expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
       expect(mockPlaceOrder.mock.calls[0][0].type).toBe("buy");
       expect(mockPlaceOrder.mock.calls[0][0].pair).toBe("BTC/USD");
+      expect(mockPlaceOrder.mock.calls[0][0].clientOrderId).toBe("test-client-id-123");
     });
 
     it("R10-TE2: should handle pending fill (no fill price)", async () => {
@@ -127,13 +130,15 @@ describe("R10: SpotRealAdapter", () => {
       });
 
       const adapter = new SpotRealAdapter();
-      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext());
+      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext(), "test-client-id-pending");
 
       expect(result.success).toBe(true);
       expect(result.pendingFill).toBe(true);
       expect(result.fillPrice).toBeNull();
       expect(result.fillVolume).toBeNull();
       expect(result.orderId).toBe("exchange-order-pending");
+      expect(result.clientOrderId).toBe("test-client-id-pending");
+      expect(result.venueOrderId).toBe("exchange-order-pending");
     });
 
     it("R10-TE3: should return failure on exchange rejection", async () => {
@@ -143,7 +148,7 @@ describe("R10: SpotRealAdapter", () => {
       });
 
       const adapter = new SpotRealAdapter();
-      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext());
+      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext(), "test-client-id");
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Insufficient balance");
@@ -153,7 +158,7 @@ describe("R10: SpotRealAdapter", () => {
       mockPlaceOrder.mockRejectedValue(new Error("Network timeout"));
 
       const adapter = new SpotRealAdapter();
-      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext());
+      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext(), "test-client-id");
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Network timeout");
@@ -162,7 +167,7 @@ describe("R10: SpotRealAdapter", () => {
     it("R10-TE5: should reject SELL intent for entry", async () => {
       const adapter = new SpotRealAdapter();
       const sellIntent = { ...makeEntryIntent(), side: "SELL" as const };
-      const result = await adapter.executeEntry(sellIntent, makeMarketContext());
+      const result = await adapter.executeEntry(sellIntent, makeMarketContext(), "test-client-id");
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("BUY");
@@ -172,14 +177,14 @@ describe("R10: SpotRealAdapter", () => {
     it("R10-TE6: should reject invalid volume", async () => {
       const adapter = new SpotRealAdapter();
       const badIntent = { ...makeEntryIntent(), volume: -1 };
-      const result = await adapter.executeEntry(badIntent, makeMarketContext());
+      const result = await adapter.executeEntry(badIntent, makeMarketContext(), "test-client-id");
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("volume");
       expect(mockPlaceOrder).not.toHaveBeenCalled();
     });
 
-    it("R10-TE7: should generate UUID clientOrderId", async () => {
+    it("R10-TE7: should pass clientOrderId from caller to exchange", async () => {
       mockPlaceOrder.mockResolvedValue({
         success: true,
         orderId: "exchange-123",
@@ -189,12 +194,11 @@ describe("R10: SpotRealAdapter", () => {
       });
 
       const adapter = new SpotRealAdapter();
-      await adapter.executeEntry(makeEntryIntent(), makeMarketContext());
+      const testClientOrderId = "caller-provided-uuid-1234";
+      await adapter.executeEntry(makeEntryIntent(), makeMarketContext(), testClientOrderId);
 
       const clientOrderId = mockPlaceOrder.mock.calls[0][0].clientOrderId;
-      expect(clientOrderId).toBeDefined();
-      // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-      expect(clientOrderId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      expect(clientOrderId).toBe(testClientOrderId);
     });
 
     it("R10-TE8: should compute fee and slippage on immediate fill", async () => {
@@ -207,7 +211,7 @@ describe("R10: SpotRealAdapter", () => {
       });
 
       const adapter = new SpotRealAdapter();
-      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext());
+      const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext(), "test-client-id");
 
       // Fee = 100050 * 0.1 * 0.0009 = 9.0045
       expect(result.feeUsd).toBeCloseTo(9.0045, 2);
@@ -227,12 +231,15 @@ describe("R10: SpotRealAdapter", () => {
       });
 
       const adapter = new SpotRealAdapter();
-      const result = await adapter.executeExit(makeExitIntent(), makeMarketContext());
+      const result = await adapter.executeExit(makeExitIntent(), makeMarketContext(), "test-client-id-exit");
 
       expect(result.success).toBe(true);
       expect(result.fillPrice).toBe(101_000);
+      expect(result.clientOrderId).toBe("test-client-id-exit");
+      expect(result.venueOrderId).toBe("exchange-sell-123");
       expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
       expect(mockPlaceOrder.mock.calls[0][0].type).toBe("sell");
+      expect(mockPlaceOrder.mock.calls[0][0].clientOrderId).toBe("test-client-id-exit");
     });
 
     it("R10-TE10: should handle pending fill for exit", async () => {
@@ -243,17 +250,18 @@ describe("R10: SpotRealAdapter", () => {
       });
 
       const adapter = new SpotRealAdapter();
-      const result = await adapter.executeExit(makeExitIntent(), makeMarketContext());
+      const result = await adapter.executeExit(makeExitIntent(), makeMarketContext(), "test-client-id");
 
       expect(result.success).toBe(true);
       expect(result.pendingFill).toBe(true);
       expect(result.fillPrice).toBeNull();
+      expect(result.clientOrderId).toBe("test-client-id");
     });
 
     it("R10-TE11: should reject BUY intent for exit", async () => {
       const adapter = new SpotRealAdapter();
       const buyIntent = { ...makeExitIntent(), side: "BUY" as const };
-      const result = await adapter.executeExit(buyIntent, makeMarketContext());
+      const result = await adapter.executeExit(buyIntent, makeMarketContext(), "test-client-id");
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("SELL");
@@ -265,7 +273,7 @@ describe("R10: SpotRealAdapter", () => {
     it("R10-TE12: SHADOW adapter should never call exchange", async () => {
       const adapter = new SpotShadowAdapter();
       const shadowIntent = { ...makeEntryIntent(), executionMode: ExecutionMode.SHADOW };
-      const result = await adapter.executeEntry(shadowIntent, makeMarketContext());
+      const result = await adapter.executeEntry(shadowIntent, makeMarketContext(), "test-client-id");
 
       expect(result.success).toBe(true);
       expect(result.fillPrice).not.toBeNull();
