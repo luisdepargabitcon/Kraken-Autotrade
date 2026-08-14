@@ -46,6 +46,7 @@ import { evaluateExit, createExitState, restoreExitState, DEFAULT_SPOT_EXIT_CONF
 import { SpotAuditTracker, type SpotAuditMetrics, type ExitAuditMetrics } from "./spotAuditTracker";
 import { computePnlBreakdown, getTradingFeeModel } from "./feeModel";
 import { DataHealth } from "./candleTimestamp";
+import { logActivity } from "./spotActivityLogger";
 
 // R8: Re-export ownership from pure module (no heavy deps)
 import {
@@ -434,7 +435,7 @@ export async function getExecutionMode(): Promise<ExecutionMode> {
 
 /**
  * Set execution mode (persisted to DB).
- * REAL is blocked.
+ * R10: REAL is now supported with preflight checks.
  * OFF = entry disabled, position supervisor continues while SPOT positions exist.
  */
 export async function setExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
@@ -465,6 +466,16 @@ export async function setExecutionMode(mode: ExecutionMode): Promise<ExecutionMo
     entryScanningEnabled = true;
   }
   console.log(`[SpotEngine] Execution mode set to ${mode}`);
+  logActivity({
+    pair: null,
+    category: "MODE",
+    severity: mode === ExecutionMode.REAL ? "CRITICAL" : "INFO",
+    title: `Modo cambiado a ${mode}`,
+    explanation: `Modo de ejecución SPOT cambiado a ${mode}`,
+    decision: mode,
+    executionMode: mode,
+    reasonCode: "MODE_CHANGE",
+  });
   return mode;
 }
 
@@ -890,8 +901,120 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   const adapter = createExecutionAdapter(mode);
   const result = await adapter.executeEntry(execIntent, ctx);
 
-  if (!result.success || result.fillPrice === null) {
+  if (!result.success) {
     console.error(`[SpotEngine] Entry failed for ${intent.pair}: ${result.error}`);
+    logActivity({
+      pair: intent.pair,
+      category: "ENTRY",
+      severity: "WARNING",
+      title: "Entrada rechazada",
+      explanation: `Orden de entrada falló: ${result.error}`,
+      decision: "REJECT",
+      executionMode: mode,
+      setupTag: intent.setupTag,
+      reasonCode: "ENTRY_FAILED",
+      intentId: execIntent.intentId,
+      orderId: result.orderId,
+    });
+    return false;
+  }
+
+  // R10: Handle pending fill — persist position with status='PENDING_FILL'
+  if (result.pendingFill && result.fillPrice === null) {
+    const lotId = `spot-${intent.pair}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const now = Date.now();
+
+    const position: SpotPosition = {
+      lotId,
+      pair: intent.pair,
+      amount: sizing.volume,
+      qtyRemaining: sizing.volume,
+      entryPrice: 0, // unknown until fill
+      entryFee: 0,
+      entryFeeQuality: "UNKNOWN" as any,
+      highestPrice: ctx.ticker.last,
+      openedAt: now,
+      entryStrategyId: "SPOT_CANONICAL",
+      entrySignalTf: "15m",
+      signalConfidence: signal?.confidence ?? 0,
+      signalReason: signal?.reason ?? intent.setupTag,
+      setupTag: intent.setupTag,
+      signalId: intent.signalId,
+      marketContextId: ctx.marketContextId,
+      regimeAtEntry: ctx.regimeContext.regime,
+      directionAtEntry: ctx.regimeContext.direction,
+      macroAtEntry: ctx.regimeContext.macroBias,
+      atrPctAtEntry: ctx.regimeContext.atrPct,
+      initialStopPrice: sizing.stopPrice,
+      initialStopDistancePct: sizing.stopDistancePct,
+      initialStopDistanceUsd: sizing.stopDistanceUsd,
+      riskUsd: sizing.riskUsd,
+      notionalUsd: sizing.notionalUsd,
+      executionMode: mode,
+      policyVersion: SPOT_POLICY_VERSION,
+      sgBreakEvenActivated: false,
+      sgTrailingActivated: false,
+      sgScaleOutDone: false,
+      sgCurrentStopPrice: sizing.stopPrice,
+      mfe: 0, mae: 0, mfeR: 0, maeR: 0,
+    };
+
+    // Persist with PENDING_FILL status
+    const venue = await getTradingVenue();
+    await db.execute(sql`
+      INSERT INTO open_positions (
+        lot_id, exchange, pair, entry_price, amount, qty_remaining, highest_price,
+        entry_strategy_id, entry_signal_tf, signal_confidence, signal_reason,
+        entry_fee, status, opened_at,
+        execution_mode, policy_version, engine_owner, origin, setup_tag, signal_id, market_context_id,
+        regime_at_entry, direction_at_entry, macro_at_entry, atr_pct_at_entry,
+        initial_stop_price, initial_stop_distance_pct, initial_stop_distance_usd,
+        risk_usd, mfe, mae, mfe_r, mae_r,
+        sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
+        break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
+        filled_notional_usd, client_order_id, venue_order_id
+      ) VALUES (
+        ${position.lotId}, ${venue}, ${position.pair}, 0,
+        ${position.amount}, ${position.qtyRemaining}, ${position.highestPrice},
+        ${position.entryStrategyId}, ${position.entrySignalTf},
+        ${position.signalConfidence}, ${position.signalReason},
+        0, 'PENDING_FILL', NOW(),
+        ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER}, ${SPOT_ORIGIN},
+        ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
+        ${position.regimeAtEntry}, ${position.directionAtEntry}, ${position.macroAtEntry},
+        ${position.atrPctAtEntry}, ${position.initialStopPrice},
+        ${position.initialStopDistancePct}, ${position.initialStopDistanceUsd},
+        ${position.riskUsd}, 0, 0, 0, 0,
+        false, false, ${position.sgCurrentStopPrice},
+        null, null, ${position.highestPrice}, ${position.highestPrice},
+        ${position.notionalUsd}, ${execIntent.intentId}, ${result.orderId}
+      )
+    `);
+
+    auditTracker.initPosition(position);
+    const exitState = createExitState(position);
+    exitStates.set(lotId, exitState);
+
+    console.log(`[SpotEngine] Position PENDING_FILL: ${lotId} ${intent.pair} orderId=${result.orderId}`);
+    logActivity({
+      pair: intent.pair,
+      category: "EXECUTION",
+      severity: "ATTENTION",
+      title: "Orden enviada — pendiente de fill",
+      explanation: `Orden de entrada enviada al exchange, esperando confirmación de fill. orderId=${result.orderId}`,
+      decision: "PENDING_FILL",
+      executionMode: mode,
+      setupTag: intent.setupTag,
+      reasonCode: "PENDING_FILL",
+      intentId: execIntent.intentId,
+      orderId: result.orderId,
+      lotId,
+    });
+    return true;
+  }
+
+  if (result.fillPrice === null) {
+    console.error(`[SpotEngine] Entry failed for ${intent.pair}: no fill price`);
     return false;
   }
 
@@ -970,6 +1093,24 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   exitStates.set(lotId, exitState);
 
   console.log(`[SpotEngine] Position opened: ${lotId} ${intent.pair} @ ${result.fillPrice}, mode=${mode}`);
+  logActivity({
+    pair: intent.pair,
+    category: "ENTRY",
+    severity: "SUCCESS",
+    title: `Entrada ejecutada — ${intent.setupTag}`,
+    explanation: `Posición abierta: ${lotId} @ ${result.fillPrice}, vol=${position.amount}, modo=${mode}`,
+    decision: "BUY",
+    executionMode: mode,
+    setupTag: intent.setupTag,
+    regime: ctx.regimeContext.regime,
+    direction: ctx.regimeContext.direction,
+    macroBias: ctx.regimeContext.macroBias,
+    price: result.fillPrice,
+    reasonCode: "ENTRY_FILLED",
+    signalId: intent.signalId,
+    lotId,
+    orderId: result.orderId,
+  });
   return true;
 }
 
@@ -984,6 +1125,8 @@ async function manageOpenPositions(pair: string, ctx: SpotMarketContext): Promis
     // B03: Only manage SPOT_CANONICAL positions — filter by policy_version and engine_owner
     if (row.policyVersion !== SPOT_POLICY_VERSION) continue;
     if (row.engineOwner && row.engineOwner !== SPOT_ENGINE_OWNER) continue;
+    // R10: Skip UNCERTAIN positions — require manual resolution
+    if (row.executionMode === "UNCERTAIN" || (row as any).status === "UNCERTAIN") continue;
 
     const position = rowToPosition(row);
     const currentPrice = ctx.ticker.last;
@@ -1082,8 +1225,47 @@ async function closePosition(
   };
 
   const result = await adapter.executeExit(execIntent, ctx);
-  if (!result.success || result.fillPrice === null) {
+  if (!result.success) {
     console.error(`[SpotEngine] Exit failed for ${position.lotId}: ${result.error}`);
+    logActivity({
+      pair: position.pair,
+      category: "EXIT",
+      severity: "WARNING",
+      title: "Salida fallida",
+      explanation: `Orden de salida falló: ${result.error}`,
+      decision: "REJECT",
+      executionMode: position.executionMode,
+      reasonCode: "EXIT_FAILED",
+      lotId: position.lotId,
+      orderId: result.orderId,
+    });
+    return;
+  }
+
+  // R10: Handle pending fill for exit — don't close position yet, mark as EXIT_PENDING
+  if (result.pendingFill && result.fillPrice === null) {
+    await db.execute(sql`
+      UPDATE open_positions SET status = 'EXIT_PENDING', updated_at = NOW()
+      WHERE lot_id = ${position.lotId}
+    `);
+    console.log(`[SpotEngine] Exit PENDING_FILL for ${position.lotId} orderId=${result.orderId}`);
+    logActivity({
+      pair: position.pair,
+      category: "EXIT",
+      severity: "ATTENTION",
+      title: "Salida enviada — pendiente de fill",
+      explanation: `Orden de venta enviada, esperando confirmación. orderId=${result.orderId}`,
+      decision: "PENDING_FILL",
+      executionMode: position.executionMode,
+      reasonCode: "EXIT_PENDING_FILL",
+      lotId: position.lotId,
+      orderId: result.orderId,
+    });
+    return;
+  }
+
+  if (result.fillPrice === null) {
+    console.error(`[SpotEngine] Exit failed for ${position.lotId}: no fill price`);
     return;
   }
 
@@ -1129,6 +1311,19 @@ async function closePosition(
     `reason=${exitDecision.reasonType}, netPnl=$${pnl.netPnlUsd.toFixed(2)}, ` +
     `MFE=$${am?.mfeUsd ?? 0}, MAE=$${am?.maeUsd ?? 0}`
   );
+  logActivity({
+    pair: position.pair,
+    category: "EXIT",
+    severity: pnl.netPnlUsd >= 0 ? "SUCCESS" : "WARNING",
+    title: `Salida ejecutada — ${exitDecision.reasonType}`,
+    explanation: `Posición cerrada: ${position.lotId} @ ${result.fillPrice}, PnL=$${pnl.netPnlUsd.toFixed(2)}, razón=${exitDecision.reason}`,
+    decision: "SELL",
+    executionMode: position.executionMode,
+    price: result.fillPrice,
+    reasonCode: exitDecision.reasonType ?? "EXIT",
+    lotId: position.lotId,
+    orderId: result.orderId,
+  });
 }
 
 // ─── DB Operations ──────────────────────────────────────────────────────────
@@ -1255,17 +1450,50 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
 
 /**
  * Load all open positions from DB on startup.
+ * R10: Includes PENDING_FILL and EXIT_PENDING recovery.
  */
 async function loadOpenPositionsFromDB(): Promise<void> {
   try {
     const result = await db.execute(sql`
-      SELECT lot_id, pair FROM open_positions
+      SELECT lot_id, pair, status, execution_mode, client_order_id, venue_order_id
+      FROM open_positions
       WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
     `);
     console.log(`[SpotEngine] Loaded ${result.rows.length} open positions from DB`);
 
-    // Rebuild exit states and audit metrics for loaded positions (B13: restore from DB)
+    // R10: Fail-closed recovery for PENDING_FILL positions
     for (const row of result.rows) {
+      const status = row.status as string;
+      if (status === 'PENDING_FILL' || status === 'EXIT_PENDING') {
+        const execMode = row.execution_mode as string;
+        const orderId = row.venue_order_id as string | null;
+        const clientOrderId = row.client_order_id as string | null;
+        console.warn(
+          `[SpotEngine] RECOVERY: Position ${row.lot_id} has status=${status}, ` +
+          `executionMode=${execMode}, orderId=${orderId}, clientOrderId=${clientOrderId}. ` +
+          `Marking as UNCERTAIN for manual review.`
+        );
+        // Fail-closed: mark as UNCERTAIN — do not auto-close or auto-open
+        await db.execute(sql`
+          UPDATE open_positions SET status = 'UNCERTAIN', updated_at = NOW()
+          WHERE lot_id = ${row.lot_id}
+        `);
+        logActivity({
+          pair: row.pair as string,
+          category: "SYSTEM",
+          severity: "CRITICAL",
+          title: "Posición incierta tras reinicio",
+          explanation: `Posición ${row.lot_id} tenía status=${status}. Marcada como UNCERTAIN para revisión manual.`,
+          decision: "FAIL_CLOSED",
+          executionMode: execMode as any,
+          reasonCode: "RESTART_UNCERTAIN",
+          lotId: row.lot_id as string,
+          orderId: orderId,
+        });
+        continue;
+      }
+
+      // Normal position recovery
       const positions = await getOpenPositionsForPair(row.pair as string);
       for (const p of positions) {
         if (p.lotId === row.lot_id) {

@@ -1,13 +1,13 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { Home, TrendingUp, BarChart3, FileText, Settings } from "lucide-react";
+import { Home, TrendingUp, Zap, FileText, Settings } from "lucide-react";
 
 const tabs = [
   { href: "/", label: "Home", icon: Home, exact: true },
   { href: "/dca", label: "DCA", icon: TrendingUp, aliases: ["/institutional-dca"] },
-  { href: "/trading", label: "Trading", icon: BarChart3, aliases: ["/strategies"] },
+  { href: "/spot", label: "SPOT", icon: Zap, aliases: ["/trading", "/strategies", "/terminal"] },
   { href: "/fiscal", label: "Fiscal", icon: FileText, aliases: ["/fisco"] },
-  { href: "/settings", label: "Sistema", icon: Settings, aliases: ["/monitor", "/wallet", "/integrations", "/notifications", "/backups", "/terminal", "/ai", "/guide", "/telegram"] },
+  { href: "/settings", label: "Sistema", icon: Settings, aliases: ["/monitor", "/wallet", "/integrations", "/notifications", "/backups", "/ai", "/guide", "/telegram"] },
 ];
 
 export function MobileTabBar() {

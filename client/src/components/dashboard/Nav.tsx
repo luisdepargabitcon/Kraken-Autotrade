@@ -20,11 +20,9 @@ export function Nav() {
     // TRADING
     { href: "/", label: "HOME", icon: LayoutDashboard },
     { href: "/dca", label: "DCA", icon: CircleDollarSign },
-    { href: "/trading", label: "TRADING", icon: Activity },
-    { href: "/grid-isolated", label: "GRID", icon: Grid3x3 },
     { href: "/spot", label: "SPOT", icon: Zap },
+    { href: "/grid-isolated", label: "GRID", icon: Grid3x3 },
     { href: "/ama", label: "AMA", icon: TrendingDown },
-    { href: "/terminal", label: "TERMINAL", icon: BarChart3 },
     // ANÁLISIS
     { separator: true, label: "ANÁLISIS" },
     { href: "/monitor", label: "MONITOR", icon: Monitor },

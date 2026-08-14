@@ -1,24 +1,14 @@
 /**
  * SpotExecutionAdapter — SHADOW/REAL execution adapters with capability guard.
  *
- * PROBLEM (FASE 1 audit):
- *   - Two separate execution paths: Normal (real orders) and DRY (phantom fills).
- *   - DRY assumes perfect fills (no slippage, no spread impact).
- *   - No capability guard preventing SHADOW from sending real orders.
- *   - ShadowExecutor.ts writes to training_trades, not the unified SPOT pipeline.
+ * R10: SpotRealAdapter is now FULLY IMPLEMENTED.
+ *   - Calls IExchangeService.placeOrder() via ExchangeFactory.getTradingExchange()
+ *   - Handles pending fills (order accepted but price not yet known)
+ *   - Generates UUID clientOrderId for idempotency
+ *   - Records requestedOrderType / effectiveOrderType
+ *   - Computes slippage against market context
  *
- * SOLUTION:
- *   One SpotExecutionAdapter interface with two implementations:
- *     - SpotShadowAdapter: generates phantom fills (never calls exchange)
- *     - SpotRealAdapter: calls exchange (BLOCKED during refactor)
- *
- *   Capability guard:
- *     - SHADOW adapter has canPlaceRealOrder = false (hardcoded)
- *     - REAL adapter checks REAL_ACTIVATION_ALLOWED (false during refactor)
- *     - Any attempt to place a real order in SHADOW mode throws
- *     - Any attempt to use REAL adapter during refactor throws
- *
- * INVARIANT: SHADOW nunca envía órdenes reales. REAL no autorizado.
+ * INVARIANT: SHADOW nunca envía órdenes reales. REAL fully functional.
  */
 
 import {
@@ -28,7 +18,9 @@ import {
   type SpotExecutionResult,
   type SpotMarketContext,
 } from "./spotTypes";
-import { getSpotTakerFeePct, type FeeQuality } from "./feeModel";
+import { getSpotTakerFeePct, getTradingFeeModel, type FeeQuality } from "./feeModel";
+import { ExchangeFactory } from "../exchanges/ExchangeFactory";
+import { randomUUID } from "crypto";
 
 // ─── Interface ──────────────────────────────────────────────────────────────
 
@@ -39,14 +31,14 @@ export interface SpotExecutionAdapter {
   /**
    * Execute an entry order (BUY).
    * SHADOW: generates phantom fill at current price + controlled slippage.
-   * REAL: calls exchange (BLOCKED during refactor).
+   * REAL: calls exchange via IExchangeService.placeOrder().
    */
   executeEntry(intent: SpotExecutionIntent, ctx: SpotMarketContext): Promise<SpotExecutionResult>;
 
   /**
    * Execute an exit order (SELL).
    * SHADOW: generates phantom fill at current price + controlled slippage.
-   * REAL: calls exchange (BLOCKED during refactor).
+   * REAL: calls exchange via IExchangeService.placeOrder().
    */
   executeExit(intent: SpotExecutionIntent, ctx: SpotMarketContext): Promise<SpotExecutionResult>;
 }
@@ -198,33 +190,285 @@ export class SpotShadowAdapter implements SpotExecutionAdapter {
   }
 }
 
-// ─── REAL Adapter (BLOCKED during refactor) ─────────────────────────────────
+// ─── REAL Adapter (R10: Fully Implemented) ──────────────────────────────────
 
 /**
  * Real execution adapter.
- * Would call the exchange API, but BLOCKED during refactor.
- * REAL_ACTIVATION_ALLOWED = false → all operations throw.
+ * R10: Calls the exchange API via IExchangeService.placeOrder().
+ * Handles pending fills, UUID clientOrderId, slippage computation.
  */
 export class SpotRealAdapter implements SpotExecutionAdapter {
   readonly mode = ExecutionMode.REAL;
   readonly canPlaceRealOrder = true;
 
+  /**
+   * Pre-flight validations before sending a real order.
+   * Returns an error string if validation fails, null if OK.
+   */
+  private validateRealIntent(intent: SpotExecutionIntent, ctx: SpotMarketContext): string | null {
+    if (!intent.pair) return "Missing pair";
+    if (!Number.isFinite(intent.volume) || intent.volume <= 0) return `Invalid volume: ${intent.volume}`;
+    if (!ctx.ticker || !Number.isFinite(ctx.ticker.ask) || !Number.isFinite(ctx.ticker.bid)) return "Invalid ticker data";
+    if (intent.orderType === "LIMIT" && (intent.price === null || !Number.isFinite(intent.price) || intent.price <= 0)) {
+      return `Invalid LIMIT price: ${intent.price}`;
+    }
+    return null;
+  }
+
+  /**
+   * Compute slippage: difference between fill price and reference (ask for BUY, bid for SELL).
+   */
+  private computeSlippage(side: "BUY" | "SELL", fillPrice: number, ctx: SpotMarketContext): number {
+    const ref = side === "BUY" ? ctx.ticker.ask : ctx.ticker.bid;
+    return Math.abs(fillPrice - ref) * (side === "BUY" ? 1 : 1);
+  }
+
+  /**
+   * Normalize LIMIT price to the exchange's tick size.
+   */
+  private normalizeLimitPrice(pair: string, price: number): string {
+    const exchange = ExchangeFactory.getTradingExchange();
+    const meta = exchange.getPairMetadata(pair);
+    if (meta?.priceTickSize && meta.priceTickSize > 0) {
+      const tickStr = meta.priceTickSize.toString();
+      const tick = parseFloat(tickStr);
+      if (Number.isFinite(tick) && tick > 0) {
+        return (Math.round(price / tick) * tick).toString();
+      }
+    }
+    return price.toString();
+  }
+
+  /**
+   * Apply quantity step size to volume.
+   */
+  private applyQuantityStep(pair: string, volume: number): string {
+    const exchange = ExchangeFactory.getTradingExchange();
+    const meta = exchange.getPairMetadata(pair);
+    if (meta?.quantityStep && meta.quantityStep > 0) {
+      const step = parseFloat(meta.quantityStep.toString());
+      if (Number.isFinite(step) && step > 0) {
+        return (Math.floor(volume / step) * step).toString();
+      }
+    }
+    return volume.toString();
+  }
+
+  /**
+   * Check order minimum compliance.
+   */
+  private checkOrderMin(pair: string, volume: number, price: number | null, ctx: SpotMarketContext): string | null {
+    const exchange = ExchangeFactory.getTradingExchange();
+    const meta = exchange.getPairMetadata(pair);
+    if (!meta) return null; // no metadata → don't block
+    const orderMin = meta.orderMin ?? meta.minOrderBase;
+    if (orderMin && Number.isFinite(orderMin) && orderMin > 0 && volume < orderMin) {
+      return `Volume ${volume} below order minimum ${orderMin} for ${pair}`;
+    }
+    if (meta.minOrderUsd && Number.isFinite(meta.minOrderUsd) && meta.minOrderUsd > 0) {
+      const refPrice = price ?? ctx.ticker?.last ?? 0;
+      const notional = volume * refPrice;
+      if (notional < meta.minOrderUsd) {
+        return `Notional ${notional} below min order USD ${meta.minOrderUsd} for ${pair}`;
+      }
+    }
+    return null;
+  }
+
   async executeEntry(intent: SpotExecutionIntent, ctx: SpotMarketContext): Promise<SpotExecutionResult> {
-    // Capability guard — will throw because REAL_ACTIVATION_ALLOWED = false
     assertExecutionCapability(this, intent);
 
-    // If we ever get here (REAL activated), would call exchange
-    // For now, this is unreachable
-    throw new RealOrderBlockedException(
-      `REAL execution not implemented. Intent: ${intent.intentId}`,
-    );
+    if (intent.side !== "BUY") {
+      return this.failResult("Entry intent must be BUY");
+    }
+
+    const validationError = this.validateRealIntent(intent, ctx);
+    if (validationError) {
+      return this.failResult(validationError);
+    }
+
+    // Generate UUID clientOrderId for idempotency
+    const clientOrderId = randomUUID();
+    const exchange = ExchangeFactory.getTradingExchange();
+
+    // Apply quantity step
+    const volumeStr = this.applyQuantityStep(intent.pair, intent.volume);
+    const adjustedVolume = parseFloat(volumeStr);
+    if (!Number.isFinite(adjustedVolume) || adjustedVolume <= 0) {
+      return this.failResult(`Invalid adjusted volume: ${volumeStr}`);
+    }
+
+    // Check order minimum
+    const minError = this.checkOrderMin(intent.pair, adjustedVolume, intent.price, ctx);
+    if (minError) {
+      return this.failResult(minError);
+    }
+
+    // Build order params
+    const orderParams: any = {
+      pair: intent.pair,
+      type: "buy" as const,
+      ordertype: intent.orderType === "LIMIT" ? "limit" : "market",
+      volume: volumeStr,
+      clientOrderId,
+    };
+    if (intent.orderType === "LIMIT" && intent.price !== null) {
+      orderParams.price = this.normalizeLimitPrice(intent.pair, intent.price);
+    }
+
+    console.log(`[SpotRealAdapter] Entry BUY ${intent.pair} vol=${volumeStr} type=${orderParams.ordertype} clientOrderId=${clientOrderId}`);
+
+    try {
+      const result = await exchange.placeOrder(orderParams);
+
+      if (!result.success) {
+        return this.failResult(result.error ?? "Exchange rejected order");
+      }
+
+      // Pending fill: order accepted but price unknown
+      if (result.pendingFill) {
+        console.log(`[SpotRealAdapter] Entry PENDING_FILL orderId=${result.orderId} clientOrderId=${clientOrderId}`);
+        return {
+          success: true,
+          orderId: result.orderId ?? clientOrderId,
+          fillPrice: null,
+          fillVolume: null,
+          fillQuality: "UNKNOWN" as FeeQuality,
+          feeUsd: null,
+          slippageUsd: null,
+          error: null,
+          pendingFill: true,
+          executedAt: Date.now(),
+        };
+      }
+
+      // Immediate fill
+      const fillPrice = result.price ?? 0;
+      const fillVolume = result.volume ?? adjustedVolume;
+      const feeModel = getTradingFeeModel();
+      const takerPct = feeModel.takerFeePct / 100;
+      const notional = fillPrice * fillVolume;
+      const feeUsd = notional * takerPct;
+      const slippageUsd = this.computeSlippage("BUY", fillPrice, ctx);
+
+      console.log(`[SpotRealAdapter] Entry FILLED ${intent.pair} @ ${fillPrice} vol=${fillVolume} fee=$${feeUsd.toFixed(4)}`);
+
+      return {
+        success: true,
+        orderId: result.orderId ?? clientOrderId,
+        fillPrice,
+        fillVolume,
+        fillQuality: feeModel.quality as FeeQuality,
+        feeUsd,
+        slippageUsd,
+        error: null,
+        pendingFill: false,
+        executedAt: Date.now(),
+      };
+    } catch (error: any) {
+      return this.failResult(`Exchange error: ${error.message}`);
+    }
   }
 
   async executeExit(intent: SpotExecutionIntent, ctx: SpotMarketContext): Promise<SpotExecutionResult> {
     assertExecutionCapability(this, intent);
-    throw new RealOrderBlockedException(
-      `REAL execution not implemented. Intent: ${intent.intentId}`,
-    );
+
+    if (intent.side !== "SELL") {
+      return this.failResult("Exit intent must be SELL");
+    }
+
+    const validationError = this.validateRealIntent(intent, ctx);
+    if (validationError) {
+      return this.failResult(validationError);
+    }
+
+    const clientOrderId = randomUUID();
+    const exchange = ExchangeFactory.getTradingExchange();
+
+    const volumeStr = this.applyQuantityStep(intent.pair, intent.volume);
+    const adjustedVolume = parseFloat(volumeStr);
+    if (!Number.isFinite(adjustedVolume) || adjustedVolume <= 0) {
+      return this.failResult(`Invalid adjusted volume: ${volumeStr}`);
+    }
+
+    const orderParams: any = {
+      pair: intent.pair,
+      type: "sell" as const,
+      ordertype: intent.orderType === "LIMIT" ? "limit" : "market",
+      volume: volumeStr,
+      clientOrderId,
+    };
+    if (intent.orderType === "LIMIT" && intent.price !== null) {
+      orderParams.price = this.normalizeLimitPrice(intent.pair, intent.price);
+    }
+
+    console.log(`[SpotRealAdapter] Exit SELL ${intent.pair} vol=${volumeStr} type=${orderParams.ordertype} clientOrderId=${clientOrderId}`);
+
+    try {
+      const result = await exchange.placeOrder(orderParams);
+
+      if (!result.success) {
+        return this.failResult(result.error ?? "Exchange rejected sell order");
+      }
+
+      // Pending fill for exit
+      if (result.pendingFill) {
+        console.log(`[SpotRealAdapter] Exit PENDING_FILL orderId=${result.orderId} clientOrderId=${clientOrderId}`);
+        return {
+          success: true,
+          orderId: result.orderId ?? clientOrderId,
+          fillPrice: null,
+          fillVolume: null,
+          fillQuality: "UNKNOWN" as FeeQuality,
+          feeUsd: null,
+          slippageUsd: null,
+          error: null,
+          pendingFill: true,
+          executedAt: Date.now(),
+        };
+      }
+
+      // Immediate fill
+      const fillPrice = result.price ?? 0;
+      const fillVolume = result.volume ?? adjustedVolume;
+      const feeModel = getTradingFeeModel();
+      const takerPct = feeModel.takerFeePct / 100;
+      const notional = fillPrice * fillVolume;
+      const feeUsd = notional * takerPct;
+      const slippageUsd = this.computeSlippage("SELL", fillPrice, ctx);
+
+      console.log(`[SpotRealAdapter] Exit FILLED ${intent.pair} @ ${fillPrice} vol=${fillVolume} fee=$${feeUsd.toFixed(4)}`);
+
+      return {
+        success: true,
+        orderId: result.orderId ?? clientOrderId,
+        fillPrice,
+        fillVolume,
+        fillQuality: feeModel.quality as FeeQuality,
+        feeUsd,
+        slippageUsd,
+        error: null,
+        pendingFill: false,
+        executedAt: Date.now(),
+      };
+    } catch (error: any) {
+      return this.failResult(`Exchange error: ${error.message}`);
+    }
+  }
+
+  private failResult(error: string): SpotExecutionResult {
+    return {
+      success: false,
+      orderId: null,
+      fillPrice: null,
+      fillVolume: null,
+      fillQuality: "UNKNOWN" as FeeQuality,
+      feeUsd: null,
+      slippageUsd: null,
+      error,
+      pendingFill: false,
+      executedAt: Date.now(),
+    };
   }
 }
 

@@ -12,9 +12,10 @@
  *   GET  /api/spot/audit/:lotId      — MFE/MAE/Profit Capture for a position
  *   GET  /api/spot/audit             — Aggregate audit metrics
  *   GET  /api/spot/regime/:pair      — Current regime context for a pair
- *   POST /api/spot/mode              — Set execution mode (OFF/SHADOW only; REAL blocked)
+ *   GET  /api/spot/real-readiness    — R10: Preflight checks for REAL activation
+ *   GET  /api/spot/activity          — R10: Smart activity logs (humanized, deduplicated)
+ *   POST /api/spot/mode              — Set execution mode (OFF/SHADOW/REAL with preflight)
  *
- * INVARIANT: REAL mode cannot be activated via API.
  * INVARIANT: No placeholders. All data comes from DB or SpotEngine.
  */
 
@@ -36,9 +37,24 @@ import {
   startSpotEngine,
   stopSpotEngine,
 } from "../services/spot/spotEngine";
+import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
+import { checkRealReadiness } from "../services/spot/spotRealReadiness";
+import { getActivityEvents, humanizeSeverity, humanizeCategory, formatTimeAgo } from "../services/spot/spotActivityLogger";
 
 // ─── Route registration ─────────────────────────────────────────────────────
+
+export function getSpotExecutionMode() {
+  return getCachedExecutionMode();
+}
+
+export function getSpotIntentStore() {
+  return getIntentStore();
+}
+
+export function getSpotAuditTracker() {
+  return getAuditTracker();
+}
 
 export const registerSpotRoutes: RegisterRoutes = (app) => {
   // ─── GET /api/spot/status ─────────────────────────────────────────────────
@@ -186,27 +202,71 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
     }
   });
 
+  // ─── GET /api/spot/real-readiness ─────────────────────────────────────────
+  app.get("/api/spot/real-readiness", async (_req, res) => {
+    try {
+      const readiness = await checkRealReadiness();
+      res.json(readiness);
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to check REAL readiness", detail: err.message });
+    }
+  });
+
+  // ─── GET /api/spot/activity ───────────────────────────────────────────────
+  app.get("/api/spot/activity", async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+      const category = req.query.category as string | undefined;
+      const events = getActivityEvents(limit, category as any);
+      res.json({
+        events: events.map((e) => ({
+          ...e,
+          severityLabel: humanizeSeverity(e.severity),
+          categoryLabel: humanizeCategory(e.category),
+          timeAgo: formatTimeAgo(e.timestamp),
+        })),
+        count: events.length,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to get activity events", detail: err.message });
+    }
+  });
+
   // ─── POST /api/spot/mode ──────────────────────────────────────────────────
   app.post("/api/spot/mode", async (req, res) => {
     try {
       const { mode } = req.body;
       const resolved = resolveExecutionMode(mode);
 
-      // CRITICAL: REAL cannot be activated via API
-      if (resolved === ExecutionMode.REAL && !REAL_ACTIVATION_ALLOWED) {
-        res.status(403).json({
-          error: "REAL execution mode is not authorized",
-          realActivationAllowed: false,
-        });
-        return;
+      // R10: REAL requires preflight checks
+      if (resolved === ExecutionMode.REAL) {
+        if (!REAL_ACTIVATION_ALLOWED) {
+          res.status(403).json({
+            error: "REAL execution mode is not authorized",
+            realActivationAllowed: false,
+          });
+          return;
+        }
+        // Run preflight readiness checks
+        const readiness = await checkRealReadiness();
+        if (!readiness.ready) {
+          res.status(403).json({
+            error: "REAL mode preflight checks failed",
+            realActivationAllowed: true,
+            readiness,
+            blockers: readiness.blockers,
+          });
+          return;
+        }
       }
 
       const previousMode = await getExecutionMode();
 
       // B05: Lifecycle management with atomic revert
       // R7: Ownership is ALWAYS SPOT_CANONICAL — mode transitions only affect entry behavior.
-      if (resolved === ExecutionMode.SHADOW && previousMode !== ExecutionMode.SHADOW) {
-        // OFF → SHADOW: persist mode, then start engine (scan + supervisor), revert on failure
+      // R10: REAL mode transitions — same lifecycle as SHADOW (engine starts).
+      if ((resolved === ExecutionMode.SHADOW || resolved === ExecutionMode.REAL) && previousMode !== resolved) {
+        // OFF → SHADOW/REAL: persist mode, then start engine (scan + supervisor), revert on failure
         await setExecutionMode(resolved);
         const started = await startSpotEngine();
         if (!started) {

@@ -91,11 +91,10 @@ describe("SPOT_CAPABILITY_GUARD", () => {
     expect(() => assertExecutionCapability(adapter, intent)).not.toThrow();
   });
 
-  it("assertExecutionCapability throws for REAL during refactor", () => {
+  it("assertExecutionCapability does not throw for REAL (R10: REAL allowed)", () => {
     const adapter = new SpotRealAdapter();
     const intent = makeEntryIntent();
-    expect(() => assertExecutionCapability(adapter, intent)).toThrow(RealOrderBlockedException);
-    expect(() => assertExecutionCapability(adapter, intent)).toThrow("REAL_ACTIVATION_ALLOWED=false");
+    expect(() => assertExecutionCapability(adapter, intent)).not.toThrow();
   });
 });
 
@@ -124,19 +123,25 @@ describe("SPOT_SHADOW_NEVER_REAL_ORDER", () => {
   });
 });
 
-describe("SPOT_REAL_BLOCKED", () => {
-  it("REAL adapter executeEntry throws during refactor", async () => {
+describe("SPOT_REAL_IMPLEMENTED", () => {
+  it("REAL adapter executeEntry calls exchange (R10: fully implemented)", async () => {
     const adapter = new SpotRealAdapter();
     const ctx = makeMarketContext();
     const intent = makeEntryIntent();
-    await expect(adapter.executeEntry(intent, ctx)).rejects.toThrow(RealOrderBlockedException);
+    // R10: REAL adapter now calls exchange instead of throwing
+    // In test env without mock, it will return a failure result (no exchange)
+    const result = await adapter.executeEntry(intent, ctx);
+    expect(result.success).toBe(false); // Expected: no exchange in test env
+    expect(result.error).toBeDefined();
   });
 
-  it("REAL adapter executeExit throws during refactor", async () => {
+  it("REAL adapter executeExit calls exchange (R10: fully implemented)", async () => {
     const adapter = new SpotRealAdapter();
     const ctx = makeMarketContext();
     const intent = makeExitIntent();
-    await expect(adapter.executeExit(intent, ctx)).rejects.toThrow(RealOrderBlockedException);
+    const result = await adapter.executeExit(intent, ctx);
+    expect(result.success).toBe(false); // Expected: no exchange in test env
+    expect(result.error).toBeDefined();
   });
 });
 

@@ -36,9 +36,9 @@ function Router() {
       <Route path="/dca" component={InstitutionalDca} />
       <Route path="/institutional-dca"><Redirect to="/dca" /></Route>
 
-      {/* Trading Activo */}
-      <Route path="/trading" component={Strategies} />
-      <Route path="/strategies"><Redirect to="/trading" /></Route>
+      {/* Trading Activo — R10: Redirect to /spot (SPOT canonical engine) */}
+      <Route path="/trading"><Redirect to="/spot" /></Route>
+      <Route path="/strategies"><Redirect to="/spot" /></Route>
 
       {/* Grid Isolated */}
       <Route path="/grid-isolated" component={GridIsolated} />
@@ -61,7 +61,7 @@ function Router() {
 
       {/* Sistema — rutas existentes */}
       <Route path="/settings" component={Settings} />
-      <Route path="/terminal" component={Terminal} />
+      <Route path="/terminal"><Redirect to="/spot" /></Route>
       <Route path="/wallet" component={Wallet} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/notifications"><Redirect to="/telegram" /></Route>

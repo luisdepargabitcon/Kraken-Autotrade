@@ -7,8 +7,9 @@ import { SpotPositionsPanel } from "@/components/spot/SpotPositionsPanel";
 import { SpotHistoryPanel } from "@/components/spot/SpotHistoryPanel";
 import { SpotIntentsPanel } from "@/components/spot/SpotIntentsPanel";
 import { SpotAuditPanel } from "@/components/spot/SpotAuditPanel";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw, Activity as ActivityIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 export default function Spot() {
   const [tab, setTab] = useState("overview");
@@ -76,10 +77,20 @@ export default function Spot() {
     refetchInterval: 30000,
   });
 
+  const { data: activityData } = useQuery<any>({
+    queryKey: ["spot-activity"],
+    queryFn: async () => {
+      const res = await fetch("/api/spot/activity?limit=100");
+      if (!res.ok) throw new Error("Failed to fetch SPOT activity");
+      return res.json();
+    },
+    refetchInterval: 10000,
+  });
+
   // ─── Mode change mutation ─────────────────────────────────────────────────
 
   const modeMutation = useMutation({
-    mutationFn: async (mode: "OFF" | "SHADOW") => {
+    mutationFn: async (mode: "OFF" | "SHADOW" | "REAL") => {
       const res = await fetch("/api/spot/mode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -93,11 +104,12 @@ export default function Spot() {
       queryClient.invalidateQueries({ queryKey: ["spot-status"] });
       queryClient.invalidateQueries({ queryKey: ["spot-intents"] });
       queryClient.invalidateQueries({ queryKey: ["spot-positions"] });
+      queryClient.invalidateQueries({ queryKey: ["spot-activity"] });
     },
   });
 
   const handleModeChange = useCallback(
-    async (mode: "OFF" | "SHADOW"): Promise<boolean> => {
+    async (mode: "OFF" | "SHADOW" | "REAL"): Promise<boolean> => {
       try {
         await modeMutation.mutateAsync(mode);
         return true;
@@ -121,6 +133,7 @@ export default function Spot() {
   const auditAggregate = auditData?.aggregate ?? null;
   const auditClosedCount = auditData?.closedCount ?? 0;
   const summary = summaryData ?? null;
+  const activityEvents = activityData?.events ?? [];
 
   return (
     <AppShell>
@@ -198,6 +211,15 @@ export default function Spot() {
               )}
             </TabsTrigger>
             <TabsTrigger value="audit">Auditoría</TabsTrigger>
+            <TabsTrigger value="activity">
+              <ActivityIcon className="h-3.5 w-3.5 mr-1 inline" />
+              Actividad
+              {activityEvents.length > 0 && (
+                <span className="ml-1.5 text-[10px] bg-primary/20 text-primary rounded px-1">
+                  {activityEvents.length}
+                </span>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-3">
@@ -227,6 +249,10 @@ export default function Spot() {
               closedCount={auditClosedCount}
             />
           </TabsContent>
+
+          <TabsContent value="activity">
+            <SpotActivityPanel events={activityEvents} />
+          </TabsContent>
         </Tabs>
       </div>
     </AppShell>
@@ -254,4 +280,61 @@ function formatHold(minutes: number): string {
   const h = Math.floor(minutes / 60);
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
+}
+
+function SpotActivityPanel({ events }: { events: any[] }) {
+  const severityColor: Record<string, string> = {
+    INFO: "text-blue-400",
+    SUCCESS: "text-emerald-400",
+    ATTENTION: "text-yellow-400",
+    WARNING: "text-orange-400",
+    CRITICAL: "text-red-400",
+  };
+
+  if (events.length === 0) {
+    return (
+      <div className="rounded-lg border border-border/50 bg-card p-8 text-center text-muted-foreground text-sm">
+        No hay eventos de actividad registrados.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {events.map((e) => (
+        <div
+          key={e.id}
+          className="rounded-lg border border-border/50 bg-card px-4 py-3 flex items-start gap-3"
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-xs font-semibold ${severityColor[e.severity] ?? "text-foreground"}`}>
+                {e.severityLabel ?? e.severity}
+              </span>
+              <Badge variant="outline" className="text-[10px] py-0 px-1.5">
+                {e.categoryLabel ?? e.category}
+              </Badge>
+              {e.pair && (
+                <span className="text-xs font-mono text-muted-foreground">{e.pair}</span>
+              )}
+              {e.executionMode && (
+                <span className="text-[10px] text-muted-foreground border border-border/50 rounded px-1">
+                  {e.executionMode}
+                </span>
+              )}
+              {e.repeatCount > 0 && (
+                <span className="text-[10px] text-muted-foreground">×{e.repeatCount + 1}</span>
+              )}
+              <span className="text-[10px] text-muted-foreground ml-auto">{e.timeAgo}</span>
+            </div>
+            <p className="text-sm font-medium mt-1">{e.title}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{e.explanation}</p>
+            {e.technicalDetails && (
+              <p className="text-[10px] font-mono text-muted-foreground/70 mt-1">{e.technicalDetails}</p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }

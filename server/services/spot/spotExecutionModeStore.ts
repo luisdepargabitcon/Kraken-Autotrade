@@ -56,6 +56,8 @@ export async function loadExecutionMode(): Promise<ExecutionMode> {
       `);
       resolved = ExecutionMode.OFF;
     }
+    // R10: REAL is now allowed — but we don't auto-activate it on restart.
+    // If DB has REAL from a previous user activation, we keep it.
 
     cachedMode = resolved;
     lastLoadTime = Date.now();
@@ -70,10 +72,10 @@ export async function loadExecutionMode(): Promise<ExecutionMode> {
 
 /**
  * Persist execution mode to DB.
- * REAL is blocked if REAL_ACTIVATION_ALLOWED is false.
+ * R10: REAL is now allowed when REAL_ACTIVATION_ALLOWED=true.
  */
 export async function saveExecutionMode(mode: ExecutionMode): Promise<void> {
-  // Block REAL
+  // Block REAL only if not authorized
   if (mode === ExecutionMode.REAL && !REAL_ACTIVATION_ALLOWED) {
     throw new Error(
       `REAL execution mode is not authorized. REAL_ACTIVATION_ALLOWED=false.`

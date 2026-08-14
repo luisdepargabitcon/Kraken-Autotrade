@@ -45,10 +45,11 @@ export function resolveExecutionMode(raw: unknown): ExecutionMode {
 }
 
 /**
- * Whether REAL trading is allowed. During this refactor task,
- * realActivationAllowed = false always.
+ * Whether REAL trading is allowed.
+ * R10: REAL is now fully implemented — adapter, pending fill lifecycle,
+ * restart recovery, and preflight checks are all in place.
  */
-export const REAL_ACTIVATION_ALLOWED = false;
+export const REAL_ACTIVATION_ALLOWED = true;
 
 // ─── Setup tags (15m) ───────────────────────────────────────────────────────
 
@@ -319,3 +320,70 @@ export interface SpotExecutionResult {
  * Recorded with every trade to prevent silent parameter changes.
  */
 export const SPOT_POLICY_VERSION = "SPOT-1.0.0-20260812";
+
+// ─── SpotActivityEvent (R10: Smart Activity Logs) ───────────────────────────
+
+export type SpotActivityCategory =
+  | "MARKET" | "DECISION" | "SIGNAL" | "INTENT" | "RISK"
+  | "ENTRY" | "POSITION" | "PROTECTION" | "EXIT" | "EXECUTION"
+  | "MODE" | "SYSTEM" | "ERROR";
+
+export type SpotActivitySeverity =
+  | "INFO" | "SUCCESS" | "ATTENTION" | "WARNING" | "CRITICAL";
+
+export interface SpotActivityEvent {
+  id: string;
+  timestamp: number;
+  pair: string | null;
+  category: SpotActivityCategory;
+  severity: SpotActivitySeverity;
+  title: string;
+  explanation: string;
+  decision: string | null;
+  executionMode: ExecutionMode | null;
+  setupTag: SetupTag | null;
+  regime: Regime | null;
+  direction: RegimeDirection | null;
+  macroBias: MacroBias | null;
+  price: number | null;
+  reasonCode: string | null;
+  technicalDetails: string | null;
+  contextId: string | null;
+  signalId: string | null;
+  lotId: string | null;
+  intentId: string | null;
+  orderId: string | null;
+  repeatCount: number;
+}
+
+// ─── Real Order Lifecycle (R10) ──────────────────────────────────────────────
+
+export type RealOrderState =
+  | "CREATED"
+  | "SUBMITTED"
+  | "PENDING_FILL"
+  | "FILLED"
+  | "FAILED"
+  | "CANCELLED"
+  | "EXIT_PENDING"
+  | "UNCERTAIN";
+
+export interface RealOrderRecord {
+  internalIntentId: string;
+  clientOrderId: string;
+  venueOrderId: string | null;
+  pair: string;
+  side: ExecutionSide;
+  requestedQty: number;
+  submittedAt: number;
+  status: RealOrderState;
+  policyVersion: string;
+  engineOwner: string;
+  executionMode: ExecutionMode;
+  lotId: string | null;
+  fillPrice: number | null;
+  fillVolume: number | null;
+  feeUsd: number | null;
+  reason: string | null;
+  error: string | null;
+}
