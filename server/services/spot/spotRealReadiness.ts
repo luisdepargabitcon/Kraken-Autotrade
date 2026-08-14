@@ -1,24 +1,34 @@
 /**
- * SpotRealReadiness — R10.1 Comprehensive preflight checks for REAL mode activation.
+ * SpotRealReadiness — R10.2 Comprehensive preflight checks for REAL mode activation.
+ *
+ * R10.2 changes:
+ *   - Real runtime state: scanner/supervisor counts from engine, not hardcode
+ *   - Metadata per pair: check each active pair has metadata, BLOCKER if missing
+ *   - Pending order_intents: count pending SPOT REAL intents in various states
+ *   - Credentials: verified via authenticated getBalance call
  *
  * Checks:
  *   1. REAL_ACTIVATION_ALLOWED = true
  *   2. ExchangeFactory.getTradingExchange() is initialized
- *   3. Balance reachable (authenticated API call)
+ *   3. Balance reachable (authenticated API call via getBalance)
  *   4. Fee model valid (takerFeePct > 0)
- *   5. Active pairs configured and pair metadata loaded
- *   6. No UNCERTAIN positions (must resolve first)
- *   7. No PENDING_FILL / EXIT_PENDING positions (must resolve first)
- *   8. No legacy entries (non-SPOT_CANONICAL positions on same pairs)
- *   9. API credentials configured
- *  10. RealAdapter implemented (canPlaceRealOrder = true)
- *  11. Entry scanner and position supervisor counts
+ *   5. Active pairs configured
+ *   6. Pair metadata loaded PER PAIR (BLOCKER if any missing)
+ *   7. No UNCERTAIN positions (must resolve first)
+ *   8. No PENDING_FILL / EXIT_PENDING positions (must resolve first)
+ *   9. No legacy entries (non-SPOT_CANONICAL positions on same pairs)
+ *  10. Shadow positions (warning only)
+ *  11. API credentials configured (verified via getBalance)
+ *  12. RealAdapter implemented (canPlaceRealOrder = true)
+ *  13. Pending order_intents counts (warning if > 0)
+ *  14. Runtime state: entry scanner and position supervisor from engine
  */
 
 import { REAL_ACTIVATION_ALLOWED, ExecutionMode, SPOT_POLICY_VERSION } from "./spotTypes";
 import { SPOT_ENGINE_OWNER } from "./spotEngine";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { getTradingFeeModel } from "./feeModel";
+import { countPendingRealOrderIntents } from "./spotOrderIntentStore";
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
 
@@ -36,7 +46,9 @@ export interface RealReadinessResult {
     makerFeePct: number | null;
     activePairsConfigured: boolean;
     activePairsCount: number;
+    activePairsList: string[];
     pairMetadataLoaded: boolean;
+    pairMetadataMissing: string[];
     uncertainPositionsCount: number;
     pendingFillPositionsCount: number;
     exitPendingPositionsCount: number;
@@ -45,6 +57,11 @@ export interface RealReadinessResult {
     shadowPositionsCount: number;
     apiCredentialsConfigured: boolean;
     realAdapterImplemented: boolean;
+    pendingEntryIntents: number;
+    pendingExitIntents: number;
+    submittedIntentsWithoutVenueId: number;
+    entryScannerRunning: boolean;
+    positionSupervisorRunning: boolean;
     entryScannerCount: number;
     positionSupervisorCount: number;
   };
@@ -63,7 +80,9 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     makerFeePct: null as number | null,
     activePairsConfigured: false,
     activePairsCount: 0,
+    activePairsList: [] as string[],
     pairMetadataLoaded: false,
+    pairMetadataMissing: [] as string[],
     uncertainPositionsCount: 0,
     pendingFillPositionsCount: 0,
     exitPendingPositionsCount: 0,
@@ -72,6 +91,11 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     shadowPositionsCount: 0,
     apiCredentialsConfigured: false,
     realAdapterImplemented: false,
+    pendingEntryIntents: 0,
+    pendingExitIntents: 0,
+    submittedIntentsWithoutVenueId: 0,
+    entryScannerRunning: false,
+    positionSupervisorRunning: false,
     entryScannerCount: 0,
     positionSupervisorCount: 0,
   };
@@ -91,19 +115,24 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
       blockers.push(`Exchange ${exchange.exchangeName} no inicializado`);
     }
 
-    // 3. Balance reachable — authenticated API call
+    // 3. Balance reachable — authenticated API call via getBalance
     if (checks.exchangeInitialized) {
       try {
         const anyExchange = exchange as any;
         if (typeof anyExchange.getBalance === "function") {
           await anyExchange.getBalance();
           checks.balanceReachable = true;
+          checks.apiCredentialsConfigured = true;
         } else {
-          checks.balanceReachable = true;
+          // No getBalance method — cannot verify credentials
+          checks.balanceReachable = false;
+          checks.apiCredentialsConfigured = false;
+          blockers.push("Exchange no implementa getBalance — no se pueden verificar credenciales");
         }
       } catch (error: any) {
         checks.balanceReachable = false;
-        blockers.push(`Balance no reachable: ${error.message}`);
+        checks.apiCredentialsConfigured = false;
+        blockers.push(`Balance no reachable (credenciales inválidas): ${error.message}`);
       }
     }
 
@@ -122,40 +151,53 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
   }
 
   // 5. Active pairs configured
+  let activePairs: string[] = [];
   try {
     const result = await db.execute(sql`
       SELECT active_pairs FROM bot_config LIMIT 1
     `);
     const pairs = result.rows[0]?.active_pairs as string[] | null;
-    checks.activePairsCount = pairs?.length ?? 0;
+    activePairs = pairs ?? [];
+    checks.activePairsCount = activePairs.length;
+    checks.activePairsList = activePairs;
     checks.activePairsConfigured = checks.activePairsCount > 0;
     if (!checks.activePairsConfigured) {
       blockers.push("No hay pares activos configurados en bot_config");
-    }
-
-    // 5b. Pair metadata loaded
-    if (checks.activePairsConfigured && checks.exchangeInitialized) {
-      try {
-        const exchange = ExchangeFactory.getTradingExchange();
-        const anyExchange = exchange as any;
-        if (typeof anyExchange.getPairMetadata === "function") {
-          const metadata = await anyExchange.getPairMetadata();
-          checks.pairMetadataLoaded = metadata && metadata.size > 0;
-        } else {
-          checks.pairMetadataLoaded = true;
-        }
-        if (!checks.pairMetadataLoaded) {
-          warnings.push("Metadata de pares no cargada — puede afectar validación de órdenes");
-        }
-      } catch {
-        warnings.push("No se pudo verificar metadata de pares");
-      }
     }
   } catch {
     warnings.push("No se pudo verificar pares activos");
   }
 
-  // 6. UNCERTAIN positions
+  // 6. R10.2: Pair metadata loaded PER PAIR — BLOCKER if any missing
+  if (checks.activePairsConfigured && checks.exchangeInitialized) {
+    try {
+      const exchange = ExchangeFactory.getTradingExchange();
+      const anyExchange = exchange as any;
+      if (typeof anyExchange.getPairMetadata === "function") {
+        const metadata = await anyExchange.getPairMetadata();
+        checks.pairMetadataLoaded = metadata && metadata.size > 0;
+        // R10.2: Check each active pair has metadata
+        for (const pair of activePairs) {
+          if (!metadata || !metadata.has(pair)) {
+            checks.pairMetadataMissing.push(pair);
+          }
+        }
+        if (checks.pairMetadataMissing.length > 0) {
+          checks.pairMetadataLoaded = false;
+          blockers.push(`Metadata faltante para pares: ${checks.pairMetadataMissing.join(", ")}`);
+        }
+      } else {
+        // No getPairMetadata method — cannot verify per-pair
+        checks.pairMetadataLoaded = false;
+        blockers.push("Exchange no implementa getPairMetadata — no se puede verificar metadata por par");
+      }
+    } catch (error: any) {
+      checks.pairMetadataLoaded = false;
+      blockers.push(`Error al verificar metadata de pares: ${error.message}`);
+    }
+  }
+
+  // 7. UNCERTAIN positions
   try {
     const result = await db.execute(sql`
       SELECT COUNT(*) as count FROM open_positions
@@ -170,7 +212,7 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     warnings.push("No se pudo verificar posiciones UNCERTAIN");
   }
 
-  // 7. PENDING_FILL / EXIT_PENDING positions
+  // 8. PENDING_FILL / EXIT_PENDING positions
   try {
     const pendingResult = await db.execute(sql`
       SELECT
@@ -191,7 +233,7 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     warnings.push("No se pudo verificar posiciones pendientes");
   }
 
-  // 8. Legacy entries (non-SPOT_CANONICAL positions on same pairs)
+  // 9. Legacy entries (non-SPOT_CANONICAL positions on same pairs)
   try {
     const result = await db.execute(sql`
       SELECT COUNT(*) as count FROM open_positions
@@ -206,7 +248,7 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     warnings.push("No se pudo verificar entradas legacy");
   }
 
-  // 9. Shadow positions (warning only)
+  // 10. Shadow positions (warning only)
   try {
     const result = await db.execute(sql`
       SELECT COUNT(*) as count FROM open_positions
@@ -223,20 +265,22 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     warnings.push("No se pudo verificar posiciones SHADOW abiertas");
   }
 
-  // 10. API credentials
-  try {
-    const result = await db.execute(sql`
-      SELECT trading_exchange FROM api_config LIMIT 1
-    `);
-    checks.apiCredentialsConfigured = result.rows.length > 0 && !!result.rows[0]?.trading_exchange;
-    if (!checks.apiCredentialsConfigured) {
-      warnings.push("No se encontró trading_exchange configurado en api_config");
-    }
-  } catch {
-    warnings.push("No se pudo verificar api_config");
+  // 11. R10.2: Pending order_intents counts (from SPOT CANONICAL provenance)
+  const intentCounts = await countPendingRealOrderIntents();
+  checks.pendingEntryIntents = intentCounts.pendingEntryOrders;
+  checks.pendingExitIntents = intentCounts.pendingExitOrders;
+  checks.submittedIntentsWithoutVenueId = intentCounts.submittedOrdersWithoutVenueId;
+  if (checks.pendingEntryIntents > 0) {
+    warnings.push(`${checks.pendingEntryIntents} entry intents pendientes en order_intents — serán reconciliadas`);
+  }
+  if (checks.pendingExitIntents > 0) {
+    warnings.push(`${checks.pendingExitIntents} exit intents pendientes en order_intents — serán reconciliadas`);
+  }
+  if (checks.submittedIntentsWithoutVenueId > 0) {
+    warnings.push(`${checks.submittedIntentsWithoutVenueId} intents sin venue_order_id — requieren atención`);
   }
 
-  // 11. RealAdapter implemented
+  // 12. RealAdapter implemented
   try {
     const { createExecutionAdapter } = await import("./spotExecutionAdapter");
     const adapter = createExecutionAdapter(ExecutionMode.REAL);
@@ -248,9 +292,18 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     blockers.push("No se pudo crear RealAdapter");
   }
 
-  // 12. Scanner/supervisor counts (informational)
-  checks.entryScannerCount = 1;
-  checks.positionSupervisorCount = 1;
+  // 13. R10.2: Runtime state — real engine state, not hardcoded
+  try {
+    const spotEngine = await import("./spotEngine");
+    checks.entryScannerRunning = spotEngine._isEngineRunningForTest();
+    checks.positionSupervisorRunning = spotEngine._isSupervisorRunningForTest();
+    checks.entryScannerCount = checks.entryScannerRunning ? 1 : 0;
+    checks.positionSupervisorCount = checks.positionSupervisorRunning ? 1 : 0;
+  } catch {
+    // Engine module not available — report as not running
+    checks.entryScannerCount = 0;
+    checks.positionSupervisorCount = 0;
+  }
 
   const ready = blockers.length === 0;
 

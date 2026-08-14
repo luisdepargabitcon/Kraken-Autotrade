@@ -13,6 +13,8 @@
 
 import { randomUUID } from "crypto";
 import { botLogger } from "../botLogger";
+import { db } from "../../db";
+import { sql } from "drizzle-orm";
 import type {
   SpotActivityEvent,
   SpotActivityCategory,
@@ -25,7 +27,7 @@ import type {
 } from "./spotTypes";
 
 const MAX_EVENTS = 500;
-const DEDUP_WINDOW_MS = 60_000; // 60s window for dedup (R10.1: increased from 5s)
+const DEDUP_WINDOW_MS = 300_000; // R10.2: 5min window for dedup (increased from 60s)
 
 const events: SpotActivityEvent[] = [];
 
@@ -188,6 +190,73 @@ export function clearActivityEvents(): void {
 
 export function getActivityEventCount(): number {
   return events.length;
+}
+
+/**
+ * R10.2: DB-backed activity read from bot_events.
+ * Queries events with type LIKE 'SPOT_%' and applies filters.
+ * Falls back to in-memory if DB query fails.
+ */
+export async function getActivityEventsFromDb(options: ActivityFilterOptions): Promise<SpotActivityEvent[]> {
+  const { limit = 100, pair, category, severity, mode } = options;
+  try {
+    const conditions: any[] = [sql`type LIKE ${"SPOT_%"}`];
+
+    if (category) {
+      conditions.push(sql`type = ${"SPOT_" + category}`);
+    }
+    if (severity) {
+      conditions.push(sql`meta->>'severity' = ${severity}`);
+    }
+    if (pair) {
+      conditions.push(sql`meta->>'pair' = ${pair}`);
+    }
+    if (mode) {
+      conditions.push(sql`meta->>'executionMode' = ${mode}`);
+    }
+
+    const whereClause = conditions.reduce((acc, curr, idx) =>
+      idx === 0 ? curr : sql`${acc} AND ${curr}`);
+
+    const result = await db.execute(sql`
+      SELECT id, timestamp, level, type, message, meta
+      FROM bot_events
+      WHERE ${whereClause}
+      ORDER BY timestamp DESC
+      LIMIT ${limit}
+    `);
+
+    return (result.rows as any[]).map((row) => {
+      const meta = typeof row.meta === "string" ? JSON.parse(row.meta) : (row.meta ?? {});
+      return {
+        id: String(row.id),
+        timestamp: new Date(row.timestamp).getTime(),
+        pair: meta.pair ?? null,
+        category: (row.type as string).replace("SPOT_", "") as SpotActivityCategory,
+        severity: meta.severity ?? "INFO",
+        title: row.message,
+        explanation: "",
+        decision: meta.decision ?? null,
+        executionMode: meta.executionMode ?? null,
+        setupTag: meta.setupTag ?? null,
+        regime: meta.regime ?? null,
+        direction: meta.direction ?? null,
+        macroBias: meta.macroBias ?? null,
+        price: meta.price ?? null,
+        reasonCode: meta.reasonCode ?? null,
+        technicalDetails: null,
+        contextId: null,
+        signalId: meta.signalId ?? null,
+        lotId: meta.lotId ?? null,
+        intentId: meta.intentId ?? null,
+        orderId: meta.orderId ?? null,
+        repeatCount: 0,
+      } as SpotActivityEvent;
+    });
+  } catch (error: any) {
+    console.warn(`[SpotActivityLogger] DB-backed read failed, falling back to in-memory: ${error.message}`);
+    return getActivityEventsFiltered(options);
+  }
 }
 
 // ─── Humanized helpers ───────────────────────────────────────────────────────

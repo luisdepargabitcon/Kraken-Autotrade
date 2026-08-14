@@ -40,7 +40,7 @@ import {
 import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
 import { checkRealReadiness } from "../services/spot/spotRealReadiness";
-import { getActivityEvents, getActivityEventsFiltered, humanizeSeverity, humanizeCategory, formatTimeAgo } from "../services/spot/spotActivityLogger";
+import { getActivityEvents, getActivityEventsFiltered, getActivityEventsFromDb, humanizeSeverity, humanizeCategory, formatTimeAgo } from "../services/spot/spotActivityLogger";
 
 // ─── Route registration ─────────────────────────────────────────────────────
 
@@ -213,7 +213,7 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   });
 
   // ─── GET /api/spot/activity ───────────────────────────────────────────────
-  // R10.1: Enhanced with filters: limit, pair, category, severity, mode
+  // R10.2: DB-backed read from bot_events, falls back to in-memory
   app.get("/api/spot/activity", async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
@@ -222,17 +222,14 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
       const severity = req.query.severity as string | undefined;
       const mode = req.query.mode as string | undefined;
 
-      // R10.1: Use filtered query if any filter beyond limit/category is provided
-      const hasAdvancedFilters = pair || severity || mode;
-      const events = hasAdvancedFilters
-        ? getActivityEventsFiltered({
-            limit,
-            pair: pair || undefined,
-            category: category as any || undefined,
-            severity: severity as any || undefined,
-            mode: mode as any || undefined,
-          })
-        : getActivityEvents(limit, category as any);
+      // R10.2: DB-backed read as primary, in-memory fallback handled inside getActivityEventsFromDb
+      const events = await getActivityEventsFromDb({
+        limit,
+        pair: pair || undefined,
+        category: category as any || undefined,
+        severity: severity as any || undefined,
+        mode: mode as any || undefined,
+      });
 
       res.json({
         events: events.map((e) => ({

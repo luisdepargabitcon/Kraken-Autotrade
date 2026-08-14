@@ -238,6 +238,18 @@ export const orderIntents = pgTable("order_intents", {
   matchedTradeId: integer("matched_trade_id"), // FK a trades.id cuando se hace match
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  // R10.2: SPOT Canonical provenance columns
+  internalIntentId: text("internal_intent_id"),
+  engineOwner: text("engine_owner"),
+  policyVersion: text("policy_version"),
+  executionMode: text("execution_mode"),
+  lotId: text("lot_id"),
+  requestedPrice: decimal("requested_price", { precision: 18, scale: 8 }),
+  orderType: text("order_type"),
+  reason: text("reason"),
+  fillPrice: decimal("fill_price", { precision: 18, scale: 8 }),
+  fillVolume: decimal("fill_volume", { precision: 18, scale: 8 }),
+  feeUsd: decimal("fee_usd", { precision: 18, scale: 8 }),
 });
 
 export const hybridReentryWatches = pgTable("hybrid_reentry_watches", {

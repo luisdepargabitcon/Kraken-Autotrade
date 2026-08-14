@@ -55,6 +55,8 @@ import {
   hasExistingSubmission,
   getCachedRecord,
   loadPendingRealOrders,
+  countPendingRealOrderIntents,
+  RealIntentPersistenceError,
   _clearCacheForTest as _clearIntentCacheForTest,
 } from "./spotOrderIntentStore";
 
@@ -536,6 +538,12 @@ export async function startSpotEngine(): Promise<boolean> {
   // Load open positions from DB
   await loadOpenPositionsFromDB();
 
+  // R10.2: Reconcile pending REAL order_intents at restart
+  // Loads SPOT CANONICAL pending intents (positive provenance) and reconciles with exchange
+  if (mode === ExecutionMode.REAL) {
+    await reconcilePendingRealOrderIntents();
+  }
+
   // R7: OFF mode — no entry scanner, but supervisor if positions exist
   if (mode === ExecutionMode.OFF) {
     entryScanningEnabled = false;
@@ -890,8 +898,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     return false;
   }
 
-  // Create execution intent
-  const internalIntentId = `ei-${intent.signalId}-${intent.pair}-${Date.now().toString(36)}`;
+  // R10.2: Stable internalIntentId — NO Date.now(), deterministic per signalId+pair
+  const internalIntentId = `entry:${SPOT_POLICY_VERSION}:${intent.signalId}:${intent.pair}`;
   const execIntent: SpotExecutionIntent = {
     intentId: internalIntentId,
     pair: intent.pair,
@@ -914,17 +922,36 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   // R10.1: For REAL mode — persist submission intent BEFORE calling placeOrder
   if (mode === ExecutionMode.REAL) {
     const venue = await getTradingVenue();
-    const { alreadySubmitted } = await persistSubmissionIntent({
-      internalIntentId,
-      pair: intent.pair,
-      side: "BUY",
-      requestedQty: sizing.volume,
-      requestedPrice: null,
-      orderType: "MARKET",
-      executionMode: mode,
-      lotId: null,
-      reason: `SPOT entry: ${intent.setupTag}`,
-    }, clientOrderId, venue);
+    let alreadySubmitted: boolean;
+    try {
+      const result = await persistSubmissionIntent({
+        internalIntentId,
+        pair: intent.pair,
+        side: "BUY",
+        requestedQty: sizing.volume,
+        requestedPrice: null,
+        orderType: "MARKET",
+        executionMode: mode,
+        lotId: null,
+        reason: `SPOT entry: ${intent.setupTag}`,
+      }, clientOrderId, venue);
+      alreadySubmitted = result.alreadySubmitted;
+    } catch (error: any) {
+      // R10.2: FAIL-CLOSED — no placeOrder if persistence fails
+      console.error(`[SpotEngine] Entry BLOCKED — persistence failed: ${error.message}`);
+      logActivity({
+        pair: intent.pair,
+        category: "EXECUTION",
+        severity: "CRITICAL",
+        title: "Entrada bloqueada — persistencia falló",
+        explanation: `No se pudo persistir el intent antes de placeOrder. NO se envió orden. Error: ${error.message}`,
+        decision: "BLOCK",
+        executionMode: mode,
+        reasonCode: "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED",
+        intentId: internalIntentId,
+      });
+      return false;
+    }
 
     if (alreadySubmitted) {
       console.log(`[SpotEngine] Entry SKIPPED — already submitted: ${internalIntentId} clientOrderId=${clientOrderId}`);
@@ -1198,8 +1225,26 @@ async function closePosition(
   // B03: Use position's immutable executionMode, not global mode
   const adapter = createExecutionAdapter(position.executionMode);
 
-  // R10.1: Stable internalIntentId and clientOrderId for exit
-  const internalIntentId = `exit-${position.lotId}-${exitDecision.reasonType ?? "EXIT"}`;
+  // R10.2: Stable internalIntentId with attempt counter for exit.
+  // If a prior exit attempt was CANCELLED/FAILED, a new attempt gets a new ID.
+  // Format: exit:${lotId}:${reasonType}:${attempt}
+  let exitAttempt = 0;
+  if (position.executionMode === ExecutionMode.REAL) {
+    try {
+      const priorExits = await db.execute(sql`
+        SELECT COUNT(*) as count FROM order_intents
+        WHERE lot_id = ${position.lotId}
+          AND side = ${"sell"}
+          AND status IN (${"failed"}, ${"expired"})
+          AND engine_owner = ${SPOT_ENGINE_OWNER}
+      `);
+      exitAttempt = Number(priorExits.rows[0]?.count ?? 0);
+    } catch {
+      // If query fails, use attempt 0 — fail-closed would block a legitimate exit
+      // Better to allow the exit with a potentially duplicate ID than block it
+    }
+  }
+  const internalIntentId = `exit:${position.lotId}:${exitDecision.reasonType ?? "EXIT"}:${exitAttempt}`;
   const clientOrderId = generateClientOrderId(internalIntentId);
 
   const execIntent: SpotExecutionIntent = {
@@ -1244,17 +1289,37 @@ async function closePosition(
     } catch { /* best effort */ }
 
     const venue = await getTradingVenue();
-    const { alreadySubmitted } = await persistSubmissionIntent({
-      internalIntentId,
-      pair: position.pair,
-      side: "SELL",
-      requestedQty: position.qtyRemaining,
-      requestedPrice: null,
-      orderType: "MARKET",
-      executionMode: position.executionMode,
-      lotId: position.lotId,
-      reason: exitDecision.reason,
-    }, clientOrderId, venue);
+    let alreadySubmitted: boolean;
+    try {
+      const result = await persistSubmissionIntent({
+        internalIntentId,
+        pair: position.pair,
+        side: "SELL",
+        requestedQty: position.qtyRemaining,
+        requestedPrice: null,
+        orderType: "MARKET",
+        executionMode: position.executionMode,
+        lotId: position.lotId,
+        reason: exitDecision.reason,
+      }, clientOrderId, venue);
+      alreadySubmitted = result.alreadySubmitted;
+    } catch (error: any) {
+      // R10.2: FAIL-CLOSED — no placeOrder if persistence fails
+      console.error(`[SpotEngine] Exit BLOCKED — persistence failed: ${error.message}`);
+      logActivity({
+        pair: position.pair,
+        category: "EXECUTION",
+        severity: "CRITICAL",
+        title: "Salida bloqueada — persistencia falló",
+        explanation: `No se pudo persistir el exit intent antes de placeOrder. NO se envió orden. Error: ${error.message}`,
+        decision: "BLOCK",
+        executionMode: position.executionMode,
+        reasonCode: "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED",
+        lotId: position.lotId,
+        intentId: internalIntentId,
+      });
+      return;
+    }
 
     if (alreadySubmitted) {
       console.log(`[SpotEngine] Exit SKIPPED — already submitted: ${internalIntentId}`);
@@ -1703,6 +1768,216 @@ async function loadOpenPositionsFromDB(): Promise<void> {
     }
   } catch (error) {
     console.error("[SpotEngine] Failed to load open positions:", error);
+  }
+}
+
+/**
+ * R10.2: Reconcile pending REAL order_intents at restart.
+ * Domain separation:
+ *   - ENTRY intents: in order_intents (side='buy', status pending/accepted)
+ *   - EXIT intents: in open_positions (status='EXIT_PENDING')
+ *
+ * For each pending entry intent:
+ *   - FILLED → create open_position exactly once (SELECT FOR UPDATE guard)
+ *   - PENDING → keep in order_intents, supervisor will monitor
+ *   - FAILED/CANCELLED → finalize in order_intents
+ *   - UNCERTAIN → block, mark UNCERTAIN
+ */
+async function reconcilePendingRealOrderIntents(): Promise<void> {
+  const pendingIntents = await loadPendingRealOrders();
+  if (pendingIntents.length === 0) {
+    console.log("[SpotEngine] R10.2: No pending REAL order_intents to reconcile");
+    return;
+  }
+
+  console.log(`[SpotEngine] R10.2: Reconciling ${pendingIntents.length} pending REAL order_intents`);
+
+  for (const intent of pendingIntents) {
+    // Only reconcile entry intents (side=BUY) here — exit intents are in open_positions
+    if (intent.side !== "BUY") continue;
+
+    if (!intent.venueOrderId) {
+      // No venue order ID — cannot query exchange. Mark UNCERTAIN.
+      console.warn(`[SpotEngine] R10.2: Intent ${intent.internalIntentId} has no venueOrderId — marking UNCERTAIN`);
+      await updateSubmissionResult(intent.internalIntentId, { status: "UNCERTAIN" });
+      logActivity({
+        pair: intent.pair,
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "Intent incierta tras reinicio — sin venueOrderId",
+        explanation: `Intent ${intent.internalIntentId} no tiene venueOrderId. No se puede reconciliar con exchange.`,
+        decision: "FAIL_CLOSED",
+        executionMode: ExecutionMode.REAL,
+        reasonCode: "RESTART_NO_VENUE_ID",
+        intentId: intent.internalIntentId,
+      });
+      continue;
+    }
+
+    const reconciled = await reconcileRealOrderViaExchange(intent.venueOrderId);
+
+    if (reconciled.state === "FILLED") {
+      // R10.2: Exactly-once — check if open_position already exists for this clientOrderId
+      try {
+        const existing = await db.execute(sql`
+          SELECT lot_id FROM open_positions
+          WHERE client_order_id = ${intent.clientOrderId}
+            AND status != 'CLOSED'
+          FOR UPDATE
+        `);
+        if (existing.rows.length > 0) {
+          console.log(`[SpotEngine] R10.2: Intent ${intent.internalIntentId} already has open_position ${existing.rows[0].lot_id} — skipping`);
+          await updateSubmissionResult(intent.internalIntentId, {
+            status: "FILLED",
+            fillPrice: reconciled.fillPrice,
+            fillVolume: reconciled.fillVolume,
+          });
+          continue;
+        }
+      } catch (error: any) {
+        console.warn(`[SpotEngine] R10.2: Guard check failed for ${intent.clientOrderId}: ${error.message}`);
+      }
+
+      // Create open_position with real fill data
+      const fillPrice = reconciled.fillPrice!;
+      const fillVolume = reconciled.fillVolume!;
+      const filledNotionalUsd = fillPrice * fillVolume;
+      const lotId = `spot-${intent.pair}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+
+      const venue = await getTradingVenue();
+      await db.execute(sql`
+        INSERT INTO open_positions (
+          lot_id, exchange, pair, entry_price, amount, qty_remaining, highest_price,
+          entry_strategy_id, entry_signal_tf, signal_confidence, signal_reason,
+          entry_fee, status, opened_at,
+          execution_mode, policy_version, engine_owner, origin, setup_tag, signal_id, market_context_id,
+          regime_at_entry, direction_at_entry, macro_at_entry, atr_pct_at_entry,
+          initial_stop_price, initial_stop_distance_pct, initial_stop_distance_usd,
+          risk_usd, mfe, mae, mfe_r, mae_r,
+          sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
+          break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
+          filled_notional_usd, client_order_id, venue_order_id
+        ) VALUES (
+          ${lotId}, ${venue}, ${intent.pair}, ${fillPrice},
+          ${fillVolume}, ${fillVolume}, ${fillPrice},
+          'SPOT_CANONICAL', '15m', 0, ${intent.reason ?? ''},
+          0, 'OPEN', NOW(),
+          'REAL', ${SPOT_POLICY_VERSION}, ${SPOT_ENGINE_OWNER}, ${SPOT_ORIGIN},
+          ${intent.reason ?? ''}, '', '',
+          'RANGE', 'NEUTRAL', 'NEUTRAL', 0,
+          null, null, null,
+          null, 0, 0, 0, 0,
+          false, false, null,
+          null, null, ${fillPrice}, ${fillPrice},
+          ${filledNotionalUsd}, ${intent.clientOrderId}, ${intent.venueOrderId}
+        )
+        RETURNING lot_id
+      `);
+
+      await updateSubmissionResult(intent.internalIntentId, {
+        status: "FILLED",
+        venueOrderId: intent.venueOrderId,
+        fillPrice,
+        fillVolume,
+      });
+
+      logActivity({
+        pair: intent.pair,
+        category: "SYSTEM",
+        severity: "SUCCESS",
+        title: "Entrada reconciliada desde order_intents",
+        explanation: `Intent ${intent.internalIntentId} reconciled: FILLED @ ${fillPrice}, lot=${lotId}`,
+        decision: "RECONCILED",
+        executionMode: ExecutionMode.REAL,
+        reasonCode: "RESTART_ENTRY_FILLED_FROM_INTENTS",
+        intentId: intent.internalIntentId,
+        lotId,
+        orderId: intent.venueOrderId,
+        price: fillPrice,
+      });
+    } else if (reconciled.state === "FAILED" || reconciled.state === "CANCELLED") {
+      await updateSubmissionResult(intent.internalIntentId, { status: reconciled.state });
+      logActivity({
+        pair: intent.pair,
+        category: "SYSTEM",
+        severity: "WARNING",
+        title: `Intent ${reconciled.state} tras reinicio`,
+        explanation: `Entry intent ${intent.internalIntentId} reconciled: ${reconciled.state}`,
+        decision: "RECONCILED",
+        executionMode: ExecutionMode.REAL,
+        reasonCode: `RESTART_ENTRY_${reconciled.state}`,
+        intentId: intent.internalIntentId,
+        orderId: intent.venueOrderId,
+      });
+    } else if (reconciled.state === "PENDING") {
+      console.log(`[SpotEngine] R10.2: Intent ${intent.internalIntentId} still PENDING on exchange`);
+    } else {
+      // UNCERTAIN — block
+      await updateSubmissionResult(intent.internalIntentId, { status: "UNCERTAIN" });
+      logActivity({
+        pair: intent.pair,
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "Intent incierta tras reinicio",
+        explanation: `Entry intent ${intent.internalIntentId} — exchange API could not resolve. Marked UNCERTAIN.`,
+        decision: "FAIL_CLOSED",
+        executionMode: ExecutionMode.REAL,
+        reasonCode: "RESTART_UNCERTAIN",
+        intentId: intent.internalIntentId,
+        orderId: intent.venueOrderId,
+      });
+    }
+  }
+}
+
+/**
+ * R10.2: Query exchange API for real order status.
+ * Returns { state, fillPrice, fillVolume }.
+ */
+async function reconcileRealOrderViaExchange(venueOrderId: string): Promise<{
+  state: "FILLED" | "FAILED" | "CANCELLED" | "PENDING" | "UNCERTAIN";
+  fillPrice: number | null;
+  fillVolume: number | null;
+}> {
+  try {
+    const exchange = ExchangeFactory.getTradingExchange();
+    if (!exchange.isInitialized()) {
+      console.warn(`[SpotEngine] Exchange not initialized — cannot reconcile ${venueOrderId}`);
+      return { state: "UNCERTAIN", fillPrice: null, fillVolume: null };
+    }
+
+    const anyExchange = exchange as any;
+    if (typeof anyExchange.getOrder !== "function") {
+      console.warn(`[SpotEngine] Exchange does not support getOrder — cannot reconcile ${venueOrderId}`);
+      return { state: "UNCERTAIN", fillPrice: null, fillVolume: null };
+    }
+
+    const order = await anyExchange.getOrder(venueOrderId);
+    if (order === null) {
+      return { state: "CANCELLED", fillPrice: null, fillVolume: null };
+    }
+
+    const orderStatus = (order.status || "").toLowerCase();
+    const filledSize = order.filledSize ?? 0;
+    const averagePrice = order.averagePrice ?? 0;
+
+    if (orderStatus === "filled" || (filledSize > 0 && averagePrice > 0)) {
+      return { state: "FILLED", fillPrice: averagePrice, fillVolume: filledSize };
+    }
+
+    if (orderStatus === "cancelled" || orderStatus === "expired" || orderStatus === "rejected") {
+      return { state: "CANCELLED", fillPrice: null, fillVolume: null };
+    }
+
+    if (orderStatus === "open" || orderStatus === "pending" || orderStatus === "accepted" || orderStatus === "new") {
+      return { state: "PENDING", fillPrice: null, fillVolume: null };
+    }
+
+    console.warn(`[SpotEngine] Exchange returned unknown order status: ${orderStatus} for ${venueOrderId}`);
+    return { state: "UNCERTAIN", fillPrice: null, fillVolume: null };
+  } catch (error: any) {
+    console.warn(`[SpotEngine] Reconciliation failed for ${venueOrderId}: ${error.message}`);
+    return { state: "UNCERTAIN", fillPrice: null, fillVolume: null };
   }
 }
 
