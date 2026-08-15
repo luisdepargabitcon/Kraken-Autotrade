@@ -29,6 +29,17 @@ import type {
 const MAX_EVENTS = 500;
 const DEDUP_WINDOW_MS = 300_000; // R10.2: 5min window for dedup (increased from 60s)
 
+// R10.3: Categories that should NEVER be deduplicated — every occurrence is critical
+const NO_DEDUP_CATEGORIES: SpotActivityCategory[] = [
+  "ERROR",
+  "SYSTEM",
+];
+
+// R10.3: Severities that should NEVER be deduplicated
+const NO_DEDUP_SEVERITIES: SpotActivitySeverity[] = [
+  "CRITICAL",
+];
+
 const events: SpotActivityEvent[] = [];
 
 // ─── Secret sanitization ─────────────────────────────────────────────────────
@@ -80,19 +91,25 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
   const sanitized = sanitizeInput(input);
   const now = Date.now();
 
-  // Dedup: check if last event is identical (same category, pair, title, reasonCode)
-  const last = events[events.length - 1];
-  if (
-    last &&
-    last.category === sanitized.category &&
-    last.pair === (sanitized.pair ?? null) &&
-    last.title === sanitized.title &&
-    last.reasonCode === (sanitized.reasonCode ?? null) &&
-    now - last.timestamp < DEDUP_WINDOW_MS
-  ) {
-    last.repeatCount++;
-    last.timestamp = now;
-    return last;
+  // R10.3: Selective dedup — skip dedup for critical categories/severities
+  const shouldDedup = !NO_DEDUP_CATEGORIES.includes(sanitized.category)
+    && !NO_DEDUP_SEVERITIES.includes(sanitized.severity);
+
+  if (shouldDedup) {
+    // Dedup: check if last event is identical (same category, pair, title, reasonCode)
+    const last = events[events.length - 1];
+    if (
+      last &&
+      last.category === sanitized.category &&
+      last.pair === (sanitized.pair ?? null) &&
+      last.title === sanitized.title &&
+      last.reasonCode === (sanitized.reasonCode ?? null) &&
+      now - last.timestamp < DEDUP_WINDOW_MS
+    ) {
+      last.repeatCount++;
+      last.timestamp = now;
+      return last;
+    }
   }
 
   const event: SpotActivityEvent = {
@@ -125,7 +142,7 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
     events.shift();
   }
 
-  // R10.1: Persist to bot_events via botLogger
+  // R10.3: Persist to bot_events via botLogger — include explanation, repeatCount, setupTag
   const eventType = `SPOT_${sanitized.category}` as any;
   const meta: Record<string, any> = {
     spotActivityId: event.id,
@@ -133,11 +150,19 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
     severity: event.severity,
     decision: event.decision,
     executionMode: event.executionMode,
+    setupTag: event.setupTag,
+    regime: event.regime,
+    direction: event.direction,
+    macroBias: event.macroBias,
     reasonCode: event.reasonCode,
     lotId: event.lotId,
     intentId: event.intentId,
     orderId: event.orderId,
+    signalId: event.signalId,
+    contextId: event.contextId,
     price: event.price,
+    explanation: event.explanation,
+    repeatCount: event.repeatCount,
   };
   // Remove null/undefined values to keep meta clean
   Object.keys(meta).forEach(k => meta[k] == null && delete meta[k]);
@@ -235,7 +260,8 @@ export async function getActivityEventsFromDb(options: ActivityFilterOptions): P
         category: (row.type as string).replace("SPOT_", "") as SpotActivityCategory,
         severity: meta.severity ?? "INFO",
         title: row.message,
-        explanation: "",
+        // R10.3: Restore explanation from meta (persisted in R10.3)
+        explanation: meta.explanation ?? "",
         decision: meta.decision ?? null,
         executionMode: meta.executionMode ?? null,
         setupTag: meta.setupTag ?? null,
@@ -245,12 +271,13 @@ export async function getActivityEventsFromDb(options: ActivityFilterOptions): P
         price: meta.price ?? null,
         reasonCode: meta.reasonCode ?? null,
         technicalDetails: null,
-        contextId: null,
+        contextId: meta.contextId ?? null,
         signalId: meta.signalId ?? null,
         lotId: meta.lotId ?? null,
         intentId: meta.intentId ?? null,
         orderId: meta.orderId ?? null,
-        repeatCount: 0,
+        // R10.3: Restore repeatCount from meta
+        repeatCount: meta.repeatCount ?? 0,
       } as SpotActivityEvent;
     });
   } catch (error: any) {

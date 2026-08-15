@@ -25,10 +25,10 @@
  */
 
 import { REAL_ACTIVATION_ALLOWED, ExecutionMode, SPOT_POLICY_VERSION } from "./spotTypes";
-import { SPOT_ENGINE_OWNER } from "./spotEngine";
+import { SPOT_ENGINE_OWNER, isSpotRuntimeOwner } from "./spotEngine";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { getTradingFeeModel } from "./feeModel";
-import { countPendingRealOrderIntents } from "./spotOrderIntentStore";
+import { countPendingRealOrderIntents, RealIntentPersistenceError } from "./spotOrderIntentStore";
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
 
@@ -56,7 +56,7 @@ export interface RealReadinessResult {
     shadowPositionsOpen: boolean;
     shadowPositionsCount: number;
     apiCredentialsConfigured: boolean;
-    realAdapterImplemented: boolean;
+    uncertainOrdersCount: number;
     pendingEntryIntents: number;
     pendingExitIntents: number;
     submittedIntentsWithoutVenueId: number;
@@ -64,6 +64,8 @@ export interface RealReadinessResult {
     positionSupervisorRunning: boolean;
     entryScannerCount: number;
     positionSupervisorCount: number;
+    runtimeOwner: string | null;
+    isSpotRuntimeOwnerCheck: boolean;
   };
 }
 
@@ -91,6 +93,7 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     shadowPositionsCount: 0,
     apiCredentialsConfigured: false,
     realAdapterImplemented: false,
+    uncertainOrdersCount: 0,
     pendingEntryIntents: 0,
     pendingExitIntents: 0,
     submittedIntentsWithoutVenueId: 0,
@@ -98,6 +101,8 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     positionSupervisorRunning: false,
     entryScannerCount: 0,
     positionSupervisorCount: 0,
+    runtimeOwner: null as string | null,
+    isSpotRuntimeOwnerCheck: false,
   };
 
   // 1. REAL_ACTIVATION_ALLOWED
@@ -168,26 +173,32 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     warnings.push("No se pudo verificar pares activos");
   }
 
-  // 6. R10.2: Pair metadata loaded PER PAIR — BLOCKER if any missing
+  // 6. R10.3: Pair metadata loaded PER PAIR — BLOCKER if any missing
+  // R10.3: Fix API — getPairMetadata(pair) is per-pair, not a Map getter
   if (checks.activePairsConfigured && checks.exchangeInitialized) {
     try {
       const exchange = ExchangeFactory.getTradingExchange();
       const anyExchange = exchange as any;
       if (typeof anyExchange.getPairMetadata === "function") {
-        const metadata = await anyExchange.getPairMetadata();
-        checks.pairMetadataLoaded = metadata && metadata.size > 0;
-        // R10.2: Check each active pair has metadata
+        // R10.3: Try loadPairMetadata if available, then check per-pair
+        if (typeof anyExchange.loadPairMetadata === "function") {
+          try {
+            await anyExchange.loadPairMetadata(activePairs);
+          } catch { /* best effort — individual checks below */ }
+        }
+        let allMetadataLoaded = true;
         for (const pair of activePairs) {
-          if (!metadata || !metadata.has(pair)) {
+          const meta = anyExchange.getPairMetadata(pair);
+          if (!meta) {
             checks.pairMetadataMissing.push(pair);
+            allMetadataLoaded = false;
           }
         }
+        checks.pairMetadataLoaded = allMetadataLoaded;
         if (checks.pairMetadataMissing.length > 0) {
-          checks.pairMetadataLoaded = false;
           blockers.push(`Metadata faltante para pares: ${checks.pairMetadataMissing.join(", ")}`);
         }
       } else {
-        // No getPairMetadata method — cannot verify per-pair
         checks.pairMetadataLoaded = false;
         blockers.push("Exchange no implementa getPairMetadata — no se puede verificar metadata por par");
       }
@@ -265,19 +276,30 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     warnings.push("No se pudo verificar posiciones SHADOW abiertas");
   }
 
-  // 11. R10.2: Pending order_intents counts (from SPOT CANONICAL provenance)
-  const intentCounts = await countPendingRealOrderIntents();
+  // 11. R10.3: Pending order_intents counts — ALL are BLOCKERS (not warnings)
+  let intentCounts: { pendingEntryOrders: number; pendingExitOrders: number; uncertainOrders: number; submittedOrdersWithoutVenueId: number };
+  try {
+    intentCounts = await countPendingRealOrderIntents();
+  } catch (error: any) {
+    // R10.3: DB failure on order_intents query → BLOCKER
+    blockers.push(`No se pudo consultar order_intents: ${error.message}`);
+    intentCounts = { pendingEntryOrders: -1, pendingExitOrders: -1, uncertainOrders: -1, submittedOrdersWithoutVenueId: -1 };
+  }
   checks.pendingEntryIntents = intentCounts.pendingEntryOrders;
   checks.pendingExitIntents = intentCounts.pendingExitOrders;
+  checks.uncertainOrdersCount = intentCounts.uncertainOrders;
   checks.submittedIntentsWithoutVenueId = intentCounts.submittedOrdersWithoutVenueId;
   if (checks.pendingEntryIntents > 0) {
-    warnings.push(`${checks.pendingEntryIntents} entry intents pendientes en order_intents — serán reconciliadas`);
+    blockers.push(`${checks.pendingEntryIntents} entry intents pendientes en order_intents — BLOCKER para nuevas entradas REAL`);
   }
   if (checks.pendingExitIntents > 0) {
-    warnings.push(`${checks.pendingExitIntents} exit intents pendientes en order_intents — serán reconciliadas`);
+    blockers.push(`${checks.pendingExitIntents} exit intents pendientes en order_intents — BLOCKER para nuevas entradas REAL`);
   }
   if (checks.submittedIntentsWithoutVenueId > 0) {
-    warnings.push(`${checks.submittedIntentsWithoutVenueId} intents sin venue_order_id — requieren atención`);
+    blockers.push(`${checks.submittedIntentsWithoutVenueId} intents sin venue_order_id — CRITICAL BLOCKER`);
+  }
+  if (checks.uncertainOrdersCount > 0) {
+    blockers.push(`${checks.uncertainOrdersCount} intents UNCERTAIN — CRITICAL BLOCKER, requieren resolución manual`);
   }
 
   // 12. RealAdapter implemented
@@ -292,15 +314,30 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     blockers.push("No se pudo crear RealAdapter");
   }
 
-  // 13. R10.2: Runtime state — real engine state, not hardcoded
+  // 13. R10.3: Runtime state — real engine state, not hardcoded
+  // R10.3: Check runtime owner directly, not inferred from scanner counts
   try {
     const spotEngine = await import("./spotEngine");
+    checks.runtimeOwner = spotEngine.SPOT_RUNTIME_OWNER;
+    checks.isSpotRuntimeOwnerCheck = isSpotRuntimeOwner();
+    if (!checks.isSpotRuntimeOwnerCheck) {
+      blockers.push("Runtime owner no es SPOT_CANONICAL — isSpotRuntimeOwner()=false");
+    }
+    if (spotEngine.SPOT_ENGINE_OWNER !== SPOT_ENGINE_OWNER) {
+      blockers.push(`SPOT_ENGINE_OWNER mismatch: expected ${SPOT_ENGINE_OWNER}, got ${spotEngine.SPOT_ENGINE_OWNER}`);
+    }
     checks.entryScannerRunning = spotEngine._isEngineRunningForTest();
     checks.positionSupervisorRunning = spotEngine._isSupervisorRunningForTest();
     checks.entryScannerCount = checks.entryScannerRunning ? 1 : 0;
     checks.positionSupervisorCount = checks.positionSupervisorRunning ? 1 : 0;
+    // R10.3: scanner count > 1 → blocker (duplicate scanners)
+    if (checks.entryScannerCount > 1) {
+      blockers.push(`Scanner count=${checks.entryScannerCount} — debe ser 0 o 1`);
+    }
+    if (checks.positionSupervisorCount > 1) {
+      blockers.push(`Supervisor count=${checks.positionSupervisorCount} — debe ser 0 o 1`);
+    }
   } catch {
-    // Engine module not available — report as not running
     checks.entryScannerCount = 0;
     checks.positionSupervisorCount = 0;
   }

@@ -46,3 +46,12 @@ CREATE INDEX IF NOT EXISTS idx_order_intents_engine_owner_policy
 CREATE INDEX IF NOT EXISTS idx_order_intents_status_provenance
   ON order_intents(status, engine_owner, execution_mode)
   WHERE engine_owner IS NOT NULL;
+
+-- R10.3: Add spot_real_reserved_capital_usd to bot_config for REAL concurrency reservation
+ALTER TABLE bot_config
+  ADD COLUMN IF NOT EXISTS spot_real_reserved_capital_usd DECIMAL(18, 2) DEFAULT 0;
+
+-- R10.3: Index for uncertain status lookups
+CREATE INDEX IF NOT EXISTS idx_order_intents_uncertain_provenance
+  ON order_intents(status, engine_owner, policy_version)
+  WHERE status = 'uncertain' AND engine_owner IS NOT NULL;

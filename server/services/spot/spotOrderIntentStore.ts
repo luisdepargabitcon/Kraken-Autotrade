@@ -66,6 +66,18 @@ export class RealIntentPersistenceError extends Error {
 }
 
 /**
+ * R10.3: Thrown when updateSubmissionResult fails to persist order state after exchange.placeOrder().
+ * The order was accepted by the exchange but its state cannot be durably recorded.
+ * This is a REAL_EXECUTION_UNRESOLVED condition — new REAL entries must be frozen.
+ */
+export class RealOrderStatePersistenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RealOrderStatePersistenceError";
+  }
+}
+
+/**
  * Persist a submission intent to order_intents BEFORE calling placeOrder.
  *
  * R10.2: FAIL-CLOSED. If DB SELECT or INSERT fails, throws RealIntentPersistenceError.
@@ -213,9 +225,10 @@ export async function updateSubmissionResult(
   }
 
   if (cached) {
+    const dbStatus = mapRealOrderStateToDbStatus(updates.status);
+    let updateResult: any;
     try {
-      const dbStatus = mapRealOrderStateToDbStatus(updates.status);
-      await db.execute(sql`
+      updateResult = await db.execute(sql`
         UPDATE order_intents SET
           status = ${dbStatus},
           exchange_order_id = COALESCE(${updates.venueOrderId ?? null}, exchange_order_id),
@@ -224,9 +237,20 @@ export async function updateSubmissionResult(
           fee_usd = COALESCE(${updates.feeUsd != null ? updates.feeUsd.toString() : null}, fee_usd),
           updated_at = NOW()
         WHERE client_order_id = ${cached.clientOrderId}
+        RETURNING id
       `);
     } catch (error: any) {
-      console.warn(`[SpotOrderIntentStore] DB update failed for ${internalIntentId}: ${error.message}`);
+      // R10.3: FAIL-CLOSED — never hide the failure after exchange.placeOrder succeeded
+      throw new RealOrderStatePersistenceError(
+        `REAL_EXECUTION_UNRESOLVED: DB update failed for ${internalIntentId} (clientOrderId=${cached.clientOrderId}): ${error.message}`
+      );
+    }
+    // R10.3: Confirm exactly 1 row updated
+    const rowCount = updateResult?.rows?.length ?? updateResult?.rowCount ?? 0;
+    if (rowCount !== 1) {
+      throw new RealOrderStatePersistenceError(
+        `REAL_EXECUTION_UNRESOLVED: DB update affected ${rowCount} rows (expected 1) for ${internalIntentId} (clientOrderId=${cached.clientOrderId})`
+      );
     }
   }
 }
@@ -254,20 +278,27 @@ export function hasExistingSubmission(internalIntentId: string): boolean {
 export async function loadPendingRealOrders(): Promise<RealOrderRecord[]> {
   const pending: RealOrderRecord[] = [];
 
+  let result: any;
   try {
-    const result = await db.execute(sql`
+    result = await db.execute(sql`
       SELECT client_order_id, exchange_order_id, exchange, pair, side, volume, status,
              internal_intent_id, engine_owner, policy_version, execution_mode,
              lot_id, requested_price, order_type, reason,
              fill_price, fill_volume, fee_usd
       FROM order_intents
-      WHERE status IN ('pending', 'accepted')
+      WHERE status IN ('pending', 'accepted', 'uncertain')
         AND engine_owner = ${SPOT_ENGINE_OWNER}
         AND policy_version = ${SPOT_POLICY_VERSION}
         AND execution_mode = 'REAL'
       ORDER BY created_at DESC
       LIMIT 100
     `);
+  } catch (error: any) {
+    // R10.3: FAIL-CLOSED — DB error does NOT mean "zero pending orders"
+    throw new RealIntentPersistenceError(
+      `LOAD_PENDING_DB_FAILURE: Cannot query order_intents for pending REAL orders: ${error.message}`
+    );
+  }
 
     for (const row of result.rows as any[]) {
       const internalIntentId = row.internal_intent_id ?? `restart-${row.client_order_id}`;
@@ -295,9 +326,6 @@ export async function loadPendingRealOrders(): Promise<RealOrderRecord[]> {
       pending.push(record);
       intentCache.set(internalIntentId, record);
     }
-  } catch (error: any) {
-    console.warn(`[SpotOrderIntentStore] Failed to load pending orders: ${error.message}`);
-  }
 
   return pending;
 }
@@ -312,30 +340,35 @@ export async function countPendingRealOrderIntents(): Promise<{
   uncertainOrders: number;
   submittedOrdersWithoutVenueId: number;
 }> {
+  let result: any;
   try {
-    const result = await db.execute(sql`
+    result = await db.execute(sql`
       SELECT
         COUNT(*) FILTER (WHERE status = 'pending' AND side = 'buy') as pending_entry,
         COUNT(*) FILTER (WHERE status = 'pending' AND side = 'sell') as pending_exit,
         COUNT(*) FILTER (WHERE status = 'accepted' AND side = 'buy') as accepted_entry,
         COUNT(*) FILTER (WHERE status = 'accepted' AND side = 'sell') as accepted_exit,
-        COUNT(*) FILTER (WHERE exchange_order_id IS NULL AND status IN ('pending', 'accepted')) as no_venue_id
+        COUNT(*) FILTER (WHERE status = 'uncertain') as uncertain_count,
+        COUNT(*) FILTER (WHERE exchange_order_id IS NULL AND status IN ('pending', 'accepted', 'uncertain')) as no_venue_id
       FROM order_intents
       WHERE engine_owner = ${SPOT_ENGINE_OWNER}
         AND policy_version = ${SPOT_POLICY_VERSION}
         AND execution_mode = 'REAL'
-        AND status IN ('pending', 'accepted')
+        AND status IN ('pending', 'accepted', 'uncertain')
     `);
+  } catch (error: any) {
+    // R10.3: FAIL-CLOSED — DB error does NOT mean "zero pending orders"
+    throw new RealIntentPersistenceError(
+      `COUNT_PENDING_DB_FAILURE: Cannot count pending REAL order_intents: ${error.message}`
+    );
+  }
     const row = result.rows[0] as any;
     return {
       pendingEntryOrders: Number(row?.pending_entry ?? 0) + Number(row?.accepted_entry ?? 0),
       pendingExitOrders: Number(row?.pending_exit ?? 0) + Number(row?.accepted_exit ?? 0),
-      uncertainOrders: 0,
+      uncertainOrders: Number(row?.uncertain_count ?? 0),
       submittedOrdersWithoutVenueId: Number(row?.no_venue_id ?? 0),
-    };
-  } catch {
-    return { pendingEntryOrders: 0, pendingExitOrders: 0, uncertainOrders: 0, submittedOrdersWithoutVenueId: 0 };
-  }
+    }
 }
 
 /**
@@ -354,6 +387,7 @@ function mapDbStatusToRealOrderState(dbStatus: string): RealOrderState {
     case "filled": return "FILLED";
     case "failed": return "FAILED";
     case "expired": return "CANCELLED";
+    case "uncertain": return "UNCERTAIN";
     default: return "UNCERTAIN";
   }
 }
@@ -365,7 +399,7 @@ function mapRealOrderStateToDbStatus(state: RealOrderState): string {
     case "FILLED": return "filled";
     case "FAILED": return "failed";
     case "CANCELLED": return "expired";
-    case "UNCERTAIN": return "pending";
+    case "UNCERTAIN": return "uncertain";
     case "EXIT_PENDING": return "accepted";
     case "CREATED": return "pending";
     default: return "pending";

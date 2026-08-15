@@ -193,6 +193,8 @@ export const botConfig = pgTable("bot_config", {
   spotExecutionMode: text("spot_execution_mode").notNull().default("OFF"),
   // SPOT Canonical Engine: virtual capital for SHADOW mode (USD)
   spotShadowCapitalUsd: decimal("spot_shadow_capital_usd", { precision: 18, scale: 2 }).default("10000"),
+  // R10.3: SPOT Canonical Engine: REAL mode concurrency capital reservation (USD)
+  spotRealReservedCapitalUsd: decimal("spot_real_reserved_capital_usd", { precision: 18, scale: 2 }).default("0"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

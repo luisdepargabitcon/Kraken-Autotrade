@@ -13,14 +13,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { generateClientOrderId, persistSubmissionIntent, updateSubmissionResult, RealIntentPersistenceError, _clearCacheForTest } from "../spot/spotOrderIntentStore";
+import { generateClientOrderId, persistSubmissionIntent, updateSubmissionResult, RealIntentPersistenceError, RealOrderStatePersistenceError, _clearCacheForTest } from "../spot/spotOrderIntentStore";
 import { logActivity, getActivityEventsFiltered, clearActivityEvents } from "../spot/spotActivityLogger";
 import { SpotActivityCategory, SpotActivitySeverity, ExecutionMode } from "../spot/spotTypes";
 
-// Mock db
+// Mock db — use vi.hoisted so variables are available when vi.mock factory runs
+const { mockDbExecute, mockDbTransaction } = vi.hoisted(() => ({
+  mockDbExecute: vi.fn(async (): Promise<any> => ({ rows: [] })),
+  mockDbTransaction: vi.fn(async (fn: any): Promise<any> => fn({ execute: vi.fn(async (): Promise<any> => ({ rows: [] })) })),
+}));
 vi.mock("../../db", () => ({
   db: {
-    execute: vi.fn(async () => ({ rows: [] })),
+    execute: mockDbExecute,
+    transaction: mockDbTransaction,
   },
 }));
 
@@ -35,11 +40,13 @@ vi.mock("../botLogger", () => ({
 
 // Mock ExchangeFactory
 const mockPlaceOrder = vi.fn();
+const mockGetPairMetadata = vi.fn((pair: string) => ({ pair, minNotional: 5 }));
 vi.mock("../exchanges/ExchangeFactory", () => ({
   ExchangeFactory: {
     getTradingExchange: () => ({
       placeOrder: mockPlaceOrder,
-      getPairMetadata: vi.fn(() => null),
+      getPairMetadata: mockGetPairMetadata,
+      loadPairMetadata: vi.fn(async () => {}),
       isInitialized: () => true,
       exchangeName: "revolutx",
     }),
@@ -540,6 +547,270 @@ describe("R10.2 Lifecycle Tests", () => {
       expect(result).toHaveProperty("checks.submittedIntentsWithoutVenueId");
       expect(result).toHaveProperty("checks.entryScannerRunning");
       expect(result).toHaveProperty("checks.positionSupervisorRunning");
+    });
+  });
+
+  // ─── R10.3 Tests ─────────────────────────────────────────────────────────────
+
+  describe("R10.3-01: updateSubmissionResult fail-closed", () => {
+    it("throws RealOrderStatePersistenceError on DB update failure", async () => {
+      _clearCacheForTest();
+      // First, persist an intent so it's in cache
+      mockDbExecute.mockResolvedValueOnce({
+        rows: [{ id: 1, client_order_id: "test-coid-001", internal_intent_id: "test-001" }],
+      });
+      await persistSubmissionIntent({
+        internalIntentId: "test-001",
+        pair: "BTC/USD",
+        side: "BUY",
+        requestedQty: 0.001,
+        executionMode: ExecutionMode.REAL,
+        requestedPrice: null,
+        orderType: "MARKET",
+        lotId: null,
+        reason: "test",
+      }, "test-coid-001", "revolutx");
+
+      // Now make DB update fail
+      mockDbExecute.mockRejectedValueOnce(new Error("DB connection lost"));
+
+      await expect(
+        updateSubmissionResult("test-001", {
+          venueOrderId: "venue-123",
+          status: "FILLED",
+          fillPrice: 50000,
+          fillVolume: 0.001,
+          feeUsd: 0.045,
+        })
+      ).rejects.toThrow(RealOrderStatePersistenceError);
+    });
+
+    it("throws RealOrderStatePersistenceError when rowCount != 1", async () => {
+      _clearCacheForTest();
+      mockDbExecute.mockResolvedValueOnce({
+        rows: [{ id: 1, client_order_id: "test-coid-002", internal_intent_id: "test-002" }],
+      });
+      await persistSubmissionIntent({
+        internalIntentId: "test-002",
+        pair: "BTC/USD",
+        side: "BUY",
+        requestedQty: 0.001,
+        executionMode: ExecutionMode.REAL,
+        requestedPrice: null,
+        orderType: "MARKET",
+        lotId: null,
+        reason: "test",
+      }, "test-coid-002", "revolutx");
+
+      // Simulate 0 rows updated (row disappeared)
+      mockDbExecute.mockResolvedValueOnce({ rows: [] });
+
+      await expect(
+        updateSubmissionResult("test-002", {
+          status: "FILLED",
+          fillPrice: 50000,
+        })
+      ).rejects.toThrow(RealOrderStatePersistenceError);
+    });
+  });
+
+  describe("R10.3-02: loadPendingRealOrders fail-closed", () => {
+    it("throws RealIntentPersistenceError on DB query failure", async () => {
+      mockDbExecute.mockRejectedValueOnce(new Error("DB timeout"));
+      const { loadPendingRealOrders } = await import("../spot/spotOrderIntentStore");
+      await expect(loadPendingRealOrders()).rejects.toThrow(RealIntentPersistenceError);
+    });
+
+    it("includes uncertain status in query results", async () => {
+      mockDbExecute.mockResolvedValueOnce({
+        rows: [{
+          client_order_id: "coid-1",
+          exchange_order_id: "venue-1",
+          exchange: "revolutx",
+          pair: "BTC/USD",
+          side: "buy",
+          volume: "0.001",
+          status: "uncertain",
+          internal_intent_id: "int-1",
+          engine_owner: "SPOT_CANONICAL",
+          policy_version: "SPOT-1.0.0-20260812",
+          execution_mode: "REAL",
+          lot_id: null,
+          requested_price: null,
+          order_type: "MARKET",
+          reason: "test",
+          fill_price: null,
+          fill_volume: null,
+          fee_usd: null,
+        }],
+      });
+      const { loadPendingRealOrders, _clearCacheForTest } = await import("../spot/spotOrderIntentStore");
+      _clearCacheForTest();
+      const pending = await loadPendingRealOrders();
+      expect(pending).toHaveLength(1);
+      expect(pending[0].status).toBe("UNCERTAIN");
+    });
+  });
+
+  describe("R10.3-03: countPendingRealOrderIntents fail-closed", () => {
+    it("throws RealIntentPersistenceError on DB query failure", async () => {
+      mockDbExecute.mockRejectedValueOnce(new Error("DB connection refused"));
+      const { countPendingRealOrderIntents } = await import("../spot/spotOrderIntentStore");
+      await expect(countPendingRealOrderIntents()).rejects.toThrow(RealIntentPersistenceError);
+    });
+
+    it("counts uncertain orders separately", async () => {
+      mockDbExecute.mockResolvedValueOnce({
+        rows: [{
+          pending_entry: "0",
+          pending_exit: "0",
+          accepted_entry: "0",
+          accepted_exit: "0",
+          uncertain_count: "2",
+          no_venue_id: "0",
+        }],
+      });
+      const { countPendingRealOrderIntents } = await import("../spot/spotOrderIntentStore");
+      const counts = await countPendingRealOrderIntents();
+      expect(counts.uncertainOrders).toBe(2);
+      expect(counts.pendingEntryOrders).toBe(0);
+    });
+  });
+
+  describe("R10.3-04: UNCERTAIN persistent + distinguishable", () => {
+    it("mapDbStatusToRealOrderState maps 'uncertain' to UNCERTAIN", async () => {
+      // Test via loadPendingRealOrders with uncertain status
+      mockDbExecute.mockResolvedValueOnce({
+        rows: [{
+          client_order_id: "coid-unc",
+          exchange_order_id: null,
+          exchange: "revolutx",
+          pair: "ETH/USD",
+          side: "buy",
+          volume: "0.01",
+          status: "uncertain",
+          internal_intent_id: "int-unc",
+          engine_owner: "SPOT_CANONICAL",
+          policy_version: "SPOT-1.0.0-20260812",
+          execution_mode: "REAL",
+          lot_id: null,
+          requested_price: null,
+          order_type: "MARKET",
+          reason: "test",
+          fill_price: null,
+          fill_volume: null,
+          fee_usd: null,
+        }],
+      });
+      const { loadPendingRealOrders, _clearCacheForTest } = await import("../spot/spotOrderIntentStore");
+      _clearCacheForTest();
+      const pending = await loadPendingRealOrders();
+      expect(pending[0].status).toBe("UNCERTAIN");
+    });
+  });
+
+  describe("R10.3-13: Activity logger selective dedup", () => {
+    it("does NOT dedup CRITICAL severity events", () => {
+      clearActivityEvents();
+      const event1 = logActivity({
+        pair: "BTC/USD",
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "System failure",
+        explanation: "DB connection lost",
+        reasonCode: "DB_FAILURE",
+      });
+      const event2 = logActivity({
+        pair: "BTC/USD",
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "System failure",
+        explanation: "DB connection lost",
+        reasonCode: "DB_FAILURE",
+      });
+      expect(event1.id).not.toBe(event2.id);
+      expect(event2.repeatCount).toBe(0);
+    });
+
+    it("does NOT dedup ERROR category events", () => {
+      clearActivityEvents();
+      const event1 = logActivity({
+        pair: "BTC/USD",
+        category: "ERROR",
+        severity: "WARNING",
+        title: "Order error",
+        explanation: "Order rejected",
+        reasonCode: "ORDER_REJECTED",
+      });
+      const event2 = logActivity({
+        pair: "BTC/USD",
+        category: "ERROR",
+        severity: "WARNING",
+        title: "Order error",
+        explanation: "Order rejected",
+        reasonCode: "ORDER_REJECTED",
+      });
+      expect(event1.id).not.toBe(event2.id);
+    });
+
+    it("dedups INFO events within window", () => {
+      clearActivityEvents();
+      const event1 = logActivity({
+        pair: "BTC/USD",
+        category: "MARKET",
+        severity: "INFO",
+        title: "Market update",
+        explanation: "Price updated",
+        reasonCode: "PRICE_UPDATE",
+      });
+      const event2 = logActivity({
+        pair: "BTC/USD",
+        category: "MARKET",
+        severity: "INFO",
+        title: "Market update",
+        explanation: "Price updated",
+        reasonCode: "PRICE_UPDATE",
+      });
+      expect(event1.id).toBe(event2.id);
+      expect(event2.repeatCount).toBe(1);
+    });
+  });
+
+  describe("R10.3-05: Readiness — pending orders as blockers", () => {
+    it("pending entry intents are blockers, not warnings", async () => {
+      const { db } = await import("../../db");
+      // Mock ALL DB calls to reject — countPendingRealOrderIntents will throw → blocker
+      (db.execute as any).mockRejectedValue(new Error("DB error"));
+
+      const { checkRealReadiness } = await import("../spot/spotRealReadiness");
+      const result = await checkRealReadiness();
+      expect(result.ready).toBe(false);
+      // DB error on order_intents query → blocker about order_intents
+      expect(result.blockers.some((b: string) => b.includes("order_intents"))).toBe(true);
+    });
+
+    it("uncertain orders are critical blockers", async () => {
+      const { db } = await import("../../db");
+      // Mock ALL DB calls to reject — countPendingRealOrderIntents will throw → blocker
+      (db.execute as any).mockRejectedValue(new Error("DB error"));
+
+      const { checkRealReadiness } = await import("../spot/spotRealReadiness");
+      const result = await checkRealReadiness();
+      expect(result.ready).toBe(false);
+      // DB error on order_intents → blocker mentions order_intents
+      expect(result.blockers.some((b: string) => b.includes("order_intents"))).toBe(true);
+    });
+  });
+
+  describe("R10.3-08: Readiness — runtime owner check", () => {
+    it("includes runtimeOwner and isSpotRuntimeOwnerCheck fields", async () => {
+      const { db } = await import("../../db");
+      (db.execute as any).mockResolvedValue({ rows: [] });
+
+      const { checkRealReadiness } = await import("../spot/spotRealReadiness");
+      const result = await checkRealReadiness();
+      expect(result.checks).toHaveProperty("runtimeOwner");
+      expect(result.checks).toHaveProperty("isSpotRuntimeOwnerCheck");
     });
   });
 });

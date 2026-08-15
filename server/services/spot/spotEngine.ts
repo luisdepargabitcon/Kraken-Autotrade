@@ -57,6 +57,7 @@ import {
   loadPendingRealOrders,
   countPendingRealOrderIntents,
   RealIntentPersistenceError,
+  RealOrderStatePersistenceError,
   _clearCacheForTest as _clearIntentCacheForTest,
 } from "./spotOrderIntentStore";
 
@@ -898,6 +899,25 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     return false;
   }
 
+  // R10.3: Real capital concurrency reservation — prevent overspending across pairs
+  if (mode === ExecutionMode.REAL) {
+    const reserved = await reserveRealCapital(sizing.notionalUsd);
+    if (!reserved) {
+      console.log(`[SpotEngine] Entry blocked for ${intent.pair}: insufficient real capital after concurrency reservation`);
+      logActivity({
+        pair: intent.pair,
+        category: "RISK",
+        severity: "WARNING",
+        title: "Entrada bloqueada — capital REAL insuficiente",
+        explanation: `Reserva concurrente de capital falló para ${intent.pair}. notional=$${sizing.notionalUsd}`,
+        decision: "BLOCK",
+        executionMode: mode,
+        reasonCode: "REAL_CAPITAL_RESERVATION_FAILED",
+      });
+      return false;
+    }
+  }
+
   // R10.2: Stable internalIntentId — NO Date.now(), deterministic per signalId+pair
   const internalIntentId = `entry:${SPOT_POLICY_VERSION}:${intent.signalId}:${intent.pair}`;
   const execIntent: SpotExecutionIntent = {
@@ -939,6 +959,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     } catch (error: any) {
       // R10.2: FAIL-CLOSED — no placeOrder if persistence fails
       console.error(`[SpotEngine] Entry BLOCKED — persistence failed: ${error.message}`);
+      // R10.3: Release capital reservation on persistence failure
+      await releaseRealCapital(sizing.notionalUsd);
       logActivity({
         pair: intent.pair,
         category: "EXECUTION",
@@ -955,6 +977,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
 
     if (alreadySubmitted) {
       console.log(`[SpotEngine] Entry SKIPPED — already submitted: ${internalIntentId} clientOrderId=${clientOrderId}`);
+      // R10.3: Release capital reservation on duplicate skip
+      await releaseRealCapital(sizing.notionalUsd);
       logActivity({
         pair: intent.pair,
         category: "EXECUTION",
@@ -976,6 +1000,10 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
 
   if (!result.success) {
     console.error(`[SpotEngine] Entry failed for ${intent.pair}: ${result.error}`);
+    // R10.3: Release capital reservation on failure
+    if (mode === ExecutionMode.REAL) {
+      await releaseRealCapital(sizing.notionalUsd);
+    }
     logActivity({
       pair: intent.pair,
       category: "ENTRY",
@@ -1021,6 +1049,10 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
 
   if (result.fillPrice === null) {
     console.error(`[SpotEngine] Entry failed for ${intent.pair}: no fill price`);
+    // R10.3: Release capital reservation on failure
+    if (mode === ExecutionMode.REAL) {
+      await releaseRealCapital(sizing.notionalUsd);
+    }
     return false;
   }
 
@@ -1087,18 +1119,40 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       return false;
     }
   } else {
-    // Non-SHADOW: persist position without ledger transaction
-    // R10.1: Persist real clientOrderId and venueOrderId
-    await persistOpenPosition(position, result, filledNotionalUsd);
-    // R10.1: Update order_intents with FILLED status
+    // R10.3: REAL mode — atomic fill materialization (exactly-once)
+    // INSERT open_position + UPDATE order_intent FILLED in ONE transaction
     if (mode === ExecutionMode.REAL) {
-      await updateSubmissionResult(internalIntentId, {
-        venueOrderId: result.venueOrderId ?? result.orderId,
-        status: "FILLED",
-        fillPrice: result.fillPrice,
-        fillVolume: result.fillVolume,
-        feeUsd: result.feeUsd,
-      });
+      try {
+        await finalizeRealEntryFillAtomic(
+          position, result, filledNotionalUsd, internalIntentId, clientOrderId,
+        );
+        // R10.3: Release concurrency reservation — position is now the reservation
+        await releaseRealCapital(sizing.notionalUsd);
+      } catch (error: any) {
+        // R10.3: Exchange ack received but DB materialization failed.
+        // Mark UNCERTAIN — do NOT re-send order. Freeze new REAL entries.
+        console.error(`[SpotEngine] REAL entry fill materialization FAILED for ${lotId}: ${error.message}`);
+        try {
+          await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
+        } catch { /* best effort */ }
+        logActivity({
+          pair: intent.pair,
+          category: "SYSTEM",
+          severity: "CRITICAL",
+          title: "REAL_EXECUTION_UNRESOLVED — materialización DB falló",
+          explanation: `Exchange aceptó orden ${result.orderId} pero DB no pudo materializar. Marcado UNCERTAIN. NO reenviar. Error: ${error.message}`,
+          decision: "FAIL_CLOSED",
+          executionMode: mode,
+          reasonCode: "REAL_ENTRY_FILL_ATOMIC_FAILED",
+          intentId: internalIntentId,
+          lotId,
+          orderId: result.orderId,
+        });
+        return false;
+      }
+    } else {
+      // Non-SHADOW non-REAL (shouldn't happen but keep for safety)
+      await persistOpenPosition(position, result, filledNotionalUsd);
     }
   }
 
@@ -1240,8 +1294,20 @@ async function closePosition(
       `);
       exitAttempt = Number(priorExits.rows[0]?.count ?? 0);
     } catch {
-      // If query fails, use attempt 0 — fail-closed would block a legitimate exit
-      // Better to allow the exit with a potentially duplicate ID than block it
+      // R10.3: FAIL-CLOSED — cannot determine exit attempt, NO placeOrder
+      console.error(`[SpotEngine] Exit BLOCKED — cannot determine exit attempt for ${position.lotId}`);
+      logActivity({
+        pair: position.pair,
+        category: "EXECUTION",
+        severity: "CRITICAL",
+        title: "Salida bloqueada — no se pudo determinar attempt",
+        explanation: `No se pudo consultar order_intents para contar exit attempts previos de ${position.lotId}. NO se envió orden.`,
+        decision: "BLOCK",
+        executionMode: position.executionMode,
+        reasonCode: "REAL_EXIT_ATTEMPT_RESOLUTION_FAILED_FAIL_CLOSED",
+        lotId: position.lotId,
+      });
+      return;
     }
   }
   const internalIntentId = `exit:${position.lotId}:${exitDecision.reasonType ?? "EXIT"}:${exitAttempt}`;
@@ -1425,34 +1491,56 @@ async function closePosition(
       return;
     }
   } else {
-    // Non-SHADOW: persist trade, delete position separately
-    // R10.1: Exactly-once guard — SELECT FOR UPDATE to prevent double close
-    try {
-      const guard = await db.execute(sql`
-        SELECT lot_id FROM open_positions
-        WHERE lot_id = ${position.lotId} AND status != 'CLOSED'
-        FOR UPDATE
-      `);
-      if (guard.rows.length === 0) {
-        console.log(`[SpotEngine] Exit SKIPPED — already closed: ${position.lotId}`);
+    // R10.3: REAL mode — atomic exit fill materialization (exactly-once)
+    // lock order_intent + lock open_position + INSERT trade + DELETE position + UPDATE intent FILLED in ONE tx
+    if (position.executionMode === ExecutionMode.REAL) {
+      try {
+        await finalizeRealExitFillAtomic(
+          position, result, pnl, exitDecision,
+          auditMetrics ?? auditTracker.getMetrics(position.lotId),
+          internalIntentId,
+        );
+      } catch (error: any) {
+        // R10.3: Exchange ack received but DB materialization failed.
+        // Mark UNCERTAIN — do NOT re-send. Freeze new REAL entries.
+        console.error(`[SpotEngine] REAL exit fill materialization FAILED for ${position.lotId}: ${error.message}`);
+        try {
+          await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
+        } catch { /* best effort */ }
+        logActivity({
+          pair: position.pair,
+          category: "SYSTEM",
+          severity: "CRITICAL",
+          title: "REAL_EXECUTION_UNRESOLVED — materialización DB exit falló",
+          explanation: `Exchange aceptó orden de salida ${result.orderId} pero DB no pudo materializar. Marcado UNCERTAIN. NO reenviar. Error: ${error.message}`,
+          decision: "FAIL_CLOSED",
+          executionMode: position.executionMode,
+          reasonCode: "REAL_EXIT_FILL_ATOMIC_FAILED",
+          lotId: position.lotId,
+          intentId: internalIntentId,
+          orderId: result.orderId,
+        });
         return;
       }
-    } catch (error: any) {
-      console.warn(`[SpotEngine] Exit guard check failed for ${position.lotId}: ${error.message}`);
-    }
-    await persistClosedTrade(position, result, pnl, exitDecision, auditMetrics ?? auditTracker.getMetrics(position.lotId));
-    await db.execute(sql`
-      DELETE FROM open_positions WHERE lot_id = ${position.lotId}
-    `);
-    // R10.1: Update order_intents with FILLED status for REAL exit
-    if (position.executionMode === ExecutionMode.REAL) {
-      await updateSubmissionResult(internalIntentId, {
-        venueOrderId: result.venueOrderId ?? result.orderId,
-        status: "FILLED",
-        fillPrice: result.fillPrice,
-        fillVolume: result.fillVolume,
-        feeUsd: result.feeUsd,
-      });
+    } else {
+      // Non-SHADOW non-REAL — keep legacy path for safety
+      try {
+        const guard = await db.execute(sql`
+          SELECT lot_id FROM open_positions
+          WHERE lot_id = ${position.lotId} AND status != 'CLOSED'
+          FOR UPDATE
+        `);
+        if (guard.rows.length === 0) {
+          console.log(`[SpotEngine] Exit SKIPPED — already closed: ${position.lotId}`);
+          return;
+        }
+      } catch (error: any) {
+        console.warn(`[SpotEngine] Exit guard check failed for ${position.lotId}: ${error.message}`);
+      }
+      await persistClosedTrade(position, result, pnl, exitDecision, auditMetrics ?? auditTracker.getMetrics(position.lotId));
+      await db.execute(sql`
+        DELETE FROM open_positions WHERE lot_id = ${position.lotId}
+      `);
     }
   }
 
@@ -1498,6 +1586,7 @@ async function getActivePairs(): Promise<string[]> {
 
 /**
  * Get available capital — B12: uses configurable shadow ledger, not hardcode 10_000.
+ * R10.3: For REAL mode, subtracts concurrent reserved capital.
  */
 async function getAvailableCapital(): Promise<number> {
   if (getCachedExecutionMode() === ExecutionMode.SHADOW) {
@@ -1513,6 +1602,69 @@ async function getAvailableCapital(): Promise<number> {
     return Number(result.rows[0]?.capital ?? 10000);
   } catch {
     return 10_000;
+  }
+}
+
+/**
+ * R10.3: Real capital concurrency reservation.
+ * Atomically reserves capital in bot_config.spot_real_reserved_capital_usd
+ * to prevent concurrent orders across pairs from overspending.
+ *
+ * Uses SELECT FOR UPDATE + conditional UPDATE in a transaction.
+ * Returns true if reservation succeeded, false if insufficient capital.
+ */
+async function reserveRealCapital(notionalUsd: number): Promise<boolean> {
+  try {
+    return await db.transaction(async (tx) => {
+      // Lock the config row
+      const row = await tx.execute(sql`
+        SELECT COALESCE(spot_real_reserved_capital_usd, 0) as reserved,
+               COALESCE(
+                 (SELECT value FROM market_data WHERE pair = 'USD' ORDER BY timestamp DESC LIMIT 1),
+                 10000
+               ) as total_capital
+        FROM bot_config
+        FOR UPDATE
+        LIMIT 1
+      `);
+      if (row.rows.length === 0) {
+        // No config row — cannot reserve
+        return false;
+      }
+      const reserved = Number(row.rows[0].reserved);
+      const totalCapital = Number(row.rows[0].total_capital);
+      const available = totalCapital - reserved;
+      if (notionalUsd > available) {
+        return false;
+      }
+      const newReserved = reserved + notionalUsd;
+      await tx.execute(sql`
+        UPDATE bot_config SET
+          spot_real_reserved_capital_usd = ${newReserved},
+          updated_at = NOW()
+      `);
+      return true;
+    });
+  } catch (error: any) {
+    console.error(`[SpotEngine] Real capital reservation failed: ${error.message}`);
+    return false;
+  }
+}
+
+/**
+ * R10.3: Release real capital reservation.
+ * Called when an entry fails or after the position is materialized
+ * (the open_position itself becomes the capital reservation).
+ */
+async function releaseRealCapital(notionalUsd: number): Promise<void> {
+  try {
+    await db.execute(sql`
+      UPDATE bot_config SET
+        spot_real_reserved_capital_usd = GREATEST(COALESCE(spot_real_reserved_capital_usd, 0) - ${notionalUsd}, 0),
+        updated_at = NOW()
+    `);
+  } catch (error: any) {
+    console.warn(`[SpotEngine] Real capital release failed: ${error.message}`);
   }
 }
 
@@ -2153,6 +2305,277 @@ async function reconcileRealOrder(row: any, venueOrderId: string): Promise<strin
     console.warn(`[SpotEngine] Reconciliation failed for ${venueOrderId}: ${error.message}`);
     return "UNCERTAIN";
   }
+}
+
+/**
+ * R10.3: Atomic REAL entry fill materialization — exactly-once.
+ * Transaction: lock order_intent → check open_position doesn't exist → INSERT open_position → UPDATE order_intent FILLED → COMMIT.
+ * Throws on any failure — caller must handle UNCERTAIN marking.
+ */
+async function finalizeRealEntryFillAtomic(
+  position: SpotPosition,
+  execResult: SpotExecutionResult,
+  filledNotionalUsd: number,
+  internalIntentId: string,
+  clientOrderId: string,
+): Promise<void> {
+  const venue = await getTradingVenue();
+  const venueOrderId = execResult.venueOrderId ?? execResult.orderId ?? null;
+
+  await db.transaction(async (tx) => {
+    // 1. Lock the order_intent row
+    const intentRow = await tx.execute(sql`
+      SELECT id FROM order_intents
+      WHERE client_order_id = ${clientOrderId}
+      FOR UPDATE
+    `);
+    if (intentRow.rows.length === 0) {
+      throw new Error(`order_intent not found for clientOrderId=${clientOrderId}`);
+    }
+
+    // 2. Check if open_position already exists (exactly-once guard)
+    const existing = await tx.execute(sql`
+      SELECT lot_id FROM open_positions
+      WHERE client_order_id = ${clientOrderId}
+        AND status != 'CLOSED'
+      FOR UPDATE
+    `);
+    if (existing.rows.length > 0) {
+      // Already materialized — just update intent to FILLED
+      await tx.execute(sql`
+        UPDATE order_intents SET
+          status = 'filled',
+          exchange_order_id = COALESCE(${venueOrderId}, exchange_order_id),
+          fill_price = COALESCE(${execResult.fillPrice?.toString() ?? null}, fill_price),
+          fill_volume = COALESCE(${execResult.fillVolume?.toString() ?? null}, fill_volume),
+          fee_usd = COALESCE(${execResult.feeUsd?.toString() ?? null}, fee_usd),
+          updated_at = NOW()
+        WHERE client_order_id = ${clientOrderId}
+      `);
+      return;
+    }
+
+    // 3. INSERT open_position
+    await tx.execute(sql`
+      INSERT INTO open_positions (
+        lot_id, exchange, pair, entry_price, amount, qty_remaining, highest_price,
+        entry_strategy_id, entry_signal_tf, signal_confidence, signal_reason,
+        entry_fee, status, opened_at,
+        execution_mode, policy_version, engine_owner, origin, setup_tag, signal_id, market_context_id,
+        regime_at_entry, direction_at_entry, macro_at_entry, atr_pct_at_entry,
+        initial_stop_price, initial_stop_distance_pct, initial_stop_distance_usd,
+        risk_usd, mfe, mae, mfe_r, mae_r,
+        sg_break_even_activated, sg_trailing_activated, sg_current_stop_price,
+        break_even_stop_price, trailing_stop_price, trailing_highest_price, lowest_price,
+        filled_notional_usd, client_order_id, venue_order_id
+      ) VALUES (
+        ${position.lotId}, ${venue}, ${position.pair}, ${position.entryPrice},
+        ${position.amount}, ${position.qtyRemaining}, ${position.highestPrice},
+        ${position.entryStrategyId}, ${position.entrySignalTf},
+        ${position.signalConfidence}, ${position.signalReason},
+        ${position.entryFee}, 'OPEN', NOW(),
+        ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER}, ${SPOT_ORIGIN},
+        ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
+        ${position.regimeAtEntry}, ${position.directionAtEntry}, ${position.macroAtEntry},
+        ${position.atrPctAtEntry}, ${position.initialStopPrice},
+        ${position.initialStopDistancePct}, ${position.initialStopDistanceUsd},
+        ${position.riskUsd}, 0, 0, 0, 0,
+        false, false, ${position.sgCurrentStopPrice},
+        null, null, ${position.highestPrice}, ${position.entryPrice},
+        ${filledNotionalUsd}, ${clientOrderId}, ${venueOrderId}
+      )
+      RETURNING lot_id
+    `);
+
+    // 4. UPDATE order_intent to FILLED
+    await tx.execute(sql`
+      UPDATE order_intents SET
+        status = 'filled',
+        exchange_order_id = COALESCE(${venueOrderId}, exchange_order_id),
+        fill_price = COALESCE(${execResult.fillPrice?.toString() ?? null}, fill_price),
+        fill_volume = COALESCE(${execResult.fillVolume?.toString() ?? null}, fill_volume),
+        fee_usd = COALESCE(${execResult.feeUsd?.toString() ?? null}, fee_usd),
+        updated_at = NOW()
+      WHERE client_order_id = ${clientOrderId}
+      RETURNING id
+    `);
+  });
+
+  // Update in-memory cache after successful COMMIT
+  const cached = getCachedRecord(internalIntentId);
+  if (cached) {
+    cached.status = "FILLED";
+    cached.venueOrderId = venueOrderId;
+    cached.fillPrice = execResult.fillPrice;
+    cached.fillVolume = execResult.fillVolume;
+    cached.feeUsd = execResult.feeUsd;
+  }
+}
+
+/**
+ * R10.3: Atomic REAL exit fill materialization — exactly-once.
+ * Transaction: lock order_intent → lock open_position → check trade doesn't exist
+ * → INSERT trade → DELETE open_position → UPDATE order_intent FILLED → COMMIT.
+ * Throws on any failure — caller must handle UNCERTAIN marking.
+ */
+async function finalizeRealExitFillAtomic(
+  position: SpotPosition,
+  execResult: SpotExecutionResult,
+  pnl: { grossPnlUsd: number; netPnlUsd: number; entryFeeUsd: number; exitFeeUsd: number; executionCostUsd: number },
+  exitDecision: SpotExitDecision,
+  auditMetrics: SpotAuditMetrics | null,
+  internalIntentId: string,
+): Promise<void> {
+  const venue = await getTradingVenue();
+  const venueOrderId = execResult.venueOrderId ?? execResult.orderId ?? null;
+  const tradeId = `spot-trade-${position.lotId}`;
+
+  await db.transaction(async (tx) => {
+    // 1. Lock the order_intent row
+    const intentRow = await tx.execute(sql`
+      SELECT id, client_order_id FROM order_intents
+      WHERE internal_intent_id = ${internalIntentId}
+      FOR UPDATE
+    `);
+    if (intentRow.rows.length === 0) {
+      throw new Error(`order_intent not found for internalIntentId=${internalIntentId}`);
+    }
+    const clientOrderId = intentRow.rows[0].client_order_id;
+
+    // 2. Lock open_position
+    const posRow = await tx.execute(sql`
+      SELECT lot_id FROM open_positions
+      WHERE lot_id = ${position.lotId} AND status != 'CLOSED'
+      FOR UPDATE
+    `);
+    if (posRow.rows.length === 0) {
+      // Position already closed — just update intent
+      await tx.execute(sql`
+        UPDATE order_intents SET status = 'filled', updated_at = NOW()
+        WHERE internal_intent_id = ${internalIntentId}
+      `);
+      return;
+    }
+
+    // 3. Check if trade already exists (exactly-once guard)
+    const existingTrade = await tx.execute(sql`
+      SELECT trade_id FROM trades WHERE lot_id = ${position.lotId} FOR UPDATE
+    `);
+    if (existingTrade.rows.length > 0) {
+      // Trade already inserted — just update intent and delete position
+      await tx.execute(sql`DELETE FROM open_positions WHERE lot_id = ${position.lotId}`);
+      await tx.execute(sql`
+        UPDATE order_intents SET status = 'filled', updated_at = NOW()
+        WHERE internal_intent_id = ${internalIntentId}
+      `);
+      return;
+    }
+
+    // 4. INSERT trade
+    const holdTimeMinutes = Math.round((Date.now() - position.openedAt) / 60000);
+    await tx.execute(sql`
+      INSERT INTO trades (
+        trade_id, exchange, origin, executed_by_bot, pair, type, price, amount,
+        status, entry_price, realized_pnl_usd, realized_pnl_pct, executed_at,
+        execution_mode, policy_version, engine_owner, setup_tag, signal_id, market_context_id,
+        gross_pnl_usd, entry_fee_usd, exit_fee_usd, execution_cost_usd, net_pnl_usd,
+        fee_quality, mfe, mae, mfe_r, mae_r, profit_capture_pct, exit_reason_type,
+        lot_id, hold_time_minutes
+      ) VALUES (
+        ${tradeId}, ${venue}, ${SPOT_ORIGIN}, true, ${position.pair}, 'sell',
+        ${execResult.fillPrice}, ${position.qtyRemaining},
+        'closed', ${position.entryPrice}, ${pnl.netPnlUsd},
+        ${position.entryPrice > 0 ? ((execResult.fillPrice! - position.entryPrice) / position.entryPrice) * 100 : 0},
+        NOW(),
+        ${position.executionMode}, ${position.policyVersion}, ${SPOT_ENGINE_OWNER},
+        ${position.setupTag}, ${position.signalId}, ${position.marketContextId},
+        ${pnl.grossPnlUsd}, ${pnl.entryFeeUsd}, ${pnl.exitFeeUsd}, ${pnl.executionCostUsd},
+        ${pnl.netPnlUsd}, ${execResult.fillQuality},
+        ${auditMetrics?.mfeUsd ?? 0}, ${auditMetrics?.maeUsd ?? 0},
+        ${auditMetrics?.mfeR ?? 0}, ${auditMetrics?.maeR ?? 0},
+        ${auditMetrics?.exitAudit?.profitCapturePct ?? null},
+        ${exitDecision.reasonType}, ${position.lotId}, ${holdTimeMinutes}
+      )
+      RETURNING trade_id
+    `);
+
+    // 5. DELETE open_position
+    await tx.execute(sql`DELETE FROM open_positions WHERE lot_id = ${position.lotId}`);
+
+    // 6. UPDATE order_intent to FILLED
+    await tx.execute(sql`
+      UPDATE order_intents SET
+        status = 'filled',
+        exchange_order_id = COALESCE(${venueOrderId}, exchange_order_id),
+        fill_price = COALESCE(${execResult.fillPrice?.toString() ?? null}, fill_price),
+        fill_volume = COALESCE(${execResult.fillVolume?.toString() ?? null}, fill_volume),
+        fee_usd = COALESCE(${execResult.feeUsd?.toString() ?? null}, fee_usd),
+        updated_at = NOW()
+      WHERE internal_intent_id = ${internalIntentId}
+      RETURNING id
+    `);
+  });
+
+  // Update in-memory cache after successful COMMIT
+  const cached = getCachedRecord(internalIntentId);
+  if (cached) {
+    cached.status = "FILLED";
+    cached.venueOrderId = venueOrderId;
+    cached.fillPrice = execResult.fillPrice;
+    cached.fillVolume = execResult.fillVolume;
+    cached.feeUsd = execResult.feeUsd;
+  }
+}
+
+/**
+ * R10.3: Prepare REAL activation — reconciliation BEFORE mode change.
+ * Called from POST /api/spot/mode when transitioning to REAL.
+ * Does NOT depend on SpotEngine being started.
+ *
+ * Flow:
+ *   1. checkRealReadiness (preliminary)
+ *   2. loadPendingRealOrders (fail-closed)
+ *   3. reconcile pendings
+ *   4. re-check readiness
+ *   5. return { ready, readiness, error? }
+ */
+export async function prepareRealActivation(): Promise<{
+  ready: boolean;
+  readiness: any;
+  error?: string;
+}> {
+  // 1. Preliminary readiness check
+  const { checkRealReadiness } = await import("./spotRealReadiness");
+  const readiness = await checkRealReadiness();
+  if (!readiness.ready) {
+    return { ready: false, readiness, error: "Preliminary readiness checks failed" };
+  }
+
+  // 2. Load pending REAL orders (fail-closed)
+  let pendingOrders: Awaited<ReturnType<typeof loadPendingRealOrders>>;
+  try {
+    pendingOrders = await loadPendingRealOrders();
+  } catch (error: any) {
+    return { ready: false, readiness, error: `LOAD_PENDING_DB_FAILURE: ${error.message}` };
+  }
+
+  // 3. Reconcile pendings if any
+  if (pendingOrders.length > 0) {
+    console.log(`[SpotEngine] R10.3: prepareRealActivation — reconciling ${pendingOrders.length} pending orders`);
+    try {
+      await reconcilePendingRealOrderIntents();
+    } catch (error: any) {
+      return { ready: false, readiness, error: `RECONCILIATION_FAILED: ${error.message}` };
+    }
+  }
+
+  // 4. Re-check readiness after reconciliation
+  const finalReadiness = await checkRealReadiness();
+  if (!finalReadiness.ready) {
+    return { ready: false, readiness: finalReadiness, error: "Post-reconciliation readiness checks failed" };
+  }
+
+  return { ready: true, readiness: finalReadiness };
 }
 
 /**

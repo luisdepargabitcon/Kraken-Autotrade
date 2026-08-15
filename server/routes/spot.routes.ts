@@ -36,6 +36,7 @@ import {
   SPOT_RUNTIME_OWNER,
   startSpotEngine,
   stopSpotEngine,
+  prepareRealActivation,
 } from "../services/spot/spotEngine";
 import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
@@ -249,9 +250,20 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   app.post("/api/spot/mode", async (req, res) => {
     try {
       const { mode } = req.body;
+
+      // R10.3: Strict validation — reject invalid modes with 400, no state change
+      const validModes = ["OFF", "SHADOW", "REAL"];
+      if (mode === undefined || mode === null || !validModes.includes(String(mode).toUpperCase())) {
+        res.status(400).json({
+          error: "Invalid mode. Must be one of: OFF, SHADOW, REAL",
+          received: mode,
+        });
+        return;
+      }
+
       const resolved = resolveExecutionMode(mode);
 
-      // R10: REAL requires preflight checks
+      // R10.3: REAL requires prepareRealActivation() — reconciliation BEFORE mode change
       if (resolved === ExecutionMode.REAL) {
         if (!REAL_ACTIVATION_ALLOWED) {
           res.status(403).json({
@@ -260,14 +272,15 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
           });
           return;
         }
-        // Run preflight readiness checks
-        const readiness = await checkRealReadiness();
-        if (!readiness.ready) {
+        // R10.3: Run prepareRealActivation — readiness + reconcile + re-check readiness
+        const prep = await prepareRealActivation();
+        if (!prep.ready) {
           res.status(403).json({
-            error: "REAL mode preflight checks failed",
+            error: "REAL mode activation blocked — preflight/reconciliation failed",
             realActivationAllowed: true,
-            readiness,
-            blockers: readiness.blockers,
+            readiness: prep.readiness,
+            blockers: prep.readiness.blockers,
+            prepError: prep.error,
           });
           return;
         }
