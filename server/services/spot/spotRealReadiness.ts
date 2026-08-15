@@ -208,13 +208,20 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
             checks.pairMetadataMissing.push(pair);
             allMetadataLoaded = false;
           } else {
-            // R10.5: Validate useful balance per active pair
-            const quoteCurrency = meta.quoteCurrency || "USD";
-            const balance = exchangeBalances[quoteCurrency] ?? exchangeBalances[quoteCurrency.toUpperCase()] ?? 0;
-            const useful = Number.isFinite(balance) && balance > 0;
-            checks.realQuoteBalances[pair] = { quoteCurrency, balance, useful };
-            if (!useful) {
-              blockers.push(`Balance insuficiente para ${pair}: ${quoteCurrency}=${balance} (fail-closed)`);
+            // R10.6: Validate useful balance per active pair
+            const quoteCurrency = meta.quoteCurrency;
+            // R10.6: USD-only quote currency for REAL mode
+            if (!quoteCurrency || quoteCurrency.toUpperCase() !== "USD") {
+              checks.pairMetadataMissing.push(pair);
+              allMetadataLoaded = false;
+              blockers.push(`Pair ${pair} has quoteCurrency=${quoteCurrency ?? "null"} — only USD supported in REAL mode`);
+            } else {
+              const balance = exchangeBalances[quoteCurrency] ?? exchangeBalances[quoteCurrency.toUpperCase()] ?? 0;
+              const useful = Number.isFinite(balance) && balance > 0;
+              checks.realQuoteBalances[pair] = { quoteCurrency, balance, useful };
+              if (!useful) {
+                blockers.push(`Balance insuficiente para ${pair}: ${quoteCurrency}=${balance} (fail-closed)`);
+              }
             }
           }
         }
@@ -385,28 +392,191 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
  * Used by prepareRealActivation before reconciliation to avoid deadlock.
  * Checks: feature flag, exchange init, balance, fee model, active pairs, metadata.
  * Does NOT check: runtime counts, pending intents, uncertain positions, freeze gate.
+ * R10.6: No string filtering — directly evaluates structural conditions.
  */
 export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
-  const full = await checkRealReadiness();
-  // Filter out runtime-dependent blockers — only keep structural ones
-  const runtimeBlockerPatterns = [
-    "runtime",
-    "scanner count",
-    "supervisor count",
-    "reconciler count",
-    "UNCERTAIN",
-    "PENDING_FILL",
-    "EXIT_PENDING",
-    "unresolved",
-    "freeze",
-  ];
-  const structuralBlockers = full.blockers.filter(b =>
-    !runtimeBlockerPatterns.some(p => b.toLowerCase().includes(p.toLowerCase()))
-  );
-  return {
-    ready: structuralBlockers.length === 0,
-    blockers: structuralBlockers,
-    warnings: full.warnings,
-    checks: full.checks,
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const checks = {
+    realActivationAllowed: false,
+    exchangeInitialized: false,
+    exchangeName: null as string | null,
+    balanceReachable: false,
+    feeModelValid: false,
+    takerFeePct: null as number | null,
+    makerFeePct: null as number | null,
+    activePairsConfigured: false,
+    activePairsCount: 0,
+    activePairsList: [] as string[],
+    pairMetadataLoaded: false,
+    pairMetadataMissing: [] as string[],
+    uncertainPositionsCount: 0,
+    pendingFillPositionsCount: 0,
+    exitPendingPositionsCount: 0,
+    legacyEntriesCount: 0,
+    shadowPositionsOpen: false,
+    shadowPositionsCount: 0,
+    apiCredentialsConfigured: false,
+    realAdapterImplemented: false,
+    uncertainOrdersCount: 0,
+    pendingEntryIntents: 0,
+    pendingExitIntents: 0,
+    submittedIntentsWithoutVenueId: 0,
+    entryScannerRunning: false,
+    positionSupervisorRunning: false,
+    entryScannerCount: 0,
+    positionSupervisorCount: 0,
+    realReconcilerCount: 0,
+    runtimeOwner: null as string | null,
+    isSpotRuntimeOwnerCheck: false,
+    realQuoteBalances: {} as Record<string, { quoteCurrency: string; balance: number; useful: boolean }>,
   };
+
+  // 1. REAL_ACTIVATION_ALLOWED
+  checks.realActivationAllowed = REAL_ACTIVATION_ALLOWED;
+  if (!REAL_ACTIVATION_ALLOWED) {
+    blockers.push("REAL_ACTIVATION_ALLOWED=false en configuración");
+  }
+
+  // 2. Exchange initialized + 3. Balance reachable + 4. Fee model
+  try {
+    const exchange = ExchangeFactory.getTradingExchange();
+    checks.exchangeInitialized = exchange.isInitialized();
+    checks.exchangeName = exchange.exchangeName;
+    if (!checks.exchangeInitialized) {
+      blockers.push(`Exchange ${exchange.exchangeName} no inicializado`);
+    }
+
+    if (checks.exchangeInitialized) {
+      try {
+        const anyExchange = exchange as any;
+        if (typeof anyExchange.getBalance === "function") {
+          await anyExchange.getBalance();
+          checks.balanceReachable = true;
+          checks.apiCredentialsConfigured = true;
+        } else {
+          checks.balanceReachable = false;
+          checks.apiCredentialsConfigured = false;
+          blockers.push("Exchange no implementa getBalance — no se pueden verificar credenciales");
+        }
+      } catch (error: any) {
+        checks.balanceReachable = false;
+        checks.apiCredentialsConfigured = false;
+        blockers.push(`Balance no reachable (credenciales inválidas): ${error.message}`);
+      }
+    }
+
+    if (checks.exchangeInitialized) {
+      const feeModel = getTradingFeeModel();
+      checks.takerFeePct = feeModel.takerFeePct;
+      checks.makerFeePct = feeModel.makerFeePct;
+      checks.feeModelValid = feeModel.takerFeePct > 0;
+      if (!checks.feeModelValid) {
+        blockers.push("Fee model inválido (takerFeePct <= 0)");
+      }
+    }
+  } catch (error: any) {
+    blockers.push(`ExchangeFactory error: ${error.message}`);
+  }
+
+  // 5. Active pairs configured
+  let activePairs: string[] = [];
+  try {
+    const result = await db.execute(sql`
+      SELECT active_pairs FROM bot_config LIMIT 1
+    `);
+    const pairs = result.rows[0]?.active_pairs as string[] | null;
+    activePairs = pairs ?? [];
+    checks.activePairsCount = activePairs.length;
+    checks.activePairsList = activePairs;
+    checks.activePairsConfigured = checks.activePairsCount > 0;
+    if (!checks.activePairsConfigured) {
+      blockers.push("No hay pares activos configurados en bot_config");
+    }
+  } catch (error: any) {
+    blockers.push(`No se pudo verificar pares activos: ${error.message}`);
+  }
+
+  // 6. Pair metadata loaded PER PAIR — BLOCKER if any missing
+  if (checks.activePairsConfigured && checks.exchangeInitialized) {
+    try {
+      const exchange = ExchangeFactory.getTradingExchange();
+      const anyExchange = exchange as any;
+      let exchangeBalances: Record<string, number> = {};
+      if (typeof anyExchange.getBalance === "function") {
+        try {
+          exchangeBalances = await anyExchange.getBalance() as Record<string, number>;
+        } catch { /* best effort */ }
+      }
+      if (typeof anyExchange.getPairMetadata === "function") {
+        if (typeof anyExchange.loadPairMetadata === "function") {
+          try {
+            await anyExchange.loadPairMetadata(activePairs);
+          } catch { /* best effort */ }
+        }
+        let allMetadataLoaded = true;
+        for (const pair of activePairs) {
+          const meta = anyExchange.getPairMetadata(pair);
+          if (!meta) {
+            checks.pairMetadataMissing.push(pair);
+            allMetadataLoaded = false;
+          } else {
+            const quoteCurrency = meta.quoteCurrency;
+            if (!quoteCurrency || quoteCurrency.toUpperCase() !== "USD") {
+              checks.pairMetadataMissing.push(pair);
+              allMetadataLoaded = false;
+              blockers.push(`Pair ${pair} has quoteCurrency=${quoteCurrency ?? "null"} — only USD supported in REAL mode`);
+            } else {
+              const balance = exchangeBalances[quoteCurrency] ?? exchangeBalances[quoteCurrency.toUpperCase()] ?? 0;
+              const useful = Number.isFinite(balance) && balance > 0;
+              checks.realQuoteBalances[pair] = { quoteCurrency, balance, useful };
+              if (!useful) {
+                blockers.push(`Balance insuficiente para ${pair}: ${quoteCurrency}=${balance} (fail-closed)`);
+              }
+            }
+          }
+        }
+        checks.pairMetadataLoaded = allMetadataLoaded;
+        if (checks.pairMetadataMissing.length > 0) {
+          blockers.push(`Metadata faltante para pares: ${checks.pairMetadataMissing.join(", ")}`);
+        }
+      } else {
+        checks.pairMetadataLoaded = false;
+        blockers.push("Exchange no implementa getPairMetadata — no se puede verificar metadata por par");
+      }
+    } catch (error: any) {
+      checks.pairMetadataLoaded = false;
+      blockers.push(`Error al verificar metadata de pares: ${error.message}`);
+    }
+  }
+
+  // 7. RealAdapter implemented
+  try {
+    const { createExecutionAdapter } = await import("./spotExecutionAdapter");
+    const adapter = createExecutionAdapter(ExecutionMode.REAL);
+    checks.realAdapterImplemented = adapter.canPlaceRealOrder;
+    if (!checks.realAdapterImplemented) {
+      blockers.push("RealAdapter no implementado (canPlaceRealOrder=false)");
+    }
+  } catch {
+    blockers.push("No se pudo crear RealAdapter");
+  }
+
+  // R10.6: Runtime owner check is structural (constant, not runtime state)
+  try {
+    const spotEngine = await import("./spotEngine");
+    checks.runtimeOwner = spotEngine.SPOT_RUNTIME_OWNER;
+    checks.isSpotRuntimeOwnerCheck = isSpotRuntimeOwner();
+    if (!checks.isSpotRuntimeOwnerCheck) {
+      blockers.push("Runtime owner no es SPOT_CANONICAL — isSpotRuntimeOwner()=false");
+    }
+    if (spotEngine.SPOT_ENGINE_OWNER !== SPOT_ENGINE_OWNER) {
+      blockers.push(`SPOT_ENGINE_OWNER mismatch: expected ${SPOT_ENGINE_OWNER}, got ${spotEngine.SPOT_ENGINE_OWNER}`);
+    }
+  } catch {
+    blockers.push("No se pudo verificar runtime owner");
+  }
+
+  const ready = blockers.length === 0;
+  return { ready, blockers, warnings, checks };
 }

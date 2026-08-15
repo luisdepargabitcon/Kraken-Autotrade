@@ -129,7 +129,7 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
     ) {
       last.repeatCount++;
       last.timestamp = now;
-      // R10.5: UPDATE bot_events by spotActivityId instead of INSERT
+      // R10.6: UPDATE bot_events by spotActivityId in meta — NOT by id (id is auto-generated, not spotActivityId)
       const dedupEventType = `SPOT_${sanitized.category}` as any;
       db.execute(sql`
         UPDATE bot_events SET
@@ -139,7 +139,7 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
             to_jsonb(${last.repeatCount})
           ),
           timestamp = NOW()
-        WHERE id = ${last.id}
+        WHERE meta->>'spotActivityId' = ${last.id}
       `).catch(() => {});
       botLogger.info(dedupEventType, sanitized.title, {
         spotActivityId: last.id,

@@ -14,6 +14,8 @@ export interface Ticker {
   volume24h?: number;
 }
 
+export type SubmissionState = "ACCEPTED" | "REJECTED" | "AMBIGUOUS";
+
 export interface OrderResult {
   success: boolean;
   orderId?: string;
@@ -26,6 +28,11 @@ export interface OrderResult {
   // This is NOT a failure - the order was accepted by the exchange
   pendingFill?: boolean;
   clientOrderId?: string;
+  // R10.6: Explicit submission state from the exchange layer.
+  // ACCEPTED: exchange confirmed order acceptance (HTTP 2xx).
+  // REJECTED: exchange explicitly rejected the order (HTTP 4xx with parseable response).
+  // AMBIGUOUS: transport error after POST was sent — order may or may not be live.
+  submissionState?: SubmissionState;
 }
 
 export interface PairMetadata {

@@ -302,6 +302,10 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
     if (!Number.isFinite(adjustedVolume) || adjustedVolume <= 0) {
       return this.failResult(`Invalid adjusted volume: ${volumeStr}`);
     }
+    // R10.6: Audit if step adjustment changed the volume significantly
+    if (Math.abs(adjustedVolume - intent.volume) > 1e-10) {
+      console.log(`[SpotRealAdapter] Entry volume step-adjusted: ${intent.volume} → ${adjustedVolume} for ${intent.pair}`);
+    }
 
     // Check order minimum
     const minError = this.checkOrderMin(intent.pair, adjustedVolume, intent.price, ctx);
@@ -326,12 +330,34 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
     try {
       const result = await exchange.placeOrder(orderParams);
 
+      // R10.6: Propagate submissionState from exchange layer
       if (!result.success) {
-        return this.failResult(result.error ?? "Exchange rejected order", "REJECTED");
+        const state = (result.submissionState === "AMBIGUOUS" ? "AMBIGUOUS" : "REJECTED") as "REJECTED" | "AMBIGUOUS";
+        return this.failResult(result.error ?? "Exchange rejected order", state);
       }
 
       // Pending fill: order accepted but price unknown
       if (result.pendingFill) {
+        // R10.6: If ACCEPTED but no venueOrderId → UNCERTAIN, not PENDING_FILL
+        const venueOrderId = result.orderId ?? null;
+        if (!venueOrderId) {
+          console.warn(`[SpotRealAdapter] Entry ACCEPTED but no venueOrderId — marking UNCERTAIN`);
+          return {
+            success: true,
+            orderId: null,
+            clientOrderId,
+            venueOrderId: null,
+            fillPrice: null,
+            fillVolume: null,
+            fillQuality: "UNKNOWN" as FeeQuality,
+            feeUsd: null,
+            slippageUsd: null,
+            error: null,
+            pendingFill: false,
+            executedAt: Date.now(),
+            submissionState: "ACCEPTED" as const,
+          };
+        }
         console.log(`[SpotRealAdapter] Entry PENDING_FILL orderId=${result.orderId} clientOrderId=${clientOrderId}`);
         return {
           success: true,
@@ -346,6 +372,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
           error: null,
           pendingFill: true,
           executedAt: Date.now(),
+          submissionState: "ACCEPTED" as const,
         };
       }
 
@@ -380,13 +407,11 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
         error: null,
         pendingFill: false,
         executedAt: Date.now(),
+        submissionState: "ACCEPTED" as const,
       };
     } catch (error: any) {
-      // R10.4: Network ambiguity — re-throw so caller can mark UNCERTAIN
-      if (this.isNetworkError(error)) {
-        throw error;
-      }
-      return this.failResult(`Exchange error: ${error.message}`, "REJECTED");
+      // R10.6: All exceptions after POST was sent are AMBIGUOUS — order may be live
+      return this.failResult(`Exchange error: ${error.message}`, "AMBIGUOUS");
     }
   }
 
@@ -427,12 +452,34 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
     try {
       const result = await exchange.placeOrder(orderParams);
 
+      // R10.6: Propagate submissionState from exchange layer
       if (!result.success) {
-        return this.failResult(result.error ?? "Exchange rejected sell order", "REJECTED");
+        const state = (result.submissionState === "AMBIGUOUS" ? "AMBIGUOUS" : "REJECTED") as "REJECTED" | "AMBIGUOUS";
+        return this.failResult(result.error ?? "Exchange rejected sell order", state);
       }
 
       // Pending fill for exit
       if (result.pendingFill) {
+        // R10.6: If ACCEPTED but no venueOrderId → UNCERTAIN
+        const venueOrderId = result.orderId ?? null;
+        if (!venueOrderId) {
+          console.warn(`[SpotRealAdapter] Exit ACCEPTED but no venueOrderId — marking UNCERTAIN`);
+          return {
+            success: true,
+            orderId: null,
+            clientOrderId,
+            venueOrderId: null,
+            fillPrice: null,
+            fillVolume: null,
+            fillQuality: "UNKNOWN" as FeeQuality,
+            feeUsd: null,
+            slippageUsd: null,
+            error: null,
+            pendingFill: false,
+            executedAt: Date.now(),
+            submissionState: "ACCEPTED" as const,
+          };
+        }
         console.log(`[SpotRealAdapter] Exit PENDING_FILL orderId=${result.orderId} clientOrderId=${clientOrderId}`);
         return {
           success: true,
@@ -447,6 +494,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
           error: null,
           pendingFill: true,
           executedAt: Date.now(),
+          submissionState: "ACCEPTED" as const,
         };
       }
 
@@ -481,13 +529,11 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
         error: null,
         pendingFill: false,
         executedAt: Date.now(),
+        submissionState: "ACCEPTED" as const,
       };
     } catch (error: any) {
-      // R10.4: Network ambiguity — re-throw so caller can mark UNCERTAIN
-      if (this.isNetworkError(error)) {
-        throw error;
-      }
-      return this.failResult(`Exchange error: ${error.message}`, "REJECTED");
+      // R10.6: All exceptions after POST was sent are AMBIGUOUS — order may be live
+      return this.failResult(`Exchange error: ${error.message}`, "AMBIGUOUS");
     }
   }
 

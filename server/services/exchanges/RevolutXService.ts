@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult, PairMetadata } from './IExchangeService';
+import { IExchangeService, ExchangeConfig, Ticker, OHLC, OrderResult, PairMetadata, SubmissionState } from './IExchangeService';
 import { errorAlertService, ErrorAlertService } from '../ErrorAlertService';
 import { balanceCache } from './BalanceCache';
 
@@ -642,9 +642,10 @@ export class RevolutXService implements IExchangeService {
         pair: params.pair,
         type: params.type
       });
-      return { 
-        success: false, 
-        error: `Invalid volume: ${params.volume} (must be finite positive number)` 
+      return {
+        success: false,
+        error: `Invalid volume: ${params.volume} (must be finite positive number)`,
+        submissionState: "REJECTED" as SubmissionState,
       };
     }
 
@@ -694,7 +695,8 @@ export class RevolutXService implements IExchangeService {
         console.error('[revolutx] placeOrder error response:', data);
         return {
           success: false,
-          error: data.message || data.error || data.description || `HTTP ${response.status}`
+          error: data.message || data.error || data.description || `HTTP ${response.status}`,
+          submissionState: "REJECTED" as SubmissionState,
         };
       }
       
@@ -762,6 +764,7 @@ export class RevolutXService implements IExchangeService {
           orderId: venueOrderIdForFillWatcher, // MUST be the real exchange order ID for FillWatcher
           txid: venueOrderIdForFillWatcher,
           clientOrderId: clientOrderId,
+          submissionState: "ACCEPTED" as SubmissionState,
           // price is undefined - must be resolved via reconcile
           volume: executedVolume,
         };
@@ -775,15 +778,19 @@ export class RevolutXService implements IExchangeService {
         orderId: resolvedOrderId,
         txid: resolvedOrderId,
         clientOrderId: clientOrderId,
+        submissionState: "ACCEPTED" as SubmissionState,
         price: executedPrice,
         volume: executedVolume,
         cost: executedCost
       };
     } catch (error: any) {
       console.error('[revolutx] placeOrder error:', error.message);
+      // R10.6: Transport error after POST was sent → AMBIGUOUS, not REJECTED
+      // The order may have been accepted by the exchange but the response was lost.
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        submissionState: "AMBIGUOUS" as SubmissionState,
       };
     }
   }
@@ -925,7 +932,7 @@ export class RevolutXService implements IExchangeService {
       const symbols = symbolsRes.ok ? await symbolsRes.json() as any[] : [];
       
       for (const pair of pairs) {
-        const [base] = pair.split('/');
+        const [base, quote] = pair.split('/');
         const revPair = this.formatPair(pair);
         
         const currencyInfo = currencies.find((c: any) => c.code === base || c.currency === base);
@@ -934,12 +941,18 @@ export class RevolutXService implements IExchangeService {
         const lotDecimals = currencyInfo?.scale || currencyInfo?.decimals || 8;
         const orderMin = symbolInfo?.min_order_size || symbolInfo?.min_base_size || 0.0001;
         const pairDecimals = symbolInfo?.price_scale || 2;
+        const baseStep = symbolInfo?.base_step || symbolInfo?.min_base_size || null;
+        const quoteStep = symbolInfo?.quote_step || symbolInfo?.min_order_size_quote || null;
         
         this.pairMetadataCache.set(pair, {
           lotDecimals,
           orderMin,
           pairDecimals,
-          stepSize: Math.pow(10, -lotDecimals)
+          stepSize: Math.pow(10, -lotDecimals),
+          baseStep: baseStep ? parseFloat(baseStep) : null,
+          quoteStep: quoteStep ? parseFloat(quoteStep) : null,
+          baseCurrency: base || null,
+          quoteCurrency: quote || null,
         });
         
         console.log(`[revolutx] ${pair}: lotDecimals=${lotDecimals}, orderMin=${orderMin}`);
