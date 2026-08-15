@@ -138,7 +138,7 @@ describe("R10.1 Lifecycle Tests", () => {
     it("deduplicates identical events within 5min window", () => {
       logActivity({
         pair: "BTC/USD",
-        category: "EXECUTION" as SpotActivityCategory,
+        category: "RISK" as SpotActivityCategory,
         severity: "INFO" as SpotActivitySeverity,
         title: "Test event",
         explanation: "Test explanation",
@@ -146,7 +146,7 @@ describe("R10.1 Lifecycle Tests", () => {
 
       logActivity({
         pair: "BTC/USD",
-        category: "EXECUTION" as SpotActivityCategory,
+        category: "RISK" as SpotActivityCategory,
         severity: "INFO" as SpotActivitySeverity,
         title: "Test event",
         explanation: "Test explanation",
@@ -489,7 +489,7 @@ describe("R10.2 Lifecycle Tests", () => {
     it("deduplicates identical events within 5min window", () => {
       logActivity({
         pair: "BTC/USD",
-        category: "EXECUTION" as SpotActivityCategory,
+        category: "RISK" as SpotActivityCategory,
         severity: "INFO" as SpotActivitySeverity,
         title: "R10.2 dedup test",
         explanation: "Test",
@@ -497,7 +497,7 @@ describe("R10.2 Lifecycle Tests", () => {
 
       logActivity({
         pair: "BTC/USD",
-        category: "EXECUTION" as SpotActivityCategory,
+        category: "RISK" as SpotActivityCategory,
         severity: "INFO" as SpotActivitySeverity,
         title: "R10.2 dedup test",
         explanation: "Test",

@@ -55,3 +55,18 @@ ALTER TABLE bot_config
 CREATE INDEX IF NOT EXISTS idx_order_intents_uncertain_provenance
   ON order_intents(status, engine_owner, policy_version)
   WHERE status = 'uncertain' AND engine_owner IS NOT NULL;
+
+-- R10.4: Durable per-intent reservation — stores the exact quote amount reserved
+ALTER TABLE order_intents
+  ADD COLUMN IF NOT EXISTS reserved_quote_usd DECIMAL(18, 8);
+
+-- R10.4: Index for reconciliation — find pending/uncertain REAL intents by provenance
+CREATE INDEX IF NOT EXISTS idx_order_intents_reconcile_provenance
+  ON order_intents(status, execution_mode, engine_owner, policy_version)
+  WHERE status IN ('pending', 'accepted', 'uncertain')
+    AND engine_owner IS NOT NULL;
+
+-- R10.4: Index for reservation lookup by internal_intent_id
+CREATE INDEX IF NOT EXISTS idx_order_intents_reserved_quote
+  ON order_intents(internal_intent_id, reserved_quote_usd)
+  WHERE reserved_quote_usd IS NOT NULL;

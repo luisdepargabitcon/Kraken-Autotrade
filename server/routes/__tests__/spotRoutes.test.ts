@@ -121,11 +121,9 @@ describe("SPOT_API_MODE_REAL", () => {
   it("POST /api/spot/mode with ambiguous value defaults to OFF (not REAL)", async () => {
     const app = createApp();
     const res = await simulatePost(app, "/api/spot/mode", { mode: "DRY_RUN" });
-    // May return 200 or 500 depending on DB availability
-    expect([200, 500]).toContain(res.status);
-    if (res.status === 200) {
-      expect(res.body.currentMode).toBe("OFF");
-    }
+    // R10.4: Strict validation rejects unknown modes with 400
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeDefined();
   });
 });
 

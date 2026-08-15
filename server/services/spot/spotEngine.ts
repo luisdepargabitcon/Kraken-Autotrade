@@ -56,8 +56,12 @@ import {
   getCachedRecord,
   loadPendingRealOrders,
   countPendingRealOrderIntents,
+  releaseReservationExact,
+  hasUnresolvedRealExecution,
   RealIntentPersistenceError,
   RealOrderStatePersistenceError,
+  RealSubmissionAmbiguousError,
+  type CreateSubmissionIntentParams,
   _clearCacheForTest as _clearIntentCacheForTest,
 } from "./spotOrderIntentStore";
 
@@ -85,6 +89,12 @@ const MAX_OPEN_POSITIONS = 10;
 let engineRunning = false;
 let entryScanningEnabled = true;
 let positionSupervisorRunning = false;
+
+// R10.4: Reconciler state — runs independently of global mode
+let reconcilerIntervalId: NodeJS.Timeout | null = null;
+let isReconciling = false;
+let realReconcilerRunning = false;
+const RECONCILER_INTERVAL_MS = 120_000; // 2 minutes
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -539,11 +549,12 @@ export async function startSpotEngine(): Promise<boolean> {
   // Load open positions from DB
   await loadOpenPositionsFromDB();
 
-  // R10.2: Reconcile pending REAL order_intents at restart
-  // Loads SPOT CANONICAL pending intents (positive provenance) and reconciles with exchange
-  if (mode === ExecutionMode.REAL) {
-    await reconcilePendingRealOrderIntents();
-  }
+  // R10.4: Reconcile pending REAL order_intents at restart — REGARDLESS of global mode
+  // If any REAL orders/positions exist, they must be reconciled even if mode is OFF/SHADOW
+  await reconcilePendingRealOrderIntents();
+
+  // R10.4: Start periodic REAL reconciler — runs independently of global mode
+  startRealReconciler();
 
   // R7: OFF mode — no entry scanner, but supervisor if positions exist
   if (mode === ExecutionMode.OFF) {
@@ -601,10 +612,76 @@ export function stopSpotEngine(): void {
     clearInterval(supervisorIntervalId);
     supervisorIntervalId = null;
   }
+  stopRealReconciler();
   engineRunning = false;
   entryScanningEnabled = false;
   positionSupervisorRunning = false;
-  console.log("[SpotEngine] Stopped (scan + supervisor)");
+  console.log("[SpotEngine] Stopped (scan + supervisor + reconciler)");
+}
+
+/**
+ * R10.4: Periodic REAL reconciler — runs independently of global mode.
+ * Checks for pending/uncertain REAL order_intents and reconciles with exchange.
+ * Reentrancy guard: skips if already running.
+ */
+async function runRealReconciler(): Promise<void> {
+  if (isReconciling) {
+    console.log("[SpotEngine] REAL reconciler already in progress, skipping");
+    return;
+  }
+  isReconciling = true;
+  try {
+    const counts = await countPendingRealOrderIntents();
+    const totalPending = counts.pendingEntryOrders + counts.pendingExitOrders + counts.uncertainOrders;
+    if (totalPending === 0) return;
+    console.log(`[SpotEngine] R10.4: Periodic reconciler — ${totalPending} pending REAL intents (entry=${counts.pendingEntryOrders}, exit=${counts.pendingExitOrders}, uncertain=${counts.uncertainOrders})`);
+    await reconcilePendingRealOrderIntents();
+  } catch (error: any) {
+    console.error(`[SpotEngine] R10.4: Periodic reconciler error: ${error.message}`);
+  } finally {
+    isReconciling = false;
+  }
+}
+
+function startRealReconciler(): void {
+  if (reconcilerIntervalId) {
+    console.log("[SpotEngine] REAL reconciler already running");
+    return;
+  }
+  realReconcilerRunning = true;
+  reconcilerIntervalId = setInterval(() => runRealReconciler().catch(console.error), RECONCILER_INTERVAL_MS);
+  console.log(`[SpotEngine] R10.4: REAL reconciler started (interval=${RECONCILER_INTERVAL_MS}ms)`);
+}
+
+function stopRealReconciler(): void {
+  if (reconcilerIntervalId) {
+    clearInterval(reconcilerIntervalId);
+    reconcilerIntervalId = null;
+  }
+  realReconcilerRunning = false;
+  console.log("[SpotEngine] R10.4: REAL reconciler stopped");
+}
+
+/**
+ * R10.4: Runtime counts for scanner, supervisor, reconciler.
+ */
+export function getRuntimeCounts(): {
+  entryScannerInstances: number;
+  positionSupervisorInstances: number;
+  realReconcilerInstances: number;
+} {
+  return {
+    entryScannerInstances: engineRunning ? 1 : 0,
+    positionSupervisorInstances: positionSupervisorRunning ? 1 : 0,
+    realReconcilerInstances: realReconcilerRunning ? 1 : 0,
+  };
+}
+
+/**
+ * R10.4: Exported for test access — check if reconciler is currently running.
+ */
+export function _isReconcilerRunningForTest(): boolean {
+  return isReconciling;
 }
 
 /**
@@ -899,20 +976,20 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     return false;
   }
 
-  // R10.3: Real capital concurrency reservation — prevent overspending across pairs
+  // R10.4: Freeze gate — check for unresolved REAL executions before new entries
   if (mode === ExecutionMode.REAL) {
-    const reserved = await reserveRealCapital(sizing.notionalUsd);
-    if (!reserved) {
-      console.log(`[SpotEngine] Entry blocked for ${intent.pair}: insufficient real capital after concurrency reservation`);
+    const frozen = await hasUnresolvedRealExecution();
+    if (frozen) {
+      console.log(`[SpotEngine] Entry blocked for ${intent.pair}: REAL FREEZE active (unresolved executions)`);
       logActivity({
         pair: intent.pair,
-        category: "RISK",
-        severity: "WARNING",
-        title: "Entrada bloqueada — capital REAL insuficiente",
-        explanation: `Reserva concurrente de capital falló para ${intent.pair}. notional=$${sizing.notionalUsd}`,
+        category: "EXECUTION",
+        severity: "CRITICAL",
+        title: "Entrada bloqueada — REAL FREEZE activo",
+        explanation: `Existen ejecuciones REAL sin resolver. Nuevas entradas congeladas hasta reconciliación.`,
         decision: "BLOCK",
         executionMode: mode,
-        reasonCode: "REAL_CAPITAL_RESERVATION_FAILED",
+        reasonCode: "REAL_FREEZE_ACTIVATED",
       });
       return false;
     }
@@ -939,12 +1016,12 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   // R10.1: Generate stable clientOrderId BEFORE calling adapter
   const clientOrderId = generateClientOrderId(internalIntentId);
 
-  // R10.1: For REAL mode — persist submission intent BEFORE calling placeOrder
+  // R10.4: For REAL mode — durable per-intent reservation + persist in ONE atomic tx
   if (mode === ExecutionMode.REAL) {
     const venue = await getTradingVenue();
     let alreadySubmitted: boolean;
     try {
-      const result = await persistSubmissionIntent({
+      const result = await persistAndReserveRealEntryIntentAtomic({
         internalIntentId,
         pair: intent.pair,
         side: "BUY",
@@ -954,19 +1031,17 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         executionMode: mode,
         lotId: null,
         reason: `SPOT entry: ${intent.setupTag}`,
-      }, clientOrderId, venue);
+      }, clientOrderId, venue, sizing.notionalUsd);
       alreadySubmitted = result.alreadySubmitted;
     } catch (error: any) {
-      // R10.2: FAIL-CLOSED — no placeOrder if persistence fails
-      console.error(`[SpotEngine] Entry BLOCKED — persistence failed: ${error.message}`);
-      // R10.3: Release capital reservation on persistence failure
-      await releaseRealCapital(sizing.notionalUsd);
+      // R10.4: FAIL-CLOSED — no placeOrder if persistence/reservation fails
+      console.error(`[SpotEngine] Entry BLOCKED — persist+reserve failed: ${error.message}`);
       logActivity({
         pair: intent.pair,
         category: "EXECUTION",
         severity: "CRITICAL",
-        title: "Entrada bloqueada — persistencia falló",
-        explanation: `No se pudo persistir el intent antes de placeOrder. NO se envió orden. Error: ${error.message}`,
+        title: "Entrada bloqueada — persistencia+reserva falló",
+        explanation: `No se pudo persistir ni reservar capital para el intent antes de placeOrder. NO se envió orden. Error: ${error.message}`,
         decision: "BLOCK",
         executionMode: mode,
         reasonCode: "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED",
@@ -977,8 +1052,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
 
     if (alreadySubmitted) {
       console.log(`[SpotEngine] Entry SKIPPED — already submitted: ${internalIntentId} clientOrderId=${clientOrderId}`);
-      // R10.3: Release capital reservation on duplicate skip
-      await releaseRealCapital(sizing.notionalUsd);
+      // R10.4: Release reservation via exact idempotent release
+      try { await releaseReservationExact(internalIntentId); } catch { /* best effort */ }
       logActivity({
         pair: intent.pair,
         category: "EXECUTION",
@@ -996,13 +1071,38 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
 
   // Execute via adapter — pass clientOrderId (NOT generated by adapter)
   const adapter = createExecutionAdapter(mode);
-  const result = await adapter.executeEntry(execIntent, ctx, clientOrderId);
+  let result: SpotExecutionResult;
+  try {
+    result = await adapter.executeEntry(execIntent, ctx, clientOrderId);
+  } catch (error: any) {
+    // R10.4: Network ambiguity — order may have been placed but response lost
+    if (mode === ExecutionMode.REAL) {
+      console.error(`[SpotEngine] REAL entry network ambiguity for ${intent.pair}: ${error.message}`);
+      try {
+        await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
+      } catch { /* best effort */ }
+      logActivity({
+        pair: intent.pair,
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "REAL_SUBMISSION_AMBIGUOUS — network error tras placeOrder",
+        explanation: `Network error durante placeOrder. Orden puede estar viva en exchange. Marcado UNCERTAIN. NO reenviar. Error: ${error.message}`,
+        decision: "FAIL_CLOSED",
+        executionMode: mode,
+        reasonCode: "REAL_SUBMISSION_AMBIGUOUS",
+        intentId: internalIntentId,
+      });
+    } else {
+      console.error(`[SpotEngine] Entry exception for ${intent.pair}: ${error.message}`);
+    }
+    return false;
+  }
 
   if (!result.success) {
     console.error(`[SpotEngine] Entry failed for ${intent.pair}: ${result.error}`);
-    // R10.3: Release capital reservation on failure
+    // R10.4: Release reservation via exact idempotent release
     if (mode === ExecutionMode.REAL) {
-      await releaseRealCapital(sizing.notionalUsd);
+      try { await releaseReservationExact(internalIntentId); } catch { /* best effort */ }
     }
     logActivity({
       pair: intent.pair,
@@ -1049,9 +1149,9 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
 
   if (result.fillPrice === null) {
     console.error(`[SpotEngine] Entry failed for ${intent.pair}: no fill price`);
-    // R10.3: Release capital reservation on failure
+    // R10.4: Release reservation via exact idempotent release
     if (mode === ExecutionMode.REAL) {
-      await releaseRealCapital(sizing.notionalUsd);
+      try { await releaseReservationExact(internalIntentId); } catch { /* best effort */ }
     }
     return false;
   }
@@ -1126,8 +1226,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         await finalizeRealEntryFillAtomic(
           position, result, filledNotionalUsd, internalIntentId, clientOrderId,
         );
-        // R10.3: Release concurrency reservation — position is now the reservation
-        await releaseRealCapital(sizing.notionalUsd);
+        // R10.4: Release durable per-intent reservation — position is now the reservation
+        try { await releaseReservationExact(internalIntentId); } catch { /* best effort */ }
       } catch (error: any) {
         // R10.3: Exchange ack received but DB materialization failed.
         // Mark UNCERTAIN — do NOT re-send order. Freeze new REAL entries.
@@ -1405,7 +1505,33 @@ async function closePosition(
     }
   }
 
-  const result = await adapter.executeExit(execIntent, ctx, clientOrderId);
+  let result: SpotExecutionResult;
+  try {
+    result = await adapter.executeExit(execIntent, ctx, clientOrderId);
+  } catch (error: any) {
+    // R10.4: Network ambiguity for exit — order may have been placed but response lost
+    if (position.executionMode === ExecutionMode.REAL) {
+      console.error(`[SpotEngine] REAL exit network ambiguity for ${position.lotId}: ${error.message}`);
+      try {
+        await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
+      } catch { /* best effort */ }
+      logActivity({
+        pair: position.pair,
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "REAL_SUBMISSION_AMBIGUOUS — network error tras exit placeOrder",
+        explanation: `Network error durante exit placeOrder. Orden puede estar viva en exchange. Marcado UNCERTAIN. NO reenviar. Error: ${error.message}`,
+        decision: "FAIL_CLOSED",
+        executionMode: position.executionMode,
+        reasonCode: "REAL_SUBMISSION_AMBIGUOUS",
+        lotId: position.lotId,
+        intentId: internalIntentId,
+      });
+    } else {
+      console.error(`[SpotEngine] Exit exception for ${position.lotId}: ${error.message}`);
+    }
+    return;
+  }
   if (!result.success) {
     console.error(`[SpotEngine] Exit failed for ${position.lotId}: ${result.error}`);
     logActivity({
@@ -1586,86 +1712,122 @@ async function getActivePairs(): Promise<string[]> {
 
 /**
  * Get available capital — B12: uses configurable shadow ledger, not hardcode 10_000.
- * R10.3: For REAL mode, subtracts concurrent reserved capital.
+ * R10.4: For REAL mode, uses authenticated exchange balance (getRealQuoteBalance).
+ *        NO fallback to market_data USD capital — fail-closed if exchange unreachable.
  */
 async function getAvailableCapital(): Promise<number> {
   if (getCachedExecutionMode() === ExecutionMode.SHADOW) {
     return getShadowAvailableCapital();
   }
+  // R10.4: REAL mode — use authenticated exchange balance, NO fictitious fallback
+  if (getCachedExecutionMode() === ExecutionMode.REAL) {
+    return getRealQuoteBalance();
+  }
+  // OFF mode — shouldn't be used for entries, but return 0 for safety
+  return 0;
+}
+
+/**
+ * R10.4: Get real quote balance from authenticated exchange.
+ * This is the ONLY source of REAL capital — no fallback to market_data or hardcoded values.
+ * Returns 0 on any error (fail-closed — no entries if balance unknown).
+ */
+async function getRealQuoteBalance(): Promise<number> {
   try {
-    const result = await db.execute(sql`
-      SELECT COALESCE(
-        (SELECT value FROM market_data WHERE pair = 'USD' ORDER BY timestamp DESC LIMIT 1),
-        10000
-      ) as capital
+    const exchange = ExchangeFactory.getTradingExchange();
+    if (!exchange.isInitialized()) {
+      console.error("[SpotEngine] getRealQuoteBalance: exchange not initialized — returning 0 (fail-closed)");
+      return 0;
+    }
+    const anyExchange = exchange as any;
+    if (typeof anyExchange.getBalance !== "function") {
+      console.error("[SpotEngine] getRealQuoteBalance: exchange does not support getBalance — returning 0 (fail-closed)");
+      return 0;
+    }
+    // Get USD balance from exchange
+    const balance = await anyExchange.getBalance("USD");
+    if (!Number.isFinite(balance) || balance < 0) {
+      console.error(`[SpotEngine] getRealQuoteBalance: invalid balance=${balance} — returning 0 (fail-closed)`);
+      return 0;
+    }
+    // Subtract already-reserved capital
+    const reservedResult = await db.execute(sql`
+      SELECT COALESCE(spot_real_reserved_capital_usd, 0) as reserved
+      FROM bot_config LIMIT 1
     `);
-    return Number(result.rows[0]?.capital ?? 10000);
-  } catch {
-    return 10_000;
+    const reserved = Number(reservedResult.rows[0]?.reserved ?? 0);
+    const available = balance - reserved;
+    return Math.max(0, available);
+  } catch (error: any) {
+    console.error(`[SpotEngine] getRealQuoteBalance: exchange balance query failed: ${error.message} — returning 0 (fail-closed)`);
+    return 0;
   }
 }
 
 /**
- * R10.3: Real capital concurrency reservation.
- * Atomically reserves capital in bot_config.spot_real_reserved_capital_usd
- * to prevent concurrent orders across pairs from overspending.
+ * R10.4: Durable per-intent REAL capital reservation.
+ * Atomically inserts the order_intent with reserved_quote_usd AND increments
+ * spot_real_reserved_capital_usd in bot_config in a SINGLE transaction.
  *
- * Uses SELECT FOR UPDATE + conditional UPDATE in a transaction.
+ * This replaces the old reserveRealCapital which was not durable — if the process
+ * crashed between reservation and order submission, the capital was leaked.
+ * With reserved_quote_usd on the intent, the reconciler can release it on restart.
+ *
  * Returns true if reservation succeeded, false if insufficient capital.
  */
-async function reserveRealCapital(notionalUsd: number): Promise<boolean> {
-  try {
-    return await db.transaction(async (tx) => {
-      // Lock the config row
-      const row = await tx.execute(sql`
-        SELECT COALESCE(spot_real_reserved_capital_usd, 0) as reserved,
-               COALESCE(
-                 (SELECT value FROM market_data WHERE pair = 'USD' ORDER BY timestamp DESC LIMIT 1),
-                 10000
-               ) as total_capital
-        FROM bot_config
-        FOR UPDATE
-        LIMIT 1
-      `);
-      if (row.rows.length === 0) {
-        // No config row — cannot reserve
-        return false;
-      }
-      const reserved = Number(row.rows[0].reserved);
-      const totalCapital = Number(row.rows[0].total_capital);
-      const available = totalCapital - reserved;
-      if (notionalUsd > available) {
-        return false;
-      }
-      const newReserved = reserved + notionalUsd;
-      await tx.execute(sql`
-        UPDATE bot_config SET
-          spot_real_reserved_capital_usd = ${newReserved},
-          updated_at = NOW()
-      `);
-      return true;
-    });
-  } catch (error: any) {
-    console.error(`[SpotEngine] Real capital reservation failed: ${error.message}`);
-    return false;
-  }
-}
+async function persistAndReserveRealEntryIntentAtomic(
+  params: CreateSubmissionIntentParams,
+  clientOrderId: string,
+  venue: string,
+  notionalUsd: number,
+): Promise<{ alreadySubmitted: boolean }> {
+  return await db.transaction(async (tx) => {
+    // 1. Lock bot_config and check available capital
+    const configRow = await tx.execute(sql`
+      SELECT COALESCE(spot_real_reserved_capital_usd, 0) as reserved
+      FROM bot_config
+      FOR UPDATE
+      LIMIT 1
+    `);
+    if (configRow.rows.length === 0) {
+      throw new RealIntentPersistenceError("persistAndReserve: bot_config row not found");
+    }
+    const currentReserved = Number(configRow.rows[0].reserved);
 
-/**
- * R10.3: Release real capital reservation.
- * Called when an entry fails or after the position is materialized
- * (the open_position itself becomes the capital reservation).
- */
-async function releaseRealCapital(notionalUsd: number): Promise<void> {
-  try {
-    await db.execute(sql`
+    // 2. Insert order_intent with reserved_quote_usd — ON CONFLICT DO NOTHING
+    const insertResult = await tx.execute(sql`
+      INSERT INTO order_intents (
+        client_order_id, exchange, pair, side, volume, status,
+        internal_intent_id, engine_owner, policy_version, execution_mode,
+        lot_id, requested_price, order_type, reason, reserved_quote_usd
+      ) VALUES (
+        ${clientOrderId}, ${venue}, ${params.pair}, ${params.side.toLowerCase()},
+        ${params.requestedQty.toString()}, 'pending',
+        ${params.internalIntentId}, ${SPOT_ENGINE_OWNER}, ${SPOT_POLICY_VERSION},
+        ${params.executionMode},
+        ${params.lotId}, ${params.requestedPrice?.toString() ?? null},
+        ${params.orderType}, ${params.reason},
+        ${notionalUsd.toString()}
+      )
+      ON CONFLICT (client_order_id) DO NOTHING
+      RETURNING id, client_order_id
+    `);
+
+    if (insertResult.rows.length === 0) {
+      // Already exists — duplicate submission
+      return { alreadySubmitted: true };
+    }
+
+    // 3. Increment reserved capital
+    const newReserved = currentReserved + notionalUsd;
+    await tx.execute(sql`
       UPDATE bot_config SET
-        spot_real_reserved_capital_usd = GREATEST(COALESCE(spot_real_reserved_capital_usd, 0) - ${notionalUsd}, 0),
+        spot_real_reserved_capital_usd = ${newReserved},
         updated_at = NOW()
     `);
-  } catch (error: any) {
-    console.warn(`[SpotEngine] Real capital release failed: ${error.message}`);
-  }
+
+    return { alreadySubmitted: false };
+  });
 }
 
 /**
@@ -2573,6 +2735,12 @@ export async function prepareRealActivation(): Promise<{
   const finalReadiness = await checkRealReadiness();
   if (!finalReadiness.ready) {
     return { ready: false, readiness: finalReadiness, error: "Post-reconciliation readiness checks failed" };
+  }
+
+  // R10.4: Freeze gate — no REAL activation if unresolved executions remain
+  const frozen = await hasUnresolvedRealExecution();
+  if (frozen) {
+    return { ready: false, readiness: finalReadiness, error: "UNRESOLVED_REAL_EXECUTIONS: freeze gate active" };
   }
 
   return { ready: true, readiness: finalReadiness };

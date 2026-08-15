@@ -31,7 +31,7 @@ vi.mock("../spot/feeModel", () => ({
 
 // Mock ExchangeFactory
 const mockPlaceOrder = vi.fn();
-const mockGetPairMetadata = vi.fn(() => null);
+const mockGetPairMetadata = vi.fn(() => ({ base: "BTC", quote: "USD", step: 0.0001, minOrderSize: 0.001, pricePrecision: 2 }));
 vi.mock("../exchanges/ExchangeFactory", () => ({
   ExchangeFactory: {
     getTradingExchange: () => ({
@@ -155,13 +155,13 @@ describe("R10: SpotRealAdapter", () => {
     });
 
     it("R10-TE4: should return failure on exchange exception", async () => {
-      mockPlaceOrder.mockRejectedValue(new Error("Network timeout"));
+      mockPlaceOrder.mockRejectedValue(new Error("Internal exchange error"));
 
       const adapter = new SpotRealAdapter();
       const result = await adapter.executeEntry(makeEntryIntent(), makeMarketContext(), "test-client-id");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Network timeout");
+      expect(result.error).toContain("Internal exchange error");
     });
 
     it("R10-TE5: should reject SELL intent for entry", async () => {
@@ -215,8 +215,8 @@ describe("R10: SpotRealAdapter", () => {
 
       // Fee = 100050 * 0.1 * 0.0009 = 9.0045
       expect(result.feeUsd).toBeCloseTo(9.0045, 2);
-      // Slippage = |100050 - 100025| = 25 (ask was 100025)
-      expect(result.slippageUsd).toBe(25);
+      // R10.4: Slippage = |100050 - 100025| * fillVolume = 25 * 0.1 = 2.5
+      expect(result.slippageUsd).toBe(2.5);
     });
   });
 

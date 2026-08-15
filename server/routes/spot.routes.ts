@@ -251,11 +251,11 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
     try {
       const { mode } = req.body;
 
-      // R10.3: Strict validation — reject invalid modes with 400, no state change
-      const validModes = ["OFF", "SHADOW", "REAL"];
-      if (mode === undefined || mode === null || !validModes.includes(String(mode).toUpperCase())) {
+      // R10.4: Strict validation — exact case-sensitive match, no toUpperCase()
+      // Accept ONLY: "OFF", "SHADOW", "REAL" — nothing else
+      if (mode !== "OFF" && mode !== "SHADOW" && mode !== "REAL") {
         res.status(400).json({
-          error: "Invalid mode. Must be one of: OFF, SHADOW, REAL",
+          error: "Invalid mode. Must be exactly one of: OFF, SHADOW, REAL (case-sensitive)",
           received: mode,
         });
         return;

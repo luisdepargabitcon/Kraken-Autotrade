@@ -64,6 +64,7 @@ export interface RealReadinessResult {
     positionSupervisorRunning: boolean;
     entryScannerCount: number;
     positionSupervisorCount: number;
+    realReconcilerCount: number;
     runtimeOwner: string | null;
     isSpotRuntimeOwnerCheck: boolean;
   };
@@ -101,6 +102,7 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     positionSupervisorRunning: false,
     entryScannerCount: 0,
     positionSupervisorCount: 0,
+    realReconcilerCount: 0,
     runtimeOwner: null as string | null,
     isSpotRuntimeOwnerCheck: false,
   };
@@ -169,8 +171,9 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     if (!checks.activePairsConfigured) {
       blockers.push("No hay pares activos configurados en bot_config");
     }
-  } catch {
-    warnings.push("No se pudo verificar pares activos");
+  } catch (error: any) {
+    // R10.4: FAIL-CLOSED — DB error = blocker
+    blockers.push(`No se pudo verificar pares activos: ${error.message}`);
   }
 
   // 6. R10.3: Pair metadata loaded PER PAIR — BLOCKER if any missing
@@ -219,8 +222,9 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     if (checks.uncertainPositionsCount > 0) {
       blockers.push(`${checks.uncertainPositionsCount} posiciones UNCERTAIN — deben resolverse antes de activar REAL`);
     }
-  } catch {
-    warnings.push("No se pudo verificar posiciones UNCERTAIN");
+  } catch (error: any) {
+    // R10.4: FAIL-CLOSED — DB error = blocker
+    blockers.push(`No se pudo verificar posiciones UNCERTAIN: ${error.message}`);
   }
 
   // 8. PENDING_FILL / EXIT_PENDING positions
@@ -240,8 +244,9 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     if (checks.exitPendingPositionsCount > 0) {
       blockers.push(`${checks.exitPendingPositionsCount} posiciones EXIT_PENDING — deben resolverse`);
     }
-  } catch {
-    warnings.push("No se pudo verificar posiciones pendientes");
+  } catch (error: any) {
+    // R10.4: FAIL-CLOSED — DB error = blocker
+    blockers.push(`No se pudo verificar posiciones pendientes: ${error.message}`);
   }
 
   // 9. Legacy entries (non-SPOT_CANONICAL positions on same pairs)
@@ -255,8 +260,9 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     if (checks.legacyEntriesCount > 0) {
       blockers.push(`${checks.legacyEntriesCount} posiciones legacy (no SPOT_CANONICAL) — deben migrarse o cerrarse`);
     }
-  } catch {
-    warnings.push("No se pudo verificar entradas legacy");
+  } catch (error: any) {
+    // R10.4: FAIL-CLOSED — DB error = blocker
+    blockers.push(`No se pudo verificar entradas legacy: ${error.message}`);
   }
 
   // 10. Shadow positions (warning only)
@@ -272,8 +278,9 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     if (checks.shadowPositionsOpen) {
       warnings.push(`${checks.shadowPositionsCount} posiciones SHADOW abiertas — se mantendrán con modo SHADOW`);
     }
-  } catch {
-    warnings.push("No se pudo verificar posiciones SHADOW abiertas");
+  } catch (error: any) {
+    // R10.4: FAIL-CLOSED — DB error = blocker
+    blockers.push(`No se pudo verificar posiciones SHADOW abiertas: ${error.message}`);
   }
 
   // 11. R10.3: Pending order_intents counts — ALL are BLOCKERS (not warnings)
@@ -330,12 +337,17 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     checks.positionSupervisorRunning = spotEngine._isSupervisorRunningForTest();
     checks.entryScannerCount = checks.entryScannerRunning ? 1 : 0;
     checks.positionSupervisorCount = checks.positionSupervisorRunning ? 1 : 0;
+    // R10.4: Real reconciler instance count
+    checks.realReconcilerCount = spotEngine._isReconcilerRunningForTest() ? 1 : 0;
     // R10.3: scanner count > 1 → blocker (duplicate scanners)
     if (checks.entryScannerCount > 1) {
       blockers.push(`Scanner count=${checks.entryScannerCount} — debe ser 0 o 1`);
     }
     if (checks.positionSupervisorCount > 1) {
       blockers.push(`Supervisor count=${checks.positionSupervisorCount} — debe ser 0 o 1`);
+    }
+    if (checks.realReconcilerCount > 1) {
+      blockers.push(`Reconciler count=${checks.realReconcilerCount} — debe ser 0 o 1`);
     }
   } catch {
     checks.entryScannerCount = 0;

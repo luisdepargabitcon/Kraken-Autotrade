@@ -161,7 +161,7 @@ describe("R10: Mode Transitions & Security Invariants", () => {
     it("R10-TM8: should deduplicate consecutive identical events", () => {
       for (let i = 0; i < 5; i++) {
         logActivity({
-          category: "ENTRY",
+          category: "RISK",
           severity: "INFO",
           title: "Same event",
           explanation: "Same",
@@ -250,6 +250,8 @@ describe("R10: Mode Transitions & Security Invariants", () => {
         pair: "BTC/USD",
         side: "BUY",
         requestedQty: 0.1,
+        requestedPrice: null,
+        orderType: "MARKET",
         submittedAt: Date.now(),
         status: "CREATED",
         policyVersion: "SPOT-1.0.0",

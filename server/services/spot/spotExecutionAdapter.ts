@@ -265,7 +265,8 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
   private checkOrderMin(pair: string, volume: number, price: number | null, ctx: SpotMarketContext): string | null {
     const exchange = ExchangeFactory.getTradingExchange();
     const meta = exchange.getPairMetadata(pair);
-    if (!meta) return null; // no metadata → don't block
+    // R10.4: FAIL-CLOSED — no metadata = BLOCK, not skip
+    if (!meta) return `No pair metadata for ${pair} — cannot validate order minimum (fail-closed)`;
     const orderMin = meta.orderMin ?? meta.minOrderBase;
     if (orderMin && Number.isFinite(orderMin) && orderMin > 0 && volume < orderMin) {
       return `Volume ${volume} below order minimum ${orderMin} for ${pair}`;
@@ -349,13 +350,20 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
       }
 
       // Immediate fill
+      // R10.4: FAIL-CLOSED — validate fillPrice and fillVolume are finite and positive
       const fillPrice = result.price ?? 0;
       const fillVolume = result.volume ?? adjustedVolume;
+      if (!Number.isFinite(fillPrice) || fillPrice <= 0) {
+        return this.failResult(`Exchange returned invalid fillPrice=${fillPrice} for ${intent.pair} (fail-closed)`);
+      }
+      if (!Number.isFinite(fillVolume) || fillVolume <= 0) {
+        return this.failResult(`Exchange returned invalid fillVolume=${fillVolume} for ${intent.pair} (fail-closed)`);
+      }
       const feeModel = getTradingFeeModel();
       const takerPct = feeModel.takerFeePct / 100;
       const notional = fillPrice * fillVolume;
       const feeUsd = notional * takerPct;
-      const slippageUsd = this.computeSlippage("BUY", fillPrice, ctx);
+      const slippageUsd = this.computeSlippage("BUY", fillPrice, ctx) * fillVolume;
 
       console.log(`[SpotRealAdapter] Entry FILLED ${intent.pair} @ ${fillPrice} vol=${fillVolume} fee=$${feeUsd.toFixed(4)}`);
 
@@ -374,6 +382,10 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
         executedAt: Date.now(),
       };
     } catch (error: any) {
+      // R10.4: Network ambiguity — re-throw so caller can mark UNCERTAIN
+      if (this.isNetworkError(error)) {
+        throw error;
+      }
       return this.failResult(`Exchange error: ${error.message}`);
     }
   }
@@ -439,13 +451,20 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
       }
 
       // Immediate fill
+      // R10.4: FAIL-CLOSED — validate fillPrice and fillVolume are finite and positive
       const fillPrice = result.price ?? 0;
       const fillVolume = result.volume ?? adjustedVolume;
+      if (!Number.isFinite(fillPrice) || fillPrice <= 0) {
+        return this.failResult(`Exchange returned invalid fillPrice=${fillPrice} for ${intent.pair} (fail-closed)`);
+      }
+      if (!Number.isFinite(fillVolume) || fillVolume <= 0) {
+        return this.failResult(`Exchange returned invalid fillVolume=${fillVolume} for ${intent.pair} (fail-closed)`);
+      }
       const feeModel = getTradingFeeModel();
       const takerPct = feeModel.takerFeePct / 100;
       const notional = fillPrice * fillVolume;
       const feeUsd = notional * takerPct;
-      const slippageUsd = this.computeSlippage("SELL", fillPrice, ctx);
+      const slippageUsd = this.computeSlippage("SELL", fillPrice, ctx) * fillVolume;
 
       console.log(`[SpotRealAdapter] Exit FILLED ${intent.pair} @ ${fillPrice} vol=${fillVolume} fee=$${feeUsd.toFixed(4)}`);
 
@@ -464,8 +483,27 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
         executedAt: Date.now(),
       };
     } catch (error: any) {
+      // R10.4: Network ambiguity — re-throw so caller can mark UNCERTAIN
+      if (this.isNetworkError(error)) {
+        throw error;
+      }
       return this.failResult(`Exchange error: ${error.message}`);
     }
+  }
+
+  /**
+   * R10.4: Detect network errors that may indicate the order was placed but
+   * the response was lost. These are ambiguous — the order may be live on the exchange.
+   */  private isNetworkError(error: any): boolean {
+    const msg = (error.message || error.toString()).toLowerCase();
+    return msg.includes("timeout")
+      || msg.includes("econnreset")
+      || msg.includes("econnrefused")
+      || msg.includes("etimedout")
+      || msg.includes("socket hang up")
+      || msg.includes("network")
+      || msg.includes("fetch failed")
+      || msg.includes("aborted");
   }
 
   private failResult(error: string): SpotExecutionResult {

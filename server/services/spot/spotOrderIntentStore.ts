@@ -43,6 +43,8 @@ export interface CreateSubmissionIntentParams {
   executionMode: ExecutionMode;
   lotId: string | null;
   reason: string | null;
+  // R10.4: Durable per-intent capital reservation
+  reservedQuoteUsd?: number | null;
 }
 
 /**
@@ -78,6 +80,18 @@ export class RealOrderStatePersistenceError extends Error {
 }
 
 /**
+ * R10.4: Thrown when exchange.placeOrder() throws a network error after the order
+ * was potentially accepted. The order state is ambiguous — it may or may not have
+ * been placed. The intent must be marked UNCERTAIN and new REAL entries frozen.
+ */
+export class RealSubmissionAmbiguousError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RealSubmissionAmbiguousError";
+  }
+}
+
+/**
  * Persist a submission intent to order_intents BEFORE calling placeOrder.
  *
  * R10.2: FAIL-CLOSED. If DB SELECT or INSERT fails, throws RealIntentPersistenceError.
@@ -108,14 +122,15 @@ export async function persistSubmissionIntent(
       INSERT INTO order_intents (
         client_order_id, exchange, pair, side, volume, status,
         internal_intent_id, engine_owner, policy_version, execution_mode,
-        lot_id, requested_price, order_type, reason
+        lot_id, requested_price, order_type, reason, reserved_quote_usd
       ) VALUES (
         ${clientOrderId}, ${venue}, ${params.pair}, ${params.side.toLowerCase()},
         ${params.requestedQty.toString()}, 'pending',
         ${params.internalIntentId}, ${SPOT_ENGINE_OWNER}, ${SPOT_POLICY_VERSION},
         ${params.executionMode},
         ${params.lotId}, ${params.requestedPrice?.toString() ?? null},
-        ${params.orderType}, ${params.reason}
+        ${params.orderType}, ${params.reason},
+        ${params.reservedQuoteUsd?.toString() ?? null}
       )
       ON CONFLICT (client_order_id) DO NOTHING
       RETURNING id, client_order_id, exchange_order_id, status
@@ -215,15 +230,8 @@ export async function updateSubmissionResult(
   },
 ): Promise<void> {
   const cached = intentCache.get(internalIntentId);
-  if (cached) {
-    if (updates.venueOrderId !== undefined) cached.venueOrderId = updates.venueOrderId;
-    cached.status = updates.status;
-    if (updates.fillPrice !== undefined) cached.fillPrice = updates.fillPrice;
-    if (updates.fillVolume !== undefined) cached.fillVolume = updates.fillVolume;
-    if (updates.feeUsd !== undefined) cached.feeUsd = updates.feeUsd;
-    if (updates.error !== undefined) cached.error = updates.error;
-  }
 
+  // R10.4: DB FIRST, cache AFTER — never expose uncommitted state
   if (cached) {
     const dbStatus = mapRealOrderStateToDbStatus(updates.status);
     let updateResult: any;
@@ -241,6 +249,7 @@ export async function updateSubmissionResult(
       `);
     } catch (error: any) {
       // R10.3: FAIL-CLOSED — never hide the failure after exchange.placeOrder succeeded
+      // R10.4: Cache NOT updated — caller sees pre-update state
       throw new RealOrderStatePersistenceError(
         `REAL_EXECUTION_UNRESOLVED: DB update failed for ${internalIntentId} (clientOrderId=${cached.clientOrderId}): ${error.message}`
       );
@@ -252,6 +261,14 @@ export async function updateSubmissionResult(
         `REAL_EXECUTION_UNRESOLVED: DB update affected ${rowCount} rows (expected 1) for ${internalIntentId} (clientOrderId=${cached.clientOrderId})`
       );
     }
+
+    // R10.4: DB succeeded — NOW update cache
+    if (updates.venueOrderId !== undefined) cached.venueOrderId = updates.venueOrderId;
+    cached.status = updates.status;
+    if (updates.fillPrice !== undefined) cached.fillPrice = updates.fillPrice;
+    if (updates.fillVolume !== undefined) cached.fillVolume = updates.fillVolume;
+    if (updates.feeUsd !== undefined) cached.feeUsd = updates.feeUsd;
+    if (updates.error !== undefined) cached.error = updates.error;
   }
 }
 
@@ -379,6 +396,94 @@ export function _clearCacheForTest(): void {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * R10.4: Exact idempotent release of reserved capital.
+ * Reads reserved_quote_usd from the order_intent, subtracts it from
+ * spot_real_reserved_capital_usd in bot_config, and nulls the reservation.
+ *
+ * Idempotency: if reserved_quote_usd is already NULL, the function is a no-op.
+ * This means a second call after a successful release does NOT double-release.
+ *
+ * Transaction: locks the order_intent row FOR UPDATE, then locks bot_config FOR UPDATE.
+ */
+export async function releaseReservationExact(
+  internalIntentId: string,
+): Promise<{ releasedAmount: number }> {
+  return await db.transaction(async (tx) => {
+    // 1. Lock the order_intent row and read reserved_quote_usd
+    const intentRow = await tx.execute(sql`
+      SELECT reserved_quote_usd FROM order_intents
+      WHERE internal_intent_id = ${internalIntentId}
+      FOR UPDATE
+    `);
+    if (intentRow.rows.length === 0) {
+      throw new RealIntentPersistenceError(
+        `RELEASE_RESERVATION_FAILED: order_intent not found for ${internalIntentId}`
+      );
+    }
+
+    const reservedQuoteUsd = intentRow.rows[0].reserved_quote_usd;
+    if (reservedQuoteUsd == null || Number(reservedQuoteUsd) === 0) {
+      // Already released — idempotent no-op
+      return { releasedAmount: 0 };
+    }
+
+    const releaseAmount = Number(reservedQuoteUsd);
+
+    // 2. Lock bot_config and subtract the exact reserved amount
+    const configRow = await tx.execute(sql`
+      SELECT spot_real_reserved_capital_usd FROM bot_config
+      FOR UPDATE LIMIT 1
+    `);
+    if (configRow.rows.length === 0) {
+      throw new RealIntentPersistenceError(
+        `RELEASE_RESERVATION_FAILED: bot_config row not found`
+      );
+    }
+
+    const currentReserved = Number(configRow.rows[0].spot_real_reserved_capital_usd ?? 0);
+    const newReserved = Math.max(0, currentReserved - releaseAmount);
+
+    await tx.execute(sql`
+      UPDATE bot_config SET
+        spot_real_reserved_capital_usd = ${newReserved},
+        updated_at = NOW()
+    `);
+
+    // 3. Null out the reservation on the intent (idempotency marker)
+    await tx.execute(sql`
+      UPDATE order_intents SET
+        reserved_quote_usd = NULL,
+        updated_at = NOW()
+      WHERE internal_intent_id = ${internalIntentId}
+    `);
+
+    return { releasedAmount: releaseAmount };
+  });
+}
+
+/**
+ * R10.4: Check if any unresolved REAL executions exist (DB-backed freeze gate).
+ * Returns true if there are any pending/accepted/uncertain REAL order_intents.
+ * When true, new REAL entries must be frozen until resolved.
+ */
+export async function hasUnresolvedRealExecution(): Promise<boolean> {
+  try {
+    const result = await db.execute(sql`
+      SELECT COUNT(*) as count FROM order_intents
+      WHERE status IN ('pending', 'accepted', 'uncertain')
+        AND engine_owner = ${SPOT_ENGINE_OWNER}
+        AND policy_version = ${SPOT_POLICY_VERSION}
+        AND execution_mode = 'REAL'
+    `);
+    return Number(result.rows[0]?.count ?? 0) > 0;
+  } catch (error: any) {
+    // R10.4: FAIL-CLOSED — DB error = freeze (assume unresolved exist)
+    console.error(`[SpotOrderIntentStore] hasUnresolvedRealExecution DB error: ${error.message}`);
+    return true;
+  }
+}
 
 function mapDbStatusToRealOrderState(dbStatus: string): RealOrderState {
   switch (dbStatus) {

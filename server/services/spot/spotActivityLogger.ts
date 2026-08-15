@@ -29,15 +29,35 @@ import type {
 const MAX_EVENTS = 500;
 const DEDUP_WINDOW_MS = 300_000; // R10.2: 5min window for dedup (increased from 60s)
 
-// R10.3: Categories that should NEVER be deduplicated — every occurrence is critical
+// R10.4: Categories that should NEVER be deduplicated — every occurrence is critical
 const NO_DEDUP_CATEGORIES: SpotActivityCategory[] = [
   "ERROR",
   "SYSTEM",
+  "MODE",
+  "ENTRY",
+  "EXIT",
+  "EXECUTION",
 ];
 
-// R10.3: Severities that should NEVER be deduplicated
+// R10.4: Severities that should NEVER be deduplicated
 const NO_DEDUP_SEVERITIES: SpotActivitySeverity[] = [
   "CRITICAL",
+];
+
+// R10.4: Reason codes that should NEVER be deduplicated — REAL lifecycle events
+const NO_DEDUP_REASON_CODES: string[] = [
+  "REAL_ORDER_SUBMITTED",
+  "REAL_PENDING",
+  "REAL_FILLED",
+  "REAL_EXIT_SUBMITTED",
+  "REAL_EXIT_FILLED",
+  "REAL_UNCERTAIN",
+  "MODE_CHANGE",
+  "REAL_ENTRY_FILL_ATOMIC_FAILED",
+  "REAL_EXIT_FILL_ATOMIC_FAILED",
+  "REAL_EXECUTION_UNRESOLVED",
+  "REAL_SUBMISSION_AMBIGUOUS",
+  "REAL_FREEZE_ACTIVATED",
 ];
 
 const events: SpotActivityEvent[] = [];
@@ -91,9 +111,10 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
   const sanitized = sanitizeInput(input);
   const now = Date.now();
 
-  // R10.3: Selective dedup — skip dedup for critical categories/severities
+  // R10.4: Selective dedup — skip dedup for critical categories/severities/reasonCodes
   const shouldDedup = !NO_DEDUP_CATEGORIES.includes(sanitized.category)
-    && !NO_DEDUP_SEVERITIES.includes(sanitized.severity);
+    && !NO_DEDUP_SEVERITIES.includes(sanitized.severity)
+    && !(sanitized.reasonCode && NO_DEDUP_REASON_CODES.includes(sanitized.reasonCode));
 
   if (shouldDedup) {
     // Dedup: check if last event is identical (same category, pair, title, reasonCode)
@@ -108,6 +129,15 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
     ) {
       last.repeatCount++;
       last.timestamp = now;
+      // R10.4: Persist updated repeatCount to DB
+      const dedupEventType = `SPOT_${sanitized.category}` as any;
+      botLogger.info(dedupEventType, sanitized.title, {
+        spotActivityId: last.id,
+        pair: last.pair,
+        severity: last.severity,
+        repeatCount: last.repeatCount,
+        dedupUpdate: true,
+      }).catch(() => {});
       return last;
     }
   }

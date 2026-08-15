@@ -252,6 +252,8 @@ export const orderIntents = pgTable("order_intents", {
   fillPrice: decimal("fill_price", { precision: 18, scale: 8 }),
   fillVolume: decimal("fill_volume", { precision: 18, scale: 8 }),
   feeUsd: decimal("fee_usd", { precision: 18, scale: 8 }),
+  // R10.4: Durable per-intent capital reservation (quote currency USD)
+  reservedQuoteUsd: decimal("reserved_quote_usd", { precision: 18, scale: 8 }),
 });
 
 export const hybridReentryWatches = pgTable("hybrid_reentry_watches", {
