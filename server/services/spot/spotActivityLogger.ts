@@ -129,8 +129,18 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
     ) {
       last.repeatCount++;
       last.timestamp = now;
-      // R10.4: Persist updated repeatCount to DB
+      // R10.5: UPDATE bot_events by spotActivityId instead of INSERT
       const dedupEventType = `SPOT_${sanitized.category}` as any;
+      db.execute(sql`
+        UPDATE bot_events SET
+          meta = jsonb_set(
+            COALESCE(meta, '{}'::jsonb),
+            '{repeatCount}',
+            to_jsonb(${last.repeatCount})
+          ),
+          timestamp = NOW()
+        WHERE id = ${last.id}
+      `).catch(() => {});
       botLogger.info(dedupEventType, sanitized.title, {
         spotActivityId: last.id,
         pair: last.pair,

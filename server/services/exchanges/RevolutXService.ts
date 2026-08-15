@@ -702,17 +702,18 @@ export class RevolutXService implements IExchangeService {
       // Unwrap if needed
       const orderData = data.data || data;
       
-      // CRITICAL: Extract the REAL exchange order ID - NEVER fall back to clientOrderId
+      // R10.5: Extract the REAL exchange order ID - NEVER fall back to clientOrderId
       // RevolutX returns the order ID in 'venue_order_id' field (NOT 'id' or 'order_id')
       const exchangeOrderId = orderData.venue_order_id || orderData.id || orderData.order_id;
-      const resolvedOrderId = exchangeOrderId || clientOrderId; // Only for logging, NOT for venue_order_id
+      // R10.5: No clientOrderId fallback — if no exchange ID, it stays null
+      const resolvedOrderId = exchangeOrderId || null;
       
       // MANDATORY LOGGING: Track exactly what RevolutX returns
       console.log(`[revolutx] placeOrder RESPONSE: { venue_order_id: ${orderData.venue_order_id}, state: ${orderData.state}, client_order_id: ${orderData.client_order_id}, clientOrderId: ${clientOrderId} }`);
       console.log('[revolutx] Order placed successfully:', resolvedOrderId);
       console.log('[revolutx] Order response data:', JSON.stringify(data, null, 2));
       
-      // CRITICAL: If we don't have a real exchange order ID, this is a problem
+      // R10.5: If we don't have a real exchange order ID, this is a problem
       if (!exchangeOrderId) {
         console.error(`[revolutx] WARNING: No exchange order ID returned! venue_order_id=${orderData.venue_order_id}, id=${orderData.id}. FillWatcher will not be able to query order status.`);
       }
@@ -751,8 +752,8 @@ export class RevolutXService implements IExchangeService {
       // If order was ACCEPTED by exchange but price couldn't be determined,
       // return success with pendingFill flag so the engine can reconcile using fills.
       if (!Number.isFinite(executedPrice) || executedPrice <= 0) {
-        // CRITICAL: Use exchangeOrderId (real ID from RevolutX), NOT resolvedOrderId which may be clientOrderId
-        const venueOrderIdForFillWatcher = exchangeOrderId || resolvedOrderId;
+        // R10.5: Use exchangeOrderId only — NO clientOrderId fallback for venueOrderId
+        const venueOrderIdForFillWatcher = exchangeOrderId;
         console.warn(`[revolutx] Order SUBMITTED but executed price not available. Marking as pendingFill.`);
         console.log(`[revolutx] PENDING_FILL IDs: exchangeOrderId=${exchangeOrderId}, venueOrderIdForFillWatcher=${venueOrderIdForFillWatcher}, clientOrderId=${clientOrderId}`);
         return {
@@ -768,6 +769,7 @@ export class RevolutXService implements IExchangeService {
 
       const executedCost = executedPrice > 0 && executedVolume > 0 ? executedPrice * executedVolume : executedValue;
       
+      // R10.5: orderId is the real exchange order ID only — no clientOrderId fallback
       return {
         success: true,
         orderId: resolvedOrderId,

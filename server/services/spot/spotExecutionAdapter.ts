@@ -327,7 +327,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
       const result = await exchange.placeOrder(orderParams);
 
       if (!result.success) {
-        return this.failResult(result.error ?? "Exchange rejected order");
+        return this.failResult(result.error ?? "Exchange rejected order", "REJECTED");
       }
 
       // Pending fill: order accepted but price unknown
@@ -335,7 +335,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
         console.log(`[SpotRealAdapter] Entry PENDING_FILL orderId=${result.orderId} clientOrderId=${clientOrderId}`);
         return {
           success: true,
-          orderId: result.orderId ?? clientOrderId,
+          orderId: result.orderId ?? null,
           clientOrderId,
           venueOrderId: result.orderId ?? null,
           fillPrice: null,
@@ -369,7 +369,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
 
       return {
         success: true,
-        orderId: result.orderId ?? clientOrderId,
+        orderId: result.orderId ?? null,
         clientOrderId,
         venueOrderId: result.orderId ?? null,
         fillPrice,
@@ -386,7 +386,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
       if (this.isNetworkError(error)) {
         throw error;
       }
-      return this.failResult(`Exchange error: ${error.message}`);
+      return this.failResult(`Exchange error: ${error.message}`, "REJECTED");
     }
   }
 
@@ -428,7 +428,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
       const result = await exchange.placeOrder(orderParams);
 
       if (!result.success) {
-        return this.failResult(result.error ?? "Exchange rejected sell order");
+        return this.failResult(result.error ?? "Exchange rejected sell order", "REJECTED");
       }
 
       // Pending fill for exit
@@ -436,7 +436,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
         console.log(`[SpotRealAdapter] Exit PENDING_FILL orderId=${result.orderId} clientOrderId=${clientOrderId}`);
         return {
           success: true,
-          orderId: result.orderId ?? clientOrderId,
+          orderId: result.orderId ?? null,
           clientOrderId,
           venueOrderId: result.orderId ?? null,
           fillPrice: null,
@@ -470,7 +470,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
 
       return {
         success: true,
-        orderId: result.orderId ?? clientOrderId,
+        orderId: result.orderId ?? null,
         clientOrderId,
         venueOrderId: result.orderId ?? null,
         fillPrice,
@@ -487,7 +487,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
       if (this.isNetworkError(error)) {
         throw error;
       }
-      return this.failResult(`Exchange error: ${error.message}`);
+      return this.failResult(`Exchange error: ${error.message}`, "REJECTED");
     }
   }
 
@@ -506,7 +506,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
       || msg.includes("aborted");
   }
 
-  private failResult(error: string): SpotExecutionResult {
+  private failResult(error: string, submissionState: "REJECTED" | "AMBIGUOUS" = "REJECTED"): SpotExecutionResult {
     return {
       success: false,
       orderId: null,
@@ -520,6 +520,7 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
       error,
       pendingFill: false,
       executedAt: Date.now(),
+      submissionState,
     };
   }
 }

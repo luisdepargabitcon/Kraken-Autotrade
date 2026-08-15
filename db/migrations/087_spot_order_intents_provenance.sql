@@ -70,3 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_order_intents_reconcile_provenance
 CREATE INDEX IF NOT EXISTS idx_order_intents_reserved_quote
   ON order_intents(internal_intent_id, reserved_quote_usd)
   WHERE reserved_quote_usd IS NOT NULL;
+
+-- R10.5: Store the quote currency used for the reservation (e.g. USD, EUR)
+ALTER TABLE order_intents
+  ADD COLUMN IF NOT EXISTS reserved_quote_currency TEXT;

@@ -313,6 +313,7 @@ export interface SpotExecutionResult {
   error: string | null;
   pendingFill: boolean;
   executedAt: number;
+  submissionState?: "REJECTED" | "AMBIGUOUS";
 }
 
 // ─── SpotPolicyVersion ──────────────────────────────────────────────────────

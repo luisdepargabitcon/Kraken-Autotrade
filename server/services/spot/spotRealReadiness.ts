@@ -67,6 +67,8 @@ export interface RealReadinessResult {
     realReconcilerCount: number;
     runtimeOwner: string | null;
     isSpotRuntimeOwnerCheck: boolean;
+    // R10.5: Per-pair real quote balances
+    realQuoteBalances: Record<string, { quoteCurrency: string; balance: number; useful: boolean }>;
   };
 }
 
@@ -105,6 +107,7 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     realReconcilerCount: 0,
     runtimeOwner: null as string | null,
     isSpotRuntimeOwnerCheck: false,
+    realQuoteBalances: {} as Record<string, { quoteCurrency: string; balance: number; useful: boolean }>,
   };
 
   // 1. REAL_ACTIVATION_ALLOWED
@@ -123,11 +126,13 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     }
 
     // 3. Balance reachable — authenticated API call via getBalance
+    // R10.5: getBalance() returns Record<string, number> keyed by currency
+    let exchangeBalances: Record<string, number> = {};
     if (checks.exchangeInitialized) {
       try {
         const anyExchange = exchange as any;
         if (typeof anyExchange.getBalance === "function") {
-          await anyExchange.getBalance();
+          exchangeBalances = await anyExchange.getBalance() as Record<string, number>;
           checks.balanceReachable = true;
           checks.apiCredentialsConfigured = true;
         } else {
@@ -177,11 +182,18 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
   }
 
   // 6. R10.3: Pair metadata loaded PER PAIR — BLOCKER if any missing
-  // R10.3: Fix API — getPairMetadata(pair) is per-pair, not a Map getter
+  // R10.5: Also validate useful balance per active pair using quoteCurrency from metadata
   if (checks.activePairsConfigured && checks.exchangeInitialized) {
     try {
       const exchange = ExchangeFactory.getTradingExchange();
       const anyExchange = exchange as any;
+      // R10.5: Fetch balances once for per-pair validation
+      let exchangeBalances: Record<string, number> = {};
+      if (typeof anyExchange.getBalance === "function") {
+        try {
+          exchangeBalances = await anyExchange.getBalance() as Record<string, number>;
+        } catch { /* best effort — individual checks below */ }
+      }
       if (typeof anyExchange.getPairMetadata === "function") {
         // R10.3: Try loadPairMetadata if available, then check per-pair
         if (typeof anyExchange.loadPairMetadata === "function") {
@@ -195,6 +207,15 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
           if (!meta) {
             checks.pairMetadataMissing.push(pair);
             allMetadataLoaded = false;
+          } else {
+            // R10.5: Validate useful balance per active pair
+            const quoteCurrency = meta.quoteCurrency || "USD";
+            const balance = exchangeBalances[quoteCurrency] ?? exchangeBalances[quoteCurrency.toUpperCase()] ?? 0;
+            const useful = Number.isFinite(balance) && balance > 0;
+            checks.realQuoteBalances[pair] = { quoteCurrency, balance, useful };
+            if (!useful) {
+              blockers.push(`Balance insuficiente para ${pair}: ${quoteCurrency}=${balance} (fail-closed)`);
+            }
           }
         }
         checks.pairMetadataLoaded = allMetadataLoaded;
@@ -337,8 +358,8 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     checks.positionSupervisorRunning = spotEngine._isSupervisorRunningForTest();
     checks.entryScannerCount = checks.entryScannerRunning ? 1 : 0;
     checks.positionSupervisorCount = checks.positionSupervisorRunning ? 1 : 0;
-    // R10.4: Real reconciler instance count
-    checks.realReconcilerCount = spotEngine._isReconcilerRunningForTest() ? 1 : 0;
+    // R10.5: Use interval active flag (realReconcilerRunning), NOT reentrancy guard (isReconciling)
+    checks.realReconcilerCount = spotEngine._isReconcilerIntervalRunningForTest() ? 1 : 0;
     // R10.3: scanner count > 1 → blocker (duplicate scanners)
     if (checks.entryScannerCount > 1) {
       blockers.push(`Scanner count=${checks.entryScannerCount} — debe ser 0 o 1`);
@@ -357,4 +378,35 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
   const ready = blockers.length === 0;
 
   return { ready, blockers, warnings, checks };
+}
+
+/**
+ * R10.5: Structural readiness only — no runtime state checks.
+ * Used by prepareRealActivation before reconciliation to avoid deadlock.
+ * Checks: feature flag, exchange init, balance, fee model, active pairs, metadata.
+ * Does NOT check: runtime counts, pending intents, uncertain positions, freeze gate.
+ */
+export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
+  const full = await checkRealReadiness();
+  // Filter out runtime-dependent blockers — only keep structural ones
+  const runtimeBlockerPatterns = [
+    "runtime",
+    "scanner count",
+    "supervisor count",
+    "reconciler count",
+    "UNCERTAIN",
+    "PENDING_FILL",
+    "EXIT_PENDING",
+    "unresolved",
+    "freeze",
+  ];
+  const structuralBlockers = full.blockers.filter(b =>
+    !runtimeBlockerPatterns.some(p => b.toLowerCase().includes(p.toLowerCase()))
+  );
+  return {
+    ready: structuralBlockers.length === 0,
+    blockers: structuralBlockers,
+    warnings: full.warnings,
+    checks: full.checks,
+  };
 }
