@@ -135,9 +135,19 @@ interface DrainResult {
  * before returning. If the drain times out, returns drained=false — the caller
  * (setExecutionMode) MUST treat this as DRAIN_TIMEOUT_FAIL_CLOSED, not as success.
  */
+let drainTimeoutMs = 15_000;
+
+export function _setDrainTimeoutMsForTest(ms: number): void {
+  drainTimeoutMs = ms;
+}
+
+export function _getDrainTimeoutMsForTest(): number {
+  return drainTimeoutMs;
+}
+
 async function invalidateEntryGenerationAndDrain(): Promise<DrainResult> {
   entryGeneration++;
-  const maxWaitMs = 15_000;
+  const maxWaitMs = drainTimeoutMs;
   const start = Date.now();
   while (entryCriticalSectionCount > 0 && Date.now() - start < maxWaitMs) {
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -161,6 +171,9 @@ export function _exitRealCriticalSectionForTest(): void {
 }
 export async function _invalidateRealSubmissionGenerationAndDrainForTest(): Promise<DrainResult> {
   return invalidateEntryGenerationAndDrain();
+}
+export function _getEntryCriticalSectionCountForTest(): number {
+  return entryCriticalSectionCount;
 }
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -545,6 +558,16 @@ async function doSetExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
   // happened to have just expired.
   const previousMode = await getExecutionMode();
 
+  // R10.9-8: Serialize REAL preflight inside the mode transition lock. This prevents
+  // concurrent POST /api/spot/mode requests from running prepareRealActivation in
+  // parallel with a mode transition — the preflight and the transition are now atomic.
+  if (mode === ExecutionMode.REAL && previousMode !== ExecutionMode.REAL) {
+    const prep = await prepareRealActivation();
+    if (!prep.ready) {
+      throw new Error(`REAL activation preflight failed: ${prep.error ?? "unknown"}`);
+    }
+  }
+
   // R10.9-8: Invalidate the general entry generation FIRST on ANY mode change, so new
   // entry work started under the previous mode gets blocked before we persist the new
   // mode. This closes OFF↔SHADOW, SHADOW↔REAL, and REAL↔OFF races, not only REAL→others.
@@ -610,10 +633,14 @@ async function doSetExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
   // keeps the response honest: the mode changed, but the transition is incomplete and
   // the entry scanner must not be trusted yet. Callers (spot.routes.ts) map this to 500.
   if (!drainResult.drained) {
+    // R10.9-6: DRAIN_TIMEOUT_FAIL_CLOSED — disable entry scanner regardless of mode.
+    // A timed-out drain means in-flight entries may still be creating positions under
+    // the old mode. The scanner must NOT restart until a clean transition succeeds.
+    entryScanningEnabled = false;
     throw new Error(
       `DRAIN_TIMEOUT_FAIL_CLOSED: mode transition ${previousMode}→${mode} persisted, ` +
       `but ${drainResult.remainingCount} entry critical section(s) still active after timeout. ` +
-      `Reconciler/supervisor continue; entry scanner must NOT be started.`
+      `Reconciler/supervisor continue; entry scanner disabled.`
     );
   }
 
@@ -1040,6 +1067,10 @@ export function _isPositionSupervisionHealthyForTest(): boolean {
   return positionSupervisionHealthy;
 }
 
+export function _getPositionSupervisionFailureReasonForTest(): string | null {
+  return positionSupervisionFailureReason;
+}
+
 // R7: Exported for testing — engine state inspection
 export function _isEngineRunningForTest(): boolean {
   return engineRunning;
@@ -1147,22 +1178,37 @@ async function runPositionSupervisor(): Promise<SupervisorCycleResult> {
       return { ok: false, reason };
     }
 
-    // R10.9-5: Cycle healthy so far — pair discovery succeeded. manageOpenPositions errors
-    // for individual pairs are logged but do NOT mark the whole supervisor unhealthy
-    // because the DB state was at least coherent enough to enumerate positions.
+    // R10.9-3: Track per-pair failures — the supervisor is only healthy if ALL pairs
+    // were successfully evaluated. A single pair failure (e.g. getOpenPositionsForPair
+    // DB error) means the supervisor could not demonstrate the state of that pair's
+    // positions, which is a false positive if we mark healthy anyway.
+    let cycleFailures = 0;
+    let cycleFailureReason: string | null = null;
+
     for (const pair of pairs) {
       try {
         let ctx: SpotMarketContext;
         try {
           ctx = await buildSpotMarketContext({ pair });
         } catch {
-          continue; // skip pairs with data errors
+          cycleFailures++;
+          if (cycleFailureReason === null) cycleFailureReason = `${pair}: buildSpotMarketContext failed`;
+          continue;
         }
         // Use position's executionMode for exit, not global mode
         await manageOpenPositions(pair, ctx);
       } catch (error: any) {
         console.error(`[SpotEngine] Supervisor error for ${pair}:`, error.message);
+        cycleFailures++;
+        if (cycleFailureReason === null) cycleFailureReason = `${pair}: ${error.message}`;
       }
+    }
+
+    if (cycleFailures > 0) {
+      positionSupervisionHealthy = false;
+      positionSupervisionFailureReason = `${cycleFailures} pair(s) failed — ${cycleFailureReason}`;
+      console.error(`[SpotEngine] R10.9-3: Supervisor cycle completed with ${cycleFailures} failure(s): ${positionSupervisionFailureReason}`);
+      return { ok: false, reason: positionSupervisionFailureReason ?? undefined };
     }
 
     positionSupervisionHealthy = true;
@@ -1404,8 +1450,9 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   const clientOrderId = generateClientOrderId(internalIntentId);
 
   // R10.4: For REAL mode — durable per-intent reservation + persist in ONE atomic tx
-  // R10.9-8: this is now the general entry critical section for the REAL submission only
-  // (SHADOW doesn't hold a real-money critical section here).
+  // R10.9-2: The entry critical section now covers BOTH REAL and SHADOW modes.
+  // Any new entry that can create a position must be inside the critical section so
+  // that invalidateEntryGenerationAndDrain can wait for it during a mode transition.
   let entryCriticalSectionEntered = false;
   if (mode === ExecutionMode.REAL) {
     // R10.9-8: Gate check #1 — re-verify mode is still REAL and the entry generation is
@@ -1504,7 +1551,47 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     }
 
     if (reserveOutcome.kind === "EXISTING_FILLED") {
-      console.log(`[SpotEngine] Entry SKIPPED — existing filled intent: ${internalIntentId}`);
+      // R10.9-9: Verify materialization — an EXISTING_FILLED intent MUST have either an
+      // open_position or a closed trade. If neither exists, the intent was marked FILLED
+      // but the position was never materialized — this is a data inconsistency that must
+      // not be silently skipped. Freeze REAL mode by throwing.
+      let materialized = false;
+      try {
+        const posCheck = await db.execute(sql`
+          SELECT lot_id FROM open_positions
+          WHERE client_order_id = ${clientOrderId}
+            AND policy_version = ${SPOT_POLICY_VERSION}
+            AND engine_owner = ${SPOT_ENGINE_OWNER}
+          LIMIT 1
+        `);
+        if (posCheck.rows.length > 0) {
+          materialized = true;
+        } else {
+          const tradeCheck = await db.execute(sql`
+            SELECT trade_id FROM trades
+            WHERE lot_id IN (
+              SELECT lot_id FROM order_intents WHERE client_order_id = ${clientOrderId}
+            )
+              AND policy_version = ${SPOT_POLICY_VERSION}
+              AND engine_owner = ${SPOT_ENGINE_OWNER}
+            LIMIT 1
+          `);
+          if (tradeCheck.rows.length > 0) {
+            materialized = true;
+          }
+        }
+      } catch (verifyError: any) {
+        console.error(`[SpotEngine] R10.9-9: EXISTING_FILLED verification DB error for ${internalIntentId}: ${verifyError.message}`);
+        throw new Error(`EXISTING_FILLED_VERIFICATION_FAILED: ${verifyError.message}`);
+      }
+      if (!materialized) {
+        console.error(`[SpotEngine] R10.9-9: EXISTING_FILLED intent ${internalIntentId} has NO materialized position or trade — data inconsistency`);
+        throw new Error(
+          `EXISTING_FILLED_NOT_MATERIALIZED: intent ${internalIntentId} is marked FILLED ` +
+          `but no open_position or trade exists. REAL mode must be frozen until resolved.`
+        );
+      }
+      console.log(`[SpotEngine] Entry SKIPPED — existing filled intent (materialized): ${internalIntentId}`);
       logActivity({
         pair: intent.pair,
         category: "EXECUTION",
@@ -1566,6 +1653,28 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       exitEntryCriticalSection();
       return false;
     }
+  }
+
+  // R10.9-2: SHADOW mode also enters the entry critical section so that
+  // invalidateEntryGenerationAndDrain waits for in-flight SHADOW entries during
+  // ANY mode transition (e.g. SHADOW→OFF, SHADOW→REAL).
+  if (mode === ExecutionMode.SHADOW) {
+    if (!isEntryGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.SHADOW) {
+      console.log(`[SpotEngine] R10.9-2: Entry BLOCKED — SHADOW mode transitioned away for ${intent.pair}`);
+      logActivity({
+        pair: intent.pair,
+        category: "EXECUTION",
+        severity: "WARNING",
+        title: "Entrada bloqueada — transición de modo SHADOW",
+        explanation: `El modo cambió fuera de SHADOW durante el scan. NO se crea posición.`,
+        decision: "BLOCK",
+        executionMode: mode,
+        reasonCode: "SHADOW_MODE_TRANSITION_RACE_BLOCKED",
+      });
+      return false;
+    }
+    enterEntryCriticalSection();
+    entryCriticalSectionEntered = true;
   }
 
   // Execute via adapter — pass clientOrderId (NOT generated by adapter)

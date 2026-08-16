@@ -73,6 +73,9 @@ export interface RealReadinessResult {
     configuredTradingVenue: string | null;
     runtimeTradingVenue: string | null;
     venueMatch: boolean;
+    // R10.9-5: Supervisor health exposed in readiness API
+    positionSupervisorHealthy: boolean;
+    positionSupervisionFailureReason: string | null;
   };
 }
 
@@ -115,6 +118,8 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     configuredTradingVenue: null as string | null,
     runtimeTradingVenue: null as string | null,
     venueMatch: false,
+    positionSupervisorHealthy: false,
+    positionSupervisionFailureReason: null as string | null,
   };
 
   // 1. REAL_ACTIVATION_ALLOWED
@@ -392,6 +397,12 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     checks.positionSupervisorCount = checks.positionSupervisorRunning ? 1 : 0;
     // R10.5: Use interval active flag (realReconcilerRunning), NOT reentrancy guard (isReconciling)
     checks.realReconcilerCount = spotEngine._isReconcilerIntervalRunningForTest() ? 1 : 0;
+    // R10.9-5: Expose supervisor health in readiness API
+    checks.positionSupervisorHealthy = spotEngine._isPositionSupervisionHealthyForTest();
+    checks.positionSupervisionFailureReason = spotEngine._getPositionSupervisionFailureReasonForTest();
+    if (!checks.positionSupervisorHealthy) {
+      blockers.push(`Position supervisor unhealthy: ${checks.positionSupervisionFailureReason ?? "unknown"} — REAL BUY blocked`);
+    }
     // R10.3: scanner count > 1 → blocker (duplicate scanners)
     if (checks.entryScannerCount > 1) {
       blockers.push(`Scanner count=${checks.entryScannerCount} — debe ser 0 o 1`);
@@ -458,6 +469,8 @@ export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
     configuredTradingVenue: null as string | null,
     runtimeTradingVenue: null as string | null,
     venueMatch: false,
+    positionSupervisorHealthy: false,
+    positionSupervisionFailureReason: null as string | null,
   };
 
   // 1. REAL_ACTIVATION_ALLOWED

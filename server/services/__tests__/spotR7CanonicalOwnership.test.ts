@@ -139,6 +139,17 @@ vi.mock("../../db", () => ({
   },
 }));
 
+// R10.9-8: prepareRealActivation is now called inside setExecutionMode(REAL).
+// Mock spotRealReadiness so structural/runtime checks pass without a real exchange.
+vi.mock("../spot/spotRealReadiness", () => ({
+  checkStructuralReadiness: vi.fn(async () => ({
+    ready: true, blockers: [], warnings: [], checks: {},
+  })),
+  checkRealReadiness: vi.fn(async () => ({
+    ready: true, blockers: [], warnings: [], checks: {},
+  })),
+}));
+
 // ─── Mock spotExecutionModeStore ─────────────────────────────────────────────
 
 const { mockModeState, mockModeFns } = vi.hoisted(() => {
@@ -623,7 +634,7 @@ describe("R7 — Canonical Ownership / OFF Fail-Safe", () => {
 
       const supervisorIdx = source.indexOf("async function runPositionSupervisor");
       expect(supervisorIdx).toBeGreaterThan(-1);
-      const supervisorBody = source.substring(supervisorIdx, supervisorIdx + 2800);
+      const supervisorBody = source.substring(supervisorIdx, supervisorIdx + 3500);
 
       expect(supervisorBody).toContain("isSupervising");
       expect(supervisorBody).toContain("finally");
