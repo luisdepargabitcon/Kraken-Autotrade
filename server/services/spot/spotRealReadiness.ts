@@ -25,7 +25,7 @@
  */
 
 import { REAL_ACTIVATION_ALLOWED, ExecutionMode, SPOT_POLICY_VERSION } from "./spotTypes";
-import { SPOT_ENGINE_OWNER, isSpotRuntimeOwner } from "./spotEngine";
+import { SPOT_ENGINE_OWNER, isSpotRuntimeOwner, getTradingVenueFailClosed } from "./spotEngine";
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { getTradingFeeModel } from "./feeModel";
 import { countPendingRealOrderIntents, RealIntentPersistenceError } from "./spotOrderIntentStore";
@@ -69,6 +69,10 @@ export interface RealReadinessResult {
     isSpotRuntimeOwnerCheck: boolean;
     // R10.5: Per-pair real quote balances
     realQuoteBalances: Record<string, { quoteCurrency: string; balance: number; useful: boolean }>;
+    // R10.8-6: Trading venue verification (no invented fallback)
+    configuredTradingVenue: string | null;
+    runtimeTradingVenue: string | null;
+    venueMatch: boolean;
   };
 }
 
@@ -108,6 +112,9 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     runtimeOwner: null as string | null,
     isSpotRuntimeOwnerCheck: false,
     realQuoteBalances: {} as Record<string, { quoteCurrency: string; balance: number; useful: boolean }>,
+    configuredTradingVenue: null as string | null,
+    runtimeTradingVenue: null as string | null,
+    venueMatch: false,
   };
 
   // 1. REAL_ACTIVATION_ALLOWED
@@ -123,6 +130,19 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     checks.exchangeName = exchange.exchangeName;
     if (!checks.exchangeInitialized) {
       blockers.push(`Exchange ${exchange.exchangeName} no inicializado`);
+    }
+
+    // R10.8-6: Trading venue verification — configured api_config.trading_exchange
+    // MUST match the runtime exchange. No invented "kraken" fallback is acceptable here.
+    try {
+      const verifiedVenue = await getTradingVenueFailClosed();
+      checks.runtimeTradingVenue = verifiedVenue;
+      checks.configuredTradingVenue = verifiedVenue;
+      checks.venueMatch = true;
+    } catch (error: any) {
+      checks.venueMatch = false;
+      checks.runtimeTradingVenue = exchange.exchangeName ?? null;
+      blockers.push(`Trading venue no verificado: ${error.message}`);
     }
 
     // 3. Balance reachable — authenticated API call via getBalance
@@ -199,7 +219,12 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
         if (typeof anyExchange.loadPairMetadata === "function") {
           try {
             await anyExchange.loadPairMetadata(activePairs);
-          } catch { /* best effort — individual checks below */ }
+          } catch (refreshError: any) {
+            // R10.8-4: Explicit refresh failure — the pairs' cache entries are already
+            // invalidated by loadPairMetadata itself, so the per-pair loop below will
+            // correctly see them as missing. Surface a clear blocker reason too.
+            blockers.push(`Refresh de metadata falló para pares activos: ${refreshError.message}`);
+          }
         }
         let allMetadataLoaded = true;
         for (const pair of activePairs) {
@@ -430,6 +455,9 @@ export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
     runtimeOwner: null as string | null,
     isSpotRuntimeOwnerCheck: false,
     realQuoteBalances: {} as Record<string, { quoteCurrency: string; balance: number; useful: boolean }>,
+    configuredTradingVenue: null as string | null,
+    runtimeTradingVenue: null as string | null,
+    venueMatch: false,
   };
 
   // 1. REAL_ACTIVATION_ALLOWED
@@ -445,6 +473,19 @@ export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
     checks.exchangeName = exchange.exchangeName;
     if (!checks.exchangeInitialized) {
       blockers.push(`Exchange ${exchange.exchangeName} no inicializado`);
+    }
+
+    // R10.8-6: Trading venue verification — configured api_config.trading_exchange
+    // MUST match the runtime exchange. No invented "kraken" fallback is acceptable here.
+    try {
+      const verifiedVenue = await getTradingVenueFailClosed();
+      checks.runtimeTradingVenue = verifiedVenue;
+      checks.configuredTradingVenue = verifiedVenue;
+      checks.venueMatch = true;
+    } catch (error: any) {
+      checks.venueMatch = false;
+      checks.runtimeTradingVenue = exchange.exchangeName ?? null;
+      blockers.push(`Trading venue no verificado: ${error.message}`);
     }
 
     if (checks.exchangeInitialized) {
@@ -512,7 +553,9 @@ export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
         if (typeof anyExchange.loadPairMetadata === "function") {
           try {
             await anyExchange.loadPairMetadata(activePairs);
-          } catch { /* best effort */ }
+          } catch (refreshError: any) {
+            blockers.push(`Refresh de metadata falló para pares activos: ${refreshError.message}`);
+          }
         }
         let allMetadataLoaded = true;
         for (const pair of activePairs) {

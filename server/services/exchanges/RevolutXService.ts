@@ -693,15 +693,20 @@ export class RevolutXService implements IExchangeService {
       
       if (!response.ok) {
         console.error('[revolutx] placeOrder error response:', data);
-        // R10.7-4: Only an explicit, parseable HTTP 4xx demonstrates the exchange REJECTED
-        // the order. HTTP 5xx (and any other non-4xx failure) means the exchange's own
-        // infrastructure failed — the order may or may not have been accepted upstream —
-        // so it must be classified AMBIGUOUS, never REJECTED.
-        const isExplicit4xx = response.status >= 400 && response.status < 500;
+        // R10.8-3: Only an explicit, unequivocal HTTP status where a successfully-parsed
+        // body demonstrates the order was rejected/never created maps to REJECTED.
+        // Everything else — including statuses whose semantics leave doubt about whether
+        // the POST reached/created state on the exchange (408 timeout, 409 conflict,
+        // 425 too-early, 429 rate-limited) and all 5xx — MUST be AMBIGUOUS.
+        // Principle: if there is doubt the POST could have landed, AMBIGUOUS.
+        const UNEQUIVOCAL_REJECTION_STATUSES = new Set([400, 401, 403, 404, 422]);
+        const submissionState: SubmissionState = UNEQUIVOCAL_REJECTION_STATUSES.has(response.status)
+          ? "REJECTED"
+          : "AMBIGUOUS";
         return {
           success: false,
           error: data.message || data.error || data.description || `HTTP ${response.status}`,
-          submissionState: (isExplicit4xx ? "REJECTED" : "AMBIGUOUS") as SubmissionState,
+          submissionState,
         };
       }
       
@@ -927,6 +932,14 @@ export class RevolutXService implements IExchangeService {
   async loadPairMetadata(pairs: string[]): Promise<void> {
     console.log(`[revolutx] Loading pair metadata for: ${pairs.join(', ')}`);
 
+    // R10.8-4: Invalidate the requested pairs' cache entries BEFORE attempting the
+    // refresh. If the refresh fails below, these pairs must NOT appear to still have
+    // valid (stale) metadata — getPairMetadata() must return null for them, and
+    // readiness must see a BLOCKER, not silently reuse old data as if refresh succeeded.
+    for (const pair of pairs) {
+      this.pairMetadataCache.delete(pair);
+    }
+
     // R10.7-7: Metadata must NEVER be invented. Both endpoints must succeed —
     // if either fails, we cannot verify any pair, so skip metadata population
     // entirely rather than falling back to defaults.
@@ -939,12 +952,12 @@ export class RevolutXService implements IExchangeService {
       ]);
     } catch (error: any) {
       console.error('[revolutx] Failed to fetch currencies/symbols endpoints — no metadata will be cached:', error.message);
-      return;
+      throw new Error(`REVOLUTX_METADATA_REFRESH_FAILED: fetch error: ${error.message}`);
     }
 
     if (!currenciesRes.ok || !symbolsRes.ok) {
       console.error(`[revolutx] currencies/symbols endpoints returned non-OK (currencies=${currenciesRes.status}, symbols=${symbolsRes.status}) — no metadata will be cached (fail-closed)`);
-      return;
+      throw new Error(`REVOLUTX_METADATA_REFRESH_FAILED: non-OK response (currencies=${currenciesRes.status}, symbols=${symbolsRes.status})`);
     }
 
     let currencies: any[];
@@ -954,7 +967,7 @@ export class RevolutXService implements IExchangeService {
       symbols = await symbolsRes.json() as any[];
     } catch (error: any) {
       console.error('[revolutx] Failed to parse currencies/symbols response — no metadata will be cached:', error.message);
-      return;
+      throw new Error(`REVOLUTX_METADATA_REFRESH_FAILED: parse error: ${error.message}`);
     }
 
     for (const pair of pairs) {
@@ -968,6 +981,15 @@ export class RevolutXService implements IExchangeService {
       // do NOT invent metadata with defaults — leave it uncached (getPairMetadata → null).
       if (!symbolInfo) {
         console.error(`[revolutx] No symbolInfo found for ${pair} — metadata NOT cached (fail-closed, pair not REAL-ready)`);
+        this.pairMetadataCache.delete(pair);
+        continue;
+      }
+
+      // R10.8-4: If the exchange publishes a status field, it MUST indicate the symbol
+      // is actively tradable. An inactive/suspended/delisted symbol must never be cached
+      // as REAL-ready, regardless of whether its step/minimum fields look valid.
+      if (typeof symbolInfo.status === "string" && symbolInfo.status.toLowerCase() !== "active") {
+        console.error(`[revolutx] symbolInfo for ${pair} has status="${symbolInfo.status}" (not ACTIVE) — metadata NOT cached (fail-closed)`);
         this.pairMetadataCache.delete(pair);
         continue;
       }

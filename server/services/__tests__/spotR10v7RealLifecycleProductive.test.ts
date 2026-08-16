@@ -210,6 +210,15 @@ vi.mock("../spot/spotActivityLogger", () => ({
   logActivity: vi.fn(() => ({})),
 }));
 
+vi.mock("../exchanges/ExchangeFactory", () => ({
+  ExchangeFactory: {
+    getTradingExchange: () => ({
+      exchangeName: "revolutx",
+      getPairMetadata: () => ({ quoteCurrency: "USD" }),
+    }),
+  },
+}));
+
 import {
   _persistAndReserveRealEntryIntentAtomicForTest as persistAndReserve,
   _terminateIntentAndReleaseReservationAtomicForTest as terminateIntent,

@@ -95,6 +95,63 @@ let isReconciling = false;
 let realReconcilerRunning = false;
 const RECONCILER_INTERVAL_MS = 120_000; // 2 minutes
 
+// R10.8: REAL submission generation/gate — closes the REAL→SHADOW/OFF in-flight race.
+// A scan captures the generation at start; any REAL persist+reserve or placeOrder MUST
+// re-verify (mode still REAL AND generation unchanged) immediately before proceeding.
+// On transition away from REAL, the generation is bumped and setExecutionMode drains
+// any in-flight critical section before returning success to the caller.
+let realSubmissionGeneration = 0;
+let realCriticalSectionCount = 0;
+
+function getRealSubmissionGeneration(): number {
+  return realSubmissionGeneration;
+}
+
+function isRealSubmissionGenerationValid(generation: number): boolean {
+  return generation === realSubmissionGeneration;
+}
+
+function enterRealCriticalSection(): void {
+  realCriticalSectionCount++;
+}
+
+function exitRealCriticalSection(): void {
+  realCriticalSectionCount = Math.max(0, realCriticalSectionCount - 1);
+}
+
+/**
+ * R10.8: Called on REAL→SHADOW/OFF transition. Bumps the generation (any in-flight
+ * scan holding the old generation will fail its next gate check) and drains any
+ * submission currently inside the critical section (persist+reserve..placeOrder)
+ * before returning — guaranteeing that once setExecutionMode resolves, no NEW REAL
+ * submission can reach placeOrder.
+ */
+async function invalidateRealSubmissionGenerationAndDrain(): Promise<void> {
+  realSubmissionGeneration++;
+  const maxWaitMs = 15_000;
+  const start = Date.now();
+  while (realCriticalSectionCount > 0 && Date.now() - start < maxWaitMs) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  if (realCriticalSectionCount > 0) {
+    console.error(`[SpotEngine] R10.8: Drain timeout — ${realCriticalSectionCount} REAL critical section(s) still active after ${maxWaitMs}ms`);
+  }
+}
+
+// R10.8: Exported for productive tests — inspect/drive the transition gate directly.
+export function _getRealSubmissionGenerationForTest(): number {
+  return realSubmissionGeneration;
+}
+export function _enterRealCriticalSectionForTest(): void {
+  enterRealCriticalSection();
+}
+export function _exitRealCriticalSectionForTest(): void {
+  exitRealCriticalSection();
+}
+export async function _invalidateRealSubmissionGenerationAndDrainForTest(): Promise<void> {
+  return invalidateRealSubmissionGenerationAndDrain();
+}
+
 // ─── State ──────────────────────────────────────────────────────────────────
 
 interface OpenPositionRow {
@@ -464,7 +521,18 @@ export async function setExecutionMode(mode: ExecutionMode): Promise<ExecutionMo
   if (mode === ExecutionMode.REAL && !REAL_ACTIVATION_ALLOWED) {
     throw new Error("REAL execution mode is not authorized. REAL_ACTIVATION_ALLOWED=false.");
   }
+  // R10.8: Capture the PREVIOUS mode before overwriting the cache — needed to detect
+  // a REAL→SHADOW/OFF transition and fence any in-flight REAL submission.
+  // Uses the DB-backed loader (not the sync cache) to avoid a false OFF fallback if
+  // the 5s cache window happened to have just expired.
+  const previousMode = await getExecutionMode();
   await saveExecutionMode(mode);
+  if (previousMode === ExecutionMode.REAL && mode !== ExecutionMode.REAL) {
+    // R10.8: Invalidate generation FIRST (blocks any new gate check), then drain any
+    // submission already past the gate. Only after this resolves does this function return,
+    // guaranteeing the POST /api/spot/mode response implies no NEW REAL submission can occur.
+    await invalidateRealSubmissionGenerationAndDrain();
+  }
   if (mode === ExecutionMode.OFF) {
     // OFF: disable new entries, clear intents, but keep position supervisor running
     entryScanningEnabled = false;
@@ -476,7 +544,15 @@ export async function setExecutionMode(mode: ExecutionMode): Promise<ExecutionMo
       clearInterval(scanIntervalId);
       scanIntervalId = null;
     }
-    const hasPositions = await hasOpenSpotPositions();
+    // R10.8-7: FAIL-SAFE — if we cannot determine whether positions exist, assume they
+    // MIGHT and keep the supervisor running. Never stop supervision based on an UNKNOWN.
+    let hasPositions: boolean;
+    try {
+      hasPositions = await hasOpenSpotPositions();
+    } catch (error: any) {
+      console.error(`[SpotEngine] R10.8-7: Cannot determine open positions on OFF transition — assuming positions MAY exist: ${error.message}`);
+      hasPositions = true;
+    }
     if (!hasPositions && supervisorIntervalId) {
       clearInterval(supervisorIntervalId);
       supervisorIntervalId = null;
@@ -580,7 +656,25 @@ export async function startSpotEngine(): Promise<boolean> {
     entryScanningEnabled = false;
     engineRunning = false;
 
-    const hasPositions = await hasOpenSpotPositions();
+    // R10.8-7: FAIL-SAFE — if we cannot determine whether positions exist, assume they
+    // MIGHT and start the supervisor. NEVER conclude 0 positions from a DB error.
+    let hasPositions: boolean;
+    try {
+      hasPositions = await hasOpenSpotPositions();
+    } catch (error: any) {
+      console.error(`[SpotEngine] R10.8-7: OFF startup — cannot determine open positions, assuming positions MAY exist: ${error.message}`);
+      logActivity({
+        pair: null,
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "OFF startup — no se pudo determinar posiciones abiertas",
+        explanation: `Error de DB al arrancar en OFF. Se asume fail-safe que PUEDEN existir posiciones REAL. Supervisor iniciado. Error: ${error.message}`,
+        decision: "FAIL_SAFE",
+        executionMode: mode,
+        reasonCode: "REAL_POSITION_QUERY_FAILED_FAIL_CLOSED",
+      });
+      hasPositions = true;
+    }
     if (hasPositions) {
       // Start position supervisor only
       if (!supervisorIntervalId) {
@@ -730,6 +824,11 @@ async function runScanCycle(): Promise<void> {
     return;
   }
 
+  // R10.8: Capture the REAL submission generation at scan start. Any REAL
+  // persist+reserve or placeOrder reachable from this scan MUST re-verify this
+  // generation immediately before proceeding — closes the REAL→SHADOW/OFF race.
+  const scanGeneration = getRealSubmissionGeneration();
+
   isScanning = true;
   lastScanTime = Date.now();
   const scanId = `scan-${lastScanTime.toString(36)}`;
@@ -749,7 +848,7 @@ async function runScanCycle(): Promise<void> {
     // Process each pair
     for (const pair of pairs) {
       try {
-        const result = await scanPair(pair, mode);
+        const result = await scanPair(pair, mode, scanGeneration);
         results.push(result);
       } catch (error: any) {
         console.error(`[SpotEngine] Error scanning ${pair}:`, error.message);
@@ -805,6 +904,26 @@ export async function _getRealQuoteBalanceForTest(pair: string): Promise<number>
 
 export async function _getAvailableCapitalForTest(pair: string): Promise<number> {
   return getAvailableCapital(pair);
+}
+
+// R10.8: Minimal test-only hooks calling the REAL executeEntry/closePosition productive
+// functions directly — needed for end-to-end transition-race and exit-retry tests.
+export async function _executeEntryForTest(
+  intent: SpotEntryIntent,
+  ctx: SpotMarketContext,
+  mode: ExecutionMode,
+  signal: SpotSignalResult | undefined,
+  generation: number,
+): Promise<boolean> {
+  return executeEntry(intent, ctx, mode, signal, generation);
+}
+
+export async function _closePositionForTest(
+  position: SpotPosition,
+  exitDecision: SpotExitDecision,
+  ctx: SpotMarketContext,
+): Promise<void> {
+  return closePosition(position, exitDecision, ctx);
 }
 
 // R6: Exported for testing — verify reentrancy guard
@@ -874,9 +993,12 @@ export async function getOpenSpotPositionPairs(): Promise<string[]> {
         AND status != 'CLOSED'
     `);
     return result.rows.map((r: any) => r.pair as string);
-  } catch (error) {
-    console.error("[SpotEngine] Failed to get open position pairs:", error);
-    return [];
+  } catch (error: any) {
+    // R10.8-7: FAIL-CLOSED — a DB error means UNKNOWN, not "no positions". Returning []
+    // here would let a REAL position go unsupervised. Callers MUST treat a thrown error
+    // as "cannot determine" and keep retrying, never conclude zero positions.
+    console.error("[SpotEngine] R10.8-7: Failed to get open position pairs (DB error) — cannot conclude no positions:", error.message);
+    throw new Error(`REAL_POSITION_QUERY_FAILED_FAIL_CLOSED: getOpenSpotPositionPairs: ${error.message}`);
   }
 }
 
@@ -894,7 +1016,25 @@ async function runPositionSupervisor(): Promise<void> {
   isSupervising = true;
   try {
     const mode = await getExecutionMode();
-    const pairs = await getOpenSpotPositionPairs();
+    let pairs: string[];
+    try {
+      pairs = await getOpenSpotPositionPairs();
+    } catch (error: any) {
+      // R10.8-7: DB error = UNKNOWN, never "no positions". Log CRITICAL and skip this
+      // cycle WITHOUT concluding zero positions — the interval stays alive to retry.
+      console.error(`[SpotEngine] R10.8-7: Supervisor cycle SKIPPED — cannot determine open positions: ${error.message}`);
+      logActivity({
+        pair: null,
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "Supervisor — no se pudo determinar posiciones abiertas",
+        explanation: `Error de DB al consultar pares con posiciones abiertas. NO se asume 0 posiciones. Se reintentará en el próximo ciclo. Error: ${error.message}`,
+        decision: "FAIL_CLOSED",
+        executionMode: mode,
+        reasonCode: "REAL_POSITION_QUERY_FAILED_FAIL_CLOSED",
+      });
+      return;
+    }
     for (const pair of pairs) {
       try {
         let ctx: SpotMarketContext;
@@ -926,8 +1066,12 @@ async function hasOpenSpotPositions(): Promise<boolean> {
       WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
     `);
     return Number(result.rows[0]?.count ?? 0) > 0;
-  } catch {
-    return false;
+  } catch (error: any) {
+    // R10.8-7: FAIL-CLOSED — a DB error is UNKNOWN, never "false" (no positions).
+    // Returning false here could stop the position supervisor while a REAL position
+    // still exists. Callers MUST treat this as "assume positions may exist".
+    console.error("[SpotEngine] R10.8-7: hasOpenSpotPositions DB error — cannot conclude false:", error.message);
+    throw new Error(`REAL_POSITION_QUERY_FAILED_FAIL_CLOSED: hasOpenSpotPositions: ${error.message}`);
   }
 }
 
@@ -940,7 +1084,7 @@ async function hasOpenSpotPositions(): Promise<boolean> {
  *   D. If no active intent → evaluate strategy → if BUY, create intent → evaluate immediately
  *   E. Execute only if all gates pass
  */
-async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: string; signal: string; reason: string; mode: string }> {
+async function scanPair(pair: string, mode: ExecutionMode, generation: number): Promise<{ pair: string; signal: string; reason: string; mode: string }> {
   // A. Build market context
   let ctx: SpotMarketContext;
   try {
@@ -965,7 +1109,7 @@ async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: stri
     intentStore.update(activeIntent);
 
     if (evaluation.shouldExecute) {
-      const executed = await executeEntry(activeIntent, ctx, mode, signalResultCache.get(pair));
+      const executed = await executeEntry(activeIntent, ctx, mode, signalResultCache.get(pair), generation);
       if (executed) {
         activeIntent.state = "EXECUTED" as any;
         intentStore.update(activeIntent);
@@ -1005,7 +1149,7 @@ async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: stri
     intentStore.update(intent);
 
     if (evaluation.shouldExecute) {
-      const executed = await executeEntry(intent, ctx, mode, signal);
+      const executed = await executeEntry(intent, ctx, mode, signal, generation);
       if (executed) {
         intent.state = "EXECUTED" as any;
         intentStore.update(intent);
@@ -1027,7 +1171,7 @@ async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: stri
  * Execute entry: sizing → adapter → persist position.
  * Propagates signalConfidence from SpotSignalResult (B14).
  */
-async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode, signal?: SpotSignalResult): Promise<boolean> {
+async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode, signal: SpotSignalResult | undefined, generation: number): Promise<boolean> {
   // Get available capital — R10.7-8: mandatory pair, no first-active-pair fallback
   const availableCapital = await getAvailableCapital(intent.pair);
 
@@ -1082,8 +1226,47 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   const clientOrderId = generateClientOrderId(internalIntentId);
 
   // R10.4: For REAL mode — durable per-intent reservation + persist in ONE atomic tx
+  let realCriticalSectionEntered = false;
   if (mode === ExecutionMode.REAL) {
-    const venue = await getTradingVenue();
+    // R10.8: Gate check #1 — re-verify mode is still REAL and the scan generation is
+    // still valid IMMEDIATELY before persist+reserve. Closes the REAL→SHADOW/OFF race
+    // where a scan captured mode=REAL before the user switched away.
+    if (!isRealSubmissionGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.REAL) {
+      console.log(`[SpotEngine] R10.8: Entry BLOCKED — REAL mode transitioned away before persist+reserve for ${intent.pair}`);
+      logActivity({
+        pair: intent.pair,
+        category: "EXECUTION",
+        severity: "WARNING",
+        title: "Entrada bloqueada — transición de modo REAL",
+        explanation: `El modo cambió fuera de REAL durante el scan. NO se persiste ni reserva. NO se envía orden.`,
+        decision: "BLOCK",
+        executionMode: mode,
+        reasonCode: "REAL_MODE_TRANSITION_RACE_BLOCKED",
+        intentId: internalIntentId,
+      });
+      return false;
+    }
+    enterRealCriticalSection();
+    realCriticalSectionEntered = true;
+    let venue: string;
+    try {
+      venue = await getTradingVenueFailClosed();
+    } catch (error: any) {
+      console.error(`[SpotEngine] R10.8-6: Entry BLOCKED — trading venue unverified/mismatched: ${error.message}`);
+      logActivity({
+        pair: intent.pair,
+        category: "EXECUTION",
+        severity: "CRITICAL",
+        title: "Entrada bloqueada — venue no verificado",
+        explanation: `No se pudo verificar el venue de trading configurado contra el runtime. NO se envía orden. Error: ${error.message}`,
+        decision: "BLOCK",
+        executionMode: mode,
+        reasonCode: "REAL_TRADING_VENUE_UNVERIFIED",
+        intentId: internalIntentId,
+      });
+      exitRealCriticalSection();
+      return false;
+    }
     // R10.5: Fetch real balance BEFORE the transaction to validate inside the lock
     // R10.6: Per-pair balance, returns GROSS (no double subtraction)
     const realBalanceUsd = await getRealQuoteBalance(intent.pair);
@@ -1119,6 +1302,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         reasonCode: "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED",
         intentId: internalIntentId,
       });
+      exitRealCriticalSection();
       return false;
     }
 
@@ -1136,7 +1320,32 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         reasonCode: "DUPLICATE_ENTRY_SUBMISSION",
         intentId: internalIntentId,
       });
+      exitRealCriticalSection();
       return true;
+    }
+
+    // R10.8: Gate check #2 — re-verify IMMEDIATELY before placeOrder. The persist+reserve
+    // step above may have taken time; the mode may have transitioned away in the interim.
+    if (!isRealSubmissionGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.REAL) {
+      console.log(`[SpotEngine] R10.8: Entry BLOCKED — REAL mode transitioned away before placeOrder for ${intent.pair}`);
+      try {
+        await terminateIntentAndReleaseReservationAtomic(internalIntentId, "CANCELLED");
+      } catch (error: any) {
+        console.error(`[SpotEngine] R10.8: Failed to release reservation after transition-race block: ${error.message}`);
+      }
+      logActivity({
+        pair: intent.pair,
+        category: "EXECUTION",
+        severity: "WARNING",
+        title: "Entrada bloqueada — transición de modo REAL (antes de placeOrder)",
+        explanation: `El modo cambió fuera de REAL entre la reserva y el envío de la orden. Reserva liberada. NO se envía orden.`,
+        decision: "BLOCK",
+        executionMode: mode,
+        reasonCode: "REAL_MODE_TRANSITION_RACE_BLOCKED",
+        intentId: internalIntentId,
+      });
+      exitRealCriticalSection();
+      return false;
     }
   }
 
@@ -1145,7 +1354,11 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   let result: SpotExecutionResult;
   try {
     result = await adapter.executeEntry(execIntent, ctx, clientOrderId);
+    // R10.8: placeOrder attempt is now committed (sent or exchange responded) — the
+    // critical section's purpose (blocking a NEW submission mid-transition) is done.
+    if (realCriticalSectionEntered) exitRealCriticalSection();
   } catch (error: any) {
+    if (realCriticalSectionEntered) exitRealCriticalSection();
     // R10.6: Adapter should not throw — but if it does, treat as AMBIGUOUS
     if (mode === ExecutionMode.REAL) {
       console.error(`[SpotEngine] REAL entry unexpected exception for ${intent.pair}: ${error.message}`);
@@ -1522,7 +1735,7 @@ async function closePosition(
         SELECT COUNT(*) as count FROM order_intents
         WHERE lot_id = ${position.lotId}
           AND side = ${"sell"}
-          AND status IN (${"failed"}, ${"expired"})
+          AND status IN (${"failed"}, ${"expired"}, ${"cancelled"})
           AND engine_owner = ${SPOT_ENGINE_OWNER}
       `);
       exitAttempt = Number(priorExits.rows[0]?.count ?? 0);
@@ -1587,7 +1800,24 @@ async function closePosition(
       }
     } catch { /* best effort */ }
 
-    const venue = await getTradingVenue();
+    let venue: string;
+    try {
+      venue = await getTradingVenueFailClosed();
+    } catch (error: any) {
+      console.error(`[SpotEngine] R10.8-6: Exit BLOCKED — trading venue unverified/mismatched for ${position.lotId}: ${error.message}`);
+      logActivity({
+        pair: position.pair,
+        category: "EXECUTION",
+        severity: "CRITICAL",
+        title: "Salida bloqueada — venue no verificado",
+        explanation: `No se pudo verificar el venue de trading configurado contra el runtime. NO se envía orden de salida. Error: ${error.message}`,
+        decision: "BLOCK",
+        executionMode: position.executionMode,
+        reasonCode: "REAL_TRADING_VENUE_UNVERIFIED",
+        lotId: position.lotId,
+      });
+      return;
+    }
     let alreadySubmitted: boolean;
     try {
       const result = await persistSubmissionIntent({
@@ -2045,16 +2275,34 @@ async function releaseReservationInTx(
 
   const reservedUsd = intentRow.rows[0]?.reserved_quote_usd;
   if (reservedUsd != null && Number(reservedUsd) > 0) {
+    const reservedUsdNum = Number(reservedUsd);
     const configLock = await tx.execute(sql`
       SELECT spot_real_reserved_capital_usd FROM bot_config FOR UPDATE LIMIT 1
     `);
-    if (configLock.rows.length > 0) {
-      const currentReserved = Number(configLock.rows[0].spot_real_reserved_capital_usd ?? 0);
-      const newReserved = Math.max(0, currentReserved - Number(reservedUsd));
-      await tx.execute(sql`
-        UPDATE bot_config SET spot_real_reserved_capital_usd = ${newReserved}, updated_at = NOW()
-      `);
+    // R10.8-5: If this intent holds a positive reservation, bot_config MUST exist exactly
+    // once. A missing row means the aggregate ledger is corrupt/uninitialized — we must
+    // NOT silently pretend the release happened (which would desync per-intent evidence
+    // from the aggregate). Throw and let the transaction roll back.
+    if (configLock.rows.length === 0) {
+      throw new Error(
+        `REAL_RESERVATION_AGGREGATE_INCONSISTENT: bot_config row missing while releasing reservation ` +
+        `reservedUsd=${reservedUsdNum} for ${lookupBy}=${identifier}`
+      );
     }
+    const currentReserved = Number(configLock.rows[0].spot_real_reserved_capital_usd ?? 0);
+    // R10.8-5: The aggregate can NEVER be less than what this single intent claims to hold —
+    // that would mean other reservations were already lost/corrupted. Do NOT clamp with
+    // Math.max(0, ...) which would hide the inconsistency. Fail closed instead.
+    if (currentReserved < reservedUsdNum) {
+      throw new Error(
+        `REAL_RESERVATION_AGGREGATE_INCONSISTENT: currentReserved=${currentReserved} < reservedUsd=${reservedUsdNum} ` +
+        `for ${lookupBy}=${identifier} — aggregate ledger does not account for this intent's reservation`
+      );
+    }
+    const newReserved = currentReserved - reservedUsdNum;
+    await tx.execute(sql`
+      UPDATE bot_config SET spot_real_reserved_capital_usd = ${newReserved}, updated_at = NOW()
+    `);
     await tx.execute(sql`
       UPDATE order_intents SET reserved_quote_usd = NULL, reserved_quote_currency = NULL, updated_at = NOW()
       WHERE ${sql.raw(lookupBy)} = ${identifier}
@@ -2235,9 +2483,13 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
       filledNotionalUsd: r.filled_notional_usd ? Number(r.filled_notional_usd) : null,
       openedAt: Number(r.opened_at_ms),
     }));
-  } catch (error) {
-    console.error(`[SpotEngine] Failed to get open positions for ${pair}:`, error);
-    return [];
+  } catch (error: any) {
+    // R10.8-7: FAIL-CLOSED — a DB error means UNKNOWN, not "no positions for this pair".
+    // Returning [] would let a REAL position for this pair go unmanaged this cycle
+    // without anyone noticing. Caller (manageOpenPositions, inside the supervisor's
+    // per-pair try/catch) will log and retry next cycle rather than silently skip.
+    console.error(`[SpotEngine] R10.8-7: Failed to get open positions for ${pair} (DB error) — cannot conclude no positions:`, error.message);
+    throw new Error(`REAL_POSITION_QUERY_FAILED_FAIL_CLOSED: getOpenPositionsForPair(${pair}): ${error.message}`);
   }
 }
 
@@ -3044,7 +3296,7 @@ async function finalizeRealEntryFillAtomic(
   internalIntentId: string,
   clientOrderId: string,
 ): Promise<void> {
-  const venue = await getTradingVenue();
+  const venue = await getTradingVenueFailClosed();
   const venueOrderId = execResult.venueOrderId ?? execResult.orderId ?? null;
 
   await db.transaction(async (tx) => {
@@ -3197,7 +3449,7 @@ async function finalizeRealExitFillAtomic(
   auditMetrics: SpotAuditMetrics | null,
   internalIntentId: string,
 ): Promise<void> {
-  const venue = await getTradingVenue();
+  const venue = await getTradingVenueFailClosed();
   const venueOrderId = execResult.venueOrderId ?? execResult.orderId ?? null;
   const tradeId = `spot-trade-${position.lotId}`;
 
@@ -3432,6 +3684,51 @@ async function getTradingVenue(): Promise<string> {
   } catch {
     return "kraken";
   }
+}
+
+/**
+ * R10.8-6: Fail-closed trading venue resolution for REAL-mode critical paths
+ * (persist+reserve, placeOrder, fill materialization). PROHIBITS the "kraken"
+ * invented fallback used by getTradingVenue() (which is only safe for SHADOW-mode
+ * DB tagging metadata, never for gating a REAL order).
+ *
+ * Requires:
+ *   - api_config.trading_exchange to be a real, non-empty configured value;
+ *   - it must match ExchangeFactory.getTradingExchange().exchangeName (normalized);
+ *   - any DB error, missing value, or mismatch is a BLOCK — never a guess.
+ */
+export async function getTradingVenueFailClosed(): Promise<string> {
+  let configuredVenue: string;
+  try {
+    const result = await db.execute(sql`
+      SELECT trading_exchange FROM api_config LIMIT 1
+    `);
+    const raw = result.rows[0]?.trading_exchange as string | null | undefined;
+    if (!raw || typeof raw !== "string" || raw.trim() === "") {
+      throw new Error("api_config.trading_exchange is missing or empty");
+    }
+    configuredVenue = raw.trim().toLowerCase();
+  } catch (error: any) {
+    throw new Error(`REAL_TRADING_VENUE_UNVERIFIED: DB error reading api_config.trading_exchange: ${error.message}`);
+  }
+
+  let runtimeVenue: string;
+  try {
+    const runtimeName = ExchangeFactory.getTradingExchange()?.exchangeName;
+    if (!runtimeName || typeof runtimeName !== "string" || runtimeName.trim() === "") {
+      throw new Error("runtime exchange has no exchangeName");
+    }
+    runtimeVenue = runtimeName.trim().toLowerCase();
+  } catch (error: any) {
+    throw new Error(`REAL_TRADING_VENUE_UNVERIFIED: could not resolve runtime exchange: ${error.message}`);
+  }
+
+  if (configuredVenue !== runtimeVenue) {
+    throw new Error(
+      `REAL_TRADING_VENUE_MISMATCH: configured=${configuredVenue} runtime=${runtimeVenue}`
+    );
+  }
+  return runtimeVenue;
 }
 
 function rowToPosition(row: OpenPositionRow): SpotPosition {

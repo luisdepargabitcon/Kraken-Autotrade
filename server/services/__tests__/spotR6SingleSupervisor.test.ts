@@ -406,7 +406,7 @@ describe("R6 — Single Position Supervisor", () => {
       const startIdx = source.indexOf("export async function startSpotEngine");
       expect(startIdx).toBeGreaterThan(-1);
       // Get a generous slice of the function body
-      const startBody = source.substring(startIdx, startIdx + 3800);
+      const startBody = source.substring(startIdx, startIdx + 6000);
 
       // Must call runPositionSupervisor (immediate) before runScanCycle (immediate)
       // The setInterval callbacks appear earlier, so look for the R6 comment marker
@@ -426,7 +426,7 @@ describe("R6 — Single Position Supervisor", () => {
       const source = fs.readFileSync(enginePath, "utf-8");
 
       const startIdx = source.indexOf("export async function startSpotEngine");
-      const startBody = source.substring(startIdx, startIdx + 2800);
+      const startBody = source.substring(startIdx, startIdx + 6000);
 
       // Must contain runPositionSupervisor call
       expect(startBody).toContain("runPositionSupervisor");
