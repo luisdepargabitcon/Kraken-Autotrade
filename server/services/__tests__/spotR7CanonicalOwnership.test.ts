@@ -621,9 +621,9 @@ describe("R7 — Canonical Ownership / OFF Fail-Safe", () => {
       const enginePath = path.resolve(__dirname, "../spot/spotEngine.ts");
       const source = fs.readFileSync(enginePath, "utf-8");
 
-      const supervisorIdx = source.indexOf("async function runPositionSupervisor()");
+      const supervisorIdx = source.indexOf("async function runPositionSupervisor");
       expect(supervisorIdx).toBeGreaterThan(-1);
-      const supervisorBody = source.substring(supervisorIdx, supervisorIdx + 2200);
+      const supervisorBody = source.substring(supervisorIdx, supervisorIdx + 2800);
 
       expect(supervisorBody).toContain("isSupervising");
       expect(supervisorBody).toContain("finally");

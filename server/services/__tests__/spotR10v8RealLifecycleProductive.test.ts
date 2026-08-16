@@ -194,6 +194,7 @@ import {
   _invalidateRealSubmissionGenerationAndDrainForTest as invalidateAndDrain,
   _persistAndReserveRealEntryIntentAtomicForTest as persistAndReserve,
   _terminateIntentAndReleaseReservationAtomicForTest as terminateIntent,
+  _setPositionSupervisionHealthyForTest as setPositionSupervisionHealthy,
   getOpenSpotPositionPairs,
   getTradingVenueFailClosed,
 } from "../spot/spotEngine";
@@ -283,6 +284,7 @@ describe("R10.8-9: REAL transition in-flight submission race", () => {
 
   it("Same generation + mode still REAL → gate passes, reaches placeOrder", async () => {
     const scanGeneration = getGeneration();
+    setPositionSupervisionHealthy(true);
     mockPlaceOrder.mockResolvedValueOnce({
       success: true, orderId: "venue-1", price: "60000", volume: "0.01", cost: "600",
       submissionState: "ACCEPTED",
