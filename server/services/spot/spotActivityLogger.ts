@@ -129,8 +129,10 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
     ) {
       last.repeatCount++;
       last.timestamp = now;
-      // R10.6: UPDATE bot_events by spotActivityId in meta — NOT by id (id is auto-generated, not spotActivityId)
-      const dedupEventType = `SPOT_${sanitized.category}` as any;
+      // R10.7-13: UPDATE the existing bot_events row by spotActivityId ONLY.
+      // botLogger.info() ALWAYS inserts a new row — it must NEVER be called here,
+      // or every dedup hit would silently create a second logical row with the
+      // same spotActivityId, defeating the purpose of deduplication.
       db.execute(sql`
         UPDATE bot_events SET
           meta = jsonb_set(
@@ -140,14 +142,14 @@ export function logActivity(input: CreateEventInput): SpotActivityEvent {
           ),
           timestamp = NOW()
         WHERE meta->>'spotActivityId' = ${last.id}
-      `).catch(() => {});
-      botLogger.info(dedupEventType, sanitized.title, {
-        spotActivityId: last.id,
-        pair: last.pair,
-        severity: last.severity,
-        repeatCount: last.repeatCount,
-        dedupUpdate: true,
-      }).catch(() => {});
+      `).then((result: any) => {
+        const rowCount = result?.rowCount ?? result?.rows?.length ?? 0;
+        if (rowCount !== 1) {
+          console.error(`[SpotActivityLogger] Dedup UPDATE affected ${rowCount} rows (expected 1) for spotActivityId=${last.id}`);
+        }
+      }).catch((error: any) => {
+        console.error(`[SpotActivityLogger] Dedup UPDATE failed for spotActivityId=${last.id}: ${error.message}`);
+      });
       return last;
     }
   }

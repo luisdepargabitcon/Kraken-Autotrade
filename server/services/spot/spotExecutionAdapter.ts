@@ -245,18 +245,37 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
   }
 
   /**
-   * Apply quantity step size to volume.
+   * R10.7-6: Apply quantity step size to volume using a canonical source.
+   * Preference order: verified quantityStep, then baseStep, then stepSize.
+   * If NO valid step exists, BLOCK the order (return "0") — never send a raw,
+   * unstepped volume to the exchange.
    */
   private applyQuantityStep(pair: string, volume: number): string {
     const exchange = ExchangeFactory.getTradingExchange();
     const meta = exchange.getPairMetadata(pair);
-    if (meta?.quantityStep && meta.quantityStep > 0) {
-      const step = parseFloat(meta.quantityStep.toString());
-      if (Number.isFinite(step) && step > 0) {
-        return (Math.floor(volume / step) * step).toString();
-      }
+    const rawStep = meta?.quantityStep ?? meta?.baseStep ?? meta?.stepSize ?? null;
+    const step = rawStep != null ? parseFloat(rawStep.toString()) : NaN;
+    if (!Number.isFinite(step) || step <= 0) {
+      console.error(`[SpotRealAdapter] No valid quantity step for ${pair} — BLOCKING real order (fail-closed)`);
+      return "0";
     }
-    return volume.toString();
+    const steps = Math.floor(volume / step);
+    const adjusted = steps * step;
+    const decimals = this.decimalPrecisionFromStep(step);
+    return adjusted.toFixed(decimals);
+  }
+
+  /**
+   * R10.7-6: Determine decimal precision from a step size for safe normalization
+   * (e.g. step=0.0001 → 4 decimals; step=1e-8 → 8 decimals).
+   */
+  private decimalPrecisionFromStep(step: number): number {
+    const str = step.toString();
+    if (str.includes("e-")) {
+      const exp = str.split("e-")[1];
+      return parseInt(exp, 10);
+    }
+    return str.includes(".") ? str.split(".")[1].length : 0;
   }
 
   /**
@@ -330,9 +349,11 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
     try {
       const result = await exchange.placeOrder(orderParams);
 
-      // R10.6: Propagate submissionState from exchange layer
+      // R10.7-5: Propagate submissionState from exchange layer. An explicit REJECTED is the
+      // ONLY value that maps to REJECTED. Missing/undefined provenance is fail-closed AMBIGUOUS
+      // — we must never assume REJECTED just because the exchange layer didn't say so.
       if (!result.success) {
-        const state = (result.submissionState === "AMBIGUOUS" ? "AMBIGUOUS" : "REJECTED") as "REJECTED" | "AMBIGUOUS";
+        const state = (result.submissionState === "REJECTED" ? "REJECTED" : "AMBIGUOUS") as "REJECTED" | "AMBIGUOUS";
         return this.failResult(result.error ?? "Exchange rejected order", state);
       }
 
@@ -452,9 +473,10 @@ export class SpotRealAdapter implements SpotExecutionAdapter {
     try {
       const result = await exchange.placeOrder(orderParams);
 
-      // R10.6: Propagate submissionState from exchange layer
+      // R10.7-5: Propagate submissionState from exchange layer. An explicit REJECTED is the
+      // ONLY value that maps to REJECTED. Missing/undefined provenance is fail-closed AMBIGUOUS.
       if (!result.success) {
-        const state = (result.submissionState === "AMBIGUOUS" ? "AMBIGUOUS" : "REJECTED") as "REJECTED" | "AMBIGUOUS";
+        const state = (result.submissionState === "REJECTED" ? "REJECTED" : "AMBIGUOUS") as "REJECTED" | "AMBIGUOUS";
         return this.failResult(result.error ?? "Exchange rejected sell order", state);
       }
 

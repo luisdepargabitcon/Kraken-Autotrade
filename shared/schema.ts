@@ -194,7 +194,8 @@ export const botConfig = pgTable("bot_config", {
   // SPOT Canonical Engine: virtual capital for SHADOW mode (USD)
   spotShadowCapitalUsd: decimal("spot_shadow_capital_usd", { precision: 18, scale: 2 }).default("10000"),
   // R10.3: SPOT Canonical Engine: REAL mode concurrency capital reservation (USD)
-  spotRealReservedCapitalUsd: decimal("spot_real_reserved_capital_usd", { precision: 18, scale: 2 }).default("0"),
+  // R10.7-10: precision 18,8 — matches migration 087 and reserved_quote_usd
+  spotRealReservedCapitalUsd: decimal("spot_real_reserved_capital_usd", { precision: 18, scale: 8 }).default("0"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

@@ -693,10 +693,15 @@ export class RevolutXService implements IExchangeService {
       
       if (!response.ok) {
         console.error('[revolutx] placeOrder error response:', data);
+        // R10.7-4: Only an explicit, parseable HTTP 4xx demonstrates the exchange REJECTED
+        // the order. HTTP 5xx (and any other non-4xx failure) means the exchange's own
+        // infrastructure failed — the order may or may not have been accepted upstream —
+        // so it must be classified AMBIGUOUS, never REJECTED.
+        const isExplicit4xx = response.status >= 400 && response.status < 500;
         return {
           success: false,
           error: data.message || data.error || data.description || `HTTP ${response.status}`,
-          submissionState: "REJECTED" as SubmissionState,
+          submissionState: (isExplicit4xx ? "REJECTED" : "AMBIGUOUS") as SubmissionState,
         };
       }
       
@@ -920,48 +925,95 @@ export class RevolutXService implements IExchangeService {
   }
 
   async loadPairMetadata(pairs: string[]): Promise<void> {
+    console.log(`[revolutx] Loading pair metadata for: ${pairs.join(', ')}`);
+
+    // R10.7-7: Metadata must NEVER be invented. Both endpoints must succeed —
+    // if either fails, we cannot verify any pair, so skip metadata population
+    // entirely rather than falling back to defaults.
+    let currenciesRes: Response;
+    let symbolsRes: Response;
     try {
-      console.log(`[revolutx] Loading pair metadata for: ${pairs.join(', ')}`);
-      
-      const [currenciesRes, symbolsRes] = await Promise.all([
+      [currenciesRes, symbolsRes] = await Promise.all([
         fetch(API_BASE_URL + '/api/1.0/currencies'),
         fetch(API_BASE_URL + '/api/1.0/symbols')
       ]);
-      
-      const currencies = currenciesRes.ok ? await currenciesRes.json() as any[] : [];
-      const symbols = symbolsRes.ok ? await symbolsRes.json() as any[] : [];
-      
-      for (const pair of pairs) {
-        const [base, quote] = pair.split('/');
-        const revPair = this.formatPair(pair);
-        
-        const currencyInfo = currencies.find((c: any) => c.code === base || c.currency === base);
-        const symbolInfo = symbols.find((s: any) => s.symbol === revPair || s.name === revPair);
-        
-        const lotDecimals = currencyInfo?.scale || currencyInfo?.decimals || 8;
-        const orderMin = symbolInfo?.min_order_size || symbolInfo?.min_base_size || 0.0001;
-        const pairDecimals = symbolInfo?.price_scale || 2;
-        const baseStep = symbolInfo?.base_step || symbolInfo?.min_base_size || null;
-        const quoteStep = symbolInfo?.quote_step || symbolInfo?.min_order_size_quote || null;
-        
-        this.pairMetadataCache.set(pair, {
-          lotDecimals,
-          orderMin,
-          pairDecimals,
-          stepSize: Math.pow(10, -lotDecimals),
-          baseStep: baseStep ? parseFloat(baseStep) : null,
-          quoteStep: quoteStep ? parseFloat(quoteStep) : null,
-          baseCurrency: base || null,
-          quoteCurrency: quote || null,
-        });
-        
-        console.log(`[revolutx] ${pair}: lotDecimals=${lotDecimals}, orderMin=${orderMin}`);
-      }
-      
-      console.log(`[revolutx] Pair metadata loaded for ${this.pairMetadataCache.size} pairs`);
     } catch (error: any) {
-      console.error('[revolutx] Failed to load pair metadata:', error.message);
+      console.error('[revolutx] Failed to fetch currencies/symbols endpoints — no metadata will be cached:', error.message);
+      return;
     }
+
+    if (!currenciesRes.ok || !symbolsRes.ok) {
+      console.error(`[revolutx] currencies/symbols endpoints returned non-OK (currencies=${currenciesRes.status}, symbols=${symbolsRes.status}) — no metadata will be cached (fail-closed)`);
+      return;
+    }
+
+    let currencies: any[];
+    let symbols: any[];
+    try {
+      currencies = await currenciesRes.json() as any[];
+      symbols = await symbolsRes.json() as any[];
+    } catch (error: any) {
+      console.error('[revolutx] Failed to parse currencies/symbols response — no metadata will be cached:', error.message);
+      return;
+    }
+
+    for (const pair of pairs) {
+      const [base, quote] = pair.split('/');
+      const revPair = this.formatPair(pair);
+
+      const currencyInfo = currencies.find((c: any) => c.code === base || c.currency === base);
+      const symbolInfo = symbols.find((s: any) => s.symbol === revPair || s.name === revPair);
+
+      // R10.7-7: Require a REAL symbolInfo match. If the exchange doesn't publish this pair,
+      // do NOT invent metadata with defaults — leave it uncached (getPairMetadata → null).
+      if (!symbolInfo) {
+        console.error(`[revolutx] No symbolInfo found for ${pair} — metadata NOT cached (fail-closed, pair not REAL-ready)`);
+        this.pairMetadataCache.delete(pair);
+        continue;
+      }
+
+      const baseStepRaw = symbolInfo.base_step ?? symbolInfo.min_base_size ?? null;
+      const orderMinRaw = symbolInfo.min_order_size ?? symbolInfo.min_base_size ?? null;
+      const baseStep = baseStepRaw != null ? parseFloat(baseStepRaw) : null;
+      const orderMin = orderMinRaw != null ? parseFloat(orderMinRaw) : null;
+
+      // R10.7-7: Require explicit, verified base_step AND min_order_size — no defaults.
+      if (baseStep == null || !Number.isFinite(baseStep) || baseStep <= 0 || orderMin == null || !Number.isFinite(orderMin) || orderMin <= 0) {
+        console.error(`[revolutx] symbolInfo for ${pair} missing valid base_step/min_order_size — metadata NOT cached (fail-closed)`);
+        this.pairMetadataCache.delete(pair);
+        continue;
+      }
+
+      const lotDecimals = currencyInfo?.scale ?? currencyInfo?.decimals ?? null;
+      const pairDecimals = symbolInfo.price_scale ?? null;
+      const quoteStepRaw = symbolInfo.quote_step ?? symbolInfo.min_order_size_quote ?? null;
+      const quoteStep = quoteStepRaw != null ? parseFloat(quoteStepRaw) : null;
+
+      this.pairMetadataCache.set(pair, {
+        lotDecimals: lotDecimals ?? this.decimalPrecisionFromStepPublic(baseStep),
+        orderMin,
+        pairDecimals: pairDecimals ?? this.decimalPrecisionFromStepPublic(quoteStep ?? baseStep),
+        stepSize: baseStep,
+        baseStep,
+        quoteStep,
+        quantityStep: baseStep,
+        baseCurrency: base || null,
+        quoteCurrency: quote || null,
+        constraintsSource: "revolutx_symbols_currencies",
+        constraintsVerified: true,
+      });
+
+      console.log(`[revolutx] ${pair}: verified baseStep=${baseStep}, orderMin=${orderMin}`);
+    }
+
+    console.log(`[revolutx] Pair metadata loaded for ${this.pairMetadataCache.size} pairs`);
+  }
+
+  private decimalPrecisionFromStepPublic(step: number | null): number {
+    if (step == null || !Number.isFinite(step) || step <= 0) return 8;
+    const str = step.toString();
+    if (str.includes("e-")) return parseInt(str.split("e-")[1], 10);
+    return str.includes(".") ? str.split(".")[1].length : 0;
   }
 
   getPairMetadata(pair: string): PairMetadata | null {

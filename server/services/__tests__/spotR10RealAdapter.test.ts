@@ -31,7 +31,10 @@ vi.mock("../spot/feeModel", () => ({
 
 // Mock ExchangeFactory
 const mockPlaceOrder = vi.fn();
-const mockGetPairMetadata = vi.fn(() => ({ base: "BTC", quote: "USD", step: 0.0001, minOrderSize: 0.001, pricePrecision: 2 }));
+const mockGetPairMetadata = vi.fn(() => ({
+  lotDecimals: 8, orderMin: 0.001, pairDecimals: 2, stepSize: 0.0001,
+  quantityStep: 0.0001, baseStep: 0.0001, baseCurrency: "BTC", quoteCurrency: "USD",
+}));
 vi.mock("../exchanges/ExchangeFactory", () => ({
   ExchangeFactory: {
     getTradingExchange: () => ({

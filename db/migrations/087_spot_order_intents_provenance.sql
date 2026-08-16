@@ -48,8 +48,9 @@ CREATE INDEX IF NOT EXISTS idx_order_intents_status_provenance
   WHERE engine_owner IS NOT NULL;
 
 -- R10.3: Add spot_real_reserved_capital_usd to bot_config for REAL concurrency reservation
+-- R10.7-10: DECIMAL(18,8) — matches reserved_quote_usd precision on order_intents
 ALTER TABLE bot_config
-  ADD COLUMN IF NOT EXISTS spot_real_reserved_capital_usd DECIMAL(18, 2) DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS spot_real_reserved_capital_usd DECIMAL(18, 8) DEFAULT 0;
 
 -- R10.3: Index for uncertain status lookups
 CREATE INDEX IF NOT EXISTS idx_order_intents_uncertain_provenance

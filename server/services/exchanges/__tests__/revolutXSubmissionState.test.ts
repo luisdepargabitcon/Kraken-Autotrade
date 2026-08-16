@@ -62,7 +62,7 @@ describe("R10.6: RevolutXService placeOrder submissionState", () => {
       pair: "BTC/USD",
       type: "buy",
       ordertype: "market",
-      volume: -0.1,
+      volume: "-0.1",
       clientOrderId: "test-2",
     });
     expect(result.success).toBe(false);
@@ -74,7 +74,7 @@ describe("R10.6: RevolutXService placeOrder submissionState", () => {
       pair: "BTC/USD",
       type: "buy",
       ordertype: "market",
-      volume: 0,
+      volume: "0",
       clientOrderId: "test-3",
     });
     expect(result.success).toBe(false);
@@ -87,7 +87,7 @@ describe("R10.6: RevolutXService placeOrder submissionState", () => {
       pair: "BTC/USD",
       type: "buy",
       ordertype: "market",
-      volume: 0.1,
+      volume: "0.1",
       clientOrderId: "test-4",
     });
     expect(result.success).toBe(false);
@@ -124,7 +124,7 @@ describe("R10.6: RevolutXService placeOrder submissionState", () => {
       pair: "BTC/USD",
       type: "buy",
       ordertype: "market",
-      volume: 0.1,
+      volume: "0.1",
       clientOrderId: "test-5",
     });
     expect(result.success).toBe(true);
@@ -147,7 +147,7 @@ describe("R10.6: RevolutXService placeOrder submissionState", () => {
       pair: "BTC/USD",
       type: "buy",
       ordertype: "market",
-      volume: 0.1,
+      volume: "0.1",
       clientOrderId: "test-6",
     });
     expect(result.success).toBe(false);
@@ -180,7 +180,7 @@ describe("R10.6: RevolutXService loadPairMetadata baseCurrency/quoteCurrency", (
     fetchMock.mockResolvedValueOnce({
       ok: true, status: 200,
       json: async () => ([
-        { symbol: "BTC-USD", name: "BTC-USD", min_order_size: "0.0001", price_scale: 2 },
+        { symbol: "BTC-USD", name: "BTC-USD", min_order_size: "0.0001", base_step: "0.00000001", price_scale: 2 },
       ]),
     });
 

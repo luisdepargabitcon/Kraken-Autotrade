@@ -56,7 +56,6 @@ import {
   getCachedRecord,
   loadPendingRealOrders,
   countPendingRealOrderIntents,
-  releaseReservationExact,
   hasUnresolvedRealExecution,
   RealIntentPersistenceError,
   RealOrderStatePersistenceError,
@@ -547,24 +546,26 @@ export async function startSpotEngine(): Promise<boolean> {
   await loadShadowLedger();
 
   // Load open positions from DB
-  // R10.5: Fail-closed for REAL mode — if DB load fails and mode is REAL, block startup
+  // R10.7-11: Fail-closed INDEPENDENT of global mode. There may be REAL positions or
+  // pending REAL order_intents on disk regardless of whether the global mode is currently
+  // OFF, SHADOW, or REAL — we cannot silently continue if we can't prove what exists.
+  // The process/API stays alive; only the trading runtime (entry scanner) is blocked.
   try {
     await loadOpenPositionsFromDB();
   } catch (error: any) {
-    if (mode === ExecutionMode.REAL) {
-      console.error(`[SpotEngine] R10.5: FAIL-CLOSED — DB load failed in REAL mode: ${error.message}`);
-      logActivity({
-        category: "SYSTEM",
-        severity: "CRITICAL",
-        title: "FAIL-CLOSED — Carga DB posiciones REAL falló",
-        explanation: `No se pueden cargar posiciones REAL desde DB. Engine NO iniciará. Error: ${error.message}`,
-        decision: "FAIL_CLOSED",
-        executionMode: ExecutionMode.REAL,
-        reasonCode: "REAL_STARTUP_DB_LOAD_FAILED",
-      });
-      throw new Error(`R10.5 FAIL-CLOSED: REAL position DB load failed: ${error.message}`);
-    }
-    console.error(`[SpotEngine] DB load failed (non-REAL mode, continuing): ${error.message}`);
+    console.error(`[SpotEngine] R10.7-11: FAIL-CLOSED — DB load failed (mode=${mode}): ${error.message}`);
+    logActivity({
+      category: "SYSTEM",
+      severity: "CRITICAL",
+      title: "FAIL-CLOSED — Carga DB posiciones falló",
+      explanation: `No se pueden cargar posiciones desde DB (mode=${mode}). Pueden existir posiciones/órdenes REAL sin supervisar. Entry scanner NO iniciará. Error: ${error.message}`,
+      decision: "FAIL_CLOSED",
+      executionMode: mode,
+      reasonCode: "STARTUP_DB_LOAD_FAILED",
+    });
+    entryScanningEnabled = false;
+    engineRunning = false;
+    return false;
   }
 
   // R10.4: Reconcile pending REAL order_intents at restart — REGARDLESS of global mode
@@ -766,6 +767,44 @@ async function runScanCycle(): Promise<void> {
 // R6: Exported for testing — verify single owner invariant
 export async function _runScanCycleForTest(): Promise<void> {
   return runScanCycle();
+}
+
+// R10.7: Minimal test-only hooks for productive reservation/reconciliation tests.
+// These call the REAL production functions directly — no logic is duplicated in tests.
+export async function _persistAndReserveRealEntryIntentAtomicForTest(
+  params: CreateSubmissionIntentParams,
+  clientOrderId: string,
+  venue: string,
+  notionalUsd: number,
+  grossQuoteBalance: number,
+  quoteCurrency: string,
+): Promise<{ alreadySubmitted: boolean }> {
+  return persistAndReserveRealEntryIntentAtomic(params, clientOrderId, venue, notionalUsd, grossQuoteBalance, quoteCurrency);
+}
+
+export async function _terminateIntentAndReleaseReservationAtomicForTest(
+  internalIntentId: string,
+  finalStatus: "FAILED" | "CANCELLED",
+): Promise<void> {
+  return terminateIntentAndReleaseReservationAtomic(internalIntentId, finalStatus);
+}
+
+export async function _finalizeRealEntryFillAtomicForTest(
+  position: SpotPosition,
+  execResult: SpotExecutionResult,
+  filledNotionalUsd: number,
+  internalIntentId: string,
+  clientOrderId: string,
+): Promise<void> {
+  return finalizeRealEntryFillAtomic(position, execResult, filledNotionalUsd, internalIntentId, clientOrderId);
+}
+
+export async function _getRealQuoteBalanceForTest(pair: string): Promise<number> {
+  return getRealQuoteBalance(pair);
+}
+
+export async function _getAvailableCapitalForTest(pair: string): Promise<number> {
+  return getAvailableCapital(pair);
 }
 
 // R6: Exported for testing — verify reentrancy guard
@@ -989,8 +1028,8 @@ async function scanPair(pair: string, mode: ExecutionMode): Promise<{ pair: stri
  * Propagates signalConfidence from SpotSignalResult (B14).
  */
 async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode, signal?: SpotSignalResult): Promise<boolean> {
-  // Get available capital
-  const availableCapital = await getAvailableCapital();
+  // Get available capital — R10.7-8: mandatory pair, no first-active-pair fallback
+  const availableCapital = await getAvailableCapital(intent.pair);
 
   // Count open lots for this pair
   const openLots = await countOpenLotsForPair(intent.pair);
@@ -1048,6 +1087,10 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     // R10.5: Fetch real balance BEFORE the transaction to validate inside the lock
     // R10.6: Per-pair balance, returns GROSS (no double subtraction)
     const realBalanceUsd = await getRealQuoteBalance(intent.pair);
+    // R10.7-9: Resolve the quote currency from the pair's own metadata — never a bare
+    // constant disconnected from the balance we just resolved.
+    const pairMetaForReserve = (ExchangeFactory.getTradingExchange() as any).getPairMetadata?.(intent.pair);
+    const resolvedQuoteCurrency: string = pairMetaForReserve?.quoteCurrency ?? "UNKNOWN";
     let alreadySubmitted: boolean;
     try {
       const result = await persistAndReserveRealEntryIntentAtomic({
@@ -1060,7 +1103,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         executionMode: mode,
         lotId: null,
         reason: `SPOT entry: ${intent.setupTag}`,
-      }, clientOrderId, venue, sizing.notionalUsd, realBalanceUsd);
+      }, clientOrderId, venue, sizing.notionalUsd, realBalanceUsd, resolvedQuoteCurrency);
       alreadySubmitted = result.alreadySubmitted;
     } catch (error: any) {
       // R10.4: FAIL-CLOSED — no placeOrder if persistence/reservation fails
@@ -1316,8 +1359,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         await finalizeRealEntryFillAtomic(
           position, result, filledNotionalUsd, internalIntentId, clientOrderId,
         );
-        // R10.4: Release durable per-intent reservation — position is now the reservation
-        try { await releaseReservationExact(internalIntentId); } catch { /* best effort */ }
+        // R10.7-3: Reservation release happens INSIDE finalizeRealEntryFillAtomic's transaction.
+        // No separate release call — releaseReservationInTx is the SINGLE owner of release.
       } catch (error: any) {
         // R10.3: Exchange ack received but DB materialization failed.
         // Mark UNCERTAIN — do NOT re-send order. Freeze new REAL entries.
@@ -1904,15 +1947,17 @@ async function getActivePairs(): Promise<string[]> {
  * Get available capital — B12: uses configurable shadow ledger, not hardcode 10_000.
  * R10.4: For REAL mode, uses authenticated exchange balance (getRealQuoteBalance).
  *        NO fallback to market_data USD capital — fail-closed if exchange unreachable.
+ * R10.7-8: pair is MANDATORY — sizing must always use the balance of the concrete pair
+ *          being entered, never the first active pair's balance.
  */
-async function getAvailableCapital(): Promise<number> {
+async function getAvailableCapital(pair: string): Promise<number> {
   if (getCachedExecutionMode() === ExecutionMode.SHADOW) {
     return getShadowAvailableCapital();
   }
   // R10.4: REAL mode — use authenticated exchange balance, NO fictitious fallback
   if (getCachedExecutionMode() === ExecutionMode.REAL) {
     // R10.6: getRealQuoteBalance returns GROSS balance — subtract reserved capital here
-    const grossBalance = await getRealQuoteBalance();
+    const grossBalance = await getRealQuoteBalance(pair);
     const reservedResult = await db.execute(sql`
       SELECT COALESCE(spot_real_reserved_capital_usd, 0) as reserved
       FROM bot_config LIMIT 1
@@ -1932,8 +1977,12 @@ async function getAvailableCapital(): Promise<number> {
  * The caller must subtract reserved capital separately to avoid double subtraction.
  * Fail-closed: returns 0 if balance unknown, missing, or exchange unreachable.
  */
-async function getRealQuoteBalance(pair?: string): Promise<number> {
+async function getRealQuoteBalance(pair: string): Promise<number> {
   try {
+    if (!pair) {
+      console.error("[SpotEngine] getRealQuoteBalance: pair is mandatory — returning 0 (fail-closed)");
+      return 0;
+    }
     const exchange = ExchangeFactory.getTradingExchange();
     if (!exchange.isInitialized()) {
       console.error("[SpotEngine] getRealQuoteBalance: exchange not initialized — returning 0 (fail-closed)");
@@ -1950,30 +1999,19 @@ async function getRealQuoteBalance(pair?: string): Promise<number> {
       console.error("[SpotEngine] getRealQuoteBalance: getBalance returned non-object — returning 0 (fail-closed)");
       return 0;
     }
-    // R10.6: Determine the quote currency from the specific pair's metadata
-    let quoteCurrency: string | null = null;
-    if (pair) {
-      const meta = anyExchange.getPairMetadata?.(pair);
-      if (!meta || !meta.quoteCurrency) {
-        console.error(`[SpotEngine] getRealQuoteBalance: no quoteCurrency in metadata for ${pair} — returning 0 (fail-closed)`);
-        return 0;
-      }
-      quoteCurrency = meta.quoteCurrency;
-    } else {
-      // Fallback: use first active pair's quoteCurrency
-      const pairs = await getActivePairs();
-      if (pairs.length === 0) {
-        console.error("[SpotEngine] getRealQuoteBalance: no active pairs — returning 0 (fail-closed)");
-        return 0;
-      }
-      const meta = anyExchange.getPairMetadata?.(pairs[0]);
-      if (!meta || !meta.quoteCurrency) {
-        console.error(`[SpotEngine] getRealQuoteBalance: no quoteCurrency in metadata for ${pairs[0]} — returning 0 (fail-closed)`);
-        return 0;
-      }
-      quoteCurrency = meta.quoteCurrency;
+    // R10.7-8: Determine the quote currency from the specific pair's metadata — no fallback
+    const meta = anyExchange.getPairMetadata?.(pair);
+    if (!meta || !meta.quoteCurrency) {
+      console.error(`[SpotEngine] getRealQuoteBalance: no quoteCurrency in metadata for ${pair} — returning 0 (fail-closed)`);
+      return 0;
     }
-    const balance = balances[quoteCurrency!] ?? balances[quoteCurrency!.toUpperCase()] ?? 0;
+    const quoteCurrency: string = meta.quoteCurrency;
+    // R10.7-8: USD-only enforced at runtime, not just at readiness time
+    if (quoteCurrency.toUpperCase() !== "USD") {
+      console.error(`[SpotEngine] getRealQuoteBalance: pair ${pair} has quoteCurrency=${quoteCurrency} — only USD supported in REAL mode (fail-closed)`);
+      return 0;
+    }
+    const balance = balances[quoteCurrency] ?? balances[quoteCurrency.toUpperCase()] ?? 0;
     if (!Number.isFinite(balance) || balance < 0) {
       console.error(`[SpotEngine] getRealQuoteBalance: invalid ${quoteCurrency} balance=${balance} — returning 0 (fail-closed)`);
       return 0;
@@ -2018,7 +2056,7 @@ async function releaseReservationInTx(
       `);
     }
     await tx.execute(sql`
-      UPDATE order_intents SET reserved_quote_usd = NULL, updated_at = NOW()
+      UPDATE order_intents SET reserved_quote_usd = NULL, reserved_quote_currency = NULL, updated_at = NOW()
       WHERE ${sql.raw(lookupBy)} = ${identifier}
     `);
   }
@@ -2040,8 +2078,26 @@ async function persistAndReserveRealEntryIntentAtomic(
   clientOrderId: string,
   venue: string,
   notionalUsd: number,
-  realBalanceUsd?: number,
+  grossQuoteBalance: number,
+  quoteCurrency: string,
 ): Promise<{ alreadySubmitted: boolean }> {
+  // R10.7-9: Balance params are MANDATORY — no optional path that bypasses the capital check.
+  if (!Number.isFinite(grossQuoteBalance) || grossQuoteBalance < 0) {
+    throw new RealIntentPersistenceError(
+      `persistAndReserve: invalid grossQuoteBalance=${grossQuoteBalance} — must be a finite number >= 0`
+    );
+  }
+  if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+    throw new RealIntentPersistenceError(
+      `persistAndReserve: invalid notionalUsd=${notionalUsd} — must be a finite number > 0`
+    );
+  }
+  if (quoteCurrency !== "USD") {
+    throw new RealIntentPersistenceError(
+      `persistAndReserve: unsupported quoteCurrency=${quoteCurrency} — only USD supported in REAL mode`
+    );
+  }
+
   return await db.transaction(async (tx) => {
     // 1. Lock bot_config and check available capital
     const configRow = await tx.execute(sql`
@@ -2055,19 +2111,18 @@ async function persistAndReserveRealEntryIntentAtomic(
     }
     const currentReserved = Number(configRow.rows[0].reserved);
 
-    // R10.5: Validate notionalUsd <= available capital INSIDE the lock
-    if (realBalanceUsd !== undefined) {
-      const available = realBalanceUsd - currentReserved;
-      if (notionalUsd > available) {
-        throw new RealIntentPersistenceError(
-          `persistAndReserve: insufficient capital — notional=${notionalUsd}, available=${available} (balance=${realBalanceUsd}, reserved=${currentReserved})`
-        );
-      }
+    // R10.7-9: ALWAYS validate notionalUsd <= available capital INSIDE the lock —
+    // there is no code path that reserves without checking balance.
+    const available = grossQuoteBalance - currentReserved;
+    if (notionalUsd > available) {
+      throw new RealIntentPersistenceError(
+        `persistAndReserve: insufficient capital — notional=${notionalUsd}, available=${available} (balance=${grossQuoteBalance}, reserved=${currentReserved})`
+      );
     }
 
     // 2. Insert order_intent with reserved_quote_usd and reserved_quote_currency — ON CONFLICT DO NOTHING
-    // R10.6: Persist the quote currency (USD-only for REAL mode)
-    const quoteCurrency = "USD";
+    // R10.7-9: Persist the quote currency that was actually resolved/validated for this balance —
+    // not a hardcoded constant disconnected from grossQuoteBalance.
     const insertResult = await tx.execute(sql`
       INSERT INTO order_intents (
         client_order_id, exchange, pair, side, volume, status,
@@ -2386,27 +2441,9 @@ async function reconcileBuyIntent(
   reconciled: { state: string; fillPrice: number | null; fillVolume: number | null },
 ): Promise<void> {
     if (reconciled.state === "FILLED") {
-      // R10.2: Exactly-once — check if open_position already exists for this clientOrderId
-      try {
-        const existing = await db.execute(sql`
-          SELECT lot_id FROM open_positions
-          WHERE client_order_id = ${intent.clientOrderId}
-            AND status != 'CLOSED'
-          FOR UPDATE
-        `);
-        if (existing.rows.length > 0) {
-          console.log(`[SpotEngine] R10.2: Intent ${intent.internalIntentId} already has open_position ${existing.rows[0].lot_id} — skipping`);
-          await updateSubmissionResult(intent.internalIntentId, {
-            status: "FILLED",
-            fillPrice: reconciled.fillPrice,
-            fillVolume: reconciled.fillVolume,
-          });
-          return;
-        }
-      } catch (error: any) {
-        console.warn(`[SpotEngine] R10.2: Guard check failed for ${intent.clientOrderId}: ${error.message}`);
-      }
-
+      // R10.7-2: No external pre-check bypass. finalizeRealEntryFillAtomic is the SINGLE
+      // authority for exactly-once materialization AND reservation release — including the
+      // already-materialized path, which now releases the reservation before returning.
       // R10.5: Use finalizeRealEntryFillAtomic for exactly-once materialization
       const fillPrice = reconciled.fillPrice!;
       const fillVolume = reconciled.fillVolume!;
@@ -2686,16 +2723,55 @@ async function reconcileSellIntent(
         });
       }
     } else if (reconciled.state === "FAILED" || reconciled.state === "CANCELLED") {
-      // R10.5: Exit failed/cancelled — revert position to OPEN
-      await updateSubmissionResult(intent.internalIntentId, { status: reconciled.state as any });
-      if (intent.lotId) {
-        try {
-          await db.execute(sql`
-            UPDATE open_positions SET status = 'OPEN', updated_at = NOW()
-            WHERE lot_id = ${intent.lotId} AND status = 'EXIT_PENDING'
+      // R10.7-12: Exit failed/cancelled — update intent AND revert position to OPEN in ONE
+      // transaction. No code path may leave intent=CANCELLED/FAILED with position=EXIT_PENDING.
+      const dbStatus = reconciled.state === "FAILED" ? "failed" : "cancelled";
+      try {
+        await db.transaction(async (tx) => {
+          const intentRow = await tx.execute(sql`
+            SELECT id FROM order_intents WHERE internal_intent_id = ${intent.internalIntentId} FOR UPDATE
           `);
-        } catch { /* best effort */ }
+          if (intentRow.rows.length === 0) {
+            throw new Error(`order_intent not found for internalIntentId=${intent.internalIntentId}`);
+          }
+          await tx.execute(sql`
+            UPDATE order_intents SET status = ${dbStatus}, updated_at = NOW()
+            WHERE internal_intent_id = ${intent.internalIntentId}
+          `);
+          if (intent.lotId) {
+            await tx.execute(sql`
+              SELECT lot_id FROM open_positions WHERE lot_id = ${intent.lotId} AND status = 'EXIT_PENDING' FOR UPDATE
+            `);
+            await tx.execute(sql`
+              UPDATE open_positions SET status = 'OPEN', updated_at = NOW()
+              WHERE lot_id = ${intent.lotId} AND status = 'EXIT_PENDING'
+            `);
+          }
+        });
+      } catch (error: any) {
+        // R10.7-12: Transaction failed — fail-closed to UNCERTAIN rather than risk a
+        // partial state (intent terminal + position stuck EXIT_PENDING).
+        console.error(`[SpotEngine] R10.7-12: Atomic SELL ${reconciled.state} reconciliation failed for ${intent.internalIntentId}: ${error.message}`);
+        try { await updateSubmissionResult(intent.internalIntentId, { status: "UNCERTAIN" }); } catch { /* best effort */ }
+        logActivity({
+          pair: intent.pair,
+          category: "SYSTEM",
+          severity: "CRITICAL",
+          title: "Reconciliación de salida rechazada falló atómicamente",
+          explanation: `Exit intent ${intent.internalIntentId} — no se pudo aplicar ${reconciled.state} atómicamente. Marcado UNCERTAIN. Error: ${error.message}`,
+          decision: "FAIL_CLOSED",
+          executionMode: ExecutionMode.REAL,
+          reasonCode: "RESTART_EXIT_TERMINATE_ATOMIC_FAILED",
+          intentId: intent.internalIntentId,
+          lotId: intent.lotId ?? undefined,
+          orderId: intent.venueOrderId,
+        });
+        return;
       }
+
+      const cachedSell = getCachedRecord(intent.internalIntentId);
+      if (cachedSell) cachedSell.status = reconciled.state as any;
+
       logActivity({
         pair: intent.pair,
         category: "SYSTEM",
@@ -2990,7 +3066,9 @@ async function finalizeRealEntryFillAtomic(
       FOR UPDATE
     `);
     if (existing.rows.length > 0) {
-      // Already materialized — just update intent to FILLED
+      // R10.7-2: Already materialized — update intent to FILLED AND release reservation
+      // if still present. finalizeRealEntryFillAtomic is the SINGLE authority for this path —
+      // no external pre-check bypass may return before this release.
       await tx.execute(sql`
         UPDATE order_intents SET
           status = 'filled',
@@ -3001,6 +3079,7 @@ async function finalizeRealEntryFillAtomic(
           updated_at = NOW()
         WHERE client_order_id = ${clientOrderId}
       `);
+      await releaseReservationInTx(tx, clientOrderId, "client_order_id");
       return;
     }
 
@@ -3075,7 +3154,7 @@ async function terminateIntentAndReleaseReservationAtomic(
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const intentRow = await tx.execute(sql`
-      SELECT id, reserved_quote_usd FROM order_intents
+      SELECT id FROM order_intents
       WHERE internal_intent_id = ${internalIntentId}
       FOR UPDATE
     `);
@@ -3083,16 +3162,19 @@ async function terminateIntentAndReleaseReservationAtomic(
 
     const dbStatus = finalStatus === "FAILED" ? "failed" : "cancelled";
 
+    // R10.7-1: Release the reservation FIRST (while reserved_quote_usd is still populated).
+    // releaseReservationInTx reads reserved_quote_usd, decrements the aggregate exactly once,
+    // then nulls reserved_quote_usd + reserved_quote_currency. Nulling the reservation BEFORE
+    // calling this helper would make it read NULL and silently no-op — that was the R10.6 bug.
+    await releaseReservationInTx(tx, internalIntentId, "internal_intent_id");
+
+    // Now update the terminal status — reservation fields are already cleared above.
     await tx.execute(sql`
       UPDATE order_intents SET
         status = ${dbStatus},
-        reserved_quote_usd = NULL,
         updated_at = NOW()
       WHERE internal_intent_id = ${internalIntentId}
     `);
-
-    // R10.6: Use unified releaseReservationInTx helper
-    await releaseReservationInTx(tx, internalIntentId, "internal_intent_id");
   });
 
   const cached = getCachedRecord(internalIntentId);
