@@ -76,6 +76,8 @@ export interface RealReadinessResult {
     // R10.9-5: Supervisor health exposed in readiness API
     positionSupervisorHealthy: boolean;
     positionSupervisionFailureReason: string | null;
+    // R10.9-final: Supervisor freshness — lastSuccessAt timestamp and stale flag
+    positionSupervisionLastSuccessAt: number | null;
   };
 }
 
@@ -120,6 +122,7 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     venueMatch: false,
     positionSupervisorHealthy: false,
     positionSupervisionFailureReason: null as string | null,
+    positionSupervisionLastSuccessAt: null as number | null,
   };
 
   // 1. REAL_ACTIVATION_ALLOWED
@@ -398,10 +401,18 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     // R10.5: Use interval active flag (realReconcilerRunning), NOT reentrancy guard (isReconciling)
     checks.realReconcilerCount = spotEngine._isReconcilerIntervalRunningForTest() ? 1 : 0;
     // R10.9-5: Expose supervisor health in readiness API
-    checks.positionSupervisorHealthy = spotEngine._isPositionSupervisionHealthyForTest();
-    checks.positionSupervisionFailureReason = spotEngine._getPositionSupervisionFailureReasonForTest();
+    // R10.9-final: Use production getPositionSupervisionHealth() instead of test-only hooks.
+    // Includes freshness check — stale supervisor is a blocker even if no error was seen.
+    const supervisorHealth = spotEngine.getPositionSupervisionHealth();
+    checks.positionSupervisorHealthy = supervisorHealth.healthy;
+    checks.positionSupervisionFailureReason = supervisorHealth.failureReason;
+    checks.positionSupervisionLastSuccessAt = supervisorHealth.lastSuccessAt;
     if (!checks.positionSupervisorHealthy) {
-      blockers.push(`Position supervisor unhealthy: ${checks.positionSupervisionFailureReason ?? "unknown"} — REAL BUY blocked`);
+      if (supervisorHealth.stale) {
+        blockers.push(`Position supervisor stale — last success at ${supervisorHealth.lastSuccessAt ?? 'never'} exceeds freshness window. REAL BUY blocked.`);
+      } else {
+        blockers.push(`Position supervisor unhealthy: ${supervisorHealth.failureReason ?? "unknown"} — REAL BUY blocked`);
+      }
     }
     // R10.3: scanner count > 1 → blocker (duplicate scanners)
     if (checks.entryScannerCount > 1) {
@@ -471,6 +482,7 @@ export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
     venueMatch: false,
     positionSupervisorHealthy: false,
     positionSupervisionFailureReason: null as string | null,
+    positionSupervisionLastSuccessAt: null as number | null,
   };
 
   // 1. REAL_ACTIVATION_ALLOWED

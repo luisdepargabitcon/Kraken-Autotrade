@@ -36,7 +36,6 @@ import {
   SPOT_RUNTIME_OWNER,
   startSpotEngine,
   stopSpotEngine,
-  prepareRealActivation,
 } from "../services/spot/spotEngine";
 import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
@@ -263,27 +262,15 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
 
       const resolved = resolveExecutionMode(mode);
 
-      // R10.3: REAL requires prepareRealActivation() — reconciliation BEFORE mode change
-      if (resolved === ExecutionMode.REAL) {
-        if (!REAL_ACTIVATION_ALLOWED) {
-          res.status(403).json({
-            error: "REAL execution mode is not authorized",
-            realActivationAllowed: false,
-          });
-          return;
-        }
-        // R10.3: Run prepareRealActivation — readiness + reconcile + re-check readiness
-        const prep = await prepareRealActivation();
-        if (!prep.ready) {
-          res.status(403).json({
-            error: "REAL mode activation blocked — preflight/reconciliation failed",
-            realActivationAllowed: true,
-            readiness: prep.readiness,
-            blockers: prep.readiness.blockers,
-            prepError: prep.error,
-          });
-          return;
-        }
+      // R10.9-final: REAL preflight is now handled exclusively inside setExecutionMode's
+      // serialized mutex (doSetExecutionMode). The route must NOT run preflight
+      // outside the lock — that would create a double preflight and a TOCTOU race.
+      if (resolved === ExecutionMode.REAL && !REAL_ACTIVATION_ALLOWED) {
+        res.status(403).json({
+          error: "REAL execution mode is not authorized",
+          realActivationAllowed: false,
+        });
+        return;
       }
 
       const previousMode = await getExecutionMode();

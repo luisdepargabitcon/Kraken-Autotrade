@@ -238,6 +238,28 @@ let positionSupervisionHealthy = false;
 let positionSupervisionLastSuccessAt: number | null = null;
 let positionSupervisionFailureReason: string | null = "Supervisor has not completed a successful cycle yet";
 
+// R10.9-final: Supervisor freshness window — 2× scan interval + small tolerance.
+// If lastSuccessAt is older than this, the supervisor is stale even if no error was seen.
+const SUPERVISOR_STALE_MS = 2 * SCAN_INTERVAL_MS + 5_000;
+
+export interface PositionSupervisionHealth {
+  healthy: boolean;
+  lastSuccessAt: number | null;
+  failureReason: string | null;
+  stale: boolean;
+}
+
+export function getPositionSupervisionHealth(): PositionSupervisionHealth {
+  const stale = positionSupervisionLastSuccessAt === null
+    || (Date.now() - positionSupervisionLastSuccessAt) > SUPERVISOR_STALE_MS;
+  return {
+    healthy: positionSupervisionHealthy && !stale,
+    lastSuccessAt: positionSupervisionLastSuccessAt,
+    failureReason: positionSupervisionFailureReason,
+    stale,
+  };
+}
+
 // ─── Shadow Capital Ledger ───────────────────────────────────────────────────
 
 /**
@@ -637,6 +659,11 @@ async function doSetExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
     // A timed-out drain means in-flight entries may still be creating positions under
     // the old mode. The scanner must NOT restart until a clean transition succeeds.
     entryScanningEnabled = false;
+    if (scanIntervalId) {
+      clearInterval(scanIntervalId);
+      scanIntervalId = null;
+    }
+    engineRunning = false;
     throw new Error(
       `DRAIN_TIMEOUT_FAIL_CLOSED: mode transition ${previousMode}→${mode} persisted, ` +
       `but ${drainResult.remainingCount} entry critical section(s) still active after timeout. ` +
@@ -1040,7 +1067,7 @@ export async function _closePositionForTest(
 }
 
 // R6: Exported for testing — verify reentrancy guard
-export async function _runPositionSupervisorForTest(): Promise<{ ok: boolean; reason?: string }> {
+export async function _runPositionSupervisorForTest(): Promise<{ ok: boolean; reason?: string; busy?: boolean }> {
   return runPositionSupervisor();
 }
 
@@ -1135,6 +1162,7 @@ export async function getOpenSpotPositionPairs(): Promise<string[]> {
 interface SupervisorCycleResult {
   ok: boolean;
   reason?: string;
+  busy?: boolean;
 }
 
 /**
@@ -1150,7 +1178,7 @@ interface SupervisorCycleResult {
 async function runPositionSupervisor(): Promise<SupervisorCycleResult> {
   if (isSupervising) {
     console.log("[SpotEngine] Supervisor already in progress, skipping");
-    return { ok: true, reason: "already-running" };
+    return { ok: false, reason: "already-running", busy: true };
   }
   isSupervising = true;
   try {
@@ -1453,6 +1481,9 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   // R10.9-2: The entry critical section now covers BOTH REAL and SHADOW modes.
   // Any new entry that can create a position must be inside the critical section so
   // that invalidateEntryGenerationAndDrain can wait for it during a mode transition.
+  // R10.9-final: The critical section spans from enterEntryCriticalSection through
+  // persistShadowEntryAtomic / finalizeRealEntryFillAtomic and ALL return/throw paths.
+  // A single try/finally guarantees exitEntryCriticalSection on every path.
   let entryCriticalSectionEntered = false;
   if (mode === ExecutionMode.REAL) {
     // R10.9-8: Gate check #1 — re-verify mode is still REAL and the entry generation is
@@ -1473,192 +1504,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       });
       return false;
     }
-    enterEntryCriticalSection();
-    entryCriticalSectionEntered = true;
-    let venue: string;
-    try {
-      venue = await getTradingVenueFailClosed();
-    } catch (error: any) {
-      console.error(`[SpotEngine] R10.8-6: Entry BLOCKED — trading venue unverified/mismatched: ${error.message}`);
-      logActivity({
-        pair: intent.pair,
-        category: "EXECUTION",
-        severity: "CRITICAL",
-        title: "Entrada bloqueada — venue no verificado",
-        explanation: `No se pudo verificar el venue de trading configurado contra el runtime. NO se envía orden. Error: ${error.message}`,
-        decision: "BLOCK",
-        executionMode: mode,
-        reasonCode: "REAL_TRADING_VENUE_UNVERIFIED",
-        intentId: internalIntentId,
-      });
-      exitEntryCriticalSection();
-      return false;
-    }
-    // R10.5: Fetch real balance BEFORE the transaction to validate inside the lock
-    // R10.6: Per-pair balance, returns GROSS (no double subtraction)
-    const realBalanceUsd = await getRealQuoteBalance(intent.pair);
-    // R10.7-9: Resolve the quote currency from the pair's own metadata — never a bare
-    // constant disconnected from the balance we just resolved.
-    const pairMetaForReserve = (ExchangeFactory.getTradingExchange() as any).getPairMetadata?.(intent.pair);
-    const resolvedQuoteCurrency: string = pairMetaForReserve?.quoteCurrency ?? "UNKNOWN";
-    let reserveOutcome: PersistReserveOutcome;
-    try {
-      reserveOutcome = await persistAndReserveRealEntryIntentAtomic({
-        internalIntentId,
-        pair: intent.pair,
-        side: "BUY",
-        requestedQty: sizing.volume,
-        requestedPrice: null,
-        orderType: "MARKET",
-        executionMode: mode,
-        lotId: null,
-        reason: `SPOT entry: ${intent.setupTag}`,
-      }, clientOrderId, venue, sizing.notionalUsd, realBalanceUsd, resolvedQuoteCurrency);
-    } catch (error: any) {
-      // R10.4: FAIL-CLOSED — no placeOrder if persistence/reservation fails
-      console.error(`[SpotEngine] Entry BLOCKED — persist+reserve failed: ${error.message}`);
-      logActivity({
-        pair: intent.pair,
-        category: "EXECUTION",
-        severity: "CRITICAL",
-        title: "Entrada bloqueada — persistencia+reserva falló",
-        explanation: `No se pudo persistir ni reservar capital para el intent antes de placeOrder. NO se envió orden. Error: ${error.message}`,
-        decision: "BLOCK",
-        executionMode: mode,
-        reasonCode: "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED",
-        intentId: internalIntentId,
-      });
-      exitEntryCriticalSection();
-      return false;
-    }
-
-    // R10.9-1/2: explicit outcome — never treat CANCELLED pre-submit as already-submitted active.
-    if (reserveOutcome.kind === "EXISTING_ACTIVE") {
-      console.log(`[SpotEngine] Entry SKIPPED — existing active submission: ${internalIntentId} clientOrderId=${clientOrderId}`);
-      logActivity({
-        pair: intent.pair,
-        category: "EXECUTION",
-        severity: "INFO",
-        title: "Entrada duplicada evitada",
-        explanation: `Intent ${internalIntentId} ya tiene submission activa (pending/accepted/uncertain). placeOrder omitido.`,
-        decision: "SKIP_DUPLICATE",
-        executionMode: mode,
-        reasonCode: "DUPLICATE_ENTRY_SUBMISSION",
-        intentId: internalIntentId,
-      });
-      exitEntryCriticalSection();
-      return false;
-    }
-
-    if (reserveOutcome.kind === "EXISTING_FILLED") {
-      // R10.9-9: Verify materialization — an EXISTING_FILLED intent MUST have either an
-      // open_position or a closed trade. If neither exists, the intent was marked FILLED
-      // but the position was never materialized — this is a data inconsistency that must
-      // not be silently skipped. Freeze REAL mode by throwing.
-      let materialized = false;
-      try {
-        const posCheck = await db.execute(sql`
-          SELECT lot_id FROM open_positions
-          WHERE client_order_id = ${clientOrderId}
-            AND policy_version = ${SPOT_POLICY_VERSION}
-            AND engine_owner = ${SPOT_ENGINE_OWNER}
-          LIMIT 1
-        `);
-        if (posCheck.rows.length > 0) {
-          materialized = true;
-        } else {
-          const tradeCheck = await db.execute(sql`
-            SELECT trade_id FROM trades
-            WHERE lot_id IN (
-              SELECT lot_id FROM order_intents WHERE client_order_id = ${clientOrderId}
-            )
-              AND policy_version = ${SPOT_POLICY_VERSION}
-              AND engine_owner = ${SPOT_ENGINE_OWNER}
-            LIMIT 1
-          `);
-          if (tradeCheck.rows.length > 0) {
-            materialized = true;
-          }
-        }
-      } catch (verifyError: any) {
-        console.error(`[SpotEngine] R10.9-9: EXISTING_FILLED verification DB error for ${internalIntentId}: ${verifyError.message}`);
-        throw new Error(`EXISTING_FILLED_VERIFICATION_FAILED: ${verifyError.message}`);
-      }
-      if (!materialized) {
-        console.error(`[SpotEngine] R10.9-9: EXISTING_FILLED intent ${internalIntentId} has NO materialized position or trade — data inconsistency`);
-        throw new Error(
-          `EXISTING_FILLED_NOT_MATERIALIZED: intent ${internalIntentId} is marked FILLED ` +
-          `but no open_position or trade exists. REAL mode must be frozen until resolved.`
-        );
-      }
-      console.log(`[SpotEngine] Entry SKIPPED — existing filled intent (materialized): ${internalIntentId}`);
-      logActivity({
-        pair: intent.pair,
-        category: "EXECUTION",
-        severity: "INFO",
-        title: "Entrada duplicada evitada",
-        explanation: `Intent ${internalIntentId} ya está filled. NO se reenvía.`,
-        decision: "SKIP_DUPLICATE",
-        executionMode: mode,
-        reasonCode: "DUPLICATE_ENTRY_SUBMISSION",
-        intentId: internalIntentId,
-      });
-      exitEntryCriticalSection();
-      return false;
-    }
-
-    if (reserveOutcome.kind === "EXISTING_TERMINAL") {
-      console.log(`[SpotEngine] Entry SKIPPED — existing terminal intent: ${internalIntentId}`);
-      logActivity({
-        pair: intent.pair,
-        category: "EXECUTION",
-        severity: "WARNING",
-        title: "Entrada terminal — no se reenvía",
-        explanation: `Intent ${internalIntentId} está en estado terminal (failed/expired/cancelled con exchange_order_id). NO se marca EXECUTED. NO se reenvía.`,
-        decision: "BLOCK",
-        executionMode: mode,
-        reasonCode: "DUPLICATE_ENTRY_TERMINAL",
-        intentId: internalIntentId,
-      });
-      exitEntryCriticalSection();
-      return false;
-    }
-
-    // CREATED or REARMED_PRE_SUBMIT → continue to placeOrder. For REARMED_PRE_SUBMIT the
-    // same clientOrderId is reused because the row was never sent to the exchange.
-    if (reserveOutcome.kind === "REARMED_PRE_SUBMIT") {
-      console.log(`[SpotEngine] Entry REARMED from PRE_SUBMISSION_CANCELLED: ${internalIntentId} clientOrderId=${clientOrderId}`);
-    }
-
-    // R10.9-8: Gate check #2 — re-verify IMMEDIATELY before placeOrder. The persist+reserve
-    // step above may have taken time; the mode may have transitioned away in the interim.
-    if (!isEntryGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.REAL) {
-      console.log(`[SpotEngine] R10.8: Entry BLOCKED — REAL mode transitioned away before placeOrder for ${intent.pair}`);
-      try {
-        await terminateIntentAndReleaseReservationAtomic(internalIntentId, "CANCELLED");
-      } catch (error: any) {
-        console.error(`[SpotEngine] R10.8: Failed to release reservation after transition-race block: ${error.message}`);
-      }
-      logActivity({
-        pair: intent.pair,
-        category: "EXECUTION",
-        severity: "WARNING",
-        title: "Entrada bloqueada — transición de modo REAL (antes de placeOrder)",
-        explanation: `El modo cambió fuera de REAL entre la reserva y el envío de la orden. Reserva liberada. NO se envía orden.`,
-        decision: "BLOCK",
-        executionMode: mode,
-        reasonCode: "REAL_MODE_TRANSITION_RACE_BLOCKED",
-        intentId: internalIntentId,
-      });
-      exitEntryCriticalSection();
-      return false;
-    }
-  }
-
-  // R10.9-2: SHADOW mode also enters the entry critical section so that
-  // invalidateEntryGenerationAndDrain waits for in-flight SHADOW entries during
-  // ANY mode transition (e.g. SHADOW→OFF, SHADOW→REAL).
-  if (mode === ExecutionMode.SHADOW) {
+  } else if (mode === ExecutionMode.SHADOW) {
     if (!isEntryGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.SHADOW) {
       console.log(`[SpotEngine] R10.9-2: Entry BLOCKED — SHADOW mode transitioned away for ${intent.pair}`);
       logActivity({
@@ -1673,72 +1519,198 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       });
       return false;
     }
-    enterEntryCriticalSection();
-    entryCriticalSectionEntered = true;
   }
 
-  // Execute via adapter — pass clientOrderId (NOT generated by adapter)
-  const adapter = createExecutionAdapter(mode);
-  let result: SpotExecutionResult;
+  enterEntryCriticalSection();
+  entryCriticalSectionEntered = true;
+
   try {
-    result = await adapter.executeEntry(execIntent, ctx, clientOrderId);
-    // R10.9-8: placeOrder attempt is now committed (sent or exchange responded) — the
-    // entry critical section's purpose (blocking a NEW submission mid-transition) is done.
-    if (entryCriticalSectionEntered) exitEntryCriticalSection();
-  } catch (error: any) {
-    if (entryCriticalSectionEntered) exitEntryCriticalSection();
-    // R10.6: Adapter should not throw — but if it does, treat as AMBIGUOUS
+    // ─── REAL: persist+reserve + outcome handling ──────────────────────────────
     if (mode === ExecutionMode.REAL) {
-      console.error(`[SpotEngine] REAL entry unexpected exception for ${intent.pair}: ${error.message}`);
+      let venue: string;
       try {
-        await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
-      } catch { /* best effort */ }
-      logActivity({
-        pair: intent.pair,
-        category: "SYSTEM",
-        severity: "CRITICAL",
-        title: "REAL_SUBMISSION_AMBIGUOUS — exception tras placeOrder",
-        explanation: `Exception durante placeOrder. Orden puede estar viva en exchange. Marcado UNCERTAIN. NO reenviar. Error: ${error.message}`,
-        decision: "FAIL_CLOSED",
-        executionMode: mode,
-        reasonCode: "REAL_SUBMISSION_AMBIGUOUS",
-        intentId: internalIntentId,
-      });
-    } else {
-      console.error(`[SpotEngine] Entry exception for ${intent.pair}: ${error.message}`);
-    }
-    return false;
-  }
-
-  // R10.6: Handle ACCEPTED without venueOrderId — treat as UNCERTAIN, retain reservation
-  if (result.success && result.submissionState === "ACCEPTED" && !result.venueOrderId && !result.pendingFill) {
-    if (mode === ExecutionMode.REAL) {
-      console.warn(`[SpotEngine] REAL entry ACCEPTED but no venueOrderId for ${intent.pair} — marking UNCERTAIN`);
+        venue = await getTradingVenueFailClosed();
+      } catch (error: any) {
+        console.error(`[SpotEngine] R10.8-6: Entry BLOCKED — trading venue unverified/mismatched: ${error.message}`);
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "CRITICAL",
+          title: "Entrada bloqueada — venue no verificado",
+          explanation: `No se pudo verificar el venue de trading configurado contra el runtime. NO se envía orden. Error: ${error.message}`,
+          decision: "BLOCK",
+          executionMode: mode,
+          reasonCode: "REAL_TRADING_VENUE_UNVERIFIED",
+          intentId: internalIntentId,
+        });
+        return false;
+      }
+      // R10.5: Fetch real balance BEFORE the transaction to validate inside the lock
+      // R10.6: Per-pair balance, returns GROSS (no double subtraction)
+      const realBalanceUsd = await getRealQuoteBalance(intent.pair);
+      // R10.7-9: Resolve the quote currency from the pair's own metadata — never a bare
+      // constant disconnected from the balance we just resolved.
+      const pairMetaForReserve = (ExchangeFactory.getTradingExchange() as any).getPairMetadata?.(intent.pair);
+      const resolvedQuoteCurrency: string = pairMetaForReserve?.quoteCurrency ?? "UNKNOWN";
+      let reserveOutcome: PersistReserveOutcome;
       try {
-        await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
-      } catch { /* best effort */ }
-      logActivity({
-        pair: intent.pair,
-        category: "SYSTEM",
-        severity: "CRITICAL",
-        title: "REAL_SUBMISSION_AMBIGUOUS — ACCEPTED sin venueOrderId",
-        explanation: `Orden aceptada pero sin venueOrderId. No se puede reconciliar. Marcado UNCERTAIN. Reserva retenida.`,
-        decision: "FAIL_CLOSED",
-        executionMode: mode,
-        reasonCode: "REAL_ACCEPTED_NO_VENUE_ID",
-        intentId: internalIntentId,
-      });
-    }
-    return false;
-  }
+        reserveOutcome = await persistAndReserveRealEntryIntentAtomic({
+          internalIntentId,
+          pair: intent.pair,
+          side: "BUY",
+          requestedQty: sizing.volume,
+          requestedPrice: null,
+          orderType: "MARKET",
+          executionMode: mode,
+          lotId: null,
+          reason: `SPOT entry: ${intent.setupTag}`,
+        }, clientOrderId, venue, sizing.notionalUsd, realBalanceUsd, resolvedQuoteCurrency);
+      } catch (error: any) {
+        // R10.4: FAIL-CLOSED — no placeOrder if persistence/reservation fails
+        console.error(`[SpotEngine] Entry BLOCKED — persist+reserve failed: ${error.message}`);
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "CRITICAL",
+          title: "Entrada bloqueada — persistencia+reserva falló",
+          explanation: `No se pudo persistir ni reservar capital para el intent antes de placeOrder. NO se envió orden. Error: ${error.message}`,
+          decision: "BLOCK",
+          executionMode: mode,
+          reasonCode: "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED",
+          intentId: internalIntentId,
+        });
+        return false;
+      }
 
-  if (!result.success) {
-    console.error(`[SpotEngine] Entry failed for ${intent.pair}: ${result.error}`);
-    // R10.6: Check submissionState — AMBIGUOUS retains reservation, REJECTED releases
-    if (mode === ExecutionMode.REAL) {
-      if (result.submissionState === "AMBIGUOUS") {
-        // R10.6: Order may be live — mark UNCERTAIN, retain reservation, freeze new REAL BUY
-        console.error(`[SpotEngine] REAL entry AMBIGUOUS for ${intent.pair}: ${result.error}`);
+      // R10.9-1/2: explicit outcome — never treat CANCELLED pre-submit as already-submitted active.
+      if (reserveOutcome.kind === "EXISTING_ACTIVE") {
+        console.log(`[SpotEngine] Entry SKIPPED — existing active submission: ${internalIntentId} clientOrderId=${clientOrderId}`);
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "INFO",
+          title: "Entrada duplicada evitada",
+          explanation: `Intent ${internalIntentId} ya tiene submission activa (pending/accepted/uncertain). placeOrder omitido.`,
+          decision: "SKIP_DUPLICATE",
+          executionMode: mode,
+          reasonCode: "DUPLICATE_ENTRY_SUBMISSION",
+          intentId: internalIntentId,
+        });
+        return false;
+      }
+
+      if (reserveOutcome.kind === "EXISTING_FILLED") {
+        // R10.9-9: Verify materialization — an EXISTING_FILLED intent MUST have either an
+        // open_position or a closed trade. If neither exists, the intent was marked FILLED
+        // but the position was never materialized — this is a data inconsistency that must
+        // not be silently skipped. Freeze REAL mode by throwing.
+        let materialized = false;
+        try {
+          const posCheck = await db.execute(sql`
+            SELECT lot_id FROM open_positions
+            WHERE client_order_id = ${clientOrderId}
+              AND policy_version = ${SPOT_POLICY_VERSION}
+              AND engine_owner = ${SPOT_ENGINE_OWNER}
+            LIMIT 1
+          `);
+          if (posCheck.rows.length > 0) {
+            materialized = true;
+          } else {
+            const tradeCheck = await db.execute(sql`
+              SELECT trade_id FROM trades
+              WHERE lot_id IN (
+                SELECT lot_id FROM order_intents WHERE client_order_id = ${clientOrderId}
+              )
+                AND policy_version = ${SPOT_POLICY_VERSION}
+                AND engine_owner = ${SPOT_ENGINE_OWNER}
+              LIMIT 1
+            `);
+            if (tradeCheck.rows.length > 0) {
+              materialized = true;
+            }
+          }
+        } catch (verifyError: any) {
+          console.error(`[SpotEngine] R10.9-9: EXISTING_FILLED verification DB error for ${internalIntentId}: ${verifyError.message}`);
+          throw new Error(`EXISTING_FILLED_VERIFICATION_FAILED: ${verifyError.message}`);
+        }
+        if (!materialized) {
+          console.error(`[SpotEngine] R10.9-9: EXISTING_FILLED intent ${internalIntentId} has NO materialized position or trade — data inconsistency`);
+          throw new Error(
+            `EXISTING_FILLED_NOT_MATERIALIZED: intent ${internalIntentId} is marked FILLED ` +
+            `but no open_position or trade exists. REAL mode must be frozen until resolved.`
+          );
+        }
+        console.log(`[SpotEngine] Entry SKIPPED — existing filled intent (materialized): ${internalIntentId}`);
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "INFO",
+          title: "Entrada duplicada evitada",
+          explanation: `Intent ${internalIntentId} ya está filled. NO se reenvía.`,
+          decision: "SKIP_DUPLICATE",
+          executionMode: mode,
+          reasonCode: "DUPLICATE_ENTRY_SUBMISSION",
+          intentId: internalIntentId,
+        });
+        return false;
+      }
+
+      if (reserveOutcome.kind === "EXISTING_TERMINAL") {
+        console.log(`[SpotEngine] Entry SKIPPED — existing terminal intent: ${internalIntentId}`);
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "WARNING",
+          title: "Entrada terminal — no se reenvía",
+          explanation: `Intent ${internalIntentId} está en estado terminal (failed/expired/cancelled con exchange_order_id). NO se marca EXECUTED. NO se reenvía.`,
+          decision: "BLOCK",
+          executionMode: mode,
+          reasonCode: "DUPLICATE_ENTRY_TERMINAL",
+          intentId: internalIntentId,
+        });
+        return false;
+      }
+
+      // CREATED or REARMED_PRE_SUBMIT → continue to placeOrder. For REARMED_PRE_SUBMIT the
+      // same clientOrderId is reused because the row was never sent to the exchange.
+      if (reserveOutcome.kind === "REARMED_PRE_SUBMIT") {
+        console.log(`[SpotEngine] Entry REARMED from PRE_SUBMISSION_CANCELLED: ${internalIntentId} clientOrderId=${clientOrderId}`);
+      }
+
+      // R10.9-8: Gate check #2 — re-verify IMMEDIATELY before placeOrder. The persist+reserve
+      // step above may have taken time; the mode may have transitioned away in the interim.
+      if (!isEntryGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.REAL) {
+        console.log(`[SpotEngine] R10.8: Entry BLOCKED — REAL mode transitioned away before placeOrder for ${intent.pair}`);
+        try {
+          await terminateIntentAndReleaseReservationAtomic(internalIntentId, "CANCELLED");
+        } catch (error: any) {
+          console.error(`[SpotEngine] R10.8: Failed to release reservation after transition-race block: ${error.message}`);
+        }
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "WARNING",
+          title: "Entrada bloqueada — transición de modo REAL (antes de placeOrder)",
+          explanation: `El modo cambió fuera de REAL entre la reserva y el envío de la orden. Reserva liberada. NO se envía orden.`,
+          decision: "BLOCK",
+          executionMode: mode,
+          reasonCode: "REAL_MODE_TRANSITION_RACE_BLOCKED",
+          intentId: internalIntentId,
+        });
+        return false;
+      }
+    }
+
+    // ─── Adapter execution ─────────────────────────────────────────────────────
+    // Execute via adapter — pass clientOrderId (NOT generated by adapter)
+    const adapter = createExecutionAdapter(mode);
+    let result: SpotExecutionResult;
+    try {
+      result = await adapter.executeEntry(execIntent, ctx, clientOrderId);
+    } catch (error: any) {
+      // R10.6: Adapter should not throw — but if it does, treat as AMBIGUOUS
+      if (mode === ExecutionMode.REAL) {
+        console.error(`[SpotEngine] REAL entry unexpected exception for ${intent.pair}: ${error.message}`);
         try {
           await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
         } catch { /* best effort */ }
@@ -1746,166 +1718,23 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           pair: intent.pair,
           category: "SYSTEM",
           severity: "CRITICAL",
-          title: "REAL_SUBMISSION_AMBIGUOUS — network error tras placeOrder",
-          explanation: `Network error durante placeOrder. Orden puede estar viva en exchange. Marcado UNCERTAIN. NO reenviar. Reserva retenida. Error: ${result.error}`,
+          title: "REAL_SUBMISSION_AMBIGUOUS — exception tras placeOrder",
+          explanation: `Exception durante placeOrder. Orden puede estar viva en exchange. Marcado UNCERTAIN. NO reenviar. Error: ${error.message}`,
           decision: "FAIL_CLOSED",
           executionMode: mode,
           reasonCode: "REAL_SUBMISSION_AMBIGUOUS",
           intentId: internalIntentId,
         });
       } else {
-        // R10.6: Explicit REJECTED — terminate intent and release reservation atomically
-        try {
-          await terminateIntentAndReleaseReservationAtomic(internalIntentId, "FAILED");
-        } catch (error: any) {
-          console.error(`[SpotEngine] R10.6: Atomic termination failed for ${internalIntentId}: ${error.message}`);
-        }
-        logActivity({
-          pair: intent.pair,
-          category: "ENTRY",
-          severity: "WARNING",
-          title: "Entrada rechazada",
-          explanation: `Orden de entrada rechazada: ${result.error}`,
-          decision: "REJECT",
-          executionMode: mode,
-          setupTag: intent.setupTag,
-          reasonCode: "ENTRY_REJECTED",
-          intentId: execIntent.intentId,
-          orderId: result.orderId,
-        });
+        console.error(`[SpotEngine] Entry exception for ${intent.pair}: ${error.message}`);
       }
-    } else {
-      logActivity({
-        pair: intent.pair,
-        category: "ENTRY",
-        severity: "WARNING",
-        title: "Entrada fallida",
-        explanation: `Orden de entrada falló: ${result.error}`,
-        decision: "REJECT",
-        executionMode: mode,
-        setupTag: intent.setupTag,
-        reasonCode: "ENTRY_FAILED",
-        intentId: execIntent.intentId,
-        orderId: result.orderId,
-      });
-    }
-    return false;
-  }
-
-  // R10.1: Handle pending fill — persist to order_intents, NOT open_positions with price=0
-  if (result.pendingFill && result.fillPrice === null) {
-    // R10.1: For REAL mode, update order_intents with venueOrderId and PENDING_FILL status
-    if (mode === ExecutionMode.REAL) {
-      await updateSubmissionResult(internalIntentId, {
-        venueOrderId: result.venueOrderId ?? result.orderId,
-        status: "PENDING_FILL",
-      });
-    }
-
-    console.log(`[SpotEngine] Entry PENDING_FILL: ${intent.pair} orderId=${result.orderId} clientOrderId=${result.clientOrderId}`);
-    logActivity({
-      pair: intent.pair,
-      category: "EXECUTION",
-      severity: "ATTENTION",
-      title: "Orden enviada — pendiente de fill",
-      explanation: `Orden de entrada enviada al exchange, esperando confirmación de fill. orderId=${result.orderId}`,
-      decision: "PENDING_FILL",
-      executionMode: mode,
-      setupTag: intent.setupTag,
-      reasonCode: "PENDING_FILL",
-      intentId: internalIntentId,
-      orderId: result.orderId,
-    });
-    return true;
-  }
-
-  if (result.fillPrice === null) {
-    console.error(`[SpotEngine] Entry failed for ${intent.pair}: no fill price`);
-    // R10.5: Use atomic termination for consistency
-    if (mode === ExecutionMode.REAL) {
-      try {
-        await terminateIntentAndReleaseReservationAtomic(internalIntentId, "FAILED");
-      } catch { /* best effort */ }
-    }
-    return false;
-  }
-
-  // Create position
-  const lotId = `spot-${intent.pair}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
-  const now = Date.now();
-
-  const position: SpotPosition = {
-    lotId,
-    pair: intent.pair,
-    amount: result.fillVolume ?? sizing.volume,
-    qtyRemaining: result.fillVolume ?? sizing.volume,
-    entryPrice: result.fillPrice,
-    entryFee: result.feeUsd ?? 0,
-    entryFeeQuality: result.fillQuality,
-    highestPrice: result.fillPrice,
-    openedAt: now,
-    entryStrategyId: "SPOT_CANONICAL",
-    entrySignalTf: "15m",
-    signalConfidence: signal?.confidence ?? 0,
-    signalReason: signal?.reason ?? intent.setupTag,
-    setupTag: intent.setupTag,
-    signalId: intent.signalId,
-    marketContextId: ctx.marketContextId,
-    regimeAtEntry: ctx.regimeContext.regime,
-    directionAtEntry: ctx.regimeContext.direction,
-    macroAtEntry: ctx.regimeContext.macroBias,
-    atrPctAtEntry: ctx.regimeContext.atrPct,
-    initialStopPrice: sizing.stopPrice,
-    initialStopDistancePct: sizing.stopDistancePct,
-    initialStopDistanceUsd: sizing.stopDistanceUsd,
-    riskUsd: sizing.riskUsd,
-    notionalUsd: sizing.notionalUsd,
-    executionMode: mode,
-    policyVersion: SPOT_POLICY_VERSION,
-    sgBreakEvenActivated: false,
-    sgTrailingActivated: false,
-    sgScaleOutDone: false,
-    sgCurrentStopPrice: sizing.stopPrice,
-    mfe: 0,
-    mae: 0,
-    mfeR: 0,
-    maeR: 0,
-  };
-
-  // R3-2: Use filledNotionalUsd (fillPrice * fillVolume) as canonical source for capital reservation
-  const filledNotionalUsd = result.fillPrice !== null && result.fillVolume !== null
-    ? result.fillPrice * result.fillVolume
-    : sizing.notionalUsd;
-  if (!Number.isFinite(filledNotionalUsd) || filledNotionalUsd <= 0) {
-    console.error(`[SpotEngine] Invalid filledNotionalUsd=${filledNotionalUsd} for ${intent.pair}`);
-    return false;
-  }
-  position.notionalUsd = filledNotionalUsd;
-
-  // R4: Atomic entry — INSERT position + UPDATE ledger in ONE transaction
-  if (mode === ExecutionMode.SHADOW) {
-    try {
-      const newLedger = await persistShadowEntryAtomic(position, filledNotionalUsd, result.feeUsd ?? 0);
-      // Sync in-memory cache only after successful COMMIT
-      shadowLedger = newLedger;
-    } catch (error: any) {
-      console.error(`[SpotEngine] Shadow entry atomic persistence failed for ${intent.pair}: ${error.message}`);
       return false;
     }
-  } else {
-    // R10.3: REAL mode — atomic fill materialization (exactly-once)
-    // INSERT open_position + UPDATE order_intent FILLED in ONE transaction
-    if (mode === ExecutionMode.REAL) {
-      try {
-        await finalizeRealEntryFillAtomic(
-          position, result, filledNotionalUsd, internalIntentId, clientOrderId,
-        );
-        // R10.7-3: Reservation release happens INSIDE finalizeRealEntryFillAtomic's transaction.
-        // No separate release call — releaseReservationInTx is the SINGLE owner of release.
-      } catch (error: any) {
-        // R10.3: Exchange ack received but DB materialization failed.
-        // Mark UNCERTAIN — do NOT re-send order. Freeze new REAL entries.
-        console.error(`[SpotEngine] REAL entry fill materialization FAILED for ${lotId}: ${error.message}`);
+
+    // R10.6: Handle ACCEPTED without venueOrderId — treat as UNCERTAIN, retain reservation
+    if (result.success && result.submissionState === "ACCEPTED" && !result.venueOrderId && !result.pendingFill) {
+      if (mode === ExecutionMode.REAL) {
+        console.warn(`[SpotEngine] REAL entry ACCEPTED but no venueOrderId for ${intent.pair} — marking UNCERTAIN`);
         try {
           await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
         } catch { /* best effort */ }
@@ -1913,50 +1742,245 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           pair: intent.pair,
           category: "SYSTEM",
           severity: "CRITICAL",
-          title: "REAL_EXECUTION_UNRESOLVED — materialización DB falló",
-          explanation: `Exchange aceptó orden ${result.orderId} pero DB no pudo materializar. Marcado UNCERTAIN. NO reenviar. Error: ${error.message}`,
+          title: "REAL_SUBMISSION_AMBIGUOUS — ACCEPTED sin venueOrderId",
+          explanation: `Orden aceptada pero sin venueOrderId. No se puede reconciliar. Marcado UNCERTAIN. Reserva retenida.`,
           decision: "FAIL_CLOSED",
           executionMode: mode,
-          reasonCode: "REAL_ENTRY_FILL_ATOMIC_FAILED",
+          reasonCode: "REAL_ACCEPTED_NO_VENUE_ID",
           intentId: internalIntentId,
-          lotId,
+        });
+      }
+      return false;
+    }
+
+    if (!result.success) {
+      console.error(`[SpotEngine] Entry failed for ${intent.pair}: ${result.error}`);
+      // R10.6: Check submissionState — AMBIGUOUS retains reservation, REJECTED releases
+      if (mode === ExecutionMode.REAL) {
+        if (result.submissionState === "AMBIGUOUS") {
+          // R10.6: Order may be live — mark UNCERTAIN, retain reservation, freeze new REAL BUY
+          console.error(`[SpotEngine] REAL entry AMBIGUOUS for ${intent.pair}: ${result.error}`);
+          try {
+            await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
+          } catch { /* best effort */ }
+          logActivity({
+            pair: intent.pair,
+            category: "SYSTEM",
+            severity: "CRITICAL",
+            title: "REAL_SUBMISSION_AMBIGUOUS — network error tras placeOrder",
+            explanation: `Network error durante placeOrder. Orden puede estar viva en exchange. Marcado UNCERTAIN. NO reenviar. Reserva retenida. Error: ${result.error}`,
+            decision: "FAIL_CLOSED",
+            executionMode: mode,
+            reasonCode: "REAL_SUBMISSION_AMBIGUOUS",
+            intentId: internalIntentId,
+          });
+        } else {
+          // R10.6: Explicit REJECTED — terminate intent and release reservation atomically
+          try {
+            await terminateIntentAndReleaseReservationAtomic(internalIntentId, "FAILED");
+          } catch (error: any) {
+            console.error(`[SpotEngine] R10.6: Atomic termination failed for ${internalIntentId}: ${error.message}`);
+          }
+          logActivity({
+            pair: intent.pair,
+            category: "ENTRY",
+            severity: "WARNING",
+            title: "Entrada rechazada",
+            explanation: `Orden de entrada rechazada: ${result.error}`,
+            decision: "REJECT",
+            executionMode: mode,
+            setupTag: intent.setupTag,
+            reasonCode: "ENTRY_REJECTED",
+            intentId: execIntent.intentId,
+            orderId: result.orderId,
+          });
+        }
+      } else {
+        logActivity({
+          pair: intent.pair,
+          category: "ENTRY",
+          severity: "WARNING",
+          title: "Entrada fallida",
+          explanation: `Orden de entrada falló: ${result.error}`,
+          decision: "REJECT",
+          executionMode: mode,
+          setupTag: intent.setupTag,
+          reasonCode: "ENTRY_FAILED",
+          intentId: execIntent.intentId,
           orderId: result.orderId,
         });
+      }
+      return false;
+    }
+
+    // R10.1: Handle pending fill — persist to order_intents, NOT open_positions with price=0
+    if (result.pendingFill && result.fillPrice === null) {
+      // R10.1: For REAL mode, update order_intents with venueOrderId and PENDING_FILL status
+      if (mode === ExecutionMode.REAL) {
+        await updateSubmissionResult(internalIntentId, {
+          venueOrderId: result.venueOrderId ?? result.orderId,
+          status: "PENDING_FILL",
+        });
+      }
+
+      console.log(`[SpotEngine] Entry PENDING_FILL: ${intent.pair} orderId=${result.orderId} clientOrderId=${result.clientOrderId}`);
+      logActivity({
+        pair: intent.pair,
+        category: "EXECUTION",
+        severity: "ATTENTION",
+        title: "Orden enviada — pendiente de fill",
+        explanation: `Orden de entrada enviada al exchange, esperando confirmación de fill. orderId=${result.orderId}`,
+        decision: "PENDING_FILL",
+        executionMode: mode,
+        setupTag: intent.setupTag,
+        reasonCode: "PENDING_FILL",
+        intentId: internalIntentId,
+        orderId: result.orderId,
+      });
+      return true;
+    }
+
+    if (result.fillPrice === null) {
+      console.error(`[SpotEngine] Entry failed for ${intent.pair}: no fill price`);
+      // R10.5: Use atomic termination for consistency
+      if (mode === ExecutionMode.REAL) {
+        try {
+          await terminateIntentAndReleaseReservationAtomic(internalIntentId, "FAILED");
+        } catch { /* best effort */ }
+      }
+      return false;
+    }
+
+    // Create position
+    const lotId = `spot-${intent.pair}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const now = Date.now();
+
+    const position: SpotPosition = {
+      lotId,
+      pair: intent.pair,
+      amount: result.fillVolume ?? sizing.volume,
+      qtyRemaining: result.fillVolume ?? sizing.volume,
+      entryPrice: result.fillPrice,
+      entryFee: result.feeUsd ?? 0,
+      entryFeeQuality: result.fillQuality,
+      highestPrice: result.fillPrice,
+      openedAt: now,
+      entryStrategyId: "SPOT_CANONICAL",
+      entrySignalTf: "15m",
+      signalConfidence: signal?.confidence ?? 0,
+      signalReason: signal?.reason ?? intent.setupTag,
+      setupTag: intent.setupTag,
+      signalId: intent.signalId,
+      marketContextId: ctx.marketContextId,
+      regimeAtEntry: ctx.regimeContext.regime,
+      directionAtEntry: ctx.regimeContext.direction,
+      macroAtEntry: ctx.regimeContext.macroBias,
+      atrPctAtEntry: ctx.regimeContext.atrPct,
+      initialStopPrice: sizing.stopPrice,
+      initialStopDistancePct: sizing.stopDistancePct,
+      initialStopDistanceUsd: sizing.stopDistanceUsd,
+      riskUsd: sizing.riskUsd,
+      notionalUsd: sizing.notionalUsd,
+      executionMode: mode,
+      policyVersion: SPOT_POLICY_VERSION,
+      sgBreakEvenActivated: false,
+      sgTrailingActivated: false,
+      sgScaleOutDone: false,
+      sgCurrentStopPrice: sizing.stopPrice,
+      mfe: 0,
+      mae: 0,
+      mfeR: 0,
+      maeR: 0,
+    };
+
+    // R3-2: Use filledNotionalUsd (fillPrice * fillVolume) as canonical source for capital reservation
+    const filledNotionalUsd = result.fillPrice !== null && result.fillVolume !== null
+      ? result.fillPrice * result.fillVolume
+      : sizing.notionalUsd;
+    if (!Number.isFinite(filledNotionalUsd) || filledNotionalUsd <= 0) {
+      console.error(`[SpotEngine] Invalid filledNotionalUsd=${filledNotionalUsd} for ${intent.pair}`);
+      return false;
+    }
+    position.notionalUsd = filledNotionalUsd;
+
+    // R4: Atomic entry — INSERT position + UPDATE ledger in ONE transaction
+    if (mode === ExecutionMode.SHADOW) {
+      try {
+        const newLedger = await persistShadowEntryAtomic(position, filledNotionalUsd, result.feeUsd ?? 0);
+        // Sync in-memory cache only after successful COMMIT
+        shadowLedger = newLedger;
+      } catch (error: any) {
+        console.error(`[SpotEngine] Shadow entry atomic persistence failed for ${intent.pair}: ${error.message}`);
         return false;
       }
     } else {
-      // Non-SHADOW non-REAL (shouldn't happen but keep for safety)
-      await persistOpenPosition(position, result, filledNotionalUsd);
+      // R10.3: REAL mode — atomic fill materialization (exactly-once)
+      // INSERT open_position + UPDATE order_intent FILLED in ONE transaction
+      if (mode === ExecutionMode.REAL) {
+        try {
+          await finalizeRealEntryFillAtomic(
+            position, result, filledNotionalUsd, internalIntentId, clientOrderId,
+          );
+          // R10.7-3: Reservation release happens INSIDE finalizeRealEntryFillAtomic's transaction.
+          // No separate release call — releaseReservationInTx is the SINGLE owner of release.
+        } catch (error: any) {
+          // R10.3: Exchange ack received but DB materialization failed.
+          // Mark UNCERTAIN — do NOT re-send order. Freeze new REAL entries.
+          console.error(`[SpotEngine] REAL entry fill materialization FAILED for ${lotId}: ${error.message}`);
+          try {
+            await updateSubmissionResult(internalIntentId, { status: "UNCERTAIN" });
+          } catch { /* best effort */ }
+          logActivity({
+            pair: intent.pair,
+            category: "SYSTEM",
+            severity: "CRITICAL",
+            title: "REAL_EXECUTION_UNRESOLVED — materialización DB falló",
+            explanation: `Exchange aceptó orden ${result.orderId} pero DB no pudo materializar. Marcado UNCERTAIN. NO reenviar. Error: ${error.message}`,
+            decision: "FAIL_CLOSED",
+            executionMode: mode,
+            reasonCode: "REAL_ENTRY_FILL_ATOMIC_FAILED",
+            intentId: internalIntentId,
+            lotId,
+            orderId: result.orderId,
+          });
+          return false;
+        }
+      } else {
+        // Non-SHADOW non-REAL (shouldn't happen but keep for safety)
+        await persistOpenPosition(position, result, filledNotionalUsd);
+      }
     }
+
+    // Init audit tracking
+    auditTracker.initPosition(position);
+
+    // Init exit state
+    const exitState = createExitState(position);
+    exitStates.set(lotId, exitState);
+
+    console.log(`[SpotEngine] Position opened: ${lotId} ${intent.pair} @ ${result.fillPrice}, mode=${mode}`);
+    logActivity({
+      pair: intent.pair,
+      category: "ENTRY",
+      severity: "SUCCESS",
+      title: `Entrada ejecutada — ${intent.setupTag}`,
+      explanation: `Posición abierta: ${lotId} @ ${result.fillPrice}, vol=${position.amount}, modo=${mode}`,
+      decision: "BUY",
+      executionMode: mode,
+      setupTag: intent.setupTag,
+      regime: ctx.regimeContext.regime,
+      direction: ctx.regimeContext.direction,
+      macroBias: ctx.regimeContext.macroBias,
+      price: result.fillPrice,
+      reasonCode: "ENTRY_FILLED",
+      signalId: intent.signalId,
+      lotId,
+      orderId: result.orderId,
+    });
+    return true;
+  } finally {
+    if (entryCriticalSectionEntered) exitEntryCriticalSection();
   }
-
-  // Init audit tracking
-  auditTracker.initPosition(position);
-
-  // Init exit state
-  const exitState = createExitState(position);
-  exitStates.set(lotId, exitState);
-
-  console.log(`[SpotEngine] Position opened: ${lotId} ${intent.pair} @ ${result.fillPrice}, mode=${mode}`);
-  logActivity({
-    pair: intent.pair,
-    category: "ENTRY",
-    severity: "SUCCESS",
-    title: `Entrada ejecutada — ${intent.setupTag}`,
-    explanation: `Posición abierta: ${lotId} @ ${result.fillPrice}, vol=${position.amount}, modo=${mode}`,
-    decision: "BUY",
-    executionMode: mode,
-    setupTag: intent.setupTag,
-    regime: ctx.regimeContext.regime,
-    direction: ctx.regimeContext.direction,
-    macroBias: ctx.regimeContext.macroBias,
-    price: result.fillPrice,
-    reasonCode: "ENTRY_FILLED",
-    signalId: intent.signalId,
-    lotId,
-    orderId: result.orderId,
-  });
-  return true;
 }
 
 /**

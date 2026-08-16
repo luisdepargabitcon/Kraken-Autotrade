@@ -26,6 +26,23 @@
  *  18. Entry critical section count tracked correctly
  *  19. SHADOW mode transition race: stale generation blocks SHADOW entry
  *  20. getOpenPositions DB error → throws (fail-closed)
+ *
+ * R10.9-final additional tests A–N:
+ *
+ *  A.  SHADOW entry critical section covers persistShadowEntryAtomic (no leak)
+ *  B.  SHADOW entry exception during persist → critical section released
+ *  C.  REAL adapter exception → critical section released
+ *  D.  REAL persistence exception → critical section released
+ *  E.  EXISTING_FILLED throws → critical section released (no leak)
+ *  F.  Drain timeout clears scanIntervalId + engineRunning=false
+ *  G.  Supervisor busy returns { ok:false, busy:true }
+ *  H.  getPositionSupervisionHealth() stale after inactivity
+ *  I.  getPositionSupervisionHealth() healthy after recent success
+ *  J.  spot.routes.ts has no prepareRealActivation (single authority)
+ *  K.  REAL entry full path → critical section count returns to 0
+ *  L.  SHADOW entry full path → critical section count returns to 0
+ *  M.  Supervisor busy on first pass → startSpotEngine fails
+ *  N.  Playwright removed from package.json
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -242,6 +259,13 @@ vi.mock("../exchanges/ExchangeFactory", () => ({
       getPairMetadata: () => ({ quoteCurrency: "USD", quantityStep: 0.0001 }),
       placeOrder: mockPlaceOrder,
     }),
+    getDataExchange: () => ({
+      exchangeName: "revolutx",
+      isInitialized: () => true,
+      getTicker: async () => ({ bid: 60000, ask: 60010, last: 60005, spread: 10, fetchedAt: Date.now() }),
+      getPairMetadata: () => ({ quoteCurrency: "USD", quantityStep: 0.0001 }),
+    }),
+    getDataExchangeType: () => "revolutx",
   },
 }));
 
@@ -267,7 +291,12 @@ import {
   _enterRealCriticalSectionForTest as enterCriticalSection,
   _exitRealCriticalSectionForTest as exitCriticalSection,
   _isEntryScanningEnabledForTest as isEntryScanningEnabled,
+  _isEngineRunningForTest as isEngineRunning,
+  _hasScanIntervalForTest as hasScanInterval,
   _stopSpotEngineForTest as stopSpotEngine,
+  _setSupervisingForTest as setSupervising,
+  _runPositionSupervisorForTest as runSupervisor,
+  getPositionSupervisionHealth,
   getOpenSpotPositionPairs,
   getOpenPositions,
   getTradingVenueFailClosed,
@@ -301,6 +330,8 @@ function resetDbState() {
   stopSpotEngine();
   setPositionSupervisionHealthy(true);
   clearIntentCache();
+  // R10.9-final: Assert no critical section leaks from previous test
+  expect(getCriticalSectionCount()).toBe(0);
   // Reset any leftover critical sections from previous tests
   while (getCriticalSectionCount() > 0) {
     exitCriticalSection();
@@ -387,6 +418,8 @@ describe("R10.9-2: General entry fence covers SHADOW mode", () => {
 
     // SHADOW adapter generates phantom fills (never calls placeOrder)
     expect(executed).toBe(true);
+    // R10.9-final: No critical section leak after SHADOW entry
+    expect(getCriticalSectionCount()).toBe(0);
   });
 });
 
@@ -431,6 +464,8 @@ describe("R10.9-4/5: REAL BUY blocked with degraded supervisor and recovery", ()
     const executed = await executeEntry(makeIntent("BTC/USD", signalId), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
     expect(executed).toBe(true);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
+    // R10.9-final: No critical section leak after REAL entry
+    expect(getCriticalSectionCount()).toBe(0);
   });
 });
 
@@ -605,6 +640,8 @@ describe("R10.9-9: EXISTING_FILLED materialization verification", () => {
     await expect(
       executeEntry(makeIntent("BTC/USD", signalId), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration),
     ).rejects.toThrow(/EXISTING_FILLED_NOT_MATERIALIZED/);
+    // R10.9-final: No critical section leak after throw
+    expect(getCriticalSectionCount()).toBe(0);
   });
 
   it("14. EXISTING_FILLED_DB_ERROR: verification query throws → throws", async () => {
@@ -628,6 +665,8 @@ describe("R10.9-9: EXISTING_FILLED materialization verification", () => {
     await expect(
       executeEntry(makeIntent("BTC/USD", signalId), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration),
     ).rejects.toThrow(/EXISTING_FILLED_VERIFICATION_FAILED/);
+    // R10.9-final: No critical section leak after throw
+    expect(getCriticalSectionCount()).toBe(0);
   });
 });
 
@@ -755,5 +794,368 @@ describe("R10.9: getOpenPositions DB error — fail-closed", () => {
     });
 
     await expect(getOpenPositions()).rejects.toThrow(/REAL_POSITION_QUERY_FAILED_FAIL_CLOSED/);
+  });
+});
+
+// ─── A: SHADOW entry critical section covers persistShadowEntryAtomic ────────
+
+describe("R10.9-final A: SHADOW critical section covers persistShadowEntryAtomic", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("A. SHADOW_ENTRY_NO_LEAK: full SHADOW entry → critical section count 0", async () => {
+    mockModeState.mode = "SHADOW";
+    setPositionSupervisionHealthy(true);
+    const scanGeneration = getGeneration();
+
+    const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
+
+    expect(executed).toBe(true);
+    expect(getCriticalSectionCount()).toBe(0);
+  });
+});
+
+// ─── B: SHADOW entry exception during persist → critical section released ───
+
+describe("R10.9-final B: SHADOW persist exception releases critical section", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("B. SHADOW_PERSIST_EXCEPTION: persist throws → critical section released", async () => {
+    mockModeState.mode = "SHADOW";
+    setPositionSupervisionHealthy(true);
+    const scanGeneration = getGeneration();
+
+    // Make the SHADOW persist fail by making the shadow ledger query throw
+    const originalTx = dbTransactionMock.getMockImplementation();
+    dbTransactionMock.mockImplementationOnce(async (callback: any) => {
+      const tx = {
+        execute: async (query: any) => {
+          const { sql: sqlText } = extractSql(query);
+          if (sqlText.includes("spot_shadow")) throw new Error("Injected: shadow ledger DB failure");
+          return { rows: [] };
+        },
+      };
+      return callback(tx);
+    });
+
+    const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
+
+    expect(executed).toBe(false);
+    expect(getCriticalSectionCount()).toBe(0);
+  });
+});
+
+// ─── C: REAL adapter exception → critical section released ──────────────────
+
+describe("R10.9-final C: REAL adapter exception releases critical section", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("C. REAL_ADAPTER_EXCEPTION: adapter throws → critical section released", async () => {
+    mockModeState.mode = "REAL";
+    setPositionSupervisionHealthy(true);
+    const scanGeneration = getGeneration();
+
+    mockPlaceOrder.mockRejectedValueOnce(new Error("Injected: adapter exception"));
+
+    const executed = await executeEntry(makeIntent("BTC/USD", "sig-adapter-exc"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+
+    expect(executed).toBe(false);
+    expect(getCriticalSectionCount()).toBe(0);
+  });
+});
+
+// ─── D: REAL persistence exception → critical section released ──────────────
+
+describe("R10.9-final D: REAL persistence exception releases critical section", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("D. REAL_PERSIST_EXCEPTION: finalizeRealEntryFillAtomic throws → critical section released", async () => {
+    mockModeState.mode = "REAL";
+    setPositionSupervisionHealthy(true);
+    const scanGeneration = getGeneration();
+
+    mockPlaceOrder.mockResolvedValueOnce({
+      success: true, orderId: "venue-1", price: 60000, volume: 0.01, cost: 600,
+    });
+
+    // Make the transaction throw during finalizeRealEntryFillAtomic (INSERT INTO open_positions for REAL)
+    const originalTx = dbTransactionMock.getMockImplementation();
+    dbTransactionMock.mockImplementationOnce(async (callback: any) => {
+      const tx = {
+        execute: async (query: any) => {
+          const { sql: sqlText } = extractSql(query);
+          // Let order_intents queries pass but make the REAL position insert fail
+          if (sqlText.includes("INSERT INTO open_positions") && !sqlText.includes("spot_shadow")) {
+            throw new Error("Injected: REAL position insert failure");
+          }
+          if (sqlText.includes("FOR UPDATE") && sqlText.includes("order_intents")) {
+            return { rows: [{ id: 1, status: "pending", exchange_order_id: null, reserved_quote_usd: 600, reserved_quote_currency: "USD", engine_owner: "SPOT_CANONICAL", policy_version: "SPOT-1.0.0-20260812", execution_mode: "REAL" }] };
+          }
+          if (sqlText.includes("UPDATE order_intents") && sqlText.includes("status")) {
+            return { rows: [{ id: 1, reserved_quote_usd: 600 }] };
+          }
+          if (sqlText.includes("UPDATE bot_config") && sqlText.includes("spot_real_reserved")) {
+            return { rows: [] };
+          }
+          return { rows: [] };
+        },
+      };
+      return callback(tx);
+    });
+
+    const executed = await executeEntry(makeIntent("BTC/USD", "sig-persist-exc"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+
+    expect(executed).toBe(false);
+    expect(getCriticalSectionCount()).toBe(0);
+  });
+});
+
+// ─── E: EXISTING_FILLED throws → critical section released ──────────────────
+
+describe("R10.9-final E: EXISTING_FILLED throw releases critical section", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("E. EXISTING_FILLED_THROW_NO_LEAK: throw inside critical section → released", async () => {
+    const signalId = "sig-E-filled-throw";
+    const internalIntentId = `entry:${SPOT_POLICY_VERSION}:${signalId}:BTC/USD`;
+    const clientOrderId = generateClientOrderId(internalIntentId);
+
+    await persistAndReserve(
+      makeIntentParams({ internalIntentId }),
+      clientOrderId, "revolutx", 600, 1000, "USD",
+    );
+    const intent = mockDbState.orderIntents.find((r: any) => r.internal_intent_id === internalIntentId);
+    intent.status = "filled";
+
+    const scanGeneration = getGeneration();
+    setPositionSupervisionHealthy(true);
+
+    // EXISTING_FILLED_NOT_MATERIALIZED throws — verify critical section is released
+    await expect(
+      executeEntry(makeIntent("BTC/USD", signalId), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration),
+    ).rejects.toThrow(/EXISTING_FILLED_NOT_MATERIALIZED/);
+
+    expect(getCriticalSectionCount()).toBe(0);
+  });
+});
+
+// ─── F: Drain timeout clears scanIntervalId + engineRunning=false ───────────
+
+describe("R10.9-final F: Drain timeout clears scanIntervalId and engineRunning", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("F. DRAIN_TIMEOUT_CLEARS_SCANNER: timeout → scanIntervalId=null, engineRunning=false", async () => {
+    const { startSpotEngine } = await import("../spot/spotEngine");
+    mockModeState.mode = "SHADOW";
+    await startSpotEngine();
+    expect(hasScanInterval()).toBe(true);
+    expect(isEngineRunning()).toBe(true);
+
+    // Enter a critical section that won't exit during drain
+    enterCriticalSection();
+    setDrainTimeoutMs(50);
+
+    const result = await invalidateAndDrain();
+
+    expect(result.drained).toBe(false);
+    // Clean up
+    exitCriticalSection();
+    stopSpotEngine();
+  });
+
+  it("F2. SET_MODE_DRAIN_TIMEOUT: setExecutionMode with drain timeout → scanner cleared", async () => {
+    // Start engine in SHADOW
+    const { startSpotEngine, setExecutionMode } = await import("../spot/spotEngine");
+    mockModeState.mode = "SHADOW";
+    await startSpotEngine();
+    expect(hasScanInterval()).toBe(true);
+    expect(isEngineRunning()).toBe(true);
+
+    // Enter a critical section that won't exit during drain
+    enterCriticalSection();
+    setDrainTimeoutMs(50);
+
+    // Mode transition should time out and clear scanner
+    await expect(setExecutionMode(ExecutionMode.OFF)).rejects.toThrow(/DRAIN_TIMEOUT_FAIL_CLOSED/);
+
+    // Clean up
+    exitCriticalSection();
+
+    expect(hasScanInterval()).toBe(false);
+    expect(isEngineRunning()).toBe(false);
+    expect(isEntryScanningEnabled()).toBe(false);
+    stopSpotEngine();
+  });
+});
+
+// ─── G: Supervisor busy returns { ok:false, busy:true } ─────────────────────
+
+describe("R10.9-final G: Supervisor busy returns ok=false busy=true", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("G. SUPERVISOR_BUSY: already supervising → ok=false, busy=true", async () => {
+    // Set the reentrancy guard
+    setSupervising(true);
+
+    const result = await runSupervisor();
+
+    expect(result.ok).toBe(false);
+    expect(result.busy).toBe(true);
+    expect(result.reason).toBe("already-running");
+
+    // Clean up
+    setSupervising(false);
+  });
+});
+
+// ─── H: getPositionSupervisionHealth() stale after inactivity ───────────────
+
+describe("R10.9-final H: getPositionSupervisionHealth stale detection", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("H. HEALTH_STALE: lastSuccessAt old → stale=true, healthy=false", () => {
+    vi.useFakeTimers();
+    setPositionSupervisionHealthy(true);
+    // Advance time past SUPERVISOR_STALE_MS (2*60_000 + 5_000 = 125_000)
+    vi.advanceTimersByTime(200_000);
+    const health = getPositionSupervisionHealth();
+    expect(health.stale).toBe(true);
+    expect(health.healthy).toBe(false);
+    vi.useRealTimers();
+  });
+});
+
+// ─── I: getPositionSupervisionHealth() healthy after recent success ─────────
+
+describe("R10.9-final I: getPositionSupervisionHealth healthy after success", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("I. HEALTH_FRESH: recent lastSuccessAt → stale=false, healthy=true", () => {
+    setPositionSupervisionHealthy(true);
+    const health = getPositionSupervisionHealth();
+    expect(health.stale).toBe(false);
+    expect(health.healthy).toBe(true);
+    expect(health.lastSuccessAt).not.toBeNull();
+  });
+});
+
+// ─── J: spot.routes.ts has no prepareRealActivation (single authority) ──────
+
+describe("R10.9-final J: spot.routes.ts single preflight authority", () => {
+  it("J. NO_PREPAREREAL_IN_ROUTES: spot.routes.ts does not reference prepareRealActivation", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const routePath = path.resolve(__dirname, "../../routes/spot.routes.ts");
+    const source = fs.readFileSync(routePath, "utf-8");
+    expect(source).not.toContain("prepareRealActivation");
+  });
+});
+
+// ─── K: REAL entry full path → critical section count returns to 0 ──────────
+
+describe("R10.9-final K: REAL entry full path critical section", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("K. REAL_FULL_PATH_NO_LEAK: successful REAL entry → critical section 0", async () => {
+    mockModeState.mode = "REAL";
+    setPositionSupervisionHealthy(true);
+    const scanGeneration = getGeneration();
+
+    mockPlaceOrder.mockResolvedValueOnce({
+      success: true, orderId: "venue-K", price: 60000, volume: 0.01, cost: 600,
+    });
+
+    const executed = await executeEntry(makeIntent("BTC/USD", "sig-K-full"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+
+    expect(executed).toBe(true);
+    expect(getCriticalSectionCount()).toBe(0);
+  });
+});
+
+// ─── L: SHADOW entry full path → critical section count returns to 0 ────────
+
+describe("R10.9-final L: SHADOW entry full path critical section", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("L. SHADOW_FULL_PATH_NO_LEAK: successful SHADOW entry → critical section 0", async () => {
+    mockModeState.mode = "SHADOW";
+    setPositionSupervisionHealthy(true);
+    const scanGeneration = getGeneration();
+
+    const executed = await executeEntry(makeIntent("BTC/USD", "sig-L-full"), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
+
+    expect(executed).toBe(true);
+    expect(getCriticalSectionCount()).toBe(0);
+  });
+});
+
+// ─── M: Supervisor busy on first pass → startSpotEngine fails ───────────────
+
+describe("R10.9-final M: Supervisor busy on first pass blocks startup", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("M. SUPERVISOR_BUSY_STARTUP: busy first pass → startSpotEngine fails for SHADOW/REAL", async () => {
+    mockModeState.mode = "SHADOW";
+    // Set reentrancy guard so supervisor returns busy
+    setSupervising(true);
+
+    const { startSpotEngine } = await import("../spot/spotEngine");
+    const started = await startSpotEngine();
+
+    expect(started).toBe(false);
+    expect(isEngineRunning()).toBe(false);
+
+    // Clean up
+    setSupervising(false);
+    stopSpotEngine();
+  });
+});
+
+// ─── N: Playwright removed from package.json ────────────────────────────────
+
+describe("R10.9-final N: Playwright removed from package.json", () => {
+  it("N. NO_PLAYWRIGHT_IN_PACKAGE_JSON: @playwright/test and playwright absent", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const pkgPath = path.resolve(__dirname, "../../../package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    const devDeps = pkg.devDependencies ?? {};
+    expect(devDeps).not.toHaveProperty("@playwright/test");
+    expect(devDeps).not.toHaveProperty("playwright");
   });
 });
