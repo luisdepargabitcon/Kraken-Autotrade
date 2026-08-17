@@ -34,6 +34,7 @@ import {
   getLastScanResults,
   getLastScanTime,
   SPOT_RUNTIME_OWNER,
+  RealActivationBlockedError,
 } from "../services/spot/spotEngine";
 import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
@@ -286,6 +287,13 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
         realActivationAllowed: REAL_ACTIVATION_ALLOWED,
       });
     } catch (err: any) {
+      if (err instanceof RealActivationBlockedError) {
+        res.status(403).json({
+          error: "REAL activation blocked — readiness requirements not satisfied",
+          blockers: err.blockers,
+        });
+        return;
+      }
       res.status(500).json({ error: "Failed to set execution mode", detail: err.message });
     }
   });

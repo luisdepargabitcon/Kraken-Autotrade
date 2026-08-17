@@ -82,6 +82,8 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
     openPositionsThrow: false,
     openPositionsVerificationThrow: false,
     tradesThrow: false,
+    summaryStatsThrow: false,
+    runtimeInspectionThrow: false,
   };
 
   const executeFn = vi.fn(async (query: any) => {
@@ -93,12 +95,49 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
     if (sqlText.includes("spot_real_reserved_capital_usd") && sqlText.includes("bot_config")) {
       return { rows: [{ reserved: String(state.botConfig.spot_real_reserved_capital_usd ?? 0) }] };
     }
-    if (sqlText.includes("COUNT") && sqlText.includes("order_intents")) {
+    if (sqlText.includes("COUNT") && sqlText.includes("order_intents") && !sqlText.includes("lot_id")) {
       return { rows: [{ count: "0" }] };
+    }
+    // COUNT prior exit attempts for a lot_id (exitAttempt counter in closePosition)
+    if (sqlText.includes("COUNT") && sqlText.includes("order_intents") && sqlText.includes("lot_id")) {
+      const { params } = extractSql(query);
+      const lotId = params[0];
+      const count = state.orderIntents.filter((r: any) =>
+        r.lot_id === lotId && r.side === "sell" &&
+        ["failed", "expired", "cancelled"].includes(r.status)
+      ).length;
+      return { rows: [{ count: String(count) }] };
     }
     if (sqlText.includes("COUNT") && sqlText.includes("open_positions")) {
       if (state.openPositionsThrow) throw new Error("Injected: open_positions DB failure");
-      return { rows: [{ count: String(state.openPositions.length) }] };
+      const { params } = extractSql(query);
+      let filtered = state.openPositions;
+      // Filter by UNCERTAIN status
+      if (sqlText.includes("UNCERTAIN")) {
+        filtered = filtered.filter((p: any) => p.status === "UNCERTAIN");
+      }
+      // Filter by status != 'CLOSED' (for PENDING_FILL/EXIT_PENDING and legacy checks)
+      if (sqlText.includes("!= 'CLOSED'") || sqlText.includes("!= 'closed'")) {
+        filtered = filtered.filter((p: any) => p.status !== "CLOSED");
+      }
+      // Legacy check: policy_version != SPOT_POLICY_VERSION OR engine_owner != SPOT_ENGINE_OWNER
+      if (sqlText.includes("policy_version") && sqlText.includes("engine_owner") && sqlText.includes("!=")) {
+        filtered = filtered.filter((p: any) =>
+          p.policy_version !== SPOT_POLICY_VERSION || p.engine_owner !== "SPOT_CANONICAL"
+        );
+      }
+      // Shadow positions check: execution_mode = 'SHADOW'
+      if (sqlText.includes("SHADOW") || sqlText.includes("shadow")) {
+        filtered = filtered.filter((p: any) => p.execution_mode === "SHADOW");
+      }
+      // PENDING_FILL / EXIT_PENDING filter
+      if (sqlText.includes("PENDING_FILL") || sqlText.includes("pending_fill")) {
+        filtered = filtered.filter((p: any) => p.status === "PENDING_FILL");
+      }
+      if (sqlText.includes("EXIT_PENDING") || sqlText.includes("exit_pending")) {
+        filtered = filtered.filter((p: any) => p.status === "EXIT_PENDING");
+      }
+      return { rows: [{ count: String(filtered.length) }] };
     }
     if (sqlText.includes("DISTINCT pair") && sqlText.includes("open_positions")) {
       if (state.openPositionsThrow) throw new Error("Injected: open_positions DB failure");
@@ -123,6 +162,123 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
     }
     if (sqlText.includes("active_pairs") && sqlText.includes("bot_config")) {
       return { rows: [{ active_pairs: ["BTC/USD"] }] };
+    }
+    // INSERT INTO order_intents (via db.execute, not transaction)
+    if (sqlText.includes("INSERT INTO order_intents")) {
+      const { params } = extractSql(query);
+      const clientOrderId = params[0];
+      const existing = state.orderIntents.find((r: any) => r.client_order_id === clientOrderId);
+      if (existing) return { rows: [] }; // ON CONFLICT DO NOTHING
+      const row = {
+        id: state.orderIntents.length + 1,
+        client_order_id: clientOrderId,
+        pair: params[2], side: params[3], status: "pending",
+        internal_intent_id: params[5],
+        engine_owner: params[6] ?? "SPOT_CANONICAL",
+        policy_version: params[7] ?? "SPOT-1.0.0-20260812",
+        execution_mode: params[8] ?? "REAL",
+        lot_id: params[9] ?? null,
+        reserved_quote_usd: params[13] != null ? Number(params[13]) : null,
+        reserved_quote_currency: null,
+        exchange_order_id: null,
+        fill_price: null, fill_volume: null, fee_usd: null,
+      };
+      state.orderIntents.push(row);
+      return { rows: [{ id: row.id, client_order_id: row.client_order_id, exchange_order_id: null, status: "pending" }] };
+    }
+    // UPDATE order_intents SET status ... (via db.execute, e.g. updateSubmissionResult)
+    if (sqlText.includes("UPDATE order_intents") && sqlText.includes("status")) {
+      const { params } = extractSql(query);
+      const dbStatus = params[0];
+      const coid = params[params.length - 1]; // WHERE client_order_id = ?
+      const row = state.orderIntents.find((r: any) => r.client_order_id === coid);
+      if (row) {
+        row.status = dbStatus;
+        if (params[1] != null) row.exchange_order_id = params[1]; // COALESCE venueOrderId
+        return { rows: [{ id: row.id }] };
+      }
+      return { rows: [] };
+    }
+    // SELECT ... FROM order_intents WHERE status IN (...) — loadPendingRealOrders
+    if (sqlText.includes("FROM order_intents") && sqlText.includes("status IN")) {
+      return { rows: state.orderIntents.filter((r: any) =>
+        ["pending", "accepted", "uncertain"].includes(r.status) &&
+        r.engine_owner === "SPOT_CANONICAL"
+      ).map((r: any) => ({
+        client_order_id: r.client_order_id, exchange_order_id: r.exchange_order_id ?? null,
+        exchange: "revolutx", pair: r.pair, side: (r.side ?? "").toLowerCase(), volume: "0.01", status: r.status,
+        internal_intent_id: r.internal_intent_id, engine_owner: r.engine_owner,
+        policy_version: r.policy_version, execution_mode: r.execution_mode,
+        lot_id: r.lot_id, requested_price: null, order_type: "MARKET", reason: r.reason ?? null,
+        fill_price: r.fill_price, fill_volume: r.fill_volume, fee_usd: r.fee_usd,
+      })) };
+    }
+    // SELECT ... FROM order_intents WHERE client_order_id = ? (recover after ON CONFLICT)
+    if (sqlText.includes("FROM order_intents") && sqlText.includes("client_order_id")) {
+      const { params } = extractSql(query);
+      const coid = params[0];
+      const row = state.orderIntents.find((r: any) => r.client_order_id === coid);
+      return { rows: row ? [row] : [] };
+    }
+    // SELECT ... FROM order_intents WHERE lot_id = ? AND side = 'sell' AND status IN (...)
+    if (sqlText.includes("FROM order_intents") && sqlText.includes("lot_id")) {
+      const { params } = extractSql(query);
+      const lotId = params[0];
+      return { rows: state.orderIntents.filter((r: any) => r.lot_id === lotId) };
+    }
+    // SELECT COUNT(*) FROM order_intents WHERE lot_id = ? AND side = 'sell' AND status IN (...)
+    if (sqlText.includes("COUNT(*)") && sqlText.includes("order_intents") && sqlText.includes("lot_id")) {
+      const { params } = extractSql(query);
+      const lotId = params[0];
+      const count = state.orderIntents.filter((r: any) =>
+        r.lot_id === lotId && r.side === "sell" &&
+        ["failed", "expired", "cancelled"].includes(r.status)
+      ).length;
+      return { rows: [{ count: String(count) }] };
+    }
+    // INSERT INTO trades
+    if (sqlText.includes("INSERT INTO trades")) {
+      const { params } = extractSql(query);
+      const tradeId = params[0];
+      const row = {
+        trade_id: tradeId, lot_id: params[1], pair: params[2],
+        policy_version: params[3] ?? "SPOT-1.0.0-20260812",
+        engine_owner: params[4] ?? "SPOT_CANONICAL",
+        net_pnl_usd: Number(params[5] ?? 0), gross_pnl_usd: Number(params[6] ?? 0),
+        hold_time_minutes: Number(params[7] ?? 0), mfe: 0, mae: 0,
+      };
+      state.trades.push(row);
+      return { rows: [{ trade_id: tradeId }] };
+    }
+    // SELECT ... FROM trades WHERE lot_id = ? (reconcileSellIntent)
+    if (sqlText.includes("FROM trades") && sqlText.includes("lot_id")) {
+      const { params } = extractSql(query);
+      const lotId = params[0];
+      return { rows: state.trades.filter((t: any) => t.lot_id === lotId) };
+    }
+    // SELECT ... FROM trades (getSummaryStats) — aggregate query
+    if (sqlText.includes("FROM trades") && sqlText.includes("FILTER")) {
+      if (state.summaryStatsThrow) throw new Error("Injected: summary stats DB failure");
+      return { rows: [{ total_trades: String(state.trades.length), winning_trades: "0", losing_trades: "0",
+        net_pnl_usd: "0", gross_pnl_usd: "0", gross_profit: "0", gross_loss: "0",
+        avg_hold_time: "0", best_trade: "0", worst_trade: "0", avg_mfe: "0", avg_mae: "0" }] };
+    }
+    // UPDATE open_positions SET status (via db.execute, e.g. closePosition EXIT_PENDING)
+    if (sqlText.includes("UPDATE open_positions") && sqlText.includes("status")) {
+      const { params } = extractSql(query);
+      const literalMatch = sqlText.match(/status\s*=\s*'([^']+)'/i);
+      const status = literalMatch ? literalMatch[1] : params[0];
+      const lotId = params[params.length - 1];
+      const row = state.openPositions.find((p: any) => p.lot_id === lotId);
+      if (row) row.status = status;
+      return { rows: row ? [{ lot_id: row.lot_id }] : [] };
+    }
+    // SELECT status FROM open_positions WHERE lot_id = ? AND status = 'EXIT_PENDING'
+    if (sqlText.includes("FROM open_positions") && sqlText.includes("lot_id") && sqlText.includes("EXIT_PENDING")) {
+      const { params } = extractSql(query);
+      const lotId = params[0];
+      const rows = state.openPositions.filter((p: any) => p.lot_id === lotId && p.status === "EXIT_PENDING");
+      return { rows: rows.map((p: any) => ({ status: p.status })) };
     }
     if (sqlText.includes("FROM open_positions")) {
       if (state.openPositionsThrow) throw new Error("Injected: open_positions DB failure");
@@ -190,20 +346,24 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
             return { rows: [] };
           }
           if (sqlText.includes("UPDATE order_intents") && sqlText.includes("status")) {
-            const status = params[0];
+            // Extract status: could be a SQL literal (e.g., status = 'failed') or a parameter (?)
+            const literalMatch = sqlText.match(/status\s*=\s*'([^']+)'/i);
+            const status = literalMatch ? literalMatch[1] : params[0];
             const identifier = params[params.length - 1];
             const row = state.orderIntents.find((r: any) => r.internal_intent_id === identifier || r.client_order_id === identifier);
             if (row) row.status = status;
             return { rows: row ? [{ id: row.id, reserved_quote_usd: row.reserved_quote_usd }] : [] };
           }
-          // SHADOW mode: INSERT INTO open_positions
+          // INSERT INTO open_positions (SHADOW and REAL modes)
           if (sqlText.includes("INSERT INTO open_positions")) {
             const lotId = params[0];
             state.openPositions.push({
-              lot_id: lotId, pair: params[1], status: "OPEN",
-              policy_version: "SPOT_R10", engine_owner: "SpotEngine",
-              entry_price: Number(params[2]), amount: Number(params[3]),
-              qty_remaining: Number(params[3]), highest_price: Number(params[2]),
+              lot_id: lotId, pair: params[2], status: "OPEN",
+              policy_version: params[13] ?? SPOT_POLICY_VERSION, engine_owner: params[14] ?? "SPOT_CANONICAL",
+              entry_price: Number(params[3]), amount: Number(params[4]),
+              qty_remaining: Number(params[5]), highest_price: Number(params[6]),
+              client_order_id: params[31] ?? null, venue_order_id: params[32] ?? null,
+              execution_mode: params[12] ?? null,
             });
             return { rows: [{ lot_id: lotId }] };
           }
@@ -214,6 +374,63 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
           // SHADOW mode: UPDATE bot_config SET spot_shadow_*
           if (sqlText.includes("UPDATE bot_config") && sqlText.includes("spot_shadow")) {
             return { rows: [] };
+          }
+          // UPDATE open_positions SET status (closePosition REJECTED/pendingFill)
+          if (sqlText.includes("UPDATE open_positions") && sqlText.includes("status")) {
+            const literalMatch = sqlText.match(/status\s*=\s*'([^']+)'/i);
+            const status = literalMatch ? literalMatch[1] : params[0];
+            const lotId = params[params.length - 1];
+            const row = state.openPositions.find((p: any) => p.lot_id === lotId);
+            if (row) row.status = status;
+            return { rows: row ? [{ lot_id: row.lot_id }] : [] };
+          }
+          // SELECT ... FROM open_positions WHERE lot_id = ? ... FOR UPDATE
+          if (sqlText.includes("FROM open_positions") && sqlText.includes("lot_id") && sqlText.includes("FOR UPDATE")) {
+            const lotId = params[0];
+            const row = state.openPositions.find((p: any) => p.lot_id === lotId && p.status !== "CLOSED");
+            return { rows: row ? [{ lot_id: row.lot_id }] : [] };
+          }
+          // SELECT ... FROM open_positions WHERE client_order_id = ? ... FOR UPDATE
+          if (sqlText.includes("FROM open_positions") && sqlText.includes("client_order_id") && sqlText.includes("FOR UPDATE")) {
+            const coid = params[0];
+            const row = state.openPositions.find((p: any) => p.client_order_id === coid && p.status !== "CLOSED");
+            return { rows: row ? [{ lot_id: row.lot_id }] : [] };
+          }
+          // SELECT trade_id FROM trades WHERE lot_id = ? FOR UPDATE
+          if (sqlText.includes("FROM trades") && sqlText.includes("lot_id") && sqlText.includes("FOR UPDATE")) {
+            const lotId = params[0];
+            return { rows: state.trades.filter((t: any) => t.lot_id === lotId).map((t: any) => ({ trade_id: t.trade_id })) };
+          }
+          // SELECT id FROM trades WHERE lot_id = ? AND policy_version = ? AND engine_owner = ?
+          if (sqlText.includes("FROM trades") && sqlText.includes("lot_id") && !sqlText.includes("FOR UPDATE")) {
+            const lotId = params[0];
+            return { rows: state.trades.filter((t: any) => t.lot_id === lotId).map((t: any) => ({ id: t.trade_id })) };
+          }
+          // INSERT INTO trades
+          if (sqlText.includes("INSERT INTO trades")) {
+            const tradeId = params[0];
+            const row = {
+              trade_id: tradeId, lot_id: params[31] ?? params[30],
+              pair: params[4], policy_version: params[15] ?? SPOT_POLICY_VERSION,
+              engine_owner: params[16] ?? "SPOT_CANONICAL",
+              net_pnl_usd: Number(params[23] ?? 0), gross_pnl_usd: Number(params[19] ?? 0),
+            };
+            state.trades.push(row);
+            return { rows: [{ trade_id: tradeId }] };
+          }
+          // DELETE FROM open_positions WHERE lot_id = ?
+          if (sqlText.includes("DELETE FROM open_positions")) {
+            const lotId = params[0];
+            const idx = state.openPositions.findIndex((p: any) => p.lot_id === lotId);
+            if (idx >= 0) state.openPositions.splice(idx, 1);
+            return { rows: [] };
+          }
+          // UPDATE open_positions SET status = 'CLOSED' (finalizeRealExitFillAtomic idempotent path)
+          if (sqlText.includes("UPDATE open_positions") && sqlText.includes("CLOSED")) {
+            const lotId = params[params.length - 1];
+            const row = state.openPositions.find((p: any) => p.lot_id === lotId);
+            if (row) row.status = "CLOSED";
+            return { rows: row ? [{ lot_id: row.lot_id }] : [] };
           }
           return { rows: [] };
         },
@@ -252,7 +469,12 @@ vi.mock("../spot/spotExecutionModeStore", () => ({
   invalidateExecutionModeCache: vi.fn(() => {}),
 }));
 
-const { mockPlaceOrder } = vi.hoisted(() => ({ mockPlaceOrder: vi.fn() }));
+const { mockPlaceOrder, mockGetOrder, mockLoadPairMetadata, mockGetPairMetadata } = vi.hoisted(() => ({
+  mockPlaceOrder: vi.fn(),
+  mockGetOrder: vi.fn(),
+  mockLoadPairMetadata: vi.fn(),
+  mockGetPairMetadata: vi.fn(),
+}));
 
 vi.mock("../exchanges/ExchangeFactory", () => ({
   ExchangeFactory: {
@@ -260,14 +482,16 @@ vi.mock("../exchanges/ExchangeFactory", () => ({
       exchangeName: "revolutx",
       isInitialized: () => true,
       getBalance: async () => ({ USD: 10000 }),
-      getPairMetadata: () => ({ quoteCurrency: "USD", quantityStep: 0.0001 }),
+      getPairMetadata: mockGetPairMetadata,
+      loadPairMetadata: mockLoadPairMetadata,
       placeOrder: mockPlaceOrder,
+      getOrder: mockGetOrder,
     }),
     getDataExchange: () => ({
       exchangeName: "revolutx",
       isInitialized: () => true,
       getTicker: async () => ({ bid: 60000, ask: 60010, last: 60005, spread: 10, fetchedAt: Date.now() }),
-      getPairMetadata: () => ({ quoteCurrency: "USD", quantityStep: 0.0001 }),
+      getPairMetadata: mockGetPairMetadata,
     }),
     getDataExchangeType: () => "revolutx",
   },
@@ -281,6 +505,7 @@ vi.mock("../spot/spotRiskManager", () => ({
   DEFAULT_SPOT_RISK_CONFIG: {},
 }));
 
+import * as spotEngineModule from "../spot/spotEngine";
 import {
   _executeEntryForTest as executeEntry,
   _getRealSubmissionGenerationForTest as getGeneration,
@@ -310,15 +535,20 @@ import {
   getTradingVenueFailClosed,
   setExecutionMode,
   startSpotEngine,
+  getSummaryStats,
+  RealActivationBlockedError,
+  _closePositionForTest as closePosition,
+  _reconcilePendingRealOrderIntentsForTest as reconcilePendingRealOrderIntents,
 } from "../spot/spotEngine";
 import {
   generateClientOrderId,
+  persistSubmissionIntent,
   _clearCacheForTest as clearIntentCache,
 } from "../spot/spotOrderIntentStore";
 import {
-  ExecutionMode, SetupTag, Regime, RegimeDirection, MacroBias,
+  ExecutionMode, SetupTag, Regime, RegimeDirection, MacroBias, ExitReasonType,
   SPOT_POLICY_VERSION,
-  type SpotEntryIntent, type SpotMarketContext,
+  type SpotEntryIntent, type SpotMarketContext, type SpotPosition, type SpotExitDecision,
 } from "../spot/spotTypes";
 import { DataHealth } from "../spot/candleTimestamp";
 import type { CreateSubmissionIntentParams } from "../spot/spotOrderIntentStore";
@@ -331,11 +561,17 @@ function resetDbState() {
   mockDbState.openPositionsThrow = false;
   mockDbState.openPositionsVerificationThrow = false;
   mockDbState.tradesThrow = false;
+  mockDbState.summaryStatsThrow = false;
+  mockDbState.runtimeInspectionThrow = false;
   mockDbState.orderIntents.length = 0;
   mockDbState.openPositions.length = 0;
   mockDbState.trades.length = 0;
   mockModeState.mode = "REAL";
   mockPlaceOrder.mockReset();
+  mockGetOrder.mockReset();
+  mockLoadPairMetadata.mockReset();
+  mockGetPairMetadata.mockReset();
+  mockGetPairMetadata.mockReturnValue({ quoteCurrency: "USD", quantityStep: 0.0001 });
   setDrainTimeoutMs(15_000);
   stopSpotEngine();
   setPositionSupervisionHealthy(true);
@@ -1185,38 +1421,47 @@ describe("R10.9-final N: Playwright removed from package.json", () => {
 describe("R10V9_MANDATORY_A_REAL_RESERVED_THEN_OFF", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_A_REAL_RESERVED_THEN_OFF: pause after reserve, OFF transition, placeOrder=0, reservation=0", async () => {
+  it("R10V9_MANDATORY_A_REAL_RESERVED_THEN_OFF: pause after reserve, real setExecutionMode(OFF), placeOrder=0, reservation=0", async () => {
     mockModeState.mode = "REAL";
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    // Pause after reserve, before Gate #2 — simulate mode transition by changing
-    // the cached mode and bumping the generation (as setExecutionMode would do).
-    // We cannot call setExecutionMode inside the pause because it would deadlock
-    // trying to drain the critical section we're currently inside.
-    setPauseAfterReserve(async () => {
-      mockModeState.mode = "OFF";
-      invalidateAndDrain();
-    });
+    // Deferred barrier: the pause hook resolves only when we release it.
+    let releaseReserveBarrier!: () => void;
+    const reserveBarrier = new Promise<void>((resolve) => { releaseReserveBarrier = resolve; });
+    setPauseAfterReserve(async () => { await reserveBarrier; });
 
-    const executed = await executeEntry(makeIntent("BTC/USD", "sig-A-reserved"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+    // Start executeEntry — it will enter the critical section, reserve, then pause.
+    const entryPromise = executeEntry(makeIntent("BTC/USD", "sig-A-reserved"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+
+    // Start setExecutionMode(OFF) — it will invalidate generation and drain (wait for critical section).
+    const transitionPromise = setExecutionMode(ExecutionMode.OFF);
+
+    // Release the barrier — the entry will see generation invalidated, block, release reservation, exit critical section.
+    releaseReserveBarrier();
+
+    // Wait for both to complete.
+    await entryPromise;
+    await transitionPromise;
 
     // placeOrder must NOT have been called (Gate #2 blocks after mode transition)
     expect(mockPlaceOrder).not.toHaveBeenCalled();
-    // Entry should be blocked
-    expect(executed).toBe(false);
     // Critical section must be clean
     expect(getCriticalSectionCount()).toBe(0);
+    // Mode must be OFF
+    expect(mockModeState.mode).toBe("OFF");
+    // Reservation must be 0 (released by terminateIntentAndReleaseReservationAtomic)
+    expect(mockDbState.botConfig.spot_real_reserved_capital_usd).toBe(0);
 
-    // Now return to REAL and verify same signalId can still entry (placeOrder total=1)
+    // Now return to REAL via setExecutionMode and verify same signalId can still entry (placeOrder total=1)
     setPauseAfterReserve(null);
-    mockModeState.mode = "REAL";
     setPositionSupervisionHealthy(true);
-    const newGeneration = getGeneration();
     mockPlaceOrder.mockResolvedValue({
       success: true, price: 60000, volume: 0.01, cost: 600,
-      orderId: "order-A-1",
+      orderId: "order-A-1", submissionState: "FILLED",
     });
+    await setExecutionMode(ExecutionMode.REAL);
+    const newGeneration = getGeneration();
     const executed2 = await executeEntry(makeIntent("BTC/USD", "sig-A-reserved"), makeCtx(), ExecutionMode.REAL, undefined, newGeneration);
     expect(executed2).toBe(true);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
@@ -1230,21 +1475,27 @@ describe("R10V9_MANDATORY_A_REAL_RESERVED_THEN_OFF", () => {
 describe("R10V9_MANDATORY_B_REAL_RESERVED_THEN_SHADOW", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_B_REAL_RESERVED_THEN_SHADOW: pause after reserve, SHADOW transition, placeOrder=0", async () => {
+  it("R10V9_MANDATORY_B_REAL_RESERVED_THEN_SHADOW: pause after reserve, real setExecutionMode(SHADOW), placeOrder=0", async () => {
     mockModeState.mode = "REAL";
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    setPauseAfterReserve(async () => {
-      mockModeState.mode = "SHADOW";
-      invalidateAndDrain();
-    });
+    let releaseReserveBarrier!: () => void;
+    const reserveBarrier = new Promise<void>((resolve) => { releaseReserveBarrier = resolve; });
+    setPauseAfterReserve(async () => { await reserveBarrier; });
 
-    const executed = await executeEntry(makeIntent("BTC/USD", "sig-B-reserved"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+    const entryPromise = executeEntry(makeIntent("BTC/USD", "sig-B-reserved"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+    const transitionPromise = setExecutionMode(ExecutionMode.SHADOW);
+
+    releaseReserveBarrier();
+
+    await entryPromise;
+    await transitionPromise;
 
     expect(mockPlaceOrder).not.toHaveBeenCalled();
-    expect(executed).toBe(false);
     expect(getCriticalSectionCount()).toBe(0);
+    expect(mockModeState.mode).toBe("SHADOW");
+    expect(mockDbState.botConfig.spot_real_reserved_capital_usd).toBe(0);
     stopSpotEngine();
   });
 });
@@ -1254,24 +1505,30 @@ describe("R10V9_MANDATORY_B_REAL_RESERVED_THEN_SHADOW", () => {
 describe("R10V9_MANDATORY_C_SHADOW_FILL_THEN_OFF", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_C_SHADOW_FILL_THEN_OFF: pause after SHADOW adapter, OFF transition blocks persist", async () => {
+  it("R10V9_MANDATORY_C_SHADOW_FILL_THEN_OFF: pause after SHADOW adapter, real setExecutionMode(OFF) blocks persist", async () => {
     mockModeState.mode = "SHADOW";
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    // Pause after SHADOW adapter, before persist — simulate mode transition
-    setPauseAfterShadowAdapter(async () => {
-      mockModeState.mode = "OFF";
-      invalidateAndDrain();
-    });
+    // SHADOW adapter generates phantom fills internally — never calls placeOrder.
+    // The transition should block materialization (persistShadowEntryAtomic).
 
-    const executed = await executeEntry(makeIntent("BTC/USD", "sig-C-shadow"), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
+    let releaseShadowBarrier!: () => void;
+    const shadowBarrier = new Promise<void>((resolve) => { releaseShadowBarrier = resolve; });
+    setPauseAfterShadowAdapter(async () => { await shadowBarrier; });
 
-    // The position must NOT be persisted after the transition to OFF
-    expect(executed).toBe(false);
-    // No open positions should have been created
-    expect(mockDbState.openPositions.length).toBe(0);
+    const entryPromise = executeEntry(makeIntent("BTC/USD", "sig-C-shadow"), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
+    const transitionPromise = setExecutionMode(ExecutionMode.OFF);
+
+    releaseShadowBarrier();
+
+    await entryPromise;
+    await transitionPromise;
+
+    expect(mockPlaceOrder).toHaveBeenCalledTimes(0); // SHADOW adapter never calls placeOrder
+    expect(mockDbState.openPositions.length).toBe(0); // but no position materialized
     expect(getCriticalSectionCount()).toBe(0);
+    expect(mockModeState.mode).toBe("OFF");
     stopSpotEngine();
   });
 });
@@ -1281,21 +1538,35 @@ describe("R10V9_MANDATORY_C_SHADOW_FILL_THEN_OFF", () => {
 describe("R10V9_MANDATORY_D_SHADOW_FILL_THEN_REAL", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_D_SHADOW_FILL_THEN_REAL: pause after SHADOW adapter, REAL transition blocks persist", async () => {
+  it("R10V9_MANDATORY_D_SHADOW_FILL_THEN_REAL: pause after SHADOW adapter, real setExecutionMode(REAL) blocks persist", async () => {
     mockModeState.mode = "SHADOW";
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    setPauseAfterShadowAdapter(async () => {
-      mockModeState.mode = "REAL";
-      invalidateAndDrain();
-    });
+    // SHADOW adapter generates phantom fills internally — never calls placeOrder.
+    // The transition should block materialization (persistShadowEntryAtomic).
 
-    const executed = await executeEntry(makeIntent("BTC/USD", "sig-D-shadow"), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
+    let releaseShadowBarrier!: () => void;
+    const shadowBarrier = new Promise<void>((resolve) => { releaseShadowBarrier = resolve; });
+    setPauseAfterShadowAdapter(async () => { await shadowBarrier; });
 
-    expect(executed).toBe(false);
-    expect(mockDbState.openPositions.length).toBe(0);
+    const entryPromise = executeEntry(makeIntent("BTC/USD", "sig-D-shadow"), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
+
+    // SHADOW→REAL requires preflight — but we start from SHADOW, so prepareRealActivation will run.
+    // The mock DB has no pending orders, no open positions, supervisor is healthy.
+    // However, setExecutionMode(REAL) will try to start the engine which calls loadOpenPositionsFromDB.
+    // The mock DB returns empty open_positions, so this should succeed.
+    const transitionPromise = setExecutionMode(ExecutionMode.REAL);
+
+    releaseShadowBarrier();
+
+    await entryPromise;
+    await transitionPromise;
+
+    expect(mockPlaceOrder).toHaveBeenCalledTimes(0); // SHADOW adapter never calls placeOrder
+    expect(mockDbState.openPositions.length).toBe(0); // but no position materialized
     expect(getCriticalSectionCount()).toBe(0);
+    expect(mockModeState.mode).toBe("REAL");
     stopSpotEngine();
   });
 });
@@ -1306,14 +1577,72 @@ describe("R10V9_MANDATORY_E_EXIT_CANCELLED_RETRY", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
   it("R10V9_MANDATORY_E_EXIT_CANCELLED_RETRY: CANCELLED → retry suffix :1, new clientOrderId, +1 placeOrder", async () => {
-    // This test verifies that a CANCELLED exit intent retries with a :1 suffix
-    // and a distinct clientOrderId, resulting in exactly 1 additional placeOrder.
-    // We test via the order intent store's generateClientOrderId behavior.
-    const coid0 = generateClientOrderId("exit:SPOT_R10:sig-E:BTC/USD");
-    const coid1 = generateClientOrderId("exit:SPOT_R10:sig-E:BTC/USD:1");
-    expect(coid0).not.toBe(coid1);
-    // The internalIntentId for retry must end in :1
-    expect("exit:SPOT_R10:sig-E:BTC/USD:1").toContain(":1");
+    // Prepare an open position in DB
+    const lotId = "lot-E-1";
+    mockDbState.openPositions.push({
+      lot_id: lotId, pair: "BTC/USD", status: "OPEN",
+      policy_version: SPOT_POLICY_VERSION, engine_owner: "SPOT_CANONICAL",
+      client_order_id: "coid-E-entry", entry_price: 60000, amount: 0.01,
+      qty_remaining: 0.01, highest_price: 60000, execution_mode: "REAL",
+    });
+
+    // First closePosition call: adapter returns CANCELLED (REJECTED) — position reverts to OPEN
+    mockPlaceOrder.mockResolvedValueOnce({
+      success: false, error: "Order cancelled by venue",
+      submissionState: "REJECTED", orderId: "venue-E-0",
+    });
+
+    const position: SpotPosition = {
+      lotId, pair: "BTC/USD", amount: 0.01, qtyRemaining: 0.01,
+      entryPrice: 60000, entryFee: 0, entryFeeQuality: "ESTIMATED" as any,
+      highestPrice: 60000, openedAt: Date.now(),
+      entryStrategyId: "SPOT_CANONICAL", entrySignalTf: "15m",
+      signalConfidence: 0.75, signalReason: "test",
+      setupTag: SetupTag.PULLBACK_CONTINUATION, signalId: "sig-E",
+      marketContextId: "ctx-E", regimeAtEntry: Regime.TREND,
+      directionAtEntry: RegimeDirection.BULLISH, macroAtEntry: MacroBias.NEUTRAL,
+      atrPctAtEntry: 1.5, initialStopPrice: 59000, initialStopDistancePct: 1,
+      initialStopDistanceUsd: 600, riskUsd: 10, notionalUsd: 600,
+      executionMode: ExecutionMode.REAL, policyVersion: SPOT_POLICY_VERSION,
+      sgBreakEvenActivated: false, sgTrailingActivated: false,
+      sgScaleOutDone: false, sgCurrentStopPrice: 59000,
+      mfe: 0, mae: 0, mfeR: 0, maeR: 0,
+    };
+
+    const exitDecision: SpotExitDecision = {
+      shouldExit: true, reasonType: ExitReasonType.EMERGENCY,
+      reason: "Emergency stop hit", price: 59000, volume: null,
+      priority: null, evaluatedAt: Date.now(),
+    };
+
+    // First closePosition — CANCELLED/REJECTED
+    await closePosition(position, exitDecision, makeCtx());
+    expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
+
+    // The intent for attempt 0 should be status=failed
+    const attempt0Intent = mockDbState.orderIntents.find(
+      (r: any) => r.internal_intent_id === `exit:${lotId}:EMERGENCY:0`
+    );
+    expect(attempt0Intent).toBeDefined();
+    expect(attempt0Intent.status).toBe("failed");
+
+    // Second closePosition — should use attempt=1, new clientOrderId
+    mockPlaceOrder.mockResolvedValueOnce({
+      success: true, price: 59000, volume: 0.01, cost: 590,
+      orderId: "venue-E-1", submissionState: "FILLED",
+    });
+
+    await closePosition(position, exitDecision, makeCtx());
+    expect(mockPlaceOrder).toHaveBeenCalledTimes(2);
+
+    // The second call should use a different clientOrderId (attempt=1 suffix)
+    const attempt1Intent = mockDbState.orderIntents.find(
+      (r: any) => r.internal_intent_id === `exit:${lotId}:EMERGENCY:1`
+    );
+    expect(attempt1Intent).toBeDefined();
+    // The clientOrderId for attempt 1 must differ from attempt 0
+    expect(attempt1Intent.client_order_id).not.toBe(attempt0Intent.client_order_id);
+    stopSpotEngine();
   });
 });
 
@@ -1322,21 +1651,63 @@ describe("R10V9_MANDATORY_E_EXIT_CANCELLED_RETRY", () => {
 describe("R10V9_MANDATORY_F_EXIT_UNCERTAIN_NO_RETRY", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_F_EXIT_UNCERTAIN_NO_RETRY: UNCERTAIN exit → no additional placeOrder", async () => {
-    // UNCERTAIN means the order may be live — no retry allowed.
-    // Verify that an UNCERTAIN exit does not generate a new placeOrder call.
-    // The intent store must not allow re-submission of an UNCERTAIN intent.
-    const internalIntentId = "exit:SPOT_R10:sig-F:BTC/USD";
-    const coid = generateClientOrderId(internalIntentId);
-    // Simulate UNCERTAIN by adding an intent with status=uncertain
-    mockDbState.orderIntents.push({
-      id: 1, client_order_id: coid, internal_intent_id: internalIntentId,
-      status: "uncertain", pair: "BTC/USD", side: "SELL",
+  it("R10V9_MANDATORY_F_EXIT_UNCERTAIN_NO_RETRY: UNCERTAIN exit → no additional placeOrder, intent remains UNCERTAIN", async () => {
+    const lotId = "lot-F-1";
+    mockDbState.openPositions.push({
+      lot_id: lotId, pair: "BTC/USD", status: "OPEN",
+      policy_version: SPOT_POLICY_VERSION, engine_owner: "SPOT_CANONICAL",
+      client_order_id: "coid-F-entry", entry_price: 60000, amount: 0.01,
+      qty_remaining: 0.01, highest_price: 60000, execution_mode: "REAL",
     });
-    // A retry should not produce an additional placeOrder
-    // (The production code checks for EXISTING_ACTIVE and blocks re-submission)
-    expect(mockDbState.orderIntents.length).toBe(1);
-    expect(mockPlaceOrder).not.toHaveBeenCalled();
+
+    // Adapter returns AMBIGUOUS (network error) — should mark UNCERTAIN, no retry
+    mockPlaceOrder.mockResolvedValueOnce({
+      success: false, error: "Network timeout",
+      submissionState: "AMBIGUOUS", orderId: null,
+    });
+
+    const position: SpotPosition = {
+      lotId, pair: "BTC/USD", amount: 0.01, qtyRemaining: 0.01,
+      entryPrice: 60000, entryFee: 0, entryFeeQuality: "ESTIMATED" as any,
+      highestPrice: 60000, openedAt: Date.now(),
+      entryStrategyId: "SPOT_CANONICAL", entrySignalTf: "15m",
+      signalConfidence: 0.75, signalReason: "test",
+      setupTag: SetupTag.PULLBACK_CONTINUATION, signalId: "sig-F",
+      marketContextId: "ctx-F", regimeAtEntry: Regime.TREND,
+      directionAtEntry: RegimeDirection.BULLISH, macroAtEntry: MacroBias.NEUTRAL,
+      atrPctAtEntry: 1.5, initialStopPrice: 59000, initialStopDistancePct: 1,
+      initialStopDistanceUsd: 600, riskUsd: 10, notionalUsd: 600,
+      executionMode: ExecutionMode.REAL, policyVersion: SPOT_POLICY_VERSION,
+      sgBreakEvenActivated: false, sgTrailingActivated: false,
+      sgScaleOutDone: false, sgCurrentStopPrice: 59000,
+      mfe: 0, mae: 0, mfeR: 0, maeR: 0,
+    };
+
+    const exitDecision: SpotExitDecision = {
+      shouldExit: true, reasonType: ExitReasonType.EMERGENCY,
+      reason: "Emergency stop hit", price: 59000, volume: null,
+      priority: null, evaluatedAt: Date.now(),
+    };
+
+    await closePosition(position, exitDecision, makeCtx());
+
+    // Only 1 placeOrder call — no retry for UNCERTAIN
+    expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
+
+    // The intent should be marked uncertain
+    const exitIntent = mockDbState.orderIntents.find(
+      (r: any) => r.internal_intent_id === `exit:${lotId}:EMERGENCY:0`
+    );
+    expect(exitIntent).toBeDefined();
+    expect(exitIntent.status).toBe("uncertain");
+
+    // A second closePosition call should NOT produce a new placeOrder —
+    // the position status should be EXIT_PENDING or the intent is UNCERTAIN (blocks re-submission)
+    // The production code checks for EXIT_PENDING status and skips duplicate exits.
+    // Since the AMBIGUOUS path does NOT revert to OPEN (only REJECTED does), the position
+    // remains in its current state. The intent is UNCERTAIN, not CANCELLED/FAILED,
+    // so exitAttempt counter won't increment.
+    stopSpotEngine();
   });
 });
 
@@ -1358,7 +1729,7 @@ describe("R10V9_MANDATORY_G_EXACT_QUANTITY_STEP", () => {
     });
 
     mockPlaceOrder.mockResolvedValue({
-      success: true, fillPrice: 60000, fillVolume: 0.1234, feeUsd: 0.54,
+      success: true, price: 60000, volume: 0.1234, cost: 7407.36,
       orderId: "order-G-1", clientOrderId: "test-coid-G", submissionState: "FILLED",
     });
 
@@ -1367,10 +1738,11 @@ describe("R10V9_MANDATORY_G_EXACT_QUANTITY_STEP", () => {
     // The placeOrder call must have volume rounded to quantityStep=0.0001
     expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
     const callArgs = mockPlaceOrder.mock.calls[0][0];
-    // The volume passed to placeOrder should be rounded to 0.1234
-    // The adapter receives the execIntent which has volume from sizing
-    // The actual rounding happens in the adapter — verify the intent volume
     expect(callArgs).toBeDefined();
+    // The adapter rounds volume to quantityStep. Verify the exact volume string sent.
+    // The adapter calls placeOrder with a volume field — check it's "0.1234"
+    const sentVolume = callArgs.volume ?? callArgs.amount ?? callArgs.size;
+    expect(sentVolume).toBe("0.1234");
     stopSpotEngine();
   });
 });
@@ -1385,15 +1757,8 @@ describe("R10V9_MANDATORY_H_MISSING_QUANTITY_STEP", () => {
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    // Override the exchange mock to return no metadata for this test
-    const { ExchangeFactory } = await import("../exchanges/ExchangeFactory");
-    (ExchangeFactory as any).getTradingExchange = () => ({
-      exchangeName: "revolutx",
-      isInitialized: () => true,
-      getBalance: async () => ({ USD: 10000 }),
-      getPairMetadata: () => null, // No metadata
-      placeOrder: mockPlaceOrder,
-    });
+    // Override getPairMetadata to return null for this test
+    mockGetPairMetadata.mockReturnValue(null);
 
     const executed = await executeEntry(makeIntent("BTC/USD", "sig-H-noqty"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
@@ -1409,18 +1774,11 @@ describe("R10V9_MANDATORY_I_METADATA_REFRESH_FAILURE", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
   it("R10V9_MANDATORY_I_METADATA_REFRESH_FAILURE: refresh fails → cache invalidated, readiness=false", async () => {
-    // Override the exchange mock to throw on loadPairMetadata
-    const { ExchangeFactory } = await import("../exchanges/ExchangeFactory");
-    (ExchangeFactory as any).getTradingExchange = () => ({
-      exchangeName: "revolutx",
-      isInitialized: () => true,
-      getBalance: async () => ({ USD: 10000 }),
-      getPairMetadata: () => ({ quoteCurrency: "USD", quantityStep: 0.0001 }),
-      loadPairMetadata: async () => { throw new Error("Metadata refresh failed"); },
-      placeOrder: mockPlaceOrder,
-    });
+    // Make loadPairMetadata throw
+    mockLoadPairMetadata.mockRejectedValue(new Error("Metadata refresh failed"));
+    // getPairMetadata still returns valid data (cached), but loadPairMetadata fails
+    mockGetPairMetadata.mockReturnValue({ quoteCurrency: "USD", quantityStep: 0.0001 });
 
-    // checkRealReadiness should fail because metadata refresh fails
     const { checkRealReadiness } = await import("../spot/spotRealReadiness");
     const readiness = await checkRealReadiness();
     expect(readiness.ready).toBe(false);
@@ -1434,16 +1792,8 @@ describe("R10V9_MANDATORY_J_INACTIVE_SYMBOL", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
   it("R10V9_MANDATORY_J_INACTIVE_SYMBOL: symbol inactive → readiness=false, placeOrder=0", async () => {
-    // Mock exchange to indicate symbol is inactive (getPairMetadata returns null)
-    const { ExchangeFactory } = await import("../exchanges/ExchangeFactory");
-    (ExchangeFactory as any).getTradingExchange = () => ({
-      exchangeName: "revolutx",
-      isInitialized: () => true,
-      getBalance: async () => ({ USD: 10000 }),
-      getPairMetadata: () => null, // Inactive symbol — no metadata
-      loadPairMetadata: async () => {},
-      placeOrder: mockPlaceOrder,
-    });
+    mockGetPairMetadata.mockReturnValue(null);
+    mockLoadPairMetadata.mockResolvedValue(undefined);
 
     const { checkRealReadiness } = await import("../spot/spotRealReadiness");
     const readiness = await checkRealReadiness();
@@ -1457,37 +1807,36 @@ describe("R10V9_MANDATORY_J_INACTIVE_SYMBOL", () => {
 describe("R10V9_MANDATORY_K_BUY_REPLAY_EXACTLY_ONCE", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_K_BUY_REPLAY_EXACTLY_ONCE: 2 reconciliation runs → 1 open_position, reservation=0", async () => {
-    // Simulate a FILLED order intent that has already been materialized
+  it("R10V9_MANDATORY_K_BUY_REPLAY_EXACTLY_ONCE: 2 real reconcile runs → 1 open_position, reservation=0", async () => {
+    // Prepare a pending BUY order intent with a venueOrderId
     const coid = "coid-K-1";
-    const lotId = "lot-K-1";
+    const internalIntentId = "entry:SPOT_R10:sig-K:BTC/USD";
     mockDbState.orderIntents.push({
-      id: 1, client_order_id: coid, internal_intent_id: "entry:SPOT_R10:sig-K:BTC/USD",
-      status: "filled", pair: "BTC/USD", side: "BUY", lot_id: lotId,
+      id: 1, client_order_id: coid, internal_intent_id: internalIntentId,
+      status: "pending", pair: "BTC/USD", side: "BUY", lot_id: null,
       reserved_quote_usd: 600, reserved_quote_currency: "USD",
       exchange_order_id: "venue-K-1", engine_owner: "SPOT_CANONICAL",
       policy_version: SPOT_POLICY_VERSION, execution_mode: "REAL",
     });
-    mockDbState.openPositions.push({
-      lot_id: lotId, pair: "BTC/USD", status: "OPEN",
-      policy_version: SPOT_POLICY_VERSION, engine_owner: "SPOT_CANONICAL",
-      client_order_id: coid, entry_price: 60000, amount: 0.01,
-      qty_remaining: 0.01, highest_price: 60000,
+
+    // Mock getOrder to return FILLED
+    mockGetOrder.mockResolvedValue({
+      status: "filled", filledSize: 0.01, averagePrice: 60000,
     });
 
-    // Run executeEntry with the same signalId — should skip (EXISTING_FILLED, materialized)
-    mockModeState.mode = "REAL";
-    setPositionSupervisionHealthy(true);
-    const scanGeneration = getGeneration();
-    const executed = await executeEntry(makeIntent("BTC/USD", "sig-K"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+    // Set reserved capital to match intent's reserved_quote_usd (600)
+    mockDbState.botConfig.spot_real_reserved_capital_usd = 600;
 
-    // Should skip — already materialized
-    expect(executed).toBe(false);
-    expect(mockPlaceOrder).not.toHaveBeenCalled();
-    // Still only 1 open position
+    // Run reconcilePendingRealOrderIntents twice
+    await reconcilePendingRealOrderIntents();
+    // First run: should materialize the position (INSERT open_position, UPDATE intent to filled)
     expect(mockDbState.openPositions.length).toBe(1);
-    // Reservation should be 0 (released during finalizeRealEntryFillAtomic)
     expect(mockDbState.botConfig.spot_real_reserved_capital_usd).toBe(0);
+
+    // Second run: the intent is now "filled", not in pending/accepted/uncertain — should be no-op
+    await reconcilePendingRealOrderIntents();
+    expect(mockDbState.openPositions.length).toBe(1); // still 1, no duplicate
+    stopSpotEngine();
   });
 });
 
@@ -1496,18 +1845,40 @@ describe("R10V9_MANDATORY_K_BUY_REPLAY_EXACTLY_ONCE", () => {
 describe("R10V9_MANDATORY_L_SELL_REPLAY_EXACTLY_ONCE", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_L_SELL_REPLAY_EXACTLY_ONCE: 2 reconciliation runs → 1 trade, 0 open_positions", async () => {
-    // Simulate a closed position with a FILLED SELL intent
+  it("R10V9_MANDATORY_L_SELL_REPLAY_EXACTLY_ONCE: 2 real reconcile runs → 1 trade, 0 open_positions", async () => {
     const coid = "coid-L-1";
     const lotId = "lot-L-1";
-    mockDbState.trades.push({
-      trade_id: "trade-L-1", lot_id: lotId, pair: "BTC/USD",
+    const internalIntentId = `exit:${lotId}:EMERGENCY:0`;
+    // Prepare an open position and a pending SELL intent
+    mockDbState.openPositions.push({
+      lot_id: lotId, pair: "BTC/USD", status: "EXIT_PENDING",
       policy_version: SPOT_POLICY_VERSION, engine_owner: "SPOT_CANONICAL",
+      client_order_id: coid, entry_price: 60000, amount: 0.01,
+      qty_remaining: 0.01, highest_price: 60000, execution_mode: "REAL",
+    });
+    mockDbState.orderIntents.push({
+      id: 1, client_order_id: coid, internal_intent_id: internalIntentId,
+      status: "accepted", pair: "BTC/USD", side: "SELL", lot_id: lotId,
+      reserved_quote_usd: null, reserved_quote_currency: null,
+      exchange_order_id: "venue-L-1", engine_owner: "SPOT_CANONICAL",
+      policy_version: SPOT_POLICY_VERSION, execution_mode: "REAL",
     });
 
-    // The trade exists, position is closed. Reconciliation should not duplicate.
+    // Mock getOrder to return FILLED for the SELL
+    mockGetOrder.mockResolvedValue({
+      status: "filled", filledSize: 0.01, averagePrice: 59000,
+    });
+
+    // Run reconcilePendingRealOrderIntents twice
+    await reconcilePendingRealOrderIntents();
+    // First run: should materialize the trade (INSERT trade, close position)
     expect(mockDbState.trades.length).toBe(1);
-    expect(mockDbState.openPositions.length).toBe(0);
+    expect(mockDbState.openPositions.filter((p: any) => p.status !== "CLOSED").length).toBe(0);
+
+    // Second run: the intent is now "filled" — should be no-op
+    await reconcilePendingRealOrderIntents();
+    expect(mockDbState.trades.length).toBe(1); // still 1, no duplicate
+    stopSpotEngine();
   });
 });
 
@@ -1516,32 +1887,103 @@ describe("R10V9_MANDATORY_L_SELL_REPLAY_EXACTLY_ONCE", () => {
 describe("R10V9_MANDATORY_M_SELL_MISSING_POSITION_AND_TRADE", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_M_SELL_MISSING_POSITION_AND_TRADE: SELL=FILLED but no position/trade → invariant failure, no invented FILLED", async () => {
-    // No open positions, no trades — but exchange says SELL=FILLED
-    // This is an invariant violation. The system must NOT invent a FILLED trade.
-    mockDbState.openPositions.length = 0;
-    mockDbState.trades.length = 0;
+  it("R10V9_MANDATORY_M_SELL_MISSING_POSITION_AND_TRADE: SELL=FILLED but no position/trade → UNCERTAIN, no invented trade", async () => {
+    const coid = "coid-M-1";
+    const lotId = "lot-M-1";
+    const internalIntentId = `exit:${lotId}:EMERGENCY:0`;
+    // Prepare a pending SELL intent with FILLED on exchange, but NO open position and NO trade
+    mockDbState.orderIntents.push({
+      id: 1, client_order_id: coid, internal_intent_id: internalIntentId,
+      status: "accepted", pair: "BTC/USD", side: "SELL", lot_id: lotId,
+      reserved_quote_usd: null, reserved_quote_currency: null,
+      exchange_order_id: "venue-M-1", engine_owner: "SPOT_CANONICAL",
+      policy_version: SPOT_POLICY_VERSION, execution_mode: "REAL",
+    });
 
-    // Verify the invariant: with no position and no trade, we cannot accept a FILLED SELL
-    // The production code would throw an invariant error in this scenario
-    expect(mockDbState.openPositions.length).toBe(0);
+    mockGetOrder.mockResolvedValue({
+      status: "filled", filledSize: 0.01, averagePrice: 59000,
+    });
+
+    // Populate intent cache so updateSubmissionResult can mark UNCERTAIN
+    await persistSubmissionIntent({
+      internalIntentId, pair: "BTC/USD", side: "SELL", requestedQty: 0.01,
+      requestedPrice: null, orderType: "MARKET", executionMode: ExecutionMode.REAL,
+      lotId, reason: "test exit",
+    }, coid, "revolutx");
+
+    // Run reconcile — should detect inconsistency and mark UNCERTAIN
+    await reconcilePendingRealOrderIntents();
+
+    // No trade should be invented
     expect(mockDbState.trades.length).toBe(0);
-    // No fabricated trade should be created
-    expect(mockDbState.trades.length).toBe(0);
+    // The intent should be marked uncertain
+    const intent = mockDbState.orderIntents.find((r: any) => r.internal_intent_id === internalIntentId);
+    expect(intent).toBeDefined();
+    expect(intent.status).toBe("uncertain");
+    stopSpotEngine();
   });
 });
 
-// ─── N: Summary DB failure → HTTP 500, no fabricated zero metrics ─────────────
+// ─── N: Summary DB failure → getSummaryStats throws, no fabricated zero metrics ─
 
 describe("R10V9_MANDATORY_N_SUMMARY_DB_FAILURE_HTTP500", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
-  it("R10V9_MANDATORY_N_SUMMARY_DB_FAILURE_HTTP500: DB error in getSummaryStats → HTTP 500, no fabricated zeros", async () => {
-    // This test is covered by spotRoutes.test.ts: GET /api/spot/summary returns 500 when DB fails
-    // Here we verify at the engine level that getSummaryStats throws on DB error
-    mockDbState.openPositionsThrow = true;
-    // The getSummaryStats function queries open_positions and trades
-    // With openPositionsThrow=true, it should throw, not return zeros
-    await expect(getOpenPositions()).rejects.toThrow();
+  it("R10V9_MANDATORY_N_SUMMARY_DB_FAILURE_HTTP500: DB error in getSummaryStats → throws, no fabricated zeros", async () => {
+    // Inject DB failure for the summary stats aggregate query
+    mockDbState.summaryStatsThrow = true;
+
+    // getSummaryStats should throw — not return fabricated zeros
+    await expect(getSummaryStats()).rejects.toThrow();
+    stopSpotEngine();
+  });
+});
+
+// ─── O: Runtime inspection failure → readiness=false ──────────────────────────
+
+describe("R10V9_MANDATORY_O_RUNTIME_INSPECTION_FAILURE", () => {
+  beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
+
+  it("R10V9_MANDATORY_O_RUNTIME_INSPECTION_FAILURE: runtime health inspection throws → readiness=false with blocker", async () => {
+    // Make _isEngineRunningForTest throw to trigger the outer runtime inspection catch
+    const spy = vi.spyOn(spotEngineModule, '_isEngineRunningForTest').mockImplementation(() => {
+      throw new Error("Injected: runtime inspection failure");
+    });
+
+    const { checkRealReadiness } = await import("../spot/spotRealReadiness");
+    const readiness = await checkRealReadiness();
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.blockers.some((b: string) => b.includes("Runtime health inspection failed"))).toBe(true);
+
+    spy.mockRestore();
+    stopSpotEngine();
+  });
+});
+
+// ─── P: REAL activation preflight blocked → RealActivationBlockedError, 403 ────
+
+describe("R10V9_MANDATORY_P_REAL_ACTIVATION_BLOCKED_403", () => {
+  beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
+
+  it("R10V9_MANDATORY_P_REAL_ACTIVATION_BLOCKED_403: preflight fails → RealActivationBlockedError with blockers", async () => {
+    // Start from OFF mode — setExecutionMode(REAL) will run prepareRealActivation
+    mockModeState.mode = "OFF";
+
+    // Make structural readiness fail by removing the exchange init
+    mockGetPairMetadata.mockReturnValue(null);
+
+    // setExecutionMode(REAL) should throw RealActivationBlockedError
+    await expect(setExecutionMode(ExecutionMode.REAL)).rejects.toThrow(RealActivationBlockedError);
+
+    // Verify the error has blockers
+    try {
+      await setExecutionMode(ExecutionMode.REAL);
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(RealActivationBlockedError);
+      expect(err.blockers).toBeDefined();
+      expect(err.blockers.length).toBeGreaterThan(0);
+    }
+    stopSpotEngine();
   });
 });

@@ -30,6 +30,14 @@ const mockSpotEngine = vi.hoisted(() => ({
   getLastScanResults: vi.fn(() => []),
   getLastScanTime: vi.fn(() => 0),
   SPOT_RUNTIME_OWNER: "SPOT_CANONICAL",
+  RealActivationBlockedError: class RealActivationBlockedError extends Error {
+    blockers: string[];
+    constructor(blockers: string[], message?: string) {
+      super(message ?? "REAL activation blocked");
+      this.name = "RealActivationBlockedError";
+      this.blockers = blockers;
+    }
+  },
 }));
 
 vi.mock("../../services/spot/spotEngine", () => ({
@@ -43,6 +51,7 @@ vi.mock("../../services/spot/spotEngine", () => ({
   getLastScanResults: mockSpotEngine.getLastScanResults,
   getLastScanTime: mockSpotEngine.getLastScanTime,
   SPOT_RUNTIME_OWNER: mockSpotEngine.SPOT_RUNTIME_OWNER,
+  RealActivationBlockedError: mockSpotEngine.RealActivationBlockedError,
 }));
 
 vi.mock("../../services/spot/feeModel", () => ({
@@ -168,12 +177,24 @@ describe("SPOT_API_MODE_SHADOW", () => {
 });
 
 describe("SPOT_API_MODE_REAL", () => {
-  it("POST /api/spot/mode with REAL returns 500 when setExecutionMode throws (preflight fail)", async () => {
+  it("POST /api/spot/mode with REAL returns 500 when setExecutionMode throws generic Error", async () => {
     mockSpotEngine.setExecutionMode.mockRejectedValue(new Error("REAL activation preflight failed: no balance"));
     const app = createApp();
     const res = await simulatePost(app, "/api/spot/mode", { mode: "REAL" });
     expect(res.status).toBe(500);
     expect(res.body.error).toBeDefined();
+  });
+
+  it("POST /api/spot/mode with REAL returns 403 when setExecutionMode throws RealActivationBlockedError", async () => {
+    const RealActivationBlockedError = mockSpotEngine.RealActivationBlockedError;
+    mockSpotEngine.setExecutionMode.mockRejectedValue(
+      new RealActivationBlockedError(["no balance", "supervisor unhealthy"], "REAL activation preflight failed")
+    );
+    const app = createApp();
+    const res = await simulatePost(app, "/api/spot/mode", { mode: "REAL" });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("readiness");
+    expect(res.body.blockers).toEqual(["no balance", "supervisor unhealthy"]);
   });
 
   it("POST /api/spot/mode with ambiguous value defaults to OFF (not REAL)", async () => {

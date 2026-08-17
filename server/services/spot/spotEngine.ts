@@ -76,6 +76,17 @@ import {
 export const SPOT_ENGINE_OWNER = _SPOT_ENGINE_OWNER;
 export const SPOT_ORIGIN = "spot_engine" as const;
 
+// ─── Typed Errors ────────────────────────────────────────────────────────────
+
+export class RealActivationBlockedError extends Error {
+  readonly blockers: string[];
+  constructor(blockers: string[], message?: string) {
+    super(message ?? `REAL activation blocked: ${blockers.join("; ")}`);
+    this.name = "RealActivationBlockedError";
+    this.blockers = blockers;
+  }
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 export const SPOT_RUNTIME_OWNER = _SPOT_RUNTIME_OWNER;
@@ -585,27 +596,30 @@ async function doSetExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
   // happened to have just expired.
   const previousMode = await getExecutionMode();
 
-  // R10.9-8: Serialize REAL preflight inside the mode transition lock. This prevents
-  // concurrent POST /api/spot/mode requests from running prepareRealActivation in
-  // parallel with a mode transition — the preflight and the transition are now atomic.
-  if (mode === ExecutionMode.REAL && previousMode !== ExecutionMode.REAL) {
-    const prep = await prepareRealActivation();
-    if (!prep.ready) {
-      throw new Error(`REAL activation preflight failed: ${prep.error ?? "unknown"}`);
-    }
-  }
-
   // R10.9-8: Invalidate the general entry generation FIRST on ANY mode change, so new
   // entry work started under the previous mode gets blocked before we persist the new
   // mode. This closes OFF↔SHADOW, SHADOW↔REAL, and REAL↔OFF races, not only REAL→others.
   // R10.9-10: Drain timeout is DRAIN_TIMEOUT_FAIL_CLOSED — the new mode is still
   // persisted (to avoid leaving DB in the old mode), but the caller receives an error
   // and the entry scanner is not started/restarted.
+  // R10.9-cierre: Generation invalidation must happen BEFORE REAL preflight to prevent
+  // in-flight SHADOW entries from materializing during the preflight window.
   let drainResult: DrainResult;
   if (previousMode !== mode) {
     drainResult = await invalidateEntryGenerationAndDrain();
   } else {
     drainResult = { drained: true, remainingCount: 0 };
+  }
+
+  // R10.9-8: Serialize REAL preflight inside the mode transition lock. This prevents
+  // concurrent POST /api/spot/mode requests from running prepareRealActivation in
+  // parallel with a mode transition — the preflight and the transition are now atomic.
+  if (mode === ExecutionMode.REAL && previousMode !== ExecutionMode.REAL) {
+    const prep = await prepareRealActivation();
+    if (!prep.ready) {
+      const blockers = prep.readiness?.blockers ?? [prep.error ?? "unknown"];
+      throw new RealActivationBlockedError(blockers, `REAL activation preflight failed: ${prep.error ?? "unknown"}`);
+    }
   }
 
   // Persist the target mode BEFORE runtime lifecycle changes, so the authoritative state
@@ -1096,6 +1110,10 @@ export async function _closePositionForTest(
   ctx: SpotMarketContext,
 ): Promise<void> {
   return closePosition(position, exitDecision, ctx);
+}
+
+export async function _reconcilePendingRealOrderIntentsForTest(): Promise<void> {
+  return reconcilePendingRealOrderIntents();
 }
 
 // R6: Exported for testing — verify reentrancy guard

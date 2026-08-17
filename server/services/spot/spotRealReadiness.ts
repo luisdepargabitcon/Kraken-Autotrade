@@ -440,9 +440,10 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     if (checks.realReconcilerCount > 1) {
       blockers.push(`Reconciler count=${checks.realReconcilerCount} — debe ser 0 o 1`);
     }
-  } catch {
+  } catch (error: any) {
     checks.entryScannerCount = 0;
     checks.positionSupervisorCount = 0;
+    blockers.push(`Runtime health inspection failed: ${error?.message ?? "unknown error"}`);
   }
 
   const ready = blockers.length === 0;
