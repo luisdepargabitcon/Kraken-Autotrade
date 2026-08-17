@@ -1426,21 +1426,34 @@ describe("R10V9_MANDATORY_A_REAL_RESERVED_THEN_OFF", () => {
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    // Deferred barrier: the pause hook resolves only when we release it.
-    let releaseReserveBarrier!: () => void;
-    const reserveBarrier = new Promise<void>((resolve) => { releaseReserveBarrier = resolve; });
-    setPauseAfterReserve(async () => { await reserveBarrier; });
+    // Two-deferred barrier: 'reached' proves hook was entered; 'released' lets it proceed.
+    let signalReachedA!: () => void;
+    const reachedA = new Promise<void>(r => { signalReachedA = r; });
+    let releaseA!: () => void;
+    const releasedA = new Promise<void>(r => { releaseA = r; });
+    setPauseAfterReserve(async () => { signalReachedA(); await releasedA; });
 
-    // Start executeEntry — it will enter the critical section, reserve, then pause.
+    // Start executeEntry — enters critical section, reserves capital, then pauses at hook.
     const entryPromise = executeEntry(makeIntent("BTC/USD", "sig-A-reserved"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
-    // Start setExecutionMode(OFF) — it will invalidate generation and drain (wait for critical section).
-    const transitionPromise = setExecutionMode(ExecutionMode.OFF);
+    // OBLIGATORIO: wait until hook is actually reached before initiating the transition.
+    await reachedA;
 
-    // Release the barrier — the entry will see generation invalidated, block, release reservation, exit critical section.
-    releaseReserveBarrier();
+    // Reserve has been applied before the hook fires — capital must be > 0.
+    expect(mockDbState.botConfig.spot_real_reserved_capital_usd).toBeGreaterThan(0);
 
-    // Wait for both to complete.
+    // Start the transition — must stay pending while entry holds the critical section.
+    let transitionCompletedA = false;
+    const transitionPromise = setExecutionMode(ExecutionMode.OFF).finally(() => { transitionCompletedA = true; });
+
+    // Flush microtask queue so entryGeneration++ executes (chain: .catch→.then→getMode→invalidate).
+    // setTimeout(0) fires before drain's setTimeout(10ms), so transitionCompleted is still false.
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(transitionCompletedA).toBe(false);
+
+    // Release the barrier — entry sees invalidated generation, aborts, exits critical section.
+    releaseA();
+
     await entryPromise;
     await transitionPromise;
 
@@ -1480,14 +1493,27 @@ describe("R10V9_MANDATORY_B_REAL_RESERVED_THEN_SHADOW", () => {
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    let releaseReserveBarrier!: () => void;
-    const reserveBarrier = new Promise<void>((resolve) => { releaseReserveBarrier = resolve; });
-    setPauseAfterReserve(async () => { await reserveBarrier; });
+    let signalReachedB!: () => void;
+    const reachedB = new Promise<void>(r => { signalReachedB = r; });
+    let releaseB!: () => void;
+    const releasedB = new Promise<void>(r => { releaseB = r; });
+    setPauseAfterReserve(async () => { signalReachedB(); await releasedB; });
 
     const entryPromise = executeEntry(makeIntent("BTC/USD", "sig-B-reserved"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
-    const transitionPromise = setExecutionMode(ExecutionMode.SHADOW);
 
-    releaseReserveBarrier();
+    // OBLIGATORIO: esperar que el hook sea alcanzado antes de iniciar la transición.
+    await reachedB;
+
+    // Reserve aplicado — capital > 0.
+    expect(mockDbState.botConfig.spot_real_reserved_capital_usd).toBeGreaterThan(0);
+
+    let transitionCompletedB = false;
+    const transitionPromise = setExecutionMode(ExecutionMode.SHADOW).finally(() => { transitionCompletedB = true; });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(transitionCompletedB).toBe(false);
+
+    releaseB();
 
     await entryPromise;
     await transitionPromise;
@@ -1510,17 +1536,26 @@ describe("R10V9_MANDATORY_C_SHADOW_FILL_THEN_OFF", () => {
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    // SHADOW adapter generates phantom fills internally — never calls placeOrder.
-    // The transition should block materialization (persistShadowEntryAtomic).
+    // Hook fires AFTER the phantom fill (SHADOW adapter) and BEFORE persistShadowEntryAtomic.
 
-    let releaseShadowBarrier!: () => void;
-    const shadowBarrier = new Promise<void>((resolve) => { releaseShadowBarrier = resolve; });
-    setPauseAfterShadowAdapter(async () => { await shadowBarrier; });
+    let signalReachedC!: () => void;
+    const reachedC = new Promise<void>(r => { signalReachedC = r; });
+    let releaseC!: () => void;
+    const releasedC = new Promise<void>(r => { releaseC = r; });
+    setPauseAfterShadowAdapter(async () => { signalReachedC(); await releasedC; });
 
     const entryPromise = executeEntry(makeIntent("BTC/USD", "sig-C-shadow"), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
-    const transitionPromise = setExecutionMode(ExecutionMode.OFF);
 
-    releaseShadowBarrier();
+    // OBLIGATORIO: esperar que el hook sea alcanzado (post phantom fill, pre persist).
+    await reachedC;
+
+    let transitionCompletedC = false;
+    const transitionPromise = setExecutionMode(ExecutionMode.OFF).finally(() => { transitionCompletedC = true; });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(transitionCompletedC).toBe(false);
+
+    releaseC();
 
     await entryPromise;
     await transitionPromise;
@@ -1543,22 +1578,26 @@ describe("R10V9_MANDATORY_D_SHADOW_FILL_THEN_REAL", () => {
     setPositionSupervisionHealthy(true);
     const scanGeneration = getGeneration();
 
-    // SHADOW adapter generates phantom fills internally — never calls placeOrder.
-    // The transition should block materialization (persistShadowEntryAtomic).
+    // Hook fires AFTER the phantom fill (SHADOW adapter) and BEFORE persistShadowEntryAtomic.
 
-    let releaseShadowBarrier!: () => void;
-    const shadowBarrier = new Promise<void>((resolve) => { releaseShadowBarrier = resolve; });
-    setPauseAfterShadowAdapter(async () => { await shadowBarrier; });
+    let signalReachedD!: () => void;
+    const reachedD = new Promise<void>(r => { signalReachedD = r; });
+    let releaseD!: () => void;
+    const releasedD = new Promise<void>(r => { releaseD = r; });
+    setPauseAfterShadowAdapter(async () => { signalReachedD(); await releasedD; });
 
     const entryPromise = executeEntry(makeIntent("BTC/USD", "sig-D-shadow"), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
 
-    // SHADOW→REAL requires preflight — but we start from SHADOW, so prepareRealActivation will run.
-    // The mock DB has no pending orders, no open positions, supervisor is healthy.
-    // However, setExecutionMode(REAL) will try to start the engine which calls loadOpenPositionsFromDB.
-    // The mock DB returns empty open_positions, so this should succeed.
-    const transitionPromise = setExecutionMode(ExecutionMode.REAL);
+    // OBLIGATORIO: esperar que el hook sea alcanzado (post phantom fill, pre persist).
+    await reachedD;
 
-    releaseShadowBarrier();
+    let transitionCompletedD = false;
+    const transitionPromise = setExecutionMode(ExecutionMode.REAL).finally(() => { transitionCompletedD = true; });
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(transitionCompletedD).toBe(false);
+
+    releaseD();
 
     await entryPromise;
     await transitionPromise;
@@ -1701,12 +1740,19 @@ describe("R10V9_MANDATORY_F_EXIT_UNCERTAIN_NO_RETRY", () => {
     expect(exitIntent).toBeDefined();
     expect(exitIntent.status).toBe("uncertain");
 
-    // A second closePosition call should NOT produce a new placeOrder —
-    // the position status should be EXIT_PENDING or the intent is UNCERTAIN (blocks re-submission)
-    // The production code checks for EXIT_PENDING status and skips duplicate exits.
-    // Since the AMBIGUOUS path does NOT revert to OPEN (only REJECTED does), the position
-    // remains in its current state. The intent is UNCERTAIN, not CANCELLED/FAILED,
-    // so exitAttempt counter won't increment.
+    // OBLIGATORIO: llamar realmente a closePosition una segunda vez.
+    // La posición sigue en EXIT_PENDING → producción detecta duplicado y NO llama placeOrder.
+    await closePosition(position, exitDecision, makeCtx());
+
+    // placeOrder total SIGUE siendo 1 — no se generó nueva orden para el intent UNCERTAIN.
+    expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
+
+    // No se creó nuevo internalIntentId — el intent original permanece UNCERTAIN.
+    const intentAfterSecond = mockDbState.orderIntents.find(
+      (r: any) => r.internal_intent_id === `exit:${lotId}:EMERGENCY:0`
+    );
+    expect(intentAfterSecond).toBeDefined();
+    expect(intentAfterSecond.status).toBe("uncertain");
     stopSpotEngine();
   });
 });
@@ -1774,11 +1820,31 @@ describe("R10V9_MANDATORY_I_METADATA_REFRESH_FAILURE", () => {
   beforeEach(() => { resetDbState(); vi.clearAllMocks(); setPauseAfterReserve(null); setPauseAfterShadowAdapter(null); });
 
   it("R10V9_MANDATORY_I_METADATA_REFRESH_FAILURE: refresh fails → cache invalidated, readiness=false", async () => {
-    // Make loadPairMetadata throw
-    mockLoadPairMetadata.mockRejectedValue(new Error("Metadata refresh failed"));
-    // getPairMetadata still returns valid data (cached), but loadPairMetadata fails
-    mockGetPairMetadata.mockReturnValue({ quoteCurrency: "USD", quantityStep: 0.0001 });
+    // Use a real Map as the pair metadata cache — ties getPairMetadata and loadPairMetadata
+    // together so cache invalidation is actually exercised, not bypassed by independent mocks.
+    const pairMetadataCache = new Map<string, any>();
 
+    // 1. Seed BTC/USD metadata (simulates post-initial-load state).
+    pairMetadataCache.set("BTC/USD", { quoteCurrency: "USD", quantityStep: 0.0001 });
+
+    // Wire mock functions to the shared cache.
+    mockGetPairMetadata.mockImplementation((pair: string) => pairMetadataCache.get(pair) ?? null);
+    mockLoadPairMetadata.mockImplementation(async (pairs: string[]) => {
+      // Production RevolutX clears cache entries before refresh; on failure they stay null.
+      for (const pair of (pairs as string[])) { pairMetadataCache.delete(pair); }
+      throw new Error("Metadata refresh failed — exchange unreachable");
+    });
+
+    // 2. Cache populated before refresh.
+    expect(mockGetPairMetadata("BTC/USD")).not.toBeNull();
+
+    // 3-4. Execute loadPairMetadata — simulates scheduled refresh failure.
+    await expect(mockLoadPairMetadata(["BTC/USD"])).rejects.toThrow();
+
+    // 5. Cache is now empty — invalidated by the failed refresh.
+    expect(mockGetPairMetadata("BTC/USD")).toBeNull();
+
+    // 6-7. checkRealReadiness sees missing metadata → ready=false.
     const { checkRealReadiness } = await import("../spot/spotRealReadiness");
     const readiness = await checkRealReadiness();
     expect(readiness.ready).toBe(false);
@@ -1933,8 +1999,37 @@ describe("R10V9_MANDATORY_N_SUMMARY_DB_FAILURE_HTTP500", () => {
     // Inject DB failure for the summary stats aggregate query
     mockDbState.summaryStatsThrow = true;
 
-    // getSummaryStats should throw — not return fabricated zeros
-    await expect(getSummaryStats()).rejects.toThrow();
+    // Create minimal Express app wiring the REAL production getSummaryStats (mocked DB).
+    const expressLib = (await import("express")).default;
+    const appN = expressLib();
+    appN.use(expressLib.json());
+    appN.get("/api/spot/summary", async (_req: any, res: any) => {
+      try {
+        const stats = await getSummaryStats();
+        res.json(stats);
+      } catch {
+        res.status(500).json({ error: "Failed to get spot summary stats" });
+      }
+    });
+
+    // Fire actual HTTP GET /api/spot/summary via node:http.
+    const httpMod = await import("node:http");
+    const result = await new Promise<{ status: number; body: any }>((resolve) => {
+      const server = httpMod.createServer(appN as any);
+      server.listen(0, () => {
+        const port = (server.address() as any).port;
+        httpMod.get(`http://localhost:${port}/api/spot/summary`, (res: any) => {
+          let data = "";
+          res.on("data", (c: string) => { data += c; });
+          res.on("end", () => { server.close(); resolve({ status: res.statusCode, body: JSON.parse(data) }); });
+        });
+      });
+    });
+
+    // HTTP 500 — and no fabricated zero metrics in the response body.
+    expect(result.status).toBe(500);
+    expect((result.body as any).totalTrades).toBeUndefined();
+    expect((result.body as any).netPnlUsd).toBeUndefined();
     stopSpotEngine();
   });
 });
