@@ -34,8 +34,6 @@ import {
   getLastScanResults,
   getLastScanTime,
   SPOT_RUNTIME_OWNER,
-  startSpotEngine,
-  stopSpotEngine,
 } from "../services/spot/spotEngine";
 import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
@@ -273,37 +271,18 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
         return;
       }
 
+      // R10.9-cierre: Single authority — setExecutionMode handles the ENTIRE transition:
+      // previous mode, REAL preflight, generation invalidate, drain, persist, runtime
+      // lifecycle (start/stop engine), first supervisor pass, and scanner enablement.
+      // The route does NOT call startSpotEngine/stopSpotEngine.
       const previousMode = await getExecutionMode();
+      const resultMode = await setExecutionMode(resolved);
 
-      // B05: Lifecycle management with atomic revert
-      // R7: Ownership is ALWAYS SPOT_CANONICAL — mode transitions only affect entry behavior.
-      // R10: REAL mode transitions — same lifecycle as SHADOW (engine starts).
-      if ((resolved === ExecutionMode.SHADOW || resolved === ExecutionMode.REAL) && previousMode !== resolved) {
-        // OFF → SHADOW/REAL: persist mode, then start engine (scan + supervisor), revert on failure
-        await setExecutionMode(resolved);
-        const started = await startSpotEngine();
-        if (!started) {
-          // Revert to previous mode
-          await setExecutionMode(previousMode);
-          res.status(500).json({
-            error: "Failed to start SPOT engine",
-            previousMode,
-            currentMode: previousMode,
-            realActivationAllowed: REAL_ACTIVATION_ALLOWED,
-          });
-          return;
-        }
-      } else if (resolved === ExecutionMode.OFF && previousMode !== ExecutionMode.OFF) {
-        // R7: SHADOW → OFF: persist mode (stops entry scanning, keeps supervisor if positions exist)
-        // Legacy TradingEngine does NOT re-acquire entry ownership — SPOT_CANONICAL remains owner.
-        await setExecutionMode(resolved);
-      } else {
-        await setExecutionMode(resolved);
-      }
-
+      // REAL readiness not satisfied → 403 with blockers (typed error)
+      // DRAIN_TIMEOUT or engine start failure → 500 (thrown by setExecutionMode)
       res.json({
         previousMode,
-        currentMode: resolved,
+        currentMode: resultMode,
         realActivationAllowed: REAL_ACTIVATION_ALLOWED,
       });
     } catch (err: any) {

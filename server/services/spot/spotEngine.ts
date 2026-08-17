@@ -122,6 +122,11 @@ function exitEntryCriticalSection(): void {
   entryCriticalSectionCount = Math.max(0, entryCriticalSectionCount - 1);
 }
 
+// R10.9-cierre: Test-only pause hooks — no-op in production.
+// Allow tests to pause execution at critical points to test mode-transition races.
+let _testPauseAfterReserve: (() => Promise<void>) | null = null;
+let _testPauseAfterShadowAdapter: (() => Promise<void>) | null = null;
+
 /** R10.9-10: Explicit drain outcome — a timeout must never be treated as success. */
 interface DrainResult {
   drained: boolean;
@@ -671,6 +676,33 @@ async function doSetExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
     );
   }
 
+  // R10.9-cierre: Single authority — lifecycle management inside the mutex.
+  // The route no longer calls startSpotEngine/stopSpotEngine separately.
+  // Same-mode retry (e.g. after drain timeout left runtime stopped) recovers here.
+  if (mode === ExecutionMode.OFF) {
+    // OFF: stop scanner, keep supervisor if positions exist
+    if (scanIntervalId) {
+      clearInterval(scanIntervalId);
+      scanIntervalId = null;
+    }
+    entryScanningEnabled = false;
+    engineRunning = false;
+    // Supervisor stays if positions exist (already handled above in the OFF branch)
+  } else {
+    // SHADOW or REAL: ensure runtime is running
+    // If same-mode retry after drain timeout, engine may be stopped — restart it
+    if (!engineRunning || !scanIntervalId) {
+      const started = await startSpotEngine();
+      if (!started) {
+        // Revert to previous mode — engine failed to start
+        await saveExecutionMode(previousMode);
+        throw new Error(
+          `Failed to start SPOT engine for mode ${mode}. Reverted to ${previousMode}.`
+        );
+      }
+    }
+  }
+
   return mode;
 }
 
@@ -1098,6 +1130,15 @@ export function _getPositionSupervisionFailureReasonForTest(): string | null {
   return positionSupervisionFailureReason;
 }
 
+// R10.9-cierre: Test-only pause hooks — no-op in production
+export function _setPauseAfterReserveForTest(hook: (() => Promise<void>) | null): void {
+  _testPauseAfterReserve = hook;
+}
+
+export function _setPauseAfterShadowAdapterForTest(hook: (() => Promise<void>) | null): void {
+  _testPauseAfterShadowAdapter = hook;
+}
+
 // R7: Exported for testing — engine state inspection
 export function _isEngineRunningForTest(): boolean {
   return engineRunning;
@@ -1391,19 +1432,28 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   // R10.9-5: Position supervisor health gate — a new REAL BUY must never proceed while
   // the supervisor cannot demonstrate it correctly knows the state of open positions.
   // SELL protections, the reconciler, and SHADOW entries are NOT affected.
-  if (mode === ExecutionMode.REAL && !positionSupervisionHealthy) {
-    console.error(`[SpotEngine] R10.9-5: REAL BUY BLOCKED for ${intent.pair} — position supervisor unhealthy: ${positionSupervisionFailureReason}`);
-    logActivity({
-      pair: intent.pair,
-      category: "SYSTEM",
-      severity: "CRITICAL",
-      title: "REAL BUY bloqueada — supervisor de posiciones no saludable",
-      explanation: `El position supervisor no pudo demostrar el estado de las posiciones abiertas en su último ciclo. NO se abren nuevas posiciones REAL hasta recovery. Razón: ${positionSupervisionFailureReason}`,
-      decision: "BLOCK",
-      executionMode: mode,
-      reasonCode: "SUPERVISOR_UNHEALTHY_BLOCKS_REAL_BUY",
-    });
-    return false;
+  // R10.9-cierre: Use production getPositionSupervisionHealth() which includes freshness.
+  // A supervisor whose last successful cycle is older than SUPERVISOR_STALE_MS is stale
+  // and must block REAL BUY — the engine cannot trust it knows current exposure.
+  if (mode === ExecutionMode.REAL) {
+    const supervision = getPositionSupervisionHealth();
+    if (!supervision.healthy) {
+      const reason = supervision.stale
+        ? `supervisor stale (last success: ${supervision.lastSuccessAt ?? 'never'})`
+        : `supervisor unhealthy: ${supervision.failureReason ?? 'unknown'}`;
+      console.error(`[SpotEngine] R10.9-5: REAL BUY BLOCKED for ${intent.pair} — ${reason}`);
+      logActivity({
+        pair: intent.pair,
+        category: "SYSTEM",
+        severity: "CRITICAL",
+        title: "REAL BUY bloqueada — supervisor de posiciones no saludable",
+        explanation: `El position supervisor no pudo demostrar el estado de las posiciones abiertas en su último ciclo. NO se abren nuevas posiciones REAL hasta recovery. Razón: ${reason}`,
+        decision: "BLOCK",
+        executionMode: mode,
+        reasonCode: "SUPERVISOR_UNHEALTHY_BLOCKS_REAL_BUY",
+      });
+      return false;
+    }
   }
 
   // Get available capital — R10.7-8: mandatory pair, no first-active-pair fallback
@@ -1677,6 +1727,11 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         console.log(`[SpotEngine] Entry REARMED from PRE_SUBMISSION_CANCELLED: ${internalIntentId} clientOrderId=${clientOrderId}`);
       }
 
+      // R10.9-cierre: Test pause hook — after reserve, before Gate #2
+      if (_testPauseAfterReserve) {
+        await _testPauseAfterReserve();
+      }
+
       // R10.9-8: Gate check #2 — re-verify IMMEDIATELY before placeOrder. The persist+reserve
       // step above may have taken time; the mode may have transitioned away in the interim.
       if (!isEntryGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.REAL) {
@@ -1905,6 +1960,27 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
 
     // R4: Atomic entry — INSERT position + UPDATE ledger in ONE transaction
     if (mode === ExecutionMode.SHADOW) {
+      // R10.9-cierre: Test pause hook — after SHADOW adapter, before persist
+      if (_testPauseAfterShadowAdapter) {
+        await _testPauseAfterShadowAdapter();
+      }
+      // R10.9-cierre: Gate check #3 — re-verify mode is still SHADOW after the adapter
+      // completed. The adapter call may have taken time; the mode may have transitioned
+      // away. A shadow fill must NOT be materialized under a different mode.
+      if (!isEntryGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.SHADOW) {
+        console.log(`[SpotEngine] R10.9-cierre: SHADOW entry BLOCKED — mode transitioned away after adapter for ${intent.pair}`);
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "WARNING",
+          title: "Entrada bloqueada — transición de modo SHADOW (después de adapter)",
+          explanation: `El modo cambió fuera de SHADOW entre el adapter y la persistencia. NO se materializa posición.`,
+          decision: "BLOCK",
+          executionMode: mode,
+          reasonCode: "SHADOW_MODE_TRANSITION_RACE_BLOCKED_POST_ADAPTER",
+        });
+        return false;
+      }
       try {
         const newLedger = await persistShadowEntryAtomic(position, filledNotionalUsd, result.feeUsd ?? 0);
         // Sync in-memory cache only after successful COMMIT

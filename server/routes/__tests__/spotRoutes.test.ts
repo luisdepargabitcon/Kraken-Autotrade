@@ -1,25 +1,77 @@
 /**
- * SPOT Routes — Unit Tests (FASE 16)
+ * SPOT Routes — Unit Tests
  *
- * Tests the API endpoints using http.createServer (no supertest dependency).
- * Required by PLAN:
- *   SPOT_API_STATUS
- *   SPOT_API_MODE_OFF
- *   SPOT_API_MODE_SHADOW
- *   SPOT_API_MODE_REAL_BLOCKED
- *   SPOT_API_INTENTS
- *   SPOT_API_AUDIT
+ * R10.9-cierre: All tests use explicit mocks — NO [200,500] tolerance.
+ * DB-dependent endpoints are mocked to test both SUCCESS and FAIL-CLOSED paths.
+ * No dependency on local PostgreSQL.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import express, { Express } from "express";
 import http from "http";
-import { registerSpotRoutes, getSpotExecutionMode, getSpotIntentStore, getSpotAuditTracker } from "../spot.routes";
 import { ExecutionMode } from "../../services/spot/spotTypes";
+
+// ─── Mocks ─────────────────────────────────────────────────────────────────
+
+const mockSpotEngine = vi.hoisted(() => ({
+  getExecutionMode: vi.fn(async () => ExecutionMode.OFF),
+  setExecutionMode: vi.fn(async (mode: ExecutionMode) => mode),
+  getIntentStore: vi.fn(() => ({ getAll: () => [] })),
+  getAuditTracker: vi.fn(() => ({
+    getAll: () => [],
+    getMetrics: vi.fn(() => null),
+    getAggregate: vi.fn(() => ({ positionCount: 0, closedCount: 0, aggregate: {} })),
+  })),
+  getOpenPositions: vi.fn(async () => []),
+  getClosedTrades: vi.fn(async () => []),
+  getSummaryStats: vi.fn(async () => ({
+    totalTrades: 0, netPnlUsd: 0, winRate: 0, totalFeesUsd: 0,
+  })),
+  getLastScanResults: vi.fn(() => []),
+  getLastScanTime: vi.fn(() => 0),
+  SPOT_RUNTIME_OWNER: "SPOT_CANONICAL",
+}));
+
+vi.mock("../../services/spot/spotEngine", () => ({
+  getExecutionMode: mockSpotEngine.getExecutionMode,
+  setExecutionMode: mockSpotEngine.setExecutionMode,
+  getIntentStore: mockSpotEngine.getIntentStore,
+  getAuditTracker: mockSpotEngine.getAuditTracker,
+  getOpenPositions: mockSpotEngine.getOpenPositions,
+  getClosedTrades: mockSpotEngine.getClosedTrades,
+  getSummaryStats: mockSpotEngine.getSummaryStats,
+  getLastScanResults: mockSpotEngine.getLastScanResults,
+  getLastScanTime: mockSpotEngine.getLastScanTime,
+  SPOT_RUNTIME_OWNER: mockSpotEngine.SPOT_RUNTIME_OWNER,
+}));
 
 vi.mock("../../services/spot/feeModel", () => ({
   getTradingFeeModel: vi.fn(() => ({ exchange: "revolutx", takerFeePct: 0.09, makerFeePct: 0.00, quality: "REAL" })),
 }));
+
+vi.mock("../../services/spot/spotExecutionModeStore", () => ({
+  getCachedExecutionMode: vi.fn(() => ExecutionMode.OFF),
+}));
+
+vi.mock("../../services/spot/spotMarketContext", () => ({
+  buildSpotMarketContext: vi.fn(async () => ({ regimeContext: { regime: "NEUTRAL", direction: "FLAT", macroBias: "NEUTRAL", atrPct: 1.5 } })),
+}));
+
+vi.mock("../../services/spot/spotRealReadiness", () => ({
+  checkRealReadiness: vi.fn(async () => ({ ready: false, blockers: ["test"], warnings: [], checks: {} })),
+}));
+
+vi.mock("../../services/spot/spotActivityLogger", () => ({
+  getActivityEvents: vi.fn(() => []),
+  getActivityEventsFiltered: vi.fn(() => []),
+  getActivityEventsFromDb: vi.fn(async () => []),
+  humanizeSeverity: vi.fn((s: string) => s),
+  humanizeCategory: vi.fn((c: string) => c),
+  formatTimeAgo: vi.fn(() => "just now"),
+}));
+
+// Import after mocks
+import { registerSpotRoutes, getSpotExecutionMode, getSpotIntentStore, getSpotAuditTracker } from "../spot.routes";
 
 function createApp(): Express {
   const app = express();
@@ -71,6 +123,17 @@ async function simulatePost(app: Express, path: string, body: any): Promise<{ st
   });
 }
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockSpotEngine.getExecutionMode.mockResolvedValue(ExecutionMode.OFF);
+  mockSpotEngine.setExecutionMode.mockResolvedValue(ExecutionMode.OFF);
+  mockSpotEngine.getOpenPositions.mockResolvedValue([]);
+  mockSpotEngine.getClosedTrades.mockResolvedValue([]);
+  mockSpotEngine.getSummaryStats.mockResolvedValue({
+    totalTrades: 0, netPnlUsd: 0, winRate: 0, totalFeesUsd: 0,
+  });
+});
+
 describe("SPOT_API_STATUS", () => {
   it("GET /api/spot/status returns execution mode and fee model", async () => {
     const app = createApp();
@@ -85,36 +148,30 @@ describe("SPOT_API_STATUS", () => {
 });
 
 describe("SPOT_API_MODE_OFF", () => {
-  it("POST /api/spot/mode with OFF returns response", async () => {
+  it("POST /api/spot/mode with OFF returns 200 with currentMode=OFF", async () => {
+    mockSpotEngine.setExecutionMode.mockResolvedValue(ExecutionMode.OFF);
     const app = createApp();
     const res = await simulatePost(app, "/api/spot/mode", { mode: "OFF" });
-    // May return 200 or 500 depending on DB availability in test env
-    expect([200, 500]).toContain(res.status);
-    if (res.status === 200) {
-      expect(res.body.currentMode).toBe("OFF");
-    }
+    expect(res.status).toBe(200);
+    expect(res.body.currentMode).toBe("OFF");
   });
 });
 
 describe("SPOT_API_MODE_SHADOW", () => {
-  it("POST /api/spot/mode with SHADOW returns response", async () => {
+  it("POST /api/spot/mode with SHADOW returns 200 with currentMode=SHADOW", async () => {
+    mockSpotEngine.setExecutionMode.mockResolvedValue(ExecutionMode.SHADOW);
     const app = createApp();
     const res = await simulatePost(app, "/api/spot/mode", { mode: "SHADOW" });
-    // May return 200 or 500 depending on DB availability in test env
-    expect([200, 500]).toContain(res.status);
-    if (res.status === 200) {
-      expect(res.body.currentMode).toBe("SHADOW");
-    }
+    expect(res.status).toBe(200);
+    expect(res.body.currentMode).toBe("SHADOW");
   });
 });
 
 describe("SPOT_API_MODE_REAL", () => {
-  it("POST /api/spot/mode with REAL returns 500 (preflight checks fail inside setExecutionMode in test env)", async () => {
+  it("POST /api/spot/mode with REAL returns 500 when setExecutionMode throws (preflight fail)", async () => {
+    mockSpotEngine.setExecutionMode.mockRejectedValue(new Error("REAL activation preflight failed: no balance"));
     const app = createApp();
     const res = await simulatePost(app, "/api/spot/mode", { mode: "REAL" });
-    // R10.9-final: REAL preflight is now inside setExecutionMode's lock, not in the route.
-    // Preflight failures throw and are caught by the route's catch block → 500.
-    // 403 is only for REAL_ACTIVATION_ALLOWED=false.
     expect(res.status).toBe(500);
     expect(res.body.error).toBeDefined();
   });
@@ -122,7 +179,6 @@ describe("SPOT_API_MODE_REAL", () => {
   it("POST /api/spot/mode with ambiguous value defaults to OFF (not REAL)", async () => {
     const app = createApp();
     const res = await simulatePost(app, "/api/spot/mode", { mode: "DRY_RUN" });
-    // R10.4: Strict validation rejects unknown modes with 400
     expect(res.status).toBe(400);
     expect(res.body.error).toBeDefined();
   });
@@ -156,15 +212,21 @@ describe("SPOT_API_AUDIT", () => {
 });
 
 describe("SPOT_API_POSITIONS", () => {
-  it("GET /api/spot/positions returns empty array", async () => {
+  it("GET /api/spot/positions returns 200 with empty array when DB OK", async () => {
+    mockSpotEngine.getOpenPositions.mockResolvedValue([]);
     const app = createApp();
     const res = await simulateGet(app, "/api/spot/positions");
-    // May return 200 or 500 depending on DB availability in test env
-    expect([200, 500]).toContain(res.status);
-    if (res.status === 200) {
-      expect(res.body.positions).toEqual([]);
-      expect(res.body.count).toBe(0);
-    }
+    expect(res.status).toBe(200);
+    expect(res.body.positions).toEqual([]);
+    expect(res.body.count).toBe(0);
+  });
+
+  it("GET /api/spot/positions returns 500 when DB fails", async () => {
+    mockSpotEngine.getOpenPositions.mockRejectedValue(new Error("DB connection refused"));
+    const app = createApp();
+    const res = await simulateGet(app, "/api/spot/positions");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBeDefined();
   });
 });
 
@@ -174,6 +236,7 @@ describe("SPOT_API_HISTORY", () => {
     const res = await simulateGet(app, "/api/spot/history");
     expect(res.status).toBe(200);
     expect(res.body.trades).toEqual([]);
+    expect(res.body.count).toBe(0);
   });
 
   it("GET /api/spot/history?limit=50 respects limit", async () => {
@@ -185,25 +248,33 @@ describe("SPOT_API_HISTORY", () => {
 });
 
 describe("SPOT_API_SUMMARY", () => {
-  it("GET /api/spot/summary returns initial state", async () => {
+  it("GET /api/spot/summary returns 200 with initial state when DB OK", async () => {
+    mockSpotEngine.getSummaryStats.mockResolvedValue({
+      totalTrades: 0, netPnlUsd: 0, winRate: 0, totalFeesUsd: 0,
+    });
     const app = createApp();
     const res = await simulateGet(app, "/api/spot/summary");
-    // May return 200 or 500 depending on DB availability in test env
-    expect([200, 500]).toContain(res.status);
-    if (res.status === 200) {
-      expect(res.body.executionMode).toBeDefined();
-      expect(res.body.totalTrades).toBe(0);
-      expect(res.body.netPnlUsd).toBe(0);
-    }
+    expect(res.status).toBe(200);
+    expect(res.body.executionMode).toBeDefined();
+    expect(res.body.totalTrades).toBe(0);
+    expect(res.body.netPnlUsd).toBe(0);
+  });
+
+  it("GET /api/spot/summary returns 500 when DB fails", async () => {
+    mockSpotEngine.getSummaryStats.mockRejectedValue(new Error("DB connection refused"));
+    const app = createApp();
+    const res = await simulateGet(app, "/api/spot/summary");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBeDefined();
   });
 });
 
 describe("SPOT_API_REGIME", () => {
-  it("GET /api/spot/regime/:pair returns data or 500 (no exchange in test env)", async () => {
+  it("GET /api/spot/regime/:pair returns 200 with mocked market context", async () => {
     const app = createApp();
     const res = await simulateGet(app, "/api/spot/regime/BTC-USD");
-    // May return 200 or 500 depending on exchange availability in test env
-    expect([200, 500]).toContain(res.status);
+    expect(res.status).toBe(200);
+    expect(res.body.regime).toBeDefined();
   });
 });
 

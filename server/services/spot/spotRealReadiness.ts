@@ -403,11 +403,27 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     // R10.9-5: Expose supervisor health in readiness API
     // R10.9-final: Use production getPositionSupervisionHealth() instead of test-only hooks.
     // Includes freshness check — stale supervisor is a blocker even if no error was seen.
+    // R10.9-cierre: PRE-ACTIVATION readiness must NOT block on supervisor freshness when
+    // the DB proves there are 0 open SPOT positions. A supervisor that has never run
+    // (because mode=OFF and no positions exist) is not a stale supervisor — it's a
+    // legitimate pre-activation state. Runtime REAL BUY gating (executeEntry) enforces
+    // freshness independently.
     const supervisorHealth = spotEngine.getPositionSupervisionHealth();
     checks.positionSupervisorHealthy = supervisorHealth.healthy;
     checks.positionSupervisionFailureReason = supervisorHealth.failureReason;
     checks.positionSupervisionLastSuccessAt = supervisorHealth.lastSuccessAt;
-    if (!checks.positionSupervisorHealthy) {
+    let openSpotPositionsCount = 0;
+    try {
+      const posResult = await db.execute(sql`
+        SELECT COUNT(*) as count FROM open_positions
+        WHERE policy_version = ${SPOT_POLICY_VERSION} AND status != 'CLOSED'
+      `);
+      openSpotPositionsCount = Number(posResult.rows[0]?.count ?? 0);
+    } catch {
+      // Fail-closed: if we can't count, assume positions exist → require supervisor health
+      openSpotPositionsCount = 1;
+    }
+    if (!checks.positionSupervisorHealthy && openSpotPositionsCount > 0) {
       if (supervisorHealth.stale) {
         blockers.push(`Position supervisor stale — last success at ${supervisorHealth.lastSuccessAt ?? 'never'} exceeds freshness window. REAL BUY blocked.`);
       } else {
