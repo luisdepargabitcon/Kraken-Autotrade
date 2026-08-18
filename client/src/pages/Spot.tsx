@@ -7,12 +7,16 @@ import { SpotPositionsPanel } from "@/components/spot/SpotPositionsPanel";
 import { SpotHistoryPanel } from "@/components/spot/SpotHistoryPanel";
 import { SpotIntentsPanel } from "@/components/spot/SpotIntentsPanel";
 import { SpotAuditPanel } from "@/components/spot/SpotAuditPanel";
-import { AlertTriangle, RefreshCw, Activity as ActivityIcon } from "lucide-react";
+import { SpotTerminalPanel } from "@/components/spot/SpotTerminalPanel";
+import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
 export default function Spot() {
   const [tab, setTab] = useState("overview");
+  const [activityCategory, setActivityCategory] = useState("");
+  const [activityPair, setActivityPair] = useState("");
+  const [activitySeverity, setActivitySeverity] = useState("");
   const queryClient = useQueryClient();
 
   // ─── Queries ──────────────────────────────────────────────────────────────
@@ -78,9 +82,13 @@ export default function Spot() {
   });
 
   const { data: activityData } = useQuery<any>({
-    queryKey: ["spot-activity"],
+    queryKey: ["spot-activity", activityCategory, activityPair, activitySeverity],
     queryFn: async () => {
-      const res = await fetch("/api/spot/activity?limit=100");
+      const params = new URLSearchParams({ limit: "200" });
+      if (activityCategory) params.set("category", activityCategory);
+      if (activityPair) params.set("pair", activityPair);
+      if (activitySeverity) params.set("severity", activitySeverity);
+      const res = await fetch(`/api/spot/activity?${params}`);
       if (!res.ok) throw new Error("Failed to fetch SPOT activity");
       return res.json();
     },
@@ -220,6 +228,10 @@ export default function Spot() {
                 </span>
               )}
             </TabsTrigger>
+            <TabsTrigger value="terminal">
+              <TerminalSquare className="h-3.5 w-3.5 mr-1 inline" />
+              Terminal
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-3">
@@ -251,7 +263,19 @@ export default function Spot() {
           </TabsContent>
 
           <TabsContent value="activity">
-            <SpotActivityPanel events={activityEvents} />
+            <SpotActivityPanel
+              events={activityEvents}
+              category={activityCategory}
+              pair={activityPair}
+              severity={activitySeverity}
+              onCategoryChange={setActivityCategory}
+              onPairChange={setActivityPair}
+              onSeverityChange={setActivitySeverity}
+            />
+          </TabsContent>
+
+          <TabsContent value="terminal">
+            <SpotTerminalPanel />
           </TabsContent>
         </Tabs>
       </div>
@@ -282,7 +306,20 @@ function formatHold(minutes: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-function SpotActivityPanel({ events }: { events: any[] }) {
+const ACTIVITY_CATEGORIES = ["MARKET","SIGNAL","DECISION","INTENT","RISK","ENTRY","POSITION","PROTECTION","EXIT","EXECUTION","SYSTEM","MODE","ERROR"] as const;
+const ACTIVITY_SEVERITIES = ["INFO","SUCCESS","ATTENTION","WARNING","CRITICAL"] as const;
+
+interface SpotActivityPanelProps {
+  events: any[];
+  category: string;
+  pair: string;
+  severity: string;
+  onCategoryChange: (v: string) => void;
+  onPairChange: (v: string) => void;
+  onSeverityChange: (v: string) => void;
+}
+
+function SpotActivityPanel({ events, category, pair, severity, onCategoryChange, onPairChange, onSeverityChange }: SpotActivityPanelProps) {
   const severityColor: Record<string, string> = {
     INFO: "text-blue-400",
     SUCCESS: "text-emerald-400",
@@ -291,50 +328,92 @@ function SpotActivityPanel({ events }: { events: any[] }) {
     CRITICAL: "text-red-400",
   };
 
-  if (events.length === 0) {
-    return (
-      <div className="rounded-lg border border-border/50 bg-card p-8 text-center text-muted-foreground text-sm">
-        No hay eventos de actividad registrados.
-      </div>
-    );
-  }
+  const uniquePairs = Array.from(new Set(events.map((e: any) => e.pair).filter(Boolean))).sort() as string[];
 
   return (
-    <div className="space-y-2">
-      {events.map((e) => (
-        <div
-          key={e.id}
-          className="rounded-lg border border-border/50 bg-card px-4 py-3 flex items-start gap-3"
+    <div className="space-y-3">
+      {/* Filter bar */}
+      <div className="flex flex-wrap gap-2 items-center rounded-lg border border-border/50 bg-card px-3 py-2">
+        <span className="text-xs text-muted-foreground">Filtros:</span>
+        <select
+          value={category}
+          onChange={e => onCategoryChange(e.target.value)}
+          className="text-[11px] bg-muted border border-border/50 rounded px-2 py-1 text-foreground"
         >
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-xs font-semibold ${severityColor[e.severity] ?? "text-foreground"}`}>
-                {e.severityLabel ?? e.severity}
-              </span>
-              <Badge variant="outline" className="text-[10px] py-0 px-1.5">
-                {e.categoryLabel ?? e.category}
-              </Badge>
-              {e.pair && (
-                <span className="text-xs font-mono text-muted-foreground">{e.pair}</span>
-              )}
-              {e.executionMode && (
-                <span className="text-[10px] text-muted-foreground border border-border/50 rounded px-1">
-                  {e.executionMode}
-                </span>
-              )}
-              {e.repeatCount > 0 && (
-                <span className="text-[10px] text-muted-foreground">×{e.repeatCount + 1}</span>
-              )}
-              <span className="text-[10px] text-muted-foreground ml-auto">{e.timeAgo}</span>
-            </div>
-            <p className="text-sm font-medium mt-1">{e.title}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{e.explanation}</p>
-            {e.technicalDetails && (
-              <p className="text-[10px] font-mono text-muted-foreground/70 mt-1">{e.technicalDetails}</p>
-            )}
-          </div>
+          <option value="">Categoría</option>
+          {ACTIVITY_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select
+          value={severity}
+          onChange={e => onSeverityChange(e.target.value)}
+          className="text-[11px] bg-muted border border-border/50 rounded px-2 py-1 text-foreground"
+        >
+          <option value="">Severidad</option>
+          {ACTIVITY_SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {uniquePairs.length > 0 && (
+          <select
+            value={pair}
+            onChange={e => onPairChange(e.target.value)}
+            className="text-[11px] bg-muted border border-border/50 rounded px-2 py-1 text-foreground"
+          >
+            <option value="">Par</option>
+            {uniquePairs.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
+        {(category || pair || severity) && (
+          <button
+            onClick={() => { onCategoryChange(""); onPairChange(""); onSeverityChange(""); }}
+            className="text-[11px] text-muted-foreground hover:text-foreground underline"
+          >
+            Limpiar
+          </button>
+        )}
+        <span className="ml-auto text-[10px] text-muted-foreground">{events.length} eventos</span>
+      </div>
+
+      {events.length === 0 ? (
+        <div className="rounded-lg border border-border/50 bg-card p-8 text-center text-muted-foreground text-sm">
+          No hay eventos de actividad{category || pair || severity ? " con los filtros aplicados" : ""}.
         </div>
-      ))}
+      ) : (
+        <div className="space-y-2">
+          {events.map((e) => (
+            <div
+              key={e.id}
+              className="rounded-lg border border-border/50 bg-card px-4 py-3 flex items-start gap-3"
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-xs font-semibold ${severityColor[e.severity] ?? "text-foreground"}`}>
+                    {e.severityLabel ?? e.severity}
+                  </span>
+                  <Badge variant="outline" className="text-[10px] py-0 px-1.5">
+                    {e.categoryLabel ?? e.category}
+                  </Badge>
+                  {e.pair && (
+                    <span className="text-xs font-mono text-muted-foreground">{e.pair}</span>
+                  )}
+                  {e.executionMode && (
+                    <span className="text-[10px] text-muted-foreground border border-border/50 rounded px-1">
+                      {e.executionMode}
+                    </span>
+                  )}
+                  {e.repeatCount > 0 && (
+                    <span className="text-[10px] text-muted-foreground">×{e.repeatCount + 1}</span>
+                  )}
+                  <span className="text-[10px] text-muted-foreground ml-auto">{e.timeAgo}</span>
+                </div>
+                <p className="text-sm font-medium mt-1">{e.title}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{e.explanation}</p>
+                {e.technicalDetails && (
+                  <p className="text-[10px] font-mono text-muted-foreground/70 mt-1">{e.technicalDetails}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

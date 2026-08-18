@@ -48,6 +48,7 @@ import { SpotAuditTracker, type SpotAuditMetrics, type ExitAuditMetrics } from "
 import { computePnlBreakdown, getTradingFeeModel } from "./feeModel";
 import { DataHealth } from "./candleTimestamp";
 import { logActivity } from "./spotActivityLogger";
+import { emitSpotTerminal } from "./spotTerminalStream";
 import {
   persistSubmissionIntent,
   updateSubmissionResult,
@@ -1019,6 +1020,7 @@ async function runScanCycle(): Promise<void> {
   lastScanTime = Date.now();
   const scanId = `scan-${lastScanTime.toString(36)}`;
   console.log(`[SpotEngine] Scan ${scanId} started, mode=${mode}`);
+  emitSpotTerminal("INFO", "scan", `[${scanId}] Scan iniciado — mode=${mode}`);
 
   try {
     // Get active pairs from bot_config
@@ -1044,6 +1046,10 @@ async function runScanCycle(): Promise<void> {
 
     lastScanResults = results;
     console.log(`[SpotEngine] Scan ${scanId} completed: ${results.length} pairs processed`);
+    for (const r of results) {
+      const lvl = r.signal === "BUY" || r.signal === "EXECUTED" ? "SIGNAL" : r.signal === "ERROR" ? "ERROR" : "INFO";
+      emitSpotTerminal(lvl, "scan", `[${r.pair}] ${r.signal} — ${r.reason}`, { pair: r.pair, mode: r.mode });
+    }
   } finally {
     isScanning = false;
   }
@@ -1391,6 +1397,16 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number): 
   const signal = evaluateSpotCanonical(ctx);
 
   if (signal.signal === "BUY" && signal.setupTag) {
+    logActivity({
+      pair,
+      category: "SIGNAL",
+      severity: "INFO",
+      title: `Setup detectado: ${signal.setupTag}`,
+      explanation: signal.reason || `Setup ${signal.setupTag} con confianza ${signal.confidence}`,
+      decision: signal.setupTag,
+      executionMode: mode,
+      reasonCode: "SIGNAL_DETECTED",
+    });
     // F. Create intent and evaluate it immediately against current context
     const intent = createEntryIntent(signal, ctx);
     intentStore.put(intent);
@@ -1412,6 +1428,17 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number): 
         signalResultCache.delete(pair);
         return { pair, signal: "EXECUTED", reason: "Entry executed (immediate)", mode };
       }
+    } else {
+      logActivity({
+        pair,
+        category: "DECISION",
+        severity: "INFO",
+        title: `Entrada pendiente: ${evaluation.newState}`,
+        explanation: evaluation.reason || `Intent en estado ${evaluation.newState}`,
+        decision: evaluation.newState,
+        executionMode: mode,
+        reasonCode: "ENTRY_GATED",
+      });
     }
 
     return { pair, signal: "BUY", reason: signal.reason, mode };

@@ -8,6 +8,7 @@ import { botLogger } from "./services/botLogger";
 import { TradingEngine } from "./services/tradingEngine";
 import { eventsWs } from "./services/eventsWebSocket";
 import { terminalWsServer } from "./services/terminalWebSocket";
+import { terminalWsServer as spotTerminalWsServer } from "./services/spot/spotTerminalStream";
 import { environment } from "./services/environment";
 import { registerConfigRoutes } from "./routes/config";
 import { ExchangeFactory } from "./services/exchanges/ExchangeFactory";
@@ -73,6 +74,7 @@ export const MIGRATIONS = [
 export function initializeWebSockets(httpServer: Server): void {
   eventsWs.initialize(httpServer);
   terminalWsServer.initialize(httpServer);
+  spotTerminalWsServer.initialize(httpServer);
   
   httpServer.on("upgrade", (req, socket, head) => {
     const pathname = new URL(req.url || "", `http://${req.headers.host}`).pathname;
@@ -81,6 +83,8 @@ export function initializeWebSockets(httpServer: Server): void {
       eventsWs.handleUpgrade(req, socket, head);
     } else if (pathname === "/ws/logs") {
       terminalWsServer.handleUpgrade(req, socket, head);
+    } else if (pathname === "/ws/spot-terminal") {
+      spotTerminalWsServer.handleUpgrade(req, socket, head);
     } else {
       socket.destroy();
     }
