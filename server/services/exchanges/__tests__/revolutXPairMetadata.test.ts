@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RevolutXService, type RevolutXPairConfigurationRaw } from "../RevolutXService";
+import { RevolutXService, parseAndValidatePairConfiguration, type RevolutXPairConfigurationRaw } from "../RevolutXService";
 
 const pair = (overrides: Partial<RevolutXPairConfigurationRaw> = {}): RevolutXPairConfigurationRaw => ({
   base: "BTC", quote: "USD",
@@ -16,11 +16,10 @@ const asInternal = service as unknown as {
   pairMetadataCache: Map<string, unknown>;
 };
 
-describe("RevolutXService.loadPairMetadata", () => {
+describe("RevolutXService.loadPairMetadata — batch mode (1 auth + 1 public max)", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    vi.useFakeTimers();
     service.clearPairConstraintsCache();
     asInternal.pairMetadataCache.clear();
     asInternal.initialized = true;
@@ -32,7 +31,6 @@ describe("RevolutXService.loadPairMetadata", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    vi.useRealTimers();
     service.clearPairConstraintsCache();
     asInternal.pairMetadataCache.clear();
   });
@@ -81,7 +79,7 @@ describe("RevolutXService.loadPairMetadata", () => {
   });
 
   // ── Case 4: Auth 200 but pair not in response → metadata null ────────────────
-  it("4 — pair absent from exchange response → metadata NOT cached", async () => {
+  it("4 — pair absent from auth response → metadata NOT cached, throw", async () => {
     fetchMock.mockResolvedValueOnce(json([pair({ base: "ETH" })])); // BTC absent
     await expect(service.loadPairMetadata(["BTC/USD"])).rejects.toThrow(
       "REVOLUTX_METADATA_REFRESH_FAILED"
@@ -91,9 +89,7 @@ describe("RevolutXService.loadPairMetadata", () => {
 
   // ── Case 5: Status inactive → metadata null ───────────────────────────────────
   it("5 — status=inactive → metadata NOT cached (fail-closed)", async () => {
-    fetchMock
-      .mockResolvedValueOnce(json([pair({ status: "inactive" })]))  // auth: inactive
-      .mockResolvedValueOnce(json([], false, 401));                 // public: no fallback
+    fetchMock.mockResolvedValueOnce(json([pair({ status: "inactive" })]));
     await expect(service.loadPairMetadata(["BTC/USD"])).rejects.toThrow(
       "REVOLUTX_METADATA_REFRESH_FAILED"
     );
@@ -101,10 +97,8 @@ describe("RevolutXService.loadPairMetadata", () => {
   });
 
   // ── Case 6: base_step invalid (non-numeric string) → metadata null ────────────
-  it("6 — base_step non-numeric → constraints PAIR_CONSTRAINTS_UNAVAILABLE, metadata NOT cached", async () => {
-    fetchMock
-      .mockResolvedValueOnce(json([pair({ base_step: "0.1x" })]))
-      .mockResolvedValueOnce(json([], false, 401));
+  it("6 — base_step non-numeric → constraints fail, metadata NOT cached", async () => {
+    fetchMock.mockResolvedValueOnce(json([pair({ base_step: "0.1x" })]));
     await expect(service.loadPairMetadata(["BTC/USD"])).rejects.toThrow(
       "REVOLUTX_METADATA_REFRESH_FAILED"
     );
@@ -113,9 +107,7 @@ describe("RevolutXService.loadPairMetadata", () => {
 
   // ── Case 7: min_order_size zero → metadata null ───────────────────────────────
   it("7 — min_order_size=0 → constraints fail strict validation, metadata NOT cached", async () => {
-    fetchMock
-      .mockResolvedValueOnce(json([pair({ min_order_size: "0" })]))
-      .mockResolvedValueOnce(json([], false, 401));
+    fetchMock.mockResolvedValueOnce(json([pair({ min_order_size: "0" })]));
     await expect(service.loadPairMetadata(["BTC/USD"])).rejects.toThrow(
       "REVOLUTX_METADATA_REFRESH_FAILED"
     );
@@ -153,19 +145,90 @@ describe("RevolutXService.loadPairMetadata", () => {
     expect(meta!.constraintsVerified).toBe(true);
   });
 
-  // ── Case 11: Multiple pairs, all resolved → no throw ─────────────────────────
-  it("11 — multiple pairs all resolved via auth → successCount = pairs.length, no throw", async () => {
-    fetchMock
-      .mockResolvedValueOnce(json([pair(), pair({ base: "ETH", base_step: "0.00001", min_order_size: "0.01" })]))  // BTC auth
-      .mockResolvedValueOnce(json([pair(), pair({ base: "ETH", base_step: "0.00001", min_order_size: "0.01" })])); // ETH auth
+  // ── Case 11: Multiple pairs, all resolved via single auth request ───────────
+  it("11 — multiple pairs resolved via single auth request (batch, no per-pair fetch)", async () => {
+    const ethPair = pair({ base: "ETH", base_step: "0.00001", min_order_size: "0.01", min_order_size_quote: "5" });
+    fetchMock.mockResolvedValueOnce(json([pair(), ethPair])); // single auth request
     await expect(service.loadPairMetadata(["BTC/USD", "ETH/USD"])).resolves.not.toThrow();
     expect(service.getPairMetadata("BTC/USD")).not.toBeNull();
     expect(service.getPairMetadata("ETH/USD")).not.toBeNull();
+    // CRITICAL: only 1 fetch call for all pairs (batch mode)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   // ── Case 12: Empty pairs list → resolves immediately, no fetch ───────────────
   it("12 — empty pairs array → resolves immediately without calling fetch", async () => {
     await expect(service.loadPairMetadata([])).resolves.not.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // ── Case 13: Auth succeeds → NO public request made (authoritative) ──────────
+  it("13 — auth 200 → no public request attempted (auth is authoritative)", async () => {
+    fetchMock.mockResolvedValueOnce(json([pair()]));
+    await service.loadPairMetadata(["BTC/USD"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const calledUrl = fetchMock.mock.calls[0][0] as string;
+    expect(calledUrl).toContain("/configuration/pairs");
+    expect(calledUrl).not.toContain("/public/");
+  });
+
+  // ── Case 14: Multiple pairs, one missing from auth → partial success ─────────
+  it("14 — one pair missing from auth response → partial success, no throw", async () => {
+    const ethPair = pair({ base: "ETH", base_step: "0.00001", min_order_size: "0.01", min_order_size_quote: "5" });
+    fetchMock.mockResolvedValueOnce(json([pair(), ethPair])); // BTC + ETH, no SOL
+    await expect(service.loadPairMetadata(["BTC/USD", "ETH/USD", "SOL/USD"])).resolves.not.toThrow();
+    expect(service.getPairMetadata("BTC/USD")).not.toBeNull();
+    expect(service.getPairMetadata("ETH/USD")).not.toBeNull();
+    expect(service.getPairMetadata("SOL/USD")).toBeNull(); // missing → fail-closed
+  });
+
+  // ── Case 15: Auth succeeds but one pair inactive → that pair not cached ──────
+  it("15 — auth 200 with one inactive pair → active pair cached, inactive not", async () => {
+    const inactiveEth = pair({ base: "ETH", status: "inactive", base_step: "0.00001", min_order_size: "0.01", min_order_size_quote: "5" });
+    fetchMock.mockResolvedValueOnce(json([pair(), inactiveEth]));
+    await service.loadPairMetadata(["BTC/USD", "ETH/USD"]);
+    expect(service.getPairMetadata("BTC/USD")).not.toBeNull();
+    expect(service.getPairMetadata("ETH/USD")).toBeNull();
+  });
+
+  // ── Case 16: max_order_size < min_order_size → validation fails ─────────────
+  it("16 — max_order_size < min_order_size → constraints fail, metadata NOT cached", async () => {
+    fetchMock.mockResolvedValueOnce(json([pair({ max_order_size: "0.00001", min_order_size: "0.0001" })]));
+    await expect(service.loadPairMetadata(["BTC/USD"])).rejects.toThrow(
+      "REVOLUTX_METADATA_REFRESH_FAILED"
+    );
+    expect(service.getPairMetadata("BTC/USD")).toBeNull();
+  });
+});
+
+// ── Pure function tests ──────────────────────────────────────────────────────
+
+describe("parseAndValidatePairConfiguration (pure function)", () => {
+  it("returns verified constraints for valid active pair", () => {
+    const result = parseAndValidatePairConfiguration(pair(), "BTC/USD", "BTC-USD", "EEA", "test_source");
+    expect(result.verified).toBe(true);
+    expect(result.quantityStep).toBe(0.00000001);
+    expect(result.minOrderBase).toBe(0.0001);
+    expect(result.baseCurrency).toBe("BTC");
+    expect(result.quoteCurrency).toBe("USD");
+    expect(result.reasonCode).toBeNull();
+  });
+
+  it("returns failed for inactive status", () => {
+    const result = parseAndValidatePairConfiguration(pair({ status: "inactive" }), "BTC/USD", "BTC-USD", "EEA", "test");
+    expect(result.verified).toBe(false);
+    expect(result.reasonCode).toBe("PAIR_NOT_ACTIVE");
+  });
+
+  it("returns failed for invalid base_step", () => {
+    const result = parseAndValidatePairConfiguration(pair({ base_step: "abc" }), "BTC/USD", "BTC-USD", "EEA", "test");
+    expect(result.verified).toBe(false);
+    expect(result.reasonCode).toBe("PAIR_CONSTRAINTS_UNAVAILABLE");
+  });
+
+  it("returns failed for base/quote mismatch with normalizedPair", () => {
+    const result = parseAndValidatePairConfiguration(pair(), "BTC/USD", "ETH-USD", "EEA", "test");
+    expect(result.verified).toBe(false);
+    expect(result.reasonCode).toBe("PAIR_CONSTRAINTS_UNAVAILABLE");
   });
 });

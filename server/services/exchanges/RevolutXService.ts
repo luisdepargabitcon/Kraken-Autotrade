@@ -104,6 +104,69 @@ export interface RevolutXPairConstraints {
   reasonCode: string | null;
 }
 
+// ── Pure validation helpers (shared by resolveGridPairConstraints and loadPairMetadata) ──
+
+function parseStrictDecimalPure(value: unknown, positive = true): number | null {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && (positive ? parsed > 0 : parsed >= 0) ? parsed : null;
+}
+
+function decimalPrecisionPure(value: string): number {
+  return value.includes(".") ? value.split(".")[1].length : 0;
+}
+
+function failedConstraints(pair: string, normalizedPair: string, region: string, reasonCode: string): RevolutXPairConstraints {
+  return {
+    pair, normalizedPair, executionVenue: "REVOLUT_X",
+    baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null,
+    minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null,
+    pricePrecision: null, quantityPrecision: null, status: null, region, source: null,
+    fetchedAt: null, expiresAt: null, verified: false, reasonCode,
+  };
+}
+
+/**
+ * Pure validation + parsing of a single RevolutXPairConfigurationRaw entry.
+ * Shared by resolveGridPairConstraints() and loadPairMetadata() — no duplication.
+ * Returns verified constraints on success, failed constraints on validation failure.
+ * Does NOT cache — caller decides caching strategy.
+ */
+export function parseAndValidatePairConfiguration(
+  raw: RevolutXPairConfigurationRaw,
+  pair: string,
+  normalizedPair: string,
+  region: string,
+  source: string,
+): RevolutXPairConstraints {
+  if (typeof raw.status !== "string") return failedConstraints(pair, normalizedPair, region, "PAIR_CONSTRAINTS_UNAVAILABLE");
+  if (raw.status.toLowerCase() !== "active") return failedConstraints(pair, normalizedPair, region, "PAIR_NOT_ACTIVE");
+  const baseStep = parseStrictDecimalPure(raw.base_step);
+  const quoteStep = parseStrictDecimalPure(raw.quote_step);
+  const minOrderBase = parseStrictDecimalPure(raw.min_order_size);
+  const minOrderQuote = parseStrictDecimalPure(raw.min_order_size_quote);
+  const maxOrderBase = parseStrictDecimalPure(raw.max_order_size);
+  if (
+    !baseStep || !quoteStep || !minOrderBase || !minOrderQuote || !maxOrderBase ||
+    maxOrderBase < minOrderBase ||
+    raw.base !== normalizedPair.split("-")[0] ||
+    raw.quote !== normalizedPair.split("-")[1]
+  ) {
+    return failedConstraints(pair, normalizedPair, region, "PAIR_CONSTRAINTS_UNAVAILABLE");
+  }
+  const fetchedAt = new Date();
+  const expiresAt = new Date(fetchedAt.getTime() + PAIR_CONSTRAINTS_TTL_MS);
+  return {
+    pair, normalizedPair, executionVenue: "REVOLUT_X",
+    baseCurrency: raw.base, quoteCurrency: raw.quote,
+    priceTickSize: quoteStep, quantityStep: baseStep, minOrderBase, minOrderQuote,
+    minOrderUsd: raw.quote === "USD" ? minOrderQuote : null, maxOrderBase,
+    pricePrecision: decimalPrecisionPure(raw.quote_step),
+    quantityPrecision: decimalPrecisionPure(raw.base_step),
+    status: raw.status, region, source, fetchedAt, expiresAt, verified: true, reasonCode: null,
+  };
+}
+
 export class RevolutXService implements IExchangeService {
   private static instance: RevolutXService;
   private initialized = false;
@@ -866,39 +929,19 @@ export class RevolutXService implements IExchangeService {
   async resolveGridPairConstraints(pair: string, region = process.env.REVOLUTX_REGION || "EEA"): Promise<RevolutXPairConstraints> {
     const normalizedPair = this.normalizeRevolutXPairKey(pair);
     const cacheKey = `${region}:${normalizedPair}`;
-    const failed = (reasonCode: string): RevolutXPairConstraints => ({ pair, normalizedPair, executionVenue: "REVOLUT_X", baseCurrency: null, quoteCurrency: null, priceTickSize: null, quantityStep: null, minOrderBase: null, minOrderQuote: null, minOrderUsd: null, maxOrderBase: null, pricePrecision: null, quantityPrecision: null, status: null, region, source: null, fetchedAt: null, expiresAt: null, verified: false, reasonCode });
-
     const matchRaw = (entries: RevolutXPairConfigurationRaw[]) => entries.find(item => `${item.base}-${item.quote}`.toUpperCase() === normalizedPair);
-
-    const parseAndValidate = (raw: RevolutXPairConfigurationRaw, source: string): RevolutXPairConstraints => {
-      if (typeof raw.status !== "string") return failed("PAIR_CONSTRAINTS_UNAVAILABLE");
-      if (raw.status.toLowerCase() !== "active") return failed("PAIR_NOT_ACTIVE");
-      const baseStep = this.parseStrictDecimal(raw.base_step);
-      const quoteStep = this.parseStrictDecimal(raw.quote_step);
-      const minOrderBase = this.parseStrictDecimal(raw.min_order_size);
-      const minOrderQuote = this.parseStrictDecimal(raw.min_order_size_quote);
-      const maxOrderBase = this.parseStrictDecimal(raw.max_order_size);
-      if (!baseStep || !quoteStep || !minOrderBase || !minOrderQuote || !maxOrderBase || maxOrderBase < minOrderBase || raw.base !== normalizedPair.split("-")[0] || raw.quote !== normalizedPair.split("-")[1]) {
-        return failed("PAIR_CONSTRAINTS_UNAVAILABLE");
-      }
-      const fetchedAt = new Date();
-      const expiresAt = new Date(fetchedAt.getTime() + PAIR_CONSTRAINTS_TTL_MS);
-      const value: RevolutXPairConstraints = {
-        pair, normalizedPair, executionVenue: "REVOLUT_X", baseCurrency: raw.base, quoteCurrency: raw.quote,
-        priceTickSize: quoteStep, quantityStep: baseStep, minOrderBase, minOrderQuote,
-        minOrderUsd: raw.quote === "USD" ? minOrderQuote : null, maxOrderBase,
-        pricePrecision: this.decimalPrecision(raw.quote_step), quantityPrecision: this.decimalPrecision(raw.base_step),
-        status: raw.status, region, source, fetchedAt, expiresAt, verified: true, reasonCode: null
-      };
-      this.pairConstraintsCache.set(cacheKey, { value, expiresAt: expiresAt.getTime() });
-      return value;
-    };
 
     // 1. Intentar endpoint autenticado.
     try {
       const authList = await this.getPairConfigurations();
       const authRaw = matchRaw(authList);
-      if (authRaw) return parseAndValidate(authRaw, "revolut_x_authenticated_configuration_pairs");
+      if (authRaw) {
+        const result = parseAndValidatePairConfiguration(authRaw, pair, normalizedPair, region, "revolut_x_authenticated_configuration_pairs");
+        if (result.verified) {
+          this.pairConstraintsCache.set(cacheKey, { value: result, expiresAt: result.expiresAt!.getTime() });
+        }
+        return result;
+      }
     } catch (authErr) {
       console.warn("[revolutx] pair constraints authenticated resolution failed", {
         pair: normalizedPair,
@@ -910,7 +953,13 @@ export class RevolutXService implements IExchangeService {
     try {
       const publicList = await this.getPublicPairConfigurations(region);
       const publicRaw = matchRaw(publicList);
-      if (publicRaw) return parseAndValidate(publicRaw, `revolut_x_public_configuration_pairs_${region.toLowerCase()}`);
+      if (publicRaw) {
+        const result = parseAndValidatePairConfiguration(publicRaw, pair, normalizedPair, region, `revolut_x_public_configuration_pairs_${region.toLowerCase()}`);
+        if (result.verified) {
+          this.pairConstraintsCache.set(cacheKey, { value: result, expiresAt: result.expiresAt!.getTime() });
+        }
+        return result;
+      }
     } catch (publicErr) {
       console.warn("[revolutx] pair constraints public resolution failed", {
         pair: normalizedPair,
@@ -926,11 +975,16 @@ export class RevolutXService implements IExchangeService {
     }
 
     // 4. Fail-closed.
-    return failed("PAIR_CONSTRAINTS_UNAVAILABLE");
+    return failedConstraints(pair, normalizedPair, region, "PAIR_CONSTRAINTS_UNAVAILABLE");
   }
 
   async loadPairMetadata(pairs: string[]): Promise<void> {
     console.log(`[revolutx] Loading pair metadata for: ${pairs.join(', ')}`);
+
+    if (pairs.length === 0) {
+      console.log(`[revolutx] Pair metadata loaded: 0/0 pairs resolved`);
+      return;
+    }
 
     const region = process.env.REVOLUTX_REGION || "EEA";
 
@@ -943,53 +997,96 @@ export class RevolutXService implements IExchangeService {
         const normalizedPair = this.normalizeRevolutXPairKey(pair);
         this.pairConstraintsCache.delete(`${region}:${normalizedPair}`);
       } catch {
-        // Invalid pair format — resolveGridPairConstraints will reject it cleanly.
+        // Invalid pair format — parseAndValidatePairConfiguration will reject it cleanly.
       }
     }
 
-    // R10.7-7 / REV-C12F: Metadata must NEVER be invented. Resolve each pair via:
-    //   1. Authenticated  /api/1.0/configuration/pairs         (signedGetJson)
-    //   2. Public fallback /api/1.0/public/configuration/pairs?region=<REVOLUTX_REGION>
-    // Both routes use parseStrictDecimal, status=active enforcement, and exact base/quote
-    // matching. /api/1.0/currencies and /api/1.0/symbols are NOT used.
-    let successCount = 0;
+    // BATCH: fetch configuration/pairs ONCE (auth), then ONCE (public fallback if auth failed).
+    // Resolve ALL requested pairs locally from the fetched list.
+    // Maximum requests per execution: 1 auth + 1 public = 2.
+    let configEntries: RevolutXPairConfigurationRaw[] | null = null;
+    let configSource: string | null = null;
 
-    for (const pair of pairs) {
+    // 1. Single authenticated request.
+    try {
+      configEntries = await this.getPairConfigurations();
+      configSource = "revolut_x_authenticated_configuration_pairs";
+    } catch (authErr) {
+      console.warn("[revolutx] batch metadata: authenticated configuration/pairs failed", {
+        reason: sanitizeRevolutXConstraintError(authErr),
+      });
+    }
+
+    // 2. Single public request ONLY if auth failed.
+    if (!configEntries) {
       try {
-        const constraints = await this.resolveGridPairConstraints(pair, region);
-        if (!constraints.verified || constraints.quantityStep === null || constraints.minOrderBase === null) {
-          console.error(`[revolutx] ${pair}: constraints not verified (reasonCode=${constraints.reasonCode}) — metadata NOT cached (fail-closed)`);
-          continue;
-        }
-
-        // Build PairMetadata exclusively from verified RevolutXPairConstraints.
-        // quantityStep = base_step (verified > 0 by parseStrictDecimal).
-        // orderMin     = minOrderBase = min_order_size (verified > 0).
-        this.pairMetadataCache.set(pair, {
-          lotDecimals: constraints.quantityPrecision ?? this.decimalPrecisionFromStepPublic(constraints.quantityStep),
-          orderMin: constraints.minOrderBase,
-          pairDecimals: constraints.pricePrecision ?? this.decimalPrecisionFromStepPublic(constraints.priceTickSize ?? constraints.quantityStep),
-          stepSize: constraints.quantityStep,
-          baseStep: constraints.quantityStep,
-          quoteStep: constraints.priceTickSize,
-          quantityStep: constraints.quantityStep,
-          minOrderBase: constraints.minOrderBase,
-          minOrderQuote: constraints.minOrderQuote,
-          maxOrderBase: constraints.maxOrderBase,
-          baseCurrency: constraints.baseCurrency,
-          quoteCurrency: constraints.quoteCurrency,
-          status: constraints.status,
-          region: constraints.region,
-          constraintsSource: constraints.source,
-          constraintsFetchedAt: constraints.fetchedAt,
-          constraintsVerified: true,
+        configEntries = await this.getPublicPairConfigurations(region);
+        configSource = `revolut_x_public_configuration_pairs_${region.toLowerCase()}`;
+      } catch (publicErr) {
+        console.warn("[revolutx] batch metadata: public configuration/pairs failed", {
+          region,
+          reason: sanitizeRevolutXConstraintError(publicErr),
         });
-
-        successCount++;
-        console.log(`[revolutx] ${pair}: metadata resolved — source=${constraints.source} quantityStep=${constraints.quantityStep} orderMin=${constraints.minOrderBase}`);
-      } catch (pairErr: any) {
-        console.error(`[revolutx] ${pair}: resolution threw — metadata NOT cached (fail-closed): ${pairErr.message}`);
       }
+    }
+
+    // 3. If both failed → fail-closed for ALL pairs.
+    if (!configEntries) {
+      console.error(`[revolutx] Batch metadata: both auth and public endpoints failed — 0/${pairs.length} resolved`);
+      throw new Error(`REVOLUTX_METADATA_REFRESH_FAILED: no configuration/pairs endpoint available (0/${pairs.length})`);
+    }
+
+    // 4. Resolve ALL pairs locally from the fetched list.
+    let successCount = 0;
+    for (const pair of pairs) {
+      let normalizedPair: string;
+      try {
+        normalizedPair = this.normalizeRevolutXPairKey(pair);
+      } catch {
+        console.error(`[revolutx] ${pair}: invalid pair format — metadata NOT cached`);
+        continue;
+      }
+
+      const raw = configEntries.find(item => `${item.base}-${item.quote}`.toUpperCase() === normalizedPair);
+      if (!raw) {
+        console.error(`[revolutx] ${pair}: not found in ${configSource!} — metadata NOT cached (fail-closed)`);
+        continue;
+      }
+
+      // Auth success is authoritative — no public fallback for individual pairs.
+      const constraints = parseAndValidatePairConfiguration(raw, pair, normalizedPair, region, configSource!);
+      if (!constraints.verified || constraints.quantityStep === null || constraints.minOrderBase === null) {
+        console.error(`[revolutx] ${pair}: constraints not verified (reasonCode=${constraints.reasonCode}) — metadata NOT cached (fail-closed)`);
+        continue;
+      }
+
+      // Cache the verified constraints.
+      const cacheKey = `${region}:${normalizedPair}`;
+      this.pairConstraintsCache.set(cacheKey, { value: constraints, expiresAt: constraints.expiresAt!.getTime() });
+
+      // Build PairMetadata exclusively from verified RevolutXPairConstraints.
+      this.pairMetadataCache.set(pair, {
+        lotDecimals: constraints.quantityPrecision ?? this.decimalPrecisionFromStepPublic(constraints.quantityStep),
+        orderMin: constraints.minOrderBase,
+        pairDecimals: constraints.pricePrecision ?? this.decimalPrecisionFromStepPublic(constraints.priceTickSize ?? constraints.quantityStep),
+        stepSize: constraints.quantityStep,
+        baseStep: constraints.quantityStep,
+        quoteStep: constraints.priceTickSize,
+        quantityStep: constraints.quantityStep,
+        minOrderBase: constraints.minOrderBase,
+        minOrderQuote: constraints.minOrderQuote,
+        maxOrderBase: constraints.maxOrderBase,
+        baseCurrency: constraints.baseCurrency,
+        quoteCurrency: constraints.quoteCurrency,
+        status: constraints.status,
+        region: constraints.region,
+        constraintsSource: constraints.source,
+        constraintsFetchedAt: constraints.fetchedAt,
+        constraintsVerified: true,
+      });
+
+      successCount++;
+      console.log(`[revolutx] ${pair}: metadata resolved — source=${constraints.source} quantityStep=${constraints.quantityStep} orderMin=${constraints.minOrderBase}`);
     }
 
     console.log(`[revolutx] Pair metadata loaded: ${successCount}/${pairs.length} pairs resolved`);
