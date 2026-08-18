@@ -924,7 +924,7 @@ describe("R10.9-5: Supervisor health exposed in readiness API", () => {
     vi.clearAllMocks();
   });
 
-  it("15. READINESS_SUPERVISOR_HEALTHY: healthy → not a blocker", async () => {
+  it("15. READINESS_SUPERVISOR_HEALTHY: healthy → not a blocker, metadata counts verified", async () => {
     setPositionSupervisionHealthy(true);
 
     const { checkRealReadiness } = await import("../spot/spotRealReadiness");
@@ -935,9 +935,13 @@ describe("R10.9-5: Supervisor health exposed in readiness API", () => {
     // Supervisor health should NOT appear in blockers when healthy
     const supervisorBlockers = result.blockers.filter((b: string) => b.includes("supervisor unhealthy"));
     expect(supervisorBlockers.length).toBe(0);
+    // META_04: Assert metadata loaded counts are present in the result
+    expect(typeof result.checks.pairMetadataLoadedCount).toBe("number");
+    expect(typeof result.checks.pairMetadataTotalCount).toBe("number");
+    expect(Array.isArray(result.checks.pairMetadataMissing)).toBe(true);
   });
 
-  it("16. READINESS_SUPERVISOR_UNHEALTHY: unhealthy → blocker present", async () => {
+  it("16. READINESS_SUPERVISOR_UNHEALTHY: unhealthy → blocker present, metadata counts verified", async () => {
     // R10.9-cierre: Supervisor health is only a blocker when open positions exist.
     // Add an open position so the check is exercised.
     mockDbState.openPositions.push({
@@ -954,6 +958,10 @@ describe("R10.9-5: Supervisor health exposed in readiness API", () => {
     // Supervisor health SHOULD appear in blockers when unhealthy AND positions exist
     const supervisorBlockers = result.blockers.filter((b: string) => b.includes("supervisor unhealthy"));
     expect(supervisorBlockers.length).toBeGreaterThan(0);
+    // META_05: Assert metadata loaded counts and blockers are present
+    expect(typeof result.checks.pairMetadataLoadedCount).toBe("number");
+    expect(typeof result.checks.pairMetadataTotalCount).toBe("number");
+    expect(Array.isArray(result.checks.pairMetadataMissing)).toBe(true);
   });
 });
 

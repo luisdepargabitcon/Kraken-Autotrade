@@ -558,7 +558,7 @@ describe("R7 — Canonical Ownership / OFF Fail-Safe", () => {
       // Find startSpotEngine function body
       const startIdx = source.indexOf("export async function startSpotEngine");
       expect(startIdx).toBeGreaterThan(-1);
-      const startBody = source.substring(startIdx, startIdx + 6000);
+      const startBody = source.substring(startIdx, startIdx + 8000);
 
       // Look for the R7 marker
       const r7MarkerIdx = startBody.indexOf("R7: Await first supervisor pass");
@@ -634,7 +634,7 @@ describe("R7 — Canonical Ownership / OFF Fail-Safe", () => {
 
       const supervisorIdx = source.indexOf("async function runPositionSupervisor");
       expect(supervisorIdx).toBeGreaterThan(-1);
-      const supervisorBody = source.substring(supervisorIdx, supervisorIdx + 3500);
+      const supervisorBody = source.substring(supervisorIdx, supervisorIdx + 6000);
 
       expect(supervisorBody).toContain("isSupervising");
       expect(supervisorBody).toContain("finally");

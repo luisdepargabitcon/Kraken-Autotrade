@@ -300,20 +300,30 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
 
   // ─── POST /api/spot/terminal-ticket ──────────────────────────────────────
   // R10.9: SAME_ORIGIN_EPHEMERAL_TICKET — ephemeral ticket for WS spot-terminal auth.
-  // Browser never sees TERMINAL_TOKEN. Ticket is bound to IP + User-Agent fingerprint.
+  // Browser never sees TERMINAL_TOKEN. Ticket is bound to IP + User-Agent fingerprint + origin.
   // Rate-limited: max 5 tickets per IP per 60s. Max 3 live tickets per IP. TTL 30s, single-use.
   app.post("/api/spot/terminal-ticket", async (req, res) => {
     try {
-      const { generateTerminalTicket } = await import("../services/spot/spotTerminalStream");
-      const clientIp = req.ip ?? req.socket?.remoteAddress ?? "unknown";
+      const { resolveTerminalClientIp, validateOrigin, generateTerminalTicketTyped } = await import("../services/spot/spotTerminalStream");
+      const clientIp = resolveTerminalClientIp(req);
       const userAgent = req.headers["user-agent"] ?? "unknown";
-      const origin = req.headers.origin;
-      const ticket = generateTerminalTicket(clientIp, userAgent, origin);
-      if (!ticket) {
-        res.status(429).json({ error: "Rate limited or TERMINAL_TOKEN not configured" });
+      const rawOrigin = req.headers.origin as string | undefined;
+      const validatedOrigin = validateOrigin(rawOrigin, req);
+      const result = generateTerminalTicketTyped(clientIp, userAgent, validatedOrigin ?? undefined);
+      if (!result.ok) {
+        if (result.reason === "NOT_CONFIGURED") {
+          res.status(503).json({ error: "TERMINAL_TOKEN not configured" });
+          return;
+        }
+        if (result.reason === "ORIGIN_REJECTED") {
+          res.status(403).json({ error: "Origin not allowed" });
+          return;
+        }
+        // RATE_LIMITED or MAX_LIVE_TICKETS
+        res.status(429).json({ error: result.reason === "RATE_LIMITED" ? "Rate limited" : "Max live tickets exceeded" });
         return;
       }
-      res.json({ ticket, expiresIn: 30 });
+      res.json({ ticket: result.ticket, expiresIn: 30 });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to generate terminal ticket", detail: err.message });
     }

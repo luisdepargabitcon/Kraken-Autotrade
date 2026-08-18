@@ -101,6 +101,12 @@ let engineRunning = false;
 let entryScanningEnabled = true;
 let positionSupervisorRunning = false;
 
+// Activity dedup: last MARKET state per pair (regime|direction|macroBias|dataHealth)
+const lastActivityMarketStateByPair = new Map<string, string>();
+
+// Activity dedup: last PROTECTION state per lot (BE|TRAILING activated flags)
+const lastProtectionStateByLot = new Map<string, string>();
+
 // R10.4: Reconciler state — runs independently of global mode
 let reconcilerIntervalId: NodeJS.Timeout | null = null;
 let isReconciling = false;
@@ -1364,6 +1370,29 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number): 
     return { pair, signal: "SKIP", reason: `MarketData error: ${error.message}`, mode };
   }
 
+  // MARKET terminal emit — technical per-scan context info
+  emitSpotTerminal("MARKET", "scan", `${pair} regime=${ctx.regimeContext.regime} dir=${ctx.regimeContext.direction} macro=${ctx.regimeContext.macroBias} health=${ctx.dataHealth} atrPct=${ctx.regimeContext.atrPct.toFixed(2)} price=${ctx.ticker.last}`, { pair, mode });
+
+  // MARKET activity — emit on first valid context and on state changes only (no spam)
+  const marketStateKey = `${ctx.regimeContext.regime}|${ctx.regimeContext.direction}|${ctx.regimeContext.macroBias}|${ctx.dataHealth}`;
+  const lastMarketState = lastActivityMarketStateByPair.get(pair);
+  if (lastMarketState !== marketStateKey) {
+    lastActivityMarketStateByPair.set(pair, marketStateKey);
+    logActivity({
+      pair,
+      category: "MARKET",
+      severity: "INFO",
+      title: `Contexto de mercado: ${ctx.regimeContext.regime} ${ctx.regimeContext.direction}`,
+      explanation: `Par ${pair} — régimen=${ctx.regimeContext.regime}, dirección=${ctx.regimeContext.direction}, macroBias=${ctx.regimeContext.macroBias}, dataHealth=${ctx.dataHealth}, ATR%=${ctx.regimeContext.atrPct.toFixed(2)}`,
+      decision: ctx.regimeContext.direction,
+      executionMode: mode,
+      regime: ctx.regimeContext.regime,
+      direction: ctx.regimeContext.direction,
+      macroBias: ctx.regimeContext.macroBias,
+      reasonCode: lastMarketState ? "MARKET_CONTEXT_CHANGED" : "MARKET_CONTEXT_INITIAL",
+    });
+  }
+
   // R6: Position management removed from scanPair — runPositionSupervisor is the single owner.
   // C. Check data health — if stale, skip entry evaluation
   if (ctx.dataHealth === DataHealth.STALE || ctx.dataHealth === DataHealth.INSUFFICIENT) {
@@ -1538,6 +1567,16 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   const sizing = evaluateSizing(ctx, intent, availableCapital, openLots);
   if (!sizing.approved) {
     console.log(`[SpotEngine] Entry blocked for ${intent.pair}: ${sizing.reason}`);
+    logActivity({
+      pair: intent.pair,
+      category: "RISK",
+      severity: "WARNING",
+      title: `Entrada rechazada por sizing: ${sizing.blockReason ?? sizing.reason}`,
+      explanation: `Sizing no aprobado para ${intent.pair}: ${sizing.reason}. Capital disponible=${availableCapital}, openLots=${openLots}.`,
+      decision: "REJECT",
+      executionMode: mode,
+      reasonCode: "SIZING_REJECTED",
+    });
     return false;
   }
 
@@ -2107,6 +2146,19 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       lotId,
       orderId: result.orderId,
     });
+    // POSITION activity — emit once on materialization
+    logActivity({
+      pair: intent.pair,
+      category: "POSITION",
+      severity: "SUCCESS",
+      title: `Posición materializada: ${lotId}`,
+      explanation: `Posición ${lotId} abierta para ${intent.pair} — modo=${mode}, precio=${result.fillPrice}, qty=${position.amount}, lotId=${lotId}`,
+      decision: "OPEN",
+      executionMode: mode,
+      price: result.fillPrice,
+      reasonCode: "POSITION_MATERIALIZED",
+      lotId,
+    });
     return true;
   } finally {
     if (entryCriticalSectionEntered) exitEntryCriticalSection();
@@ -2184,6 +2236,40 @@ async function manageOpenPositions(pair: string, ctx: SpotMarketContext): Promis
       WHERE lot_id = ${row.lotId}
     `);
 
+    // PROTECTION activity — emit on BE/TRAILING state change false→true (no repeat)
+    const protectionKey = `${exitState.breakEvenStopPrice !== null}|${exitState.trailingStopPrice !== null}`;
+    const lastProtection = lastProtectionStateByLot.get(row.lotId);
+    if (lastProtection !== protectionKey) {
+      const wasActive = lastProtection !== undefined;
+      lastProtectionStateByLot.set(row.lotId, protectionKey);
+      if (exitState.breakEvenStopPrice !== null && (!wasActive || lastProtection === "false|false")) {
+        logActivity({
+          pair: position.pair,
+          category: "PROTECTION",
+          severity: "INFO",
+          title: `Break-Even activado: ${row.lotId}`,
+          explanation: `Stop movido a break-even para posición ${row.lotId} (${position.pair}). Precio de stop=${exitState.breakEvenStopPrice}.`,
+          decision: "BE_ACTIVATED",
+          executionMode: position.executionMode,
+          reasonCode: "PROTECTION_BE_ACTIVATED",
+          lotId: row.lotId,
+        });
+      }
+      if (exitState.trailingStopPrice !== null && (!wasActive || lastProtection === "true|false")) {
+        logActivity({
+          pair: position.pair,
+          category: "PROTECTION",
+          severity: "INFO",
+          title: `Trailing stop activado: ${row.lotId}`,
+          explanation: `Trailing stop armado para posición ${row.lotId} (${position.pair}). Precio de stop=${exitState.trailingStopPrice}, highest=${exitState.trailingHighestPrice}.`,
+          decision: "TRAILING_ACTIVATED",
+          executionMode: position.executionMode,
+          reasonCode: "PROTECTION_TRAILING_ACTIVATED",
+          lotId: row.lotId,
+        });
+      }
+    }
+
     if (exitDecision.shouldExit && exitDecision.reasonType) {
       // B03: Use position.executionMode (immutable), NOT global mode
       await closePosition(position, exitDecision, ctx);
@@ -2191,6 +2277,7 @@ async function manageOpenPositions(pair: string, ctx: SpotMarketContext): Promis
       // Clean up state
       exitStates.delete(row.lotId);
       intentStore.remove(pair);
+      lastProtectionStateByLot.delete(row.lotId);
     }
   }
 }

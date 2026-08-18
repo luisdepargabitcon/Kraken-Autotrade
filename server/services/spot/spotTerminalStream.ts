@@ -36,6 +36,7 @@ interface TicketEntry {
   ticket: string;
   ip: string;
   fingerprint: string; // hash of IP + User-Agent
+  origin: string; // validated same-origin
   createdAt: number;
   expiresAt: number;
 }
@@ -48,6 +49,76 @@ const RATE_LIMIT_MAX_TICKETS = 5;
 const MAX_LIVE_TICKETS_PER_IP = 3;
 
 const ipRateLimit = new Map<string, number[]>(); // IP -> timestamps of ticket issuances
+
+// ── IP resolver — shared between HTTP ticket issuance and WS upgrade ───────────
+
+/**
+ * Resolve client IP consistently for both HTTP ticket issuance and WS upgrade.
+ * Uses socket.remoteAddress directly — does NOT trust X-Forwarded-For without
+ * explicit proxy configuration. Normalizes localhost variants.
+ */
+export function resolveTerminalClientIp(req: IncomingMessage): string {
+  // If trust proxy is explicitly configured via env, use X-Forwarded-For
+  const trustProxy = process.env.TRUST_PROXY === "true";
+  if (trustProxy) {
+    const xff = req.headers["x-forwarded-for"];
+    if (typeof xff === "string" && xff.length > 0) {
+      return xff.split(",")[0].trim();
+    }
+  }
+  const raw = req.socket?.remoteAddress ?? "unknown";
+  return normalizeIp(raw);
+}
+
+/**
+ * Normalize localhost IP variants to a canonical form.
+ */
+export function normalizeIp(ip: string): string {
+  if (ip === "::1" || ip === "::ffff:127.0.0.1" || ip === "127.0.0.1") {
+    return "127.0.0.1";
+  }
+  return ip;
+}
+
+// ── Origin validation ─────────────────────────────────────────────────────────
+
+/**
+ * Validate that the Origin header matches the expected same-origin.
+ * If PUBLIC_URL env is set, use it as the canonical allowed origin.
+ * Otherwise, construct expected origin from the request's protocol + host.
+ * Rejects null, undefined, and foreign origins.
+ */
+export function validateOrigin(origin: string | undefined, req: IncomingMessage): string | null {
+  if (!origin || origin === "null") return null;
+
+  // If PUBLIC_URL is configured, use it as the canonical allowed origin
+  const publicUrl = process.env.PUBLIC_URL;
+  if (publicUrl) {
+    try {
+      const parsed = new URL(publicUrl);
+      const expectedOrigin = `${parsed.protocol}//${parsed.host}`;
+      if (origin === expectedOrigin) return origin;
+      return null;
+    } catch {
+      // Invalid PUBLIC_URL — fall through to request-based validation
+    }
+  }
+
+  // Fallback: construct expected origin from request protocol + host
+  const host = req.headers.host;
+  if (!host) return null;
+
+  // Determine protocol: trust X-Forwarded-Proto if trust proxy, else use socket
+  const trustProxy = process.env.TRUST_PROXY === "true";
+  const xForwardedProto = req.headers["x-forwarded-proto"];
+  const protocol = (trustProxy && typeof xForwardedProto === "string" && xForwardedProto)
+    ? xForwardedProto.split(",")[0].trim()
+    : ((req.socket as any)?.encrypted ? "https" : "http");
+
+  const expectedOrigin = `${protocol}://${host}`;
+  if (origin === expectedOrigin) return origin;
+  return null;
+}
 
 function computeFingerprint(ip: string, userAgent: string): string {
   // Simple hash — not cryptographic, just for binding ticket to client
@@ -96,42 +167,72 @@ function cleanupExpiredRateLimits(): void {
 }
 
 /**
+ * Typed ticket generation result — distinguishes NOT_CONFIGURED from rate-limit.
+ */
+export type TicketResult =
+  | { ok: true; ticket: string }
+  | { ok: false; reason: "NOT_CONFIGURED" }
+  | { ok: false; reason: "RATE_LIMITED" }
+  | { ok: false; reason: "MAX_LIVE_TICKETS" }
+  | { ok: false; reason: "ORIGIN_REJECTED" };
+
+/**
  * Generate an ephemeral ticket for WS authentication.
- * The ticket is bound to the client's IP + User-Agent fingerprint.
+ * The ticket is bound to the client's IP + User-Agent fingerprint AND validated origin.
  * The browser never sees the permanent TERMINAL_TOKEN.
  *
  * TERMINAL_TICKET_AUTH=SAME_ORIGIN_EPHEMERAL_TICKET
  */
 export function generateTerminalTicket(clientIp: string, userAgent: string, origin?: string): string | null {
+  const result = generateTerminalTicketTyped(clientIp, userAgent, origin);
+  return result.ok ? result.ticket : null;
+}
+
+/**
+ * Typed ticket generation — returns structured result for proper HTTP status codes.
+ */
+export function generateTerminalTicketTyped(clientIp: string, userAgent: string, origin?: string): TicketResult {
   const permanentToken = process.env.TERMINAL_TOKEN;
-  if (!permanentToken) return null;
+  if (!permanentToken) return { ok: false, reason: "NOT_CONFIGURED" };
+
+  // Origin must be provided and valid (same-origin check)
+  if (!origin || origin === "null") {
+    log(`[WS-SPOT-TERMINAL] Origin missing or null — rejecting (ip: ${clientIp})`, "websocket");
+    return { ok: false, reason: "ORIGIN_REJECTED" };
+  }
 
   // Rate-limit check
   if (isRateLimited(clientIp)) {
     log(`[WS-SPOT-TERMINAL] Rate limit exceeded for IP: ${clientIp}`, "websocket");
-    return null;
+    return { ok: false, reason: "RATE_LIMITED" };
   }
 
   // Max live tickets per IP
   if (countLiveTicketsForIp(clientIp) >= MAX_LIVE_TICKETS_PER_IP) {
     log(`[WS-SPOT-TERMINAL] Max live tickets exceeded for IP: ${clientIp}`, "websocket");
-    return null;
+    return { ok: false, reason: "MAX_LIVE_TICKETS" };
   }
 
   const ticket = randomUUID();
   const fingerprint = computeFingerprint(clientIp, userAgent);
   const now = Date.now();
-  ticketStore.set(ticket, { ticket, ip: clientIp, fingerprint, createdAt: now, expiresAt: now + TICKET_TTL_MS });
-  return ticket;
+  ticketStore.set(ticket, { ticket, ip: clientIp, fingerprint, origin, createdAt: now, expiresAt: now + TICKET_TTL_MS });
+  return { ok: true, ticket };
 }
 
-function validateAndConsumeTicket(ticket: string, clientIp: string, userAgent: string): boolean {
+function validateAndConsumeTicket(ticket: string, clientIp: string, userAgent: string, origin?: string): boolean {
   const entry = ticketStore.get(ticket);
   if (!entry) return false;
 
   // Verify fingerprint matches
   const expectedFingerprint = computeFingerprint(clientIp, userAgent);
   if (entry.fingerprint !== expectedFingerprint) return false;
+
+  // Verify origin matches (same-origin enforcement)
+  if (origin !== entry.origin) {
+    log(`[WS-SPOT-TERMINAL] Origin mismatch — ticket origin=${entry.origin}, ws origin=${origin}`, "websocket");
+    return false;
+  }
 
   // Check expiry
   if (Date.now() >= entry.expiresAt) {
@@ -204,6 +305,7 @@ function sanitizeDeep<T>(value: T): T {
 
 export type TerminalLevel =
   | "INFO"
+  | "MARKET"
   | "SIGNAL"
   | "DECISION"
   | "EXECUTION"
@@ -301,7 +403,7 @@ class SpotTerminalWsServer {
 
   private onConnection(ws: WebSocket, req: IncomingMessage): void {
     const client = ws as WsClient;
-    const clientIp: string = req.socket?.remoteAddress ?? "unknown";
+    const clientIp = resolveTerminalClientIp(req);
 
     client.isAlive = true;
     this.clients.add(client);
@@ -357,8 +459,9 @@ class SpotTerminalWsServer {
     const authHeader: string | undefined = req.headers.authorization;
     const headerTicket = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
     const ticket = queryTicket ?? headerTicket;
-    const clientIp: string = req.socket?.remoteAddress ?? "unknown";
+    const clientIp = resolveTerminalClientIp(req);
     const userAgent: string = req.headers["user-agent"] ?? "unknown";
+    const wsOrigin: string | undefined = req.headers.origin as string | undefined;
 
     if (!ticket) {
       log(`[WS-SPOT-TERMINAL] No ticket provided — rejecting (ip: ${clientIp})`, "websocket");
@@ -367,8 +470,8 @@ class SpotTerminalWsServer {
       return;
     }
 
-    if (!validateAndConsumeTicket(ticket, clientIp, userAgent)) {
-      log(`[WS-SPOT-TERMINAL] Invalid/expired/fingerprint-mismatch ticket — rejecting (ip: ${clientIp})`, "websocket");
+    if (!validateAndConsumeTicket(ticket, clientIp, userAgent, wsOrigin)) {
+      log(`[WS-SPOT-TERMINAL] Invalid/expired/fingerprint/origin-mismatch ticket — rejecting (ip: ${clientIp})`, "websocket");
       socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n{\"error\":\"INVALID_TICKET\"}");
       socket.destroy();
       return;
@@ -391,6 +494,10 @@ class SpotTerminalWsServer {
     ringBuffer.length = 0;
     ticketStore.clear();
     ipRateLimit.clear();
+  }
+
+  clearTicketStoreOnlyForTest(): void {
+    ticketStore.clear();
   }
 
   shutdown(): void {
