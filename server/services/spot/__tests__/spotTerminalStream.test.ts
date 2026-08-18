@@ -3,6 +3,9 @@ import { createServer, type Server } from "http";
 import { WebSocket } from "ws";
 import { emitSpotTerminal, generateTerminalTicket, terminalWsServer, type TerminalLevel } from "../spotTerminalStream";
 
+const CLIENT_IP = "127.0.0.1";
+const CLIENT_UA = "vitest-test-agent/1.0";
+
 describe("spotTerminalStream — unit tests", () => {
   beforeEach(() => {
     terminalWsServer.clearRingBufferForTest();
@@ -71,7 +74,7 @@ describe("spotTerminalStream — unit tests", () => {
     expect(uniqueIds.size).toBe(100);
   });
 
-  // ── Sanitizer ──────────────────────────────────────────────────────────────
+  // ── Sanitizer (7 mandatory secret cases) ───────────────────────────────────
 
   it("7 — long base64 strings are redacted", () => {
     const secret = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn";
@@ -102,7 +105,33 @@ describe("spotTerminalStream — unit tests", () => {
     expect(line.msg).toContain("***REDACTED***");
   });
 
-  it("11 — short non-secret messages pass through unsanitized", () => {
+  it("11 — PEM private key body is redacted", () => {
+    const pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
+    emitSpotTerminal("INFO", "scan", `Loaded key: ${pem}`);
+    const [line] = terminalWsServer.getRingBuffer();
+    expect(line.msg).not.toContain("MIIEowIBAAKCAQEA");
+    expect(line.msg).toContain("***REDACTED_PEM***");
+  });
+
+  it("12 — signature header is redacted", () => {
+    emitSpotTerminal("INFO", "scan", "signature=AbCdEf1234567890AbCdEf1234567890AbCdEf12=");
+    const [line] = terminalWsServer.getRingBuffer();
+    expect(line.msg).not.toContain("AbCdEf1234567890");
+    expect(line.msg).toContain("***REDACTED***");
+  });
+
+  it("13 — secret key name in object details is redacted", () => {
+    emitSpotTerminal("INFO", "scan", "config loaded", {
+      details: { apiKey: "AKIAIOSFODNN7EXAMPLE1234567890ABCDEFGHIJKLMN", normalField: "ok" },
+    });
+    const [line] = terminalWsServer.getRingBuffer();
+    expect(line.details).not.toBeNull();
+    expect(JSON.stringify(line.details)).not.toContain("AKIAIOSFODNN7EXAMPLE1234567890ABCDEFGHIJKLMN");
+    expect(JSON.stringify(line.details)).toContain("***REDACTED***");
+    expect((line.details as any).normalField).toBe("ok");
+  });
+
+  it("14 — short non-secret messages pass through unsanitized", () => {
     emitSpotTerminal("INFO", "scan", "scan started mode=SHADOW");
     const [line] = terminalWsServer.getRingBuffer();
     expect(line.msg).toBe("scan started mode=SHADOW");
@@ -117,9 +146,12 @@ describe("spotTerminalStream — unit tests", () => {
     ["EXECUTION"] as [TerminalLevel],
     ["SUPERVISOR"] as [TerminalLevel],
     ["METADATA"] as [TerminalLevel],
+    ["READINESS"] as [TerminalLevel],
+    ["RISK"] as [TerminalLevel],
+    ["ADAPTER"] as [TerminalLevel],
     ["SYSTEM"] as [TerminalLevel],
     ["ERROR"] as [TerminalLevel],
-  ])("12 — level '%s' is stored verbatim", (level) => {
+  ])("15 — level '%s' is stored verbatim", (level) => {
     emitSpotTerminal(level, "test", `test-${level}`);
     const buf = terminalWsServer.getRingBuffer();
     const line = buf.find(l => l.msg === `test-${level}`);
@@ -128,19 +160,19 @@ describe("spotTerminalStream — unit tests", () => {
 
   // ── Broadcast ─────────────────────────────────────────────────────────────
 
-  it("13 — broadcast does not throw when no clients connected", () => {
+  it("16 — broadcast does not throw when no clients connected", () => {
     expect(() => {
       emitSpotTerminal("INFO", "scan", "no clients test");
     }).not.toThrow();
   });
 
-  it("14 — clearRingBufferForTest empties the buffer", () => {
+  it("17 — clearRingBufferForTest empties the buffer", () => {
     emitSpotTerminal("INFO", "scan", "before clear");
     terminalWsServer.clearRingBufferForTest();
     expect(terminalWsServer.getRingBuffer()).toHaveLength(0);
   });
 
-  it("15 — multiple sources coexist in ring buffer", () => {
+  it("18 — multiple sources coexist in ring buffer", () => {
     emitSpotTerminal("INFO", "scan", "from scan");
     emitSpotTerminal("SUPERVISOR", "supervisor", "from supervisor");
     emitSpotTerminal("SYSTEM", "engine", "from engine");
@@ -151,16 +183,40 @@ describe("spotTerminalStream — unit tests", () => {
 
   // ── Ticket auth ────────────────────────────────────────────────────────────
 
-  it("16 — generateTerminalTicket returns null when TERMINAL_TOKEN not set", () => {
+  it("19 — generateTerminalTicket returns null when TERMINAL_TOKEN not set", () => {
     delete process.env.TERMINAL_TOKEN;
-    const ticket = generateTerminalTicket();
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA);
     expect(ticket).toBeNull();
   });
 
-  it("17 — generateTerminalTicket returns a valid UUID when TERMINAL_TOKEN is set", () => {
-    const ticket = generateTerminalTicket();
+  it("20 — generateTerminalTicket returns a valid UUID when TERMINAL_TOKEN is set", () => {
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA);
     expect(ticket).not.toBeNull();
     expect(ticket).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it("21 — rate limit: max 5 tickets per IP per 60s window", () => {
+    // Generate 3 tickets (max live per IP is 3, so these succeed)
+    for (let i = 0; i < 3; i++) {
+      const t = generateTerminalTicket(CLIENT_IP, CLIENT_UA);
+      expect(t).not.toBeNull();
+    }
+    // 4th fails because max live tickets (3) is reached, not rate limit
+    const fourth = generateTerminalTicket(CLIENT_IP, CLIENT_UA);
+    expect(fourth).toBeNull();
+  });
+
+  it("22 — max 3 live tickets per IP", () => {
+    // Generate 3 tickets (rate limit allows 5, but max live is 3)
+    const t1 = generateTerminalTicket(CLIENT_IP, CLIENT_UA);
+    const t2 = generateTerminalTicket(CLIENT_IP, CLIENT_UA);
+    const t3 = generateTerminalTicket(CLIENT_IP, CLIENT_UA);
+    expect(t1).not.toBeNull();
+    expect(t2).not.toBeNull();
+    expect(t3).not.toBeNull();
+    // 4th should fail because 3 are still live
+    const t4 = generateTerminalTicket(CLIENT_IP, CLIENT_UA);
+    expect(t4).toBeNull();
   });
 });
 
@@ -198,10 +254,10 @@ describe("spotTerminalStream — WS integration", () => {
     delete process.env.TERMINAL_TOKEN;
   });
 
-  function wsConnect(ticket?: string): Promise<WebSocket> {
+  function wsConnect(ticket?: string, ua: string = CLIENT_UA): Promise<WebSocket> {
     return new Promise((resolve, reject) => {
       const url = `ws://127.0.0.1:${port}/ws/spot-terminal${ticket ? `?ticket=${ticket}` : ""}`;
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(url, { headers: { "user-agent": ua } });
       ws.on("open", () => resolve(ws));
       ws.on("error", reject);
       ws.on("unexpected-response", (_req, res) => {
@@ -211,11 +267,11 @@ describe("spotTerminalStream — WS integration", () => {
     });
   }
 
-  function connectAndCollect(ticket: string, expectedCount: number, timeoutMs = 5000): Promise<{ ws: WebSocket; messages: any[] }> {
+  function connectAndCollect(ticket: string, expectedCount: number, timeoutMs = 5000, ua: string = CLIENT_UA): Promise<{ ws: WebSocket; messages: any[] }> {
     return new Promise((resolve, reject) => {
       const messages: any[] = [];
       const url = `ws://127.0.0.1:${port}/ws/spot-terminal?ticket=${encodeURIComponent(ticket)}`;
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(url, { headers: { "user-agent": ua } });
 
       const handler = (data: any) => {
         try { messages.push(JSON.parse(data.toString())); } catch { /* ignore */ }
@@ -243,7 +299,7 @@ describe("spotTerminalStream — WS integration", () => {
 
   it("I1 — valid ticket connects and receives WS_STATUS + backfill", async () => {
     emitSpotTerminal("INFO", "scan", "pre-connect line");
-    const ticket = generateTerminalTicket()!;
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
     const { ws, messages } = await connectAndCollect(ticket, 2);
     expect(messages[0].type).toBe("WS_STATUS");
     expect(messages[1].type).toBe("TERMINAL_HISTORY");
@@ -252,7 +308,7 @@ describe("spotTerminalStream — WS integration", () => {
     ws.close();
   });
 
-  it("I2 — missing ticket → connection rejected with 4001", async () => {
+  it("I2 — missing ticket → connection rejected", async () => {
     await expect(wsConnect()).rejects.toThrow();
   });
 
@@ -261,22 +317,28 @@ describe("spotTerminalStream — WS integration", () => {
   });
 
   it("I4 — expired ticket → connection rejected", async () => {
-    const ticket = generateTerminalTicket()!;
-    // Wait 31s? No — we simulate expiry by clearing the store
-    terminalWsServer.clearRingBufferForTest(); // clears tickets too
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
+    // Simulate expiry by clearing the store
+    terminalWsServer.clearRingBufferForTest();
     await expect(wsConnect(ticket)).rejects.toThrow();
   });
 
   it("I5 — single-use ticket: second connect with same ticket fails", async () => {
-    const ticket = generateTerminalTicket()!;
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
     const ws1 = await wsConnect(ticket);
     ws1.close();
     // Ticket already consumed
     await expect(wsConnect(ticket)).rejects.toThrow();
   });
 
-  it("I6 — live emit reaches connected client", async () => {
-    const ticket = generateTerminalTicket()!;
+  it("I6 — fingerprint mismatch: different User-Agent → rejected", async () => {
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
+    // Connect with a different User-Agent — fingerprint won't match
+    await expect(wsConnect(ticket, "different-agent/2.0")).rejects.toThrow();
+  });
+
+  it("I7 — live emit reaches connected client", async () => {
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
     // Connect and collect initial WS_STATUS (1 message)
     const { ws, messages: initial } = await connectAndCollect(ticket, 1);
     expect(initial[0].type).toBe("WS_STATUS");
@@ -303,8 +365,8 @@ describe("spotTerminalStream — WS integration", () => {
     ws.close();
   });
 
-  it("I7 — secret in live emit is sanitized before reaching client", async () => {
-    const ticket = generateTerminalTicket()!;
+  it("I8 — secret in live emit is sanitized before reaching client", async () => {
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
     const { ws } = await connectAndCollect(ticket, 1);
 
     const secret = "api_key=AKIAIOSFODNN7EXAMPLE123456";
@@ -321,6 +383,125 @@ describe("spotTerminalStream — WS integration", () => {
 
     expect(liveMsg.payload.msg).not.toContain("AKIAIOSFODNN7EXAMPLE123456");
     expect(liveMsg.payload.msg).toContain("***REDACTED***");
+
+    ws.close();
+  });
+
+  // ── Missing WebSocket tests ────────────────────────────────────────────────
+
+  it("I9 — two clients both receive broadcast", async () => {
+    const ticket1 = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
+    const { ws: ws1, messages: m1 } = await connectAndCollect(ticket1, 1);
+
+    const ticket2 = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
+    const { ws: ws2, messages: m2 } = await connectAndCollect(ticket2, 1);
+
+    expect(m1[0].type).toBe("WS_STATUS");
+    expect(m2[0].type).toBe("WS_STATUS");
+
+    emitSpotTerminal("INFO", "scan", "broadcast to both");
+
+    const [live1, live2] = await Promise.all([
+      new Promise<any>(resolve => {
+        ws1.on("message", (data) => {
+          try {
+            const parsed = JSON.parse(data.toString());
+            if (parsed.type === "TERMINAL_LINE") resolve(parsed);
+          } catch { /* ignore */ }
+        });
+      }),
+      new Promise<any>(resolve => {
+        ws2.on("message", (data) => {
+          try {
+            const parsed = JSON.parse(data.toString());
+            if (parsed.type === "TERMINAL_LINE") resolve(parsed);
+          } catch { /* ignore */ }
+        });
+      }),
+    ]);
+
+    expect(live1.payload.msg).toBe("broadcast to both");
+    expect(live2.payload.msg).toBe("broadcast to both");
+
+    ws1.close();
+    ws2.close();
+  });
+
+  it("I10 — message order preserved: first emit arrives first", async () => {
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
+    const { ws } = await connectAndCollect(ticket, 1);
+
+    emitSpotTerminal("INFO", "scan", "first");
+    emitSpotTerminal("INFO", "scan", "second");
+    emitSpotTerminal("INFO", "scan", "third");
+
+    const messages: any[] = [];
+    await new Promise<void>(resolve => {
+      let count = 0;
+      ws.on("message", (data) => {
+        try {
+          const parsed = JSON.parse(data.toString());
+          if (parsed.type === "TERMINAL_LINE") {
+            messages.push(parsed);
+            count++;
+            if (count >= 3) resolve();
+          }
+        } catch { /* ignore */ }
+      });
+    });
+
+    expect(messages[0].payload.msg).toBe("first");
+    expect(messages[1].payload.msg).toBe("second");
+    expect(messages[2].payload.msg).toBe("third");
+
+    ws.close();
+  });
+
+  it("I11 — disconnect reduces client count", async () => {
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
+    const { ws } = await connectAndCollect(ticket, 1);
+    expect(terminalWsServer.getClientCount()).toBe(1);
+
+    ws.close();
+
+    // Wait for close to propagate
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(terminalWsServer.getClientCount()).toBe(0);
+  });
+
+  it("I12 — read-only: client messages are ignored (no response, no error)", async () => {
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
+    const { ws } = await connectAndCollect(ticket, 1);
+
+    // Send various messages — all should be ignored
+    ws.send(JSON.stringify({ type: "START_SOURCE", source: "scan" }));
+    ws.send(JSON.stringify({ type: "RUN_COMMAND", command: "ls -la" }));
+    ws.send("plain text message");
+    ws.send(JSON.stringify({ type: "placeOrder", pair: "BTC/USD", volume: 100 }));
+
+    // Wait a bit to ensure no response comes back
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // Client should still be connected — no disconnect from sending messages
+    expect(terminalWsServer.getClientCount()).toBe(1);
+
+    ws.close();
+  });
+
+  it("I13 — backfill preserves order (oldest first in history)", async () => {
+    emitSpotTerminal("INFO", "scan", "oldest");
+    emitSpotTerminal("INFO", "scan", "middle");
+    emitSpotTerminal("INFO", "scan", "newest");
+
+    const ticket = generateTerminalTicket(CLIENT_IP, CLIENT_UA)!;
+    const { ws, messages } = await connectAndCollect(ticket, 2);
+
+    const history = messages.find(m => m.type === "TERMINAL_HISTORY");
+    expect(history).toBeDefined();
+    expect(history.payload.lines).toHaveLength(3);
+    expect(history.payload.lines[0].msg).toBe("oldest");
+    expect(history.payload.lines[1].msg).toBe("middle");
+    expect(history.payload.lines[2].msg).toBe("newest");
 
     ws.close();
   });

@@ -29,6 +29,7 @@ import { SPOT_ENGINE_OWNER, isSpotRuntimeOwner, getTradingVenueFailClosed } from
 import { ExchangeFactory } from "../exchanges/ExchangeFactory";
 import { getTradingFeeModel } from "./feeModel";
 import { countPendingRealOrderIntents, RealIntentPersistenceError } from "./spotOrderIntentStore";
+import { emitSpotTerminal } from "./spotTerminalStream";
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
 
@@ -229,12 +230,15 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
       if (typeof anyExchange.getPairMetadata === "function") {
         // R10.3: Try loadPairMetadata if available, then check per-pair
         if (typeof anyExchange.loadPairMetadata === "function") {
+          emitSpotTerminal("METADATA", "metadata", `Cargando metadata para ${activePairs.length} pares activos`, { details: { pairs: activePairs } });
           try {
             await anyExchange.loadPairMetadata(activePairs);
+            emitSpotTerminal("METADATA", "metadata", `Metadata cargada OK para ${activePairs.length} pares`);
           } catch (refreshError: any) {
             // R10.8-4: Explicit refresh failure — the pairs' cache entries are already
             // invalidated by loadPairMetadata itself, so the per-pair loop below will
             // correctly see them as missing. Surface a clear blocker reason too.
+            emitSpotTerminal("METADATA", "metadata", `Metadata refresh FALLÓ: ${refreshError.message}`, { details: { error: refreshError.message } });
             blockers.push(`Refresh de metadata falló para pares activos: ${refreshError.message}`);
           }
         }
@@ -351,6 +355,15 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
   }
 
   // 11. R10.3: Pending order_intents counts — ALL are BLOCKERS (not warnings)
+  emitSpotTerminal("RISK", "risk", `Risk state: uncertain=${checks.uncertainPositionsCount}, pendingFill=${checks.pendingFillPositionsCount}, exitPending=${checks.exitPendingPositionsCount}, legacy=${checks.legacyEntriesCount}, shadow=${checks.shadowPositionsCount}`, {
+    details: {
+      uncertain: checks.uncertainPositionsCount,
+      pendingFill: checks.pendingFillPositionsCount,
+      exitPending: checks.exitPendingPositionsCount,
+      legacy: checks.legacyEntriesCount,
+      shadow: checks.shadowPositionsCount,
+    },
+  });
   let intentCounts: { pendingEntryOrders: number; pendingExitOrders: number; uncertainOrders: number; submittedOrdersWithoutVenueId: number };
   try {
     intentCounts = await countPendingRealOrderIntents();
@@ -381,10 +394,12 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     const { createExecutionAdapter } = await import("./spotExecutionAdapter");
     const adapter = createExecutionAdapter(ExecutionMode.REAL);
     checks.realAdapterImplemented = adapter.canPlaceRealOrder;
+    emitSpotTerminal("ADAPTER", "adapter", `RealAdapter ${checks.realAdapterImplemented ? "OK" : "NO implementado"} (canPlaceRealOrder=${adapter.canPlaceRealOrder})`);
     if (!checks.realAdapterImplemented) {
       blockers.push("RealAdapter no implementado (canPlaceRealOrder=false)");
     }
-  } catch {
+  } catch (err: any) {
+    emitSpotTerminal("ADAPTER", "adapter", `Error creando RealAdapter: ${err?.message ?? "unknown"}`);
     blockers.push("No se pudo crear RealAdapter");
   }
 
@@ -673,5 +688,8 @@ export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
   }
 
   const ready = blockers.length === 0;
+  emitSpotTerminal("READINESS", "readiness", `Structural readiness: ${ready ? "OK" : `BLOCKED (${blockers.length} blockers)`}`, {
+    details: { ready, blockerCount: blockers.length, warningCount: warnings.length, metadataLoaded: checks.pairMetadataLoadedCount, metadataTotal: checks.pairMetadataTotalCount },
+  });
   return { ready, blockers, warnings, checks };
 }

@@ -5,7 +5,7 @@ import { Activity, Pause, Play, Trash2, Copy, RefreshCw, Search, ArrowDownToLine
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type TerminalLevel = "INFO" | "SIGNAL" | "DECISION" | "EXECUTION" | "SUPERVISOR" | "METADATA" | "SYSTEM" | "ERROR";
+type TerminalLevel = "INFO" | "SIGNAL" | "DECISION" | "EXECUTION" | "SUPERVISOR" | "METADATA" | "READINESS" | "RISK" | "ADAPTER" | "SYSTEM" | "ERROR";
 
 interface TerminalLine {
   id: string;
@@ -32,6 +32,9 @@ const LEVEL_CLASS: Record<TerminalLevel, string> = {
   EXECUTION:  "text-blue-400",
   SUPERVISOR: "text-purple-400",
   METADATA:   "text-cyan-400",
+  READINESS:  "text-indigo-400",
+  RISK:       "text-orange-400",
+  ADAPTER:    "text-teal-400",
   SYSTEM:     "text-orange-400",
   ERROR:      "text-red-400",
 };
@@ -256,7 +259,7 @@ export function SpotTerminalPanel() {
             className="text-[10px] bg-muted border border-border/50 rounded px-1 py-0.5 text-foreground"
           >
             <option value="ALL">Todos</option>
-            {(["INFO", "SIGNAL", "DECISION", "EXECUTION", "SUPERVISOR", "METADATA", "SYSTEM", "ERROR"] as const).map(l => (
+            {(["INFO", "SIGNAL", "DECISION", "EXECUTION", "SUPERVISOR", "METADATA", "READINESS", "RISK", "ADAPTER", "SYSTEM", "ERROR"] as const).map(l => (
               <option key={l} value={l}>{l}</option>
             ))}
           </select>

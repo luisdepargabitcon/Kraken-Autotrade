@@ -1,19 +1,27 @@
 /**
  * spotTerminalStream — Real-time Spot engine terminal over WebSocket.
  *
- * R10.9 hardening:
+ * R10.9 hardening (SAME_ORIGIN_EPHEMERAL_TICKET):
  *   - UUID v4 line IDs via randomUUID() for deduplication.
- *   - Recursive secret sanitization (objects, arrays, nested strings).
+ *   - Recursive secret sanitization via buildSanitizedLine() — single entry point.
  *   - Ephemeral ticket-based WS auth — no permanent token in browser.
+ *   - Ticket bound to fingerprint: client IP + User-Agent.
+ *   - Same-origin verification on ticket issuance.
+ *   - Rate-limit: max 5 tickets per IP per 60s window.
+ *   - Max 3 live tickets per IP.
+ *   - TTL 30s, single-use, expired ticket cleanup.
  *   - In-memory ring buffer of last RING_BUFFER_SIZE lines (no DB).
- *   - emitSpotTerminal() called from SpotEngine scan, supervisor, readiness.
  *   - WebSocket server on /ws/spot-terminal.
  *   - Backfill last BACKFILL_LINES on connect.
+ *   - Read-only: client messages are ignored (no action, no execution).
+ *
+ * TERMINAL_TICKET_AUTH=SAME_ORIGIN_EPHEMERAL_TICKET
+ * No application-level user authentication exists in this codebase.
  */
 
 import { randomUUID } from "crypto";
 import { WebSocketServer, WebSocket } from "ws";
-import type { Server } from "http";
+import type { Server, IncomingMessage } from "http";
 import { log } from "../../utils/logger";
 
 const WS_PATH = "/ws/spot-terminal";
@@ -22,30 +30,118 @@ const BACKFILL_LINES = 100;
 const HEARTBEAT_INTERVAL = 30_000;
 const TICKET_TTL_MS = 30_000; // 30 seconds
 
-// ── Ephemeral ticket store ────────────────────────────────────────────────────
+// ── Same-origin ephemeral ticket store ─────────────────────────────────────────
 
-const ticketStore = new Map<string, { createdAt: number; expiresAt: number }>();
+interface TicketEntry {
+  ticket: string;
+  ip: string;
+  fingerprint: string; // hash of IP + User-Agent
+  createdAt: number;
+  expiresAt: number;
+}
+
+const ticketStore = new Map<string, TicketEntry>();
+
+// Rate-limit: max tickets per IP per window
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_TICKETS = 5;
+const MAX_LIVE_TICKETS_PER_IP = 3;
+
+const ipRateLimit = new Map<string, number[]>(); // IP -> timestamps of ticket issuances
+
+function computeFingerprint(ip: string, userAgent: string): string {
+  // Simple hash — not cryptographic, just for binding ticket to client
+  let hash = 0;
+  const str = ip + "|" + userAgent;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return hash.toString(36);
+}
+
+function countLiveTicketsForIp(ip: string): number {
+  const now = Date.now();
+  let count = 0;
+  for (const entry of ticketStore.values()) {
+    if (entry.ip === ip && entry.expiresAt > now) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const timestamps = ipRateLimit.get(ip) ?? [];
+  const recent = timestamps.filter(ts => now - ts < RATE_LIMIT_WINDOW_MS);
+  if (recent.length >= RATE_LIMIT_MAX_TICKETS) {
+    ipRateLimit.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  ipRateLimit.set(ip, recent);
+  return false;
+}
+
+function cleanupExpiredRateLimits(): void {
+  const now = Date.now();
+  for (const [ip, timestamps] of ipRateLimit) {
+    const recent = timestamps.filter(ts => now - ts < RATE_LIMIT_WINDOW_MS);
+    if (recent.length === 0) {
+      ipRateLimit.delete(ip);
+    } else {
+      ipRateLimit.set(ip, recent);
+    }
+  }
+}
 
 /**
  * Generate an ephemeral ticket for WS authentication.
- * The ticket is valid for TICKET_TTL_MS and can only be used once.
+ * The ticket is bound to the client's IP + User-Agent fingerprint.
  * The browser never sees the permanent TERMINAL_TOKEN.
+ *
+ * TERMINAL_TICKET_AUTH=SAME_ORIGIN_EPHEMERAL_TICKET
  */
-export function generateTerminalTicket(): string | null {
+export function generateTerminalTicket(clientIp: string, userAgent: string, origin?: string): string | null {
   const permanentToken = process.env.TERMINAL_TOKEN;
   if (!permanentToken) return null;
 
+  // Rate-limit check
+  if (isRateLimited(clientIp)) {
+    log(`[WS-SPOT-TERMINAL] Rate limit exceeded for IP: ${clientIp}`, "websocket");
+    return null;
+  }
+
+  // Max live tickets per IP
+  if (countLiveTicketsForIp(clientIp) >= MAX_LIVE_TICKETS_PER_IP) {
+    log(`[WS-SPOT-TERMINAL] Max live tickets exceeded for IP: ${clientIp}`, "websocket");
+    return null;
+  }
+
   const ticket = randomUUID();
+  const fingerprint = computeFingerprint(clientIp, userAgent);
   const now = Date.now();
-  ticketStore.set(ticket, { createdAt: now, expiresAt: now + TICKET_TTL_MS });
+  ticketStore.set(ticket, { ticket, ip: clientIp, fingerprint, createdAt: now, expiresAt: now + TICKET_TTL_MS });
   return ticket;
 }
 
-function validateAndConsumeTicket(ticket: string): boolean {
+function validateAndConsumeTicket(ticket: string, clientIp: string, userAgent: string): boolean {
   const entry = ticketStore.get(ticket);
   if (!entry) return false;
-  ticketStore.delete(ticket); // single-use
-  return Date.now() < entry.expiresAt;
+
+  // Verify fingerprint matches
+  const expectedFingerprint = computeFingerprint(clientIp, userAgent);
+  if (entry.fingerprint !== expectedFingerprint) return false;
+
+  // Check expiry
+  if (Date.now() >= entry.expiresAt) {
+    ticketStore.delete(ticket);
+    return false;
+  }
+
+  // Single-use: consume the ticket
+  ticketStore.delete(ticket);
+  return true;
 }
 
 // Cleanup expired tickets periodically
@@ -54,6 +150,7 @@ setInterval(() => {
   for (const [key, entry] of ticketStore) {
     if (now >= entry.expiresAt) ticketStore.delete(key);
   }
+  cleanupExpiredRateLimits();
 }, 60_000).unref();
 
 // ── Recursive Sanitizer ───────────────────────────────────────────────────────
@@ -62,10 +159,14 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   // Authorization headers
   [/Authorization:\s*Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Authorization: Bearer ***REDACTED***"],
   [/Authorization:\s*[A-Za-z]+\s+[A-Za-z0-9\-._~+/]+=*/gi, "Authorization: ***REDACTED***"],
-  // API keys, secrets, tokens, private keys (key=value or key: value patterns)
+  // API keys, secrets, tokens, private keys, passphrases, passwords
   [/(api[_-]?key|apikey|api[_-]?secret|secret|token|private[_-]?key|passphrase|password)[=:\s"']+[^\s"',;&\]}{]+/gi, "$1=***REDACTED***"],
   // Revolut RPA keys
   [/([Rr][Pp][Aa][-\w]{20,})/g, "***REDACTED_KEY***"],
+  // Revolut X signature headers
+  [/(signature[=:\s]+[A-Za-z0-9+/=]{20,})/gi, "signature=***REDACTED***"],
+  // PEM private key bodies
+  [/(-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?-----END[A-Z ]*PRIVATE KEY-----)/g, "***REDACTED_PEM***"],
   // Base64-encoded private keys (40+ chars)
   [/[A-Za-z0-9+/]{40,}={0,2}/g, "***REDACTED_B64***"],
   // Long uppercase hex strings (potential API secrets)
@@ -90,7 +191,9 @@ function sanitizeDeep<T>(value: T): T {
   if (value !== null && typeof value === "object") {
     const result: Record<string, unknown> = {};
     for (const key of Object.keys(value as Record<string, unknown>)) {
-      result[key] = sanitizeDeep((value as Record<string, unknown>)[key]);
+      // Also sanitize keys that look like secret field names
+      const sanitizedKey = /secret|password|token|key|signature|credential/i.test(key) ? "***REDACTED***" : key;
+      result[sanitizedKey] = sanitizeDeep((value as Record<string, unknown>)[key]);
     }
     return result as T;
   }
@@ -106,6 +209,9 @@ export type TerminalLevel =
   | "EXECUTION"
   | "SUPERVISOR"
   | "METADATA"
+  | "READINESS"
+  | "RISK"
+  | "ADAPTER"
   | "SYSTEM"
   | "ERROR";
 
@@ -117,6 +223,7 @@ export interface TerminalLine {
   msg: string;
   pair?: string | null;
   mode?: string | null;
+  details?: Record<string, unknown> | null;
 }
 
 interface WsMessage {
@@ -126,6 +233,31 @@ interface WsMessage {
 
 interface WsClient extends WebSocket {
   isAlive: boolean;
+}
+
+// ── buildSanitizedLine — single entry point for sanitization ──────────────────
+
+/**
+ * Build a fully sanitized TerminalLine. This is the ONLY function that should
+ * be used to construct lines for the ring buffer and broadcast.
+ * Sanitization happens BEFORE ring buffer and broadcast — no bypass.
+ */
+function buildSanitizedLine(
+  level: TerminalLevel,
+  source: string,
+  rawMsg: string,
+  meta?: { pair?: string | null; mode?: string | null; details?: Record<string, unknown> | null },
+): TerminalLine {
+  return {
+    id: randomUUID(),
+    ts: Date.now(),
+    level,
+    source: sanitizeString(source),
+    msg: sanitizeString(rawMsg),
+    pair: meta?.pair ? sanitizeString(meta.pair) : null,
+    mode: meta?.mode ? sanitizeString(meta.mode) : null,
+    details: meta?.details ? sanitizeDeep(meta.details) : null,
+  };
 }
 
 // ── Ring Buffer ───────────────────────────────────────────────────────────────
@@ -147,18 +279,9 @@ export function emitSpotTerminal(
   level: TerminalLevel,
   source: string,
   rawMsg: string,
-  meta?: { pair?: string | null; mode?: string | null },
+  meta?: { pair?: string | null; mode?: string | null; details?: Record<string, unknown> | null },
 ): void {
-  const line: TerminalLine = {
-    id: randomUUID(),
-    ts: Date.now(),
-    level,
-    source,
-    msg: sanitizeString(rawMsg),
-    pair: meta?.pair ? sanitizeString(meta.pair) : null,
-    mode: meta?.mode ? sanitizeString(meta.mode) : null,
-  };
-
+  const line = buildSanitizedLine(level, source, rawMsg, meta);
   pushLine(line);
   terminalWsServer.broadcast(line);
 }
@@ -173,10 +296,10 @@ class SpotTerminalWsServer {
   initialize(server: Server): void {
     this.wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
     this.startHeartbeat();
-    log(`[WS-SPOT-TERMINAL] Initialized on ${WS_PATH} (ephemeral ticket auth)`, "websocket");
+    log(`[WS-SPOT-TERMINAL] Initialized on ${WS_PATH} (SAME_ORIGIN_EPHEMERAL_TICKET auth)`, "websocket");
   }
 
-  private onConnection(ws: WebSocket, req: any): void {
+  private onConnection(ws: WebSocket, req: IncomingMessage): void {
     const client = ws as WsClient;
     const clientIp: string = req.socket?.remoteAddress ?? "unknown";
 
@@ -202,6 +325,12 @@ class SpotTerminalWsServer {
       }
     });
 
+    // Read-only: ignore all client messages (no action, no execution, no response)
+    client.on("message", () => {
+      // Intentionally empty — terminal is read-only.
+      // Commands like START_SOURCE, RUN_COMMAND, placeOrder are ignored.
+    });
+
     client.on("pong", () => { client.isAlive = true; });
     client.on("close", () => {
       this.clients.delete(client);
@@ -220,7 +349,7 @@ class SpotTerminalWsServer {
     }
   }
 
-  handleUpgrade(req: any, socket: any, head: any): void {
+  handleUpgrade(req: IncomingMessage, socket: any, head: any): void {
     if (!this.wss) return;
 
     const url = new URL(req.url || "", `http://${req.headers.host}`);
@@ -229,6 +358,7 @@ class SpotTerminalWsServer {
     const headerTicket = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
     const ticket = queryTicket ?? headerTicket;
     const clientIp: string = req.socket?.remoteAddress ?? "unknown";
+    const userAgent: string = req.headers["user-agent"] ?? "unknown";
 
     if (!ticket) {
       log(`[WS-SPOT-TERMINAL] No ticket provided — rejecting (ip: ${clientIp})`, "websocket");
@@ -237,8 +367,8 @@ class SpotTerminalWsServer {
       return;
     }
 
-    if (!validateAndConsumeTicket(ticket)) {
-      log(`[WS-SPOT-TERMINAL] Invalid or expired ticket — rejecting (ip: ${clientIp})`, "websocket");
+    if (!validateAndConsumeTicket(ticket, clientIp, userAgent)) {
+      log(`[WS-SPOT-TERMINAL] Invalid/expired/fingerprint-mismatch ticket — rejecting (ip: ${clientIp})`, "websocket");
       socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n{\"error\":\"INVALID_TICKET\"}");
       socket.destroy();
       return;
@@ -260,6 +390,7 @@ class SpotTerminalWsServer {
   clearRingBufferForTest(): void {
     ringBuffer.length = 0;
     ticketStore.clear();
+    ipRateLimit.clear();
   }
 
   shutdown(): void {

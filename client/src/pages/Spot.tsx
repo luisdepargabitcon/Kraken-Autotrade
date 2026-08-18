@@ -99,6 +99,15 @@ export default function Spot() {
 
   // ─── Mode change mutation ─────────────────────────────────────────────────
 
+  class SpotModeChangeError extends Error {
+    blockers: string[];
+    constructor(message: string, blockers: string[] = []) {
+      super(message);
+      this.name = "SpotModeChangeError";
+      this.blockers = blockers;
+    }
+  }
+
   const modeMutation = useMutation({
     mutationFn: async (mode: "OFF" | "SHADOW" | "REAL") => {
       const res = await fetch("/api/spot/mode", {
@@ -107,7 +116,7 @@ export default function Spot() {
         body: JSON.stringify({ mode }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Failed to set mode");
+      if (!res.ok) throw new SpotModeChangeError(json.error || "Failed to set mode", json.blockers ?? []);
       return json;
     },
     onSuccess: () => {
@@ -123,7 +132,12 @@ export default function Spot() {
       try {
         await modeMutation.mutateAsync(mode);
         return true;
-      } catch {
+      } catch (err: any) {
+        // Propagate blockers to SpotStatusPanel via the error object
+        if (err?.blockers && Array.isArray(err.blockers)) {
+          // Re-throw so SpotStatusPanel's handleModeChange catch block receives it
+          throw err;
+        }
         return false;
       }
     },

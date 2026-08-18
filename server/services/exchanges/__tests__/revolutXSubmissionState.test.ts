@@ -161,6 +161,7 @@ describe("R10.6: RevolutXService loadPairMetadata baseCurrency/quoteCurrency", (
     asInternal.initialized = true;
     asInternal.getHeaders = () => ({ "Authorization": "Bearer test" });
     asInternal.pairMetadataCache.clear();
+    service.clearPairConstraintsCache();
   });
 
   afterEach(() => {
@@ -171,16 +172,11 @@ describe("R10.6: RevolutXService loadPairMetadata baseCurrency/quoteCurrency", (
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
+    // Mock /api/1.0/configuration/pairs response (auth endpoint)
     fetchMock.mockResolvedValueOnce({
       ok: true, status: 200,
       json: async () => ([
-        { currency: "BTC", scale: 8 },
-      ]),
-    });
-    fetchMock.mockResolvedValueOnce({
-      ok: true, status: 200,
-      json: async () => ([
-        { symbol: "BTC-USD", name: "BTC-USD", min_order_size: "0.0001", base_step: "0.00000001", price_scale: 2 },
+        { base: "BTC", quote: "USD", base_step: "0.00000001", quote_step: "0.01", min_order_size: "0.0001", min_order_size_quote: "10", max_order_size: "10", status: "active" },
       ]),
     });
 

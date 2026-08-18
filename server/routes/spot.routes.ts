@@ -299,13 +299,18 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   });
 
   // ─── POST /api/spot/terminal-ticket ──────────────────────────────────────
-  // R10.9: Ephemeral ticket for WS spot-terminal auth. Browser never sees TERMINAL_TOKEN.
-  app.post("/api/spot/terminal-ticket", async (_req, res) => {
+  // R10.9: SAME_ORIGIN_EPHEMERAL_TICKET — ephemeral ticket for WS spot-terminal auth.
+  // Browser never sees TERMINAL_TOKEN. Ticket is bound to IP + User-Agent fingerprint.
+  // Rate-limited: max 5 tickets per IP per 60s. Max 3 live tickets per IP. TTL 30s, single-use.
+  app.post("/api/spot/terminal-ticket", async (req, res) => {
     try {
       const { generateTerminalTicket } = await import("../services/spot/spotTerminalStream");
-      const ticket = generateTerminalTicket();
+      const clientIp = req.ip ?? req.socket?.remoteAddress ?? "unknown";
+      const userAgent = req.headers["user-agent"] ?? "unknown";
+      const origin = req.headers.origin;
+      const ticket = generateTerminalTicket(clientIp, userAgent, origin);
       if (!ticket) {
-        res.status(503).json({ error: "TERMINAL_TOKEN not configured on server" });
+        res.status(429).json({ error: "Rate limited or TERMINAL_TOKEN not configured" });
         return;
       }
       res.json({ ticket, expiresIn: 30 });

@@ -35,6 +35,7 @@ interface RealReadiness {
     pairMetadataLoaded: boolean;
     pairMetadataLoadedCount: number;
     pairMetadataTotalCount: number;
+    pairMetadataMissing: string[];
     uncertainPositionsCount: number;
     pendingFillPositionsCount: number;
     exitPendingPositionsCount: number;
@@ -209,6 +210,13 @@ export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) 
                         <ReadinessCheck label="Fee model válido" ok={readiness.checks.feeModelValid} />
                         <ReadinessCheck label={`Pares activos (${readiness.checks.activePairsCount})`} ok={readiness.checks.activePairsConfigured} />
                         <ReadinessCheck label={`Metadata de pares (${readiness.checks.pairMetadataLoadedCount}/${readiness.checks.pairMetadataTotalCount})`} ok={readiness.checks.pairMetadataLoaded} />
+                        {readiness.checks.pairMetadataMissing && readiness.checks.pairMetadataMissing.length > 0 && (
+                          <div className="ml-4 space-y-0.5">
+                            {readiness.checks.pairMetadataMissing.map((p: string) => (
+                              <p key={p} className="text-xs text-red-400">⚠ {p} — metadata faltante</p>
+                            ))}
+                          </div>
+                        )}
                         <ReadinessCheck label="Sin posiciones UNCERTAIN" ok={readiness.checks.uncertainPositionsCount === 0} />
                         <ReadinessCheck label="Sin PENDING_FILL" ok={readiness.checks.pendingFillPositionsCount === 0} />
                         <ReadinessCheck label="Sin EXIT_PENDING" ok={readiness.checks.exitPendingPositionsCount === 0} />
