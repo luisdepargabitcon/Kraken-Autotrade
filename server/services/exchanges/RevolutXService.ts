@@ -932,103 +932,73 @@ export class RevolutXService implements IExchangeService {
   async loadPairMetadata(pairs: string[]): Promise<void> {
     console.log(`[revolutx] Loading pair metadata for: ${pairs.join(', ')}`);
 
-    // R10.8-4: Invalidate the requested pairs' cache entries BEFORE attempting the
-    // refresh. If the refresh fails below, these pairs must NOT appear to still have
-    // valid (stale) metadata — getPairMetadata() must return null for them, and
-    // readiness must see a BLOCKER, not silently reuse old data as if refresh succeeded.
+    const region = process.env.REVOLUTX_REGION || "EEA";
+
+    // R10.8-4 / REV-C12F: Invalidate both caches for the requested pairs BEFORE attempting
+    // the refresh. Fail-closed: if the refresh fails, getPairMetadata() → null and
+    // readiness must see a BLOCKER, not silently reuse old data.
     for (const pair of pairs) {
       this.pairMetadataCache.delete(pair);
+      try {
+        const normalizedPair = this.normalizeRevolutXPairKey(pair);
+        this.pairConstraintsCache.delete(`${region}:${normalizedPair}`);
+      } catch {
+        // Invalid pair format — resolveGridPairConstraints will reject it cleanly.
+      }
     }
 
-    // R10.7-7: Metadata must NEVER be invented. Both endpoints must succeed —
-    // if either fails, we cannot verify any pair, so skip metadata population
-    // entirely rather than falling back to defaults.
-    let currenciesRes: Response;
-    let symbolsRes: Response;
-    try {
-      [currenciesRes, symbolsRes] = await Promise.all([
-        fetch(API_BASE_URL + '/api/1.0/currencies'),
-        fetch(API_BASE_URL + '/api/1.0/symbols')
-      ]);
-    } catch (error: any) {
-      console.error('[revolutx] Failed to fetch currencies/symbols endpoints — no metadata will be cached:', error.message);
-      throw new Error(`REVOLUTX_METADATA_REFRESH_FAILED: fetch error: ${error.message}`);
-    }
-
-    if (!currenciesRes.ok || !symbolsRes.ok) {
-      console.error(`[revolutx] currencies/symbols endpoints returned non-OK (currencies=${currenciesRes.status}, symbols=${symbolsRes.status}) — no metadata will be cached (fail-closed)`);
-      throw new Error(`REVOLUTX_METADATA_REFRESH_FAILED: non-OK response (currencies=${currenciesRes.status}, symbols=${symbolsRes.status})`);
-    }
-
-    let currencies: any[];
-    let symbols: any[];
-    try {
-      currencies = await currenciesRes.json() as any[];
-      symbols = await symbolsRes.json() as any[];
-    } catch (error: any) {
-      console.error('[revolutx] Failed to parse currencies/symbols response — no metadata will be cached:', error.message);
-      throw new Error(`REVOLUTX_METADATA_REFRESH_FAILED: parse error: ${error.message}`);
-    }
+    // R10.7-7 / REV-C12F: Metadata must NEVER be invented. Resolve each pair via:
+    //   1. Authenticated  /api/1.0/configuration/pairs         (signedGetJson)
+    //   2. Public fallback /api/1.0/public/configuration/pairs?region=<REVOLUTX_REGION>
+    // Both routes use parseStrictDecimal, status=active enforcement, and exact base/quote
+    // matching. /api/1.0/currencies and /api/1.0/symbols are NOT used.
+    let successCount = 0;
 
     for (const pair of pairs) {
-      const [base, quote] = pair.split('/');
-      const revPair = this.formatPair(pair);
+      try {
+        const constraints = await this.resolveGridPairConstraints(pair, region);
+        if (!constraints.verified || constraints.quantityStep === null || constraints.minOrderBase === null) {
+          console.error(`[revolutx] ${pair}: constraints not verified (reasonCode=${constraints.reasonCode}) — metadata NOT cached (fail-closed)`);
+          continue;
+        }
 
-      const currencyInfo = currencies.find((c: any) => c.code === base || c.currency === base);
-      const symbolInfo = symbols.find((s: any) => s.symbol === revPair || s.name === revPair);
+        // Build PairMetadata exclusively from verified RevolutXPairConstraints.
+        // quantityStep = base_step (verified > 0 by parseStrictDecimal).
+        // orderMin     = minOrderBase = min_order_size (verified > 0).
+        this.pairMetadataCache.set(pair, {
+          lotDecimals: constraints.quantityPrecision ?? this.decimalPrecisionFromStepPublic(constraints.quantityStep),
+          orderMin: constraints.minOrderBase,
+          pairDecimals: constraints.pricePrecision ?? this.decimalPrecisionFromStepPublic(constraints.priceTickSize ?? constraints.quantityStep),
+          stepSize: constraints.quantityStep,
+          baseStep: constraints.quantityStep,
+          quoteStep: constraints.priceTickSize,
+          quantityStep: constraints.quantityStep,
+          minOrderBase: constraints.minOrderBase,
+          minOrderQuote: constraints.minOrderQuote,
+          maxOrderBase: constraints.maxOrderBase,
+          baseCurrency: constraints.baseCurrency,
+          quoteCurrency: constraints.quoteCurrency,
+          status: constraints.status,
+          region: constraints.region,
+          constraintsSource: constraints.source,
+          constraintsFetchedAt: constraints.fetchedAt,
+          constraintsVerified: true,
+        });
 
-      // R10.7-7: Require a REAL symbolInfo match. If the exchange doesn't publish this pair,
-      // do NOT invent metadata with defaults — leave it uncached (getPairMetadata → null).
-      if (!symbolInfo) {
-        console.error(`[revolutx] No symbolInfo found for ${pair} — metadata NOT cached (fail-closed, pair not REAL-ready)`);
-        this.pairMetadataCache.delete(pair);
-        continue;
+        successCount++;
+        console.log(`[revolutx] ${pair}: metadata resolved — source=${constraints.source} quantityStep=${constraints.quantityStep} orderMin=${constraints.minOrderBase}`);
+      } catch (pairErr: any) {
+        console.error(`[revolutx] ${pair}: resolution threw — metadata NOT cached (fail-closed): ${pairErr.message}`);
       }
-
-      // R10.8-4: If the exchange publishes a status field, it MUST indicate the symbol
-      // is actively tradable. An inactive/suspended/delisted symbol must never be cached
-      // as REAL-ready, regardless of whether its step/minimum fields look valid.
-      if (typeof symbolInfo.status === "string" && symbolInfo.status.toLowerCase() !== "active") {
-        console.error(`[revolutx] symbolInfo for ${pair} has status="${symbolInfo.status}" (not ACTIVE) — metadata NOT cached (fail-closed)`);
-        this.pairMetadataCache.delete(pair);
-        continue;
-      }
-
-      const baseStepRaw = symbolInfo.base_step ?? symbolInfo.min_base_size ?? null;
-      const orderMinRaw = symbolInfo.min_order_size ?? symbolInfo.min_base_size ?? null;
-      const baseStep = baseStepRaw != null ? parseFloat(baseStepRaw) : null;
-      const orderMin = orderMinRaw != null ? parseFloat(orderMinRaw) : null;
-
-      // R10.7-7: Require explicit, verified base_step AND min_order_size — no defaults.
-      if (baseStep == null || !Number.isFinite(baseStep) || baseStep <= 0 || orderMin == null || !Number.isFinite(orderMin) || orderMin <= 0) {
-        console.error(`[revolutx] symbolInfo for ${pair} missing valid base_step/min_order_size — metadata NOT cached (fail-closed)`);
-        this.pairMetadataCache.delete(pair);
-        continue;
-      }
-
-      const lotDecimals = currencyInfo?.scale ?? currencyInfo?.decimals ?? null;
-      const pairDecimals = symbolInfo.price_scale ?? null;
-      const quoteStepRaw = symbolInfo.quote_step ?? symbolInfo.min_order_size_quote ?? null;
-      const quoteStep = quoteStepRaw != null ? parseFloat(quoteStepRaw) : null;
-
-      this.pairMetadataCache.set(pair, {
-        lotDecimals: lotDecimals ?? this.decimalPrecisionFromStepPublic(baseStep),
-        orderMin,
-        pairDecimals: pairDecimals ?? this.decimalPrecisionFromStepPublic(quoteStep ?? baseStep),
-        stepSize: baseStep,
-        baseStep,
-        quoteStep,
-        quantityStep: baseStep,
-        baseCurrency: base || null,
-        quoteCurrency: quote || null,
-        constraintsSource: "revolutx_symbols_currencies",
-        constraintsVerified: true,
-      });
-
-      console.log(`[revolutx] ${pair}: verified baseStep=${baseStep}, orderMin=${orderMin}`);
     }
 
-    console.log(`[revolutx] Pair metadata loaded for ${this.pairMetadataCache.size} pairs`);
+    console.log(`[revolutx] Pair metadata loaded: ${successCount}/${pairs.length} pairs resolved`);
+
+    // Throw only if ZERO pairs resolved so checkStructuralReadiness adds a blocker.
+    // Partial failures are surfaced by per-pair hasMetadata() checks in checkRealReadiness.
+    if (successCount === 0 && pairs.length > 0) {
+      throw new Error(`REVOLUTX_METADATA_REFRESH_FAILED: no pairs could be resolved (0/${pairs.length})`);
+    }
   }
 
   private decimalPrecisionFromStepPublic(step: number | null): number {
