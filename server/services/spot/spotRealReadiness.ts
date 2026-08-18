@@ -48,6 +48,8 @@ export interface RealReadinessResult {
     activePairsCount: number;
     activePairsList: string[];
     pairMetadataLoaded: boolean;
+    pairMetadataLoadedCount: number;
+    pairMetadataTotalCount: number;
     pairMetadataMissing: string[];
     uncertainPositionsCount: number;
     pendingFillPositionsCount: number;
@@ -96,6 +98,8 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
     activePairsCount: 0,
     activePairsList: [] as string[],
     pairMetadataLoaded: false,
+    pairMetadataLoadedCount: 0,
+    pairMetadataTotalCount: 0,
     pairMetadataMissing: [] as string[],
     uncertainPositionsCount: 0,
     pendingFillPositionsCount: 0,
@@ -259,6 +263,8 @@ export async function checkRealReadiness(): Promise<RealReadinessResult> {
           }
         }
         checks.pairMetadataLoaded = allMetadataLoaded;
+        checks.pairMetadataTotalCount = activePairs.length;
+        checks.pairMetadataLoadedCount = activePairs.length - checks.pairMetadataMissing.length;
         if (checks.pairMetadataMissing.length > 0) {
           blockers.push(`Metadata faltante para pares: ${checks.pairMetadataMissing.join(", ")}`);
         }
@@ -473,6 +479,8 @@ export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
     activePairsCount: 0,
     activePairsList: [] as string[],
     pairMetadataLoaded: false,
+    pairMetadataLoadedCount: 0,
+    pairMetadataTotalCount: 0,
     pairMetadataMissing: [] as string[],
     uncertainPositionsCount: 0,
     pendingFillPositionsCount: 0,
@@ -622,6 +630,8 @@ export async function checkStructuralReadiness(): Promise<RealReadinessResult> {
           }
         }
         checks.pairMetadataLoaded = allMetadataLoaded;
+        checks.pairMetadataTotalCount = activePairs.length;
+        checks.pairMetadataLoadedCount = activePairs.length - checks.pairMetadataMissing.length;
         if (checks.pairMetadataMissing.length > 0) {
           blockers.push(`Metadata faltante para pares: ${checks.pairMetadataMissing.join(", ")}`);
         }

@@ -33,6 +33,8 @@ interface RealReadiness {
     activePairsConfigured: boolean;
     activePairsCount: number;
     pairMetadataLoaded: boolean;
+    pairMetadataLoadedCount: number;
+    pairMetadataTotalCount: number;
     uncertainPositionsCount: number;
     pendingFillPositionsCount: number;
     exitPendingPositionsCount: number;
@@ -54,6 +56,7 @@ interface SpotStatusPanelProps {
 export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorBlockers, setErrorBlockers] = useState<string[]>([]);
   const [showRealConfirm, setShowRealConfirm] = useState(false);
   const [readiness, setReadiness] = useState<RealReadiness | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(false);
@@ -87,9 +90,17 @@ export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) 
     if (pending) return;
     setPending(true);
     setError(null);
-    const ok = await onModeChange(target);
-    if (!ok) {
-      setError("No se pudo cambiar el modo. Verifique la conexión.");
+    setErrorBlockers([]);
+    try {
+      const ok = await onModeChange(target);
+      if (!ok) {
+        setError("No se pudo cambiar el modo. Verifique la conexión.");
+      }
+    } catch (err: any) {
+      setError(err.message || "Network error");
+      if (err?.blockers && Array.isArray(err.blockers)) {
+        setErrorBlockers(err.blockers as string[]);
+      }
     }
     setPending(false);
   }
@@ -163,7 +174,17 @@ export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) 
               </p>
             )}
             {error && (
-              <p className="text-xs text-red-400">{error}</p>
+              <div className="space-y-1">
+                <p className="text-xs text-red-400">{error}</p>
+                {errorBlockers.length > 0 && (
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] text-red-400 font-semibold">Bloqueantes persistidos:</p>
+                    {errorBlockers.map((b, i) => (
+                      <p key={i} className="text-[10px] text-red-400">• {b}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
 
             {/* REAL Confirmation Modal */}
@@ -187,7 +208,7 @@ export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) 
                         <ReadinessCheck label="Balance reachable" ok={readiness.checks.balanceReachable} />
                         <ReadinessCheck label="Fee model válido" ok={readiness.checks.feeModelValid} />
                         <ReadinessCheck label={`Pares activos (${readiness.checks.activePairsCount})`} ok={readiness.checks.activePairsConfigured} />
-                        <ReadinessCheck label="Metadata de pares" ok={readiness.checks.pairMetadataLoaded} />
+                        <ReadinessCheck label={`Metadata de pares (${readiness.checks.pairMetadataLoadedCount}/${readiness.checks.pairMetadataTotalCount})`} ok={readiness.checks.pairMetadataLoaded} />
                         <ReadinessCheck label="Sin posiciones UNCERTAIN" ok={readiness.checks.uncertainPositionsCount === 0} />
                         <ReadinessCheck label="Sin PENDING_FILL" ok={readiness.checks.pendingFillPositionsCount === 0} />
                         <ReadinessCheck label="Sin EXIT_PENDING" ok={readiness.checks.exitPendingPositionsCount === 0} />

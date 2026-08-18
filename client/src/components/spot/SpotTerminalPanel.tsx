@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Pause, Play, Trash2, Copy, RefreshCw } from "lucide-react";
+import { Activity, Pause, Play, Trash2, Copy, RefreshCw, Search, ArrowDownToLine } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type TerminalLevel = "INFO" | "SIGNAL" | "DECISION" | "EXECUTION" | "SUPERVISOR" | "METADATA" | "SYSTEM" | "ERROR";
 
 interface TerminalLine {
+  id: string;
   ts: number;
   level: TerminalLevel;
   source: string;
@@ -21,8 +22,8 @@ type ConnStatus = "CONNECTING" | "LIVE" | "PAUSED" | "RECONNECTING" | "NO_TOKEN"
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const MAX_LINES = 1000;
-const RECONNECT_BASE_MS = 2000;
-const RECONNECT_MAX_MS = 30_000;
+const PAUSE_BUFFER_LIMIT = 1000;
+const RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 10000]; // 1s, 2s, 5s, 10s, max 10s
 
 const LEVEL_CLASS: Record<TerminalLevel, string> = {
   INFO:       "text-muted-foreground",
@@ -43,55 +44,76 @@ export function SpotTerminalPanel() {
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState<TerminalLevel | "ALL">("ALL");
   const [filterPair, setFilterPair] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [autoScroll, setAutoScroll] = useState(true);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pauseRef = useRef(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectDelay = useRef(RECONNECT_BASE_MS);
+  const reconnectIdx = useRef(0);
   const bufferRef = useRef<TerminalLine[]>([]);
+  const seenIds = useRef<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
 
-  const getToken = (): string | null => {
+  const fetchTicket = async (): Promise<string | null> => {
     try {
-      const meta = (window as any).__APP_META__ ?? {};
-      return meta.terminalToken ?? localStorage.getItem("terminal_token") ?? null;
-    } catch { return null; }
+      const res = await fetch("/api/spot/terminal-ticket", { method: "POST" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.ticket ?? null;
+    } catch {
+      return null;
+    }
   };
 
   const pushLines = useCallback((incoming: TerminalLine[]) => {
+    // Dedup by UUID id — skip lines we've already seen
+    const newLines: TerminalLine[] = [];
+    for (const line of incoming) {
+      if (!seenIds.current.has(line.id)) {
+        seenIds.current.add(line.id);
+        newLines.push(line);
+      }
+    }
+    if (newLines.length === 0) return;
+
     if (pauseRef.current) {
-      bufferRef.current.push(...incoming);
+      bufferRef.current.push(...newLines);
+      // Enforce pause buffer limit — drop oldest if exceeded
+      if (bufferRef.current.length > PAUSE_BUFFER_LIMIT) {
+        bufferRef.current = bufferRef.current.slice(-PAUSE_BUFFER_LIMIT);
+      }
       return;
     }
     setLines(prev => {
-      const combined = [...prev, ...incoming];
+      const combined = [...prev, ...newLines];
       return combined.length > MAX_LINES ? combined.slice(combined.length - MAX_LINES) : combined;
     });
   }, []);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (wsRef.current) {
       wsRef.current.onclose = null;
       wsRef.current.close();
     }
 
-    const token = getToken();
-    if (!token) {
+    const ticket = await fetchTicket();
+    if (!ticket) {
       setStatus("NO_TOKEN");
       return;
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws/spot-terminal?token=${encodeURIComponent(token)}`;
+    const url = `${protocol}//${window.location.host}/ws/spot-terminal?ticket=${encodeURIComponent(ticket)}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
     setStatus("CONNECTING");
 
     ws.onopen = () => {
       setStatus(paused ? "PAUSED" : "LIVE");
-      reconnectDelay.current = RECONNECT_BASE_MS;
+      reconnectIdx.current = 0; // reset reconnect index on successful connect
     };
 
     ws.onmessage = (ev) => {
@@ -108,10 +130,11 @@ export function SpotTerminalPanel() {
     ws.onclose = () => {
       if (wsRef.current === ws) {
         setStatus("RECONNECTING");
+        const delay = RECONNECT_DELAYS[Math.min(reconnectIdx.current, RECONNECT_DELAYS.length - 1)];
+        reconnectIdx.current++;
         reconnectTimer.current = setTimeout(() => {
-          reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX_MS);
           connect();
-        }, reconnectDelay.current);
+        }, delay);
       }
     };
 
@@ -138,6 +161,7 @@ export function SpotTerminalPanel() {
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     autoScrollRef.current = atBottom;
+    if (atBottom !== autoScroll) setAutoScroll(atBottom);
   };
 
   function togglePause() {
@@ -159,9 +183,19 @@ export function SpotTerminalPanel() {
     }
   }
 
+  function toggleAutoScroll() {
+    const next = !autoScroll;
+    setAutoScroll(next);
+    autoScrollRef.current = next;
+    if (next && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ block: "end" });
+    }
+  }
+
   function clearLines() {
     setLines([]);
     bufferRef.current = [];
+    seenIds.current.clear();
   }
 
   function copyAll() {
@@ -175,6 +209,9 @@ export function SpotTerminalPanel() {
   function applyFilter(l: TerminalLine): boolean {
     if (filter !== "ALL" && l.level !== filter) return false;
     if (filterPair && l.pair !== filterPair) return false;
+    if (searchQuery && !l.msg.toLowerCase().includes(searchQuery.toLowerCase()) &&
+        !l.source.toLowerCase().includes(searchQuery.toLowerCase()) &&
+        !(l.pair ?? "").toLowerCase().includes(searchQuery.toLowerCase())) return false;
     return true;
   }
 
@@ -200,6 +237,18 @@ export function SpotTerminalPanel() {
         )}
 
         <div className="flex items-center gap-1 ml-auto">
+          {/* Search */}
+          <div className="relative">
+            <Search className="h-3 w-3 absolute left-1.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Buscar..."
+              className="text-[10px] bg-muted border border-border/50 rounded pl-6 pr-2 py-0.5 text-foreground w-24 focus:w-32 transition-all"
+            />
+          </div>
+
           {/* Level filter */}
           <select
             value={filter}
@@ -224,6 +273,17 @@ export function SpotTerminalPanel() {
             </select>
           )}
 
+          {/* Auto-scroll toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-7 px-2 ${autoScroll ? "text-emerald-400" : "text-muted-foreground"}`}
+            onClick={toggleAutoScroll}
+            title={autoScroll ? "Auto-scroll ON" : "Auto-scroll OFF"}
+          >
+            <ArrowDownToLine className="h-3.5 w-3.5" />
+          </Button>
+
           <Button variant="ghost" size="sm" className="h-7 px-2" onClick={togglePause} title={paused ? "Reanudar" : "Pausar"}>
             {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
           </Button>
@@ -247,15 +307,15 @@ export function SpotTerminalPanel() {
       >
         {status === "NO_TOKEN" ? (
           <p className="text-red-400 p-4">
-            TERMINAL_TOKEN no configurado. Ajusta la variable de entorno y recarga.
+            No se pudo obtener ticket de terminal. Verifica que TERMINAL_TOKEN esté configurado en el servidor.
           </p>
         ) : visibleLines.length === 0 ? (
           <p className="text-muted-foreground p-4">
             {status === "CONNECTING" ? "Conectando..." : "Sin eventos todavía. El terminal muestra actividad del motor Spot en tiempo real."}
           </p>
         ) : (
-          visibleLines.map((l, i) => (
-            <div key={`${l.ts}-${i}`} className="flex gap-2 leading-5">
+          visibleLines.map((l) => (
+            <div key={l.id} className="flex gap-2 leading-5">
               <span className="text-muted-foreground/60 select-none flex-shrink-0">
                 {new Date(l.ts).toISOString().slice(11, 23)}
               </span>

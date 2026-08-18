@@ -660,6 +660,7 @@ async function doSetExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
   }
 
   console.log(`[SpotEngine] Execution mode set to ${mode}`);
+  emitSpotTerminal("SYSTEM", "engine", `Modo cambiado a ${mode}`, { mode });
   logActivity({
     pair: null,
     category: "MODE",
@@ -894,6 +895,7 @@ export async function startSpotEngine(): Promise<boolean> {
     return false;
   }
   console.log("[SpotEngine] Supervisor first pass completed, starting scan");
+  emitSpotTerminal("SYSTEM", "engine", `Motor iniciado — mode=${mode}, supervisor OK`, { mode });
 
   // Run first scan immediately (after supervisor)
   runScanCycle().catch(console.error);
@@ -917,6 +919,7 @@ export function stopSpotEngine(): void {
   entryScanningEnabled = false;
   positionSupervisorRunning = false;
   console.log("[SpotEngine] Stopped (scan + supervisor + reconciler)");
+  emitSpotTerminal("SYSTEM", "engine", "Motor detenido (scan + supervisor + reconciler)");
 }
 
 /**
@@ -934,6 +937,7 @@ async function runRealReconciler(): Promise<void> {
     const counts = await countPendingRealOrderIntents();
     const totalPending = counts.pendingEntryOrders + counts.pendingExitOrders + counts.uncertainOrders;
     if (totalPending === 0) return;
+    emitSpotTerminal("SYSTEM", "reconciler", `Reconciler — ${totalPending} pending REAL intents (entry=${counts.pendingEntryOrders}, exit=${counts.pendingExitOrders}, uncertain=${counts.uncertainOrders})`);
     console.log(`[SpotEngine] R10.4: Periodic reconciler — ${totalPending} pending REAL intents (entry=${counts.pendingEntryOrders}, exit=${counts.pendingExitOrders}, uncertain=${counts.uncertainOrders})`);
     await reconcilePendingRealOrderIntents();
   } catch (error: any) {
@@ -951,6 +955,7 @@ function startRealReconciler(): void {
   realReconcilerRunning = true;
   reconcilerIntervalId = setInterval(() => runRealReconciler().catch(console.error), RECONCILER_INTERVAL_MS);
   console.log(`[SpotEngine] R10.4: REAL reconciler started (interval=${RECONCILER_INTERVAL_MS}ms)`);
+  emitSpotTerminal("SYSTEM", "reconciler", `Reconciler iniciado (interval=${RECONCILER_INTERVAL_MS}ms)`);
 }
 
 function stopRealReconciler(): void {
@@ -1255,6 +1260,7 @@ async function runPositionSupervisor(): Promise<SupervisorCycleResult> {
       // R10.8-7: DB error = UNKNOWN, never "no positions". Log CRITICAL and skip this
       // cycle WITHOUT concluding zero positions — the interval stays alive to retry.
       console.error(`[SpotEngine] R10.8-7: Supervisor cycle SKIPPED — cannot determine open positions: ${error.message}`);
+      emitSpotTerminal("ERROR", "supervisor", `DB error — no se pudo determinar posiciones: ${error.message}`, { mode });
       positionSupervisionHealthy = false;
       positionSupervisionFailureReason = error.message || "getOpenSpotPositionPairs DB error";
       const reason = positionSupervisionFailureReason ?? undefined;
@@ -1301,15 +1307,18 @@ async function runPositionSupervisor(): Promise<SupervisorCycleResult> {
       positionSupervisionHealthy = false;
       positionSupervisionFailureReason = `${cycleFailures} pair(s) failed — ${cycleFailureReason}`;
       console.error(`[SpotEngine] R10.9-3: Supervisor cycle completed with ${cycleFailures} failure(s): ${positionSupervisionFailureReason}`);
+      emitSpotTerminal("ERROR", "supervisor", `Ciclo con ${cycleFailures} fallo(s) — ${cycleFailureReason}`, { mode });
       return { ok: false, reason: positionSupervisionFailureReason ?? undefined };
     }
 
     positionSupervisionHealthy = true;
     positionSupervisionLastSuccessAt = Date.now();
     positionSupervisionFailureReason = null;
+    emitSpotTerminal("SUPERVISOR", "supervisor", `Ciclo OK — ${pairs.length} par(es) supervisado(s)`, { mode });
     return { ok: true };
   } catch (error: any) {
     console.error('[SpotEngine] Supervisor cycle error:', error.message);
+    emitSpotTerminal("ERROR", "supervisor", `Ciclo error: ${error.message}`, { mode: undefined });
     positionSupervisionHealthy = false;
     positionSupervisionFailureReason = error.message || "supervisor cycle exception";
     return { ok: false, reason: positionSupervisionFailureReason ?? undefined };

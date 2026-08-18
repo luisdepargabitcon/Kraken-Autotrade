@@ -297,4 +297,20 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
       res.status(500).json({ error: "Failed to set execution mode", detail: err.message });
     }
   });
+
+  // ─── POST /api/spot/terminal-ticket ──────────────────────────────────────
+  // R10.9: Ephemeral ticket for WS spot-terminal auth. Browser never sees TERMINAL_TOKEN.
+  app.post("/api/spot/terminal-ticket", async (_req, res) => {
+    try {
+      const { generateTerminalTicket } = await import("../services/spot/spotTerminalStream");
+      const ticket = generateTerminalTicket();
+      if (!ticket) {
+        res.status(503).json({ error: "TERMINAL_TOKEN not configured on server" });
+        return;
+      }
+      res.json({ ticket, expiresIn: 30 });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to generate terminal ticket", detail: err.message });
+    }
+  });
 };

@@ -1,15 +1,17 @@
 /**
  * spotTerminalStream — Real-time Spot engine terminal over WebSocket.
  *
- * Responsibilities:
+ * R10.9 hardening:
+ *   - UUID v4 line IDs via randomUUID() for deduplication.
+ *   - Recursive secret sanitization (objects, arrays, nested strings).
+ *   - Ephemeral ticket-based WS auth — no permanent token in browser.
  *   - In-memory ring buffer of last RING_BUFFER_SIZE lines (no DB).
  *   - emitSpotTerminal() called from SpotEngine scan, supervisor, readiness.
  *   - WebSocket server on /ws/spot-terminal.
  *   - Backfill last BACKFILL_LINES on connect.
- *   - Secret sanitization before any line reaches the wire.
- *   - Token auth via TERMINAL_TOKEN (same env var as /ws/logs).
  */
 
+import { randomUUID } from "crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { log } from "../../utils/logger";
@@ -18,22 +20,81 @@ const WS_PATH = "/ws/spot-terminal";
 const RING_BUFFER_SIZE = 500;
 const BACKFILL_LINES = 100;
 const HEARTBEAT_INTERVAL = 30_000;
+const TICKET_TTL_MS = 30_000; // 30 seconds
 
-// ── Sanitizer ─────────────────────────────────────────────────────────────────
+// ── Ephemeral ticket store ────────────────────────────────────────────────────
+
+const ticketStore = new Map<string, { createdAt: number; expiresAt: number }>();
+
+/**
+ * Generate an ephemeral ticket for WS authentication.
+ * The ticket is valid for TICKET_TTL_MS and can only be used once.
+ * The browser never sees the permanent TERMINAL_TOKEN.
+ */
+export function generateTerminalTicket(): string | null {
+  const permanentToken = process.env.TERMINAL_TOKEN;
+  if (!permanentToken) return null;
+
+  const ticket = randomUUID();
+  const now = Date.now();
+  ticketStore.set(ticket, { createdAt: now, expiresAt: now + TICKET_TTL_MS });
+  return ticket;
+}
+
+function validateAndConsumeTicket(ticket: string): boolean {
+  const entry = ticketStore.get(ticket);
+  if (!entry) return false;
+  ticketStore.delete(ticket); // single-use
+  return Date.now() < entry.expiresAt;
+}
+
+// Cleanup expired tickets periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of ticketStore) {
+    if (now >= entry.expiresAt) ticketStore.delete(key);
+  }
+}, 60_000).unref();
+
+// ── Recursive Sanitizer ───────────────────────────────────────────────────────
 
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
-  [/[A-Za-z0-9+/]{40,}={0,2}/g, "***REDACTED_B64***"],
-  [/(api[_-]?key|apikey|api[_-]?secret|secret|token|private[_-]?key)[=:\s"']+[^\s"',;&\]}{]+/gi, "$1=***"],
+  // Authorization headers
+  [/Authorization:\s*Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Authorization: Bearer ***REDACTED***"],
+  [/Authorization:\s*[A-Za-z]+\s+[A-Za-z0-9\-._~+/]+=*/gi, "Authorization: ***REDACTED***"],
+  // API keys, secrets, tokens, private keys (key=value or key: value patterns)
+  [/(api[_-]?key|apikey|api[_-]?secret|secret|token|private[_-]?key|passphrase|password)[=:\s"']+[^\s"',;&\]}{]+/gi, "$1=***REDACTED***"],
+  // Revolut RPA keys
   [/([Rr][Pp][Aa][-\w]{20,})/g, "***REDACTED_KEY***"],
-  [/([A-Z0-9]{20,})/g, "***REDACTED***"],
+  // Base64-encoded private keys (40+ chars)
+  [/[A-Za-z0-9+/]{40,}={0,2}/g, "***REDACTED_B64***"],
+  // Long uppercase hex strings (potential API secrets)
+  [/([A-F0-9]{32,})/g, "***REDACTED***"],
 ];
 
-function sanitize(msg: string): string {
+function sanitizeString(msg: string): string {
   let out = msg;
   for (const [pattern, replacement] of SECRET_PATTERNS) {
     out = out.replace(pattern, replacement);
   }
   return out;
+}
+
+/**
+ * Recursively sanitize any value: strings, objects, arrays, nested structures.
+ * Returns a deep-sanitized copy — never mutates the original.
+ */
+function sanitizeDeep<T>(value: T): T {
+  if (typeof value === "string") return sanitizeString(value) as T;
+  if (Array.isArray(value)) return value.map(sanitizeDeep) as T;
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      result[key] = sanitizeDeep((value as Record<string, unknown>)[key]);
+    }
+    return result as T;
+  }
+  return value;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -49,6 +110,7 @@ export type TerminalLevel =
   | "ERROR";
 
 export interface TerminalLine {
+  id: string;
   ts: number;
   level: TerminalLevel;
   source: string;
@@ -88,12 +150,13 @@ export function emitSpotTerminal(
   meta?: { pair?: string | null; mode?: string | null },
 ): void {
   const line: TerminalLine = {
+    id: randomUUID(),
     ts: Date.now(),
     level,
     source,
-    msg: sanitize(rawMsg),
-    pair: meta?.pair ?? null,
-    mode: meta?.mode ?? null,
+    msg: sanitizeString(rawMsg),
+    pair: meta?.pair ? sanitizeString(meta.pair) : null,
+    mode: meta?.mode ? sanitizeString(meta.mode) : null,
   };
 
   pushLine(line);
@@ -109,37 +172,22 @@ class SpotTerminalWsServer {
 
   initialize(server: Server): void {
     this.wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+    this.startHeartbeat();
+    log(`[WS-SPOT-TERMINAL] Initialized on ${WS_PATH} (ephemeral ticket auth)`, "websocket");
+  }
 
-    this.wss.on("connection", (ws: WebSocket, req: any) => {
-      const client = ws as WsClient;
-      const clientIp: string = req.socket?.remoteAddress ?? "unknown";
+  private onConnection(ws: WebSocket, req: any): void {
+    const client = ws as WsClient;
+    const clientIp: string = req.socket?.remoteAddress ?? "unknown";
 
-      const url = new URL(req.url || "", `http://${req.headers.host}`);
-      const queryToken = url.searchParams.get("token");
-      const authHeader: string | undefined = req.headers.authorization;
-      const headerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-      const token = queryToken ?? headerToken;
+    client.isAlive = true;
+    this.clients.add(client);
 
-      const expectedToken = process.env.TERMINAL_TOKEN;
+    log(`[WS-SPOT-TERMINAL] Client connected (ip: ${clientIp}). Total: ${this.clients.size}`, "websocket");
 
-      if (!expectedToken) {
-        log(`[WS-SPOT-TERMINAL] TERMINAL_TOKEN not configured — rejecting (ip: ${clientIp})`, "websocket");
-        this.send(client, { type: "TERMINAL_ERROR", payload: { message: "TERMINAL_TOKEN not configured", reason: "TOKEN_NOT_CONFIGURED" } });
-        client.close(4001, "Unauthorized");
-        return;
-      }
-
-      if (!token || token !== expectedToken) {
-        log(`[WS-SPOT-TERMINAL] Invalid or missing token — rejecting (ip: ${clientIp})`, "websocket");
-        this.send(client, { type: "TERMINAL_ERROR", payload: { message: "Invalid or missing token", reason: "INVALID_TOKEN" } });
-        client.close(4001, "Unauthorized");
-        return;
-      }
-
-      client.isAlive = true;
-      this.clients.add(client);
-
-      log(`[WS-SPOT-TERMINAL] Client connected (ip: ${clientIp}). Total: ${this.clients.size}`, "websocket");
+    // Defer status + backfill to next tick so client has time to attach message handlers
+    process.nextTick(() => {
+      if (client.readyState !== WebSocket.OPEN) return;
 
       // Status frame
       this.send(client, {
@@ -152,17 +200,14 @@ class SpotTerminalWsServer {
       if (history.length > 0) {
         this.send(client, { type: "TERMINAL_HISTORY", payload: { lines: history } });
       }
-
-      client.on("pong", () => { client.isAlive = true; });
-      client.on("close", () => {
-        this.clients.delete(client);
-        log(`[WS-SPOT-TERMINAL] Client disconnected. Total: ${this.clients.size}`, "websocket");
-      });
-      client.on("error", () => { this.clients.delete(client); });
     });
 
-    this.startHeartbeat();
-    log(`[WS-SPOT-TERMINAL] Initialized on ${WS_PATH}`, "websocket");
+    client.on("pong", () => { client.isAlive = true; });
+    client.on("close", () => {
+      this.clients.delete(client);
+      log(`[WS-SPOT-TERMINAL] Client disconnected. Total: ${this.clients.size}`, "websocket");
+    });
+    client.on("error", () => { this.clients.delete(client); });
   }
 
   broadcast(line: TerminalLine): void {
@@ -177,8 +222,30 @@ class SpotTerminalWsServer {
 
   handleUpgrade(req: any, socket: any, head: any): void {
     if (!this.wss) return;
+
+    const url = new URL(req.url || "", `http://${req.headers.host}`);
+    const queryTicket = url.searchParams.get("ticket");
+    const authHeader: string | undefined = req.headers.authorization;
+    const headerTicket = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    const ticket = queryTicket ?? headerTicket;
+    const clientIp: string = req.socket?.remoteAddress ?? "unknown";
+
+    if (!ticket) {
+      log(`[WS-SPOT-TERMINAL] No ticket provided — rejecting (ip: ${clientIp})`, "websocket");
+      socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n{\"error\":\"MISSING_TICKET\"}");
+      socket.destroy();
+      return;
+    }
+
+    if (!validateAndConsumeTicket(ticket)) {
+      log(`[WS-SPOT-TERMINAL] Invalid or expired ticket — rejecting (ip: ${clientIp})`, "websocket");
+      socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n{\"error\":\"INVALID_TICKET\"}");
+      socket.destroy();
+      return;
+    }
+
     this.wss.handleUpgrade(req, socket, head, (ws) => {
-      this.wss!.emit("connection", ws, req);
+      this.onConnection(ws, req);
     });
   }
 
@@ -192,14 +259,16 @@ class SpotTerminalWsServer {
 
   clearRingBufferForTest(): void {
     ringBuffer.length = 0;
+    ticketStore.clear();
   }
 
   shutdown(): void {
-    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    if (this.heartbeatInterval) { clearInterval(this.heartbeatInterval); this.heartbeatInterval = null; }
     for (const client of this.clients) {
       try { client.close(1001, "Server shutting down"); } catch { /* ignore */ }
     }
-    if (this.wss) this.wss.close();
+    this.clients.clear();
+    if (this.wss) { this.wss.close(); this.wss = null; }
   }
 
   private startHeartbeat(): void {

@@ -17,6 +17,7 @@ export default function Spot() {
   const [activityCategory, setActivityCategory] = useState("");
   const [activityPair, setActivityPair] = useState("");
   const [activitySeverity, setActivitySeverity] = useState("");
+  const [activityMode, setActivityMode] = useState("");
   const queryClient = useQueryClient();
 
   // ─── Queries ──────────────────────────────────────────────────────────────
@@ -82,12 +83,13 @@ export default function Spot() {
   });
 
   const { data: activityData } = useQuery<any>({
-    queryKey: ["spot-activity", activityCategory, activityPair, activitySeverity],
+    queryKey: ["spot-activity", activityCategory, activityPair, activitySeverity, activityMode],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: "200" });
       if (activityCategory) params.set("category", activityCategory);
       if (activityPair) params.set("pair", activityPair);
       if (activitySeverity) params.set("severity", activitySeverity);
+      if (activityMode) params.set("mode", activityMode);
       const res = await fetch(`/api/spot/activity?${params}`);
       if (!res.ok) throw new Error("Failed to fetch SPOT activity");
       return res.json();
@@ -268,9 +270,11 @@ export default function Spot() {
               category={activityCategory}
               pair={activityPair}
               severity={activitySeverity}
+              mode={activityMode}
               onCategoryChange={setActivityCategory}
               onPairChange={setActivityPair}
               onSeverityChange={setActivitySeverity}
+              onModeChange={setActivityMode}
             />
           </TabsContent>
 
@@ -314,12 +318,14 @@ interface SpotActivityPanelProps {
   category: string;
   pair: string;
   severity: string;
+  mode: string;
   onCategoryChange: (v: string) => void;
   onPairChange: (v: string) => void;
   onSeverityChange: (v: string) => void;
+  onModeChange: (v: string) => void;
 }
 
-function SpotActivityPanel({ events, category, pair, severity, onCategoryChange, onPairChange, onSeverityChange }: SpotActivityPanelProps) {
+function SpotActivityPanel({ events, category, pair, severity, mode, onCategoryChange, onPairChange, onSeverityChange, onModeChange }: SpotActivityPanelProps) {
   const severityColor: Record<string, string> = {
     INFO: "text-blue-400",
     SUCCESS: "text-emerald-400",
@@ -351,6 +357,16 @@ function SpotActivityPanel({ events, category, pair, severity, onCategoryChange,
           <option value="">Severidad</option>
           {ACTIVITY_SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <select
+          value={mode}
+          onChange={e => onModeChange(e.target.value)}
+          className="text-[11px] bg-muted border border-border/50 rounded px-2 py-1 text-foreground"
+        >
+          <option value="">Modo</option>
+          <option value="OFF">OFF</option>
+          <option value="SHADOW">SHADOW</option>
+          <option value="REAL">REAL</option>
+        </select>
         {uniquePairs.length > 0 && (
           <select
             value={pair}
@@ -361,9 +377,9 @@ function SpotActivityPanel({ events, category, pair, severity, onCategoryChange,
             {uniquePairs.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         )}
-        {(category || pair || severity) && (
+        {(category || pair || severity || mode) && (
           <button
-            onClick={() => { onCategoryChange(""); onPairChange(""); onSeverityChange(""); }}
+            onClick={() => { onCategoryChange(""); onPairChange(""); onSeverityChange(""); onModeChange(""); }}
             className="text-[11px] text-muted-foreground hover:text-foreground underline"
           >
             Limpiar
@@ -374,7 +390,7 @@ function SpotActivityPanel({ events, category, pair, severity, onCategoryChange,
 
       {events.length === 0 ? (
         <div className="rounded-lg border border-border/50 bg-card p-8 text-center text-muted-foreground text-sm">
-          No hay eventos de actividad{category || pair || severity ? " con los filtros aplicados" : ""}.
+          No hay eventos de actividad{category || pair || severity || mode ? " con los filtros aplicados" : ""}.
         </div>
       ) : (
         <div className="space-y-2">
