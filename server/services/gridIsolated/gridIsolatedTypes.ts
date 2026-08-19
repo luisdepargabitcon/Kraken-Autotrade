@@ -320,6 +320,8 @@ export interface GridCycleRiskState {
   protectiveExit: GridPendingMakerExit;
   stateVersion: number;
   lastEvaluatedAt: Date | null;
+  // ─── V3.1: trailing policy snapshot (additive) ───
+  trailingPolicy?: TrailingPolicySnapshot | null;
 }
 
 export type RiskAction =
@@ -513,6 +515,37 @@ export interface PumpDumpGuardState {
 
 // ─── Trailing Protection ────────────────────────────────────────────
 
+export type TrailingMode = "adaptive_atr" | "manual";
+
+export type TrailingAtrSource = "current_atr" | "persisted_atr" | "manual_fallback" | "none";
+
+/**
+ * Snapshot of the trailing policy captured at cycle creation time.
+ * Changes to global config do NOT retroactively affect open cycles.
+ */
+export interface TrailingPolicySnapshot {
+  /** Whether trailing is enabled for this cycle (captured at creation). */
+  enabled: boolean;
+  /** Trailing mode: adaptive ATR or manual fixed percentages. */
+  mode: TrailingMode;
+  /** Calculation version for forward compatibility. */
+  calculationVersion: number;
+  /** Effective activation pct used. */
+  activationPctEffective: number;
+  /** Activation price (>= targetSellPrice for V3 cycles). */
+  activationPrice: number | null;
+  /** V3 target price used as profit floor reference. */
+  profitFloorPrice: number | null;
+  /** ATR multiplier for adaptive mode. */
+  atrMultiplier: number;
+  /** Minimum stop pct clamp. */
+  minPct: number;
+  /** Maximum stop pct clamp. */
+  maxPct: number;
+  /** EMA smoothing alpha for ATR. */
+  smoothingAlpha: number;
+}
+
 export interface TrailingProtectionState {
   activated: boolean;
   activatedAt: Date | null;
@@ -520,6 +553,23 @@ export interface TrailingProtectionState {
   trailingStopPct: number;
   currentStopPrice: number | null;
   reason: string;
+  // ─── V3.1 Adaptive ATR extension (additive, backward compatible) ───
+  /** Policy snapshot captured at cycle creation. */
+  policy?: TrailingPolicySnapshot | null;
+  /** Current ATR pct from the canonical GRID band snapshot. */
+  atrPct?: number | null;
+  /** Smoothed ATR pct (EMA). */
+  smoothedAtrPct?: number | null;
+  /** Source of the ATR value used. */
+  atrSource?: TrailingAtrSource | null;
+  /** Effective stop pct after clamp and smoothing. */
+  effectiveStopPct?: number | null;
+  /** Base stop pct before clamp (smoothedAtrPct * multiplier). */
+  baseStopPct?: number | null;
+  /** Profit floor price (= targetSellPrice for V3 cycles). */
+  profitFloorPrice?: number | null;
+  /** Activation price effective for this cycle. */
+  activationPrice?: number | null;
 }
 
 // ─── HODL Recovery ──────────────────────────────────────────────────
@@ -558,6 +608,17 @@ export interface GridIsolatedConfig {
   trailingEnabled?: boolean;
   /** Activa/desactiva las capas de stop-loss. */
   stopLossEnabled?: boolean;
+  // ─── V3.1 Adaptive ATR Trailing ───
+  /** Modo del trailing: adaptativo ATR o manual. */
+  trailingMode?: TrailingMode;
+  /** Multiplicador ATR para el retroceso adaptativo. */
+  trailingAtrMultiplier?: number;
+  /** Retroceso mínimo pct (clamp inferior). */
+  trailingMinPct?: number;
+  /** Retroceso máximo pct (clamp superior). */
+  trailingMaxPct?: number;
+  /** Alpha de suavizado EMA para ATR. */
+  trailingAtrSmoothingAlpha?: number;
   /** Porcentaje de comisión simulada para la compra (maker en SHADOW). */
   buyFeePct: number;
   /** Porcentaje de comisión simulada para la venta (maker en SHADOW). */
@@ -652,6 +713,12 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   defaultExitPolicyVersion: "FIRST_PROFITABLE_HIGHER_RUNG_V2",
   trailingEnabled: false,
   stopLossEnabled: false,
+  // V3.1 Adaptive ATR Trailing defaults
+  trailingMode: "adaptive_atr" as TrailingMode,
+  trailingAtrMultiplier: 0.75,
+  trailingMinPct: 0.25,
+  trailingMaxPct: 1.20,
+  trailingAtrSmoothingAlpha: 0.25,
   buyFeePct: 0.09,
   sellFeePct: 0.09,
   netProfitTargetPct: 0.8,

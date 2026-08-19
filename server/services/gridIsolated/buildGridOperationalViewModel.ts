@@ -149,6 +149,16 @@ export interface OperationalOpenCycle {
   trailingHighestPrice: number | null;
   trailingStopPrice: number | null;
   trailingReason: string | null;
+  // V3.1 Adaptive ATR trailing fields
+  trailingMode: string | null;
+  trailingAtrPct: number | null;
+  trailingSmoothedAtrPct: number | null;
+  trailingAtrSource: string | null;
+  trailingEffectiveStopPct: number | null;
+  trailingBaseStopPct: number | null;
+  trailingProfitFloorPrice: number | null;
+  trailingActivationPrice: number | null;
+  trailingPolicyEnabled: boolean | null;
   // Stop-loss history
   stopLossTriggered: boolean;
   stopLossLayersTriggered: StopLossLayerTriggered[];
@@ -393,10 +403,11 @@ function riskStateSummary(risk: GridCycleRiskState | null): string | null {
   return null;
 }
 
-function closePathLabel(path: GridClosePath | null): string | null {
+export function closePathLabel(path: GridClosePath | null): string | null {
   switch (path) {
     case "NORMAL_TARGET": return "Objetivo normal";
     case "SYNTHETIC_RUNG": return "Escalón sintético";
+    case "CYCLE_OWNED_TARGET": return "Objetivo individual V3";
     case "LEGACY_PERSISTED_TARGET": return "Objetivo legacy persistido";
     case "TRAILING_MAKER": return "Trailing maker";
     case "PROTECTIVE_MAKER": return "Stop-loss maker";
@@ -605,6 +616,15 @@ function buildOpenCycle(
     trailingHighestPrice: toNum(risk?.trailing?.highestPriceSinceBuy) ?? null,
     trailingStopPrice: toNum(risk?.trailing?.currentStopPrice) ?? null,
     trailingReason: risk?.trailing?.reason ?? null,
+    trailingMode: risk?.trailingPolicy?.mode ?? risk?.trailing?.policy?.mode ?? null,
+    trailingAtrPct: toNum(risk?.trailing?.atrPct) ?? null,
+    trailingSmoothedAtrPct: toNum(risk?.trailing?.smoothedAtrPct) ?? null,
+    trailingAtrSource: risk?.trailing?.atrSource ?? null,
+    trailingEffectiveStopPct: toNum(risk?.trailing?.effectiveStopPct) ?? null,
+    trailingBaseStopPct: toNum(risk?.trailing?.baseStopPct) ?? null,
+    trailingProfitFloorPrice: toNum(risk?.trailing?.profitFloorPrice) ?? null,
+    trailingActivationPrice: toNum(risk?.trailing?.activationPrice) ?? null,
+    trailingPolicyEnabled: risk?.trailingPolicy?.enabled ?? null,
     stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
     stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => ({
       layer: l.layer,
@@ -752,6 +772,15 @@ function buildClosedCycle(
     trailingHighestPrice: toNum(risk?.trailing?.highestPriceSinceBuy) ?? null,
     trailingStopPrice: toNum(risk?.trailing?.currentStopPrice) ?? null,
     trailingReason: risk?.trailing?.reason ?? null,
+    trailingMode: risk?.trailingPolicy?.mode ?? risk?.trailing?.policy?.mode ?? null,
+    trailingAtrPct: toNum(risk?.trailing?.atrPct) ?? null,
+    trailingSmoothedAtrPct: toNum(risk?.trailing?.smoothedAtrPct) ?? null,
+    trailingAtrSource: risk?.trailing?.atrSource ?? null,
+    trailingEffectiveStopPct: toNum(risk?.trailing?.effectiveStopPct) ?? null,
+    trailingBaseStopPct: toNum(risk?.trailing?.baseStopPct) ?? null,
+    trailingProfitFloorPrice: toNum(risk?.trailing?.profitFloorPrice) ?? null,
+    trailingActivationPrice: toNum(risk?.trailing?.activationPrice) ?? null,
+    trailingPolicyEnabled: risk?.trailingPolicy?.enabled ?? null,
     stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
     stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => ({
       layer: l.layer,
@@ -1428,7 +1457,7 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
       { id: "range", title: "Rango y volatilidad", description: "Cálculo de banda, ATR, Bollinger y rango inteligente.", fields: ["gridRangeControlMode", "adaptiveRangeEnabled", "adaptiveRangeProfile", "adaptiveRangeMinPct", "adaptiveRangeMaxPct", "adaptiveRangeLowVolMaxPct", "adaptiveRangeNormalMaxPct", "adaptiveRangeHighVolMaxPct", "adaptiveRangeTargetFullLevels", "adaptiveRangeMinViableLevels", "bandPeriod", "bandStdDevMultiplier", "atrPeriod", "atrTimeframe"] },
       { id: "spacing", title: "Separación de niveles", description: "Distancia mínima/máxima entre niveles.", fields: ["gridStepMinPct", "gridStepMaxPct", "gridStepAtrMultiplier", "gridMaxLevelPct", "gridMinLevelUsd"] },
       { id: "protection", title: "Protección Pump/Dump", description: "Bloqueo de compras ante movimientos bruscos.", fields: ["pumpGuardDeviationPct", "pumpGuardVolumeSpikeRatio", "pumpGuardCooldownMinutes", "dumpGuardDeviationPct", "dumpGuardVolumeSpikeRatio", "dumpGuardCooldownMinutes"] },
-      { id: "exits", title: "Salidas y HODL", description: "Stop loss y recuperación de posiciones.", fields: ["hodlRecoveryEnabled", "stopLossSoftPct", "stopLossHardPct", "stopLossEmergencyPct", "trailingActivationPct", "trailingStopPct"] },
+      { id: "exits", title: "Salidas y HODL", description: "Trailing, stop loss y recuperación de posiciones.", fields: ["trailingEnabled", "trailingMode", "trailingActivationPct", "trailingStopPct", "trailingAtrMultiplier", "trailingMinPct", "trailingMaxPct", "trailingAtrSmoothingAlpha", "stopLossEnabled", "stopLossSoftPct", "stopLossHardPct", "stopLossEmergencyPct", "hodlRecoveryEnabled"] },
       { id: "limits", title: "Límites operativos", description: "Máximos de ciclos y órdenes diarias.", fields: ["maxOpenCycles", "maxDailyOrders"] },
       { id: "simulation", title: "Simulación y diagnóstico", description: "Beneficio neto objetivo y parámetros de validación.", fields: ["netProfitTargetPct", "enforceCompactRange", "gridRangeMaxPct", "maxDistanceFromCenterPct", "maxSellDistanceFromNearestBuyPct"] },
     ],

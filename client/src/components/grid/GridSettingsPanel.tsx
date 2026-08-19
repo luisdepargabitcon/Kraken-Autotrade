@@ -332,20 +332,89 @@ const FIELD_META: Record<string, FieldMeta> = {
     min: 0.1,
     max: 10,
     step: 0.1,
-    help: "Beneficio mínimo para activar el trailing stop.",
+    help: "Beneficio mínimo para activar el trailing stop. En ciclos V3, el trailing se arma al alcanzar el objetivo económico V3.",
     impact: "Más alto = espera más ganancia antes de proteger.",
     recommended: "1.0",
   },
   trailingStopPct: {
-    label: "Distancia del trailing",
+    label: "Distancia del trailing (manual)",
     unit: "%",
     type: "percent",
     min: 0.1,
     max: 5,
     step: 0.1,
-    help: "Margen que mantiene el trailing por debajo del máximo alcanzado.",
+    help: "Margen que mantiene el trailing por debajo del máximo alcanzado. Solo se usa en modo manual o como fallback.",
     impact: "Más bajo = protección más ajustada.",
     recommended: "0.4",
+  },
+  trailingEnabled: {
+    label: "Trailing stop",
+    type: "boolean",
+    help: "Activa el trailing stop para dejar correr ganancias por encima del objetivo V3 y proteger el retroceso.",
+    impact: "Cuando está activo, el target V3 pasa a ser suelo económico y el trailing gobierna la salida.",
+    recommended: "false",
+  },
+  stopLossEnabled: {
+    label: "Stop loss",
+    type: "boolean",
+    help: "Activa las capas de stop loss (suave, duro, emergencia).",
+    impact: "Sin esta opción, los porcentajes de stop loss no tienen efecto.",
+    recommended: "false",
+  },
+  trailingMode: {
+    label: "Modo del trailing",
+    type: "select",
+    options: [
+      { value: "adaptive_atr", label: "Automático inteligente (ATR)" },
+      { value: "manual", label: "Manual" },
+    ],
+    help: "Automático: el retroceso se calcula con el ATR del Grid. Manual: usa los porcentajes fijos configurados.",
+    impact: "Automático se adapta a la volatilidad; Manual es constante.",
+    recommended: "adaptive_atr",
+  },
+  trailingAtrMultiplier: {
+    label: "Multiplicador ATR",
+    unit: "×",
+    type: "number",
+    min: 0.1,
+    max: 3.0,
+    step: 0.05,
+    help: "Multiplica el ATR suavizado para calcular el retroceso del trailing adaptativo.",
+    impact: "Mayor = trailing más amplio y menos ajustado.",
+    recommended: "0.75",
+  },
+  trailingMinPct: {
+    label: "Retroceso mínimo",
+    unit: "%",
+    type: "percent",
+    min: 0.05,
+    max: 5,
+    step: 0.05,
+    help: "Límite inferior del retroceso adaptativo. El stop nunca será menor que este porcentaje.",
+    impact: "Protege contra ATR muy bajos.",
+    recommended: "0.25",
+  },
+  trailingMaxPct: {
+    label: "Retroceso máximo",
+    unit: "%",
+    type: "percent",
+    min: 0.5,
+    max: 10,
+    step: 0.1,
+    help: "Límite superior del retroceso adaptativo. El stop nunca será mayor que este porcentaje.",
+    impact: "Protege contra ATR muy altos.",
+    recommended: "1.20",
+  },
+  trailingAtrSmoothingAlpha: {
+    label: "Suavizado ATR (alpha)",
+    unit: "",
+    type: "number",
+    min: 0.01,
+    max: 1.0,
+    step: 0.01,
+    help: "Factor de suavizado EMA para el ATR. Menor = más estable. Mayor = más reactivo.",
+    impact: "Evita saltos violentos del stop por cambios puntuales de ATR.",
+    recommended: "0.25",
   },
   maxOpenCycles: {
     label: "Máximo de ciclos abiertos",
@@ -510,6 +579,20 @@ function SimpleMode({
       </div>
       <div className={isHighlighted("hodlRecoveryEnabled") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
         <FieldControl fieldKey="hodlRecoveryEnabled" value={draft.hodlRecoveryEnabled} onChange={(v) => onChange("hodlRecoveryEnabled", v)} />
+        {draft.hodlRecoveryEnabled && !draft.stopLossEnabled && (
+          <p className="mt-2 text-xs text-amber-400/80">⚠ HODL recovery requiere Stop Loss activado. Actualmente inactivo por dependencia.</p>
+        )}
+      </div>
+      <div className={isHighlighted("trailingEnabled") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+        <FieldControl fieldKey="trailingEnabled" value={draft.trailingEnabled} onChange={(v) => onChange("trailingEnabled", v)} />
+      </div>
+      {draft.trailingEnabled && (
+        <div className={isHighlighted("trailingMode") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+          <FieldControl fieldKey="trailingMode" value={draft.trailingMode} onChange={(v) => onChange("trailingMode", v)} />
+        </div>
+      )}
+      <div className={isHighlighted("stopLossEnabled") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
+        <FieldControl fieldKey="stopLossEnabled" value={draft.stopLossEnabled} onChange={(v) => onChange("stopLossEnabled", v)} />
       </div>
       <div className={isHighlighted("gridWalletCompoundProfits") ? "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" : ""}>
         <FieldControl fieldKey="gridWalletCompoundProfits" value={draft.gridWalletCompoundProfits} onChange={(v) => onChange("gridWalletCompoundProfits", v)} />
@@ -549,9 +632,21 @@ function ExpertMode({
               {(block.fields ?? []).map((fieldKey: string) => {
                 if (FIELD_META[fieldKey]?.hidden) return null;
                 if (draft[fieldKey] === undefined) return null;
+                // V3.1: visually disable manual trailing fields when adaptive_atr is active
+                const isAdaptive = draft.trailingMode === "adaptive_atr";
+                const isManualField = fieldKey === "trailingActivationPct" || fieldKey === "trailingStopPct";
+                const isAtrField = fieldKey === "trailingAtrMultiplier" || fieldKey === "trailingMinPct" || fieldKey === "trailingMaxPct" || fieldKey === "trailingAtrSmoothingAlpha";
+                const visuallyDisabled =
+                  (isAdaptive && isManualField && fieldKey === "trailingStopPct") ? false : // trailingStopPct is used as fallback
+                  (isAdaptive && isManualField) ? true :
+                  (!isAdaptive && isAtrField) ? true :
+                  false;
                 return (
-                  <div key={fieldKey} className={cn("rounded-lg border border-border/30 p-3 bg-muted/10", isHighlighted(fieldKey) && "border-amber-500/40 bg-amber-500/10")}>
+                  <div key={fieldKey} className={cn("rounded-lg border border-border/30 p-3 bg-muted/10", isHighlighted(fieldKey) && "border-amber-500/40 bg-amber-500/10", visuallyDisabled && "opacity-50")}>
                     <FieldControl fieldKey={fieldKey} value={draft[fieldKey]} onChange={(v) => onChange(fieldKey, v)} />
+                    {visuallyDisabled && (
+                      <p className="mt-1 text-xs text-muted-foreground italic">Inactivo en este modo</p>
+                    )}
                   </div>
                 );
               })}
@@ -580,6 +675,9 @@ export function GridSettingsPanel({ config, operational, onApply, applyPending, 
     "netProfitTargetPct",
     "adaptiveRangeProfile",
     "hodlRecoveryEnabled",
+    "trailingEnabled",
+    "trailingMode",
+    "stopLossEnabled",
     "gridWalletCompoundProfits",
   ];
 

@@ -68,6 +68,8 @@ export const MIGRATIONS = [
   { id: '086_spot_canonical_fields', filePath: path.join(migrationsDir, '086_spot_canonical_fields.sql') },
   // SPOT R10 provenance columns — order_intents + bot_config.spot_real_reserved_capital_usd
   { id: '087_spot_order_intents_provenance', filePath: path.join(migrationsDir, '087_spot_order_intents_provenance.sql') },
+  // GRID V3.1 Adaptive ATR Trailing — additive columns, no data loss
+  { id: '088_grid_v31_adaptive_trailing', filePath: path.join(migrationsDir, '088_grid_v31_adaptive_trailing.sql') },
 ];
 
 
