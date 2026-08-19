@@ -85,10 +85,33 @@ const REASON_CODE_ES: Record<string, string> = {
 
   // Misc
   PAIR_DISABLED: "Desactivado para nuevas entradas.",
-  NO_SCAN_YET: "Aún no se ha realizado ningún análisis de mercado para este par.",
+  PAIR_DISABLED_RACE_BLOCKED: "El par fue desactivado durante una entrada en curso. La operación se canceló por seguridad.",
+  NO_SCAN_YET: "Aún no se realizado ningún análisis de mercado para este par.",
   MARKET_CONTEXT_INITIAL: "Contexto de mercado inicial.",
   MARKET_CONTEXT_CHANGED: "El contexto de mercado ha cambiado.",
   SKIPPED: "Omitido — gates superiores no pasaron.",
+
+  // ExecuteEntryOutcome reason codes
+  REAL_FREEZE_ACTIVATED: "Bloqueo de seguridad REAL activado. No se abren nuevas posiciones.",
+  REAL_TRADING_VENUE_UNVERIFIED: "La plataforma de ejecución no está verificada. No se pueden enviar órdenes reales.",
+  REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED: "Error al persistir la intención de entrada. Bloqueado por seguridad.",
+  DUPLICATE_ENTRY_SUBMISSION: "La entrada ya fue enviada previamente. No se reenvía.",
+  DUPLICATE_ENTRY_TERMINAL: "La intención ya está en estado terminal. No se reenvía.",
+  REAL_SUBMISSION_AMBIGUOUS: "El envío de la orden resultó ambiguo. Se requiere revisión.",
+  REAL_ACCEPTED_NO_VENUE_ID: "La orden fue aceptada pero sin identificador de plataforma. Pendiente de confirmación.",
+  ENTRY_REJECTED: "La entrada fue rechazada por la plataforma de ejecución.",
+  ENTRY_FAILED: "La entrada falló durante la ejecución.",
+  NO_FILL_PRICE: "No se obtuvo precio de ejecución. La operación no puede completarse.",
+  INVALID_NOTIONAL: "El valor nominal calculado es inválido. La operación no puede completarse.",
+  SHADOW_PERSIST_FAILED: "Error al persistir la posición de simulación.",
+  REAL_ENTRY_FILL_ATOMIC_FAILED: "Error en la materialización atómica de la entrada real.",
+  PENDING_FILL: "Orden enviada, esperando confirmación de ejecución.",
+  ENTRY_FILLED: "Entrada ejecutada correctamente.",
+  POSITION_MATERIALIZED: "Posición materializada en base de datos.",
+  SHADOW_MODE_TRANSITION_RACE_BLOCKED: "El modo simulación cambió durante la operación. Bloqueado por seguridad.",
+  SHADOW_MODE_TRANSITION_RACE_BLOCKED_POST_ADAPTER: "El modo simulación cambió después del adaptador. Bloqueado por seguridad.",
+  REAL_MODE_TRANSITION_RACE_BLOCKED: "El modo real cambió durante la operación. Bloqueado por seguridad.",
+  ENTRY_EXCEPTION: "Excepción durante la entrada. La operación fue cancelada.",
 };
 
 /**
@@ -107,10 +130,10 @@ function mapGateLevelToStage(level: string): string {
     "Data Health": "DATA_HEALTH",
     "Macro 4H": "MACRO_4H",
     "Régimen 1H": "REGIME_1H",
-    "Setup 15M": "SETUP_15M",
-    "Trigger 5M": "TIMING_5M",
-    "Anti-Late-Entry": "ANTI_LATE_ENTRY",
-    "Sizing/Risk": "SIZING_RISK",
+    "Configuración 15 min": "SETUP_15M",
+    "Confirmación 5 min": "TIMING_5M",
+    "Protección contra entrada tardía": "ANTI_LATE_ENTRY",
+    "Gestión de riesgo": "SIZING_RISK",
   };
   return map[level] ?? level;
 }
@@ -175,36 +198,36 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
   let setup15m: string | null = null;
   if (macroPass && regimePass && dataHealthPass) {
     if (signal.blockReason === "NO_SETUP_15M") {
-      gates.push({ level: "Setup 15M", pass: false, reason: signal.reason, reasonCode: "NO_SETUP_15M" });
+      gates.push({ level: "Configuración 15 min", pass: false, reason: signal.reason, reasonCode: "NO_SETUP_15M" });
     } else if (signal.signal === "BUY" || signal.blockReason === "NO_TRIGGER_5M") {
       setup15m = signal.setupTag ? String(signal.setupTag) : "UNKNOWN";
-      gates.push({ level: "Setup 15M", pass: true, reason: `Setup ${signal.setupTag} detectado`, reasonCode: "SETUP_DETECTED" });
+      gates.push({ level: "Configuración 15 min", pass: true, reason: `Configuración ${signal.setupTag} detectada`, reasonCode: "SETUP_DETECTED" });
     } else {
-      gates.push({ level: "Setup 15M", pass: false, reason: signal.reason || "No setup", reasonCode: "NO_SETUP_15M" });
+      gates.push({ level: "Configuración 15 min", pass: false, reason: signal.reason || "Sin configuración", reasonCode: "NO_SETUP_15M" });
     }
   } else {
-    gates.push({ level: "Setup 15M", pass: false, reason: "Omitido — gates superiores no pasaron", reasonCode: "SKIPPED" });
+    gates.push({ level: "Configuración 15 min", pass: false, reason: "Omitido — gates superiores no pasaron", reasonCode: "SKIPPED" });
   }
 
   // Trigger 5M gate
   let timing5m: string | null = null;
   if (setup15m !== null) {
     if (signal.blockReason === "NO_TRIGGER_5M") {
-      gates.push({ level: "Trigger 5M", pass: false, reason: signal.reason, reasonCode: "NO_TRIGGER_5M" });
+      gates.push({ level: "Confirmación 5 min", pass: false, reason: signal.reason, reasonCode: "NO_TRIGGER_5M" });
     } else if (signal.signal === "BUY") {
       timing5m = "CONFIRMED";
-      gates.push({ level: "Trigger 5M", pass: true, reason: "Trigger 5M confirmado", reasonCode: "TRIGGER_CONFIRMED" });
+      gates.push({ level: "Confirmación 5 min", pass: true, reason: "Confirmación 5 min verificada", reasonCode: "TRIGGER_CONFIRMED" });
     } else {
-      gates.push({ level: "Trigger 5M", pass: false, reason: signal.reason || "No trigger", reasonCode: "NO_TRIGGER_5M" });
+      gates.push({ level: "Confirmación 5 min", pass: false, reason: signal.reason || "Sin confirmación", reasonCode: "NO_TRIGGER_5M" });
     }
   } else {
-    gates.push({ level: "Trigger 5M", pass: false, reason: "Omitido — setup no detectado", reasonCode: "SKIPPED" });
+    gates.push({ level: "Confirmación 5 min", pass: false, reason: "Omitido — configuración no detectada", reasonCode: "SKIPPED" });
   }
 
   // Anti-Late-Entry gate
   if (intent && intentEvaluation) {
     gates.push({
-      level: "Anti-Late-Entry",
+      level: "Protección contra entrada tardía",
       pass: intentEvaluation.shouldExecute,
       reason: intentEvaluation.reason,
       reasonCode: intentEvaluation.shouldExecute ? "INTENT_APPROVED" : (intent.lastBlockReason ?? "ENTRY_GATED"),
@@ -214,9 +237,9 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
   // Sizing/Risk gate
   if (sizing) {
     gates.push({
-      level: "Sizing/Risk",
+      level: "Gestión de riesgo",
       pass: sizing.approved,
-      reason: sizing.approved ? "Sizing aprobado" : (sizing.blockReason ?? sizing.reason),
+      reason: sizing.approved ? "Gestión de riesgo aprobada" : (sizing.blockReason ?? sizing.reason),
       reasonCode: sizing.approved ? "SIZING_APPROVED" : (sizing.blockReason ?? "SIZING_REJECTED"),
     });
   }
@@ -227,7 +250,10 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
   const primaryGate = gates.find(g => !g.pass) ?? null;
 
   const primaryReasonCode = pipelineStopReasonCode ?? blockReasonCode ?? primaryGate?.reasonCode ?? (signal.signal === "BUY" ? "SIGNAL_DETECTED" : "NO_SIGNAL");
-  const primaryReasonEs = pipelineStopReason ?? reasonCodeToSpanish(primaryReasonCode, primaryGate?.reason ?? signal.reason ?? "Sin señal");
+  // P9: primaryReasonEs must ALWAYS be derived from reasonCodeToSpanish, never from
+  // pipelineStopReason directly (which may contain English technical text).
+  // pipelineStopReason is preserved as technical detail only.
+  const primaryReasonEs = reasonCodeToSpanish(primaryReasonCode, primaryGate?.reason ?? signal.reason ?? "Sin señal");
   const secondaryReasonsEs = gates
     .filter(g => !g.pass && g !== primaryGate)
     .slice(0, 3)

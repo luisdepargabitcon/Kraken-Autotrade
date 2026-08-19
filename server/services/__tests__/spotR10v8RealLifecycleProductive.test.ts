@@ -264,9 +264,9 @@ describe("R10.8-9: REAL transition in-flight submission race", () => {
     await invalidateAndDrain();
     mockModeState.mode = "OFF";
 
-    const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+    const outcome = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(outcome.executed).toBe(false);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(0);
   });
 
@@ -276,9 +276,9 @@ describe("R10.8-9: REAL transition in-flight submission race", () => {
     await invalidateAndDrain();
     mockModeState.mode = "SHADOW";
 
-    const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
+    const outcome = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(outcome.executed).toBe(false);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(0);
   });
 

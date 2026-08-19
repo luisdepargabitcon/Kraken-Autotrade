@@ -200,6 +200,15 @@ export async function disablePair(pair: string): Promise<PairToggleResult> {
     }
 
     if (!current.includes(normalized)) {
+      // Pair is already absent from active_pairs, but a previous disable may have
+      // timed out on drain. Re-invalidate generation and re-check the critical section
+      // before declaring success. Do NOT write DB again.
+      await _invalidatePairEntryGenerationOnly(normalized);
+      const drainResult = await _drainPairCriticalSection(normalized);
+      if (!drainResult.drained) {
+        console.error(`[spotPairToggle] DRAIN_TIMEOUT (retry) for ${normalized} — ${drainResult.remainingCount} critical sections still active.`);
+        throw new PairDisableDrainTimeoutError(normalized, drainResult.remainingCount);
+      }
       return {
         pair: normalized,
         enabled: false,

@@ -49,6 +49,7 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
     tradesThrow: false,
     summaryStatsThrow: false,
     runtimeInspectionThrow: false,
+    mockActivePairs: ["BTC/USD", "SOL/USD"] as string[],
   };
 
   const executeFn = vi.fn(async (query: any) => {
@@ -112,8 +113,8 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
       const lotIds = intentRows.map((r: any) => r.lot_id).filter(Boolean);
       return { rows: state.trades.filter((t: any) => lotIds.includes(t.lot_id)).map((t: any) => ({ trade_id: t.trade_id })) };
     }
-    if (sqlText.includes("active_pairs") && sqlText.includes("bot_config")) {
-      return { rows: [{ active_pairs: ["BTC/USD", "SOL/USD"] }] };
+    if (sqlText.includes("active_pairs") && sqlText.includes("bot_config") && !sqlText.includes("UPDATE")) {
+      return { rows: [{ active_pairs: state.mockActivePairs }] };
     }
     if (sqlText.includes("INSERT INTO order_intents")) {
       const { params } = extractSql(query);
@@ -218,6 +219,11 @@ const { mockDbState, dbExecuteMock, dbTransactionMock } = vi.hoisted(() => {
     }
     // UPDATE bot_config SET active_pairs (for disablePair)
     if (sqlText.includes("UPDATE bot_config") && sqlText.includes("active_pairs")) {
+      const { params } = extractSql(query);
+      // writeActivePairs sends JSON.stringify(pairs) as first param
+      if (params[0] && typeof params[0] === "string") {
+        try { state.mockActivePairs = JSON.parse(params[0]); } catch { /* ignore */ }
+      }
       return { rows: [] };
     }
     return { rows: [] };
@@ -471,6 +477,7 @@ function resetDbState() {
   mockDbState.tradesThrow = false;
   mockDbState.summaryStatsThrow = false;
   mockDbState.runtimeInspectionThrow = false;
+  mockDbState.mockActivePairs = ["BTC/USD", "SOL/USD"];
   mockDbState.orderIntents.length = 0;
   mockDbState.openPositions.length = 0;
   mockDbState.trades.length = 0;
@@ -617,6 +624,70 @@ describe("Productive per-pair race tests", () => {
 
     // Clean up
     exitPairCs("BTC/USD");
+    setDrainTimeoutMs(15_000);
+  });
+});
+
+describe("Pair retry after drain timeout", () => {
+  beforeEach(() => {
+    resetDbState();
+    vi.clearAllMocks();
+  });
+
+  it("PAIR_RETRY_01_FIRST_DISABLE_TIMEOUT: first disable with open CS → throws error", async () => {
+    setDrainTimeoutMs(50);
+
+    // Open a pair critical section that won't close
+    enterPairCs("BTC/USD");
+
+    // First disable should throw
+    await expect(disablePair("BTC/USD")).rejects.toThrow(PairDisableDrainTimeoutError);
+
+    // Pair should have been removed from active_pairs (DB write happened before drain)
+    expect(mockDbState.mockActivePairs).not.toContain("BTC/USD");
+
+    // Clean up
+    exitPairCs("BTC/USD");
+    setDrainTimeoutMs(15_000);
+  });
+
+  it("PAIR_RETRY_02_RETRY_WHILE_CS_OPEN: retry while CS still open → throws again, no false success", async () => {
+    setDrainTimeoutMs(50);
+
+    // Open a pair critical section
+    enterPairCs("BTC/USD");
+
+    // First disable throws
+    await expect(disablePair("BTC/USD")).rejects.toThrow(PairDisableDrainTimeoutError);
+
+    // Pair is now absent from active_pairs
+    expect(mockDbState.mockActivePairs).not.toContain("BTC/USD");
+
+    // Retry: pair is absent, but CS is still open → should throw again
+    await expect(disablePair("BTC/USD")).rejects.toThrow(PairDisableDrainTimeoutError);
+
+    // Clean up
+    exitPairCs("BTC/USD");
+    setDrainTimeoutMs(15_000);
+  });
+
+  it("PAIR_RETRY_03_RETRY_AFTER_CS_CLOSED: retry after CS closed → success 'ya está inactivo'", async () => {
+    setDrainTimeoutMs(50);
+
+    // Open a pair critical section
+    enterPairCs("BTC/USD");
+
+    // First disable throws
+    await expect(disablePair("BTC/USD")).rejects.toThrow(PairDisableDrainTimeoutError);
+
+    // Now close the critical section
+    exitPairCs("BTC/USD");
+
+    // Retry: pair is absent, CS is now closed → should succeed
+    const result = await disablePair("BTC/USD");
+    expect(result.enabled).toBe(false);
+    expect(result.message).toContain("ya está inactivo");
+
     setDrainTimeoutMs(15_000);
   });
 });

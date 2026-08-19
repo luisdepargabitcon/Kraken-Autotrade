@@ -140,3 +140,100 @@ describe("ExecuteEntryOutcome propagation to snapshot", () => {
     expect(snap.lastReachedStage).toBe("ADAPTER");
   });
 });
+
+describe("Context Spanish labels and reason code mapping", () => {
+  it("CTX_ES_SETUP_LABELS: gate levels use Spanish labels", () => {
+    const input = makeBaseInput({
+      ctx: {
+        ...makeBaseInput().ctx,
+        regimeContext: {
+          ...makeBaseInput().ctx.regimeContext,
+          regime: "TREND",
+          direction: "BULLISH",
+        },
+      } as any,
+      signal: { signal: "NONE", setupTag: null, reason: "No setup", confidence: 0, blockReason: "NO_SETUP_15M" } as any,
+    });
+    const snap = buildSnapshotFromScanResults(input);
+    const setupGate = snap.gates.find(g => g.reasonCode === "NO_SETUP_15M");
+    expect(setupGate).toBeDefined();
+    expect(setupGate!.level).toBe("Configuración 15 min");
+  });
+
+  it("CTX_ES_MARKET_LABELS: gate levels use Spanish for trigger and sizing", () => {
+    const input = makeBaseInput({
+      ctx: {
+        ...makeBaseInput().ctx,
+        regimeContext: {
+          ...makeBaseInput().ctx.regimeContext,
+          regime: "TREND",
+          direction: "BULLISH",
+        },
+      } as any,
+      signal: { signal: "BUY", setupTag: "PULLBACK_CONTINUATION", reason: "ok", confidence: 0.8, blockReason: null } as any,
+      sizing: { approved: false, volume: 0, notionalUsd: 0, stopPrice: 0, stopDistancePct: 0, stopDistanceUsd: 0, riskUsd: 0, reason: "too small", blockReason: "SIZING_REJECTED" } as any,
+    });
+    const snap = buildSnapshotFromScanResults(input);
+    const sizingGate = snap.gates.find(g => g.reasonCode === "SIZING_REJECTED");
+    expect(sizingGate).toBeDefined();
+    expect(sizingGate!.level).toBe("Gestión de riesgo");
+  });
+
+  it("CTX_ES_PRIMARY_REASON_FROM_CODE: primaryReasonEs derived from reasonCode, not pipelineStopReason", () => {
+    const input = makeBaseInput({
+      pipelineStopStage: "SIZING",
+      pipelineStopReasonCode: "SIZING_REJECTED",
+      pipelineStopReason: "Some English technical reason that should NOT appear in primaryReasonEs",
+    });
+    const snap = buildSnapshotFromScanResults(input);
+    expect(snap.primaryReasonCode).toBe("SIZING_REJECTED");
+    expect(snap.primaryReasonEs).toContain("gestión de riesgo");
+    expect(snap.primaryReasonEs).not.toContain("Some English technical reason");
+  });
+
+  it("CTX_ES_PIPELINE_RAW_REASON_DETAIL_ONLY: pipelineStopReason preserved as technical detail", () => {
+    const input = makeBaseInput({
+      pipelineStopStage: "ADAPTER",
+      pipelineStopReasonCode: "ENTRY_FAILED",
+      pipelineStopReason: "Exchange error: connection timeout",
+    });
+    const snap = buildSnapshotFromScanResults(input);
+    expect(snap.pipelineStopReason).toBe("Exchange error: connection timeout");
+    expect(snap.primaryReasonEs).not.toContain("Exchange error");
+    expect(snap.primaryReasonEs).toContain("entrada");
+  });
+
+  it("CTX_ES_ALL_EXECUTE_ENTRY_OUTCOME_CODES_MAPPED: every outcome code has Spanish mapping", () => {
+    const codes = [
+      "PAIR_DISABLED_RACE_BLOCKED",
+      "SIZING_REJECTED",
+      "REAL_FREEZE_ACTIVATED",
+      "SUPERVISOR_UNHEALTHY_BLOCKS_REAL_BUY",
+      "REAL_OPEN_LOTS_QUERY_FAILED_FAIL_CLOSED",
+      "REAL_TRADING_VENUE_UNVERIFIED",
+      "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED",
+      "DUPLICATE_ENTRY_SUBMISSION",
+      "DUPLICATE_ENTRY_TERMINAL",
+      "REAL_SUBMISSION_AMBIGUOUS",
+      "REAL_ACCEPTED_NO_VENUE_ID",
+      "ENTRY_REJECTED",
+      "ENTRY_FAILED",
+      "NO_FILL_PRICE",
+      "INVALID_NOTIONAL",
+      "SHADOW_PERSIST_FAILED",
+      "REAL_ENTRY_FILL_ATOMIC_FAILED",
+      "PENDING_FILL",
+      "ENTRY_FILLED",
+    ];
+    for (const code of codes) {
+      const input = makeBaseInput({
+        pipelineStopStage: "TEST",
+        pipelineStopReasonCode: code,
+        pipelineStopReason: `English detail for ${code}`,
+      });
+      const snap = buildSnapshotFromScanResults(input);
+      expect(snap.primaryReasonEs).not.toBe(`English detail for ${code}`);
+      expect(snap.primaryReasonEs.length).toBeGreaterThan(5);
+    }
+  });
+});

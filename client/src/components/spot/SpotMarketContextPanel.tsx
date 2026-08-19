@@ -205,8 +205,8 @@ function getParticipationLabel(part: string): string {
 function getSetupLabel(setup: string | null): string {
   if (!setup) return "—";
   const labels: Record<string, string> = {
-    PULLBACK_CONTINUATION: "Pullback Continuación",
-    BREAKOUT_RETEST: "Breakout Retest",
+    PULLBACK_CONTINUATION: "Continuación tras retroceso",
+    BREAKOUT_RETEST: "Ruptura y retesteo",
   };
   return labels[setup] ?? setup.replace(/_/g, " ");
 }
@@ -312,7 +312,7 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
         <MetricBox icon={Gauge} label="Volatilidad" value={getVolatilityLabel(snap.volatility)} />
         <MetricBox icon={Target} label="ADX" value={snap.adx.toFixed(1)} />
         <MetricBox icon={Activity} label="ATR %" value={snap.atrPct.toFixed(2)} />
-        <MetricBox icon={Gauge} label="Spread %" value={snap.spreadPct.toFixed(3)} />
+        <MetricBox icon={Gauge} label="Diferencial %" value={snap.spreadPct.toFixed(3)} />
         <MetricBox icon={Zap} label="Volumen" value={`${snap.volumeRatio.toFixed(2)}× (${getParticipationLabel(snap.participation)})`} />
       </div>
 
@@ -328,11 +328,11 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
 
       {/* Ticker */}
       <div>
-        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Ticker</p>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Mercado</p>
         <div className="grid grid-cols-4 gap-3">
           <MetricMini label="Precio" value={formatPrice(snap.price)} />
-          <MetricMini label="Bid" value={snap.bid > 0 ? formatPrice(snap.bid) : "—"} />
-          <MetricMini label="Ask" value={snap.ask > 0 ? formatPrice(snap.ask) : "—"} />
+          <MetricMini label="Mejor compra" value={snap.bid > 0 ? formatPrice(snap.bid) : "—"} />
+          <MetricMini label="Mejor venta" value={snap.ask > 0 ? formatPrice(snap.ask) : "—"} />
           <MetricMini label="Datos" value={getDataHealthLabel(snap.dataHealth)} colorClass={dataHealthColorMap[snap.dataHealth] ?? ""} />
         </div>
       </div>
@@ -340,7 +340,7 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
       {/* Active intent */}
       {snap.hasActiveIntent && (
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Intent Activo</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Intención activa</p>
           <div className="flex items-center gap-3 text-xs">
             <Badge variant="outline" className="text-[10px]">{snap.intentState}</Badge>
             {snap.intentCreatedAt && <span className="text-muted-foreground">Creado: {formatTime(snap.intentCreatedAt)}</span>}

@@ -306,10 +306,16 @@ export function SpotTerminalPanel() {
         <span className="text-sm font-semibold">Terminal SPOT</span>
         <span className={`h-2 w-2 rounded-full ml-1 ${statusColor[status]}`} title={status} />
         <Badge variant="outline" className="text-[10px] py-0 px-1.5" title={status}>{formatStatusEs(status)}</Badge>
-        {visibleLines.length > 0 && (
-          <span className="text-[10px] text-muted-foreground ml-1">{visibleLines.length} líneas</span>
+        {showPaginated ? (
+          serverTotalLines > 0 && (
+            <span className="text-[10px] text-muted-foreground ml-1">{serverTotalLines} líneas en servidor</span>
+          )
+        ) : (
+          visibleLines.length > 0 && (
+            <span className="text-[10px] text-muted-foreground ml-1">{visibleLines.length} líneas</span>
+          )
         )}
-        {newLinesCount > 0 && !autoScroll && (
+        {newLinesCount > 0 && (showPaginated || !autoScroll) && (
           <Badge variant="outline" className="text-[10px] py-0 px-1.5 text-cyan-400 border-cyan-500/30">
             {newLinesCount} nuevas
           </Badge>
@@ -357,10 +363,24 @@ export function SpotTerminalPanel() {
             variant="ghost"
             size="sm"
             className={`h-7 px-2 ${showPaginated ? "text-cyan-400" : "text-muted-foreground"}`}
-            onClick={() => { setShowPaginated(!showPaginated); setCurrentPage(1); }}
-            title={showPaginated ? "Modo stream" : "Modo paginado"}
+            onClick={() => {
+              const next = !showPaginated;
+              setShowPaginated(next);
+              setCurrentPage(1);
+              if (next) {
+                // P2: Entering paginated = history mode — disable autoScroll
+                autoScrollRef.current = false;
+                setAutoScroll(false);
+              } else {
+                // Returning to live mode — re-enable autoScroll
+                autoScrollRef.current = true;
+                setAutoScroll(true);
+                setNewLinesCount(0);
+              }
+            }}
+            title={showPaginated ? "Modo en vivo" : "Modo paginado"}
           >
-            <span className="text-[10px]">{showPaginated ? "Stream" : "Páginas"}</span>
+            <span className="text-[10px]">{showPaginated ? "En vivo" : "Páginas"}</span>
           </Button>
 
           {/* Auto-scroll toggle */}
@@ -387,7 +407,7 @@ export function SpotTerminalPanel() {
             onClick={() => setShowRawDetails(!showRawDetails)}
             title={showRawDetails ? "Mostrar español" : "Mostrar detalle técnico"}
           >
-            <span className="text-[10px]">{showRawDetails ? "ES" : "RAW"}</span>
+            <span className="text-[10px]">{showRawDetails ? "ES" : "Técnico"}</span>
           </Button>
           <Button variant="ghost" size="sm" className="h-7 px-2" onClick={clearLines} title="Limpiar">
             <Trash2 className="h-3.5 w-3.5" />
@@ -436,8 +456,8 @@ export function SpotTerminalPanel() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Return to live button */}
-      {newLinesCount > 0 && !autoScroll && (
+      {/* Return to live button — visible whenever there are new lines in paginated or non-autoScroll mode */}
+      {newLinesCount > 0 && (showPaginated || !autoScroll) && (
         <div className="flex justify-center py-1.5 border-t border-border/50 flex-shrink-0">
           <Button
             variant="outline"
@@ -451,8 +471,8 @@ export function SpotTerminalPanel() {
         </div>
       )}
 
-      {/* Pagination footer */}
-      {showPaginated && visibleLines.length > 0 && (
+      {/* Pagination footer — uses server totals, not local WS buffer */}
+      {showPaginated && (
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/50 flex-shrink-0 text-[10px]">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Líneas por página:</span>
@@ -463,6 +483,7 @@ export function SpotTerminalPanel() {
             >
               {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+            <span className="text-muted-foreground ml-2">{serverLoading ? "Cargando..." : `${serverTotalLines} líneas en servidor`}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Pág. {safePage} de {totalPages}</span>
