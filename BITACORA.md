@@ -1,7 +1,7 @@
 ﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-08-26
+> Última actualización: 2026-08-12
 
 ---
 
@@ -14,195 +14,6 @@
 - Si una entrada histórica contradice una regla posterior, prevalece la regla vigente más reciente.
 - Si código y documentación se contradicen, registrar la discrepancia y resolverla conforme al alcance de la tarea actual.
 - No alterar silenciosamente datos operativos o históricos para forzar coincidencia documental.
-
-## 2026-08-26 — SPOT FORWARD TWIN + IA FORWARD TWIN — ESTADO VIGENTE
-
-### Checkpoint R6 2026-08-27 — SPOT IA Forward Twin R6 — Cierre post-contraauditoría R5
-
-`608e3ee` (R5) no fue aprobado por contraauditoría GitHub. Correcciones R6 aplicadas sobre `608e3ee`, sin deploy:
-
-**Defectos R5 detectados por contraauditoría:**
-- Phantom exit qty: tolerancia relativa 99%-101% permitía asignar precio SELL a cantidad no vendida (closedQty=1 cuando exit=0.995).
-- ECON_DB_* no probaban DB: probaban el normalizador puro, no `queryCompletedTrades()`.
-- Durable lifecycle no conectado: `scheduleDurableReconciliation()` era one-shot, nadie lo llamaba.
-- Durable tests no probaban writer real: probaban casi exclusivamente migration absent.
-- Fingerprint incompleto: no incluía features, labels, schema, policy.
-- Giveback schema provenance por batch: pasaba un único `schemaVersion=2` para todo el batch.
-- Quality schema demasiado permisivo: `NOT IN (1,2)` permitía SCAN v2 y FILL v2.
-- Duplicate BUY hardcoded zero: `duplicateEntryFills=0` hardcoded.
-
-**Correcciones R6:**
-- **1. Phantom exit qty eliminado**: Reemplazada tolerancia relativa 99%-101% por `QTY_EPSILON=1e-8` (epsilon numérico puro). `closedQty = min(entry, exit)` solo cuando `abs(exit - entry) <= QTY_EPSILON`. exit < entry - epsilon → PARTIAL_EXIT. exit > entry + epsilon → EXIT_VOLUME_OVERFLOW.
-- **2. PnL exacto**: `grossPnlUsd = (weightedExit - weightedEntry) * closedQty`. `entryFeeAllocatedUsd = totalEntryFeeUsd * (closedQty / totalEntryVolume)`. `netPnlUsd = grossPnlUsd - entryFeeAllocatedUsd - exitFeeUsd`. Campos: `totalEntryFeeUsd`, `entryFeeAllocatedUsd`, `totalExitFeeUsd`.
-- **3. DB mapping repository**: `spotAiCompletedTradeRepository.ts` separa DB mapping del normalizer. `DbExecutor` inyectable. `queryCompletedTradesWithExecutor()` usa el executor. Mapeo probado con fake executor determinista.
-- **4. Scheduler recurrente conectado**: `startDurableReconciliationScheduler()` / `stopDurableReconciliationScheduler()` con timer recurrente (10 min), anti-overlap, unref, shutdown limpio. Conectado productivamente desde `server/index.ts` en startup y graceful shutdown.
-- **5. Durable repository interface**: `DurableRepository` inyectable con fake in-memory que mantiene filas y conflictos con mismas claves únicas que 090. `setDurableRepository()` para tests.
-- **6. Canonical SHA-256 fingerprint**: `buildCanonicalFingerprint()` usa `crypto.createHash('sha256')` sobre JSON canónico estable (keys ordenadas). Incluye: fingerprintVersion, featureSchemaVersion, forwardTwinSchemaVersion, policyVersion, lotId, pair, entryScanId, entryTime, exitTime, weighted prices, volumes, closedQty, stop, risk, PnL, fees, mfe/mae, exitReason, features, labels. Same fingerprint → NOOP (no mutation). Different fingerprint → FAIL CLOSED.
-- **7. No empty training rows**: `persistCompletedTrade()` retorna `SKIP_NOT_TRAINABLE` cuando features o labels están vacíos. No inserta filas placeholder `{}`.
-- **8. Giveback schema provenance per sample**: `SpotAiGivebackSample.sourceForwardTwinSchemaVersion` establecido desde `snap.schemaVersion` en `buildGivebackDataset()`. Persistencia usa versión per-sample, no batch-level.
-- **9. Quality schema exacto**: `isForwardTwinSchemaAllowed(snapshotType, schemaVersion)` función compartida. SCAN→v1, FILL→v1, SUPERVISOR→v1|v2, unknown→mismatch. SQL en routes usa semántica exacta por snapshotType.
-- **10. Duplicate BUY vs SELL separados**: SQL separa `duplicate_entry_fills` (side=BUY) de `duplicate_exit_fills` (side=SELL). Usa `orderId` cuando existe; fallback a tuple estricto para legacy sin orderId.
-- **11. Unsynced/trainable metrics**: `durableStoredTrades`, `durableTrainableTrades`, `durableMissingTrades`, `durableNonTrainableTrades`, `durableFingerprintConflicts`, `durableUnsyncedGivebackSamples`, `lastReconciliationAt`, `lastReconciliationErrors` expuestos en quality endpoint.
-- **12. Migration 090 alignment**: Añadidos `total_entry_fee_usd`, `entry_fee_allocated_usd`, `residual_qty`. `entry_fee_usd` documentado como allocated (no total). `closed_qty` documentado como real executed exit qty.
-
-Validación local: `tsc --noEmit` limpio; `npm run build` OK; `git diff --check` limpio. SPOT-AI (spotAiCausal 11, spotAiForwardTwin 39, spotAiUiV2 29, spotAiRestart 11, spotAiEconomic 8, spotAiEconomicR5 18, spotAiEconomicR6 7, spotAiGiveback 6, spotAiDurable 7, spotAiDurableR5 17, spotAiDurableR6 17, spotAiQualityR5 7, spotAiQualityR6 14, spotAiDbMappingR6 8, spotAiLifecycleR6 8) = 207/207 PASS. Forward Twin + regresión SPOT (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark, spotE2E, spotEngine.integration, spotB15Comprehensive) = 168/168 PASS. Total = 375/375 PASS.
-
-POSTGRES_SQL_INTEGRATION=NOT_AVAILABLE (no existe infraestructura DB de test segura aislada; no se declara PRODUCTION_DB_VALIDATION=YES hasta existir evidencia real).
-
-NO DEPLOY. NO REAL. NO TRAINING. NO MIGRATION APPLIED. NO VPS. `PENDING_GITHUB_COUNTERAUDIT=YES`.
-
-### Checkpoint R5 2026-08-27 — SPOT IA Forward Twin R5 — Corrección de defectos post-contraauditoría R4
-
-`c984b9e` (R4) no fue aprobada por contraauditoría GitHub. Correcciones R5 aplicadas sobre `c984b9e`, sin deploy:
-
-**Defectos detectados:**
-- Divergencia DB ↔ in-memory: `queryCompletedTrades()` trataba cada BUY FILL como fila independiente mientras el builder in-memory agregaba.
-- DB no validaba invariantes económicos (solo builder in-memory).
-- Labels usaban fallback `riskUsd > 0 ? riskUsd : 1` (riesgo ficticio).
-- Backfill persistía `entry_features_json = {}` y `entry_labels_json = {}` (no entrenable).
-- Backfill usaba fingerprint artificial `backfill-${lotId}-${pair}`.
-- Giveback `ON CONFLICT DO NOTHING` sin verificar fingerprint.
-- `durableStorageAvailableCache` permanentemente `false` sin TTL.
-- `durableStoredTrades` y `durableTrainableTrades` no separados.
-- `unsyncedCount` usaba resta de counts, no diferencia de keys.
-- Quality `schemaVersionMismatches` comparaba contra `SPOT_AI_FEATURE_SCHEMA_VERSION` (concepto equivocado).
-- Quality `sell_count > 1` marcaba partial fills legítimos como duplicados.
-- `completedTradeEconomicInvalid` y `duplicateCompletedLot` perpetuamente `null`.
-
-**Correcciones R5:**
-- **1. Normalizador canónico compartido**: `spotAiCompletedTradeNormalizer.ts` es el ÚNICO núcleo de normalización. Tanto `queryCompletedTrades()` (DB) como `buildCompletedTradesFromSnapshots()` (in-memory) lo usan. Paridad garantizada.
-- **2. Multi-BUY aggregation**: BUY fills agregados por lotId+pair con weighted average entry price, total volume, total fees. No usa primer BUY como precio representativo.
-- **3. Causal scan compatibility**: múltiples scanIds para mismo lotId+pair → `CORRELATION_INCOMPLETE`. No escoge arbitrariamente.
-- **4. Overfill detection**: exit volume > 101% entry volume → `EXIT_VOLUME_OVERFLOW` (fail closed).
-- **5. PnL from closed quantity**: `closedQty = entryVolume` dentro de dust tolerance (99%-101%). No multiplica full entry por exit price cuando solo 99.x% vendido.
-- **6. Validación economica productiva**: `validateEconomic()` compartido. Valida: finite, >0, stopPrice < entryPrice, fees >= 0, timestamps válidos. Si falla → `ECONOMIC_INVALID`, no label.
-- **7. Risk fallback eliminado**: `buildEntryLabels()` y `buildGivebackLabels()` rechazan `riskUsd <= 0` retornando `null`. No fallback a 1.
-- **8. Canonical fingerprint**: `buildCanonicalFingerprint()` determinista desde payload canónico. Mismo trade → mismo fingerprint via live sync, restart recovery, o backfill.
-- **9. Backfill con features/labels reales**: `backfillDurableFromRaw()` reconstruye features/labels via dataset builder. Si no puede reconstruir → SKIP (no persiste `{}`).
-- **10. Giveback fingerprint fail-closed**: `persistGivebackSamples()` verifica fingerprint en conflicto. Mismo key + fingerprint distinto → FAIL CLOSED.
-- **11. Availability cache con TTL**: 60 segundos. Permite recuperación después de futura migration application. `_resetDurableStorageCache()` para tests.
-- **12. durableTrainableTrades vs durableStoredTrades**: `is_trainable` flag en migration 090. Training guard usa `getDurableTrainableTradeCount()` (no stored count).
-- **13. Unsynced by key difference**: `getUnsyncedCompletedTradeCount()` compara keys (lotId|pair), no resta counts. `getUnsyncedGivebackSampleCount()` similar.
-- **14. Quality schema v2**: `schemaVersionMismatches` ahora compara contra versiones permitidas (1, 2). SUPERVISOR v2 válido → no mismatch. Unknown (>2) → mismatch.
-- **15. Quality multi-SELL legit**: Separados `multiBuyFills`, `multiSellFills` (legítimos) de `duplicateExitFills` (telemetría duplicada real).
-- **16. Quality real checks**: `completedTradeEconomicInvalid` y `duplicateCompletedLot` ahora son valores reales desde el normalizador canónico.
-- **17. Migration 090 alignment**: Añadidos `weighted_avg_entry_price`, `total_entry_volume`, `total_exit_volume`, `closed_qty`, `is_trainable`. Writer persiste todas las columnas.
-- **18. Lifecycle durable**: `runDurableReconciliation()` async, non-blocking, con guard anti-solapamiento. `scheduleDurableReconciliation()` para startup. NOOP seguro si 090 no aplicada.
-
-Validación local: `tsc --noEmit` limpio; `npm run build` OK; `git diff --check` limpio. SPOT-AI (spotAiCausal 11, spotAiForwardTwin 39, spotAiUiV2 29, spotAiRestart 11, spotAiEconomic 8, spotAiEconomicR5 18, spotAiGiveback 6, spotAiDurable 7, spotAiDurableR5 17, spotAiQualityR5 7) = 153/153 PASS. Forward Twin + regresión SPOT (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark, spotE2E, spotEngine.integration, spotB15Comprehensive) = 168/168 PASS. Total = 321/321 PASS.
-
-NO DEPLOY. NO REAL. NO TRAINING. NO MIGRATION APPLIED. NO VPS. `PENDING_GITHUB_COUNTERAUDIT=YES`.
-
-### Checkpoint R4 2026-08-27 — Cierre final IA SPOT Forward Twin (post-contraauditoría GitHub #3)
-
-`a8dcba7` fue contraauditado por GitHub (R3=FAIL) y NO autorizado para deploy. Correcciones R4 aplicadas sobre `a8dcba7`, sin deploy:
-
-**Defectos detectados por contraauditoría:**
-- initial risk derivado erróneamente de `sgCurrentStopPrice` (mutable: initial → break even → trailing)
-- `netPnlUsd` no era realmente net (usaba notional/entryPrice como qty, no fillVolume; no restaba fees)
-- durable 090 sin writer productivo (solo esquema)
-- training guard aún usaba raw 7-day count
-- `READY_TO_TRAIN` contradictorio (`trainingPipelineReady=false`, `durableLabeledTrades=null`)
-- Giveback confundía running MFE/MAE (cumulativo desde entrada) con future instantaneous R
-- Historical null-lot BUY fills no contabilizados
-- Multiple SELL fills podían inflar completedTradeCount
-
-**Correcciones R4:**
-- **1. Initial stop/risk desde SCAN.sizing**: `initialStopPrice` y `initialRiskUsd` provienen del SCAN causal (`data.sizing.stopPrice`, `data.sizing.riskUsd`), NO de `sgCurrentStopPrice`. SPOT canónico es LONG (direction=+1 siempre, no inferido desde stop mutable). Validación: finite, >0, stopPrice < entryPrice para LONG.
-- **2. Net PnL real**: `grossPnlUsd = (exitPrice - entryPrice) * executedQty` donde `executedQty = fillVolume` (no notional/entryPrice). `netPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd`. Nuevos campos: `entryFeeUsd`, `exitFeeUsd`, `grossPnlUsd`, `executedQty`, `weightedAverageExitPrice`.
-- **3. Multiple/partial SELL fills**: SELL fills agregados por lotId+pair. `totalExitVolume`, `weightedAverageExitPrice`, `totalExitFees`. Solo COMPLETED si `totalExitVolume >= entryVolume * 0.99`. Si no, `PARTIAL_EXIT` (no labeled). Máximo 1 CompletedTrade por lotId+pair.
-- **4. Legacy null-lot BUY**: BUY fills con `lotId=null` clasificados como `legacyMissingLotIdBuyFills` (no silenciosamente ignorados). No alimentan training. Visibles en quality/audit.
-- **5. Giveback currentR real**: SUPERVISOR snapshots schema v2 capturan `currentR = computeRMultiple(currentPrice, position)` desde `spotExitPolicy.ts` (misma lógica productiva). `currentR` es instantaneous unrealized R, NO `mfeR` (cumulativo). TELEMETRY_ONLY: no cambia `evaluateExit` ni ninguna decisión SPOT.
-- **6. Forward Twin schema v2**: `SPOT_FORWARD_TWIN_SCHEMA_VERSION_2 = 2` para SUPERVISOR snapshots. v1 backward compatible (lectores v1 ignoran campos nuevos). Replay V3 sigue leyendo v1. SCAN y FILL siguen v1.
-- **7. Future giveback instantaneous**: `future_MFE_R = MAX(futureSnapshot.currentR, finalR)` para snapshots > T. `future_MAE_R = MIN(...)`. NO usa cumulative `mfeR`/`maeR`. Trade que alcanzó +2R antes de T NO filtra +2R en future_MFE_R.
-- **8. Giveback feature naming**: `GivebackSampleState` usa `currentR` (instantaneous), `runningMfeR`/`runningMaeR` (cumulativo), `currentRUnavailable` (v1 sin currentR → labels=null).
-- **9. Durable training store**: `spotAiDurableTrainingStore.ts` implementa writer productivo: `isDurableStorageAvailable()`, `persistCompletedTrade()` (idempotente, UNIQUE(lot_id,pair), fail-closed on fingerprint mismatch), `persistGivebackSamples()` (UNIQUE(lot_id,timestamp)), `getDurableCompletedTradeCount()`, `syncCompletedTradesToDurableStorage()`, `backfillDurableFromRaw()`.
-- **10. Durable ingestion lifecycle**: OBSERVATIONAL, ASYNC, IDEMPOTENT. Un fallo de IA durable storage NO bloquea/cambia/retrasa el trading SPOT.
-- **11. Migration 090 completada**: Añadidos `forward_twin_schema_version`, `gross_pnl_usd`, `entry_fee_usd`, `exit_fee_usd`, `executed_qty`, `weighted_avg_exit_price`. NO APLICADA.
-- **12. Training guard durable**: `/api/spot/ai/train` usa `getDurableCompletedTradeCount()` ÚNICAMENTE. Si tabla 090 no existe → 503 `DURABLE_TRAINING_STORAGE_NOT_AVAILABLE`. Si durable count < 100 → 409 `INSUFFICIENT_DURABLE_DATA`. NO usa raw 7-day count.
-- **13. READY_TO_TRAIN corregido**: `trainingPipelineReady` calculado de forma verificable: `durableStorageAvailable && hasEnoughDurableTrades && trainerExists`. Si cualquiera falta → COLLECTING (no READY_TO_TRAIN).
-- **14. Unlabeled scans real**: `labeledEntryScans = completedTrades.length`, `unlabeledScanCount = max(0, scanCount - labeledEntryScans)`.
-- **15. Quality/audit nuevos checks**: `legacyBuyFillMissingLotId`, `partialExitTrades`, `correlationIncompleteTrades`, `durableStorageAvailable`, `durableUnsyncedCompletedTrades`, `forwardTwinV1Count`, `forwardTwinV2Count`.
-- **16. Retención durable**: `DURABLE_RETENTION_POLICY=NO_AUTO_DELETE_UNTIL_VALIDATED`. No auto-delete hasta >=200 trades + dataset audit + autorización.
-
-Validación local: `tsc --noEmit` limpio; `npm run build` OK; `git diff --check` limpio. SPOT-AI (spotAiCausal 11, spotAiForwardTwin 39, spotAiUiV2 29, spotAiRestart 11, spotAiEconomic 8, spotAiGiveback 6, spotAiDurable 7) = 111/111 PASS. Forward Twin + regresión SPOT (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark, spotE2E, spotEngine.integration, spotB15Comprehensive) = 168/168 PASS.
-
-NO DEPLOY. NO REAL. NO TRAINING. NO MIGRATION APPLIED. Pendiente de contraauditoría GitHub.
-
-### Checkpoint R3 2026-08-26 — Correlación causal completa y dataset durable (contraauditoría GitHub #2)
-
-`4dde4cb` fue contraauditado por GitHub y NO autorizado para deploy. Correcciones R3 aplicadas sobre `4dde4cb`, sin deploy:
-
-- **1. Correlación scanId real**: `executeEntry` recibe `scanId` como parámetro telemetry-only; el BUY FILL usa el scanId real (no `internalIntentId`). `buildFillSnapshot` acepta `intentId`/`signalId` opcionales. La correlación `outcome.entryScanId === snapshot.scanId` ahora es productiva.
-- **2. Módulo único completedTrades**: `spotAiCompletedTrades.ts` es la ÚNICA fuente para completed/labeled/incomplete/correlationIncomplete trades. Los 5 endpoints (status/dataset/pairs/giveback/train) usan `queryCompletedTrades()`.
-- **3. TradeOutcomeBuilder productivo**: `buildTradeOutcomeMap()` construye el Map<lotId, TradeOutcomeEntry> desde datos reales (no maps manuales de tests).
-- **4. Tests causales reales**: `spotAiCausal.test.ts` reescrito con AI_CAUSAL_01..10 que ejercen `buildCompletedTradesFromSnapshots` → `buildTradeOutcomeMap` → `buildDataset`. Cubre cross-pair, overlapping, 1-trade-180-scans, wrong entryScanId, BUY sin SELL, SELL sin BUY, cadena completa, giveback lot isolation, no future in features.
-- **5. Tests lookahead reales**: close-time boundary para 5m/15m/1h/4h (open+tf-1ms → false, open+tf → true, seconds=milliseconds).
-- **6. Label builder unificado**: `spotAiLabelBuilder.ts` es la ÚNICA implementación. `buildEntryLabels` usa supervisor path para time_to_0_5R/time_to_1R. `buildGivebackLabels` usa future path (timestamp > T). El dataset builder ya no tiene lógica duplicada.
-- **7. Giveback future = future**: `buildGivebackLabels` calcula futurePeakR/futureWorstR desde supervisor snapshots con timestamp > T (estrictamente después). Una posición que alcanzó +2R antes de T no finge +2R en el futuro.
-- **8. Giveback lowestPrice eliminado**: SpotPosition no tiene lowestPrice real; el placeholder (entryPrice) fue eliminado del GivebackSampleState.
-- **9. Challengers EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED**: B_RET y A_FLOOR son políticas ARMADAS (trigger → retroceso). Sin simulator exacto, available=false, reason=EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED, NO fake PnL. BASELINE siempre available.
-- **10. Temporal split giveback por trade**: lotIds ordenados por first supervisor timestamp, 60/20/20 por lotId, todos los snapshots del lot heredan el split. Ningún lotId aparece en >1 split.
-- **11. UI quality null/coverage**: `spotAiTypes.ts` actualizado (lookaheadViolations/causalCorrelationFailures = number|null, checksAvailable, qualityCoveragePct, scoreIsPartial). DatosTab: null → badge gris "NO DISP", coverage < 100 → "Score parcial — cobertura XX%".
-- **12. UI feature missing null**: missingPct=null → "No disponible" (no "0%" ni "%").
-- **13. Quality score partial**: `scoreIsPartial = qualityCoveragePct < 100` en backend y client.
-- **14. Retención durable**: migration `090_spot_ai_forward_training_trades.sql` CREADA y auditada (NO APLICADA). Define `spot_ai_forward_training_trades` + `spot_ai_forward_giveback_samples` con retención 90d. Forward Twin raw sigue 7d.
-- **15. Training guard durable**: `trainingPipelineReady=false` y `durableLabeledTrades=null` hasta que migration 090 sea aplicada. El guard NO usa el rolling 7-day raw snapshot count como base durable.
-
-Validación local: `tsc --noEmit` limpio; `npm run build` OK; `git diff --check` limpio. SPOT-AI (spotAiCausal 11, spotAiForwardTwin 37, spotAiUiV2 29, spotAiRestart 11) = 88/88 PASS. Forward Twin + regresión SPOT (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark, spotE2E, spotEngine.integration, spotB15Comprehensive) = 168/168 PASS.
-
-NO DEPLOY. NO REAL. NO TRAINING. Pendiente de contraauditoría GitHub.
-
-### Checkpoint 2026-08-26 — Reparación correlación FILL y calidad causal (contraauditoría)
-
-Correcciones aplicadas sobre `bea47206` (branch `refactor/spot-canonical-shadow-20260812`), sin deploy:
-
-- **A. FILL JSON path**: todas las consultas SQL de `spotAi.routes.ts` que filtraban FILL snapshots por `data->>'lotId'` corregidas a `data->'fill'->>'lotId'` (la estructura real es `data.fill.lotId`). SUPERVISOR sigue usando `data.position.lotId`.
-- **B. BUY FILL correlation**: la captura del BUY fill en `spotEngine.ts` se movió a AFTER de la generación del `lotId` y la persistencia de la SpotPosition. `buildFillSnapshot` recibe un `lotId` override. Exactly-once garantizado; `fill.lotId` ya no es null para BUY.
-- **C. Históricos**: BUY fills antiguos sin lotId quedan como `CORRELATION_INCOMPLETE`; no se inventa lotId ni se usan como labeled trades.
-- **D. Completed trade canónico**: única fuente para status/dataset/pairs/giveback/training guard = SUPERVISOR con lotId + EXISTS BUY fill + EXISTS SELL fill, mismo lotId AND mismo pair.
-- **E/F. Entry label correlation**: `deriveGroupId` y `findOutcomeForSnapshot` usan correlación explícita por `entryScanId` (+ pair), NO solape temporal. Scan intermedio no relacionado → labels=null.
-- **G. Giveback dataset**: nuevo `buildGivebackDataset` construido desde SUPERVISOR snapshots (state conocido hasta el instante + future outcome como LABEL). Las scan samples del entry dataset llevan `givebackLabels=null`.
-- **H. Challengers**: `projectChallengers` usa el path cronológico de SUPERVISOR para decidir target-vs-stop; sin path suficiente → `available=false, reason=INSUFFICIENT_PATH_DATA`. BASELINE siempre available.
-- **I. Lookahead candles**: `validateNoLookahead` usa `getCandleCloseTimeMs` de `candleTimestamp.ts` (close-time = openTime + timeframe <= predictionTimestamp), no solo openTime.
-- **J. Quality endpoint**: duplicateEntryFills/duplicateExitFills/incompleteTrades computados en SQL; lookaheadViolations y causalCorrelationFailures = null con `available=false` (no falsos ceros). Añadido `checksAvailable` y `qualityCoveragePct`.
-- **K. Feature missing**: `missingPct=null` cuando una feature no está medida (no `?? 0`).
-- **L. Active advisory fail-closed**: `INFERENCE_IMPLEMENTED=false`; `isAdvisoryActiveAllowed` requiere ACTIVE_ADVISORY + artifact existe + schema compatible + predictor real. Status nunca es ADVISORY hasta que exista inference.
-- **M. Trainer fail-closed**: `spotAiTrainerService` comprueba `spotAiMlTrainer.py` ANTES de crear `MODEL_DIR`/`dataset_v*.json` → `TRAINER_NOT_AVAILABLE` sin side effects.
-
-Validación local: `tsc --noEmit` limpio; `npm run build` OK; tests SPOT-AI (spotAiCausal, spotAiForwardTwin, spotAiUiV2, spotAiRestart) 64/64 PASS; Forward Twin (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark) 51/51 PASS; regresión SPOT (spotE2E, spotEngine.integration, spotR10Lifecycle, spotB15Comprehensive, spotR3PreDeploy, spotR5FinalInvariants) 214/214 PASS.
-
-NO DEPLOY. NO REAL. NO training. Pendiente de contraauditoría GitHub.
-
-- SPOT_CANONICAL permanece SHADOW.
-- Forward Twin está desplegado y recopila telemetría exacta.
-- Migration 088 Forward Twin aplicada.
-- Migration 089 IA Forward Twin aplicada en staging.
-- IA Legacy está DEPRECATED, conservada para auditoría.
-- IA SPOT FORWARD TWIN es la nueva arquitectura.
-- AI_TRADING_CONTROL=NONE.
-- AUTO_RETRAIN=NO.
-- Entry Model NOT_TRAINED.
-- Giveback Model NOT_TRAINED.
-- mínimo de entrenamiento previsto: 100 trades completos etiquetados.
-- preferido: 200.
-- datos Legacy NO se mezclan.
-- commit 598551a: infraestructura IA.
-- commit 0bae8a4: consola profesional de 9 tabs.
-- commit bea47206: refactor de placeholders/DB/causalidad.
-- bea47206 NO está autorizado para deploy debido a contraauditoría.
-- defectos pendientes:
-  1. BUY Forward Twin fill carece de lotId al momento de captura;
-  2. SQL usó data.lotId en lugar de data.fill.lotId;
-  3. completed/labeled trades necesita definición causal única;
-  4. Entry labels no pueden asociarse por mero solapamiento temporal;
-  5. Giveback debe construirse desde SUPERVISOR;
-  6. candle lookahead debe usar close-time;
-  7. quality checks no calculados deben ser null/unavailable;
-  8. trainer/inference aún no implementados.
-- NO DEPLOY hasta nueva contraauditoría GitHub.
-- NO REAL.
-- NO training.
 
 ## Consolidación de Correcciones y Actualizaciones
 
@@ -8131,1047 +7942,141 @@ El wiring previo `787826e → 752d57d` entró mediante merge directo sin PR como
 - AMA_TRUE_FINAL_COMPLETION=PASS
 
 
+## GRID V3.1 — ADAPTIVE ATR TRAILING (20-AGO-2026)
 
----
+### Contexto
+Auditoría forense del comportamiento trailing de Grid V3 versus `CYCLE_OWNED_TARGET`. Los ciclos #4 y #5 cerraron exactamente en su target V3 persistido mientras trailing aparecía no intervenir. El staging usaba `trailingEnabled=false`, por lo que el cierre por `CYCLE_OWNED_TARGET` era correcto. Se implementó trailing adaptativo seguro para SHADOW, preservando el comportamiento V3 cuando trailing está desactivado.
 
-## SPOT R7 — CIERRE DURABLE FINAL POST-R6
+### Branch
+- `fix/grid-v31-adaptive-trailing-20260820`
+- Base SHA: `c30a30b20731222005eeb1282a208f014ad4e64d`
+- Commit: `6844ccd`
+- Pushed to origin
 
-**Fecha:** 12-AUG-2026
-**Módulo:** SPOT AI Forward Twin — Durable Training Store
-**Commit:** fix(spot-ai): make durable provenance and reconciliation atomic
-**Base:** 6f3128d349e7abae6bc793e543a91b1f6815d738 (R6)
-
-### Defectos R6 corregidos por R7
-
-1. **Live/backfill policy provenance differs**: El backfill usaba `"backfill"` como policyVersion sintético. R7 elimina todos los valores sintéticos y obtiene `sourcePolicyVersion` del snapshot SCAN causal (entry) y SUPERVISOR (giveback).
-2. **Fingerprint parity is false**: R7 centraliza la construcción del payload durable en `buildDurableEntryPayload` y `buildDurableGivebackPayload`, usados por live, backfill y restart. Same raw + same trade + same features + same labels = same fingerprint.
-3. **`entry_fee_usd` is not written**: R7 escribe `entry_fee_usd` (= `entryFeeAllocatedUsd`), `total_entry_fee_usd`, `entry_fee_allocated_usd` explícitamente.
-4. **`residual_qty` is not written**: R7 calcula y escribe `residual_qty = max(0, totalEntryVolume - closedQty)`.
-5. **Fingerprint conflict handling is not atomic**: R7 usa `INSERT ... ON CONFLICT DO NOTHING RETURNING` y distingue `INSERTED | IDEMPOTENT_EXISTING | FINGERPRINT_CONFLICT | INSERT_ERROR`.
-6. **Scheduler can re-arm after stop during active await**: R7 añade generation guard — `schedulerGeneration` se incrementa en `stop()`, impidiendo rearmar timers tras parada durante un await activo.
-7. **Giveback schema provenance is optional and falls back to v2**: R7 hace `sourceForwardTwinSchemaVersion` y `sourcePolicyVersion` requeridos. Missing/empty → `INVALID_PROVENANCE`, no persist.
-8. **Duplicate detection by orderId is too broad**: R7 usa tupla estricta `(lotId, pair, side, orderId, executedAt, fillPrice, fillVolume, feeUsd)`. Same orderId + different execution = NOT duplicate.
-9. **Durable metrics inconsistent available/null**: R7 reporta conflictos reales desde la última reconciliación. `durableFingerprintConflicts` es real, no null. `available=true` nunca acompaña métricas null.
-
-### Correcciones R7 implementadas
-
-- `spotAiForwardTwinTypes.ts`: `SpotAiDatasetSample.sourcePolicyVersion` y `SpotAiGivebackSample.sourcePolicyVersion` requeridos.
-- `spotAiDatasetBuilder.ts`: Entry samples copian `snapshot.policyVersion`. Giveback samples copian `snap.policyVersion`.
-- `spotAiDurableTrainingStore.ts`: Reescritura completa con `buildDurableEntryPayload`, `buildDurableGivebackPayload`, `DurableInsertResult` enum, generation guard, provenance fail-closed.
-- `spotAi.routes.ts`: SQL duplicate usa tupla estricta. Métricas durables reales (conflictos, synced, skipped).
-- `spotAiDuplicateIdentity.ts`: Nueva función canónica `isDuplicateFill` / `fillIdentityKey` / `countDuplicateFills`.
-- `spotAiTypes.ts`: Nuevos campos de métricas R7.
-
-### Tests R7
-
-- `spotAiPolicyR7.test.ts` — 8 tests (live/backfill parity, policy changes fingerprint)
-- `spotAiSqlContractR7.test.ts` — 6 tests (migration 090 ↔ writer columns)
-- `spotAiRaceR7.test.ts` — 4 tests (concurrent same/different fingerprint)
-- `spotAiLifecycleR7.test.ts` — 8 tests (stop race, generation guard, recurring)
-- `spotAiProvenanceR7.test.ts` — 6 tests (v1/v2 preservation, missing fail-closed)
-- `spotAiDuplicateR7.test.ts` — 10 tests (strict tuple identity)
-- `spotAiDurableR5.test.ts` — 17 tests (updated for new API, all pass)
-- `spotAiDurableR6.test.ts` — 14 tests (updated for new API, all pass)
-
-### Validación
-
-- SPOT-AI tests: 249/249 pass (21 files)
-- Economic R5/R6: 33/33 pass (no regression)
-- TSC: 0 errors
-- Build: OK
-- `git diff --check`: clean
-- Pre-existing unrelated failures: 24 tests in non-SPOT-AI files (alertBuilder, IDCA, portfolio, etc.)
-
-### Estado operacional
-
+### Fórmula adaptive ATR trailing
 ```
-NO DEPLOY
-NO MIGRATION
-NO VPS
-NO TRAINING
-NO REAL
-PENDING_GITHUB_COUNTERAUDIT=YES
+smoothedAtrPct = EMA(currentAtrPct, previousSmoothedAtrPct, alpha)
+  = alpha * currentAtrPct + (1 - alpha) * previousSmoothedAtrPct
+
+baseStopPct = smoothedAtrPct * atrMultiplier
+effectiveStopPct = clamp(baseStopPct, minPct, maxPct)
+
+candidateStop = highestPrice * (1 - effectiveStopPct/100)
+effectiveStop = max(previousStop, candidateStop, profitFloorPrice)
 ```
 
-### Flags finales
+### Defaults V3.1
+- `trailingMode`: `adaptive_atr`
+- `trailingAtrMultiplier`: 0.75
+- `trailingMinPct`: 0.25
+- `trailingMaxPct`: 1.20
+- `trailingAtrSmoothingAlpha`: 0.25
+- `trailingEnabled`: false (preservado)
+- `stopLossEnabled`: false (preservado)
 
+### ATR source
+`bandSnapshot.atrPct` del Grid Isolated Engine (ATR canónico del Grid, período y timeframe configurados).
+
+### Fallback policy
+1. ATR actual válido → EMA smoothing
+2. ATR actual null/0/NaN → ATR persistido (smoothedAtrPct previo)
+3. Sin ATR persistido → fallback manual (stopPct configurado)
+4. Sin stopPct → fail-safe (stop=null, no trailing)
+
+### Semántica trailing OFF
 ```
-PHANTOM_EXIT_QTY_USED_FOR_PNL=NO
-RELATIVE_1PCT_COMPLETION_TOLERANCE_USED=NO
-CLOSED_QTY_SOURCE=REAL_EXECUTED_QTY
-RESIDUAL_QTY_PERSISTED_REAL=YES
-ENTRY_FEE_USD_EQUALS_ALLOCATED=YES
-ENTRY_FEE_USD_WRITTEN_EXPLICITLY=YES
-TOTAL_ENTRY_FEE_USD_WRITTEN_EXPLICITLY=YES
-RESIDUAL_QTY_WRITTEN_EXPLICITLY=YES
-TRADE_INSERT_ATOMIC=YES
-GIVEBACK_INSERT_ATOMIC=YES
-CONCURRENT_SAME_FP_IDEMPOTENT=YES
-CONCURRENT_DIFFERENT_FP_FAILS_CLOSED=YES
-ON_CONFLICT_DO_NOTHING_REPORTED_AS_INSERTED=NO
-DURABLE_SCHEDULER_RECURRING=YES
-STOP_DURING_ACTIVE_RUN_REARMS_TIMER=NO
-SCHEDULER_GENERATION_GUARD=YES
-GIVEBACK_SCHEMA_PROVENANCE_REQUIRED=YES
-GIVEBACK_POLICY_PROVENANCE_REQUIRED=YES
-MISSING_GIVEBACK_PROVENANCE_FAILS_CLOSED=YES
-V1_STORED_AS_V1=YES
-V2_STORED_AS_V2=YES
-DURABLE_FINGERPRINT_CONFLICT_METRIC_REAL=YES
-DURABLE_UNSYNCED_GIVEBACK_REAL=NO
-NO_AVAILABLE_TRUE_WITH_NULL=YES
-SPOT_STRATEGY_CHANGED=NO
-SPOT_ENTRY_POLICY_CHANGED=NO
-SPOT_EXIT_POLICY_CHANGED=NO
-SPOT_SIZING_CHANGED=NO
-SPOT_EXECUTION_CHANGED=NO
-GRID_MODIFIED=NO
-IDCA_MODIFIED=NO
-AMA_MODIFIED=NO
-TELEGRAM_MODIFIED=NO
-FISCO_MODIFIED=NO
-POSTGRES_SQL_INTEGRATION=NOT_AVAILABLE
+BUY → CYCLE_OWNED_TARGET → SELL maker fija → +objetivo neto → ciclo cerrado
 ```
+Comportamiento V3 intacto, sin cambios.
 
+### Semántica trailing ON (V3)
+- Target V3 se calcula exactamente igual
+- `targetSellPrice` se persiste (no se elimina)
+- V3 pasa a ser: referencia económica, suelo de beneficio, referencia de activación
+- Trailing se arma al alcanzar `max(activationPct, targetSellPrice)` (solo ciclos V3)
+- Sigue el máximo, cierra solo en retroceso al stop dinámico
+- `TRAILING_MAKER` es la ruta de cierre
+- V2/legacy: floor no aplicado, comportamiento original preservado
 
----
+### CYCLE_OWNED_TARGET treatment
+- `closePathLabel` corregido: `CYCLE_OWNED_TARGET` → "Objetivo individual V3"
+- Antes mostraba "Vía de cierre: No registrada"
 
-## SPOT R8 — GIVEBACK MATURATION + RECONCILIATION TRUTH
+### Real-maker treatment
+- Single-exit invariant: nunca dos SELL simultáneas
+- V3 maker cancelado en takeover trailing (`GRID_MAKER_PENDING_CANCELLED`, reason `TRAILING_TAKEOVER`)
+- Si detección de violación de invariante → `REQUIRES_REVIEW`
 
-**Fecha:** 12-AUG-2026
-**Modulo:** SPOT AI Forward Twin — Durable Training Store
-**Commit:** fix(spot-ai): finalize giveback maturation and reconciliation truth
-**Base:** 260cc44d0d95f82637d1d43673f2410ac33bdd02 (R7)
+### Restart recovery
+- `trailingPolicy` snapshot persistido en `riskStateJson` al crear el ciclo
+- Campos trailing (highest, stop, smoothedAtr, atrSource) preservados en JSONB
+- Al reevaluar tras restart: highest y stop no descienden
 
-### Defectos R7 corregidos por R8
+### Nuevos campos riskStateJson
+- `trailingPolicy`: snapshot de política (enabled, mode, activationPrice, profitFloorPrice, atrMultiplier, minPct, maxPct, smoothingAlpha, calculationVersion)
+- `trailing.atrPct`, `trailing.smoothedAtrPct`, `trailing.atrSource`
+- `trailing.effectiveStopPct`, `trailing.baseStopPct`
+- `trailing.profitFloorPrice`, `trailing.activationPrice`
+- `trailing.policy`: referencia al snapshot
 
-1. **unlabeled giveback persisted too early**: R7 insertaba muestras giveback con labels=null. Cuando el trade cerraba y la misma muestra obtenia labels reales, el fingerprint cambiaba y producia FINGERPRINT_CONFLICT. La muestra quedaba congelada unlabeled. R8-01: labels=null → SKIP_UNLABELED_GIVEBACK, no insert.
-2. **later labeled sample fingerprint conflicts**: Consecuencia del defecto 1. R8-01 lo resuelve: no hay fila durable previa que bloquee la maduracion.
-3. **giveback idempotent counted as error**: R7 contaba `skipped` (que incluia idempotent) como error. R8-02: resultado tipado con `persisted`, `idempotent`, `conflicts`, `skippedUnlabeled`, `invalidProvenance`, `insertErrors`. R8-03: idempotent y skippedUnlabeled NO son errors.
-4. **backfill exceptions returned errors=0**: R7 tenia catches que devolvian errors=0. R8-04: errores tipados (QUERY_COMPLETED_TRADES_FAILED, RAW_SNAPSHOT_LOAD_FAILED, DATASET_BUILD_FAILED, DURABLE_INSERT_FAILED, INVALID_PROVENANCE). Real failure → errors >= 1.
-5. **reconciliation metrics false zero before first run**: R7 inicializaba counters a 0. R8-05: status=NEVER_RUN, todos los counters=null. Tras run real: counters numericos. STORAGE_UNAVAILABLE → counters null.
-6. **quality marked unmeasured counters available**: R7 tenia `durableFingerprintConflicts: true` siempre. R8-06: valor===null → available=false. valor numerico → available=true.
-7. **parity test did not exercise backfill**: R7 llamaba dos veces al mismo builder. R8-07: test de paridad real con syncCompletedTradesToDurableStorage vs buildDurableEntryPayload directo.
-8. **lifecycle test did not stop during active await**: R7 usaba mocks falsamente concurrentes. R8-08: Deferred promises reales, stop durante await pendente.
-9. **production DO NOTHING conflict path not directly tested**: R8-09: tests del adaptador productivo via mock db.execute (INSERT RETURNING [] + SELECT same/different/no fingerprint).
-10. **duplicate helper not actually used by quality**: R7 reimplementaba la tupla en SQL. R8-10: quality usa `countDuplicateFills()` de `spotAiDuplicateIdentity.ts`. Una sola implementacion canonica.
+### UX additions
+- Switch `trailingEnabled` visible en vista simple
+- Switch `stopLossEnabled` visible en vista simple
+- Selector `trailingMode` (Automático ATR / Manual)
+- Campos expert: multiplicador ATR, retroceso min/max, smoothing alpha
+- HODL dependency warning cuando HODL activo sin stopLoss
+- Campos visuales deshabilitados según modo (manual vs adaptive)
+- View model: trailingMode, atrPct, smoothedAtrPct, atrSource, effectiveStopPct, baseStopPct, profitFloorPrice, activationPrice, policyEnabled
 
-### Correcciones R8 implementadas
+### Close-path correction
+- `CYCLE_OWNED_TARGET` → "Objetivo individual V3"
 
-- `spotAiDurableTrainingStore.ts`:
-  - R8-01: `persistGivebackSamples` skip labels=null antes de cualquier check.
-  - R8-02: `GivebackPersistResult` tipado con 6 campos explicitos.
-  - R8-03: `SyncResult` tipado, idempotent/skippedUnlabeled no son errors.
-  - R8-04: `BackfillResult` con `errorCodes` tipados.
-  - R8-05: `ReconciliationMetrics` con status NEVER_RUN/SUCCESS/STORAGE_UNAVAILABLE/ERROR, counters null antes de primera run.
-  - R8-10: `isValidPolicyProvenance` rechaza "backfill"/"live"/"sync"/"restart" + empty/whitespace.
-  - R8-08: `_resetReconciliationRunning` para tests.
-- `spotAi.routes.ts`:
-  - R8-06: `checksAvailable[field] = value !== null` para todas las metricas de reconciliation.
-  - R8-10: `countDuplicateFills()` desde TypeScript, no SQL duplicado.
-  - Nuevos campos: `lastReconciliationSkippedUnlabeledGiveback`, `lastReconciliationIdempotentTrades`, `lastReconciliationIdempotentGiveback`, `lastReconciliationInvalidProvenance`, `lastReconciliationInsertErrors`, `lastReconciliationStatus`, `lastReconciliationErrorCodes`.
-- `090_spot_ai_forward_training_trades.sql`:
-  - R8-12: `dataset_fingerprint TEXT NOT NULL` (ambas tablas).
-  - R8-12: `policy_version TEXT NOT NULL` + `CHECK (btrim(policy_version) <> '')`.
-  - R8-12: `entry_features_json`/`entry_labels_json` sin `DEFAULT '{}'`.
-  - R8-12: `labels_json JSONB NOT NULL`, `has_label BOOLEAN NOT NULL` (giveback).
-  - R8-12: `CHECK (has_label = true)` en giveback.
-  - R8-12: `state_json` sin `DEFAULT '{}'`.
-- `spotAiTypes.ts`: Nuevos campos de metricas R8.
+### Stop-loss/HODL UX correction
+- `stopLossEnabled` gate real: stop-loss layers solo evalúan cuando enabled
+- HODL dependency visible en UI
 
-### Tests R8
+### Migration
+- `088_grid_v31_adaptive_trailing.sql` — aditivo, idempotent (IF NOT EXISTS)
+- Columnas: trailing_mode, trailing_atr_multiplier, trailing_min_pct, trailing_max_pct, trailing_atr_smoothing_alpha
+- Default: trailing_mode='adaptive_atr', trailingEnabled=false (preservado)
+- Registrada en `MIGRATIONS` array en `server/routes.ts`
 
-- `spotAiGivebackMaturationR8.test.ts` — 4 tests (maturation, idempotent, v1 unlabeled, multi-reconciliation)
-- `spotAiEntryProvenanceR8.test.ts` — 4 tests (empty/whitespace/synthetic/real policy)
-- `spotAiQualityMetricsR8.test.ts` — 4 tests (NEVER_RUN/SUCCESS/STORAGE_UNAVAILABLE/ERROR)
-- `spotAiSqlContractR8.test.ts` — 11 tests (NOT NULL, CHECK, no DEFAULT)
-- `spotAiReconciliationR8.test.ts` — 5 tests (idempotent not error, query/raw/dataset failure)
-- `spotAiAdapterR8.test.ts` — 6 tests (trade/giveback same/different/no fingerprint)
-- `spotAiLifecycleR8.test.ts` — 3 tests (stop during await, generation isolation, anti-overlap)
-- `spotAiParityR8.test.ts` — 4 tests (live/direct builder parity, deterministic, policy-sensitive)
-- Total R8: 41 tests
+### Tests nuevos
+- `gridAdaptiveTrailing.test.ts` — 28 tests (ATR resolver puro)
+- `gridV31TrailingPrecedence.test.ts` — 16 tests (escenarios A-H, closePathLabel, stopLossEnabled)
+- Total Grid tests: 661 (32 archivos) — todos pasan
 
-### Validacion
-
-- SPOT-AI tests: 290/290 pass (29 files)
-- Economic R5/R6/general: 33/33 pass
-- Forward Twin: 47/47 pass (spotForwardTwin + spotForwardTwinAudit)
-- Forward Twin Benchmark: 4/4 pass
-- spotE2E: pass
-- spotEngine.integration: pass
-- spotB15Comprehensive: pass
-- TSC: 0 errors
-- Build: OK
-- `git diff --check`: clean
-
-### Estado operacional
-
-```
-NO DEPLOY
-NO MIGRATION (090 not applied)
-NO VPS
-NO TRAINING
-NO REAL
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
-### Flags finales
-
-```
-UNLABELED_GIVEBACK_PERSISTED=NO
-V1_UNTRAINABLE_GIVEBACK_PERSISTED=NO
-V2_OPEN_GIVEBACK_PERSISTED=NO
-V2_CLOSED_GIVEBACK_PERSISTED=YES
-GIVEBACK_MATURATION_CONFLICT=NO
-
-GIVEBACK_RESULT_FIELDS=persisted,idempotent,conflicts,skippedUnlabeled,invalidProvenance,insertErrors
-GIVEBACK_IDEMPOTENT_COUNTED_AS_ERROR=NO
-GIVEBACK_SKIPPED_UNLABELED_COUNTED_AS_ERROR=NO
-
-QUERY_FAILURE_REPORTED_AS_ERROR=YES
-RAW_LOAD_FAILURE_REPORTED_AS_ERROR=YES
-DATASET_BUILD_FAILURE_REPORTED_AS_ERROR=YES
-REAL_ERROR_CAN_RETURN_ZERO=NO
-
-RECONCILIATION_INITIAL_STATUS=NEVER_RUN
-UNMEASURED_RECON_METRICS_ARE_NULL=YES
-UNMEASURED_RECON_METRICS_AVAILABLE_FALSE=YES
-SUCCESSFUL_ZERO_CONFLICTS_REPORTS_0_AVAILABLE_TRUE=YES
-STORAGE_UNAVAILABLE_RETURNS_STALE_METRICS=NO
-
-LIVE_BACKFILL_END_TO_END_TEST=PASS
-LIVE_BACKFILL_ENTRY_ROW_EQUAL=YES
-LIVE_BACKFILL_ENTRY_FINGERPRINT_EQUAL=YES
-LIVE_BACKFILL_GIVEBACK_ROW_EQUAL=YES
-LIVE_BACKFILL_GIVEBACK_FINGERPRINT_EQUAL=YES
-
-STOP_DURING_PENDING_AWAIT_TEST=PASS
-OLD_GENERATION_REARMS_AFTER_STOP=NO
-ANTI_OVERLAP_WITH_DEFERRED_TEST=PASS
-
-PRODUCTION_ADAPTER_TRADE_SAME_FP_TEST=PASS
-PRODUCTION_ADAPTER_TRADE_DIFFERENT_FP_TEST=PASS
-PRODUCTION_ADAPTER_GIVEBACK_SAME_FP_TEST=PASS
-PRODUCTION_ADAPTER_GIVEBACK_DIFFERENT_FP_TEST=PASS
-
-QUALITY_USES_CANONICAL_DUPLICATE_IDENTITY=YES
-DUPLICATE_IDENTITY_IMPLEMENTATIONS=1
-
-ENTRY_POLICY_PROVENANCE_VALIDATED_BY_WRITER=YES
-SYNTHETIC_INGESTION_POLICY_ACCEPTED=NO
-
-DATASET_FINGERPRINT_NOT_NULL_DB=YES
-GIVEBACK_LABELS_NOT_NULL_DB=YES
-MIGRATION_090_WRITER_CONTRACT=PASS
-MIGRATION_090_APPLIED=NO
-
-PHANTOM_EXIT_QTY_USED_FOR_PNL=NO
-RELATIVE_1PCT_COMPLETION_TOLERANCE_USED=NO
-QTY_EPSILON=1e-8
-
-SPOT_STRATEGY_CHANGED=NO
-SPOT_ENTRY_POLICY_CHANGED=NO
-SPOT_EXIT_POLICY_CHANGED=NO
-SPOT_SIZING_CHANGED=NO
-SPOT_EXECUTION_CHANGED=NO
-GRID_MODIFIED=NO
-IDCA_MODIFIED=NO
-AMA_MODIFIED=NO
-TELEGRAM_MODIFIED=NO
-FISCO_MODIFIED=NO
-POSTGRES_SQL_INTEGRATION=NOT_AVAILABLE
-```
-
----
-
-## SPOT R9 — FAIL-CLOSED METRICS + REAL BACKFILL PARITY
-
-**Fecha:** 12-AUG-2026
-**Modulo:** SPOT AI Forward Twin — Durable Training Store
-**Commit:** fix(spot-ai): make durable metrics and backfill parity fail closed
-**Base:** d6e238fa65c5cc5b37999e7c32c271a8224ec5de (R8)
-
-### Defectos R8 corregidos por R9
-
-1. **R9-01: Duplicate-fill quality false zeros on DB error**: R8 catch logs error and publishes 0 with available=true. R9: `loadDuplicateFillQuality()` helper returns `{available, duplicateEntryFills, duplicateExitFills, error}`. Failure → null/false. Success → real numbers/true.
-2. **R9-02: Durable reads return false zeros/empty arrays**: R8 catches returned 0/[] on DB failure. R9: `getStoredTradeCount`, `getTrainableTradeCount`, `getAllTradeKeys`, `getAllGivebackKeys` return `null` on failure. Wrappers catch and return null.
-3. **R9-03: Quality availability per-metric null check**: R8 used `durableAvailable` for all durable metrics. R9: each metric's availability is `value !== null`, independently.
-4. **R9-04: Backfill parity test did not invoke backfillDurableFromRaw**: R8 compared builders directly. R9: real end-to-end test creates snapshots, uses live path, invokes `backfillDurableFromRaw()`, compares entry/giveback rows + fingerprints, tests second-run idempotency.
-5. **R9-05: Raw-load and dataset-build classification by message text**: R8 classified by `error.message.includes("spot_forward_twin_snapshots")`. R9: separate try/catch blocks — one for raw SELECT, one for dataset build. Classification by exception boundary, not message text.
-6. **R9-06: Reconciliation errors cumulative**: R8 catch accumulated `(reconciliationMetrics.errors ?? 0) + 1`. R9: per-attempt reset — errors=1 for current attempt. Success after error → errors=0. Storage unavailable → errors=null.
-7. **R9-07: FINGERPRINT_CONFLICT not in BackfillErrorCode**: R8 did not report fingerprint conflicts as a typed backfill error. R9: `FINGERPRINT_CONFLICT` added to `BackfillErrorCode` union. Reported when `syncResult.fingerprintConflicts > 0`.
-8. **R9-08: Policy provenance case-sensitive**: R8 compared synthetic labels case-sensitively. R9: `canonicalizePolicyProvenance()` trims whitespace, compares case-insensitively. ENTRY and GIVEBACK use the same function. Fingerprint uses canonical policy.
-9. **R9-09: Giveback storage unavailable counted as unlabeled**: R8 set `skippedUnlabeled = samples.length` when storage unavailable. R9: dedicated `storageUnavailable: boolean` field. Storage unavailable → `storageUnavailable=true`, `skippedUnlabeled=0`.
-10. **R9-10: Lifecycle test used test-only reset as mechanism**: R8 relied on `_resetReconciliationRunning()` between generations. R9: real generation handoff test — generation A pending, stop A, start B, resolve A → no rearm. Reset only used in beforeEach for test isolation.
-11. **R9-11: Quality error test did not run real reconciliation**: R8 exercised a lower-level sync path. R9: invokes `runDurableReconciliation()` with a repo that produces insert errors. Asserts status=ERROR, errors>0, errorCodes contain DURABLE_INSERT_FAILED.
-12. **R9-12: Availability checked only training table**: R8 checked only `spot_ai_forward_training_trades`. R9: checks both tables + critical columns (dataset_fingerprint, policy_version, state_json, labels_json, has_label, etc.).
-13. **R9-13: Migration 090 silent defaults on economic columns**: R8 had `DEFAULT 0` on gross_pnl_usd, entry_fee_usd, etc. R9: removed all DEFAULTs from economic columns. `is_trainable` CHECK (is_trainable = true). `forward_twin_schema_version` no DEFAULT in both tables.
-14. **R9-14: Exhaustive migration↔writer contract**: R9: 27 contract tests covering every NOT NULL column, no-DEFAULT verification, writer-provides-all verification, both tables, CHECK constraints.
+### Validaciones
+- `npm run check`: PASS
+- `npm run build`: PASS
+- `git diff --check`: PASS
+- Suite GRID: 661/661 PASS
 
 ### Archivos modificados
-
-- `server/services/spotAiForwardTwin/spotAiDurableTrainingStore.ts`:
-  - R9-02: Repository interface returns `number | null` / `Array | null`.
-  - R9-02: Production repo catches return null (not 0/[]).
-  - R9-02: Wrappers (`getDurableStoredTradeCount`, etc.) catch and return null.
-  - R9-05: Separate try/catch for raw SELECT and dataset build.
-  - R9-06: Per-attempt errors=1 in catch block (not cumulative).
-  - R9-07: `FINGERPRINT_CONFLICT` in `BackfillErrorCode`.
-  - R9-08: `canonicalizePolicyProvenance()` — trim + case-insensitive synthetic check.
-  - R9-08: `buildDurableEntryPayload` / `buildDurableGivebackPayload` / `buildGivebackFingerprint` use canonical policy.
-  - R9-09: `storageUnavailable: boolean` in `GivebackPersistResult` and `SyncResult`.
-  - R9-12: `isAvailable()` checks both tables + critical columns.
-- `server/services/spotAiForwardTwin/spotAiDuplicateIdentity.ts`:
-  - R9-01: `loadDuplicateFillQuality()` fail-closed helper.
-- `server/routes/spotAi.routes.ts`:
-  - R9-01: Uses `loadDuplicateFillQuality(db)`.
-  - R9-03: Per-metric null check for durable availability.
-- `db/migrations/090_spot_ai_forward_training_trades.sql`:
-  - R9-13: Removed DEFAULT 0 from all economic columns.
-  - R9-13: `is_trainable` CHECK (is_trainable = true).
-  - R9-13: `forward_twin_schema_version` no DEFAULT in both tables.
-
-### Tests R9 (10 files, 59 tests)
-
-- `spotAiQualityDuplicatesR9.test.ts` — 3 tests (R9-01: fail/no-dup/real-dup)
-- `spotAiDurableReadsR9.test.ts` — 5 tests (R9-02/R9-03: null on failure, real on success)
-- `spotAiBackfillParityR9.test.ts` — 3 tests (R9-04: entry/giveback parity, idempotent)
-- `spotAiReconciliationR9.test.ts` — 6 tests (R9-05/R9-06/R9-07: boundaries, per-attempt, conflict)
-- `spotAiPolicyProvenanceR9.test.ts` — 5 tests (R9-08: case-insensitive, canonicalize, entry=gb)
-- `spotAiGivebackStorageR9.test.ts` — 2 tests (R9-09: storage unavailable ≠ unlabeled)
-- `spotAiLifecycleR9.test.ts` — 3 tests (R9-10: real generation handoff, anti-overlap)
-- `spotAiQualityReconErrorR9.test.ts` — 1 test (R9-11: real reconciliation ERROR)
-- `spotAiAvailabilityR9.test.ts` — 4 tests (R9-12: both tables, critical schema)
-- `spotAiMigrationContractR9.test.ts` — 27 tests (R9-13/R9-14: no DEFAULT, NOT NULL, CHECK, writer contract)
-
-### Validacion
-
-- SPOT-AI tests: 349/349 pass (39 files) — 290 R8 + 59 R9
-- Economic R5/R6/general: 33/33 pass
-- Forward Twin + audit: 47/47 pass
-- Forward Twin benchmark: 4/4 pass
-- TSC: 0 errors (PASS)
-- Build: OK (PASS)
-- `git diff --check`: clean (PASS)
-
-### Estado operacional
-
-```
-NO DEPLOY
-NO MIGRATION (090 not applied, no 091 created)
-NO VPS
-NO TRAINING
-NO REAL
-NO INFERENCE
-NO ORDER PLACEMENT
-AI_TRADING_CONTROL=NONE
-SHADOW
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
-### Flags finales
-
-```
-QUALITY_R9_DUP_FAIL_01=PASS
-QUALITY_R9_DUP_FAIL_02=PASS
-QUALITY_R9_DUP_FAIL_03=PASS
-
-DURABLE_READS_RETURN_NULL_ON_FAILURE=YES
-DURABLE_READS_NEVER_RETURN_FALSE_ZERO=YES
-QUALITY_AVAILABILITY_PER_METRIC_NULL_CHECK=YES
-
-LIVE_BACKFILL_REAL_FUNCTION_CALLED=YES
-LIVE_BACKFILL_END_TO_END_TEST=PASS
-LIVE_BACKFILL_ENTRY_ROW_EQUAL=YES
-LIVE_BACKFILL_ENTRY_FINGERPRINT_EQUAL=YES
-LIVE_BACKFILL_GIVEBACK_ROW_EQUAL=YES
-LIVE_BACKFILL_GIVEBACK_FINGERPRINT_EQUAL=YES
-BACKFILL_SECOND_RUN_IDEMPOTENT=YES
-
-RAW_LOAD_ERROR_CLASSIFICATION_BY_EXCEPTION_BOUNDARY=YES
-RAW_LOAD_ERROR_CLASSIFICATION_BY_MESSAGE_TEXT=NO
-DATASET_BUILD_REAL_THROW_TEST=PASS
-
-RECONCILIATION_ERRORS_PER_ATTEMPT=YES
-RECONCILIATION_ERRORS_NOT_CUMULATIVE=YES
-RECONCILIATION_SUCCESS_AFTER_ERROR_ERRORS_0=YES
-RECONCILIATION_UNAVAILABLE_AFTER_ERROR_ERRORS_NULL=YES
-
-FINGERPRINT_CONFLICT_ERROR_CODE=YES
-
-POLICY_SYNTHETIC_CHECK_CASE_INSENSITIVE=YES
-POLICY_OUTER_WHITESPACE_CANONICALIZED=YES
-ENTRY_GIVEBACK_POLICY_CANONICALIZATION_SAME=YES
-
-GIVEBACK_STORAGE_UNAVAILABLE_FIELD=YES
-STORAGE_UNAVAILABLE_COUNTED_AS_UNLABELED=NO
-
-REAL_GENERATION_HANDOFF_TEST=PASS
-GENERATION_HANDOFF_USES_TEST_RESET_RUNNING=NO
-
-QUALITY_REAL_RECON_ERROR_TEST=PASS
-
-AVAILABILITY_CHECKS_TRAINING_TABLE=YES
-AVAILABILITY_CHECKS_GIVEBACK_TABLE=YES
-AVAILABILITY_CHECKS_CRITICAL_SCHEMA=YES
-
-MIGRATION_090_WRITER_CONTRACT=PASS
-MIGRATION_090_CRITICAL_DEFAULTS_AUDITED=YES
-MIGRATION_090_APPLIED=NO
-NO_MIGRATION_091=YES
-
-TSC=PASS
-CHECK=PASS
-BUILD=PASS
-DIFF_CHECK=PASS
-GITHUB_CI=NOT_VERIFIED
-
-SPOT_STRATEGY_CHANGED=NO
-SPOT_ENTRY_POLICY_CHANGED=NO
-SPOT_EXIT_POLICY_CHANGED=NO
-SPOT_SIZING_CHANGED=NO
-SPOT_EXECUTION_CHANGED=NO
-GRID_MODIFIED=NO
-IDCA_MODIFIED=NO
-AMA_MODIFIED=NO
-TELEGRAM_MODIFIED=NO
-FISCO_MODIFIED=NO
-```
-
----
-
-## SPOT R10 — FINAL DURABLE CONTRACT + TRUE E2E
-
-**Fecha:** 12-AUG-2026
-**Modulo:** SPOT AI Forward Twin — Durable Training Store
-**Commit:** fix(spot-ai): finalize durable contract and true backfill e2e
-**Base:** 5d6b86997e95724a00539a7acbd4dc6bd4093a23 (R9)
-
-### Defectos R9 corregidos por R10
-
-1. **R10-01: Real dataset-build throw test**: R9 test did not provoke a real throw. R10: injectable `DurableDatasetBuilder` boundary. Tests inject builders that throw `Error("synthetic dataset build failure")`. `RECON_R10_DATASET_01` and `RECON_R10_DATASET_02` verify `DATASET_BUILD_FAILED` with real throws.
-2. **R10-02: True backfill E2E**: R9 parity test mocked `spotAiCompletedTrades`. R10: `spotAiBackfillParityR10.test.ts` does NOT mock `queryCompletedTrades`, `buildTradeOutcomeMap`, `buildDataset`, or `buildGivebackDataset`. Only `db.execute` and `DurableRepository` are mocked. Real mapping, normalization, correlation, and dataset construction are exercised.
-3. **R10-03: Infra error not counted as not-trainable**: R9 did not distinguish infrastructure failures from trainability. R10: `unprocessedCompletedTrades` field added to `BackfillResult`. RAW_SNAPSHOT_LOAD_FAILED and DATASET_BUILD_FAILED do NOT increment `skippedNotTrainableTrades`.
-4. **R10-04: Storage-unavailable propagation**: R10: `syncCompletedTradesToDurableStorage` propagates `storageUnavailable` without incrementing `insertErrors` or `errors`.
-5. **R10-05: Reconciliation storage status**: R10: `runDurableReconciliation` returns `STORAGE_UNAVAILABLE` status with null counters when backfill reports `storageUnavailable`.
-6. **R10-06: Canonical builders fail closed**: R9 used `canonicalizePolicyProvenance(policy) ?? policy` fallback. R10: builders return `DurablePayloadBuildResult<T>` discriminated union. Invalid policy → `{ok: false, reason: "INVALID_POLICY_PROVENANCE"}`. No fallback to original string.
-7. **R10-07: Durable type contract**: R10: `DurableGivebackRow.labelsJson` is `Record<string, unknown>` (not nullable). `hasLabel` is literal `true`. `DurableTradeRow.isTrainable` is `true` only (writer only inserts trainable rows).
-8. **R10-08: Lifecycle exact assertions**: R10: `LIFE_R10_04` and `LIFE_R10_05` verify exact call counts (1 from A, 2-3 from B). `LIFE_R10_01` verifies A does not rearm after stop. `LIFE_R10_02` verifies no rearm during pending await.
-9. **R10-09: Quality partial status not OK**: R9 could report OK with partial coverage. R10: status is `PARTIAL` when coverage < 100 + 0 issues, `WARNINGS_PARTIAL` when coverage < 100 + issues, `OK` only when coverage = 100 + 0 issues.
-10. **R10-10: Exhaustive migration contract**: R10: every migration 090 column classified as `GENERATED_BY_DB`, `WRITTEN_EXPLICITLY`, or `INTENTIONALLY_NULLABLE`. 36 training columns, 12 giveback columns. Writer provides all `WRITTEN_EXPLICITLY` columns.
-11. **R10-11: Tautological tests eliminated**: R9 `expect(true).toBe(true)` for `NO_MIGRATION_091` replaced with real filesystem check: `fs.readdirSync(migrationsDir).some(f => f.startsWith("091_"))`.
-12. **R10-12: Availability critical schema tests**: R10: `spotAiAvailabilityCriticalSchemaR10.test.ts` verifies `isDurableStorageAvailable()` returns false when critical columns are missing (not just when tables are missing).
-
-### Archivos modificados
-
-- `server/services/spotAiForwardTwin/spotAiDurableTrainingStore.ts` — core R10 changes
-- `server/routes/spotAi.routes.ts` — quality partial status
-- `server/services/__tests__/spotAiDurableR6.test.ts` — builder API compat
-- `server/services/__tests__/spotAiParityR8.test.ts` — builder API compat
-- `server/services/__tests__/spotAiPolicyR7.test.ts` — builder API compat
-- `server/services/__tests__/spotAiSqlContractR7.test.ts` — builder API compat
-- `server/services/__tests__/spotAiPolicyProvenanceR9.test.ts` — builder API compat
-- `server/services/__tests__/spotAiMigrationContractR9.test.ts` — tautological test fix
-
-### Nuevos tests R10
-
-- `spotAiBuilderFailClosedR10.test.ts` — 10 tests (R10-06: fail-closed, no fallback)
-- `spotAiDatasetBuildThrowR10.test.ts` — 2 tests (R10-01: real throw injection)
-- `spotAiInfraErrorClassificationR10.test.ts` — 2 tests (R10-03: infra ≠ not-trainable)
-- `spotAiStorageUnavailableR10.test.ts` — 2 tests (R10-04/05: storage unavailable propagation)
-- `spotAiBackfillParityR10.test.ts` — 3 tests (R10-02: true E2E parity)
-- `spotAiLifecycleR10.test.ts` — 5 tests (R10-08: exact generation handoff)
-- `spotAiQualityPartialStatusR10.test.ts` — 7 tests (R10-09: partial status)
-- `spotAiMigrationContractR10.test.ts` — 99 tests (R10-10: exhaustive column classification)
-- `spotAiAvailabilityCriticalSchemaR10.test.ts` — 5 tests (R10-12: critical schema)
-
-### Validacion
-
-- SPOT-AI tests: 484/484 pass (48 files) — 349 R9 + 135 R10
-- R10 tests: 135/135 pass (9 files)
-- Economic R5/R6/general: 33/33 pass
-- Forward Twin + audit: 47/47 pass
-- Forward Twin benchmark: 4/4 pass
-- TSC: 0 errors (PASS)
-- Build: OK (PASS)
-- `git diff --check`: clean (PASS)
-
-### Estado operacional
-
-```
-NO DEPLOY
-NO MIGRATION (090 not applied, no 091 created)
-NO VPS
-NO TRAINING
-NO REAL
-NO INFERENCE
-NO ORDER PLACEMENT
-AI_TRADING_CONTROL=NONE
-SHADOW
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
-### Flags finales
-
-```
-RECON_R10_DATASET_01=PASS
-RECON_R10_DATASET_02=PASS
-DATASET_BUILD_REAL_THROW_TEST=PASS
-
-PARITY_R10_01_ENTRY_TRUE_E2E=PASS
-PARITY_R10_02_GIVEBACK_TRUE_E2E=PASS
-PARITY_R10_03_SECOND_BACKFILL_IDEMPOTENT=PASS
-
-RAW_FAILURE_COUNTED_AS_NOT_TRAINABLE=NO
-DATASET_FAILURE_COUNTED_AS_NOT_TRAINABLE=NO
-UNPROCESSED_COMPLETED_TRADES_FIELD=YES
-
-ENTRY_STORAGE_UNAVAILABLE_CLASSIFIED_AS_INSERT_ERROR=NO
-SYNC_STORAGE_UNAVAILABLE_PROPAGATED=YES
-RECON_STORAGE_UNAVAILABLE_STATUS=STORAGE_UNAVAILABLE
-
-CANONICAL_ENTRY_BUILDER_INVALID_POLICY_FAILS_CLOSED=YES
-CANONICAL_GIVEBACK_BUILDER_INVALID_POLICY_FAILS_CLOSED=YES
-CANONICAL_BUILDER_POLICY_FALLBACK_TO_ORIGINAL=NO
-
-DURABLE_GIVEBACK_LABELS_NULLABLE=NO
-DURABLE_GIVEBACK_HAS_LABEL_TYPE=TRUE_ONLY
-DURABLE_TRADE_IS_TRAINABLE_TYPE=TRUE_ONLY
-
-REAL_GENERATION_HANDOFF_EXACT_ASSERTIONS=PASS
-GEN_A_REARMS_AFTER_STOP=NO
-GEN_B_RUN_COUNT_EXACT=PASS
-
-QUALITY_PARTIAL_CAN_REPORT_OK=NO
-QUALITY_PARTIAL_STATUS=PARTIAL
-
-MIGRATION_CONTRACT_ALL_COLUMNS_CLASSIFIED=YES
-PRODUCTION_INSERT_ALL_REQUIRED_COLUMNS_TESTED=YES
-MIGRATION_090_APPLIED=NOT_VERIFIED_FROM_REPO
-
-TAUTOLOGICAL_TESTS_PRESENT=NO
-NO_MIGRATION_091=verified_from_repository_filesystem
-
-AVAILABILITY_MISSING_TRAINING_CRITICAL_COLUMN_TEST=PASS
-AVAILABILITY_MISSING_GIVEBACK_CRITICAL_COLUMN_TEST=PASS
-
-SPOT_AI_TESTS=484
-R10_TESTS=135
-ECONOMIC_TESTS=33
-FORWARD_TWIN_SPOT_REGRESSION=90
-FULL_SUITE_RESULT=PASS
-TSC=PASS
-CHECK=PASS
-BUILD=PASS
-DIFF_CHECK=PASS
-GITHUB_CI=NOT_VERIFIED
-
-SPOT_STRATEGY_CHANGED=NO
-SPOT_ENTRY_POLICY_CHANGED=NO
-SPOT_EXIT_POLICY_CHANGED=NO
-SPOT_SIZING_CHANGED=NO
-SPOT_EXECUTION_CHANGED=NO
-GRID_MODIFIED=NO
-IDCA_MODIFIED=NO
-AMA_MODIFIED=NO
-TELEGRAM_MODIFIED=NO
-FISCO_MODIFIED=NO
-```
-
-## SPOT R11 — DB-VALID BY CONSTRUCTION + MID-RUN OUTAGE
-
-### Base
-- R10 commit: `46a9f70cc5d2e0ee188992c68e61b81e5d040abc`
-- Branch: `refactor/spot-canonical-shadow-20260812`
-- Runtime: `SHADOW`, `AI_TRADING_CONTROL=NONE`, `AUTO_RETRAIN=NO`
-
-### R10 defects closed by R11
-1. `isTrainable` remained `boolean` — R11 changes `DurableTradeRow.isTrainable` to literal `true`, aligning with migration 090 `CHECK (is_trainable = true)`.
-2. Canonical entry builder could return a false-trainable row — R11 adds fail-closed `NOT_TRAINABLE` when `entryFeaturesJson` or `entryLabelsJson` is empty.
-3. `buildGivebackFingerprint` retained raw-policy fallback (`canonicalizePolicyProvenance(...) ?? original`) — R11 removes the fallback; the builder now receives validated canonical policy provenance and fails closed on invalid provenance before fingerprinting.
-4. `storageUnavailable` could be overwritten by a later giveback result — R11 makes propagation monotonic (`result.storageUnavailable = result.storageUnavailable || gbResult.storageUnavailable`).
-5. Unavailable test was pre-run rather than mid-run — R11 adds `STORAGE_UNAVAILABLE` as a distinct `DurableInsertResult`, with mid-run outage detection, cache invalidation, re-probe, and early termination of writes.
-6. Giveback E2E could pass with zero rows — R11 adds a second SUPERVISOR v2 snapshot to the fixture, requires `matureSamples.length > 0`, requires `repoA.givebacks.size > 0` and `repoB.givebacks.size > 0`, and makes the live/backfill comparison unconditional.
-7. Scheduler exact counts were proven with direct calls — R11 adds a timer-only handoff test using `runAllTimersAsync` to flush microtasks, with no direct `runDurableReconciliation()` calls.
-8. Production INSERT columns were not checked — R11 adds tests that inspect the production repository insert SQL strings and verify all migration 090 columns are present.
-9. Duplicate partial integration mocked the wrong module — R11 mocks the route's actual import (`../services/spotAiForwardTwin/spotAiDuplicateIdentity`) and verifies failure returns null/false availability rather than false zero values.
-
-### Availability cache fix
-- `isDurableStorageAvailable()` now captures `checkedAt` AFTER the `await getRepository().isAvailable()` call, not before. This prevents the cache from being immediately expired when `isAvailable()` is slow.
-
-### Files changed (R11)
-- `server/services/spotAiForwardTwin/spotAiDurableTrainingStore.ts` (production)
-- `server/services/__tests__/spotAiBackfillParityR10.test.ts` (fixture + unconditional giveback comparison)
-- `server/services/__tests__/spotAiBuilderTrainabilityR11.test.ts` (new)
-- `server/services/__tests__/spotAiGivebackFingerprintR11.test.ts` (new)
-- `server/services/__tests__/spotAiMidRunOutageR11.test.ts` (new)
-- `server/services/__tests__/spotAiSchedulerTimerHandoffR11.test.ts` (new)
-- `server/services/__tests__/spotAiProductionInsertColumnsR11.test.ts` (new)
-- `server/services/__tests__/spotAiQualityDuplicateFailureR11.test.ts` (new)
-- `BITACORA.md` (this section)
-
-### Validation
-- SPOT-AI suite: 54 files / 503 tests passed
-- Economic: 3 files / 33 tests passed
-- Forward Twin/SPOT regression: 4 files / 56 tests passed
-- TSC: exit 0
-- Build: exit 0
-- `git diff --check`: clean
-
-### Scope invariants
-```
-SPOT_STRATEGY_CHANGED=NO
-SPOT_ENTRY_POLICY_CHANGED=NO
-SPOT_EXIT_POLICY_CHANGED=NO
-SPOT_SIZING_CHANGED=NO
-SPOT_EXECUTION_CHANGED=NO
-GRID_MODIFIED=NO
-IDCA_MODIFIED=NO
-AMA_MODIFIED=NO
-TELEGRAM_MODIFIED=NO
-FISCO_MODIFIED=NO
-SMARTGUARD_MODIFIED=NO
-```
-
-### Operational status
-```
-NO DEPLOY
-NO MIGRATION
-NO VPS
-NO TRAINING
-NO REAL
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
----
-
-## SPOT R12 — TYPED E2E + PRODUCTION OUTAGE PROOF
-
-### Defectos cerrados (contraauditoría R11)
-
-1. **R11 fingerprint inválido seguía devolviendo SHA sentinel.**
-   `buildGivebackFingerprint` usaba `policyVersion: "__INVALID_POLICY_FAIL_CLOSED__"` y devolvía SHA-256 para provenance inválida. Eliminado completamente. Una provenance inválida NO puede producir un canonical fingerprint.
-
-2. **`canonicalPolicyVersion` opcional no garantizaba provenance validada.**
-   Introducido branded type `CanonicalPolicyVersion = string & { readonly [__canonicalPolicyVersionBrand]: true }`. `canonicalizePolicyProvenance` retorna `CanonicalPolicyVersion | null`. `buildGivebackFingerprint` requiere `CanonicalPolicyVersion` obligatorio (no optional, no default). Una string cruda NO es asignable al tipo branded en compile time.
-
-3. **Mid-run outage test usaba FakeRepo que retornaba STORAGE_UNAVAILABLE directamente.**
-   Creado `spotAiProductionOutageR12.test.ts` que usa `setDurableRepository(null)` (productionRepository REAL) y mockea únicamente `db.execute`. Probado INSERT throw → reprobe unavailable → STORAGE_UNAVAILABLE, e INSERT throw → reprobe healthy → INSERT_FAILED.
-
-4. **Production INSERT throw→reprobe no estaba probado.**
-   Probado con el adapter productivo real. Outage real (connection lost) → STORAGE_UNAVAILABLE. Constraint violation → INSERT_FAILED. Giveback outage y giveback healthy reprobe también probados.
-
-5. **Final lint fix degradó fixture E2E a `data:any` + casts.**
-   Creadas factories tipadas `makeScanSnapshot`, `makeFillSnapshot`, `makeSupervisorSnapshot` que producen objetos que cumplen REALMENTE `ForwardTwinSnapshot`. El fixture se declara como `Array<{ data: ForwardTwinSnapshot }>` sin `any` ni `as ForwardTwinSnapshot[]`.
-
-6. **ForwardTwin fixture no cumplía el schema productivo completo.**
-   Las factories completan todos los campos requeridos: ticker (bid, ask, last, spread, spreadPct, fetchedAt), regime (14 campos), volume, signal, sizing, capital, position (con currentR, initialStopPrice, riskUsd, etc.), exitDecision, fill (con slippageUsd, slippagePct, fillQuality, etc.).
-
-7. **Scheduler test ignoraba cualquier error de `runAllTimersAsync`.**
-   Eliminado `try { await vi.runAllTimersAsync() } catch { // ignore }`. Reescrito con `flushAsync()` que usa `runAllTimersAsync` con catch TARGETED que solo ignora el error interno de vitest "too many timer iterations". Todos los demás errores se re-throw. Counts exactos: 1,1,2,3,4.
-
-8. **INSERT SQL test usaba substring contains, no exact column-set comparison.**
-   Creado `parseInsertColumns()` que extrae el set exacto de columnas del `INSERT INTO table (...)` y compara con `Set` esperado via `toEqual`. Verifica ausencia de `id` y `created_at`, y ausencia de duplicados.
-
-### Cache semantics (R12-03)
-
-`invalidateDurableStorageCache()` ahora setea `durableStorageAvailableCache = null` (no negative cache). La siguiente llamada a `isDurableStorageAvailable()` ejecuta REALMENTE `repository.isAvailable()`. Test con counter verifica re-probe real.
-
-### Giveback E2E fuerte (R12-04)
-
-Dos SUPERVISOR v2 con currentR=1.5 y currentR=2.0. Assertions incondicionales: `matureSamples.length > 0`, `repoA.givebacks.size > 0`, `repoB.givebacks.size > 0`, `supervisorSnapshots.length >= 2`. Labels `future_MFE_R` y `future_MAE_R` requeridos (no condicional). Row A deepEqual row B, fingerprint A === fingerprint B.
-
-### Validación
-
-- SPOT-AI: 57 archivos / 513 tests pasaron
-- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
-- TSC: exit 0
-- `npm run check`: exit 0
-- Build: exit 0
-- `git diff --check`: exit 0
-
-### Invariantes preservados
-
-- DURABLE_TRADE_IS_TRAINABLE_TYPE=TRUE_ONLY
-- Empty features/labels => NOT_TRAINABLE
-- Unlabeled giveback => no persist
-- Mature giveback => persist
-- No phantom exit qty
-- QTY_EPSILON=1e-8
-- No 1% tolerance
-- Weighted BUY/SELL
-- Real fee allocation
-- Policy provenance real
-- Atomic INSERT
-- Fingerprint conflict fail closed
-- Duplicate quality no false zero
-- Quality partial != OK
-- Storage unavailable monotónico
-
-### Estado operacional
-
-```
-NO DEPLOY
-NO MIGRATION (090 no aplicada, no existe 091)
-NO VPS
-NO TRAINING
-NO REAL
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
----
-
-## SPOT R12F — FINAL EVIDENCE CLOSURE
-
-### Huecos cerrados (contraauditoría R12)
-
-1. **Giveback E2E sin valores numéricos exactos.**
-   Assertions ahora verifican exactamente:
-   - Supervisor T=1500: final_R=0.8, future_MFE_R=2.0, future_MAE_R=0.8, expected_giveback_R=1.2
-   - Supervisor T=1700: final_R=0.8, future_MFE_R=0.8, future_MAE_R=0.8, expected_giveback_R=0
-   - running mfeR/maeR son DISTINTOS de currentR (cumulativeMfeR=currentR*2, cumulativeMaeR=-currentR*1.5)
-   - Una regresión que use cumulative mfeR/maeR en lugar de currentR NO puede pasar.
-
-2. **Scheduler test usaba runAllTimersAsync con catch.**
-   Eliminado completamente vi.runAllTimersAsync() y cualquier catch.
-   Usa exclusivamente vi.advanceTimersByTimeAsync con intervalos exactos.
-   Flush de microtasks vía setTimeout(0) + advanceTimersByTimeAsync(0) — sin captura de errores.
-   Módulos mocked pre-importados para que dynamic imports resuelvan bajo fake timers.
-   Counts exactos: 1,1,1,2,2,3,4.
-
-3. **Cache outage no probaba invalidación interna → recovery → reprobe real.**
-   PROD_OUTAGE_R12F_RECOVERY: INSERT throw → dbDown=true → reprobe fail → STORAGE_UNAVAILABLE.
-   Sin _resetDurableStorageCache() manual. DB recupera. isDurableStorageAvailable() → true.
-   Contador de queries LIMIT 0 verifica NUEVAS queries después del outage.
-   PROD_OUTAGE_R12F_STILL_DOWN: DB sigue caída. isDurableStorageAvailable() → false.
-   Contador verifica reprobe real (no negative cache).
-
-### No product code changes
-
-spotAiDurableTrainingStore.ts NO fue modificado.
-Migración 090 NO fue modificada.
-spotAi.routes.ts NO fue modificado.
-
-### Validación
-
-- SPOT-AI: 57 archivos / 515 tests pasaron
-- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
-- TSC: exit 0
-- npm run check: exit 0
-- Build: exit 0
-- git diff --check: exit 0
-
-### Estado operacional
-
-```
-NO DEPLOY
-NO MIGRATION
-NO VPS
-NO TRAINING
-NO REAL
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
----
-
-## SPOT R13F — CONTROLLED 090 EXECUTION PATH
-
-### Defectos R13 cerrados
-
-1. **090 no estaba registrada en startup.** El array `MIGRATIONS` en `server/routes.ts` termina en `088_spot_forward_twin`. No existe camino automático para aplicar 090.
-2. **`script/migrate.ts` tampoco contiene 090.** Su lista tracked llega 051-079. No es el mecanismo de 090.
-3. **No existía camino real de ejecución.** Sin registro en startup ni script dedicado, 090 no podía aplicarse.
-4. **Registrar 090 en startup eliminaría control explícito.** Auto-aplicarse en reinicio es inaceptable para una migration que requiere autorización.
-5. **Startup actual no aborta al fallar runner.** El runner se llama en el callback `listen()` y errores no bloquean el startup del servidor.
-6. **SAFE_DEPLOY_ORDER B no era ejecutable.** Sin un script dedicado, no había forma de aplicar 090 antes de activar la nueva app.
-7. **Duplicate SQL usaba fillId incorrectamente.** La identidad canónica real es lotId+pair+side+orderId+executedAt+fillPrice+fillVolume+feeUsd.
-8. **Completed candidates no exigía BUY+SELL.** `COUNT(*) >= 2` no garantiza presencia de ambos lados.
-9. **Training migration tiene 36 columnas, no 35.** Corrección: 34 WRITTEN_EXPLICITLY + 2 GENERATED_BY_DB (id, created_at).
-10. **089 queda deliberadamente diferida.** 089 declara `NOT TO BE APPLIED IN THIS PHASE`. Contiene `spot_ai_advisory_logs` y `spot_ai_model_registry` — fase posterior.
-
-### Mecanismo creado
-
-**`script/spot-ai-migrate-090.ts`** — ejecutor dedicado SOLO para migration 090.
-
-- Usa `AutoMigrationRunner` (transaccional, advisory-locked, registry-tracked).
-- Requiere token exacto: `SPOT_AI_MIGRATION_090_CONFIRM=APPLY_STAGING_090`.
-- Sin token: rechaza, exit 2, NO conecta DB.
-- Post-verify: `schema_migrations` registry, `to_regclass` para ambas tablas, `information_schema` para columnas críticas.
-- Idempotente: segundo run → AutoMigrationRunner ve registry entry → SKIPPED.
-- Fallo propaga: exit != 0, NO éxito falso.
-- NO modifica `server/routes.ts`, `script/migrate.ts`, ni `server/index.ts`.
-
-### Corrección de inventario
-
-```
-TRAINING_TOTAL_COLUMNS=36
-TRAINING_WRITTEN_EXPLICITLY=34
-TRAINING_GENERATED_BY_DB=2 (id, created_at)
-
-GIVEBACK_TOTAL_COLUMNS=12
-GIVEBACK_WRITTEN_EXPLICITLY=10
-GIVEBACK_GENERATED_BY_DB=2 (id, created_at)
-```
-
-### Pre-apply SQL corregido
-
-Duplicate fills usan identidad canónica: lotId, pair, side, orderId, executedAt, fillPrice, fillVolume, feeUsd.
-
-Completed candidates exigen BUY > 0 AND SELL > 0 (no COUNT >= 2).
-
-### Safe deploy order corregido
-
-```
-SAFE_DEPLOY_ORDER=MIGRATION_090_DEDICATED_RUNNER_THEN_APP_ACTIVATION
-```
-
-1. App staging actual sigue funcionando.
-2. Checkout nuevo SHA en VPS (no reiniciar).
-3. Verificar SHA exacto.
-4. Verificar AI_TRADING_CONTROL=NONE.
-5. Backup DB.
-6. Ejecutar pre-apply SQL READ-ONLY.
-7. Ejecutar: `SPOT_AI_MIGRATION_090_CONFIRM=APPLY_STAGING_090 npx tsx script/spot-ai-migrate-090.ts`
-8. Si exit != 0: STOP. App anterior continúa.
-9. Si exit=0: verificar schema_migrations, tablas, constraints, indexes.
-10. Construir nueva app/container.
-11. Reiniciar/apply nueva versión.
-12. Health check.
-13. SHADOW validation.
-
-### Rollback corregido
-
-A) Script falla: AutoMigrationRunner ROLLBACK. Script exit != 0. NO deploy. App anterior permanece activa.
-B) 090 aplica pero nueva app no arranca: revertir app. Tablas 090 aditivas — dejar intactas. NO DROP automático.
-C) Reconciliation falla: AI observacional. NO trading impact. Revert app / investigar.
-D) Fingerprint conflicts: fail closed. NO borrar rows. NO overwrite. Investigar.
-
-Eliminada la afirmación "migration failure => app startup aborts" — 090 ya NO se aplica mediante app startup.
-
-### 089 diferida
-
-```
-MIGRATION_089_DEFERRED=YES
-MIGRATION_089_REGISTERED_FOR_AUTOAPPLY=NO
-MIGRATION_089_APPLIED=NO
-```
-
-### Validación
-
-- R13F tests: 1 archivo / 10 tests pasaron
-- SPOT-AI: 58 archivos / 525 tests pasaron
-- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
-- TSC: exit 0
-- npm run check: exit 0
-- Build: exit 0
-- git diff --check: exit 0
-
-### Estado operacional
-
-```
-NO DEPLOY
-NO MIGRATION (090 no aplicada, 089 diferida)
-NO VPS
-NO TRAINING
-NO REAL
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
----
-
-## SPOT R13G — RUNNER VERIFIABLE + RUNBOOK + ROLLBACK CORREGIDO
-
-### Refactor runner
-
-`script/spot-ai-migrate-090.ts` refactorizado:
-- Core exportado: `runSpotAiMigration090(deps)` — throw ante fallo, nunca `process.exit()`.
-- Wrapper CLI: `main()` — captura errores tipados, asigna `process.exitCode`.
-- Errores tipados: `ConfirmationError`, `MigrationFileNotFoundError`, `PostVerifyError`.
-- Deps inyectables: pool, runner, fsExists, migrationFile.
-
-### Tests reales R13G
-
-- `spotAiMigrate090RunnerR13G.test.ts` (12 tests): llama al core productivo con deps inyectadas.
-  - Confirmation gate real: sin token → `ConfirmationError`, runner.run=0, pool.query=0.
-  - Only-090 real: captura descriptor pasado a `runner.run` — length=1, id=090.
-  - Failure propagation real: `runner.run` throw → core throw, post-verify=0 queries.
-  - Post-verify real: 6 casos (registry, training table, giveback table, training column, giveback column, all-pass).
-- `spotAiMigrate090IdempotencyR13G.test.ts` (1 test): usa la CLASE real `AutoMigrationRunner` con fake pool transaccional.
-  - RUN 1: SQL ejecutado 1 vez, registry registra 090.
-  - RUN 2: SQL NO se re-ejecuta, count total=1 (no 2).
-
-Eliminado `spotAiMigrate090RunnerR13F.test.ts` — tests de evidencia falsa.
-
-### Runbook creado
-
-`AUDITORIAS/SPOT_AI_090_STAGING_RUNBOOK_2026-08-28.md`:
-- Pre-apply SQL completo (11 queries read-only).
-- Post-apply SQL completo (7 queries read-only).
-- Canonical duplicate fills: lotId+pair+side+orderId+executedAt+fillPrice+fillVolume+feeUsd.
-- Completed candidates: BUY > 0 AND SELL > 0 con buy_fill_count, sell_fill_count, buy_volume, sell_volume.
-- Safe deploy order detallado (18 pasos).
-- Rollback con CASE A (before commit) vs CASE B (after commit) distinguidos.
-
-### Rollback corregido
-
-CASE A — MIGRATION_EXECUTION_FAILURE_BEFORE_COMMIT:
-- AutoMigrationRunner ROLLBACK. 090 NO registrada. NO deploy. App anterior activa.
-
-CASE B — POSTVERIFY_FAILURE_AFTER_MIGRATION_COMMIT:
-- 090 PUEDE estar ya aplicada y commiteada.
-- NO afirmar rollback.
-- STOP. NO deploy. Inspeccionar manualmente. NO DROP. NO rerun destructivo.
-- App anterior sigue funcionando mientras se diagnostica.
-
-Eliminada la afirmación "migration failure => app startup aborts" — 090 NO se aplica mediante app startup.
-
-### Validación
-
-- R13G tests: 2 archivos / 13 tests pasaron
-- SPOT-AI: 58 archivos / 525 tests pasaron
-- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
-- TSC: exit 0
-- npm run check: exit 0
-- Build: exit 0
-- git diff --check: exit 0
-
-### Estado operacional
-
-```
-NO DEPLOY
-NO MIGRATION
-NO VPS
-NO TRAINING
-NO REAL
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
----
-
-## SPOT R13H — IMPORT-SAFE 090 CLI FINAL
-
-### Defecto cerrado
-
-R13G ejecutaba `main()` incondicionalmente al final del módulo. Eso significa que importar el módulo (por tests o por otro consumidor) ejecutaba el CLI, intentando conectar DB y mutar `process.exitCode`.
-
-### Fix
-
-`script/spot-ai-migrate-090.ts` ahora usa un guard ESM `isDirectExecution()`:
-- Compara `fileURLToPath(import.meta.url)` con `path.resolve(process.argv[1])`.
-- Solo ejecuta `main()` cuando el archivo es el entrypoint directo.
-- Al ser importado por tests: `isDirectExecution()=false`, `main()` NO se ejecuta.
-
-### Tests R13H
-
-`spotAiMigrate090ImportSafetyR13H.test.ts` (6 tests):
-- Importar módulo NO cambia `process.exitCode`.
-- `isDirectExecution()` retorna `false` en contexto de import.
-- Core `runSpotAiMigration090` sigue callable explícitamente.
-- Sin token: `ConfirmationError`, runner=0, pool.query=0.
-- Con token y deps válidas: core resuelve correctamente.
-- `isDirectExecution()` retorna `false` con argv[1] diferente.
-
-### No cambios de producto
-
-- Migration 090: NO modificada.
-- Migration 089: NO modificada.
-- Forward Twin product code: NO modificado.
-- Runbook: NO modificado.
-- server/routes.ts: NO modificado.
-- server/index.ts: NO modificado.
-- script/migrate.ts: NO modificado.
-
-### Validación
-
-- R13H tests: 1 archivo / 6 tests pasaron
-- R13G tests: 2 archivos / 13 tests pasaron
-- SPOT-AI: 60 archivos / 534 tests pasaron
-- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
-- TSC: exit 0
-- npm run check: exit 0
-- Build: exit 0
-- git diff --check: exit 0
-
-### Estado operacional
-
-```
-NO DEPLOY
-NO MIGRATION
-NO VPS
-NO TRAINING
-NO REAL
-PENDING_GITHUB_COUNTERAUDIT=YES
-```
-
-## SPOT R14 — IA FORWARD TWIN UI/PERFORMANCE + TRACKED LOTS
-
-### Causa del loading infinito
-
-El Centro de Inteligencia IA Forward Twin no renderizaba porque:
-
-1. `/api/spot/ai/status` llamaba `queryCompletedTrades()` que ejecuta 5 queries SQL con filtrado JSONB — demasiado lento para un endpoint de status.
-2. `/api/spot/ai/dataset/quality` usaba correlated subqueries sobre `data->>'snapshotType'` en vez de la columna física `snapshot_type`.
-3. El frontend gatingaba con `isLoading || !status` — si el endpoint fallaba, `!status` permanecía `true` → loading infinito.
-4. DatosTab lanzaba polling cada 30s sobre endpoints analíticos pesados.
-
-### Baseline (staging, 30s timeout)
-
-Todos los endpoints IA excedieron 30s (timeout del curl):
-- status: >30000ms TIMEOUT
-- dataset: >30000ms TIMEOUT
-- quality: >30000ms TIMEOUT
-- pairs: >30000ms TIMEOUT
-- regimes: >30000ms TIMEOUT
-
-### Paridad columna física vs JSONB
-
-Verificado en staging READ-ONLY:
-- `snapshot_type` vs `data->>'snapshotType'`: 0 mismatches
-- `pair` vs `data->>'pair'`: 0 mismatches
-- `scan_id` vs `data->>'scanId'`: 0 mismatches
-- `policy_version` vs `data->>'policyVersion'`: 0 mismatches
-
-### Queries optimizadas
-
-- Status: eliminada llamada a `queryCompletedTrades()`. Usa `getDurableCompletedTradeCount()`.
-- Dataset: eliminada llamada a `queryCompletedTrades()`. Usa columnas físicas + durable count.
-- Quality: reemplazadas correlated subqueries por CTEs. Usa `snapshot_type` físico. Checks del normalizer reportados como `null` (fail-closed).
-- Pairs: usa `snapshot_type` físico. Eliminada llamada a `queryCompletedTrades()`.
-- Regimes/Features/Giveback: usa `snapshot_type` físico.
-- Repository y duplicate loader: usa `snapshot_type` físico.
-
-### Semantics parity
-
-- `queryCompletedTrades()`, `normalizeCompletedTrades()`, `countDuplicateFills()`, `fillIdentityKey()` NO modificados.
-- Durable writer, label builder, fingerprints, policy provenance, reconciliation: NO modificados.
-- Checks del normalizer no disponibles en fast path se reportan como `null` (no `0`).
-
-### UI error states
-
-- `SpotAiForwardTwinPanel`: separa LOADING / ERROR / SUCCESS con botón Reintentar.
-- `fetchWithTimeout`: helper con AbortController. Status 10s, analíticos 15s.
-- `DatosTab`: error states con Reintentar. Sin polling 30s.
-- `ActividadTab`: nueva pestaña con actividad Forward Twin y lotes en seguimiento.
-- Polling reducido: Modelos/Auditoría/Validación 5min, Predicciones 60s, Actividad 60s.
-
-### Tracked lots
-
-- Nuevo endpoint `GET /api/spot/ai/tracking`: summary + lots agrupados por lotId.
-- Diferencia histórico SPOT (referencia) vs Forward Twin vs FILL legacy vs válidos vs lotes vs completos vs etiquetados.
-- Estados: EN_SEGUIMIENTO, COMPLETO, ETIQUETADO.
-
-### Tests R14
-
-- `spotAiR14Performance.test.ts` (14 tests): PERF_01-12 + repo/duplicate physical column parity.
-- `spotAiR14Ui.test.tsx` (12 tests): UI_01-10 + fetchWithTimeout.
-
-### Validación local
-
-- R14 tests: 2 archivos / 26 tests pasaron
-- SPOT-AI: 61 archivos / 548 tests pasaron
-- Forward Twin + E2E + integration + B15 + economic: 4 archivos / 156 tests pasaron
-- spotRoutes + spotAiUiV2: 2 archivos / 48 tests pasaron
-- TSC: exit 0
-- npm run check: exit 0
-- Build: exit 0
-- git diff --check: exit 0
+- `server/services/gridIsolated/gridAdaptiveTrailing.ts` (nuevo)
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridRiskManager.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridJsonbValidators.ts`
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `server/routes.ts`
+- `shared/schema.ts`
+- `client/src/components/grid/GridSettingsPanel.tsx`
+- `server/migrations/088_grid_v31_adaptive_trailing.sql` (nuevo)
+- `server/services/gridIsolated/__tests__/gridAdaptiveTrailing.test.ts` (nuevo)
+- `server/services/gridIsolated/__tests__/gridV31TrailingPrecedence.test.ts` (nuevo)
+
+### Estado
+- Implementado: SI
+- Validado: SI (check, build, 661 tests)
+- Committeado: SI (6844ccd)
+- Pusheado: SI (origin/fix/grid-v31-adaptive-trailing-20260820)
+- Desplegado staging: NO (requiere autorización VPS)
+- Runtime validation: NO (pendiente de deploy)
+
+### Restricciones
+- No Spot Normal, No IDCA, No AMA
+- No REAL, No órdenes reales
+- No DB manual, No SQL manual
+- SHADOW only
