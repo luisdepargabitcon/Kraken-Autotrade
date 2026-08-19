@@ -171,7 +171,7 @@ describe("Context Spanish labels and reason code mapping", () => {
         },
       } as any,
       signal: { signal: "BUY", setupTag: "PULLBACK_CONTINUATION", reason: "ok", confidence: 0.8, blockReason: null } as any,
-      sizing: { approved: false, volume: 0, notionalUsd: 0, stopPrice: 0, stopDistancePct: 0, stopDistanceUsd: 0, riskUsd: 0, reason: "too small", blockReason: "SIZING_REJECTED" } as any,
+      sizing: { approved: false, volume: 0, notionalUsd: 0, stopPrice: 0, stopDistancePct: 0, stopDistanceUsd: 0, riskUsd: 0, reason: "too small", blockReason: "SIZING_REJECTED", blockCode: "SIZING_REJECTED" } as any,
     });
     const snap = buildSnapshotFromScanResults(input);
     const sizingGate = snap.gates.find(g => g.reasonCode === "SIZING_REJECTED");

@@ -1770,7 +1770,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       executionMode: mode,
       reasonCode: "SIZING_REJECTED",
     });
-    return { executed: false, stage: "SIZING", reasonCode: sizing.blockReason ?? "SIZING_REJECTED", reason: sizing.reason, sizing, submitted: false };
+    return { executed: false, stage: "SIZING", reasonCode: sizing.blockCode ?? "SIZING_REJECTED", reason: sizing.reason, sizing, submitted: false };
   }
 
   // R10.4: Freeze gate — check for unresolved REAL executions before new entries

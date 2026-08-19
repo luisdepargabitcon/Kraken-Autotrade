@@ -97,6 +97,7 @@ export interface SizingResult {
   roundTripFeeUsd: number;
   expectedProfitUsd: number;
   blockReason: string | null;
+  blockCode: string | null;
 }
 
 // ─── Stop distance ──────────────────────────────────────────────────────────
@@ -238,6 +239,18 @@ export function evaluateFeeGate(
   return { pass: true, roundTripFeeUsd, reason: `Fee gate OK (gross ${expectedGrossProfit.toFixed(2)} ≥ ${config.minProfitMultiplier}× fee ${roundTripFeeUsd.toFixed(2)})` };
 }
 
+// ─── Capital efficiency reason classifier ───────────────────────────────────
+
+function classifyCapitalEfficiencyReason(reason: string): string {
+  if (reason.startsWith("Notional dust")) return "DUST_NOTIONAL";
+  if (reason.startsWith("Expected profit")) return "EXPECTED_PROFIT_TOO_LOW";
+  if (reason.startsWith("Slot efficiency")) return "SLOT_EFFICIENCY_TOO_LOW";
+  if (reason.startsWith("Notional") && reason.includes("< min")) return "MIN_NOTIONAL";
+  if (reason.startsWith("Notional") && reason.includes("> max")) return "MAX_NOTIONAL";
+  if (reason.includes("> capital")) return "INSUFFICIENT_CAPITAL";
+  return "SIZING_REJECTED";
+}
+
 // ─── Full sizing evaluation ─────────────────────────────────────────────────
 
 /**
@@ -263,6 +276,7 @@ export function evaluateSizing(
       volume: 0, notionalUsd: 0, stopPrice: 0, stopDistanceUsd: 0, stopDistancePct: 0,
       riskUsd: 0, entryFeeUsd: 0, roundTripFeeUsd: 0, expectedProfitUsd: 0,
       blockReason: "MAX_LOTS_REACHED",
+      blockCode: "MAX_LOTS_REACHED",
     };
   }
 
@@ -283,12 +297,14 @@ export function evaluateSizing(
       volume: 0, notionalUsd: 0, stopPrice: stop.stopPrice, stopDistanceUsd: stop.stopDistanceUsd,
       stopDistancePct: stop.stopDistancePct, riskUsd, entryFeeUsd: 0, roundTripFeeUsd: 0,
       expectedProfitUsd: 0, blockReason: "ZERO_VOLUME",
+      blockCode: "ZERO_VOLUME",
     };
   }
 
   // 5. Spread gate
   const spread = evaluateSpreadGate(ctx.spreadPct, regime, config);
-  if (!spread.pass) blockReasons.push(spread.reason);
+  const blockCodes: string[] = [];
+  if (!spread.pass) { blockReasons.push(spread.reason); blockCodes.push("SPREAD_TOO_WIDE"); }
 
   // 6. Expected profit (estimate: 2× stop distance as TP target)
   const expectedExitPrice = entryPrice + stop.stopDistanceUsd * 2;
@@ -296,11 +312,11 @@ export function evaluateSizing(
 
   // 7. Capital efficiency
   const capEff = evaluateCapitalEfficiency(notionalUsd, expectedProfitUsd, riskUsd, availableCapitalUsd, config);
-  if (!capEff.pass) blockReasons.push(capEff.reason);
+  if (!capEff.pass) { blockReasons.push(capEff.reason); blockCodes.push(classifyCapitalEfficiencyReason(capEff.reason)); }
 
   // 8. Fee gate
   const feeGate = evaluateFeeGate(entryPrice, volume, expectedExitPrice, config);
-  if (!feeGate.pass) blockReasons.push(feeGate.reason);
+  if (!feeGate.pass) { blockReasons.push(feeGate.reason); blockCodes.push("FEE_GATE"); }
 
   // 9. Entry fee
   const takerPct = getSpotTakerFeePct() / 100;
@@ -314,6 +330,7 @@ export function evaluateSizing(
       stopPrice: stop.stopPrice, stopDistanceUsd: stop.stopDistanceUsd, stopDistancePct: stop.stopDistancePct,
       riskUsd, entryFeeUsd, roundTripFeeUsd: feeGate.roundTripFeeUsd, expectedProfitUsd,
       blockReason: blockReasons[0],
+      blockCode: blockCodes[0] ?? "SIZING_REJECTED",
     };
   }
 
@@ -324,5 +341,6 @@ export function evaluateSizing(
     stopPrice: stop.stopPrice, stopDistanceUsd: stop.stopDistanceUsd, stopDistancePct: stop.stopDistancePct,
     riskUsd, entryFeeUsd, roundTripFeeUsd: feeGate.roundTripFeeUsd, expectedProfitUsd,
     blockReason: null,
+    blockCode: null,
   };
 }

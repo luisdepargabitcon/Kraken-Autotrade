@@ -32,6 +32,7 @@ import {
   Gauge,
   Layers,
 } from "lucide-react";
+import { reasonCodeShortEs } from "./spotTerminalSpanishFormatter";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -222,6 +223,20 @@ function getDataHealthLabel(dh: string): string {
   return labels[dh] ?? dh;
 }
 
+function getIntentStateEs(state: string | null): string {
+  if (!state) return "—";
+  const labels: Record<string, string> = {
+    WAITING: "En espera",
+    APPROVED: "Aprobada",
+    CHASED: "Reevaluando precio",
+    EXECUTED: "Ejecutada",
+    EXPIRED: "Expirada",
+    INVALIDATED: "Invalidada",
+    CANCELLED: "Cancelada",
+  };
+  return labels[state] ?? state;
+}
+
 // ─── Compact Row ────────────────────────────────────────────────────────────
 
 function CompactRow({ snap, expanded, onToggle }: { snap: SpotContextSnapshotData; expanded: boolean; onToggle: () => void }) {
@@ -342,11 +357,11 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Intención activa</p>
           <div className="flex items-center gap-3 text-xs">
-            <Badge variant="outline" className="text-[10px]">{snap.intentState}</Badge>
+            <Badge variant="outline" className="text-[10px]">{getIntentStateEs(snap.intentState)}</Badge>
             {snap.intentCreatedAt && <span className="text-muted-foreground">Creado: {formatTime(snap.intentCreatedAt)}</span>}
             {snap.intentExpiresAt && <span className="text-muted-foreground">Expira: {formatTime(snap.intentExpiresAt)}</span>}
             {snap.intentLastBlockReason && (
-              <span className="text-amber-400/80 font-mono text-[10px]">⚠ {snap.intentLastBlockReason}</span>
+              <span className="text-amber-400/80 font-mono text-[10px]">⚠ {reasonCodeShortEs(snap.intentLastBlockReason)}</span>
             )}
           </div>
         </div>

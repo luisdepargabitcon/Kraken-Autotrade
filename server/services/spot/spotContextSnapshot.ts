@@ -62,11 +62,19 @@ const REASON_CODE_ES: Record<string, string> = {
   ENTRY_GATED: "La intención de entrada está pendiente de verificación.",
 
   // Sizing
-  SIZING_REJECTED: "La gestión de riesgo no aprobó la entrada. El tamaño calculado no cumple los criterios mínimos.",
+  SIZING_REJECTED: "No compra porque la gestión de riesgo no aprobó la operación.",
   SIZING_APPROVED: "La gestión de riesgo aprobó la entrada.",
-  SPREAD_TOO_WIDE: "El spread actual es demasiado amplio para ejecutar la entrada de forma segura.",
+  SPREAD_TOO_WIDE: "No compra porque el diferencial actual entre compra y venta es demasiado amplio.",
+  MAX_LOTS_REACHED: "No compra porque ya se alcanzó el número máximo de posiciones permitidas para este activo.",
+  ZERO_VOLUME: "No compra porque el tamaño calculado de la operación es cero.",
+  MIN_NOTIONAL: "No compra porque el importe calculado de la operación está por debajo del mínimo permitido.",
+  MAX_NOTIONAL: "No compra porque el importe calculado supera el máximo permitido.",
+  DUST_NOTIONAL: "No compra porque el importe de la operación sería demasiado pequeño.",
+  EXPECTED_PROFIT_TOO_LOW: "No compra porque el beneficio esperado no alcanza el mínimo exigido.",
+  SLOT_EFFICIENCY_TOO_LOW: "No compra porque la relación entre beneficio esperado y riesgo no es suficientemente eficiente.",
+  INSUFFICIENT_CAPITAL: "No compra porque no hay capital disponible suficiente para el tamaño calculado.",
+  FEE_GATE: "No compra porque las comisiones consumirían demasiado del beneficio esperado.",
   CAPITAL_EFFICIENCY_LOW: "La eficiencia de capital es insuficiente para justificar la entrada.",
-  FEE_GATE: "Las comisiones actuales hacen que la operación no sea viable.",
 
   // Execution
   ENTRY_GENERATION_STALE_BLOCKED: "El modo global cambió durante el análisis. No se crea posición bajo un modo obsoleto.",
@@ -172,7 +180,7 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
   gates.push({
     level: "Data Health",
     pass: dataHealthPass,
-    reason: `DataHealth=${ctx.dataHealth}`,
+    reason: dataHealthPass ? "Datos en buen estado" : reasonCodeToSpanish(`DATA_${ctx.dataHealth}`, `DataHealth=${ctx.dataHealth}`),
     reasonCode: dataHealthPass ? "DATA_GOOD" : `DATA_${ctx.dataHealth}`,
   });
 
@@ -181,7 +189,7 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
   gates.push({
     level: "Macro 4H",
     pass: macroPass,
-    reason: macroPass ? `Macro ${ctx.regimeContext.macroBias}` : "Macro bearish",
+    reason: macroPass ? `Macro ${ctx.regimeContext.macroBias === "BULLISH" ? "alcista" : "neutral"}` : "Macro bajista",
     reasonCode: macroPass ? `MACRO_${ctx.regimeContext.macroBias}` : "MACRO_BEARISH",
   });
 
@@ -239,8 +247,8 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
     gates.push({
       level: "Gestión de riesgo",
       pass: sizing.approved,
-      reason: sizing.approved ? "Gestión de riesgo aprobada" : (sizing.blockReason ?? sizing.reason),
-      reasonCode: sizing.approved ? "SIZING_APPROVED" : (sizing.blockReason ?? "SIZING_REJECTED"),
+      reason: sizing.approved ? "Gestión de riesgo aprobada" : reasonCodeToSpanish(sizing.blockCode ?? "SIZING_REJECTED", sizing.blockReason ?? sizing.reason),
+      reasonCode: sizing.approved ? "SIZING_APPROVED" : (sizing.blockCode ?? "SIZING_REJECTED"),
     });
   }
 
