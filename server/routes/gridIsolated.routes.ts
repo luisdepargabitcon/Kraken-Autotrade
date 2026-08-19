@@ -832,6 +832,10 @@ export function registerGridIsolatedRoutes(app: Express): void {
         "trailingActivationPct", "trailingStopPct",
         "stopLossSoftPct", "stopLossHardPct", "stopLossEmergencyPct",
         "hodlRecoveryEnabled",
+        // V3.1 Adaptive ATR Trailing
+        "trailingEnabled", "stopLossEnabled", "trailingMode",
+        "trailingAtrMultiplier", "trailingMinPct", "trailingMaxPct",
+        "trailingAtrSmoothingAlpha",
         "pumpGuardDeviationPct", "pumpGuardVolumeSpikeRatio", "pumpGuardCooldownMinutes",
         "dumpGuardDeviationPct", "dumpGuardVolumeSpikeRatio", "dumpGuardCooldownMinutes",
         "maxOpenCycles", "maxDailyOrders",

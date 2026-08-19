@@ -1724,6 +1724,12 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   defaultExitPolicyVersion:text("default_exit_policy_version").default("FIRST_PROFITABLE_HIGHER_RUNG_V2"),
   trailingEnabled:         boolean("trailing_enabled").notNull().default(false),
   stopLossEnabled:         boolean("stop_loss_enabled").notNull().default(false),
+  // V3.1 Adaptive ATR Trailing
+  trailingMode:            text("trailing_mode").notNull().default("adaptive_atr"),
+  trailingAtrMultiplier:   decimal("trailing_atr_multiplier", { precision: 6, scale: 4 }).notNull().default("0.7500"),
+  trailingMinPct:          decimal("trailing_min_pct", { precision: 6, scale: 4 }).notNull().default("0.2500"),
+  trailingMaxPct:          decimal("trailing_max_pct", { precision: 6, scale: 4 }).notNull().default("1.2000"),
+  trailingAtrSmoothingAlpha: decimal("trailing_atr_smoothing_alpha", { precision: 6, scale: 4 }).notNull().default("0.2500"),
   buyFeePct:               decimal("buy_fee_pct", { precision: 6, scale: 4 }).notNull().default("0.0900"),
   sellFeePct:              decimal("sell_fee_pct", { precision: 6, scale: 4 }).notNull().default("0.0900"),
   netProfitTargetPct:      decimal("net_profit_target_pct", { precision: 6, scale: 3 }).notNull().default("0.800"),

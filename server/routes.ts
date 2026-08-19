@@ -70,6 +70,8 @@ export const MIGRATIONS = [
   { id: '087_spot_order_intents_provenance', filePath: path.join(migrationsDir, '087_spot_order_intents_provenance.sql') },
   // SPOT Forward Twin telemetry — append-only snapshots table
   { id: '088_spot_forward_twin', filePath: path.join(migrationsDir, '088_spot_forward_twin.sql') },
+  // GRID V3.1 Adaptive ATR Trailing — additive columns, no data loss
+  { id: '091_grid_v31_adaptive_trailing', filePath: path.join(migrationsDir, '091_grid_v31_adaptive_trailing.sql') },
 ];
 
 

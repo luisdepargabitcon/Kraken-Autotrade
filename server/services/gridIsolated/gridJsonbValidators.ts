@@ -19,6 +19,9 @@ import type {
   StopLossLayer,
   StopLossLayerType,
   TrailingProtectionState,
+  TrailingAtrSource,
+  TrailingMode,
+  TrailingPolicySnapshot,
 } from "./gridIsolatedTypes";
 
 export type JsonbValidationResult<T> =
@@ -66,6 +69,16 @@ const VALID_MAKER_EXIT_STATES: GridMakerExitState[] = [
   "REQUIRES_REVIEW",
 ];
 
+const VALID_TRAILING_MODES: TrailingMode[] = ["adaptive_atr", "manual"];
+
+const VALID_ATR_SOURCES: (TrailingAtrSource | null)[] = [
+  "current_atr",
+  "persisted_atr",
+  "manual_fallback",
+  "none",
+  null,
+];
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -88,10 +101,32 @@ function finiteNumber(value: unknown): number | null {
   return null;
 }
 
+function validateTrailingPolicy(raw: unknown): TrailingPolicySnapshot | null {
+  if (!isPlainObject(raw)) return null;
+  const mode = VALID_TRAILING_MODES.includes(raw.mode as TrailingMode)
+    ? (raw.mode as TrailingMode)
+    : "adaptive_atr";
+  return {
+    enabled: raw.enabled === true,
+    mode,
+    calculationVersion: finiteNumber(raw.calculationVersion) ?? 1,
+    activationPctEffective: finiteNumber(raw.activationPctEffective) ?? 0,
+    activationPrice: finiteNumber(raw.activationPrice),
+    profitFloorPrice: finiteNumber(raw.profitFloorPrice),
+    atrMultiplier: finiteNumber(raw.atrMultiplier) ?? 0.75,
+    minPct: finiteNumber(raw.minPct) ?? 0.25,
+    maxPct: finiteNumber(raw.maxPct) ?? 1.20,
+    smoothingAlpha: finiteNumber(raw.smoothingAlpha) ?? 0.25,
+  };
+}
+
 function validateTrailing(raw: unknown): TrailingProtectionState {
   const obj = isPlainObject(raw) ? raw : {};
   const highestPrice = finiteNumber(obj.highestPriceSinceBuy);
   const currentStop = finiteNumber(obj.currentStopPrice);
+  const atrSource = VALID_ATR_SOURCES.includes(obj.atrSource as TrailingAtrSource | null)
+    ? (obj.atrSource as TrailingAtrSource | null)
+    : null;
   return {
     activated: obj.activated === true,
     activatedAt: toDate(obj.activatedAt),
@@ -99,6 +134,15 @@ function validateTrailing(raw: unknown): TrailingProtectionState {
     trailingStopPct: finiteNumber(obj.trailingStopPct) ?? 0,
     currentStopPrice: currentStop,
     reason: typeof obj.reason === "string" ? obj.reason : "",
+    // V3.1 additive fields (backward compatible — old JSONB without these is fine)
+    policy: validateTrailingPolicy(obj.policy),
+    atrPct: finiteNumber(obj.atrPct),
+    smoothedAtrPct: finiteNumber(obj.smoothedAtrPct),
+    atrSource,
+    effectiveStopPct: finiteNumber(obj.effectiveStopPct),
+    baseStopPct: finiteNumber(obj.baseStopPct),
+    profitFloorPrice: finiteNumber(obj.profitFloorPrice),
+    activationPrice: finiteNumber(obj.activationPrice),
   };
 }
 
@@ -224,6 +268,8 @@ export function validateRiskStateJson(raw: unknown): JsonbValidationResult<GridC
     protectiveExit: validatePendingMakerExit(raw.protectiveExit),
     stateVersion: 1,
     lastEvaluatedAt: toDate(raw.lastEvaluatedAt),
+    // V3.1: trailing policy snapshot (additive — null for legacy cycles)
+    trailingPolicy: isPlainObject(raw.trailingPolicy) ? validateTrailingPolicy(raw.trailingPolicy) : null,
   };
 
   return { valid: true, value: risk };
@@ -400,6 +446,14 @@ export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null 
       trailingStopPct: 0,
       currentStopPrice: null,
       reason: "",
+      policy: null,
+      atrPct: null,
+      smoothedAtrPct: null,
+      atrSource: null,
+      effectiveStopPct: null,
+      baseStopPct: null,
+      profitFloorPrice: null,
+      activationPrice: null,
     },
     stopLoss: [],
     hodl: {
@@ -435,6 +489,7 @@ export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null 
     },
     stateVersion: 1,
     lastEvaluatedAt: null,
+    trailingPolicy: null,
   };
   return empty;
 }

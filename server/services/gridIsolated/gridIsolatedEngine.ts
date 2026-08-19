@@ -77,6 +77,10 @@ import {
 } from "./gridCycleOwnedTarget";
 import { gridRiskManager } from "./gridRiskManager";
 import {
+  computeActivationPrice,
+  buildTrailingPolicySnapshot,
+} from "./gridAdaptiveTrailing";
+import {
   loadRangeVersionsForCycles,
 } from "./gridCycleRangeVersionLoader";
 import {
@@ -460,6 +464,12 @@ export class GridIsolatedEngine {
           defaultExitPolicyVersion: (row.defaultExitPolicyVersion as GridExitPolicyVersion | undefined) ?? DEFAULT_GRID_CONFIG.defaultExitPolicyVersion,
           trailingEnabled: row.trailingEnabled ?? DEFAULT_GRID_CONFIG.trailingEnabled,
           stopLossEnabled: row.stopLossEnabled ?? DEFAULT_GRID_CONFIG.stopLossEnabled,
+          // V3.1 Adaptive ATR Trailing
+          trailingMode: (row.trailingMode as any) ?? DEFAULT_GRID_CONFIG.trailingMode,
+          trailingAtrMultiplier: parseFloat(row.trailingAtrMultiplier ?? "0.75"),
+          trailingMinPct: parseFloat(row.trailingMinPct ?? "0.25"),
+          trailingMaxPct: parseFloat(row.trailingMaxPct ?? "1.20"),
+          trailingAtrSmoothingAlpha: parseFloat(row.trailingAtrSmoothingAlpha ?? "0.25"),
           buyFeePct: parseFloat(row.buyFeePct ?? String(DEFAULT_GRID_CONFIG.buyFeePct)),
           sellFeePct: parseFloat(row.sellFeePct ?? String(DEFAULT_GRID_CONFIG.sellFeePct)),
           netProfitTargetPct: parseFloat(row.netProfitTargetPct),
@@ -609,6 +619,12 @@ export class GridIsolatedEngine {
           defaultExitPolicyVersion: (row.defaultExitPolicyVersion as GridExitPolicyVersion | undefined) ?? DEFAULT_GRID_CONFIG.defaultExitPolicyVersion,
           trailingEnabled: row.trailingEnabled ?? DEFAULT_GRID_CONFIG.trailingEnabled,
           stopLossEnabled: row.stopLossEnabled ?? DEFAULT_GRID_CONFIG.stopLossEnabled,
+          // V3.1 Adaptive ATR Trailing
+          trailingMode: (row.trailingMode as any) ?? DEFAULT_GRID_CONFIG.trailingMode,
+          trailingAtrMultiplier: parseFloat(row.trailingAtrMultiplier ?? "0.75"),
+          trailingMinPct: parseFloat(row.trailingMinPct ?? "0.25"),
+          trailingMaxPct: parseFloat(row.trailingMaxPct ?? "1.20"),
+          trailingAtrSmoothingAlpha: parseFloat(row.trailingAtrSmoothingAlpha ?? "0.25"),
           buyFeePct: parseFloat(row.buyFeePct ?? String(DEFAULT_GRID_CONFIG.buyFeePct)),
           sellFeePct: parseFloat(row.sellFeePct ?? String(DEFAULT_GRID_CONFIG.sellFeePct)),
           netProfitTargetPct: parseFloat(row.netProfitTargetPct),
@@ -1006,6 +1022,12 @@ export class GridIsolatedEngine {
         defaultExitPolicyVersion: this.config.defaultExitPolicyVersion,
         trailingEnabled: this.config.trailingEnabled,
         stopLossEnabled: this.config.stopLossEnabled,
+        // V3.1 Adaptive ATR Trailing
+        trailingMode: this.config.trailingMode ?? "adaptive_atr",
+        trailingAtrMultiplier: (this.config.trailingAtrMultiplier ?? 0.75).toFixed(4),
+        trailingMinPct: (this.config.trailingMinPct ?? 0.25).toFixed(4),
+        trailingMaxPct: (this.config.trailingMaxPct ?? 1.20).toFixed(4),
+        trailingAtrSmoothingAlpha: (this.config.trailingAtrSmoothingAlpha ?? 0.25).toFixed(4),
         buyFeePct: this.config.buyFeePct.toFixed(4),
         sellFeePct: this.config.sellFeePct.toFixed(4),
         netProfitTargetPct: this.config.netProfitTargetPct.toFixed(3),
@@ -1328,7 +1350,7 @@ export class GridIsolatedEngine {
 
     // Las salidas existentes siempre se procesan antes de validar microestructura.
     if (this.config.mode === "SHADOW") {
-      await this.evaluateRiskForOpenCycles(shadowExecutionPrice, ctx);
+      await this.evaluateRiskForOpenCycles(shadowExecutionPrice, ctx, bandSnapshot.atrPct);
       const cyclesClosed = await this.processOpenCyclesShadow(shadowExecutionPrice, ctx);
       if (cyclesClosed > 0) {
         this.lastTickReason = `Cierres SHADOW de ciclos abiertos: ${cyclesClosed}. Rebuild aplazado para evitar solapamientos.`;
@@ -3669,6 +3691,36 @@ export class GridIsolatedEngine {
       cycle.targetSellQuantity = targetResult.targetSellQuantity;
       cycle.targetCalculationJson = targetResult;
 
+      // V3.1: Snapshot the trailing policy at cycle creation time.
+      // Changes to global config do NOT retroactively affect open cycles.
+      const trailingEnabled = this.config.trailingEnabled ?? false;
+      const trailingMode = this.config.trailingMode ?? "adaptive_atr";
+      const activationPrice = computeActivationPrice(
+        fillPrice,
+        targetResult.targetSellPrice ?? null,
+        this.config.trailingActivationPct,
+        trailingMode,
+        constraints.priceTickSize,
+      );
+      const trailingPolicy = buildTrailingPolicySnapshot({
+        enabled: trailingEnabled,
+        mode: trailingMode,
+        activationPctEffective: this.config.trailingActivationPct,
+        activationPrice,
+        profitFloorPrice: targetResult.targetSellPrice ?? null,
+        atrMultiplier: this.config.trailingAtrMultiplier ?? 0.75,
+        minPct: this.config.trailingMinPct ?? 0.25,
+        maxPct: this.config.trailingMaxPct ?? 1.20,
+        smoothingAlpha: this.config.trailingAtrSmoothingAlpha ?? 0.25,
+      });
+      // Inject the policy snapshot into the cycle's initial risk state.
+      const initialRisk = cycle.riskStateJson ?? this.defaultRiskState();
+      initialRisk.trailingPolicy = trailingPolicy;
+      initialRisk.trailing.policy = trailingPolicy;
+      initialRisk.trailing.profitFloorPrice = targetResult.targetSellPrice ?? null;
+      initialRisk.trailing.activationPrice = activationPrice;
+      cycle.riskStateJson = initialRisk;
+
       const now = tickCtx.startedAt;
       const insertValues: any = {
         id: cycle.id,
@@ -3776,7 +3828,8 @@ export class GridIsolatedEngine {
    */
   private async evaluateRiskForOpenCycles(
     priceResult: GridShadowExecutionPriceResult,
-    ctx: GridTickContext
+    ctx: GridTickContext,
+    atrPct: number | null,
   ): Promise<void> {
     if (!this.config) return;
 
@@ -3817,7 +3870,8 @@ export class GridIsolatedEngine {
           this.config,
           risk.trailing,
           risk.stopLoss,
-          risk.hodl
+          risk.hodl,
+          atrPct,
         );
         evaluation = riskEval;
       }
@@ -3865,12 +3919,61 @@ export class GridIsolatedEngine {
       );
       // While trailing is armed but not firing, do not advertise the normal target
       // as the active exit route; it would confuse the UI/risk state.
+      // V3.1: When trailing takes over a V3 cycle, explicitly cancel any existing
+      // V3 maker order to enforce the single-exit invariant.
       if (evaluation?.action === "TRAILING_UPDATE") {
         nextRisk.activeExitRoute = null;
         nextRisk.pendingExitPrice = null;
+        // V3 takeover: cancel existing CYCLE_OWNED_TARGET maker if pending
+        if (
+          nextRisk.protectiveExit.state === "MAKER_PENDING" &&
+          nextRisk.protectiveExit.route === "CYCLE_OWNED_TARGET"
+        ) {
+          nextRisk.protectiveExit = {
+            ...nextRisk.protectiveExit,
+            state: "CANCELLED",
+            cancellationReason: "TRAILING_TAKEOVER",
+          };
+          await this.logEvent(
+            "GRID_MAKER_PENDING_CANCELLED",
+            `[SHADOW] Maker V3 cancelado por takeover trailing — ciclo ${cycle.cycleNumber}`,
+            {
+              cycleId: cycle.id,
+              previousRoute: "CYCLE_OWNED_TARGET",
+              reason: "TRAILING_TAKEOVER",
+              mode: "SHADOW",
+            },
+          );
+        }
+      } else if (evaluation?.action === "TRAILING_CLOSE") {
+        // Trailing close: the route is TRAILING_MAKER, replacing any V3 maker.
+        // The advanceProtectiveExitLifecycle already handles route changes by
+        // resetting the lifecycle. Single-exit invariant is enforced there.
+        nextRisk.activeExitRoute = nextRisk.protectiveExit.route ?? null;
+        nextRisk.pendingExitPrice = nextRisk.protectiveExit.requestedMakerPrice ?? nextRisk.protectiveExit.triggerPrice ?? null;
       } else {
         nextRisk.activeExitRoute = nextRisk.protectiveExit.route ?? null;
         nextRisk.pendingExitPrice = nextRisk.protectiveExit.requestedMakerPrice ?? nextRisk.protectiveExit.triggerPrice ?? null;
+      }
+
+      // V3.1 Single-exit invariant: a cycle must never have two simultaneous
+      // SELL obligations. If somehow both CYCLE_OWNED_TARGET and TRAILING_MAKER
+      // are in MAKER_PENDING state, mark for review.
+      if (
+        nextRisk.protectiveExit.state === "MAKER_PENDING" &&
+        nextRisk.protectiveExit.route === "TRAILING_MAKER" &&
+        risk.protectiveExit.state === "MAKER_PENDING" &&
+        risk.protectiveExit.route === "CYCLE_OWNED_TARGET"
+      ) {
+        // The advanceProtectiveExitLifecycle should have reset the lifecycle,
+        // but if it didn't (edge case), fail closed.
+        botLogger.error("GRID_SINGLE_EXIT_INVARIANT_VIOLATION" as any,
+          `[GridIsolatedEngine] Invariante de salida única violada para ciclo ${cycle.id}`,
+          { cycleId: cycle.id, oldRoute: risk.protectiveExit.route, newRoute: nextRisk.protectiveExit.route });
+        this.markCycleForReview(cycle, "Invariante de salida única violada", "SINGLE_EXIT_INVARIANT", "risk_state_json");
+        await this.persistReviewState(cycle);
+        cycle.status = preEvalStatus;
+        continue;
       }
 
       // Strict JSONB validation before persistence (Gate F). On validation

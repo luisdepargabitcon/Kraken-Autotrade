@@ -19,9 +19,15 @@ import type {
   HodlRecoveryState,
   GridCycle,
   GridIsolatedConfig,
+  TrailingMode,
 } from "./gridIsolatedTypes";
 import { FEE_BUFFER_BUY_PCT, FEE_BUFFER_SELL_PCT } from "./gridIsolatedTypes";
 import { computeBreakEvenSellPrice } from "./gridNetCalculator";
+import {
+  resolveAdaptiveTrailingStop,
+  computeActivationPrice,
+  type AdaptiveTrailingConfig,
+} from "./gridAdaptiveTrailing";
 
 export interface RiskEvaluation {
   action: "HOLD" | "TRAILING_UPDATE" | "TRAILING_CLOSE" | "STOP_LOSS_SOFT" | "STOP_LOSS_HARD" | "STOP_LOSS_EMERGENCY" | "HODL_RECOVERY_ACTIVATE" | "HODL_RECOVERY_SELL";
@@ -42,7 +48,9 @@ class GridRiskManager {
     config: GridIsolatedConfig,
     trailingState: TrailingProtectionState,
     stopLossLayers: StopLossLayer[],
-    hodlState: HodlRecoveryState
+    hodlState: HodlRecoveryState,
+    /** Current ATR pct from canonical GRID band snapshot (V3.1 adaptive trailing). */
+    atrPct?: number | null,
   ): RiskEvaluation {
     if (!cycle.buyPrice) {
       return this.noAction(trailingState, stopLossLayers, hodlState);
@@ -75,7 +83,9 @@ class GridRiskManager {
     }
 
     // ─── 2. Check Stop Loss layers ─────────────────────────────────
-    const updatedLayers = stopLossLayers.map(layer => {
+    // V3.1: stop loss only evaluates when stopLossEnabled is true.
+    const stopLossEnabled = config.stopLossEnabled ?? false;
+    const updatedLayers = stopLossEnabled ? stopLossLayers.map(layer => {
       if (layer.triggered) return layer;
 
       let triggerPrice: number;
@@ -104,7 +114,7 @@ class GridRiskManager {
         return updated;
       }
       return layer;
-    });
+    }) : stopLossLayers;
 
     const softTriggered = updatedLayers.find(l => l.layer === "soft" && l.triggered);
     const hardTriggered = updatedLayers.find(l => l.layer === "hard" && l.triggered);
@@ -173,33 +183,102 @@ class GridRiskManager {
     // Only active when the user explicitly enables trailing. Once trailing is
     // active it remains active even if the current profit retraces below the
     // activation threshold, until the stop is hit.
-    if ((config.trailingEnabled ?? false) && (profitPct >= config.trailingActivationPct || trailingState.activated)) {
-      // Trailing should be active
+    //
+    // V3.1: For CYCLE_OWNED_NET_TARGET_V3 cycles, activation is floored at
+    // targetSellPrice so trailing only arms after the economic target is reached.
+    // This prevents trailing from closing below the V3 net profit objective.
+    // V2 and legacy cycles are NOT affected — they use the plain activationPct.
+    const trailingEnabled = config.trailingEnabled ?? false;
+    const trailingMode: TrailingMode = config.trailingMode ?? "adaptive_atr";
+
+    const isV3Cycle = cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" ||
+                      cycle.targetKind === "CYCLE_OWNED_SYNTHETIC";
+
+    // Compute activation price with V3 floor (only for V3 cycles)
+    const activationPrice = computeActivationPrice(
+      buyPrice,
+      isV3Cycle ? cycle.targetSellPrice : null,
+      config.trailingActivationPct,
+      trailingMode,
+      0.01, // tick size — risk manager doesn't have constraints; engine passes real tick via state
+    );
+
+    // Activation condition: price >= activationPrice, OR trailing already activated
+    const activationReached = activationPrice != null
+      ? currentPrice >= activationPrice
+      : profitPct >= config.trailingActivationPct;
+
+    if (trailingEnabled && (activationReached || trailingState.activated)) {
+      // Trailing should be active — compute adaptive stop
+      const adaptiveConfig: AdaptiveTrailingConfig = {
+        mode: trailingMode,
+        activationPct: config.trailingActivationPct,
+        stopPct: config.trailingStopPct,
+        atrMultiplier: config.trailingAtrMultiplier ?? 0.75,
+        minPct: config.trailingMinPct ?? 0.25,
+        maxPct: config.trailingMaxPct ?? 1.20,
+        smoothingAlpha: config.trailingAtrSmoothingAlpha ?? 0.25,
+        priceTickSize: 0.01,
+      };
+
+      const adaptiveResult = resolveAdaptiveTrailingStop({
+        buyPrice,
+        currentPrice,
+        highestPriceSinceBuy: trailingState.highestPriceSinceBuy,
+        targetSellPrice: isV3Cycle ? cycle.targetSellPrice : null,
+        atrPct: atrPct ?? trailingState.atrPct ?? null,
+        previousSmoothedAtrPct: trailingState.smoothedAtrPct ?? null,
+        previousStopPrice: trailingState.currentStopPrice,
+        profitFloorPrice: isV3Cycle ? cycle.targetSellPrice : null,
+        config: adaptiveConfig,
+      });
+
       let updatedTrailing: TrailingProtectionState = { ...trailingState };
 
       if (!trailingState.activated) {
         // Activate trailing
         updatedTrailing = {
+          ...trailingState,
           activated: true,
           activatedAt: new Date(),
-          highestPriceSinceBuy: currentPrice,
-          trailingStopPct: config.trailingStopPct,
-          currentStopPrice: currentPrice * (1 - config.trailingStopPct / 100),
-          reason: `Trailing activated at ${profitPct.toFixed(2)}% profit`,
+          highestPriceSinceBuy: adaptiveResult.highestPrice,
+          trailingStopPct: adaptiveResult.effectiveStopPct ?? config.trailingStopPct,
+          currentStopPrice: adaptiveResult.effectiveStopPrice,
+          reason: `Trailing activated at ${profitPct.toFixed(2)}% profit — stop: ${adaptiveResult.effectiveStopPrice}`,
+          atrPct: adaptiveResult.atrPct,
+          smoothedAtrPct: adaptiveResult.smoothedAtrPct,
+          atrSource: adaptiveResult.atrSource,
+          effectiveStopPct: adaptiveResult.effectiveStopPct,
+          baseStopPct: adaptiveResult.baseStopPct,
+          profitFloorPrice: adaptiveResult.profitFloorPrice,
+          activationPrice: adaptiveResult.activationPrice,
         };
         botLogger.info("GRID_TRAILING_ACTIVATED", updatedTrailing.reason, {
           cycleId: cycle.id, profitPct, currentPrice, stopPrice: updatedTrailing.currentStopPrice,
+          mode: trailingMode, atrSource: adaptiveResult.atrSource,
         });
       } else {
-        // Update highest price
-        if (currentPrice > (updatedTrailing.highestPriceSinceBuy || 0)) {
-          updatedTrailing.highestPriceSinceBuy = currentPrice;
-          updatedTrailing.currentStopPrice = currentPrice * (1 - config.trailingStopPct / 100);
-        }
+        // Already activated — update highest and stop (never descend)
+        updatedTrailing = {
+          ...trailingState,
+          highestPriceSinceBuy: adaptiveResult.highestPrice,
+          trailingStopPct: adaptiveResult.effectiveStopPct ?? trailingState.trailingStopPct,
+          currentStopPrice: adaptiveResult.effectiveStopPrice ?? trailingState.currentStopPrice,
+          reason: adaptiveResult.reason,
+          atrPct: adaptiveResult.atrPct,
+          smoothedAtrPct: adaptiveResult.smoothedAtrPct,
+          atrSource: adaptiveResult.atrSource,
+          effectiveStopPct: adaptiveResult.effectiveStopPct,
+          baseStopPct: adaptiveResult.baseStopPct,
+          profitFloorPrice: adaptiveResult.profitFloorPrice,
+          activationPrice: adaptiveResult.activationPrice,
+        };
       }
 
-      // Check if trailing stop hit
-      if (updatedTrailing.currentStopPrice && currentPrice <= updatedTrailing.currentStopPrice) {
+      // Check if trailing stop hit (strictly less than — price must drop below stop,
+      // not just touch it; this prevents immediate close when trailing activates at
+      // the profit floor price = V3 target).
+      if (updatedTrailing.currentStopPrice && currentPrice < updatedTrailing.currentStopPrice) {
         return {
           action: "TRAILING_CLOSE",
           reason: `Trailing stop hit at ${currentPrice} (stop: ${updatedTrailing.currentStopPrice})`,
@@ -254,6 +333,15 @@ class GridRiskManager {
       trailingStopPct: 0,
       currentStopPrice: null,
       reason: "",
+      // V3.1 adaptive fields (additive — old JSONB without these is still valid)
+      policy: null,
+      atrPct: null,
+      smoothedAtrPct: null,
+      atrSource: null,
+      effectiveStopPct: null,
+      baseStopPct: null,
+      profitFloorPrice: null,
+      activationPrice: null,
     };
   }
 
