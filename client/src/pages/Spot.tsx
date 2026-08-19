@@ -8,7 +8,9 @@ import { SpotHistoryPanel } from "@/components/spot/SpotHistoryPanel";
 import { SpotIntentsPanel } from "@/components/spot/SpotIntentsPanel";
 import { SpotAuditPanel } from "@/components/spot/SpotAuditPanel";
 import { SpotTerminalPanel } from "@/components/spot/SpotTerminalPanel";
-import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare } from "lucide-react";
+import { SpotMarketContextPanel, type SpotContextSnapshotData } from "@/components/spot/SpotMarketContextPanel";
+import { SpotAssetsPanel, type SpotPairStatus } from "@/components/spot/SpotAssetsPanel";
+import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -97,6 +99,26 @@ export default function Spot() {
     refetchInterval: 10000,
   });
 
+  const { data: contextData, isLoading: contextLoading } = useQuery<{ snapshots: SpotContextSnapshotData[] }>({
+    queryKey: ["spot-context"],
+    queryFn: async () => {
+      const res = await fetch("/api/spot/context");
+      if (!res.ok) throw new Error("Failed to fetch SPOT context");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
+  const { data: pairsData } = useQuery<{ pairs: SpotPairStatus[] }>({
+    queryKey: ["spot-pairs"],
+    queryFn: async () => {
+      const res = await fetch("/api/spot/pairs");
+      if (!res.ok) throw new Error("Failed to fetch SPOT pairs");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
   // ─── Mode change mutation ─────────────────────────────────────────────────
 
   class SpotModeChangeError extends Error {
@@ -149,6 +171,21 @@ export default function Spot() {
     queryClient.invalidateQueries({ queryKey: ["spot-"] });
   }, [refetchStatus, queryClient]);
 
+  const handlePairToggle = useCallback(async (pair: string, enabled: boolean) => {
+    const res = await fetch(`/api/spot/pairs/${encodeURIComponent(pair)}/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error ?? "Error al cambiar par");
+    }
+    queryClient.invalidateQueries({ queryKey: ["spot-pairs"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-context"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-status"] });
+  }, [queryClient]);
+
   const executionMode = status?.executionMode ?? "OFF";
   const positions = positionsData?.positions ?? [];
   const trades = historyData?.trades ?? [];
@@ -158,6 +195,14 @@ export default function Spot() {
   const auditClosedCount = auditData?.closedCount ?? 0;
   const summary = summaryData ?? null;
   const activityEvents = activityData?.events ?? [];
+  const contextSnapshots = contextData?.snapshots ?? [];
+  const pairStatuses = pairsData?.pairs ?? [];
+
+  // Count open positions per pair for assets panel
+  const openPositionsByPair: Record<string, number> = {};
+  for (const p of positions) {
+    openPositionsByPair[p.pair] = (openPositionsByPair[p.pair] ?? 0) + 1;
+  }
 
   return (
     <AppShell>
@@ -166,13 +211,13 @@ export default function Spot() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-              SPOT Engine
+              Motor SPOT
               <span className="text-[10px] font-mono text-muted-foreground border border-border/50 rounded px-1.5 py-0.5">
                 {status?.policyVersion ?? "SPOT-1.0.0"}
               </span>
             </h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Motor canónico unificado · SHADOW / REAL · LONG ONLY
+              Motor canónico unificado · SHADOW / REAL · Solo LONG
             </p>
           </div>
           <Button
@@ -197,19 +242,24 @@ export default function Spot() {
         {/* Summary KPIs */}
         {summary && (
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-            <KpiBox label="Net PnL" value={`$${(summary.netPnlUsd ?? 0).toFixed(2)}`} positive={(summary.netPnlUsd ?? 0) >= 0} />
-            <KpiBox label="Win Rate" value={`${((summary.winRate ?? 0) * 100).toFixed(1)}%`} />
+            <KpiBox label="PnL Neto" value={`$${(summary.netPnlUsd ?? 0).toFixed(2)}`} positive={(summary.netPnlUsd ?? 0) >= 0} />
+            <KpiBox label="Tasa de Acierto" value={`${((summary.winRate ?? 0) * 100).toFixed(1)}%`} />
             <KpiBox label="Trades" value={summary.totalTrades ?? 0} />
             <KpiBox label="Abiertas" value={summary.openPositions ?? 0} />
-            <KpiBox label="Profit Factor" value={(summary.profitFactor ?? 0).toFixed(2)} />
-            <KpiBox label="Avg Hold" value={formatHold(summary.avgHoldTimeMinutes)} />
+            <KpiBox label="Factor de Beneficio" value={(summary.profitFactor ?? 0).toFixed(2)} />
+            <KpiBox label="Duración Media" value={formatHold(summary.avgHoldTimeMinutes)} />
           </div>
         )}
 
         {/* Tabs */}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="overview">Resumen</TabsTrigger>
+            <TabsTrigger value="context">
+              <BarChart3 className="h-3.5 w-3.5 mr-1 inline" />
+              Contexto
+            </TabsTrigger>
+            <TabsTrigger value="assets">Pares</TabsTrigger>
             <TabsTrigger value="positions">
               Posiciones
               {positions.length > 0 && (
@@ -256,6 +306,21 @@ export default function Spot() {
               <SpotPositionsPanel positions={positions} executionMode={executionMode} />
               <SpotIntentsPanel intents={intents} />
             </div>
+          </TabsContent>
+
+          <TabsContent value="context" className="space-y-3">
+            <SpotMarketContextPanel
+              snapshots={contextSnapshots}
+              isLoading={contextLoading}
+            />
+          </TabsContent>
+
+          <TabsContent value="assets" className="space-y-3">
+            <SpotAssetsPanel
+              pairs={pairStatuses}
+              onToggle={handlePairToggle}
+              openPositionsByPair={openPositionsByPair}
+            />
           </TabsContent>
 
           <TabsContent value="positions">

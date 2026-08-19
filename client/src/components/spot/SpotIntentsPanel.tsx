@@ -44,7 +44,7 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
             <Crosshair className="h-4 w-4 text-primary" />
-            Entry Intents
+            Intents de Entrada
           </CardTitle>
           <div className="flex gap-2">
             <Badge variant="secondary" className="font-mono text-[10px]">

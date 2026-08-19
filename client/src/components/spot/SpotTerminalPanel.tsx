@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Pause, Play, Trash2, Copy, RefreshCw, Search, ArrowDownToLine } from "lucide-react";
+import { Activity, Pause, Play, Trash2, Copy, RefreshCw, Search, ArrowDownToLine, ChevronLeft, ChevronRight } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -21,9 +21,10 @@ type ConnStatus = "CONNECTING" | "LIVE" | "PAUSED" | "RECONNECTING" | "NO_TOKEN"
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const MAX_LINES = 1000;
-const PAUSE_BUFFER_LIMIT = 1000;
+const MAX_LINES = 2000;
+const PAUSE_BUFFER_LIMIT = 2000;
 const RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 10000]; // 1s, 2s, 5s, 10s, max 10s
+const PAGE_SIZES = [50, 100, 200] as const;
 
 const LEVEL_CLASS: Record<TerminalLevel, string> = {
   INFO:       "text-muted-foreground",
@@ -50,6 +51,9 @@ export function SpotTerminalPanel() {
   const [filterPair, setFilterPair] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
+  const [pageSize, setPageSize] = useState<number>(100);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [showPaginated, setShowPaginated] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pauseRef = useRef(false);
@@ -228,12 +232,18 @@ export function SpotTerminalPanel() {
     NO_TOKEN: "bg-red-500", OFFLINE: "bg-red-500",
   };
 
+  const totalPages = Math.max(1, Math.ceil(visibleLines.length / pageSize));
+  const safePage = Math.max(1, Math.min(currentPage, totalPages));
+  const paginatedLines = showPaginated
+    ? visibleLines.slice((safePage - 1) * pageSize, safePage * pageSize)
+    : visibleLines;
+
   return (
-    <div className="rounded-lg border border-border/50 bg-card flex flex-col h-[600px]">
+    <div className="rounded-lg border border-border/50 bg-card flex flex-col h-[620px]">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50 flex-shrink-0">
         <Activity className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold">Spot Terminal</span>
+        <span className="text-sm font-semibold">Terminal SPOT</span>
         <span className={`h-2 w-2 rounded-full ml-1 ${statusColor[status]}`} title={status} />
         <Badge variant="outline" className="text-[10px] py-0 px-1.5">{status}</Badge>
         {visibleLines.length > 0 && (
@@ -277,13 +287,24 @@ export function SpotTerminalPanel() {
             </select>
           )}
 
+          {/* Pagination toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-7 px-2 ${showPaginated ? "text-cyan-400" : "text-muted-foreground"}`}
+            onClick={() => { setShowPaginated(!showPaginated); setCurrentPage(1); }}
+            title={showPaginated ? "Modo stream" : "Modo paginado"}
+          >
+            <span className="text-[10px]">{showPaginated ? "Stream" : "Páginas"}</span>
+          </Button>
+
           {/* Auto-scroll toggle */}
           <Button
             variant="ghost"
             size="sm"
             className={`h-7 px-2 ${autoScroll ? "text-emerald-400" : "text-muted-foreground"}`}
             onClick={toggleAutoScroll}
-            title={autoScroll ? "Auto-scroll ON" : "Auto-scroll OFF"}
+            title={autoScroll ? "Auto-scroll activado" : "Auto-scroll desactivado"}
           >
             <ArrowDownToLine className="h-3.5 w-3.5" />
           </Button>
@@ -313,12 +334,12 @@ export function SpotTerminalPanel() {
           <p className="text-red-400 p-4">
             No se pudo obtener ticket de terminal. Verifica que TERMINAL_TOKEN esté configurado en el servidor.
           </p>
-        ) : visibleLines.length === 0 ? (
+        ) : paginatedLines.length === 0 ? (
           <p className="text-muted-foreground p-4">
-            {status === "CONNECTING" ? "Conectando..." : "Sin eventos todavía. El terminal muestra actividad del motor Spot en tiempo real."}
+            {status === "CONNECTING" ? "Conectando..." : "Sin eventos todavía. El terminal muestra actividad del motor SPOT en tiempo real."}
           </p>
         ) : (
-          visibleLines.map((l) => (
+          paginatedLines.map((l) => (
             <div key={l.id} className="flex gap-2 leading-5">
               <span className="text-muted-foreground/60 select-none flex-shrink-0">
                 {new Date(l.ts).toISOString().slice(11, 23)}
@@ -338,6 +359,43 @@ export function SpotTerminalPanel() {
         )}
         <div ref={bottomRef} />
       </div>
+
+      {/* Pagination footer */}
+      {showPaginated && visibleLines.length > 0 && (
+        <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/50 flex-shrink-0 text-[10px]">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Líneas por página:</span>
+            <select
+              value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+              className="bg-muted border border-border/50 rounded px-1 py-0.5 text-foreground"
+            >
+              {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Pág. {safePage} de {totalPages}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5"
+              disabled={safePage <= 1}
+              onClick={() => setCurrentPage(safePage - 1)}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5"
+              disabled={safePage >= totalPages}
+              onClick={() => setCurrentPage(safePage + 1)}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

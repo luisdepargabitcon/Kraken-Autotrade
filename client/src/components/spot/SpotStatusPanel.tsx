@@ -98,7 +98,7 @@ export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) 
         setError("No se pudo cambiar el modo. Verifique la conexión.");
       }
     } catch (err: any) {
-      setError(err.message || "Network error");
+      setError(err.message || "Error de conexión");
       if (err?.blockers && Array.isArray(err.blockers)) {
         setErrorBlockers(err.blockers as string[]);
       }
