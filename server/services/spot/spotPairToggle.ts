@@ -22,7 +22,20 @@
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
 import { DEFAULT_ACTIVE_PAIRS, normalizePair } from "../pairAllowlist";
-import { _invalidatePairEntryGenerationAndDrain } from "./spotEngine";
+import { _invalidatePairEntryGenerationOnly, _drainPairCriticalSection } from "./spotEngine";
+
+// ─── Typed errors ────────────────────────────────────────────────────────────
+
+export class PairDisableDrainTimeoutError extends Error {
+  readonly pair: string;
+  readonly remainingCount: number;
+  constructor(pair: string, remainingCount: number) {
+    super(`El activo ${pair} se ha marcado como desactivado, pero todavía existe una sección crítica de entrada en curso. No se considera completada la desactivación hasta que el motor quede drenado.`);
+    this.name = "PairDisableDrainTimeoutError";
+    this.pair = pair;
+    this.remainingCount = remainingCount;
+  }
+}
 
 // ─── Allowlist validation ───────────────────────────────────────────────────
 
@@ -197,16 +210,21 @@ export async function disablePair(pair: string): Promise<PairToggleResult> {
 
     const updated = current.filter(p => normalizePair(p) !== normalized);
 
+    // P3: Invalidate per-pair generation BEFORE persisting to DB.
+    // This ensures any in-flight scanPair for THIS pair sees the invalidated
+    // generation as soon as possible, even before the DB write completes.
+    // The drain happens AFTER the DB write to maintain consistency.
+    await _invalidatePairEntryGenerationOnly(normalized);
+
     // Zero active pairs is VALID — persist explicitly.
     // The scan loop will simply not evaluate any pairs.
     await writeActivePairs(updated);
 
-    // Invalidate per-pair entry generation and drain critical section.
-    // This ensures any in-flight scanPair for THIS pair aborts at the next
-    // revalidation point (A-E) without affecting other pairs.
-    const drainResult = await _invalidatePairEntryGenerationAndDrain(normalized);
+    // Drain the per-pair critical section AFTER the DB write.
+    const drainResult = await _drainPairCriticalSection(normalized);
     if (!drainResult.drained) {
-      console.error(`[spotPairToggle] DRAIN_TIMEOUT for ${normalized} — ${drainResult.remainingCount} critical sections still active. Pair disabled but in-flight entry may complete.`);
+      console.error(`[spotPairToggle] DRAIN_TIMEOUT for ${normalized} — ${drainResult.remainingCount} critical sections still active.`);
+      throw new PairDisableDrainTimeoutError(normalized, drainResult.remainingCount);
     }
 
     const zeroWarning = updated.length === 0 ? " — ADVERTENCIA: no hay pares activos, el motor no abrirá nuevas posiciones." : "";

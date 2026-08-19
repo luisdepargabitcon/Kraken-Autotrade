@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Activity, Pause, Play, Trash2, Copy, RefreshCw, Search, ArrowDownToLine, ChevronLeft, ChevronRight, ArrowUpToLine } from "lucide-react";
-import { formatLevelEs, formatSourceEs, formatRawDetails } from "./spotTerminalSpanishFormatter";
+import { formatLevelEs, formatSourceEs, formatRawDetails, formatStatusEs, formatNaturalMessageEs } from "./spotTerminalSpanishFormatter";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ type ConnStatus = "CONNECTING" | "LIVE" | "PAUSED" | "RECONNECTING" | "NO_TOKEN"
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const MAX_LINES = 2000;
-const PAUSE_BUFFER_LIMIT = 2000;
+const PAUSE_BUFFER_LIMIT = 1000;
 const RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 10000]; // 1s, 2s, 5s, 10s, max 10s
 const PAGE_SIZES = [50, 100, 200] as const;
 
@@ -57,6 +57,10 @@ export function SpotTerminalPanel() {
   const [showPaginated, setShowPaginated] = useState(false);
   const [newLinesCount, setNewLinesCount] = useState(0);
   const [showRawDetails, setShowRawDetails] = useState(false);
+  const [serverPageLines, setServerPageLines] = useState<TerminalLine[]>([]);
+  const [serverTotalLines, setServerTotalLines] = useState(0);
+  const [serverTotalPages, setServerTotalPages] = useState(0);
+  const [serverLoading, setServerLoading] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pauseRef = useRef(false);
@@ -67,6 +71,7 @@ export function SpotTerminalPanel() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
+  const showPaginatedRef = useRef(false);
 
   const fetchTicket = async (): Promise<string | null> => {
     try {
@@ -100,8 +105,8 @@ export function SpotTerminalPanel() {
     }
     setLines(prev => {
       const combined = [...prev, ...newLines];
-      // Track new lines for the "new lines" counter when not at bottom
-      if (!autoScrollRef.current) {
+      // Track new lines for the "new lines" counter when not at bottom or in paginated mode
+      if (!autoScrollRef.current || showPaginatedRef.current) {
         setNewLinesCount(c => c + newLines.length);
       }
       return combined.length > MAX_LINES ? combined.slice(combined.length - MAX_LINES) : combined;
@@ -166,10 +171,38 @@ export function SpotTerminalPanel() {
 
   // Auto-scroll to bottom
   useEffect(() => {
+    showPaginatedRef.current = showPaginated;
+  }, [showPaginated]);
+
+  useEffect(() => {
     if (autoScrollRef.current && bottomRef.current) {
       bottomRef.current.scrollIntoView({ block: "end" });
     }
   }, [lines]);
+
+  // Server pagination: fetch from /api/spot/terminal-lines when showPaginated=true
+  useEffect(() => {
+    if (!showPaginated) return;
+    let cancelled = false;
+    setServerLoading(true);
+    const params = new URLSearchParams();
+    params.set("page", String(currentPage));
+    params.set("pageSize", String(pageSize));
+    if (filter !== "ALL") params.set("level", filter);
+    if (filterPair) params.set("pair", filterPair);
+    if (searchQuery) params.set("search", searchQuery);
+    fetch(`/api/spot/terminal-lines?${params.toString()}`)
+      .then(res => res.json())
+      .then(data => {
+        if (cancelled) return;
+        setServerPageLines(data.lines ?? []);
+        setServerTotalLines(data.total ?? 0);
+        setServerTotalPages(data.totalPages ?? 0);
+      })
+      .catch(() => { /* ignore */ })
+      .finally(() => { if (!cancelled) setServerLoading(false); });
+    return () => { cancelled = true; };
+  }, [showPaginated, currentPage, pageSize, filter, filterPair, searchQuery]);
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -225,10 +258,17 @@ export function SpotTerminalPanel() {
   }
 
   function copyAll() {
-    const visible = lines.filter(applyFilter);
-    const text = visible.map(l =>
-      `[${new Date(l.ts).toISOString().slice(11, 23)}] [${l.level.padEnd(10)}] [${l.source}]${l.pair ? ` [${l.pair}]` : ""} ${l.msg}`
-    ).join("\n");
+    const visible = (showPaginated ? serverPageLines : lines).filter(applyFilter);
+    const text = visible.map(l => {
+      if (showRawDetails) {
+        return formatRawDetails(l);
+      }
+      const levelEs = formatLevelEs(l.level);
+      const sourceEs = formatSourceEs(l.source);
+      const ts = new Date(l.ts).toISOString().slice(11, 23);
+      const pairStr = l.pair ? ` [${l.pair}]` : "";
+      return `[${ts}] [${levelEs}] [${sourceEs}]${pairStr} ${formatNaturalMessageEs(l)}`;
+    }).join("\n");
     navigator.clipboard.writeText(text).catch(() => { /* ignore */ });
   }
 
@@ -250,11 +290,13 @@ export function SpotTerminalPanel() {
     NO_TOKEN: "bg-red-500", OFFLINE: "bg-red-500",
   };
 
-  const totalPages = Math.max(1, Math.ceil(visibleLines.length / pageSize));
+  const totalPages = showPaginated
+    ? serverTotalPages
+    : Math.max(1, Math.ceil(visibleLines.length / pageSize));
   const safePage = Math.max(1, Math.min(currentPage, totalPages));
   const paginatedLines = showPaginated
-    ? visibleLines.slice((safePage - 1) * pageSize, safePage * pageSize)
-    : visibleLines;
+    ? serverPageLines
+    : visibleLines.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
     <div className="rounded-lg border border-border/50 bg-card flex flex-col h-[620px]">
@@ -263,7 +305,7 @@ export function SpotTerminalPanel() {
         <Activity className="h-4 w-4 text-primary" />
         <span className="text-sm font-semibold">Terminal SPOT</span>
         <span className={`h-2 w-2 rounded-full ml-1 ${statusColor[status]}`} title={status} />
-        <Badge variant="outline" className="text-[10px] py-0 px-1.5">{status}</Badge>
+        <Badge variant="outline" className="text-[10px] py-0 px-1.5" title={status}>{formatStatusEs(status)}</Badge>
         {visibleLines.length > 0 && (
           <span className="text-[10px] text-muted-foreground ml-1">{visibleLines.length} líneas</span>
         )}
@@ -294,7 +336,7 @@ export function SpotTerminalPanel() {
           >
             <option value="ALL">Todos</option>
             {(["INFO", "MARKET", "SIGNAL", "DECISION", "EXECUTION", "SUPERVISOR", "METADATA", "READINESS", "RISK", "ADAPTER", "SYSTEM", "ERROR"] as const).map(l => (
-              <option key={l} value={l}>{l}</option>
+              <option key={l} value={l}>{formatLevelEs(l)}</option>
             ))}
           </select>
 
@@ -386,7 +428,7 @@ export function SpotTerminalPanel() {
                 <span className="text-cyan-400/80 flex-shrink-0">{l.pair}</span>
               )}
               <span className="text-foreground/90 break-all">
-                {showRawDetails ? formatRawDetails(l) : l.msg}
+                {showRawDetails ? formatRawDetails(l) : formatNaturalMessageEs(l)}
               </span>
             </div>
           ))
@@ -404,7 +446,7 @@ export function SpotTerminalPanel() {
             onClick={returnToLive}
           >
             <ArrowUpToLine className="h-3.5 w-3.5 mr-1" />
-            Volver a live ({newLinesCount} nuevas)
+            Volver a En vivo ({newLinesCount} nuevas)
           </Button>
         </div>
       )}

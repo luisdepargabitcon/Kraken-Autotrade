@@ -251,6 +251,28 @@ export async function _invalidatePairEntryGenerationAndDrain(pair: string): Prom
   return invalidatePairEntryGenerationAndDrain(pair);
 }
 
+// P3: Separated invalidate-only (no drain) — called BEFORE DB write in disablePair
+export async function _invalidatePairEntryGenerationOnly(pair: string): Promise<void> {
+  const normalized = normalizePair(pair);
+  pairEntryGeneration.set(normalized, (pairEntryGeneration.get(normalized) ?? 0) + 1);
+}
+
+// P3: Separated drain-only (no invalidate) — called AFTER DB write in disablePair
+export async function _drainPairCriticalSection(pair: string): Promise<DrainResult> {
+  const normalized = normalizePair(pair);
+  const maxWaitMs = drainTimeoutMs;
+  const start = Date.now();
+  while ((pairCriticalSectionCount.get(normalized) ?? 0) > 0 && Date.now() - start < maxWaitMs) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const remaining = pairCriticalSectionCount.get(normalized) ?? 0;
+  if (remaining > 0) {
+    console.error(`[SpotEngine] R10.9-pair: DRAIN_TIMEOUT_FAIL_CLOSED for ${normalized} — ${remaining} critical section(s) still active after ${maxWaitMs}ms`);
+    return { drained: false, remainingCount: remaining };
+  }
+  return { drained: true, remainingCount: 0 };
+}
+
 // Test-only exports for per-pair generation
 export function _getPairEntryGenerationForTest(pair: string): number {
   return getPairEntryGeneration(pair);
@@ -1503,6 +1525,17 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           pipelineStopStage: "EXECUTED", pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
         }));
         return { pair, signal: "EXECUTED", reason: "Entry executed", mode };
+      } else {
+        // P5: Propagate outcome when executed=false — the pipeline reached executeEntry
+        // and returned a real reason. This is the LAST real gate executed.
+        publishSnapshot(buildSnapshotFromScanResults({
+          pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+          ctx, signal: signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: outcome.reason, confidence: 0, blockReason: null } as SpotSignalResult,
+          intent: activeIntent, intentEvaluation: evaluation, sizing: outcome.sizing ?? null,
+          blockReasonCode: outcome.reasonCode,
+          pipelineStopStage: outcome.stage, pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
+        }));
+        return { pair, signal: "BLOCKED", reason: outcome.reason, mode };
       }
     }
 
@@ -1565,6 +1598,16 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           pipelineStopStage: "EXECUTED", pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
         }));
         return { pair, signal: "EXECUTED", reason: "Entry executed (immediate)", mode };
+      } else {
+        // P5: Propagate outcome when executed=false — the pipeline reached executeEntry
+        // and returned a real reason. This is the LAST real gate executed.
+        publishSnapshot(buildSnapshotFromScanResults({
+          pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+          ctx, signal, intent, intentEvaluation: evaluation, sizing: outcome.sizing ?? null,
+          blockReasonCode: outcome.reasonCode,
+          pipelineStopStage: outcome.stage, pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
+        }));
+        return { pair, signal: "BLOCKED", reason: outcome.reason, mode };
       }
     } else {
       logActivity({
@@ -1990,6 +2033,30 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         await _testPauseAfterReserve();
       }
 
+      // P2-D: Per-pair generation revalidation AFTER reserve, BEFORE placeOrder.
+      // Independent of the global generation check. If the pair was disabled during
+      // the reserve step, the reservation must be released and no order placed.
+      if (!isPairEntryGenerationValid(intent.pair, pairGeneration)) {
+        console.log(`[SpotEngine] R10.9-pair: Entry BLOCKED at point D (post-reserve) for ${intent.pair} — pair disabled during reserve`);
+        try {
+          await terminateIntentAndReleaseReservationAtomic(internalIntentId, "CANCELLED");
+        } catch (error: any) {
+          console.error(`[SpotEngine] R10.9-pair: Failed to release reservation after pair-disable race: ${error.message}`);
+        }
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "WARNING",
+          title: "Entrada bloqueada — par desactivado durante reserva",
+          explanation: `El par ${intent.pair} fue desactivado mientras se reservaba capital. Reserva liberada. NO se envía orden.`,
+          decision: "BLOCK",
+          executionMode: mode,
+          reasonCode: "PAIR_DISABLED_RACE_BLOCKED",
+          intentId: internalIntentId,
+        });
+        return { executed: false, stage: "PAIR_DISABLED", reasonCode: "PAIR_DISABLED_RACE_BLOCKED", reason: `Par ${intent.pair} desactivado durante reserva`, sizing: null, submitted: false };
+      }
+
       // R10.9-8: Gate check #2 — re-verify IMMEDIATELY before placeOrder. The persist+reserve
       // step above may have taken time; the mode may have transitioned away in the interim.
       if (!isEntryGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.REAL) {
@@ -2222,6 +2289,22 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       // R10.9-cierre: Test pause hook — after SHADOW adapter, before persist
       if (_testPauseAfterShadowAdapter) {
         await _testPauseAfterShadowAdapter();
+      }
+      // P2-E: Per-pair generation revalidation AFTER shadow adapter, BEFORE persist.
+      // If the pair was disabled during the adapter call, do NOT materialize the position.
+      if (!isPairEntryGenerationValid(intent.pair, pairGeneration)) {
+        console.log(`[SpotEngine] R10.9-pair: Entry BLOCKED at point E (post-shadow-adapter) for ${intent.pair} — pair disabled during adapter`);
+        logActivity({
+          pair: intent.pair,
+          category: "EXECUTION",
+          severity: "WARNING",
+          title: "Entrada bloqueada — par desactivado durante adapter shadow",
+          explanation: `El par ${intent.pair} fue desactivado mientras el adapter shadow ejecutaba. NO se materializa posición fantasma.`,
+          decision: "BLOCK",
+          executionMode: mode,
+          reasonCode: "PAIR_DISABLED_RACE_BLOCKED",
+        });
+        return { executed: false, stage: "PAIR_DISABLED", reasonCode: "PAIR_DISABLED_RACE_BLOCKED", reason: `Par ${intent.pair} desactivado durante adapter shadow`, sizing: null, submitted: false };
       }
       // R10.9-cierre: Gate check #3 — re-verify mode is still SHADOW after the adapter
       // completed. The adapter call may have taken time; the mode may have transitioned

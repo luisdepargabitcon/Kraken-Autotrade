@@ -640,7 +640,7 @@ describe("R10.9-2: General entry fence covers SHADOW mode", () => {
 
     const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
   });
 
   it("2. SHADOW_TO_REAL_INFLIGHT: generation invalidated → SHADOW entry blocked", async () => {
@@ -652,7 +652,7 @@ describe("R10.9-2: General entry fence covers SHADOW mode", () => {
 
     const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
   });
 
   it("3. SHADOW_VALID_GENERATION: same generation + mode still SHADOW → reaches phantom fill", async () => {
@@ -663,7 +663,7 @@ describe("R10.9-2: General entry fence covers SHADOW mode", () => {
     const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
 
     // SHADOW adapter generates phantom fills (never calls placeOrder)
-    expect(executed).toBe(true);
+    expect(executed.executed).toBe(true);
     // R10.9-final: No critical section leak after SHADOW entry
     expect(getCriticalSectionCount()).toBe(0);
   });
@@ -683,7 +683,7 @@ describe("R10.9-4/5: REAL BUY blocked with degraded supervisor and recovery", ()
 
     const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(0);
     expect(isPositionSupervisionHealthy()).toBe(false);
     expect(getSupervisionFailureReason()).toBe("DB connection lost");
@@ -696,7 +696,7 @@ describe("R10.9-4/5: REAL BUY blocked with degraded supervisor and recovery", ()
 
     // First attempt blocked
     const blocked = await executeEntry(makeIntent("BTC/USD", signalId), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
-    expect(blocked).toBe(false);
+    expect(blocked.executed).toBe(false);
 
     // Supervisor recovers
     setPositionSupervisionHealthy(true);
@@ -708,7 +708,7 @@ describe("R10.9-4/5: REAL BUY blocked with degraded supervisor and recovery", ()
 
     // Use same signalId so internalIntentId is the same
     const executed = await executeEntry(makeIntent("BTC/USD", signalId), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
-    expect(executed).toBe(true);
+    expect(executed.executed).toBe(true);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
     // R10.9-final: No critical section leak after REAL entry
     expect(getCriticalSectionCount()).toBe(0);
@@ -836,7 +836,7 @@ describe("R10.9-9: EXISTING_FILLED materialization verification", () => {
     const executed = await executeEntry(makeIntent("BTC/USD", signalId), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
     // Should skip (not throw) because materialization is verified
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(0);
   });
 
@@ -863,7 +863,7 @@ describe("R10.9-9: EXISTING_FILLED materialization verification", () => {
 
     const executed = await executeEntry(makeIntent("BTC/USD", signalId), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(0);
   });
 
@@ -1036,7 +1036,7 @@ describe("R10.9-2: SHADOW mode transition race — stale generation blocks", () 
     // Even though mode is still SHADOW, the generation is stale
     const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
   });
 });
 
@@ -1072,7 +1072,7 @@ describe("R10.9-final A: SHADOW critical section covers persistShadowEntryAtomic
 
     const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
 
-    expect(executed).toBe(true);
+    expect(executed.executed).toBe(true);
     expect(getCriticalSectionCount()).toBe(0);
   });
 });
@@ -1105,7 +1105,7 @@ describe("R10.9-final B: SHADOW persist exception releases critical section", ()
 
     const executed = await executeEntry(makeIntent(), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
     expect(getCriticalSectionCount()).toBe(0);
   });
 });
@@ -1127,7 +1127,7 @@ describe("R10.9-final C: REAL adapter exception releases critical section", () =
 
     const executed = await executeEntry(makeIntent("BTC/USD", "sig-adapter-exc"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
     expect(getCriticalSectionCount()).toBe(0);
   });
 });
@@ -1176,7 +1176,7 @@ describe("R10.9-final D: REAL persistence exception releases critical section", 
 
     const executed = await executeEntry(makeIntent("BTC/USD", "sig-persist-exc"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
     expect(getCriticalSectionCount()).toBe(0);
   });
 });
@@ -1356,7 +1356,7 @@ describe("R10.9-final K: REAL entry full path critical section", () => {
 
     const executed = await executeEntry(makeIntent("BTC/USD", "sig-K-full"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
-    expect(executed).toBe(true);
+    expect(executed.executed).toBe(true);
     expect(getCriticalSectionCount()).toBe(0);
   });
 });
@@ -1376,7 +1376,7 @@ describe("R10.9-final L: SHADOW entry full path critical section", () => {
 
     const executed = await executeEntry(makeIntent("BTC/USD", "sig-L-full"), makeCtx(), ExecutionMode.SHADOW, undefined, scanGeneration);
 
-    expect(executed).toBe(true);
+    expect(executed.executed).toBe(true);
     expect(getCriticalSectionCount()).toBe(0);
   });
 });
@@ -1484,7 +1484,7 @@ describe("R10V9_MANDATORY_A_REAL_RESERVED_THEN_OFF", () => {
     await setExecutionMode(ExecutionMode.REAL);
     const newGeneration = getGeneration();
     const executed2 = await executeEntry(makeIntent("BTC/USD", "sig-A-reserved"), makeCtx(), ExecutionMode.REAL, undefined, newGeneration);
-    expect(executed2).toBe(true);
+    expect(executed2.executed).toBe(true);
     expect(mockPlaceOrder).toHaveBeenCalledTimes(1);
     expect(getCriticalSectionCount()).toBe(0);
     stopSpotEngine();
@@ -1817,7 +1817,7 @@ describe("R10V9_MANDATORY_H_MISSING_QUANTITY_STEP", () => {
     const executed = await executeEntry(makeIntent("BTC/USD", "sig-H-noqty"), makeCtx(), ExecutionMode.REAL, undefined, scanGeneration);
 
     expect(mockPlaceOrder).not.toHaveBeenCalled();
-    expect(executed).toBe(false);
+    expect(executed.executed).toBe(false);
     stopSpotEngine();
   });
 });

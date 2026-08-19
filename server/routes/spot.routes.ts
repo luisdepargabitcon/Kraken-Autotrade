@@ -40,7 +40,7 @@ import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore"
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
 import { checkRealReadiness } from "../services/spot/spotRealReadiness";
 import { getActivityEvents, getActivityEventsFiltered, getActivityEventsFromDb, humanizeSeverity, humanizeCategory, formatTimeAgo } from "../services/spot/spotActivityLogger";
-import { getPairStatuses, enablePair, disablePair, PairValidationError } from "../services/spot/spotPairToggle";
+import { getPairStatuses, enablePair, disablePair, PairValidationError, PairDisableDrainTimeoutError } from "../services/spot/spotPairToggle";
 import { terminalWsServer } from "../services/spot/spotTerminalStream";
 import { getSnapshot, getAllSnapshots } from "../services/spot/spotContextSnapshotStore";
 import { normalizePair } from "../services/pairAllowlist";
@@ -372,6 +372,10 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
     } catch (err: any) {
       if (err instanceof PairValidationError) {
         res.status(400).json({ error: err.message });
+        return;
+      }
+      if (err instanceof PairDisableDrainTimeoutError) {
+        res.status(503).json({ error: err.message, pair: err.pair, remainingCount: err.remainingCount });
         return;
       }
       res.status(500).json({ error: "Failed to toggle pair", detail: err.message });

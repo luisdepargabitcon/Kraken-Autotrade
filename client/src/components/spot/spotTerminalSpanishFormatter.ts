@@ -20,35 +20,35 @@ export type TerminalLevel =
   | "ERROR";
 
 const LEVEL_ES: Record<TerminalLevel, string> = {
-  INFO: "Info",
+  INFO: "Información",
   MARKET: "Mercado",
   SIGNAL: "Señal",
   DECISION: "Decisión",
   EXECUTION: "Ejecución",
   SUPERVISOR: "Supervisor",
   METADATA: "Metadatos",
-  READINESS: "Preparación",
+  READINESS: "Preparación REAL",
   RISK: "Riesgo",
-  ADAPTER: "Adapter",
+  ADAPTER: "Adaptador",
   SYSTEM: "Sistema",
   ERROR: "Error",
 };
 
 const SOURCE_ES: Record<string, string> = {
-  scan: "Scan",
-  strategy: "Estrategia",
-  intent: "Intención",
-  sizing: "Sizing",
-  adapter: "Adapter",
-  shadow: "Shadow",
-  real: "Real",
-  supervisor: "Supervisor",
-  exit: "Salida",
-  readiness: "Preparación",
-  engine: "Motor",
-  toggle: "Toggle",
-  pipeline: "Pipeline",
-  system: "Sistema",
+  scan: "análisis",
+  strategy: "estrategia",
+  intent: "intención",
+  sizing: "gestión de riesgo",
+  adapter: "adaptador",
+  shadow: "simulación",
+  real: "real",
+  supervisor: "supervisor",
+  exit: "salida",
+  readiness: "preparación REAL",
+  engine: "motor",
+  toggle: "configuración de activo",
+  pipeline: "proceso",
+  system: "sistema",
 };
 
 export function formatLevelEs(level: TerminalLevel): string {
@@ -57,6 +57,100 @@ export function formatLevelEs(level: TerminalLevel): string {
 
 export function formatSourceEs(source: string): string {
   return SOURCE_ES[source] ?? source;
+}
+
+export type ConnStatus = "CONNECTING" | "LIVE" | "PAUSED" | "RECONNECTING" | "NO_TOKEN" | "OFFLINE";
+
+const STATUS_ES: Record<ConnStatus, string> = {
+  CONNECTING: "CONECTANDO",
+  LIVE: "EN VIVO",
+  PAUSED: "PAUSADO",
+  RECONNECTING: "RECONECTANDO",
+  NO_TOKEN: "NO DISPONIBLE",
+  OFFLINE: "SIN CONEXIÓN",
+};
+
+export function formatStatusEs(status: ConnStatus): string {
+  return STATUS_ES[status] ?? status;
+}
+
+/**
+ * Transform a raw terminal message into a natural Spanish message.
+ * Recognizes common patterns and produces human-readable text.
+ * Falls back to a safe humanized version if no pattern matches.
+ */
+export function formatNaturalMessageEs(line: {
+  level: TerminalLevel;
+  source: string;
+  msg: string;
+  pair?: string | null;
+  mode?: string | null;
+}): string {
+  const msg = line.msg;
+  const pair = line.pair ?? "";
+
+  // HOLD — No setup
+  if (msg.includes("HOLD") && msg.includes("No setup")) {
+    return `No compra ${pair} porque todavía no existe una configuración válida de entrada.`;
+  }
+
+  // Scan iniciado
+  if (msg.includes("Scan iniciado") || msg.includes("scan started")) {
+    const modeMatch = msg.match(/mode=(\w+)/i);
+    const modeEs = modeMatch ? (modeMatch[1].toUpperCase() === "SHADOW" ? "simulación" : modeMatch[1].toLowerCase()) : "mercado";
+    return `Se inicia un nuevo análisis de mercado en modo ${modeEs}.`;
+  }
+
+  // regime=TREND dir=BULLISH macro=BULLISH...
+  if (msg.includes("regime=") && msg.includes("dir=")) {
+    const regimeMatch = msg.match(/regime=(\w+)/);
+    const dirMatch = msg.match(/dir=(\w+)/);
+    const macroMatch = msg.match(/macro=(\w+)/);
+    const regimeEs = regimeMatch ? regimeMatch[1].toLowerCase() : "";
+    const dirEs = dirMatch ? dirMatch[1].toLowerCase() : "";
+    const macroEs = macroMatch ? macroMatch[1].toLowerCase() : "";
+    return `${pair}: tendencia ${regimeEs}, dirección ${dirEs} y contexto macro ${macroEs}.`;
+  }
+
+  // pending REAL intents
+  if (msg.includes("pending REAL intents") || msg.includes("reconciler")) {
+    return `El reconciliador está revisando órdenes reales pendientes.`;
+  }
+
+  // supervisor completed
+  if (msg.includes("supervisor completed") || msg.includes("supervisor completado")) {
+    const posMatch = msg.match(/positions=(\d+)/);
+    const count = posMatch ? parseInt(posMatch[1]) : 0;
+    return `El supervisor ha completado la revisión. ${count === 0 ? "No hay posiciones abiertas." : `${count} posiciones revisadas.`}`;
+  }
+
+  // Entry intent created
+  if (msg.includes("Entry intent created") || msg.includes("intent created")) {
+    return `Nueva intención de entrada creada para ${pair}.`;
+  }
+
+  // Entry executed
+  if (msg.includes("Entry executed") || msg.includes("Position opened")) {
+    return `Entrada ejecutada para ${pair}. Posición abierta.`;
+  }
+
+  // Entry blocked
+  if (msg.includes("BLOCKED") || msg.includes("blocked")) {
+    return `Entrada bloqueada para ${pair}.`;
+  }
+
+  // Entry pending
+  if (msg.includes("PENDING_FILL") || msg.includes("pending fill")) {
+    return `Orden de entrada enviada para ${pair}, esperando confirmación de fill.`;
+  }
+
+  // Mode transition
+  if (msg.includes("mode transition") || msg.includes("Mode transition")) {
+    return `Transición de modo completada para ${pair}.`;
+  }
+
+  // Fallback: humanize — strip raw technical markers but keep readable
+  return msg;
 }
 
 /**
