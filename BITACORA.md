@@ -7941,3 +7941,142 @@ El wiring previo `787826e → 752d57d` entró mediante merge directo sin PR como
 ### Estado final
 - AMA_TRUE_FINAL_COMPLETION=PASS
 
+
+## GRID V3.1 — ADAPTIVE ATR TRAILING (20-AGO-2026)
+
+### Contexto
+Auditoría forense del comportamiento trailing de Grid V3 versus `CYCLE_OWNED_TARGET`. Los ciclos #4 y #5 cerraron exactamente en su target V3 persistido mientras trailing aparecía no intervenir. El staging usaba `trailingEnabled=false`, por lo que el cierre por `CYCLE_OWNED_TARGET` era correcto. Se implementó trailing adaptativo seguro para SHADOW, preservando el comportamiento V3 cuando trailing está desactivado.
+
+### Branch
+- `fix/grid-v31-adaptive-trailing-20260820`
+- Base SHA: `c30a30b20731222005eeb1282a208f014ad4e64d`
+- Commit: `6844ccd`
+- Pushed to origin
+
+### Fórmula adaptive ATR trailing
+```
+smoothedAtrPct = EMA(currentAtrPct, previousSmoothedAtrPct, alpha)
+  = alpha * currentAtrPct + (1 - alpha) * previousSmoothedAtrPct
+
+baseStopPct = smoothedAtrPct * atrMultiplier
+effectiveStopPct = clamp(baseStopPct, minPct, maxPct)
+
+candidateStop = highestPrice * (1 - effectiveStopPct/100)
+effectiveStop = max(previousStop, candidateStop, profitFloorPrice)
+```
+
+### Defaults V3.1
+- `trailingMode`: `adaptive_atr`
+- `trailingAtrMultiplier`: 0.75
+- `trailingMinPct`: 0.25
+- `trailingMaxPct`: 1.20
+- `trailingAtrSmoothingAlpha`: 0.25
+- `trailingEnabled`: false (preservado)
+- `stopLossEnabled`: false (preservado)
+
+### ATR source
+`bandSnapshot.atrPct` del Grid Isolated Engine (ATR canónico del Grid, período y timeframe configurados).
+
+### Fallback policy
+1. ATR actual válido → EMA smoothing
+2. ATR actual null/0/NaN → ATR persistido (smoothedAtrPct previo)
+3. Sin ATR persistido → fallback manual (stopPct configurado)
+4. Sin stopPct → fail-safe (stop=null, no trailing)
+
+### Semántica trailing OFF
+```
+BUY → CYCLE_OWNED_TARGET → SELL maker fija → +objetivo neto → ciclo cerrado
+```
+Comportamiento V3 intacto, sin cambios.
+
+### Semántica trailing ON (V3)
+- Target V3 se calcula exactamente igual
+- `targetSellPrice` se persiste (no se elimina)
+- V3 pasa a ser: referencia económica, suelo de beneficio, referencia de activación
+- Trailing se arma al alcanzar `max(activationPct, targetSellPrice)` (solo ciclos V3)
+- Sigue el máximo, cierra solo en retroceso al stop dinámico
+- `TRAILING_MAKER` es la ruta de cierre
+- V2/legacy: floor no aplicado, comportamiento original preservado
+
+### CYCLE_OWNED_TARGET treatment
+- `closePathLabel` corregido: `CYCLE_OWNED_TARGET` → "Objetivo individual V3"
+- Antes mostraba "Vía de cierre: No registrada"
+
+### Real-maker treatment
+- Single-exit invariant: nunca dos SELL simultáneas
+- V3 maker cancelado en takeover trailing (`GRID_MAKER_PENDING_CANCELLED`, reason `TRAILING_TAKEOVER`)
+- Si detección de violación de invariante → `REQUIRES_REVIEW`
+
+### Restart recovery
+- `trailingPolicy` snapshot persistido en `riskStateJson` al crear el ciclo
+- Campos trailing (highest, stop, smoothedAtr, atrSource) preservados en JSONB
+- Al reevaluar tras restart: highest y stop no descienden
+
+### Nuevos campos riskStateJson
+- `trailingPolicy`: snapshot de política (enabled, mode, activationPrice, profitFloorPrice, atrMultiplier, minPct, maxPct, smoothingAlpha, calculationVersion)
+- `trailing.atrPct`, `trailing.smoothedAtrPct`, `trailing.atrSource`
+- `trailing.effectiveStopPct`, `trailing.baseStopPct`
+- `trailing.profitFloorPrice`, `trailing.activationPrice`
+- `trailing.policy`: referencia al snapshot
+
+### UX additions
+- Switch `trailingEnabled` visible en vista simple
+- Switch `stopLossEnabled` visible en vista simple
+- Selector `trailingMode` (Automático ATR / Manual)
+- Campos expert: multiplicador ATR, retroceso min/max, smoothing alpha
+- HODL dependency warning cuando HODL activo sin stopLoss
+- Campos visuales deshabilitados según modo (manual vs adaptive)
+- View model: trailingMode, atrPct, smoothedAtrPct, atrSource, effectiveStopPct, baseStopPct, profitFloorPrice, activationPrice, policyEnabled
+
+### Close-path correction
+- `CYCLE_OWNED_TARGET` → "Objetivo individual V3"
+
+### Stop-loss/HODL UX correction
+- `stopLossEnabled` gate real: stop-loss layers solo evalúan cuando enabled
+- HODL dependency visible en UI
+
+### Migration
+- `088_grid_v31_adaptive_trailing.sql` — aditivo, idempotent (IF NOT EXISTS)
+- Columnas: trailing_mode, trailing_atr_multiplier, trailing_min_pct, trailing_max_pct, trailing_atr_smoothing_alpha
+- Default: trailing_mode='adaptive_atr', trailingEnabled=false (preservado)
+- Registrada en `MIGRATIONS` array en `server/routes.ts`
+
+### Tests nuevos
+- `gridAdaptiveTrailing.test.ts` — 28 tests (ATR resolver puro)
+- `gridV31TrailingPrecedence.test.ts` — 16 tests (escenarios A-H, closePathLabel, stopLossEnabled)
+- Total Grid tests: 661 (32 archivos) — todos pasan
+
+### Validaciones
+- `npm run check`: PASS
+- `npm run build`: PASS
+- `git diff --check`: PASS
+- Suite GRID: 661/661 PASS
+
+### Archivos modificados
+- `server/services/gridIsolated/gridAdaptiveTrailing.ts` (nuevo)
+- `server/services/gridIsolated/gridIsolatedTypes.ts`
+- `server/services/gridIsolated/gridRiskManager.ts`
+- `server/services/gridIsolated/gridIsolatedEngine.ts`
+- `server/services/gridIsolated/gridJsonbValidators.ts`
+- `server/services/gridIsolated/buildGridOperationalViewModel.ts`
+- `server/routes/gridIsolated.routes.ts`
+- `server/routes.ts`
+- `shared/schema.ts`
+- `client/src/components/grid/GridSettingsPanel.tsx`
+- `server/migrations/088_grid_v31_adaptive_trailing.sql` (nuevo)
+- `server/services/gridIsolated/__tests__/gridAdaptiveTrailing.test.ts` (nuevo)
+- `server/services/gridIsolated/__tests__/gridV31TrailingPrecedence.test.ts` (nuevo)
+
+### Estado
+- Implementado: SI
+- Validado: SI (check, build, 661 tests)
+- Committeado: SI (6844ccd)
+- Pusheado: SI (origin/fix/grid-v31-adaptive-trailing-20260820)
+- Desplegado staging: NO (requiere autorización VPS)
+- Runtime validation: NO (pendiente de deploy)
+
+### Restricciones
+- No Spot Normal, No IDCA, No AMA
+- No REAL, No órdenes reales
+- No DB manual, No SQL manual
+- SHADOW only
