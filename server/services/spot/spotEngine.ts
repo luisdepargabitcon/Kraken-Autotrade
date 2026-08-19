@@ -202,6 +202,72 @@ export function _getEntryCriticalSectionCountForTest(): number {
   return entryCriticalSectionCount;
 }
 
+// ─── Per-pair entry generation ──────────────────────────────────────────────
+// R10.9-pair: Per-pair race safety — disabling a pair (e.g. SOL) must NOT
+// invalidate the generation of other pairs (e.g. BTC/ETH). Each pair has its
+// own generation counter and critical section count. When a pair is disabled,
+// only that pair's generation is bumped and its critical section is drained.
+
+const pairEntryGeneration = new Map<string, number>();
+const pairCriticalSectionCount = new Map<string, number>();
+
+function getPairEntryGeneration(pair: string): number {
+  return pairEntryGeneration.get(normalizePair(pair)) ?? 0;
+}
+
+function isPairEntryGenerationValid(pair: string, generation: number): boolean {
+  return getPairEntryGeneration(pair) === generation;
+}
+
+async function invalidatePairEntryGenerationAndDrain(pair: string): Promise<DrainResult> {
+  const normalized = normalizePair(pair);
+  pairEntryGeneration.set(normalized, (pairEntryGeneration.get(normalized) ?? 0) + 1);
+  const maxWaitMs = drainTimeoutMs;
+  const start = Date.now();
+  while ((pairCriticalSectionCount.get(normalized) ?? 0) > 0 && Date.now() - start < maxWaitMs) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const remaining = pairCriticalSectionCount.get(normalized) ?? 0;
+  if (remaining > 0) {
+    console.error(`[SpotEngine] R10.9-pair: DRAIN_TIMEOUT_FAIL_CLOSED for ${normalized} — ${remaining} critical section(s) still active after ${maxWaitMs}ms`);
+    return { drained: false, remainingCount: remaining };
+  }
+  return { drained: true, remainingCount: 0 };
+}
+
+function enterPairCriticalSection(pair: string): void {
+  const normalized = normalizePair(pair);
+  pairCriticalSectionCount.set(normalized, (pairCriticalSectionCount.get(normalized) ?? 0) + 1);
+}
+
+function exitPairCriticalSection(pair: string): void {
+  const normalized = normalizePair(pair);
+  const current = pairCriticalSectionCount.get(normalized) ?? 0;
+  pairCriticalSectionCount.set(normalized, Math.max(0, current - 1));
+}
+
+// Export for spotPairToggle integration
+export async function _invalidatePairEntryGenerationAndDrain(pair: string): Promise<DrainResult> {
+  return invalidatePairEntryGenerationAndDrain(pair);
+}
+
+// Test-only exports for per-pair generation
+export function _getPairEntryGenerationForTest(pair: string): number {
+  return getPairEntryGeneration(pair);
+}
+
+export function _getPairCriticalSectionCountForTest(pair: string): number {
+  return pairCriticalSectionCount.get(normalizePair(pair)) ?? 0;
+}
+
+export function _enterPairCriticalSectionForTest(pair: string): void {
+  enterPairCriticalSection(pair);
+}
+
+export function _exitPairCriticalSectionForTest(pair: string): void {
+  exitPairCriticalSection(pair);
+}
+
 // ─── State ──────────────────────────────────────────────────────────────────
 
 interface OpenPositionRow {
@@ -1123,8 +1189,8 @@ export async function _executeEntryForTest(
   mode: ExecutionMode,
   signal: SpotSignalResult | undefined,
   generation: number,
-): Promise<boolean> {
-  return executeEntry(intent, ctx, mode, signal, generation);
+): Promise<ExecuteEntryOutcome> {
+  return executeEntry(intent, ctx, mode, signal, generation, getPairEntryGeneration(intent.pair));
 }
 
 export async function _closePositionForTest(
@@ -1368,6 +1434,9 @@ async function hasOpenSpotPositions(): Promise<boolean> {
  *   E. Execute only if all gates pass
  */
 async function scanPair(pair: string, mode: ExecutionMode, generation: number, scanId: string, enabledPairs: Set<string>): Promise<{ pair: string; signal: string; reason: string; mode: string }> {
+  // Capture per-pair generation at scan start — any disable during this scan invalidates it
+  const pairGen = getPairEntryGeneration(pair);
+
   // A. Build market context
   let ctx: SpotMarketContext;
   try {
@@ -1421,16 +1490,17 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
     intentStore.update(activeIntent);
 
     if (evaluation.shouldExecute) {
-      const executed = await executeEntry(activeIntent, ctx, mode, signalResultCache.get(pair), generation);
-      if (executed) {
+      const outcome = await executeEntry(activeIntent, ctx, mode, signalResultCache.get(pair), generation, pairGen);
+      if (outcome.executed) {
         activeIntent.state = "EXECUTED" as any;
         intentStore.update(activeIntent);
         signalResultCache.delete(pair);
         publishSnapshot(buildSnapshotFromScanResults({
           pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
           ctx, signal: signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: "Executed", confidence: 0, blockReason: null } as SpotSignalResult,
-          intent: activeIntent, intentEvaluation: evaluation, sizing: null,
+          intent: activeIntent, intentEvaluation: evaluation, sizing: outcome.sizing ?? null,
           blockReasonCode: null,
+          pipelineStopStage: "EXECUTED", pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
         }));
         return { pair, signal: "EXECUTED", reason: "Entry executed", mode };
       }
@@ -1483,15 +1553,16 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
     intentStore.update(intent);
 
     if (evaluation.shouldExecute) {
-      const executed = await executeEntry(intent, ctx, mode, signal, generation);
-      if (executed) {
+      const outcome = await executeEntry(intent, ctx, mode, signal, generation, pairGen);
+      if (outcome.executed) {
         intent.state = "EXECUTED" as any;
         intentStore.update(intent);
         signalResultCache.delete(pair);
         publishSnapshot(buildSnapshotFromScanResults({
           pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
-          ctx, signal, intent, intentEvaluation: evaluation, sizing: null,
+          ctx, signal, intent, intentEvaluation: evaluation, sizing: outcome.sizing ?? null,
           blockReasonCode: null,
+          pipelineStopStage: "EXECUTED", pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
         }));
         return { pair, signal: "EXECUTED", reason: "Entry executed (immediate)", mode };
       }
@@ -1512,6 +1583,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
       pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
       ctx, signal, intent, intentEvaluation: evaluation, sizing: null,
       blockReasonCode: intent.lastBlockReason,
+      pipelineStopStage: "ANTI_LATE_ENTRY", pipelineStopReasonCode: intent.lastBlockReason ?? "ENTRY_GATED", pipelineStopReason: evaluation.reason,
     }));
     return { pair, signal: "BUY", reason: signal.reason, mode };
   }
@@ -1528,10 +1600,33 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
 }
 
 /**
+ * Typed outcome from executeEntry — preserves the CAUSE when entry doesn't proceed.
+ * scanPair uses this to pass the real reason into the snapshot.
+ */
+export interface ExecuteEntryOutcome {
+  executed: boolean;
+  stage:
+    | "GENERATION"
+    | "PAIR_DISABLED"
+    | "SIZING"
+    | "FREEZE"
+    | "SUPERVISOR"
+    | "CAPACITY"
+    | "ADAPTER"
+    | "PERSIST"
+    | "EXECUTED";
+  reasonCode: string;
+  reason: string;
+  sizing?: SizingResult | null;
+  submitted?: boolean;
+}
+
+/**
  * Execute entry: sizing → adapter → persist position.
  * Propagates signalConfidence from SpotSignalResult (B14).
+ * Returns typed outcome for full traceability.
  */
-async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode, signal: SpotSignalResult | undefined, generation: number): Promise<boolean> {
+async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode, signal: SpotSignalResult | undefined, generation: number, pairGeneration: number): Promise<ExecuteEntryOutcome> {
   // R10.9-8: General entry-generation gate — applies to EVERY mode, not only REAL.
   // A scan job captures `generation` at scan start; any mode transition (OFF↔SHADOW,
   // SHADOW↔REAL, REAL↔OFF) bumps the generation. A stale job must not create a NEW
@@ -1548,7 +1643,23 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       executionMode: mode,
       reasonCode: "ENTRY_GENERATION_STALE_BLOCKED",
     });
-    return false;
+    return { executed: false, stage: "GENERATION", reasonCode: "ENTRY_GENERATION_STALE_BLOCKED", reason: "Modo global cambió durante scan", sizing: null, submitted: false };
+  }
+
+  // P2-A: Per-pair generation check — before any entry work begins
+  if (!isPairEntryGenerationValid(intent.pair, pairGeneration)) {
+    console.log(`[SpotEngine] R10.9-pair: Entry BLOCKED for ${intent.pair} — pair disabled during scan (stale pairGeneration)`);
+    logActivity({
+      pair: intent.pair,
+      category: "EXECUTION",
+      severity: "WARNING",
+      title: "Entrada bloqueada — par desactivado durante scan",
+      explanation: `El par ${intent.pair} fue desactivado mientras este scan estaba en curso. NO se crea nueva entrada.`,
+      decision: "BLOCK",
+      executionMode: mode,
+      reasonCode: "PAIR_DISABLED_RACE_BLOCKED",
+    });
+    return { executed: false, stage: "PAIR_DISABLED", reasonCode: "PAIR_DISABLED_RACE_BLOCKED", reason: `Par ${intent.pair} desactivado durante scan`, sizing: null, submitted: false };
   }
 
   // R10.9-5: Position supervisor health gate — a new REAL BUY must never proceed while
@@ -1574,7 +1685,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         executionMode: mode,
         reasonCode: "SUPERVISOR_UNHEALTHY_BLOCKS_REAL_BUY",
       });
-      return false;
+      return { executed: false, stage: "SUPERVISOR", reasonCode: "SUPERVISOR_UNHEALTHY_BLOCKS_REAL_BUY", reason: `Supervisor no saludable: ${reason}`, sizing: null, submitted: false };
     }
   }
 
@@ -1599,7 +1710,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       executionMode: mode,
       reasonCode: "REAL_OPEN_LOTS_QUERY_FAILED_FAIL_CLOSED",
     });
-    return false;
+    return { executed: false, stage: "CAPACITY", reasonCode: "REAL_OPEN_LOTS_QUERY_FAILED_FAIL_CLOSED", reason: `No se pudo contar posiciones abiertas: ${error.message}`, sizing: null, submitted: false };
   }
 
   // Sizing
@@ -1616,7 +1727,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       executionMode: mode,
       reasonCode: "SIZING_REJECTED",
     });
-    return false;
+    return { executed: false, stage: "SIZING", reasonCode: sizing.blockReason ?? "SIZING_REJECTED", reason: sizing.reason, sizing, submitted: false };
   }
 
   // R10.4: Freeze gate — check for unresolved REAL executions before new entries
@@ -1634,8 +1745,14 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         executionMode: mode,
         reasonCode: "REAL_FREEZE_ACTIVATED",
       });
-      return false;
+      return { executed: false, stage: "FREEZE", reasonCode: "REAL_FREEZE_ACTIVATED", reason: "REAL FREEZE activo — ejecuciones sin resolver", sizing: null, submitted: false };
     }
+  }
+
+  // P2-B: Per-pair revalidation before creating/advancing executable intent
+  if (!isPairEntryGenerationValid(intent.pair, pairGeneration)) {
+    console.log(`[SpotEngine] R10.9-pair: Entry BLOCKED at point B for ${intent.pair} — pair disabled before intent creation`);
+    return { executed: false, stage: "PAIR_DISABLED", reasonCode: "PAIR_DISABLED_RACE_BLOCKED", reason: `Par ${intent.pair} desactivado antes de crear intent`, sizing: null, submitted: false };
   }
 
   // R10.2: Stable internalIntentId — NO Date.now(), deterministic per signalId+pair
@@ -1684,7 +1801,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         reasonCode: "REAL_MODE_TRANSITION_RACE_BLOCKED",
         intentId: internalIntentId,
       });
-      return false;
+      return { executed: false, stage: "GENERATION", reasonCode: "REAL_MODE_TRANSITION_RACE_BLOCKED", reason: "Modo REAL cambió antes de persist+reserve", sizing: null, submitted: false };
     }
   } else if (mode === ExecutionMode.SHADOW) {
     if (!isEntryGenerationValid(generation) || getCachedExecutionMode() !== ExecutionMode.SHADOW) {
@@ -1699,12 +1816,21 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         executionMode: mode,
         reasonCode: "SHADOW_MODE_TRANSITION_RACE_BLOCKED",
       });
-      return false;
+      return { executed: false, stage: "GENERATION", reasonCode: "SHADOW_MODE_TRANSITION_RACE_BLOCKED", reason: "Modo SHADOW cambió", sizing: null, submitted: false };
     }
+  }
+
+  // P2-C: Per-pair revalidation before reserving capital
+  if (!isPairEntryGenerationValid(intent.pair, pairGeneration)) {
+    console.log(`[SpotEngine] R10.9-pair: Entry BLOCKED at point C for ${intent.pair} — pair disabled before reserve`);
+    return { executed: false, stage: "PAIR_DISABLED", reasonCode: "PAIR_DISABLED_RACE_BLOCKED", reason: `Par ${intent.pair} desactivado antes de reserva`, sizing: null, submitted: false };
   }
 
   enterEntryCriticalSection();
   entryCriticalSectionEntered = true;
+  let pairCriticalSectionEntered = false;
+  enterPairCriticalSection(intent.pair);
+  pairCriticalSectionEntered = true;
 
   try {
     // ─── REAL: persist+reserve + outcome handling ──────────────────────────────
@@ -1725,7 +1851,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           reasonCode: "REAL_TRADING_VENUE_UNVERIFIED",
           intentId: internalIntentId,
         });
-        return false;
+        return { executed: false, stage: "ADAPTER", reasonCode: "REAL_TRADING_VENUE_UNVERIFIED", reason: `Venue no verificado: ${error.message}`, sizing: null, submitted: false };
       }
       // R10.5: Fetch real balance BEFORE the transaction to validate inside the lock
       // R10.6: Per-pair balance, returns GROSS (no double subtraction)
@@ -1761,7 +1887,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           reasonCode: "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED",
           intentId: internalIntentId,
         });
-        return false;
+        return { executed: false, stage: "PERSIST", reasonCode: "REAL_INTENT_PERSISTENCE_FAILED_FAIL_CLOSED", reason: `Persist+reserve falló: ${error.message}`, sizing: null, submitted: false };
       }
 
       // R10.9-1/2: explicit outcome — never treat CANCELLED pre-submit as already-submitted active.
@@ -1778,7 +1904,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           reasonCode: "DUPLICATE_ENTRY_SUBMISSION",
           intentId: internalIntentId,
         });
-        return false;
+        return { executed: false, stage: "PERSIST", reasonCode: "DUPLICATE_ENTRY_SUBMISSION", reason: "Submission activa existente", sizing: null, submitted: false };
       }
 
       if (reserveOutcome.kind === "EXISTING_FILLED") {
@@ -1834,7 +1960,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           reasonCode: "DUPLICATE_ENTRY_SUBMISSION",
           intentId: internalIntentId,
         });
-        return false;
+        return { executed: false, stage: "PERSIST", reasonCode: "DUPLICATE_ENTRY_SUBMISSION", reason: "Intent ya filled", sizing: null, submitted: false };
       }
 
       if (reserveOutcome.kind === "EXISTING_TERMINAL") {
@@ -1850,7 +1976,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           reasonCode: "DUPLICATE_ENTRY_TERMINAL",
           intentId: internalIntentId,
         });
-        return false;
+        return { executed: false, stage: "PERSIST", reasonCode: "DUPLICATE_ENTRY_TERMINAL", reason: "Intent terminal existente", sizing: null, submitted: false };
       }
 
       // CREATED or REARMED_PRE_SUBMIT → continue to placeOrder. For REARMED_PRE_SUBMIT the
@@ -1884,7 +2010,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           reasonCode: "REAL_MODE_TRANSITION_RACE_BLOCKED",
           intentId: internalIntentId,
         });
-        return false;
+        // P2-D: Per-pair revalidation before REAL placeOrder
+        return { executed: false, stage: "GENERATION", reasonCode: "REAL_MODE_TRANSITION_RACE_BLOCKED", reason: "Modo REAL cambió antes de placeOrder", sizing: null, submitted: false };
       }
     }
 
@@ -1915,7 +2042,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       } else {
         console.error(`[SpotEngine] Entry exception for ${intent.pair}: ${error.message}`);
       }
-      return false;
+      return { executed: false, stage: "ADAPTER", reasonCode: mode === ExecutionMode.REAL ? "REAL_SUBMISSION_AMBIGUOUS" : "ENTRY_EXCEPTION", reason: error.message, sizing: null, submitted: false };
     }
 
     // R10.6: Handle ACCEPTED without venueOrderId — treat as UNCERTAIN, retain reservation
@@ -1937,7 +2064,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           intentId: internalIntentId,
         });
       }
-      return false;
+      return { executed: false, stage: "ADAPTER", reasonCode: "REAL_ACCEPTED_NO_VENUE_ID", reason: "ACCEPTED sin venueOrderId", sizing: null, submitted: false };
     }
 
     if (!result.success) {
@@ -1997,7 +2124,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           orderId: result.orderId,
         });
       }
-      return false;
+      return { executed: false, stage: "ADAPTER", reasonCode: result.submissionState === "AMBIGUOUS" ? "REAL_SUBMISSION_AMBIGUOUS" : "ENTRY_REJECTED", reason: result.error ?? "Entry failed", sizing: null, submitted: false };
     }
 
     // R10.1: Handle pending fill — persist to order_intents, NOT open_positions with price=0
@@ -2024,7 +2151,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         intentId: internalIntentId,
         orderId: result.orderId,
       });
-      return true;
+      return { executed: true, stage: "EXECUTED", reasonCode: "PENDING_FILL", reason: "Orden pendiente de fill", sizing, submitted: true };
     }
 
     if (result.fillPrice === null) {
@@ -2035,7 +2162,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           await terminateIntentAndReleaseReservationAtomic(internalIntentId, "FAILED");
         } catch { /* best effort */ }
       }
-      return false;
+      return { executed: false, stage: "ADAPTER", reasonCode: "NO_FILL_PRICE", reason: "No fill price", sizing: null, submitted: false };
     }
 
     // Create position
@@ -2086,7 +2213,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       : sizing.notionalUsd;
     if (!Number.isFinite(filledNotionalUsd) || filledNotionalUsd <= 0) {
       console.error(`[SpotEngine] Invalid filledNotionalUsd=${filledNotionalUsd} for ${intent.pair}`);
-      return false;
+      return { executed: false, stage: "PERSIST", reasonCode: "INVALID_NOTIONAL", reason: `filledNotionalUsd inválido: ${filledNotionalUsd}`, sizing: null, submitted: false };
     }
     position.notionalUsd = filledNotionalUsd;
 
@@ -2111,7 +2238,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
           executionMode: mode,
           reasonCode: "SHADOW_MODE_TRANSITION_RACE_BLOCKED_POST_ADAPTER",
         });
-        return false;
+        // P2-E: Per-pair revalidation after SHADOW adapter, before persist
+        return { executed: false, stage: "GENERATION", reasonCode: "SHADOW_MODE_TRANSITION_RACE_BLOCKED_POST_ADAPTER", reason: "Modo SHADOW cambió después de adapter", sizing: null, submitted: false };
       }
       try {
         const newLedger = await persistShadowEntryAtomic(position, filledNotionalUsd, result.feeUsd ?? 0);
@@ -2119,7 +2247,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         shadowLedger = newLedger;
       } catch (error: any) {
         console.error(`[SpotEngine] Shadow entry atomic persistence failed for ${intent.pair}: ${error.message}`);
-        return false;
+        return { executed: false, stage: "PERSIST", reasonCode: "SHADOW_PERSIST_FAILED", reason: error.message, sizing: null, submitted: false };
       }
     } else {
       // R10.3: REAL mode — atomic fill materialization (exactly-once)
@@ -2151,7 +2279,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
             lotId,
             orderId: result.orderId,
           });
-          return false;
+          return { executed: false, stage: "PERSIST", reasonCode: "REAL_ENTRY_FILL_ATOMIC_FAILED", reason: `Materialización DB falló: ${error.message}`, sizing: null, submitted: false };
         }
       } else {
         // Non-SHADOW non-REAL (shouldn't happen but keep for safety)
@@ -2198,9 +2326,10 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       reasonCode: "POSITION_MATERIALIZED",
       lotId,
     });
-    return true;
+    return { executed: true, stage: "EXECUTED", reasonCode: "ENTRY_FILLED", reason: `Posición abierta: ${lotId} @ ${result.fillPrice}`, sizing, submitted: true };
   } finally {
     if (entryCriticalSectionEntered) exitEntryCriticalSection();
+    if (pairCriticalSectionEntered) exitPairCriticalSection(intent.pair);
   }
 }
 

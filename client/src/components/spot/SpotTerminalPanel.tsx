@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Pause, Play, Trash2, Copy, RefreshCw, Search, ArrowDownToLine, ChevronLeft, ChevronRight } from "lucide-react";
+import { Activity, Pause, Play, Trash2, Copy, RefreshCw, Search, ArrowDownToLine, ChevronLeft, ChevronRight, ArrowUpToLine } from "lucide-react";
+import { formatLevelEs, formatSourceEs, formatRawDetails } from "./spotTerminalSpanishFormatter";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,8 @@ export function SpotTerminalPanel() {
   const [pageSize, setPageSize] = useState<number>(100);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [showPaginated, setShowPaginated] = useState(false);
+  const [newLinesCount, setNewLinesCount] = useState(0);
+  const [showRawDetails, setShowRawDetails] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pauseRef = useRef(false);
@@ -97,6 +100,10 @@ export function SpotTerminalPanel() {
     }
     setLines(prev => {
       const combined = [...prev, ...newLines];
+      // Track new lines for the "new lines" counter when not at bottom
+      if (!autoScrollRef.current) {
+        setNewLinesCount(c => c + newLines.length);
+      }
       return combined.length > MAX_LINES ? combined.slice(combined.length - MAX_LINES) : combined;
     });
   }, []);
@@ -197,6 +204,17 @@ export function SpotTerminalPanel() {
     autoScrollRef.current = next;
     if (next && bottomRef.current) {
       bottomRef.current.scrollIntoView({ block: "end" });
+      setNewLinesCount(0);
+    }
+  }
+
+  function returnToLive() {
+    autoScrollRef.current = true;
+    setAutoScroll(true);
+    setNewLinesCount(0);
+    setShowPaginated(false);
+    if (bottomRef.current) {
+      bottomRef.current.scrollIntoView({ block: "end" });
     }
   }
 
@@ -248,6 +266,11 @@ export function SpotTerminalPanel() {
         <Badge variant="outline" className="text-[10px] py-0 px-1.5">{status}</Badge>
         {visibleLines.length > 0 && (
           <span className="text-[10px] text-muted-foreground ml-1">{visibleLines.length} líneas</span>
+        )}
+        {newLinesCount > 0 && !autoScroll && (
+          <Badge variant="outline" className="text-[10px] py-0 px-1.5 text-cyan-400 border-cyan-500/30">
+            {newLinesCount} nuevas
+          </Badge>
         )}
 
         <div className="flex items-center gap-1 ml-auto">
@@ -315,6 +338,15 @@ export function SpotTerminalPanel() {
           <Button variant="ghost" size="sm" className="h-7 px-2" onClick={copyAll} title="Copiar líneas visibles">
             <Copy className="h-3.5 w-3.5" />
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-7 px-2 ${showRawDetails ? "text-amber-400" : "text-muted-foreground"}`}
+            onClick={() => setShowRawDetails(!showRawDetails)}
+            title={showRawDetails ? "Mostrar español" : "Mostrar detalle técnico"}
+          >
+            <span className="text-[10px]">{showRawDetails ? "ES" : "RAW"}</span>
+          </Button>
           <Button variant="ghost" size="sm" className="h-7 px-2" onClick={clearLines} title="Limpiar">
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -345,20 +377,37 @@ export function SpotTerminalPanel() {
                 {new Date(l.ts).toISOString().slice(11, 23)}
               </span>
               <span className={`font-semibold flex-shrink-0 w-[82px] ${LEVEL_CLASS[l.level] ?? "text-foreground"}`}>
-                {l.level}
+                {showRawDetails ? l.level : formatLevelEs(l.level)}
               </span>
               <span className="text-muted-foreground/70 flex-shrink-0 w-[70px]">
-                {l.source}
+                {showRawDetails ? l.source : formatSourceEs(l.source)}
               </span>
               {l.pair && (
                 <span className="text-cyan-400/80 flex-shrink-0">{l.pair}</span>
               )}
-              <span className="text-foreground/90 break-all">{l.msg}</span>
+              <span className="text-foreground/90 break-all">
+                {showRawDetails ? formatRawDetails(l) : l.msg}
+              </span>
             </div>
           ))
         )}
         <div ref={bottomRef} />
       </div>
+
+      {/* Return to live button */}
+      {newLinesCount > 0 && !autoScroll && (
+        <div className="flex justify-center py-1.5 border-t border-border/50 flex-shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-3 text-[11px] text-cyan-400 border-cyan-500/30"
+            onClick={returnToLive}
+          >
+            <ArrowUpToLine className="h-3.5 w-3.5 mr-1" />
+            Volver a live ({newLinesCount} nuevas)
+          </Button>
+        </div>
+      )}
 
       {/* Pagination footer */}
       {showPaginated && visibleLines.length > 0 && (

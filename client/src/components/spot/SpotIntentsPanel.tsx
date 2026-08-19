@@ -44,7 +44,7 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
             <Crosshair className="h-4 w-4 text-primary" />
-            Intents de Entrada
+            Intenciones de Entrada
           </CardTitle>
           <div className="flex gap-2">
             <Badge variant="secondary" className="font-mono text-[10px]">
@@ -59,7 +59,7 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
       <CardContent>
         {intents.length === 0 ? (
           <div className="text-center py-8 text-sm text-muted-foreground">
-            No hay entry intents. El motor generará intents al detectar señales válidas.
+            No hay intenciones de entrada. El motor generará intenciones al detectar señales válidas.
           </div>
         ) : (
           <div className="space-y-2">
@@ -84,13 +84,13 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
                     </span>
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-[11px]">
-                    <MetaItem label="Origin" value={`$${intent.originPrice.toFixed(2)}`} />
+                    <MetaItem label="Origen" value={`$${intent.originPrice.toFixed(2)}`} />
                     <MetaItem label="Régimen" value={intent.originRegime} />
                     <MetaItem label="Dirección" value={intent.originDirection} />
                     <MetaItem label="Macro" value={intent.originMacro} />
                     <MetaItem label="ATR%" value={intent.originAtrPct.toFixed(2)} />
                     <MetaItem
-                      label="Retry"
+                      label="Reintento"
                       value={String(intent.retryCount)}
                     />
                   </div>

@@ -101,7 +101,7 @@ export function SpotAssetsPanel({ pairs, onToggle, openPositionsByPair }: SpotAs
                     />
                   </button>
                   <span className={`text-[10px] font-mono ${p.enabled ? "text-emerald-400" : "text-muted-foreground"}`}>
-                    {p.enabled ? "ON" : "OFF"}
+                    {p.enabled ? "Activo" : "Inactivo"}
                   </span>
                 </div>
               </div>

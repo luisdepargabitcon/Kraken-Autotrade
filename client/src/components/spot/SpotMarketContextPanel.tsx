@@ -95,6 +95,9 @@ export interface SpotContextSnapshotData {
   marketContextId: string;
   regimeId: string;
   mode: string;
+  pipelineStopStage?: string | null;
+  pipelineStopReasonCode?: string | null;
+  pipelineStopReason?: string | null;
 }
 
 interface SpotMarketContextPanelProps {

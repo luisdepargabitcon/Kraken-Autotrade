@@ -22,6 +22,7 @@
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
 import { DEFAULT_ACTIVE_PAIRS, normalizePair } from "../pairAllowlist";
+import { _invalidatePairEntryGenerationAndDrain } from "./spotEngine";
 
 // ─── Allowlist validation ───────────────────────────────────────────────────
 
@@ -199,6 +200,14 @@ export async function disablePair(pair: string): Promise<PairToggleResult> {
     // Zero active pairs is VALID — persist explicitly.
     // The scan loop will simply not evaluate any pairs.
     await writeActivePairs(updated);
+
+    // Invalidate per-pair entry generation and drain critical section.
+    // This ensures any in-flight scanPair for THIS pair aborts at the next
+    // revalidation point (A-E) without affecting other pairs.
+    const drainResult = await _invalidatePairEntryGenerationAndDrain(normalized);
+    if (!drainResult.drained) {
+      console.error(`[spotPairToggle] DRAIN_TIMEOUT for ${normalized} — ${drainResult.remainingCount} critical sections still active. Pair disabled but in-flight entry may complete.`);
+    }
 
     const zeroWarning = updated.length === 0 ? " — ADVERTENCIA: no hay pares activos, el motor no abrirá nuevas posiciones." : "";
     console.log(`[spotPairToggle] Disabled pair: ${normalized} — existing positions and intents are NOT affected${zeroWarning}`);

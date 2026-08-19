@@ -128,6 +128,9 @@ export interface SnapshotBuildContext {
   intentEvaluation: IntentEvaluationResult | null;
   sizing: SizingResult | null;
   blockReasonCode: string | null;
+  pipelineStopStage?: string | null;
+  pipelineStopReasonCode?: string | null;
+  pipelineStopReason?: string | null;
 }
 
 /**
@@ -136,7 +139,8 @@ export interface SnapshotBuildContext {
  * Pure function: no side effects, no DB, no market data fetching.
  */
 export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotContextSnapshot {
-  const { ctx, signal, intent, intentEvaluation, sizing, blockReasonCode, enabled, scanId, mode } = input;
+  const { ctx, signal, intent, intentEvaluation, sizing, blockReasonCode, enabled, scanId, mode,
+          pipelineStopStage, pipelineStopReasonCode, pipelineStopReason } = input;
 
   const gates: SpotDecisionGate[] = [];
 
@@ -219,11 +223,11 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
 
   // Determine decision state
   const decisionState = determineDecisionState(signal, intent, intentEvaluation, sizing, enabled);
-  const lastReachedStage = determineLastReachedStage(gates);
+  const lastReachedStage = pipelineStopStage ?? determineLastReachedStage(gates);
   const primaryGate = gates.find(g => !g.pass) ?? null;
 
-  const primaryReasonCode = blockReasonCode ?? primaryGate?.reasonCode ?? (signal.signal === "BUY" ? "SIGNAL_DETECTED" : "NO_SIGNAL");
-  const primaryReasonEs = reasonCodeToSpanish(primaryReasonCode, primaryGate?.reason ?? signal.reason ?? "Sin señal");
+  const primaryReasonCode = pipelineStopReasonCode ?? blockReasonCode ?? primaryGate?.reasonCode ?? (signal.signal === "BUY" ? "SIGNAL_DETECTED" : "NO_SIGNAL");
+  const primaryReasonEs = pipelineStopReason ?? reasonCodeToSpanish(primaryReasonCode, primaryGate?.reason ?? signal.reason ?? "Sin señal");
   const secondaryReasonsEs = gates
     .filter(g => !g.pass && g !== primaryGate)
     .slice(0, 3)
@@ -285,6 +289,9 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
     marketContextId: ctx.marketContextId,
     regimeId: ctx.regimeContext.regimeId,
     mode: String(mode),
+    pipelineStopStage: pipelineStopStage ?? null,
+    pipelineStopReasonCode: pipelineStopReasonCode ?? null,
+    pipelineStopReason: pipelineStopReason ?? null,
   };
 }
 

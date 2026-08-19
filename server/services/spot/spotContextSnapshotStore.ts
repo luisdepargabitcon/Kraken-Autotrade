@@ -94,6 +94,11 @@ export interface SpotContextSnapshot {
 
   // Mode when snapshot was taken
   mode: string;
+
+  // Pipeline stop metadata (from executeEntry outcome, not reconstructed)
+  pipelineStopStage?: string | null;
+  pipelineStopReasonCode?: string | null;
+  pipelineStopReason?: string | null;
 }
 
 // ─── Store ──────────────────────────────────────────────────────────────────
@@ -138,7 +143,15 @@ export function getAllSnapshots(enabledPairs: Set<string>): SpotContextSnapshot[
       if (enabled) {
         result.push({ ...existing, enabled });
       } else {
-        result.push({ ...existing, enabled, decisionState: "DISABLED" as DecisionState, decisionColor: "gray" });
+        // P7: Show "Desactivado" but preserve lastProductiveDecision info
+        result.push({
+          ...existing,
+          enabled,
+          decisionState: "DISABLED" as DecisionState,
+          decisionColor: "gray" as const,
+          decisionTitle: "Desactivado",
+          decisionExplanation: `Última decisión productiva: ${existing.decisionTitle}. Par desactivado para nuevas entradas. Las posiciones existentes continúan bajo supervisión.`,
+        });
       }
     } else {
       // No snapshot yet — create placeholder

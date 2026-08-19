@@ -10,6 +10,7 @@ import { SpotAuditPanel } from "@/components/spot/SpotAuditPanel";
 import { SpotTerminalPanel } from "@/components/spot/SpotTerminalPanel";
 import { SpotMarketContextPanel, type SpotContextSnapshotData } from "@/components/spot/SpotMarketContextPanel";
 import { SpotAssetsPanel, type SpotPairStatus } from "@/components/spot/SpotAssetsPanel";
+import { reasonCodeShortEs } from "@/components/spot/spotTerminalSpanishFormatter";
 import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -332,6 +333,16 @@ export default function Spot() {
                       <p className="text-[10px] text-muted-foreground/70 truncate">
                         {s.decisionTitle}
                       </p>
+                      {!s.enabled && (
+                        <p className="text-[10px] text-gray-400 truncate">
+                          Par desactivado
+                        </p>
+                      )}
+                      {s.enabled && s.decisionState !== "APPROVED" && s.decisionState !== "CANDIDATE" && (
+                        <p className="text-[10px] text-muted-foreground/60 truncate">
+                          {reasonCodeShortEs(s.primaryReasonCode)}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
