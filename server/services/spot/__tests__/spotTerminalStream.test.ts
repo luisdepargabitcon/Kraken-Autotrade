@@ -39,14 +39,14 @@ describe("spotTerminalStream — unit tests", () => {
     expect(buf[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
-  it("2 — ring buffer trims to RING_BUFFER_SIZE (500)", () => {
-    for (let i = 0; i < 510; i++) {
+  it("2 — ring buffer trims to RING_BUFFER_SIZE (2000)", () => {
+    for (let i = 0; i < 2010; i++) {
       emitSpotTerminal("INFO", "scan", `msg-${i}`);
     }
     const buf = terminalWsServer.getRingBuffer();
-    expect(buf.length).toBe(500);
+    expect(buf.length).toBe(2000);
     expect(buf[0].msg).toBe("msg-10");
-    expect(buf[buf.length - 1].msg).toBe("msg-509");
+    expect(buf[buf.length - 1].msg).toBe("msg-2009");
   });
 
   it("3 — each line has a numeric ts close to now", () => {

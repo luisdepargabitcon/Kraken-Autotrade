@@ -2742,6 +2742,10 @@ async function getActivePairs(): Promise<string[]> {
   }
 }
 
+export async function getActivePairsExportedForRoutes(): Promise<string[]> {
+  return getActivePairs();
+}
+
 /**
  * Get available capital — B12: uses configurable shadow ledger, not hardcode 10_000.
  * R10.4: For REAL mode, uses authenticated exchange balance (getRealQuoteBalance).

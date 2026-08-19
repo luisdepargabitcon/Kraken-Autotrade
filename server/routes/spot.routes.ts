@@ -40,6 +40,9 @@ import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore"
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
 import { checkRealReadiness } from "../services/spot/spotRealReadiness";
 import { getActivityEvents, getActivityEventsFiltered, getActivityEventsFromDb, humanizeSeverity, humanizeCategory, formatTimeAgo } from "../services/spot/spotActivityLogger";
+import { buildSpotContextSnapshot, buildSpotContextSnapshots } from "../services/spot/spotContextSnapshot";
+import { getPairStatuses, enablePair, disablePair } from "../services/spot/spotPairToggle";
+import { terminalWsServer } from "../services/spot/spotTerminalStream";
 
 // ─── Route registration ─────────────────────────────────────────────────────
 
@@ -295,6 +298,79 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
         return;
       }
       res.status(500).json({ error: "Failed to set execution mode", detail: err.message });
+    }
+  });
+
+  // ─── GET /api/spot/context ───────────────────────────────────────────────
+  // Returns market context snapshots for all active pairs with decision info.
+  app.get("/api/spot/context", async (_req, res) => {
+    try {
+      // Get active pairs from bot_config via engine
+      const { getActivePairsExportedForRoutes } = await import("../services/spot/spotEngine");
+      const pairs = await getActivePairsExportedForRoutes();
+      if (pairs.length === 0) {
+        res.json({ snapshots: [], count: 0 });
+        return;
+      }
+      const snapshots = await buildSpotContextSnapshots(pairs);
+      res.json({ snapshots, count: snapshots.length });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to get SPOT context", detail: err.message });
+    }
+  });
+
+  // ─── GET /api/spot/context/:pair ──────────────────────────────────────────
+  // Returns a single pair's market context snapshot.
+  app.get("/api/spot/context/:pair", async (req, res) => {
+    try {
+      const { pair } = req.params;
+      const snapshot = await buildSpotContextSnapshot(pair);
+      res.json(snapshot);
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to get SPOT context for pair", detail: err.message });
+    }
+  });
+
+  // ─── GET /api/spot/pairs ──────────────────────────────────────────────────
+  // Returns all known pairs with their enabled/disabled status.
+  app.get("/api/spot/pairs", async (_req, res) => {
+    try {
+      const pairs = await getPairStatuses();
+      res.json({ pairs, count: pairs.length });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to get pair statuses", detail: err.message });
+    }
+  });
+
+  // ─── POST /api/spot/pairs/:pair/toggle ────────────────────────────────────
+  // Enable/disable a pair for new entries. Race-safe.
+  app.post("/api/spot/pairs/:pair/toggle", async (req, res) => {
+    try {
+      const { pair } = req.params;
+      const { enabled } = req.body;
+      if (typeof enabled !== "boolean") {
+        res.status(400).json({ error: "Field 'enabled' must be boolean" });
+        return;
+      }
+      const result = enabled
+        ? await enablePair(pair)
+        : await disablePair(pair);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to toggle pair", detail: err.message });
+    }
+  });
+
+  // ─── GET /api/spot/terminal-lines ─────────────────────────────────────────
+  // Paginated terminal lines from ring buffer (HTTP fallback for pagination).
+  app.get("/api/spot/terminal-lines", async (req, res) => {
+    try {
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const pageSize = Math.min(Math.max(1, parseInt(req.query.pageSize as string) || 50), 200);
+      const result = terminalWsServer.getRingBufferPaginated(page, pageSize);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to get terminal lines", detail: err.message });
     }
   });
 

@@ -25,7 +25,7 @@ import type { Server, IncomingMessage } from "http";
 import { log } from "../../utils/logger";
 
 const WS_PATH = "/ws/spot-terminal";
-const RING_BUFFER_SIZE = 500;
+const RING_BUFFER_SIZE = 2000;
 const BACKFILL_LINES = 100;
 const HEARTBEAT_INTERVAL = 30_000;
 const TICKET_TTL_MS = 30_000; // 30 seconds
@@ -490,10 +490,23 @@ class SpotTerminalWsServer {
     return ringBuffer.slice();
   }
 
+  getRingBufferPaginated(page: number, pageSize: number): { lines: TerminalLine[]; total: number; page: number; pageSize: number; totalPages: number } {
+    const total = ringBuffer.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const clampedPage = Math.max(1, Math.min(page, totalPages));
+    const start = (clampedPage - 1) * pageSize;
+    const lines = ringBuffer.slice(start, start + pageSize);
+    return { lines, total, page: clampedPage, pageSize, totalPages };
+  }
+
   clearRingBufferForTest(): void {
     ringBuffer.length = 0;
     ticketStore.clear();
     ipRateLimit.clear();
+  }
+
+  emitForTest(line: TerminalLine): void {
+    pushLine(line);
   }
 
   clearTicketStoreOnlyForTest(): void {
