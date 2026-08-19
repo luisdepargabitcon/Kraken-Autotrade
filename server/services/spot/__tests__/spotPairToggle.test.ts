@@ -6,19 +6,25 @@
  *   - Disable an enabled pair
  *   - Idempotent: enabling already-enabled is no-op
  *   - Idempotent: disabling already-disabled is no-op
- *   - Cannot disable the last active pair
+ *   - Zero pairs: CAN disable the last active pair (zero is valid)
  *   - Race safety: concurrent toggles are serialized
  *   - getPairStatuses returns union of defaults and active
+ *   - Invalid pair rejected with PairValidationError
+ *   - DB read failure FAILS CLOSED (throws)
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock DB
-const mockRows: any[] = [{ active_pairs: ["BTC/USD", "ETH/USD"] }];
+// Mock DB — vi.hoisted ensures the mock fn is available when vi.mock factory runs
+const { mockExecute, mockRows } = vi.hoisted(() => {
+  const mockExecute = vi.fn(async () => ({ rows: [{ active_pairs: ["BTC/USD", "ETH/USD"] }] }));
+  const mockRows = [{ active_pairs: ["BTC/USD", "ETH/USD"] }];
+  return { mockExecute, mockRows };
+});
 
 vi.mock("../../../db", () => ({
   db: {
-    execute: vi.fn(async () => ({ rows: mockRows })),
+    execute: mockExecute,
   },
 }));
 
@@ -31,17 +37,16 @@ vi.mock("../pairAllowlist", () => ({
   normalizePair: (p: string) => p.toUpperCase().trim(),
 }));
 
-import { enablePair, disablePair, getPairStatuses } from "../spotPairToggle";
+import { enablePair, disablePair, getPairStatuses, validatePairAllowed, PairValidationError } from "../spotPairToggle";
 
 describe("spotPairToggle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRows.length = 0;
-    mockRows.push({ active_pairs: ["BTC/USD", "ETH/USD"] });
+    mockExecute.mockResolvedValue({ rows: [{ active_pairs: ["BTC/USD", "ETH/USD"] }] });
   });
 
   it("should enable a disabled pair", async () => {
-    mockRows[0].active_pairs = ["BTC/USD"];
+    mockExecute.mockResolvedValueOnce({ rows: [{ active_pairs: ["BTC/USD"] }] });
 
     const result = await enablePair("ETH/USD");
 
@@ -52,7 +57,7 @@ describe("spotPairToggle", () => {
   });
 
   it("should disable an enabled pair", async () => {
-    mockRows[0].active_pairs = ["BTC/USD", "ETH/USD"];
+    mockExecute.mockResolvedValueOnce({ rows: [{ active_pairs: ["BTC/USD", "ETH/USD"] }] });
 
     const result = await disablePair("ETH/USD");
 
@@ -63,7 +68,7 @@ describe("spotPairToggle", () => {
   });
 
   it("should be idempotent when enabling already-enabled pair", async () => {
-    mockRows[0].active_pairs = ["BTC/USD", "ETH/USD"];
+    mockExecute.mockResolvedValueOnce({ rows: [{ active_pairs: ["BTC/USD", "ETH/USD"] }] });
 
     const result = await enablePair("BTC/USD");
 
@@ -72,7 +77,7 @@ describe("spotPairToggle", () => {
   });
 
   it("should be idempotent when disabling already-disabled pair", async () => {
-    mockRows[0].active_pairs = ["BTC/USD"];
+    mockExecute.mockResolvedValueOnce({ rows: [{ active_pairs: ["BTC/USD"] }] });
 
     const result = await disablePair("ETH/USD");
 
@@ -80,34 +85,38 @@ describe("spotPairToggle", () => {
     expect(result.message).toContain("ya está inactivo");
   });
 
-  it("should not allow disabling the last active pair", async () => {
-    mockRows[0].active_pairs = ["BTC/USD"];
+  it("should allow disabling the last active pair (zero pairs is valid)", async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [{ active_pairs: ["BTC/USD"] }] });
 
     const result = await disablePair("BTC/USD");
 
-    expect(result.enabled).toBe(true);
-    expect(result.message).toContain("último par");
+    expect(result.enabled).toBe(false);
+    expect(result.activePairs.length).toBe(0);
+    expect(result.message).toContain("ADVERTENCIA");
   });
 
   it("should serialize concurrent toggle operations (race safety)", async () => {
-    mockRows[0].active_pairs = ["BTC/USD", "ETH/USD", "SOL/USD"];
+    // Each call to db.execute returns the current state
+    // First read: 3 pairs, then after first disable write: 2 pairs, then after second: 1 pair
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ active_pairs: ["BTC/USD", "ETH/USD", "SOL/USD"] }] }) // read for ETH disable
+      .mockResolvedValueOnce({ rows: [] }) // write for ETH disable
+      .mockResolvedValueOnce({ rows: [{ active_pairs: ["BTC/USD", "SOL/USD"] }] }) // read for SOL disable
+      .mockResolvedValueOnce({ rows: [] }); // write for SOL disable
 
-    // Issue concurrent disable operations
     const [r1, r2] = await Promise.all([
       disablePair("ETH/USD"),
       disablePair("SOL/USD"),
     ]);
 
-    // Both should succeed — ETH and SOL both removed
     expect(r1.enabled).toBe(false);
     expect(r2.enabled).toBe(false);
-    // BTC should still be active
     expect(r1.activePairs).toContain("BTC/USD");
     expect(r2.activePairs).toContain("BTC/USD");
   });
 
   it("getPairStatuses should return union of defaults and active", async () => {
-    mockRows[0].active_pairs = ["BTC/USD", "ETH/USD"];
+    mockExecute.mockResolvedValueOnce({ rows: [{ active_pairs: ["BTC/USD", "ETH/USD"] }] });
 
     const statuses = await getPairStatuses();
 
@@ -120,5 +129,44 @@ describe("spotPairToggle", () => {
     const solStatus = statuses.find(s => s.pair === "SOL/USD");
     expect(solStatus).toBeDefined();
     expect(solStatus!.enabled).toBe(false);
+  });
+
+  // ─── New tests: validation and fail-closed ──────────────────────────────
+
+  it("should reject invalid pair with PairValidationError", () => {
+    expect(() => validatePairAllowed("INVALID/USD")).toThrow(PairValidationError);
+    expect(() => validatePairAllowed("FAKE/USD")).toThrow(PairValidationError);
+  });
+
+  it("should accept valid pairs from allowlist", () => {
+    expect(() => validatePairAllowed("BTC/USD")).not.toThrow();
+    expect(() => validatePairAllowed("ETH/USD")).not.toThrow();
+    expect(() => validatePairAllowed("SOL/USD")).not.toThrow();
+  });
+
+  it("should reject invalid pair when enabling", async () => {
+    await expect(enablePair("FAKE/USD")).rejects.toThrow(PairValidationError);
+  });
+
+  it("should reject invalid pair when disabling", async () => {
+    await expect(disablePair("FAKE/USD")).rejects.toThrow(PairValidationError);
+  });
+
+  it("should FAIL CLOSED on DB read error in getPairStatuses", async () => {
+    mockExecute.mockRejectedValueOnce(new Error("DB connection lost"));
+
+    await expect(getPairStatuses()).rejects.toThrow();
+  });
+
+  it("should FAIL CLOSED on DB read error in enablePair", async () => {
+    mockExecute.mockRejectedValueOnce(new Error("DB connection lost"));
+
+    await expect(enablePair("SOL/USD")).rejects.toThrow();
+  });
+
+  it("should FAIL CLOSED on DB read error in disablePair", async () => {
+    mockExecute.mockRejectedValueOnce(new Error("DB connection lost"));
+
+    await expect(disablePair("BTC/USD")).rejects.toThrow();
   });
 });

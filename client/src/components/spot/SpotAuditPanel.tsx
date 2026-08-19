@@ -54,19 +54,19 @@ export function SpotAuditPanel({ positions, aggregate, closedCount }: SpotAuditP
               <div>
                 <p className="text-xs text-muted-foreground mb-2">Distribución Profit Capture</p>
                 <div className="grid grid-cols-4 gap-2">
-                  <CaptureBox label="Excellent" count={aggregate.excellentCount} color="text-emerald-400" border="border-emerald-500/30" />
-                  <CaptureBox label="Good" count={aggregate.goodCount} color="text-blue-400" border="border-blue-500/30" />
-                  <CaptureBox label="Poor" count={aggregate.poorCount} color="text-yellow-400" border="border-yellow-500/30" />
-                  <CaptureBox label="Bad" count={aggregate.badCount} color="text-red-400" border="border-red-500/30" />
+                  <CaptureBox label="Excelente" count={aggregate.excellentCount} color="text-emerald-400" border="border-emerald-500/30" />
+                  <CaptureBox label="Bueno" count={aggregate.goodCount} color="text-blue-400" border="border-blue-500/30" />
+                  <CaptureBox label="Pobre" count={aggregate.poorCount} color="text-yellow-400" border="border-yellow-500/30" />
+                  <CaptureBox label="Malo" count={aggregate.badCount} color="text-red-400" border="border-red-500/30" />
                 </div>
               </div>
 
               {/* Avg metrics */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <AvgBox label="Avg Profit Capture" value={`${aggregate.avgProfitCapturePct.toFixed(1)}%`} />
-                <AvgBox label="Avg MFE (USD)" value={`$${aggregate.avgMfeUsd.toFixed(2)}`} />
-                <AvgBox label="Avg MAE (USD)" value={`$${aggregate.avgMaeUsd.toFixed(2)}`} />
-                <AvgBox label="Avg MFE (R)" value={`${aggregate.avgMfeR.toFixed(2)}R`} />
+                <AvgBox label="Captura Media" value={`${aggregate.avgProfitCapturePct.toFixed(1)}%`} />
+                <AvgBox label="MFE Medio (USD)" value={`$${aggregate.avgMfeUsd.toFixed(2)}`} />
+                <AvgBox label="MAE Medio (USD)" value={`$${aggregate.avgMaeUsd.toFixed(2)}`} />
+                <AvgBox label="MFE Medio (R)" value={`${aggregate.avgMfeR.toFixed(2)}R`} />
               </div>
             </div>
           ) : (
@@ -88,11 +88,11 @@ export function SpotAuditPanel({ positions, aggregate, closedCount }: SpotAuditP
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-muted-foreground border-b border-border/50">
-                    <th className="text-left py-2 px-2 font-medium">Lot ID</th>
+                    <th className="text-left py-2 px-2 font-medium">Lote ID</th>
                     <th className="text-right py-2 px-2 font-medium">MFE $</th>
                     <th className="text-right py-2 px-2 font-medium">MAE $</th>
                     <th className="text-right py-2 px-2 font-medium">MFE R</th>
-                    <th className="text-right py-2 px-2 font-medium">Capture</th>
+                    <th className="text-right py-2 px-2 font-medium">Captura</th>
                     <th className="text-center py-2 px-2 font-medium">Razón</th>
                   </tr>
                 </thead>

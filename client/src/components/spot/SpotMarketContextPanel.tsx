@@ -39,12 +39,26 @@ export interface SpotGate {
   level: string;
   pass: boolean;
   reason: string;
+  reasonCode?: string;
 }
 
 export interface SpotContextSnapshotData {
   pair: string;
+  scanId: string;
   generatedAt: number;
+  enabled: boolean;
+  decisionState: string;
+  primaryReasonCode: string;
+  primaryReasonEs: string;
+  secondaryReasonsEs: string[];
+  lastReachedStage: string;
+  // Market context
   dataHealth: string;
+  macro4h: string;
+  regime1h: string;
+  setup15m: string | null;
+  timing5m: string | null;
+  spread: number;
   macroBias: string;
   regime: string;
   direction: string;
@@ -80,6 +94,7 @@ export interface SpotContextSnapshotData {
   intentExpiresAt: number | null;
   marketContextId: string;
   regimeId: string;
+  mode: string;
 }
 
 interface SpotMarketContextPanelProps {
@@ -213,13 +228,16 @@ function CompactRow({ snap, expanded, onToggle }: { snap: SpotContextSnapshotDat
 
   return (
     <div
-      className={`rounded-lg border ${dc.border} ${dc.bg} px-3 py-2.5 cursor-pointer transition-colors hover:bg-opacity-20`}
+      className={`rounded-lg border ${snap.enabled ? dc.border : "border-border/30"} ${snap.enabled ? dc.bg : "bg-muted/10 opacity-60"} px-3 py-2.5 cursor-pointer transition-colors hover:bg-opacity-20`}
       onClick={onToggle}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
           <span className="font-mono text-sm font-semibold shrink-0">{snap.pair}</span>
+          {!snap.enabled && (
+            <span className="text-[9px] bg-gray-500/20 text-gray-400 rounded px-1 shrink-0">DESACTIVADO</span>
+          )}
           <span className={`text-[10px] font-mono ${dirColor} shrink-0`}>
             {snap.regime !== "UNKNOWN" ? getRegimeLabel(snap.regime) : ""}
           </span>
@@ -333,7 +351,7 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
 
       {/* Context IDs */}
       <div className="text-[10px] text-muted-foreground font-mono space-y-0.5">
-        <div>Context ID: {snap.marketContextId || "—"}</div>
+        <div>Contexto ID: {snap.marketContextId || "—"}</div>
         <div>Régimen ID: {snap.regimeId || "—"}</div>
         <div>Generado: {formatTime(snap.generatedAt)}</div>
       </div>

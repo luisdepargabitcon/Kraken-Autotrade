@@ -40,9 +40,10 @@ import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore"
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
 import { checkRealReadiness } from "../services/spot/spotRealReadiness";
 import { getActivityEvents, getActivityEventsFiltered, getActivityEventsFromDb, humanizeSeverity, humanizeCategory, formatTimeAgo } from "../services/spot/spotActivityLogger";
-import { buildSpotContextSnapshot, buildSpotContextSnapshots } from "../services/spot/spotContextSnapshot";
-import { getPairStatuses, enablePair, disablePair } from "../services/spot/spotPairToggle";
+import { getPairStatuses, enablePair, disablePair, PairValidationError } from "../services/spot/spotPairToggle";
 import { terminalWsServer } from "../services/spot/spotTerminalStream";
+import { getSnapshot, getAllSnapshots } from "../services/spot/spotContextSnapshotStore";
+import { normalizePair } from "../services/pairAllowlist";
 
 // ─── Route registration ─────────────────────────────────────────────────────
 
@@ -302,17 +303,22 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   });
 
   // ─── GET /api/spot/context ───────────────────────────────────────────────
-  // Returns market context snapshots for all active pairs with decision info.
+  // Returns market context snapshots from the LAST productive scan.
+  // Reads ONLY from spotContextSnapshotStore — never recalculates.
   app.get("/api/spot/context", async (_req, res) => {
     try {
-      // Get active pairs from bot_config via engine
-      const { getActivePairsExportedForRoutes } = await import("../services/spot/spotEngine");
-      const pairs = await getActivePairsExportedForRoutes();
-      if (pairs.length === 0) {
-        res.json({ snapshots: [], count: 0 });
+      // Build enabled pairs set from DB (fail-closed)
+      let enabledPairs: Set<string>;
+      try {
+        const { getActivePairsExportedForRoutes } = await import("../services/spot/spotEngine");
+        const pairs = await getActivePairsExportedForRoutes();
+        enabledPairs = new Set(pairs.map(normalizePair));
+      } catch {
+        // DB read failed — fail closed, return empty
+        res.json({ snapshots: [], count: 0, error: "No se pudo leer la configuración de pares activos" });
         return;
       }
-      const snapshots = await buildSpotContextSnapshots(pairs);
+      const snapshots = getAllSnapshots(enabledPairs);
       res.json({ snapshots, count: snapshots.length });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get SPOT context", detail: err.message });
@@ -320,11 +326,17 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   });
 
   // ─── GET /api/spot/context/:pair ──────────────────────────────────────────
-  // Returns a single pair's market context snapshot.
+  // Returns a single pair's market context snapshot from the store.
+  // Reads ONLY from spotContextSnapshotStore — never recalculates.
   app.get("/api/spot/context/:pair", async (req, res) => {
     try {
       const { pair } = req.params;
-      const snapshot = await buildSpotContextSnapshot(pair);
+      const normalized = normalizePair(pair);
+      const snapshot = getSnapshot(normalized);
+      if (!snapshot) {
+        res.status(404).json({ error: `No hay snapshot disponible para ${normalized}` });
+        return;
+      }
       res.json(snapshot);
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get SPOT context for pair", detail: err.message });
@@ -344,6 +356,7 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
 
   // ─── POST /api/spot/pairs/:pair/toggle ────────────────────────────────────
   // Enable/disable a pair for new entries. Race-safe.
+  // Validates pair against allowlist — rejects invalid pairs with 400.
   app.post("/api/spot/pairs/:pair/toggle", async (req, res) => {
     try {
       const { pair } = req.params;
@@ -357,17 +370,25 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
         : await disablePair(pair);
       res.json(result);
     } catch (err: any) {
+      if (err instanceof PairValidationError) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
       res.status(500).json({ error: "Failed to toggle pair", detail: err.message });
     }
   });
 
   // ─── GET /api/spot/terminal-lines ─────────────────────────────────────────
   // Paginated terminal lines from ring buffer (HTTP fallback for pagination).
+  // Supports filters: level, pair, search.
   app.get("/api/spot/terminal-lines", async (req, res) => {
     try {
       const page = Math.max(1, parseInt(req.query.page as string) || 1);
       const pageSize = Math.min(Math.max(1, parseInt(req.query.pageSize as string) || 50), 200);
-      const result = terminalWsServer.getRingBufferPaginated(page, pageSize);
+      const levelFilter = req.query.level as string | undefined;
+      const pairFilter = req.query.pair as string | undefined;
+      const search = req.query.search as string | undefined;
+      const result = terminalWsServer.getRingBufferPaginated(page, pageSize, { level: levelFilter, pair: pairFilter, search });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get terminal lines", detail: err.message });

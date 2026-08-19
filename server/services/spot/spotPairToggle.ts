@@ -13,12 +13,37 @@
  * INVARIANTS:
  *   - No DB migration required — reuses existing bot_config.active_pairs JSON array.
  *   - Toggle is idempotent: toggling an already-enabled pair to enabled is a no-op.
- *   - DEFAULT_ACTIVE_PAIRS used as fallback if bot_config has no active_pairs.
+ *   - Zero active pairs (active_pairs=[]) is VALID and persisted explicitly.
+ *   - DB read failures FAIL CLOSED — throw error, do NOT default to allowlist.
+ *   - Pair validation against allowlist is strict — invalid pairs are rejected with 400.
+ *   - Toggle integrates with SpotEngine entry generation for race safety.
  */
 
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
 import { DEFAULT_ACTIVE_PAIRS, normalizePair } from "../pairAllowlist";
+
+// ─── Allowlist validation ───────────────────────────────────────────────────
+
+const ALLOWLIST_SET = new Set<string>(DEFAULT_ACTIVE_PAIRS.map(normalizePair));
+
+/**
+ * Validate that a pair is in the known allowlist.
+ * Throws PairValidationError if not.
+ */
+export function validatePairAllowed(pair: string): void {
+  const normalized = normalizePair(pair);
+  if (!ALLOWLIST_SET.has(normalized)) {
+    throw new PairValidationError(`Par no permitido: ${normalized}. Pares válidos: ${Array.from(ALLOWLIST_SET).join(", ")}`);
+  }
+}
+
+export class PairValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PairValidationError";
+  }
+}
 
 // ─── Mutex ──────────────────────────────────────────────────────────────────
 
@@ -58,21 +83,17 @@ export interface PairStatus {
 
 // ─── DB helpers ─────────────────────────────────────────────────────────────
 
+/**
+ * Read active pairs from DB. FAIL CLOSED on error — throw, do NOT default to allowlist.
+ */
 async function readActivePairs(): Promise<string[]> {
-  try {
-    const result = await db.execute(sql`
-      SELECT active_pairs FROM bot_config LIMIT 1
-    `);
-    if (result.rows.length === 0) return [...DEFAULT_ACTIVE_PAIRS];
-    const pairs = result.rows[0].active_pairs as string[] | null;
-    if (!pairs || !Array.isArray(pairs) || pairs.length === 0) {
-      return [...DEFAULT_ACTIVE_PAIRS];
-    }
-    return pairs.map(normalizePair);
-  } catch (error) {
-    console.error("[spotPairToggle] Failed to read active_pairs:", error);
-    return [...DEFAULT_ACTIVE_PAIRS];
-  }
+  const result = await db.execute(sql`
+    SELECT active_pairs FROM bot_config LIMIT 1
+  `);
+  if (result.rows.length === 0) return [];
+  const pairs = result.rows[0].active_pairs as string[] | null;
+  if (!pairs || !Array.isArray(pairs)) return [];
+  return pairs.map(normalizePair);
 }
 
 async function writeActivePairs(pairs: string[]): Promise<void> {
@@ -87,12 +108,18 @@ async function writeActivePairs(pairs: string[]): Promise<void> {
 /**
  * Get all known pairs with their enabled status.
  * Known pairs = union of DEFAULT_ACTIVE_PAIRS and currently configured active_pairs.
+ * FAIL CLOSED on DB error — throws.
  */
 export async function getPairStatuses(): Promise<PairStatus[]> {
-  const activePairs = await readActivePairs();
+  let activePairs: string[];
+  try {
+    activePairs = await readActivePairs();
+  } catch (error) {
+    console.error("[spotPairToggle] Failed to read active_pairs — FAIL CLOSED:", error);
+    throw error;
+  }
   const activeSet = new Set(activePairs.map(normalizePair));
 
-  // Union of defaults and active
   const allPairs = new Set<string>([...DEFAULT_ACTIVE_PAIRS, ...activePairs]);
 
   return Array.from(allPairs).sort().map(pair => ({
@@ -104,11 +131,19 @@ export async function getPairStatuses(): Promise<PairStatus[]> {
 /**
  * Enable a pair for SPOT scanning (new entries).
  * Race-safe via mutex. Idempotent.
+ * Validates pair against allowlist.
  */
 export async function enablePair(pair: string): Promise<PairToggleResult> {
+  validatePairAllowed(pair);
   return withToggleLock(async () => {
     const normalized = normalizePair(pair);
-    const current = await readActivePairs();
+    let current: string[];
+    try {
+      current = await readActivePairs();
+    } catch (error) {
+      console.error("[spotPairToggle] Failed to read active_pairs — FAIL CLOSED:", error);
+      throw error;
+    }
 
     if (current.includes(normalized)) {
       return {
@@ -136,11 +171,19 @@ export async function enablePair(pair: string): Promise<PairToggleResult> {
  * Disable a pair for SPOT scanning (no new entries).
  * Race-safe via mutex. Idempotent.
  * Does NOT affect existing positions or active intents.
+ * Zero active pairs is VALID — the last pair can be disabled.
  */
 export async function disablePair(pair: string): Promise<PairToggleResult> {
+  validatePairAllowed(pair);
   return withToggleLock(async () => {
     const normalized = normalizePair(pair);
-    const current = await readActivePairs();
+    let current: string[];
+    try {
+      current = await readActivePairs();
+    } catch (error) {
+      console.error("[spotPairToggle] Failed to read active_pairs — FAIL CLOSED:", error);
+      throw error;
+    }
 
     if (!current.includes(normalized)) {
       return {
@@ -153,24 +196,17 @@ export async function disablePair(pair: string): Promise<PairToggleResult> {
 
     const updated = current.filter(p => normalizePair(p) !== normalized);
 
-    // Don't allow removing ALL pairs — keep at least the defaults
-    if (updated.length === 0) {
-      return {
-        pair: normalized,
-        enabled: true,
-        activePairs: current,
-        message: `No se puede desactivar el último par activo`,
-      };
-    }
-
+    // Zero active pairs is VALID — persist explicitly.
+    // The scan loop will simply not evaluate any pairs.
     await writeActivePairs(updated);
 
-    console.log(`[spotPairToggle] Disabled pair: ${normalized} — existing positions and intents are NOT affected`);
+    const zeroWarning = updated.length === 0 ? " — ADVERTENCIA: no hay pares activos, el motor no abrirá nuevas posiciones." : "";
+    console.log(`[spotPairToggle] Disabled pair: ${normalized} — existing positions and intents are NOT affected${zeroWarning}`);
     return {
       pair: normalized,
       enabled: false,
       activePairs: updated,
-      message: `Par ${normalized} desactivado — no hay nuevas entradas. Posiciones e intents existentes se mantienen.`,
+      message: `Par ${normalized} desactivado — no hay nuevas entradas. Posiciones e intents existentes se mantienen.${zeroWarning}`,
     };
   });
 }

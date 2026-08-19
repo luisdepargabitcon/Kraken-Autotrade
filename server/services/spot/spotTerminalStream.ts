@@ -328,6 +328,54 @@ export interface TerminalLine {
   details?: Record<string, unknown> | null;
 }
 
+// ── Spanish formatter ─────────────────────────────────────────────────────────
+
+const TERMINAL_LEVEL_ES: Record<TerminalLevel, string> = {
+  INFO: "INFO",
+  MARKET: "MERCADO",
+  SIGNAL: "SEÑAL",
+  DECISION: "DECISIÓN",
+  EXECUTION: "EJECUCIÓN",
+  SUPERVISOR: "SUPERVISOR",
+  METADATA: "METADATOS",
+  READINESS: "PREPARACIÓN",
+  RISK: "RIESGO",
+  ADAPTER: "ADAPTADOR",
+  SYSTEM: "SISTEMA",
+  ERROR: "ERROR",
+};
+
+const TERMINAL_SOURCE_ES: Record<string, string> = {
+  scan: "análisis",
+  supervisor: "supervisor",
+  execution: "ejecución",
+  readiness: "preparación",
+  adapter: "adaptador",
+  risk: "riesgo",
+  system: "sistema",
+  market: "mercado",
+  signal: "señal",
+  decision: "decisión",
+};
+
+/**
+ * Format a TerminalLine into a natural Spanish string for display.
+ * Technical details remain in the details field (foldable in UI).
+ */
+export function formatTerminalLineEs(line: TerminalLine): string {
+  const levelEs = TERMINAL_LEVEL_ES[line.level] ?? line.level;
+  const sourceEs = TERMINAL_SOURCE_ES[line.source] ?? line.source;
+  const pairStr = line.pair ? ` [${line.pair}]` : "";
+  return `[${levelEs}] ${sourceEs}${pairStr}: ${line.msg}`;
+}
+
+/**
+ * Get the Spanish label for a terminal level.
+ */
+export function getTerminalLevelEs(level: TerminalLevel): string {
+  return TERMINAL_LEVEL_ES[level] ?? level;
+}
+
 interface WsMessage {
   type: "TERMINAL_LINE" | "TERMINAL_HISTORY" | "WS_STATUS" | "TERMINAL_ERROR";
   payload: unknown;
@@ -490,12 +538,23 @@ class SpotTerminalWsServer {
     return ringBuffer.slice();
   }
 
-  getRingBufferPaginated(page: number, pageSize: number): { lines: TerminalLine[]; total: number; page: number; pageSize: number; totalPages: number } {
-    const total = ringBuffer.length;
+  getRingBufferPaginated(page: number, pageSize: number, filters?: { level?: string; pair?: string; search?: string }): { lines: TerminalLine[]; total: number; page: number; pageSize: number; totalPages: number } {
+    let filtered = ringBuffer;
+    if (filters?.level) {
+      filtered = filtered.filter(l => l.level === filters.level);
+    }
+    if (filters?.pair) {
+      filtered = filtered.filter(l => l.pair === filters.pair);
+    }
+    if (filters?.search) {
+      const q = filters.search.toLowerCase();
+      filtered = filtered.filter(l => l.msg.toLowerCase().includes(q));
+    }
+    const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const clampedPage = Math.max(1, Math.min(page, totalPages));
     const start = (clampedPage - 1) * pageSize;
-    const lines = ringBuffer.slice(start, start + pageSize);
+    const lines = filtered.slice(start, start + pageSize);
     return { lines, total, page: clampedPage, pageSize, totalPages };
   }
 

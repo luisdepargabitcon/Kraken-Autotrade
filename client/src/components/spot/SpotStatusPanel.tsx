@@ -206,7 +206,7 @@ export function SpotStatusPanel({ status, onModeChange }: SpotStatusPanelProps) 
                         <p className="text-xs font-semibold">Verificaciones comprehensivas:</p>
                         <ReadinessCheck label="REAL autorizado" ok={readiness.checks.realActivationAllowed} />
                         <ReadinessCheck label={`Exchange: ${readiness.checks.exchangeName ?? "—"}`} ok={readiness.checks.exchangeInitialized} />
-                        <ReadinessCheck label="Balance reachable" ok={readiness.checks.balanceReachable} />
+                        <ReadinessCheck label="Balance accesible" ok={readiness.checks.balanceReachable} />
                         <ReadinessCheck label="Fee model válido" ok={readiness.checks.feeModelValid} />
                         <ReadinessCheck label={`Pares activos (${readiness.checks.activePairsCount})`} ok={readiness.checks.activePairsConfigured} />
                         <ReadinessCheck label={`Metadata de pares (${readiness.checks.pairMetadataLoadedCount}/${readiness.checks.pairMetadataTotalCount})`} ok={readiness.checks.pairMetadataLoaded} />

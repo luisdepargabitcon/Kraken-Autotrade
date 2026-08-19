@@ -48,14 +48,14 @@ export function SpotHistoryPanel({ trades }: SpotHistoryPanelProps) {
               <thead>
                 <tr className="text-muted-foreground border-b border-border/50">
                   <th className="text-left py-2 px-2 font-medium">Par</th>
-                  <th className="text-right py-2 px-2 font-medium">Entry</th>
-                  <th className="text-right py-2 px-2 font-medium">Exit</th>
-                  <th className="text-right py-2 px-2 font-medium">Gross</th>
-                  <th className="text-right py-2 px-2 font-medium">Fees</th>
-                  <th className="text-right py-2 px-2 font-medium">Net PnL</th>
+                  <th className="text-right py-2 px-2 font-medium">Entrada</th>
+                  <th className="text-right py-2 px-2 font-medium">Salida</th>
+                  <th className="text-right py-2 px-2 font-medium">Bruto</th>
+                  <th className="text-right py-2 px-2 font-medium">Comisiones</th>
+                  <th className="text-right py-2 px-2 font-medium">PnL Neto</th>
                   <th className="text-right py-2 px-2 font-medium">R</th>
                   <th className="text-center py-2 px-2 font-medium">Razón</th>
-                  <th className="text-right py-2 px-2 font-medium">Hold</th>
+                  <th className="text-right py-2 px-2 font-medium">Duración</th>
                   <th className="text-center py-2 px-2 font-medium">Modo</th>
                 </tr>
               </thead>

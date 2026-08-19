@@ -57,13 +57,13 @@ export function SpotPositionsPanel({ positions, executionMode }: SpotPositionsPa
                 <tr className="text-muted-foreground border-b border-border/50">
                   <th className="text-left py-2 px-2 font-medium">Par</th>
                   <th className="text-right py-2 px-2 font-medium">Cantidad</th>
-                  <th className="text-right py-2 px-2 font-medium">Entry</th>
+                  <th className="text-right py-2 px-2 font-medium">Entrada</th>
                   <th className="text-right py-2 px-2 font-medium">MFE</th>
                   <th className="text-right py-2 px-2 font-medium">MAE</th>
                   <th className="text-right py-2 px-2 font-medium">R-MFE</th>
                   <th className="text-center py-2 px-2 font-medium">Setup</th>
                   <th className="text-center py-2 px-2 font-medium">SG</th>
-                  <th className="text-right py-2 px-2 font-medium">Notional</th>
+                  <th className="text-right py-2 px-2 font-medium">Nominal</th>
                 </tr>
               </thead>
               <tbody>

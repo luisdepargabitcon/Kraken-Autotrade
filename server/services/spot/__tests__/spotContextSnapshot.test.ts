@@ -1,67 +1,35 @@
 /**
  * spotContextSnapshot.test.ts — Tests for SPOT context snapshot builder.
  *
- * Tests:
- *   - Snapshot structure correctness
- *   - Decision explanation for BUY signal
- *   - Decision explanation for NONE signal with various block reasons
- *   - Gate breakdown correctness
- *   - Error handling for invalid pair
- *   - Multi-pair snapshot with error resilience
- *   - Read-only: no side effects on engine state
+ * Tests the PURE builder (buildSnapshotFromScanResults) that takes
+ * real scan results and produces a snapshot. No DB, no market data.
+ *
+ * Also tests spotContextSnapshotStore (publish, get, getAll).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock dependencies
+// Mock dependencies — the builder only imports types, but the store imports pairAllowlist
 vi.mock("../../../db", () => ({
-  db: {
-    execute: vi.fn(),
-  },
+  db: { execute: vi.fn() },
 }));
 
 vi.mock("drizzle-orm", () => ({
   sql: (strings: TemplateStringsArray) => strings.join(""),
 }));
 
-vi.mock("../spotMarketContext", () => ({
-  buildSpotMarketContext: vi.fn(),
-}));
-
-vi.mock("../spotCanonicalStrategy", () => ({
-  evaluateSpotCanonical: vi.fn(),
-  evaluate4hMacro: vi.fn(),
-  evaluate1hRegime: vi.fn(),
-}));
-
-vi.mock("../spotEntryIntent", () => ({
-  evaluateEntryIntent: vi.fn(),
-}));
-
-vi.mock("../spotRiskManager", () => ({
-  evaluateSizing: vi.fn(),
-  DEFAULT_SPOT_RISK_CONFIG: {},
-}));
-
-vi.mock("../spotRegimeEngine", () => ({
-  isEntryAllowedByRegime: vi.fn(),
-}));
-
-vi.mock("../spotEngine", () => ({
-  getIntentStore: vi.fn(() => ({
-    get: vi.fn(() => null),
-  })),
-}));
-
-import { buildSpotContextSnapshot, buildSpotContextSnapshots } from "../spotContextSnapshot";
-import { buildSpotMarketContext } from "../spotMarketContext";
-import { evaluateSpotCanonical, evaluate4hMacro, evaluate1hRegime } from "../spotCanonicalStrategy";
+import { buildSnapshotFromScanResults, reasonCodeToSpanish } from "../spotContextSnapshot";
+import { publishSnapshot, getSnapshot, getAllSnapshots, clearSnapshotStoreForTest } from "../spotContextSnapshotStore";
 import { DataHealth } from "../candleTimestamp";
 import { Regime, RegimeDirection, MacroBias, VolatilityLevel } from "../spotTypes";
+import type { SpotMarketContext, SpotEntryIntent, ExecutionMode } from "../spotTypes";
+import type { SpotSignalResult } from "../spotCanonicalStrategy";
+import type { SizingResult } from "../spotRiskManager";
+import type { IntentEvaluationResult } from "../spotEntryIntent";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function mockCtx(pair: string = "BTC/USD") {
+function mockCtx(pair: string = "BTC/USD"): SpotMarketContext {
   return {
     marketContextId: `mc-${pair}-test`,
     generatedAt: Date.now(),
@@ -91,10 +59,10 @@ function mockCtx(pair: string = "BTC/USD") {
     spreadPct: 0.5,
     atr: 2,
     volumeMetrics: { volumeRatio: 1.2, volume24h: 50000, participation: "NORMAL" as const },
-  };
+  } as any;
 }
 
-function mockSignal(signal: "BUY" | "NONE" = "NONE", blockReason: string | null = "BLOCKED") {
+function mockSignal(signal: "BUY" | "NONE" = "NONE", blockReason: string | null = "BLOCKED"): SpotSignalResult {
   return {
     signal,
     setupTag: signal === "BUY" ? "PULLBACK_CONTINUATION" as any : null,
@@ -106,26 +74,29 @@ function mockSignal(signal: "BUY" | "NONE" = "NONE", blockReason: string | null 
     originVolume: 1.2,
     contextId: "mc-test",
     blockReason,
-  };
+  } as any;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe("spotContextSnapshot", () => {
+describe("spotContextSnapshot — buildSnapshotFromScanResults", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    clearSnapshotStoreForTest();
   });
 
-  it("should produce a snapshot with correct structure", async () => {
+  it("should produce a snapshot with correct structure from scan results", () => {
     const ctx = mockCtx();
-    (buildSpotMarketContext as any).mockResolvedValue(ctx);
-    (evaluateSpotCanonical as any).mockReturnValue(mockSignal("NONE", "BLOCKED"));
-    (evaluate4hMacro as any).mockReturnValue({ pass: true, reason: "Macro bullish" });
-    (evaluate1hRegime as any).mockReturnValue({ pass: true, reason: "Trend bullish" });
+    const signal = mockSignal("NONE", "NO_SETUP_15M");
 
-    const snap = await buildSpotContextSnapshot("BTC/USD");
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: "NO_SETUP_15M",
+    });
 
     expect(snap.pair).toBe("BTC/USD");
+    expect(snap.scanId).toBe("scan-1");
+    expect(snap.enabled).toBe(true);
     expect(snap.dataHealth).toBe("GOOD");
     expect(snap.macroBias).toBe("BULLISH");
     expect(snap.regime).toBe("TREND");
@@ -138,98 +109,194 @@ describe("spotContextSnapshot", () => {
     expect(snap.decisionExplanation).toBeDefined();
     expect(snap.decisionColor).toBeDefined();
     expect(snap.marketContextId).toBe("mc-BTC/USD-test");
+    expect(snap.mode).toBe("SHADOW");
   });
 
-  it("should show BUY decision when signal is BUY", async () => {
+  it("should show CANDIDATE decision when signal is BUY without sizing", () => {
     const ctx = mockCtx();
-    (buildSpotMarketContext as any).mockResolvedValue(ctx);
-    (evaluateSpotCanonical as any).mockReturnValue(mockSignal("BUY", null));
-    (evaluate4hMacro as any).mockReturnValue({ pass: true, reason: "Macro bullish" });
-    (evaluate1hRegime as any).mockReturnValue({ pass: true, reason: "Trend bullish" });
+    const signal = mockSignal("BUY", null);
 
-    const snap = await buildSpotContextSnapshot("BTC/USD");
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: null,
+    });
 
     expect(snap.signal).toBe("BUY");
     expect(snap.setupTag).toBe("PULLBACK_CONTINUATION");
     expect(snap.signalConfidence).toBe(0.75);
+    expect(snap.decisionState).toBe("CANDIDATE");
     expect(snap.decisionColor).toBe("green");
   });
 
-  it("should show red decision when data health is stale", async () => {
+  it("should show APPROVED when signal BUY and sizing approved", () => {
+    const ctx = mockCtx();
+    const signal = mockSignal("BUY", null);
+    const sizing: SizingResult = { approved: true, qty: 0.1, notional: 10, blockReason: null, reason: "OK" } as any;
+
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing,
+      blockReasonCode: null,
+    });
+
+    expect(snap.decisionState).toBe("APPROVED");
+  });
+
+  it("should show red decision when data health is stale", () => {
     const ctx = mockCtx();
     ctx.dataHealth = DataHealth.STALE;
-    (buildSpotMarketContext as any).mockResolvedValue(ctx);
-    (evaluateSpotCanonical as any).mockReturnValue(mockSignal("NONE", "DATA_STALE"));
-    (evaluate4hMacro as any).mockReturnValue({ pass: false, reason: "Macro fail" });
-    (evaluate1hRegime as any).mockReturnValue({ pass: false, reason: "Regime fail" });
+    const signal = mockSignal("NONE", "DATA_STALE");
 
-    const snap = await buildSpotContextSnapshot("BTC/USD");
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: "DATA_STALE",
+    });
 
     expect(snap.decisionColor).toBe("red");
     expect(snap.decisionTitle).toContain("Datos");
   });
 
-  it("should show red decision when macro is bearish", async () => {
+  it("should show red decision when macro is bearish", () => {
     const ctx = mockCtx();
     ctx.regimeContext.macroBias = MacroBias.BEARISH;
-    (buildSpotMarketContext as any).mockResolvedValue(ctx);
-    (evaluateSpotCanonical as any).mockReturnValue(mockSignal("NONE", "Macro bearish"));
-    (evaluate4hMacro as any).mockReturnValue({ pass: false, reason: "Macro 4h bearish" });
-    (evaluate1hRegime as any).mockReturnValue({ pass: false, reason: "Regime fail" });
+    const signal = mockSignal("NONE", "MACRO_BEARISH");
 
-    const snap = await buildSpotContextSnapshot("BTC/USD");
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: "MACRO_BEARISH",
+    });
 
     expect(snap.decisionColor).toBe("red");
     expect(snap.decisionTitle).toContain("Macro");
   });
 
-  it("should include gate breakdown with pass/fail status", async () => {
+  it("should show DISABLED when pair is not enabled", () => {
     const ctx = mockCtx();
-    (buildSpotMarketContext as any).mockResolvedValue(ctx);
-    (evaluateSpotCanonical as any).mockReturnValue(mockSignal("NONE", "NO_SETUP_15M"));
-    (evaluate4hMacro as any).mockReturnValue({ pass: true, reason: "Macro bullish" });
-    (evaluate1hRegime as any).mockReturnValue({ pass: true, reason: "Trend bullish" });
+    const signal = mockSignal("NONE", null);
 
-    const snap = await buildSpotContextSnapshot("BTC/USD");
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: false,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: null,
+    });
+
+    expect(snap.decisionState).toBe("DISABLED");
+    expect(snap.enabled).toBe(false);
+    expect(snap.decisionColor).toBe("gray");
+  });
+
+  it("should include gate breakdown with pass/fail status and reasonCodes", () => {
+    const ctx = mockCtx();
+    const signal = mockSignal("NONE", "NO_SETUP_15M");
+
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: "NO_SETUP_15M",
+    });
 
     const dataHealthGate = snap.gates.find(g => g.level === "Data Health");
     expect(dataHealthGate).toBeDefined();
     expect(dataHealthGate!.pass).toBe(true);
+    expect(dataHealthGate!.reasonCode).toBe("DATA_GOOD");
 
     const macroGate = snap.gates.find(g => g.level === "Macro 4H");
     expect(macroGate).toBeDefined();
     expect(macroGate!.pass).toBe(true);
   });
 
-  it("should handle errors gracefully in multi-pair snapshots", async () => {
-    (buildSpotMarketContext as any)
-      .mockResolvedValueOnce(mockCtx("BTC/USD"))
-      .mockRejectedValueOnce(new Error("Network error"));
-
-    (evaluateSpotCanonical as any).mockReturnValue(mockSignal("NONE", "BLOCKED"));
-    (evaluate4hMacro as any).mockReturnValue({ pass: true, reason: "OK" });
-    (evaluate1hRegime as any).mockReturnValue({ pass: true, reason: "OK" });
-
-    const snapshots = await buildSpotContextSnapshots(["BTC/USD", "ETH/USD"]);
-
-    expect(snapshots.length).toBe(2);
-    expect(snapshots[0].pair).toBe("BTC/USD");
-    expect(snapshots[1].pair).toBe("ETH/USD");
-    expect(snapshots[1].dataHealth).toBe("ERROR");
-    expect(snapshots[1].decisionColor).toBe("red");
-  });
-
-  it("should be read-only (no side effects on engine state)", async () => {
+  it("should be read-only (no side effects, pure function)", () => {
     const ctx = mockCtx();
-    (buildSpotMarketContext as any).mockResolvedValue(ctx);
-    (evaluateSpotCanonical as any).mockReturnValue(mockSignal("NONE", "BLOCKED"));
-    (evaluate4hMacro as any).mockReturnValue({ pass: true, reason: "OK" });
-    (evaluate1hRegime as any).mockReturnValue({ pass: true, reason: "OK" });
+    const signal = mockSignal("NONE", "BLOCKED");
 
-    const snap = await buildSpotContextSnapshot("BTC/USD");
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: null,
+    });
 
-    // Snapshot should not have created any intents or positions
     expect(snap.hasActiveIntent).toBe(false);
     expect(snap.intentState).toBeNull();
+  });
+
+  it("reasonCodeToSpanish should map known codes and fallback for unknown", () => {
+    expect(reasonCodeToSpanish("MACRO_BEARISH", "fallback")).toContain("bajista");
+    expect(reasonCodeToSpanish("NO_SETUP_15M", "fallback")).toContain("configuración");
+    expect(reasonCodeToSpanish("UNKNOWN_CODE", "fallback text")).toBe("fallback text");
+    expect(reasonCodeToSpanish(null, "fallback")).toBe("fallback");
+  });
+});
+
+describe("spotContextSnapshotStore", () => {
+  beforeEach(() => {
+    clearSnapshotStoreForTest();
+  });
+
+  it("should publish and retrieve a snapshot", () => {
+    const ctx = mockCtx();
+    const signal = mockSignal("NONE", null);
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: null,
+    });
+
+    publishSnapshot(snap);
+    const retrieved = getSnapshot("BTC/USD");
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.pair).toBe("BTC/USD");
+    expect(retrieved!.scanId).toBe("scan-1");
+  });
+
+  it("should return null for unpublished pair", () => {
+    const result = getSnapshot("ETH/USD");
+    expect(result).toBeNull();
+  });
+
+  it("getAllSnapshots should include published and placeholder pairs", () => {
+    const ctx = mockCtx();
+    const signal = mockSignal("NONE", null);
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: null,
+    });
+    publishSnapshot(snap);
+
+    const all = getAllSnapshots(new Set(["BTC/USD"]));
+    expect(all.length).toBeGreaterThan(0);
+    const btc = all.find(s => s.pair === "BTC/USD");
+    expect(btc).toBeDefined();
+    expect(btc!.enabled).toBe(true);
+    expect(btc!.scanId).toBe("scan-1");
+  });
+
+  it("getAllSnapshots should mark disabled pairs", () => {
+    const ctx = mockCtx();
+    const signal = mockSignal("NONE", null);
+    const snap = buildSnapshotFromScanResults({
+      pair: "BTC/USD", scanId: "scan-1", mode: "SHADOW" as ExecutionMode, enabled: true,
+      ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: null,
+    });
+    publishSnapshot(snap);
+
+    const all = getAllSnapshots(new Set()); // no enabled pairs
+    const btc = all.find(s => s.pair === "BTC/USD");
+    expect(btc).toBeDefined();
+    expect(btc!.enabled).toBe(false);
+    expect(btc!.decisionState).toBe("DISABLED");
+  });
+
+  it("getAllSnapshots should create placeholders for pairs without snapshots", () => {
+    const all = getAllSnapshots(new Set(["BTC/USD"]));
+    const btc = all.find(s => s.pair === "BTC/USD");
+    expect(btc).toBeDefined();
+    expect(btc!.scanId).toBe("");
+    expect(btc!.decisionState).toBe("WAITING");
+    expect(btc!.primaryReasonCode).toBe("NO_SCAN_YET");
   });
 });

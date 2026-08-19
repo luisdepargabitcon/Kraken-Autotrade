@@ -302,6 +302,41 @@ export default function Spot() {
 
           <TabsContent value="overview" className="space-y-3">
             <SpotStatusPanel status={status} onModeChange={handleModeChange} />
+            {/* Context summary — compact active assets and market context */}
+            {contextSnapshots.length > 0 && (
+              <div className="rounded-lg border border-border/50 bg-card px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold">Contexto de Mercado</h3>
+                  <span className="text-[10px] text-muted-foreground">
+                    {contextSnapshots.filter(s => s.enabled).length} activos · {contextSnapshots.length} total
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                  {contextSnapshots.slice(0, 10).map(s => (
+                    <div key={s.pair} className="rounded border border-border/40 bg-muted/30 px-2 py-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-semibold">{s.pair}</span>
+                        <span className={`text-[9px] px-1 rounded ${
+                          s.decisionColor === "green" ? "bg-emerald-500/20 text-emerald-400" :
+                          s.decisionColor === "red" ? "bg-red-500/20 text-red-400" :
+                          s.decisionColor === "amber" ? "bg-amber-500/20 text-amber-400" :
+                          s.decisionColor === "violet" ? "bg-violet-500/20 text-violet-400" :
+                          "bg-gray-500/20 text-gray-400"
+                        }`}>
+                          {s.enabled ? s.decisionState : "DESACTIVADO"}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                        {s.regime1h} · {s.macro4h}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground/70 truncate">
+                        {s.decisionTitle}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <SpotPositionsPanel positions={positions} executionMode={executionMode} />
               <SpotIntentsPanel intents={intents} />

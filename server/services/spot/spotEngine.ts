@@ -64,6 +64,9 @@ import {
   type CreateSubmissionIntentParams,
   _clearCacheForTest as _clearIntentCacheForTest,
 } from "./spotOrderIntentStore";
+import { publishSnapshot } from "./spotContextSnapshotStore";
+import { buildSnapshotFromScanResults } from "./spotContextSnapshot";
+import { normalizePair, DEFAULT_ACTIVE_PAIRS } from "../pairAllowlist";
 
 // R8: Re-export ownership from pure module (no heavy deps)
 import {
@@ -1047,7 +1050,7 @@ async function runScanCycle(): Promise<void> {
     // Process each pair
     for (const pair of pairs) {
       try {
-        const result = await scanPair(pair, mode, scanGeneration);
+        const result = await scanPair(pair, mode, scanGeneration, scanId, new Set(pairs.map(normalizePair)));
         results.push(result);
       } catch (error: any) {
         console.error(`[SpotEngine] Error scanning ${pair}:`, error.message);
@@ -1061,6 +1064,9 @@ async function runScanCycle(): Promise<void> {
       const lvl = r.signal === "BUY" || r.signal === "EXECUTED" ? "SIGNAL" : r.signal === "ERROR" ? "ERROR" : "INFO";
       emitSpotTerminal(lvl, "scan", `[${r.pair}] ${r.signal} — ${r.reason}`, { pair: r.pair, mode: r.mode });
     }
+  } catch (err: any) {
+    console.error(`[SpotEngine] Scan ${scanId} aborted: ${err.message}`);
+    emitSpotTerminal("ERROR", "scan", `[${scanId}] Scan abortado — ${err.message}`);
   } finally {
     isScanning = false;
   }
@@ -1361,7 +1367,7 @@ async function hasOpenSpotPositions(): Promise<boolean> {
  *   D. If no active intent → evaluate strategy → if BUY, create intent → evaluate immediately
  *   E. Execute only if all gates pass
  */
-async function scanPair(pair: string, mode: ExecutionMode, generation: number): Promise<{ pair: string; signal: string; reason: string; mode: string }> {
+async function scanPair(pair: string, mode: ExecutionMode, generation: number, scanId: string, enabledPairs: Set<string>): Promise<{ pair: string; signal: string; reason: string; mode: string }> {
   // A. Build market context
   let ctx: SpotMarketContext;
   try {
@@ -1396,6 +1402,12 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number): 
   // R6: Position management removed from scanPair — runPositionSupervisor is the single owner.
   // C. Check data health — if stale, skip entry evaluation
   if (ctx.dataHealth === DataHealth.STALE || ctx.dataHealth === DataHealth.INSUFFICIENT) {
+    publishSnapshot(buildSnapshotFromScanResults({
+      pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+      ctx, signal: { signal: "NONE", setupTag: null, reason: `DataHealth=${ctx.dataHealth}`, confidence: 0, blockReason: `DATA_${ctx.dataHealth}` } as SpotSignalResult,
+      intent: null, intentEvaluation: null, sizing: null,
+      blockReasonCode: `DATA_${ctx.dataHealth}`,
+    }));
     return { pair, signal: "HOLD", reason: `DataHealth=${ctx.dataHealth}`, mode };
   }
 
@@ -1414,6 +1426,12 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number): 
         activeIntent.state = "EXECUTED" as any;
         intentStore.update(activeIntent);
         signalResultCache.delete(pair);
+        publishSnapshot(buildSnapshotFromScanResults({
+          pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+          ctx, signal: signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: "Executed", confidence: 0, blockReason: null } as SpotSignalResult,
+          intent: activeIntent, intentEvaluation: evaluation, sizing: null,
+          blockReasonCode: null,
+        }));
         return { pair, signal: "EXECUTED", reason: "Entry executed", mode };
       }
     }
@@ -1427,6 +1445,12 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number): 
     // If intent is still active (WAITING/APPROVED/CHASED), do NOT create a new one
     // Origin snapshot stays frozen — we don't reset it each scan
     if (activeIntent.state !== "EXPIRED" && activeIntent.state !== "INVALIDATED") {
+      publishSnapshot(buildSnapshotFromScanResults({
+        pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+        ctx, signal: signalResultCache.get(pair) ?? { signal: "NONE", setupTag: null, reason: evaluation.reason, confidence: 0, blockReason: null } as SpotSignalResult,
+        intent: activeIntent, intentEvaluation: evaluation, sizing: null,
+        blockReasonCode: activeIntent.lastBlockReason,
+      }));
       return { pair, signal: "INTENT", reason: evaluation.reason, mode };
     }
   }
@@ -1464,6 +1488,11 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number): 
         intent.state = "EXECUTED" as any;
         intentStore.update(intent);
         signalResultCache.delete(pair);
+        publishSnapshot(buildSnapshotFromScanResults({
+          pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+          ctx, signal, intent, intentEvaluation: evaluation, sizing: null,
+          blockReasonCode: null,
+        }));
         return { pair, signal: "EXECUTED", reason: "Entry executed (immediate)", mode };
       }
     } else {
@@ -1479,12 +1508,22 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number): 
       });
     }
 
+    publishSnapshot(buildSnapshotFromScanResults({
+      pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+      ctx, signal, intent, intentEvaluation: evaluation, sizing: null,
+      blockReasonCode: intent.lastBlockReason,
+    }));
     return { pair, signal: "BUY", reason: signal.reason, mode };
   }
 
   // No signal — clean up any stale signal cache
   signalResultCache.delete(pair);
 
+  publishSnapshot(buildSnapshotFromScanResults({
+    pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+    ctx, signal, intent: null, intentEvaluation: null, sizing: null,
+    blockReasonCode: signal.blockReason,
+  }));
   return { pair, signal: "HOLD", reason: signal.reason || signal.blockReason || "No signal", mode };
 }
 
@@ -2737,8 +2776,8 @@ async function getActivePairs(): Promise<string[]> {
     const pairs = result.rows[0].active_pairs as string[] | null;
     return pairs ?? [];
   } catch (error) {
-    console.error("[SpotEngine] Failed to get active pairs:", error);
-    return [];
+    console.error("[SpotEngine] Failed to get active pairs — FAIL CLOSED:", error);
+    throw new Error(`ACTIVE_PAIRS_DB_READ_FAILED: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
