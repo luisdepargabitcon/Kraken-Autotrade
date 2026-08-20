@@ -546,6 +546,13 @@ export interface TrailingPolicySnapshot {
   smoothingAlpha: number;
   /** Price tick size captured at cycle creation (instrument-specific). */
   priceTickSize: number;
+  /**
+   * Manual stop pct captured at cycle creation. Used as:
+   *   - the stop percentage when mode=manual
+   *   - the fallback stop when mode=adaptive_atr and no ATR is available
+   * Frozen per-cycle — global config changes do NOT affect open cycles.
+   */
+  manualStopPct: number;
 }
 
 export interface TrailingProtectionState {

@@ -151,6 +151,7 @@ function makeV3Policy(): TrailingPolicySnapshot {
     maxPct: 1.20,
     smoothingAlpha: 0.25,
     priceTickSize: 0.01,
+    manualStopPct: 0.40,
   };
 }
 

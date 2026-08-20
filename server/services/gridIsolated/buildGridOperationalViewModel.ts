@@ -164,6 +164,8 @@ export interface OperationalOpenCycle {
   trailingPolicySource: "snapshot" | "legacy_config" | null;
   // V3.1: Persisted tick size from the policy snapshot (instrument-specific).
   trailingPriceTickSize: number | null;
+  // V3.1: Manual stop pct frozen per-cycle (used in manual mode or as adaptive fallback).
+  trailingManualStopPct: number | null;
   // Stop-loss history
   stopLossTriggered: boolean;
   stopLossLayersTriggered: StopLossLayerTriggered[];
@@ -632,6 +634,7 @@ function buildOpenCycle(
     trailingPolicyEnabled: risk?.trailingPolicy?.enabled ?? null,
     trailingPolicySource: risk?.trailingPolicy ? "snapshot" : (risk?.trailing?.policy ? "snapshot" : "legacy_config"),
     trailingPriceTickSize: toNum(risk?.trailingPolicy?.priceTickSize) ?? null,
+    trailingManualStopPct: toNum(risk?.trailingPolicy?.manualStopPct) ?? null,
     stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
     stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => ({
       layer: l.layer,
@@ -790,6 +793,7 @@ function buildClosedCycle(
     trailingPolicyEnabled: risk?.trailingPolicy?.enabled ?? null,
     trailingPolicySource: risk?.trailingPolicy ? "snapshot" : (risk?.trailing?.policy ? "snapshot" : "legacy_config"),
     trailingPriceTickSize: toNum(risk?.trailingPolicy?.priceTickSize) ?? null,
+    trailingManualStopPct: toNum(risk?.trailingPolicy?.manualStopPct) ?? null,
     stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
     stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => ({
       layer: l.layer,

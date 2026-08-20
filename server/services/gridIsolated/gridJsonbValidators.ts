@@ -118,6 +118,9 @@ function validateTrailingPolicy(raw: unknown): TrailingPolicySnapshot | null {
     maxPct: finiteNumber(raw.maxPct) ?? 1.20,
     smoothingAlpha: finiteNumber(raw.smoothingAlpha) ?? 0.25,
     priceTickSize: finiteNumber(raw.priceTickSize) ?? 0.01,
+    // V3.1: manualStopPct — legacy snapshots without this field fall back to
+    // a sentinel of 0 which the risk manager resolves to config.trailingStopPct.
+    manualStopPct: finiteNumber(raw.manualStopPct) ?? 0,
   };
 }
 

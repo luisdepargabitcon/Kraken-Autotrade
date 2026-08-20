@@ -53,6 +53,7 @@ function makePolicy(overrides: Partial<TrailingPolicySnapshot> = {}): TrailingPo
     maxPct: 1.20,
     smoothingAlpha: 0.25,
     priceTickSize: 0.01,
+    manualStopPct: 0.40,
     ...overrides,
   };
 }
@@ -302,5 +303,139 @@ describe("[V3.1 Legacy] Ciclo sin policy snapshot → usa config global explíci
     expect(r.action).toBe("TRAILING_UPDATE");
     // Manual mode: stopPct=0.4, clamped to [0.25, 1.20] → 0.4
     expect(r.trailingState.effectiveStopPct).toBeCloseTo(0.4, 4);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// V3.1 CASCADE: manualStopPct frozen per cycle
+// ════════════════════════════════════════════════════════════════════
+
+describe("[V3.1 MANUAL_STOP_SNAPSHOT_IMMUTABLE] Ciclo manual → global trailingStopPct cambia → stop conservado", () => {
+  it("policy.manualStopPct=0.40 se preserva aunque config global sea 2.00", () => {
+    const c = makeCycle();
+    const policy = makePolicy({ mode: "manual", manualStopPct: 0.40 });
+    // Global config changed to trailingStopPct=2.00
+    const globalConfig = makeConfig({ trailingMode: "manual", trailingStopPct: 2.00 });
+    const r = gridRiskManager.evaluateCycle(c, TARGET, globalConfig, noTrailing, noStop, noHodl, 1.0, policy);
+    expect(r.action).toBe("TRAILING_UPDATE");
+    // Manual mode: stopPct from policy (0.40), NOT config (2.00)
+    // clamped to [0.25, 1.20] → 0.40
+    expect(r.trailingState.effectiveStopPct).toBeCloseTo(0.40, 4);
+    expect(r.trailingState.effectiveStopPct).not.toBeCloseTo(1.20, 4); // 2.00 would clamp to 1.20
+  });
+
+  it("policy.manualStopPct=0.80 → stop 0.80 aunque config global sea 0.40", () => {
+    const c = makeCycle();
+    const policy = makePolicy({ mode: "manual", manualStopPct: 0.80 });
+    const globalConfig = makeConfig({ trailingMode: "manual", trailingStopPct: 0.40 });
+    const r = gridRiskManager.evaluateCycle(c, TARGET, globalConfig, noTrailing, noStop, noHodl, 1.0, policy);
+    expect(r.trailingState.effectiveStopPct).toBeCloseTo(0.80, 4);
+    expect(r.trailingState.effectiveStopPct).not.toBeCloseTo(0.40, 4);
+  });
+});
+
+describe("[V3.1 ADAPTIVE_MANUAL_FALLBACK_USES_SNAPSHOT] Fallback manual usa snapshot, no config global", () => {
+  it("mode=adaptive_atr, sin ATR actual ni persistido → fallback usa manualStopPct del snapshot", () => {
+    const c = makeCycle();
+    const policy = makePolicy({ mode: "adaptive_atr", manualStopPct: 0.40 });
+    // Global config has trailingStopPct=2.00 — must NOT be used as fallback
+    const globalConfig = makeConfig({ trailingMode: "adaptive_atr", trailingStopPct: 2.00 });
+    // No ATR current (null), no ATR persisted (null) → manual fallback
+    const r = gridRiskManager.evaluateCycle(c, TARGET, globalConfig, noTrailing, noStop, noHodl, null, policy);
+    expect(r.action).toBe("TRAILING_UPDATE");
+    expect(r.trailingState.atrSource).toBe("manual_fallback");
+    // Fallback should use 0.40 (snapshot), NOT 2.00 (config)
+    // smoothed = 0.40, baseStopPct = 0.40 * 0.75 = 0.30, clamped to [0.25, 1.20] → 0.30
+    // NOT: smoothed = 2.00, baseStopPct = 2.00 * 0.75 = 1.50, clamped to 1.20
+    expect(r.trailingState.smoothedAtrPct).toBeCloseTo(0.40, 4);
+    expect(r.trailingState.smoothedAtrPct).not.toBeCloseTo(2.00, 4);
+    expect(r.trailingState.effectiveStopPct).toBeCloseTo(0.30, 4);
+    expect(r.trailingState.effectiveStopPct).not.toBeCloseTo(1.20, 4);
+  });
+
+  it("mode=adaptive_atr, sin ATR actual, con ATR persistido → NO usa fallback manual", () => {
+    const c = makeCycle();
+    const policy = makePolicy({ mode: "adaptive_atr", manualStopPct: 0.40 });
+    const globalConfig = makeConfig({ trailingMode: "adaptive_atr", trailingStopPct: 2.00 });
+    // ATR persisted = 1.0, no current ATR → uses persisted_atr, not manual_fallback
+    const trailingWithPersisted: TrailingProtectionState = {
+      ...noTrailing,
+      smoothedAtrPct: 1.0,
+    };
+    const r = gridRiskManager.evaluateCycle(c, TARGET, globalConfig, trailingWithPersisted, noStop, noHodl, null, policy);
+    expect(r.trailingState.atrSource).toBe("persisted_atr");
+    // smoothed = 1.0 (persisted), baseStopPct = 1.0 * 0.75 = 0.75
+    expect(r.trailingState.smoothedAtrPct).toBeCloseTo(1.0, 4);
+  });
+});
+
+describe("[V3.1 MANUAL_STOP_SURVIVES_RESTART] Restart recupera manualStopPct exacto", () => {
+  it("policy con manualStopPct=0.65 se recupera tras restart y sobrevive cambio global", () => {
+    const c = makeCycle();
+    const policy = makePolicy({ mode: "manual", manualStopPct: 0.65 });
+    // Simulate pre-restart state with trailing active
+    const preRestart: TrailingProtectionState = {
+      ...noTrailing,
+      activated: true,
+      activatedAt: new Date("2026-08-20T10:00:00Z"),
+      highestPriceSinceBuy: 102,
+      currentStopPrice: 101.24,
+      trailingStopPct: 0.65,
+      reason: "Trailing manual activo",
+      policy,
+    };
+    // After restart: global config has trailingStopPct=5.0 — must NOT affect
+    const globalConfig = makeConfig({ trailingMode: "manual", trailingStopPct: 5.0 });
+    const r = gridRiskManager.evaluateCycle(c, 101.8, globalConfig, preRestart, noStop, noHodl, 1.0, policy);
+    expect(r.action).toBe("TRAILING_UPDATE");
+    expect(r.trailingState.activated).toBe(true);
+    // Manual mode: stopPct from policy (0.65), NOT config (5.0)
+    // clamped to [0.25, 1.20] → 0.65
+    expect(r.trailingState.effectiveStopPct).toBeCloseTo(0.65, 4);
+    expect(r.trailingState.effectiveStopPct).not.toBeCloseTo(1.20, 4); // 5.0 would clamp to 1.20
+  });
+
+  it("policy con manualStopPct=0.40 en adaptive_atr sobrevive restart con fallback", () => {
+    const c = makeCycle();
+    const policy = makePolicy({ mode: "adaptive_atr", manualStopPct: 0.40 });
+    const preRestart: TrailingProtectionState = {
+      ...noTrailing,
+      activated: true,
+      activatedAt: new Date("2026-08-20T10:00:00Z"),
+      highestPriceSinceBuy: 102,
+      currentStopPrice: 101.50,
+      reason: "Trailing adaptive activo",
+      policy,
+    };
+    // After restart: no ATR available, global trailingStopPct=3.0
+    const globalConfig = makeConfig({ trailingMode: "adaptive_atr", trailingStopPct: 3.0 });
+    const r = gridRiskManager.evaluateCycle(c, 101.8, globalConfig, preRestart, noStop, noHodl, null, policy);
+    expect(r.trailingState.atrSource).toBe("manual_fallback");
+    // Fallback uses 0.40 (snapshot), NOT 3.0 (config)
+    expect(r.trailingState.smoothedAtrPct).toBeCloseTo(0.40, 4);
+    expect(r.trailingState.smoothedAtrPct).not.toBeCloseTo(3.0, 4);
+  });
+});
+
+describe("[V3.1 LEGACY] Snapshot sin manualStopPct → fallback a config global", () => {
+  it("policy antigua con manualStopPct=0 (sentinel) → usa config.trailingStopPct", () => {
+    const c = makeCycle();
+    // Legacy snapshot: manualStopPct=0 (sentinel for "not persisted")
+    const policy = makePolicy({ mode: "manual", manualStopPct: 0 });
+    const globalConfig = makeConfig({ trailingMode: "manual", trailingStopPct: 0.50 });
+    const r = gridRiskManager.evaluateCycle(c, TARGET, globalConfig, noTrailing, noStop, noHodl, 1.0, policy);
+    expect(r.action).toBe("TRAILING_UPDATE");
+    // Legacy: manualStopPct=0 → falls back to config.trailingStopPct=0.50
+    expect(r.trailingState.effectiveStopPct).toBeCloseTo(0.50, 4);
+  });
+
+  it("policy antigua no marca REQUIRES_REVIEW", () => {
+    const c = makeCycle();
+    const policy = makePolicy({ mode: "manual", manualStopPct: 0 });
+    const globalConfig = makeConfig({ trailingMode: "manual", trailingStopPct: 0.40 });
+    const r = gridRiskManager.evaluateCycle(c, TARGET, globalConfig, noTrailing, noStop, noHodl, 1.0, policy);
+    // Should work normally — no review required
+    expect(r.action).toBe("TRAILING_UPDATE");
+    expect(c.requiresReview).toBeFalsy();
   });
 });
