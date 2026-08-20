@@ -8080,3 +8080,54 @@ Comportamiento V3 intacto, sin cambios.
 - No REAL, No órdenes reales
 - No DB manual, No SQL manual
 - SHADOW only
+
+## GRID V3.1 — HARDENING POLICY SNAPSHOT + UX (20-AGO-2026)
+
+### Commit adicional
+- Mensaje: `fix(grid-v31): enforce cycle policy snapshot and complete trailing UX`
+- Branch: `fix/grid-v31-adaptive-trailing-20260820`
+- Base: `b2e9464`
+
+### Cambios core
+
+#### Policy snapshot = runtime source of truth
+- `gridRiskManager.evaluateCycle` ahora acepta `trailingPolicy` como parámetro
+- Cuando existe un snapshot válido, TODOS los parámetros se leen del snapshot:
+  - `enabled`, `mode`, `activationPctEffective`, `activationPrice`, `profitFloorPrice`
+  - `atrMultiplier`, `minPct`, `maxPct`, `smoothingAlpha`, `priceTickSize`
+- Sin snapshot → fallback explícito a config global (legacy compatibility)
+- Cambios globales NO afectan ciclos abiertos V3.1
+
+#### priceTickSize persistido en policy
+- `TrailingPolicySnapshot` ahora incluye `priceTickSize: number`
+- Capturado en cycle creation desde `constraints.priceTickSize`
+- Eliminado hardcoded `0.01` de risk manager
+- Validador JSONB actualizado con default `0.01` para legacy
+
+#### Engine: shouldEvaluateRisk considera policy snapshot
+- `cyclePolicyEnabled = risk.trailingPolicy?.enabled ?? false`
+- Un ciclo con `policy.enabled=true` se evalúa aunque `config.trailingEnabled=false`
+
+#### Engine: single-exit invariant
+- `CANCELLED` es ahora resettable en `advanceProtectiveExitLifecycle`
+- Un V3 maker cancelado por `TRAILING_TAKEOVER` permite un nuevo lifecycle `TRAILING_MAKER`
+- `TRAILING_MAKER` pendiente NO se cancela por `TRAILING_UPDATE` cuando precio sube
+- `trailingMakerPending` guard evita override de `activeExitRoute`
+
+### UX
+- `GridOpenCyclesPanel`: `TrailingStateBlock` exportado con estado, stop, máximo, modo, ATR source, policy source, tick size, distancia efectiva, progreso activación
+- `GridSettingsPanel`: `FieldControl` y `ExpertMode` exportados; `disabled=true` en campos inactivos (no solo opacity)
+- `ProteccionesDetail` (closed cycles): añadidos modo, distancia efectiva, ATR source, policy source, profit floor, activation price
+
+### Tests añadidos
+- `gridV31PolicySnapshot.test.ts` — S1-S5 + legacy (13 tests)
+- `gridV31EngineSingleExit.test.ts` — V3 takeover, lifecycle, single-exit (4 tests)
+- `gridV31SettingsDisabled.test.tsx` — FieldControl disabled, TrailingStateBlock (7 tests)
+
+### Estado REAL
+- `REAL_SUPPORTED=false`
+- Cancelación real de maker resting en Revolut X: NO implementado
+- Reconciliación real: NO implementada
+- Trailing takeover real: NO implementado
+- REAL permanece bloqueado
+- SHADOW only — sin órdenes reales

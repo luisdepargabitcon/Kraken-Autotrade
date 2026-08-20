@@ -3712,6 +3712,7 @@ export class GridIsolatedEngine {
         minPct: this.config.trailingMinPct ?? 0.25,
         maxPct: this.config.trailingMaxPct ?? 1.20,
         smoothingAlpha: this.config.trailingAtrSmoothingAlpha ?? 0.25,
+        priceTickSize: constraints.priceTickSize,
       });
       // Inject the policy snapshot into the cycle's initial risk state.
       const initialRisk = cycle.riskStateJson ?? this.defaultRiskState();
@@ -3853,10 +3854,16 @@ export class GridIsolatedEngine {
         continue;
       }
 
+      // V3.1: A cycle with a persisted trailing policy snapshot that has
+      // enabled=true must continue being evaluated even if the global config
+      // has trailingEnabled=false. The policy snapshot is the source of truth.
+      const cyclePolicyEnabled = risk.trailingPolicy?.enabled ?? false;
+
       const hasTarget = cycle.targetSellPrice != null && cycle.targetSellPrice > 0;
       const pendingExit = risk.protectiveExit.state !== "NONE";
       const shouldEvaluateRisk =
         riskFeaturesEnabled ||
+        cyclePolicyEnabled ||
         risk.trailing.activated ||
         risk.hodl.active;
 
@@ -3872,6 +3879,7 @@ export class GridIsolatedEngine {
           risk.stopLoss,
           risk.hodl,
           atrPct,
+          risk.trailingPolicy ?? null,
         );
         evaluation = riskEval;
       }
@@ -3921,7 +3929,13 @@ export class GridIsolatedEngine {
       // as the active exit route; it would confuse the UI/risk state.
       // V3.1: When trailing takes over a V3 cycle, explicitly cancel any existing
       // V3 maker order to enforce the single-exit invariant.
-      if (evaluation?.action === "TRAILING_UPDATE") {
+      // V3.1: Once a TRAILING_MAKER order is PENDING, do NOT override the active
+      // exit route — the maker must be filled, not cancelled by a subsequent
+      // TRAILING_UPDATE when price rises above the stop.
+      const trailingMakerPending =
+        nextRisk.protectiveExit.state === "MAKER_PENDING" &&
+        nextRisk.protectiveExit.route === "TRAILING_MAKER";
+      if (evaluation?.action === "TRAILING_UPDATE" && !trailingMakerPending) {
         nextRisk.activeExitRoute = null;
         nextRisk.pendingExitPrice = null;
         // V3 takeover: cancel existing CYCLE_OWNED_TARGET maker if pending
@@ -4137,7 +4151,9 @@ export class GridIsolatedEngine {
     }
 
     // New trigger detected.
-    if (protectiveExit.state === "NONE" || protectiveExit.state === "ARMED") {
+    // V3.1: CANCELLED is also resettable — a V3 maker cancelled by TRAILING_TAKEOVER
+    // must allow a fresh TRAILING_MAKER lifecycle to begin on the next trigger.
+    if (protectiveExit.state === "NONE" || protectiveExit.state === "ARMED" || protectiveExit.state === "CANCELLED") {
       return {
         ...this.defaultMakerExit(),
         state: "TRIGGERED",

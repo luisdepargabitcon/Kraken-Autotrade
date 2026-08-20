@@ -20,6 +20,7 @@ import type {
   GridCycle,
   GridIsolatedConfig,
   TrailingMode,
+  TrailingPolicySnapshot,
 } from "./gridIsolatedTypes";
 import { FEE_BUFFER_BUY_PCT, FEE_BUFFER_SELL_PCT } from "./gridIsolatedTypes";
 import { computeBreakEvenSellPrice } from "./gridNetCalculator";
@@ -51,6 +52,10 @@ class GridRiskManager {
     hodlState: HodlRecoveryState,
     /** Current ATR pct from canonical GRID band snapshot (V3.1 adaptive trailing). */
     atrPct?: number | null,
+    /** V3.1: Trailing policy snapshot persisted at cycle creation. When present,
+     *  this is the runtime source of truth — global config changes do NOT
+     *  affect open cycles. */
+    trailingPolicy?: TrailingPolicySnapshot | null,
   ): RiskEvaluation {
     if (!cycle.buyPrice) {
       return this.noAction(trailingState, stopLossLayers, hodlState);
@@ -184,42 +189,63 @@ class GridRiskManager {
     // active it remains active even if the current profit retraces below the
     // activation threshold, until the stop is hit.
     //
+    // V3.1: The trailing policy snapshot (persisted at cycle creation) is the
+    // runtime source of truth. Global config changes do NOT affect open cycles.
+    // Legacy cycles without a snapshot fall back to global config explicitly.
+    //
     // V3.1: For CYCLE_OWNED_NET_TARGET_V3 cycles, activation is floored at
     // targetSellPrice so trailing only arms after the economic target is reached.
-    // This prevents trailing from closing below the V3 net profit objective.
     // V2 and legacy cycles are NOT affected — they use the plain activationPct.
-    const trailingEnabled = config.trailingEnabled ?? false;
-    const trailingMode: TrailingMode = config.trailingMode ?? "adaptive_atr";
-
     const isV3Cycle = cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" ||
                       cycle.targetKind === "CYCLE_OWNED_SYNTHETIC";
 
-    // Compute activation price with V3 floor (only for V3 cycles)
-    const activationPrice = computeActivationPrice(
-      buyPrice,
-      isV3Cycle ? cycle.targetSellPrice : null,
-      config.trailingActivationPct,
-      trailingMode,
-      0.01, // tick size — risk manager doesn't have constraints; engine passes real tick via state
-    );
+    // V3.1: Policy snapshot is the source of truth when present.
+    // Legacy cycles without snapshot use global config (explicit fallback).
+    const hasPolicy = trailingPolicy != null && typeof trailingPolicy === "object";
+    const trailingEnabled = hasPolicy
+      ? trailingPolicy!.enabled
+      : (config.trailingEnabled ?? false);
+    const trailingMode: TrailingMode = hasPolicy
+      ? trailingPolicy!.mode
+      : (config.trailingMode ?? "adaptive_atr");
+    const policyTickSize = hasPolicy
+      ? (trailingPolicy!.priceTickSize ?? 0.01)
+      : 0.01; // legacy fallback — no tick persisted
+
+    // Use persisted activationPrice from policy when available;
+    // otherwise recompute (legacy compatibility).
+    const activationPrice = hasPolicy && trailingPolicy!.activationPrice != null
+      ? trailingPolicy!.activationPrice
+      : computeActivationPrice(
+          buyPrice,
+          isV3Cycle ? cycle.targetSellPrice : null,
+          hasPolicy ? trailingPolicy!.activationPctEffective : config.trailingActivationPct,
+          trailingMode,
+          policyTickSize,
+        );
 
     // Activation condition: price >= activationPrice, OR trailing already activated
     const activationReached = activationPrice != null
       ? currentPrice >= activationPrice
-      : profitPct >= config.trailingActivationPct;
+      : profitPct >= (hasPolicy ? trailingPolicy!.activationPctEffective : config.trailingActivationPct);
 
     if (trailingEnabled && (activationReached || trailingState.activated)) {
-      // Trailing should be active — compute adaptive stop
+      // Trailing should be active — compute adaptive stop using policy snapshot
       const adaptiveConfig: AdaptiveTrailingConfig = {
         mode: trailingMode,
-        activationPct: config.trailingActivationPct,
-        stopPct: config.trailingStopPct,
-        atrMultiplier: config.trailingAtrMultiplier ?? 0.75,
-        minPct: config.trailingMinPct ?? 0.25,
-        maxPct: config.trailingMaxPct ?? 1.20,
-        smoothingAlpha: config.trailingAtrSmoothingAlpha ?? 0.25,
-        priceTickSize: 0.01,
+        activationPct: hasPolicy ? trailingPolicy!.activationPctEffective : config.trailingActivationPct,
+        stopPct: config.trailingStopPct, // manual fallback — always from config (not policy-scoped)
+        atrMultiplier: hasPolicy ? trailingPolicy!.atrMultiplier : (config.trailingAtrMultiplier ?? 0.75),
+        minPct: hasPolicy ? trailingPolicy!.minPct : (config.trailingMinPct ?? 0.25),
+        maxPct: hasPolicy ? trailingPolicy!.maxPct : (config.trailingMaxPct ?? 1.20),
+        smoothingAlpha: hasPolicy ? trailingPolicy!.smoothingAlpha : (config.trailingAtrSmoothingAlpha ?? 0.25),
+        priceTickSize: policyTickSize,
       };
+
+      // Profit floor: use policy snapshot when available, otherwise from cycle target
+      const profitFloor = hasPolicy && trailingPolicy!.profitFloorPrice != null
+        ? trailingPolicy!.profitFloorPrice
+        : (isV3Cycle ? cycle.targetSellPrice : null);
 
       const adaptiveResult = resolveAdaptiveTrailingStop({
         buyPrice,
@@ -229,7 +255,7 @@ class GridRiskManager {
         atrPct: atrPct ?? trailingState.atrPct ?? null,
         previousSmoothedAtrPct: trailingState.smoothedAtrPct ?? null,
         previousStopPrice: trailingState.currentStopPrice,
-        profitFloorPrice: isV3Cycle ? cycle.targetSellPrice : null,
+        profitFloorPrice: profitFloor,
         config: adaptiveConfig,
       });
 

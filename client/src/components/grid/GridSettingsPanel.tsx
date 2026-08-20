@@ -468,14 +468,16 @@ function guessMeta(key: string, value: unknown): FieldMeta {
   return base;
 }
 
-function FieldControl({
+export function FieldControl({
   fieldKey,
   value,
   onChange,
+  disabled = false,
 }: {
   fieldKey: string;
   value: unknown;
   onChange: (v: any) => void;
+  disabled?: boolean;
 }) {
   const meta = getFieldMeta(fieldKey) ?? guessMeta(fieldKey, value);
   const num = toNum(value) ?? 0;
@@ -498,6 +500,7 @@ function FieldControl({
             max={meta.max ?? 100}
             step={meta.step ?? 1}
             onValueChange={(v) => onChange(v[0])}
+            disabled={disabled}
           />
           <p className="text-xs text-muted-foreground">{meta.help}</p>
           {meta.impact && <p className="text-xs text-muted-foreground"><Lightbulb className="inline h-3 w-3 mr-1" />Impacto: {meta.impact}</p>}
@@ -514,7 +517,7 @@ function FieldControl({
             <p className="text-xs text-muted-foreground">{meta.help}</p>
             {meta.impact && <p className="text-xs text-muted-foreground">Impacto: {meta.impact}</p>}
           </div>
-          <Switch checked={checked} onCheckedChange={onChange} />
+          <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
         </div>
       );
     }
@@ -526,7 +529,8 @@ function FieldControl({
           <select
             value={String(value ?? "")}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full rounded-md border border-border/50 bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
+            disabled={disabled}
+            className="w-full rounded-md border border-border/50 bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {options.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -544,7 +548,8 @@ function FieldControl({
             type="text"
             value={String(value ?? "")}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full rounded-md border border-border/50 bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
+            disabled={disabled}
+            className="w-full rounded-md border border-border/50 bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <p className="text-xs text-muted-foreground">{meta.help}</p>
         </div>
@@ -605,7 +610,7 @@ function SimpleMode({
   );
 }
 
-function ExpertMode({
+export function ExpertMode({
   draft,
   expertBlocks,
   onChange,
@@ -632,19 +637,26 @@ function ExpertMode({
               {(block.fields ?? []).map((fieldKey: string) => {
                 if (FIELD_META[fieldKey]?.hidden) return null;
                 if (draft[fieldKey] === undefined) return null;
-                // V3.1: visually disable manual trailing fields when adaptive_atr is active
+                // V3.1: Genuinely disable fields that don't apply to the active mode.
+                // disabled=true prevents the control from modifying the draft.
                 const isAdaptive = draft.trailingMode === "adaptive_atr";
                 const isManualField = fieldKey === "trailingActivationPct" || fieldKey === "trailingStopPct";
                 const isAtrField = fieldKey === "trailingAtrMultiplier" || fieldKey === "trailingMinPct" || fieldKey === "trailingMaxPct" || fieldKey === "trailingAtrSmoothingAlpha";
-                const visuallyDisabled =
-                  (isAdaptive && isManualField && fieldKey === "trailingStopPct") ? false : // trailingStopPct is used as fallback
-                  (isAdaptive && isManualField) ? true :
+                // trailingStopPct remains editable in adaptive mode (used as manual fallback)
+                const isStopPctFallback = fieldKey === "trailingStopPct";
+                const fieldDisabled =
+                  (isAdaptive && isManualField && !isStopPctFallback) ? true :
                   (!isAdaptive && isAtrField) ? true :
                   false;
                 return (
-                  <div key={fieldKey} className={cn("rounded-lg border border-border/30 p-3 bg-muted/10", isHighlighted(fieldKey) && "border-amber-500/40 bg-amber-500/10", visuallyDisabled && "opacity-50")}>
-                    <FieldControl fieldKey={fieldKey} value={draft[fieldKey]} onChange={(v) => onChange(fieldKey, v)} />
-                    {visuallyDisabled && (
+                  <div key={fieldKey} className={cn("rounded-lg border border-border/30 p-3 bg-muted/10", isHighlighted(fieldKey) && "border-amber-500/40 bg-amber-500/10", fieldDisabled && "opacity-50")}>
+                    <FieldControl
+                      fieldKey={fieldKey}
+                      value={draft[fieldKey]}
+                      onChange={(v) => onChange(fieldKey, v)}
+                      disabled={fieldDisabled}
+                    />
+                    {fieldDisabled && (
                       <p className="mt-1 text-xs text-muted-foreground italic">Inactivo en este modo</p>
                     )}
                   </div>

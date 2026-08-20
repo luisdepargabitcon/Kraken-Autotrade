@@ -544,6 +544,8 @@ export interface TrailingPolicySnapshot {
   maxPct: number;
   /** EMA smoothing alpha for ATR. */
   smoothingAlpha: number;
+  /** Price tick size captured at cycle creation (instrument-specific). */
+  priceTickSize: number;
 }
 
 export interface TrailingProtectionState {

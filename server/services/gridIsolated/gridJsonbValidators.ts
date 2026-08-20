@@ -117,6 +117,7 @@ function validateTrailingPolicy(raw: unknown): TrailingPolicySnapshot | null {
     minPct: finiteNumber(raw.minPct) ?? 0.25,
     maxPct: finiteNumber(raw.maxPct) ?? 1.20,
     smoothingAlpha: finiteNumber(raw.smoothingAlpha) ?? 0.25,
+    priceTickSize: finiteNumber(raw.priceTickSize) ?? 0.01,
   };
 }
 
