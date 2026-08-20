@@ -776,7 +776,8 @@ function buildClosedCycle(
     holdTimeMinutes,
     durationMinutes,
     capitalUsedUsd: buy != null && qty != null ? buy * qty : null,
-    closePathLabel: closePathLabel(closePath as GridClosePath | null),
+    closePathLabel: closePathLabel(closePath as GridClosePath | null)
+      ?? (exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" ? "Objetivo individual V3" : null),
     trailingActivated: risk?.trailing?.activated ?? false,
     trailingActivatedAt: safeIso(risk?.trailing?.activatedAt) ?? null,
     trailingHighestPrice: toNum(risk?.trailing?.highestPriceSinceBuy) ?? null,

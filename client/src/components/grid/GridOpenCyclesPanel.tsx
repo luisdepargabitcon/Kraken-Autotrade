@@ -149,12 +149,12 @@ export function TrailingStateBlock({ cycle }: { cycle: any }) {
   } else if (reviewRequired) {
     opState = "Revisión requerida";
     opStateColor = "text-red-400";
+  } else if (makerState === "TRIGGERED" || (activated && activeExitRoute === "TRAILING_MAKER" && makerState !== "MAKER_PENDING")) {
+    opState = "Cierre trailing disparado";
+    opStateColor = "text-amber-400";
   } else if (activeExitRoute === "TRAILING_MAKER" || makerState === "MAKER_PENDING") {
     opState = "Maker trailing pendiente";
     opStateColor = "text-purple-400";
-  } else if (activated && activeExitRoute === "TRAILING_MAKER") {
-    opState = "Cierre trailing disparado";
-    opStateColor = "text-amber-400";
   } else if (activated) {
     opState = "Siguiendo máximo";
     opStateColor = "text-amber-400";

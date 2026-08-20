@@ -322,6 +322,40 @@ describe("[V3.1 UI] Operational state precision", () => {
     expect(html).toContain("Maker trailing pendiente");
   });
 
+  it("muestra 'Cierre trailing disparado' cuando makerState=TRIGGERED", () => {
+    const cycle = {
+      trailingPolicyEnabled: true,
+      trailingMode: "adaptive_atr",
+      trailingAtrSource: "current_atr",
+      trailingAtrPct: 1.0,
+      trailingSmoothedAtrPct: 1.0,
+      trailingPolicySource: "snapshot",
+      trailingActivationPrice: 60600,
+      trailingProfitFloorPrice: 60600,
+      trailingEffectiveStopPct: 0.75,
+      trailingPriceTickSize: 0.01,
+      trailingManualStopPct: 0.40,
+      buyPrice: 60000,
+      currentBid: 60600,
+      activeExitRoute: "TRAILING_MAKER",
+      riskState: {
+        trailing: {
+          activated: true,
+          currentStopPrice: 60650,
+          highestPriceSinceBuy: 60700,
+          reason: "Trailing triggered",
+        },
+        protectiveExit: { state: "TRIGGERED" },
+      },
+    };
+
+    const html = renderToString(
+      React.createElement(TrailingStateBlock, { cycle })
+    );
+    expect(html).toContain("Cierre trailing disparado");
+    expect(html).not.toContain("Maker trailing pendiente");
+  });
+
   it("muestra 'Revisión requerida' cuando requiresReview=true", () => {
     const cycle = {
       trailingPolicyEnabled: true,

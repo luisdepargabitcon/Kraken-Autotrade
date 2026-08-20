@@ -8131,3 +8131,80 @@ Comportamiento V3 intacto, sin cambios.
 - Trailing takeover real: NO implementado
 - REAL permanece bloqueado
 - SHADOW only — sin órdenes reales
+
+
+---
+
+## GRID V3.1 STAGING DEPLOY â€” 2026-08-20
+
+### SHA aplicado
+- Branch: `fix/grid-v31-adaptive-trailing-20260820`
+- Commit objetivo: `fc7dda7b66b8ab322c98f458c66be0e0286dd1f8`
+- Staging HEAD antes: `c30a30b20731222005eeb1282a208f014ad4e64d`
+- Staging HEAD despues: `f35c727b` (cherry-pick de 6844ccd, b2e9464, 43191d4, fc7dda7 sobre `refactor/spot-canonical-shadow-20260812`)
+
+### Migration 088
+- `088_grid_v31_adaptive_trailing.sql` aplicada idempotentemente
+- Columnas anadidas: `trailing_mode`, `trailing_atr_multiplier`, `trailing_min_pct`, `trailing_max_pct`, `trailing_atr_smoothing_alpha`
+- Defaults: `adaptive_atr`, `0.7500`, `0.2500`, `1.2000`, `0.2500`
+- Backup pre-migration: `/opt/krakenbot-staging/backups/staging_pre_v31_migration.sql` (~4.1GB)
+
+### Configuracion STAGING/SHADOW
+- `mode=SHADOW`
+- `executionPolicy=MAKER_ONLY`
+- `trailingEnabled=true` (activado para validacion de nuevos ciclos)
+- `trailingMode=adaptive_atr`
+- `trailingAtrMultiplier=0.75`
+- `trailingMinPct=0.25`
+- `trailingMaxPct=1.20`
+- `trailingAtrSmoothingAlpha=0.25`
+- `trailingStopPct=0.40` (preservado como fallback manual)
+- `stopLossEnabled=false` (preservado)
+- `realOpenOrdersCount=0`
+
+### Runtime checks
+- `npm run check`: PASS
+- `npm run build`: PASS
+- Grid server suite: 686 tests PASS (34 files)
+- Grid client suite: 153 tests PASS (8 files, local); 152 tests PASS (VPS)
+- Docker services: `krakenbot-staging-app` Up, `krakenbot-staging-db` Up (healthy)
+- Logs: sin errores, sin exceptions, sin REQUIRES_REVIEW, sin JSONB invalido
+- Migration 088: APPLIED
+
+### Validacion historica
+- Ciclos #4 y #5: preservados (buyPrice, sellPrice, timestamps, exitPolicyVersion=CYCLE_OWNED_NET_TARGET_V3)
+- `closePathLabel` ahora muestra "Objetivo individual V3" (derivado de exitPolicyVersion cuando closePath=null)
+- No se reescribieron ciclos historicos
+- `trailingPolicySource=legacy_config` para ciclos historicos
+- No trailing retroactivo
+
+### UX fixes aplicados en deploy
+- `closePathLabel` deriva de `exitPolicyVersion` cuando `closePath` es null
+- `TRIGGERED` muestra "Cierre trailing disparado" (antes incorrectamente "Maker trailing pendiente")
+- `MAKER_PENDING` muestra "Maker trailing pendiente"
+- Test anadido para TRIGGERED vs MAKER_PENDING
+
+### Validacion visual
+- SPA carga correctamente (HTTP 200)
+- JS bundle sirve correctamente
+- Datos operacionales correctos via API
+- ATR actual, ATR suavizado, Sin dato: implementados
+- Estados operacionales: Desactivado, Esperando objetivo V3, Siguiendo maximo, Cierre trailing disparado, Maker trailing pendiente, Revision requerida
+- Desktop y mobile: validacion estructural via API (no se pudo abrir browser preview contra VPS)
+
+### Validacion pendiente
+- `NEW_CYCLE_POLICY_SNAPSHOT_VALIDATED=PENDING_NO_NEW_CYCLE` (no hay ciclos nuevos desde activacion)
+- `ATR_RUNTIME_VALIDATED=PENDING_NO_ACTIVATION` (no hay trailing activo)
+- `HIGHEST_MONOTONIC_VALIDATED=PENDING`
+- `STOP_MONOTONIC_VALIDATED=PENDING`
+- `SINGLE_ACTIVE_SELL_INVARIANT=PENDING`
+- `TRAILING_CLOSE_LIFECYCLE_VALIDATED=PENDING_NO_NATURAL_CLOSE`
+
+### Riesgos pendientes
+- Validacion de ciclo natural completo pendiente (no forzar fills, no manipular DB)
+- REAL permanece bloqueado hasta implementar cancelacion/reconciliacion REAL en Revolut X
+
+### Estado REAL
+- `REAL_SUPPORTED=false`
+- `REAL_EXCHANGE_CANCEL_IMPLEMENTED=NO`
+- `REAL_REMAINS_BLOCKED=YES`
