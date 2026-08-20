@@ -234,7 +234,11 @@ class GridRiskManager {
       const adaptiveConfig: AdaptiveTrailingConfig = {
         mode: trailingMode,
         activationPct: hasPolicy ? trailingPolicy!.activationPctEffective : config.trailingActivationPct,
-        stopPct: config.trailingStopPct, // manual fallback — always from config (not policy-scoped)
+        stopPct: hasPolicy
+          ? (trailingPolicy!.manualStopPct > 0
+              ? trailingPolicy!.manualStopPct
+              : config.trailingStopPct) // V3.1: snapshot freezes manual stop; legacy snapshots (manualStopPct=0) fall back to config
+          : config.trailingStopPct,
         atrMultiplier: hasPolicy ? trailingPolicy!.atrMultiplier : (config.trailingAtrMultiplier ?? 0.75),
         minPct: hasPolicy ? trailingPolicy!.minPct : (config.trailingMinPct ?? 0.25),
         maxPct: hasPolicy ? trailingPolicy!.maxPct : (config.trailingMaxPct ?? 1.20),

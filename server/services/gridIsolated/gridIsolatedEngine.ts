@@ -3713,6 +3713,7 @@ export class GridIsolatedEngine {
         maxPct: this.config.trailingMaxPct ?? 1.20,
         smoothingAlpha: this.config.trailingAtrSmoothingAlpha ?? 0.25,
         priceTickSize: constraints.priceTickSize,
+        manualStopPct: this.config.trailingStopPct,
       });
       // Inject the policy snapshot into the cycle's initial risk state.
       const initialRisk = cycle.riskStateJson ?? this.defaultRiskState();

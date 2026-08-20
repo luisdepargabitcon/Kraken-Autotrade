@@ -270,6 +270,7 @@ export function buildTrailingPolicySnapshot(params: {
   maxPct: number;
   smoothingAlpha: number;
   priceTickSize: number;
+  manualStopPct: number;
 }): {
   enabled: boolean;
   mode: TrailingMode;
@@ -282,6 +283,7 @@ export function buildTrailingPolicySnapshot(params: {
   maxPct: number;
   smoothingAlpha: number;
   priceTickSize: number;
+  manualStopPct: number;
 } {
   return {
     enabled: params.enabled,
@@ -295,5 +297,6 @@ export function buildTrailingPolicySnapshot(params: {
     maxPct: params.maxPct,
     smoothingAlpha: params.smoothingAlpha,
     priceTickSize: params.priceTickSize,
+    manualStopPct: params.manualStopPct,
   };
 }

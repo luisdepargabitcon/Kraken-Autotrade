@@ -109,6 +109,8 @@ export function TrailingStateBlock({ cycle }: { cycle: any }) {
   const policyEnabled = cycle.trailingPolicyEnabled;
   const mode = cycle.trailingMode;
   const atrSource = cycle.trailingAtrSource;
+  const atrPct = cycle.trailingAtrPct;
+  const smoothedAtrPct = cycle.trailingSmoothedAtrPct;
   const policySource = cycle.trailingPolicySource;
   const activationPrice = cycle.trailingActivationPrice;
   const highestPrice = ts?.highestPriceSinceBuy ?? cycle.trailingHighestPrice;
@@ -116,8 +118,12 @@ export function TrailingStateBlock({ cycle }: { cycle: any }) {
   const effectiveStopPct = cycle.trailingEffectiveStopPct;
   const profitFloor = cycle.trailingProfitFloorPrice;
   const tickSize = cycle.trailingPriceTickSize;
+  const manualStopPct = cycle.trailingManualStopPct;
   const activated = ts?.activated ?? false;
   const reason = ts?.reason ?? cycle.trailingReason;
+  const activeExitRoute = cycle.activeExitRoute ?? ts?.activeExitRoute;
+  const makerState = cycle.riskState?.protectiveExit?.state ?? cycle.makerState;
+  const reviewRequired = cycle.requiresReview;
 
   // Compute trailing distance
   let trailingDistancePct: number | null = null;
@@ -134,14 +140,34 @@ export function TrailingStateBlock({ cycle }: { cycle: any }) {
     }
   }
 
-  const stateLabel = activated ? "Activo" : (policyEnabled ? "Inactivo — esperando activación" : "Deshabilitado");
-  const stateColor = activated ? "text-amber-400" : (policyEnabled ? "text-cyan-400" : "text-muted-foreground");
+  // Derive precise operational state
+  let opState: string;
+  let opStateColor: string;
+  if (!policyEnabled) {
+    opState = "Desactivado";
+    opStateColor = "text-muted-foreground";
+  } else if (reviewRequired) {
+    opState = "Revisión requerida";
+    opStateColor = "text-red-400";
+  } else if (activeExitRoute === "TRAILING_MAKER" || makerState === "MAKER_PENDING") {
+    opState = "Maker trailing pendiente";
+    opStateColor = "text-purple-400";
+  } else if (activated && activeExitRoute === "TRAILING_MAKER") {
+    opState = "Cierre trailing disparado";
+    opStateColor = "text-amber-400";
+  } else if (activated) {
+    opState = "Siguiendo máximo";
+    opStateColor = "text-amber-400";
+  } else {
+    opState = "Esperando objetivo V3";
+    opStateColor = "text-cyan-400";
+  }
 
   return (
     <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-xs space-y-2">
       <div className="flex items-center justify-between">
         <span className="font-semibold text-amber-400">Trailing V3.1</span>
-        <span className={cn("font-mono text-[10px]", stateColor)}>{stateLabel}</span>
+        <span className={cn("font-mono text-[10px]", opStateColor)}>{opState}</span>
       </div>
 
       <div className="grid grid-cols-2 gap-1 text-muted-foreground">
@@ -153,8 +179,15 @@ export function TrailingStateBlock({ cycle }: { cycle: any }) {
         <span>Stop actual: <span className="font-mono text-foreground">{fmtPrice(stopPrice)}</span></span>
         <span>Distancia efectiva: <span className="font-mono text-foreground">{effectiveStopPct != null ? `${effectiveStopPct.toFixed(4)}%` : "—"}</span></span>
         <span>Distancia trailing: <span className="font-mono text-foreground">{trailingDistancePct != null ? `${trailingDistancePct.toFixed(4)}%` : "—"}</span></span>
-        <span>Fuente ATR: <span className="font-mono text-foreground">{atrSourceLabel(atrSource)}</span></span>
+        <span>Stop manual: <span className="font-mono text-foreground">{manualStopPct != null ? `${manualStopPct.toFixed(4)}%` : "—"}</span></span>
         <span>Tick size: <span className="font-mono text-foreground">{tickSize != null ? tickSize : "—"}</span></span>
+      </div>
+
+      {/* ATR values — show actual values, not just source */}
+      <div className="grid grid-cols-2 gap-1 text-muted-foreground border-t border-border/30 pt-1">
+        <span>ATR actual: <span className="font-mono text-foreground">{atrPct != null ? `${atrPct.toFixed(4)}%` : "Sin dato"}</span></span>
+        <span>ATR suavizado: <span className="font-mono text-foreground">{smoothedAtrPct != null ? `${smoothedAtrPct.toFixed(4)}%` : "Sin dato"}</span></span>
+        <span>Fuente ATR: <span className="font-mono text-foreground">{atrSourceLabel(atrSource)}</span></span>
       </div>
 
       {activated && reason && (
@@ -412,6 +445,8 @@ function ProteccionesDetail({ cycle }: { cycle: any }) {
             <span>Origen política: <span className="font-mono text-foreground">{policySourceLabel(cycle.trailingPolicySource)}</span></span>
             <span>Profit floor: <span className="font-mono text-foreground">{fmtPrice(cycle.trailingProfitFloorPrice)}</span></span>
             <span>Precio activación: <span className="font-mono text-foreground">{fmtPrice(cycle.trailingActivationPrice)}</span></span>
+            <span>ATR actual: <span className="font-mono text-foreground">{cycle.trailingAtrPct != null ? `${cycle.trailingAtrPct.toFixed(4)}%` : "Sin dato"}</span></span>
+            <span>ATR suavizado: <span className="font-mono text-foreground">{cycle.trailingSmoothedAtrPct != null ? `${cycle.trailingSmoothedAtrPct.toFixed(4)}%` : "Sin dato"}</span></span>
           </div>
           {cycle.closePath === "TRAILING_MAKER" && (
             <div className="text-amber-400/80">Cerrado mediante trailing maker</div>

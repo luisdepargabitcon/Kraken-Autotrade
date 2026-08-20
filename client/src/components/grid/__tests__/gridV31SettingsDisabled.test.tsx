@@ -125,8 +125,8 @@ describe("[V3.1 UI] Open cycle trailing UX block", () => {
     expect(html).toContain("Trailing V3.1");
     expect(html).toContain("Adaptive ATR");
     expect(html).toContain("Snapshot persistido");
-    expect(html).toContain("Activo");
-    expect(html).toContain("ATR actual");
+    expect(html).toContain("Siguiendo máximo");
+    expect(html).toContain("ATR actual:");
     expect(html).toContain("0.7500%");
   });
 
@@ -155,7 +155,7 @@ describe("[V3.1 UI] Open cycle trailing UX block", () => {
     const html = renderToString(
       React.createElement(TrailingStateBlock, { cycle })
     );
-    expect(html).toContain("Inactivo — esperando activación");
+    expect(html).toContain("Esperando objetivo V3");
     expect(html).toContain("Progreso activación");
   });
 
@@ -184,6 +184,204 @@ describe("[V3.1 UI] Open cycle trailing UX block", () => {
     const html = renderToString(
       React.createElement(TrailingStateBlock, { cycle })
     );
-    expect(html).toContain("Deshabilitado");
+    expect(html).toContain("Desactivado");
+  });
+});
+
+describe("[V3.1 UI] ATR values visibility", () => {
+  it("muestra ATR actual y ATR suavizado cuando están disponibles", () => {
+    const cycle = {
+      trailingPolicyEnabled: true,
+      trailingMode: "adaptive_atr",
+      trailingAtrSource: "current_atr",
+      trailingAtrPct: 1.2345,
+      trailingSmoothedAtrPct: 1.1500,
+      trailingPolicySource: "snapshot",
+      trailingActivationPrice: 60600,
+      trailingProfitFloorPrice: 60600,
+      trailingEffectiveStopPct: 0.8625,
+      trailingPriceTickSize: 0.01,
+      trailingManualStopPct: 0.40,
+      buyPrice: 60000,
+      currentBid: 60700,
+      riskState: {
+        trailing: {
+          activated: true,
+          currentStopPrice: 60650,
+          highestPriceSinceBuy: 60700,
+          reason: "ATR suavizado",
+        },
+      },
+    };
+
+    const html = renderToString(
+      React.createElement(TrailingStateBlock, { cycle })
+    );
+    expect(html).toContain("ATR actual:");
+    expect(html).toContain("1.2345%");
+    expect(html).toContain("ATR suavizado:");
+    expect(html).toContain("1.1500%");
+  });
+
+  it("muestra 'Sin dato' cuando ATR actual y suavizado son null", () => {
+    const cycle = {
+      trailingPolicyEnabled: true,
+      trailingMode: "adaptive_atr",
+      trailingAtrSource: null,
+      trailingAtrPct: null,
+      trailingSmoothedAtrPct: null,
+      trailingPolicySource: "snapshot",
+      trailingActivationPrice: 60600,
+      trailingProfitFloorPrice: 60600,
+      trailingEffectiveStopPct: null,
+      trailingPriceTickSize: 0.01,
+      trailingManualStopPct: 0.40,
+      buyPrice: 60000,
+      currentBid: 60300,
+      riskState: {
+        trailing: {
+          activated: false,
+          currentStopPrice: null,
+          highestPriceSinceBuy: null,
+          reason: null,
+        },
+      },
+    };
+
+    const html = renderToString(
+      React.createElement(TrailingStateBlock, { cycle })
+    );
+    expect(html).toContain("ATR actual:");
+    expect(html).toContain("Sin dato");
+    expect(html).toContain("ATR suavizado:");
+  });
+});
+
+describe("[V3.1 UI] Operational state precision", () => {
+  it("muestra 'Siguiendo máximo' cuando trailing activo sin maker pendiente", () => {
+    const cycle = {
+      trailingPolicyEnabled: true,
+      trailingMode: "adaptive_atr",
+      trailingAtrSource: "current_atr",
+      trailingAtrPct: 1.0,
+      trailingSmoothedAtrPct: 1.0,
+      trailingPolicySource: "snapshot",
+      trailingActivationPrice: 60600,
+      trailingProfitFloorPrice: 60600,
+      trailingEffectiveStopPct: 0.75,
+      trailingPriceTickSize: 0.01,
+      trailingManualStopPct: 0.40,
+      buyPrice: 60000,
+      currentBid: 60700,
+      riskState: {
+        trailing: {
+          activated: true,
+          currentStopPrice: 60650,
+          highestPriceSinceBuy: 60700,
+          reason: "Siguiendo",
+        },
+      },
+    };
+
+    const html = renderToString(
+      React.createElement(TrailingStateBlock, { cycle })
+    );
+    expect(html).toContain("Siguiendo máximo");
+  });
+
+  it("muestra 'Maker trailing pendiente' cuando activeExitRoute=TRAILING_MAKER", () => {
+    const cycle = {
+      trailingPolicyEnabled: true,
+      trailingMode: "adaptive_atr",
+      trailingAtrSource: "current_atr",
+      trailingAtrPct: 1.0,
+      trailingSmoothedAtrPct: 1.0,
+      trailingPolicySource: "snapshot",
+      trailingActivationPrice: 60600,
+      trailingProfitFloorPrice: 60600,
+      trailingEffectiveStopPct: 0.75,
+      trailingPriceTickSize: 0.01,
+      trailingManualStopPct: 0.40,
+      buyPrice: 60000,
+      currentBid: 60600,
+      activeExitRoute: "TRAILING_MAKER",
+      riskState: {
+        trailing: {
+          activated: true,
+          currentStopPrice: 60650,
+          highestPriceSinceBuy: 60700,
+          reason: "Maker creado",
+        },
+        protectiveExit: { state: "MAKER_PENDING" },
+      },
+    };
+
+    const html = renderToString(
+      React.createElement(TrailingStateBlock, { cycle })
+    );
+    expect(html).toContain("Maker trailing pendiente");
+  });
+
+  it("muestra 'Revisión requerida' cuando requiresReview=true", () => {
+    const cycle = {
+      trailingPolicyEnabled: true,
+      trailingMode: "adaptive_atr",
+      trailingAtrSource: null,
+      trailingAtrPct: null,
+      trailingSmoothedAtrPct: null,
+      trailingPolicySource: "snapshot",
+      trailingActivationPrice: 60600,
+      trailingProfitFloorPrice: 60600,
+      trailingEffectiveStopPct: null,
+      trailingPriceTickSize: 0.01,
+      trailingManualStopPct: 0.40,
+      buyPrice: 60000,
+      currentBid: 60300,
+      requiresReview: true,
+      riskState: {
+        trailing: {
+          activated: false,
+          currentStopPrice: null,
+          highestPriceSinceBuy: null,
+          reason: null,
+        },
+      },
+    };
+
+    const html = renderToString(
+      React.createElement(TrailingStateBlock, { cycle })
+    );
+    expect(html).toContain("Revisión requerida");
+  });
+
+  it("muestra 'Esperando objetivo V3' cuando policy habilitada pero no activado", () => {
+    const cycle = {
+      trailingPolicyEnabled: true,
+      trailingMode: "adaptive_atr",
+      trailingAtrSource: null,
+      trailingAtrPct: null,
+      trailingSmoothedAtrPct: null,
+      trailingPolicySource: "snapshot",
+      trailingActivationPrice: 60600,
+      trailingProfitFloorPrice: 60600,
+      trailingEffectiveStopPct: null,
+      trailingPriceTickSize: 0.01,
+      trailingManualStopPct: 0.40,
+      buyPrice: 60000,
+      currentBid: 60300,
+      riskState: {
+        trailing: {
+          activated: false,
+          currentStopPrice: null,
+          highestPriceSinceBuy: null,
+          reason: null,
+        },
+      },
+    };
+
+    const html = renderToString(
+      React.createElement(TrailingStateBlock, { cycle })
+    );
+    expect(html).toContain("Esperando objetivo V3");
   });
 });
