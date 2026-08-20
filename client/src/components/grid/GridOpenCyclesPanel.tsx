@@ -78,6 +78,110 @@ function CycleVisualBar({
   );
 }
 
+function atrSourceLabel(source: string | null | undefined): string {
+  switch (source) {
+    case "current_atr": return "ATR actual";
+    case "persisted_atr": return "ATR persistido";
+    case "manual_fallback": return "Fallback manual";
+    case "none": return "Sin ATR";
+    default: return source ?? "—";
+  }
+}
+
+function modeLabel(mode: string | null | undefined): string {
+  switch (mode) {
+    case "adaptive_atr": return "Adaptive ATR";
+    case "manual": return "Manual";
+    default: return mode ?? "—";
+  }
+}
+
+function policySourceLabel(source: string | null | undefined): string {
+  switch (source) {
+    case "snapshot": return "Snapshot persistido";
+    case "legacy_config": return "Config global (legacy)";
+    default: return "—";
+  }
+}
+
+export function TrailingStateBlock({ cycle }: { cycle: any }) {
+  const ts = cycle.riskState?.trailing;
+  const policyEnabled = cycle.trailingPolicyEnabled;
+  const mode = cycle.trailingMode;
+  const atrSource = cycle.trailingAtrSource;
+  const policySource = cycle.trailingPolicySource;
+  const activationPrice = cycle.trailingActivationPrice;
+  const highestPrice = ts?.highestPriceSinceBuy ?? cycle.trailingHighestPrice;
+  const stopPrice = ts?.currentStopPrice ?? cycle.trailingStopPrice;
+  const effectiveStopPct = cycle.trailingEffectiveStopPct;
+  const profitFloor = cycle.trailingProfitFloorPrice;
+  const tickSize = cycle.trailingPriceTickSize;
+  const activated = ts?.activated ?? false;
+  const reason = ts?.reason ?? cycle.trailingReason;
+
+  // Compute trailing distance
+  let trailingDistancePct: number | null = null;
+  if (highestPrice != null && stopPrice != null && highestPrice > 0) {
+    trailingDistancePct = ((highestPrice - stopPrice) / highestPrice) * 100;
+  }
+
+  // Compute activation progress
+  let activationProgressPct: number | null = null;
+  if (!activated && activationPrice != null && cycle.buyPrice != null && activationPrice > cycle.buyPrice) {
+    const current = cycle.currentBid ?? cycle.currentPrice;
+    if (current != null) {
+      activationProgressPct = Math.max(0, Math.min(100, ((current - cycle.buyPrice) / (activationPrice - cycle.buyPrice)) * 100));
+    }
+  }
+
+  const stateLabel = activated ? "Activo" : (policyEnabled ? "Inactivo — esperando activación" : "Deshabilitado");
+  const stateColor = activated ? "text-amber-400" : (policyEnabled ? "text-cyan-400" : "text-muted-foreground");
+
+  return (
+    <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-xs space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="font-semibold text-amber-400">Trailing V3.1</span>
+        <span className={cn("font-mono text-[10px]", stateColor)}>{stateLabel}</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+        <span>Modo: <span className="font-mono text-foreground">{modeLabel(mode)}</span></span>
+        <span>Origen política: <span className="font-mono text-foreground">{policySourceLabel(policySource)}</span></span>
+        <span>Precio activación: <span className="font-mono text-foreground">{fmtPrice(activationPrice)}</span></span>
+        <span>Profit floor: <span className="font-mono text-foreground">{fmtPrice(profitFloor)}</span></span>
+        <span>Precio máximo: <span className="font-mono text-foreground">{fmtPrice(highestPrice)}</span></span>
+        <span>Stop actual: <span className="font-mono text-foreground">{fmtPrice(stopPrice)}</span></span>
+        <span>Distancia efectiva: <span className="font-mono text-foreground">{effectiveStopPct != null ? `${effectiveStopPct.toFixed(4)}%` : "—"}</span></span>
+        <span>Distancia trailing: <span className="font-mono text-foreground">{trailingDistancePct != null ? `${trailingDistancePct.toFixed(4)}%` : "—"}</span></span>
+        <span>Fuente ATR: <span className="font-mono text-foreground">{atrSourceLabel(atrSource)}</span></span>
+        <span>Tick size: <span className="font-mono text-foreground">{tickSize != null ? tickSize : "—"}</span></span>
+      </div>
+
+      {activated && reason && (
+        <div className="font-mono text-[10px] text-amber-400/80">{reason}</div>
+      )}
+
+      {!activated && policyEnabled && activationProgressPct != null && (
+        <div className="space-y-1">
+          <div className="text-[10px] text-muted-foreground">Progreso activación: {activationProgressPct.toFixed(1)}%</div>
+          <div className="h-1 w-full rounded bg-muted/40 overflow-hidden">
+            <div
+              className="h-full bg-cyan-500 rounded transition-all"
+              style={{ width: `${activationProgressPct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {cycle.activeExitRouteLabel && (
+        <div className="text-[10px] text-muted-foreground">
+          Ruta salida activa: <span className="text-foreground">{cycle.activeExitRouteLabel}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CycleDetail({ cycle }: { cycle: any }) {
   return (
     <div className="space-y-2 text-sm pt-2">
@@ -132,6 +236,11 @@ function CycleDetail({ cycle }: { cycle: any }) {
             <div className="font-mono text-[10px] text-muted-foreground">Sin riesgo activo</div>
           )}
         </div>
+      )}
+
+      {/* V3.1: Trailing block — full state for open cycles */}
+      {cycle.trailingPolicyEnabled != null && (
+        <TrailingStateBlock cycle={cycle} />
       )}
 
       <div className="border-t pt-2 mt-2">
@@ -297,9 +406,18 @@ function ProteccionesDetail({ cycle }: { cycle: any }) {
             <span>Precio máximo: <span className="font-mono text-foreground">{fmtPrice(cycle.trailingHighestPrice)}</span></span>
             <span>Stop final: <span className="font-mono text-foreground">{fmtPrice(cycle.trailingStopPrice)}</span></span>
             <span>Motivo: <span className="text-foreground">{cycle.trailingReason ?? "—"}</span></span>
+            <span>Modo: <span className="font-mono text-foreground">{modeLabel(cycle.trailingMode)}</span></span>
+            <span>Distancia efectiva: <span className="font-mono text-foreground">{cycle.trailingEffectiveStopPct != null ? `${cycle.trailingEffectiveStopPct.toFixed(4)}%` : "—"}</span></span>
+            <span>Fuente ATR: <span className="font-mono text-foreground">{atrSourceLabel(cycle.trailingAtrSource)}</span></span>
+            <span>Origen política: <span className="font-mono text-foreground">{policySourceLabel(cycle.trailingPolicySource)}</span></span>
+            <span>Profit floor: <span className="font-mono text-foreground">{fmtPrice(cycle.trailingProfitFloorPrice)}</span></span>
+            <span>Precio activación: <span className="font-mono text-foreground">{fmtPrice(cycle.trailingActivationPrice)}</span></span>
           </div>
           {cycle.closePath === "TRAILING_MAKER" && (
             <div className="text-amber-400/80">Cerrado mediante trailing maker</div>
+          )}
+          {cycle.closePathLabel && cycle.closePath !== "TRAILING_MAKER" && (
+            <div className="text-[10px] text-muted-foreground">Vía de cierre: {cycle.closePathLabel}</div>
           )}
         </div>
       )}

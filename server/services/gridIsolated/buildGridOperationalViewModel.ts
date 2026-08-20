@@ -159,6 +159,11 @@ export interface OperationalOpenCycle {
   trailingProfitFloorPrice: number | null;
   trailingActivationPrice: number | null;
   trailingPolicyEnabled: boolean | null;
+  // V3.1: Policy source indicator — "snapshot" when persisted policy is the source of truth,
+  // "legacy_config" when falling back to global config, null when no trailing policy exists.
+  trailingPolicySource: "snapshot" | "legacy_config" | null;
+  // V3.1: Persisted tick size from the policy snapshot (instrument-specific).
+  trailingPriceTickSize: number | null;
   // Stop-loss history
   stopLossTriggered: boolean;
   stopLossLayersTriggered: StopLossLayerTriggered[];
@@ -625,6 +630,8 @@ function buildOpenCycle(
     trailingProfitFloorPrice: toNum(risk?.trailing?.profitFloorPrice) ?? null,
     trailingActivationPrice: toNum(risk?.trailing?.activationPrice) ?? null,
     trailingPolicyEnabled: risk?.trailingPolicy?.enabled ?? null,
+    trailingPolicySource: risk?.trailingPolicy ? "snapshot" : (risk?.trailing?.policy ? "snapshot" : "legacy_config"),
+    trailingPriceTickSize: toNum(risk?.trailingPolicy?.priceTickSize) ?? null,
     stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
     stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => ({
       layer: l.layer,
@@ -781,6 +788,8 @@ function buildClosedCycle(
     trailingProfitFloorPrice: toNum(risk?.trailing?.profitFloorPrice) ?? null,
     trailingActivationPrice: toNum(risk?.trailing?.activationPrice) ?? null,
     trailingPolicyEnabled: risk?.trailingPolicy?.enabled ?? null,
+    trailingPolicySource: risk?.trailingPolicy ? "snapshot" : (risk?.trailing?.policy ? "snapshot" : "legacy_config"),
+    trailingPriceTickSize: toNum(risk?.trailingPolicy?.priceTickSize) ?? null,
     stopLossTriggered: risk?.stopLoss?.some(l => l.triggered) ?? false,
     stopLossLayersTriggered: (risk?.stopLoss ?? []).filter(l => l.triggered).map(l => ({
       layer: l.layer,
