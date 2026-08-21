@@ -146,10 +146,16 @@ const dataHealthColorMap: Record<string, string> = {
 
 // ─── Helper functions ───────────────────────────────────────────────────────
 
-function formatPrice(price: number): string {
-  if (price >= 1000) return `$${price.toFixed(2)}`;
-  if (price >= 1) return `$${price.toFixed(4)}`;
-  return `$${price.toFixed(6)}`;
+function safeNumber(n: unknown, fallback = 0): number {
+  const v = typeof n === "number" ? n : Number(n);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function formatPrice(price: unknown): string {
+  const v = safeNumber(price, 0);
+  if (v >= 1000) return `$${v.toFixed(2)}`;
+  if (v >= 1) return `$${v.toFixed(4)}`;
+  return `$${v.toFixed(6)}`;
 }
 
 function formatTime(ts: number): string {
@@ -249,7 +255,7 @@ function CompactRow({ snap, expanded, onToggle }: { snap: SpotContextSnapshotDat
       className={`rounded-lg border ${snap.enabled ? dc.border : "border-border/30"} ${snap.enabled ? dc.bg : "bg-muted/10 opacity-60"} px-3 py-2.5 cursor-pointer transition-colors hover:bg-opacity-20`}
       onClick={onToggle}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2">
         <div className="flex items-center gap-2 min-w-0">
           {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
           <span className="font-mono text-sm font-semibold shrink-0">{snap.pair}</span>
@@ -260,7 +266,7 @@ function CompactRow({ snap, expanded, onToggle }: { snap: SpotContextSnapshotDat
             {snap.regime !== "UNKNOWN" ? getRegimeLabel(snap.regime) : ""}
           </span>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center justify-between sm:justify-end gap-2 sm:shrink-0 w-full sm:w-auto">
           <span className="font-mono text-xs text-muted-foreground">{formatPrice(snap.price)}</span>
           <div className={`flex items-center gap-1 px-2 py-0.5 rounded border ${dc.border} ${dc.bg}`}>
             <DecisionIcon className={`h-3 w-3 ${dc.text}`} />
@@ -320,21 +326,21 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
       </div>
 
       {/* Market data grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
         <MetricBox icon={TrendingUp} label="Macro 4H" value={getMacroLabel(snap.macroBias)} colorClass={macroColorMap[snap.macroBias] ?? ""} />
         <MetricBox icon={Activity} label="Régimen 1H" value={getRegimeLabel(snap.regime)} colorClass={regimeColorMap[snap.regime] ?? ""} />
         <MetricBox icon={Layers} label="Dirección" value={getDirectionLabel(snap.direction)} colorClass={directionColorMap[snap.direction] ?? ""} />
         <MetricBox icon={Gauge} label="Volatilidad" value={getVolatilityLabel(snap.volatility)} />
-        <MetricBox icon={Target} label="ADX" value={snap.adx.toFixed(1)} />
-        <MetricBox icon={Activity} label="ATR %" value={snap.atrPct.toFixed(2)} />
-        <MetricBox icon={Gauge} label="Diferencial %" value={snap.spreadPct.toFixed(3)} />
-        <MetricBox icon={Zap} label="Volumen" value={`${snap.volumeRatio.toFixed(2)}× (${getParticipationLabel(snap.participation)})`} />
+        <MetricBox icon={Target} label="ADX" value={safeNumber(snap.adx, 0).toFixed(1)} />
+        <MetricBox icon={Activity} label="ATR %" value={safeNumber(snap.atrPct, 0).toFixed(2)} />
+        <MetricBox icon={Gauge} label="Diferencial %" value={safeNumber(snap.spreadPct, 0).toFixed(3)} />
+        <MetricBox icon={Zap} label="Volumen" value={`${safeNumber(snap.volumeRatio, 0).toFixed(2)}× (${getParticipationLabel(snap.participation)})`} />
       </div>
 
       {/* EMA structure */}
       <div>
         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Estructura EMA 1H</p>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
           <MetricMini label="EMA 20" value={snap.ema20 > 0 ? formatPrice(snap.ema20) : "—"} />
           <MetricMini label="EMA 50" value={snap.ema50 > 0 ? formatPrice(snap.ema50) : "—"} />
           <MetricMini label="EMA 200" value={snap.ema200 > 0 ? formatPrice(snap.ema200) : "—"} />
@@ -344,7 +350,7 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
       {/* Ticker */}
       <div>
         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Mercado</p>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
           <MetricMini label="Precio" value={formatPrice(snap.price)} />
           <MetricMini label="Mejor compra" value={snap.bid > 0 ? formatPrice(snap.bid) : "—"} />
           <MetricMini label="Mejor venta" value={snap.ask > 0 ? formatPrice(snap.ask) : "—"} />
@@ -356,7 +362,7 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
       {snap.hasActiveIntent && (
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Intención activa</p>
-          <div className="flex items-center gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
             <Badge variant="outline" className="text-[10px]">{getIntentStateEs(snap.intentState)}</Badge>
             {snap.intentCreatedAt && <span className="text-muted-foreground">Creado: {formatTime(snap.intentCreatedAt)}</span>}
             {snap.intentExpiresAt && <span className="text-muted-foreground">Expira: {formatTime(snap.intentExpiresAt)}</span>}
