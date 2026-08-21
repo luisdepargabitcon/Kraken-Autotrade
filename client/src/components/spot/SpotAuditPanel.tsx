@@ -4,25 +4,42 @@ import { BarChart3 } from "lucide-react";
 
 interface SpotAuditPosition {
   lotId: string;
-  mfeUsd: number;
-  maeUsd: number;
-  mfeR: number;
-  maeR: number;
+  mfeUsd: number | null;
+  maeUsd: number | null;
+  mfeR: number | null;
+  maeR: number | null;
   profitCapturePct: number | null;
   exitReason: string | null;
 }
 
 interface SpotAuditAggregate {
   totalExits: number;
-  avgProfitCapturePct: number;
-  avgMfeUsd: number;
-  avgMaeUsd: number;
-  avgMfeR: number;
-  avgHoldTimeMinutes: number;
+  avgProfitCapturePct: number | null;
+  avgMfeUsd: number | null;
+  avgMaeUsd: number | null;
+  avgMfeR: number | null;
+  avgHoldTimeMinutes: number | null;
   excellentCount: number;
   goodCount: number;
   poorCount: number;
   badCount: number;
+}
+
+function safeNumber(n: unknown, fallback = 0): number {
+  const v = typeof n === "number" ? n : Number(n);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function formatPct(n: unknown): string {
+  return `${safeNumber(n, 0).toFixed(1)}%`;
+}
+
+function formatUsd(n: unknown): string {
+  return `$${safeNumber(n, 0).toFixed(2)}`;
+}
+
+function formatR(n: unknown): string {
+  return `${safeNumber(n, 0).toFixed(2)}R`;
 }
 
 interface SpotAuditPanelProps {
@@ -63,10 +80,10 @@ export function SpotAuditPanel({ positions, aggregate, closedCount }: SpotAuditP
 
               {/* Avg metrics */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <AvgBox label="Captura Media" value={`${aggregate.avgProfitCapturePct.toFixed(1)}%`} />
-                <AvgBox label="MFE Medio (USD)" value={`$${aggregate.avgMfeUsd.toFixed(2)}`} />
-                <AvgBox label="MAE Medio (USD)" value={`$${aggregate.avgMaeUsd.toFixed(2)}`} />
-                <AvgBox label="MFE Medio (R)" value={`${aggregate.avgMfeR.toFixed(2)}R`} />
+                <AvgBox label="Captura Media" value={formatPct(aggregate.avgProfitCapturePct)} />
+                <AvgBox label="MFE Medio (USD)" value={formatUsd(aggregate.avgMfeUsd)} />
+                <AvgBox label="MAE Medio (USD)" value={formatUsd(aggregate.avgMaeUsd)} />
+                <AvgBox label="MFE Medio (R)" value={formatR(aggregate.avgMfeR)} />
               </div>
             </div>
           ) : (
@@ -101,14 +118,14 @@ export function SpotAuditPanel({ positions, aggregate, closedCount }: SpotAuditP
                     <tr key={p.lotId} className="border-b border-border/20 hover:bg-muted/10">
                       <td className="py-2 px-2 font-mono text-[11px]">{p.lotId}</td>
                       <td className="py-2 px-2 text-right font-mono text-emerald-400">
-                        ${p.mfeUsd.toFixed(2)}
+                        {formatUsd(p.mfeUsd)}
                       </td>
                       <td className="py-2 px-2 text-right font-mono text-red-400">
-                        ${p.maeUsd.toFixed(2)}
+                        {formatUsd(p.maeUsd)}
                       </td>
-                      <td className="py-2 px-2 text-right font-mono">{p.mfeR.toFixed(2)}R</td>
+                      <td className="py-2 px-2 text-right font-mono">{formatR(p.mfeR)}</td>
                       <td className="py-2 px-2 text-right font-mono">
-                        {p.profitCapturePct != null ? `${p.profitCapturePct.toFixed(1)}%` : "—"}
+                        {p.profitCapturePct != null ? formatPct(p.profitCapturePct) : "—"}
                       </td>
                       <td className="py-2 px-2 text-center">
                         {p.exitReason && (

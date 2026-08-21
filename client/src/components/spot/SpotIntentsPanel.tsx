@@ -5,17 +5,30 @@ import { Crosshair } from "lucide-react";
 interface SpotIntentRow {
   signalId: string;
   pair: string;
-  setupTag: string;
+  setupTag: string | null;
   state: string;
-  createdAt: number;
-  expiresAt: number;
-  originPrice: number;
-  originRegime: string;
-  originDirection: string;
-  originMacro: string;
-  originAtrPct: number;
-  retryCount: number;
+  createdAt: number | null;
+  expiresAt: number | null;
+  originPrice: number | null;
+  originRegime: string | null;
+  originDirection: string | null;
+  originMacro: string | null;
+  originAtrPct: number | null;
+  retryCount: number | null;
   lastBlockReason: string | null;
+}
+
+function safeNumber(n: unknown, fallback = 0): number {
+  const v = typeof n === "number" ? n : Number(n);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function formatUsd(n: unknown): string {
+  return `$${safeNumber(n, 0).toFixed(2)}`;
+}
+
+function formatPct(n: unknown): string {
+  return `${safeNumber(n, 0).toFixed(2)}%`;
 }
 
 interface SpotIntentsPanelProps {
@@ -65,7 +78,7 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
           <div className="space-y-2">
             {intents.map((intent) => {
               const now = Date.now();
-              const expired = intent.expiresAt < now;
+              const expired = intent.expiresAt != null && intent.expiresAt < now;
               const stateColor = stateColors[intent.state] ?? stateColors.CREATED;
               return (
                 <div
@@ -76,7 +89,7 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm font-medium">{intent.pair}</span>
                       <Badge variant="outline" className="text-[10px]">
-                        {intent.setupTag.replace("_", " ")}
+                        {intent.setupTag ? intent.setupTag.replace(/_/g, " ") : "—"}
                       </Badge>
                     </div>
                     <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${stateColor}`}>
@@ -84,14 +97,14 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
                     </span>
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-[11px]">
-                    <MetaItem label="Origen" value={`$${intent.originPrice.toFixed(2)}`} />
-                    <MetaItem label="Régimen" value={intent.originRegime} />
-                    <MetaItem label="Dirección" value={intent.originDirection} />
-                    <MetaItem label="Macro" value={intent.originMacro} />
-                    <MetaItem label="ATR%" value={intent.originAtrPct.toFixed(2)} />
+                    <MetaItem label="Origen" value={formatUsd(intent.originPrice)} />
+                    <MetaItem label="Régimen" value={intent.originRegime ?? "—"} />
+                    <MetaItem label="Dirección" value={intent.originDirection ?? "—"} />
+                    <MetaItem label="Macro" value={intent.originMacro ?? "—"} />
+                    <MetaItem label="ATR%" value={formatPct(intent.originAtrPct)} />
                     <MetaItem
                       label="Reintento"
-                      value={String(intent.retryCount)}
+                      value={String(safeNumber(intent.retryCount, 0))}
                     />
                   </div>
                   {intent.lastBlockReason && (
