@@ -4669,6 +4669,9 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
       trailingHighestPrice: r.trailing_highest_price ? Number(r.trailing_highest_price) : null,
       lowestPrice: r.lowest_price ? Number(r.lowest_price) : null,
       filledNotionalUsd: r.filled_notional_usd ? Number(r.filled_notional_usd) : null,
+      notionalUsd: r.filled_notional_usd
+        ? Number(r.filled_notional_usd)
+        : (Number(r.entry_price) && Number(r.amount) ? Number(r.entry_price) * Number(r.amount) : 0),
       openedAt: Number(r.opened_at_ms),
     }));
   } catch (error: any) {
@@ -4695,7 +4698,37 @@ export async function getClosedTrades(limit: number = 100): Promise<any[]> {
       ORDER BY executed_at DESC NULLS LAST
       LIMIT ${limit}
     `);
-    return result.rows;
+    return result.rows.map((r: any) => ({
+      tradeId: r.trade_id,
+      lotId: r.lot_id,
+      pair: r.pair,
+      side: r.type,
+      exitPrice: Number(r.price ?? 0),
+      entryPrice: Number(r.entry_price ?? 0),
+      amount: Number(r.amount ?? 0),
+      grossPnl: Number(r.gross_pnl_usd ?? 0),
+      netPnl: Number(r.net_pnl_usd ?? 0),
+      realizedPnl: Number(r.realized_pnl_usd ?? 0),
+      realizedPnlPct: Number(r.realized_pnl_pct ?? 0),
+      entryFee: Number(r.entry_fee_usd ?? 0),
+      exitFee: Number(r.exit_fee_usd ?? 0),
+      executionCost: Number(r.execution_cost_usd ?? 0),
+      feeQuality: r.fee_quality,
+      mfe: Number(r.mfe ?? 0),
+      mae: Number(r.mae ?? 0),
+      mfeR: Number(r.mfe_r ?? 0),
+      maeR: Number(r.mae_r ?? 0),
+      profitCapturePct: Number(r.profit_capture_pct ?? 0),
+      exitReason: r.exit_reason_type,
+      holdTimeMinutes: Number(r.hold_time_minutes ?? 0),
+      executionMode: r.execution_mode,
+      policyVersion: r.policy_version,
+      setupTag: r.setup_tag,
+      signalId: r.signal_id,
+      marketContextId: r.market_context_id,
+      executedAt: r.executed_at ? new Date(r.executed_at).getTime() : null,
+      openedAt: r.created_at ? new Date(r.created_at).getTime() : null,
+    }));
   } catch (error) {
     console.error("[SpotEngine] Failed to get closed trades:", error);
     return [];

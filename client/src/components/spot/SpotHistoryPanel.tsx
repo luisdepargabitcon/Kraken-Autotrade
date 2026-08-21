@@ -3,22 +3,32 @@ import { Badge } from "@/components/ui/badge";
 import { History } from "lucide-react";
 
 interface SpotTradeRow {
+  tradeId: string;
   lotId: string;
   pair: string;
   side: string;
-  entryPrice: number;
-  exitPrice: number;
-  amount: number;
-  grossPnl: number;
-  entryFee: number;
-  exitFee: number;
-  netPnl: number;
-  exitReason: string;
-  openedAt: number;
-  closedAt: number;
-  holdTimeMinutes: number;
+  entryPrice: number | null;
+  exitPrice: number | null;
+  amount: number | null;
+  grossPnl: number | null;
+  entryFee: number | null;
+  exitFee: number | null;
+  netPnl: number | null;
+  exitReason: string | null;
+  openedAt: number | null;
+  closedAt: number | null;
+  holdTimeMinutes: number | null;
   executionMode: string;
-  rMultiple: number;
+  rMultiple: number | null;
+}
+
+function safeNumber(n: unknown, fallback = 0): number {
+  const v = typeof n === "number" ? n : Number(n);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function formatUsd(n: unknown): string {
+  return `$${safeNumber(n, 0).toFixed(2)}`;
 }
 
 interface SpotHistoryPanelProps {
@@ -61,30 +71,31 @@ export function SpotHistoryPanel({ trades }: SpotHistoryPanelProps) {
               </thead>
               <tbody>
                 {trades.map((t) => {
-                  const totalFees = (t.entryFee ?? 0) + (t.exitFee ?? 0);
-                  const isProfit = (t.netPnl ?? 0) > 0;
+                  const totalFees = safeNumber(t.entryFee, 0) + safeNumber(t.exitFee, 0);
+                  const netPnl = safeNumber(t.netPnl, 0);
+                  const isProfit = netPnl > 0;
                   return (
                     <tr key={t.lotId} className="border-b border-border/20 hover:bg-muted/10">
                       <td className="py-2 px-2 font-mono font-medium">{t.pair}</td>
-                      <td className="py-2 px-2 text-right font-mono">${t.entryPrice.toFixed(2)}</td>
-                      <td className="py-2 px-2 text-right font-mono">${t.exitPrice.toFixed(2)}</td>
-                      <td className="py-2 px-2 text-right font-mono">${(t.grossPnl ?? 0).toFixed(2)}</td>
+                      <td className="py-2 px-2 text-right font-mono">{formatUsd(t.entryPrice)}</td>
+                      <td className="py-2 px-2 text-right font-mono">{formatUsd(t.exitPrice)}</td>
+                      <td className="py-2 px-2 text-right font-mono">{formatUsd(t.grossPnl)}</td>
                       <td className="py-2 px-2 text-right font-mono text-muted-foreground">
-                        ${totalFees.toFixed(2)}
+                        ${safeNumber(totalFees, 0).toFixed(2)}
                       </td>
                       <td className={`py-2 px-2 text-right font-mono font-semibold ${
                         isProfit ? "text-emerald-400" : "text-red-400"
                       }`}>
-                        ${(t.netPnl ?? 0).toFixed(2)}
+                        {formatUsd(t.netPnl)}
                       </td>
                       <td className={`py-2 px-2 text-right font-mono ${
-                        (t.rMultiple ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"
+                        safeNumber(t.rMultiple, 0) >= 0 ? "text-emerald-400" : "text-red-400"
                       }`}>
-                        {(t.rMultiple ?? 0).toFixed(2)}R
+                        {safeNumber(t.rMultiple, 0).toFixed(2)}R
                       </td>
                       <td className="py-2 px-2 text-center">
                         <Badge variant="outline" className="text-[10px]">
-                          {(t.exitReason ?? "—").replace(/_/g, " ")}
+                          {humanizeExitReason(t.exitReason)}
                         </Badge>
                       </td>
                       <td className="py-2 px-2 text-right font-mono text-muted-foreground">
@@ -107,12 +118,28 @@ export function SpotHistoryPanel({ trades }: SpotHistoryPanelProps) {
   );
 }
 
-function formatHoldTime(minutes: number): string {
-  if (!minutes || minutes <= 0) return "—";
-  if (minutes < 60) return `${minutes}m`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
+function formatHoldTime(minutes: number | null): string {
+  const v = safeNumber(minutes, 0);
+  if (v <= 0) return "—";
+  if (v < 60) return `${v}m`;
+  const h = Math.floor(v / 60);
+  const m = Math.round(v % 60);
   if (h < 24) return `${h}h${m > 0 ? ` ${m}m` : ""}`;
   const d = Math.floor(h / 24);
   return `${d}d${h % 24 > 0 ? ` ${h % 24}h` : ""}`;
+}
+
+function humanizeExitReason(reason: string | null | undefined): string {
+  if (!reason) return "—";
+  const map: Record<string, string> = {
+    STRUCTURE_INVALIDATION: "Salida por pérdida de estructura",
+    TIME_EFFICIENCY: "Salida por eficiencia temporal",
+    TIME_STOP: "Salida por time stop",
+    BREAK_EVEN: "Salida en break-even",
+    TAKE_PROFIT: "Take profit",
+    TRAILING_STOP: "Trailing stop",
+    MANUAL: "Cierre manual",
+    MAX_LOSS: "Pérdida máxima alcanzada",
+  };
+  return map[reason] || reason.replace(/_/g, " ");
 }

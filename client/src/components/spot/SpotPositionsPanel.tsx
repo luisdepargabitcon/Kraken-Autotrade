@@ -5,25 +5,55 @@ import { Briefcase } from "lucide-react";
 interface SpotPositionRow {
   lotId: string;
   pair: string;
-  amount: number;
-  qtyRemaining: number;
-  entryPrice: number;
-  highestPrice: number;
-  openedAt: number;
-  setupTag: string;
-  signalConfidence: number;
+  amount: number | null;
+  qtyRemaining: number | null;
+  entryPrice: number | null;
+  highestPrice: number | null;
+  openedAt: number | null;
+  setupTag: string | null;
+  signalConfidence: number | null;
   executionMode: string;
-  regimeAtEntry: string;
-  directionAtEntry: string;
-  mfe: number;
-  mae: number;
-  mfeR: number;
-  maeR: number;
-  riskUsd: number;
-  notionalUsd: number;
-  initialStopPrice: number;
+  regimeAtEntry: string | null;
+  directionAtEntry: string | null;
+  mfe: number | null;
+  mae: number | null;
+  mfeR: number | null;
+  maeR: number | null;
+  riskUsd: number | null;
+  notionalUsd: number | null;
+  initialStopPrice: number | null;
   sgBreakEvenActivated: boolean;
   sgTrailingActivated: boolean;
+}
+
+function safeNumber(n: unknown, fallback = 0): number {
+  const v = typeof n === "number" ? n : Number(n);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function formatUsd(n: unknown): string {
+  const v = safeNumber(n, 0);
+  return `$${v.toFixed(2)}`;
+}
+
+function formatQty(n: unknown): string {
+  const v = safeNumber(n, 0);
+  return v.toFixed(6);
+}
+
+function formatR(n: unknown): string {
+  const v = safeNumber(n, 0);
+  return `${v.toFixed(2)}R`;
+}
+
+function formatNominal(n: unknown): string {
+  const v = safeNumber(n, 0);
+  return `$${v.toFixed(0)}`;
+}
+
+function humanizeSetup(tag: string | null | undefined): string {
+  if (!tag) return "—";
+  return tag.replace(/_/g, " ");
 }
 
 interface SpotPositionsPanelProps {
@@ -70,18 +100,18 @@ export function SpotPositionsPanel({ positions, executionMode }: SpotPositionsPa
                 {positions.map((p) => (
                   <tr key={p.lotId} className="border-b border-border/20 hover:bg-muted/10">
                     <td className="py-2 px-2 font-mono font-medium">{p.pair}</td>
-                    <td className="py-2 px-2 text-right font-mono">{p.qtyRemaining.toFixed(6)}</td>
-                    <td className="py-2 px-2 text-right font-mono">${p.entryPrice.toFixed(2)}</td>
+                    <td className="py-2 px-2 text-right font-mono">{formatQty(p.qtyRemaining)}</td>
+                    <td className="py-2 px-2 text-right font-mono">{formatUsd(p.entryPrice)}</td>
                     <td className="py-2 px-2 text-right font-mono text-emerald-400">
-                      ${p.mfe.toFixed(2)}
+                      {formatUsd(p.mfe)}
                     </td>
                     <td className="py-2 px-2 text-right font-mono text-red-400">
-                      ${p.mae.toFixed(2)}
+                      {formatUsd(p.mae)}
                     </td>
-                    <td className="py-2 px-2 text-right font-mono">{p.mfeR.toFixed(2)}R</td>
+                    <td className="py-2 px-2 text-right font-mono">{formatR(p.mfeR)}</td>
                     <td className="py-2 px-2 text-center">
                       <Badge variant="outline" className="text-[10px]">
-                        {p.setupTag.replace("_", " ")}
+                        {humanizeSetup(p.setupTag)}
                       </Badge>
                     </td>
                     <td className="py-2 px-2 text-center">
@@ -94,7 +124,7 @@ export function SpotPositionsPanel({ positions, executionMode }: SpotPositionsPa
                         )}
                       </div>
                     </td>
-                    <td className="py-2 px-2 text-right font-mono">${p.notionalUsd.toFixed(0)}</td>
+                    <td className="py-2 px-2 text-right font-mono">{formatNominal(p.notionalUsd)}</td>
                   </tr>
                 ))}
               </tbody>
