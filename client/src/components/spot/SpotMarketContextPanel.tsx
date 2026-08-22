@@ -214,6 +214,10 @@ function getSetupLabel(setup: string | null): string {
   const labels: Record<string, string> = {
     PULLBACK_CONTINUATION: "Continuación tras retroceso",
     BREAKOUT_RETEST: "Ruptura y retesteo",
+    PULLBACK: "retroceso",
+    BREAKOUT: "ruptura",
+    ROLLING_HIGH: "máximo reciente",
+    NO_SETUP_15M: "No hay configuración válida en 15 minutos",
   };
   return labels[setup] ?? setup.replace(/_/g, " ");
 }
@@ -354,7 +358,7 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
           <MetricMini label="Precio" value={formatPrice(snap.price)} />
           <MetricMini label="Mejor compra" value={snap.bid > 0 ? formatPrice(snap.bid) : "—"} />
           <MetricMini label="Mejor venta" value={snap.ask > 0 ? formatPrice(snap.ask) : "—"} />
-          <MetricMini label="Datos" value={getDataHealthLabel(snap.dataHealth)} colorClass={dataHealthColorMap[snap.dataHealth] ?? ""} />
+          <MetricMini label="Estado de los datos" value={getDataHealthLabel(snap.dataHealth)} colorClass={dataHealthColorMap[snap.dataHealth] ?? ""} />
         </div>
       </div>
 

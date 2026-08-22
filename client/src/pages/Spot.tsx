@@ -12,6 +12,7 @@ import { SpotMarketContextPanel, type SpotContextSnapshotData } from "@/componen
 import { SpotAssetsPanel, type SpotPairStatus } from "@/components/spot/SpotAssetsPanel";
 import { SpotErrorBoundary } from "@/components/spot/SpotErrorBoundary";
 import { reasonCodeShortEs } from "@/components/spot/spotTerminalSpanishFormatter";
+import { refreshSpotData } from "@/lib/spotRefresh";
 import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -169,17 +170,7 @@ export default function Spot() {
   );
 
   const handleRefresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["spot-status"] });
-    queryClient.invalidateQueries({ queryKey: ["spot-positions"] });
-    queryClient.invalidateQueries({ queryKey: ["spot-history"] });
-    queryClient.invalidateQueries({ queryKey: ["spot-summary"] });
-    queryClient.invalidateQueries({ queryKey: ["spot-intents"] });
-    queryClient.invalidateQueries({ queryKey: ["spot-audit"] });
-    queryClient.invalidateQueries({ queryKey: ["spot-activity"] });
-    queryClient.invalidateQueries({ queryKey: ["spot-context"] });
-    queryClient.invalidateQueries({ queryKey: ["spot-pairs"] });
-    // Trigger immediate refetch for status so the spinner reacts
-    refetchStatus();
+    refreshSpotData(queryClient, refetchStatus);
   }, [refetchStatus, queryClient]);
 
   const handlePairToggle = useCallback(async (pair: string, enabled: boolean) => {
