@@ -80,6 +80,13 @@ import {
 export const SPOT_ENGINE_OWNER = _SPOT_ENGINE_OWNER;
 export const SPOT_ORIGIN = "spot_engine" as const;
 
+const REGIME_ES: Record<string, string> = { TREND: "Tendencia", TRANSITION: "Transición", RANGING: "Lateral" };
+const DIR_ES: Record<string, string> = { BULLISH: "alcista", BEARISH: "bajista", NEUTRAL: "neutral" };
+const SETUP_ES: Record<string, string> = { PULLBACK_CONTINUATION: "Continuación de pullback", BREAKOUT: "Ruptura", MEAN_REVERSION: "Reversión a la media" };
+const INTENT_STATE_ES: Record<string, string> = { INVALIDATED: "Invalidada", CHASED: "Persiguiendo precio", WAITING: "En espera", CANCELLED: "Cancelada" };
+const EXIT_REASON_ES: Record<string, string> = { TIME_EFFICIENCY: "Eficiencia temporal", TRAILING: "Trailing stop", PROFIT: "Toma de beneficios", BREAK_EVEN: "Break-even", STRUCTURE_INVALIDATION: "Pérdida de estructura", TIME_STOP: "Time stop", TAKE_PROFIT: "Take profit", MAX_LOSS: "Pérdida máxima" };
+const SIZING_BLOCK_ES: Record<string, string> = { MAX_LOTS_REACHED: "Máximo de posiciones simultáneas alcanzado" };
+
 // ─── Typed Errors ────────────────────────────────────────────────────────────
 
 export class RealActivationBlockedError extends Error {
@@ -1480,7 +1487,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
       pair,
       category: "MARKET",
       severity: "INFO",
-      title: `Contexto de mercado: ${ctx.regimeContext.regime} ${ctx.regimeContext.direction}`,
+      title: `Contexto de mercado: ${REGIME_ES[ctx.regimeContext.regime] ?? ctx.regimeContext.regime} ${DIR_ES[ctx.regimeContext.direction] ?? ctx.regimeContext.direction}`,
       explanation: `Par ${pair} — régimen=${ctx.regimeContext.regime}, dirección=${ctx.regimeContext.direction}, macroBias=${ctx.regimeContext.macroBias}, dataHealth=${ctx.dataHealth}, ATR%=${ctx.regimeContext.atrPct.toFixed(2)}`,
       decision: ctx.regimeContext.direction,
       executionMode: mode,
@@ -1567,7 +1574,8 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
       pair,
       category: "SIGNAL",
       severity: "INFO",
-      title: `Setup detectado: ${signal.setupTag}`,
+      title: `Setup detectado: ${SETUP_ES[signal.setupTag ?? ""] ?? (signal.setupTag ?? "").replace(/_/g, " ")}`,
+
       explanation: signal.reason || `Setup ${signal.setupTag} con confianza ${signal.confidence}`,
       decision: signal.setupTag,
       executionMode: mode,
@@ -1615,7 +1623,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
         pair,
         category: "DECISION",
         severity: "INFO",
-        title: `Entrada pendiente: ${evaluation.newState}`,
+        title: `Entrada pendiente: ${INTENT_STATE_ES[evaluation.newState] ?? evaluation.newState}`,
         explanation: evaluation.reason || `Intent en estado ${evaluation.newState}`,
         decision: evaluation.newState,
         executionMode: mode,
@@ -1765,7 +1773,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       pair: intent.pair,
       category: "RISK",
       severity: "WARNING",
-      title: `Entrada rechazada por sizing: ${sizing.blockReason ?? sizing.reason}`,
+      title: `Entrada rechazada por sizing: ${SIZING_BLOCK_ES[sizing.blockReason ?? ""] ?? sizing.blockReason ?? sizing.reason}`,
       explanation: `Sizing no aprobado para ${intent.pair}: ${sizing.reason}. Capital disponible=${availableCapital}, openLots=${openLots}.`,
       decision: "REJECT",
       executionMode: mode,
@@ -2383,7 +2391,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       pair: intent.pair,
       category: "ENTRY",
       severity: "SUCCESS",
-      title: `Entrada ejecutada — ${intent.setupTag}`,
+      title: `Entrada ejecutada — ${SETUP_ES[intent.setupTag ?? ""] ?? (intent.setupTag ?? "").replace(/_/g, " ")}`,
       explanation: `Posición abierta: ${lotId} @ ${result.fillPrice}, vol=${position.amount}, modo=${mode}`,
       decision: "BUY",
       executionMode: mode,
@@ -2964,7 +2972,7 @@ async function closePosition(
     pair: position.pair,
     category: "EXIT",
     severity: pnl.netPnlUsd >= 0 ? "SUCCESS" : "WARNING",
-    title: `Salida ejecutada — ${exitDecision.reasonType}`,
+    title: `Salida ejecutada — ${EXIT_REASON_ES[exitDecision.reasonType ?? ""] ?? exitDecision.reasonType}`,
     explanation: `Posición cerrada: ${position.lotId} @ ${result.fillPrice}, PnL=$${pnl.netPnlUsd.toFixed(2)}, razón=${exitDecision.reason}`,
     decision: "SELL",
     executionMode: position.executionMode,

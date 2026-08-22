@@ -138,6 +138,8 @@ function humanizeExitReason(reason: string | null | undefined): string {
     BREAK_EVEN: "Salida en break-even",
     TAKE_PROFIT: "Take profit",
     TRAILING_STOP: "Trailing stop",
+    TRAILING: "Trailing stop",
+    PROFIT: "Toma de beneficios",
     MANUAL: "Cierre manual",
     MAX_LOSS: "Pérdida máxima alcanzada",
   };
