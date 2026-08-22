@@ -330,6 +330,7 @@ interface OpenPositionRow {
   trailingHighestPrice: number | null;
   lowestPrice: number | null;
   filledNotionalUsd: number | null;
+  notionalUsd: number;
   openedAt: number;
 }
 
@@ -3405,6 +3406,9 @@ async function getOpenPositionsForPair(pair: string): Promise<OpenPositionRow[]>
       trailingHighestPrice: r.trailing_highest_price ? Number(r.trailing_highest_price) : null,
       lowestPrice: r.lowest_price ? Number(r.lowest_price) : null,
       filledNotionalUsd: r.filled_notional_usd ? Number(r.filled_notional_usd) : null,
+      notionalUsd: r.filled_notional_usd
+        ? Number(r.filled_notional_usd)
+        : (Number(r.entry_price) && Number(r.amount) ? Number(r.entry_price) * Number(r.amount) : 0),
       openedAt: Number(r.opened_at_ms),
     }));
   } catch (error: any) {
@@ -3515,6 +3519,9 @@ async function loadOpenPositionsFromDB(): Promise<void> {
         trailingHighestPrice: row.trailing_highest_price ? Number(row.trailing_highest_price) : null,
         lowestPrice: row.lowest_price ? Number(row.lowest_price) : null,
         filledNotionalUsd: row.filled_notional_usd ? Number(row.filled_notional_usd) : null,
+        notionalUsd: row.filled_notional_usd
+          ? Number(row.filled_notional_usd)
+          : (Number(row.entry_price) && Number(row.amount) ? Number(row.entry_price) * Number(row.amount) : 0),
         openedAt: Number(row.opened_at_ms),
       });
       auditTracker.restorePosition(position, {
@@ -3859,6 +3866,9 @@ async function reconcileSellIntent(
           trailingHighestPrice: row.trailing_highest_price ? Number(row.trailing_highest_price) : null,
           lowestPrice: row.lowest_price ? Number(row.lowest_price) : null,
           filledNotionalUsd: row.filled_notional_usd ? Number(row.filled_notional_usd) : null,
+          notionalUsd: row.filled_notional_usd
+            ? Number(row.filled_notional_usd)
+            : (Number(row.entry_price) && Number(row.amount) ? Number(row.entry_price) * Number(row.amount) : 0),
           openedAt: row.opened_at ? new Date(row.opened_at).getTime() : Date.now(),
         });
 
@@ -4719,6 +4729,7 @@ export async function getClosedTrades(limit: number = 100): Promise<any[]> {
       mfeR: Number(r.mfe_r ?? 0),
       maeR: Number(r.mae_r ?? 0),
       profitCapturePct: Number(r.profit_capture_pct ?? 0),
+      rMultiple: Number(r.r_multiple ?? 0),
       exitReason: r.exit_reason_type,
       holdTimeMinutes: Number(r.hold_time_minutes ?? 0),
       executionMode: r.execution_mode,
@@ -4728,6 +4739,7 @@ export async function getClosedTrades(limit: number = 100): Promise<any[]> {
       marketContextId: r.market_context_id,
       executedAt: r.executed_at ? new Date(r.executed_at).getTime() : null,
       openedAt: r.created_at ? new Date(r.created_at).getTime() : null,
+      closedAt: r.executed_at ? new Date(r.executed_at).getTime() : null,
     }));
   } catch (error) {
     console.error("[SpotEngine] Failed to get closed trades:", error);

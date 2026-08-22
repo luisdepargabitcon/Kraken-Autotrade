@@ -10,6 +10,7 @@ import { SpotAuditPanel } from "@/components/spot/SpotAuditPanel";
 import { SpotTerminalPanel } from "@/components/spot/SpotTerminalPanel";
 import { SpotMarketContextPanel, type SpotContextSnapshotData } from "@/components/spot/SpotMarketContextPanel";
 import { SpotAssetsPanel, type SpotPairStatus } from "@/components/spot/SpotAssetsPanel";
+import { SpotErrorBoundary } from "@/components/spot/SpotErrorBoundary";
 import { reasonCodeShortEs } from "@/components/spot/spotTerminalSpanishFormatter";
 import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -168,8 +169,17 @@ export default function Spot() {
   );
 
   const handleRefresh = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["spot-status"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-positions"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-history"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-summary"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-intents"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-audit"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-activity"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-context"] });
+    queryClient.invalidateQueries({ queryKey: ["spot-pairs"] });
+    // Trigger immediate refetch for status so the spinner reacts
     refetchStatus();
-    queryClient.invalidateQueries({ queryKey: ["spot-"] });
   }, [refetchStatus, queryClient]);
 
   const handlePairToggle = useCallback(async (pair: string, enabled: boolean) => {
@@ -349,16 +359,22 @@ export default function Spot() {
               </div>
             )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              <SpotPositionsPanel positions={positions} executionMode={executionMode} />
-              <SpotIntentsPanel intents={intents} />
+              <SpotErrorBoundary name="Posiciones">
+                <SpotPositionsPanel positions={positions} executionMode={executionMode} />
+              </SpotErrorBoundary>
+              <SpotErrorBoundary name="Intents">
+                <SpotIntentsPanel intents={intents} />
+              </SpotErrorBoundary>
             </div>
           </TabsContent>
 
           <TabsContent value="context" className="space-y-3">
-            <SpotMarketContextPanel
-              snapshots={contextSnapshots}
-              isLoading={contextLoading}
-            />
+            <SpotErrorBoundary name="Contexto de mercado">
+              <SpotMarketContextPanel
+                snapshots={contextSnapshots}
+                isLoading={contextLoading}
+              />
+            </SpotErrorBoundary>
           </TabsContent>
 
           <TabsContent value="assets" className="space-y-3">
@@ -370,37 +386,47 @@ export default function Spot() {
           </TabsContent>
 
           <TabsContent value="positions">
-            <SpotPositionsPanel positions={positions} executionMode={executionMode} />
+            <SpotErrorBoundary name="Posiciones">
+              <SpotPositionsPanel positions={positions} executionMode={executionMode} />
+            </SpotErrorBoundary>
           </TabsContent>
 
           <TabsContent value="history">
-            <SpotHistoryPanel trades={trades} />
+            <SpotErrorBoundary name="Historial">
+              <SpotHistoryPanel trades={trades} />
+            </SpotErrorBoundary>
           </TabsContent>
 
           <TabsContent value="intents">
-            <SpotIntentsPanel intents={intents} />
+            <SpotErrorBoundary name="Intents">
+              <SpotIntentsPanel intents={intents} />
+            </SpotErrorBoundary>
           </TabsContent>
 
           <TabsContent value="audit">
-            <SpotAuditPanel
-              positions={auditPositions}
-              aggregate={auditAggregate}
-              closedCount={auditClosedCount}
-            />
+            <SpotErrorBoundary name="Auditoría">
+              <SpotAuditPanel
+                positions={auditPositions}
+                aggregate={auditAggregate}
+                closedCount={auditClosedCount}
+              />
+            </SpotErrorBoundary>
           </TabsContent>
 
           <TabsContent value="activity">
-            <SpotActivityPanel
-              events={activityEvents}
-              category={activityCategory}
-              pair={activityPair}
-              severity={activitySeverity}
-              mode={activityMode}
-              onCategoryChange={setActivityCategory}
-              onPairChange={setActivityPair}
-              onSeverityChange={setActivitySeverity}
-              onModeChange={setActivityMode}
-            />
+            <SpotErrorBoundary name="Actividad">
+              <SpotActivityPanel
+                events={activityEvents}
+                category={activityCategory}
+                pair={activityPair}
+                severity={activitySeverity}
+                mode={activityMode}
+                onCategoryChange={setActivityCategory}
+                onPairChange={setActivityPair}
+                onSeverityChange={setActivitySeverity}
+                onModeChange={setActivityMode}
+              />
+            </SpotErrorBoundary>
           </TabsContent>
 
           <TabsContent value="terminal">
