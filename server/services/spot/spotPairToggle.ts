@@ -112,7 +112,7 @@ async function readActivePairs(): Promise<string[]> {
 
 async function writeActivePairs(pairs: string[]): Promise<void> {
   await db.execute(sql`
-    UPDATE bot_config SET active_pairs = (${JSON.stringify(pairs)}::jsonb)::text[]
+    UPDATE bot_config SET active_pairs = ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(pairs)}::jsonb))
     WHERE id = (SELECT id FROM bot_config LIMIT 1)
   `);
 }
