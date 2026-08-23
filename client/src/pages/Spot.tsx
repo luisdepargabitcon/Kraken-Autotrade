@@ -244,7 +244,7 @@ export default function Spot() {
         {/* Summary KPIs */}
         {summary && (
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-            <KpiBox label="PnL Neto" value={`$${(summary.netPnlUsd ?? 0).toFixed(2)}`} positive={(summary.netPnlUsd ?? 0) >= 0} />
+            <KpiBox label="PnL Histórico" value={`$${(summary.netPnlUsd ?? 0).toFixed(2)}`} positive={(summary.netPnlUsd ?? 0) >= 0} />
             <KpiBox label="Tasa de Acierto" value={`${((summary.winRate ?? 0) * 100).toFixed(1)}%`} />
             <KpiBox label="Trades" value={summary.totalTrades ?? 0} />
             <KpiBox label="Abiertas" value={summary.openPositions ?? 0} />
@@ -255,7 +255,8 @@ export default function Spot() {
 
         {/* Tabs */}
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
+          <div className="overflow-x-auto -mx-1 pb-0.5">
+          <TabsList className="w-max min-w-full">
             <TabsTrigger value="overview">Resumen</TabsTrigger>
             <TabsTrigger value="context">
               <BarChart3 className="h-3.5 w-3.5 mr-1 inline" />
@@ -301,6 +302,7 @@ export default function Spot() {
               Terminal
             </TabsTrigger>
           </TabsList>
+          </div>
 
           <TabsContent value="overview" className="space-y-3">
             <SpotStatusPanel status={status} onModeChange={handleModeChange} />

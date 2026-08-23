@@ -300,30 +300,33 @@ export function SpotTerminalPanel() {
 
   return (
     <div className="rounded-lg border border-border/50 bg-card flex flex-col h-[620px]">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50 flex-shrink-0">
-        <Activity className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold">Terminal SPOT</span>
-        <span className={`h-2 w-2 rounded-full ml-1 ${statusColor[status]}`} title={status} />
-        <Badge variant="outline" className="text-[10px] py-0 px-1.5" title={status}>{formatStatusEs(status)}</Badge>
-        {showPaginated ? (
-          serverTotalLines > 0 && (
-            <span className="text-[10px] text-muted-foreground ml-1">{serverTotalLines} líneas en servidor</span>
-          )
-        ) : (
-          visibleLines.length > 0 && (
-            <span className="text-[10px] text-muted-foreground ml-1">{visibleLines.length} líneas</span>
-          )
-        )}
-        {newLinesCount > 0 && (showPaginated || !autoScroll) && (
-          <Badge variant="outline" className="text-[10px] py-0 px-1.5 text-cyan-400 border-cyan-500/30">
-            {newLinesCount} nuevas
-          </Badge>
-        )}
-
-        <div className="flex items-center gap-1 ml-auto">
+      {/* Header — two-row layout for responsive */}
+      <div className="border-b border-border/50 flex-shrink-0">
+        {/* Row 1: title + status */}
+        <div className="flex items-center gap-2 px-4 py-2">
+          <Activity className="h-4 w-4 text-primary flex-shrink-0" />
+          <span className="text-sm font-semibold whitespace-nowrap">Terminal SPOT</span>
+          <span className={`h-2 w-2 rounded-full ml-1 flex-shrink-0 ${statusColor[status]}`} title={status} />
+          <Badge variant="outline" className="text-[10px] py-0 px-1.5 flex-shrink-0" title={status}>{formatStatusEs(status)}</Badge>
+          {showPaginated ? (
+            serverTotalLines > 0 && (
+              <span className="text-[10px] text-muted-foreground whitespace-nowrap">{serverTotalLines} líneas</span>
+            )
+          ) : (
+            visibleLines.length > 0 && (
+              <span className="text-[10px] text-muted-foreground whitespace-nowrap">{visibleLines.length} líneas</span>
+            )
+          )}
+          {newLinesCount > 0 && (showPaginated || !autoScroll) && (
+            <Badge variant="outline" className="text-[10px] py-0 px-1.5 text-cyan-400 border-cyan-500/30 flex-shrink-0">
+              {newLinesCount} nuevas
+            </Badge>
+          )}
+        </div>
+        {/* Row 2: controls — scrollable horizontally on mobile */}
+        <div className="flex items-center gap-1 px-2 pb-1.5 overflow-x-auto">
           {/* Search */}
-          <div className="relative">
+          <div className="relative flex-shrink-0">
             <Search className="h-3 w-3 absolute left-1.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
@@ -338,7 +341,7 @@ export function SpotTerminalPanel() {
           <select
             value={filter}
             onChange={e => setFilter(e.target.value as TerminalLevel | "ALL")}
-            className="text-[10px] bg-muted border border-border/50 rounded px-1 py-0.5 text-foreground"
+            className="text-[10px] bg-muted border border-border/50 rounded px-1 py-0.5 text-foreground flex-shrink-0"
           >
             <option value="ALL">Todos</option>
             {(["INFO", "MARKET", "SIGNAL", "DECISION", "EXECUTION", "SUPERVISOR", "METADATA", "READINESS", "RISK", "ADAPTER", "SYSTEM", "ERROR"] as const).map(l => (
@@ -351,7 +354,7 @@ export function SpotTerminalPanel() {
             <select
               value={filterPair}
               onChange={e => setFilterPair(e.target.value)}
-              className="text-[10px] bg-muted border border-border/50 rounded px-1 py-0.5 text-foreground"
+              className="text-[10px] bg-muted border border-border/50 rounded px-1 py-0.5 text-foreground flex-shrink-0"
             >
               <option value="">Todos los pares</option>
               {uniquePairs.map(p => <option key={p} value={p}>{p}</option>)}
@@ -362,17 +365,15 @@ export function SpotTerminalPanel() {
           <Button
             variant="ghost"
             size="sm"
-            className={`h-7 px-2 ${showPaginated ? "text-cyan-400" : "text-muted-foreground"}`}
+            className={`h-7 px-2 flex-shrink-0 ${showPaginated ? "text-cyan-400" : "text-muted-foreground"}`}
             onClick={() => {
               const next = !showPaginated;
               setShowPaginated(next);
               setCurrentPage(1);
               if (next) {
-                // P2: Entering paginated = history mode — disable autoScroll
                 autoScrollRef.current = false;
                 setAutoScroll(false);
               } else {
-                // Returning to live mode — re-enable autoScroll
                 autoScrollRef.current = true;
                 setAutoScroll(true);
                 setNewLinesCount(0);
@@ -387,32 +388,32 @@ export function SpotTerminalPanel() {
           <Button
             variant="ghost"
             size="sm"
-            className={`h-7 px-2 ${autoScroll ? "text-emerald-400" : "text-muted-foreground"}`}
+            className={`h-7 px-2 flex-shrink-0 ${autoScroll ? "text-emerald-400" : "text-muted-foreground"}`}
             onClick={toggleAutoScroll}
             title={autoScroll ? "Auto-scroll activado" : "Auto-scroll desactivado"}
           >
             <ArrowDownToLine className="h-3.5 w-3.5" />
           </Button>
 
-          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={togglePause} title={paused ? "Reanudar" : "Pausar"}>
+          <Button variant="ghost" size="sm" className="h-7 px-2 flex-shrink-0" onClick={togglePause} title={paused ? "Reanudar" : "Pausar"}>
             {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={copyAll} title="Copiar líneas visibles">
+          <Button variant="ghost" size="sm" className="h-7 px-2 flex-shrink-0" onClick={copyAll} title="Copiar líneas visibles">
             <Copy className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className={`h-7 px-2 ${showRawDetails ? "text-amber-400" : "text-muted-foreground"}`}
+            className={`h-7 px-2 flex-shrink-0 ${showRawDetails ? "text-amber-400" : "text-muted-foreground"}`}
             onClick={() => setShowRawDetails(!showRawDetails)}
             title={showRawDetails ? "Mostrar español" : "Mostrar detalle técnico"}
           >
             <span className="text-[10px]">{showRawDetails ? "ES" : "Técnico"}</span>
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={clearLines} title="Limpiar">
+          <Button variant="ghost" size="sm" className="h-7 px-2 flex-shrink-0" onClick={clearLines} title="Limpiar">
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => { clearLines(); connect(); }} title="Reconectar">
+          <Button variant="ghost" size="sm" className="h-7 px-2 flex-shrink-0" onClick={() => { clearLines(); connect(); }} title="Reconectar">
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
         </div>

@@ -42,6 +42,23 @@ function formatR(n: unknown): string {
   return `${safeNumber(n, 0).toFixed(2)}R`;
 }
 
+function humanizeExitReason(r: string | null): string {
+  if (!r) return "—";
+  const map: Record<string, string> = {
+    STRUCTURE_INVALIDATION: "Pérdida de estructura",
+    TIME_EFFICIENCY: "Eficiencia temporal",
+    TIME_STOP: "Time stop",
+    BREAK_EVEN: "Break-even",
+    TAKE_PROFIT: "Take profit",
+    TRAILING_STOP: "Trailing stop",
+    TRAILING: "Trailing stop",
+    PROFIT: "Toma de beneficios",
+    MANUAL: "Cierre manual",
+    MAX_LOSS: "Pérdida máxima",
+  };
+  return map[r] || r.replace(/_/g, " ");
+}
+
 interface SpotAuditPanelProps {
   positions: SpotAuditPosition[];
   aggregate: SpotAuditAggregate | null;
@@ -130,7 +147,7 @@ export function SpotAuditPanel({ positions, aggregate, closedCount }: SpotAuditP
                       <td className="py-2 px-2 text-center">
                         {p.exitReason && (
                           <Badge variant="outline" className="text-[10px]">
-                            {p.exitReason.replace(/_/g, " ")}
+                            {humanizeExitReason(p.exitReason)}
                           </Badge>
                         )}
                       </td>

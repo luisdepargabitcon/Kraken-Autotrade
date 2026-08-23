@@ -35,6 +35,61 @@ interface SpotIntentsPanelProps {
   intents: SpotIntentRow[];
 }
 
+const stateLabels: Record<string, string> = {
+  CREATED: "Creada",
+  WAITING: "En espera",
+  APPROVED: "Aprobada",
+  EXECUTED: "Ejecutada",
+  EXPIRED: "Expirada",
+  INVALIDATED: "Invalidada",
+  CHASED: "Reevaluando",
+  CANCELLED: "Cancelada",
+};
+
+const setupLabels: Record<string, string> = {
+  PULLBACK_CONTINUATION: "Continuación pullback",
+  BREAKOUT_RETEST: "Ruptura y retesteo",
+  PULLBACK: "Retroceso",
+  BREAKOUT: "Ruptura",
+  ROLLING_HIGH: "Máximo reciente",
+  MEAN_REVERSION: "Regresión a la media",
+};
+
+const regimeLabels: Record<string, string> = {
+  TREND: "Tendencia",
+  RANGE: "Rango",
+  TRANSITION: "Transición",
+};
+
+const directionLabels: Record<string, string> = {
+  BULLISH: "Alcista",
+  BEARISH: "Bajista",
+  NEUTRAL: "Neutral",
+};
+
+const macroLabels: Record<string, string> = {
+  BULLISH: "Alcista",
+  BEARISH: "Bajista",
+  NEUTRAL: "Neutral",
+};
+
+function humanizeBlockReason(r: string | null): string {
+  if (!r) return "—";
+  const map: Record<string, string> = {
+    NO_SETUP_15M: "Sin setup en 15M",
+    NO_TRIGGER_5M: "Sin trigger en 5M",
+    MAX_LOTS_REACHED: "Máximo de posiciones",
+    SPREAD_TOO_HIGH: "Diferencial muy alto",
+    REGIME_CHANGE: "Cambio de régimen",
+    MACRO_INVALIDATION: "Macro invalidada",
+    DATA_HEALTH: "Datos insuficientes",
+    ENTRY_PRICE_MISSED: "Precio de entrada no alcanzado",
+    PRICE_CHASED: "Precio no válido",
+    DIRECTION_CHANGE: "Cambio de dirección",
+  };
+  return map[r] || r.replace(/_/g, " ");
+}
+
 const stateColors: Record<string, string> = {
   CREATED: "bg-blue-500/10 text-blue-400 border-blue-500/30",
   WAITING: "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
@@ -89,18 +144,18 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm font-medium">{intent.pair}</span>
                       <Badge variant="outline" className="text-[10px]">
-                        {intent.setupTag ? intent.setupTag.replace(/_/g, " ") : "—"}
+                        {intent.setupTag ? (setupLabels[intent.setupTag] ?? intent.setupTag.replace(/_/g, " ")) : "—"}
                       </Badge>
                     </div>
                     <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${stateColor}`}>
-                      {intent.state}
+                      {stateLabels[intent.state] ?? intent.state}
                     </span>
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-[11px]">
                     <MetaItem label="Origen" value={formatUsd(intent.originPrice)} />
-                    <MetaItem label="Régimen" value={intent.originRegime ?? "—"} />
-                    <MetaItem label="Dirección" value={intent.originDirection ?? "—"} />
-                    <MetaItem label="Macro" value={intent.originMacro ?? "—"} />
+                    <MetaItem label="Régimen" value={regimeLabels[intent.originRegime ?? ""] ?? (intent.originRegime ?? "—")} />
+                    <MetaItem label="Dirección" value={directionLabels[intent.originDirection ?? ""] ?? (intent.originDirection ?? "—")} />
+                    <MetaItem label="Macro" value={macroLabels[intent.originMacro ?? ""] ?? (intent.originMacro ?? "—")} />
                     <MetaItem label="ATR%" value={formatPct(intent.originAtrPct)} />
                     <MetaItem
                       label="Reintento"
@@ -108,8 +163,8 @@ export function SpotIntentsPanel({ intents }: SpotIntentsPanelProps) {
                     />
                   </div>
                   {intent.lastBlockReason && (
-                    <p className="text-[11px] text-yellow-400/80 font-mono">
-                      ⚠ {intent.lastBlockReason}
+                    <p className="text-[11px] text-yellow-400/80">
+                      ⚠ {humanizeBlockReason(intent.lastBlockReason)}
                     </p>
                   )}
                   {expired && intent.state === "WAITING" && (

@@ -272,9 +272,9 @@ function CompactRow({ snap, expanded, onToggle }: { snap: SpotContextSnapshotDat
         </div>
         <div className="flex items-center justify-between sm:justify-end gap-2 sm:shrink-0 w-full sm:w-auto">
           <span className="font-mono text-xs text-muted-foreground">{formatPrice(snap.price)}</span>
-          <div className={`flex items-center gap-1 px-2 py-0.5 rounded border ${dc.border} ${dc.bg}`}>
-            <DecisionIcon className={`h-3 w-3 ${dc.text}`} />
-            <span className={`text-[10px] font-medium ${dc.text}`}>{snap.decisionTitle}</span>
+          <div className={`flex items-center gap-1 px-2 py-0.5 rounded border ${dc.border} ${dc.bg} max-w-[200px] sm:max-w-none`}>
+            <DecisionIcon className={`h-3 w-3 ${dc.text} flex-shrink-0`} />
+            <span className={`text-[10px] font-medium ${dc.text} truncate`}>{snap.decisionTitle}</span>
           </div>
         </div>
       </div>
@@ -379,8 +379,8 @@ function DetailPanel({ snap }: { snap: SpotContextSnapshotData }) {
 
       {/* Context IDs */}
       <div className="text-[10px] text-muted-foreground font-mono space-y-0.5">
-        <div>Contexto ID: {snap.marketContextId || "—"}</div>
-        <div>Régimen ID: {snap.regimeId || "—"}</div>
+        <div className="break-all">Contexto ID: {snap.marketContextId || "—"}</div>
+        <div className="break-all">Régimen ID: {snap.regimeId || "—"}</div>
         <div>Generado: {formatTime(snap.generatedAt)}</div>
       </div>
     </div>
