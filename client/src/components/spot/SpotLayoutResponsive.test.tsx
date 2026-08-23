@@ -11,7 +11,15 @@
 import * as React from "react";
 import { describe, it, expect } from "vitest";
 import { renderToString } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SpotHistoryPanel } from "./SpotHistoryPanel";
+
+function withQC(node: React.ReactElement): string {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderToString(
+    React.createElement(QueryClientProvider, { client: qc }, node),
+  );
+}
 
 const MINIMAL_TRADE = {
   tradeId: "spot-trade-spot-ETH/USD-test",
@@ -35,45 +43,35 @@ const MINIMAL_TRADE = {
 
 describe("SpotHistoryPanel — responsive layout (SPOT_RESPONSIVE_LAYOUT)", () => {
   it("renders overflow-x-auto wrapper around the trade table for horizontal scroll on mobile", () => {
-    const html = renderToString(
-      <SpotHistoryPanel trades={[MINIMAL_TRADE]} />,
-    );
+    const html = withQC(<SpotHistoryPanel trades={[MINIMAL_TRADE]} />);
     expect(html).toContain("overflow-x-auto");
   });
 
   it("renders the table element inside the overflow wrapper", () => {
-    const html = renderToString(
-      <SpotHistoryPanel trades={[MINIMAL_TRADE]} />,
-    );
+    const html = withQC(<SpotHistoryPanel trades={[MINIMAL_TRADE]} />);
     expect(html).toContain("<table");
   });
 
   it("shows empty-state message when trades array is empty (no table overflow needed)", () => {
-    const html = renderToString(<SpotHistoryPanel trades={[]} />);
+    const html = withQC(<SpotHistoryPanel trades={[]} />);
     expect(html).toContain("No hay trades cerrados");
     expect(html).not.toContain("overflow-x-auto");
   });
 
   it("renders entry and exit prices without crashing on valid camelCase trade data", () => {
-    const html = renderToString(
-      <SpotHistoryPanel trades={[MINIMAL_TRADE]} />,
-    );
+    const html = withQC(<SpotHistoryPanel trades={[MINIMAL_TRADE]} />);
     expect(html).toContain("2450.52");
     expect(html).toContain("2478.20");
   });
 
   it("renders netPnl with correct sign styling class (positive trade)", () => {
-    const html = renderToString(
-      <SpotHistoryPanel trades={[MINIMAL_TRADE]} />,
-    );
+    const html = withQC(<SpotHistoryPanel trades={[MINIMAL_TRADE]} />);
     expect(html).toContain("emerald");
   });
 
   it("renders negative trade with red styling class", () => {
     const lossTrade = { ...MINIMAL_TRADE, netPnl: -5.0, grossPnl: -3.0 };
-    const html = renderToString(
-      <SpotHistoryPanel trades={[lossTrade]} />,
-    );
+    const html = withQC(<SpotHistoryPanel trades={[lossTrade]} />);
     expect(html).toContain("red");
   });
 
@@ -89,7 +87,7 @@ describe("SpotHistoryPanel — responsive layout (SPOT_RESPONSIVE_LAYOUT)", () =
       closedAt: null,
     };
     expect(() =>
-      renderToString(<SpotHistoryPanel trades={[sparseTrade as any]} />),
+      withQC(<SpotHistoryPanel trades={[sparseTrade as any]} />),
     ).not.toThrow();
   });
 });

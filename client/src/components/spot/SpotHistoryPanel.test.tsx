@@ -1,7 +1,15 @@
 import * as React from "react";
 import { describe, it, expect } from "vitest";
 import { renderToString } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SpotHistoryPanel } from "./SpotHistoryPanel";
+
+function withQueryClient(node: React.ReactElement): string {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderToString(
+    React.createElement(QueryClientProvider, { client: qc }, node),
+  );
+}
 
 const baseTrade = {
   tradeId: "trade-1",
@@ -25,7 +33,7 @@ const baseTrade = {
 
 describe("SpotHistoryPanel — SPOT_UI render resilience", () => {
   it("SPOT_HISTORY_RENDER_01 — renders negative trade without throwing", () => {
-    const html = renderToString(<SpotHistoryPanel trades={[baseTrade as any]} />);
+    const html = withQueryClient(<SpotHistoryPanel trades={[baseTrade as any]} />);
     expect(html).toContain("ETH/USD");
     expect(html).toContain("Salida por pérdida de estructura");
     expect(html).toContain("-20.96");
@@ -33,25 +41,25 @@ describe("SpotHistoryPanel — SPOT_UI render resilience", () => {
 
   it("SPOT_HISTORY_RENDER_02 — renders positive trade", () => {
     const t = { ...baseTrade, grossPnl: 10, netPnl: 9.5, rMultiple: 1.5 };
-    const html = renderToString(<SpotHistoryPanel trades={[t as any]} />);
+    const html = withQueryClient(<SpotHistoryPanel trades={[t as any]} />);
     expect(html).toContain("ETH/USD");
     expect(html).toContain("9.50");
   });
 
   it("SPOT_HISTORY_RENDER_03 — renders with zero fees", () => {
     const t = { ...baseTrade, entryFee: 0, exitFee: 0 };
-    const html = renderToString(<SpotHistoryPanel trades={[t as any]} />);
+    const html = withQueryClient(<SpotHistoryPanel trades={[t as any]} />);
     expect(html).toContain("0.00");
   });
 
   it("SPOT_HISTORY_RENDER_04 — renders with optional null fields", () => {
     const t = { ...baseTrade, entryPrice: null, exitPrice: null, grossPnl: null, netPnl: null, rMultiple: null, holdTimeMinutes: null };
-    const html = renderToString(<SpotHistoryPanel trades={[t as any]} />);
+    const html = withQueryClient(<SpotHistoryPanel trades={[t as any]} />);
     expect(html).toContain("ETH/USD");
   });
 
   it("SPOT_HISTORY_RENDER_05 — empty trades does not throw", () => {
-    const html = renderToString(<SpotHistoryPanel trades={[]} />);
+    const html = withQueryClient(<SpotHistoryPanel trades={[]} />);
     expect(html).toContain("No hay trades cerrados");
   });
 });

@@ -29,13 +29,13 @@ import {
   getIntentStore,
   getAuditTracker,
   getOpenPositions,
-  getClosedTrades,
   getSummaryStats,
   getLastScanResults,
   getLastScanTime,
   SPOT_RUNTIME_OWNER,
   RealActivationBlockedError,
 } from "../services/spot/spotEngine";
+import { getClosedTradesList, getTradeDetail } from "../services/spot/spotHistoryService";
 import { getCachedExecutionMode } from "../services/spot/spotExecutionModeStore";
 import { buildSpotMarketContext } from "../services/spot/spotMarketContext";
 import { checkRealReadiness } from "../services/spot/spotRealReadiness";
@@ -101,10 +101,29 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
   app.get("/api/spot/history", async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
-      const trades = await getClosedTrades(limit);
+      const trades = await getClosedTradesList(limit);
       res.json({ trades, count: trades.length, limit });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to get SPOT history", detail: err.message });
+    }
+  });
+
+  // ─── GET /api/spot/history/:lotId ────────────────────────────────────────
+  app.get("/api/spot/history/:lotId", async (req, res) => {
+    try {
+      const { lotId } = req.params;
+      if (!lotId || !lotId.startsWith("spot-")) {
+        res.status(400).json({ error: "Invalid lotId — must start with 'spot-'" });
+        return;
+      }
+      const detail = await getTradeDetail(lotId);
+      if (!detail) {
+        res.status(404).json({ error: `Trade detail not found for lot ${lotId}` });
+        return;
+      }
+      res.json(detail);
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to get SPOT trade detail", detail: err.message });
     }
   });
 
