@@ -67,6 +67,14 @@ import {
 import { publishSnapshot } from "./spotContextSnapshotStore";
 import { buildSnapshotFromScanResults } from "./spotContextSnapshot";
 import { normalizePair, DEFAULT_ACTIVE_PAIRS } from "../pairAllowlist";
+import {
+  enableForwardTwin,
+  disableForwardTwin,
+  captureScan,
+  captureSupervisor,
+  captureFill,
+} from "./spotForwardTwinCollector";
+import { buildScanSnapshot, buildSupervisorSnapshot, buildFillSnapshot } from "./spotForwardTwinBuilder";
 
 // R8: Re-export ownership from pure module (no heavy deps)
 import {
@@ -777,6 +785,13 @@ async function doSetExecutionMode(mode: ExecutionMode): Promise<ExecutionMode> {
     reasonCode: "MODE_CHANGE",
   });
 
+  // Forward Twin: enable telemetry on SHADOW, disable on OFF/REAL
+  if (mode === ExecutionMode.SHADOW) {
+    enableForwardTwin();
+  } else {
+    disableForwardTwin().catch((e) => console.error(`[ForwardTwin] Disable error: ${e.message}`));
+  }
+
   // R10.9-10: After the mode is persisted, throw if the drain did not complete. This
   // keeps the response honest: the mode changed, but the transition is incomplete and
   // the entry scanner must not be trusted yet. Callers (spot.routes.ts) map this to 500.
@@ -1463,6 +1478,26 @@ async function hasOpenSpotPositions(): Promise<boolean> {
  *   D. If no active intent → evaluate strategy → if BUY, create intent → evaluate immediately
  *   E. Execute only if all gates pass
  */
+
+function ftCaptureScan(
+  scanId: string, mode: ExecutionMode, ctx: SpotMarketContext,
+  signal: SpotSignalResult, intent: SpotEntryIntent | null,
+  intentEvaluation: IntentEvaluationResult | null,
+  sizing: SizingResult | null,
+  pipelineStopStage?: string | null, pipelineStopReasonCode?: string | null,
+): void {
+  captureScan(buildScanSnapshot({
+    scanId, mode: String(mode), ctx, signal, intent, intentEvaluation, sizing,
+    availableCapital: getShadowAvailableCapital(),
+    openLots: 0,
+    maxLotsPerPair: DEFAULT_SPOT_RISK_CONFIG.maxLotsPerPair,
+    reservedCapital: shadowLedger.reservedUsd,
+    realizedPnl: shadowLedger.realizedNetPnlUsd,
+    totalFees: shadowLedger.totalFeesUsd,
+    pipelineStopStage, pipelineStopReasonCode,
+  }));
+}
+
 async function scanPair(pair: string, mode: ExecutionMode, generation: number, scanId: string, enabledPairs: Set<string>): Promise<{ pair: string; signal: string; reason: string; mode: string }> {
   // Capture per-pair generation at scan start — any disable during this scan invalidates it
   const pairGen = getPairEntryGeneration(pair);
@@ -1507,6 +1542,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
       intent: null, intentEvaluation: null, sizing: null,
       blockReasonCode: `DATA_${ctx.dataHealth}`,
     }));
+    ftCaptureScan(scanId, mode, ctx, { signal: "NONE", setupTag: null, reason: `DataHealth=${ctx.dataHealth}`, confidence: 0, blockReason: `DATA_${ctx.dataHealth}` } as SpotSignalResult, null, null, null);
     return { pair, signal: "HOLD", reason: `DataHealth=${ctx.dataHealth}`, mode };
   }
 
@@ -1532,6 +1568,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           blockReasonCode: null,
           pipelineStopStage: "EXECUTED", pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
         }));
+        ftCaptureScan(scanId, mode, ctx, signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: "Executed", confidence: 0, blockReason: null } as SpotSignalResult, activeIntent, evaluation, outcome.sizing ?? null, "EXECUTED", outcome.reasonCode);
         return { pair, signal: "EXECUTED", reason: "Entry executed", mode };
       } else {
         // P5: Propagate outcome when executed=false — the pipeline reached executeEntry
@@ -1543,6 +1580,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           blockReasonCode: outcome.reasonCode,
           pipelineStopStage: outcome.stage, pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
         }));
+        ftCaptureScan(scanId, mode, ctx, signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: outcome.reason, confidence: 0, blockReason: null } as SpotSignalResult, activeIntent, evaluation, outcome.sizing ?? null, outcome.stage, outcome.reasonCode);
         return { pair, signal: "BLOCKED", reason: outcome.reason, mode };
       }
     }
@@ -1562,6 +1600,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
         intent: activeIntent, intentEvaluation: evaluation, sizing: null,
         blockReasonCode: activeIntent.lastBlockReason,
       }));
+      ftCaptureScan(scanId, mode, ctx, signalResultCache.get(pair) ?? { signal: "NONE", setupTag: null, reason: evaluation.reason, confidence: 0, blockReason: null } as SpotSignalResult, activeIntent, evaluation, null);
       return { pair, signal: "INTENT", reason: evaluation.reason, mode };
     }
   }
@@ -1606,6 +1645,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           blockReasonCode: null,
           pipelineStopStage: "EXECUTED", pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
         }));
+        ftCaptureScan(scanId, mode, ctx, signal, intent, evaluation, outcome.sizing ?? null, "EXECUTED", outcome.reasonCode);
         return { pair, signal: "EXECUTED", reason: "Entry executed (immediate)", mode };
       } else {
         // P5: Propagate outcome when executed=false — the pipeline reached executeEntry
@@ -1616,6 +1656,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           blockReasonCode: outcome.reasonCode,
           pipelineStopStage: outcome.stage, pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
         }));
+        ftCaptureScan(scanId, mode, ctx, signal, intent, evaluation, outcome.sizing ?? null, outcome.stage, outcome.reasonCode);
         return { pair, signal: "BLOCKED", reason: outcome.reason, mode };
       }
     } else {
@@ -1637,6 +1678,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
       blockReasonCode: intent.lastBlockReason,
       pipelineStopStage: "ANTI_LATE_ENTRY", pipelineStopReasonCode: intent.lastBlockReason ?? "ENTRY_GATED", pipelineStopReason: evaluation.reason,
     }));
+    ftCaptureScan(scanId, mode, ctx, signal, intent, evaluation, null, "ANTI_LATE_ENTRY", intent.lastBlockReason ?? "ENTRY_GATED");
     return { pair, signal: "BUY", reason: signal.reason, mode };
   }
 
@@ -1648,6 +1690,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
     ctx, signal, intent: null, intentEvaluation: null, sizing: null,
     blockReasonCode: signal.blockReason,
   }));
+  ftCaptureScan(scanId, mode, ctx, signal, null, null, null);
   return { pair, signal: "HOLD", reason: signal.reason || signal.blockReason || "No signal", mode };
 }
 
@@ -2121,6 +2164,22 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       return { executed: false, stage: "ADAPTER", reasonCode: mode === ExecutionMode.REAL ? "REAL_SUBMISSION_AMBIGUOUS" : "ENTRY_EXCEPTION", reason: error.message, sizing: null, submitted: false };
     }
 
+    // Forward Twin: capture fill snapshot on successful entry
+    if (result.success && result.fillPrice !== null) {
+      const slippagePct = ctx.ticker.ask > 0
+        ? Math.abs(result.fillPrice - ctx.ticker.ask) / ctx.ticker.ask
+        : 0;
+      captureFill(buildFillSnapshot({
+        scanId: internalIntentId,
+        mode: String(mode),
+        pair: intent.pair,
+        ctx,
+        execIntent,
+        result,
+        slippagePct,
+      }));
+    }
+
     // R10.6: Handle ACCEPTED without venueOrderId — treat as UNCERTAIN, retain reservation
     if (result.success && result.submissionState === "ACCEPTED" && !result.venueOrderId && !result.pendingFill) {
       if (mode === ExecutionMode.REAL) {
@@ -2475,6 +2534,17 @@ async function manageOpenPositions(pair: string, ctx: SpotMarketContext): Promis
     const maeUsd = auditMetrics?.maeUsd ?? row.mae;
     const mfeR = auditMetrics?.mfeR ?? row.mfeR;
     const maeR = auditMetrics?.maeR ?? row.maeR;
+
+    // Forward Twin: capture supervisor snapshot
+    captureSupervisor(buildSupervisorSnapshot({
+      scanId: `supervisor-${Date.now().toString(36)}`,
+      mode: String(position.executionMode),
+      ctx,
+      position,
+      exitState,
+      exitDecision,
+      auditMetrics: { mfeUsd, maeUsd, mfeR, maeR },
+    }));
     const newHighest = Math.max(row.highestPrice, currentPrice);
     const newLowest = Math.min(row.lowestPrice ?? position.entryPrice, currentPrice);
 
@@ -2723,6 +2793,22 @@ async function closePosition(
       console.error(`[SpotEngine] Exit exception for ${position.lotId}: ${error.message}`);
     }
     return;
+  }
+
+  // Forward Twin: capture fill snapshot on successful exit
+  if (result.success && result.fillPrice !== null) {
+    const slippagePct = ctx.ticker.bid > 0
+      ? Math.abs(ctx.ticker.bid - result.fillPrice) / ctx.ticker.bid
+      : 0;
+    captureFill(buildFillSnapshot({
+      scanId: internalIntentId,
+      mode: String(position.executionMode),
+      pair: position.pair,
+      ctx,
+      execIntent,
+      result,
+      slippagePct,
+    }));
   }
 
   // R10.6: Handle ACCEPTED without venueOrderId — treat as UNCERTAIN
