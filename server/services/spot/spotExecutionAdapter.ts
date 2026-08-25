@@ -120,7 +120,7 @@ export class SpotShadowAdapter implements SpotExecutionAdapter {
     return slippagePct;
   }
 
-  private generatePhantomFill(intent: SpotExecutionIntent, ctx: SpotMarketContext): SpotExecutionResult {
+  private generatePhantomFill(intent: SpotExecutionIntent, ctx: SpotMarketContext, nowMs?: number): SpotExecutionResult {
     const ticker = ctx.ticker;
     const slippagePct = this.computePhantomSlippagePct(intent, ctx);
     const slippageMult = slippagePct / 100;
@@ -140,7 +140,8 @@ export class SpotShadowAdapter implements SpotExecutionAdapter {
     const feeUsd = notional * takerPct;
     const slippageUsd = Math.abs(fillPrice - (intent.side === "BUY" ? ticker.ask : ticker.bid)) * fillVolume;
 
-    const orderId = `shadow-${intent.intentId}-${Date.now().toString(36)}`;
+    const ts = nowMs ?? Date.now();
+    const orderId = `shadow-${intent.intentId}-${ts.toString(36)}`;
 
     return {
       success: true,
@@ -154,11 +155,11 @@ export class SpotShadowAdapter implements SpotExecutionAdapter {
       slippageUsd,
       error: null,
       pendingFill: false,
-      executedAt: Date.now(),
+      executedAt: ts,
     };
   }
 
-  async executeEntry(intent: SpotExecutionIntent, ctx: SpotMarketContext, _clientOrderId: string): Promise<SpotExecutionResult> {
+  async executeEntry(intent: SpotExecutionIntent, ctx: SpotMarketContext, _clientOrderId: string, nowMs?: number): Promise<SpotExecutionResult> {
     // Capability guard — verifies SHADOW cannot place real orders
     assertExecutionCapability(this, intent);
 
@@ -168,15 +169,15 @@ export class SpotShadowAdapter implements SpotExecutionAdapter {
         success: false, orderId: null, clientOrderId: null, venueOrderId: null,
         fillPrice: null, fillVolume: null,
         fillQuality: "UNKNOWN" as FeeQuality, feeUsd: null, slippageUsd: null,
-        error: "Entry intent must be BUY", pendingFill: false, executedAt: Date.now(),
+        error: "Entry intent must be BUY", pendingFill: false, executedAt: nowMs ?? Date.now(),
       };
     }
 
     // Generate phantom fill (NEVER call exchange)
-    return this.generatePhantomFill(intent, ctx);
+    return this.generatePhantomFill(intent, ctx, nowMs);
   }
 
-  async executeExit(intent: SpotExecutionIntent, ctx: SpotMarketContext, _clientOrderId: string): Promise<SpotExecutionResult> {
+  async executeExit(intent: SpotExecutionIntent, ctx: SpotMarketContext, _clientOrderId: string, nowMs?: number): Promise<SpotExecutionResult> {
     // Capability guard
     assertExecutionCapability(this, intent);
 
@@ -186,12 +187,12 @@ export class SpotShadowAdapter implements SpotExecutionAdapter {
         success: false, orderId: null, clientOrderId: null, venueOrderId: null,
         fillPrice: null, fillVolume: null,
         fillQuality: "UNKNOWN" as FeeQuality, feeUsd: null, slippageUsd: null,
-        error: "Exit intent must be SELL", pendingFill: false, executedAt: Date.now(),
+        error: "Exit intent must be SELL", pendingFill: false, executedAt: nowMs ?? Date.now(),
       };
     }
 
     // Generate phantom fill (NEVER call exchange)
-    return this.generatePhantomFill(intent, ctx);
+    return this.generatePhantomFill(intent, ctx, nowMs);
   }
 }
 

@@ -31,7 +31,9 @@ import { computePnlBreakdown, computeFeeBreakdown, getSpotTakerFeePct, type FeeQ
 import { evaluateExit, createExitState, type SpotExitConfig, DEFAULT_SPOT_EXIT_CONFIG } from "./spotExitPolicy";
 import { SpotAuditTracker, classifyProfitCapture, type ExitAuditMetrics } from "./spotAuditTracker";
 import { DataHealth } from "./candleTimestamp";
-import { Regime, RegimeDirection, MacroBias, VolatilityLevel, type SpotRegimeContext, type SpotTicker, type SpotVolumeMetrics } from "./spotTypes";
+import { type SpotTicker, type SpotVolumeMetrics } from "./spotTypes";
+import { buildSpotRegimeContext } from "./spotRegimeEngine";
+import { calculateATR, type PriceData, type OHLCCandle } from "../indicators";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -147,12 +149,14 @@ export function runReplay(
   const sorted1h = [...candles.candles1h].sort((a, b) => a.time - b.time);
   const sorted4h = [...candles.candles4h].sort((a, b) => a.time - b.time);
 
-  // Iterate through 15m candles
-  for (let i = 200; i < sorted15m.length; i++) {
-    const current15m = sorted15m[i];
-    const currentTime = current15m.time;
-    const nextCandle = sorted15m[i + 1];
-    const fillPrice = nextCandle ? nextCandle.open : current15m.close;
+  // Iterate through 5m candles for finer scan granularity (closer to 60s production scan).
+  // Warmup: need 200 15m candles (= 600 5m candles) before generating signals.
+  const warmup5m = 600;
+  for (let i = warmup5m; i < sorted5m.length; i++) {
+    const current5m = sorted5m[i];
+    const currentTime = current5m.time;
+    const nextCandle = sorted5m[i + 1];
+    const fillPrice = nextCandle ? nextCandle.open : current5m.close;
 
     // Build market context from candles up to current time
     const ctx = buildReplayContext(
@@ -162,7 +166,7 @@ export function runReplay(
       sorted1h,
       sorted4h,
       currentTime,
-      current15m.close,
+      current5m.close,
     );
 
     if (!ctx) continue;
@@ -176,7 +180,7 @@ export function runReplay(
       // Update MFE/MAE
       auditTracker.updatePrice(pos, ctx.ticker.last, currentTime);
 
-      const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG);
+      const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, currentTime);
       if (exitDecision.shouldExit) {
         const exitFillPrice = fillPrice;
         const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining);
@@ -302,7 +306,7 @@ export function runReplay(
   }
 
   // Close any remaining positions at last available price
-  const lastCandle = sorted15m[sorted15m.length - 1];
+  const lastCandle = sorted5m[sorted5m.length - 1];
   for (const pos of positions) {
     const exitPrice = lastCandle.close;
     const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.qtyRemaining);
@@ -413,7 +417,7 @@ function buildReplayContext(
   currentTime: number,
   currentPrice: number,
 ): SpotMarketContext | null {
-  // Filter candles up to current time
+  // Filter candles up to current time (no lookahead)
   const c5m = candles5m.filter(c => c.time <= currentTime);
   const c15m = candles15m.filter(c => c.time <= currentTime);
   const c1h = candles1h.filter(c => c.time <= currentTime);
@@ -421,15 +425,28 @@ function buildReplayContext(
 
   if (c15m.length < 200 || c1h.length < 50 || c4h.length < 50) return null;
 
-  // Build a simplified regime context from 1h candles
-  const last1h = c1h[c1h.length - 1];
-  const regimeContext = buildSimpleRegimeContext(pair, c1h, currentTime);
+  // ── Production regime context (real ADX, Bollinger, macro) ──
+  const ohlc1h: OHLCCandle[] = c1h.map(c => ({
+    time: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+  }));
+  const ohlc4h: OHLCCandle[] = c4h.map(c => ({
+    time: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+  }));
 
-  // Simple ATR from 15m candles (last 14)
-  const recent15m = c15m.slice(-14);
-  const atr = computeSimpleATR(recent15m);
+  const regimeContext = buildSpotRegimeContext({
+    pair,
+    candles1h: ohlc1h,
+    candles4h: ohlc4h,
+    dataHealth: DataHealth.GOOD,
+  });
 
-  // Simple ticker
+  // ── Production ATR from 1h candles (same as spotMarketContext.ts) ──
+  const priceData1h: PriceData[] = c1h.map(c => ({
+    price: c.close, timestamp: c.time, high: c.high, low: c.low, volume: c.volume,
+  }));
+  const atr = priceData1h.length >= 14 ? calculateATR(priceData1h, 14) : 0;
+
+  // Ticker (no spread in replay)
   const ticker: SpotTicker = {
     bid: currentPrice,
     ask: currentPrice,
@@ -438,6 +455,7 @@ function buildReplayContext(
     fetchedAt: currentTime,
   };
 
+  const recent15m = c15m.slice(-14);
   const volumeMetrics: SpotVolumeMetrics = {
     volumeRatio: 1.0,
     volume24h: recent15m.reduce((s, c) => s + c.volume, 0),
@@ -460,72 +478,4 @@ function buildReplayContext(
     atr,
     volumeMetrics,
   };
-}
-
-function buildSimpleRegimeContext(pair: string, candles1h: SpotCandle[], now: number): SpotRegimeContext {
-  const closes = candles1h.map(c => c.close);
-  const ema20 = computeSimpleEMA(closes, 20);
-  const ema50 = computeSimpleEMA(closes, 50);
-  const ema200 = computeSimpleEMA(closes, 200);
-
-  const lastClose = closes[closes.length - 1] ?? 0;
-  const emaAlignment = ema20 > ema50 && ema50 > ema200 ? "bullish"
-    : ema20 < ema50 && ema50 < ema200 ? "bearish"
-    : "neutral";
-
-  const regime = emaAlignment === "bullish" ? Regime.TREND
-    : emaAlignment === "bearish" ? Regime.TREND
-    : Regime.RANGE;
-
-  const direction = emaAlignment === "bullish" ? RegimeDirection.BULLISH
-    : emaAlignment === "bearish" ? RegimeDirection.BEARISH
-    : RegimeDirection.NEUTRAL;
-
-  const macroBias = emaAlignment === "bullish" ? MacroBias.BULLISH
-    : emaAlignment === "bearish" ? MacroBias.BEARISH
-    : MacroBias.NEUTRAL;
-
-  const atr = computeSimpleATR(candles1h.slice(-14));
-  const atrPct = lastClose > 0 ? (atr / lastClose) * 100 : 0;
-
-  return {
-    regimeId: `replay-regime-${pair}-${now}`,
-    contextId: `replay-ctx-${pair}-${now}`,
-    pair,
-    regime,
-    direction,
-    volatility: atrPct > 3 ? VolatilityLevel.HIGH : atrPct > 1 ? VolatilityLevel.NORMAL : VolatilityLevel.LOW,
-    macroBias,
-    adx: 25,
-    ema20,
-    ema50,
-    ema200,
-    emaAlignment,
-    bollingerWidth: 0,
-    atrPct,
-    confidence: 0.5,
-    dataHealth: DataHealth.GOOD,
-    generatedAt: now,
-  };
-}
-
-function computeSimpleEMA(values: number[], period: number): number {
-  if (values.length === 0) return 0;
-  if (values.length < period) return values[values.length - 1];
-  const k = 2 / (period + 1);
-  let ema = values[0];
-  for (let i = 1; i < values.length; i++) {
-    ema = values[i] * k + ema * (1 - k);
-  }
-  return ema;
-}
-
-function computeSimpleATR(candles: SpotCandle[]): number {
-  if (candles.length === 0) return 0;
-  const trs = candles.map(c => Math.max(
-    c.high - c.low,
-    Math.abs(c.high - c.close),
-    Math.abs(c.low - c.close),
-  ));
-  return trs.reduce((s, v) => s + v, 0) / trs.length;
 }

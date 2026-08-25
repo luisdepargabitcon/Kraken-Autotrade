@@ -1,4 +1,4 @@
--- 049_spot_forward_twin.sql — Forward Twin telemetry table.
+-- 088_spot_forward_twin.sql — Forward Twin telemetry table.
 -- Append-only storage for scan/supervisor/fill snapshots.
 -- NOT applied automatically — create manually or on deploy.
 

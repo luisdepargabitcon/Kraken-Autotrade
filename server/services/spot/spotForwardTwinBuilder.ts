@@ -27,6 +27,7 @@ import type {
   ForwardTwinTickerSnapshot,
   ForwardTwinCandleSnapshot,
   ForwardTwinCandleMeta,
+  ForwardTwinCandleArray,
   ForwardTwinRegimeSnapshot,
   ForwardTwinVolumeSnapshot,
   ForwardTwinSignalSnapshot,
@@ -40,10 +41,13 @@ import type {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function candleMeta(candles: { time: number; close: number }[]): ForwardTwinCandleMeta {
-  if (candles.length === 0) return { count: 0, lastTime: 0, lastClose: 0 };
+function candleArray(candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[]): ForwardTwinCandleArray {
+  if (candles.length === 0) return { meta: { count: 0, lastTime: 0, lastClose: 0 }, candles: [] };
   const last = candles[candles.length - 1];
-  return { count: candles.length, lastTime: last.time, lastClose: last.close };
+  return {
+    meta: { count: candles.length, lastTime: last.time, lastClose: last.close },
+    candles: candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume })),
+  };
 }
 
 // ─── SCAN Snapshot Builder ───────────────────────────────────────────────────
@@ -79,10 +83,10 @@ export function buildScanSnapshot(input: ScanSnapshotInput): ForwardTwinSnapshot
   };
 
   const candles: ForwardTwinCandleSnapshot = {
-    candles5m: candleMeta(ctx.candles5m),
-    candles15m: candleMeta(ctx.candles15m),
-    candles1h: candleMeta(ctx.candles1h),
-    candles4h: candleMeta(ctx.candles4h),
+    candles5m: candleArray(ctx.candles5m),
+    candles15m: candleArray(ctx.candles15m),
+    candles1h: candleArray(ctx.candles1h),
+    candles4h: candleArray(ctx.candles4h),
   };
 
   const regime: ForwardTwinRegimeSnapshot = {

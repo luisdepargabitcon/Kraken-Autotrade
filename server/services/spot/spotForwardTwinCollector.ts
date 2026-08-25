@@ -41,6 +41,7 @@ let flushTimer: NodeJS.Timeout | null = null;
 let isFlushing = false;
 let totalCaptured = 0;
 let totalFlushed = 0;
+let droppedSnapshots = 0;
 let lastFlushError: string | null = null;
 let lastFlushAt: number | null = null;
 
@@ -124,19 +125,13 @@ export async function flush(): Promise<void> {
   buffer = [];
 
   try {
-    // Batch INSERT
-    for (const snap of batch) {
-      await db.execute(sql`
-        INSERT INTO spot_forward_twin_snapshots
-          (schema_version, snapshot_type, scan_id, timestamp, pair,
-           policy_version, execution_mode, engine_owner, data)
-        VALUES
-          (${snap.schemaVersion}, ${snap.snapshotType}, ${snap.scanId},
-           ${snap.timestamp}, ${snap.pair},
-           ${snap.policyVersion}, ${snap.executionMode}, ${snap.engineOwner},
-           ${JSON.stringify(snap)}::jsonb)
-      `);
-    }
+    // Batch INSERT — single query with VALUES list
+    const values = batch.map(snap =>
+      `(${snap.schemaVersion}, '${snap.snapshotType}', '${snap.scanId.replace(/'/g, "''")}', ${snap.timestamp}, '${snap.pair.replace(/'/g, "''")}', '${snap.policyVersion.replace(/'/g, "''")}', '${snap.executionMode.replace(/'/g, "''")}', '${snap.engineOwner.replace(/'/g, "''")}', '${JSON.stringify(snap).replace(/'/g, "''")}'::jsonb)`
+    ).join(', ');
+    await db.execute(sql.raw(
+      `INSERT INTO spot_forward_twin_snapshots (schema_version, snapshot_type, scan_id, timestamp, pair, policy_version, execution_mode, engine_owner, data) VALUES ${values}`
+    ));
     totalFlushed += batch.length;
     lastFlushAt = Date.now();
     lastFlushError = null;
@@ -148,12 +143,8 @@ export async function flush(): Promise<void> {
     `);
   } catch (error: any) {
     lastFlushError = error.message;
-    // Re-buffer the failed batch (prepend) if buffer has room
-    const room = SPOT_FORWARD_TWIN_BUFFER_MAX - buffer.length;
-    if (room > 0) {
-      buffer = [...batch.slice(0, room), ...buffer];
-    }
-    console.error(`[ForwardTwin] Flush error: ${error.message}`);
+    // Drop failed batch — do NOT re-buffer to avoid duplicates
+    console.error(`[ForwardTwin] Flush error: ${error.message} — ${batch.length} snapshots lost`);
   } finally {
     isFlushing = false;
   }
@@ -168,6 +159,7 @@ export function getCollectorStats(): {
   bufferMax: number;
   totalCaptured: number;
   totalFlushed: number;
+  droppedSnapshots: number;
   lastFlushAt: number | null;
   lastFlushError: string | null;
   isFlushing: boolean;
@@ -178,6 +170,7 @@ export function getCollectorStats(): {
     bufferMax: SPOT_FORWARD_TWIN_BUFFER_MAX,
     totalCaptured,
     totalFlushed,
+    droppedSnapshots,
     lastFlushAt,
     lastFlushError,
     isFlushing,
@@ -196,6 +189,7 @@ export function _resetForTest(): void {
   isFlushing = false;
   totalCaptured = 0;
   totalFlushed = 0;
+  droppedSnapshots = 0;
   lastFlushError = null;
   lastFlushAt = null;
 }
@@ -225,8 +219,9 @@ export function _disableForTest(): void {
 
 function pushToBuffer(snapshot: ForwardTwinSnapshot): void {
   if (buffer.length >= SPOT_FORWARD_TWIN_BUFFER_MAX) {
-    // Ring buffer: drop oldest
+    // Ring buffer: drop oldest, increment counter
     buffer.shift();
+    droppedSnapshots++;
   }
   buffer.push(snapshot);
   totalCaptured++;

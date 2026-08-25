@@ -157,16 +157,17 @@ export function evaluateEmergencyStop(
   state: SpotExitState,
   currentPrice: number,
   config: SpotExitConfig,
+  nowMs?: number,
 ): SpotExitDecision {
   if (!config.emergencyStopEnabled) {
-    return noExit("Emergency stop disabled");
+    return noExit("Emergency stop disabled", nowMs);
   }
   if (currentPrice <= state.emergencyStopPrice) {
     return exitNow(ExitReasonType.EMERGENCY, ExitPriority.EMERGENCY,
       `Emergency stop hit: ${currentPrice} ≤ ${state.emergencyStopPrice}`,
-      currentPrice, state.emergencyStopPrice);
+      currentPrice, state.emergencyStopPrice, nowMs);
   }
-  return noExit("Emergency stop not hit");
+  return noExit("Emergency stop not hit", nowMs);
 }
 
 /**
@@ -176,13 +177,14 @@ export function evaluateStructureInvalidation(
   position: SpotPosition,
   ctx: SpotMarketContext,
   config: SpotExitConfig,
+  nowMs?: number,
 ): SpotExitDecision {
   if (!config.structureInvalidationEnabled) {
-    return noExit("Structure invalidation disabled");
+    return noExit("Structure invalidation disabled", nowMs);
   }
   const candles = ctx.candles15m;
   if (candles.length < config.structureEmaPeriod + config.structureMinCandlesBelow) {
-    return noExit("Insufficient candles for structure check");
+    return noExit("Insufficient candles for structure check", nowMs);
   }
   // Check if last N candles are below EMA20
   const closes = candles.map(c => c.close);
@@ -193,9 +195,9 @@ export function evaluateStructureInvalidation(
   if (allBelow) {
     return exitNow(ExitReasonType.STRUCTURE_INVALIDATION, ExitPriority.STRUCTURE_INVALIDATION,
       `Structure invalidation: ${config.structureMinCandlesBelow} candles below EMA${config.structureEmaPeriod}`,
-      ctx.ticker.last, ctx.ticker.last);
+      ctx.ticker.last, ctx.ticker.last, nowMs);
   }
-  return noExit("Structure intact");
+  return noExit("Structure intact", nowMs);
 }
 
 /**
@@ -206,9 +208,10 @@ export function evaluateDefensive(
   ctx: SpotMarketContext,
   rMultiple: number,
   config: SpotExitConfig,
+  nowMs?: number,
 ): SpotExitDecision {
   if (!config.defensiveEnabled) {
-    return noExit("Defensive disabled");
+    return noExit("Defensive disabled", nowMs);
   }
   const rc = ctx.regimeContext;
 
@@ -216,17 +219,17 @@ export function evaluateDefensive(
   if (rc.adx < config.defensiveAdxThreshold && rMultiple < 0) {
     return exitNow(ExitReasonType.DEFENSIVE, ExitPriority.DEFENSIVE,
       `Defensive: ADX ${rc.adx.toFixed(0)} < ${config.defensiveAdxThreshold} + adverse R ${rMultiple.toFixed(2)}`,
-      ctx.ticker.last, ctx.ticker.last);
+      ctx.ticker.last, ctx.ticker.last, nowMs);
   }
 
   // Direction flipped to bearish
   if (rc.direction === RegimeDirection.BEARISH && rMultiple < 0.5) {
     return exitNow(ExitReasonType.DEFENSIVE, ExitPriority.DEFENSIVE,
       `Defensive: direction flipped bearish, R ${rMultiple.toFixed(2)}`,
-      ctx.ticker.last, ctx.ticker.last);
+      ctx.ticker.last, ctx.ticker.last, nowMs);
   }
 
-  return noExit("Defensive conditions not met");
+  return noExit("Defensive conditions not met", nowMs);
 }
 
 /**
@@ -238,24 +241,22 @@ export function evaluateBreakEven(
   rMultiple: number,
   currentPrice: number,
   config: SpotExitConfig,
+  nowMs?: number,
 ): SpotExitDecision {
   if (!config.breakEvenEnabled) {
-    return noExit("Break-even disabled");
+    return noExit("Break-even disabled", nowMs);
   }
   // Arm BE stop if R multiple reaches threshold and not yet armed
   if (rMultiple >= config.breakEvenActivateAtPctR && !state.breakEvenStopPrice) {
     const beStop = position.entryPrice * (1 + config.breakEvenStopPctR / 100);
     state.breakEvenStopPrice = beStop;
-    // Do NOT exit immediately — the stop is now armed.
-    // Exit only if price subsequently falls back to BE stop.
   }
-  // If BE already armed, check if price hit BE stop
   if (state.breakEvenStopPrice && currentPrice <= state.breakEvenStopPrice) {
     return exitNow(ExitReasonType.BREAK_EVEN, ExitPriority.BREAK_EVEN,
       `Break-even exit: ${currentPrice} ≤ BE ${state.breakEvenStopPrice}`,
-      currentPrice, state.breakEvenStopPrice);
+      currentPrice, state.breakEvenStopPrice, nowMs);
   }
-  return noExit("Break-even not triggered");
+  return noExit("Break-even not triggered", nowMs);
 }
 
 /**
@@ -267,27 +268,23 @@ export function evaluateTrailing(
   rMultiple: number,
   currentPrice: number,
   config: SpotExitConfig,
+  nowMs?: number,
 ): SpotExitDecision {
   if (!config.trailingEnabled) {
-    return noExit("Trailing disabled");
+    return noExit("Trailing disabled", nowMs);
   }
-  // Update trailing highest price (monotonic — never decreases)
   state.trailingHighestPrice = Math.max(state.trailingHighestPrice, currentPrice);
 
-  // Arm trailing stop if R reaches threshold and not yet armed
   if (rMultiple >= config.trailingActivateAtPctR) {
     const trailingStop = state.trailingHighestPrice * (1 - config.trailingDistancePct / 100);
     state.trailingStopPrice = trailingStop;
-    // Do NOT exit immediately — the stop is now armed.
-    // Exit only if price subsequently falls to trailing stop.
   }
-  // If trailing already armed, check if price hit trailing stop
   if (state.trailingStopPrice && currentPrice <= state.trailingStopPrice) {
     return exitNow(ExitReasonType.TRAILING, ExitPriority.TRAILING,
       `Trailing exit: ${currentPrice} ≤ trail ${state.trailingStopPrice} (highest ${state.trailingHighestPrice})`,
-      currentPrice, state.trailingStopPrice);
+      currentPrice, state.trailingStopPrice, nowMs);
   }
-  return noExit("Trailing not triggered");
+  return noExit("Trailing not triggered", nowMs);
 }
 
 /**
@@ -298,13 +295,13 @@ export function evaluateProfitExit(
   ctx: SpotMarketContext,
   rMultiple: number,
   config: SpotExitConfig,
+  nowMs?: number,
 ): SpotExitDecision {
   if (!config.profitExitEnabled) {
-    return noExit("Profit exit disabled");
+    return noExit("Profit exit disabled", nowMs);
   }
   const targetR = config.profitTargetR;
   if (rMultiple >= targetR) {
-    // Verify net PnL > 0 (not just gross)
     const pnl = computePnlBreakdown({
       entryPrice: position.entryPrice,
       exitPrice: ctx.ticker.last,
@@ -314,13 +311,12 @@ export function evaluateProfitExit(
     if (isValidProfitExit(pnl.netPnlUsd)) {
       return exitNow(ExitReasonType.PROFIT, ExitPriority.PROFIT,
         `Profit exit: R ${rMultiple.toFixed(2)} ≥ ${targetR}, net PnL ${pnl.netPnlUsd.toFixed(2)}`,
-        ctx.ticker.last, ctx.ticker.last);
+        ctx.ticker.last, ctx.ticker.last, nowMs);
     } else {
-      // Gross winner but net loser — don't exit as PROFIT, let trailing handle it
-      return noExit(`R ${rMultiple.toFixed(2)} reached but net PnL negative — deferring to trailing`);
+      return noExit(`R ${rMultiple.toFixed(2)} reached but net PnL negative — deferring to trailing`, nowMs);
     }
   }
-  return noExit(`Profit target not reached (R ${rMultiple.toFixed(2)} < ${targetR})`);
+  return noExit(`Profit target not reached (R ${rMultiple.toFixed(2)} < ${targetR})`, nowMs);
 }
 
 /**
@@ -332,34 +328,31 @@ export function evaluateTimeEfficiency(
   rMultiple: number,
   now: number,
   config: SpotExitConfig,
+  nowMs?: number,
 ): SpotExitDecision {
   if (!config.timeEfficiencyEnabled) {
-    return noExit("Time efficiency disabled");
+    return noExit("Time efficiency disabled", nowMs);
   }
   const holdMinutes = (now - position.openedAt) / (60 * 1000);
 
-  // Min hold period
   if (holdMinutes < config.timeEfficiencyMinHoldMinutes) {
-    return noExit(`Min hold not reached (${holdMinutes.toFixed(0)} < ${config.timeEfficiencyMinHoldMinutes}min)`);
+    return noExit(`Min hold not reached (${holdMinutes.toFixed(0)} < ${config.timeEfficiencyMinHoldMinutes}min)`, nowMs);
   }
 
-  // Max hold period — force exit
   if (holdMinutes > config.timeEfficiencyMaxHoldHours * 60) {
     return exitNow(ExitReasonType.TIME_EFFICIENCY, ExitPriority.TIME_EFFICIENCY,
       `Time efficiency: max hold ${config.timeEfficiencyMaxHoldHours}h exceeded (${holdMinutes.toFixed(0)}min)`,
-      ctx.ticker.last, ctx.ticker.last);
+      ctx.ticker.last, ctx.ticker.last, nowMs);
   }
 
-  // No progress (MFE not improving for N minutes)
   const noProgressMs = config.timeEfficiencyNoProgressMinutes * 60 * 1000;
   if (now - position.openedAt > noProgressMs && rMultiple < 0.5) {
-    // If after 3h and R < 0.5, exit for capital efficiency
     return exitNow(ExitReasonType.TIME_EFFICIENCY, ExitPriority.TIME_EFFICIENCY,
       `Time efficiency: no progress after ${config.timeEfficiencyNoProgressMinutes}min, R ${rMultiple.toFixed(2)}`,
-      ctx.ticker.last, ctx.ticker.last);
+      ctx.ticker.last, ctx.ticker.last, nowMs);
   }
 
-  return noExit("Time efficiency conditions not met");
+  return noExit("Time efficiency conditions not met", nowMs);
 }
 
 // ─── Full exit evaluation ───────────────────────────────────────────────────
@@ -373,40 +366,41 @@ export function evaluateExit(
   state: SpotExitState,
   ctx: SpotMarketContext,
   config: SpotExitConfig = DEFAULT_SPOT_EXIT_CONFIG,
+  nowMs?: number,
 ): SpotExitDecision {
   const currentPrice = ctx.ticker.last;
   const rMultiple = computeRMultiple(currentPrice, position);
-  const now = Date.now();
+  const now = nowMs ?? Date.now();
 
   // 1. EMERGENCY
-  const emergency = evaluateEmergencyStop(position, state, currentPrice, config);
+  const emergency = evaluateEmergencyStop(position, state, currentPrice, config, now);
   if (emergency.shouldExit) return emergency;
 
   // 2. STRUCTURE_INVALIDATION
-  const structure = evaluateStructureInvalidation(position, ctx, config);
+  const structure = evaluateStructureInvalidation(position, ctx, config, now);
   if (structure.shouldExit) return structure;
 
   // 3. DEFENSIVE
-  const defensive = evaluateDefensive(position, ctx, rMultiple, config);
+  const defensive = evaluateDefensive(position, ctx, rMultiple, config, now);
   if (defensive.shouldExit) return defensive;
 
   // 4. BREAK_EVEN
-  const be = evaluateBreakEven(position, state, rMultiple, currentPrice, config);
+  const be = evaluateBreakEven(position, state, rMultiple, currentPrice, config, now);
   if (be.shouldExit) return be;
 
   // 5. TRAILING
-  const trailing = evaluateTrailing(position, state, rMultiple, currentPrice, config);
+  const trailing = evaluateTrailing(position, state, rMultiple, currentPrice, config, now);
   if (trailing.shouldExit) return trailing;
 
   // 6. PROFIT
-  const profit = evaluateProfitExit(position, ctx, rMultiple, config);
+  const profit = evaluateProfitExit(position, ctx, rMultiple, config, now);
   if (profit.shouldExit) return profit;
 
   // 7. TIME_EFFICIENCY
-  const time = evaluateTimeEfficiency(position, ctx, rMultiple, now, config);
+  const time = evaluateTimeEfficiency(position, ctx, rMultiple, now, config, now);
   if (time.shouldExit) return time;
 
-  return noExit("No exit conditions met");
+  return noExit("No exit conditions met", now);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -417,6 +411,7 @@ function exitNow(
   reason: string,
   price: number,
   stopPrice: number,
+  nowMs?: number,
 ): SpotExitDecision {
   return {
     shouldExit: true,
@@ -425,11 +420,11 @@ function exitNow(
     price,
     volume: null, // full position
     priority,
-    evaluatedAt: Date.now(),
+    evaluatedAt: nowMs ?? Date.now(),
   };
 }
 
-function noExit(reason: string): SpotExitDecision {
+function noExit(reason: string, nowMs?: number): SpotExitDecision {
   return {
     shouldExit: false,
     reasonType: null,
@@ -437,6 +432,6 @@ function noExit(reason: string): SpotExitDecision {
     price: 0,
     volume: null,
     priority: null,
-    evaluatedAt: Date.now(),
+    evaluatedAt: nowMs ?? Date.now(),
   };
 }

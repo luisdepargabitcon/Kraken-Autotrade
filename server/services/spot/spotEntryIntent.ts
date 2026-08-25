@@ -67,8 +67,9 @@ export function createEntryIntent(
   signal: SpotSignalResult,
   ctx: SpotMarketContext,
   config: AntiLateEntryConfig = DEFAULT_ANTI_LATE_ENTRY_CONFIG,
+  nowMs?: number,
 ): SpotEntryIntent {
-  const now = Date.now();
+  const now = nowMs ?? Date.now();
   const ttlMs = config.maxCandlesAfterSignal * config.candleIntervalMs;
 
   return {
@@ -112,8 +113,9 @@ export function evaluateEntryIntent(
   intent: SpotEntryIntent,
   ctx: SpotMarketContext,
   config: AntiLateEntryConfig = DEFAULT_ANTI_LATE_ENTRY_CONFIG,
+  nowMs?: number,
 ): IntentEvaluationResult {
-  const now = Date.now();
+  const now = nowMs ?? Date.now();
   const updatedIntent: SpotEntryIntent = {
     ...intent,
     lastEvaluatedAt: now,

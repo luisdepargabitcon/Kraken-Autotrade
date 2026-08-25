@@ -38,11 +38,16 @@ export interface ForwardTwinCandleMeta {
   lastClose: number;
 }
 
+export interface ForwardTwinCandleArray {
+  meta: ForwardTwinCandleMeta;
+  candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[];
+}
+
 export interface ForwardTwinCandleSnapshot {
-  candles5m: ForwardTwinCandleMeta;
-  candles15m: ForwardTwinCandleMeta;
-  candles1h: ForwardTwinCandleMeta;
-  candles4h: ForwardTwinCandleMeta;
+  candles5m: ForwardTwinCandleArray;
+  candles15m: ForwardTwinCandleArray;
+  candles1h: ForwardTwinCandleArray;
+  candles4h: ForwardTwinCandleArray;
 }
 
 export interface ForwardTwinRegimeSnapshot {
@@ -254,8 +259,11 @@ export interface ReplayV3Trade {
 
 export interface ReplayV3FidelityMetrics {
   signalMatchRate: number;
+  signalTotal: number;
   intentMatchRate: number;
+  intentTotal: number;
   entryMatchRate: number;
+  entryTotal: number;
   exitDecisionMatchRate: number;
   fillMatchRate: number;
   totalSnapshots: number;

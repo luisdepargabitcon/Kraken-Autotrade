@@ -64,21 +64,21 @@ const events: SpotActivityEvent[] = [];
 
 // ─── Secret sanitization ─────────────────────────────────────────────────────
 
-const SECRET_KEYS = ["apiKey", "secretKey", "password", "token", "credential", "privateKey"];
+const SECRET_KEYS = ["apiKey", "api_key", "secretKey", "secret", "password", "token", "credential", "privateKey", "Authorization", "Bearer", "signature"];
 
-function sanitizeInput(input: CreateEventInput): CreateEventInput {
+export function sanitizeInput(input: CreateEventInput): CreateEventInput {
   const sanitized = { ...input };
   // Check technicalDetails for secrets
   if (sanitized.technicalDetails) {
     for (const key of SECRET_KEYS) {
-      const regex = new RegExp(`${key}[^\\s]*`, "gi");
+      const regex = new RegExp(`${key}[\\s:=]*[^\\s,}"]*`, "gi");
       sanitized.technicalDetails = sanitized.technicalDetails.replace(regex, "[REDACTED]");
     }
   }
   // Check explanation for secrets
   if (sanitized.explanation) {
     for (const key of SECRET_KEYS) {
-      const regex = new RegExp(`${key}[^\\s]*`, "gi");
+      const regex = new RegExp(`${key}[\\s:=]*[^\\s,}"]*`, "gi");
       sanitized.explanation = sanitized.explanation.replace(regex, "[REDACTED]");
     }
   }
