@@ -29,40 +29,51 @@ export function ValidacionTab() {
         </CardHeader>
         <CardContent>
           {validation ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Baseline */}
-              <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="border-blue-500/40 text-blue-400">BASELINE</Badge>
-                  <span className="text-sm font-semibold">{validation.baseline.name}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <Stat label="Trades" value={validation.baseline.trades} />
-                  <Stat label="Wins" value={validation.baseline.wins} color="text-green-400" />
-                  <Stat label="Losses" value={validation.baseline.losses} color="text-red-400" />
-                  <Stat label="PnL" value={`$${validation.baseline.pnl.toFixed(2)}`} />
-                </div>
-              </div>
-              {/* Candidate */}
-              <div className={`p-3 rounded-lg border space-y-2 ${validation.candidate ? "bg-green-500/10 border-green-500/20" : "bg-white/[0.02] border-white/[0.08]"}`}>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className={validation.candidate ? "border-green-500/40 text-green-400" : "border-gray-500/40 text-gray-400"}>
-                    CANDIDATE
-                  </Badge>
-                  <span className="text-sm font-semibold">{validation.candidate?.name ?? "Sin candidato"}</span>
-                </div>
-                {validation.candidate ? (
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <Stat label="Trades" value={validation.candidate.trades} />
-                    <Stat label="Wins" value={validation.candidate.wins} color="text-green-400" />
-                    <Stat label="Losses" value={validation.candidate.losses} color="text-red-400" />
-                    <Stat label="PnL" value={`$${validation.candidate.pnl.toFixed(2)}`} />
+            validation.available ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Baseline */}
+                <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="border-blue-500/40 text-blue-400">BASELINE</Badge>
+                    <span className="text-sm font-semibold">{validation.baseline?.name ?? "—"}</span>
                   </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">Sin modelo candidato para comparar.</p>
-                )}
+                  {validation.baseline ? (
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <Stat label="Trades" value={validation.baseline.trades} />
+                      <Stat label="Wins" value={validation.baseline.wins} color="text-green-400" />
+                      <Stat label="Losses" value={validation.baseline.losses} color="text-red-400" />
+                      <Stat label="PnL" value={`$${validation.baseline.pnl.toFixed(2)}`} />
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Sin baseline evaluado.</p>
+                  )}
+                </div>
+                {/* Candidate */}
+                <div className={`p-3 rounded-lg border space-y-2 ${validation.candidate ? "bg-green-500/10 border-green-500/20" : "bg-white/[0.02] border-white/[0.08]"}`}>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className={validation.candidate ? "border-green-500/40 text-green-400" : "border-gray-500/40 text-gray-400"}>
+                      CANDIDATE
+                    </Badge>
+                    <span className="text-sm font-semibold">{validation.candidate?.name ?? "Sin candidato"}</span>
+                  </div>
+                  {validation.candidate ? (
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <Stat label="Trades" value={validation.candidate.trades} />
+                      <Stat label="Wins" value={validation.candidate.wins} color="text-green-400" />
+                      <Stat label="Losses" value={validation.candidate.losses} color="text-red-400" />
+                      <Stat label="PnL" value={`$${validation.candidate.pnl.toFixed(2)}`} />
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Sin modelo candidato para comparar.</p>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-6 gap-2 text-muted-foreground">
+                <p className="text-sm">Validación no disponible</p>
+                <p className="text-xs">{validation.reason === "NO_CANDIDATE" ? "No hay modelo candidato." : "Evaluación no realizada."}</p>
+              </div>
+            )
           ) : (
             <p className="text-xs text-muted-foreground">Cargando validación...</p>
           )}
@@ -134,56 +145,63 @@ export function ValidacionTab() {
         </CardHeader>
         <CardContent className="space-y-3">
           {giveback ? (
-            <>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <Stat label="Trades con MFE positivo" value={giveback.tradesWithPositiveMfe} />
-                <Stat label="MFE ≥ 0.5R" value={giveback.mfeGte0_5R} />
-                <Stat label="MFE ≥ 1R" value={giveback.mfeGte1R} />
-                <Stat label="MFE ≥ 2R" value={giveback.mfeGte2R} />
-                <Stat label="Profit → Loss" value={giveback.profitToLoss} />
-                <Stat label="Giveback total USD" value={`$${giveback.givebackTotalUsd.toFixed(2)}`} />
-                <Stat label="MFE total" value={`$${giveback.mfeTotal.toFixed(2)}`} />
-                <Stat label="PnL capturado" value={`$${giveback.pnlCaptured.toFixed(2)}`} />
-              </div>
-              {giveback.captureEfficiency !== null && (
-                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">Eficiencia de captura</span>
-                    <span className="text-lg font-bold text-amber-400">{(giveback.captureEfficiency * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Proporción del MFE total que se convirtió en PnL realizado.
-                  </div>
+            giveback.available ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <Stat label="Trades con MFE positivo" value={giveback.tradesWithPositiveMfe ?? "—"} />
+                  <Stat label="MFE ≥ 0.5R" value={giveback.mfeGte0_5R ?? "—"} />
+                  <Stat label="MFE ≥ 1R" value={giveback.mfeGte1R ?? "—"} />
+                  <Stat label="MFE ≥ 2R" value={giveback.mfeGte2R ?? "—"} />
+                  <Stat label="Profit → Loss" value={giveback.profitToLoss ?? "—"} />
+                  <Stat label="Giveback total USD" value={giveback.givebackTotalUsd !== null ? `$${giveback.givebackTotalUsd.toFixed(2)}` : "—"} />
+                  <Stat label="MFE total" value={giveback.mfeTotal !== null ? `$${giveback.mfeTotal.toFixed(2)}` : "—"} />
+                  <Stat label="PnL capturado" value={giveback.pnlCaptured !== null ? `$${giveback.pnlCaptured.toFixed(2)}` : "—"} />
                 </div>
-              )}
-              {giveback.highGivebackCases.length > 0 && (
-                <div className="overflow-x-auto">
-                  <p className="text-xs text-muted-foreground mb-2">Casos de giveback alto:</p>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs">Par</TableHead>
-                        <TableHead className="text-xs">LotId</TableHead>
-                        <TableHead className="text-xs text-right">MFE (R)</TableHead>
-                        <TableHead className="text-xs text-right">Giveback %</TableHead>
-                        <TableHead className="text-xs text-right">Final (R)</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {giveback.highGivebackCases.map((c, i) => (
-                        <TableRow key={i}>
-                          <TableCell className="text-xs font-mono">{c.pair}</TableCell>
-                          <TableCell className="text-xs font-mono">{c.lotId}</TableCell>
-                          <TableCell className="text-xs text-right text-green-400">{c.mfeR.toFixed(2)}</TableCell>
-                          <TableCell className="text-xs text-right text-amber-400">{(c.givebackPct * 100).toFixed(1)}%</TableCell>
-                          <TableCell className="text-xs text-right">{c.finalR.toFixed(2)}</TableCell>
+                {giveback.captureEfficiency !== null && (
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Eficiencia de captura</span>
+                      <span className="text-lg font-bold text-amber-400">{(giveback.captureEfficiency * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Proporción del MFE total que se convirtió en PnL realizado.
+                    </div>
+                  </div>
+                )}
+                {giveback.highGivebackCases.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <p className="text-xs text-muted-foreground mb-2">Casos de giveback alto:</p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Par</TableHead>
+                          <TableHead className="text-xs">LotId</TableHead>
+                          <TableHead className="text-xs text-right">MFE (R)</TableHead>
+                          <TableHead className="text-xs text-right">Giveback %</TableHead>
+                          <TableHead className="text-xs text-right">Final (R)</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </>
+                      </TableHeader>
+                      <TableBody>
+                        {giveback.highGivebackCases.map((c, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="text-xs font-mono">{c.pair}</TableCell>
+                            <TableCell className="text-xs font-mono">{c.lotId}</TableCell>
+                            <TableCell className="text-xs text-right text-green-400">{c.mfeR.toFixed(2)}</TableCell>
+                            <TableCell className="text-xs text-right text-amber-400">{(c.givebackPct * 100).toFixed(1)}%</TableCell>
+                            <TableCell className="text-xs text-right">{c.finalR.toFixed(2)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-6 gap-2 text-muted-foreground">
+                <p className="text-sm">Analytics de giveback no disponible</p>
+                <p className="text-xs">{giveback.reason === "NO_COMPLETED_FORWARD_TRADES" ? "No hay trades completos en Forward Twin." : "Datos insuficientes."}</p>
+              </div>
+            )
           ) : (
             <p className="text-xs text-muted-foreground">Cargando giveback...</p>
           )}

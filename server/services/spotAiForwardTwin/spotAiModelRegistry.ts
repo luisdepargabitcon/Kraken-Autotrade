@@ -1,92 +1,135 @@
 /**
  * spotAiModelRegistry — Append-only model registry for Forward Twin AI.
  *
- * Stores model metadata in a JSON file. Never overwrites previous versions.
+ * Stores model metadata in DB table spot_ai_model_registry (migration 089).
+ * Never overwrites previous versions.
  * States: CANDIDATE → VALIDATED → ACTIVE_ADVISORY → RETIRED.
+ *
+ * Artifacts (.joblib) remain on filesystem, but canonical metadata is in DB.
  */
 
-import * as fs from "fs";
 import * as path from "path";
+import { db } from "../../db";
+import { sql } from "drizzle-orm";
 import type { ModelRegistryEntry, ModelName, ModelStatus } from "./spotAiForwardTwinTypes";
 
-const REGISTRY_DIR = process.env.AI_MODEL_DIR
+const MODEL_DIR = process.env.AI_MODEL_DIR
   ? path.join(process.env.AI_MODEL_DIR, "spot_forward_twin")
   : "/tmp/models/spot_forward_twin";
 
-const REGISTRY_PATH = path.join(REGISTRY_DIR, "registry.json");
-
 export class SpotAiModelRegistry {
-  private entries: ModelRegistryEntry[] = [];
 
-  constructor() {
-    this.load();
-  }
-
-  private load(): void {
+  async register(entry: ModelRegistryEntry): Promise<void> {
     try {
-      if (fs.existsSync(REGISTRY_PATH)) {
-        const raw = fs.readFileSync(REGISTRY_PATH, "utf-8");
-        this.entries = JSON.parse(raw);
+      await db.execute(sql`
+        INSERT INTO spot_ai_model_registry
+          (model_name, model_version, feature_schema_version, status,
+           dataset_start, dataset_end, trade_count, git_sha, trained_at,
+           metrics_json, model_path)
+        VALUES
+          (${entry.modelName}, ${entry.modelVersion}, ${entry.featureSchemaVersion},
+           ${entry.status}, ${entry.datasetStart}, ${entry.datasetEnd},
+           ${entry.tradeCount}, ${entry.gitSha}, ${entry.trainedAt},
+           ${JSON.stringify(entry.metrics)}::jsonb, ${entry.modelPath})
+      `);
+    } catch (error: any) {
+      if (error.message?.includes("unique") || error.code === "23505") {
+        throw new Error(
+          `Model ${entry.modelName} version ${entry.modelVersion} already registered. Version must be unique.`,
+        );
       }
+      throw error;
+    }
+  }
+
+  async getLatest(modelName: ModelName): Promise<ModelRegistryEntry | null> {
+    try {
+      const rows = await db.execute(sql`
+        SELECT * FROM spot_ai_model_registry
+        WHERE model_name = ${modelName}
+        ORDER BY trained_at DESC LIMIT 1
+      `);
+      const r = (rows.rows ?? [])[0] as any;
+      return r ? this.mapRow(r) : null;
     } catch {
-      this.entries = [];
+      return null;
     }
   }
 
-  private persist(): void {
-    if (!fs.existsSync(REGISTRY_DIR)) {
-      fs.mkdirSync(REGISTRY_DIR, { recursive: true });
+  async getActiveAdvisory(modelName: ModelName): Promise<ModelRegistryEntry | null> {
+    try {
+      const rows = await db.execute(sql`
+        SELECT * FROM spot_ai_model_registry
+        WHERE model_name = ${modelName} AND status = 'ACTIVE_ADVISORY'
+        LIMIT 1
+      `);
+      const r = (rows.rows ?? [])[0] as any;
+      return r ? this.mapRow(r) : null;
+    } catch {
+      return null;
     }
-    fs.writeFileSync(REGISTRY_PATH, JSON.stringify(this.entries, null, 2));
   }
 
-  register(entry: ModelRegistryEntry): void {
-    const exists = this.entries.some(
-      e => e.modelName === entry.modelName && e.modelVersion === entry.modelVersion,
-    );
-    if (exists) {
-      throw new Error(
-        `Model ${entry.modelName} version ${entry.modelVersion} already registered. Version must be unique.`,
-      );
-    }
-    this.entries.push(entry);
-    this.persist();
-  }
-
-  getLatest(modelName: ModelName): ModelRegistryEntry | null {
-    const filtered = this.entries.filter(e => e.modelName === modelName);
-    if (filtered.length === 0) return null;
-    return filtered.sort((a, b) => b.trainedAt - a.trainedAt)[0];
-  }
-
-  getActiveAdvisory(modelName: ModelName): ModelRegistryEntry | null {
-    return (
-      this.entries.find(e => e.modelName === modelName && e.status === "ACTIVE_ADVISORY") ?? null
-    );
-  }
-
-  updateStatus(modelName: ModelName, modelVersion: string, status: ModelStatus): void {
-    const entry = this.entries.find(
-      e => e.modelName === modelName && e.modelVersion === modelVersion,
-    );
-    if (!entry) {
+  async updateStatus(modelName: ModelName, modelVersion: string, status: ModelStatus): Promise<void> {
+    const result = await db.execute(sql`
+      UPDATE spot_ai_model_registry
+      SET status = ${status}
+      WHERE model_name = ${modelName} AND model_version = ${modelVersion}
+    `);
+    if ((result as any)?.rowCount === 0) {
       throw new Error(`Model ${modelName} version ${modelVersion} not found in registry.`);
     }
-    entry.status = status;
-    this.persist();
   }
 
-  listAll(): ModelRegistryEntry[] {
-    return [...this.entries];
+  async listAll(): Promise<ModelRegistryEntry[]> {
+    try {
+      const rows = await db.execute(sql`
+        SELECT * FROM spot_ai_model_registry ORDER BY trained_at DESC
+      `);
+      return ((rows.rows ?? []) as any[]).map(r => this.mapRow(r));
+    } catch {
+      return [];
+    }
   }
 
-  listByModel(modelName: ModelName): ModelRegistryEntry[] {
-    return this.entries.filter(e => e.modelName === modelName);
+  async listByModel(modelName: ModelName): Promise<ModelRegistryEntry[]> {
+    try {
+      const rows = await db.execute(sql`
+        SELECT * FROM spot_ai_model_registry
+        WHERE model_name = ${modelName}
+        ORDER BY trained_at DESC
+      `);
+      return ((rows.rows ?? []) as any[]).map(r => this.mapRow(r));
+    } catch {
+      return [];
+    }
   }
 
   getModelPath(modelName: ModelName, modelVersion: string): string {
     const prefix = modelName === "SPOT_AI_FORWARD_TWIN_ENTRY" ? "entry" : "giveback";
-    return path.join(REGISTRY_DIR, `${prefix}_${modelVersion}.joblib`);
+    return path.join(MODEL_DIR, `${prefix}_${modelVersion}.joblib`);
+  }
+
+  private mapRow(r: any): ModelRegistryEntry {
+    let metrics: Record<string, number> = {};
+    try {
+      metrics = typeof r.metrics_json === "string" ? JSON.parse(r.metrics_json) : (r.metrics_json ?? {});
+    } catch {
+      metrics = {};
+    }
+    return {
+      modelName: r.model_name,
+      modelVersion: r.model_version,
+      featureSchemaVersion: r.feature_schema_version,
+      status: r.status as ModelStatus,
+      datasetStart: r.dataset_start ?? 0,
+      datasetEnd: r.dataset_end ?? 0,
+      tradeCount: r.trade_count ?? 0,
+      gitSha: r.git_sha ?? "",
+      trainedAt: r.trained_at ?? 0,
+      metrics,
+      modelPath: r.model_path ?? "",
+    };
   }
 }
 

@@ -76,16 +76,16 @@ export function DatosTab() {
                 <span className="text-xs text-muted-foreground">Schema v{quality.featureSchemaVersion}</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                <QualityCheck label="Lookahead" value={quality.checks.lookaheadFeatures} good={quality.checks.lookaheadFeatures === 0} />
+                <QualityCheck label="Schema mismatch" value={quality.checks.schemaVersionMismatches} good={quality.checks.schemaVersionMismatches === 0} />
                 <QualityCheck label="Legacy mixto" value={quality.checks.legacyMixed ? "Sí" : "No"} good={!quality.checks.legacyMixed} />
                 <QualityCheck label="Labels sintéticos" value={quality.checks.syntheticLabels ? "Sí" : "No"} good={!quality.checks.syntheticLabels} />
-                <QualityCheck label="Duplicados" value={quality.checks.duplicateTrades} good={quality.checks.duplicateTrades === 0} />
+                <QualityCheck label="Lookahead" value={quality.checks.lookaheadViolations} good={quality.checks.lookaheadViolations === 0} />
                 <QualityCheck label="Features missing" value={quality.checks.missingFeatures} good={quality.checks.missingFeatures === 0} />
                 <QualityCheck label="Snapshots inválidos" value={quality.checks.invalidSnapshots} good={quality.checks.invalidSnapshots === 0} />
                 <QualityCheck label="Supervisor huérfanos" value={quality.checks.orphanSupervisor} good={quality.checks.orphanSupervisor === 0} />
                 <QualityCheck label="Fills huérfanos" value={quality.checks.orphanFills} good={quality.checks.orphanFills === 0} />
                 <QualityCheck label="Trades incompletos" value={quality.checks.incompleteTrades} good={quality.checks.incompleteTrades === 0} />
-                <QualityCheck label="Schema mismatch" value={quality.checks.schemaVersionMismatches} good={quality.checks.schemaVersionMismatches === 0} />
+                <QualityCheck label="Causal failures" value={quality.checks.causalCorrelationFailures} good={quality.checks.causalCorrelationFailures === 0} />
               </div>
             </>
           ) : (

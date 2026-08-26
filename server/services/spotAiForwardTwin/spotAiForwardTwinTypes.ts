@@ -199,11 +199,14 @@ export interface SpotAiAdvisoryLog {
   modelVersion: string;
   featureSchemaVersion: number;
   entryQualityScore: number;
+  prob_0_5R: number;
   prob_1R: number;
   prob_2R: number;
   expectedMfeR: number;
   expectedMaeR: number;
+  prob_net_profit: number;
   givebackRiskScore: number | null;
+  lotId: string | null;
   timestamp: number;
 }
 

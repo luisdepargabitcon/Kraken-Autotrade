@@ -36,7 +36,9 @@ export function PrediccionesTab() {
                       {new Date(p.timestamp).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
                     </span>
                     <span className="font-mono font-semibold w-20 flex-shrink-0 truncate">{p.pair}</span>
-                    <span className="text-blue-300 flex-1 truncate">{p.recommendation}</span>
+                    <span className="text-blue-300 flex-1 truncate">
+                      {p.prob_1R !== undefined ? `P(1R)=${(p.prob_1R * 100).toFixed(0)}%` : "—"}
+                    </span>
                     <span className="text-[10px] text-muted-foreground">{p.modelVersion}</span>
                   </div>
                 ))}

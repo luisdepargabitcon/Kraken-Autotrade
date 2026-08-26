@@ -8,6 +8,22 @@
  *   - Temporal split: 60% train, 20% validation, 20% test — chronological.
  *   - No random shuffle.
  *   - No lookahead: features from snapshot at prediction time only.
+ *
+ * CAUSAL CORRELATION:
+ *   - TradeOutcomeEntry MUST contain pair.
+ *   - deriveGroupId and findOutcomeForSnapshot match by pair AND lotId,
+ *     never by simple temporal overlap.
+ *   - A BTC scan can NEVER receive labels from an ETH trade.
+ *
+ * TIME-TO-TARGETS:
+ *   - time_to_0_5R and time_to_1R are computed from SUPERVISOR snapshots
+ *     that first observed the position reaching +0.5R or +1.0R.
+ *   - If no supervisor snapshot is available, null (NOT holdTime).
+ *
+ * GIVEBACK LABELS:
+ *   - Computed from SUPERVISOR + FILL snapshots for each lotId.
+ *   - profit_to_loss: position was profitable (MFE >= 1R) but closed at a loss.
+ *   - Challengers are observational only — never modify exit policy.
  */
 
 import { SPOT_AI_FEATURE_SCHEMA_VERSION } from "./spotAiForwardTwinTypes";
@@ -19,6 +35,7 @@ import type {
   SpotAiEntryLabels,
   SpotAiGivebackLabels,
   ChallengerProjection,
+  ChallengerPolicy,
 } from "./spotAiForwardTwinTypes";
 import { buildFeaturesFromSnapshot, validateNoLookahead } from "./spotAiFeatureBuilder";
 import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
@@ -32,6 +49,8 @@ export interface DatasetBuildInput {
 
 export interface TradeOutcomeEntry {
   lotId: string;
+  pair: string;
+  entryScanId: string | null;
   entryPrice: number;
   exitPrice: number;
   stopPrice: number;
@@ -46,10 +65,11 @@ export interface TradeOutcomeEntry {
 }
 
 export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
-  const { scanSnapshots, tradeOutcomes } = input;
+  const { scanSnapshots, supervisorSnapshots, tradeOutcomes } = input;
 
   const samples: SpotAiDatasetSample[] = [];
   let labeledTradeCount = 0;
+  const labeledLotIds = new Set<string>();
 
   for (const snapshot of scanSnapshots) {
     if (snapshot.snapshotType !== "SCAN") continue;
@@ -61,15 +81,26 @@ export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
       continue;
     }
 
-    if (!validateNoLookahead(features, snapshot.timestamp)) continue;
+    if (!validateNoLookahead(features, snapshot.timestamp, snapshot)) continue;
 
     const groupId = deriveGroupId(snapshot, tradeOutcomes);
     const outcome = findOutcomeForSnapshot(snapshot, tradeOutcomes);
-    const labels: SpotAiEntryLabels | null = outcome ? buildEntryLabelsFromOutcome(outcome) : null;
-    const givebackLabels: SpotAiGivebackLabels | null = null;
-    const challengers: ChallengerProjection[] = [];
+    const labels: SpotAiEntryLabels | null = outcome ? buildEntryLabelsFromOutcome(outcome, supervisorSnapshots) : null;
 
-    if (labels) labeledTradeCount++;
+    const givebackLabels: SpotAiGivebackLabels | null = outcome
+      ? buildGivebackLabelsFromOutcome(outcome, supervisorSnapshots)
+      : null;
+
+    const challengers: ChallengerProjection[] = outcome
+      ? projectChallengers(outcome)
+      : [];
+
+    if (labels && outcome) {
+      if (!labeledLotIds.has(outcome.lotId)) {
+        labeledLotIds.add(outcome.lotId);
+        labeledTradeCount++;
+      }
+    }
 
     samples.push({
       sampleId: `${snapshot.scanId}-${snapshot.pair}`,
@@ -101,11 +132,12 @@ export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
 
 function deriveGroupId(snapshot: ForwardTwinSnapshot, outcomes: Map<string, TradeOutcomeEntry>): string {
   for (const [lotId, outcome] of outcomes) {
+    if (outcome.pair !== snapshot.pair) continue;
     if (outcome.entryTime <= snapshot.timestamp && outcome.exitTime >= snapshot.timestamp) {
       return lotId;
     }
   }
-  return `temporal-${Math.floor(snapshot.timestamp / (60 * 60 * 1000))}`;
+  return `temporal-${snapshot.pair}-${Math.floor(snapshot.timestamp / (60 * 60 * 1000))}`;
 }
 
 function findOutcomeForSnapshot(
@@ -113,6 +145,7 @@ function findOutcomeForSnapshot(
   outcomes: Map<string, TradeOutcomeEntry>,
 ): TradeOutcomeEntry | null {
   for (const outcome of outcomes.values()) {
+    if (outcome.pair !== snapshot.pair) continue;
     if (outcome.entryTime <= snapshot.timestamp && outcome.exitTime >= snapshot.timestamp) {
       return outcome;
     }
@@ -120,11 +153,17 @@ function findOutcomeForSnapshot(
   return null;
 }
 
-function buildEntryLabelsFromOutcome(outcome: TradeOutcomeEntry): SpotAiEntryLabels {
+function buildEntryLabelsFromOutcome(
+  outcome: TradeOutcomeEntry,
+  supervisorSnapshots: ForwardTwinSnapshot[],
+): SpotAiEntryLabels {
   const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
   const mfeR = outcome.mfeR;
   const finalR = outcome.netPnlUsd / r;
   const holdMs = outcome.exitTime - outcome.entryTime;
+
+  const timeTo0_5R = computeTimeToTarget(outcome, supervisorSnapshots, 0.5);
+  const timeTo1R = computeTimeToTarget(outcome, supervisorSnapshots, 1.0);
 
   return {
     reached_0_5R_before_stop: mfeR >= 0.5,
@@ -135,10 +174,104 @@ function buildEntryLabelsFromOutcome(outcome: TradeOutcomeEntry): SpotAiEntryLab
     final_R: finalR,
     mfe_R: mfeR,
     mae_R: outcome.maeR,
-    time_to_0_5R: mfeR >= 0.5 ? holdMs : null,
-    time_to_1R: mfeR >= 1.0 ? holdMs : null,
+    time_to_0_5R: mfeR >= 0.5 ? timeTo0_5R : null,
+    time_to_1R: mfeR >= 1.0 ? timeTo1R : null,
     time_to_exit: holdMs,
   };
+}
+
+function computeTimeToTarget(
+  outcome: TradeOutcomeEntry,
+  supervisorSnapshots: ForwardTwinSnapshot[],
+  targetR: number,
+): number | null {
+  const relevant = supervisorSnapshots
+    .filter(s => s.snapshotType === "SUPERVISOR" && s.position?.lotId === outcome.lotId && s.position?.pair === outcome.pair)
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  for (const snap of relevant) {
+    if (snap.position && snap.position.mfeR >= targetR) {
+      return snap.timestamp - outcome.entryTime;
+    }
+  }
+
+  return null;
+}
+
+function buildGivebackLabelsFromOutcome(
+  outcome: TradeOutcomeEntry,
+  _supervisorSnapshots: ForwardTwinSnapshot[],
+): SpotAiGivebackLabels | null {
+  if (outcome.mfeR <= 0) return null;
+
+  const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
+  const finalR = outcome.netPnlUsd / r;
+  const givebackR = outcome.mfeR - finalR;
+  const givebackPct = outcome.mfeR > 0 ? givebackR / outcome.mfeR : 0;
+
+  return {
+    profit_to_loss: outcome.mfeR >= 1.0 && outcome.netPnlUsd < 0,
+    giveback_25pct: givebackPct >= 0.25,
+    giveback_50pct: givebackPct >= 0.50,
+    giveback_75pct: givebackPct >= 0.75,
+    final_R: finalR,
+    future_MFE_R: outcome.mfeR,
+    future_MAE_R: outcome.maeR,
+    expected_giveback_R: givebackR,
+  };
+}
+
+function projectChallengers(outcome: TradeOutcomeEntry): ChallengerProjection[] {
+  const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
+  const entryPrice = outcome.entryPrice;
+  const stopPrice = outcome.stopPrice;
+  const direction = entryPrice > stopPrice ? 1 : -1;
+  const riskDist = Math.abs(entryPrice - stopPrice);
+
+  if (riskDist <= 0) return [];
+
+  const project = (
+    policy: ChallengerPolicy,
+    targetR: number,
+    stopR: number,
+  ): ChallengerProjection => {
+    const targetPrice = entryPrice + direction * riskDist * targetR;
+    const stopExitPrice = entryPrice - direction * riskDist * stopR;
+
+    let projectedExitPrice: number;
+    let projectedR: number;
+
+    if (outcome.mfeR >= targetR) {
+      projectedExitPrice = targetPrice;
+      projectedR = targetR;
+    } else if (outcome.maeR <= -stopR) {
+      projectedExitPrice = stopExitPrice;
+      projectedR = -stopR;
+    } else {
+      projectedExitPrice = outcome.exitPrice;
+      projectedR = outcome.netPnlUsd / r;
+    }
+
+    const projectedPnlUsd = (projectedExitPrice - entryPrice) * direction * (r / riskDist);
+
+    return {
+      policy,
+      projectedExitPrice,
+      projectedR,
+      projectedPnlUsd,
+    };
+  };
+
+  return [
+    {
+      policy: "BASELINE",
+      projectedExitPrice: outcome.exitPrice,
+      projectedR: outcome.netPnlUsd / r,
+      projectedPnlUsd: outcome.netPnlUsd,
+    },
+    project("B_RET_0_75_0_30", 0.75, 0.30),
+    project("A_FLOOR_1_00_1_00", 1.0, 1.0),
+  ];
 }
 
 function assignTemporalSplits(samples: SpotAiDatasetSample[]): void {
@@ -182,6 +315,10 @@ export function validateNoLookaheadInDataset(dataset: SpotAiDataset): boolean {
     if (!validateNoLookahead(sample.features, sample.features.timestamp)) return false;
   }
   return true;
+}
+
+export function countLabeledTrades(outcomes: Map<string, TradeOutcomeEntry>): number {
+  return outcomes.size;
 }
 
 export function validateHoldsIncluded(dataset: SpotAiDataset): boolean {

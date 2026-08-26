@@ -20,17 +20,18 @@ import type {
   ModelStatus,
 } from "./spotAiForwardTwinTypes";
 import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
+import { db } from "../../db";
+import { sql } from "drizzle-orm";
 
 class SpotAiAdvisoryService {
-  private advisoryLogs: SpotAiAdvisoryLog[] = [];
   private maxLogs = 1000;
 
-  getStatus(
+  async getStatus(
     totalSnapshots: number,
     labeledTrades: number,
-  ): SpotAiStatusResponse {
-    const entryModel = modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_ENTRY");
-    const givebackModel = modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_GIVEBACK");
+  ): Promise<SpotAiStatusResponse> {
+    const entryModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_ENTRY");
+    const givebackModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_GIVEBACK");
 
     let status: SpotAiStatus = "COLLECTING";
     if (entryModel && entryModel.status === "ACTIVE_ADVISORY") {
@@ -56,8 +57,8 @@ class SpotAiAdvisoryService {
     };
   }
 
-  computeEntryAdvisory(snapshot: ForwardTwinSnapshot): SpotAiEntryPrediction | null {
-    const entryModel = modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_ENTRY");
+  async computeEntryAdvisory(snapshot: ForwardTwinSnapshot): Promise<SpotAiEntryPrediction | null> {
+    const entryModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_ENTRY");
     if (!entryModel) return null;
 
     let features;
@@ -67,53 +68,74 @@ class SpotAiAdvisoryService {
       return null;
     }
 
-    return {
-      modelVersion: entryModel.modelVersion,
-      featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
-      scanId: snapshot.scanId,
-      pair: snapshot.pair,
-      timestamp: snapshot.timestamp,
-      prob_0_5R: 0.5,
-      prob_1R: 0.5,
-      prob_2R: 0.5,
-      expected_MFE_R: 0,
-      expected_MAE_R: 0,
-      prob_net_profit: 0.5,
-      entry_quality_score: 50,
-    };
+    // No real model artifact exists yet — cannot produce inference.
+    // Return null to indicate MODEL_INFERENCE_NOT_AVAILABLE.
+    // When a real predictor is implemented, it will load the artifact
+    // from modelPath and produce actual probabilities.
+    return null;
   }
 
-  computeGivebackAdvisory(
+  async computeGivebackAdvisory(
     snapshot: ForwardTwinSnapshot,
     lotId: string,
-  ): SpotAiGivebackPrediction | null {
-    const givebackModel = modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_GIVEBACK");
+  ): Promise<SpotAiGivebackPrediction | null> {
+    const givebackModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_GIVEBACK");
     if (!givebackModel) return null;
 
-    return {
-      modelVersion: givebackModel.modelVersion,
-      featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
-      scanId: snapshot.scanId,
-      pair: snapshot.pair,
-      lotId,
-      timestamp: snapshot.timestamp,
-      prob_profit_to_loss: 0.5,
-      expected_future_MFE_R: 0,
-      expected_final_R: 0,
-      expected_giveback_R: 0,
-      giveback_risk_score: 50,
-    };
+    // No real model artifact exists yet — cannot produce inference.
+    return null;
   }
 
-  logAdvisory(log: SpotAiAdvisoryLog): void {
-    this.advisoryLogs.push(log);
-    if (this.advisoryLogs.length > this.maxLogs) {
-      this.advisoryLogs.shift();
+  async logAdvisory(log: SpotAiAdvisoryLog): Promise<void> {
+    try {
+      await db.execute(sql`
+        INSERT INTO spot_ai_advisory_logs
+          (scan_id, pair, model_name, model_version, feature_schema_version,
+           entry_quality_score, prob_0_5r, prob_1r, prob_2r,
+           expected_mfe_r, expected_mae_r, prob_net_profit, giveback_risk_score, lot_id, timestamp)
+        VALUES
+          (${log.scanId}, ${log.pair}, 'SPOT_AI_FORWARD_TWIN_ENTRY', ${log.modelVersion},
+           ${log.featureSchemaVersion}, ${log.entryQualityScore},
+           ${log.prob_0_5R ?? null}, ${log.prob_1R}, ${log.prob_2R ?? null},
+           ${log.expectedMfeR ?? null}, ${log.expectedMaeR ?? null},
+           ${log.prob_net_profit ?? null}, ${log.givebackRiskScore ?? null},
+           ${log.lotId ?? null}, ${log.timestamp})
+      `);
+    } catch (error: any) {
+      console.error(`[SpotAiAdvisory] Failed to log advisory: ${error.message}`);
     }
   }
 
-  getRecentAdvisoryLogs(limit: number = 50): SpotAiAdvisoryLog[] {
-    return this.advisoryLogs.slice(-limit);
+  async getRecentAdvisoryLogs(limit: number = 50): Promise<SpotAiAdvisoryLog[]> {
+    try {
+      const rows = await db.execute(sql`
+        SELECT scan_id, pair, model_version, feature_schema_version,
+               entry_quality_score, prob_0_5r, prob_1r, prob_2r,
+               expected_mfe_r, expected_mae_r, prob_net_profit,
+               giveback_risk_score, lot_id, timestamp
+        FROM spot_ai_advisory_logs
+        ORDER BY timestamp DESC
+        LIMIT ${limit}
+      `);
+      return ((rows.rows ?? []) as any[]).map((r: any) => ({
+        scanId: r.scan_id,
+        pair: r.pair,
+        modelVersion: r.model_version,
+        featureSchemaVersion: r.feature_schema_version,
+        entryQualityScore: r.entry_quality_score ?? 0,
+        prob_0_5R: r.prob_0_5r ?? 0,
+        prob_1R: r.prob_1r ?? 0,
+        prob_2R: r.prob_2r ?? 0,
+        expectedMfeR: r.expected_mfe_r ?? 0,
+        expectedMaeR: r.expected_mae_r ?? 0,
+        prob_net_profit: r.prob_net_profit ?? 0,
+        givebackRiskScore: r.giveback_risk_score ?? null,
+        lotId: r.lot_id ?? null,
+        timestamp: parseInt(r.timestamp ?? "0"),
+      }));
+    } catch {
+      return [];
+    }
   }
 
   canTrain(labeledTrades: number): boolean {

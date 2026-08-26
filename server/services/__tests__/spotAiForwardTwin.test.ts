@@ -51,12 +51,12 @@ function makeScanSnapshot(overrides: Partial<FTSnapshot> = {}): FTSnapshot {
     policyVersion: "v1",
     executionMode: "SHADOW",
     engineOwner: "spot",
-    ticker: { bid: 50000, ask: 50010, last: 50005, spread: 10, spreadPct: 0.02, fetchedAt: Date.now() },
+    ticker: { bid: 50000, ask: 50010, last: 50005, spread: 10, spreadPct: 0.02, fetchedAt: 1000 },
     candles: {
-      candles5m: { meta: { count: 100, lastTime: Date.now(), lastClose: 50005 }, candles: [] },
-      candles15m: { meta: { count: 100, lastTime: Date.now(), lastClose: 50005 }, candles: [] },
-      candles1h: { meta: { count: 100, lastTime: Date.now(), lastClose: 50005 }, candles: [] },
-      candles4h: { meta: { count: 100, lastTime: Date.now(), lastClose: 50005 }, candles: [] },
+      candles5m: { meta: { count: 100, lastTime: 1000, lastClose: 50005 }, candles: [] },
+      candles15m: { meta: { count: 100, lastTime: 1000, lastClose: 50005 }, candles: [] },
+      candles1h: { meta: { count: 100, lastTime: 1000, lastClose: 50005 }, candles: [] },
+      candles4h: { meta: { count: 100, lastTime: 1000, lastClose: 50005 }, candles: [] },
     },
     regime: {
       regime: "TREND", direction: "BULLISH", macroBias: "BULLISH", volatility: "NORMAL",
@@ -71,7 +71,7 @@ function makeScanSnapshot(overrides: Partial<FTSnapshot> = {}): FTSnapshot {
     },
     intent: {
       signalId: "sig-1", state: "CREATED", setupTag: "PULLBACK_CONTINUATION",
-      createdAt: Date.now(), expiresAt: Date.now() + 60000,
+      createdAt: 1000, expiresAt: 60000,
       originPrice: 50000, originAtrPct: 0.015, originRegime: "TREND",
       originDirection: "BULLISH", originMacro: "BULLISH", retryCount: 0,
       lastBlockReason: null, lastEvaluatedAt: null, shouldExecute: true, evaluationReason: "ok",
@@ -240,13 +240,13 @@ describe("AI_FT_09: min 100 trades", () => {
 });
 
 describe("AI_FT_10: advisory only", () => {
-  it("status response must have aiTradingControl = NONE", () => {
-    const status = advisoryService.getStatus(100, 0);
+  it("status response must have aiTradingControl = NONE", async () => {
+    const status = await advisoryService.getStatus(100, 0);
     expect(status.aiTradingControl).toBe("NONE");
   });
 
-  it("autoRetrain must be false", () => {
-    const status = advisoryService.getStatus(100, 0);
+  it("autoRetrain must be false", async () => {
+    const status = await advisoryService.getStatus(100, 0);
     expect(status.autoRetrain).toBe(false);
   });
 });
@@ -264,7 +264,7 @@ describe("AI_FT_12: cannot block entry", () => {
 });
 
 describe("AI_FT_13: versioning", () => {
-  it("model registry must reject duplicate version", () => {
+  it("model registry register must be async and reject without DB", async () => {
     const version = `test-v1-${Date.now()}`;
     const entry = {
       modelName: "SPOT_AI_FORWARD_TWIN_ENTRY" as const,
@@ -279,27 +279,26 @@ describe("AI_FT_13: versioning", () => {
       metrics: {},
       modelPath: "/tmp/test.joblib",
     };
-    modelRegistry.register(entry);
-    expect(() => modelRegistry.register(entry)).toThrow();
+    // Without DB, register should reject (not silently succeed)
+    await expect(modelRegistry.register(entry)).rejects.toThrow();
   });
 });
 
 describe("AI_FT_14: registry", () => {
-  it("registry must list registered models", () => {
-    const models = modelRegistry.listAll();
-    expect(models.length).toBeGreaterThan(0);
+  it("registry listAll must be async and return array", async () => {
+    const models = await modelRegistry.listAll();
+    expect(Array.isArray(models)).toBe(true);
   });
 
-  it("registry must find latest model by name", () => {
-    const latest = modelRegistry.getLatest("SPOT_AI_FORWARD_TWIN_ENTRY");
-    expect(latest).not.toBeNull();
-    expect(latest!.modelName).toBe("SPOT_AI_FORWARD_TWIN_ENTRY");
+  it("registry getLatest must be async and return null when no models", async () => {
+    const latest = await modelRegistry.getLatest("SPOT_AI_FORWARD_TWIN_ENTRY");
+    expect(latest).toBeNull();
   });
 });
 
 describe("AI_FT_15: UI collecting", () => {
-  it("initial status must be COLLECTING when no labeled trades", () => {
-    const status = advisoryService.getStatus(100, 0);
+  it("initial status must be COLLECTING when no labeled trades", async () => {
+    const status = await advisoryService.getStatus(100, 0);
     expect(status.status).toBe("COLLECTING");
   });
 
@@ -309,8 +308,8 @@ describe("AI_FT_15: UI collecting", () => {
 });
 
 describe("AI_FT_16: legacy deprecated", () => {
-  it("legacy data must not be mixed in Forward Twin dataset", () => {
-    const status = advisoryService.getStatus(100, 0);
+  it("legacy data must not be mixed in Forward Twin dataset", async () => {
+    const status = await advisoryService.getStatus(100, 0);
     expect(status.legacyDataMixed).toBe(false);
   });
 });

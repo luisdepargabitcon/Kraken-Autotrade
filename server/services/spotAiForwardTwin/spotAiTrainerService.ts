@@ -72,24 +72,10 @@ class SpotAiTrainerService {
 
     const scriptPath = path.join(process.cwd(), "server/services/spotAiForwardTwin/spotAiMlTrainer.py");
     if (!fs.existsSync(scriptPath)) {
-      const entry: ModelRegistryEntry = {
-        modelName,
-        modelVersion,
-        featureSchemaVersion: dataset.featureSchemaVersion,
-        status: "CANDIDATE",
-        datasetStart: dataset.samples[0]?.features.timestamp ?? 0,
-        datasetEnd: dataset.samples[dataset.samples.length - 1]?.features.timestamp ?? 0,
-        tradeCount: dataset.labeledTradeCount,
-        gitSha,
-        trainedAt: Date.now(),
-        metrics: {},
-        modelPath,
-      };
-      modelRegistry.register(entry);
       return {
-        success: true,
-        modelVersion,
-        message: `Model ${modelName} ${modelVersion} registered as CANDIDATE (Python trainer not available — placeholder).`,
+        success: false,
+        errorCode: "TRAINER_NOT_AVAILABLE",
+        message: `Python trainer script not found at ${scriptPath}. Cannot train model.`,
       };
     }
 
@@ -101,7 +87,7 @@ class SpotAiTrainerService {
       proc.stdout.on("data", d => (stdout += d.toString()));
       proc.stderr.on("data", d => (stderr += d.toString()));
 
-      proc.on("close", code => {
+      proc.on("close", async code => {
         if (code !== 0) {
           resolve({ success: false, message: `Training failed: ${stderr.slice(0, 500)}` });
           return;
@@ -128,7 +114,7 @@ class SpotAiTrainerService {
           metrics,
           modelPath,
         };
-        modelRegistry.register(entry);
+        await modelRegistry.register(entry);
 
         resolve({
           success: true,

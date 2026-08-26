@@ -12,6 +12,11 @@ export interface SpotAiStatus {
   autoRetrain: boolean;
   aiTradingControl: string;
   legacyDataMixed: boolean;
+  collectorSessionCaptured?: number;
+  collectorSessionFlushed?: number;
+  bufferSize?: number;
+  bufferMax?: number;
+  droppedSnapshots?: number;
 }
 
 export interface DatasetOverview {
@@ -22,26 +27,36 @@ export interface DatasetOverview {
   firstTimestamp: number;
   lastTimestamp: number;
   labeledTrades: number;
-  pendingTrades: number;
+  labeledSampleCount?: number;
+  unlabeledScanCount?: number;
+  pendingTrades: number | null;
   collectorEnabled: boolean;
   bufferSize: number;
   bufferMax: number;
+  collectorSessionCaptured?: number;
+  collectorSessionFlushed?: number;
 }
 
 export interface DatasetQuality {
   checks: {
-    lookaheadFeatures: number;
-    legacyMixed: boolean;
-    syntheticLabels: boolean;
-    duplicateTrades: number;
-    missingFeatures: number;
+    schemaVersionMismatches: number;
     invalidSnapshots: number;
+    missingFeatures: number;
+    duplicateEntryFills: number;
+    duplicateExitFills: number;
     orphanSupervisor: number;
     orphanFills: number;
     incompleteTrades: number;
-    schemaVersionMismatches: number;
+    lookaheadViolations: number;
+    causalCorrelationFailures: number;
+    legacyMixed: boolean;
+    syntheticLabels: boolean;
   };
   score: number;
+  available: boolean;
+  status: string;
+  legacyMixedStructuralInvariant: boolean;
+  syntheticLabelsStructuralInvariant: boolean;
   featureSchemaVersion: number;
 }
 
@@ -50,8 +65,15 @@ export interface FeatureInfo {
   type: string;
   origin: string;
   timeframe: string;
-  missingPct: number;
+  missingPct: number | null;
   version: number;
+}
+
+export interface FeaturesResponse {
+  features: FeatureInfo[];
+  schemaVersion: number;
+  available: boolean;
+  reason?: string;
 }
 
 export interface PairDistribution {
@@ -62,13 +84,14 @@ export interface PairDistribution {
   fills: number;
   firstTs: number;
   lastTs: number;
-  trades: number;
-  wins: number;
-  losses: number;
+  trades: number | null;
+  wins: number | null;
+  losses: number | null;
   winRate: number | null;
   netPnl: number | null;
   mfeMedian: number | null;
   maeMedian: number | null;
+  tradeStatsAvailable: boolean;
 }
 
 export interface RegimeDistribution {
@@ -95,13 +118,23 @@ export interface AdvisoryLog {
   scanId: string;
   pair: string;
   modelVersion: string;
+  featureSchemaVersion: number;
+  entryQualityScore: number;
+  prob_0_5R: number;
+  prob_1R: number;
+  prob_2R: number;
+  expectedMfeR: number;
+  expectedMaeR: number;
+  prob_net_profit: number;
+  givebackRiskScore: number | null;
+  lotId: string | null;
   timestamp: number;
-  scores: Record<string, number>;
-  recommendation: string;
 }
 
 export interface ValidationData {
-  baseline: { name: string; trades: number; wins: number; losses: number; pnl: number };
+  available: boolean;
+  reason?: string;
+  baseline: { name: string; trades: number; wins: number; losses: number; pnl: number } | null;
   candidate: { name: string; trades: number; wins: number; losses: number; pnl: number } | null;
   confusionMatrix: { tp: number; fp: number; tn: number; fn: number } | null;
   winnerRejectionRate: number | null;
@@ -110,16 +143,18 @@ export interface ValidationData {
 }
 
 export interface GivebackData {
-  tradesWithPositiveMfe: number;
-  mfeGte0_5R: number;
-  mfeGte1R: number;
-  mfeGte1_5R: number;
-  mfeGte2R: number;
-  profitToLoss: number;
-  givebackTotalUsd: number;
+  available: boolean;
+  reason?: string;
+  tradesWithPositiveMfe: number | null;
+  mfeGte0_5R: number | null;
+  mfeGte1R: number | null;
+  mfeGte1_5R: number | null;
+  mfeGte2R: number | null;
+  profitToLoss: number | null;
+  givebackTotalUsd: number | null;
   medianGivebackPct: number | null;
-  mfeTotal: number;
-  pnlCaptured: number;
+  mfeTotal: number | null;
+  pnlCaptured: number | null;
   captureEfficiency: number | null;
   highGivebackCases: Array<{ pair: string; lotId: string; mfeR: number; givebackPct: number; finalR: number }>;
 }
@@ -143,15 +178,18 @@ export interface AuditData {
     status: string;
     metrics: Record<string, number>;
   }>;
+  trainingRunsAvailable: boolean;
   collectorHealth: {
     enabled: boolean;
     totalCaptured: number;
     totalFlushed: number;
+    persistedSnapshots: number;
     droppedSnapshots: number;
     lastFlushError: string | null;
     lastFlushAt: number | null;
   };
   recentErrors: Array<{ timestamp: number; error: string; context: string }>;
+  errorsAvailable: boolean;
 }
 
 export const STATUS_LABELS: Record<string, string> = {
@@ -181,3 +219,23 @@ export const MODEL_STATUS_COLORS: Record<string, string> = {
   RETIRED: "bg-amber-500/20 text-amber-400 border-amber-500/30",
   FAILED: "bg-red-500/20 text-red-400 border-red-500/30",
 };
+
+export function getAvailabilityBadge(
+  available: boolean,
+  reason?: string,
+): { label: string; color: string } {
+  if (available) {
+    return { label: "REAL", color: "bg-green-500/20 text-green-400 border-green-500/30" };
+  }
+  if (reason === "INSUFFICIENT_DATA" || reason === "NO_COMPLETED_FORWARD_TRADES") {
+    return { label: "INSUFICIENTE", color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" };
+  }
+  if (reason === "NO_CANDIDATE" || reason === "EVALUATION_NOT_PERFORMED" || reason === "TRAINER_NOT_AVAILABLE") {
+    return { label: "NO DISPONIBLE", color: "bg-gray-500/20 text-gray-400 border-gray-500/30" };
+  }
+  return { label: "NO DISPONIBLE", color: "bg-gray-500/20 text-gray-400 border-gray-500/30" };
+}
+
+export function isStructuralInvariant(checks: DatasetQuality): boolean {
+  return checks.legacyMixedStructuralInvariant && checks.syntheticLabelsStructuralInvariant;
+}
