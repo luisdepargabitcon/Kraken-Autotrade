@@ -980,6 +980,11 @@ export async function startSpotEngine(): Promise<boolean> {
   entryScanningEnabled = true;
   engineRunning = true;
 
+  // Forward Twin: enable telemetry on SHADOW at startup
+  if (mode === ExecutionMode.SHADOW) {
+    enableForwardTwin();
+  }
+
   // Start scan loop
   scanIntervalId = setInterval(() => runScanCycle().catch(console.error), SCAN_INTERVAL_MS);
 
