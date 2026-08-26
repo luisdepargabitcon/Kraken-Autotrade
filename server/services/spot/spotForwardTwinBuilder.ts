@@ -289,10 +289,17 @@ export interface FillSnapshotInput {
    * already set and this override is not needed.
    */
   lotId?: string | null;
+  /**
+   * R3: optional explicit telemetry correlation keys. intentId is the
+   * SpotExecutionIntent id; signalId is the originating SpotEntryIntent
+   * signalId. These make the scan→entry→fill→lot chain unambiguous.
+   */
+  intentId?: string | null;
+  signalId?: string | null;
 }
 
 export function buildFillSnapshot(input: FillSnapshotInput): ForwardTwinSnapshot {
-  const { ctx, execIntent, result, scanId, mode, pair, slippagePct, lotId } = input;
+  const { ctx, execIntent, result, scanId, mode, pair, slippagePct, lotId, intentId, signalId } = input;
 
   const fillSnap: ForwardTwinFillSnapshot = {
     side: execIntent.side,
@@ -309,6 +316,8 @@ export function buildFillSnapshot(input: FillSnapshotInput): ForwardTwinSnapshot
     tickerBid: ctx.ticker.bid,
     tickerAsk: ctx.ticker.ask,
     tickerLast: ctx.ticker.last,
+    intentId: intentId ?? null,
+    signalId: signalId ?? null,
   };
 
   return {

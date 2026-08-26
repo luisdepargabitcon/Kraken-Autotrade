@@ -12,6 +12,7 @@ import { modelRegistry } from "../services/spotAiForwardTwin/spotAiModelRegistry
 import { trainerService } from "../services/spotAiForwardTwin/spotAiTrainerService";
 import { getCollectorStats } from "../services/spot/spotForwardTwinCollector";
 import { CANONICAL_FEATURE_DEFINITIONS } from "../services/spotAiForwardTwin/spotAiFeatureBuilder";
+import { queryCompletedTrades } from "../services/spotAiForwardTwin/spotAiCompletedTrades";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import {
@@ -31,33 +32,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         SELECT COUNT(*) AS total FROM spot_forward_twin_snapshots
       `);
       const totalSnapshots = parseInt(((snapshotRows.rows ?? [])[0] as any)?.total ?? "0");
-      // Count CANONICAL completed Forward Twin trades:
-      //   BUY/entry fill (data.fill.lotId) + SUPERVISOR snapshot (data.position.lotId)
-      //   + SELL/exit fill (data.fill.lotId), same lotId AND same pair.
-      // This is the SINGLE source of truth for "labeled trades" used by status,
-      // dataset, pairs, giveback and the training guard.
-      const labeledRows = await db.execute(sql`
-        SELECT
-          COUNT(DISTINCT s.data->'position'->>'lotId') AS labeled_trades
-        FROM spot_forward_twin_snapshots s
-        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
-          AND s.data->'position'->>'lotId' IS NOT NULL
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fb
-            WHERE fb.data->>'snapshotType' = 'FILL'
-              AND fb.data->'fill'->>'side' = 'BUY'
-              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fb.pair = s.pair
-          )
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fs
-            WHERE fs.data->>'snapshotType' = 'FILL'
-              AND fs.data->'fill'->>'side' = 'SELL'
-              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fs.pair = s.pair
-          )
-      `);
-      const labeledTrades = parseInt(((labeledRows.rows ?? [])[0] as any)?.labeled_trades ?? "0");
+      // R3: SINGLE canonical source for completed/labeled trades.
+      const completedTradesResult = await queryCompletedTrades();
+      const labeledTrades = completedTradesResult.completedTradeCount;
       const status = await advisoryService.getStatus(totalSnapshots, labeledTrades);
       res.json({
         ...status,
@@ -87,29 +64,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         FROM spot_forward_twin_snapshots
       `);
       const r = (rows.rows ?? [])[0] as any ?? {};
-      // Count CANONICAL completed trades (BUY + SUPERVISOR + SELL, same lotId + pair)
-      const labeledRows = await db.execute(sql`
-        SELECT
-          COUNT(DISTINCT s.data->'position'->>'lotId') AS labeled_trades
-        FROM spot_forward_twin_snapshots s
-        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
-          AND s.data->'position'->>'lotId' IS NOT NULL
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fb
-            WHERE fb.data->>'snapshotType' = 'FILL'
-              AND fb.data->'fill'->>'side' = 'BUY'
-              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fb.pair = s.pair
-          )
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fs
-            WHERE fs.data->>'snapshotType' = 'FILL'
-              AND fs.data->'fill'->>'side' = 'SELL'
-              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fs.pair = s.pair
-          )
-      `);
-      const labeledTrades = parseInt(((labeledRows.rows ?? [])[0] as any)?.labeled_trades ?? "0");
+      // R3: SINGLE canonical source for completed/labeled trades.
+      const completedTradesResult = await queryCompletedTrades();
+      const labeledTrades = completedTradesResult.completedTradeCount;
       // Count scans without matching trades as unlabeled
       const scanCount = parseInt(r.scan_count ?? "0");
       const unlabeledScans = scanCount; // scans that don't have a matching trade outcome
@@ -263,6 +220,7 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         checks,
         checksAvailable,
         qualityCoveragePct,
+        scoreIsPartial: qualityCoveragePct < 100,
         score,
         available,
         status: totalIssues === 0 ? "OK" : "WARNINGS",
@@ -369,38 +327,14 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         GROUP BY pair
         ORDER BY total DESC
       `);
-      // Canonical completed trades per pair: SUPERVISOR lotId with BOTH a BUY
-      // fill and a SELL fill for the same lotId AND same pair.
-      const tradeRows = await db.execute(sql`
-        SELECT
-          s.pair AS pair,
-          COUNT(DISTINCT s.data->'position'->>'lotId') AS unique_trades
-        FROM spot_forward_twin_snapshots s
-        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
-          AND s.data->'position'->>'lotId' IS NOT NULL
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fb
-            WHERE fb.data->>'snapshotType' = 'FILL'
-              AND fb.data->'fill'->>'side' = 'BUY'
-              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fb.pair = s.pair
-          )
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fs
-            WHERE fs.data->>'snapshotType' = 'FILL'
-              AND fs.data->'fill'->>'side' = 'SELL'
-              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fs.pair = s.pair
-          )
-        GROUP BY s.pair
-      `);
-      const tradeMap = new Map<string, any>();
-      for (const tr of (tradeRows.rows ?? []) as any[]) {
-        tradeMap.set(tr.pair, tr);
+      // R3: SINGLE canonical source for completed trades per pair.
+      const completedTradesResult = await queryCompletedTrades();
+      const tradesByPair = new Map<string, number>();
+      for (const t of completedTradesResult.completedTrades) {
+        tradesByPair.set(t.pair, (tradesByPair.get(t.pair) ?? 0) + 1);
       }
       const pairs = ((rows.rows ?? []) as any[]).map((r: any) => {
-        const tradeInfo = tradeMap.get(r.pair);
-        const completedTrades = tradeInfo ? parseInt(tradeInfo.unique_trades) : 0;
+        const completedTrades = tradesByPair.get(r.pair) ?? 0;
         const hasCompleteTrades = completedTrades > 0;
         return {
           pair: r.pair,
@@ -522,30 +456,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Giveback analytics ──────────────────────────────────────────────────
   app.get("/api/spot/ai/giveback", async (_req, res) => {
     try {
-      // Check if there are CANONICAL completed Forward Twin trades
-      // (BUY + SUPERVISOR + SELL, same lotId AND same pair).
-      const tradeRows = await db.execute(sql`
-        SELECT
-          COUNT(DISTINCT s.data->'position'->>'lotId') AS completed_trades
-        FROM spot_forward_twin_snapshots s
-        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
-          AND s.data->'position'->>'lotId' IS NOT NULL
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fb
-            WHERE fb.data->>'snapshotType' = 'FILL'
-              AND fb.data->'fill'->>'side' = 'BUY'
-              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fb.pair = s.pair
-          )
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fs
-            WHERE fs.data->>'snapshotType' = 'FILL'
-              AND fs.data->'fill'->>'side' = 'SELL'
-              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fs.pair = s.pair
-          )
-      `);
-      const completedTrades = parseInt(((tradeRows.rows ?? [])[0] as any)?.completed_trades ?? "0");
+      // R3: SINGLE canonical source for completed trades.
+      const completedTradesResult = await queryCompletedTrades();
+      const completedTrades = completedTradesResult.completedTradeCount;
 
       if (completedTrades === 0) {
         res.json({
@@ -681,30 +594,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Training (guarded) ──────────────────────────────────────────────────
   app.post("/api/spot/ai/train", async (_req, res) => {
     try {
-      // Count CANONICAL completed trades (BUY + SUPERVISOR + SELL, same lotId + pair).
-      // This is the SINGLE source of truth shared with status/dataset/pairs/giveback.
-      const labeledRows = await db.execute(sql`
-        SELECT
-          COUNT(DISTINCT s.data->'position'->>'lotId') AS labeled_trades
-        FROM spot_forward_twin_snapshots s
-        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
-          AND s.data->'position'->>'lotId' IS NOT NULL
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fb
-            WHERE fb.data->>'snapshotType' = 'FILL'
-              AND fb.data->'fill'->>'side' = 'BUY'
-              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fb.pair = s.pair
-          )
-          AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots fs
-            WHERE fs.data->>'snapshotType' = 'FILL'
-              AND fs.data->'fill'->>'side' = 'SELL'
-              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
-              AND fs.pair = s.pair
-          )
-      `);
-      const labeledTrades = parseInt(((labeledRows.rows ?? [])[0] as any)?.labeled_trades ?? "0");
+      // R3: SINGLE canonical source for completed/labeled trades.
+      const completedTradesResult = await queryCompletedTrades();
+      const labeledTrades = completedTradesResult.completedTradeCount;
 
       if (labeledTrades < MIN_TRADES_TO_TRAIN) {
         res.status(409).json({

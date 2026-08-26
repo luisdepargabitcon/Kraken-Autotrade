@@ -175,6 +175,12 @@ export interface ForwardTwinFillSnapshot {
   tickerBid: number;
   tickerAsk: number;
   tickerLast: number;
+  // R3: explicit telemetry correlation keys (optional). For BUY fills,
+  // intentId is the SpotExecutionIntent id and signalId is the originating
+  // SpotEntryIntent signalId. These make the scan→entry→fill→lot chain
+  // unambiguous without parsing internalIntentId.
+  intentId?: string | null;
+  signalId?: string | null;
 }
 
 // ─── Full Snapshot Record ────────────────────────────────────────────────────

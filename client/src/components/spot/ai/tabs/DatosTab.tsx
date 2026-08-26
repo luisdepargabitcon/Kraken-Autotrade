@@ -68,11 +68,16 @@ export function DatosTab() {
         <CardContent className="space-y-3">
           {quality ? (
             <>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-xs text-muted-foreground">Score global:</span>
                 <Badge className={quality.score >= 80 ? "bg-green-500/20 text-green-400" : quality.score >= 50 ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}>
                   {quality.score}/100
                 </Badge>
+                {quality.qualityCoveragePct !== undefined && quality.qualityCoveragePct < 100 && (
+                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                    Score parcial — cobertura {quality.qualityCoveragePct}%
+                  </Badge>
+                )}
                 <span className="text-xs text-muted-foreground">Schema v{quality.featureSchemaVersion}</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
@@ -123,7 +128,9 @@ export function DatosTab() {
                       <TableCell className="text-xs">{f.type}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{f.origin}</TableCell>
                       <TableCell className="text-xs">{f.timeframe}</TableCell>
-                      <TableCell className="text-xs text-right">{f.missingPct}%</TableCell>
+                      <TableCell className="text-xs text-right">
+                        {f.missingPct === null ? "No disponible" : `${f.missingPct.toFixed(1)}%`}
+                      </TableCell>
                       <TableCell className="text-xs text-right">v{f.version}</TableCell>
                     </TableRow>
                   ))}
@@ -217,14 +224,17 @@ function KpiBox({ icon, label, value }: { icon: React.ReactNode; label: string; 
   );
 }
 
-function QualityCheck({ label, value, good }: { label: string; value: string | number; good: boolean }) {
+function QualityCheck({ label, value, good }: { label: string; value: string | number | null; good: boolean }) {
+  // R3: null value = NO DISPONIBLE (gray badge), NOT red.
+  const isNull = value === null;
+  const display = isNull ? "NO DISP" : value;
   return (
-    <div className={`p-2 rounded-lg border ${good ? "bg-green-500/10 border-green-500/20" : "bg-red-500/10 border-red-500/20"}`}>
+    <div className={`p-2 rounded-lg border ${isNull ? "bg-gray-500/10 border-gray-500/20" : good ? "bg-green-500/10 border-green-500/20" : "bg-red-500/10 border-red-500/20"}`}>
       <div className="flex items-center gap-1">
-        {good ? <CheckCircle2 className="h-3 w-3 text-green-400" /> : <AlertTriangle className="h-3 w-3 text-red-400" />}
+        {isNull ? <AlertTriangle className="h-3 w-3 text-gray-400" /> : good ? <CheckCircle2 className="h-3 w-3 text-green-400" /> : <AlertTriangle className="h-3 w-3 text-red-400" />}
         <span className="text-[10px] text-muted-foreground">{label}</span>
       </div>
-      <div className={`text-sm font-mono font-bold ${good ? "text-green-400" : "text-red-400"}`}>{value}</div>
+      <div className={`text-sm font-mono font-bold ${isNull ? "text-gray-400" : good ? "text-green-400" : "text-red-400"}`}>{display}</div>
     </div>
   );
 }

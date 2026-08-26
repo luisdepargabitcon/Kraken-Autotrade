@@ -17,6 +17,30 @@
 
 ## 2026-08-26 — SPOT FORWARD TWIN + IA FORWARD TWIN — ESTADO VIGENTE
 
+### Checkpoint R3 2026-08-26 — Correlación causal completa y dataset durable (contraauditoría GitHub #2)
+
+`4dde4cb` fue contraauditado por GitHub y NO autorizado para deploy. Correcciones R3 aplicadas sobre `4dde4cb`, sin deploy:
+
+- **1. Correlación scanId real**: `executeEntry` recibe `scanId` como parámetro telemetry-only; el BUY FILL usa el scanId real (no `internalIntentId`). `buildFillSnapshot` acepta `intentId`/`signalId` opcionales. La correlación `outcome.entryScanId === snapshot.scanId` ahora es productiva.
+- **2. Módulo único completedTrades**: `spotAiCompletedTrades.ts` es la ÚNICA fuente para completed/labeled/incomplete/correlationIncomplete trades. Los 5 endpoints (status/dataset/pairs/giveback/train) usan `queryCompletedTrades()`.
+- **3. TradeOutcomeBuilder productivo**: `buildTradeOutcomeMap()` construye el Map<lotId, TradeOutcomeEntry> desde datos reales (no maps manuales de tests).
+- **4. Tests causales reales**: `spotAiCausal.test.ts` reescrito con AI_CAUSAL_01..10 que ejercen `buildCompletedTradesFromSnapshots` → `buildTradeOutcomeMap` → `buildDataset`. Cubre cross-pair, overlapping, 1-trade-180-scans, wrong entryScanId, BUY sin SELL, SELL sin BUY, cadena completa, giveback lot isolation, no future in features.
+- **5. Tests lookahead reales**: close-time boundary para 5m/15m/1h/4h (open+tf-1ms → false, open+tf → true, seconds=milliseconds).
+- **6. Label builder unificado**: `spotAiLabelBuilder.ts` es la ÚNICA implementación. `buildEntryLabels` usa supervisor path para time_to_0_5R/time_to_1R. `buildGivebackLabels` usa future path (timestamp > T). El dataset builder ya no tiene lógica duplicada.
+- **7. Giveback future = future**: `buildGivebackLabels` calcula futurePeakR/futureWorstR desde supervisor snapshots con timestamp > T (estrictamente después). Una posición que alcanzó +2R antes de T no finge +2R en el futuro.
+- **8. Giveback lowestPrice eliminado**: SpotPosition no tiene lowestPrice real; el placeholder (entryPrice) fue eliminado del GivebackSampleState.
+- **9. Challengers EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED**: B_RET y A_FLOOR son políticas ARMADAS (trigger → retroceso). Sin simulator exacto, available=false, reason=EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED, NO fake PnL. BASELINE siempre available.
+- **10. Temporal split giveback por trade**: lotIds ordenados por first supervisor timestamp, 60/20/20 por lotId, todos los snapshots del lot heredan el split. Ningún lotId aparece en >1 split.
+- **11. UI quality null/coverage**: `spotAiTypes.ts` actualizado (lookaheadViolations/causalCorrelationFailures = number|null, checksAvailable, qualityCoveragePct, scoreIsPartial). DatosTab: null → badge gris "NO DISP", coverage < 100 → "Score parcial — cobertura XX%".
+- **12. UI feature missing null**: missingPct=null → "No disponible" (no "0%" ni "%").
+- **13. Quality score partial**: `scoreIsPartial = qualityCoveragePct < 100` en backend y client.
+- **14. Retención durable**: migration `090_spot_ai_forward_training_trades.sql` CREADA y auditada (NO APLICADA). Define `spot_ai_forward_training_trades` + `spot_ai_forward_giveback_samples` con retención 90d. Forward Twin raw sigue 7d.
+- **15. Training guard durable**: `trainingPipelineReady=false` y `durableLabeledTrades=null` hasta que migration 090 sea aplicada. El guard NO usa el rolling 7-day raw snapshot count como base durable.
+
+Validación local: `tsc --noEmit` limpio; `npm run build` OK; `git diff --check` limpio. SPOT-AI (spotAiCausal 11, spotAiForwardTwin 37, spotAiUiV2 29, spotAiRestart 11) = 88/88 PASS. Forward Twin + regresión SPOT (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark, spotE2E, spotEngine.integration, spotB15Comprehensive) = 168/168 PASS.
+
+NO DEPLOY. NO REAL. NO TRAINING. Pendiente de contraauditoría GitHub.
+
 ### Checkpoint 2026-08-26 — Reparación correlación FILL y calidad causal (contraauditoría)
 
 Correcciones aplicadas sobre `bea47206` (branch `refactor/spot-canonical-shadow-20260812`), sin deploy:

@@ -204,6 +204,10 @@ export interface SpotAiDataset {
 /**
  * State known up to a given SUPERVISOR snapshot instant. This is the FEATURE
  * side of a giveback sample — never includes future outcome.
+ *
+ * R3: lowestPrice is NOT included. SpotPosition has no real lowestPrice
+ * (the Forward Twin builder used entryPrice as a placeholder, which is
+ * incorrect). Only fields with a real source are present.
  */
 export interface GivebackSampleState {
   lotId: string;
@@ -219,7 +223,6 @@ export interface GivebackSampleState {
   trailingActivated: boolean;
   currentStopPrice: number;
   highestPrice: number;
-  lowestPrice: number;
 }
 
 export interface SpotAiGivebackSample {
@@ -279,4 +282,12 @@ export interface SpotAiStatusResponse {
   autoRetrain: boolean;
   aiTradingControl: "NONE";
   legacyDataMixed: boolean;
+  // R3: training pipeline readiness. NO until durable training trade storage
+  // (migration 090) is applied and the durable completed trade count is used
+  // as the training guard. The rolling 7-day raw snapshot count is NOT a
+  // durable basis for training.
+  trainingPipelineReady: boolean;
+  // R3: durable completed trade count (from spot_ai_forward_training_trades).
+  // null when the durable table does not exist yet (migration 090 not applied).
+  durableLabeledTrades: number | null;
 }

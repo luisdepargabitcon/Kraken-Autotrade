@@ -37,6 +37,7 @@ import {
   validateMinTrades,
   validateNoLookaheadInDataset,
 } from "../spotAiForwardTwin/spotAiDatasetBuilder";
+import type { TradeOutcomeEntry } from "../spotAiForwardTwin/spotAiCompletedTrades";
 import { modelRegistry } from "../spotAiForwardTwin/spotAiModelRegistry";
 import { advisoryService } from "../spotAiForwardTwin/spotAiAdvisoryService";
 import type { ForwardTwinSnapshot as FTSnapshot } from "../spot/spotForwardTwinTypes";
@@ -102,6 +103,43 @@ function makeScanSnapshot(overrides: Partial<FTSnapshot> = {}): FTSnapshot {
   };
 }
 
+function makeSupervisorSnapshot(
+  lotId: string,
+  pair: string,
+  timestamp: number,
+  overrides: Partial<FTSnapshot> = {},
+): FTSnapshot {
+  return {
+    ...makeScanSnapshot(),
+    snapshotType: "SUPERVISOR",
+    timestamp,
+    pair,
+    position: {
+      lotId,
+      pair,
+      entryPrice: 50000,
+      amount: 0.01,
+      qtyRemaining: 0.01,
+      highestPrice: 51000,
+      lowestPrice: 49500,
+      mfe: 1000,
+      mae: -500,
+      mfeR: 1.0,
+      maeR: -0.5,
+      openedAt: timestamp - 5000,
+      setupTag: "PULLBACK_CONTINUATION",
+      executionMode: "SHADOW",
+      sgBreakEvenActivated: false,
+      sgTrailingActivated: false,
+      sgCurrentStopPrice: 49000,
+      breakEvenStopPrice: null,
+      trailingStopPrice: null,
+      trailingHighestPrice: 51000,
+    },
+    ...overrides,
+  };
+}
+
 describe("AI_FT_01: legacy dataset excluded", () => {
   it("dataset builder must not reference training_trades or legacy tables", () => {
     const snapshot = makeScanSnapshot();
@@ -135,6 +173,75 @@ describe("AI_FT_02: no lookahead", () => {
     });
     expect(validateNoLookaheadInDataset(dataset)).toBe(true);
   });
+});
+
+// ─── R3: REAL candle close-time lookahead tests ──────────────────────────────
+// A candle is only safe to use if it is CLOSED: openTime + timeframe <= predTs.
+// These tests verify the close-time boundary for each timeframe, in both
+// seconds and milliseconds (must produce the same result).
+
+describe("AI_FT_02R: candle close-time lookahead (real)", () => {
+  // Helper: make a snapshot whose candle for `tf` has lastTime = candleOpen,
+  // and all other candles are safely closed.
+  function makeSnapshotWithCandle(tf: "candles5m" | "candles15m" | "candles1h" | "candles4m", candleOpen: number, predTs: number): FTSnapshot {
+    const safeLastTime = predTs - CLOSED_CANDLE_BUFFER_MS;
+    const candles: FTSnapshot["candles"] = {
+      candles5m: { meta: { count: 100, lastTime: safeLastTime, lastClose: 50005 }, candles: [] },
+      candles15m: { meta: { count: 100, lastTime: safeLastTime, lastClose: 50005 }, candles: [] },
+      candles1h: { meta: { count: 100, lastTime: safeLastTime, lastClose: 50005 }, candles: [] },
+      candles4h: { meta: { count: 100, lastTime: safeLastTime, lastClose: 50005 }, candles: [] },
+    };
+    const tfKey = tf as "candles5m" | "candles15m" | "candles1h" | "candles4h";
+    (candles as any)[tfKey] = { meta: { count: 100, lastTime: candleOpen, lastClose: 50005 }, candles: [] };
+    return makeScanSnapshot({ timestamp: predTs, candles } as any);
+  }
+
+  const TF_DURATIONS: Record<string, number> = {
+    "5m": 5 * 60 * 1000,
+    "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000,
+    "4h": 4 * 60 * 60 * 1000,
+  };
+  const TF_KEYS: Record<string, "candles5m" | "candles15m" | "candles1h" | "candles4h"> = {
+    "5m": "candles5m",
+    "15m": "candles15m",
+    "1h": "candles1h",
+    "4h": "candles4h",
+  };
+
+  for (const tf of ["5m", "15m", "1h", "4h"]) {
+    const dur = TF_DURATIONS[tf];
+    const tfKey = TF_KEYS[tf];
+    const open = BASE_TS;
+    const close = open + dur;
+
+    it(`${tf}: open=${open}, prediction=close-1ms → false (candle not closed)`, () => {
+      const snap = makeSnapshotWithCandle(tfKey, open, close - 1);
+      const features = buildFeaturesFromSnapshot(snap);
+      expect(validateNoLookahead(features, close - 1, snap)).toBe(false);
+    });
+
+    it(`${tf}: open=${open}, prediction=close → true (candle just closed)`, () => {
+      const snap = makeSnapshotWithCandle(tfKey, open, close);
+      const features = buildFeaturesFromSnapshot(snap);
+      expect(validateNoLookahead(features, close, snap)).toBe(true);
+    });
+
+    // Seconds vs milliseconds must produce the same result.
+    it(`${tf}: seconds and milliseconds produce the same result`, () => {
+      const snapMs = makeSnapshotWithCandle(tfKey, open, close);
+      const featuresMs = buildFeaturesFromSnapshot(snapMs);
+      const resultMs = validateNoLookahead(featuresMs, close, snapMs);
+      // Also test with prediction in seconds (rounded) — must match.
+      const predSec = Math.floor(close / 1000) * 1000;
+      const snapSec = makeSnapshotWithCandle(tfKey, open, predSec);
+      const featuresSec = buildFeaturesFromSnapshot(snapSec);
+      const resultSec = validateNoLookahead(featuresSec, predSec, snapSec);
+      // Both should be true (candle closed at or before prediction).
+      expect(resultMs).toBe(true);
+      expect(resultSec).toBe(true);
+    });
+  }
 });
 
 describe("AI_FT_03: schema version", () => {
@@ -195,11 +302,14 @@ describe("AI_FT_06: temporal split", () => {
 
 describe("AI_FT_07: entry labels", () => {
   it("entry labels must compute R targets correctly", () => {
-    const labels = buildEntryLabels({
+    // R3: buildEntryLabels uses the canonical TradeOutcomeEntry + supervisor path.
+    const outcome: TradeOutcomeEntry = {
+      lotId: "lot-1", pair: "BTC/USD", entryScanId: "scan-1",
       entryPrice: 50000, exitPrice: 51000, stopPrice: 49000,
       mfe: 1200, mae: -200, mfeR: 1.2, maeR: -0.2,
-      entryTime: 1000, exitTime: 60000, netPnlUsd: 100, riskUsd: 1000,
-    });
+      entryTime: BASE_TS, exitTime: BASE_TS + 60000, netPnlUsd: 100, riskUsd: 1000,
+    };
+    const labels = buildEntryLabels(outcome, []);
     expect(labels.reached_0_5R_before_stop).toBe(true);
     expect(labels.reached_1R_before_stop).toBe(true);
     expect(labels.reached_1_5R_before_stop).toBe(false);
@@ -209,19 +319,34 @@ describe("AI_FT_07: entry labels", () => {
 });
 
 describe("AI_FT_08: giveback labels", () => {
-  it("giveback labels must compute giveback percentages", () => {
+  it("giveback labels must compute giveback percentages from future path", () => {
+    // R3: buildGivebackLabels uses future path (supervisor snapshots > T).
+    const outcome: TradeOutcomeEntry = {
+      lotId: "lot-1", pair: "BTC/USD", entryScanId: "scan-1",
+      entryPrice: 50000, exitPrice: 50500, stopPrice: 49000,
+      mfe: 2000, mae: -300, mfeR: 2.0, maeR: -0.3,
+      entryTime: BASE_TS, exitTime: BASE_TS + 60000, netPnlUsd: 50, riskUsd: 1000,
+    };
+    // Supervisor at T (currentR=1.5), then future supervisors showing peak 2.0.
+    const supAtT = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 1000);
+    (supAtT as any).position.mfeR = 1.5;
+    const supFuture1 = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 2000);
+    (supFuture1 as any).position.mfeR = 2.0;
+    const supFuture2 = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 3000);
+    (supFuture2 as any).position.mfeR = 1.8;
+
     const labels = buildGivebackLabels({
-      currentUnrealizedR: 1.5,
-      mfeR: 2.0,
-      maeR: -0.3,
-      finalR: 0.5,
-      futureMfeR: 2.0,
-      futureMaeR: -0.3,
+      lotId: "lot-1", pair: "BTC/USD", timestamp: BASE_TS + 1000,
+      currentR: 1.5, outcome,
+      supervisorSnapshots: [supAtT, supFuture1, supFuture2],
     });
-    expect(labels.giveback_25pct).toBe(true);
-    expect(labels.giveback_50pct).toBe(true);
-    expect(labels.giveback_75pct).toBe(true);
-    expect(labels.expected_giveback_R).toBe(1.5);
+    expect(labels).not.toBeNull();
+    expect(labels!.final_R).toBeCloseTo(0.05, 5);
+    // futurePeakR = 2.0 (from future path), finalR = 0.05 → giveback > 75%.
+    expect(labels!.future_MFE_R).toBe(2.0);
+    expect(labels!.giveback_25pct).toBe(true);
+    expect(labels!.giveback_50pct).toBe(true);
+    expect(labels!.giveback_75pct).toBe(true);
   });
 });
 

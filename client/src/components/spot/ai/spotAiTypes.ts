@@ -12,6 +12,9 @@ export interface SpotAiStatus {
   autoRetrain: boolean;
   aiTradingControl: string;
   legacyDataMixed: boolean;
+  // R3: training pipeline readiness and durable trade count.
+  trainingPipelineReady?: boolean;
+  durableLabeledTrades?: number | null;
   collectorSessionCaptured?: number;
   collectorSessionFlushed?: number;
   bufferSize?: number;
@@ -47,11 +50,18 @@ export interface DatasetQuality {
     orphanSupervisor: number;
     orphanFills: number;
     incompleteTrades: number;
-    lookaheadViolations: number;
-    causalCorrelationFailures: number;
+    // R3: nullable — not computable in pure SQL. null = NO DISPONIBLE.
+    lookaheadViolations: number | null;
+    causalCorrelationFailures: number | null;
     legacyMixed: boolean;
     syntheticLabels: boolean;
   };
+  // R3: per-check availability metadata.
+  checksAvailable?: Record<string, boolean>;
+  // R3: coverage percentage of computed checks vs total checks.
+  qualityCoveragePct?: number;
+  // R3: true when coverage < 100 (partial score).
+  scoreIsPartial?: boolean;
   score: number;
   available: boolean;
   status: string;

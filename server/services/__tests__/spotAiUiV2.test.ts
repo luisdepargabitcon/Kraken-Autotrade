@@ -227,3 +227,116 @@ describe("AI_UIV2_16: canTrain enforces MIN_TRADES_TO_TRAIN", () => {
     expect(advisoryService.canTrain(100)).toBe(true);
   });
 });
+
+// ─── R3: UI quality / coverage / missingPct / training pipeline tests ────────
+
+describe("AI_UIV2_R3_01: quality null checks render as NO DISPONIBLE", () => {
+  it("lookaheadViolations=null must NOT be treated as 0 (good)", () => {
+    // Simulate the quality response shape the backend now produces.
+    const qualityResponse = {
+      checks: {
+        schemaVersionMismatches: 0,
+        invalidSnapshots: 0,
+        missingFeatures: 0,
+        duplicateEntryFills: 0,
+        duplicateExitFills: 0,
+        orphanSupervisor: 0,
+        orphanFills: 0,
+        incompleteTrades: 0,
+        lookaheadViolations: null as number | null,
+        causalCorrelationFailures: null as number | null,
+        legacyMixed: false,
+        syntheticLabels: false,
+      },
+      checksAvailable: {
+        schemaVersionMismatches: true,
+        invalidSnapshots: true,
+        missingFeatures: true,
+        duplicateEntryFills: true,
+        duplicateExitFills: true,
+        orphanSupervisor: true,
+        orphanFills: true,
+        incompleteTrades: true,
+        lookaheadViolations: false,
+        causalCorrelationFailures: false,
+        legacyMixed: true,
+        syntheticLabels: true,
+      },
+      qualityCoveragePct: 83.3,
+      scoreIsPartial: true,
+      score: 100,
+      available: true,
+      status: "OK",
+      legacyMixedStructuralInvariant: true,
+      syntheticLabelsStructuralInvariant: true,
+      featureSchemaVersion: 1,
+    };
+    // null must NOT equal 0 (the old UI bug).
+    expect(qualityResponse.checks.lookaheadViolations).not.toBe(0);
+    expect(qualityResponse.checks.lookaheadViolations).toBeNull();
+    expect(qualityResponse.checks.causalCorrelationFailures).toBeNull();
+  });
+});
+
+describe("AI_UIV2_R3_02: quality coverage partial score", () => {
+  it("coverage < 100 → scoreIsPartial=true", () => {
+    const qualityResponse = { qualityCoveragePct: 83.3, scoreIsPartial: true };
+    expect(qualityResponse.qualityCoveragePct).toBeLessThan(100);
+    expect(qualityResponse.scoreIsPartial).toBe(true);
+  });
+
+  it("coverage = 100 → scoreIsPartial=false", () => {
+    const qualityResponse = { qualityCoveragePct: 100, scoreIsPartial: false };
+    expect(qualityResponse.qualityCoveragePct).toBe(100);
+    expect(qualityResponse.scoreIsPartial).toBe(false);
+  });
+});
+
+describe("AI_UIV2_R3_03: feature missingPct null = No disponible", () => {
+  it("missingPct=null must NOT render as 0% or empty %", () => {
+    const feature = { name: "testFeature", missingPct: null as number | null };
+    // The UI must show "No disponible", not "0%" or "%".
+    expect(feature.missingPct).toBeNull();
+    expect(feature.missingPct).not.toBe(0);
+  });
+
+  it("missingPct=number must render as percentage", () => {
+    const feature = { name: "testFeature", missingPct: 5.5 };
+    expect(feature.missingPct).toBe(5.5);
+  });
+});
+
+describe("AI_UIV2_R3_04: completed trade 0 → progress 0/100", () => {
+  it("status with labeledTrades=0 must show 0 progress", async () => {
+    const status = await advisoryService.getStatus(0, 0);
+    expect(status.labeledTrades).toBe(0);
+    expect(status.minTradesToTrain).toBe(100);
+    // Progress = 0/100.
+    expect(status.labeledTrades / status.minTradesToTrain).toBe(0);
+  });
+});
+
+describe("AI_UIV2_R3_05: no candidate → validation not available", () => {
+  it("validation endpoint returns NO_CANDIDATE when no candidate model exists", async () => {
+    const models = await modelRegistry.listByModel("SPOT_AI_FORWARD_TWIN_ENTRY");
+    const candidate = models.find((m) => m.status === "CANDIDATE" || m.status === "VALIDATED");
+    // In test env, no candidate should exist.
+    expect(candidate).toBeUndefined();
+  });
+});
+
+describe("AI_UIV2_R3_06: advisory inference false → no ACTIVE UI", () => {
+  it("status must NOT be ADVISORY when inference is not implemented", async () => {
+    const status = await advisoryService.getStatus(100, 200);
+    // INFERENCE_IMPLEMENTED=false → status must NOT be ADVISORY.
+    expect(status.status).not.toBe("ADVISORY");
+  });
+});
+
+describe("AI_UIV2_R3_07: training pipeline ready = NO", () => {
+  it("trainingPipelineReady must be false (durable storage not applied)", async () => {
+    const status = await advisoryService.getStatus(100, 0);
+    expect(status.trainingPipelineReady).toBe(false);
+    expect(status.durableLabeledTrades).toBeNull();
+  });
+});

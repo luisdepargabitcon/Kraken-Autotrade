@@ -1,6 +1,9 @@
 /**
  * spotAiDatasetBuilder — Build training dataset from Forward Twin snapshots.
  *
+ * R3 SINGLE SOURCE: TradeOutcomeEntry comes from spotAiCompletedTrades.
+ * Labels come from spotAiLabelBuilder (single canonical implementation).
+ *
  * Key invariants:
  *   - Source: spot_forward_twin_snapshots ONLY (no legacy training_trades).
  *   - Includes HOLD/REJECTED scans, not just executed trades.
@@ -9,35 +12,30 @@
  *   - No random shuffle.
  *   - No lookahead: features from snapshot at prediction time only.
  *
- * CAUSAL CORRELATION (defects E, F):
- *   - TradeOutcomeEntry MUST contain pair AND entryScanId.
+ * CAUSAL CORRELATION (R3):
  *   - deriveGroupId and findOutcomeForSnapshot match by EXPLICIT correlation:
  *     outcome.entryScanId === snapshot.scanId AND outcome.pair === snapshot.pair.
- *   - Temporal overlap (entryTime <= scan.timestamp <= exitTime) is NOT used
- *     to associate Entry Model labels. Only the scan that ORIGINATED the entry
+ *   - Temporal overlap is NOT used. Only the scan that ORIGINATED the entry
  *     receives that outcome. Overlapping but unrelated scans get labels=null.
- *   - When entryScanId is null the trade is CORRELATION_INCOMPLETE and no scan
- *     receives its labels (defect C).
  *   - A BTC scan can NEVER receive labels from an ETH trade.
  *
- * TIME-TO-TARGETS:
- *   - time_to_0_5R and time_to_1R are computed from SUPERVISOR snapshots
- *     that first observed the position reaching +0.5R or +1.0R.
- *   - If no supervisor snapshot is available, null (NOT holdTime).
+ * GIVEBACK DATASET (R3):
+ *   - Built from SUPERVISOR snapshots via buildGivebackDataset().
+ *   - Each sample = lotId + timestamp T + state known up to T (FEATURE side).
+ *   - labels = future outcome computed from supervisor path with timestamp > T
+ *     (strictly after T). Aggregate outcome MFE/MAE is NOT used directly
+ *     because it may include excursions before T.
+ *   - lowestPrice is NOT used as a feature (SpotPosition has no real
+ *     lowestPrice; the builder used entryPrice as a placeholder). See
+ *     GivebackSampleState for the available real fields.
  *
- * GIVEBACK DATASET (defect G):
- *   - NOT built from SCAN. Built from SUPERVISOR snapshots via
- *     buildGivebackDataset(). Each sample = lotId + timestamp + state known
- *     up to that instant; future outcome is the LABEL only.
- *   - Entry dataset scan samples carry givebackLabels=null (giveback is a
- *     separate dataset).
- *
- * CHALLENGERS (defect H):
- *   - A challenger must NOT simulate "reached trigger => closed immediately at
- *     trigger" when there is insufficient chronological path data to decide
- *     whether the target or the stop was hit first.
- *   - When the supervisor path is insufficient, available=false with
- *     reason=INSUFFICIENT_PATH_DATA.
+ * CHALLENGERS (R3):
+ *   - B_RET and A_FLOOR are ARMED policies: they reach a trigger, then
+ *     evaluate a retroceso/protección posterior. An exact counterfactual
+ *     state-machine simulator is NOT implemented.
+ *   - BASELINE: available=true (actual exit).
+ *   - B_RET_0_75_0_30 / A_FLOOR_1_00_1_00: available=false,
+ *     reason=EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED. NO fake PnL.
  *   - Challengers are observational only — never modify exit policy.
  */
 
@@ -47,15 +45,17 @@ import type {
   SpotAiDatasetSample,
   DatasetSplit,
   SpotAiFeatures,
-  SpotAiEntryLabels,
   SpotAiGivebackLabels,
   SpotAiGivebackDataset,
   SpotAiGivebackSample,
   GivebackSampleState,
   ChallengerProjection,
-  ChallengerPolicy,
 } from "./spotAiForwardTwinTypes";
 import { buildFeaturesFromSnapshot, validateNoLookahead } from "./spotAiFeatureBuilder";
+import { buildEntryLabels, buildGivebackLabels } from "./spotAiLabelBuilder";
+import type { TradeOutcomeEntry } from "./spotAiCompletedTrades";
+// Re-export so existing imports from this module keep working.
+export type { TradeOutcomeEntry } from "./spotAiCompletedTrades";
 import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
 
 export interface DatasetBuildInput {
@@ -63,23 +63,6 @@ export interface DatasetBuildInput {
   supervisorSnapshots: ForwardTwinSnapshot[];
   fillSnapshots: ForwardTwinSnapshot[];
   tradeOutcomes: Map<string, TradeOutcomeEntry>;
-}
-
-export interface TradeOutcomeEntry {
-  lotId: string;
-  pair: string;
-  entryScanId: string | null;
-  entryPrice: number;
-  exitPrice: number;
-  stopPrice: number;
-  mfe: number;
-  mae: number;
-  mfeR: number;
-  maeR: number;
-  entryTime: number;
-  exitTime: number;
-  netPnlUsd: number;
-  riskUsd: number;
 }
 
 export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
@@ -103,15 +86,16 @@ export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
 
     const groupId = deriveGroupId(snapshot, tradeOutcomes);
     const outcome = findOutcomeForSnapshot(snapshot, tradeOutcomes);
-    const labels: SpotAiEntryLabels | null = outcome ? buildEntryLabelsFromOutcome(outcome, supervisorSnapshots) : null;
+    // R3: use the SINGLE canonical label builder (spotAiLabelBuilder).
+    const labels = outcome ? buildEntryLabels(outcome, supervisorSnapshots) : null;
 
-    // Defect G: giveback is NOT built from SCAN. The entry dataset carries
+    // Giveback is NOT built from SCAN. The entry dataset carries
     // givebackLabels=null; giveback is a separate dataset built from
     // SUPERVISOR snapshots via buildGivebackDataset().
     const givebackLabels: SpotAiGivebackLabels | null = null;
 
     const challengers: ChallengerProjection[] = outcome
-      ? projectChallengers(outcome, supervisorSnapshots)
+      ? projectChallengers(outcome)
       : [];
 
     if (labels && outcome) {
@@ -139,9 +123,9 @@ export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
   return {
     featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
     samples,
-    trainCount: samples.filter(s => s.split === "train").length,
-    validationCount: samples.filter(s => s.split === "validation").length,
-    testCount: samples.filter(s => s.split === "test").length,
+    trainCount: samples.filter((s) => s.split === "train").length,
+    validationCount: samples.filter((s) => s.split === "validation").length,
+    testCount: samples.filter((s) => s.split === "test").length,
     labeledTradeCount,
     totalSnapshotCount: scanSnapshots.length,
     groupSplitByTrade: true,
@@ -158,7 +142,7 @@ export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
 function deriveGroupId(snapshot: ForwardTwinSnapshot, outcomes: Map<string, TradeOutcomeEntry>): string {
   for (const [lotId, outcome] of outcomes) {
     if (outcome.pair !== snapshot.pair) continue;
-    if (outcome.entryScanId !== null && outcome.entryScanId === snapshot.scanId) {
+    if (outcome.entryScanId === snapshot.scanId) {
       return lotId;
     }
   }
@@ -167,9 +151,8 @@ function deriveGroupId(snapshot: ForwardTwinSnapshot, outcomes: Map<string, Trad
 
 /**
  * Find the trade outcome whose entry was ORIGINATED by this scan, via explicit
- * entryScanId correlation (defects E, F). Temporal overlap is NOT used. A
- * scan that did not originate any entry receives no outcome (labels=null).
- * Outcomes with entryScanId=null are CORRELATION_INCOMPLETE and match nothing.
+ * entryScanId correlation. Temporal overlap is NOT used. A scan that did not
+ * originate any entry receives no outcome (labels=null).
  */
 function findOutcomeForSnapshot(
   snapshot: ForwardTwinSnapshot,
@@ -177,91 +160,28 @@ function findOutcomeForSnapshot(
 ): TradeOutcomeEntry | null {
   for (const outcome of outcomes.values()) {
     if (outcome.pair !== snapshot.pair) continue;
-    if (outcome.entryScanId !== null && outcome.entryScanId === snapshot.scanId) {
+    if (outcome.entryScanId === snapshot.scanId) {
       return outcome;
     }
   }
   return null;
 }
 
-function buildEntryLabelsFromOutcome(
-  outcome: TradeOutcomeEntry,
-  supervisorSnapshots: ForwardTwinSnapshot[],
-): SpotAiEntryLabels {
-  const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
-  const mfeR = outcome.mfeR;
-  const finalR = outcome.netPnlUsd / r;
-  const holdMs = outcome.exitTime - outcome.entryTime;
-
-  const timeTo0_5R = computeTimeToTarget(outcome, supervisorSnapshots, 0.5);
-  const timeTo1R = computeTimeToTarget(outcome, supervisorSnapshots, 1.0);
-
-  return {
-    reached_0_5R_before_stop: mfeR >= 0.5,
-    reached_1R_before_stop: mfeR >= 1.0,
-    reached_1_5R_before_stop: mfeR >= 1.5,
-    reached_2R_before_stop: mfeR >= 2.0,
-    final_net_profitable: outcome.netPnlUsd > 0,
-    final_R: finalR,
-    mfe_R: mfeR,
-    mae_R: outcome.maeR,
-    time_to_0_5R: mfeR >= 0.5 ? timeTo0_5R : null,
-    time_to_1R: mfeR >= 1.0 ? timeTo1R : null,
-    time_to_exit: holdMs,
-  };
-}
-
-function computeTimeToTarget(
-  outcome: TradeOutcomeEntry,
-  supervisorSnapshots: ForwardTwinSnapshot[],
-  targetR: number,
-): number | null {
-  const relevant = supervisorSnapshots
-    .filter(s => s.snapshotType === "SUPERVISOR" && s.position?.lotId === outcome.lotId && s.position?.pair === outcome.pair)
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  for (const snap of relevant) {
-    if (snap.position && snap.position.mfeR >= targetR) {
-      return snap.timestamp - outcome.entryTime;
-    }
-  }
-
-  return null;
-}
+// ─── Giveback dataset (from SUPERVISOR, future labels after T) ───────────────
 
 /**
- * Compute the future-outcome giveback LABEL from a completed trade outcome.
- * This is the LABEL side only — it must never be used as a feature. Returns
- * null when the trade has no positive MFE (no giveback to study).
- */
-function buildGivebackLabelFromOutcome(outcome: TradeOutcomeEntry): SpotAiGivebackLabels | null {
-  if (outcome.mfeR <= 0) return null;
-
-  const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
-  const finalR = outcome.netPnlUsd / r;
-  const givebackR = outcome.mfeR - finalR;
-  const givebackPct = outcome.mfeR > 0 ? givebackR / outcome.mfeR : 0;
-
-  return {
-    profit_to_loss: outcome.mfeR >= 1.0 && outcome.netPnlUsd < 0,
-    giveback_25pct: givebackPct >= 0.25,
-    giveback_50pct: givebackPct >= 0.50,
-    giveback_75pct: givebackPct >= 0.75,
-    final_R: finalR,
-    future_MFE_R: outcome.mfeR,
-    future_MAE_R: outcome.maeR,
-    expected_giveback_R: givebackR,
-  };
-}
-
-/**
- * Build the Giveback dataset from SUPERVISOR snapshots (defect G).
+ * Build the Giveback dataset from SUPERVISOR snapshots.
  *
- * Each sample is a SUPERVISOR snapshot for a lotId:
- *   - state  = state known up to that instant (FEATURE side)
- *   - labels = future outcome (LABEL only), null if the trade is not closed
+ * Each sample is a SUPERVISOR snapshot for a lotId at time T:
+ *   - state  = state known up to T (FEATURE side). R3: lowestPrice is NOT
+ *              included (SpotPosition has no real lowestPrice; using
+ *              entryPrice as a placeholder is prohibited).
+ *   - labels = future outcome computed from supervisor path with
+ *              timestamp > T (strictly after T). null if trade not closed.
  *
- * The dataset is grouped by lotId and temporally split (60/20/20).
+ * The dataset is grouped by lotId and split BY TRADE (chronological lotId
+ * ordering by first supervisor timestamp), 60/20/20. All snapshots of a
+ * lot inherit the lot's split. No lot appears in >1 split.
  */
 export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDataset {
   const { supervisorSnapshots, tradeOutcomes } = input;
@@ -275,16 +195,24 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
     if (!position) continue;
 
     const outcome = tradeOutcomes.get(position.lotId) ?? null;
-    // Only supervisor snapshots whose lotId has a completed outcome carry a
-    // future label. Open positions (no outcome) are included with labels=null
-    // so the dataset reflects the real supervisor population, but they do not
-    // count as labeled trades.
-    const labels = outcome ? buildGivebackLabelFromOutcome(outcome) : null;
+    // R3: giveback labels computed from future path (timestamp > T), not
+    // aggregate outcome MFE/MAE.
+    const labels = outcome
+      ? buildGivebackLabels({
+          lotId: position.lotId,
+          pair: position.pair,
+          timestamp: snap.timestamp,
+          currentR: position.mfeR, // current unrealized R at T
+          outcome,
+          supervisorSnapshots,
+        })
+      : null;
 
     const minutesInTrade = position.openedAt > 0
       ? Math.max(0, Math.round((snap.timestamp - position.openedAt) / 60_000))
       : 0;
 
+    // R3: lowestPrice is NOT included — SpotPosition has no real lowestPrice.
     const state: GivebackSampleState = {
       lotId: position.lotId,
       pair: position.pair,
@@ -299,7 +227,6 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
       trailingActivated: position.sgTrailingActivated,
       currentStopPrice: position.sgCurrentStopPrice,
       highestPrice: position.highestPrice,
-      lowestPrice: position.lowestPrice,
     };
 
     if (labels && outcome && !labeledLotIds.has(outcome.lotId)) {
@@ -315,15 +242,15 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
     });
   }
 
-  samples.sort((a, b) => a.state.timestamp - b.state.timestamp);
-  assignGivebackTemporalSplits(samples);
+  // R3: split BY TRADE (chronological lotId ordering by first supervisor ts).
+  assignGivebackTemporalSplitsByTrade(samples);
 
   return {
     featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
     samples,
-    trainCount: samples.filter(s => s.split === "train").length,
-    validationCount: samples.filter(s => s.split === "validation").length,
-    testCount: samples.filter(s => s.split === "test").length,
+    trainCount: samples.filter((s) => s.split === "train").length,
+    validationCount: samples.filter((s) => s.split === "validation").length,
+    testCount: samples.filter((s) => s.split === "test").length,
     labeledTradeCount: labeledLotIds.size,
     totalSupervisorSnapshots: supervisorSnapshots.length,
     groupSplitByTrade: true,
@@ -331,140 +258,88 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
   };
 }
 
-function assignGivebackTemporalSplits(samples: SpotAiGivebackSample[]): void {
-  const n = samples.length;
-  if (n === 0) return;
-  const trainEnd = Math.floor(n * 0.6);
-  const valEnd = Math.floor(n * 0.8);
-  const groupAssignments = new Map<string, DatasetSplit>();
-  for (let i = 0; i < n; i++) {
-    const desired: DatasetSplit = i < trainEnd ? "train" : i < valEnd ? "validation" : "test";
-    const groupId = samples[i].groupId;
-    if (groupAssignments.has(groupId)) {
-      samples[i].split = groupAssignments.get(groupId)!;
-    } else {
-      groupAssignments.set(groupId, desired);
-      samples[i].split = desired;
+/**
+ * R3: split giveback samples BY TRADE. Order lotIds by their first supervisor
+ * timestamp, assign 60/20/20 by lotId, then all snapshots of a lot inherit
+ * the lot's split. No lot appears in >1 split.
+ */
+function assignGivebackTemporalSplitsByTrade(samples: SpotAiGivebackSample[]): void {
+  if (samples.length === 0) return;
+
+  // First timestamp per lotId.
+  const firstTsByLot = new Map<string, number>();
+  for (const s of samples) {
+    const prev = firstTsByLot.get(s.groupId);
+    if (prev === undefined || s.state.timestamp < prev) {
+      firstTsByLot.set(s.groupId, s.state.timestamp);
     }
   }
+
+  // Order lotIds by first timestamp.
+  const orderedLots = Array.from(firstTsByLot.entries())
+    .sort((a, b) => a[1] - b[1])
+    .map((e) => e[0]);
+
+  const nLots = orderedLots.length;
+  const trainEnd = Math.floor(nLots * 0.6);
+  const valEnd = Math.floor(nLots * 0.8);
+
+  const lotSplit = new Map<string, DatasetSplit>();
+  for (let i = 0; i < nLots; i++) {
+    const split: DatasetSplit = i < trainEnd ? "train" : i < valEnd ? "validation" : "test";
+    lotSplit.set(orderedLots[i], split);
+  }
+
+  for (const s of samples) {
+    s.split = lotSplit.get(s.groupId) ?? "train";
+  }
 }
+
+// ─── Challengers (R3: EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED) ────────────────
 
 /**
- * Project challenger exit policies observationally (defect H).
+ * Project challenger exit policies observationally.
  *
- * A challenger must NOT simulate "reached trigger => closed immediately at
- * trigger" when there is insufficient chronological SUPERVISOR path data to
- * determine whether the target or the stop was hit first. When the path is
- * insufficient, the challenger is reported with available=false and
- * reason=INSUFFICIENT_PATH_DATA. BASELINE is always available (actual exit).
+ * R3: B_RET and A_FLOOR are ARMED policies (trigger → retroceso/protección
+ * posterior). An exact counterfactual state-machine simulator is NOT
+ * implemented. Therefore these challengers report available=false with
+ * reason=EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED and NO fake PnL.
+ *
+ * BASELINE is always available (actual exit).
+ *
+ * Challengers are observational only — never modify exit policy.
  */
-function projectChallengers(
-  outcome: TradeOutcomeEntry,
-  supervisorSnapshots: ForwardTwinSnapshot[],
-): ChallengerProjection[] {
+function projectChallengers(outcome: TradeOutcomeEntry): ChallengerProjection[] {
   const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
-  const entryPrice = outcome.entryPrice;
-  const stopPrice = outcome.stopPrice;
-  const direction = entryPrice > stopPrice ? 1 : -1;
-  const riskDist = Math.abs(entryPrice - stopPrice);
-
-  const baseline: ChallengerProjection = {
-    policy: "BASELINE",
-    projectedExitPrice: outcome.exitPrice,
-    projectedR: outcome.netPnlUsd / r,
-    projectedPnlUsd: outcome.netPnlUsd,
-    available: true,
-    reason: null,
-  };
-
-  if (riskDist <= 0) {
-    return [
-      baseline,
-      { policy: "B_RET_0_75_0_30", projectedExitPrice: 0, projectedR: 0, projectedPnlUsd: 0, available: false, reason: "INVALID_RISK_DISTANCE" },
-      { policy: "A_FLOOR_1_00_1_00", projectedExitPrice: 0, projectedR: 0, projectedPnlUsd: 0, available: false, reason: "INVALID_RISK_DISTANCE" },
-    ];
-  }
-
-  // Chronological supervisor path for this lot/pair — used to determine the
-  // ORDER in which target/stop events occurred (defect H).
-  const path = supervisorSnapshots
-    .filter(s => s.snapshotType === "SUPERVISOR" && s.position?.lotId === outcome.lotId && s.position?.pair === outcome.pair)
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  const project = (
-    policy: ChallengerPolicy,
-    targetR: number,
-    stopR: number,
-  ): ChallengerProjection => {
-    const targetPrice = entryPrice + direction * riskDist * targetR;
-    const stopExitPrice = entryPrice - direction * riskDist * stopR;
-
-    // Insufficient path data → cannot determine target-vs-stop ordering.
-    if (path.length === 0) {
-      return {
-        policy,
-        projectedExitPrice: 0,
-        projectedR: 0,
-        projectedPnlUsd: 0,
-        available: false,
-        reason: "INSUFFICIENT_PATH_DATA",
-      };
-    }
-
-    // First supervisor snapshot where the running MFE reached the target,
-    // and first where the running MAE reached the stop.
-    let firstTargetTs: number | null = null;
-    let firstStopTs: number | null = null;
-    for (const s of path) {
-      const mfeR = s.position?.mfeR ?? 0;
-      const maeR = s.position?.maeR ?? 0;
-      if (firstTargetTs === null && mfeR >= targetR) firstTargetTs = s.timestamp;
-      if (firstStopTs === null && maeR <= -stopR) firstStopTs = s.timestamp;
-      if (firstTargetTs !== null && firstStopTs !== null) break;
-    }
-
-    let projectedExitPrice: number;
-    let projectedR: number;
-
-    if (firstTargetTs !== null && (firstStopTs === null || firstTargetTs <= firstStopTs)) {
-      // Target hit first (or stop never hit) → challenger exits at target.
-      projectedExitPrice = targetPrice;
-      projectedR = targetR;
-    } else if (firstStopTs !== null && (firstTargetTs === null || firstStopTs < firstTargetTs)) {
-      // Stop hit first → challenger exits at stop.
-      projectedExitPrice = stopExitPrice;
-      projectedR = -stopR;
-    } else {
-      // Neither event observed in the supervisor path → cannot simulate the
-      // challenger policy reliably. Do NOT assume "reached trigger => closed
-      // immediately at trigger" from aggregate MFE/MAE alone.
-      return {
-        policy,
-        projectedExitPrice: 0,
-        projectedR: 0,
-        projectedPnlUsd: 0,
-        available: false,
-        reason: "INSUFFICIENT_PATH_DATA",
-      };
-    }
-
-    const projectedPnlUsd = (projectedExitPrice - entryPrice) * direction * (r / riskDist);
-    return {
-      policy,
-      projectedExitPrice,
-      projectedR,
-      projectedPnlUsd,
+  return [
+    {
+      policy: "BASELINE",
+      projectedExitPrice: outcome.exitPrice,
+      projectedR: outcome.netPnlUsd / r,
+      projectedPnlUsd: outcome.netPnlUsd,
       available: true,
       reason: null,
-    };
-  };
-
-  return [
-    baseline,
-    project("B_RET_0_75_0_30", 0.75, 0.30),
-    project("A_FLOOR_1_00_1_00", 1.0, 1.0),
+    },
+    {
+      policy: "B_RET_0_75_0_30",
+      projectedExitPrice: 0,
+      projectedR: 0,
+      projectedPnlUsd: 0,
+      available: false,
+      reason: "EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED",
+    },
+    {
+      policy: "A_FLOOR_1_00_1_00",
+      projectedExitPrice: 0,
+      projectedR: 0,
+      projectedPnlUsd: 0,
+      available: false,
+      reason: "EXACT_POLICY_SIMULATOR_NOT_IMPLEMENTED",
+    },
   ];
 }
+
+// ─── Temporal split (entry dataset) ──────────────────────────────────────────
 
 function assignTemporalSplits(samples: SpotAiDatasetSample[]): void {
   const n = samples.length;
@@ -487,6 +362,8 @@ function assignTemporalSplits(samples: SpotAiDatasetSample[]): void {
     }
   }
 }
+
+// ─── Validation helpers ──────────────────────────────────────────────────────
 
 export function validateGroupSplit(dataset: SpotAiDataset): boolean {
   const groupSplits = new Map<string, Set<DatasetSplit>>();
@@ -514,9 +391,27 @@ export function countLabeledTrades(outcomes: Map<string, TradeOutcomeEntry>): nu
 }
 
 export function validateHoldsIncluded(dataset: SpotAiDataset): boolean {
-  return dataset.samples.some(s => s.labels === null);
+  return dataset.samples.some((s) => s.labels === null);
 }
 
 export function validateMinTrades(dataset: SpotAiDataset, minTrades: number): boolean {
   return dataset.labeledTradeCount >= minTrades;
+}
+
+/**
+ * R3: validate that no lotId appears in more than one split in the giveback
+ * dataset (split by trade invariant).
+ */
+export function validateGivebackGroupSplit(dataset: SpotAiGivebackDataset): boolean {
+  const groupSplits = new Map<string, Set<DatasetSplit>>();
+  for (const sample of dataset.samples) {
+    if (!groupSplits.has(sample.groupId)) {
+      groupSplits.set(sample.groupId, new Set());
+    }
+    groupSplits.get(sample.groupId)!.add(sample.split);
+  }
+  for (const splits of groupSplits.values()) {
+    if (splits.size > 1) return false;
+  }
+  return true;
 }

@@ -89,6 +89,12 @@ class SpotAiAdvisoryService {
       autoRetrain: false,
       aiTradingControl: "NONE",
       legacyDataMixed: false,
+      // R3: durable training storage (migration 090) is NOT applied yet.
+      // The training pipeline is NOT ready until durable completed trade
+      // storage exists. The rolling 7-day raw snapshot count is NOT a durable
+      // basis for training.
+      trainingPipelineReady: false,
+      durableLabeledTrades: null,
     };
   }
 

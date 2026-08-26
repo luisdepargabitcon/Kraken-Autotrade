@@ -1240,7 +1240,9 @@ export async function _executeEntryForTest(
   signal: SpotSignalResult | undefined,
   generation: number,
 ): Promise<ExecuteEntryOutcome> {
-  return executeEntry(intent, ctx, mode, signal, generation, getPairEntryGeneration(intent.pair));
+  // R3: scanId is telemetry-only for Forward Twin FILL correlation. Tests do
+  // not have a real scanId, so pass a synthetic one derived from the intent.
+  return executeEntry(intent, ctx, mode, signal, generation, getPairEntryGeneration(intent.pair), `test-${intent.signalId}`);
 }
 
 export async function _closePositionForTest(
@@ -1561,7 +1563,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
     intentStore.update(activeIntent);
 
     if (evaluation.shouldExecute) {
-      const outcome = await executeEntry(activeIntent, ctx, mode, signalResultCache.get(pair), generation, pairGen);
+      const outcome = await executeEntry(activeIntent, ctx, mode, signalResultCache.get(pair), generation, pairGen, scanId);
       if (outcome.executed) {
         activeIntent.state = "EXECUTED" as any;
         intentStore.update(activeIntent);
@@ -1639,7 +1641,7 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
     intentStore.update(intent);
 
     if (evaluation.shouldExecute) {
-      const outcome = await executeEntry(intent, ctx, mode, signal, generation, pairGen);
+      const outcome = await executeEntry(intent, ctx, mode, signal, generation, pairGen, scanId);
       if (outcome.executed) {
         intent.state = "EXECUTED" as any;
         intentStore.update(intent);
@@ -1726,7 +1728,7 @@ export interface ExecuteEntryOutcome {
  * Propagates signalConfidence from SpotSignalResult (B14).
  * Returns typed outcome for full traceability.
  */
-async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode, signal: SpotSignalResult | undefined, generation: number, pairGeneration: number): Promise<ExecuteEntryOutcome> {
+async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mode: ExecutionMode, signal: SpotSignalResult | undefined, generation: number, pairGeneration: number, scanId: string): Promise<ExecuteEntryOutcome> {
   // R10.9-8: General entry-generation gate — applies to EVERY mode, not only REAL.
   // A scan job captures `generation` at scan start; any mode transition (OFF↔SHADOW,
   // SHADOW↔REAL, REAL↔OFF) bumps the generation. A stale job must not create a NEW
@@ -2436,6 +2438,11 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     // Forward Twin: capture BUY fill snapshot exactly-once AFTER the lotId is
     // generated and the position is persisted. This guarantees fill.lotId is
     // non-null and causally correlated with the materialized SpotPosition.
+    // R3: the FILL scanId is the REAL scanId that originated the entry (passed
+    // into executeEntry as telemetry-only), so the dataset builder can
+    // correlate outcome.entryScanId === snapshot.scanId. internalIntentId is
+    // NOT used as scanId (it is a different identifier). intentId/signalId are
+    // available on the snapshot via the SCAN capture and the intent object.
     // (SELL fills are captured in the exit path where execIntent.positionLotId
     // is already set to position.lotId.)
     {
@@ -2443,7 +2450,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         ? Math.abs(result.fillPrice! - ctx.ticker.ask) / ctx.ticker.ask
         : 0;
       captureFill(buildFillSnapshot({
-        scanId: internalIntentId,
+        scanId,
         mode: String(mode),
         pair: intent.pair,
         ctx,
@@ -2451,6 +2458,8 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         result,
         slippagePct,
         lotId,
+        intentId: internalIntentId,
+        signalId: intent.signalId,
       }));
     }
 

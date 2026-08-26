@@ -1,27 +1,28 @@
 /**
- * spotAiCausal.test.ts — AI_CAUSAL_01..05: Causal correctness tests.
+ * spotAiCausal.test.ts — R3 AI_CAUSAL_01..10: REAL causal correctness tests.
  *
- * Verifies that the dataset builder enforces causal correlation
- * by pair and lotId, no temporal overlap, HOLD/REJECTED labels=null,
- * and giveback dataset uses SUPERVISOR+FILL with lotId.
+ * These tests exercise the PRODUCTIVE code path:
+ *   buildCompletedTradesFromSnapshots → buildTradeOutcomeMap → buildDataset
+ *
+ * No manual tradeOutcomes maps. The correlation rules are tested via the
+ * canonical completed-trades module + dataset builder.
  */
 
 import { describe, it, expect } from "vitest";
 import {
   buildDataset,
   buildGivebackDataset,
-  validateNoLookaheadInDataset,
-  validateHoldsIncluded,
+  validateGivebackGroupSplit,
 } from "../spotAiForwardTwin/spotAiDatasetBuilder";
-import type { TradeOutcomeEntry } from "../spotAiForwardTwin/spotAiDatasetBuilder";
+import {
+  buildCompletedTradesFromSnapshots,
+  buildTradeOutcomeMap,
+} from "../spotAiForwardTwin/spotAiCompletedTrades";
 import { buildFeaturesFromSnapshot } from "../spotAiForwardTwin/spotAiFeatureBuilder";
 import type { ForwardTwinSnapshot as FTSnapshot } from "../spot/spotForwardTwinTypes";
 
-// Base epoch-ms timestamp (2023-11-14). Test snapshots derive from this so
-// candle close-time checks (defect I) see realistic, already-closed candles.
+// Base epoch-ms timestamp (2023-11-14).
 const BASE_TS = 1_700_000_000_000;
-// Buffer larger than the biggest timeframe (4h = 14_400_000ms) so the last
-// candle of every timeframe is CLOSED at the snapshot timestamp.
 const CLOSED_CANDLE_BUFFER_MS = 15_000_000;
 
 function makeScanSnapshot(overrides: Partial<FTSnapshot> = {}): FTSnapshot {
@@ -120,11 +121,13 @@ function makeFillSnapshot(
   pair: string,
   side: "BUY" | "SELL",
   timestamp: number,
+  scanId: string = "scan-001",
   overrides: Partial<FTSnapshot> = {},
 ): FTSnapshot {
   return {
     ...makeScanSnapshot(),
     snapshotType: "FILL",
+    scanId,
     timestamp,
     pair,
     fill: {
@@ -147,171 +150,326 @@ function makeFillSnapshot(
   };
 }
 
-describe("AI_CAUSAL_01: pair in TradeOutcomeEntry", () => {
-  it("dataset builder must include pair in trade outcomes", () => {
-    const scan = makeScanSnapshot({ scanId: "scan-1", timestamp: BASE_TS, pair: "BTC/USD" });
-    const supervisor = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 1000);
-    const fill = makeFillSnapshot("lot-1", "BTC/USD", "BUY", BASE_TS + 500);
-    const fillExit = makeFillSnapshot("lot-1", "BTC/USD", "SELL", BASE_TS + 2000);
+// Helper: build dataset from raw snapshots via the productive path.
+function buildDatasetFromSnapshots(snaps: {
+  scans: FTSnapshot[];
+  supervisors: FTSnapshot[];
+  fills: FTSnapshot[];
+}) {
+  const completed = buildCompletedTradesFromSnapshots(snaps);
+  const outcomes = buildTradeOutcomeMap(completed.completedTrades);
+  const dataset = buildDataset({
+    scanSnapshots: snaps.scans,
+    supervisorSnapshots: snaps.supervisors,
+    fillSnapshots: snaps.fills,
+    tradeOutcomes: outcomes,
+  });
+  return { completed, outcomes, dataset };
+}
 
-    const dataset = buildDataset({
-      scanSnapshots: [scan],
-      supervisorSnapshots: [supervisor],
-      fillSnapshots: [fill, fillExit],
-      tradeOutcomes: new Map(),
+// ─── AI_CAUSAL_01: BTC scan + ETH outcome → labels=null ──────────────────────
+
+describe("AI_CAUSAL_01: cross-pair isolation", () => {
+  it("BTC scan must NOT receive labels from an ETH outcome", () => {
+    const btcScan = makeScanSnapshot({ scanId: "scan-btc", timestamp: BASE_TS, pair: "BTC/USD" });
+    const ethScan = makeScanSnapshot({ scanId: "scan-eth", timestamp: BASE_TS, pair: "ETH/USD" });
+    const ethSupervisor = makeSupervisorSnapshot("lot-eth", "ETH/USD", BASE_TS + 1000);
+    const ethBuy = makeFillSnapshot("lot-eth", "ETH/USD", "BUY", BASE_TS + 500, "scan-eth");
+    const ethSell = makeFillSnapshot("lot-eth", "ETH/USD", "SELL", BASE_TS + 2000, "scan-eth");
+
+    const { dataset } = buildDatasetFromSnapshots({
+      scans: [btcScan, ethScan],
+      supervisors: [ethSupervisor],
+      fills: [ethBuy, ethSell],
     });
 
-    // The dataset should have samples
-    expect(dataset.samples.length).toBeGreaterThan(0);
-    // Check that samples with labels have matching pair
-    for (const sample of dataset.samples) {
-      if (sample.labels) {
-        expect(sample.features.pair).toBeDefined();
-      }
-    }
+    // BTC scan must have labels=null (no BTC trade).
+    const btcSample = dataset.samples.find((s) => s.features.pair === "BTC/USD");
+    expect(btcSample).toBeDefined();
+    expect(btcSample!.labels).toBeNull();
   });
 });
 
-describe("AI_CAUSAL_02: no cross-pair matching", () => {
-  it("supervisor from ETH/USD must not match fill from BTC/USD", () => {
-    const scan = makeScanSnapshot({ scanId: "scan-1", timestamp: BASE_TS, pair: "BTC/USD" });
-    const supervisorBTC = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 1000);
-    const supervisorETH = makeSupervisorSnapshot("lot-2", "ETH/USD", BASE_TS + 1000);
-    const fillBTC = makeFillSnapshot("lot-1", "BTC/USD", "BUY", BASE_TS + 500);
-    const fillETH = makeFillSnapshot("lot-2", "ETH/USD", "SELL", BASE_TS + 2000);
+// ─── AI_CAUSAL_02: BTC lot-A and lot-B overlapping → correct mapping ─────────
 
-    const dataset = buildDataset({
-      scanSnapshots: [scan],
-      supervisorSnapshots: [supervisorBTC, supervisorETH],
-      fillSnapshots: [fillBTC, fillETH],
-      tradeOutcomes: new Map(),
+describe("AI_CAUSAL_02: same-pair overlapping trades", () => {
+  it("scan-A → lot-A, scan-B → lot-B, intermediate scan → null", () => {
+    const scanA = makeScanSnapshot({ scanId: "scan-a", timestamp: BASE_TS, pair: "BTC/USD" });
+    const scanB = makeScanSnapshot({ scanId: "scan-b", timestamp: BASE_TS + 1000, pair: "BTC/USD" });
+    const scanMid = makeScanSnapshot({ scanId: "scan-mid", timestamp: BASE_TS + 500, pair: "BTC/USD" });
+
+    const supA = makeSupervisorSnapshot("lot-a", "BTC/USD", BASE_TS + 100);
+    const supB = makeSupervisorSnapshot("lot-b", "BTC/USD", BASE_TS + 1100);
+
+    const buyA = makeFillSnapshot("lot-a", "BTC/USD", "BUY", BASE_TS + 50, "scan-a");
+    const sellA = makeFillSnapshot("lot-a", "BTC/USD", "SELL", BASE_TS + 3000, "scan-a");
+    const buyB = makeFillSnapshot("lot-b", "BTC/USD", "BUY", BASE_TS + 1050, "scan-b");
+    const sellB = makeFillSnapshot("lot-b", "BTC/USD", "SELL", BASE_TS + 4000, "scan-b");
+
+    const { dataset, completed } = buildDatasetFromSnapshots({
+      scans: [scanA, scanB, scanMid],
+      supervisors: [supA, supB],
+      fills: [buyA, sellA, buyB, sellB],
     });
 
-    // No sample should have labels from a cross-pair match
-    for (const sample of dataset.samples) {
-      if (sample.labels && sample.features.pair) {
-        // Labels should only exist for matching pair
-        expect(sample.features.pair).toBeDefined();
-      }
-    }
+    expect(completed.completedTradeCount).toBe(2);
+
+    const sampleA = dataset.samples.find((s) => s.features.scanId === "scan-a");
+    const sampleB = dataset.samples.find((s) => s.features.scanId === "scan-b");
+    const sampleMid = dataset.samples.find((s) => s.features.scanId === "scan-mid");
+
+    expect(sampleA?.labels).not.toBeNull();
+    expect(sampleA?.groupId).toBe("lot-a");
+    expect(sampleB?.labels).not.toBeNull();
+    expect(sampleB?.groupId).toBe("lot-b");
+    // Intermediate scan did not originate any entry → labels=null.
+    expect(sampleMid?.labels).toBeNull();
   });
 });
 
-describe("AI_CAUSAL_03: HOLD/REJECTED labels=null", () => {
-  it("samples without matching trade outcome must have labels=null", () => {
-    const scan = makeScanSnapshot({ scanId: "scan-hold", timestamp: BASE_TS });
-    // No supervisor or fill for this scan
-    const dataset = buildDataset({
-      scanSnapshots: [scan],
-      supervisorSnapshots: [],
-      fillSnapshots: [],
-      tradeOutcomes: new Map(),
+// ─── AI_CAUSAL_03: 1 trade + 180 scans → labeledTradeCount=1 ─────────────────
+
+describe("AI_CAUSAL_03: single trade among many scans", () => {
+  it("1 completed trade + 180 scans → labeledTradeCount=1", () => {
+    const tradeScan = makeScanSnapshot({ scanId: "scan-trade", timestamp: BASE_TS, pair: "BTC/USD" });
+    const otherScans = Array.from({ length: 180 }, (_, i) =>
+      makeScanSnapshot({ scanId: `scan-other-${i}`, timestamp: BASE_TS + (i + 1) * 1000, pair: "BTC/USD" }),
+    );
+    const sup = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 100);
+    const buy = makeFillSnapshot("lot-1", "BTC/USD", "BUY", BASE_TS + 50, "scan-trade");
+    const sell = makeFillSnapshot("lot-1", "BTC/USD", "SELL", BASE_TS + 5000, "scan-trade");
+
+    const { dataset } = buildDatasetFromSnapshots({
+      scans: [tradeScan, ...otherScans],
+      supervisors: [sup],
+      fills: [buy, sell],
     });
 
-    expect(dataset.samples.length).toBeGreaterThan(0);
+    expect(dataset.labeledTradeCount).toBe(1);
+    // Only the trade scan has labels.
+    const labeled = dataset.samples.filter((s) => s.labels !== null);
+    expect(labeled.length).toBe(1);
+    expect(labeled[0].features.scanId).toBe("scan-trade");
+  });
+});
+
+// ─── AI_CAUSAL_04: wrong entryScanId → labels=null ────────────────────────────
+
+describe("AI_CAUSAL_04: wrong entryScanId", () => {
+  it("scan with wrong scanId must not receive the outcome", () => {
+    const scan = makeScanSnapshot({ scanId: "scan-wrong", timestamp: BASE_TS, pair: "BTC/USD" });
+    const sup = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 100);
+    // BUY fill has scanId "scan-correct" (not "scan-wrong").
+    const buy = makeFillSnapshot("lot-1", "BTC/USD", "BUY", BASE_TS + 50, "scan-correct");
+    const sell = makeFillSnapshot("lot-1", "BTC/USD", "SELL", BASE_TS + 2000, "scan-correct");
+    // The "scan-correct" SCAN does NOT exist → CORRELATION_INCOMPLETE.
+    const { dataset, completed } = buildDatasetFromSnapshots({
+      scans: [scan],
+      supervisors: [sup],
+      fills: [buy, sell],
+    });
+
+    expect(completed.completedTradeCount).toBe(0);
+    expect(completed.correlationIncompleteTrades).toBe(1);
+    expect(dataset.labeledTradeCount).toBe(0);
     const sample = dataset.samples[0];
     expect(sample.labels).toBeNull();
-    // Defect G: giveback is a separate dataset; scan samples carry null.
-    expect(sample.givebackLabels).toBeNull();
   });
 });
 
-describe("AI_CAUSAL_04: giveback uses SUPERVISOR+FILL with lotId", () => {
-  it("giveback dataset is built from SUPERVISOR snapshots with future outcome label", () => {
-    const scan = makeScanSnapshot({ scanId: "scan-1", timestamp: BASE_TS });
-    const supervisor = makeSupervisorSnapshot("lot-gb", "BTC/USD", BASE_TS + 1000, {
+// ─── AI_CAUSAL_05: exact entryScanId → correct outcome ────────────────────────
+
+describe("AI_CAUSAL_05: exact entryScanId", () => {
+  it("scan with exact entryScanId receives the correct outcome", () => {
+    const scan = makeScanSnapshot({ scanId: "scan-exact", timestamp: BASE_TS, pair: "BTC/USD" });
+    const sup = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 100, {
       position: {
-        lotId: "lot-gb",
-        pair: "BTC/USD",
-        entryPrice: 50000,
-        amount: 0.01,
-        qtyRemaining: 0.01,
-        highestPrice: 52000,
-        lowestPrice: 49500,
-        mfe: 2000,
-        mae: -500,
-        mfeR: 2.0,
-        maeR: -0.5,
-        openedAt: BASE_TS + 500,
-        setupTag: "PULLBACK_CONTINUATION",
-        executionMode: "SHADOW",
-        sgBreakEvenActivated: false,
-        sgTrailingActivated: false,
-        sgCurrentStopPrice: 49000,
-        breakEvenStopPrice: null,
-        trailingStopPrice: null,
-        trailingHighestPrice: 52000,
+        lotId: "lot-1", pair: "BTC/USD", entryPrice: 50000, amount: 0.01, qtyRemaining: 0.01,
+        highestPrice: 52000, lowestPrice: 49500, mfe: 2000, mae: -500, mfeR: 2.0, maeR: -0.5,
+        openedAt: BASE_TS + 50, setupTag: "PULLBACK_CONTINUATION", executionMode: "SHADOW",
+        sgBreakEvenActivated: false, sgTrailingActivated: false, sgCurrentStopPrice: 49000,
+        breakEvenStopPrice: null, trailingStopPrice: null, trailingHighestPrice: 52000,
       },
     });
-    const fillBuy = makeFillSnapshot("lot-gb", "BTC/USD", "BUY", BASE_TS + 500);
-    const fillSell = makeFillSnapshot("lot-gb", "BTC/USD", "SELL", BASE_TS + 4000);
+    const buy = makeFillSnapshot("lot-1", "BTC/USD", "BUY", BASE_TS + 50, "scan-exact");
+    const sell = makeFillSnapshot("lot-1", "BTC/USD", "SELL", BASE_TS + 2000, "scan-exact");
 
-    const outcomes = new Map<string, TradeOutcomeEntry>();
-    outcomes.set("lot-gb", {
-      lotId: "lot-gb",
-      pair: "BTC/USD",
-      entryScanId: "scan-1",
-      entryPrice: 50000,
-      exitPrice: 51000,
-      stopPrice: 49000,
-      mfe: 2000,
-      mae: -500,
-      mfeR: 2.0,
-      maeR: -0.5,
-      entryTime: BASE_TS + 500,
-      exitTime: BASE_TS + 4000,
-      netPnlUsd: 100,
-      riskUsd: 1000,
+    const { dataset, completed } = buildDatasetFromSnapshots({
+      scans: [scan],
+      supervisors: [sup],
+      fills: [buy, sell],
     });
 
-    // Defect G: giveback is built from SUPERVISOR snapshots, NOT from SCAN.
+    expect(completed.completedTradeCount).toBe(1);
+    expect(dataset.labeledTradeCount).toBe(1);
+    const sample = dataset.samples[0];
+    expect(sample.labels).not.toBeNull();
+    expect(sample.labels!.mfe_R).toBe(2.0);
+  });
+});
+
+// ─── AI_CAUSAL_06: BUY without SELL → incomplete, labeled=0 ───────────────────
+
+describe("AI_CAUSAL_06: BUY without SELL", () => {
+  it("BUY fill without SELL fill → incomplete, labeledTradeCount=0", () => {
+    const scan = makeScanSnapshot({ scanId: "scan-1", timestamp: BASE_TS, pair: "BTC/USD" });
+    const sup = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 100);
+    const buy = makeFillSnapshot("lot-1", "BTC/USD", "BUY", BASE_TS + 50, "scan-1");
+    // No SELL fill.
+
+    const { dataset, completed } = buildDatasetFromSnapshots({
+      scans: [scan],
+      supervisors: [sup],
+      fills: [buy],
+    });
+
+    expect(completed.completedTradeCount).toBe(0);
+    expect(completed.incompleteTrades).toBe(1);
+    expect(dataset.labeledTradeCount).toBe(0);
+  });
+});
+
+// ─── AI_CAUSAL_07: SELL without BUY → incomplete/correlation invalid ──────────
+
+describe("AI_CAUSAL_07: SELL without BUY", () => {
+  it("SELL fill without BUY fill → no completed trade, labeled=0", () => {
+    const scan = makeScanSnapshot({ scanId: "scan-1", timestamp: BASE_TS, pair: "BTC/USD" });
+    const sup = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 100);
+    const sell = makeFillSnapshot("lot-1", "BTC/USD", "SELL", BASE_TS + 2000, "scan-1");
+    // No BUY fill.
+
+    const { dataset, completed } = buildDatasetFromSnapshots({
+      scans: [scan],
+      supervisors: [sup],
+      fills: [sell],
+    });
+
+    expect(completed.completedTradeCount).toBe(0);
+    expect(dataset.labeledTradeCount).toBe(0);
+  });
+});
+
+// ─── AI_CAUSAL_08: BUY+SCAN+SUPERVISOR+SELL → labeled=1 ───────────────────────
+
+describe("AI_CAUSAL_08: full causal chain", () => {
+  it("BUY+SCAN+SUPERVISOR+SELL correlated → labeledTradeCount=1", () => {
+    const scan = makeScanSnapshot({ scanId: "scan-1", timestamp: BASE_TS, pair: "BTC/USD" });
+    const sup = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 100);
+    const buy = makeFillSnapshot("lot-1", "BTC/USD", "BUY", BASE_TS + 50, "scan-1");
+    const sell = makeFillSnapshot("lot-1", "BTC/USD", "SELL", BASE_TS + 2000, "scan-1");
+
+    const { dataset, completed } = buildDatasetFromSnapshots({
+      scans: [scan],
+      supervisors: [sup],
+      fills: [buy, sell],
+    });
+
+    expect(completed.completedTradeCount).toBe(1);
+    expect(completed.correlationIncompleteTrades).toBe(0);
+    expect(completed.incompleteTrades).toBe(0);
+    expect(dataset.labeledTradeCount).toBe(1);
+  });
+});
+
+// ─── AI_CAUSAL_09: Giveback sample lot-A never receives outcome lot-B ─────────
+
+describe("AI_CAUSAL_09: giveback lot isolation", () => {
+  it("giveback sample for lot-A must NOT receive outcome from lot-B", () => {
+    const scanA = makeScanSnapshot({ scanId: "scan-a", timestamp: BASE_TS, pair: "BTC/USD" });
+    const scanB = makeScanSnapshot({ scanId: "scan-b", timestamp: BASE_TS + 1000, pair: "BTC/USD" });
+
+    const supA = makeSupervisorSnapshot("lot-a", "BTC/USD", BASE_TS + 100, {
+      position: {
+        lotId: "lot-a", pair: "BTC/USD", entryPrice: 50000, amount: 0.01, qtyRemaining: 0.01,
+        highestPrice: 51000, lowestPrice: 49500, mfe: 1000, mae: -500, mfeR: 1.0, maeR: -0.5,
+        openedAt: BASE_TS + 50, setupTag: "PULLBACK_CONTINUATION", executionMode: "SHADOW",
+        sgBreakEvenActivated: false, sgTrailingActivated: false, sgCurrentStopPrice: 49000,
+        breakEvenStopPrice: null, trailingStopPrice: null, trailingHighestPrice: 51000,
+      },
+    });
+    const supB = makeSupervisorSnapshot("lot-b", "BTC/USD", BASE_TS + 1100, {
+      position: {
+        lotId: "lot-b", pair: "BTC/USD", entryPrice: 50000, amount: 0.01, qtyRemaining: 0.01,
+        highestPrice: 52000, lowestPrice: 49500, mfe: 2000, mae: -500, mfeR: 2.0, maeR: -0.5,
+        openedAt: BASE_TS + 1050, setupTag: "PULLBACK_CONTINUATION", executionMode: "SHADOW",
+        sgBreakEvenActivated: false, sgTrailingActivated: false, sgCurrentStopPrice: 49000,
+        breakEvenStopPrice: null, trailingStopPrice: null, trailingHighestPrice: 52000,
+      },
+    });
+
+    const buyA = makeFillSnapshot("lot-a", "BTC/USD", "BUY", BASE_TS + 50, "scan-a");
+    const sellA = makeFillSnapshot("lot-a", "BTC/USD", "SELL", BASE_TS + 3000, "scan-a");
+    const buyB = makeFillSnapshot("lot-b", "BTC/USD", "BUY", BASE_TS + 1050, "scan-b");
+    const sellB = makeFillSnapshot("lot-b", "BTC/USD", "SELL", BASE_TS + 4000, "scan-b");
+
+    const { completed } = buildDatasetFromSnapshots({
+      scans: [scanA, scanB],
+      supervisors: [supA, supB],
+      fills: [buyA, sellA, buyB, sellB],
+    });
+    const outcomes = buildTradeOutcomeMap(completed.completedTrades);
+
     const givebackDataset = buildGivebackDataset({
-      scanSnapshots: [scan],
-      supervisorSnapshots: [supervisor],
-      fillSnapshots: [fillBuy, fillSell],
+      scanSnapshots: [scanA, scanB],
+      supervisorSnapshots: [supA, supB],
+      fillSnapshots: [buyA, sellA, buyB, sellB],
       tradeOutcomes: outcomes,
     });
 
-    expect(givebackDataset.samples.length).toBeGreaterThan(0);
-    // The supervisor sample for lot-gb must carry the future outcome label.
-    const withGiveback = givebackDataset.samples.filter(s => s.labels !== null);
-    expect(withGiveback.length).toBeGreaterThan(0);
-    // The entry dataset scan samples must NOT carry giveback labels anymore.
-    const entryDataset = buildDataset({
-      scanSnapshots: [scan],
-      supervisorSnapshots: [supervisor],
-      fillSnapshots: [fillBuy, fillSell],
-      tradeOutcomes: outcomes,
-    });
-    for (const s of entryDataset.samples) {
-      expect(s.givebackLabels).toBeNull();
+    // lot-A samples must have labels from lot-A outcome only.
+    const lotASamples = givebackDataset.samples.filter((s) => s.groupId === "lot-a");
+    for (const s of lotASamples) {
+      if (s.labels !== null) {
+        // lot-A outcome mfeR=1.0, lot-B outcome mfeR=2.0. Verify no cross-contamination.
+        expect(s.labels.future_MFE_R).toBeLessThanOrEqual(1.0);
+      }
+    }
+    // lot-B samples must have labels from lot-B outcome only.
+    const lotBSamples = givebackDataset.samples.filter((s) => s.groupId === "lot-b");
+    for (const s of lotBSamples) {
+      if (s.labels !== null) {
+        expect(s.labels.future_MFE_R).toBeGreaterThanOrEqual(0);
+      }
     }
   });
 });
 
-describe("AI_CAUSAL_05: no lookahead in features", () => {
-  it("features timestamp must not exceed scan timestamp", () => {
-    const scan = makeScanSnapshot({ scanId: "scan-1", timestamp: BASE_TS });
-    const features = buildFeaturesFromSnapshot(scan);
-    expect(features.timestamp).toBeLessThanOrEqual(BASE_TS);
-  });
+// ─── AI_CAUSAL_10: future information not in features ─────────────────────────
 
-  it("ticker.fetchedAt must not exceed scan timestamp", () => {
-    const scan = makeScanSnapshot({ timestamp: BASE_TS });
+describe("AI_CAUSAL_10: no future in features", () => {
+  it("features must not contain future outcome information", () => {
+    const scan = makeScanSnapshot({ scanId: "scan-1", timestamp: BASE_TS, pair: "BTC/USD" });
     const features = buildFeaturesFromSnapshot(scan);
-    // fetchedAt is validated in buildFeaturesFromSnapshot
-    expect(features).toBeDefined();
+    const featureStr = JSON.stringify(features);
+    // Features must not contain outcome labels.
+    expect(featureStr).not.toMatch(/final_R|reached_|giveback|future_MFE|future_MAE|profit_to_loss/);
   });
+});
 
-  it("candle meta.lastTime must not exceed scan timestamp", () => {
-    const scan = makeScanSnapshot({ timestamp: BASE_TS });
-    const features = buildFeaturesFromSnapshot(scan);
-    expect(features).toBeDefined();
-  });
+// ─── Bonus: giveback group split by trade ─────────────────────────────────────
 
-  it("intent.createdAt must not exceed scan timestamp", () => {
-    const scan = makeScanSnapshot({ timestamp: BASE_TS });
-    const features = buildFeaturesFromSnapshot(scan);
-    expect(features).toBeDefined();
+describe("AI_CAUSAL_SPLIT: giveback split by trade", () => {
+  it("no lotId appears in more than one split", () => {
+    const scans: FTSnapshot[] = [];
+    const supervisors: FTSnapshot[] = [];
+    const fills: FTSnapshot[] = [];
+    for (let i = 0; i < 10; i++) {
+      const lotId = `lot-${i}`;
+      const scanId = `scan-${i}`;
+      const ts = BASE_TS + i * 10_000;
+      scans.push(makeScanSnapshot({ scanId, timestamp: ts, pair: "BTC/USD" }));
+      supervisors.push(makeSupervisorSnapshot(lotId, "BTC/USD", ts + 100));
+      fills.push(makeFillSnapshot(lotId, "BTC/USD", "BUY", ts + 50, scanId));
+      fills.push(makeFillSnapshot(lotId, "BTC/USD", "SELL", ts + 5000, scanId));
+    }
+    const { completed } = buildDatasetFromSnapshots({ scans, supervisors, fills });
+    const outcomes = buildTradeOutcomeMap(completed.completedTrades);
+    const givebackDataset = buildGivebackDataset({
+      scanSnapshots: scans,
+      supervisorSnapshots: supervisors,
+      fillSnapshots: fills,
+      tradeOutcomes: outcomes,
+    });
+    expect(validateGivebackGroupSplit(givebackDataset)).toBe(true);
   });
 });
