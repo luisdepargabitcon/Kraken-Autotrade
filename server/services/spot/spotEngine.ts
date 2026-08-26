@@ -2169,21 +2169,11 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
       return { executed: false, stage: "ADAPTER", reasonCode: mode === ExecutionMode.REAL ? "REAL_SUBMISSION_AMBIGUOUS" : "ENTRY_EXCEPTION", reason: error.message, sizing: null, submitted: false };
     }
 
-    // Forward Twin: capture fill snapshot on successful entry
-    if (result.success && result.fillPrice !== null) {
-      const slippagePct = ctx.ticker.ask > 0
-        ? Math.abs(result.fillPrice - ctx.ticker.ask) / ctx.ticker.ask
-        : 0;
-      captureFill(buildFillSnapshot({
-        scanId: internalIntentId,
-        mode: String(mode),
-        pair: intent.pair,
-        ctx,
-        execIntent,
-        result,
-        slippagePct,
-      }));
-    }
+    // Forward Twin: BUY fill capture is deferred to AFTER the SpotPosition lotId
+    // is generated and persisted. The SpotExecutionIntent is created with
+    // positionLotId=null (the lotId does not exist yet at intent creation time),
+    // so capturing here would record fill.lotId=null and break causal correlation.
+    // The capture now happens exactly-once after successful materialization below.
 
     // R10.6: Handle ACCEPTED without venueOrderId — treat as UNCERTAIN, retain reservation
     if (result.success && result.submissionState === "ACCEPTED" && !result.venueOrderId && !result.pendingFill) {
@@ -2441,6 +2431,27 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
         // Non-SHADOW non-REAL (shouldn't happen but keep for safety)
         await persistOpenPosition(position, result, filledNotionalUsd);
       }
+    }
+
+    // Forward Twin: capture BUY fill snapshot exactly-once AFTER the lotId is
+    // generated and the position is persisted. This guarantees fill.lotId is
+    // non-null and causally correlated with the materialized SpotPosition.
+    // (SELL fills are captured in the exit path where execIntent.positionLotId
+    // is already set to position.lotId.)
+    {
+      const slippagePct = ctx.ticker.ask > 0
+        ? Math.abs(result.fillPrice! - ctx.ticker.ask) / ctx.ticker.ask
+        : 0;
+      captureFill(buildFillSnapshot({
+        scanId: internalIntentId,
+        mode: String(mode),
+        pair: intent.pair,
+        ctx,
+        execIntent,
+        result,
+        slippagePct,
+        lotId,
+      }));
     }
 
     // Init audit tracking

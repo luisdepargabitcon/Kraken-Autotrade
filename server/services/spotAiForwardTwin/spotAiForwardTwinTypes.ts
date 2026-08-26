@@ -144,6 +144,14 @@ export interface ChallengerProjection {
   projectedExitPrice: number;
   projectedR: number;
   projectedPnlUsd: number;
+  /**
+   * Whether the challenger projection is reliable. A challenger must NOT
+   * simulate "reached trigger => closed immediately at trigger" when there is
+   * insufficient chronological path data to determine whether the target or
+   * the stop was hit first. When available=false, reason explains why.
+   */
+  available: boolean;
+  reason: string | null;
 }
 
 // ─── Model Registry ──────────────────────────────────────────────────────────
@@ -187,6 +195,51 @@ export interface SpotAiDataset {
   testCount: number;
   labeledTradeCount: number;
   totalSnapshotCount: number;
+  groupSplitByTrade: boolean;
+  temporalSplit: boolean;
+}
+
+// ─── Giveback Dataset (from SUPERVISOR snapshots) ────────────────────────────
+
+/**
+ * State known up to a given SUPERVISOR snapshot instant. This is the FEATURE
+ * side of a giveback sample — never includes future outcome.
+ */
+export interface GivebackSampleState {
+  lotId: string;
+  pair: string;
+  timestamp: number;
+  entryPrice: number;
+  mfeR: number;
+  maeR: number;
+  mfeUsd: number;
+  maeUsd: number;
+  minutesInTrade: number;
+  breakEvenActivated: boolean;
+  trailingActivated: boolean;
+  currentStopPrice: number;
+  highestPrice: number;
+  lowestPrice: number;
+}
+
+export interface SpotAiGivebackSample {
+  sampleId: string;
+  split: DatasetSplit;
+  groupId: string; // lotId — group split by trade
+  state: GivebackSampleState;
+  // Future outcome — LABEL only, not available at prediction time.
+  // null when the trade is not yet closed (no completed outcome).
+  labels: SpotAiGivebackLabels | null;
+}
+
+export interface SpotAiGivebackDataset {
+  featureSchemaVersion: number;
+  samples: SpotAiGivebackSample[];
+  trainCount: number;
+  validationCount: number;
+  testCount: number;
+  labeledTradeCount: number;
+  totalSupervisorSnapshots: number;
   groupSplitByTrade: boolean;
   temporalSplit: boolean;
 }

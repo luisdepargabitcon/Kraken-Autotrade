@@ -31,14 +31,31 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         SELECT COUNT(*) AS total FROM spot_forward_twin_snapshots
       `);
       const totalSnapshots = parseInt(((snapshotRows.rows ?? [])[0] as any)?.total ?? "0");
-      // Count labeled trades from FILL snapshots with entry+exit
+      // Count CANONICAL completed Forward Twin trades:
+      //   BUY/entry fill (data.fill.lotId) + SUPERVISOR snapshot (data.position.lotId)
+      //   + SELL/exit fill (data.fill.lotId), same lotId AND same pair.
+      // This is the SINGLE source of truth for "labeled trades" used by status,
+      // dataset, pairs, giveback and the training guard.
       const labeledRows = await db.execute(sql`
         SELECT
-          COUNT(DISTINCT data->>'lotId') AS labeled_trades
-        FROM spot_forward_twin_snapshots
-        WHERE data->>'snapshotType' = 'FILL'
-          AND data->>'lotId' IS NOT NULL
-          AND data->'fill'->>'side' IN ('BUY', 'SELL')
+          COUNT(DISTINCT s.data->'position'->>'lotId') AS labeled_trades
+        FROM spot_forward_twin_snapshots s
+        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
+          AND s.data->'position'->>'lotId' IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fb
+            WHERE fb.data->>'snapshotType' = 'FILL'
+              AND fb.data->'fill'->>'side' = 'BUY'
+              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fb.pair = s.pair
+          )
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fs
+            WHERE fs.data->>'snapshotType' = 'FILL'
+              AND fs.data->'fill'->>'side' = 'SELL'
+              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fs.pair = s.pair
+          )
       `);
       const labeledTrades = parseInt(((labeledRows.rows ?? [])[0] as any)?.labeled_trades ?? "0");
       const status = await advisoryService.getStatus(totalSnapshots, labeledTrades);
@@ -70,14 +87,27 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         FROM spot_forward_twin_snapshots
       `);
       const r = (rows.rows ?? [])[0] as any ?? {};
-      // Count unique lotIds from FILL snapshots as labeled trades
+      // Count CANONICAL completed trades (BUY + SUPERVISOR + SELL, same lotId + pair)
       const labeledRows = await db.execute(sql`
         SELECT
-          COUNT(DISTINCT data->>'lotId') AS labeled_trades
-        FROM spot_forward_twin_snapshots
-        WHERE data->>'snapshotType' = 'FILL'
-          AND data->>'lotId' IS NOT NULL
-          AND data->'fill'->>'side' IN ('BUY', 'SELL')
+          COUNT(DISTINCT s.data->'position'->>'lotId') AS labeled_trades
+        FROM spot_forward_twin_snapshots s
+        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
+          AND s.data->'position'->>'lotId' IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fb
+            WHERE fb.data->>'snapshotType' = 'FILL'
+              AND fb.data->'fill'->>'side' = 'BUY'
+              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fb.pair = s.pair
+          )
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fs
+            WHERE fs.data->>'snapshotType' = 'FILL'
+              AND fs.data->'fill'->>'side' = 'SELL'
+              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fs.pair = s.pair
+          )
       `);
       const labeledTrades = parseInt(((labeledRows.rows ?? [])[0] as any)?.labeled_trades ?? "0");
       // Count scans without matching trades as unlabeled
@@ -108,7 +138,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Dataset quality ─────────────────────────────────────────────────────
   app.get("/api/spot/ai/dataset/quality", async (_req, res) => {
     try {
-      // Compute real checks from DB
+      // Compute real checks from DB.
+      // FILL snapshots store lotId at data.fill.lotId (NOT data.lotId).
+      // SUPERVISOR snapshots store lotId at data.position.lotId.
       const rows = await db.execute(sql`
         SELECT
           COUNT(*) FILTER (WHERE schema_version != ${SPOT_AI_FEATURE_SCHEMA_VERSION}) AS schema_mismatches,
@@ -117,15 +149,15 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
             AND NOT EXISTS (
               SELECT 1 FROM spot_forward_twin_snapshots f
               WHERE f.data->>'snapshotType' = 'FILL'
-                AND f.data->>'lotId' = spot_forward_twin_snapshots.data->'position'->>'lotId'
+                AND f.data->'fill'->>'lotId' = spot_forward_twin_snapshots.data->'position'->>'lotId'
             )
           ) AS orphan_supervisor,
           COUNT(*) FILTER (WHERE data->>'snapshotType' = 'FILL'
-            AND data->>'lotId' IS NOT NULL
+            AND data->'fill'->>'lotId' IS NOT NULL
             AND NOT EXISTS (
               SELECT 1 FROM spot_forward_twin_snapshots s
               WHERE s.data->>'snapshotType' = 'SUPERVISOR'
-                AND s.data->'position'->>'lotId' = spot_forward_twin_snapshots.data->>'lotId'
+                AND s.data->'position'->>'lotId' = spot_forward_twin_snapshots.data->'fill'->>'lotId'
             )
           ) AS orphan_fills,
           COUNT(*) FILTER (WHERE data->>'snapshotType' = 'SCAN'
@@ -143,37 +175,94 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const invalidSnapshots = parseInt(r.invalid_snapshots ?? "0");
       const missingFeatures = parseInt(r.missing_features ?? "0");
 
+      // Duplicate fills and incomplete trades — computed from FILL snapshots
+      // grouped by data.fill.lotId. A trade is incomplete when it has a BUY fill
+      // (entry) but no SELL fill (exit) for the same lotId.
+      const dupRows = await db.execute(sql`
+        WITH fill_counts AS (
+          SELECT
+            data->'fill'->>'lotId' AS lotId,
+            pair,
+            COUNT(*) FILTER (WHERE data->'fill'->>'side' = 'BUY') AS buy_count,
+            COUNT(*) FILTER (WHERE data->'fill'->>'side' = 'SELL') AS sell_count
+          FROM spot_forward_twin_snapshots
+          WHERE data->>'snapshotType' = 'FILL'
+            AND data->'fill'->>'lotId' IS NOT NULL
+          GROUP BY data->'fill'->>'lotId', pair
+        )
+        SELECT
+          COUNT(*) FILTER (WHERE buy_count > 1) AS duplicate_entry_fills,
+          COUNT(*) FILTER (WHERE sell_count > 1) AS duplicate_exit_fills,
+          COUNT(*) FILTER (WHERE buy_count > 0 AND sell_count = 0) AS incomplete_trades
+        FROM fill_counts
+      `);
+      const d = (dupRows.rows ?? [])[0] as any ?? {};
+      const duplicateEntryFills = parseInt(d.duplicate_entry_fills ?? "0");
+      const duplicateExitFills = parseInt(d.duplicate_exit_fills ?? "0");
+      const incompleteTrades = parseInt(d.incomplete_trades ?? "0");
+
       // Structural invariants — always false by design, not computed statistically
       const legacyMixed = false;
       const syntheticLabels = false;
 
+      // Checks NOT computable in pure SQL are reported as null with available=false
+      // (no false zeros). lookaheadViolations requires per-scan candle close-time
+      // verification (candleTimestamp helpers, used by the dataset builder).
+      // causalCorrelationFailures requires the explicit entry-label correlation
+      // logic (entryScanId/signalId/intentId/lotId) from the dataset builder.
       const checks = {
         schemaVersionMismatches: schemaMismatches,
         invalidSnapshots,
         missingFeatures,
-        duplicateEntryFills: 0,
-        duplicateExitFills: 0,
+        duplicateEntryFills,
+        duplicateExitFills,
         orphanSupervisor,
         orphanFills,
-        incompleteTrades: 0,
-        lookaheadViolations: 0,
-        causalCorrelationFailures: 0,
+        incompleteTrades,
+        lookaheadViolations: null as number | null,
+        causalCorrelationFailures: null as number | null,
         legacyMixed,
         syntheticLabels,
       };
+      const checksAvailable = {
+        schemaVersionMismatches: true,
+        invalidSnapshots: true,
+        missingFeatures: true,
+        duplicateEntryFills: true,
+        duplicateExitFills: true,
+        orphanSupervisor: true,
+        orphanFills: true,
+        incompleteTrades: true,
+        lookaheadViolations: false,
+        causalCorrelationFailures: false,
+        legacyMixed: true,
+        syntheticLabels: true,
+      };
+      // Coverage = computed checks / total checks
+      const totalCheckCount = Object.keys(checksAvailable).length;
+      const computedCheckCount = Object.values(checksAvailable).filter(Boolean).length;
+      const qualityCoveragePct = totalCheckCount > 0
+        ? Math.round((computedCheckCount / totalCheckCount) * 1000) / 10
+        : 0;
 
-      // Score formula: start at 100, subtract weighted penalties
+      // Score formula: start at 100, subtract weighted penalties (only for
+      // computed checks; null checks do not contribute false zeros).
       const totalIssues =
         schemaMismatches * 10 +
         invalidSnapshots * 5 +
         missingFeatures * 3 +
         orphanSupervisor * 2 +
-        orphanFills * 2;
+        orphanFills * 2 +
+        duplicateEntryFills * 4 +
+        duplicateExitFills * 4 +
+        incompleteTrades * 1;
       const score = Math.max(0, 100 - totalIssues);
       const available = true;
 
       res.json({
         checks,
+        checksAvailable,
+        qualityCoveragePct,
         score,
         available,
         status: totalIssues === 0 ? "OK" : "WARNINGS",
@@ -246,8 +335,16 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
 
       const features = CANONICAL_FEATURE_DEFINITIONS.map(f => {
         const missingKey = f.name === "initialRiskUsd" ? "initialRiskUsd" : f.name;
-        const missingCount = missingMap[missingKey] ?? 0;
-        const missingPct = totalScans > 0 ? (missingCount / totalScans) * 100 : 0;
+        // Defect K: a feature that is NOT measured must report missingPct=null,
+        // never a false zero via `?? 0`.
+        const isMeasured = missingKey in missingMap;
+        const missingCount = isMeasured ? missingMap[missingKey] : null;
+        const missingPct: number | null =
+          !isMeasured || missingCount === null
+            ? null
+            : totalScans > 0
+              ? (missingCount / totalScans) * 100
+              : 0;
         return { ...f, missingPct };
       });
       res.json({ features, schemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION, available: true });
@@ -272,16 +369,30 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         GROUP BY pair
         ORDER BY total DESC
       `);
-      // Check if there are completed trades to compute trade stats
+      // Canonical completed trades per pair: SUPERVISOR lotId with BOTH a BUY
+      // fill and a SELL fill for the same lotId AND same pair.
       const tradeRows = await db.execute(sql`
         SELECT
-          pair,
-          COUNT(DISTINCT data->>'lotId') AS unique_trades,
-          COUNT(*) FILTER (WHERE data->'fill'->>'side' = 'SELL') AS exits,
-          COUNT(*) FILTER (WHERE data->'fill'->>'side' = 'BUY') AS entries
-        FROM spot_forward_twin_snapshots
-        WHERE data->>'snapshotType' = 'FILL' AND data->>'lotId' IS NOT NULL
-        GROUP BY pair
+          s.pair AS pair,
+          COUNT(DISTINCT s.data->'position'->>'lotId') AS unique_trades
+        FROM spot_forward_twin_snapshots s
+        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
+          AND s.data->'position'->>'lotId' IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fb
+            WHERE fb.data->>'snapshotType' = 'FILL'
+              AND fb.data->'fill'->>'side' = 'BUY'
+              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fb.pair = s.pair
+          )
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fs
+            WHERE fs.data->>'snapshotType' = 'FILL'
+              AND fs.data->'fill'->>'side' = 'SELL'
+              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fs.pair = s.pair
+          )
+        GROUP BY s.pair
       `);
       const tradeMap = new Map<string, any>();
       for (const tr of (tradeRows.rows ?? []) as any[]) {
@@ -289,7 +400,8 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       }
       const pairs = ((rows.rows ?? []) as any[]).map((r: any) => {
         const tradeInfo = tradeMap.get(r.pair);
-        const hasCompleteTrades = tradeInfo && parseInt(tradeInfo.entries) > 0 && parseInt(tradeInfo.exits) > 0;
+        const completedTrades = tradeInfo ? parseInt(tradeInfo.unique_trades) : 0;
+        const hasCompleteTrades = completedTrades > 0;
         return {
           pair: r.pair,
           total: parseInt(r.total ?? "0"),
@@ -298,14 +410,14 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
           fills: parseInt(r.fills ?? "0"),
           firstTs: parseInt(r.first_ts ?? "0"),
           lastTs: parseInt(r.last_ts ?? "0"),
-          trades: hasCompleteTrades ? parseInt(tradeInfo.unique_trades) : null,
+          trades: hasCompleteTrades ? completedTrades : null,
           wins: null,
           losses: null,
           winRate: null,
           netPnl: null,
           mfeMedian: null,
           maeMedian: null,
-          tradeStatsAvailable: !!hasCompleteTrades,
+          tradeStatsAvailable: hasCompleteTrades,
         };
       });
       res.json({ pairs });
@@ -410,7 +522,8 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Giveback analytics ──────────────────────────────────────────────────
   app.get("/api/spot/ai/giveback", async (_req, res) => {
     try {
-      // Check if there are completed Forward Twin trades
+      // Check if there are CANONICAL completed Forward Twin trades
+      // (BUY + SUPERVISOR + SELL, same lotId AND same pair).
       const tradeRows = await db.execute(sql`
         SELECT
           COUNT(DISTINCT s.data->'position'->>'lotId') AS completed_trades
@@ -418,10 +531,18 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         WHERE s.data->>'snapshotType' = 'SUPERVISOR'
           AND s.data->'position'->>'lotId' IS NOT NULL
           AND EXISTS (
-            SELECT 1 FROM spot_forward_twin_snapshots f
-            WHERE f.data->>'snapshotType' = 'FILL'
-              AND f.data->>'lotId' = s.data->'position'->>'lotId'
-              AND f.data->'fill'->>'side' = 'SELL'
+            SELECT 1 FROM spot_forward_twin_snapshots fb
+            WHERE fb.data->>'snapshotType' = 'FILL'
+              AND fb.data->'fill'->>'side' = 'BUY'
+              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fb.pair = s.pair
+          )
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fs
+            WHERE fs.data->>'snapshotType' = 'FILL'
+              AND fs.data->'fill'->>'side' = 'SELL'
+              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fs.pair = s.pair
           )
       `);
       const completedTrades = parseInt(((tradeRows.rows ?? [])[0] as any)?.completed_trades ?? "0");
@@ -454,10 +575,18 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
           WHERE s.data->>'snapshotType' = 'SUPERVISOR'
             AND s.data->'position'->>'lotId' IS NOT NULL
             AND EXISTS (
-              SELECT 1 FROM spot_forward_twin_snapshots f
-              WHERE f.data->>'snapshotType' = 'FILL'
-                AND f.data->>'lotId' = s.data->'position'->>'lotId'
-                AND f.data->'fill'->>'side' = 'SELL'
+              SELECT 1 FROM spot_forward_twin_snapshots fb
+              WHERE fb.data->>'snapshotType' = 'FILL'
+                AND fb.data->'fill'->>'side' = 'BUY'
+                AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+                AND fb.pair = s.pair
+            )
+            AND EXISTS (
+              SELECT 1 FROM spot_forward_twin_snapshots fs
+              WHERE fs.data->>'snapshotType' = 'FILL'
+                AND fs.data->'fill'->>'side' = 'SELL'
+                AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+                AND fs.pair = s.pair
             )
         ),
         last_supervisor AS (
@@ -552,14 +681,28 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Training (guarded) ──────────────────────────────────────────────────
   app.post("/api/spot/ai/train", async (_req, res) => {
     try {
-      // Count labeled trades from DB
+      // Count CANONICAL completed trades (BUY + SUPERVISOR + SELL, same lotId + pair).
+      // This is the SINGLE source of truth shared with status/dataset/pairs/giveback.
       const labeledRows = await db.execute(sql`
         SELECT
-          COUNT(DISTINCT data->>'lotId') AS labeled_trades
-        FROM spot_forward_twin_snapshots
-        WHERE data->>'snapshotType' = 'FILL'
-          AND data->>'lotId' IS NOT NULL
-          AND data->'fill'->>'side' IN ('BUY', 'SELL')
+          COUNT(DISTINCT s.data->'position'->>'lotId') AS labeled_trades
+        FROM spot_forward_twin_snapshots s
+        WHERE s.data->>'snapshotType' = 'SUPERVISOR'
+          AND s.data->'position'->>'lotId' IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fb
+            WHERE fb.data->>'snapshotType' = 'FILL'
+              AND fb.data->'fill'->>'side' = 'BUY'
+              AND fb.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fb.pair = s.pair
+          )
+          AND EXISTS (
+            SELECT 1 FROM spot_forward_twin_snapshots fs
+            WHERE fs.data->>'snapshotType' = 'FILL'
+              AND fs.data->'fill'->>'side' = 'SELL'
+              AND fs.data->'fill'->>'lotId' = s.data->'position'->>'lotId'
+              AND fs.pair = s.pair
+          )
       `);
       const labeledTrades = parseInt(((labeledRows.rows ?? [])[0] as any)?.labeled_trades ?? "0");
 

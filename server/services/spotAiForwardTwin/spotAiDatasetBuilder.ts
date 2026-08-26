@@ -9,10 +9,15 @@
  *   - No random shuffle.
  *   - No lookahead: features from snapshot at prediction time only.
  *
- * CAUSAL CORRELATION:
- *   - TradeOutcomeEntry MUST contain pair.
- *   - deriveGroupId and findOutcomeForSnapshot match by pair AND lotId,
- *     never by simple temporal overlap.
+ * CAUSAL CORRELATION (defects E, F):
+ *   - TradeOutcomeEntry MUST contain pair AND entryScanId.
+ *   - deriveGroupId and findOutcomeForSnapshot match by EXPLICIT correlation:
+ *     outcome.entryScanId === snapshot.scanId AND outcome.pair === snapshot.pair.
+ *   - Temporal overlap (entryTime <= scan.timestamp <= exitTime) is NOT used
+ *     to associate Entry Model labels. Only the scan that ORIGINATED the entry
+ *     receives that outcome. Overlapping but unrelated scans get labels=null.
+ *   - When entryScanId is null the trade is CORRELATION_INCOMPLETE and no scan
+ *     receives its labels (defect C).
  *   - A BTC scan can NEVER receive labels from an ETH trade.
  *
  * TIME-TO-TARGETS:
@@ -20,9 +25,19 @@
  *     that first observed the position reaching +0.5R or +1.0R.
  *   - If no supervisor snapshot is available, null (NOT holdTime).
  *
- * GIVEBACK LABELS:
- *   - Computed from SUPERVISOR + FILL snapshots for each lotId.
- *   - profit_to_loss: position was profitable (MFE >= 1R) but closed at a loss.
+ * GIVEBACK DATASET (defect G):
+ *   - NOT built from SCAN. Built from SUPERVISOR snapshots via
+ *     buildGivebackDataset(). Each sample = lotId + timestamp + state known
+ *     up to that instant; future outcome is the LABEL only.
+ *   - Entry dataset scan samples carry givebackLabels=null (giveback is a
+ *     separate dataset).
+ *
+ * CHALLENGERS (defect H):
+ *   - A challenger must NOT simulate "reached trigger => closed immediately at
+ *     trigger" when there is insufficient chronological path data to decide
+ *     whether the target or the stop was hit first.
+ *   - When the supervisor path is insufficient, available=false with
+ *     reason=INSUFFICIENT_PATH_DATA.
  *   - Challengers are observational only — never modify exit policy.
  */
 
@@ -34,6 +49,9 @@ import type {
   SpotAiFeatures,
   SpotAiEntryLabels,
   SpotAiGivebackLabels,
+  SpotAiGivebackDataset,
+  SpotAiGivebackSample,
+  GivebackSampleState,
   ChallengerProjection,
   ChallengerPolicy,
 } from "./spotAiForwardTwinTypes";
@@ -87,12 +105,13 @@ export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
     const outcome = findOutcomeForSnapshot(snapshot, tradeOutcomes);
     const labels: SpotAiEntryLabels | null = outcome ? buildEntryLabelsFromOutcome(outcome, supervisorSnapshots) : null;
 
-    const givebackLabels: SpotAiGivebackLabels | null = outcome
-      ? buildGivebackLabelsFromOutcome(outcome, supervisorSnapshots)
-      : null;
+    // Defect G: giveback is NOT built from SCAN. The entry dataset carries
+    // givebackLabels=null; giveback is a separate dataset built from
+    // SUPERVISOR snapshots via buildGivebackDataset().
+    const givebackLabels: SpotAiGivebackLabels | null = null;
 
     const challengers: ChallengerProjection[] = outcome
-      ? projectChallengers(outcome)
+      ? projectChallengers(outcome, supervisorSnapshots)
       : [];
 
     if (labels && outcome) {
@@ -130,23 +149,35 @@ export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
   };
 }
 
+/**
+ * Derive the group id for a SCAN snapshot. The group is the lotId of the trade
+ * whose entry was ORIGINATED by this scan (explicit entryScanId correlation),
+ * never a temporal-overlap match. Unrelated scans fall back to a temporal
+ * block group (and will have labels=null).
+ */
 function deriveGroupId(snapshot: ForwardTwinSnapshot, outcomes: Map<string, TradeOutcomeEntry>): string {
   for (const [lotId, outcome] of outcomes) {
     if (outcome.pair !== snapshot.pair) continue;
-    if (outcome.entryTime <= snapshot.timestamp && outcome.exitTime >= snapshot.timestamp) {
+    if (outcome.entryScanId !== null && outcome.entryScanId === snapshot.scanId) {
       return lotId;
     }
   }
   return `temporal-${snapshot.pair}-${Math.floor(snapshot.timestamp / (60 * 60 * 1000))}`;
 }
 
+/**
+ * Find the trade outcome whose entry was ORIGINATED by this scan, via explicit
+ * entryScanId correlation (defects E, F). Temporal overlap is NOT used. A
+ * scan that did not originate any entry receives no outcome (labels=null).
+ * Outcomes with entryScanId=null are CORRELATION_INCOMPLETE and match nothing.
+ */
 function findOutcomeForSnapshot(
   snapshot: ForwardTwinSnapshot,
   outcomes: Map<string, TradeOutcomeEntry>,
 ): TradeOutcomeEntry | null {
   for (const outcome of outcomes.values()) {
     if (outcome.pair !== snapshot.pair) continue;
-    if (outcome.entryTime <= snapshot.timestamp && outcome.exitTime >= snapshot.timestamp) {
+    if (outcome.entryScanId !== null && outcome.entryScanId === snapshot.scanId) {
       return outcome;
     }
   }
@@ -198,10 +229,12 @@ function computeTimeToTarget(
   return null;
 }
 
-function buildGivebackLabelsFromOutcome(
-  outcome: TradeOutcomeEntry,
-  _supervisorSnapshots: ForwardTwinSnapshot[],
-): SpotAiGivebackLabels | null {
+/**
+ * Compute the future-outcome giveback LABEL from a completed trade outcome.
+ * This is the LABEL side only — it must never be used as a feature. Returns
+ * null when the trade has no positive MFE (no giveback to study).
+ */
+function buildGivebackLabelFromOutcome(outcome: TradeOutcomeEntry): SpotAiGivebackLabels | null {
   if (outcome.mfeR <= 0) return null;
 
   const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
@@ -221,14 +254,142 @@ function buildGivebackLabelsFromOutcome(
   };
 }
 
-function projectChallengers(outcome: TradeOutcomeEntry): ChallengerProjection[] {
+/**
+ * Build the Giveback dataset from SUPERVISOR snapshots (defect G).
+ *
+ * Each sample is a SUPERVISOR snapshot for a lotId:
+ *   - state  = state known up to that instant (FEATURE side)
+ *   - labels = future outcome (LABEL only), null if the trade is not closed
+ *
+ * The dataset is grouped by lotId and temporally split (60/20/20).
+ */
+export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDataset {
+  const { supervisorSnapshots, tradeOutcomes } = input;
+
+  const samples: SpotAiGivebackSample[] = [];
+  const labeledLotIds = new Set<string>();
+
+  for (const snap of supervisorSnapshots) {
+    if (snap.snapshotType !== "SUPERVISOR") continue;
+    const position = snap.position;
+    if (!position) continue;
+
+    const outcome = tradeOutcomes.get(position.lotId) ?? null;
+    // Only supervisor snapshots whose lotId has a completed outcome carry a
+    // future label. Open positions (no outcome) are included with labels=null
+    // so the dataset reflects the real supervisor population, but they do not
+    // count as labeled trades.
+    const labels = outcome ? buildGivebackLabelFromOutcome(outcome) : null;
+
+    const minutesInTrade = position.openedAt > 0
+      ? Math.max(0, Math.round((snap.timestamp - position.openedAt) / 60_000))
+      : 0;
+
+    const state: GivebackSampleState = {
+      lotId: position.lotId,
+      pair: position.pair,
+      timestamp: snap.timestamp,
+      entryPrice: position.entryPrice,
+      mfeR: position.mfeR,
+      maeR: position.maeR,
+      mfeUsd: position.mfe,
+      maeUsd: position.mae,
+      minutesInTrade,
+      breakEvenActivated: position.sgBreakEvenActivated,
+      trailingActivated: position.sgTrailingActivated,
+      currentStopPrice: position.sgCurrentStopPrice,
+      highestPrice: position.highestPrice,
+      lowestPrice: position.lowestPrice,
+    };
+
+    if (labels && outcome && !labeledLotIds.has(outcome.lotId)) {
+      labeledLotIds.add(outcome.lotId);
+    }
+
+    samples.push({
+      sampleId: `gb-${position.lotId}-${snap.timestamp}`,
+      split: "train",
+      groupId: position.lotId,
+      state,
+      labels,
+    });
+  }
+
+  samples.sort((a, b) => a.state.timestamp - b.state.timestamp);
+  assignGivebackTemporalSplits(samples);
+
+  return {
+    featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
+    samples,
+    trainCount: samples.filter(s => s.split === "train").length,
+    validationCount: samples.filter(s => s.split === "validation").length,
+    testCount: samples.filter(s => s.split === "test").length,
+    labeledTradeCount: labeledLotIds.size,
+    totalSupervisorSnapshots: supervisorSnapshots.length,
+    groupSplitByTrade: true,
+    temporalSplit: true,
+  };
+}
+
+function assignGivebackTemporalSplits(samples: SpotAiGivebackSample[]): void {
+  const n = samples.length;
+  if (n === 0) return;
+  const trainEnd = Math.floor(n * 0.6);
+  const valEnd = Math.floor(n * 0.8);
+  const groupAssignments = new Map<string, DatasetSplit>();
+  for (let i = 0; i < n; i++) {
+    const desired: DatasetSplit = i < trainEnd ? "train" : i < valEnd ? "validation" : "test";
+    const groupId = samples[i].groupId;
+    if (groupAssignments.has(groupId)) {
+      samples[i].split = groupAssignments.get(groupId)!;
+    } else {
+      groupAssignments.set(groupId, desired);
+      samples[i].split = desired;
+    }
+  }
+}
+
+/**
+ * Project challenger exit policies observationally (defect H).
+ *
+ * A challenger must NOT simulate "reached trigger => closed immediately at
+ * trigger" when there is insufficient chronological SUPERVISOR path data to
+ * determine whether the target or the stop was hit first. When the path is
+ * insufficient, the challenger is reported with available=false and
+ * reason=INSUFFICIENT_PATH_DATA. BASELINE is always available (actual exit).
+ */
+function projectChallengers(
+  outcome: TradeOutcomeEntry,
+  supervisorSnapshots: ForwardTwinSnapshot[],
+): ChallengerProjection[] {
   const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
   const entryPrice = outcome.entryPrice;
   const stopPrice = outcome.stopPrice;
   const direction = entryPrice > stopPrice ? 1 : -1;
   const riskDist = Math.abs(entryPrice - stopPrice);
 
-  if (riskDist <= 0) return [];
+  const baseline: ChallengerProjection = {
+    policy: "BASELINE",
+    projectedExitPrice: outcome.exitPrice,
+    projectedR: outcome.netPnlUsd / r,
+    projectedPnlUsd: outcome.netPnlUsd,
+    available: true,
+    reason: null,
+  };
+
+  if (riskDist <= 0) {
+    return [
+      baseline,
+      { policy: "B_RET_0_75_0_30", projectedExitPrice: 0, projectedR: 0, projectedPnlUsd: 0, available: false, reason: "INVALID_RISK_DISTANCE" },
+      { policy: "A_FLOOR_1_00_1_00", projectedExitPrice: 0, projectedR: 0, projectedPnlUsd: 0, available: false, reason: "INVALID_RISK_DISTANCE" },
+    ];
+  }
+
+  // Chronological supervisor path for this lot/pair — used to determine the
+  // ORDER in which target/stop events occurred (defect H).
+  const path = supervisorSnapshots
+    .filter(s => s.snapshotType === "SUPERVISOR" && s.position?.lotId === outcome.lotId && s.position?.pair === outcome.pair)
+    .sort((a, b) => a.timestamp - b.timestamp);
 
   const project = (
     policy: ChallengerPolicy,
@@ -238,37 +399,68 @@ function projectChallengers(outcome: TradeOutcomeEntry): ChallengerProjection[] 
     const targetPrice = entryPrice + direction * riskDist * targetR;
     const stopExitPrice = entryPrice - direction * riskDist * stopR;
 
+    // Insufficient path data → cannot determine target-vs-stop ordering.
+    if (path.length === 0) {
+      return {
+        policy,
+        projectedExitPrice: 0,
+        projectedR: 0,
+        projectedPnlUsd: 0,
+        available: false,
+        reason: "INSUFFICIENT_PATH_DATA",
+      };
+    }
+
+    // First supervisor snapshot where the running MFE reached the target,
+    // and first where the running MAE reached the stop.
+    let firstTargetTs: number | null = null;
+    let firstStopTs: number | null = null;
+    for (const s of path) {
+      const mfeR = s.position?.mfeR ?? 0;
+      const maeR = s.position?.maeR ?? 0;
+      if (firstTargetTs === null && mfeR >= targetR) firstTargetTs = s.timestamp;
+      if (firstStopTs === null && maeR <= -stopR) firstStopTs = s.timestamp;
+      if (firstTargetTs !== null && firstStopTs !== null) break;
+    }
+
     let projectedExitPrice: number;
     let projectedR: number;
 
-    if (outcome.mfeR >= targetR) {
+    if (firstTargetTs !== null && (firstStopTs === null || firstTargetTs <= firstStopTs)) {
+      // Target hit first (or stop never hit) → challenger exits at target.
       projectedExitPrice = targetPrice;
       projectedR = targetR;
-    } else if (outcome.maeR <= -stopR) {
+    } else if (firstStopTs !== null && (firstTargetTs === null || firstStopTs < firstTargetTs)) {
+      // Stop hit first → challenger exits at stop.
       projectedExitPrice = stopExitPrice;
       projectedR = -stopR;
     } else {
-      projectedExitPrice = outcome.exitPrice;
-      projectedR = outcome.netPnlUsd / r;
+      // Neither event observed in the supervisor path → cannot simulate the
+      // challenger policy reliably. Do NOT assume "reached trigger => closed
+      // immediately at trigger" from aggregate MFE/MAE alone.
+      return {
+        policy,
+        projectedExitPrice: 0,
+        projectedR: 0,
+        projectedPnlUsd: 0,
+        available: false,
+        reason: "INSUFFICIENT_PATH_DATA",
+      };
     }
 
     const projectedPnlUsd = (projectedExitPrice - entryPrice) * direction * (r / riskDist);
-
     return {
       policy,
       projectedExitPrice,
       projectedR,
       projectedPnlUsd,
+      available: true,
+      reason: null,
     };
   };
 
   return [
-    {
-      policy: "BASELINE",
-      projectedExitPrice: outcome.exitPrice,
-      projectedR: outcome.netPnlUsd / r,
-      projectedPnlUsd: outcome.netPnlUsd,
-    },
+    baseline,
     project("B_RET_0_75_0_30", 0.75, 0.30),
     project("A_FLOOR_1_00_1_00", 1.0, 1.0),
   ];

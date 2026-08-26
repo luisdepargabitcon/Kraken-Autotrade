@@ -41,22 +41,31 @@ import { modelRegistry } from "../spotAiForwardTwin/spotAiModelRegistry";
 import { advisoryService } from "../spotAiForwardTwin/spotAiAdvisoryService";
 import type { ForwardTwinSnapshot as FTSnapshot } from "../spot/spotForwardTwinTypes";
 
+// Base epoch-ms timestamp (2023-11-14). Test snapshots derive from this so
+// candle close-time checks (defect I) see realistic, already-closed candles.
+const BASE_TS = 1_700_000_000_000;
+// Buffer larger than the biggest timeframe (4h = 14_400_000ms) so the last
+// candle of every timeframe is CLOSED at the snapshot timestamp.
+const CLOSED_CANDLE_BUFFER_MS = 15_000_000;
+
 function makeScanSnapshot(overrides: Partial<FTSnapshot> = {}): FTSnapshot {
+  const ts = overrides.timestamp ?? BASE_TS;
+  const closedLastTime = ts - CLOSED_CANDLE_BUFFER_MS;
   return {
     schemaVersion: 1,
     snapshotType: "SCAN",
     scanId: "scan-001",
-    timestamp: Date.now(),
+    timestamp: ts,
     pair: "BTC/USD",
     policyVersion: "v1",
     executionMode: "SHADOW",
     engineOwner: "spot",
-    ticker: { bid: 50000, ask: 50010, last: 50005, spread: 10, spreadPct: 0.02, fetchedAt: 1000 },
+    ticker: { bid: 50000, ask: 50010, last: 50005, spread: 10, spreadPct: 0.02, fetchedAt: ts },
     candles: {
-      candles5m: { meta: { count: 100, lastTime: 1000, lastClose: 50005 }, candles: [] },
-      candles15m: { meta: { count: 100, lastTime: 1000, lastClose: 50005 }, candles: [] },
-      candles1h: { meta: { count: 100, lastTime: 1000, lastClose: 50005 }, candles: [] },
-      candles4h: { meta: { count: 100, lastTime: 1000, lastClose: 50005 }, candles: [] },
+      candles5m: { meta: { count: 100, lastTime: closedLastTime, lastClose: 50005 }, candles: [] },
+      candles15m: { meta: { count: 100, lastTime: closedLastTime, lastClose: 50005 }, candles: [] },
+      candles1h: { meta: { count: 100, lastTime: closedLastTime, lastClose: 50005 }, candles: [] },
+      candles4h: { meta: { count: 100, lastTime: closedLastTime, lastClose: 50005 }, candles: [] },
     },
     regime: {
       regime: "TREND", direction: "BULLISH", macroBias: "BULLISH", volatility: "NORMAL",
@@ -66,12 +75,12 @@ function makeScanSnapshot(overrides: Partial<FTSnapshot> = {}): FTSnapshot {
     volume: { volumeRatio: 1.2, volume24h: 1000000, participation: "NORMAL" },
     signal: {
       signal: "BUY", setupTag: "PULLBACK_CONTINUATION", reason: "test", confidence: 80,
-      originPrice: 50000, origin15mCloseAt: Date.now(), originAtrPct: 0.015,
+      originPrice: 50000, origin15mCloseAt: ts, originAtrPct: 0.015,
       originVolume: 1000, contextId: "c1", blockReason: null,
     },
     intent: {
       signalId: "sig-1", state: "CREATED", setupTag: "PULLBACK_CONTINUATION",
-      createdAt: 1000, expiresAt: 60000,
+      createdAt: ts, expiresAt: ts + 60_000,
       originPrice: 50000, originAtrPct: 0.015, originRegime: "TREND",
       originDirection: "BULLISH", originMacro: "BULLISH", retryCount: 0,
       lastBlockReason: null, lastEvaluatedAt: null, shouldExecute: true, evaluationReason: "ok",
@@ -110,14 +119,14 @@ describe("AI_FT_01: legacy dataset excluded", () => {
 
 describe("AI_FT_02: no lookahead", () => {
   it("features timestamp must be <= prediction timestamp", () => {
-    const snapshot = makeScanSnapshot({ timestamp: 1000 });
+    const snapshot = makeScanSnapshot({ timestamp: BASE_TS });
     const features = buildFeaturesFromSnapshot(snapshot);
-    expect(validateNoLookahead(features, 1000)).toBe(true);
-    expect(validateNoLookahead(features, 999)).toBe(false);
+    expect(validateNoLookahead(features, BASE_TS)).toBe(true);
+    expect(validateNoLookahead(features, BASE_TS - 1)).toBe(false);
   });
 
   it("dataset must have zero lookahead features", () => {
-    const snapshot = makeScanSnapshot({ timestamp: 1000 });
+    const snapshot = makeScanSnapshot({ timestamp: BASE_TS });
     const dataset = buildDataset({
       scanSnapshots: [snapshot],
       supervisorSnapshots: [],
@@ -156,7 +165,7 @@ describe("AI_FT_04: HOLD included", () => {
 describe("AI_FT_05: group split", () => {
   it("samples from same group must not be in different splits", () => {
     const snapshots = Array.from({ length: 20 }, (_, i) =>
-      makeScanSnapshot({ scanId: `scan-${i}`, timestamp: 1000 + i * 1000 }),
+      makeScanSnapshot({ scanId: `scan-${i}`, timestamp: BASE_TS + i * 1000 }),
     );
     const dataset = buildDataset({
       scanSnapshots: snapshots,
@@ -171,7 +180,7 @@ describe("AI_FT_05: group split", () => {
 describe("AI_FT_06: temporal split", () => {
   it("dataset must have temporal split (60/20/20)", () => {
     const snapshots = Array.from({ length: 10 }, (_, i) =>
-      makeScanSnapshot({ scanId: `scan-${i}`, timestamp: 1000 + i * 1000 }),
+      makeScanSnapshot({ scanId: `scan-${i}`, timestamp: BASE_TS + i * 1000 }),
     );
     const dataset = buildDataset({
       scanSnapshots: snapshots,

@@ -17,14 +17,47 @@ import type {
   SpotAiEntryPrediction,
   SpotAiGivebackPrediction,
   SpotAiAdvisoryLog,
+  ModelRegistryEntry,
   ModelStatus,
 } from "./spotAiForwardTwinTypes";
 import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
+import * as fs from "fs";
+
+/**
+ * INFERENCE_IMPLEMENTED = NO.
+ *
+ * A real predictor (loading the .joblib artifact and producing probabilities)
+ * is not yet implemented. Therefore ADVISORY_ACTIVE_ALLOWED = NO: even if a
+ * model row has status = ACTIVE_ADVISORY in the DB, the advisory layer must
+ * fail closed and NOT report ADVISORY status or produce predictions.
+ *
+ * Defect L: active advisory requires ALL of:
+ *   - ACTIVE_ADVISORY DB status
+ *   - artifact file exists at modelPath
+ *   - feature schema compatible
+ *   - a real predictor available (INFERENCE_IMPLEMENTED)
+ */
+const INFERENCE_IMPLEMENTED = false;
 
 class SpotAiAdvisoryService {
   private maxLogs = 1000;
+
+  /**
+   * Defect L: an active advisory is only allowed when ALL conditions hold:
+   * ACTIVE_ADVISORY DB status, artifact file exists, schema compatible, and a
+   * real predictor is available (INFERENCE_IMPLEMENTED). Returns false
+   * otherwise (fail closed).
+   */
+  private isAdvisoryActiveAllowed(entry: ModelRegistryEntry | null): boolean {
+    if (!entry) return false;
+    if (entry.status !== "ACTIVE_ADVISORY") return false;
+    if (entry.featureSchemaVersion !== SPOT_AI_FEATURE_SCHEMA_VERSION) return false;
+    if (!entry.modelPath || !fs.existsSync(entry.modelPath)) return false;
+    if (!INFERENCE_IMPLEMENTED) return false;
+    return true;
+  }
 
   async getStatus(
     totalSnapshots: number,
@@ -33,8 +66,10 @@ class SpotAiAdvisoryService {
     const entryModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_ENTRY");
     const givebackModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_GIVEBACK");
 
+    // Defect L: ADVISORY status requires a real, artifact-backed, schema-
+    // compatible predictor (INFERENCE_IMPLEMENTED). Until then, fail closed.
     let status: SpotAiStatus = "COLLECTING";
-    if (entryModel && entryModel.status === "ACTIVE_ADVISORY") {
+    if (this.isAdvisoryActiveAllowed(entryModel)) {
       status = "ADVISORY";
     } else if (labeledTrades >= MIN_TRADES_TO_TRAIN) {
       status = "READY_TO_TRAIN";
@@ -59,7 +94,8 @@ class SpotAiAdvisoryService {
 
   async computeEntryAdvisory(snapshot: ForwardTwinSnapshot): Promise<SpotAiEntryPrediction | null> {
     const entryModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_ENTRY");
-    if (!entryModel) return null;
+    // Defect L: fail closed unless a real predictor is available.
+    if (!this.isAdvisoryActiveAllowed(entryModel)) return null;
 
     let features;
     try {
@@ -68,10 +104,11 @@ class SpotAiAdvisoryService {
       return null;
     }
 
-    // No real model artifact exists yet — cannot produce inference.
+    // No real model artifact / predictor exists yet — cannot produce inference.
     // Return null to indicate MODEL_INFERENCE_NOT_AVAILABLE.
     // When a real predictor is implemented, it will load the artifact
     // from modelPath and produce actual probabilities.
+    void features;
     return null;
   }
 
@@ -80,9 +117,11 @@ class SpotAiAdvisoryService {
     lotId: string,
   ): Promise<SpotAiGivebackPrediction | null> {
     const givebackModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_GIVEBACK");
-    if (!givebackModel) return null;
+    // Defect L: fail closed unless a real predictor is available.
+    if (!this.isAdvisoryActiveAllowed(givebackModel)) return null;
 
-    // No real model artifact exists yet — cannot produce inference.
+    // No real model artifact / predictor exists yet — cannot produce inference.
+    void snapshot; void lotId;
     return null;
   }
 

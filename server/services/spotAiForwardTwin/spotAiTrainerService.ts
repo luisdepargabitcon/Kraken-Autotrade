@@ -63,13 +63,9 @@ class SpotAiTrainerService {
     const modelVersion = `v${Date.now()}`;
     const modelPath = modelRegistry.getModelPath(modelName, modelVersion);
 
-    if (!fs.existsSync(MODEL_DIR)) {
-      fs.mkdirSync(MODEL_DIR, { recursive: true });
-    }
-
-    const datasetPath = path.join(MODEL_DIR, `dataset_${modelVersion}.json`);
-    fs.writeFileSync(datasetPath, JSON.stringify(dataset));
-
+    // Defect M: check trainer availability BEFORE creating MODEL_DIR or
+    // writing dataset_v*.json. If the trainer script does not exist, fail
+    // closed with TRAINER_NOT_AVAILABLE and NO side effects on disk.
     const scriptPath = path.join(process.cwd(), "server/services/spotAiForwardTwin/spotAiMlTrainer.py");
     if (!fs.existsSync(scriptPath)) {
       return {
@@ -78,6 +74,13 @@ class SpotAiTrainerService {
         message: `Python trainer script not found at ${scriptPath}. Cannot train model.`,
       };
     }
+
+    if (!fs.existsSync(MODEL_DIR)) {
+      fs.mkdirSync(MODEL_DIR, { recursive: true });
+    }
+
+    const datasetPath = path.join(MODEL_DIR, `dataset_${modelVersion}.json`);
+    fs.writeFileSync(datasetPath, JSON.stringify(dataset));
 
     return new Promise(resolve => {
       const proc = spawn(PYTHON_BIN, [scriptPath, "train", datasetPath, modelPath, modelName]);

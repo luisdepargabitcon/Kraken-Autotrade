@@ -9,6 +9,16 @@
 import { SPOT_AI_FEATURE_SCHEMA_VERSION } from "./spotAiForwardTwinTypes";
 import type { SpotAiFeatures } from "./spotAiForwardTwinTypes";
 import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
+import { getCandleCloseTimeMs } from "../spot/candleTimestamp";
+
+// Map ForwardTwin candle-array keys to canonical timeframe strings used by
+// the candleTimestamp helpers (defect I: lookahead must use CLOSE-time).
+const CANDLE_TF_MAP = {
+  candles5m: "5m",
+  candles15m: "15m",
+  candles1h: "1h",
+  candles4h: "4h",
+} as const;
 
 export function buildFeaturesFromSnapshot(snapshot: ForwardTwinSnapshot): SpotAiFeatures {
   const ticker = snapshot.ticker;
@@ -77,9 +87,18 @@ export function validateNoLookahead(
 
     const candles = snapshot.candles;
     if (candles) {
+      // Defect I: a candle is only safe to use if it is CLOSED, i.e.
+      //   openTime + timeframe <= predictionTimestamp
+      // Checking only openTime <= predictionTimestamp allows an still-open
+      // candle whose close is in the future (lookahead). Use the canonical
+      // candleTimestamp close-time helper.
       for (const tf of ["candles5m", "candles15m", "candles1h", "candles4h"] as const) {
         const ca = candles[tf];
-        if (ca && ca.meta && ca.meta.lastTime > predictionTimestamp) return false;
+        if (ca && ca.meta) {
+          const closeMs = getCandleCloseTimeMs(ca.meta.lastTime, CANDLE_TF_MAP[tf]);
+          if (closeMs === null) return false;
+          if (closeMs > predictionTimestamp) return false;
+        }
       }
     }
   }

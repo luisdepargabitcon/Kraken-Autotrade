@@ -1,7 +1,7 @@
 ﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-08-12
+> Última actualización: 2026-08-26
 
 ---
 
@@ -14,6 +14,59 @@
 - Si una entrada histórica contradice una regla posterior, prevalece la regla vigente más reciente.
 - Si código y documentación se contradicen, registrar la discrepancia y resolverla conforme al alcance de la tarea actual.
 - No alterar silenciosamente datos operativos o históricos para forzar coincidencia documental.
+
+## 2026-08-26 — SPOT FORWARD TWIN + IA FORWARD TWIN — ESTADO VIGENTE
+
+### Checkpoint 2026-08-26 — Reparación correlación FILL y calidad causal (contraauditoría)
+
+Correcciones aplicadas sobre `bea47206` (branch `refactor/spot-canonical-shadow-20260812`), sin deploy:
+
+- **A. FILL JSON path**: todas las consultas SQL de `spotAi.routes.ts` que filtraban FILL snapshots por `data->>'lotId'` corregidas a `data->'fill'->>'lotId'` (la estructura real es `data.fill.lotId`). SUPERVISOR sigue usando `data.position.lotId`.
+- **B. BUY FILL correlation**: la captura del BUY fill en `spotEngine.ts` se movió a AFTER de la generación del `lotId` y la persistencia de la SpotPosition. `buildFillSnapshot` recibe un `lotId` override. Exactly-once garantizado; `fill.lotId` ya no es null para BUY.
+- **C. Históricos**: BUY fills antiguos sin lotId quedan como `CORRELATION_INCOMPLETE`; no se inventa lotId ni se usan como labeled trades.
+- **D. Completed trade canónico**: única fuente para status/dataset/pairs/giveback/training guard = SUPERVISOR con lotId + EXISTS BUY fill + EXISTS SELL fill, mismo lotId AND mismo pair.
+- **E/F. Entry label correlation**: `deriveGroupId` y `findOutcomeForSnapshot` usan correlación explícita por `entryScanId` (+ pair), NO solape temporal. Scan intermedio no relacionado → labels=null.
+- **G. Giveback dataset**: nuevo `buildGivebackDataset` construido desde SUPERVISOR snapshots (state conocido hasta el instante + future outcome como LABEL). Las scan samples del entry dataset llevan `givebackLabels=null`.
+- **H. Challengers**: `projectChallengers` usa el path cronológico de SUPERVISOR para decidir target-vs-stop; sin path suficiente → `available=false, reason=INSUFFICIENT_PATH_DATA`. BASELINE siempre available.
+- **I. Lookahead candles**: `validateNoLookahead` usa `getCandleCloseTimeMs` de `candleTimestamp.ts` (close-time = openTime + timeframe <= predictionTimestamp), no solo openTime.
+- **J. Quality endpoint**: duplicateEntryFills/duplicateExitFills/incompleteTrades computados en SQL; lookaheadViolations y causalCorrelationFailures = null con `available=false` (no falsos ceros). Añadido `checksAvailable` y `qualityCoveragePct`.
+- **K. Feature missing**: `missingPct=null` cuando una feature no está medida (no `?? 0`).
+- **L. Active advisory fail-closed**: `INFERENCE_IMPLEMENTED=false`; `isAdvisoryActiveAllowed` requiere ACTIVE_ADVISORY + artifact existe + schema compatible + predictor real. Status nunca es ADVISORY hasta que exista inference.
+- **M. Trainer fail-closed**: `spotAiTrainerService` comprueba `spotAiMlTrainer.py` ANTES de crear `MODEL_DIR`/`dataset_v*.json` → `TRAINER_NOT_AVAILABLE` sin side effects.
+
+Validación local: `tsc --noEmit` limpio; `npm run build` OK; tests SPOT-AI (spotAiCausal, spotAiForwardTwin, spotAiUiV2, spotAiRestart) 64/64 PASS; Forward Twin (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark) 51/51 PASS; regresión SPOT (spotE2E, spotEngine.integration, spotR10Lifecycle, spotB15Comprehensive, spotR3PreDeploy, spotR5FinalInvariants) 214/214 PASS.
+
+NO DEPLOY. NO REAL. NO training. Pendiente de contraauditoría GitHub.
+
+- SPOT_CANONICAL permanece SHADOW.
+- Forward Twin está desplegado y recopila telemetría exacta.
+- Migration 088 Forward Twin aplicada.
+- Migration 089 IA Forward Twin aplicada en staging.
+- IA Legacy está DEPRECATED, conservada para auditoría.
+- IA SPOT FORWARD TWIN es la nueva arquitectura.
+- AI_TRADING_CONTROL=NONE.
+- AUTO_RETRAIN=NO.
+- Entry Model NOT_TRAINED.
+- Giveback Model NOT_TRAINED.
+- mínimo de entrenamiento previsto: 100 trades completos etiquetados.
+- preferido: 200.
+- datos Legacy NO se mezclan.
+- commit 598551a: infraestructura IA.
+- commit 0bae8a4: consola profesional de 9 tabs.
+- commit bea47206: refactor de placeholders/DB/causalidad.
+- bea47206 NO está autorizado para deploy debido a contraauditoría.
+- defectos pendientes:
+  1. BUY Forward Twin fill carece de lotId al momento de captura;
+  2. SQL usó data.lotId en lugar de data.fill.lotId;
+  3. completed/labeled trades necesita definición causal única;
+  4. Entry labels no pueden asociarse por mero solapamiento temporal;
+  5. Giveback debe construirse desde SUPERVISOR;
+  6. candle lookahead debe usar close-time;
+  7. quality checks no calculados deben ser null/unavailable;
+  8. trainer/inference aún no implementados.
+- NO DEPLOY hasta nueva contraauditoría GitHub.
+- NO REAL.
+- NO training.
 
 ## Consolidación de Correcciones y Actualizaciones
 

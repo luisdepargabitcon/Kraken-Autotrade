@@ -281,14 +281,22 @@ export interface FillSnapshotInput {
   execIntent: SpotExecutionIntent;
   result: SpotExecutionResult;
   slippagePct: number;
+  /**
+   * Optional lotId override. For BUY fills, the SpotPosition lotId is generated
+   * AFTER the execution intent is submitted (execIntent.positionLotId is null at
+   * capture time). Pass the materialized lotId here so the FILL snapshot carries
+   * an unambiguous correlation key. For SELL fills, execIntent.positionLotId is
+   * already set and this override is not needed.
+   */
+  lotId?: string | null;
 }
 
 export function buildFillSnapshot(input: FillSnapshotInput): ForwardTwinSnapshot {
-  const { ctx, execIntent, result, scanId, mode, pair, slippagePct } = input;
+  const { ctx, execIntent, result, scanId, mode, pair, slippagePct, lotId } = input;
 
   const fillSnap: ForwardTwinFillSnapshot = {
     side: execIntent.side,
-    lotId: execIntent.positionLotId,
+    lotId: lotId ?? execIntent.positionLotId,
     fillPrice: result.fillPrice ?? 0,
     fillVolume: result.fillVolume ?? 0,
     notionalUsd: execIntent.notionalUsd,
