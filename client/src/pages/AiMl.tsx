@@ -1019,6 +1019,18 @@ export default function AiMl() {
       <Nav />
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-6">
 
+        {/* ── LEGACY DEPRECATION BANNER ── */}
+        <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-amber-400" />
+            <span className="text-sm font-semibold text-amber-400">IA Legacy — DESACTIVADA / DEPRECATED</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Modelo histórico anterior a Forward Twin. Conservado únicamente para auditoría.
+            La nueva IA SPOT Forward Twin está disponible en la pestaña SPOT.
+          </p>
+        </div>
+
         {/* ── ALERTAS DE SEGURIDAD ── */}
         {diag?.dryRunTradesCount === 0 && diag?.realTradesCount > 0 && (
           <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30">

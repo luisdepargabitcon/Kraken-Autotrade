@@ -11,9 +11,10 @@ import { SpotTerminalPanel } from "@/components/spot/SpotTerminalPanel";
 import { SpotMarketContextPanel, type SpotContextSnapshotData } from "@/components/spot/SpotMarketContextPanel";
 import { SpotAssetsPanel, type SpotPairStatus } from "@/components/spot/SpotAssetsPanel";
 import { SpotErrorBoundary } from "@/components/spot/SpotErrorBoundary";
+import { SpotAiForwardTwinPanel } from "@/components/spot/SpotAiForwardTwinPanel";
 import { reasonCodeShortEs } from "@/components/spot/spotTerminalSpanishFormatter";
 import { refreshSpotData } from "@/lib/spotRefresh";
-import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare, BarChart3 } from "lucide-react";
+import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare, BarChart3, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -301,6 +302,10 @@ export default function Spot() {
               <TerminalSquare className="h-3.5 w-3.5 mr-1 inline" />
               Terminal
             </TabsTrigger>
+            <TabsTrigger value="ai">
+              <Brain className="h-3.5 w-3.5 mr-1 inline" />
+              IA Forward Twin
+            </TabsTrigger>
           </TabsList>
           </div>
 
@@ -424,6 +429,12 @@ export default function Spot() {
 
           <TabsContent value="terminal">
             <SpotTerminalPanel />
+          </TabsContent>
+
+          <TabsContent value="ai">
+            <SpotErrorBoundary name="IA Forward Twin">
+              <SpotAiForwardTwinPanel />
+            </SpotErrorBoundary>
           </TabsContent>
         </Tabs>
       </div>

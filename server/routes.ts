@@ -1802,6 +1802,12 @@ export async function registerRoutes(
   registerSpotRoutes(app, routerDeps);
 
   // ============================================================
+  // SPOT AI FORWARD TWIN — Advisory intelligence endpoints
+  // ============================================================
+  const { registerSpotAiRoutes } = await import('./routes/spotAi.routes');
+  registerSpotAiRoutes(app, routerDeps);
+
+  // ============================================================
   // AUDIT ENDPOINTS — Trading + IDCA (read-only)
   // ============================================================
   const { registerAuditRoutes } = await import('./routes/audit.routes');
