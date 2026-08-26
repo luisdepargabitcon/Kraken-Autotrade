@@ -11,7 +11,7 @@ import { SpotTerminalPanel } from "@/components/spot/SpotTerminalPanel";
 import { SpotMarketContextPanel, type SpotContextSnapshotData } from "@/components/spot/SpotMarketContextPanel";
 import { SpotAssetsPanel, type SpotPairStatus } from "@/components/spot/SpotAssetsPanel";
 import { SpotErrorBoundary } from "@/components/spot/SpotErrorBoundary";
-import { SpotAiForwardTwinPanel } from "@/components/spot/SpotAiForwardTwinPanel";
+import { SpotAiForwardTwinPanel } from "@/components/spot/ai/SpotAiForwardTwinPanel";
 import { reasonCodeShortEs } from "@/components/spot/spotTerminalSpanishFormatter";
 import { refreshSpotData } from "@/lib/spotRefresh";
 import { AlertTriangle, RefreshCw, Activity as ActivityIcon, TerminalSquare, BarChart3, Brain } from "lucide-react";
