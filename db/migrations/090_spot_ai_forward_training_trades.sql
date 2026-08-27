@@ -33,6 +33,10 @@
 --     No empty training rows: is_trainable=false rows are NOT inserted.
 -- R8: hardened dataset_fingerprint NOT NULL, policy_version NOT NULL + CHECK.
 --     Giveback labels_json NOT NULL, has_label NOT NULL (only mature samples).
+-- R9: removed silent DEFAULT 0 from all economic columns the writer always
+--     provides explicitly. No DEFAULT can mask a writer omission as a zero.
+--     is_trainable NOT NULL + CHECK (is_trainable = true) — only trainable
+--     rows are inserted by the writer.
 
 -- ─── Completed training trades (entry model) ─────────────────────────────────
 -- One row per COMPLETED Forward Twin trade (full causal chain).
@@ -40,7 +44,8 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades (
   id                    SERIAL PRIMARY KEY,
   feature_schema_version INTEGER NOT NULL,
   -- R4: Forward Twin snapshot schema version (1=v1, 2=v2 with currentR).
-  forward_twin_schema_version INTEGER NOT NULL DEFAULT 1,
+  -- R9: No DEFAULT — writer always provides explicitly.
+  forward_twin_schema_version INTEGER NOT NULL,
   lot_id                TEXT NOT NULL,
   pair                  TEXT NOT NULL,
   entry_scan_id         TEXT NOT NULL,
@@ -59,33 +64,46 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades (
   -- R4: NET PnL (gross - fees).
   net_pnl_usd           DOUBLE PRECISION NOT NULL,
   -- R4: gross PnL = (exitPrice - entryPrice) * executedQty.
-  gross_pnl_usd         DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  gross_pnl_usd         DOUBLE PRECISION NOT NULL,
   -- R4: entry fee (USD). R6: this is the ALLOCATED portion = totalEntryFeeUsd * (closedQty / totalEntryVolume).
-  entry_fee_usd         DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  entry_fee_usd         DOUBLE PRECISION NOT NULL,
   -- R6: total entry fee (USD) — all BUY fills, before allocation.
-  total_entry_fee_usd   DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  total_entry_fee_usd   DOUBLE PRECISION NOT NULL,
   -- R6: entry fee allocated to the closed portion = totalEntryFeeUsd * (closedQty / totalEntryVolume).
-  entry_fee_allocated_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  entry_fee_allocated_usd DOUBLE PRECISION NOT NULL,
   -- R4: exit fee (USD).
-  exit_fee_usd          DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  exit_fee_usd          DOUBLE PRECISION NOT NULL,
   -- R4: executed entry volume (base currency, from fillVolume).
   -- R5: kept for backward compat; closed_qty is the canonical field.
-  executed_qty          DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  executed_qty          DOUBLE PRECISION NOT NULL,
   -- R4: weighted average exit price across SELL fills.
-  weighted_avg_exit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  weighted_avg_exit_price DOUBLE PRECISION NOT NULL,
   -- R5: weighted average entry price across BUY fills.
-  weighted_avg_entry_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  weighted_avg_entry_price DOUBLE PRECISION NOT NULL,
   -- R5: total executed entry volume (base currency).
-  total_entry_volume    DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  total_entry_volume    DOUBLE PRECISION NOT NULL,
   -- R5: total executed exit volume (base currency).
-  total_exit_volume     DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  total_exit_volume     DOUBLE PRECISION NOT NULL,
   -- R5: actually closed quantity. R6: = min(entry, exit) when within QTY_EPSILON.
   --     No phantom exit qty. No relative 1% tolerance.
-  closed_qty            DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  closed_qty            DOUBLE PRECISION NOT NULL,
   -- R6: residual quantity = totalEntryVolume - closedQty (0 when fully closed).
-  residual_qty          DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R9: No DEFAULT 0 — writer always provides explicitly.
+  residual_qty          DOUBLE PRECISION NOT NULL,
   -- R5: whether this row is trainable (valid economy + causal + features + labels).
-  is_trainable          BOOLEAN NOT NULL DEFAULT false,
+  -- R9: NOT NULL + CHECK (is_trainable = true) — writer only inserts trainable rows.
+  is_trainable          BOOLEAN NOT NULL,
   exit_reason_type      TEXT,
   -- Entry features (compact JSON, versioned by feature_schema_version).
   -- R5: MUST be non-empty for is_trainable=true. Backfill must reconstruct
@@ -104,7 +122,9 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades (
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (lot_id, pair),
   -- R8: Reject empty/whitespace policy_version at the DB level.
-  CONSTRAINT chk_training_trades_policy_version CHECK (btrim(policy_version) <> '')
+  CONSTRAINT chk_training_trades_policy_version CHECK (btrim(policy_version) <> ''),
+  -- R9: Only trainable rows are inserted by the writer.
+  CONSTRAINT chk_training_trades_is_trainable CHECK (is_trainable = true)
 );
 
 CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_trades_pair
@@ -126,7 +146,8 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_giveback_samples (
   id                    SERIAL PRIMARY KEY,
   feature_schema_version INTEGER NOT NULL,
   -- R4: Forward Twin snapshot schema version (1=v1, 2=v2 with currentR).
-  forward_twin_schema_version INTEGER NOT NULL DEFAULT 1,
+  -- R9: No DEFAULT — writer always provides explicitly.
+  forward_twin_schema_version INTEGER NOT NULL,
   lot_id                TEXT NOT NULL,
   pair                  TEXT NOT NULL,
   timestamp             BIGINT NOT NULL,

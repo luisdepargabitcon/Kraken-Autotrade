@@ -10,6 +10,8 @@
  * This function is the SINGLE canonical implementation used by quality checks.
  */
 
+import { sql } from "drizzle-orm";
+
 export interface FillIdentityInput {
   lotId: string;
   pair: string;
@@ -69,4 +71,70 @@ export function countDuplicateFills(
     }
   }
   return { duplicateEntry, duplicateExit };
+}
+
+// ─── R9-01: Fail-closed duplicate quality loader ─────────────────────────────
+
+/**
+ * R9-01: Result of loading duplicate fill quality.
+ * - available=false → DB query failed, values are null.
+ * - available=true → values are real numbers (including 0).
+ */
+export interface DuplicateFillQualityResult {
+  available: boolean;
+  duplicateEntryFills: number | null;
+  duplicateExitFills: number | null;
+  error: string | null;
+}
+
+/**
+ * R9-01: Fail-closed duplicate fill quality loader.
+ *
+ * Loads FILL snapshots from the DB via an executor, maps them to FillIdentityInput,
+ * and counts duplicates via the SINGLE canonical countDuplicateFills().
+ *
+ * On SUCCESS: returns real numbers (including 0) with available=true.
+ * On FAILURE: returns null values with available=false and error message.
+ *
+ * NO DEFAULT 0 after exception.
+ */
+export async function loadDuplicateFillQuality(
+  executor: { execute: (query: any) => Promise<{ rows: any[] }> },
+): Promise<DuplicateFillQualityResult> {
+  try {
+    const fillRows = await executor.execute(sql`
+      SELECT data FROM spot_forward_twin_snapshots
+      WHERE data->>'snapshotType' = 'FILL'
+        AND data->'fill'->>'lotId' IS NOT NULL
+    `);
+    const fillIdentities: FillIdentityInput[] = ((fillRows.rows ?? []) as any[]).map((r) => {
+      const f = (r.data ?? {}).fill ?? {};
+      return {
+        lotId: String(f.lotId ?? ""),
+        pair: String((r.data ?? {}).pair ?? ""),
+        side: (f.side === "SELL" ? "SELL" : "BUY") as "BUY" | "SELL",
+        orderId: String(f.orderId ?? ""),
+        executedAt: Number(f.executedAt ?? 0),
+        fillPrice: Number(f.fillPrice ?? 0),
+        fillVolume: Number(f.fillVolume ?? 0),
+        feeUsd: Number(f.feeUsd ?? 0),
+      };
+    });
+    const dupCounts = countDuplicateFills(fillIdentities);
+    return {
+      available: true,
+      duplicateEntryFills: dupCounts.duplicateEntry,
+      duplicateExitFills: dupCounts.duplicateExit,
+      error: null,
+    };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error("[SpotAi] loadDuplicateFillQuality failed:", error);
+    return {
+      available: false,
+      duplicateEntryFills: null,
+      duplicateExitFills: null,
+      error: errMsg,
+    };
+  }
 }

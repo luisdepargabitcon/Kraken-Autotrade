@@ -83,12 +83,16 @@ export interface DurableRepository {
   isAvailable(): Promise<boolean>;
   getExistingTradeFingerprint(lotId: string, pair: string): Promise<string | null>;
   insertTrade(row: DurableTradeRow): Promise<DurableInsertResult>;
-  getStoredTradeCount(): Promise<number>;
-  getTrainableTradeCount(): Promise<number>;
-  getAllTradeKeys(): Promise<Array<{ lotId: string; pair: string }>>;
+  /** R9-02: Returns null on DB query failure (NOT 0). */
+  getStoredTradeCount(): Promise<number | null>;
+  /** R9-02: Returns null on DB query failure (NOT 0). */
+  getTrainableTradeCount(): Promise<number | null>;
+  /** R9-02: Returns null on DB query failure (NOT []). */
+  getAllTradeKeys(): Promise<Array<{ lotId: string; pair: string }> | null>;
   getExistingGivebackFingerprint(lotId: string, timestamp: number): Promise<string | null>;
   insertGiveback(row: DurableGivebackRow): Promise<DurableInsertResult>;
-  getAllGivebackKeys(): Promise<Array<{ lotId: string; timestamp: number }>>;
+  /** R9-02: Returns null on DB query failure (NOT []). */
+  getAllGivebackKeys(): Promise<Array<{ lotId: string; timestamp: number }> | null>;
 }
 
 export interface DurableTradeRow {
@@ -157,11 +161,13 @@ export function buildDurableEntryPayload(
   sourcePolicyVersion: string,
   forwardTwinSchemaVersion: number = SPOT_FORWARD_TWIN_SCHEMA_VERSION_1,
 ): { row: Omit<DurableTradeRow, "datasetFingerprint">; fingerprint: string } {
+  // R9-08: Canonicalize policy provenance (trim whitespace).
+  const canonicalPolicy = canonicalizePolicyProvenance(sourcePolicyVersion) ?? sourcePolicyVersion;
   const fingerprint = buildCanonicalFingerprint(
     trade,
     entryFeaturesJson,
     entryLabelsJson,
-    sourcePolicyVersion,
+    canonicalPolicy,
     SPOT_AI_FEATURE_SCHEMA_VERSION,
     forwardTwinSchemaVersion,
   );
@@ -199,7 +205,7 @@ export function buildDurableEntryPayload(
     exitReasonType: trade.exitReasonType,
     entryFeaturesJson,
     entryLabelsJson,
-    policyVersion: sourcePolicyVersion,
+    policyVersion: canonicalPolicy,
   };
   return { row, fingerprint };
 }
@@ -215,6 +221,8 @@ export function buildDurableGivebackPayload(
 ): { row: Omit<DurableGivebackRow, "datasetFingerprint">; fingerprint: string } {
   const stateJson = sample.state as unknown as Record<string, unknown>;
   const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
+  // R9-08: Canonicalize policy provenance (trim whitespace).
+  const canonicalPolicy = canonicalizePolicyProvenance(sample.sourcePolicyVersion) ?? sample.sourcePolicyVersion;
   const fingerprint = buildGivebackFingerprint(sample);
   const row: Omit<DurableGivebackRow, "datasetFingerprint"> = {
     featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
@@ -225,7 +233,7 @@ export function buildDurableGivebackPayload(
     stateJson,
     labelsJson,
     hasLabel: sample.labels !== null,
-    policyVersion: sample.sourcePolicyVersion,
+    policyVersion: canonicalPolicy,
   };
   return { row, fingerprint };
 }
@@ -290,11 +298,13 @@ export function buildGivebackFingerprint(
 ): string {
   const stateJson = sample.state as unknown as Record<string, unknown>;
   const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
+  // R9-08: Canonicalize policy provenance for fingerprint consistency.
+  const canonicalPolicy = canonicalizePolicyProvenance(sample.sourcePolicyVersion) ?? sample.sourcePolicyVersion;
   const payload = {
     fingerprintVersion: CANONICAL_FINGERPRINT_VERSION,
     featureSchemaVersion,
     forwardTwinSchemaVersion: sample.sourceForwardTwinSchemaVersion,
-    policyVersion: sample.sourcePolicyVersion,
+    policyVersion: canonicalPolicy,
     lotId: sample.state.lotId,
     pair: sample.state.pair,
     timestamp: sample.state.timestamp,
@@ -311,9 +321,27 @@ import { db } from "../../db";
 import { sql } from "drizzle-orm";
 
 const productionRepository: DurableRepository = {
+  /**
+   * R9-12: Availability checks BOTH tables AND critical columns.
+   * Not just spot_ai_forward_training_trades.
+   * Uses SELECT ... LIMIT 0 to verify columns exist without reading data.
+   */
   async isAvailable(): Promise<boolean> {
     try {
-      await db.execute(sql`SELECT 1 FROM spot_ai_forward_training_trades LIMIT 1`);
+      // Check training table + critical columns
+      await db.execute(sql`
+        SELECT
+          dataset_fingerprint, policy_version, entry_features_json, entry_labels_json,
+          closed_qty, residual_qty
+        FROM spot_ai_forward_training_trades LIMIT 0
+      `);
+      // Check giveback table + critical columns
+      await db.execute(sql`
+        SELECT
+          dataset_fingerprint, policy_version, state_json, labels_json,
+          has_label, forward_twin_schema_version
+        FROM spot_ai_forward_giveback_samples LIMIT 0
+      `);
       return true;
     } catch {
       return false;
@@ -396,32 +424,38 @@ const productionRepository: DurableRepository = {
     }
   },
 
-  async getStoredTradeCount(): Promise<number> {
+  /** R9-02: Returns null on DB query failure (NOT 0). */
+  async getStoredTradeCount(): Promise<number | null> {
     try {
       const result = await db.execute(sql`SELECT COUNT(*) AS cnt FROM spot_ai_forward_training_trades`);
       return parseInt(String((result.rows ?? [])[0]?.cnt ?? "0"));
-    } catch {
-      return 0;
+    } catch (error) {
+      console.error("[SpotAiDurable] getStoredTradeCount failed:", error);
+      return null;
     }
   },
 
-  async getTrainableTradeCount(): Promise<number> {
+  /** R9-02: Returns null on DB query failure (NOT 0). */
+  async getTrainableTradeCount(): Promise<number | null> {
     try {
       const result = await db.execute(sql`
         SELECT COUNT(*) AS cnt FROM spot_ai_forward_training_trades WHERE is_trainable = true
       `);
       return parseInt(String((result.rows ?? [])[0]?.cnt ?? "0"));
-    } catch {
-      return 0;
+    } catch (error) {
+      console.error("[SpotAiDurable] getTrainableTradeCount failed:", error);
+      return null;
     }
   },
 
-  async getAllTradeKeys(): Promise<Array<{ lotId: string; pair: string }>> {
+  /** R9-02: Returns null on DB query failure (NOT []). */
+  async getAllTradeKeys(): Promise<Array<{ lotId: string; pair: string }> | null> {
     try {
       const result = await db.execute(sql`SELECT lot_id, pair FROM spot_ai_forward_training_trades`);
       return ((result.rows ?? []) as any[]).map((r) => ({ lotId: r.lot_id, pair: r.pair }));
-    } catch {
-      return [];
+    } catch (error) {
+      console.error("[SpotAiDurable] getAllTradeKeys failed:", error);
+      return null;
     }
   },
 
@@ -481,12 +515,14 @@ const productionRepository: DurableRepository = {
     }
   },
 
-  async getAllGivebackKeys(): Promise<Array<{ lotId: string; timestamp: number }>> {
+  /** R9-02: Returns null on DB query failure (NOT []). */
+  async getAllGivebackKeys(): Promise<Array<{ lotId: string; timestamp: number }> | null> {
     try {
       const result = await db.execute(sql`SELECT lot_id, timestamp FROM spot_ai_forward_giveback_samples`);
       return ((result.rows ?? []) as any[]).map((r) => ({ lotId: r.lot_id, timestamp: parseInt(r.timestamp) }));
-    } catch {
-      return [];
+    } catch (error) {
+      console.error("[SpotAiDurable] getAllGivebackKeys failed:", error);
+      return null;
     }
   },
 };
@@ -532,9 +568,10 @@ export function _resetDurableStorageCache(): void {
 // ─── Completed trade persistence ─────────────────────────────────────────────
 
 /**
- * R8: Synthetic ingestion labels that MUST NOT be accepted as policy provenance.
+ * R8/R9: Synthetic ingestion labels that MUST NOT be accepted as policy provenance.
  * The policy must come from the Forward Twin snapshot, not from the ingestion
  * mechanism name.
+ * R9-08: Comparison is case-insensitive (BACKFILL, BackFill, etc. all rejected).
  */
 const SYNTHETIC_INGESTION_POLICY_LABELS = new Set([
   "backfill",
@@ -544,15 +581,30 @@ const SYNTHETIC_INGESTION_POLICY_LABELS = new Set([
 ]);
 
 /**
- * R8: Validate that sourcePolicyVersion is a real Forward Twin policy,
+ * R9-08: Canonicalize policy provenance.
+ * - Trims outer whitespace.
+ * - Preserves internal case (policy versions may be semantically case-sensitive).
+ * - Returns null if the policy is invalid (empty, synthetic, non-string).
+ *
+ * ENTRY and GIVEBACK use exactly the same function.
+ */
+export function canonicalizePolicyProvenance(policy: string): string | null {
+  if (typeof policy !== "string") return null;
+  const trimmed = policy.trim();
+  if (trimmed === "") return null;
+  // R9-08: Case-insensitive comparison for synthetic labels.
+  const normalized = trimmed.toLowerCase();
+  if (SYNTHETIC_INGESTION_POLICY_LABELS.has(normalized)) return null;
+  return trimmed;
+}
+
+/**
+ * R8/R9: Validate that sourcePolicyVersion is a real Forward Twin policy,
  * not a synthetic ingestion label, not empty/whitespace.
+ * R9-08: Case-insensitive — BACKFILL, BackFill, LIVE, Live, etc. all rejected.
  */
 function isValidPolicyProvenance(policy: string): boolean {
-  if (typeof policy !== "string") return false;
-  const trimmed = policy.trim();
-  if (trimmed === "") return false;
-  if (SYNTHETIC_INGESTION_POLICY_LABELS.has(trimmed)) return false;
-  return true;
+  return canonicalizePolicyProvenance(policy) !== null;
 }
 
 /**
@@ -587,8 +639,10 @@ export async function persistCompletedTrade(
     return { persisted: false, reason: "SKIP_NOT_TRAINABLE" };
   }
 
-  // R8: Validate policy provenance at the writer — do not trust the caller.
-  if (!isValidPolicyProvenance(sourcePolicyVersion)) {
+  // R8/R9: Validate policy provenance at the writer — do not trust the caller.
+  // R9-08: Canonicalize (trim + case-insensitive synthetic check).
+  const canonicalPolicy = canonicalizePolicyProvenance(sourcePolicyVersion);
+  if (canonicalPolicy === null) {
     return { persisted: false, reason: "INVALID_POLICY_PROVENANCE" };
   }
 
@@ -597,9 +651,9 @@ export async function persistCompletedTrade(
     return { persisted: false, reason: "STORAGE_UNAVAILABLE" };
   }
 
-  // R7: Compute fingerprint centrally. R8: trim policy before fingerprinting.
+  // R7: Compute fingerprint centrally. R9-08: use canonical (trimmed) policy.
   const { row, fingerprint } = buildDurableEntryPayload(
-    trade, entryFeaturesJson, entryLabelsJson, sourcePolicyVersion.trim(), forwardTwinSchemaVersion,
+    trade, entryFeaturesJson, entryLabelsJson, canonicalPolicy, forwardTwinSchemaVersion,
   );
 
   // R7: If caller provided a fingerprint, it must match.
@@ -645,6 +699,8 @@ export interface GivebackPersistResult {
   invalidProvenance: number;
   /** INSERT_ERROR from the repository. */
   insertErrors: number;
+  /** R9-09: true when storage was unavailable. NOT the same as unlabeled. */
+  storageUnavailable: boolean;
 }
 
 /**
@@ -675,12 +731,14 @@ export async function persistGivebackSamples(
     skippedUnlabeled: 0,
     invalidProvenance: 0,
     insertErrors: 0,
+    storageUnavailable: false,
   };
 
   const available = await isDurableStorageAvailable();
   if (!available) {
-    // R8: unavailable → all samples skipped as unlabeled (not errors).
-    result.skippedUnlabeled = samples.length;
+    // R9-09: Storage unavailable is NOT the same as unlabeled.
+    // Do not classify samples — just mark storage as unavailable.
+    result.storageUnavailable = true;
     return result;
   }
 
@@ -736,13 +794,23 @@ export async function persistGivebackSamples(
 export async function getDurableStoredTradeCount(): Promise<number | null> {
   const available = await isDurableStorageAvailable();
   if (!available) return null;
-  return getRepository().getStoredTradeCount();
+  // R9-02: repository may return null on query failure, or throw.
+  try {
+    return await getRepository().getStoredTradeCount();
+  } catch {
+    return null;
+  }
 }
 
 export async function getDurableTrainableTradeCount(): Promise<number | null> {
   const available = await isDurableStorageAvailable();
   if (!available) return null;
-  return getRepository().getTrainableTradeCount();
+  // R9-02: repository may return null on query failure, or throw.
+  try {
+    return await getRepository().getTrainableTradeCount();
+  } catch {
+    return null;
+  }
 }
 
 export async function getDurableCompletedTradeCount(): Promise<number | null> {
@@ -766,6 +834,8 @@ export interface SyncResult {
   invalidProvenance: number;
   insertErrors: number;
   errors: number;
+  /** R9-09: true when giveback storage was unavailable. */
+  storageUnavailable: boolean;
 }
 
 /**
@@ -792,10 +862,12 @@ export async function syncCompletedTradesToDurableStorage(
     invalidProvenance: 0,
     insertErrors: 0,
     errors: 0,
+    storageUnavailable: false,
   };
 
   const available = await isDurableStorageAvailable();
   if (!available) {
+    result.storageUnavailable = true;
     return result;
   }
 
@@ -852,6 +924,7 @@ export async function syncCompletedTradesToDurableStorage(
   result.fingerprintConflicts += gbResult.conflicts;
   result.invalidProvenance += gbResult.invalidProvenance;
   result.insertErrors += gbResult.insertErrors;
+  result.storageUnavailable = gbResult.storageUnavailable;
   // R8-03: errors = conflicts + invalidProvenance + insertErrors.
   // idempotent and skippedUnlabeled are NOT errors.
   result.errors += gbResult.conflicts + gbResult.invalidProvenance + gbResult.insertErrors;
@@ -869,7 +942,8 @@ export type BackfillErrorCode =
   | "RAW_SNAPSHOT_LOAD_FAILED"
   | "DATASET_BUILD_FAILED"
   | "DURABLE_INSERT_FAILED"
-  | "INVALID_PROVENANCE";
+  | "INVALID_PROVENANCE"
+  | "FINGERPRINT_CONFLICT";
 
 export interface BackfillResult extends SyncResult {
   errorCodes: BackfillErrorCode[];
@@ -902,12 +976,13 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
     invalidProvenance: 0,
     insertErrors: 0,
     errors: 0,
+    storageUnavailable: false,
     errorCodes: [],
   };
 
   const available = await isDurableStorageAvailable();
   if (!available) {
-    return emptyResult;
+    return { ...emptyResult, storageUnavailable: true };
   }
 
   const { queryCompletedTrades } = await import("./spotAiCompletedTrades");
@@ -930,11 +1005,27 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
     return emptyResult;
   }
 
+  // R9-05: BLOQUE A — raw SELECT in its own try/catch.
+  // No inference by error message text.
+  let snapshots: any[] = [];
+  try {
+    const rawRows = await db.execute(sql`SELECT data FROM spot_forward_twin_snapshots ORDER BY timestamp ASC`);
+    snapshots = ((rawRows.rows ?? []) as any[]).map((r) => r.data as any);
+  } catch (error) {
+    console.error("[SpotAiDurable] backfill: raw snapshot load failed:", error);
+    return {
+      ...emptyResult,
+      skippedNotTrainableTrades: queryResult.completedTrades.length,
+      errors: 1,
+      errorCodes: ["RAW_SNAPSHOT_LOAD_FAILED"],
+    };
+  }
+
+  // R9-05: BLOQUE B — dataset build in its own try/catch.
+  // No inference by error message text.
   let datasetSamples: SpotAiDatasetSample[] = [];
   let givebackSamples: SpotAiGivebackSample[] = [];
   try {
-    const rawRows = await db.execute(sql`SELECT data FROM spot_forward_twin_snapshots ORDER BY timestamp ASC`);
-    const snapshots = ((rawRows.rows ?? []) as any[]).map((r) => r.data as any);
     const scanSnapshots = snapshots.filter((s) => s.snapshotType === "SCAN");
     const supervisorSnapshots = snapshots.filter((s) => s.snapshotType === "SUPERVISOR");
     const fillSnapshots = snapshots.filter((s) => s.snapshotType === "FILL");
@@ -944,14 +1035,12 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
     const gbDataset = buildGivebackDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     givebackSamples = gbDataset.samples;
   } catch (error) {
-    // R8-04: Distinguish raw load vs dataset build failures.
-    const isRawLoad = error instanceof Error && error.message.includes("spot_forward_twin_snapshots");
-    console.error("[SpotAiDurable] backfill: raw load / dataset build failed:", error);
+    console.error("[SpotAiDurable] backfill: dataset build failed:", error);
     return {
       ...emptyResult,
       skippedNotTrainableTrades: queryResult.completedTrades.length,
       errors: 1,
-      errorCodes: [isRawLoad ? "RAW_SNAPSHOT_LOAD_FAILED" : "DATASET_BUILD_FAILED"],
+      errorCodes: ["DATASET_BUILD_FAILED"],
     };
   }
 
@@ -960,8 +1049,9 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
     queryResult.completedTrades, datasetSamples, givebackSamples,
   );
 
-  // R8-04: If sync had insert errors, add the error code.
+  // R8-04/R9-07: If sync had errors, add the corresponding error codes.
   const errorCodes: BackfillErrorCode[] = [];
+  if (syncResult.fingerprintConflicts > 0) errorCodes.push("FINGERPRINT_CONFLICT");
   if (syncResult.invalidProvenance > 0) errorCodes.push("INVALID_PROVENANCE");
   if (syncResult.insertErrors > 0) errorCodes.push("DURABLE_INSERT_FAILED");
 
@@ -976,17 +1066,21 @@ export async function getUnsyncedCompletedTradeCount(
   const available = await isDurableStorageAvailable();
   if (!available) return null;
 
+  // R9-02: getAllTradeKeys may return null on query failure, or throw.
+  let durableKeys: Array<{ lotId: string; pair: string }> | null;
   try {
-    const durableKeys = await getRepository().getAllTradeKeys();
-    const durableKeySet = new Set(durableKeys.map((k) => `${k.lotId}|${k.pair}`));
-    let unsynced = 0;
-    for (const trade of rawCompletedTrades) {
-      if (!durableKeySet.has(`${trade.lotId}|${trade.pair}`)) unsynced++;
-    }
-    return unsynced;
+    durableKeys = await getRepository().getAllTradeKeys();
   } catch {
     return null;
   }
+  if (durableKeys === null) return null;
+
+  const durableKeySet = new Set(durableKeys.map((k) => `${k.lotId}|${k.pair}`));
+  let unsynced = 0;
+  for (const trade of rawCompletedTrades) {
+    if (!durableKeySet.has(`${trade.lotId}|${trade.pair}`)) unsynced++;
+  }
+  return unsynced;
 }
 
 export async function getUnsyncedGivebackSampleCount(
@@ -995,17 +1089,21 @@ export async function getUnsyncedGivebackSampleCount(
   const available = await isDurableStorageAvailable();
   if (!available) return null;
 
+  // R9-02: getAllGivebackKeys may return null on query failure, or throw.
+  let durableKeys: Array<{ lotId: string; timestamp: number }> | null;
   try {
-    const durableKeys = await getRepository().getAllGivebackKeys();
-    const durableKeySet = new Set(durableKeys.map((k) => `${k.lotId}|${k.timestamp}`));
-    let unsynced = 0;
-    for (const sample of rawGivebackSamples) {
-      if (!durableKeySet.has(`${sample.state.lotId}|${sample.state.timestamp}`)) unsynced++;
-    }
-    return unsynced;
+    durableKeys = await getRepository().getAllGivebackKeys();
   } catch {
     return null;
   }
+  if (durableKeys === null) return null;
+
+  const durableKeySet = new Set(durableKeys.map((k) => `${k.lotId}|${k.timestamp}`));
+  let unsynced = 0;
+  for (const sample of rawGivebackSamples) {
+    if (!durableKeySet.has(`${sample.state.lotId}|${sample.state.timestamp}`)) unsynced++;
+  }
+  return unsynced;
 }
 
 // ─── Reconciliation metrics ──────────────────────────────────────────────────
@@ -1198,13 +1296,15 @@ export async function runDurableReconciliation(): Promise<void> {
       );
     }
   } catch (error) {
-    // R8-05: Real error — status=ERROR, errors >= 1.
+    // R8-05/R9-06: Real error — status=ERROR, errors=1 for THIS attempt.
+    // R9-06: Do NOT accumulate errors from previous attempts.
+    // lastReconciliationErrors is LAST ATTEMPT, not lifetime.
     reconciliationMetrics = {
       ...INITIAL_METRICS,
       lastAttemptAt: attemptAt,
       lastCompletedAt: Date.now(),
       status: "ERROR",
-      errors: (reconciliationMetrics.errors ?? 0) + 1,
+      errors: 1,
       errorCodes: ["RECONCILIATION_EXCEPTION"],
     };
     console.error("[SpotAiDurable] Reconciliation error (non-blocking):", error);

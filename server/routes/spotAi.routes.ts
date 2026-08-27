@@ -41,7 +41,7 @@ import {
   PREFERRED_TRADES_TO_TRAIN,
   SPOT_AI_FEATURE_SCHEMA_VERSION,
 } from "../services/spotAiForwardTwin/spotAiForwardTwinTypes";
-import { countDuplicateFills } from "../services/spotAiForwardTwin/spotAiDuplicateIdentity";
+import { countDuplicateFills, loadDuplicateFillQuality } from "../services/spotAiForwardTwin/spotAiDuplicateIdentity";
 
 export const registerSpotAiRoutes: RegisterRoutes = (app) => {
 
@@ -201,35 +201,12 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const multiSellFills = parseInt(d.multi_sell_fills ?? "0");
       const incompleteTrades = parseInt(d.incomplete_trades ?? "0");
 
-      // R8-09: Load FILL snapshots and compute duplicates via the SINGLE canonical
-      // countDuplicateFills() function — same implementation used by tests.
-      let duplicateEntryFills = 0;
-      let duplicateExitFills = 0;
-      try {
-        const fillRows = await db.execute(sql`
-          SELECT data FROM spot_forward_twin_snapshots
-          WHERE data->>'snapshotType' = 'FILL'
-            AND data->'fill'->>'lotId' IS NOT NULL
-        `);
-        const fillIdentities = ((fillRows.rows ?? []) as any[]).map((r) => {
-          const f = (r.data ?? {}).fill ?? {};
-          return {
-            lotId: String(f.lotId ?? ""),
-            pair: String((r.data ?? {}).pair ?? ""),
-            side: (f.side === "SELL" ? "SELL" : "BUY") as "BUY" | "SELL",
-            orderId: String(f.orderId ?? ""),
-            executedAt: Number(f.executedAt ?? 0),
-            fillPrice: Number(f.fillPrice ?? 0),
-            fillVolume: Number(f.fillVolume ?? 0),
-            feeUsd: Number(f.feeUsd ?? 0),
-          };
-        });
-        const dupCounts = countDuplicateFills(fillIdentities);
-        duplicateEntryFills = dupCounts.duplicateEntry;
-        duplicateExitFills = dupCounts.duplicateExit;
-      } catch (error) {
-        console.error("[SpotAi] Quality: countDuplicateFills via TS failed:", error);
-      }
+      // R9-01: Duplicate fill quality via fail-closed helper.
+      // On DB failure: null values + available=false. NO DEFAULT 0.
+      // On success: real numbers (including 0) + available=true.
+      const duplicateQuality = await loadDuplicateFillQuality(db);
+      const duplicateEntryFills = duplicateQuality.duplicateEntryFills;
+      const duplicateExitFills = duplicateQuality.duplicateExitFills;
 
       // Structural invariants — always false by design, not computed statistically
       const legacyMixed = false;
@@ -252,13 +229,13 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const forwardTwinV1Count = parseInt(sv.v1_count ?? "0");
       const forwardTwinV2Count = parseInt(sv.v2_count ?? "0");
 
-      // R4/R6/R7/R8: durable storage availability and sync status.
+      // R4/R6/R7/R8/R9: durable storage availability and sync status.
+      // R9-03: Each durable read can independently fail (return null).
       const durableAvailable = await isDurableStorageAvailable();
       const durableCompletedCount = await getDurableCompletedTradeCount();
-      const durableStoredCount = durableAvailable ? await getDurableStoredTradeCount() : null;
-      const durableUnsyncedCount = durableAvailable
-        ? await getUnsyncedCompletedTradeCount(completedTradesResult.completedTrades)
-        : null;
+      // R9-03: Always call — the function returns null if unavailable or query fails.
+      const durableStoredCount = await getDurableStoredTradeCount();
+      const durableUnsyncedCount = await getUnsyncedCompletedTradeCount(completedTradesResult.completedTrades);
       // R8-05: durable reconciliation metrics — null before first run, real after.
       const reconStatus = getReconciliationStatus();
       const lastReconAt = getLastReconciliationAt();
@@ -359,8 +336,8 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         schemaVersionMismatches: true,
         invalidSnapshots: true,
         missingFeatures: true,
-        duplicateEntryFills: true,
-        duplicateExitFills: true,
+        duplicateEntryFills: duplicateQuality.available,
+        duplicateExitFills: duplicateQuality.available,
         orphanSupervisor: true,
         orphanFills: true,
         incompleteTrades: true,
@@ -381,12 +358,12 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         multiSellFills: true,
         durableStorageAvailable: true,
         durableSyncErrors: false,
-        durableUnsyncedCompletedTrades: durableAvailable,
-        // R6/R7/R8: new durable metrics availability
-        durableStoredTrades: durableAvailable,
-        durableTrainableTrades: durableAvailable,
-        durableMissingTrades: durableAvailable,
-        durableNonTrainableTrades: durableAvailable,
+        durableUnsyncedCompletedTrades: durableUnsyncedCount !== null,
+        // R9-03: per-metric null check, NOT just durableAvailable.
+        durableStoredTrades: durableStoredCount !== null,
+        durableTrainableTrades: durableCompletedCount !== null,
+        durableMissingTrades: durableMissingTrades !== null,
+        durableNonTrainableTrades: durableNonTrainableTrades !== null,
         // R8-06: fingerprint conflicts available iff value is not null.
         durableFingerprintConflicts: lastReconConflicts !== null,
         // R8-06: unsynced giveback not computed without reconstruction.
@@ -416,14 +393,15 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
 
       // Score formula: start at 100, subtract weighted penalties (only for
       // computed checks; null checks do not contribute false zeros).
+      // R9-01: duplicateEntryFills/ExitFills may be null on DB failure.
       const totalIssues =
         schemaMismatches * 10 +
         invalidSnapshots * 5 +
         missingFeatures * 3 +
         orphanSupervisor * 2 +
         orphanFills * 2 +
-        duplicateEntryFills * 4 +
-        duplicateExitFills * 4 +
+        (duplicateEntryFills ?? 0) * 4 +
+        (duplicateExitFills ?? 0) * 4 +
         incompleteTrades * 1;
       const score = Math.max(0, 100 - totalIssues);
       const available = true;

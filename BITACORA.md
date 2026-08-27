@@ -8381,3 +8381,159 @@ TELEGRAM_MODIFIED=NO
 FISCO_MODIFIED=NO
 POSTGRES_SQL_INTEGRATION=NOT_AVAILABLE
 ```
+
+---
+
+## SPOT R9 — FAIL-CLOSED METRICS + REAL BACKFILL PARITY
+
+**Fecha:** 12-AUG-2026
+**Modulo:** SPOT AI Forward Twin — Durable Training Store
+**Commit:** fix(spot-ai): make durable metrics and backfill parity fail closed
+**Base:** d6e238fa65c5cc5b37999e7c32c271a8224ec5de (R8)
+
+### Defectos R8 corregidos por R9
+
+1. **R9-01: Duplicate-fill quality false zeros on DB error**: R8 catch logs error and publishes 0 with available=true. R9: `loadDuplicateFillQuality()` helper returns `{available, duplicateEntryFills, duplicateExitFills, error}`. Failure → null/false. Success → real numbers/true.
+2. **R9-02: Durable reads return false zeros/empty arrays**: R8 catches returned 0/[] on DB failure. R9: `getStoredTradeCount`, `getTrainableTradeCount`, `getAllTradeKeys`, `getAllGivebackKeys` return `null` on failure. Wrappers catch and return null.
+3. **R9-03: Quality availability per-metric null check**: R8 used `durableAvailable` for all durable metrics. R9: each metric's availability is `value !== null`, independently.
+4. **R9-04: Backfill parity test did not invoke backfillDurableFromRaw**: R8 compared builders directly. R9: real end-to-end test creates snapshots, uses live path, invokes `backfillDurableFromRaw()`, compares entry/giveback rows + fingerprints, tests second-run idempotency.
+5. **R9-05: Raw-load and dataset-build classification by message text**: R8 classified by `error.message.includes("spot_forward_twin_snapshots")`. R9: separate try/catch blocks — one for raw SELECT, one for dataset build. Classification by exception boundary, not message text.
+6. **R9-06: Reconciliation errors cumulative**: R8 catch accumulated `(reconciliationMetrics.errors ?? 0) + 1`. R9: per-attempt reset — errors=1 for current attempt. Success after error → errors=0. Storage unavailable → errors=null.
+7. **R9-07: FINGERPRINT_CONFLICT not in BackfillErrorCode**: R8 did not report fingerprint conflicts as a typed backfill error. R9: `FINGERPRINT_CONFLICT` added to `BackfillErrorCode` union. Reported when `syncResult.fingerprintConflicts > 0`.
+8. **R9-08: Policy provenance case-sensitive**: R8 compared synthetic labels case-sensitively. R9: `canonicalizePolicyProvenance()` trims whitespace, compares case-insensitively. ENTRY and GIVEBACK use the same function. Fingerprint uses canonical policy.
+9. **R9-09: Giveback storage unavailable counted as unlabeled**: R8 set `skippedUnlabeled = samples.length` when storage unavailable. R9: dedicated `storageUnavailable: boolean` field. Storage unavailable → `storageUnavailable=true`, `skippedUnlabeled=0`.
+10. **R9-10: Lifecycle test used test-only reset as mechanism**: R8 relied on `_resetReconciliationRunning()` between generations. R9: real generation handoff test — generation A pending, stop A, start B, resolve A → no rearm. Reset only used in beforeEach for test isolation.
+11. **R9-11: Quality error test did not run real reconciliation**: R8 exercised a lower-level sync path. R9: invokes `runDurableReconciliation()` with a repo that produces insert errors. Asserts status=ERROR, errors>0, errorCodes contain DURABLE_INSERT_FAILED.
+12. **R9-12: Availability checked only training table**: R8 checked only `spot_ai_forward_training_trades`. R9: checks both tables + critical columns (dataset_fingerprint, policy_version, state_json, labels_json, has_label, etc.).
+13. **R9-13: Migration 090 silent defaults on economic columns**: R8 had `DEFAULT 0` on gross_pnl_usd, entry_fee_usd, etc. R9: removed all DEFAULTs from economic columns. `is_trainable` CHECK (is_trainable = true). `forward_twin_schema_version` no DEFAULT in both tables.
+14. **R9-14: Exhaustive migration↔writer contract**: R9: 27 contract tests covering every NOT NULL column, no-DEFAULT verification, writer-provides-all verification, both tables, CHECK constraints.
+
+### Archivos modificados
+
+- `server/services/spotAiForwardTwin/spotAiDurableTrainingStore.ts`:
+  - R9-02: Repository interface returns `number | null` / `Array | null`.
+  - R9-02: Production repo catches return null (not 0/[]).
+  - R9-02: Wrappers (`getDurableStoredTradeCount`, etc.) catch and return null.
+  - R9-05: Separate try/catch for raw SELECT and dataset build.
+  - R9-06: Per-attempt errors=1 in catch block (not cumulative).
+  - R9-07: `FINGERPRINT_CONFLICT` in `BackfillErrorCode`.
+  - R9-08: `canonicalizePolicyProvenance()` — trim + case-insensitive synthetic check.
+  - R9-08: `buildDurableEntryPayload` / `buildDurableGivebackPayload` / `buildGivebackFingerprint` use canonical policy.
+  - R9-09: `storageUnavailable: boolean` in `GivebackPersistResult` and `SyncResult`.
+  - R9-12: `isAvailable()` checks both tables + critical columns.
+- `server/services/spotAiForwardTwin/spotAiDuplicateIdentity.ts`:
+  - R9-01: `loadDuplicateFillQuality()` fail-closed helper.
+- `server/routes/spotAi.routes.ts`:
+  - R9-01: Uses `loadDuplicateFillQuality(db)`.
+  - R9-03: Per-metric null check for durable availability.
+- `db/migrations/090_spot_ai_forward_training_trades.sql`:
+  - R9-13: Removed DEFAULT 0 from all economic columns.
+  - R9-13: `is_trainable` CHECK (is_trainable = true).
+  - R9-13: `forward_twin_schema_version` no DEFAULT in both tables.
+
+### Tests R9 (10 files, 59 tests)
+
+- `spotAiQualityDuplicatesR9.test.ts` — 3 tests (R9-01: fail/no-dup/real-dup)
+- `spotAiDurableReadsR9.test.ts` — 5 tests (R9-02/R9-03: null on failure, real on success)
+- `spotAiBackfillParityR9.test.ts` — 3 tests (R9-04: entry/giveback parity, idempotent)
+- `spotAiReconciliationR9.test.ts` — 6 tests (R9-05/R9-06/R9-07: boundaries, per-attempt, conflict)
+- `spotAiPolicyProvenanceR9.test.ts` — 5 tests (R9-08: case-insensitive, canonicalize, entry=gb)
+- `spotAiGivebackStorageR9.test.ts` — 2 tests (R9-09: storage unavailable ≠ unlabeled)
+- `spotAiLifecycleR9.test.ts` — 3 tests (R9-10: real generation handoff, anti-overlap)
+- `spotAiQualityReconErrorR9.test.ts` — 1 test (R9-11: real reconciliation ERROR)
+- `spotAiAvailabilityR9.test.ts` — 4 tests (R9-12: both tables, critical schema)
+- `spotAiMigrationContractR9.test.ts` — 27 tests (R9-13/R9-14: no DEFAULT, NOT NULL, CHECK, writer contract)
+
+### Validacion
+
+- SPOT-AI tests: 349/349 pass (39 files) — 290 R8 + 59 R9
+- Economic R5/R6/general: 33/33 pass
+- Forward Twin + audit: 47/47 pass
+- Forward Twin benchmark: 4/4 pass
+- TSC: 0 errors (PASS)
+- Build: OK (PASS)
+- `git diff --check`: clean (PASS)
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION (090 not applied, no 091 created)
+NO VPS
+NO TRAINING
+NO REAL
+NO INFERENCE
+NO ORDER PLACEMENT
+AI_TRADING_CONTROL=NONE
+SHADOW
+PENDING_GITHUB_COUNTERAUDIT=YES
+```
+
+### Flags finales
+
+```
+QUALITY_R9_DUP_FAIL_01=PASS
+QUALITY_R9_DUP_FAIL_02=PASS
+QUALITY_R9_DUP_FAIL_03=PASS
+
+DURABLE_READS_RETURN_NULL_ON_FAILURE=YES
+DURABLE_READS_NEVER_RETURN_FALSE_ZERO=YES
+QUALITY_AVAILABILITY_PER_METRIC_NULL_CHECK=YES
+
+LIVE_BACKFILL_REAL_FUNCTION_CALLED=YES
+LIVE_BACKFILL_END_TO_END_TEST=PASS
+LIVE_BACKFILL_ENTRY_ROW_EQUAL=YES
+LIVE_BACKFILL_ENTRY_FINGERPRINT_EQUAL=YES
+LIVE_BACKFILL_GIVEBACK_ROW_EQUAL=YES
+LIVE_BACKFILL_GIVEBACK_FINGERPRINT_EQUAL=YES
+BACKFILL_SECOND_RUN_IDEMPOTENT=YES
+
+RAW_LOAD_ERROR_CLASSIFICATION_BY_EXCEPTION_BOUNDARY=YES
+RAW_LOAD_ERROR_CLASSIFICATION_BY_MESSAGE_TEXT=NO
+DATASET_BUILD_REAL_THROW_TEST=PASS
+
+RECONCILIATION_ERRORS_PER_ATTEMPT=YES
+RECONCILIATION_ERRORS_NOT_CUMULATIVE=YES
+RECONCILIATION_SUCCESS_AFTER_ERROR_ERRORS_0=YES
+RECONCILIATION_UNAVAILABLE_AFTER_ERROR_ERRORS_NULL=YES
+
+FINGERPRINT_CONFLICT_ERROR_CODE=YES
+
+POLICY_SYNTHETIC_CHECK_CASE_INSENSITIVE=YES
+POLICY_OUTER_WHITESPACE_CANONICALIZED=YES
+ENTRY_GIVEBACK_POLICY_CANONICALIZATION_SAME=YES
+
+GIVEBACK_STORAGE_UNAVAILABLE_FIELD=YES
+STORAGE_UNAVAILABLE_COUNTED_AS_UNLABELED=NO
+
+REAL_GENERATION_HANDOFF_TEST=PASS
+GENERATION_HANDOFF_USES_TEST_RESET_RUNNING=NO
+
+QUALITY_REAL_RECON_ERROR_TEST=PASS
+
+AVAILABILITY_CHECKS_TRAINING_TABLE=YES
+AVAILABILITY_CHECKS_GIVEBACK_TABLE=YES
+AVAILABILITY_CHECKS_CRITICAL_SCHEMA=YES
+
+MIGRATION_090_WRITER_CONTRACT=PASS
+MIGRATION_090_CRITICAL_DEFAULTS_AUDITED=YES
+MIGRATION_090_APPLIED=NO
+NO_MIGRATION_091=YES
+
+TSC=PASS
+CHECK=PASS
+BUILD=PASS
+DIFF_CHECK=PASS
+GITHUB_CI=NOT_VERIFIED
+
+SPOT_STRATEGY_CHANGED=NO
+SPOT_ENTRY_POLICY_CHANGED=NO
+SPOT_EXIT_POLICY_CHANGED=NO
+SPOT_SIZING_CHANGED=NO
+SPOT_EXECUTION_CHANGED=NO
+GRID_MODIFIED=NO
+IDCA_MODIFIED=NO
+AMA_MODIFIED=NO
+TELEGRAM_MODIFIED=NO
+FISCO_MODIFIED=NO
+```
