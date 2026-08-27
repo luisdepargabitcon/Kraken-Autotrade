@@ -17,6 +17,40 @@
 
 ## 2026-08-26 — SPOT FORWARD TWIN + IA FORWARD TWIN — ESTADO VIGENTE
 
+### Checkpoint R6 2026-08-27 — SPOT IA Forward Twin R6 — Cierre post-contraauditoría R5
+
+`608e3ee` (R5) no fue aprobado por contraauditoría GitHub. Correcciones R6 aplicadas sobre `608e3ee`, sin deploy:
+
+**Defectos R5 detectados por contraauditoría:**
+- Phantom exit qty: tolerancia relativa 99%-101% permitía asignar precio SELL a cantidad no vendida (closedQty=1 cuando exit=0.995).
+- ECON_DB_* no probaban DB: probaban el normalizador puro, no `queryCompletedTrades()`.
+- Durable lifecycle no conectado: `scheduleDurableReconciliation()` era one-shot, nadie lo llamaba.
+- Durable tests no probaban writer real: probaban casi exclusivamente migration absent.
+- Fingerprint incompleto: no incluía features, labels, schema, policy.
+- Giveback schema provenance por batch: pasaba un único `schemaVersion=2` para todo el batch.
+- Quality schema demasiado permisivo: `NOT IN (1,2)` permitía SCAN v2 y FILL v2.
+- Duplicate BUY hardcoded zero: `duplicateEntryFills=0` hardcoded.
+
+**Correcciones R6:**
+- **1. Phantom exit qty eliminado**: Reemplazada tolerancia relativa 99%-101% por `QTY_EPSILON=1e-8` (epsilon numérico puro). `closedQty = min(entry, exit)` solo cuando `abs(exit - entry) <= QTY_EPSILON`. exit < entry - epsilon → PARTIAL_EXIT. exit > entry + epsilon → EXIT_VOLUME_OVERFLOW.
+- **2. PnL exacto**: `grossPnlUsd = (weightedExit - weightedEntry) * closedQty`. `entryFeeAllocatedUsd = totalEntryFeeUsd * (closedQty / totalEntryVolume)`. `netPnlUsd = grossPnlUsd - entryFeeAllocatedUsd - exitFeeUsd`. Campos: `totalEntryFeeUsd`, `entryFeeAllocatedUsd`, `totalExitFeeUsd`.
+- **3. DB mapping repository**: `spotAiCompletedTradeRepository.ts` separa DB mapping del normalizer. `DbExecutor` inyectable. `queryCompletedTradesWithExecutor()` usa el executor. Mapeo probado con fake executor determinista.
+- **4. Scheduler recurrente conectado**: `startDurableReconciliationScheduler()` / `stopDurableReconciliationScheduler()` con timer recurrente (10 min), anti-overlap, unref, shutdown limpio. Conectado productivamente desde `server/index.ts` en startup y graceful shutdown.
+- **5. Durable repository interface**: `DurableRepository` inyectable con fake in-memory que mantiene filas y conflictos con mismas claves únicas que 090. `setDurableRepository()` para tests.
+- **6. Canonical SHA-256 fingerprint**: `buildCanonicalFingerprint()` usa `crypto.createHash('sha256')` sobre JSON canónico estable (keys ordenadas). Incluye: fingerprintVersion, featureSchemaVersion, forwardTwinSchemaVersion, policyVersion, lotId, pair, entryScanId, entryTime, exitTime, weighted prices, volumes, closedQty, stop, risk, PnL, fees, mfe/mae, exitReason, features, labels. Same fingerprint → NOOP (no mutation). Different fingerprint → FAIL CLOSED.
+- **7. No empty training rows**: `persistCompletedTrade()` retorna `SKIP_NOT_TRAINABLE` cuando features o labels están vacíos. No inserta filas placeholder `{}`.
+- **8. Giveback schema provenance per sample**: `SpotAiGivebackSample.sourceForwardTwinSchemaVersion` establecido desde `snap.schemaVersion` en `buildGivebackDataset()`. Persistencia usa versión per-sample, no batch-level.
+- **9. Quality schema exacto**: `isForwardTwinSchemaAllowed(snapshotType, schemaVersion)` función compartida. SCAN→v1, FILL→v1, SUPERVISOR→v1|v2, unknown→mismatch. SQL en routes usa semántica exacta por snapshotType.
+- **10. Duplicate BUY vs SELL separados**: SQL separa `duplicate_entry_fills` (side=BUY) de `duplicate_exit_fills` (side=SELL). Usa `orderId` cuando existe; fallback a tuple estricto para legacy sin orderId.
+- **11. Unsynced/trainable metrics**: `durableStoredTrades`, `durableTrainableTrades`, `durableMissingTrades`, `durableNonTrainableTrades`, `durableFingerprintConflicts`, `durableUnsyncedGivebackSamples`, `lastReconciliationAt`, `lastReconciliationErrors` expuestos en quality endpoint.
+- **12. Migration 090 alignment**: Añadidos `total_entry_fee_usd`, `entry_fee_allocated_usd`, `residual_qty`. `entry_fee_usd` documentado como allocated (no total). `closed_qty` documentado como real executed exit qty.
+
+Validación local: `tsc --noEmit` limpio; `npm run build` OK; `git diff --check` limpio. SPOT-AI (spotAiCausal 11, spotAiForwardTwin 39, spotAiUiV2 29, spotAiRestart 11, spotAiEconomic 8, spotAiEconomicR5 18, spotAiEconomicR6 7, spotAiGiveback 6, spotAiDurable 7, spotAiDurableR5 17, spotAiDurableR6 17, spotAiQualityR5 7, spotAiQualityR6 14, spotAiDbMappingR6 8, spotAiLifecycleR6 8) = 207/207 PASS. Forward Twin + regresión SPOT (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark, spotE2E, spotEngine.integration, spotB15Comprehensive) = 168/168 PASS. Total = 375/375 PASS.
+
+POSTGRES_SQL_INTEGRATION=NOT_AVAILABLE (no existe infraestructura DB de test segura aislada; no se declara PRODUCTION_DB_VALIDATION=YES hasta existir evidencia real).
+
+NO DEPLOY. NO REAL. NO TRAINING. NO MIGRATION APPLIED. NO VPS. `PENDING_GITHUB_COUNTERAUDIT=YES`.
+
 ### Checkpoint R5 2026-08-27 — SPOT IA Forward Twin R5 — Corrección de defectos post-contraauditoría R4
 
 `c984b9e` (R4) no fue aprobada por contraauditoría GitHub. Correcciones R5 aplicadas sobre `c984b9e`, sin deploy:

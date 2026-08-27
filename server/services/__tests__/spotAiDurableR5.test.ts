@@ -36,6 +36,7 @@ function makeTrade(overrides: Partial<CompletedTrade> = {}): CompletedTrade {
     initialStopPrice: 95, initialRiskUsd: 10,
     weightedAverageExitPrice: 110, weightedAverageEntryPrice: 100,
     totalEntryVolume: 1, totalExitVolume: 1, closedQty: 1,
+    totalEntryFeeUsd: 1, entryFeeAllocatedUsd: 1, totalExitFeeUsd: 1,
     entryFeeUsd: 1, exitFeeUsd: 1,
     grossPnlUsd: 10, netPnlUsd: 8,
     mfe: 10, mae: -5, mfeR: 1, maeR: -0.5,
@@ -71,16 +72,16 @@ describe("R5 DURABLE tests", () => {
     expect(count).toBeNull();
   });
 
-  it("DURABLE_05: storage not available → persistCompletedTrade=false", async () => {
-    const ok = await persistCompletedTrade(
-      makeTrade(), {}, {}, "test", "fp-1",
+  it("DURABLE_05: storage not available → persistCompletedTrade not persisted", async () => {
+    const result = await persistCompletedTrade(
+      makeTrade(), { f: 1 }, { l: 1 }, "test", "fp-1",
     );
-    expect(ok).toBe(false);
+    expect(result.persisted).toBe(false);
   });
 
-  it("DURABLE_06: storage not available → persistGivebackSamples=false", async () => {
-    const ok = await persistGivebackSamples([], "test", "fp-1");
-    expect(ok).toBe(false);
+  it("DURABLE_06: storage not available → persistGivebackSamples skipped", async () => {
+    const result = await persistGivebackSamples([], "test", "fp-1");
+    expect(result.persisted).toBe(0);
   });
 
   it("DURABLE_07: storage not available → getUnsyncedCompletedTradeCount=null", async () => {
@@ -118,33 +119,47 @@ describe("R5 DURABLE tests", () => {
 
   it("DURABLE_12: canonical fingerprint is deterministic", () => {
     const trade = makeTrade();
-    const fp1 = buildCanonicalFingerprint(trade);
-    const fp2 = buildCanonicalFingerprint(trade);
+    const features = { f: 1 };
+    const labels = { l: 1 };
+    const fp1 = buildCanonicalFingerprint(trade, features, labels, "test");
+    const fp2 = buildCanonicalFingerprint(trade, features, labels, "test");
     expect(fp1).toBe(fp2);
   });
 
   it("DURABLE_13: canonical fingerprint changes with different data", () => {
-    const trade1 = makeTrade({ entryPrice: 100 });
-    const trade2 = makeTrade({ entryPrice: 200 });
-    expect(buildCanonicalFingerprint(trade1)).not.toBe(buildCanonicalFingerprint(trade2));
+    const trade1 = makeTrade({ weightedAverageEntryPrice: 100 });
+    const trade2 = makeTrade({ weightedAverageEntryPrice: 200 });
+    const features = { f: 1 };
+    const labels = { l: 1 };
+    expect(buildCanonicalFingerprint(trade1, features, labels, "test"))
+      .not.toBe(buildCanonicalFingerprint(trade2, features, labels, "test"));
   });
 
   // ─── DURABLE_14: giveback fingerprint ────────────────────────────────────
 
   it("DURABLE_14: giveback fingerprint is deterministic", () => {
-    const state = { lotId: "lot-1", pair: "BTC/USD", timestamp: 1000, currentR: 1.5 };
-    const labels = { future_MFE_R: 2.0, future_MAE_R: -0.5 };
-    const fp1 = buildGivebackFingerprint("lot-1", 1000, state, labels);
-    const fp2 = buildGivebackFingerprint("lot-1", 1000, state, labels);
+    const sample = {
+      sampleId: "gb-1", split: "train" as const, groupId: "lot-1",
+      state: { lotId: "lot-1", pair: "BTC/USD", timestamp: 1000, currentR: 1.5 } as any,
+      labels: { future_MFE_R: 2.0, future_MAE_R: -0.5 } as any,
+      sourceForwardTwinSchemaVersion: 2,
+    };
+    const fp1 = buildGivebackFingerprint(sample, "test");
+    const fp2 = buildGivebackFingerprint(sample, "test");
     expect(fp1).toBe(fp2);
   });
 
   it("DURABLE_15: giveback fingerprint changes with different labels", () => {
-    const state = { lotId: "lot-1", pair: "BTC/USD", timestamp: 1000, currentR: 1.5 };
-    const labels1 = { future_MFE_R: 2.0, future_MAE_R: -0.5 };
-    const labels2 = { future_MFE_R: 3.0, future_MAE_R: -0.5 };
-    expect(buildGivebackFingerprint("lot-1", 1000, state, labels1))
-      .not.toBe(buildGivebackFingerprint("lot-1", 1000, state, labels2));
+    const makeSample = (labels: any) => ({
+      sampleId: "gb-1", split: "train" as const, groupId: "lot-1",
+      state: { lotId: "lot-1", pair: "BTC/USD", timestamp: 1000, currentR: 1.5 } as any,
+      labels,
+      sourceForwardTwinSchemaVersion: 2,
+    });
+    const sample1 = makeSample({ future_MFE_R: 2.0, future_MAE_R: -0.5 });
+    const sample2 = makeSample({ future_MFE_R: 3.0, future_MAE_R: -0.5 });
+    expect(buildGivebackFingerprint(sample1, "test"))
+      .not.toBe(buildGivebackFingerprint(sample2, "test"));
   });
 
   // ─── DURABLE_16: retention policy ────────────────────────────────────────

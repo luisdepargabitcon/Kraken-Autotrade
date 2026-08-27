@@ -244,6 +244,13 @@ export interface SpotAiGivebackSample {
   // Future outcome — LABEL only, not available at prediction time.
   // null when the trade is not yet closed (no completed outcome).
   labels: SpotAiGivebackLabels | null;
+  /**
+   * R6: Schema version of the SUPERVISOR snapshot that originated this sample.
+   * Per-sample provenance — NOT a batch-level constant.
+   * v1 → currentR unavailable, labels null.
+   * v2 → currentR real, labels available.
+   */
+  sourceForwardTwinSchemaVersion?: number;
 }
 
 export interface SpotAiGivebackDataset {

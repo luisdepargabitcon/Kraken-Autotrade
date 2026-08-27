@@ -173,21 +173,18 @@ describe("R5 ECON_DB tests — production economic validation", () => {
     expect(result.exitVolumeOverflowTrades).toBe(1);
   });
 
-  // ECON_DB_07: dust tolerance → PnL uses closed quantity
-  it("ECON_DB_07: within dust tolerance → completed with entry volume as closed", () => {
+  // ECON_DB_07: R6 — 99.5% sold is PARTIAL_EXIT (no phantom exit qty)
+  it("ECON_DB_07: 99.5% sold → PARTIAL_EXIT (no phantom exit qty)", () => {
     const input = makeInput(
       [makeBuyFill("lot-7", "BTC/USD", "scan-7", 100, 1, 1, 1000)],
-      [makeSellFill("lot-7", "BTC/USD", 110, 0.995, 1, 2000)], // 99.5% (within tolerance)
+      [makeSellFill("lot-7", "BTC/USD", 110, 0.995, 1, 2000)], // 99.5% — NOT within epsilon
       [makeScan("scan-7", "BTC/USD", 95, 10)],
       [makeSupervisor("lot-7", "BTC/USD", 10, -5, 1, -0.5)],
     );
     const result = normalizeCompletedTrades(input);
-    expect(result.completedTradeCount).toBe(1);
-    const trade = result.completedTrades[0];
-    // closedQty = entry volume (dust tolerance covers the 0.5% gap)
-    expect(trade.closedQty).toBe(1);
-    // gross = (110 - 100) * 1 = 10
-    expect(trade.grossPnlUsd).toBe(10);
+    // R6: 99.5% is NOT completed — no relative tolerance.
+    expect(result.completedTradeCount).toBe(0);
+    expect(result.partialExitTrades).toBe(1);
   });
 
   // ECON_DB_08: invalid fee/price/qty/risk → fail closed

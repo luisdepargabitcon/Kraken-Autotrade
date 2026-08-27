@@ -1,29 +1,28 @@
 /**
  * spotAiDurableTrainingStore — Durable storage for completed AI training episodes.
  *
- * R5 FIXES:
- *   - Canonical deterministic fingerprint (not "backfill-${lotId}-${pair}").
- *   - Backfill reconstructs real features/labels (not empty {}).
- *   - Giveback fingerprint fail-closed on conflict (not ON CONFLICT DO NOTHING).
- *   - Availability cache with TTL (not permanent false).
- *   - durableTrainableTrades vs durableStoredTrades separation.
- *   - Unsynced count by key difference (not count subtraction).
- *   - Migration 090 ↔ writer alignment (all columns persisted).
- *   - Lifecycle wired (async, non-blocking, observational).
+ * R6 FIXES:
+ *   - Canonical SHA-256 fingerprint (versioned, stable canonical JSON).
+ *   - Fingerprint includes ALL protected payload (features, labels, schema, policy).
+ *   - Same fingerprint → NO UPDATE (immutable versioned row).
+ *   - Different fingerprint for same key → FAIL CLOSED.
+ *   - No empty training rows: SKIP_NOT_TRAINABLE when features/labels missing.
+ *   - Giveback schema provenance per sample (not batch-level).
+ *   - Recurring scheduler with anti-overlap, not one-shot setTimeout.
+ *   - Scheduler wired to server startup/shutdown.
+ *   - Durable repository interface for testability with fake repository.
  *
  * PROPERTIES:
- *   - IDEMPOTENT: upsert by UNIQUE(lot_id, pair) / UNIQUE(lot_id, timestamp).
- *   - FAIL_CLOSED: if fingerprint diverges for same key, FAIL (do NOT
- *     silently overwrite).
- *   - OBSERVATIONAL: a failure here must NOT block, change, or delay trading.
- *   - ASYNC: called after a trade is completed, outside the critical path.
+ *   - IDEMPOTENT: same key + same fingerprint → NOOP (no mutation).
+ *   - FAIL_CLOSED: same key + different fingerprint → reject (no overwrite).
+ *   - OBSERVATIONAL: failures never block, change, or delay trading.
+ *   - ASYNC: called outside the trading critical path.
  *
  * Until migration 090 is applied, isDurableStorageAvailable() returns false
- * and all write operations are no-ops that log a warning (not errors).
+ * and all write operations are safe NOOPs.
  */
 
-import { db } from "../../db";
-import { sql } from "drizzle-orm";
+import { createHash } from "crypto";
 import { SPOT_AI_FEATURE_SCHEMA_VERSION } from "./spotAiForwardTwinTypes";
 import {
   SPOT_FORWARD_TWIN_SCHEMA_VERSION_1,
@@ -32,16 +31,328 @@ import {
 import type { CompletedTrade } from "./spotAiCompletedTrades";
 import type { SpotAiDatasetSample, SpotAiGivebackSample } from "./spotAiForwardTwinTypes";
 
+// ─── Canonical fingerprint ───────────────────────────────────────────────────
+
+export const CANONICAL_FINGERPRINT_VERSION = 1;
+export const CANONICAL_FINGERPRINT_ALGORITHM = "SHA-256";
+
+/**
+ * R6: Stable canonical JSON serialization.
+ * Sorts keys to avoid insertion-order dependence.
+ */
+function stableCanonicalJson(obj: unknown): string {
+  if (obj === null || obj === undefined) return "null";
+  if (typeof obj !== "object") return JSON.stringify(obj);
+  if (Array.isArray(obj)) {
+    return "[" + obj.map(stableCanonicalJson).join(",") + "]";
+  }
+  const entries = Object.entries(obj as Record<string, unknown>)
+    .filter(([_, v]) => v !== undefined)
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return "{" + entries.map(([k, v]) => `${JSON.stringify(k)}:${stableCanonicalJson(v)}`).join(",") + "}";
+}
+
+/**
+ * R6: Canonical SHA-256 fingerprint for a completed trade.
+ * Includes ALL protected payload: features, labels, schema, policy, economics.
+ *
+ * Same key + same fingerprint → NOOP (no update).
+ * Same key + different fingerprint → FAIL CLOSED.
+ */
+export function buildCanonicalFingerprint(
+  trade: CompletedTrade,
+  entryFeaturesJson: Record<string, unknown>,
+  entryLabelsJson: Record<string, unknown>,
+  policyVersion: string,
+  featureSchemaVersion: number = SPOT_AI_FEATURE_SCHEMA_VERSION,
+  forwardTwinSchemaVersion: number = SPOT_FORWARD_TWIN_SCHEMA_VERSION_1,
+): string {
+  const payload = {
+    fingerprintVersion: CANONICAL_FINGERPRINT_VERSION,
+    featureSchemaVersion,
+    forwardTwinSchemaVersion,
+    policyVersion,
+    lotId: trade.lotId,
+    pair: trade.pair,
+    entryScanId: trade.entryScanId,
+    entryTime: trade.entryTime,
+    exitTime: trade.exitTime,
+    weightedAverageEntryPrice: trade.weightedAverageEntryPrice,
+    weightedAverageExitPrice: trade.weightedAverageExitPrice,
+    totalEntryVolume: trade.totalEntryVolume,
+    totalExitVolume: trade.totalExitVolume,
+    closedQty: trade.closedQty,
+    initialStopPrice: trade.initialStopPrice,
+    initialRiskUsd: trade.initialRiskUsd,
+    grossPnlUsd: trade.grossPnlUsd,
+    netPnlUsd: trade.netPnlUsd,
+    totalEntryFeeUsd: trade.totalEntryFeeUsd,
+    entryFeeAllocatedUsd: trade.entryFeeAllocatedUsd,
+    totalExitFeeUsd: trade.totalExitFeeUsd,
+    mfe: trade.mfe,
+    mae: trade.mae,
+    mfeR: trade.mfeR,
+    maeR: trade.maeR,
+    exitReasonType: trade.exitReasonType,
+    entryFeaturesJson,
+    entryLabelsJson,
+  };
+  const canonical = stableCanonicalJson(payload);
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+/**
+ * R6: Canonical SHA-256 fingerprint for a giveback sample.
+ * Includes schema version and policy version per sample.
+ */
+export function buildGivebackFingerprint(
+  sample: SpotAiGivebackSample,
+  policyVersion: string,
+  featureSchemaVersion: number = SPOT_AI_FEATURE_SCHEMA_VERSION,
+): string {
+  const stateJson = sample.state as unknown as Record<string, unknown>;
+  const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
+  const payload = {
+    fingerprintVersion: CANONICAL_FINGERPRINT_VERSION,
+    featureSchemaVersion,
+    forwardTwinSchemaVersion: sample.sourceForwardTwinSchemaVersion ?? SPOT_FORWARD_TWIN_SCHEMA_VERSION_2,
+    policyVersion,
+    lotId: sample.state.lotId,
+    pair: sample.state.pair,
+    timestamp: sample.state.timestamp,
+    stateJson,
+    labelsJson: labelsJson ?? null,
+  };
+  const canonical = stableCanonicalJson(payload);
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+// ─── Durable repository interface ────────────────────────────────────────────
+
+/**
+ * R6: Repository interface for durable storage.
+ * Production uses the real DB; tests use a fake in-memory repository.
+ */
+export interface DurableRepository {
+  isAvailable(): Promise<boolean>;
+  getExistingTradeFingerprint(lotId: string, pair: string): Promise<string | null>;
+  insertTrade(row: DurableTradeRow): Promise<boolean>;
+  getStoredTradeCount(): Promise<number>;
+  getTrainableTradeCount(): Promise<number>;
+  getAllTradeKeys(): Promise<Array<{ lotId: string; pair: string }>>;
+  getExistingGivebackFingerprint(lotId: string, timestamp: number): Promise<string | null>;
+  insertGiveback(row: DurableGivebackRow): Promise<boolean>;
+  getAllGivebackKeys(): Promise<Array<{ lotId: string; timestamp: number }>>;
+}
+
+export interface DurableTradeRow {
+  featureSchemaVersion: number;
+  forwardTwinSchemaVersion: number;
+  lotId: string;
+  pair: string;
+  entryScanId: string;
+  entryTime: number;
+  exitTime: number;
+  entryPrice: number;
+  exitPrice: number;
+  stopPrice: number;
+  riskUsd: number;
+  mfe: number;
+  mae: number;
+  mfeR: number;
+  maeR: number;
+  netPnlUsd: number;
+  grossPnlUsd: number;
+  totalEntryFeeUsd: number;
+  entryFeeAllocatedUsd: number;
+  exitFeeUsd: number;
+  closedQty: number;
+  weightedAvgExitPrice: number;
+  weightedAvgEntryPrice: number;
+  totalEntryVolume: number;
+  totalExitVolume: number;
+  isTrainable: boolean;
+  exitReasonType: string | null;
+  entryFeaturesJson: Record<string, unknown>;
+  entryLabelsJson: Record<string, unknown>;
+  policyVersion: string;
+  datasetFingerprint: string;
+}
+
+export interface DurableGivebackRow {
+  featureSchemaVersion: number;
+  forwardTwinSchemaVersion: number;
+  lotId: string;
+  pair: string;
+  timestamp: number;
+  stateJson: Record<string, unknown>;
+  labelsJson: Record<string, unknown> | null;
+  hasLabel: boolean;
+  policyVersion: string;
+  datasetFingerprint: string;
+}
+
+// ─── Production repository (real DB) ─────────────────────────────────────────
+
+import { db } from "../../db";
+import { sql } from "drizzle-orm";
+
+const productionRepository: DurableRepository = {
+  async isAvailable(): Promise<boolean> {
+    try {
+      await db.execute(sql`SELECT 1 FROM spot_ai_forward_training_trades LIMIT 1`);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  async getExistingTradeFingerprint(lotId: string, pair: string): Promise<string | null> {
+    try {
+      const result = await db.execute(sql`
+        SELECT dataset_fingerprint FROM spot_ai_forward_training_trades
+        WHERE lot_id = ${lotId} AND pair = ${pair}
+      `);
+      const rows = (result.rows ?? []) as any[];
+      return rows.length > 0 ? (rows[0].dataset_fingerprint ?? null) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  async insertTrade(row: DurableTradeRow): Promise<boolean> {
+    try {
+      await db.execute(sql`
+        INSERT INTO spot_ai_forward_training_trades (
+          feature_schema_version, forward_twin_schema_version,
+          lot_id, pair, entry_scan_id,
+          entry_time, exit_time, entry_price, exit_price,
+          stop_price, risk_usd, mfe, mae, mfe_r, mae_r,
+          net_pnl_usd, gross_pnl_usd, total_entry_fee_usd, entry_fee_allocated_usd, exit_fee_usd,
+          executed_qty, closed_qty,
+          weighted_avg_exit_price, weighted_avg_entry_price,
+          total_entry_volume, total_exit_volume,
+          is_trainable,
+          exit_reason_type, entry_features_json, entry_labels_json,
+          policy_version, dataset_fingerprint
+        ) VALUES (
+          ${row.featureSchemaVersion}, ${row.forwardTwinSchemaVersion},
+          ${row.lotId}, ${row.pair}, ${row.entryScanId},
+          ${row.entryTime}, ${row.exitTime}, ${row.entryPrice}, ${row.exitPrice},
+          ${row.stopPrice}, ${row.riskUsd}, ${row.mfe}, ${row.mae},
+          ${row.mfeR}, ${row.maeR},
+          ${row.netPnlUsd}, ${row.grossPnlUsd},
+          ${row.totalEntryFeeUsd}, ${row.entryFeeAllocatedUsd}, ${row.exitFeeUsd},
+          ${row.closedQty}, ${row.closedQty},
+          ${row.weightedAvgExitPrice}, ${row.weightedAvgEntryPrice},
+          ${row.totalEntryVolume}, ${row.totalExitVolume},
+          ${row.isTrainable},
+          ${row.exitReasonType}, ${JSON.stringify(row.entryFeaturesJson)}, ${JSON.stringify(row.entryLabelsJson)},
+          ${row.policyVersion}, ${row.datasetFingerprint}
+        )
+        ON CONFLICT (lot_id, pair) DO NOTHING
+      `);
+      return true;
+    } catch (error) {
+      console.error(`[SpotAiDurable] insertTrade failed for lot_id=${row.lotId}:`, error);
+      return false;
+    }
+  },
+
+  async getStoredTradeCount(): Promise<number> {
+    try {
+      const result = await db.execute(sql`SELECT COUNT(*) AS cnt FROM spot_ai_forward_training_trades`);
+      return parseInt(String((result.rows ?? [])[0]?.cnt ?? "0"));
+    } catch {
+      return 0;
+    }
+  },
+
+  async getTrainableTradeCount(): Promise<number> {
+    try {
+      const result = await db.execute(sql`
+        SELECT COUNT(*) AS cnt FROM spot_ai_forward_training_trades WHERE is_trainable = true
+      `);
+      return parseInt(String((result.rows ?? [])[0]?.cnt ?? "0"));
+    } catch {
+      return 0;
+    }
+  },
+
+  async getAllTradeKeys(): Promise<Array<{ lotId: string; pair: string }>> {
+    try {
+      const result = await db.execute(sql`SELECT lot_id, pair FROM spot_ai_forward_training_trades`);
+      return ((result.rows ?? []) as any[]).map((r) => ({ lotId: r.lot_id, pair: r.pair }));
+    } catch {
+      return [];
+    }
+  },
+
+  async getExistingGivebackFingerprint(lotId: string, timestamp: number): Promise<string | null> {
+    try {
+      const result = await db.execute(sql`
+        SELECT dataset_fingerprint FROM spot_ai_forward_giveback_samples
+        WHERE lot_id = ${lotId} AND timestamp = ${timestamp}
+      `);
+      const rows = (result.rows ?? []) as any[];
+      return rows.length > 0 ? (rows[0].dataset_fingerprint ?? null) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  async insertGiveback(row: DurableGivebackRow): Promise<boolean> {
+    try {
+      await db.execute(sql`
+        INSERT INTO spot_ai_forward_giveback_samples (
+          feature_schema_version, forward_twin_schema_version,
+          lot_id, pair, timestamp,
+          state_json, labels_json, has_label,
+          policy_version, dataset_fingerprint
+        ) VALUES (
+          ${row.featureSchemaVersion}, ${row.forwardTwinSchemaVersion},
+          ${row.lotId}, ${row.pair}, ${row.timestamp},
+          ${JSON.stringify(row.stateJson)}, ${row.labelsJson ? JSON.stringify(row.labelsJson) : null},
+          ${row.hasLabel},
+          ${row.policyVersion}, ${row.datasetFingerprint}
+        )
+        ON CONFLICT (lot_id, timestamp) DO NOTHING
+      `);
+      return true;
+    } catch (error) {
+      console.error(`[SpotAiDurable] insertGiveback failed:`, error);
+      return false;
+    }
+  },
+
+  async getAllGivebackKeys(): Promise<Array<{ lotId: string; timestamp: number }>> {
+    try {
+      const result = await db.execute(sql`SELECT lot_id, timestamp FROM spot_ai_forward_giveback_samples`);
+      return ((result.rows ?? []) as any[]).map((r) => ({ lotId: r.lot_id, timestamp: parseInt(r.timestamp) }));
+    } catch {
+      return [];
+    }
+  },
+};
+
 // ─── Availability cache with TTL ─────────────────────────────────────────────
 
 const AVAILABILITY_CACHE_TTL_MS = 60_000; // 1 minute
 let durableStorageAvailableCache: { value: boolean; checkedAt: number } | null = null;
+let injectedRepository: DurableRepository | null = null;
 
 /**
- * Check if the durable training tables exist (migration 090 applied).
- * Cached with TTL to allow recovery after future migration application.
- * Returns false if 090 is not applied.
+ * R6: Inject a repository for testing. Pass null to reset to production.
  */
+export function setDurableRepository(repo: DurableRepository | null): void {
+  injectedRepository = repo;
+  durableStorageAvailableCache = null;
+}
+
+function getRepository(): DurableRepository {
+  return injectedRepository ?? productionRepository;
+}
+
 export async function isDurableStorageAvailable(): Promise<boolean> {
   const now = Date.now();
   if (durableStorageAvailableCache !== null) {
@@ -49,81 +360,29 @@ export async function isDurableStorageAvailable(): Promise<boolean> {
     if (age < AVAILABILITY_CACHE_TTL_MS) return durableStorageAvailableCache.value;
   }
   try {
-    await db.execute(sql`
-      SELECT 1 FROM spot_ai_forward_training_trades LIMIT 1
-    `);
-    durableStorageAvailableCache = { value: true, checkedAt: now };
-    return true;
+    const value = await getRepository().isAvailable();
+    durableStorageAvailableCache = { value, checkedAt: now };
+    return value;
   } catch {
     durableStorageAvailableCache = { value: false, checkedAt: now };
     return false;
   }
 }
 
-/**
- * Reset the durable storage availability cache. For testing only.
- */
 export function _resetDurableStorageCache(): void {
   durableStorageAvailableCache = null;
-}
-
-// ─── Canonical deterministic fingerprint ──────────────────────────────────────
-
-/**
- * Build a canonical deterministic fingerprint for a completed trade.
- * The same trade produces the same fingerprint regardless of whether it
- * arrived via live sync, restart recovery, or backfill.
- *
- * Fingerprint is derived from the canonical economic payload:
- *   lotId + pair + entryScanId + entryPrice + exitPrice +
- *   initialStopPrice + initialRiskUsd + closedQty + netPnlUsd
- */
-export function buildCanonicalFingerprint(trade: CompletedTrade): string {
-  const parts = [
-    trade.lotId,
-    trade.pair,
-    trade.entryScanId,
-    trade.entryPrice.toFixed(8),
-    trade.exitPrice.toFixed(8),
-    trade.initialStopPrice.toFixed(8),
-    trade.initialRiskUsd.toFixed(8),
-    trade.closedQty.toFixed(8),
-    trade.netPnlUsd.toFixed(8),
-  ];
-  return parts.join("|");
-}
-
-/**
- * Build a canonical deterministic fingerprint for a giveback sample.
- */
-export function buildGivebackFingerprint(
-  lotId: string,
-  timestamp: number,
-  stateJson: Record<string, unknown>,
-  labelsJson: Record<string, unknown> | null,
-): string {
-  const parts = [
-    lotId,
-    timestamp.toString(),
-    JSON.stringify(stateJson),
-    labelsJson ? JSON.stringify(labelsJson) : "null",
-  ];
-  return parts.join("|");
 }
 
 // ─── Completed trade persistence ─────────────────────────────────────────────
 
 /**
- * Persist a completed trade to durable storage.
+ * R6: Persist a completed trade to durable storage.
  *
- * IDEMPOTENT: upsert by UNIQUE(lot_id, pair). If the lot already exists with
- * a different fingerprint, FAIL CLOSED (do NOT silently overwrite).
+ * IDEMPOTENT: same key + same fingerprint → NOOP (no update, no mutation).
+ * FAIL CLOSED: same key + different fingerprint → reject (no overwrite).
  *
- * R5: Persists ALL columns from migration 090, including:
- *   forward_twin_schema_version, weighted_avg_entry_price, total_entry_volume,
- *   total_exit_volume, closed_qty, is_trainable.
- *
- * Returns true on success, false on failure (non-blocking).
+ * R6: Does NOT insert empty training rows. If features/labels are missing,
+ * SKIP_NOT_TRAINABLE is returned and no row is inserted.
  */
 export async function persistCompletedTrade(
   trade: CompletedTrade,
@@ -132,205 +391,153 @@ export async function persistCompletedTrade(
   policyVersion: string,
   datasetFingerprint: string,
   forwardTwinSchemaVersion: number = SPOT_FORWARD_TWIN_SCHEMA_VERSION_1,
-): Promise<boolean> {
-  const available = await isDurableStorageAvailable();
-  if (!available) {
-    return false;
-  }
-
-  // R5: A row is trainable only if it has real features AND real labels.
+): Promise<{ persisted: boolean; reason?: string }> {
+  // R6: No empty training rows. If features or labels are missing → SKIP.
   const hasRealFeatures = Object.keys(entryFeaturesJson).length > 0;
   const hasRealLabels = Object.keys(entryLabelsJson).length > 0;
-  const isTrainable = hasRealFeatures && hasRealLabels;
-
-  try {
-    // Check if lot already exists with a different fingerprint.
-    const existing = await db.execute(sql`
-      SELECT dataset_fingerprint FROM spot_ai_forward_training_trades
-      WHERE lot_id = ${trade.lotId} AND pair = ${trade.pair}
-    `);
-    const existingRows = (existing.rows ?? []) as any[];
-    if (existingRows.length > 0) {
-      const existingFingerprint = existingRows[0].dataset_fingerprint;
-      if (existingFingerprint !== null && existingFingerprint !== datasetFingerprint) {
-        console.error(
-          `[SpotAiDurable] FINGERPRINT_MISMATCH for lot_id=${trade.lotId} pair=${trade.pair}: ` +
-          `existing=${existingFingerprint} new=${datasetFingerprint}. FAIL CLOSED — not overwriting.`,
-        );
-        return false;
-      }
-    }
-
-    // Upsert (insert or update with same fingerprint).
-    await db.execute(sql`
-      INSERT INTO spot_ai_forward_training_trades (
-        feature_schema_version, forward_twin_schema_version,
-        lot_id, pair, entry_scan_id,
-        entry_time, exit_time, entry_price, exit_price,
-        stop_price, risk_usd, mfe, mae, mfe_r, mae_r,
-        net_pnl_usd, gross_pnl_usd, entry_fee_usd, exit_fee_usd,
-        executed_qty, closed_qty,
-        weighted_avg_exit_price, weighted_avg_entry_price,
-        total_entry_volume, total_exit_volume,
-        is_trainable,
-        exit_reason_type, entry_features_json, entry_labels_json,
-        policy_version, dataset_fingerprint
-      ) VALUES (
-        ${SPOT_AI_FEATURE_SCHEMA_VERSION}, ${forwardTwinSchemaVersion},
-        ${trade.lotId}, ${trade.pair}, ${trade.entryScanId},
-        ${trade.entryTime}, ${trade.exitTime}, ${trade.entryPrice}, ${trade.exitPrice},
-        ${trade.initialStopPrice}, ${trade.initialRiskUsd}, ${trade.mfe}, ${trade.mae},
-        ${trade.mfeR}, ${trade.maeR},
-        ${trade.netPnlUsd}, ${trade.grossPnlUsd}, ${trade.entryFeeUsd}, ${trade.exitFeeUsd},
-        ${trade.closedQty}, ${trade.closedQty},
-        ${trade.weightedAverageExitPrice}, ${trade.weightedAverageEntryPrice},
-        ${trade.totalEntryVolume}, ${trade.totalExitVolume},
-        ${isTrainable},
-        ${trade.exitReasonType}, ${JSON.stringify(entryFeaturesJson)}, ${JSON.stringify(entryLabelsJson)},
-        ${policyVersion}, ${datasetFingerprint}
-      )
-      ON CONFLICT (lot_id, pair) DO UPDATE SET
-        entry_features_json = EXCLUDED.entry_features_json,
-        entry_labels_json = EXCLUDED.entry_labels_json,
-        is_trainable = EXCLUDED.is_trainable,
-        dataset_fingerprint = EXCLUDED.dataset_fingerprint,
-        forward_twin_schema_version = EXCLUDED.forward_twin_schema_version,
-        closed_qty = EXCLUDED.closed_qty,
-        weighted_avg_entry_price = EXCLUDED.weighted_avg_entry_price,
-        total_entry_volume = EXCLUDED.total_entry_volume,
-        total_exit_volume = EXCLUDED.total_exit_volume,
-        created_at = spot_ai_forward_training_trades.created_at
-      WHERE spot_ai_forward_training_trades.dataset_fingerprint IS NULL
-        OR spot_ai_forward_training_trades.dataset_fingerprint = EXCLUDED.dataset_fingerprint
-    `);
-    return true;
-  } catch (error) {
-    console.error(`[SpotAiDurable] Failed to persist trade lot_id=${trade.lotId}:`, error);
-    return false;
+  if (!hasRealFeatures || !hasRealLabels) {
+    return { persisted: false, reason: "SKIP_NOT_TRAINABLE" };
   }
+
+  const available = await isDurableStorageAvailable();
+  if (!available) {
+    return { persisted: false, reason: "STORAGE_UNAVAILABLE" };
+  }
+
+  const repo = getRepository();
+
+  // R6: Check for fingerprint conflict.
+  const existingFingerprint = await repo.getExistingTradeFingerprint(trade.lotId, trade.pair);
+  if (existingFingerprint !== null) {
+    if (existingFingerprint === datasetFingerprint) {
+      // R6: Same fingerprint → NOOP. Do NOT mutate features/labels.
+      return { persisted: false, reason: "IDEMPOTENT_NOOP" };
+    } else {
+      // R6: Different fingerprint → FAIL CLOSED.
+      console.error(
+        `[SpotAiDurable] FINGERPRINT_MISMATCH for lot_id=${trade.lotId} pair=${trade.pair}: ` +
+        `existing=${existingFingerprint} new=${datasetFingerprint}. FAIL CLOSED.`,
+      );
+      return { persisted: false, reason: "FINGERPRINT_CONFLICT" };
+    }
+  }
+
+  const isTrainable = hasRealFeatures && hasRealLabels;
+  const ok = await repo.insertTrade({
+    featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
+    forwardTwinSchemaVersion,
+    lotId: trade.lotId,
+    pair: trade.pair,
+    entryScanId: trade.entryScanId,
+    entryTime: trade.entryTime,
+    exitTime: trade.exitTime,
+    entryPrice: trade.entryPrice,
+    exitPrice: trade.exitPrice,
+    stopPrice: trade.initialStopPrice,
+    riskUsd: trade.initialRiskUsd,
+    mfe: trade.mfe,
+    mae: trade.mae,
+    mfeR: trade.mfeR,
+    maeR: trade.maeR,
+    netPnlUsd: trade.netPnlUsd,
+    grossPnlUsd: trade.grossPnlUsd,
+    totalEntryFeeUsd: trade.totalEntryFeeUsd,
+    entryFeeAllocatedUsd: trade.entryFeeAllocatedUsd,
+    exitFeeUsd: trade.totalExitFeeUsd,
+    closedQty: trade.closedQty,
+    weightedAvgExitPrice: trade.weightedAverageExitPrice,
+    weightedAvgEntryPrice: trade.weightedAverageEntryPrice,
+    totalEntryVolume: trade.totalEntryVolume,
+    totalExitVolume: trade.totalExitVolume,
+    isTrainable,
+    exitReasonType: trade.exitReasonType,
+    entryFeaturesJson,
+    entryLabelsJson,
+    policyVersion,
+    datasetFingerprint,
+  });
+  return { persisted: ok, reason: ok ? undefined : "INSERT_FAILED" };
 }
 
 // ─── Giveback sample persistence ─────────────────────────────────────────────
 
 /**
- * Persist giveback samples to durable storage.
- *
- * R5: FAIL CLOSED on fingerprint conflict (not ON CONFLICT DO NOTHING).
- * IDEMPOTENT: upsert by UNIQUE(lot_id, timestamp). If same key with different
- * fingerprint → fail closed.
+ * R6: Persist giveback samples with per-sample schema provenance.
+ * FAIL CLOSED on fingerprint conflict.
  */
 export async function persistGivebackSamples(
   samples: SpotAiGivebackSample[],
   policyVersion: string,
-  datasetFingerprint: string,
-  forwardTwinSchemaVersion: number = SPOT_FORWARD_TWIN_SCHEMA_VERSION_2,
-): Promise<boolean> {
+  _datasetFingerprint?: string, // R6: ignored — fingerprint is per-sample now
+): Promise<{ persisted: number; conflicts: number; skipped: number }> {
   const available = await isDurableStorageAvailable();
   if (!available) {
-    return false;
+    return { persisted: 0, conflicts: 0, skipped: samples.length };
   }
 
-  try {
-    for (const sample of samples) {
-      const stateJson = sample.state as unknown as Record<string, unknown>;
-      const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
-      const sampleFingerprint = buildGivebackFingerprint(
-        sample.state.lotId, sample.state.timestamp, stateJson, labelsJson,
-      );
+  const repo = getRepository();
+  let persisted = 0;
+  let conflicts = 0;
+  let skipped = 0;
 
-      // R5: Check for fingerprint conflict before upsert.
-      const existing = await db.execute(sql`
-        SELECT dataset_fingerprint FROM spot_ai_forward_giveback_samples
-        WHERE lot_id = ${sample.state.lotId} AND timestamp = ${sample.state.timestamp}
-      `);
-      const existingRows = (existing.rows ?? []) as any[];
-      if (existingRows.length > 0) {
-        const existingFingerprint = existingRows[0].dataset_fingerprint;
-        if (existingFingerprint !== null && existingFingerprint !== sampleFingerprint) {
-          console.error(
-            `[SpotAiDurable] GIVEBACK_FINGERPRINT_MISMATCH for lot_id=${sample.state.lotId} ` +
-            `timestamp=${sample.state.timestamp}: existing=${existingFingerprint} ` +
-            `new=${sampleFingerprint}. FAIL CLOSED — not overwriting.`,
-          );
-          return false;
-        }
+  for (const sample of samples) {
+    const stateJson = sample.state as unknown as Record<string, unknown>;
+    const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
+    const sampleFingerprint = buildGivebackFingerprint(sample, policyVersion);
+    const sampleSchemaVersion = sample.sourceForwardTwinSchemaVersion ?? SPOT_FORWARD_TWIN_SCHEMA_VERSION_2;
+
+    // R6: Check for fingerprint conflict.
+    const existingFingerprint = await repo.getExistingGivebackFingerprint(
+      sample.state.lotId, sample.state.timestamp,
+    );
+    if (existingFingerprint !== null) {
+      if (existingFingerprint === sampleFingerprint) {
+        // Idempotent NOOP.
+        skipped++;
+        continue;
+      } else {
+        console.error(
+          `[SpotAiDurable] GIVEBACK_FINGERPRINT_MISMATCH for lot_id=${sample.state.lotId} ` +
+          `timestamp=${sample.state.timestamp}. FAIL CLOSED.`,
+        );
+        conflicts++;
+        continue;
       }
-
-      await db.execute(sql`
-        INSERT INTO spot_ai_forward_giveback_samples (
-          feature_schema_version, forward_twin_schema_version,
-          lot_id, pair, timestamp,
-          state_json, labels_json, has_label,
-          policy_version, dataset_fingerprint
-        ) VALUES (
-          ${SPOT_AI_FEATURE_SCHEMA_VERSION}, ${forwardTwinSchemaVersion},
-          ${sample.state.lotId}, ${sample.state.pair},
-          ${sample.state.timestamp},
-          ${JSON.stringify(stateJson)}, ${labelsJson ? JSON.stringify(labelsJson) : null},
-          ${sample.labels !== null},
-          ${policyVersion}, ${sampleFingerprint}
-        )
-        ON CONFLICT (lot_id, timestamp) DO UPDATE SET
-          state_json = EXCLUDED.state_json,
-          labels_json = EXCLUDED.labels_json,
-          has_label = EXCLUDED.has_label,
-          dataset_fingerprint = EXCLUDED.dataset_fingerprint,
-          forward_twin_schema_version = EXCLUDED.forward_twin_schema_version
-        WHERE spot_ai_forward_giveback_samples.dataset_fingerprint IS NULL
-          OR spot_ai_forward_giveback_samples.dataset_fingerprint = EXCLUDED.dataset_fingerprint
-      `);
     }
-    return true;
-  } catch (error) {
-    console.error(`[SpotAiDurable] Failed to persist giveback samples:`, error);
-    return false;
+
+    const ok = await repo.insertGiveback({
+      featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
+      forwardTwinSchemaVersion: sampleSchemaVersion,
+      lotId: sample.state.lotId,
+      pair: sample.state.pair,
+      timestamp: sample.state.timestamp,
+      stateJson,
+      labelsJson,
+      hasLabel: sample.labels !== null,
+      policyVersion,
+      datasetFingerprint: sampleFingerprint,
+    });
+    if (ok) persisted++;
+    else skipped++;
   }
+
+  return { persisted, conflicts, skipped };
 }
 
 // ─── Durable counts ──────────────────────────────────────────────────────────
 
-/**
- * Get the count of ALL durable stored trades (including non-trainable).
- * Returns null if durable storage is not available.
- */
 export async function getDurableStoredTradeCount(): Promise<number | null> {
   const available = await isDurableStorageAvailable();
   if (!available) return null;
-
-  try {
-    const rows = await db.execute(sql`
-      SELECT COUNT(*) AS cnt FROM spot_ai_forward_training_trades
-    `);
-    return parseInt(((rows.rows ?? [])[0] as any)?.cnt ?? "0");
-  } catch {
-    return null;
-  }
+  return getRepository().getStoredTradeCount();
 }
 
-/**
- * R5: Get the count of durable TRAINABLE trades (is_trainable=true).
- * This is the count used by the training guard.
- * Returns null if durable storage is not available.
- */
 export async function getDurableTrainableTradeCount(): Promise<number | null> {
   const available = await isDurableStorageAvailable();
   if (!available) return null;
-
-  try {
-    const rows = await db.execute(sql`
-      SELECT COUNT(*) AS cnt FROM spot_ai_forward_training_trades
-      WHERE is_trainable = true
-    `);
-    return parseInt(((rows.rows ?? [])[0] as any)?.cnt ?? "0");
-  } catch {
-    return null;
-  }
+  return getRepository().getTrainableTradeCount();
 }
 
-/**
- * R5: Backward compat alias. Returns the TRAINABLE count (not stored count).
- * Training guard uses trainable count.
- */
 export async function getDurableCompletedTradeCount(): Promise<number | null> {
   return getDurableTrainableTradeCount();
 }
@@ -338,73 +545,69 @@ export async function getDurableCompletedTradeCount(): Promise<number | null> {
 // ─── Sync ────────────────────────────────────────────────────────────────────
 
 /**
- * Sync completed trades from the canonical source to durable storage.
- *
- * This is the ASYNC, OBSERVATIONAL ingestion lifecycle. It must be called
- * OUTSIDE the critical trading path. A failure here must NOT block, change,
- * or delay trading.
- *
- * R5: Uses canonical fingerprint (not artificial "backfill-" prefix).
+ * R6: Sync completed trades to durable storage.
+ * SKIP_NOT_TRAINABLE when features/labels are missing (no empty rows).
  */
 export async function syncCompletedTradesToDurableStorage(
   completedTrades: CompletedTrade[],
   datasetSamples: SpotAiDatasetSample[],
   givebackSamples: SpotAiGivebackSample[],
   policyVersion: string,
-): Promise<{ syncedTrades: number; syncedGivebackSamples: number; errors: number }> {
+): Promise<{
+  syncedTrades: number;
+  syncedGivebackSamples: number;
+  skippedNotTrainable: number;
+  fingerprintConflicts: number;
+  errors: number;
+}> {
   const available = await isDurableStorageAvailable();
   if (!available) {
-    return { syncedTrades: 0, syncedGivebackSamples: 0, errors: 0 };
+    return { syncedTrades: 0, syncedGivebackSamples: 0, skippedNotTrainable: 0, fingerprintConflicts: 0, errors: 0 };
   }
 
   let syncedTrades = 0;
-  let syncedGivebackSamples = 0;
+  let skippedNotTrainable = 0;
+  let fingerprintConflicts = 0;
   let errors = 0;
 
-  // Sync completed trades
   for (const trade of completedTrades) {
-    // Find the matching dataset sample for entry features/labels
     const sample = datasetSamples.find(
       (s) => s.features.scanId === trade.entryScanId && s.features.pair === trade.pair,
     );
     const entryFeaturesJson = sample ? (sample.features as unknown as Record<string, unknown>) : {};
     const entryLabelsJson = (sample?.labels ?? null) as unknown as Record<string, unknown> | null;
 
-    // R5: canonical fingerprint
-    const fingerprint = buildCanonicalFingerprint(trade);
+    // R6: No empty training rows.
+    if (Object.keys(entryFeaturesJson).length === 0 || entryLabelsJson === null) {
+      skippedNotTrainable++;
+      continue;
+    }
 
-    // R5: if no real features/labels, still persist but is_trainable=false
-    const ok = await persistCompletedTrade(
-      trade,
-      entryFeaturesJson,
-      entryLabelsJson ?? {},
-      policyVersion,
-      fingerprint,
+    const fingerprint = buildCanonicalFingerprint(
+      trade, entryFeaturesJson, entryLabelsJson, policyVersion,
     );
-    if (ok) syncedTrades++;
+    const result = await persistCompletedTrade(
+      trade, entryFeaturesJson, entryLabelsJson, policyVersion, fingerprint,
+    );
+    if (result.persisted) syncedTrades++;
+    else if (result.reason === "FINGERPRINT_CONFLICT") fingerprintConflicts++;
+    else if (result.reason === "SKIP_NOT_TRAINABLE") skippedNotTrainable++;
+    else if (result.reason === "IDEMPOTENT_NOOP") { /* ok */ }
     else errors++;
   }
 
-  // Sync giveback samples
-  const gbOk = await persistGivebackSamples(givebackSamples, policyVersion, "sync-giveback");
-  if (gbOk) syncedGivebackSamples = givebackSamples.length;
-  else errors++;
-
-  return { syncedTrades, syncedGivebackSamples, errors };
+  const gbResult = await persistGivebackSamples(givebackSamples, policyVersion);
+  return {
+    syncedTrades,
+    syncedGivebackSamples: gbResult.persisted,
+    skippedNotTrainable,
+    fingerprintConflicts: fingerprintConflicts + gbResult.conflicts,
+    errors: errors + gbResult.skipped,
+  };
 }
 
 // ─── Backfill ────────────────────────────────────────────────────────────────
 
-/**
- * Backfill: find completed trades from raw Forward Twin that haven't been
- * persisted to durable storage yet, and persist them.
- *
- * R5: Reconstructs REAL features/labels from the dataset builder, not empty {}.
- * Uses canonical fingerprint (not artificial "backfill-" prefix).
- * If features/labels cannot be reconstructed → SKIP (not_trainable, not persisted).
- *
- * Called at startup or via a safe job. Idempotent.
- */
 export async function backfillDurableFromRaw(): Promise<{
   syncedTrades: number;
   skipped: number;
@@ -415,26 +618,25 @@ export async function backfillDurableFromRaw(): Promise<{
     return { syncedTrades: 0, skipped: 0, errors: 0 };
   }
 
-  // Import here to avoid circular dependency
   const { queryCompletedTrades } = await import("./spotAiCompletedTrades");
-  const { buildDataset } = await import("./spotAiDatasetBuilder");
-  const result = await queryCompletedTrades();
+  const { buildDataset, buildGivebackDataset } = await import("./spotAiDatasetBuilder");
+  const { buildTradeOutcomeMap } = await import("./spotAiCompletedTrades");
+  let result;
+  try {
+    result = await queryCompletedTrades();
+  } catch {
+    // If we can't query completed trades, skip backfill.
+    return { syncedTrades: 0, skipped: 0, errors: 0 };
+  }
 
   if (result.completedTrades.length === 0) {
     return { syncedTrades: 0, skipped: 0, errors: 0 };
   }
 
-  // R5: Reconstruct real features/labels via the dataset builder.
-  // We need the raw Forward Twin snapshots for this.
   let datasetSamples: SpotAiDatasetSample[] = [];
   let givebackSamples: SpotAiGivebackSample[] = [];
   try {
-    // Query raw snapshots from DB and parse them.
-    const { buildDataset, buildGivebackDataset } = await import("./spotAiDatasetBuilder");
-    const { buildTradeOutcomeMap } = await import("./spotAiCompletedTrades");
-    const rawRows = await db.execute(sql`
-      SELECT data FROM spot_forward_twin_snapshots ORDER BY timestamp ASC
-    `);
+    const rawRows = await db.execute(sql`SELECT data FROM spot_forward_twin_snapshots ORDER BY timestamp ASC`);
     const snapshots = ((rawRows.rows ?? []) as any[]).map((r) => r.data as any);
     const scanSnapshots = snapshots.filter((s) => s.snapshotType === "SCAN");
     const supervisorSnapshots = snapshots.filter((s) => s.snapshotType === "SUPERVISOR");
@@ -445,12 +647,7 @@ export async function backfillDurableFromRaw(): Promise<{
     const gbDataset = buildGivebackDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     givebackSamples = gbDataset.samples;
   } catch {
-    // If we can't reconstruct features, we skip (not persist empty {}).
-    return {
-      syncedTrades: 0,
-      skipped: result.completedTrades.length,
-      errors: 0,
-    };
+    return { syncedTrades: 0, skipped: result.completedTrades.length, errors: 0 };
   }
 
   let syncedTrades = 0;
@@ -458,34 +655,30 @@ export async function backfillDurableFromRaw(): Promise<{
   let errors = 0;
 
   for (const trade of result.completedTrades) {
-    // Find matching dataset sample for real features/labels
     const sample = datasetSamples.find(
       (s) => s.features.scanId === trade.entryScanId && s.features.pair === trade.pair,
     );
     const entryFeaturesJson = sample ? (sample.features as unknown as Record<string, unknown>) : {};
     const entryLabelsJson = (sample?.labels ?? null) as unknown as Record<string, unknown> | null;
 
-    // R5: If no real features/labels → SKIP (not trainable, not persisted).
     if (Object.keys(entryFeaturesJson).length === 0 || entryLabelsJson === null) {
       skipped++;
       continue;
     }
 
-    const fingerprint = buildCanonicalFingerprint(trade);
-    const ok = await persistCompletedTrade(
-      trade,
-      entryFeaturesJson,
-      entryLabelsJson,
-      "backfill",
-      fingerprint,
+    const fingerprint = buildCanonicalFingerprint(
+      trade, entryFeaturesJson, entryLabelsJson, "backfill",
     );
-    if (ok) syncedTrades++;
+    const persistResult = await persistCompletedTrade(
+      trade, entryFeaturesJson, entryLabelsJson, "backfill", fingerprint,
+    );
+    if (persistResult.persisted) syncedTrades++;
+    else if (persistResult.reason === "SKIP_NOT_TRAINABLE" || persistResult.reason === "IDEMPOTENT_NOOP") skipped++;
     else errors++;
   }
 
-  // Also sync giveback samples
   if (givebackSamples.length > 0) {
-    await persistGivebackSamples(givebackSamples, "backfill", "backfill-giveback");
+    await persistGivebackSamples(givebackSamples, "backfill");
   }
 
   return { syncedTrades, skipped, errors };
@@ -493,12 +686,6 @@ export async function backfillDurableFromRaw(): Promise<{
 
 // ─── Unsynced count by key difference ────────────────────────────────────────
 
-/**
- * R5: Count completed trades in raw Forward Twin that are NOT yet in durable
- * storage, computed by KEY DIFFERENCE (not count subtraction).
- *
- * Returns null if durable storage is not available.
- */
 export async function getUnsyncedCompletedTradeCount(
   rawCompletedTrades: CompletedTrade[],
 ): Promise<number | null> {
@@ -506,20 +693,11 @@ export async function getUnsyncedCompletedTradeCount(
   if (!available) return null;
 
   try {
-    // Get all durable (lot_id, pair) keys
-    const durableRows = await db.execute(sql`
-      SELECT lot_id, pair FROM spot_ai_forward_training_trades
-    `);
-    const durableKeys = new Set(
-      ((durableRows.rows ?? []) as any[]).map((r) => `${r.lot_id}|${r.pair}`),
-    );
-
-    // Count raw keys not in durable
+    const durableKeys = await getRepository().getAllTradeKeys();
+    const durableKeySet = new Set(durableKeys.map((k) => `${k.lotId}|${k.pair}`));
     let unsynced = 0;
     for (const trade of rawCompletedTrades) {
-      if (!durableKeys.has(`${trade.lotId}|${trade.pair}`)) {
-        unsynced++;
-      }
+      if (!durableKeySet.has(`${trade.lotId}|${trade.pair}`)) unsynced++;
     }
     return unsynced;
   } catch {
@@ -527,10 +705,6 @@ export async function getUnsyncedCompletedTradeCount(
   }
 }
 
-/**
- * R5: Count giveback samples in raw that are NOT yet in durable,
- * computed by KEY DIFFERENCE.
- */
 export async function getUnsyncedGivebackSampleCount(
   rawGivebackSamples: SpotAiGivebackSample[],
 ): Promise<number | null> {
@@ -538,18 +712,11 @@ export async function getUnsyncedGivebackSampleCount(
   if (!available) return null;
 
   try {
-    const durableRows = await db.execute(sql`
-      SELECT lot_id, timestamp FROM spot_ai_forward_giveback_samples
-    `);
-    const durableKeys = new Set(
-      ((durableRows.rows ?? []) as any[]).map((r) => `${r.lot_id}|${r.timestamp}`),
-    );
-
+    const durableKeys = await getRepository().getAllGivebackKeys();
+    const durableKeySet = new Set(durableKeys.map((k) => `${k.lotId}|${k.timestamp}`));
     let unsynced = 0;
     for (const sample of rawGivebackSamples) {
-      if (!durableKeys.has(`${sample.state.lotId}|${sample.state.timestamp}`)) {
-        unsynced++;
-      }
+      if (!durableKeySet.has(`${sample.state.lotId}|${sample.state.timestamp}`)) unsynced++;
     }
     return unsynced;
   } catch {
@@ -557,32 +724,51 @@ export async function getUnsyncedGivebackSampleCount(
   }
 }
 
-// ─── Lifecycle (async, non-blocking, observational) ──────────────────────────
+// ─── Reconciliation metrics ──────────────────────────────────────────────────
 
-let lifecycleRunning = false;
+let lastReconciliationAt: number | null = null;
+let lastReconciliationErrors = 0;
+
+export function getLastReconciliationAt(): number | null {
+  return lastReconciliationAt;
+}
+
+export function getLastReconciliationErrors(): number {
+  return lastReconciliationErrors;
+}
 
 /**
- * R5: Durable reconciliation lifecycle.
- *
- * OBSERVATIONAL, ASYNC, NON-BLOCKING, IDEMPOTENT.
- * Called after startup (not from the trading critical path).
- * Has a guard against overlapping runs.
- * Errors are captured and logged, never thrown.
- *
- * While migration 090 is not applied: safe NOOP.
+ * R6: Reset reconciliation metrics. For testing only.
+ */
+export function _resetReconciliationMetrics(): void {
+  lastReconciliationAt = null;
+  lastReconciliationErrors = 0;
+}
+
+// ─── Recurring scheduler ─────────────────────────────────────────────────────
+
+const RECONCILIATION_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const RECONCILIATION_INITIAL_DELAY_MS = 5_000; // 5 seconds after startup
+
+let reconciliationTimer: NodeJS.Timeout | null = null;
+let reconciliationRunning = false;
+
+/**
+ * R6: Run a single reconciliation cycle.
+ * Anti-overlap: if already running, skip.
+ * Errors are captured and never thrown.
  */
 export async function runDurableReconciliation(): Promise<void> {
-  if (lifecycleRunning) return;
-  lifecycleRunning = true;
+  if (reconciliationRunning) return;
+  reconciliationRunning = true;
 
   try {
     const available = await isDurableStorageAvailable();
-    if (!available) {
-      // Safe NOOP — migration 090 not applied.
-      return;
-    }
+    if (!available) return;
 
     const result = await backfillDurableFromRaw();
+    lastReconciliationAt = Date.now();
+    lastReconciliationErrors = result.errors;
     if (result.syncedTrades > 0 || result.skipped > 0) {
       console.log(
         `[SpotAiDurable] Reconciliation: synced=${result.syncedTrades} ` +
@@ -590,29 +776,76 @@ export async function runDurableReconciliation(): Promise<void> {
       );
     }
   } catch (error) {
-    // Never throw from lifecycle — observational.
+    lastReconciliationErrors++;
     console.error("[SpotAiDurable] Reconciliation error (non-blocking):", error);
   } finally {
-    lifecycleRunning = false;
+    reconciliationRunning = false;
   }
 }
 
 /**
- * R5: Schedule durable reconciliation after startup.
- * Non-blocking, async, with anti-overlap guard.
- * Safe to call even if migration 090 is not applied (NOOP).
+ * R6: Start the RECURRING durable reconciliation scheduler.
+ *
+ * - First run after RECONCILIATION_INITIAL_DELAY_MS (non-blocking).
+ * - Recurring every RECONCILIATION_INTERVAL_MS.
+ * - Anti-overlap: concurrent runs are skipped.
+ * - Timer is unref'd so it doesn't keep the process alive.
+ * - Safe NOOP if migration 090 is not applied.
+ *
+ * @returns true if scheduler was started.
+ */
+export function startDurableReconciliationScheduler(): boolean {
+  if (reconciliationTimer !== null) return false;
+
+  const scheduleNext = () => {
+    reconciliationTimer = setTimeout(async () => {
+      await runDurableReconciliation();
+      scheduleNext();
+    }, RECONCILIATION_INTERVAL_MS);
+    // unref so the timer doesn't keep the process alive.
+    if (typeof reconciliationTimer.unref === "function") {
+      reconciliationTimer.unref();
+    }
+  };
+
+  // First run after initial delay.
+  const initialTimer = setTimeout(async () => {
+    await runDurableReconciliation();
+    scheduleNext();
+  }, RECONCILIATION_INITIAL_DELAY_MS);
+  if (typeof initialTimer.unref === "function") {
+    initialTimer.unref();
+  }
+
+  // Store the initial timer so stopDurableReconciliationScheduler can cancel it.
+  // After the first run, scheduleNext replaces the timer.
+  reconciliationTimer = initialTimer;
+
+  console.log(`[SpotAiDurable] Scheduler started: interval=${RECONCILIATION_INTERVAL_MS}ms`);
+  return true;
+}
+
+/**
+ * R6: Stop the recurring durable reconciliation scheduler.
+ * Cancels all pending executions. Does not interrupt a running reconciliation.
+ */
+export function stopDurableReconciliationScheduler(): void {
+  if (reconciliationTimer !== null) {
+    clearTimeout(reconciliationTimer);
+    reconciliationTimer = null;
+    console.log("[SpotAiDurable] Scheduler stopped.");
+  }
+}
+
+/**
+ * R5 compat: one-shot schedule. R6 recommends startDurableReconciliationScheduler().
  */
 export function scheduleDurableReconciliation(delayMs: number = 5000): void {
-  setTimeout(() => {
-    void runDurableReconciliation();
-  }, delayMs);
+  const timer = setTimeout(() => { void runDurableReconciliation(); }, delayMs);
+  if (typeof timer.unref === "function") timer.unref();
 }
 
 // ─── Retention policy ────────────────────────────────────────────────────────
 
-/**
- * R4/R5: retention policy. NO auto-delete until validated.
- * After >=200 trades + dataset audit approved + explicit authorization,
- * a cleanup job can be activated.
- */
 export const DURABLE_RETENTION_POLICY = "NO_AUTO_DELETE_UNTIL_VALIDATED";
+export const DURABLE_RECONCILIATION_INTERVAL = RECONCILIATION_INTERVAL_MS;

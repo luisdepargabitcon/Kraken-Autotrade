@@ -27,6 +27,10 @@
 -- R5: added weighted_avg_entry_price, total_entry_volume, total_exit_volume,
 --     closed_qty, is_trainable. Renamed executed_qty semantics to closed_qty
 --     (executed_qty kept for backward compat = closed_qty).
+-- R6: added total_entry_fee_usd, entry_fee_allocated_usd, residual_qty.
+--     closed_qty = real executed exit qty (no phantom, no 1% tolerance).
+--     entry_fee_usd = allocated portion (NOT total). total_entry_fee_usd = full.
+--     No empty training rows: is_trainable=false rows are NOT inserted.
 
 -- ─── Completed training trades (entry model) ─────────────────────────────────
 -- One row per COMPLETED Forward Twin trade (full causal chain).
@@ -54,8 +58,12 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades (
   net_pnl_usd           DOUBLE PRECISION NOT NULL,
   -- R4: gross PnL = (exitPrice - entryPrice) * executedQty.
   gross_pnl_usd         DOUBLE PRECISION NOT NULL DEFAULT 0,
-  -- R4: entry fee (USD).
+  -- R4: entry fee (USD). R6: this is the ALLOCATED portion = totalEntryFeeUsd * (closedQty / totalEntryVolume).
   entry_fee_usd         DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R6: total entry fee (USD) — all BUY fills, before allocation.
+  total_entry_fee_usd   DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R6: entry fee allocated to the closed portion = totalEntryFeeUsd * (closedQty / totalEntryVolume).
+  entry_fee_allocated_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
   -- R4: exit fee (USD).
   exit_fee_usd          DOUBLE PRECISION NOT NULL DEFAULT 0,
   -- R4: executed entry volume (base currency, from fillVolume).
@@ -69,8 +77,11 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades (
   total_entry_volume    DOUBLE PRECISION NOT NULL DEFAULT 0,
   -- R5: total executed exit volume (base currency).
   total_exit_volume     DOUBLE PRECISION NOT NULL DEFAULT 0,
-  -- R5: actually closed quantity (min of entry and exit within dust tolerance).
+  -- R5: actually closed quantity. R6: = min(entry, exit) when within QTY_EPSILON.
+  --     No phantom exit qty. No relative 1% tolerance.
   closed_qty            DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R6: residual quantity = totalEntryVolume - closedQty (0 when fully closed).
+  residual_qty          DOUBLE PRECISION NOT NULL DEFAULT 0,
   -- R5: whether this row is trainable (valid economy + causal + features + labels).
   is_trainable          BOOLEAN NOT NULL DEFAULT false,
   exit_reason_type      TEXT,

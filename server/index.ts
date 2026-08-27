@@ -6,6 +6,7 @@ import { logStreamService } from "./services/logStreamService";
 import { log } from "./utils/logger";
 import { MarketDataService } from "./services/MarketDataService";
 import { startScheduler as startAmaScheduler, stopScheduler as stopAmaScheduler } from "./services/ama/amaSchedulerRunner";
+import { startDurableReconciliationScheduler, stopDurableReconciliationScheduler } from "./services/spotAiForwardTwin/spotAiDurableTrainingStore";
 import fs from "fs";
 import path from "path";
 
@@ -113,6 +114,9 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
       // Start AMA scheduler after server is listening
       startAmaScheduler();
+      // R6: Start durable reconciliation scheduler (async, non-blocking, observational).
+      // Safe NOOP if migration 090 is not applied. Does NOT affect trading.
+      startDurableReconciliationScheduler();
     },
   );
 
@@ -120,6 +124,8 @@ app.use((req, res, next) => {
   function gracefulShutdown(signal: string) {
     console.log(`[shutdown] ${signal} received, stopping schedulers...`);
     stopAmaScheduler();
+    // R6: Stop durable reconciliation scheduler cleanly.
+    stopDurableReconciliationScheduler();
     // Stop SPOT Engine if running
     import("./services/spot/spotEngine").then(({ stopSpotEngine }) => {
       stopSpotEngine();

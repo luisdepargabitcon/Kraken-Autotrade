@@ -2,9 +2,13 @@
  * spotAiCompletedTradeNormalizer — SHARED canonical core for completed trade
  * normalization and validation.
  *
- * R5: Both `queryCompletedTrades()` (DB path) and `buildCompletedTradesFromSnapshots()`
- * (in-memory path) feed raw aggregated fill data into this module. This
- * guarantees DB ↔ builder parity.
+ * R6 FIXES:
+ *   - Eliminated phantom exit qty: no relative 99%-101% tolerance.
+ *   - closedQty = min(totalEntryVolume, totalExitVolume) but COMPLETED only
+ *     if abs(exit - entry) <= QTY_EPSILON (pure numeric representation epsilon).
+ *   - exit < entry - epsilon → PARTIAL_EXIT. exit > entry + epsilon → OVERFLOW.
+ *   - Entry fee allocated proportionally to closed quantity.
+ *   - PnL uses closedQty (real executed exit qty), not full entry volume.
  *
  * RESPONSIBILITIES:
  *   - Aggregate BUY fills per lotId+pair (weighted entry price, total volume,
@@ -12,31 +16,29 @@
  *   - Aggregate SELL fills per lotId+pair (weighted exit price, total volume,
  *     total fees).
  *   - Validate economic invariants (finite, >0, stopPrice < entryPrice for LONG).
- *   - Compute PnL from actually closed quantity (not full entry volume when
- *     only 99.x% sold).
- *   - Detect overfill (exit volume >> entry volume) → EXIT_VOLUME_OVERFLOW.
- *   - Detect partial exit (exit volume < entry volume * tolerance) → PARTIAL_EXIT.
+ *   - Compute PnL from actually closed quantity.
+ *   - Detect overfill (exit volume > entry volume + epsilon) → EXIT_VOLUME_OVERFLOW.
+ *   - Detect partial exit (exit volume < entry volume - epsilon) → PARTIAL_EXIT.
  *   - Detect multiple incompatible scanIds for same lotId+pair → CORRELATION_INCOMPLETE.
  *   - Build CompletedTrade objects with full economic fields.
- *
- * INVARIANTS:
- *   - SPOT canónico is LONG (BUY→SELL). Direction is always +1.
- *   - initialStopPrice and initialRiskUsd come from the causal SCAN's sizing.
- *   - netPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd.
- *   - grossPnlUsd uses the actually closed quantity, not full entry volume.
- *   - Invalid risk → fail closed → no CompletedTrade.
- *   - Maximum 1 CompletedTrade per lotId+pair.
  */
 
 import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-/** Volume tolerance: exit volume must cover >= 99% of entry volume. */
-export const VOLUME_COVERAGE_TOLERANCE = 0.99;
-
-/** Overfill threshold: exit volume > 101% of entry volume → EXIT_VOLUME_OVERFLOW. */
-export const VOLUME_OVERFILL_THRESHOLD = 1.01;
+/**
+ * R6: Pure numeric quantity epsilon for representation precision.
+ *
+ * This is NOT a business tolerance. It accounts for floating-point
+ * representation imprecision only. Crypto base quantities typically have
+ * 8 decimal places (satoshis/wei), so the epsilon is set to 1e-8 which
+ * is the smallest representable unit for most exchange base currencies.
+ *
+ * A trade is COMPLETED only if abs(exitVolume - entryVolume) <= QTY_EPSILON.
+ * No relative 1% tolerance is used.
+ */
+export const QTY_EPSILON = 1e-8;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,15 +62,24 @@ export interface CompletedTrade {
   totalEntryVolume: number;
   /** Total executed exit volume (base currency). */
   totalExitVolume: number;
-  /** Actually closed quantity (min of entry and exit volume). */
+  /** Actually closed quantity = min(entry, exit) when within epsilon. */
   closedQty: number;
-  /** Total entry fee (USD). */
+  /** Total entry fee (USD) — all BUY fills. */
+  totalEntryFeeUsd: number;
+  /** Entry fee allocated to the closed portion = totalEntryFeeUsd * (closedQty / totalEntryVolume). */
+  entryFeeAllocatedUsd: number;
+  /** Total exit fee (USD) — all SELL fills. */
+  totalExitFeeUsd: number;
+  /**
+   * Entry fee attributed to the trade (alias for backward compat).
+   * R6: This is the ALLOCATED entry fee, not the total.
+   */
   entryFeeUsd: number;
-  /** Total exit fee (USD). */
+  /** Exit fee (USD). Alias for totalExitFeeUsd. */
   exitFeeUsd: number;
   /** Gross PnL (USD) = (exitPrice - entryPrice) * closedQty. */
   grossPnlUsd: number;
-  /** Net PnL (USD) = grossPnlUsd - entryFeeUsd - exitFeeUsd. */
+  /** Net PnL (USD) = grossPnlUsd - entryFeeAllocatedUsd - exitFeeUsd. */
   netPnlUsd: number;
   mfe: number;
   mae: number;
@@ -137,10 +148,6 @@ export interface RawSupervisorData {
   mfeR: number;
   maeR: number;
   exitReasonType: string | null;
-}
-
-export interface RawLegacyNullLotBuyFill {
-  count: number;
 }
 
 export interface NormalizeInput {
@@ -267,15 +274,14 @@ export function validateEconomic(
 /**
  * Normalize raw fill data into completed trades.
  *
- * This is the SHARED canonical core used by both DB and in-memory paths.
- * Guarantees:
- *   - Maximum 1 CompletedTrade per lotId+pair.
- *   - Weighted average entry/exit prices from aggregated fills.
- *   - PnL from actually closed quantity (min of entry and exit volume).
- *   - Full economic validation.
- *   - Overfill detection.
- *   - Causal scan compatibility check (all BUY fills for same lot must have
- *     same scanId, otherwise CORRELATION_INCOMPLETE).
+ * R6: Uses QTY_EPSILON (pure numeric representation epsilon) instead of
+ * relative 1% tolerance. A trade is COMPLETED only if
+ * abs(exitVolume - entryVolume) <= QTY_EPSILON.
+ *
+ * closedQty = min(totalEntryVolume, totalExitVolume).
+ * No phantom exit quantity — SELL price is never applied to unsold quantity.
+ *
+ * Entry fee is allocated proportionally to the closed portion.
  */
 export function normalizeCompletedTrades(input: NormalizeInput): CompletedTradesResult {
   const { buyFills, sellFills, scanSizings, supervisors, legacyNullLotBuyFillCount } = input;
@@ -341,33 +347,27 @@ export function normalizeCompletedTrades(input: NormalizeInput): CompletedTrades
       ? sell.weightedPriceSum / sell.totalVolume
       : 0;
 
-    // R5: PnL from actually closed quantity.
-    // closedQty = min(entryVolume, exitVolume) — the quantity actually closed.
-    // For dust tolerance: if exit covers >= 99% of entry, use entry volume
-    // (the remaining dust is negligible). If exit > 101% of entry, that's
-    // overfill → fail closed.
-    const coverageRatio = buy.totalVolume > 0
-      ? sell.totalVolume / buy.totalVolume
-      : 0;
+    // R6: Pure numeric epsilon comparison — NO relative tolerance.
+    const volumeDiff = sell.totalVolume - buy.totalVolume;
 
-    // Check overfill first (exit volume >> entry volume)
-    if (coverageRatio > VOLUME_OVERFILL_THRESHOLD) {
+    // Check overfill: exit > entry + epsilon
+    if (volumeDiff > QTY_EPSILON) {
       exitVolumeOverflowTrades++;
       classifications.push("EXIT_VOLUME_OVERFLOW");
       continue;
     }
 
-    // Check partial exit
-    if (coverageRatio < VOLUME_COVERAGE_TOLERANCE) {
+    // Check partial exit: exit < entry - epsilon
+    if (volumeDiff < -QTY_EPSILON) {
       partialExitTrades++;
       classifications.push("PARTIAL_EXIT");
       continue;
     }
 
-    // Within dust tolerance: use entry volume as closed quantity.
-    // This avoids PnL phantom from multiplying full entry by exit price
-    // when only 99.x% was sold. The dust (0.x%) is negligible.
-    const closedQty = buy.totalVolume;
+    // Within numeric epsilon: COMPLETED.
+    // closedQty = min(entry, exit) — the real executed quantity.
+    // No phantom quantity receives the SELL price.
+    const closedQty = Math.min(buy.totalVolume, sell.totalVolume);
 
     // Economic validation
     const invalid = validateEconomic(
@@ -388,11 +388,18 @@ export function normalizeCompletedTrades(input: NormalizeInput): CompletedTrades
       continue;
     }
 
-    // R5: SPOT canónico is LONG. Direction is always +1.
+    // R6: Entry fee allocated proportionally to closed portion.
+    const totalEntryFeeUsd = buy.totalFees;
+    const entryFeeAllocatedUsd = buy.totalVolume > 0
+      ? totalEntryFeeUsd * (closedQty / buy.totalVolume)
+      : totalEntryFeeUsd;
+    const totalExitFeeUsd = sell.totalFees;
+
+    // R6: SPOT canónico is LONG. Direction is always +1.
     // grossPnlUsd = (exitPrice - entryPrice) * closedQty
     const grossPnlUsd = (weightedAverageExitPrice - weightedAverageEntryPrice) * closedQty;
-    // netPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd
-    const netPnlUsd = grossPnlUsd - buy.totalFees - sell.totalFees;
+    // netPnlUsd = grossPnlUsd - entryFeeAllocatedUsd - exitFeeUsd
+    const netPnlUsd = grossPnlUsd - entryFeeAllocatedUsd - totalExitFeeUsd;
 
     completedTrades.push({
       lotId: buy.lotId,
@@ -409,8 +416,12 @@ export function normalizeCompletedTrades(input: NormalizeInput): CompletedTrades
       totalEntryVolume: buy.totalVolume,
       totalExitVolume: sell.totalVolume,
       closedQty,
-      entryFeeUsd: buy.totalFees,
-      exitFeeUsd: sell.totalFees,
+      totalEntryFeeUsd,
+      entryFeeAllocatedUsd,
+      totalExitFeeUsd,
+      // R6: entryFeeUsd = allocated (for backward compat with label builder).
+      entryFeeUsd: entryFeeAllocatedUsd,
+      exitFeeUsd: totalExitFeeUsd,
       grossPnlUsd,
       netPnlUsd,
       mfe: supervisor.mfe,
@@ -494,26 +505,6 @@ export function extractRawDataFromSnapshots(snapshots: {
 
   // Last supervisor per lotId+pair
   const supMap = new Map<string, RawSupervisorData>();
-  for (const s of supervisors) {
-    if (s.snapshotType !== "SUPERVISOR" || !s.position || !s.position.lotId) continue;
-    const key = `${s.position.lotId}|${s.position.pair}`;
-    const existing = supMap.get(key);
-    // Keep the one with the latest timestamp
-    if (!existing || s.timestamp > (existing as any)._ts) {
-      supMap.set(key, {
-        lotId: s.position.lotId,
-        pair: s.position.pair,
-        mfe: s.position.mfe,
-        mae: s.position.mae,
-        mfeR: s.position.mfeR,
-        maeR: s.position.maeR,
-        exitReasonType: s.exitDecision?.reasonType ?? null,
-      });
-    }
-  }
-  // We need to track timestamps for "last supervisor" logic.
-  // Redo with proper timestamp tracking:
-  supMap.clear();
   const supTsMap = new Map<string, number>();
   for (const s of supervisors) {
     if (s.snapshotType !== "SUPERVISOR" || !s.position || !s.position.lotId) continue;

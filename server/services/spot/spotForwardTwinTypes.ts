@@ -18,6 +18,28 @@ export const SPOT_FORWARD_TWIN_SCHEMA_VERSION_1 = 1;
 export const SPOT_FORWARD_TWIN_SCHEMA_VERSION_2 = 2;
 
 export const SPOT_FORWARD_TWIN_RETENTION_DAYS = 7;
+
+/**
+ * R6: Shared canonical schema validation per snapshot type.
+ *
+ * Allowed schema versions:
+ *   SCAN → v1 only
+ *   FILL → v1 only
+ *   SUPERVISOR → v1 (legacy) and v2 (with currentR)
+ *   unknown type → mismatch
+ *
+ * Used by quality checks and any consumer that needs to validate
+ * Forward Twin schema provenance.
+ */
+export function isForwardTwinSchemaAllowed(
+  snapshotType: string,
+  schemaVersion: number,
+): boolean {
+  if (snapshotType === "SCAN") return schemaVersion === 1;
+  if (snapshotType === "FILL") return schemaVersion === 1;
+  if (snapshotType === "SUPERVISOR") return schemaVersion === 1 || schemaVersion === 2;
+  return false;
+}
 export const SPOT_FORWARD_TWIN_FLUSH_INTERVAL_MS = 5_000;
 export const SPOT_FORWARD_TWIN_BUFFER_MAX = 500;
 

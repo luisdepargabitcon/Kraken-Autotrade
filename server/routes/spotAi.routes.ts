@@ -17,7 +17,10 @@ import {
   isDurableStorageAvailable,
   getDurableCompletedTradeCount,
   getDurableTrainableTradeCount,
+  getDurableStoredTradeCount,
   getUnsyncedCompletedTradeCount,
+  getLastReconciliationAt,
+  getLastReconciliationErrors,
 } from "../services/spotAiForwardTwin/spotAiDurableTrainingStore";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
@@ -117,10 +120,15 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       // SUPERVISOR snapshots store lotId at data.position.lotId.
       const rows = await db.execute(sql`
         SELECT
-          -- R5: Forward Twin schema version mismatch.
-          -- Allowed: SCAN v1, FILL v1, SUPERVISOR v1 (legacy), SUPERVISOR v2.
-          -- Unknown versions (>2) are mismatches.
-          COUNT(*) FILTER (WHERE schema_version NOT IN (1, 2)) AS schema_mismatches,
+          -- R6: Exact schema validation per snapshot type.
+          -- SCAN → v1 only. FILL → v1 only. SUPERVISOR → v1 or v2. Unknown → mismatch.
+          COUNT(*) FILTER (
+            WHERE (data->>'snapshotType' = 'SCAN' AND schema_version != 1)
+              OR (data->>'snapshotType' = 'FILL' AND schema_version != 1)
+              OR (data->>'snapshotType' = 'SUPERVISOR' AND schema_version NOT IN (1, 2))
+              OR (data->>'snapshotType' IS NULL)
+              OR (data->>'snapshotType' NOT IN ('SCAN', 'FILL', 'SUPERVISOR'))
+          ) AS schema_mismatches,
           COUNT(*) FILTER (WHERE data->>'snapshotType' = 'SUPERVISOR'
             AND data->'position'->>'lotId' IS NOT NULL
             AND NOT EXISTS (
@@ -152,12 +160,10 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const invalidSnapshots = parseInt(r.invalid_snapshots ?? "0");
       const missingFeatures = parseInt(r.missing_features ?? "0");
 
-      // Duplicate fills and incomplete trades — computed from FILL snapshots
-      // grouped by data.fill.lotId. A trade is incomplete when it has a BUY fill
-      // (entry) but no SELL fill (exit) for the same lotId.
-      // R5: Separate multi-fill (legitimate partials) from duplicate telemetry.
-      // Multi-fill: >1 fills with different timestamps (legitimate).
-      // Duplicate: identical (lotId, pair, side, fillPrice, fillVolume, timestamp).
+      // R6: Duplicate fills and incomplete trades.
+      // Multi-fill: >1 fills with different orderId (legitimate partials).
+      // Duplicate: same (lotId, pair, side, orderId) repeated → telemetry duplicate.
+      // If orderId is empty/null, fall back to (lotId, pair, side, fillPrice, fillVolume, timestamp).
       const dupRows = await db.execute(sql`
         WITH fill_counts AS (
           SELECT
@@ -170,36 +176,58 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
             AND data->'fill'->>'lotId' IS NOT NULL
           GROUP BY data->'fill'->>'lotId', pair
         ),
-        duplicate_telemetry AS (
-          SELECT
-            data->'fill'->>'lotId' AS lotId,
-            pair,
-            data->'fill'->>'side' AS side,
-            (data->'fill'->>'fillPrice')::float AS fill_price,
-            (data->'fill'->>'fillVolume')::float AS fill_volume,
-            timestamp,
-            COUNT(*) AS cnt
-          FROM spot_forward_twin_snapshots
+        duplicate_buy AS (
+          SELECT 1 FROM spot_forward_twin_snapshots
           WHERE data->>'snapshotType' = 'FILL'
             AND data->'fill'->>'lotId' IS NOT NULL
-          GROUP BY data->'fill'->>'lotId', pair, data->'fill'->>'side',
+            AND data->'fill'->>'side' = 'BUY'
+            AND COALESCE(data->'fill'->>'orderId', '') != ''
+          GROUP BY data->'fill'->>'lotId', pair, data->'fill'->>'orderId'
+          HAVING COUNT(*) > 1
+        ),
+        duplicate_buy_legacy AS (
+          SELECT 1 FROM spot_forward_twin_snapshots
+          WHERE data->>'snapshotType' = 'FILL'
+            AND data->'fill'->>'lotId' IS NOT NULL
+            AND data->'fill'->>'side' = 'BUY'
+            AND (data->'fill'->>'orderId' IS NULL OR COALESCE(data->'fill'->>'orderId', '') = '')
+          GROUP BY data->'fill'->>'lotId', pair,
+            (data->'fill'->>'fillPrice')::float, (data->'fill'->>'fillVolume')::float, timestamp
+          HAVING COUNT(*) > 1
+        ),
+        duplicate_sell AS (
+          SELECT 1 FROM spot_forward_twin_snapshots
+          WHERE data->>'snapshotType' = 'FILL'
+            AND data->'fill'->>'lotId' IS NOT NULL
+            AND data->'fill'->>'side' = 'SELL'
+            AND COALESCE(data->'fill'->>'orderId', '') != ''
+          GROUP BY data->'fill'->>'lotId', pair, data->'fill'->>'orderId'
+          HAVING COUNT(*) > 1
+        ),
+        duplicate_sell_legacy AS (
+          SELECT 1 FROM spot_forward_twin_snapshots
+          WHERE data->>'snapshotType' = 'FILL'
+            AND data->'fill'->>'lotId' IS NOT NULL
+            AND data->'fill'->>'side' = 'SELL'
+            AND (data->'fill'->>'orderId' IS NULL OR COALESCE(data->'fill'->>'orderId', '') = '')
+          GROUP BY data->'fill'->>'lotId', pair,
             (data->'fill'->>'fillPrice')::float, (data->'fill'->>'fillVolume')::float, timestamp
           HAVING COUNT(*) > 1
         )
         SELECT
           COUNT(*) FILTER (WHERE buy_count > 1) AS multi_buy_fills,
           COUNT(*) FILTER (WHERE sell_count > 1) AS multi_sell_fills,
-          (SELECT COUNT(*) FROM duplicate_telemetry) AS duplicate_telemetry_count,
+          (SELECT COUNT(*) FROM duplicate_buy) + (SELECT COUNT(*) FROM duplicate_buy_legacy) AS duplicate_entry_fills,
+          (SELECT COUNT(*) FROM duplicate_sell) + (SELECT COUNT(*) FROM duplicate_sell_legacy) AS duplicate_exit_fills,
           COUNT(*) FILTER (WHERE buy_count > 0 AND sell_count = 0) AS incomplete_trades
         FROM fill_counts
       `);
       const d = (dupRows.rows ?? [])[0] as any ?? {};
       const multiBuyFills = parseInt(d.multi_buy_fills ?? "0");
       const multiSellFills = parseInt(d.multi_sell_fills ?? "0");
-      const duplicateExitFills = parseInt(d.duplicate_telemetry_count ?? "0");
+      const duplicateEntryFills = parseInt(d.duplicate_entry_fills ?? "0");
+      const duplicateExitFills = parseInt(d.duplicate_exit_fills ?? "0");
       const incompleteTrades = parseInt(d.incomplete_trades ?? "0");
-      // R5: duplicateEntryFills now uses duplicate telemetry, not multi-buy.
-      const duplicateEntryFills = 0; // multi-buy is legitimate, not duplicate
 
       // Structural invariants — always false by design, not computed statistically
       const legacyMixed = false;
@@ -222,11 +250,21 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const forwardTwinV1Count = parseInt(sv.v1_count ?? "0");
       const forwardTwinV2Count = parseInt(sv.v2_count ?? "0");
 
-      // R4: durable storage availability and sync status.
+      // R4/R6: durable storage availability and sync status.
       const durableAvailable = await isDurableStorageAvailable();
       const durableCompletedCount = await getDurableCompletedTradeCount();
+      const durableStoredCount = durableAvailable ? await getDurableStoredTradeCount() : null;
       const durableUnsyncedCount = durableAvailable
         ? await getUnsyncedCompletedTradeCount(completedTradesResult.completedTrades)
+        : null;
+      // R6: durable reconciliation metrics.
+      const lastReconAt = getLastReconciliationAt();
+      const lastReconErrors = getLastReconciliationErrors();
+      // R6: durable missing = raw completed trades not in durable.
+      const durableMissingTrades = durableUnsyncedCount;
+      // R6: durable non-trainable = stored - trainable.
+      const durableNonTrainableTrades = (durableStoredCount !== null && durableCompletedCount !== null)
+        ? Math.max(0, durableStoredCount - durableCompletedCount)
         : null;
 
       // R5: Real checks from canonical completed trades source.
@@ -275,6 +313,15 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         durableStorageAvailable: durableAvailable,
         durableSyncErrors: null as number | null,
         durableUnsyncedCompletedTrades: durableUnsyncedCount,
+        // R6: new durable metrics
+        durableStoredTrades: durableStoredCount,
+        durableTrainableTrades: durableCompletedCount,
+        durableMissingTrades,
+        durableNonTrainableTrades,
+        durableFingerprintConflicts: null as number | null,
+        durableUnsyncedGivebackSamples: null as number | null,
+        lastReconciliationAt: lastReconAt,
+        lastReconciliationErrors: lastReconErrors,
         forwardTwinV1Count,
         forwardTwinV2Count,
       };
@@ -305,6 +352,15 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         durableStorageAvailable: true,
         durableSyncErrors: false,
         durableUnsyncedCompletedTrades: durableAvailable,
+        // R6: new durable metrics availability
+        durableStoredTrades: durableAvailable,
+        durableTrainableTrades: durableAvailable,
+        durableMissingTrades: durableAvailable,
+        durableNonTrainableTrades: durableAvailable,
+        durableFingerprintConflicts: false,
+        durableUnsyncedGivebackSamples: durableAvailable,
+        lastReconciliationAt: true,
+        lastReconciliationErrors: true,
         forwardTwinV1Count: true,
         forwardTwinV2Count: true,
       };

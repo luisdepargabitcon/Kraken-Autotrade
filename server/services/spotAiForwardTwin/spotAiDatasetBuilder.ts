@@ -245,6 +245,8 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
       groupId: position.lotId,
       state,
       labels,
+      // R6: per-sample schema provenance from the originating SUPERVISOR snapshot.
+      sourceForwardTwinSchemaVersion: snap.schemaVersion,
     });
   }
 
