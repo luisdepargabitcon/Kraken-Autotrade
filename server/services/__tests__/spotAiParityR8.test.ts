@@ -145,9 +145,11 @@ describe("R8 PARITY tests — canonical payload builders", () => {
     // Path B (direct): buildDurableEntryPayload with the same inputs
     const featuresJson = sample.features as unknown as Record<string, unknown>;
     const labelsJson = sample.labels as unknown as Record<string, unknown>;
-    const { row: rowB, fingerprint: fpB } = buildDurableEntryPayload(
+    const buildB = buildDurableEntryPayload(
       trade, featuresJson, labelsJson, sample.sourcePolicyVersion!,
     );
+    expect(buildB.ok).toBe(true);
+    const { row: rowB, fingerprint: fpB } = buildB as any;
 
     // Compare
     const rowA = repoA.trades.get("lot-1|BTC/USD")!;
@@ -176,7 +178,9 @@ describe("R8 PARITY tests — canonical payload builders", () => {
     expect(gbResult.persisted).toBe(1);
 
     // Path B (direct): buildDurableGivebackPayload with the same sample
-    const { row: rowB, fingerprint: fpB } = buildDurableGivebackPayload(sample);
+    const buildB = buildDurableGivebackPayload(sample);
+    expect(buildB.ok).toBe(true);
+    const { row: rowB, fingerprint: fpB } = buildB as any;
 
     // Compare
     const rowA = repoA.givebacks.get("lot-1|1000")!;
@@ -197,9 +201,11 @@ describe("R8 PARITY tests — canonical payload builders", () => {
     const features = { f: 1 };
     const labels = { l: 1 };
 
-    const { fingerprint: fp1 } = buildDurableEntryPayload(trade, features, labels, POLICY_VERSION);
-    const { fingerprint: fp2 } = buildDurableEntryPayload(trade, features, labels, POLICY_VERSION);
-    expect(fp1).toBe(fp2);
+    const r1 = buildDurableEntryPayload(trade, features, labels, POLICY_VERSION);
+    const r2 = buildDurableEntryPayload(trade, features, labels, POLICY_VERSION);
+    expect(r1.ok).toBe(true);
+    expect(r2.ok).toBe(true);
+    expect((r1 as any).fingerprint).toBe((r2 as any).fingerprint);
   });
 
   // DURABLE_R8_PARITY_04: different policy = different fingerprint
@@ -208,8 +214,10 @@ describe("R8 PARITY tests — canonical payload builders", () => {
     const features = { f: 1 };
     const labels = { l: 1 };
 
-    const { fingerprint: fp1 } = buildDurableEntryPayload(trade, features, labels, "POLICY_A");
-    const { fingerprint: fp2 } = buildDurableEntryPayload(trade, features, labels, "POLICY_B");
-    expect(fp1).not.toBe(fp2);
+    const r1 = buildDurableEntryPayload(trade, features, labels, "POLICY_A");
+    const r2 = buildDurableEntryPayload(trade, features, labels, "POLICY_B");
+    expect(r1.ok).toBe(true);
+    expect(r2.ok).toBe(true);
+    expect((r1 as any).fingerprint).not.toBe((r2 as any).fingerprint);
   });
 });

@@ -140,8 +140,11 @@ export interface DurableGivebackRow {
   pair: string;
   timestamp: number;
   stateJson: Record<string, unknown>;
-  labelsJson: Record<string, unknown> | null;
-  hasLabel: boolean;
+  // R10-07: Migration 090 requires labels_json NOT NULL. The durable row
+  // type reflects this — only mature (labeled) samples produce a row.
+  labelsJson: Record<string, unknown>;
+  // R10-07: Migration 090 requires has_label=true (CHECK has_label = true).
+  hasLabel: true;
   policyVersion: string;
   datasetFingerprint: string;
 }
@@ -149,10 +152,22 @@ export interface DurableGivebackRow {
 // ─── Canonical durable payload builders ──────────────────────────────────────
 
 /**
- * R7: SINGLE canonical builder for entry durable payload.
+ * R10-06: Typed result for canonical durable payload construction.
+ * Builders FAIL CLOSED — they never produce a payload with invalid policy.
+ * No fallback to the original string.
+ */
+export type DurablePayloadBuildResult<T> =
+  | { ok: true; row: Omit<T, "datasetFingerprint">; fingerprint: string }
+  | { ok: false; reason: "INVALID_POLICY_PROVENANCE" | "MATURATION_NOT_READY" };
+
+/**
+ * R7/R10-06: SINGLE canonical builder for entry durable payload.
  * Used by live, backfill, and restart alike.
  * Computes both the row and the fingerprint from the same inputs.
  * Does NOT know whether the caller is live/backfill/restart.
+ *
+ * R10-06: FAIL CLOSED on invalid policy provenance.
+ * No fallback to the original string.
  */
 export function buildDurableEntryPayload(
   trade: CompletedTrade,
@@ -160,9 +175,12 @@ export function buildDurableEntryPayload(
   entryLabelsJson: Record<string, unknown>,
   sourcePolicyVersion: string,
   forwardTwinSchemaVersion: number = SPOT_FORWARD_TWIN_SCHEMA_VERSION_1,
-): { row: Omit<DurableTradeRow, "datasetFingerprint">; fingerprint: string } {
-  // R9-08: Canonicalize policy provenance (trim whitespace).
-  const canonicalPolicy = canonicalizePolicyProvenance(sourcePolicyVersion) ?? sourcePolicyVersion;
+): DurablePayloadBuildResult<DurableTradeRow> {
+  // R10-06: Canonicalize policy provenance. FAIL CLOSED if invalid.
+  const canonicalPolicy = canonicalizePolicyProvenance(sourcePolicyVersion);
+  if (canonicalPolicy === null) {
+    return { ok: false, reason: "INVALID_POLICY_PROVENANCE" };
+  }
   const fingerprint = buildCanonicalFingerprint(
     trade,
     entryFeaturesJson,
@@ -207,22 +225,33 @@ export function buildDurableEntryPayload(
     entryLabelsJson,
     policyVersion: canonicalPolicy,
   };
-  return { row, fingerprint };
+  return { ok: true, row, fingerprint };
 }
 
 /**
- * R7: SINGLE canonical builder for giveback durable payload.
+ * R7/R10-06: SINGLE canonical builder for giveback durable payload.
  * Used by live, backfill, and restart alike.
  * Computes both the row and the fingerprint from the same inputs.
  * Does NOT know whether the caller is live/backfill/restart.
+ *
+ * R10-06: FAIL CLOSED on invalid policy provenance.
+ * R10-07: FAIL CLOSED on unlabeled (immature) sample.
+ * No fallback to the original string.
  */
 export function buildDurableGivebackPayload(
   sample: SpotAiGivebackSample,
-): { row: Omit<DurableGivebackRow, "datasetFingerprint">; fingerprint: string } {
+): DurablePayloadBuildResult<DurableGivebackRow> {
+  // R10-07: Only mature (labeled) samples can produce a durable row.
+  if (sample.labels === null || sample.labels === undefined) {
+    return { ok: false, reason: "MATURATION_NOT_READY" };
+  }
+  // R10-06: Canonicalize policy provenance. FAIL CLOSED if invalid.
+  const canonicalPolicy = canonicalizePolicyProvenance(sample.sourcePolicyVersion);
+  if (canonicalPolicy === null) {
+    return { ok: false, reason: "INVALID_POLICY_PROVENANCE" };
+  }
   const stateJson = sample.state as unknown as Record<string, unknown>;
-  const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
-  // R9-08: Canonicalize policy provenance (trim whitespace).
-  const canonicalPolicy = canonicalizePolicyProvenance(sample.sourcePolicyVersion) ?? sample.sourcePolicyVersion;
+  const labelsJson = sample.labels as unknown as Record<string, unknown>;
   const fingerprint = buildGivebackFingerprint(sample);
   const row: Omit<DurableGivebackRow, "datasetFingerprint"> = {
     featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
@@ -232,10 +261,10 @@ export function buildDurableGivebackPayload(
     timestamp: sample.state.timestamp,
     stateJson,
     labelsJson,
-    hasLabel: sample.labels !== null,
+    hasLabel: true,
     policyVersion: canonicalPolicy,
   };
-  return { row, fingerprint };
+  return { ok: true, row, fingerprint };
 }
 
 /**
@@ -298,7 +327,9 @@ export function buildGivebackFingerprint(
 ): string {
   const stateJson = sample.state as unknown as Record<string, unknown>;
   const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
-  // R9-08: Canonicalize policy provenance for fingerprint consistency.
+  // R10-06: Canonicalize policy provenance for fingerprint consistency.
+  // No fallback — if invalid, use the raw value (fingerprint will differ
+  // from a valid-policy fingerprint, which is correct fail-closed behavior).
   const canonicalPolicy = canonicalizePolicyProvenance(sample.sourcePolicyVersion) ?? sample.sourcePolicyVersion;
   const payload = {
     fingerprintVersion: CANONICAL_FINGERPRINT_VERSION,
@@ -651,10 +682,14 @@ export async function persistCompletedTrade(
     return { persisted: false, reason: "STORAGE_UNAVAILABLE" };
   }
 
-  // R7: Compute fingerprint centrally. R9-08: use canonical (trimmed) policy.
-  const { row, fingerprint } = buildDurableEntryPayload(
+  // R10-06: Canonical builder FAIL CLOSED — no fallback to invalid policy.
+  const buildResult = buildDurableEntryPayload(
     trade, entryFeaturesJson, entryLabelsJson, canonicalPolicy, forwardTwinSchemaVersion,
   );
+  if (!buildResult.ok) {
+    return { persisted: false, reason: "INVALID_POLICY_PROVENANCE" };
+  }
+  const { row, fingerprint } = buildResult;
 
   // R7: If caller provided a fingerprint, it must match.
   if (providedFingerprint !== undefined && providedFingerprint !== fingerprint) {
@@ -767,7 +802,20 @@ export async function persistGivebackSamples(
       continue;
     }
 
-    const { row, fingerprint } = buildDurableGivebackPayload(sample);
+    // R10-06/R10-07: Canonical builder FAIL CLOSED.
+    const buildResult = buildDurableGivebackPayload(sample);
+    if (!buildResult.ok) {
+      // R10-07: MATURATION_NOT_READY should not happen here because we already
+      // skipped unlabeled samples above. But if a direct caller reaches here,
+      // treat it as skipped unlabeled.
+      if (buildResult.reason === "MATURATION_NOT_READY") {
+        result.skippedUnlabeled++;
+      } else {
+        result.invalidProvenance++;
+      }
+      continue;
+    }
+    const { row, fingerprint } = buildResult;
     const insertResult = await repo.insertGiveback({ ...row, datasetFingerprint: fingerprint });
 
     switch (insertResult) {
@@ -908,6 +956,12 @@ export async function syncCompletedTradesToDurableStorage(
           result.invalidProvenance++;
           result.errors++;
           break;
+        case "STORAGE_UNAVAILABLE":
+          // R10-04: Storage unavailable is NOT an insert error.
+          // Propagate storageUnavailable=true. Do NOT increment insertErrors
+          // or fingerprintConflicts or invalidProvenance.
+          result.storageUnavailable = true;
+          break;
         default:
           result.insertErrors++;
           result.errors++;
@@ -945,8 +999,51 @@ export type BackfillErrorCode =
   | "INVALID_PROVENANCE"
   | "FINGERPRINT_CONFLICT";
 
+/**
+ * R10-01: Injectable dataset builder boundary.
+ * Production uses the real functions. Tests can inject a builder that throws
+ * to exercise the DATASET_BUILD_FAILED path with a REAL throw.
+ * This does NOT change the semantics of the production builders.
+ */
+export interface DurableDatasetBuilder {
+  buildDataset(input: import("./spotAiDatasetBuilder").DatasetBuildInput): import("./spotAiForwardTwinTypes").SpotAiDataset;
+  buildGivebackDataset(input: import("./spotAiDatasetBuilder").DatasetBuildInput): import("./spotAiForwardTwinTypes").SpotAiGivebackDataset;
+}
+
+// R10-01: Default production builder uses the real functions.
+let durableDatasetBuilder: DurableDatasetBuilder | null = null;
+
+/**
+ * R10-01: Set a custom dataset builder for testing.
+ * Pass null to restore the production default.
+ */
+export function _setDurableDatasetBuilder(builder: DurableDatasetBuilder | null): void {
+  durableDatasetBuilder = builder;
+}
+
+/**
+ * R10-01: Get the effective dataset builder.
+ * If no custom builder is set, lazily import and use the real functions.
+ */
+async function getDurableDatasetBuilder(): Promise<DurableDatasetBuilder> {
+  if (durableDatasetBuilder) return durableDatasetBuilder;
+  const { buildDataset, buildGivebackDataset } = await import("./spotAiDatasetBuilder");
+  return {
+    buildDataset,
+    buildGivebackDataset,
+  };
+}
+
 export interface BackfillResult extends SyncResult {
   errorCodes: BackfillErrorCode[];
+  /**
+   * R10-03: Number of completed trades that could not be processed due to
+   * a technical infrastructure failure (raw load, dataset build).
+   * NOT the same as skippedNotTrainable (which means the episode was
+   * reconstructed but lacks training features/labels).
+   * null when queryCompletedTrades itself failed (we don't know N reliably).
+   */
+  unprocessedCompletedTrades: number | null;
 }
 
 /**
@@ -978,6 +1075,7 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
     errors: 0,
     storageUnavailable: false,
     errorCodes: [],
+    unprocessedCompletedTrades: null,
   };
 
   const available = await isDurableStorageAvailable();
@@ -986,18 +1084,22 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
   }
 
   const { queryCompletedTrades } = await import("./spotAiCompletedTrades");
-  const { buildDataset, buildGivebackDataset } = await import("./spotAiDatasetBuilder");
   const { buildTradeOutcomeMap } = await import("./spotAiCompletedTrades");
+  // R10-01: Use injectable dataset builder boundary.
+  const datasetBuilder = await getDurableDatasetBuilder();
 
   let queryResult;
   try {
     queryResult = await queryCompletedTrades();
   } catch (error) {
     console.error("[SpotAiDurable] backfill: queryCompletedTrades failed:", error);
+    // R10-03: query failure → unprocessedCompletedTrades=null (we don't know N).
+    // skippedNotTrainableTrades=0 (infra error is NOT trainability).
     return {
       ...emptyResult,
       errors: 1,
       errorCodes: ["QUERY_COMPLETED_TRADES_FAILED"],
+      unprocessedCompletedTrades: null,
     };
   }
 
@@ -1013,15 +1115,17 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
     snapshots = ((rawRows.rows ?? []) as any[]).map((r) => r.data as any);
   } catch (error) {
     console.error("[SpotAiDurable] backfill: raw snapshot load failed:", error);
+    // R10-03: Infra error is NOT trainability. Use unprocessedCompletedTrades.
     return {
       ...emptyResult,
-      skippedNotTrainableTrades: queryResult.completedTrades.length,
       errors: 1,
       errorCodes: ["RAW_SNAPSHOT_LOAD_FAILED"],
+      unprocessedCompletedTrades: queryResult.completedTrades.length,
     };
   }
 
   // R9-05: BLOQUE B — dataset build in its own try/catch.
+  // R10-01: Uses injectable builder — tests can inject a throwing builder.
   // No inference by error message text.
   let datasetSamples: SpotAiDatasetSample[] = [];
   let givebackSamples: SpotAiGivebackSample[] = [];
@@ -1030,17 +1134,18 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
     const supervisorSnapshots = snapshots.filter((s) => s.snapshotType === "SUPERVISOR");
     const fillSnapshots = snapshots.filter((s) => s.snapshotType === "FILL");
     const tradeOutcomes = buildTradeOutcomeMap(queryResult.completedTrades);
-    const dataset = buildDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
+    const dataset = datasetBuilder.buildDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     datasetSamples = dataset.samples;
-    const gbDataset = buildGivebackDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
+    const gbDataset = datasetBuilder.buildGivebackDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     givebackSamples = gbDataset.samples;
   } catch (error) {
     console.error("[SpotAiDurable] backfill: dataset build failed:", error);
+    // R10-03: Infra error is NOT trainability. Use unprocessedCompletedTrades.
     return {
       ...emptyResult,
-      skippedNotTrainableTrades: queryResult.completedTrades.length,
       errors: 1,
       errorCodes: ["DATASET_BUILD_FAILED"],
+      unprocessedCompletedTrades: queryResult.completedTrades.length,
     };
   }
 
@@ -1055,7 +1160,7 @@ export async function backfillDurableFromRaw(): Promise<BackfillResult> {
   if (syncResult.invalidProvenance > 0) errorCodes.push("INVALID_PROVENANCE");
   if (syncResult.insertErrors > 0) errorCodes.push("DURABLE_INSERT_FAILED");
 
-  return { ...syncResult, errorCodes };
+  return { ...syncResult, errorCodes, unprocessedCompletedTrades: 0 };
 }
 
 // ─── Unsynced count by key difference ────────────────────────────────────────
@@ -1271,6 +1376,18 @@ export async function runDurableReconciliation(): Promise<void> {
     }
 
     const result = await backfillDurableFromRaw();
+    // R10-05: If backfill reports storageUnavailable, status=STORAGE_UNAVAILABLE.
+    // NOT SUCCESS, NOT ERROR by INSERT_FAILED artificial.
+    if (result.storageUnavailable) {
+      reconciliationMetrics = {
+        ...INITIAL_METRICS,
+        lastAttemptAt: attemptAt,
+        lastCompletedAt: Date.now(),
+        status: "STORAGE_UNAVAILABLE",
+        errorCodes: [],
+      };
+      return;
+    }
     const hasErrors = result.errors > 0 || result.errorCodes.length > 0;
     reconciliationMetrics = {
       lastAttemptAt: attemptAt,

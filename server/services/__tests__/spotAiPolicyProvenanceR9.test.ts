@@ -71,12 +71,14 @@ describe("R9-08 POLICY PROVENANCE CASE-INSENSITIVE", () => {
     const features = { f: 1 };
     const labels = { l: 1 };
 
-    const { row: rowTrimmed, fingerprint: fpTrimmed } = buildDurableEntryPayload(
-      trade, features, labels, "SPOT_POLICY_X",
-    );
-    const { row: rowPadded, fingerprint: fpPadded } = buildDurableEntryPayload(
-      trade, features, labels, "  SPOT_POLICY_X  ",
-    );
+    const rTrimmed = buildDurableEntryPayload(trade, features, labels, "SPOT_POLICY_X");
+    const rPadded = buildDurableEntryPayload(trade, features, labels, "  SPOT_POLICY_X  ");
+    expect(rTrimmed.ok).toBe(true);
+    expect(rPadded.ok).toBe(true);
+    const rowTrimmed = (rTrimmed as any).row;
+    const rowPadded = (rPadded as any).row;
+    const fpTrimmed = (rTrimmed as any).fingerprint;
+    const fpPadded = (rPadded as any).fingerprint;
 
     expect(rowPadded.policyVersion).toBe("SPOT_POLICY_X");
     expect(fpPadded).toBe(fpTrimmed);
@@ -87,8 +89,13 @@ describe("R9-08 POLICY PROVENANCE CASE-INSENSITIVE", () => {
     const sampleTrimmed = makeGivebackSample("SPOT_POLICY_X");
     const samplePadded = makeGivebackSample("  SPOT_POLICY_X  ");
 
-    const { row: rowTrimmed, fingerprint: fpTrimmed } = buildDurableGivebackPayload(sampleTrimmed);
-    const { row: rowPadded, fingerprint: fpPadded } = buildDurableGivebackPayload(samplePadded);
+    const rTrimmed = buildDurableGivebackPayload(sampleTrimmed);
+    const rPadded = buildDurableGivebackPayload(samplePadded);
+    expect(rTrimmed.ok).toBe(true);
+    expect(rPadded.ok).toBe(true);
+    const rowPadded = (rPadded as any).row;
+    const fpTrimmed = (rTrimmed as any).fingerprint;
+    const fpPadded = (rPadded as any).fingerprint;
 
     expect(rowPadded.policyVersion).toBe("SPOT_POLICY_X");
     expect(fpPadded).toBe(fpTrimmed);

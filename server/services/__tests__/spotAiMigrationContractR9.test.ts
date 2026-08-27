@@ -153,7 +153,9 @@ describe("R9-13/R9-14 MIGRATION 090 ↔ WRITER CONTRACT", () => {
     // R9-14: Writer provides ALL NOT NULL columns
     it("CONTRACT_R9_TRAIN: writer provides all economic NOT NULL columns", () => {
       const trade = makeTrade();
-      const { row } = buildDurableEntryPayload(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+      const r = buildDurableEntryPayload(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+      expect(r.ok).toBe(true);
+      const row = (r as any).row;
       // Verify all economic columns are present and non-null
       expect(row.forwardTwinSchemaVersion).toBeDefined();
       expect(row.grossPnlUsd).toBeDefined();
@@ -230,7 +232,9 @@ describe("R9-13/R9-14 MIGRATION 090 ↔ WRITER CONTRACT", () => {
     // R9-14: Writer provides ALL NOT NULL columns
     it("CONTRACT_R9_GB: writer provides all NOT NULL columns", () => {
       const sample = makeGivebackSample();
-      const { row } = buildDurableGivebackPayload(sample);
+      const r = buildDurableGivebackPayload(sample);
+      expect(r.ok).toBe(true);
+      const row = (r as any).row;
       expect(row.forwardTwinSchemaVersion).toBeDefined();
       expect(row.lotId).toBeDefined();
       expect(row.pair).toBeDefined();
@@ -244,17 +248,21 @@ describe("R9-13/R9-14 MIGRATION 090 ↔ WRITER CONTRACT", () => {
 
   // ─── Migration not applied ────────────────────────────────────────────────
 
-  it("MIGRATION_090_APPLIED=NO (file exists, not applied)", () => {
+  it("MIGRATION_090_APPLIED=NOT_VERIFIED_FROM_REPO (file exists)", () => {
     // The migration file exists but is NOT applied.
     // This test verifies the file is present and auditable.
+    // Applied state is OPERATIONAL and cannot be verified from a unit test.
     expect(migrationSql).toContain("CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades");
     expect(migrationSql).toContain("CREATE TABLE IF NOT EXISTS spot_ai_forward_giveback_samples");
   });
 
-  // No migration 091
-  it("NO_MIGRATION_091: no 091 file should exist", () => {
-    // This is a documentation test — no 091 migration should be created.
-    // The test passes by construction (no 091 file is created).
-    expect(true).toBe(true);
+  // R10-11: No migration 091 — verified from filesystem, NOT tautological.
+  it("NO_MIGRATION_091: no 091 file exists in db/migrations", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const migrationsDir = path.resolve(__dirname, "../../../db/migrations");
+    const files = fs.readdirSync(migrationsDir);
+    const has091 = files.some((f: string) => f.startsWith("091_"));
+    expect(has091).toBe(false);
   });
 });

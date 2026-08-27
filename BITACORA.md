@@ -8537,3 +8537,143 @@ AMA_MODIFIED=NO
 TELEGRAM_MODIFIED=NO
 FISCO_MODIFIED=NO
 ```
+
+---
+
+## SPOT R10 — FINAL DURABLE CONTRACT + TRUE E2E
+
+**Fecha:** 12-AUG-2026
+**Modulo:** SPOT AI Forward Twin — Durable Training Store
+**Commit:** fix(spot-ai): finalize durable contract and true backfill e2e
+**Base:** 5d6b86997e95724a00539a7acbd4dc6bd4093a23 (R9)
+
+### Defectos R9 corregidos por R10
+
+1. **R10-01: Real dataset-build throw test**: R9 test did not provoke a real throw. R10: injectable `DurableDatasetBuilder` boundary. Tests inject builders that throw `Error("synthetic dataset build failure")`. `RECON_R10_DATASET_01` and `RECON_R10_DATASET_02` verify `DATASET_BUILD_FAILED` with real throws.
+2. **R10-02: True backfill E2E**: R9 parity test mocked `spotAiCompletedTrades`. R10: `spotAiBackfillParityR10.test.ts` does NOT mock `queryCompletedTrades`, `buildTradeOutcomeMap`, `buildDataset`, or `buildGivebackDataset`. Only `db.execute` and `DurableRepository` are mocked. Real mapping, normalization, correlation, and dataset construction are exercised.
+3. **R10-03: Infra error not counted as not-trainable**: R9 did not distinguish infrastructure failures from trainability. R10: `unprocessedCompletedTrades` field added to `BackfillResult`. RAW_SNAPSHOT_LOAD_FAILED and DATASET_BUILD_FAILED do NOT increment `skippedNotTrainableTrades`.
+4. **R10-04: Storage-unavailable propagation**: R10: `syncCompletedTradesToDurableStorage` propagates `storageUnavailable` without incrementing `insertErrors` or `errors`.
+5. **R10-05: Reconciliation storage status**: R10: `runDurableReconciliation` returns `STORAGE_UNAVAILABLE` status with null counters when backfill reports `storageUnavailable`.
+6. **R10-06: Canonical builders fail closed**: R9 used `canonicalizePolicyProvenance(policy) ?? policy` fallback. R10: builders return `DurablePayloadBuildResult<T>` discriminated union. Invalid policy → `{ok: false, reason: "INVALID_POLICY_PROVENANCE"}`. No fallback to original string.
+7. **R10-07: Durable type contract**: R10: `DurableGivebackRow.labelsJson` is `Record<string, unknown>` (not nullable). `hasLabel` is literal `true`. `DurableTradeRow.isTrainable` is `true` only (writer only inserts trainable rows).
+8. **R10-08: Lifecycle exact assertions**: R10: `LIFE_R10_04` and `LIFE_R10_05` verify exact call counts (1 from A, 2-3 from B). `LIFE_R10_01` verifies A does not rearm after stop. `LIFE_R10_02` verifies no rearm during pending await.
+9. **R10-09: Quality partial status not OK**: R9 could report OK with partial coverage. R10: status is `PARTIAL` when coverage < 100 + 0 issues, `WARNINGS_PARTIAL` when coverage < 100 + issues, `OK` only when coverage = 100 + 0 issues.
+10. **R10-10: Exhaustive migration contract**: R10: every migration 090 column classified as `GENERATED_BY_DB`, `WRITTEN_EXPLICITLY`, or `INTENTIONALLY_NULLABLE`. 36 training columns, 12 giveback columns. Writer provides all `WRITTEN_EXPLICITLY` columns.
+11. **R10-11: Tautological tests eliminated**: R9 `expect(true).toBe(true)` for `NO_MIGRATION_091` replaced with real filesystem check: `fs.readdirSync(migrationsDir).some(f => f.startsWith("091_"))`.
+12. **R10-12: Availability critical schema tests**: R10: `spotAiAvailabilityCriticalSchemaR10.test.ts` verifies `isDurableStorageAvailable()` returns false when critical columns are missing (not just when tables are missing).
+
+### Archivos modificados
+
+- `server/services/spotAiForwardTwin/spotAiDurableTrainingStore.ts` — core R10 changes
+- `server/routes/spotAi.routes.ts` — quality partial status
+- `server/services/__tests__/spotAiDurableR6.test.ts` — builder API compat
+- `server/services/__tests__/spotAiParityR8.test.ts` — builder API compat
+- `server/services/__tests__/spotAiPolicyR7.test.ts` — builder API compat
+- `server/services/__tests__/spotAiSqlContractR7.test.ts` — builder API compat
+- `server/services/__tests__/spotAiPolicyProvenanceR9.test.ts` — builder API compat
+- `server/services/__tests__/spotAiMigrationContractR9.test.ts` — tautological test fix
+
+### Nuevos tests R10
+
+- `spotAiBuilderFailClosedR10.test.ts` — 10 tests (R10-06: fail-closed, no fallback)
+- `spotAiDatasetBuildThrowR10.test.ts` — 2 tests (R10-01: real throw injection)
+- `spotAiInfraErrorClassificationR10.test.ts` — 2 tests (R10-03: infra ≠ not-trainable)
+- `spotAiStorageUnavailableR10.test.ts` — 2 tests (R10-04/05: storage unavailable propagation)
+- `spotAiBackfillParityR10.test.ts` — 3 tests (R10-02: true E2E parity)
+- `spotAiLifecycleR10.test.ts` — 5 tests (R10-08: exact generation handoff)
+- `spotAiQualityPartialStatusR10.test.ts` — 7 tests (R10-09: partial status)
+- `spotAiMigrationContractR10.test.ts` — 99 tests (R10-10: exhaustive column classification)
+- `spotAiAvailabilityCriticalSchemaR10.test.ts` — 5 tests (R10-12: critical schema)
+
+### Validacion
+
+- SPOT-AI tests: 484/484 pass (48 files) — 349 R9 + 135 R10
+- R10 tests: 135/135 pass (9 files)
+- Economic R5/R6/general: 33/33 pass
+- Forward Twin + audit: 47/47 pass
+- Forward Twin benchmark: 4/4 pass
+- TSC: 0 errors (PASS)
+- Build: OK (PASS)
+- `git diff --check`: clean (PASS)
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION (090 not applied, no 091 created)
+NO VPS
+NO TRAINING
+NO REAL
+NO INFERENCE
+NO ORDER PLACEMENT
+AI_TRADING_CONTROL=NONE
+SHADOW
+PENDING_GITHUB_COUNTERAUDIT=YES
+```
+
+### Flags finales
+
+```
+RECON_R10_DATASET_01=PASS
+RECON_R10_DATASET_02=PASS
+DATASET_BUILD_REAL_THROW_TEST=PASS
+
+PARITY_R10_01_ENTRY_TRUE_E2E=PASS
+PARITY_R10_02_GIVEBACK_TRUE_E2E=PASS
+PARITY_R10_03_SECOND_BACKFILL_IDEMPOTENT=PASS
+
+RAW_FAILURE_COUNTED_AS_NOT_TRAINABLE=NO
+DATASET_FAILURE_COUNTED_AS_NOT_TRAINABLE=NO
+UNPROCESSED_COMPLETED_TRADES_FIELD=YES
+
+ENTRY_STORAGE_UNAVAILABLE_CLASSIFIED_AS_INSERT_ERROR=NO
+SYNC_STORAGE_UNAVAILABLE_PROPAGATED=YES
+RECON_STORAGE_UNAVAILABLE_STATUS=STORAGE_UNAVAILABLE
+
+CANONICAL_ENTRY_BUILDER_INVALID_POLICY_FAILS_CLOSED=YES
+CANONICAL_GIVEBACK_BUILDER_INVALID_POLICY_FAILS_CLOSED=YES
+CANONICAL_BUILDER_POLICY_FALLBACK_TO_ORIGINAL=NO
+
+DURABLE_GIVEBACK_LABELS_NULLABLE=NO
+DURABLE_GIVEBACK_HAS_LABEL_TYPE=TRUE_ONLY
+DURABLE_TRADE_IS_TRAINABLE_TYPE=TRUE_ONLY
+
+REAL_GENERATION_HANDOFF_EXACT_ASSERTIONS=PASS
+GEN_A_REARMS_AFTER_STOP=NO
+GEN_B_RUN_COUNT_EXACT=PASS
+
+QUALITY_PARTIAL_CAN_REPORT_OK=NO
+QUALITY_PARTIAL_STATUS=PARTIAL
+
+MIGRATION_CONTRACT_ALL_COLUMNS_CLASSIFIED=YES
+PRODUCTION_INSERT_ALL_REQUIRED_COLUMNS_TESTED=YES
+MIGRATION_090_APPLIED=NOT_VERIFIED_FROM_REPO
+
+TAUTOLOGICAL_TESTS_PRESENT=NO
+NO_MIGRATION_091=verified_from_repository_filesystem
+
+AVAILABILITY_MISSING_TRAINING_CRITICAL_COLUMN_TEST=PASS
+AVAILABILITY_MISSING_GIVEBACK_CRITICAL_COLUMN_TEST=PASS
+
+SPOT_AI_TESTS=484
+R10_TESTS=135
+ECONOMIC_TESTS=33
+FORWARD_TWIN_SPOT_REGRESSION=90
+FULL_SUITE_RESULT=PASS
+TSC=PASS
+CHECK=PASS
+BUILD=PASS
+DIFF_CHECK=PASS
+GITHUB_CI=NOT_VERIFIED
+
+SPOT_STRATEGY_CHANGED=NO
+SPOT_ENTRY_POLICY_CHANGED=NO
+SPOT_EXIT_POLICY_CHANGED=NO
+SPOT_SIZING_CHANGED=NO
+SPOT_EXECUTION_CHANGED=NO
+GRID_MODIFIED=NO
+IDCA_MODIFIED=NO
+AMA_MODIFIED=NO
+TELEGRAM_MODIFIED=NO
+FISCO_MODIFIED=NO
+```

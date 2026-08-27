@@ -62,8 +62,12 @@ describe("R7 POLICY tests — live/backfill fingerprint parity", () => {
     const policyVersion = "SPOT_POLICY_X";
 
     // Build via the canonical payload builder (used by both live and backfill)
-    const livePayload = buildDurableEntryPayload(trade, features, labels, policyVersion);
-    const backfillPayload = buildDurableEntryPayload(trade, features, labels, policyVersion);
+    const liveR = buildDurableEntryPayload(trade, features, labels, policyVersion);
+    const backfillR = buildDurableEntryPayload(trade, features, labels, policyVersion);
+    expect(liveR.ok).toBe(true);
+    expect(backfillR.ok).toBe(true);
+    const livePayload = liveR as any;
+    const backfillPayload = backfillR as any;
 
     // Same fingerprint
     expect(livePayload.fingerprint).toBe(backfillPayload.fingerprint);
@@ -129,7 +133,9 @@ describe("R7 POLICY tests — live/backfill fingerprint parity", () => {
     const fp = buildCanonicalFingerprint(trade, features, labels, "SPOT_POLICY_X");
     // The fingerprint is a hex hash — it won't contain literal strings.
     // But we verify the policyVersion in the payload is NOT "backfill" or "live".
-    const payload = buildDurableEntryPayload(trade, features, labels, "SPOT_POLICY_X");
+    const r = buildDurableEntryPayload(trade, features, labels, "SPOT_POLICY_X");
+    expect(r.ok).toBe(true);
+    const payload = r as any;
     expect(payload.row.policyVersion).not.toBe("backfill");
     expect(payload.row.policyVersion).not.toBe("live");
     expect(payload.row.policyVersion).not.toBe("sync");
@@ -143,7 +149,9 @@ describe("R7 POLICY tests — live/backfill fingerprint parity", () => {
     const labels = { l: 1 };
     const policyVersion = "SPOT_POLICY_X";
 
-    const payload = buildDurableEntryPayload(trade, features, labels, policyVersion);
+    const r = buildDurableEntryPayload(trade, features, labels, policyVersion);
+    expect(r.ok).toBe(true);
+    const payload = r as any;
     const directFp = buildCanonicalFingerprint(trade, features, labels, policyVersion);
 
     expect(payload.fingerprint).toBe(directFp);
@@ -152,7 +160,9 @@ describe("R7 POLICY tests — live/backfill fingerprint parity", () => {
   // DURABLE_R7_POLICY_08: buildDurableGivebackPayload computes fingerprint centrally
   it("DURABLE_R7_POLICY_08: buildDurableGivebackPayload fingerprint matches buildGivebackFingerprint", () => {
     const sample = makeGivebackSample();
-    const payload = buildDurableGivebackPayload(sample);
+    const r = buildDurableGivebackPayload(sample);
+    expect(r.ok).toBe(true);
+    const payload = r as any;
     const directFp = buildGivebackFingerprint(sample);
     expect(payload.fingerprint).toBe(directFp);
   });

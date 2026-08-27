@@ -172,7 +172,9 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { atrPct: 1.5 };
     const labels = { outcome: "WIN" };
-    const { fingerprint: fp } = buildDurableEntryPayload(trade, features, labels, "test");
+    const r = buildDurableEntryPayload(trade, features, labels, "test");
+    expect(r.ok).toBe(true);
+    const fp = (r as any).fingerprint;
     await persistCompletedTrade(trade, features, labels, "test");
     const row = repo.trades.get("lot-1|BTC/USD")!;
     expect(row.lotId).toBe("lot-1");

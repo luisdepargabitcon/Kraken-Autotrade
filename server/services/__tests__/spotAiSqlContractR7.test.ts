@@ -87,7 +87,9 @@ describe("R7 SQL CONTRACT tests — migration 090 ↔ writer", () => {
     const trade = makeTrade();
     const features = { f: 1 };
     const labels = { l: 1 };
-    const { row } = buildDurableEntryPayload(trade, features, labels, "SPOT_POLICY_X");
+    const r = buildDurableEntryPayload(trade, features, labels, "SPOT_POLICY_X");
+    expect(r.ok).toBe(true);
+    const row = (r as any).row;
 
     // Verify all migration 090 economic columns are present in the row
     expect(row.entryFeeUsd).toBeDefined();
@@ -114,7 +116,9 @@ describe("R7 SQL CONTRACT tests — migration 090 ↔ writer", () => {
       closedQty: 1,
       totalExitVolume: 1,
     });
-    const { row } = buildDurableEntryPayload(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+    const r = buildDurableEntryPayload(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+    expect(r.ok).toBe(true);
+    const row = (r as any).row;
     expect(row.residualQty).toBe(1); // 2 - 1 = 1
   });
 
@@ -125,7 +129,9 @@ describe("R7 SQL CONTRACT tests — migration 090 ↔ writer", () => {
       closedQty: 1,
       totalExitVolume: 1,
     });
-    const { row } = buildDurableEntryPayload(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+    const r = buildDurableEntryPayload(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+    expect(r.ok).toBe(true);
+    const row = (r as any).row;
     expect(row.residualQty).toBe(0);
   });
 
@@ -137,7 +143,9 @@ describe("R7 SQL CONTRACT tests — migration 090 ↔ writer", () => {
       totalEntryFeeUsd: 2,
       entryFeeAllocatedUsd: 1, // 2 * (1/2) = 1
     });
-    const { row } = buildDurableEntryPayload(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+    const r = buildDurableEntryPayload(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+    expect(r.ok).toBe(true);
+    const row = (r as any).row;
     expect(row.entryFeeUsd).toBe(1); // allocated
     expect(row.entryFeeAllocatedUsd).toBe(1);
     expect(row.totalEntryFeeUsd).toBe(2); // total

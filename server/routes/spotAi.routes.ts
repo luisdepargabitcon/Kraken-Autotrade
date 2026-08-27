@@ -405,15 +405,25 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         incompleteTrades * 1;
       const score = Math.max(0, 100 - totalIssues);
       const available = true;
+      const isPartial = qualityCoveragePct < 100;
+
+      // R10-09: Partial coverage must NOT report OK.
+      // PARTIAL: coverage < 100 and no issues found.
+      // WARNINGS_PARTIAL: coverage < 100 and issues found.
+      // OK: coverage = 100 and no issues.
+      // WARNINGS: coverage = 100 and issues found.
+      const status = isPartial
+        ? (totalIssues > 0 ? "WARNINGS_PARTIAL" : "PARTIAL")
+        : (totalIssues > 0 ? "WARNINGS" : "OK");
 
       res.json({
         checks,
         checksAvailable,
         qualityCoveragePct,
-        scoreIsPartial: qualityCoveragePct < 100,
+        scoreIsPartial: isPartial,
         score,
         available,
-        status: totalIssues === 0 ? "OK" : "WARNINGS",
+        status,
         legacyMixedStructuralInvariant: true,
         syntheticLabelsStructuralInvariant: true,
         featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
