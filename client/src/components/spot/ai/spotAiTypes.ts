@@ -72,7 +72,7 @@ export interface DatasetQuality {
     durableStorageAvailable?: boolean;
     durableSyncErrors?: number | null;
     durableUnsyncedCompletedTrades?: number | null;
-    // R6/R7: new durable metrics
+    // R6/R7/R8: new durable metrics
     durableStoredTrades?: number | null;
     durableTrainableTrades?: number | null;
     durableMissingTrades?: number | null;
@@ -80,10 +80,18 @@ export interface DatasetQuality {
     durableFingerprintConflicts?: number | null;
     durableUnsyncedGivebackSamples?: number | null;
     lastReconciliationAt?: number | null;
-    lastReconciliationErrors?: number;
-    lastReconciliationSyncedTrades?: number;
-    lastReconciliationSyncedGiveback?: number;
-    lastReconciliationSkippedNotTrainable?: number;
+    lastReconciliationErrors?: number | null;
+    lastReconciliationSyncedTrades?: number | null;
+    lastReconciliationSyncedGiveback?: number | null;
+    lastReconciliationSkippedNotTrainable?: number | null;
+    // R8-05: new typed reconciliation metrics
+    lastReconciliationSkippedUnlabeledGiveback?: number | null;
+    lastReconciliationIdempotentTrades?: number | null;
+    lastReconciliationIdempotentGiveback?: number | null;
+    lastReconciliationInvalidProvenance?: number | null;
+    lastReconciliationInsertErrors?: number | null;
+    lastReconciliationStatus?: string;
+    lastReconciliationErrorCodes?: string[];
     forwardTwinV1Count?: number;
     forwardTwinV2Count?: number;
   };

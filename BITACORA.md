@@ -8232,3 +8232,152 @@ TELEGRAM_MODIFIED=NO
 FISCO_MODIFIED=NO
 POSTGRES_SQL_INTEGRATION=NOT_AVAILABLE
 ```
+
+
+---
+
+## SPOT R8 — GIVEBACK MATURATION + RECONCILIATION TRUTH
+
+**Fecha:** 12-AUG-2026
+**Modulo:** SPOT AI Forward Twin — Durable Training Store
+**Commit:** fix(spot-ai): finalize giveback maturation and reconciliation truth
+**Base:** 260cc44d0d95f82637d1d43673f2410ac33bdd02 (R7)
+
+### Defectos R7 corregidos por R8
+
+1. **unlabeled giveback persisted too early**: R7 insertaba muestras giveback con labels=null. Cuando el trade cerraba y la misma muestra obtenia labels reales, el fingerprint cambiaba y producia FINGERPRINT_CONFLICT. La muestra quedaba congelada unlabeled. R8-01: labels=null → SKIP_UNLABELED_GIVEBACK, no insert.
+2. **later labeled sample fingerprint conflicts**: Consecuencia del defecto 1. R8-01 lo resuelve: no hay fila durable previa que bloquee la maduracion.
+3. **giveback idempotent counted as error**: R7 contaba `skipped` (que incluia idempotent) como error. R8-02: resultado tipado con `persisted`, `idempotent`, `conflicts`, `skippedUnlabeled`, `invalidProvenance`, `insertErrors`. R8-03: idempotent y skippedUnlabeled NO son errors.
+4. **backfill exceptions returned errors=0**: R7 tenia catches que devolvian errors=0. R8-04: errores tipados (QUERY_COMPLETED_TRADES_FAILED, RAW_SNAPSHOT_LOAD_FAILED, DATASET_BUILD_FAILED, DURABLE_INSERT_FAILED, INVALID_PROVENANCE). Real failure → errors >= 1.
+5. **reconciliation metrics false zero before first run**: R7 inicializaba counters a 0. R8-05: status=NEVER_RUN, todos los counters=null. Tras run real: counters numericos. STORAGE_UNAVAILABLE → counters null.
+6. **quality marked unmeasured counters available**: R7 tenia `durableFingerprintConflicts: true` siempre. R8-06: valor===null → available=false. valor numerico → available=true.
+7. **parity test did not exercise backfill**: R7 llamaba dos veces al mismo builder. R8-07: test de paridad real con syncCompletedTradesToDurableStorage vs buildDurableEntryPayload directo.
+8. **lifecycle test did not stop during active await**: R7 usaba mocks falsamente concurrentes. R8-08: Deferred promises reales, stop durante await pendente.
+9. **production DO NOTHING conflict path not directly tested**: R8-09: tests del adaptador productivo via mock db.execute (INSERT RETURNING [] + SELECT same/different/no fingerprint).
+10. **duplicate helper not actually used by quality**: R7 reimplementaba la tupla en SQL. R8-10: quality usa `countDuplicateFills()` de `spotAiDuplicateIdentity.ts`. Una sola implementacion canonica.
+
+### Correcciones R8 implementadas
+
+- `spotAiDurableTrainingStore.ts`:
+  - R8-01: `persistGivebackSamples` skip labels=null antes de cualquier check.
+  - R8-02: `GivebackPersistResult` tipado con 6 campos explicitos.
+  - R8-03: `SyncResult` tipado, idempotent/skippedUnlabeled no son errors.
+  - R8-04: `BackfillResult` con `errorCodes` tipados.
+  - R8-05: `ReconciliationMetrics` con status NEVER_RUN/SUCCESS/STORAGE_UNAVAILABLE/ERROR, counters null antes de primera run.
+  - R8-10: `isValidPolicyProvenance` rechaza "backfill"/"live"/"sync"/"restart" + empty/whitespace.
+  - R8-08: `_resetReconciliationRunning` para tests.
+- `spotAi.routes.ts`:
+  - R8-06: `checksAvailable[field] = value !== null` para todas las metricas de reconciliation.
+  - R8-10: `countDuplicateFills()` desde TypeScript, no SQL duplicado.
+  - Nuevos campos: `lastReconciliationSkippedUnlabeledGiveback`, `lastReconciliationIdempotentTrades`, `lastReconciliationIdempotentGiveback`, `lastReconciliationInvalidProvenance`, `lastReconciliationInsertErrors`, `lastReconciliationStatus`, `lastReconciliationErrorCodes`.
+- `090_spot_ai_forward_training_trades.sql`:
+  - R8-12: `dataset_fingerprint TEXT NOT NULL` (ambas tablas).
+  - R8-12: `policy_version TEXT NOT NULL` + `CHECK (btrim(policy_version) <> '')`.
+  - R8-12: `entry_features_json`/`entry_labels_json` sin `DEFAULT '{}'`.
+  - R8-12: `labels_json JSONB NOT NULL`, `has_label BOOLEAN NOT NULL` (giveback).
+  - R8-12: `CHECK (has_label = true)` en giveback.
+  - R8-12: `state_json` sin `DEFAULT '{}'`.
+- `spotAiTypes.ts`: Nuevos campos de metricas R8.
+
+### Tests R8
+
+- `spotAiGivebackMaturationR8.test.ts` — 4 tests (maturation, idempotent, v1 unlabeled, multi-reconciliation)
+- `spotAiEntryProvenanceR8.test.ts` — 4 tests (empty/whitespace/synthetic/real policy)
+- `spotAiQualityMetricsR8.test.ts` — 4 tests (NEVER_RUN/SUCCESS/STORAGE_UNAVAILABLE/ERROR)
+- `spotAiSqlContractR8.test.ts` — 11 tests (NOT NULL, CHECK, no DEFAULT)
+- `spotAiReconciliationR8.test.ts` — 5 tests (idempotent not error, query/raw/dataset failure)
+- `spotAiAdapterR8.test.ts` — 6 tests (trade/giveback same/different/no fingerprint)
+- `spotAiLifecycleR8.test.ts` — 3 tests (stop during await, generation isolation, anti-overlap)
+- `spotAiParityR8.test.ts` — 4 tests (live/direct builder parity, deterministic, policy-sensitive)
+- Total R8: 41 tests
+
+### Validacion
+
+- SPOT-AI tests: 290/290 pass (29 files)
+- Economic R5/R6/general: 33/33 pass
+- Forward Twin: 47/47 pass (spotForwardTwin + spotForwardTwinAudit)
+- Forward Twin Benchmark: 4/4 pass
+- spotE2E: pass
+- spotEngine.integration: pass
+- spotB15Comprehensive: pass
+- TSC: 0 errors
+- Build: OK
+- `git diff --check`: clean
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION (090 not applied)
+NO VPS
+NO TRAINING
+NO REAL
+PENDING_GITHUB_COUNTERAUDIT=YES
+```
+
+### Flags finales
+
+```
+UNLABELED_GIVEBACK_PERSISTED=NO
+V1_UNTRAINABLE_GIVEBACK_PERSISTED=NO
+V2_OPEN_GIVEBACK_PERSISTED=NO
+V2_CLOSED_GIVEBACK_PERSISTED=YES
+GIVEBACK_MATURATION_CONFLICT=NO
+
+GIVEBACK_RESULT_FIELDS=persisted,idempotent,conflicts,skippedUnlabeled,invalidProvenance,insertErrors
+GIVEBACK_IDEMPOTENT_COUNTED_AS_ERROR=NO
+GIVEBACK_SKIPPED_UNLABELED_COUNTED_AS_ERROR=NO
+
+QUERY_FAILURE_REPORTED_AS_ERROR=YES
+RAW_LOAD_FAILURE_REPORTED_AS_ERROR=YES
+DATASET_BUILD_FAILURE_REPORTED_AS_ERROR=YES
+REAL_ERROR_CAN_RETURN_ZERO=NO
+
+RECONCILIATION_INITIAL_STATUS=NEVER_RUN
+UNMEASURED_RECON_METRICS_ARE_NULL=YES
+UNMEASURED_RECON_METRICS_AVAILABLE_FALSE=YES
+SUCCESSFUL_ZERO_CONFLICTS_REPORTS_0_AVAILABLE_TRUE=YES
+STORAGE_UNAVAILABLE_RETURNS_STALE_METRICS=NO
+
+LIVE_BACKFILL_END_TO_END_TEST=PASS
+LIVE_BACKFILL_ENTRY_ROW_EQUAL=YES
+LIVE_BACKFILL_ENTRY_FINGERPRINT_EQUAL=YES
+LIVE_BACKFILL_GIVEBACK_ROW_EQUAL=YES
+LIVE_BACKFILL_GIVEBACK_FINGERPRINT_EQUAL=YES
+
+STOP_DURING_PENDING_AWAIT_TEST=PASS
+OLD_GENERATION_REARMS_AFTER_STOP=NO
+ANTI_OVERLAP_WITH_DEFERRED_TEST=PASS
+
+PRODUCTION_ADAPTER_TRADE_SAME_FP_TEST=PASS
+PRODUCTION_ADAPTER_TRADE_DIFFERENT_FP_TEST=PASS
+PRODUCTION_ADAPTER_GIVEBACK_SAME_FP_TEST=PASS
+PRODUCTION_ADAPTER_GIVEBACK_DIFFERENT_FP_TEST=PASS
+
+QUALITY_USES_CANONICAL_DUPLICATE_IDENTITY=YES
+DUPLICATE_IDENTITY_IMPLEMENTATIONS=1
+
+ENTRY_POLICY_PROVENANCE_VALIDATED_BY_WRITER=YES
+SYNTHETIC_INGESTION_POLICY_ACCEPTED=NO
+
+DATASET_FINGERPRINT_NOT_NULL_DB=YES
+GIVEBACK_LABELS_NOT_NULL_DB=YES
+MIGRATION_090_WRITER_CONTRACT=PASS
+MIGRATION_090_APPLIED=NO
+
+PHANTOM_EXIT_QTY_USED_FOR_PNL=NO
+RELATIVE_1PCT_COMPLETION_TOLERANCE_USED=NO
+QTY_EPSILON=1e-8
+
+SPOT_STRATEGY_CHANGED=NO
+SPOT_ENTRY_POLICY_CHANGED=NO
+SPOT_EXIT_POLICY_CHANGED=NO
+SPOT_SIZING_CHANGED=NO
+SPOT_EXECUTION_CHANGED=NO
+GRID_MODIFIED=NO
+IDCA_MODIFIED=NO
+AMA_MODIFIED=NO
+TELEGRAM_MODIFIED=NO
+FISCO_MODIFIED=NO
+POSTGRES_SQL_INTEGRATION=NOT_AVAILABLE
+```

@@ -532,11 +532,39 @@ export function _resetDurableStorageCache(): void {
 // ─── Completed trade persistence ─────────────────────────────────────────────
 
 /**
+ * R8: Synthetic ingestion labels that MUST NOT be accepted as policy provenance.
+ * The policy must come from the Forward Twin snapshot, not from the ingestion
+ * mechanism name.
+ */
+const SYNTHETIC_INGESTION_POLICY_LABELS = new Set([
+  "backfill",
+  "live",
+  "sync",
+  "restart",
+]);
+
+/**
+ * R8: Validate that sourcePolicyVersion is a real Forward Twin policy,
+ * not a synthetic ingestion label, not empty/whitespace.
+ */
+function isValidPolicyProvenance(policy: string): boolean {
+  if (typeof policy !== "string") return false;
+  const trimmed = policy.trim();
+  if (trimmed === "") return false;
+  if (SYNTHETIC_INGESTION_POLICY_LABELS.has(trimmed)) return false;
+  return true;
+}
+
+/**
  * R7: Persist a completed trade to durable storage.
  *
  * R7: Fingerprint is computed CENTRALLY by buildDurableEntryPayload.
  * The caller provides sourcePolicyVersion from the causal SCAN snapshot.
  * If a fingerprint argument is provided, it must match the computed fingerprint.
+ *
+ * R8: sourcePolicyVersion is validated by the writer — empty/whitespace or
+ * synthetic ingestion labels ("backfill", "live", "sync", "restart") are
+ * rejected with INVALID_POLICY_PROVENANCE.
  *
  * IDEMPOTENT: same key + same fingerprint → NOOP (no update, no mutation).
  * FAIL CLOSED: same key + different fingerprint → reject (no overwrite).
@@ -559,14 +587,19 @@ export async function persistCompletedTrade(
     return { persisted: false, reason: "SKIP_NOT_TRAINABLE" };
   }
 
+  // R8: Validate policy provenance at the writer — do not trust the caller.
+  if (!isValidPolicyProvenance(sourcePolicyVersion)) {
+    return { persisted: false, reason: "INVALID_POLICY_PROVENANCE" };
+  }
+
   const available = await isDurableStorageAvailable();
   if (!available) {
     return { persisted: false, reason: "STORAGE_UNAVAILABLE" };
   }
 
-  // R7: Compute fingerprint centrally.
+  // R7: Compute fingerprint centrally. R8: trim policy before fingerprinting.
   const { row, fingerprint } = buildDurableEntryPayload(
-    trade, entryFeaturesJson, entryLabelsJson, sourcePolicyVersion, forwardTwinSchemaVersion,
+    trade, entryFeaturesJson, entryLabelsJson, sourcePolicyVersion.trim(), forwardTwinSchemaVersion,
   );
 
   // R7: If caller provided a fingerprint, it must match.
@@ -596,64 +629,106 @@ export async function persistCompletedTrade(
 // ─── Giveback sample persistence ─────────────────────────────────────────────
 
 /**
- * R7: Persist giveback samples with per-sample schema + policy provenance.
+ * R8: Typed giveback persistence result.
+ * Each category is explicit — NO mixing "skipped" for different meanings.
+ */
+export interface GivebackPersistResult {
+  /** INSERTED by the repository. */
+  persisted: number;
+  /** IDEMPOTENT_EXISTING — same key + same fingerprint. NOT an error. */
+  idempotent: number;
+  /** FINGERPRINT_CONFLICT — same key + different fingerprint. */
+  conflicts: number;
+  /** R8: labels === null — sample not yet mature. NOT an error. */
+  skippedUnlabeled: number;
+  /** Provenance missing/invalid. */
+  invalidProvenance: number;
+  /** INSERT_ERROR from the repository. */
+  insertErrors: number;
+}
+
+/**
+ * R7/R8: Persist giveback samples with per-sample schema + policy provenance.
  *
  * R7: Provenance is REQUIRED. No v2 fallback.
  * - sourceForwardTwinSchemaVersion must be present and allowed for SUPERVISOR.
- * - sourcePolicyVersion must be present and non-empty.
- * Missing/invalid provenance → INVALID_PROVENANCE, no persist.
+ * - sourcePolicyVersion must be present and non-empty (R8: validated by writer).
+ * Missing/invalid provenance → invalidProvenance++, no persist.
+ *
+ * R8-01 MATURATION: samples with labels === null are NOT persisted.
+ * The durable training table only stores MATURE (labeled) samples.
+ * - labels === null → skippedUnlabeled++, no insert.
+ * - This prevents a frozen unlabeled row from blocking later maturation
+ *   via FINGERPRINT_CONFLICT.
+ *
+ * R8-02 TYPED RESULT: each category is explicit, no mixing.
  *
  * FAIL CLOSED on fingerprint conflict.
  */
 export async function persistGivebackSamples(
   samples: SpotAiGivebackSample[],
-): Promise<{ persisted: number; conflicts: number; skipped: number; invalidProvenance: number }> {
+): Promise<GivebackPersistResult> {
+  const result: GivebackPersistResult = {
+    persisted: 0,
+    idempotent: 0,
+    conflicts: 0,
+    skippedUnlabeled: 0,
+    invalidProvenance: 0,
+    insertErrors: 0,
+  };
+
   const available = await isDurableStorageAvailable();
   if (!available) {
-    return { persisted: 0, conflicts: 0, skipped: samples.length, invalidProvenance: 0 };
+    // R8: unavailable → all samples skipped as unlabeled (not errors).
+    result.skippedUnlabeled = samples.length;
+    return result;
   }
 
   const repo = getRepository();
-  let persisted = 0;
-  let conflicts = 0;
-  let skipped = 0;
-  let invalidProvenance = 0;
 
   for (const sample of samples) {
+    // R8-01: MATURATION — skip unlabeled samples BEFORE any provenance check.
+    // The durable training table only stores mature (labeled) samples.
+    if (sample.labels === null || sample.labels === undefined) {
+      result.skippedUnlabeled++;
+      continue;
+    }
+
     // R7: Validate provenance — no fallback.
     if (sample.sourceForwardTwinSchemaVersion === undefined || sample.sourceForwardTwinSchemaVersion === null) {
-      invalidProvenance++;
+      result.invalidProvenance++;
       continue;
     }
     if (!isForwardTwinSchemaAllowed("SUPERVISOR", sample.sourceForwardTwinSchemaVersion)) {
-      invalidProvenance++;
+      result.invalidProvenance++;
       continue;
     }
-    if (!sample.sourcePolicyVersion || sample.sourcePolicyVersion === "") {
-      invalidProvenance++;
+    // R8: Validate policy provenance at the writer.
+    if (!isValidPolicyProvenance(sample.sourcePolicyVersion)) {
+      result.invalidProvenance++;
       continue;
     }
 
     const { row, fingerprint } = buildDurableGivebackPayload(sample);
-    const result = await repo.insertGiveback({ ...row, datasetFingerprint: fingerprint });
+    const insertResult = await repo.insertGiveback({ ...row, datasetFingerprint: fingerprint });
 
-    switch (result) {
+    switch (insertResult) {
       case "INSERTED":
-        persisted++;
+        result.persisted++;
         break;
       case "IDEMPOTENT_EXISTING":
-        skipped++;
+        result.idempotent++;
         break;
       case "FINGERPRINT_CONFLICT":
-        conflicts++;
+        result.conflicts++;
         break;
       default:
-        skipped++;
+        result.insertErrors++;
         break;
     }
   }
 
-  return { persisted, conflicts, skipped, invalidProvenance };
+  return result;
 }
 
 // ─── Durable counts ──────────────────────────────────────────────────────────
@@ -677,30 +752,52 @@ export async function getDurableCompletedTradeCount(): Promise<number | null> {
 // ─── Sync ────────────────────────────────────────────────────────────────────
 
 /**
+ * R8: Typed sync result. Each category is explicit.
+ * errors NEVER includes idempotency or skipped unlabeled.
+ */
+export interface SyncResult {
+  syncedTrades: number;
+  syncedGivebackSamples: number;
+  idempotentTrades: number;
+  idempotentGivebackSamples: number;
+  skippedNotTrainableTrades: number;
+  skippedUnlabeledGiveback: number;
+  fingerprintConflicts: number;
+  invalidProvenance: number;
+  insertErrors: number;
+  errors: number;
+}
+
+/**
  * Sync completed trades to durable storage.
  * R7: Uses per-sample sourcePolicyVersion from dataset samples.
  * SKIP_NOT_TRAINABLE when features/labels are missing (no empty rows).
+ *
+ * R8-03: IDEMPOTENT is NOT an error. SKIPPED_UNLABELED is NOT an error.
+ * Only conflicts, invalidProvenance, and insertErrors count as errors.
  */
 export async function syncCompletedTradesToDurableStorage(
   completedTrades: CompletedTrade[],
   datasetSamples: SpotAiDatasetSample[],
   givebackSamples: SpotAiGivebackSample[],
-): Promise<{
-  syncedTrades: number;
-  syncedGivebackSamples: number;
-  skippedNotTrainable: number;
-  fingerprintConflicts: number;
-  errors: number;
-}> {
+): Promise<SyncResult> {
+  const result: SyncResult = {
+    syncedTrades: 0,
+    syncedGivebackSamples: 0,
+    idempotentTrades: 0,
+    idempotentGivebackSamples: 0,
+    skippedNotTrainableTrades: 0,
+    skippedUnlabeledGiveback: 0,
+    fingerprintConflicts: 0,
+    invalidProvenance: 0,
+    insertErrors: 0,
+    errors: 0,
+  };
+
   const available = await isDurableStorageAvailable();
   if (!available) {
-    return { syncedTrades: 0, syncedGivebackSamples: 0, skippedNotTrainable: 0, fingerprintConflicts: 0, errors: 0 };
+    return result;
   }
-
-  let syncedTrades = 0;
-  let skippedNotTrainable = 0;
-  let fingerprintConflicts = 0;
-  let errors = 0;
 
   for (const trade of completedTrades) {
     const sample = datasetSamples.find(
@@ -711,39 +808,72 @@ export async function syncCompletedTradesToDurableStorage(
 
     // R6: No empty training rows.
     if (Object.keys(entryFeaturesJson).length === 0 || entryLabelsJson === null) {
-      skippedNotTrainable++;
+      result.skippedNotTrainableTrades++;
       continue;
     }
 
     // R7: Use per-sample policy provenance from the causal SCAN.
     const sourcePolicyVersion = sample?.sourcePolicyVersion ?? "";
-    if (!sourcePolicyVersion) {
-      errors++;
-      continue;
-    }
 
-    const result = await persistCompletedTrade(
+    const persistResult = await persistCompletedTrade(
       trade, entryFeaturesJson, entryLabelsJson, sourcePolicyVersion,
     );
-    if (result.persisted) syncedTrades++;
-    else if (result.reason === "FINGERPRINT_CONFLICT") fingerprintConflicts++;
-    else if (result.reason === "SKIP_NOT_TRAINABLE") skippedNotTrainable++;
-    else if (result.reason === "IDEMPOTENT_NOOP") { /* ok */ }
-    else errors++;
+    if (persistResult.persisted) {
+      result.syncedTrades++;
+    } else {
+      switch (persistResult.reason) {
+        case "IDEMPOTENT_NOOP":
+          result.idempotentTrades++;
+          break;
+        case "FINGERPRINT_CONFLICT":
+          result.fingerprintConflicts++;
+          result.errors++;
+          break;
+        case "SKIP_NOT_TRAINABLE":
+          result.skippedNotTrainableTrades++;
+          break;
+        case "INVALID_POLICY_PROVENANCE":
+          result.invalidProvenance++;
+          result.errors++;
+          break;
+        default:
+          result.insertErrors++;
+          result.errors++;
+          break;
+      }
+    }
   }
 
-  // R7: persistGivebackSamples uses per-sample provenance.
+  // R8: persistGivebackSamples uses typed result.
   const gbResult = await persistGivebackSamples(givebackSamples);
-  return {
-    syncedTrades,
-    syncedGivebackSamples: gbResult.persisted,
-    skippedNotTrainable,
-    fingerprintConflicts: fingerprintConflicts + gbResult.conflicts,
-    errors: errors + gbResult.skipped + gbResult.invalidProvenance,
-  };
+  result.syncedGivebackSamples = gbResult.persisted;
+  result.idempotentGivebackSamples = gbResult.idempotent;
+  result.skippedUnlabeledGiveback = gbResult.skippedUnlabeled;
+  result.fingerprintConflicts += gbResult.conflicts;
+  result.invalidProvenance += gbResult.invalidProvenance;
+  result.insertErrors += gbResult.insertErrors;
+  // R8-03: errors = conflicts + invalidProvenance + insertErrors.
+  // idempotent and skippedUnlabeled are NOT errors.
+  result.errors += gbResult.conflicts + gbResult.invalidProvenance + gbResult.insertErrors;
+
+  return result;
 }
 
 // ─── Backfill ────────────────────────────────────────────────────────────────
+
+/**
+ * R8: Typed backfill error codes. Real failures are reported, not hidden.
+ */
+export type BackfillErrorCode =
+  | "QUERY_COMPLETED_TRADES_FAILED"
+  | "RAW_SNAPSHOT_LOAD_FAILED"
+  | "DATASET_BUILD_FAILED"
+  | "DURABLE_INSERT_FAILED"
+  | "INVALID_PROVENANCE";
+
+export interface BackfillResult extends SyncResult {
+  errorCodes: BackfillErrorCode[];
+}
 
 /**
  * R7: Backfill durable storage from raw Forward Twin snapshots.
@@ -752,31 +882,52 @@ export async function syncCompletedTradesToDurableStorage(
  * Does NOT use synthetic "backfill" as policyVersion.
  * The same raw + same trade + same features + same labels produces the same
  * fingerprint as the live path.
+ *
+ * R8-04: Real failures are reported with typed error codes.
+ * A catch that returns errors=0 is PROHIBITED.
+ * - queryCompletedTrades failure → errors >= 1, errorCodes includes QUERY_COMPLETED_TRADES_FAILED
+ * - raw SELECT failure → errors >= 1, errorCodes includes RAW_SNAPSHOT_LOAD_FAILED
+ * - dataset build failure → errors >= 1, errorCodes includes DATASET_BUILD_FAILED
+ * Non-blocking: errors never throw to the scheduler.
  */
-export async function backfillDurableFromRaw(): Promise<{
-  syncedTrades: number;
-  syncedGivebackSamples: number;
-  skippedNotTrainable: number;
-  fingerprintConflicts: number;
-  errors: number;
-}> {
+export async function backfillDurableFromRaw(): Promise<BackfillResult> {
+  const emptyResult: BackfillResult = {
+    syncedTrades: 0,
+    syncedGivebackSamples: 0,
+    idempotentTrades: 0,
+    idempotentGivebackSamples: 0,
+    skippedNotTrainableTrades: 0,
+    skippedUnlabeledGiveback: 0,
+    fingerprintConflicts: 0,
+    invalidProvenance: 0,
+    insertErrors: 0,
+    errors: 0,
+    errorCodes: [],
+  };
+
   const available = await isDurableStorageAvailable();
   if (!available) {
-    return { syncedTrades: 0, syncedGivebackSamples: 0, skippedNotTrainable: 0, fingerprintConflicts: 0, errors: 0 };
+    return emptyResult;
   }
 
   const { queryCompletedTrades } = await import("./spotAiCompletedTrades");
   const { buildDataset, buildGivebackDataset } = await import("./spotAiDatasetBuilder");
   const { buildTradeOutcomeMap } = await import("./spotAiCompletedTrades");
-  let result;
+
+  let queryResult;
   try {
-    result = await queryCompletedTrades();
-  } catch {
-    return { syncedTrades: 0, syncedGivebackSamples: 0, skippedNotTrainable: 0, fingerprintConflicts: 0, errors: 0 };
+    queryResult = await queryCompletedTrades();
+  } catch (error) {
+    console.error("[SpotAiDurable] backfill: queryCompletedTrades failed:", error);
+    return {
+      ...emptyResult,
+      errors: 1,
+      errorCodes: ["QUERY_COMPLETED_TRADES_FAILED"],
+    };
   }
 
-  if (result.completedTrades.length === 0) {
-    return { syncedTrades: 0, syncedGivebackSamples: 0, skippedNotTrainable: 0, fingerprintConflicts: 0, errors: 0 };
+  if (queryResult.completedTrades.length === 0) {
+    return emptyResult;
   }
 
   let datasetSamples: SpotAiDatasetSample[] = [];
@@ -787,19 +938,34 @@ export async function backfillDurableFromRaw(): Promise<{
     const scanSnapshots = snapshots.filter((s) => s.snapshotType === "SCAN");
     const supervisorSnapshots = snapshots.filter((s) => s.snapshotType === "SUPERVISOR");
     const fillSnapshots = snapshots.filter((s) => s.snapshotType === "FILL");
-    const tradeOutcomes = buildTradeOutcomeMap(result.completedTrades);
+    const tradeOutcomes = buildTradeOutcomeMap(queryResult.completedTrades);
     const dataset = buildDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     datasetSamples = dataset.samples;
     const gbDataset = buildGivebackDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     givebackSamples = gbDataset.samples;
-  } catch {
-    return { syncedTrades: 0, syncedGivebackSamples: 0, skippedNotTrainable: result.completedTrades.length, fingerprintConflicts: 0, errors: 0 };
+  } catch (error) {
+    // R8-04: Distinguish raw load vs dataset build failures.
+    const isRawLoad = error instanceof Error && error.message.includes("spot_forward_twin_snapshots");
+    console.error("[SpotAiDurable] backfill: raw load / dataset build failed:", error);
+    return {
+      ...emptyResult,
+      skippedNotTrainableTrades: queryResult.completedTrades.length,
+      errors: 1,
+      errorCodes: [isRawLoad ? "RAW_SNAPSHOT_LOAD_FAILED" : "DATASET_BUILD_FAILED"],
+    };
   }
 
   // R7: Use the SAME sync path as live — per-sample policy provenance.
-  return syncCompletedTradesToDurableStorage(
-    result.completedTrades, datasetSamples, givebackSamples,
+  const syncResult = await syncCompletedTradesToDurableStorage(
+    queryResult.completedTrades, datasetSamples, givebackSamples,
   );
+
+  // R8-04: If sync had insert errors, add the error code.
+  const errorCodes: BackfillErrorCode[] = [];
+  if (syncResult.invalidProvenance > 0) errorCodes.push("INVALID_PROVENANCE");
+  if (syncResult.insertErrors > 0) errorCodes.push("DURABLE_INSERT_FAILED");
+
+  return { ...syncResult, errorCodes };
 }
 
 // ─── Unsynced count by key difference ────────────────────────────────────────
@@ -844,47 +1010,125 @@ export async function getUnsyncedGivebackSampleCount(
 
 // ─── Reconciliation metrics ──────────────────────────────────────────────────
 
-let lastReconciliationAt: number | null = null;
-let lastReconciliationErrors = 0;
-let lastFingerprintConflicts = 0;
-let lastSkippedNotTrainable = 0;
-let lastSyncedTrades = 0;
-let lastSyncedGivebackSamples = 0;
+/**
+ * R8-05: Reconciliation status enum.
+ * - NEVER_RUN: no reconciliation has been executed yet.
+ * - SUCCESS: last reconciliation completed without errors.
+ * - STORAGE_UNAVAILABLE: storage was unavailable, no reconciliation ran.
+ * - ERROR: last reconciliation had errors.
+ */
+export type ReconciliationStatus = "NEVER_RUN" | "SUCCESS" | "STORAGE_UNAVAILABLE" | "ERROR";
+
+/**
+ * R8-05: Reconciliation metrics interface.
+ * Before the first reconciliation, all counters are null (not zero).
+ * A null counter means "not measured", NOT "zero".
+ */
+export interface ReconciliationMetrics {
+  lastAttemptAt: number | null;
+  lastCompletedAt: number | null;
+  status: ReconciliationStatus;
+  errors: number | null;
+  fingerprintConflicts: number | null;
+  skippedNotTrainable: number | null;
+  skippedUnlabeledGiveback: number | null;
+  syncedTrades: number | null;
+  syncedGivebackSamples: number | null;
+  idempotentTrades: number | null;
+  idempotentGivebackSamples: number | null;
+  invalidProvenance: number | null;
+  insertErrors: number | null;
+  errorCodes: string[];
+}
+
+const INITIAL_METRICS: ReconciliationMetrics = {
+  lastAttemptAt: null,
+  lastCompletedAt: null,
+  status: "NEVER_RUN",
+  errors: null,
+  fingerprintConflicts: null,
+  skippedNotTrainable: null,
+  skippedUnlabeledGiveback: null,
+  syncedTrades: null,
+  syncedGivebackSamples: null,
+  idempotentTrades: null,
+  idempotentGivebackSamples: null,
+  invalidProvenance: null,
+  insertErrors: null,
+  errorCodes: [],
+};
+
+let reconciliationMetrics: ReconciliationMetrics = { ...INITIAL_METRICS };
+
+export function getReconciliationMetrics(): ReconciliationMetrics {
+  return { ...reconciliationMetrics };
+}
 
 export function getLastReconciliationAt(): number | null {
-  return lastReconciliationAt;
+  return reconciliationMetrics.lastCompletedAt;
 }
 
-export function getLastReconciliationErrors(): number {
-  return lastReconciliationErrors;
+export function getLastReconciliationErrors(): number | null {
+  return reconciliationMetrics.errors;
 }
 
-export function getLastFingerprintConflicts(): number {
-  return lastFingerprintConflicts;
+export function getLastFingerprintConflicts(): number | null {
+  return reconciliationMetrics.fingerprintConflicts;
 }
 
-export function getLastSkippedNotTrainable(): number {
-  return lastSkippedNotTrainable;
+export function getLastSkippedNotTrainable(): number | null {
+  return reconciliationMetrics.skippedNotTrainable;
 }
 
-export function getLastSyncedTrades(): number {
-  return lastSyncedTrades;
+export function getLastSyncedTrades(): number | null {
+  return reconciliationMetrics.syncedTrades;
 }
 
-export function getLastSyncedGivebackSamples(): number {
-  return lastSyncedGivebackSamples;
+export function getLastSyncedGivebackSamples(): number | null {
+  return reconciliationMetrics.syncedGivebackSamples;
+}
+
+export function getLastSkippedUnlabeledGiveback(): number | null {
+  return reconciliationMetrics.skippedUnlabeledGiveback;
+}
+
+export function getLastIdempotentTrades(): number | null {
+  return reconciliationMetrics.idempotentTrades;
+}
+
+export function getLastIdempotentGivebackSamples(): number | null {
+  return reconciliationMetrics.idempotentGivebackSamples;
+}
+
+export function getLastInvalidProvenance(): number | null {
+  return reconciliationMetrics.invalidProvenance;
+}
+
+export function getLastInsertErrors(): number | null {
+  return reconciliationMetrics.insertErrors;
+}
+
+export function getReconciliationStatus(): ReconciliationStatus {
+  return reconciliationMetrics.status;
+}
+
+export function getReconciliationErrorCodes(): string[] {
+  return reconciliationMetrics.errorCodes;
 }
 
 /**
  * Reset reconciliation metrics. For testing only.
  */
 export function _resetReconciliationMetrics(): void {
-  lastReconciliationAt = null;
-  lastReconciliationErrors = 0;
-  lastFingerprintConflicts = 0;
-  lastSkippedNotTrainable = 0;
-  lastSyncedTrades = 0;
-  lastSyncedGivebackSamples = 0;
+  reconciliationMetrics = { ...INITIAL_METRICS, errorCodes: [] };
+}
+
+/**
+ * R8: Reset reconciliation running state. For testing only.
+ * Allows tests to reset the anti-overlap guard between test cases.
+ */
+export function _resetReconciliationRunning(): void {
+  reconciliationRunning = false;
 }
 
 // ─── Recurring scheduler with generation guard ───────────────────────────────
@@ -904,31 +1148,65 @@ let schedulerGeneration = 0;
  * Run a single reconciliation cycle.
  * Anti-overlap: if already running, skip.
  * Errors are captured and never thrown.
+ *
+ * R8-05: Metrics are set to real values after completion.
+ * - Storage unavailable → status=STORAGE_UNAVAILABLE, counters stay null.
+ * - Success with 0 errors → status=SUCCESS, counters are real (including 0).
+ * - Errors → status=ERROR, counters are real, errors >= 1.
  */
 export async function runDurableReconciliation(): Promise<void> {
   if (reconciliationRunning) return;
   reconciliationRunning = true;
 
+  const attemptAt = Date.now();
   try {
     const available = await isDurableStorageAvailable();
-    if (!available) return;
+    if (!available) {
+      // R8-05: Storage unavailable — do NOT invent counters.
+      reconciliationMetrics = {
+        ...INITIAL_METRICS,
+        lastAttemptAt: attemptAt,
+        status: "STORAGE_UNAVAILABLE",
+        errorCodes: [],
+      };
+      return;
+    }
 
     const result = await backfillDurableFromRaw();
-    lastReconciliationAt = Date.now();
-    lastReconciliationErrors = result.errors;
-    lastFingerprintConflicts = result.fingerprintConflicts;
-    lastSkippedNotTrainable = result.skippedNotTrainable;
-    lastSyncedTrades = result.syncedTrades;
-    lastSyncedGivebackSamples = result.syncedGivebackSamples;
-    if (result.syncedTrades > 0 || result.skippedNotTrainable > 0 || result.fingerprintConflicts > 0) {
+    const hasErrors = result.errors > 0 || result.errorCodes.length > 0;
+    reconciliationMetrics = {
+      lastAttemptAt: attemptAt,
+      lastCompletedAt: Date.now(),
+      status: hasErrors ? "ERROR" : "SUCCESS",
+      errors: result.errors,
+      fingerprintConflicts: result.fingerprintConflicts,
+      skippedNotTrainable: result.skippedNotTrainableTrades,
+      skippedUnlabeledGiveback: result.skippedUnlabeledGiveback,
+      syncedTrades: result.syncedTrades,
+      syncedGivebackSamples: result.syncedGivebackSamples,
+      idempotentTrades: result.idempotentTrades,
+      idempotentGivebackSamples: result.idempotentGivebackSamples,
+      invalidProvenance: result.invalidProvenance,
+      insertErrors: result.insertErrors,
+      errorCodes: result.errorCodes,
+    };
+    if (result.syncedTrades > 0 || result.skippedNotTrainableTrades > 0 || result.fingerprintConflicts > 0) {
       console.log(
         `[SpotAiDurable] Reconciliation: synced=${result.syncedTrades} ` +
-        `skipped=${result.skippedNotTrainable} conflicts=${result.fingerprintConflicts} ` +
+        `skipped=${result.skippedNotTrainableTrades} conflicts=${result.fingerprintConflicts} ` +
         `errors=${result.errors}`,
       );
     }
   } catch (error) {
-    lastReconciliationErrors++;
+    // R8-05: Real error — status=ERROR, errors >= 1.
+    reconciliationMetrics = {
+      ...INITIAL_METRICS,
+      lastAttemptAt: attemptAt,
+      lastCompletedAt: Date.now(),
+      status: "ERROR",
+      errors: (reconciliationMetrics.errors ?? 0) + 1,
+      errorCodes: ["RECONCILIATION_EXCEPTION"],
+    };
     console.error("[SpotAiDurable] Reconciliation error (non-blocking):", error);
   } finally {
     reconciliationRunning = false;

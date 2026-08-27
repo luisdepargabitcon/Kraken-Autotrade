@@ -31,6 +31,8 @@
 --     closed_qty = real executed exit qty (no phantom, no 1% tolerance).
 --     entry_fee_usd = allocated portion (NOT total). total_entry_fee_usd = full.
 --     No empty training rows: is_trainable=false rows are NOT inserted.
+-- R8: hardened dataset_fingerprint NOT NULL, policy_version NOT NULL + CHECK.
+--     Giveback labels_json NOT NULL, has_label NOT NULL (only mature samples).
 
 -- ─── Completed training trades (entry model) ─────────────────────────────────
 -- One row per COMPLETED Forward Twin trade (full causal chain).
@@ -88,15 +90,21 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades (
   -- Entry features (compact JSON, versioned by feature_schema_version).
   -- R5: MUST be non-empty for is_trainable=true. Backfill must reconstruct
   -- real features, not persist {}.
-  entry_features_json   JSONB NOT NULL DEFAULT '{}',
+  -- R8: No DEFAULT '{}' — writer must provide real features explicitly.
+  entry_features_json   JSONB NOT NULL,
   -- Entry labels (compact JSON).
   -- R5: MUST be non-empty for is_trainable=true. Backfill must reconstruct
   -- real labels, not persist {}.
-  entry_labels_json     JSONB NOT NULL DEFAULT '{}',
+  -- R8: No DEFAULT '{}' — writer must provide real labels explicitly.
+  entry_labels_json     JSONB NOT NULL,
+  -- R8: policy_version NOT NULL + CHECK non-empty/non-whitespace.
   policy_version        TEXT NOT NULL,
-  dataset_fingerprint   TEXT,
+  -- R8: dataset_fingerprint NOT NULL — writer must always provide it.
+  dataset_fingerprint   TEXT NOT NULL,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (lot_id, pair)
+  UNIQUE (lot_id, pair),
+  -- R8: Reject empty/whitespace policy_version at the DB level.
+  CONSTRAINT chk_training_trades_policy_version CHECK (btrim(policy_version) <> '')
 );
 
 CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_trades_pair
@@ -123,15 +131,24 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_giveback_samples (
   pair                  TEXT NOT NULL,
   timestamp             BIGINT NOT NULL,
   -- State known up to T (FEATURE side, compact JSON)
-  state_json            JSONB NOT NULL DEFAULT '{}',
-  -- Future outcome label (computed from path > T)
-  labels_json           JSONB,
-  -- Whether this sample has a future label (trade closed)
-  has_label             BOOLEAN NOT NULL DEFAULT false,
+  state_json            JSONB NOT NULL,
+  -- R8: Future outcome label — NOT NULL. Only mature (labeled) samples are
+  -- persisted to this durable TRAINING table. Unlabeled samples are skipped
+  -- by the writer (R8-01 maturation).
+  labels_json           JSONB NOT NULL,
+  -- R8: Whether this sample has a future label — NOT NULL, always true.
+  -- Writer always sets has_label=true for mature samples.
+  has_label             BOOLEAN NOT NULL,
+  -- R8: policy_version NOT NULL + CHECK non-empty/non-whitespace.
   policy_version        TEXT NOT NULL,
-  dataset_fingerprint   TEXT,
+  -- R8: dataset_fingerprint NOT NULL — writer must always provide it.
+  dataset_fingerprint   TEXT NOT NULL,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (lot_id, timestamp)
+  UNIQUE (lot_id, timestamp),
+  -- R8: Reject empty/whitespace policy_version at the DB level.
+  CONSTRAINT chk_giveback_policy_version CHECK (btrim(policy_version) <> ''),
+  -- R8: Only mature samples in the durable training table.
+  CONSTRAINT chk_giveback_has_label CHECK (has_label = true)
 );
 
 CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_giveback_lot

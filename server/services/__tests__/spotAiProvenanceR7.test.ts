@@ -75,13 +75,14 @@ describe("R7 PROVENANCE tests — giveback schema + policy fail-closed", () => {
     _resetReconciliationMetrics();
   });
 
-  // PROVENANCE_R7_01: v1 exact → persists v1
-  it("PROVENANCE_R7_01: v1 exact → persists v1", async () => {
+  // PROVENANCE_R7_01: v1 exact with labels → persists v1
+  // R8: v1 samples with labels=null are skipped (maturation). Must have labels.
+  it("PROVENANCE_R7_01: v1 exact with labels → persists v1", async () => {
     const sample = makeSample({
       sourceForwardTwinSchemaVersion: 1,
       sourcePolicyVersion: "SPOT_POLICY_X",
       state: { ...makeSample().state, currentR: null, currentRUnavailable: true } as any,
-      labels: null,
+      labels: { future_MFE_R: 1.5, future_MAE_R: -0.3 } as any,
     });
     const result = await persistGivebackSamples([sample]);
     expect(result.persisted).toBe(1);
@@ -140,10 +141,11 @@ describe("R7 PROVENANCE tests — giveback schema + policy fail-closed", () => {
   });
 
   // PROVENANCE_R7_06: mixed v1/v2 + different policies → each preserved
+  // R8: v1 samples must have labels (mature) to be persisted.
   it("PROVENANCE_R7_06: mixed v1/v2 + different policies → each preserved", async () => {
     const sampleV1 = makeSample({
       state: { ...makeSample().state, lotId: "lot-v1", currentR: null, currentRUnavailable: true } as any,
-      labels: null,
+      labels: { future_MFE_R: 1.5, future_MAE_R: -0.3 } as any,
       sourceForwardTwinSchemaVersion: 1,
       sourcePolicyVersion: "POLICY_A",
     });

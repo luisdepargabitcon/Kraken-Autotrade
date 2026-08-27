@@ -323,10 +323,11 @@ describe("R6 DURABLE tests with fake repository", () => {
   });
 
   // DURABLE_R6_12: mixed v1/v2 giveback preserves provenance per sample
+  // R8: v1 samples must have labels (mature) to be persisted.
   it("DURABLE_R6_12: mixed v1/v2 giveback preserves schema version per sample", async () => {
     const sampleV1 = makeGivebackSample({
       state: { ...makeGivebackSample().state, lotId: "lot-v1", currentR: null, currentRUnavailable: true } as any,
-      labels: null,
+      labels: { future_MFE_R: 1.5, future_MAE_R: -0.3 } as any,
       sourceForwardTwinSchemaVersion: 1,
     });
     const sampleV2 = makeGivebackSample({

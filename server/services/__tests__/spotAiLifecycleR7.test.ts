@@ -246,7 +246,8 @@ describe("R7 LIFE tests — scheduler stop race", () => {
 
     // Should not throw
     await expect(runDurableReconciliation()).resolves.toBeUndefined();
-    // Errors are tracked but don't throw
-    expect(getLastReconciliationErrors()).toBeGreaterThanOrEqual(0);
+    // R8-05: isAvailable() throws → isDurableStorageAvailable() returns false
+    // → status=STORAGE_UNAVAILABLE, errors=null (not measured).
+    expect(getLastReconciliationErrors()).toBeNull();
   });
 });

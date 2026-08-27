@@ -25,12 +25,12 @@ function makeFakeRepository(available: boolean): DurableRepository {
   return {
     async isAvailable() { return available; },
     async getExistingTradeFingerprint() { return null; },
-    async insertTrade() { return true; },
+    async insertTrade() { return "INSERTED" as any; },
     async getStoredTradeCount() { return 0; },
     async getTrainableTradeCount() { return 0; },
     async getAllTradeKeys() { return []; },
     async getExistingGivebackFingerprint() { return null; },
-    async insertGiveback() { return true; },
+    async insertGiveback() { return "INSERTED" as any; },
     async getAllGivebackKeys() { return []; },
   };
 }
@@ -91,8 +91,8 @@ describe("R6 LIFE tests — durable reconciliation scheduler", () => {
     // Multiple rapid timer advances should not cause overlap errors.
     await vi.advanceTimersByTimeAsync(100);
     await vi.advanceTimersByTimeAsync(100);
-    // No errors thrown — lifecycle is safe.
-    expect(getLastReconciliationErrors()).toBe(0);
+    // R8-05: storage unavailable → errors is null (not 0). No errors thrown.
+    expect(getLastReconciliationErrors()).toBeNull();
   });
 
   // LIFE_R6_04: error in reconciliation => no throw toward app
@@ -100,12 +100,12 @@ describe("R6 LIFE tests — durable reconciliation scheduler", () => {
     const errorRepo: DurableRepository = {
       async isAvailable() { throw new Error("DB connection lost"); },
       async getExistingTradeFingerprint() { return null; },
-      async insertTrade() { return true; },
+      async insertTrade() { return "INSERTED" as any; },
       async getStoredTradeCount() { return 0; },
       async getTrainableTradeCount() { return 0; },
       async getAllTradeKeys() { return []; },
       async getExistingGivebackFingerprint() { return null; },
-      async insertGiveback() { return true; },
+      async insertGiveback() { return "INSERTED" as any; },
       async getAllGivebackKeys() { return []; },
     };
     setDurableRepository(errorRepo);

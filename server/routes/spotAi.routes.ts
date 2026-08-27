@@ -26,6 +26,13 @@ import {
   getLastSkippedNotTrainable,
   getLastSyncedTrades,
   getLastSyncedGivebackSamples,
+  getLastSkippedUnlabeledGiveback,
+  getLastIdempotentTrades,
+  getLastIdempotentGivebackSamples,
+  getLastInvalidProvenance,
+  getLastInsertErrors,
+  getReconciliationStatus,
+  getReconciliationErrorCodes,
 } from "../services/spotAiForwardTwin/spotAiDurableTrainingStore";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
@@ -34,6 +41,7 @@ import {
   PREFERRED_TRADES_TO_TRAIN,
   SPOT_AI_FEATURE_SCHEMA_VERSION,
 } from "../services/spotAiForwardTwin/spotAiForwardTwinTypes";
+import { countDuplicateFills } from "../services/spotAiForwardTwin/spotAiDuplicateIdentity";
 
 export const registerSpotAiRoutes: RegisterRoutes = (app) => {
 
@@ -165,11 +173,11 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const invalidSnapshots = parseInt(r.invalid_snapshots ?? "0");
       const missingFeatures = parseInt(r.missing_features ?? "0");
 
-      // R7: Duplicate fills and incomplete trades.
-      // R7: Duplicate identity = strict tuple:
-      //   (lotId, pair, side, orderId, executedAt, fillPrice, fillVolume, feeUsd)
+      // R8-09: Duplicate fills and incomplete trades.
+      // R8-09: Duplicate identity uses the SINGLE canonical countDuplicateFills()
+      // from spotAiDuplicateIdentity.ts — NO separate SQL implementation.
+      // SQL is kept only for multi-fill counts and incomplete trades.
       // Same orderId + different executedAt/volume/price = legitimate multi-fill, NOT duplicate.
-      // Exact copy of same snapshot = duplicate.
       const dupRows = await db.execute(sql`
         WITH fill_counts AS (
           SELECT
@@ -181,47 +189,47 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
           WHERE data->>'snapshotType' = 'FILL'
             AND data->'fill'->>'lotId' IS NOT NULL
           GROUP BY data->'fill'->>'lotId', pair
-        ),
-        duplicate_buy AS (
-          SELECT 1 FROM spot_forward_twin_snapshots
-          WHERE data->>'snapshotType' = 'FILL'
-            AND data->'fill'->>'lotId' IS NOT NULL
-            AND data->'fill'->>'side' = 'BUY'
-          GROUP BY data->'fill'->>'lotId', pair,
-            COALESCE(data->'fill'->>'orderId', ''),
-            COALESCE((data->'fill'->>'executedAt')::bigint, 0),
-            (data->'fill'->>'fillPrice')::float,
-            (data->'fill'->>'fillVolume')::float,
-            COALESCE((data->'fill'->>'feeUsd')::float, 0)
-          HAVING COUNT(*) > 1
-        ),
-        duplicate_sell AS (
-          SELECT 1 FROM spot_forward_twin_snapshots
-          WHERE data->>'snapshotType' = 'FILL'
-            AND data->'fill'->>'lotId' IS NOT NULL
-            AND data->'fill'->>'side' = 'SELL'
-          GROUP BY data->'fill'->>'lotId', pair,
-            COALESCE(data->'fill'->>'orderId', ''),
-            COALESCE((data->'fill'->>'executedAt')::bigint, 0),
-            (data->'fill'->>'fillPrice')::float,
-            (data->'fill'->>'fillVolume')::float,
-            COALESCE((data->'fill'->>'feeUsd')::float, 0)
-          HAVING COUNT(*) > 1
         )
         SELECT
           COUNT(*) FILTER (WHERE buy_count > 1) AS multi_buy_fills,
           COUNT(*) FILTER (WHERE sell_count > 1) AS multi_sell_fills,
-          (SELECT COUNT(*) FROM duplicate_buy) AS duplicate_entry_fills,
-          (SELECT COUNT(*) FROM duplicate_sell) AS duplicate_exit_fills,
           COUNT(*) FILTER (WHERE buy_count > 0 AND sell_count = 0) AS incomplete_trades
         FROM fill_counts
       `);
       const d = (dupRows.rows ?? [])[0] as any ?? {};
       const multiBuyFills = parseInt(d.multi_buy_fills ?? "0");
       const multiSellFills = parseInt(d.multi_sell_fills ?? "0");
-      const duplicateEntryFills = parseInt(d.duplicate_entry_fills ?? "0");
-      const duplicateExitFills = parseInt(d.duplicate_exit_fills ?? "0");
       const incompleteTrades = parseInt(d.incomplete_trades ?? "0");
+
+      // R8-09: Load FILL snapshots and compute duplicates via the SINGLE canonical
+      // countDuplicateFills() function — same implementation used by tests.
+      let duplicateEntryFills = 0;
+      let duplicateExitFills = 0;
+      try {
+        const fillRows = await db.execute(sql`
+          SELECT data FROM spot_forward_twin_snapshots
+          WHERE data->>'snapshotType' = 'FILL'
+            AND data->'fill'->>'lotId' IS NOT NULL
+        `);
+        const fillIdentities = ((fillRows.rows ?? []) as any[]).map((r) => {
+          const f = (r.data ?? {}).fill ?? {};
+          return {
+            lotId: String(f.lotId ?? ""),
+            pair: String((r.data ?? {}).pair ?? ""),
+            side: (f.side === "SELL" ? "SELL" : "BUY") as "BUY" | "SELL",
+            orderId: String(f.orderId ?? ""),
+            executedAt: Number(f.executedAt ?? 0),
+            fillPrice: Number(f.fillPrice ?? 0),
+            fillVolume: Number(f.fillVolume ?? 0),
+            feeUsd: Number(f.feeUsd ?? 0),
+          };
+        });
+        const dupCounts = countDuplicateFills(fillIdentities);
+        duplicateEntryFills = dupCounts.duplicateEntry;
+        duplicateExitFills = dupCounts.duplicateExit;
+      } catch (error) {
+        console.error("[SpotAi] Quality: countDuplicateFills via TS failed:", error);
+      }
 
       // Structural invariants — always false by design, not computed statistically
       const legacyMixed = false;
@@ -244,20 +252,31 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const forwardTwinV1Count = parseInt(sv.v1_count ?? "0");
       const forwardTwinV2Count = parseInt(sv.v2_count ?? "0");
 
-      // R4/R6/R7: durable storage availability and sync status.
+      // R4/R6/R7/R8: durable storage availability and sync status.
       const durableAvailable = await isDurableStorageAvailable();
       const durableCompletedCount = await getDurableCompletedTradeCount();
       const durableStoredCount = durableAvailable ? await getDurableStoredTradeCount() : null;
       const durableUnsyncedCount = durableAvailable
         ? await getUnsyncedCompletedTradeCount(completedTradesResult.completedTrades)
         : null;
-      // R7: durable reconciliation metrics — real values from last reconciliation.
+      // R8-05: durable reconciliation metrics — null before first run, real after.
+      const reconStatus = getReconciliationStatus();
       const lastReconAt = getLastReconciliationAt();
       const lastReconErrors = getLastReconciliationErrors();
       const lastReconConflicts = getLastFingerprintConflicts();
       const lastReconSkipped = getLastSkippedNotTrainable();
       const lastReconSyncedTrades = getLastSyncedTrades();
       const lastReconSyncedGiveback = getLastSyncedGivebackSamples();
+      const lastReconSkippedUnlabeled = getLastSkippedUnlabeledGiveback();
+      const lastReconIdempotentTrades = getLastIdempotentTrades();
+      const lastReconIdempotentGiveback = getLastIdempotentGivebackSamples();
+      const lastReconInvalidProvenance = getLastInvalidProvenance();
+      const lastReconInsertErrors = getLastInsertErrors();
+      const lastReconErrorCodes = getReconciliationErrorCodes();
+      // R8-06: A metric is available iff its value is not null.
+      // NEVER_RUN → all recon metrics null → available=false.
+      // STORAGE_UNAVAILABLE → recon metrics null → available=false.
+      const reconMetricsAvailable = reconStatus === "SUCCESS" || reconStatus === "ERROR";
       // R6: durable missing = raw completed trades not in durable.
       const durableMissingTrades = durableUnsyncedCount;
       // R6: durable non-trainable = stored - trainable.
@@ -311,20 +330,28 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         durableStorageAvailable: durableAvailable,
         durableSyncErrors: null as number | null,
         durableUnsyncedCompletedTrades: durableUnsyncedCount,
-        // R6/R7: new durable metrics
+        // R6/R7/R8: new durable metrics
         durableStoredTrades: durableStoredCount,
         durableTrainableTrades: durableCompletedCount,
         durableMissingTrades,
         durableNonTrainableTrades,
-        // R7: real fingerprint conflicts from last reconciliation.
+        // R8-06: fingerprint conflicts — null before first run, real after.
         durableFingerprintConflicts: lastReconConflicts,
-        // R7: unsynced giveback samples — null when storage unavailable.
+        // R8-06: unsynced giveback samples — null when storage unavailable.
         durableUnsyncedGivebackSamples: null as number | null,
         lastReconciliationAt: lastReconAt,
         lastReconciliationErrors: lastReconErrors,
         lastReconciliationSyncedTrades: lastReconSyncedTrades,
         lastReconciliationSyncedGiveback: lastReconSyncedGiveback,
         lastReconciliationSkippedNotTrainable: lastReconSkipped,
+        // R8-05: new typed reconciliation metrics.
+        lastReconciliationSkippedUnlabeledGiveback: lastReconSkippedUnlabeled,
+        lastReconciliationIdempotentTrades: lastReconIdempotentTrades,
+        lastReconciliationIdempotentGiveback: lastReconIdempotentGiveback,
+        lastReconciliationInvalidProvenance: lastReconInvalidProvenance,
+        lastReconciliationInsertErrors: lastReconInsertErrors,
+        lastReconciliationStatus: reconStatus,
+        lastReconciliationErrorCodes: lastReconErrorCodes,
         forwardTwinV1Count,
         forwardTwinV2Count,
       };
@@ -355,20 +382,28 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         durableStorageAvailable: true,
         durableSyncErrors: false,
         durableUnsyncedCompletedTrades: durableAvailable,
-        // R6/R7: new durable metrics availability
+        // R6/R7/R8: new durable metrics availability
         durableStoredTrades: durableAvailable,
         durableTrainableTrades: durableAvailable,
         durableMissingTrades: durableAvailable,
         durableNonTrainableTrades: durableAvailable,
-        // R7: fingerprint conflicts are real from reconciliation.
-        durableFingerprintConflicts: true,
-        // R7: unsynced giveback not computed without reconstruction.
+        // R8-06: fingerprint conflicts available iff value is not null.
+        durableFingerprintConflicts: lastReconConflicts !== null,
+        // R8-06: unsynced giveback not computed without reconstruction.
         durableUnsyncedGivebackSamples: false,
-        lastReconciliationAt: true,
-        lastReconciliationErrors: true,
-        lastReconciliationSyncedTrades: true,
-        lastReconciliationSyncedGiveback: true,
-        lastReconciliationSkippedNotTrainable: true,
+        // R8-06: reconciliation metrics available iff value is not null.
+        lastReconciliationAt: lastReconAt !== null,
+        lastReconciliationErrors: lastReconErrors !== null,
+        lastReconciliationSyncedTrades: lastReconSyncedTrades !== null,
+        lastReconciliationSyncedGiveback: lastReconSyncedGiveback !== null,
+        lastReconciliationSkippedNotTrainable: lastReconSkipped !== null,
+        lastReconciliationSkippedUnlabeledGiveback: lastReconSkippedUnlabeled !== null,
+        lastReconciliationIdempotentTrades: lastReconIdempotentTrades !== null,
+        lastReconciliationIdempotentGiveback: lastReconIdempotentGiveback !== null,
+        lastReconciliationInvalidProvenance: lastReconInvalidProvenance !== null,
+        lastReconciliationInsertErrors: lastReconInsertErrors !== null,
+        lastReconciliationStatus: true,
+        lastReconciliationErrorCodes: true,
         forwardTwinV1Count: true,
         forwardTwinV2Count: true,
       };
