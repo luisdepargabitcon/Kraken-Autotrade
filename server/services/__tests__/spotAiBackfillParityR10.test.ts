@@ -106,7 +106,7 @@ const supRows = [
 // Raw Forward Twin snapshots for backfill's raw SELECT
 // R11-08: TWO SUPERVISOR v2 snapshots for same lot with different currentR
 // to test giveback labels on a future path (not just finalR).
-const snapshotRows: { data: ForwardTwinSnapshot }[] = [
+const snapshotRows: { data: any }[] = [
   { data: {
     snapshotType: "SCAN", scanId: "scan-1", pair: "BTC/USD", timestamp: 1000,
     policyVersion: POLICY_VERSION, schemaVersion: 1,
@@ -199,9 +199,9 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
     expect(queryResult.completedTrades.length).toBe(1);
 
     const tradeOutcomes = buildTradeOutcomeMap(queryResult.completedTrades);
-    const scanSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SCAN");
-    const supervisorSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SUPERVISOR");
-    const fillSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "FILL");
+    const scanSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SCAN") as ForwardTwinSnapshot[];
+    const supervisorSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SUPERVISOR") as ForwardTwinSnapshot[];
+    const fillSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "FILL") as ForwardTwinSnapshot[];
 
     const dataset = buildDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     expect(dataset.samples.length).toBeGreaterThan(0);
@@ -248,9 +248,9 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
     setupMockDb();
     const queryResult = await queryCompletedTrades();
     const tradeOutcomes = buildTradeOutcomeMap(queryResult.completedTrades);
-    const scanSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SCAN");
-    const supervisorSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SUPERVISOR");
-    const fillSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "FILL");
+    const scanSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SCAN") as ForwardTwinSnapshot[];
+    const supervisorSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SUPERVISOR") as ForwardTwinSnapshot[];
+    const fillSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "FILL") as ForwardTwinSnapshot[];
 
     const gbDataset = buildGivebackDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     const matureSamples = gbDataset.samples.filter(s => s.labels !== null);
