@@ -70,7 +70,12 @@ function stableCanonicalJson(obj: unknown): string {
 
 // ─── Durable insert result ───────────────────────────────────────────────────
 
-export type DurableInsertResult = "INSERTED" | "IDEMPOTENT_EXISTING" | "FINGERPRINT_CONFLICT" | "INSERT_ERROR";
+export type DurableInsertResult =
+  | "INSERTED"
+  | "IDEMPOTENT_EXISTING"
+  | "FINGERPRINT_CONFLICT"
+  | "INSERT_ERROR"
+  | "STORAGE_UNAVAILABLE";
 
 // ─── Durable repository interface ────────────────────────────────────────────
 
@@ -125,7 +130,9 @@ export interface DurableTradeRow {
   weightedAvgEntryPrice: number;
   totalEntryVolume: number;
   totalExitVolume: number;
-  isTrainable: boolean;
+  // R11-01: Migration 090 has CHECK (is_trainable = true). The writer only
+  // inserts trainable rows. The type is literal `true`, not general boolean.
+  isTrainable: true;
   exitReasonType: string | null;
   entryFeaturesJson: Record<string, unknown>;
   entryLabelsJson: Record<string, unknown>;
@@ -158,7 +165,7 @@ export interface DurableGivebackRow {
  */
 export type DurablePayloadBuildResult<T> =
   | { ok: true; row: Omit<T, "datasetFingerprint">; fingerprint: string }
-  | { ok: false; reason: "INVALID_POLICY_PROVENANCE" | "MATURATION_NOT_READY" };
+  | { ok: false; reason: "INVALID_POLICY_PROVENANCE" | "MATURATION_NOT_READY" | "NOT_TRAINABLE" };
 
 /**
  * R7/R10-06: SINGLE canonical builder for entry durable payload.
@@ -176,6 +183,15 @@ export function buildDurableEntryPayload(
   sourcePolicyVersion: string,
   forwardTwinSchemaVersion: number = SPOT_FORWARD_TWIN_SCHEMA_VERSION_1,
 ): DurablePayloadBuildResult<DurableTradeRow> {
+  // R11-02: FAIL CLOSED on empty features or labels. The canonical builder
+  // MUST NOT produce a row with isTrainable=false. Migration 090 has
+  // CHECK (is_trainable = true), so a false-trainable row would violate the
+  // DB contract. Return NOT_TRAINABLE instead.
+  const hasRealFeatures = Object.keys(entryFeaturesJson).length > 0;
+  const hasRealLabels = Object.keys(entryLabelsJson).length > 0;
+  if (!hasRealFeatures || !hasRealLabels) {
+    return { ok: false, reason: "NOT_TRAINABLE" };
+  }
   // R10-06: Canonicalize policy provenance. FAIL CLOSED if invalid.
   const canonicalPolicy = canonicalizePolicyProvenance(sourcePolicyVersion);
   if (canonicalPolicy === null) {
@@ -219,7 +235,8 @@ export function buildDurableEntryPayload(
     weightedAvgEntryPrice: trade.weightedAverageEntryPrice,
     totalEntryVolume: trade.totalEntryVolume,
     totalExitVolume: trade.totalExitVolume,
-    isTrainable: Object.keys(entryFeaturesJson).length > 0 && Object.keys(entryLabelsJson).length > 0,
+    // R11-01: Literal true — builder only produces trainable rows.
+    isTrainable: true,
     exitReasonType: trade.exitReasonType,
     entryFeaturesJson,
     entryLabelsJson,
@@ -252,7 +269,9 @@ export function buildDurableGivebackPayload(
   }
   const stateJson = sample.state as unknown as Record<string, unknown>;
   const labelsJson = sample.labels as unknown as Record<string, unknown>;
-  const fingerprint = buildGivebackFingerprint(sample);
+  // R11-03: Pass the canonical policy to the fingerprint builder.
+  // No raw-policy fallback.
+  const fingerprint = buildGivebackFingerprint(sample, SPOT_AI_FEATURE_SCHEMA_VERSION, canonicalPolicy);
   const row: Omit<DurableGivebackRow, "datasetFingerprint"> = {
     featureSchemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION,
     forwardTwinSchemaVersion: sample.sourceForwardTwinSchemaVersion,
@@ -320,17 +339,41 @@ export function buildCanonicalFingerprint(
  * Canonical SHA-256 fingerprint for a giveback sample.
  * R7: Uses per-sample sourceForwardTwinSchemaVersion and sourcePolicyVersion.
  * R7: No v2 fallback — provenance must be present.
+ *
+ * R11-03: The policy version MUST be canonical and validated BEFORE calling
+ * this function. No raw-policy fallback. Callers must canonicalize first.
+ * The optional `canonicalPolicyVersion` parameter is the validated policy.
+ * If omitted, the function canonicalizes internally (but callers should
+ * pass the canonical value to avoid re-canonicalization).
  */
 export function buildGivebackFingerprint(
   sample: SpotAiGivebackSample,
   featureSchemaVersion: number = SPOT_AI_FEATURE_SCHEMA_VERSION,
+  canonicalPolicyVersion?: string,
 ): string {
   const stateJson = sample.state as unknown as Record<string, unknown>;
   const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
-  // R10-06: Canonicalize policy provenance for fingerprint consistency.
-  // No fallback — if invalid, use the raw value (fingerprint will differ
-  // from a valid-policy fingerprint, which is correct fail-closed behavior).
-  const canonicalPolicy = canonicalizePolicyProvenance(sample.sourcePolicyVersion) ?? sample.sourcePolicyVersion;
+  // R11-03: Use the provided canonical policy, or canonicalize internally.
+  // NO fallback to raw sample.sourcePolicyVersion.
+  const canonicalPolicy = canonicalPolicyVersion ?? canonicalizePolicyProvenance(sample.sourcePolicyVersion);
+  if (canonicalPolicy === null) {
+    // R11-03: Invalid policy cannot produce a canonical fingerprint.
+    // This should never happen if callers validate first. Return a
+    // fail-closed fingerprint that will never match a valid one.
+    const failPayload = {
+      fingerprintVersion: CANONICAL_FINGERPRINT_VERSION,
+      featureSchemaVersion,
+      forwardTwinSchemaVersion: sample.sourceForwardTwinSchemaVersion,
+      policyVersion: "__INVALID_POLICY_FAIL_CLOSED__",
+      lotId: sample.state.lotId,
+      pair: sample.state.pair,
+      timestamp: sample.state.timestamp,
+      stateJson,
+      labelsJson: labelsJson ?? null,
+    };
+    const canonical = stableCanonicalJson(failPayload);
+    return createHash("sha256").update(canonical).digest("hex");
+  }
   const payload = {
     fingerprintVersion: CANONICAL_FINGERPRINT_VERSION,
     featureSchemaVersion,
@@ -451,6 +494,19 @@ const productionRepository: DurableRepository = {
       return "FINGERPRINT_CONFLICT";
     } catch (error) {
       console.error(`[SpotAiDurable] insertTrade failed for lot_id=${row.lotId}:`, error);
+      // R11-05: Re-probe availability directly (do NOT use stale cache).
+      // If storage is truly down, return STORAGE_UNAVAILABLE so sync can
+      // stop attempting further writes. Otherwise, it's a real INSERT_ERROR.
+      try {
+        const reprobe = await this.isAvailable();
+        if (!reprobe) {
+          invalidateDurableStorageCache();
+          return "STORAGE_UNAVAILABLE";
+        }
+      } catch {
+        invalidateDurableStorageCache();
+        return "STORAGE_UNAVAILABLE";
+      }
       return "INSERT_ERROR";
     }
   },
@@ -542,6 +598,17 @@ const productionRepository: DurableRepository = {
       return "FINGERPRINT_CONFLICT";
     } catch (error) {
       console.error(`[SpotAiDurable] insertGiveback failed:`, error);
+      // R11-05: Re-probe availability directly (do NOT use stale cache).
+      try {
+        const reprobe = await this.isAvailable();
+        if (!reprobe) {
+          invalidateDurableStorageCache();
+          return "STORAGE_UNAVAILABLE";
+        }
+      } catch {
+        invalidateDurableStorageCache();
+        return "STORAGE_UNAVAILABLE";
+      }
       return "INSERT_ERROR";
     }
   },
@@ -584,16 +651,29 @@ export async function isDurableStorageAvailable(): Promise<boolean> {
   }
   try {
     const value = await getRepository().isAvailable();
-    durableStorageAvailableCache = { value, checkedAt: now };
+    // R11: Capture checkedAt AFTER the await, not before. If isAvailable()
+    // is slow, the cache should record when the value was obtained, not
+    // when the check started. Otherwise the cache could be immediately
+    // expired if the check took longer than the TTL.
+    durableStorageAvailableCache = { value, checkedAt: Date.now() };
     return value;
   } catch {
-    durableStorageAvailableCache = { value: false, checkedAt: now };
+    durableStorageAvailableCache = { value: false, checkedAt: Date.now() };
     return false;
   }
 }
 
 export function _resetDurableStorageCache(): void {
   durableStorageAvailableCache = null;
+}
+
+/**
+ * R11-06: Invalidate the availability cache when an outage is detected.
+ * This ensures the next isDurableStorageAvailable() call re-probes the
+ * repository instead of returning a stale `true` for up to 60s.
+ */
+function invalidateDurableStorageCache(): void {
+  durableStorageAvailableCache = { value: false, checkedAt: Date.now() };
 }
 
 // ─── Completed trade persistence ─────────────────────────────────────────────
@@ -710,6 +790,11 @@ export async function persistCompletedTrade(
       return { persisted: false, reason: "IDEMPOTENT_NOOP" };
     case "FINGERPRINT_CONFLICT":
       return { persisted: false, reason: "FINGERPRINT_CONFLICT" };
+    case "STORAGE_UNAVAILABLE":
+      // R11-05/R11-06: Mid-run outage detected during INSERT.
+      // Invalidate cache so next availability check re-probes.
+      invalidateDurableStorageCache();
+      return { persisted: false, reason: "STORAGE_UNAVAILABLE" };
     default:
       return { persisted: false, reason: "INSERT_FAILED" };
   }
@@ -828,6 +913,14 @@ export async function persistGivebackSamples(
       case "FINGERPRINT_CONFLICT":
         result.conflicts++;
         break;
+      case "STORAGE_UNAVAILABLE":
+        // R11-05/R11-06: Mid-run outage detected during INSERT.
+        // Invalidate cache so next availability check re-probes.
+        // Mark storage unavailable and STOP attempting further writes.
+        // Do NOT count as insertError.
+        invalidateDurableStorageCache();
+        result.storageUnavailable = true;
+        return result;
       default:
         result.insertErrors++;
         break;
@@ -957,11 +1050,12 @@ export async function syncCompletedTradesToDurableStorage(
           result.errors++;
           break;
         case "STORAGE_UNAVAILABLE":
-          // R10-04: Storage unavailable is NOT an insert error.
+          // R10-04/R11-05: Storage unavailable is NOT an insert error.
           // Propagate storageUnavailable=true. Do NOT increment insertErrors
           // or fingerprintConflicts or invalidProvenance.
+          // R11-05: STOP attempting further writes in this cycle.
           result.storageUnavailable = true;
-          break;
+          return result;
         default:
           result.insertErrors++;
           result.errors++;
@@ -978,7 +1072,10 @@ export async function syncCompletedTradesToDurableStorage(
   result.fingerprintConflicts += gbResult.conflicts;
   result.invalidProvenance += gbResult.invalidProvenance;
   result.insertErrors += gbResult.insertErrors;
-  result.storageUnavailable = gbResult.storageUnavailable;
+  // R11-04: storageUnavailable is MONOTONIC — once true, never reset to false.
+  // Do NOT overwrite with gbResult.storageUnavailable (could erase a true set
+  // during the entry loop).
+  result.storageUnavailable = result.storageUnavailable || gbResult.storageUnavailable;
   // R8-03: errors = conflicts + invalidProvenance + insertErrors.
   // idempotent and skippedUnlabeled are NOT errors.
   result.errors += gbResult.conflicts + gbResult.invalidProvenance + gbResult.insertErrors;

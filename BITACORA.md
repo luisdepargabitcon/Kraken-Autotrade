@@ -8677,3 +8677,68 @@ AMA_MODIFIED=NO
 TELEGRAM_MODIFIED=NO
 FISCO_MODIFIED=NO
 ```
+
+## SPOT R11 — DB-VALID BY CONSTRUCTION + MID-RUN OUTAGE
+
+### Base
+- R10 commit: `46a9f70cc5d2e0ee188992c68e61b81e5d040abc`
+- Branch: `refactor/spot-canonical-shadow-20260812`
+- Runtime: `SHADOW`, `AI_TRADING_CONTROL=NONE`, `AUTO_RETRAIN=NO`
+
+### R10 defects closed by R11
+1. `isTrainable` remained `boolean` — R11 changes `DurableTradeRow.isTrainable` to literal `true`, aligning with migration 090 `CHECK (is_trainable = true)`.
+2. Canonical entry builder could return a false-trainable row — R11 adds fail-closed `NOT_TRAINABLE` when `entryFeaturesJson` or `entryLabelsJson` is empty.
+3. `buildGivebackFingerprint` retained raw-policy fallback (`canonicalizePolicyProvenance(...) ?? original`) — R11 removes the fallback; the builder now receives validated canonical policy provenance and fails closed on invalid provenance before fingerprinting.
+4. `storageUnavailable` could be overwritten by a later giveback result — R11 makes propagation monotonic (`result.storageUnavailable = result.storageUnavailable || gbResult.storageUnavailable`).
+5. Unavailable test was pre-run rather than mid-run — R11 adds `STORAGE_UNAVAILABLE` as a distinct `DurableInsertResult`, with mid-run outage detection, cache invalidation, re-probe, and early termination of writes.
+6. Giveback E2E could pass with zero rows — R11 adds a second SUPERVISOR v2 snapshot to the fixture, requires `matureSamples.length > 0`, requires `repoA.givebacks.size > 0` and `repoB.givebacks.size > 0`, and makes the live/backfill comparison unconditional.
+7. Scheduler exact counts were proven with direct calls — R11 adds a timer-only handoff test using `runAllTimersAsync` to flush microtasks, with no direct `runDurableReconciliation()` calls.
+8. Production INSERT columns were not checked — R11 adds tests that inspect the production repository insert SQL strings and verify all migration 090 columns are present.
+9. Duplicate partial integration mocked the wrong module — R11 mocks the route's actual import (`../services/spotAiForwardTwin/spotAiDuplicateIdentity`) and verifies failure returns null/false availability rather than false zero values.
+
+### Availability cache fix
+- `isDurableStorageAvailable()` now captures `checkedAt` AFTER the `await getRepository().isAvailable()` call, not before. This prevents the cache from being immediately expired when `isAvailable()` is slow.
+
+### Files changed (R11)
+- `server/services/spotAiForwardTwin/spotAiDurableTrainingStore.ts` (production)
+- `server/services/__tests__/spotAiBackfillParityR10.test.ts` (fixture + unconditional giveback comparison)
+- `server/services/__tests__/spotAiBuilderTrainabilityR11.test.ts` (new)
+- `server/services/__tests__/spotAiGivebackFingerprintR11.test.ts` (new)
+- `server/services/__tests__/spotAiMidRunOutageR11.test.ts` (new)
+- `server/services/__tests__/spotAiSchedulerTimerHandoffR11.test.ts` (new)
+- `server/services/__tests__/spotAiProductionInsertColumnsR11.test.ts` (new)
+- `server/services/__tests__/spotAiQualityDuplicateFailureR11.test.ts` (new)
+- `BITACORA.md` (this section)
+
+### Validation
+- SPOT-AI suite: 54 files / 503 tests passed
+- Economic: 3 files / 33 tests passed
+- Forward Twin/SPOT regression: 4 files / 56 tests passed
+- TSC: exit 0
+- Build: exit 0
+- `git diff --check`: clean
+
+### Scope invariants
+```
+SPOT_STRATEGY_CHANGED=NO
+SPOT_ENTRY_POLICY_CHANGED=NO
+SPOT_EXIT_POLICY_CHANGED=NO
+SPOT_SIZING_CHANGED=NO
+SPOT_EXECUTION_CHANGED=NO
+GRID_MODIFIED=NO
+IDCA_MODIFIED=NO
+AMA_MODIFIED=NO
+TELEGRAM_MODIFIED=NO
+FISCO_MODIFIED=NO
+SMARTGUARD_MODIFIED=NO
+```
+
+### Operational status
+```
+NO DEPLOY
+NO MIGRATION
+NO VPS
+NO TRAINING
+NO REAL
+PENDING_GITHUB_COUNTERAUDIT=YES
+```

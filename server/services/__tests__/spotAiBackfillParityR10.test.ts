@@ -103,6 +103,8 @@ const supRows = [
 ];
 
 // Raw Forward Twin snapshots for backfill's raw SELECT
+// R11-08: TWO SUPERVISOR v2 snapshots for same lot with different currentR
+// to test giveback labels on a future path (not just finalR).
 const snapshotRows = [
   { data: {
     snapshotType: "SCAN", scanId: "scan-1", pair: "BTC/USD", timestamp: 1000,
@@ -119,10 +121,18 @@ const snapshotRows = [
     fill: { lotId: "lot-1", side: "BUY", orderId: "o1", executedAt: 1100, fillPrice: 100, fillVolume: 1, feeUsd: 1, notionalUsd: 100, slippage: 0, quality: "ok" },
     execIntent: { positionLotId: "lot-1", scanId: "scan-1" },
   } },
+  // SUPERVISOR v2 #1 — mid-trade, currentR=1.5
   { data: {
     snapshotType: "SUPERVISOR", pair: "BTC/USD", timestamp: 1500,
     schemaVersion: 2, policyVersion: POLICY_VERSION,
     position: { lotId: "lot-1", entryPrice: 100, currentR: 1.5, mfe: 10, mae: -5, mfeR: 1.0, maeR: -0.5, currentStopPrice: 95, highestPrice: 110 },
+    exitDecision: { reasonType: null },
+  } },
+  // SUPERVISOR v2 #2 — later, currentR=2.0 (different from #1)
+  { data: {
+    snapshotType: "SUPERVISOR", pair: "BTC/USD", timestamp: 1700,
+    schemaVersion: 2, policyVersion: POLICY_VERSION,
+    position: { lotId: "lot-1", entryPrice: 100, currentR: 2.0, mfe: 15, mae: -5, mfeR: 1.5, maeR: -0.5, currentStopPrice: 95, highestPrice: 115 },
     exitDecision: { reasonType: null },
   } },
   { data: {
@@ -239,12 +249,18 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
     const gbDataset = buildGivebackDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     const matureSamples = gbDataset.samples.filter(s => s.labels !== null);
 
+    // R11-08: Assert mature samples exist — the test CANNOT pass with 0 rows.
+    expect(matureSamples.length).toBeGreaterThan(0);
+
     const repoA = new CapturingRepo();
     setDurableRepository(repoA);
     _resetDurableStorageCache();
     const syncResultA = await syncCompletedTradesToDurableStorage(
       queryResult.completedTrades, [], matureSamples,
     );
+
+    // R11-08: Assert giveback rows were actually persisted
+    expect(repoA.givebacks.size).toBeGreaterThan(0);
 
     // CAMINO B (BACKFILL)
     setupMockDb();
@@ -253,22 +269,29 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
     _resetDurableStorageCache();
     const backfillResult = await backfillDurableFromRaw();
 
-    // Compare giveback rows if any mature samples exist
-    if (matureSamples.length > 0 && repoA.givebacks.size > 0) {
-      expect(repoA.givebacks.size).toBe(repoB.givebacks.size);
-      for (const [key, rowA] of repoA.givebacks) {
-        const rowB = repoB.givebacks.get(key);
-        expect(rowB).toBeDefined();
-        expect(rowA).toEqual(rowB);
-        expect(rowA.datasetFingerprint).toBe(rowB!.datasetFingerprint);
-        expect(rowA.policyVersion).toBe(rowB!.policyVersion);
-        expect(rowA.labelsJson).toEqual(rowB!.labelsJson);
-        expect(rowA.hasLabel).toBe(rowB!.hasLabel);
-        expect(rowA.hasLabel).toBe(true);
+    // R11-08: Assert backfill also persisted giveback rows
+    expect(repoB.givebacks.size).toBeGreaterThan(0);
+
+    // R11-08: Comparison is UNCONDITIONAL — no `if (matureSamples.length > 0 ...)`
+    expect(repoA.givebacks.size).toBe(repoB.givebacks.size);
+    for (const [key, rowA] of repoA.givebacks) {
+      const rowB = repoB.givebacks.get(key);
+      expect(rowB).toBeDefined();
+      expect(rowA).toEqual(rowB);
+      expect(rowA.datasetFingerprint).toBe(rowB!.datasetFingerprint);
+      expect(rowA.policyVersion).toBe(rowB!.policyVersion);
+      expect(rowA.labelsJson).toEqual(rowB!.labelsJson);
+      expect(rowA.hasLabel).toBe(rowB!.hasLabel);
+      expect(rowA.hasLabel).toBe(true);
+      // R11-08: Verify future_MFE_R / future_MAE_R are real (not null/undefined)
+      const labels = rowA.labelsJson as any;
+      if (labels.future_MFE_R !== undefined) {
+        expect(labels.future_MFE_R).not.toBeNull();
+      }
+      if (labels.future_MAE_R !== undefined) {
+        expect(labels.future_MAE_R).not.toBeNull();
       }
     }
-    // At minimum, both paths should have the same giveback count
-    expect(repoA.givebacks.size).toBe(repoB.givebacks.size);
   });
 
   // PARITY_R10_03_SECOND_BACKFILL_IDEMPOTENT
