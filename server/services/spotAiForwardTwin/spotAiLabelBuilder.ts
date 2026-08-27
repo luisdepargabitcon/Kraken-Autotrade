@@ -1,24 +1,16 @@
 /**
  * spotAiLabelBuilder — SINGLE canonical implementation for entry and giveback labels.
  *
- * Labels are computed ONLY after a trade is closed (entry labels) or from a
- * supervisor snapshot's future path (giveback labels).
- * They are NEVER exposed as features (no lookahead).
- *
- * R3 UNIFICATION: this is the ONLY label builder. spotAiDatasetBuilder uses
- * these functions. The previous duplicate logic in the dataset builder was
- * removed.
- *
- * Entry labels measure: did the trade reach R targets before stop?
- *   - time_to_0_5R / time_to_1R are computed from the SUPERVISOR path
- *     (first snapshot where running mfeR >= target), NOT from holdMs.
- *   - If no supervisor snapshot reaches the target, time_to_*R = null.
- *
- * Giveback labels measure: from a supervisor snapshot at time T, how much
- * profit was given back AFTER T?
- *   - futurePeakR / futureWorstR / finalR are computed from the supervisor
- *     path with timestamp > T (strictly after), NOT from aggregate outcome
- *     MFE/MAE which may include excursions before T.
+ * R4 FIXES:
+ *   - Entry labels use the real initialRiskUsd from the causal SCAN sizing
+ *     (via TradeOutcomeEntry.riskUsd which is now the immutable initial risk).
+ *   - Giveback future labels use INSTANTANEOUS currentR from supervisor
+ *     snapshots (schema v2), NOT cumulative running mfeR/maeR.
+ *   - For v1 snapshots without currentR, giveback labels are null
+ *     (currentRUnavailable=true).
+ *   - future_MFE_R = MAX(futureSnapshot.currentR, finalR) for snapshots > T.
+ *   - future_MAE_R = MIN(futureSnapshot.currentR, finalR) for snapshots > T.
+ *   - A trade that reached +2R BEFORE T does NOT leak +2R into future_MFE_R.
  */
 
 import type {
@@ -33,11 +25,9 @@ import type { TradeOutcomeEntry } from "./spotAiCompletedTrades";
 /**
  * Compute entry labels from a completed trade outcome.
  *
- * time_to_0_5R and time_to_1R use the SUPERVISOR path: the first supervisor
- * snapshot (chronological) where running mfeR >= target. If the target was
- * never reached in the supervisor path, time_to_*R = null (even if the
- * aggregate outcome.mfeR >= target, because we need the path to confirm
- * WHEN it happened).
+ * R4: final_R uses the real initialRiskUsd (from causal SCAN sizing, not
+ * from mutable sgCurrentStopPrice). time_to_0_5R / time_to_1R use the
+ * SUPERVISOR path (first snapshot where running mfeR >= target).
  */
 export function buildEntryLabels(
   outcome: TradeOutcomeEntry,
@@ -46,6 +36,7 @@ export function buildEntryLabels(
   const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
   const mfeR = outcome.mfeR;
   const maeR = outcome.maeR;
+  // R4: netPnlUsd is now NET (gross - fees). final_R = netPnlUsd / initialRiskUsd.
   const finalR = outcome.netPnlUsd / r;
   const holdMs = outcome.exitTime - outcome.entryTime;
 
@@ -57,6 +48,7 @@ export function buildEntryLabels(
     reached_1R_before_stop: mfeR >= 1.0,
     reached_1_5R_before_stop: mfeR >= 1.5,
     reached_2R_before_stop: mfeR >= 2.0,
+    // R4: final_net_profitable uses NET PnL (gross - fees).
     final_net_profitable: outcome.netPnlUsd > 0,
     final_R: finalR,
     mfe_R: mfeR,
@@ -98,32 +90,26 @@ function computeTimeToTarget(
 /**
  * Compute giveback labels for a SUPERVISOR snapshot at time T.
  *
- * FUTURE means strictly AFTER T (timestamp > T). The future path is the
- * chronological sequence of supervisor snapshots for the same lotId+pair
- * with timestamp > T, plus the final outcome (exit).
+ * R4: future_MFE_R and future_MAE_R use INSTANTANEOUS currentR from future
+ * supervisor snapshots (schema v2), NOT cumulative running mfeR/maeR.
  *
- * Definitions:
- *   - futurePeakR   = max running mfeR in the future path (snapshots > T).
- *                     If no future supervisor snapshots, the exit outcome's
- *                     finalR is the only future data point.
- *   - futureWorstR  = min running maeR in the future path (snapshots > T).
- *   - finalR        = outcome.netPnlUsd / riskUsd (the trade's final result).
- *   - profitToLoss  = the position was profitable at T (currentR > 0) but
- *                     closed at a loss (finalR < 0).
- *   - futureGivebackR = futurePeakR - finalR (how much was given back from
- *                     the future peak to the final result).
+ *   future_MFE_R = MAX(futureSnapshot.currentR, finalR) for snapshots > T
+ *   future_MAE_R = MIN(futureSnapshot.currentR, finalR) for snapshots > T
  *
- * A position that reached +2R BEFORE T and never returns to +2R after T
- * will NOT have +2R in futurePeakR — futurePeakR only counts excursions
- * strictly after T.
+ * A trade that reached +2R BEFORE T and never returns to +2R after T
+ * will NOT have +2R in future_MFE_R — future_MFE_R only counts the
+ * instantaneous unrealized R at each future snapshot.
+ *
+ * For v1 snapshots without currentR, giveback labels are null
+ * (currentRUnavailable=true).
  */
 export interface GivebackLabelInput {
   lotId: string;
   pair: string;
   /** Timestamp T of the supervisor snapshot (prediction time). */
   timestamp: number;
-  /** Current unrealized R at time T (from the supervisor snapshot). */
-  currentR: number;
+  /** R4: instantaneous unrealized R at time T (from schema v2 currentR). */
+  currentR: number | null;
   /** Completed trade outcome (for finalR). */
   outcome: TradeOutcomeEntry;
   /** All supervisor snapshots for this lotId+pair (used to compute future path). */
@@ -132,6 +118,10 @@ export interface GivebackLabelInput {
 
 export function buildGivebackLabels(input: GivebackLabelInput): SpotAiGivebackLabels | null {
   const { lotId, pair, timestamp, currentR, outcome, supervisorSnapshots } = input;
+
+  // R4: if currentR is unavailable (v1 snapshot), cannot compute giveback
+  // labels causally. Return null.
+  if (currentR === null) return null;
 
   // Future path: supervisor snapshots strictly AFTER T for this lot+pair.
   const futurePath = supervisorSnapshots
@@ -147,18 +137,26 @@ export function buildGivebackLabels(input: GivebackLabelInput): SpotAiGivebackLa
   const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
   const finalR = outcome.netPnlUsd / r;
 
-  // futurePeakR: max running mfeR in future path. If no future snapshots,
-  // the only future data is the exit itself → futurePeakR = finalR.
+  // R4: futurePeakR = MAX(futureSnapshot.currentR, finalR).
+  // futureWorstR = MIN(futureSnapshot.currentR, finalR).
+  // Use INSTANTANEOUS currentR, NOT cumulative mfeR/maeR.
   let futurePeakR = finalR;
   let futureWorstR = finalR;
   for (const snap of futurePath) {
     if (snap.position) {
-      if (snap.position.mfeR > futurePeakR) futurePeakR = snap.position.mfeR;
-      if (snap.position.maeR < futureWorstR) futureWorstR = snap.position.maeR;
+      // R4: use currentR (instantaneous) if available (v2).
+      // For v2 snapshots, currentR is the instantaneous unrealized R.
+      // For v1 snapshots in the future path without currentR, skip them
+      // (cannot use cumulative mfeR as a substitute for instantaneous R).
+      const snapCurrentR = snap.position.currentR;
+      if (snapCurrentR !== undefined && snapCurrentR !== null) {
+        if (snapCurrentR > futurePeakR) futurePeakR = snapCurrentR;
+        if (snapCurrentR < futureWorstR) futureWorstR = snapCurrentR;
+      }
     }
   }
 
-  // profit_to_loss: profitable at T but closed at a loss.
+  // profit_to_loss: profitable at T (currentR > 0) but closed at a loss.
   const profitToLoss = currentR > 0 && finalR < 0;
 
   // giveback from future peak to final.

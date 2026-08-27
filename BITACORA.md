@@ -17,6 +17,42 @@
 
 ## 2026-08-26 — SPOT FORWARD TWIN + IA FORWARD TWIN — ESTADO VIGENTE
 
+### Checkpoint R4 2026-08-27 — Cierre final IA SPOT Forward Twin (post-contraauditoría GitHub #3)
+
+`a8dcba7` fue contraauditado por GitHub (R3=FAIL) y NO autorizado para deploy. Correcciones R4 aplicadas sobre `a8dcba7`, sin deploy:
+
+**Defectos detectados por contraauditoría:**
+- initial risk derivado erróneamente de `sgCurrentStopPrice` (mutable: initial → break even → trailing)
+- `netPnlUsd` no era realmente net (usaba notional/entryPrice como qty, no fillVolume; no restaba fees)
+- durable 090 sin writer productivo (solo esquema)
+- training guard aún usaba raw 7-day count
+- `READY_TO_TRAIN` contradictorio (`trainingPipelineReady=false`, `durableLabeledTrades=null`)
+- Giveback confundía running MFE/MAE (cumulativo desde entrada) con future instantaneous R
+- Historical null-lot BUY fills no contabilizados
+- Multiple SELL fills podían inflar completedTradeCount
+
+**Correcciones R4:**
+- **1. Initial stop/risk desde SCAN.sizing**: `initialStopPrice` y `initialRiskUsd` provienen del SCAN causal (`data.sizing.stopPrice`, `data.sizing.riskUsd`), NO de `sgCurrentStopPrice`. SPOT canónico es LONG (direction=+1 siempre, no inferido desde stop mutable). Validación: finite, >0, stopPrice < entryPrice para LONG.
+- **2. Net PnL real**: `grossPnlUsd = (exitPrice - entryPrice) * executedQty` donde `executedQty = fillVolume` (no notional/entryPrice). `netPnlUsd = grossPnlUsd - entryFeeUsd - exitFeeUsd`. Nuevos campos: `entryFeeUsd`, `exitFeeUsd`, `grossPnlUsd`, `executedQty`, `weightedAverageExitPrice`.
+- **3. Multiple/partial SELL fills**: SELL fills agregados por lotId+pair. `totalExitVolume`, `weightedAverageExitPrice`, `totalExitFees`. Solo COMPLETED si `totalExitVolume >= entryVolume * 0.99`. Si no, `PARTIAL_EXIT` (no labeled). Máximo 1 CompletedTrade por lotId+pair.
+- **4. Legacy null-lot BUY**: BUY fills con `lotId=null` clasificados como `legacyMissingLotIdBuyFills` (no silenciosamente ignorados). No alimentan training. Visibles en quality/audit.
+- **5. Giveback currentR real**: SUPERVISOR snapshots schema v2 capturan `currentR = computeRMultiple(currentPrice, position)` desde `spotExitPolicy.ts` (misma lógica productiva). `currentR` es instantaneous unrealized R, NO `mfeR` (cumulativo). TELEMETRY_ONLY: no cambia `evaluateExit` ni ninguna decisión SPOT.
+- **6. Forward Twin schema v2**: `SPOT_FORWARD_TWIN_SCHEMA_VERSION_2 = 2` para SUPERVISOR snapshots. v1 backward compatible (lectores v1 ignoran campos nuevos). Replay V3 sigue leyendo v1. SCAN y FILL siguen v1.
+- **7. Future giveback instantaneous**: `future_MFE_R = MAX(futureSnapshot.currentR, finalR)` para snapshots > T. `future_MAE_R = MIN(...)`. NO usa cumulative `mfeR`/`maeR`. Trade que alcanzó +2R antes de T NO filtra +2R en future_MFE_R.
+- **8. Giveback feature naming**: `GivebackSampleState` usa `currentR` (instantaneous), `runningMfeR`/`runningMaeR` (cumulativo), `currentRUnavailable` (v1 sin currentR → labels=null).
+- **9. Durable training store**: `spotAiDurableTrainingStore.ts` implementa writer productivo: `isDurableStorageAvailable()`, `persistCompletedTrade()` (idempotente, UNIQUE(lot_id,pair), fail-closed on fingerprint mismatch), `persistGivebackSamples()` (UNIQUE(lot_id,timestamp)), `getDurableCompletedTradeCount()`, `syncCompletedTradesToDurableStorage()`, `backfillDurableFromRaw()`.
+- **10. Durable ingestion lifecycle**: OBSERVATIONAL, ASYNC, IDEMPOTENT. Un fallo de IA durable storage NO bloquea/cambia/retrasa el trading SPOT.
+- **11. Migration 090 completada**: Añadidos `forward_twin_schema_version`, `gross_pnl_usd`, `entry_fee_usd`, `exit_fee_usd`, `executed_qty`, `weighted_avg_exit_price`. NO APLICADA.
+- **12. Training guard durable**: `/api/spot/ai/train` usa `getDurableCompletedTradeCount()` ÚNICAMENTE. Si tabla 090 no existe → 503 `DURABLE_TRAINING_STORAGE_NOT_AVAILABLE`. Si durable count < 100 → 409 `INSUFFICIENT_DURABLE_DATA`. NO usa raw 7-day count.
+- **13. READY_TO_TRAIN corregido**: `trainingPipelineReady` calculado de forma verificable: `durableStorageAvailable && hasEnoughDurableTrades && trainerExists`. Si cualquiera falta → COLLECTING (no READY_TO_TRAIN).
+- **14. Unlabeled scans real**: `labeledEntryScans = completedTrades.length`, `unlabeledScanCount = max(0, scanCount - labeledEntryScans)`.
+- **15. Quality/audit nuevos checks**: `legacyBuyFillMissingLotId`, `partialExitTrades`, `correlationIncompleteTrades`, `durableStorageAvailable`, `durableUnsyncedCompletedTrades`, `forwardTwinV1Count`, `forwardTwinV2Count`.
+- **16. Retención durable**: `DURABLE_RETENTION_POLICY=NO_AUTO_DELETE_UNTIL_VALIDATED`. No auto-delete hasta >=200 trades + dataset audit + autorización.
+
+Validación local: `tsc --noEmit` limpio; `npm run build` OK; `git diff --check` limpio. SPOT-AI (spotAiCausal 11, spotAiForwardTwin 39, spotAiUiV2 29, spotAiRestart 11, spotAiEconomic 8, spotAiGiveback 6, spotAiDurable 7) = 111/111 PASS. Forward Twin + regresión SPOT (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark, spotE2E, spotEngine.integration, spotB15Comprehensive) = 168/168 PASS.
+
+NO DEPLOY. NO REAL. NO TRAINING. NO MIGRATION APPLIED. Pendiente de contraauditoría GitHub.
+
 ### Checkpoint R3 2026-08-26 — Correlación causal completa y dataset durable (contraauditoría GitHub #2)
 
 `4dde4cb` fue contraauditado por GitHub y NO autorizado para deploy. Correcciones R3 aplicadas sobre `4dde4cb`, sin deploy:

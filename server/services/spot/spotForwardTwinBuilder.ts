@@ -7,9 +7,10 @@
  * timing impact on the hot path.
  */
 
-import { SPOT_FORWARD_TWIN_SCHEMA_VERSION } from "./spotForwardTwinTypes";
+import { SPOT_FORWARD_TWIN_SCHEMA_VERSION, SPOT_FORWARD_TWIN_SCHEMA_VERSION_2 } from "./spotForwardTwinTypes";
 import { SPOT_POLICY_VERSION } from "./spotTypes";
 import { SPOT_ENGINE_OWNER } from "./spotOwnership";
+import { computeRMultiple } from "./spotExitPolicy";
 import type {
   SpotMarketContext,
   SpotEntryIntent,
@@ -217,6 +218,12 @@ export interface SupervisorSnapshotInput {
 export function buildSupervisorSnapshot(input: SupervisorSnapshotInput): ForwardTwinSnapshot {
   const { ctx, position, exitState, exitDecision, scanId, mode } = input;
 
+  // R4: compute instantaneous currentR using the SAME productive logic as
+  // spotExitPolicy. TELEMETRY_ONLY — does NOT change evaluateExit or any
+  // trading decision.
+  const currentPrice = ctx.ticker.last;
+  const currentR = computeRMultiple(currentPrice, position);
+
   const positionSnap: ForwardTwinPositionSnapshot = {
     lotId: position.lotId,
     pair: position.pair,
@@ -238,6 +245,13 @@ export function buildSupervisorSnapshot(input: SupervisorSnapshotInput): Forward
     breakEvenStopPrice: exitState.breakEvenStopPrice,
     trailingStopPrice: exitState.trailingStopPrice,
     trailingHighestPrice: exitState.trailingHighestPrice,
+    // R4 (schema v2): immutable initial stop/risk from SpotPosition.
+    initialStopPrice: position.initialStopPrice,
+    initialStopDistanceUsd: position.initialStopDistanceUsd,
+    riskUsd: position.riskUsd,
+    // R4 (schema v2): instantaneous unrealized R at snapshot time.
+    currentR,
+    currentPrice,
   };
 
   const exitSnap: ForwardTwinExitDecisionSnapshot = {
@@ -250,7 +264,10 @@ export function buildSupervisorSnapshot(input: SupervisorSnapshotInput): Forward
   };
 
   return {
-    schemaVersion: SPOT_FORWARD_TWIN_SCHEMA_VERSION,
+    // R4: SUPERVISOR snapshots use schema v2 (adds currentR, initialStopPrice,
+    // initialStopDistanceUsd, riskUsd, currentPrice). v1 readers ignore these
+    // fields. v1 snapshots remain readable (backward compatible).
+    schemaVersion: SPOT_FORWARD_TWIN_SCHEMA_VERSION_2,
     snapshotType: "SUPERVISOR",
     scanId,
     timestamp: ctx.generatedAt,

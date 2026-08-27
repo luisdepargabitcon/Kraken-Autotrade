@@ -14,6 +14,7 @@
  */
 
 export const SPOT_FORWARD_TWIN_SCHEMA_VERSION = 1;
+export const SPOT_FORWARD_TWIN_SCHEMA_VERSION_2 = 2;
 
 export const SPOT_FORWARD_TWIN_RETENTION_DAYS = 7;
 export const SPOT_FORWARD_TWIN_FLUSH_INTERVAL_MS = 5_000;
@@ -149,6 +150,20 @@ export interface ForwardTwinPositionSnapshot {
   breakEvenStopPrice: number | null;
   trailingStopPrice: number | null;
   trailingHighestPrice: number;
+  // R4 (schema v2): immutable initial stop/risk from the causal entry scan.
+  // v1 snapshots do NOT have these fields; readers must treat them as
+  // optional and fall back to the causal SCAN sizing when absent.
+  initialStopPrice?: number;
+  initialStopDistanceUsd?: number;
+  riskUsd?: number;
+  // R4 (schema v2): instantaneous unrealized R at the moment of the
+  // supervisor snapshot. Computed via computeRMultiple(currentPrice, position).
+  // v1 snapshots do NOT have this field; giveback labels for v1 snapshots
+  // cannot use instantaneous currentR and must be marked unavailable.
+  currentR?: number;
+  // R4 (schema v2): the ticker last price at the moment of the supervisor
+  // snapshot. Used to compute currentR if not directly available.
+  currentPrice?: number;
 }
 
 export interface ForwardTwinExitDecisionSnapshot {

@@ -31,7 +31,11 @@ export interface DatasetOverview {
   lastTimestamp: number;
   labeledTrades: number;
   labeledSampleCount?: number;
+  // R4: real unlabeled scan count (totalScans - labeledEntryScans).
+  labeledEntryScans?: number;
   unlabeledScanCount?: number;
+  // R4: durable completed trade count (null if 090 not applied).
+  completedDurableTrades?: number | null;
   pendingTrades: number | null;
   collectorEnabled: boolean;
   bufferSize: number;
@@ -55,6 +59,17 @@ export interface DatasetQuality {
     causalCorrelationFailures: number | null;
     legacyMixed: boolean;
     syntheticLabels: boolean;
+    // R4: new quality checks
+    legacyBuyFillMissingLotId?: number;
+    completedTradeEconomicInvalid?: number | null;
+    duplicateCompletedLot?: number | null;
+    partialExitTrades?: number;
+    correlationIncompleteTrades?: number;
+    durableStorageAvailable?: boolean;
+    durableSyncErrors?: number | null;
+    durableUnsyncedCompletedTrades?: number | null;
+    forwardTwinV1Count?: number;
+    forwardTwinV2Count?: number;
   };
   // R3: per-check availability metadata.
   checksAvailable?: Record<string, boolean>;

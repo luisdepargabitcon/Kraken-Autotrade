@@ -498,12 +498,15 @@ describe("Forward Twin", () => {
       exitDecision: makeExitDecision(),
       auditMetrics: { mfeUsd: 5, maeUsd: -2, mfeR: 0.67, maeR: -0.27 },
     });
-    expect(snap.schemaVersion).toBe(1);
+    // R4: SUPERVISOR snapshots use schema v2 (adds currentR, initialStopPrice, etc.)
+    expect(snap.schemaVersion).toBe(2);
     expect(snap.snapshotType).toBe("SUPERVISOR");
     expect(snap.position?.lotId).toBe("spot-BTC-001");
     expect(snap.position?.entryPrice).toBe(50005);
     expect(snap.position?.mfe).toBe(5);
     expect(snap.exitDecision?.shouldExit).toBe(true);
+    // R4: v2 supervisor snapshots have currentR
+    expect(snap.position?.currentR).toBeDefined();
     expect(snap.exitDecision?.reasonType).toBe("PROFIT");
     expect(snap.exitDecision?.price).toBe(51000);
     expect(snap.ticker?.last).toBe(ctx.ticker.last);

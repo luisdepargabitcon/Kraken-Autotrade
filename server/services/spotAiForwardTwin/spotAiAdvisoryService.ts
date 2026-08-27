@@ -24,6 +24,7 @@ import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
 import { db } from "../../db";
 import { sql } from "drizzle-orm";
 import * as fs from "fs";
+import * as path from "path";
 
 /**
  * INFERENCE_IMPLEMENTED = NO.
@@ -62,18 +63,32 @@ class SpotAiAdvisoryService {
   async getStatus(
     totalSnapshots: number,
     labeledTrades: number,
+    durableLabeledTrades?: number | null,
   ): Promise<SpotAiStatusResponse> {
     const entryModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_ENTRY");
     const givebackModel = await modelRegistry.getActiveAdvisory("SPOT_AI_FORWARD_TWIN_GIVEBACK");
 
-    // Defect L: ADVISORY status requires a real, artifact-backed, schema-
-    // compatible predictor (INFERENCE_IMPLEMENTED). Until then, fail closed.
+    // R4: calculate trainingPipelineReady from real conditions, not hardcoded.
+    // durable storage exists + durable count >= MIN + trainer script exists.
+    const durableCount = durableLabeledTrades ?? null;
+    const durableStorageAvailable = durableCount !== null;
+    const hasEnoughDurableTrades = durableCount !== null && durableCount >= MIN_TRADES_TO_TRAIN;
+    // Check trainer script existence
+    const trainerPath = path.join(process.cwd(), "server/services/spotAiForwardTwin/spotAiMlTrainer.py");
+    const trainerExists = fs.existsSync(trainerPath);
+    const trainingPipelineReady = durableStorageAvailable && hasEnoughDurableTrades && trainerExists;
+
+    // R4: READY_TO_TRAIN requires ALL: durable storage + durable count >= MIN
+    // + trainer available. While any is missing, status is COLLECTING (not
+    // READY_TO_TRAIN).
     let status: SpotAiStatus = "COLLECTING";
     if (this.isAdvisoryActiveAllowed(entryModel)) {
       status = "ADVISORY";
-    } else if (labeledTrades >= MIN_TRADES_TO_TRAIN) {
+    } else if (trainingPipelineReady) {
       status = "READY_TO_TRAIN";
     }
+    // If durable storage not available OR insufficient durable trades OR
+    // trainer missing → COLLECTING (NOT READY_TO_TRAIN).
 
     return {
       status,
@@ -89,12 +104,9 @@ class SpotAiAdvisoryService {
       autoRetrain: false,
       aiTradingControl: "NONE",
       legacyDataMixed: false,
-      // R3: durable training storage (migration 090) is NOT applied yet.
-      // The training pipeline is NOT ready until durable completed trade
-      // storage exists. The rolling 7-day raw snapshot count is NOT a durable
-      // basis for training.
-      trainingPipelineReady: false,
-      durableLabeledTrades: null,
+      // R4: calculated from real conditions.
+      trainingPipelineReady,
+      durableLabeledTrades: durableCount,
     };
   }
 

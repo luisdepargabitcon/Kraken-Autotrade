@@ -13,6 +13,11 @@ import { trainerService } from "../services/spotAiForwardTwin/spotAiTrainerServi
 import { getCollectorStats } from "../services/spot/spotForwardTwinCollector";
 import { CANONICAL_FEATURE_DEFINITIONS } from "../services/spotAiForwardTwin/spotAiFeatureBuilder";
 import { queryCompletedTrades } from "../services/spotAiForwardTwin/spotAiCompletedTrades";
+import {
+  isDurableStorageAvailable,
+  getDurableCompletedTradeCount,
+  getUnsyncedCompletedTradeCount,
+} from "../services/spotAiForwardTwin/spotAiDurableTrainingStore";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import {
@@ -35,7 +40,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       // R3: SINGLE canonical source for completed/labeled trades.
       const completedTradesResult = await queryCompletedTrades();
       const labeledTrades = completedTradesResult.completedTradeCount;
-      const status = await advisoryService.getStatus(totalSnapshots, labeledTrades);
+      // R4: get durable completed trade count (null if 090 not applied).
+      const durableLabeledTrades = await getDurableCompletedTradeCount();
+      const status = await advisoryService.getStatus(totalSnapshots, labeledTrades, durableLabeledTrades);
       res.json({
         ...status,
         collectorSessionCaptured: stats.totalCaptured,
@@ -67,9 +74,14 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       // R3: SINGLE canonical source for completed/labeled trades.
       const completedTradesResult = await queryCompletedTrades();
       const labeledTrades = completedTradesResult.completedTradeCount;
-      // Count scans without matching trades as unlabeled
+      // R4: compute REAL unlabeled scan count. A scan is "labeled" if it is the
+      // causal origin of a completed trade (entryScanId matches). unlabeled =
+      // totalScans - labeledEntryScans (with guard >= 0).
       const scanCount = parseInt(r.scan_count ?? "0");
-      const unlabeledScans = scanCount; // scans that don't have a matching trade outcome
+      const labeledEntryScanCount = completedTradesResult.completedTrades.length;
+      const unlabeledScans = Math.max(0, scanCount - labeledEntryScanCount);
+      // R4: durable count
+      const durableLabeledTrades = await getDurableCompletedTradeCount();
       res.json({
         totalSnapshots: parseInt(r.total ?? "0"),
         scanCount,
@@ -79,7 +91,11 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         lastTimestamp: parseInt(r.last_ts ?? "0"),
         labeledTrades,
         labeledSampleCount: labeledTrades,
+        // R4: real unlabeled scan count (totalScans - labeledEntryScans).
+        labeledEntryScans: labeledEntryScanCount,
         unlabeledScanCount: unlabeledScans,
+        // R4: durable completed trade count (null if 090 not applied).
+        completedDurableTrades: durableLabeledTrades,
         pendingTrades: null as number | null,
         collectorEnabled: stats.enabled,
         bufferSize: stats.bufferSize,
@@ -162,6 +178,30 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const legacyMixed = false;
       const syntheticLabels = false;
 
+      // R4: canonical completed trades source for quality checks.
+      const completedTradesResult = await queryCompletedTrades();
+      const partialExitTrades = completedTradesResult.partialExitTrades;
+      const legacyBuyFillMissingLotId = completedTradesResult.legacyMissingLotIdBuyFills;
+      const correlationIncompleteTrades = completedTradesResult.correlationIncompleteTrades;
+
+      // R4: Forward Twin schema version counts (v1 vs v2).
+      const schemaVersionRows = await db.execute(sql`
+        SELECT
+          COUNT(*) FILTER (WHERE schema_version = 1) AS v1_count,
+          COUNT(*) FILTER (WHERE schema_version = 2) AS v2_count
+        FROM spot_forward_twin_snapshots
+      `);
+      const sv = (schemaVersionRows.rows ?? [])[0] as any ?? {};
+      const forwardTwinV1Count = parseInt(sv.v1_count ?? "0");
+      const forwardTwinV2Count = parseInt(sv.v2_count ?? "0");
+
+      // R4: durable storage availability and sync status.
+      const durableAvailable = await isDurableStorageAvailable();
+      const durableCompletedCount = await getDurableCompletedTradeCount();
+      const durableUnsyncedCount = durableAvailable
+        ? await getUnsyncedCompletedTradeCount(completedTradesResult.completedTradeCount)
+        : null;
+
       // Checks NOT computable in pure SQL are reported as null with available=false
       // (no false zeros). lookaheadViolations requires per-scan candle close-time
       // verification (candleTimestamp helpers, used by the dataset builder).
@@ -180,6 +220,17 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         causalCorrelationFailures: null as number | null,
         legacyMixed,
         syntheticLabels,
+        // R4: new checks
+        legacyBuyFillMissingLotId,
+        completedTradeEconomicInvalid: null as number | null,
+        duplicateCompletedLot: null as number | null,
+        partialExitTrades,
+        correlationIncompleteTrades,
+        durableStorageAvailable: durableAvailable,
+        durableSyncErrors: null as number | null,
+        durableUnsyncedCompletedTrades: durableUnsyncedCount,
+        forwardTwinV1Count,
+        forwardTwinV2Count,
       };
       const checksAvailable = {
         schemaVersionMismatches: true,
@@ -194,6 +245,17 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         causalCorrelationFailures: false,
         legacyMixed: true,
         syntheticLabels: true,
+        // R4: new checks availability
+        legacyBuyFillMissingLotId: true,
+        completedTradeEconomicInvalid: false,
+        duplicateCompletedLot: false,
+        partialExitTrades: true,
+        correlationIncompleteTrades: true,
+        durableStorageAvailable: true,
+        durableSyncErrors: false,
+        durableUnsyncedCompletedTrades: durableAvailable,
+        forwardTwinV1Count: true,
+        forwardTwinV2Count: true,
       };
       // Coverage = computed checks / total checks
       const totalCheckCount = Object.keys(checksAvailable).length;
@@ -594,16 +656,25 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Training (guarded) ──────────────────────────────────────────────────
   app.post("/api/spot/ai/train", async (_req, res) => {
     try {
-      // R3: SINGLE canonical source for completed/labeled trades.
-      const completedTradesResult = await queryCompletedTrades();
-      const labeledTrades = completedTradesResult.completedTradeCount;
+      // R4: training guard uses DURABLE completed trade count, NOT raw 7-day count.
+      const durableAvailable = await isDurableStorageAvailable();
+      if (!durableAvailable) {
+        res.status(503).json({
+          success: false,
+          errorCode: "DURABLE_TRAINING_STORAGE_NOT_AVAILABLE",
+          message: "Durable training storage (migration 090) is not applied. Training is not available.",
+        });
+        return;
+      }
 
-      if (labeledTrades < MIN_TRADES_TO_TRAIN) {
+      const durableLabeledTrades = await getDurableCompletedTradeCount();
+      if (durableLabeledTrades === null || durableLabeledTrades < MIN_TRADES_TO_TRAIN) {
         res.status(409).json({
-          errorCode: "INSUFFICIENT_DATA",
-          message: `Insufficient labeled trades: ${labeledTrades}. Minimum: ${MIN_TRADES_TO_TRAIN}.`,
+          success: false,
+          errorCode: "INSUFFICIENT_DURABLE_DATA",
+          message: `Insufficient durable labeled trades: ${durableLabeledTrades ?? 0}. Minimum: ${MIN_TRADES_TO_TRAIN}.`,
           required: MIN_TRADES_TO_TRAIN,
-          current: labeledTrades,
+          current: durableLabeledTrades ?? 0,
         });
         return;
       }

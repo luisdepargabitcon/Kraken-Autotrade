@@ -195,14 +195,17 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
     if (!position) continue;
 
     const outcome = tradeOutcomes.get(position.lotId) ?? null;
-    // R3: giveback labels computed from future path (timestamp > T), not
-    // aggregate outcome MFE/MAE.
+    // R4: currentR is the instantaneous unrealized R from schema v2 supervisor
+    // snapshots. For v1 snapshots without currentR, currentR=null and giveback
+    // labels are null (currentRUnavailable=true).
+    const currentR = position.currentR ?? null;
+    const currentRUnavailable = currentR === null;
     const labels = outcome
       ? buildGivebackLabels({
           lotId: position.lotId,
           pair: position.pair,
           timestamp: snap.timestamp,
-          currentR: position.mfeR, // current unrealized R at T
+          currentR,
           outcome,
           supervisorSnapshots,
         })
@@ -212,14 +215,16 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
       ? Math.max(0, Math.round((snap.timestamp - position.openedAt) / 60_000))
       : 0;
 
-    // R3: lowestPrice is NOT included — SpotPosition has no real lowestPrice.
+    // R4: GivebackSampleState uses currentR (instantaneous) and
+    // runningMfeR/runningMaeR (cumulative) with clear naming.
     const state: GivebackSampleState = {
       lotId: position.lotId,
       pair: position.pair,
       timestamp: snap.timestamp,
       entryPrice: position.entryPrice,
-      mfeR: position.mfeR,
-      maeR: position.maeR,
+      currentR,
+      runningMfeR: position.mfeR,
+      runningMaeR: position.maeR,
       mfeUsd: position.mfe,
       maeUsd: position.mae,
       minutesInTrade,
@@ -227,6 +232,7 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
       trailingActivated: position.sgTrailingActivated,
       currentStopPrice: position.sgCurrentStopPrice,
       highestPrice: position.highestPrice,
+      currentRUnavailable,
     };
 
     if (labels && outcome && !labeledLotIds.has(outcome.lotId)) {

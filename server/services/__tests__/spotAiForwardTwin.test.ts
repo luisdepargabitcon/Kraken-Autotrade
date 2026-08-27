@@ -319,21 +319,25 @@ describe("AI_FT_07: entry labels", () => {
 });
 
 describe("AI_FT_08: giveback labels", () => {
-  it("giveback labels must compute giveback percentages from future path", () => {
-    // R3: buildGivebackLabels uses future path (supervisor snapshots > T).
+  it("giveback labels must compute giveback percentages from future path (instantaneous currentR)", () => {
+    // R4: buildGivebackLabels uses INSTANTANEOUS currentR from future path,
+    // NOT cumulative mfeR. Supervisor snapshots must have currentR (v2).
     const outcome: TradeOutcomeEntry = {
       lotId: "lot-1", pair: "BTC/USD", entryScanId: "scan-1",
       entryPrice: 50000, exitPrice: 50500, stopPrice: 49000,
       mfe: 2000, mae: -300, mfeR: 2.0, maeR: -0.3,
-      entryTime: BASE_TS, exitTime: BASE_TS + 60000, netPnlUsd: 50, riskUsd: 1000,
+      entryTime: BASE_TS, exitTime: BASE_TS + 60000,
+      netPnlUsd: 50, grossPnlUsd: 60, entryFeeUsd: 5, exitFeeUsd: 5,
+      executedQty: 0.01, riskUsd: 1000,
     };
-    // Supervisor at T (currentR=1.5), then future supervisors showing peak 2.0.
+    // Supervisor at T (currentR=1.5), then future supervisors with
+    // INSTANTANEOUS currentR values (NOT cumulative mfeR).
     const supAtT = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 1000);
-    (supAtT as any).position.mfeR = 1.5;
+    (supAtT as any).position.currentR = 1.5;
     const supFuture1 = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 2000);
-    (supFuture1 as any).position.mfeR = 2.0;
+    (supFuture1 as any).position.currentR = 0.6; // instantaneous, NOT mfeR
     const supFuture2 = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 3000);
-    (supFuture2 as any).position.mfeR = 1.8;
+    (supFuture2 as any).position.currentR = 0.4;
 
     const labels = buildGivebackLabels({
       lotId: "lot-1", pair: "BTC/USD", timestamp: BASE_TS + 1000,
@@ -342,11 +346,64 @@ describe("AI_FT_08: giveback labels", () => {
     });
     expect(labels).not.toBeNull();
     expect(labels!.final_R).toBeCloseTo(0.05, 5);
-    // futurePeakR = 2.0 (from future path), finalR = 0.05 → giveback > 75%.
-    expect(labels!.future_MFE_R).toBe(2.0);
+    // R4: future_MFE_R = MAX(0.6, 0.4, finalR=0.05) = 0.6 (NOT 2.0 from mfeR).
+    expect(labels!.future_MFE_R).toBe(0.6);
+    // future_MAE_R = MIN(0.6, 0.4, finalR=0.05) = 0.05
+    expect(labels!.future_MAE_R).toBeCloseTo(0.05, 5);
+    // giveback from 0.6 to 0.05 = ~91% → giveback > 75%.
     expect(labels!.giveback_25pct).toBe(true);
     expect(labels!.giveback_50pct).toBe(true);
     expect(labels!.giveback_75pct).toBe(true);
+  });
+
+  it("R4: historical cumulative MFE before T does NOT leak into future_MFE_R", () => {
+    // Trade reached +2R BEFORE T (cumulative mfeR=2.0), but after T the
+    // instantaneous currentR only reached +0.6R. future_MFE_R must be 0.6, NOT 2.0.
+    const outcome: TradeOutcomeEntry = {
+      lotId: "lot-1", pair: "BTC/USD", entryScanId: "scan-1",
+      entryPrice: 50000, exitPrice: 50500, stopPrice: 49000,
+      mfe: 2000, mae: -300, mfeR: 2.0, maeR: -0.3,
+      entryTime: BASE_TS, exitTime: BASE_TS + 60000,
+      netPnlUsd: 50, grossPnlUsd: 60, entryFeeUsd: 5, exitFeeUsd: 5,
+      executedQty: 0.01, riskUsd: 1000,
+    };
+    const supAtT = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 1000);
+    (supAtT as any).position.currentR = 0.3; // currentR at T is only +0.3R
+    (supAtT as any).position.mfeR = 2.0; // but cumulative MFE was 2.0 before T
+    const supFuture1 = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 2000);
+    (supFuture1 as any).position.currentR = 0.6; // after T, instantaneous max is 0.6
+    (supFuture1 as any).position.mfeR = 2.0; // cumulative is still 2.0
+
+    const labels = buildGivebackLabels({
+      lotId: "lot-1", pair: "BTC/USD", timestamp: BASE_TS + 1000,
+      currentR: 0.3, outcome,
+      supervisorSnapshots: [supAtT, supFuture1],
+    });
+    expect(labels).not.toBeNull();
+    // R4: future_MFE_R must be 0.6 (instantaneous after T), NOT 2.0 (cumulative).
+    expect(labels!.future_MFE_R).toBe(0.6);
+  });
+
+  it("R4: v1 snapshot without currentR → labels=null (currentRUnavailable)", () => {
+    const outcome: TradeOutcomeEntry = {
+      lotId: "lot-1", pair: "BTC/USD", entryScanId: "scan-1",
+      entryPrice: 50000, exitPrice: 50500, stopPrice: 49000,
+      mfe: 2000, mae: -300, mfeR: 2.0, maeR: -0.3,
+      entryTime: BASE_TS, exitTime: BASE_TS + 60000,
+      netPnlUsd: 50, grossPnlUsd: 60, entryFeeUsd: 5, exitFeeUsd: 5,
+      executedQty: 0.01, riskUsd: 1000,
+    };
+    // v1 snapshot: no currentR field
+    const supAtT = makeSupervisorSnapshot("lot-1", "BTC/USD", BASE_TS + 1000);
+    // currentR is undefined (v1)
+
+    const labels = buildGivebackLabels({
+      lotId: "lot-1", pair: "BTC/USD", timestamp: BASE_TS + 1000,
+      currentR: null, // v1: currentR unavailable
+      outcome,
+      supervisorSnapshots: [supAtT],
+    });
+    expect(labels).toBeNull();
   });
 });
 

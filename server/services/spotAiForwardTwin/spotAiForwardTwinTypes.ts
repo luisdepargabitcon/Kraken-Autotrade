@@ -208,14 +208,23 @@ export interface SpotAiDataset {
  * R3: lowestPrice is NOT included. SpotPosition has no real lowestPrice
  * (the Forward Twin builder used entryPrice as a placeholder, which is
  * incorrect). Only fields with a real source are present.
+ *
+ * R4: currentR is the instantaneous unrealized R at time T (from schema v2
+ * supervisor snapshots). runningMfeR/runningMaeR are the cumulative MFE/MAE
+ * R-multiples since entry (different from currentR). For v1 snapshots without
+ * currentR, currentRUnavailable=true and giveback labels are null.
  */
 export interface GivebackSampleState {
   lotId: string;
   pair: string;
   timestamp: number;
   entryPrice: number;
-  mfeR: number;
-  maeR: number;
+  /** R4: instantaneous unrealized R at time T. null for v1 snapshots. */
+  currentR: number | null;
+  /** R4: cumulative MFE R since entry (running, NOT current). */
+  runningMfeR: number;
+  /** R4: cumulative MAE R since entry (running, NOT current). */
+  runningMaeR: number;
   mfeUsd: number;
   maeUsd: number;
   minutesInTrade: number;
@@ -223,6 +232,8 @@ export interface GivebackSampleState {
   trailingActivated: boolean;
   currentStopPrice: number;
   highestPrice: number;
+  /** R4: true when currentR is unavailable (v1 snapshot without currentR). */
+  currentRUnavailable: boolean;
 }
 
 export interface SpotAiGivebackSample {

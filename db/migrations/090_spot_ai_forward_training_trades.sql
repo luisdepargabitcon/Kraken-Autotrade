@@ -17,18 +17,21 @@
 --   - Additive only (no destructive changes).
 --   - Idempotent (IF NOT EXISTS on all objects).
 --   - No secrets stored.
---   - Retention: 90 days for training trades / giveback samples (or no
---     auto-delete initially; a scheduled job can enforce it later).
+--   - Retention: NO_AUTO_DELETE_UNTIL_VALIDATED (R4).
 --
 -- NOT TO BE APPLIED IN THIS PHASE.
 -- Requires explicit authorization before deployment.
 -- R3: created and audited only. NO DEPLOY.
+-- R4: added forward_twin_schema_version, gross_pnl_usd, entry_fee_usd,
+--     exit_fee_usd, executed_qty, weighted_avg_exit_price.
 
 -- ─── Completed training trades (entry model) ─────────────────────────────────
 -- One row per COMPLETED Forward Twin trade (full causal chain).
 CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades (
   id                    SERIAL PRIMARY KEY,
   feature_schema_version INTEGER NOT NULL,
+  -- R4: Forward Twin snapshot schema version (1=v1, 2=v2 with currentR).
+  forward_twin_schema_version INTEGER NOT NULL DEFAULT 1,
   lot_id                TEXT NOT NULL,
   pair                  TEXT NOT NULL,
   entry_scan_id         TEXT NOT NULL,
@@ -36,13 +39,26 @@ CREATE TABLE IF NOT EXISTS spot_ai_forward_training_trades (
   exit_time             BIGINT NOT NULL,
   entry_price           DOUBLE PRECISION NOT NULL,
   exit_price            DOUBLE PRECISION NOT NULL,
+  -- R4: immutable initial stop from causal SCAN sizing (NOT sgCurrentStopPrice).
   stop_price            DOUBLE PRECISION NOT NULL,
+  -- R4: immutable initial risk (USD) from causal SCAN sizing.
   risk_usd              DOUBLE PRECISION NOT NULL,
   mfe                   DOUBLE PRECISION NOT NULL,
   mae                   DOUBLE PRECISION NOT NULL,
   mfe_r                 DOUBLE PRECISION NOT NULL,
   mae_r                 DOUBLE PRECISION NOT NULL,
+  -- R4: NET PnL (gross - fees).
   net_pnl_usd           DOUBLE PRECISION NOT NULL,
+  -- R4: gross PnL = (exitPrice - entryPrice) * executedQty.
+  gross_pnl_usd         DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R4: entry fee (USD).
+  entry_fee_usd         DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R4: exit fee (USD).
+  exit_fee_usd          DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R4: executed entry volume (base currency, from fillVolume).
+  executed_qty          DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- R4: weighted average exit price across SELL fills.
+  weighted_avg_exit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
   exit_reason_type      TEXT,
   -- Entry features (compact JSON, versioned by feature_schema_version)
   entry_features_json   JSONB NOT NULL DEFAULT '{}',
@@ -60,6 +76,8 @@ CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_trades_entry_time
   ON spot_ai_forward_training_trades (entry_time DESC);
 CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_trades_schema
   ON spot_ai_forward_training_trades (feature_schema_version);
+CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_trades_ft_schema
+  ON spot_ai_forward_training_trades (forward_twin_schema_version);
 
 -- ─── Giveback samples (giveback model) ───────────────────────────────────────
 -- One row per SUPERVISOR snapshot for a completed trade (state at time T +
@@ -67,6 +85,8 @@ CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_trades_schema
 CREATE TABLE IF NOT EXISTS spot_ai_forward_giveback_samples (
   id                    SERIAL PRIMARY KEY,
   feature_schema_version INTEGER NOT NULL,
+  -- R4: Forward Twin snapshot schema version (1=v1, 2=v2 with currentR).
+  forward_twin_schema_version INTEGER NOT NULL DEFAULT 1,
   lot_id                TEXT NOT NULL,
   pair                  TEXT NOT NULL,
   timestamp             BIGINT NOT NULL,
@@ -90,11 +110,13 @@ CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_giveback_timestamp
   ON spot_ai_forward_giveback_samples (timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_giveback_schema
   ON spot_ai_forward_giveback_samples (feature_schema_version);
+CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_giveback_ft_schema
+  ON spot_ai_forward_giveback_samples (forward_twin_schema_version);
 CREATE INDEX IF NOT EXISTS idx_spot_ai_ft_giveback_has_label
   ON spot_ai_forward_giveback_samples (has_label);
 
 -- ─── Retention ───────────────────────────────────────────────────────────────
--- 90 days minimum for training trades / giveback samples.
--- Implemented via a scheduled cleanup job (not a trigger) that deletes rows
--- with created_at < now() - interval '90 days'.
--- Initially (R3): no auto-delete until the pipeline is validated.
+-- R4: DURABLE_RETENTION_POLICY=NO_AUTO_DELETE_UNTIL_VALIDATED
+-- No auto-delete until:
+--   >=200 trades + dataset audit approved + explicit authorization.
+-- After that, a scheduled cleanup job can enforce 90/180/etc days.
