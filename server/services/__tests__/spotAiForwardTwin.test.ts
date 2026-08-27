@@ -183,7 +183,7 @@ describe("AI_FT_02: no lookahead", () => {
 describe("AI_FT_02R: candle close-time lookahead (real)", () => {
   // Helper: make a snapshot whose candle for `tf` has lastTime = candleOpen,
   // and all other candles are safely closed.
-  function makeSnapshotWithCandle(tf: "candles5m" | "candles15m" | "candles1h" | "candles4m", candleOpen: number, predTs: number): FTSnapshot {
+  function makeSnapshotWithCandle(tf: "candles5m" | "candles15m" | "candles1h" | "candles4h", candleOpen: number, predTs: number): FTSnapshot {
     const safeLastTime = predTs - CLOSED_CANDLE_BUFFER_MS;
     const candles: FTSnapshot["candles"] = {
       candles5m: { meta: { count: 100, lastTime: safeLastTime, lastClose: 50005 }, candles: [] },
@@ -307,7 +307,9 @@ describe("AI_FT_07: entry labels", () => {
       lotId: "lot-1", pair: "BTC/USD", entryScanId: "scan-1",
       entryPrice: 50000, exitPrice: 51000, stopPrice: 49000,
       mfe: 1200, mae: -200, mfeR: 1.2, maeR: -0.2,
-      entryTime: BASE_TS, exitTime: BASE_TS + 60000, netPnlUsd: 100, riskUsd: 1000,
+      entryTime: BASE_TS, exitTime: BASE_TS + 60000,
+      netPnlUsd: 100, grossPnlUsd: 110, entryFeeUsd: 5, exitFeeUsd: 5,
+      executedQty: 0.01, riskUsd: 1000,
     };
     const labels = buildEntryLabels(outcome, []);
     expect(labels.reached_0_5R_before_stop).toBe(true);
