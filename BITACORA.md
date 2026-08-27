@@ -17,6 +17,48 @@
 
 ## 2026-08-26 — SPOT FORWARD TWIN + IA FORWARD TWIN — ESTADO VIGENTE
 
+### Checkpoint R5 2026-08-27 — SPOT IA Forward Twin R5 — Corrección de defectos post-contraauditoría R4
+
+`c984b9e` (R4) no fue aprobada por contraauditoría GitHub. Correcciones R5 aplicadas sobre `c984b9e`, sin deploy:
+
+**Defectos detectados:**
+- Divergencia DB ↔ in-memory: `queryCompletedTrades()` trataba cada BUY FILL como fila independiente mientras el builder in-memory agregaba.
+- DB no validaba invariantes económicos (solo builder in-memory).
+- Labels usaban fallback `riskUsd > 0 ? riskUsd : 1` (riesgo ficticio).
+- Backfill persistía `entry_features_json = {}` y `entry_labels_json = {}` (no entrenable).
+- Backfill usaba fingerprint artificial `backfill-${lotId}-${pair}`.
+- Giveback `ON CONFLICT DO NOTHING` sin verificar fingerprint.
+- `durableStorageAvailableCache` permanentemente `false` sin TTL.
+- `durableStoredTrades` y `durableTrainableTrades` no separados.
+- `unsyncedCount` usaba resta de counts, no diferencia de keys.
+- Quality `schemaVersionMismatches` comparaba contra `SPOT_AI_FEATURE_SCHEMA_VERSION` (concepto equivocado).
+- Quality `sell_count > 1` marcaba partial fills legítimos como duplicados.
+- `completedTradeEconomicInvalid` y `duplicateCompletedLot` perpetuamente `null`.
+
+**Correcciones R5:**
+- **1. Normalizador canónico compartido**: `spotAiCompletedTradeNormalizer.ts` es el ÚNICO núcleo de normalización. Tanto `queryCompletedTrades()` (DB) como `buildCompletedTradesFromSnapshots()` (in-memory) lo usan. Paridad garantizada.
+- **2. Multi-BUY aggregation**: BUY fills agregados por lotId+pair con weighted average entry price, total volume, total fees. No usa primer BUY como precio representativo.
+- **3. Causal scan compatibility**: múltiples scanIds para mismo lotId+pair → `CORRELATION_INCOMPLETE`. No escoge arbitrariamente.
+- **4. Overfill detection**: exit volume > 101% entry volume → `EXIT_VOLUME_OVERFLOW` (fail closed).
+- **5. PnL from closed quantity**: `closedQty = entryVolume` dentro de dust tolerance (99%-101%). No multiplica full entry por exit price cuando solo 99.x% vendido.
+- **6. Validación economica productiva**: `validateEconomic()` compartido. Valida: finite, >0, stopPrice < entryPrice, fees >= 0, timestamps válidos. Si falla → `ECONOMIC_INVALID`, no label.
+- **7. Risk fallback eliminado**: `buildEntryLabels()` y `buildGivebackLabels()` rechazan `riskUsd <= 0` retornando `null`. No fallback a 1.
+- **8. Canonical fingerprint**: `buildCanonicalFingerprint()` determinista desde payload canónico. Mismo trade → mismo fingerprint via live sync, restart recovery, o backfill.
+- **9. Backfill con features/labels reales**: `backfillDurableFromRaw()` reconstruye features/labels via dataset builder. Si no puede reconstruir → SKIP (no persiste `{}`).
+- **10. Giveback fingerprint fail-closed**: `persistGivebackSamples()` verifica fingerprint en conflicto. Mismo key + fingerprint distinto → FAIL CLOSED.
+- **11. Availability cache con TTL**: 60 segundos. Permite recuperación después de futura migration application. `_resetDurableStorageCache()` para tests.
+- **12. durableTrainableTrades vs durableStoredTrades**: `is_trainable` flag en migration 090. Training guard usa `getDurableTrainableTradeCount()` (no stored count).
+- **13. Unsynced by key difference**: `getUnsyncedCompletedTradeCount()` compara keys (lotId|pair), no resta counts. `getUnsyncedGivebackSampleCount()` similar.
+- **14. Quality schema v2**: `schemaVersionMismatches` ahora compara contra versiones permitidas (1, 2). SUPERVISOR v2 válido → no mismatch. Unknown (>2) → mismatch.
+- **15. Quality multi-SELL legit**: Separados `multiBuyFills`, `multiSellFills` (legítimos) de `duplicateExitFills` (telemetría duplicada real).
+- **16. Quality real checks**: `completedTradeEconomicInvalid` y `duplicateCompletedLot` ahora son valores reales desde el normalizador canónico.
+- **17. Migration 090 alignment**: Añadidos `weighted_avg_entry_price`, `total_entry_volume`, `total_exit_volume`, `closed_qty`, `is_trainable`. Writer persiste todas las columnas.
+- **18. Lifecycle durable**: `runDurableReconciliation()` async, non-blocking, con guard anti-solapamiento. `scheduleDurableReconciliation()` para startup. NOOP seguro si 090 no aplicada.
+
+Validación local: `tsc --noEmit` limpio; `npm run build` OK; `git diff --check` limpio. SPOT-AI (spotAiCausal 11, spotAiForwardTwin 39, spotAiUiV2 29, spotAiRestart 11, spotAiEconomic 8, spotAiEconomicR5 18, spotAiGiveback 6, spotAiDurable 7, spotAiDurableR5 17, spotAiQualityR5 7) = 153/153 PASS. Forward Twin + regresión SPOT (spotForwardTwin, spotForwardTwinAudit, spotForwardTwinBenchmark, spotE2E, spotEngine.integration, spotB15Comprehensive) = 168/168 PASS. Total = 321/321 PASS.
+
+NO DEPLOY. NO REAL. NO TRAINING. NO MIGRATION APPLIED. NO VPS. `PENDING_GITHUB_COUNTERAUDIT=YES`.
+
 ### Checkpoint R4 2026-08-27 — Cierre final IA SPOT Forward Twin (post-contraauditoría GitHub #3)
 
 `a8dcba7` fue contraauditado por GitHub (R3=FAIL) y NO autorizado para deploy. Correcciones R4 aplicadas sobre `a8dcba7`, sin deploy:

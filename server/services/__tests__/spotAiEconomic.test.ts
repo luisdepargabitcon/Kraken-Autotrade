@@ -305,8 +305,8 @@ describe("ECON_03: use real fillVolume, not requested notional", () => {
 
     expect(result.completedTradeCount).toBe(1);
     const trade = result.completedTrades[0];
-    // R4: executedQty = fillVolume = 0.02, NOT notional/entryPrice = 500/50000 = 0.01
-    expect(trade.executedQty).toBe(0.02);
+    // R5: closedQty = fillVolume = 0.02, NOT notional/entryPrice = 500/50000 = 0.01
+    expect(trade.closedQty).toBe(0.02);
     // gross = (51000-50000)*0.02 = 20, NOT (51000-50000)*0.01 = 10
     expect(trade.grossPnlUsd).toBe(20);
   });

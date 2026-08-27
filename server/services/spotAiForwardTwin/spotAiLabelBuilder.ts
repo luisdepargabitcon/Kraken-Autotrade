@@ -32,8 +32,12 @@ import type { TradeOutcomeEntry } from "./spotAiCompletedTrades";
 export function buildEntryLabels(
   outcome: TradeOutcomeEntry,
   supervisorSnapshots: ForwardTwinSnapshot[],
-): SpotAiEntryLabels {
-  const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
+): SpotAiEntryLabels | null {
+  // R5: Eliminate risk fallback. Invalid risk → fail closed → no labels.
+  if (!isFinite(outcome.riskUsd) || outcome.riskUsd <= 0) {
+    return null;
+  }
+  const r = outcome.riskUsd;
   const mfeR = outcome.mfeR;
   const maeR = outcome.maeR;
   // R4: netPnlUsd is now NET (gross - fees). final_R = netPnlUsd / initialRiskUsd.
@@ -134,7 +138,11 @@ export function buildGivebackLabels(input: GivebackLabelInput): SpotAiGivebackLa
     )
     .sort((a, b) => a.timestamp - b.timestamp);
 
-  const r = outcome.riskUsd > 0 ? outcome.riskUsd : 1;
+  // R5: Eliminate risk fallback. Invalid risk → fail closed → no labels.
+  if (!isFinite(outcome.riskUsd) || outcome.riskUsd <= 0) {
+    return null;
+  }
+  const r = outcome.riskUsd;
   const finalR = outcome.netPnlUsd / r;
 
   // R4: futurePeakR = MAX(futureSnapshot.currentR, finalR).

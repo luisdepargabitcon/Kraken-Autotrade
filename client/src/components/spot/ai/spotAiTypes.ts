@@ -59,12 +59,16 @@ export interface DatasetQuality {
     causalCorrelationFailures: number | null;
     legacyMixed: boolean;
     syntheticLabels: boolean;
-    // R4: new quality checks
+    // R4/R5: new quality checks
     legacyBuyFillMissingLotId?: number;
     completedTradeEconomicInvalid?: number | null;
     duplicateCompletedLot?: number | null;
     partialExitTrades?: number;
     correlationIncompleteTrades?: number;
+    // R5: overfill and multi-fill checks
+    exitVolumeOverflowTrades?: number;
+    multiBuyFills?: number;
+    multiSellFills?: number;
     durableStorageAvailable?: boolean;
     durableSyncErrors?: number | null;
     durableUnsyncedCompletedTrades?: number | null;

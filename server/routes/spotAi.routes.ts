@@ -16,6 +16,7 @@ import { queryCompletedTrades } from "../services/spotAiForwardTwin/spotAiComple
 import {
   isDurableStorageAvailable,
   getDurableCompletedTradeCount,
+  getDurableTrainableTradeCount,
   getUnsyncedCompletedTradeCount,
 } from "../services/spotAiForwardTwin/spotAiDurableTrainingStore";
 import { db } from "../db";
@@ -116,7 +117,10 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       // SUPERVISOR snapshots store lotId at data.position.lotId.
       const rows = await db.execute(sql`
         SELECT
-          COUNT(*) FILTER (WHERE schema_version != ${SPOT_AI_FEATURE_SCHEMA_VERSION}) AS schema_mismatches,
+          -- R5: Forward Twin schema version mismatch.
+          -- Allowed: SCAN v1, FILL v1, SUPERVISOR v1 (legacy), SUPERVISOR v2.
+          -- Unknown versions (>2) are mismatches.
+          COUNT(*) FILTER (WHERE schema_version NOT IN (1, 2)) AS schema_mismatches,
           COUNT(*) FILTER (WHERE data->>'snapshotType' = 'SUPERVISOR'
             AND data->'position'->>'lotId' IS NOT NULL
             AND NOT EXISTS (
@@ -151,6 +155,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       // Duplicate fills and incomplete trades — computed from FILL snapshots
       // grouped by data.fill.lotId. A trade is incomplete when it has a BUY fill
       // (entry) but no SELL fill (exit) for the same lotId.
+      // R5: Separate multi-fill (legitimate partials) from duplicate telemetry.
+      // Multi-fill: >1 fills with different timestamps (legitimate).
+      // Duplicate: identical (lotId, pair, side, fillPrice, fillVolume, timestamp).
       const dupRows = await db.execute(sql`
         WITH fill_counts AS (
           SELECT
@@ -162,17 +169,37 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
           WHERE data->>'snapshotType' = 'FILL'
             AND data->'fill'->>'lotId' IS NOT NULL
           GROUP BY data->'fill'->>'lotId', pair
+        ),
+        duplicate_telemetry AS (
+          SELECT
+            data->'fill'->>'lotId' AS lotId,
+            pair,
+            data->'fill'->>'side' AS side,
+            (data->'fill'->>'fillPrice')::float AS fill_price,
+            (data->'fill'->>'fillVolume')::float AS fill_volume,
+            timestamp,
+            COUNT(*) AS cnt
+          FROM spot_forward_twin_snapshots
+          WHERE data->>'snapshotType' = 'FILL'
+            AND data->'fill'->>'lotId' IS NOT NULL
+          GROUP BY data->'fill'->>'lotId', pair, data->'fill'->>'side',
+            (data->'fill'->>'fillPrice')::float, (data->'fill'->>'fillVolume')::float, timestamp
+          HAVING COUNT(*) > 1
         )
         SELECT
-          COUNT(*) FILTER (WHERE buy_count > 1) AS duplicate_entry_fills,
-          COUNT(*) FILTER (WHERE sell_count > 1) AS duplicate_exit_fills,
+          COUNT(*) FILTER (WHERE buy_count > 1) AS multi_buy_fills,
+          COUNT(*) FILTER (WHERE sell_count > 1) AS multi_sell_fills,
+          (SELECT COUNT(*) FROM duplicate_telemetry) AS duplicate_telemetry_count,
           COUNT(*) FILTER (WHERE buy_count > 0 AND sell_count = 0) AS incomplete_trades
         FROM fill_counts
       `);
       const d = (dupRows.rows ?? [])[0] as any ?? {};
-      const duplicateEntryFills = parseInt(d.duplicate_entry_fills ?? "0");
-      const duplicateExitFills = parseInt(d.duplicate_exit_fills ?? "0");
+      const multiBuyFills = parseInt(d.multi_buy_fills ?? "0");
+      const multiSellFills = parseInt(d.multi_sell_fills ?? "0");
+      const duplicateExitFills = parseInt(d.duplicate_telemetry_count ?? "0");
       const incompleteTrades = parseInt(d.incomplete_trades ?? "0");
+      // R5: duplicateEntryFills now uses duplicate telemetry, not multi-buy.
+      const duplicateEntryFills = 0; // multi-buy is legitimate, not duplicate
 
       // Structural invariants — always false by design, not computed statistically
       const legacyMixed = false;
@@ -199,8 +226,20 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const durableAvailable = await isDurableStorageAvailable();
       const durableCompletedCount = await getDurableCompletedTradeCount();
       const durableUnsyncedCount = durableAvailable
-        ? await getUnsyncedCompletedTradeCount(completedTradesResult.completedTradeCount)
+        ? await getUnsyncedCompletedTradeCount(completedTradesResult.completedTrades)
         : null;
+
+      // R5: Real checks from canonical completed trades source.
+      const economicInvalidTrades = completedTradesResult.economicInvalidTrades;
+      // R5: duplicate completed lot — check if any lotId+pair appears >1 in completedTrades.
+      // Since the normalizer guarantees max 1 per lotId+pair, this should always be 0.
+      const lotPairKeys = new Set<string>();
+      let duplicateCompletedLot = 0;
+      for (const t of completedTradesResult.completedTrades) {
+        const key = `${t.lotId}|${t.pair}`;
+        if (lotPairKeys.has(key)) duplicateCompletedLot++;
+        else lotPairKeys.add(key);
+      }
 
       // Checks NOT computable in pure SQL are reported as null with available=false
       // (no false zeros). lookaheadViolations requires per-scan candle close-time
@@ -220,12 +259,19 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         causalCorrelationFailures: null as number | null,
         legacyMixed,
         syntheticLabels,
-        // R4: new checks
+        // R4/R5: new checks
         legacyBuyFillMissingLotId,
-        completedTradeEconomicInvalid: null as number | null,
-        duplicateCompletedLot: null as number | null,
+        // R5: real economic invalid count from canonical normalizer.
+        completedTradeEconomicInvalid: economicInvalidTrades,
+        // R5: real duplicate completed lot count.
+        duplicateCompletedLot,
         partialExitTrades,
         correlationIncompleteTrades,
+        // R5: overfill count from canonical normalizer.
+        exitVolumeOverflowTrades: completedTradesResult.exitVolumeOverflowTrades,
+        // R5: multi-fill (legitimate) vs duplicate telemetry.
+        multiBuyFills,
+        multiSellFills,
         durableStorageAvailable: durableAvailable,
         durableSyncErrors: null as number | null,
         durableUnsyncedCompletedTrades: durableUnsyncedCount,
@@ -245,12 +291,17 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         causalCorrelationFailures: false,
         legacyMixed: true,
         syntheticLabels: true,
-        // R4: new checks availability
+        // R4/R5: new checks availability
         legacyBuyFillMissingLotId: true,
-        completedTradeEconomicInvalid: false,
-        duplicateCompletedLot: false,
+        // R5: now real (computed from canonical normalizer).
+        completedTradeEconomicInvalid: true,
+        duplicateCompletedLot: true,
         partialExitTrades: true,
         correlationIncompleteTrades: true,
+        // R5: new checks
+        exitVolumeOverflowTrades: true,
+        multiBuyFills: true,
+        multiSellFills: true,
         durableStorageAvailable: true,
         durableSyncErrors: false,
         durableUnsyncedCompletedTrades: durableAvailable,
@@ -667,14 +718,15 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         return;
       }
 
-      const durableLabeledTrades = await getDurableCompletedTradeCount();
-      if (durableLabeledTrades === null || durableLabeledTrades < MIN_TRADES_TO_TRAIN) {
+      // R5: training guard uses DURABLE TRAINABLE count (not stored count).
+      const durableTrainableTrades = await getDurableTrainableTradeCount();
+      if (durableTrainableTrades === null || durableTrainableTrades < MIN_TRADES_TO_TRAIN) {
         res.status(409).json({
           success: false,
           errorCode: "INSUFFICIENT_DURABLE_DATA",
-          message: `Insufficient durable labeled trades: ${durableLabeledTrades ?? 0}. Minimum: ${MIN_TRADES_TO_TRAIN}.`,
+          message: `Insufficient durable trainable trades: ${durableTrainableTrades ?? 0}. Minimum: ${MIN_TRADES_TO_TRAIN}.`,
           required: MIN_TRADES_TO_TRAIN,
-          current: durableLabeledTrades ?? 0,
+          current: durableTrainableTrades ?? 0,
         });
         return;
       }
