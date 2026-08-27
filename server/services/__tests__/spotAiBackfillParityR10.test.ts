@@ -48,6 +48,7 @@ import {
 } from "../spotAiForwardTwin/spotAiDurableTrainingStore";
 import { queryCompletedTrades, buildTradeOutcomeMap } from "../spotAiForwardTwin/spotAiCompletedTrades";
 import { buildDataset, buildGivebackDataset } from "../spotAiForwardTwin/spotAiDatasetBuilder";
+import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
 
 // ─── Capturing repository ────────────────────────────────────────────────────
 
@@ -105,7 +106,7 @@ const supRows = [
 // Raw Forward Twin snapshots for backfill's raw SELECT
 // R11-08: TWO SUPERVISOR v2 snapshots for same lot with different currentR
 // to test giveback labels on a future path (not just finalR).
-const snapshotRows = [
+const snapshotRows: { data: ForwardTwinSnapshot }[] = [
   { data: {
     snapshotType: "SCAN", scanId: "scan-1", pair: "BTC/USD", timestamp: 1000,
     policyVersion: POLICY_VERSION, schemaVersion: 1,
