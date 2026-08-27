@@ -185,6 +185,12 @@ export interface SpotAiDatasetSample {
   labels: SpotAiEntryLabels | null;
   givebackLabels: SpotAiGivebackLabels | null;
   challengers: ChallengerProjection[];
+  /**
+   * R7: Policy provenance from the causal SCAN snapshot that originated this
+   * sample. Used by the durable writer for fingerprinting. This is metadata,
+   * NOT a predictive feature.
+   */
+  sourcePolicyVersion: string;
 }
 
 export interface SpotAiDataset {
@@ -245,12 +251,20 @@ export interface SpotAiGivebackSample {
   // null when the trade is not yet closed (no completed outcome).
   labels: SpotAiGivebackLabels | null;
   /**
-   * R6: Schema version of the SUPERVISOR snapshot that originated this sample.
+   * R6/R7: Schema version of the SUPERVISOR snapshot that originated this sample.
    * Per-sample provenance — NOT a batch-level constant.
    * v1 → currentR unavailable, labels null.
    * v2 → currentR real, labels available.
+   * R7: REQUIRED. No fallback. Missing → INVALID_PROVENANCE.
    */
-  sourceForwardTwinSchemaVersion?: number;
+  sourceForwardTwinSchemaVersion: number;
+  /**
+   * R7: Policy provenance from the SUPERVISOR snapshot that originated this
+   * sample. Used by the durable writer for fingerprinting. This is metadata,
+   * NOT a predictive feature.
+   * R7: REQUIRED. No fallback. Missing/empty → INVALID_PROVENANCE.
+   */
+  sourcePolicyVersion: string;
 }
 
 export interface SpotAiGivebackDataset {

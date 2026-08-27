@@ -113,6 +113,8 @@ export function buildDataset(input: DatasetBuildInput): SpotAiDataset {
       labels,
       givebackLabels,
       challengers,
+      // R7: policy provenance from the causal SCAN snapshot.
+      sourcePolicyVersion: snapshot.policyVersion,
     });
   }
 
@@ -247,6 +249,8 @@ export function buildGivebackDataset(input: DatasetBuildInput): SpotAiGivebackDa
       labels,
       // R6: per-sample schema provenance from the originating SUPERVISOR snapshot.
       sourceForwardTwinSchemaVersion: snap.schemaVersion,
+      // R7: per-sample policy provenance from the originating SUPERVISOR snapshot.
+      sourcePolicyVersion: snap.policyVersion,
     });
   }
 

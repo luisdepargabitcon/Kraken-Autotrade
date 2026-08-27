@@ -19,8 +19,13 @@ import {
   getDurableTrainableTradeCount,
   getDurableStoredTradeCount,
   getUnsyncedCompletedTradeCount,
+  getUnsyncedGivebackSampleCount,
   getLastReconciliationAt,
   getLastReconciliationErrors,
+  getLastFingerprintConflicts,
+  getLastSkippedNotTrainable,
+  getLastSyncedTrades,
+  getLastSyncedGivebackSamples,
 } from "../services/spotAiForwardTwin/spotAiDurableTrainingStore";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
@@ -160,10 +165,11 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const invalidSnapshots = parseInt(r.invalid_snapshots ?? "0");
       const missingFeatures = parseInt(r.missing_features ?? "0");
 
-      // R6: Duplicate fills and incomplete trades.
-      // Multi-fill: >1 fills with different orderId (legitimate partials).
-      // Duplicate: same (lotId, pair, side, orderId) repeated → telemetry duplicate.
-      // If orderId is empty/null, fall back to (lotId, pair, side, fillPrice, fillVolume, timestamp).
+      // R7: Duplicate fills and incomplete trades.
+      // R7: Duplicate identity = strict tuple:
+      //   (lotId, pair, side, orderId, executedAt, fillPrice, fillVolume, feeUsd)
+      // Same orderId + different executedAt/volume/price = legitimate multi-fill, NOT duplicate.
+      // Exact copy of same snapshot = duplicate.
       const dupRows = await db.execute(sql`
         WITH fill_counts AS (
           SELECT
@@ -181,18 +187,12 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
           WHERE data->>'snapshotType' = 'FILL'
             AND data->'fill'->>'lotId' IS NOT NULL
             AND data->'fill'->>'side' = 'BUY'
-            AND COALESCE(data->'fill'->>'orderId', '') != ''
-          GROUP BY data->'fill'->>'lotId', pair, data->'fill'->>'orderId'
-          HAVING COUNT(*) > 1
-        ),
-        duplicate_buy_legacy AS (
-          SELECT 1 FROM spot_forward_twin_snapshots
-          WHERE data->>'snapshotType' = 'FILL'
-            AND data->'fill'->>'lotId' IS NOT NULL
-            AND data->'fill'->>'side' = 'BUY'
-            AND (data->'fill'->>'orderId' IS NULL OR COALESCE(data->'fill'->>'orderId', '') = '')
           GROUP BY data->'fill'->>'lotId', pair,
-            (data->'fill'->>'fillPrice')::float, (data->'fill'->>'fillVolume')::float, timestamp
+            COALESCE(data->'fill'->>'orderId', ''),
+            COALESCE((data->'fill'->>'executedAt')::bigint, 0),
+            (data->'fill'->>'fillPrice')::float,
+            (data->'fill'->>'fillVolume')::float,
+            COALESCE((data->'fill'->>'feeUsd')::float, 0)
           HAVING COUNT(*) > 1
         ),
         duplicate_sell AS (
@@ -200,25 +200,19 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
           WHERE data->>'snapshotType' = 'FILL'
             AND data->'fill'->>'lotId' IS NOT NULL
             AND data->'fill'->>'side' = 'SELL'
-            AND COALESCE(data->'fill'->>'orderId', '') != ''
-          GROUP BY data->'fill'->>'lotId', pair, data->'fill'->>'orderId'
-          HAVING COUNT(*) > 1
-        ),
-        duplicate_sell_legacy AS (
-          SELECT 1 FROM spot_forward_twin_snapshots
-          WHERE data->>'snapshotType' = 'FILL'
-            AND data->'fill'->>'lotId' IS NOT NULL
-            AND data->'fill'->>'side' = 'SELL'
-            AND (data->'fill'->>'orderId' IS NULL OR COALESCE(data->'fill'->>'orderId', '') = '')
           GROUP BY data->'fill'->>'lotId', pair,
-            (data->'fill'->>'fillPrice')::float, (data->'fill'->>'fillVolume')::float, timestamp
+            COALESCE(data->'fill'->>'orderId', ''),
+            COALESCE((data->'fill'->>'executedAt')::bigint, 0),
+            (data->'fill'->>'fillPrice')::float,
+            (data->'fill'->>'fillVolume')::float,
+            COALESCE((data->'fill'->>'feeUsd')::float, 0)
           HAVING COUNT(*) > 1
         )
         SELECT
           COUNT(*) FILTER (WHERE buy_count > 1) AS multi_buy_fills,
           COUNT(*) FILTER (WHERE sell_count > 1) AS multi_sell_fills,
-          (SELECT COUNT(*) FROM duplicate_buy) + (SELECT COUNT(*) FROM duplicate_buy_legacy) AS duplicate_entry_fills,
-          (SELECT COUNT(*) FROM duplicate_sell) + (SELECT COUNT(*) FROM duplicate_sell_legacy) AS duplicate_exit_fills,
+          (SELECT COUNT(*) FROM duplicate_buy) AS duplicate_entry_fills,
+          (SELECT COUNT(*) FROM duplicate_sell) AS duplicate_exit_fills,
           COUNT(*) FILTER (WHERE buy_count > 0 AND sell_count = 0) AS incomplete_trades
         FROM fill_counts
       `);
@@ -250,16 +244,20 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const forwardTwinV1Count = parseInt(sv.v1_count ?? "0");
       const forwardTwinV2Count = parseInt(sv.v2_count ?? "0");
 
-      // R4/R6: durable storage availability and sync status.
+      // R4/R6/R7: durable storage availability and sync status.
       const durableAvailable = await isDurableStorageAvailable();
       const durableCompletedCount = await getDurableCompletedTradeCount();
       const durableStoredCount = durableAvailable ? await getDurableStoredTradeCount() : null;
       const durableUnsyncedCount = durableAvailable
         ? await getUnsyncedCompletedTradeCount(completedTradesResult.completedTrades)
         : null;
-      // R6: durable reconciliation metrics.
+      // R7: durable reconciliation metrics — real values from last reconciliation.
       const lastReconAt = getLastReconciliationAt();
       const lastReconErrors = getLastReconciliationErrors();
+      const lastReconConflicts = getLastFingerprintConflicts();
+      const lastReconSkipped = getLastSkippedNotTrainable();
+      const lastReconSyncedTrades = getLastSyncedTrades();
+      const lastReconSyncedGiveback = getLastSyncedGivebackSamples();
       // R6: durable missing = raw completed trades not in durable.
       const durableMissingTrades = durableUnsyncedCount;
       // R6: durable non-trainable = stored - trainable.
@@ -313,15 +311,20 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         durableStorageAvailable: durableAvailable,
         durableSyncErrors: null as number | null,
         durableUnsyncedCompletedTrades: durableUnsyncedCount,
-        // R6: new durable metrics
+        // R6/R7: new durable metrics
         durableStoredTrades: durableStoredCount,
         durableTrainableTrades: durableCompletedCount,
         durableMissingTrades,
         durableNonTrainableTrades,
-        durableFingerprintConflicts: null as number | null,
+        // R7: real fingerprint conflicts from last reconciliation.
+        durableFingerprintConflicts: lastReconConflicts,
+        // R7: unsynced giveback samples — null when storage unavailable.
         durableUnsyncedGivebackSamples: null as number | null,
         lastReconciliationAt: lastReconAt,
         lastReconciliationErrors: lastReconErrors,
+        lastReconciliationSyncedTrades: lastReconSyncedTrades,
+        lastReconciliationSyncedGiveback: lastReconSyncedGiveback,
+        lastReconciliationSkippedNotTrainable: lastReconSkipped,
         forwardTwinV1Count,
         forwardTwinV2Count,
       };
@@ -352,15 +355,20 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         durableStorageAvailable: true,
         durableSyncErrors: false,
         durableUnsyncedCompletedTrades: durableAvailable,
-        // R6: new durable metrics availability
+        // R6/R7: new durable metrics availability
         durableStoredTrades: durableAvailable,
         durableTrainableTrades: durableAvailable,
         durableMissingTrades: durableAvailable,
         durableNonTrainableTrades: durableAvailable,
-        durableFingerprintConflicts: false,
-        durableUnsyncedGivebackSamples: durableAvailable,
+        // R7: fingerprint conflicts are real from reconciliation.
+        durableFingerprintConflicts: true,
+        // R7: unsynced giveback not computed without reconstruction.
+        durableUnsyncedGivebackSamples: false,
         lastReconciliationAt: true,
         lastReconciliationErrors: true,
+        lastReconciliationSyncedTrades: true,
+        lastReconciliationSyncedGiveback: true,
+        lastReconciliationSkippedNotTrainable: true,
         forwardTwinV1Count: true,
         forwardTwinV2Count: true,
       };

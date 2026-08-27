@@ -20,12 +20,15 @@ import {
   persistGivebackSamples,
   buildCanonicalFingerprint,
   buildGivebackFingerprint,
+  buildDurableEntryPayload,
+  buildDurableGivebackPayload,
   CANONICAL_FINGERPRINT_VERSION,
   CANONICAL_FINGERPRINT_ALGORITHM,
   DURABLE_RETENTION_POLICY,
   type DurableRepository,
   type DurableTradeRow,
   type DurableGivebackRow,
+  type DurableInsertResult,
 } from "../spotAiForwardTwin/spotAiDurableTrainingStore";
 import type { CompletedTrade } from "../spotAiForwardTwin/spotAiCompletedTrades";
 import type { SpotAiGivebackSample } from "../spotAiForwardTwin/spotAiForwardTwinTypes";
@@ -48,11 +51,15 @@ class FakeDurableRepository implements DurableRepository {
     return row ? row.datasetFingerprint : null;
   }
 
-  async insertTrade(row: DurableTradeRow): Promise<boolean> {
+  async insertTrade(row: DurableTradeRow): Promise<DurableInsertResult> {
     const key = `${row.lotId}|${row.pair}`;
-    if (this.trades.has(key)) return false; // ON CONFLICT DO NOTHING
+    if (this.trades.has(key)) {
+      const existing = this.trades.get(key)!;
+      if (existing.datasetFingerprint === row.datasetFingerprint) return "IDEMPOTENT_EXISTING";
+      return "FINGERPRINT_CONFLICT";
+    }
     this.trades.set(key, row);
-    return true;
+    return "INSERTED";
   }
 
   async getStoredTradeCount(): Promise<number> {
@@ -79,11 +86,15 @@ class FakeDurableRepository implements DurableRepository {
     return row ? row.datasetFingerprint : null;
   }
 
-  async insertGiveback(row: DurableGivebackRow): Promise<boolean> {
+  async insertGiveback(row: DurableGivebackRow): Promise<DurableInsertResult> {
     const key = `${row.lotId}|${row.timestamp}`;
-    if (this.givebacks.has(key)) return false;
+    if (this.givebacks.has(key)) {
+      const existing = this.givebacks.get(key)!;
+      if (existing.datasetFingerprint === row.datasetFingerprint) return "IDEMPOTENT_EXISTING";
+      return "FINGERPRINT_CONFLICT";
+    }
     this.givebacks.set(key, row);
-    return true;
+    return "INSERTED";
   }
 
   async getAllGivebackKeys(): Promise<Array<{ lotId: string; timestamp: number }>> {
@@ -129,6 +140,7 @@ function makeGivebackSample(overrides: Partial<SpotAiGivebackSample> = {}): Spot
     } as any,
     labels: { future_MFE_R: 2.0, future_MAE_R: -0.5 } as any,
     sourceForwardTwinSchemaVersion: 2,
+    sourcePolicyVersion: "test",
     ...overrides,
   };
 }
@@ -150,8 +162,7 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { atrPct: 1.5, adx: 25 };
     const labels = { outcome: "WIN", rMultiple: 1.0 };
-    const fp = buildCanonicalFingerprint(trade, features, labels, "test");
-    const result = await persistCompletedTrade(trade, features, labels, "test", fp);
+    const result = await persistCompletedTrade(trade, features, labels, "test");
     expect(result.persisted).toBe(true);
     expect(repo.trades.size).toBe(1);
   });
@@ -161,8 +172,8 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { atrPct: 1.5 };
     const labels = { outcome: "WIN" };
-    const fp = buildCanonicalFingerprint(trade, features, labels, "test");
-    await persistCompletedTrade(trade, features, labels, "test", fp);
+    const { fingerprint: fp } = buildDurableEntryPayload(trade, features, labels, "test");
+    await persistCompletedTrade(trade, features, labels, "test");
     const row = repo.trades.get("lot-1|BTC/USD")!;
     expect(row.lotId).toBe("lot-1");
     expect(row.pair).toBe("BTC/USD");
@@ -172,11 +183,16 @@ describe("R6 DURABLE tests with fake repository", () => {
     expect(row.stopPrice).toBe(95);
     expect(row.riskUsd).toBe(10);
     expect(row.closedQty).toBe(1);
+    // R7: entryFeeUsd === entryFeeAllocatedUsd
+    expect(row.entryFeeUsd).toBe(1);
+    expect(row.entryFeeAllocatedUsd).toBe(1);
+    expect(row.entryFeeUsd).toBe(row.entryFeeAllocatedUsd);
+    expect(row.totalEntryFeeUsd).toBe(1);
+    expect(row.exitFeeUsd).toBe(1);
+    // R7: residualQty = max(0, totalEntryVolume - closedQty) = 0
+    expect(row.residualQty).toBe(0);
     expect(row.grossPnlUsd).toBe(10);
     expect(row.netPnlUsd).toBe(8);
-    expect(row.totalEntryFeeUsd).toBe(1);
-    expect(row.entryFeeAllocatedUsd).toBe(1);
-    expect(row.exitFeeUsd).toBe(1);
     expect(row.weightedAvgEntryPrice).toBe(100);
     expect(row.weightedAvgExitPrice).toBe(110);
     expect(row.totalEntryVolume).toBe(1);
@@ -193,10 +209,9 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { f: 1 };
     const labels = { l: 1 };
-    const fp = buildCanonicalFingerprint(trade, features, labels, "test");
-    const r1 = await persistCompletedTrade(trade, features, labels, "test", fp);
+    const r1 = await persistCompletedTrade(trade, features, labels, "test");
     expect(r1.persisted).toBe(true);
-    const r2 = await persistCompletedTrade(trade, features, labels, "test", fp);
+    const r2 = await persistCompletedTrade(trade, features, labels, "test");
     expect(r2.persisted).toBe(false);
     expect(r2.reason).toBe("IDEMPOTENT_NOOP");
     // Row should NOT be mutated
@@ -208,12 +223,10 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { f: 1 };
     const labels = { l: 1 };
-    const fp1 = buildCanonicalFingerprint(trade, features, labels, "test");
-    await persistCompletedTrade(trade, features, labels, "test", fp1);
+    await persistCompletedTrade(trade, features, labels, "test");
     // Different features → different fingerprint
     const features2 = { f: 2 };
-    const fp2 = buildCanonicalFingerprint(trade, features2, labels, "test");
-    const result = await persistCompletedTrade(trade, features2, labels, "test", fp2);
+    const result = await persistCompletedTrade(trade, features2, labels, "test");
     expect(result.persisted).toBe(false);
     expect(result.reason).toBe("FINGERPRINT_CONFLICT");
     // Original row should NOT be overwritten
@@ -226,12 +239,10 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { original: true };
     const labels = { label: "WIN" };
-    const fp = buildCanonicalFingerprint(trade, features, labels, "test");
-    await persistCompletedTrade(trade, features, labels, "test", fp);
+    await persistCompletedTrade(trade, features, labels, "test");
     // Attempt with different features
     const features2 = { mutated: true };
-    const fp2 = buildCanonicalFingerprint(trade, features2, labels, "test");
-    await persistCompletedTrade(trade, features2, labels, "test", fp2);
+    await persistCompletedTrade(trade, features2, labels, "test");
     // Original features preserved
     const row = repo.trades.get("lot-1|BTC/USD")!;
     expect(row.entryFeaturesJson).toEqual({ original: true });
@@ -240,8 +251,7 @@ describe("R6 DURABLE tests with fake repository", () => {
   // DURABLE_R6_06: non-trainable row does not increment trainable count
   it("DURABLE_R6_06: empty features → SKIP_NOT_TRAINABLE, no row inserted", async () => {
     const trade = makeTrade();
-    const fp = buildCanonicalFingerprint(trade, {}, {}, "test");
-    const result = await persistCompletedTrade(trade, {}, {}, "test", fp);
+    const result = await persistCompletedTrade(trade, {}, {}, "test");
     expect(result.persisted).toBe(false);
     expect(result.reason).toBe("SKIP_NOT_TRAINABLE");
     expect(repo.trades.size).toBe(0);
@@ -252,8 +262,7 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { f: 1 };
     const labels = { l: 1 };
-    const fp = buildCanonicalFingerprint(trade, features, labels, "test");
-    await persistCompletedTrade(trade, features, labels, "test", fp);
+    await persistCompletedTrade(trade, features, labels, "test");
     const stored = await getDurableStoredTradeCount();
     const trainable = await getDurableTrainableTradeCount();
     expect(stored).toBe(1);
@@ -266,8 +275,7 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade1 = makeTrade({ lotId: "lot-a" });
     const features = { f: 1 };
     const labels = { l: 1 };
-    const fp1 = buildCanonicalFingerprint(trade1, features, labels, "test");
-    await persistCompletedTrade(trade1, features, labels, "test", fp1);
+    await persistCompletedTrade(trade1, features, labels, "test");
     // Raw has 2 trades, durable has 1 → unsynced = 1
     const trade2 = makeTrade({ lotId: "lot-b" });
     const unsynced = await getUnsyncedCompletedTradeCount([trade1, trade2]);
@@ -279,8 +287,7 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { f: 1 };
     const labels = { l: 1 };
-    const fp = buildCanonicalFingerprint(trade, features, labels, "test");
-    await persistCompletedTrade(trade, features, labels, "test", fp);
+    await persistCompletedTrade(trade, features, labels, "test");
     // Simulate raw deletion: pass empty raw list
     const unsynced = await getUnsyncedCompletedTradeCount([]);
     expect(unsynced).toBe(0); // nothing unsynced since raw is empty
@@ -289,30 +296,28 @@ describe("R6 DURABLE tests with fake repository", () => {
     expect(stored).toBe(1);
   });
 
-  // DURABLE_R6_10: backfill and live produce same fingerprint/payload
-  it("DURABLE_R6_10: same trade + features + labels → same fingerprint", () => {
+  // DURABLE_R6_10: R7 REPLACED — same policy → same fingerprint regardless of mechanism
+  it("DURABLE_R6_10: same policy → same fingerprint (R7 parity)", () => {
     const trade = makeTrade();
     const features = { f: 1 };
     const labels = { l: 1 };
-    const fpLive = buildCanonicalFingerprint(trade, features, labels, "live");
-    const fpBackfill = buildCanonicalFingerprint(trade, features, labels, "backfill");
-    // Different policyVersion → different fingerprint (correct)
-    expect(fpLive).not.toBe(fpBackfill);
-    // Same policyVersion → same fingerprint
-    const fpLive2 = buildCanonicalFingerprint(trade, features, labels, "live");
-    expect(fpLive).toBe(fpLive2);
+    // R7: policy comes from Forward Twin, not ingestion mechanism.
+    // Same policy → same fingerprint, regardless of caller.
+    const fp1 = buildCanonicalFingerprint(trade, features, labels, "SPOT_POLICY_X");
+    const fp2 = buildCanonicalFingerprint(trade, features, labels, "SPOT_POLICY_X");
+    expect(fp1).toBe(fp2);
   });
 
   // DURABLE_R6_11: giveback same key + different payload => FAIL CLOSED
   it("DURABLE_R6_11: giveback same key + different payload => FAIL CLOSED", async () => {
     const sample1 = makeGivebackSample();
-    const result1 = await persistGivebackSamples([sample1], "test");
+    const result1 = await persistGivebackSamples([sample1]);
     expect(result1.persisted).toBe(1);
     // Same key, different labels → different fingerprint
     const sample2 = makeGivebackSample({
       labels: { future_MFE_R: 3.0, future_MAE_R: -0.5 } as any,
     });
-    const result2 = await persistGivebackSamples([sample2], "test");
+    const result2 = await persistGivebackSamples([sample2]);
     expect(result2.persisted).toBe(0);
     expect(result2.conflicts).toBe(1);
   });
@@ -329,7 +334,7 @@ describe("R6 DURABLE tests with fake repository", () => {
       labels: { future_MFE_R: 2.0 } as any,
       sourceForwardTwinSchemaVersion: 2,
     });
-    const result = await persistGivebackSamples([sampleV1, sampleV2], "test");
+    const result = await persistGivebackSamples([sampleV1, sampleV2]);
     expect(result.persisted).toBe(2);
     // Verify per-sample schema version
     const rowV1 = repo.givebacks.get("lot-v1|1000")!;
@@ -347,8 +352,7 @@ describe("R6 DURABLE tests with fake repository", () => {
     const trade = makeTrade();
     const features = { f: 1 };
     const labels = { l: 1 };
-    const fp = buildCanonicalFingerprint(trade, features, labels, "test");
-    const result = await persistCompletedTrade(trade, features, labels, "test", fp);
+    const result = await persistCompletedTrade(trade, features, labels, "test");
     expect(result.persisted).toBe(false);
   });
 

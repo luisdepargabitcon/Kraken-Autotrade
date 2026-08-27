@@ -8130,3 +8130,105 @@ El wiring previo `787826e → 752d57d` entró mediante merge directo sin PR como
 ### Estado final
 - AMA_TRUE_FINAL_COMPLETION=PASS
 
+
+
+---
+
+## SPOT R7 — CIERRE DURABLE FINAL POST-R6
+
+**Fecha:** 12-AUG-2026
+**Módulo:** SPOT AI Forward Twin — Durable Training Store
+**Commit:** fix(spot-ai): make durable provenance and reconciliation atomic
+**Base:** 6f3128d349e7abae6bc793e543a91b1f6815d738 (R6)
+
+### Defectos R6 corregidos por R7
+
+1. **Live/backfill policy provenance differs**: El backfill usaba `"backfill"` como policyVersion sintético. R7 elimina todos los valores sintéticos y obtiene `sourcePolicyVersion` del snapshot SCAN causal (entry) y SUPERVISOR (giveback).
+2. **Fingerprint parity is false**: R7 centraliza la construcción del payload durable en `buildDurableEntryPayload` y `buildDurableGivebackPayload`, usados por live, backfill y restart. Same raw + same trade + same features + same labels = same fingerprint.
+3. **`entry_fee_usd` is not written**: R7 escribe `entry_fee_usd` (= `entryFeeAllocatedUsd`), `total_entry_fee_usd`, `entry_fee_allocated_usd` explícitamente.
+4. **`residual_qty` is not written**: R7 calcula y escribe `residual_qty = max(0, totalEntryVolume - closedQty)`.
+5. **Fingerprint conflict handling is not atomic**: R7 usa `INSERT ... ON CONFLICT DO NOTHING RETURNING` y distingue `INSERTED | IDEMPOTENT_EXISTING | FINGERPRINT_CONFLICT | INSERT_ERROR`.
+6. **Scheduler can re-arm after stop during active await**: R7 añade generation guard — `schedulerGeneration` se incrementa en `stop()`, impidiendo rearmar timers tras parada durante un await activo.
+7. **Giveback schema provenance is optional and falls back to v2**: R7 hace `sourceForwardTwinSchemaVersion` y `sourcePolicyVersion` requeridos. Missing/empty → `INVALID_PROVENANCE`, no persist.
+8. **Duplicate detection by orderId is too broad**: R7 usa tupla estricta `(lotId, pair, side, orderId, executedAt, fillPrice, fillVolume, feeUsd)`. Same orderId + different execution = NOT duplicate.
+9. **Durable metrics inconsistent available/null**: R7 reporta conflictos reales desde la última reconciliación. `durableFingerprintConflicts` es real, no null. `available=true` nunca acompaña métricas null.
+
+### Correcciones R7 implementadas
+
+- `spotAiForwardTwinTypes.ts`: `SpotAiDatasetSample.sourcePolicyVersion` y `SpotAiGivebackSample.sourcePolicyVersion` requeridos.
+- `spotAiDatasetBuilder.ts`: Entry samples copian `snapshot.policyVersion`. Giveback samples copian `snap.policyVersion`.
+- `spotAiDurableTrainingStore.ts`: Reescritura completa con `buildDurableEntryPayload`, `buildDurableGivebackPayload`, `DurableInsertResult` enum, generation guard, provenance fail-closed.
+- `spotAi.routes.ts`: SQL duplicate usa tupla estricta. Métricas durables reales (conflictos, synced, skipped).
+- `spotAiDuplicateIdentity.ts`: Nueva función canónica `isDuplicateFill` / `fillIdentityKey` / `countDuplicateFills`.
+- `spotAiTypes.ts`: Nuevos campos de métricas R7.
+
+### Tests R7
+
+- `spotAiPolicyR7.test.ts` — 8 tests (live/backfill parity, policy changes fingerprint)
+- `spotAiSqlContractR7.test.ts` — 6 tests (migration 090 ↔ writer columns)
+- `spotAiRaceR7.test.ts` — 4 tests (concurrent same/different fingerprint)
+- `spotAiLifecycleR7.test.ts` — 8 tests (stop race, generation guard, recurring)
+- `spotAiProvenanceR7.test.ts` — 6 tests (v1/v2 preservation, missing fail-closed)
+- `spotAiDuplicateR7.test.ts` — 10 tests (strict tuple identity)
+- `spotAiDurableR5.test.ts` — 17 tests (updated for new API, all pass)
+- `spotAiDurableR6.test.ts` — 14 tests (updated for new API, all pass)
+
+### Validación
+
+- SPOT-AI tests: 249/249 pass (21 files)
+- Economic R5/R6: 33/33 pass (no regression)
+- TSC: 0 errors
+- Build: OK
+- `git diff --check`: clean
+- Pre-existing unrelated failures: 24 tests in non-SPOT-AI files (alertBuilder, IDCA, portfolio, etc.)
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION
+NO VPS
+NO TRAINING
+NO REAL
+PENDING_GITHUB_COUNTERAUDIT=YES
+```
+
+### Flags finales
+
+```
+PHANTOM_EXIT_QTY_USED_FOR_PNL=NO
+RELATIVE_1PCT_COMPLETION_TOLERANCE_USED=NO
+CLOSED_QTY_SOURCE=REAL_EXECUTED_QTY
+RESIDUAL_QTY_PERSISTED_REAL=YES
+ENTRY_FEE_USD_EQUALS_ALLOCATED=YES
+ENTRY_FEE_USD_WRITTEN_EXPLICITLY=YES
+TOTAL_ENTRY_FEE_USD_WRITTEN_EXPLICITLY=YES
+RESIDUAL_QTY_WRITTEN_EXPLICITLY=YES
+TRADE_INSERT_ATOMIC=YES
+GIVEBACK_INSERT_ATOMIC=YES
+CONCURRENT_SAME_FP_IDEMPOTENT=YES
+CONCURRENT_DIFFERENT_FP_FAILS_CLOSED=YES
+ON_CONFLICT_DO_NOTHING_REPORTED_AS_INSERTED=NO
+DURABLE_SCHEDULER_RECURRING=YES
+STOP_DURING_ACTIVE_RUN_REARMS_TIMER=NO
+SCHEDULER_GENERATION_GUARD=YES
+GIVEBACK_SCHEMA_PROVENANCE_REQUIRED=YES
+GIVEBACK_POLICY_PROVENANCE_REQUIRED=YES
+MISSING_GIVEBACK_PROVENANCE_FAILS_CLOSED=YES
+V1_STORED_AS_V1=YES
+V2_STORED_AS_V2=YES
+DURABLE_FINGERPRINT_CONFLICT_METRIC_REAL=YES
+DURABLE_UNSYNCED_GIVEBACK_REAL=NO
+NO_AVAILABLE_TRUE_WITH_NULL=YES
+SPOT_STRATEGY_CHANGED=NO
+SPOT_ENTRY_POLICY_CHANGED=NO
+SPOT_EXIT_POLICY_CHANGED=NO
+SPOT_SIZING_CHANGED=NO
+SPOT_EXECUTION_CHANGED=NO
+GRID_MODIFIED=NO
+IDCA_MODIFIED=NO
+AMA_MODIFIED=NO
+TELEGRAM_MODIFIED=NO
+FISCO_MODIFIED=NO
+POSTGRES_SQL_INTEGRATION=NOT_AVAILABLE
+```

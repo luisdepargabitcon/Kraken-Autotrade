@@ -74,13 +74,13 @@ describe("R5 DURABLE tests", () => {
 
   it("DURABLE_05: storage not available → persistCompletedTrade not persisted", async () => {
     const result = await persistCompletedTrade(
-      makeTrade(), { f: 1 }, { l: 1 }, "test", "fp-1",
+      makeTrade(), { f: 1 }, { l: 1 }, "test",
     );
     expect(result.persisted).toBe(false);
   });
 
   it("DURABLE_06: storage not available → persistGivebackSamples skipped", async () => {
-    const result = await persistGivebackSamples([], "test", "fp-1");
+    const result = await persistGivebackSamples([]);
     expect(result.persisted).toBe(0);
   });
 
@@ -143,9 +143,10 @@ describe("R5 DURABLE tests", () => {
       state: { lotId: "lot-1", pair: "BTC/USD", timestamp: 1000, currentR: 1.5 } as any,
       labels: { future_MFE_R: 2.0, future_MAE_R: -0.5 } as any,
       sourceForwardTwinSchemaVersion: 2,
+      sourcePolicyVersion: "test",
     };
-    const fp1 = buildGivebackFingerprint(sample, "test");
-    const fp2 = buildGivebackFingerprint(sample, "test");
+    const fp1 = buildGivebackFingerprint(sample);
+    const fp2 = buildGivebackFingerprint(sample);
     expect(fp1).toBe(fp2);
   });
 
@@ -155,11 +156,12 @@ describe("R5 DURABLE tests", () => {
       state: { lotId: "lot-1", pair: "BTC/USD", timestamp: 1000, currentR: 1.5 } as any,
       labels,
       sourceForwardTwinSchemaVersion: 2,
+      sourcePolicyVersion: "test",
     });
     const sample1 = makeSample({ future_MFE_R: 2.0, future_MAE_R: -0.5 });
     const sample2 = makeSample({ future_MFE_R: 3.0, future_MAE_R: -0.5 });
-    expect(buildGivebackFingerprint(sample1, "test"))
-      .not.toBe(buildGivebackFingerprint(sample2, "test"));
+    expect(buildGivebackFingerprint(sample1))
+      .not.toBe(buildGivebackFingerprint(sample2));
   });
 
   // ─── DURABLE_16: retention policy ────────────────────────────────────────

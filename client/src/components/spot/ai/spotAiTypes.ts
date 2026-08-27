@@ -72,7 +72,7 @@ export interface DatasetQuality {
     durableStorageAvailable?: boolean;
     durableSyncErrors?: number | null;
     durableUnsyncedCompletedTrades?: number | null;
-    // R6: new durable metrics
+    // R6/R7: new durable metrics
     durableStoredTrades?: number | null;
     durableTrainableTrades?: number | null;
     durableMissingTrades?: number | null;
@@ -81,6 +81,9 @@ export interface DatasetQuality {
     durableUnsyncedGivebackSamples?: number | null;
     lastReconciliationAt?: number | null;
     lastReconciliationErrors?: number;
+    lastReconciliationSyncedTrades?: number;
+    lastReconciliationSyncedGiveback?: number;
+    lastReconciliationSkippedNotTrainable?: number;
     forwardTwinV1Count?: number;
     forwardTwinV2Count?: number;
   };
