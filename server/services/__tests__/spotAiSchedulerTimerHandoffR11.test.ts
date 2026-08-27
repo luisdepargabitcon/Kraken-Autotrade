@@ -99,8 +99,28 @@ describe("R11-09 SCHEDULER TIMER HANDOFF (no direct calls)", () => {
     _resetReconciliationMetrics();
     _resetReconciliationRunning();
     _setDurableDatasetBuilder({
-      buildDataset: () => ({ samples: [], givebackSamples: [], fingerprint: "fp" }),
-      buildGivebackDataset: () => ({ samples: [], fingerprint: "fp" }),
+      buildDataset: () => ({
+        featureSchemaVersion: 1,
+        samples: [],
+        trainCount: 0,
+        validationCount: 0,
+        testCount: 0,
+        labeledTradeCount: 0,
+        totalSnapshotCount: 0,
+        groupSplitByTrade: true,
+        temporalSplit: true,
+      }),
+      buildGivebackDataset: () => ({
+        featureSchemaVersion: 1,
+        samples: [],
+        trainCount: 0,
+        validationCount: 0,
+        testCount: 0,
+        labeledTradeCount: 0,
+        totalSupervisorSnapshots: 0,
+        groupSplitByTrade: true,
+        temporalSplit: true,
+      }),
     });
   });
 

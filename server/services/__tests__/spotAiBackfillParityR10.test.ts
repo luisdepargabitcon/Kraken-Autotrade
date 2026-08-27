@@ -109,6 +109,7 @@ const snapshotRows = [
   { data: {
     snapshotType: "SCAN", scanId: "scan-1", pair: "BTC/USD", timestamp: 1000,
     policyVersion: POLICY_VERSION, schemaVersion: 1,
+    executionMode: "SPOT", engineOwner: "forward-twin",
     ticker: { bid: 100, ask: 100.1, last: 100 },
     regime: { atrPct: 1.5, adx: 25, trend: "up" },
     volume: { ratio: 1.2, baseVolume: 1000 },
@@ -118,6 +119,7 @@ const snapshotRows = [
   } },
   { data: {
     snapshotType: "FILL", pair: "BTC/USD", timestamp: 1100,
+    executionMode: "SPOT", engineOwner: "forward-twin", schemaVersion: 1, scanId: "scan-1", policyVersion: POLICY_VERSION,
     fill: { lotId: "lot-1", side: "BUY", orderId: "o1", executedAt: 1100, fillPrice: 100, fillVolume: 1, feeUsd: 1, notionalUsd: 100, slippage: 0, quality: "ok" },
     execIntent: { positionLotId: "lot-1", scanId: "scan-1" },
   } },
@@ -125,6 +127,7 @@ const snapshotRows = [
   { data: {
     snapshotType: "SUPERVISOR", pair: "BTC/USD", timestamp: 1500,
     schemaVersion: 2, policyVersion: POLICY_VERSION,
+    executionMode: "SPOT", engineOwner: "forward-twin", scanId: "scan-1",
     position: { lotId: "lot-1", entryPrice: 100, currentR: 1.5, mfe: 10, mae: -5, mfeR: 1.0, maeR: -0.5, currentStopPrice: 95, highestPrice: 110 },
     exitDecision: { reasonType: null },
   } },
@@ -132,11 +135,13 @@ const snapshotRows = [
   { data: {
     snapshotType: "SUPERVISOR", pair: "BTC/USD", timestamp: 1700,
     schemaVersion: 2, policyVersion: POLICY_VERSION,
+    executionMode: "SPOT", engineOwner: "forward-twin", scanId: "scan-1",
     position: { lotId: "lot-1", entryPrice: 100, currentR: 2.0, mfe: 15, mae: -5, mfeR: 1.5, maeR: -0.5, currentStopPrice: 95, highestPrice: 115 },
     exitDecision: { reasonType: null },
   } },
   { data: {
     snapshotType: "FILL", pair: "BTC/USD", timestamp: 2000,
+    executionMode: "SPOT", engineOwner: "forward-twin", schemaVersion: 1, scanId: "scan-1", policyVersion: POLICY_VERSION,
     fill: { lotId: "lot-1", side: "SELL", orderId: "o2", executedAt: 2000, fillPrice: 110, fillVolume: 1, feeUsd: 1, notionalUsd: 110, slippage: 0, quality: "ok" },
     execIntent: { positionLotId: "lot-1" },
   } },
