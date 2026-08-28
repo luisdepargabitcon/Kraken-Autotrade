@@ -29,6 +29,7 @@
 
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 import type { Pool } from "pg";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -233,4 +234,29 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+// ─── Direct-execution guard ───────────────────────────────────────────────────
+
+/**
+ * Returns true when this module is the direct entrypoint (invoked via
+ * `npx tsx script/spot-ai-migrate-090.ts` or `node script/spot-ai-migrate-090.ts`).
+ * Returns false when the module is imported by another module or test.
+ *
+ * Uses path resolution to compare the current module URL against process.argv[1].
+ * Works on both Windows and Linux (path.resolve normalizes separators).
+ */
+export function isDirectExecution(): boolean {
+  try {
+    const currentFile = fileURLToPath(import.meta.url);
+    const invokedFile = process.argv[1] ? path.resolve(process.argv[1]) : null;
+    if (invokedFile === null) return false;
+    return path.resolve(currentFile) === invokedFile;
+  } catch {
+    return false;
+  }
+}
+
+// Execute CLI ONLY when this file is the direct entrypoint.
+// When imported (e.g. by tests), main() is NOT called.
+if (isDirectExecution()) {
+  void main();
+}

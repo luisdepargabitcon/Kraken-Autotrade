@@ -9045,3 +9045,60 @@ NO TRAINING
 NO REAL
 PENDING_GITHUB_COUNTERAUDIT=YES
 ```
+
+---
+
+## SPOT R13H — IMPORT-SAFE 090 CLI FINAL
+
+### Defecto cerrado
+
+R13G ejecutaba `main()` incondicionalmente al final del módulo. Eso significa que importar el módulo (por tests o por otro consumidor) ejecutaba el CLI, intentando conectar DB y mutar `process.exitCode`.
+
+### Fix
+
+`script/spot-ai-migrate-090.ts` ahora usa un guard ESM `isDirectExecution()`:
+- Compara `fileURLToPath(import.meta.url)` con `path.resolve(process.argv[1])`.
+- Solo ejecuta `main()` cuando el archivo es el entrypoint directo.
+- Al ser importado por tests: `isDirectExecution()=false`, `main()` NO se ejecuta.
+
+### Tests R13H
+
+`spotAiMigrate090ImportSafetyR13H.test.ts` (6 tests):
+- Importar módulo NO cambia `process.exitCode`.
+- `isDirectExecution()` retorna `false` en contexto de import.
+- Core `runSpotAiMigration090` sigue callable explícitamente.
+- Sin token: `ConfirmationError`, runner=0, pool.query=0.
+- Con token y deps válidas: core resuelve correctamente.
+- `isDirectExecution()` retorna `false` con argv[1] diferente.
+
+### No cambios de producto
+
+- Migration 090: NO modificada.
+- Migration 089: NO modificada.
+- Forward Twin product code: NO modificado.
+- Runbook: NO modificado.
+- server/routes.ts: NO modificado.
+- server/index.ts: NO modificado.
+- script/migrate.ts: NO modificado.
+
+### Validación
+
+- R13H tests: 1 archivo / 6 tests pasaron
+- R13G tests: 2 archivos / 13 tests pasaron
+- SPOT-AI: 60 archivos / 534 tests pasaron
+- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
+- TSC: exit 0
+- npm run check: exit 0
+- Build: exit 0
+- git diff --check: exit 0
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION
+NO VPS
+NO TRAINING
+NO REAL
+PENDING_GITHUB_COUNTERAUDIT=YES
+```
