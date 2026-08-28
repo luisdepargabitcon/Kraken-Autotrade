@@ -42,6 +42,27 @@ import {
 } from "../services/spotAiForwardTwin/spotAiForwardTwinTypes";
 import { countDuplicateFills, loadDuplicateFillQuality } from "../services/spotAiForwardTwin/spotAiDuplicateIdentity";
 
+// R14: In-memory cache for JSONB-heavy aggregate queries (regimes, features).
+// These queries scan 17k+ SCAN rows with JSONB key extraction (30-130s).
+// Cache for 5 minutes to keep the UI responsive without a migration.
+interface CacheEntry<T> { value: T; expiresAt: number; }
+const queryCache = new Map<string, CacheEntry<any>>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCached<T>(key: string): T | null {
+  const entry = queryCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    queryCache.delete(key);
+    return null;
+  }
+  return entry.value as T;
+}
+
+function setCached<T>(key: string, value: T): void {
+  queryCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
 export const registerSpotAiRoutes: RegisterRoutes = (app) => {
 
   // ─── Status ──────────────────────────────────────────────────────────────
@@ -470,6 +491,13 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Features ────────────────────────────────────────────────────────────
   app.get("/api/spot/ai/features", async (_req, res) => {
     try {
+      // R14: Cache for 5 minutes — JSONB extraction on 17k SCAN rows takes 30s+.
+      const cacheKey = "features";
+      const cached = getCached<any>(cacheKey);
+      if (cached) {
+        res.json(cached);
+        return;
+      }
       // Compute missingPct from persisted SCAN snapshots
       const totalRows = await db.execute(sql`
         SELECT COUNT(*) AS total
@@ -483,7 +511,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
           ...f,
           missingPct: null as number | null,
         }));
-        res.json({ features, schemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION, available: false, reason: "INSUFFICIENT_DATA" });
+        const result = { features, schemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION, available: false, reason: "INSUFFICIENT_DATA" };
+        setCached(cacheKey, result);
+        res.json(result);
         return;
       }
 
@@ -539,7 +569,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
               : 0;
         return { ...f, missingPct };
       });
-      res.json({ features, schemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION, available: true });
+      const result = { features, schemaVersion: SPOT_AI_FEATURE_SCHEMA_VERSION, available: true };
+      setCached(cacheKey, result);
+      res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -593,6 +625,13 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Regime distribution ─────────────────────────────────────────────────
   app.get("/api/spot/ai/dataset/regimes", async (_req, res) => {
     try {
+      // R14: Cache for 5 minutes — JSONB extraction on 17k SCAN rows takes 30s+.
+      const cacheKey = "regimes";
+      const cached = getCached<{ regimes: any[] }>(cacheKey);
+      if (cached) {
+        res.json(cached);
+        return;
+      }
       const rows = await db.execute(sql`
         SELECT
           data->'regime'->>'regime' AS regime,
@@ -608,7 +647,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         direction: r.direction ?? "NEUTRAL",
         count: parseInt(r.count ?? "0"),
       }));
-      res.json({ regimes });
+      const result = { regimes };
+      setCached(cacheKey, result);
+      res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
