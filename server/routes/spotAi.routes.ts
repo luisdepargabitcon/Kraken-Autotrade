@@ -41,6 +41,8 @@ import {
   SPOT_AI_FEATURE_SCHEMA_VERSION,
 } from "../services/spotAiForwardTwin/spotAiForwardTwinTypes";
 import { countDuplicateFills, loadDuplicateFillQuality } from "../services/spotAiForwardTwin/spotAiDuplicateIdentity";
+import { normalizeCompletedTrades } from "../services/spotAiForwardTwin/spotAiCompletedTradeNormalizer";
+import type { RawBuyFill, RawSellFill, RawScanSizing, RawSupervisorData } from "../services/spotAiForwardTwin/spotAiCompletedTradeNormalizer";
 
 // R14: In-memory cache for JSONB-heavy aggregate queries (regimes, features).
 // These queries scan 17k+ SCAN rows with JSONB key extraction (30-130s).
@@ -74,17 +76,21 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         SELECT COUNT(*) AS total FROM spot_forward_twin_snapshots
       `);
       const totalSnapshots = parseInt(((snapshotRows.rows ?? [])[0] as any)?.total ?? "0");
-      // R14: FAST PATH — do NOT call queryCompletedTrades() here.
-      // It does 5 separate SQL queries with JSONB filtering and is too slow
-      // for a status endpoint. Use durable count (the canonical labeled count).
-      // If durable storage is unavailable, labeledTrades = 0 (no completed trades
-      // have been durably stored). This is semantically correct: no durable
-      // records means no labeled trades available for training.
+      // R14F: Durable null != zero. If durable storage is unavailable,
+      // report labeledTrades=null + labeledTradesAvailable=false.
+      // Do NOT coerce null to 0 — that would conflate "no data" with "zero trades".
       const durableLabeledTrades = await getDurableCompletedTradeCount();
-      const labeledTrades = durableLabeledTrades ?? 0;
-      const status = await advisoryService.getStatus(totalSnapshots, labeledTrades, durableLabeledTrades);
+      const labeledTradesAvailable = durableLabeledTrades !== null;
+      const labeledTrades = durableLabeledTrades; // null | number
+      const status = await advisoryService.getStatus(
+        totalSnapshots,
+        labeledTrades ?? 0, // advisory service expects a number for internal logic
+        durableLabeledTrades,
+      );
       res.json({
         ...status,
+        labeledTrades,
+        labeledTradesAvailable,
         collectorSessionCaptured: stats.totalCaptured,
         collectorSessionFlushed: stats.totalFlushed,
         bufferSize: stats.bufferSize,
@@ -112,14 +118,16 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         FROM spot_forward_twin_snapshots
       `);
       const r = (rows.rows ?? [])[0] as any ?? {};
-      // R14: FAST PATH — use durable count instead of queryCompletedTrades().
+      // R14F: Durable null != zero. Report null + available=false if unavailable.
       const durableLabeledTrades = await getDurableCompletedTradeCount();
-      const labeledTrades = durableLabeledTrades ?? 0;
+      const labeledTradesAvailable = durableLabeledTrades !== null;
+      const labeledTrades = durableLabeledTrades; // null | number
       const scanCount = parseInt(r.scan_count ?? "0");
-      // R14: labeledEntryScans not available without heavy queryCompletedTrades().
-      // Use durable count as proxy (completed trades = labeled entry scans).
-      const labeledEntryScanCount = labeledTrades;
-      const unlabeledScans = Math.max(0, scanCount - labeledEntryScanCount);
+      // R14F: labeledEntryScans/unlabeledScans not computable when durable is null.
+      const labeledEntryScanCount = labeledTrades; // null | number
+      const unlabeledScans = (labeledTrades !== null)
+        ? Math.max(0, scanCount - labeledTrades)
+        : null;
       res.json({
         totalSnapshots: parseInt(r.total ?? "0"),
         scanCount,
@@ -128,6 +136,7 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         firstTimestamp: parseInt(r.first_ts ?? "0"),
         lastTimestamp: parseInt(r.last_ts ?? "0"),
         labeledTrades,
+        labeledTradesAvailable,
         labeledSampleCount: labeledTrades,
         labeledEntryScans: labeledEntryScanCount,
         unlabeledScanCount: unlabeledScans,
@@ -210,21 +219,14 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       `);
       const orphanFills = parseInt(((orphanFillRows.rows ?? [])[0] as any)?.orphan_fills ?? "0");
 
-      // Invalid/missing SCAN features — R14: avoid JSONB key extraction on 17k SCAN rows.
-      // data->'ticker' IS NULL took 132s due to per-row JSONB parsing.
-      // data IS NULL takes 10ms (TOAST pointer check, no decompression).
-      // Structural invariants (ticker/regime/volume/signal/capital present in
-      // every SCAN) are enforced by the writer, so we check only for null data.
-      const scanQualityRows = await db.execute(sql`
-        SELECT
-          COUNT(*) FILTER (WHERE data IS NULL) AS invalid_snapshots,
-          0 AS missing_features
-        FROM spot_forward_twin_snapshots
-        WHERE snapshot_type = 'SCAN'
-      `);
-      const sqr = (scanQualityRows.rows ?? [])[0] as any ?? {};
-      const invalidSnapshots = parseInt(sqr.invalid_snapshots ?? "0");
-      const missingFeatures = parseInt(sqr.missing_features ?? "0");
+      // R14F: Invalid/missing SCAN features — FAIL-CLOSED.
+      // The data column is DB NOT NULL, so `data IS NULL` is always 0 and
+      // proves nothing about nested JSONB keys (ticker/regime/volume/etc).
+      // Extracting nested keys on 17k SCAN rows takes 132s (TOAST decompression).
+      // Without a fast exact method, report null + available=false.
+      // No false zeros, no score penalty/bonus.
+      const invalidSnapshots = null as number | null;
+      const missingFeatures = null as number | null;
 
       // R8-09: Duplicate fills and incomplete trades.
       // R8-09: Duplicate identity uses the SINGLE canonical countDuplicateFills()
@@ -390,8 +392,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       };
       const checksAvailable = {
         schemaVersionMismatches: true,
-        invalidSnapshots: true,
-        missingFeatures: true,
+        // R14F: invalidSnapshots/missingFeatures not computable in fast path.
+        invalidSnapshots: false,
+        missingFeatures: false,
         duplicateEntryFills: duplicateQuality.available,
         duplicateExitFills: duplicateQuality.available,
         orphanSupervisor: true,
@@ -449,10 +452,12 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       // Score formula: start at 100, subtract weighted penalties (only for
       // computed checks; null checks do not contribute false zeros).
       // R9-01: duplicateEntryFills/ExitFills may be null on DB failure.
+      // R14F: Only penalize for computed (available) checks. null checks
+      // do not contribute false zeros to the score.
       const totalIssues =
         schemaMismatches * 10 +
-        invalidSnapshots * 5 +
-        missingFeatures * 3 +
+        (invalidSnapshots ?? 0) * 5 +
+        (missingFeatures ?? 0) * 3 +
         orphanSupervisor * 2 +
         orphanFills * 2 +
         (duplicateEntryFills ?? 0) * 4 +
@@ -517,33 +522,27 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         return;
       }
 
-      // R14: Avoid JSONB key extraction on 17k SCAN rows (120s+ for 14 keys).
-      // The SCAN snapshot writer always includes ticker/regime/volume/signal/
-      // intent/sizing/capital by construction. We check only data IS NULL
-      // (10ms, TOAST pointer check). If data is present, all keys are present.
-      const missingRows = await db.execute(sql`
-        SELECT COUNT(*) FILTER (WHERE data IS NULL) AS missing_all
-        FROM spot_forward_twin_snapshots
-        WHERE snapshot_type = 'SCAN'
-      `);
-      const m = (missingRows.rows ?? [])[0] as any ?? {};
-      const missingAll = parseInt(m.missing_all ?? "0");
-      // If data IS NULL, all fields are missing. Otherwise, 0 (writer invariant).
-      const missingMap: Record<string, number> = {
-        bid: missingAll,
-        atrPct: missingAll,
-        adx: missingAll,
-        ema20: missingAll,
-        ema50: missingAll,
-        ema200: missingAll,
-        volume: missingAll,
-        volumeRatio: missingAll,
-        setupTag: missingAll,
-        signalConfidence: missingAll,
-        intentState: missingAll,
-        notionalUsd: missingAll,
-        initialRiskUsd: missingAll,
-        availableCapital: missingAll,
+      // R14F: FAIL-CLOSED — do NOT infer data != NULL => feature present.
+      // The data column is DB NOT NULL, so `data IS NULL` is always 0 and
+      // proves nothing about nested JSONB keys (ticker->bid, regime->atrPct, etc).
+      // Extracting nested keys on 17k SCAN rows takes 120s+ (TOAST decompression).
+      // Without a fast exact method, report missingPct=null for all features.
+      // The UI already supports "No disponible" for null missingPct.
+      const missingMap: Record<string, number | null> = {
+        bid: null,
+        atrPct: null,
+        adx: null,
+        ema20: null,
+        ema50: null,
+        ema200: null,
+        volume: null,
+        volumeRatio: null,
+        setupTag: null,
+        signalConfidence: null,
+        intentState: null,
+        notionalUsd: null,
+        initialRiskUsd: null,
+        availableCapital: null,
       };
 
       const features = CANONICAL_FEATURE_DEFINITIONS.map(f => {
@@ -616,31 +615,51 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Regime distribution ─────────────────────────────────────────────────
   app.get("/api/spot/ai/dataset/regimes", async (_req, res) => {
     try {
-      // R14: Cache for 5 minutes — JSONB extraction on 17k SCAN rows takes 30s+.
+      // R14F: Cache for 5 minutes — JSONB extraction on 17k SCAN rows takes 34s
+      // due to TOAST decompression. Without a migration (091) to add an
+      // expression index, the cold path cannot meet the <=10s gate.
+      // On cache miss, return available=false immediately (fail-closed)
+      // and trigger a background refresh. The UI shows "No disponible".
       const cacheKey = "regimes";
-      const cached = getCached<{ regimes: any[] }>(cacheKey);
+      const cached = getCached<{ regimes: any[]; available: boolean }>(cacheKey);
       if (cached) {
         res.json(cached);
         return;
       }
-      const rows = await db.execute(sql`
-        SELECT
-          data->'regime'->>'regime' AS regime,
-          data->'regime'->>'direction' AS direction,
-          COUNT(*) AS count
-        FROM spot_forward_twin_snapshots
-        WHERE snapshot_type = 'SCAN'
-        GROUP BY data->'regime'->>'regime', data->'regime'->>'direction'
-        ORDER BY count DESC
-      `);
-      const regimes = ((rows.rows ?? []) as any[]).map((r: any) => ({
-        regime: r.regime ?? "UNKNOWN",
-        direction: r.direction ?? "NEUTRAL",
-        count: parseInt(r.count ?? "0"),
-      }));
-      const result = { regimes };
-      setCached(cacheKey, result);
+      // R14F: Cold cache — fail-closed. Do NOT block for 34s.
+      // Trigger background refresh (fire-and-forget).
+      const result = { regimes: [], available: false, reason: "COMPUTING_COLD_CACHE" };
       res.json(result);
+
+      // Background refresh — populate cache for next request.
+      // This runs after res.json() so the response is not delayed.
+      if (!queryCache.has(cacheKey + "__refreshing")) {
+        queryCache.set(cacheKey + "__refreshing", { value: true, expiresAt: Date.now() + 60000 });
+        setImmediate(async () => {
+          try {
+            const rows = await db.execute(sql`
+              SELECT
+                data->'regime'->>'regime' AS regime,
+                data->'regime'->>'direction' AS direction,
+                COUNT(*) AS count
+              FROM spot_forward_twin_snapshots
+              WHERE snapshot_type = 'SCAN'
+              GROUP BY data->'regime'->>'regime', data->'regime'->>'direction'
+              ORDER BY count DESC
+            `);
+            const regimes = ((rows.rows ?? []) as any[]).map((r: any) => ({
+              regime: r.regime ?? "UNKNOWN",
+              direction: r.direction ?? "NEUTRAL",
+              count: parseInt(r.count ?? "0"),
+            }));
+            setCached(cacheKey, { regimes, available: true });
+          } catch {
+            // Background refresh failed — cache remains empty.
+          } finally {
+            queryCache.delete(cacheKey + "__refreshing");
+          }
+        });
+      }
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -942,14 +961,178 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
       const legacyFillCount = parseInt(fb.legacy_count ?? "0");
       const validFillCount = parseInt(fb.valid_count ?? "0");
 
-      // R14: Durable labeled trades count.
+      // R14F: Durable null != zero. Report null + available=false if unavailable.
       const durableLabeledTrades = await getDurableCompletedTradeCount();
-      const labeledTrades = durableLabeledTrades ?? 0;
+      const durableStatusAvailable = durableLabeledTrades !== null;
+      const labeledTrades = durableLabeledTrades; // null | number
 
-      // R14: Tracked lots — group by lotId+pair using FILL snapshots.
-      // A lot is "identified" if it has at least one FILL with a valid lotId.
-      // A lot is "completed" if the durable store has a row for it.
-      // A lot is "in tracking" if identified but not completed.
+      // R14F: Durable lot keys for label status. Separate from lifecycle.
+      // If durable query fails, labelStatus=NO_DISPONIBLE (do NOT degrade
+      // ETIQUETADO to no-label — the lot may still be labeled, we just can't verify).
+      let durableLotKeys = new Set<string>();
+      let durableLotKeysAvailable = false;
+      if (durableStatusAvailable) {
+        try {
+          const durableRows = await db.execute(sql`
+            SELECT lot_id, pair FROM spot_ai_forward_training_trades
+          ` as any);
+          for (const row of (durableRows.rows ?? []) as any[]) {
+            durableLotKeys.add(`${row.lot_id}|${row.pair}`);
+          }
+          durableLotKeysAvailable = true;
+        } catch {
+          // Durable query failed — labelStatus will be NO_DISPONIBLE.
+          durableLotKeysAvailable = false;
+        }
+      }
+
+      // R14F: GLOBAL KPIs — independent of LIMIT.
+      // Count unique lots, completed lots, tracked lots from ALL valid FILL lots,
+      // not just the page result. Uses canonical normalizer for completion.
+      const globalLotRows = await db.execute(sql`
+        SELECT
+          data->'fill'->>'lotId' AS lot_id,
+          pair,
+          COUNT(*) FILTER (WHERE data->'fill'->>'side' = 'BUY') AS buy_fills,
+          COUNT(*) FILTER (WHERE data->'fill'->>'side' = 'SELL') AS sell_fills
+        FROM spot_forward_twin_snapshots
+        WHERE snapshot_type = 'FILL'
+          AND data->'fill'->>'lotId' IS NOT NULL
+        GROUP BY data->'fill'->>'lotId', pair
+      `);
+      const globalLots = (globalLotRows.rows ?? []) as any[];
+      const globalUniqueLots = globalLots.length;
+
+      // R14F: Canonical completed trade classification.
+      // Use normalizeCompletedTrades() — the SINGLE canonical normalizer.
+      // This respects QTY_EPSILON, PARTIAL_EXIT, EXIT_VOLUME_OVERFLOW,
+      // CORRELATION_INCOMPLETE, ECONOMIC_INVALID, INCOMPLETE.
+      // Loads only the rows needed: FILLs (12), SUPERVISORs (~1700),
+      // and SCAN sizings filtered by scanIds referenced by BUY fills.
+
+      // Step 1: BUY fills with valid lotId (fast — only 12 FILL rows total).
+      const buyFillRows = await db.execute(sql`
+        SELECT
+          fb.data->'fill'->>'lotId' AS lot_id,
+          fb.pair AS pair,
+          fb.scan_id AS scan_id,
+          (fb.data->'fill'->>'fillPrice')::float AS fill_price,
+          (fb.data->'fill'->>'fillVolume')::float AS fill_volume,
+          (fb.data->'fill'->>'feeUsd')::float AS fee_usd,
+          fb.timestamp AS ts
+        FROM spot_forward_twin_snapshots fb
+        WHERE fb.snapshot_type = 'FILL'
+          AND fb.data->'fill'->>'side' = 'BUY'
+          AND fb.data->'fill'->>'lotId' IS NOT NULL
+      ` as any);
+      const buyFills: RawBuyFill[] = ((buyFillRows.rows ?? []) as any[]).map((r: any) => ({
+        lotId: r.lot_id, pair: r.pair, scanId: r.scan_id,
+        fillPrice: parseFloat(String(r.fill_price ?? "0")),
+        fillVolume: parseFloat(String(r.fill_volume ?? "0")),
+        feeUsd: parseFloat(String(r.fee_usd ?? "0")),
+        timestamp: parseInt(String(r.ts ?? "0")),
+      }));
+
+      // Step 2: SELL fills with valid lotId.
+      const sellFillRows = await db.execute(sql`
+        SELECT
+          fs.data->'fill'->>'lotId' AS lot_id,
+          fs.pair AS pair,
+          (fs.data->'fill'->>'fillPrice')::float AS fill_price,
+          (fs.data->'fill'->>'fillVolume')::float AS fill_volume,
+          (fs.data->'fill'->>'feeUsd')::float AS fee_usd,
+          fs.timestamp AS ts
+        FROM spot_forward_twin_snapshots fs
+        WHERE fs.snapshot_type = 'FILL'
+          AND fs.data->'fill'->>'side' = 'SELL'
+          AND fs.data->'fill'->>'lotId' IS NOT NULL
+      ` as any);
+      const sellFills: RawSellFill[] = ((sellFillRows.rows ?? []) as any[]).map((r: any) => ({
+        lotId: r.lot_id, pair: r.pair,
+        fillPrice: parseFloat(String(r.fill_price ?? "0")),
+        fillVolume: parseFloat(String(r.fill_volume ?? "0")),
+        feeUsd: parseFloat(String(r.fee_usd ?? "0")),
+        timestamp: parseInt(String(r.ts ?? "0")),
+      }));
+
+      // Step 3: SCAN sizings — only for scanIds referenced by BUY fills.
+      // This avoids scanning 17k SCAN rows with JSONB extraction.
+      const buyScanIds = Array.from(new Set(buyFills.map(f => f.scanId).filter(Boolean)));
+      let scanSizings: RawScanSizing[] = [];
+      if (buyScanIds.length > 0) {
+        const scanSizingRows = await db.execute(sql`
+          SELECT
+            sc.scan_id AS scan_id,
+            sc.pair AS pair,
+            (sc.data->'sizing'->>'stopPrice')::float AS stop_price,
+            (sc.data->'sizing'->>'riskUsd')::float AS risk_usd
+          FROM spot_forward_twin_snapshots sc
+          WHERE sc.snapshot_type = 'SCAN'
+            AND sc.scan_id = ANY(${buyScanIds})
+            AND sc.data->'sizing' IS NOT NULL
+            AND sc.data->'sizing'->>'stopPrice' IS NOT NULL
+            AND sc.data->'sizing'->>'riskUsd' IS NOT NULL
+        ` as any);
+        scanSizings = ((scanSizingRows.rows ?? []) as any[]).map((r: any) => ({
+          scanId: r.scan_id, pair: r.pair,
+          stopPrice: parseFloat(String(r.stop_price ?? "0")),
+          riskUsd: parseFloat(String(r.risk_usd ?? "0")),
+        }));
+      }
+
+      // Step 4: Last supervisor per lotId+pair (fast — ~1700 rows, 10ms).
+      const supRows = await db.execute(sql`
+        SELECT DISTINCT ON (s.data->'position'->>'lotId', s.pair)
+          s.data->'position'->>'lotId' AS lot_id,
+          s.pair AS pair,
+          (s.data->'position'->>'mfe')::float AS mfe,
+          (s.data->'position'->>'mae')::float AS mae,
+          (s.data->'position'->>'mfeR')::float AS mfe_r,
+          (s.data->'position'->>'maeR')::float AS mae_r,
+          s.data->'exitDecision'->>'reasonType' AS exit_reason_type
+        FROM spot_forward_twin_snapshots s
+        WHERE s.snapshot_type = 'SUPERVISOR'
+          AND s.data->'position'->>'lotId' IS NOT NULL
+        ORDER BY s.data->'position'->>'lotId', s.pair, s.timestamp DESC
+      ` as any);
+      const supervisors: RawSupervisorData[] = ((supRows.rows ?? []) as any[]).map((r: any) => ({
+        lotId: r.lot_id, pair: r.pair,
+        mfe: parseFloat(String(r.mfe ?? "0")),
+        mae: parseFloat(String(r.mae ?? "0")),
+        mfeR: parseFloat(String(r.mfe_r ?? "0")),
+        maeR: parseFloat(String(r.mae_r ?? "0")),
+        exitReasonType: r.exit_reason_type ?? null,
+      }));
+
+      // Step 5: Legacy BUY fills with null lotId.
+      const legacyRows2 = await db.execute(sql`
+        SELECT COUNT(*) AS cnt FROM spot_forward_twin_snapshots fb
+        WHERE fb.snapshot_type = 'FILL'
+          AND fb.data->'fill'->>'side' = 'BUY'
+          AND fb.data->'fill'->>'lotId' IS NULL
+      ` as any);
+      const legacyNullLotBuyFillCount = parseInt(
+        String(((legacyRows2.rows ?? [])[0] as any)?.cnt ?? "0"),
+      );
+
+      // Run the canonical normalizer.
+      const canonicalResult = normalizeCompletedTrades({
+        buyFills,
+        sellFills,
+        scanSizings,
+        supervisors,
+        legacyNullLotBuyFillCount,
+      });
+
+      // Build a set of completed lot keys from the canonical result.
+      const completedLotKeys = new Set<string>();
+      for (const ct of canonicalResult.completedTrades) {
+        completedLotKeys.add(`${ct.lotId}|${ct.pair}`);
+      }
+      const globalCompletedTrades = completedLotKeys.size;
+      const globalTrackedLots = globalUniqueLots - globalCompletedTrades;
+
+      // R14F: Page result for the lots table (LIMIT applies only to display).
       const trackedLotRows = await db.execute(sql`
         WITH fill_lots AS (
           SELECT
@@ -1012,35 +1195,36 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         LIMIT ${limit}
       `);
 
-      // R14: Get durable completed lot IDs for status determination.
-      const durableAvailable = await isDurableStorageAvailable();
-      let durableLotKeys = new Set<string>();
-      if (durableAvailable) {
-        try {
-          const durableRows = await db.execute(sql`
-            SELECT lot_id, pair FROM spot_ai_forward_training_trades
-          ` as any);
-          for (const row of (durableRows.rows ?? []) as any[]) {
-            durableLotKeys.add(`${row.lot_id}|${row.pair}`);
-          }
-        } catch {
-          // If durable query fails, treat as no labeled lots.
-        }
-      }
-
       const lots = ((trackedLotRows.rows ?? []) as any[]).map((r: any) => {
         const lotKey = `${r.lot_id}|${r.pair}`;
-        const isLabeled = durableLotKeys.has(lotKey);
-        const isCompleted = r.buy_fills > 0 && r.sell_fills > 0;
-        // R14: Status semantics:
-        // ETIQUETADO: durable training row exists for this lot.
-        // COMPLETO: has both BUY and SELL fills (economic cycle) but not labeled.
-        // EN_SEGUIMIENTO: identified lot with Forward Twin tracking, not completed.
-        const status = isLabeled ? "ETIQUETADO" : isCompleted ? "COMPLETO" : "EN_SEGUIMIENTO";
+        // R14F: lifecycleStatus from canonical normalizer.
+        const isCanonicallyCompleted = completedLotKeys.has(lotKey);
+        const lifecycleStatus = isCanonicallyCompleted ? "COMPLETO" : "EN_SEGUIMIENTO";
+
+        // R14F: labelStatus from durable store. Separate concept.
+        // If durableLotKeysAvailable=false, labelStatus=NO_DISPONIBLE.
+        let labelStatus: string;
+        if (!durableLotKeysAvailable) {
+          labelStatus = "NO_DISPONIBLE";
+        } else if (durableLotKeys.has(lotKey)) {
+          labelStatus = "ETIQUETADO";
+        } else {
+          labelStatus = "NO_ETIQUETADO";
+        }
+
+        // Combined status for backward-compatible UI field.
+        // Priority: ETIQUETADO > COMPLETO > EN_SEGUIMIENTO.
+        // But if labelStatus=NO_DISPONIBLE, don't claim ETIQUETADO.
+        const status = labelStatus === "ETIQUETADO"
+          ? "ETIQUETADO"
+          : lifecycleStatus;
+
         return {
           lotId: r.lot_id,
           pair: r.pair,
           status,
+          lifecycleStatus,
+          labelStatus,
           entryPrice: r.entry_price ? parseFloat(r.entry_price) : null,
           currentR: r.current_r ?? null,
           mfeR: r.mfe_r ?? null,
@@ -1055,9 +1239,10 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         };
       });
 
-      const uniqueLots = lots.length;
-      const completedTradesCount = lots.filter(l => l.status === "COMPLETO" || l.status === "ETIQUETADO").length;
-      const trackedLotsCount = lots.filter(l => l.status === "EN_SEGUIMIENTO").length;
+      // R14F: KPIs are GLOBAL (from globalLots + canonical normalizer), NOT from page.
+      const uniqueLots = globalUniqueLots;
+      const completedTradesCount = globalCompletedTrades;
+      const trackedLotsCount = globalTrackedLots;
 
       res.json({
         historicalSpotTrades,
@@ -1072,7 +1257,9 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         trackedLotsCount,
         completedTrades: completedTradesCount,
         labeledTrades,
-        durableStorageAvailable: durableAvailable,
+        labeledTradesAvailable: durableStatusAvailable,
+        durableStorageAvailable: durableStatusAvailable,
+        durableLotKeysAvailable,
         lots,
       });
     } catch (error: any) {
