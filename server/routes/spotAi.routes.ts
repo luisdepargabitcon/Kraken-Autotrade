@@ -127,20 +127,12 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   app.get("/api/spot/ai/dataset/quality", async (_req, res) => {
     try {
       // R14: Use physical columns (parity verified: 0 mismatches).
-      // R14: Replace correlated subqueries with CTE-based distinct lot sets.
-      const rows = await db.execute(sql`
-        WITH fill_lots AS (
-          SELECT DISTINCT data->'fill'->>'lotId' AS lot_id
-          FROM spot_forward_twin_snapshots
-          WHERE snapshot_type = 'FILL'
-            AND data->'fill'->>'lotId' IS NOT NULL
-        ),
-        sup_lots AS (
-          SELECT DISTINCT data->'position'->>'lotId' AS lot_id
-          FROM spot_forward_twin_snapshots
-          WHERE snapshot_type = 'SUPERVISOR'
-            AND data->'position'->>'lotId' IS NOT NULL
-        )
+      // R14: Split into separate index-friendly queries to avoid full-table
+      //      correlated NOT EXISTS scans that took 126s on 17k rows.
+      //      Each sub-query uses idx_ft_pair_type for snapshot_type filtering.
+
+      // Schema mismatches — simple aggregate, no JSONB extraction.
+      const schemaRows = await db.execute(sql`
         SELECT
           COUNT(*) FILTER (
             WHERE (snapshot_type = 'SCAN' AND schema_version != 1)
@@ -148,29 +140,73 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
               OR (snapshot_type = 'SUPERVISOR' AND schema_version NOT IN (1, 2))
               OR (snapshot_type IS NULL)
               OR (snapshot_type NOT IN ('SCAN', 'FILL', 'SUPERVISOR'))
-          ) AS schema_mismatches,
-          COUNT(*) FILTER (WHERE snapshot_type = 'SUPERVISOR'
-            AND data->'position'->>'lotId' IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM fill_lots fl WHERE fl.lot_id = spot_forward_twin_snapshots.data->'position'->>'lotId')
-          ) AS orphan_supervisor,
-          COUNT(*) FILTER (WHERE snapshot_type = 'FILL'
-            AND data->'fill'->>'lotId' IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM sup_lots sl WHERE sl.lot_id = spot_forward_twin_snapshots.data->'fill'->>'lotId')
-          ) AS orphan_fills,
-          COUNT(*) FILTER (WHERE snapshot_type = 'SCAN'
-            AND (data->'ticker' IS NULL OR data->'regime' IS NULL OR data->'volume' IS NULL OR data->'signal' IS NULL OR data->'capital' IS NULL)
-          ) AS invalid_snapshots,
-          COUNT(*) FILTER (WHERE snapshot_type = 'SCAN'
-            AND (data->'ticker'->>'bid' IS NULL OR data->'regime'->>'atrPct' IS NULL OR data->'regime'->>'adx' IS NULL)
-          ) AS missing_features
+          ) AS schema_mismatches
         FROM spot_forward_twin_snapshots
       `);
-      const r = (rows.rows ?? [])[0] as any ?? {};
-      const schemaMismatches = parseInt(r.schema_mismatches ?? "0");
-      const orphanSupervisor = parseInt(r.orphan_supervisor ?? "0");
-      const orphanFills = parseInt(r.orphan_fills ?? "0");
-      const invalidSnapshots = parseInt(r.invalid_snapshots ?? "0");
-      const missingFeatures = parseInt(r.missing_features ?? "0");
+      const sr = (schemaRows.rows ?? [])[0] as any ?? {};
+      const schemaMismatches = parseInt(sr.schema_mismatches ?? "0");
+
+      // Orphan supervisor — supervisors whose lotId has no matching FILL lotId.
+      // Uses index on snapshot_type for both sides.
+      const orphanSupRows = await db.execute(sql`
+        SELECT COUNT(*) AS orphan_supervisor
+        FROM (
+          SELECT DISTINCT data->'position'->>'lotId' AS lot_id
+          FROM spot_forward_twin_snapshots
+          WHERE snapshot_type = 'SUPERVISOR'
+            AND data->'position'->>'lotId' IS NOT NULL
+        ) sup
+        WHERE NOT EXISTS (
+          SELECT 1 FROM (
+            SELECT DISTINCT data->'fill'->>'lotId' AS lot_id
+            FROM spot_forward_twin_snapshots
+            WHERE snapshot_type = 'FILL'
+              AND data->'fill'->>'lotId' IS NOT NULL
+          ) fl
+          WHERE fl.lot_id = sup.lot_id
+        )
+      `);
+      const orphanSupervisor = parseInt(((orphanSupRows.rows ?? [])[0] as any)?.orphan_supervisor ?? "0");
+
+      // Orphan fills — fills whose lotId has no matching SUPERVISOR lotId.
+      const orphanFillRows = await db.execute(sql`
+        SELECT COUNT(*) AS orphan_fills
+        FROM (
+          SELECT DISTINCT data->'fill'->>'lotId' AS lot_id
+          FROM spot_forward_twin_snapshots
+          WHERE snapshot_type = 'FILL'
+            AND data->'fill'->>'lotId' IS NOT NULL
+        ) fl
+        WHERE NOT EXISTS (
+          SELECT 1 FROM (
+            SELECT DISTINCT data->'position'->>'lotId' AS lot_id
+            FROM spot_forward_twin_snapshots
+            WHERE snapshot_type = 'SUPERVISOR'
+              AND data->'position'->>'lotId' IS NOT NULL
+          ) sup
+          WHERE sup.lot_id = fl.lot_id
+        )
+      `);
+      const orphanFills = parseInt(((orphanFillRows.rows ?? [])[0] as any)?.orphan_fills ?? "0");
+
+      // Invalid/missing SCAN features — only scan SCAN rows via index.
+      const scanQualityRows = await db.execute(sql`
+        SELECT
+          COUNT(*) FILTER (
+            WHERE data->'ticker' IS NULL OR data->'regime' IS NULL
+              OR data->'volume' IS NULL OR data->'signal' IS NULL OR data->'capital' IS NULL
+          ) AS invalid_snapshots,
+          COUNT(*) FILTER (
+            WHERE data->'ticker'->>'bid' IS NULL
+              OR data->'regime'->>'atrPct' IS NULL
+              OR data->'regime'->>'adx' IS NULL
+          ) AS missing_features
+        FROM spot_forward_twin_snapshots
+        WHERE snapshot_type = 'SCAN'
+      `);
+      const sqr = (scanQualityRows.rows ?? [])[0] as any ?? {};
+      const invalidSnapshots = parseInt(sqr.invalid_snapshots ?? "0");
+      const missingFeatures = parseInt(sqr.missing_features ?? "0");
 
       // R8-09: Duplicate fills and incomplete trades.
       // R8-09: Duplicate identity uses the SINGLE canonical countDuplicateFills()
