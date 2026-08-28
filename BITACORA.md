@@ -8976,3 +8976,72 @@ NO TRAINING
 NO REAL
 PENDING_GITHUB_COUNTERAUDIT=YES
 ```
+
+---
+
+## SPOT R13G — RUNNER VERIFIABLE + RUNBOOK + ROLLBACK CORREGIDO
+
+### Refactor runner
+
+`script/spot-ai-migrate-090.ts` refactorizado:
+- Core exportado: `runSpotAiMigration090(deps)` — throw ante fallo, nunca `process.exit()`.
+- Wrapper CLI: `main()` — captura errores tipados, asigna `process.exitCode`.
+- Errores tipados: `ConfirmationError`, `MigrationFileNotFoundError`, `PostVerifyError`.
+- Deps inyectables: pool, runner, fsExists, migrationFile.
+
+### Tests reales R13G
+
+- `spotAiMigrate090RunnerR13G.test.ts` (12 tests): llama al core productivo con deps inyectadas.
+  - Confirmation gate real: sin token → `ConfirmationError`, runner.run=0, pool.query=0.
+  - Only-090 real: captura descriptor pasado a `runner.run` — length=1, id=090.
+  - Failure propagation real: `runner.run` throw → core throw, post-verify=0 queries.
+  - Post-verify real: 6 casos (registry, training table, giveback table, training column, giveback column, all-pass).
+- `spotAiMigrate090IdempotencyR13G.test.ts` (1 test): usa la CLASE real `AutoMigrationRunner` con fake pool transaccional.
+  - RUN 1: SQL ejecutado 1 vez, registry registra 090.
+  - RUN 2: SQL NO se re-ejecuta, count total=1 (no 2).
+
+Eliminado `spotAiMigrate090RunnerR13F.test.ts` — tests de evidencia falsa.
+
+### Runbook creado
+
+`AUDITORIAS/SPOT_AI_090_STAGING_RUNBOOK_2026-08-28.md`:
+- Pre-apply SQL completo (11 queries read-only).
+- Post-apply SQL completo (7 queries read-only).
+- Canonical duplicate fills: lotId+pair+side+orderId+executedAt+fillPrice+fillVolume+feeUsd.
+- Completed candidates: BUY > 0 AND SELL > 0 con buy_fill_count, sell_fill_count, buy_volume, sell_volume.
+- Safe deploy order detallado (18 pasos).
+- Rollback con CASE A (before commit) vs CASE B (after commit) distinguidos.
+
+### Rollback corregido
+
+CASE A — MIGRATION_EXECUTION_FAILURE_BEFORE_COMMIT:
+- AutoMigrationRunner ROLLBACK. 090 NO registrada. NO deploy. App anterior activa.
+
+CASE B — POSTVERIFY_FAILURE_AFTER_MIGRATION_COMMIT:
+- 090 PUEDE estar ya aplicada y commiteada.
+- NO afirmar rollback.
+- STOP. NO deploy. Inspeccionar manualmente. NO DROP. NO rerun destructivo.
+- App anterior sigue funcionando mientras se diagnostica.
+
+Eliminada la afirmación "migration failure => app startup aborts" — 090 NO se aplica mediante app startup.
+
+### Validación
+
+- R13G tests: 2 archivos / 13 tests pasaron
+- SPOT-AI: 58 archivos / 525 tests pasaron
+- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
+- TSC: exit 0
+- npm run check: exit 0
+- Build: exit 0
+- git diff --check: exit 0
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION
+NO VPS
+NO TRAINING
+NO REAL
+PENDING_GITHUB_COUNTERAUDIT=YES
+```
