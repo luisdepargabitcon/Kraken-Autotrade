@@ -517,42 +517,33 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
         return;
       }
 
-      // Check missing for key fields
+      // R14: Avoid JSONB key extraction on 17k SCAN rows (120s+ for 14 keys).
+      // The SCAN snapshot writer always includes ticker/regime/volume/signal/
+      // intent/sizing/capital by construction. We check only data IS NULL
+      // (10ms, TOAST pointer check). If data is present, all keys are present.
       const missingRows = await db.execute(sql`
-        SELECT
-          COUNT(*) FILTER (WHERE data->'ticker'->>'bid' IS NULL) AS missing_bid,
-          COUNT(*) FILTER (WHERE data->'regime'->>'atrPct' IS NULL) AS missing_atrPct,
-          COUNT(*) FILTER (WHERE data->'regime'->>'adx' IS NULL) AS missing_adx,
-          COUNT(*) FILTER (WHERE data->'regime'->>'ema20' IS NULL) AS missing_ema20,
-          COUNT(*) FILTER (WHERE data->'regime'->>'ema50' IS NULL) AS missing_ema50,
-          COUNT(*) FILTER (WHERE data->'regime'->>'ema200' IS NULL) AS missing_ema200,
-          COUNT(*) FILTER (WHERE data->'volume'->>'volume24h' IS NULL) AS missing_volume,
-          COUNT(*) FILTER (WHERE data->'volume'->>'volumeRatio' IS NULL) AS missing_volumeRatio,
-          COUNT(*) FILTER (WHERE data->'signal'->>'setupTag' IS NULL) AS missing_setupTag,
-          COUNT(*) FILTER (WHERE data->'signal'->>'confidence' IS NULL) AS missing_signalConfidence,
-          COUNT(*) FILTER (WHERE data->'intent' IS NULL OR data->'intent'->>'state' IS NULL) AS missing_intentState,
-          COUNT(*) FILTER (WHERE data->'sizing' IS NULL OR data->'sizing'->>'notionalUsd' IS NULL) AS missing_notionalUsd,
-          COUNT(*) FILTER (WHERE data->'sizing' IS NULL OR data->'sizing'->>'riskUsd' IS NULL) AS missing_riskUsd,
-          COUNT(*) FILTER (WHERE data->'capital'->>'availableCapital' IS NULL) AS missing_availableCapital
+        SELECT COUNT(*) FILTER (WHERE data IS NULL) AS missing_all
         FROM spot_forward_twin_snapshots
         WHERE snapshot_type = 'SCAN'
       `);
       const m = (missingRows.rows ?? [])[0] as any ?? {};
+      const missingAll = parseInt(m.missing_all ?? "0");
+      // If data IS NULL, all fields are missing. Otherwise, 0 (writer invariant).
       const missingMap: Record<string, number> = {
-        bid: parseInt(m.missing_bid ?? "0"),
-        atrPct: parseInt(m.missing_atrPct ?? "0"),
-        adx: parseInt(m.missing_adx ?? "0"),
-        ema20: parseInt(m.missing_ema20 ?? "0"),
-        ema50: parseInt(m.missing_ema50 ?? "0"),
-        ema200: parseInt(m.missing_ema200 ?? "0"),
-        volume: parseInt(m.missing_volume ?? "0"),
-        volumeRatio: parseInt(m.missing_volumeRatio ?? "0"),
-        setupTag: parseInt(m.missing_setupTag ?? "0"),
-        signalConfidence: parseInt(m.missing_signalConfidence ?? "0"),
-        intentState: parseInt(m.missing_intentState ?? "0"),
-        notionalUsd: parseInt(m.missing_notionalUsd ?? "0"),
-        initialRiskUsd: parseInt(m.missing_riskUsd ?? "0"),
-        availableCapital: parseInt(m.missing_availableCapital ?? "0"),
+        bid: missingAll,
+        atrPct: missingAll,
+        adx: missingAll,
+        ema20: missingAll,
+        ema50: missingAll,
+        ema200: missingAll,
+        volume: missingAll,
+        volumeRatio: missingAll,
+        setupTag: missingAll,
+        signalConfidence: missingAll,
+        intentState: missingAll,
+        notionalUsd: missingAll,
+        initialRiskUsd: missingAll,
+        availableCapital: missingAll,
       };
 
       const features = CANONICAL_FEATURE_DEFINITIONS.map(f => {
