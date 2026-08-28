@@ -20,6 +20,7 @@ import {
   persistGivebackSamples,
   buildCanonicalFingerprint,
   buildGivebackFingerprint,
+  canonicalizePolicyProvenance,
   runDurableReconciliation,
   scheduleDurableReconciliation,
   DURABLE_RETENTION_POLICY,
@@ -145,8 +146,9 @@ describe("R5 DURABLE tests", () => {
       sourceForwardTwinSchemaVersion: 2,
       sourcePolicyVersion: "test",
     };
-    const fp1 = buildGivebackFingerprint(sample);
-    const fp2 = buildGivebackFingerprint(sample);
+    const canonical = canonicalizePolicyProvenance("test")!;
+    const fp1 = buildGivebackFingerprint(sample, 1, canonical);
+    const fp2 = buildGivebackFingerprint(sample, 1, canonical);
     expect(fp1).toBe(fp2);
   });
 
@@ -158,10 +160,11 @@ describe("R5 DURABLE tests", () => {
       sourceForwardTwinSchemaVersion: 2,
       sourcePolicyVersion: "test",
     });
+    const canonical = canonicalizePolicyProvenance("test")!;
     const sample1 = makeSample({ future_MFE_R: 2.0, future_MAE_R: -0.5 });
     const sample2 = makeSample({ future_MFE_R: 3.0, future_MAE_R: -0.5 });
-    expect(buildGivebackFingerprint(sample1))
-      .not.toBe(buildGivebackFingerprint(sample2));
+    expect(buildGivebackFingerprint(sample1, 1, canonical))
+      .not.toBe(buildGivebackFingerprint(sample2, 1, canonical));
   });
 
   // ─── DURABLE_16: retention policy ────────────────────────────────────────

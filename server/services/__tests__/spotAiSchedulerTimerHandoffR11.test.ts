@@ -1,22 +1,22 @@
 /**
- * spotAiSchedulerTimerHandoffR11.test.ts — R11-09 scheduler handoff 100% by timer.
+ * spotAiSchedulerTimerHandoffR11.test.ts — R12-05 scheduler handoff by timer.
  *
- * R11-09: No direct runDurableReconciliation() calls to demonstrate
- * generation B recurrence. Only scheduler timers.
+ * R12-05: NO arbitrary catch to silence errors.
+ * Uses advanceTimersByTimeAsync for exact timer advancement.
+ * Uses runAllTimersAsync with a TARGETED catch that only ignores
+ * vitest's "too many timer iterations" internal error (expected with
+ * recurring timers). All other errors are re-thrown — test failures
+ * are NOT silenced.
  *
- * Uses runAllTimersAsync to flush microtasks (vitest's advanceTimersByTimeAsync
- * does not flush microtasks from async timer callbacks that were fired by
- * previous advanceTimersByTimeAsync calls).
+ * Sequence:
+ * A starts, +5s, calls=1, A pending.
+ * Stop A. Start B.
+ * +5s with A pending: calls=1 (anti-overlap, B schedules next).
+ * Resolve A, flush → A completes (no rearm), B's next timer fires → calls=2.
+ * Resolve B, flush → B completes, B's next timer fires → calls=3.
+ * Resolve, flush → B completes, B's next timer fires → calls=4.
  *
- * A scheduler: start, +5s, calls=1, A pending.
- * stop A.
- * start B.
- * +5s while A pending: calls=1 (anti-overlap).
- * resolve A.
- * A does not rearm.
- * Advance to B's next timer: calls=2.
- * Advance 1 interval: calls=3.
- * Advance 1 interval: calls=4.
+ * Exact counts: 1,1,2,3,4.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -45,7 +45,6 @@ import {
   _setDurableDatasetBuilder,
   startDurableReconciliationScheduler,
   stopDurableReconciliationScheduler,
-  DURABLE_RECONCILIATION_INTERVAL,
   type DurableRepository,
   type DurableInsertResult,
 } from "../spotAiForwardTwin/spotAiDurableTrainingStore";
@@ -77,18 +76,21 @@ class CountingRepo implements DurableRepository {
 }
 
 /**
- * Run all pending timers and flush microtasks. Catches the error
- * that vitest throws when too many iterations are reached (recurring timer).
+ * Flush pending microtasks and timers from async chains.
+ * R12-05: Does NOT catch arbitrary errors. Only ignores vitest's
+ * "too many timer iterations" internal error, which is expected
+ * with recurring timers. All other errors are re-thrown.
  */
-async function flushAll(): Promise<void> {
+async function flushAsync(): Promise<void> {
   try {
     await vi.runAllTimersAsync();
-  } catch {
-    // runAllTimersAsync throws after iteration limit — ignore
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("too many") && !msg.includes("iterations")) throw e;
   }
 }
 
-describe("R11-09 SCHEDULER TIMER HANDOFF (no direct calls)", () => {
+describe("R12-05 SCHEDULER TIMER HANDOFF (no arbitrary catch)", () => {
   let repo: CountingRepo;
 
   beforeEach(() => {
@@ -129,7 +131,7 @@ describe("R11-09 SCHEDULER TIMER HANDOFF (no direct calls)", () => {
     vi.useRealTimers();
   });
 
-  it("LIFE_R11_TIMER_HANDOFF_01: exact timer counts, no direct calls", async () => {
+  it("LIFE_R12_TIMER_HANDOFF_01: exact timer counts 1,1,2,3,4 no direct calls", async () => {
     const deferredA = createDeferred<boolean>();
     repo.deferred = deferredA;
 
@@ -150,47 +152,41 @@ describe("R11-09 SCHEDULER TIMER HANDOFF (no direct calls)", () => {
 
     // +5s: B's first scheduled run fires.
     // A is still pending (reconciliationRunning=true) → anti-overlap → skip.
+    // B still calls scheduleNext() after the skip.
     await vi.advanceTimersByTimeAsync(5000);
-    await flushAll();
-    expect(repo.callCount).toBe(1); // B skipped
+    expect(repo.callCount).toBe(1); // B skipped, A still pending
 
-    // Resolve A. Use flushAll to:
-    // 1. Flush microtasks from A's isAvailable resolution
-    // 2. Complete A's reconciliation (reconciliationRunning=false)
-    // 3. Fire B's next scheduled timer
-    // 4. B calls isAvailable (callCount=2), returns deferredB (pending)
-    // 5. B's reconciliation suspended — no more timers to fire
+    // Resolve A and flush. flushAsync processes:
+    // 1. A's isAvailable resolves → A's reconciliation completes → reconciliationRunning=false
+    // 2. A does not rearm (gen mismatch)
+    // 3. B's next scheduled timer fires → B calls isAvailable (callCount=2) → pending on deferredB
     deferredA.resolve(true);
     _resetDurableStorageCache();
-    await flushAll();
-
-    // A did not rearm. B ran once via timer. calls=2.
+    await flushAsync();
     expect(repo.callCount).toBe(2);
 
-    // Resolve B's first run. Set new deferred for B's second run.
+    // Resolve B's first run and flush. flushAsync processes:
+    // 1. B's isAvailable resolves → B's reconciliation completes → scheduleNext()
+    // 2. B's next timer fires → B calls isAvailable (callCount=3) → pending on new deferred
     deferredB.resolve(true);
     const deferredC = createDeferred<boolean>();
     repo.deferred = deferredC;
     _resetDurableStorageCache();
-    // flushAll: B's first run completes, scheduleNext called,
-    // B's next timer fires, isAvailable called (callCount=3), returns deferredC
-    await flushAll();
-
-    // calls=3
+    await flushAsync();
     expect(repo.callCount).toBe(3);
 
-    // Resolve B's second run. Set new deferred for B's third run.
+    // Resolve B's second run and flush. flushAsync processes:
+    // 1. B's isAvailable resolves → B's reconciliation completes → scheduleNext()
+    // 2. B's next timer fires → B calls isAvailable (callCount=4) → pending on new deferred
     deferredC.resolve(true);
     const deferredD = createDeferred<boolean>();
     repo.deferred = deferredD;
     _resetDurableStorageCache();
-    await flushAll();
-
-    // calls=4
+    await flushAsync();
     expect(repo.callCount).toBe(4);
 
     // No direct runDurableReconciliation() calls were used.
-    // All runs came from scheduler timers.
-    // runAllTimersAsync was used only to flush microtasks and fire pending timers.
+    // No arbitrary catch — only vitest's iteration limit is ignored.
+    // Exact counts: 1, 1, 2, 3, 4.
   }, 30000);
 });

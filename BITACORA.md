@@ -8742,3 +8742,79 @@ NO TRAINING
 NO REAL
 PENDING_GITHUB_COUNTERAUDIT=YES
 ```
+
+---
+
+## SPOT R12 — TYPED E2E + PRODUCTION OUTAGE PROOF
+
+### Defectos cerrados (contraauditoría R11)
+
+1. **R11 fingerprint inválido seguía devolviendo SHA sentinel.**
+   `buildGivebackFingerprint` usaba `policyVersion: "__INVALID_POLICY_FAIL_CLOSED__"` y devolvía SHA-256 para provenance inválida. Eliminado completamente. Una provenance inválida NO puede producir un canonical fingerprint.
+
+2. **`canonicalPolicyVersion` opcional no garantizaba provenance validada.**
+   Introducido branded type `CanonicalPolicyVersion = string & { readonly [__canonicalPolicyVersionBrand]: true }`. `canonicalizePolicyProvenance` retorna `CanonicalPolicyVersion | null`. `buildGivebackFingerprint` requiere `CanonicalPolicyVersion` obligatorio (no optional, no default). Una string cruda NO es asignable al tipo branded en compile time.
+
+3. **Mid-run outage test usaba FakeRepo que retornaba STORAGE_UNAVAILABLE directamente.**
+   Creado `spotAiProductionOutageR12.test.ts` que usa `setDurableRepository(null)` (productionRepository REAL) y mockea únicamente `db.execute`. Probado INSERT throw → reprobe unavailable → STORAGE_UNAVAILABLE, e INSERT throw → reprobe healthy → INSERT_FAILED.
+
+4. **Production INSERT throw→reprobe no estaba probado.**
+   Probado con el adapter productivo real. Outage real (connection lost) → STORAGE_UNAVAILABLE. Constraint violation → INSERT_FAILED. Giveback outage y giveback healthy reprobe también probados.
+
+5. **Final lint fix degradó fixture E2E a `data:any` + casts.**
+   Creadas factories tipadas `makeScanSnapshot`, `makeFillSnapshot`, `makeSupervisorSnapshot` que producen objetos que cumplen REALMENTE `ForwardTwinSnapshot`. El fixture se declara como `Array<{ data: ForwardTwinSnapshot }>` sin `any` ni `as ForwardTwinSnapshot[]`.
+
+6. **ForwardTwin fixture no cumplía el schema productivo completo.**
+   Las factories completan todos los campos requeridos: ticker (bid, ask, last, spread, spreadPct, fetchedAt), regime (14 campos), volume, signal, sizing, capital, position (con currentR, initialStopPrice, riskUsd, etc.), exitDecision, fill (con slippageUsd, slippagePct, fillQuality, etc.).
+
+7. **Scheduler test ignoraba cualquier error de `runAllTimersAsync`.**
+   Eliminado `try { await vi.runAllTimersAsync() } catch { // ignore }`. Reescrito con `flushAsync()` que usa `runAllTimersAsync` con catch TARGETED que solo ignora el error interno de vitest "too many timer iterations". Todos los demás errores se re-throw. Counts exactos: 1,1,2,3,4.
+
+8. **INSERT SQL test usaba substring contains, no exact column-set comparison.**
+   Creado `parseInsertColumns()` que extrae el set exacto de columnas del `INSERT INTO table (...)` y compara con `Set` esperado via `toEqual`. Verifica ausencia de `id` y `created_at`, y ausencia de duplicados.
+
+### Cache semantics (R12-03)
+
+`invalidateDurableStorageCache()` ahora setea `durableStorageAvailableCache = null` (no negative cache). La siguiente llamada a `isDurableStorageAvailable()` ejecuta REALMENTE `repository.isAvailable()`. Test con counter verifica re-probe real.
+
+### Giveback E2E fuerte (R12-04)
+
+Dos SUPERVISOR v2 con currentR=1.5 y currentR=2.0. Assertions incondicionales: `matureSamples.length > 0`, `repoA.givebacks.size > 0`, `repoB.givebacks.size > 0`, `supervisorSnapshots.length >= 2`. Labels `future_MFE_R` y `future_MAE_R` requeridos (no condicional). Row A deepEqual row B, fingerprint A === fingerprint B.
+
+### Validación
+
+- SPOT-AI: 57 archivos / 513 tests pasaron
+- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
+- TSC: exit 0
+- `npm run check`: exit 0
+- Build: exit 0
+- `git diff --check`: exit 0
+
+### Invariantes preservados
+
+- DURABLE_TRADE_IS_TRAINABLE_TYPE=TRUE_ONLY
+- Empty features/labels => NOT_TRAINABLE
+- Unlabeled giveback => no persist
+- Mature giveback => persist
+- No phantom exit qty
+- QTY_EPSILON=1e-8
+- No 1% tolerance
+- Weighted BUY/SELL
+- Real fee allocation
+- Policy provenance real
+- Atomic INSERT
+- Fingerprint conflict fail closed
+- Duplicate quality no false zero
+- Quality partial != OK
+- Storage unavailable monotónico
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION (090 no aplicada, no existe 091)
+NO VPS
+NO TRAINING
+NO REAL
+PENDING_GITHUB_COUNTERAUDIT=YES
+```

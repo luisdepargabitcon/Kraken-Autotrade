@@ -1,8 +1,11 @@
 /**
  * spotAiGivebackFingerprintR11.test.ts — R11-03 eliminate raw-policy fallback.
  *
- * R11-03: buildGivebackFingerprint must NOT fall back to raw policy.
- * - BACKFILL => fail-closed fingerprint (never matches valid)
+ * R12-01: Updated for branded CanonicalPolicyVersion type.
+ * buildGivebackFingerprint now REQUIRES a CanonicalPolicyVersion (branded).
+ * Invalid policy is rejected by buildDurableGivebackPayload BEFORE fingerprinting.
+ *
+ * - BACKFILL => canonicalize = null => builder fails closed (INVALID_POLICY_PROVENANCE)
  * - "  SPOT_POLICY_X  " and "SPOT_POLICY_X" => same fingerprint
  * - No production code contains `canonicalizePolicyProvenance(...) ?? original`
  */
@@ -11,6 +14,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildGivebackFingerprint,
   buildDurableGivebackPayload,
+  canonicalizePolicyProvenance,
 } from "../spotAiForwardTwin/spotAiDurableTrainingStore";
 import type { SpotAiGivebackSample } from "../spotAiForwardTwin/spotAiForwardTwinTypes";
 import fs from "fs";
@@ -60,8 +64,10 @@ describe("R11-03 GIVEBACK FINGERPRINT NO RAW-POLICY FALLBACK", () => {
       expect(rPadded.fingerprint).toBe(rTrimmed.fingerprint);
     }
     // Also test buildGivebackFingerprint directly with canonical policy
-    const fp1 = buildGivebackFingerprint(samplePadded, undefined, "SPOT_POLICY_X");
-    const fp2 = buildGivebackFingerprint(sampleTrimmed, undefined, "SPOT_POLICY_X");
+    const canonicalPadded = canonicalizePolicyProvenance("  SPOT_POLICY_X  ")!;
+    const canonicalTrimmed = canonicalizePolicyProvenance("SPOT_POLICY_X")!;
+    const fp1 = buildGivebackFingerprint(samplePadded, 1, canonicalPadded);
+    const fp2 = buildGivebackFingerprint(sampleTrimmed, 1, canonicalTrimmed);
     expect(fp1).toBe(fp2);
   });
 
@@ -70,19 +76,23 @@ describe("R11-03 GIVEBACK FINGERPRINT NO RAW-POLICY FALLBACK", () => {
     const storePath = path.resolve(__dirname, "../spotAiForwardTwin/spotAiDurableTrainingStore.ts");
     const source = fs.readFileSync(storePath, "utf-8");
     // Check that the old fallback pattern is NOT present for durable provenance
-    // The old pattern was: canonicalizePolicyProvenance(...) ?? sample.sourcePolicyVersion
     const hasFallback = source.includes("?? sample.sourcePolicyVersion");
     expect(hasFallback).toBe(false);
   });
 
-  // FINGERPRINT_R11_04: invalid policy via buildGivebackFingerprint => fail-closed fingerprint
-  it("FINGERPRINT_R11_04: invalid policy => fail-closed fingerprint (never matches valid)", () => {
+  // FINGERPRINT_R11_04: invalid policy cannot produce a fingerprint via builder
+  it("FINGERPRINT_R11_04: invalid policy => builder rejects, no fingerprint produced", () => {
     const sampleInvalid = makeGivebackSample("BACKFILL");
     const sampleValid = makeGivebackSample("SPOT_POLICY_X");
-    // Without canonical policy param, buildGivebackFingerprint canonicalizes internally
-    const fpInvalid = buildGivebackFingerprint(sampleInvalid);
-    const fpValid = buildGivebackFingerprint(sampleValid);
-    // The invalid fingerprint must NOT match the valid one
-    expect(fpInvalid).not.toBe(fpValid);
+    // Invalid policy => canonicalize returns null => builder returns INVALID_POLICY_PROVENANCE
+    const rInvalid = buildDurableGivebackPayload(sampleInvalid);
+    expect(rInvalid.ok).toBe(false);
+    // Valid policy => builder succeeds with fingerprint
+    const rValid = buildDurableGivebackPayload(sampleValid);
+    expect(rValid.ok).toBe(true);
+    // The invalid builder result has NO fingerprint
+    if (!rInvalid.ok) {
+      expect(rInvalid.reason).toBe("INVALID_POLICY_PROVENANCE");
+    }
   });
 });

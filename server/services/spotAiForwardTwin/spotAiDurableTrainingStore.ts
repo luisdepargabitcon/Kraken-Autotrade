@@ -52,6 +52,14 @@ import type { SpotAiDatasetSample, SpotAiGivebackSample } from "./spotAiForwardT
 export const CANONICAL_FINGERPRINT_VERSION = 1;
 export const CANONICAL_FINGERPRINT_ALGORITHM = "SHA-256";
 
+// ─── R12-01: Branded canonical policy version ───────────────────────────────
+// A CanonicalPolicyVersion can ONLY be obtained from canonicalizePolicyProvenance.
+// This prevents raw/synthetic policy strings from reaching buildGivebackFingerprint
+// at compile time. A plain string is NOT assignable to CanonicalPolicyVersion.
+
+declare const __canonicalPolicyVersionBrand: unique symbol;
+export type CanonicalPolicyVersion = string & { readonly [__canonicalPolicyVersionBrand]: true };
+
 /**
  * Stable canonical JSON serialization.
  * Sorts keys to avoid insertion-order dependence.
@@ -340,45 +348,24 @@ export function buildCanonicalFingerprint(
  * R7: Uses per-sample sourceForwardTwinSchemaVersion and sourcePolicyVersion.
  * R7: No v2 fallback — provenance must be present.
  *
- * R11-03: The policy version MUST be canonical and validated BEFORE calling
- * this function. No raw-policy fallback. Callers must canonicalize first.
- * The optional `canonicalPolicyVersion` parameter is the validated policy.
- * If omitted, the function canonicalizes internally (but callers should
- * pass the canonical value to avoid re-canonicalization).
+ * R12-01: The third argument is a MANDATORY CanonicalPolicyVersion (branded type).
+ * It can ONLY be obtained from canonicalizePolicyProvenance. This prevents
+ * raw/synthetic policy strings from reaching the fingerprint builder at
+ * compile time. There is NO sentinel hash for invalid policy — invalid
+ * policy is rejected by buildDurableGivebackPayload BEFORE calling this function.
  */
 export function buildGivebackFingerprint(
   sample: SpotAiGivebackSample,
-  featureSchemaVersion: number = SPOT_AI_FEATURE_SCHEMA_VERSION,
-  canonicalPolicyVersion?: string,
+  featureSchemaVersion: number,
+  canonicalPolicyVersion: CanonicalPolicyVersion,
 ): string {
   const stateJson = sample.state as unknown as Record<string, unknown>;
   const labelsJson = sample.labels as unknown as Record<string, unknown> | null;
-  // R11-03: Use the provided canonical policy, or canonicalize internally.
-  // NO fallback to raw sample.sourcePolicyVersion.
-  const canonicalPolicy = canonicalPolicyVersion ?? canonicalizePolicyProvenance(sample.sourcePolicyVersion);
-  if (canonicalPolicy === null) {
-    // R11-03: Invalid policy cannot produce a canonical fingerprint.
-    // This should never happen if callers validate first. Return a
-    // fail-closed fingerprint that will never match a valid one.
-    const failPayload = {
-      fingerprintVersion: CANONICAL_FINGERPRINT_VERSION,
-      featureSchemaVersion,
-      forwardTwinSchemaVersion: sample.sourceForwardTwinSchemaVersion,
-      policyVersion: "__INVALID_POLICY_FAIL_CLOSED__",
-      lotId: sample.state.lotId,
-      pair: sample.state.pair,
-      timestamp: sample.state.timestamp,
-      stateJson,
-      labelsJson: labelsJson ?? null,
-    };
-    const canonical = stableCanonicalJson(failPayload);
-    return createHash("sha256").update(canonical).digest("hex");
-  }
   const payload = {
     fingerprintVersion: CANONICAL_FINGERPRINT_VERSION,
     featureSchemaVersion,
     forwardTwinSchemaVersion: sample.sourceForwardTwinSchemaVersion,
-    policyVersion: canonicalPolicy,
+    policyVersion: canonicalPolicyVersion,
     lotId: sample.state.lotId,
     pair: sample.state.pair,
     timestamp: sample.state.timestamp,
@@ -668,12 +655,14 @@ export function _resetDurableStorageCache(): void {
 }
 
 /**
- * R11-06: Invalidate the availability cache when an outage is detected.
- * This ensures the next isDurableStorageAvailable() call re-probes the
- * repository instead of returning a stale `true` for up to 60s.
+ * R12-03: Invalidate the availability cache when an outage is detected.
+ * Sets cache to null so the next isDurableStorageAvailable() call
+ * re-probes the REAL repository instead of returning a stale value.
+ * This is NOT a negative cache — it is a true invalidation that forces
+ * a fresh probe on the next call.
  */
 function invalidateDurableStorageCache(): void {
-  durableStorageAvailableCache = { value: false, checkedAt: Date.now() };
+  durableStorageAvailableCache = null;
 }
 
 // ─── Completed trade persistence ─────────────────────────────────────────────
@@ -699,14 +688,16 @@ const SYNTHETIC_INGESTION_POLICY_LABELS = new Set([
  *
  * ENTRY and GIVEBACK use exactly the same function.
  */
-export function canonicalizePolicyProvenance(policy: string): string | null {
+export function canonicalizePolicyProvenance(policy: string): CanonicalPolicyVersion | null {
   if (typeof policy !== "string") return null;
   const trimmed = policy.trim();
   if (trimmed === "") return null;
   // R9-08: Case-insensitive comparison for synthetic labels.
   const normalized = trimmed.toLowerCase();
   if (SYNTHETIC_INGESTION_POLICY_LABELS.has(normalized)) return null;
-  return trimmed;
+  // R12-01: Return branded type so callers cannot pass raw strings to
+  // buildGivebackFingerprint without canonicalization.
+  return trimmed as CanonicalPolicyVersion;
 }
 
 /**

@@ -100,7 +100,19 @@ const GIVEBACK_WRITTEN_COLUMNS = [
   "policy_version", "dataset_fingerprint",
 ];
 
-describe("R11-10 PRODUCTION INSERT COLUMNS", () => {
+/**
+ * R12-06: Parse the exact column set from the INSERT INTO ... (...) clause
+ * and compare as a Set. Not just substring contains — exact set equality.
+ */
+function parseInsertColumns(sql: string): Set<string> {
+  // Match "INSERT INTO table (col1, col2, ...) VALUES"
+  const match = sql.match(/INSERT\s+INTO\s+\w+\s*\(([^)]+)\)\s*VALUES/i);
+  if (!match) throw new Error("Could not parse INSERT columns from SQL: " + sql.slice(0, 100));
+  const cols = match[1].split(",").map((c) => c.trim()).filter((c) => c.length > 0);
+  return new Set(cols);
+}
+
+describe("R12-06 PRODUCTION INSERT COLUMNS (exact set)", () => {
   beforeEach(() => {
     mockExecute.mockReset();
     // Use production repository
@@ -108,8 +120,8 @@ describe("R11-10 PRODUCTION INSERT COLUMNS", () => {
     _resetDurableStorageCache();
   });
 
-  // SQL_R11_PROD_ENTRY_COLUMNS
-  it("SQL_R11_PROD_ENTRY_COLUMNS: production INSERT contains all required columns", async () => {
+  // SQL_R12_PROD_ENTRY_COLUMNS: exact column set comparison
+  it("SQL_R12_PROD_ENTRY_COLUMNS: production INSERT column set is exact", async () => {
     let capturedSql = "";
     mockExecute.mockImplementation((query: any) => {
       const sqlStr = String(query?.sql ?? query ?? "");
@@ -130,14 +142,17 @@ describe("R11-10 PRODUCTION INSERT COLUMNS", () => {
     await persistCompletedTrade(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
 
     expect(capturedSql).toContain("INSERT INTO spot_ai_forward_training_trades");
-    // Verify every WRITTEN_EXPLICITLY column is in the INSERT
-    for (const col of TRAINING_WRITTEN_COLUMNS) {
-      expect(capturedSql).toContain(col);
-    }
+    // R12-06: Parse exact column set from INSERT and compare as Set
+    const actualCols = parseInsertColumns(capturedSql);
+    const expectedCols = new Set(TRAINING_WRITTEN_COLUMNS);
+    expect(actualCols).toEqual(expectedCols);
+    // Verify no id or created_at
+    expect(actualCols.has("id")).toBe(false);
+    expect(actualCols.has("created_at")).toBe(false);
   });
 
-  // SQL_R11_PROD_GIVEBACK_COLUMNS
-  it("SQL_R11_PROD_GIVEBACK_COLUMNS: production INSERT contains all required columns", async () => {
+  // SQL_R12_PROD_GIVEBACK_COLUMNS: exact column set comparison
+  it("SQL_R12_PROD_GIVEBACK_COLUMNS: production INSERT column set is exact", async () => {
     let capturedSql = "";
     mockExecute.mockImplementation((query: any) => {
       const sqlStr = String(query?.sql ?? query ?? "");
@@ -158,13 +173,17 @@ describe("R11-10 PRODUCTION INSERT COLUMNS", () => {
     await persistGivebackSamples([sample]);
 
     expect(capturedSql).toContain("INSERT INTO spot_ai_forward_giveback_samples");
-    for (const col of GIVEBACK_WRITTEN_COLUMNS) {
-      expect(capturedSql).toContain(col);
-    }
+    // R12-06: Parse exact column set from INSERT and compare as Set
+    const actualCols = parseInsertColumns(capturedSql);
+    const expectedCols = new Set(GIVEBACK_WRITTEN_COLUMNS);
+    expect(actualCols).toEqual(expectedCols);
+    // Verify no id or created_at
+    expect(actualCols.has("id")).toBe(false);
+    expect(actualCols.has("created_at")).toBe(false);
   });
 
-  // Verify no unknown critical columns in entry INSERT
-  it("SQL_R11_PROD_ENTRY_02: no unknown critical columns in entry INSERT", async () => {
+  // Verify no duplicates in the column list
+  it("SQL_R12_PROD_ENTRY_02: no duplicate columns in entry INSERT", async () => {
     let capturedSql = "";
     mockExecute.mockImplementation((query: any) => {
       const sqlStr = String(query?.sql ?? query ?? "");
@@ -179,8 +198,10 @@ describe("R11-10 PRODUCTION INSERT COLUMNS", () => {
     const trade = makeTrade();
     await persistCompletedTrade(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
 
-    // Should not contain id (GENERATED_BY_DB) or created_at (GENERATED_BY_DB)
-    expect(capturedSql).not.toMatch(/\bid\b/);
-    expect(capturedSql).not.toContain("created_at");
+    const actualCols = parseInsertColumns(capturedSql);
+    // No duplicates: Set size should match the raw split count
+    const match = capturedSql.match(/INSERT\s+INTO\s+\w+\s*\(([^)]+)\)\s*VALUES/i);
+    const rawCols = match![1].split(",").map((c) => c.trim()).filter((c) => c.length > 0);
+    expect(actualCols.size).toBe(rawCols.length);
   });
 });

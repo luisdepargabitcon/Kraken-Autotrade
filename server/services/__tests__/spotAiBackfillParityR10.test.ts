@@ -49,6 +49,11 @@ import {
 import { queryCompletedTrades, buildTradeOutcomeMap } from "../spotAiForwardTwin/spotAiCompletedTrades";
 import { buildDataset, buildGivebackDataset } from "../spotAiForwardTwin/spotAiDatasetBuilder";
 import type { ForwardTwinSnapshot } from "../spot/spotForwardTwinTypes";
+import {
+  makeScanSnapshot,
+  makeFillSnapshot,
+  makeSupervisorSnapshot,
+} from "./spotAiForwardTwinFactories";
 
 // ─── Capturing repository ────────────────────────────────────────────────────
 
@@ -103,49 +108,18 @@ const supRows = [
   { lot_id: "lot-1", pair: "BTC/USD", mfe: 10, mae: -5, mfe_r: 1, mae_r: -0.5, exit_reason_type: "TARGET" },
 ];
 
-// Raw Forward Twin snapshots for backfill's raw SELECT
-// R11-08: TWO SUPERVISOR v2 snapshots for same lot with different currentR
+// R12-04: Typed ForwardTwinSnapshot fixtures via factories.
+// NO `any`, NO `as ForwardTwinSnapshot[]` casts. TSC guarantees shape.
+// R11-08/R12: TWO SUPERVISOR v2 snapshots for same lot with different currentR
 // to test giveback labels on a future path (not just finalR).
-const snapshotRows: { data: any }[] = [
-  { data: {
-    snapshotType: "SCAN", scanId: "scan-1", pair: "BTC/USD", timestamp: 1000,
-    policyVersion: POLICY_VERSION, schemaVersion: 1,
-    executionMode: "SPOT", engineOwner: "forward-twin",
-    ticker: { bid: 100, ask: 100.1, last: 100 },
-    regime: { atrPct: 1.5, adx: 25, trend: "up" },
-    volume: { ratio: 1.2, baseVolume: 1000 },
-    signal: { type: "BREAKOUT", strength: 0.8 },
-    capital: { availableUsd: 10000, riskPerTradeUsd: 100 },
-    sizing: { stopPrice: 95, riskUsd: 10, qty: 1, notionalUsd: 100 },
-  } },
-  { data: {
-    snapshotType: "FILL", pair: "BTC/USD", timestamp: 1100,
-    executionMode: "SPOT", engineOwner: "forward-twin", schemaVersion: 1, scanId: "scan-1", policyVersion: POLICY_VERSION,
-    fill: { lotId: "lot-1", side: "BUY", orderId: "o1", executedAt: 1100, fillPrice: 100, fillVolume: 1, feeUsd: 1, notionalUsd: 100, slippage: 0, quality: "ok" },
-    execIntent: { positionLotId: "lot-1", scanId: "scan-1" },
-  } },
+const snapshotRows: Array<{ data: ForwardTwinSnapshot }> = [
+  { data: makeScanSnapshot() },
+  { data: makeFillSnapshot("BUY", "lot-1") },
   // SUPERVISOR v2 #1 — mid-trade, currentR=1.5
-  { data: {
-    snapshotType: "SUPERVISOR", pair: "BTC/USD", timestamp: 1500,
-    schemaVersion: 2, policyVersion: POLICY_VERSION,
-    executionMode: "SPOT", engineOwner: "forward-twin", scanId: "scan-1",
-    position: { lotId: "lot-1", entryPrice: 100, currentR: 1.5, mfe: 10, mae: -5, mfeR: 1.0, maeR: -0.5, currentStopPrice: 95, highestPrice: 110 },
-    exitDecision: { reasonType: null },
-  } },
+  { data: makeSupervisorSnapshot("lot-1", 1.5, 1500) },
   // SUPERVISOR v2 #2 — later, currentR=2.0 (different from #1)
-  { data: {
-    snapshotType: "SUPERVISOR", pair: "BTC/USD", timestamp: 1700,
-    schemaVersion: 2, policyVersion: POLICY_VERSION,
-    executionMode: "SPOT", engineOwner: "forward-twin", scanId: "scan-1",
-    position: { lotId: "lot-1", entryPrice: 100, currentR: 2.0, mfe: 15, mae: -5, mfeR: 1.5, maeR: -0.5, currentStopPrice: 95, highestPrice: 115 },
-    exitDecision: { reasonType: null },
-  } },
-  { data: {
-    snapshotType: "FILL", pair: "BTC/USD", timestamp: 2000,
-    executionMode: "SPOT", engineOwner: "forward-twin", schemaVersion: 1, scanId: "scan-1", policyVersion: POLICY_VERSION,
-    fill: { lotId: "lot-1", side: "SELL", orderId: "o2", executedAt: 2000, fillPrice: 110, fillVolume: 1, feeUsd: 1, notionalUsd: 110, slippage: 0, quality: "ok" },
-    execIntent: { positionLotId: "lot-1" },
-  } },
+  { data: makeSupervisorSnapshot("lot-1", 2.0, 1700) },
+  { data: makeFillSnapshot("SELL", "lot-1") },
 ];
 
 function setupMockDb() {
@@ -199,9 +173,9 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
     expect(queryResult.completedTrades.length).toBe(1);
 
     const tradeOutcomes = buildTradeOutcomeMap(queryResult.completedTrades);
-    const scanSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SCAN") as ForwardTwinSnapshot[];
-    const supervisorSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SUPERVISOR") as ForwardTwinSnapshot[];
-    const fillSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "FILL") as ForwardTwinSnapshot[];
+    const scanSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SCAN");
+    const supervisorSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SUPERVISOR");
+    const fillSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "FILL");
 
     const dataset = buildDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     expect(dataset.samples.length).toBeGreaterThan(0);
@@ -248,9 +222,9 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
     setupMockDb();
     const queryResult = await queryCompletedTrades();
     const tradeOutcomes = buildTradeOutcomeMap(queryResult.completedTrades);
-    const scanSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SCAN") as ForwardTwinSnapshot[];
-    const supervisorSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SUPERVISOR") as ForwardTwinSnapshot[];
-    const fillSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "FILL") as ForwardTwinSnapshot[];
+    const scanSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SCAN");
+    const supervisorSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "SUPERVISOR");
+    const fillSnapshots = snapshotRows.map(r => r.data).filter(s => s.snapshotType === "FILL");
 
     const gbDataset = buildGivebackDataset({ scanSnapshots, supervisorSnapshots, fillSnapshots, tradeOutcomes });
     const matureSamples = gbDataset.samples.filter(s => s.labels !== null);
@@ -278,8 +252,10 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
     // R11-08: Assert backfill also persisted giveback rows
     expect(repoB.givebacks.size).toBeGreaterThan(0);
 
-    // R11-08: Comparison is UNCONDITIONAL — no `if (matureSamples.length > 0 ...)`
+    // R11-08/R12-04: Comparison is UNCONDITIONAL — no `if (matureSamples.length > 0 ...)`
     expect(repoA.givebacks.size).toBe(repoB.givebacks.size);
+    // R12-04: Assert supervisor count >= 2 (two v2 supervisors in fixture)
+    expect(supervisorSnapshots.length).toBeGreaterThanOrEqual(2);
     for (const [key, rowA] of repoA.givebacks) {
       const rowB = repoB.givebacks.get(key);
       expect(rowB).toBeDefined();
@@ -289,14 +265,14 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
       expect(rowA.labelsJson).toEqual(rowB!.labelsJson);
       expect(rowA.hasLabel).toBe(rowB!.hasLabel);
       expect(rowA.hasLabel).toBe(true);
-      // R11-08: Verify future_MFE_R / future_MAE_R are real (not null/undefined)
-      const labels = rowA.labelsJson as any;
-      if (labels.future_MFE_R !== undefined) {
-        expect(labels.future_MFE_R).not.toBeNull();
-      }
-      if (labels.future_MAE_R !== undefined) {
-        expect(labels.future_MAE_R).not.toBeNull();
-      }
+      // R12-04: Require future_MFE_R and future_MAE_R keys to exist (no conditional)
+      const labels = rowA.labelsJson as Record<string, unknown>;
+      expect(labels).toHaveProperty("future_MFE_R");
+      expect(labels).toHaveProperty("future_MAE_R");
+      expect(labels.future_MFE_R).not.toBeNull();
+      expect(labels.future_MAE_R).not.toBeNull();
+      expect(labels.future_MFE_R).not.toBe(undefined);
+      expect(labels.future_MAE_R).not.toBe(undefined);
     }
   });
 

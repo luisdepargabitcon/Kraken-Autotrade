@@ -11,6 +11,7 @@ import {
   buildGivebackFingerprint,
   buildDurableEntryPayload,
   buildDurableGivebackPayload,
+  canonicalizePolicyProvenance,
 } from "../spotAiForwardTwin/spotAiDurableTrainingStore";
 import type { CompletedTrade } from "../spotAiForwardTwin/spotAiCompletedTrades";
 import type { SpotAiGivebackSample } from "../spotAiForwardTwin/spotAiForwardTwinTypes";
@@ -110,8 +111,9 @@ describe("R7 POLICY tests — live/backfill fingerprint parity", () => {
   // DURABLE_R7_POLICY_04: giveback same policy → same fingerprint
   it("DURABLE_R7_POLICY_04: giveback same policy → same fingerprint", () => {
     const sample = makeGivebackSample();
-    const fp1 = buildGivebackFingerprint(sample);
-    const fp2 = buildGivebackFingerprint(sample);
+    const canonical = canonicalizePolicyProvenance(sample.sourcePolicyVersion)!;
+    const fp1 = buildGivebackFingerprint(sample, 1, canonical);
+    const fp2 = buildGivebackFingerprint(sample, 1, canonical);
     expect(fp1).toBe(fp2);
     expect(fp1).toContain(""); // just verify it's a string
   });
@@ -120,8 +122,10 @@ describe("R7 POLICY tests — live/backfill fingerprint parity", () => {
   it("DURABLE_R7_POLICY_05: giveback different policy → different fingerprint", () => {
     const sample1 = makeGivebackSample({ sourcePolicyVersion: "SPOT_POLICY_X" });
     const sample2 = makeGivebackSample({ sourcePolicyVersion: "SPOT_POLICY_Y" });
-    const fp1 = buildGivebackFingerprint(sample1);
-    const fp2 = buildGivebackFingerprint(sample2);
+    const canonical1 = canonicalizePolicyProvenance(sample1.sourcePolicyVersion)!;
+    const canonical2 = canonicalizePolicyProvenance(sample2.sourcePolicyVersion)!;
+    const fp1 = buildGivebackFingerprint(sample1, 1, canonical1);
+    const fp2 = buildGivebackFingerprint(sample2, 1, canonical2);
     expect(fp1).not.toBe(fp2);
   });
 
@@ -163,7 +167,8 @@ describe("R7 POLICY tests — live/backfill fingerprint parity", () => {
     const r = buildDurableGivebackPayload(sample);
     expect(r.ok).toBe(true);
     const payload = r as any;
-    const directFp = buildGivebackFingerprint(sample);
+    const canonical = canonicalizePolicyProvenance(sample.sourcePolicyVersion)!;
+    const directFp = buildGivebackFingerprint(sample, 1, canonical);
     expect(payload.fingerprint).toBe(directFp);
   });
 });
