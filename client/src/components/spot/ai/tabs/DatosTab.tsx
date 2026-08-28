@@ -4,13 +4,17 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Database, ScanLine, Eye, Zap, CheckCircle2, XCircle, AlertTriangle, RefreshCw, AlertCircle } from "lucide-react";
-import type { DatasetOverview, DatasetQuality, FeatureInfo, PairDistribution, RegimeDistribution } from "../spotAiTypes";
+import { Database, ScanLine, Eye, Zap, CheckCircle2, XCircle, AlertTriangle, RefreshCw, AlertCircle, Clock } from "lucide-react";
+import type { DatasetOverview, DatasetQuality, FeatureInfo, PairDistribution, RegimesResponse } from "../spotAiTypes";
 import { fetchJsonWithTimeout } from "../fetchWithTimeout";
 
 // R14: Analytic endpoints — no aggressive 30s polling.
 // Load on mount, refresh only via manual button or tab re-mount.
 const ANALYTIC_TIMEOUT = 15000;
+
+// R14G: Regimes cold cache recovery — conditional refetch at ~45s.
+// No permanent polling. Only when available=false.
+const REGIMES_COLD_REFETCH_MS = 45000;
 
 function AnalyticError({ onRetry }: { onRetry: () => void }) {
   return (
@@ -47,10 +51,21 @@ export function DatosTab() {
     queryFn: () => fetchJsonWithTimeout<{ pairs: PairDistribution[] }>("/api/spot/ai/dataset/pairs", ANALYTIC_TIMEOUT),
     retry: 1,
   });
-  const { data: regimes, isError: regimesErr, refetch: refetchRegimes } = useQuery<{ regimes: RegimeDistribution[] }>({
+  // R14G: Regimes uses RegimesResponse with available flag.
+  // Conditional refetch: only poll when available=false (cold cache recovery).
+  const { data: regimes, isError: regimesErr, refetch: refetchRegimes } = useQuery<RegimesResponse>({
     queryKey: ["/api/spot/ai/dataset/regimes"],
-    queryFn: () => fetchJsonWithTimeout<{ regimes: RegimeDistribution[] }>("/api/spot/ai/dataset/regimes", ANALYTIC_TIMEOUT),
+    queryFn: () => fetchJsonWithTimeout<RegimesResponse>("/api/spot/ai/dataset/regimes", ANALYTIC_TIMEOUT),
     retry: 1,
+    // R14G: Only refetch on interval when regimes are unavailable (cold cache).
+    // Once available=true, no permanent polling.
+    refetchInterval: (query) => {
+      const data = query.state.data as RegimesResponse | undefined;
+      if (data && data.available === false) {
+        return REGIMES_COLD_REFETCH_MS;
+      }
+      return false; // No permanent polling when available.
+    },
   });
 
   return (
@@ -70,7 +85,13 @@ export function DatosTab() {
               <KpiBox icon={<ScanLine className="h-3 w-3" />} label="SCAN" value={dataset.scanCount} />
               <KpiBox icon={<Eye className="h-3 w-3" />} label="SUPERVISOR" value={dataset.supervisorCount} />
               <KpiBox icon={<Zap className="h-3 w-3" />} label="FILL" value={dataset.fillCount} />
-              <KpiBox icon={<Database className="h-3 w-3" />} label="Trades etiquetados" value={dataset.labeledTrades} />
+              {/* R14G: null labeledTrades => NO DISP. */}
+              <KpiBox
+                icon={<Database className="h-3 w-3" />}
+                label="Trades etiquetados"
+                value={dataset.labeledTrades === null ? "NO DISP." : dataset.labeledTrades}
+                valueClass={dataset.labeledTrades === null ? "text-gray-400" : undefined}
+              />
             </div>
           ) : datasetErr ? (
             <AnalyticError onRetry={() => refetchDataset()} />
@@ -216,16 +237,22 @@ export function DatosTab() {
         </CardContent>
       </Card>
 
-      {/* Regime distribution */}
+      {/* Regime distribution — R14G: uses RegimesResponse with available flag */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-mono flex items-center gap-2">
-            <Database className="h-4 w-4 text-amber-400" />
-            Distribución por Regime
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-mono flex items-center gap-2">
+              <Database className="h-4 w-4 text-amber-400" />
+              Distribución por Regime
+            </CardTitle>
+            <Button variant="outline" size="sm" onClick={() => refetchRegimes()}>
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Actualizar
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
-          {regimes && regimes.regimes.length > 0 ? (
+          {regimes && regimes.available && regimes.regimes.length > 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {regimes.regimes.map((r, i) => (
                 <div key={i} className="p-2 rounded-lg bg-white/5 border border-white/10">
@@ -235,10 +262,23 @@ export function DatosTab() {
                 </div>
               ))}
             </div>
+          ) : regimes && regimes.available === false ? (
+            // R14G: available=false => show "calculating" message, NOT "Sin datos"
+            <div className="space-y-2 py-3">
+              <div className="flex items-center gap-2 text-xs text-amber-400">
+                <Clock className="h-4 w-4 animate-pulse" />
+                <span>Distribución de régimen no disponible temporalmente. Calculando datos en segundo plano...</span>
+              </div>
+              {regimes.reason === "COMPUTING_COLD_CACHE" && (
+                <p className="text-[10px] text-muted-foreground">
+                  El cálculo en segundo plano puede tardar ~30s. Se reintentará automáticamente.
+                </p>
+              )}
+            </div>
           ) : regimesErr ? (
             <AnalyticError onRetry={() => refetchRegimes()} />
           ) : (
-            <p className="text-xs text-muted-foreground">{regimes ? "Sin datos de regime" : "Cargando..."}</p>
+            <p className="text-xs text-muted-foreground">Cargando...</p>
           )}
         </CardContent>
       </Card>
@@ -246,17 +286,17 @@ export function DatosTab() {
   );
 }
 
-function KpiBox({ icon, label, value }: { icon: React.ReactNode; label: string; value: number | string }) {
+function KpiBox({ icon, label, value, valueClass }: { icon: React.ReactNode; label: string; value: number | string; valueClass?: string }) {
   return (
     <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-1">
       <div className="flex items-center gap-1 text-xs text-muted-foreground">{icon}{label}</div>
-      <div className="text-xl font-bold font-mono">{value}</div>
+      <div className={`text-xl font-bold font-mono ${valueClass ?? ""}`}>{value}</div>
     </div>
   );
 }
 
 function QualityCheck({ label, value, good }: { label: string; value: string | number | null; good: boolean }) {
-  // R3: null value = NO DISPONIBLE (gray badge), NOT red.
+  // R3/R14G: null value = NO DISPONIBLE (gray badge), NOT red, NOT green, NOT 0.
   const isNull = value === null;
   const display = isNull ? "NO DISP" : value;
   return (

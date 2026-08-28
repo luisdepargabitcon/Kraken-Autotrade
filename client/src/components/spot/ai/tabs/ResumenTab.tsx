@@ -6,8 +6,15 @@ import type { SpotAiStatus } from "../spotAiTypes";
 import { STATUS_LABELS, STATUS_COLORS, MODEL_STATUS_COLORS } from "../spotAiTypes";
 
 export function ResumenTab({ status }: { status: SpotAiStatus }) {
-  const progressPct = Math.min(100, (status.labeledTrades / status.minTradesToTrain) * 100);
-  const preferredPct = Math.min(100, (status.labeledTrades / status.preferredTradesToTrain) * 100);
+  // R14G: null labeledTrades = NO DISP. Do NOT coerce to 0.
+  const labeledUnavailable = status.labeledTrades === null || status.labeledTradesAvailable === false;
+  const labeledValue = labeledUnavailable ? null : status.labeledTrades;
+  const progressPct = labeledValue !== null
+    ? Math.min(100, (labeledValue / status.minTradesToTrain) * 100)
+    : null;
+  const preferredPct = labeledValue !== null
+    ? Math.min(100, (labeledValue / status.preferredTradesToTrain) * 100)
+    : null;
 
   return (
     <div className="space-y-3">
@@ -22,25 +29,35 @@ export function ResumenTab({ status }: { status: SpotAiStatus }) {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard icon={<Database className="h-3 w-3" />} label="Snapshots" value={status.totalSnapshots} />
-            <KpiCard icon={<Activity className="h-3 w-3" />} label="Trades etiquetados" value={status.labeledTrades} />
+            <KpiCard
+              icon={<Activity className="h-3 w-3" />}
+              label="Trades etiquetados"
+              value={labeledUnavailable ? "NO DISP." : (labeledValue as number)}
+              valueClass={labeledUnavailable ? "text-gray-400" : undefined}
+            />
             <KpiCard icon={<Eye className="h-3 w-3" />} label="Modo" value="Solo observación" />
             <KpiCard icon={<ShieldCheck className="h-3 w-3" />} label="Control trading" value="NINGUNO" valueClass="text-green-400" />
           </div>
 
           <div className="space-y-3">
+            {/* R14G: null => NO DISPONIBLE, no bar, no "0 / 100" */}
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Progreso mínimo (100 trades)</span>
-                <span>{status.labeledTrades} / {status.minTradesToTrain}</span>
+                <span className={labeledUnavailable ? "text-gray-400" : ""}>
+                  {labeledUnavailable ? "NO DISPONIBLE" : `${labeledValue} / ${status.minTradesToTrain}`}
+                </span>
               </div>
-              <Progress value={progressPct} className="h-2" />
+              {progressPct !== null && <Progress value={progressPct} className="h-2" />}
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Progreso preferido (200 trades)</span>
-                <span>{status.labeledTrades} / {status.preferredTradesToTrain}</span>
+                <span className={labeledUnavailable ? "text-gray-400" : ""}>
+                  {labeledUnavailable ? "NO DISPONIBLE" : `${labeledValue} / ${status.preferredTradesToTrain}`}
+                </span>
               </div>
-              <Progress value={preferredPct} className="h-2" />
+              {preferredPct !== null && <Progress value={preferredPct} className="h-2" />}
             </div>
           </div>
 
