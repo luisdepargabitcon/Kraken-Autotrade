@@ -8871,3 +8871,108 @@ NO TRAINING
 NO REAL
 PENDING_GITHUB_COUNTERAUDIT=YES
 ```
+
+---
+
+## SPOT R13F — CONTROLLED 090 EXECUTION PATH
+
+### Defectos R13 cerrados
+
+1. **090 no estaba registrada en startup.** El array `MIGRATIONS` en `server/routes.ts` termina en `088_spot_forward_twin`. No existe camino automático para aplicar 090.
+2. **`script/migrate.ts` tampoco contiene 090.** Su lista tracked llega 051-079. No es el mecanismo de 090.
+3. **No existía camino real de ejecución.** Sin registro en startup ni script dedicado, 090 no podía aplicarse.
+4. **Registrar 090 en startup eliminaría control explícito.** Auto-aplicarse en reinicio es inaceptable para una migration que requiere autorización.
+5. **Startup actual no aborta al fallar runner.** El runner se llama en el callback `listen()` y errores no bloquean el startup del servidor.
+6. **SAFE_DEPLOY_ORDER B no era ejecutable.** Sin un script dedicado, no había forma de aplicar 090 antes de activar la nueva app.
+7. **Duplicate SQL usaba fillId incorrectamente.** La identidad canónica real es lotId+pair+side+orderId+executedAt+fillPrice+fillVolume+feeUsd.
+8. **Completed candidates no exigía BUY+SELL.** `COUNT(*) >= 2` no garantiza presencia de ambos lados.
+9. **Training migration tiene 36 columnas, no 35.** Corrección: 34 WRITTEN_EXPLICITLY + 2 GENERATED_BY_DB (id, created_at).
+10. **089 queda deliberadamente diferida.** 089 declara `NOT TO BE APPLIED IN THIS PHASE`. Contiene `spot_ai_advisory_logs` y `spot_ai_model_registry` — fase posterior.
+
+### Mecanismo creado
+
+**`script/spot-ai-migrate-090.ts`** — ejecutor dedicado SOLO para migration 090.
+
+- Usa `AutoMigrationRunner` (transaccional, advisory-locked, registry-tracked).
+- Requiere token exacto: `SPOT_AI_MIGRATION_090_CONFIRM=APPLY_STAGING_090`.
+- Sin token: rechaza, exit 2, NO conecta DB.
+- Post-verify: `schema_migrations` registry, `to_regclass` para ambas tablas, `information_schema` para columnas críticas.
+- Idempotente: segundo run → AutoMigrationRunner ve registry entry → SKIPPED.
+- Fallo propaga: exit != 0, NO éxito falso.
+- NO modifica `server/routes.ts`, `script/migrate.ts`, ni `server/index.ts`.
+
+### Corrección de inventario
+
+```
+TRAINING_TOTAL_COLUMNS=36
+TRAINING_WRITTEN_EXPLICITLY=34
+TRAINING_GENERATED_BY_DB=2 (id, created_at)
+
+GIVEBACK_TOTAL_COLUMNS=12
+GIVEBACK_WRITTEN_EXPLICITLY=10
+GIVEBACK_GENERATED_BY_DB=2 (id, created_at)
+```
+
+### Pre-apply SQL corregido
+
+Duplicate fills usan identidad canónica: lotId, pair, side, orderId, executedAt, fillPrice, fillVolume, feeUsd.
+
+Completed candidates exigen BUY > 0 AND SELL > 0 (no COUNT >= 2).
+
+### Safe deploy order corregido
+
+```
+SAFE_DEPLOY_ORDER=MIGRATION_090_DEDICATED_RUNNER_THEN_APP_ACTIVATION
+```
+
+1. App staging actual sigue funcionando.
+2. Checkout nuevo SHA en VPS (no reiniciar).
+3. Verificar SHA exacto.
+4. Verificar AI_TRADING_CONTROL=NONE.
+5. Backup DB.
+6. Ejecutar pre-apply SQL READ-ONLY.
+7. Ejecutar: `SPOT_AI_MIGRATION_090_CONFIRM=APPLY_STAGING_090 npx tsx script/spot-ai-migrate-090.ts`
+8. Si exit != 0: STOP. App anterior continúa.
+9. Si exit=0: verificar schema_migrations, tablas, constraints, indexes.
+10. Construir nueva app/container.
+11. Reiniciar/apply nueva versión.
+12. Health check.
+13. SHADOW validation.
+
+### Rollback corregido
+
+A) Script falla: AutoMigrationRunner ROLLBACK. Script exit != 0. NO deploy. App anterior permanece activa.
+B) 090 aplica pero nueva app no arranca: revertir app. Tablas 090 aditivas — dejar intactas. NO DROP automático.
+C) Reconciliation falla: AI observacional. NO trading impact. Revert app / investigar.
+D) Fingerprint conflicts: fail closed. NO borrar rows. NO overwrite. Investigar.
+
+Eliminada la afirmación "migration failure => app startup aborts" — 090 ya NO se aplica mediante app startup.
+
+### 089 diferida
+
+```
+MIGRATION_089_DEFERRED=YES
+MIGRATION_089_REGISTERED_FOR_AUTOAPPLY=NO
+MIGRATION_089_APPLIED=NO
+```
+
+### Validación
+
+- R13F tests: 1 archivo / 10 tests pasaron
+- SPOT-AI: 58 archivos / 525 tests pasaron
+- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
+- TSC: exit 0
+- npm run check: exit 0
+- Build: exit 0
+- git diff --check: exit 0
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION (090 no aplicada, 089 diferida)
+NO VPS
+NO TRAINING
+NO REAL
+PENDING_GITHUB_COUNTERAUDIT=YES
+```
