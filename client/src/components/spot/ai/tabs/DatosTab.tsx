@@ -3,33 +3,54 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
-import { Database, ScanLine, Eye, Zap, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Database, ScanLine, Eye, Zap, CheckCircle2, XCircle, AlertTriangle, RefreshCw, AlertCircle } from "lucide-react";
 import type { DatasetOverview, DatasetQuality, FeatureInfo, PairDistribution, RegimeDistribution } from "../spotAiTypes";
+import { fetchJsonWithTimeout } from "../fetchWithTimeout";
+
+// R14: Analytic endpoints — no aggressive 30s polling.
+// Load on mount, refresh only via manual button or tab re-mount.
+const ANALYTIC_TIMEOUT = 15000;
+
+function AnalyticError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="text-center space-y-2 py-3">
+      <AlertCircle className="h-4 w-4 text-red-400 mx-auto" />
+      <p className="text-xs text-red-400">Error al cargar datos analíticos</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        <RefreshCw className="h-3 w-3 mr-1" />
+        Reintentar
+      </Button>
+    </div>
+  );
+}
 
 export function DatosTab() {
-  const { data: dataset } = useQuery<DatasetOverview>({
+  // R14: No refetchInterval — analytic endpoints are too heavy for 30s polling.
+  const { data: dataset, isError: datasetErr, refetch: refetchDataset } = useQuery<DatasetOverview>({
     queryKey: ["/api/spot/ai/dataset"],
-    queryFn: async () => { const r = await fetch("/api/spot/ai/dataset"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 30000,
+    queryFn: () => fetchJsonWithTimeout<DatasetOverview>("/api/spot/ai/dataset", ANALYTIC_TIMEOUT),
+    retry: 1,
   });
-  const { data: quality } = useQuery<DatasetQuality>({
+  const { data: quality, isError: qualityErr, refetch: refetchQuality } = useQuery<DatasetQuality>({
     queryKey: ["/api/spot/ai/dataset/quality"],
-    queryFn: async () => { const r = await fetch("/api/spot/ai/dataset/quality"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 30000,
+    queryFn: () => fetchJsonWithTimeout<DatasetQuality>("/api/spot/ai/dataset/quality", ANALYTIC_TIMEOUT),
+    retry: 1,
   });
-  const { data: features } = useQuery<{ features: FeatureInfo[]; schemaVersion: number }>({
+  const { data: features, isError: featuresErr, refetch: refetchFeatures } = useQuery<{ features: FeatureInfo[]; schemaVersion: number }>({
     queryKey: ["/api/spot/ai/features"],
-    queryFn: async () => { const r = await fetch("/api/spot/ai/features"); if (!r.ok) throw new Error("fetch"); return r.json(); },
+    queryFn: () => fetchJsonWithTimeout<{ features: FeatureInfo[]; schemaVersion: number }>("/api/spot/ai/features", ANALYTIC_TIMEOUT),
+    retry: 1,
   });
-  const { data: pairs } = useQuery<{ pairs: PairDistribution[] }>({
+  const { data: pairs, isError: pairsErr, refetch: refetchPairs } = useQuery<{ pairs: PairDistribution[] }>({
     queryKey: ["/api/spot/ai/dataset/pairs"],
-    queryFn: async () => { const r = await fetch("/api/spot/ai/dataset/pairs"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 30000,
+    queryFn: () => fetchJsonWithTimeout<{ pairs: PairDistribution[] }>("/api/spot/ai/dataset/pairs", ANALYTIC_TIMEOUT),
+    retry: 1,
   });
-  const { data: regimes } = useQuery<{ regimes: RegimeDistribution[] }>({
+  const { data: regimes, isError: regimesErr, refetch: refetchRegimes } = useQuery<{ regimes: RegimeDistribution[] }>({
     queryKey: ["/api/spot/ai/dataset/regimes"],
-    queryFn: async () => { const r = await fetch("/api/spot/ai/dataset/regimes"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 30000,
+    queryFn: () => fetchJsonWithTimeout<{ regimes: RegimeDistribution[] }>("/api/spot/ai/dataset/regimes", ANALYTIC_TIMEOUT),
+    retry: 1,
   });
 
   return (
@@ -51,6 +72,8 @@ export function DatosTab() {
               <KpiBox icon={<Zap className="h-3 w-3" />} label="FILL" value={dataset.fillCount} />
               <KpiBox icon={<Database className="h-3 w-3" />} label="Trades etiquetados" value={dataset.labeledTrades} />
             </div>
+          ) : datasetErr ? (
+            <AnalyticError onRetry={() => refetchDataset()} />
           ) : (
             <p className="text-xs text-muted-foreground">Cargando dataset...</p>
           )}
@@ -93,6 +116,8 @@ export function DatosTab() {
                 <QualityCheck label="Causal failures" value={quality.checks.causalCorrelationFailures} good={quality.checks.causalCorrelationFailures === 0} />
               </div>
             </>
+          ) : qualityErr ? (
+            <AnalyticError onRetry={() => refetchQuality()} />
           ) : (
             <p className="text-xs text-muted-foreground">Cargando calidad...</p>
           )}
@@ -137,6 +162,8 @@ export function DatosTab() {
                 </TableBody>
               </Table>
             </div>
+          ) : featuresErr ? (
+            <AnalyticError onRetry={() => refetchFeatures()} />
           ) : (
             <p className="text-xs text-muted-foreground">Cargando features...</p>
           )}
@@ -181,6 +208,8 @@ export function DatosTab() {
                 </TableBody>
               </Table>
             </div>
+          ) : pairsErr ? (
+            <AnalyticError onRetry={() => refetchPairs()} />
           ) : (
             <p className="text-xs text-muted-foreground">{pairs ? "Sin datos por par" : "Cargando..."}</p>
           )}
@@ -206,6 +235,8 @@ export function DatosTab() {
                 </div>
               ))}
             </div>
+          ) : regimesErr ? (
+            <AnalyticError onRetry={() => refetchRegimes()} />
           ) : (
             <p className="text-xs text-muted-foreground">{regimes ? "Sin datos de regime" : "Cargando..."}</p>
           )}

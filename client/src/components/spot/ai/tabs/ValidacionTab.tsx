@@ -9,12 +9,12 @@ export function ValidacionTab() {
   const { data: validation } = useQuery<ValidationData>({
     queryKey: ["/api/spot/ai/validation"],
     queryFn: async () => { const r = await fetch("/api/spot/ai/validation"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 30000,
+    refetchInterval: 300000,
   });
   const { data: giveback } = useQuery<GivebackData>({
     queryKey: ["/api/spot/ai/giveback"],
     queryFn: async () => { const r = await fetch("/api/spot/ai/giveback"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 30000,
+    refetchInterval: 300000,
   });
 
   return (

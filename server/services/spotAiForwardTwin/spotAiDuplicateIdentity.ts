@@ -104,7 +104,7 @@ export async function loadDuplicateFillQuality(
   try {
     const fillRows = await executor.execute(sql`
       SELECT data FROM spot_forward_twin_snapshots
-      WHERE data->>'snapshotType' = 'FILL'
+      WHERE snapshot_type = 'FILL'
         AND data->'fill'->>'lotId' IS NOT NULL
     `);
     const fillIdentities: FillIdentityInput[] = ((fillRows.rows ?? []) as any[]).map((r) => {

@@ -10,7 +10,7 @@ export function AuditoriaTab() {
   const { data } = useQuery<AuditData>({
     queryKey: ["/api/spot/ai/audit"],
     queryFn: async () => { const r = await fetch("/api/spot/ai/audit"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 30000,
+    refetchInterval: 300000,
   });
 
   return (

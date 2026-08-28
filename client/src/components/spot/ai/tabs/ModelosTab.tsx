@@ -10,7 +10,7 @@ export function ModelosTab() {
   const { data } = useQuery<{ models: ModelRegistryEntry[] }>({
     queryKey: ["/api/spot/ai/models"],
     queryFn: async () => { const r = await fetch("/api/spot/ai/models"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 30000,
+    refetchInterval: 300000,
   });
 
   const models = data?.models ?? [];

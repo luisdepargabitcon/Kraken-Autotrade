@@ -9102,3 +9102,76 @@ NO TRAINING
 NO REAL
 PENDING_GITHUB_COUNTERAUDIT=YES
 ```
+
+## SPOT R14 — IA FORWARD TWIN UI/PERFORMANCE + TRACKED LOTS
+
+### Causa del loading infinito
+
+El Centro de Inteligencia IA Forward Twin no renderizaba porque:
+
+1. `/api/spot/ai/status` llamaba `queryCompletedTrades()` que ejecuta 5 queries SQL con filtrado JSONB — demasiado lento para un endpoint de status.
+2. `/api/spot/ai/dataset/quality` usaba correlated subqueries sobre `data->>'snapshotType'` en vez de la columna física `snapshot_type`.
+3. El frontend gatingaba con `isLoading || !status` — si el endpoint fallaba, `!status` permanecía `true` → loading infinito.
+4. DatosTab lanzaba polling cada 30s sobre endpoints analíticos pesados.
+
+### Baseline (staging, 30s timeout)
+
+Todos los endpoints IA excedieron 30s (timeout del curl):
+- status: >30000ms TIMEOUT
+- dataset: >30000ms TIMEOUT
+- quality: >30000ms TIMEOUT
+- pairs: >30000ms TIMEOUT
+- regimes: >30000ms TIMEOUT
+
+### Paridad columna física vs JSONB
+
+Verificado en staging READ-ONLY:
+- `snapshot_type` vs `data->>'snapshotType'`: 0 mismatches
+- `pair` vs `data->>'pair'`: 0 mismatches
+- `scan_id` vs `data->>'scanId'`: 0 mismatches
+- `policy_version` vs `data->>'policyVersion'`: 0 mismatches
+
+### Queries optimizadas
+
+- Status: eliminada llamada a `queryCompletedTrades()`. Usa `getDurableCompletedTradeCount()`.
+- Dataset: eliminada llamada a `queryCompletedTrades()`. Usa columnas físicas + durable count.
+- Quality: reemplazadas correlated subqueries por CTEs. Usa `snapshot_type` físico. Checks del normalizer reportados como `null` (fail-closed).
+- Pairs: usa `snapshot_type` físico. Eliminada llamada a `queryCompletedTrades()`.
+- Regimes/Features/Giveback: usa `snapshot_type` físico.
+- Repository y duplicate loader: usa `snapshot_type` físico.
+
+### Semantics parity
+
+- `queryCompletedTrades()`, `normalizeCompletedTrades()`, `countDuplicateFills()`, `fillIdentityKey()` NO modificados.
+- Durable writer, label builder, fingerprints, policy provenance, reconciliation: NO modificados.
+- Checks del normalizer no disponibles en fast path se reportan como `null` (no `0`).
+
+### UI error states
+
+- `SpotAiForwardTwinPanel`: separa LOADING / ERROR / SUCCESS con botón Reintentar.
+- `fetchWithTimeout`: helper con AbortController. Status 10s, analíticos 15s.
+- `DatosTab`: error states con Reintentar. Sin polling 30s.
+- `ActividadTab`: nueva pestaña con actividad Forward Twin y lotes en seguimiento.
+- Polling reducido: Modelos/Auditoría/Validación 5min, Predicciones 60s, Actividad 60s.
+
+### Tracked lots
+
+- Nuevo endpoint `GET /api/spot/ai/tracking`: summary + lots agrupados por lotId.
+- Diferencia histórico SPOT (referencia) vs Forward Twin vs FILL legacy vs válidos vs lotes vs completos vs etiquetados.
+- Estados: EN_SEGUIMIENTO, COMPLETO, ETIQUETADO.
+
+### Tests R14
+
+- `spotAiR14Performance.test.ts` (14 tests): PERF_01-12 + repo/duplicate physical column parity.
+- `spotAiR14Ui.test.tsx` (12 tests): UI_01-10 + fetchWithTimeout.
+
+### Validación local
+
+- R14 tests: 2 archivos / 26 tests pasaron
+- SPOT-AI: 61 archivos / 548 tests pasaron
+- Forward Twin + E2E + integration + B15 + economic: 4 archivos / 156 tests pasaron
+- spotRoutes + spotAiUiV2: 2 archivos / 48 tests pasaron
+- TSC: exit 0
+- npm run check: exit 0
+- Build: exit 0
+- git diff --check: exit 0

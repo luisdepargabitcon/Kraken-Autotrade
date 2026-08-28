@@ -143,7 +143,7 @@ export async function fetchRawDataFromDb(executor: DbExecutor = productionExecut
       (fb.data->'fill'->>'feeUsd')::float AS fee_usd,
       fb.timestamp AS ts
     FROM spot_forward_twin_snapshots fb
-    WHERE fb.data->>'snapshotType' = 'FILL'
+    WHERE fb.snapshot_type = 'FILL'
       AND fb.data->'fill'->>'side' = 'BUY'
       AND fb.data->'fill'->>'lotId' IS NOT NULL
   ` as any);
@@ -159,7 +159,7 @@ export async function fetchRawDataFromDb(executor: DbExecutor = productionExecut
       (fs.data->'fill'->>'feeUsd')::float AS fee_usd,
       fs.timestamp AS ts
     FROM spot_forward_twin_snapshots fs
-    WHERE fs.data->>'snapshotType' = 'FILL'
+    WHERE fs.snapshot_type = 'FILL'
       AND fs.data->'fill'->>'side' = 'SELL'
       AND fs.data->'fill'->>'lotId' IS NOT NULL
   ` as any);
@@ -173,7 +173,7 @@ export async function fetchRawDataFromDb(executor: DbExecutor = productionExecut
       (sc.data->'sizing'->>'stopPrice')::float AS stop_price,
       (sc.data->'sizing'->>'riskUsd')::float AS risk_usd
     FROM spot_forward_twin_snapshots sc
-    WHERE sc.data->>'snapshotType' = 'SCAN'
+    WHERE sc.snapshot_type = 'SCAN'
       AND sc.data->'sizing' IS NOT NULL
       AND sc.data->'sizing'->>'stopPrice' IS NOT NULL
       AND sc.data->'sizing'->>'riskUsd' IS NOT NULL
@@ -191,7 +191,7 @@ export async function fetchRawDataFromDb(executor: DbExecutor = productionExecut
       (s.data->'position'->>'maeR')::float AS mae_r,
       s.data->'exitDecision'->>'reasonType' AS exit_reason_type
     FROM spot_forward_twin_snapshots s
-    WHERE s.data->>'snapshotType' = 'SUPERVISOR'
+    WHERE s.snapshot_type = 'SUPERVISOR'
       AND s.data->'position'->>'lotId' IS NOT NULL
     ORDER BY s.data->'position'->>'lotId', s.pair, s.timestamp DESC
   ` as any);
@@ -201,7 +201,7 @@ export async function fetchRawDataFromDb(executor: DbExecutor = productionExecut
   const legacyRows = await executor.execute(sql`
     SELECT COUNT(*) AS cnt
     FROM spot_forward_twin_snapshots fb
-    WHERE fb.data->>'snapshotType' = 'FILL'
+    WHERE fb.snapshot_type = 'FILL'
       AND fb.data->'fill'->>'side' = 'BUY'
       AND fb.data->'fill'->>'lotId' IS NULL
   ` as any);

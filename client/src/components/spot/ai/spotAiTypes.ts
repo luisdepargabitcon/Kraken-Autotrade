@@ -288,3 +288,38 @@ export function getAvailabilityBadge(
 export function isStructuralInvariant(checks: DatasetQuality): boolean {
   return checks.legacyMixedStructuralInvariant && checks.syntheticLabelsStructuralInvariant;
 }
+
+// R14: Forward Twin tracking types.
+export interface TrackedLot {
+  lotId: string;
+  pair: string;
+  status: "EN_SEGUIMIENTO" | "COMPLETO" | "ETIQUETADO";
+  entryPrice: number | null;
+  currentR: number | null;
+  mfeR: number | null;
+  maeR: number | null;
+  initialQty: number | null;
+  remainingQty: number | null;
+  buyFills: number;
+  sellFills: number;
+  supervisions: number;
+  openSince: number;
+  lastUpdate: number;
+}
+
+export interface TrackingData {
+  historicalSpotTrades: number;
+  historicalSpotNote: string;
+  totalSnapshots: number;
+  scanCount: number;
+  supervisorCount: number;
+  fillCount: number;
+  legacyFillCount: number;
+  validFillCount: number;
+  uniqueLots: number;
+  trackedLotsCount: number;
+  completedTrades: number;
+  labeledTrades: number;
+  durableStorageAvailable: boolean;
+  lots: TrackedLot[];
+}

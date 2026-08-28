@@ -8,7 +8,7 @@ export function PrediccionesTab() {
   const { data } = useQuery<{ predictions: AdvisoryLog[]; count: number }>({
     queryKey: ["/api/spot/ai/predictions"],
     queryFn: async () => { const r = await fetch("/api/spot/ai/predictions"); if (!r.ok) throw new Error("fetch"); return r.json(); },
-    refetchInterval: 15000,
+    refetchInterval: 60000,
   });
 
   const predictions = data?.predictions ?? [];
