@@ -274,6 +274,45 @@ describe("R10-02 TRUE BACKFILL E2E (no mock of completedTrades)", () => {
       expect(labels.future_MFE_R).not.toBe(undefined);
       expect(labels.future_MAE_R).not.toBe(undefined);
     }
+
+    // R12F-01: EXACT numeric values for giveback labels.
+    // Trade: entry=100, exit=110, entryFee=1, exitFee=1, grossPnl=10, netPnl=8, riskUsd=10
+    // final_R = netPnl / riskUsd = 8/10 = 0.8
+    //
+    // Supervisor T=1500 (currentR=1.5, runningMfeR=3.0, runningMaeR=-2.25):
+    //   Future path: T=1700 with currentR=2.0
+    //   future_MFE_R = max(2.0, 0.8) = 2.0
+    //   future_MAE_R = min(2.0, 0.8) = 0.8
+    //   expected_giveback_R = 2.0 - 0.8 = 1.2
+    //
+    // Supervisor T=1700 (currentR=2.0, runningMfeR=4.0, runningMaeR=-3.0):
+    //   No future path
+    //   future_MFE_R = final_R = 0.8
+    //   future_MAE_R = final_R = 0.8
+    //   expected_giveback_R = 0.8 - 0.8 = 0
+    //
+    // R12F-01: running mfeR/maeR are DISTINCT from currentR to prevent
+    // regressions that use cumulative mfeR/maeR instead of currentR.
+
+    const rowT1500 = repoA.givebacks.get("lot-1|1500");
+    expect(rowT1500).toBeDefined();
+    if (rowT1500) {
+      const labels = rowT1500.labelsJson as Record<string, number>;
+      expect(labels.final_R).toBeCloseTo(0.8, 10);
+      expect(labels.future_MFE_R).toBeCloseTo(2.0, 10);
+      expect(labels.future_MAE_R).toBeCloseTo(0.8, 10);
+      expect(labels.expected_giveback_R).toBeCloseTo(1.2, 10);
+    }
+
+    const rowT1700 = repoA.givebacks.get("lot-1|1700");
+    expect(rowT1700).toBeDefined();
+    if (rowT1700) {
+      const labels = rowT1700.labelsJson as Record<string, number>;
+      expect(labels.final_R).toBeCloseTo(0.8, 10);
+      expect(labels.future_MFE_R).toBeCloseTo(0.8, 10);
+      expect(labels.future_MAE_R).toBeCloseTo(0.8, 10);
+      expect(labels.expected_giveback_R).toBeCloseTo(0, 10);
+    }
   });
 
   // PARITY_R10_03_SECOND_BACKFILL_IDEMPOTENT

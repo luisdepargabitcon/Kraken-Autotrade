@@ -240,4 +240,101 @@ describe("R12-02 PRODUCTION OUTAGE (REAL productionRepository)", () => {
     expect(result.storageUnavailable).toBe(false);
     expect(result.insertErrors).toBe(1);
   });
+
+  // R12F-03: Production outage → cache invalidated internally → recovery → real reprobe
+  it("PROD_OUTAGE_R12F_RECOVERY: outage invalidates cache, recovery causes real reprobe (no manual reset)", async () => {
+    let insertAttempted = false;
+    let dbDown = false;
+    let availabilityQueryCount = 0;
+
+    mockExecute.mockImplementation((query: any) => {
+      const sqlStr = String(query?.sql ?? query ?? "");
+
+      // Count availability checks (LIMIT 0 queries)
+      if (sqlStr.includes("LIMIT 0")) {
+        availabilityQueryCount++;
+        if (dbDown) {
+          return Promise.reject(new Error("connection lost"));
+        }
+        return Promise.resolve({ rows: [] });
+      }
+      // INSERT INTO training → throw "connection lost" and mark DB as down
+      if (sqlStr.includes("INSERT INTO spot_ai_forward_training_trades")) {
+        insertAttempted = true;
+        dbDown = true; // DB goes down when INSERT is attempted
+        return Promise.reject(new Error("connection lost"));
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    // A) Initial availability: LIMIT 0 success (availabilityQueryCount increments)
+    const trade = makeTrade();
+    const result = await persistCompletedTrade(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+
+    // B) INSERT throws → reprobe fails (dbDown=true) → STORAGE_UNAVAILABLE
+    expect(insertAttempted).toBe(true);
+    expect(result.persisted).toBe(false);
+    expect(result.reason).toBe("STORAGE_UNAVAILABLE");
+
+    // C) Cache was invalidated INTERNALLY by production code.
+    // NO manual _resetDurableStorageCache() call.
+    // D) Simulate DB recovery.
+    dbDown = false;
+    const countBeforeRecovery = availabilityQueryCount;
+
+    // E) Call isDurableStorageAvailable() — should re-probe (new LIMIT 0 queries)
+    const available = await isDurableStorageAvailable();
+
+    // F) Assert: true (DB recovered)
+    expect(available).toBe(true);
+    // G) Assert: NEW availability queries were executed after outage
+    expect(availabilityQueryCount).toBeGreaterThan(countBeforeRecovery);
+  });
+
+  // R12F-03: Production outage → cache invalidated → DB still down → real reprobe
+  it("PROD_OUTAGE_R12F_STILL_DOWN: outage invalidates cache, still down causes real reprobe (no manual reset)", async () => {
+    let insertAttempted = false;
+    let dbDown = false;
+    let availabilityQueryCount = 0;
+
+    mockExecute.mockImplementation((query: any) => {
+      const sqlStr = String(query?.sql ?? query ?? "");
+
+      // Count availability checks (LIMIT 0 queries)
+      if (sqlStr.includes("LIMIT 0")) {
+        availabilityQueryCount++;
+        if (dbDown) {
+          return Promise.reject(new Error("connection lost"));
+        }
+        return Promise.resolve({ rows: [] });
+      }
+      // INSERT INTO training → throw "connection lost" and mark DB as down
+      if (sqlStr.includes("INSERT INTO spot_ai_forward_training_trades")) {
+        insertAttempted = true;
+        dbDown = true;
+        return Promise.reject(new Error("connection lost"));
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    // A) Initial availability: LIMIT 0 success
+    const trade = makeTrade();
+    const result = await persistCompletedTrade(trade, { f: 1 }, { l: 1 }, "SPOT_POLICY_X");
+
+    // B) INSERT throws → reprobe fails (dbDown=true) → STORAGE_UNAVAILABLE
+    expect(result.reason).toBe("STORAGE_UNAVAILABLE");
+
+    // C) Cache was invalidated INTERNALLY by production code.
+    // NO manual _resetDurableStorageCache() call.
+    // D) DB is still down (dbDown stays true).
+    const countBeforeReprobe = availabilityQueryCount;
+
+    // E) Call isDurableStorageAvailable() — should re-probe (new LIMIT 0 queries)
+    const available = await isDurableStorageAvailable();
+
+    // F) Assert: false (DB still down)
+    expect(available).toBe(false);
+    // G) Assert: NEW availability queries were executed
+    expect(availabilityQueryCount).toBeGreaterThan(countBeforeReprobe);
+  });
 });

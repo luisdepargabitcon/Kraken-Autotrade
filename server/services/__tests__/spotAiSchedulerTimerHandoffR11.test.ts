@@ -1,22 +1,26 @@
 /**
- * spotAiSchedulerTimerHandoffR11.test.ts — R12-05 scheduler handoff by timer.
+ * spotAiSchedulerTimerHandoffR11.test.ts — R12F-02 scheduler handoff by timer.
  *
- * R12-05: NO arbitrary catch to silence errors.
- * Uses advanceTimersByTimeAsync for exact timer advancement.
- * Uses runAllTimersAsync with a TARGETED catch that only ignores
- * vitest's "too many timer iterations" internal error (expected with
- * recurring timers). All other errors are re-thrown — test failures
- * are NOT silenced.
+ * R12F-02: NO runAllTimersAsync. NO catch of any kind.
+ * Uses ONLY advanceTimersByTimeAsync with exact intervals.
+ *
+ * Flush mechanism: after resolving a deferred, create a setTimeout(0) that
+ * does nothing. advanceTimersByTimeAsync(0) fires this timer and in the
+ * process flushes all pending microtasks from the async chain.
+ * This does NOT catch errors and does NOT use runAllTimersAsync.
  *
  * Sequence:
- * A starts, +5s, calls=1, A pending.
- * Stop A. Start B.
- * +5s with A pending: calls=1 (anti-overlap, B schedules next).
- * Resolve A, flush → A completes (no rearm), B's next timer fires → calls=2.
- * Resolve B, flush → B completes, B's next timer fires → calls=3.
- * Resolve, flush → B completes, B's next timer fires → calls=4.
+ * start A, advance 5000 → calls=1, A pending (deferred)
+ * stop A, start B
+ * advance 5000 → calls=1, B blocked by anti-overlap
+ * resolve A, flush via advanceTimersByTimeAsync(0) → calls=1, A completes, no rearm
+ * advance DURABLE_RECONCILIATION_INTERVAL → calls=2, B pending (deferred)
+ * resolve B, flush → calls=2
+ * advance interval → calls=3
+ * resolve, flush
+ * advance interval → calls=4
  *
- * Exact counts: 1,1,2,3,4.
+ * Exact counts: 1,1,1,2,2,3,4
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -37,6 +41,10 @@ vi.mock("../spotAiForwardTwin/spotAiCompletedTrades", () => ({
   buildTradeOutcomeMap: vi.fn().mockReturnValue(new Map()),
 }));
 
+// R12F-02: Pre-import mocked modules so dynamic imports in backfillDurableFromRaw()
+// resolve from cache under fake timers.
+import "../spotAiForwardTwin/spotAiCompletedTrades";
+
 import {
   setDurableRepository,
   _resetDurableStorageCache,
@@ -45,6 +53,7 @@ import {
   _setDurableDatasetBuilder,
   startDurableReconciliationScheduler,
   stopDurableReconciliationScheduler,
+  DURABLE_RECONCILIATION_INTERVAL,
   type DurableRepository,
   type DurableInsertResult,
 } from "../spotAiForwardTwin/spotAiDurableTrainingStore";
@@ -56,13 +65,23 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-class CountingRepo implements DurableRepository {
-  deferred: ReturnType<typeof createDeferred<boolean>> | null = null;
+/**
+ * Deferred repo: isAvailable() returns a deferred Promise.
+ * The test controls when the Promise resolves.
+ * After resolving, a flush mechanism (advanceTimersByTimeAsync(0) with a
+ * setTimeout(0) marker) processes the microtask chain.
+ */
+class DeferredRepo implements DurableRepository {
   callCount = 0;
+  deferred: ReturnType<typeof createDeferred<boolean>> | null = null;
 
   async isAvailable(): Promise<boolean> {
     this.callCount++;
-    if (this.deferred) return this.deferred.promise;
+    if (this.deferred) {
+      const d = this.deferred;
+      this.deferred = null;
+      return d.promise;
+    }
     return true;
   }
   async getExistingTradeFingerprint() { return null; }
@@ -76,26 +95,22 @@ class CountingRepo implements DurableRepository {
 }
 
 /**
- * Flush pending microtasks and timers from async chains.
- * R12-05: Does NOT catch arbitrary errors. Only ignores vitest's
- * "too many timer iterations" internal error, which is expected
- * with recurring timers. All other errors are re-thrown.
+ * R12F-02: Flush microtasks using ONLY advanceTimersByTimeAsync.
+ * Creates a setTimeout(0) marker, then advances 0ms to fire it.
+ * advanceTimersByTimeAsync processes microtasks when firing timers.
+ * NO catch. NO runAllTimersAsync. Errors are NOT silenced.
  */
-async function flushAsync(): Promise<void> {
-  try {
-    await vi.runAllTimersAsync();
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!msg.includes("too many") && !msg.includes("iterations")) throw e;
-  }
+async function flushMicrotasks(): Promise<void> {
+  setTimeout(() => undefined, 0);
+  await vi.advanceTimersByTimeAsync(0);
 }
 
-describe("R12-05 SCHEDULER TIMER HANDOFF (no arbitrary catch)", () => {
-  let repo: CountingRepo;
+describe("R12F-02 SCHEDULER TIMER HANDOFF (no runAll, no catch)", () => {
+  let repo: DeferredRepo;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    repo = new CountingRepo();
+    repo = new DeferredRepo();
     setDurableRepository(repo);
     _resetDurableStorageCache();
     _resetReconciliationMetrics();
@@ -131,18 +146,23 @@ describe("R12-05 SCHEDULER TIMER HANDOFF (no arbitrary catch)", () => {
     vi.useRealTimers();
   });
 
-  it("LIFE_R12_TIMER_HANDOFF_01: exact timer counts 1,1,2,3,4 no direct calls", async () => {
+  it("LIFE_R12F_TIMER_HANDOFF_01: exact timer counts 1,1,1,2,2,3,4 no runAll no catch", async () => {
+    // Setup: A's isAvailable() will return a deferred Promise
     const deferredA = createDeferred<boolean>();
     repo.deferred = deferredA;
 
     // Start A via scheduler
     startDurableReconciliationScheduler();
 
-    // +5s: A's first run fires, isAvailable called (callCount=1), A pending
+    // +5s: A's first run fires (initial delay=5s).
+    // isAvailable called (callCount=1), returns deferredA.promise (pending).
+    // A is pending (reconciliationRunning=true).
     await vi.advanceTimersByTimeAsync(5000);
+    // Flush microtasks from A's timer callback (isAvailable call, etc.)
+    await flushMicrotasks();
     expect(repo.callCount).toBe(1);
 
-    // Stop A — A still pending
+    // Stop A — A still pending (deferredA not resolved)
     stopDurableReconciliationScheduler();
 
     // Start B via scheduler
@@ -150,43 +170,60 @@ describe("R12-05 SCHEDULER TIMER HANDOFF (no arbitrary catch)", () => {
     repo.deferred = deferredB;
     startDurableReconciliationScheduler();
 
-    // +5s: B's first scheduled run fires.
+    // +5s: B's first scheduled run fires (initial delay=5s, at t=10s).
     // A is still pending (reconciliationRunning=true) → anti-overlap → skip.
     // B still calls scheduleNext() after the skip.
+    // B's next timer: t=10s + DURABLE_RECONCILIATION_INTERVAL.
     await vi.advanceTimersByTimeAsync(5000);
+    // Flush microtasks from B's timer callback (anti-overlap skip, scheduleNext)
+    await flushMicrotasks();
     expect(repo.callCount).toBe(1); // B skipped, A still pending
 
-    // Resolve A and flush. flushAsync processes:
-    // 1. A's isAvailable resolves → A's reconciliation completes → reconciliationRunning=false
-    // 2. A does not rearm (gen mismatch)
-    // 3. B's next scheduled timer fires → B calls isAvailable (callCount=2) → pending on deferredB
+    // Resolve A — A's isAvailable() returns true.
+    // A's reconciliation chain resumes (microtasks).
+    // A does not rearm (gen mismatch).
     deferredA.resolve(true);
-    _resetDurableStorageCache();
-    await flushAsync();
-    expect(repo.callCount).toBe(2);
+    // Flush microtasks from A's async chain.
+    // R12F-02: NO catch — errors are NOT silenced.
+    await flushMicrotasks();
+    expect(repo.callCount).toBe(1); // A completed, no new isAvailable call
 
-    // Resolve B's first run and flush. flushAsync processes:
-    // 1. B's isAvailable resolves → B's reconciliation completes → scheduleNext()
-    // 2. B's next timer fires → B calls isAvailable (callCount=3) → pending on new deferred
+    // Advance exactly DURABLE_RECONCILIATION_INTERVAL to B's next scheduled tick.
+    // B's next timer is at t=10s + DURABLE_RECONCILIATION_INTERVAL = t=610000ms.
+    // B's timer fires, isAvailable called (callCount=2), returns deferredB.promise.
+    // B is pending (reconciliationRunning=true).
+    _resetDurableStorageCache();
+    await vi.advanceTimersByTimeAsync(DURABLE_RECONCILIATION_INTERVAL);
+    await flushMicrotasks();
+    expect(repo.callCount).toBe(2); // B ran via timer
+
+    // Resolve B — B's isAvailable() returns true.
+    // B's reconciliation chain resumes, scheduleNext() called.
     deferredB.resolve(true);
+    await flushMicrotasks();
+    expect(repo.callCount).toBe(2); // B completed, no new isAvailable call
+
+    // Advance 1 full interval — B runs again, isAvailable called (callCount=3).
     const deferredC = createDeferred<boolean>();
     repo.deferred = deferredC;
     _resetDurableStorageCache();
-    await flushAsync();
+    await vi.advanceTimersByTimeAsync(DURABLE_RECONCILIATION_INTERVAL);
     expect(repo.callCount).toBe(3);
 
-    // Resolve B's second run and flush. flushAsync processes:
-    // 1. B's isAvailable resolves → B's reconciliation completes → scheduleNext()
-    // 2. B's next timer fires → B calls isAvailable (callCount=4) → pending on new deferred
+    // Resolve, flush
     deferredC.resolve(true);
+    await flushMicrotasks();
+
+    // Advance 1 full interval — B runs again, isAvailable called (callCount=4).
     const deferredD = createDeferred<boolean>();
     repo.deferred = deferredD;
     _resetDurableStorageCache();
-    await flushAsync();
+    await vi.advanceTimersByTimeAsync(DURABLE_RECONCILIATION_INTERVAL);
     expect(repo.callCount).toBe(4);
 
     // No direct runDurableReconciliation() calls were used.
-    // No arbitrary catch — only vitest's iteration limit is ignored.
-    // Exact counts: 1, 1, 2, 3, 4.
+    // No runAllTimersAsync.
+    // No catch of any kind.
+    // Exact counts: 1, 1, 1, 2, 2, 3, 4.
   }, 30000);
 });

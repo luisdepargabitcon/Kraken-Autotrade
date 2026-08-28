@@ -8818,3 +8818,56 @@ NO TRAINING
 NO REAL
 PENDING_GITHUB_COUNTERAUDIT=YES
 ```
+
+---
+
+## SPOT R12F — FINAL EVIDENCE CLOSURE
+
+### Huecos cerrados (contraauditoría R12)
+
+1. **Giveback E2E sin valores numéricos exactos.**
+   Assertions ahora verifican exactamente:
+   - Supervisor T=1500: final_R=0.8, future_MFE_R=2.0, future_MAE_R=0.8, expected_giveback_R=1.2
+   - Supervisor T=1700: final_R=0.8, future_MFE_R=0.8, future_MAE_R=0.8, expected_giveback_R=0
+   - running mfeR/maeR son DISTINTOS de currentR (cumulativeMfeR=currentR*2, cumulativeMaeR=-currentR*1.5)
+   - Una regresión que use cumulative mfeR/maeR en lugar de currentR NO puede pasar.
+
+2. **Scheduler test usaba runAllTimersAsync con catch.**
+   Eliminado completamente vi.runAllTimersAsync() y cualquier catch.
+   Usa exclusivamente vi.advanceTimersByTimeAsync con intervalos exactos.
+   Flush de microtasks vía setTimeout(0) + advanceTimersByTimeAsync(0) — sin captura de errores.
+   Módulos mocked pre-importados para que dynamic imports resuelvan bajo fake timers.
+   Counts exactos: 1,1,1,2,2,3,4.
+
+3. **Cache outage no probaba invalidación interna → recovery → reprobe real.**
+   PROD_OUTAGE_R12F_RECOVERY: INSERT throw → dbDown=true → reprobe fail → STORAGE_UNAVAILABLE.
+   Sin _resetDurableStorageCache() manual. DB recupera. isDurableStorageAvailable() → true.
+   Contador de queries LIMIT 0 verifica NUEVAS queries después del outage.
+   PROD_OUTAGE_R12F_STILL_DOWN: DB sigue caída. isDurableStorageAvailable() → false.
+   Contador verifica reprobe real (no negative cache).
+
+### No product code changes
+
+spotAiDurableTrainingStore.ts NO fue modificado.
+Migración 090 NO fue modificada.
+spotAi.routes.ts NO fue modificado.
+
+### Validación
+
+- SPOT-AI: 57 archivos / 515 tests pasaron
+- Económicos + Forward Twin + regresión: 6 archivos / 168 tests pasaron
+- TSC: exit 0
+- npm run check: exit 0
+- Build: exit 0
+- git diff --check: exit 0
+
+### Estado operacional
+
+```
+NO DEPLOY
+NO MIGRATION
+NO VPS
+NO TRAINING
+NO REAL
+PENDING_GITHUB_COUNTERAUDIT=YES
+```

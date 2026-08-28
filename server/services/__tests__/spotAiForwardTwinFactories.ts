@@ -164,18 +164,23 @@ export function makeSupervisorSnapshot(
   timestamp: number,
   overrides: Partial<ForwardTwinSnapshot> = {},
 ): ForwardTwinSnapshot {
+  // R12F-01: mfeR/maeR are CUMULATIVE and MUST differ from currentR
+  // (instantaneous). This prevents regressions where cumulative mfeR/maeR
+  // are used instead of currentR for giveback labels.
+  const cumulativeMfeR = currentR * 2;
+  const cumulativeMaeR = -currentR * 1.5;
   const position: ForwardTwinPositionSnapshot = {
     lotId,
     pair: "BTC/USD",
     entryPrice: 100,
     amount: 1,
     qtyRemaining: 1,
-    highestPrice: 100 + currentR * 5,
+    highestPrice: 100 + cumulativeMfeR * 5,
     lowestPrice: 95,
-    mfe: currentR * 5,
-    mae: -5,
-    mfeR: currentR,
-    maeR: -0.5,
+    mfe: cumulativeMfeR * 5,
+    mae: cumulativeMaeR * 5,
+    mfeR: cumulativeMfeR,
+    maeR: cumulativeMaeR,
     openedAt: 1100,
     setupTag: "BREAKOUT",
     executionMode: EXECUTION_MODE,
@@ -184,7 +189,7 @@ export function makeSupervisorSnapshot(
     sgCurrentStopPrice: 95,
     breakEvenStopPrice: null,
     trailingStopPrice: null,
-    trailingHighestPrice: 100 + currentR * 5,
+    trailingHighestPrice: 100 + cumulativeMfeR * 5,
     initialStopPrice: 95,
     initialStopDistanceUsd: 5,
     riskUsd: 10,
