@@ -615,46 +615,73 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
   // ─── Regime distribution ─────────────────────────────────────────────────
   app.get("/api/spot/ai/dataset/regimes", async (_req, res) => {
     try {
-      // R14F: Cache for 5 minutes — JSONB extraction on 17k SCAN rows takes 34s
-      // due to TOAST decompression. Without a migration (091) to add an
-      // expression index, the cold path cannot meet the <=10s gate.
-      // On cache miss, return available=false immediately (fail-closed)
-      // and trigger a background refresh. The UI shows "No disponible".
+      // R16: Physical columns path — no JSONB extraction in the productive query.
+      // R14F cache contract preserved: cache hit → immediate response;
+      // cache miss → fail-closed + background refresh.
       const cacheKey = "regimes";
-      const cached = getCached<{ regimes: any[]; available: boolean }>(cacheKey);
+      const cached = getCached<{ regimes: any[]; available: boolean; reason?: string }>(cacheKey);
       if (cached) {
         res.json(cached);
         return;
       }
-      // R14F: Cold cache — fail-closed. Do NOT block for 34s.
-      // Trigger background refresh (fire-and-forget).
+      // Cold cache — fail-closed. Do NOT block.
       const result = { regimes: [], available: false, reason: "COMPUTING_COLD_CACHE" };
       res.json(result);
 
       // Background refresh — populate cache for next request.
-      // This runs after res.json() so the response is not delayed.
       if (!queryCache.has(cacheKey + "__refreshing")) {
         queryCache.set(cacheKey + "__refreshing", { value: true, expiresAt: Date.now() + 60000 });
         setImmediate(async () => {
           try {
+            // R16: Single query — aggregate + coverage in one snapshot.
+            // Uses physical columns only. No JSONB access.
             const rows = await db.execute(sql`
               SELECT
-                data->'regime'->>'regime' AS regime,
-                data->'regime'->>'direction' AS direction,
-                COUNT(*) AS count
+                regime_projection_version,
+                regime,
+                direction,
+                COUNT(*)::bigint AS count
               FROM spot_forward_twin_snapshots
               WHERE snapshot_type = 'SCAN'
-              GROUP BY data->'regime'->>'regime', data->'regime'->>'direction'
-              ORDER BY count DESC
+              GROUP BY regime_projection_version, regime, direction
             `);
-            const regimes = ((rows.rows ?? []) as any[]).map((r: any) => ({
-              regime: r.regime ?? "UNKNOWN",
-              direction: r.direction ?? "NEUTRAL",
-              count: parseInt(r.count ?? "0"),
-            }));
+            const allRows = (rows.rows ?? []) as any[];
+
+            // Check for pending backfill rows
+            const pendingRows = allRows
+              .filter(r => r.regime_projection_version === null || r.regime_projection_version !== 1)
+              .reduce((sum, r) => sum + parseInt(r.count ?? "0"), 0);
+
+            if (pendingRows > 0) {
+              setCached(cacheKey, {
+                regimes: [],
+                available: false,
+                reason: "PHYSICAL_REGIME_BACKFILL_PENDING",
+              });
+              return;
+            }
+
+            // Build distribution from projected rows only (version=1)
+            const regimes = allRows
+              .filter(r => r.regime_projection_version === 1)
+              .map(r => ({
+                regime: r.regime ?? "UNKNOWN",
+                direction: r.direction ?? "NEUTRAL",
+                count: parseInt(r.count ?? "0"),
+              }))
+              .sort((a, b) => b.count - a.count);
+
             setCached(cacheKey, { regimes, available: true });
-          } catch {
-            // Background refresh failed — cache remains empty.
+          } catch (err: any) {
+            // R16: If columns don't exist (schema unavailable), fail closed.
+            if (err.code === "42703" || err.message?.includes("does not exist")) {
+              setCached(cacheKey, {
+                regimes: [],
+                available: false,
+                reason: "PHYSICAL_REGIME_SCHEMA_UNAVAILABLE",
+              });
+            }
+            // Other DB errors: cache remains empty (fail-closed).
           } finally {
             queryCache.delete(cacheKey + "__refreshing");
           }

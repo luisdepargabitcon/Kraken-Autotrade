@@ -107,6 +107,85 @@ NO REAL.**
 Esperar contraauditoría GitHub independiente y autorización explícita del
 usuario para aplicar 091 en staging.
 
+## 2026-08-29 — SPOT R16 — PHYSICAL REGIME PROJECTION READINESS
+
+### Diagnóstico R15D
+
+R15D demostró que el índice 091 (`idx_ft_scan_regime`) NO acelera la query
+`GET /api/spot/ai/dataset/regimes` (~42s). El cuello de botella es TOAST
+decompression del JSONB `data` (~2GB), no row lookup. El planner usa Seq Scan
+incluso con el índice forzado, porque el heap fetch + TOAST decompression
+domina el coste.
+
+### Solución R16
+
+Physical projection: añadir columnas físicas `regime TEXT`, `direction TEXT`,
+`regime_projection_version SMALLINT` a `spot_forward_twin_snapshots`. El
+collector copia los valores ya calculados al INSERT. El endpoint consulta
+columnas físicas en lugar de extraer JSONB.
+
+### Migration 092
+
+- **ID:** `092_spot_ai_regime_physical_columns`
+- **Archivo:** `db/migrations/092_spot_ai_regime_physical_columns.sql`
+- **DDL aditivo:** tres `ALTER TABLE ADD COLUMN` (nullable, sin default)
+- **Sin backfill en migration** (runner separado)
+- **No auto-aplicada** (no en routes.ts ni migrate.ts)
+
+### Runners
+
+- **Migration runner:** `script/spot-ai-migrate-092.ts` (token `APPLY_STAGING_092`)
+- **Backfill runner:** `script/spot-ai-backfill-regime-columns-092.ts` (token `APPLY_STAGING_BACKFILL_092`)
+- Backfill: batch-based (250), session advisory lock, idempotente, SCAN-only
+
+### Collector
+
+- SCAN: proyecta `regime`, `direction`, `regime_projection_version=1`
+- SUPERVISOR/FILL: NULL/NULL/NULL
+- JSONB `data` canónico sin cambios
+- Retention, buffer, flush invariants sin cambios
+
+### Endpoint
+
+- Query productiva usa columnas físicas (no JSONB)
+- Fail-closed si schema unavailable (`PHYSICAL_REGIME_SCHEMA_UNAVAILABLE`)
+- Fail-closed si backfill pending (`PHYSICAL_REGIME_BACKFILL_PENDING`)
+- Cache R14F/R14G preservado
+- No partial results
+
+### Projection Version
+
+`regime_projection_version` distingue entre:
+- `1` = proyectado correctamente (incluso si regime/direction son NULL)
+- `NULL` = pendiente de backfill o no-SCAN
+
+### Diseño operativo futuro
+
+1. Apply migration 092
+2. Pre-backfill (app vieja viva)
+3. Deploy R16
+4. Catch-up backfill
+5. Same-MVCC parity
+6. Benchmark físico
+
+### Alcance R16
+
+- Código + tests + auditoría ONLY
+- NO aplicar 092 en staging
+- NO deploy
+- NO training, inference, REAL
+- NO DROP idx_ft_scan_regime
+- NO modificar 089, 090, 091
+
+### Tests R16
+
+- Migration 092 runner: 16 tests
+- Backfill runner: 27 tests
+- Collector projection: 11 tests
+- Endpoint physical: 11 tests
+- Cutover sequence: 5 tests
+- Total: 70 new tests
+
 ## 2026-08-26 — SPOT FORWARD TWIN + IA FORWARD TWIN — ESTADO VIGENTE
 
 ### Checkpoint R6 2026-08-27 — SPOT IA Forward Twin R6 — Cierre post-contraauditoría R5
