@@ -157,7 +157,8 @@ export type Migration091Result =
 
 export interface PoolClientLike {
   query(text: string, values?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
-  release(options?: { destroy?: boolean }): void;
+  // node-postgres accepts both release(true) and release({ destroy: true }).
+  release(options?: { destroy?: boolean } | boolean): void;
 }
 
 export interface PoolLike {
