@@ -74,6 +74,26 @@ Sin NOT NULL, sin DEFAULT, sin CHECK, sin backfill, sin index, sin DROP.
 - STOP on batch failure (no skip)
 - Unlock siempre en finally; destroy client si unlock falla
 
+### R16F: Transaction Order (SET LOCAL MUST be inside transaction)
+
+**PostgreSQL `SET LOCAL` fuera de un transaction block no tiene efecto.**
+
+Orden correcto por cada batch:
+
+```
+BEGIN
+SET LOCAL lock_timeout = '2s'
+SET LOCAL statement_timeout = '15s'
+WITH batch ... UPDATE ...
+COMMIT
+```
+
+Si `SET LOCAL` falla: ROLLBACK + STOP.
+Si `UPDATE` falla: ROLLBACK + STOP.
+Si `COMMIT` falla: intentar ROLLBACK + STOP.
+
+Nunca continuar al siguiente batch después de un fallo.
+
 ## 7. Projection Version Rationale
 
 `regime IS NULL` no distingue entre:

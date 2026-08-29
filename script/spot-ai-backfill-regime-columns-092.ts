@@ -177,14 +177,16 @@ export async function runBackfill092(deps: Backfill092Deps): Promise<BackfillRes
     console.log(`[backfill-092] Advisory lock acquired: ${ADVISORY_LOCK_BACKFILL_092}`);
 
     // 7. Process batches
+    // R16F: SET LOCAL MUST be inside a transaction block to have effect.
+    // Order: BEGIN → SET LOCAL lock_timeout → SET LOCAL statement_timeout → UPDATE → COMMIT
     while (true) {
       const batchStart = Date.now();
 
       try {
+        await client.query("BEGIN");
         await client.query(`SET LOCAL lock_timeout = '${BATCH_LOCK_TIMEOUT}'`);
         await client.query(`SET LOCAL statement_timeout = '${BATCH_STATEMENT_TIMEOUT}'`);
 
-        await client.query("BEGIN");
         const updateResult = await client.query(
           `WITH batch AS (
             SELECT id FROM ${TABLE_NAME}

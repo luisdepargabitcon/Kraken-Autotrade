@@ -673,15 +673,23 @@ export const registerSpotAiRoutes: RegisterRoutes = (app) => {
 
             setCached(cacheKey, { regimes, available: true });
           } catch (err: any) {
-            // R16: If columns don't exist (schema unavailable), fail closed.
-            if (err.code === "42703" || err.message?.includes("does not exist")) {
+            // R16F: Strict SQLSTATE classification — no generic message matching.
+            // 42703 = undefined_column (R16 columns not yet added)
+            if (err.code === "42703") {
               setCached(cacheKey, {
                 regimes: [],
                 available: false,
                 reason: "PHYSICAL_REGIME_SCHEMA_UNAVAILABLE",
               });
+            } else {
+              // Other DB errors: fail-closed with generic reason.
+              // Never present as available=true or empty success.
+              setCached(cacheKey, {
+                regimes: [],
+                available: false,
+                reason: "PHYSICAL_REGIME_QUERY_UNAVAILABLE",
+              });
             }
-            // Other DB errors: cache remains empty (fail-closed).
           } finally {
             queryCache.delete(cacheKey + "__refreshing");
           }

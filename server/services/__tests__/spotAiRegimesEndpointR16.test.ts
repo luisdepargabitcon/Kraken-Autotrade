@@ -301,4 +301,45 @@ describe("R16 REGIMES ENDPOINT — PHYSICAL COLUMNS", () => {
     await handlers["/api/spot/ai/dataset/regimes"]({} as any, res2);
     expect(res2.body.available).toBe(false);
   });
+
+  // ─── R16F: STRICT SCHEMA ERROR CLASSIFICATION ───────────────────────────
+
+  // R16F_API_01
+  it("R16F_API_01: undefined_column (42703) → PHYSICAL_REGIME_SCHEMA_UNAVAILABLE", async () => {
+    mockQueryError = Object.assign(new Error('column "regime" does not exist'), { code: "42703" });
+    const res = createMockRes();
+    await handlers["/api/spot/ai/dataset/regimes"]({} as any, res);
+    await waitBackgroundRefresh();
+    const res2 = createMockRes();
+    await handlers["/api/spot/ai/dataset/regimes"]({} as any, res2);
+    expect(res2.body.available).toBe(false);
+    expect(res2.body.reason).toBe("PHYSICAL_REGIME_SCHEMA_UNAVAILABLE");
+  });
+
+  // R16F_API_02
+  it("R16F_API_02: generic 'does not exist' message (42P01) → NOT schema unavailable", async () => {
+    mockQueryError = Object.assign(new Error("relation spot_forward_twin_snapshots does not exist"), { code: "42P01" });
+    const res = createMockRes();
+    await handlers["/api/spot/ai/dataset/regimes"]({} as any, res);
+    await waitBackgroundRefresh();
+    const res2 = createMockRes();
+    await handlers["/api/spot/ai/dataset/regimes"]({} as any, res2);
+    expect(res2.body.available).toBe(false);
+    // Must NOT be classified as schema unavailable — it's a different error
+    expect(res2.body.reason).not.toBe("PHYSICAL_REGIME_SCHEMA_UNAVAILABLE");
+  });
+
+  // R16F_API_03
+  it("R16F_API_03: generic DB error (08006) → fail-closed, no fake empty success", async () => {
+    mockQueryError = Object.assign(new Error("connection failure"), { code: "08006" });
+    const res = createMockRes();
+    await handlers["/api/spot/ai/dataset/regimes"]({} as any, res);
+    await waitBackgroundRefresh();
+    const res2 = createMockRes();
+    await handlers["/api/spot/ai/dataset/regimes"]({} as any, res2);
+    expect(res2.body.available).toBe(false);
+    expect(res2.body.regimes).toEqual([]);
+    // Must NOT be schema unavailable
+    expect(res2.body.reason).not.toBe("PHYSICAL_REGIME_SCHEMA_UNAVAILABLE");
+  });
 });

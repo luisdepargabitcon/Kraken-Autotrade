@@ -430,4 +430,122 @@ describe("R16 BACKFILL 092 RUNNER — REAL CORE TESTS", () => {
     process.env.SPOT_AI_BACKFILL_092_BATCH_SIZE = "10";
     expect(() => resolveBatchSize()).toThrow(InvalidBatchSizeError);
   });
+
+  // ─── R16F: TRANSACTION ORDER + SET LOCAL INSIDE TRANSACTION ─────────────
+
+  // R16F_BF_01_TIMEOUTS_INSIDE_TRANSACTION
+  it("R16F_BF_01: timeouts inside transaction — BEGIN before SET LOCAL before UPDATE before COMMIT", async () => {
+    process.env[CONFIRM_ENV] = CONFIRM_TOKEN;
+    const { pool, state } = createFakePool({ pendingCount: 5 });
+    await runBackfill092({ pool, batchSize: DEFAULT_BATCH_SIZE });
+
+    // Find the first batch's query sequence
+    const allClientQueries = (state.queries);
+    const beginIdx = allClientQueries.indexOf("BEGIN");
+    const setLockIdx = allClientQueries.findIndex(q => q.includes("SET LOCAL lock_timeout"));
+    const setStmtIdx = allClientQueries.findIndex(q => q.includes("SET LOCAL statement_timeout"));
+    const updateIdx = allClientQueries.findIndex(q => q.includes("UPDATE"));
+    const commitIdx = allClientQueries.indexOf("COMMIT");
+
+    expect(beginIdx).toBeGreaterThanOrEqual(0);
+    expect(setLockIdx).toBeGreaterThan(beginIdx);
+    expect(setStmtIdx).toBeGreaterThan(setLockIdx);
+    expect(updateIdx).toBeGreaterThan(setStmtIdx);
+    expect(commitIdx).toBeGreaterThan(updateIdx);
+  });
+
+  // R16F_BF_01b: No SET LOCAL before BEGIN
+  it("R16F_BF_01b: no SET LOCAL before BEGIN in the same batch", async () => {
+    process.env[CONFIRM_ENV] = CONFIRM_TOKEN;
+    const { pool, state } = createFakePool({ pendingCount: 5 });
+    await runBackfill092({ pool, batchSize: DEFAULT_BATCH_SIZE });
+
+    const allClientQueries = state.queries;
+    const firstSetLocal = allClientQueries.findIndex(q => q.includes("SET LOCAL"));
+    const firstBegin = allClientQueries.indexOf("BEGIN");
+    // First SET LOCAL must come AFTER first BEGIN
+    expect(firstSetLocal).toBeGreaterThan(firstBegin);
+  });
+
+  // R16F_BF_02_LOCK_TIMEOUT_SET_FAILURE
+  it("R16F_BF_02: SET LOCAL lock_timeout failure → ROLLBACK, no UPDATE, no COMMIT, FAIL", async () => {
+    process.env[CONFIRM_ENV] = CONFIRM_TOKEN;
+    const { pool, state, client } = createFakePool({ pendingCount: 10 });
+    // Override client.query to fail on SET LOCAL lock_timeout
+    const origQuery = client.query;
+    client.query = vi.fn(async (text: string, values?: any[]) => {
+      state.queries.push(text);
+      if (text.includes("SET LOCAL lock_timeout")) {
+        throw new Error("SET LOCAL failed");
+      }
+      return origQuery(text, values);
+    });
+
+    await expect(
+      runBackfill092({ pool, batchSize: DEFAULT_BATCH_SIZE }),
+    ).rejects.toThrow("SET LOCAL failed");
+
+    // ROLLBACK should have been attempted
+    expect(state.queries).toContain("ROLLBACK");
+    // UPDATE should NOT have been called
+    expect(state.queries.find(q => q.includes("UPDATE"))).toBeUndefined();
+    // COMMIT should NOT have been called
+    expect(state.queries).not.toContain("COMMIT");
+  });
+
+  // R16F_BF_03_STATEMENT_TIMEOUT_SET_FAILURE
+  it("R16F_BF_03: SET LOCAL statement_timeout failure → ROLLBACK, no UPDATE, no COMMIT, FAIL", async () => {
+    process.env[CONFIRM_ENV] = CONFIRM_TOKEN;
+    const { pool, state, client } = createFakePool({ pendingCount: 10 });
+    const origQuery = client.query;
+    client.query = vi.fn(async (text: string, values?: any[]) => {
+      state.queries.push(text);
+      if (text.includes("SET LOCAL statement_timeout")) {
+        throw new Error("SET LOCAL failed");
+      }
+      return origQuery(text, values);
+    });
+
+    await expect(
+      runBackfill092({ pool, batchSize: DEFAULT_BATCH_SIZE }),
+    ).rejects.toThrow("SET LOCAL failed");
+
+    expect(state.queries).toContain("ROLLBACK");
+    expect(state.queries.find(q => q.includes("UPDATE"))).toBeUndefined();
+    expect(state.queries).not.toContain("COMMIT");
+  });
+
+  // R16F_BF_04_UPDATE_TIMEOUT_57014
+  it("R16F_BF_04: UPDATE statement timeout (57014) → ROLLBACK, STOP, no second batch", async () => {
+    process.env[CONFIRM_ENV] = CONFIRM_TOKEN;
+    const { pool, state } = createFakePool({ pendingCount: 100, batchTimeoutOnBatch: 1 });
+    await expect(
+      runBackfill092({ pool, batchSize: DEFAULT_BATCH_SIZE }),
+    ).rejects.toThrow(BatchTimeoutError);
+    expect(state.queries).toContain("ROLLBACK");
+    // Only 1 UPDATE attempted
+    const updateCount = state.queries.filter(q => q.includes("UPDATE")).length;
+    expect(updateCount).toBe(1);
+  });
+
+  // R16F_BF_05_LOCK_TIMEOUT_55P03
+  it("R16F_BF_05: lock timeout (55P03) → ROLLBACK, STOP, no second batch", async () => {
+    process.env[CONFIRM_ENV] = CONFIRM_TOKEN;
+    const { pool, state, client } = createFakePool({ pendingCount: 100 });
+    const origQuery = client.query;
+    client.query = vi.fn(async (text: string, values?: any[]) => {
+      state.queries.push(text);
+      if (text.includes("UPDATE")) {
+        throw Object.assign(new Error("lock timeout"), { code: "55P03" });
+      }
+      return origQuery(text, values);
+    });
+
+    await expect(
+      runBackfill092({ pool, batchSize: DEFAULT_BATCH_SIZE }),
+    ).rejects.toThrow(BatchTimeoutError);
+    expect(state.queries).toContain("ROLLBACK");
+    const updateCount = state.queries.filter(q => q.includes("UPDATE")).length;
+    expect(updateCount).toBe(1);
+  });
 });
