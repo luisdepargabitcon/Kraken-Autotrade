@@ -304,12 +304,18 @@ describe("R10-10 MIGRATION CONTRACT EXHAUSTIVE", () => {
     });
   });
 
-  // R10-11: No migration 091 — verified from filesystem
-  it("NO_MIGRATION_091: no 091 file exists in db/migrations", () => {
+  // R15: Migration 091 now exists — verified from filesystem
+  it("MIGRATION_091_EXISTS: 091 file exists in db/migrations and is CREATE INDEX CONCURRENTLY", () => {
     const migrationsDir = path.resolve(__dirname, "../../../db/migrations");
     const files = fs.readdirSync(migrationsDir);
     const has091 = files.some((f) => f.startsWith("091_"));
-    expect(has091).toBe(false);
+    expect(has091).toBe(true);
+    const sql091 = fs.readFileSync(
+      path.resolve(migrationsDir, "091_spot_ai_scan_regime_index.sql"),
+      "utf-8",
+    );
+    expect(sql091).toContain("CREATE INDEX CONCURRENTLY");
+    expect(sql091).toContain("idx_ft_scan_regime");
   });
 
   // R10-11: Migration 090 applied state is operational, not verifiable from repo

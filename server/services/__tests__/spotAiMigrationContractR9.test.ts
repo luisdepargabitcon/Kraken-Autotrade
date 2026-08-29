@@ -256,13 +256,19 @@ describe("R9-13/R9-14 MIGRATION 090 ↔ WRITER CONTRACT", () => {
     expect(migrationSql).toContain("CREATE TABLE IF NOT EXISTS spot_ai_forward_giveback_samples");
   });
 
-  // R10-11: No migration 091 — verified from filesystem, NOT tautological.
-  it("NO_MIGRATION_091: no 091 file exists in db/migrations", () => {
+  // R15: Migration 091 now exists — verified from filesystem, NOT tautological.
+  it("MIGRATION_091_EXISTS: 091 file exists in db/migrations and is CREATE INDEX CONCURRENTLY", () => {
     const fs = require("fs");
     const path = require("path");
     const migrationsDir = path.resolve(__dirname, "../../../db/migrations");
     const files = fs.readdirSync(migrationsDir);
     const has091 = files.some((f: string) => f.startsWith("091_"));
-    expect(has091).toBe(false);
+    expect(has091).toBe(true);
+    const sql091 = fs.readFileSync(
+      path.resolve(migrationsDir, "091_spot_ai_scan_regime_index.sql"),
+      "utf-8",
+    );
+    expect(sql091).toContain("CREATE INDEX CONCURRENTLY");
+    expect(sql091).toContain("idx_ft_scan_regime");
   });
 });

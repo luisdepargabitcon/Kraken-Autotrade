@@ -15,6 +15,98 @@
 - Si código y documentación se contradicen, registrar la discrepancia y resolverla conforme al alcance de la tarea actual.
 - No alterar silenciosamente datos operativos o históricos para forzar coincidencia documental.
 
+## 2026-08-29 — SPOT R15 — MIGRATION 091 CONCURRENT REGIME INDEX READINESS
+
+### Objetivo
+
+Optimizar `GET /api/spot/ai/dataset/regimes` cuya consulta de agregación JSONB
+sobre `spot_forward_twin_snapshots` tiene un baseline de aproximadamente
+**33.7 s** (~33675 ms). La solución es un índice partial expression btree
+(`idx_ft_scan_regime`) sobre las rutas JSON `data->'regime'->>'regime'` y
+`data->'regime'->>'direction'` con predicate `snapshot_type='SCAN'`.
+
+### Alcance R15
+
+R15 es exclusivamente **readiness de código**: crear migration 091, runner
+dedicado no transaccional, tests, auditoría/runbook, BITACORA, commit y push.
+**NO aplicar 091. NO deploy. NO VPS. NO staging DB. NO training. NO inference.
+NO REAL.**
+
+### Migration 091
+
+- **ID:** `091_spot_ai_scan_regime_index`
+- **Archivo:** `db/migrations/091_spot_ai_scan_regime_index.sql`
+- **SQL:** `CREATE INDEX CONCURRENTLY idx_ft_scan_regime ON public.spot_forward_twin_snapshots (((data->'regime'->>'regime')), ((data->'regime'->>'direction'))) WHERE snapshot_type = 'SCAN';`
+- **Una sola sentencia ejecutable.** No BEGIN/COMMIT/DROP/ALTER/DML/IF NOT EXISTS.
+- **NO registrada** en `server/routes.ts` MIGRATIONS array.
+- **NO registrada** en `script/migrate.ts`.
+- **NO aplicada** vía `AutoMigrationRunner` (CREATE INDEX CONCURRENTLY no puede
+  ejecutarse dentro de transaction block).
+- `AutoMigrationRunner` **NO modificado**.
+- `server/routes.ts` **NO modificado**.
+- `script/migrate.ts` **NO modificado**.
+- Migration 089 **NO modificada** (sigue diferida).
+- Migration 090 **NO modificada** (sigue intacta).
+
+### Runner dedicado no transaccional
+
+- **Archivo:** `script/spot-ai-migrate-091.ts`
+- **Confirmation gate:** `SPOT_AI_MIGRATION_091_CONFIRM=APPLY_STAGING_091`
+  Sin token: no importa DB, no conecta pool, no ejecuta SQL, exit code 2.
+- **Session advisory lock:** `pg_advisory_lock(910091202)` (NO
+  `pg_advisory_xact_lock`). ID distinto del AutoMigrationRunner (7845123456).
+- **Single PoolClient:** lock → inspect → CREATE → postverify → registry →
+  unlock, todo en el mismo cliente.
+- **CREATE INDEX CONCURRENTLY fuera de transaction.** Registry INSERT en
+  transacción corta separada (BEGIN/INSERT/COMMIT) después de verificar índice
+  válido.
+- **Unlock always:** en `finally`, si lock fue adquirido. Si unlock falla o
+  devuelve false → `client.release(true)` (destruir conexión).
+- **State machine:** 8 casos (A–H) con fail-closed para drift, invalid,
+  conflict. Crash recovery (Case E) → RECOVERED_REGISTRY sin re-CREATE.
+- **Import-safe:** importar módulo no ejecuta main(), no muta exitCode, no
+  conecta DB.
+- **SQL validator:** exactamente 1 statement, CREATE INDEX CONCURRENTLY, sin
+  BEGIN/COMMIT/DROP/ALTER/DML/IF NOT EXISTS.
+- **Index inspector:** consulta pg_class/pg_index/pg_namespace/pg_am con
+  pg_get_indexdef y pg_get_expr. Canonicalización robusta (strips ::text,
+  whitespace, paréntesis).
+
+### Tests R15
+
+- **Archivo:** `server/services/__tests__/spotAiMigrate091RunnerR15.test.ts`
+- **28 tests** cubriendo: confirmation, only-091, no-auto-runner,
+  create-outside-transaction, single-client, idempotency, crash-recovery,
+  invalid-index, definition-conflict, registry-drift, create-failure,
+  postverify-failure, registry-write-failure, unlock-always,
+  unlock-destroys-client, sql-file-validation, import-safe, cli-fails-closed,
+  canonicalization, checksum-coherence + 8 auxiliares.
+- **Resultado: 28/28 PASS.**
+
+### Runbook
+
+- **Archivo:** `AUDITORIAS/SPOT_AI_091_REGIME_INDEX_RUNBOOK_2026-08-28.md`
+- Contiene: objetivo, baseline, SQL exacto, confirmation token, pre-apply SQL,
+  future apply command, post-apply SQL, crash recovery, invalid index
+  recovery, rollback, future benchmark, prohibiciones.
+
+### Estado
+
+- **MIGRATION_091_CREATED=YES**
+- **MIGRATION_091_APPLIED=NO**
+- **VPS_ACCESSED=NO**
+- **STAGING_DB_TOUCHED=NO**
+- **STAGING_DEPLOYED=NO**
+- **TRAINING_EXECUTED=NO**
+- **INFERENCE_EXECUTED=NO**
+- **REAL_EXECUTED=NO**
+- **AI_TRADING_CONTROL=NONE**
+
+### Próxima acción
+
+Esperar contraauditoría GitHub independiente y autorización explícita del
+usuario para aplicar 091 en staging.
+
 ## 2026-08-26 — SPOT FORWARD TWIN + IA FORWARD TWIN — ESTADO VIGENTE
 
 ### Checkpoint R6 2026-08-27 — SPOT IA Forward Twin R6 — Cierre post-contraauditoría R5
