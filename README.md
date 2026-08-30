@@ -20,7 +20,6 @@ docker compose -f docker-compose.staging.yml up -d --build
 docker logs -f krakenbot-staging-app
 
 # Acceder al panel
-http://5.250.184.18:3020
 ```
 
 ## 📞 Soporte
