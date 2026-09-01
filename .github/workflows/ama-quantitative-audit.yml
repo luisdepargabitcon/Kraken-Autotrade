@@ -1,0 +1,61 @@
+name: AMA Quantitative Strategy Audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/amaQuantitativeAudit.ts"
+      - "scripts/amaQuantitativeAuditV2.ts"
+      - "scripts/runAmaQuantitativeAuditV3.mjs"
+      - "server/services/ama/**"
+      - ".github/workflows/ama-quantitative-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ama-quant-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify canonical seed invariants
+        run: |
+          npx vitest run \
+            server/services/ama/__tests__/amaSeedTypes.test.ts \
+            server/services/ama/__tests__/amaAdaptivePlanner.test.ts \
+            server/services/ama/__tests__/amaProtectionExits.test.ts \
+            --reporter=verbose
+
+      - name: Run final AMA quantitative audit V3
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          node scripts/runAmaQuantitativeAuditV3.mjs | tee artifacts/ama-quant-audit-v3.log
+
+      - name: Verify audit artifacts
+        run: |
+          test -s artifacts/ama-quant-audit-v3/AUDITORIA_CUANTITATIVA_AMA_BTC_V3.md
+          test -s artifacts/ama-quant-audit-v3/runs.json
+          test -s artifacts/ama-quant-audit-v3/trades.csv
+          grep -q "AMA_QUANT_AUDIT_V3=PASS" artifacts/ama-quant-audit-v3.log
+
+      - name: Upload quantitative audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ama-quantitative-audit-v3
+          path: |
+            artifacts/ama-quant-audit-v3/
+            artifacts/ama-quant-audit-v3.log
+          retention-days: 30
