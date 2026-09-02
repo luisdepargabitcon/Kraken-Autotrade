@@ -121,11 +121,25 @@ describe("V3.2 getEffectiveProtectiveTakerFallbackEnabled", () => {
     })).toBe(false);
   });
 
-  it("REAL_LIMITED with enabled=true returns true", () => {
+  it("REAL_LIMITED with enabled=true returns FALSE (hard blocked)", () => {
     expect(getEffectiveProtectiveTakerFallbackEnabled({
       mode: "REAL_LIMITED",
       protectiveTakerFallbackEnabled: true,
-    })).toBe(true);
+    })).toBe(false);
+  });
+
+  it("REAL_FULL with enabled=true returns FALSE (hard blocked)", () => {
+    expect(getEffectiveProtectiveTakerFallbackEnabled({
+      mode: "REAL_FULL",
+      protectiveTakerFallbackEnabled: true,
+    })).toBe(false);
+  });
+
+  it("OFF with enabled=true returns FALSE", () => {
+    expect(getEffectiveProtectiveTakerFallbackEnabled({
+      mode: "OFF",
+      protectiveTakerFallbackEnabled: true,
+    })).toBe(false);
   });
 });
 

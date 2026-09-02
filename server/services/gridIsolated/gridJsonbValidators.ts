@@ -227,6 +227,13 @@ function validatePendingMakerExit(raw: unknown): GridPendingMakerExit {
     slippageVsStopUsd: finiteNumber(obj.slippageVsStopUsd),
     slippageVsStopPct: finiteNumber(obj.slippageVsStopPct),
     takerFallbackReason: typeof obj.takerFallbackReason === "string" ? obj.takerFallbackReason : null,
+    // V3.2 Policy snapshot fields
+    snapshotProtectiveTakerFallbackEnabled: typeof obj.snapshotProtectiveTakerFallbackEnabled === "boolean" ? obj.snapshotProtectiveTakerFallbackEnabled : null,
+    snapshotProtectiveMakerMaxAttempts: typeof obj.snapshotProtectiveMakerMaxAttempts === "number" ? obj.snapshotProtectiveMakerMaxAttempts : null,
+    snapshotProtectiveMakerMaxWaitSeconds: typeof obj.snapshotProtectiveMakerMaxWaitSeconds === "number" ? obj.snapshotProtectiveMakerMaxWaitSeconds : null,
+    snapshotProtectiveTakerMaxSlippagePct: typeof obj.snapshotProtectiveTakerMaxSlippagePct === "number" ? obj.snapshotProtectiveTakerMaxSlippagePct : null,
+    snapshotResolvedTakerFeePct: typeof obj.snapshotResolvedTakerFeePct === "number" ? obj.snapshotResolvedTakerFeePct : null,
+    snapshotFeeSource: typeof obj.snapshotFeeSource === "string" ? obj.snapshotFeeSource : null,
   };
 }
 
@@ -567,6 +574,12 @@ export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null 
       slippageVsStopUsd: null,
       slippageVsStopPct: null,
       takerFallbackReason: null,
+      snapshotProtectiveTakerFallbackEnabled: null,
+      snapshotProtectiveMakerMaxAttempts: null,
+      snapshotProtectiveMakerMaxWaitSeconds: null,
+      snapshotProtectiveTakerMaxSlippagePct: null,
+      snapshotResolvedTakerFeePct: null,
+      snapshotFeeSource: null,
     },
     performanceState: null,
     stateVersion: 1,
@@ -625,6 +638,12 @@ function defaultReviewRequiredMakerExit(reason: string): GridPendingMakerExit {
     slippageVsStopUsd: null,
     slippageVsStopPct: null,
     takerFallbackReason: null,
+    snapshotProtectiveTakerFallbackEnabled: null,
+    snapshotProtectiveMakerMaxAttempts: null,
+    snapshotProtectiveMakerMaxWaitSeconds: null,
+    snapshotProtectiveTakerMaxSlippagePct: null,
+    snapshotResolvedTakerFeePct: null,
+    snapshotFeeSource: null,
   };
 }
 

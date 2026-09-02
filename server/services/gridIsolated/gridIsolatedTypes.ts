@@ -123,13 +123,19 @@ export const DEFAULT_PROTECTIVE_MAKER_MAX_WAIT_SECONDS = 30;
 /**
  * V3.2: Returns the effective protective taker fallback flag.
  * SHADOW uses the stored value (allows testing the fallback in SHADOW).
- * REAL modes also use the stored value, but REAL remains blocked by
- * GridModeLock until explicit safety conditions are met.
+ * REAL_LIMITED and REAL_FULL are HARD BLOCKED — protective taker fallback
+ * is NOT authorized for REAL modes until a separate REAL-specific
+ * implementation covers real maker cancellation, exchange confirmation,
+ * reconciliation, real taker submission, idempotency, partial fills,
+ * restart recovery, and Revolut X-specific audit.
+ * OFF mode always returns false.
  */
 export function getEffectiveProtectiveTakerFallbackEnabled(
   config: { mode: GridMode; protectiveTakerFallbackEnabled: boolean },
 ): boolean {
-  return config.protectiveTakerFallbackEnabled;
+  if (config.mode === "SHADOW") return config.protectiveTakerFallbackEnabled;
+  // REAL_LIMITED, REAL_FULL, OFF → hard blocked
+  return false;
 }
 
 /**
@@ -394,6 +400,19 @@ export interface GridPendingMakerExit {
   slippageVsStopPct: number | null;
   /** Reason for taker fallback: "max_attempts" | "max_wait" | null. */
   takerFallbackReason: string | null;
+  // ─── V3.2 Policy Snapshot (frozen at protective trigger time) ───
+  /** Protective taker fallback enabled flag, snapshot at trigger time. */
+  snapshotProtectiveTakerFallbackEnabled: boolean | null;
+  /** Max maker attempts, snapshot at trigger time. */
+  snapshotProtectiveMakerMaxAttempts: number | null;
+  /** Max maker wait seconds, snapshot at trigger time. */
+  snapshotProtectiveMakerMaxWaitSeconds: number | null;
+  /** Max taker slippage pct, snapshot at trigger time. */
+  snapshotProtectiveTakerMaxSlippagePct: number | null;
+  /** Resolved taker fee pct, snapshot at trigger time. */
+  snapshotResolvedTakerFeePct: number | null;
+  /** Fee source identifier, snapshot at trigger time. */
+  snapshotFeeSource: string | null;
 }
 
 export interface GridCycleRiskState {
@@ -829,6 +848,15 @@ export interface GridIsolatedConfig {
   protectiveMakerMaxWaitSeconds: number;
   /** Optional max slippage pct guard for taker fallback. Null = no guard. */
   protectiveTakerMaxSlippagePct: number | null;
+  /**
+   * V3.2: Explicit taker fee percentage for protective taker fallback.
+   * This is the canonical fee source for taker SELL liquidity.
+   * Default: 0.09 (matching Revolut X taker fee).
+   * NOT the same as sellFeePct — sellFeePct is the maker fee for normal targets.
+   */
+  protectiveTakerFeePct: number;
+  /** V3.2: Fee source identifier for audit trail. */
+  protectiveTakerFeeSource: string;
   // ─── Wallet / Cartera ───
   gridWalletMode: "automatic" | "manual";
   gridWalletInitialUsd: number;
@@ -930,6 +958,8 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   protectiveMakerMaxAttempts: 3,
   protectiveMakerMaxWaitSeconds: 30,
   protectiveTakerMaxSlippagePct: null,
+  protectiveTakerFeePct: 0.09,
+  protectiveTakerFeeSource: "REVOLUTX_TAKER_DEFAULT",
   // Wallet / Cartera
   gridWalletMode: "automatic",
   gridWalletInitialUsd: 1000,
