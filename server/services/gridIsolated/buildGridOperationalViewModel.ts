@@ -196,11 +196,18 @@ export interface OperationalOpenCycle {
   liquidityRole: string | null;
   takerFillPrice: number | null;
   takerFeePct: number | null;
+  takerFeeSource: string | null;
   takerFeeUsd: number | null;
   slippageVsFloorUsd: number | null;
   slippageVsFloorPct: number | null;
   slippageVsStopUsd: number | null;
   slippageVsStopPct: number | null;
+  // V3.2: Policy snapshot (frozen at trigger time)
+  snapshotProtectiveTakerFallbackEnabled: boolean | null;
+  snapshotProtectiveMakerMaxAttempts: number | null;
+  snapshotProtectiveMakerMaxWaitSeconds: number | null;
+  snapshotResolvedTakerFeePct: number | null;
+  snapshotFeeSource: string | null;
   // V3.2: Performance state (MFE/MAE/forensic profit tracking)
   performanceDataAvailable: boolean;
   mfeGrossUsd: number | null;
@@ -221,6 +228,9 @@ export interface OperationalOpenCycle {
   finalCaptureEfficiencyPct: number | null;
   targetBaselineNetUsd: number | null;
   targetBaselineNetPct: number | null;
+  // V3.2: Performance valuation mode (how MFE/MAE is computed)
+  performanceValuationMode: string | null;
+  markPriceSource: string | null;
 }
 
 export interface OperationalLevel {
@@ -705,11 +715,18 @@ function buildOpenCycle(
     liquidityRole: risk?.protectiveExit?.liquidityRole ?? null,
     takerFillPrice: toNum(risk?.protectiveExit?.takerFillPrice) ?? null,
     takerFeePct: toNum(risk?.protectiveExit?.takerFeePct) ?? null,
+    takerFeeSource: risk?.protectiveExit?.snapshotFeeSource ?? null,
     takerFeeUsd: toNum(risk?.protectiveExit?.takerFeeUsd) ?? null,
     slippageVsFloorUsd: toNum(risk?.protectiveExit?.slippageVsFloorUsd) ?? null,
     slippageVsFloorPct: toNum(risk?.protectiveExit?.slippageVsFloorPct) ?? null,
     slippageVsStopUsd: toNum(risk?.protectiveExit?.slippageVsStopUsd) ?? null,
     slippageVsStopPct: toNum(risk?.protectiveExit?.slippageVsStopPct) ?? null,
+    // V3.2: Policy snapshot
+    snapshotProtectiveTakerFallbackEnabled: risk?.protectiveExit?.snapshotProtectiveTakerFallbackEnabled ?? null,
+    snapshotProtectiveMakerMaxAttempts: risk?.protectiveExit?.snapshotProtectiveMakerMaxAttempts ?? null,
+    snapshotProtectiveMakerMaxWaitSeconds: risk?.protectiveExit?.snapshotProtectiveMakerMaxWaitSeconds ?? null,
+    snapshotResolvedTakerFeePct: toNum(risk?.protectiveExit?.snapshotResolvedTakerFeePct) ?? null,
+    snapshotFeeSource: risk?.protectiveExit?.snapshotFeeSource ?? null,
     // V3.2: Performance state
     performanceDataAvailable: risk?.performanceState?.performanceDataAvailable ?? false,
     mfeGrossUsd: toNum(risk?.performanceState?.mfeGrossUsd) ?? null,
@@ -730,6 +747,8 @@ function buildOpenCycle(
     finalCaptureEfficiencyPct: toNum(risk?.performanceState?.finalCaptureEfficiencyPct) ?? null,
     targetBaselineNetUsd: toNum(risk?.performanceState?.targetBaselineNetUsd) ?? null,
     targetBaselineNetPct: toNum(risk?.performanceState?.targetBaselineNetPct) ?? null,
+    performanceValuationMode: "EXECUTABLE_TAKER_LIQUIDATION",
+    markPriceSource: risk?.performanceState?.markPriceSource ?? null,
     reviewCode: cycle?.reviewCode ?? null,
     reviewReason: cycle?.reviewReason ?? null,
     terminalKind: null,
@@ -901,11 +920,18 @@ function buildClosedCycle(
     liquidityRole: risk?.protectiveExit?.liquidityRole ?? null,
     takerFillPrice: toNum(risk?.protectiveExit?.takerFillPrice) ?? null,
     takerFeePct: toNum(risk?.protectiveExit?.takerFeePct) ?? null,
+    takerFeeSource: risk?.protectiveExit?.snapshotFeeSource ?? null,
     takerFeeUsd: toNum(risk?.protectiveExit?.takerFeeUsd) ?? null,
     slippageVsFloorUsd: toNum(risk?.protectiveExit?.slippageVsFloorUsd) ?? null,
     slippageVsFloorPct: toNum(risk?.protectiveExit?.slippageVsFloorPct) ?? null,
     slippageVsStopUsd: toNum(risk?.protectiveExit?.slippageVsStopUsd) ?? null,
     slippageVsStopPct: toNum(risk?.protectiveExit?.slippageVsStopPct) ?? null,
+    // V3.2: Policy snapshot
+    snapshotProtectiveTakerFallbackEnabled: risk?.protectiveExit?.snapshotProtectiveTakerFallbackEnabled ?? null,
+    snapshotProtectiveMakerMaxAttempts: risk?.protectiveExit?.snapshotProtectiveMakerMaxAttempts ?? null,
+    snapshotProtectiveMakerMaxWaitSeconds: risk?.protectiveExit?.snapshotProtectiveMakerMaxWaitSeconds ?? null,
+    snapshotResolvedTakerFeePct: toNum(risk?.protectiveExit?.snapshotResolvedTakerFeePct) ?? null,
+    snapshotFeeSource: risk?.protectiveExit?.snapshotFeeSource ?? null,
     // V3.2: Performance state
     performanceDataAvailable: risk?.performanceState?.performanceDataAvailable ?? false,
     mfeGrossUsd: toNum(risk?.performanceState?.mfeGrossUsd) ?? null,
@@ -926,6 +952,8 @@ function buildClosedCycle(
     finalCaptureEfficiencyPct: toNum(risk?.performanceState?.finalCaptureEfficiencyPct) ?? null,
     targetBaselineNetUsd: toNum(risk?.performanceState?.targetBaselineNetUsd) ?? null,
     targetBaselineNetPct: toNum(risk?.performanceState?.targetBaselineNetPct) ?? null,
+    performanceValuationMode: "EXECUTABLE_TAKER_LIQUIDATION",
+    markPriceSource: risk?.performanceState?.markPriceSource ?? null,
     terminalKind: isCancelled ? "cancelled" : "completed",
     closedAt: completedAt ?? safeIso(sellFilledAt) ?? null,
   };
