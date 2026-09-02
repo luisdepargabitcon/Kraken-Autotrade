@@ -219,6 +219,7 @@ function makeConfig(overrides: Partial<GridIsolatedConfig> = {}): GridIsolatedCo
     maxTakerFallbackPerCycle: 1,
     takerFallbackRequiresNetProfit: true,
     takerFallbackAuditRequired: true,
+    protectiveTakerFallbackEnabled: false, protectiveMakerMaxAttempts: 3, protectiveMakerMaxWaitSeconds: 30, protectiveTakerMaxSlippagePct: null,
     gridWalletMode: "automatic",
     gridWalletInitialUsd: 1000,
     gridWalletMaxUsd: 5000,

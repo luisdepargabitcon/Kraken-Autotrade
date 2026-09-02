@@ -193,6 +193,11 @@ function makeConfig(overrides: Partial<GridIsolatedConfig> = {}): GridIsolatedCo
     maxTakerFallbackPerCycle: 1,
     takerFallbackRequiresNetProfit: true,
     takerFallbackAuditRequired: true,
+    // V3.2: Protective Maker→Taker Fallback
+    protectiveTakerFallbackEnabled: false,
+    protectiveMakerMaxAttempts: 3,
+    protectiveMakerMaxWaitSeconds: 30,
+    protectiveTakerMaxSlippagePct: null,
     gridWalletMode: "automatic",
     gridWalletInitialUsd: 1000,
     gridWalletMaxUsd: 5000,
@@ -1405,12 +1410,18 @@ describe("processOpenCyclesShadow — cierre transaccional SHADOW", () => {
       await processLifecycleTickAt(engine, { bid: 60_900 }, tick3At);
 
       const exitAfter = (engine.cycles[0].riskStateJson as any)?.protectiveExit;
-      // Reprice debe actualizar makerOrderCreatedAt
-      expect(exitAfter.makerOrderCreatedAt.getTime()).toBeGreaterThan(createdBefore);
-      // makerEligibleAfter debe ser posterior al nuevo makerOrderCreatedAt
-      expect(exitAfter.makerEligibleAfter.getTime()).toBeGreaterThan(exitAfter.makerOrderCreatedAt.getTime());
+      // V3.2 FIX: Reprice NO debe actualizar makerOrderCreatedAt ni firstMakerCreatedAt.
+      // firstMakerCreatedAt preserva el timestamp de creación original del primer maker.
+      expect(exitAfter.firstMakerCreatedAt.getTime()).toBe(createdBefore);
+      expect(exitAfter.makerOrderCreatedAt.getTime()).toBe(createdBefore);
+      // Reprice debe actualizar lastRepricedAt
+      expect(exitAfter.lastRepricedAt.getTime()).toBeGreaterThan(createdBefore);
+      // makerEligibleAfter debe ser posterior al lastRepricedAt
+      expect(exitAfter.makerEligibleAfter.getTime()).toBeGreaterThan(exitAfter.lastRepricedAt.getTime());
       // makerEligibleAfter debe ser posterior al anterior
       expect(exitAfter.makerEligibleAfter.getTime()).toBeGreaterThan(eligibleBefore);
+      // repriceAttempts debe incrementar
+      expect(exitAfter.repriceAttempts).toBeGreaterThan(exitBefore.repriceAttempts);
     });
 
     it("tick posterior al reprice pero antes de la nueva elegibilidad: bloqueado", async () => {

@@ -159,6 +159,7 @@ function mkCfg(o: Partial<GridIsolatedConfig> = {}): GridIsolatedConfig {
     createdAt: new Date(), updatedAt: new Date(),
     makerAttemptsBeforeTaker: 3, takerFallbackEnabled: true, takerFallbackAttemptNumber: 4,
     maxTakerFallbackPerCycle: 1, takerFallbackRequiresNetProfit: true, takerFallbackAuditRequired: true,
+    protectiveTakerFallbackEnabled: false, protectiveMakerMaxAttempts: 3, protectiveMakerMaxWaitSeconds: 30, protectiveTakerMaxSlippagePct: null,
     gridWalletMode: "automatic", gridWalletInitialUsd: 1000, gridWalletMaxUsd: 5000,
     gridWalletUseProfits: true, gridWalletCompoundProfits: true,
     gridMaxCapitalPerCycleUsd: 600, gridMaxCapitalPerCyclePct: 60, gridReservePct: 20,

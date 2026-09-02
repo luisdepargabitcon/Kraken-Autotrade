@@ -88,6 +88,7 @@ import {
   computeSellPrice,
   computeCyclePnL,
   computeCyclePnLWithRoles,
+  computeBreakEvenSellPrice,
 } from "./gridNetCalculator";
 import { computeGridCycleEconomicPnl } from "./gridCycleEconomicPnl";
 import {
@@ -139,10 +140,16 @@ import {
   type StopLossLayer,
   type HodlRecoveryState,
   type GridPendingMakerExit,
+  type GridPerformanceState,
   FEE_BUFFER_BUY_PCT,
   FEE_BUFFER_SELL_PCT,
   TAX_RESERVE_PCT,
   type RevolutXGridFailureStage,
+  isProtectiveClosePath,
+  takerClosePathForMaker,
+  getEffectiveProtectiveTakerFallbackEnabled,
+  DEFAULT_PROTECTIVE_MAKER_MAX_ATTEMPTS,
+  DEFAULT_PROTECTIVE_MAKER_MAX_WAIT_SECONDS,
 } from "./gridIsolatedTypes";
 
 const MIN_MAKER_REST_MS = 1;
@@ -552,6 +559,11 @@ export class GridIsolatedEngine {
           circuitBreakerResolvedAt: row.circuitBreakerResolvedAt,
           circuitBreakerResolvedBy: row.circuitBreakerResolvedBy ?? null,
           circuitBreakerResolutionReason: row.circuitBreakerResolutionReason ?? null,
+          // V3.2: Protective Maker→Taker Fallback
+          protectiveTakerFallbackEnabled: (row as any).protectiveTakerFallbackEnabled ?? DEFAULT_GRID_CONFIG.protectiveTakerFallbackEnabled,
+          protectiveMakerMaxAttempts: (row as any).protectiveMakerMaxAttempts ?? DEFAULT_GRID_CONFIG.protectiveMakerMaxAttempts,
+          protectiveMakerMaxWaitSeconds: (row as any).protectiveMakerMaxWaitSeconds ?? DEFAULT_GRID_CONFIG.protectiveMakerMaxWaitSeconds,
+          protectiveTakerMaxSlippagePct: (row as any).protectiveTakerMaxSlippagePct ?? DEFAULT_GRID_CONFIG.protectiveTakerMaxSlippagePct,
         };
         if (this.config.mode === "SHADOW" && isLegacyExecutionPolicy(originalExecutionPolicy)) {
           await botLogger.warn(
@@ -707,6 +719,11 @@ export class GridIsolatedEngine {
           circuitBreakerResolvedAt: row.circuitBreakerResolvedAt,
           circuitBreakerResolvedBy: row.circuitBreakerResolvedBy ?? null,
           circuitBreakerResolutionReason: row.circuitBreakerResolutionReason ?? null,
+          // V3.2: Protective Maker→Taker Fallback
+          protectiveTakerFallbackEnabled: (row as any).protectiveTakerFallbackEnabled ?? DEFAULT_GRID_CONFIG.protectiveTakerFallbackEnabled,
+          protectiveMakerMaxAttempts: (row as any).protectiveMakerMaxAttempts ?? DEFAULT_GRID_CONFIG.protectiveMakerMaxAttempts,
+          protectiveMakerMaxWaitSeconds: (row as any).protectiveMakerMaxWaitSeconds ?? DEFAULT_GRID_CONFIG.protectiveMakerMaxWaitSeconds,
+          protectiveTakerMaxSlippagePct: (row as any).protectiveTakerMaxSlippagePct ?? DEFAULT_GRID_CONFIG.protectiveTakerMaxSlippagePct,
         };
       }
     } catch (error) {
@@ -767,6 +784,7 @@ export class GridIsolatedEngine {
       activeExitRoute: null,
       pendingExitPrice: null,
       protectiveExit: this.defaultMakerExit(),
+      performanceState: null,
       stateVersion: 1,
       lastEvaluatedAt: null,
     };
@@ -793,6 +811,23 @@ export class GridIsolatedEngine {
       bestBidAtFill: null,
       bestAskAtFill: null,
       cancellationReason: null,
+      // V3.2 protective maker→taker fallback fields
+      protectiveTriggeredAt: null,
+      firstMakerCreatedAt: null,
+      lastMakerAttemptAt: null,
+      makerAttempts: 0,
+      protectiveElapsedMs: null,
+      takerFallbackTriggeredAt: null,
+      exitFilledAt: null,
+      liquidityRole: null,
+      takerFillPrice: null,
+      takerFeePct: null,
+      takerFeeUsd: null,
+      slippageVsFloorUsd: null,
+      slippageVsFloorPct: null,
+      slippageVsStopUsd: null,
+      slippageVsStopPct: null,
+      takerFallbackReason: null,
     };
   }
 
@@ -904,6 +939,7 @@ export class GridIsolatedEngine {
       stopLoss: parsed.stopLoss.length ? parsed.stopLoss : defaults.stopLoss,
       hodl: { ...defaults.hodl, ...parsed.hodl },
       protectiveExit: parsed.protectiveExit?.state ? parsed.protectiveExit : defaults.protectiveExit,
+      performanceState: parsed.performanceState ?? null,
     };
   }
 
@@ -2571,6 +2607,24 @@ export class GridIsolatedEngine {
       return { targetPrice: null, targetQty: null, sellLevelId: null, closePath: null, eligibleForFill: false };
     }
 
+    // V3.2: Taker fallback — when the protective exit has been cancelled and the
+    // route is a taker path, execute the taker fill at the canonical best bid.
+    // The maker is already CANCELLED, so the single-active-sell invariant holds.
+    if (
+      risk.protectiveExit.state === "CANCELLED" &&
+      risk.protectiveExit.takerFallbackTriggeredAt != null &&
+      risk.protectiveExit.route != null &&
+      (risk.protectiveExit.route === "TRAILING_TAKER" || risk.protectiveExit.route === "PROTECTIVE_TAKER")
+    ) {
+      return {
+        targetPrice: bestBid,
+        targetQty: risk.protectiveExit.pendingQuantity || cycle.quantity,
+        sellLevelId: cycle.targetSellLevelId,
+        closePath: risk.protectiveExit.route,
+        eligibleForFill: true,
+      };
+    }
+
     // Lifecycle is strict: TRIGGERED -> MAKER_PENDING -> MAKER_FILLED.
     // A fill can only happen once the order is pending, on a later tick, and
     // after the maker eligibility timestamp. The resting price is the requested
@@ -2601,7 +2655,11 @@ export class GridIsolatedEngine {
    * All SHADOW exits are simulated as post-only maker SELL orders: a resting
    * sell is filled only when the market bid reaches or exceeds the requested price.
    */
-  private canFillExit(bestBid: number, targetPrice: number, _closePath: GridClosePath | null): boolean {
+  private canFillExit(bestBid: number, targetPrice: number, closePath: GridClosePath | null): boolean {
+    // V3.2: Taker exits execute immediately at best bid; no price threshold check needed.
+    if (closePath === "TRAILING_TAKER" || closePath === "PROTECTIVE_TAKER") {
+      return bestBid > 0;
+    }
     return bestBid >= targetPrice;
   }
 
@@ -2626,6 +2684,14 @@ export class GridIsolatedEngine {
       ? Math.round((now.getTime() - cycle.buyFilledAt.getTime()) / 60000)
       : 0;
 
+    // V3.2: Detect taker fill for correct fee/role accounting.
+    const isTakerFill = closePath === "TRAILING_TAKER" || closePath === "PROTECTIVE_TAKER";
+    const sellLiquidityRole: "maker" | "taker" = isTakerFill ? "taker" : "maker";
+    // V3.2: Taker fee — uses config sellFeePct as canonical source (no separate taker fee field exists yet).
+    // This is the same fee as maker for now; a canonical taker fee source should be added in the future.
+    const takerFeePct = this.config.sellFeePct;
+    const sellFeePctForFill = isTakerFill ? takerFeePct : this.config.sellFeePct;
+
     const isV3 = cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" || cycle.targetKind === "CYCLE_OWNED_SYNTHETIC" || cycle.targetCalculationJson?.stateVersion === 2;
     let pnl: {
       grossPnlUsd: number;
@@ -2641,7 +2707,7 @@ export class GridIsolatedEngine {
       netBeforeTaxUsd?: number;
       netBeforeTaxPct?: number;
     };
-    if (isV3 && cycle.targetCalculationJson && cycle.targetCalculationJson.stateVersion === 2) {
+    if (isV3 && cycle.targetCalculationJson && cycle.targetCalculationJson.stateVersion === 2 && !isTakerFill) {
       const calc = cycle.targetCalculationJson;
       const v3 = computeGridCycleEconomicPnl({
         buyPrice: cycle.buyPrice!,
@@ -2655,23 +2721,27 @@ export class GridIsolatedEngine {
       });
       pnl = { ...v3, totalFeesUsd: v3.exchangeFeesUsd, feeTotalUsd: v3.exchangeFeesUsd };
     } else {
-      const legacy = computeCyclePnLWithRoles({
+      // V3.2: For taker fills (and non-V3 maker fills), use computeCyclePnLWithRoles
+      // with the correct liquidity role and fee.
+      const roleBased = computeCyclePnLWithRoles({
         buyPrice: cycle.buyPrice!,
         sellPrice,
         quantity: cycle.quantity,
         buyLiquidityRole: "maker",
-        sellLiquidityRole: "maker",
+        sellLiquidityRole,
         buyFeePct: this.config.buyFeePct,
-        sellFeePct: this.config.sellFeePct,
+        sellFeePct: sellFeePctForFill,
         taxReservePct: TAX_RESERVE_PCT,
       });
       pnl = {
-        grossPnlUsd: legacy.grossPnlUsd,
-        totalFeesUsd: legacy.totalFeesUsd,
-        feeTotalUsd: legacy.totalFeesUsd,
-        taxReserveUsd: legacy.taxReserveUsd,
-        netPnlUsd: legacy.netPnlUsd,
-        netPnlPct: legacy.netPnlPct,
+        grossPnlUsd: roleBased.grossPnlUsd,
+        totalFeesUsd: roleBased.totalFeesUsd,
+        feeTotalUsd: roleBased.totalFeesUsd,
+        taxReserveUsd: roleBased.taxReserveUsd,
+        netPnlUsd: roleBased.netPnlUsd,
+        netPnlPct: roleBased.netPnlPct,
+        buyFeeUsd: roleBased.buyFeeUsd,
+        sellFeeUsd: roleBased.sellFeeUsd,
       };
     }
 
@@ -2683,25 +2753,61 @@ export class GridIsolatedEngine {
       : null;
 
     const finalStatus: GridCycleStatus =
-      closePath === "TRAILING_MAKER"
+      closePath === "TRAILING_MAKER" || closePath === "TRAILING_TAKER"
         ? "trailing_closed"
-        : closePath === "PROTECTIVE_MAKER"
+        : closePath === "PROTECTIVE_MAKER" || closePath === "PROTECTIVE_TAKER"
         ? "stop_loss_hit"
         : "completed";
 
     const currentRisk = this.parseRiskState(cycle);
+
+    // V3.2: Compute slippage vs floor and stop for protective exits.
+    const trailingStopPrice = currentRisk.trailing.currentStopPrice;
+    const profitFloorPrice = cycle.buyPrice
+      ? this.computeProfitFloorPrice(cycle.buyPrice, cycle.quantity)
+      : null;
+    const slippageVsFloorUsd = (isTakerFill && profitFloorPrice != null)
+      ? sellPrice - profitFloorPrice : null;
+    const slippageVsFloorPct = (isTakerFill && profitFloorPrice != null && profitFloorPrice > 0)
+      ? ((sellPrice - profitFloorPrice) / profitFloorPrice) * 100 : null;
+    const slippageVsStopUsd = (isTakerFill && trailingStopPrice != null)
+      ? sellPrice - trailingStopPrice : null;
+    const slippageVsStopPct = (isTakerFill && trailingStopPrice != null && trailingStopPrice > 0)
+      ? ((sellPrice - trailingStopPrice) / trailingStopPrice) * 100 : null;
+
+    // V3.2: Compute final performance state (giveback, capture efficiency, etc.)
+    const finalPerformanceState = this.computeFinalPerformanceState(
+      currentRisk.performanceState,
+      pnl.netPnlUsd,
+      pnl.netPnlPct,
+      cycle
+    );
+
     const filledProtectiveExit: GridPendingMakerExit = {
       ...currentRisk.protectiveExit,
       state: "MAKER_FILLED",
       fillPrice: sellPrice,
       filledAt: now,
+      exitFilledAt: now,
       bestBidAtFill: priceResult.bid ?? null,
       bestAskAtFill: priceResult.ask ?? null,
       lifecycleTickId: currentRisk.protectiveExit.lifecycleTickId,
+      liquidityRole: sellLiquidityRole,
+      takerFillPrice: isTakerFill ? sellPrice : null,
+      takerFeePct: isTakerFill ? takerFeePct : null,
+      takerFeeUsd: isTakerFill ? (pnl.sellFeeUsd ?? null) : null,
+      slippageVsFloorUsd,
+      slippageVsFloorPct,
+      slippageVsStopUsd,
+      slippageVsStopPct,
+      protectiveElapsedMs: currentRisk.protectiveExit.protectiveTriggeredAt
+        ? now.getTime() - currentRisk.protectiveExit.protectiveTriggeredAt.getTime()
+        : null,
     };
     const filledRisk: GridCycleRiskState = {
       ...currentRisk,
       protectiveExit: filledProtectiveExit,
+      performanceState: finalPerformanceState,
     };
 
     let committed = false;
@@ -2835,13 +2941,33 @@ export class GridIsolatedEngine {
     }
 
     const eventType: GridEventType =
-      closePath === "TRAILING_MAKER"
+      closePath === "TRAILING_MAKER" || closePath === "TRAILING_TAKER"
         ? "GRID_CYCLE_TRAILING_CLOSED"
-        : closePath === "PROTECTIVE_MAKER"
+        : closePath === "PROTECTIVE_MAKER" || closePath === "PROTECTIVE_TAKER"
         ? "GRID_CYCLE_STOP_LOSS_HIT"
         : "GRID_CYCLE_COMPLETED";
 
-    await this.logEvent(eventType, `[SHADOW] Ciclo ${cycle.cycleNumber} cerrado por ${closePath} a ${sellPrice} (maker/maker). Net PnL $${pnl.netPnlUsd.toFixed(2)} (${pnl.netPnlPct.toFixed(3)}%)`, {
+    // V3.2: Emit taker-filled event for protective taker fills.
+    if (isTakerFill) {
+      await this.logEvent("GRID_PROTECTIVE_TAKER_FILLED", `[SHADOW] Ciclo ${cycle.cycleNumber} taker fill ejecutado via ${closePath} a ${sellPrice}. Net PnL $${pnl.netPnlUsd.toFixed(2)}`, {
+        cycleId: cycle.id,
+        closePath,
+        sellPrice,
+        takerFillPrice: sellPrice,
+        takerFeePct,
+        takerFeeUsd: pnl.sellFeeUsd ?? null,
+        slippageVsFloorUsd,
+        slippageVsFloorPct,
+        slippageVsStopUsd,
+        slippageVsStopPct,
+        makerAttempts: currentRisk.protectiveExit.makerAttempts,
+        protectiveElapsedMs: filledProtectiveExit.protectiveElapsedMs,
+        takerFallbackReason: currentRisk.protectiveExit.takerFallbackReason,
+        mode: "SHADOW",
+      });
+    }
+
+    await this.logEvent(eventType, `[SHADOW] Ciclo ${cycle.cycleNumber} cerrado por ${closePath} a ${sellPrice} (${sellLiquidityRole}/${sellLiquidityRole}). Net PnL $${pnl.netPnlUsd.toFixed(2)} (${pnl.netPnlPct.toFixed(3)}%)`, {
       cycleId: cycle.id,
       buyLevelId: cycle.buyLevelId,
       sellLevelId,
@@ -2861,9 +2987,23 @@ export class GridIsolatedEngine {
       netBeforeTaxUsd: pnl.netBeforeTaxUsd ?? null,
       netBeforeTaxPct: pnl.netBeforeTaxPct ?? null,
       buyLiquidityRole: "maker",
-      sellLiquidityRole: "maker",
+      sellLiquidityRole,
       executionPolicy: "MAKER_ONLY",
-      takerFallbackUsed: false,
+      takerFallbackUsed: isTakerFill,
+      liquidityRole: sellLiquidityRole,
+      takerFillPrice: isTakerFill ? sellPrice : null,
+      takerFeePct: isTakerFill ? takerFeePct : null,
+      takerFeeUsd: isTakerFill ? (pnl.sellFeeUsd ?? null) : null,
+      slippageVsFloorUsd,
+      slippageVsFloorPct,
+      slippageVsStopUsd,
+      slippageVsStopPct,
+      makerAttempts: currentRisk.protectiveExit.makerAttempts,
+      protectiveElapsedMs: filledProtectiveExit.protectiveElapsedMs,
+      givebackUsd: finalPerformanceState?.givebackUsd ?? null,
+      givebackPct: finalPerformanceState?.givebackPct ?? null,
+      captureEfficiencyPct: finalPerformanceState?.finalCaptureEfficiencyPct ?? null,
+      peakNetPnlUsd: finalPerformanceState?.peakNetPnlUsd ?? null,
       priceSource: priceResult.source,
       mode: "SHADOW",
     });
@@ -3195,6 +3335,7 @@ export class GridIsolatedEngine {
         route: closePath,
         triggerPrice: intendedPrice,
         triggerDetectedAt: tickCtx.startedAt,
+        protectiveTriggeredAt: tickCtx.startedAt,
         bestBidAtTrigger: currentBid,
         bestAskAtTrigger: currentAsk,
         requestedMakerPrice: null,
@@ -3232,6 +3373,9 @@ export class GridIsolatedEngine {
         state: "MAKER_PENDING",
         requestedMakerPrice: requestedPrice,
         makerOrderCreatedAt,
+        firstMakerCreatedAt: currentRisk.protectiveExit.firstMakerCreatedAt ?? makerOrderCreatedAt,
+        lastMakerAttemptAt: makerOrderCreatedAt,
+        makerAttempts: (currentRisk.protectiveExit.makerAttempts ?? 0) + 1,
         makerEligibleAfter: new Date(makerOrderCreatedAt.getTime() + MIN_MAKER_REST_MS),
         lifecycleTickId: tickCtx.tickId,
         pendingQuantity: openCycle.quantity,
@@ -3893,9 +4037,33 @@ export class GridIsolatedEngine {
         activeExitRoute: risk.activeExitRoute,
         pendingExitPrice: risk.pendingExitPrice,
         protectiveExit: risk.protectiveExit,
+        performanceState: risk.performanceState,
         stateVersion: 1,
         lastEvaluatedAt: new Date(),
       };
+
+      // V3.2: Update MFE/MAE performance state on each tick with fresh best bid.
+      // Uses canonical best bid for LONG liquidation reference.
+      if (cycle.buyPrice && currentPrice > 0) {
+        const prevPeak = risk.performanceState?.peakNetPnlUsd ?? null;
+        nextRisk.performanceState = this.updatePerformanceState(
+          cycle,
+          currentPrice,
+          new Date(),
+          risk.performanceState
+        );
+        // Emit peak event only when peak changes materially (avoid spam).
+        const newPeak = nextRisk.performanceState?.peakNetPnlUsd ?? null;
+        if (newPeak != null && prevPeak != null && newPeak > prevPeak * 1.001) {
+          await this.logEvent("GRID_CYCLE_PERFORMANCE_PEAK", `[SHADOW] Ciclo ${cycle.cycleNumber} nuevo peak net PnL: $${newPeak.toFixed(2)}`, {
+            cycleId: cycle.id,
+            peakNetPnlUsd: newPeak,
+            peakNetPnlPct: nextRisk.performanceState?.peakNetPnlPct ?? null,
+            highestObservedPrice: nextRisk.performanceState?.highestObservedPrice ?? null,
+            mode: "SHADOW",
+          });
+        }
+      }
 
       // A persisted protective exit in REQUIRES_REVIEW is a terminal quarantine
       // state: do not advance to triggered/pending/fill or rearm automatically.
@@ -4151,6 +4319,35 @@ export class GridIsolatedEngine {
       return protectiveExit;
     }
 
+    // V3.2: Once a taker fallback has been triggered, the exit is committed to taker.
+    // Do not rearm maker. The taker fill is handled by processOpenCyclesShadow.
+    if (protectiveExit.state === "CANCELLED" && protectiveExit.takerFallbackTriggeredAt != null) {
+      return protectiveExit;
+    }
+
+    // V3.2: Check if taker fallback should be triggered for a protective maker exit.
+    // This check runs BEFORE repricing to avoid burning time on a doomed maker.
+    if (
+      protectiveExit.state === "MAKER_PENDING" &&
+      isProtectiveClosePath(protectiveExit.route) &&
+      this.shouldTriggerProtectiveTakerFallback(protectiveExit, now)
+    ) {
+      const takerRoute = takerClosePathForMaker(protectiveExit.route!);
+      const reason = this.getProtectiveTakerFallbackReason(protectiveExit, now);
+      return {
+        ...protectiveExit,
+        state: "CANCELLED",
+        route: takerRoute,
+        cancellationReason: `taker_fallback_${reason}`,
+        takerFallbackTriggeredAt: now,
+        takerFallbackReason: reason,
+        protectiveElapsedMs: protectiveExit.protectiveTriggeredAt
+          ? now.getTime() - protectiveExit.protectiveTriggeredAt.getTime()
+          : null,
+        lastRepricedAt: now,
+      };
+    }
+
     // New trigger detected.
     // V3.1: CANCELLED is also resettable — a V3 maker cancelled by TRAILING_TAKEOVER
     // must allow a fresh TRAILING_MAKER lifecycle to begin on the next trigger.
@@ -4161,6 +4358,7 @@ export class GridIsolatedEngine {
         route: intended.route,
         triggerPrice: intended.price,
         triggerDetectedAt: now,
+        protectiveTriggeredAt: now,
         bestBidAtTrigger: currentBid,
         bestAskAtTrigger: currentAsk,
         requestedMakerPrice: null,
@@ -4181,6 +4379,7 @@ export class GridIsolatedEngine {
           route: intended.route,
           triggerPrice: intended.price,
           triggerDetectedAt: now,
+          protectiveTriggeredAt: now,
           bestBidAtTrigger: currentBid,
           bestAskAtTrigger: currentAsk,
           requestedMakerPrice: null,
@@ -4212,6 +4411,9 @@ export class GridIsolatedEngine {
         state: "MAKER_PENDING",
         requestedMakerPrice: makerPrice,
         makerOrderCreatedAt: now,
+        firstMakerCreatedAt: protectiveExit.firstMakerCreatedAt ?? now,
+        lastMakerAttemptAt: now,
+        makerAttempts: (protectiveExit.makerAttempts ?? 0) + 1,
         makerEligibleAfter: new Date(now.getTime() + MIN_MAKER_REST_MS),
         lifecycleTickId: ctx.tickId,
         pendingQuantity: cycle.quantity,
@@ -4228,6 +4430,7 @@ export class GridIsolatedEngine {
           route: intended.route,
           triggerPrice: intended.price,
           triggerDetectedAt: now,
+          protectiveTriggeredAt: now,
           bestBidAtTrigger: currentBid,
           bestAskAtTrigger: currentAsk,
           requestedMakerPrice: null,
@@ -4248,10 +4451,13 @@ export class GridIsolatedEngine {
         if (makerPrice == null || !Number.isFinite(makerPrice)) {
           return protectiveExit;
         }
+        // V3.2 FIX: Do NOT overwrite firstMakerCreatedAt or makerOrderCreatedAt on reprice.
+        // firstMakerCreatedAt preserves the original creation timestamp.
+        // makerOrderCreatedAt is kept for backward compatibility but firstMakerCreatedAt
+        // is the canonical source of truth for the first maker order creation.
         return {
           ...protectiveExit,
           requestedMakerPrice: makerPrice,
-          makerOrderCreatedAt: now,
           makerEligibleAfter: new Date(now.getTime() + MIN_MAKER_REST_MS),
           lifecycleTickId: ctx.tickId,
           lastRepricedAt: now,
@@ -4262,6 +4468,312 @@ export class GridIsolatedEngine {
     }
 
     return protectiveExit;
+  }
+
+  /**
+   * V3.2: Check if protective taker fallback should be triggered.
+   * Returns true if makerAttempts >= maxAttempts OR elapsed >= maxWaitSeconds.
+   * Only applies when protectiveTakerFallbackEnabled is true.
+   */
+  private shouldTriggerProtectiveTakerFallback(
+    protectiveExit: GridPendingMakerExit,
+    now: Date
+  ): boolean {
+    if (!this.config) return false;
+    const fallbackEnabled = getEffectiveProtectiveTakerFallbackEnabled({
+      mode: this.config.mode,
+      protectiveTakerFallbackEnabled: this.config.protectiveTakerFallbackEnabled ?? false,
+    });
+    if (!fallbackEnabled) return false;
+
+    const maxAttempts = this.config.protectiveMakerMaxAttempts ?? DEFAULT_PROTECTIVE_MAKER_MAX_ATTEMPTS;
+    const maxWaitSeconds = this.config.protectiveMakerMaxWaitSeconds ?? DEFAULT_PROTECTIVE_MAKER_MAX_WAIT_SECONDS;
+
+    const attempts = protectiveExit.makerAttempts ?? 0;
+    const triggerTime = protectiveExit.protectiveTriggeredAt;
+    const elapsedSeconds = triggerTime ? (now.getTime() - triggerTime.getTime()) / 1000 : 0;
+
+    return attempts >= maxAttempts || elapsedSeconds >= maxWaitSeconds;
+  }
+
+  /**
+   * V3.2: Get the reason for the taker fallback.
+   */
+  private getProtectiveTakerFallbackReason(
+    protectiveExit: GridPendingMakerExit,
+    now: Date
+  ): string {
+    if (!this.config) return "max_attempts";
+    const maxAttempts = this.config.protectiveMakerMaxAttempts ?? DEFAULT_PROTECTIVE_MAKER_MAX_ATTEMPTS;
+    const maxWaitSeconds = this.config.protectiveMakerMaxWaitSeconds ?? DEFAULT_PROTECTIVE_MAKER_MAX_WAIT_SECONDS;
+
+    const attempts = protectiveExit.makerAttempts ?? 0;
+    const triggerTime = protectiveExit.protectiveTriggeredAt;
+    const elapsedSeconds = triggerTime ? (now.getTime() - triggerTime.getTime()) / 1000 : 0;
+
+    if (attempts >= maxAttempts) return "max_attempts";
+    if (elapsedSeconds >= maxWaitSeconds) return "max_wait";
+    return "max_attempts";
+  }
+
+  /**
+   * V3.2: Compute the profit floor price (break-even sell price after fees).
+   */
+  private computeProfitFloorPrice(buyPrice: number, quantity: number): number | null {
+    if (!this.config) return null;
+    return computeBreakEvenSellPrice(buyPrice, quantity, this.config.buyFeePct, this.config.sellFeePct);
+  }
+
+  /**
+   * V3.2: Update performance state with a new tick observation.
+   * Tracks MFE/MAE, peak/trough PnL, and max drawdown from peak.
+   * Uses canonical best bid for LONG liquidation reference.
+   */
+  private updatePerformanceState(
+    cycle: GridCycle,
+    currentBestBid: number,
+    now: Date,
+    currentPerf: GridPerformanceState | null
+  ): GridPerformanceState {
+    if (!cycle.buyPrice || !this.config) {
+      return currentPerf ?? this.defaultPerformanceState();
+    }
+
+    const buyPrice = cycle.buyPrice;
+    const quantity = cycle.quantity;
+
+    // Compute hypothetical net PnL if liquidated at current best bid.
+    const hypPnl = computeCyclePnLWithRoles({
+      buyPrice,
+      sellPrice: currentBestBid,
+      quantity,
+      buyLiquidityRole: "maker",
+      sellLiquidityRole: "maker",
+      buyFeePct: this.config.buyFeePct,
+      sellFeePct: this.config.sellFeePct,
+      taxReservePct: TAX_RESERVE_PCT,
+    });
+
+    const hypNetUsd = hypPnl.netPnlUsd;
+    const hypNetPct = hypPnl.netPnlPct;
+    const hypGrossUsd = hypPnl.grossPnlUsd;
+    const hypGrossPct = buyPrice > 0 ? ((currentBestBid - buyPrice) / buyPrice) * 100 : 0;
+
+    const prev = currentPerf ?? this.defaultPerformanceState();
+    if (!prev.performanceDataAvailable) {
+      // First observation from BUY fill.
+      return {
+        performanceDataAvailable: true,
+        markPriceSource: "KRAKEN_BEST_BID",
+        lastObservedPrice: currentBestBid,
+        lastObservedAt: now,
+        highestObservedPrice: currentBestBid,
+        highestObservedAt: now,
+        lowestObservedPrice: currentBestBid,
+        lowestObservedAt: now,
+        mfeGrossUsd: hypGrossUsd,
+        mfeGrossPct: hypGrossPct,
+        mfeNetUsd: hypNetUsd,
+        mfeNetPct: hypNetPct,
+        maeGrossUsd: hypGrossUsd <= 0 ? hypGrossUsd : 0,
+        maeGrossPct: hypGrossPct <= 0 ? hypGrossPct : 0,
+        maeNetUsd: hypNetUsd <= 0 ? hypNetUsd : 0,
+        maeNetPct: hypNetPct <= 0 ? hypNetPct : 0,
+        peakNetPnlUsd: hypNetUsd,
+        peakNetPnlPct: hypNetPct,
+        peakNetPnlAt: now,
+        troughNetPnlUsd: hypNetUsd,
+        troughNetPnlPct: hypNetPct,
+        troughNetPnlAt: now,
+        maxDrawdownFromPeakUsd: 0,
+        maxDrawdownFromPeakPct: 0,
+        targetBaselineNetUsd: prev.targetBaselineNetUsd,
+        targetBaselineNetPct: prev.targetBaselineNetPct,
+        finalCaptureEfficiencyPct: null,
+        givebackUsd: null,
+        givebackPct: null,
+      };
+    }
+
+    // Update highest/lowest observed prices.
+    const newHighest = (prev.highestObservedPrice == null || currentBestBid > prev.highestObservedPrice)
+      ? currentBestBid : prev.highestObservedPrice;
+    const newHighestAt = (prev.highestObservedPrice == null || currentBestBid > prev.highestObservedPrice)
+      ? now : prev.highestObservedAt;
+    const newLowest = (prev.lowestObservedPrice == null || currentBestBid < prev.lowestObservedPrice)
+      ? currentBestBid : prev.lowestObservedPrice;
+    const newLowestAt = (prev.lowestObservedPrice == null || currentBestBid < prev.lowestObservedPrice)
+      ? now : prev.lowestObservedAt;
+
+    // MFE: max favorable excursion (use highest observed price's net PnL).
+    const mfeNetUsd = (newHighest === currentBestBid) ? hypNetUsd : (prev.mfeNetUsd ?? hypNetUsd);
+    const mfeNetPct = (newHighest === currentBestBid) ? hypNetPct : (prev.mfeNetPct ?? hypNetPct);
+    const mfeGrossUsd = (newHighest === currentBestBid) ? hypGrossUsd : (prev.mfeGrossUsd ?? hypGrossUsd);
+    const mfeGrossPct = (newHighest === currentBestBid) ? hypGrossPct : (prev.mfeGrossPct ?? hypGrossPct);
+
+    // MAE: max adverse excursion (use lowest observed price's net PnL, <= 0 when adverse).
+    const maeNetUsd = (newLowest === currentBestBid && hypNetUsd <= 0)
+      ? hypNetUsd
+      : (prev.maeNetUsd != null && prev.maeNetUsd <= 0 && hypNetUsd <= prev.maeNetUsd)
+      ? hypNetUsd
+      : prev.maeNetUsd ?? 0;
+    const maeNetPct = (newLowest === currentBestBid && hypNetPct <= 0)
+      ? hypNetPct
+      : (prev.maeNetPct != null && prev.maeNetPct <= 0 && hypNetPct <= prev.maeNetPct)
+      ? hypNetPct
+      : prev.maeNetPct ?? 0;
+    const maeGrossUsd = (newLowest === currentBestBid && hypGrossUsd <= 0)
+      ? hypGrossUsd
+      : (prev.maeGrossUsd != null && prev.maeGrossUsd <= 0 && hypGrossUsd <= prev.maeGrossUsd)
+      ? hypGrossUsd
+      : prev.maeGrossUsd ?? 0;
+    const maeGrossPct = (newLowest === currentBestBid && hypGrossPct <= 0)
+      ? hypGrossPct
+      : (prev.maeGrossPct != null && prev.maeGrossPct <= 0 && hypGrossPct <= prev.maeGrossPct)
+      ? hypGrossPct
+      : prev.maeGrossPct ?? 0;
+
+    // Peak/trough PnL tracking.
+    const newPeakUsd = (prev.peakNetPnlUsd == null || hypNetUsd > prev.peakNetPnlUsd) ? hypNetUsd : prev.peakNetPnlUsd;
+    const newPeakPct = (prev.peakNetPnlPct == null || hypNetPct > prev.peakNetPnlPct) ? hypNetPct : prev.peakNetPnlPct;
+    const newPeakAt = (prev.peakNetPnlUsd == null || hypNetUsd > prev.peakNetPnlUsd) ? now : prev.peakNetPnlAt;
+    const newTroughUsd = (prev.troughNetPnlUsd == null || hypNetUsd < prev.troughNetPnlUsd) ? hypNetUsd : prev.troughNetPnlUsd;
+    const newTroughPct = (prev.troughNetPnlPct == null || hypNetPct < prev.troughNetPnlPct) ? hypNetPct : prev.troughNetPnlPct;
+    const newTroughAt = (prev.troughNetPnlUsd == null || hypNetUsd < prev.troughNetPnlUsd) ? now : prev.troughNetPnlAt;
+
+    // Max drawdown from peak.
+    const drawdownFromPeakUsd = newPeakUsd != null ? Math.min(0, hypNetUsd - newPeakUsd) : 0;
+    const newMaxDrawdownUsd = (prev.maxDrawdownFromPeakUsd == null || Math.abs(drawdownFromPeakUsd) > Math.abs(prev.maxDrawdownFromPeakUsd))
+      ? Math.abs(drawdownFromPeakUsd) : prev.maxDrawdownFromPeakUsd;
+    const newMaxDrawdownPct = newPeakUsd != null && newPeakUsd > 0
+      ? (newMaxDrawdownUsd / Math.abs(newPeakUsd)) * 100 : 0;
+
+    return {
+      performanceDataAvailable: true,
+      markPriceSource: "KRAKEN_BEST_BID",
+      lastObservedPrice: currentBestBid,
+      lastObservedAt: now,
+      highestObservedPrice: newHighest,
+      highestObservedAt: newHighestAt,
+      lowestObservedPrice: newLowest,
+      lowestObservedAt: newLowestAt,
+      mfeGrossUsd,
+      mfeGrossPct,
+      mfeNetUsd,
+      mfeNetPct,
+      maeGrossUsd,
+      maeGrossPct,
+      maeNetUsd,
+      maeNetPct,
+      peakNetPnlUsd: newPeakUsd,
+      peakNetPnlPct: newPeakPct,
+      peakNetPnlAt: newPeakAt,
+      troughNetPnlUsd: newTroughUsd,
+      troughNetPnlPct: newTroughPct,
+      troughNetPnlAt: newTroughAt,
+      maxDrawdownFromPeakUsd: newMaxDrawdownUsd,
+      maxDrawdownFromPeakPct: newMaxDrawdownPct,
+      targetBaselineNetUsd: prev.targetBaselineNetUsd,
+      targetBaselineNetPct: prev.targetBaselineNetPct,
+      finalCaptureEfficiencyPct: null,
+      givebackUsd: null,
+      givebackPct: null,
+    };
+  }
+
+  /**
+   * V3.2: Default performance state (no data available, for legacy cycles).
+   */
+  private defaultPerformanceState(): GridPerformanceState {
+    return {
+      performanceDataAvailable: false,
+      markPriceSource: null,
+      lastObservedPrice: null,
+      lastObservedAt: null,
+      highestObservedPrice: null,
+      highestObservedAt: null,
+      lowestObservedPrice: null,
+      lowestObservedAt: null,
+      mfeGrossUsd: null,
+      mfeGrossPct: null,
+      mfeNetUsd: null,
+      mfeNetPct: null,
+      maeGrossUsd: null,
+      maeGrossPct: null,
+      maeNetUsd: null,
+      maeNetPct: null,
+      peakNetPnlUsd: null,
+      peakNetPnlPct: null,
+      peakNetPnlAt: null,
+      troughNetPnlUsd: null,
+      troughNetPnlPct: null,
+      troughNetPnlAt: null,
+      maxDrawdownFromPeakUsd: null,
+      maxDrawdownFromPeakPct: null,
+      targetBaselineNetUsd: null,
+      targetBaselineNetPct: null,
+      finalCaptureEfficiencyPct: null,
+      givebackUsd: null,
+      givebackPct: null,
+    };
+  }
+
+  /**
+   * V3.2: Compute final performance state at cycle close.
+   * Computes giveback, capture efficiency, and target baseline delta.
+   */
+  private computeFinalPerformanceState(
+    currentPerf: GridPerformanceState | null,
+    finalNetPnlUsd: number,
+    finalNetPnlPct: number,
+    cycle: GridCycle
+  ): GridPerformanceState | null {
+    if (!currentPerf || !currentPerf.performanceDataAvailable) {
+      // Legacy cycle without performance data.
+      return currentPerf;
+    }
+
+    const peakNetPnlUsd = currentPerf.peakNetPnlUsd ?? finalNetPnlUsd;
+    const peakNetPnlPct = currentPerf.peakNetPnlPct ?? finalNetPnlPct;
+
+    // Giveback: how much profit was given back from peak.
+    const givebackUsd = Math.max(0, peakNetPnlUsd - finalNetPnlUsd);
+    const givebackPct = peakNetPnlUsd > 0 ? (givebackUsd / peakNetPnlUsd) * 100 : 0;
+
+    // Capture efficiency: what fraction of peak was captured.
+    const finalCaptureEfficiencyPct = peakNetPnlUsd > 0 ? (finalNetPnlUsd / peakNetPnlUsd) * 100 : null;
+
+    // Target baseline: what target V3 would have produced.
+    let targetBaselineNetUsd = currentPerf.targetBaselineNetUsd;
+    let targetBaselineNetPct = currentPerf.targetBaselineNetPct;
+    if (targetBaselineNetUsd == null && cycle.targetCalculationJson && cycle.targetSellPrice) {
+      // Compute what the target V3 would have produced if filled at targetSellPrice.
+      if (this.config) {
+        const targetPnl = computeCyclePnLWithRoles({
+          buyPrice: cycle.buyPrice!,
+          sellPrice: cycle.targetSellPrice,
+          quantity: cycle.quantity,
+          buyLiquidityRole: "maker",
+          sellLiquidityRole: "maker",
+          buyFeePct: this.config.buyFeePct,
+          sellFeePct: this.config.sellFeePct,
+          taxReservePct: TAX_RESERVE_PCT,
+        });
+        targetBaselineNetUsd = targetPnl.netPnlUsd;
+        targetBaselineNetPct = targetPnl.netPnlPct;
+      }
+    }
+
+    return {
+      ...currentPerf,
+      peakNetPnlUsd,
+      peakNetPnlPct,
+      givebackUsd,
+      givebackPct,
+      finalCaptureEfficiencyPct,
+      targetBaselineNetUsd,
+      targetBaselineNetPct,
+    };
   }
 
   /**
@@ -4329,11 +4841,11 @@ export class GridIsolatedEngine {
       case "TRAILING_UPDATE":
         return "GRID_TRAILING_STOP_UPDATED";
       case "TRAILING_CLOSE":
-        return "GRID_CYCLE_TRAILING_CLOSED";
+        return "GRID_PROTECTIVE_EXIT_TRIGGERED";
       case "STOP_LOSS_SOFT":
       case "STOP_LOSS_HARD":
       case "STOP_LOSS_EMERGENCY":
-        return "GRID_CYCLE_STOP_LOSS_HIT";
+        return "GRID_PROTECTIVE_EXIT_TRIGGERED";
       case "HODL_RECOVERY_ACTIVATE":
         return "GRID_CYCLE_HODL_RECOVERY";
       case "HODL_RECOVERY_SELL":
