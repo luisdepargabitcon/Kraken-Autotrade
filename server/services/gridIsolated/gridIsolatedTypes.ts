@@ -115,6 +115,59 @@ export const MAKER_ATTEMPTS_BEFORE_TAKER = 3;
 export const TAKER_FALLBACK_ATTEMPT_NUMBER = 4;
 export const MAX_TAKER_FALLBACK_PER_CYCLE = 1;
 
+// ─── V3.2 Protective Maker→Taker Fallback Defaults ──────────────────
+export const DEFAULT_PROTECTIVE_TAKER_FALLBACK_ENABLED = false;
+export const DEFAULT_PROTECTIVE_MAKER_MAX_ATTEMPTS = 3;
+export const DEFAULT_PROTECTIVE_MAKER_MAX_WAIT_SECONDS = 30;
+
+/**
+ * V3.2: Returns the effective protective taker fallback flag.
+ * SHADOW uses the stored value (allows testing the fallback in SHADOW).
+ * REAL modes also use the stored value, but REAL remains blocked by
+ * GridModeLock until explicit safety conditions are met.
+ */
+export function getEffectiveProtectiveTakerFallbackEnabled(
+  config: { mode: GridMode; protectiveTakerFallbackEnabled: boolean },
+): boolean {
+  return config.protectiveTakerFallbackEnabled;
+}
+
+/**
+ * V3.2: Close path label for UI display.
+ */
+export function gridClosePathLabel(path: GridClosePath | null): string | null {
+  if (!path) return null;
+  switch (path) {
+    case "NORMAL_TARGET": return "Objetivo normal";
+    case "SYNTHETIC_RUNG": return "Escalón sintético";
+    case "CYCLE_OWNED_TARGET": return "Objetivo individual V3";
+    case "LEGACY_PERSISTED_TARGET": return "Objetivo legacy persistido";
+    case "TRAILING_MAKER": return "Trailing maker";
+    case "TRAILING_TAKER": return "Trailing taker";
+    case "PROTECTIVE_MAKER": return "Stop-loss maker";
+    case "PROTECTIVE_TAKER": return "Stop-loss taker";
+    case "HODL_RECOVERY": return "Recuperación HODL";
+    default: return null;
+  }
+}
+
+/**
+ * V3.2: Checks if a close path is a protective exit (eligible for taker fallback).
+ */
+export function isProtectiveClosePath(path: GridClosePath | null): boolean {
+  return path === "TRAILING_MAKER" || path === "TRAILING_TAKER" ||
+         path === "PROTECTIVE_MAKER" || path === "PROTECTIVE_TAKER";
+}
+
+/**
+ * V3.2: Returns the taker equivalent close path for a protective maker route.
+ */
+export function takerClosePathForMaker(makerPath: GridClosePath): GridClosePath {
+  if (makerPath === "TRAILING_MAKER") return "TRAILING_TAKER";
+  if (makerPath === "PROTECTIVE_MAKER") return "PROTECTIVE_TAKER";
+  return makerPath;
+}
+
 export function executionPolicyLabel(policy: ExecutionPolicy): string {
   switch (policy) {
     case "MAKER_ONLY":
@@ -308,6 +361,39 @@ export interface GridPendingMakerExit {
   bestBidAtFill: number | null;
   bestAskAtFill: number | null;
   cancellationReason: string | null;
+  // ─── V3.2 Protective Maker→Taker Fallback ───
+  /** Timestamp when the protective exit was triggered (TRAILING_CLOSE or STOP_LOSS). */
+  protectiveTriggeredAt: Date | null;
+  /** Timestamp when the first maker order was created. Preserved across reprices. */
+  firstMakerCreatedAt: Date | null;
+  /** Timestamp of the last maker attempt (new order, not reprice). */
+  lastMakerAttemptAt: Date | null;
+  /** Number of maker attempts (distinct order placements, NOT reprices). */
+  makerAttempts: number;
+  /** Elapsed milliseconds since protective trigger. */
+  protectiveElapsedMs: number | null;
+  /** Timestamp when taker fallback was triggered. */
+  takerFallbackTriggeredAt: Date | null;
+  /** Timestamp when the exit was filled (maker or taker). */
+  exitFilledAt: Date | null;
+  /** Liquidity role of the fill: maker or taker. */
+  liquidityRole: "maker" | "taker" | null;
+  /** Taker fill price (canonical best bid). */
+  takerFillPrice: number | null;
+  /** Taker fee percentage used. */
+  takerFeePct: number | null;
+  /** Taker fee in USD. */
+  takerFeeUsd: number | null;
+  /** Slippage vs profit floor in USD. */
+  slippageVsFloorUsd: number | null;
+  /** Slippage vs profit floor in pct. */
+  slippageVsFloorPct: number | null;
+  /** Slippage vs trailing stop in USD. */
+  slippageVsStopUsd: number | null;
+  /** Slippage vs trailing stop in pct. */
+  slippageVsStopPct: number | null;
+  /** Reason for taker fallback: "max_attempts" | "max_wait" | null. */
+  takerFallbackReason: string | null;
 }
 
 export interface GridCycleRiskState {
@@ -318,8 +404,73 @@ export interface GridCycleRiskState {
   activeExitRoute: GridClosePath | null;
   pendingExitPrice: number | null;
   protectiveExit: GridPendingMakerExit;
+  /** V3.2: MFE/MAE and forensic profit tracking. Optional for backward compatibility. */
+  performanceState: GridPerformanceState | null;
   stateVersion: number;
   lastEvaluatedAt: Date | null;
+}
+
+// ─── V3.2 Performance State (MFE/MAE/Forensic Profit Tracking) ──────
+
+export interface GridPerformanceState {
+  /** Whether performance data was tracked from BUY fill. False for legacy cycles. */
+  performanceDataAvailable: boolean;
+  /** Source of mark price used for MFE/MAE (e.g. "KRAKEN_BEST_BID"). */
+  markPriceSource: string | null;
+  /** Last observed price. */
+  lastObservedPrice: number | null;
+  /** Timestamp of last observed price. */
+  lastObservedAt: Date | null;
+  /** Highest observed price since BUY fill. */
+  highestObservedPrice: number | null;
+  /** Timestamp of highest observed price. */
+  highestObservedAt: Date | null;
+  /** Lowest observed price since BUY fill. */
+  lowestObservedPrice: number | null;
+  /** Timestamp of lowest observed price. */
+  lowestObservedAt: Date | null;
+  /** MFE gross USD (before fees). */
+  mfeGrossUsd: number | null;
+  /** MFE gross pct. */
+  mfeGrossPct: number | null;
+  /** MFE net USD (after fees + tax reserve). */
+  mfeNetUsd: number | null;
+  /** MFE net pct. */
+  mfeNetPct: number | null;
+  /** MAE gross USD (before fees). <= 0 when adverse excursion. */
+  maeGrossUsd: number | null;
+  /** MAE gross pct. */
+  maeGrossPct: number | null;
+  /** MAE net USD (after fees + tax reserve). <= 0 when adverse excursion. */
+  maeNetUsd: number | null;
+  /** MAE net pct. */
+  maeNetPct: number | null;
+  /** Peak net PnL USD observed. */
+  peakNetPnlUsd: number | null;
+  /** Peak net PnL pct. */
+  peakNetPnlPct: number | null;
+  /** Timestamp of peak net PnL. */
+  peakNetPnlAt: Date | null;
+  /** Trough net PnL USD observed (worst net PnL). */
+  troughNetPnlUsd: number | null;
+  /** Trough net PnL pct. */
+  troughNetPnlPct: number | null;
+  /** Timestamp of trough net PnL. */
+  troughNetPnlAt: Date | null;
+  /** Max drawdown from peak in USD. */
+  maxDrawdownFromPeakUsd: number | null;
+  /** Max drawdown from peak in pct. */
+  maxDrawdownFromPeakPct: number | null;
+  /** What target V3 would have produced net USD. */
+  targetBaselineNetUsd: number | null;
+  /** What target V3 would have produced net pct. */
+  targetBaselineNetPct: number | null;
+  /** Final capture efficiency pct (finalNetPnl / peakNetPnl * 100). */
+  finalCaptureEfficiencyPct: number | null;
+  /** Giveback USD (peak - final). */
+  givebackUsd: number | null;
+  /** Giveback pct (giveback / peak * 100). */
+  givebackPct: number | null;
 }
 
 export type RiskAction =
@@ -338,7 +489,9 @@ export type GridClosePath =
   | "CYCLE_OWNED_TARGET"
   | "LEGACY_PERSISTED_TARGET"
   | "TRAILING_MAKER"
+  | "TRAILING_TAKER"
   | "PROTECTIVE_MAKER"
+  | "PROTECTIVE_TAKER"
   | "HODL_RECOVERY";
 
 export interface GridRejectedCandidate {
@@ -597,6 +750,15 @@ export interface GridIsolatedConfig {
   maxTakerFallbackPerCycle: number;
   takerFallbackRequiresNetProfit: boolean;
   takerFallbackAuditRequired: boolean;
+  // ─── V3.2: Protective Maker→Taker Fallback ───
+  /** Enables maker→taker fallback for protective exits (TRAILING_CLOSE / STOP_LOSS). Default: false. */
+  protectiveTakerFallbackEnabled: boolean;
+  /** Max maker attempts before taker fallback on protective exits. Default: 3. */
+  protectiveMakerMaxAttempts: number;
+  /** Max wait seconds before taker fallback on protective exits. Default: 30. */
+  protectiveMakerMaxWaitSeconds: number;
+  /** Optional max slippage pct guard for taker fallback. Null = no guard. */
+  protectiveTakerMaxSlippagePct: number | null;
   // ─── Wallet / Cartera ───
   gridWalletMode: "automatic" | "manual";
   gridWalletInitialUsd: number;
@@ -687,6 +849,11 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   maxTakerFallbackPerCycle: MAX_TAKER_FALLBACK_PER_CYCLE,
   takerFallbackRequiresNetProfit: true,
   takerFallbackAuditRequired: true,
+  // V3.2: Protective Maker→Taker Fallback
+  protectiveTakerFallbackEnabled: false,
+  protectiveMakerMaxAttempts: 3,
+  protectiveMakerMaxWaitSeconds: 30,
+  protectiveTakerMaxSlippagePct: null,
   // Wallet / Cartera
   gridWalletMode: "automatic",
   gridWalletInitialUsd: 1000,
@@ -852,6 +1019,13 @@ export const GRID_EVENT_TYPES = [
   "GRID_SELL_LIFECYCLE_ADVANCED",
   "GRID_CYCLE_OWNED_TARGET_CREATED",
   "GRID_ENTRY_SPACING_CALCULATED",
+  // V3.2: Protective Maker→Taker Fallback events
+  "GRID_PROTECTIVE_EXIT_TRIGGERED",
+  "GRID_PROTECTIVE_MAKER_ATTEMPT",
+  "GRID_PROTECTIVE_MAKER_CANCELLED",
+  "GRID_PROTECTIVE_TAKER_FALLBACK_TRIGGERED",
+  "GRID_PROTECTIVE_TAKER_FILLED",
+  "GRID_CYCLE_PERFORMANCE_PEAK",
 ] as const;
 
 export type GridEventType = (typeof GRID_EVENT_TYPES)[number];

@@ -12,6 +12,7 @@ import type {
   GridEventType,
   GridMakerExitState,
   GridPendingMakerExit,
+  GridPerformanceState,
   GridTargetCalculation,
   GridTargetKind,
   HodlRecoveryState,
@@ -31,7 +32,9 @@ const VALID_GRID_CLOSE_PATHS: (GridClosePath | null)[] = [
   "CYCLE_OWNED_TARGET",
   "LEGACY_PERSISTED_TARGET",
   "TRAILING_MAKER",
+  "TRAILING_TAKER",
   "PROTECTIVE_MAKER",
+  "PROTECTIVE_TAKER",
   "HODL_RECOVERY",
   null,
 ];
@@ -135,6 +138,10 @@ function validatePendingMakerExit(raw: unknown): GridPendingMakerExit {
   const route = VALID_GRID_CLOSE_PATHS.includes(obj.route as GridClosePath | null)
     ? (obj.route as GridClosePath | null)
     : null;
+  const liquidityRole =
+    obj.liquidityRole === "maker" || obj.liquidityRole === "taker"
+      ? (obj.liquidityRole as "maker" | "taker")
+      : null;
   return {
     state,
     route,
@@ -155,6 +162,59 @@ function validatePendingMakerExit(raw: unknown): GridPendingMakerExit {
     bestBidAtFill: finiteNumber(obj.bestBidAtFill),
     bestAskAtFill: finiteNumber(obj.bestAskAtFill),
     cancellationReason: typeof obj.cancellationReason === "string" ? obj.cancellationReason : null,
+    // V3.2 protective maker→taker fallback fields
+    protectiveTriggeredAt: toDate(obj.protectiveTriggeredAt),
+    firstMakerCreatedAt: toDate(obj.firstMakerCreatedAt),
+    lastMakerAttemptAt: toDate(obj.lastMakerAttemptAt),
+    makerAttempts: Number.isFinite(obj.makerAttempts) ? (obj.makerAttempts as number) : 0,
+    protectiveElapsedMs: finiteNumber(obj.protectiveElapsedMs),
+    takerFallbackTriggeredAt: toDate(obj.takerFallbackTriggeredAt),
+    exitFilledAt: toDate(obj.exitFilledAt),
+    liquidityRole,
+    takerFillPrice: finiteNumber(obj.takerFillPrice),
+    takerFeePct: finiteNumber(obj.takerFeePct),
+    takerFeeUsd: finiteNumber(obj.takerFeeUsd),
+    slippageVsFloorUsd: finiteNumber(obj.slippageVsFloorUsd),
+    slippageVsFloorPct: finiteNumber(obj.slippageVsFloorPct),
+    slippageVsStopUsd: finiteNumber(obj.slippageVsStopUsd),
+    slippageVsStopPct: finiteNumber(obj.slippageVsStopPct),
+    takerFallbackReason: typeof obj.takerFallbackReason === "string" ? obj.takerFallbackReason : null,
+  };
+}
+
+function validatePerformanceState(raw: unknown): GridPerformanceState | null {
+  if (raw == null) return null;
+  if (!isPlainObject(raw)) return null;
+  return {
+    performanceDataAvailable: raw.performanceDataAvailable === true,
+    markPriceSource: typeof raw.markPriceSource === "string" ? raw.markPriceSource : null,
+    lastObservedPrice: finiteNumber(raw.lastObservedPrice),
+    lastObservedAt: toDate(raw.lastObservedAt),
+    highestObservedPrice: finiteNumber(raw.highestObservedPrice),
+    highestObservedAt: toDate(raw.highestObservedAt),
+    lowestObservedPrice: finiteNumber(raw.lowestObservedPrice),
+    lowestObservedAt: toDate(raw.lowestObservedAt),
+    mfeGrossUsd: finiteNumber(raw.mfeGrossUsd),
+    mfeGrossPct: finiteNumber(raw.mfeGrossPct),
+    mfeNetUsd: finiteNumber(raw.mfeNetUsd),
+    mfeNetPct: finiteNumber(raw.mfeNetPct),
+    maeGrossUsd: finiteNumber(raw.maeGrossUsd),
+    maeGrossPct: finiteNumber(raw.maeGrossPct),
+    maeNetUsd: finiteNumber(raw.maeNetUsd),
+    maeNetPct: finiteNumber(raw.maeNetPct),
+    peakNetPnlUsd: finiteNumber(raw.peakNetPnlUsd),
+    peakNetPnlPct: finiteNumber(raw.peakNetPnlPct),
+    peakNetPnlAt: toDate(raw.peakNetPnlAt),
+    troughNetPnlUsd: finiteNumber(raw.troughNetPnlUsd),
+    troughNetPnlPct: finiteNumber(raw.troughNetPnlPct),
+    troughNetPnlAt: toDate(raw.troughNetPnlAt),
+    maxDrawdownFromPeakUsd: finiteNumber(raw.maxDrawdownFromPeakUsd),
+    maxDrawdownFromPeakPct: finiteNumber(raw.maxDrawdownFromPeakPct),
+    targetBaselineNetUsd: finiteNumber(raw.targetBaselineNetUsd),
+    targetBaselineNetPct: finiteNumber(raw.targetBaselineNetPct),
+    finalCaptureEfficiencyPct: finiteNumber(raw.finalCaptureEfficiencyPct),
+    givebackUsd: finiteNumber(raw.givebackUsd),
+    givebackPct: finiteNumber(raw.givebackPct),
   };
 }
 
@@ -222,6 +282,7 @@ export function validateRiskStateJson(raw: unknown): JsonbValidationResult<GridC
     activeExitRoute,
     pendingExitPrice,
     protectiveExit: validatePendingMakerExit(raw.protectiveExit),
+    performanceState: validatePerformanceState(raw.performanceState),
     stateVersion: 1,
     lastEvaluatedAt: toDate(raw.lastEvaluatedAt),
   };
@@ -432,7 +493,24 @@ export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null 
       bestBidAtFill: null,
       bestAskAtFill: null,
       cancellationReason: forensic.reason ?? "unknown",
+      protectiveTriggeredAt: null,
+      firstMakerCreatedAt: null,
+      lastMakerAttemptAt: null,
+      makerAttempts: 0,
+      protectiveElapsedMs: null,
+      takerFallbackTriggeredAt: null,
+      exitFilledAt: null,
+      liquidityRole: null,
+      takerFillPrice: null,
+      takerFeePct: null,
+      takerFeeUsd: null,
+      slippageVsFloorUsd: null,
+      slippageVsFloorPct: null,
+      slippageVsStopUsd: null,
+      slippageVsStopPct: null,
+      takerFallbackReason: null,
     },
+    performanceState: null,
     stateVersion: 1,
     lastEvaluatedAt: null,
   };
@@ -472,6 +550,22 @@ function defaultReviewRequiredMakerExit(reason: string): GridPendingMakerExit {
     bestBidAtFill: null,
     bestAskAtFill: null,
     cancellationReason: reason,
+    protectiveTriggeredAt: null,
+    firstMakerCreatedAt: null,
+    lastMakerAttemptAt: null,
+    makerAttempts: 0,
+    protectiveElapsedMs: null,
+    takerFallbackTriggeredAt: null,
+    exitFilledAt: null,
+    liquidityRole: null,
+    takerFillPrice: null,
+    takerFeePct: null,
+    takerFeeUsd: null,
+    slippageVsFloorUsd: null,
+    slippageVsFloorPct: null,
+    slippageVsStopUsd: null,
+    slippageVsStopPct: null,
+    takerFallbackReason: null,
   };
 }
 

@@ -168,6 +168,42 @@ export interface OperationalOpenCycle {
   simulatedOrderId: string | null;
   makerFillPrice: number | null;
   makerFilledAt: string | null;
+  // V3.2: Protective maker→taker fallback fields
+  protectiveTriggeredAt: string | null;
+  firstMakerCreatedAt: string | null;
+  lastMakerAttemptAt: string | null;
+  makerAttempts: number | null;
+  takerFallbackTriggeredAt: string | null;
+  takerFallbackReason: string | null;
+  exitFilledAt: string | null;
+  liquidityRole: string | null;
+  takerFillPrice: number | null;
+  takerFeePct: number | null;
+  takerFeeUsd: number | null;
+  slippageVsFloorUsd: number | null;
+  slippageVsFloorPct: number | null;
+  slippageVsStopUsd: number | null;
+  slippageVsStopPct: number | null;
+  // V3.2: Performance state (MFE/MAE/forensic profit tracking)
+  performanceDataAvailable: boolean;
+  mfeGrossUsd: number | null;
+  mfeNetUsd: number | null;
+  maeGrossUsd: number | null;
+  maeNetUsd: number | null;
+  peakNetPnlUsd: number | null;
+  peakNetPnlPct: number | null;
+  peakNetPnlAt: string | null;
+  troughNetPnlUsd: number | null;
+  troughNetPnlPct: number | null;
+  maxDrawdownFromPeakUsd: number | null;
+  maxDrawdownFromPeakPct: number | null;
+  highestObservedPrice: number | null;
+  lowestObservedPrice: number | null;
+  givebackUsd: number | null;
+  givebackPct: number | null;
+  finalCaptureEfficiencyPct: number | null;
+  targetBaselineNetUsd: number | null;
+  targetBaselineNetPct: number | null;
 }
 
 export interface OperationalLevel {
@@ -397,9 +433,12 @@ function closePathLabel(path: GridClosePath | null): string | null {
   switch (path) {
     case "NORMAL_TARGET": return "Objetivo normal";
     case "SYNTHETIC_RUNG": return "Escalón sintético";
+    case "CYCLE_OWNED_TARGET": return "Objetivo individual V3";
     case "LEGACY_PERSISTED_TARGET": return "Objetivo legacy persistido";
     case "TRAILING_MAKER": return "Trailing maker";
+    case "TRAILING_TAKER": return "Trailing taker";
     case "PROTECTIVE_MAKER": return "Stop-loss maker";
+    case "PROTECTIVE_TAKER": return "Stop-loss taker";
     case "HODL_RECOVERY": return "Recuperación HODL";
     default: return null;
   }
@@ -626,6 +665,42 @@ function buildOpenCycle(
     simulatedOrderId: risk?.protectiveExit?.simulatedOrderId ?? null,
     makerFillPrice: toNum(risk?.protectiveExit?.fillPrice) ?? null,
     makerFilledAt: safeIso(risk?.protectiveExit?.filledAt) ?? null,
+    // V3.2: Protective maker→taker fallback fields
+    protectiveTriggeredAt: safeIso(risk?.protectiveExit?.protectiveTriggeredAt) ?? null,
+    firstMakerCreatedAt: safeIso(risk?.protectiveExit?.firstMakerCreatedAt) ?? null,
+    lastMakerAttemptAt: safeIso(risk?.protectiveExit?.lastMakerAttemptAt) ?? null,
+    makerAttempts: risk?.protectiveExit?.makerAttempts ?? null,
+    takerFallbackTriggeredAt: safeIso(risk?.protectiveExit?.takerFallbackTriggeredAt) ?? null,
+    takerFallbackReason: risk?.protectiveExit?.takerFallbackReason ?? null,
+    exitFilledAt: safeIso(risk?.protectiveExit?.exitFilledAt) ?? null,
+    liquidityRole: risk?.protectiveExit?.liquidityRole ?? null,
+    takerFillPrice: toNum(risk?.protectiveExit?.takerFillPrice) ?? null,
+    takerFeePct: toNum(risk?.protectiveExit?.takerFeePct) ?? null,
+    takerFeeUsd: toNum(risk?.protectiveExit?.takerFeeUsd) ?? null,
+    slippageVsFloorUsd: toNum(risk?.protectiveExit?.slippageVsFloorUsd) ?? null,
+    slippageVsFloorPct: toNum(risk?.protectiveExit?.slippageVsFloorPct) ?? null,
+    slippageVsStopUsd: toNum(risk?.protectiveExit?.slippageVsStopUsd) ?? null,
+    slippageVsStopPct: toNum(risk?.protectiveExit?.slippageVsStopPct) ?? null,
+    // V3.2: Performance state
+    performanceDataAvailable: risk?.performanceState?.performanceDataAvailable ?? false,
+    mfeGrossUsd: toNum(risk?.performanceState?.mfeGrossUsd) ?? null,
+    mfeNetUsd: toNum(risk?.performanceState?.mfeNetUsd) ?? null,
+    maeGrossUsd: toNum(risk?.performanceState?.maeGrossUsd) ?? null,
+    maeNetUsd: toNum(risk?.performanceState?.maeNetUsd) ?? null,
+    peakNetPnlUsd: toNum(risk?.performanceState?.peakNetPnlUsd) ?? null,
+    peakNetPnlPct: toNum(risk?.performanceState?.peakNetPnlPct) ?? null,
+    peakNetPnlAt: safeIso(risk?.performanceState?.peakNetPnlAt) ?? null,
+    troughNetPnlUsd: toNum(risk?.performanceState?.troughNetPnlUsd) ?? null,
+    troughNetPnlPct: toNum(risk?.performanceState?.troughNetPnlPct) ?? null,
+    maxDrawdownFromPeakUsd: toNum(risk?.performanceState?.maxDrawdownFromPeakUsd) ?? null,
+    maxDrawdownFromPeakPct: toNum(risk?.performanceState?.maxDrawdownFromPeakPct) ?? null,
+    highestObservedPrice: toNum(risk?.performanceState?.highestObservedPrice) ?? null,
+    lowestObservedPrice: toNum(risk?.performanceState?.lowestObservedPrice) ?? null,
+    givebackUsd: toNum(risk?.performanceState?.givebackUsd) ?? null,
+    givebackPct: toNum(risk?.performanceState?.givebackPct) ?? null,
+    finalCaptureEfficiencyPct: toNum(risk?.performanceState?.finalCaptureEfficiencyPct) ?? null,
+    targetBaselineNetUsd: toNum(risk?.performanceState?.targetBaselineNetUsd) ?? null,
+    targetBaselineNetPct: toNum(risk?.performanceState?.targetBaselineNetPct) ?? null,
     reviewCode: cycle?.reviewCode ?? null,
     reviewReason: cycle?.reviewReason ?? null,
     terminalKind: null,
@@ -773,6 +848,42 @@ function buildClosedCycle(
     simulatedOrderId: risk?.protectiveExit?.simulatedOrderId ?? null,
     makerFillPrice: toNum(risk?.protectiveExit?.fillPrice) ?? null,
     makerFilledAt: safeIso(risk?.protectiveExit?.filledAt) ?? null,
+    // V3.2: Protective maker→taker fallback fields
+    protectiveTriggeredAt: safeIso(risk?.protectiveExit?.protectiveTriggeredAt) ?? null,
+    firstMakerCreatedAt: safeIso(risk?.protectiveExit?.firstMakerCreatedAt) ?? null,
+    lastMakerAttemptAt: safeIso(risk?.protectiveExit?.lastMakerAttemptAt) ?? null,
+    makerAttempts: risk?.protectiveExit?.makerAttempts ?? null,
+    takerFallbackTriggeredAt: safeIso(risk?.protectiveExit?.takerFallbackTriggeredAt) ?? null,
+    takerFallbackReason: risk?.protectiveExit?.takerFallbackReason ?? null,
+    exitFilledAt: safeIso(risk?.protectiveExit?.exitFilledAt) ?? null,
+    liquidityRole: risk?.protectiveExit?.liquidityRole ?? null,
+    takerFillPrice: toNum(risk?.protectiveExit?.takerFillPrice) ?? null,
+    takerFeePct: toNum(risk?.protectiveExit?.takerFeePct) ?? null,
+    takerFeeUsd: toNum(risk?.protectiveExit?.takerFeeUsd) ?? null,
+    slippageVsFloorUsd: toNum(risk?.protectiveExit?.slippageVsFloorUsd) ?? null,
+    slippageVsFloorPct: toNum(risk?.protectiveExit?.slippageVsFloorPct) ?? null,
+    slippageVsStopUsd: toNum(risk?.protectiveExit?.slippageVsStopUsd) ?? null,
+    slippageVsStopPct: toNum(risk?.protectiveExit?.slippageVsStopPct) ?? null,
+    // V3.2: Performance state
+    performanceDataAvailable: risk?.performanceState?.performanceDataAvailable ?? false,
+    mfeGrossUsd: toNum(risk?.performanceState?.mfeGrossUsd) ?? null,
+    mfeNetUsd: toNum(risk?.performanceState?.mfeNetUsd) ?? null,
+    maeGrossUsd: toNum(risk?.performanceState?.maeGrossUsd) ?? null,
+    maeNetUsd: toNum(risk?.performanceState?.maeNetUsd) ?? null,
+    peakNetPnlUsd: toNum(risk?.performanceState?.peakNetPnlUsd) ?? null,
+    peakNetPnlPct: toNum(risk?.performanceState?.peakNetPnlPct) ?? null,
+    peakNetPnlAt: safeIso(risk?.performanceState?.peakNetPnlAt) ?? null,
+    troughNetPnlUsd: toNum(risk?.performanceState?.troughNetPnlUsd) ?? null,
+    troughNetPnlPct: toNum(risk?.performanceState?.troughNetPnlPct) ?? null,
+    maxDrawdownFromPeakUsd: toNum(risk?.performanceState?.maxDrawdownFromPeakUsd) ?? null,
+    maxDrawdownFromPeakPct: toNum(risk?.performanceState?.maxDrawdownFromPeakPct) ?? null,
+    highestObservedPrice: toNum(risk?.performanceState?.highestObservedPrice) ?? null,
+    lowestObservedPrice: toNum(risk?.performanceState?.lowestObservedPrice) ?? null,
+    givebackUsd: toNum(risk?.performanceState?.givebackUsd) ?? null,
+    givebackPct: toNum(risk?.performanceState?.givebackPct) ?? null,
+    finalCaptureEfficiencyPct: toNum(risk?.performanceState?.finalCaptureEfficiencyPct) ?? null,
+    targetBaselineNetUsd: toNum(risk?.performanceState?.targetBaselineNetUsd) ?? null,
+    targetBaselineNetPct: toNum(risk?.performanceState?.targetBaselineNetPct) ?? null,
     terminalKind: isCancelled ? "cancelled" : "completed",
     closedAt: completedAt ?? safeIso(sellFilledAt) ?? null,
   };
