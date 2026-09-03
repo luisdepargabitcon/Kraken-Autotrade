@@ -35,18 +35,10 @@ function makeClosedCycleV32(overrides: Record<string, any> = {}) {
     performanceDataAvailable: true,
     mfeNetUsd: 6.89,
     maeNetUsd: -0.30,
-    mfeGrossUsd: 7.00,
-    maeGrossUsd: -0.25,
     peakNetPnlUsd: 6.89,
     peakNetPnlPct: 1.78,
-    troughNetPnlUsd: -0.30,
-    troughNetPnlPct: -0.08,
     maxDrawdownFromPeakUsd: 7.19,
-    maxDrawdownFromPeakPct: 1.86,
-    highestObservedPrice: 79369.60,
-    lowestObservedPrice: 76900,
-    mfePeakPrice: 79369.60,
-    maeTroughPrice: 76900,
+    maxDrawdownFromPeakPct: 28.4,
     givebackUsd: 1.99,
     givebackPct: 28.88,
     finalCaptureEfficiencyPct: 71.12,
@@ -82,7 +74,7 @@ describe("CompletedPerformanceBlock — real render", () => {
     expect(html).toContain("Taker");
   });
 
-  it("renders MFE and MAE values", () => {
+  it("renders MAE value", () => {
     const html = renderToString(<CompletedPerformanceBlock cycle={makeClosedCycleV32()} />);
     expect(html).toContain("MAE");
   });
@@ -98,7 +90,7 @@ describe("CompletedPerformanceBlock — real render", () => {
     expect(html).toContain("max_attempts");
   });
 
-  it("renders delta vs target value", () => {
+  it("renders delta vs target value (es-ES locale)", () => {
     const html = renderToString(<CompletedPerformanceBlock cycle={makeClosedCycleV32()} />);
     expect(html).toContain("Diferencia vs Target V3");
     // fmtUsd uses es-ES locale: 1.70 → "+1,70"
@@ -109,5 +101,22 @@ describe("CompletedPerformanceBlock — real render", () => {
     const legacyCycle = makeClosedCycleV32({ performanceDataAvailable: false });
     const html = renderToString(<CompletedPerformanceBlock cycle={legacyCycle} />);
     expect(html).toContain("Sin datos históricos suficientes");
+  });
+
+  // V3.2 forensic fix: drawdown must use maxDrawdownFromPeakUsd, NOT troughNetPnlUsd
+  it("UI-1 historical: shows drawdown from maxDrawdownFromPeakUsd (7.19), NOT troughNetPnlUsd", () => {
+    const cycle = makeClosedCycleV32({
+      maeNetUsd: -0.30,
+      maxDrawdownFromPeakUsd: 7.19,
+      maxDrawdownFromPeakPct: 28.4,
+    });
+    const html = renderToString(<CompletedPerformanceBlock cycle={cycle} />);
+    // Must contain 7,19 (the drawdown magnitude)
+    expect(html).toContain("7,19");
+    expect(html).toContain("28.4%");
+    // Should be displayed as negative
+    expect(html).toContain("-$7,19");
+    // Should use "Máxima caída desde el pico" label
+    expect(html).toContain("Máxima caída desde el pico");
   });
 });
