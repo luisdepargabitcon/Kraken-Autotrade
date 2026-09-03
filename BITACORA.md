@@ -8208,3 +8208,58 @@ Comportamiento V3 intacto, sin cambios.
 - `REAL_SUPPORTED=false`
 - `REAL_EXCHANGE_CANCEL_IMPLEMENTED=NO`
 - `REAL_REMAINS_BLOCKED=YES`
+
+## GRID V3.2 STAGING DEPLOY — 2026-09-03
+
+### Resumen
+- **Objetivo**: Integrar GRID V3.2 (protective maker→taker fallback + MFE/MAE forensic tracking) en staging SHADOW.
+- **HEAD origen**: 0eac548f2264c5fad418134906fca86f418e5422 (branch fix/grid-v32-v31-integration-20260902)
+- **Staging HEAD antes**: 1cb97d6e8e9315d7fdc9f3a2cae1468f5d63322c
+- **Staging HEAD después**: c2840567048ec8a24286f1fd82d46a9a4c7fb624
+
+### Commits integrados
+- 12 commits cherry-picked (V3.1 adaptive ATR trailing + V3.2 protective fallback + forensic metrics + UI wiring)
+- Migraciones renumeradas: 088→091 (V3.1 adaptive trailing), 093→092 (V3.2 protective taker fallback) para evitar conflictos con staging
+- Fix adicional: wiring de campos V3.2 en config route POST handler, saveConfig, y schema
+
+### Migration 092
+- **ID**: 092_grid_protective_taker_fallback
+- **Columnas**: protective_taker_fallback_enabled, protective_maker_max_attempts, protective_maker_max_wait_seconds, protective_taker_max_slippage_pct
+- **Sin columnas duplicadas de fee** — la fee se resuelve via modelo canónico
+- **Aplicada**: YES (AutoMigrationRunner)
+
+### Fee canónica runtime
+- effectiveTakerFeePct: 0.09
+- effectiveTakerFeeSource: EXECUTION_EXCHANGE_FEE_MODEL
+- effectiveTakerFeeQuality: REAL
+- effectiveTakerFeeExchange: revolutx
+
+### Configuración V3.2 activada en SHADOW
+- protectiveTakerFallbackEnabled: true
+- protectiveMakerMaxAttempts: 3
+- protectiveMakerMaxWaitSeconds: 30
+- mode: SHADOW
+- trailingEnabled: true
+- trailingMode: adaptive_atr
+
+### Estado REAL
+- REAL_LIMITED: blocked (getEffectiveProtectiveTakerFallbackEnabled returns false)
+- REAL_FULL: blocked
+- REAL_OPEN_ORDERS: 0
+- REAL_REMAINS_BLOCKED: YES
+
+### Tests
+- Grid server: 37 files, 762 tests passed
+- Grid client: 13 files, 194 tests passed (V3.2: 5 files, 41 tests passed)
+- npm run check: PASS (0 errors)
+- npm run build: PASS
+
+### DB Backup
+- Path: backups/pre_v32_deploy_20260903_125500.sql (19GB)
+
+### Runtime natural
+- PENDING_NO_NATURAL_EVENT — sin ciclos abiertos para validar fallback natural
+
+### Datos históricos
+- Intactos — no se reconstruyó MFE/MAE retrospectivamente
+- Ciclos legacy muestran "Sin datos históricos suficientes"
