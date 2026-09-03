@@ -72,6 +72,8 @@ export const MIGRATIONS = [
   { id: '088_spot_forward_twin', filePath: path.join(migrationsDir, '088_spot_forward_twin.sql') },
   // GRID V3.1 Adaptive ATR Trailing — additive columns, no data loss
   { id: '091_grid_v31_adaptive_trailing', filePath: path.join(migrationsDir, '091_grid_v31_adaptive_trailing.sql') },
+  // GRID V3.2 Protective taker fallback — additive columns
+  { id: '092_grid_protective_taker_fallback', filePath: path.join(migrationsDir, '092_grid_protective_taker_fallback.sql') },
 ];
 
 
