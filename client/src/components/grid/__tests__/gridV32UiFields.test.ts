@@ -72,14 +72,10 @@ describe("V3.2 config fields for protective taker fallback", () => {
       protectiveMakerMaxAttempts: 3,
       protectiveMakerMaxWaitSeconds: 30,
       protectiveTakerMaxSlippagePct: null,
-      protectiveTakerFeePct: 0.09,
-      protectiveTakerFeeSource: "REVOLUTX_TAKER_DEFAULT",
     };
     expect(mockConfig.protectiveTakerFallbackEnabled).toBe(false);
     expect(mockConfig.protectiveMakerMaxAttempts).toBe(3);
     expect(mockConfig.protectiveMakerMaxWaitSeconds).toBe(30);
     expect(mockConfig.protectiveTakerMaxSlippagePct).toBeNull();
-    expect(mockConfig.protectiveTakerFeePct).toBe(0.09);
-    expect(mockConfig.protectiveTakerFeeSource).toBe("REVOLUTX_TAKER_DEFAULT");
   });
 });

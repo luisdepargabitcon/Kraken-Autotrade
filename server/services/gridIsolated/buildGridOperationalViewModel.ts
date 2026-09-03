@@ -197,6 +197,8 @@ export interface OperationalOpenCycle {
   takerFillPrice: number | null;
   takerFeePct: number | null;
   takerFeeSource: string | null;
+  takerFeeQuality: string | null;
+  takerFeeExchange: string | null;
   takerFeeUsd: number | null;
   slippageVsFloorUsd: number | null;
   slippageVsFloorPct: number | null;
@@ -208,6 +210,8 @@ export interface OperationalOpenCycle {
   snapshotProtectiveMakerMaxWaitSeconds: number | null;
   snapshotResolvedTakerFeePct: number | null;
   snapshotFeeSource: string | null;
+  snapshotFeeQuality: string | null;
+  snapshotFeeExchange: string | null;
   // V3.2: Performance state (MFE/MAE/forensic profit tracking)
   performanceDataAvailable: boolean;
   mfeGrossUsd: number | null;
@@ -223,11 +227,16 @@ export interface OperationalOpenCycle {
   maxDrawdownFromPeakPct: number | null;
   highestObservedPrice: number | null;
   lowestObservedPrice: number | null;
+  mfePeakPrice: number | null;
+  maeTroughPrice: number | null;
   givebackUsd: number | null;
   givebackPct: number | null;
   finalCaptureEfficiencyPct: number | null;
+  finalNetPnlUsd: number | null;
   targetBaselineNetUsd: number | null;
   targetBaselineNetPct: number | null;
+  deltaVsTargetUsd: number | null;
+  deltaVsTargetPct: number | null;
   // V3.2: Performance valuation mode (how MFE/MAE is computed)
   performanceValuationMode: string | null;
   markPriceSource: string | null;
@@ -716,6 +725,8 @@ function buildOpenCycle(
     takerFillPrice: toNum(risk?.protectiveExit?.takerFillPrice) ?? null,
     takerFeePct: toNum(risk?.protectiveExit?.takerFeePct) ?? null,
     takerFeeSource: risk?.protectiveExit?.snapshotFeeSource ?? null,
+    takerFeeQuality: risk?.protectiveExit?.snapshotFeeQuality ?? null,
+    takerFeeExchange: risk?.protectiveExit?.snapshotFeeExchange ?? null,
     takerFeeUsd: toNum(risk?.protectiveExit?.takerFeeUsd) ?? null,
     slippageVsFloorUsd: toNum(risk?.protectiveExit?.slippageVsFloorUsd) ?? null,
     slippageVsFloorPct: toNum(risk?.protectiveExit?.slippageVsFloorPct) ?? null,
@@ -727,6 +738,8 @@ function buildOpenCycle(
     snapshotProtectiveMakerMaxWaitSeconds: risk?.protectiveExit?.snapshotProtectiveMakerMaxWaitSeconds ?? null,
     snapshotResolvedTakerFeePct: toNum(risk?.protectiveExit?.snapshotResolvedTakerFeePct) ?? null,
     snapshotFeeSource: risk?.protectiveExit?.snapshotFeeSource ?? null,
+    snapshotFeeQuality: risk?.protectiveExit?.snapshotFeeQuality ?? null,
+    snapshotFeeExchange: risk?.protectiveExit?.snapshotFeeExchange ?? null,
     // V3.2: Performance state
     performanceDataAvailable: risk?.performanceState?.performanceDataAvailable ?? false,
     mfeGrossUsd: toNum(risk?.performanceState?.mfeGrossUsd) ?? null,
@@ -742,11 +755,16 @@ function buildOpenCycle(
     maxDrawdownFromPeakPct: toNum(risk?.performanceState?.maxDrawdownFromPeakPct) ?? null,
     highestObservedPrice: toNum(risk?.performanceState?.highestObservedPrice) ?? null,
     lowestObservedPrice: toNum(risk?.performanceState?.lowestObservedPrice) ?? null,
+    mfePeakPrice: toNum(risk?.performanceState?.highestObservedPrice) ?? null,
+    maeTroughPrice: toNum(risk?.performanceState?.lowestObservedPrice) ?? null,
     givebackUsd: toNum(risk?.performanceState?.givebackUsd) ?? null,
     givebackPct: toNum(risk?.performanceState?.givebackPct) ?? null,
     finalCaptureEfficiencyPct: toNum(risk?.performanceState?.finalCaptureEfficiencyPct) ?? null,
+    finalNetPnlUsd: toNum(risk?.performanceState?.finalNetPnlUsd) ?? null,
     targetBaselineNetUsd: toNum(risk?.performanceState?.targetBaselineNetUsd) ?? null,
     targetBaselineNetPct: toNum(risk?.performanceState?.targetBaselineNetPct) ?? null,
+    deltaVsTargetUsd: toNum(risk?.performanceState?.deltaVsTargetUsd) ?? null,
+    deltaVsTargetPct: toNum(risk?.performanceState?.deltaVsTargetPct) ?? null,
     performanceValuationMode: "EXECUTABLE_TAKER_LIQUIDATION",
     markPriceSource: risk?.performanceState?.markPriceSource ?? null,
     reviewCode: cycle?.reviewCode ?? null,
@@ -921,6 +939,8 @@ function buildClosedCycle(
     takerFillPrice: toNum(risk?.protectiveExit?.takerFillPrice) ?? null,
     takerFeePct: toNum(risk?.protectiveExit?.takerFeePct) ?? null,
     takerFeeSource: risk?.protectiveExit?.snapshotFeeSource ?? null,
+    takerFeeQuality: risk?.protectiveExit?.snapshotFeeQuality ?? null,
+    takerFeeExchange: risk?.protectiveExit?.snapshotFeeExchange ?? null,
     takerFeeUsd: toNum(risk?.protectiveExit?.takerFeeUsd) ?? null,
     slippageVsFloorUsd: toNum(risk?.protectiveExit?.slippageVsFloorUsd) ?? null,
     slippageVsFloorPct: toNum(risk?.protectiveExit?.slippageVsFloorPct) ?? null,
@@ -932,6 +952,8 @@ function buildClosedCycle(
     snapshotProtectiveMakerMaxWaitSeconds: risk?.protectiveExit?.snapshotProtectiveMakerMaxWaitSeconds ?? null,
     snapshotResolvedTakerFeePct: toNum(risk?.protectiveExit?.snapshotResolvedTakerFeePct) ?? null,
     snapshotFeeSource: risk?.protectiveExit?.snapshotFeeSource ?? null,
+    snapshotFeeQuality: risk?.protectiveExit?.snapshotFeeQuality ?? null,
+    snapshotFeeExchange: risk?.protectiveExit?.snapshotFeeExchange ?? null,
     // V3.2: Performance state
     performanceDataAvailable: risk?.performanceState?.performanceDataAvailable ?? false,
     mfeGrossUsd: toNum(risk?.performanceState?.mfeGrossUsd) ?? null,
@@ -947,11 +969,16 @@ function buildClosedCycle(
     maxDrawdownFromPeakPct: toNum(risk?.performanceState?.maxDrawdownFromPeakPct) ?? null,
     highestObservedPrice: toNum(risk?.performanceState?.highestObservedPrice) ?? null,
     lowestObservedPrice: toNum(risk?.performanceState?.lowestObservedPrice) ?? null,
+    mfePeakPrice: toNum(risk?.performanceState?.highestObservedPrice) ?? null,
+    maeTroughPrice: toNum(risk?.performanceState?.lowestObservedPrice) ?? null,
     givebackUsd: toNum(risk?.performanceState?.givebackUsd) ?? null,
     givebackPct: toNum(risk?.performanceState?.givebackPct) ?? null,
     finalCaptureEfficiencyPct: toNum(risk?.performanceState?.finalCaptureEfficiencyPct) ?? null,
+    finalNetPnlUsd: toNum(risk?.performanceState?.finalNetPnlUsd) ?? null,
     targetBaselineNetUsd: toNum(risk?.performanceState?.targetBaselineNetUsd) ?? null,
     targetBaselineNetPct: toNum(risk?.performanceState?.targetBaselineNetPct) ?? null,
+    deltaVsTargetUsd: toNum(risk?.performanceState?.deltaVsTargetUsd) ?? null,
+    deltaVsTargetPct: toNum(risk?.performanceState?.deltaVsTargetPct) ?? null,
     performanceValuationMode: "EXECUTABLE_TAKER_LIQUIDATION",
     markPriceSource: risk?.performanceState?.markPriceSource ?? null,
     terminalKind: isCancelled ? "cancelled" : "completed",

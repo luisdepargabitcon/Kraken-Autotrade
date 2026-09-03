@@ -388,6 +388,10 @@ export interface GridPendingMakerExit {
   takerFillPrice: number | null;
   /** Taker fee percentage used. */
   takerFeePct: number | null;
+  /** Taker fee quality (REAL/ESTIMATED). */
+  takerFeeQuality: string | null;
+  /** Taker fee exchange name. */
+  takerFeeExchange: string | null;
   /** Taker fee in USD. */
   takerFeeUsd: number | null;
   /** Slippage vs profit floor in USD. */
@@ -413,6 +417,10 @@ export interface GridPendingMakerExit {
   snapshotResolvedTakerFeePct: number | null;
   /** Fee source identifier, snapshot at trigger time. */
   snapshotFeeSource: string | null;
+  /** Fee quality (REAL/ESTIMATED), snapshot at trigger time. */
+  snapshotFeeQuality: string | null;
+  /** Fee exchange name, snapshot at trigger time. */
+  snapshotFeeExchange: string | null;
 }
 
 export interface GridCycleRiskState {
@@ -488,6 +496,12 @@ export interface GridPerformanceState {
   targetBaselineNetPct: number | null;
   /** Final capture efficiency pct (finalNetPnl / peakNetPnl * 100). */
   finalCaptureEfficiencyPct: number | null;
+  /** Final net PnL USD (realized at close). */
+  finalNetPnlUsd: number | null;
+  /** Delta vs target V3 baseline USD. */
+  deltaVsTargetUsd: number | null;
+  /** Delta vs target V3 baseline pct. */
+  deltaVsTargetPct: number | null;
   /** Giveback USD (peak - final). */
   givebackUsd: number | null;
   /** Giveback pct (giveback / peak * 100). */
@@ -846,17 +860,8 @@ export interface GridIsolatedConfig {
   protectiveMakerMaxAttempts: number;
   /** Max wait seconds before taker fallback on protective exits. Default: 30. */
   protectiveMakerMaxWaitSeconds: number;
-  /** Optional max slippage pct guard for taker fallback. Null = no guard. */
+  /** Optional max slippage pct guard for taker fallback. Null = no guard (reserved). */
   protectiveTakerMaxSlippagePct: number | null;
-  /**
-   * V3.2: Explicit taker fee percentage for protective taker fallback.
-   * This is the canonical fee source for taker SELL liquidity.
-   * Default: 0.09 (matching Revolut X taker fee).
-   * NOT the same as sellFeePct — sellFeePct is the maker fee for normal targets.
-   */
-  protectiveTakerFeePct: number;
-  /** V3.2: Fee source identifier for audit trail. */
-  protectiveTakerFeeSource: string;
   // ─── Wallet / Cartera ───
   gridWalletMode: "automatic" | "manual";
   gridWalletInitialUsd: number;
@@ -958,8 +963,6 @@ export const DEFAULT_GRID_CONFIG: Omit<GridIsolatedConfig, "id" | "createdAt" | 
   protectiveMakerMaxAttempts: 3,
   protectiveMakerMaxWaitSeconds: 30,
   protectiveTakerMaxSlippagePct: null,
-  protectiveTakerFeePct: 0.09,
-  protectiveTakerFeeSource: "REVOLUTX_TAKER_DEFAULT",
   // Wallet / Cartera
   gridWalletMode: "automatic",
   gridWalletInitialUsd: 1000,

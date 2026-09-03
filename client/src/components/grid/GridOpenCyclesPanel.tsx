@@ -215,6 +215,102 @@ export function TrailingStateBlock({ cycle }: { cycle: any }) {
   );
 }
 
+export function PerformanceBlock({ cycle }: { cycle: any }) {
+  const mfeNet = cycle.mfeNetUsd ?? cycle.mfeGrossUsd;
+  const maeNet = cycle.maeNetUsd ?? cycle.maeGrossUsd;
+  const peakNet = cycle.peakNetPnlUsd;
+  const drawdownFromPeak = cycle.troughNetPnlUsd;
+  const maxPrice = cycle.mfePeakPrice;
+  const minPrice = cycle.maeTroughPrice;
+  const targetBaselineNet = cycle.targetBaselineNetUsd;
+  const valuation = "Liquidación taker al best bid";
+
+  return (
+    <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2 text-xs space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="font-semibold text-cyan-400">Rendimiento en curso</span>
+        <span className="text-[10px] text-muted-foreground">Valuación: {valuation}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+        <span>MFE neto: <span className="font-mono text-green-400">{fmtUsd(mfeNet)}</span></span>
+        <span>MAE neto: <span className="font-mono text-red-400">{fmtUsd(maeNet)}</span></span>
+        <span>Máximo beneficio observado: <span className="font-mono text-green-400">{fmtUsd(peakNet)}</span></span>
+        <span>Máximo drawdown desde peak: <span className="font-mono text-red-400">{fmtUsd(drawdownFromPeak)}</span></span>
+        <span>Precio máximo observado: <span className="font-mono text-foreground">{fmtPrice(maxPrice)}</span></span>
+        <span>Precio mínimo observado: <span className="font-mono text-foreground">{fmtPrice(minPrice)}</span></span>
+        <span>Target V3 baseline: <span className="font-mono text-foreground">{fmtUsd(targetBaselineNet)}</span></span>
+      </div>
+    </div>
+  );
+}
+
+export function ProtectiveExecutionBlock({ cycle }: { cycle: any }) {
+  const state = cycle.makerState;
+  const route = cycle.activeExitRoute ?? cycle.makerRoute;
+  const triggerAt = cycle.triggerDetectedAt ?? cycle.protectiveTriggeredAt;
+  const firstMakerAt = cycle.makerOrderCreatedAt;
+  const makerAttempts = cycle.makerAttempts ?? cycle.snapshotProtectiveMakerMaxAttempts;
+  const maxAttempts = cycle.snapshotProtectiveMakerMaxAttempts ?? 3;
+  const reprices = cycle.repriceAttempts ?? 0;
+  const waitSeconds = cycle.protiveWaitSeconds ?? cycle.makerWaitSeconds;
+  const maxWait = cycle.snapshotProtectiveMakerMaxWaitSeconds ?? 30;
+  const lastRepriceAt = cycle.lastRepricedAt;
+  const fallbackReason = cycle.takerFallbackReason;
+  const feePct = cycle.snapshotResolvedTakerFeePct;
+  const feeSource = cycle.snapshotFeeSource;
+  const feeQuality = cycle.snapshotFeeQuality;
+  const feeExchange = cycle.snapshotFeeExchange;
+  const closePathLabel = cycle.closePathLabel ?? cycle.activeExitRouteLabel;
+
+  const stateLabel = (() => {
+    switch (state) {
+      case "TRIGGERED": return "Disparado";
+      case "MAKER_PENDING": return "Maker pendiente";
+      case "MAKER_FILLED": return "Maker lleno";
+      case "TAKER_PENDING": return "Taker fallback";
+      case "TAKER_FILLED": return "Cerrando";
+      case "CANCELLED": return "Cancelado";
+      default: return state ?? "—";
+    }
+  })();
+
+  const routeLabel = (() => {
+    switch (route) {
+      case "TRAILING_MAKER": return "Trailing maker";
+      case "TRAILING_TAKER": return "Trailing taker";
+      case "PROTECTIVE_MAKER": return "Stop-loss maker";
+      case "PROTECTIVE_TAKER": return "Stop-loss taker";
+      default: return route ?? "—";
+    }
+  })();
+
+  return (
+    <div className="rounded-lg border border-purple-500/20 bg-purple-500/5 p-2 text-xs space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="font-semibold text-purple-400">Salida protectora</span>
+        <span className="font-mono text-[10px] text-foreground">{stateLabel}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+        <span>Trigger: <span className="font-mono text-foreground">{fmtDate(triggerAt)}</span></span>
+        <span>Primer maker: <span className="font-mono text-foreground">{fmtDate(firstMakerAt)}</span></span>
+        <span>Intentos maker: <span className="font-mono text-foreground">{makerAttempts ?? "—"} / {maxAttempts}</span></span>
+        <span>Reprecios: <span className="font-mono text-foreground">{reprices}</span></span>
+        <span>Espera: <span className="font-mono text-foreground">{waitSeconds != null ? `${waitSeconds} s / ${maxWait} s` : "—"}</span></span>
+        <span>Último reprice: <span className="font-mono text-foreground">{fmtDate(lastRepriceAt)}</span></span>
+        <span>Fallback: <span className="text-foreground">{fallbackReason ?? "No"}</span></span>
+        <span>Ruta: <span className="text-foreground">{routeLabel}</span></span>
+        {closePathLabel && <span>Vía cierre: <span className="text-foreground">{closePathLabel}</span></span>}
+      </div>
+      {feePct != null && (
+        <div className="grid grid-cols-2 gap-1 text-muted-foreground border-t border-border/30 pt-1">
+          <span>Fee taker: <span className="font-mono text-foreground">{feePct.toFixed(3)} %</span></span>
+          <span>Fuente: <span className="font-mono text-foreground">{feeExchange ?? "—"} · {feeQuality ?? "—"}</span></span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CycleDetail({ cycle }: { cycle: any }) {
   return (
     <div className="space-y-2 text-sm pt-2">
@@ -274,6 +370,16 @@ function CycleDetail({ cycle }: { cycle: any }) {
       {/* V3.1: Trailing block — full state for open cycles */}
       {cycle.trailingPolicyEnabled != null && (
         <TrailingStateBlock cycle={cycle} />
+      )}
+
+      {/* V3.2: Performance en curso — MFE/MAE/forensic */}
+      {cycle.performanceDataAvailable && (
+        <PerformanceBlock cycle={cycle} />
+      )}
+
+      {/* V3.2: Protective exit execution state */}
+      {cycle.makerState && cycle.makerState !== "NONE" && (
+        <ProtectiveExecutionBlock cycle={cycle} />
       )}
 
       <div className="border-t pt-2 mt-2">
@@ -567,8 +673,83 @@ function CompletedCycleDetail({ cycle }: { cycle: any }) {
 
       <ProteccionesDetail cycle={cycle} />
       <MakerExecutionDetail cycle={cycle} />
+      <CompletedPerformanceBlock cycle={cycle} />
       <Cronologia cycle={cycle} />
       <TechnicalDetail cycle={cycle} />
+    </div>
+  );
+}
+
+export function CompletedPerformanceBlock({ cycle }: { cycle: any }) {
+  if (!cycle.performanceDataAvailable) {
+    return (
+      <div className="rounded-lg border border-border/30 bg-muted/10 p-2 text-xs text-muted-foreground">
+        Sin datos históricos suficientes
+      </div>
+    );
+  }
+  const peakNet = cycle.peakNetPnlUsd;
+  const finalNet = cycle.finalNetPnlUsd ?? cycle.realizedNetPnl;
+  const givebackUsd = cycle.givebackUsd;
+  const givebackPct = cycle.givebackPct;
+  const captureEff = cycle.finalCaptureEfficiencyPct;
+  const maeNet = cycle.maeNetUsd ?? cycle.maeGrossUsd;
+  const maxDrawdownFromPeak = cycle.troughNetPnlUsd;
+  const targetBaseline = cycle.targetBaselineNetUsd;
+  const deltaVsTarget = cycle.deltaVsTargetUsd;
+  const liquidityRole = cycle.liquidityRole;
+  const closePath = cycle.closePath;
+  const feePct = cycle.takerFeePct ?? cycle.snapshotResolvedTakerFeePct;
+  const feeQuality = cycle.takerFeeQuality ?? cycle.snapshotFeeQuality;
+  const feeExchange = cycle.takerFeeExchange ?? cycle.snapshotFeeExchange;
+  const feeUsd = cycle.takerFeeUsd ?? cycle.realizedFee;
+  const makerAttempts = cycle.makerAttempts;
+  const reprices = cycle.repriceAttempts;
+  const fallbackReason = cycle.takerFallbackReason;
+
+  const closePathLabel = (() => {
+    switch (closePath) {
+      case "TRAILING_MAKER": return "Trailing maker";
+      case "TRAILING_TAKER": return "Trailing taker";
+      case "PROTECTIVE_MAKER": return "Stop-loss maker";
+      case "PROTECTIVE_TAKER": return "Stop-loss taker";
+      case "HODL_RECOVERY": return "Recuperación HODL";
+      case "TARGET_V3": return "Target V3";
+      default: return cycle.closePathLabel ?? closePath ?? "—";
+    }
+  })();
+
+  return (
+    <div className="space-y-2 pt-2">
+      <p className="text-xs font-semibold text-muted-foreground">Rendimiento del ciclo</p>
+      <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2 text-xs space-y-1">
+        <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+          <span>Máximo beneficio alcanzado: <span className="font-mono text-green-400">{fmtUsd(peakNet)}</span></span>
+          <span>Resultado final: <span className={finalNet != null && finalNet >= 0 ? "font-mono text-green-400" : "font-mono text-red-400"}>{fmtUsd(finalNet)}</span></span>
+          <span>Giveback: <span className="font-mono text-red-400">{fmtUsd(givebackUsd)}</span></span>
+          <span>Giveback %: <span className="font-mono text-foreground">{givebackPct != null ? `${givebackPct.toFixed(2)} %` : "—"}</span></span>
+          <span>Eficiencia de captura: <span className="font-mono text-foreground">{captureEff != null ? `${captureEff.toFixed(2)} %` : "—"}</span></span>
+          <span>MAE: <span className="font-mono text-red-400">{fmtUsd(maeNet)}</span></span>
+          <span>Max drawdown desde peak: <span className="font-mono text-red-400">{fmtUsd(maxDrawdownFromPeak)}</span></span>
+          <span>Target V3 habría dado: <span className="font-mono text-foreground">{fmtUsd(targetBaseline)}</span></span>
+          <span>Diferencia vs Target V3: <span className={deltaVsTarget != null && deltaVsTarget >= 0 ? "font-mono text-green-400" : "font-mono text-red-400"}>{fmtUsd(deltaVsTarget)}</span></span>
+        </div>
+      </div>
+
+      <p className="text-xs font-semibold text-muted-foreground">Ejecución</p>
+      <div className="rounded-lg border border-purple-500/20 bg-purple-500/5 p-2 text-xs space-y-1">
+        <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+          <span>Vía de cierre: <span className="text-foreground">{closePathLabel}</span></span>
+          <span>Liquidez: <span className="text-foreground">{liquidityRole === "taker" ? "Taker" : liquidityRole === "maker" ? "Maker" : "—"}</span></span>
+          {makerAttempts != null && <span>Intentos maker: <span className="font-mono text-foreground">{makerAttempts}</span></span>}
+          {reprices != null && <span>Reprecios: <span className="font-mono text-foreground">{reprices}</span></span>}
+          {fallbackReason && <span>Fallback taker: <span className="text-foreground">Sí · {fallbackReason}</span></span>}
+          {feePct != null && <span>Fee SELL: <span className="font-mono text-foreground">{feePct.toFixed(3)} %</span></span>}
+          {feeUsd != null && <span>Fee SELL USD: <span className="font-mono text-foreground">{fmtUsd(feeUsd)}</span></span>}
+          {feeQuality && <span>Calidad fee: <span className="text-foreground">{feeQuality}</span></span>}
+          {feeExchange && <span>Exchange fee: <span className="text-foreground">{feeExchange}</span></span>}
+        </div>
+      </div>
     </div>
   );
 }
