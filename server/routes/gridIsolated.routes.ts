@@ -867,6 +867,9 @@ export function registerGridIsolatedRoutes(app: Express): void {
         "adaptiveRangeMinPct", "adaptiveRangeMaxPct",
         "adaptiveRangeLowVolMaxPct", "adaptiveRangeNormalMaxPct", "adaptiveRangeHighVolMaxPct",
         "adaptiveRangeTargetFullLevels", "adaptiveRangeMinViableLevels",
+        // V3.2 Protective taker fallback
+        "protectiveTakerFallbackEnabled", "protectiveMakerMaxAttempts",
+        "protectiveMakerMaxWaitSeconds", "protectiveTakerMaxSlippagePct",
       ];
 
       for (const field of allowedFields) {

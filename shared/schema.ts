@@ -1799,6 +1799,11 @@ export const gridIsolatedConfigs = pgTable("grid_isolated_configs", {
   adaptiveRangeHighVolMaxPct:        decimal("adaptive_range_high_vol_max_pct", { precision: 6, scale: 2 }).notNull().default("7.00"),
   adaptiveRangeTargetFullLevels:     boolean("adaptive_range_target_full_levels").notNull().default(false),
   adaptiveRangeMinViableLevels:      integer("adaptive_range_min_viable_levels").notNull().default(4),
+  // V3.2 Protective taker fallback
+  protectiveTakerFallbackEnabled: boolean("protective_taker_fallback_enabled").notNull().default(false),
+  protectiveMakerMaxAttempts:     integer("protective_maker_max_attempts").notNull().default(3),
+  protectiveMakerMaxWaitSeconds:  integer("protective_maker_max_wait_seconds").notNull().default(30),
+  protectiveTakerMaxSlippagePct:  decimal("protective_taker_max_slippage_pct", { precision: 5, scale: 2 }),
   // Risk/circuit breaker persistence
   circuitBreakerOpen:      boolean("circuit_breaker_open").notNull().default(false),
   circuitBreakerOpenedAt:  timestamp("circuit_breaker_opened_at", { withTimezone: true }),

@@ -1145,6 +1145,11 @@ export class GridIsolatedEngine {
         adaptiveRangeHighVolMaxPct: Number(this.config.adaptiveRangeHighVolMaxPct ?? 7.00).toFixed(2),
         adaptiveRangeTargetFullLevels: this.config.adaptiveRangeTargetFullLevels ?? false,
         adaptiveRangeMinViableLevels: this.config.adaptiveRangeMinViableLevels ?? 4,
+        // V3.2 Protective taker fallback
+        protectiveTakerFallbackEnabled: this.config.protectiveTakerFallbackEnabled ?? false,
+        protectiveMakerMaxAttempts: this.config.protectiveMakerMaxAttempts ?? 3,
+        protectiveMakerMaxWaitSeconds: this.config.protectiveMakerMaxWaitSeconds ?? 30,
+        protectiveTakerMaxSlippagePct: this.config.protectiveTakerMaxSlippagePct ?? null,
         // Risk/circuit breaker persistence
         circuitBreakerOpen: this.circuitBreakerOpen ?? this.config.circuitBreakerOpen ?? false,
         circuitBreakerOpenedAt: this.circuitBreakerOpenedAt ?? this.config.circuitBreakerOpenedAt ?? null,
