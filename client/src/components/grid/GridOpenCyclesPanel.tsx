@@ -22,6 +22,14 @@ function fmtUsd(v: number | null | undefined): string {
   return `${prefix}$${v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+// V3.2: Drawdown is stored as a positive magnitude. Display as negative.
+function fmtDrawdown(v: number | null | undefined, pct?: number | null | undefined): string {
+  if (v == null) return "—";
+  const mag = `$${v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (pct != null) return `-$${v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${pct.toFixed(1)}%)`;
+  return `-${mag}`;
+}
+
 function fmtQty(v: number | null | undefined): string {
   if (v == null) return "—";
   return v.toLocaleString("es-ES", { minimumFractionDigits: 6, maximumFractionDigits: 8 });
@@ -216,14 +224,18 @@ export function TrailingStateBlock({ cycle }: { cycle: any }) {
 }
 
 export function PerformanceBlock({ cycle }: { cycle: any }) {
-  const mfeNet = cycle.mfeNetUsd ?? cycle.mfeGrossUsd;
-  const maeNet = cycle.maeNetUsd ?? cycle.maeGrossUsd;
+  const mfeNet = cycle.mfeNetUsd;
+  const maeNet = cycle.maeNetUsd;
   const peakNet = cycle.peakNetPnlUsd;
-  const drawdownFromPeak = cycle.troughNetPnlUsd;
-  const maxPrice = cycle.mfePeakPrice;
-  const minPrice = cycle.maeTroughPrice;
+  const drawdownFromPeak = cycle.maxDrawdownFromPeakUsd;
+  const drawdownFromPeakPct = cycle.maxDrawdownFromPeakPct;
+  const maxPrice = cycle.highestObservedPrice;
+  const minPrice = cycle.lowestObservedPrice;
   const targetBaselineNet = cycle.targetBaselineNetUsd;
-  const valuation = "Liquidación taker al best bid";
+  const valuation = cycle.performanceValuationMode === "EXECUTABLE_TAKER_LIQUIDATION"
+    ? "Liquidación taker al best bid"
+    : cycle.performanceValuationMode ?? "—";
+  const markPriceSource = cycle.markPriceSource ?? "—";
 
   return (
     <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2 text-xs space-y-2">
@@ -235,10 +247,11 @@ export function PerformanceBlock({ cycle }: { cycle: any }) {
         <span>MFE neto: <span className="font-mono text-green-400">{fmtUsd(mfeNet)}</span></span>
         <span>MAE neto: <span className="font-mono text-red-400">{fmtUsd(maeNet)}</span></span>
         <span>Máximo beneficio observado: <span className="font-mono text-green-400">{fmtUsd(peakNet)}</span></span>
-        <span>Máximo drawdown desde peak: <span className="font-mono text-red-400">{fmtUsd(drawdownFromPeak)}</span></span>
+        <span>Máxima caída desde el pico: <span className="font-mono text-red-400">{fmtDrawdown(drawdownFromPeak, drawdownFromPeakPct)}</span></span>
         <span>Precio máximo observado: <span className="font-mono text-foreground">{fmtPrice(maxPrice)}</span></span>
         <span>Precio mínimo observado: <span className="font-mono text-foreground">{fmtPrice(minPrice)}</span></span>
         <span>Target V3 baseline: <span className="font-mono text-foreground">{fmtUsd(targetBaselineNet)}</span></span>
+        <span>Mark price: <span className="font-mono text-foreground">{markPriceSource}</span></span>
       </div>
     </div>
   );
@@ -248,40 +261,61 @@ export function ProtectiveExecutionBlock({ cycle }: { cycle: any }) {
   const state = cycle.makerState;
   const route = cycle.activeExitRoute ?? cycle.makerRoute;
   const triggerAt = cycle.triggerDetectedAt ?? cycle.protectiveTriggeredAt;
-  const firstMakerAt = cycle.makerOrderCreatedAt;
-  const makerAttempts = cycle.makerAttempts ?? cycle.snapshotProtectiveMakerMaxAttempts;
+  // V3.2: Use firstMakerCreatedAt (canonical) with legacy fallback
+  const firstMakerAt = cycle.firstMakerCreatedAt ?? cycle.makerOrderCreatedAt;
+  // V3.2: actualAttempts is the count of attempts made, NOT the max limit
+  const actualAttempts = cycle.makerAttempts ?? 0;
   const maxAttempts = cycle.snapshotProtectiveMakerMaxAttempts ?? 3;
   const reprices = cycle.repriceAttempts ?? 0;
-  const waitSeconds = cycle.protiveWaitSeconds ?? cycle.makerWaitSeconds;
+  // V3.2: Use protectiveElapsedMs from view model (not phantom protiveWaitSeconds)
+  const elapsedMs = cycle.protectiveElapsedMs ?? null;
+  const waitSeconds = elapsedMs != null ? Math.round(elapsedMs / 1000) : null;
   const maxWait = cycle.snapshotProtectiveMakerMaxWaitSeconds ?? 30;
   const lastRepriceAt = cycle.lastRepricedAt;
   const fallbackReason = cycle.takerFallbackReason;
+  const takerFallbackTriggeredAt = cycle.takerFallbackTriggeredAt;
   const feePct = cycle.snapshotResolvedTakerFeePct;
   const feeSource = cycle.snapshotFeeSource;
   const feeQuality = cycle.snapshotFeeQuality;
   const feeExchange = cycle.snapshotFeeExchange;
+  const closePath = cycle.closePath;
   const closePathLabel = cycle.closePathLabel ?? cycle.activeExitRouteLabel;
 
+  // V3.2: Clear status representation
   const stateLabel = (() => {
+    // If taker fallback was triggered, show that clearly
+    if (takerFallbackTriggeredAt != null && state === "CANCELLED") {
+      return "Maker cancelado → fallback taker";
+    }
     switch (state) {
       case "TRIGGERED": return "Disparado";
-      case "MAKER_PENDING": return "Maker pendiente";
+      case "MAKER_PENDING": return `Maker #${Math.min(actualAttempts + 1, maxAttempts)}/${maxAttempts}`;
       case "MAKER_FILLED": return "Maker lleno";
-      case "TAKER_PENDING": return "Taker fallback";
-      case "TAKER_FILLED": return "Cerrando";
+      case "TAKER_PENDING": return "Fallback taker pendiente";
+      case "TAKER_FILLED": return "Taker ejecutado";
       case "CANCELLED": return "Cancelado";
-      default: return state ?? "—";
+      default: return state ?? "No disparado";
     }
   })();
 
+  // V3.2: Route label based on closePath if available, else route
   const routeLabel = (() => {
-    switch (route) {
+    const effectiveRoute = closePath ?? route;
+    switch (effectiveRoute) {
       case "TRAILING_MAKER": return "Trailing maker";
       case "TRAILING_TAKER": return "Trailing taker";
       case "PROTECTIVE_MAKER": return "Stop-loss maker";
       case "PROTECTIVE_TAKER": return "Stop-loss taker";
-      default: return route ?? "—";
+      default: return effectiveRoute ?? "—";
     }
+  })();
+
+  const fallbackLabel = (() => {
+    if (fallbackReason === "max_attempts") return "Fallback por intentos";
+    if (fallbackReason === "max_wait") return "Fallback por tiempo";
+    if (fallbackReason != null) return fallbackReason;
+    if (takerFallbackTriggeredAt != null) return "Fallback taker";
+    return "No";
   })();
 
   return (
@@ -293,11 +327,11 @@ export function ProtectiveExecutionBlock({ cycle }: { cycle: any }) {
       <div className="grid grid-cols-2 gap-1 text-muted-foreground">
         <span>Trigger: <span className="font-mono text-foreground">{fmtDate(triggerAt)}</span></span>
         <span>Primer maker: <span className="font-mono text-foreground">{fmtDate(firstMakerAt)}</span></span>
-        <span>Intentos maker: <span className="font-mono text-foreground">{makerAttempts ?? "—"} / {maxAttempts}</span></span>
+        <span>Intentos maker: <span className="font-mono text-foreground">{actualAttempts} / {maxAttempts}</span></span>
         <span>Reprecios: <span className="font-mono text-foreground">{reprices}</span></span>
         <span>Espera: <span className="font-mono text-foreground">{waitSeconds != null ? `${waitSeconds} s / ${maxWait} s` : "—"}</span></span>
         <span>Último reprice: <span className="font-mono text-foreground">{fmtDate(lastRepriceAt)}</span></span>
-        <span>Fallback: <span className="text-foreground">{fallbackReason ?? "No"}</span></span>
+        <span>Fallback: <span className="text-foreground">{fallbackLabel}</span></span>
         <span>Ruta: <span className="text-foreground">{routeLabel}</span></span>
         {closePathLabel && <span>Vía cierre: <span className="text-foreground">{closePathLabel}</span></span>}
       </div>
@@ -693,8 +727,9 @@ export function CompletedPerformanceBlock({ cycle }: { cycle: any }) {
   const givebackUsd = cycle.givebackUsd;
   const givebackPct = cycle.givebackPct;
   const captureEff = cycle.finalCaptureEfficiencyPct;
-  const maeNet = cycle.maeNetUsd ?? cycle.maeGrossUsd;
-  const maxDrawdownFromPeak = cycle.troughNetPnlUsd;
+  const maeNet = cycle.maeNetUsd;
+  const maxDrawdownFromPeak = cycle.maxDrawdownFromPeakUsd;
+  const maxDrawdownFromPeakPct = cycle.maxDrawdownFromPeakPct;
   const targetBaseline = cycle.targetBaselineNetUsd;
   const deltaVsTarget = cycle.deltaVsTargetUsd;
   const liquidityRole = cycle.liquidityRole;
@@ -730,7 +765,7 @@ export function CompletedPerformanceBlock({ cycle }: { cycle: any }) {
           <span>Giveback %: <span className="font-mono text-foreground">{givebackPct != null ? `${givebackPct.toFixed(2)} %` : "—"}</span></span>
           <span>Eficiencia de captura: <span className="font-mono text-foreground">{captureEff != null ? `${captureEff.toFixed(2)} %` : "—"}</span></span>
           <span>MAE: <span className="font-mono text-red-400">{fmtUsd(maeNet)}</span></span>
-          <span>Max drawdown desde peak: <span className="font-mono text-red-400">{fmtUsd(maxDrawdownFromPeak)}</span></span>
+          <span>Máxima caída desde el pico: <span className="font-mono text-red-400">{fmtDrawdown(maxDrawdownFromPeak, maxDrawdownFromPeakPct)}</span></span>
           <span>Target V3 habría dado: <span className="font-mono text-foreground">{fmtUsd(targetBaseline)}</span></span>
           <span>Diferencia vs Target V3: <span className={deltaVsTarget != null && deltaVsTarget >= 0 ? "font-mono text-green-400" : "font-mono text-red-400"}>{fmtUsd(deltaVsTarget)}</span></span>
         </div>

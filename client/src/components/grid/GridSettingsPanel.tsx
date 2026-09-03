@@ -446,6 +446,32 @@ const FIELD_META: Record<string, FieldMeta> = {
   takerFallbackRequiresNetProfit: { label: "Taker fallback requiere beneficio", type: "boolean", hidden: true, help: "" },
   takerFallbackAuditRequired: { label: "Taker fallback requiere auditoría", type: "boolean", hidden: true, help: "" },
   executionPolicy: { label: "Política de ejecución", type: "text", hidden: true, help: "" },
+  // V3.2: Protective taker fallback controls (canonical UI)
+  protectiveTakerFallbackEnabled: {
+    label: "Salida taker de protección",
+    type: "boolean",
+    help: "Cuando trailing o stop-loss ya han ordenado salir, permite pasar de maker a taker después del límite de intentos o de tiempo. Solo se aplica a cierres protectores por trailing o stop-loss. El target V3 normal continúa maker-only.",
+    impact: "Reduce el beneficio devuelto al mercado durante una salida protectora.",
+  },
+  protectiveMakerMaxAttempts: {
+    label: "Intentos maker antes de taker",
+    type: "integer",
+    min: 1,
+    max: 20,
+    step: 1,
+    help: "Número máximo de órdenes maker antes de pasar a taker.",
+    recommended: "3",
+  },
+  protectiveMakerMaxWaitSeconds: {
+    label: "Espera máxima maker",
+    unit: "s",
+    type: "integer",
+    min: 1,
+    max: 300,
+    step: 1,
+    help: "Tiempo máximo de espera antes de pasar a taker.",
+    recommended: "30",
+  },
 };
 
 function getFieldMeta(key: string): FieldMeta | undefined {
@@ -644,9 +670,13 @@ export function ExpertMode({
                 const isAtrField = fieldKey === "trailingAtrMultiplier" || fieldKey === "trailingMinPct" || fieldKey === "trailingMaxPct" || fieldKey === "trailingAtrSmoothingAlpha";
                 // trailingStopPct remains editable in adaptive mode (used as manual fallback)
                 const isStopPctFallback = fieldKey === "trailingStopPct";
+                // V3.2: Disable protective maker fields when protective taker fallback is OFF
+                const isProtectiveDependent = fieldKey === "protectiveMakerMaxAttempts" || fieldKey === "protectiveMakerMaxWaitSeconds";
+                const protectiveDisabled = isProtectiveDependent && !draft.protectiveTakerFallbackEnabled;
                 const fieldDisabled =
                   (isAdaptive && isManualField && !isStopPctFallback) ? true :
                   (!isAdaptive && isAtrField) ? true :
+                  protectiveDisabled ? true :
                   false;
                 return (
                   <div key={fieldKey} className={cn("rounded-lg border border-border/30 p-3 bg-muted/10", isHighlighted(fieldKey) && "border-amber-500/40 bg-amber-500/10", fieldDisabled && "opacity-50")}>
@@ -762,6 +792,9 @@ export function GridSettingsPanel({ config, operational, onApply, applyPending, 
           <ExpertMode draft={draft} expertBlocks={expertBlocks} onChange={handleChange} highlightedSettings={highlightedSettings} />
         )}
 
+        {/* V3.2: Read-only effective taker fee from canonical resolver */}
+        <ProtectiveFeeReadonly config={config} />
+
         {/* Draft actions */}
         <div className="sticky bottom-0 z-10 rounded-lg border border-border/50 bg-card/95 p-3 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-2">
@@ -808,6 +841,41 @@ export function GridSettingsPanel({ config, operational, onApply, applyPending, 
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// V3.2: Read-only effective taker fee section (canonical fee model, not editable)
+export function ProtectiveFeeReadonly({ config }: { config: any }) {
+  const feePct = config?.effectiveTakerFeePct;
+  const exchange = config?.effectiveTakerFeeExchange;
+  const quality = config?.effectiveTakerFeeQuality;
+  const source = config?.effectiveTakerFeeSource;
+  if (feePct == null && !exchange && !quality && !source) return null;
+  return (
+    <div className="rounded-lg border border-border/50 bg-muted/10 p-3 space-y-1">
+      <p className="text-sm font-medium">Fee taker protectora</p>
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">Fee taker protectora</span>
+        <span className="font-mono text-sm text-foreground">
+          {feePct != null ? `${feePct.toFixed(3)} %` : "—"}
+        </span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">Exchange</span>
+        <span className="font-mono text-xs text-foreground">{exchange ?? "—"}</span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">Calidad</span>
+        <span className="font-mono text-xs text-foreground">{quality ?? "—"}</span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">Fuente</span>
+        <span className="font-mono text-xs text-foreground">{source ?? "—"}</span>
+      </div>
+      <p className="text-xs text-muted-foreground/70">
+        Resuelta desde el modelo canónico de fees del exchange. Solo lectura.
+      </p>
+    </div>
   );
 }
 

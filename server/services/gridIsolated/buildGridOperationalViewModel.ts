@@ -204,6 +204,7 @@ export interface OperationalOpenCycle {
   slippageVsFloorPct: number | null;
   slippageVsStopUsd: number | null;
   slippageVsStopPct: number | null;
+  protectiveElapsedMs: number | null;
   // V3.2: Policy snapshot (frozen at trigger time)
   snapshotProtectiveTakerFallbackEnabled: boolean | null;
   snapshotProtectiveMakerMaxAttempts: number | null;
@@ -732,6 +733,7 @@ function buildOpenCycle(
     slippageVsFloorPct: toNum(risk?.protectiveExit?.slippageVsFloorPct) ?? null,
     slippageVsStopUsd: toNum(risk?.protectiveExit?.slippageVsStopUsd) ?? null,
     slippageVsStopPct: toNum(risk?.protectiveExit?.slippageVsStopPct) ?? null,
+    protectiveElapsedMs: toNum(risk?.protectiveExit?.protectiveElapsedMs) ?? null,
     // V3.2: Policy snapshot
     snapshotProtectiveTakerFallbackEnabled: risk?.protectiveExit?.snapshotProtectiveTakerFallbackEnabled ?? null,
     snapshotProtectiveMakerMaxAttempts: risk?.protectiveExit?.snapshotProtectiveMakerMaxAttempts ?? null,
@@ -946,6 +948,7 @@ function buildClosedCycle(
     slippageVsFloorPct: toNum(risk?.protectiveExit?.slippageVsFloorPct) ?? null,
     slippageVsStopUsd: toNum(risk?.protectiveExit?.slippageVsStopUsd) ?? null,
     slippageVsStopPct: toNum(risk?.protectiveExit?.slippageVsStopPct) ?? null,
+    protectiveElapsedMs: toNum(risk?.protectiveExit?.protectiveElapsedMs) ?? null,
     // V3.2: Policy snapshot
     snapshotProtectiveTakerFallbackEnabled: risk?.protectiveExit?.snapshotProtectiveTakerFallbackEnabled ?? null,
     snapshotProtectiveMakerMaxAttempts: risk?.protectiveExit?.snapshotProtectiveMakerMaxAttempts ?? null,
@@ -1636,7 +1639,7 @@ export function buildGridOperationalViewModel(input: BuildGridOperationalViewMod
       { id: "range", title: "Rango y volatilidad", description: "Cálculo de banda, ATR, Bollinger y rango inteligente.", fields: ["gridRangeControlMode", "adaptiveRangeEnabled", "adaptiveRangeProfile", "adaptiveRangeMinPct", "adaptiveRangeMaxPct", "adaptiveRangeLowVolMaxPct", "adaptiveRangeNormalMaxPct", "adaptiveRangeHighVolMaxPct", "adaptiveRangeTargetFullLevels", "adaptiveRangeMinViableLevels", "bandPeriod", "bandStdDevMultiplier", "atrPeriod", "atrTimeframe"] },
       { id: "spacing", title: "Separación de niveles", description: "Distancia mínima/máxima entre niveles.", fields: ["gridStepMinPct", "gridStepMaxPct", "gridStepAtrMultiplier", "gridMaxLevelPct", "gridMinLevelUsd"] },
       { id: "protection", title: "Protección Pump/Dump", description: "Bloqueo de compras ante movimientos bruscos.", fields: ["pumpGuardDeviationPct", "pumpGuardVolumeSpikeRatio", "pumpGuardCooldownMinutes", "dumpGuardDeviationPct", "dumpGuardVolumeSpikeRatio", "dumpGuardCooldownMinutes"] },
-      { id: "exits", title: "Salidas y HODL", description: "Trailing, stop loss y recuperación de posiciones.", fields: ["trailingEnabled", "trailingMode", "trailingActivationPct", "trailingStopPct", "trailingAtrMultiplier", "trailingMinPct", "trailingMaxPct", "trailingAtrSmoothingAlpha", "stopLossEnabled", "stopLossSoftPct", "stopLossHardPct", "stopLossEmergencyPct", "hodlRecoveryEnabled"] },
+      { id: "exits", title: "Salidas y HODL", description: "Trailing, stop loss y recuperación de posiciones.", fields: ["trailingEnabled", "trailingMode", "trailingActivationPct", "trailingStopPct", "trailingAtrMultiplier", "trailingMinPct", "trailingMaxPct", "trailingAtrSmoothingAlpha", "stopLossEnabled", "stopLossSoftPct", "stopLossHardPct", "stopLossEmergencyPct", "hodlRecoveryEnabled", "protectiveTakerFallbackEnabled", "protectiveMakerMaxAttempts", "protectiveMakerMaxWaitSeconds"] },
       { id: "limits", title: "Límites operativos", description: "Máximos de ciclos y órdenes diarias.", fields: ["maxOpenCycles", "maxDailyOrders"] },
       { id: "simulation", title: "Simulación y diagnóstico", description: "Beneficio neto objetivo y parámetros de validación.", fields: ["netProfitTargetPct", "enforceCompactRange", "gridRangeMaxPct", "maxDistanceFromCenterPct", "maxSellDistanceFromNearestBuyPct"] },
     ],
