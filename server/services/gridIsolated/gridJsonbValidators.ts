@@ -221,6 +221,8 @@ function validatePendingMakerExit(raw: unknown): GridPendingMakerExit {
     liquidityRole,
     takerFillPrice: finiteNumber(obj.takerFillPrice),
     takerFeePct: finiteNumber(obj.takerFeePct),
+    takerFeeQuality: typeof obj.takerFeeQuality === "string" ? obj.takerFeeQuality : null,
+    takerFeeExchange: typeof obj.takerFeeExchange === "string" ? obj.takerFeeExchange : null,
     takerFeeUsd: finiteNumber(obj.takerFeeUsd),
     slippageVsFloorUsd: finiteNumber(obj.slippageVsFloorUsd),
     slippageVsFloorPct: finiteNumber(obj.slippageVsFloorPct),
@@ -234,6 +236,8 @@ function validatePendingMakerExit(raw: unknown): GridPendingMakerExit {
     snapshotProtectiveTakerMaxSlippagePct: typeof obj.snapshotProtectiveTakerMaxSlippagePct === "number" ? obj.snapshotProtectiveTakerMaxSlippagePct : null,
     snapshotResolvedTakerFeePct: typeof obj.snapshotResolvedTakerFeePct === "number" ? obj.snapshotResolvedTakerFeePct : null,
     snapshotFeeSource: typeof obj.snapshotFeeSource === "string" ? obj.snapshotFeeSource : null,
+    snapshotFeeQuality: typeof obj.snapshotFeeQuality === "string" ? obj.snapshotFeeQuality : null,
+    snapshotFeeExchange: typeof obj.snapshotFeeExchange === "string" ? obj.snapshotFeeExchange : null,
   };
 }
 
@@ -268,6 +272,9 @@ function validatePerformanceState(raw: unknown): GridPerformanceState | null {
     targetBaselineNetUsd: finiteNumber(raw.targetBaselineNetUsd),
     targetBaselineNetPct: finiteNumber(raw.targetBaselineNetPct),
     finalCaptureEfficiencyPct: finiteNumber(raw.finalCaptureEfficiencyPct),
+    finalNetPnlUsd: finiteNumber(raw.finalNetPnlUsd),
+    deltaVsTargetUsd: finiteNumber(raw.deltaVsTargetUsd),
+    deltaVsTargetPct: finiteNumber(raw.deltaVsTargetPct),
     givebackUsd: finiteNumber(raw.givebackUsd),
     givebackPct: finiteNumber(raw.givebackPct),
   };
@@ -568,6 +575,8 @@ export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null 
       liquidityRole: null,
       takerFillPrice: null,
       takerFeePct: null,
+      takerFeeQuality: null,
+      takerFeeExchange: null,
       takerFeeUsd: null,
       slippageVsFloorUsd: null,
       slippageVsFloorPct: null,
@@ -580,6 +589,8 @@ export function safeParseRiskStateJson(raw: unknown): GridCycleRiskState | null 
       snapshotProtectiveTakerMaxSlippagePct: null,
       snapshotResolvedTakerFeePct: null,
       snapshotFeeSource: null,
+      snapshotFeeQuality: null,
+      snapshotFeeExchange: null,
     },
     performanceState: null,
     stateVersion: 1,
@@ -632,6 +643,8 @@ function defaultReviewRequiredMakerExit(reason: string): GridPendingMakerExit {
     liquidityRole: null,
     takerFillPrice: null,
     takerFeePct: null,
+    takerFeeQuality: null,
+    takerFeeExchange: null,
     takerFeeUsd: null,
     slippageVsFloorUsd: null,
     slippageVsFloorPct: null,
@@ -644,6 +657,8 @@ function defaultReviewRequiredMakerExit(reason: string): GridPendingMakerExit {
     snapshotProtectiveTakerMaxSlippagePct: null,
     snapshotResolvedTakerFeePct: null,
     snapshotFeeSource: null,
+    snapshotFeeQuality: null,
+    snapshotFeeExchange: null,
   };
 }
 

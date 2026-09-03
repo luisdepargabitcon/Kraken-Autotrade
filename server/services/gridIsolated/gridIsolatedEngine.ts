@@ -91,6 +91,7 @@ import {
   computeBreakEvenSellPrice,
 } from "./gridNetCalculator";
 import { computeGridCycleEconomicPnl, computeGridCycleEconomicPnlWithLiquidityRoles } from "./gridCycleEconomicPnl";
+import { resolveGridExecutionFees } from "./gridExecutionFeeResolver";
 import {
   safeParseMakerExitStateJson,
   safeParseMakerExitStateJsonForensic,
@@ -564,8 +565,6 @@ export class GridIsolatedEngine {
           protectiveMakerMaxAttempts: (row as any).protectiveMakerMaxAttempts ?? DEFAULT_GRID_CONFIG.protectiveMakerMaxAttempts,
           protectiveMakerMaxWaitSeconds: (row as any).protectiveMakerMaxWaitSeconds ?? DEFAULT_GRID_CONFIG.protectiveMakerMaxWaitSeconds,
           protectiveTakerMaxSlippagePct: (row as any).protectiveTakerMaxSlippagePct ?? DEFAULT_GRID_CONFIG.protectiveTakerMaxSlippagePct,
-          protectiveTakerFeePct: (row as any).protectiveTakerFeePct ?? DEFAULT_GRID_CONFIG.protectiveTakerFeePct,
-          protectiveTakerFeeSource: (row as any).protectiveTakerFeeSource ?? DEFAULT_GRID_CONFIG.protectiveTakerFeeSource,
         };
         if (this.config.mode === "SHADOW" && isLegacyExecutionPolicy(originalExecutionPolicy)) {
           await botLogger.warn(
@@ -726,8 +725,6 @@ export class GridIsolatedEngine {
           protectiveMakerMaxAttempts: (row as any).protectiveMakerMaxAttempts ?? DEFAULT_GRID_CONFIG.protectiveMakerMaxAttempts,
           protectiveMakerMaxWaitSeconds: (row as any).protectiveMakerMaxWaitSeconds ?? DEFAULT_GRID_CONFIG.protectiveMakerMaxWaitSeconds,
           protectiveTakerMaxSlippagePct: (row as any).protectiveTakerMaxSlippagePct ?? DEFAULT_GRID_CONFIG.protectiveTakerMaxSlippagePct,
-          protectiveTakerFeePct: (row as any).protectiveTakerFeePct ?? DEFAULT_GRID_CONFIG.protectiveTakerFeePct,
-          protectiveTakerFeeSource: (row as any).protectiveTakerFeeSource ?? DEFAULT_GRID_CONFIG.protectiveTakerFeeSource,
         };
       }
     } catch (error) {
@@ -826,6 +823,8 @@ export class GridIsolatedEngine {
       liquidityRole: null,
       takerFillPrice: null,
       takerFeePct: null,
+      takerFeeQuality: null,
+      takerFeeExchange: null,
       takerFeeUsd: null,
       slippageVsFloorUsd: null,
       slippageVsFloorPct: null,
@@ -839,6 +838,8 @@ export class GridIsolatedEngine {
       snapshotProtectiveTakerMaxSlippagePct: null,
       snapshotResolvedTakerFeePct: null,
       snapshotFeeSource: null,
+      snapshotFeeQuality: null,
+      snapshotFeeExchange: null,
     };
   }
 
@@ -2698,11 +2699,23 @@ export class GridIsolatedEngine {
     // V3.2: Detect taker fill for correct fee/role accounting.
     const isTakerFill = closePath === "TRAILING_TAKER" || closePath === "PROTECTIVE_TAKER";
     const sellLiquidityRole: "maker" | "taker" = isTakerFill ? "taker" : "maker";
-    // V3.2 HARDENING: Taker fee uses the explicit protectiveTakerFeePct config field,
-    // NOT sellFeePct. sellFeePct is the maker fee for normal targets.
-    // The fee source is recorded for audit trail.
-    const takerFeePct = this.config.protectiveTakerFeePct;
-    const takerFeeSource = this.config.protectiveTakerFeeSource;
+    // V3.2 CANONICAL FEE: Parse risk state early to access the protective exit snapshot
+    // (which was resolved from getTradingFeeModel at trigger time).
+    // If no snapshot exists (legacy), resolve fresh from the canonical fee model.
+    const currentRisk = this.parseRiskState(cycle);
+    const protectiveExit = currentRisk.protectiveExit;
+    const takerFeePct = isTakerFill
+      ? (protectiveExit.snapshotResolvedTakerFeePct ?? resolveGridExecutionFees().takerFeePct)
+      : this.config.sellFeePct;
+    const takerFeeSource = isTakerFill
+      ? (protectiveExit.snapshotFeeSource ?? "EXECUTION_EXCHANGE_FEE_MODEL")
+      : null;
+    const takerFeeQuality = isTakerFill
+      ? (protectiveExit.snapshotFeeQuality ?? null)
+      : null;
+    const takerFeeExchange = isTakerFill
+      ? (protectiveExit.snapshotFeeExchange ?? null)
+      : null;
     const sellFeePctForFill = isTakerFill ? takerFeePct : this.config.sellFeePct;
 
     const isV3 = cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" || cycle.targetKind === "CYCLE_OWNED_SYNTHETIC" || cycle.targetCalculationJson?.stateVersion === 2;
@@ -2776,8 +2789,6 @@ export class GridIsolatedEngine {
         ? "stop_loss_hit"
         : "completed";
 
-    const currentRisk = this.parseRiskState(cycle);
-
     // V3.2: Compute slippage vs floor and stop for protective exits.
     const trailingStopPrice = currentRisk.trailing.currentStopPrice;
     const profitFloorPrice = cycle.buyPrice
@@ -2812,6 +2823,8 @@ export class GridIsolatedEngine {
       liquidityRole: sellLiquidityRole,
       takerFillPrice: isTakerFill ? sellPrice : null,
       takerFeePct: isTakerFill ? takerFeePct : null,
+      takerFeeQuality: isTakerFill ? takerFeeQuality : null,
+      takerFeeExchange: isTakerFill ? takerFeeExchange : null,
       takerFeeUsd: isTakerFill ? (pnl.sellFeeUsd ?? null) : null,
       slippageVsFloorUsd,
       slippageVsFloorPct,
@@ -2973,6 +2986,8 @@ export class GridIsolatedEngine {
         takerFillPrice: sellPrice,
         takerFeePct,
         takerFeeSource,
+        takerFeeQuality,
+        takerFeeExchange,
         takerFeeUsd: pnl.sellFeeUsd ?? null,
         slippageVsFloorUsd,
         slippageVsFloorPct,
@@ -3012,6 +3027,8 @@ export class GridIsolatedEngine {
       takerFillPrice: isTakerFill ? sellPrice : null,
       takerFeePct: isTakerFill ? takerFeePct : null,
       takerFeeSource: isTakerFill ? takerFeeSource : null,
+      takerFeeQuality: isTakerFill ? takerFeeQuality : null,
+      takerFeeExchange: isTakerFill ? takerFeeExchange : null,
       takerFeeUsd: isTakerFill ? (pnl.sellFeeUsd ?? null) : null,
       slippageVsFloorUsd,
       slippageVsFloorPct,
@@ -4374,11 +4391,14 @@ export class GridIsolatedEngine {
       // V3.2 HARDENING: Snapshot the protective execution policy at trigger time.
       // Once triggered, changing global config must NOT alter this exit in progress.
       // The snapshot is persisted and survives restart.
+      // V3.2 CANONICAL FEE: Taker fee is resolved from the canonical Spot fee model
+      // (getTradingFeeModel → ExchangeFactory → Revolut X), NOT from a Grid config field.
       const cfg = this.config;
       const fallbackEnabled = cfg ? getEffectiveProtectiveTakerFallbackEnabled({
         mode: cfg.mode,
         protectiveTakerFallbackEnabled: cfg.protectiveTakerFallbackEnabled ?? false,
       }) : false;
+      const feeSnapshot = resolveGridExecutionFees();
       return {
         ...this.defaultMakerExit(),
         state: "TRIGGERED",
@@ -4396,8 +4416,11 @@ export class GridIsolatedEngine {
         snapshotProtectiveMakerMaxAttempts: cfg?.protectiveMakerMaxAttempts ?? DEFAULT_PROTECTIVE_MAKER_MAX_ATTEMPTS,
         snapshotProtectiveMakerMaxWaitSeconds: cfg?.protectiveMakerMaxWaitSeconds ?? DEFAULT_PROTECTIVE_MAKER_MAX_WAIT_SECONDS,
         snapshotProtectiveTakerMaxSlippagePct: cfg?.protectiveTakerMaxSlippagePct ?? null,
-        snapshotResolvedTakerFeePct: cfg?.protectiveTakerFeePct ?? 0.09,
-        snapshotFeeSource: cfg?.protectiveTakerFeeSource ?? "REVOLUTX_TAKER_DEFAULT",
+        // V3.2 Canonical fee snapshot (resolved from getTradingFeeModel)
+        snapshotResolvedTakerFeePct: feeSnapshot.takerFeePct,
+        snapshotFeeSource: feeSnapshot.feeSource,
+        snapshotFeeQuality: feeSnapshot.feeQuality,
+        snapshotFeeExchange: feeSnapshot.feeExchange,
       };
     }
 
@@ -4589,10 +4612,10 @@ export class GridIsolatedEngine {
 
     // V3.2 HARDENING: MFE/MAE measures EXECUTABLE profit/loss — what could be
     // realized by immediate taker liquidation at canonical best bid.
-    // This uses taker fee (protectiveTakerFeePct), NOT maker fee.
+    // This uses taker fee resolved from the canonical fee model, NOT a config field.
     // For V3 cycles, the V3 economic model (spreadBuffer, safetyBuffer, taxReserve) is preserved.
     const isV3Cycle = cycle.exitPolicyVersion === "CYCLE_OWNED_NET_TARGET_V3" || cycle.targetKind === "CYCLE_OWNED_SYNTHETIC" || cycle.targetCalculationJson?.stateVersion === 2;
-    const takerFeePctForPerf = this.config.protectiveTakerFeePct;
+    const takerFeePctForPerf = resolveGridExecutionFees().takerFeePct;
 
     let hypNetUsd: number;
     let hypNetPct: number;
@@ -4667,6 +4690,9 @@ export class GridIsolatedEngine {
         targetBaselineNetUsd: prev.targetBaselineNetUsd,
         targetBaselineNetPct: prev.targetBaselineNetPct,
         finalCaptureEfficiencyPct: null,
+        finalNetPnlUsd: null,
+        deltaVsTargetUsd: null,
+        deltaVsTargetPct: null,
         givebackUsd: null,
         givebackPct: null,
       };
@@ -4753,6 +4779,9 @@ export class GridIsolatedEngine {
       targetBaselineNetUsd: prev.targetBaselineNetUsd,
       targetBaselineNetPct: prev.targetBaselineNetPct,
       finalCaptureEfficiencyPct: null,
+      finalNetPnlUsd: null,
+      deltaVsTargetUsd: null,
+      deltaVsTargetPct: null,
       givebackUsd: null,
       givebackPct: null,
     };
@@ -4790,6 +4819,9 @@ export class GridIsolatedEngine {
       targetBaselineNetUsd: null,
       targetBaselineNetPct: null,
       finalCaptureEfficiencyPct: null,
+      finalNetPnlUsd: null,
+      deltaVsTargetUsd: null,
+      deltaVsTargetPct: null,
       givebackUsd: null,
       givebackPct: null,
     };
@@ -4860,6 +4892,10 @@ export class GridIsolatedEngine {
       }
     }
 
+    // Delta vs target V3 baseline.
+    const deltaVsTargetUsd = targetBaselineNetUsd != null ? finalNetPnlUsd - targetBaselineNetUsd : null;
+    const deltaVsTargetPct = targetBaselineNetPct != null ? finalNetPnlPct - targetBaselineNetPct : null;
+
     return {
       ...currentPerf,
       peakNetPnlUsd,
@@ -4867,6 +4903,9 @@ export class GridIsolatedEngine {
       givebackUsd,
       givebackPct,
       finalCaptureEfficiencyPct,
+      finalNetPnlUsd,
+      deltaVsTargetUsd,
+      deltaVsTargetPct,
       targetBaselineNetUsd,
       targetBaselineNetPct,
     };

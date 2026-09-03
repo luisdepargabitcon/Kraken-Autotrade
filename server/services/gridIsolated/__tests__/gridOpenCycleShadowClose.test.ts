@@ -198,8 +198,6 @@ function makeConfig(overrides: Partial<GridIsolatedConfig> = {}): GridIsolatedCo
     protectiveMakerMaxAttempts: 3,
     protectiveMakerMaxWaitSeconds: 30,
     protectiveTakerMaxSlippagePct: null,
-    protectiveTakerFeePct: 0.09,
-    protectiveTakerFeeSource: "REVOLUTX_TAKER_DEFAULT",
     gridWalletMode: "automatic",
     gridWalletInitialUsd: 1000,
     gridWalletMaxUsd: 5000,

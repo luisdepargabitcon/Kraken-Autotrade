@@ -31,6 +31,7 @@ import { Express, Request, Response } from "express";
 import { gridIsolatedEngine } from "../services/gridIsolated/gridIsolatedEngine";
 import { gridModeLockService } from "../services/gridIsolated/gridModeLockService";
 import { gridReconciliationRunner } from "../services/gridIsolated/gridReconciliationRunner";
+import { resolveGridExecutionFees } from "../services/gridIsolated/gridExecutionFeeResolver";
 import { gridBacktestEngine } from "../services/gridIsolated/gridBacktest";
 import { MarketDataService } from "../services/MarketDataService";
 import { botLogger } from "../services/botLogger";
@@ -813,7 +814,15 @@ export function registerGridIsolatedRoutes(app: Express): void {
   app.get("/api/grid-isolated/config", async (_req: Request, res: Response) => {
     try {
       const config = await gridIsolatedEngine.loadConfig();
-      res.json(config);
+      // V3.2: Append canonical effective taker fee (read-only, resolved from fee model)
+      const feeSnapshot = resolveGridExecutionFees();
+      res.json({
+        ...config,
+        effectiveTakerFeePct: feeSnapshot.takerFeePct,
+        effectiveTakerFeeSource: feeSnapshot.feeSource,
+        effectiveTakerFeeQuality: feeSnapshot.feeQuality,
+        effectiveTakerFeeExchange: feeSnapshot.feeExchange,
+      });
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
