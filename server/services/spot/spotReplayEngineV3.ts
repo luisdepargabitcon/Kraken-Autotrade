@@ -40,6 +40,8 @@ import { ExecutionMode, Regime, RegimeDirection, MacroBias, VolatilityLevel, Set
   type SpotMarketContext, type SpotPosition, type SpotExitState, type SpotExitDecision,
   type SpotRegimeContext } from "./spotTypes";
 import { DataHealth } from "./candleTimestamp";
+import { buildClosedCandleContext } from "./closedCandleContract";
+import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── Snapshot Loader ─────────────────────────────────────────────────────────
 
@@ -438,6 +440,25 @@ function reconstructContext(snap: ForwardTwinSnapshot): SpotMarketContext | null
     candles15m: snap.candles?.candles15m?.candles ?? [],
     candles1h: snap.candles?.candles1h?.candles ?? [],
     candles4h: snap.candles?.candles4h?.candles ?? [],
+    formingCandle5m: null,
+    formingCandle15m: null,
+    formingCandle1h: null,
+    formingCandle4h: null,
+    closedCandleContext: buildClosedCandleContext(
+      snap.candles?.candles5m?.candles ?? [],
+      snap.candles?.candles15m?.candles ?? [],
+      snap.candles?.candles1h?.candles ?? [],
+      snap.candles?.candles4h?.candles ?? [],
+      snap.timestamp,
+    ),
+    adaptiveMarketState: buildAdaptiveMarketState({
+      candles1h: snap.candles?.candles1h?.candles ?? [],
+      candles15m: snap.candles?.candles15m?.candles ?? [],
+      candles4h: snap.candles?.candles4h?.candles ?? [],
+      regimeContext: regimeCtx,
+      spreadPct: snap.ticker.spreadPct,
+      dataHealth: snap.dataHealth ?? "GOOD",
+    }),
     ticker: {
       bid: snap.ticker.bid,
       ask: snap.ticker.ask,

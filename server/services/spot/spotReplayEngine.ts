@@ -34,6 +34,8 @@ import { DataHealth } from "./candleTimestamp";
 import { type SpotTicker, type SpotVolumeMetrics } from "./spotTypes";
 import { buildSpotRegimeContext } from "./spotRegimeEngine";
 import { calculateATR, type PriceData, type OHLCCandle } from "../indicators";
+import { buildClosedCandleContext } from "./closedCandleContract";
+import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -473,6 +475,19 @@ function buildReplayContext(
     candles15m: c15m.slice(-200),
     candles1h: c1h.slice(-200),
     candles4h: c4h.slice(-200),
+    formingCandle5m: null,
+    formingCandle15m: null,
+    formingCandle1h: null,
+    formingCandle4h: null,
+    closedCandleContext: buildClosedCandleContext(c5m.slice(-200), c15m.slice(-200), c1h.slice(-200), c4h.slice(-200), currentTime),
+    adaptiveMarketState: buildAdaptiveMarketState({
+      candles1h: c1h.slice(-200),
+      candles15m: c15m.slice(-200),
+      candles4h: c4h.slice(-200),
+      regimeContext,
+      spreadPct: 0,
+      dataHealth: String(DataHealth.GOOD),
+    }),
     ticker,
     spreadPct: 0,
     atr,

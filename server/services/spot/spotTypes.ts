@@ -14,6 +14,8 @@
 
 import type { DataHealth } from "./candleTimestamp";
 import type { FeeQuality } from "./feeModel";
+import type { ClosedCandleContext, ClosedCandleSet } from "./closedCandleContract";
+import type { AdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── ExecutionMode (single canonical enum) ──────────────────────────────────
 
@@ -117,10 +119,35 @@ export interface SpotMarketContext {
   dataHealth: DataHealth;
   macroBias: MacroBias;
   regimeContext: SpotRegimeContext;
+  /**
+   * CLOSED candles only (forming candle excluded).
+   * Signal logic (BUY, pullback, reclaim, breakout, regime, volume) MUST use these.
+   * These are derived from closedCandleContext.tfXm.closedCandles.
+   */
   candles5m: SpotCandle[];
   candles15m: SpotCandle[];
   candles1h: SpotCandle[];
   candles4h: SpotCandle[];
+  /**
+   * Forming (in-progress) candles per timeframe.
+   * MAY be used for: current price, MFE/MAE, emergency, trailing, spread, supervision.
+   * MUST NOT be used for: signal confirmation, pullback, reclaim, breakout, regime, volume.
+   */
+  formingCandle5m: SpotCandle | null;
+  formingCandle15m: SpotCandle | null;
+  formingCandle1h: SpotCandle | null;
+  formingCandle4h: SpotCandle | null;
+  /**
+   * Canonical closed-candle contract with explicit typed separation.
+   * This is the authoritative source — candles5m/15m/1h/4h are derived from it.
+   */
+  closedCandleContext: ClosedCandleContext;
+  /**
+   * Adaptive market state: trendQualityScore, volatilityState, volatilityPercentile,
+   * marketStressScore (READ-ONLY), setupQualityScore.
+   * Computed from closed candles only. Explainable and deterministic.
+   */
+  adaptiveMarketState: AdaptiveMarketState;
   ticker: SpotTicker;
   spreadPct: number;
   atr: number;

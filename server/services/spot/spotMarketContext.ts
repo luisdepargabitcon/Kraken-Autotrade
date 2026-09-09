@@ -22,6 +22,8 @@ import { normalizeCandles, evaluateDataHealth, DataHealth, getCandleCloseTimeMs,
 import { buildSpotRegimeContext } from "./spotRegimeEngine";
 import { calculateATR, type PriceData } from "../indicators";
 import type { SpotMarketContext, SpotCandle, SpotTicker, SpotVolumeMetrics, SpotRegimeContext } from "./spotTypes";
+import { buildClosedCandleContext, type ClosedCandleContext } from "./closedCandleContract";
+import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── Builder ────────────────────────────────────────────────────────────────
 
@@ -52,10 +54,25 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
   ]);
 
   // Normalize timestamps (sec → ms, drop invalid)
-  const candles5m = normalizeCandles(candles5mRaw);
-  const candles15m = normalizeCandles(candles15mRaw);
-  const candles1h = normalizeCandles(candles1hRaw);
-  const candles4h = normalizeCandles(candles4hRaw);
+  const candles5mNorm = normalizeCandles(candles5mRaw);
+  const candles15mNorm = normalizeCandles(candles15mRaw);
+  const candles1hNorm = normalizeCandles(candles1hRaw);
+  const candles4hNorm = normalizeCandles(candles4hRaw);
+
+  // Split into closed and forming candles using the canonical contract
+  const closedCandleContext = buildClosedCandleContext(
+    candles5mNorm,
+    candles15mNorm,
+    candles1hNorm,
+    candles4hNorm,
+    generatedAt,
+  );
+
+  // Use ONLY closed candles for all signal/regime/volume logic
+  const candles5m = closedCandleContext.tf5m.closedCandles as SpotCandle[];
+  const candles15m = closedCandleContext.tf15m.closedCandles as SpotCandle[];
+  const candles1h = closedCandleContext.tf1h.closedCandles as SpotCandle[];
+  const candles4h = closedCandleContext.tf4h.closedCandles as SpotCandle[];
 
   // Fetch ticker (bid/ask/last)
   const tickerRaw = await MarketDataService.getTicker(pair);
@@ -76,7 +93,7 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
     staleThresholdMs: staleThreshold,
   });
 
-  // Build regime context from 1h + 4h
+  // Build regime context from 1h + 4h (closed candles only)
   const regimeContext = buildSpotRegimeContext({
     pair,
     candles1h: toOHLCCandles(candles1h),
@@ -84,7 +101,7 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
     dataHealth,
   });
 
-  // Compute ATR from 1h candles
+  // Compute ATR from 1h candles (closed only)
   const priceData1h: PriceData[] = candles1h.map((c) => ({
     price: c.close,
     timestamp: c.time,
@@ -94,12 +111,22 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
   }));
   const atr = priceData1h.length >= 14 ? calculateATR(priceData1h, 14) : 0;
 
-  // Volume metrics from 5m (most granular)
+  // Volume metrics from 5m (closed only, most granular)
   const volumeMetrics = computeVolumeMetrics(candles5m);
 
   // Ticker with spread
   const spotTicker = toSpotTicker(tickerRaw, generatedAt);
   const spreadPct = computeSpreadPct(spotTicker);
+
+  // Build adaptive market state from closed candles
+  const adaptiveMarketState = buildAdaptiveMarketState({
+    candles1h,
+    candles15m,
+    candles4h,
+    regimeContext,
+    spreadPct,
+    dataHealth: String(dataHealth),
+  });
 
   const marketContextId = `mc-${pair}-${generatedAt.toString(36)}-${Math.abs(hash(pair + generatedAt)).toString(36)}`;
 
@@ -114,6 +141,12 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
     candles15m,
     candles1h,
     candles4h,
+    formingCandle5m: closedCandleContext.tf5m.formingCandle,
+    formingCandle15m: closedCandleContext.tf15m.formingCandle,
+    formingCandle1h: closedCandleContext.tf1h.formingCandle,
+    formingCandle4h: closedCandleContext.tf4h.formingCandle,
+    closedCandleContext,
+    adaptiveMarketState,
     ticker: spotTicker,
     spreadPct,
     atr,
