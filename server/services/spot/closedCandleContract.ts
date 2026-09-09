@@ -76,8 +76,54 @@ export interface ClosedCandleDiagnostics {
   formingCount: number;
   /** True if multiple forming candles were detected (data anomaly). */
   multipleFormingDetected: boolean;
-  /** Number of duplicate timestamps detected. */
+  /** Number of duplicate timestamps detected (total, including identical and conflicting). */
   duplicateTimestamps: number;
+  /** Number of duplicates with conflicting OHLCV data (data integrity anomaly). */
+  conflictingDuplicates: number;
+  /** Number of future candles (openTime > evaluatedAt). Not closed, not forming. */
+  futureCandleCount: number;
+  /** True if data is valid for new entry signals. False if anomalies detected. */
+  dataValid: boolean;
+}
+
+/** Reason code for blocking new entries due to candle data temporal anomaly. */
+export const CANDLE_DATA_TEMPORAL_ANOMALY = "CANDLE_DATA_TEMPORAL_ANOMALY";
+
+/**
+ * Check if candle data is valid for new entry signals.
+ * Returns false if multiple forming candles or conflicting duplicates detected.
+ * Emergency stops, MFE/MAE tracking, and position protection are NOT blocked.
+ */
+export function isCandleDataValidForEntry(set: ClosedCandleSet): boolean {
+  return set.diagnostics.dataValid;
+}
+
+/**
+ * Get the anomaly reason code if candle data is invalid for new entries.
+ * Returns null if data is valid.
+ */
+export function getCandleDataAnomalyReason(set: ClosedCandleSet): string | null {
+  if (!set.diagnostics.dataValid) {
+    return CANDLE_DATA_TEMPORAL_ANOMALY;
+  }
+  return null;
+}
+
+/**
+ * Get a human-readable explanation (Spanish) for a candle data anomaly.
+ */
+export function getCandleDataAnomalyExplanation(set: ClosedCandleSet): string | null {
+  if (!set.diagnostics.dataValid) {
+    const reasons: string[] = [];
+    if (set.diagnostics.multipleFormingDetected) {
+      reasons.push(`múltiples velas en formación (${set.diagnostics.formingCount})`);
+    }
+    if (set.diagnostics.conflictingDuplicates > 0) {
+      reasons.push(`duplicados conflictivos (${set.diagnostics.conflictingDuplicates})`);
+    }
+    return `Entrada bloqueada: incoherencia temporal en los datos de velas (${reasons.join(", ")}).`;
+  }
+  return null;
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -117,24 +163,32 @@ export interface ClosedCandleContext {
 // ─── Core split function ────────────────────────────────────────────────────
 
 /**
- * Split an array of candles into closed and forming based on `now`.
+ * Split an array of candles into CLOSED, FORMING, and FUTURE based on `now`.
  *
- * A candle is "closed" if its close time (open time + timeframe duration)
- * is <= now. Otherwise it is "forming".
+ * Definitions:
+ *   CLOSED:  closeTime <= now  (openTime + tfMs <= now)
+ *   FORMING: openTime <= now AND closeTime > now
+ *   FUTURE:  openTime > now
+ *
+ * FUTURE candles are NOT closed, NOT forming, and MUST NOT be exposed as
+ * formingCandle. They appear in diagnostics as futureCandleCount.
+ *
+ * DEDUPLICATION policy (deterministic):
+ *   One candle per (timeframe, openTime).
+ *   - Identical duplicates (same OHLCV) → collapse to one.
+ *   - Conflicting duplicates (different OHLCV) → flag as conflict, dataValid=false.
  *
  * FAIL-CLOSED semantics:
  *   - Unknown timeframe → THROWS UnknownTimeframeError (never all-closed).
- *   - Multiple forming candles → NONE are promoted to closed. All non-closed
- *     candles are excluded from closedCandles. The latest forming candle is
- *     kept as formingCandle; earlier ones are discarded.
+ *   - Multiple forming candles → NONE promoted to closed. dataValid=false.
+ *   - Conflicting duplicates → dataValid=false. New entries blocked.
  *   - Input array is NOT mutated.
- *   - closedCandles are sorted ascending by time.
- *   - Duplicate timestamps: last occurrence wins for forming detection.
+ *   - closedCandles are sorted ascending by time, deduplicated.
  *
  * @param candles - Raw candles (already timestamp-normalized to ms)
  * @param timeframe - MUST be one of "5m" | "15m" | "1h" | "4h"
  * @param now - Evaluation timestamp (epoch ms)
- * @returns ClosedCandleSet with separated closed/forming candles
+ * @returns ClosedCandleSet with separated closed/forming/future candles
  * @throws UnknownTimeframeError if timeframe is not recognized
  */
 export function splitCandlesByClose(
@@ -150,23 +204,51 @@ export function splitCandlesByClose(
   // Do NOT mutate the input array — work on a copy
   const sorted = [...candles].sort((a, b) => a.time - b.time);
 
-  const closed: SpotCandle[] = [];
-  const formingCandles: SpotCandle[] = [];
+  // ── Phase 1: Deduplication by (openTime) ──────────────────────────────
+  // One candle per openTime. Identical → collapse. Conflicting → flag.
+  const deduped: SpotCandle[] = [];
+  const seenByTime = new Map<number, SpotCandle>();
   let duplicateTimestamps = 0;
-  let lastSeenTime = -1;
+  let conflictingDuplicates = 0;
 
   for (const candle of sorted) {
-    // Detect duplicate timestamps
-    if (candle.time === lastSeenTime) {
+    const existing = seenByTime.get(candle.time);
+    if (existing !== undefined) {
       duplicateTimestamps++;
-    }
-    lastSeenTime = candle.time;
-
-    if (isCandleClosed(candle.time, timeframe, now)) {
-      closed.push(candle);
+      // Check if OHLCV is identical
+      const isIdentical =
+        existing.open === candle.open &&
+        existing.high === candle.high &&
+        existing.low === candle.low &&
+        existing.close === candle.close &&
+        existing.volume === candle.volume;
+      if (!isIdentical) {
+        conflictingDuplicates++;
+      }
+      // Keep the first occurrence for identical; for conflicting, keep first but flag
+      // (do NOT replace — deterministic: first wins, conflict flagged)
     } else {
-      // This candle is still forming — NEVER promote to closed
+      seenByTime.set(candle.time, candle);
+      deduped.push(candle);
+    }
+  }
+
+  // ── Phase 2: Classify deduped candles into CLOSED / FORMING / FUTURE ──
+  const closed: SpotCandle[] = [];
+  const formingCandles: SpotCandle[] = [];
+  let futureCandleCount = 0;
+
+  for (const candle of deduped) {
+    const closeTime = candle.time + tfMs;
+    if (closeTime <= now) {
+      // CLOSED
+      closed.push(candle);
+    } else if (candle.time <= now) {
+      // FORMING: openTime <= now AND closeTime > now
       formingCandles.push(candle);
+    } else {
+      // FUTURE: openTime > now
+      futureCandleCount++;
     }
   }
 
@@ -176,10 +258,18 @@ export function splitCandlesByClose(
     ? formingCandles[formingCandles.length - 1]
     : null;
 
+  const multipleFormingDetected = formingCandles.length > 1;
+
+  // dataValid: false if any anomaly detected that could compromise signal integrity
+  const dataValid = !multipleFormingDetected && conflictingDuplicates === 0;
+
   const diagnostics: ClosedCandleDiagnostics = {
     formingCount: formingCandles.length,
-    multipleFormingDetected: formingCandles.length > 1,
+    multipleFormingDetected,
     duplicateTimestamps,
+    conflictingDuplicates,
+    futureCandleCount,
+    dataValid,
   };
 
   return {
@@ -218,6 +308,59 @@ export function buildClosedCandleContext(
     tf4h: splitCandlesByClose(candles4h, "4h", now),
     evaluatedAt: now,
   };
+}
+
+/**
+ * Check if a ClosedCandleContext is valid for new entry signals across ALL timeframes.
+ * Returns false if any timeframe has temporal anomalies (multiple forming or conflicting duplicates).
+ * Emergency stops, MFE/MAE tracking, and position protection are NOT blocked.
+ */
+export function isContextValidForEntry(ctx: ClosedCandleContext): boolean {
+  return (
+    ctx.tf5m.diagnostics.dataValid &&
+    ctx.tf15m.diagnostics.dataValid &&
+    ctx.tf1h.diagnostics.dataValid &&
+    ctx.tf4h.diagnostics.dataValid
+  );
+}
+
+/**
+ * Get the anomaly reason code if any timeframe has temporal anomalies.
+ * Returns null if all timeframes are valid.
+ */
+export function getContextAnomalyReason(ctx: ClosedCandleContext): string | null {
+  if (!isContextValidForEntry(ctx)) {
+    return CANDLE_DATA_TEMPORAL_ANOMALY;
+  }
+  return null;
+}
+
+/**
+ * Get a human-readable explanation (Spanish) for context-level candle data anomalies.
+ */
+export function getContextAnomalyExplanation(ctx: ClosedCandleContext): string | null {
+  if (isContextValidForEntry(ctx)) return null;
+  const reasons: string[] = [];
+  for (const [label, set] of [
+    ["5m", ctx.tf5m],
+    ["15m", ctx.tf15m],
+    ["1h", ctx.tf1h],
+    ["4h", ctx.tf4h],
+  ] as [string, ClosedCandleSet][]) {
+    if (!set.diagnostics.dataValid) {
+      const subReasons: string[] = [];
+      if (set.diagnostics.multipleFormingDetected) {
+        subReasons.push(`múltiples forming (${set.diagnostics.formingCount})`);
+      }
+      if (set.diagnostics.conflictingDuplicates > 0) {
+        subReasons.push(`duplicados conflictivos (${set.diagnostics.conflictingDuplicates})`);
+      }
+      if (subReasons.length > 0) {
+        reasons.push(`${label}: ${subReasons.join(", ")}`);
+      }
+    }
+  }
+  return `Entrada bloqueada: incoherencia temporal en los datos de velas (${reasons.join("; ")}).`;
 }
 
 // ─── Accessor helpers ───────────────────────────────────────────────────────

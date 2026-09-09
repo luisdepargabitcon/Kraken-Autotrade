@@ -161,8 +161,10 @@ export function runReplay(
     const evaluationTime = getCandleCloseTimeMs(current5m.time, "5m");
     if (evaluationTime === null) continue;
     const nextCandle = sorted5m[i + 1];
+    // C1F2-10: No entry without next candle fill — last candle cannot open position
+    // If there is no next candle, we cannot fill at next open. No new entry.
     // Fill at NEXT candle OPEN (after signal confirmed at close). No lookahead.
-    const fillPrice = nextCandle ? nextCandle.open : current5m.close;
+    const fillPrice = nextCandle ? nextCandle.open : null;
 
     // Build market context from candles closed at evaluationTime
     const ctx = buildReplayContext(
@@ -188,7 +190,8 @@ export function runReplay(
 
       const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, evaluationTime);
       if (exitDecision.shouldExit) {
-        const exitFillPrice = fillPrice;
+        // C1F2-10: Exit requires a fill price. If no next candle, use current candle close as terminal exit.
+        const exitFillPrice = fillPrice ?? current5m.close;
         const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining);
         const pnl = computePnlBreakdown({
           entryPrice: pos.entryPrice,
@@ -237,6 +240,10 @@ export function runReplay(
     // ─── Entry evaluation (if slots available) ─────────────────────────────
     if (positions.length >= maxConcurrent) continue;
 
+    // C1F2-10: No entry without next candle fill — cannot open on last candle
+    if (fillPrice === null) continue;
+    const entryFillPrice = fillPrice;
+
     // Signal evaluation at candle CLOSE — no lookahead
 
     const signal = evaluateSpotCanonical(ctx, config.strategyConfig);
@@ -252,13 +259,13 @@ export function runReplay(
 
     // Sizing
     const stopDist = computeStopDistance(
-      fillPrice,
+      entryFillPrice,
       ctx.atr,
       ctx.regimeContext.regime,
       config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG,
     );
     const sizing = computePositionSize(
-      fillPrice,
+      entryFillPrice,
       stopDist.stopDistanceUsd,
       config.riskConfig?.riskPerTradeUsd ?? DEFAULT_SPOT_RISK_CONFIG.riskPerTradeUsd,
       config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG,
@@ -268,17 +275,17 @@ export function runReplay(
 
     lotCounter++;
     const lotId = `replay-${pair}-${lotCounter}`;
-    const entryFee = fillPrice * sizing.volume * (takerFeePct / 100);
+    const entryFee = entryFillPrice * sizing.volume * (takerFeePct / 100);
 
     const position: SpotPosition = {
       lotId,
       pair,
       amount: sizing.volume,
       qtyRemaining: sizing.volume,
-      entryPrice: fillPrice,
+      entryPrice: entryFillPrice,
       entryFee,
       entryFeeQuality: "ESTIMATED" as FeeQuality,
-      highestPrice: fillPrice,
+      highestPrice: entryFillPrice,
       openedAt: evaluationTime,
       entryStrategyId: "SPOT_CANONICAL",
       entrySignalTf: "15m",
@@ -315,6 +322,8 @@ export function runReplay(
 
   // Close any remaining positions at last available price
   const lastCandle = sorted5m[sorted5m.length - 1];
+  // C1F2-9: Terminal close timestamp must be candle CLOSE time, not OPEN time
+  const terminalExitTime = getCandleCloseTimeMs(lastCandle.time, "5m") ?? lastCandle.time;
   for (const pos of positions) {
     const exitPrice = lastCandle.close;
     const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.qtyRemaining);
@@ -324,7 +333,7 @@ export function runReplay(
       volume: pos.qtyRemaining,
       entryFeeUsd: pos.entryFee,
     });
-    const audit = auditTracker.finalizeExit(pos, exitPrice, "TIME_EFFICIENCY", lastCandle.time);
+    const audit = auditTracker.finalizeExit(pos, exitPrice, "TIME_EFFICIENCY", terminalExitTime);
     const posMetrics = auditTracker.getMetrics(pos.lotId);
     const rMultiple = pos.initialStopDistanceUsd > 0
       ? (exitPrice - pos.entryPrice) / pos.initialStopDistanceUsd
@@ -345,8 +354,8 @@ export function runReplay(
       rMultiple,
       exitReason: ExitReasonType.TIME_EFFICIENCY,
       openedAtMs: pos.openedAt,
-      closedAtMs: lastCandle.time,
-      holdTimeMinutes: Math.round((lastCandle.time - pos.openedAt) / 60000),
+      closedAtMs: terminalExitTime,
+      holdTimeMinutes: Math.round((terminalExitTime - pos.openedAt) / 60000),
       mfeUsd: posMetrics?.mfeUsd ?? 0,
       maeUsd: posMetrics?.maeUsd ?? 0,
       mfeR: posMetrics?.mfeR ?? 0,

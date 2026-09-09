@@ -42,6 +42,7 @@ import { ExecutionMode, Regime, RegimeDirection, MacroBias, VolatilityLevel, Set
 import { DataHealth } from "./candleTimestamp";
 import { buildClosedCandleContext } from "./closedCandleContract";
 import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
+import { computeFeeBreakdown, computePnlBreakdown } from "./feeModel";
 
 // ─── Snapshot Loader ─────────────────────────────────────────────────────────
 
@@ -329,9 +330,19 @@ function finalizeTrade(
   exitReasonType: string,
   exitTime: number,
 ): void {
-  const grossPnl = (exitPrice - pos.entryPrice) * pos.amount;
-  const exitFeeUsd = grossPnl * 0.0026; // estimated taker fee
-  const netPnl = grossPnl - pos.entryFeeUsd - exitFeeUsd;
+  // C1F2-11: Use canonical fee model — eliminate hardcoded 0.0026
+  // A fee must NEVER depend on the sign of PnL. Use computeFeeBreakdown + computePnlBreakdown.
+  const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.amount);
+  const pnl = computePnlBreakdown({
+    entryPrice: pos.entryPrice,
+    exitPrice,
+    volume: pos.amount,
+    entryFeeUsd: pos.entryFeeUsd,
+  });
+
+  const grossPnl = pnl.grossPnlUsd;
+  const exitFeeUsd = feeBreakdown.exitFeeUsd;
+  const netPnl = pnl.netPnlUsd;
 
   state.equity += netPnl;
   state.maxEquity = Math.max(state.maxEquity, state.equity);

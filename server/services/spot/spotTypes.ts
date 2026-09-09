@@ -61,6 +61,40 @@ export const REAL_ACTIVATION_ALLOWED = true;
  */
 export const SPOT_ADAPTIVE_V3_REAL_ALLOWED = false;
 
+/**
+ * V3 REAL execution gate — reusable function for blocking V3 adaptive decisions.
+ *
+ * When a V3 policy/decision is about to govern trading (entry, exit, sizing,
+ * risk) in REAL mode, this function MUST be called. If
+ * SPOT_ADAPTIVE_V3_REAL_ALLOWED is false, the decision is blocked.
+ *
+ * Observational computations (building AdaptiveMarketState, computing metrics,
+ * logging, telemetry) are NOT blocked — only decisions that would change
+ * trading behavior.
+ *
+ * @param mode - The execution mode of the calling context
+ * @returns true if V3 decisions are allowed in the given mode, false if blocked
+ */
+export function isAdaptiveV3DecisionAllowed(mode: ExecutionMode): boolean {
+  if (mode === ExecutionMode.REAL && !SPOT_ADAPTIVE_V3_REAL_ALLOWED) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Assert that V3 adaptive decisions are allowed in the given mode.
+ * Throws if a V3 decision is attempted in REAL mode while the gate is closed.
+ */
+export function assertAdaptiveV3ExecutionModeAllowed(mode: ExecutionMode): void {
+  if (!isAdaptiveV3DecisionAllowed(mode)) {
+    throw new Error(
+      `SPOT ADAPTIVE V3 decision blocked: SPOT_ADAPTIVE_V3_REAL_ALLOWED=false ` +
+      `and mode=REAL. V3 adaptive decisions are not allowed during development.`
+    );
+  }
+}
+
 // ─── Setup tags (15m) ───────────────────────────────────────────────────────
 
 export enum SetupTag {

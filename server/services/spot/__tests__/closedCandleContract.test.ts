@@ -23,6 +23,13 @@ import {
   verifyNoFormingInClosed,
   verifyFormingNotInClosed,
   UnknownTimeframeError,
+  isContextValidForEntry,
+  getContextAnomalyReason,
+  getContextAnomalyExplanation,
+  CANDLE_DATA_TEMPORAL_ANOMALY,
+  isCandleDataValidForEntry,
+  getCandleDataAnomalyReason,
+  getCandleDataAnomalyExplanation,
   type ClosedCandleSet,
 } from "../closedCandleContract";
 import type { SpotCandle } from "../spotTypes";
@@ -476,8 +483,10 @@ describe("ClosedCandleContract — C1F: Multiple forming candles fail-closed", (
   it("NO promueve forming candles a closed cuando hay múltiples", () => {
     const now = BASE_NOW;
     const closed = makeCandleSeries(TF_15M, 5, now - 5 * TF_15M);
-    const forming1 = makeCandle(now, 105);
-    const forming2 = makeCandle(now + TF_15M, 106);
+    // Two forming candles: one aligned at `now`, one misaligned at `now - 7m`
+    // Both have closeTime > now → both are FORMING (anomaly)
+    const forming1 = makeCandle(now - 7 * 60 * 1000, 105); // closeTime = now - 7m + 15m = now + 8m > now
+    const forming2 = makeCandle(now, 106); // closeTime = now + 15m > now
     const all = [...closed, forming1, forming2];
 
     const set = splitCandlesByClose(all, "15m", now);
@@ -490,8 +499,8 @@ describe("ClosedCandleContract — C1F: Multiple forming candles fail-closed", (
   it("mantiene la última forming como formingCandle", () => {
     const now = BASE_NOW;
     const closed = makeCandleSeries(TF_15M, 3, now - 3 * TF_15M);
-    const forming1 = makeCandle(now, 105);
-    const forming2 = makeCandle(now + TF_15M, 106);
+    const forming1 = makeCandle(now - 7 * 60 * 1000, 105); // misaligned forming
+    const forming2 = makeCandle(now, 106); // aligned forming
     const all = [...closed, forming1, forming2];
 
     const set = splitCandlesByClose(all, "15m", now);
@@ -566,5 +575,203 @@ describe("ClosedCandleContract — C1F: Readonly enforcement", () => {
     const set = splitCandlesByClose(candles, "15m", now);
     const last5 = lastNClosedCandles(set, 5);
     expect(last5.length).toBe(5);
+  });
+});
+
+// ─── C1F2 Corrections: Dedup, FUTURE distinction, anomaly blocking ─────────
+
+describe("ClosedCandleContract — C1F2-1: Canonical dedup (timeframe, openTime)", () => {
+  it("collapses identical duplicates to a single candle", () => {
+    const now = BASE_NOW;
+    const c1 = makeCandle(now - 3 * TF_5M, 100);
+    const c2 = makeCandle(now - 2 * TF_5M, 101);
+    const c2dup = makeCandle(now - 2 * TF_5M, 101); // identical duplicate
+    const c3 = makeCandle(now - TF_5M, 102);
+
+    const set = splitCandlesByClose([c1, c2, c2dup, c3], "5m", now);
+
+    expect(set.closedCount).toBe(3);
+    expect(set.diagnostics.duplicateTimestamps).toBe(1);
+    expect(set.diagnostics.conflictingDuplicates).toBe(0);
+    expect(set.diagnostics.dataValid).toBe(true);
+  });
+
+  it("flags conflicting duplicates (same openTime, different OHLCV)", () => {
+    const now = BASE_NOW;
+    const c1 = makeCandle(now - 3 * TF_5M, 100);
+    const c2 = makeCandle(now - 2 * TF_5M, 101);
+    const c2conflict = makeCandle(now - 2 * TF_5M, 999); // conflicting OHLCV
+    const c3 = makeCandle(now - TF_5M, 102);
+
+    const set = splitCandlesByClose([c1, c2, c2conflict, c3], "5m", now);
+
+    expect(set.diagnostics.duplicateTimestamps).toBe(1);
+    expect(set.diagnostics.conflictingDuplicates).toBe(1);
+    expect(set.diagnostics.dataValid).toBe(false);
+  });
+
+  it("does not double-count collapsed duplicates in closedCandles", () => {
+    const now = BASE_NOW;
+    const candles = makeCandleSeries(TF_5M, 10, now - 10 * TF_5M);
+    const withDup = [...candles, candles[5], candles[7]]; // 2 identical dups
+
+    const set = splitCandlesByClose(withDup, "5m", now);
+
+    expect(set.closedCount).toBe(10);
+    expect(set.diagnostics.duplicateTimestamps).toBe(2);
+    expect(set.diagnostics.conflictingDuplicates).toBe(0);
+  });
+});
+
+describe("ClosedCandleContract — C1F2-2: Distinguish CLOSED / FORMING / FUTURE", () => {
+  it("classifies future candles (openTime > now) as FUTURE, not FORMING", () => {
+    const now = BASE_NOW;
+    const closed = makeCandleSeries(TF_5M, 5, now - 5 * TF_5M);
+    const forming = makeCandle(now, 105); // openTime = now, closeTime > now → FORMING
+    const future = makeCandle(now + TF_5M, 106); // openTime > now → FUTURE
+    const all = [...closed, forming, future];
+
+    const set = splitCandlesByClose(all, "5m", now);
+
+    expect(set.closedCount).toBe(5);
+    expect(set.formingCandle).not.toBeNull();
+    expect(set.formingCandle!.time).toBe(now);
+    expect(set.diagnostics.futureCandleCount).toBe(1);
+  });
+
+  it("future candles are NOT in closedCandles and NOT formingCandle", () => {
+    const now = BASE_NOW;
+    const closed = makeCandleSeries(TF_15M, 3, now - 3 * TF_15M);
+    const future1 = makeCandle(now + TF_15M, 110);
+    const future2 = makeCandle(now + 2 * TF_15M, 111);
+    const all = [...closed, future1, future2];
+
+    const set = splitCandlesByClose(all, "15m", now);
+
+    expect(set.closedCount).toBe(3);
+    expect(set.formingCandle).toBeNull();
+    expect(set.diagnostics.futureCandleCount).toBe(2);
+    expect(set.diagnostics.formingCount).toBe(0);
+  });
+
+  it("buildClosedCandleContext reports futureCandleCount in diagnostics", () => {
+    const now = BASE_NOW;
+    const ctx = buildClosedCandleContext(
+      [...makeCandleSeries(TF_5M, 10, now - 10 * TF_5M), makeCandle(now + TF_5M, 999)],
+      makeCandleSeries(TF_15M, 10, now - 10 * TF_15M),
+      makeCandleSeries(TF_1H, 10, now - 10 * TF_1H),
+      makeCandleSeries(TF_4H, 10, now - 10 * TF_4H),
+      now,
+    );
+
+    expect(ctx.tf5m.diagnostics.futureCandleCount).toBe(1);
+    expect(ctx.tf15m.diagnostics.futureCandleCount).toBe(0);
+  });
+});
+
+describe("ClosedCandleContract — C1F2-3: Multiple forming blocks new entries", () => {
+  it("multiple forming candles set dataValid=false", () => {
+    const now = BASE_NOW;
+    const closed = makeCandleSeries(TF_15M, 5, now - 5 * TF_15M);
+    // Two genuinely forming candles (misaligned timestamps within forming window)
+    const forming1 = makeCandle(now - 7 * 60 * 1000, 105); // closeTime = now + 8m > now
+    const forming2 = makeCandle(now, 106); // closeTime = now + 15m > now
+    const all = [...closed, forming1, forming2];
+
+    const set = splitCandlesByClose(all, "15m", now);
+
+    expect(set.diagnostics.multipleFormingDetected).toBe(true);
+    expect(set.diagnostics.dataValid).toBe(false);
+  });
+
+  it("isCandleDataValidForEntry returns false for multiple forming", () => {
+    const now = BASE_NOW;
+    const closed = makeCandleSeries(TF_5M, 5, now - 5 * TF_5M);
+    // Two forming candles: misaligned + aligned
+    const f1 = makeCandle(now - 3 * 60 * 1000, 100); // closeTime = now - 3m + 5m = now + 2m > now
+    const f2 = makeCandle(now, 101); // closeTime = now + 5m > now
+    const set = splitCandlesByClose([...closed, f1, f2], "5m", now);
+
+    expect(isCandleDataValidForEntry(set)).toBe(false);
+  });
+
+  it("getCandleDataAnomalyReason returns CANDLE_DATA_TEMPORAL_ANOMALY", () => {
+    const now = BASE_NOW;
+    const closed = makeCandleSeries(TF_5M, 5, now - 5 * TF_5M);
+    const f1 = makeCandle(now - 3 * 60 * 1000, 100); // misaligned forming
+    const f2 = makeCandle(now, 101); // aligned forming
+    const set = splitCandlesByClose([...closed, f1, f2], "5m", now);
+
+    expect(getCandleDataAnomalyReason(set)).toBe(CANDLE_DATA_TEMPORAL_ANOMALY);
+  });
+
+  it("getCandleDataAnomalyExplanation provides human-readable Spanish message", () => {
+    const now = BASE_NOW;
+    const closed = makeCandleSeries(TF_5M, 5, now - 5 * TF_5M);
+    const f1 = makeCandle(now - 3 * 60 * 1000, 100); // misaligned forming
+    const f2 = makeCandle(now, 101); // aligned forming
+    const set = splitCandlesByClose([...closed, f1, f2], "5m", now);
+
+    const explanation = getCandleDataAnomalyExplanation(set);
+    expect(explanation).not.toBeNull();
+    expect(explanation).toContain("múltiples velas en formación");
+  });
+
+  it("conflicting duplicates also block new entries via dataValid=false", () => {
+    const now = BASE_NOW;
+    const c1 = makeCandle(now - 3 * TF_5M, 100);
+    const c2 = makeCandle(now - 2 * TF_5M, 101);
+    const c2conflict = makeCandle(now - 2 * TF_5M, 999);
+    const set = splitCandlesByClose([c1, c2, c2conflict], "5m", now);
+
+    expect(set.diagnostics.dataValid).toBe(false);
+    expect(getCandleDataAnomalyReason(set)).toBe(CANDLE_DATA_TEMPORAL_ANOMALY);
+  });
+
+  it("isContextValidForEntry returns false if any timeframe has anomaly", () => {
+    const now = BASE_NOW;
+    const ctx = buildClosedCandleContext(
+      makeCandleSeries(TF_5M, 10, now - 10 * TF_5M),
+      // Two genuinely forming 15m candles (misaligned + aligned)
+      [...makeCandleSeries(TF_15M, 5, now - 5 * TF_15M), makeCandle(now - 7 * 60 * 1000, 100), makeCandle(now, 101)],
+      makeCandleSeries(TF_1H, 10, now - 10 * TF_1H),
+      makeCandleSeries(TF_4H, 10, now - 10 * TF_4H),
+      now,
+    );
+
+    expect(isContextValidForEntry(ctx)).toBe(false);
+    expect(getContextAnomalyReason(ctx)).toBe(CANDLE_DATA_TEMPORAL_ANOMALY);
+  });
+
+  it("isContextValidForEntry returns true when all timeframes are clean", () => {
+    const now = BASE_NOW;
+    const ctx = buildClosedCandleContext(
+      makeCandleSeries(TF_5M, 50, now - 50 * TF_5M),
+      makeCandleSeries(TF_15M, 50, now - 50 * TF_15M),
+      makeCandleSeries(TF_1H, 50, now - 50 * TF_1H),
+      makeCandleSeries(TF_4H, 50, now - 50 * TF_4H),
+      now,
+    );
+
+    expect(isContextValidForEntry(ctx)).toBe(true);
+    expect(getContextAnomalyReason(ctx)).toBeNull();
+    expect(getContextAnomalyExplanation(ctx)).toBeNull();
+  });
+
+  it("getContextAnomalyExplanation includes per-timeframe details", () => {
+    const now = BASE_NOW;
+    const ctx = buildClosedCandleContext(
+      makeCandleSeries(TF_5M, 10, now - 10 * TF_5M),
+      // Two genuinely forming 15m candles (misaligned + aligned)
+      [...makeCandleSeries(TF_15M, 5, now - 5 * TF_15M), makeCandle(now - 7 * 60 * 1000, 100), makeCandle(now, 101)],
+      makeCandleSeries(TF_1H, 10, now - 10 * TF_1H),
+      makeCandleSeries(TF_4H, 10, now - 10 * TF_4H),
+      now,
+    );
+
+    const explanation = getContextAnomalyExplanation(ctx);
+    expect(explanation).not.toBeNull();
+    expect(explanation).toContain("15m");
+    expect(explanation).toContain("múltiples forming");
   });
 });

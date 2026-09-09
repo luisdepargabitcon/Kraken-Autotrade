@@ -39,6 +39,7 @@ import {
 } from "./spotTypes";
 import { isEntryAllowedByRegime } from "./spotRegimeEngine";
 import { DataHealth } from "./candleTimestamp";
+import { isContextValidForEntry, getContextAnomalyExplanation, CANDLE_DATA_TEMPORAL_ANOMALY } from "./closedCandleContract";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -399,6 +400,24 @@ export function evaluateSpotCanonical(
       originVolume: 0,
       contextId: ctx.marketContextId,
       blockReason: `DATA_${ctx.dataHealth}`,
+    };
+  }
+
+  // Candle data temporal anomaly gate — blocks new entries only
+  // Emergency stops, MFE/MAE, and position protection are NOT affected
+  if (!isContextValidForEntry(ctx.closedCandleContext)) {
+    const explanation = getContextAnomalyExplanation(ctx.closedCandleContext);
+    return {
+      signal: "NONE",
+      setupTag: null,
+      reason: explanation ?? "Entrada bloqueada: incoherencia temporal en los datos de velas.",
+      confidence: 0,
+      originPrice: 0,
+      origin15mCloseAt: 0,
+      originAtrPct: 0,
+      originVolume: 0,
+      contextId: ctx.marketContextId,
+      blockReason: CANDLE_DATA_TEMPORAL_ANOMALY,
     };
   }
 

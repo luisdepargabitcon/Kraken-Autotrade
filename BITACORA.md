@@ -5,6 +5,100 @@
 
 ---
 
+## 2026-09-09 — SPOT ADAPTIVE V3 — C1F2: REFACTOR SPOT CANDLE PROCESSING
+
+### Objetivo
+
+Refactor del procesamiento de velas spot: deduplicación canónica, distinción CLOSED/FORMING/FUTURE, bloqueo de entradas por anomalías temporales, V3 REAL gate, fixes de replay engine y modelo de fees canónico.
+
+### Cambios (C1F2-1 a C1F2-12)
+
+**C1F2-1: Deduplicación canónica (timeframe, openTime)**
+- `splitCandlesByClose` ahora colapsa duplicados idénticos (mismo OHLCV) a una sola vela
+- Duplicados conflictivos (mismo openTime, diferente OHLCV) se marcan en `conflictingDuplicates`
+- `dataValid = false` cuando hay conflictos → bloquea entradas
+
+**C1F2-2: Distinguir CLOSED / FORMING / FUTURE**
+- Las velas con `openTime > now` se clasifican como FUTURE (no FORMING)
+- `futureCandleCount` añadido a `ClosedCandleDiagnostics`
+- Las velas FUTURE no aparecen en `closedCandles` ni como `formingCandle`
+
+**C1F2-3: Múltiples forming bloquean nuevas entradas**
+- `CANDLE_DATA_TEMPORAL_ANOMALY` como reason code
+- Helpers: `isCandleDataValidForEntry`, `getCandleDataAnomalyReason`, `getCandleDataAnomalyExplanation`
+- Helpers de contexto: `isContextValidForEntry`, `getContextAnomalyReason`, `getContextAnomalyExplanation`
+- Emergency stops y MFE/MAE NO bloqueados por el gate de anomalía
+
+**C1F2-4: Replay no pasa future como forming**
+- Ambos replay engines (`spotReplayEngine.ts`, `spotReplayEngineV3.ts`) usan `buildClosedCandleContext`
+- El contrato distingue FUTURE de FORMING → no hay paso indebido
+
+**C1F2-5: Integration test producción real**
+- `spotC1F2ProductionIntegration.test.ts`: buildSpotMarketContext → evaluateSpotCanonical
+- Verifica forming excluido de señales, contrato como fuente única, anomalía bloquea entrada
+
+**C1F2-6: Forward Twin parity real**
+- `spotC1F2ForwardTwinParity.test.ts`: ForwardTwinSnapshot → reconstructContext → evaluateSpotCanonical
+- Verifica forming excluido, future no pasado como forming, anomalía bloquea entrada
+
+**C1F2-7: Structure invalidation integration test**
+- `spotC1F2StructureInvalidation.test.ts`: forming excluido de structure lookback
+- Pre-entry closed candle correctamente identificado
+
+**C1F2-8: V3 REAL gate executable function**
+- `SPOT_ADAPTIVE_V3_REAL_ALLOWED = false` (gate cerrado en desarrollo)
+- `isAdaptiveV3DecisionAllowed(mode)`: false para REAL, true para SHADOW/OFF
+- `assertAdaptiveV3ExecutionModeAllowed(mode)`: throws para REAL, no-op para SHADOW/OFF
+- Legacy behavior unchanged — SHADOW decisions proceed normally
+
+**C1F2-9: Replay terminal close timestamp = candle close time**
+- `spotReplayEngine.ts`: exit timestamp usa `getCandleCloseTimeMs` en vez de `openTime`
+- Elimina lookahead bias en el timestamp de salida
+
+**C1F2-10: No entry without next candle fill**
+- `spotReplayEngine.ts`: guard que bloquea nueva entrada si no hay next candle fill
+- La última vela no puede abrir posición si no hay fill posterior
+
+**C1F2-11: Replay V3 fee model — eliminar hardcoded 0.0026**
+- `spotReplayEngineV3.ts`: `finalizeTrade` usa `computeFeeBreakdown` + `computePnlBreakdown`
+- Fees proporcionales al notional, no al PnL
+- No produce fees negativos en trades perdedores
+
+**C1F2-12: Economic parity test**
+- `spotC1F2EconomicParity.test.ts`: compara modelo antiguo (0.0026 * PnL) vs canónico
+- Verifica: fees siempre positivos, proporcionales a notional, net PnL correcto
+
+### Archivos modificados
+
+- `server/services/spot/closedCandleContract.ts` — dedup, FUTURE, helpers
+- `server/services/spot/spotCanonicalStrategy.ts` — anomaly gate en evaluateSpotCanonical
+- `server/services/spot/spotTypes.ts` — V3 REAL gate functions
+- `server/services/spot/spotReplayEngine.ts` — terminal close timestamp, no-entry guard
+- `server/services/spot/spotReplayEngineV3.ts` — canonical fee model en finalizeTrade
+- `server/services/spot/__tests__/closedCandleContract.test.ts` — C1F2 tests added
+
+### Archivos nuevos
+
+- `server/services/spot/__tests__/spotC1F2ProductionIntegration.test.ts`
+- `server/services/spot/__tests__/spotC1F2ForwardTwinParity.test.ts`
+- `server/services/spot/__tests__/spotC1F2StructureInvalidation.test.ts`
+- `server/services/spot/__tests__/spotC1F2V3RealGate.test.ts`
+- `server/services/spot/__tests__/spotC1F2EconomicParity.test.ts`
+
+### Validaciones
+
+- TypeScript: `tsc --noEmit` — sin errores
+- Tests: 323 passed (21 files) — suite SPOT completa
+- `git diff --check` — sin whitespace issues
+
+### Estado
+
+- Implementado, validado, pendiente de commit + push
+- No se tocaron: IDCA, FISCO, REAL mode, órdenes reales
+- No cambios destructivos
+
+---
+
 ## 2026-09-09 — SPOT ADAPTIVE V3 — C1F: CORRECCIONES CLOSED-CANDLE CONTRACT + REPLAY FIDELITY
 
 ### Objetivo
