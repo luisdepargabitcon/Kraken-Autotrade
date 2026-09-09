@@ -53,6 +53,14 @@ export function resolveExecutionMode(raw: unknown): ExecutionMode {
  */
 export const REAL_ACTIVATION_ALLOWED = true;
 
+/**
+ * SPOT ADAPTIVE V3 REAL trading gate.
+ * MUST remain false during V3 development (closed-candle contract, replay
+ * fidelity, adaptive market state, and Forward Twin parity validation).
+ * Only flip to true after full validation and explicit user authorization.
+ */
+export const SPOT_ADAPTIVE_V3_REAL_ALLOWED = false;
+
 // ─── Setup tags (15m) ───────────────────────────────────────────────────────
 
 export enum SetupTag {
@@ -123,11 +131,12 @@ export interface SpotMarketContext {
    * CLOSED candles only (forming candle excluded).
    * Signal logic (BUY, pullback, reclaim, breakout, regime, volume) MUST use these.
    * These are derived from closedCandleContext.tfXm.closedCandles.
+   * readonly: consumers must not mutate the contract's arrays.
    */
-  candles5m: SpotCandle[];
-  candles15m: SpotCandle[];
-  candles1h: SpotCandle[];
-  candles4h: SpotCandle[];
+  readonly candles5m: readonly SpotCandle[];
+  readonly candles15m: readonly SpotCandle[];
+  readonly candles1h: readonly SpotCandle[];
+  readonly candles4h: readonly SpotCandle[];
   /**
    * Forming (in-progress) candles per timeframe.
    * MAY be used for: current price, MFE/MAE, emergency, trailing, spread, supervision.

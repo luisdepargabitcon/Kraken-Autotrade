@@ -429,6 +429,27 @@ function reconstructContext(snap: ForwardTwinSnapshot): SpotMarketContext | null
     generatedAt: snap.timestamp,
   };
 
+  // Use the canonical contract as the single source of truth for candle arrays.
+  // Snapshot candles are all historical (closed) in replay — no forming candles.
+  const snapCandles5m = snap.candles?.candles5m?.candles ?? [];
+  const snapCandles15m = snap.candles?.candles15m?.candles ?? [];
+  const snapCandles1h = snap.candles?.candles1h?.candles ?? [];
+  const snapCandles4h = snap.candles?.candles4h?.candles ?? [];
+
+  const closedCandleContext = buildClosedCandleContext(
+    snapCandles5m,
+    snapCandles15m,
+    snapCandles1h,
+    snapCandles4h,
+    snap.timestamp,
+  );
+
+  // Derive all candle arrays from the contract — no direct snapshot assignment
+  const candles5m = closedCandleContext.tf5m.closedCandles;
+  const candles15m = closedCandleContext.tf15m.closedCandles;
+  const candles1h = closedCandleContext.tf1h.closedCandles;
+  const candles4h = closedCandleContext.tf4h.closedCandles;
+
   return {
     marketContextId: snap.marketContextId ?? snap.scanId,
     generatedAt: snap.timestamp,
@@ -436,25 +457,19 @@ function reconstructContext(snap: ForwardTwinSnapshot): SpotMarketContext | null
     dataHealth: (snap.dataHealth ?? "GOOD") as DataHealth,
     macroBias: regimeCtx.macroBias,
     regimeContext: regimeCtx,
-    candles5m: snap.candles?.candles5m?.candles ?? [],
-    candles15m: snap.candles?.candles15m?.candles ?? [],
-    candles1h: snap.candles?.candles1h?.candles ?? [],
-    candles4h: snap.candles?.candles4h?.candles ?? [],
-    formingCandle5m: null,
-    formingCandle15m: null,
-    formingCandle1h: null,
-    formingCandle4h: null,
-    closedCandleContext: buildClosedCandleContext(
-      snap.candles?.candles5m?.candles ?? [],
-      snap.candles?.candles15m?.candles ?? [],
-      snap.candles?.candles1h?.candles ?? [],
-      snap.candles?.candles4h?.candles ?? [],
-      snap.timestamp,
-    ),
+    candles5m,
+    candles15m,
+    candles1h,
+    candles4h,
+    formingCandle5m: closedCandleContext.tf5m.formingCandle,
+    formingCandle15m: closedCandleContext.tf15m.formingCandle,
+    formingCandle1h: closedCandleContext.tf1h.formingCandle,
+    formingCandle4h: closedCandleContext.tf4h.formingCandle,
+    closedCandleContext,
     adaptiveMarketState: buildAdaptiveMarketState({
-      candles1h: snap.candles?.candles1h?.candles ?? [],
-      candles15m: snap.candles?.candles15m?.candles ?? [],
-      candles4h: snap.candles?.candles4h?.candles ?? [],
+      candles1h,
+      candles15m,
+      candles4h,
       regimeContext: regimeCtx,
       spreadPct: snap.ticker.spreadPct,
       dataHealth: snap.dataHealth ?? "GOOD",

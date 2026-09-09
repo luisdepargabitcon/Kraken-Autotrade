@@ -42,7 +42,7 @@ import type {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function candleArray(candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[]): ForwardTwinCandleArray {
+function candleArray(candles: readonly { time: number; open: number; high: number; low: number; close: number; volume: number }[]): ForwardTwinCandleArray {
   if (candles.length === 0) return { meta: { count: 0, lastTime: 0, lastClose: 0 }, candles: [] };
   const last = candles[candles.length - 1];
   return {

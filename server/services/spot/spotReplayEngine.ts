@@ -30,11 +30,11 @@ import { computeStopDistance, computePositionSize, type SpotRiskConfig, DEFAULT_
 import { computePnlBreakdown, computeFeeBreakdown, getSpotTakerFeePct, type FeeQuality } from "./feeModel";
 import { evaluateExit, createExitState, type SpotExitConfig, DEFAULT_SPOT_EXIT_CONFIG } from "./spotExitPolicy";
 import { SpotAuditTracker, classifyProfitCapture, type ExitAuditMetrics } from "./spotAuditTracker";
-import { DataHealth } from "./candleTimestamp";
+import { DataHealth, getCandleCloseTimeMs } from "./candleTimestamp";
 import { type SpotTicker, type SpotVolumeMetrics } from "./spotTypes";
 import { buildSpotRegimeContext } from "./spotRegimeEngine";
 import { calculateATR, type PriceData, type OHLCCandle } from "../indicators";
-import { buildClosedCandleContext } from "./closedCandleContract";
+import { buildClosedCandleContext, type ClosedCandleContext } from "./closedCandleContract";
 import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -156,18 +156,22 @@ export function runReplay(
   const warmup5m = 600;
   for (let i = warmup5m; i < sorted5m.length; i++) {
     const current5m = sorted5m[i];
-    const currentTime = current5m.time;
+    // CRITICAL: evaluation happens at the CLOSE time of the 5m candle, not its open time.
+    // At open time, the close is unknown — using it would be lookahead bias.
+    const evaluationTime = getCandleCloseTimeMs(current5m.time, "5m");
+    if (evaluationTime === null) continue;
     const nextCandle = sorted5m[i + 1];
+    // Fill at NEXT candle OPEN (after signal confirmed at close). No lookahead.
     const fillPrice = nextCandle ? nextCandle.open : current5m.close;
 
-    // Build market context from candles up to current time
+    // Build market context from candles closed at evaluationTime
     const ctx = buildReplayContext(
       pair,
       sorted5m,
       sorted15m,
       sorted1h,
       sorted4h,
-      currentTime,
+      evaluationTime,
       current5m.close,
     );
 
@@ -180,9 +184,9 @@ export function runReplay(
       if (!state) continue;
 
       // Update MFE/MAE
-      auditTracker.updatePrice(pos, ctx.ticker.last, currentTime);
+      auditTracker.updatePrice(pos, ctx.ticker.last, evaluationTime);
 
-      const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, currentTime);
+      const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, evaluationTime);
       if (exitDecision.shouldExit) {
         const exitFillPrice = fillPrice;
         const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining);
@@ -193,7 +197,7 @@ export function runReplay(
           entryFeeUsd: pos.entryFee,
         });
 
-        const audit = auditTracker.finalizeExit(pos, exitFillPrice, exitDecision.reasonType ?? "TIME_EFFICIENCY", currentTime);
+        const audit = auditTracker.finalizeExit(pos, exitFillPrice, exitDecision.reasonType ?? "TIME_EFFICIENCY", evaluationTime);
         const posMetrics = auditTracker.getMetrics(pos.lotId);
         const rMultiple = pos.initialStopDistanceUsd > 0
           ? (exitFillPrice - pos.entryPrice) / pos.initialStopDistanceUsd
@@ -214,8 +218,8 @@ export function runReplay(
           rMultiple,
           exitReason: exitDecision.reasonType ?? ExitReasonType.TIME_EFFICIENCY,
           openedAtMs: pos.openedAt,
-          closedAtMs: currentTime,
-          holdTimeMinutes: Math.round((currentTime - pos.openedAt) / 60000),
+          closedAtMs: evaluationTime,
+          holdTimeMinutes: Math.round((evaluationTime - pos.openedAt) / 60000),
           mfeUsd: posMetrics?.mfeUsd ?? 0,
           maeUsd: posMetrics?.maeUsd ?? 0,
           mfeR: posMetrics?.mfeR ?? 0,
@@ -232,6 +236,8 @@ export function runReplay(
 
     // ─── Entry evaluation (if slots available) ─────────────────────────────
     if (positions.length >= maxConcurrent) continue;
+
+    // Signal evaluation at candle CLOSE — no lookahead
 
     const signal = evaluateSpotCanonical(ctx, config.strategyConfig);
     if (signal.signal !== "BUY") continue;
@@ -273,7 +279,7 @@ export function runReplay(
       entryFee,
       entryFeeQuality: "ESTIMATED" as FeeQuality,
       highestPrice: fillPrice,
-      openedAt: currentTime,
+      openedAt: evaluationTime,
       entryStrategyId: "SPOT_CANONICAL",
       entrySignalTf: "15m",
       signalConfidence: signal.confidence,
@@ -416,14 +422,24 @@ function buildReplayContext(
   candles15m: SpotCandle[],
   candles1h: SpotCandle[],
   candles4h: SpotCandle[],
-  currentTime: number,
+  evaluationTime: number,
   currentPrice: number,
 ): SpotMarketContext | null {
-  // Filter candles up to current time (no lookahead)
-  const c5m = candles5m.filter(c => c.time <= currentTime);
-  const c15m = candles15m.filter(c => c.time <= currentTime);
-  const c1h = candles1h.filter(c => c.time <= currentTime);
-  const c4h = candles4h.filter(c => c.time <= currentTime);
+  // Use the canonical contract to split closed vs forming candles.
+  // NO parallel filtering — the contract is the single source of truth.
+  const closed = buildClosedCandleContext(
+    candles5m,
+    candles15m,
+    candles1h,
+    candles4h,
+    evaluationTime,
+  );
+
+  // Derive all candle arrays from the contract
+  const c5m = closed.tf5m.closedCandles;
+  const c15m = closed.tf15m.closedCandles;
+  const c1h = closed.tf1h.closedCandles;
+  const c4h = closed.tf4h.closedCandles;
 
   if (c15m.length < 200 || c1h.length < 50 || c4h.length < 50) return null;
 
@@ -454,7 +470,7 @@ function buildReplayContext(
     ask: currentPrice,
     last: currentPrice,
     spread: 0,
-    fetchedAt: currentTime,
+    fetchedAt: evaluationTime,
   };
 
   const recent15m = c15m.slice(-14);
@@ -464,26 +480,32 @@ function buildReplayContext(
     participation: "NORMAL",
   };
 
+  // Slice to last 200 for consumption (creates copies, preserves readonly)
+  const candles5mCtx = c5m.slice(-200);
+  const candles15mCtx = c15m.slice(-200);
+  const candles1hCtx = c1h.slice(-200);
+  const candles4hCtx = c4h.slice(-200);
+
   return {
-    marketContextId: `replay-${pair}-${currentTime}`,
-    generatedAt: currentTime,
+    marketContextId: `replay-${pair}-${evaluationTime}`,
+    generatedAt: evaluationTime,
     pair,
     dataHealth: DataHealth.GOOD,
     macroBias: regimeContext.macroBias,
     regimeContext,
-    candles5m: c5m.slice(-200),
-    candles15m: c15m.slice(-200),
-    candles1h: c1h.slice(-200),
-    candles4h: c4h.slice(-200),
-    formingCandle5m: null,
-    formingCandle15m: null,
-    formingCandle1h: null,
-    formingCandle4h: null,
-    closedCandleContext: buildClosedCandleContext(c5m.slice(-200), c15m.slice(-200), c1h.slice(-200), c4h.slice(-200), currentTime),
+    candles5m: candles5mCtx,
+    candles15m: candles15mCtx,
+    candles1h: candles1hCtx,
+    candles4h: candles4hCtx,
+    formingCandle5m: closed.tf5m.formingCandle,
+    formingCandle15m: closed.tf15m.formingCandle,
+    formingCandle1h: closed.tf1h.formingCandle,
+    formingCandle4h: closed.tf4h.formingCandle,
+    closedCandleContext: closed,
     adaptiveMarketState: buildAdaptiveMarketState({
-      candles1h: c1h.slice(-200),
-      candles15m: c15m.slice(-200),
-      candles4h: c4h.slice(-200),
+      candles1h: candles1hCtx,
+      candles15m: candles15mCtx,
+      candles4h: candles4hCtx,
       regimeContext,
       spreadPct: 0,
       dataHealth: String(DataHealth.GOOD),

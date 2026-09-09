@@ -22,6 +22,7 @@ import {
   assertCandleClosed,
   verifyNoFormingInClosed,
   verifyFormingNotInClosed,
+  UnknownTimeframeError,
   type ClosedCandleSet,
 } from "../closedCandleContract";
 import type { SpotCandle } from "../spotTypes";
@@ -101,12 +102,9 @@ describe("ClosedCandleContract — splitCandlesByClose", () => {
     expect(set.formingCandle).toBeNull();
   });
 
-  it("trata timeframe desconocido como fail-safe (todas cerradas)", () => {
+  it("trata timeframe desconocido como fail-closed (throw)", () => {
     const candles = makeCandleSeries(TF_5M, 5, BASE_NOW);
-    const set = splitCandlesByClose(candles, "invalid_tf", BASE_NOW + 999);
-
-    expect(set.closedCount).toBe(5);
-    expect(set.formingCandle).toBeNull();
+    expect(() => splitCandlesByClose(candles, "invalid_tf", BASE_NOW + 999)).toThrow(UnknownTimeframeError);
   });
 });
 
@@ -444,5 +442,129 @@ describe("ClosedCandleContract — Accessor helpers", () => {
     const set = splitCandlesByClose([], "5m", now);
     expect(lastClosedCandle(set)).toBeNull();
     expect(lastClosedPrice(set)).toBeNull();
+  });
+});
+
+// ─── C1F Corrections: Fail-closed, sorting, duplicates, no mutation ─────────
+
+describe("ClosedCandleContract — C1F: Unknown timeframe fail-closed", () => {
+  it("lanza UnknownTimeframeError para timeframe desconocido", () => {
+    const candles = makeCandleSeries(TF_5M, 10, BASE_NOW - 9 * TF_5M);
+    expect(() => splitCandlesByClose(candles, "2m", BASE_NOW)).toThrow(UnknownTimeframeError);
+  });
+
+  it("lanza UnknownTimeframeError para timeframe vacío", () => {
+    const candles = makeCandleSeries(TF_5M, 10, BASE_NOW - 9 * TF_5M);
+    expect(() => splitCandlesByClose(candles, "", BASE_NOW)).toThrow(UnknownTimeframeError);
+  });
+
+  it("NO trata todas como cerradas para timeframe desconocido", () => {
+    const candles = makeCandleSeries(TF_5M, 10, BASE_NOW - 9 * TF_5M);
+    let threw = false;
+    try {
+      splitCandlesByClose(candles, "invalid_tf", BASE_NOW);
+    } catch (e) {
+      threw = true;
+      expect(e).toBeInstanceOf(UnknownTimeframeError);
+      expect((e as UnknownTimeframeError).timeframe).toBe("invalid_tf");
+    }
+    expect(threw).toBe(true);
+  });
+});
+
+describe("ClosedCandleContract — C1F: Multiple forming candles fail-closed", () => {
+  it("NO promueve forming candles a closed cuando hay múltiples", () => {
+    const now = BASE_NOW;
+    const closed = makeCandleSeries(TF_15M, 5, now - 5 * TF_15M);
+    const forming1 = makeCandle(now, 105);
+    const forming2 = makeCandle(now + TF_15M, 106);
+    const all = [...closed, forming1, forming2];
+
+    const set = splitCandlesByClose(all, "15m", now);
+
+    expect(set.closedCount).toBe(5);
+    expect(set.diagnostics.multipleFormingDetected).toBe(true);
+    expect(set.diagnostics.formingCount).toBe(2);
+  });
+
+  it("mantiene la última forming como formingCandle", () => {
+    const now = BASE_NOW;
+    const closed = makeCandleSeries(TF_15M, 3, now - 3 * TF_15M);
+    const forming1 = makeCandle(now, 105);
+    const forming2 = makeCandle(now + TF_15M, 106);
+    const all = [...closed, forming1, forming2];
+
+    const set = splitCandlesByClose(all, "15m", now);
+
+    expect(set.formingCandle).not.toBeNull();
+    expect(set.formingCandle!.close).toBe(106);
+  });
+
+  it("con 0 forming candles, diagnostics es normal", () => {
+    const now = BASE_NOW;
+    const candles = makeCandleSeries(TF_5M, 10, now - 10 * TF_5M);
+    const set = splitCandlesByClose(candles, "5m", now);
+
+    expect(set.diagnostics.formingCount).toBe(0);
+    expect(set.diagnostics.multipleFormingDetected).toBe(false);
+  });
+});
+
+describe("ClosedCandleContract — C1F: Sorting and duplicates", () => {
+  it("ordena closedCandles ascending por time", () => {
+    const now = BASE_NOW;
+    const candles = makeCandleSeries(TF_5M, 5, now - 5 * TF_5M);
+    const shuffled = [candles[3], candles[0], candles[4], candles[1], candles[2]];
+
+    const set = splitCandlesByClose(shuffled, "5m", now);
+
+    expect(set.closedCandles.length).toBe(5);
+    for (let i = 1; i < set.closedCandles.length; i++) {
+      expect(set.closedCandles[i].time).toBeGreaterThanOrEqual(set.closedCandles[i - 1].time);
+    }
+  });
+
+  it("detecta timestamps duplicados en diagnostics", () => {
+    const now = BASE_NOW;
+    const c1 = makeCandle(now - 3 * TF_5M, 100);
+    const c2 = makeCandle(now - 2 * TF_5M, 101);
+    const c3 = makeCandle(now - 2 * TF_5M, 102); // duplicate timestamp
+    const c4 = makeCandle(now - TF_5M, 103);
+
+    const set = splitCandlesByClose([c1, c2, c3, c4], "5m", now);
+
+    expect(set.diagnostics.duplicateTimestamps).toBe(1);
+  });
+
+  it("NO muta el array de entrada", () => {
+    const now = BASE_NOW;
+    const candles = makeCandleSeries(TF_5M, 5, now - 5 * TF_5M);
+    const original = [...candles];
+
+    splitCandlesByClose(candles, "5m", now);
+
+    expect(candles).toEqual(original);
+  });
+});
+
+describe("ClosedCandleContract — C1F: Readonly enforcement", () => {
+  it("closedCandles es readonly SpotCandle[]", () => {
+    const now = BASE_NOW;
+    const candles = makeCandleSeries(TF_5M, 5, now - 5 * TF_5M);
+    const set = splitCandlesByClose(candles, "5m", now);
+
+    // Type-level check: closedCandles should be readonly
+    // Runtime: slice returns a new array, original is not mutated
+    const arr = set.closedCandles;
+    expect(Array.isArray(arr)).toBe(true);
+    expect(arr.length).toBe(5);
+  });
+
+  it("lastNClosedCandles devuelve readonly SpotCandle[]", () => {
+    const now = BASE_NOW;
+    const candles = makeCandleSeries(TF_15M, 20, now - 19 * TF_15M);
+    const set = splitCandlesByClose(candles, "15m", now);
+    const last5 = lastNClosedCandles(set, 5);
+    expect(last5.length).toBe(5);
   });
 });

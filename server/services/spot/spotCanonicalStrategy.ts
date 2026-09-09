@@ -135,7 +135,7 @@ export interface Setup15mResult {
 }
 
 export function evaluate15mSetup(
-  candles15m: SpotCandle[],
+  candles15m: readonly SpotCandle[],
   regimeCtx: SpotRegimeContext,
   config: SpotCanonicalConfig,
 ): Setup15mResult {
@@ -264,7 +264,7 @@ function evaluatePullbackContinuation(
 }
 
 function evaluateBreakoutRetest(
-  candles15m: SpotCandle[],
+  candles15m: readonly SpotCandle[],
   atr: number,
   atrPct: number,
   volumeRatio: number,
@@ -331,7 +331,7 @@ export interface Trigger5mResult {
 }
 
 export function evaluate5mTrigger(
-  candles5m: SpotCandle[],
+  candles5m: readonly SpotCandle[],
   setupTag: SetupTag,
   config: SpotCanonicalConfig,
 ): Trigger5mResult {

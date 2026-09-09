@@ -69,10 +69,11 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
   );
 
   // Use ONLY closed candles for all signal/regime/volume logic
-  const candles5m = closedCandleContext.tf5m.closedCandles as SpotCandle[];
-  const candles15m = closedCandleContext.tf15m.closedCandles as SpotCandle[];
-  const candles1h = closedCandleContext.tf1h.closedCandles as SpotCandle[];
-  const candles4h = closedCandleContext.tf4h.closedCandles as SpotCandle[];
+  // No cast — preserve readonly protection from the contract
+  const candles5m = closedCandleContext.tf5m.closedCandles;
+  const candles15m = closedCandleContext.tf15m.closedCandles;
+  const candles1h = closedCandleContext.tf1h.closedCandles;
+  const candles4h = closedCandleContext.tf4h.closedCandles;
 
   // Fetch ticker (bid/ask/last)
   const tickerRaw = await MarketDataService.getTicker(pair);
@@ -156,7 +157,7 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function toOHLCCandles(spot: SpotCandle[]): OHLC[] {
+function toOHLCCandles(spot: readonly SpotCandle[]): OHLC[] {
   return spot.map((c) => ({
     time: c.time,
     open: c.open,
@@ -183,7 +184,7 @@ function computeSpreadPct(ticker: SpotTicker): number {
   return mid > 0 ? ((ticker.ask - ticker.bid) / mid) * 100 : 0;
 }
 
-function computeVolumeMetrics(candles: SpotCandle[]): SpotVolumeMetrics {
+function computeVolumeMetrics(candles: readonly SpotCandle[]): SpotVolumeMetrics {
   if (candles.length < 20) {
     return { volumeRatio: 1, volume24h: 0, participation: "NORMAL" };
   }

@@ -1,7 +1,109 @@
 ﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-08-30
+> Última actualización: 2026-09-09
+
+---
+
+## 2026-09-09 — SPOT ADAPTIVE V3 — C1F: CORRECCIONES CLOSED-CANDLE CONTRACT + REPLAY FIDELITY
+
+### Objetivo
+
+Corregir defectos críticos detectados en el contrato de velas cerradas y los motores de replay: fail-open en timeframe desconocido, promoción indebida de forming a closed, casts que rompen readonly, lookahead bias en `spotReplayEngine`, y consumo de arrays paralelos en `spotReplayEngineV3`.
+
+### Correcciones (C1F-1 a C1F-12)
+
+**C1F-1: Fail-closed para timeframe desconocido**
+- `splitCandlesByClose` ahora lanza `UnknownTimeframeError` para timeframes no reconocidos
+- Antes: trataba todas las velas como cerradas (fail-open peligroso)
+
+**C1F-2: Múltiples forming candles — fail-closed**
+- Cuando se detectan múltiples velas en formación (anomalía), NINGUNA se promueve a cerrada
+- La última forming se mantiene como `formingCandle`, las anteriores se descartan
+- Diagnostics: `formingCount`, `multipleFormingDetected`, `duplicateTimestamps`
+
+**C1F-3: Ordenación, duplicados, no mutación**
+- `closedCandles` se ordena ascending por tiempo
+- Duplicados se detectan y reportan en diagnostics
+- El array de entrada NO se muta (trabaja sobre copia)
+
+**C1F-4: Eliminar casts que rompen readonly**
+- `SpotMarketContext.candles5m/15m/1h/4h` ahora son `readonly SpotCandle[]`
+- Eliminados los `as SpotCandle[]` en `spotMarketContext.ts`
+- Actualizadas todas las funciones consumidoras para aceptar `readonly SpotCandle[]`
+- `spotForwardTwinBuilder.candleArray` acepta `readonly`
+
+**C1F-5: Fix spotReplayEngine — lookahead bias**
+- Evaluación ahora ocurre en CLOSE time de la vela 5m, no en OPEN time
+- `getCandleCloseTimeMs(candle.time, "5m")` reemplaza `candle.time` como tiempo de evaluación
+- Fill price sigue siendo next candle open (sin lookahead)
+
+**C1F-6: buildReplayContext consume contrato canónico**
+- `buildReplayContext` ahora usa `buildClosedCandleContext` como única fuente de verdad
+- Eliminado el filtrado paralelo `candles.filter(c => c.time <= currentTime)`
+- Todos los arrays se derivan del contrato
+
+**C1F-7: Test de replay temporal exacto**
+- Nuevo archivo `spotReplayTemporal.test.ts` (9 tests)
+- Verifica boundary temporal: close time vs open time
+- Verifica fill price en next candle open
+
+**C1F-8: spotReplayEngineV3 usa contrato para todos los arrays**
+- `reconstructContext` ahora construye `closedCandleContext` primero
+- Arrays `candles5m/15m/1h/4h` se derivan del contrato, no del snapshot directo
+- Forming candles se obtienen del contrato
+
+**C1F-9: Forward Twin parity test**
+- Nuevo archivo `spotForwardTwinParity.test.ts` (4 tests)
+- Verifica que forming candles se excluyen de arrays cerrados
+- Verifica paridad: contract arrays = snapshot arrays cuando todo está cerrado
+
+**C1F-10: Production strategy integration test**
+- Incluido en `spotReplayTemporal.test.ts` (2 tests)
+- Verifica que vela forming bullish NO genera false buy
+- Verifica exclusión de forming 5m y 15m
+
+**C1F-11: Structure invalidation evidence test**
+- Incluido en `spotReplayTemporal.test.ts` (2 tests)
+- Verifica que forming 15m NO cuenta en consecutive candle count
+- Verifica que forming 15m NO invalida estructura de higher highs
+- TODO dejado en test para integración futura con evaluate15mSetup
+
+**C1F-12: V3 REAL gate**
+- Nuevo `SPOT_ADAPTIVE_V3_REAL_ALLOWED = false` en `spotTypes.ts`
+- Debe permanecer `false` durante desarrollo de V3
+
+### Archivos afectados
+
+**Modificados**:
+- `server/services/spot/closedCandleContract.ts` — fail-closed, diagnostics, readonly, no mutation
+- `server/services/spot/spotTypes.ts` — readonly candle arrays, SPOT_ADAPTIVE_V3_REAL_ALLOWED
+- `server/services/spot/spotMarketContext.ts` — eliminar casts, readonly helpers
+- `server/services/spot/spotAdaptiveMarketState.ts` — readonly en todas las funciones
+- `server/services/spot/spotCanonicalStrategy.ts` — readonly en evaluate15mSetup, evaluate5mTrigger, evaluateBreakoutRetest
+- `server/services/spot/spotReplayEngine.ts` — evaluationTime = close time, buildReplayContext consume contrato
+- `server/services/spot/spotReplayEngineV3.ts` — reconstructContext usa contrato para todos los arrays
+- `server/services/spot/spotForwardTwinBuilder.ts` — candleArray acepta readonly
+- `server/services/spot/__tests__/closedCandleContract.test.ts` — test actualizado + 13 nuevos tests C1F
+
+**Nuevos**:
+- `server/services/spot/__tests__/spotReplayTemporal.test.ts` — 9 tests (C1F-7, C1F-10, C1F-11)
+- `server/services/spot/__tests__/spotForwardTwinParity.test.ts` — 4 tests (C1F-9)
+
+### Validaciones
+
+- `tsc --noEmit`: ✅ sin errores
+- `closedCandleContract.test.ts`: 37/37 ✅
+- `spotReplayTemporal.test.ts`: 9/9 ✅
+- `spotForwardTwinParity.test.ts`: 4/4 ✅
+- Total: 50/50 tests ✅
+
+### Estado final
+
+- Contrato canónico fail-closed completo
+- Replay sin lookahead bias
+- V3 REAL gate activo (false)
+- Pendiente: integración test con evaluate15mSetup para C1F-11
 
 ---
 

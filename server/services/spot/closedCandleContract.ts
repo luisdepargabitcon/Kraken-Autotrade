@@ -42,10 +42,43 @@
  *   - formingCandle is null when no candle is in progress (edge case)
  *   - All timestamps are epoch milliseconds (normalized via candleTimestamp)
  *   - No lookahead: closedCandles only contains candles closed at evaluatedAt
+ *   - Unknown timeframes THROW — never fail-open to all-closed
+ *   - Multiple forming candles are NOT promoted to closed — fail-closed
+ *   - Input arrays are never mutated
+ *   - Duplicate timestamps are handled deterministically (last wins for forming)
  */
 
 import type { SpotCandle } from "./spotTypes";
-import { isCandleClosed, getTimeframeMs } from "./candleTimestamp";
+import { isCandleClosed, getTimeframeMs, getCandleCloseTimeMs } from "./candleTimestamp";
+
+// ─── Accepted SPOT timeframes ────────────────────────────────────────────────
+
+/** The only timeframes accepted by the SPOT closed-candle contract. */
+export type SpotTimeframe = "5m" | "15m" | "1h" | "4h";
+
+/**
+ * Typed error for unknown timeframes.
+ * Never silently treat candles as closed when the timeframe duration is unknown.
+ */
+export class UnknownTimeframeError extends Error {
+  constructor(public readonly timeframe: string) {
+    super(`ClosedCandleContract: unknown timeframe "${timeframe}" — cannot determine candle close time. FAIL-CLOSED.`);
+    this.name = "UnknownTimeframeError";
+  }
+}
+
+/**
+ * Diagnostics for data anomalies detected during splitting.
+ * Allows upstream code to decide whether to proceed or flag data as invalid.
+ */
+export interface ClosedCandleDiagnostics {
+  /** Number of forming candles found (normally 0 or 1). >1 indicates anomaly. */
+  formingCount: number;
+  /** True if multiple forming candles were detected (data anomaly). */
+  multipleFormingDetected: boolean;
+  /** Number of duplicate timestamps detected. */
+  duplicateTimestamps: number;
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +97,8 @@ export interface ClosedCandleSet {
   readonly evaluatedAt: number;
   /** Number of closed candles available. */
   readonly closedCount: number;
+  /** Diagnostics about data anomalies. */
+  readonly diagnostics: ClosedCandleDiagnostics;
 }
 
 /**
@@ -87,14 +122,20 @@ export interface ClosedCandleContext {
  * A candle is "closed" if its close time (open time + timeframe duration)
  * is <= now. Otherwise it is "forming".
  *
- * If multiple forming candles exist (data anomaly), only the latest is kept
- * and earlier ones are treated as closed (fail-safe: prefer more closed data
- * over discarding).
+ * FAIL-CLOSED semantics:
+ *   - Unknown timeframe → THROWS UnknownTimeframeError (never all-closed).
+ *   - Multiple forming candles → NONE are promoted to closed. All non-closed
+ *     candles are excluded from closedCandles. The latest forming candle is
+ *     kept as formingCandle; earlier ones are discarded.
+ *   - Input array is NOT mutated.
+ *   - closedCandles are sorted ascending by time.
+ *   - Duplicate timestamps: last occurrence wins for forming detection.
  *
  * @param candles - Raw candles (already timestamp-normalized to ms)
- * @param timeframe - e.g. "5m", "15m", "1h", "4h"
+ * @param timeframe - MUST be one of "5m" | "15m" | "1h" | "4h"
  * @param now - Evaluation timestamp (epoch ms)
  * @returns ClosedCandleSet with separated closed/forming candles
+ * @throws UnknownTimeframeError if timeframe is not recognized
  */
 export function splitCandlesByClose(
   candles: SpotCandle[],
@@ -103,32 +144,43 @@ export function splitCandlesByClose(
 ): ClosedCandleSet {
   const tfMs = getTimeframeMs(timeframe);
   if (tfMs === null) {
-    // Unknown timeframe: treat all as closed (fail-safe for data availability)
-    return {
-      closedCandles: candles,
-      formingCandle: null,
-      timeframe,
-      evaluatedAt: now,
-      closedCount: candles.length,
-    };
+    throw new UnknownTimeframeError(timeframe);
   }
 
-  const closed: SpotCandle[] = [];
-  let forming: SpotCandle | null = null;
+  // Do NOT mutate the input array — work on a copy
+  const sorted = [...candles].sort((a, b) => a.time - b.time);
 
-  for (const candle of candles) {
+  const closed: SpotCandle[] = [];
+  const formingCandles: SpotCandle[] = [];
+  let duplicateTimestamps = 0;
+  let lastSeenTime = -1;
+
+  for (const candle of sorted) {
+    // Detect duplicate timestamps
+    if (candle.time === lastSeenTime) {
+      duplicateTimestamps++;
+    }
+    lastSeenTime = candle.time;
+
     if (isCandleClosed(candle.time, timeframe, now)) {
       closed.push(candle);
     } else {
-      // This candle is still forming
-      // If we already have a forming candle, the previous one must be stale
-      // (overlapping data). Treat the previous forming as closed (fail-safe).
-      if (forming !== null) {
-        closed.push(forming);
-      }
-      forming = candle;
+      // This candle is still forming — NEVER promote to closed
+      formingCandles.push(candle);
     }
   }
+
+  // Multiple forming candles: anomaly. Keep the latest as forming, discard earlier ones.
+  // Do NOT promote any forming candle to closed.
+  const forming = formingCandles.length > 0
+    ? formingCandles[formingCandles.length - 1]
+    : null;
+
+  const diagnostics: ClosedCandleDiagnostics = {
+    formingCount: formingCandles.length,
+    multipleFormingDetected: formingCandles.length > 1,
+    duplicateTimestamps,
+  };
 
   return {
     closedCandles: closed,
@@ -136,6 +188,7 @@ export function splitCandlesByClose(
     timeframe,
     evaluatedAt: now,
     closedCount: closed.length,
+    diagnostics,
   };
 }
 
@@ -183,7 +236,7 @@ export function lastClosedCandle(set: ClosedCandleSet): SpotCandle | null {
  * Get the last N closed candles (excluding the forming candle).
  * Returns fewer if not enough closed candles are available.
  */
-export function lastNClosedCandles(set: ClosedCandleSet, n: number): SpotCandle[] {
+export function lastNClosedCandles(set: ClosedCandleSet, n: number): readonly SpotCandle[] {
   return set.closedCandles.slice(-n);
 }
 
@@ -228,7 +281,8 @@ export function assertCandleClosed(
  */
 export function verifyNoFormingInClosed(set: ClosedCandleSet): boolean {
   for (const candle of set.closedCandles) {
-    if (!isCandleClosed(candle.time, set.timeframe, set.evaluatedAt)) {
+    const closeMs = getCandleCloseTimeMs(candle.time, set.timeframe);
+    if (closeMs === null || closeMs > set.evaluatedAt) {
       return false;
     }
   }

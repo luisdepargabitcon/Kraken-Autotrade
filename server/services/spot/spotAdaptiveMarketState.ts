@@ -143,7 +143,7 @@ export const DEFAULT_ADAPTIVE_STATE_CONFIG: AdaptiveStateConfig = {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function toOHLCCandles(candles: SpotCandle[]): OHLCCandle[] {
+function toOHLCCandles(candles: readonly SpotCandle[]): OHLCCandle[] {
   return candles.map(c => ({
     time: c.time,
     open: c.open,
@@ -154,7 +154,7 @@ function toOHLCCandles(candles: SpotCandle[]): OHLCCandle[] {
   }));
 }
 
-function toPriceData(candles: SpotCandle[]): PriceData[] {
+function toPriceData(candles: readonly SpotCandle[]): PriceData[] {
   return candles.map(c => ({
     price: c.close,
     timestamp: c.time,
@@ -203,7 +203,7 @@ function computeAdxSeries(candles: OHLCCandle[], period: number, lookback: numbe
   return series;
 }
 
-function computeStructureContinuity(candles: SpotCandle[], lookback: number): number {
+function computeStructureContinuity(candles: readonly SpotCandle[], lookback: number): number {
   if (candles.length < lookback * 2 + 1) return 0.5;
   const recent = candles.slice(-lookback * 2);
   let higherHighs = 0;
@@ -219,7 +219,7 @@ function computeStructureContinuity(candles: SpotCandle[], lookback: number): nu
   return clamp(bullScore, 0, 1);
 }
 
-function computeRelativeVolume(candles: SpotCandle[], lookback: number): number {
+function computeRelativeVolume(candles: readonly SpotCandle[], lookback: number): number {
   if (candles.length < lookback + 1) return 1.0;
   const recent = candles.slice(-lookback - 1);
   const currentVol = recent[recent.length - 1].volume;
@@ -228,7 +228,7 @@ function computeRelativeVolume(candles: SpotCandle[], lookback: number): number 
   return currentVol / avgVol;
 }
 
-function computeVolatilityPercentile(atrPct: number, candles: SpotCandle[], lookback: number): number {
+function computeVolatilityPercentile(atrPct: number, candles: readonly SpotCandle[], lookback: number): number {
   if (candles.length < 14) return 50;
   const priceData = toPriceData(candles);
   const atrValues: number[] = [];
@@ -261,7 +261,7 @@ function classifyVolatilityState(atrPct: number, percentile: number, config: Ada
 function computeMultiTimeframeAlignment(
   regime1h: SpotRegimeContext,
   macroBias: MacroBias,
-  candles15m: SpotCandle[],
+  candles15m: readonly SpotCandle[],
 ): number {
   let agreement = 0;
   let total = 0;
@@ -294,9 +294,9 @@ function computeMultiTimeframeAlignment(
 // ─── Trend Quality Score ────────────────────────────────────────────────────
 
 export function computeTrendQuality(
-  candles1h: SpotCandle[],
-  candles15m: SpotCandle[],
-  candles4h: SpotCandle[],
+  candles1h: readonly SpotCandle[],
+  candles15m: readonly SpotCandle[],
+  candles4h: readonly SpotCandle[],
   regimeContext: SpotRegimeContext,
   config: AdaptiveStateConfig = DEFAULT_ADAPTIVE_STATE_CONFIG,
 ): TrendQualityResult {
@@ -398,7 +398,7 @@ export function computeTrendQuality(
 // ─── Volatility State ───────────────────────────────────────────────────────
 
 export function computeVolatilityState(
-  candles1h: SpotCandle[],
+  candles1h: readonly SpotCandle[],
   regimeContext: SpotRegimeContext,
   config: AdaptiveStateConfig = DEFAULT_ADAPTIVE_STATE_CONFIG,
 ): VolatilityStateResult {
@@ -415,7 +415,7 @@ export function computeVolatilityState(
 // ─── Market Stress Score ────────────────────────────────────────────────────
 
 export function computeMarketStress(
-  candles1h: SpotCandle[],
+  candles1h: readonly SpotCandle[],
   regimeContext: SpotRegimeContext,
   spreadPct: number,
   dataHealth: string,
@@ -469,9 +469,9 @@ export function computeMarketStress(
 // ─── Full Adaptive Market State ─────────────────────────────────────────────
 
 export interface AdaptiveStateInput {
-  candles1h: SpotCandle[];
-  candles15m: SpotCandle[];
-  candles4h: SpotCandle[];
+  candles1h: readonly SpotCandle[];
+  candles15m: readonly SpotCandle[];
+  candles4h: readonly SpotCandle[];
   regimeContext: SpotRegimeContext;
   spreadPct: number;
   dataHealth: string;
