@@ -1,7 +1,83 @@
 ﻿# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
-> Última actualización: 2026-08-26
+> Última actualización: 2026-08-30
+
+---
+
+## 2026-08-30 — SPOT ADAPTIVE V3 — CLOSED-CANDLE CONTRACT + ADAPTIVE MARKET STATE
+
+### Objetivo
+
+Implementar contrato canónico de velas cerradas (A) y estado adaptativo de mercado (B) para SPOT ADAPTIVE V3, eliminando lookahead bias y añadiendo métricas explicables de calidad de tendencia, volatilidad y estrés.
+
+### A. Closed-Candle Contract
+
+**Problema**: `SpotMarketContext.candles15m` (y 5m/1h/4h) contenían TODAS las velas incluyendo la vela en formación. Estrategia, exit y regime usaban `candles[length-1]` sin verificar si estaba cerrada → lookahead bias.
+
+**Solución**: Contrato canónico tipado que separa velas cerradas de vela en formación:
+- `closedCandleContract.ts`: tipos `ClosedCandleSet`, `ClosedCandleContext`, función `splitCandlesByClose()`
+- `SpotMarketContext.candles5m/15m/1h/4h` ahora contienen SOLO velas cerradas
+- Campos `formingCandle5m/15m/1h/4h` para acceso explícito a vela en formación
+- Campo `closedCandleContext` como fuente autoritativa tipada
+- Actualizado `spotMarketContext.ts`, `spotReplayEngine.ts`, `spotReplayEngineV3.ts`
+
+**Invariantes testadas (7)**:
+1. Vela abierta NO genera entrada
+2. Misma vela cerrada SÍ puede ser evaluada
+3. Vela abierta NO completa un reclaim
+4. Vela abierta NO cuenta en confirmaciones consecutivas
+5. No existe lookahead
+6. Timestamps sec/ms son correctos
+7. Forward Twin conserva la misma semántica
+
+### B. Adaptive Market State
+
+**Nuevo módulo** `spotAdaptiveMarketState.ts` con métricas explicables y deterministas:
+
+- **trendQualityScore** (0..1): 9 componentes ponderados — ADX, ADX slope, EMA alignment, EMA slopes (20/50), structure continuity, ATR% reasonableness, Bollinger width, relative volume, multi-timeframe alignment
+- **volatilityState**: LOW / NORMAL / HIGH / EXTREME con clasificación por ATR% y percentil
+- **volatilityPercentile** (0..100): percentil rolling de ATR%
+- **marketStressScore** (0..1): READ-ONLY, 5 factores (volatilidad, spread, data health, transición, ADX bajo + volatilidad alta)
+- **setupQualityScore** (0..1): metadata de setup
+
+Integrado en `SpotMarketContext` vía `buildAdaptiveMarketState()`.
+
+### Archivos afectados
+
+**Nuevos**:
+- `server/services/spot/closedCandleContract.ts`
+- `server/services/spot/spotAdaptiveMarketState.ts`
+- `server/services/spot/__tests__/closedCandleContract.test.ts`
+- `server/services/spot/__tests__/spotAdaptiveMarketState.test.ts`
+
+**Modificados**:
+- `server/services/spot/spotTypes.ts` — nuevos campos en `SpotMarketContext`
+- `server/services/spot/spotMarketContext.ts` — usa `buildClosedCandleContext` + `buildAdaptiveMarketState`
+- `server/services/spot/spotReplayEngine.ts` — nuevos campos en contexto de replay
+- `server/services/spot/spotReplayEngineV3.ts` — nuevos campos en contexto de replay V3
+
+### Validaciones
+
+- TypeScript: clean
+- Build: clean
+- Tests nuevos: 46/46 (28 closed-candle + 18 adaptive state)
+- Tests spot existentes: 257/257 passing
+- `git diff --check`: clean
+
+### Estado final
+
+- **Implementado**: Sí
+- **Validado**: Sí
+- **Commit**: `d458b8e` en `feature/spot-adaptive-v3-shadow`
+- **Push**: Sí, rama `feature/spot-adaptive-v3-shadow` en remote
+- **Deploy**: No requiere (SHADOW, sin órdenes reales)
+
+### Pendientes
+
+- Integrar `adaptiveMarketState` en decisiones de estrategia (entrada/exit) — fase siguiente
+- Usar `marketStressScore` en gating de entrada — fase siguiente
+- Forward Twin snapshot puede añadir campos de adaptive state para replay — fase siguiente
 
 ---
 
