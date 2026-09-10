@@ -272,13 +272,19 @@ describe("C1F4-11: Productive snapshot builders", () => {
     expect(fill.fill?.feeUsd).toBe(0.26);
   });
 
-  it("buildSupervisorSnapshot produces schema v2 SUPERVISOR", () => {
+  it("buildSupervisorSnapshot produces schema v3 SUPERVISOR with full market context (C1F5-2)", () => {
     const pos = makePosition("lot-1", "BTC/USD", 100, 1, BASE_NOW, 95, "sig-1");
     const sup = buildTestSupervisorSnapshot("BTC/USD", BASE_NOW + 3600000, 105, c5m, c15m, c1h, c4h, pos, false);
     expect(sup.snapshotType).toBe("SUPERVISOR");
-    expect(sup.schemaVersion).toBe(2);
+    expect(sup.schemaVersion).toBe(3);
     expect(sup.position).toBeDefined();
     expect(sup.position?.lotId).toBe("lot-1");
+    // C1F5-2: v3 includes full market context
+    expect(sup.candles).toBeDefined();
+    expect(sup.regime).toBeDefined();
+    expect(sup.volume).toBeDefined();
+    expect(sup.dataHealth).toBeDefined();
+    expect(sup.marketContextId).toBeDefined();
   });
 });
 
@@ -332,7 +338,7 @@ describe("C1F4-12: Two-lot test exits via real SELL fills", () => {
 // ─── C1F4-14: Fill volume integrity ───────────────────────────────────────────
 
 describe("C1F4-14: Fill volume integrity — partial/mismatch handling", () => {
-  it("SELL FILL with mismatched volume → DEGRADED fidelity", () => {
+  it("SELL FILL with mismatched volume → no trade, position stays open (C1F5-8)", () => {
     const scan = buildTestScanSnapshot("BTC/USD", BASE_NOW, 100, c5m, c15m, c1h, c4h, "sig-vol");
     if (!scan.sizing?.approved) { expect(scan.signal.signal).toBe("BUY"); return; }
     const vol = scan.sizing.volume;
@@ -347,8 +353,11 @@ describe("C1F4-14: Fill volume integrity — partial/mismatch handling", () => {
 
     const result = _processSnapshotsForTest([scan.snapshot, buyFill, sup, sellFill], 10000);
 
+    // C1F5-8: Volume mismatch — SELL FILL does NOT create a trade.
+    // Position stays open, closed as OPEN_AT_END at end of replay.
+    expect(result.diagnostics.volumeMismatchCount).toBe(1);
     expect(result.trades).toHaveLength(1);
-    expect(result.trades[0].economicFidelity).toBe("DEGRADED");
+    expect(result.trades[0].exitReasonType).toBe("OPEN_AT_END");
   });
 
   it("SELL FILL with exact matching volume → FILL fidelity", () => {
@@ -399,17 +408,16 @@ describe("C1F4-15: Final equity canonical identity", () => {
     expect(trade.exitFeeUsd).toBeCloseTo(exitFee, 2);
   });
 
-  it("DEGRADED trade (no BUY FILL): equity = initialCapital - estimatedFee", () => {
+  it("PendingEntry without BUY FILL: zero economic impact (C1F5-1)", () => {
     const scan = buildTestScanSnapshot("BTC/USD", BASE_NOW, 100, c5m, c15m, c1h, c4h, "sig-deg");
     if (!scan.sizing?.approved) { expect(scan.signal.signal).toBe("BUY"); return; }
 
     const initialCapital = 10000;
     const result = _processSnapshotsForTest([scan.snapshot], initialCapital);
 
-    expect(result.trades).toHaveLength(1);
-    expect(result.trades[0].economicFidelity).toBe("DEGRADED");
-    expect(result.trades[0].exitReasonType).toBe("NO_BUY_FILL");
-    const expectedFee = scan.sizing.entryFeeUsd;
-    expect(result.finalEquity).toBeCloseTo(initialCapital - expectedFee, 2);
+    // C1F5-1: No trade created, no fee deducted, diagnostics only
+    expect(result.trades).toHaveLength(0);
+    expect(result.diagnostics.noBuyFillCount).toBe(1);
+    expect(result.finalEquity).toBe(initialCapital);
   });
 });

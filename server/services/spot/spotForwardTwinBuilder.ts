@@ -7,7 +7,7 @@
  * timing impact on the hot path.
  */
 
-import { SPOT_FORWARD_TWIN_SCHEMA_VERSION, SPOT_FORWARD_TWIN_SCHEMA_VERSION_2 } from "./spotForwardTwinTypes";
+import { SPOT_FORWARD_TWIN_SCHEMA_VERSION, SPOT_FORWARD_TWIN_SCHEMA_VERSION_3 } from "./spotForwardTwinTypes";
 import { SPOT_POLICY_VERSION } from "./spotTypes";
 import { SPOT_ENGINE_OWNER } from "./spotOwnership";
 import { computeRMultiple } from "./spotExitPolicy";
@@ -263,11 +263,41 @@ export function buildSupervisorSnapshot(input: SupervisorSnapshotInput): Forward
     evaluatedAt: exitDecision.evaluatedAt,
   };
 
+  // C1F5-2: SUPERVISOR snapshots use schema v3 — includes full market context
+  // (candles, regime, volume, dataHealth, marketContextId) for exit parity.
+  // v2 readers ignore the extra fields. v1/v2 snapshots remain readable.
+  const candles: ForwardTwinCandleSnapshot = {
+    candles5m: candleArray(ctx.candles5m),
+    candles15m: candleArray(ctx.candles15m),
+    candles1h: candleArray(ctx.candles1h),
+    candles4h: candleArray(ctx.candles4h),
+  };
+
+  const regime: ForwardTwinRegimeSnapshot = {
+    regime: String(ctx.regimeContext.regime),
+    direction: String(ctx.regimeContext.direction),
+    macroBias: String(ctx.regimeContext.macroBias),
+    volatility: String(ctx.regimeContext.volatility),
+    adx: ctx.regimeContext.adx,
+    ema20: ctx.regimeContext.ema20,
+    ema50: ctx.regimeContext.ema50,
+    ema200: ctx.regimeContext.ema200,
+    emaAlignment: ctx.regimeContext.emaAlignment,
+    bollingerWidth: ctx.regimeContext.bollingerWidth,
+    atrPct: ctx.regimeContext.atrPct,
+    confidence: ctx.regimeContext.confidence,
+    regimeId: ctx.regimeContext.regimeId,
+    contextId: ctx.regimeContext.contextId,
+  };
+
+  const volume: ForwardTwinVolumeSnapshot = {
+    volumeRatio: ctx.volumeMetrics.volumeRatio,
+    volume24h: ctx.volumeMetrics.volume24h,
+    participation: String(ctx.volumeMetrics.participation),
+  };
+
   return {
-    // R4: SUPERVISOR snapshots use schema v2 (adds currentR, initialStopPrice,
-    // initialStopDistanceUsd, riskUsd, currentPrice). v1 readers ignore these
-    // fields. v1 snapshots remain readable (backward compatible).
-    schemaVersion: SPOT_FORWARD_TWIN_SCHEMA_VERSION_2,
+    schemaVersion: SPOT_FORWARD_TWIN_SCHEMA_VERSION_3,
     snapshotType: "SUPERVISOR",
     scanId,
     timestamp: ctx.generatedAt,
@@ -285,6 +315,11 @@ export function buildSupervisorSnapshot(input: SupervisorSnapshotInput): Forward
       spreadPct: ctx.spreadPct,
       fetchedAt: ctx.ticker.fetchedAt,
     },
+    candles,
+    regime,
+    volume,
+    dataHealth: String(ctx.dataHealth),
+    marketContextId: ctx.marketContextId,
   };
 }
 

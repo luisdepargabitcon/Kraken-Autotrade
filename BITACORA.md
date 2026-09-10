@@ -9795,3 +9795,76 @@ Verificado en staging READ-ONLY:
 - npm run check: exit 0
 - Build: exit 0
 - git diff --check: exit 0
+
+## 2026-09-10 — SPOT ADAPTIVE V3 — C1F5: FORWARD TWIN FIDELITY CLOSURE
+
+### Objetivo
+
+Cerrar fidelidad de contexto y economía del Forward Twin: PendingEntry zero impact, Supervisor v3 con contexto completo, reconstructPosition con risk real, volume mismatch sin finalizar, fee fidelity REAL vs ESTIMATED, diagnostics completos.
+
+### Cambios producción (C1F5-1 a C1F5-13)
+
+**C1F5-1: PendingEntry sin BUY FILL = zero economic impact**
+- `spotReplayEngineV3.ts`: Eliminada creación de trade NO_BUY_FILL y deducción de fee para pending entries sin BUY FILL.
+- `noBuyFillCount` en diagnostics reemplaza al trade fantasma.
+- Equity no se modifica por pending entries sin fill.
+
+**C1F5-2: Supervisor v3 schema — full market context**
+- `spotForwardTwinTypes.ts`: `SPOT_FORWARD_TWIN_SCHEMA_VERSION_3 = 3`, `isForwardTwinSchemaAllowed` permite v3 para SUPERVISOR.
+- `spotForwardTwinBuilder.ts`: `buildSupervisorSnapshot` usa schema v3 e incluye `candles`, `regime`, `volume`, `dataHealth`, `marketContextId`.
+
+**C1F5-3: reconstructContext usa contexto real v3, DEGRADED v1/v2**
+- `spotReplayEngineV3.ts`: `processSupervisorSnapshot` incrementa `contextDegradedCount` si `snap.regime` ausente (v1/v2).
+
+**C1F5-4: reconstructPosition conserva risk real**
+- `spotReplayEngineV3.ts`: `reconstructPosition` usa `posSnap.initialStopDistanceUsd`, `posSnap.riskUsd`, `posSnap.initialStopPrice` del snapshot. Calcula `initialStopDistancePct` real.
+
+**C1F5-5: Exit decision parity con contexto real v3**
+- Verificado: `evaluateExit` recibe `SpotMarketContext` reconstruido desde v3 con regime, candles, volume reales.
+
+**C1F5-8: SELL volume mismatch — no finalizar posición, no crear trade**
+- `spotReplayEngineV3.ts`: Volume mismatch en SELL FILL → `return` sin finalizar, sin crear trade. Posición queda abierta → OPEN_AT_END.
+- `volumeMismatchCount` en diagnostics.
+
+**C1F5-9: Fee fidelity — FULL requiere fees reales**
+- `spotReplayEngineV3.ts`: `ReplayPosition.entryFeeReal` trackea si entry fee viene de fill real.
+- `finalizeTrade` recibe `exitFeeReal`. Si entry o exit fee no es real → `economicFidelity = "DEGRADED"`.
+- `ReplayV3Trade.feeQuality`: "REAL" | "ESTIMATED".
+- `feeEstimatedCount` en diagnostics.
+
+**C1F5-13: ReplayV3Result diagnostics fields**
+- `spotForwardTwinTypes.ts`: `ReplayV3Diagnostics` interface con `noBuyFillCount`, `volumeMismatchCount`, `contextDegradedCount`, `feeEstimatedCount`, `openAtEndCount`.
+- `ReplayV3Result.diagnostics` field.
+- `ReplayV3Trade.feeQuality` field.
+- `ReplayState` extendido con contadores diagnostics.
+
+### Tests (C1F5-1 a C1F5-13)
+
+**Nuevo archivo**: `server/services/spot/__tests__/spotC1F5ForwardTwinFidelity.test.ts` — 17 tests productivos.
+
+**Tests modificados**:
+- `spotC1F4ReplayIdentity.test.ts`: Schema v3, volume mismatch OPEN_AT_END, zero economic impact.
+- `spotC1F3EconomicReplay.test.ts`: Zero economic impact para pending sin BUY FILL.
+
+### Archivos afectados
+
+- `server/services/spot/spotForwardTwinTypes.ts`
+- `server/services/spot/spotForwardTwinBuilder.ts`
+- `server/services/spot/spotReplayEngineV3.ts`
+- `server/services/spot/__tests__/spotC1F4ReplayIdentity.test.ts`
+- `server/services/spot/__tests__/spotC1F3EconomicReplay.test.ts`
+- `server/services/spot/__tests__/spotC1F5ForwardTwinFidelity.test.ts` (nuevo)
+
+### Validaciones
+
+- SPOT suite: 29 archivos / 379 tests pasaron
+- TSC: exit 0
+- npm run check: exit 0
+- Build: exit 0
+- git diff --check: exit 0
+
+### Estado final
+
+- C1F5 completo: implementado, testado, validado.
+- Branch: `feature/spot-adaptive-v3-shadow`
+- SPOT_ADAPTIVE_V3_REAL_ALLOWED=false

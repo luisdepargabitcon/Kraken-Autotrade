@@ -244,24 +244,17 @@ describe("C1F3-11: Double fee test — entry fee counted exactly once", () => {
     expect(result.finalEquity).toBeCloseTo(9999.48, 2);
   });
 
-  it("DEGRADED position (no BUY FILL): pending entry closed as NO_BUY_FILL with entry fee only", () => {
+  it("PendingEntry without BUY FILL: zero economic impact (C1F5-1)", () => {
     const scan = makeScanSnapshot("BTC/USD", BASE_NOW, 100, c5m, c15m, c1h, c4h);
-    // No BUY FILL — pending entry is closed as NO_BUY_FILL at end of replay
+    // No BUY FILL — pending entry has zero economic impact
     const finalSnap = makeScanSnapshot("BTC/USD", BASE_NOW + 7200000, 105, c5m, c15m, c1h, c4h, false);
 
     const result = _processSnapshotsForTest([scan, finalSnap], 10000);
 
-    expect(result.trades).toHaveLength(1);
-    const trade = result.trades[0];
-    expect(trade.economicFidelity).toBe("DEGRADED");
-    // C1F4-4: SCAN without BUY FILL creates NO_BUY_FILL trade, not OPEN_AT_END
-    expect(trade.exitReasonType).toBe("NO_BUY_FILL");
-    // Entry fee from sizing (0.0026 * 100 * 1 = 0.26)
-    expect(trade.entryFeeUsd).toBeCloseTo(0.26, 2);
-    // No exit fee — no SELL FILL occurred
-    expect(trade.exitFeeUsd).toBe(0);
-    // Equity: 10000 - 0.26 (entry fee only)
-    expect(result.finalEquity).toBeCloseTo(10000 - 0.26, 2);
+    // C1F5-1: No trade created, no fee deducted
+    expect(result.trades).toHaveLength(0);
+    expect(result.diagnostics.noBuyFillCount).toBe(1);
+    expect(result.finalEquity).toBe(10000);
   });
 });
 
