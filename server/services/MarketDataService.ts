@@ -216,6 +216,98 @@ class MarketDataServiceClass {
     this.candleCache.set(this.candleKey(pair, tf), { candles, fetchedAt: Date.now() });
   }
 
+  /**
+   * SPOT V3 Source Finality: Get candles with boundary freshness check.
+   *
+   * If the cached response was fetched BEFORE the close time of its last candle,
+   * and that close time has now passed (wall clock), the cached data is STALE
+   * for closed-candle purposes — the last candle was provisional when fetched
+   * and must NOT be promoted to CLOSED by wall clock alone.
+   *
+   * In that case, forces a refetch. If refetch fails, returns candles excluding
+   * the last (provisional) candle, so SPOT signals use only confirmed-closed data.
+   *
+   * Used by buildSpotMarketContext. Does NOT affect getCandles used by IDCA/GRID.
+   */
+  async getCandlesFinalizedAware(pair: string, tf: Timeframe): Promise<OHLC[]> {
+    const key = this.candleKey(pair, tf);
+    const cached = this.candleCache.get(key);
+    const ttl = this.getTtl(tf);
+
+    if (cached && Date.now() - cached.fetchedAt < ttl) {
+      const candles = cached.candles;
+      if (candles.length > 0) {
+        const lastCandle = candles[candles.length - 1];
+        const lastCandleOpenMs = (lastCandle as any).time ?? (lastCandle as any).timestamp ?? 0;
+        const tfMs = (TIMEFRAME_INTERVAL_MINUTES[tf] ?? 0) * 60 * 1000;
+        const lastCandleCloseMs = lastCandleOpenMs + tfMs;
+
+        if (cached.fetchedAt < lastCandleCloseMs && Date.now() >= lastCandleCloseMs) {
+          console.debug(`[MDS] SOURCE_FINALITY_STALE ${key}: fetchedAt=${new Date(cached.fetchedAt).toISOString()} < closeTime=${new Date(lastCandleCloseMs).toISOString()}`);
+          this.candleCache.delete(key);
+        } else {
+          this._hits++;
+          return candles;
+        }
+      } else {
+        this._hits++;
+        return candles;
+      }
+    }
+
+    const pending = this.pendingCandles.get(key);
+    if (pending) {
+      this._shared++;
+      return pending.catch(() => cached?.candles ?? []);
+    }
+
+    this._misses++;
+
+    if (isFiscoRebuildActive()) {
+      if (cached?.candles) return cached.candles;
+      const fb = await this.tryFallbackToDb(pair, tf, undefined);
+      return fb ?? [];
+    }
+
+    const fetch = (async (): Promise<OHLC[]> => {
+      try {
+        const exchange = ExchangeFactory.getDataExchange();
+        if (!exchange.isInitialized()) {
+          const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
+          return fallback ?? cached?.candles ?? [];
+        }
+        const intervalMin = TIMEFRAME_INTERVAL_MINUTES[tf];
+        if (!intervalMin) return cached?.candles ?? [];
+        const candles = await exchange.getOHLC(pair, intervalMin);
+        if (candles && Array.isArray(candles) && candles.length >= 7) {
+          this.candleCache.set(key, { candles, fetchedAt: Date.now() });
+          this.persistCandles(pair, tf, candles).catch(() => {});
+          return candles;
+        }
+        const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
+        return fallback ?? cached?.candles ?? [];
+      } catch (e: any) {
+        console.warn(`[MDS] getCandlesFinalizedAware(${pair}, ${tf}) error: ${e.message}`);
+        if (cached?.candles && cached.candles.length > 1) {
+          const tfMs = (TIMEFRAME_INTERVAL_MINUTES[tf] ?? 0) * 60 * 1000;
+          const lastCandle = cached.candles[cached.candles.length - 1];
+          const lastCandleOpenMs = (lastCandle as any).time ?? (lastCandle as any).timestamp ?? 0;
+          const lastCandleCloseMs = lastCandleOpenMs + tfMs;
+          if (cached.fetchedAt < lastCandleCloseMs && Date.now() >= lastCandleCloseMs) {
+            console.warn(`[MDS] SOURCE_FINALITY_FAIL_CLOSED ${key}: excluding provisional last candle`);
+            return cached.candles.slice(0, -1);
+          }
+        }
+        const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
+        return fallback ?? cached?.candles ?? [];
+      }
+    })();
+
+    this.pendingCandles.set(key, fetch);
+    fetch.finally(() => this.pendingCandles.delete(key));
+    return fetch;
+  }
+
   hasFreshCandles(pair: string, tf: Timeframe): boolean {
     const key = this.candleKey(pair, tf);
     const cached = this.candleCache.get(key);

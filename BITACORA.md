@@ -9907,3 +9907,78 @@ Cerrar 3 gaps finales: exit con gap en replay clásico, loadSnapshots test real 
 - npm run check: exit 0
 - Build: exit 0
 - git diff --check: exit 0
+
+## 2026-09-11 — SPOT ADAPTIVE V3 — KRAKEN HISTORICAL + BASELINE REPLAY CERTIFICATION
+
+### Objetivo
+
+Certificación end-to-end: fuente histórica Kraken oficial, baseline replay determinista, cache source-finality, anti-lookahead histórico.
+
+### Fuente histórica
+
+- Source: KRAKEN_OFFICIAL_API_OHLC (api.kraken.com/0/public/OHLC)
+- ZIP oficial (7.3 GB Google Drive) no disponible por rate-limit. API oficial usada como alternativa oficial.
+- Pares: BTC/USD (XBTUSD→XXBTZUSD), ETH/USD (ETHUSD→XETHZUSD), SOL/USD (SOLUSD→SOLUSD), XRP/USD (XRPUSD→XXRPZUSD)
+- Timeframes: 5m, 15m, 60m, 240m
+- 720 velas por request (limitación API). Datos cacheados localmente fuera del repo.
+
+### Dataset
+
+- 16 datasets (4 pares × 4 timeframes), 723 velas cada uno
+- 5m: 2026-09-08 → 2026-09-10 (~2.5 días)
+- 15m: 2026-09-03 → 2026-09-10 (~7.5 días)
+- 1h: 2026-08-11 → 2026-09-10 (~30 días)
+- 4h: 2026-05-13 → 2026-09-10 (~120 días)
+- Validación: timestamps ascending, unique, OHLC invariant, gap detection, MTF cross-check
+- Manifest: research/spot-v3/kraken-historical-manifest.json
+
+### Cache Source-Finality
+
+- MarketDataService.getCandlesFinalizedAware(): no promueve velas provisionales cacheadas a closed por wall clock
+- Si fetchedAt < closeTime y Date.now() >= closeTime → refetch obligatorio
+- En fallo de refetch: excluye última vela provisional (fail-closed)
+- No altera getCandles() para IDCA/GRID/otros consumidores
+- Tests: 5m, 15m, 1h, 4h — todos PASS
+
+### Anti-Lookahead Histórico
+
+- 5 tests deterministas: future candles, no next candle, forming candle, closeTime boundary, post-decision modification
+- Todos PASS
+
+### Baseline Replay
+
+- Estrategia EXACTA del commit base (sin optimización)
+- 2 runs por par para verificar determinismo (SHA256)
+- Resultado: 0 trades para los 4 pares (datos 5m insuficientes para warmup + señales)
+- Determinismo: PASS (hashes idénticos run1 vs run2)
+- Estructura pre-entry: 0 casos (sin trades)
+- Sin tuning, sin walk-forward, sin optimización
+
+### Limitación conocida
+
+- La API de Kraken solo retorna 720 velas por request. El ZIP oficial (7.3 GB) está rate-limited en Google Drive.
+- Para baseline con más histórico: descargar ZIP manualmente o usar API de trades para construir velas.
+
+### Archivos afectados
+
+- server/services/MarketDataService.ts (getCandlesFinalizedAware)
+- server/services/spot/research/krakenHistoricalLoader.ts (nuevo)
+- server/services/spot/research/krakenDatasetValidator.ts (nuevo)
+- server/services/spot/research/spotBaselineResearch.ts (nuevo)
+- server/services/spot/research/downloadKrakenData.ts (nuevo)
+- server/services/spot/research/runBaseline.ts (nuevo)
+- server/services/spot/__tests__/spotCacheBoundaryFinality.test.ts (nuevo)
+- server/services/spot/__tests__/spotHistoricalAntiLookahead.test.ts (nuevo)
+- research/spot-v3/kraken-historical-manifest.json (nuevo)
+- research/spot-v3/results/SPOT_V3_BASELINE_SUMMARY.csv (nuevo)
+- research/spot-v3/results/SPOT_V3_BASELINE_SUMMARY.json (nuevo)
+- research/spot-v3/results/SPOT_V3_BASELINE_REPORT.md (nuevo)
+
+### Validaciones
+
+- SPOT suite: 31 archivos / 392 tests pasaron
+- TSC: exit 0
+- npm run check: exit 0
+- Build: exit 0
+- git diff --check: exit 0
+- NO tuning, NO REAL, NO deploy, NO DB, NO VPS
