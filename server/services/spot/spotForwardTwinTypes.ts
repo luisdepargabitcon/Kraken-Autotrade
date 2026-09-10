@@ -299,6 +299,7 @@ export interface ReplayV3Trade {
   mfeR: number;
   maeR: number;
   setupTag: string;
+  economicFidelity: "FILL" | "DEGRADED";
 }
 
 export interface ReplayV3FidelityMetrics {

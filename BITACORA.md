@@ -1,4 +1,79 @@
-﻿# BITÁCORA — Kraken-Autotrade
+## 2026-09-10 — SPOT ADAPTIVE V3 — C1F3: COUNTER-AUDIT & REPLAY EQUITY FIX
+
+### Objetivo
+
+Counter-audit de C1F2: garantizar que los tests de integración usen código de producción real (no mocks ni reimplementaciones). Corregir defectos económicos en Replay V3.
+
+### Cambios (C1F3-1 a C1F3-12)
+
+**C1F3-1: Exploración código producción**
+- Revisado: uildSpotMarketContext, econstructContext, processScanSnapshot, inalizeTrade, evaluateStructureInvalidation, evaluateExit, ForwardTwinFillSnapshot.
+
+**C1F3-2: Test integración producción real**
+- spotC1F3ProductionIntegration.test.ts (nuevo): Mock MarketDataService.getCandles/getTicker, Date.now determinístico, llama real uildSpotMarketContext + evaluateSpotCanonical. 5 tests.
+
+**C1F3-3: Forward Twin parity real**
+- spotC1F3ForwardTwinParity.test.ts (nuevo): Usa _reconstructContextForTest exportada de spotReplayEngineV3.ts. Sin reimplementación local. 4 tests.
+
+**C1F3-4: Structure invalidation real**
+- spotC1F3StructureInvalidation.test.ts (nuevo): Llama real evaluateStructureInvalidation + evaluateExit de spotExitPolicy.ts. Documenta defecto pre-entry candle. 5 tests.
+
+**C1F3-5: Fix double entry fee en Replay V3**
+- processScanSnapshot: No descuenta entryFeeUsd al crear posición (PENDING ENTRY).
+- processFillSnapshot (BUY): Descuenta entryFeeUsd una sola vez al materializar con BUY FILL.
+- inalizeTrade: state.equity += grossPnl - exitFeeUsd (no 
+etPnl que incluye entryFee).
+- OPEN_AT_END: Descuenta entryFeeUsd si economicFidelity === "DEGRADED".
+
+**C1F3-6: Replay V3 entry usa BUY FILL como autoridad económica**
+- processFillSnapshot (BUY): pos.entryPrice = snap.fill.fillPrice, pos.amount = snap.fill.fillVolume, pos.entryFeeUsd = snap.fill.feeUsd.
+
+**C1F3-7: Replay V3 exit usa SELL FILL como autoridad económica**
+- processSupervisorSnapshot: Registra pendingExit (no finaliza).
+- processFillSnapshot (SELL): inalizeTrade con snap.fill.fillPrice y snap.fill.feeUsd.
+
+**C1F3-8: Correlación de fills por lotId/signalId/intentId**
+- processFillSnapshot: Busca posición por lotId → signalId → intentId → fallback por par.
+
+**C1F3-9: Fallback explícito DEGRADED**
+- ReplayPosition.economicFidelity: "FILL" | "DEGRADED".
+- Posiciones sin BUY FILL quedan DEGRADED. ReplayV3Trade.economicFidelity expuesto.
+
+**C1F3-10: Test económico real Replay V3**
+- spotC1F3EconomicReplay.test.ts (nuevo): WIN/LOSS/ZERO gross con checks numéricos exactos. 6 tests.
+
+**C1F3-11: Test double fee**
+- Verifica entry fee contado exactamente una vez (FILL y DEGRADED).
+
+**C1F3-12: Fail-closed para entries en data gap**
+- spotReplayEngine.ts: hasDataGap detecta gaps > 2x 5m entre candles consecutivos, bloquea entries.
+- spotC1F3ReplayGap.test.ts (nuevo): 2 tests.
+
+### Archivos modificados
+- server/services/spot/spotReplayEngineV3.ts — Export _reconstructContextForTest, fix double fee, fill authority, DEGRADED fidelity, pending exit, fill correlation.
+- server/services/spot/spotReplayEngine.ts — Gap detection fail-closed.
+- server/services/spot/spotForwardTwinTypes.ts — economicFidelity en ReplayV3Trade.
+
+### Archivos nuevos
+- server/services/spot/__tests__/spotC1F3ProductionIntegration.test.ts (5 tests)
+- server/services/spot/__tests__/spotC1F3ForwardTwinParity.test.ts (4 tests)
+- server/services/spot/__tests__/spotC1F3StructureInvalidation.test.ts (5 tests)
+- server/services/spot/__tests__/spotC1F3EconomicReplay.test.ts (6 tests)
+- server/services/spot/__tests__/spotC1F3ReplayGap.test.ts (2 tests)
+
+### Validación
+- 
+px tsc --noEmit: 0 errores
+- C1F3 tests: 22/22 pasados
+- C1F2 tests: 19/19 pasados (sin regresión)
+- Spot tests totales: 345/345 pasados (26 archivos)
+- git diff --check: limpio
+- SPOT_ADAPTIVE_V3_REAL_ALLOWED = false: mantenido
+
+### Estado
+- Implementado, validado, no desplegado.
+- SHADOW only. No REAL orders. No VPS. No deploy.
+# BITÁCORA — Kraken-Autotrade
 
 > Fuente técnica y operativa unificada. Incluye el estado vigente y los hitos necesarios para comprenderlo. Las entradas antiguas no prevalecen sobre una regla vigente posterior.
 > Última actualización: 2026-09-09
