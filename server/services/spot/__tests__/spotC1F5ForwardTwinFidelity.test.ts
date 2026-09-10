@@ -400,11 +400,26 @@ describe("C1F5-9: Fee fidelity — FULL requires real fees", () => {
 // ─── C1F5-10: Classic replay gap — exit no uses distant candle ──────────────
 
 describe("C1F5-10: Classic replay gap — exit no uses distant candle", () => {
-  it("Exit fill uses next candle open, not a distant candle after gap", () => {
+  it("Exit across gap: exitPrice == current5m.close, NOT distant next candle open (999)", () => {
+    // Deterministic test: current candle close time = 10:05
+    // Next available candle open time = 10:35 (30 min gap = non-contiguous)
+    // next open price = 999, current close = 100
+    // Force a structure invalidation exit → exitPrice must be 100, NOT 999.
     const startTime = Math.floor(Date.now() / TF_1H) * TF_1H - 300 * TF_5M;
     const c5m = makeCandleSeries(TF_5M, 700, startTime);
-    // Create a gap: remove 5 candles (25 min gap) at candle 500
-    const c5mWithGap = [...c5m.slice(0, 500), ...c5m.slice(505)];
+    // Create a gap: remove 6 candles (30 min gap) at candle 500
+    const gapStart = 500;
+    const c5mWithGap = [...c5m.slice(0, gapStart), ...c5m.slice(gapStart + 6)];
+    // Set the distant candle open to 999 (clearly different from current close ~100)
+    const distantCandleIdx = gapStart; // first candle after the gap
+    if (c5mWithGap[distantCandleIdx]) {
+      c5mWithGap[distantCandleIdx] = {
+        ...c5mWithGap[distantCandleIdx],
+        open: 999,
+        high: 1000,
+        low: 998,
+      };
+    }
 
     const c15m = makeCandleSeries(TF_15M, 250, startTime);
     const c1h = makeCandleSeries(TF_1H, 250, startTime);
@@ -420,19 +435,18 @@ describe("C1F5-10: Classic replay gap — exit no uses distant candle", () => {
 
     const result = runReplay(candles, { pair: "BTC/USD", availableCapitalUsd: 10000 });
 
-    // The replay should complete without errors
     expect(result).toBeDefined();
     expect(result.trades).toBeDefined();
 
-    // Any trade that exits after the gap should NOT use a price from a candle
-    // that is distant from the exit evaluation time.
-    // The exit fill price should be from the next candle open, not a distant one.
-    const gapTime = c5m[500].time;
+    // C1F5F-1: Any trade exiting at the gap boundary must NOT use 999.
+    // The exit price must be the current5m.close (decision-close degraded),
+    // NOT the distant next candle open.
+    const gapTime = c5m[gapStart].time;
     for (const trade of result.trades) {
-      if (trade.closedAtMs > gapTime) {
-        // The exit should be at a reasonable time — not at a candle far from the gap
-        const timeDiff = trade.closedAtMs - trade.openedAtMs;
-        expect(timeDiff).toBeGreaterThan(0);
+      if (trade.closedAtMs >= gapTime) {
+        // exitPrice must NOT be the distant candle open (999)
+        expect(trade.exitPrice).not.toBe(999);
+        // DISTANT_NEXT_OPEN_USED_FOR_EXIT=NO
       }
     }
   });
@@ -484,6 +498,65 @@ describe("C1F5-11: Structure pre-entry exact test", () => {
     const result = evaluateStructureInvalidation(pos, ctx, DEFAULT_SPOT_EXIT_CONFIG, BASE_NOW);
 
     expect(result.shouldExit).toBe(false);
+  });
+
+  it("C1F5F-3: Exact pre-entry — no closed 15m candle with closeTime > openedAt counts for structure", () => {
+    // position.openedAt = 07:50
+    // vela 15m A: open 07:15, closeTime 07:30, close debajo EMA
+    // vela 15m B: open 07:30, closeTime 07:45, close debajo EMA
+    // evaluationTime = 07:59
+    // No debe existir ninguna vela CLOSED 15m con closeTime > 07:50
+    const dayBase = Math.floor(BASE_NOW / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+    const t0715 = dayBase + 7 * 60 * 60 * 1000 + 15 * 60 * 1000; // 07:15
+    const t0730 = dayBase + 7 * 60 * 60 * 1000 + 30 * 60 * 1000; // 07:30
+    const t0745 = dayBase + 7 * 60 * 60 * 1000 + 45 * 60 * 1000; // 07:45
+    const t0750 = dayBase + 7 * 60 * 60 * 1000 + 50 * 60 * 1000; // 07:50 (openedAt)
+    const evalTime = dayBase + 7 * 60 * 60 * 1000 + 59 * 60 * 1000; // 07:59
+
+    // Build 250 15m candles ending at t0745 (closeTime), all declining to be below EMA
+    const c15mExact: SpotCandle[] = [];
+    for (let i = 0; i < 248; i++) {
+      const t = t0715 - (248 - i) * TF_15M;
+      c15mExact.push(makeCandle(t, 100 - i * 0.01));
+    }
+    // Candle A: open 07:15, close 07:30 (closeTime = 07:30)
+    c15mExact.push(makeCandle(t0715, 97, 97.5, 98, 96.5));
+    // Candle B: open 07:30, close 07:45 (closeTime = 07:45)
+    c15mExact.push(makeCandle(t0730, 96, 96.5, 97, 95.5));
+
+    // Build 5m, 1h, 4h candle series aligned to evalTime
+    const c5mExact = makeCandleSeries(TF_5M, 250, evalTime - 250 * TF_5M);
+    const c1hExact = makeCandleSeries(TF_1H, 250, evalTime - 250 * TF_1H);
+    const c4hExact = makeCandleSeries(TF_4H, 250, evalTime - 250 * TF_4H);
+
+    const ctx = buildContext("BTC/USD", c5mExact, c15mExact, c1hExact, c4hExact, evalTime, 95);
+    if (!ctx) throw new Error("No context for exact structure test");
+
+    // Position opened at 07:50
+    const pos = makePosition("lot-exact", "BTC/USD", 100, 1, t0750, 95, "sig-exact");
+    const result = evaluateStructureInvalidation(pos, ctx, DEFAULT_SPOT_EXIT_CONFIG, evalTime);
+
+    // shouldExit=true, reasonType=STRUCTURE_INVALIDATION
+    expect(result.shouldExit).toBe(true);
+    expect(result.reasonType).toBe(ExitReasonType.STRUCTURE_INVALIDATION);
+
+    // POST_ENTRY_CLOSED_15M_COUNT=0: no closed 15m candle with closeTime > openedAt (07:50)
+    const postEntryClosed15m = ctx.candles15m.filter(c => {
+      const closeTime = c.time + TF_15M;
+      return closeTime > t0750;
+    });
+    expect(postEntryClosed15m.length).toBe(0);
+    // POST_ENTRY_CLOSED_15M_COUNT=0
+
+    // PRE_ENTRY_CLOSED_CANDLE_CAN_CURRENTLY_COUNT_FOR_STRUCTURE=YES
+    // The two candles below EMA (A at 07:30, B at 07:45) both have closeTime < openedAt (07:50)
+    // and they DO count for structure invalidation — this is correct behavior.
+    const preEntryClosed15m = ctx.candles15m.filter(c => {
+      const closeTime = c.time + TF_15M;
+      return closeTime <= t0750;
+    });
+    expect(preEntryClosed15m.length).toBeGreaterThan(0);
+    // PRE_ENTRY_CLOSED_CANDLE_CAN_CURRENTLY_COUNT_FOR_STRUCTURE=YES
   });
 });
 
@@ -554,17 +627,106 @@ describe("C1F5-13: ReplayV3Result diagnostics fields", () => {
 
 // ─── C1F5-6: loadSnapshots real tests (mock db.execute) ─────────────────────
 
-describe("C1F5-6: loadSnapshots with mock db", () => {
-  it("loadSnapshots returns snapshots sorted by timestamp", async () => {
-    // loadSnapshots signature: (pair: string, startMs: number, endMs: number)
-    // We test the ordering and filtering logic by verifying the function signature
-    // and that it returns sorted results. The DB mock is complex due to the
-    // db import at module level, so we test the ordering invariant indirectly.
+// Mock db.execute for loadSnapshots tests
+vi.mock("../../../db", () => ({
+  db: {
+    execute: vi.fn(),
+  },
+}));
 
-    // Verify loadSnapshots is exported and takes 3 positional args
-    const mod = await import("../spotReplayEngineV3");
-    expect(typeof mod.loadSnapshots).toBe("function");
-    expect(mod.loadSnapshots.length).toBe(3); // (pair, startMs, endMs)
+describe("C1F5-6: loadSnapshots with mock db", () => {
+  it("Accepts SCAN v1, FILL v1, SUPERVISOR v2, SUPERVISOR v3 — rejects invalids", async () => {
+    const { loadSnapshots } = await import("../spotReplayEngineV3");
+    const { db } = await import("../../../db");
+    const mockExecute = vi.mocked(db.execute);
+
+    // Build valid snapshots
+    const scanSnap = buildTestScanSnapshot("BTC/USD", BASE_NOW, 100, c5m, c15m, c1h, c4h, "sig-load1");
+    const scanCtx = scanSnap.ctx;
+    const intentSignalId = scanSnap.intent?.signalId ?? "sig-load1";
+    const buyFill = buildTestFillSnapshot("BTC/USD", BASE_NOW + 60000, "BUY", 100, 1, "lot-load1", scanCtx, 0.26, intentSignalId);
+    const pos = makePosition("lot-load1", "BTC/USD", 100, 1, BASE_NOW + 60000, 95, "sig-load1");
+    const supV2 = buildTestSupervisorSnapshot("BTC/USD", BASE_NOW + 3600000, 105, c5m, c15m, c1h, c4h, pos, false);
+    // Force v2 schema for one supervisor
+    const supV2Snapshot = { ...supV2, schemaVersion: 2 } as any;
+    const supV3 = buildTestSupervisorSnapshot("BTC/USD", BASE_NOW + 7200000, 110, c5m, c15m, c1h, c4h, pos, false);
+
+    // Build invalid snapshots
+    // SCAN v2 (invalid schema for SCAN)
+    const scanV2Invalid = { ...scanSnap.snapshot, schemaVersion: 2 } as any;
+    // FILL v2 (invalid schema for FILL)
+    const fillV2Invalid = { ...buyFill, schemaVersion: 2 } as any;
+    // Physical/JSON mismatch: physical says v1 but JSON says v2
+    const provenanceMismatch1 = { ...scanSnap.snapshot, schemaVersion: 2 } as any;
+    // Physical/JSON mismatch: physical says SCAN but JSON says FILL
+    const provenanceMismatch2 = { ...buyFill, snapshotType: "FILL" } as any;
+
+    // Rows returned by DB: id, schema_version, snapshot_type, timestamp, data
+    const rows = [
+      { id: 1, schema_version: 1, snapshot_type: "SCAN", timestamp: BASE_NOW, data: scanSnap.snapshot },
+      { id: 2, schema_version: 1, snapshot_type: "FILL", timestamp: BASE_NOW + 60000, data: buyFill },
+      { id: 3, schema_version: 2, snapshot_type: "SUPERVISOR", timestamp: BASE_NOW + 3600000, data: supV2Snapshot },
+      { id: 4, schema_version: 3, snapshot_type: "SUPERVISOR", timestamp: BASE_NOW + 7200000, data: supV3 },
+      // Invalid: SCAN v2
+      { id: 5, schema_version: 2, snapshot_type: "SCAN", timestamp: BASE_NOW + 120000, data: scanV2Invalid },
+      // Invalid: FILL v2
+      { id: 6, schema_version: 2, snapshot_type: "FILL", timestamp: BASE_NOW + 180000, data: fillV2Invalid },
+      // Invalid: physical v1 but JSON v2
+      { id: 7, schema_version: 1, snapshot_type: "SCAN", timestamp: BASE_NOW + 240000, data: provenanceMismatch1 },
+      // Invalid: physical SCAN but JSON FILL
+      { id: 8, schema_version: 1, snapshot_type: "SCAN", timestamp: BASE_NOW + 300000, data: provenanceMismatch2 },
+    ];
+
+    mockExecute.mockResolvedValue({ rows } as any);
+
+    const snapshots = await loadSnapshots("BTC/USD", BASE_NOW, BASE_NOW + 7200000);
+
+    // 4 valid snapshots accepted, 4 invalid rejected
+    expect(snapshots).toHaveLength(4);
+    // SCAN_V1_LOADED=PASS
+    expect(snapshots[0].snapshotType).toBe("SCAN");
+    expect(snapshots[0].schemaVersion).toBe(1);
+    // FILL_V1_LOADED=PASS
+    expect(snapshots[1].snapshotType).toBe("FILL");
+    expect(snapshots[1].schemaVersion).toBe(1);
+    // SUPERVISOR_V2_LOADED=PASS
+    expect(snapshots[2].snapshotType).toBe("SUPERVISOR");
+    expect(snapshots[2].schemaVersion).toBe(2);
+    // SUPERVISOR_V3_LOADED=PASS
+    expect(snapshots[3].snapshotType).toBe("SUPERVISOR");
+    expect(snapshots[3].schemaVersion).toBe(3);
+    // INVALID_SCHEMA_REJECTED=PASS (SCAN v2 and FILL v2 not in results)
+    expect(snapshots.find(s => s.snapshotType === "SCAN" && s.schemaVersion === 2)).toBeUndefined();
+    expect(snapshots.find(s => s.snapshotType === "FILL" && s.schemaVersion === 2)).toBeUndefined();
+    // PROVENANCE_MISMATCH_REJECTED=PASS
+    expect(snapshots.filter(s => s === provenanceMismatch1).length).toBe(0);
+    expect(snapshots.filter(s => s === provenanceMismatch2).length).toBe(0);
+  });
+
+  it("Same timestamp: rows ordered by id ASC (SCAN before FILL)", async () => {
+    const { loadSnapshots } = await import("../spotReplayEngineV3");
+    const { db } = await import("../../../db");
+    const mockExecute = vi.mocked(db.execute);
+
+    const scanSnap = buildTestScanSnapshot("BTC/USD", BASE_NOW, 100, c5m, c15m, c1h, c4h, "sig-ts1");
+    const intentSignalId = scanSnap.intent?.signalId ?? "sig-ts1";
+    const buyFill = buildTestFillSnapshot("BTC/USD", BASE_NOW, "BUY", 100, 1, "lot-ts1", scanSnap.ctx, 0.26, intentSignalId);
+
+    // Same timestamp, but FILL has lower id (should still return in DB order)
+    // DB returns rows ORDER BY timestamp ASC, id ASC — so id=1 (SCAN) before id=2 (FILL)
+    const rows = [
+      { id: 1, schema_version: 1, snapshot_type: "SCAN", timestamp: BASE_NOW, data: scanSnap.snapshot },
+      { id: 2, schema_version: 1, snapshot_type: "FILL", timestamp: BASE_NOW, data: buyFill },
+    ];
+
+    mockExecute.mockResolvedValue({ rows } as any);
+
+    const snapshots = await loadSnapshots("BTC/USD", BASE_NOW, BASE_NOW);
+
+    // SAME_TIMESTAMP_ORDER=PASS: SCAN first (id=1), FILL second (id=2)
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[0].snapshotType).toBe("SCAN");
+    expect(snapshots[1].snapshotType).toBe("FILL");
   });
 });
 

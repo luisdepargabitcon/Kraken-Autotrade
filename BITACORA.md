@@ -9868,3 +9868,42 @@ Cerrar fidelidad de contexto y economía del Forward Twin: PendingEntry zero imp
 - C1F5 completo: implementado, testado, validado.
 - Branch: `feature/spot-adaptive-v3-shadow`
 - SPOT_ADAPTIVE_V3_REAL_ALLOWED=false
+
+## 2026-09-10 — SPOT ADAPTIVE V3 — C1F5F: CORRECCIÓN FINAL RÁPIDA
+
+### Objetivo
+
+Cerrar 3 gaps finales: exit con gap en replay clásico, loadSnapshots test real con mock db, structure pre-entry exacto.
+
+### Cambios
+
+**C1F5F-1: Classic replay gap exit — no distant next open**
+- `spotReplayEngine.ts`: Exit fill usa `hasNextCandle ? nextCandle.open : current5m.close` en lugar de `fillPrice ?? current5m.close`.
+- Evita usar apertura de vela distante tras gap. Política conservadora: decision-close degraded.
+- Test: gap 30 min, distant open=999, current close=100 → exitPrice != 999.
+
+**C1F5F-2: loadSnapshots real test — mock db.execute**
+- `spotC1F5ForwardTwinFidelity.test.ts`: `vi.mock("../../../db")` con mock real.
+- Llama `loadSnapshots("BTC/USD", start, end)` con rows válidas e inválidas.
+- Acepta SCAN v1, FILL v1, SUPERVISOR v2, SUPERVISOR v3.
+- Rechaza SCAN v2, FILL v2, provenance mismatch (physical vs JSON).
+- Verifica orden same timestamp por id ASC.
+
+**C1F5F-3: Structure pre-entry exacto**
+- Test exacto: position.openedAt=07:50, velas 15m A (07:15-07:30) y B (07:30-07:45) debajo EMA, evalTime=07:59.
+- POST_ENTRY_CLOSED_15M_COUNT=0: ninguna vela closed 15m con closeTime > 07:50.
+- PRE_ENTRY_CLOSED_CANDLE_CAN_CURRENTLY_COUNT_FOR_STRUCTURE=YES.
+- `evaluateStructureInvalidation` → shouldExit=true, reasonType=STRUCTURE_INVALIDATION.
+
+### Archivos afectados
+
+- `server/services/spot/spotReplayEngine.ts`
+- `server/services/spot/__tests__/spotC1F5ForwardTwinFidelity.test.ts`
+
+### Validaciones
+
+- SPOT suite: 29 archivos / 381 tests pasaron
+- TSC: exit 0
+- npm run check: exit 0
+- Build: exit 0
+- git diff --check: exit 0

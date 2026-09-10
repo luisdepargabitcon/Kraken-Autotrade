@@ -200,8 +200,9 @@ export function runReplay(
 
       const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, evaluationTime);
       if (exitDecision.shouldExit) {
-        // C1F2-10: Exit requires a fill price. If no next candle, use current candle close as terminal exit.
-        const exitFillPrice = fillPrice ?? current5m.close;
+        // C1F5F-1: Exit fill must NOT use distant next candle open.
+        // Only use nextCandle.open if contiguous; otherwise use current5m.close as EXIT_AT_DECISION_CLOSE_DEGRADED.
+        const exitFillPrice = hasNextCandle ? nextCandle!.open : current5m.close;
         const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining);
         const pnl = computePnlBreakdown({
           entryPrice: pos.entryPrice,
