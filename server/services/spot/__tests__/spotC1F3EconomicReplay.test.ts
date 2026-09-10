@@ -244,10 +244,9 @@ describe("C1F3-11: Double fee test — entry fee counted exactly once", () => {
     expect(result.finalEquity).toBeCloseTo(9999.48, 2);
   });
 
-  it("DEGRADED position (no BUY FILL): entry fee deducted once at OPEN_AT_END", () => {
+  it("DEGRADED position (no BUY FILL): pending entry closed as NO_BUY_FILL with entry fee only", () => {
     const scan = makeScanSnapshot("BTC/USD", BASE_NOW, 100, c5m, c15m, c1h, c4h);
-    // No BUY FILL — position stays DEGRADED
-    // Add a final snapshot with ticker for OPEN_AT_END
+    // No BUY FILL — pending entry is closed as NO_BUY_FILL at end of replay
     const finalSnap = makeScanSnapshot("BTC/USD", BASE_NOW + 7200000, 105, c5m, c15m, c1h, c4h, false);
 
     const result = _processSnapshotsForTest([scan, finalSnap], 10000);
@@ -255,21 +254,22 @@ describe("C1F3-11: Double fee test — entry fee counted exactly once", () => {
     expect(result.trades).toHaveLength(1);
     const trade = result.trades[0];
     expect(trade.economicFidelity).toBe("DEGRADED");
+    // C1F4-4: SCAN without BUY FILL creates NO_BUY_FILL trade, not OPEN_AT_END
+    expect(trade.exitReasonType).toBe("NO_BUY_FILL");
     // Entry fee from sizing (0.0026 * 100 * 1 = 0.26)
     expect(trade.entryFeeUsd).toBeCloseTo(0.26, 2);
-    // Equity: 10000 - 0.26 (entry at OPEN_AT_END) + gross - exitFee
-    // gross = (105 - 100) * 1 = 5
-    // exitFee from canonical = 105 * 1 * takerPct/100
-    const feeModel = getTradingFeeModel();
-    const expectedExitFee = 105 * 1 * (feeModel.takerFeePct / 100);
-    expect(trade.exitFeeUsd).toBeCloseTo(expectedExitFee, 2);
+    // No exit fee — no SELL FILL occurred
+    expect(trade.exitFeeUsd).toBe(0);
+    // Equity: 10000 - 0.26 (entry fee only)
+    expect(result.finalEquity).toBeCloseTo(10000 - 0.26, 2);
   });
 });
 
 describe("C1F3-8: Fill correlation by lotId for two lots same pair", () => {
   it("two SCAN snapshots create two positions, fills correlate by lotId", () => {
-    const scan1 = makeScanSnapshot("BTC/USD", BASE_NOW, 100, c5m, c15m, c1h, c4h, true, "sig-a", "intent-a");
-    const scan2 = makeScanSnapshot("BTC/USD", BASE_NOW + 300000, 100, c5m, c15m, c1h, c4h, true, "sig-b", "intent-b");
+    // C1F4-5: signalId must match between SCAN intent.signalId and FILL fill.signalId
+    const scan1 = makeScanSnapshot("BTC/USD", BASE_NOW, 100, c5m, c15m, c1h, c4h, true, "sig-a", "sig-a");
+    const scan2 = makeScanSnapshot("BTC/USD", BASE_NOW + 300000, 100, c5m, c15m, c1h, c4h, true, "sig-b", "sig-b");
 
     const buyFill1 = makeFillSnapshot("BTC/USD", BASE_NOW + 60000, "BUY", 100, 1, "lot-a", 0.26, "sig-a", "intent-a");
     const buyFill2 = makeFillSnapshot("BTC/USD", BASE_NOW + 360000, "BUY", 100, 1, "lot-b", 0.26, "sig-b", "intent-b");

@@ -1,3 +1,104 @@
+## 2026-09-10 — SPOT ADAPTIVE V3 — C1F4: FORWARD-TWIN IDENTITY + FILL + REPLAY LOADER CLOSURE
+
+### Objetivo
+
+Cerrar identidad de replay: schema loader multi-version, PendingEntry state, correlación por lotId, economicFidelity dual-fill, gap contiguity exacto, tests con productive builders.
+
+### Cambios producción (C1F4-2 a C1F4-20)
+
+**C1F4-2: loadSnapshots schema contract**
+- `spotReplayEngineV3.ts`: Import `isForwardTwinSchemaAllowed` (no filtro por schema_version único).
+- SQL: `ORDER BY timestamp ASC, id ASC` (determinismo).
+- Validación physical/JSON: `data.schemaVersion === row.schema_version && data.snapshotType === row.snapshot_type` → fail-closed (skip).
+- Validación `isForwardTwinSchemaAllowed(rowSnapshotType, rowSchemaVersion)` → skip si no permitido.
+- SCAN=1, FILL=1, SUPERVISOR=1|2.
+
+**C1F4-3: Deterministic event ordering**
+- `ORDER BY timestamp ASC, id ASC` garantiza orden determinista para mismo timestamp.
+
+**C1F4-4: PendingEntry state**
+- Nueva interfaz `PendingEntry` (pair, scanId, signalId, setupTag, intendedVolume, estimatedFee, stopPrice, createdAt, tickerLast).
+- `ReplayState.pendingEntries: Map<string, PendingEntry>`.
+- SCAN crea `PendingEntry` (no `ReplayPosition`) cuando `pipelineStopStage === "EXECUTED" && sizing.approved`.
+- Pending entries sin BUY FILL → trade `NO_BUY_FILL` con `economicFidelity: "DEGRADED"` y solo entryFee.
+
+**C1F4-5: signalId semantics**
+- `signalId = snap.intent?.signalId ?? null` (no `snap.signal.contextId`).
+
+**C1F4-6: intentId not faked**
+- `intentId = null` en SCAN. Se asigna solo desde FILL (`fill.intentId`).
+
+**C1F4-7: BUY FILL materializes lot**
+- BUY FILL crea `ReplayPosition` desde `PendingEntry`.
+- `mapKey === position.lotId` (invariante). `state.positions.set(lotId, pos)`.
+- `entryFillConfirmed = true`, `exitFillConfirmed = false`.
+- Entry fee deducido en BUY FILL, no en SCAN.
+
+**C1F4-8: Supervisor correlation by lotId**
+- `processSupervisorSnapshot`: busca por `snap.position.lotId` primero.
+- Fallback por pair solo si exactamente 1 posición para ese pair.
+- 2+ posiciones sin lotId match → fail-closed (no update).
+
+**C1F4-9: SELL FILL correlation by lotId**
+- SELL FILL busca por `fill.lotId` directamente.
+- Fallback por pair solo si exactamente 1 posición.
+- `state.positions.delete(pos.lotId)` tras finalizar.
+
+**C1F4-10: economicFidelity dual-fill**
+- `ReplayPosition.entryFillConfirmed` y `exitFillConfirmed`.
+- `economicFidelity = "FILL"` solo si ambos true y sin volumeMismatch.
+- `OPEN_AT_END` siempre `DEGRADED`.
+
+**C1F4-14: Fill volume integrity**
+- SELL FILL verifica `Math.abs(fill.fillVolume - pos.qtyRemaining) > 0.0001`.
+- Mismatch → `DEGRADED`.
+
+**C1F4-18: Classic replay gap contiguity**
+- `spotReplayEngine.ts`: Reemplazado heurística 2x timeframe por contiguidad exacta.
+- `expectedNextOpen = current5m.time + 5*60*1000`.
+- `hasNextCandle = nextCandle != null && nextCandle.time === expectedNextOpen`.
+- Gap de 1 candle (5 min) ahora bloquea entries (antes no).
+
+**C1F4-19: Gap blocks entry not exit**
+- Exit evaluation ocurre antes del check de gap.
+- `if (hasDataGap) continue;` solo bloquea entry, no exit.
+
+### Tests (C1F4-11 a C1F4-20)
+
+**C1F4-11/12/13/14/15: spotC1F4ReplayIdentity.test.ts (nuevo, 8 tests)**
+- Usa productive builders: `buildScanSnapshot`, `buildSupervisorSnapshot`, `buildFillSnapshot`.
+- C1F4-11: Schema v1 SCAN, v1 FILL sin top-level ticker, v2 SUPERVISOR.
+- C1F4-12: Two-lot exits via real SELL fills, no OPEN_AT_END.
+- C1F4-14: Volume mismatch → DEGRADED, exact match → FILL.
+- C1F4-15: Equity = initialCapital - entryFee + gross - exitFee.
+
+**C1F4-16/17/18/19/20: spotC1F4StructureAndGap.test.ts (nuevo, 9 tests)**
+- C1F4-16: evaluateStructureInvalidation real (price below EMA → exit, above → no exit).
+- C1F4-17: Forming candle excluded from structure evaluation.
+- C1F4-18: 1-candle gap bloquea entries (contiguity exacta).
+- C1F4-19: Exit evaluado incluso con gap.
+- C1F4-20: closedCandleContext excluye forming, lastNClosedCandles y lastClosedCandle correctos.
+
+**C1F3 tests corregidos: spotC1F3EconomicReplay.test.ts**
+- DEGRADED test: espera `NO_BUY_FILL` (no `OPEN_AT_END`), `exitFeeUsd: 0`.
+- Two-lot test: `intentSigId` coincide con `fillSignalId` para correlación.
+
+### Archivos modificados
+- `server/services/spot/spotReplayEngineV3.ts` — loadSnapshots, PendingEntry, processScanSnapshot, processSupervisorSnapshot, processFillSnapshot, OPEN_AT_END, _processSnapshotsForTest.
+- `server/services/spot/spotReplayEngine.ts` — Gap detection contiguity, entry/exit separation.
+- `server/services/spot/__tests__/spotC1F3EconomicReplay.test.ts` — Tests corregidos para nueva semántica.
+
+### Archivos nuevos
+- `server/services/spot/__tests__/spotC1F4ReplayIdentity.test.ts` — 8 tests.
+- `server/services/spot/__tests__/spotC1F4StructureAndGap.test.ts` — 9 tests.
+
+### Validación
+- tsc --noEmit: sin errores.
+- vitest spot/__tests__/: 28 archivos, 362 tests, todos pasan.
+- git diff --check: sin whitespace errors.
+
+---
+
 ## 2026-09-10 — SPOT ADAPTIVE V3 — C1F3: COUNTER-AUDIT & REPLAY EQUITY FIX
 
 ### Objetivo
@@ -7,7 +108,8 @@ Counter-audit de C1F2: garantizar que los tests de integración usen código de 
 ### Cambios (C1F3-1 a C1F3-12)
 
 **C1F3-1: Exploración código producción**
-- Revisado: uildSpotMarketContext, econstructContext, processScanSnapshot, inalizeTrade, evaluateStructureInvalidation, evaluateExit, ForwardTwinFillSnapshot.
+- Revisado: uildSpotMarketContext, 
+econstructContext, processScanSnapshot, inalizeTrade, evaluateStructureInvalidation, evaluateExit, ForwardTwinFillSnapshot.
 
 **C1F3-2: Test integración producción real**
 - spotC1F3ProductionIntegration.test.ts (nuevo): Mock MarketDataService.getCandles/getTicker, Date.now determinístico, llama real uildSpotMarketContext + evaluateSpotCanonical. 5 tests.

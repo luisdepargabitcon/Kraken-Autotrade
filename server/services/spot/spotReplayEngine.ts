@@ -167,14 +167,14 @@ export function runReplay(
     // Fill at NEXT candle OPEN (after signal confirmed at close). No lookahead.
     const fillPrice = nextCandle ? nextCandle.open : null;
 
-    // C1F3-12: Fail-closed for entries across data gaps
-    // If the gap between current and previous candle exceeds 2x the timeframe, block entries
-    const prev5m = sorted5m[i - 1];
-    const gapMs = current5m.time - prev5m.time;
-    const hasDataGap = gapMs > 2 * 5 * 60 * 1000; // > 2x 5m = gap
-
-    // C1F3-12: Fail-closed across data gaps
-    if (hasDataGap) continue;
+    // C1F4-18: Exact next-candle contiguity required.
+    // For a signal at current5m close, the expected next open is:
+    //   expectedNextOpen = current5m.time + 5*60*1000
+    // A new entry only has next-open fill if nextCandle != null AND nextCandle.time === expectedNextOpen.
+    const expectedNextOpen = current5m.time + 5 * 60 * 1000;
+    const hasNextCandle = nextCandle != null && nextCandle.time === expectedNextOpen;
+    // C1F4-19: Gap detection for entries only — exits must still be evaluated.
+    const hasDataGap = !hasNextCandle;
 
     // Build market context from candles closed at evaluationTime
     const ctx = buildReplayContext(
@@ -250,7 +250,9 @@ export function runReplay(
     // ─── Entry evaluation (if slots available) ─────────────────────────────
     if (positions.length >= maxConcurrent) continue;
 
-    // C1F3-12: Fail-closed across data gaps
+    // C1F4-19: Gap blocks entry but NOT exit evaluation.
+    // Exit evaluation for open positions continues regardless of gap.
+    // Only entry is blocked when there is no contiguous next candle.
     if (hasDataGap) continue;
 
     // C1F2-10: No entry without next candle fill — cannot open on last candle
