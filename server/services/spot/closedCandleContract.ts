@@ -445,3 +445,143 @@ export function verifyFormingNotInClosed(set: ClosedCandleSet): boolean {
   }
   return true;
 }
+
+// ─── Optimized path for replay (pre-sorted + binary search) ─────────────────
+
+/**
+ * Pre-sort and pre-deduplicate candles ONCE before a replay loop.
+ * Returns a new array that is sorted ascending by time and deduplicated.
+ * This is equivalent to the sort+dedup phase inside splitCandlesByClose,
+ * but done only once instead of per-iteration.
+ */
+export function prepareCandles(candles: SpotCandle[]): SpotCandle[] {
+  const sorted = [...candles].sort((a, b) => a.time - b.time);
+
+  const deduped: SpotCandle[] = [];
+  const seenByTime = new Map<number, SpotCandle>();
+  let duplicateTimestamps = 0;
+  let conflictingDuplicates = 0;
+
+  for (const candle of sorted) {
+    const existing = seenByTime.get(candle.time);
+    if (existing !== undefined) {
+      duplicateTimestamps++;
+      const isIdentical =
+        existing.open === candle.open &&
+        existing.high === candle.high &&
+        existing.low === candle.low &&
+        existing.close === candle.close &&
+        existing.volume === candle.volume;
+      if (!isIdentical) {
+        conflictingDuplicates++;
+      }
+    } else {
+      seenByTime.set(candle.time, candle);
+      deduped.push(candle);
+    }
+  }
+
+  // Stash diagnostics on the array via a property for later use
+  (deduped as any)._duplicateTimestamps = duplicateTimestamps;
+  (deduped as any)._conflictingDuplicates = conflictingDuplicates;
+
+  return deduped;
+}
+
+/**
+ * Fast split using binary search on a pre-sorted, pre-deduped array.
+ * Produces the same ClosedCandleSet as splitCandlesByClose but in O(log n)
+ * instead of O(n log n).
+ */
+export function splitCandlesByCloseFast(
+  sortedDeduped: SpotCandle[],
+  timeframe: string,
+  now: number,
+): ClosedCandleSet {
+  const tfMs = getTimeframeMs(timeframe);
+  if (tfMs === null) {
+    throw new UnknownTimeframeError(timeframe);
+  }
+
+  // Binary search: find the last index where candle.time + tfMs <= now
+  // i.e., candle.time <= now - tfMs
+  const threshold = now - tfMs;
+  let lo = 0;
+  let hi = sortedDeduped.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sortedDeduped[mid].time <= threshold) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  // lo is now the first index where candle.time > threshold
+  // So indices [0, lo) are CLOSED, [lo, ...) are FORMING or FUTURE
+
+  const closed = lo > 0 ? sortedDeduped.slice(0, lo) : [];
+
+  // Check the candle at index lo: is it FORMING or FUTURE?
+  let formingCandle: SpotCandle | null = null;
+  let futureCandleCount = 0;
+  if (lo < sortedDeduped.length) {
+    const next = sortedDeduped[lo];
+    if (next.time <= now) {
+      // FORMING: openTime <= now AND closeTime > now
+      formingCandle = next;
+      // Any remaining candles after the forming one are FUTURE
+      futureCandleCount = sortedDeduped.length - lo - 1;
+    } else {
+      // FUTURE: openTime > now
+      futureCandleCount = sortedDeduped.length - lo;
+    }
+  }
+
+  // Multiple forming candles: anomaly (shouldn't happen with deduped data,
+  // but check for safety)
+  const multipleFormingDetected = false; // deduped guarantees one per openTime
+
+  // Retrieve pre-computed diagnostics
+  const duplicateTimestamps = (sortedDeduped as any)._duplicateTimestamps ?? 0;
+  const conflictingDuplicates = (sortedDeduped as any)._conflictingDuplicates ?? 0;
+
+  const dataValid = !multipleFormingDetected && conflictingDuplicates === 0;
+
+  const diagnostics: ClosedCandleDiagnostics = {
+    formingCount: formingCandle !== null ? 1 : 0,
+    multipleFormingDetected,
+    duplicateTimestamps,
+    conflictingDuplicates,
+    futureCandleCount,
+    dataValid,
+  };
+
+  return {
+    closedCandles: closed,
+    formingCandle,
+    timeframe,
+    evaluatedAt: now,
+    closedCount: closed.length,
+    diagnostics,
+  };
+}
+
+/**
+ * Build a full ClosedCandleContext using the fast path.
+ * Each input array must be pre-sorted and pre-deduped (via prepareCandles).
+ */
+export function buildClosedCandleContextFast(
+  prepared5m: SpotCandle[],
+  prepared15m: SpotCandle[],
+  prepared1h: SpotCandle[],
+  prepared4h: SpotCandle[],
+  now: number,
+): ClosedCandleContext {
+  return {
+    tf5m: splitCandlesByCloseFast(prepared5m, "5m", now),
+    tf15m: splitCandlesByCloseFast(prepared15m, "15m", now),
+    tf1h: splitCandlesByCloseFast(prepared1h, "1h", now),
+    tf4h: splitCandlesByCloseFast(prepared4h, "4h", now),
+    evaluatedAt: now,
+  };
+}

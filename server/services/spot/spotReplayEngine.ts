@@ -34,7 +34,7 @@ import { DataHealth, getCandleCloseTimeMs } from "./candleTimestamp";
 import { type SpotTicker, type SpotVolumeMetrics } from "./spotTypes";
 import { buildSpotRegimeContext } from "./spotRegimeEngine";
 import { calculateATR, type PriceData, type OHLCCandle } from "../indicators";
-import { buildClosedCandleContext, type ClosedCandleContext } from "./closedCandleContract";
+import { type ClosedCandleContext, prepareCandles, buildClosedCandleContextFast } from "./closedCandleContract";
 import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -159,11 +159,11 @@ export function runReplay(
   let intentExecutableCount = 0;
   let entriesExecutedCount = 0;
 
-  // Sort candles by time
-  const sorted15m = [...candles.candles15m].sort((a, b) => a.time - b.time);
-  const sorted5m = [...candles.candles5m].sort((a, b) => a.time - b.time);
-  const sorted1h = [...candles.candles1h].sort((a, b) => a.time - b.time);
-  const sorted4h = [...candles.candles4h].sort((a, b) => a.time - b.time);
+  // Pre-sort + pre-dedup ONCE (O(n log n) total, not per-iteration)
+  const sorted5m = prepareCandles(candles.candles5m);
+  const sorted15m = prepareCandles(candles.candles15m);
+  const sorted1h = prepareCandles(candles.candles1h);
+  const sorted4h = prepareCandles(candles.candles4h);
 
   // Iterate through 5m candles for finer scan granularity (closer to 60s production scan).
   // Warmup: need 200 15m candles (= 600 5m candles) before generating signals.
@@ -190,8 +190,8 @@ export function runReplay(
     // C1F4-19: Gap detection for entries only — exits must still be evaluated.
     const hasDataGap = !hasNextCandle;
 
-    // Build market context from candles closed at evaluationTime
-    const ctx = buildReplayContext(
+    // Build market context from candles closed at evaluationTime (fast path)
+    const ctx = buildReplayContextFast(
       pair,
       sorted5m,
       sorted15m,
@@ -510,7 +510,7 @@ export function computeReplayStats(
 
 // ─── Context builder (from candles, no async) ───────────────────────────────
 
-function buildReplayContext(
+function buildReplayContextFast(
   pair: string,
   candles5m: SpotCandle[],
   candles15m: SpotCandle[],
@@ -520,8 +520,8 @@ function buildReplayContext(
   currentPrice: number,
 ): SpotMarketContext | null {
   // Use the canonical contract to split closed vs forming candles.
-  // NO parallel filtering — the contract is the single source of truth.
-  const closed = buildClosedCandleContext(
+  // Fast path: inputs are pre-sorted + pre-deduped, uses binary search.
+  const closed = buildClosedCandleContextFast(
     candles5m,
     candles15m,
     candles1h,
