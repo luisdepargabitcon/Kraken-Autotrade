@@ -12,7 +12,7 @@ import * as crypto from "crypto";
 import type { SpotCandle } from "../spotTypes";
 import { ExitReasonType, SetupTag, Regime } from "../spotTypes";
 import { runReplay, type ReplayCandleSet, type ReplayConfig, type ReplayResult, type ReplayTrade } from "../spotReplayEngine";
-import { PAIR_MAPPINGS, TIMEFRAMES, loadAllCached, type KrakenDataset, type KrakenOHLCRow, KRAKEN_SOURCE, KRAKEN_OFFICIAL_PAGE, KRAKEN_API_URL } from "./krakenHistoricalLoader";
+import { PAIR_MAPPINGS, TIMEFRAMES, loadAllCached, type KrakenDataset, type KrakenOHLCRow, KRAKEN_SOURCE, KRAKEN_OFFICIAL_PAGE } from "./krakenHistoricalLoader";
 import { validateDataset, validateAllCached, type ValidationResult, type FullValidationReport } from "./krakenDatasetValidator";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ export interface BaselineMetrics {
   window: string;
   candlesAnalyzed: number;
   signalsBuy: number;
+  intentExecutable: number;
   entriesExecuted: number;
   closedTrades: number;
   openTerminalTrades: number;
@@ -37,6 +38,7 @@ export interface BaselineMetrics {
   medianR: number;
   meanR: number;
   profitFactor: number;
+  grossProfitFactor: number;
   maxDrawdownUsd: number;
   maxDrawdownPct: number;
   maxConsecutiveLosses: number;
@@ -54,7 +56,7 @@ export interface BaselineMetrics {
   profitCaptureMedian: number;
   exitReasonBreakdown: Record<string, number>;
   setupTagBreakdown: Record<string, number>;
-  regimeBreakdown: Record<string, number>;
+  regimeBreakdown: Record<string, { count: number; netPnlUsd: number; wins: number; losses: number }>;
 }
 
 export interface StructurePreEntryAnalysis {
@@ -152,6 +154,7 @@ function serializeResult(result: ReplayResult): string {
 
 function computeMetrics(pair: string, window: string, result: ReplayResult, candlesAnalyzed: number): BaselineMetrics {
   const trades = result.trades;
+  const stats = result.stats;
   const wins = trades.filter(t => t.netPnlUsd > 0);
   const losses = trades.filter(t => t.netPnlUsd <= 0);
   const grossProfit = wins.reduce((s, t) => s + Math.max(0, t.grossPnlUsd), 0);
@@ -173,37 +176,15 @@ function computeMetrics(pair: string, window: string, result: ReplayResult, cand
     setupTagBreakdown[t.setupTag] = (setupTagBreakdown[t.setupTag] ?? 0) + 1;
   }
 
-  // Max drawdown
-  let peak = 0;
-  let maxDd = 0;
-  let cumulative = 0;
-  for (const t of trades) {
-    cumulative += t.netPnlUsd;
-    if (cumulative > peak) peak = cumulative;
-    const dd = peak - cumulative;
-    if (dd > maxDd) maxDd = dd;
-  }
-
-  // Max consecutive losses
-  let maxConsecLosses = 0;
-  let currentLosses = 0;
-  for (const t of trades) {
-    if (t.netPnlUsd <= 0) {
-      currentLosses++;
-      if (currentLosses > maxConsecLosses) maxConsecLosses = currentLosses;
-    } else {
-      currentLosses = 0;
-    }
-  }
-
   return {
     pair,
     window,
     candlesAnalyzed,
-    signalsBuy: trades.length,
-    entriesExecuted: trades.length,
-    closedTrades: trades.filter(t => t.exitReason !== "OPEN_AT_END" as ExitReasonType).length,
-    openTerminalTrades: trades.filter(t => t.exitReason === ("OPEN_AT_END" as any)).length,
+    signalsBuy: stats.signalsBuy,
+    intentExecutable: stats.intentExecutable,
+    entriesExecuted: stats.entriesExecuted,
+    closedTrades: stats.closedTrades,
+    openTerminalTrades: stats.openTerminalTrades,
     wins: wins.length,
     losses: losses.length,
     winRate: trades.length > 0 ? wins.length / trades.length : 0,
@@ -215,10 +196,11 @@ function computeMetrics(pair: string, window: string, result: ReplayResult, cand
     expectancyR: trades.length > 0 ? rMultiples.reduce((s, r) => s + r, 0) / trades.length : 0,
     medianR: median(rMultiples),
     meanR: trades.length > 0 ? rMultiples.reduce((s, r) => s + r, 0) / trades.length : 0,
-    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0,
-    maxDrawdownUsd: maxDd,
-    maxDrawdownPct: peak > 0 ? (maxDd / peak) * 100 : 0,
-    maxConsecutiveLosses: maxConsecLosses,
+    profitFactor: stats.profitFactor,
+    grossProfitFactor: stats.grossProfitFactor,
+    maxDrawdownUsd: stats.maxDrawdownUsd,
+    maxDrawdownPct: stats.maxDrawdownPct * 100,
+    maxConsecutiveLosses: stats.maxConsecutiveLosses,
     avgHoldMinutes: trades.length > 0 ? holdTimes.reduce((s, h) => s + h, 0) / trades.length : 0,
     medianHoldMinutes: median(holdTimes),
     mfeMean: trades.length > 0 ? mfeValues.reduce((s, v) => s + v, 0) / trades.length : 0,
@@ -233,7 +215,7 @@ function computeMetrics(pair: string, window: string, result: ReplayResult, cand
     profitCaptureMedian: median(profitCaptures),
     exitReasonBreakdown,
     setupTagBreakdown,
-    regimeBreakdown: {},
+    regimeBreakdown: stats.regimeBreakdown,
   };
 }
 
@@ -293,6 +275,8 @@ export function runBaselineForPair(
   pair: string,
   datasets: Map<string, KrakenDataset>,
   window: string = "FULL",
+  windowStart?: number,
+  windowEnd?: number,
 ): PairBaselineResult | null {
   const c5 = datasets.get(`${pair}_5m`);
   const c15 = datasets.get(`${pair}_15m`);
@@ -304,10 +288,23 @@ export function runBaselineForPair(
     return null;
   }
 
-  const candles5m = c5.rows.map(toSpotCandle);
-  const candles15m = c15.rows.map(toSpotCandle);
-  const candles1h = c60.rows.map(toSpotCandle);
-  const candles4h = c240.rows.map(toSpotCandle);
+  let candles5m = c5.rows.map(toSpotCandle);
+  let candles15m = c15.rows.map(toSpotCandle);
+  let candles1h = c60.rows.map(toSpotCandle);
+  let candles4h = c240.rows.map(toSpotCandle);
+
+  // Apply window filtering for COMMON window
+  if (windowStart !== undefined && windowEnd !== undefined) {
+    candles5m = candles5m.filter(c => c.time >= windowStart && c.time <= windowEnd);
+    candles15m = candles15m.filter(c => c.time >= windowStart && c.time <= windowEnd);
+    candles1h = candles1h.filter(c => c.time >= windowStart && c.time <= windowEnd);
+    candles4h = candles4h.filter(c => c.time >= windowStart && c.time <= windowEnd);
+  }
+
+  if (candles5m.length < 700) {
+    console.warn(`[Baseline] Insufficient candles for ${pair} ${window}: ${candles5m.length} 5m candles`);
+    return null;
+  }
 
   const candleSet: ReplayCandleSet = {
     pair,
@@ -336,11 +333,14 @@ export function runBaselineForPair(
   const structurePreEntry = computeStructurePreEntry(result1.trades, candles15m);
   const durationAnalysis = computeDurationAnalysis(result1.trades);
 
+  const startDate = windowStart !== undefined ? new Date(windowStart).toISOString() : new Date(c5.firstTimestamp).toISOString();
+  const endDate = windowEnd !== undefined ? new Date(windowEnd).toISOString() : new Date(c5.lastTimestamp).toISOString();
+
   return {
     pair,
     window,
-    startDate: new Date(c5.firstTimestamp).toISOString(),
-    endDate: new Date(c5.lastTimestamp).toISOString(),
+    startDate,
+    endDate,
     metrics,
     structurePreEntry,
     durationAnalysis,
@@ -353,24 +353,35 @@ export function runFullBaseline(): BaselineReport {
   const datasets = loadAllCached();
   const validationReport = validateAllCached();
 
-  // Compute common window
+  // Compute common window: intersection of all 4 pairs × 4 timeframes
   let commonStart = 0;
   let commonEnd = Infinity;
   for (const mapping of PAIR_MAPPINGS) {
-    const c5 = datasets.get(`${mapping.requested}_5m`);
-    if (!c5) continue;
-    if (commonStart < c5.firstTimestamp) commonStart = c5.firstTimestamp;
-    if (commonEnd > c5.lastTimestamp) commonEnd = c5.lastTimestamp;
+    for (const tf of TIMEFRAMES) {
+      const ds = datasets.get(`${mapping.requested}_${tf}m`);
+      if (!ds) continue;
+      if (commonStart < ds.firstTimestamp) commonStart = ds.firstTimestamp;
+      if (commonEnd > ds.lastTimestamp) commonEnd = ds.lastTimestamp;
+    }
   }
 
   const pairs: PairBaselineResult[] = [];
   const fullWindows: { pair: string; start: string; end: string }[] = [];
 
   for (const mapping of PAIR_MAPPINGS) {
-    const result = runBaselineForPair(mapping.requested, datasets, "FULL");
-    if (result) {
-      pairs.push(result);
-      fullWindows.push({ pair: mapping.requested, start: result.startDate, end: result.endDate });
+    // FULL window
+    const resultFull = runBaselineForPair(mapping.requested, datasets, "FULL");
+    if (resultFull) {
+      pairs.push(resultFull);
+      fullWindows.push({ pair: mapping.requested, start: resultFull.startDate, end: resultFull.endDate });
+    }
+
+    // COMMON window
+    if (commonStart > 0 && commonEnd < Infinity) {
+      const resultCommon = runBaselineForPair(mapping.requested, datasets, "COMMON", commonStart, commonEnd);
+      if (resultCommon) {
+        pairs.push(resultCommon);
+      }
     }
   }
 
@@ -395,10 +406,10 @@ export function generateReports(report: BaselineReport, outputDir: string): void
   // CSV
   const csvLines: string[] = [];
   const headers = [
-    "pair", "window", "startDate", "endDate", "candlesAnalyzed", "signalsBuy", "entriesExecuted",
+    "pair", "window", "startDate", "endDate", "candlesAnalyzed", "signalsBuy", "intentExecutable", "entriesExecuted",
     "closedTrades", "openTerminalTrades", "wins", "losses", "winRate",
     "grossPnlUsd", "netPnlUsd", "feesUsd", "feesToGrossProfitRatio",
-    "expectancyUsd", "expectancyR", "medianR", "meanR", "profitFactor",
+    "expectancyUsd", "expectancyR", "medianR", "meanR", "profitFactor", "grossProfitFactor",
     "maxDrawdownUsd", "maxDrawdownPct", "maxConsecutiveLosses",
     "avgHoldMinutes", "medianHoldMinutes",
     "mfeMean", "mfeMedian", "mfeP75", "mfeP90",
@@ -413,10 +424,10 @@ export function generateReports(report: BaselineReport, outputDir: string): void
     const m = p.metrics;
     const s = p.structurePreEntry;
     const row = [
-      p.pair, p.window, p.startDate, p.endDate, m.candlesAnalyzed, m.signalsBuy, m.entriesExecuted,
+      p.pair, p.window, p.startDate, p.endDate, m.candlesAnalyzed, m.signalsBuy, m.intentExecutable, m.entriesExecuted,
       m.closedTrades, m.openTerminalTrades, m.wins, m.losses, m.winRate.toFixed(4),
       m.grossPnlUsd.toFixed(2), m.netPnlUsd.toFixed(2), m.feesUsd.toFixed(2), m.feesToGrossProfitRatio.toFixed(4),
-      m.expectancyUsd.toFixed(2), m.expectancyR.toFixed(4), m.medianR.toFixed(4), m.meanR.toFixed(4), m.profitFactor.toFixed(4),
+      m.expectancyUsd.toFixed(2), m.expectancyR.toFixed(4), m.medianR.toFixed(4), m.meanR.toFixed(4), m.profitFactor.toFixed(4), m.grossProfitFactor.toFixed(4),
       m.maxDrawdownUsd.toFixed(2), m.maxDrawdownPct.toFixed(2), m.maxConsecutiveLosses,
       m.avgHoldMinutes.toFixed(1), m.medianHoldMinutes.toFixed(1),
       m.mfeMean.toFixed(2), m.mfeMedian.toFixed(2), m.mfeP75.toFixed(2), m.mfeP90.toFixed(2),
@@ -448,12 +459,12 @@ export function generateReports(report: BaselineReport, outputDir: string): void
     md.push(`### ${p.pair} (${p.window})`);
     md.push(`- Range: ${p.startDate} → ${p.endDate}`);
     md.push(`- Candles: ${m.candlesAnalyzed}`);
-    md.push(`- Trades: ${m.entriesExecuted} (closed: ${m.closedTrades}, open: ${m.openTerminalTrades})`);
+    md.push(`- Trades: signals=${m.signalsBuy}, intent=${m.intentExecutable}, entries=${m.entriesExecuted} (closed: ${m.closedTrades}, open: ${m.openTerminalTrades})`);
     md.push(`- Win Rate: ${(m.winRate * 100).toFixed(1)}% (${m.wins}W / ${m.losses}L)`);
     md.push(`- Net PnL: $${m.netPnlUsd.toFixed(2)}`);
     md.push(`- Gross PnL: $${m.grossPnlUsd.toFixed(2)}`);
     md.push(`- Fees: $${m.feesUsd.toFixed(2)}`);
-    md.push(`- Profit Factor: ${m.profitFactor.toFixed(2)}`);
+    md.push(`- Profit Factor: ${m.profitFactor.toFixed(2)} (gross: ${m.grossProfitFactor.toFixed(2)})`);
     md.push(`- Max DD: $${m.maxDrawdownUsd.toFixed(2)} (${m.maxDrawdownPct.toFixed(1)}%)`);
     md.push(`- Expectancy: $${m.expectancyUsd.toFixed(2)}/trade, ${m.expectancyR.toFixed(2)}R/trade`);
     md.push(`- Avg Hold: ${m.avgHoldMinutes.toFixed(0)} min (median: ${m.medianHoldMinutes.toFixed(0)} min)`);
@@ -487,12 +498,18 @@ export function generateReports(report: BaselineReport, outputDir: string): void
 export function generateManifest(datasets: Map<string, KrakenDataset>, outputDir: string): void {
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
+  const startRequested = Date.UTC(2026, 2, 14); // 2026-03-14T00:00:00Z
+  const endRequested = Date.now();
+
   const manifest: any = {
     source: KRAKEN_SOURCE,
-    official_page_url: KRAKEN_OFFICIAL_PAGE,
-    api_url: KRAKEN_API_URL,
+    official_documentation_url: "https://docs.kraken.com/rest/#tag/Market-Data/operation/getRecentTrades",
+    endpoint: "/0/public/Trades",
+    zip_used: false,
+    google_drive_used: false,
+    start_requested_utc: new Date(startRequested).toISOString(),
+    end_requested_utc: new Date(endRequested).toISOString(),
     downloaded_at_utc: new Date().toISOString(),
-    baseline_commit_sha: "e2ce79a1af2c572d9b92d26240b171d53156645d",
     parser_version: "1.0.0",
     normalizer_version: "1.0.0",
     pairs: [] as any[],
@@ -517,11 +534,12 @@ export function generateManifest(datasets: Map<string, KrakenDataset>, outputDir
         kraken_result_key: mapping.resultKey,
         timeframe_minutes: tf,
         csv_filename: `${mapping.requested.replace("/", "_")}_${tf}m.json`,
-        csv_size: ds.rowCount,
         csv_sha256: csvSha,
         row_count: ds.rowCount,
         first_timestamp: ds.firstTimestamp,
         last_timestamp: ds.lastTimestamp,
+        first_timestamp_utc: ds.firstTimestamp > 0 ? new Date(ds.firstTimestamp).toISOString() : "N/A",
+        last_timestamp_utc: ds.lastTimestamp > 0 ? new Date(ds.lastTimestamp).toISOString() : "N/A",
       });
     }
   }

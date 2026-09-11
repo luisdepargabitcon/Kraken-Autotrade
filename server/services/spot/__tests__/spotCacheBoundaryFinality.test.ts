@@ -21,18 +21,19 @@ vi.mock("../../exchanges/ExchangeFactory", () => ({
   },
 }));
 
-vi.mock("../fisco/rebuild-state", () => ({
+vi.mock("../../fisco/rebuild-state", () => ({
   isFiscoRebuildActive: vi.fn(() => false),
 }));
 
-vi.mock("../marketData/MarketCandleRepository", () => ({
+vi.mock("../../marketData/MarketCandleRepository", () => ({
   MarketCandleRepository: {
     saveCandles: vi.fn(),
-    getCandles: vi.fn(),
+    getCandles: vi.fn().mockResolvedValue(null),
   },
 }));
 
 import { MarketDataService } from "../../MarketDataService";
+import { isFiscoRebuildActive } from "../../fisco/rebuild-state";
 
 const TF_15M = 15 * 60 * 1000;
 const TF_5M = 5 * 60 * 1000;
@@ -58,6 +59,8 @@ describe("Cache Boundary Source Finality", () => {
     (mds as any).candleCache.clear();
     (mds as any).pendingCandles.clear();
     originalDateNow = Date.now;
+    // Reset FISCO mock to false
+    vi.mocked(isFiscoRebuildActive).mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -217,18 +220,83 @@ describe("Cache Boundary Source Finality", () => {
     const { ExchangeFactory } = await import("../../exchanges/ExchangeFactory");
     vi.mocked(ExchangeFactory.getDataExchange).mockReturnValue(mockExchange as any);
 
-    // Mock DB fallback to also fail
-    vi.mock("../marketData/MarketCandleRepository", () => ({
-      MarketCandleRepository: {
-        saveCandles: vi.fn(),
-        getCandles: vi.fn().mockResolvedValue(null),
-      },
-    }));
-
     const result = await mds.getCandlesFinalizedAware("BTC/USD", "15m");
 
     // Should exclude the last (provisional) candle
     expect(result).toHaveLength(9);
     // SOURCE_FINALITY_FAIL_CLOSED=PASS
+  });
+
+  it("FISCO rebuild active: provisional NOT promoted, stripped in fallback", async () => {
+    const candleOpen = 12 * 60 * 60 * 1000;
+    const candles = makeCandles(TF_15M, 10, candleOpen - 9 * TF_15M);
+    const fetchedAt = candleOpen + 14 * 60 * 1000;
+    const closeTime = candleOpen + TF_15M;
+
+    mockDateNow(fetchedAt);
+    mds.putCandles("BTC/USD", "15m", candles);
+
+    mockDateNow(closeTime + 1000);
+
+    // Activate FISCO rebuild
+    vi.mocked(isFiscoRebuildActive).mockReturnValue(true);
+
+    const result = await mds.getCandlesFinalizedAware("BTC/USD", "15m");
+
+    // Should exclude the last (provisional) candle — NOT return cached as-is
+    expect(result).toHaveLength(9);
+    // CACHE_BOUNDARY_FAIL_CLOSED_FISCO=PASS
+  });
+
+  it("Exchange not initialized: provisional NOT promoted, stripped in fallback", async () => {
+    const candleOpen = 12 * 60 * 60 * 1000;
+    const candles = makeCandles(TF_15M, 10, candleOpen - 9 * TF_15M);
+    const fetchedAt = candleOpen + 14 * 60 * 1000;
+    const closeTime = candleOpen + TF_15M;
+
+    mockDateNow(fetchedAt);
+    mds.putCandles("BTC/USD", "15m", candles);
+
+    mockDateNow(closeTime + 1000);
+
+    // Mock exchange as not initialized
+    const mockExchange = {
+      isInitialized: () => false,
+      getOHLC: vi.fn(),
+    };
+    const { ExchangeFactory } = await import("../../exchanges/ExchangeFactory");
+    vi.mocked(ExchangeFactory.getDataExchange).mockReturnValue(mockExchange as any);
+
+    const result = await mds.getCandlesFinalizedAware("BTC/USD", "15m");
+
+    // Should exclude the last (provisional) candle
+    expect(result).toHaveLength(9);
+    expect(mockExchange.getOHLC).not.toHaveBeenCalled();
+    // CACHE_BOUNDARY_FAIL_CLOSED_EXCHANGE_UNINIT=PASS
+  });
+
+  it("Exception during refetch: provisional NOT promoted, stripped in catch", async () => {
+    const candleOpen = 12 * 60 * 60 * 1000;
+    const candles = makeCandles(TF_5M, 10, candleOpen - 9 * TF_5M);
+    const fetchedAt = candleOpen + 3 * 60 * 1000;
+    const closeTime = candleOpen + TF_5M;
+
+    mockDateNow(fetchedAt);
+    mds.putCandles("BTC/USD", "5m", candles);
+
+    mockDateNow(closeTime + 1000);
+
+    // Mock exchange to throw
+    const mockExchange = {
+      isInitialized: () => true,
+      getOHLC: vi.fn().mockRejectedValue(new Error("Connection refused")),
+    };
+    const { ExchangeFactory } = await import("../../exchanges/ExchangeFactory");
+    vi.mocked(ExchangeFactory.getDataExchange).mockReturnValue(mockExchange as any);
+
+    const result = await mds.getCandlesFinalizedAware("BTC/USD", "5m");
+
+    expect(result).toHaveLength(9);
+    // CACHE_BOUNDARY_FAIL_CLOSED_EXCEPTION=PASS
   });
 });

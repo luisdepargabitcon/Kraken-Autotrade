@@ -63,6 +63,8 @@ export interface ReplayTrade {
   pair: string;
   signalId: string;
   setupTag: SetupTag;
+  regimeAtEntry: string;
+  directionAtEntry: string;
   entryPrice: number;
   exitPrice: number;
   volume: number;
@@ -93,6 +95,11 @@ export interface ReplayResult {
 
 export interface ReplayStats {
   totalTrades: number;
+  signalsBuy: number;
+  intentExecutable: number;
+  entriesExecuted: number;
+  closedTrades: number;
+  openTerminalTrades: number;
   wins: number;
   losses: number;
   winRate: number;
@@ -102,6 +109,9 @@ export interface ReplayStats {
   avgNetPnlUsd: number;
   avgRMultiple: number;
   profitFactor: number;
+  grossProfitFactor: number;
+  maxDrawdownUsd: number;
+  maxDrawdownPct: number;
   avgHoldTimeMinutes: number;
   avgMfeUsd: number;
   avgMaeUsd: number;
@@ -114,6 +124,7 @@ export interface ReplayStats {
   goodCount: number;
   poorCount: number;
   badCount: number;
+  regimeBreakdown: Record<string, { count: number; netPnlUsd: number; wins: number; losses: number }>;
 }
 
 // ─── Replay Engine ──────────────────────────────────────────────────────────
@@ -144,6 +155,9 @@ export function runReplay(
   const trades: ReplayTrade[] = [];
   let lotCounter = 0;
   let signalCounter = 0;
+  let signalsBuyCount = 0;
+  let intentExecutableCount = 0;
+  let entriesExecutedCount = 0;
 
   // Sort candles by time
   const sorted15m = [...candles.candles15m].sort((a, b) => a.time - b.time);
@@ -222,6 +236,8 @@ export function runReplay(
           pair: pos.pair,
           signalId: pos.signalId,
           setupTag: pos.setupTag,
+          regimeAtEntry: pos.regimeAtEntry ?? "UNKNOWN",
+          directionAtEntry: pos.directionAtEntry ?? "NEUTRAL",
           entryPrice: pos.entryPrice,
           exitPrice: exitFillPrice,
           volume: pos.qtyRemaining,
@@ -266,12 +282,15 @@ export function runReplay(
     if (signal.signal !== "BUY") continue;
 
     signalCounter++;
+    signalsBuyCount++;
     const signalId = `replay-${pair}-${signalCounter}`;
     const intent = createEntryIntent(signal, ctx, config.antiLateEntryConfig);
 
     // Evaluate intent immediately (in replay, we fill at next candle)
     const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig);
     if (!intentEval.shouldExecute) continue;
+
+    intentExecutableCount++;
 
     // Sizing
     const stopDist = computeStopDistance(
@@ -289,6 +308,7 @@ export function runReplay(
 
     if (sizing.volume <= 0 || sizing.notionalUsd <= 0) continue;
 
+    entriesExecutedCount++;
     lotCounter++;
     const lotId = `replay-${pair}-${lotCounter}`;
     const entryFee = entryFillPrice * sizing.volume * (takerFeePct / 100);
@@ -360,6 +380,8 @@ export function runReplay(
       pair: pos.pair,
       signalId: pos.signalId,
       setupTag: pos.setupTag,
+      regimeAtEntry: pos.regimeAtEntry ?? "UNKNOWN",
+      directionAtEntry: pos.directionAtEntry ?? "NEUTRAL",
       entryPrice: pos.entryPrice,
       exitPrice,
       volume: pos.qtyRemaining,
@@ -382,30 +404,51 @@ export function runReplay(
     });
   }
 
-  const stats = computeReplayStats(trades);
+  const stats = computeReplayStats(trades, {
+    signalsBuy: signalsBuyCount,
+    intentExecutable: intentExecutableCount,
+    entriesExecuted: entriesExecutedCount,
+    openTerminalTrades: positions.length,
+    initialCapital: config.availableCapitalUsd,
+  });
   return { pair, trades, stats, config };
 }
 
 // ─── Stats ──────────────────────────────────────────────────────────────────
 
-export function computeReplayStats(trades: ReplayTrade[]): ReplayStats {
+export function computeReplayStats(
+  trades: ReplayTrade[],
+  extra?: { signalsBuy?: number; intentExecutable?: number; entriesExecuted?: number; openTerminalTrades?: number; initialCapital?: number },
+): ReplayStats {
   const n = trades.length;
+  const signalsBuy = extra?.signalsBuy ?? 0;
+  const intentExecutable = extra?.intentExecutable ?? 0;
+  const entriesExecuted = extra?.entriesExecuted ?? n;
+  const openTerminalTrades = extra?.openTerminalTrades ?? 0;
+  const initialCapital = extra?.initialCapital ?? 10000;
+  const closedTrades = n;
+
   if (n === 0) {
     return {
-      totalTrades: 0, wins: 0, losses: 0, winRate: 0,
+      totalTrades: 0, signalsBuy, intentExecutable, entriesExecuted, closedTrades: 0, openTerminalTrades,
+      wins: 0, losses: 0, winRate: 0,
       netPnlUsd: 0, grossPnlUsd: 0, totalFeesUsd: 0,
-      avgNetPnlUsd: 0, avgRMultiple: 0, profitFactor: 0,
+      avgNetPnlUsd: 0, avgRMultiple: 0, profitFactor: 0, grossProfitFactor: 0,
+      maxDrawdownUsd: 0, maxDrawdownPct: 0,
       avgHoldTimeMinutes: 0, avgMfeUsd: 0, avgMaeUsd: 0, avgMfeR: 0,
       bestTradeUsd: 0, worstTradeUsd: 0,
       maxConsecutiveWins: 0, maxConsecutiveLosses: 0,
       excellentCount: 0, goodCount: 0, poorCount: 0, badCount: 0,
+      regimeBreakdown: {},
     };
   }
 
   const wins = trades.filter(t => t.netPnlUsd > 0);
   const losses = trades.filter(t => t.netPnlUsd <= 0);
-  const grossWin = wins.reduce((s, t) => s + t.netPnlUsd, 0);
-  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.netPnlUsd, 0));
+  const netWin = wins.reduce((s, t) => s + t.netPnlUsd, 0);
+  const netLoss = Math.abs(losses.reduce((s, t) => s + t.netPnlUsd, 0));
+  const grossWin = wins.reduce((s, t) => s + t.grossPnlUsd, 0);
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.grossPnlUsd, 0));
 
   let maxConWins = 0, maxConLosses = 0, curWins = 0, curLosses = 0;
   for (const t of trades) {
@@ -413,17 +456,42 @@ export function computeReplayStats(trades: ReplayTrade[]): ReplayStats {
     else { curLosses++; curWins = 0; maxConLosses = Math.max(maxConLosses, curLosses); }
   }
 
+  // Max drawdown: equity starts at initialCapital, peakEquity starts at initialCapital
+  let equity = initialCapital;
+  let peakEquity = initialCapital;
+  let maxDD = 0;
+  let maxDDPct = 0;
+  for (const t of trades) {
+    equity += t.netPnlUsd;
+    peakEquity = Math.max(peakEquity, equity);
+    const dd = peakEquity - equity;
+    const ddPct = peakEquity > 0 ? dd / peakEquity : 0;
+    if (dd > maxDD) { maxDD = dd; maxDDPct = ddPct; }
+  }
+
+  // Regime breakdown
+  const regimeBreakdown: Record<string, { count: number; netPnlUsd: number; wins: number; losses: number }> = {};
+  for (const t of trades) {
+    const regime = t.regimeAtEntry ?? "UNKNOWN";
+    if (!regimeBreakdown[regime]) regimeBreakdown[regime] = { count: 0, netPnlUsd: 0, wins: 0, losses: 0 };
+    regimeBreakdown[regime].count++;
+    regimeBreakdown[regime].netPnlUsd += t.netPnlUsd;
+    if (t.netPnlUsd > 0) regimeBreakdown[regime].wins++;
+    else regimeBreakdown[regime].losses++;
+  }
+
   return {
-    totalTrades: n,
-    wins: wins.length,
-    losses: losses.length,
-    winRate: wins.length / n,
+    totalTrades: n, signalsBuy, intentExecutable, entriesExecuted, closedTrades, openTerminalTrades,
+    wins: wins.length, losses: losses.length, winRate: wins.length / n,
     netPnlUsd: trades.reduce((s, t) => s + t.netPnlUsd, 0),
     grossPnlUsd: trades.reduce((s, t) => s + t.grossPnlUsd, 0),
     totalFeesUsd: trades.reduce((s, t) => s + t.entryFeeUsd + t.exitFeeUsd, 0),
     avgNetPnlUsd: trades.reduce((s, t) => s + t.netPnlUsd, 0) / n,
     avgRMultiple: trades.reduce((s, t) => s + t.rMultiple, 0) / n,
-    profitFactor: grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Infinity : 0,
+    profitFactor: netLoss > 0 ? netWin / netLoss : netWin > 0 ? Infinity : 0,
+    grossProfitFactor: grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Infinity : 0,
+    maxDrawdownUsd: maxDD,
+    maxDrawdownPct: maxDDPct,
     avgHoldTimeMinutes: trades.reduce((s, t) => s + t.holdTimeMinutes, 0) / n,
     avgMfeUsd: trades.reduce((s, t) => s + t.mfeUsd, 0) / n,
     avgMaeUsd: trades.reduce((s, t) => s + t.maeUsd, 0) / n,
@@ -436,6 +504,7 @@ export function computeReplayStats(trades: ReplayTrade[]): ReplayStats {
     goodCount: trades.filter(t => t.profitCaptureClass === "GOOD").length,
     poorCount: trades.filter(t => t.profitCaptureClass === "POOR").length,
     badCount: trades.filter(t => t.profitCaptureClass === "BAD").length,
+    regimeBreakdown,
   };
 }
 

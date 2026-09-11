@@ -51,8 +51,12 @@ export interface PairMapping {
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 export const KRAKEN_API_URL = "https://api.kraken.com/0/public/OHLC";
-export const KRAKEN_OFFICIAL_PAGE = "https://support.kraken.com/articles/360047124832-downloadable-historical-ohlcvt-open-high-low-close-volume-trades-data";
-export const KRAKEN_SOURCE = "KRAKEN_OFFICIAL_API_OHLC";
+export const KRAKEN_OFFICIAL_PAGE = "https://docs.kraken.com/rest/#tag/Market-Data/operation/getOHLCData";
+export const KRAKEN_SOURCE = "KRAKEN_OFFICIAL_REST_TRADES";
+export const KRAKEN_TRADES_URL = "https://api.kraken.com/0/public/Trades";
+export const KRAKEN_TRADES_DOC = "https://docs.kraken.com/rest/#tag/Market-Data/operation/getRecentTrades";
+export const ZIP_USED = false;
+export const GOOGLE_DRIVE_USED = false;
 
 export const PAIR_MAPPINGS: PairMapping[] = [
   { requested: "BTC/USD", krakenPair: "XBTUSD", resultKey: "XXBTZUSD" },

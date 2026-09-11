@@ -229,6 +229,19 @@ class MarketDataServiceClass {
    *
    * Used by buildSpotMarketContext. Does NOT affect getCandles used by IDCA/GRID.
    */
+  private stripProvisional(cached: { candles: OHLC[]; fetchedAt: number } | undefined, tf: Timeframe): OHLC[] {
+    if (!cached || !cached.candles || cached.candles.length === 0) return [];
+    const tfMs = (TIMEFRAME_INTERVAL_MINUTES[tf] ?? 0) * 60 * 1000;
+    const lastCandle = cached.candles[cached.candles.length - 1];
+    const lastCandleOpenMs = (lastCandle as any).time ?? (lastCandle as any).timestamp ?? 0;
+    const lastCandleCloseMs = lastCandleOpenMs + tfMs;
+    if (cached.fetchedAt < lastCandleCloseMs && Date.now() >= lastCandleCloseMs) {
+      console.warn(`[MDS] SOURCE_FINALITY_FAIL_CLOSED ${this.candleKey("", tf)}: excluding provisional last candle`);
+      return cached.candles.slice(0, -1);
+    }
+    return cached.candles;
+  }
+
   async getCandlesFinalizedAware(pair: string, tf: Timeframe): Promise<OHLC[]> {
     const key = this.candleKey(pair, tf);
     const cached = this.candleCache.get(key);
@@ -258,13 +271,14 @@ class MarketDataServiceClass {
     const pending = this.pendingCandles.get(key);
     if (pending) {
       this._shared++;
-      return pending.catch(() => cached?.candles ?? []);
+      return pending.catch(() => this.stripProvisional(cached, tf));
     }
 
     this._misses++;
 
     if (isFiscoRebuildActive()) {
-      if (cached?.candles) return cached.candles;
+      const stripped = this.stripProvisional(cached, tf);
+      if (stripped.length > 0) return stripped;
       const fb = await this.tryFallbackToDb(pair, tf, undefined);
       return fb ?? [];
     }
@@ -273,33 +287,24 @@ class MarketDataServiceClass {
       try {
         const exchange = ExchangeFactory.getDataExchange();
         if (!exchange.isInitialized()) {
-          const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
-          return fallback ?? cached?.candles ?? [];
+          const fallback = await this.tryFallbackToDb(pair, tf, this.stripProvisional(cached, tf));
+          return fallback ?? this.stripProvisional(cached, tf);
         }
         const intervalMin = TIMEFRAME_INTERVAL_MINUTES[tf];
-        if (!intervalMin) return cached?.candles ?? [];
+        if (!intervalMin) return this.stripProvisional(cached, tf);
         const candles = await exchange.getOHLC(pair, intervalMin);
         if (candles && Array.isArray(candles) && candles.length >= 7) {
           this.candleCache.set(key, { candles, fetchedAt: Date.now() });
           this.persistCandles(pair, tf, candles).catch(() => {});
           return candles;
         }
-        const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
-        return fallback ?? cached?.candles ?? [];
+        const fallback = await this.tryFallbackToDb(pair, tf, this.stripProvisional(cached, tf));
+        return fallback ?? this.stripProvisional(cached, tf);
       } catch (e: any) {
         console.warn(`[MDS] getCandlesFinalizedAware(${pair}, ${tf}) error: ${e.message}`);
-        if (cached?.candles && cached.candles.length > 1) {
-          const tfMs = (TIMEFRAME_INTERVAL_MINUTES[tf] ?? 0) * 60 * 1000;
-          const lastCandle = cached.candles[cached.candles.length - 1];
-          const lastCandleOpenMs = (lastCandle as any).time ?? (lastCandle as any).timestamp ?? 0;
-          const lastCandleCloseMs = lastCandleOpenMs + tfMs;
-          if (cached.fetchedAt < lastCandleCloseMs && Date.now() >= lastCandleCloseMs) {
-            console.warn(`[MDS] SOURCE_FINALITY_FAIL_CLOSED ${key}: excluding provisional last candle`);
-            return cached.candles.slice(0, -1);
-          }
-        }
-        const fallback = await this.tryFallbackToDb(pair, tf, cached?.candles);
-        return fallback ?? cached?.candles ?? [];
+        const stripped = this.stripProvisional(cached, tf);
+        const fallback = await this.tryFallbackToDb(pair, tf, stripped);
+        return fallback ?? stripped;
       }
     })();
 

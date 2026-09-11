@@ -50,6 +50,10 @@ vi.mock("../../MarketDataService", () => {
         const key = `${pair}-${tf}`;
         return candleStore.get(key) ?? [];
       }),
+      getCandlesFinalizedAware: vi.fn(async (pair: string, tf: string) => {
+        const key = `${pair}-${tf}`;
+        return candleStore.get(key) ?? [];
+      }),
       getTicker: vi.fn(async (pair: string) => {
         return tickerStore.get(pair) ?? null;
       }),
@@ -195,5 +199,30 @@ describe("C1F3-2: Real production integration — mock MarketDataService, real b
     expect(ctx.formingCandle5m).toBeNull();
     expect(ctx.closedCandleContext.tf5m.diagnostics.futureCandleCount).toBe(1);
     expect(isContextValidForEntry(ctx.closedCandleContext)).toBe(true);
+  });
+
+  it("buildSpotMarketContext uses getCandlesFinalizedAware (source finality)", async () => {
+    const c5m = makeCandleSeries(TF_5M, 200, BASE_NOW - 200 * TF_5M);
+    const c15m = makeCandleSeries(TF_15M, 200, BASE_NOW - 200 * TF_15M);
+    const c1h = makeCandleSeries(TF_1H, 200, BASE_NOW - 200 * TF_1H);
+    const c4h = makeCandleSeries(TF_4H, 200, BASE_NOW - 200 * TF_4H);
+    const ticker: Ticker = { bid: 100, ask: 100.1, last: 100 };
+
+    setupMarketData(c5m, c15m, c1h, c4h, ticker);
+
+    // Clear mock call history
+    (MarketDataService.getCandlesFinalizedAware as any).mockClear();
+    (MarketDataService.getCandles as any).mockClear();
+
+    const ctx = await buildSpotMarketContext({ pair: "BTC/USD" });
+
+    // buildSpotMarketContext MUST call getCandlesFinalizedAware for all 4 TFs
+    expect(MarketDataService.getCandlesFinalizedAware).toHaveBeenCalledTimes(4);
+    // buildSpotMarketContext MUST NOT call getCandles (old path)
+    expect(MarketDataService.getCandles).not.toHaveBeenCalled();
+    // Context must still be valid
+    expect(ctx.pair).toBe("BTC/USD");
+    expect(isContextValidForEntry(ctx.closedCandleContext)).toBe(true);
+    // SOURCE_FINALITY_PRODUCTION_USAGE=PASS
   });
 });

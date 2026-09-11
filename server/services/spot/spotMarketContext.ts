@@ -45,12 +45,13 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
   const minCandles = input.minCandles ?? 200;
   const generatedAt = Date.now();
 
-  // Fetch all 4 timeframes in parallel
+  // Fetch all 4 timeframes in parallel — SOURCE FINALITY for SPOT V3
+  // getCandlesFinalizedAware ensures provisional candles are never promoted to closed
   const [candles5mRaw, candles15mRaw, candles1hRaw, candles4hRaw] = await Promise.all([
-    MarketDataService.getCandles(pair, "5m"),
-    MarketDataService.getCandles(pair, "15m"),
-    MarketDataService.getCandles(pair, "1h"),
-    MarketDataService.getCandles(pair, "4h"),
+    MarketDataService.getCandlesFinalizedAware(pair, "5m"),
+    MarketDataService.getCandlesFinalizedAware(pair, "15m"),
+    MarketDataService.getCandlesFinalizedAware(pair, "1h"),
+    MarketDataService.getCandlesFinalizedAware(pair, "4h"),
   ]);
 
   // Normalize timestamps (sec → ms, drop invalid)

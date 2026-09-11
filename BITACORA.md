@@ -1,3 +1,49 @@
+## 2026-09-11 — SPOT ADAPTIVE V3 — REAL KRKEN BASELINE CERTIFICATION (Trades REST API)
+
+### Objetivo
+
+Certificación baseline con datos reales de Kraken usando REST API Trades endpoint.
+Source finality productivo, métricas refinadas, ventanas FULL + COMMON, 180 días de histórico.
+
+### Cambios de fuente
+
+- Google Drive ZIPs: BLOQUEADO (quota exceeded)
+- Fuente final: KRAKEN_OFFICIAL_REST_TRADES (`/0/public/Trades`)
+- Descarga resumible con checkpoint cada 50 requests
+- Agregación simultánea de 4 TFs (5m, 15m, 60m, 240m) en una sola pasada por par
+- Retry/backoff para 429/5xx/network errors
+- Delay: 1200ms entre requests para evitar rate limiting
+
+### Cambios de código
+
+**Nuevos archivos:**
+- `server/services/spot/research/downloadTradesData.ts` — Downloader Trades con checkpoint/resume, agregación OHLCV desde trades
+
+**Archivos modificados:**
+- `server/services/spot/research/krakenHistoricalLoader.ts` — Source label → KRAKEN_OFFICIAL_REST_TRADES, añadidas constantes KRAKEN_TRADES_URL, ZIP_USED, GOOGLE_DRIVE_USED
+- `server/services/spot/research/downloadKrakenData.ts` — Start date → 2026-03-14 (180 días), mejor logging
+- `server/services/spot/research/spotBaselineResearch.ts` — Manifest actualizado (endpoint, zip_used, google_drive_used, start/end_requested), removido KRAKEN_API_URL import
+- `server/services/spot/spotReplayEngine.ts` — Nuevos counters: signalsBuy, intentExecutable, entriesExecuted, closedTrades, openTerminalTrades, grossProfitFactor, maxDrawdownUsd, maxDrawdownPct, regimeBreakdown; campos regimeAtEntry/directionAtEntry en ReplayTrade
+- `server/services/spot/spotWalkForward.ts` — aggregateStats actualizado con nuevos campos
+- `server/services/spot/spotMarketContext.ts` — Usa getCandlesFinalizedAware para source finality
+- `server/services/MarketDataService.ts` — getCandlesFinalizedAware: stripProvisional en todos los fallback paths
+- `server/services/spot/__tests__/spotC1F3ProductionIntegration.test.ts` — Test source finality: buildSpotMarketContext usa getCandlesFinalizedAware
+- `server/services/spot/__tests__/spotCacheBoundaryFinality.test.ts` — Tests fallback finality
+
+### Validaciones
+
+- SPOT suite: 31 archivos / 396 tests pasaron
+- TSC: exit 0
+- Build: exit 0
+- git diff --check: exit 0
+- NO tuning, NO REAL, NO deploy, NO DB, NO VPS
+
+### Estado
+
+- Descarga Trades en progreso (BTC/USD casi completo, ETH/SOL/XRP pendientes)
+- Baseline se ejecutará cuando los 4 pares estén descargados
+- Commit: fix(spot-v3): complete real kraken baseline certification
+
 ## 2026-09-10 — SPOT ADAPTIVE V3 — C1F4: FORWARD-TWIN IDENTITY + FILL + REPLAY LOADER CLOSURE
 
 ### Objetivo
