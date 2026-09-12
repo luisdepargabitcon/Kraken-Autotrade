@@ -63,6 +63,10 @@ export interface ReplayConfig {
   entryV3Config?: EntryV3Config;
   /** Instrumentation log for V3 research */
   v3Instrumentation?: V3InstrumentationLog;
+  /** Evaluation boundary: no new entries before this time (candles still used for warmup/indicators) */
+  evaluationStartMs?: number;
+  /** Evaluation boundary: no new entries after this time */
+  evaluationEndMs?: number;
 }
 
 export interface ReplayTrade {
@@ -298,6 +302,11 @@ export function runReplay(
 
     // ─── Entry evaluation (if slots available) ─────────────────────────────
     if (positions.length >= maxConcurrent) continue;
+
+    // Evaluation boundary: skip new entries outside [evaluationStartMs, evaluationEndMs]
+    // Candles before evaluationStartMs are still processed for exit evaluation and indicator warmup
+    if (config.evaluationStartMs !== undefined && evaluationTime < config.evaluationStartMs) continue;
+    if (config.evaluationEndMs !== undefined && evaluationTime > config.evaluationEndMs) continue;
 
     // C1F4-19: Gap blocks entry but NOT exit evaluation.
     // Exit evaluation for open positions continues regardless of gap.
@@ -586,7 +595,7 @@ export function computeReplayStats(
 
 // ─── Context builder (from candles, no async) ───────────────────────────────
 
-function buildReplayContextFast(
+export function buildReplayContextFast(
   pair: string,
   candles5m: SpotCandle[],
   candles15m: SpotCandle[],
