@@ -67,6 +67,8 @@ export interface ReplayConfig {
   evaluationStartMs?: number;
   /** Evaluation boundary: no new entries after this time */
   evaluationEndMs?: number;
+  /** V4 soft quality threshold (research-only). When set, V4 acceptance replaces V3. */
+  v4MinQualityScore?: number;
 }
 
 export interface ReplayTrade {
@@ -95,6 +97,8 @@ export interface ReplayTrade {
   profitCaptureClass: string;
   executionMode: ExecutionMode;
   policyVersion: string;
+  /** V4 quality score at entry time (research-only, -1 if not computed) */
+  v4QualityScore?: number;
 }
 
 export interface V3InstrumentationEntry {

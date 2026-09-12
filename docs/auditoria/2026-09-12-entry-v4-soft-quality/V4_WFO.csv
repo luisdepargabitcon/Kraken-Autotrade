@@ -1,0 +1,4 @@
+fold,threshold,train_score,train_trades,test_trades,test_net,test_pf,test_expectancy
+0,0.5,-1.17,6,0,0,0,0
+1,0.3,-0.67,34,7,56.25,1.6240985243537114,8.04
+2,0.3,-0.29,16,51,529.24,1.821724684035649,10.38

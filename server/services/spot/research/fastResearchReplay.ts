@@ -36,10 +36,10 @@ import {
 import { evaluateSpotCanonical, type SpotSignalResult, type SpotCanonicalConfig } from "../spotCanonicalStrategy";
 import { createEntryIntent, evaluateEntryIntent, type AntiLateEntryConfig } from "../spotEntryIntent";
 import {
-  evaluateV3AntiLateEntry,
   type EntryV3Config,
   DEFAULT_ENTRY_V3_CONFIG,
 } from "../spotEntryV3";
+import { checkV4Acceptance, computeV4QualityScores, type V4QualityScores } from "./spotEntryV4Research";
 import { evaluateSizing, DEFAULT_SPOT_RISK_CONFIG } from "../spotRiskManager";
 import { type FeeQuality } from "../feeModel";
 import { computePnlBreakdown, computeFeeBreakdown, type FeeModel } from "../feeModel";
@@ -325,12 +325,9 @@ function checkV3Acceptance(
   const rawPassReclaim = f.reclaimIsBullish && f.reclaimBodyPct >= config.reclaimMinBodyPct && (!config.reclaimMustCloseAboveEma || f.reclaimCandleClose >= f.ema20) && f.reclaimAfterOrigin;
   const rawPassResumption = f.resumptionExists && f.resumptionIsBullish && f.resumptionBodyPct >= config.resumptionMinBodyPct && f.resumptionUpperWickRatio <= config.resumptionMaxUpperWickRatio && f.resumptionVolRatio5m >= config.resumptionMinVolumeRatio;
 
-  // Anti-late checks — SEPARATE from stages
+  // Anti-late checks — SEPARATE from stages, direct computation
   const passAntiLateDistance = f.distanceFromOriginAtr <= config.maxEntryDistanceAtr;
-  const antiLate = evaluateV3AntiLateEntry(
-    currentPrice, f.originPrice, f.originAtrPct, f.expiresAt, nowMs, config,
-  );
-  const passAntiLateExpiry = antiLate.action === "EXECUTE";
+  const passAntiLateExpiry = nowMs <= f.expiresAt;
   const passAntiLateTotal = passAntiLateDistance && passAntiLateExpiry;
 
   // Mask determines which stages are REQUIRED for acceptance
@@ -391,6 +388,9 @@ export function fastReplay(
   let antiLateDistanceFails = 0;
   let antiLateExpiryFails = 0;
 
+  // V4 quality score tracking per lotId
+  const v4ScoreMap = new Map<string, number>();
+
   let lastInWindowClose = 0;
   let lastInWindowTime = 0;
   let boundaryClosed = false;
@@ -428,6 +428,7 @@ export function fastReplay(
             profitCapturePct: audit.profitCapturePct,
             profitCaptureClass: classifyProfitCapture(audit.profitCapturePct),
             executionMode: ExecutionMode.SHADOW, policyVersion: SPOT_POLICY_VERSION,
+            v4QualityScore: v4ScoreMap.get(pos.lotId) ?? -1,
           });
         }
         boundaryClosed = true;
@@ -484,6 +485,7 @@ export function fastReplay(
             profitCapturePct: audit.profitCapturePct,
             profitCaptureClass: classifyProfitCapture(audit.profitCapturePct),
             executionMode: ExecutionMode.SHADOW, policyVersion: SPOT_POLICY_VERSION,
+            v4QualityScore: v4ScoreMap.get(pos.lotId) ?? -1,
           });
           positions.splice(p, 1);
           exitStates.delete(pos.lotId);
@@ -511,47 +513,62 @@ export function fastReplay(
       if (!features) continue;
 
       totalCandidates++;
-      const { accepted, attribution } = checkV3Acceptance(features, entryV3Config, currentPrice, evaluationTime, stageMask);
 
-      if (attribution.rawPassImpulse) rawPassImpulseCount++;
-      if (attribution.rawPassRetracement) rawPassRetracementCount++;
-      if (attribution.rawPassStructure) rawPassStructureCount++;
-      if (attribution.rawPassReclaim) rawPassReclaimCount++;
-      if (attribution.rawPassResumption) rawPassResumptionCount++;
+      // V4 path: soft quality threshold replaces V3 AND-gates
+      if (config.v4MinQualityScore !== undefined) {
+        const v4Result = checkV4Acceptance(features, config.v4MinQualityScore, evaluationTime, entryV3Config);
+        // Track raw stage booleans for attribution
+        if (v4Result.scores.impulseScore > 0) rawPassImpulseCount++;
+        if (v4Result.scores.retracementScore > 0) rawPassRetracementCount++;
+        if (v4Result.scores.structureScore > 0) rawPassStructureCount++;
+        if (v4Result.scores.reclaimScore > 0) rawPassReclaimCount++;
+        if (v4Result.scores.resumptionScore > 0) rawPassResumptionCount++;
+        if (!v4Result.passAntiLateDistance) antiLateDistanceFails++;
+        if (!v4Result.passAntiLateExpiry) antiLateExpiryFails++;
+        if (!v4Result.accepted) continue;
+        // Mark that this entry has a V4 score (will be stored by lotId below)
+        (frame as any)._v4QualityScore = v4Result.scores.qualityScore;
+      } else {
+        const { accepted, attribution } = checkV3Acceptance(features, entryV3Config, currentPrice, evaluationTime, stageMask);
 
-      if (!attribution.passAntiLateDistance) antiLateDistanceFails++;
-      if (!attribution.passAntiLateExpiry) antiLateExpiryFails++;
+        if (attribution.rawPassImpulse) rawPassImpulseCount++;
+        if (attribution.rawPassRetracement) rawPassRetracementCount++;
+        if (attribution.rawPassStructure) rawPassStructureCount++;
+        if (attribution.rawPassReclaim) rawPassReclaimCount++;
+        if (attribution.rawPassResumption) rawPassResumptionCount++;
 
-      if (!accepted) {
-        // Count stage failures using RAW booleans (not mask)
-        const stageFails = [!attribution.rawPassImpulse, !attribution.rawPassRetracement, !attribution.rawPassStructure, !attribution.rawPassReclaim, !attribution.rawPassResumption].filter(Boolean).length;
-        if (stageFails === 1) {
-          if (!attribution.rawPassImpulse) failOnlyImpulse++;
-          else if (!attribution.rawPassRetracement) failOnlyRetracement++;
-          else if (!attribution.rawPassStructure) failOnlyStructure++;
-          else if (!attribution.rawPassReclaim) failOnlyReclaim++;
-          else if (!attribution.rawPassResumption) failOnlyResumption++;
-        } else if (stageFails >= 2) {
-          failMultipleStages++;
+        if (!attribution.passAntiLateDistance) antiLateDistanceFails++;
+        if (!attribution.passAntiLateExpiry) antiLateExpiryFails++;
+
+        if (!accepted) {
+          const stageFails = [!attribution.rawPassImpulse, !attribution.rawPassRetracement, !attribution.rawPassStructure, !attribution.rawPassReclaim, !attribution.rawPassResumption].filter(Boolean).length;
+          if (stageFails === 1) {
+            if (!attribution.rawPassImpulse) failOnlyImpulse++;
+            else if (!attribution.rawPassRetracement) failOnlyRetracement++;
+            else if (!attribution.rawPassStructure) failOnlyStructure++;
+            else if (!attribution.rawPassReclaim) failOnlyReclaim++;
+            else if (!attribution.rawPassResumption) failOnlyResumption++;
+          } else if (stageFails >= 2) {
+            failMultipleStages++;
+          }
         }
-        // Anti-late failures are NOT counted in failMultipleStages
-      }
 
-      if (v3Log) {
-        v3Log.add({
-          pair, timestamp: evaluationTime,
-          regime: "", direction: "",
-          adx: 0, atrPct: 0,
-          impulseAtr: features.impulseAtr, retracementAtr: features.retracementAtr,
-          reclaimConfirmed: features.reclaimIsBullish && features.reclaimAfterOrigin,
-          resumptionConfirmed: features.resumptionExists && features.resumptionIsBullish,
-          distanceFromOriginAtr: features.distanceFromOriginAtr,
-          accepted,
-          reasonCode: accepted ? "V3_ENTRY_CONFIRMED" : "V3_REJECTED" as any,
-        });
-      }
+        if (v3Log) {
+          v3Log.add({
+            pair, timestamp: evaluationTime,
+            regime: "", direction: "",
+            adx: 0, atrPct: 0,
+            impulseAtr: features.impulseAtr, retracementAtr: features.retracementAtr,
+            reclaimConfirmed: features.reclaimIsBullish && features.reclaimAfterOrigin,
+            resumptionConfirmed: features.resumptionExists && features.resumptionIsBullish,
+            distanceFromOriginAtr: features.distanceFromOriginAtr,
+            accepted,
+            reasonCode: accepted ? "V3_ENTRY_CONFIRMED" : "V3_REJECTED" as any,
+          });
+        }
 
-      if (!accepted) continue;
+        if (!accepted) continue;
+      }
     } else {
       // B0 path: need ctx for intent evaluation
       const ctx = buildReplayContextFast(
@@ -608,6 +625,12 @@ export function fastReplay(
     positions.push(position);
     exitStates.set(lotId, createExitState(position));
     auditTracker.initPosition(position);
+
+    // Store V4 quality score for this position
+    const v4Score = (frame as any)._v4QualityScore;
+    if (v4Score !== undefined) {
+      v4ScoreMap.set(lotId, v4Score);
+    }
   }
 
   // Close remaining positions at terminal candle (only if not already closed by boundary)
@@ -643,6 +666,7 @@ export function fastReplay(
         profitCapturePct: audit.profitCapturePct,
         profitCaptureClass: classifyProfitCapture(audit.profitCapturePct),
         executionMode: ExecutionMode.SHADOW, policyVersion: SPOT_POLICY_VERSION,
+        v4QualityScore: v4ScoreMap.get(pos.lotId) ?? -1,
       });
     }
   }

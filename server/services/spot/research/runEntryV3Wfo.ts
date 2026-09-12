@@ -221,7 +221,7 @@ function netPF(trades: ReplayTrade[]): { netWin: number; netLoss: number; pf: nu
   return { netWin, netLoss, pf };
 }
 
-function maxDrawdown(trades: ReplayTrade[], initialCapital: number = 10000): number {
+function maxDrawdown(trades: { netPnlUsd: number }[], initialCapital: number = 10000): number {
   let equity = initialCapital;
   let peak = initialCapital;
   let maxDD = 0;
@@ -284,7 +284,14 @@ function summarizePairResult(pair: string, trades: ReplayTrade[]): PairFoldResul
  *   - More negative expectancy -> score never improves (normalizedNetExpectancy decreases)
  *   - Penalties on negative expectancy make score MORE negative (worse)
  */
-function objectiveScore(allPairTrades: { pair: string; trades: ReplayTrade[] }[]): { score: number; totalTrades: number; netPnl: number } {
+export interface ObjectiveTrade {
+  netPnlUsd: number;
+  grossPnlUsd: number;
+  entryFeeUsd: number;
+  exitFeeUsd: number;
+}
+
+export function objectiveScore(allPairTrades: { pair: string; trades: ObjectiveTrade[] }[]): { score: number; totalTrades: number; netPnl: number } {
   let totalTrades = 0;
   let totalNetPnl = 0;
   let totalFees = 0;
@@ -895,4 +902,6 @@ function main(): void {
   }
 }
 
-main();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
