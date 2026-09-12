@@ -130,6 +130,12 @@ export interface ReplayResult {
   v3Instrumentation?: V3InstrumentationEntry[];
   b0EligibleCandidates?: number;
   v4AcceptedCandidates?: number;
+  b0SignalCandidates?: number;
+  b0IntentEligible?: number;
+  b0SizingApproved?: number;
+  v4ScoreEligible?: number;
+  v4FinalExecuted?: number;
+  v4AcceptsB0Rejected?: number;
 }
 
 export interface ReplayStats {
@@ -380,7 +386,7 @@ export function runReplay(
     signalCounter++;
     signalsBuyCount++;
     const signalId = `replay-${pair}-${signalCounter}`;
-    const intent = createEntryIntent(signal, ctx, config.antiLateEntryConfig);
+    const intent = createEntryIntent(signal, ctx, config.antiLateEntryConfig, evaluationTime);
 
     // ── V3 entry quality gate (when enabled) ──
     if (entryV3Config.enabled) {
@@ -425,7 +431,7 @@ export function runReplay(
       if (v3AntiLate.action !== "EXECUTE") continue;
     } else {
       // B0 path: standard intent evaluation
-      const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig);
+      const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig, evaluationTime);
       if (!intentEval.shouldExecute) continue;
     }
 

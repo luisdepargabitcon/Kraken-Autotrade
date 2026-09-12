@@ -1,7 +1,7 @@
 # Entry V4 Soft Quality Overlay — Counter-Audit Report
 
 ## Base
-- Commit base: `bd9723a6fe459978733ddada90065bac9411ce4f`
+- Commit base: `f9b6160b62d3b2909342825df64c7ceaee860f14`
 - Branch: `feature/spot-adaptive-v3-shadow`
 - Date: 2026-09-12
 
@@ -36,11 +36,11 @@ V4 adds ONLY a quality filter. It does NOT eliminate any B0 gate.
 
 | Test | Result |
 |---|---|
+| HISTORICAL_INTENT_CLOCK | PASS (49 intents, createdAt==evaluationTime) |
+| CANONICAL_FAST_B0_PARITY | PASS (runReplay B0 == fastReplay B0) |
+| V4_THRESHOLD_ZERO_EQUALS_B0 | PASS (fastReplay B0 == fastReplay V4 threshold=0) |
+| V4_REAL_FUTURE_INVARIANCE | PASS (featuresEqual, scoresEqual, score=0.2025) |
 | V4_ACCEPTS_B0_REJECTED | PASS (0) |
-| V4_B0_CHASE_PARITY | PASS |
-| V4_B0_CONTEXT_PARITY | PASS |
-| V4_FUTURE_INVARIANCE | PASS |
-| V4_THRESHOLD_ZERO_EQUALS_B0 | PASS |
 | B0_SCORE_COVERAGE | 100% (94/94, 0 missing) |
 
 ## WFO Results
@@ -111,9 +111,26 @@ The old V4 mixed results were higher because V4 was replacing B0 anti-late seman
 
 ### Candidate Tracking
 
-- B0_ELIGIBLE_CANDIDATES: 108
-- V4_ACCEPTED_CANDIDATES: 108 (threshold=0)
-- V4_ACCEPTS_B0_REJECTED: 0
+| Counter | Value |
+|---|---|
+| B0_SIGNAL_CANDIDATES | 133 |
+| B0_INTENT_ELIGIBLE | 108 |
+| B0_SIZING_APPROVED | 94 |
+| V4_SCORE_ELIGIBLE | 133 |
+| V4_FINAL_EXECUTED | 108 |
+| V4_ACCEPTS_B0_REJECTED | 0 |
+
+### Replay Clock Certification
+
+- `evaluationTime` is now explicitly passed to `createEntryIntent` and `evaluateEntryIntent` in `precomputeFrames`, `fastReplay`, and `runReplay`.
+- No `Date.now()` calls remain in replay paths.
+- Intent `createdAt` matches candle close time exactly.
+- Intent `expiresAt` = `createdAt + maxCandlesAfterSignal * candleIntervalMs`.
+
+### Portfolio Drawdown Fix
+
+- Trades closed at the same `closedAtMs` are grouped as a single equity event.
+- Prevents artificial drawdown inflation from sequential same-timestamp trade processing.
 
 ## Causal Comparison
 

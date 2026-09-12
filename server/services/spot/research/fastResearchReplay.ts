@@ -178,7 +178,7 @@ export function precomputeFrames(
 
     if (isBuy) {
       signalCounter++;
-      intent = createEntryIntent(signal, ctx, antiLateEntryConfig);
+      intent = createEntryIntent(signal, ctx, antiLateEntryConfig, evaluationTime);
       intent = { ...intent, signalId: `replay-${pair}-${signalCounter}` };
 
       if (entryV3Config.enabled) {
@@ -392,6 +392,12 @@ export function fastReplay(
   const v4ScoreMap = new Map<string, number>();
   let b0EligibleCandidates = 0;
   let v4AcceptedCandidates = 0;
+  let b0SignalCandidates = 0;
+  let b0IntentEligible = 0;
+  let b0SizingApproved = 0;
+  let v4ScoreEligible = 0;
+  let v4FinalExecuted = 0;
+  let v4AcceptsB0Rejected = 0;
 
   let lastInWindowClose = 0;
   let lastInWindowTime = 0;
@@ -507,6 +513,7 @@ export function fastReplay(
 
     if (!frame.isBuy) continue;
     signalsBuyCount++;
+    b0SignalCandidates++;
 
     const intent = frame.intent!;
 
@@ -562,24 +569,45 @@ export function fastReplay(
       );
       if (!ctx) continue;
 
-      const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig);
-      if (!intentEval.shouldExecute) continue;
+      const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig, evaluationTime);
+      const b0Approved = intentEval.shouldExecute;
 
       // V4 overlay: quality filter on top of B0 eligibility
       if (config.v4MinQualityScore !== undefined) {
         const features = frame.v3Features;
-        if (!features) continue;
-        totalCandidates++;
-        b0EligibleCandidates++;
+        if (!features) {
+          if (!b0Approved) continue;
+          continue;
+        }
+
+        if (b0Approved) {
+          b0IntentEligible++;
+          b0EligibleCandidates++;
+        }
+
+        v4ScoreEligible++;
         const v4Scores = computeV4QualityScores(features);
         if (v4Scores.impulseScore > 0) rawPassImpulseCount++;
         if (v4Scores.retracementScore > 0) rawPassRetracementCount++;
         if (v4Scores.structureScore > 0) rawPassStructureCount++;
         if (v4Scores.reclaimScore > 0) rawPassReclaimCount++;
         if (v4Scores.resumptionScore > 0) rawPassResumptionCount++;
-        if (v4Scores.qualityScore < config.v4MinQualityScore) continue;
+
+        const v4QualityPass = v4Scores.qualityScore >= config.v4MinQualityScore;
+        const v4FinalAccepted = v4QualityPass && b0Approved;
+
+        if (v4FinalAccepted && !b0Approved) v4AcceptsB0Rejected++;
+
+        if (!b0Approved) continue;
+        if (!v4QualityPass) continue;
+
         v4AcceptedCandidates++;
+        v4FinalExecuted++;
         (frame as any)._v4QualityScore = v4Scores.qualityScore;
+      } else {
+        if (!b0Approved) continue;
+        b0IntentEligible++;
+        b0EligibleCandidates++;
       }
     }
 
@@ -599,6 +627,7 @@ export function fastReplay(
     );
 
     if (!sizing.approved) continue;
+    b0SizingApproved++;
 
     entriesExecutedCount++;
     lotCounter++;
@@ -695,5 +724,5 @@ export function fastReplay(
     };
   }
 
-  return { pair, trades, stats, config, v3Instrumentation: v3Log?.entries, b0EligibleCandidates, v4AcceptedCandidates };
+  return { pair, trades, stats, config, v3Instrumentation: v3Log?.entries, b0EligibleCandidates, v4AcceptedCandidates, b0SignalCandidates, b0IntentEligible, b0SizingApproved, v4ScoreEligible, v4FinalExecuted, v4AcceptsB0Rejected };
 }

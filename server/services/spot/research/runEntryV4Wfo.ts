@@ -152,6 +152,12 @@ interface V4WFOReport {
   b0EligibleCandidates: number;
   v4AcceptedCandidates: number;
   v4AcceptsB0Rejected: number;
+  b0SignalCandidates: number;
+  b0IntentEligible: number;
+  b0SizingApproved: number;
+  v4ScoreEligible: number;
+  v4FinalExecuted: number;
+  robustness: string;
   runtimeSec: number;
   precomputeSec: number;
   researchSec: number;
@@ -425,6 +431,8 @@ function runV4WFO(
   const allB0TestTradesWithScores: { netR: number; mfeR: number; qualityScore: number; netPnl: number; fees: number; win: boolean }[] = [];
   let b0ScoreTrades = 0, b0ScoreMapped = 0, b0ScoreMissing = 0;
   let totalB0Eligible = 0, totalV4Accepted = 0, totalV4AcceptsB0Rejected = 0;
+  let totalB0SignalCandidates = 0, totalB0IntentEligible = 0, totalB0SizingApproved = 0;
+  let totalV4ScoreEligible = 0, totalV4FinalExecuted = 0;
 
   // Also collect all B0 and V4 trades for portfolio DD
   const allB0TestTrades: ReplayTrade[] = [];
@@ -443,7 +451,9 @@ function runV4WFO(
       };
       const b0Result = fastReplay(precomputed, b0Config);
       allB0TestTrades.push(...b0Result.trades);
-      totalB0Eligible += b0Result.b0EligibleCandidates ?? 0;
+      totalB0SignalCandidates += b0Result.b0SignalCandidates ?? 0;
+      totalB0IntentEligible += b0Result.b0IntentEligible ?? 0;
+      totalB0SizingApproved += b0Result.b0SizingApproved ?? 0;
 
       // Run V4 with threshold=0 to get all B0-eligible V4 trades for comparison
       const v4ZeroConfig: ReplayConfig = {
@@ -455,6 +465,9 @@ function runV4WFO(
       const v4ZeroResult = fastReplay(precomputed, v4ZeroConfig);
       totalB0Eligible += v4ZeroResult.b0EligibleCandidates ?? 0;
       totalV4Accepted += v4ZeroResult.v4AcceptedCandidates ?? 0;
+      totalV4ScoreEligible += v4ZeroResult.v4ScoreEligible ?? 0;
+      totalV4FinalExecuted += v4ZeroResult.v4FinalExecuted ?? 0;
+      totalV4AcceptsB0Rejected += v4ZeroResult.v4AcceptsB0Rejected ?? 0;
 
       // For each B0 trade, find the corresponding frame and compute V4 score
       for (const trade of b0Result.trades) {
@@ -532,14 +545,18 @@ function runV4WFO(
   const spearmanNetR = n >= 5 ? Math.round(spearman(scores, netRs) * 1000) / 1000 : 0;
   const spearmanMfeR = n >= 5 ? Math.round(spearman(scores, mfeRs) * 1000) / 1000 : 0;
 
-  // ── Portfolio DD: chronological across all pairs ──
+  // ── Portfolio DD: chronological across all pairs, grouped by closedAtMs ──
   function portfolioMaxDD(trades: ReplayTrade[]): number {
-    const sorted = [...trades].sort((a, b) => a.closedAtMs - b.closedAtMs);
+    const byTs = new Map<number, number>();
+    for (const t of trades) {
+      byTs.set(t.closedAtMs, (byTs.get(t.closedAtMs) ?? 0) + t.netPnlUsd);
+    }
+    const sortedTs = [...byTs.keys()].sort((a, b) => a - b);
     let equity = 10000;
     let peak = 10000;
     let maxDD = 0;
-    for (const t of sorted) {
-      equity += t.netPnlUsd;
+    for (const ts of sortedTs) {
+      equity += byTs.get(ts)!;
       peak = Math.max(peak, equity);
       const dd = peak - equity;
       if (dd > maxDD) maxDD = dd;
@@ -588,6 +605,12 @@ function runV4WFO(
     b0EligibleCandidates: totalB0Eligible,
     v4AcceptedCandidates: totalV4Accepted,
     v4AcceptsB0Rejected: totalV4AcceptsB0Rejected,
+    b0SignalCandidates: totalB0SignalCandidates,
+    b0IntentEligible: totalB0IntentEligible,
+    b0SizingApproved: totalB0SizingApproved,
+    v4ScoreEligible: totalV4ScoreEligible,
+    v4FinalExecuted: totalV4FinalExecuted,
+    robustness: pctNetFromBestFold > 80 ? "LOW" : "MEDIUM",
     runtimeSec: Math.round(runtimeSec * 10) / 10,
     precomputeSec: Math.round(precomputeSec * 10) / 10,
     researchSec: Math.round(researchSec * 10) / 10,
@@ -705,12 +728,14 @@ function main(): void {
 
   for (const f of report.folds) {
     console.log(`FOLD${f.foldIndex}_THRESHOLD=${f.bestThreshold}`);
-    // Per-fold B0 and V4 net
-    let foldB0Net = 0, foldV4Net = 0;
-    for (const b0r of f.b0Results) foldB0Net += b0r.netPnl;
-    for (const v4r of f.v4Results) foldV4Net += v4r.netPnl;
+    // Per-fold B0 and V4 net and trades
+    let foldB0Net = 0, foldV4Net = 0, foldB0Trades = 0, foldV4Trades = 0;
+    for (const b0r of f.b0Results) { foldB0Net += b0r.netPnl; foldB0Trades += b0r.trades; }
+    for (const v4r of f.v4Results) { foldV4Net += v4r.netPnl; foldV4Trades += v4r.trades; }
     console.log(`FOLD${f.foldIndex}_B0_NET=${Math.round(foldB0Net * 100) / 100}`);
     console.log(`FOLD${f.foldIndex}_V4_NET=${Math.round(foldV4Net * 100) / 100}`);
+    console.log(`FOLD${f.foldIndex}_B0_TRADES=${foldB0Trades}`);
+    console.log(`FOLD${f.foldIndex}_V4_TRADES=${foldV4Trades}`);
   }
   console.log(`THRESHOLD_STABILITY=${a.thresholdStability}`);
   console.log(`OOS_TRADES_SUFFICIENT=${a.sampleSufficient ? "YES" : "NO"}`);
@@ -742,8 +767,14 @@ function main(): void {
   console.log(`B0_ELIGIBLE_CANDIDATES=${report.b0EligibleCandidates}`);
   console.log(`V4_ACCEPTED_CANDIDATES=${report.v4AcceptedCandidates}`);
   console.log(`V4_ACCEPTS_B0_REJECTED=${report.v4AcceptsB0Rejected}`);
+  console.log(`B0_SIGNAL_CANDIDATES=${report.b0SignalCandidates}`);
+  console.log(`B0_INTENT_ELIGIBLE=${report.b0IntentEligible}`);
+  console.log(`B0_SIZING_APPROVED=${report.b0SizingApproved}`);
+  console.log(`V4_SCORE_ELIGIBLE=${report.v4ScoreEligible}`);
+  console.log(`V4_FINAL_EXECUTED=${report.v4FinalExecuted}`);
   console.log(`PCT_NET_FROM_BEST_FOLD=${a.pctNetFromBestFold}%`);
   console.log(`TEMPORAL_CONCENTRATION=${a.temporalConcentration}`);
+  console.log(`ROBUSTNESS=${report.robustness}`);
 
   // Verdict
   const deltaNet = a.v4NetPnl - a.b0NetPnl;
