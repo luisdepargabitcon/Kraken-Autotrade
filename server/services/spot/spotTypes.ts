@@ -333,6 +333,7 @@ export enum ExitReasonType {
   TRAILING = "TRAILING",
   PROFIT = "PROFIT",
   TIME_EFFICIENCY = "TIME_EFFICIENCY",
+  RESEARCH_WINDOW_END = "RESEARCH_WINDOW_END",
 }
 
 export enum ExitPriority {

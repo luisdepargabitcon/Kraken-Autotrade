@@ -203,12 +203,61 @@ export function runReplay(
   // Iterate through 5m candles for finer scan granularity (closer to 60s production scan).
   // Warmup: need 200 15m candles (= 600 5m candles) before generating signals.
   const warmup5m = 600;
+
+  // Track last in-window candle for RESEARCH_WINDOW_END boundary
+  let lastInWindowClose = 0;
+  let lastInWindowTime = 0;
+  let boundaryClosed = false;
+
   for (let i = warmup5m; i < sorted5m.length; i++) {
     const current5m = sorted5m[i];
     // CRITICAL: evaluation happens at the CLOSE time of the 5m candle, not its open time.
     // At open time, the close is unknown — using it would be lookahead bias.
     const evaluationTime = getCandleCloseTimeMs(current5m.time, "5m");
     if (evaluationTime === null) continue;
+
+    // ── Strict evaluationEndMs boundary ──
+    // When we pass the boundary, close all remaining positions at the last in-window
+    // candle's close with RESEARCH_WINDOW_END and break. No future data leakage.
+    if (config.evaluationEndMs !== undefined && evaluationTime > config.evaluationEndMs) {
+      if (positions.length > 0 && lastInWindowClose > 0 && !boundaryClosed) {
+        for (const pos of positions) {
+          const exitPrice = lastInWindowClose;
+          const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.qtyRemaining, feeModel);
+          const pnl = computePnlBreakdown({
+            entryPrice: pos.entryPrice, exitPrice, volume: pos.qtyRemaining,
+            entryFeeUsd: pos.entryFee, feeModel,
+          });
+          const audit = auditTracker.finalizeExit(pos, exitPrice, ExitReasonType.RESEARCH_WINDOW_END, lastInWindowTime);
+          const posMetrics = auditTracker.getMetrics(pos.lotId);
+          const rMultiple = pos.initialStopDistanceUsd > 0
+            ? (exitPrice - pos.entryPrice) / pos.initialStopDistanceUsd : 0;
+          trades.push({
+            lotId: pos.lotId, pair: pos.pair, signalId: pos.signalId,
+            setupTag: pos.setupTag,
+            regimeAtEntry: pos.regimeAtEntry ?? "UNKNOWN",
+            directionAtEntry: pos.directionAtEntry ?? "NEUTRAL",
+            entryPrice: pos.entryPrice, exitPrice, volume: pos.qtyRemaining,
+            entryFeeUsd: feeBreakdown.entryFeeUsd, exitFeeUsd: feeBreakdown.exitFeeUsd,
+            grossPnlUsd: pnl.grossPnlUsd, netPnlUsd: pnl.netPnlUsd, rMultiple,
+            exitReason: ExitReasonType.RESEARCH_WINDOW_END,
+            openedAtMs: pos.openedAt, closedAtMs: lastInWindowTime,
+            holdTimeMinutes: Math.round((lastInWindowTime - pos.openedAt) / 60000),
+            mfeUsd: posMetrics?.mfeUsd ?? 0, maeUsd: posMetrics?.maeUsd ?? 0,
+            mfeR: posMetrics?.mfeR ?? 0,
+            profitCapturePct: audit.profitCapturePct,
+            profitCaptureClass: classifyProfitCapture(audit.profitCapturePct),
+            executionMode: ExecutionMode.SHADOW, policyVersion: SPOT_POLICY_VERSION,
+          });
+        }
+        boundaryClosed = true;
+      }
+      break;
+    }
+
+    lastInWindowClose = current5m.close;
+    lastInWindowTime = evaluationTime;
+
     const nextCandle = sorted5m[i + 1];
 
     // C1F2-10: No entry without next candle fill — last candle cannot open position
@@ -440,7 +489,10 @@ export function runReplay(
     auditTracker.initPosition(position);
   }
 
-  // Close any remaining positions at last available price
+  // Close any remaining positions at last available price (only if not already closed by boundary)
+  if (boundaryClosed) {
+    positions.length = 0;
+  }
   const lastCandle = sorted5m[sorted5m.length - 1];
   // C1F2-9: Terminal close timestamp must be candle CLOSE time, not OPEN time
   const terminalExitTime = getCandleCloseTimeMs(lastCandle.time, "5m") ?? lastCandle.time;

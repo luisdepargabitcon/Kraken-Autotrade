@@ -1,90 +1,122 @@
-# TEST_RESULTS.md — Fast-Path Research Replay
+# Test Results � Strict Window + Ablation WFO
 
 ## 1. TypeScript Compilation
+
 ```
-npx tsc --noEmit → 0 errors
+npx tsc --noEmit
 ```
 
-## 2. Equivalence Test: runReplay vs fastReplay
+Result: **PASS** (0 errors)
 
-**Command**: `node --import tsx server/services/spot/research/testFastReplayEquivalence.ts`
+## 2. git diff --check
 
-**Pair**: BTC/USD (full dataset, no evaluation window restriction)
+Result: **PASS** (no whitespace errors)
 
-### V3 Enabled (entryV3Config.enabled = true)
+## 3. Strict Window Equivalence Test
 
-| Metric | runReplay | fastReplay | Match |
-|--------|-----------|------------|-------|
-| tradeCount | 6 | 6 | ✅ |
-| signalsBuy | 49 | 49 | ✅ |
-| intentExecutable | 7 | 7 | ✅ |
-| entriesExecuted | 6 | 6 | ✅ |
-| netPnl | -83.76023 | -83.76023 | ✅ |
-| grossPnl | -50.26222 | -50.26222 | ✅ |
-| totalFees | 33.49801 | 33.49801 | ✅ |
-| winRate | 0.3333 | 0.3333 | ✅ |
-| profitFactor | 0.25879 | 0.25879 | ✅ |
-| wins | 2 | 2 | ✅ |
-| losses | 4 | 4 | ✅ |
+```
+node --import tsx server/services/spot/research/testStrictWindowEquivalence.ts
+```
 
-### Per-Trade Comparison (V3)
+### Results
 
-| # | lotId | entryPrice | exitPrice | netPnl | exitReason | openedAtMs | closedAtMs | Match |
-|---|-------|-----------|-----------|--------|------------|------------|------------|-------|
-| 0 | replay-BTC/USD-1 | 71919.9 | 71295.9 | -40.09 | STRUCTURE_INVALIDATION | 1775670600000 | 1775673900000 | ✅ |
-| 1 | replay-BTC/USD-2 | 73035.2 | 73111.4 | -3.11 | TIME_EFFICIENCY | 1775844600000 | 1775855700000 | ✅ |
-| 2 | replay-BTC/USD-3 | 80500 | 80900.9 | 11.04 | TIME_EFFICIENCY | 1777946700000 | 1777957800000 | ✅ |
-| 3 | replay-BTC/USD-4 | 68766.7 | 69335.7 | 18.21 | TIME_EFFICIENCY | 1787171100000 | 1787182200000 | ✅ |
-| 4 | replay-BTC/USD-5 | 78011.2 | 77908.6 | -5.34 | STRUCTURE_INVALIDATION | 1787347500000 | 1787358600000 | ✅ |
-| 5 | replay-BTC/USD-6 | 78700.5 | 76955 | -64.46 | EMERGENCY | 1787373300000 | 1787376000000 | ✅ |
+| Test | Result |
+|------|--------|
+| FAST_WINDOW_EQUIVALENCE | PASS |
+| NO_LEAKAGE | PASS |
+| WINDOW_FUTURE_INVARIANCE | PASS |
+| BOUNDARY_CLOSE_MATCH | PASS |
+| ALL_TESTS | PASS |
 
-### B0 (V3 Disabled)
+Details:
+- PAIR=BTC/USD
+- WINDOW_START=2026-04-28T08:23:45.000Z
+- WINDOW_END=2026-06-12T16:47:30.000Z
+- PRECOMPUTE_SEC=80.9
+- BOUNDARY_TRADES_FAST=0
+- BOUNDARY_TRADES_RUNREPLAY=0
+- OLD_POST_BOUNDARY_CLOSES=0
 
-| Metric | runReplay | fastReplay | Match |
-|--------|-----------|------------|-------|
-| tradeCount | 24 | 24 | ✅ |
-| netPnl | -95.37 | -95.37 | ✅ |
-| profitFactor | 0.7624 | 0.7624 | ✅ |
-| Per-trade (24 trades) | — | — | ✅ all identical |
+## 4. Full WFO + Ablation Run
 
-### Performance
+```
+node --import tsx server/services/spot/research/runEntryV3Wfo.ts --all
+```
+
+### Results
 
 | Metric | Value |
 |--------|-------|
-| runReplay time | 73,814ms |
-| precompute time | 67,745ms |
-| fastReplay time | 266ms |
-| Speedup (per combo) | 277.5x |
-| Speedup (incl precompute) | 1.1x |
+| FOLDS | 3 |
+| COMBOS | 108 |
+| PRECOMPUTE_SEC | 347.7 |
+| RESEARCH_SEC | 39.8 |
+| TOTAL_RUNTIME_SEC | 387.5 |
 
-**Result: ALL TESTS PASSED**
-
-## 3. Smoke WFO (1 fold, 2 combos, 4 pairs)
-
-**Command**: `node --import tsx server/services/spot/research/runEntryV3Wfo.ts --smoke --max-combos 2`
+### B0 (V3 OFF) OOS
 
 | Metric | Value |
 |--------|-------|
-| Precompute | 274.3s |
-| WFO runtime | 8.5s |
-| Combos/sec | 0.71 |
-| Estimated full WFO | 26s |
-| Total (precompute + WFO) | ~283s |
+| Trades | 94 |
+| Net PnL | +$228.34 |
+| PF | 1.16 |
+| Expectancy | +$2.43 |
+| Fees | $462.43 |
+| Worst Fold DD | $227.25 |
+| Worst Pair DD | $227.25 (XRP/USD) |
 
-## 4. Full WFO (3 folds, 6 combos, 4 pairs)
-
-**Command**: `node --import tsx server/services/spot/research/runEntryV3Wfo.ts`
+### Strict V3 (ALL stages) OOS
 
 | Metric | Value |
 |--------|-------|
-| Precompute | 272.5s |
-| WFO runtime | 9.6s |
-| Total runtime | 282.1s (~4.7 min) |
-| Target | ≤ 20 min ✅ |
-| B0 OOS trades | 94 |
-| V3 OOS trades | 11 |
-| B0 OOS net PnL | $228.34 |
-| V3 OOS net PnL | -$90.24 |
-| Sample sufficient | NO (11 < 30) |
+| Trades | 12 |
+| Net PnL | -$124.94 |
+| PF | 0.44 |
+| Expectancy | -$10.41 |
+| Fees | $54.21 |
+| Worst Fold DD | $64.46 |
+| Worst Pair DD | $64.46 (BTC/USD) |
 
-**Result: WFO COMPLETED SUCCESSFULLY**
+### Ablation Selected OOS
+
+| Metric | Value |
+|--------|-------|
+| Trades | 22 |
+| Net PnL | -$88.76 |
+| PF | 0.78 |
+| Expectancy | -$4.03 |
+| Fees | $95.26 |
+| Worst Fold DD | $90.64 |
+| Worst Pair DD | $90.64 (SOL/USD) |
+
+### Architecture Selection
+
+| Fold | Architecture |
+|------|-------------|
+| 0 | NO_RECLAIM |
+| 1 | NO_RECLAIM |
+| 2 | NO_RETRACEMENT |
+
+- Most common: NO_RECLAIM
+- Architecture instability: NO
+- OOS sample sufficient: NO (22 < 30)
+
+### Per-Pair OOS
+
+| Pair | B0 Net | Ablation Net |
+|------|--------|-------------|
+| BTC/USD | +$26.68 | -$65.57 |
+| ETH/USD | -$153 | +$40.53 |
+| SOL/USD | +$355.77 | +$32.27 |
+| XRP/USD | -$1.11 | -$95.99 |
+
+## 5. CSV Files Generated
+
+- STRICT_WINDOW_RESULTS.csv
+- STAGE_ATTRIBUTION.csv
+- ABLATION_TRAIN.csv
+- ABLATION_SELECTED_OOS.csv
+- JOINT_WFO_FOLDS.csv
+- B0_VS_V3_OOS.csv
+- OOS_SUMMARY.csv
+- entry-v3-wfo-joint.json

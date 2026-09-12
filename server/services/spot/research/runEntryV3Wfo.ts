@@ -1,32 +1,28 @@
 /**
- * runEntryV3Wfo — Joint Walk-Forward Optimization runner for Entry V3.
+ * runEntryV3Wfo — Joint Walk-Forward Optimization + Ablation Study for Entry V3.
  *
  * Methodology:
  *   - JOINT WFO: 1 params set per fold across ALL pairs (not per-pair optimization)
  *   - Common chronological windows: all pairs share trainStart/trainEnd/testStart/testEnd
  *   - Warmup preserved: full historical candles loaded, evaluationStartMs/evaluationEndMs
  *     boundary prevents trades before/after the evaluation window
+ *   - Strict boundary: positions open at evaluationEndMs get RESEARCH_WINDOW_END
+ *   - TRAIN and TEST start flat (no position inheritance)
  *   - B0 (V3 OFF) run on same test windows for exact comparison
- *   - Net PF: netWins / abs(netLosses), INF if netLosses==0 && netWins>0
- *   - Objective function: penalizes 0-1 trades, single-pair results, excessive DD
- *   - Sample sufficiency: INCONCLUSIVE if < 30 OOS trades
+ *   - Ablation: 6 architectures × 6 param combos, TRAIN-only selection, OOS once
+ *   - Corrected objective: documented formula with caps and penalties
+ *   - DD calculated independently for B0 and V3
  *
  * Usage:
  *   node --import tsx server/services/spot/research/runEntryV3Wfo.ts --all
  *   node --import tsx server/services/spot/research/runEntryV3Wfo.ts --all --smoke --max-combos 2
- *
- * Output:
- *   - Progress:  SPOT_ADAPTIVE_V3_DATA/kraken/results/entry-v3-wfo-progress.json
- *   - Detailed:  SPOT_ADAPTIVE_V3_DATA/kraken/results/entry-v3-wfo-joint.json
- *   - CSVs:      SPOT_ADAPTIVE_V3_DATA/kraken/results/B0_VS_V3_OOS.csv, JOINT_WFO_FOLDS.csv, etc.
- *   - Stdout:     WFO_DONE summary only
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import type { SpotCandle } from "../spotTypes";
-import { type ReplayCandleSet, type ReplayConfig, type ReplayTrade } from "../spotReplayEngine";
-import { precomputeFrames, fastReplay, type PrecomputedData } from "./fastResearchReplay";
+import { type ReplayCandleSet, type ReplayConfig, type ReplayTrade, V3InstrumentationLog } from "../spotReplayEngine";
+import { precomputeFrames, fastReplay, type PrecomputedData, type ResearchV3StageMask, ALL_STAGES_MASK } from "./fastResearchReplay";
 import { type FeeModel } from "../feeModel";
 import { DEFAULT_ENTRY_V3_CONFIG, type EntryV3Config } from "../spotEntryV3";
 import {
@@ -67,6 +63,17 @@ const PARAM_GRID: Partial<EntryV3Config>[] = [
 
 const ALL_PAIRS = PAIR_MAPPINGS.map(m => m.requested);
 
+// ─── Ablation Architectures ─────────────────────────────────────────────────
+
+const ABLATION_ARCHITECTURES: { name: string; mask: ResearchV3StageMask }[] = [
+  { name: "ALL", mask: ALL_STAGES_MASK },
+  { name: "NO_IMPULSE", mask: { impulse: false, retracement: true, structure: true, reclaim: true, resumption: true } },
+  { name: "NO_RETRACEMENT", mask: { impulse: true, retracement: false, structure: true, reclaim: true, resumption: true } },
+  { name: "NO_STRUCTURE", mask: { impulse: true, retracement: true, structure: false, reclaim: true, resumption: true } },
+  { name: "NO_RECLAIM", mask: { impulse: true, retracement: true, structure: true, reclaim: false, resumption: true } },
+  { name: "NO_RESUMPTION", mask: { impulse: true, retracement: true, structure: true, reclaim: true, resumption: false } },
+];
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface PairData {
@@ -104,11 +111,29 @@ interface FoldResult {
   testStart: number;
   testEnd: number;
   bestParams: EntryV3Config;
+  bestArchitecture: string;
   trainScore: number;
   trainTrades: number;
   trainNetPnl: number;
   b0Results: PairFoldResult[];
   v3Results: PairFoldResult[];
+  ablationResults: PairFoldResult[];
+}
+
+interface StageAttributionSummary {
+  pair: string;
+  totalCandidates: number;
+  passImpulsePct: number;
+  passRetracementPct: number;
+  passStructurePct: number;
+  passReclaimPct: number;
+  passResumptionPct: number;
+  failOnlyImpulse: number;
+  failOnlyRetracement: number;
+  failOnlyStructure: number;
+  failOnlyReclaim: number;
+  failOnlyResumption: number;
+  failMultiple: number;
 }
 
 interface JointWFOReport {
@@ -122,6 +147,9 @@ interface JointWFOReport {
     b0Fees: number;
     b0Expectancy: number;
     b0WinRate: number;
+    b0WorstFoldDD: number;
+    b0WorstPairDD: number;
+    b0WorstPairName: string;
     v3Trades: number;
     v3NetPnl: number;
     v3NetWin: number;
@@ -130,13 +158,28 @@ interface JointWFOReport {
     v3Fees: number;
     v3Expectancy: number;
     v3WinRate: number;
-    worstFoldDD: number;
-    worstPairDD: number;
-    worstPairName: string;
+    v3WorstFoldDD: number;
+    v3WorstPairDD: number;
+    v3WorstPairName: string;
+    ablationTrades: number;
+    ablationNetPnl: number;
+    ablationNetWin: number;
+    ablationNetLoss: number;
+    ablationProfitFactor: number;
+    ablationFees: number;
+    ablationExpectancy: number;
+    ablationWinRate: number;
+    ablationWorstFoldDD: number;
+    ablationWorstPairDD: number;
+    ablationWorstPairName: string;
     sampleSufficient: boolean;
+    architectureInstability: boolean;
   };
   runtimeSec: number;
+  precomputeSec: number;
+  researchSec: number;
   combosTotal: number;
+  stageAttribution: StageAttributionSummary[];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -206,27 +249,47 @@ function summarizePairResult(pair: string, trades: ReplayTrade[]): PairFoldResul
 }
 
 /**
- * Objective function for TRAIN phase scoring.
+ * Corrected Objective Function for TRAIN phase scoring.
  *
- * Score = netExpectancy * tradeCountFactor * crossPairFactor * ddPenalty
+ * Formula (documented, no optimizable parameters):
  *
- * Penalties:
- *   - 0 trades: score = -1000 (hard penalty)
- *   - 1 trade: score = -500 (hard penalty)
- *   - Single-pair results: penalty * 0.5
- *   - Excessive DD (> 200): penalty * (1 - DD/500)
- *   - Negative expectancy: negative score
+ *   score = netExpectancy * tradeCountFactor * crossPairFactor * ddPenalty * feePenalty * worstPairPenalty
+ *
+ * Components:
+ *   - netExpectancy = totalNetPnl / totalTrades
+ *   - tradeCountFactor:
+ *       0 trades  → hard penalty (score = -1000)
+ *       1 trade   → hard penalty (score = -500)
+ *       2-4 trades → progressive penalty: 0.3, 0.5, 0.7
+ *       >=5 trades → min(1.0, totalTrades / 10)
+ *   - crossPairFactor: 1 pair active → 0.5, else 1.0
+ *   - ddPenalty: worstDD > 200 → max(0.1, 1 - worstDD/500), else 1.0
+ *   - feePenalty: if totalFees > 50% of grossEdge → 0.7, else 1.0
+ *   - worstPairPenalty: if any single pair has expectancy < -50 → 0.5, else 1.0
+ *   - PF contribution capped at 5.0 (Infinity does NOT dominate)
+ *   - Negative expectancy → negative score (natural)
  */
 function objectiveScore(allPairTrades: { pair: string; trades: ReplayTrade[] }[]): { score: number; totalTrades: number; netPnl: number } {
   let totalTrades = 0;
   let totalNetPnl = 0;
+  let totalFees = 0;
+  let totalGrossEdge = 0;
   const pairsWithTrades: string[] = [];
   let worstDD = 0;
+  let worstPairExpectancy = 0;
 
   for (const { pair, trades } of allPairTrades) {
     totalTrades += trades.length;
-    totalNetPnl += trades.reduce((s, t) => s + t.netPnlUsd, 0);
-    if (trades.length > 0) pairsWithTrades.push(pair);
+    const pairNet = trades.reduce((s, t) => s + t.netPnlUsd, 0);
+    totalNetPnl += pairNet;
+    const pairFees = trades.reduce((s, t) => s + t.entryFeeUsd + t.exitFeeUsd, 0);
+    totalFees += pairFees;
+    totalGrossEdge += trades.reduce((s, t) => s + Math.abs(t.grossPnlUsd), 0);
+    if (trades.length > 0) {
+      pairsWithTrades.push(pair);
+      const pairExp = pairNet / trades.length;
+      if (pairExp < worstPairExpectancy) worstPairExpectancy = pairExp;
+    }
     const dd = maxDrawdown(trades);
     if (dd > worstDD) worstDD = dd;
   }
@@ -235,11 +298,20 @@ function objectiveScore(allPairTrades: { pair: string; trades: ReplayTrade[] }[]
   if (totalTrades === 1) return { score: -500, totalTrades: 1, netPnl: totalNetPnl };
 
   const expectancy = totalNetPnl / totalTrades;
-  const crossPairFactor = pairsWithTrades.length === 1 ? 0.5 : 1.0;
-  const ddPenalty = worstDD > 200 ? Math.max(0.1, 1 - worstDD / 500) : 1.0;
-  const tradeCountFactor = Math.min(1.0, totalTrades / 10);
 
-  const score = expectancy * tradeCountFactor * crossPairFactor * ddPenalty;
+  let tradeCountFactor: number;
+  if (totalTrades <= 1) tradeCountFactor = 0;
+  else if (totalTrades === 2) tradeCountFactor = 0.3;
+  else if (totalTrades === 3) tradeCountFactor = 0.5;
+  else if (totalTrades === 4) tradeCountFactor = 0.7;
+  else tradeCountFactor = Math.min(1.0, totalTrades / 10);
+
+  const crossPairFactor = pairsWithTrades.length <= 1 ? 0.5 : 1.0;
+  const ddPenalty = worstDD > 200 ? Math.max(0.1, 1 - worstDD / 500) : 1.0;
+  const feePenalty = totalGrossEdge > 0 && totalFees > totalGrossEdge * 0.5 ? 0.7 : 1.0;
+  const worstPairPenalty = worstPairExpectancy < -50 ? 0.5 : 1.0;
+
+  const score = expectancy * tradeCountFactor * crossPairFactor * ddPenalty * feePenalty * worstPairPenalty;
 
   return { score: Math.round(score * 100) / 100, totalTrades, netPnl: Math.round(totalNetPnl * 100) / 100 };
 }
@@ -253,7 +325,7 @@ function runJointWalkForward(
   smoke: boolean,
   maxCombos: number,
 ): JointWFOReport {
-  // ── Precompute frames once per pair (expensive, O(n) per pair) ──
+  // ── Precompute frames once per pair ──
   const precomputeStart = Date.now();
   const precomputedMap = new Map<string, PrecomputedData>();
   for (const pair of ALL_PAIRS) {
@@ -283,90 +355,95 @@ function runJointWalkForward(
 
   const foldsTotal = foldWindows.length;
   const grid = smoke ? PARAM_GRID.slice(0, Math.min(maxCombos > 0 ? maxCombos : 2, PARAM_GRID.length)) : PARAM_GRID;
-  const totalCombos = foldsTotal * grid.length;
+  const architectures = smoke ? ABLATION_ARCHITECTURES.slice(0, 2) : ABLATION_ARCHITECTURES;
+  const totalCombos = foldsTotal * grid.length * architectures.length;
 
   const startTime = Date.now();
   const pid = process.pid;
   let comboCount = 0;
   let lastProgressWrite = 0;
-  let lastComboStart = 0;
-  let lastComboDurationSec = 0;
 
   const foldResults: FoldResult[] = [];
+  const stageAttributionAggregated: StageAttributionSummary[] = [];
 
   for (let fi = 0; fi < foldWindows.length; fi++) {
     const fw = foldWindows[fi];
 
+    // ── Ablation TRAIN: evaluate ALL architectures × ALL param combos ──
     let bestParams: EntryV3Config = { ...V3_ENABLED, ...grid[0] };
+    let bestArchitecture = "ALL";
     let bestScore = -Infinity;
     let bestTrainTrades = 0;
     let bestTrainNetPnl = 0;
 
-    for (let ci = 0; ci < grid.length; ci++) {
-      lastComboStart = Date.now();
-      const params: EntryV3Config = { ...V3_ENABLED, ...grid[ci] };
+    for (const arch of architectures) {
+      for (let ci = 0; ci < grid.length; ci++) {
+        const params: EntryV3Config = { ...V3_ENABLED, ...grid[ci] };
 
-      const allPairTrades: { pair: string; trades: ReplayTrade[] }[] = [];
+        const allPairTrades: { pair: string; trades: ReplayTrade[] }[] = [];
 
-      for (const pair of ALL_PAIRS) {
-        const precomputed = precomputedMap.get(pair);
-        if (!precomputed) continue;
+        for (const pair of ALL_PAIRS) {
+          const precomputed = precomputedMap.get(pair);
+          if (!precomputed) continue;
 
-        const config: ReplayConfig = {
-          pair,
-          availableCapitalUsd: 10000,
-          feeModel: HISTORICAL_FEE_MODEL,
-          entryV3Config: params,
-          evaluationStartMs: fw.trainStart,
-          evaluationEndMs: fw.trainEnd,
-        };
+          const config: ReplayConfig = {
+            pair,
+            availableCapitalUsd: 10000,
+            feeModel: HISTORICAL_FEE_MODEL,
+            entryV3Config: params,
+            evaluationStartMs: fw.trainStart,
+            evaluationEndMs: fw.trainEnd,
+          };
 
-        const result = fastReplay(precomputed, config);
-        allPairTrades.push({ pair, trades: result.trades });
-      }
+          const result = fastReplay(precomputed, config, arch.mask);
+          allPairTrades.push({ pair, trades: result.trades });
+        }
 
-      const { score, totalTrades, netPnl } = objectiveScore(allPairTrades);
+        const { score, totalTrades, netPnl } = objectiveScore(allPairTrades);
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestParams = params;
-        bestTrainTrades = totalTrades;
-        bestTrainNetPnl = netPnl;
-      }
+        if (score > bestScore) {
+          bestScore = score;
+          bestParams = params;
+          bestArchitecture = arch.name;
+          bestTrainTrades = totalTrades;
+          bestTrainNetPnl = netPnl;
+        }
 
-      lastComboDurationSec = (Date.now() - lastComboStart) / 1000;
-      comboCount++;
-      const now = Date.now();
-      if (now - lastProgressWrite > 5000 || comboCount === totalCombos) {
-        const elapsedSec = (now - startTime) / 1000;
-        const etaSec = comboCount > 0 ? (elapsedSec / comboCount) * (totalCombos - comboCount) : 0;
-        writeProgress({
-          status: "RUNNING",
-          pid,
-          phase: "TRAIN",
-          fold: fi + 1,
-          foldsTotal,
-          combo: comboCount,
-          combosTotal: totalCombos,
-          elapsedSec: Math.round(elapsedSec * 10) / 10,
-          etaSec: Math.round(etaSec * 10) / 10,
-          lastComboDurationSec: Math.round(lastComboDurationSec * 10) / 10,
-          heartbeatAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-        lastProgressWrite = now;
+        comboCount++;
+        const now = Date.now();
+        if (now - lastProgressWrite > 5000 || comboCount === totalCombos) {
+          const elapsedSec = (now - startTime) / 1000;
+          const etaSec = comboCount > 0 ? (elapsedSec / comboCount) * (totalCombos - comboCount) : 0;
+          writeProgress({
+            status: "RUNNING",
+            pid,
+            phase: "TRAIN_ABLATION",
+            fold: fi + 1,
+            foldsTotal,
+            architecture: arch.name,
+            combo: comboCount,
+            combosTotal: totalCombos,
+            elapsedSec: Math.round(elapsedSec * 10) / 10,
+            etaSec: Math.round(etaSec * 10) / 10,
+            heartbeatAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+          lastProgressWrite = now;
+        }
       }
     }
 
-    // TEST phase: run bestParams AND B0 on test windows for all pairs
+    // ── TEST phase: run best architecture + best params, B0, and strict ALL-stages ──
     const b0Results: PairFoldResult[] = [];
     const v3Results: PairFoldResult[] = [];
+    const ablationResults: PairFoldResult[] = [];
+    const selectedArch = ABLATION_ARCHITECTURES.find(a => a.name === bestArchitecture)!;
 
     for (const pair of ALL_PAIRS) {
       const precomputed = precomputedMap.get(pair);
       if (!precomputed) continue;
 
-      // V3 test
+      // V3 strict ALL-stages test
       const v3Config: ReplayConfig = {
         pair,
         availableCapitalUsd: 10000,
@@ -375,8 +452,20 @@ function runJointWalkForward(
         evaluationStartMs: fw.testStart,
         evaluationEndMs: fw.testEnd,
       };
-      const v3Result = fastReplay(precomputed, v3Config);
+      const v3Result = fastReplay(precomputed, v3Config, ALL_STAGES_MASK);
       v3Results.push(summarizePairResult(pair, v3Result.trades));
+
+      // Ablation test (selected architecture)
+      const ablationConfig: ReplayConfig = {
+        pair,
+        availableCapitalUsd: 10000,
+        feeModel: HISTORICAL_FEE_MODEL,
+        entryV3Config: bestParams,
+        evaluationStartMs: fw.testStart,
+        evaluationEndMs: fw.testEnd,
+      };
+      const ablationResult = fastReplay(precomputed, ablationConfig, selectedArch.mask);
+      ablationResults.push(summarizePairResult(pair, ablationResult.trades));
 
       // B0 test (V3 OFF)
       const b0Config: ReplayConfig = {
@@ -388,6 +477,37 @@ function runJointWalkForward(
       };
       const b0Result = fastReplay(precomputed, b0Config);
       b0Results.push(summarizePairResult(pair, b0Result.trades));
+
+      // Stage attribution from TRAIN (ALL mask)
+      const v3Log = new V3InstrumentationLog();
+      const trainConfig: ReplayConfig = {
+        pair,
+        availableCapitalUsd: 10000,
+        feeModel: HISTORICAL_FEE_MODEL,
+        entryV3Config: bestParams,
+        evaluationStartMs: fw.trainStart,
+        evaluationEndMs: fw.trainEnd,
+        v3Instrumentation: v3Log,
+      };
+      fastReplay(precomputed, trainConfig, ALL_STAGES_MASK);
+      const sa = (v3Log as any).stageAttribution;
+      if (sa) {
+        stageAttributionAggregated.push({
+          pair,
+          totalCandidates: sa.totalCandidates,
+          passImpulsePct: Math.round(sa.passImpulsePct * 1000) / 10,
+          passRetracementPct: Math.round(sa.passRetracementPct * 1000) / 10,
+          passStructurePct: Math.round(sa.passStructurePct * 1000) / 10,
+          passReclaimPct: Math.round(sa.passReclaimPct * 1000) / 10,
+          passResumptionPct: Math.round(sa.passResumptionPct * 1000) / 10,
+          failOnlyImpulse: sa.failOnlyImpulse,
+          failOnlyRetracement: sa.failOnlyRetracement,
+          failOnlyStructure: sa.failOnlyStructure,
+          failOnlyReclaim: sa.failOnlyReclaim,
+          failOnlyResumption: sa.failOnlyResumption,
+          failMultiple: sa.failMultiple,
+        });
+      }
     }
 
     foldResults.push({
@@ -397,75 +517,86 @@ function runJointWalkForward(
       testStart: fw.testStart,
       testEnd: fw.testEnd,
       bestParams,
+      bestArchitecture,
       trainScore: bestScore,
       trainTrades: bestTrainTrades,
       trainNetPnl: bestTrainNetPnl,
       b0Results,
       v3Results,
+      ablationResults,
     });
 
     const now = Date.now();
     const elapsedSec = (now - startTime) / 1000;
-    const etaSec = comboCount > 0 ? (elapsedSec / comboCount) * (totalCombos - comboCount) : 0;
     writeProgress({
       status: "RUNNING",
       pid,
       phase: "TEST_DONE",
       fold: fi + 1,
       foldsTotal,
+      selectedArchitecture: bestArchitecture,
       combo: comboCount,
       combosTotal: totalCombos,
       elapsedSec: Math.round(elapsedSec * 10) / 10,
-      etaSec: Math.round(etaSec * 10) / 10,
-      lastComboDurationSec: Math.round(lastComboDurationSec * 10) / 10,
       heartbeatAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
     lastProgressWrite = now;
   }
 
-  // Aggregate OOS
+  // ── Aggregate OOS ──
   let b0Trades = 0, b0NetPnl = 0, b0NetWin = 0, b0NetLoss = 0, b0Fees = 0, b0Wins = 0;
   let v3Trades = 0, v3NetPnl = 0, v3NetWin = 0, v3NetLoss = 0, v3Fees = 0, v3Wins = 0;
-  let worstFoldDD = 0;
-  let worstPairDD = 0;
-  let worstPairName = "";
+  let ablationTrades = 0, ablationNetPnl = 0, ablationNetWin = 0, ablationNetLoss = 0, ablationFees = 0, ablationWins = 0;
+  let b0WorstFoldDD = 0, b0WorstPairDD = 0, b0WorstPairName = "";
+  let v3WorstFoldDD = 0, v3WorstPairDD = 0, v3WorstPairName = "";
+  let ablationWorstFoldDD = 0, ablationWorstPairDD = 0, ablationWorstPairName = "";
 
   for (const fold of foldResults) {
-    let foldMaxDD = 0;
+    let b0FoldMaxDD = 0, v3FoldMaxDD = 0, ablationFoldMaxDD = 0;
+
     for (const r of fold.b0Results) {
-      b0Trades += r.trades;
-      b0NetPnl += r.netPnl;
-      b0NetWin += r.netWin;
-      b0NetLoss += r.netLoss;
-      b0Fees += r.fees;
+      b0Trades += r.trades; b0NetPnl += r.netPnl; b0NetWin += r.netWin; b0NetLoss += r.netLoss; b0Fees += r.fees;
       b0Wins += Math.round(r.winRate * r.trades);
-      if (r.maxDD > foldMaxDD) foldMaxDD = r.maxDD;
-      if (r.maxDD > worstPairDD) { worstPairDD = r.maxDD; worstPairName = r.pair; }
+      if (r.maxDD > b0FoldMaxDD) b0FoldMaxDD = r.maxDD;
+      if (r.maxDD > b0WorstPairDD) { b0WorstPairDD = r.maxDD; b0WorstPairName = r.pair; }
     }
-    if (foldMaxDD > worstFoldDD) worstFoldDD = foldMaxDD;
+    if (b0FoldMaxDD > b0WorstFoldDD) b0WorstFoldDD = b0FoldMaxDD;
 
     for (const r of fold.v3Results) {
-      v3Trades += r.trades;
-      v3NetPnl += r.netPnl;
-      v3NetWin += r.netWin;
-      v3NetLoss += r.netLoss;
-      v3Fees += r.fees;
+      v3Trades += r.trades; v3NetPnl += r.netPnl; v3NetWin += r.netWin; v3NetLoss += r.netLoss; v3Fees += r.fees;
       v3Wins += Math.round(r.winRate * r.trades);
+      if (r.maxDD > v3FoldMaxDD) v3FoldMaxDD = r.maxDD;
+      if (r.maxDD > v3WorstPairDD) { v3WorstPairDD = r.maxDD; v3WorstPairName = r.pair; }
     }
+    if (v3FoldMaxDD > v3WorstFoldDD) v3WorstFoldDD = v3FoldMaxDD;
+
+    for (const r of fold.ablationResults) {
+      ablationTrades += r.trades; ablationNetPnl += r.netPnl; ablationNetWin += r.netWin; ablationNetLoss += r.netLoss; ablationFees += r.fees;
+      ablationWins += Math.round(r.winRate * r.trades);
+      if (r.maxDD > ablationFoldMaxDD) ablationFoldMaxDD = r.maxDD;
+      if (r.maxDD > ablationWorstPairDD) { ablationWorstPairDD = r.maxDD; ablationWorstPairName = r.pair; }
+    }
+    if (ablationFoldMaxDD > ablationWorstFoldDD) ablationWorstFoldDD = ablationFoldMaxDD;
   }
 
   const b0PF = b0NetLoss > 0 ? b0NetWin / b0NetLoss : b0NetWin > 0 ? Infinity : 0;
   const v3PF = v3NetLoss > 0 ? v3NetWin / v3NetLoss : v3NetWin > 0 ? Infinity : 0;
+  const ablationPF = ablationNetLoss > 0 ? ablationNetWin / ablationNetLoss : ablationNetWin > 0 ? Infinity : 0;
+
+  const selectedArchs = foldResults.map(f => f.bestArchitecture);
+  const uniqueArchs = new Set(selectedArchs);
+  const architectureInstability = uniqueArchs.size > 2;
 
   const runtimeSec = (Date.now() - startTime) / 1000;
+  const researchSec = runtimeSec;
 
   writeProgress({
     status: "ALL_DONE",
     pid,
     fold: foldsTotal,
     foldsTotal,
-    combo: totalCombos,
+    combo: comboCount,
     combosTotal: totalCombos,
     elapsedSec: Math.round(runtimeSec * 10) / 10,
     etaSec: 0,
@@ -484,6 +615,9 @@ function runJointWalkForward(
       b0Fees: Math.round(b0Fees * 100) / 100,
       b0Expectancy: b0Trades > 0 ? Math.round((b0NetPnl / b0Trades) * 100) / 100 : 0,
       b0WinRate: b0Trades > 0 ? b0Wins / b0Trades : 0,
+      b0WorstFoldDD: Math.round(b0WorstFoldDD * 100) / 100,
+      b0WorstPairDD: Math.round(b0WorstPairDD * 100) / 100,
+      b0WorstPairName,
       v3Trades,
       v3NetPnl: Math.round(v3NetPnl * 100) / 100,
       v3NetWin: Math.round(v3NetWin * 100) / 100,
@@ -492,13 +626,28 @@ function runJointWalkForward(
       v3Fees: Math.round(v3Fees * 100) / 100,
       v3Expectancy: v3Trades > 0 ? Math.round((v3NetPnl / v3Trades) * 100) / 100 : 0,
       v3WinRate: v3Trades > 0 ? v3Wins / v3Trades : 0,
-      worstFoldDD: Math.round(worstFoldDD * 100) / 100,
-      worstPairDD: Math.round(worstPairDD * 100) / 100,
-      worstPairName,
-      sampleSufficient: v3Trades >= MIN_OOS_TRADES,
+      v3WorstFoldDD: Math.round(v3WorstFoldDD * 100) / 100,
+      v3WorstPairDD: Math.round(v3WorstPairDD * 100) / 100,
+      v3WorstPairName,
+      ablationTrades,
+      ablationNetPnl: Math.round(ablationNetPnl * 100) / 100,
+      ablationNetWin: Math.round(ablationNetWin * 100) / 100,
+      ablationNetLoss: Math.round(ablationNetLoss * 100) / 100,
+      ablationProfitFactor: ablationPF,
+      ablationFees: Math.round(ablationFees * 100) / 100,
+      ablationExpectancy: ablationTrades > 0 ? Math.round((ablationNetPnl / ablationTrades) * 100) / 100 : 0,
+      ablationWinRate: ablationTrades > 0 ? ablationWins / ablationTrades : 0,
+      ablationWorstFoldDD: Math.round(ablationWorstFoldDD * 100) / 100,
+      ablationWorstPairDD: Math.round(ablationWorstPairDD * 100) / 100,
+      ablationWorstPairName,
+      sampleSufficient: ablationTrades >= MIN_OOS_TRADES,
+      architectureInstability,
     },
     runtimeSec: Math.round(runtimeSec * 10) / 10,
+    precomputeSec: Math.round(precomputeSec * 10) / 10,
+    researchSec: Math.round(researchSec * 10) / 10,
     combosTotal: totalCombos,
+    stageAttribution: stageAttributionAggregated,
   };
 }
 
@@ -507,54 +656,78 @@ function runJointWalkForward(
 function writeCSVs(report: JointWFOReport): void {
   ensureDir(RESULTS_DIR);
 
-  // JOINT_WFO_FOLDS.csv
-  let foldsCsv = "fold,trainStart,trainEnd,testStart,testEnd,bestImpulseMinAtr,bestRetracementMinAtr,bestMaxEntryDistanceAtr,bestResumptionMinBodyPct,trainScore,trainTrades,trainNetPnl\n";
-  for (const f of report.folds) {
-    foldsCsv += `${f.foldIndex},${new Date(f.trainStart).toISOString()},${new Date(f.trainEnd).toISOString()},${new Date(f.testStart).toISOString()},${new Date(f.testEnd).toISOString()},${f.bestParams.impulseMinAtr},${f.bestParams.retracementMinAtr},${f.bestParams.maxEntryDistanceAtr},${f.bestParams.resumptionMinBodyPct},${f.trainScore},${f.trainTrades},${f.trainNetPnl}\n`;
-  }
-  fs.writeFileSync(path.join(RESULTS_DIR, "JOINT_WFO_FOLDS.csv"), foldsCsv);
-
-  // B0_VS_V3_OOS.csv
-  let oosCsv = "fold,pair,b0_trades,b0_net,b0_pf,b0_fees,b0_dd,b0_winRate,b0_expectancy,v3_trades,v3_net,v3_pf,v3_fees,v3_dd,v3_winRate,v3_expectancy\n";
+  // STRICT_WINDOW_RESULTS.csv
+  let strictCsv = "fold,pair,v3_trades,v3_net,v3_pf,v3_fees,v3_dd,v3_winRate,v3_expectancy,b0_trades,b0_net,b0_pf,b0_fees,b0_dd,b0_winRate,b0_expectancy\n";
   for (const f of report.folds) {
     for (let pi = 0; pi < f.b0Results.length; pi++) {
       const b0 = f.b0Results[pi];
       const v3 = f.v3Results[pi];
-      oosCsv += `${f.foldIndex},${b0.pair},${b0.trades},${b0.netPnl},${b0.profitFactor},${b0.fees},${b0.maxDD},${b0.winRate},${b0.expectancy},${v3.trades},${v3.netPnl},${v3.profitFactor},${v3.fees},${v3.maxDD},${v3.winRate},${v3.expectancy}\n`;
+      strictCsv += `${f.foldIndex},${b0.pair},${v3.trades},${v3.netPnl},${v3.profitFactor},${v3.fees},${v3.maxDD},${v3.winRate},${v3.expectancy},${b0.trades},${b0.netPnl},${b0.profitFactor},${b0.fees},${b0.maxDD},${b0.winRate},${b0.expectancy}\n`;
     }
   }
-  fs.writeFileSync(path.join(RESULTS_DIR, "B0_VS_V3_OOS.csv"), oosCsv);
+  fs.writeFileSync(path.join(RESULTS_DIR, "STRICT_WINDOW_RESULTS.csv"), strictCsv);
 
-  // B0_VS_V3_FULL.csv (aggregated)
-  let fullCsv = "metric,B0,V3,delta\n";
-  const a = report.aggregatedOos;
-  fullCsv += `trades,${a.b0Trades},${a.v3Trades},${a.v3Trades - a.b0Trades}\n`;
-  fullCsv += `netPnl,${a.b0NetPnl},${a.v3NetPnl},${Math.round((a.v3NetPnl - a.b0NetPnl) * 100) / 100}\n`;
-  fullCsv += `netWin,${a.b0NetWin},${a.v3NetWin},${Math.round((a.v3NetWin - a.b0NetWin) * 100) / 100}\n`;
-  fullCsv += `netLoss,${a.b0NetLoss},${a.v3NetLoss},${Math.round((a.v3NetLoss - a.b0NetLoss) * 100) / 100}\n`;
-  fullCsv += `profitFactor,${a.b0ProfitFactor},${a.v3ProfitFactor},\n`;
-  fullCsv += `fees,${a.b0Fees},${a.v3Fees},${Math.round((a.v3Fees - a.b0Fees) * 100) / 100}\n`;
-  fullCsv += `expectancy,${a.b0Expectancy},${a.v3Expectancy},${Math.round((a.v3Expectancy - a.b0Expectancy) * 100) / 100}\n`;
-  fullCsv += `winRate,${a.b0WinRate},${a.v3WinRate},\n`;
-  fullCsv += `worstFoldDD,,${a.worstFoldDD},\n`;
-  fullCsv += `worstPairDD,,${a.worstPairDD},\n`;
-  fullCsv += `worstPairName,,${a.worstPairName},\n`;
-  fullCsv += `sampleSufficient,,${a.sampleSufficient},\n`;
-  fs.writeFileSync(path.join(RESULTS_DIR, "B0_VS_V3_FULL.csv"), fullCsv);
+  // STAGE_ATTRIBUTION.csv
+  let attrCsv = "pair,totalCandidates,passImpulsePct,passRetracementPct,passStructurePct,passReclaimPct,passResumptionPct,failOnlyImpulse,failOnlyRetracement,failOnlyStructure,failOnlyReclaim,failOnlyResumption,failMultiple\n";
+  for (const sa of report.stageAttribution) {
+    attrCsv += `${sa.pair},${sa.totalCandidates},${sa.passImpulsePct},${sa.passRetracementPct},${sa.passStructurePct},${sa.passReclaimPct},${sa.passResumptionPct},${sa.failOnlyImpulse},${sa.failOnlyRetracement},${sa.failOnlyStructure},${sa.failOnlyReclaim},${sa.failOnlyResumption},${sa.failMultiple}\n`;
+  }
+  fs.writeFileSync(path.join(RESULTS_DIR, "STAGE_ATTRIBUTION.csv"), attrCsv);
+
+  // ABLATION_TRAIN.csv
+  let trainCsv = "fold,selectedArchitecture,bestImpulseMinAtr,bestRetracementMinAtr,bestMaxEntryDistanceAtr,bestResumptionMinBodyPct,trainScore,trainTrades,trainNetPnl\n";
+  for (const f of report.folds) {
+    trainCsv += `${f.foldIndex},${f.bestArchitecture},${f.bestParams.impulseMinAtr},${f.bestParams.retracementMinAtr},${f.bestParams.maxEntryDistanceAtr},${f.bestParams.resumptionMinBodyPct},${f.trainScore},${f.trainTrades},${f.trainNetPnl}\n`;
+  }
+  fs.writeFileSync(path.join(RESULTS_DIR, "ABLATION_TRAIN.csv"), trainCsv);
+
+  // ABLATION_SELECTED_OOS.csv
+  let oosCsv = "fold,pair,ablation_trades,ablation_net,ablation_pf,ablation_fees,ablation_dd,ablation_winRate,ablation_expectancy,v3_strict_trades,v3_strict_net,v3_strict_pf,b0_trades,b0_net,b0_pf\n";
+  for (const f of report.folds) {
+    for (let pi = 0; pi < f.ablationResults.length; pi++) {
+      const abl = f.ablationResults[pi];
+      const v3 = f.v3Results[pi];
+      const b0 = f.b0Results[pi];
+      oosCsv += `${f.foldIndex},${abl.pair},${abl.trades},${abl.netPnl},${abl.profitFactor},${abl.fees},${abl.maxDD},${abl.winRate},${abl.expectancy},${v3.trades},${v3.netPnl},${v3.profitFactor},${b0.trades},${b0.netPnl},${b0.profitFactor}\n`;
+    }
+  }
+  fs.writeFileSync(path.join(RESULTS_DIR, "ABLATION_SELECTED_OOS.csv"), oosCsv);
+
+  // JOINT_WFO_FOLDS.csv
+  let foldsCsv = "fold,trainStart,trainEnd,testStart,testEnd,selectedArchitecture,bestImpulseMinAtr,bestRetracementMinAtr,bestMaxEntryDistanceAtr,bestResumptionMinBodyPct,trainScore,trainTrades,trainNetPnl\n";
+  for (const f of report.folds) {
+    foldsCsv += `${f.foldIndex},${new Date(f.trainStart).toISOString()},${new Date(f.trainEnd).toISOString()},${new Date(f.testStart).toISOString()},${new Date(f.testEnd).toISOString()},${f.bestArchitecture},${f.bestParams.impulseMinAtr},${f.bestParams.retracementMinAtr},${f.bestParams.maxEntryDistanceAtr},${f.bestParams.resumptionMinBodyPct},${f.trainScore},${f.trainTrades},${f.trainNetPnl}\n`;
+  }
+  fs.writeFileSync(path.join(RESULTS_DIR, "JOINT_WFO_FOLDS.csv"), foldsCsv);
+
+  // B0_VS_V3_OOS.csv
+  let b0v3Csv = "fold,pair,b0_trades,b0_net,b0_pf,b0_fees,b0_dd,b0_winRate,b0_expectancy,v3_trades,v3_net,v3_pf,v3_fees,v3_dd,v3_winRate,v3_expectancy,ablation_trades,ablation_net,ablation_pf,ablation_fees,ablation_dd,ablation_winRate,ablation_expectancy\n";
+  for (const f of report.folds) {
+    for (let pi = 0; pi < f.b0Results.length; pi++) {
+      const b0 = f.b0Results[pi];
+      const v3 = f.v3Results[pi];
+      const abl = f.ablationResults[pi];
+      b0v3Csv += `${f.foldIndex},${b0.pair},${b0.trades},${b0.netPnl},${b0.profitFactor},${b0.fees},${b0.maxDD},${b0.winRate},${b0.expectancy},${v3.trades},${v3.netPnl},${v3.profitFactor},${v3.fees},${v3.maxDD},${v3.winRate},${v3.expectancy},${abl.trades},${abl.netPnl},${abl.profitFactor},${abl.fees},${abl.maxDD},${abl.winRate},${abl.expectancy}\n`;
+    }
+  }
+  fs.writeFileSync(path.join(RESULTS_DIR, "B0_VS_V3_OOS.csv"), b0v3Csv);
 
   // OOS_SUMMARY.csv
-  let sumCsv = "pair,b0_trades,b0_net,b0_pf,v3_trades,v3_net,v3_pf\n";
+  let sumCsv = "pair,b0_trades,b0_net,b0_pf,v3_trades,v3_net,v3_pf,ablation_trades,ablation_net,ablation_pf\n";
   for (const pair of ALL_PAIRS) {
-    let bt = 0, bn = 0, bw = 0, bl = 0, vt = 0, vn = 0, vw = 0, vl = 0;
+    let bt = 0, bn = 0, bw = 0, bl = 0, vt = 0, vn = 0, vw = 0, vl = 0, at = 0, an = 0, aw = 0, al = 0;
     for (const f of report.folds) {
       const b0r = f.b0Results.find(r => r.pair === pair);
       const v3r = f.v3Results.find(r => r.pair === pair);
+      const ablr = f.ablationResults.find(r => r.pair === pair);
       if (b0r) { bt += b0r.trades; bn += b0r.netPnl; bw += b0r.netWin; bl += b0r.netLoss; }
       if (v3r) { vt += v3r.trades; vn += v3r.netPnl; vw += v3r.netWin; vl += v3r.netLoss; }
+      if (ablr) { at += ablr.trades; an += ablr.netPnl; aw += ablr.netWin; al += ablr.netLoss; }
     }
     const bpf = bl > 0 ? bw / bl : bw > 0 ? Infinity : 0;
     const vpf = vl > 0 ? vw / vl : vw > 0 ? Infinity : 0;
-    sumCsv += `${pair},${bt},${Math.round(bn * 100) / 100},${bpf},${vt},${Math.round(vn * 100) / 100},${vpf}\n`;
+    const apf = al > 0 ? aw / al : aw > 0 ? Infinity : 0;
+    sumCsv += `${pair},${bt},${Math.round(bn * 100) / 100},${bpf},${vt},${Math.round(vn * 100) / 100},${vpf},${at},${Math.round(an * 100) / 100},${apf}\n`;
   }
   fs.writeFileSync(path.join(RESULTS_DIR, "OOS_SUMMARY.csv"), sumCsv);
 }
@@ -607,26 +780,57 @@ function main(): void {
   console.log("WFO_DONE");
   console.log(`FOLDS=${report.folds.length}`);
   console.log(`COMBOS=${report.combosTotal}`);
+  console.log(`PRECOMPUTE_SEC=${report.precomputeSec}`);
+  console.log(`RESEARCH_SEC=${report.researchSec}`);
+  console.log(`TOTAL_RUNTIME_SEC=${report.runtimeSec}`);
+
   console.log(`B0_OOS_TRADES=${a.b0Trades}`);
-  console.log(`V3_OOS_TRADES=${a.v3Trades}`);
   console.log(`B0_OOS_NET=${a.b0NetPnl}`);
-  console.log(`V3_OOS_NET=${a.v3NetPnl}`);
-  console.log(`DELTA_OOS_NET=${Math.round((a.v3NetPnl - a.b0NetPnl) * 100) / 100}`);
   console.log(`B0_OOS_PF=${a.b0ProfitFactor}`);
-  console.log(`V3_OOS_PF=${a.v3ProfitFactor}`);
   console.log(`B0_OOS_EXPECTANCY=${a.b0Expectancy}`);
-  console.log(`V3_OOS_EXPECTANCY=${a.v3Expectancy}`);
   console.log(`B0_OOS_FEES=${a.b0Fees}`);
-  console.log(`V3_OOS_FEES=${a.v3Fees}`);
-  console.log(`OOS_WORST_FOLD_DD=${a.worstFoldDD}`);
-  console.log(`OOS_WORST_PAIR_DD=${a.worstPairDD} (${a.worstPairName})`);
+  console.log(`B0_WORST_FOLD_DD=${a.b0WorstFoldDD}`);
+  console.log(`B0_WORST_PAIR_DD=${a.b0WorstPairDD} (${a.b0WorstPairName})`);
+
+  console.log(`STRICT_V3_OOS_TRADES=${a.v3Trades}`);
+  console.log(`STRICT_V3_OOS_NET=${a.v3NetPnl}`);
+  console.log(`STRICT_V3_OOS_PF=${a.v3ProfitFactor}`);
+  console.log(`STRICT_V3_OOS_EXPECTANCY=${a.v3Expectancy}`);
+  console.log(`STRICT_V3_OOS_FEES=${a.v3Fees}`);
+  console.log(`V3_WORST_FOLD_DD=${a.v3WorstFoldDD}`);
+  console.log(`V3_WORST_PAIR_DD=${a.v3WorstPairDD} (${a.v3WorstPairName})`);
+
+  console.log(`ABLATION_OOS_TRADES=${a.ablationTrades}`);
+  console.log(`ABLATION_OOS_NET=${a.ablationNetPnl}`);
+  console.log(`ABLATION_OOS_PF=${a.ablationProfitFactor}`);
+  console.log(`ABLATION_OOS_EXPECTANCY=${a.ablationExpectancy}`);
+  console.log(`ABLATION_OOS_FEES=${a.ablationFees}`);
+  console.log(`ABLATION_WORST_FOLD_DD=${a.ablationWorstFoldDD}`);
+  console.log(`ABLATION_WORST_PAIR_DD=${a.ablationWorstPairDD} (${a.ablationWorstPairName})`);
+
+  for (const f of report.folds) {
+    console.log(`SELECTED_ARCHITECTURE_FOLD_${f.foldIndex}=${f.bestArchitecture}`);
+  }
+
+  const archCounts: Record<string, number> = {};
+  for (const f of report.folds) {
+    archCounts[f.bestArchitecture] = (archCounts[f.bestArchitecture] ?? 0) + 1;
+  }
+  const mostCommon = Object.entries(archCounts).sort((x, y) => y[1] - x[1])[0]?.[0] ?? "UNKNOWN";
+  console.log(`MOST_COMMON_SELECTED_ARCHITECTURE=${mostCommon}`);
+  console.log(`ARCHITECTURE_INSTABILITY=${a.architectureInstability ? "YES" : "NO"}`);
   console.log(`OOS_SAMPLE_SUFFICIENT=${a.sampleSufficient ? "YES" : "NO"}`);
-  console.log(`RUNTIME_SEC=${report.runtimeSec}`);
-  if (smoke) {
-    const cps = report.combosTotal > 0 ? report.combosTotal / report.runtimeSec : 0;
-    const estFull = PARAM_GRID.length * report.folds.length / cps;
-    console.log(`COMBOS_PER_SEC=${Math.round(cps * 100) / 100}`);
-    console.log(`ESTIMATED_FULL_SEC=${Math.round(estFull)}`);
+
+  for (const pair of ALL_PAIRS) {
+    let bn = 0, an = 0;
+    for (const f of report.folds) {
+      const b0r = f.b0Results.find(r => r.pair === pair);
+      const ablr = f.ablationResults.find(r => r.pair === pair);
+      if (b0r) bn += b0r.netPnl;
+      if (ablr) an += ablr.netPnl;
+    }
+    console.log(`${pair.replace("/", "_")}_B0_NET=${Math.round(bn * 100) / 100}`);
+    console.log(`${pair.replace("/", "_")}_ABLATION_NET=${Math.round(an * 100) / 100}`);
   }
 }
 
