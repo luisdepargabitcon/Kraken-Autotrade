@@ -39,7 +39,7 @@ import {
   type EntryV3Config,
   DEFAULT_ENTRY_V3_CONFIG,
 } from "../spotEntryV3";
-import { checkV4Acceptance, computeV4QualityScores, type V4QualityScores } from "./spotEntryV4Research";
+import { computeV4QualityScores } from "./spotEntryV4Research";
 import { evaluateSizing, DEFAULT_SPOT_RISK_CONFIG } from "../spotRiskManager";
 import { type FeeQuality } from "../feeModel";
 import { computePnlBreakdown, computeFeeBreakdown, type FeeModel } from "../feeModel";
@@ -390,6 +390,8 @@ export function fastReplay(
 
   // V4 quality score tracking per lotId
   const v4ScoreMap = new Map<string, number>();
+  let b0EligibleCandidates = 0;
+  let v4AcceptedCandidates = 0;
 
   let lastInWindowClose = 0;
   let lastInWindowTime = 0;
@@ -508,69 +510,53 @@ export function fastReplay(
 
     const intent = frame.intent!;
 
-    if (entryV3Config.enabled) {
+    if (entryV3Config.enabled && config.v4MinQualityScore === undefined) {
+      // ── V3 path: hard AND-gates (unchanged) ──
       const features = frame.v3Features;
       if (!features) continue;
 
       totalCandidates++;
+      const { accepted, attribution } = checkV3Acceptance(features, entryV3Config, currentPrice, evaluationTime, stageMask);
 
-      // V4 path: soft quality threshold replaces V3 AND-gates
-      if (config.v4MinQualityScore !== undefined) {
-        const v4Result = checkV4Acceptance(features, config.v4MinQualityScore, evaluationTime, entryV3Config);
-        // Track raw stage booleans for attribution
-        if (v4Result.scores.impulseScore > 0) rawPassImpulseCount++;
-        if (v4Result.scores.retracementScore > 0) rawPassRetracementCount++;
-        if (v4Result.scores.structureScore > 0) rawPassStructureCount++;
-        if (v4Result.scores.reclaimScore > 0) rawPassReclaimCount++;
-        if (v4Result.scores.resumptionScore > 0) rawPassResumptionCount++;
-        if (!v4Result.passAntiLateDistance) antiLateDistanceFails++;
-        if (!v4Result.passAntiLateExpiry) antiLateExpiryFails++;
-        if (!v4Result.accepted) continue;
-        // Mark that this entry has a V4 score (will be stored by lotId below)
-        (frame as any)._v4QualityScore = v4Result.scores.qualityScore;
-      } else {
-        const { accepted, attribution } = checkV3Acceptance(features, entryV3Config, currentPrice, evaluationTime, stageMask);
+      if (attribution.rawPassImpulse) rawPassImpulseCount++;
+      if (attribution.rawPassRetracement) rawPassRetracementCount++;
+      if (attribution.rawPassStructure) rawPassStructureCount++;
+      if (attribution.rawPassReclaim) rawPassReclaimCount++;
+      if (attribution.rawPassResumption) rawPassResumptionCount++;
 
-        if (attribution.rawPassImpulse) rawPassImpulseCount++;
-        if (attribution.rawPassRetracement) rawPassRetracementCount++;
-        if (attribution.rawPassStructure) rawPassStructureCount++;
-        if (attribution.rawPassReclaim) rawPassReclaimCount++;
-        if (attribution.rawPassResumption) rawPassResumptionCount++;
+      if (!attribution.passAntiLateDistance) antiLateDistanceFails++;
+      if (!attribution.passAntiLateExpiry) antiLateExpiryFails++;
 
-        if (!attribution.passAntiLateDistance) antiLateDistanceFails++;
-        if (!attribution.passAntiLateExpiry) antiLateExpiryFails++;
-
-        if (!accepted) {
-          const stageFails = [!attribution.rawPassImpulse, !attribution.rawPassRetracement, !attribution.rawPassStructure, !attribution.rawPassReclaim, !attribution.rawPassResumption].filter(Boolean).length;
-          if (stageFails === 1) {
-            if (!attribution.rawPassImpulse) failOnlyImpulse++;
-            else if (!attribution.rawPassRetracement) failOnlyRetracement++;
-            else if (!attribution.rawPassStructure) failOnlyStructure++;
-            else if (!attribution.rawPassReclaim) failOnlyReclaim++;
-            else if (!attribution.rawPassResumption) failOnlyResumption++;
-          } else if (stageFails >= 2) {
-            failMultipleStages++;
-          }
+      if (!accepted) {
+        const stageFails = [!attribution.rawPassImpulse, !attribution.rawPassRetracement, !attribution.rawPassStructure, !attribution.rawPassReclaim, !attribution.rawPassResumption].filter(Boolean).length;
+        if (stageFails === 1) {
+          if (!attribution.rawPassImpulse) failOnlyImpulse++;
+          else if (!attribution.rawPassRetracement) failOnlyRetracement++;
+          else if (!attribution.rawPassStructure) failOnlyStructure++;
+          else if (!attribution.rawPassReclaim) failOnlyReclaim++;
+          else if (!attribution.rawPassResumption) failOnlyResumption++;
+        } else if (stageFails >= 2) {
+          failMultipleStages++;
         }
-
-        if (v3Log) {
-          v3Log.add({
-            pair, timestamp: evaluationTime,
-            regime: "", direction: "",
-            adx: 0, atrPct: 0,
-            impulseAtr: features.impulseAtr, retracementAtr: features.retracementAtr,
-            reclaimConfirmed: features.reclaimIsBullish && features.reclaimAfterOrigin,
-            resumptionConfirmed: features.resumptionExists && features.resumptionIsBullish,
-            distanceFromOriginAtr: features.distanceFromOriginAtr,
-            accepted,
-            reasonCode: accepted ? "V3_ENTRY_CONFIRMED" : "V3_REJECTED" as any,
-          });
-        }
-
-        if (!accepted) continue;
       }
+
+      if (v3Log) {
+        v3Log.add({
+          pair, timestamp: evaluationTime,
+          regime: "", direction: "",
+          adx: 0, atrPct: 0,
+          impulseAtr: features.impulseAtr, retracementAtr: features.retracementAtr,
+          reclaimConfirmed: features.reclaimIsBullish && features.reclaimAfterOrigin,
+          resumptionConfirmed: features.resumptionExists && features.resumptionIsBullish,
+          distanceFromOriginAtr: features.distanceFromOriginAtr,
+          accepted,
+          reasonCode: accepted ? "V3_ENTRY_CONFIRMED" : "V3_REJECTED" as any,
+        });
+      }
+
+      if (!accepted) continue;
     } else {
-      // B0 path: need ctx for intent evaluation
+      // ── B0 path: evaluateEntryIntent (also used by V4 overlay) ──
       const ctx = buildReplayContextFast(
         pair, sorted5m, sorted15m, sorted1h, sorted4h, evaluationTime, currentPrice,
       );
@@ -578,6 +564,23 @@ export function fastReplay(
 
       const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig);
       if (!intentEval.shouldExecute) continue;
+
+      // V4 overlay: quality filter on top of B0 eligibility
+      if (config.v4MinQualityScore !== undefined) {
+        const features = frame.v3Features;
+        if (!features) continue;
+        totalCandidates++;
+        b0EligibleCandidates++;
+        const v4Scores = computeV4QualityScores(features);
+        if (v4Scores.impulseScore > 0) rawPassImpulseCount++;
+        if (v4Scores.retracementScore > 0) rawPassRetracementCount++;
+        if (v4Scores.structureScore > 0) rawPassStructureCount++;
+        if (v4Scores.reclaimScore > 0) rawPassReclaimCount++;
+        if (v4Scores.resumptionScore > 0) rawPassResumptionCount++;
+        if (v4Scores.qualityScore < config.v4MinQualityScore) continue;
+        v4AcceptedCandidates++;
+        (frame as any)._v4QualityScore = v4Scores.qualityScore;
+      }
     }
 
     intentExecutableCount++;
@@ -692,5 +695,5 @@ export function fastReplay(
     };
   }
 
-  return { pair, trades, stats, config, v3Instrumentation: v3Log?.entries };
+  return { pair, trades, stats, config, v3Instrumentation: v3Log?.entries, b0EligibleCandidates, v4AcceptedCandidates };
 }

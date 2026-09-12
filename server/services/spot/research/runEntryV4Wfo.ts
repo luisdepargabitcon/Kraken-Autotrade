@@ -126,6 +126,7 @@ interface V4WFOReport {
     b0WorstFoldDD: number;
     b0WorstPairDD: number;
     b0WorstPairName: string;
+    b0PortfolioMaxDD: number;
     v4Trades: number;
     v4NetPnl: number;
     v4ProfitFactor: number;
@@ -135,12 +136,22 @@ interface V4WFOReport {
     v4WorstFoldDD: number;
     v4WorstPairDD: number;
     v4WorstPairName: string;
+    v4PortfolioMaxDD: number;
     sampleSufficient: boolean;
     thresholdStability: string;
+    pctNetFromBestFold: number;
+    temporalConcentration: string;
   };
   scoreBins: ScoreBin[];
   spearmanScoreNetR: number;
   spearmanScoreMfeR: number;
+  b0ScoreTrades: number;
+  b0ScoreMapped: number;
+  b0ScoreMissing: number;
+  b0ScoreCoverage: number;
+  b0EligibleCandidates: number;
+  v4AcceptedCandidates: number;
+  v4AcceptsB0Rejected: number;
   runtimeSec: number;
   precomputeSec: number;
   researchSec: number;
@@ -412,6 +423,12 @@ function runV4WFO(
   // ── Quality calibration: group B0 test trades by V4 score into Q1-Q4 ──
   // Collect all B0 test trades with V4 scores computed from precomputed features
   const allB0TestTradesWithScores: { netR: number; mfeR: number; qualityScore: number; netPnl: number; fees: number; win: boolean }[] = [];
+  let b0ScoreTrades = 0, b0ScoreMapped = 0, b0ScoreMissing = 0;
+  let totalB0Eligible = 0, totalV4Accepted = 0, totalV4AcceptsB0Rejected = 0;
+
+  // Also collect all B0 and V4 trades for portfolio DD
+  const allB0TestTrades: ReplayTrade[] = [];
+  const allV4TestTrades: ReplayTrade[] = [];
 
   for (let fi = 0; fi < foldWindows.length; fi++) {
     const fw = foldWindows[fi];
@@ -425,21 +442,30 @@ function runV4WFO(
         evaluationStartMs: fw.testStart, evaluationEndMs: fw.testEnd,
       };
       const b0Result = fastReplay(precomputed, b0Config);
+      allB0TestTrades.push(...b0Result.trades);
+      totalB0Eligible += b0Result.b0EligibleCandidates ?? 0;
+
+      // Run V4 with threshold=0 to get all B0-eligible V4 trades for comparison
+      const v4ZeroConfig: ReplayConfig = {
+        pair, availableCapitalUsd: 10000, feeModel: HISTORICAL_FEE_MODEL,
+        entryV3Config: V3_ENABLED,
+        evaluationStartMs: fw.testStart, evaluationEndMs: fw.testEnd,
+        v4MinQualityScore: 0,
+      };
+      const v4ZeroResult = fastReplay(precomputed, v4ZeroConfig);
+      totalB0Eligible += v4ZeroResult.b0EligibleCandidates ?? 0;
+      totalV4Accepted += v4ZeroResult.v4AcceptedCandidates ?? 0;
 
       // For each B0 trade, find the corresponding frame and compute V4 score
       for (const trade of b0Result.trades) {
-        // Find the frame closest to trade.openedAtMs
+        b0ScoreTrades++;
         const frame = precomputed.frames.find(f => f.evaluationTime === trade.openedAtMs);
         if (!frame || !frame.v3Features) {
-          allB0TestTradesWithScores.push({
-            netR: trade.rMultiple, mfeR: trade.mfeR,
-            qualityScore: 0, netPnl: trade.netPnlUsd,
-            fees: trade.entryFeeUsd + trade.exitFeeUsd,
-            win: trade.netPnlUsd > 0,
-          });
+          b0ScoreMissing++;
           continue;
         }
         const scores = computeV4QualityScores(frame.v3Features);
+        b0ScoreMapped++;
         allB0TestTradesWithScores.push({
           netR: trade.rMultiple, mfeR: trade.mfeR,
           qualityScore: scores.qualityScore,
@@ -448,6 +474,23 @@ function runV4WFO(
           win: trade.netPnlUsd > 0,
         });
       }
+    }
+  }
+
+  // Collect V4 test trades for portfolio DD
+  for (const f of foldResults) {
+    for (const v4r of f.v4Results) {
+      const precomputed = precomputedMap.get(v4r.pair);
+      if (!precomputed) continue;
+      const fw = foldWindows[f.foldIndex];
+      const v4Config: ReplayConfig = {
+        pair: v4r.pair, availableCapitalUsd: 10000, feeModel: HISTORICAL_FEE_MODEL,
+        entryV3Config: V3_ENABLED,
+        evaluationStartMs: fw.testStart, evaluationEndMs: fw.testEnd,
+        v4MinQualityScore: f.bestThreshold,
+      };
+      const v4Result = fastReplay(precomputed, v4Config);
+      allV4TestTrades.push(...v4Result.trades);
     }
   }
 
@@ -489,6 +532,32 @@ function runV4WFO(
   const spearmanNetR = n >= 5 ? Math.round(spearman(scores, netRs) * 1000) / 1000 : 0;
   const spearmanMfeR = n >= 5 ? Math.round(spearman(scores, mfeRs) * 1000) / 1000 : 0;
 
+  // ── Portfolio DD: chronological across all pairs ──
+  function portfolioMaxDD(trades: ReplayTrade[]): number {
+    const sorted = [...trades].sort((a, b) => a.closedAtMs - b.closedAtMs);
+    let equity = 10000;
+    let peak = 10000;
+    let maxDD = 0;
+    for (const t of sorted) {
+      equity += t.netPnlUsd;
+      peak = Math.max(peak, equity);
+      const dd = peak - equity;
+      if (dd > maxDD) maxDD = dd;
+    }
+    return maxDD;
+  }
+  const b0PortfolioMaxDD = portfolioMaxDD(allB0TestTrades);
+  const v4PortfolioMaxDD = portfolioMaxDD(allV4TestTrades);
+
+  // ── Fold robustness: PCT_TOTAL_V4_NET_FROM_BEST_FOLD ──
+  const foldNets = foldResults.map(f => f.testNetPnl);
+  const bestFoldNet = Math.max(...foldNets);
+  const totalV4Net = foldNets.reduce((s, v) => s + v, 0);
+  const pctNetFromBestFold = totalV4Net > 0 ? Math.round((bestFoldNet / totalV4Net) * 10000) / 100 : 0;
+  const temporalConcentration = pctNetFromBestFold > 80 ? "HIGH" : pctNetFromBestFold > 50 ? "MEDIUM" : "LOW";
+
+  const b0ScoreCoverage = b0ScoreTrades > 0 ? Math.round((b0ScoreMapped / b0ScoreTrades) * 10000) / 100 : 0;
+
   return {
     folds: foldResults,
     aggregatedOos: {
@@ -497,17 +566,28 @@ function runV4WFO(
       b0Fees: Math.round(b0Fees * 100) / 100, b0WinRate: b0Trades > 0 ? Math.round((b0Wins / b0Trades) * 100) / 100 : 0,
       b0WorstFoldDD: Math.round(b0WorstFoldDD * 100) / 100,
       b0WorstPairDD: Math.round(b0WorstPairDD * 100) / 100, b0WorstPairName,
+      b0PortfolioMaxDD: Math.round(b0PortfolioMaxDD * 100) / 100,
       v4Trades, v4NetPnl: Math.round(v4Net * 100) / 100,
       v4ProfitFactor: v4PF, v4Expectancy: v4Trades > 0 ? Math.round((v4Net / v4Trades) * 100) / 100 : 0,
       v4Fees: Math.round(v4Fees * 100) / 100, v4WinRate: v4Trades > 0 ? Math.round((v4Wins / v4Trades) * 100) / 100 : 0,
       v4WorstFoldDD: Math.round(v4WorstFoldDD * 100) / 100,
       v4WorstPairDD: Math.round(v4WorstPairDD * 100) / 100, v4WorstPairName,
+      v4PortfolioMaxDD: Math.round(v4PortfolioMaxDD * 100) / 100,
       sampleSufficient: v4Trades >= MIN_OOS_TRADES,
       thresholdStability,
+      pctNetFromBestFold,
+      temporalConcentration,
     },
     scoreBins,
     spearmanScoreNetR: spearmanNetR,
     spearmanScoreMfeR: spearmanMfeR,
+    b0ScoreTrades,
+    b0ScoreMapped,
+    b0ScoreMissing,
+    b0ScoreCoverage,
+    b0EligibleCandidates: totalB0Eligible,
+    v4AcceptedCandidates: totalV4Accepted,
+    v4AcceptsB0Rejected: totalV4AcceptsB0Rejected,
     runtimeSec: Math.round(runtimeSec * 10) / 10,
     precomputeSec: Math.round(precomputeSec * 10) / 10,
     researchSec: Math.round(researchSec * 10) / 10,
@@ -611,6 +691,7 @@ function main(): void {
   console.log(`B0_OOS_WIN_RATE=${a.b0WinRate}`);
   console.log(`B0_WORST_FOLD_DD=${a.b0WorstFoldDD}`);
   console.log(`B0_WORST_PAIR_DD=${a.b0WorstPairDD} (${a.b0WorstPairName})`);
+  console.log(`B0_OOS_PORTFOLIO_MAX_DD=${a.b0PortfolioMaxDD}`);
 
   console.log(`V4_OOS_TRADES=${a.v4Trades}`);
   console.log(`V4_OOS_NET=${a.v4NetPnl}`);
@@ -620,9 +701,16 @@ function main(): void {
   console.log(`V4_OOS_WIN_RATE=${a.v4WinRate}`);
   console.log(`V4_WORST_FOLD_DD=${a.v4WorstFoldDD}`);
   console.log(`V4_WORST_PAIR_DD=${a.v4WorstPairDD} (${a.v4WorstPairName})`);
+  console.log(`V4_OOS_PORTFOLIO_MAX_DD=${a.v4PortfolioMaxDD}`);
 
   for (const f of report.folds) {
     console.log(`FOLD${f.foldIndex}_THRESHOLD=${f.bestThreshold}`);
+    // Per-fold B0 and V4 net
+    let foldB0Net = 0, foldV4Net = 0;
+    for (const b0r of f.b0Results) foldB0Net += b0r.netPnl;
+    for (const v4r of f.v4Results) foldV4Net += v4r.netPnl;
+    console.log(`FOLD${f.foldIndex}_B0_NET=${Math.round(foldB0Net * 100) / 100}`);
+    console.log(`FOLD${f.foldIndex}_V4_NET=${Math.round(foldV4Net * 100) / 100}`);
   }
   console.log(`THRESHOLD_STABILITY=${a.thresholdStability}`);
   console.log(`OOS_TRADES_SUFFICIENT=${a.sampleSufficient ? "YES" : "NO"}`);
@@ -647,6 +735,15 @@ function main(): void {
   }
   console.log(`SPEARMAN_SCORE_NET_R=${report.spearmanScoreNetR}`);
   console.log(`SPEARMAN_SCORE_MFE_R=${report.spearmanScoreMfeR}`);
+  console.log(`B0_SCORE_TRADES=${report.b0ScoreTrades}`);
+  console.log(`B0_SCORE_MAPPED=${report.b0ScoreMapped}`);
+  console.log(`B0_SCORE_MISSING=${report.b0ScoreMissing}`);
+  console.log(`B0_SCORE_COVERAGE=${report.b0ScoreCoverage}%`);
+  console.log(`B0_ELIGIBLE_CANDIDATES=${report.b0EligibleCandidates}`);
+  console.log(`V4_ACCEPTED_CANDIDATES=${report.v4AcceptedCandidates}`);
+  console.log(`V4_ACCEPTS_B0_REJECTED=${report.v4AcceptsB0Rejected}`);
+  console.log(`PCT_NET_FROM_BEST_FOLD=${a.pctNetFromBestFold}%`);
+  console.log(`TEMPORAL_CONCENTRATION=${a.temporalConcentration}`);
 
   // Verdict
   const deltaNet = a.v4NetPnl - a.b0NetPnl;

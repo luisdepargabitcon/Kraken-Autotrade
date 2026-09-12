@@ -128,6 +128,8 @@ export interface ReplayResult {
   stats: ReplayStats;
   config: ReplayConfig;
   v3Instrumentation?: V3InstrumentationEntry[];
+  b0EligibleCandidates?: number;
+  v4AcceptedCandidates?: number;
 }
 
 export interface ReplayStats {
