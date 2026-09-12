@@ -12,8 +12,19 @@ import * as crypto from "crypto";
 import type { SpotCandle } from "../spotTypes";
 import { ExitReasonType, SetupTag, Regime } from "../spotTypes";
 import { runReplay, type ReplayCandleSet, type ReplayConfig, type ReplayResult, type ReplayTrade } from "../spotReplayEngine";
+import { type FeeModel } from "../feeModel";
 import { PAIR_MAPPINGS, TIMEFRAMES, loadAllCached, type KrakenDataset, type KrakenOHLCRow, KRAKEN_SOURCE, KRAKEN_OFFICIAL_PAGE } from "./krakenHistoricalLoader";
 import { validateDataset, validateAllCached, type ValidationResult, type FullValidationReport } from "./krakenDatasetValidator";
+
+// Historical replay uses Revolut X execution fees (0.09% taker / 0.00% maker).
+// These are MODEL fees for historical research, NOT real fills.
+// Production code without override continues using the canonical fee model.
+const HISTORICAL_FEE_MODEL: FeeModel = {
+  exchange: "revolutx",
+  takerFeePct: 0.09,
+  makerFeePct: 0.00,
+  quality: "ESTIMATED",
+};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -317,6 +328,7 @@ export function runBaselineForPair(
   const config: ReplayConfig = {
     pair,
     availableCapitalUsd: 10000,
+    feeModel: HISTORICAL_FEE_MODEL,
   };
 
   // Run 1

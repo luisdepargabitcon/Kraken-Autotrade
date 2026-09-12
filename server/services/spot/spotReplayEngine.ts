@@ -26,8 +26,8 @@ import {
 } from "./spotTypes";
 import { evaluateSpotCanonical, type SpotSignalResult, type SpotCanonicalConfig } from "./spotCanonicalStrategy";
 import { createEntryIntent, evaluateEntryIntent, type AntiLateEntryConfig } from "./spotEntryIntent";
-import { computeStopDistance, computePositionSize, type SpotRiskConfig, DEFAULT_SPOT_RISK_CONFIG } from "./spotRiskManager";
-import { computePnlBreakdown, computeFeeBreakdown, getSpotTakerFeePct, type FeeQuality } from "./feeModel";
+import { evaluateSizing, type SpotRiskConfig, DEFAULT_SPOT_RISK_CONFIG } from "./spotRiskManager";
+import { computePnlBreakdown, computeFeeBreakdown, type FeeQuality, type FeeModel } from "./feeModel";
 import { evaluateExit, createExitState, type SpotExitConfig, DEFAULT_SPOT_EXIT_CONFIG } from "./spotExitPolicy";
 import { SpotAuditTracker, classifyProfitCapture, type ExitAuditMetrics } from "./spotAuditTracker";
 import { DataHealth, getCandleCloseTimeMs } from "./candleTimestamp";
@@ -56,6 +56,8 @@ export interface ReplayConfig {
   antiLateEntryConfig?: AntiLateEntryConfig;
   /** Max concurrent positions (default 2) */
   maxConcurrentPositions?: number;
+  /** Explicit fee model for historical replay (defaults to canonical) */
+  feeModel?: FeeModel;
 }
 
 export interface ReplayTrade {
@@ -147,7 +149,7 @@ export function runReplay(
 ): ReplayResult {
   const pair = config.pair;
   const maxConcurrent = config.maxConcurrentPositions ?? 2;
-  const takerFeePct = getSpotTakerFeePct();
+  const feeModel = config.feeModel;
 
   const positions: SpotPosition[] = [];
   const exitStates: Map<string, SpotExitState> = new Map();
@@ -217,12 +219,13 @@ export function runReplay(
         // C1F5F-1: Exit fill must NOT use distant next candle open.
         // Only use nextCandle.open if contiguous; otherwise use current5m.close as EXIT_AT_DECISION_CLOSE_DEGRADED.
         const exitFillPrice = hasNextCandle ? nextCandle!.open : current5m.close;
-        const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining);
+        const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining, feeModel);
         const pnl = computePnlBreakdown({
           entryPrice: pos.entryPrice,
           exitPrice: exitFillPrice,
           volume: pos.qtyRemaining,
           entryFeeUsd: pos.entryFee,
+          feeModel,
         });
 
         const audit = auditTracker.finalizeExit(pos, exitFillPrice, exitDecision.reasonType ?? "TIME_EFFICIENCY", evaluationTime);
@@ -292,26 +295,26 @@ export function runReplay(
 
     intentExecutableCount++;
 
-    // Sizing
-    const stopDist = computeStopDistance(
-      entryFillPrice,
-      ctx.atr,
-      ctx.regimeContext.regime,
-      config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG,
-    );
-    const sizing = computePositionSize(
-      entryFillPrice,
-      stopDist.stopDistanceUsd,
-      config.riskConfig?.riskPerTradeUsd ?? DEFAULT_SPOT_RISK_CONFIG.riskPerTradeUsd,
-      config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG,
+    // Sizing — use productive evaluateSizing() (applies maxLots, maxOrder, spread gate, fee gate, capital efficiency)
+    // Override ticker.last to the actual fill price so sizing matches the entry price
+    const openLotsForPair = positions.filter(p => p.pair === pair).length;
+    const riskConfig = config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG;
+    const sizingCtx = { ...ctx, ticker: { ...ctx.ticker, last: entryFillPrice } };
+    const sizing = evaluateSizing(
+      sizingCtx,
+      intent,
+      config.availableCapitalUsd,
+      openLotsForPair,
+      riskConfig,
+      feeModel,
     );
 
-    if (sizing.volume <= 0 || sizing.notionalUsd <= 0) continue;
+    if (!sizing.approved) continue;
 
     entriesExecutedCount++;
     lotCounter++;
     const lotId = `replay-${pair}-${lotCounter}`;
-    const entryFee = entryFillPrice * sizing.volume * (takerFeePct / 100);
+    const entryFee = sizing.entryFeeUsd;
 
     const position: SpotPosition = {
       lotId,
@@ -334,17 +337,17 @@ export function runReplay(
       directionAtEntry: ctx.regimeContext.direction,
       macroAtEntry: ctx.regimeContext.macroBias,
       atrPctAtEntry: ctx.regimeContext.atrPct,
-      initialStopPrice: stopDist.stopPrice,
-      initialStopDistancePct: stopDist.stopDistancePct,
-      initialStopDistanceUsd: stopDist.stopDistanceUsd,
-      riskUsd: config.riskConfig?.riskPerTradeUsd ?? DEFAULT_SPOT_RISK_CONFIG.riskPerTradeUsd,
+      initialStopPrice: sizing.stopPrice,
+      initialStopDistancePct: sizing.stopDistancePct,
+      initialStopDistanceUsd: sizing.stopDistanceUsd,
+      riskUsd: sizing.riskUsd,
       notionalUsd: sizing.notionalUsd,
       executionMode: ExecutionMode.SHADOW,
       policyVersion: SPOT_POLICY_VERSION,
       sgBreakEvenActivated: false,
       sgTrailingActivated: false,
       sgScaleOutDone: false,
-      sgCurrentStopPrice: stopDist.stopPrice,
+      sgCurrentStopPrice: sizing.stopPrice,
       mfe: 0,
       mae: 0,
       mfeR: 0,
@@ -362,12 +365,13 @@ export function runReplay(
   const terminalExitTime = getCandleCloseTimeMs(lastCandle.time, "5m") ?? lastCandle.time;
   for (const pos of positions) {
     const exitPrice = lastCandle.close;
-    const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.qtyRemaining);
+    const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.qtyRemaining, feeModel);
     const pnl = computePnlBreakdown({
       entryPrice: pos.entryPrice,
       exitPrice,
       volume: pos.qtyRemaining,
       entryFeeUsd: pos.entryFee,
+      feeModel,
     });
     const audit = auditTracker.finalizeExit(pos, exitPrice, "TIME_EFFICIENCY", terminalExitTime);
     const posMetrics = auditTracker.getMetrics(pos.lotId);

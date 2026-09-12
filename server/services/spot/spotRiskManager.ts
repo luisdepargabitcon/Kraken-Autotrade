@@ -19,7 +19,7 @@
  *   All sizing is deterministic from the SpotMarketContext + SpotEntryIntent.
  */
 
-import { getSpotTakerFeePct, computeFeeBreakdown } from "./feeModel";
+import { getSpotTakerFeePct, computeFeeBreakdown, type FeeModel } from "./feeModel";
 import {
   Regime,
   type SpotMarketContext,
@@ -220,8 +220,9 @@ export function evaluateFeeGate(
   volume: number,
   expectedExitPrice: number,
   config: SpotRiskConfig,
+  feeModel?: FeeModel,
 ): { pass: boolean; roundTripFeeUsd: number; reason: string } {
-  const takerPct = getSpotTakerFeePct() / 100;
+  const takerPct = (feeModel?.takerFeePct ?? getSpotTakerFeePct()) / 100;
   const entryNotional = entryPrice * volume;
   const exitNotional = expectedExitPrice * volume;
   const entryFee = entryNotional * takerPct;
@@ -263,6 +264,7 @@ export function evaluateSizing(
   availableCapitalUsd: number,
   openLotsForPair: number,
   config: SpotRiskConfig = DEFAULT_SPOT_RISK_CONFIG,
+  feeModel?: FeeModel,
 ): SizingResult {
   const entryPrice = ctx.ticker.last;
   const regime = ctx.regimeContext.regime;
@@ -315,11 +317,11 @@ export function evaluateSizing(
   if (!capEff.pass) { blockReasons.push(capEff.reason); blockCodes.push(classifyCapitalEfficiencyReason(capEff.reason)); }
 
   // 8. Fee gate
-  const feeGate = evaluateFeeGate(entryPrice, volume, expectedExitPrice, config);
+  const feeGate = evaluateFeeGate(entryPrice, volume, expectedExitPrice, config, feeModel);
   if (!feeGate.pass) { blockReasons.push(feeGate.reason); blockCodes.push("FEE_GATE"); }
 
   // 9. Entry fee
-  const takerPct = getSpotTakerFeePct() / 100;
+  const takerPct = (feeModel?.takerFeePct ?? getSpotTakerFeePct()) / 100;
   const entryFeeUsd = notionalUsd * takerPct;
 
   if (blockReasons.length > 0) {
