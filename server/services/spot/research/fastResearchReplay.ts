@@ -298,12 +298,16 @@ function computeAtr15m(candles: readonly SpotCandle[]): number {
 
 // ─── V3 threshold check (fast, per-combo) ───────────────────────────────────
 
-export interface StageAttribution {
-  passImpulse: boolean;
-  passRetracement: boolean;
-  passStructure: boolean;
-  passReclaim: boolean;
-  passResumption: boolean;
+export interface RawStageAttribution {
+  rawPassImpulse: boolean;
+  rawPassRetracement: boolean;
+  rawPassStructure: boolean;
+  rawPassReclaim: boolean;
+  rawPassResumption: boolean;
+  passAntiLateDistance: boolean;
+  passAntiLateExpiry: boolean;
+  passAntiLateTotal: boolean;
+  accepted: boolean;
 }
 
 function checkV3Acceptance(
@@ -312,33 +316,40 @@ function checkV3Acceptance(
   currentPrice: number,
   nowMs: number,
   mask: ResearchV3StageMask = ALL_STAGES_MASK,
-): { accepted: boolean; attribution: StageAttribution } {
-  // Anti-late is always checked (not a stage, it's a safety gate)
-  if (f.distanceFromOriginAtr > config.maxEntryDistanceAtr) {
-    return { accepted: false, attribution: { passImpulse: false, passRetracement: false, passStructure: false, passReclaim: false, passResumption: false } };
-  }
-
-  const passImpulse = !mask.impulse || f.impulseAtr >= config.impulseMinAtr;
-  const passRetracement = !mask.retracement || (f.retracementAtr >= config.retracementMinAtr && f.retracementAtr <= config.retracementMaxAtr);
+): { accepted: boolean; attribution: RawStageAttribution } {
+  // Raw stage booleans — INDEPENDENT of mask, INDEPENDENT of anti-late
+  const rawPassImpulse = f.impulseAtr >= config.impulseMinAtr;
+  const rawPassRetracement = f.retracementAtr >= config.retracementMinAtr && f.retracementAtr <= config.retracementMaxAtr;
   const structureThreshold = f.ema20 - config.structureMinEmaDistanceAtr * f.atr;
-  const passStructure = !mask.structure || f.retracementLow >= structureThreshold;
-  const passReclaim = !mask.reclaim || (f.reclaimIsBullish && f.reclaimBodyPct >= config.reclaimMinBodyPct && (!config.reclaimMustCloseAboveEma || f.reclaimCandleClose >= f.ema20) && f.reclaimAfterOrigin);
-  const passResumption = !mask.resumption || (f.resumptionExists && f.resumptionIsBullish && f.resumptionBodyPct >= config.resumptionMinBodyPct && f.resumptionUpperWickRatio <= config.resumptionMaxUpperWickRatio && f.resumptionVolRatio5m >= config.resumptionMinVolumeRatio);
+  const rawPassStructure = f.retracementLow >= structureThreshold;
+  const rawPassReclaim = f.reclaimIsBullish && f.reclaimBodyPct >= config.reclaimMinBodyPct && (!config.reclaimMustCloseAboveEma || f.reclaimCandleClose >= f.ema20) && f.reclaimAfterOrigin;
+  const rawPassResumption = f.resumptionExists && f.resumptionIsBullish && f.resumptionBodyPct >= config.resumptionMinBodyPct && f.resumptionUpperWickRatio <= config.resumptionMaxUpperWickRatio && f.resumptionVolRatio5m >= config.resumptionMinVolumeRatio;
 
-  const attribution: StageAttribution = { passImpulse, passRetracement, passStructure, passReclaim, passResumption };
-
-  if (!passImpulse || !passRetracement || !passStructure || !passReclaim || !passResumption) {
-    return { accepted: false, attribution };
-  }
-
+  // Anti-late checks — SEPARATE from stages
+  const passAntiLateDistance = f.distanceFromOriginAtr <= config.maxEntryDistanceAtr;
   const antiLate = evaluateV3AntiLateEntry(
     currentPrice, f.originPrice, f.originAtrPct, f.expiresAt, nowMs, config,
   );
-  if (antiLate.action !== "EXECUTE") {
-    return { accepted: false, attribution };
-  }
+  const passAntiLateExpiry = antiLate.action === "EXECUTE";
+  const passAntiLateTotal = passAntiLateDistance && passAntiLateExpiry;
 
-  return { accepted: true, attribution };
+  // Mask determines which stages are REQUIRED for acceptance
+  const maskPassImpulse = !mask.impulse || rawPassImpulse;
+  const maskPassRetracement = !mask.retracement || rawPassRetracement;
+  const maskPassStructure = !mask.structure || rawPassStructure;
+  const maskPassReclaim = !mask.reclaim || rawPassReclaim;
+  const maskPassResumption = !mask.resumption || rawPassResumption;
+
+  const accepted = maskPassImpulse && maskPassRetracement && maskPassStructure && maskPassReclaim && maskPassResumption && passAntiLateTotal;
+
+  return {
+    accepted,
+    attribution: {
+      rawPassImpulse, rawPassRetracement, rawPassStructure, rawPassReclaim, rawPassResumption,
+      passAntiLateDistance, passAntiLateExpiry, passAntiLateTotal,
+      accepted,
+    },
+  };
 }
 
 // ─── Fast replay ───────────────────────────────────────────────────────────
@@ -364,19 +375,21 @@ export function fastReplay(
   let intentExecutableCount = 0;
   let entriesExecutedCount = 0;
 
-  // Stage attribution tracking
+  // Stage attribution tracking (raw, independent of mask)
   let totalCandidates = 0;
-  let passImpulseCount = 0;
-  let passRetracementCount = 0;
-  let passStructureCount = 0;
-  let passReclaimCount = 0;
-  let passResumptionCount = 0;
+  let rawPassImpulseCount = 0;
+  let rawPassRetracementCount = 0;
+  let rawPassStructureCount = 0;
+  let rawPassReclaimCount = 0;
+  let rawPassResumptionCount = 0;
   let failOnlyImpulse = 0;
   let failOnlyRetracement = 0;
   let failOnlyStructure = 0;
   let failOnlyReclaim = 0;
   let failOnlyResumption = 0;
-  let failMultiple = 0;
+  let failMultipleStages = 0;
+  let antiLateDistanceFails = 0;
+  let antiLateExpiryFails = 0;
 
   let lastInWindowClose = 0;
   let lastInWindowTime = 0;
@@ -500,23 +513,28 @@ export function fastReplay(
       totalCandidates++;
       const { accepted, attribution } = checkV3Acceptance(features, entryV3Config, currentPrice, evaluationTime, stageMask);
 
-      if (attribution.passImpulse) passImpulseCount++;
-      if (attribution.passRetracement) passRetracementCount++;
-      if (attribution.passStructure) passStructureCount++;
-      if (attribution.passReclaim) passReclaimCount++;
-      if (attribution.passResumption) passResumptionCount++;
+      if (attribution.rawPassImpulse) rawPassImpulseCount++;
+      if (attribution.rawPassRetracement) rawPassRetracementCount++;
+      if (attribution.rawPassStructure) rawPassStructureCount++;
+      if (attribution.rawPassReclaim) rawPassReclaimCount++;
+      if (attribution.rawPassResumption) rawPassResumptionCount++;
+
+      if (!attribution.passAntiLateDistance) antiLateDistanceFails++;
+      if (!attribution.passAntiLateExpiry) antiLateExpiryFails++;
 
       if (!accepted) {
-        const failCount = [!attribution.passImpulse, !attribution.passRetracement, !attribution.passStructure, !attribution.passReclaim, !attribution.passResumption].filter(Boolean).length;
-        if (failCount === 1) {
-          if (!attribution.passImpulse) failOnlyImpulse++;
-          else if (!attribution.passRetracement) failOnlyRetracement++;
-          else if (!attribution.passStructure) failOnlyStructure++;
-          else if (!attribution.passReclaim) failOnlyReclaim++;
-          else if (!attribution.passResumption) failOnlyResumption++;
-        } else {
-          failMultiple++;
+        // Count stage failures using RAW booleans (not mask)
+        const stageFails = [!attribution.rawPassImpulse, !attribution.rawPassRetracement, !attribution.rawPassStructure, !attribution.rawPassReclaim, !attribution.rawPassResumption].filter(Boolean).length;
+        if (stageFails === 1) {
+          if (!attribution.rawPassImpulse) failOnlyImpulse++;
+          else if (!attribution.rawPassRetracement) failOnlyRetracement++;
+          else if (!attribution.rawPassStructure) failOnlyStructure++;
+          else if (!attribution.rawPassReclaim) failOnlyReclaim++;
+          else if (!attribution.rawPassResumption) failOnlyResumption++;
+        } else if (stageFails >= 2) {
+          failMultipleStages++;
         }
+        // Anti-late failures are NOT counted in failMultipleStages
       }
 
       if (v3Log) {
@@ -639,12 +657,14 @@ export function fastReplay(
   if (v3Log) {
     (v3Log as any).stageAttribution = {
       totalCandidates,
-      passImpulsePct: totalCandidates > 0 ? passImpulseCount / totalCandidates : 0,
-      passRetracementPct: totalCandidates > 0 ? passRetracementCount / totalCandidates : 0,
-      passStructurePct: totalCandidates > 0 ? passStructureCount / totalCandidates : 0,
-      passReclaimPct: totalCandidates > 0 ? passReclaimCount / totalCandidates : 0,
-      passResumptionPct: totalCandidates > 0 ? passResumptionCount / totalCandidates : 0,
-      failOnlyImpulse, failOnlyRetracement, failOnlyStructure, failOnlyReclaim, failOnlyResumption, failMultiple,
+      rawPassImpulsePct: totalCandidates > 0 ? rawPassImpulseCount / totalCandidates : 0,
+      rawPassRetracementPct: totalCandidates > 0 ? rawPassRetracementCount / totalCandidates : 0,
+      rawPassStructurePct: totalCandidates > 0 ? rawPassStructureCount / totalCandidates : 0,
+      rawPassReclaimPct: totalCandidates > 0 ? rawPassReclaimCount / totalCandidates : 0,
+      rawPassResumptionPct: totalCandidates > 0 ? rawPassResumptionCount / totalCandidates : 0,
+      failOnlyImpulse, failOnlyRetracement, failOnlyStructure, failOnlyReclaim, failOnlyResumption,
+      failMultipleStages,
+      antiLateDistanceFails, antiLateExpiryFails,
     };
   }
 

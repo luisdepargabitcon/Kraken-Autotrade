@@ -1,122 +1,130 @@
-# Test Results � Strict Window + Ablation WFO
+# Test Results — Contra-auditoría
 
 ## 1. TypeScript Compilation
 
 ```
 npx tsc --noEmit
 ```
+Result: **PASS** (no errors)
 
-Result: **PASS** (0 errors)
+## 2. Git Diff Check
 
-## 2. git diff --check
-
+```
+git diff --check
+```
 Result: **PASS** (no whitespace errors)
 
-## 3. Strict Window Equivalence Test
+## 3. Objective Monotonicity Tests
+
+```
+node --import tsx server/services/spot/research/testObjectiveMonotonicity.ts
+```
+
+```
+NEGATIVE_EXPECTANCY: base=1.5 worse=1.3 worst=0.7
+MORE_DD: low=0.7 high=0.2
+MORE_FEES: low=2.5 high=2.2
+FEWER_PAIRS: two=1.5 one=1
+SPARSER_SAMPLE: dense=1.5 sparse=0.9
+LOWER_PF: high=2 low=1.6
+NEGATIVE_EXPECTANCY_PENALTY: noPenalty=-1 withPenalty=-7
+NEGATIVE_EXPECTANCY=PASS
+MORE_DD=PASS
+MORE_FEES=PASS
+FEWER_PAIRS=PASS
+SPARSER_SAMPLE=PASS
+LOWER_PF=PASS
+NEGATIVE_EXPECTANCY_PENALTY=PASS
+ALL_MONOTONICITY_TESTS=PASS
+```
+
+Result: **PASS** (7/7)
+
+## 4. Strict Window Equivalence + Boundary Tests
 
 ```
 node --import tsx server/services/spot/research/testStrictWindowEquivalence.ts
 ```
 
-### Results
-
-| Test | Result |
-|------|--------|
-| FAST_WINDOW_EQUIVALENCE | PASS |
-| NO_LEAKAGE | PASS |
-| WINDOW_FUTURE_INVARIANCE | PASS |
-| BOUNDARY_CLOSE_MATCH | PASS |
-| ALL_TESTS | PASS |
-
-Details:
-- PAIR=BTC/USD
-- WINDOW_START=2026-04-28T08:23:45.000Z
-- WINDOW_END=2026-06-12T16:47:30.000Z
-- PRECOMPUTE_SEC=80.9
-- BOUNDARY_TRADES_FAST=0
-- BOUNDARY_TRADES_RUNREPLAY=0
-- OLD_POST_BOUNDARY_CLOSES=0
-
-## 4. Full WFO + Ablation Run
-
 ```
-node --import tsx server/services/spot/research/runEntryV3Wfo.ts --all
+PAIR=BTC/USD
+DATA_START=2026-03-14T00:00:00.000Z
+DATA_END=2026-09-11T09:35:00.000Z
+WINDOW_START=2026-04-28T08:23:45.000Z
+WINDOW_END=2026-06-12T16:47:30.000Z
+PRECOMPUTE_SEC=55.9
+FAST_WINDOW_EQUIVALENCE=PASS
+NO_LEAKAGE=PASS
+WINDOW_FUTURE_INVARIANCE=PASS
+BOUNDARY_TRADES_FAST=0
+BOUNDARY_TRADES_RUNREPLAY=0
+BOUNDARY_CLOSE_MATCH=PASS
+Searching for non-vacuous boundary window...
+NON_VACUOUS_WINDOW=2026-04-01T03:22:00.000Z to 2026-05-05T02:20:00.000Z
+NON_VACUOUS_BOUNDARY_FAST=1
+NON_VACUOUS_BOUNDARY_RUNREPLAY=1
+BOUNDARY_NONVACUOUS=PASS
+BOUNDARY_FUTURE_INVARIANCE=PASS
+ALL_TESTS=PASS
 ```
 
-### Results
+Result: **PASS** (6/6)
 
-| Metric | Value |
-|--------|-------|
-| FOLDS | 3 |
-| COMBOS | 108 |
-| PRECOMPUTE_SEC | 347.7 |
-| RESEARCH_SEC | 39.8 |
-| TOTAL_RUNTIME_SEC | 387.5 |
+## 5. Full WFO + Ablation Run
 
-### B0 (V3 OFF) OOS
+```
+node --import tsx server/services/spot/research/runEntryV3Wfo.ts
+```
 
-| Metric | Value |
-|--------|-------|
-| Trades | 94 |
-| Net PnL | +$228.34 |
-| PF | 1.16 |
-| Expectancy | +$2.43 |
-| Fees | $462.43 |
-| Worst Fold DD | $227.25 |
-| Worst Pair DD | $227.25 (XRP/USD) |
+```
+PRECOMPUTE_DONE pairs=4 sec=203
+WFO_DONE
+FOLDS=3
+COMBOS=126
+PRECOMPUTE_SEC=203
+RESEARCH_SEC=21.4
+TOTAL_RUNTIME_SEC=21.4
+B0_OOS_TRADES=94
+B0_OOS_NET=228.34
+B0_OOS_PF=1.16
+B0_OOS_EXPECTANCY=2.43
+B0_OOS_FEES=462.43
+B0_WORST_FOLD_DD=227.25
+B0_WORST_PAIR_DD=227.25 (XRP/USD)
+STRICT_V3_OOS_TRADES=12
+STRICT_V3_OOS_NET=-124.94
+STRICT_V3_OOS_PF=0.44
+STRICT_V3_OOS_EXPECTANCY=-10.41
+STRICT_V3_OOS_FEES=54.21
+V3_WORST_FOLD_DD=64.46
+V3_WORST_PAIR_DD=64.46 (BTC/USD)
+ABLATION_OOS_TRADES=22
+ABLATION_OOS_NET=-88.76
+ABLATION_OOS_PF=0.78
+ABLATION_OOS_EXPECTANCY=-4.03
+ABLATION_OOS_FEES=95.26
+ABLATION_WORST_FOLD_DD=90.64
+ABLATION_WORST_PAIR_DD=90.64 (SOL/USD)
+STRICT_FOLD_0_PARAMS=1.5/0.5/2/0.003
+STRICT_FOLD_1_PARAMS=0.8/0.3/1.5/0.001
+STRICT_FOLD_2_PARAMS=0.8/0.2/1/0.0005
+ABLATION_FOLD_0_ARCH=NO_RECLAIM
+ABLATION_FOLD_1_ARCH=NO_RECLAIM
+ABLATION_FOLD_2_ARCH=NO_RETRACEMENT
+ABLATION_FOLD_0_PARAMS=1.5/0.5/2/0.003
+ABLATION_FOLD_1_PARAMS=0.8/0.3/1.5/0.001
+ABLATION_FOLD_2_PARAMS=0.8/0.2/1/0.0005
+MOST_COMMON_SELECTED_ARCHITECTURE=NO_RECLAIM
+ARCHITECTURE_STABILITY=MEDIUM
+OOS_SAMPLE_SUFFICIENT=NO
+BTC_USD_B0_NET=26.68
+BTC_USD_ABLATION_NET=-65.57
+ETH_USD_B0_NET=-153
+ETH_USD_ABLATION_NET=40.53
+SOL_USD_B0_NET=355.77
+SOL_USD_ABLATION_NET=32.27
+XRP_USD_B0_NET=-1.11
+XRP_USD_ABLATION_NET=-95.99
+```
 
-### Strict V3 (ALL stages) OOS
-
-| Metric | Value |
-|--------|-------|
-| Trades | 12 |
-| Net PnL | -$124.94 |
-| PF | 0.44 |
-| Expectancy | -$10.41 |
-| Fees | $54.21 |
-| Worst Fold DD | $64.46 |
-| Worst Pair DD | $64.46 (BTC/USD) |
-
-### Ablation Selected OOS
-
-| Metric | Value |
-|--------|-------|
-| Trades | 22 |
-| Net PnL | -$88.76 |
-| PF | 0.78 |
-| Expectancy | -$4.03 |
-| Fees | $95.26 |
-| Worst Fold DD | $90.64 |
-| Worst Pair DD | $90.64 (SOL/USD) |
-
-### Architecture Selection
-
-| Fold | Architecture |
-|------|-------------|
-| 0 | NO_RECLAIM |
-| 1 | NO_RECLAIM |
-| 2 | NO_RETRACEMENT |
-
-- Most common: NO_RECLAIM
-- Architecture instability: NO
-- OOS sample sufficient: NO (22 < 30)
-
-### Per-Pair OOS
-
-| Pair | B0 Net | Ablation Net |
-|------|--------|-------------|
-| BTC/USD | +$26.68 | -$65.57 |
-| ETH/USD | -$153 | +$40.53 |
-| SOL/USD | +$355.77 | +$32.27 |
-| XRP/USD | -$1.11 | -$95.99 |
-
-## 5. CSV Files Generated
-
-- STRICT_WINDOW_RESULTS.csv
-- STAGE_ATTRIBUTION.csv
-- ABLATION_TRAIN.csv
-- ABLATION_SELECTED_OOS.csv
-- JOINT_WFO_FOLDS.csv
-- B0_VS_V3_OOS.csv
-- OOS_SUMMARY.csv
-- entry-v3-wfo-joint.json
+Result: **PASS** (completed in 224.4s total)

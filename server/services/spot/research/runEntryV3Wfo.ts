@@ -110,11 +110,15 @@ interface FoldResult {
   trainEnd: number;
   testStart: number;
   testEnd: number;
-  bestParams: EntryV3Config;
-  bestArchitecture: string;
-  trainScore: number;
-  trainTrades: number;
-  trainNetPnl: number;
+  strictBestParams: EntryV3Config;
+  strictTrainScore: number;
+  strictTrainTrades: number;
+  strictTrainNetPnl: number;
+  ablationBestParams: EntryV3Config;
+  ablationBestArchitecture: string;
+  ablationTrainScore: number;
+  ablationTrainTrades: number;
+  ablationTrainNetPnl: number;
   b0Results: PairFoldResult[];
   v3Results: PairFoldResult[];
   ablationResults: PairFoldResult[];
@@ -123,17 +127,19 @@ interface FoldResult {
 interface StageAttributionSummary {
   pair: string;
   totalCandidates: number;
-  passImpulsePct: number;
-  passRetracementPct: number;
-  passStructurePct: number;
-  passReclaimPct: number;
-  passResumptionPct: number;
+  rawPassImpulsePct: number;
+  rawPassRetracementPct: number;
+  rawPassStructurePct: number;
+  rawPassReclaimPct: number;
+  rawPassResumptionPct: number;
   failOnlyImpulse: number;
   failOnlyRetracement: number;
   failOnlyStructure: number;
   failOnlyReclaim: number;
   failOnlyResumption: number;
-  failMultiple: number;
+  failMultipleStages: number;
+  antiLateDistanceFails: number;
+  antiLateExpiryFails: number;
 }
 
 interface JointWFOReport {
@@ -173,7 +179,7 @@ interface JointWFOReport {
     ablationWorstPairDD: number;
     ablationWorstPairName: string;
     sampleSufficient: boolean;
-    architectureInstability: boolean;
+    architectureStability: string;
   };
   runtimeSec: number;
   precomputeSec: number;
@@ -251,29 +257,40 @@ function summarizePairResult(pair: string, trades: ReplayTrade[]): PairFoldResul
 /**
  * Corrected Objective Function for TRAIN phase scoring.
  *
- * Formula (documented, no optimizable parameters):
+ * ADDITIVE / MONOTONIC model. Penalties always SUBTRACT, regardless of
+ * the sign of expectancy. No multiplicative penalties on signed values.
  *
- *   score = netExpectancy * tradeCountFactor * crossPairFactor * ddPenalty * feePenalty * worstPairPenalty
+ *   baseQuality = normalizedNetExpectancy + cappedPfContribution
+ *   score = baseQuality - sparseSamplePenalty - crossPairPenalty
+ *           - drawdownPenalty - feePenalty - worstPairPenalty
  *
  * Components:
- *   - netExpectancy = totalNetPnl / totalTrades
- *   - tradeCountFactor:
- *       0 trades  → hard penalty (score = -1000)
- *       1 trade   → hard penalty (score = -500)
- *       2-4 trades → progressive penalty: 0.3, 0.5, 0.7
- *       >=5 trades → min(1.0, totalTrades / 10)
- *   - crossPairFactor: 1 pair active → 0.5, else 1.0
- *   - ddPenalty: worstDD > 200 → max(0.1, 1 - worstDD/500), else 1.0
- *   - feePenalty: if totalFees > 50% of grossEdge → 0.7, else 1.0
- *   - worstPairPenalty: if any single pair has expectancy < -50 → 0.5, else 1.0
- *   - PF contribution capped at 5.0 (Infinity does NOT dominate)
- *   - Negative expectancy → negative score (natural)
+ *   - normalizedNetExpectancy = expectancy / 10  ($10/trade = 1.0)
+ *   - cappedPfContribution = totalTrades >= 5 ? min(netPF, 3) / 3 * 0.5 : 0
+ *     (PF capped at 3, Infinity treated as 3, NOT used for <5 trades)
+ *   - sparseSamplePenalty: 0 trades -> -1000 (hard), 1 -> -500 (hard),
+ *       2 -> 0.3, 3 -> 0.2, 4 -> 0.1, >=5 -> 0
+ *   - crossPairPenalty: 1 pair active -> 0.5, else 0
+ *   - drawdownPenalty: worstDD > 200 -> worstDD / 500 (max ~1.0), else 0
+ *   - feePenalty: fees > 50% of grossEdge -> 0.3, else 0
+ *   - worstPairPenalty: any pair expectancy < -50 -> 0.5, else 0
+ *
+ * Monotonicity guarantees:
+ *   - More DD -> score never improves (drawdownPenalty only increases)
+ *   - More fees -> score never improves (feePenalty only activates/increases)
+ *   - Fewer pairs -> score never improves (crossPairPenalty only activates)
+ *   - Smaller sample -> score never improves (sparseSamplePenalty only increases)
+ *   - Lower PF -> score never improves (cappedPfContribution only decreases)
+ *   - More negative expectancy -> score never improves (normalizedNetExpectancy decreases)
+ *   - Penalties on negative expectancy make score MORE negative (worse)
  */
 function objectiveScore(allPairTrades: { pair: string; trades: ReplayTrade[] }[]): { score: number; totalTrades: number; netPnl: number } {
   let totalTrades = 0;
   let totalNetPnl = 0;
   let totalFees = 0;
   let totalGrossEdge = 0;
+  let netWin = 0;
+  let netLoss = 0;
   const pairsWithTrades: string[] = [];
   let worstDD = 0;
   let worstPairExpectancy = 0;
@@ -285,6 +302,8 @@ function objectiveScore(allPairTrades: { pair: string; trades: ReplayTrade[] }[]
     const pairFees = trades.reduce((s, t) => s + t.entryFeeUsd + t.exitFeeUsd, 0);
     totalFees += pairFees;
     totalGrossEdge += trades.reduce((s, t) => s + Math.abs(t.grossPnlUsd), 0);
+    netWin += trades.filter(t => t.netPnlUsd > 0).reduce((s, t) => s + t.netPnlUsd, 0);
+    netLoss += Math.abs(trades.filter(t => t.netPnlUsd <= 0).reduce((s, t) => s + t.netPnlUsd, 0));
     if (trades.length > 0) {
       pairsWithTrades.push(pair);
       const pairExp = pairNet / trades.length;
@@ -298,20 +317,28 @@ function objectiveScore(allPairTrades: { pair: string; trades: ReplayTrade[] }[]
   if (totalTrades === 1) return { score: -500, totalTrades: 1, netPnl: totalNetPnl };
 
   const expectancy = totalNetPnl / totalTrades;
+  const normalizedNetExpectancy = expectancy / 10;
 
-  let tradeCountFactor: number;
-  if (totalTrades <= 1) tradeCountFactor = 0;
-  else if (totalTrades === 2) tradeCountFactor = 0.3;
-  else if (totalTrades === 3) tradeCountFactor = 0.5;
-  else if (totalTrades === 4) tradeCountFactor = 0.7;
-  else tradeCountFactor = Math.min(1.0, totalTrades / 10);
+  // NET PF capped at 3, Infinity treated as 3
+  const rawPF = netLoss > 0 ? netWin / netLoss : netWin > 0 ? Infinity : 0;
+  const cappedPF = Math.min(rawPF === Infinity ? 3 : rawPF, 3);
+  // PF contribution only for sufficient samples (>= 5 trades)
+  const cappedPfContribution = totalTrades >= 5 ? (cappedPF / 3) * 0.5 : 0;
 
-  const crossPairFactor = pairsWithTrades.length <= 1 ? 0.5 : 1.0;
-  const ddPenalty = worstDD > 200 ? Math.max(0.1, 1 - worstDD / 500) : 1.0;
-  const feePenalty = totalGrossEdge > 0 && totalFees > totalGrossEdge * 0.5 ? 0.7 : 1.0;
-  const worstPairPenalty = worstPairExpectancy < -50 ? 0.5 : 1.0;
+  const baseQuality = normalizedNetExpectancy + cappedPfContribution;
 
-  const score = expectancy * tradeCountFactor * crossPairFactor * ddPenalty * feePenalty * worstPairPenalty;
+  // Penalties (all additive, always subtract)
+  let sparseSamplePenalty = 0;
+  if (totalTrades === 2) sparseSamplePenalty = 0.3;
+  else if (totalTrades === 3) sparseSamplePenalty = 0.2;
+  else if (totalTrades === 4) sparseSamplePenalty = 0.1;
+
+  const crossPairPenalty = pairsWithTrades.length <= 1 ? 0.5 : 0;
+  const drawdownPenalty = worstDD > 200 ? worstDD / 500 : 0;
+  const feePenalty = totalGrossEdge > 0 && totalFees > totalGrossEdge * 0.5 ? 0.3 : 0;
+  const worstPairPenalty = worstPairExpectancy < -50 ? 0.5 : 0;
+
+  const score = baseQuality - sparseSamplePenalty - crossPairPenalty - drawdownPenalty - feePenalty - worstPairPenalty;
 
   return { score: Math.round(score * 100) / 100, totalTrades, netPnl: Math.round(totalNetPnl * 100) / 100 };
 }
@@ -356,7 +383,10 @@ function runJointWalkForward(
   const foldsTotal = foldWindows.length;
   const grid = smoke ? PARAM_GRID.slice(0, Math.min(maxCombos > 0 ? maxCombos : 2, PARAM_GRID.length)) : PARAM_GRID;
   const architectures = smoke ? ABLATION_ARCHITECTURES.slice(0, 2) : ABLATION_ARCHITECTURES;
-  const totalCombos = foldsTotal * grid.length * architectures.length;
+  // Strict: folds × 6 params. Ablation: folds × 6 architectures × 6 params.
+  const strictCombos = foldsTotal * grid.length;
+  const ablationCombos = foldsTotal * grid.length * architectures.length;
+  const totalCombos = strictCombos + ablationCombos;
 
   const startTime = Date.now();
   const pid = process.pid;
@@ -369,44 +399,82 @@ function runJointWalkForward(
   for (let fi = 0; fi < foldWindows.length; fi++) {
     const fw = foldWindows[fi];
 
-    // ── Ablation TRAIN: evaluate ALL architectures × ALL param combos ──
-    let bestParams: EntryV3Config = { ...V3_ENABLED, ...grid[0] };
-    let bestArchitecture = "ALL";
-    let bestScore = -Infinity;
-    let bestTrainTrades = 0;
-    let bestTrainNetPnl = 0;
+    // ── A) STRICT TRAIN: ALL_STAGES_MASK × 6 params ──
+    let strictBestParams: EntryV3Config = { ...V3_ENABLED, ...grid[0] };
+    let strictBestScore = -Infinity;
+    let strictBestTrainTrades = 0;
+    let strictBestTrainNetPnl = 0;
+
+    for (let ci = 0; ci < grid.length; ci++) {
+      const params: EntryV3Config = { ...V3_ENABLED, ...grid[ci] };
+      const allPairTrades: { pair: string; trades: ReplayTrade[] }[] = [];
+
+      for (const pair of ALL_PAIRS) {
+        const precomputed = precomputedMap.get(pair);
+        if (!precomputed) continue;
+        const config: ReplayConfig = {
+          pair, availableCapitalUsd: 10000, feeModel: HISTORICAL_FEE_MODEL,
+          entryV3Config: params,
+          evaluationStartMs: fw.trainStart, evaluationEndMs: fw.trainEnd,
+        };
+        const result = fastReplay(precomputed, config, ALL_STAGES_MASK);
+        allPairTrades.push({ pair, trades: result.trades });
+      }
+
+      const { score, totalTrades, netPnl } = objectiveScore(allPairTrades);
+      if (score > strictBestScore) {
+        strictBestScore = score;
+        strictBestParams = params;
+        strictBestTrainTrades = totalTrades;
+        strictBestTrainNetPnl = netPnl;
+      }
+
+      comboCount++;
+      const now = Date.now();
+      if (now - lastProgressWrite > 5000) {
+        const elapsedSec = (now - startTime) / 1000;
+        const etaSec = comboCount > 0 ? (elapsedSec / comboCount) * (totalCombos - comboCount) : 0;
+        writeProgress({
+          status: "RUNNING", pid, phase: "TRAIN_STRICT", fold: fi + 1, foldsTotal,
+          combo: comboCount, combosTotal: totalCombos,
+          elapsedSec: Math.round(elapsedSec * 10) / 10, etaSec: Math.round(etaSec * 10) / 10,
+          heartbeatAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        });
+        lastProgressWrite = now;
+      }
+    }
+
+    // ── B) ABLATION TRAIN: 6 architectures × 6 params ──
+    let ablationBestParams: EntryV3Config = { ...V3_ENABLED, ...grid[0] };
+    let ablationBestArchitecture = "ALL";
+    let ablationBestScore = -Infinity;
+    let ablationBestTrainTrades = 0;
+    let ablationBestTrainNetPnl = 0;
 
     for (const arch of architectures) {
       for (let ci = 0; ci < grid.length; ci++) {
         const params: EntryV3Config = { ...V3_ENABLED, ...grid[ci] };
-
         const allPairTrades: { pair: string; trades: ReplayTrade[] }[] = [];
 
         for (const pair of ALL_PAIRS) {
           const precomputed = precomputedMap.get(pair);
           if (!precomputed) continue;
-
           const config: ReplayConfig = {
-            pair,
-            availableCapitalUsd: 10000,
-            feeModel: HISTORICAL_FEE_MODEL,
+            pair, availableCapitalUsd: 10000, feeModel: HISTORICAL_FEE_MODEL,
             entryV3Config: params,
-            evaluationStartMs: fw.trainStart,
-            evaluationEndMs: fw.trainEnd,
+            evaluationStartMs: fw.trainStart, evaluationEndMs: fw.trainEnd,
           };
-
           const result = fastReplay(precomputed, config, arch.mask);
           allPairTrades.push({ pair, trades: result.trades });
         }
 
         const { score, totalTrades, netPnl } = objectiveScore(allPairTrades);
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestParams = params;
-          bestArchitecture = arch.name;
-          bestTrainTrades = totalTrades;
-          bestTrainNetPnl = netPnl;
+        if (score > ablationBestScore) {
+          ablationBestScore = score;
+          ablationBestParams = params;
+          ablationBestArchitecture = arch.name;
+          ablationBestTrainTrades = totalTrades;
+          ablationBestTrainNetPnl = netPnl;
         }
 
         comboCount++;
@@ -415,78 +483,58 @@ function runJointWalkForward(
           const elapsedSec = (now - startTime) / 1000;
           const etaSec = comboCount > 0 ? (elapsedSec / comboCount) * (totalCombos - comboCount) : 0;
           writeProgress({
-            status: "RUNNING",
-            pid,
-            phase: "TRAIN_ABLATION",
-            fold: fi + 1,
-            foldsTotal,
-            architecture: arch.name,
-            combo: comboCount,
-            combosTotal: totalCombos,
-            elapsedSec: Math.round(elapsedSec * 10) / 10,
-            etaSec: Math.round(etaSec * 10) / 10,
-            heartbeatAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            status: "RUNNING", pid, phase: "TRAIN_ABLATION", fold: fi + 1, foldsTotal,
+            architecture: arch.name, combo: comboCount, combosTotal: totalCombos,
+            elapsedSec: Math.round(elapsedSec * 10) / 10, etaSec: Math.round(etaSec * 10) / 10,
+            heartbeatAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
           });
           lastProgressWrite = now;
         }
       }
     }
 
-    // ── TEST phase: run best architecture + best params, B0, and strict ALL-stages ──
+    // ── TEST phase: B0, STRICT (ALL + strictBestParams), ABLATION (selected arch + ablationBestParams) ──
     const b0Results: PairFoldResult[] = [];
     const v3Results: PairFoldResult[] = [];
     const ablationResults: PairFoldResult[] = [];
-    const selectedArch = ABLATION_ARCHITECTURES.find(a => a.name === bestArchitecture)!;
+    const selectedArch = ABLATION_ARCHITECTURES.find(a => a.name === ablationBestArchitecture)!;
 
     for (const pair of ALL_PAIRS) {
       const precomputed = precomputedMap.get(pair);
       if (!precomputed) continue;
 
-      // V3 strict ALL-stages test
+      // V3 strict ALL-stages test (strictBestParams, NOT ablationBestParams)
       const v3Config: ReplayConfig = {
-        pair,
-        availableCapitalUsd: 10000,
-        feeModel: HISTORICAL_FEE_MODEL,
-        entryV3Config: bestParams,
-        evaluationStartMs: fw.testStart,
-        evaluationEndMs: fw.testEnd,
+        pair, availableCapitalUsd: 10000, feeModel: HISTORICAL_FEE_MODEL,
+        entryV3Config: strictBestParams,
+        evaluationStartMs: fw.testStart, evaluationEndMs: fw.testEnd,
       };
       const v3Result = fastReplay(precomputed, v3Config, ALL_STAGES_MASK);
       v3Results.push(summarizePairResult(pair, v3Result.trades));
 
-      // Ablation test (selected architecture)
+      // Ablation test (selected architecture + ablationBestParams)
       const ablationConfig: ReplayConfig = {
-        pair,
-        availableCapitalUsd: 10000,
-        feeModel: HISTORICAL_FEE_MODEL,
-        entryV3Config: bestParams,
-        evaluationStartMs: fw.testStart,
-        evaluationEndMs: fw.testEnd,
+        pair, availableCapitalUsd: 10000, feeModel: HISTORICAL_FEE_MODEL,
+        entryV3Config: ablationBestParams,
+        evaluationStartMs: fw.testStart, evaluationEndMs: fw.testEnd,
       };
       const ablationResult = fastReplay(precomputed, ablationConfig, selectedArch.mask);
       ablationResults.push(summarizePairResult(pair, ablationResult.trades));
 
       // B0 test (V3 OFF)
       const b0Config: ReplayConfig = {
-        pair,
-        availableCapitalUsd: 10000,
-        feeModel: HISTORICAL_FEE_MODEL,
-        evaluationStartMs: fw.testStart,
-        evaluationEndMs: fw.testEnd,
+        pair, availableCapitalUsd: 10000, feeModel: HISTORICAL_FEE_MODEL,
+        evaluationStartMs: fw.testStart, evaluationEndMs: fw.testEnd,
       };
       const b0Result = fastReplay(precomputed, b0Config);
       b0Results.push(summarizePairResult(pair, b0Result.trades));
 
-      // Stage attribution from TRAIN (ALL mask)
+      // Stage attribution from TRAIN (ALL mask, strictBestParams)
       const v3Log = new V3InstrumentationLog();
       const trainConfig: ReplayConfig = {
-        pair,
-        availableCapitalUsd: 10000,
-        feeModel: HISTORICAL_FEE_MODEL,
-        entryV3Config: bestParams,
-        evaluationStartMs: fw.trainStart,
-        evaluationEndMs: fw.trainEnd,
+        pair, availableCapitalUsd: 10000, feeModel: HISTORICAL_FEE_MODEL,
+        entryV3Config: strictBestParams,
+        evaluationStartMs: fw.trainStart, evaluationEndMs: fw.trainEnd,
         v3Instrumentation: v3Log,
       };
       fastReplay(precomputed, trainConfig, ALL_STAGES_MASK);
@@ -495,17 +543,19 @@ function runJointWalkForward(
         stageAttributionAggregated.push({
           pair,
           totalCandidates: sa.totalCandidates,
-          passImpulsePct: Math.round(sa.passImpulsePct * 1000) / 10,
-          passRetracementPct: Math.round(sa.passRetracementPct * 1000) / 10,
-          passStructurePct: Math.round(sa.passStructurePct * 1000) / 10,
-          passReclaimPct: Math.round(sa.passReclaimPct * 1000) / 10,
-          passResumptionPct: Math.round(sa.passResumptionPct * 1000) / 10,
+          rawPassImpulsePct: Math.round(sa.rawPassImpulsePct * 1000) / 10,
+          rawPassRetracementPct: Math.round(sa.rawPassRetracementPct * 1000) / 10,
+          rawPassStructurePct: Math.round(sa.rawPassStructurePct * 1000) / 10,
+          rawPassReclaimPct: Math.round(sa.rawPassReclaimPct * 1000) / 10,
+          rawPassResumptionPct: Math.round(sa.rawPassResumptionPct * 1000) / 10,
           failOnlyImpulse: sa.failOnlyImpulse,
           failOnlyRetracement: sa.failOnlyRetracement,
           failOnlyStructure: sa.failOnlyStructure,
           failOnlyReclaim: sa.failOnlyReclaim,
           failOnlyResumption: sa.failOnlyResumption,
-          failMultiple: sa.failMultiple,
+          failMultipleStages: sa.failMultipleStages,
+          antiLateDistanceFails: sa.antiLateDistanceFails,
+          antiLateExpiryFails: sa.antiLateExpiryFails,
         });
       }
     }
@@ -516,11 +566,15 @@ function runJointWalkForward(
       trainEnd: fw.trainEnd,
       testStart: fw.testStart,
       testEnd: fw.testEnd,
-      bestParams,
-      bestArchitecture,
-      trainScore: bestScore,
-      trainTrades: bestTrainTrades,
-      trainNetPnl: bestTrainNetPnl,
+      strictBestParams,
+      strictTrainScore: strictBestScore,
+      strictTrainTrades: strictBestTrainTrades,
+      strictTrainNetPnl: strictBestTrainNetPnl,
+      ablationBestParams,
+      ablationBestArchitecture,
+      ablationTrainScore: ablationBestScore,
+      ablationTrainTrades: ablationBestTrainTrades,
+      ablationTrainNetPnl: ablationBestTrainNetPnl,
       b0Results,
       v3Results,
       ablationResults,
@@ -529,17 +583,11 @@ function runJointWalkForward(
     const now = Date.now();
     const elapsedSec = (now - startTime) / 1000;
     writeProgress({
-      status: "RUNNING",
-      pid,
-      phase: "TEST_DONE",
-      fold: fi + 1,
-      foldsTotal,
-      selectedArchitecture: bestArchitecture,
-      combo: comboCount,
-      combosTotal: totalCombos,
+      status: "RUNNING", pid, phase: "TEST_DONE", fold: fi + 1, foldsTotal,
+      selectedArchitecture: ablationBestArchitecture,
+      combo: comboCount, combosTotal: totalCombos,
       elapsedSec: Math.round(elapsedSec * 10) / 10,
-      heartbeatAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
     lastProgressWrite = now;
   }
@@ -584,9 +632,14 @@ function runJointWalkForward(
   const v3PF = v3NetLoss > 0 ? v3NetWin / v3NetLoss : v3NetWin > 0 ? Infinity : 0;
   const ablationPF = ablationNetLoss > 0 ? ablationNetWin / ablationNetLoss : ablationNetWin > 0 ? Infinity : 0;
 
-  const selectedArchs = foldResults.map(f => f.bestArchitecture);
-  const uniqueArchs = new Set(selectedArchs);
-  const architectureInstability = uniqueArchs.size > 2;
+  const selectedArchs = foldResults.map(f => f.ablationBestArchitecture);
+  const archCounts: Record<string, number> = {};
+  for (const a of selectedArchs) archCounts[a] = (archCounts[a] ?? 0) + 1;
+  const maxArchCount = Math.max(...Object.values(archCounts));
+  let architectureStability: string;
+  if (maxArchCount === foldsTotal) architectureStability = "HIGH";
+  else if (maxArchCount >= Math.ceil(foldsTotal / 2)) architectureStability = "MEDIUM";
+  else architectureStability = "LOW";
 
   const runtimeSec = (Date.now() - startTime) / 1000;
   const researchSec = runtimeSec;
@@ -641,7 +694,7 @@ function runJointWalkForward(
       ablationWorstPairDD: Math.round(ablationWorstPairDD * 100) / 100,
       ablationWorstPairName,
       sampleSufficient: ablationTrades >= MIN_OOS_TRADES,
-      architectureInstability,
+      architectureStability,
     },
     runtimeSec: Math.round(runtimeSec * 10) / 10,
     precomputeSec: Math.round(precomputeSec * 10) / 10,
@@ -668,16 +721,16 @@ function writeCSVs(report: JointWFOReport): void {
   fs.writeFileSync(path.join(RESULTS_DIR, "STRICT_WINDOW_RESULTS.csv"), strictCsv);
 
   // STAGE_ATTRIBUTION.csv
-  let attrCsv = "pair,totalCandidates,passImpulsePct,passRetracementPct,passStructurePct,passReclaimPct,passResumptionPct,failOnlyImpulse,failOnlyRetracement,failOnlyStructure,failOnlyReclaim,failOnlyResumption,failMultiple\n";
+  let attrCsv = "pair,totalCandidates,rawPassImpulsePct,rawPassRetracementPct,rawPassStructurePct,rawPassReclaimPct,rawPassResumptionPct,failOnlyImpulse,failOnlyRetracement,failOnlyStructure,failOnlyReclaim,failOnlyResumption,failMultipleStages,antiLateDistanceFails,antiLateExpiryFails\n";
   for (const sa of report.stageAttribution) {
-    attrCsv += `${sa.pair},${sa.totalCandidates},${sa.passImpulsePct},${sa.passRetracementPct},${sa.passStructurePct},${sa.passReclaimPct},${sa.passResumptionPct},${sa.failOnlyImpulse},${sa.failOnlyRetracement},${sa.failOnlyStructure},${sa.failOnlyReclaim},${sa.failOnlyResumption},${sa.failMultiple}\n`;
+    attrCsv += `${sa.pair},${sa.totalCandidates},${sa.rawPassImpulsePct},${sa.rawPassRetracementPct},${sa.rawPassStructurePct},${sa.rawPassReclaimPct},${sa.rawPassResumptionPct},${sa.failOnlyImpulse},${sa.failOnlyRetracement},${sa.failOnlyStructure},${sa.failOnlyReclaim},${sa.failOnlyResumption},${sa.failMultipleStages},${sa.antiLateDistanceFails},${sa.antiLateExpiryFails}\n`;
   }
   fs.writeFileSync(path.join(RESULTS_DIR, "STAGE_ATTRIBUTION.csv"), attrCsv);
 
   // ABLATION_TRAIN.csv
-  let trainCsv = "fold,selectedArchitecture,bestImpulseMinAtr,bestRetracementMinAtr,bestMaxEntryDistanceAtr,bestResumptionMinBodyPct,trainScore,trainTrades,trainNetPnl\n";
+  let trainCsv = "fold,strictImpulseMinAtr,strictRetracementMinAtr,strictMaxEntryDistanceAtr,strictResumptionMinBodyPct,strictTrainScore,strictTrainTrades,strictTrainNetPnl,ablationArchitecture,ablationImpulseMinAtr,ablationRetracementMinAtr,ablationMaxEntryDistanceAtr,ablationResumptionMinBodyPct,ablationTrainScore,ablationTrainTrades,ablationTrainNetPnl\n";
   for (const f of report.folds) {
-    trainCsv += `${f.foldIndex},${f.bestArchitecture},${f.bestParams.impulseMinAtr},${f.bestParams.retracementMinAtr},${f.bestParams.maxEntryDistanceAtr},${f.bestParams.resumptionMinBodyPct},${f.trainScore},${f.trainTrades},${f.trainNetPnl}\n`;
+    trainCsv += `${f.foldIndex},${f.strictBestParams.impulseMinAtr},${f.strictBestParams.retracementMinAtr},${f.strictBestParams.maxEntryDistanceAtr},${f.strictBestParams.resumptionMinBodyPct},${f.strictTrainScore},${f.strictTrainTrades},${f.strictTrainNetPnl},${f.ablationBestArchitecture},${f.ablationBestParams.impulseMinAtr},${f.ablationBestParams.retracementMinAtr},${f.ablationBestParams.maxEntryDistanceAtr},${f.ablationBestParams.resumptionMinBodyPct},${f.ablationTrainScore},${f.ablationTrainTrades},${f.ablationTrainNetPnl}\n`;
   }
   fs.writeFileSync(path.join(RESULTS_DIR, "ABLATION_TRAIN.csv"), trainCsv);
 
@@ -694,9 +747,9 @@ function writeCSVs(report: JointWFOReport): void {
   fs.writeFileSync(path.join(RESULTS_DIR, "ABLATION_SELECTED_OOS.csv"), oosCsv);
 
   // JOINT_WFO_FOLDS.csv
-  let foldsCsv = "fold,trainStart,trainEnd,testStart,testEnd,selectedArchitecture,bestImpulseMinAtr,bestRetracementMinAtr,bestMaxEntryDistanceAtr,bestResumptionMinBodyPct,trainScore,trainTrades,trainNetPnl\n";
+  let foldsCsv = "fold,trainStart,trainEnd,testStart,testEnd,strictImpulseMinAtr,strictRetracementMinAtr,strictMaxEntryDistanceAtr,strictResumptionMinBodyPct,strictTrainScore,ablationArchitecture,ablationImpulseMinAtr,ablationRetracementMinAtr,ablationMaxEntryDistanceAtr,ablationResumptionMinBodyPct,ablationTrainScore\n";
   for (const f of report.folds) {
-    foldsCsv += `${f.foldIndex},${new Date(f.trainStart).toISOString()},${new Date(f.trainEnd).toISOString()},${new Date(f.testStart).toISOString()},${new Date(f.testEnd).toISOString()},${f.bestArchitecture},${f.bestParams.impulseMinAtr},${f.bestParams.retracementMinAtr},${f.bestParams.maxEntryDistanceAtr},${f.bestParams.resumptionMinBodyPct},${f.trainScore},${f.trainTrades},${f.trainNetPnl}\n`;
+    foldsCsv += `${f.foldIndex},${new Date(f.trainStart).toISOString()},${new Date(f.trainEnd).toISOString()},${new Date(f.testStart).toISOString()},${new Date(f.testEnd).toISOString()},${f.strictBestParams.impulseMinAtr},${f.strictBestParams.retracementMinAtr},${f.strictBestParams.maxEntryDistanceAtr},${f.strictBestParams.resumptionMinBodyPct},${f.strictTrainScore},${f.ablationBestArchitecture},${f.ablationBestParams.impulseMinAtr},${f.ablationBestParams.retracementMinAtr},${f.ablationBestParams.maxEntryDistanceAtr},${f.ablationBestParams.resumptionMinBodyPct},${f.ablationTrainScore}\n`;
   }
   fs.writeFileSync(path.join(RESULTS_DIR, "JOINT_WFO_FOLDS.csv"), foldsCsv);
 
@@ -809,16 +862,24 @@ function main(): void {
   console.log(`ABLATION_WORST_PAIR_DD=${a.ablationWorstPairDD} (${a.ablationWorstPairName})`);
 
   for (const f of report.folds) {
-    console.log(`SELECTED_ARCHITECTURE_FOLD_${f.foldIndex}=${f.bestArchitecture}`);
+    console.log(`STRICT_FOLD_${f.foldIndex}_PARAMS=${f.strictBestParams.impulseMinAtr}/${f.strictBestParams.retracementMinAtr}/${f.strictBestParams.maxEntryDistanceAtr}/${f.strictBestParams.resumptionMinBodyPct}`);
+  }
+
+  for (const f of report.folds) {
+    console.log(`ABLATION_FOLD_${f.foldIndex}_ARCH=${f.ablationBestArchitecture}`);
+  }
+
+  for (const f of report.folds) {
+    console.log(`ABLATION_FOLD_${f.foldIndex}_PARAMS=${f.ablationBestParams.impulseMinAtr}/${f.ablationBestParams.retracementMinAtr}/${f.ablationBestParams.maxEntryDistanceAtr}/${f.ablationBestParams.resumptionMinBodyPct}`);
   }
 
   const archCounts: Record<string, number> = {};
   for (const f of report.folds) {
-    archCounts[f.bestArchitecture] = (archCounts[f.bestArchitecture] ?? 0) + 1;
+    archCounts[f.ablationBestArchitecture] = (archCounts[f.ablationBestArchitecture] ?? 0) + 1;
   }
   const mostCommon = Object.entries(archCounts).sort((x, y) => y[1] - x[1])[0]?.[0] ?? "UNKNOWN";
   console.log(`MOST_COMMON_SELECTED_ARCHITECTURE=${mostCommon}`);
-  console.log(`ARCHITECTURE_INSTABILITY=${a.architectureInstability ? "YES" : "NO"}`);
+  console.log(`ARCHITECTURE_STABILITY=${a.architectureStability}`);
   console.log(`OOS_SAMPLE_SUFFICIENT=${a.sampleSufficient ? "YES" : "NO"}`);
 
   for (const pair of ALL_PAIRS) {
