@@ -22,15 +22,22 @@
 | simulates replay scenario: intent executable but sizing rejects → entriesExecuted=0 | Flujo completo: signal=1, intent=1, sizing rejected → entries=0 | PASS |
 | approves entry when all gates pass with Revolut X fee model | Verifica aprobación con fee model correcto y entryFeeUsd = 0.09% | PASS |
 
+### `replayExpectedProfitFeeModel.test.ts` — 2/2 PASS
+
+| Test | Descripción | Resultado |
+|------|-------------|-----------|
+| expectedProfitUsd = grossProfit - fees at 0.09% (not 0.40%) | Verifica que `expectedProfitUsd` usa `feeModel` inyectado en `computeFeeBreakdown` | PASS |
+| boundary: approved with 0.09% but rejected with 0.40% due to capital efficiency | Demuestra que el bug podía cambiar entradas: con 0.09% approved, con 0.40% rejected por slot efficiency | PASS |
+
 ## Suite existente
 
-- **SPOT tests**: 35 archivos, 419 tests, todos PASS
+- **SPOT tests**: 36 archivos, 421 tests, todos PASS
 - **TSC**: `npx tsc --noEmit` sin errores
 
 ## Comando de ejecución
 
 ```
-npx vitest run server/services/spot/__tests__/replayFeeModel.test.ts server/services/spot/__tests__/replaySizingGate.test.ts
+npx vitest run server/services/spot/__tests__/replayFeeModel.test.ts server/services/spot/__tests__/replaySizingGate.test.ts server/services/spot/__tests__/replayExpectedProfitFeeModel.test.ts
 npx vitest run server/services/spot/
 npx tsc --noEmit
 ```

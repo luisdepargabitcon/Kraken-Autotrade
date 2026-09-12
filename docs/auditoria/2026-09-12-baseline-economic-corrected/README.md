@@ -6,7 +6,7 @@
 - **Branch**: `feature/spot-adaptive-v3-shadow`
 - **Baseline anterior**: `docs/auditoria/2026-09-11-0860a02/`
 - **SHA base**: 0860a02e6aa326c453f730a59ef52878ff2463d8
-- **SHA corrección**: (pendiente de commit)
+- **CODE_SHA**: fix(spot-v3): propagate replay fee model through capital efficiency (este commit)
 - **Datasets**: Reutilizados sin cambios (16 datasets, SHA256 verificados contra manifest anterior)
 
 ## Defectos corregidos
@@ -27,7 +27,7 @@
 **Antes**: `getSpotTakerFeePct()` intentaba resolver el fee del exchange activo vía `ExchangeFactory`, que en contexto offline fallaba y caía al fallback de Kraken 0.40% taker.
 
 **Después**: `spotBaselineResearch.ts` inyecta explícitamente `HISTORICAL_FEE_MODEL = { exchange: "revolutx", takerFeePct: 0.09, makerFeePct: 0.00, quality: "ESTIMATED" }` en `ReplayConfig.feeModel`. Este fee model se propaga a:
-- `evaluateSizing()` → `evaluateFeeGate()` y `entryFeeUsd`
+- `evaluateSizing()` → `evaluateFeeGate()`, `entryFeeUsd`, `expectedProfitUsd` (capital efficiency)
 - `computeFeeBreakdown()` en exits
 - `computePnlBreakdown()` en PnL de cierre
 
@@ -38,6 +38,7 @@
 ### `server/services/spot/spotRiskManager.ts`
 - `evaluateFeeGate()`: añadido parámetro opcional `feeModel?: FeeModel`
 - `evaluateSizing()`: añadido parámetro opcional `feeModel?: FeeModel`
+- `expectedProfitUsd`: `computeFeeBreakdown()` ahora recibe `feeModel` (fix: antes usaba fee por defecto)
 - Import de `type FeeModel` desde `feeModel.ts`
 
 ### `server/services/spot/spotReplayEngine.ts`
@@ -55,6 +56,7 @@
 ### Tests nuevos
 - `server/services/spot/__tests__/replayFeeModel.test.ts` — 5 tests
 - `server/services/spot/__tests__/replaySizingGate.test.ts` — 5 tests
+- `server/services/spot/__tests__/replayExpectedProfitFeeModel.test.ts` — 2 tests (expectedProfitUsd fee model + boundary)
 
 ## Verificación de datasets
 

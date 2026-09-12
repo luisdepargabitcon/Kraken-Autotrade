@@ -310,7 +310,7 @@ export function evaluateSizing(
 
   // 6. Expected profit (estimate: 2× stop distance as TP target)
   const expectedExitPrice = entryPrice + stop.stopDistanceUsd * 2;
-  const expectedProfitUsd = (expectedExitPrice - entryPrice) * volume - computeFeeBreakdown(entryPrice, expectedExitPrice, volume).totalFeeUsd;
+  const expectedProfitUsd = (expectedExitPrice - entryPrice) * volume - computeFeeBreakdown(entryPrice, expectedExitPrice, volume, feeModel).totalFeeUsd;
 
   // 7. Capital efficiency
   const capEff = evaluateCapitalEfficiency(notionalUsd, expectedProfitUsd, riskUsd, availableCapitalUsd, config);
