@@ -26,6 +26,7 @@ import {
 } from "./spotTypes";
 import { evaluateSpotCanonical, type SpotSignalResult, type SpotCanonicalConfig } from "./spotCanonicalStrategy";
 import { createEntryIntent, evaluateEntryIntent, type AntiLateEntryConfig } from "./spotEntryIntent";
+import { evaluateEntryV3, evaluateV3AntiLateEntry, type EntryV3Config, DEFAULT_ENTRY_V3_CONFIG } from "./spotEntryV3";
 import { evaluateSizing, type SpotRiskConfig, DEFAULT_SPOT_RISK_CONFIG } from "./spotRiskManager";
 import { computePnlBreakdown, computeFeeBreakdown, type FeeQuality, type FeeModel } from "./feeModel";
 import { evaluateExit, createExitState, type SpotExitConfig, DEFAULT_SPOT_EXIT_CONFIG } from "./spotExitPolicy";
@@ -58,6 +59,10 @@ export interface ReplayConfig {
   maxConcurrentPositions?: number;
   /** Explicit fee model for historical replay (defaults to canonical) */
   feeModel?: FeeModel;
+  /** V3 entry quality config (default OFF) */
+  entryV3Config?: EntryV3Config;
+  /** Instrumentation log for V3 research */
+  v3Instrumentation?: V3InstrumentationLog;
 }
 
 export interface ReplayTrade {
@@ -88,11 +93,33 @@ export interface ReplayTrade {
   policyVersion: string;
 }
 
+export interface V3InstrumentationEntry {
+  pair: string;
+  timestamp: number;
+  regime: string;
+  direction: string;
+  adx: number;
+  atrPct: number;
+  impulseAtr: number;
+  retracementAtr: number;
+  reclaimConfirmed: boolean;
+  resumptionConfirmed: boolean;
+  distanceFromOriginAtr: number;
+  accepted: boolean;
+  reasonCode: string;
+}
+
+export class V3InstrumentationLog {
+  entries: V3InstrumentationEntry[] = [];
+  add(e: V3InstrumentationEntry): void { this.entries.push(e); }
+}
+
 export interface ReplayResult {
   pair: string;
   trades: ReplayTrade[];
   stats: ReplayStats;
   config: ReplayConfig;
+  v3Instrumentation?: V3InstrumentationEntry[];
 }
 
 export interface ReplayStats {
@@ -150,6 +177,8 @@ export function runReplay(
   const pair = config.pair;
   const maxConcurrent = config.maxConcurrentPositions ?? 2;
   const feeModel = config.feeModel;
+  const entryV3Config = config.entryV3Config ?? DEFAULT_ENTRY_V3_CONFIG;
+  const v3Log = config.v3Instrumentation;
 
   const positions: SpotPosition[] = [];
   const exitStates: Map<string, SpotExitState> = new Map();
@@ -289,9 +318,52 @@ export function runReplay(
     const signalId = `replay-${pair}-${signalCounter}`;
     const intent = createEntryIntent(signal, ctx, config.antiLateEntryConfig);
 
-    // Evaluate intent immediately (in replay, we fill at next candle)
-    const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig);
-    if (!intentEval.shouldExecute) continue;
+    // ── V3 entry quality gate (when enabled) ──
+    if (entryV3Config.enabled) {
+      const v3Eval = evaluateEntryV3(
+        ctx,
+        intent.originPrice,
+        intent.origin15mCloseAt,
+        entryV3Config,
+        evaluationTime,
+      );
+
+      // Instrumentation
+      if (v3Log) {
+        v3Log.add({
+          pair,
+          timestamp: evaluationTime,
+          regime: ctx.regimeContext.regime,
+          direction: ctx.regimeContext.direction,
+          adx: ctx.regimeContext.adx,
+          atrPct: ctx.regimeContext.atrPct,
+          impulseAtr: v3Eval.impulseAtr,
+          retracementAtr: v3Eval.retracementAtr,
+          reclaimConfirmed: v3Eval.reclaimConfirmed,
+          resumptionConfirmed: v3Eval.resumptionConfirmed,
+          distanceFromOriginAtr: v3Eval.distanceFromOriginAtr,
+          accepted: v3Eval.accepted,
+          reasonCode: v3Eval.reasonCode,
+        });
+      }
+
+      if (!v3Eval.accepted) continue;
+
+      // V3 anti-late entry: no re-anchor, expire or execute
+      const v3AntiLate = evaluateV3AntiLateEntry(
+        ctx.ticker.last,
+        intent.originPrice,
+        intent.originAtrPct,
+        intent.expiresAt,
+        evaluationTime,
+        entryV3Config,
+      );
+      if (v3AntiLate.action !== "EXECUTE") continue;
+    } else {
+      // B0 path: standard intent evaluation
+      const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig);
+      if (!intentEval.shouldExecute) continue;
+    }
 
     intentExecutableCount++;
 
@@ -415,7 +487,7 @@ export function runReplay(
     openTerminalTrades: positions.length,
     initialCapital: config.availableCapitalUsd,
   });
-  return { pair, trades, stats, config };
+  return { pair, trades, stats, config, v3Instrumentation: v3Log?.entries };
 }
 
 // ─── Stats ──────────────────────────────────────────────────────────────────

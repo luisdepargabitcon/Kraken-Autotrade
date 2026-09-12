@@ -35,6 +35,7 @@ import {
   type SpotExitDecision,
   type SpotExitState,
   type SpotRegimeContext,
+  type SpotCandle,
 } from "./spotTypes";
 import { computePnlBreakdown, isValidProfitExit } from "./feeModel";
 import { SPOT_POLICY_VERSION } from "./spotTypes";
@@ -186,10 +187,17 @@ export function evaluateStructureInvalidation(
   if (candles.length < config.structureEmaPeriod + config.structureMinCandlesBelow) {
     return noExit("Insufficient candles for structure check", nowMs);
   }
-  // Check if last N candles are below EMA20
+  // Temporal correctness: only count 15m candles with close time > position.openedAt
+  // Pre-entry candles cannot trigger structure exit
+  const candleCloseTime = (c: SpotCandle) => c.time + 15 * 60 * 1000;
+  const postEntryCandles = candles.filter(c => candleCloseTime(c) > position.openedAt);
+  if (postEntryCandles.length < config.structureMinCandlesBelow) {
+    return noExit("Insufficient post-entry candles for structure check", nowMs);
+  }
+  // Check if last N post-entry candles are below EMA20
   const closes = candles.map(c => c.close);
   const ema = calculateEMA(closes.slice(-config.structureEmaPeriod * 3), config.structureEmaPeriod);
-  const lastN = candles.slice(-config.structureMinCandlesBelow);
+  const lastN = postEntryCandles.slice(-config.structureMinCandlesBelow);
   const allBelow = lastN.every(c => c.close < ema);
 
   if (allBelow) {

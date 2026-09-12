@@ -536,9 +536,9 @@ describe("C1F5-11: Structure pre-entry exact test", () => {
     const pos = makePosition("lot-exact", "BTC/USD", 100, 1, t0750, 95, "sig-exact");
     const result = evaluateStructureInvalidation(pos, ctx, DEFAULT_SPOT_EXIT_CONFIG, evalTime);
 
-    // shouldExit=true, reasonType=STRUCTURE_INVALIDATION
-    expect(result.shouldExit).toBe(true);
-    expect(result.reasonType).toBe(ExitReasonType.STRUCTURE_INVALIDATION);
+    // shouldExit=false: pre-entry 15m candles do NOT count for structure invalidation
+    // (temporal correctness fix: only post-entry closed 15m candles can trigger structure exit)
+    expect(result.shouldExit).toBe(false);
 
     // POST_ENTRY_CLOSED_15M_COUNT=0: no closed 15m candle with closeTime > openedAt (07:50)
     const postEntryClosed15m = ctx.candles15m.filter(c => {
@@ -546,17 +546,17 @@ describe("C1F5-11: Structure pre-entry exact test", () => {
       return closeTime > t0750;
     });
     expect(postEntryClosed15m.length).toBe(0);
-    // POST_ENTRY_CLOSED_15M_COUNT=0
+    // POST_ENTRY_CLOSED_15M_COUNT=0 → structure invalidation cannot trigger
 
-    // PRE_ENTRY_CLOSED_CANDLE_CAN_CURRENTLY_COUNT_FOR_STRUCTURE=YES
+    // PRE_ENTRY_CLOSED_CANDLE_CAN_CURRENTLY_COUNT_FOR_STRUCTURE=NO
     // The two candles below EMA (A at 07:30, B at 07:45) both have closeTime < openedAt (07:50)
-    // and they DO count for structure invalidation — this is correct behavior.
+    // and they do NOT count for structure invalidation — this is the corrected behavior.
     const preEntryClosed15m = ctx.candles15m.filter(c => {
       const closeTime = c.time + TF_15M;
       return closeTime <= t0750;
     });
     expect(preEntryClosed15m.length).toBeGreaterThan(0);
-    // PRE_ENTRY_CLOSED_CANDLE_CAN_CURRENTLY_COUNT_FOR_STRUCTURE=YES
+    // PRE_ENTRY_CLOSED_CANDLE_CAN_CURRENTLY_COUNT_FOR_STRUCTURE=NO
   });
 });
 
