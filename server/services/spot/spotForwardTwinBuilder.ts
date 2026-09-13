@@ -69,6 +69,11 @@ export interface ScanSnapshotInput {
   totalFees: number;
   pipelineStopStage?: string | null;
   pipelineStopReasonCode?: string | null;
+  // V4 quality overlay metadata
+  v4QualityScore?: number | null;
+  v4Threshold?: number | null;
+  v4Accepted?: boolean | null;
+  v4RejectReason?: string | null;
 }
 
 export function buildScanSnapshot(input: ScanSnapshotInput): ForwardTwinSnapshot {
@@ -144,6 +149,10 @@ export function buildScanSnapshot(input: ScanSnapshotInput): ForwardTwinSnapshot
       lastEvaluatedAt: intent.lastEvaluatedAt,
       shouldExecute: intentEvaluation?.shouldExecute ?? false,
       evaluationReason: intentEvaluation?.reason ?? "",
+      v4QualityScore: input.v4QualityScore ?? null,
+      v4Threshold: input.v4Threshold ?? null,
+      v4Accepted: input.v4Accepted ?? null,
+      v4RejectReason: input.v4RejectReason ?? null,
     };
   }
 

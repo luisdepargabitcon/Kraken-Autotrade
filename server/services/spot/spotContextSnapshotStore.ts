@@ -99,6 +99,12 @@ export interface SpotContextSnapshot {
   pipelineStopStage?: string | null;
   pipelineStopReasonCode?: string | null;
   pipelineStopReason?: string | null;
+
+  // V4 quality overlay metadata
+  v4QualityScore?: number | null;
+  v4Threshold?: number | null;
+  v4Accepted?: boolean | null;
+  v4RejectReason?: string | null;
 }
 
 // ─── Store ──────────────────────────────────────────────────────────────────

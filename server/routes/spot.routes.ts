@@ -22,6 +22,8 @@
 import type { Express } from "express";
 import type { RegisterRoutes } from "./types";
 import { ExecutionMode, resolveExecutionMode, REAL_ACTIVATION_ALLOWED } from "../services/spot/spotTypes";
+import { evaluateV4Gate, SPOT_ENTRY_V4_ENABLED, SPOT_ENTRY_V4_MIN_QUALITY_SCORE, type V4EvaluationResult } from "../services/spot/spotEntryV4";
+import { V4_WEIGHTS } from "../services/spot/spotEntryV4";
 import { getTradingFeeModel } from "../services/spot/feeModel";
 import {
   getExecutionMode,
@@ -75,6 +77,13 @@ export const registerSpotRoutes: RegisterRoutes = (app) => {
         realActivationAllowed: REAL_ACTIVATION_ALLOWED,
         runtimeOwner: SPOT_RUNTIME_OWNER,
         feeModel,
+        entryStrategy: {
+          version: "V4_SOFT_QUALITY",
+          enabled: SPOT_ENTRY_V4_ENABLED,
+          active: SPOT_ENTRY_V4_ENABLED,
+          minQualityScore: SPOT_ENTRY_V4_MIN_QUALITY_SCORE,
+          weights: V4_WEIGHTS,
+        },
         activeIntents: intents.length,
         trackedPositions: auditPositions.length,
         policyVersion: "SPOT-1.0.0-20260812",
