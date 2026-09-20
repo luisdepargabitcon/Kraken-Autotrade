@@ -8336,3 +8336,19 @@ Comportamiento V3 intacto, sin cambios.
 - SPOT_MODE_BEFORE=SHADOW
 - SPOT_MODE_AFTER=SHADOW (pendiente verificación post-deploy)
 - GRID: sin cambios de modo (read-only)
+
+### Post-deploy (2026-09-20)
+
+- APP_CODE_SHA=600ad6daf0b6567626d96b96c5a53a6f97de6804
+- VPS_HEAD=600ad6daf0b6567626d96b96c5a53a6f97de6804 (integration/staging-spot-v4)
+- Deploy: docker compose -f docker-compose.staging.yml up -d --build --no-deps krakenbot-staging-app (app-only, sin down, sin DB recreate, sin migrations)
+- Health: HTTP 200
+- SPOT status: entryStrategy.version=V4_SOFT_QUALITY, enabled=true, active=true, minQualityScore=0.3, weights=0.2×5
+- SPOT_MODE_AFTER=SHADOW (SHADOW → SHADOW, sin cambio)
+- DB: krakenbot-staging-db healthy, sin restart deliberado
+- Logs: SpotEngine scan operativo, 5 pares procesados, sin errores
+- GRID post-deploy check: git diff backup/staging-before-spot-v4-20260920..HEAD sobre paths GRID/migrations/schema = 0 archivos
+- GRID_CODE_BEFORE == GRID_CODE_AFTER: OK
+- GRID_CHANGE_COUNT=0
+- Rollback disponible: git checkout staging-grid-v32-deploy + rebuild (backup remoto preservado)
+- Pendiente: contraauditoría ChatGPT. NO iniciado Exit R1.
