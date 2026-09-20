@@ -46,8 +46,9 @@ import { extractEntryV4Features } from "../spotEntryQualityFeatures";
 import type { V3RawFeatures } from "../spotEntryQualityFeatures";
 import { DEFAULT_ENTRY_V3_CONFIG } from "../spotEntryV3";
 import type { SpotMarketContext, SpotEntryIntent, SpotCandle } from "../spotTypes";
-import { EntryIntentState, SetupTag, Regime, RegimeDirection, MacroBias } from "../spotTypes";
+import { EntryIntentState, SetupTag, Regime, RegimeDirection, MacroBias, VolatilityLevel } from "../spotTypes";
 import { DataHealth } from "../candleTimestamp";
+import type { AdaptiveMarketState, VolatilityStateResult, TrendQualityResult, MarketStressResult } from "../spotAdaptiveMarketState";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -88,23 +89,26 @@ function makeMinimalCtx(candles15m: SpotCandle[], candles5m: SpotCandle[], lastP
     marketContextId: "test-ctx",
     generatedAt: Date.now(),
     pair: "BTC/USDT",
-    dataHealth: DataHealth.HEALTHY,
+    dataHealth: DataHealth.GOOD,
     macroBias: MacroBias.NEUTRAL,
     regimeContext: {
       regime: Regime.TREND,
-      direction: RegimeDirection.UP,
+      direction: RegimeDirection.BULLISH,
       macroBias: MacroBias.NEUTRAL,
-      volatility: "NORMAL",
+      volatility: VolatilityLevel.NORMAL,
       adx: 30,
       ema20: 49800,
       ema50: 49500,
       ema200: 49000,
-      emaAlignment: "BULLISH",
+      emaAlignment: "bullish",
       bollingerWidth: 0.03,
       atrPct: 1.0,
       confidence: 0.8,
       regimeId: "test-regime",
       contextId: "test-ctx",
+      pair: "BTC/USDT",
+      dataHealth: DataHealth.GOOD,
+      generatedAt: Date.now(),
     },
     candles5m,
     candles15m,
@@ -115,17 +119,18 @@ function makeMinimalCtx(candles15m: SpotCandle[], candles5m: SpotCandle[], lastP
     formingCandle1h: null,
     formingCandle4h: null,
     closedCandleContext: {
-      tf5m: { closedCandles: candles5m, formingCandle: null },
-      tf15m: { closedCandles: candles15m, formingCandle: null },
-      tf1h: { closedCandles: [], formingCandle: null },
-      tf4h: { closedCandles: [], formingCandle: null },
+      tf5m: { closedCandles: candles5m, formingCandle: null, timeframe: "5m", evaluatedAt: Date.now(), closedCount: candles5m.length, diagnostics: { formingCount: 0, multipleFormingDetected: false, duplicateTimestamps: 0, conflictingDuplicates: 0, futureCandleCount: 0, dataValid: true } },
+      tf15m: { closedCandles: candles15m, formingCandle: null, timeframe: "15m", evaluatedAt: Date.now(), closedCount: candles15m.length, diagnostics: { formingCount: 0, multipleFormingDetected: false, duplicateTimestamps: 0, conflictingDuplicates: 0, futureCandleCount: 0, dataValid: true } },
+      tf1h: { closedCandles: [], formingCandle: null, timeframe: "1h", evaluatedAt: Date.now(), closedCount: 0, diagnostics: { formingCount: 0, multipleFormingDetected: false, duplicateTimestamps: 0, conflictingDuplicates: 0, futureCandleCount: 0, dataValid: true } },
+      tf4h: { closedCandles: [], formingCandle: null, timeframe: "4h", evaluatedAt: Date.now(), closedCount: 0, diagnostics: { formingCount: 0, multipleFormingDetected: false, duplicateTimestamps: 0, conflictingDuplicates: 0, futureCandleCount: 0, dataValid: true } },
+      evaluatedAt: Date.now(),
     },
     adaptiveMarketState: {
-      trendQualityScore: 0.5,
-      volatilityState: "NORMAL",
-      volatilityPercentile: 50,
-      marketStressScore: 0,
+      trendQuality: { score: 0.5, components: { adx: 30, adxSlope: 0.5, emaAlignment: 0.8, ema20Slope: 0.5, ema50Slope: 0.3, structureContinuity: 0.7, atrPct: 1.0, bollingerWidth: 0.5, relativeVolume: 1.5, multiTimeframeAlignment: 0.7 }, explanation: "test" },
+      volatilityState: { state: "NORMAL", percentile: 50, atrPct: 1.0, explanation: "test" },
+      marketStress: { score: 0, factors: [], explanation: "test", readonly: true },
       setupQualityScore: 0,
+      evaluatedAt: Date.now(),
     },
     ticker: { bid: lastPrice - 1, ask: lastPrice + 1, last: lastPrice, spread: 2, fetchedAt: Date.now() },
     spreadPct: 0.01,
@@ -148,7 +153,7 @@ function makeIntent(overrides: Partial<SpotEntryIntent> = {}): SpotEntryIntent {
     originClose: 49500,
     originAtrPct: 1.0,
     originRegime: Regime.TREND,
-    originDirection: RegimeDirection.UP,
+    originDirection: RegimeDirection.BULLISH,
     originMacro: MacroBias.NEUTRAL,
     originVolume: 1000,
     originContextId: "test-ctx",

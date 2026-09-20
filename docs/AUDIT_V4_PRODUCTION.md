@@ -1,6 +1,6 @@
 # Audit Package — Entry V4 Quality Overlay Production Promotion
 
-**Date:** 2026-01-15  
+**Date:** 2026-09-13  
 **Branch:** `feature/spot-adaptive-v3-shadow`  
 **Base commit:** `89fdfdc2de4f51a67ee9c97bd23ac801b5457921`  
 **Commit message:** `feat(spot-entry): promote certified V4 quality overlay to production`
