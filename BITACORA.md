@@ -8352,3 +8352,29 @@ Comportamiento V3 intacto, sin cambios.
 - GRID_CHANGE_COUNT=0
 - Rollback disponible: git checkout staging-grid-v32-deploy + rebuild (backup remoto preservado)
 - Pendiente: contraauditoría ChatGPT. NO iniciado Exit R1.
+
+### Checkpoint correctivo post-contraauditoría (2026-09-20)
+
+La contraauditoría GitHub detectó dos defectos en 600ad6d:
+
+- BITACORA afirmaba "client spot/ai tabs: NO aplicado" pero el diff real incluía modificaciones en client/src/components/spot/ai/** (spotAiTypes.ts, tabs Actividad/Datos/Resumen/Seguridad, test spotAiR14GUi). Cambios ajenos a Entry V4.
+- server/db.ts fue cambiado de fail-fast a Pool lazy — modificación de semántica DB global compartida, innecesaria para Entry V4 productiva.
+
+Corrección aplicada en CORRECTION_CODE_SHA=3ae18319b8c0b68c9374241db65f8ef9bdd39a57:
+
+- client/src/components/spot/ai/** restaurado byte-exacto a 3db5e6ec (incluye borrado del test nuevo spotAiR14GUi.test.tsx).
+- server/db.ts restaurado byte-exacto a 3db5e6ec (fail-fast). Tests research deben ejecutarse con DATABASE_URL en entorno.
+- spotExitPolicy temporal correctness fix (STRUCTURE_INVALIDATION solo cuenta velas 15m cerradas con closeTime > position.openedAt) se mantiene deliberadamente: corrección certificada contra velas pre-entry, no es Exit R1 tuning. INHERITED_SPOT_TEMPORAL_CORRECTNESS_FIX=YES.
+
+Registro:
+
+- PREVIOUS_CODE_SHA=600ad6daf0b6567626d96b96c5a53a6f97de6804
+- CORRECTION_CODE_SHA=3ae18319b8c0b68c9374241db65f8ef9bdd39a57
+- SPOT_AI_CHANGED=NO
+- SHARED_DB_CHANGED=NO
+- GRID_CHANGED=NO
+- ENTRY_V4_ACTIVE=YES
+- EXIT_R1_STARTED=NO
+- SPOT_MODE=SHADOW
+- REAL_ORDER_SENT=NO
+- Redeploy app-only validado: health=200, V4_SOFT_QUALITY active, threshold=0.30, weights=0.20×5, SHADOW→SHADOW, DB healthy sin restart, GRID diff=0.
