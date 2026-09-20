@@ -8378,3 +8378,14 @@ Registro:
 - SPOT_MODE=SHADOW
 - REAL_ORDER_SENT=NO
 - Redeploy app-only validado: health=200, V4_SOFT_QUALITY active, threshold=0.30, weights=0.20×5, SHADOW→SHADOW, DB healthy sin restart, GRID diff=0.
+
+### Post-correction test rerun (2026-09-20)
+
+- POST_CORRECTION_TEST_RERUN=PASS
+- TESTED_CODE_SHA=3ae18319b8c0b68c9374241db65f8ef9bdd39a57
+- CERTIFICATION=7/7
+- PRODUCTION_PARITY=10/10
+- COUNTERAUDIT=6/6
+- UNIT=8/8
+- DB_MUTATION=NO (DATABASE_URL dummy a puerto muerto; ningún runner ejecutó queries)
+- EXIT_R1_STARTED=NO
