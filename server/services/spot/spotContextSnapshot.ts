@@ -162,6 +162,11 @@ export interface SnapshotBuildContext {
   pipelineStopStage?: string | null;
   pipelineStopReasonCode?: string | null;
   pipelineStopReason?: string | null;
+  // V4 quality overlay metadata
+  v4QualityScore?: number | null;
+  v4Threshold?: number | null;
+  v4Accepted?: boolean | null;
+  v4RejectReason?: string | null;
 }
 
 /**
@@ -239,6 +244,18 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
       pass: intentEvaluation.shouldExecute,
       reason: intentEvaluation.reason,
       reasonCode: intentEvaluation.shouldExecute ? "INTENT_APPROVED" : (intent.lastBlockReason ?? "ENTRY_GATED"),
+    });
+  }
+
+  // V4 quality gate (between anti-late and sizing)
+  if (intentEvaluation?.shouldExecute && input.v4Accepted !== null && input.v4Accepted !== undefined) {
+    gates.push({
+      level: "V4 Quality Overlay",
+      pass: input.v4Accepted,
+      reason: input.v4Accepted
+        ? `V4 quality score ${(input.v4QualityScore ?? 0).toFixed(4)} ≥ threshold ${(input.v4Threshold ?? 0).toFixed(2)}`
+        : `V4 rechazado: ${input.v4RejectReason ?? "score below threshold"} (score=${(input.v4QualityScore ?? 0).toFixed(4)}, threshold=${(input.v4Threshold ?? 0).toFixed(2)})`,
+      reasonCode: input.v4Accepted ? "V4_APPROVED" : (input.v4RejectReason ?? "V4_SCORE_BELOW_THRESHOLD"),
     });
   }
 
@@ -326,6 +343,10 @@ export function buildSnapshotFromScanResults(input: SnapshotBuildContext): SpotC
     pipelineStopStage: pipelineStopStage ?? null,
     pipelineStopReasonCode: pipelineStopReasonCode ?? null,
     pipelineStopReason: pipelineStopReason ?? null,
+    v4QualityScore: input.v4QualityScore ?? null,
+    v4Threshold: input.v4Threshold ?? null,
+    v4Accepted: input.v4Accepted ?? null,
+    v4RejectReason: input.v4RejectReason ?? null,
   };
 }
 

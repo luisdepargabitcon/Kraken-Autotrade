@@ -26,12 +26,14 @@ import { sql } from "drizzle-orm";
 import type {
   ForwardTwinSnapshot,
   ForwardTwinPositionSnapshot,
+  ForwardTwinFillSnapshot,
   ReplayV3Config,
   ReplayV3Result,
   ReplayV3Trade,
   ReplayV3FidelityMetrics,
+  ReplayV3Diagnostics,
 } from "./spotForwardTwinTypes";
-import { SPOT_FORWARD_TWIN_SCHEMA_VERSION } from "./spotForwardTwinTypes";
+import { isForwardTwinSchemaAllowed } from "./spotForwardTwinTypes";
 import { evaluateSpotCanonical, type SpotSignalResult } from "./spotCanonicalStrategy";
 import { createEntryIntent, evaluateEntryIntent, DEFAULT_ANTI_LATE_ENTRY_CONFIG } from "./spotEntryIntent";
 import { evaluateSizing, DEFAULT_SPOT_RISK_CONFIG } from "./spotRiskManager";
@@ -40,6 +42,9 @@ import { ExecutionMode, Regime, RegimeDirection, MacroBias, VolatilityLevel, Set
   type SpotMarketContext, type SpotPosition, type SpotExitState, type SpotExitDecision,
   type SpotRegimeContext } from "./spotTypes";
 import { DataHealth } from "./candleTimestamp";
+import { buildClosedCandleContext } from "./closedCandleContract";
+import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
+import { computeFeeBreakdown, computePnlBreakdown } from "./feeModel";
 
 // ─── Snapshot Loader ─────────────────────────────────────────────────────────
 
@@ -52,16 +57,37 @@ export async function loadSnapshots(
   startMs: number,
   endMs: number,
 ): Promise<ForwardTwinSnapshot[]> {
+  // C1F4-2: Do NOT filter by a single schema version — SUPERVISOR v2 is valid.
+  // C1F4-3: ORDER BY timestamp ASC, id ASC for deterministic ordering.
   const result = await db.execute(sql`
-    SELECT data FROM spot_forward_twin_snapshots
+    SELECT id, schema_version, snapshot_type, timestamp, data
+    FROM spot_forward_twin_snapshots
     WHERE pair = ${pair}
       AND timestamp >= ${startMs}
       AND timestamp <= ${endMs}
-      AND schema_version = ${SPOT_FORWARD_TWIN_SCHEMA_VERSION}
-    ORDER BY timestamp ASC
+    ORDER BY timestamp ASC, id ASC
   `);
 
-  return result.rows.map((row: any) => row.data as ForwardTwinSnapshot);
+  const snapshots: ForwardTwinSnapshot[] = [];
+  for (const row of result.rows as any[]) {
+    const data = row.data as ForwardTwinSnapshot;
+    const rowSnapshotType = row.snapshot_type as string;
+    const rowSchemaVersion = row.schema_version as number;
+
+    // C1F4-2: Validate physical/JSON consistency — FAIL-CLOSED on mismatch.
+    if (data.schemaVersion !== rowSchemaVersion || data.snapshotType !== rowSnapshotType) {
+      // Typed schema mismatch — reject silently (fail-closed).
+      continue;
+    }
+
+    // C1F4-2: Validate schema is allowed for this snapshot type.
+    if (!isForwardTwinSchemaAllowed(rowSnapshotType, rowSchemaVersion)) {
+      continue;
+    }
+
+    snapshots.push(data);
+  }
+  return snapshots;
 }
 
 // ─── Replay Engine ───────────────────────────────────────────────────────────
@@ -80,11 +106,37 @@ interface ReplayPosition {
   mfeR: number;
   maeR: number;
   entryFeeUsd: number;
+  // C1F5-9: Track whether entry fee is from real fill or estimated.
+  entryFeeReal: boolean;
   stopPrice: number;
+  economicFidelity: "FILL" | "DEGRADED";
+  pendingExit: { price: number; reasonType: string; evaluatedAt: number } | null;
+  signalId: string | null;
+  intentId: string | null;
+  // C1F4-10: Track fill confirmation separately.
+  // economicFidelity="FILL" only when BOTH entryFillConfirmed AND exitFillConfirmed.
+  entryFillConfirmed: boolean;
+  exitFillConfirmed: boolean;
+}
+
+// C1F4-4: Pending entry — SCAN creates this, not a ReplayPosition.
+// BUY FILL materializes a ReplayPosition from a PendingEntry.
+interface PendingEntry {
+  pair: string;
+  scanId: string;
+  signalId: string | null;
+  setupTag: string;
+  intendedVolume: number;
+  estimatedFee: number;
+  stopPrice: number;
+  createdAt: number;
+  tickerLast: number;
 }
 
 interface ReplayState {
   positions: Map<string, ReplayPosition>;
+  // C1F4-4: Pending entries keyed by signalId (or scanId fallback).
+  pendingEntries: Map<string, PendingEntry>;
   trades: ReplayV3Trade[];
   equity: number;
   maxEquity: number;
@@ -103,6 +155,12 @@ interface ReplayState {
   exitTotal: number;
   fillMatches: number;
   fillTotal: number;
+  // C1F5-13: Diagnostics
+  noBuyFillCount: number;
+  volumeMismatchCount: number;
+  contextDegradedCount: number;
+  feeEstimatedCount: number;
+  openAtEndCount: number;
 }
 
 /**
@@ -120,6 +178,7 @@ export async function runReplayV3(config: ReplayV3Config): Promise<ReplayV3Resul
 
   const state: ReplayState = {
     positions: new Map(),
+    pendingEntries: new Map(),
     trades: [],
     equity: config.initialCapitalUsd,
     maxEquity: config.initialCapitalUsd,
@@ -137,6 +196,11 @@ export async function runReplayV3(config: ReplayV3Config): Promise<ReplayV3Resul
     exitTotal: 0,
     fillMatches: 0,
     fillTotal: 0,
+    noBuyFillCount: 0,
+    volumeMismatchCount: 0,
+    contextDegradedCount: 0,
+    feeEstimatedCount: 0,
+    openAtEndCount: 0,
   };
 
   for (const snap of snapshots) {
@@ -153,10 +217,23 @@ export async function runReplayV3(config: ReplayV3Config): Promise<ReplayV3Resul
     }
   }
 
+  // C1F5-1: Pending entries without BUY FILL have ZERO economic impact.
+  // No trade created, no fee deducted. Diagnostics only.
+  state.noBuyFillCount = state.pendingEntries.size;
+
   // Close any remaining open positions at last known price
+  state.openAtEndCount = state.positions.size;
   for (const [lotId, pos] of state.positions) {
     const lastSnap = snapshots.findLast(s => s.pair === pos.pair && s.ticker);
     const exitPrice = lastSnap?.ticker?.last ?? pos.entryPrice;
+    // C1F4-10: OPEN_AT_END is always DEGRADED (no SELL FILL).
+    pos.economicFidelity = "DEGRADED";
+    // If entry fee was not yet deducted (entryFillConfirmed but no exit fill), deduct now.
+    if (pos.entryFillConfirmed && !pos.exitFillConfirmed) {
+      // Entry fee already deducted at BUY FILL time — do NOT double-deduct.
+    } else {
+      state.equity -= pos.entryFeeUsd;
+    }
     finalizeTrade(state, pos, exitPrice, "OPEN_AT_END", snapshots[snapshots.length - 1]?.timestamp ?? Date.now());
   }
 
@@ -175,6 +252,13 @@ export async function runReplayV3(config: ReplayV3Config): Promise<ReplayV3Resul
     fillCount: state.fillCount,
     fidelity,
     deterministic: true,
+    diagnostics: {
+      noBuyFillCount: state.noBuyFillCount,
+      volumeMismatchCount: state.volumeMismatchCount,
+      contextDegradedCount: state.contextDegradedCount,
+      feeEstimatedCount: state.feeEstimatedCount,
+      openAtEndCount: state.openAtEndCount,
+    },
   };
 }
 
@@ -184,7 +268,7 @@ function processScanSnapshot(state: ReplayState, snap: ForwardTwinSnapshot): voi
   state.scanCount++;
 
   // Reconstruct SpotMarketContext from recorded inputs
-  const ctx = reconstructContext(snap);
+  const ctx = _reconstructContextForTest(snap);
   if (!ctx) return;
 
   // RECALCULATE signal using productive code
@@ -223,45 +307,55 @@ function processScanSnapshot(state: ReplayState, snap: ForwardTwinSnapshot): voi
     }
   }
 
-  // Open replay position if recorded pipeline executed
-  // Uses recorded sizing data to track actual activity (not replay recalculation)
+  // C1F4-4: Open pending entry if recorded pipeline executed.
+  // SCAN does NOT create a ReplayPosition — only a PendingEntry.
+  // BUY FILL materializes the ReplayPosition with real lotId and fill data.
   if (snap.pipelineStopStage === "EXECUTED" && snap.sizing?.approved) {
-    const lotId = `replay-${snap.pair}-${snap.timestamp}`;
-    const pos: ReplayPosition = {
-      lotId,
+    // C1F4-5: signalId comes from snap.intent.signalId, NOT signal.contextId.
+    const signalId = snap.intent?.signalId ?? null;
+    // C1F4-6: Do NOT fake intentId in SCAN. intentId is SpotExecutionIntent.id,
+    // which is NOT available at SCAN time. Keep null until a causal source provides it.
+    const pendingKey = signalId ?? snap.scanId;
+    const pending: PendingEntry = {
       pair: snap.pair,
-      entryPrice: ctx.ticker.last,
-      entryTime: snap.timestamp,
-      amount: snap.sizing.volume,
-      qtyRemaining: snap.sizing.volume,
+      scanId: snap.scanId,
+      signalId,
       setupTag: String(snap.signal?.setupTag ?? replaySignal.setupTag ?? "UNKNOWN"),
-      highestPrice: ctx.ticker.last,
-      mfe: 0,
-      mae: 0,
-      mfeR: 0,
-      maeR: 0,
-      entryFeeUsd: snap.sizing.entryFeeUsd,
+      intendedVolume: snap.sizing.volume,
+      estimatedFee: snap.sizing.entryFeeUsd,
       stopPrice: snap.sizing.stopPrice,
+      createdAt: snap.timestamp,
+      tickerLast: ctx.ticker.last,
     };
-    state.positions.set(lotId, pos);
-    state.equity -= snap.sizing.entryFeeUsd;
+    state.pendingEntries.set(pendingKey, pending);
   }
 }
 
 function processSupervisorSnapshot(state: ReplayState, snap: ForwardTwinSnapshot): void {
   state.supervisorCount++;
 
+  // C1F5-3: v3 SUPERVISOR snapshots include full market context (regime, candles, volume).
+  // v1/v2 lack regime — context is DEGRADED (fabricated minimal regime).
+  if (!snap.regime) {
+    state.contextDegradedCount++;
+  }
+
   // Reconstruct context from supervisor snapshot
-  const ctx = reconstructContext(snap);
+  const ctx = _reconstructContextForTest(snap);
   if (!ctx || !snap.position) return;
 
-  // Find replay position by pair (replay uses synthetic lotIds)
+  // C1F4-8: Correlate by lotId first — never pick the first matching pair arbitrarily.
   let pos: ReplayPosition | undefined;
-  for (const p of state.positions.values()) {
-    if (p.pair === snap.position.pair) {
-      pos = p;
-      break;
+  if (snap.position.lotId) {
+    pos = state.positions.get(snap.position.lotId);
+  }
+  if (!pos) {
+    // Fallback by pair only if EXACTLY one position for that pair (legacy/degraded).
+    const samePair = [...state.positions.values()].filter(p => p.pair === snap.position!.pair);
+    if (samePair.length === 1) {
+      pos = samePair[0];
     }
+    // If 2+ positions for same pair and no lotId match: fail-closed (no update).
   }
   if (!pos) return;
 
@@ -287,37 +381,127 @@ function processSupervisorSnapshot(state: ReplayState, snap: ForwardTwinSnapshot
   pos.mfeR = snap.position.mfeR;
   pos.maeR = snap.position.maeR;
 
-  // Close position if exit triggered (use recorded price for consistency)
+  // C1F3-7: Register PENDING EXIT — do NOT finalize yet. SELL FILL is the economic authority.
   if (snap.exitDecision?.shouldExit) {
-    const exitPrice = snap.exitDecision.price;
-    for (const [key, p] of state.positions) {
-      if (p.pair === snap.position.pair) {
-        finalizeTrade(state, p, exitPrice, snap.exitDecision.reasonType ?? "UNKNOWN", snap.exitDecision.evaluatedAt);
-        state.positions.delete(key);
-        break;
-      }
-    }
+    pos.pendingExit = {
+      price: snap.exitDecision.price,
+      reasonType: snap.exitDecision.reasonType ?? "UNKNOWN",
+      evaluatedAt: snap.exitDecision.evaluatedAt,
+    };
   }
 }
 
 function processFillSnapshot(state: ReplayState, snap: ForwardTwinSnapshot): void {
   state.fillCount++;
 
-  if (snap.fill) {
-    state.fillTotal++;
-    // Verify fill price is reasonable (within 1% of ticker)
-    if (snap.ticker && snap.ticker.last > 0) {
-      const deviation = Math.abs(snap.fill.fillPrice - snap.ticker.last) / snap.ticker.last;
-      if (deviation < 0.01) {
-        state.fillMatches++;
-      }
-    } else {
-      // No ticker to compare — trust the recorded fill
-      state.fillMatches++;
+  if (!snap.fill) return;
+  state.fillTotal++;
+
+  const fill = snap.fill;
+
+  if (fill.side === "BUY") {
+    // C1F4-7: BUY FILL materializes a ReplayPosition from a PendingEntry.
+    // Correlate by fill.signalId → pendingEntry.signalId first.
+    let pending: PendingEntry | undefined;
+    if (fill.signalId) {
+      pending = state.pendingEntries.get(fill.signalId);
     }
+    if (!pending) {
+      // Fallback: match by pair if exactly 1 pending entry for that pair.
+      const samePair = [...state.pendingEntries.values()].filter(pe => pe.pair === snap.pair);
+      if (samePair.length === 1) pending = samePair[0];
+    }
+    if (!pending) return; // No matching pending entry — skip.
+
+    const lotId = fill.lotId ?? `replay-${snap.pair}-${pending.createdAt}`;
+    // C1F4-7: mapKey === position.lotId invariant.
+    const pos: ReplayPosition = {
+      lotId,
+      pair: pending.pair,
+      entryPrice: fill.fillPrice,
+      entryTime: fill.executedAt,
+      amount: fill.fillVolume,
+      qtyRemaining: fill.fillVolume,
+      setupTag: pending.setupTag,
+      highestPrice: fill.fillPrice,
+      mfe: 0,
+      mae: 0,
+      mfeR: 0,
+      maeR: 0,
+      entryFeeUsd: fill.feeUsd > 0 ? fill.feeUsd : pending.estimatedFee,
+      // C1F5-9: Track whether entry fee is from real fill or estimated.
+      entryFeeReal: fill.feeUsd > 0,
+      stopPrice: pending.stopPrice,
+      // C1F4-10: economicFidelity is FILL only when BOTH entry AND exit fills confirmed.
+      economicFidelity: "DEGRADED",
+      pendingExit: null,
+      signalId: pending.signalId,
+      intentId: fill.intentId ?? null,
+      entryFillConfirmed: true,
+      exitFillConfirmed: false,
+    };
+    state.positions.set(lotId, pos);
+
+    // Remove pending entry — it's been materialized.
+    const pendingKey = pending.signalId ?? pending.scanId;
+    state.pendingEntries.delete(pendingKey);
+
+    // C1F3-5: Deduct entryFee at BUY FILL time.
+    state.equity -= pos.entryFeeUsd;
+
+    // Fill price verification
+    state.fillMatches++;
+  } else if (fill.side === "SELL") {
+    // C1F4-9: SELL FILL correlates by lotId directly.
+    let pos: ReplayPosition | undefined;
+    if (fill.lotId) {
+      pos = state.positions.get(fill.lotId);
+    }
+    if (!pos) {
+      // Fallback: match by pair if exactly 1 position for that pair.
+      const samePair = [...state.positions.values()].filter(p => p.pair === snap.pair);
+      if (samePair.length === 1) pos = samePair[0];
+    }
+    if (!pos) return;
+
+    // C1F4-14: Fill volume integrity — verify volume matches.
+    const volumeMismatch = Math.abs(fill.fillVolume - pos.qtyRemaining) > 0.0001;
+    if (volumeMismatch) {
+      // C1F5-8: Volume mismatch — do NOT finalize position, do NOT create trade.
+      // Keep position open for later resolution. Diagnostics only.
+      state.volumeMismatchCount++;
+      pos.economicFidelity = "DEGRADED";
+      state.fillMatches++;
+      return;
+    }
+
+    const exitPrice = fill.fillPrice;
+    const exitReasonType = pos.pendingExit?.reasonType ?? "UNKNOWN";
+    const exitTime = fill.executedAt;
+
+    // C1F4-10: Mark exit fill confirmed.
+    pos.exitFillConfirmed = true;
+    // C1F4-10: Full fidelity only if both entry AND exit fills confirmed.
+    if (pos.entryFillConfirmed && pos.exitFillConfirmed) {
+      pos.economicFidelity = "FILL";
+    } else {
+      pos.economicFidelity = "DEGRADED";
+    }
+
+    // C1F5-9: Fee fidelity — FULL requires real fees from fills.
+    const exitFeeReal = fill.feeUsd > 0;
+    if (!pos.entryFeeReal || !exitFeeReal) {
+      pos.economicFidelity = "DEGRADED";
+      state.feeEstimatedCount++;
+    }
+
+    finalizeTrade(state, pos, exitPrice, exitReasonType, exitTime, fill.feeUsd, exitFeeReal);
+    // C1F4-7: Delete by lotId (mapKey === lotId invariant).
+    state.positions.delete(pos.lotId);
+
+    state.fillMatches++;
   }
 }
-
 // ─── Trade Finalization ──────────────────────────────────────────────────────
 
 function finalizeTrade(
@@ -326,12 +510,28 @@ function finalizeTrade(
   exitPrice: number,
   exitReasonType: string,
   exitTime: number,
+  fillFeeUsd?: number,
+  exitFeeReal?: boolean,
 ): void {
-  const grossPnl = (exitPrice - pos.entryPrice) * pos.amount;
-  const exitFeeUsd = grossPnl * 0.0026; // estimated taker fee
-  const netPnl = grossPnl - pos.entryFeeUsd - exitFeeUsd;
+  // C1F2-11: Use canonical fee model — eliminate hardcoded 0.0026
+  const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.amount);
+  const pnl = computePnlBreakdown({
+    entryPrice: pos.entryPrice,
+    exitPrice,
+    volume: pos.amount,
+    entryFeeUsd: pos.entryFeeUsd,
+  });
 
-  state.equity += netPnl;
+  const grossPnl = pnl.grossPnlUsd;
+  const exitFeeUsd = fillFeeUsd != null && fillFeeUsd > 0 ? fillFeeUsd : feeBreakdown.exitFeeUsd;
+  // C1F3-7: When fill fee is provided, recompute netPnl to use fill-based exit fee
+  const netPnl = fillFeeUsd != null && fillFeeUsd > 0
+    ? grossPnl - pos.entryFeeUsd - exitFeeUsd
+    : pnl.netPnlUsd;
+
+  // C1F3-5: Fix double entry fee — entryFee already deducted at open (processScanSnapshot or BUY FILL)
+  // At close: add grossPnl - exitFee (NOT netPnl, which includes entryFee)
+  state.equity += grossPnl - exitFeeUsd;
   state.maxEquity = Math.max(state.maxEquity, state.equity);
   state.maxDrawdownUsd = Math.max(state.maxDrawdownUsd, state.maxEquity - state.equity);
 
@@ -356,6 +556,8 @@ function finalizeTrade(
     mfeR: pos.mfeR,
     maeR: pos.maeR,
     setupTag: pos.setupTag,
+    economicFidelity: pos.economicFidelity,
+    feeQuality: pos.entryFeeReal && (exitFeeReal ?? false) ? "REAL" : "ESTIMATED",
   });
 }
 
@@ -384,7 +586,7 @@ function computeFidelityMetrics(state: ReplayState): ReplayV3FidelityMetrics {
 
 // ─── Context Reconstruction ──────────────────────────────────────────────────
 
-function reconstructContext(snap: ForwardTwinSnapshot): SpotMarketContext | null {
+export function _reconstructContextForTest(snap: ForwardTwinSnapshot): SpotMarketContext | null {
   if (!snap.ticker) return null;
 
   // Supervisor snapshots may not have regime — construct minimal context
@@ -427,6 +629,27 @@ function reconstructContext(snap: ForwardTwinSnapshot): SpotMarketContext | null
     generatedAt: snap.timestamp,
   };
 
+  // Use the canonical contract as the single source of truth for candle arrays.
+  // Snapshot candles are all historical (closed) in replay — no forming candles.
+  const snapCandles5m = snap.candles?.candles5m?.candles ?? [];
+  const snapCandles15m = snap.candles?.candles15m?.candles ?? [];
+  const snapCandles1h = snap.candles?.candles1h?.candles ?? [];
+  const snapCandles4h = snap.candles?.candles4h?.candles ?? [];
+
+  const closedCandleContext = buildClosedCandleContext(
+    snapCandles5m,
+    snapCandles15m,
+    snapCandles1h,
+    snapCandles4h,
+    snap.timestamp,
+  );
+
+  // Derive all candle arrays from the contract — no direct snapshot assignment
+  const candles5m = closedCandleContext.tf5m.closedCandles;
+  const candles15m = closedCandleContext.tf15m.closedCandles;
+  const candles1h = closedCandleContext.tf1h.closedCandles;
+  const candles4h = closedCandleContext.tf4h.closedCandles;
+
   return {
     marketContextId: snap.marketContextId ?? snap.scanId,
     generatedAt: snap.timestamp,
@@ -434,10 +657,23 @@ function reconstructContext(snap: ForwardTwinSnapshot): SpotMarketContext | null
     dataHealth: (snap.dataHealth ?? "GOOD") as DataHealth,
     macroBias: regimeCtx.macroBias,
     regimeContext: regimeCtx,
-    candles5m: snap.candles?.candles5m?.candles ?? [],
-    candles15m: snap.candles?.candles15m?.candles ?? [],
-    candles1h: snap.candles?.candles1h?.candles ?? [],
-    candles4h: snap.candles?.candles4h?.candles ?? [],
+    candles5m,
+    candles15m,
+    candles1h,
+    candles4h,
+    formingCandle5m: closedCandleContext.tf5m.formingCandle,
+    formingCandle15m: closedCandleContext.tf15m.formingCandle,
+    formingCandle1h: closedCandleContext.tf1h.formingCandle,
+    formingCandle4h: closedCandleContext.tf4h.formingCandle,
+    closedCandleContext,
+    adaptiveMarketState: buildAdaptiveMarketState({
+      candles1h,
+      candles15m,
+      candles4h,
+      regimeContext: regimeCtx,
+      spreadPct: snap.ticker.spreadPct,
+      dataHealth: snap.dataHealth ?? "GOOD",
+    }),
     ticker: {
       bid: snap.ticker.bid,
       ask: snap.ticker.ask,
@@ -456,6 +692,14 @@ function reconstructContext(snap: ForwardTwinSnapshot): SpotMarketContext | null
 }
 
 function reconstructPosition(posSnap: ForwardTwinPositionSnapshot, replayPos: ReplayPosition): SpotPosition {
+  // C1F5-4: Preserve real risk from snapshot (v2/v3 fields).
+  const initialStopDistanceUsd = posSnap.initialStopDistanceUsd ?? 0;
+  const riskUsd = posSnap.riskUsd ?? 0;
+  const initialStopPrice = posSnap.initialStopPrice ?? replayPos.stopPrice;
+  const stopDistPct = initialStopDistanceUsd > 0 && posSnap.entryPrice > 0
+    ? (initialStopDistanceUsd / posSnap.entryPrice) * 100
+    : 0;
+
   return {
     lotId: posSnap.lotId,
     pair: posSnap.pair,
@@ -463,7 +707,7 @@ function reconstructPosition(posSnap: ForwardTwinPositionSnapshot, replayPos: Re
     qtyRemaining: posSnap.qtyRemaining,
     entryPrice: posSnap.entryPrice,
     entryFee: replayPos.entryFeeUsd,
-    entryFeeQuality: "ESTIMATED",
+    entryFeeQuality: replayPos.entryFeeReal ? "REAL" : "ESTIMATED",
     highestPrice: posSnap.highestPrice,
     openedAt: posSnap.openedAt,
     entryStrategyId: "SPOT_CANONICAL",
@@ -477,10 +721,10 @@ function reconstructPosition(posSnap: ForwardTwinPositionSnapshot, replayPos: Re
     directionAtEntry: RegimeDirection.BULLISH,
     macroAtEntry: MacroBias.BULLISH,
     atrPctAtEntry: 0,
-    initialStopPrice: replayPos.stopPrice,
-    initialStopDistancePct: 0,
-    initialStopDistanceUsd: 0,
-    riskUsd: 0,
+    initialStopPrice,
+    initialStopDistancePct: stopDistPct,
+    initialStopDistanceUsd,
+    riskUsd,
     notionalUsd: posSnap.entryPrice * posSnap.amount,
     executionMode: ExecutionMode.SHADOW,
     policyVersion: "SPOT-1.0.0-20260812",
@@ -521,6 +765,7 @@ export function _processSnapshotsForTest(
 ): ReplayV3Result {
   const state: ReplayState = {
     positions: new Map(),
+    pendingEntries: new Map(),
     trades: [],
     equity: initialCapitalUsd,
     maxEquity: initialCapitalUsd,
@@ -538,6 +783,11 @@ export function _processSnapshotsForTest(
     exitTotal: 0,
     fillMatches: 0,
     fillTotal: 0,
+    noBuyFillCount: 0,
+    volumeMismatchCount: 0,
+    contextDegradedCount: 0,
+    feeEstimatedCount: 0,
+    openAtEndCount: 0,
   };
 
   for (const snap of snapshots) {
@@ -554,10 +804,21 @@ export function _processSnapshotsForTest(
     }
   }
 
+  // C1F5-1: Pending entries without BUY FILL have ZERO economic impact.
+  state.noBuyFillCount = state.pendingEntries.size;
+
   // Close remaining positions
+  state.openAtEndCount = state.positions.size;
   for (const [lotId, pos] of state.positions) {
     const lastSnap = snapshots.findLast(s => s.pair === pos.pair && s.ticker);
     const exitPrice = lastSnap?.ticker?.last ?? pos.entryPrice;
+    // C1F4-10: OPEN_AT_END is always DEGRADED (no SELL FILL).
+    pos.economicFidelity = "DEGRADED";
+    if (pos.entryFillConfirmed && !pos.exitFillConfirmed) {
+      // Entry fee already deducted at BUY FILL time — do NOT double-deduct.
+    } else {
+      state.equity -= pos.entryFeeUsd;
+    }
     finalizeTrade(state, pos, exitPrice, "OPEN_AT_END", snapshots[snapshots.length - 1]?.timestamp ?? Date.now());
   }
 
@@ -576,5 +837,12 @@ export function _processSnapshotsForTest(
     fillCount: state.fillCount,
     fidelity,
     deterministic: true,
+    diagnostics: {
+      noBuyFillCount: state.noBuyFillCount,
+      volumeMismatchCount: state.volumeMismatchCount,
+      contextDegradedCount: state.contextDegradedCount,
+      feeEstimatedCount: state.feeEstimatedCount,
+      openAtEndCount: state.openAtEndCount,
+    },
   };
 }

@@ -41,6 +41,7 @@ import { buildSpotMarketContext } from "./spotMarketContext";
 import { evaluateSpotCanonical, type SpotSignalResult } from "./spotCanonicalStrategy";
 import { createEntryIntent, evaluateEntryIntent, SpotEntryIntentStore,
   DEFAULT_ANTI_LATE_ENTRY_CONFIG, type IntentEvaluationResult } from "./spotEntryIntent";
+import { evaluateV4Gate, SPOT_ENTRY_V4_ENABLED, SPOT_ENTRY_V4_MIN_QUALITY_SCORE, type V4EvaluationResult } from "./spotEntryV4";
 import { evaluateSizing, DEFAULT_SPOT_RISK_CONFIG, type SizingResult } from "./spotRiskManager";
 import { createExecutionAdapter, type SpotExecutionAdapter } from "./spotExecutionAdapter";
 import { evaluateExit, createExitState, restoreExitState, DEFAULT_SPOT_EXIT_CONFIG, computeRMultiple } from "./spotExitPolicy";
@@ -1505,6 +1506,36 @@ function ftCaptureScan(
   }));
 }
 
+/**
+ * Log ENTRY_V4_EVALUATED structured event for every BUY candidate evaluated by V4.
+ */
+function logV4Evaluation(
+  pair: string,
+  signalId: string,
+  b0IntentApproved: boolean,
+  v4Result: V4EvaluationResult,
+): void {
+  const evaluationTime = Date.now();
+  const scores = v4Result.scores;
+  console.log(JSON.stringify({
+    event: "ENTRY_V4_EVALUATED",
+    pair,
+    evaluationTime,
+    signalId,
+    b0IntentApproved,
+    v4Enabled: v4Result.enabled,
+    qualityScore: scores?.qualityScore ?? null,
+    threshold: v4Result.threshold,
+    impulseScore: scores?.impulseScore ?? null,
+    retracementScore: scores?.retracementScore ?? null,
+    structureScore: scores?.structureScore ?? null,
+    reclaimScore: scores?.reclaimScore ?? null,
+    resumptionScore: scores?.resumptionScore ?? null,
+    accepted: v4Result.accepted,
+    rejectReason: v4Result.rejectReason,
+  }));
+}
+
 async function scanPair(pair: string, mode: ExecutionMode, generation: number, scanId: string, enabledPairs: Set<string>): Promise<{ pair: string; signal: string; reason: string; mode: string }> {
   // Capture per-pair generation at scan start — any disable during this scan invalidates it
   const pairGen = getPairEntryGeneration(pair);
@@ -1563,6 +1594,37 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
     intentStore.update(activeIntent);
 
     if (evaluation.shouldExecute) {
+      // ─── V4 QUALITY GATE ───────────────────────────────────────────────────
+      // B0 has approved the entry. V4 quality overlay must also approve.
+      // FAIL CLOSED: V4 rejection NEVER falls back to B0.
+      const v4Result = evaluateV4Gate(ctx, activeIntent);
+      logV4Evaluation(pair, activeIntent.signalId, true, v4Result);
+      if (!v4Result.accepted) {
+        logActivity({
+          pair,
+          category: "DECISION",
+          severity: "INFO",
+          title: `Entrada bloqueada por V4: ${v4Result.rejectReason}`,
+          explanation: `V4 quality gate rechazó entrada para ${pair}. Score=${v4Result.scores?.qualityScore ?? "N/A"}, threshold=${v4Result.threshold}. NO fallback a B0.`,
+          decision: "V4_REJECT",
+          executionMode: mode,
+          reasonCode: v4Result.rejectReason,
+        });
+        publishSnapshot(buildSnapshotFromScanResults({
+          pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+          ctx, signal: signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: v4Result.rejectReason, confidence: 0, blockReason: null } as SpotSignalResult,
+          intent: activeIntent, intentEvaluation: evaluation, sizing: null,
+          blockReasonCode: v4Result.rejectReason,
+          pipelineStopStage: "V4_QUALITY_GATE", pipelineStopReasonCode: v4Result.rejectReason, pipelineStopReason: v4Result.rejectReason,
+          v4QualityScore: v4Result.scores?.qualityScore ?? null,
+          v4Threshold: v4Result.threshold,
+          v4Accepted: false,
+          v4RejectReason: v4Result.rejectReason,
+        }));
+        ftCaptureScan(scanId, mode, ctx, signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: v4Result.rejectReason, confidence: 0, blockReason: null } as SpotSignalResult, activeIntent, evaluation, null, "V4_QUALITY_GATE", v4Result.rejectReason);
+        return { pair, signal: "BLOCKED", reason: `V4: ${v4Result.rejectReason}`, mode };
+      }
+
       const outcome = await executeEntry(activeIntent, ctx, mode, signalResultCache.get(pair), generation, pairGen, scanId);
       if (outcome.executed) {
         activeIntent.state = "EXECUTED" as any;
@@ -1574,6 +1636,10 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           intent: activeIntent, intentEvaluation: evaluation, sizing: outcome.sizing ?? null,
           blockReasonCode: null,
           pipelineStopStage: "EXECUTED", pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
+          v4QualityScore: v4Result.scores?.qualityScore ?? null,
+          v4Threshold: v4Result.threshold,
+          v4Accepted: true,
+          v4RejectReason: null,
         }));
         ftCaptureScan(scanId, mode, ctx, signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: "Executed", confidence: 0, blockReason: null } as SpotSignalResult, activeIntent, evaluation, outcome.sizing ?? null, "EXECUTED", outcome.reasonCode);
         return { pair, signal: "EXECUTED", reason: "Entry executed", mode };
@@ -1586,6 +1652,10 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           intent: activeIntent, intentEvaluation: evaluation, sizing: outcome.sizing ?? null,
           blockReasonCode: outcome.reasonCode,
           pipelineStopStage: outcome.stage, pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
+          v4QualityScore: v4Result.scores?.qualityScore ?? null,
+          v4Threshold: v4Result.threshold,
+          v4Accepted: true,
+          v4RejectReason: null,
         }));
         ftCaptureScan(scanId, mode, ctx, signalResultCache.get(pair) ?? { signal: "BUY", setupTag: null, reason: outcome.reason, confidence: 0, blockReason: null } as SpotSignalResult, activeIntent, evaluation, outcome.sizing ?? null, outcome.stage, outcome.reasonCode);
         return { pair, signal: "BLOCKED", reason: outcome.reason, mode };
@@ -1641,6 +1711,36 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
     intentStore.update(intent);
 
     if (evaluation.shouldExecute) {
+      // ─── V4 QUALITY GATE ───────────────────────────────────────────────────
+      // B0 has approved the entry. V4 quality overlay must also approve.
+      // FAIL CLOSED: V4 rejection NEVER falls back to B0.
+      const v4Result = evaluateV4Gate(ctx, intent);
+      logV4Evaluation(pair, intent.signalId, true, v4Result);
+      if (!v4Result.accepted) {
+        logActivity({
+          pair,
+          category: "DECISION",
+          severity: "INFO",
+          title: `Entrada bloqueada por V4: ${v4Result.rejectReason}`,
+          explanation: `V4 quality gate rechazó entrada para ${pair}. Score=${v4Result.scores?.qualityScore ?? "N/A"}, threshold=${v4Result.threshold}. NO fallback a B0.`,
+          decision: "V4_REJECT",
+          executionMode: mode,
+          reasonCode: v4Result.rejectReason,
+        });
+        publishSnapshot(buildSnapshotFromScanResults({
+          pair, scanId, mode, enabled: enabledPairs.has(normalizePair(pair)),
+          ctx, signal, intent, intentEvaluation: evaluation, sizing: null,
+          blockReasonCode: v4Result.rejectReason,
+          pipelineStopStage: "V4_QUALITY_GATE", pipelineStopReasonCode: v4Result.rejectReason, pipelineStopReason: v4Result.rejectReason,
+          v4QualityScore: v4Result.scores?.qualityScore ?? null,
+          v4Threshold: v4Result.threshold,
+          v4Accepted: false,
+          v4RejectReason: v4Result.rejectReason,
+        }));
+        ftCaptureScan(scanId, mode, ctx, signal, intent, evaluation, null, "V4_QUALITY_GATE", v4Result.rejectReason);
+        return { pair, signal: "BLOCKED", reason: `V4: ${v4Result.rejectReason}`, mode };
+      }
+
       const outcome = await executeEntry(intent, ctx, mode, signal, generation, pairGen, scanId);
       if (outcome.executed) {
         intent.state = "EXECUTED" as any;
@@ -1651,6 +1751,10 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           ctx, signal, intent, intentEvaluation: evaluation, sizing: outcome.sizing ?? null,
           blockReasonCode: null,
           pipelineStopStage: "EXECUTED", pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
+          v4QualityScore: v4Result.scores?.qualityScore ?? null,
+          v4Threshold: v4Result.threshold,
+          v4Accepted: true,
+          v4RejectReason: null,
         }));
         ftCaptureScan(scanId, mode, ctx, signal, intent, evaluation, outcome.sizing ?? null, "EXECUTED", outcome.reasonCode);
         return { pair, signal: "EXECUTED", reason: "Entry executed (immediate)", mode };
@@ -1662,6 +1766,10 @@ async function scanPair(pair: string, mode: ExecutionMode, generation: number, s
           ctx, signal, intent, intentEvaluation: evaluation, sizing: outcome.sizing ?? null,
           blockReasonCode: outcome.reasonCode,
           pipelineStopStage: outcome.stage, pipelineStopReasonCode: outcome.reasonCode, pipelineStopReason: outcome.reason,
+          v4QualityScore: v4Result.scores?.qualityScore ?? null,
+          v4Threshold: v4Result.threshold,
+          v4Accepted: true,
+          v4RejectReason: null,
         }));
         ftCaptureScan(scanId, mode, ctx, signal, intent, evaluation, outcome.sizing ?? null, outcome.stage, outcome.reasonCode);
         return { pair, signal: "BLOCKED", reason: outcome.reason, mode };

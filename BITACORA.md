@@ -8263,3 +8263,76 @@ Comportamiento V3 intacto, sin cambios.
 ### Datos históricos
 - Intactos — no se reconstruyó MFE/MAE retrospectivamente
 - Ciclos legacy muestran "Sin datos históricos suficientes"
+
+## 2026-09-20 — SPOT ENTRY V4 — DEPLOY STAGING (SCOPE=SPOT_ONLY)
+
+### Scope
+
+- SCOPE=SPOT_ONLY
+- GRID_TOUCHED=NO
+- GRID_FILES_CHANGED=0
+- GRID_LOGIC_CHANGED=NO
+- GRID_MIGRATIONS_CHANGED=0
+- IDCA_CHANGED=NO
+- AMA_CHANGED=NO
+- TELEGRAM_CHANGED=NO
+
+### Divergencia detectada
+
+- VPS staging estaba en rama local `staging-grid-v32-deploy` @ 3db5e6ec (GRID V3.2, 16 commits no presentes en feature/spot-adaptive-v3-shadow).
+- Deploy directo de la rama feature habría eliminado GRID V3.2 de staging → cancelado.
+- Estrategia: rama `integration/staging-spot-v4` creada DESDE el HEAD de staging + delta SPOT únicamente (checkout de paths SPOT, sin merge).
+
+### Backup
+
+- STAGING_BEFORE_SHA=3db5e6ec7e8276f0aac251eb19755db66894a16a
+- STAGING_BACKUP_SHA=3db5e6ec7e8276f0aac251eb19755db66894a16a
+- STAGING_BACKUP_REMOTE=YES (origin/backup/staging-before-spot-v4-20260920)
+- Untracked preservados en VPS: artifacts/, audits/, backups/, spotReplayRunner.ts
+
+### Source V4 certificado
+
+- SPOT_SOURCE_SHA=c5de7ed6cfe7b7e4e5a62bbce998d9882b7af3fb (productización 56279f6 + certificación c5de7ed)
+- Entry V4: enabled=true, threshold=0.30, weights=0.20×5 (impulse, retracement, structure, reclaim, resumption), fail-closed
+
+### Dependency closure aplicado
+
+- SPOT_REQUIRED (73 archivos): server/services/spot/** completo (stack V3+V4: spotEntryV3, spotEntryV4, spotEntryQualityFeatures, closedCandleContract, spotAdaptiveMarketState, spotEngine, spotMarketContext, spotReplayEngine(+V3), spotRiskManager, spotExitPolicy, spotCanonicalStrategy, spotContextSnapshot(+Store), spotForwardTwin(Builder/Collector/Types), spotTypes, spotWalkForward, tests, research), server/routes/spot.routes.ts, client/src/pages/Spot.tsx, client/src/components/spot/**
+- SHARED_REQUIRED (2 archivos): server/services/MarketDataService.ts (hunk aditivo: getCandlesFinalizedAware + stripProvisional — requerido por buildSpotMarketContext; no altera getCandles para IDCA/GRID), server/db.ts (lazy Pool — permite importar módulos research sin DATABASE_URL; comportamiento idéntico con DATABASE_URL set)
+- DOCS (5): docs/AUDIT_V4_PRODUCTION.md, docs/auditoria/2026-09-13-entry-v4-productization/* (REPORT.md, TEST_RESULTS.md, PARITY_RESULTS.csv, PRODUCTION_030_BASELINE.csv)
+
+### Archivos NO aplicados (auditados y descartados)
+
+- server/routes.ts: diff solo eliminaba registro de migraciones GRID 093/094 → NO aplicado
+- shared/schema.ts: diff eliminaba columnas GRID V3.1/V3.2 → NO aplicado
+- script/migrate.ts: renombre migración GRID 094→093 → NO aplicado
+- db/migrations/091,092 (spot_ai): módulo spot-ai ajeno a Entry V4 → NO aplicado
+- server/routes/spotAi.routes.ts + client spot/ai tabs: módulo spot-ai → NO aplicado
+- server/services/__tests__/spotAi* + scripts spot-ai: UNRELATED → NO aplicado
+- research/spot-v3/* artifacts: research-only → NO aplicado
+
+### Diff gate (STAGING_BEFORE..INTEGRATION, staged)
+
+- SPOT files: 73 (esperados)
+- SHARED files: 2 (justificados arriba)
+- DOCS files: 5
+- GRID files: 0
+- GRID migrations: 0
+- IDCA/AMA/Telegram/Fisco: 0
+- UNRELATED: 0
+
+### Validaciones pre-deploy
+
+- tsc --noEmit: PASS (0 errors)
+- npm run build: PASS (28.38s)
+- git diff --check: PASS
+- testEntryV4Certification.ts: 7/7 PASS
+- testEntryV4ProductionParity.ts: 10/10 PASS
+- testEntryV4CounterAudit.ts: 6/6 PASS
+- testEntryV4.ts: 8/8 PASS
+
+### Modos
+
+- SPOT_MODE_BEFORE=SHADOW
+- SPOT_MODE_AFTER=SHADOW (pendiente verificación post-deploy)
+- GRID: sin cambios de modo (read-only)

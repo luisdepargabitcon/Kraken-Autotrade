@@ -14,6 +14,8 @@
 
 import type { DataHealth } from "./candleTimestamp";
 import type { FeeQuality } from "./feeModel";
+import type { ClosedCandleContext, ClosedCandleSet } from "./closedCandleContract";
+import type { AdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── ExecutionMode (single canonical enum) ──────────────────────────────────
 
@@ -50,6 +52,48 @@ export function resolveExecutionMode(raw: unknown): ExecutionMode {
  * restart recovery, and preflight checks are all in place.
  */
 export const REAL_ACTIVATION_ALLOWED = true;
+
+/**
+ * SPOT ADAPTIVE V3 REAL trading gate.
+ * MUST remain false during V3 development (closed-candle contract, replay
+ * fidelity, adaptive market state, and Forward Twin parity validation).
+ * Only flip to true after full validation and explicit user authorization.
+ */
+export const SPOT_ADAPTIVE_V3_REAL_ALLOWED = false;
+
+/**
+ * V3 REAL execution gate — reusable function for blocking V3 adaptive decisions.
+ *
+ * When a V3 policy/decision is about to govern trading (entry, exit, sizing,
+ * risk) in REAL mode, this function MUST be called. If
+ * SPOT_ADAPTIVE_V3_REAL_ALLOWED is false, the decision is blocked.
+ *
+ * Observational computations (building AdaptiveMarketState, computing metrics,
+ * logging, telemetry) are NOT blocked — only decisions that would change
+ * trading behavior.
+ *
+ * @param mode - The execution mode of the calling context
+ * @returns true if V3 decisions are allowed in the given mode, false if blocked
+ */
+export function isAdaptiveV3DecisionAllowed(mode: ExecutionMode): boolean {
+  if (mode === ExecutionMode.REAL && !SPOT_ADAPTIVE_V3_REAL_ALLOWED) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Assert that V3 adaptive decisions are allowed in the given mode.
+ * Throws if a V3 decision is attempted in REAL mode while the gate is closed.
+ */
+export function assertAdaptiveV3ExecutionModeAllowed(mode: ExecutionMode): void {
+  if (!isAdaptiveV3DecisionAllowed(mode)) {
+    throw new Error(
+      `SPOT ADAPTIVE V3 decision blocked: SPOT_ADAPTIVE_V3_REAL_ALLOWED=false ` +
+      `and mode=REAL. V3 adaptive decisions are not allowed during development.`
+    );
+  }
+}
 
 // ─── Setup tags (15m) ───────────────────────────────────────────────────────
 
@@ -117,10 +161,36 @@ export interface SpotMarketContext {
   dataHealth: DataHealth;
   macroBias: MacroBias;
   regimeContext: SpotRegimeContext;
-  candles5m: SpotCandle[];
-  candles15m: SpotCandle[];
-  candles1h: SpotCandle[];
-  candles4h: SpotCandle[];
+  /**
+   * CLOSED candles only (forming candle excluded).
+   * Signal logic (BUY, pullback, reclaim, breakout, regime, volume) MUST use these.
+   * These are derived from closedCandleContext.tfXm.closedCandles.
+   * readonly: consumers must not mutate the contract's arrays.
+   */
+  readonly candles5m: readonly SpotCandle[];
+  readonly candles15m: readonly SpotCandle[];
+  readonly candles1h: readonly SpotCandle[];
+  readonly candles4h: readonly SpotCandle[];
+  /**
+   * Forming (in-progress) candles per timeframe.
+   * MAY be used for: current price, MFE/MAE, emergency, trailing, spread, supervision.
+   * MUST NOT be used for: signal confirmation, pullback, reclaim, breakout, regime, volume.
+   */
+  formingCandle5m: SpotCandle | null;
+  formingCandle15m: SpotCandle | null;
+  formingCandle1h: SpotCandle | null;
+  formingCandle4h: SpotCandle | null;
+  /**
+   * Canonical closed-candle contract with explicit typed separation.
+   * This is the authoritative source — candles5m/15m/1h/4h are derived from it.
+   */
+  closedCandleContext: ClosedCandleContext;
+  /**
+   * Adaptive market state: trendQualityScore, volatilityState, volatilityPercentile,
+   * marketStressScore (READ-ONLY), setupQualityScore.
+   * Computed from closed candles only. Explainable and deterministic.
+   */
+  adaptiveMarketState: AdaptiveMarketState;
   ticker: SpotTicker;
   spreadPct: number;
   atr: number;
@@ -263,6 +333,7 @@ export enum ExitReasonType {
   TRAILING = "TRAILING",
   PROFIT = "PROFIT",
   TIME_EFFICIENCY = "TIME_EFFICIENCY",
+  RESEARCH_WINDOW_END = "RESEARCH_WINDOW_END",
 }
 
 export enum ExitPriority {

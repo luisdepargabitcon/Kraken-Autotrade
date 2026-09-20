@@ -95,11 +95,14 @@ export function SeguridadTab({ status }: { status: SpotAiStatus }) {
           <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Trades etiquetados actuales</span>
-              <span className="text-lg font-bold font-mono">{status.labeledTrades}</span>
+              {/* R14G: null => NO DISP. */}
+              <span className={`text-lg font-bold font-mono ${status.labeledTrades === null ? "text-gray-400" : ""}`}>
+                {status.labeledTrades === null ? "NO DISP." : status.labeledTrades}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Mínimo requerido</span>
-              <span className={`text-sm font-bold font-mono ${status.labeledTrades >= status.minTradesToTrain ? "text-green-400" : "text-amber-400"}`}>
+              <span className={`text-sm font-bold font-mono ${(status.labeledTrades ?? 0) >= status.minTradesToTrain && status.labeledTrades !== null ? "text-green-400" : "text-amber-400"}`}>
                 {status.minTradesToTrain}
               </span>
             </div>
@@ -108,16 +111,18 @@ export function SeguridadTab({ status }: { status: SpotAiStatus }) {
               <span className="text-sm font-bold font-mono text-blue-400">{status.preferredTradesToTrain}</span>
             </div>
           </div>
-          <div className={`p-3 rounded-lg border ${status.labeledTrades >= status.minTradesToTrain ? "bg-green-500/10 border-green-500/20" : "bg-amber-500/10 border-amber-500/20"}`}>
+          <div className={`p-3 rounded-lg border ${(status.labeledTrades ?? 0) >= status.minTradesToTrain && status.labeledTrades !== null ? "bg-green-500/10 border-green-500/20" : "bg-amber-500/10 border-amber-500/20"}`}>
             <div className="flex items-center gap-2">
-              {status.labeledTrades >= status.minTradesToTrain ? (
+              {(status.labeledTrades ?? 0) >= status.minTradesToTrain && status.labeledTrades !== null ? (
                 <><ShieldCheck className="h-4 w-4 text-green-400" /><span className="text-sm font-semibold text-green-400">Entrenamiento permitido</span></>
               ) : (
                 <><Lock className="h-4 w-4 text-amber-400" /><span className="text-sm font-semibold text-amber-400">Entrenamiento bloqueado</span></>
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {status.labeledTrades >= status.minTradesToTrain
+              {status.labeledTrades === null
+                ? "No se puede determinar el número de trades etiquetados (almacén durable no disponible)."
+                : status.labeledTrades >= status.minTradesToTrain
                 ? "Hay suficientes trades etiquetados para iniciar entrenamiento manual."
                 : `Faltan ${status.minTradesToTrain - status.labeledTrades} trades para alcanzar el mínimo de ${status.minTradesToTrain}.`}
             </p>

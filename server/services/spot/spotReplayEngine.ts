@@ -26,14 +26,17 @@ import {
 } from "./spotTypes";
 import { evaluateSpotCanonical, type SpotSignalResult, type SpotCanonicalConfig } from "./spotCanonicalStrategy";
 import { createEntryIntent, evaluateEntryIntent, type AntiLateEntryConfig } from "./spotEntryIntent";
-import { computeStopDistance, computePositionSize, type SpotRiskConfig, DEFAULT_SPOT_RISK_CONFIG } from "./spotRiskManager";
-import { computePnlBreakdown, computeFeeBreakdown, getSpotTakerFeePct, type FeeQuality } from "./feeModel";
+import { evaluateEntryV3, evaluateV3AntiLateEntry, type EntryV3Config, DEFAULT_ENTRY_V3_CONFIG } from "./spotEntryV3";
+import { evaluateSizing, type SpotRiskConfig, DEFAULT_SPOT_RISK_CONFIG } from "./spotRiskManager";
+import { computePnlBreakdown, computeFeeBreakdown, type FeeQuality, type FeeModel } from "./feeModel";
 import { evaluateExit, createExitState, type SpotExitConfig, DEFAULT_SPOT_EXIT_CONFIG } from "./spotExitPolicy";
 import { SpotAuditTracker, classifyProfitCapture, type ExitAuditMetrics } from "./spotAuditTracker";
-import { DataHealth } from "./candleTimestamp";
+import { DataHealth, getCandleCloseTimeMs } from "./candleTimestamp";
 import { type SpotTicker, type SpotVolumeMetrics } from "./spotTypes";
 import { buildSpotRegimeContext } from "./spotRegimeEngine";
 import { calculateATR, type PriceData, type OHLCCandle } from "../indicators";
+import { type ClosedCandleContext, prepareCandles, buildClosedCandleContextFast } from "./closedCandleContract";
+import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +57,18 @@ export interface ReplayConfig {
   antiLateEntryConfig?: AntiLateEntryConfig;
   /** Max concurrent positions (default 2) */
   maxConcurrentPositions?: number;
+  /** Explicit fee model for historical replay (defaults to canonical) */
+  feeModel?: FeeModel;
+  /** V3 entry quality config (default OFF) */
+  entryV3Config?: EntryV3Config;
+  /** Instrumentation log for V3 research */
+  v3Instrumentation?: V3InstrumentationLog;
+  /** Evaluation boundary: no new entries before this time (candles still used for warmup/indicators) */
+  evaluationStartMs?: number;
+  /** Evaluation boundary: no new entries after this time */
+  evaluationEndMs?: number;
+  /** V4 soft quality threshold (research-only). When set, V4 acceptance replaces V3. */
+  v4MinQualityScore?: number;
 }
 
 export interface ReplayTrade {
@@ -61,6 +76,8 @@ export interface ReplayTrade {
   pair: string;
   signalId: string;
   setupTag: SetupTag;
+  regimeAtEntry: string;
+  directionAtEntry: string;
   entryPrice: number;
   exitPrice: number;
   volume: number;
@@ -80,6 +97,29 @@ export interface ReplayTrade {
   profitCaptureClass: string;
   executionMode: ExecutionMode;
   policyVersion: string;
+  /** V4 quality score at entry time (research-only, -1 if not computed) */
+  v4QualityScore?: number;
+}
+
+export interface V3InstrumentationEntry {
+  pair: string;
+  timestamp: number;
+  regime: string;
+  direction: string;
+  adx: number;
+  atrPct: number;
+  impulseAtr: number;
+  retracementAtr: number;
+  reclaimConfirmed: boolean;
+  resumptionConfirmed: boolean;
+  distanceFromOriginAtr: number;
+  accepted: boolean;
+  reasonCode: string;
+}
+
+export class V3InstrumentationLog {
+  entries: V3InstrumentationEntry[] = [];
+  add(e: V3InstrumentationEntry): void { this.entries.push(e); }
 }
 
 export interface ReplayResult {
@@ -87,10 +127,24 @@ export interface ReplayResult {
   trades: ReplayTrade[];
   stats: ReplayStats;
   config: ReplayConfig;
+  v3Instrumentation?: V3InstrumentationEntry[];
+  b0EligibleCandidates?: number;
+  v4AcceptedCandidates?: number;
+  b0SignalCandidates?: number;
+  b0IntentEligible?: number;
+  b0SizingApproved?: number;
+  v4ScoreEligible?: number;
+  v4FinalExecuted?: number;
+  v4AcceptsB0Rejected?: number;
 }
 
 export interface ReplayStats {
   totalTrades: number;
+  signalsBuy: number;
+  intentExecutable: number;
+  entriesExecuted: number;
+  closedTrades: number;
+  openTerminalTrades: number;
   wins: number;
   losses: number;
   winRate: number;
@@ -100,6 +154,9 @@ export interface ReplayStats {
   avgNetPnlUsd: number;
   avgRMultiple: number;
   profitFactor: number;
+  grossProfitFactor: number;
+  maxDrawdownUsd: number;
+  maxDrawdownPct: number;
   avgHoldTimeMinutes: number;
   avgMfeUsd: number;
   avgMaeUsd: number;
@@ -112,6 +169,7 @@ export interface ReplayStats {
   goodCount: number;
   poorCount: number;
   badCount: number;
+  regimeBreakdown: Record<string, { count: number; netPnlUsd: number; wins: number; losses: number }>;
 }
 
 // ─── Replay Engine ──────────────────────────────────────────────────────────
@@ -134,7 +192,9 @@ export function runReplay(
 ): ReplayResult {
   const pair = config.pair;
   const maxConcurrent = config.maxConcurrentPositions ?? 2;
-  const takerFeePct = getSpotTakerFeePct();
+  const feeModel = config.feeModel;
+  const entryV3Config = config.entryV3Config ?? DEFAULT_ENTRY_V3_CONFIG;
+  const v3Log = config.v3Instrumentation;
 
   const positions: SpotPosition[] = [];
   const exitStates: Map<string, SpotExitState> = new Map();
@@ -142,30 +202,98 @@ export function runReplay(
   const trades: ReplayTrade[] = [];
   let lotCounter = 0;
   let signalCounter = 0;
+  let signalsBuyCount = 0;
+  let intentExecutableCount = 0;
+  let entriesExecutedCount = 0;
 
-  // Sort candles by time
-  const sorted15m = [...candles.candles15m].sort((a, b) => a.time - b.time);
-  const sorted5m = [...candles.candles5m].sort((a, b) => a.time - b.time);
-  const sorted1h = [...candles.candles1h].sort((a, b) => a.time - b.time);
-  const sorted4h = [...candles.candles4h].sort((a, b) => a.time - b.time);
+  // Pre-sort + pre-dedup ONCE (O(n log n) total, not per-iteration)
+  const sorted5m = prepareCandles(candles.candles5m);
+  const sorted15m = prepareCandles(candles.candles15m);
+  const sorted1h = prepareCandles(candles.candles1h);
+  const sorted4h = prepareCandles(candles.candles4h);
 
   // Iterate through 5m candles for finer scan granularity (closer to 60s production scan).
   // Warmup: need 200 15m candles (= 600 5m candles) before generating signals.
   const warmup5m = 600;
+
+  // Track last in-window candle for RESEARCH_WINDOW_END boundary
+  let lastInWindowClose = 0;
+  let lastInWindowTime = 0;
+  let boundaryClosed = false;
+
   for (let i = warmup5m; i < sorted5m.length; i++) {
     const current5m = sorted5m[i];
-    const currentTime = current5m.time;
-    const nextCandle = sorted5m[i + 1];
-    const fillPrice = nextCandle ? nextCandle.open : current5m.close;
+    // CRITICAL: evaluation happens at the CLOSE time of the 5m candle, not its open time.
+    // At open time, the close is unknown — using it would be lookahead bias.
+    const evaluationTime = getCandleCloseTimeMs(current5m.time, "5m");
+    if (evaluationTime === null) continue;
 
-    // Build market context from candles up to current time
-    const ctx = buildReplayContext(
+    // ── Strict evaluationEndMs boundary ──
+    // When we pass the boundary, close all remaining positions at the last in-window
+    // candle's close with RESEARCH_WINDOW_END and break. No future data leakage.
+    if (config.evaluationEndMs !== undefined && evaluationTime > config.evaluationEndMs) {
+      if (positions.length > 0 && lastInWindowClose > 0 && !boundaryClosed) {
+        for (const pos of positions) {
+          const exitPrice = lastInWindowClose;
+          const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.qtyRemaining, feeModel);
+          const pnl = computePnlBreakdown({
+            entryPrice: pos.entryPrice, exitPrice, volume: pos.qtyRemaining,
+            entryFeeUsd: pos.entryFee, feeModel,
+          });
+          const audit = auditTracker.finalizeExit(pos, exitPrice, ExitReasonType.RESEARCH_WINDOW_END, lastInWindowTime);
+          const posMetrics = auditTracker.getMetrics(pos.lotId);
+          const rMultiple = pos.initialStopDistanceUsd > 0
+            ? (exitPrice - pos.entryPrice) / pos.initialStopDistanceUsd : 0;
+          trades.push({
+            lotId: pos.lotId, pair: pos.pair, signalId: pos.signalId,
+            setupTag: pos.setupTag,
+            regimeAtEntry: pos.regimeAtEntry ?? "UNKNOWN",
+            directionAtEntry: pos.directionAtEntry ?? "NEUTRAL",
+            entryPrice: pos.entryPrice, exitPrice, volume: pos.qtyRemaining,
+            entryFeeUsd: feeBreakdown.entryFeeUsd, exitFeeUsd: feeBreakdown.exitFeeUsd,
+            grossPnlUsd: pnl.grossPnlUsd, netPnlUsd: pnl.netPnlUsd, rMultiple,
+            exitReason: ExitReasonType.RESEARCH_WINDOW_END,
+            openedAtMs: pos.openedAt, closedAtMs: lastInWindowTime,
+            holdTimeMinutes: Math.round((lastInWindowTime - pos.openedAt) / 60000),
+            mfeUsd: posMetrics?.mfeUsd ?? 0, maeUsd: posMetrics?.maeUsd ?? 0,
+            mfeR: posMetrics?.mfeR ?? 0,
+            profitCapturePct: audit.profitCapturePct,
+            profitCaptureClass: classifyProfitCapture(audit.profitCapturePct),
+            executionMode: ExecutionMode.SHADOW, policyVersion: SPOT_POLICY_VERSION,
+          });
+        }
+        boundaryClosed = true;
+      }
+      break;
+    }
+
+    lastInWindowClose = current5m.close;
+    lastInWindowTime = evaluationTime;
+
+    const nextCandle = sorted5m[i + 1];
+
+    // C1F2-10: No entry without next candle fill — last candle cannot open position
+    // If there is no next candle, we cannot fill at next open. No new entry.
+    // Fill at NEXT candle OPEN (after signal confirmed at close). No lookahead.
+    const fillPrice = nextCandle ? nextCandle.open : null;
+
+    // C1F4-18: Exact next-candle contiguity required.
+    // For a signal at current5m close, the expected next open is:
+    //   expectedNextOpen = current5m.time + 5*60*1000
+    // A new entry only has next-open fill if nextCandle != null AND nextCandle.time === expectedNextOpen.
+    const expectedNextOpen = current5m.time + 5 * 60 * 1000;
+    const hasNextCandle = nextCandle != null && nextCandle.time === expectedNextOpen;
+    // C1F4-19: Gap detection for entries only — exits must still be evaluated.
+    const hasDataGap = !hasNextCandle;
+
+    // Build market context from candles closed at evaluationTime (fast path)
+    const ctx = buildReplayContextFast(
       pair,
       sorted5m,
       sorted15m,
       sorted1h,
       sorted4h,
-      currentTime,
+      evaluationTime,
       current5m.close,
     );
 
@@ -178,20 +306,23 @@ export function runReplay(
       if (!state) continue;
 
       // Update MFE/MAE
-      auditTracker.updatePrice(pos, ctx.ticker.last, currentTime);
+      auditTracker.updatePrice(pos, ctx.ticker.last, evaluationTime);
 
-      const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, currentTime);
+      const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, evaluationTime);
       if (exitDecision.shouldExit) {
-        const exitFillPrice = fillPrice;
-        const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining);
+        // C1F5F-1: Exit fill must NOT use distant next candle open.
+        // Only use nextCandle.open if contiguous; otherwise use current5m.close as EXIT_AT_DECISION_CLOSE_DEGRADED.
+        const exitFillPrice = hasNextCandle ? nextCandle!.open : current5m.close;
+        const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining, feeModel);
         const pnl = computePnlBreakdown({
           entryPrice: pos.entryPrice,
           exitPrice: exitFillPrice,
           volume: pos.qtyRemaining,
           entryFeeUsd: pos.entryFee,
+          feeModel,
         });
 
-        const audit = auditTracker.finalizeExit(pos, exitFillPrice, exitDecision.reasonType ?? "TIME_EFFICIENCY", currentTime);
+        const audit = auditTracker.finalizeExit(pos, exitFillPrice, exitDecision.reasonType ?? "TIME_EFFICIENCY", evaluationTime);
         const posMetrics = auditTracker.getMetrics(pos.lotId);
         const rMultiple = pos.initialStopDistanceUsd > 0
           ? (exitFillPrice - pos.entryPrice) / pos.initialStopDistanceUsd
@@ -202,6 +333,8 @@ export function runReplay(
           pair: pos.pair,
           signalId: pos.signalId,
           setupTag: pos.setupTag,
+          regimeAtEntry: pos.regimeAtEntry ?? "UNKNOWN",
+          directionAtEntry: pos.directionAtEntry ?? "NEUTRAL",
           entryPrice: pos.entryPrice,
           exitPrice: exitFillPrice,
           volume: pos.qtyRemaining,
@@ -212,8 +345,8 @@ export function runReplay(
           rMultiple,
           exitReason: exitDecision.reasonType ?? ExitReasonType.TIME_EFFICIENCY,
           openedAtMs: pos.openedAt,
-          closedAtMs: currentTime,
-          holdTimeMinutes: Math.round((currentTime - pos.openedAt) / 60000),
+          closedAtMs: evaluationTime,
+          holdTimeMinutes: Math.round((evaluationTime - pos.openedAt) / 60000),
           mfeUsd: posMetrics?.mfeUsd ?? 0,
           maeUsd: posMetrics?.maeUsd ?? 0,
           mfeR: posMetrics?.mfeR ?? 0,
@@ -231,47 +364,110 @@ export function runReplay(
     // ─── Entry evaluation (if slots available) ─────────────────────────────
     if (positions.length >= maxConcurrent) continue;
 
+    // Evaluation boundary: skip new entries outside [evaluationStartMs, evaluationEndMs]
+    // Candles before evaluationStartMs are still processed for exit evaluation and indicator warmup
+    if (config.evaluationStartMs !== undefined && evaluationTime < config.evaluationStartMs) continue;
+    if (config.evaluationEndMs !== undefined && evaluationTime > config.evaluationEndMs) continue;
+
+    // C1F4-19: Gap blocks entry but NOT exit evaluation.
+    // Exit evaluation for open positions continues regardless of gap.
+    // Only entry is blocked when there is no contiguous next candle.
+    if (hasDataGap) continue;
+
+    // C1F2-10: No entry without next candle fill — cannot open on last candle
+    if (fillPrice === null) continue;
+    const entryFillPrice = fillPrice;
+
+    // Signal evaluation at candle CLOSE — no lookahead
+
     const signal = evaluateSpotCanonical(ctx, config.strategyConfig);
     if (signal.signal !== "BUY") continue;
 
     signalCounter++;
+    signalsBuyCount++;
     const signalId = `replay-${pair}-${signalCounter}`;
-    const intent = createEntryIntent(signal, ctx, config.antiLateEntryConfig);
+    const intent = createEntryIntent(signal, ctx, config.antiLateEntryConfig, evaluationTime);
 
-    // Evaluate intent immediately (in replay, we fill at next candle)
-    const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig);
-    if (!intentEval.shouldExecute) continue;
+    // ── V3 entry quality gate (when enabled) ──
+    if (entryV3Config.enabled) {
+      const v3Eval = evaluateEntryV3(
+        ctx,
+        intent.originPrice,
+        intent.origin15mCloseAt,
+        entryV3Config,
+        evaluationTime,
+      );
 
-    // Sizing
-    const stopDist = computeStopDistance(
-      fillPrice,
-      ctx.atr,
-      ctx.regimeContext.regime,
-      config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG,
+      // Instrumentation
+      if (v3Log) {
+        v3Log.add({
+          pair,
+          timestamp: evaluationTime,
+          regime: ctx.regimeContext.regime,
+          direction: ctx.regimeContext.direction,
+          adx: ctx.regimeContext.adx,
+          atrPct: ctx.regimeContext.atrPct,
+          impulseAtr: v3Eval.impulseAtr,
+          retracementAtr: v3Eval.retracementAtr,
+          reclaimConfirmed: v3Eval.reclaimConfirmed,
+          resumptionConfirmed: v3Eval.resumptionConfirmed,
+          distanceFromOriginAtr: v3Eval.distanceFromOriginAtr,
+          accepted: v3Eval.accepted,
+          reasonCode: v3Eval.reasonCode,
+        });
+      }
+
+      if (!v3Eval.accepted) continue;
+
+      // V3 anti-late entry: no re-anchor, expire or execute
+      const v3AntiLate = evaluateV3AntiLateEntry(
+        ctx.ticker.last,
+        intent.originPrice,
+        intent.originAtrPct,
+        intent.expiresAt,
+        evaluationTime,
+        entryV3Config,
+      );
+      if (v3AntiLate.action !== "EXECUTE") continue;
+    } else {
+      // B0 path: standard intent evaluation
+      const intentEval = evaluateEntryIntent(intent, ctx, config.antiLateEntryConfig, evaluationTime);
+      if (!intentEval.shouldExecute) continue;
+    }
+
+    intentExecutableCount++;
+
+    // Sizing — use productive evaluateSizing() (applies maxLots, maxOrder, spread gate, fee gate, capital efficiency)
+    // Override ticker.last to the actual fill price so sizing matches the entry price
+    const openLotsForPair = positions.filter(p => p.pair === pair).length;
+    const riskConfig = config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG;
+    const sizingCtx = { ...ctx, ticker: { ...ctx.ticker, last: entryFillPrice } };
+    const sizing = evaluateSizing(
+      sizingCtx,
+      intent,
+      config.availableCapitalUsd,
+      openLotsForPair,
+      riskConfig,
+      feeModel,
     );
-    const sizing = computePositionSize(
-      fillPrice,
-      stopDist.stopDistanceUsd,
-      config.riskConfig?.riskPerTradeUsd ?? DEFAULT_SPOT_RISK_CONFIG.riskPerTradeUsd,
-      config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG,
-    );
 
-    if (sizing.volume <= 0 || sizing.notionalUsd <= 0) continue;
+    if (!sizing.approved) continue;
 
+    entriesExecutedCount++;
     lotCounter++;
     const lotId = `replay-${pair}-${lotCounter}`;
-    const entryFee = fillPrice * sizing.volume * (takerFeePct / 100);
+    const entryFee = sizing.entryFeeUsd;
 
     const position: SpotPosition = {
       lotId,
       pair,
       amount: sizing.volume,
       qtyRemaining: sizing.volume,
-      entryPrice: fillPrice,
+      entryPrice: entryFillPrice,
       entryFee,
       entryFeeQuality: "ESTIMATED" as FeeQuality,
-      highestPrice: fillPrice,
-      openedAt: currentTime,
+      highestPrice: entryFillPrice,
+      openedAt: evaluationTime,
       entryStrategyId: "SPOT_CANONICAL",
       entrySignalTf: "15m",
       signalConfidence: signal.confidence,
@@ -283,17 +479,17 @@ export function runReplay(
       directionAtEntry: ctx.regimeContext.direction,
       macroAtEntry: ctx.regimeContext.macroBias,
       atrPctAtEntry: ctx.regimeContext.atrPct,
-      initialStopPrice: stopDist.stopPrice,
-      initialStopDistancePct: stopDist.stopDistancePct,
-      initialStopDistanceUsd: stopDist.stopDistanceUsd,
-      riskUsd: config.riskConfig?.riskPerTradeUsd ?? DEFAULT_SPOT_RISK_CONFIG.riskPerTradeUsd,
+      initialStopPrice: sizing.stopPrice,
+      initialStopDistancePct: sizing.stopDistancePct,
+      initialStopDistanceUsd: sizing.stopDistanceUsd,
+      riskUsd: sizing.riskUsd,
       notionalUsd: sizing.notionalUsd,
       executionMode: ExecutionMode.SHADOW,
       policyVersion: SPOT_POLICY_VERSION,
       sgBreakEvenActivated: false,
       sgTrailingActivated: false,
       sgScaleOutDone: false,
-      sgCurrentStopPrice: stopDist.stopPrice,
+      sgCurrentStopPrice: sizing.stopPrice,
       mfe: 0,
       mae: 0,
       mfeR: 0,
@@ -305,18 +501,24 @@ export function runReplay(
     auditTracker.initPosition(position);
   }
 
-  // Close any remaining positions at last available price
+  // Close any remaining positions at last available price (only if not already closed by boundary)
+  if (boundaryClosed) {
+    positions.length = 0;
+  }
   const lastCandle = sorted5m[sorted5m.length - 1];
+  // C1F2-9: Terminal close timestamp must be candle CLOSE time, not OPEN time
+  const terminalExitTime = getCandleCloseTimeMs(lastCandle.time, "5m") ?? lastCandle.time;
   for (const pos of positions) {
     const exitPrice = lastCandle.close;
-    const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.qtyRemaining);
+    const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitPrice, pos.qtyRemaining, feeModel);
     const pnl = computePnlBreakdown({
       entryPrice: pos.entryPrice,
       exitPrice,
       volume: pos.qtyRemaining,
       entryFeeUsd: pos.entryFee,
+      feeModel,
     });
-    const audit = auditTracker.finalizeExit(pos, exitPrice, "TIME_EFFICIENCY", lastCandle.time);
+    const audit = auditTracker.finalizeExit(pos, exitPrice, "TIME_EFFICIENCY", terminalExitTime);
     const posMetrics = auditTracker.getMetrics(pos.lotId);
     const rMultiple = pos.initialStopDistanceUsd > 0
       ? (exitPrice - pos.entryPrice) / pos.initialStopDistanceUsd
@@ -327,6 +529,8 @@ export function runReplay(
       pair: pos.pair,
       signalId: pos.signalId,
       setupTag: pos.setupTag,
+      regimeAtEntry: pos.regimeAtEntry ?? "UNKNOWN",
+      directionAtEntry: pos.directionAtEntry ?? "NEUTRAL",
       entryPrice: pos.entryPrice,
       exitPrice,
       volume: pos.qtyRemaining,
@@ -337,8 +541,8 @@ export function runReplay(
       rMultiple,
       exitReason: ExitReasonType.TIME_EFFICIENCY,
       openedAtMs: pos.openedAt,
-      closedAtMs: lastCandle.time,
-      holdTimeMinutes: Math.round((lastCandle.time - pos.openedAt) / 60000),
+      closedAtMs: terminalExitTime,
+      holdTimeMinutes: Math.round((terminalExitTime - pos.openedAt) / 60000),
       mfeUsd: posMetrics?.mfeUsd ?? 0,
       maeUsd: posMetrics?.maeUsd ?? 0,
       mfeR: posMetrics?.mfeR ?? 0,
@@ -349,30 +553,51 @@ export function runReplay(
     });
   }
 
-  const stats = computeReplayStats(trades);
-  return { pair, trades, stats, config };
+  const stats = computeReplayStats(trades, {
+    signalsBuy: signalsBuyCount,
+    intentExecutable: intentExecutableCount,
+    entriesExecuted: entriesExecutedCount,
+    openTerminalTrades: positions.length,
+    initialCapital: config.availableCapitalUsd,
+  });
+  return { pair, trades, stats, config, v3Instrumentation: v3Log?.entries };
 }
 
 // ─── Stats ──────────────────────────────────────────────────────────────────
 
-export function computeReplayStats(trades: ReplayTrade[]): ReplayStats {
+export function computeReplayStats(
+  trades: ReplayTrade[],
+  extra?: { signalsBuy?: number; intentExecutable?: number; entriesExecuted?: number; openTerminalTrades?: number; initialCapital?: number },
+): ReplayStats {
   const n = trades.length;
+  const signalsBuy = extra?.signalsBuy ?? 0;
+  const intentExecutable = extra?.intentExecutable ?? 0;
+  const entriesExecuted = extra?.entriesExecuted ?? n;
+  const openTerminalTrades = extra?.openTerminalTrades ?? 0;
+  const initialCapital = extra?.initialCapital ?? 10000;
+  const closedTrades = n;
+
   if (n === 0) {
     return {
-      totalTrades: 0, wins: 0, losses: 0, winRate: 0,
+      totalTrades: 0, signalsBuy, intentExecutable, entriesExecuted, closedTrades: 0, openTerminalTrades,
+      wins: 0, losses: 0, winRate: 0,
       netPnlUsd: 0, grossPnlUsd: 0, totalFeesUsd: 0,
-      avgNetPnlUsd: 0, avgRMultiple: 0, profitFactor: 0,
+      avgNetPnlUsd: 0, avgRMultiple: 0, profitFactor: 0, grossProfitFactor: 0,
+      maxDrawdownUsd: 0, maxDrawdownPct: 0,
       avgHoldTimeMinutes: 0, avgMfeUsd: 0, avgMaeUsd: 0, avgMfeR: 0,
       bestTradeUsd: 0, worstTradeUsd: 0,
       maxConsecutiveWins: 0, maxConsecutiveLosses: 0,
       excellentCount: 0, goodCount: 0, poorCount: 0, badCount: 0,
+      regimeBreakdown: {},
     };
   }
 
   const wins = trades.filter(t => t.netPnlUsd > 0);
   const losses = trades.filter(t => t.netPnlUsd <= 0);
-  const grossWin = wins.reduce((s, t) => s + t.netPnlUsd, 0);
-  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.netPnlUsd, 0));
+  const netWin = wins.reduce((s, t) => s + t.netPnlUsd, 0);
+  const netLoss = Math.abs(losses.reduce((s, t) => s + t.netPnlUsd, 0));
+  const grossWin = wins.reduce((s, t) => s + t.grossPnlUsd, 0);
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.grossPnlUsd, 0));
 
   let maxConWins = 0, maxConLosses = 0, curWins = 0, curLosses = 0;
   for (const t of trades) {
@@ -380,17 +605,42 @@ export function computeReplayStats(trades: ReplayTrade[]): ReplayStats {
     else { curLosses++; curWins = 0; maxConLosses = Math.max(maxConLosses, curLosses); }
   }
 
+  // Max drawdown: equity starts at initialCapital, peakEquity starts at initialCapital
+  let equity = initialCapital;
+  let peakEquity = initialCapital;
+  let maxDD = 0;
+  let maxDDPct = 0;
+  for (const t of trades) {
+    equity += t.netPnlUsd;
+    peakEquity = Math.max(peakEquity, equity);
+    const dd = peakEquity - equity;
+    const ddPct = peakEquity > 0 ? dd / peakEquity : 0;
+    if (dd > maxDD) { maxDD = dd; maxDDPct = ddPct; }
+  }
+
+  // Regime breakdown
+  const regimeBreakdown: Record<string, { count: number; netPnlUsd: number; wins: number; losses: number }> = {};
+  for (const t of trades) {
+    const regime = t.regimeAtEntry ?? "UNKNOWN";
+    if (!regimeBreakdown[regime]) regimeBreakdown[regime] = { count: 0, netPnlUsd: 0, wins: 0, losses: 0 };
+    regimeBreakdown[regime].count++;
+    regimeBreakdown[regime].netPnlUsd += t.netPnlUsd;
+    if (t.netPnlUsd > 0) regimeBreakdown[regime].wins++;
+    else regimeBreakdown[regime].losses++;
+  }
+
   return {
-    totalTrades: n,
-    wins: wins.length,
-    losses: losses.length,
-    winRate: wins.length / n,
+    totalTrades: n, signalsBuy, intentExecutable, entriesExecuted, closedTrades, openTerminalTrades,
+    wins: wins.length, losses: losses.length, winRate: wins.length / n,
     netPnlUsd: trades.reduce((s, t) => s + t.netPnlUsd, 0),
     grossPnlUsd: trades.reduce((s, t) => s + t.grossPnlUsd, 0),
     totalFeesUsd: trades.reduce((s, t) => s + t.entryFeeUsd + t.exitFeeUsd, 0),
     avgNetPnlUsd: trades.reduce((s, t) => s + t.netPnlUsd, 0) / n,
     avgRMultiple: trades.reduce((s, t) => s + t.rMultiple, 0) / n,
-    profitFactor: grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Infinity : 0,
+    profitFactor: netLoss > 0 ? netWin / netLoss : netWin > 0 ? Infinity : 0,
+    grossProfitFactor: grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Infinity : 0,
+    maxDrawdownUsd: maxDD,
+    maxDrawdownPct: maxDDPct,
     avgHoldTimeMinutes: trades.reduce((s, t) => s + t.holdTimeMinutes, 0) / n,
     avgMfeUsd: trades.reduce((s, t) => s + t.mfeUsd, 0) / n,
     avgMaeUsd: trades.reduce((s, t) => s + t.maeUsd, 0) / n,
@@ -403,25 +653,36 @@ export function computeReplayStats(trades: ReplayTrade[]): ReplayStats {
     goodCount: trades.filter(t => t.profitCaptureClass === "GOOD").length,
     poorCount: trades.filter(t => t.profitCaptureClass === "POOR").length,
     badCount: trades.filter(t => t.profitCaptureClass === "BAD").length,
+    regimeBreakdown,
   };
 }
 
 // ─── Context builder (from candles, no async) ───────────────────────────────
 
-function buildReplayContext(
+export function buildReplayContextFast(
   pair: string,
   candles5m: SpotCandle[],
   candles15m: SpotCandle[],
   candles1h: SpotCandle[],
   candles4h: SpotCandle[],
-  currentTime: number,
+  evaluationTime: number,
   currentPrice: number,
 ): SpotMarketContext | null {
-  // Filter candles up to current time (no lookahead)
-  const c5m = candles5m.filter(c => c.time <= currentTime);
-  const c15m = candles15m.filter(c => c.time <= currentTime);
-  const c1h = candles1h.filter(c => c.time <= currentTime);
-  const c4h = candles4h.filter(c => c.time <= currentTime);
+  // Use the canonical contract to split closed vs forming candles.
+  // Fast path: inputs are pre-sorted + pre-deduped, uses binary search.
+  const closed = buildClosedCandleContextFast(
+    candles5m,
+    candles15m,
+    candles1h,
+    candles4h,
+    evaluationTime,
+  );
+
+  // Derive all candle arrays from the contract
+  const c5m = closed.tf5m.closedCandles;
+  const c15m = closed.tf15m.closedCandles;
+  const c1h = closed.tf1h.closedCandles;
+  const c4h = closed.tf4h.closedCandles;
 
   if (c15m.length < 200 || c1h.length < 50 || c4h.length < 50) return null;
 
@@ -452,7 +713,7 @@ function buildReplayContext(
     ask: currentPrice,
     last: currentPrice,
     spread: 0,
-    fetchedAt: currentTime,
+    fetchedAt: evaluationTime,
   };
 
   const recent15m = c15m.slice(-14);
@@ -462,17 +723,36 @@ function buildReplayContext(
     participation: "NORMAL",
   };
 
+  // Slice to last 200 for consumption (creates copies, preserves readonly)
+  const candles5mCtx = c5m.slice(-200);
+  const candles15mCtx = c15m.slice(-200);
+  const candles1hCtx = c1h.slice(-200);
+  const candles4hCtx = c4h.slice(-200);
+
   return {
-    marketContextId: `replay-${pair}-${currentTime}`,
-    generatedAt: currentTime,
+    marketContextId: `replay-${pair}-${evaluationTime}`,
+    generatedAt: evaluationTime,
     pair,
     dataHealth: DataHealth.GOOD,
     macroBias: regimeContext.macroBias,
     regimeContext,
-    candles5m: c5m.slice(-200),
-    candles15m: c15m.slice(-200),
-    candles1h: c1h.slice(-200),
-    candles4h: c4h.slice(-200),
+    candles5m: candles5mCtx,
+    candles15m: candles15mCtx,
+    candles1h: candles1hCtx,
+    candles4h: candles4hCtx,
+    formingCandle5m: closed.tf5m.formingCandle,
+    formingCandle15m: closed.tf15m.formingCandle,
+    formingCandle1h: closed.tf1h.formingCandle,
+    formingCandle4h: closed.tf4h.formingCandle,
+    closedCandleContext: closed,
+    adaptiveMarketState: buildAdaptiveMarketState({
+      candles1h: candles1hCtx,
+      candles15m: candles15mCtx,
+      candles4h: candles4hCtx,
+      regimeContext,
+      spreadPct: 0,
+      dataHealth: String(DataHealth.GOOD),
+    }),
     ticker,
     spreadPct: 0,
     atr,

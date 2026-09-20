@@ -7,7 +7,7 @@
  * timing impact on the hot path.
  */
 
-import { SPOT_FORWARD_TWIN_SCHEMA_VERSION, SPOT_FORWARD_TWIN_SCHEMA_VERSION_2 } from "./spotForwardTwinTypes";
+import { SPOT_FORWARD_TWIN_SCHEMA_VERSION, SPOT_FORWARD_TWIN_SCHEMA_VERSION_3 } from "./spotForwardTwinTypes";
 import { SPOT_POLICY_VERSION } from "./spotTypes";
 import { SPOT_ENGINE_OWNER } from "./spotOwnership";
 import { computeRMultiple } from "./spotExitPolicy";
@@ -42,7 +42,7 @@ import type {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function candleArray(candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[]): ForwardTwinCandleArray {
+function candleArray(candles: readonly { time: number; open: number; high: number; low: number; close: number; volume: number }[]): ForwardTwinCandleArray {
   if (candles.length === 0) return { meta: { count: 0, lastTime: 0, lastClose: 0 }, candles: [] };
   const last = candles[candles.length - 1];
   return {
@@ -69,6 +69,11 @@ export interface ScanSnapshotInput {
   totalFees: number;
   pipelineStopStage?: string | null;
   pipelineStopReasonCode?: string | null;
+  // V4 quality overlay metadata
+  v4QualityScore?: number | null;
+  v4Threshold?: number | null;
+  v4Accepted?: boolean | null;
+  v4RejectReason?: string | null;
 }
 
 export function buildScanSnapshot(input: ScanSnapshotInput): ForwardTwinSnapshot {
@@ -144,6 +149,10 @@ export function buildScanSnapshot(input: ScanSnapshotInput): ForwardTwinSnapshot
       lastEvaluatedAt: intent.lastEvaluatedAt,
       shouldExecute: intentEvaluation?.shouldExecute ?? false,
       evaluationReason: intentEvaluation?.reason ?? "",
+      v4QualityScore: input.v4QualityScore ?? null,
+      v4Threshold: input.v4Threshold ?? null,
+      v4Accepted: input.v4Accepted ?? null,
+      v4RejectReason: input.v4RejectReason ?? null,
     };
   }
 
@@ -263,11 +272,41 @@ export function buildSupervisorSnapshot(input: SupervisorSnapshotInput): Forward
     evaluatedAt: exitDecision.evaluatedAt,
   };
 
+  // C1F5-2: SUPERVISOR snapshots use schema v3 — includes full market context
+  // (candles, regime, volume, dataHealth, marketContextId) for exit parity.
+  // v2 readers ignore the extra fields. v1/v2 snapshots remain readable.
+  const candles: ForwardTwinCandleSnapshot = {
+    candles5m: candleArray(ctx.candles5m),
+    candles15m: candleArray(ctx.candles15m),
+    candles1h: candleArray(ctx.candles1h),
+    candles4h: candleArray(ctx.candles4h),
+  };
+
+  const regime: ForwardTwinRegimeSnapshot = {
+    regime: String(ctx.regimeContext.regime),
+    direction: String(ctx.regimeContext.direction),
+    macroBias: String(ctx.regimeContext.macroBias),
+    volatility: String(ctx.regimeContext.volatility),
+    adx: ctx.regimeContext.adx,
+    ema20: ctx.regimeContext.ema20,
+    ema50: ctx.regimeContext.ema50,
+    ema200: ctx.regimeContext.ema200,
+    emaAlignment: ctx.regimeContext.emaAlignment,
+    bollingerWidth: ctx.regimeContext.bollingerWidth,
+    atrPct: ctx.regimeContext.atrPct,
+    confidence: ctx.regimeContext.confidence,
+    regimeId: ctx.regimeContext.regimeId,
+    contextId: ctx.regimeContext.contextId,
+  };
+
+  const volume: ForwardTwinVolumeSnapshot = {
+    volumeRatio: ctx.volumeMetrics.volumeRatio,
+    volume24h: ctx.volumeMetrics.volume24h,
+    participation: String(ctx.volumeMetrics.participation),
+  };
+
   return {
-    // R4: SUPERVISOR snapshots use schema v2 (adds currentR, initialStopPrice,
-    // initialStopDistanceUsd, riskUsd, currentPrice). v1 readers ignore these
-    // fields. v1 snapshots remain readable (backward compatible).
-    schemaVersion: SPOT_FORWARD_TWIN_SCHEMA_VERSION_2,
+    schemaVersion: SPOT_FORWARD_TWIN_SCHEMA_VERSION_3,
     snapshotType: "SUPERVISOR",
     scanId,
     timestamp: ctx.generatedAt,
@@ -285,6 +324,11 @@ export function buildSupervisorSnapshot(input: SupervisorSnapshotInput): Forward
       spreadPct: ctx.spreadPct,
       fetchedAt: ctx.ticker.fetchedAt,
     },
+    candles,
+    regime,
+    volume,
+    dataHealth: String(ctx.dataHealth),
+    marketContextId: ctx.marketContextId,
   };
 }
 

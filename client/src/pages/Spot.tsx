@@ -222,6 +222,22 @@ export default function Spot() {
             <p className="text-xs text-muted-foreground mt-0.5">
               Motor canónico unificado · SHADOW / REAL · Solo LONG
             </p>
+            {status?.entryStrategy && (
+              <div className="flex items-center gap-3 mt-1.5 text-[11px]">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/5 text-emerald-400 font-mono">
+                  ENTRY STRATEGY: V4 SOFT QUALITY
+                </span>
+                <span className="text-muted-foreground font-mono">
+                  STATUS: {status.entryStrategy.active ? "ACTIVE" : "INACTIVE"}
+                </span>
+                <span className="text-muted-foreground font-mono">
+                  MIN SCORE: {status.entryStrategy.minQualityScore?.toFixed(2)}
+                </span>
+                <span className="text-muted-foreground font-mono">
+                  WEIGHTS: {status.entryStrategy.weights ? `${status.entryStrategy.weights.impulse}/${status.entryStrategy.weights.retracement}/${status.entryStrategy.weights.structure}/${status.entryStrategy.weights.reclaim}/${status.entryStrategy.weights.resumption}` : "N/A"}
+                </span>
+              </div>
+            )}
           </div>
           <Button
             variant="ghost"

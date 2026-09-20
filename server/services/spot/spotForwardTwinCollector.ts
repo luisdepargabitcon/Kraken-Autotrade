@@ -126,11 +126,24 @@ export async function flush(): Promise<void> {
 
   try {
     // Batch INSERT — single query with VALUES list
-    const values = batch.map(snap =>
-      `(${snap.schemaVersion}, '${snap.snapshotType}', '${snap.scanId.replace(/'/g, "''")}', ${snap.timestamp}, '${snap.pair.replace(/'/g, "''")}', '${snap.policyVersion.replace(/'/g, "''")}', '${snap.executionMode.replace(/'/g, "''")}', '${snap.engineOwner.replace(/'/g, "''")}', '${JSON.stringify(snap).replace(/'/g, "''")}'::jsonb)`
-    ).join(', ');
+    // R16: Project regime/direction into physical columns for SCAN snapshots.
+    // SUPERVISOR and FILL get NULL/NULL/NULL for the three projection columns.
+    const values = batch.map(snap => {
+      const jsonStr = JSON.stringify(snap).replace(/'/g, "''");
+      let regimeCol = "NULL";
+      let directionCol = "NULL";
+      let versionCol = "NULL";
+      if (snap.snapshotType === "SCAN") {
+        const projectedRegime = snap.regime?.regime ?? null;
+        const projectedDirection = snap.regime?.direction ?? null;
+        regimeCol = projectedRegime !== null ? `'${projectedRegime.replace(/'/g, "''")}'` : "NULL";
+        directionCol = projectedDirection !== null ? `'${projectedDirection.replace(/'/g, "''")}'` : "NULL";
+        versionCol = "1";
+      }
+      return `(${snap.schemaVersion}, '${snap.snapshotType}', '${snap.scanId.replace(/'/g, "''")}', ${snap.timestamp}, '${snap.pair.replace(/'/g, "''")}', '${snap.policyVersion.replace(/'/g, "''")}', '${snap.executionMode.replace(/'/g, "''")}', '${snap.engineOwner.replace(/'/g, "''")}', '${jsonStr}'::jsonb, ${regimeCol}, ${directionCol}, ${versionCol})`;
+    }).join(', ');
     await db.execute(sql.raw(
-      `INSERT INTO spot_forward_twin_snapshots (schema_version, snapshot_type, scan_id, timestamp, pair, policy_version, execution_mode, engine_owner, data) VALUES ${values}`
+      `INSERT INTO spot_forward_twin_snapshots (schema_version, snapshot_type, scan_id, timestamp, pair, policy_version, execution_mode, engine_owner, data, regime, direction, regime_projection_version) VALUES ${values}`
     ));
     totalFlushed += batch.length;
     lastFlushAt = Date.now();

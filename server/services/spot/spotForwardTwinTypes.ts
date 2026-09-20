@@ -16,6 +16,7 @@
 export const SPOT_FORWARD_TWIN_SCHEMA_VERSION = 1;
 export const SPOT_FORWARD_TWIN_SCHEMA_VERSION_1 = 1;
 export const SPOT_FORWARD_TWIN_SCHEMA_VERSION_2 = 2;
+export const SPOT_FORWARD_TWIN_SCHEMA_VERSION_3 = 3;
 
 export const SPOT_FORWARD_TWIN_RETENTION_DAYS = 7;
 
@@ -37,7 +38,7 @@ export function isForwardTwinSchemaAllowed(
 ): boolean {
   if (snapshotType === "SCAN") return schemaVersion === 1;
   if (snapshotType === "FILL") return schemaVersion === 1;
-  if (snapshotType === "SUPERVISOR") return schemaVersion === 1 || schemaVersion === 2;
+  if (snapshotType === "SUPERVISOR") return schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3;
   return false;
 }
 export const SPOT_FORWARD_TWIN_FLUSH_INTERVAL_MS = 5_000;
@@ -126,6 +127,11 @@ export interface ForwardTwinIntentSnapshot {
   lastEvaluatedAt: number | null;
   shouldExecute: boolean;
   evaluationReason: string;
+  // V4 quality overlay metadata
+  v4QualityScore?: number | null;
+  v4Threshold?: number | null;
+  v4Accepted?: boolean | null;
+  v4RejectReason?: string | null;
 }
 
 export interface ForwardTwinSizingSnapshot {
@@ -299,6 +305,8 @@ export interface ReplayV3Trade {
   mfeR: number;
   maeR: number;
   setupTag: string;
+  economicFidelity: "FILL" | "DEGRADED";
+  feeQuality: "REAL" | "ESTIMATED";
 }
 
 export interface ReplayV3FidelityMetrics {
@@ -318,6 +326,14 @@ export interface ReplayV3FidelityMetrics {
   mismatchedTrades: number;
 }
 
+export interface ReplayV3Diagnostics {
+  noBuyFillCount: number;
+  volumeMismatchCount: number;
+  contextDegradedCount: number;
+  feeEstimatedCount: number;
+  openAtEndCount: number;
+}
+
 export interface ReplayV3Result {
   trades: ReplayV3Trade[];
   finalEquity: number;
@@ -328,4 +344,5 @@ export interface ReplayV3Result {
   fillCount: number;
   fidelity: ReplayV3FidelityMetrics;
   deterministic: boolean;
+  diagnostics: ReplayV3Diagnostics;
 }

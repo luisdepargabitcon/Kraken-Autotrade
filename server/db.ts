@@ -4,12 +4,14 @@ import * as schema from "@shared/schema";
 
 const { Pool } = pg;
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is not set");
-}
-
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+// Pool is created lazily — it does NOT connect until a query is executed.
+// This allows research/offline modules to import storage.ts without DATABASE_URL.
+// If DATABASE_URL is unset, the Pool will throw on first actual query (connect),
+// not at module load time.
+export const pool = new Pool(
+  process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL }
+    : {}
+);
 
 export const db = drizzle(pool, { schema });

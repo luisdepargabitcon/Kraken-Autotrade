@@ -9,7 +9,10 @@
  *   - Completed trades
  *   - Labeled IA trades
  *
- * Also shows a "LOTES EN SEGUIMIENTO" table.
+ * R14F/R14G: lifecycleStatus and labelStatus are SEPARATE concepts.
+ *   - lifecycleStatus: EN_SEGUIMIENTO | COMPLETO (canonical normalizer)
+ *   - labelStatus: ETIQUETADO | NO_ETIQUETADO | NO_DISPONIBLE (durable store)
+ * A durable outage does NOT change lifecycleStatus.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -18,21 +21,32 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Database, ScanLine, Eye, Zap, Activity, AlertCircle, RefreshCw, Info, CheckCircle2, AlertTriangle } from "lucide-react";
-import type { TrackingData, TrackedLot } from "../spotAiTypes";
+import type { TrackingData, TrackedLot, LotLifecycleStatus, LotLabelStatus } from "../spotAiTypes";
 import { fetchJsonWithTimeout } from "../fetchWithTimeout";
 
 const TRACKING_TIMEOUT = 10000;
 
-const STATUS_LABELS: Record<TrackedLot["status"], string> = {
+// R14G: lifecycle and label are independent — separate labels and colors.
+const LIFECYCLE_LABELS: Record<LotLifecycleStatus, string> = {
   EN_SEGUIMIENTO: "EN SEGUIMIENTO",
   COMPLETO: "COMPLETO",
-  ETIQUETADO: "ETIQUETADO",
 };
 
-const STATUS_COLORS: Record<TrackedLot["status"], string> = {
+const LIFECYCLE_COLORS: Record<LotLifecycleStatus, string> = {
   EN_SEGUIMIENTO: "bg-blue-500/20 text-blue-400 border-blue-500/30",
   COMPLETO: "bg-green-500/20 text-green-400 border-green-500/30",
+};
+
+const LABEL_LABELS: Record<LotLabelStatus, string> = {
+  ETIQUETADO: "ETIQUETADO",
+  NO_ETIQUETADO: "NO ETIQUETADO",
+  NO_DISPONIBLE: "NO DISPONIBLE",
+};
+
+const LABEL_COLORS: Record<LotLabelStatus, string> = {
   ETIQUETADO: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  NO_ETIQUETADO: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  NO_DISPONIBLE: "bg-amber-500/20 text-amber-400 border-amber-500/30",
 };
 
 function formatTs(ts: number | null): string {
@@ -40,7 +54,7 @@ function formatTs(ts: number | null): string {
   return new Date(ts).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
 }
 
-function KpiBox({ icon, label, value, tooltip }: { icon: React.ReactNode; label: string; value: number | string; tooltip?: string }) {
+function KpiBox({ icon, label, value, tooltip, valueClass }: { icon: React.ReactNode; label: string; value: number | string; tooltip?: string; valueClass?: string }) {
   return (
     <div className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-1">
       <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -52,7 +66,7 @@ function KpiBox({ icon, label, value, tooltip }: { icon: React.ReactNode; label:
           </span>
         )}
       </div>
-      <div className="text-xl font-bold font-mono">{value}</div>
+      <div className={`text-xl font-bold font-mono ${valueClass ?? ""}`}>{value}</div>
     </div>
   );
 }
@@ -90,6 +104,9 @@ export function ActividadTab() {
       </Card>
     );
   }
+
+  // R14G: labeledTrades null = NO DISP. 0 = real zero.
+  const labeledUnavailable = tracking.labeledTrades === null || tracking.labeledTradesAvailable === false;
 
   return (
     <div className="space-y-3">
@@ -160,7 +177,13 @@ export function ActividadTab() {
             <KpiBox icon={<Database className="h-3 w-3" />} label="Lotes únicos" value={tracking.uniqueLots} />
             <KpiBox icon={<Eye className="h-3 w-3" />} label="En seguimiento" value={tracking.trackedLotsCount} />
             <KpiBox icon={<CheckCircle2Small />} label="Trades completos" value={tracking.completedTrades} />
-            <KpiBox icon={<Zap className="h-3 w-3" />} label="Etiquetados IA" value={tracking.labeledTrades} />
+            {/* R14G: null labeledTrades => NO DISP. */}
+            <KpiBox
+              icon={<Zap className="h-3 w-3" />}
+              label="Etiquetados IA"
+              value={labeledUnavailable ? "NO DISP." : (tracking.labeledTrades as number)}
+              valueClass={labeledUnavailable ? "text-gray-400" : undefined}
+            />
           </div>
         </CardContent>
       </Card>
@@ -187,7 +210,9 @@ export function ActividadTab() {
                   <TableRow>
                     <TableHead className="text-xs">Lot ID</TableHead>
                     <TableHead className="text-xs">Par</TableHead>
-                    <TableHead className="text-xs">Estado</TableHead>
+                    {/* R14G: Two separate columns — lifecycle and label */}
+                    <TableHead className="text-xs">Estado lote</TableHead>
+                    <TableHead className="text-xs">Estado IA</TableHead>
                     <TableHead className="text-xs text-right">Entrada</TableHead>
                     <TableHead className="text-xs text-right">R actual</TableHead>
                     <TableHead className="text-xs text-right">MFE R</TableHead>
@@ -202,40 +227,50 @@ export function ActividadTab() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {tracking.lots.map((lot) => (
-                    <TableRow key={`${lot.lotId}-${lot.pair}`}>
-                      <TableCell className="text-xs font-mono">{lot.lotId}</TableCell>
-                      <TableCell className="text-xs font-mono font-semibold">{lot.pair}</TableCell>
-                      <TableCell>
-                        <Badge className={STATUS_COLORS[lot.status]}>
-                          {STATUS_LABELS[lot.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-right font-mono">
-                        {lot.entryPrice !== null ? lot.entryPrice.toFixed(4) : "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-right font-mono">
-                        {lot.currentR !== null ? lot.currentR.toFixed(2) : "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-right font-mono">
-                        {lot.mfeR !== null ? lot.mfeR.toFixed(2) : "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-right font-mono">
-                        {lot.maeR !== null ? lot.maeR.toFixed(2) : "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-right font-mono">
-                        {lot.initialQty !== null ? lot.initialQty : "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-right font-mono">
-                        {lot.remainingQty !== null ? lot.remainingQty : "—"}
-                      </TableCell>
-                      <TableCell className="text-xs text-right">{lot.buyFills}</TableCell>
-                      <TableCell className="text-xs text-right">{lot.sellFills}</TableCell>
-                      <TableCell className="text-xs text-right">{lot.supervisions}</TableCell>
-                      <TableCell className="text-xs">{formatTs(lot.openSince)}</TableCell>
-                      <TableCell className="text-xs">{formatTs(lot.lastUpdate)}</TableCell>
-                    </TableRow>
-                  ))}
+                  {tracking.lots.map((lot) => {
+                    // R14G: Use lifecycleStatus/labelStatus if present, fall back to status for compat.
+                    const lc: LotLifecycleStatus = lot.lifecycleStatus ?? (lot.status === "COMPLETO" ? "COMPLETO" : "EN_SEGUIMIENTO");
+                    const ls: LotLabelStatus = lot.labelStatus ?? (lot.status === "ETIQUETADO" ? "ETIQUETADO" : "NO_ETIQUETADO");
+                    return (
+                      <TableRow key={`${lot.lotId}-${lot.pair}`}>
+                        <TableCell className="text-xs font-mono">{lot.lotId}</TableCell>
+                        <TableCell className="text-xs font-mono font-semibold">{lot.pair}</TableCell>
+                        <TableCell>
+                          <Badge className={LIFECYCLE_COLORS[lc]}>
+                            {LIFECYCLE_LABELS[lc]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={LABEL_COLORS[ls]}>
+                            {LABEL_LABELS[ls]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {lot.entryPrice !== null ? lot.entryPrice.toFixed(4) : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {lot.currentR !== null ? lot.currentR.toFixed(2) : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {lot.mfeR !== null ? lot.mfeR.toFixed(2) : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {lot.maeR !== null ? lot.maeR.toFixed(2) : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {lot.initialQty !== null ? lot.initialQty : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {lot.remainingQty !== null ? lot.remainingQty : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-right">{lot.buyFills}</TableCell>
+                        <TableCell className="text-xs text-right">{lot.sellFills}</TableCell>
+                        <TableCell className="text-xs text-right">{lot.supervisions}</TableCell>
+                        <TableCell className="text-xs">{formatTs(lot.openSince)}</TableCell>
+                        <TableCell className="text-xs">{formatTs(lot.lastUpdate)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

@@ -22,6 +22,8 @@ import { normalizeCandles, evaluateDataHealth, DataHealth, getCandleCloseTimeMs,
 import { buildSpotRegimeContext } from "./spotRegimeEngine";
 import { calculateATR, type PriceData } from "../indicators";
 import type { SpotMarketContext, SpotCandle, SpotTicker, SpotVolumeMetrics, SpotRegimeContext } from "./spotTypes";
+import { buildClosedCandleContext, type ClosedCandleContext } from "./closedCandleContract";
+import { buildAdaptiveMarketState } from "./spotAdaptiveMarketState";
 
 // ─── Builder ────────────────────────────────────────────────────────────────
 
@@ -43,19 +45,36 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
   const minCandles = input.minCandles ?? 200;
   const generatedAt = Date.now();
 
-  // Fetch all 4 timeframes in parallel
+  // Fetch all 4 timeframes in parallel — SOURCE FINALITY for SPOT V3
+  // getCandlesFinalizedAware ensures provisional candles are never promoted to closed
   const [candles5mRaw, candles15mRaw, candles1hRaw, candles4hRaw] = await Promise.all([
-    MarketDataService.getCandles(pair, "5m"),
-    MarketDataService.getCandles(pair, "15m"),
-    MarketDataService.getCandles(pair, "1h"),
-    MarketDataService.getCandles(pair, "4h"),
+    MarketDataService.getCandlesFinalizedAware(pair, "5m"),
+    MarketDataService.getCandlesFinalizedAware(pair, "15m"),
+    MarketDataService.getCandlesFinalizedAware(pair, "1h"),
+    MarketDataService.getCandlesFinalizedAware(pair, "4h"),
   ]);
 
   // Normalize timestamps (sec → ms, drop invalid)
-  const candles5m = normalizeCandles(candles5mRaw);
-  const candles15m = normalizeCandles(candles15mRaw);
-  const candles1h = normalizeCandles(candles1hRaw);
-  const candles4h = normalizeCandles(candles4hRaw);
+  const candles5mNorm = normalizeCandles(candles5mRaw);
+  const candles15mNorm = normalizeCandles(candles15mRaw);
+  const candles1hNorm = normalizeCandles(candles1hRaw);
+  const candles4hNorm = normalizeCandles(candles4hRaw);
+
+  // Split into closed and forming candles using the canonical contract
+  const closedCandleContext = buildClosedCandleContext(
+    candles5mNorm,
+    candles15mNorm,
+    candles1hNorm,
+    candles4hNorm,
+    generatedAt,
+  );
+
+  // Use ONLY closed candles for all signal/regime/volume logic
+  // No cast — preserve readonly protection from the contract
+  const candles5m = closedCandleContext.tf5m.closedCandles;
+  const candles15m = closedCandleContext.tf15m.closedCandles;
+  const candles1h = closedCandleContext.tf1h.closedCandles;
+  const candles4h = closedCandleContext.tf4h.closedCandles;
 
   // Fetch ticker (bid/ask/last)
   const tickerRaw = await MarketDataService.getTicker(pair);
@@ -76,7 +95,7 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
     staleThresholdMs: staleThreshold,
   });
 
-  // Build regime context from 1h + 4h
+  // Build regime context from 1h + 4h (closed candles only)
   const regimeContext = buildSpotRegimeContext({
     pair,
     candles1h: toOHLCCandles(candles1h),
@@ -84,7 +103,7 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
     dataHealth,
   });
 
-  // Compute ATR from 1h candles
+  // Compute ATR from 1h candles (closed only)
   const priceData1h: PriceData[] = candles1h.map((c) => ({
     price: c.close,
     timestamp: c.time,
@@ -94,12 +113,22 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
   }));
   const atr = priceData1h.length >= 14 ? calculateATR(priceData1h, 14) : 0;
 
-  // Volume metrics from 5m (most granular)
+  // Volume metrics from 5m (closed only, most granular)
   const volumeMetrics = computeVolumeMetrics(candles5m);
 
   // Ticker with spread
   const spotTicker = toSpotTicker(tickerRaw, generatedAt);
   const spreadPct = computeSpreadPct(spotTicker);
+
+  // Build adaptive market state from closed candles
+  const adaptiveMarketState = buildAdaptiveMarketState({
+    candles1h,
+    candles15m,
+    candles4h,
+    regimeContext,
+    spreadPct,
+    dataHealth: String(dataHealth),
+  });
 
   const marketContextId = `mc-${pair}-${generatedAt.toString(36)}-${Math.abs(hash(pair + generatedAt)).toString(36)}`;
 
@@ -114,6 +143,12 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
     candles15m,
     candles1h,
     candles4h,
+    formingCandle5m: closedCandleContext.tf5m.formingCandle,
+    formingCandle15m: closedCandleContext.tf15m.formingCandle,
+    formingCandle1h: closedCandleContext.tf1h.formingCandle,
+    formingCandle4h: closedCandleContext.tf4h.formingCandle,
+    closedCandleContext,
+    adaptiveMarketState,
     ticker: spotTicker,
     spreadPct,
     atr,
@@ -123,7 +158,7 @@ export async function buildSpotMarketContext(input: SpotMarketContextInput): Pro
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function toOHLCCandles(spot: SpotCandle[]): OHLC[] {
+function toOHLCCandles(spot: readonly SpotCandle[]): OHLC[] {
   return spot.map((c) => ({
     time: c.time,
     open: c.open,
@@ -150,7 +185,7 @@ function computeSpreadPct(ticker: SpotTicker): number {
   return mid > 0 ? ((ticker.ask - ticker.bid) / mid) * 100 : 0;
 }
 
-function computeVolumeMetrics(candles: SpotCandle[]): SpotVolumeMetrics {
+function computeVolumeMetrics(candles: readonly SpotCandle[]): SpotVolumeMetrics {
   if (candles.length < 20) {
     return { volumeRatio: 1, volume24h: 0, participation: "NORMAL" };
   }
