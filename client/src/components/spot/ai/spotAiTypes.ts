@@ -2,9 +2,7 @@ export interface SpotAiStatus {
   status: string;
   featureSchemaVersion: number;
   totalSnapshots: number;
-  // R14F/R14G: null = durable unavailable (NO DISP). 0 = real zero.
-  labeledTrades: number | null;
-  labeledTradesAvailable: boolean;
+  labeledTrades: number;
   minTradesToTrain: number;
   preferredTradesToTrain: number;
   entryModelVersion: string | null;
@@ -31,12 +29,11 @@ export interface DatasetOverview {
   fillCount: number;
   firstTimestamp: number;
   lastTimestamp: number;
-  // R14F/R14G: null = durable unavailable. 0 = real zero.
-  labeledTrades: number | null;
-  labeledTradesAvailable: boolean;
-  labeledSampleCount?: number | null;
-  labeledEntryScans?: number | null;
-  unlabeledScanCount?: number | null;
+  labeledTrades: number;
+  labeledSampleCount?: number;
+  // R4: real unlabeled scan count (totalScans - labeledEntryScans).
+  labeledEntryScans?: number;
+  unlabeledScanCount?: number;
   // R4: durable completed trade count (null if 090 not applied).
   completedDurableTrades?: number | null;
   pendingTrades: number | null;
@@ -50,9 +47,8 @@ export interface DatasetOverview {
 export interface DatasetQuality {
   checks: {
     schemaVersionMismatches: number;
-    // R14F/R14G: null = not computable without TOAST decompression.
-    invalidSnapshots: number | null;
-    missingFeatures: number | null;
+    invalidSnapshots: number;
+    missingFeatures: number;
     duplicateEntryFills: number;
     duplicateExitFills: number;
     orphanSupervisor: number;
@@ -67,11 +63,10 @@ export interface DatasetQuality {
     legacyBuyFillMissingLotId?: number;
     completedTradeEconomicInvalid?: number | null;
     duplicateCompletedLot?: number | null;
-    // R14F/R14G: nullable — canonical normalizer checks may be unavailable.
-    partialExitTrades?: number | null;
-    correlationIncompleteTrades?: number | null;
+    partialExitTrades?: number;
+    correlationIncompleteTrades?: number;
     // R5: overfill and multi-fill checks
-    exitVolumeOverflowTrades?: number | null;
+    exitVolumeOverflowTrades?: number;
     multiBuyFills?: number;
     multiSellFills?: number;
     durableStorageAvailable?: boolean;
@@ -152,13 +147,6 @@ export interface RegimeDistribution {
   regime: string;
   direction: string;
   count: number;
-}
-
-// R14F/R14G: regimes endpoint returns available=false on cold cache.
-export interface RegimesResponse {
-  regimes: RegimeDistribution[];
-  available: boolean;
-  reason?: string;
 }
 
 export interface ModelRegistryEntry {
@@ -301,18 +289,11 @@ export function isStructuralInvariant(checks: DatasetQuality): boolean {
   return checks.legacyMixedStructuralInvariant && checks.syntheticLabelsStructuralInvariant;
 }
 
-// R14/R14F/R14G: Forward Twin tracking types.
-export type LotLifecycleStatus = "EN_SEGUIMIENTO" | "COMPLETO";
-export type LotLabelStatus = "ETIQUETADO" | "NO_ETIQUETADO" | "NO_DISPONIBLE";
-
+// R14: Forward Twin tracking types.
 export interface TrackedLot {
   lotId: string;
   pair: string;
-  /** @deprecated Use lifecycleStatus + labelStatus (R14F/R14G). Kept for compat. */
   status: "EN_SEGUIMIENTO" | "COMPLETO" | "ETIQUETADO";
-  // R14F/R14G: lifecycle and label are independent concepts.
-  lifecycleStatus: LotLifecycleStatus;
-  labelStatus: LotLabelStatus;
   entryPrice: number | null;
   currentR: number | null;
   mfeR: number | null;
@@ -338,10 +319,7 @@ export interface TrackingData {
   uniqueLots: number;
   trackedLotsCount: number;
   completedTrades: number;
-  // R14F/R14G: null = durable unavailable. 0 = real zero.
-  labeledTrades: number | null;
-  labeledTradesAvailable: boolean;
+  labeledTrades: number;
   durableStorageAvailable: boolean;
-  durableLotKeysAvailable: boolean;
   lots: TrackedLot[];
 }
