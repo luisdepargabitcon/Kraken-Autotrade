@@ -8406,3 +8406,20 @@ Registro:
 - Artefactos: E1_GRID_RESULTS.csv, E1_WFO_RESULTS.csv, FIXED_COHORT_RESULTS.csv, PATH_DEPENDENT_RESULTS.csv, PRODUCTION_030_RESULTS.csv, SELECTED_PARAMETERS.md, REPORT.md, TEST_RESULTS.md, DEFECTS_AUDIT.md, progress.json, stdout/stderr.log.
 - Registro: SPOT_MODE=SHADOW, REAL_ORDER_SENT=NO, DEPLOY=NO, GRID_CHANGED=NO, DB_MUTATION=NO, ENTRY_V4_UNCHANGED=YES.
 - Pendiente: contraauditoría ChatGPT.
+
+## 2026-09-21 — SPOT EXIT R1 — CORRECCIÓN METODOLÓGICA WFO (checkpoint correctivo)
+
+- **EXIT_R1_METHOD_CORRECTION=YES** · RESEARCH_BASE_SHA=368b19d11cc9fa5949aad623cedaa6a44259a636 · SCOPE=SPOT_ONLY.
+- **Motivo**: (1) WFO inicial usó threshold 0.30 en todos los folds (fold0 vivió bajo 0.50); (2) faltaba comparación fixed-cohort E0 vs E1; (3) production-030 no comparaba E0 vs E1; (4) grid truncado por orden (144→slice) desequilibrado.
+- **Correcciones aplicadas** (`runExitR1Wfo.ts`): `HISTORICAL_ENTRY_THRESHOLDS=[0.50,0.30,0.30]` por fold en TRAIN+TEST; grid balanceado exacto 96 combos (3×2×2×2×2×2) con assert; cohort E1 sobre mismas entradas congeladas → FIXED_COHORT_E0_VS_E1.csv; pasada PRODUCTION_FIXED_030 (E0@0.30 vs E1@0.30 con params E1 del WFO histórico); capture solo sobre mfeR>0.05 (mean+median+n), giveback=mfeR-rMultiple (mean+median); `downloadKrakenZips.ts` eliminado de la rama (ajeno a R1).
+- **Tests**: exitR1.test.ts 26/26 PASS (14 + 12 nuevos: thresholds, grid 96 balanceado, cohort E1 same entries/price/size/stop, production 030, no-test-retune).
+- **Resultados (metodología corregida)**:
+  - Path-dependent OOS: E1 51tr net=217.03 PF=1.308 exp=4.26 dd=209.36 cap=-0.466 gb=0.577 | E0 52tr net=297.38 PF=1.408 exp=5.72 dd=275.98 cap=-0.359 gb=0.519.
+  - Folds: F0 @0.50 sin trades OOS (0/0); F1 E0 gana (+23.9); F2 E0 gana (+56.5).
+  - Pares: E1 solo mejora XRP (+30.8); pierde BTC (-67.5), ETH (-30.5), SOL (-13.1).
+  - Fixed-cohort (mismas entradas): FIXED_E0_NET=297.38 FIXED_E1_NET=182.24 DELTA=-115.14; PF 1.408/1.246; capture -0.359/-0.466; giveback 0.519/0.578; gate REPRODUCES_E0=ALL_PASS (0 mismatches).
+  - Production-030: E0 net=217.22 PF=1.262 | E1 net=118.81 PF=1.147 | DELTA_NET=-98.41 DELTA_PF=-0.116.
+- **VEREDICTO: FAIL → FINAL_VERDICT=KEEP_E0.** E1 pierde en las 3 comparaciones; solo mejora XRP (ROBUSTNESS=LOW). Reduce DD pero empeora net/PF/exp/capture/giveback. No se promueve ningún parámetro; E0 permanece.
+- Validaciones: tsc --noEmit sin errores nuevos en archivos R1; npm run build OK; git diff --check limpio.
+- Registro: ENTRY_V4_CHANGED=NO · DEPLOY_EXECUTED=NO · REAL_ORDER_SENT=NO · GRID_CHANGED=NO · DB_MUTATION=NO.
+- Pendiente: contraauditoría ChatGPT.

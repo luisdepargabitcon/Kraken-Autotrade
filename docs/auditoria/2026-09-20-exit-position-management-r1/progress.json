@@ -1,11 +1,11 @@
 {
-  "updatedAt": "2026-09-21T20:46:26.109Z",
+  "updatedAt": "2026-09-21T21:25:23.225Z",
   "stage": "done",
-  "elapsedSec": 332,
+  "elapsedSec": 303,
   "folds": 3,
-  "e1OosNet": 141.2367537279794,
-  "e1OosPf": 1.1747726091909572,
-  "e0OosNet": 217.22039398354497,
-  "e0OosPf": 1.2623958291647415,
+  "e1OosNet": 217.02833860194545,
+  "e1OosPf": 1.3076330550730673,
+  "e0OosNet": 297.3755756606907,
+  "e0OosPf": 1.4080084959209695,
   "cohortGateAllPass": true
 }

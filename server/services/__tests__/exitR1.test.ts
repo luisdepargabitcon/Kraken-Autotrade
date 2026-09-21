@@ -32,6 +32,12 @@ import {
 import { createE1ExitEvaluator, E1_DISABLED, type SpotExitE1Config } from "../spot/research/spotExitE1";
 import { fixedCohortReplay, frozenEntryToPosition, type FrozenEntry, type CohortCandles } from "../spot/research/fixedCohortReplay";
 import {
+  HISTORICAL_ENTRY_THRESHOLDS,
+  PRODUCTION_030_THRESHOLDS,
+  EXPECTED_GRID_SIZE,
+  buildGrid,
+} from "../spot/research/runExitR1Wfo";
+import {
   ExitReasonType,
   ExitPriority,
   Regime,
@@ -395,5 +401,125 @@ describe("NO_TEST_RETUNE", () => {
     expect(DEFAULT_SPOT_EXIT_CONFIG.trailingDistancePct).toBe(2.0);
     expect(DEFAULT_SPOT_EXIT_CONFIG.profitTargetR).toBe(3.0);
     expect(DEFAULT_SPOT_EXIT_CONFIG.timeEfficiencyNoProgressMinutes).toBe(180);
+  });
+
+  it("grid is built once and is identical for every call (no test-informed retune)", () => {
+    const g1 = buildGrid().map(c => c.label);
+    const g2 = buildGrid().map(c => c.label);
+    expect(g1).toEqual(g2);
+    for (const combo of buildGrid()) {
+      expect(combo).not.toHaveProperty("fold");
+      expect(combo).not.toHaveProperty("testStart");
+      expect(combo).not.toHaveProperty("oos");
+    }
+  });
+});
+
+// ─── WFO methodology corrections (2026-09-21) ───────────────────────────────
+
+describe("HISTORICAL_ENTRY_THRESHOLDS_FIXED", () => {
+  it("is exactly [0.50, 0.30, 0.30]", () => {
+    expect([...HISTORICAL_ENTRY_THRESHOLDS]).toEqual([0.50, 0.30, 0.30]);
+    expect(HISTORICAL_ENTRY_THRESHOLDS.length).toBe(3);
+  });
+  it("FOLD0_ENTRY_THRESHOLD_050", () => {
+    expect(HISTORICAL_ENTRY_THRESHOLDS[0]).toBe(0.50);
+  });
+  it("FOLD1_ENTRY_THRESHOLD_030", () => {
+    expect(HISTORICAL_ENTRY_THRESHOLDS[1]).toBe(0.30);
+  });
+  it("FOLD2_ENTRY_THRESHOLD_030", () => {
+    expect(HISTORICAL_ENTRY_THRESHOLDS[2]).toBe(0.30);
+  });
+});
+
+describe("GRID_EXACTLY_96", () => {
+  it("buildGrid returns exactly 96 combos", () => {
+    expect(buildGrid().length).toBe(96);
+    expect(EXPECTED_GRID_SIZE).toBe(96);
+  });
+});
+
+describe("GRID_BALANCED", () => {
+  it("every dimension value appears with equal frequency", () => {
+    const grid = buildGrid();
+    const count = <K extends keyof SpotExitE1Config>(k: K, v: NonNullable<SpotExitE1Config[K]>) =>
+      grid.filter(c => c[k] === v).length;
+    for (const v of [120, 180, 240]) expect(count("staleSinceLastMfeMinutes", v)).toBe(32);
+    for (const v of [0.3, 0.5]) expect(count("staleMaxR", v)).toBe(48);
+    for (const v of [0.8, 1.2]) expect(count("mfeGivebackActivateR", v)).toBe(48);
+    for (const v of [0.4, 0.6]) expect(count("mfeGivebackPct", v)).toBe(48);
+    for (const v of [2.0, 2.5]) expect(count("atrTrailMult", v)).toBe(48);
+    for (const v of [false, true]) expect(count("feeAwareBreakEven", v)).toBe(48);
+    // full cartesian coverage: all labels unique
+    expect(new Set(grid.map(c => c.label)).size).toBe(96);
+  });
+});
+
+describe("FIXED_COHORT_E1_SAME_ENTRIES", () => {
+  // Same synthetic candles as FIXED_COHORT_REPRODUCES_E0
+  const t0 = 1_700_000_000_000;
+  const makeCandles = (): CohortCandles => {
+    const c5: SpotCandle[] = [];
+    for (let i = 0; i < 200; i++) {
+      const price = i < 100 ? 100_000 : 96_000;
+      c5.push({ time: t0 + i * 5 * 60 * 1000, open: price, high: price + 100, low: price - 100, close: price, volume: 100 });
+    }
+    const c15: SpotCandle[] = [];
+    for (let i = 0; i < 80; i++) {
+      const price = i < 40 ? 100_000 : 96_000;
+      c15.push({ time: t0 + i * 15 * 60 * 1000, open: price, high: price + 100, low: price - 100, close: price, volume: 300 });
+    }
+    return { candles5m: c5, candles15m: c15, candles1h: c15.filter((_, i) => i % 4 === 0), candles4h: c15.filter((_, i) => i % 16 === 0) };
+  };
+  const entry: FrozenEntry = {
+    lotId: "cohort-e1", pair: "BTC/USD", signalId: "s1",
+    setupTag: SetupTag.PULLBACK_CONTINUATION, regimeAtEntry: "TREND",
+    directionAtEntry: "BULLISH", entryPrice: 100_000, volume: 0.1,
+    openedAtMs: t0 + 10 * 5 * 60 * 1000,
+    initialStopPrice: 97_000, initialStopDistanceUsd: 3000,
+    riskUsd: 50, notionalUsd: 10_000, entryFee: 9,
+  };
+  const e1Eval = createE1ExitEvaluator({
+    staleSinceLastMfeMinutes: 120, staleMaxR: 0.5,
+    mfeGivebackActivateR: 0.8, mfeGivebackPct: 0.4,
+    atrTrailMult: 2.0, feeAwareBreakEven: true,
+  }, TEST_FEE_MODEL);
+
+  it("E1 cohort replay keeps the same entries (same lotIds, same count)", () => {
+    const r = fixedCohortReplay([entry], makeCandles(), DEFAULT_SPOT_EXIT_CONFIG, e1Eval, TEST_FEE_MODEL);
+    expect(r.trades.length).toBe(1);
+    expect(r.trades[0].lotId).toBe(entry.lotId);
+    expect(r.trades[0].signalId).toBe(entry.signalId);
+  });
+
+  it("E1 cohort replay never modifies entry price", () => {
+    const r = fixedCohortReplay([entry], makeCandles(), DEFAULT_SPOT_EXIT_CONFIG, e1Eval, TEST_FEE_MODEL);
+    expect(r.trades[0].entryPrice).toBe(entry.entryPrice);
+    expect(r.trades[0].openedAtMs).toBe(entry.openedAtMs);
+  });
+
+  it("E1 cohort replay never modifies size", () => {
+    const r = fixedCohortReplay([entry], makeCandles(), DEFAULT_SPOT_EXIT_CONFIG, e1Eval, TEST_FEE_MODEL);
+    expect(r.trades[0].volume).toBe(entry.volume);
+  });
+
+  it("frozenEntryToPosition preserves the initial stop", () => {
+    const pos = frozenEntryToPosition(entry);
+    expect(pos.initialStopPrice).toBe(entry.initialStopPrice);
+    expect(pos.initialStopDistanceUsd).toBe(entry.initialStopDistanceUsd);
+    expect(pos.qtyRemaining).toBe(entry.volume);
+    expect(pos.openedAt).toBe(entry.openedAtMs);
+  });
+});
+
+describe("PRODUCTION_030_HAS_E0_AND_E1", () => {
+  it("production analysis thresholds are 0.30 on all folds and cover both policies", () => {
+    expect([...PRODUCTION_030_THRESHOLDS]).toEqual([0.30, 0.30, 0.30]);
+    // Both evaluators exist and are invocable at the production threshold
+    const e0 = evaluateExit;
+    const e1 = createE1ExitEvaluator(E1_DISABLED, TEST_FEE_MODEL);
+    expect(typeof e0).toBe("function");
+    expect(typeof e1).toBe("function");
   });
 });
