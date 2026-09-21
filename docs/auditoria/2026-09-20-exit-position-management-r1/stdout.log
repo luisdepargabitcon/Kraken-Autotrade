@@ -1,0 +1,24 @@
+[NonceManager] Initialized — padding=10000ms, initialNonce=1790023264262000 (2026-09-21T20:41:04.262Z)
+[BTC/USD] precomputed in 45.3s
+[ETH/USD] precomputed in 43.1s
+[SOL/USD] precomputed in 44.7s
+[XRP/USD] precomputed in 45.2s
+GRID=100 combos/fold (cap 100)
+
+=== FOLD 0: train 2026-03-15→2026-06-13 | test 2026-06-13→2026-07-13 ===
+BEST=stale180_r0.5_gb1.2@0.4_atr2_fa0 score=-1.14 trainTrades=24
+FOLD 0 TEST: E1 net=-75.79 pf=0.262 | E0 net=-80.16 pf=0.190 | cohort gate=PASS
+
+=== FOLD 1: train 2026-04-14→2026-07-13 | test 2026-07-13→2026-08-12 ===
+BEST=stale180_r0.5_gb1.2@0.4_atr2_fa0 score=0.19 trainTrades=21
+FOLD 1 TEST: E1 net=-18.47 pf=0.806 | E0 net=5.41 pf=1.060 | cohort gate=PASS
+
+=== FOLD 2: train 2026-05-14→2026-08-12 | test 2026-08-12→2026-09-11 ===
+BEST=stale180_r0.5_gb0.8@0.6_atr2.5_fa0 score=-0.52 trainTrades=12
+FOLD 2 TEST: E1 net=235.50 pf=1.386 | E0 net=291.96 pf=1.457 | cohort gate=PASS
+
+WFO_DONE
+E1_OOS: trades=58 net=141.24 pf=1.175 dd=217.63 exp=2.435 wr=39.7%
+E0_OOS: trades=59 net=217.22 pf=1.262 dd=217.63 exp=3.682 wr=40.7%
+COHORT_GATE=ALL_PASS
+OUTPUT_DIR=C:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE_SPOT_ADAPTIVE_V3\docs\auditoria\2026-09-20-exit-position-management-r1

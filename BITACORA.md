@@ -8389,3 +8389,20 @@ Registro:
 - UNIT=8/8
 - DB_MUTATION=NO (DATABASE_URL dummy a puerto muerto; ningún runner ejecutó queries)
 - EXIT_R1_STARTED=NO
+
+## 2026-09-21 — SPOT EXIT R1 — FORENSIC + WFO ADAPTIVE POSITION MANAGEMENT (research/spot-exit-r1)
+
+- **Scope**: exit-only research. Entry V4 @0.30 congelado (production threshold). SHADOW. Sin deploy, sin REAL, sin GRID.
+- **E0 forensic** (`runExitR1Forensic.ts`): ventana completa, 84 trades, netPnl=-85.19, PF=0.931, maxDD=328.40, giveback medio 0.49R vs MFE medio 0.567R. ETH (PF 0.469) y XRP (PF 0.528) concentran la pérdida. Artefactos: `docs/auditoria/2026-09-20-exit-position-management-r1/e0_forensic_*`.
+- **Defectos auditados** (DEFECTS_AUDIT.md): A CONFIRMADO (`timeEfficiencyNoProgressMinutes` mide desde apertura, no desde último MFE); B/C/D CONFIRMADOS como config muerta (`trailingStepPct`, `regimeExit*`, `defensiveMaxAdversePctR` — deuda documentada, no corregida); E/G/H no confirmados; F parcial (etiquetado BE vs TRAILING, sin impacto económico).
+- **E1 evaluator** (`spotExitE1.ts`): stale-desde-último-MFE + giveback protection + ATR ratchet + fee-aware BE. Hooks `exitEvaluator`/`onTradeClosed` en `fastResearchReplay.ts`; `fixedCohortReplay.ts` para gate de reproducción.
+- **Tests**: `exitR1.test.ts` 14/14 PASS (temporalidad, invarianza E0, monotonicidad ratchet/MFE, FIXED_COHORT_REPRODUCES_E0, E0 config frozen).
+- **Smoke**: 1 fold end-to-end validado, cohort gate PASS.
+- **WFO completo**: 3 folds (90d train/30d test/30d step), 96 combos/fold, selección `objectiveScore` en train. Determinista (dos runs idénticos). Completado en ~5.7 min/run.
+- **Resultados OOS**: E1 net=141.24 PF=1.175 exp=2.44 dd=209.36 wr=39.7% | E0 net=217.22 PF=1.262 exp=3.68 dd=275.98 wr=40.7%. Por fold: F0 E1 gana (+4.4), F1/F2 E0 gana (+23.9/+56.5). Por par: E1 solo mejora XRP (+30.8); pierde BTC (-67.5), ETH (-30.5), SOL (-8.7). Giveback E1 0.555R > E0 0.506R.
+- **Fixed-cohort gate**: 3/3 folds PASS, 0 mismatches.
+- **Production 0.30**: registrado en PRODUCTION_030_RESULTS.csv (baseline E0 por fold/par).
+- **VEREDICTO: FAIL** — E1 no supera E0 en OOS agregado. No se promueve ningún parámetro; E0 permanece en producción. Defecto A sigue siendo real pero su corrección aislada no paga OOS.
+- Artefactos: E1_GRID_RESULTS.csv, E1_WFO_RESULTS.csv, FIXED_COHORT_RESULTS.csv, PATH_DEPENDENT_RESULTS.csv, PRODUCTION_030_RESULTS.csv, SELECTED_PARAMETERS.md, REPORT.md, TEST_RESULTS.md, DEFECTS_AUDIT.md, progress.json, stdout/stderr.log.
+- Registro: SPOT_MODE=SHADOW, REAL_ORDER_SENT=NO, DEPLOY=NO, GRID_CHANGED=NO, DB_MUTATION=NO, ENTRY_V4_UNCHANGED=YES.
+- Pendiente: contraauditoría ChatGPT.

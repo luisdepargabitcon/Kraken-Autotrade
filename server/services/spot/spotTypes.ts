@@ -334,6 +334,8 @@ export enum ExitReasonType {
   PROFIT = "PROFIT",
   TIME_EFFICIENCY = "TIME_EFFICIENCY",
   RESEARCH_WINDOW_END = "RESEARCH_WINDOW_END",
+  /** Research-only (Exit R1): MFE giveback protection exit. Not used by production E0. */
+  MFE_GIVEBACK = "MFE_GIVEBACK",
 }
 
 export enum ExitPriority {

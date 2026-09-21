@@ -1,0 +1,53 @@
+{
+  "generatedAt": "2026-09-20T21:38:46.727Z",
+  "policy": "E0 (DEFAULT_SPOT_EXIT_CONFIG, production evaluateExit)",
+  "v4Threshold": 0.3,
+  "feeModel": {
+    "exchange": "revolutx",
+    "takerFeePct": 0.09,
+    "makerFeePct": 0,
+    "quality": "ESTIMATED"
+  },
+  "smoke": false,
+  "totalTrades": 84,
+  "netPnl": -85.1889333502495,
+  "pf": 0.931241657493165,
+  "maxDD": 328.404900124724,
+  "avgGivebackR": 0.4918542280809733,
+  "avgMfeR": 0.5670690046415785,
+  "avgCapturePct": -692.4830306223603,
+  "pairSummaries": [
+    {
+      "pair": "BTC/USD",
+      "trades": 12,
+      "netPnl": 156.42345522705756,
+      "pf": 2.1186853257669283,
+      "winRate": 0.5833333333333334,
+      "maxDD": 68.21722104203036
+    },
+    {
+      "pair": "ETH/USD",
+      "trades": 20,
+      "netPnl": -175.66745333726666,
+      "pf": 0.4686448437807964,
+      "winRate": 0.3,
+      "maxDD": 220.67872590725528
+    },
+    {
+      "pair": "SOL/USD",
+      "trades": 31,
+      "netPnl": 120.00859766563177,
+      "pf": 1.3203822522711508,
+      "winRate": 0.41935483870967744,
+      "maxDD": 136.67284090657813
+    },
+    {
+      "pair": "XRP/USD",
+      "trades": 21,
+      "netPnl": -185.95353290567212,
+      "pf": 0.5279784441406705,
+      "winRate": 0.23809523809523808,
+      "maxDD": 217.62671300369038
+    }
+  ]
+}

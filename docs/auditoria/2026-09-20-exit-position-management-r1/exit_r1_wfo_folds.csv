@@ -1,0 +1,4 @@
+fold,trainStart,trainEnd,testStart,testEnd,bestCombo,trainScore,trainTrades,testTrades,testNetPnl,testPF,testExpectancy,testMaxDD,e0TestTrades,e0TestNetPnl,e0TestPF,e0TestMaxDD,cohortGate,cohortMismatches
+0,2026-03-15,2026-06-13,2026-06-13,2026-07-13,stale180_r0.5_gb1.2@0.4_atr2_fa0,-1.14,24,7,-75.79,0.262,-10.827,77.49,7,-80.16,0.190,80.16,true,0
+1,2026-04-14,2026-07-13,2026-07-13,2026-08-12,stale180_r0.5_gb1.2@0.4_atr2_fa0,0.19,21,5,-18.47,0.806,-3.694,75.20,5,5.41,1.060,71.25,true,0
+2,2026-05-14,2026-08-12,2026-08-12,2026-09-11,stale180_r0.5_gb0.8@0.6_atr2.5_fa0,-0.52,12,46,235.50,1.386,5.119,217.63,47,291.96,1.457,217.63,true,0

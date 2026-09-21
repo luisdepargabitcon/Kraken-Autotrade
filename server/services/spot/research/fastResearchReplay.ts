@@ -224,10 +224,29 @@ function checkV3Acceptance(
 
 // ─── Fast replay ───────────────────────────────────────────────────────────
 
+/** Research-only hooks for Exit R1: custom exit evaluator + per-trade observer. */
+export interface FastReplayOpts {
+  /** If set, replaces production evaluateExit for open positions (E1 research). */
+  exitEvaluator?: (
+    position: SpotPosition,
+    state: SpotExitState,
+    ctx: SpotMarketContext,
+    config: import("../spotExitPolicy").SpotExitConfig,
+    nowMs: number,
+  ) => import("../spotTypes").SpotExitDecision;
+  /** Called after each trade closes with full position + audit metrics snapshot. */
+  onTradeClosed?: (
+    position: SpotPosition,
+    trade: ReplayTrade,
+    metrics: { mfeR: number; maeR: number; highestPrice: number; lowestPrice: number; mfeTimestamp: number; maeTimestamp: number } | null,
+  ) => void;
+}
+
 export function fastReplay(
   precomputed: PrecomputedData,
   config: ReplayConfig,
   stageMask: ResearchV3StageMask = ALL_STAGES_MASK,
+  opts?: FastReplayOpts,
 ): ReplayResult {
   const { frames, sorted5m, sorted15m, sorted1h, sorted4h, terminalClosePrice, terminalCloseTime } = precomputed;
   const pair = config.pair;
@@ -311,6 +330,7 @@ export function fastReplay(
             executionMode: ExecutionMode.SHADOW, policyVersion: SPOT_POLICY_VERSION,
             v4QualityScore: v4ScoreMap.get(pos.lotId) ?? -1,
           });
+          opts?.onTradeClosed?.(pos, trades[trades.length - 1], posMetrics);
         }
         boundaryClosed = true;
       }
@@ -335,7 +355,8 @@ export function fastReplay(
 
         auditTracker.updatePrice(pos, ctx.ticker.last, evaluationTime);
 
-        const exitDecision = evaluateExit(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, evaluationTime);
+        const exitEvaluator = opts?.exitEvaluator ?? evaluateExit;
+        const exitDecision = exitEvaluator(pos, state, ctx, config.exitConfig ?? DEFAULT_SPOT_EXIT_CONFIG, evaluationTime);
         if (exitDecision.shouldExit) {
           const exitFillPrice = hasNextCandle ? frame.fillPrice! : currentPrice;
           const feeBreakdown = computeFeeBreakdown(pos.entryPrice, exitFillPrice, pos.qtyRemaining, feeModel);
@@ -368,6 +389,7 @@ export function fastReplay(
             executionMode: ExecutionMode.SHADOW, policyVersion: SPOT_POLICY_VERSION,
             v4QualityScore: v4ScoreMap.get(pos.lotId) ?? -1,
           });
+          opts?.onTradeClosed?.(pos, trades[trades.length - 1], posMetrics);
           positions.splice(p, 1);
           exitStates.delete(pos.lotId);
         }
@@ -573,6 +595,7 @@ export function fastReplay(
         executionMode: ExecutionMode.SHADOW, policyVersion: SPOT_POLICY_VERSION,
         v4QualityScore: v4ScoreMap.get(pos.lotId) ?? -1,
       });
+      opts?.onTradeClosed?.(pos, trades[trades.length - 1], posMetrics);
     }
   }
 
