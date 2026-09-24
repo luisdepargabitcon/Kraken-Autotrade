@@ -278,10 +278,16 @@ function makeCtx(pair = "BTC/USD"): SpotMarketContext {
       bollingerWidth: 2.5, atrPct: 1.5, confidence: 0.75, dataHealth: DataHealth.GOOD, generatedAt: Date.now(),
     },
     candles5m: [], candles15m: [], candles1h: [], candles4h: [],
+    formingCandle5m: null,
+    formingCandle15m: null,
+    formingCandle1h: null,
+    formingCandle4h: null,
+    closedCandleContext: null,
+    adaptiveMarketState: null,
     ticker: { bid: 60000, ask: 60010, last: 60005, spread: 10, fetchedAt: Date.now() },
     spreadPct: 0.02, atr: 900,
     volumeMetrics: { volumeRatio: 1.5, volume24h: 50000000, participation: "NORMAL" },
-  };
+  } as unknown as SpotMarketContext;
 }
 
 function makeIntent(pair = "BTC/USD", signalId?: string): SpotEntryIntent {
