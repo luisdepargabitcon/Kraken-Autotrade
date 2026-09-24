@@ -51,10 +51,14 @@ function makeCtx(atrPct = 1.5, price = 100_000, candles15m: SpotCandle[] = []): 
   return {
     marketContextId: "m", generatedAt: Date.now(), pair: "BTC/USD",
     dataHealth: DataHealth.GOOD, macroBias: MacroBias.BULLISH,
-    regimeContext, candles5m: [], candles15m, candles1h: [], candles4h: [],
+    regimeContext,
+    candles5m: [], candles15m, candles1h: [], candles4h: [],
+    formingCandle5m: null, formingCandle15m: null, formingCandle1h: null, formingCandle4h: null,
+    closedCandleContext: {} as any,
+    adaptiveMarketState: {} as any,
     ticker, spreadPct: 0.05, atr: atrPct * price / 100,
-    volumeMetrics: { volumeRatio: 1.2, volume24h: 1e6, participation: "NORMAL" } as any,
-  } as SpotMarketContext;
+    volumeMetrics: { volumeRatio: 1.2, volume24h: 1e6, participation: "NORMAL" },
+  } as unknown as SpotMarketContext;
 }
 
 function makeInput(overrides: Partial<RiskScalerInput> = {}): RiskScalerInput {
