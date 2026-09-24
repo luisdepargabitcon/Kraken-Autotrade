@@ -66,7 +66,7 @@ export const DEFAULT_SPOT_RISK_CONFIG: SpotRiskConfig = {
   maxRiskPerPairUsd: 100,
   minOrderUsd: 100,
   maxOrderUsd: 5000,
-  maxLotsPerPair: 2,
+  maxLotsPerPair: 1,
   slAtrMultiplier: 2.0,
   minStopDistancePct: 0.5,
   maxStopDistancePct: 5.0,

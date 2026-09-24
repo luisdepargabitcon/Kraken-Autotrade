@@ -8389,3 +8389,48 @@ Registro:
 - UNIT=8/8
 - DB_MUTATION=NO (DATABASE_URL dummy a puerto muerto; ningún runner ejecutó queries)
 - EXIT_R1_STARTED=NO
+
+## SPOT MAX1 — productización del defecto de stacking (2026-09-24)
+
+SPOT_STACKING_DEFECT_CONFIRMED=YES
+
+FORENSIC_SHA=45120521950b0dd65849cebd922e867f02e5d104
+PRODUCTIZATION_BASE_SHA=1784f94845ea49fb7beefe05f74deb11287908d8
+
+OLD_MAX_LOTS_PER_PAIR=2
+NEW_MAX_LOTS_PER_PAIR=1
+
+Cambio funcional único: DEFAULT_SPOT_RISK_CONFIG.maxLotsPerPair 2→1
+(server/services/spot/spotRiskManager.ts).
+
+Race guard mínimo (server/services/spot/spotEngine.ts): la gate de sizing
+corría ANTES de la sección crítica por par y los "critical sections" son
+contadores de drain, no mutex. Además un REAL PENDING_FILL vive en
+order_intents sin fila en open_positions. Se añade:
+
+- pairEntryLocks: mutex FIFO por par que serializa gate→persist dentro de
+  la sección crítica. Pares distintos usan cadenas independientes
+  (NO es un global maxConcurrent=1).
+- countInFlightEntryIntentsForPair: cuenta order_intents en
+  pending/accepted/uncertain/PENDING_FILL del mismo par (excluye el propio
+  internalIntentId). Fail-closed ante error DB.
+- Re-check dentro de la sección crítica: open lots + in-flight >=
+  maxLotsPerPair → bloqueo con reasonCode MAX_LOTS_REACHED (sin nueva
+  familia de estados).
+
+ENTRY_V4_CHANGED=NO (hash a7f6b656f4)
+EXIT_E0_CHANGED=NO (hash a1e8862c21)
+RISK_MODEL_CHANGED=NO (R0 intacto)
+RISK_LIMIT_ONLY_CHANGED=YES
+
+Regresión certificada (runStackingControl, umbrales históricos
+[0.50,0.30,0.30] y producción 0.30):
+
+- HISTORICAL MAX1: 40 trades, net=332.71, PF=1.624, DD=203.72
+- PRODUCTION_030 MAX1: 46 trades, net=241.58, PF=1.382, DD=203.72
+
+Artefactos: docs/auditoria/spot-max1-productizacion/MAX1_CERTIFICATION_CONTROL.csv
+Tests nuevos: server/services/__tests__/spotMax1SingleLot.test.ts (13/13)
+
+DEPLOY_EXECUTED=NO
+REAL_ORDER_SENT=NO

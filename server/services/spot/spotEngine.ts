@@ -256,6 +256,30 @@ function enterPairCriticalSection(pair: string): void {
   pairCriticalSectionCount.set(normalized, (pairCriticalSectionCount.get(normalized) ?? 0) + 1);
 }
 
+// ─── Per-pair entry mutex ───────────────────────────────────────────────────
+// MAX1: pairCriticalSectionCount is a drain counter, NOT mutual exclusion —
+// two concurrent same-pair entries can be inside the "critical section"
+// simultaneously. With maxLotsPerPair=1 that allows both to pass the sizing
+// gate (openLots counted before the section) and materialize two lots.
+// This FIFO promise-chain lock serializes the same-pair execution window
+// (gate re-check → persist/reserve → placeOrder/persist position). Different
+// pairs use independent chains and are never serialized against each other.
+
+const pairEntryLocks = new Map<string, Promise<void>>();
+
+async function acquirePairEntryLock(pair: string): Promise<() => void> {
+  const normalized = normalizePair(pair);
+  const prev = pairEntryLocks.get(normalized) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  pairEntryLocks.set(normalized, prev.then(() => current, () => current));
+  await prev;
+  return () => {
+    release();
+    if (pairEntryLocks.get(normalized) === current) pairEntryLocks.delete(normalized);
+  };
+}
+
 function exitPairCriticalSection(pair: string): void {
   const normalized = normalizePair(pair);
   const current = pairCriticalSectionCount.get(normalized) ?? 0;
@@ -2041,8 +2065,41 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
   let pairCriticalSectionEntered = false;
   enterPairCriticalSection(intent.pair);
   pairCriticalSectionEntered = true;
+  // MAX1: serialize same-pair execution — the sizing gate ran before this point
+  // and a concurrent same-pair entry may materialize concurrently otherwise.
+  const releasePairEntryLock = await acquirePairEntryLock(intent.pair);
 
   try {
+    // MAX1 race guard: the sizing gate (evaluateSizing with openLots) ran BEFORE
+    // this critical section was entered. A concurrent same-pair evaluation could
+    // have passed sizing and materialized a position/intent in between — and a
+    // REAL PENDING_FILL lives in order_intents without an open_positions row.
+    // Inside the per-pair critical section, re-count open lots + in-flight entry
+    // intents and block if the per-pair limit would be exceeded.
+    const inFlightSamePair = await countOpenLotsForPair(intent.pair)
+      + await countInFlightEntryIntentsForPair(intent.pair, internalIntentId);
+    if (inFlightSamePair >= DEFAULT_SPOT_RISK_CONFIG.maxLotsPerPair) {
+      logActivity({
+        pair: intent.pair,
+        category: "RISK",
+        severity: "INFO",
+        title: `Entry blocked inside critical section — max lots per pair`,
+        explanation: `MAX1 race guard: ${inFlightSamePair} open/in-flight lot(s) for ${intent.pair} detected inside the per-pair critical section (limit ${DEFAULT_SPOT_RISK_CONFIG.maxLotsPerPair}).`,
+        decision: "BLOCKED",
+        executionMode: mode,
+        reasonCode: "MAX_LOTS_REACHED",
+        intentId: internalIntentId,
+      });
+      return {
+        executed: false,
+        stage: "SIZING",
+        reasonCode: "MAX_LOTS_REACHED",
+        reason: `Max lots per pair reached inside critical section (${inFlightSamePair}/${DEFAULT_SPOT_RISK_CONFIG.maxLotsPerPair})`,
+        sizing,
+        submitted: false,
+      };
+    }
+
     // ─── REAL: persist+reserve + outcome handling ──────────────────────────────
     if (mode === ExecutionMode.REAL) {
       let venue: string;
@@ -2612,6 +2669,7 @@ async function executeEntry(intent: SpotEntryIntent, ctx: SpotMarketContext, mod
     });
     return { executed: true, stage: "EXECUTED", reasonCode: "ENTRY_FILLED", reason: `Posición abierta: ${lotId} @ ${result.fillPrice}`, sizing, submitted: true };
   } finally {
+    releasePairEntryLock();
     if (entryCriticalSectionEntered) exitEntryCriticalSection();
     if (pairCriticalSectionEntered) exitPairCriticalSection(intent.pair);
   }
@@ -3571,6 +3629,33 @@ async function countOpenLotsForPair(pair: string): Promise<number> {
     // BUY that violates max-lots-per-pair risk limits. Callers MUST block on this throw.
     console.error(`[SpotEngine] R10.9-4: countOpenLotsForPair(${pair}) DB error — cannot conclude 0 open lots:`, error.message);
     throw new Error(`REAL_OPEN_LOTS_QUERY_FAILED_FAIL_CLOSED: countOpenLotsForPair(${pair}): ${error.message}`);
+  }
+}
+
+/**
+ * Count in-flight SPOT entry order_intents for a pair — statuses that can still
+ * materialize a position ('pending', 'accepted', 'uncertain', 'PENDING_FILL')
+ * but are not yet represented in open_positions. Excludes the current intent's
+ * own internalIntentId (a resubmission of the same signal must not count
+ * itself). B03: only SPOT engine intents.
+ */
+async function countInFlightEntryIntentsForPair(pair: string, excludeInternalIntentId: string): Promise<number> {
+  try {
+    const result = await db.execute(sql`
+      SELECT COUNT(*) as count FROM order_intents
+      WHERE pair = ${pair}
+        AND engine_owner = ${SPOT_ENGINE_OWNER}
+        AND policy_version = ${SPOT_POLICY_VERSION}
+        AND lower(side) = 'buy'
+        AND status IN ('pending', 'accepted', 'uncertain', 'PENDING_FILL')
+        AND internal_intent_id != ${excludeInternalIntentId}
+    `);
+    return Number(result.rows[0]?.count ?? 0);
+  } catch (error: any) {
+    // Fail-closed: cannot prove the pair has no in-flight entry — block rather
+    // than risk exceeding maxLotsPerPair.
+    console.error(`[SpotEngine] MAX1: countInFlightEntryIntentsForPair(${pair}) DB error — cannot conclude 0 in-flight intents:`, error.message);
+    throw new Error(`IN_FLIGHT_INTENTS_QUERY_FAILED_FAIL_CLOSED: countInFlightEntryIntentsForPair(${pair}): ${error.message}`);
   }
 }
 
