@@ -33,10 +33,25 @@ Consultas: SELECT only sobre `krakenbot-staging-db` (krakenbot_staging).
   250 BUY_ALLOWED (aprobado pero sin ejecución en esa ventana), 91 BUY_BLOCKED.
 - `SPOT_EXIT_EVENTS.csv` — 27 evaluaciones de supervisor con shouldExit=true
   sobre la cohorte.
-- `SUMMARY.md` — hechos agregados.
+- `SPOT_ENTRY_CLUSTERS.csv` — agrupación de entradas dependientes (mismo
+  pair + setupTag, separación consecutiva <30min): 29 trades → 20 clusters.
+- `SUMMARY.md` — hechos agregados con scope separado CERTIFIED_V4 (4 pares) vs
+  OTHER_SPOT_PAIRS (TON).
 - `process.cjs` — script de procesamiento reproducible (local, read-only).
 - Los dumps psql crudos (`raw/`) NO se suben a Git por política anti-dumps;
   los CSV finales contienen todos los campos extraídos.
+
+## Corrección v2 (data integrity)
+
+- Export re-hecho como **JSONL estructurado** (`jsonb_build_object` por fila)
+  — elimina el bug de `split(",")` sobre campos quoted con comas que desplazaba
+  columnas en SPOT_ENTRY_DECISIONS.csv.
+- `entryStrategyId` ya no está hardcodeado: no se persiste para trades
+  cerrados → NULL documentado.
+- Estados de salida por lifecycle completo del lot: highestPrice = máximo
+  observado, breakEven/trailingActivated = ANY snapshot true; último snapshot
+  ≤ close como estado final. Validación: 0 trades TRAILING sin flag.
+- Revalidado contra SQL directo: TRADE_COUNT/NET_PNL/FEES/LOTID = MATCH.
 
 ## Notas
 

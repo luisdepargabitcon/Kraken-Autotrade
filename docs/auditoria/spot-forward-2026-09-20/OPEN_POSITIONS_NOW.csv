@@ -1,1 +1,1 @@
-lotId,pair,openedAt,entryPrice,qty,notional,riskUsd,initialStop,currentStop,highestPrice,mfe,mae,unrealizedPnl,qualityScore,regimeAtEntry,setupTag
+lotId,pair,openedAt,entryPrice,qty,notionalUsd,riskUsd,initialStop,currentStop,highestPrice,mfeR,maeR,unrealizedPnl,qualityScore,setupTag,regimeAtEntry

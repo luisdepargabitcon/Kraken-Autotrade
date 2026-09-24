@@ -2,38 +2,48 @@ DEPLOY_CODE_SHA=3ae18319b8c0b68c9374241db65f8ef9bdd39a57
 DEPLOY_TIMESTAMP_UTC=2026-09-20 11:12:22 UTC (docker CreatedAt krakenbot-staging-app; VPS git HEAD=3ae18319 committed 11:11:29 UTC)
 DEPLOY_TIMESTAMP_MADRID=2026-09-20 13:12:22 Europe/Madrid (CEST, UTC+2)
 
-EXTRACTION_END_UTC=2026-09-24T12:26:42.231Z
-EXTRACTION_END_MADRID=2026-09-24T14:26:42.231 (approx CEST)
+EXTRACTION_END_UTC=2026-09-24T13:30:45.331Z
+EXTRACTION_END_MADRID=2026-09-24T14:xx (CEST = UTC+2)
 
 SPOT_MODE=SHADOW
 
-TOTAL_CLOSED=29
-TOTAL_OPEN=0 (open_positions table empty)
+# CERTIFIED_V4_SCOPE (BTC/ETH/SOL/XRP)
+TOTAL_CLOSED=27
+TOTAL_OPEN=0 (open_positions empty)
 TOTAL_CARRYOVER=0
 
 BTC_CLOSED=3
 ETH_CLOSED=6
 SOL_CLOSED=5
 XRP_CLOSED=13
-OTHER_PAIRS_CLOSED=2 (TON/USD — SPOT engine also trades TON; kept in extraction, flagged by pair validation)
+
+NET_PNL_CLOSED=-101.08
+TOTAL_FEES=115.60
+WINNERS=12
+LOSERS=15
+PF=0.634
+EXPECTANCY=-3.744
+MAX_DD=171.41
+
+# OTHER_SPOT_PAIRS
+TON_TRADES=2
+TON_NET=-64.97
+ALL_SCOPE_NET=-166.04 (certified+other)
 
 TOTAL_ENTRY_EXECUTED=29
 TOTAL_ENTRY_ALLOWED=250
 TOTAL_ENTRY_BLOCKED=91
 TOTAL_EXIT_EVENTS=27
 
+RAW_TRADES=29
+INDEPENDENT_ENTRY_CLUSTERS=20
+
 EARLIEST_ENTRY=2026-09-21T08:25:01.618Z
 LATEST_ENTRY=2026-09-23T04:38:10.958Z
 
-NET_PNL_CLOSED=-166.04
-TOTAL_FEES=124.32
-WINNERS=12
-LOSERS=17
-PF=0.513
-EXPECTANCY=-5.726
-MAX_DD=236.38
+VALIDATION: dupLotId=0 badOpenCloseTimes=0 nonShadow=0 ctxOutOfRange=0 trailingNoFlag=0
 
-VALIDATION: dupLotId=0 badOpenCloseTimes=0 nonShadow=0
+V4_PERSISTENCE: qualityScore nonNull=0/29, threshold=0, accepted=0 → V4_PERSISTENCE_MISSING=YES (fields exist in intent schema, always NULL in build 3ae18319)
 
-DATA_SOURCE=MIXED (trades=DB canonical; openedAt/riskUsd/stop=DB supervisor snapshots; v4/context=DB scan snapshots; fills=DB fill snapshots)
-MISSING_FIELDS=impulse/retracement/structure/reclaim/resumption scores NOT persisted per trade (v4 component breakdown not stored in scan intent row — only v4QualityScore/v4Threshold/v4Accepted/v4RejectReason); signalConfidence not persisted on trade rowsNOTE=29 executed intents match 29 closed trades 1:1 (signalId verified). EXIT_EVENTS=27/29 — 2 lots lack a supervisor shouldExit snapshot in the extracted window (exit itself recorded canonically in trades table).
+DATA_SOURCE=DB (trades + spot_forward_twin_snapshots SCAN/SUPERVISOR/FILL; SELECT only; JSONL structured export)
+MISSING_FIELDS=entryStrategyId (not persisted for closed trades → NULL); v4 component scores + qualityScore/threshold/accepted/rejectReason present-but-NULL in snapshots; signalConfidence only in scan signal (no per-trade persist)
