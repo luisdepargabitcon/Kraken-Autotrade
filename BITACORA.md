@@ -8423,3 +8423,20 @@ Registro:
 - Validaciones: tsc --noEmit sin errores nuevos en archivos R1; npm run build OK; git diff --check limpio.
 - Registro: ENTRY_V4_CHANGED=NO · DEPLOY_EXECUTED=NO · REAL_ORDER_SENT=NO · GRID_CHANGED=NO · DB_MUTATION=NO.
 - Pendiente: contraauditoría ChatGPT.
+
+## 2026-09-24 — SPOT RISK R1 — ADAPTIVE RISK REDUCTION WFO (research/spot-risk-r1)
+
+- **RISK_R1_STARTED=YES** · BASE_SHA=eca997b8e2b100daa3ae766ea2a9e585d4de6093 · SCOPE=SPOT_ONLY.
+- **Frozen**: ENTRY_V4_FROZEN=YES (thr [0.50,0.30,0.30] por fold) · EXIT_E0_FROZEN=YES · stop inicial intacto · hashes verificados pre/post (spotEntryV4 a7f6b65, spotEntryQualityFeatures 07ad23a, spotEntryIntent 362c2a0, spotCanonicalStrategy a127402, spotExitPolicy a1e8862, spotRiskManager 8cadd62 — sin cambios).
+- **R0 documentado**: riskPerTradeUsd=50, maxRiskPerPairUsd=100, minOrder 100/maxOrder 5000, maxLots 2, slAtr 2.0 (×0.5 RANGE/×0.75 TRANSITION), stops 0.5–5%, spread gates, minExpectedProfit 5, slotEff 50%, minProfitMult 2.
+- **R0 forensic** (84 trades, net -85.19): mala concentración en quality 0.45–0.55 (net -268.45, PF 0.148) y atrPct≥3 (-111.17, n=2). Exposición simultánea sin diferenciación → factor descartado.
+- **R1 policy** (spotAdaptiveRiskR1.ts): multiplier=min(triggered) ∈ [0.25,1.0]; fuentes lowQuality + highVol. Grid 24 combos. Selección TRAIN: netToDD.
+- **Hooks research** en fastResearchReplay: riskScaler (clamp ≤1) + onEntry snapshot. Uniform controls U75/U50 obligatorios.
+- **Resultados OOS path-dependent**: R0 52tr net=297.38 PF=1.408 DD=275.98 netDD=1.078 | R1 57tr net=64.15 PF=1.094 DD=275.27 netDD=0.233 avgMult=0.769 | U75 58tr net=73.68 | U50 59tr net=118.20 DD=190.47.
+- **Fixed cohort** (mismas entradas/salidas): R0=297.38 R1=200.69 U75=223.03 U50=148.69 → R1 < U75 con riesgo comparable → sin edge adaptativo. FIXED_COHORT_PASS=YES.
+- **Production-030**: R0 217.22/1.262 | R1 24.07/1.033 | U75 13.56 | U50 78.12.
+- **Tests**: riskR1 12/12 + exitR1 regresión 26/26 = 38/38 PASS. BUILD=PASS. TSC_R1_NEW_REGRESSIONS=0 (solo errores preexistentes node_modules). DIFF_CHECK=limpio.
+- **VEREDICTO: FINAL_VERDICT=KEEP_R0.** R1 falla todos los criterios: PF< R0, netDD -78%, DD sin mejora, net=21.6% de R0, worst trade peor (-78.73), y no supera U75 uniforme. R0 permanece en producción.
+- Artefactos: docs/auditoria/2026-09-22-spot-risk-r1/ (REPORT, TEST_RESULTS, SELECTED_PARAMETERS, R0_FORENSIC, R0_RISK_BUCKETS, R1_GRID_RESULTS, R1_WFO_RESULTS, FIXED_COHORT_RISK_RESULTS, PATH_DEPENDENT_RISK_RESULTS, UNIFORM_RISK_CONTROLS, PRODUCTION_030_RISK_RESULTS, progress.json, stdout/stderr.log).
+- Registro: DEPLOY_EXECUTED=NO · REAL_ORDER_SENT=NO · GRID/IDCA/AMA/Fisco/Telegram/SpotAI sin tocar.
+- Pendiente: contraauditoría ChatGPT.

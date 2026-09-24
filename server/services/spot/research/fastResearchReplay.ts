@@ -224,6 +224,40 @@ function checkV3Acceptance(
 
 // ─── Fast replay ───────────────────────────────────────────────────────────
 
+/** Input visible to a risk scaler at entry time — all fields exist BEFORE the
+ *  entry executes (closed candles ≤ now, V4 scores, open exposure). No future
+ *  data may be read here. */
+export interface RiskScalerInput {
+  pair: string;
+  evaluationTime: number;
+  ctx: SpotMarketContext;
+  intent: SpotEntryIntent;
+  v4Scores: import("../spotEntryV4").V4QualityScores | null;
+  openPositions: number;
+  openLotsForPair: number;
+  openRiskUsd: number;
+  availableCapitalUsd: number;
+  /** Unscaled risk budget the base config would deploy. */
+  baseRiskUsd: number;
+}
+
+/** Snapshot emitted when an entry executes — for forensic / fixed-cohort risk. */
+export interface EntrySnapshot extends RiskScalerInput {
+  lotId: string;
+  entryPrice: number;
+  riskMultiplier: number;
+  effectiveRiskUsd: number;
+  notionalUsd: number;
+  stopDistanceUsd: number;
+  initialStopPrice: number;
+  setupTag: string;
+  regime: string;
+  direction: string;
+  adx: number;
+  atrPct: number;
+  spreadPct: number;
+}
+
 /** Research-only hooks for Exit R1: custom exit evaluator + per-trade observer. */
 export interface FastReplayOpts {
   /** If set, replaces production evaluateExit for open positions (E1 research). */
@@ -240,6 +274,11 @@ export interface FastReplayOpts {
     trade: ReplayTrade,
     metrics: { mfeR: number; maeR: number; highestPrice: number; lowestPrice: number; mfeTimestamp: number; maeTimestamp: number } | null,
   ) => void;
+  /** Risk R1: per-entry risk multiplier. MUST return <= 1.0 (clamped hard).
+   *  Values > 1 are truncated to 1 — risk can only be maintained or reduced. */
+  riskScaler?: (input: RiskScalerInput) => number;
+  /** Called once per executed entry with full pre-entry context snapshot. */
+  onEntry?: (info: EntrySnapshot) => void;
 }
 
 export function fastReplay(
@@ -499,6 +538,7 @@ export function fastReplay(
         v4AcceptedCandidates++;
         v4FinalExecuted++;
         (frame as any)._v4QualityScore = v4Scores.qualityScore;
+        (frame as any)._v4Scores = v4Scores;
       } else {
         if (!b0Approved) continue;
         b0IntentEligible++;
@@ -517,8 +557,29 @@ export function fastReplay(
     const openLotsForPair = positions.filter(p => p.pair === pair).length;
     const riskConfig = config.riskConfig ?? DEFAULT_SPOT_RISK_CONFIG;
     const sizingCtx = { ...ctx, ticker: { ...ctx.ticker, last: entryFillPrice } };
+
+    // ── Risk R1 hook: adaptive risk multiplier (0 < m <= 1, hard-clamped) ──
+    const scalerInput: RiskScalerInput = {
+      pair, evaluationTime, ctx: sizingCtx, intent,
+      v4Scores: (frame as any)._v4Scores ?? null,
+      openPositions: positions.length,
+      openLotsForPair,
+      openRiskUsd: positions.reduce((s, p) => s + p.riskUsd, 0),
+      availableCapitalUsd: config.availableCapitalUsd,
+      baseRiskUsd: riskConfig.riskPerTradeUsd,
+    };
+    let riskMultiplier = 1;
+    if (opts?.riskScaler) {
+      const raw = opts.riskScaler(scalerInput);
+      // HARD RULE: multiplier can never exceed 1.0 (risk reduction only)
+      riskMultiplier = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 1;
+    }
+    const effRiskConfig = riskMultiplier < 1
+      ? { ...riskConfig, riskPerTradeUsd: riskConfig.riskPerTradeUsd * riskMultiplier }
+      : riskConfig;
+
     const sizing = evaluateSizing(
-      sizingCtx, intent, config.availableCapitalUsd, openLotsForPair, riskConfig, feeModel,
+      sizingCtx, intent, config.availableCapitalUsd, openLotsForPair, effRiskConfig, feeModel,
     );
 
     if (!sizing.approved) continue;
@@ -552,6 +613,20 @@ export function fastReplay(
     positions.push(position);
     exitStates.set(lotId, createExitState(position));
     auditTracker.initPosition(position);
+
+    // Risk R1 / forensic: entry-time snapshot (all fields pre-entry)
+    opts?.onEntry?.({
+      ...scalerInput,
+      lotId, entryPrice: entryFillPrice, riskMultiplier,
+      effectiveRiskUsd: sizing.riskUsd, notionalUsd: sizing.notionalUsd,
+      stopDistanceUsd: sizing.stopDistanceUsd, initialStopPrice: sizing.stopPrice,
+      setupTag: position.setupTag,
+      regime: String(ctx.regimeContext.regime),
+      direction: String(ctx.regimeContext.direction),
+      adx: ctx.regimeContext.adx,
+      atrPct: ctx.regimeContext.atrPct,
+      spreadPct: ctx.spreadPct,
+    });
 
     // Store V4 quality score for this position
     const v4Score = (frame as any)._v4QualityScore;
