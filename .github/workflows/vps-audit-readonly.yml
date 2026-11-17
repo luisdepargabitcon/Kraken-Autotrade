@@ -1,0 +1,101 @@
+name: NEXA VPS - Auditoria cifrada solo lectura
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexa-vps-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VPS_HOST: "5.250.184.18"
+      VPS_PORT: "22"
+      VPS_USER: "root"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preconditions - do not print any secret
+        shell: bash
+        env:
+          AUDIT_KEY: ${{ secrets.VPS_AUDIT_SSH_PRIVATE_KEY }}
+          AUDIT_PASSWORD: ${{ secrets.VPS_AUDIT_SSH_PASSWORD }}
+          HOST_FP: ${{ secrets.VPS_AUDIT_HOST_FINGERPRINT }}
+          REPORT_PASSWORD: ${{ secrets.VPS_AUDIT_REPORT_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$AUDIT_KEY" && -z "$AUDIT_PASSWORD" ]]; then
+            echo 'Missing VPS_AUDIT_SSH_PRIVATE_KEY or VPS_AUDIT_SSH_PASSWORD'; exit 21
+          fi
+          if [[ -z "$HOST_FP" ]]; then
+            echo 'Missing VPS_AUDIT_HOST_FINGERPRINT'; exit 22
+          fi
+          if [[ -z "$REPORT_PASSWORD" ]] || [[ "$(printf %s "$REPORT_PASSWORD" | wc -c)" -lt 24 ]]; then
+            echo 'Missing VPS_AUDIT_REPORT_PASSPHRASE or too short'; exit 23
+          fi
+          bash -n scripts/vps-audit-readonly.sh
+          echo 'SSH/crypto prerequisites are present.'
+      - name: Verify SSH host ED25519 fingerprint before connecting
+        shell: bash
+        env:
+          HOST_FP: ${{ secrets.VPS_AUDIT_HOST_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          ssh-keyscan -T 8 -p "$VPS_PORT" -t ed25519 "$VPS_HOST" > "$HOME/.ssh/known_hosts" 2>/dev/null
+          ACTUAL=$(ssh-keygen -lf "$HOME/.ssh/known_hosts" -E sha256 | awk '$NF=="(ED25519)" {print $2}' | head -1)
+          if [[ -z "$ACTUAL" || "$ACTUAL" != "$HOST_FP" ]]; then
+            echo 'SSH host fingerprint mismatch; connection blocked'; exit 31
+          fi
+          echo 'VPS host identity verified.'
+      - name: Prepare SSH password transport when needed
+        shell: bash
+        env:
+          AUDIT_KEY: ${{ secrets.VPS_AUDIT_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$AUDIT_KEY" ]]; then
+            sudo apt-get update -qq >/dev/null
+            sudo apt-get install -y -qq sshpass >/dev/null
+          fi
+      - name: Run remote read-only script, capture without printing
+        shell: bash
+        env:
+          AUDIT_KEY: ${{ secrets.VPS_AUDIT_SSH_PRIVATE_KEY }}
+          SSHPASS: ${{ secrets.VPS_AUDIT_SSH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p private
+          if [[ -n "$AUDIT_KEY" ]]; then
+            printf '%s\n' "$AUDIT_KEY" > "$HOME/.ssh/audit_key"
+            chmod 600 "$HOME/.ssh/audit_key"
+            timeout 240 ssh -p "$VPS_PORT" -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o BatchMode=yes -i "$HOME/.ssh/audit_key" "$VPS_USER@$VPS_HOST" 'bash -s' < scripts/vps-audit-readonly.sh > private/report.txt
+          else
+            timeout 240 sshpass -e ssh -p "$VPS_PORT" -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o PreferredAuthentications=password -o PubkeyAuthentication=no "$VPS_USER@$VPS_HOST" 'bash -s' < scripts/vps-audit-readonly.sh > private/report.txt
+          fi
+          echo 'Audit finished; no plaintext printed to logs.'
+      - name: Encrypt report before upload
+        shell: bash
+        env:
+          REPORT_PASSWORD: ${{ secrets.VPS_AUDIT_REPORT_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p encrypted
+          printf %s "$REPORT_PASSWORD" > private/report.key
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 250000 -in private/report.txt -out encrypted/NEXA_VPS_AUDIT.enc -pass file:private/report.key
+          echo 'Encrypted artifact ready.'
+      - name: Publish only ciphertext
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexa-vps-audit-encrypted-${{ github.run_id }}
+          path: encrypted/NEXA_VPS_AUDIT.enc
+          retention-days: 7
+          if-no-files-found: error
