@@ -183,6 +183,7 @@ Usar las marcas \`[ ] / [x]\` y una línea de evidencia por hito. No sustituir e
 | T12 | Respaldo íntegro cifrado de 31 tablas FISCO/AEAT | AUTORIZADA COPIA / PENDIENTE | ~4,8 M filas estimadas; NO modificar origen |
 | T13 | Incrementales de todas las tablas y fuentes nuevas | PENDIENTE | Corte y cambio tardío |
 | T14 | Verificación completa y prueba de lectura/restaurabilidad fiscal aislada | PENDIENTE | No iniciar fase 2 |
+| T15 | SPOT 167 operaciones: replay pérdidas y máximos teóricos bruto/neto | ORDEN CREADA · SOLO LECTURA | [Issue #14](https://github.com/luisdepargabitcon/Kraken-Autotrade/issues/14) · tras extracción y antes de correcciones; entrega integral idéntica en GitHub **verificado privado** y Google Drive privado |
 
 ### Formato breve para futuras actualizaciones
 
