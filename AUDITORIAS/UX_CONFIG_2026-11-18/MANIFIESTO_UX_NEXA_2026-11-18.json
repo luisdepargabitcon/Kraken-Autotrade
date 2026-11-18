@@ -1,0 +1,77 @@
+{
+  "audit": "nexa-ux-config-2026-11-18",
+  "issue": "https://github.com/luisdepargabitcon/Kraken-Autotrade/issues/12",
+  "generatedAtUtc": "2026-11-18T20:20:00Z",
+  "scope": "SOLO AUDITORIA DOCUMENTAL; sin cambios de codigo, configuracion, DB, trading ni despliegue",
+  "versions": {
+    "deployedBranch": "integration/staging-spot-v4",
+    "deployedSha": "3ae18319b8c0b68c9374241db65f8ef9bdd39a57",
+    "deployedCommit": "fix(spot): remove unrelated AI and shared DB drift from V4 staging",
+    "mainSha": "3797cc99cd335b1a7f1bc0ae86079282486705a5",
+    "divergence": "main ahead 6 / runtime ahead 103",
+    "runtimeUrl": "http://5.250.184.18:3020"
+  },
+  "methods": [
+    "git inspection of origin/main and origin/integration/staging-spot-v4",
+    "read-only HTTP GET endpoints",
+    "read-only SSH checks for SHA/processes/space",
+    "static UX/config/dataflow review"
+  ],
+  "notPerformed": [
+    "POST/PATCH/DELETE operativos",
+    "consultas PostgreSQL en esta pasada",
+    "automatizacion visual de navegador",
+    "cambios en motores, estrategias, servicios, Docker o credenciales",
+    "construccion de APK"
+  ],
+  "deliverables": [
+    "AUDITORIAS/UX_CONFIG_2026-11-18/AUDITORIA_UX_CONFIG_NEXA_2026-11-18.md",
+    "AUDITORIAS/UX_CONFIG_2026-11-18/MATRIZ_CONFIGURACIONES_NEXA_2026-11-18.csv",
+    "AUDITORIAS/UX_CONFIG_2026-11-18/MAPA_PANTALLAS_NEXA_2026-11-18.md",
+    "AUDITORIAS/UX_CONFIG_2026-11-18/MANIFIESTO_UX_NEXA_2026-11-18.json"
+  ],
+  "runtimeObservations": {
+    "spotExecutionMode": "SHADOW",
+    "idcaMode": "simulation",
+    "gridMode": "SHADOW",
+    "ama": "OFF/OBSERVING surface",
+    "tradingExchange": "revolutx",
+    "dataExchange": "kraken",
+    "activeExchangeLegacy": "revolutx",
+    "featureFlagsSample": "6 enabled / 3 disabled",
+    "gridStatus": "SHADOW running; last tick blocked by lower band/downtrend reason"
+  },
+  "keyFindings": [
+    "runtime is not main; divergence must be resolved before product decisions",
+    "no visible API authentication on panel endpoints",
+    "configuration is fragmented across bot_config, api_config, trading_config, IDCA, Grid, market metrics, SmartExit, TimeStop, Telegram, portfolio and AMA",
+    "riskPerTradePct runtime 50.00 conflicts with global schema max 10.0",
+    "SPOT canonical uses SHADOW with V4 entry active and pair toggles",
+    "IDCA uses simulation mode with allocated capital and BTC/ETH asset configs",
+    "Grid uses SHADOW MAKER_ONLY with extensive capital/range/adaptive controls",
+    "legacy UI/routes coexist with canonical SPOT runtime",
+    "market data has a partial SSOT via MarketDataService but consumers use different contracts",
+    "APK feasible after auth; recommended path is PWA first then TWA/Capacitor if needed"
+  ],
+  "artifactHashes": {
+    "AUDITORIA_UX_CONFIG_NEXA_2026-11-18.md": {
+      "sha256": "1deb4de7bffeb8e3eac781924dcd3590283beba95bfb91f5ca073c3b60df2d16",
+      "bytes": 28462
+    },
+    "MATRIZ_CONFIGURACIONES_NEXA_2026-11-18.csv": {
+      "sha256": "45a4d9940ca163244e3e2d6420975b80ec9d59ea8e2511dc9b3b211cd32b939f",
+      "bytes": 27328
+    },
+    "MAPA_PANTALLAS_NEXA_2026-11-18.md": {
+      "sha256": "ef86ace0cfded548777f3e55371b8dcdb81f1be2471fa5eea63d861d2930c3b0",
+      "bytes": 5919
+    },
+    "note": "sha256 del propio manifiesto se calcula tras escritura final en cada copia"
+  },
+  "limitations": [
+    "visual review was static/responsive inference, not browser emulation",
+    "Google Drive delivery depends on available private rclone credential",
+    "VPS write limited to small docs under private non-public path if verified",
+    "GitHub PR/comment depends on authenticated gh or equivalent credentials"
+  ]
+}
