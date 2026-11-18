@@ -69,15 +69,18 @@ Tablas incluidas: \`trades\`, \`trade_fills\`, \`lot_matches\`, \`trade_snapshot
 
 **Criterio de salida FASE 1:** totalidad del histórico relevante accesible **identificado y verificado**, faltantes enumerados, carpeta privada operativa y PR documental; ningún cambio de operativa/VPS. Si alguna tabla grande no puede exportarse de forma segura, declararlo **PARCIAL** con plan de extracción, no ocultarlo.
 
-## Avance real de la FASE 1 (Cascade, 18/11/2026) — PARCIAL con faltantes documentados
+## Avance real de la FASE 1 (Cascade, 18/11/2026) — COMPLETA al corte 14:36 UTC
 
 **Informe y PR:** `AUDITORIAS/CONTRAAUDITORIA_NEXA_CASCADE_2026-11-17.md` (+ `NEXA_AUDIT_SUMMARY_2026-11-17.json`). Sin datos privados en GitHub.
 
 - **Versión desplegada:** rama `integration/staging-spot-v4` @ `3ae18319` (2026-09-20), divergente de `main` (101 por delante, 2 por detrás).
-- **Exportación:** 140 archivos / 59,7 MiB comprimidos en la carpeta privada `NEXA_AUDITORIA_CASCADE_2026-11-17` (creada por rclone con `drive.file`; **no** movida ni compartida). 1.596.041 filas en tablas: 62 COMPLETO, 7 PARCIAL, 39 vacías, 5 excluidas por secretos, 31 fiscales **excluidas y no tocadas**. Verificación por archivo: MD5 remoto, SHA-256 por relectura, recuento de filas y escaneo de secretos.
-- **Parcial por diseño:** `server_logs` (solo ERROR/WARN; INFO/DEBUG agregados), `grid_isolated_events` y `institutional_dca_events` (tipos de ruido agregados), `spot_forward_twin_snapshots` (filas completas sin `candles`).
-- **Pendiente:** extracción incremental de filas posteriores al corte; verificar que la carpeta Drive no esté compartida; **revocar el token OAuth** expuesto en una salida de herramienta; backtests/benchmarks.
-- **Hallazgo prioritario (no corregido):** bucle de reinicios por OOM (~500/día) por una consulta ilimitada a `spot_forward_twin_snapshots`; error `401` continuo de Revolut X; panel/API accesibles sin autenticación.
+- **Exportación:** 180 archivos / 67,9 MiB comprimidos en la carpeta privada `NEXA_AUDITORIA_CASCADE_2026-11-17` (creada por rclone con `drive.file`; **no** movida ni compartida). 1.771.666 filas en tablas: 64 COMPLETO, 5 PARCIAL solo por deriva de inserciones en vivo tras el corte (44+20+74+2 filas nuevas), 39 vacías, 5 excluidas por secretos, 31 fiscales **excluidas y no tocadas**. Verificación por archivo: MD5 remoto, SHA-256 por relectura, recuento de filas y escaneo de secretos (0 aciertos).
+- **Lote 003 (incremental):** +175.625 filas — `GRID_SHADOW_EXECUTION_PRICE` exportado **íntegro** (165.242), deltas de `bot_events`, `institutional_dca_events`, `server_logs` err/warn, `spot_forward_twin_snapshots` slim, `market_candles`, `market_metrics_snapshots`; `institutional_dca_ohlcv_cache` re-exportada completa (v2, sustituye lote 002); agregados delta.
+- **Parcial por diseño:** `server_logs` (solo ERROR/WARN íntegros; INFO/DEBUG agregados), `grid_isolated_events` (solo `GRID_CYCLES_RECOVERED` agregado, ruido de reinicios), `institutional_dca_events` (`migration_validation_warning` agregado), `spot_forward_twin_snapshots` (filas completas sin `data.candles`, recalculable).
+- **Anomalía:** `spot_forward_twin_snapshots` y `market_candles` tienen **menos filas en origen que exportadas** → el bot poda/borra datos; la exportación conserva ids ya eliminados en origen.
+- **Token OAuth:** expuesto anteriormente en una salida de herramienta (riesgo documentado). **Por orden expresa del propietario (18/11) se conserva** para esta extracción; pendiente de sustitución antes de cualquier sincronización permanente. Nunca publicado ni copiado a GitHub.
+- **Pendiente:** verificar que la carpeta Drive no esté compartida; backtests/benchmarks; decidir retención de datos de ruido agregados.
+- **Hallazgo prioritario (no corregido):** bucle de reinicios por OOM (~500/día, contador >17.000) por una consulta ilimitada a `spot_forward_twin_snapshots`; error `401` continuo de Revolut X; panel/API accesibles sin autenticación.
 - **No se ha realizado:** ningún cambio en VPS, PostgreSQL, estrategias, servicios, despliegues ni REAL.
 
 ## 2. FASE FUTURA — Auditoría y correcciones (orden separada con autorización)
