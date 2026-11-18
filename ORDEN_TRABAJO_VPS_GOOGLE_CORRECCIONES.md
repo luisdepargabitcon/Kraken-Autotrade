@@ -23,7 +23,7 @@
 - Nunca limpiar \`backups/\`, WAL/volúmenes, \`trade_fills\`, operaciones/fills originales, audit trail, IDs, conversiones de moneda o cost basis sin inventario de dependencias, copia verificada y nueva autorización.
 - Sin datos operativos crudos en GitHub: únicamente informes técnicos agregados, inventarios sin secretos, hashes/verificaciones y código revisable.
 - Reutilizar la **carpeta privada de Google Drive ya utilizada por Cascade para el lote 001**. La carpeta inicial creada para NEXA y la nueva creada por \`rclone\` son distintas; **no duplicar, mover ni publicar** hasta verificar su organización y contar con permiso del propietario.
-- **Token OAuth:** Cascade informó de que un token apareció en la salida de una herramienta durante la configuración. Considerarlo **potencialmente comprometido**: **revocar y sustituir antes de dejar una sincronización permanente**, no volver a imprimirlo, no subirlo a GitHub ni exponerlo en informes; el acceso nuevo se autorizará con permisos mínimos adecuados. **Jamás usar la credencial expuesta como base de la integración permanente.**
+- **Token OAuth — decisión del propietario del 18/11/2026:** el propietario **NO autoriza revocarlo ni eliminar la configuración temporal ahora**; quiere mantener el acceso `drive.file` activo para continuar las exportaciones sin reiterar aprobaciones. Consta riesgo residual: la credencial apareció en una salida de herramienta y debe considerarse **potencialmente expuesta**. No mostrar token ni refresh token, no copiarlo a GitHub/logs ni cambiar su almacenamiento/permisos. El token está en RAM y puede perderse al finalizar la sesión/reiniciar; **no prometer persistencia**. El paso futuro a un sincronizador persistente exige diseño de custodia segura, aprobación y revisión explícita del riesgo, evitando pedir consentimientos innecesarios.
 
 ## 1. FASE ACTUAL — Exportación histórica COMPLETA y verificación
 
@@ -62,7 +62,7 @@ Tablas incluidas: \`trades\`, \`trade_fills\`, \`lot_matches\`, \`trade_snapshot
 
 - [x] Primera prueba de escritura y descarga/lectura desde Google Drive.
 - [x] Lote 001 almacenado y comprobado por lectura del conector Google Drive.
-- [ ] Exportar las **tablas restantes** conforme al inventario, sin duplicar lote 001.
+- [ ] Exportar las **tablas restantes** conforme al inventario, sin duplicar lote 001. **Mantener por ahora la autorización OAuth actual activa según instrucción expresa del propietario**, sin ampliación de alcance.
 - [ ] Completar \`02_DECISIONES\`, \`03_DIAGNOSTICOS\` y \`04_INFORMES\` en la carpeta privada.
 - [ ] Emitir **manifiesto global** con todas las tablas y períodos: filas estimadas, filas exportadas, excluidas justificadas, fechas y estado de integridad.
 - [ ] Cerrar la Issue #9 con **contraauditoría completa**, evidencias y propuestas **sin aplicar**; enlazar desde aquí el informe y PR cuando existan.
@@ -94,7 +94,7 @@ Diseño mínimo propuesto:
 2. **Incrementales:** detectar registros nuevos y actualizaciones posteriores (por PK + \`updated_at\`, versiones o mecanismo de reconciliación); no basarse únicamente en \`created_at\` cuando existan updates tardíos. Capturar cierres tardíos, cambios de estado y correcciones; diseñar watermark, deduplicación y margen temporal de reproceso.
 3. **Transporte:** streaming comprimido en fragmentos por fuente/período, sin archivos temporales voluminosos, con límites de memoria/carga y pausas si PostgreSQL o trading están saturados.
 4. **Destinos:** Drive privado con estructura fija, datos originales inmutables por snapshot, \`manifest.json\`, checksums y un índice de revisión. Una segunda subida del mismo lote NO debe generar doble contabilidad.
-5. **Autenticación:** credenciales OAuth rotadas, de permisos mínimos, almacenamiento seguro no accesible por otros usuarios y fuera de GitHub/logs; servicio con privilegios mínimos, no root salvo imposibilidad justificada. Token temporal expuesto anteriormente: **revocado y sustituido** antes de producción.
+5. **Autenticación:** acceso OAuth de permisos mínimos, almacenamiento seguro no accesible por otros usuarios y fuera de GitHub/logs; servicio con privilegios mínimos, no root salvo imposibilidad justificada. El propietario ha pedido **no revocar ahora** el token temporal; la exposición previa se documenta como riesgo no resuelto. Antes de automatizar de forma persistente, revisar y obtener autorización específica para custodia segura, mitigación del riesgo y eventual rotación sin exigir consentimientos repetitivos.
 6. **Fiabilidad:** timeout, reintentos con backoff, informe de fallo/éxito, alerta si no hay nueva copia dentro de la ventana, caducidad de sesión tratada y prueba periódica de restauración/lectura. La sincronización nunca debe detener el bot por falta de Drive.
 7. **Validación:** prueba con datos simulados, prueba puntual con pocos registros, 2 ciclos de sincronización correctos, recuentos/MD5-SHA comparados, carga DB segura, privacidad revisada, rollback consistente.
 8. **Gobernanza:** propuesta técnica → revisión/PR → autorización del usuario → despliegue controlado y verificaciones. Nunca crear cron/scheduler persistente o añadir accesos OAuth nuevos sin la aprobación específica.
@@ -124,6 +124,9 @@ Diseño mínimo propuesto:
 
 **Las copias de Drive no equivalen automáticamente a backup legal o restaurable.** Conservación y prueba de restauración deben validarse antes de toda política de retención.
 
+
+> **Actualización 18/11/2026 — autorización Google Drive:** El propietario ha rechazado expresamente las opciones «revocar y borrar ya» y «mantener un poco» como solicitudes de elección repetidas: **dejar el token activo**. Cascade debe proseguir la Fase 1 con la sesión OAuth limitada existente, sin borrar/revocar ni cambiar su ubicación o permisos; si la sesión se pierde, explicar el motivo y solicitar solo la intervención imprescindible. Esto NO autoriza convertir el token expuesto en una integración permanente, instalar servicios ni ampliar los permisos.
+
 ## 5. Lista de seguimiento — actualizar este mismo archivo
 
 Usar las marcas \`[ ] / [x]\` y una línea de evidencia por hito. No sustituir estimaciones por certezas sin pruebas.
@@ -138,7 +141,7 @@ Usar las marcas \`[ ] / [x]\` y una línea de evidencia por hito. No sustituir e
 | T06 | Automatismo VPS → Drive miércoles y domingo | FUTURO / SIN AUTORIZAR | Sin cron ni deploy |
 | T07 | Inventario técnico para posible limpieza no fiscal | FUTURO / SIN AUTORIZAR | Solo estudio |
 | T08 | Tarea mensual de auditoría ChatGPT (opcional) | NO CREADA | Requiere solicitud/consentimiento |
-| T09 | Revocación/rotación credencial OAuth expuesta | PENDIENTE / SEGURIDAD | Completar antes del servicio permanente |
+| T09 | Gestión del riesgo del token OAuth expuesto | RIESGO ACEPTADO TEMPORALMENTE · NO REVOCAR AHORA | Decisión propietario 18/11: mantener sesión `drive.file` en RAM; no imprimir ni persistir sin permiso. Revisar medidas antes de sincronizador permanente |
 
 ### Formato breve para futuras actualizaciones
 
