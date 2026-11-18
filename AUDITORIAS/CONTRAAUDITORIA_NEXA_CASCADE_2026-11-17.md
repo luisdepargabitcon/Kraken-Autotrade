@@ -1,6 +1,6 @@
 # CONTRAAUDITORÍA NEXA — Cascade (Issue #9)
 
-**Fecha de ejecución:** 2026-11-18 (UTC) · **Alcance:** solo lectura (SELECT / READ ONLY, inspección de procesos y código) · **Estado de la entrega:** FASE 1 de exportación **PARCIAL CON FALTANTES DOCUMENTADOS** (ver §9) · **No desplegado, no mergeado, sin cambios en VPS/DB/estrategias.**
+**Fecha de ejecución:** 2026-11-18 (UTC) · **Alcance:** solo lectura (SELECT / READ ONLY, inspección de procesos y código) · **Estado de la entrega:** FASE 1 de exportación **COMPLETA AL CORTE 2026-11-18T14:36Z** (deriva posterior documentada en §9) · **No desplegado, no mergeado, sin cambios en VPS/DB/estrategias.**
 
 > Este documento es **público y agregado**. No contiene operaciones individuales, identificadores de órdenes, credenciales, balances privados ni datos fiscales. Los datos de detalle están en una carpeta privada de Google Drive (ver §9).
 
@@ -117,23 +117,27 @@ Backtests/replays con *benchmarks* y sensibilidad **no ejecutados** en esta pasa
 
 ## 9. Exportación a Google Drive privado (estado)
 
-Método: PostgreSQL `READ ONLY` → `gzip` en memoria → RAM (`tmpfs`) → `rclone` (permiso `drive.file`) → comprobación de MD5 remoto, SHA-256 por relectura y recuento de filas. Sin ficheros de datos en el disco del VPS ni del PC. Un token OAuth apareció en una salida de herramienta durante la configuración: **tratado como comprometido**; revocación pendiente.
+Método: PostgreSQL `READ ONLY` → `gzip` en memoria → RAM (`tmpfs`) → `rclone` (permiso `drive.file`) → comprobación de MD5 remoto, SHA-256 por relectura y recuento de filas. Sin ficheros de datos en el disco del VPS ni del PC. Un token OAuth apareció en una salida de herramienta durante la configuración: **riesgo documentado**; por orden expresa del propietario el token se conserva temporalmente para esta extracción y **no se revoca ni se borra** en esta fase; deberá sustituirse antes de cualquier sincronización permanente.
 
 | Métrica | Valor |
 |---|---|
 | Carpeta | `NEXA_AUDITORIA_CASCADE_2026-11-17` (privada, creada por rclone; no movida ni compartida) |
-| Objetos / tamaño | 140 archivos, 59,7 MiB comprimidos |
-| Filas exportadas | 1.596.041 en tablas (62 COMPLETO, 7 PARCIAL, 39 vacías, 5 excluidas por secretos, 31 fiscales excluidas) |
+| Objetos / tamaño | 180 archivos, 67,9 MiB comprimidos |
+| Filas exportadas | 1.771.666 en tablas (64 COMPLETO, 5 PARCIAL por deriva posterior al corte, 39 vacías, 5 excluidas por secretos, 31 fiscales excluidas) |
 | Verificación | todos los archivos `OK` (md5 remoto, sha256 relectura, filas = esperadas, escaneo de secretos 0 aciertos) |
-| Manifiestos | `manifest_global_*.json`, `cobertura_*.csv`, `inventario_tablas_*.csv`, manifiestos por lote |
+| Manifiestos | `manifest_global_20261118T143629Z.json`, `cobertura_20261118T143629Z.csv`, `inventario_tablas_*.csv`, manifiestos por lote (001, 002×7, 003, 003b, 003c) |
 
-**PARCIAL por filas posteriores al corte (tablas vivas):** `bot_events`, `market_candles`, `market_metrics_snapshots`, `institutional_dca_ohlcv_cache` (diferencias de 4–370 filas). **Parcial/por diseño:** `server_logs` (solo ERROR/WARN; INFO/DEBUG en agregados), `grid_isolated_events` (sin 2 tipos de ruido: agregado diario + muestra horaria), `institutional_dca_events` (sin `migration_validation_warning`), `spot_forward_twin_snapshots` (todas las filas **sin** `candles`). **Filas posteriores al corte** (tablas vivas): se capturarán en una extracción incremental. **Excluido:** `fisco_*` (31 tablas, solo metadatos), `api_config`, tokens/chats Telegram, `master_backups`. Columnas sensibles excluidas (`chat_id`, `token_id`, `*_key`…). Los 14 archivos del lote 001 están en CSV; el resto en JSONL.
+**Corte final:** 2026-11-18T14:36Z. **Lote 003 (incremental):** +175.625 filas — `GRID_SHADOW_EXECUTION_PRICE` exportado **íntegro** (165.229 + 13), deltas de `bot_events` (+1.946), `institutional_dca_events` (+1.128), `server_logs` err/warn (+1.172), `spot_forward_twin_snapshots` slim (+1.539), `market_candles` (+439), `market_metrics_snapshots` (+3.996), `institutional_dca_ohlcv_cache` re-exportada completa v2 (sustituye al archivo del lote 002) y 4 agregados delta.
+
+**PARCIAL al cierre (solo deriva de inserciones en vivo tras el último lote):** `bot_events` (+44), `institutional_dca_events` (+20), `market_metrics_snapshots` (+74), `grid_isolated_events` (+2 no-spam). Son filas creadas después del corte; sin huecos en los rangos exportados. **Parcial/por diseño (decisión documentada):** `server_logs` — solo ERROR/WARN/is_error íntegros (2,46 M de INFO/DEBUG en agregados diarios + plantillas; ruido sin valor de decisión); `grid_isolated_events` — `GRID_CYCLES_RECOVERED` no exportado íntegro (~177.5 k, un evento por arranque del bucle de reinicios; agregado diario conservado); `institutional_dca_events` — `migration_validation_warning` agregado + 50 muestras (12,5 k de ruido repetitivo); `spot_forward_twin_snapshots` — todas las filas **sin** `data.candles` (recalculable desde `market_candles`; claves omitidas registradas).
+
+**Anomalías de conteo (origen activo):** `spot_forward_twin_snapshots` exportadas 54.977 > origen actual 53.460 y `market_candles` exportadas 110.174 > origen actual 109.784 → el bot **borra/poda filas** mientras tanto; los datos ya exportados cubren ids que ya no existen en origen. **Excluido:** `fisco_*` (31 tablas, solo metadatos de catálogo, no leídas), `api_config`, tokens/chats Telegram, `master_backups`. Columnas sensibles excluidas (`chat_id`, `token_id`, `*_key`…). Lote 001 en CSV; resto en JSONL.
 
 Limitaciones: la carpeta se creó con `drive.file` y no se pudo verificar su estado de compartición vía API; el acceso a la carpeta NEXA preexistente no es posible con ese permiso.
 
 ## 10. Checklist y siguientes pasos
 
-- [x] SHA/rama desplegados identificados · [x] Motores inventariados · [x] Inventario 145 tablas/vistas · [x] Exportación histórica con verificación
-- [x] Contraauditoría de los 16 hallazgos · [x] Propuestas (≤3 por motor) · [ ] Backtests/benchmarks · [ ] Extracción incremental de filas posteriores · [ ] Revocar token OAuth · [ ] Verificar privacidad de la carpeta Drive
+- [x] SHA/rama desplegados identificados · [x] Motores inventariados · [x] Inventario 145 tablas/vistas · [x] Exportación histórica con verificación · [x] Extracción incremental al corte 14:36Z
+- [x] Contraauditoría de los 16 hallazgos · [x] Propuestas (≤3 por motor) · [ ] Backtests/benchmarks · [~] Token OAuth expuesto: conservado por orden del propietario (riesgo documentado; sustituir antes de sincronización permanente) · [ ] Verificar privacidad de la carpeta Drive
 - **Modo operativo observado:** SHADOW/simulation; REAL no activo. **NO desplegado.**
 - Siguiente paso: ChatGPT contrasta este informe y prepara la orden de correcciones, empezando por NEW-01 (estabilidad) y seguridad; Cascade no aplica cambios sin autorización.
