@@ -2,7 +2,7 @@
 
 **Documento permanente y ampliable.** Fecha de apertura: **18/11/2026**.  
 **Proyecto:** NEXA Crypto Suite / Kraken-Autotrade.  
-**Estado:** **FASE 1 EN CURSO — completar extracción histórica del VPS a Google Drive**. Fases 2 a 4 son **PLANIFICACIÓN**, no autorización para modificar el VPS o los motores.  
+**Estado:** **FASE 1 AMPLIADA — copia integral de datos operativos, eventos originales, velas SPOT y FISCO/AEAT a Google Drive**. Fases 2 a 4 son **PLANIFICACIÓN**, no autorización para modificar el VPS o los motores.  
 **Orden operativa de auditoría:** [Issue #9](https://github.com/luisdepargabitcon/Kraken-Autotrade/issues/9).  
 **Antecedente técnico:** [AUDITORIAS/AUDITORIA_INTEGRAL_2026-11-17.md](AUDITORIAS/AUDITORIA_INTEGRAL_2026-11-17.md).  
 **Fuentes de continuidad:** \`AGENTS.md\` y apartados pertinentes de \`BITACORA.md\` (no crear una segunda bitácora).  
@@ -10,7 +10,7 @@
 
 ## 0. Qué queremos conseguir — en pocas palabras
 
-1. **Ahora:** descargar/exportar **todo el historial relevante** de operaciones, decisiones, eventos y evidencias del VPS a **Google Drive privado**, íntegro, verificable, comprimido y sin ocupar el disco del PC ni producir grandes archivos temporales en el VPS.
+1. **AHORA:** copiar y verificar **todas las filas originales disponibles** de operaciones, eventos, logs, mercado, snapshots SPOT incluidos `data.candles`, además de **las 31 tablas FISCO/AEAT** en copia privada cifrada de solo lectura. No omitir originales por tamaño o ruido; sin archivos voluminosos en disco del VPS/PC. Las credenciales activas no se trasladan.
 2. **Después:** terminar la auditoría de SPOT, IDCA, Grid, AMA y cartera, contrastarla con la auditoría de ChatGPT, y **proponer** correcciones. Nada de cambiar algoritmos sin análisis de resultados.
 3. **Tras la corrección y autorización expresa:** sincronizar desde el VPS a Google Drive **miércoles y domingos**, preferentemente a las **04:00 Europe/Madrid** (hora local, sujeto a confirmación y compatibilidad del programador), enviando únicamente novedades/correcciones desde el último punto de control.
 4. **Más adelante:** estudiar limpieza de **datos técnicos obsoletos**, primero archivar/verificar y aprobar una política de retención, **sin tocar jamás el circuito fiscal/AEAT ni comprometer reconstrucción contable**.
@@ -19,7 +19,7 @@
 ### Reglas innegociables
 
 - La autorización vigente de la **Issue #9** es **auditoría SELECT/READ ONLY y exportación de datos**; **NO** autoriza eliminación SQL, cambios de contenedores, restarts, instalación permanente, crons, despliegues, cambios de riesgo, operaciones de trading, activar REAL ni migraciones.
-- **Protección fiscal absoluta:** no borrar, purgar, truncar, normalizar, reescribir ni modificar el módulo **FISCO/AEAT**; incluye **todas** las tablas \`fisco_*\` y sus backups, operaciones, disposiciones, lotes, balances, coste fiscal, justificantes, informes y demás dependencias legales. No considerar obsoleto un dato fiscal por ser antiguo, duplicado a simple vista o voluminoso. **Ni esta orden ni una exportación implican permiso de tocarlo.** Si un dato histórico de SPOT/IDCA/Grid alimenta FISCO, también queda protegido hasta determinar sus dependencias y obtener autorización explícita independiente.
+- **Protección fiscal absoluta del ORIGEN:** el propietario **AUTORIZA EXPRESAMENTE LEER Y COPIAR** todas las tablas `fisco_*`, sus registros y relaciones, **SIN MODIFICAR NADA en el VPS**. Prohibidos `DELETE`, `UPDATE`, `TRUNCATE`, `DROP`, migraciones, reconstrucción fiscal, purga, modificación de costes/lotes y eliminación de backups o registros necesarios para AEAT. La prohibición de borrado es permanente; no equivale a prohibición de copia.
 - Nunca limpiar \`backups/\`, WAL/volúmenes, \`trade_fills\`, operaciones/fills originales, audit trail, IDs, conversiones de moneda o cost basis sin inventario de dependencias, copia verificada y nueva autorización.
 - Sin datos operativos crudos en GitHub: únicamente informes técnicos agregados, inventarios sin secretos, hashes/verificaciones y código revisable.
 - Reutilizar la **carpeta privada de Google Drive ya utilizada por Cascade para el lote 001**. La carpeta inicial creada para NEXA y la nueva creada por \`rclone\` son distintas; **no duplicar, mover ni publicar** hasta verificar su organización y contar con permiso del propietario.
@@ -34,7 +34,7 @@
 - [ ] Identificar **versión realmente desplegada** (rama, SHA, imagen, esquema/migraciones, estado de los servicios) sin asumir igualdad con \`main\`.
 - [ ] Listar **todas las tablas y vistas** de PostgreSQL, con finalidad, tamaño, cardinalidad real o estimada, rango de fechas, PK/índices, origen y relación entre motores. Categorizar: **OPERACIONES**, **DECISIONES**, **EVENTOS**, **MERCADO**, **LOGS**, **ESTADO**, **FISCAL PROTEGIDO** y **OTROS**.
 - [ ] Separar SHADOW/SIMULATION/DRY_RUN/LIVE/REAL, exchange, estrategia, activo y versión del motor. **No sumar universos incompatibles** ni llamar orden real a un nivel \`planned\`.
-- [ ] Marcar las tablas fiscales como **EXCLUIDAS de tratamiento**; solo incluir metadatos mínimos de su existencia y dependencias para evitar cualquier limpieza accidental.
+- [ ] Clasificar FISCO como **PROTEGIDO CONTRA CUALQUIER MODIFICACIÓN PERO INCLUIDO EN COPIA**. Inventariar y respaldar las 31 tablas `fisco_*` y sus relaciones. El antiguo estado `EXCLUIDA_FISCAL` pasa a `PENDIENTE_COPIA_FISCAL` hasta verificar la copia privada cifrada.
 - [ ] Consultar límites de RAM, CPU, cuota de Drive, tamaño de lotes y ventanas de baja carga. La carga histórica de snapshots SPOT ya fue relacionada con **OOM/reinicios**; no repetir \`SELECT\` sin límite, lecturas que reconstruyen todos los snapshots en memoria ni queries que agoten \`work_mem\`.
 
 ### 1.2 Qué datos exportar
@@ -42,9 +42,9 @@
 - [ ] **Histórico íntegro de transacciones y trazabilidad** por cada motor (SPOT, DCA/IDCA, Grid, AMA si tiene datos, cartera, órdenes compartidas): trades, order intents, fills, lot matches, estados de órdenes, BUY/SELL parciales, lotes, ajustes, costes, comisiones, PnL en sus distintas fuentes, posiciones, ciclos, reservas e inventario residual.
 - [ ] **Decisiones que NO se ejecutaron**: candidatos, motivos y umbrales de veto, señales, indicadores guardados, eventos de entrada/salida, políticas de riesgo, mercado de referencia; seleccionar todos los códigos y preservar ventana detallada para incidentes. No es suficiente exportar compras/ventas.
 - [ ] **Eventos completos relevantes** para comparar comportamientos y regresiones, incluidos eventos IDCA, Grid, SPOT y motores compartidos. Exportar por fecha/PK en lotes pequeños; comprimir en streaming.
-- [ ] **Histórico de mercado/snapshots y logs diagnósticos**: inventariar todo, exportar completo **si es útil y se puede hacer sin perjudicar el servicio**; los registros de gran volumen se dividen por ventanas y se prioriza reconstrucción de decisiones. Nunca forzar una exportación masiva que tire el proceso. Explicar por escrito qué tablas, columnas o períodos se omiten, su tamaño y por qué.
-- [ ] **No exportar** contraseñas, API keys, OAuth/refresh tokens, \`.env\`, cookies, headers de autenticación, bodies sensibles, claves privadas, dumps de credenciales o datos personales/fiscales no necesarios. Transformar de forma irreversible los identificadores privados cuando sea viable sin perder trazabilidad.
-- [ ] Para fuentes muy grandes o duplicadas, conservar **100 % de los registros significativos** y un catálogo de elementos excluidos/no necesarios; que el manifiesto indique explícitamente si el histórico está **COMPLETO, PARCIAL o NO VERIFICADO**.
+- [ ] **Registros ORIGINALES de mercado, snapshots, eventos y logs sin resumir**, incluidos `server_logs` INFO/DEBUG, `GRID_CYCLES_RECOVERED`, `migration_validation_warning` y `spot_forward_twin_snapshots.data.candles`. Los agregados anteriores se conservan como índices, nunca como sustituto del original. Extraer en lotes pequeños para no agotar RAM/CPU y registrar si el original ya fue eliminado antes de copiarlo.
+- [ ] **No exportar secretos activos** en claro: contraseñas, API keys, OAuth/refresh tokens, `.env`, cookies y claves privadas. **Autorización fiscal específica:** copiar registros y campos fiscales íntegros, incluyendo identificadores, importes, fechas, lotes y trazabilidad, **cifrados desde el origen antes de Drive**; NO seudonimizar el respaldo fiscal original. La clave privada de descifrado quedará bajo control exclusivo del propietario y fuera de VPS, Google Drive y GitHub. Si falta el mecanismo de cifrado seguro, detener solo FISCO y solicitar una única autorización técnica imprescindible; continuar con el resto.
+- [ ] Preservar **100 % de registros originales existentes**, aunque parezcan ruido o duplicados. No deduplicar filas del origen: solo evitar transferir dos veces el mismo lote. Para registros ya podados, documentar ID, fecha y estado `NO_RECUPERABLE_EN_ORIGEN` si no hay backups preexistentes.
 
 ### 1.3 Transferencia directa VPS → Drive
 
@@ -69,6 +69,42 @@ Tablas incluidas: \`trades\`, \`trade_fills\`, \`lot_matches\`, \`trade_snapshot
 
 **Criterio de salida FASE 1:** totalidad del histórico relevante accesible **identificado y verificado**, faltantes enumerados, carpeta privada operativa y PR documental; ningún cambio de operativa/VPS. Si alguna tabla grande no puede exportarse de forma segura, declararlo **PARCIAL** con plan de extracción, no ocultarlo.
 
+## AMPLIACIÓN PRIORITARIA — 18/11/2026 · COPIA INTEGRAL DE TODOS LOS DATOS
+
+> **La nueva autorización del propietario prevalece** sobre exclusiones anteriores. Se puede **COPIAR FISCO/AEAT** en lectura, pero jamás borrar ni modificar el origen. Logs, eventos y velas SPOT se conservan originales, no solo agregados. **No empezar correcciones ni limpieza.**
+
+**Base ya respaldada, NO repetir:** corte 18/11/2026 14:36 UTC; 1.771.666 filas en tablas y 180 archivos declarados, 67,9 MiB comprimidos. Manifiesto `manifest_global_20261118T143629Z.json`. Las 31 tablas FISCO aparecían como excluidas; ello era una interpretación de seguridad anterior, **ahora corregida**.
+
+### A. Originales y datos que faltan
+
+- [ ] **Logs INFO/DEBUG íntegros:** aproximadamente **2.465.771 filas** de `server_logs` antes resumidas. Mantener campos originales salvo secretos activos identificados/mascarados y registrar cualquier redacción en manifiesto.
+- [ ] **Grid original:** recuperar ~177.600 eventos `GRID_CYCLES_RECOVERED` antes resumidos, sin omitir eventos repetitivos ni otros tipos. Los 165.242 `GRID_SHADOW_EXECUTION_PRICE` del lote previo no se duplican.
+- [ ] **IDCA original:** recuperar ~12.466 eventos `migration_validation_warning` antes resumidos, conservando íntegros IDs, fechas, tipo y razones (excepto secretos activos). Reconciliar con el resto de IDCA.
+- [ ] **SPOT con velas:** realizar exportación COMPLEMENTARIA, vinculada por ID estable y hash, de `spot_forward_twin_snapshots.data.candles` **ORIGINAL e ÍNTEGRO**, para cada snapshot aún conservado; la tabla ocupaba ~5,7 GB. No resumir, truncar ni reconstruir durante el respaldo. **Prioridad temporal alta** por poda activa de snapshots.
+- [ ] **Poda anterior:** analizar si existen backups legítimos ya presentes, sin restaurarlos en producción, para recuperar los `data.candles` de snapshots que el VPS ya borró. Si no existen, declarar `ORIGINAL_IRRECUPERABLE` por rango; **NO afirmar equivalencia con `market_candles` sin pruebas**.
+- [ ] **Incrementales desde el último corte:** `bot_events` (+44 en inventario), `grid_isolated_events` (+2), `institutional_dca_events` (+20), `market_metrics_snapshots` (+74) y cualesquiera otras altas/actualizaciones. Las cantidades citadas son **solo una foto del corte**, no un recuento actual. Utilizar keysets + mecanismo para detectar UPDATE tardíos; fijar un nuevo corte coherente.
+- [ ] **Otras fuentes del proyecto:** inventariar otros esquemas o bases de datos de NEXA y archivos operativos/históricos locales del VPS que no figuren en `public`. Solo copia de fuentes del proyecto, no credenciales activas, contenido personal ajeno ni volúmenes enteros innecesarios. Registrar qué se inspeccionó y qué no.
+
+### B. Respaldo fiscal / AEAT — lectura permitida, borrado absolutamente prohibido
+
+- [ ] Exportar las **31 tablas `fisco_*` completas**: operaciones, disposiciones, lotes, costes de adquisición, staging, respaldos fiscales, importaciones, conciliaciones, cálculos, resultados, estados e histórico. Inventario anterior: **~4.785.639 filas estimadas** y **1.847.803.904 bytes** de almacenamiento (cifras estimadas de catálogo; comprobar el COUNT exacto en snapshot). No filtrar datos antiguos/duplicados por su apariencia.
+- [ ] Preservar **esquema, columnas y tipos, exactitud decimal, nulls, IDs, fechas, relaciones, claves y dependencias**. Exportar en una **vista transaccional coherente y de solo lectura**, preferiblemente un `pg_dump` lógico consistente que pueda restaurarse en un **entorno aislado** más adelante; **NO ejecutar restore en el VPS**.
+- [ ] Crear subcarpeta **privada `05_FISCAL_AEAT_CIFRADO`** dentro de la carpeta NEXA existente creada por rclone. **Cifrar en origen en streaming antes de subir**, con clave pública del usuario y custodia exclusiva de clave privada fuera de Drive y VPS; jamás mostrar secretos en salidas, URL, logs o GitHub. **Si no hay clave pública confiable o método seguro, detener solo FISCO y solicitar autorización técnica mínima para habilitarlo**, no subir fiscal en claro bajo el token OAuth previamente expuesto.
+- [ ] Crear manifiesto fiscal privado con **COUNT por tabla, snapshot/corte, esquema/versión, bytes, SHA-256 del contenido original y archivo cifrado, ruta, verificaciones y estado de recuperabilidad**. Probar descifrado y lectura en entorno seguro autorizado, sin archivos grandes en VPS/PC y sin escribir en BD productiva. No dar por «backup legal/restaurable» hasta probarlo.
+- [ ] **Mantener token actual de rclone `drive.file` activo**, como pidió el propietario; no revocar, borrar, imprimir, persistir ni ampliar permisos sin nueva autorización. El riesgo histórico de exposición sigue registrado. Para FISCO en concreto: **sin almacenamiento en claro en Drive**.
+
+### C. Método y validación de la Fase 1 ampliada
+
+- [ ] `psql READ ONLY` / `COPY TO STDOUT` / `pg_dump` de solo lectura → streaming por lotes, compresión/cifrado acotados en memoria → Drive privado. Sin copiar archivos grandes al disco del VPS o PC. Respetar límites de CPU/RAM, ventanas, `statement_timeout`, evitar OOM y detener lotes degradantes.
+- [ ] Lotes únicos y **no destructivos**; nunca `rclone sync` con borrados ni reemplazar los archivos 001–003 originales. Guardar fecha UTC, versión, snapshot, PK/intervalos, suma de filas, SHA-256 por relectura del archivo en Drive, integridad gzip/JSONL/dump, deduplicación **de lotes**, no de datos.
+- [ ] Reconciliar todas las tablas y orígenes al corte, con clasificación `COMPLETO_ORIGINAL` / `COMPLETO_CON_SECRETOS_SANEADOS` / `PENDIENTE` / `IRRECUPERABLE_EN_ORIGEN` / `EXCLUIDO_SECRETOS_ACTIVOS`. Una foto al corte **nunca** incluye futuras escrituras; no exigir «cero filas nuevas» mientras el bot sigue activo.
+- [ ] Emitir nuevo `manifest_global` y `cobertura`, separados por motor y fiscal, distinguir **fuentes originales recuperadas** de agregados existentes. Verificar que el origen FISCO no cambió por la extracción. Comprobar privacidad real y no compartir archivos con terceros.
+- [ ] Actualizar la **Issue #9, PR #10 y este documento maestro mediante PR**, conservando cambios ajenos. GitHub público solo agregados inocuos y pruebas técnicas sin datos/identificadores personales, financieros, fiscales, rutas privadas o secretos.
+- [ ] **No pasar a correcciones de P0, despliegues, sincronización semanal, ajustes o limpieza** hasta cerrar esta exportación ampliada y presentar inventario de completitud. Si alguna fuente es inaccesible o no recuperable, declararlo abiertamente. La limitación histórica no se resuelve inventando reconstrucciones.
+
+**Cierre:** datos originales operativos + fiscales existentes archivados con integridad; las velas SPOT preservadas o pérdidas anteriores documentadas; logs sin resumir; manifiesto completo; sin modificación del VPS ni de las bases. **FISCO intacto.**
+
+
 ## 2. FASE FUTURA — Auditoría y correcciones (orden separada con autorización)
 
 - [ ] Conciliar SPOT por fill real/simulado, fees **estimadas vs reales**, razones de salida, MFE/MAE, invalidación de estructura, profit factor y reversión de ganancias; no confundir pérdidas SHADOW con dinero real.
@@ -90,7 +126,7 @@ Tablas incluidas: \`trades\`, \`trade_fills\`, \`lot_matches\`, \`trade_snapshot
 
 Diseño mínimo propuesto:
 
-1. **Fuente:** consultas de solo lectura de PostgreSQL y, si corresponde, datos diagnósticos sanitizados; nunca leer FISCO para esta sincronización.
+1. **Fuente:** consultas de solo lectura de PostgreSQL y diagnósticos sanitizados, pudiendo **incluir incrementales fiscales cifrados en diseño futuro**, previa aprobación independiente antes de configurar el servicio permanente. Nunca modificar FISCO.
 2. **Incrementales:** detectar registros nuevos y actualizaciones posteriores (por PK + \`updated_at\`, versiones o mecanismo de reconciliación); no basarse únicamente en \`created_at\` cuando existan updates tardíos. Capturar cierres tardíos, cambios de estado y correcciones; diseñar watermark, deduplicación y margen temporal de reproceso.
 3. **Transporte:** streaming comprimido en fragmentos por fuente/período, sin archivos temporales voluminosos, con límites de memoria/carga y pausas si PostgreSQL o trading están saturados.
 4. **Destinos:** Drive privado con estructura fija, datos originales inmutables por snapshot, \`manifest.json\`, checksums y un índice de revisión. Una segunda subida del mismo lote NO debe generar doble contabilidad.
@@ -120,7 +156,7 @@ Diseño mínimo propuesto:
 
 ### ZONA PROTEGIDA — Fiscal AEAT
 
-**Prohibición explícita permanente hasta nueva instrucción inequívoca del propietario:** no ejecutar \`DELETE\`, \`TRUNCATE\`, \`DROP\`, \`UPDATE\`, migraciones destructivas, compactaciones que alteren los datos o cambios de semántica sobre \`fisco_*\`, su histórico/backups, cálculos fiscales y cualquier dependencia que sirva para declarar o justificar operaciones ante la AEAT. Tampoco tocar \`backups/\` ni eliminar datos operativos que FISCO necesite para trazabilidad, aunque estén en tablas sin prefijo \`fisco_\`.
+**AUTORIZADO AHORA:** leer y copiar registros FISCO/AEAT mediante `SELECT`/`COPY TO STDOUT`/`pg_dump` en modo solo lectura y streaming para respaldo privado cifrado. **PROHIBIDO:** cualquier `DELETE`/`UPDATE`/`TRUNCATE`/`DROP`/restore/migración/purga/reconstrucción o modificación de datos originales, backups y dependencias fiscales, también si viven en tablas sin prefijo `fisco_`.
 
 **Las copias de Drive no equivalen automáticamente a backup legal o restaurable.** Conservación y prueba de restauración deben validarse antes de toda política de retención.
 
@@ -133,15 +169,20 @@ Usar las marcas \`[ ] / [x]\` y una línea de evidencia por hito. No sustituir e
 
 | ID | Trabajo | Estado | Evidencia / enlace |
 | --- | --- | --- | --- |
-| T01 | Inventario total de tablas, fechas, tamaño y dependencias | EN CURSO | Issue #9 |
+| T01 | Inventario del esquema existente (144 tablas), ampliar a fuentes ajenas a public.* | BASE COMPLETADA · AMPLIAR | Manifest 18/11 · Issue #9 |
 | T02 | Lote 001 de operaciones → Drive privado | VERIFICADO | 14 archivos + manifiesto, 18/11 |
-| T03 | Históricos restantes / decisiones / eventos / snapshots | PENDIENTE | No duplicar T02 |
+| T03 | Históricos operativos iniciales (lotes 001–003) | BASE RESPALDADA · NO ÍNTEGRA | 1.771.666 filas al corte 14:36 UTC; falta origen íntegro |
 | T04 | Contraste y cierre de auditorías Cascade ↔ ChatGPT | PENDIENTE | Issue #9 |
 | T05 | Diseño de correcciones de estabilidad / estrategias | FUTURO | Requiere revisión del usuario |
 | T06 | Automatismo VPS → Drive miércoles y domingo | FUTURO / SIN AUTORIZAR | Sin cron ni deploy |
 | T07 | Inventario técnico para posible limpieza no fiscal | FUTURO / SIN AUTORIZAR | Solo estudio |
 | T08 | Tarea mensual de auditoría ChatGPT (opcional) | NO CREADA | Requiere solicitud/consentimiento |
 | T09 | Gestión del riesgo del token OAuth expuesto | RIESGO ACEPTADO TEMPORALMENTE · NO REVOCAR AHORA | Decisión propietario 18/11: mantener sesión `drive.file` en RAM; no imprimir ni persistir sin permiso. Revisar medidas antes de sincronizador permanente |
+| T10 | Logs INFO/DEBUG y eventos repetitivos originales | PENDIENTE, NUEVA ORDEN | ~2.655.837 filas resumidas |
+| T11 | Velas `data.candles` originales de snapshots SPOT | PENDIENTE, PRIORIDAD ALTA | ~55 mil snapshots; posible poda activa |
+| T12 | Respaldo íntegro cifrado de 31 tablas FISCO/AEAT | AUTORIZADA COPIA / PENDIENTE | ~4,8 M filas estimadas; NO modificar origen |
+| T13 | Incrementales de todas las tablas y fuentes nuevas | PENDIENTE | Corte y cambio tardío |
+| T14 | Verificación completa y prueba de lectura/restaurabilidad fiscal aislada | PENDIENTE | No iniciar fase 2 |
 
 ### Formato breve para futuras actualizaciones
 
@@ -151,4 +192,4 @@ Añadir bajo esta sección o actualizar la fila correspondiente:
 
 ---
 
-**Regla final:** **AHORA DESCARGAR Y VERIFICAR DATOS**. Después **ANALIZAR Y PROPONER**. Solo entonces, con permisos separados, **CORREGIR**, **SINCRONIZAR** y eventualmente **LIMPIAR**; **FISCO/AEAT permanece protegido**.
+**Regla final:** **AHORA ARCHIVAR TODOS LOS ORIGINALES DISPONIBLES, INCLUIDOS LOS DATOS FISCALES CIFRADOS Y LAS VELAS SPOT**. Después analizar y proponer. Correcciones, sincronización y posible limpieza NO FISCAL requieren nuevas autorizaciones. **El sistema FISCO/AEAT nunca se borra ni modifica en el VPS; únicamente se copia de forma segura.**
