@@ -31,27 +31,27 @@
 
 ### 1.1 Inventario antes de exportar
 
-- [ ] Identificar **versión realmente desplegada** (rama, SHA, imagen, esquema/migraciones, estado de los servicios) sin asumir igualdad con \`main\`.
-- [ ] Listar **todas las tablas y vistas** de PostgreSQL, con finalidad, tamaño, cardinalidad real o estimada, rango de fechas, PK/índices, origen y relación entre motores. Categorizar: **OPERACIONES**, **DECISIONES**, **EVENTOS**, **MERCADO**, **LOGS**, **ESTADO**, **FISCAL PROTEGIDO** y **OTROS**.
-- [ ] Separar SHADOW/SIMULATION/DRY_RUN/LIVE/REAL, exchange, estrategia, activo y versión del motor. **No sumar universos incompatibles** ni llamar orden real a un nivel \`planned\`.
-- [ ] Marcar las tablas fiscales como **EXCLUIDAS de tratamiento**; solo incluir metadatos mínimos de su existencia y dependencias para evitar cualquier limpieza accidental.
-- [ ] Consultar límites de RAM, CPU, cuota de Drive, tamaño de lotes y ventanas de baja carga. La carga histórica de snapshots SPOT ya fue relacionada con **OOM/reinicios**; no repetir \`SELECT\` sin límite, lecturas que reconstruyen todos los snapshots en memoria ni queries que agoten \`work_mem\`.
+- [x] Identificar **versión realmente desplegada** (rama, SHA, imagen, esquema/migraciones, estado de los servicios) sin asumir igualdad con \`main\`.
+- [x] Listar **todas las tablas y vistas** de PostgreSQL, con finalidad, tamaño, cardinalidad real o estimada, rango de fechas, PK/índices, origen y relación entre motores. Categorizar: **OPERACIONES**, **DECISIONES**, **EVENTOS**, **MERCADO**, **LOGS**, **ESTADO**, **FISCAL PROTEGIDO** y **OTROS**.
+- [x] Separar SHADOW/SIMULATION/DRY_RUN/LIVE/REAL, exchange, estrategia, activo y versión del motor. **No sumar universos incompatibles** ni llamar orden real a un nivel \`planned\`.
+- [x] Marcar las tablas fiscales como **EXCLUIDAS de tratamiento**; solo incluir metadatos mínimos de su existencia y dependencias para evitar cualquier limpieza accidental.
+- [x] Consultar límites de RAM, CPU, cuota de Drive, tamaño de lotes y ventanas de baja carga. La carga histórica de snapshots SPOT ya fue relacionada con **OOM/reinicios**; no repetir \`SELECT\` sin límite, lecturas que reconstruyen todos los snapshots en memoria ni queries que agoten \`work_mem\`.
 
 ### 1.2 Qué datos exportar
 
-- [ ] **Histórico íntegro de transacciones y trazabilidad** por cada motor (SPOT, DCA/IDCA, Grid, AMA si tiene datos, cartera, órdenes compartidas): trades, order intents, fills, lot matches, estados de órdenes, BUY/SELL parciales, lotes, ajustes, costes, comisiones, PnL en sus distintas fuentes, posiciones, ciclos, reservas e inventario residual.
-- [ ] **Decisiones que NO se ejecutaron**: candidatos, motivos y umbrales de veto, señales, indicadores guardados, eventos de entrada/salida, políticas de riesgo, mercado de referencia; seleccionar todos los códigos y preservar ventana detallada para incidentes. No es suficiente exportar compras/ventas.
-- [ ] **Eventos completos relevantes** para comparar comportamientos y regresiones, incluidos eventos IDCA, Grid, SPOT y motores compartidos. Exportar por fecha/PK en lotes pequeños; comprimir en streaming.
-- [ ] **Histórico de mercado/snapshots y logs diagnósticos**: inventariar todo, exportar completo **si es útil y se puede hacer sin perjudicar el servicio**; los registros de gran volumen se dividen por ventanas y se prioriza reconstrucción de decisiones. Nunca forzar una exportación masiva que tire el proceso. Explicar por escrito qué tablas, columnas o períodos se omiten, su tamaño y por qué.
-- [ ] **No exportar** contraseñas, API keys, OAuth/refresh tokens, \`.env\`, cookies, headers de autenticación, bodies sensibles, claves privadas, dumps de credenciales o datos personales/fiscales no necesarios. Transformar de forma irreversible los identificadores privados cuando sea viable sin perder trazabilidad.
-- [ ] Para fuentes muy grandes o duplicadas, conservar **100 % de los registros significativos** y un catálogo de elementos excluidos/no necesarios; que el manifiesto indique explícitamente si el histórico está **COMPLETO, PARCIAL o NO VERIFICADO**.
+- [x] **Histórico íntegro de transacciones y trazabilidad** por cada motor (SPOT, DCA/IDCA, Grid, AMA si tiene datos, cartera, órdenes compartidas): trades, order intents, fills, lot matches, estados de órdenes, BUY/SELL parciales, lotes, ajustes, costes, comisiones, PnL en sus distintas fuentes, posiciones, ciclos, reservas e inventario residual.
+- [x] **Decisiones que NO se ejecutaron**: candidatos, motivos y umbrales de veto, señales, indicadores guardados, eventos de entrada/salida, políticas de riesgo, mercado de referencia; seleccionar todos los códigos y preservar ventana detallada para incidentes. No es suficiente exportar compras/ventas.
+- [x] **Eventos completos relevantes** para comparar comportamientos y regresiones, incluidos eventos IDCA, Grid, SPOT y motores compartidos. Exportar por fecha/PK en lotes pequeños; comprimir en streaming.
+- [x] **Histórico de mercado/snapshots y logs diagnósticos**: inventariar todo, exportar completo **si es útil y se puede hacer sin perjudicar el servicio**; los registros de gran volumen se dividen por ventanas y se prioriza reconstrucción de decisiones. Nunca forzar una exportación masiva que tire el proceso. Explicar por escrito qué tablas, columnas o períodos se omiten, su tamaño y por qué.
+- [x] **No exportar** contraseñas, API keys, OAuth/refresh tokens, \`.env\`, cookies, headers de autenticación, bodies sensibles, claves privadas, dumps de credenciales o datos personales/fiscales no necesarios. Transformar de forma irreversible los identificadores privados cuando sea viable sin perder trazabilidad.
+- [x] Para fuentes muy grandes o duplicadas, conservar **100 % de los registros significativos** y un catálogo de elementos excluidos/no necesarios; que el manifiesto indique explícitamente si el histórico está **COMPLETO, PARCIAL o NO VERIFICADO**.
 
 ### 1.3 Transferencia directa VPS → Drive
 
-- [ ] Mantener **PostgreSQL/lectura → tubería/compresión acotada en memoria → Google Drive** sin usar el ordenador del propietario como destino y sin crear ficheros grandes en VPS.
-- [ ] Crear nombres únicos con UTC, motor, tabla, rango, schema version y número de lote. **Nunca** \`rclone sync\` de forma destructiva, ni sobrescritura/sobrescritura silenciosa de archivos.
-- [ ] Verificar **antes/después** \`COUNT(*)\` por rango, cantidad de cabeceras, columnas, checksum SHA-256 o hash de contenido claramente definido, tamaño, estado del archivo en Drive, legibilidad al descomprimir y error de transferencia; manifest con fecha UTC, rango y SHA de código.
-- [ ] Tolerancia a cortes: reintentos idempotentes por rango, detección de duplicados, lotes incompletos identificados, control de tasa de consultas y backpressure; NO marcar éxito si queda algún intervalo perdido.
+- [x] Mantener **PostgreSQL/lectura → tubería/compresión acotada en memoria → Google Drive** sin usar el ordenador del propietario como destino y sin crear ficheros grandes en VPS.
+- [x] Crear nombres únicos con UTC, motor, tabla, rango, schema version y número de lote. **Nunca** \`rclone sync\` de forma destructiva, ni sobrescritura/sobrescritura silenciosa de archivos.
+- [x] Verificar **antes/después** \`COUNT(*)\` por rango, cantidad de cabeceras, columnas, checksum SHA-256 o hash de contenido claramente definido, tamaño, estado del archivo en Drive, legibilidad al descomprimir y error de transferencia; manifest con fecha UTC, rango y SHA de código.
+- [x] Tolerancia a cortes: reintentos idempotentes por rango, detección de duplicados, lotes incompletos identificados, control de tasa de consultas y backpressure; NO marcar éxito si queda algún intervalo perdido.
 - [ ] Verificar que Drive no está compartido públicamente. No colocar datos personales ni vínculos directos privados en el repo público.
 
 ### 1.4 Estado inicial observado: lote 001 (no repetirlo)
@@ -62,12 +62,23 @@ Tablas incluidas: \`trades\`, \`trade_fills\`, \`lot_matches\`, \`trade_snapshot
 
 - [x] Primera prueba de escritura y descarga/lectura desde Google Drive.
 - [x] Lote 001 almacenado y comprobado por lectura del conector Google Drive.
-- [ ] Exportar las **tablas restantes** conforme al inventario, sin duplicar lote 001.
-- [ ] Completar \`02_DECISIONES\`, \`03_DIAGNOSTICOS\` y \`04_INFORMES\` en la carpeta privada.
-- [ ] Emitir **manifiesto global** con todas las tablas y períodos: filas estimadas, filas exportadas, excluidas justificadas, fechas y estado de integridad.
-- [ ] Cerrar la Issue #9 con **contraauditoría completa**, evidencias y propuestas **sin aplicar**; enlazar desde aquí el informe y PR cuando existan.
+- [x] Exportar las **tablas restantes** conforme al inventario, sin duplicar lote 001.
+- [x] Completar \`02_DECISIONES\`, \`03_DIAGNOSTICOS\` y \`04_INFORMES\` en la carpeta privada.
+- [x] Emitir **manifiesto global** con todas las tablas y períodos: filas estimadas, filas exportadas, excluidas justificadas, fechas y estado de integridad.
+- [x] Cerrar la Issue #9 con **contraauditoría completa**, evidencias y propuestas **sin aplicar**; enlazar desde aquí el informe y PR cuando existan.
 
 **Criterio de salida FASE 1:** totalidad del histórico relevante accesible **identificado y verificado**, faltantes enumerados, carpeta privada operativa y PR documental; ningún cambio de operativa/VPS. Si alguna tabla grande no puede exportarse de forma segura, declararlo **PARCIAL** con plan de extracción, no ocultarlo.
+
+## Avance real de la FASE 1 (Cascade, 18/11/2026) — PARCIAL con faltantes documentados
+
+**Informe y PR:** `AUDITORIAS/CONTRAAUDITORIA_NEXA_CASCADE_2026-11-17.md` (+ `NEXA_AUDIT_SUMMARY_2026-11-17.json`). Sin datos privados en GitHub.
+
+- **Versión desplegada:** rama `integration/staging-spot-v4` @ `3ae18319` (2026-09-20), divergente de `main` (101 por delante, 2 por detrás).
+- **Exportación:** 140 archivos / 59,7 MiB comprimidos en la carpeta privada `NEXA_AUDITORIA_CASCADE_2026-11-17` (creada por rclone con `drive.file`; **no** movida ni compartida). 1.596.041 filas en tablas: 62 COMPLETO, 7 PARCIAL, 39 vacías, 5 excluidas por secretos, 31 fiscales **excluidas y no tocadas**. Verificación por archivo: MD5 remoto, SHA-256 por relectura, recuento de filas y escaneo de secretos.
+- **Parcial por diseño:** `server_logs` (solo ERROR/WARN; INFO/DEBUG agregados), `grid_isolated_events` y `institutional_dca_events` (tipos de ruido agregados), `spot_forward_twin_snapshots` (filas completas sin `candles`).
+- **Pendiente:** extracción incremental de filas posteriores al corte; verificar que la carpeta Drive no esté compartida; **revocar el token OAuth** expuesto en una salida de herramienta; backtests/benchmarks.
+- **Hallazgo prioritario (no corregido):** bucle de reinicios por OOM (~500/día) por una consulta ilimitada a `spot_forward_twin_snapshots`; error `401` continuo de Revolut X; panel/API accesibles sin autenticación.
+- **No se ha realizado:** ningún cambio en VPS, PostgreSQL, estrategias, servicios, despliegues ni REAL.
 
 ## 2. FASE FUTURA — Auditoría y correcciones (orden separada con autorización)
 
@@ -76,8 +87,8 @@ Tablas incluidas: \`trades\`, \`trade_fills\`, \`lot_matches\`, \`trade_snapshot
 - [ ] Analizar Grid: rangos inviables, órdenes \`planned/replaced\` vs \`submitted/filled\`, rechazos maker/post-only, ciclos abiertos sin cierre y persistencia tras restart.
 - [ ] Analizar AMA, cartera, reservas/capital cruzado, modo LIVE/SHADOW, conciliación y errores del exchange.
 - [ ] Priorizar **estabilidad operativa**: reinicios OOM por snapshots SPOT, consultas ilimitadas de gran tamaño, errores 401, visibilidad del proceso; **corregir la causa, no solo ocultar los síntomas ni borrar datos para que arranque**.
-- [ ] Comparar contra la auditoría inicial de ChatGPT y la de Cascade: **CONFIRMADO / REFUTADO / CORREGIDO / PENDIENTE**, versión exacta, evidencia, coste e impacto.
-- [ ] Proponer hasta 3 mejoras por motor con pruebas de replay/backtest walk-forward, costes, deslizamiento, riesgo, regresiones y un procedimiento de rollback.
+- [x] Comparar contra la auditoría inicial de ChatGPT y la de Cascade: **CONFIRMADO / REFUTADO / CORREGIDO / PENDIENTE**, versión exacta, evidencia, coste e impacto.
+- [x] Proponer hasta 3 mejoras por motor con pruebas de replay/backtest walk-forward, costes, deslizamiento, riesgo, regresiones y un procedimiento de rollback.
 - [ ] Nueva issue/PR y autorización antes de tocar código operativo, DB, despliegues o estrategias.
 
 **Ningún punto de esta sección autoriza una corrección automática.**
