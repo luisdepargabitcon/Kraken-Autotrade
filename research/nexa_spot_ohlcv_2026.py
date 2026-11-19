@@ -4,7 +4,8 @@ import concurrent.futures, datetime, hashlib, io, json, time, zipfile
 from pathlib import Path
 import numpy as np, pandas as pd, requests
 
-PAIRS=['BTCUSDT','ETHUSDT','SOLUSDT','XRPUSDT','TONUSDT']
+PAIRS=['BTCUSDT','ETHUSDT','SOLUSDT','XRPUSDT','GRAMUSDT']
+# GRAM es el ticker sucesor de TON en Binance desde 2026-07-02 08:00 UTC, canje 1:1. La serie GRAM no es una serie del mercado Kraken TON/USD.
 OUT=Path('nexa_ohlcv_publico'); OUT.mkdir(exist_ok=True)
 BEGIN=pd.Timestamp('2026-07-01T00:00:00Z')
 END=pd.Timestamp('2026-11-19T00:00:00Z')
@@ -110,7 +111,9 @@ def main():
        'end_exclusive_utc':'2026-11-19','sources_expected':110,
        'sources_ok':sum(m['status']=='OK' for m in manifest),
        'missing_sources':[m['url'] for m in manifest if m['status']!='OK'],
-       'coverage':[]}
+       'coverage':[],
+       'ticker_lineage':{'TON':'Binance TONUSDT delisted 2026-06-30 03:00 UTC; GRAMUSDT listed 2026-07-02 08:00 UTC; official conversion 1 TON=1 GRAM; keep venue and ticker explicit'},
+       'ticker_source':'https://www.binance.com/en/support/announcement/detail/8177254072cf4da3b9d8fcaacceb0a2c'}
     hourly=[]
     for sym in PAIRS:
         sources=[x[1] for x in results if x[0]==sym and x[1] is not None]
@@ -119,7 +122,8 @@ def main():
         s=s[(s.ts>=BEGIN)&(s.ts<END)].set_index('ts')
         s=s[(s.open>0)&(s.high>=s[['open','close','low']].max(axis=1))&
             (s.low<=s[['open','close','high']].min(axis=1))&(s.volume>=0)]
-        expected=pd.date_range(BEGIN,END-pd.Timedelta(minutes=5),freq='5min')
+        start_expected=(pd.Timestamp('2026-07-02T08:00:00Z') if sym=='GRAMUSDT' else BEGIN)
+        expected=pd.date_range(start_expected,END-pd.Timedelta(minutes=5),freq='5min')
         gaps=expected.difference(s.index)
         pd.DataFrame({'missing_5m_utc':gaps}).to_csv(OUT/f'{sym}_huecos.csv',index=False)
         print(sym,'bars',len(s),'missing',len(gaps),flush=True)
