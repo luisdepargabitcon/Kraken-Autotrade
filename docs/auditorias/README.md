@@ -24,6 +24,7 @@
 | AUD-20261119-10 | 2026-11-19 | [Comparativa A+B por día, mes y operación](2026-11-19/10-comparativa-estrategias-A-B-diaria-mensual.md) | [HTML privado en Drive](https://drive.google.com/file/d/1aVwbdKZ9Qk32gNPo_vSOVDrh2xJYnONg/view) |
 | AUD-20261119-11 | 2026-11-19 | [Laboratorio de 168 estrategias SPOT y validación cronológica](2026-11-19/11-laboratorio-168-estrategias-spot.md) | [Informe HTML privado](https://drive.google.com/file/d/1pk4g4dIkvnsrmTnvO8yicDt9K92S4tuu/view) |
 | AUD-20261119-12 | 2026-11-19 | [Tres estrategias D/E/F de foros y documentación; laboratorio ampliado a 174](2026-11-19/12-nuevas-estrategias-foros-hummingbot-freqtrade.md) | [HTML privado actualizado](https://drive.google.com/file/d/1pk4g4dIkvnsrmTnvO8yicDt9K92S4tuu/view) |
+| AUD-20261119-13 | 2026-11-19 | [Datos OHLCV verificados: cinco activos, 110 fuentes, 4 temporalidades](2026-11-19/13-datos-ohlcv-descarga-verificada-cinco-activos.md) | [Datos ZIP privados](https://drive.google.com/file/d/1mabq79pmGblzj5PACEXy-5Yn4AQUTZT_/view) |
 
 ## Carpetas de Google Drive (privadas)
 
