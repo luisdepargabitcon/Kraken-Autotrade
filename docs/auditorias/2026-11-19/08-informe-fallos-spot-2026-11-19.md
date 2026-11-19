@@ -39,6 +39,12 @@
 
 **F-SPOT-15 — Pregunta del usuario:** «¿Puede el bot prever si una operación perderá estructura dentro de unos 180 minutos? ¿Qué hacen los bots profesionales?» No es posible predecir el precio a tres horas con certeza. Algunas estrategias sistemáticas filtran el régimen multi-timeframe, confirman rupturas y usan volatilidad (ATR) para distinguir ruido de invalidación; las salidas realmente protectoras son necesarias. Si se investigara, exigiría validación fuera de muestra y no usar datos futuros para filtrar entradas. **No se pidió crear un filtro predictivo ni modificar la estrategia.**
 
+## Investigación ampliada de F-SPOT-03
+
+- [Anexo técnico: umbrales de BE/trailing/TP y pruebas de sensibilidad (19/11/2026)](09-investigacion-f-spot-03-umbrales.md).
+- [Informe privado íntegro de esta investigación (Google Docs)](https://docs.google.com/document/d/1dg_i33nl5tF-vU-xloYNr4gO7BwYieKMD-nlIbB4lWU/edit).
+- **Estado:** el problema histórico de cobertura es observable, pero bajar sin más los umbrales no se ha demostrado rentable; no se autorizan cambios de producción.
+
 ## Criterios para cerrar cada incidencia
 
 1. Identificar el commit/código **efectivamente desplegado** y reproducir el comportamiento en pruebas, nunca presumir que un commit histórico es producción.
