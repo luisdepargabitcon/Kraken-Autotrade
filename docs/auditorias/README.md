@@ -19,6 +19,8 @@
 | AUD-20261119-05 | 2026-11-19 | [Simulación combinada de cuatro cambios](2026-11-19/05-cuatro-cambios.md) | [Carpeta de 2026-11-19](https://drive.google.com/drive/folders/1af2Guko1FXpzbxQ0fYAMiZP2oGAtzNn5) |
 | AUD-20261119-06 | 2026-11-19 | [Simulación de salidas profesionales y dinámicas](2026-11-19/06-salidas-dinamicas.md) | [Carpeta de 2026-11-19](https://drive.google.com/drive/folders/1af2Guko1FXpzbxQ0fYAMiZP2oGAtzNn5) |
 | AUD-20261119-07 | 2026-11-19 | [Investigación de entradas y contexto de mercado](2026-11-19/07-entradas-contexto.md) | [Carpeta de 2026-11-19](https://drive.google.com/drive/folders/1af2Guko1FXpzbxQ0fYAMiZP2oGAtzNn5) |
+| AUD-20261119-08 | 2026-11-19 | [INFORME FALLOS SPOT — Registro consolidado](2026-11-19/08-informe-fallos-spot-2026-11-19.md) | [Informe privado](https://docs.google.com/document/d/1W3-z7Z_rPPGeMRan_Rh_WgNEnBdXP84aiH8ENEe-31M/edit) |
+| AUD-20261119-09 | 2026-11-19 | [Investigación F-SPOT-03: umbrales de protección](2026-11-19/09-investigacion-f-spot-03-umbrales.md) | [Informe privado](https://docs.google.com/document/d/1dg_i33nl5tF-vU-xloYNr4gO7BwYieKMD-nlIbB4lWU/edit) |
 
 ## Carpetas de Google Drive (privadas)
 
