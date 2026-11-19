@@ -119,6 +119,15 @@
       "original_private_filename": "NEXA_Comparativa_AB_Diaria_Mensual_19-11-2026.html",
       "attachment_private_filename": "NEXA_Comparativa_AB_Operaciones_19-11-2026.csv",
       "original_private_url": "https://drive.google.com/file/d/1aVwbdKZ9Qk32gNPo_vSOVDrh2xJYnONg/view"
+    },
+    {
+      "id": "AUD-20261119-11",
+      "date": "2026-11-19",
+      "title": "Laboratorio de 168 estrategias SPOT y validación cronológica",
+      "path": "docs/auditorias/2026-11-19/11-laboratorio-168-estrategias-spot.md",
+      "original_private_filename": "NEXA_Laboratorio_168_Estrategias_SPOT_19-11-2026.html",
+      "attachment_private_filename": "NEXA_Exploracion_Estrategias_2026-11-19_todos_escenarios.csv",
+      "original_private_url": "https://drive.google.com/file/d/1pk4g4dIkvnsrmTnvO8yicDt9K92S4tuu/view"
     }
   ],
   "catalog_updated_utc_date": "2026-11-19"
