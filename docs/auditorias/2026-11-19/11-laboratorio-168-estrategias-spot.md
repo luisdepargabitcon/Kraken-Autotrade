@@ -4,6 +4,7 @@
 **Fuente:** 167 operaciones SPOT SHADOW del 20/08 al 12/11/2026 y pertenencia a filtros de entrada de la [auditoría previa A/B](10-comparativa-estrategias-A-B-diaria-mensual.md).  
 **Informe HTML privado interactivo:** [Laboratorio de 168 configuraciones](https://drive.google.com/file/d/1pk4g4dIkvnsrmTnvO8yicDt9K92S4tuu/view).  
 **Tabla privada completa de las 168 combinaciones:** [CSV de escenarios](https://drive.google.com/file/d/15bASeQBrHuNbrvB9aNs4twtl6eMWZv36/view).  
+**Paquete de reproducción privado (HTML, scripts, datos, resultados):** [ZIP reproducible](https://drive.google.com/file/d/1h42cY0jqNyU5VUSeSsd9nA49jgQ75sKj/view).  
 **Carpeta privada:** [Auditorías de 19/11/2026](https://drive.google.com/drive/folders/1af2Guko1FXpzbxQ0fYAMiZP2oGAtzNn5).
 
 > Repositorio público: solo agregados y metodología. Los identificadores por operación, posiciones, trazas, saldos y detalles no publicables permanecen en Drive privado.
