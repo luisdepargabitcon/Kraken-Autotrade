@@ -1,5 +1,8 @@
 # Laboratorio NEXA SPOT — Búsqueda de estrategias y pruebas de robustez (19/11/2026)
 
+> **Actualización documental (19/11/2026):** el archivo HTML vinculado en Google Drive fue **actualizado en el mismo ID** para añadir las tres familias D/E/F y ahora incluye **174 configuraciones**. La investigación original de 168 configuraciones se conserva como ficha histórica aquí; consulte la [auditoría 12](12-nuevas-estrategias-foros-hummingbot-freqtrade.md) y el [ZIP reproducible de la versión ampliada](https://drive.google.com/file/d/1wcveT6FfPT-AUXYtE59dJxFrReFkH4rj/view). Ninguna estrategia nueva se ha autorizado.
+
+
 **ID:** `AUD-20261119-11` · **Estado:** INVESTIGACIÓN; **NINGUNA ESTRATEGIA VALIDADA NI APROBADA**.  
 **Fuente:** 167 operaciones SPOT SHADOW del 20/08 al 12/11/2026 y pertenencia a filtros de entrada de la [auditoría previa A/B](10-comparativa-estrategias-A-B-diaria-mensual.md).  
 **Informe HTML privado interactivo:** [Laboratorio de 168 configuraciones](https://drive.google.com/file/d/1pk4g4dIkvnsrmTnvO8yicDt9K92S4tuu/view).  
