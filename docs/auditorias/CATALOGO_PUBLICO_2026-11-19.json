@@ -146,6 +146,15 @@
       "original_private_filename": "NEXA_SPOT_OHLCV_5_ACTIVOS_VERIFICADOS_2026-07-01_a_11-18.zip",
       "attachment_private_filename": "NEXA_Informe_Verificacion_Datos_SPOT_19-11-2026.html",
       "original_private_url": "https://drive.google.com/file/d/1mabq79pmGblzj5PACEXy-5Yn4AQUTZT_/view"
+    },
+    {
+      "id": "AUD-20261119-14",
+      "date": "2026-11-19",
+      "title": "Backtest histórico de tres estrategias D/E/F sobre mercado Binance OHLCV, ejecución simulada de cartera",
+      "path": "docs/auditorias/2026-11-19/14-backtest-real-estrategias-D-E-F-2026.md",
+      "original_private_filename": "NEXA_SPOT_BACKTEST_D_E_F_2026-11-19.html",
+      "attachment_private_filename": "NEXA_SPOT_Simulaciones_Reales_D_E_F_19-11-2026.zip",
+      "original_private_url": "https://drive.google.com/file/d/1Xh8S02_yLQm7in3aSCMLCnPuVcnHxbhp/view"
     }
   ],
   "catalog_updated_utc_date": "2026-11-19"
