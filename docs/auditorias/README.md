@@ -23,6 +23,7 @@
 | AUD-20261119-09 | 2026-11-19 | [Investigación F-SPOT-03: umbrales de protección](2026-11-19/09-investigacion-f-spot-03-umbrales.md) | [Informe privado](https://docs.google.com/document/d/1dg_i33nl5tF-vU-xloYNr4gO7BwYieKMD-nlIbB4lWU/edit) |
 | AUD-20261119-10 | 2026-11-19 | [Comparativa A+B por día, mes y operación](2026-11-19/10-comparativa-estrategias-A-B-diaria-mensual.md) | [HTML privado en Drive](https://drive.google.com/file/d/1aVwbdKZ9Qk32gNPo_vSOVDrh2xJYnONg/view) |
 | AUD-20261119-11 | 2026-11-19 | [Laboratorio de 168 estrategias SPOT y validación cronológica](2026-11-19/11-laboratorio-168-estrategias-spot.md) | [Informe HTML privado](https://drive.google.com/file/d/1pk4g4dIkvnsrmTnvO8yicDt9K92S4tuu/view) |
+| AUD-20261119-12 | 2026-11-19 | [Tres estrategias D/E/F de foros y documentación; laboratorio ampliado a 174](2026-11-19/12-nuevas-estrategias-foros-hummingbot-freqtrade.md) | [HTML privado actualizado](https://drive.google.com/file/d/1pk4g4dIkvnsrmTnvO8yicDt9K92S4tuu/view) |
 
 ## Carpetas de Google Drive (privadas)
 
