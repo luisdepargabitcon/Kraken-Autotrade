@@ -1,0 +1,97 @@
+{
+  "archive_created_utc": "2026-11-19T11:28:14Z",
+  "repository": "luisdepargabitcon/Kraken-Autotrade",
+  "visibility": "public",
+  "full_originals_private_drive": "https://drive.google.com/drive/folders/1Cz1BHX1yNsxfsHC6M9Y28UvCw3V8lRiO",
+  "status": "audit archive only; no REAL deployment",
+  "audits": [
+    {
+      "id": "AUD-20261117-01",
+      "date": "2026-11-17",
+      "title": "Auditoría integral de NEXA Crypto Suite",
+      "path": "docs/auditorias/2026-11-17/01-integral-nexa.md",
+      "original_private_filename": "Auditoria_NEXA_Crypto_Suite_2026-11-17.html",
+      "attachment_private_filename": null
+    },
+    {
+      "id": "AUD-20261117-02",
+      "date": "2026-11-17",
+      "title": "Auditoría de operaciones y estrategias",
+      "path": "docs/auditorias/2026-11-17/02-operaciones-estrategias.md",
+      "original_private_filename": "NEXA_Auditoria_OPERACIONES_y_ESTRATEGIAS_17-11-2026.html",
+      "attachment_private_filename": null
+    },
+    {
+      "id": "AUD-20261118-01",
+      "date": "2026-11-18",
+      "title": "Auditoría independiente: 167 ventas SPOT SHADOW",
+      "path": "docs/auditorias/2026-11-18/01-spot-167.md",
+      "original_private_filename": "NEXA_Auditoria_Independiente_SPOT_167_18-11-2026.html",
+      "attachment_private_filename": "NEXA_SPOT_167_Auditoria_Completa_Privada_18-11-2026.zip"
+    },
+    {
+      "id": "AUD-20261118-02",
+      "date": "2026-11-18",
+      "title": "Auditoría UX, configuración y futura APK",
+      "path": "docs/auditorias/2026-11-18/02-ux-configuracion-apk.md",
+      "original_private_filename": "NEXA_Informe_Auditoria_UX_Configuraciones_APK_18-11-2026.html",
+      "attachment_private_filename": null
+    },
+    {
+      "id": "AUD-20261119-01",
+      "date": "2026-11-19",
+      "title": "Diagnóstico causal profundo SPOT",
+      "path": "docs/auditorias/2026-11-19/01-diagnostico-causal.md",
+      "original_private_filename": "NEXA_SPOT_Diagnostico_Causal_2026-11-19.html",
+      "attachment_private_filename": "NEXA_SPOT_Auditoria_Causal_19-11-2026.zip"
+    },
+    {
+      "id": "AUD-20261119-02",
+      "date": "2026-11-19",
+      "title": "Trailing +15 USD netos y tomas parciales",
+      "path": "docs/auditorias/2026-11-19/02-trailing-15-usd.md",
+      "original_private_filename": "CONCLUSIONES_Y_LIMITACIONES.md",
+      "attachment_private_filename": "NEXA_SPOT_TRAILING_15_TESTS.zip"
+    },
+    {
+      "id": "AUD-20261119-03",
+      "date": "2026-11-19",
+      "title": "Venta directa al alcanzar +10 USD netos",
+      "path": "docs/auditorias/2026-11-19/03-take-profit-10-usd.md",
+      "original_private_filename": "NEXA_SPOT_TP10_Informe_2026-11-19.html",
+      "attachment_private_filename": "TP10_DATOS_Y_METODOLOGIA_2026-11-19.zip"
+    },
+    {
+      "id": "AUD-20261119-04",
+      "date": "2026-11-19",
+      "title": "Auditoría forense de protecciones SPOT",
+      "path": "docs/auditorias/2026-11-19/04-protecciones-forense.md",
+      "original_private_filename": "NEXA_SPOT_Informe_Causal_Protecciones_19-11-2026.html",
+      "attachment_private_filename": "PROTECCIONES_EVIDENCIAS_2026-11-19.zip"
+    },
+    {
+      "id": "AUD-20261119-05",
+      "date": "2026-11-19",
+      "title": "Simulación combinada de cuatro cambios",
+      "path": "docs/auditorias/2026-11-19/05-cuatro-cambios.md",
+      "original_private_filename": "NEXA_SPOT_Simulacion_4_Puntos_19-11-2026.html",
+      "attachment_private_filename": "NEXA_SPOT_Simulacion_4_Puntos_19-11-2026.zip"
+    },
+    {
+      "id": "AUD-20261119-06",
+      "date": "2026-11-19",
+      "title": "Simulación de salidas profesionales y dinámicas",
+      "path": "docs/auditorias/2026-11-19/06-salidas-dinamicas.md",
+      "original_private_filename": "NEXA_SPOT_Salidas_Dinamicas_Informe_2026-11-19.html",
+      "attachment_private_filename": "NEXA_SPOT_Salidas_Profesionales_21_Politicas_2026-11-19.zip"
+    },
+    {
+      "id": "AUD-20261119-07",
+      "date": "2026-11-19",
+      "title": "Investigación de entradas y contexto de mercado",
+      "path": "docs/auditorias/2026-11-19/07-entradas-contexto.md",
+      "original_private_filename": "NEXA_SPOT_Auditoria_Entradas_19-11-2026.html",
+      "attachment_private_filename": "NEXA_SPOT_Entradas_Investigacion_19-11-2026.zip"
+    }
+  ]
+}
