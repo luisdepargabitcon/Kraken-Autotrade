@@ -6,6 +6,12 @@ on:
     paths:
       - research/nexa_spot_ohlcv_2026.py
       - .github/workflows/nexa-market-research-2026.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - research/nexa_spot_ohlcv_2026.py
+      - .github/workflows/nexa-market-research-2026.yml
   workflow_dispatch:
 permissions:
   contents: read
