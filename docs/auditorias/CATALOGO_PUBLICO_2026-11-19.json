@@ -92,6 +92,25 @@
       "path": "docs/auditorias/2026-11-19/07-entradas-contexto.md",
       "original_private_filename": "NEXA_SPOT_Auditoria_Entradas_19-11-2026.html",
       "attachment_private_filename": "NEXA_SPOT_Entradas_Investigacion_19-11-2026.zip"
+    },
+    {
+      "id": "AUD-20261119-08",
+      "date": "2026-11-19",
+      "title": "INFORME FALLOS SPOT — Registro consolidado",
+      "path": "docs/auditorias/2026-11-19/08-informe-fallos-spot-2026-11-19.md",
+      "original_private_filename": "INFORME FALLOS SPOT — 19-11-2026 — Registro de incidencias y mejoras",
+      "attachment_private_filename": null,
+      "original_private_url": "https://docs.google.com/document/d/1W3-z7Z_rPPGeMRan_Rh_WgNEnBdXP84aiH8ENEe-31M/edit"
+    },
+    {
+      "id": "AUD-20261119-09",
+      "date": "2026-11-19",
+      "title": "Investigación F-SPOT-03 — Umbrales de protección",
+      "path": "docs/auditorias/2026-11-19/09-investigacion-f-spot-03-umbrales.md",
+      "original_private_filename": "NEXA — Investigación F-SPOT-03 — Umbrales y protección de beneficios — 19-11-2026",
+      "attachment_private_filename": null,
+      "original_private_url": "https://docs.google.com/document/d/1dg_i33nl5tF-vU-xloYNr4gO7BwYieKMD-nlIbB4lWU/edit"
     }
-  ]
+  ],
+  "catalog_updated_utc_date": "2026-11-19"
 }
