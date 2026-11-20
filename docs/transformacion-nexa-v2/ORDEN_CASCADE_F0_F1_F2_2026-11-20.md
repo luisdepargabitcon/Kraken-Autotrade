@@ -1,10 +1,33 @@
 # ORDEN DEFINITIVA PARA CASCADE — NEXA V2 · TRANSFORMACIÓN COMPLETA AISLADA
-**Fecha:** 20-11-2026 · **Revisión:** 5 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
+**Fecha:** 20-11-2026 · **Revisión:** 6 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
 **Rama EXCLUSIVA:** feature/nexa-v2-transformacion-20261120.
 **Base de referencia:** main 47d79db3f7065e0e54481447129f2f88e9225fe2.
 **Diseño de referencia:** design/nexa-apk-web-basico-pro-20261120; HTML NEXA y ORION en Drive privado.
 **Documento bloqueante:** [Checklist completo de 75 puntos](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md).
 **Plan:** [F0-F6](PLAN_MAESTRO_2026-11-20.md).
+
+
+## RECTIFICACIÓN PRIORITARIA REV. 6 — EL PRODUCTO FINAL ES EL PANEL DE GESTIÓN REAL DEL BOT
+
+**Orden del usuario:** NEXA V2 NO es simplemente una maqueta, un visor estático ni un «panel DEMO» como entrega definitiva. El producto que debe completar Cascade es la **sustitución funcional de las interfaces de gestión existentes** por un **PANEL WEB DE GESTIÓN AUTÉNTICO y su APK ANDROID equivalente**, ambos usando una fuente de datos canónica común del bot actual, conservando sus motores, estado, métricas, históricos, operaciones, cartera, FISCO y configuración; Básico/Pro son únicamente capas de presentación. El bot actual seguirá ejecutándose sin cambios hasta una migración explícitamente autorizada.
+
+### Separar etapa de prueba y producto definitivo
+- **Vista previa DEMO en GitHub Pages:** sirve exclusivamente para que el propietario inspeccione la UX sin datos ni acceso al trading real. No equivale al panel de gestión conectado. Mantener el enlace temporal y etiquetarlo claramente VISTA PREVIA DEMO; no presentar F6 como proyecto global terminado por publicar esa URL.
+- **APK debug como GitHub Pre-release:** debe ser descargable para QA, pero mientras use fixtures debe identificarse como APK DE PRUEBAS. No sustituye la APK conectada al bot ni una versión firmada para distribución.
+- **Objetivo real del producto:** web y APK capaces de **consultar datos reales con permisos**, ver SPOT/IDCA/Grid/AMA completos y gestionar de forma segura las mismas operaciones y configuraciones que permite la interfaz actual, sin degradación ni duplicar lógica de trading.
+
+### Trabajo nuevo obligatorio en rama aislada (sin acceso a producción)
+1. Hacer inventario de todos los **contratos de lectura y mutación** ya existentes (método, ruta, payload, permisos, validaciones, auditoría, fuente, error, actualización efectiva); comprobar equivalencia real con los campos y controles del sistema original. La matriz `MATRIZ_PARIDAD.csv` no puede quedarse en estado «mapeado»: pruebas por cada elemento.
+2. Preparar **adaptadores normalizados para el backend actual**: mercado, motores, señales, posiciones, ciclos, BUY/SELL, cartera, balances, FISCO autorizado, históricos, monitor, logs, configuración efectiva y alertas. Tratar errores parciales y frescura por sección; no asumir que un endpoint GET devuelve ya el contrato UI. No exponer fiscalidad personal en público.
+3. Implementar **flujos de gestión y controles reales en el código** a través de una capa autenticada/autorizada; en pruebas usar un **backend local simulado** que reproduzca respuestas y valide permisos, confirmaciones, bloqueo REAL, errores y auditoría, sin enviar órdenes reales. No basta con mostrar botones que dicen «acción protegida» sin flujo implementable.
+4. Diseñar seguridad para uso real: autenticación de servidor, sesiones protegidas, comprobación de permisos por acción y motor, protección frente a CSRF/XSS, HTTPS, tokens seguros fuera del código, trazas con redacción de secretos, confirmaciones de operaciones sensibles, idempotencia donde proceda, separación lectura/configuración/ejecución. **Un PIN local o SHA-256 de un PIN embebido nunca son autenticación suficiente.**
+5. QA cruzada de **Web + APK** y **Básico + Pro**, 4 motores, pruebas de API local contractuales y negativas, autorización, estado offline/stale, paridad de tablas/acciones y fallos. El modo de gestión no debe operar por una UI duplicada que calcule PnL distinto del backend canónico.
+6. Generar y comprobar los dos artefactos de **PRUEBAS** accesibles (URL vista previa y APK GitHub Release) solicitados en Rev. 5, **sin confundirlos con la entrega definitiva**. Registrar explícitamente **«PANEL DE GESTIÓN REAL: PENDIENTE DE INTEGRACIÓN/VALIDACIÓN EN ENTORNO AUTORIZADO»** hasta que proceda.
+
+### Puerta de autorización para conexión real
+NO acceder, desplegar, configurar ni conectar al VPS, backend real, bases de datos, servicios mutables o trading LIVE, ni modificar `main`, por esta rectificación. Cuando toda la integración esté preparada en local, entregar un **plan de conexión/migración reversible**, relación de rutas y controles, pruebas de seguridad y lista mínima de acciones que requieren aprobación explícita. No publicar un panel administrativo real ni un API de gestión sensible en GitHub Pages público. Es necesario un hosting y un acceso seguro bajo control del propietario, autorizados separadamente. **No declarar NEXA V2 en producción ni «gestión real terminada» hasta esa verificación.**
+
+**Esta revisión 6 prevalece sobre cualquier frase de la revisión 5 que sugiera que una demo web + APK de demostración bastan para cerrar el proyecto.** Las entregas DEMO siguen siendo obligatorias como hitos de QA, pero **no constituyen la meta final**.
 
 
 ## ORDEN DE TRABAJO PRINCIPAL Y RESPONSABILIDAD DEL CHECKLIST (REV. 4)
