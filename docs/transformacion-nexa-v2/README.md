@@ -1,16 +1,15 @@
-# Transformación NEXA V2 (20-11-2026)
+# NEXA V2 — implementación definitiva web + APK (Revisión 7)
 
-Documentos de control para una **rama aislada**, con `main` protegido y sin autorización para modificar VPS, DB, producción o realizar órdenes.
+**Una sola versión definitiva. No crear ni publicar maquetas, previews DEMO ni APK de demostración como entregables del proyecto.** La aplicación web de gestión y la APK Android comparten lógica, modelos y acceso seguro al bot existente; Básico/Pro son solo niveles de presentación.
 
-- [Plan maestro](PLAN_MAESTRO_2026-11-20.md)
-- [Orden principal revisada para Cascade](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md)
-- Diseño de referencia: [rama de prototipo](https://github.com/luisdepargabitcon/Kraken-Autotrade/tree/design/nexa-apk-web-basico-pro-20261120/design/nexa-apk-web)
+- [Plan maestro F0–F6: producto definitivo](PLAN_MAESTRO_2026-11-20.md)
+- [Orden operativa Rev. 7 para Cascade](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md)
+- [Checklist ejecutivo C001–C086 que debe cumplimentar Cascade](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md)
 - [Contraauditoría canónica 22 hallazgos](../auditorias/2026-11-20/03-contraauditoria-final-nexa-v2.md)
-- [Carpeta Google Drive privada de esta transformación](https://drive.google.com/drive/folders/1z24z4lZQKnkPFxPXwIm00KcqvHPg7W72)
+- [Diseño de referencia original](https://github.com/luisdepargabitcon/Kraken-Autotrade/tree/design/nexa-apk-web-basico-pro-20261120/design/nexa-apk-web)
+- [Drive privado de transformación](https://drive.google.com/drive/folders/1z24z4lZQKnkPFxPXwIm00KcqvHPg7W72)
+- [Issue de ejecución #17](https://github.com/luisdepargabitcon/Kraken-Autotrade/issues/17)
 
-Los adjuntos con datos individuales, fiscalidad, API y respaldos no se suben a este repositorio público.
+**Rama única** `feature/nexa-v2-transformacion-20261120`. `main` intacta. No se autoriza acceso VPS, DB real, trading LIVE, despliegue ni merge por este documento.
 
-- [Checklist bloqueante — 75 controles que debe ejecutar y marcar Cascade: IDCA, SPOT, GRID, AMA y módulos comunes](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md)
-- [Orden de ejecución completa local F0-F6](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md). No autoriza VPS, DB ni REAL.
-
-**IMPORTANTE:** el checklist es **exclusivo de ejecución de Cascade**. Debe recorrerlo y probar cada control según el plan maestro F0-F6, registrar evidencias en `seguimiento/` y no solicitar al usuario que marque casillas.
+El panel definitivo tendrá una URL HTTPS protegida **solo tras autorización del despliegue**. La APK definitiva se entrega mediante GitHub Release descargable tras superar QA. Tests y fixtures son herramientas internas, no producto de demostración. Cascade mantiene sus propios registros en `seguimiento/` y marca cada control con evidencia.
