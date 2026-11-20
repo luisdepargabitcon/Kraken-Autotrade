@@ -29,6 +29,8 @@
 
 | AUD-20261120-01 | 2026-11-20 | [Backtest Grid continuo, adaptativo e híbrido](2026-11-20/01-backtest-grid-continuo-adaptativo-hibrido.md) | [Informe HTML privado](https://drive.google.com/file/d/1c2neZninoRhDHHqcXhs9fTJRnbdZXa_q/view) |
 
+| AUD-20261120-02 | 2026-11-20 | [Auditoría integral: cuatro motores, configuraciones efectivas, fuentes y código heredado](2026-11-20/02-auditoria-integral-motores-config-fuentes-codigo.md) | [Informe completo en GitHub](2026-11-20/02-auditoria-integral-motores-config-fuentes-codigo.md) |
+
 ## Carpetas de Google Drive (privadas)
 
 - [2026-11-17](https://drive.google.com/drive/folders/1WZMTEf8swuti7jaxz0IIGV5LI3l6kHT7)
