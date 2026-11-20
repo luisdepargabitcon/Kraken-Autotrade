@@ -27,6 +27,8 @@
 | AUD-20261119-13 | 2026-11-19 | [Datos OHLCV verificados: cinco activos, 110 fuentes, 4 temporalidades](2026-11-19/13-datos-ohlcv-descarga-verificada-cinco-activos.md) | [Datos ZIP privados](https://drive.google.com/file/d/1mabq79pmGblzj5PACEXy-5Yn4AQUTZT_/view) |
 | AUD-20261119-14 | 2026-11-19 | [Backtest completo D/E/F: cartera, costes, riesgos y desglose diario](2026-11-19/14-backtest-real-estrategias-D-E-F-2026.md) | [HTML privado interactivo](https://drive.google.com/file/d/1Xh8S02_yLQm7in3aSCMLCnPuVcnHxbhp/view) |
 
+| AUD-20261120-01 | 2026-11-20 | [Backtest Grid continuo, adaptativo e híbrido](2026-11-20/01-backtest-grid-continuo-adaptativo-hibrido.md) | [Informe HTML privado](https://drive.google.com/file/d/1c2neZninoRhDHHqcXhs9fTJRnbdZXa_q/view) |
+
 ## Carpetas de Google Drive (privadas)
 
 - [2026-11-17](https://drive.google.com/drive/folders/1WZMTEf8swuti7jaxz0IIGV5LI3l6kHT7)
