@@ -69,6 +69,8 @@ Trabajar en una rama del repositorio actual, no en un mirror/repo nuevo. Mantene
 
 ### F5 — PWA y APK Android
 - Paridad web y móvil sobre contratos comunes. Soporte de PIN seguro, sin secretos embebidos, sesión/caducidad, permisos mínimos, detección desconexión y notificaciones respetando privacidad.
+- **Entregable exigido:** APK Android de pruebas local instalable, más SHA-256 e informe de instalación/QA. Si las herramientas no están presentes, **Cascade debe preparar e instalar el toolchain local compatible** (JDK, SDK y componentes Android, dependencias del proyecto, Gradle/Node/Capacitor cuando corresponda), comprobando versiones y fuentes oficiales. No es válido omitir la compilación por falta inicial de herramientas.
+- Instalar sin privilegios en el entorno de usuario cuando sea posible; si requiere administrador, modificaciones sensibles o acuerdos externos, solicitar autorización para esa acción y documentar bloqueo. Si tras intentos concretos la compilación sigue bloqueada, marcar F5 PARCIAL/BLOQUEADA, nunca COMPLETADA. Probar arranque en emulador/dispositivo de pruebas si está disponible; no afirmar una instalación no realizada.
 - Pruebas en Pixel 9 y QA de accesibilidad, batería/red, rotación, navegación atrás, caché y sincronización.
 **Gate:** APK solo firmada y distribuida tras pruebas, sin afirmar «aprobada» sin revisión.
 
@@ -85,7 +87,7 @@ Trabajar en una rama del repositorio actual, no en un mirror/repo nuevo. Mantene
 Drive privado: «NEXA V2 - Transformacion - 2026-11-20». Históricos originales permanecen en sus carpetas; enlazarlos, NO moverlos ni duplicar sin necesidad.
 
 ## Siguiente trabajo autorizado
-Ejecutar autónomamente en la rama aislada **F0–F6 completos en todo lo que sea posible y comprobable localmente** según la revisión 3 de la orden, sin modificar runtime operativo, motor de trading LIVE, DB real, configuración real ni VPS. En cada fase, Cascade ejecuta, documenta, corrige fallos y **cumplimenta su checklist de 75 controles con pruebas y estados**; la lista no es para el usuario. Entregar matriz inventario, informe de seguridad P0, HTML/PWA, APK local si compilable, QA, evidencias y estado honesto de bloqueos. Commits/push solo rama tras comprobar pipelines; no PR merge, deploy ni REAL.
+Ejecutar autónomamente en la rama aislada **F0–F6 completos en todo lo que sea posible y comprobable localmente** según la revisión 3 de la orden, sin modificar runtime operativo, motor de trading LIVE, DB real, configuración real ni VPS. En cada fase, Cascade ejecuta, documenta, corrige fallos y **cumplimenta su checklist de 75 controles con pruebas y estados**; la lista no es para el usuario. Entregar matriz inventario, informe de seguridad P0, HTML/PWA, APK local compilada tras provisionar herramientas compatibles (o bloqueo demostrado y F5 no aprobada), QA, evidencias y estado honesto de bloqueos. Commits/push solo rama tras comprobar pipelines; no PR merge, deploy ni REAL.
 
 
 ## ACTUALIZACIÓN DE ALCANCE — 20/11/2026 (prevalece sobre restricciones anteriores)
@@ -97,3 +99,7 @@ El usuario autoriza que Cascade **complete F0-F6 en rama local aislada**, sin pa
 - Usar [Checklist C001–C075](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md) como mínimo extensible; [Orden principal rev. 3](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md) como instrucciones de ejecución.
 - En `docs/transformacion-nexa-v2/seguimiento/` mantener: `ESTADO_FASES.md`, `MATRIZ_PARIDAD.csv`, `EVIDENCIAS_CHECKLIST.md` e `INCIDENCIAS.md`. Ningún check «VERIFICADA» sin prueba; «NO APLICA» y «BLOQUEADA» llevan motivos.
 - Resultado final solo puede llamarse VERIFICADO LOCAL cuando hay evidencia, sin equipararlo con aprobación de trading REAL, despliegue o certificación del VPS.
+
+
+## Aclaración Rev. 4 — herramientas Android
+El hecho de que el ordenador no tenga Android Studio/SDK/JDK/Gradle no autoriza terminar sin APK. Cascade debe instalar por sí mismo los componentes de desarrollo necesarios en espacio de usuario y continuar con la compilación y pruebas. No se autoriza instalar servicios de pago, elevar privilegios ni alterar configuración sensible sin permiso. La APK de laboratorio no es aprobación del trading real ni despliegue del backend. La versión definitiva conectada a producción requerirá autorización posterior.
