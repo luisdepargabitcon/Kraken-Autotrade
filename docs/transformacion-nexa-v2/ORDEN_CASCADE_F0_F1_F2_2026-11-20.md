@@ -1,10 +1,29 @@
 # ORDEN DEFINITIVA PARA CASCADE — NEXA V2 · TRANSFORMACIÓN COMPLETA AISLADA
-**Fecha:** 20-11-2026 · **Revisión:** 2 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
+**Fecha:** 20-11-2026 · **Revisión:** 3 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
 **Rama EXCLUSIVA:** feature/nexa-v2-transformacion-20261120.
 **Base de referencia:** main 47d79db3f7065e0e54481447129f2f88e9225fe2.
 **Diseño de referencia:** design/nexa-apk-web-basico-pro-20261120; HTML NEXA y ORION en Drive privado.
 **Documento bloqueante:** [Checklist completo de 75 puntos](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md).
 **Plan:** [F0-F6](PLAN_MAESTRO_2026-11-20.md).
+
+
+## ORDEN DE TRABAJO PRINCIPAL Y RESPONSABILIDAD DEL CHECKLIST (REV. 3)
+**Cascade es el único responsable de ejecutar, marcar, evidenciar y cerrar las comprobaciones**, NO el usuario. La orden obliga a seguir íntegro el **Plan Maestro F0–F6**, sus entregables y prioridades, sin convertir la lista de controles en una tarea separada ni dejar apartados del plan sin ejecutar.
+
+### Bucle obligatorio fase a fase
+**LEER PLAN → EJECUTAR FASE → MAPEAR DATOS → CORRER PRUEBAS → ACTUALIZAR CHECKLIST (C001–C075 y extras) → GUARDAR EVIDENCIAS → CORREGIR FALLOS → REPROBAR → PASAR A FASE SIGUIENTE.**
+El checklist no se rellena por el usuario ni se acepta el autocumplimiento sin prueba.
+
+Crear y actualizar en la rama `docs/transformacion-nexa-v2/seguimiento/`:
+- `ESTADO_FASES.md`: F0–F6, estado, qué falta, bloqueos, pruebas y porcentaje demostrado.
+- `MATRIZ_PARIDAD.csv`: cada dato, función, control e histórico existente, origen, destinos Básico/Pro y web/APK, estado y caso de prueba; sin datos privados.
+- `EVIDENCIAS_CHECKLIST.md`: ID de casilla, resultado, evidencia reproducible, commit/test, fecha y notas.
+- `INCIDENCIAS.md`: defectos, causa, reparación, nueva prueba, bloqueos de autorización.
+
+**El documento [Checklist de 75 controles](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md) es un documento activo:** Cascade debe editar en GitHub los `[ ]` a `[x]` exclusivamente tras verificar, añadir elementos descubiertos y vincular evidencias. Cada cierre parcial debe reflejar discrepancias; no esconder fallos. El valor de una maqueta DEMO no prueba operatividad de un backend/órdenes/DB. Los datos originales de IDCA mostrados en capturas son referencia de detalle, pero debe comprobar también **cada** campo existente en los otros modos y en módulos comunes.
+
+**No termina el proyecto** por haber redactado plan o haber hecho un HTML: completar todas las fases autorizadas localmente F0–F6, incluida QA transversal, sin detenerse por errores técnicos ordinarios. Donde sea necesaria acción prohibida (VPS, DB real, migraciones, trading LIVE, deploy, merge), no ejecutarla; marcar BLOQUEADO POR AUTORIZACIÓN y continuar con el resto. Informar estado parcial real. **No marcar todo verde ni cerrar la Issue #17 sin pruebas.**
+
 
 ## MANDATO
 Comenzar YA y completar autónomamente en local **todas las tareas de F0 a F6 técnicamente ejecutables sin infraestructura real**: auditoría, inventario, renovación visual, HTML terminado, conexión a contratos canónicos de lectura, preparación de una aplicación PWA y APK Android local si el entorno permite compilación, tests y entrega verificable. **No parar tras F2 ni pedir permiso entre fases ordinarias**. Proseguir ante incidencias de build, types, pruebas, fixtures, UX o refactor local sin cambiar el alcance y sin ocultar fallos. Para bloqueos por autorización o dependencias externas, aislar la subacción, continuar con el resto y reportar lo que no se puede certificar. No declarar COMPLETO si subsiste algún campo sin destino o una prueba crítica fallida.
@@ -42,7 +61,7 @@ Probar Básico/Pro x web/móvil x 4 motores, estados activos/sin datos/offline/s
 No terminar mientras existan errores ordinarios corregibles. Entregar:
 - Código HTML final navegable + fuentes y frontend en rama.
 - APK local de prueba y SHA/instalación **solo si compilación real lograda**.
-- Matriz origen → destino con **100% de campos del origen auditado** mapeados o explícitamente N/A justificado y probados; checklist de 75 puntos con evidencias, no casillas sin revisar.
+- Matriz origen → destino con **100% de campos del origen auditado** mapeados o explícitamente N/A justificado y probados; checklist C001–C075 (más extensiones) actualizado por Cascade con evidencias, no casillas sin revisar; además ESTADO_FASES.md, MATRIZ_PARIDAD.csv, EVIDENCIAS_CHECKLIST.md e INCIDENCIAS.md.
 - Informe de peligros P0 y bloqueos REALES pendientes, sin fingir runtime auditado.
 - Tests ejecutados y resultados, fallos honestos, capturas comparativas, commit SHA completo, rutas y links a GitHub y Drive privado.
 - No afirmar que el software nuevo ejecuta o ha sido desplegado en producción.
