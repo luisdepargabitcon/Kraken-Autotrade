@@ -14,8 +14,8 @@ Regla: cada ID lleva resultado, evidencia reproducible, commit/test y fecha. Est
 | C019–C028 | PARCIAL | SPOT posiciones/protecciones, GRID ciclos 1:1+rangos antiguos, AMA reserved≠executed+REAL cerrado (tests). Pendiente QA visual | 2026-11-20 |
 | C029–C033 | PARCIAL | Mercado (fuentes+frescura), Cartera, Actividad (filtro sev), FISCO restringido, Ajustes (tests) | 2026-11-20 |
 | C034–C040 | PARCIAL | Estados DEMO/STALE/UNAVAILABLE/ERROR + null→NA (test no-falso-cero). Offline/SW pendiente QA | 2026-11-20 |
-| C041–C046 | PENDIENTE | APK/emulador bloqueado por disco (INC-003) | 2026-11-20 |
-| C047–C051 | PENDIENTE | APK no compilada aún (INC-003) | 2026-11-20 |
+| C041–C046 | PARCIAL | **APK compilada** SHA 7a31a017…, manifest solo INTERNET, assets verificados. Instalación/arranque emulador BLOQUEADA por disco | 2026-11-20 |
+| C047–C051 | PARCIAL | APK existe (4,16 MB, SHA verificado); PIN/navegación en emulador pendiente por disco | 2026-11-20 |
 | C052–C058 | PARCIAL | PWA manifest+sw escritos; no-POST test OK; a11y/viewports pendientes | 2026-11-20 |
 | C059–C065 | PARCIAL | Tests 17/17; viewports/emulador/instalación pendientes por INC-003 | 2026-11-20 |
 | C066–C075 | EN CURSO | Seguimiento actualizado; commit/push rama pendiente; sin merge/deploy | 2026-11-20 |

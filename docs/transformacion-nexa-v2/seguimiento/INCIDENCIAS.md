@@ -21,7 +21,7 @@ Formato: ID · fase · gravedad · descripción · causa · reparación · nueva
 - **Descripción:** `gradlew assembleDebug` falla: `java.io.IOException: Espacio en disco insuficiente` durante descarga de Gradle 8.2.1-all (~50%).
 - **Causa:** unidad C: al 100% (0 bytes libres); D: solo 232 MB. Se requieren ~2 GB (dist Gradle + dependencias AndroidX + salidas de build).
 - **Resolución:** liberados ~139 MB (borrador de descarga parcial propio + `npm cache clean`); insuficiente. Requiere acción del usuario: liberar ~3 GB o indicar unidad alternativa para GRADLE_USER_HOME.
-- **Estado:** BLOQUEADA — pendiente de espacio en disco.
+- **Estado:** PARCIALMENTE RESUELTA (2026-11-20) — APK compilada offline con caché Gradle existente + buildDir en D:. Sigue bloqueada la **instalación/arranque en emulador** (AVD necesita ~GB libres en C:).
 
 ## INC-004
 - **Fase:** F2 · **Gravedad:** defecto
@@ -41,3 +41,9 @@ Formato: ID · fase · gravedad · descripción · causa · reparación · nueva
 - **Descripción:** `ctxMarketCandles` usaba `window` (no testeable en node) y `renderMarket` solo leía `m.sources` mientras fixtures usan `externalSources`.
 - **Reparación:** `globalThis` + fallback `m.sources||m.externalSources`.
 - **Estado:** CERRADA.
+
+## INC-007
+- **Fase:** F5 · **Gravedad:** defecto
+- **Descripción:** `npx cap sync` regenera `capacitor-cordova-android-plugins/build.gradle` y revierte el pin AGP a 8.2.1 (no cacheado) rompiendo el build offline.
+- **Reparación:** re-aplicar reemplazo AGP→8.13.0/gms→4.4.4 tras cada `cap sync` (documentado en nexa-v2/BUILD_APK.md).
+- **Estado:** CERRADA (procedimiento documentado).
