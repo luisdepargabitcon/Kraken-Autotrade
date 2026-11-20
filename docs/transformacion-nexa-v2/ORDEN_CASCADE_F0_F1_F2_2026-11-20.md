@@ -1,47 +1,50 @@
-# ORDEN CASCADE — NEXA V2 · ARRANQUE SEGURO F0/F1/F2
-**Fecha 2026-11-20** · **Rama destino:** `feature/nexa-v2-transformacion-20261120`
+# ORDEN DEFINITIVA PARA CASCADE — NEXA V2 · TRANSFORMACIÓN COMPLETA AISLADA
+**Fecha:** 20-11-2026 · **Revisión:** 2 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
+**Rama EXCLUSIVA:** feature/nexa-v2-transformacion-20261120.
+**Base de referencia:** main 47d79db3f7065e0e54481447129f2f88e9225fe2.
+**Diseño de referencia:** design/nexa-apk-web-basico-pro-20261120; HTML NEXA y ORION en Drive privado.
+**Documento bloqueante:** [Checklist completo de 75 puntos](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md).
+**Plan:** [F0-F6](PLAN_MAESTRO_2026-11-20.md).
 
-## AUTORIZACIÓN LIMITADA
-Se autoriza a Cascade a trabajar en local, documentar, analizar los archivos del repositorio, completar el prototipo HTML de diseño (sin conexión real ni credenciales), ejecutar pruebas locales y crear commits/push exclusivamente en `feature/nexa-v2-transformacion-20261120` cuando estén validados. NO se autoriza VPS, SQL, migraciones, cambios DB, órdenes, REAL, deploy, merges ni modificaciones de `main`.
+## MANDATO
+Comenzar YA y completar autónomamente en local **todas las tareas de F0 a F6 técnicamente ejecutables sin infraestructura real**: auditoría, inventario, renovación visual, HTML terminado, conexión a contratos canónicos de lectura, preparación de una aplicación PWA y APK Android local si el entorno permite compilación, tests y entrega verificable. **No parar tras F2 ni pedir permiso entre fases ordinarias**. Proseguir ante incidencias de build, types, pruebas, fixtures, UX o refactor local sin cambiar el alcance y sin ocultar fallos. Para bloqueos por autorización o dependencias externas, aislar la subacción, continuar con el resto y reportar lo que no se puede certificar. No declarar COMPLETO si subsiste algún campo sin destino o una prueba crítica fallida.
 
-### 1. Preparación obligatoria
-1. Abrir repositorio en `C:\Users\JSLUI\Qsync\BOT_NAS\BOT_AUTOTRADE`. Si la ruta difiere, localizar el checkout correcto antes de actuar.
-2. Ejecutar `git remote -v`, `git fetch origin`, `git status --short`, `git branch --show-current`, `git rev-parse origin/main`, `git log -5 --oneline`. No eliminar WIP ajeno. No `reset --hard`, `clean`, `stash`, `rebase`, `push --force` ni `git add -A`.
-3. Confirmar HEAD de `main` esperado al iniciar la rama: `47d79db3f7065e0e54481447129f2f88e9225fe2`. Si main avanzó, informar el SHA y razonar compatibilidad; no mezclar sin revisión.
-4. Checkout de `feature/nexa-v2-transformacion-20261120`, crear seguimiento remoto si procede. No crear rama duplicada. Leer `AGENTS.md`, secciones relevantes de `BITACORA.md`, `docs/transformacion-nexa-v2/PLAN_MAESTRO_2026-11-20.md`, auditorías AUD-20261120-02 y -03 y documentación de diseño.
-5. Confirmar que la rama de diseño `design/nexa-apk-web-basico-pro-20261120` y el HTML ORION en Google Drive existen. Conservar los dos originales intactos.
+## LÍMITES INALTERABLES
+1. NO VPS/SSH, deploy, staging, producción, SQL/DB reales, migraciones, modificaciones de órdenes/ciclos/targets, cuentas externas, transacciones reales, activación LIVE/REAL ni merge a main. No iniciar servidor operativo en entorno que pueda ejecutar migraciones, reconciliaciones, schedulers u órdenes.
+2. Se permiten archivos y cambios de código **en la rama aislada**, únicamente en modo desarrollo sin efectos reales. Integración backend solo por contratos READ-ONLY y mocks/fixtures desidentificados. No crear nuevos endpoints mutables. Un módulo de órdenes nuevo no se debe conectar al circuito LIVE.
+3. Conservar todos los motores (SPOT/IDCA/Grid aislado/AMA), estrategia grid antigua SPOT diferenciada, overlay IDCA diferenciado, FISCO/AEAT, cartera y market metrics. No borrar datos/configuraciones de origen, ni ficheros de legado sin análisis.
+4. Repositorio público: no subir secretos, .env, logs privados, CSV de operaciones reales, copias de DB, claves, respuestas autenticadas, datos fiscales/personales. No imprimir secretos en las evidencias.
+5. Mantener exclusivamente esta rama para commits; preservar WIP ajeno. Prohibido git add -A, reset --hard, clean, stash de cambios ajenos, rebase y force-push. Revisar antes de push que no exista workflow que despliegue por cambios en la rama; de existir, no hacer push y documentar.
 
-### 2. Auditoría F0 — bloqueo de seguridad
-- Documentar sin exponer secretos las áreas P0: AMA gateway `executed=true/orderId=null`, rutas mutables/auth, API log sensible, venue fallback Kraken/Revolut X, dryRun/simulation, arranque con migraciones/reconciliaciones, velas stale, reserva de capital.
-- Revisar que los respaldos previos con las 31 tablas FISCO/AEAT, velas y operaciones EXISTAN, sin leer registros privados ni manipular backups para esta tarea. Si no se puede verificar, anotar NO VERIFICADO, sin borrarlos.
-- El repositorio es público y contiene ficheros de entorno. No abrir, imprimir, citar ni copiar posibles valores secretos. Proponer reparación por auditoría de seguridad independiente, no improvisar.
-- Cualquier necesidad de tocar infraestructura, runtime, contabilidad, API privada, DB o datos reales: detener esa subacción y registrar el bloqueo de autorización. Resto de tareas de diseño pueden continuar.
+## PASOS QUE DEBES EJECUTAR SIN INTERRUPCIONES ORDINARIAS
+### F0: congelación y P0
+Leer AGENTS.md, secciones relevantes de BITACORA.md y las auditorías 20/11. Verificar hashes HEAD de main y rama, y diff. Catalogar riesgos confirmados vs condicionales: AMA executed=true sin orden real, endpoints mutables y auth, logs sensibles, selección Kraken/RevolutX, frescura OHLCV, inconsistencias de config, reservas compartidas. Verificar solo metadatos de evidencia de backups/FISCO 31 tablas, nunca datos reales. Separar problemas que requieren autorización de acciones que pueden resolverse sin acceso real.
 
-### 3. Inventario F1 — ningún dato perdido
-- Crear matriz consultable de los cuatro motores: SPOT, IDCA, Grid aislado y AMA. Separar estrategias SPOT grid clásico e IDCA Grid overlay del Grid aislado.
-- Inventariar **todas** las pantallas, indicadores, balances, bandas, RSI, MACD, EMAs, ATR, ADX, Bollinger, señales, régimen, volumen, velas, OI/funding condicional, spread, bid/ask, costes, PnL, órdenes, ciclos, estrategias, cartera, AEAT, Telegram, logs/monitor, y controles existentes.
-- Para cada campo: nombre actual, componente, API, servicio/DB, fuente, timestamp/latencia, parámetro configurado/efectivo, lectura/escritura, modo de ejecución propietario, presencia en Básico/Pro y caso de prueba.
-- Nunca confundir datos de investigación Binance/USDT con feed operativo Kraken/USD ni inventar indicadores faltantes.
-- Mantener información íntegra en Pro; Básico solo filtra su presentación, no su adquisición/almacenamiento.
+### F1: inventario 100% y prueba de paridad
+Comparar pantallas/código/rutas actuales y las **tres capturas IDCA** (panel, ciclo abierto, histórico). Crear matriz completa por campo: identificador, motor/página, etiqueta, valor/tipo/unidades, origen, API/DB/servicio, cálculo y timestamp, permisos, destinos Básico/Pro/Web/APK, evidencia y estado. Repetir en SPOT, Grid, AMA y módulos transversales. **El checklist de 75 puntos es obligatorio y se amplía si aparece cualquier campo no listado.** Campos sin destino o sin prueba bloquean la aprobación.
 
-### 4. HTML F2 — completar el diseño antes de implementar motores
-- Usar como fuentes de diseño `design/nexa-apk-web/` de la rama de referencia y «ORION_Prototipo_APK_Web.html» de Drive. Trabajar en ruta nueva dentro de la rama de transformación o copiar selectivamente los fuentes de diseño; NO modificar sus originales.
-- Eliminar barra lateral permanente en desktop: navegación superior limpia con secciones claras. En móvil, navegación inferior. Selector de estrategias/motores mediante modal profesional; NO una tabla plana.
-- Básico (Simple) debe mostrar una composición realmente minimalista: patrimonio, resultado, precio/estado mercado, posiciones/ciclos, actividad y avisos importantes. Pro debe mostrar visualmente una arquitectura más densa: estudios de mercado (RSI/Bollinger/etc.), gráficos, señales, ajustes, logs, análisis y auditoría. No basta cambiar colores de una lista.
-- Ambos niveles disponibles en web y APK; colores negro/azul; verde PnL positivo y rojo negativo. Seleccionar el nivel visual jamás debe llamar POST.
-- Mercado completo: gráficos de precio y patrimonio, régimen y bandas, OHLCV, RSI, indicadores y su fuente/frescura; descripciones entendibles y detalles técnicos expandibles. Estado stale/offline claro. Sin cifras ficticias presentadas como reales.
-- Grid: nueva vista móvil desde cero; BUY, SELL objetivo, SELL ejecutada y avance, rango de nuevas compras separado de rangos anteriores con ventas pendientes. Nunca revender HOLD ni alterar targets.
-- Pantallas incluidas: Inicio, Mercado, Motores/Estrategias, Cartera, Actividad/Monitor/Logs, Fiscal/AEAT, Ajustes. Selector de motor bonito en modal, no panel cuadriculado. Los controles de ejecución REAL solo aparecen cuando exista soporte/gate real, sin habilitarlos.
-- Mostrar DEMO en todo dato ficticio de maqueta. Los botones que no tengan implementación deben avisarlo y no fingir acciones.
-- No añadir referencias a NAS/QNAP en navegación o despliegue.
+### F2: UX HTML terminada
+Reutilizar referencias NEXA y ORION; trabajar en nueva ruta de rama, dejando intactos los prototipos. Web con barra superior; APK con navegación inferior, selector de motores por modal; dos experiencias realmente distintas Básico minimalista y Pro exhaustivo; detalle accesible en ambos. Mercado completo con indicadores, bandas, RSI/MACD/EMA/ATR/ADX/volumen, frescura, origen y avisos. Gráficas limpias; IDCA con detalle de entrada/score/ancla/TP/BE/trailing/duración/órdenes/histórico; Grid BUY→SELL por ciclo y rango; SPOT señales/protecciones; AMA macro/mandatos/risks; cartera/FISCO/monitor/logs/ajustes. Nada de botones placebo o demo que aparente datos reales.
 
-### 5. Validación y salida
-- Antes de tocar código: registrar inventario de archivos/diff y evidencias de partida.
-- Tests locales: `npm run check`, tests relevantes, `npm run build`; justificar scripts no disponibles. Validación de HTML en 360×800, 390×844, 768×1024, 1280×800 y 1920×1080. Sin scroll horizontal, botones accesibles, modales cerrables, coherencia básica/pro.
-- Auditar Network local: navegación, cambio de nivel, apertura de modal y tarjetas = **cero POST**; ningún exchange privado invocado.
-- `git diff --check`, secret scan de rutas cambiadas, y revisión completa de la lista de ficheros; `git add` por rutas exactas; crear commits de documentación y diseño únicamente en `feature/nexa-v2-transformacion-20261120`; push a `origin/feature/nexa-v2-transformacion-20261120`.
-- NO abrir PR a main automáticamente salvo draft explícitamente etiquetado SIN MERGE, y sin pipelines de deploy por push; antes de push comprobar que no hay workflows que desplieguen ramas feature. Si existe tal riesgo, NO push y reportar.
-- Entregar SHA completo verificable, lista de archivos, estado tests, ruta/HTML final, links Google Drive/GitHub si existen, matriz de datos, incidencias, pendientes y propuesta de siguiente fase.
-- Veredicto: «F0/F1 DOCUMENTADOS Y HTML DISEÑADO — PENDIENTE APROBACIÓN FUNCIONAL» o «PARCIAL — DETALLAR PENDIENTES». Nunca decir desplegado o REAL habilitado.
+### F3: contratos reales de lectura, sin efectos
+Construir componentes y read-models reutilizables que representen **datos ya existentes** y sus estados unavailable/stale/error; evitar duplicar cálculos del motor. En pruebas, alimentarlos con datos sintéticos etiquetados DEMO y fixtures de cobertura, sin extraer datos privados. No activar ni modificar backends operativos ni DB.
 
-**NO iniciar F3/F4/F5/F6 ni modificar algoritmos de estrategias tras esta orden.**
+### F4: análisis de estrategias, SIN reconfigurar REAL
+Revisar discrepancia SPOT agosto ganancia/septiembre pérdida con los informes disponibles, así como Grid, IDCA y AMA; documentar hipótesis, cambios de configuración y oportunidades, con prudencia sobre backtests, sin reescribir políticas de entrada/salida, ciclos o targets. Crear mejoras propuestas para investigaciones futuras, no ejecutarlas en trading.
+
+### F5: PWA/APK de prueba
+Implementar frontend responsive, seguridad de acceso/selección y envoltorio Android de laboratorio si herramientas disponibles; generar APK local SOLO demo/lectura, nunca con credenciales o endpoint productivo embebido. Si no hay toolchain, terminar HTML/PWA/UX y documentar exactamente bloqueo y pasos reproducibles de build. No publicar una release sin aprobación.
+
+### F6: QA final
+Probar Básico/Pro x web/móvil x 4 motores, estados activos/sin datos/offline/stale, cientos de registros, múltiples ciclos y rangos legacy, historial y exportaciones seguras. Validar UI 360, 390, 768, 1280, 1920 px y Pixel 9 si hay emulador equivalente; accesibilidad, menús, modales, atrás, safe areas y ausencia de desbordamientos. Ejecutar check, tests, build y controles anti POST en acciones de lectura; no declarar ejecutado un test que no se ejecutó. Revisar matriz y checklist y todos los diffs. Commit/push SOLO rama si no hay deploy trigger. No PR merge.
+
+## CONDICIÓN DE TERMINACIÓN
+No terminar mientras existan errores ordinarios corregibles. Entregar:
+- Código HTML final navegable + fuentes y frontend en rama.
+- APK local de prueba y SHA/instalación **solo si compilación real lograda**.
+- Matriz origen → destino con **100% de campos del origen auditado** mapeados o explícitamente N/A justificado y probados; checklist de 75 puntos con evidencias, no casillas sin revisar.
+- Informe de peligros P0 y bloqueos REALES pendientes, sin fingir runtime auditado.
+- Tests ejecutados y resultados, fallos honestos, capturas comparativas, commit SHA completo, rutas y links a GitHub y Drive privado.
+- No afirmar que el software nuevo ejecuta o ha sido desplegado en producción.
+
+**No esperar confirmación para arreglar defectos técnicos dentro de esta rama. SOLO solicitar autorización si la acción precisa VPS, DB real, deploy, modificación de configuración LIVE, órdenes REALES, cambio de ramas protegidas o borrado destructivo.**
