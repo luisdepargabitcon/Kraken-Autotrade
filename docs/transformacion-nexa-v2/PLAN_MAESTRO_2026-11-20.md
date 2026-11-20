@@ -85,8 +85,15 @@ Trabajar en una rama del repositorio actual, no en un mirror/repo nuevo. Mantene
 Drive privado: «NEXA V2 - Transformacion - 2026-11-20». Históricos originales permanecen en sus carpetas; enlazarlos, NO moverlos ni duplicar sin necesidad.
 
 ## Siguiente trabajo autorizado
-Iniciar F0 + F1 en local y preparar F2 del HTML, sin tocar runtime, motor, DB, configuración ni VPS; entregar matriz inventario, diagnóstico P0, propuesta visual y HTML aislado. Commit/push solo a la rama de trabajo después de tests. No PR merge, no deploy, no REAL.
+Ejecutar autónomamente en la rama aislada **F0–F6 completos en todo lo que sea posible y comprobable localmente** según la revisión 3 de la orden, sin modificar runtime operativo, motor de trading LIVE, DB real, configuración real ni VPS. En cada fase, Cascade ejecuta, documenta, corrige fallos y **cumplimenta su checklist de 75 controles con pruebas y estados**; la lista no es para el usuario. Entregar matriz inventario, informe de seguridad P0, HTML/PWA, APK local si compilable, QA, evidencias y estado honesto de bloqueos. Commits/push solo rama tras comprobar pipelines; no PR merge, deploy ni REAL.
 
 
 ## ACTUALIZACIÓN DE ALCANCE — 20/11/2026 (prevalece sobre restricciones anteriores)
 El usuario autoriza que Cascade **complete F0-F6 en rama local aislada**, sin pausas entre tareas ordinarias. La anterior frase «No iniciar F3/F4/F5/F6» queda expresamente **sustituida** por esta orden. F3 solo lectura, F4 análisis no operativo, F5 prototipo PWA/APK local sin claves ni LIVE, F6 QA local; las puertas de NO VPS/DB/órdenes/REAL/deploy/main/merge permanecen. El artefacto debe cumplir el [checklist bloqueante de conservación total](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md), que se ampliará si el inventario encuentra más campos que los de las capturas IDCA. En Básico, el detalle adicional sigue accesible; Pro exhibe toda la información real y configuraciones efectivas. CERO pérdida de información, trazabilidad o controles. No se puede cerrar sin matriz y pruebas de paridad web/APK x Básico/Pro x 4 motores. Una tarea dependiente de entorno real queda documentada como NO VERIFICADA, no como realizada.
+
+
+## Mecanismo de seguimiento a cargo de Cascade — rev. 3
+- El **plan maestro es el itinerario rector F0–F6**; el checklist es un control de calidad transversal e incremental que Cascade debe trabajar activamente durante la implementación, no un formulario que el usuario tenga que cumplimentar.
+- Usar [Checklist C001–C075](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md) como mínimo extensible; [Orden principal rev. 3](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md) como instrucciones de ejecución.
+- En `docs/transformacion-nexa-v2/seguimiento/` mantener: `ESTADO_FASES.md`, `MATRIZ_PARIDAD.csv`, `EVIDENCIAS_CHECKLIST.md` e `INCIDENCIAS.md`. Ningún check «VERIFICADA» sin prueba; «NO APLICA» y «BLOQUEADA» llevan motivos.
+- Resultado final solo puede llamarse VERIFICADO LOCAL cuando hay evidencia, sin equipararlo con aprobación de trading REAL, despliegue o certificación del VPS.
