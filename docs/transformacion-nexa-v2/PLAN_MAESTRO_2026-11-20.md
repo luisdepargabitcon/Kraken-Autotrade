@@ -86,3 +86,7 @@ Drive privado: «NEXA V2 - Transformacion - 2026-11-20». Históricos originales
 
 ## Siguiente trabajo autorizado
 Iniciar F0 + F1 en local y preparar F2 del HTML, sin tocar runtime, motor, DB, configuración ni VPS; entregar matriz inventario, diagnóstico P0, propuesta visual y HTML aislado. Commit/push solo a la rama de trabajo después de tests. No PR merge, no deploy, no REAL.
+
+
+## ACTUALIZACIÓN DE ALCANCE — 20/11/2026 (prevalece sobre restricciones anteriores)
+El usuario autoriza que Cascade **complete F0-F6 en rama local aislada**, sin pausas entre tareas ordinarias. La anterior frase «No iniciar F3/F4/F5/F6» queda expresamente **sustituida** por esta orden. F3 solo lectura, F4 análisis no operativo, F5 prototipo PWA/APK local sin claves ni LIVE, F6 QA local; las puertas de NO VPS/DB/órdenes/REAL/deploy/main/merge permanecen. El artefacto debe cumplir el [checklist bloqueante de conservación total](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md), que se ampliará si el inventario encuentra más campos que los de las capturas IDCA. En Básico, el detalle adicional sigue accesible; Pro exhibe toda la información real y configuraciones efectivas. CERO pérdida de información, trazabilidad o controles. No se puede cerrar sin matriz y pruebas de paridad web/APK x Básico/Pro x 4 motores. Una tarea dependiente de entorno real queda documentada como NO VERIFICADA, no como realizada.
