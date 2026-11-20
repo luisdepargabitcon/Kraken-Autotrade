@@ -106,10 +106,10 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 - [ ] **C068** Pruebas automatizadas de campos/propiedades por contrato (sin snapshots superficiales exclusivamente).
 - [ ] **C069** Tests de faltantes, stale, endpoint error, permisos, modo apagado, historial grande, múltiples ciclos y fills, sin falsos ceros.
 - [ ] **C070** Tests de seguridad: navegación/cambio Básico-Pro no hacen POST ni órdenes; SHADOW no transmite órdenes reales; no cambio DB/targets.
-- [ ] **C071** npm run check, tests pertinentes, npm run build, build local Android si es viable, y manifiesto de qué se ejecutó realmente.
+- [ ] **C071** npm run check, tests pertinentes, npm run build, provisión/instalación verificada de toolchain Android compatible (JDK, SDK, build-tools, Gradle y framework requerido), build local APK, SHA-256, pruebas de instalación cuando haya dispositivo/emulador, y manifiesto de qué se ejecutó realmente. La falta inicial de herramientas no es bloqueo admisible; documentar intentos, versiones y permisos si tras instalar no se logra.
 - [ ] **C072** Revisión de GitHub commit SHA, diff exacto, archivos y CI; solo rama feature, no main, no merge, no VPS, no deploy.
 - [ ] **C073** Para todo incumplimiento, registrar ID, gravedad, reproducción, evidencia, reparación y nueva prueba. No marcar COMPLETADO si hay incumplimientos P0 o pérdida de paridad.
-- [ ] **C074** Entregables: HTML navegable, fuentes, inventario CSV/MD sin datos personales, checklist cumplimentado con evidencia, guía de instalación/QA local, APK de prueba si se logra compilar; si no, bloqueo técnico concreto.
+- [ ] **C074** Entregables: HTML navegable, fuentes, inventario CSV/MD sin datos personales, checklist cumplimentado con evidencia, guía de instalación/QA local, APK Android local instalable y comprobación de arranque/funciones; si después de instalar herramientas no se logra, F5 PARCIAL/BLOQUEADA, con error verificable, intentos y permisos requeridos. No cerrar checklist como aprobado en ese caso.
 - [ ] **C075** Estado final: IMPLEMENTADO LOCAL/VALIDADO LOCAL/PENDIENTE APROBACIÓN. **No declarar bot transformado en producción ni estrategia REAL validada**.
 
 **Regla final:** no sacrificar datos por estética, no fusionar motores, no degradar trazabilidad y no afirmar éxito sin evidencia.
