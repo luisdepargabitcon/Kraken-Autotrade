@@ -1,6 +1,10 @@
-// NEXA V2 — shell: router, navegación, Básico/Pro, PIN local, proveedor de datos.
+// NEXA V2 — shell definitivo: router, Básico/Pro, sesión servidor + desbloqueo local,
+// proveedor API real y acciones de gestión autenticadas. Sin datos DEMO en el producto.
 import { ENGINES, ENGINE_SUBTABS } from './contracts.js';
-import { createDemoProvider, createLiveProvider, DATA_MODE } from './provider.js';
+import { createApiProvider } from './provider.js';
+import { CONFIG, setApiBase } from './config.js';
+import { session, login, logout, localLock } from './auth.js';
+import { ACTIONS, runAction, canDo, confirmText, needsDouble } from './actions.js';
 import { esc, fmtAge } from './util.js';
 import { clear, h, badge, openModal } from './ui.js';
 import * as S from './screens.js';
@@ -11,12 +15,12 @@ const state = {
   screen: 'home',
   ui: { engineId:'idca', subtab:'panel', marketPair:'BTC/USD',
     activityFilter:{ sev:'all', engine:'all' } },
-  provider: createDemoProvider(),
-  apiBase: localStorage.getItem('nexa.apiBase') || '',
+  provider: createApiProvider(),
   online: navigator.onLine !== false,
-  locked: true,
-  dataTag: 'DEMO',
-  demoCache: {},
+  unlocked: !localLock.isSet(),
+  common: {},          // market/portfolio/activity/fisco normalizados
+  enginesData: {},     // { id: { state, data } }
+  refreshTimer: null,
 };
 
 const NAV = [
@@ -45,13 +49,27 @@ window.addEventListener('hashchange', ()=>{ if(location.hash) navTo(location.has
 // ---------- Datos ----------
 async function loadData(){
   const p = state.provider;
-  const [market, portfolio, activity, fisco, settings] = await Promise.all([
-    p.market(), p.portfolio(), p.activity(), p.fisco(), p.settings(),
+  const [idca, spot, grid, ama, market, portfolio, activity, fisco] = await Promise.all([
+    p.idca(), p.spot(), p.grid(), p.ama(), p.market(state.ui.marketPair),
+    p.portfolio(), p.activity(), p.fisco(),
   ]);
-  const enginesData = {};
-  for(const e of ENGINES){ enginesData[e.id] = await p.engine(e.id); }
-  state.demoCache = { market, portfolio, activity, fisco, settings };
-  state.enginesData = enginesData;
+  const pack = r => ({ state: r.state||'ok', data: normalizeEngine(r) });
+  state.enginesData = { idca:pack(idca), spot:pack(spot), grid:pack(grid), ama:pack(ama) };
+  state.common = {
+    market: { state: market.state, data: market.market?.data ?? null },
+    portfolio: { state: portfolio.state, data: { summary: portfolio.summary?.data ?? null, holdings: portfolio.holdings?.data ?? [] } },
+    activity: { state: activity.state, data: { events: activity.events?.data ?? [] } },
+    fisco: { state: fisco.state, data: fisco.data ?? null, note: fisco.note },
+  };
+}
+// Aplana los envoltorios {data,state} del provider a la forma que consumen las pantallas.
+function normalizeEngine(r){
+  const d = {};
+  for(const [k,v] of Object.entries(r||{})){
+    if(k==='state'||k==='latency') continue;
+    d[k] = (v && typeof v==='object' && 'data' in v) ? v.data : v;
+  }
+  return d;
 }
 
 // ---------- Render ----------
@@ -60,10 +78,10 @@ function render(){
   const scr = $('screen');
   const ctx = {
     mode: state.mode, ui: state.ui, engineList: ENGINES,
-    enginesData: state.enginesData, data: state.demoCache,
-    dataTag: state.dataTag, market: state.demoCache.market,
+    enginesData: state.enginesData, data: state.common,
+    dataTag: 'API', market: state.common.market,
     subtabs: ENGINE_SUBTABS[state.ui.engineId] || [],
-    renderEngineSub, ctxBridge(){ window.__nexa = { ctx: this }; },
+    renderEngineSub, ctxBridge(){ window.__nexa = { ctx: this, session: session.get() }; },
   };
   ctx.ctxBridge();
   let html='';
@@ -84,7 +102,6 @@ function render(){
   scr.focus({preventScroll:true});
 }
 function renderNav(){
-  const on = navTarget().split(':')[0];
   const cur = state.screen;
   $('topnav').innerHTML = NAV.filter(n=>n.id!=='engines').map(n=>
     `<a href="#${n.id}" data-nav="${n.id}" class="${cur===n.id?'on':''}">${esc(n.label)}</a>`).join('')
@@ -97,20 +114,29 @@ function renderNav(){
   }).join('');
 }
 function renderStatusline(){
-  const dotCls = state.online ? (state.provider.mode===DATA_MODE.DEMO?'warn':'') : 'err';
+  const s = session.get();
+  const states = Object.values(state.enginesData).map(e=>e.state);
+  const bad = states.includes('unavailable')||states.includes('unreachable')||states.includes('error');
+  const dotCls = !state.online ? 'err' : (s ? (bad?'warn':'') : 'warn');
+  const authTxt = s ? `sesión ${esc(s.user||'')}` : 'sin sesión';
   $('statusline').innerHTML =
     `<span class="dot ${dotCls}"></span>`+
-    `<span>${esc(state.provider.label)}</span>`+
-    `<span>·</span><span>vista ${state.mode==='basic'?'Básico':'Pro'} (solo presentación)</span>`+
+    `<span>API ${esc(CONFIG.apiBase)}</span>`+
+    `<span>·</span><span>${authTxt}</span>`+
+    `<span>·</span><span>vista ${state.mode==='basic'?'Básico':'Pro'}</span>`+
     `<span>·</span><span>${state.online?'en línea':'offline'}</span>`+
-    `<span>·</span><span>obs ${esc(fmtAge(state.demoCache?.market?.ts))}</span>`+
-    (state.provider.mode===DATA_MODE.DEMO?`<span>·</span><span class="warn-tx">DEMO — sin datos reales</span>`:'');
+    (bad?`<span>·</span><span class="warn-tx">datos parciales/no disponibles</span>`:'');
 }
 
 // ---------- Sub-renderer de motor ----------
 function renderEngineSub(engineId, subtab){
-  const data = state.enginesData?.[engineId]?.data ?? {};
-  const ctx = { mode: state.mode, ui: state.ui, data, dataTag: state.dataTag };
+  const eng = state.enginesData?.[engineId] ?? {state:'unavailable', data:{}};
+  if(eng.state && eng.state!=='ok'){
+    return `<div class="banner ${eng.state==='auth_required'?'warn':'err'}">
+      Motor ${esc(engineId)}: ${esc(stateLabel(eng.state))}.
+      ${eng.state==='auth_required'?'Inicia sesión con permisos para verlo.':'Sin datos del backend.'}</div>`;
+  }
+  const ctx = { mode: state.mode, ui: state.ui, data: eng.data, dataTag:'API' };
   const fn = {
     idca: { panel:S.idcaPanel, cycles:S.idcaCycles, history:S.idcaHistory, orders:S.idcaOrders, hybrid:S.idcaHybrid, config:S.idcaConfig, alerts:S.idcaAlerts },
     spot: { panel:S.spotPanel, positions:S.spotPositions, history:S.spotHistory, protections:S.spotProtections, config:S.spotConfig },
@@ -118,6 +144,10 @@ function renderEngineSub(engineId, subtab){
     ama:  { panel:S.amaPanel, readiness:S.amaReadiness, mandate:S.amaMandate, trace:S.amaTrace, lab:S.amaLab, config:S.amaConfig },
   }[engineId]?.[subtab];
   return fn ? fn(ctx) : `<div class="banner warn">Subvista no implementada: ${esc(engineId)}/${esc(subtab)}</div>`;
+}
+function stateLabel(s){
+  return {unreachable:'backend inaccesible',unavailable:'no disponible',error:'error de API',
+    auth_required:'autenticación requerida',forbidden:'sin permiso',ok:'ok'}[s] || s;
 }
 
 // ---------- Modal selector de motor ----------
@@ -133,16 +163,65 @@ function openEngineModal(){
   }));
 }
 
-// ---------- Acciones demo protegidas ----------
-function demoAction(a){
-  openModal(`<h3>Acción protegida (prototipo)</h3>
-    <p class="small">La acción <b>${esc(a)}</b> requeriría confirmación explícita y autorización del backend propietario del motor. En este prototipo no se ejecuta nada.</p>
-    <div class="btn-row" style="margin-top:14px"><button class="btn" id="demo-cancel">Entendido</button></div>`)
-    .root.querySelector('#demo-cancel')?.addEventListener('click',e=>e.target.closest('.modal-root')?.classList.add('hidden'));
+// ---------- Acciones de gestión autenticadas ----------
+function openAction(actionId, params){
+  const a = ACTIONS[actionId];
+  if(!a) return;
+  if(!session.get()){
+    return openModal(`<h3>Autenticación requerida</h3><p class="small">Inicia sesión para ejecutar acciones.</p>`);
+  }
+  if(!canDo(actionId)){
+    return openModal(`<h3>Sin permiso</h3><p class="small">Tu sesión no tiene el permiso <b>${esc(a.perm)}</b>.</p>`);
+  }
+  const dbl = needsDouble(actionId);
+  const modal = openModal(`<h3>Confirmar acción</h3>
+    <p class="small">${esc(confirmText(actionId, params))}</p>
+    ${dbl?'<p class="warn-tx small">Acción de alto riesgo. Escribe CONFIRMAR para continuar.</p><input id="act-confirm" class="inp" placeholder="CONFIRMAR" autocomplete="off">':''}
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn danger" id="act-run">Ejecutar</button>
+      <button class="btn" id="act-cancel">Cancelar</button></div>
+    <div id="act-result" class="small" style="margin-top:10px"></div>`);
+  modal.root.querySelector('#act-cancel').addEventListener('click',()=>modal.close());
+  modal.root.querySelector('#act-run').addEventListener('click', async ev=>{
+    if(dbl && modal.root.querySelector('#act-confirm').value!=='CONFIRMAR'){
+      modal.root.querySelector('#act-result').textContent='Escribe CONFIRMAR.'; return;
+    }
+    ev.target.disabled = true;
+    const r = await runAction(actionId, params);
+    modal.root.querySelector('#act-result').innerHTML = r.ok
+      ? `<span class="pos">Aceptada (HTTP ${r.status||200})</span>`
+      : `<span class="neg">Rechazada: ${esc(r.error||'error')}${r.status?` (HTTP ${r.status})`:''}</span>`;
+    if(r.ok) setTimeout(()=>{ modal.close(); loadData().then(render); }, 1200);
+  });
 }
 
-// ---------- PIN local (demostración) ----------
-const PIN = { len:4, expected:'2468', tries:0, lockUntil:0 };
+// ---------- Login de sesión ----------
+function showLogin(){
+  const ov = $('login-overlay');
+  ov.classList.remove('hidden');
+  $('login-err').textContent='';
+  $('login-api').textContent = CONFIG.apiBase;
+}
+async function doLogin(){
+  const user = $('login-user').value.trim(), pass = $('login-pass').value;
+  $('login-err').textContent='Conectando…';
+  const r = await login(user, pass);
+  if(r.ok){
+    $('login-overlay').classList.add('hidden');
+    await loadData(); render(); scheduleRefresh();
+  }else{
+    $('login-err').textContent = r.status===0 ? 'Backend inaccesible ('+CONFIG.apiBase+')'
+      : `Acceso denegado (${r.status}): ${r.error||'credenciales'}`;
+  }
+}
+function skipLogin(){
+  // Explorar sin sesión: la UI muestra estados honestos, ningún dato inventado.
+  $('login-overlay').classList.add('hidden');
+  loadData().then(render);
+}
+
+// ---------- Desbloqueo local (2ª capa, elegido por el usuario) ----------
+let pinBuf='';
 function pinInit(){
   const pad = $('pin-pad');
   const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
@@ -157,32 +236,45 @@ function pinInit(){
     if(e.key==='Backspace') pinKey('⌫');
   });
 }
-let pinBuf='';
 function pinKey(k){
-  if(Date.now()<PIN.lockUntil){ $('pin-err').textContent='Bloqueado unos segundos…'; return; }
   if(k==='⌫'){ pinBuf=pinBuf.slice(0,-1); }
-  else if(pinBuf.length<PIN.len){ pinBuf+=k; }
+  else if(pinBuf.length<8){ pinBuf+=k; }
   pinDraw();
-  if(pinBuf.length===PIN.len) pinCheck();
+  if(pinBuf.length>=4) pinCheck();
 }
 function pinDraw(){
-  $('pin-dots').innerHTML = Array.from({length:PIN.len},(_,i)=>`<i class="${i<pinBuf.length?'on':''}"></i>`).join('');
+  $('pin-dots').innerHTML = Array.from({length:Math.max(4,pinBuf.length||4)},(_,i)=>`<i class="${i<pinBuf.length?'on':''}"></i>`).join('');
 }
 async function pinCheck(){
-  const digest = await sha256(pinBuf);
-  const ok = digest === await sha256(PIN.expected);
-  if(ok){ $('pin-overlay').classList.add('hidden'); pinBuf=''; pinDraw(); PIN.tries=0; state.locked=false; render(); }
-  else{
-    PIN.tries++; pinBuf=''; pinDraw();
-    $('pin-err').textContent = `PIN incorrecto (${PIN.tries}/5)`;
-    if(PIN.tries>=5){ PIN.lockUntil=Date.now()+15000; PIN.tries=0; }
+  if(!localLock.isSet()){
+    // Primer uso: el usuario define su PIN de desbloqueo local (4–8 dígitos).
+    if(pinBuf.length>=4){ await localLock.setup(pinBuf); $('pin-overlay').classList.add('hidden'); pinBuf=''; pinDraw(); }
+    return;
   }
+  const ok = await localLock.verify(pinBuf);
+  if(ok){ $('pin-overlay').classList.add('hidden'); pinBuf=''; pinDraw(); }
+  else{ pinBuf=''; pinDraw(); $('pin-err').textContent='PIN incorrecto'; }
 }
-async function sha256(s){
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+function lockNow(){
+  if(!localLock.isSet()) return; // sin PIN local no hay nada que bloquear
+  pinBuf=''; pinDraw(); $('pin-err').textContent=''; $('pin-overlay').classList.remove('hidden');
 }
-function lockNow(){ state.locked=true; pinBuf=''; pinDraw(); $('pin-err').textContent=''; $('pin-overlay').classList.remove('hidden'); }
+
+// ---------- Ajustes: backend y sesión ----------
+function openSettingsApi(){
+  const modal = openModal(`<h3>Conexión backend</h3>
+    <p class="small">URL base de la API del bot. Sin credenciales aquí.</p>
+    <input id="api-base" class="inp" value="${esc(CONFIG.apiBase)}" placeholder="/api o https://host/api">
+    <div class="btn-row" style="margin-top:12px"><button class="btn" id="api-save">Guardar y reconectar</button></div>`);
+  modal.root.querySelector('#api-save').addEventListener('click',()=>{
+    setApiBase(modal.root.querySelector('#api-base').value.trim());
+    modal.close(); loadData().then(render);
+  });
+}
+function scheduleRefresh(){
+  clearInterval(state.refreshTimer);
+  state.refreshTimer = setInterval(()=>{ if(session.get()) loadData().then(render); }, 30000);
+}
 
 // ---------- Eventos globales ----------
 document.addEventListener('click', e=>{
@@ -197,13 +289,27 @@ document.addEventListener('click', e=>{
     else if(k==='eng') state.ui.activityFilter.engine=v;
     render(); return;
   }
-  const act = e.target.closest('[data-demo-action]');
-  if(act){ demoAction(act.dataset.demoAction); return; }
+  const act = e.target.closest('[data-action]');
+  if(act){
+    let params={}; try{ params = JSON.parse(act.dataset.params||'{}'); }catch{}
+    openAction(act.dataset.action, params); return;
+  }
+  const misc = e.target.closest('[data-app]');
+  if(misc){
+    const k = misc.dataset.app;
+    if(k==='settings-api') openSettingsApi();
+    else if(k==='logout'){ logout(); location.reload(); }
+    else if(k==='refresh'){ loadData().then(render); }
+    return;
+  }
 });
 $('mode-basic').addEventListener('click', ()=>{ state.mode='basic'; localStorage.setItem('nexa.mode','basic'); render(); });
 $('mode-pro').addEventListener('click', ()=>{ state.mode='pro'; localStorage.setItem('nexa.mode','pro'); render(); });
 $('engine-btn').addEventListener('click', openEngineModal);
 $('lock-btn').addEventListener('click', lockNow);
+$('login-btn').addEventListener('click', doLogin);
+$('login-pass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+$('login-skip').addEventListener('click', skipLogin);
 window.addEventListener('online',  ()=>{ state.online=true; renderStatusline(); });
 window.addEventListener('offline', ()=>{ state.online=false; renderStatusline(); });
 
@@ -213,8 +319,10 @@ if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catc
 // ---------- Boot ----------
 (async function boot(){
   pinInit();
-  await loadData();
   render();
-  // PIN al arranque (demostración): mostrar overlay bloqueado por defecto
-  if(state.locked){ lockNow(); }
+  if(localLock.isSet() && !state.unlocked){
+    $('pin-overlay').classList.remove('hidden');
+  }
+  if(!session.get()){ showLogin(); }
+  else{ await loadData(); render(); scheduleRefresh(); }
 })();

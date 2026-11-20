@@ -26,7 +26,7 @@ export function renderHome(ctx){
     const chip = mode==='basic' ? '' : `<span class="tiny">${esc(e.desc)}</span>`;
     return `<button class="card pick-btn" data-nav="engine:${e.id}" style="text-align:left;cursor:pointer">
       <div class="row" style="border:0"><b>${esc(e.name)}</b>${modeBadge(st.mode||'?')}</div>
-      ${chip}<div class="row"><span class="k">PnL (demo)</span><span class="v">${signed(pnl, signedUsd(pnl))}</span></div>
+      ${chip}<div class="row"><span class="k">PnL</span><span class="v">${signed(pnl, signedUsd(pnl))}</span></div>
       <div class="tiny">${st.lastTickAt?`tick ${fmtAge(st.lastTickAt)}`:''}</div></button>`;
   }).join('');
   const core = `
@@ -35,8 +35,8 @@ export function renderHome(ctx){
       <div class="row"><span class="k">PnL realizado</span><span class="v">${signed(sum.realizedPnlUsd, signedUsd(sum.realizedPnlUsd))}</span></div>
       <div class="row"><span class="k">PnL no realizado</span><span class="v">${signed(sum.unrealizedPnlUsd, signedUsd(sum.unrealizedPnlUsd))}</span></div>
       <div class="row"><span class="k">Exposición</span><span class="v">${fmtUsd(sum.exposureUsd)}</span></div>
-      ${freshChip(port.ts||ctx.market?.ts, port.source||'fixtures demo')}
-      ${mode==='pro'?`<div style="margin-top:8px">${lineChart(navSeries,{hh:120,ylabel:'BTC/USD demo'})}</div>`:''}
+      ${freshChip(port.ts||ctx.market?.ts, port.source||'api')}
+      ${mode==='pro'?`<div style="margin-top:8px">${lineChart(navSeries,{hh:120,ylabel:'BTC/USD'})}</div>`:''}
     `, {right: badge(ctx.dataTag,'demo')})}
     ${card('Estado de motores', `<div class="grid g2">${engineCards}</div>`)}`;
   const extra = mode==='pro' ? `
@@ -87,7 +87,7 @@ export function renderMarket(ctx){
       ['Momentum 4h', signedPct(ind.momentum?.pct4h)], ['Momentum 24h', signedPct(ind.momentum?.pct24h)],
     ])}
     <div class="row"><span class="k">Régimen</span><span class="v">${esc(ind.regime??NA)}</span></div>
-    ${provLine({source:'indicadores demo', ts:ind.computedAt, state:'fresh'})}`);
+    ${provLine({source:'indicadores', ts:ind.computedAt, state:'fresh'})}`);
   const sources = card('Fuentes de datos', table(
     [{label:'Fuente'},{label:'Rol'},{label:'Estado'},{label:'Último OK'},{label:'Nota'}],
     ((m.sources||m.externalSources)||[]).map(s=>[esc(s.name), esc(s.role), badge(s.state, s.state==='active'?'on':s.state==='offline'?'err':'warn'), s.lastOk?esc(fmtAge(s.lastOk)):NA, esc(s.note||'')]),
@@ -104,7 +104,7 @@ export function renderEngine(ctx){
   if(!eng) return `<div class="banner err">Motor desconocido</div>`;
   const head = `<div class="eng-head"><h1>${esc(eng.name)}</h1>${modeBadge(d?.status?.mode||eng.modes[0])}
     ${badge(ctx.dataTag,'demo')}<span class="sub">${esc(eng.desc)} · modos propios: ${eng.modes.join(' / ')}</span>
-    ${stateBanner(st?.state||'demo', st?.error||'')}</div>`;
+    ${stateBanner(st?.state||'desconocido', st?.error||'')}</div>`;
   const subtabs = ctx.subtabs.map(s=>`<button class="${s.id===subtab?'on':''}" data-ui="subtab:${s.id}">${esc(s.label)}</button>`).join('');
   const body = ctx.renderEngineSub(engineId, subtab);
   return `${head}<div class="subnav">${subtabs}</div>${body}`;
@@ -148,9 +148,9 @@ export function idcaPanel(ctx){
     ]))}
     ${card('Controles del motor (protegidos)', `
       <div class="btn-row">
-        <button class="btn prot" data-demo-action="pausa">Pausar / reanudar</button>
-        <button class="btn prot" data-demo-action="toggle-pair">Activar par</button>
-        <button class="btn danger prot" data-demo-action="emergency">Cierre de emergencia</button>
+        <button class="btn prot" data-action="idca.pauseGlobal" data-params="{&quot;pause&quot;:true}">Pausar / reanudar</button>
+        <button class="btn prot" data-action="idca.togglePair" data-params="{&quot;pair&quot;:&quot;BTC/USD&quot;,&quot;enabled&quot;:true}">Activar par</button>
+        <button class="btn danger prot" data-action="idca.emergencyClose" data-params="{}">Cierre de emergencia</button>
       </div>
       <div class="tiny" style="margin-top:8px">Prototipo: las acciones requieren confirmación + autorización del backend. No se ejecutan.</div>`)}`;
 }
@@ -168,7 +168,7 @@ function idcaMarketDetail(pc, s, pro=false){
       ['Market score', fmtNum(pc.marketScore,{dec:2})],
     ])}
     <div class="row"><span class="k">Progreso hacia umbral de entrada</span><span class="v">${microBar(Math.min(100,(pc.entryScore||0)/(pc.entryThreshold||1)*100),{mark:100})}</span></div>
-    ${provLine({source:'kraken demo', ts:pc.priceTs, state:'fresh'})}
+    ${provLine({source:'kraken', ts:pc.priceTs, state:'fresh'})}
     ${pro?`<h4 class="small" style="margin:10px 0 4px">Desglose score V/C/R/D/M</h4>
       ${table([{label:'Componente'},{label:'Valor',num:1}],
         Object.entries(pc.scoreBreakdown||{}).map(([k,v])=>[esc(k),fmtNum(v,{dec:2})]),{minWidth:260})}`:''}`;
@@ -213,11 +213,11 @@ export function idcaCycles(ctx){
         fmtUsd(o.price), fmtQty(o.quantity), fmtUsd(o.valueUsd), fmtUsd(o.feeUsd),
         fmtPct(o.slippagePct), `<small>${esc(o.reason)}</small>`]),{minWidth:760}));
     const actions = `<div class="btn-row">
-      <button class="btn prot" data-demo-action="pause-cycle">Pausar ciclo</button>
-      <button class="btn prot" data-demo-action="manual-buy">Compra manual</button>
-      <button class="btn prot" data-demo-action="schedule-exit">Programar salida</button>
-      <button class="btn danger prot" data-demo-action="close-cycle">Cerrar posición</button>
-      <button class="btn danger prot" data-demo-action="delete-cycle">Eliminar ciclo</button></div>
+      <button class="btn prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Pausar ciclo</button>
+      <button class="btn prot" data-action="idca.manualBuy" data-params='{"cycleId":"'+esc(c.id)+'"}'>Compra manual</button>
+      <button class="btn prot" data-action="idca.manualBuy" data-params='{"cycleId":"'+esc(c.id)+'","type":"schedule"}'>Programar salida</button>
+      <button class="btn danger prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Cerrar posición</button>
+      <button class="btn danger prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'","delete":true}'>Eliminar ciclo</button></div>
       <div class="tiny">Prototipo — acciones protegidas; requieren backend autorizado.</div>`;
     return card(head+core+anchors+prot+(ctx.mode==='pro'?tp+orders+actions:expandable('Detalle completo (TP, órdenes, acciones)', tp+orders+actions)),{});
   }).join('');
@@ -229,7 +229,7 @@ export function idcaHistory(ctx){
   const wins = h.filter(c=>c.realizedPnlUsd>0).length, losses=h.filter(c=>c.realizedPnlUsd<0).length, neutral=h.length-wins-losses;
   const summary = card('Historial IDCA', kv([
     ['Ciclos cerrados', h.length],['Wins / losses / neutros', `${wins} / ${losses} / ${neutral}`],
-    ['PnL histórico (demo)', signed(totPnl, signedUsd(totPnl))],
+    ['PnL histórico', signed(totPnl, signedUsd(totPnl))],
   ]));
   const list = h.map(c=>expandable(
     `<b>${esc(c.pair)}</b> · ${esc(c.id)} · ${badge(c.exitType||c.closeReason,'sim')} · ${signed(c.realizedPnlUsd,signedUsd(c.realizedPnlUsd))}`,
@@ -242,7 +242,7 @@ export function idcaHistory(ctx){
     ]) + expandable('Órdenes', table(
       [{label:'ID'}],[(c.orders||[]).map(o=>[`<span class="mono">${esc(o)}</span>`])],{minWidth:200})),
   )).join('');
-  const exp = ctx.mode==='pro'?`<div class="btn-row"><button class="btn" data-demo-action="export">Exportar CSV (demo)</button>
+  const exp = ctx.mode==='pro'?`<div class="btn-row"><button class="btn" data-app="export-idca">Exportar CSV</button>
     <span class="tiny" style="align-self:center">Filtro modo: simulación y live separados — sin mezcla.</span></div>`:'';
   return `<div class="grid">${summary}<div class="grid">${list}</div>${exp}</div>`;
 }
@@ -254,7 +254,7 @@ export function idcaOrders(ctx){
     fmtPct(o.slippagePct), badge(o.mode,'sim'), `<small>${esc(o.reason)}</small>`]);
   const totBuy = (ctx.data.orders||[]).filter(o=>o.side==='BUY').reduce((a,o)=>a+o.valueUsd,0);
   const totSell = (ctx.data.orders||[]).filter(o=>o.side==='SELL').reduce((a,o)=>a+o.valueUsd,0);
-  return card('Órdenes IDCA (demo)', `
+  return card('Órdenes IDCA', `
     ${kv([['Total compras', fmtUsd(totBuy)],['Total ventas', fmtUsd(totSell)]])}
     ${table(
       [{label:'Fecha'},{label:'ID'},{label:'Ciclo'},{label:'Lado'},{label:'Tipo'},{label:'Precio',num:1},{label:'Cant.',num:1},{label:'Valor',num:1},{label:'Fee',num:1},{label:'Slip%',num:1},{label:'Modo'},{label:'Motivo'}],
@@ -319,7 +319,7 @@ export function spotPositions(ctx){
   const rows = list.map(p=>[esc(p.pair), fmtQty(p.quantity), fmtUsd(p.avgPrice), fmtUsd(p.currentPrice),
     fmtUsd(p.costUsd), fmtUsd(p.valueUsd), signed(p.pnlUsd,signedUsd(p.pnlUsd)), signedPct(p.pnlPct),
     fmtPct(p.exposurePct), esc((p.protections||[]).join(', '))]);
-  return card('Posiciones SPOT (dry-run demo)', table(
+  return card('Posiciones SPOT', table(
     [{label:'Par'},{label:'Cantidad',num:1},{label:'Precio medio',num:1},{label:'Actual',num:1},
      {label:'Coste',num:1},{label:'Valor',num:1},{label:'PnL $',num:1},{label:'PnL %',num:1},
      {label:'Exposición',num:1},{label:'Protecciones'}],rows,{minWidth:780}));
@@ -398,7 +398,7 @@ function cyclesChart(d){
   const buys = (d.cycles||[]).map(c=>({ts:c.buyFillTs,price:c.buyPrice}));
   const tgts = (d.cycles||[]).filter(c=>c.status!=='closed').map(c=>({ts:c.buyFillTs,price:c.sellTargetPrice}));
   const sells = (d.cycles||[]).filter(c=>c.sellFillTs).map(c=>({ts:c.sellFillTs,price:c.sellTargetPrice}));
-  return `<div class="tiny" style="margin-bottom:4px">Velas BTC/USD demo · niveles (azul=actual, ámbar=antiguo) · ● compras ● targets ● ventas</div>`
+  return `<div class="tiny" style="margin-bottom:4px">Velas BTC/USD · niveles (azul=actual, ámbar=antiguo) · ● compras ● targets ● ventas</div>`
     + candleChart(candles,{hh:220,levels:[...levels,...oldLv],buys,targets:tgts,sells});
 }
 export function gridCycles(ctx){
@@ -586,7 +586,7 @@ export function renderActivity(ctx){
     <div class="chips" style="margin-bottom:10px">${engBtn('all','Todos')}${engBtn('idca','IDCA')}${engBtn('spot','SPOT')}${engBtn('grid','Grid')}${engBtn('ama','AMA')}${engBtn('system','Sistema')}</div>`;
   const feed = `<div class="feed">${filtered.map(evRow).join('')||'<div class="na">Sin eventos</div>'}</div>`;
   return `${head}${card(`Actividad (${filtered.length}/${list.length})`,feed)}
-    ${mode==='pro'?'<div class="tiny" style="margin-top:6px">Stream demo · estados de exchange, latencias y staleness visibles por evento.</div>':''}`;
+    ${mode==='pro'?'<div class="tiny" style="margin-top:6px">Stream · estados de exchange, latencias y staleness visibles por evento.</div>':''}`;
 }
 function evRow(e){
   return `<div class="ev"><span class="sev ${esc(e.severity||'info')}"></span>

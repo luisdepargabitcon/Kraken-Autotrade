@@ -11,12 +11,16 @@ Estados: PENDIENTE / EN CURSO / VALIDADA LOCALMENTE / PARCIAL / BLOQUEADA POR AU
 | Fase | Estado | % demostrado | Pruebas | Bloqueos |
 |---|---|---|---|---|
 | F0 — Congelación y P0 | VALIDADA LOCALMENTE | 100% | verificación por git/objects | runtime VPS no autorizado |
-| F1 — Inventario y paridad | VALIDADA LOCALMENTE | ~80% | MATRIZ_PARIDAD.csv 76 filas | ampliación continua al encontrar campos nuevos |
-| F2 — HTML/UX web+APK | IMPLEMENTADO LOCAL | 90% | render.test.mjs 8/8 | QA visual por viewports pendiente |
-| F3 — Contratos read-only | IMPLEMENTADO LOCAL | 90% | parity.test.mjs 9/9 | integración endpoints reales pendiente |
-| F4 — Análisis estrategias | VALIDADA LOCALMENTE | 100% | ANALISIS_ESTRATEGIAS_F4.md | — |
-| F5 — PWA + APK | VALIDADA LOCALMENTE | 95% | APK compilada+instalada+arrancada en emulador qa34; PIN/nav/Básico/Pro verificados | capturas screencap en negro (headless lavapipe); QA visual pendiente |
-| F6 — QA final | EN CURSO | — | 17/17 tests node pasan | QA navegador/emulador pendiente |
+| F1 — Inventario y paridad | VALIDADA LOCALMENTE | ~85% | MATRIZ_PARIDAD.csv 76 filas + ROUTES reales en adapters.js | verificación viva pendiente |
+| F2 — Panel definitivo | IMPLEMENTADO LOCAL | 85% | render tests + gate sesión en emulador | QA visual viewports pendiente |
+| F3 — Contratos+auth+acciones | IMPLEMENTADO LOCAL | 80% | auth.test.mjs 7/7; adapters a rutas reales; BFF ref | validación contra API viva BLOQUEADA POR AUTORIZACIÓN |
+| F4 — Análisis estrategias | VALIDADA LOCALMENTE | 100% | ANALISIS_ESTRATEGIAS_F4.md + ago/sep | — |
+| F5 — APK definitiva | VALIDADA LOCALMENTE | 95% | app-release firmada v0.2.0 VC2 instalada en emulador; gate sesión verificado | release GitHub pendiente de publicación autorizada |
+| F6 — QA final | EN CURSO | — | 24/24 tests node | integración real pendiente autorización |
+
+## Revisión 7 — estado global
+`IMPLEMENTACIÓN DEFINITIVA LOCAL PREPARADA — INTEGRACIÓN/DEPLOY REAL PENDIENTE DE AUTORIZACIÓN`.
+Nada de DEMO en el producto: provider único `createApiProvider`, fixtures solo en tests/, PIN 2468 eliminado, sesión servidor + roles + CSRF + idempotencia + auditoría (BFF `nexa-v2/bff/`).
 
 ## F0 — Congelación, seguridad y preservación
 

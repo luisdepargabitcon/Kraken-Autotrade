@@ -221,8 +221,9 @@ details.exp .exp-body{padding:4px 12px 12px;border-top:1px solid var(--line)}
     padding-bottom:env(safe-area-inset-bottom);
     background:rgba(10,17,32,.96);backdrop-filter:blur(10px);
     border-top:1px solid var(--line)}
+  .bottomnav{min-height:calc(52px + env(safe-area-inset-bottom))}
   .bottomnav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-    gap:3px;font-size:10px;color:var(--tx3);text-decoration:none;padding-top:6px}
+    gap:3px;font-size:10px;color:var(--tx3);text-decoration:none;padding-top:6px;min-height:44px}
   .bottomnav a svg{width:20px;height:20px}
   .bottomnav a.on{color:var(--blue2)}
   .brand-tx span{display:none}
@@ -235,3 +236,8 @@ details.exp .exp-body{padding:4px 12px 12px;border-top:1px solid var(--line)}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media print{.topbar,.bottomnav,.statusline{display:none}}
+.inp{width:100%;padding:10px 12px;margin:6px 0;border:1px solid var(--line2);border-radius:9px;
+  background:#0d1626;color:var(--tx);font-size:14px}
+.inp:focus{outline:2px solid var(--blue2);outline-offset:1px}
+.btn.primary{background:#123877;color:var(--blue2);border-color:var(--blue)}
+code{color:var(--blue2);font-size:.9em}

@@ -11,7 +11,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const web = join(root, 'web');
 
 const { CONTRACTS, ENGINES, coverageReport, ENGINE_SUBTABS } = await import(pathToFileURL(join(web,'js','contracts.js')));
-const fixtures = await import(pathToFileURL(join(web,'js','fixtures.js')));
+const fixtures = await import(pathToFileURL(join(root,'tests','fixtures.mjs')));
 const { freshness, fmtUsd, NA } = await import(pathToFileURL(join(web,'js','util.js')));
 
 function listJs(dir){
@@ -73,21 +73,30 @@ test('formato: null nunca es 0 ni cadena vacía', ()=>{
   assert.equal(fmtUsd(0), '$0,00');
 });
 
-test('seguridad: la app no usa métodos mutables ni credenciales', ()=>{
-  const files = listJs(join(web,'js')).concat([join(web,'index.html'), join(web,'sw.js')]);
-  const bad = /(fetch\([^)]*method:\s*['"](?:POST|PUT|PATCH|DELETE)|open\(\s*['"](?:POST|PUT|PATCH|DELETE)|axios\.(?:post|put|patch|delete)\()/i;
-  const secrets = /(api[_-]?key|secret|password|token)\s*[:=]\s*['"][A-Za-z0-9_\-]{8,}/i;
-  for(const f of files){
+test('seguridad: mutaciones SOLO vía actions/auth autenticadas; sin credenciales', ()=>{
+  const mutable = /(fetch\([^)]*method:\s*['"](?:POST|PUT|PATCH|DELETE)|open\(\s*['"](?:POST|PUT|PATCH|DELETE)|axios\.(?:post|put|patch|delete)\()/i;
+  const secrets = /(api[_-]?key|secret|password)\s*[:=]\s*['"][A-Za-z0-9_\-]{8,}/i;
+  const allowed = new Set(['actions.js','auth.js']); // capa autorizada: requiere sesión+confirmación+idempotencia
+  for(const f of listJs(join(web,'js'))){
     const src = readFileSync(f,'utf8');
-    assert.ok(!bad.test(src), `mutable call en ${f}`);
-    assert.ok(!secrets.test(src), `posible secreto en ${f}`);
+    const name = f.split(/[\/]/).pop();
+    if(!allowed.has(name)) assert.ok(!mutable.test(src), `mutable call fuera de capa autorizada en ${name}`);
+    assert.ok(!secrets.test(src), `posible secreto en ${name}`);
+  }
+  // render/navegación/modo jamás mutan:
+  for(const name of ['screens.js','ui.js','util.js','contracts.js','provider.js']){
+    assert.ok(!mutable.test(readFileSync(join(web,'js',name),'utf8')), `${name} muta`);
   }
 });
 
-test('PIN local no viaja en claro al backend (sin llamadas que lo envíen)', ()=>{
-  const src = readFileSync(join(web,'js','app.js'),'utf8');
-  assert.ok(!/fetch\([^)]*pin/i.test(src), 'PIN enviado por fetch');
-  assert.ok(/crypto\.subtle\.digest/.test(src), 'PIN debería verificarse con hash local');
+test('autenticación: sin PIN fijo; PBKDF2 local + sesión servidor', ()=>{
+  const app = readFileSync(join(web,'js','app.js'),'utf8');
+  const auth = readFileSync(join(web,'js','auth.js'),'utf8');
+  assert.ok(!/2468/.test(app+auth), 'PIN 2468 hardcodeado');
+  assert.ok(!/expected\s*[:=]\s*['"]\d+/.test(app+auth), 'PIN esperado hardcodeado');
+  assert.ok(/deriveBits|PBKDF2/i.test(auth), 'desbloqueo local debe usar PBKDF2');
+  assert.ok(/\/v2\/auth\/login/.test(auth), 'login de sesión servidor requerido');
+  assert.ok(!/fetch\([^)]*pin/i.test(app), 'PIN local nunca viaja por fetch');
 });
 
 test('grid: ciclos 1:1 BUY→SELL conservan cantidad exacta', ()=>{

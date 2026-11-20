@@ -28,6 +28,6 @@ task clean(type: Delete) {
     delete rootProject.buildDir
 }
 
-// Build outputs a D: por falta de espacio en C:
-rootProject.buildDir = 'D:/nexa-build/root'
-subprojects { project.buildDir = "D:/nexa-build/${project.name}" }
+// Salidas de build redirigibles con NEXA_BUILD_DIR (por defecto, carpetas build/ estándar).
+def outDir = System.getenv('NEXA_BUILD_DIR')
+if(outDir){ rootProject.buildDir = "$outDir/root"; subprojects { project.buildDir = "$outDir/${project.name}" } }

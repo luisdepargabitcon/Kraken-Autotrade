@@ -1,106 +1,131 @@
-// NEXA V2 — capa de datos. DOS proveedores:
-//  - demo: fixtures locales etiquetados DEMO (por defecto en la APK).
-//  - live: SOLO GET de lectura contra una API configurable; nunca POST.
-// Ambos devuelven read-models con provenance {source, ts, state}.
-import { provenance } from './util.js';
-import {
-  DEMO_MARKET, DEMO_IDCA, DEMO_SPOT, DEMO_GRID, DEMO_AMA,
-  DEMO_PORTFOLIO, DEMO_FISCO, DEMO_ACTIVITY, DEMO_SETTINGS, DEMO_META,
-} from './fixtures.js';
+// NEXA V2 — proveedor de datos DEL PRODUCTO.
+// Única fuente: API real del bot (rutas existentes) a través de apiFetch.
+// Sin conexión/sesión devuelve estado honesto 'unavailable'/'error' — jamás
+// inventa datos. Los fixtures SOLO se usan en tests (ver tests/*.mjs).
+import { CONFIG } from './config.js';
+import { apiFetch, session } from './auth.js';
+import { ROUTES, normEngineStatus, normIdcaSummary, normIdcaCycle, normOrder,
+         normGridCycle, normMarket, normEvent, wrap } from './adapters.js';
+import { freshness } from './util.js';
 
-export const DATA_MODE = { DEMO:'demo', LIVE:'live' };
+function pathOf(route){
+  // 'GET /institutional-dca/summary' -> '/institutional-dca/summary'
+  return '/' + route.split(' ')[1].replace(/^\/+/,'');
+}
 
-export function createDemoProvider(){
-  const P = prov => ({ ok:true, state:'demo', ts:new Date().toISOString(), data:prov });
+async function get(route, {params} = {}){
+  let p = pathOf(route);
+  if(params) for(const [k,v] of Object.entries(params)) p = p.replace(':'+k, encodeURIComponent(v));
+  const url = CONFIG.apiBase + p;
+  const t0 = Date.now();
+  try{
+    const r = await fetch(url, {
+      headers: { 'Accept':'application/json',
+        ...(session.get()? {'Authorization':`Bearer ${session.get().token}`}:{}) },
+    });
+    let data=null; try{ data=await r.json(); }catch{}
+    if(r.status===401) return { data:null, state:'auth_required', status:r.status, latency:Date.now()-t0 };
+    if(r.status===403) return { data:null, state:'forbidden', status:r.status, latency:Date.now()-t0 };
+    if(!r.ok) return { data:null, state:'error', status:r.status, latency:Date.now()-t0 };
+    return { data, state:'ok', status:r.status, latency:Date.now()-t0 };
+  }catch(e){
+    return { data:null, state:'unreachable', status:0, error:String(e?.message||e), latency:Date.now()-t0 };
+  }
+}
+
+const st = s => s==='ok'?'ok':(s==='unreachable'?'unavailable':s);
+const list = v => Array.isArray(v) ? v : (v?.items || v?.cycles || v?.orders || v?.rows || v?.data || []);
+
+export function createApiProvider(){
   return {
-    mode: DATA_MODE.DEMO, label:'Datos DEMO (fixtures locales)',
-    async market(){ return P({ tickers:DEMO_MARKET.tickers, candles:DEMO_MARKET.candles,
-      indicators:DEMO_MARKET.indicators, sources:DEMO_MARKET.externalSources }); },
-    async engine(id){
-      const map={ idca:DEMO_IDCA, spot:DEMO_SPOT, grid:DEMO_GRID, ama:DEMO_AMA };
-      return P(map[id] ?? null);
+    kind:'api',
+    async idca(){
+      const [summary, controls, cycles, orders, history] = await Promise.all([
+        get(ROUTES.idca.summary), get(ROUTES.idca.controls),
+        get(ROUTES.idca.cycles), get(ROUTES.idca.orders), get(ROUTES.idca.history),
+      ]);
+      const worst = [summary,controls].find(r=>r.state!=='ok');
+      return {
+        state: worst ? st(worst.state) : 'ok',
+        status: wrap(controls.data, normEngineStatus),
+        summary: wrap(summary.data, normIdcaSummary),
+        cycles: wrap(list(cycles.data).map(normIdcaCycle).filter(Boolean), x=>x, {ts:Date.now()}),
+        orders: wrap(list(orders.data).map(normOrder).filter(Boolean), x=>x, {ts:Date.now()}),
+        history: wrap(list(history.data).map(normIdcaCycle).filter(Boolean), x=>x, {ts:Date.now()}),
+        latency: Math.max(summary.latency||0, controls.latency||0),
+      };
     },
-    async portfolio(){ return P(DEMO_PORTFOLIO); },
-    async fisco(){ return P(DEMO_FISCO); },
-    async activity(){ return P(DEMO_ACTIVITY); },
-    async settings(){ return P(DEMO_SETTINGS); },
-    meta: DEMO_META,
+    async spot(){
+      const pos = await get(ROUTES.spot.positions);
+      const diag = await get(ROUTES.spot.diagnostics);
+      return {
+        state: pos.state==='ok'?'ok':st(pos.state),
+        status: wrap(diag.data, normEngineStatus),
+        positions: wrap(list(pos.data), x=>x, {ts:Date.now()}),
+        diagnostics: diag.data ?? null,
+        latency: pos.latency,
+      };
+    },
+    async grid(){
+      const [status, levels, cycles, events] = await Promise.all([
+        get(ROUTES.grid.status), get(ROUTES.grid.levels),
+        get(ROUTES.grid.cycles), get(ROUTES.grid.events),
+      ]);
+      return {
+        state: status.state==='ok'?'ok':st(status.state),
+        status: wrap(status.data, normEngineStatus),
+        levels: wrap(list(levels.data), x=>x, {ts:Date.now()}),
+        cycles: wrap(list(cycles.data).map(normGridCycle).filter(Boolean), x=>x, {ts:Date.now()}),
+        events: wrap(list(events.data).map(normEvent).filter(Boolean), x=>x, {ts:Date.now()}),
+        latency: status.latency,
+      };
+    },
+    async ama(){
+      const [status, mandate, tranches, cycles] = await Promise.all([
+        get(ROUTES.ama.status), get(ROUTES.ama.mandate),
+        get(ROUTES.ama.tranches), get(ROUTES.ama.cycles),
+      ]);
+      return {
+        state: status.state==='ok'?'ok':st(status.state),
+        status: wrap(status.data, normEngineStatus),
+        mandate: wrap(mandate.data, x=>x, {ts:Date.now()}),
+        tranches: wrap(list(tranches.data), x=>x, {ts:Date.now()}),
+        cycles: wrap(list(cycles.data), x=>x, {ts:Date.now()}),
+        latency: status.latency,
+      };
+    },
+    async market(pair='BTC/USD'){
+      const r = await get(ROUTES.common.market, {params:{pair}});
+      return { state: st(r.state), market: wrap(r.data, normMarket), latency: r.latency };
+    },
+    async portfolio(){
+      const [summary, holdings] = await Promise.all([
+        get(ROUTES.common.portfolio), get(ROUTES.common.holdings),
+      ]);
+      return {
+        state: summary.state==='ok'?'ok':st(summary.state),
+        summary: wrap(summary.data, x=>x, {ts:Date.now()}),
+        holdings: wrap(list(holdings.data), x=>x, {ts:Date.now()}),
+        latency: summary.latency,
+      };
+    },
+    async activity(){
+      const r = await get(ROUTES.common.notifications);
+      return { state: st(r.state), events: wrap(list(r.data).map(normEvent).filter(Boolean), x=>x, {ts:Date.now()}) };
+    },
+    async fisco(){
+      // FISCO requiere permiso propio; sin sesión autorizada devuelve estado honesto.
+      return { state:'auth_required', data:null,
+        note:'Sección restringida: requiere sesión con permiso fisco:read.' };
+    },
   };
 }
 
-// Endpoints de lectura permitidos en modo live (lista blanca — solo GET).
-// Mapean read-models del panel existente (no inventan endpoints nuevos).
-const LIVE_ENDPOINTS = {
-  'idca.status': '/api/institutional-dca/controls',
-  'idca.summary': '/api/institutional-dca/summary',
-  'idca.cycles': '/api/institutional-dca/cycles',
-  'idca.config': '/api/institutional-dca/config',
-  'idca.hybrid': '/api/idca/hybrid/status',
-  'spot.status': '/api/trading/status',
-  'spot.config': '/api/config/active',
-  'grid.status': '/api/grid-isolated/status',
-  'grid.cycles': '/api/grid-isolated/cycles',
-  'grid.levels': '/api/grid-isolated/levels',
-  'ama.status': '/api/ama/status',
-  'ama.readiness': '/api/ama/readiness',
-  'ama.portfolio': '/api/ama/portfolio',
-  'ama.mandate': '/api/ama/mandate',
-  'portfolio.summary': '/api/portfolio/summary',
-  'portfolio.balances': '/api/balances/all',
-  'activity.events': '/api/events',
-};
-
-export function createLiveProvider(baseUrl){
-  const base = (baseUrl||'').replace(/\/+$/,'');
-  async function get(path){
-    if(!base) return { ok:false, state:'unavailable', error:'sin API configurada' };
-    const t0 = Date.now();
-    try{
-      const res = await fetch(base+path, { method:'GET', headers:{ 'Accept':'application/json' }, credentials:'omit' });
-      const latencyMs = Date.now()-t0;
-      if(!res.ok) return { ok:false, state:'error', error:`HTTP ${res.status}`, latencyMs, ts:new Date().toISOString() };
-      const data = await res.json();
-      return { ok:true, state:'fresh', data, latencyMs, ts:new Date().toISOString(), source:base+path };
-    }catch(e){
-      return { ok:false, state:'offline', error:String(e&&e.message||e), latencyMs:Date.now()-t0, ts:new Date().toISOString() };
-    }
-  }
-  return {
-    mode: DATA_MODE.LIVE, label:`API lectura · ${base||'no configurada'}`,
-    raw: get, endpoints: LIVE_ENDPOINTS,
-    async market(){ return get(LIVE_ENDPOINTS['spot.status']); },
-    async engine(id){
-      const per = {
-        idca: async()=>({ status:(await get(LIVE_ENDPOINTS['idca.status'])).data,
-          summary:(await get(LIVE_ENDPOINTS['idca.summary'])).data,
-          cycles:(await get(LIVE_ENDPOINTS['idca.cycles'])).data,
-          config:(await get(LIVE_ENDPOINTS['idca.config'])).data,
-          hybrid:(await get(LIVE_ENDPOINTS['idca.hybrid'])).data }),
-        spot: async()=>({ status:(await get(LIVE_ENDPOINTS['spot.status'])).data,
-          config:(await get(LIVE_ENDPOINTS['spot.config'])).data }),
-        grid: async()=>({ status:(await get(LIVE_ENDPOINTS['grid.status'])).data,
-          cycles:(await get(LIVE_ENDPOINTS['grid.cycles'])).data,
-          levels:(await get(LIVE_ENDPOINTS['grid.levels'])).data }),
-        ama: async()=>({ status:(await get(LIVE_ENDPOINTS['ama.status'])).data,
-          readiness:(await get(LIVE_ENDPOINTS['ama.readiness'])).data,
-          portfolio:(await get(LIVE_ENDPOINTS['ama.portfolio'])).data,
-          mandate:(await get(LIVE_ENDPOINTS['ama.mandate'])).data }),
-      };
-      const fn = per[id];
-      if(!fn) return { ok:false, state:'unavailable', error:'motor desconocido' };
-      try{
-        const data = await fn();
-        const anyErr = Object.values(data).some(v=>v && v.ok===false);
-        return { ok:!anyErr, state:anyErr?'partial':'fresh', data, ts:new Date().toISOString(), source:base };
-      }catch(e){ return { ok:false, state:'error', error:String(e&&e.message||e) }; }
-    },
-    async portfolio(){
-      const [s,b] = await Promise.all([get(LIVE_ENDPOINTS['portfolio.summary']), get(LIVE_ENDPOINTS['portfolio.balances'])]);
-      return { ok:s.ok&&b.ok, state:(s.ok&&b.ok)?'fresh':'partial', data:{summary:s.data, balances:b.data}, ts:new Date().toISOString() };
-    },
-    async fisco(){ return { ok:false, state:'unavailable', error:'FISCO restringido — sin agregado público en V2' }; },
-    async activity(){ return get(LIVE_ENDPOINTS['activity.events']); },
-    async settings(){ return get(LIVE_ENDPOINTS['spot.config']); },
-    meta:{ tag:'LIVE', note:'Lectura GET contra API configurada. Sin POST.', observedAt:new Date().toISOString() },
-  };
+// Utilidad de tests: crea un provider a partir de respuestas mock.
+export function createMockProvider(responses){
+  const call = k => async () => ({ state:'ok', ...responses[k] });
+  const p = {};
+  for(const k of Object.keys(responses)) p[k]=call(k);
+  p.kind='mock';
+  return p;
 }

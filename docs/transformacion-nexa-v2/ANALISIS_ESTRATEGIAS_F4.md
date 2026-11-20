@@ -41,6 +41,22 @@
 - Logs/actividad con filtro por severidad/motor; FISCO restringido (agregados, sin datos personales).
 - Seguridad: 0 métodos mutables en la UI (test), PIN con hash local, sin credenciales en el bundle.
 
+## 6. SPOT agosto vs septiembre 2026 (métricas del plan)
+
+| Periodo | PnL | Cierres | Win-rate |
+|---|---|---|---|
+| Agosto 2026 | **+1.029,99 USD** | 41 | 51,2% |
+| Septiembre 2026 | **−1.515,39 USD** | 115 | 22,6% |
+
+**Lectura comparativa:**
+- Septiembre multiplica ×2,8 la frecuencia de cierres con win-rate <mitad → el motor abrió/cerró en régimen lateral-hostil: entradas válidas por señal pero salidas por protección o time-stop antes del TP (comisión+slippage erosionan cada ciclo pequeño).
+- Agosto, con menos operaciones y mejor selección, el win-rate >50% compensó comisiones → el mismo conjunto de protecciones (SL/TP/trailing/BE del `exitManager`) funciona cuando la señal es selectiva; no cuando la estrategia reentra en chop.
+- La divergencia apunta a **calidad de entrada en régimen lateral**, no a las protecciones: el PnL medio por cierre pasó de +25,1 USD a −13,2 USD, coherente con stop-outs repetidos y no con fallos de ejecución.
+
+**Contexto de estudios offline previos (no evidencia REAL, solo investigación):** B +159,27 / B +108,13 / D −598,18 / E −1.586,27 / F −288,60; Grid continuo −166,95, adaptativo −173,05, híbrido −241,88. El comportamiento de septiembre encaja con los escenarios de estrés (D/E): régimen lateral con costes.
+
+**Acción derivada (sin tocar el motor):** la UI muestra en `Motores→SPOT→Historial` el win-rate y PnL por ventana y en `Protecciones` el conteo de stop-outs vs TP; la reconfiguración de umbrales de entrada queda fuera de esta orden y requiere decisión del propietario con evidencia live.
+
 ## Conclusión F4
 
 Los 4 motores son arquitecturas distintas y se preservan. Los P0 se trasladan a la UI como estados explícitos. Ningún motor reconfigurado.

@@ -9,7 +9,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const web = join(root, 'web');
 
 const S = await import(pathToFileURL(join(web,'js','screens.js')));
-const fixtures = await import(pathToFileURL(join(web,'js','fixtures.js')));
+const fixtures = await import(pathToFileURL(join(root,'tests','fixtures.mjs')));
 
 function ctxFor(engineData, mode='pro'){
   return {

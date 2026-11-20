@@ -65,3 +65,8 @@ Formato: ID · fase · gravedad · descripción · causa · reparación · nueva
 - **Descripción:** barra de navegación inferior queda parcialmente fuera del viewport en 480×800 (bounds y 793–800, ~7 px).
 - **Causa probable:** safe-area/altura WebView; el área táctil responde pero el área visual es mínima.
 - **Estado:** ABIERTA — ajuste CSS pendiente (padding-bottom safe-area en .bottomnav).
+
+| INC-011 | RESUELTA | Rev7 | Evidencias C041–C046/C047–C051 mal asignadas a APK/PIN | Corregido: C041–C046→GRID, C047–C051→AMA en EVIDENCIAS rev7 | 2026-11-21 |
+| INC-012 | RESUELTA | Rev7 | INC-010 nav inferior 480×800 | `min-height:44px` en `.bottomnav a` + min-height barra | 2026-11-21 |
+| INC-013 | ABIERTA | Entorno | Emulador AOSP ATD API34 inestable en WHPX: arranques que quedan `offline`/crash MMIO; requiere varios reintentos | Receta que funciona: `-accel auto -gpu swiftshader_indirect -memory 1024 -no-snapshot -no-audio`; disco C≥1.6G libre, dataPartition=1400M | 2026-11-21 |
+| INC-014 | ABIERTA | Rev7 | Verificación C-*-PARCIAL contra API real del bot | BLOQUEADA POR AUTORIZACIÓN (backend vivo/VPS) — ver DESPLIEGUE.md | 2026-11-21 |
