@@ -83,3 +83,12 @@ emulator -avd qa34 -no-snapshot -gpu guest -no-window -no-audio -no-boot-anim -m
 - **Nota:** `screencap` da PNG negro con `-gpu guest` headless (limitación del
   renderer lavapipe); la evidencia funcional se tomó por árbol UI.
 - **Menor (INC-010):** nav inferior ~7 px visibles en 480×800 (área táctil OK).
+
+## Release definitiva — 2026-11-21 (rev7)
+
+- **APK:** `dist/nexa-v2-0.2.0-release.apk` — 3.207.013 B, versionName `0.2.0`, versionCode `2`
+- **SHA-256:** `b40178749d41cbf9e94ce451a42d1ce0e6774a11c6f6a47446456a180ce090fa`
+- **Firma:** v2 scheme, CN=NEXA V2 (keystore local `android/nexa-release.keystore`, NO en repo)
+- **Release:** https://github.com/luisdepargabitcon/Kraken-Autotrade/releases/tag/nexa-v2-0.2.0
+- **Emulador qa34:** install Success; arranque verificado — gate `NEXA · Sesión` (Entrar/Explorar sin conexión), statusline `API /api · sin sesión`, todos los datos `No disponible` honestos, 0 fixtures en bundle, 0 `2468`.
+- **Nota:** sin backend accesible la app muestra estados, no datos. Configurar `?api=<url>` o Ajustes.
