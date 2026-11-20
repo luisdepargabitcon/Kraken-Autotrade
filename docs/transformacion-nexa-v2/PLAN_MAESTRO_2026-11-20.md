@@ -1,115 +1,77 @@
-# NEXA V2 — PLAN MAESTRO DE TRANSFORMACIÓN
-**Fecha:** 20-11-2026 · **Estado:** PLAN DE TRABAJO, NO APROBACIÓN REAL
+# NEXA V2 — PLAN MAESTRO DEFINITIVO, WEB + APK
+**Revisión 7 · 21-11-2026 · Sustituye íntegramente el plan acumulativo anterior**
 **Repositorio:** https://github.com/luisdepargabitcon/Kraken-Autotrade
-**Rama de implementación:** `feature/nexa-v2-transformacion-20261120`
-**Referencia visual, NO rama de despliegue:** `design/nexa-apk-web-basico-pro-20261120`
-**Base congelada de main:** `47d79db3f7065e0e54481447129f2f88e9225fe2`
+**Rama única:** \`feature/nexa-v2-transformacion-20261120\`
+**Main congelado (base de partida):** \`47d79db3f7065e0e54481447129f2f88e9225fe2\`
+**Orden ejecutiva:** [Orden Cascade](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md).
+**Checklist de agente:** [Paridad y aceptación](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md).
+**Issue de seguimiento:** https://github.com/luisdepargabitcon/Kraken-Autotrade/issues/17
 
-## Decisión estructural
-Trabajar en una rama del repositorio actual, no en un mirror/repo nuevo. Mantener `main` y el bot actual intactos. No fusionar motores, registros, ciclos, posiciones o configuraciones de trading. No trabajar en VPS ni modificar bases de datos ni realizar deploy sin autorización específica del usuario. Sin accesos REAL, sin órdenes y sin cambios retroactivos. La rama de diseño ya contiene `design/nexa-apk-web/index.html`, `src/app.js`, `src/style.css`, plantilla y referencias; preservar ese trabajo y usarlo como referencia para el HTML definitivo.
+## 1. DECISIÓN DEL PROPIETARIO (PREVALECE SOBRE REV. 1–6)
+**Desarrollar exclusivamente el producto definitivo desde el primer commit.** No crear una serie de «maquetas / demo → preview / pre-release → volver a programar panel real». Construir **una única aplicación NEXA V2 real** con dos clientes: **panel web administrativo y APK Android**, idénticos en datos y funciones, con UX propia para escritorio/móvil y dos niveles Básico/Pro.
 
-## Fuentes verificadas
-- Arquitectura y hallazgos: [AUD-20261120-02](../auditorias/2026-11-20/02-auditoria-integral-motores-config-fuentes-codigo.md).
-- Contraauditoría canónica de 22 hallazgos: [AUD-20261120-03](../auditorias/2026-11-20/03-contraauditoria-final-nexa-v2.md); el anexo de 18 hallazgos NO es otra auditoría.
-- Backtest Grid de investigación: [AUD-20261120-01](../auditorias/2026-11-20/01-backtest-grid-continuo-adaptativo-hibrido.md).
-- Prototipo NEXA: https://drive.google.com/file/d/1TrRGggK2vFxIqqYakOAYmYfNMiecZuWg/view
-- Prototipo ORION (iteración más reciente): https://drive.google.com/file/d/1djd4ahCDwbWYecWPwFzcLARKIqkQdp40/view
-- Carpeta de investigación y simulaciones históricas (Drive privado): https://drive.google.com/drive/folders/1af2Guko1FXpzbxQ0fYAMiZP2oGAtzNn5
+Las fases F0-F6 siguen siendo **paquetes internos de trabajo y pruebas**, no productos intermedios a entregar. Los tests unitarios pueden usar fixtures y backend de prueba local, siempre aislados del producto runtime y sin hacer que la interfaz definitiva arranque mostrando datos ficticios. El estado de ejecución real solo se activa después de integrar, auditar, autorizar y validar el entorno de producción. La falta de permiso para despliegue **no justifica seguir implementando una segunda demo**.
 
-## Principios irrevocables
-1. Preservar SPOT/Swing, IDCA institucional, Grid aislado, AMA, cartera global, FISCO/AEAT, operaciones, logs, Telegram y todos los indicadores y datos ya capturados. Los términos «gridStrategy de SPOT», «overlay IDCA» y «Grid aislado» designan sistemas distintos.
-2. Básico (también llamado Simple) y Pro son dos **niveles de presentación**, disponibles tanto en web como en APK; NO son dos motores ni dos configuraciones persistidas distintas. Cambiarlos nunca envía POST ni altera el estado del trading.
-3. Los modos de **ejecución originales permanecen propios de cada motor**: SPOT dry-run/live, IDCA disabled/simulation/live, Grid OFF/SHADOW/REAL_*, AMA OFF/LAB/REPLAY/SHADOW_*/REAL_*. No exponer controles REAL no implementados ni confundir etiquetas con garantías.
-4. No perder información de mercado. Inventariar RSI, MACD, Bollinger, EMA, ATR/ATRP, ADX, volumen, momentum, régimen, bandas, spread/bid/ask, OHLCV, fuentes auxiliares OI/funding, señales, métricas, frescura y timestamps. Mostrar solo campos realmente disponibles; `null` y «No disponible» en vez de ceros inventados.
-5. Mantener los ciclos de Grid con obligación `1 BUY → 1 SELL`, misma cantidad, sin vender HOLD ni mezclar rangos; preservar targets y posiciones existentes. No implementar una nueva política de salida sin contraauditoría separada.
-6. Sin NAS/QNAP ni pasos heredados de despliegue QNAP.
-7. Las pantallas no hacen cálculos de PnL o estrategia de forma paralela al motor canónico. Etiquetar PnL realizado, no realizado y reserva fiscal por separado.
-8. El repositorio actual es PÚBLICO. Está prohibido incorporar secretos, archivos `.env`, backups, registros individuales, datos personales, exportaciones fiscales, respuestas API privadas, firmas o CSV con transacciones individuales. Detener ante detección de secretos; no publicarlos ni en incidencias. Drive de trabajo permanecerá privado.
+### Entregable final
+- **Web**: consola administrativa autenticada, datos reales del bot, gráficos, configuraciones, monitor, operaciones y logs; URL HTTPS en hosting privado/protegido cuando se autorice su publicación.
+- **Android**: APK instalable de esa misma versión, autenticada y conectable al backend seguro, distribuida como asset descargable de GitHub Releases tras validación, con SHA-256, versión, procedencia y enlace real.
+- **Código común**: contratos, modelos, decisiones de render y permisos compartidos; no dos bots ni dos fuentes de verdad.
+- **Auditoría y calidad**: matriz 100 % de datos y controles originales con pruebas por campo/estado, checklist cumplimentado por Cascade y evidencia en \`seguimiento/\`.
 
-## Fases, entregables y puertas
-### F0 — Congelación, seguridad y preservación (prioridad P0)
-- Inventariar main y la rama de diseño, HEADs y diffs; revisar AGENTS.md y partes pertinentes de BITACORA.md.
-- Revisar con pruebas read-only el riesgo de AMA `executed=true/orderId=null`; autenticación/autorización efectiva de rutas mutables, logs sensibles, venue fail-closed, dryRun y selección de fuente, migraciones/efectos del boot.
-- Verificar, no asumir, que las copias de respaldo contienen 31 tablas FISCO/AEAT, velas SPOT, ciclos/targets, cartera y esquemas. El respaldo de noviembre fue **reportado**, no es licencia para borrar o sustituir datos.
-- Proponer remediación de posibles secretos en el historial público como trabajo aparte; NO leer ni copiar valores de credenciales a documentos.
-- Entregables: matriz riesgos confirmados/condicionales/pendientes, manifest de respaldo privado y checklist reversible. No código operativo.
-**Gate:** ninguna fase de lógica REAL antes de cerrar P0 y obtener autorización expresa.
+## 2. ARQUITECTURA: REUTILIZAR MOTORES, NO REESCRIBIR TRADING
+SPOT/Swing, IDCA institucional, **Grid aislado** y AMA siguen siendo los motores dueños de su algoritmo y configuración; la \`gridStrategy\` de SPOT y el overlay Hybrid/Grid de IDCA son distintos del Grid aislado. NEXA V2 reemplaza **capas de interacción**, no la lógica de ejecución ni las bases históricas.
+- **Backend canónico y BFF/API segura:** contrato formal de datos por motor, estados y eventos, lectura de configuración efectiva y operaciones autorizadas; permisos y auditoría por ruta. Trazabilidad de proveedor y latencia para cada valor.
+- **Un solo modelo de dominio tipado:** cartera, posiciones/ciclos, órdenes, fills, fees/slippage, PnL bruto/neto, realized/unrealized, riesgo, exposición y reservas diferenciadas por dueño/venue/moneda; fuente y tiempo, stale/offline, errores.
+- **Clientes web y Android:** consumen BFF API por HTTPS, nunca almacenan claves de Kraken/Revolut X en cliente; gestionan sesión, roles y autorizaciones. Pantalla no recalcula la contabilidad del motor.
+- **Política de seguridad:** PIN local puede complementar sesión, pero **no sustituye autenticación del servidor**; prohibido PIN fijo \`2468\` o clave/secretos en el bundle. Separar lectura, configuración y acciones de ejecución, con confirmaciones, audit-log, límites, CSRF/CORS/HTTPS y verificación de permiso.
+- **No GitHub Pages para consola real:** sirve recursos públicos, incompatible con publicar un panel administrativo privado como si fuera acceso seguro. No generar una URL «demo» como entregable; URL definitiva solo tras aprobación de infraestructura.
 
-### F1 — Inventario de datos y controles sin pérdida
-- Matriz pantalla actual → motor propietario → estado de ejecución → campo/indicador → proveedor → API → DB/config → cálculo canónico → timestamp/frescura → UI → derechos de edición → prueba.
-- Catalogar los ≈90 parámetros ya inventariados (verificar número), sliders activos/legacy, defaults y si realmente modifican decisiones.
-- Documentar todas las páginas actuales, gráficos, velas, bandas, PnL, operaciones, advertencias y controles. No ocultar por simplificación; jerarquizar.
-- Separar datos de mercado Kraken, ejecución Revolut X, servicios auxiliares condicionales y datasets offline Binance de investigación. No mostrar datos offline como si fueran feed LIVE.
-**Gate:** 100% de funciones y datos existentes trazados, sin pérdidas silenciosas.
+## 3. CERO PÉRDIDA DE INFORMACIÓN (REQUISITO BLOQUEANTE)
+Comparar **todas** las pantallas/datos/códigos con el bot anterior (capturas IDCA como patrón de profundidad) y certificar 100 % de origen→destino:
 
-### F2 — HTML definitivo, UX visual web + APK
-- Consolidar prototipos NEXA y ORION sin sobrescribirlos: nueva versión de HTML con fuentes legibles y captura de aceptación.
-- Web: menús principales **arriba**, no en lateral permanente; selección elegante por modal/emergente, no tabla simple. Mobile: navegación inferior segura y pantallas a ancho completo. Sin scroll horizontal.
-- Paleta negros/azules y verde para beneficio, rojo para pérdida. Básico: equilibrio simple, patrimonio, mercado/resumen, posiciones, actividad y estados esenciales. Pro: toda la información de mercado, estrategias, indicadores, ejecución, órdenes, controles técnicos, auditoría y diagnósticos. Ambas presentaciones disponibles en web y APK, con diseño **distinto**, no un mero cambio de color.
-- Páginas: Inicio, Mercado, Estrategias (SPOT/IDCA/Grid/AMA), Cartera/Posiciones, Actividad/Monitor/Logs, FISCO/AEAT, Ajustes. Subvistas por motor: grafos de ciclos/entradas/salidas, indicadores, regímenes, bandas, señales y decisiones.
-- Selector de motor visual; selector de presentación Básico/Pro; modo de ejecución de cada motor solo en pantalla propietaria con controles protegidos.
-- Gráficos SVG/Canvas limpios, ejes y unidades correctos, leyenda, rango temporal, estados stale/offline. Gráficas de precio, patrimonio, PnL realizado y abierto, y ciclos con BUY / SELL objetivo / SELL ejecutada.
-- El HTML es PROTOTIPO con datos demo claramente rotulados; no promete acciones reales.
-**Gate:** revisión visual real 360×800, 390×844 (Pixel 9), 768×1024, 1280×800, 1920×1080; usabilidad con teclado/tacto, contraste, navegación y comparación de pantallas Básico/Pro.
+### IDCA
+- Global/par: activado, disabled/simulation/live, pausa/emergencia, tick, latencia, origen/frescura, BTC/USD y ETH/USD, estado de cada par, precio, score/confianza y desglose, rango/régimen, ATR/volatilidad, dinámica inteligente, % caída, rebote requerido, filtros y motivos.
+- Resumen económico: capital asignado/usado/libre, PnL por tipo, ciclos, compras/ventas de hoy, trailing, Smart Mode, anclas y referencias (viva/de ciclo/VWAP/híbrida).
+- Ciclos: ID, fechas y duración, número de compras, TP y dip, precio actual y medio, cantidad, valor y capital, base y ancla, siguiente entrada, PnL USD/%/neto, drawdown, BE, trailing, time-stop, reglas y progreso, desglose de TP.
+- Órdenes: ID, fecha/hora, lado/tipo, precio, volumen, valor, fee, slippage, motivo, totales, histórico, win/loss/neutral, cierre y exportes; acciones pausar/cerrar/programar salida/compra manual/eliminar con autorizaciones reales.
+### SPOT/Swing
+Estrategias y modos de ejecución, señales, confianza/score, contextos y vetos, RSI/EMA/MACD/Bollinger/ADX/ATR/volumen, órdenes, exposición, precio/coste/valor, TP/SL/BE/trailing/time-stop, protecciones y decisiones, PnL neto histórico y efectivo, logs y ajustes.
+### Grid aislado
+OFF/SHADOW/REAL*, maker/post-only, capital/locks, centro, spacing, niveles, rangos pasados/nuevos, BUY planificada y ejecutada, SELL target/pendiente/ejecutada, **1 BUY → 1 SELL de misma cantidad**, fees, PnL, históricos y estado. **No mezclar HOLD ni alterar posiciones/targets antiguos.**
+### AMA
+Mandatos, modos OFF/LAB/REPLAY/SHADOW*/REAL*, macro, señales, fuentes, scheduler/readiness, killswitch, budget/reserved/free, riesgo/HWM, órdenes y trace. **Reserved ≠ submitted ≠ executed ≠ filled**. Nunca habilitar REAL con gateway placeholder.
+### Transversales
+Mercado: OHLCV, RSI, MACD, EMAs, bandas, ATR/ATRP, ADX, momentum, régimen, spread bid/ask, volumen, fuentes y frescura. Fuentes externas OI/funding/etc solo si operan y están autorizadas; no inventarlas.
+Cartera: por exchange/activo/motor, HOLD, NAV, PnL realizado/no realizado, exposición, reservas y fiscalidad separadas.
+FISCO/AEAT: 31 tablas históricas protegidas (verificación de backup pendiente de autorización), lotes, operaciones/reportes/exportes con autorización, sin datos fiscales en repo.
+Monitor/Actividad/Ajustes: logs, alertas, errores, cambios, Telegram, timestamps, sliders y configuración almacenada vs efectiva, controles de emergencia y confirmaciones.
 
-### F3 — Contratos canónicos read-only y convivencia
-- Fachada API/BFF de lectura agregada sin endpoints mutables nuevos: estado y precio/frescura, balances, posiciones/ciclos, PnL, señales/indicadores y registro de decisiones con provenance.
-- Reducir duplicación de UI y configuraciones, pero mantener cada motor dueño de su lógica y configuración.
-- Cuando falte data, indicar «Sin datos», origen, timestamp y edad; no generar datos de prueba en API real.
-- Evaluar presupuesto/locks de cartera global, exposición cruzada y idempotencia antes de nuevas compras; no cambiarlo en esta fase sin gate.
-**Gate:** lectura de panel, selección de modo visual, navegación, expansión, filtros y sliders de borrador generan cero POST.
+**Visual:** En web navegación superior, en móvil inferior; modales agradables; Básico reduce densidad pero siempre permite abrir detalles; Pro cubre todos los campos. Gráficos con unidades/escala/periodo/fuentes; negro/azul, PnL verde/rojo. Sin botones vacíos.
 
-### F4 — Estrategias: análisis causal y validación independiente (solo LAB/SHADOW)
-- SPOT agosto 2026 ~+1.029,99 USD / 41 cierres / 51,2%; septiembre ~−1.515,39 USD / 115 cierres / 22,6%. Estos son resultados históricos citados, NO garantía. Separar condiciones de mercado, cambios efectivos de código/config y distribución de entradas.
-- Verificar discrepancias SPOT `STRUCTURE_INVALIDATION`, `PULLBACK_CONTINUATION`, timing de trailing, fees/slippage y veto real de régimen/estrés. Estudiar comportamiento rentable bruto que terminó en pérdida sin considerar máximos ex post ejecutables.
-- Probar por ventana independiente y venue real con bid/ask/costes: baseline, robustez, drawdown de cartera, reservas, sensibilidad a fees, latencia y maker fills.
-- Estudios del 20/11: B exigente con mercado BTC +159,27, B exigente +108,13, D −598,18, E −1.586,27, F −288,60, Grid continuo −166,95, Grid adaptativo −173,05, híbrido −241,88 USDT; enfoques/datasets no necesariamente comparables ni aprobados para REAL.
-- Solo tras replicación y holdout, formular hipótesis de clasificación por régimen; sin autoejecución ni cambios retroactivos.
-**Gate:** ninguna estrategia promovida a REAL por un backtest.
+## 4. PLAN DE EJECUCIÓN ÚNICO — ETAPAS INTERNAS
+### F0 — Preservar, aislar, resolver riesgos de acceso
+Auditoría de repositorio, SHA/diffs y WIP; leer \`AGENTS.md\`, BITACORA y auditorías. No operar ni acceder VPS. P0 estáticos: AMA \`executed=true\` con \`orderId=null\`, \`dryRunMode\` duplicado, ConfigService update sin evento efectivo, venue Kraken fallback, velas stale, reservas entre motores, autenticación de mutaciones, logs sensibles, secretos y copias FISCO. Clasificar confirmado/no verificado/bloqueado, sin fingir runtime auditado. Gate: no conectar ninguna operación REAL si P0 sin resolver.
+### F1 — Inventario fino y trazabilidad
+Matriz de cada pantalla/acción/campo: motor, fuente, ruta API, servicio, DB/config, tipo/unidades, permiso, timestamp, destino Básico/Pro web/APK, prueba y evidencia. Inventariar ~90 parámetros a verificar, estrategias, modos, históricos y operaciones. Corregir mapeos no verificados y evidencias mal asociadas a C041–C051. Gate: 100 % de datos originales con destinos confirmados o N/A motivado.
+### F2 — UX final reutilizable, no maqueta
+Evolucionar \`nexa-v2/web/\` como código de producto; sustituir dependencia del DEMO por modelo canónico y estados reales; mantener un diseño completo e intuitivo. Corregir INC-010 de safe areas. PWA configurada para URL segura. No añadir un prototipo paralelo ni publicar Pages de ejemplo.
+### F3 — Integración funcional y autorizaciones
+Adaptadores reales de contrato GET, validación de payload, errores por sección, reconexión y frescura, configuración efectiva y flujos de acciones seguras con permisos server-side e idempotencia. Inventariar rutas existentes y añadir implementación faltante **en rama aislada**, sin poner en marcha servicios con efectos en producción. Usar API local de test/fixtures solo para verificar integración, no para el producto que recibe el usuario. Gate: no botones placebo, no auth meramente de PIN, no confundir datos y estados demo con reales.
+### F4 — Investigación de estrategia sin cambiar trading
+Analizar por separado SPOT agosto 2026 (+1.029,99 USD/41 cierres/51,2 %) y septiembre (−1.515,39 USD/115/22,6 %): condiciones de mercado frente a parámetros/código. Estudios offline del 20/11 no son evidencia de rentabilidad en LIVE: B +159,27; B +108,13; D −598,18; E −1.586,27; F −288,60; Grid continuo −166,95; adaptativo −173,05; híbrido −241,88 (datasets/contextos no necesariamente comparables). Sin cambio de estrategia REAL sin aprobación separada.
+### F5 — Web y APK definitivas, una sola versión
+Instalar toolchain Android necesario cuando falte, preservar entorno, sincronizar assets, compilar APK reproducible, test de arranque/seguridad/back/rotación en emulador y Pixel 9 si disponible; preparar versión firmada y distribuir por GitHub Release **solo cuando sea producto validado**, con checksum y enlace directo. Empaquetar web lista para servidor HTTPS protegido, configuración sin secretos cliente. No release DEMO ni Pages público de consola admin. Si la conexión real necesita permisos, entregar producto listo y documentar gate sin declararlo validado en VPS.
+### F6 — QA de aceptación definitiva
+Tests unidad, integración, contrato, autorización, E2E, offline, grandes historiales, múltiples ciclos/órdenes, fallos de proveedor, validación responsiva a 360/390/480/768/1280/1920, PIN/sesión, accesibilidad y paridad web/APK/Básico/Pro. \`npm run check\`, tests, build, SHA, CI/diff; no marcar «OK» con solo 17 tests de fixtures ni asignar evidencias a ID equivocado. Actualizar checklist que administra **Cascade**, nunca el usuario. Quedan explícitamente BLOQUEADAS las pruebas que necesitan VPS/servicio operativo sin permiso.
 
-### F5 — PWA y APK Android
-- Paridad web y móvil sobre contratos comunes. Soporte de PIN seguro, sin secretos embebidos, sesión/caducidad, permisos mínimos, detección desconexión y notificaciones respetando privacidad.
-- **Entregable exigido:** APK Android de pruebas local instalable, más SHA-256 e informe de instalación/QA. Si las herramientas no están presentes, **Cascade debe preparar e instalar el toolchain local compatible** (JDK, SDK y componentes Android, dependencias del proyecto, Gradle/Node/Capacitor cuando corresponda), comprobando versiones y fuentes oficiales. No es válido omitir la compilación por falta inicial de herramientas.
-- Instalar sin privilegios en el entorno de usuario cuando sea posible; si requiere administrador, modificaciones sensibles o acuerdos externos, solicitar autorización para esa acción y documentar bloqueo. Si tras intentos concretos la compilación sigue bloqueada, marcar F5 PARCIAL/BLOQUEADA, nunca COMPLETADA. Probar arranque en emulador/dispositivo de pruebas si está disponible; no afirmar una instalación no realizada.
-- Pruebas en Pixel 9 y QA de accesibilidad, batería/red, rotación, navegación atrás, caché y sincronización.
-**Gate:** APK solo firmada y distribuida tras pruebas, sin afirmar «aprobada» sin revisión.
+## 5. PREPARACIÓN DE LA CONEXIÓN FINAL (SIN EJECUTAR AÚN)
+Una vez desarrolladas web+APK definitivas, Cascade entrega runbook de conexión y puesta en servicio de alcance mínimo, autenticación, CORS/HTTPS, backup/reversión, migración sin tocar motores, controles antifraude, QA real de lectura y acciones, y la URL administrativa que se dará **después de la autorización**. No sugerir que el usuario ya tiene panel gestionando capital si solo existe código local. No habilitar trading REAL por entregar interfaces. No unir ramas ni cambiar VPS sin consentimiento.
+**Estado correcto si falta permiso:** IMPLEMENTACIÓN DEFINITIVA LOCAL PREPARADA — INTEGRACIÓN/DEPLOY REAL PENDIENTE DE AUTORIZACIÓN. Este es un bloqueo de ejecución externa, no un producto DEMO ni un motivo para crear otro front-end.
 
-### F6 — QA comparativa y eventual promoción
-- Pruebas unitarias, integración, contratos, E2E, snapshots UI, reconexión, auth, fallos proveedor, datos obsoletos, no POST implícitos, posiciones/ciclos históricos, integridad de FISCO/AEAT y reconciliación.
-- Validar rama/commit/PR independientemente en GitHub, CI, diff y cobertura. No fusionar o desplegar sin orden expresa.
-- Runbook de rollback, versión paralela y paridad de datos. QA de staging solo con autorización.
-
-## Organización del trabajo
-`main`: producción/continuidad, NO MODIFICAR.
-`design/nexa-apk-web-basico-pro-20261120`: diseño histórico y prototipo, NO sustituir.
-`feature/nexa-v2-transformacion-20261120`: trabajo nuevo y commits aislados; PR **draft** solamente tras primera fase. Sin merges automáticos.
-`docs/transformacion-nexa-v2/`: plan, orden, matriz, inventarios y QA; ningún secreto ni dato privado.
-Drive privado: «NEXA V2 - Transformacion - 2026-11-20». Históricos originales permanecen en sus carpetas; enlazarlos, NO moverlos ni duplicar sin necesidad.
-
-## Siguiente trabajo autorizado
-Ejecutar autónomamente en la rama aislada **F0–F6 completos en todo lo que sea posible y comprobable localmente** según la revisión 3 de la orden, sin modificar runtime operativo, motor de trading LIVE, DB real, configuración real ni VPS. En cada fase, Cascade ejecuta, documenta, corrige fallos y **cumplimenta su checklist de 75 controles con pruebas y estados**; la lista no es para el usuario. Entregar matriz inventario, informe de seguridad P0, HTML/PWA, APK local compilada tras provisionar herramientas compatibles (o bloqueo demostrado y F5 no aprobada), QA, evidencias y estado honesto de bloqueos. Commits/push solo rama tras comprobar pipelines; no PR merge, deploy ni REAL.
-
-
-## ACTUALIZACIÓN DE ALCANCE — 20/11/2026 (prevalece sobre restricciones anteriores)
-El usuario autoriza que Cascade **complete F0-F6 en rama local aislada**, sin pausas entre tareas ordinarias. La anterior frase «No iniciar F3/F4/F5/F6» queda expresamente **sustituida** por esta orden. F3 solo lectura, F4 análisis no operativo, F5 prototipo PWA/APK local sin claves ni LIVE, F6 QA local; las puertas de NO VPS/DB/órdenes/REAL/deploy/main/merge permanecen. El artefacto debe cumplir el [checklist bloqueante de conservación total](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md), que se ampliará si el inventario encuentra más campos que los de las capturas IDCA. En Básico, el detalle adicional sigue accesible; Pro exhibe toda la información real y configuraciones efectivas. CERO pérdida de información, trazabilidad o controles. No se puede cerrar sin matriz y pruebas de paridad web/APK x Básico/Pro x 4 motores. Una tarea dependiente de entorno real queda documentada como NO VERIFICADA, no como realizada.
-
-
-## Mecanismo de seguimiento a cargo de Cascade — rev. 3
-- El **plan maestro es el itinerario rector F0–F6**; el checklist es un control de calidad transversal e incremental que Cascade debe trabajar activamente durante la implementación, no un formulario que el usuario tenga que cumplimentar.
-- Usar [Checklist C001–C075](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md) como mínimo extensible; [Orden principal rev. 3](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md) como instrucciones de ejecución.
-- En `docs/transformacion-nexa-v2/seguimiento/` mantener: `ESTADO_FASES.md`, `MATRIZ_PARIDAD.csv`, `EVIDENCIAS_CHECKLIST.md` e `INCIDENCIAS.md`. Ningún check «VERIFICADA» sin prueba; «NO APLICA» y «BLOQUEADA» llevan motivos.
-- Resultado final solo puede llamarse VERIFICADO LOCAL cuando hay evidencia, sin equipararlo con aprobación de trading REAL, despliegue o certificación del VPS.
-
-
-## Aclaración Rev. 4 — herramientas Android
-El hecho de que el ordenador no tenga Android Studio/SDK/JDK/Gradle no autoriza terminar sin APK. Cascade debe instalar por sí mismo los componentes de desarrollo necesarios en espacio de usuario y continuar con la compilación y pruebas. No se autoriza instalar servicios de pago, elevar privilegios ni alterar configuración sensible sin permiso. La APK de laboratorio no es aprobación del trading real ni despliegue del backend. La versión definitiva conectada a producción requerirá autorización posterior.
-
-
-## Alcance adicional Rev. 5 — publicación de artefactos DEMO para revisión
-Por solicitud explícita del usuario, Cascade debe **entregar un enlace HTTPS funcional al panel web estático DEMO** y **subir la APK debug de pruebas como asset descargable de una GitHub Release PRE-RELEASE (SIN APROBAR)**, con .sha256.txt y enlace directo. Verificar ambas URLs antes de darlas por hechas. No subir el APK como objeto de historial Git ni confundir el código HTML servido desde blob con un panel navegable. Preferir GitHub Pages cuando sea seguro y no altere una página ya existente; si exige permisos o cambios ajenos, documentar bloqueo y pedir autorización mínima. Es una **excepción explícita solo para distribución de demostración**, no para VPS, producción, trading LIVE, datos reales, merge o releases estables. F6 queda PARCIAL mientras uno de los dos enlaces no exista o no funcione, sin perjuicio de continuar QA y corregir INC-010/paridad/checklist.
-
-
-## PRIORIDAD REV. 6 — PANEL DE GESTIÓN REAL COMO PRODUCTO FINAL
-La transformación NEXA V2 tiene como **meta definitiva** una web de gestión del bot y una APK Android equivalente que consulten **datos reales** y ofrezcan de forma segura todas las funciones originales de SPOT, IDCA, Grid, AMA, cartera, mercado, órdenes, configuraciones, monitor y FISCO con permisos. Una interfaz con fixtures DEMO, incluso publicada en GitHub Pages, no es la gestión del bot. La APK debug DEMO tampoco constituye entrega definitiva conectada.
-
-Cascade debe completar en rama aislada los **adaptadores API y contratos canónicos**, preparar flujos de gestión sujetos a autenticación/autorización del servidor, confirmar paridad de cada dato/control original, y probarlo contra backend local simulado, sin operar ni modificar producción. Deberá identificar y resolver déficits del proveedor LIVE actual (no basta consumir GET aislados ni PIN hardcoded). La puesta en marcha en el backend real, alojamiento seguro, conexiones, acciones de trading y despliegue precisan **autorización explícita del usuario**: esas tareas quedan marcadas NO VERIFICADAS/BLOQUEADAS, sin falsa aprobación. GitHub Pages solo puede servir una vista previa pública DEMO; nunca consola administrativa conectada ni API sensible. Los dos enlaces de Rev. 5 (preview DEMO y APK debug) continúan exigidos como entregas intermedias revisables, **no como cierre del proyecto real**.
+## 6. ORGANIZACIÓN, EVIDENCIA Y ENTREGABLES
+- \`main\` intacto. Rama de referencia \`design/nexa-apk-web-basico-pro-20261120\` intacta. Trabajo nuevo solo en \`feature/nexa-v2-transformacion-20261120\`.
+- Preservar proyectos previos, no borrar WIP, sin \`reset --hard\`, \`clean\`, \`stash\`, \`rebase\`, \`push --force\`, ni \`git add -A\`.
+- Seguir \`docs/transformacion-nexa-v2/seguimiento/{ESTADO_FASES.md,MATRIZ_PARIDAD.csv,EVIDENCIAS_CHECKLIST.md,INCIDENCIAS.md}\`. Cascade marca C001–C075+ individualmente con prueba. Ampliar si aparecen datos/acciones no inventariados.
+- Entregables: código completo web+APK de una versión, contratos, adaptadores, flujos autenticados, pruebas y evidencias, paquete web preparado para hosting seguro, APK compilada y enlace GitHub Release cuando aprobada, SHA y guía de instalación, pendientes reales de autorización para conectar a producción. **No fases intermedias publicadas, demos ni pre-releases solo para completar enlaces.**
+- Repositorio es público. Nunca subir \`.env\`, secretos, CSV fiscales, backups, datos personales ni transacciones individuales. Drive privado solo para evidencias sensibles.
+- VPS, DB operativa, órdenes reales, deployments, configuración LIVE y merge a main **EXPRESAMENTE NO AUTORIZADOS** por esta orden. Si precisa permisos de administrador para toolchain o servicios externos, solicitar autorización solo para esa acción, continuar lo demás.
