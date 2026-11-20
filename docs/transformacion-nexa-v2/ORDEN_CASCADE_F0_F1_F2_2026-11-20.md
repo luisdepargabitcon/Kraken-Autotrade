@@ -1,5 +1,5 @@
 # ORDEN DEFINITIVA PARA CASCADE — NEXA V2 · TRANSFORMACIÓN COMPLETA AISLADA
-**Fecha:** 20-11-2026 · **Revisión:** 4 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
+**Fecha:** 20-11-2026 · **Revisión:** 5 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
 **Rama EXCLUSIVA:** feature/nexa-v2-transformacion-20261120.
 **Base de referencia:** main 47d79db3f7065e0e54481447129f2f88e9225fe2.
 **Diseño de referencia:** design/nexa-apk-web-basico-pro-20261120; HTML NEXA y ORION en Drive privado.
@@ -60,10 +60,27 @@ Implementar frontend responsive, seguridad de acceso/selección y aplicación An
 
 **Compilar y validar:** sincronizar assets Android, generar APK de pruebas local (firma de depuración cuando corresponda), generar SHA-256, comprobar manifest/permisos/ausencia de secretos, instalarla en emulador o dispositivo de pruebas accesible y comprobar arranque, PIN, navegación, Básico/Pro, datos demo, offline, atrás y logs sin acciones reales. Proporcionar archivo APK verificable y ruta de compilación; no afirmar instalada si no se ha instalado.
 
-**Gestión de bloqueos:** si tras intentar de forma documentada instalar toolchain y compilar sigue siendo técnicamente imposible, NO dar la fase F5 como aprobada, no declarar transformación terminada y explicar error concreto, intentos y acción/permiso pendiente. Continuar con el resto del plan. No publicar release ni firmar APK de distribución sin aprobación.
+**Gestión de bloqueos:** si tras intentar de forma documentada instalar toolchain y compilar sigue siendo técnicamente imposible, NO dar la fase F5 como aprobada, no declarar transformación terminada y explicar error concreto, intentos y acción/permiso pendiente. Continuar con el resto del plan. No publicar una release de producción ni firmar APK de distribución; se permite únicamente el GitHub Release pre-release de APK DEMO QA descrito en Rev. 5.
 
 ### F6: QA final
 Probar Básico/Pro x web/móvil x 4 motores, estados activos/sin datos/offline/stale, cientos de registros, múltiples ciclos y rangos legacy, historial y exportaciones seguras. Validar UI 360, 390, 768, 1280, 1920 px y Pixel 9 si hay emulador equivalente; accesibilidad, menús, modales, atrás, safe areas y ausencia de desbordamientos. Ejecutar check, tests, build y controles anti POST en acciones de lectura; no declarar ejecutado un test que no se ejecutó. Revisar matriz y checklist y todos los diffs. Commit/push SOLO rama si no hay deploy trigger. No PR merge.
+
+
+## ENTREGABLES DE ACCESO DIRECTO — REV. 5 (SOLICITUD EXPRESA DEL USUARIO)
+Se autoriza de forma limitada la **publicación de la maqueta web estática DEMO** y la **subida de la APK debug DEMO como GitHub Release prerelease de pruebas**, para que el usuario pueda abrir el panel y descargar el APK por enlaces reales. Esto NO autoriza deploy en VPS, conexión a backend operativo, configuración LIVE ni release de producción.
+
+### A. Enlace de acceso al panel
+1. Preparar una versión estática plenamente navegable de `nexa-v2/web/`, con rutas, módulos ES y recursos funcionando desde la URL pública (no usar enlaces a archivos en `blob/` que no sirven el panel). Verificar que se ve el banner DEMO, PIN de pruebas, Básico/Pro, motores y gráficos. No incluir `.env`, tokens, cuentas, datos privados, URLs internas ni endpoints productivos.
+2. Publicar como **vista previa DEMO en GitHub Pages** si puede hacerse sin sustituir o romper cualquier sitio Pages existente ni disparar despliegues de producción. Si hay un Pages preexistente que se modificaría, hace falta permiso/configuración privilegiada o las opciones disponibles requieren un hosting externo/pago, NO cambiarlo ni contratar; documentar el bloqueo y ofrecer la alternativa estática segura sin fingir URL publicada.
+3. Comprobar mediante acceso HTTPS desde un navegador la URL pública completa; entregarla literalmente como **«Abrir panel web NEXA V2 (DEMO)»**. Un enlace al repositorio o al archivo HTML de GitHub NO sustituye la dirección del panel navegable. Añadir el enlace a `nexa-v2/BUILD_APK.md` o documento de entrega y a la Issue #17.
+
+### B. GitHub APK descargable
+1. Tras corregir QA, reconstruir APK de pruebas, verificar `SHA-256`, paquete, tamaño, firma de debug, permisos y ausencia de secretos/cuentas/ejecución real. Confirmar que instalación y navegación siguen funcionando. Acompañarla de `.sha256.txt` y nota de «DEMO — SIN TRADING REAL», además de versión/SHA de commit.
+2. Publicar el binario como **asset descargable de GitHub Releases**: crear tag de pruebas `nexa-v2-qa-YYYYMMDD-rN` apuntando EXCLUSIVAMENTE al commit de la rama `feature/nexa-v2-transformacion-20261120`, Release **PRE-RELEASE** con nombre `NEXA V2 QA — DEMO, SIN APROBAR`. No adjuntar binarios al git history, no cambiar `main` y no marcar `latest`/release estable.
+3. Entregar la **URL directa del asset .apk**, la URL de la pre-release y el SHA-256. Verificar que el asset realmente está subido, visible y descargable desde GitHub; no ofrecer un path local `D:\...` como sustituto. Si las herramientas carecen de permisos para subir assets, dejar un bloqueo concreto y solicitar la autorización/acción mínima, sin afirmar publicado.
+
+### C. Cierre obligatorio
+En la respuesta final Cascade debe incluir DOS ENLACES REALES Y PROBADOS: **(1) Abrir panel web DEMO; (2) Descargar APK de pruebas desde GitHub Releases**. Indicar el alcance DEMO, no operación real. No marcar F6/entrega cerrada sin esos enlaces y QA visual; si no puede publicar alguno, marcar la entrega PARCIAL, explicar por qué y continuar con el resto. Mantener los 75 controles del checklist y el plan F0–F6; no fusionar con main ni intervenir en VPS/DB/trading.
 
 ## CONDICIÓN DE TERMINACIÓN
 No terminar mientras existan errores ordinarios corregibles. Entregar:
