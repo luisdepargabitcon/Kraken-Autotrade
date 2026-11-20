@@ -1,5 +1,5 @@
 # ORDEN DEFINITIVA PARA CASCADE — NEXA V2 · TRANSFORMACIÓN COMPLETA AISLADA
-**Fecha:** 20-11-2026 · **Revisión:** 3 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
+**Fecha:** 20-11-2026 · **Revisión:** 4 · **Sustituye el alcance F0/F1/F2 limitado de esta orden previa.**
 **Rama EXCLUSIVA:** feature/nexa-v2-transformacion-20261120.
 **Base de referencia:** main 47d79db3f7065e0e54481447129f2f88e9225fe2.
 **Diseño de referencia:** design/nexa-apk-web-basico-pro-20261120; HTML NEXA y ORION en Drive privado.
@@ -7,7 +7,7 @@
 **Plan:** [F0-F6](PLAN_MAESTRO_2026-11-20.md).
 
 
-## ORDEN DE TRABAJO PRINCIPAL Y RESPONSABILIDAD DEL CHECKLIST (REV. 3)
+## ORDEN DE TRABAJO PRINCIPAL Y RESPONSABILIDAD DEL CHECKLIST (REV. 4)
 **Cascade es el único responsable de ejecutar, marcar, evidenciar y cerrar las comprobaciones**, NO el usuario. La orden obliga a seguir íntegro el **Plan Maestro F0–F6**, sus entregables y prioridades, sin convertir la lista de controles en una tarea separada ni dejar apartados del plan sin ejecutar.
 
 ### Bucle obligatorio fase a fase
@@ -26,7 +26,7 @@ Crear y actualizar en la rama `docs/transformacion-nexa-v2/seguimiento/`:
 
 
 ## MANDATO
-Comenzar YA y completar autónomamente en local **todas las tareas de F0 a F6 técnicamente ejecutables sin infraestructura real**: auditoría, inventario, renovación visual, HTML terminado, conexión a contratos canónicos de lectura, preparación de una aplicación PWA y APK Android local si el entorno permite compilación, tests y entrega verificable. **No parar tras F2 ni pedir permiso entre fases ordinarias**. Proseguir ante incidencias de build, types, pruebas, fixtures, UX o refactor local sin cambiar el alcance y sin ocultar fallos. Para bloqueos por autorización o dependencias externas, aislar la subacción, continuar con el resto y reportar lo que no se puede certificar. No declarar COMPLETO si subsiste algún campo sin destino o una prueba crítica fallida.
+Comenzar YA y completar autónomamente en local **todas las tareas de F0 a F6 técnicamente ejecutables sin infraestructura real**: auditoría, inventario, renovación visual, HTML terminado, conexión a contratos canónicos de lectura, preparación de una aplicación PWA y compilación obligatoria de APK Android local tras instalar las herramientas necesarias, tests y entrega verificable. **No parar tras F2 ni pedir permiso entre fases ordinarias**. Proseguir ante incidencias de build, types, pruebas, fixtures, UX o refactor local sin cambiar el alcance y sin ocultar fallos. Para bloqueos por autorización o dependencias externas, aislar la subacción, continuar con el resto y reportar lo que no se puede certificar. No declarar COMPLETO si subsiste algún campo sin destino o una prueba crítica fallida.
 
 ## LÍMITES INALTERABLES
 1. NO VPS/SSH, deploy, staging, producción, SQL/DB reales, migraciones, modificaciones de órdenes/ciclos/targets, cuentas externas, transacciones reales, activación LIVE/REAL ni merge a main. No iniciar servidor operativo en entorno que pueda ejecutar migraciones, reconciliaciones, schedulers u órdenes.
@@ -52,7 +52,15 @@ Construir componentes y read-models reutilizables que representen **datos ya exi
 Revisar discrepancia SPOT agosto ganancia/septiembre pérdida con los informes disponibles, así como Grid, IDCA y AMA; documentar hipótesis, cambios de configuración y oportunidades, con prudencia sobre backtests, sin reescribir políticas de entrada/salida, ciclos o targets. Crear mejoras propuestas para investigaciones futuras, no ejecutarlas en trading.
 
 ### F5: PWA/APK de prueba
-Implementar frontend responsive, seguridad de acceso/selección y envoltorio Android de laboratorio si herramientas disponibles; generar APK local SOLO demo/lectura, nunca con credenciales o endpoint productivo embebido. Si no hay toolchain, terminar HTML/PWA/UX y documentar exactamente bloqueo y pasos reproducibles de build. No publicar una release sin aprobación.
+Implementar frontend responsive, seguridad de acceso/selección y aplicación Android local de laboratorio. **La compilación e instalación de la APK de pruebas es un entregable OBLIGATORIO, no opcional por ausencia inicial de herramientas.** No confundir esta APK de laboratorio con el despliegue conectado al bot real; solo DEMO/lectura y sin credenciales ni endpoint de producción embebidos.
+
+**Obligación explícita de preparar el entorno:** detectar primero herramientas existentes y su compatibilidad con el proyecto; instalar/configurar para el usuario actual, según necesidad, JDK compatible, Android SDK y command-line tools, build-tools/plataformas requeridas, Gradle/Gradle Wrapper y dependencias Node/Capacitor u otro framework usado realmente por el repositorio. Preferir instaladores oficiales y versiones compatibles con el proyecto; verificar descargas y respetar licencias. No introducir malware, instaladores desconocidos ni credenciales en el código. Conservar instalaciones existentes y no alterar PATH global innecesariamente. Registrar versiones y pasos reproducibles en la documentación.
+
+**Permisos:** la instalación local no privilegiada de dependencias de desarrollo necesarias está incluida en esta orden. Si instalar requiere permisos de administrador, elevar privilegios, modificar configuración sensible del equipo, aceptar acuerdos que requieran decisión del usuario o contratar servicios, pedir autorización antes de ESA acción; intentar alternativas en directorio de usuario. No tocar VPS, infraestructura ni DB real bajo ninguna circunstancia.
+
+**Compilar y validar:** sincronizar assets Android, generar APK de pruebas local (firma de depuración cuando corresponda), generar SHA-256, comprobar manifest/permisos/ausencia de secretos, instalarla en emulador o dispositivo de pruebas accesible y comprobar arranque, PIN, navegación, Básico/Pro, datos demo, offline, atrás y logs sin acciones reales. Proporcionar archivo APK verificable y ruta de compilación; no afirmar instalada si no se ha instalado.
+
+**Gestión de bloqueos:** si tras intentar de forma documentada instalar toolchain y compilar sigue siendo técnicamente imposible, NO dar la fase F5 como aprobada, no declarar transformación terminada y explicar error concreto, intentos y acción/permiso pendiente. Continuar con el resto del plan. No publicar release ni firmar APK de distribución sin aprobación.
 
 ### F6: QA final
 Probar Básico/Pro x web/móvil x 4 motores, estados activos/sin datos/offline/stale, cientos de registros, múltiples ciclos y rangos legacy, historial y exportaciones seguras. Validar UI 360, 390, 768, 1280, 1920 px y Pixel 9 si hay emulador equivalente; accesibilidad, menús, modales, atrás, safe areas y ausencia de desbordamientos. Ejecutar check, tests, build y controles anti POST en acciones de lectura; no declarar ejecutado un test que no se ejecutó. Revisar matriz y checklist y todos los diffs. Commit/push SOLO rama si no hay deploy trigger. No PR merge.
@@ -60,7 +68,7 @@ Probar Básico/Pro x web/móvil x 4 motores, estados activos/sin datos/offline/s
 ## CONDICIÓN DE TERMINACIÓN
 No terminar mientras existan errores ordinarios corregibles. Entregar:
 - Código HTML final navegable + fuentes y frontend en rama.
-- APK local de prueba y SHA/instalación **solo si compilación real lograda**.
+- **APK local compilada, SHA-256, informe de instalación y pruebas**; si imposibilitada por un bloqueo externo real después de provisionar el entorno, estado F5 PARCIAL/BLOQUEADA, pruebas y errores registrados, nunca COMPLETADA.
 - Matriz origen → destino con **100% de campos del origen auditado** mapeados o explícitamente N/A justificado y probados; checklist C001–C075 (más extensiones) actualizado por Cascade con evidencias, no casillas sin revisar; además ESTADO_FASES.md, MATRIZ_PARIDAD.csv, EVIDENCIAS_CHECKLIST.md e INCIDENCIAS.md.
 - Informe de peligros P0 y bloqueos REALES pendientes, sin fingir runtime auditado.
 - Tests ejecutados y resultados, fallos honestos, capturas comparativas, commit SHA completo, rutas y links a GitHub y Drive privado.
