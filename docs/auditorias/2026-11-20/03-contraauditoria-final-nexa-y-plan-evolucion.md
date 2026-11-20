@@ -1,6 +1,6 @@
-# AUD-20261120-03 — Contraauditoría final documental y plan de evolución NEXA
+# AUD-20261120-03-B — Contraauditoría final documental y plan de evolución NEXA
 
-**Fecha:** 2026-11-20. **Tipo:** contraauditoría independiente de código + reconciliación de resultados históricos.  
+**Documento complementario:** la versión principal y más extensa de esta contraauditoría es [AUD-20261120-03](03-contraauditoria-final-nexa-v2.md) (22 hallazgos). Este anexo reúne 18 comprobaciones focalizadas y una matriz resumida; no debe presentarse como una segunda auditoría distinta.\n\n**Fecha:** 2026-11-20. **Tipo:** contraauditoría independiente de código + reconciliación de resultados históricos.  
 **Base GitHub verificada:** `6ed48825ce53b898a1a37117c77718faac7de29f` de `main` (antes de registrar esta nueva auditoría).  
 **Estado:** auditoría **estática completada**, **runtime NO VERIFICADO** por falta de conexión al VPS. Este informe NO certifica la aplicación de configuraciones, ni seguridad del perímetro, ni órdenes de REAL.
 
