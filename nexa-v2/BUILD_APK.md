@@ -48,10 +48,38 @@ ANDROID_HOME="%LOCALAPPDATA%\Android\Sdk" \
 Si el disco dispone de espacio y red, basta `npx cap add android && gradlew assembleDebug`
 con las versiones por defecto del template.
 
-## Estado de verificación
+## Estado de verificación (2026-11-20)
 
 - `assembleDebug`: OK (`BUILD SUCCESSFUL`).
 - Manifest inspeccionado con aapt2: permisos limpios.
 - Contenido `assets/public` verificado (incluye correcciones INC-004/005/006).
-- **Instalación/arranque en emulador `qa34`: BLOQUEADA** — el emulador exige espacio
-  en `C:` (FATAL `not enough disk space to run avd`). Pendiente hasta liberar ~3 GB.
+- **Instalación/arranque en emulador `qa34`: VERIFICADA.**
+
+### Arranque del emulador (con disco limitado)
+
+Requisitos observados: el check de disco exige hueco para `userdata` (`disk.dataPartition.size`,
+por defecto 6 GB) y `ram.img` (~tamaño de la RAM de la AVD) en `C:`. Receta usada:
+
+```ini
+# ~/.android/avd/qa34.avd/config.ini
+disk.dataPartition.size = 2147483648   # 6 GB -> 2 GB
+hw.ramSize = 1024                       # 2560 -> 1024 MB
+```
+
+```bash
+emulator -avd qa34 -no-snapshot -gpu guest -no-window -no-audio -no-boot-anim -memory 1024
+# boot completado en ~100 s (WHPX). -gpu guest -> lavapipe headless.
+```
+
+### Pruebas ejecutadas (uiautomator + adb)
+
+- `adb install -r app-debug.apk` → **Success** (`package:com.nexa.autotrade.v2`).
+- Lanzamiento por `monkey LAUNCHER` → `MainActivity` en foco; logcat muestra Capacitor
+  sirviendo `index.html`, `css/`, `js/` y `assets/icon.svg`. Sin crashes.
+- **PIN:** el overlay `pin-pad` bloquea toda interacción; `2468` desbloquea.
+- **Navegación:** Inicio → Motores → detalle IDCA (subpestañas, pares `simulation`).
+- **Básico/Pro:** tap Básico → statusline pasa a `vista Básico (solo presentación)`;
+  sin mutaciones ni POST.
+- **Nota:** `screencap` da PNG negro con `-gpu guest` headless (limitación del
+  renderer lavapipe); la evidencia funcional se tomó por árbol UI.
+- **Menor (INC-010):** nav inferior ~7 px visibles en 480×800 (área táctil OK).

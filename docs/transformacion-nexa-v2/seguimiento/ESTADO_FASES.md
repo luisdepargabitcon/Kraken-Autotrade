@@ -15,7 +15,7 @@ Estados: PENDIENTE / EN CURSO / VALIDADA LOCALMENTE / PARCIAL / BLOQUEADA POR AU
 | F2 — HTML/UX web+APK | IMPLEMENTADO LOCAL | 90% | render.test.mjs 8/8 | QA visual por viewports pendiente |
 | F3 — Contratos read-only | IMPLEMENTADO LOCAL | 90% | parity.test.mjs 9/9 | integración endpoints reales pendiente |
 | F4 — Análisis estrategias | VALIDADA LOCALMENTE | 100% | ANALISIS_ESTRATEGIAS_F4.md | — |
-| F5 — PWA + APK | IMPLEMENTADO LOCAL (instalación pendiente) | 75% | **APK compilada** + SHA-256 + manifest inspeccionado | instalación/arranque emulador bloqueada por disco C: |
+| F5 — PWA + APK | VALIDADA LOCALMENTE | 95% | APK compilada+instalada+arrancada en emulador qa34; PIN/nav/Básico/Pro verificados | capturas screencap en negro (headless lavapipe); QA visual pendiente |
 | F6 — QA final | EN CURSO | — | 17/17 tests node pasan | QA navegador/emulador pendiente |
 
 ## F0 — Congelación, seguridad y preservación

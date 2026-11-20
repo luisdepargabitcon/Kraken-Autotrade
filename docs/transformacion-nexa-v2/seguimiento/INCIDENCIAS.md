@@ -47,3 +47,21 @@ Formato: ID · fase · gravedad · descripción · causa · reparación · nueva
 - **Descripción:** `npx cap sync` regenera `capacitor-cordova-android-plugins/build.gradle` y revierte el pin AGP a 8.2.1 (no cacheado) rompiendo el build offline.
 - **Reparación:** re-aplicar reemplazo AGP→8.13.0/gms→4.4.4 tras cada `cap sync` (documentado en nexa-v2/BUILD_APK.md).
 - **Estado:** CERRADA (procedimiento documentado).
+
+## INC-008
+- **Fase:** F5 · **Gravedad:** bloqueo externo
+- **Descripción:** emulador `qa34` no arrancaba: 1) check de disco (userdata 6 GB + RAM 2560 en ram.img), 2) crash silencioso de qemu tras «Starting QEMU main loop» (mem-path ram.img ~2,5 GB > espacio libre), 3) `opengl32sw` ausente en swiftshader_indirect.
+- **Resolución:** liberados ~3,3 GB en C: (Temp, caches propios, qcow2 antiguos, Windsurf Cache, CrashDumps); `disk.dataPartition.size`→2 GB; `-memory 1024`; GPU `guest`/lavapipe headless. Boot OK (~100 s WHPX).
+- **Estado:** CERRADA.
+
+## INC-009
+- **Fase:** F5 · **Gravedad:** menor
+- **Descripción:** screencap produce PNG negro (headless `-gpu guest` + lavapipe no compone framebuffer).
+- **Resolución:** verificación funcional por `uiautomator dump` (bounds+texto reales). Capturas visuales quedarían para QA con ventana.
+- **Estado:** CERRADA (alternativa documentada).
+
+## INC-010
+- **Fase:** F5/F6 · **Gravedad:** menor
+- **Descripción:** barra de navegación inferior queda parcialmente fuera del viewport en 480×800 (bounds y 793–800, ~7 px).
+- **Causa probable:** safe-area/altura WebView; el área táctil responde pero el área visual es mínima.
+- **Estado:** ABIERTA — ajuste CSS pendiente (padding-bottom safe-area en .bottomnav).
