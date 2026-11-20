@@ -1,4 +1,6 @@
-# AUD-20261120-02 — Auditoría de arquitectura: motores, fuentes, configuraciones y deuda técnica
+# Anexo técnico a AUD-20261120-02 — hallazgos de código comprobados
+
+**Documento principal de esta auditoría:** [AUD-20261120-02 — informe integral](02-auditoria-integral-motores-config-fuentes-codigo.md). **Identificador del anexo: AUD-20261120-02-A.**
 
 **Fecha:** 20/11/2026. **Corte de fuentes:** main, commit ee497e60aae16f5e22116e7133c92e287db377ac, anterior a este informe.
 **Tipo:** auditoría estática independiente de GitHub (árbol completo: 2.209 entradas / 2.122 archivos, 2.209 no significa 2.209 archivos de código). Inspección dirigida de motores, arranques, rutas, datos y configuración.
