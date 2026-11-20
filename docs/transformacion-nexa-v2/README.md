@@ -9,3 +9,6 @@ Documentos de control para una **rama aislada**, con `main` protegido y sin auto
 - [Carpeta Google Drive privada de esta transformación](https://drive.google.com/drive/folders/1z24z4lZQKnkPFxPXwIm00KcqvHPg7W72)
 
 Los adjuntos con datos individuales, fiscalidad, API y respaldos no se suben a este repositorio público.
+
+- [Checklist bloqueante — 75 controles de IDCA, SPOT, GRID, AMA y módulos comunes](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md)
+- [Orden de ejecución completa local F0-F6](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md). No autoriza VPS, DB ni REAL.
