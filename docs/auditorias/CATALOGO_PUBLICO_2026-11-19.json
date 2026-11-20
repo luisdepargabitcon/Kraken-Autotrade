@@ -155,6 +155,12 @@
       "original_private_filename": "NEXA_SPOT_BACKTEST_D_E_F_2026-11-19.html",
       "attachment_private_filename": "NEXA_SPOT_Simulaciones_Reales_D_E_F_19-11-2026.zip",
       "original_private_url": "https://drive.google.com/file/d/1Xh8S02_yLQm7in3aSCMLCnPuVcnHxbhp/view"
+    },
+    {
+      "id": "AUD-20261120-02",
+      "date": "2026-11-20",
+      "title": "Auditoría integral de motores NEXA: SPOT, IDCA, Grid, AMA, fuentes, configuraciones y código heredado",
+      "path": "docs/auditorias/2026-11-20/02-auditoria-integral-motores-config-fuentes-codigo.md"
     }
   ],
   "catalog_updated_utc_date": "2026-11-19"
