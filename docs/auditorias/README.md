@@ -31,6 +31,8 @@
 
 | AUD-20261120-02 | 2026-11-20 | [Auditoría integral: cuatro motores, configuraciones efectivas, fuentes y código heredado](2026-11-20/02-auditoria-integral-motores-config-fuentes-codigo.md) | [Informe completo en GitHub](2026-11-20/02-auditoria-integral-motores-config-fuentes-codigo.md) |
 
+| AUD-20261120-03 | 2026-11-20 | [Contraauditoría estática final y reconversión NEXA V2](2026-11-20/03-contraauditoria-final-nexa-v2.md) | [Informe HTML privado e interactivo](https://drive.google.com/file/d/1lakf2MNxUQJn0IrPi4nB6G8caBEctSpd/view) |
+
 ## Carpetas de Google Drive (privadas)
 
 - [2026-11-17](https://drive.google.com/drive/folders/1WZMTEf8swuti7jaxz0IIGV5LI3l6kHT7)
