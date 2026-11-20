@@ -8,7 +8,7 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 
 1. Leer **primero y de forma íntegra** el [PLAN MAESTRO F0–F6](PLAN_MAESTRO_2026-11-20.md) y la [ORDEN OPERATIVA](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md). Ejecutar el plan completo; el checklist **no sustituye** sus entregables, prioridades, dependencias ni restricciones.
 2. En F0 inicializar `docs/transformacion-nexa-v2/seguimiento/ESTADO_FASES.md`, `MATRIZ_PARIDAD.csv` (sin datos financieros personales), `EVIDENCIAS_CHECKLIST.md` y `INCIDENCIAS.md`. Marcar fases F0–F6 como PENDIENTE / EN CURSO / VALIDADA LOCALMENTE / PARCIAL / BLOQUEADA POR AUTORIZACIÓN. Actualizar después de cada cambio relevante.
-3. Las 75 casillas enumeradas C001–C075 son **responsabilidad de Cascade**: para cada una registrar en `EVIDENCIAS_CHECKLIST.md` ID, fase, fuente y pantalla de origen, implementación/destino, prueba o reproducción, resultado, archivo/commit/captura si existe y estado: **VERIFICADA / FALLIDA / PENDIENTE / NO APLICA (motivo demostrado) / BLOQUEADA POR AUTORIZACIÓN**.
+3. Los controles enumerados C001–C086 (y extensiones) son **responsabilidad de Cascade**: para cada una registrar en `EVIDENCIAS_CHECKLIST.md` ID, fase, fuente y pantalla de origen, implementación/destino, prueba o reproducción, resultado, archivo/commit/captura si existe y estado: **VERIFICADA / FALLIDA / PENDIENTE / NO APLICA (motivo demostrado) / BLOQUEADA POR AUTORIZACIÓN**.
 4. Solo transformar `- [ ]` en `- [x]` si existe prueba verificable satisfactoria y toda la comprobación se cumplió. No marcar por suposición, por maqueta o por documentación de tercero. Para NO APLICA o BLOQUEADA dejar la casilla sin marcar y referenciar su justificación; la verificación de runtime nunca se sustituye por una prueba de HTML ficticio.
 5. Al finalizar **cada fase**, volver a recorrer los IDs relacionados, identificar faltantes, corregir defectos ordinarios y volver a probar. Registrar el resumen en `ESTADO_FASES.md`: total de controles, verificados, fallidos, pendientes, N/A justificados y bloqueados; porcentaje calculado sobre controles aplicables, sin considerar N/A o bloqueados como tests exitosos.
 6. **Añadir nuevas casillas con nuevos IDs** cuando el inventario de código/pantallas descubra un campo, acción o control que no aparece aquí. No eliminar ninguna comprobación para mejorar el porcentaje de cobertura.
@@ -23,7 +23,7 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 - [ ] **C003** Para cada elemento, marcar: PARIDAD DEMOSTRADA / PENDIENTE / NO DISPONIBLE EN ORIGEN / NO APLICA CON JUSTIFICACIÓN / BLOQUEADO POR AUTORIZACIÓN. Nunca marcar como terminado con un simple mock o un campo parecido.
 - [ ] **C004** Básico y Pro son SOLO presentaciones, no motores ni modos de ejecución. Ocultar inicialmente en Básico ≠ borrar: acceso por detalle, modal, desplegable o enlace claramente descubrible; en Pro acceso completo y sin pérdida.
 - [ ] **C005** Web y APK dan acceso equivalente a cada dato y ficha, aunque la composición responsive difiera.
-- [ ] **C006** No inventar métricas ni operaciones; DEMO inequívoco para datos simulados; no mostrar 0 en lugar de no disponible o stale. Fecha real de observación y proveedor.
+- [ ] **C006** No inventar métricas ni operaciones; fixtures aislados ÚNICAMENTE en tests, jamás datos ficticios como fuente del producto definitivo; no mostrar 0 en lugar de no disponible o stale. Fecha real de observación y proveedor.
 
 ## IDCA — ESTADO Y ENTRADAS (referencia visual obligatoria)
 - [ ] **C007** Estado global IDCA ON/OFF, enabled, DISABLED/SIMULATION/LIVE reales, tick y hora última actualización.
@@ -102,14 +102,28 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 
 ## TESTS Y CRITERIOS DE CIERRE (BLOQUEANTES)
 - [ ] **C066** Archivo de inventario cuenta el número de elementos fuente y destinos. Ninguno queda «SIN DESTINO»; justificar expresamente NO APLICA.
-- [ ] **C067** Prueba comparativa origen vs maqueta y nueva UI por cada motor, en Básico/Pro y móvil/web. Capturas y matriz por pantalla, campo y función.
+- [ ] **C067** Prueba comparativa panel original vs producto definitivo web+APK por cada motor, en Básico/Pro y móvil/web. Capturas y matriz por pantalla, campo y función.
 - [ ] **C068** Pruebas automatizadas de campos/propiedades por contrato (sin snapshots superficiales exclusivamente).
 - [ ] **C069** Tests de faltantes, stale, endpoint error, permisos, modo apagado, historial grande, múltiples ciclos y fills, sin falsos ceros.
-- [ ] **C070** Tests de seguridad: navegación/cambio Básico-Pro no hacen POST ni órdenes; SHADOW no transmite órdenes reales; no cambio DB/targets.
+- [ ] **C070** Tests de seguridad: navegación/cambio Básico-Pro no hacen POST ni órdenes; acciones de gestión requieren permiso servidor, confirmación y auditoría; SHADOW no transmite órdenes reales; no cambio DB/targets.
 - [ ] **C071** npm run check, tests pertinentes, npm run build, provisión/instalación verificada de toolchain Android compatible (JDK, SDK, build-tools, Gradle y framework requerido), build local APK, SHA-256, pruebas de instalación cuando haya dispositivo/emulador, y manifiesto de qué se ejecutó realmente. La falta inicial de herramientas no es bloqueo admisible; documentar intentos, versiones y permisos si tras instalar no se logra.
 - [ ] **C072** Revisión de GitHub commit SHA, diff exacto, archivos y CI; solo rama feature, no main, no merge, no VPS, no deploy.
 - [ ] **C073** Para todo incumplimiento, registrar ID, gravedad, reproducción, evidencia, reparación y nueva prueba. No marcar COMPLETADO si hay incumplimientos P0 o pérdida de paridad.
-- [ ] **C074** Entregables: HTML navegable, fuentes, inventario CSV/MD sin datos personales, checklist cumplimentado con evidencia, guía de instalación/QA local, APK Android local instalable y comprobación de arranque/funciones; si después de instalar herramientas no se logra, F5 PARCIAL/BLOQUEADA, con error verificable, intentos y permisos requeridos. No cerrar checklist como aprobado en ese caso.
+- [ ] **C074** Entregables: panel web definitivo preparado para hosting protegido, fuentes y adaptadores del backend original, inventario sin datos personales, checklist con evidencia, guía de conexión segura, APK Android definitiva compilada y probada, enlace de GitHub Release y checksum tras superar QA; si falla compilación o integración, mantener F5/F6 PARCIAL/BLOQUEADA con pruebas concretas. Ninguna preview/DEMO como sustituto.
 - [ ] **C075** Estado final: IMPLEMENTADO LOCAL/VALIDADO LOCAL/PENDIENTE APROBACIÓN. **No declarar bot transformado en producción ni estrategia REAL validada**.
+
+
+## COMPROBACIONES ESPECÍFICAS DE PRODUCTO DEFINITIVO (REV. 7)
+- [ ] **C076** No existe entrega intermedia de maqueta, GitHub Pages DEMO, release DEMO ni APK debug con fixtures considerada producto final; una sola ruta de implementación definitiva.
+- [ ] **C077** Arranque en web y APK con proveedor productivo seguro configurable, nunca `createDemoProvider()` como fuente del producto; fixtures separados exclusivamente en tests.
+- [ ] **C078** Contratos GET auténticos revisados contra rutas existentes: forma de datos, errores parciales, API real normalizada, tiempos/fees/unidades y cobertura end-to-end en entorno aislado.
+- [ ] **C079** Acciones auténticas de gestión (configuración, pausa, protección, órdenes autorizadas) implementadas en backend/cliente de la rama con permisos, confirmaciones y auditoría; comprobadas sin tocar trading real.
+- [ ] **C080** PIN fijo `2468` eliminado del producto; autenticación de servidor real preparada, sesión segura, roles, caducidad y controles de autorización probados.
+- [ ] **C081** Mercado, cartera y FISCO usan fuente canónica y permisos adecuados; no estados «sin acceso» permanentes como solución final de UI.
+- [ ] **C082** Básico, Pro, web y APK demuestran paridad exacta por fuente, campo, histórico y control con matriz y pruebas reales contra API aislada; ningún `mapeado` tomado por `verificado`.
+- [ ] **C083** Build y distribución de APK definitiva: nombre/versionado, firma apropiada, SHA-256, instalación, enlace directo de GitHub Release solo tras QA, sin credenciales ni endpoints de producción embebidos.
+- [ ] **C084** Panel web definitivo empaquetado para HTTPS protegido con configuración de backend segura; URL real pendiente de despliegue autorizado, nunca GitHub Pages público como consola administrativa.
+- [ ] **C085** Gate de autorización documentado con runbook de despliegue reversible; no afirmar conexión ni pruebas en VPS hasta recibir permiso y ejecutarlas.
+- [ ] **C086** Revisados los 75 controles originales y los adicionales uno a uno: evidencias correctas por ID; C041–C046 GRID y C047–C051 AMA, no pruebas de APK/PIN; estado global honesto.
 
 **Regla final:** no sacrificar datos por estética, no fusionar motores, no degradar trazabilidad y no afirmar éxito sin evidencia.
