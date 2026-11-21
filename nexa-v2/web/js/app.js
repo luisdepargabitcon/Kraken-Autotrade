@@ -321,8 +321,17 @@ function openSettingsApi(){
     <input id="api-base" class="inp" value="${esc(CONFIG.apiBase)}" placeholder="/api o https://host/api">
     <div class="btn-row" style="margin-top:12px"><button class="btn" id="api-save">Guardar y reconectar</button></div>`);
   modal.root.querySelector('#api-save').addEventListener('click',()=>{
-    setApiBase(modal.root.querySelector('#api-base').value.trim());
-    modal.close(); loadData().then(render);
+    try{
+      setApiBase(modal.root.querySelector('#api-base').value.trim());
+      session.clear(); // A previous bearer token must not be reused on a different server.
+      modal.close();
+      loadData().then(render);
+    }catch(err){
+      const input=modal.root.querySelector('#api-base');
+      input.setCustomValidity(String(err.message||err));
+      input.reportValidity();
+      input.addEventListener('input',()=>input.setCustomValidity(''),{once:true});
+    }
   });
 }
 function scheduleRefresh(){
