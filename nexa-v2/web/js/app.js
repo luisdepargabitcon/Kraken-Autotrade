@@ -25,7 +25,11 @@ const state = {
   common: {},          // market/portfolio/activity/fisco normalizados
   enginesData: {},     // { id: { state, data } }
   refreshTimer: null,
+  unlocked: false,             // PIN/biometría comprobados en esta apertura
+  deviceEnrolled: false,       // Identidad persistente, independiente del token de 30 min
+  repairRequired: false,       // Solo un dispositivo revocado exige nuevo código
 };
+let renewPromise=null;
 
 const NAV = [
   { id:'home',   label:'Inicio',     icon:'M4 11 12 4l8 7v9h-5v-5H9v5H4z' },
@@ -128,10 +132,15 @@ function renderStatusline(){
   const states=Object.values(state.enginesData).map(e=>e.state);
   const sourceError=states.some(x=>x==='unavailable'||x==='unreachable'||x==='error'||x==='auth_required');
   const cls=!state.online?'err':(authed&& !sourceError?'':'warn');
-  const connection = !state.online?'Sin red':(!authed?'Dispositivo sin vincular':sourceError?'Datos pendientes':'Conectado');
+  const linked=state.deviceEnrolled&&!state.repairRequired;
+  const connection = !state.online?'Sin red':
+    state.repairRequired?'Dispositivo revocado':
+    !authed?(linked?'Conexión pendiente':'Dispositivo sin vincular'):
+    sourceError?'Datos pendientes':'Conectado';
   $('statusline').innerHTML =
     `<span class="dot ${cls}"></span><span>${esc(connection)}</span>`+
-    (!authed?`<button data-app="pair-device" class="nx-status-link">Vincular ahora ›</button>`:
+    (!authed?(linked?`<button data-app="refresh" class="nx-status-link">Reintentar conexión ↻</button>`:
+      `<button data-app="pair-device" class="nx-status-link">Vincular ahora ›</button>`):
       sourceError?`<button data-app="refresh" class="nx-status-link">Reintentar ↻</button>`:'')+
     `<span class="nx-status-right">NEXA · ${state.mode==='basic'?'Básico':'Pro'}</span>`;
 }
@@ -333,22 +342,59 @@ async function showUnlock(){
   $('unlock-overlay').classList.remove('hidden');
   pinBuf=''; pinDraw();
 }
+// El código temporal SOLO registra una nueva identidad. Desde entonces la clave
+// local firma desafíos nuevos y renueva el token sin PIN adicional ni otro código.
+// Rotamos el token de 30 minutos antes de vencer; no guardamos secretos en logs.
+async function ensureDeviceSession(force=false){
+  if(!state.unlocked || !state.deviceEnrolled || !state.online)return false;
+  const current=session.get();
+  if(!force && current && current.expiresAt>Date.now()+2*60*1000)return true;
+  if(renewPromise)return renewPromise;
+  renewPromise=(async()=>{
+    try{
+      const next=await obtainSession();
+      if(next.ok){
+        session.set({token:next.token,expiresAt:next.expiresAt,user:next.user,
+          roles:next.roles,csrf:next.csrf});
+        state.repairRequired=false;
+        return true;
+      }
+      if(next.status===403 && next.error==='device_unknown_or_revoked'){
+        state.repairRequired=true;
+        session.clear();
+      }
+      return !!session.get();
+    }catch{
+      // La falta de red NO borra el dispositivo registrado en IndexedDB.
+      return !!session.get();
+    }
+  })();
+  try{return await renewPromise;}finally{renewPromise=null;}
+}
+async function refreshVisibleData(forceSession=false){
+  if(!state.unlocked)return;
+  if(!await ensureDeviceSession(forceSession)){
+    render(); // Sin datos ficticios, pero NUNCA exigir código por timeout.
+    return;
+  }
+  try{await loadData();}catch{
+    // El servidor puede estar temporalmente fuera de línea; conserva la identidad.
+  }
+  render();
+}
 async function afterUnlock(){
   $('unlock-overlay').classList.add('hidden');
-  let warning='';
-  if(await device.isEnrolled()){
-    try{
-      const s=await obtainSession();
-      if(s.ok){
-        session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,roles:s.roles,csrf:s.csrf});
-        await loadData();render();scheduleRefresh();return;
-      }
-      warning='No se ha podido recuperar la sesión. Puedes volver a conectar el móvil.';
-    }catch{
-      warning='No se pudo abrir la sesión. Comprueba la dirección HTTPS del servidor.';
-    }
+  state.unlocked=true;
+  state.deviceEnrolled=await device.isEnrolled();
+  if(state.deviceEnrolled){
+    // Un móvil YA REGISTRADO nunca debe pedir otro código por expiración del token
+    // o por caída de red. Reintenta sesión en segundo plano cada 30 s.
+    await refreshVisibleData(true);
+    scheduleRefresh();
+    return;
   }
-  openPairOverlay(warning);
+  // Solo la PRIMERA vinculación, o la revocación explícita, usa código temporal.
+  openPairOverlay();
 }
 async function doPair(){
   const code=$('pair-code').value.replace(/[\s-]/g,'').toUpperCase();
@@ -377,15 +423,16 @@ async function doPair(){
               : 'No se ha podido vincular. Comprueba la conexión o solicita otro código.';
       return;
     }
-    const s=await obtainSession();
-    if(!s.ok){
-      $('pair-err').textContent='Dispositivo registrado, pero la sesión no se pudo abrir. Comprueba el servidor y reintenta.';
-      return;
-    }
-    session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,roles:s.roles,csrf:s.csrf});
+    // El canje ya guardó la identidad: nunca consumir otro código para reintentar.
+    state.deviceEnrolled=true;
+    state.repairRequired=false;
     $('pair-overlay').classList.add('hidden');
-    await loadData();
-    render();
+    const s=await obtainSession();
+    if(s.ok){
+      session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,
+        roles:s.roles,csrf:s.csrf});
+    }
+    await refreshVisibleData();
     scheduleRefresh();
   }catch(err){
     $('pair-err').textContent='No se ha podido conectar con la API segura. Comprueba la URL y tu conexión.';
@@ -396,7 +443,12 @@ async function doPair(){
 }
 function lockNow(){
   if(!localLock.isSet()) return;
-  pinBuf=''; pinDraw(); showUnlock();
+  state.unlocked=false;
+  clearInterval(state.refreshTimer);
+  session.clear(); // La clave del dispositivo persiste; nuevo token tras PIN/biometría.
+  state.enginesData={};state.common={};
+  render();
+  pinBuf='';pinDraw();showUnlock();
 }
 
 
@@ -422,7 +474,11 @@ function openSettingsApi(){
 }
 function scheduleRefresh(){
   clearInterval(state.refreshTimer);
-  state.refreshTimer = setInterval(()=>{ if(session.get()) loadData().then(render); }, 30000);
+  state.refreshTimer=setInterval(()=>{
+    if(state.unlocked && state.deviceEnrolled && state.online){
+      refreshVisibleData().catch(()=>{ /* no se pierde la vinculación */ });
+    }
+  },30000);
 }
 
 // ---------- Eventos globales ----------
@@ -458,7 +514,7 @@ document.addEventListener('click', e=>{
     if(k==='pair-device') openPairOverlay();
     else if(k==='settings-api') openSettingsApi();
     else if(k==='logout'){ logout(); location.reload(); }
-    else if(k==='refresh'){ loadData().then(render); }
+    else if(k==='refresh'){ refreshVisibleData(true).catch(()=>render()); }
     return;
   }
 });
@@ -488,7 +544,15 @@ document.addEventListener('pointerout',event=>{
   }
 });
 
-window.addEventListener('online',  ()=>{ state.online=true; renderStatusline(); });
+window.addEventListener('online',()=>{
+  state.online=true;
+  renderStatusline();
+  if(state.unlocked&&state.deviceEnrolled)refreshVisibleData(true).catch(()=>render());
+});
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden&&state.unlocked&&state.deviceEnrolled&&state.online)
+    refreshVisibleData().catch(()=>render());
+});
 window.addEventListener('offline', ()=>{ state.online=false; renderStatusline(); });
 
 // PWA
