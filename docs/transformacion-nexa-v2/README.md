@@ -13,3 +13,7 @@
 **Rama única** `feature/nexa-v2-transformacion-20261120`. `main` intacta. No se autoriza acceso VPS, DB real, trading LIVE, despliegue ni merge por este documento.
 
 El panel definitivo tendrá una URL HTTPS protegida **solo tras autorización del despliegue**. La APK definitiva se entrega mediante GitHub Release descargable tras superar QA. Tests y fixtures son herramientas internas, no producto de demostración. Cascade mantiene sus propios registros en `seguimiento/` y marca cada control con evidencia.
+
+## Diseño y autenticación Rev. 8
+- [Rediseño UX de NEXA y acceso PIN/Huella/Rostro sin usuario o contraseña](REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md)
+- Cascade es responsable de checks C001–C102 y de compilar/probar nueva APK de verdad. Sin VPS/DB/trading/merge.
