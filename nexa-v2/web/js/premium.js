@@ -301,8 +301,8 @@ function idcaEntryCards(contexts,basic=false){
  if(!contexts.length)return '<p class="nxp-panel-empty">No se ha recibido el diagnóstico de entrada por par. Esto NO confirma que falten señales: la pasarela puede no tener habilitada la ruta de lectura.</p>';
  const human=v=>String(v??'Sin evaluar').replaceAll('_',' ');
  return '<div class="nxp-entry-cards">'+contexts.map(x=>{
-  if(x.error||x.unavailable)return '<article class="nxp-entry-card nxp-entry-pending"><b>'+esc(x.pair||'Par')+
-   '</b><p>Datos de entrada no disponibles: '+esc(x.error||'sin lectura confirmada')+'</p></article>';
+  if(x.error||x.unavailable||(x.entryScore==null&&x.confidenceScore==null&&x.currentPrice==null))return '<article class="nxp-entry-card nxp-entry-pending"><b>'+esc(x.pair||'Par')+
+   '</b><p>Diagnóstico de entrada no disponible para este par. La lectura de pares habilitados no equivale a información de mercado. '+esc(x.error||'')+'</p></article>';
   const drop=first(x,'dipDetectedPct','drawdownFromReferencePct'),
     required=first(x,'requiredDipPct','requiredDistancePct'),score=first(x,'entryScore','confidenceScore');
   const progress=num(drop)&&num(required)&&required>0?Math.max(0,Math.min(100,drop/required*100)):null;
