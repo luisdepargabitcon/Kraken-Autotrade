@@ -365,3 +365,45 @@ body .topbar{background:#090f1af6;border-bottom:1px solid #1d3048}
 body .bottomnav{background:#09111ef7;border-top:1px solid #263950}
 body .bottomnav a.on{color:#83b5ff}
 body #screen{min-height:calc(100dvh - 145px)}
+
+/* Security and FISCO: full-screen hierarchy instead of another generic table. */
+.nxp-privacy-head{display:grid;grid-template-columns:52px minmax(0,1fr);gap:17px;
+ border:1px solid #304b69;border-radius:22px;padding:25px 22px;background:linear-gradient(135deg,#192d48,#0c192a)}
+.nxp-privacy-head>.nxp-ico{width:42px;height:42px;color:#91bfff}
+.nxp-privacy-head h3{font-size:21px;letter-spacing:-.035em;margin-bottom:9px}
+.nxp-privacy-head p{max-width:580px;color:#a4b9d5;font-size:13px;line-height:1.6;margin-bottom:16px}
+.nxp-privacy-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:14px}
+.nxp-privacy-steps .nxp-meta{border:1px solid #2b4463;border-radius:13px;padding:15px;background:#102034}
+.nxp-privacy-note{font-size:12px;color:#c0a77a;margin-top:15px}
+.nxp-legal-row{display:flex;align-items:center;gap:10px;padding:13px 0;border-bottom:1px solid #22354f;font-size:13px}
+.nxp-legal-row>.nxp-ico{width:17px;height:17px;color:#8eb2e6}
+.nxp-settings-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}
+.nxp-setting-tile{display:flex;flex-direction:column;align-items:flex-start;gap:11px;border:1px solid #2d4260;border-radius:22px;
+ padding:22px 19px;min-width:0;background:linear-gradient(145deg,#152842,#0d192b)}
+.nxp-setting-symbol{width:48px;height:48px;border-radius:16px;background:#1b4775;color:#a8d1ff;display:grid;place-items:center}
+.nxp-setting-tile h3{font-size:17px;letter-spacing:-.025em}
+.nxp-setting-tile p{color:#92abc9;font-size:12px;line-height:1.65;flex:1}
+.nxp-setting-tile .nxp-secondary{font-size:12px;min-height:43px}
+.nxp-settings-note{font-size:12px;color:#7b94b6;margin-top:16px;max-width:620px;line-height:1.6}
+/* Clean the header on phones: the selected engine is already displayed in the screen. */
+@media(max-width:820px){
+ .topbar{gap:8px}
+ #app[data-screen="engines"] #engine-btn{width:40px;min-width:40px;max-width:40px;height:39px;padding:0;display:grid;place-items:center;
+  font-size:0!important;overflow:hidden;border-radius:12px}
+ #app[data-screen="engines"] #engine-btn b{display:none}
+ #app[data-screen="engines"] #engine-btn::after{content:"▦";font-size:21px;color:#9dcaff}
+ .top-ctl{gap:7px;min-width:0}
+ .top-ctl .seg{min-width:0}
+ .top-ctl .seg button{min-width:61px;font-size:12px;padding-inline:8px}
+ .nxp-settings-grid{grid-template-columns:1fr}
+ .nxp-privacy-head{grid-template-columns:1fr;padding:20px}
+ .nxp-privacy-steps{grid-template-columns:1fr}
+ .nxp-privacy-steps .nxp-meta{padding:11px}
+}
+@media(min-width:821px) and (max-width:1100px){
+ .nxp-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:370px){
+ #app[data-screen="engines"] #engine-btn{width:36px;min-width:36px;max-width:36px}
+ .top-ctl .seg button{min-width:54px;font-size:11px;padding-inline:6px}
+}
