@@ -241,3 +241,108 @@ details.exp .exp-body{padding:4px 12px 12px;border-top:1px solid var(--line)}
 .inp:focus{outline:2px solid var(--blue2);outline-offset:1px}
 .btn.primary{background:#123877;color:var(--blue2);border-color:var(--blue)}
 code{color:var(--blue2);font-size:.9em}
+
+
+/* NEXA — revisión UX 8. Retícula mobile-first, inspiraciones propias de trading moderno. */
+:root{
+  --bg:#060a12;--bg2:#080f1a;--card:#101a2b;--card2:#132238;
+  --line:#1b2940;--line2:#2a3a56;
+  --tx:#f1f6ff;--tx2:#a6bad4;--tx3:#7792b2;
+  --blue:#4e93ff;--blue2:#94c5ff;--ice:#44d4a5;--red:#ff687f;--amber:#ffca78;
+  --nav-h:56px;--bnav-h:66px;
+}
+html,body{overflow-x:hidden}
+.app{background:radial-gradient(ellipse 80% 280px at 50% -120px,#17346470,transparent),var(--bg)}
+.topbar{background:rgba(8,16,30,.96);box-shadow:0 1px 0 #ffffff08}
+.brand-tx b{font-size:16px;letter-spacing:.08em;color:var(--tx)}
+.top-ctl{gap:7px}
+.seg{background:#0c1527;border-color:#263c5f;border-radius:12px}
+.seg button{min-height:35px;padding:7px 12px}
+.seg button.on{background:#1c4c8c;color:white}
+.seg-btn{min-height:35px;border-radius:12px;background:#101a2c}
+.statusline{background:#080f1a;min-height:30px;padding-block:6px}
+.screen{padding-top:18px}
+.grid{gap:15px}
+.card{border-radius:20px;padding:18px;background:linear-gradient(135deg,#111d31,#0b1424);
+  border-color:#20304b;box-shadow:0 9px 32px #03071040}
+.card h3{font-size:12px;letter-spacing:.075em;margin-bottom:14px;color:#9ab3d5}
+.big-num{font-size:clamp(28px,5vw,39px);letter-spacing:-.035em;line-height:1.2}
+.row{padding:10px 0;gap:12px}
+.row .k{font-size:13px}
+.row .v{font-size:14px;overflow-wrap:anywhere}
+.kv{gap:13px}
+.kv .item .k{font-size:11px}
+.kv .item .v{font-size:15px;overflow-wrap:anywhere}
+.subnav{width:100%;flex-wrap:nowrap;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;
+  background:transparent;border:0;padding:2px 0 8px;gap:7px;scrollbar-width:thin}
+.subnav button{flex:none;padding:10px 13px;border:1px solid var(--line2);border-radius:12px;
+  background:#111d30;min-height:40px;font-size:12.5px}
+.subnav button.on{background:#163b70;border-color:#3561a0;color:#fff}
+.eng-head{gap:8px;margin-bottom:15px}
+.eng-head h1{font-size:24px;letter-spacing:-.02em}
+.eng-head .sub{line-height:1.5}
+.badge{font-size:11px;padding:4px 9px}
+.btn{font-size:13px;min-height:40px;padding:10px 14px;border-radius:12px}
+.btn.primary{background:linear-gradient(135deg,#215fc0,#347edc);border-color:#477fdb;color:#fff}
+.btn-row{gap:10px}
+.tblwrap{border-radius:13px}
+details.exp{border-radius:13px}
+details.exp>summary{min-height:44px;font-size:13px}
+.modal{border-radius:24px;box-shadow:0 35px 80px #000d}
+.pin-card{max-width:375px;width:100%;border-radius:26px;padding:30px 24px;
+  background:linear-gradient(140deg,#14243c,#0b1322)}
+.pin-card h2{font-size:20px;letter-spacing:.025em}
+.pin-note{font-size:13px;color:var(--tx2);line-height:1.6}
+.pin-pad button{height:57px;border-radius:14px;font-size:22px}
+.restricted{border-radius:18px}
+.na{color:#829ab9}
+.connection-empty{display:flex;flex-direction:column;align-items:flex-start;gap:12px;
+  padding:26px 22px;border:1px solid #223b5b;border-radius:22px;
+  background:radial-gradient(circle at 0 0,#19406b55,transparent 75%),linear-gradient(130deg,#111d31,#0b1424)}
+.connection-empty .empty-icon{display:grid;place-items:center;width:48px;height:48px;
+  border-radius:16px;background:#214984;color:#e9f4ff;font-size:24px}
+.connection-empty h2{font-size:20px;letter-spacing:-.02em}
+.connection-empty p{font-size:13px;line-height:1.6;color:var(--tx2);max-width:48ch}
+.connection-empty .btn{margin-top:4px}
+@media(max-width:820px){
+  .screen{padding:16px 12px calc(var(--bnav-h) + 28px + env(safe-area-inset-bottom,0px))}
+  .topbar{gap:6px;padding:0 9px;height:54px;min-height:54px}
+  .brand{gap:5px}
+  .brand svg{width:26px;height:26px}
+  .brand-tx b{font-size:13px}
+  .brand-tx span{display:none}
+  .top-ctl{gap:5px;flex:1;min-width:0;justify-content:flex-end}
+  #engine-btn{font-size:0;padding:7px 8px;white-space:nowrap;max-width:85px}
+  #engine-btn b{font-size:12px}
+  #engine-btn::after{content:" ▾";font-size:11px;color:var(--blue2)}
+  .seg button{font-size:12px;padding:7px 9px;min-height:36px}
+  #lock-btn{font-size:0;width:35px;height:36px;min-height:36px;padding:0;display:grid;place-items:center}
+  #lock-btn::after{content:"⌁";font-size:19px;color:var(--blue2)}
+  .statusline{padding-inline:12px;font-size:11px;gap:7px}
+  .card{padding:16px;border-radius:19px}
+  .card h3{font-size:11.5px}
+  .row .v{font-size:13px}
+  .bottomnav{height:calc(var(--bnav-h) + env(safe-area-inset-bottom,0px));
+    background:rgba(9,17,31,.98)}
+  .bottomnav a{min-height:50px;font-size:10.5px;gap:5px}
+  .bottomnav a svg{width:23px;height:23px}
+  .bottomnav a.on{font-weight:700;color:#8abaff}
+  .modal-root{align-items:flex-end;padding:0}
+  .modal{max-width:none;max-height:88dvh;border-radius:22px 22px 0 0;
+    padding:24px 18px calc(18px + env(safe-area-inset-bottom,0px))}
+  .kv{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:375px){
+  .topbar{padding-inline:6px}
+  .top-ctl{gap:3px}
+  .brand-tx b{font-size:12px}
+  .seg button{padding:6px 7px;font-size:11px}
+  .card{padding:14px}
+  .kv{column-gap:9px}
+}
+/* Capacitor Android edge-to-edge: explicit reliable fallback for WebView inset=0.
+   Cascade must verify native safe-area integration in QA Pixel 9, Android 15/16. */
+html.nexa-native .topbar{
+  height:auto;min-height:calc(54px + max(env(safe-area-inset-top,0px),28px));
+  padding-top:max(env(safe-area-inset-top,0px),28px)
+}
