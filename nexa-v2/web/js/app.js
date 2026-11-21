@@ -113,6 +113,7 @@ function renderNav(){
   $('topnav').innerHTML = NAV.filter(n=>n.id!=='engines').map(n=>
     `<a href="#${n.id}" data-nav="${n.id}" class="${cur===n.id?'on':''}">${esc(n.label)}</a>`).join('')
     + `<a href="#engines" data-nav="engines" class="${cur==='engines'?'on':''}">Motores</a>`;
+  $('settings-shortcut').setAttribute('aria-current',cur==='settings'?'page':'false');
   $('bottomnav').innerHTML = BOTTOM_NAV.map(id=>{
     const n = NAV.find(x=>x.id===id);
     const active = cur===id || (id==='engines'&&cur==='engines');
@@ -220,6 +221,22 @@ function pinInit(){
   $('bio-btn').addEventListener('click', bioUnlock);
   $('pair-btn').addEventListener('click', doPair);
   $('pair-code').addEventListener('keydown', e=>{ if(e.key==='Enter') doPair(); });
+  $('pair-paste-btn').addEventListener('click',async()=>{
+    try{
+      const text=await navigator.clipboard.readText();
+      const code=String(text||'').replace(/[\\s-]/g,'').trim().toUpperCase();
+      if(!/^[0-9A-F]{24}$/.test(code)){
+        $('pair-err').textContent='El portapapeles no contiene un código válido de 24 caracteres.';
+        return;
+      }
+      $('pair-code').value=code;
+      $('pair-err').textContent='';
+      $('pair-code').focus();
+    }catch{
+      $('pair-err').textContent='Mantén pulsado el campo para pegar el código.';
+      $('pair-code').focus();
+    }
+  });
   $('pair-config-toggle').addEventListener('click', ()=>{
     const form=$('pair-config-form');
     const open=form.hidden;
