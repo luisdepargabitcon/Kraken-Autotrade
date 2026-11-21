@@ -68,10 +68,16 @@ function fieldValue(k,v,depth=0){
 }
 function fields(record,depth=0){
  if(!record||typeof record!=='object')return '';
- return '<dl class="nx-inspect-fields">'+Object.entries(record)
-   .filter(([k,v])=>!SECRET.test(k)&&typeof v!=='function')
-   .map(([k,v])=>'<div class="nx-inspect-field"><dt>'+esc(label(k))+
-      '</dt><dd>'+fieldValue(k,v,depth)+'</dd></div>').join('')+'</dl>';
+ const entries=Object.entries(record).filter(([k,v])=>!SECRET.test(k)&&typeof v!=='function');
+ // Mostrar primero lo auténticamente disponible, no una montaña de «No disponible».
+ // Todos los campos sin dato siguen accesibles y claramente marcados en el desplegable.
+ const known=entries.filter(([,v])=>v!==null&&v!==undefined&&v!=='');
+ const missing=entries.filter(([,v])=>v===null||v===undefined||v==='');
+ const markup=known.map(([k,v])=>'<div class="nx-inspect-field"><dt>'+esc(label(k))+
+      '</dt><dd>'+fieldValue(k,v,depth)+'</dd></div>').join('');
+ return '<dl class="nx-inspect-fields">'+markup+'</dl>'+
+   (missing.length?'<details class="nx-inspect-absent"><summary>'+missing.length+
+   ' campos sin información confirmada</summary><p>'+missing.map(([k])=>esc(label(k))).join(' · ')+'</p></details>':'');
 }
 const getPath=(obj,path)=>path.split('.').reduce((o,k)=>o?.[k],obj);
 function resolve(state,ref){
