@@ -259,40 +259,67 @@ const idcaPlain=v=>v===null||v===undefined||v===''?NA:esc(String(v));
 const idcaSide=s=>String(s||'').toUpperCase()==='BUY'?'Compra':String(s||'').toUpperCase()==='SELL'?'Venta':'Operación';
 
 export function idcaHistory(ctx){
+ // Historial comparable al IDCA original: resumen económico, estados, semántica LIVE/SIM,
+ // PnL verificado y detalle al toque (ficha universal). No inventar resultados.
  const items=Array.isArray(ctx.data.history)?ctx.data.history:[];
+ const amount=v=>idcaKnownNum(v)?signedUsd(v):'—';
  const known=items.filter(c=>idcaKnownNum(c.realizedPnlUsd));
  const wins=known.filter(c=>c.realizedPnlUsd>0).length;
  const losses=known.filter(c=>c.realizedPnlUsd<0).length;
  const even=known.filter(c=>c.realizedPnlUsd===0).length;
  const unknown=items.length-known.length;
  const sum=known.length?known.reduce((n,c)=>n+c.realizedPnlUsd,0):null;
- const summary=card('Resumen de ciclos cerrados',
-   kv([['Cerrados',items.length],['Ganados / perdidos',wins+' / '+losses],
-       ['Neutros / sin PnL confirmado',even+' / '+unknown],
-       ['PnL de ciclos con dato',sum===null?NA:signed(sum,signedUsd(sum))]])+
-   (unknown?'<p class="nx-idca-hint">Falta PnL verificado en '+unknown+' ciclo(s); el resultado mostrado no representa el total definitivo.</p>':''));
+ const explain={
+  fail_safe:'Salida de seguridad',trailing:'Trailing stop',trailing_stop:'Trailing stop',
+  trailing_exit_dust_adj:'Trailing · ajuste residual',take_profit:'Objetivo de beneficio',
+  break_even:'Break-even',breakeven_sell:'Break-even',manual:'Cierre manual',
+  mode_transition_simulation_to_live:'Transición SIM → LIVE',
+ };
+ const human=v=>v?explain[String(v).toLowerCase()]||String(v).replaceAll('_',' '):'Motivo no informado';
+ const counts='<div class="nx-idca-history-overview">'+
+   '<div class="nx-idca-stat nx-idca-stat-total"><small>Ciclos cerrados</small><strong>'+items.length+'</strong></div>'+
+   '<div class="nx-idca-stat nx-idca-stat-won"><small>Ganadores</small><strong>✓ '+wins+'</strong></div>'+
+   '<div class="nx-idca-stat nx-idca-stat-lost"><small>Perdedores</small><strong>● '+losses+'</strong></div>'+
+   '<div class="nx-idca-stat nx-idca-stat-neutral"><small>Neutros</small><strong>'+even+'</strong></div>'+
+   '<div class="nx-idca-stat nx-idca-stat-unknown"><small>Sin PnL verificado</small><strong>? '+unknown+'</strong></div></div>';
+ const profit='<div class="nx-idca-history-profit '+(sum===null?'nx-idca-profit-unknown':sum<0?'nx-idca-profit-loss':sum>0?'nx-idca-profit-gain':'nx-idca-profit-even')+'">'+
+   '<div><span>PnL neto</span><small>Solo ciclos con resultado verificable'+(unknown?' · '+unknown+' pendientes':'')+'</small></div>'+
+   '<strong>'+amount(sum)+'</strong></div>';
+ const summary='<section class="nx-idca-historical-summary">'+
+   '<div class="nx-idca-history-title"><h2>Historial de ciclos IDCA</h2><span>Datos de la API</span></div>'+
+   counts+profit+'<p class="nx-idca-period-label">Ganados / perdidos: '+wins+' / '+losses+
+   ' · Neutros / sin PnL confirmado: '+even+' / '+unknown+'</p>'+
+   (unknown?'<p class="nx-idca-hint">Falta PnL verificado en '+unknown+' ciclo(s); el resultado mostrado no representa el total definitivo.</p>':'')+'</section>';
  const renderCycle=(c,index)=>{
-   const result=idcaKnownNum(c.realizedPnlUsd)?signed(c.realizedPnlUsd,signedUsd(c.realizedPnlUsd)):NA;
-   const orders=Array.isArray(c.orders)?c.orders:[];
-   const head='<span class="nx-idca-history-pair">'+idcaPlain(c.pair)+' <small>#'+idcaPlain(c.id)+'</small></span>'+
-      '<span class="nx-idca-history-result">'+result+'</span><small>'+idcaPlain(c.closeReason||c.exitType||'Cierre sin tipo')+'</small>';
-   return '<details class="nx-idca-history-row" data-inspect="idca:history:'+index+'"><summary>'+head+'</summary><div class="nx-idca-history-body">'+
-      kv([['Modo',idcaPlain(c.mode)],['Inicio',esc(fmtTs(c.startedAt))],
-         ['Cierre',c.closedAt?esc(fmtTs(c.closedAt)):NA],
-         ['Duración',c.startedAt&&c.closedAt?duration(c.startedAt,c.closedAt):NA],
-         ['Compras',idcaPlain(c.buyCount)],['Capital utilizado',fmtUsd(c.capitalUsedUsd)],
-         ['PnL neto',result],['Motivo',idcaPlain(c.closeReason)]])+
-      (orders.length?'<details class="exp"><summary>Órdenes del ciclo ('+orders.length+')</summary><div class="exp-body">'+
-          orders.map(o=>'<div class="nx-idca-order-ref">'+idcaPlain(typeof o==='object'?(o.id||o.orderId):o)+'</div>').join('')+
-          '</div></details>':'')+'</div></details>';
+   const value=idcaKnownNum(c.realizedPnlUsd)?c.realizedPnlUsd:null;
+   const cls=value===null?'unknown':value>0?'gain':value<0?'loss':'neutral';
+   const mode=String(c.mode||'').toLowerCase();
+   const imported=c.isImported===true||c.imported===true;
+   const manual=c.isManualCycle===true||c.manual===true;
+   const dur=c.startedAt&&c.closedAt?duration(c.startedAt,c.closedAt):'—';
+   const pct=idcaKnownNum(c.realizedPnlPct)?signedPct(c.realizedPnlPct):'';
+   const date=c.closedAt?esc(fmtTs(c.closedAt)):'Fecha de cierre no verificada';
+   const phrase=value===null?'Resultado insuficiente':value>0?'Ciclo con beneficio':value<0?'Ciclo con pérdida':'Ciclo sin beneficio ni pérdida';
+   return '<div class="nx-idca-history-row nx-idca-history-'+cls+'">'+
+    '<button type="button" class="nx-idca-history-open" data-inspect="idca:history:'+index+'" aria-label="Abrir detalle ciclo '+esc(c.id||index)+'">'+
+     '<span class="nx-idca-history-sign" aria-hidden="true">'+(value===null?'?':value>0?'✓':value<0?'●':'=')+'</span>'+
+     '<span class="nx-idca-history-info"><b>'+idcaPlain(c.pair)+' <small>#'+idcaPlain(c.id)+'</small></b>'+
+       '<span class="nx-idca-history-badges"><em class="nx-idca-mode '+(mode==='live'?'is-live':'is-sim')+'">'+(mode?esc(mode.toUpperCase()):'MODO SIN VERIFICAR')+'</em>'+
+       (imported?'<em>IMPORTADO</em>':'')+(manual?'<em>MANUAL</em>':'')+'</span>'+
+       '<small>'+date+' · '+esc(dur)+' · '+idcaPlain(c.buyCount)+' compras</small>'+
+       '<small>'+esc(human(c.closeReason||c.exitType))+'</small></span>'+
+     '<span class="nx-idca-history-money"><strong>'+amount(value)+'</strong>'+
+      (pct?'<b>'+esc(pct)+'</b>':'<small>'+phrase+'</small>')+'</span>'+
+     '<span class="nx-idca-history-arrow" aria-hidden="true">›</span></button>'+
+    '</div>';
  };
  const list=items.slice(0,12).map(renderCycle).join('');
- const rest=items.length>12?'<details class="nx-idca-rest"><summary>Ver otros '+(items.length-12)+' ciclos del historial</summary><div class="nx-idca-history-list">'+
-    items.slice(12).map((c,i)=>renderCycle(c,i+12)).join('')+'</div></details>':'';
- return '<div class="nx-idca-history">'+summary+
-    (items.length?'<div class="nx-idca-history-list">'+list+'</div>'+rest:
-      '<p class="nx-idca-hint">No se recibieron ciclos cerrados en esta lectura. Esto no confirma que el histórico completo esté vacío.</p>')+
-    '</div>';
+ const rest=items.length>12?'<details class="nx-idca-rest"><summary>Ver otros '+(items.length-12)+' ciclos del historial</summary>'+
+  '<div class="nx-idca-history-list">'+items.slice(12).map((c,i)=>renderCycle(c,i+12)).join('')+'</div></details>':'';
+ return '<div class="nx-idca-history nx-idca-history-refined">'+summary+
+   (items.length?'<div class="nx-idca-history-list">'+list+'</div>'+rest:
+   '<div class="nx-idca-historical-empty"><strong>Historial no disponible</strong><p>La API no ha proporcionado ciclos cerrados en esta lectura. Esto no demuestra que no existan operaciones.</p></div>')+
+   '</div>';
 }
 export function idcaOrders(ctx){
  const all=Array.isArray(ctx.data.orders)?ctx.data.orders:[];
