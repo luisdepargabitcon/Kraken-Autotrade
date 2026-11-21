@@ -195,7 +195,7 @@ function financial(s,record,engine,path,orders){
    .filter(o=>num(o.valueUsd??o.grossValueUsd)!==null).reduce((t,o)=>t+num(o.valueUsd??o.grossValueUsd),0):null;
  const stats=[];
  if(cycle){
-   stats.push(['Capital invertido',amountOrDash(invested)],['Valor vendido',amountOrDash(sold??computedOrderGross)],
+   stats.push(['Capital invertido',amountOrDash(invested)],['Valor vendido'+(sold===null&&computedOrderGross!==null?' (órdenes visibles)':''),amountOrDash(sold??computedOrderGross)],
      ['N.º compras',labelUnit(first(record,'buyCount','buys'))],
      ['Precio de entrada',amountOrDash(first(record,'avgEntryPrice','avgPrice','entryPrice'))],
      ['Cantidad',labelUnit(first(record,'totalQuantity','quantity','qty'))],
