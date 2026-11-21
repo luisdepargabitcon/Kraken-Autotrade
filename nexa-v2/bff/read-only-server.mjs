@@ -69,7 +69,7 @@ const ALLOWED_ROLES=new Set(['read','fisco:read']);
 async function readState(filename){
   try{
     const st=await fs.stat(filename);
-    if((st.mode & 0o077)!==0)throw new Error('El archivo de dispositivos debe ser privado (0600)');
+    if(process.platform!=='win32' && (st.mode & 0o077)!==0)throw new Error('El archivo de dispositivos debe ser privado (0600)');
     const j=JSON.parse(await fs.readFile(filename,'utf8'));
     return new Map(Object.entries(j.devices||{}));
   }catch(e){if(e.code==='ENOENT')return new Map();throw e;}
@@ -86,7 +86,7 @@ export async function createReadOnlyServer({
   if(!stateDir || !path.isAbsolute(stateDir))throw new Error('NXV2_STATE_DIR absoluto y obligatorio');
   await fs.mkdir(stateDir,{recursive:true,mode:0o700});
   const dirStat=await fs.stat(stateDir);
-  if((dirStat.mode&0o077)!==0)throw new Error('NXV2_STATE_DIR debe tener permisos 0700');
+  if(process.platform!=='win32' && (dirStat.mode&0o077)!==0)throw new Error('NXV2_STATE_DIR debe tener permisos 0700');
   const filename=path.join(stateDir,'devices.json');
   const devices=await readState(filename);
   const pairCodes=new Map(),sessions=new Map(),challenges=new Map(),attempts=new Map();
