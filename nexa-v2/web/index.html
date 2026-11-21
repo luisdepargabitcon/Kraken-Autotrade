@@ -51,8 +51,22 @@
     <svg aria-hidden="true" viewBox="0 0 36 36" width="40" height="40"><rect x="1" y="1" width="34" height="34" rx="9" fill="#123877"/><path d="m7 25 6-15h5l3 11 4-11h5l-6 15h-6l-3-10-4 10z" fill="#79bcff"/></svg>
     <h2>Vincular dispositivo</h2>
     <p class="pin-note">Introduce el código de un solo uso generado por el administrador del bot. Sin usuario ni contraseña: este equipo firmará sus propias sesiones.</p>
-    <input id="pair-code" class="inp code-inp" placeholder="CÓDIGO" autocomplete="off" maxlength="12">
+    <label class="pair-field-label" for="pair-code">Código temporal de vinculación</label>
+    <input id="pair-code" class="inp code-inp" placeholder="CÓDIGO DE 24 CARACTERES" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" inputmode="text" maxlength="24" aria-describedby="pair-code-hint">
+    <p id="pair-code-hint" class="pair-help">Código de 24 caracteres que genera Cascade. Caduca a los 10 minutos.</p>
     <input id="pair-label" class="inp" placeholder="Nombre del dispositivo (ej. Pixel 9)" autocomplete="off">
+    <section class="pair-server" aria-label="Conexión al servidor">
+      <div class="pair-server-row">
+        <div class="pair-server-summary"><span>Servidor NEXA</span><small id="pair-server-current">Comprobando dirección…</small></div>
+        <button class="pair-settings-btn" id="pair-config-toggle" type="button" aria-controls="pair-config-form" aria-expanded="false">⚙ Ajustes</button>
+      </div>
+      <form id="pair-config-form" class="pair-config-form" hidden>
+        <label for="pair-api-base">Dirección HTTPS de la API</label>
+        <input id="pair-api-base" class="inp" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://nexa-5-250-184-18.nip.io/api">
+        <button class="btn" id="pair-api-save" type="submit">Guardar servidor</button>
+        <small>No introduzcas la dirección HTTP antigua ni el puerto 3020.</small>
+      </form>
+    </section>
     <div class="btn-row" style="margin-top:10px">
       <button class="btn primary" id="pair-btn">Vincular</button>
       <button class="btn" id="pair-skip">Explorar sin conexión</button>
