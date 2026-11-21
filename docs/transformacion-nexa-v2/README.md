@@ -23,3 +23,5 @@ El panel definitivo tendrá una URL HTTPS protegida **solo tras autorización de
 - [Conexión autorizada de solo lectura NEXA → VPS, IP HTTPS, emparejamiento y rollback](CONEXION_VPS_SOLO_LECTURA_2026-11-21.md). Nunca habilitar acciones LIVE con esta pasarela.
 
 - [Corrección Rev12: Ajustes visibles sin vincular, códigos de 24 caracteres y compilación APK pendiente](FIX_AJUSTES_VINCULACION_REV12_2026-11-21.md)
+
+- [Rev13: Ajustes permanente en cabecera, 5 pestañas y conexión de un campo](UX_VINCULACION_SIMPLE_REV13_2026-11-21.md) — sustituye la presentación Rev12 de 6 pestañas.
