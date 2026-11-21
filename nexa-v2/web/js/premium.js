@@ -414,7 +414,7 @@ function engineSummary(ctx,id,d){
  idca:[['PnL',pnl(first(s,'realizedPnlUsd','realizedPnl'))],
  ['Ciclos',value(first(s,'activeCyclesCount','activeCycles'))],
  ['Capital',money(first(s,'capitalUsedUsd','capitalUsed'))]],
- grid:[['Capital',money(first(st,'capitalUsedUsd','capitalReservedUsd'))],['Ciclos',num(first(st,'activeCyclesCount','openCycles'))?first(st,'activeCyclesCount','openCycles'):Array.isArray(d.cycles)?d.cycles.length:'—'],['Par',value(st.pair)]],
+ grid:[['Capital',money(first(st,'capitalUsedUsd','capitalReservedUsd'))],['Ciclos',first(st,'activeCyclesCount','openCycles')!==null?value(first(st,'activeCyclesCount','openCycles')):'—'],['Par',value(st.pair)]],
  spot:[['Posiciones',Array.isArray(d.positions)?d.positions.length:'—'],['Estrategia',value(st.strategy)],['Fuente',value(st.dataExchange)]],
  ama:[['Presupuesto',money(d.portfolio?.budgetUsd)],['Reservado',money(d.portfolio?.reservedUsd)],['Mandato',value(d.mandate?.status)]]
  }[id]||[];
@@ -494,11 +494,17 @@ function allocationBars(rows,nameKey='asset'){
 function basicPortfolio(ctx){
  const s=raw(ctx,'portfolio').summary||{},ready=goodCommon(ctx,'portfolio');
  const byAsset=s.byAsset||raw(ctx,'portfolio').holdings||[];
- return wrap(`${section('PATRIMONIO','Mi cartera')}
-  ${ready?`<section class="nxp-basic-balance"><span>Valor total</span><h1>${money(s.navUsd)}</h1>
+ const verifiedAssets=Array.isArray(byAsset)&&byAsset.some(x=>num(x.valueUsd??x.exposureUsd??x.currentValueUsd));
+ const navConfirmed=ready&&num(s.navUsd);
+ const label=verifiedAssets?'Patrimonio consolidado':'Capital informado por la API';
+ return wrap(`${section('CARTERA','Mi cartera')}
+  ${ready?`<section class="nxp-basic-balance nxp-balanced">
+    <span>${label}</span><h1>${navConfirmed?money(s.navUsd):'—'}</h1>
+    <p>${verifiedAssets?'Valor según los activos y el balance disponible.':'No se ha recibido desglose por activo: esta cifra no debe interpretarse como saldo confirmado de Kraken.'}</p>
     <div class="nxp-pnl-pair">${block('PnL realizado',pnl(s.realizedPnlUsd),moneyClass(s.realizedPnlUsd))}
       ${block('Sin realizar',pnl(s.unrealizedPnlUsd),moneyClass(s.unrealizedPnlUsd))}</div></section>
-    ${section('DISTRIBUCIÓN','Mis activos')}${allocationBars(byAsset)}
+    ${verifiedAssets?`${section('DISTRIBUCIÓN','Mis activos')}${allocationBars(byAsset)}`:
+      `<div class="nxp-portfolio-empty"><b>Activos sin desglose</b><span>La API no devuelve valores por moneda en esta lectura. No se generan distribuciones ficticias.</span></div>`}
     <div class="nxp-basic-shortcuts">${link('engines','Motores')}${link('fisco','Fiscalidad')}</div>`:
       offline(ctx,'tu cartera, resultados y exposición')}
  </div>`,'nxp-mode-basic nxp-portfolio');
@@ -556,11 +562,16 @@ export function renderFiscoPremium(ctx,legacy){
  const f=raw(ctx,'fisco'),s=f.summary||{};
  const header=section('FISCALIDAD PRIVADA','FISCO / AEAT','Información fiscal con permisos independientes.');
  if(!ready){
+  const denied=ctx.data?.fisco?.state==='forbidden';
+  const pending=ctx.data?.fisco?.state==='auth_required';
+  const title=denied?'Falta autorización fiscal':pending?'Inicia sesión para consultar FISCO':'Informes fiscales no disponibles';
+  const desc=denied?'Tu teléfono está vinculado, pero no tiene el permiso adicional fisco:read. Reintentar no lo concederá: solicita a Cascade una autorización fiscal de solo lectura.':
+      'Los informes no están disponibles en esta lectura; se mantiene protegida la información y no se generan cifras ficticias.';
   return wrap(`${header}<div class="nxp-privacy-head">${ico('shield')}
-    <div><h3>Tus datos fiscales permanecen protegidos</h3><p>Solo se mostrarán tras autorizar el dispositivo y obtener el permiso fiscal correspondiente. No se generan cálculos fiscales de ejemplo.</p>
-      <button data-app="${ctx.deviceEnrolled?'refresh':'pair-device'}" class="nxp-primary">${ctx.deviceEnrolled?'Reintentar conexión':'Conectar acceso'}</button></div></div>
-    <div class="nxp-privacy-steps">${meta('1 · Identidad','Dispositivo autorizado')}
-      ${meta('2 · Acceso','Permiso FISCO')}${meta('3 · Informes','Datos verificados')}</div>
+    <div><h3>${title}</h3><p>${desc}</p>
+      ${denied?`<p class="nxp-privacy-note">Estado: acceso restringido. La conexión al resto del bot sigue funcionando.</p>`:
+        `<button data-app="refresh" class="nxp-secondary">Reintentar consulta</button>`}
+    </div></div>
    </div>`,ctx.mode==='basic'?'nxp-mode-basic nxp-fisco':'nxp-mode-pro nxp-fisco');
  }
  const figures=twoValueGrid([
