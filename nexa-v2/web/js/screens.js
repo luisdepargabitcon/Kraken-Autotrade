@@ -12,12 +12,30 @@ import { GRID_DISTINCTION } from './contracts.js';
 
 const P = (v, src, ts) => provenance(v, {source:src, ts});
 
+// No presentar una montaña de "No disponible" cuando la sesión/API no está preparada.
+// El contenido completo permanece disponible cuando hay datos auténticos.
+function connectionEmpty(title, detail, {icon='↗', action='Configurar conexión'}={}){
+  return `<section class="connection-empty" role="status" aria-live="polite">
+    <span class="empty-icon" aria-hidden="true">${esc(icon)}</span>
+    <h2>${esc(title)}</h2><p>${esc(detail)}</p>
+    <button class="btn primary" data-app="settings-api">${esc(action)}</button>
+    <small class="tiny">No se muestran valores ficticios ni se confunde una sesión pendiente con un motor detenido.</small>
+  </section>`;
+}
+
+
+
 // ==================== INICIO ====================
 export function renderHome(ctx){
   const { mode, data } = ctx;
   const port = data.portfolio?.data ?? {};
   const sum = port.summary ?? {};
   const engines = ctx.enginesData ?? {};
+  if(data.portfolio?.state!=='ok' && sum.navUsd==null && sum.exposureUsd==null){
+    return connectionEmpty('Tu centro de control está preparado',
+      'Vincula NEXA al servidor seguro del bot para consultar patrimonio, PnL, motores y actividad. No hay datos reales disponibles todavía.',
+      {icon:'◈',action:'Configurar servidor'});
+  }
   const navSeries = (ctx.market?.data?.candles?.['BTC/USD']||[]).slice(-40).map(c=>({v:c.c}));
   const engineCards = ctx.engineList.map(e=>{
     const d = engines[e.id]?.data ?? {};
@@ -52,9 +70,14 @@ export function renderMarket(ctx){
   const { mode, data } = ctx;
   const m = data.market?.data ?? {};
   const pair = ctx.ui.marketPair;
-  const t = m.tickers?.[pair] ?? {};
-  const ind = m.indicators?.[pair] ?? {};
-  const candles = m.candles?.[pair] ?? [];
+  if(data.market?.state!=='ok' && !m.price && !m.tickers){
+    return connectionEmpty('Mercado pendiente de conexión',
+      'Al conectar el bot aparecerán precios, velas, volumen e indicadores técnicos completos. Mientras tanto, no se muestran cotizaciones inventadas.',
+      {icon:'⌁',action:'Configurar fuente de mercado'});
+  }
+  const t = m.tickers?.[pair] ?? (m.pair===pair?m:{});
+  const ind = m.indicators?.[pair] ?? (m.pair===pair?m.indicators:{}) ?? {};
+  const candles = m.candles?.[pair] ?? (m.pair===pair?m.candles:[]) ?? [];
   const pairChips = Object.keys(m.tickers||{}).map(p=>
     `<button class="chip ${p===pair?'on':''}" data-ui="marketPair:${p}">${esc(p)}</button>`).join('');
   const priceBlock = card(`Mercado · ${esc(pair)}`, `
@@ -102,8 +125,8 @@ export function renderEngine(ctx){
   const d = ctx.enginesData?.[engineId]?.data;
   const st = ctx.enginesData?.[engineId];
   if(!eng) return `<div class="banner err">Motor desconocido</div>`;
-  const head = `<div class="eng-head"><h1>${esc(eng.name)}</h1>${modeBadge(d?.status?.mode||eng.modes[0])}
-    ${badge(ctx.dataTag,'demo')}<span class="sub">${esc(eng.desc)} · modos propios: ${eng.modes.join(' / ')}</span>
+  const head = `<div class="eng-head"><h1>${esc(eng.name)}</h1>${st?.state==='ok'?modeBadge(d?.status?.mode):badge('Sin conexión','warn')}
+    ${badge(ctx.dataTag,'sim')}<span class="sub">${esc(eng.desc)} · modos propios: ${eng.modes.join(' / ')}</span>
     ${stateBanner(st?.state||'desconocido', st?.error||'')}</div>`;
   const subtabs = ctx.subtabs.map(s=>`<button class="${s.id===subtab?'on':''}" data-ui="subtab:${s.id}">${esc(s.label)}</button>`).join('');
   const body = ctx.renderEngineSub(engineId, subtab);
@@ -152,7 +175,7 @@ export function idcaPanel(ctx){
         <button class="btn prot" data-action="idca.togglePair" data-params="{&quot;pair&quot;:&quot;BTC/USD&quot;,&quot;enabled&quot;:true}">Activar par</button>
         <button class="btn danger prot" data-action="idca.emergencyClose" data-params="{}">Cierre de emergencia</button>
       </div>
-      <div class="tiny" style="margin-top:8px">Prototipo: las acciones requieren confirmación + autorización del backend. No se ejecutan.</div>`)}`;
+      <div class="tiny" style="margin-top:8px">Acciones protegidas: requieren una sesión autorizada y confirmación en el servidor.</div>`)}`;
 }
 function idcaMarketDetail(pc, s, pro=false){
   return `
@@ -218,7 +241,7 @@ export function idcaCycles(ctx){
       <button class="btn prot" data-action="idca.manualBuy" data-params='{"cycleId":"'+esc(c.id)+'","type":"schedule"}'>Programar salida</button>
       <button class="btn danger prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'"}'>Cerrar posición</button>
       <button class="btn danger prot" data-action="idca.closeCycle" data-params='{"cycleId":"'+esc(c.id)+'","delete":true}'>Eliminar ciclo</button></div>
-      <div class="tiny">Prototipo — acciones protegidas; requieren backend autorizado.</div>`;
+      <div class="tiny">Acciones sujetas a permisos y comprobación del servidor.</div>`;
     return card(head+core+anchors+prot+(ctx.mode==='pro'?tp+orders+actions:expandable('Detalle completo (TP, órdenes, acciones)', tp+orders+actions)),{});
   }).join('');
   return `<div class="grid">${cards||'<div class="na">Sin ciclos</div>'}</div>`;
@@ -529,6 +552,10 @@ export function amaConfig(ctx){
 
 // ==================== CARTERA ====================
 export function renderPortfolio(ctx){
+  if(ctx.data.portfolio?.state!=='ok') return connectionEmpty(
+    'Cartera pendiente de vinculación',
+    'El patrimonio, las posiciones y el PnL aparecerán cuando exista una sesión segura con el backend. No mostramos ceros ni balances ficticios.',
+    {icon:'▣',action:'Configurar cartera'});
   const { mode, data } = ctx;
   const p = data.portfolio?.data ?? {};
   const s = p.summary ?? {};
@@ -596,6 +623,9 @@ function evRow(e){
 
 // ==================== FISCO ====================
 export function renderFisco(ctx){
+  if(ctx.data.fisco?.state!=='ok') return connectionEmpty('Fiscalidad privada',
+    'Los informes de FISCO/AEAT requieren vinculación segura y permisos específicos. No se publican datos fiscales en el móvil sin autorización.',
+    {icon:'▦',action:'Configurar acceso seguro'});
   const f = ctx.data.fisco?.data ?? {};
   const s = f.summary ?? {};
   return `<div class="grid">
