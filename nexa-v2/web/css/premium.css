@@ -407,3 +407,17 @@ body #screen{min-height:calc(100dvh - 145px)}
  #app[data-screen="engines"] #engine-btn{width:36px;min-width:36px;max-width:36px}
  .top-ctl .seg button{min-width:54px;font-size:11px;padding-inline:6px}
 }
+
+/* Price chart inspection on touch, pointer and keyboard. */
+.nxp-chart-interactive{position:relative;width:100%;overflow:hidden;border-radius:12px}
+.nxp-chart-interactive .nxp-ohclv{width:100%;height:auto;display:block;max-height:none}
+.nxp-candle-hit{cursor:crosshair}
+.nxp-candle-hit:focus-visible rect:last-child{fill:#78aaff22}
+.nxp-chart-tooltip{position:absolute;left:12px;top:12px;right:12px;max-width:430px;pointer-events:none;
+ padding:10px 12px;border:1px solid #608fc7;border-radius:10px;background:#081522ee;color:#f0f7ff;
+ font-size:11px;line-height:1.5;box-shadow:0 6px 25px #000b}
+.nxp-chart-tooltip[hidden]{display:none}
+@media(max-width:520px){
+ .nxp-chart-interactive{border-radius:10px}
+ .nxp-chart-tooltip{font-size:10.5px;padding:9px 10px}
+}
