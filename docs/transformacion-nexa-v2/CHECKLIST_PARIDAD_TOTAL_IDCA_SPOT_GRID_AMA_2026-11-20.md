@@ -8,7 +8,7 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 
 1. Leer **primero y de forma íntegra** el [PLAN MAESTRO F0–F6](PLAN_MAESTRO_2026-11-20.md) y la [ORDEN OPERATIVA](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md). Ejecutar el plan completo; el checklist **no sustituye** sus entregables, prioridades, dependencias ni restricciones.
 2. En F0 inicializar `docs/transformacion-nexa-v2/seguimiento/ESTADO_FASES.md`, `MATRIZ_PARIDAD.csv` (sin datos financieros personales), `EVIDENCIAS_CHECKLIST.md` y `INCIDENCIAS.md`. Marcar fases F0–F6 como PENDIENTE / EN CURSO / VALIDADA LOCALMENTE / PARCIAL / BLOQUEADA POR AUTORIZACIÓN. Actualizar después de cada cambio relevante.
-3. Los controles enumerados C001–C102 (y extensiones) son **responsabilidad de Cascade**: para cada una registrar en `EVIDENCIAS_CHECKLIST.md` ID, fase, fuente y pantalla de origen, implementación/destino, prueba o reproducción, resultado, archivo/commit/captura si existe y estado: **VERIFICADA / FALLIDA / PENDIENTE / NO APLICA (motivo demostrado) / BLOQUEADA POR AUTORIZACIÓN**.
+3. Los controles enumerados C001–C112 (y extensiones) son **responsabilidad de Cascade**: para cada una registrar en `EVIDENCIAS_CHECKLIST.md` ID, fase, fuente y pantalla de origen, implementación/destino, prueba o reproducción, resultado, archivo/commit/captura si existe y estado: **VERIFICADA / FALLIDA / PENDIENTE / NO APLICA (motivo demostrado) / BLOQUEADA POR AUTORIZACIÓN**.
 4. Solo transformar `- [ ]` en `- [x]` si existe prueba verificable satisfactoria y toda la comprobación se cumplió. No marcar por suposición, por maqueta o por documentación de tercero. Para NO APLICA o BLOQUEADA dejar la casilla sin marcar y referenciar su justificación; la verificación de runtime nunca se sustituye por una prueba de HTML ficticio.
 5. Al finalizar **cada fase**, volver a recorrer los IDs relacionados, identificar faltantes, corregir defectos ordinarios y volver a probar. Registrar el resumen en `ESTADO_FASES.md`: total de controles, verificados, fallidos, pendientes, N/A justificados y bloqueados; porcentaje calculado sobre controles aplicables, sin considerar N/A o bloqueados como tests exitosos.
 6. **Añadir nuevas casillas con nuevos IDs** cuando el inventario de código/pantallas descubra un campo, acción o control que no aparece aquí. No eliminar ninguna comprobación para mejorar el porcentaje de cobertura.
@@ -144,5 +144,18 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 - [ ] **C100** Tests reales de enrolamiento, reinicio, PIN erróneo, biometrias, cancelación, dispositivos revocados, pérdida móvil, 401/403, web/Android sin herramientas de producción.
 - [ ] **C101** Firma APK sin secretos embebidos; claves previas potencialmente expuestas rotadas/gestionadas con plan de actualización; entrega solo tras QA, SHA y archivo GitHub verificable.
 - [ ] **C102** Entrega final inspeccionable Pixel 9/web: capturas, pruebas visuales 360–1920, sin «ok.» suelto ni «Sin ciclos» cuando API no disponible; APK compilada y publicada solo tras verificación.
+
+
+## REV. 9 — COMPROBACIONES ADICIONALES DE EXPERIENCIA ESTRUCTURAL
+- [ ] **C103** Inicio Básico: hero de patrimonio/estado real, cuatro motores en lista navegable y accesos a cartera/mercado/actividad; sin tarjetas duplicadas antiguas.
+- [ ] **C104** Inicio Pro: indicadores financieros y datos del backend con profundidad, accesos de auditoría y campos originales preservados y realmente accesibles.
+- [ ] **C105** Motor sin sesión: no indicar DISABLED/LIVE/«detenido»/«sin ciclos» sin evidencia de backend; ofrecer una única vista de conexión.
+- [ ] **C106** Vista Básico y Pro difieren en estructura, jerarquía, cantidad visible y navegación; no solo colores, tipografías o el mismo panel más largo.
+- [ ] **C107** Mercado: gráfico de velas principal, selección de par, indicadores clave y análisis técnico exhaustivo desplegable; no precio/indicador inventado cuando faltan datos.
+- [ ] **C108** Cartera: cifras reales principales y distribución por activo/venue/motor sin duplicación; desconectado muestra un solo mensaje y ningún cero ficticio.
+- [ ] **C109** Motores SPOT, IDCA, Grid y AMA: resumen visual + rutas completas hacia ciclos, órdenes, parámetros, protecciones, logs e históricos; tests de paridad y autenticación.
+- [ ] **C110** Header superior y navegación inferior sin solapes Android ni desperdicio vertical, safe-area comprobada en Pixel 9 y 360/390/412/480 dp.
+- [ ] **C111** Comparativas de capturas Android 0.3.0 vs nueva versión y web 768/1280/1920, en ambos modos; 0 truncamiento y 0 scroll horizontal del layout global.
+- [ ] **C112** `npm test` incluye `experience.test.mjs`, build Android y QA de navegación y datos aislados documentados con evidencias reales; APK nueva publicada solo tras cumplimiento.
 
 **Regla final:** no sacrificar datos por estética, no fusionar motores, no degradar trazabilidad y no afirmar éxito sin evidencia.
