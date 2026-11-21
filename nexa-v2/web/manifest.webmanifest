@@ -1,7 +1,7 @@
 {
   "name": "NEXA Control Tower V2",
   "short_name": "NEXA",
-  "description": "Panel de control NEXA — lectura y monitorización (demo local).",
+  "description": "Centro de gestión NEXA — SPOT, IDCA, GRID, AMA y cartera en una única aplicación.",
   "lang": "es",
   "start_url": "./index.html",
   "scope": "./",
