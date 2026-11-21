@@ -69,6 +69,7 @@ export const ROUTES = {
   spot: {
     positions:   'GET /open-positions',
     diagnostics: 'GET /positions/smart-exit-diagnostics',
+    trades:      'GET /trades/closed?limit=100&offset=0',
     actions: {
       close:   'POST /positions/:pair/close',
       buy:     'POST /positions/:pair/buy',
@@ -181,6 +182,29 @@ export function normOrder(raw){
    slippageUsd:slipUsd,slippagePct:num(pick(raw,'slippagePct')),
    reason:pick(raw,'triggerReason','humanReason','reason','motivo','cause','trigger'),
    mode:pick(raw,'mode'),status:pick(raw,'executionStatus','status','result','outcome')};
+}
+
+// Historial real: GET /trades/closed es GLOBAL al bot, no necesariamente solo SPOT.
+// Conservar estrategia/origen de cada operación y no imputar automáticamente a SPOT.
+export function normSpotTrade(raw){
+ if(!raw||typeof raw!=='object')return null;
+ const side=pick(raw,'side','type');
+ return {...raw,
+  id:pick(raw,'id','tradeId','orderId'),cycleId:pick(raw,'cycleId'),
+  pair:pick(raw,'pair','symbol'),side:typeof side==='string'?side.toUpperCase():null,
+  ts:pick(raw,'executedAt','ts','timestamp','closedAt','createdAt'),
+  price:num(pick(raw,'price','fillPrice','avgFillPrice')),
+  quantity:num(pick(raw,'quantity','amount','qty','filledQty')),
+  valueUsd:num(pick(raw,'totalUsd','grossValueUsd','valueUsd')),
+  feeUsd:num(pick(raw,'feesUsd','feeUsd','fee','commission')),
+  realizedPnlUsd:num(pick(raw,'realizedPnlUsd','netPnlUsd')),
+  realizedPnlPct:num(pick(raw,'realizedPnlPct','pnlPct')),
+  reason:pick(raw,'closeReason','reason','exitReason'),
+  exchange:pick(raw,'exchange','venue'),
+  // Estos campos no autorizan atribución al motor: conservar tal cual del backend.
+  strategy:pick(raw,'strategy','strategyName'),
+  origin:pick(raw,'origin','source','engine'),
+ };
 }
 
 export function normGridCycle(raw){
