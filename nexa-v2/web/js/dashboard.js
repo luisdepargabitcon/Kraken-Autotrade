@@ -211,7 +211,7 @@ export function renderAsset(ctx){
  const kind=side==='BUY'?'COMPRA':side==='SELL'?'VENTA':x.kind;
  return '<button type="button" class="nxh-operation '+tone+'" data-inspect="'+esc(x.ref)+'"><span><b>'+out(kind)+'</b>'+
  '<small>'+out(x.key.toUpperCase())+' · '+out(x.ts?fmtTs(x.ts):'Fecha no confirmada')+'</small>'+
- '<small>'+out(x.reason||'Abrir para ver motivo y cronología')+'</small></span>'+
+ '<small>'+out(x.kind)+(x.key==='spot'&&x.ref.includes(':trades:')?' · motor de origen no atribuido':'')+'</small>'+ '<small>'+out(x.reason||'Abrir para ver motivo y cronología')+'</small></span>'+
  '<span><strong>'+(gain===null?usd(x.amount):pnl(gain))+'</strong><small>'+(gain===null?'Importe · no PnL':'PnL')+'</small></span>›</button>';
  }).join(''):'<p class="nxh-empty">No se han recibido operaciones atribuibles a este activo en los endpoints consultados.</p>')+'</div>'+
  section('ANÁLISIS','Indicadores completos')+indicators(q.indicators)+
