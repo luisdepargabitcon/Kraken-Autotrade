@@ -1,0 +1,17 @@
+{
+  "name": "nexa-read-only-gateway",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Pasarela NEXA solo lectura; nunca envía órdenes",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node read-only-server.mjs",
+    "test": "node --test ../tests/read-only-server.test.mjs"
+  },
+  "dependencies": {
+    "express": "4.22.3"
+  }
+}
