@@ -9,6 +9,7 @@ const html=load('../web/index.html');
 const app=load('../web/js/app.js');
 const conf=load('../web/js/config.js');
 const pairing=load('../web/js/pairing.js');
+const css=load('../web/css/premium.css');
 
 function makeConfig({native,stored=null}={}){
   const values=new Map(stored?[['nexa.apiBase',stored]]:[]);
@@ -82,4 +83,12 @@ test('Error 403 en lenguaje claro, nunca texto crudo API',()=>{
   assert.ok(app.includes("navigator.clipboard.readText()"));
   assert.ok(app.includes('Comprobando código…'));
   assert.doesNotMatch(app,/Vinculación rechazada \(\$\{r\.status/);
+});
+
+test('Cabecera 360 px evita solapar Básico/Pro, mantiene selector de motor accesible',()=>{
+  assert.match(html,/id="engine-btn"[^>]*aria-label="Cambiar motor"/);
+  assert.match(app,/setAttribute\('aria-label','Cambiar motor\. Actual: '/);
+  assert.match(css,/#engine-btn,#app\[data-screen="engines"\] #engine-btn/);
+  assert.match(css,/Evitar que añadir el engranaje recorte Básico\/Pro/);
+  assert.match(css,/\.nx-header-settings/);
 });
