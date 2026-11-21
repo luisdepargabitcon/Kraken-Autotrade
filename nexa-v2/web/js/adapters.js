@@ -182,7 +182,9 @@ export function normOrder(raw){
 
 export function normGridCycle(raw){
   if(!raw || typeof raw!=='object') return null;
-  return {
+  // Preservar todos los campos del API (fees, fills, cierres, rangos y estado)
+  // para la ficha universal; los alias canónicos no deben destruir el detalle.
+  return { ...raw,
     id: pick(raw,'id','cycleId'),
     cycleNumber: num(pick(raw,'cycleNumber')),
     pair: pick(raw,'pair','symbol'),
