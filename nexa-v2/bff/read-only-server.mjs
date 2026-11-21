@@ -17,6 +17,7 @@ const READ_ROUTES = [
   /^\/api\/ama\/(?:status|market-view|mandate|policy\/active|tranche-plan\/current|cycles|portfolio|readiness|scheduler\/state|events|ledger)$/,
   /^\/api\/ama\/cycles\/[0-9]+$/,
   /^\/api\/open-positions$/,
+  /^\/api\/trades\/closed$/, // GET global history; not necessarily SPOT
   /^\/api\/positions\/smart-exit-diagnostics$/,
   /^\/api\/positions\/smart-exit-diagnostics$/,
   /^\/api\/portfolio\/(?:summary|holdings|ledger|reservations|inventory|budgets|health|snapshots)$/,
@@ -215,6 +216,17 @@ export async function createReadOnlyServer({
     if(FISCO.test(requested)&&!session.roles.includes('fisco:read'))
       return res.status(403).json({error:'fisco_read_permission_required'});
     if(relative.search.length>1024)return res.status(400).json({error:'query_too_long'});
+    // Lectura acotada: evitar consultas gigantes o filtros no auditados.
+    if(requested==='/api/trades/closed'){
+      const q=relative.searchParams;
+      if([...q.keys()].some(key=>!['limit','offset'].includes(key)) ||
+          q.getAll('limit').length>1 || q.getAll('offset').length>1)
+        return res.status(400).json({error:'unsupported_trade_query'});
+      const limit=q.get('limit')??'50',offset=q.get('offset')??'0';
+      if(!/^\d+$/.test(limit)||!/^\d+$/.test(offset)||
+        Number(limit)<1||Number(limit)>100||Number(offset)>100000)
+        return res.status(400).json({error:'trade_query_out_of_bounds'});
+    }
     try{
       const remote=new URL(relative.pathname+relative.search,upstreamOrigin);
       const up=await fetchImpl(remote,{method:'GET',redirect:'manual',headers:{'Accept':'application/json'},
