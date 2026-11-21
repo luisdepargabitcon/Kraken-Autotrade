@@ -26,7 +26,7 @@ Devin entra en SSH en el entorno del propietario, **sin copiar contraseñas ni c
 
 ## 2. Aplicar BFF de solo lectura en servicio independiente
 
-1. Extraer **sólo** `nexa-v2/bff/` y `nexa-v2/web/` de la rama a un directorio exclusivo de despliegue `/opt/nexa-ro/bff` y `/srv/nexa-v2/web`. No clonar .env del repositorio ni desplegar el bot ni hacer `git pull` sobre directorios operativos.
+1. Extraer **sólo** `nexa-v2/bff/`, `nexa-v2/web/` y las pruebas aisladas `nexa-v2/tests/read-only-server.test.mjs` de la rama a un directorio exclusivo de despliegue `/opt/nexa-ro/bff` y `/srv/nexa-v2/web`. No clonar .env del repositorio ni desplegar el bot ni hacer `git pull` sobre directorios operativos.
 2. Crear cuenta de servicio sin login `nexa-ro` y directorio `/var/lib/nexa-ro` dueño `nexa-ro`, permisos 0700.
 3. Instalar las dependencias **sólo del BFF** mediante `cd /opt/nexa-ro/bff && npm install --omit=dev`. Comprobar versión de Node >=20 y que Express sólo escucha localhost.
 4. Generar bootstrap aleatorio de **al menos 32 bytes** (`openssl rand -hex 32`), exclusivamente en `/etc/nexa-ro/env` con modo 0600. Configurar las variables reales:
@@ -36,7 +36,7 @@ Devin entra en SSH en el entorno del propietario, **sin copiar contraseñas ni c
    - `NXV2_CORS_ORIGINS=https://localhost,https://5.250.184.18`
    - `NXV2_PORT=3101`
 5. Adaptar la plantilla `nexa-v2/bff/nexa-readonly.service.example` según ruta REAL de Node. Validar con `systemd-analyze verify`; arrancar y comprobar que **sólo escucha 127.0.0.1:3101**, sin cambios en el proceso bot.
-6. Ejecutar tests de gateway EN AISLAMIENTO antes de arrancar: `npm --prefix /opt/nexa-ro/bff test`, incluyendo denegación 405, denylist, P-256, persistencia de clave pública, CORS y FISCO aislado.
+6. Ejecutar tests de gateway EN AISLAMIENTO antes de arrancar: `npm --prefix /opt/nexa-ro/bff test` (con el test copiado a `/opt/nexa-ro/tests/read-only-server.test.mjs`), incluyendo denegación 405, denylist, P-256, persistencia de clave pública, CORS y FISCO aislado.
 7. Nunca imprimir los códigos de acceso, tokens, bootstrap ni datos financieros en documentos públicos; no incluirlos en GitHub Issues.
 
 ## 3. HTTPS para IP 5.250.184.18, sin dominio (si puertos y permisos lo permiten)
@@ -86,3 +86,11 @@ Por HTTPS real:
 - Si el entorno VPS resulta diferente a lo supuesto, PARAR y aportar inventario y un cambio mínimo revisable, nunca tocar DB/trading ni sustituir Nginx a ciegas.
 
 **Nota de seguridad:** el repositorio principal tiene archivos `.env` históricos. No copiar credenciales ni utilizar esa configuración para NEXA. Revisar exposición de secretos de forma separada.
+
+
+## 7. Estado de implementación (actualizado)
+- El gateway no depende del BFF antiguo. **NO** arrancar `v2-auth.mjs`/`v2-proxy.mjs` ni redirigir `/api` al motor directamente.
+- La APK guardaba URLs arbitrarias en versiones anteriores; `web/js/config.js` actualizado para validar solo HTTPS `/api` y purgar conexiones HTTP antiguas al arranque.
+- El provider `web/js/provider.js` ya solicita FISCO real **solo** si el rol contiene `fisco:read`, que no se concede automáticamente.
+- Los tests `read-only-server.test.mjs` comprueban 405 a órdenes, 403 a rutas no autorizadas, challenge ECDSA, clave pública persistida y CORS, pero **no se ha demostrado su ejecución en VPS desde esta sesión**.
+- Recompilar APK después de cambios de `config.js` / `provider.js` si se quiere la protección HTTPS incorporada en el binario distribuido. La APK 0.4.0 existente NO contiene necesariamente estos parches posteriores.
