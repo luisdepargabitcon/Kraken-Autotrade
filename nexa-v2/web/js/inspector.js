@@ -4,7 +4,7 @@
 import { openModal } from './ui.js';
 import { esc, fmtUsd, fmtTs } from './util.js';
 
-const SECRET=/^(token|password|secret|api.?key|authorization|cookie|private.?key|refresh.?token|pin|session.?token)$/i;
+const SECRET=/(token|password|secret|api.?key|authorization|cookie|private.?key|credential|bearer|passphrase|mnemonic)/i;
 const LABELS={
   id:'ID de registro',orderId:'ID de orden',cycleId:'ID de ciclo',pair:'Par',symbol:'Par',
   side:'Operación',status:'Estado',state:'Estado',mode:'Modo operativo',type:'Tipo de orden',
@@ -106,6 +106,21 @@ function summary(record){
   id:first(record,'id','orderId','cycleId','mandateId'),
  };
 }
+function relatedOrders(state,engine,path,record){
+ if(engine!=='idca'||(path!=='cycles'&&path!=='history'))return '';
+ const id=first(record,'id','cycleId');
+ const all=state.enginesData?.idca?.data?.orders;
+ if(id===null||!Array.isArray(all))return '';
+ const matches=all.filter(o=>o?.cycleId!==undefined&&o.cycleId!==null&&String(o.cycleId)===String(id));
+ if(!matches.length)return '<p class="nx-inspect-source">No se han recibido órdenes vinculadas a este ciclo en la lectura actual. Esto no demuestra que no existan.</p>';
+ return '<section class="nx-inspect-linked"><h3>Órdenes vinculadas ('+matches.length+')</h3>'+
+   matches.map(o=>{
+    const side=String(o.side||'').toUpperCase(),isBuy=side==='BUY';
+    return '<details class="nx-inspect-fold"><summary><span class="nx-inspect-pill '+(isBuy?'buy':side==='SELL'?'sell':'neutral')+'">'+esc(side||'Operación')+'</span> '+
+       esc(String(o.id??'Sin ID'))+' · '+esc(money(first(o,'grossValueUsd','valueUsd')))+'</summary>'+
+       fields(o)+'</details>';
+   }).join('')+'</section>';
+}
 export function showRecordInspector(state,ref){
  const found=resolve(state,ref);
  if(!found){
@@ -132,7 +147,7 @@ export function showRecordInspector(state,ref){
    '<div><small>Modo</small><b>'+esc(safe(s.mode))+'</b></div></div>'+
   '<div class="nx-inspect-reason"><small>Motivo / señal de ejecución o salida</small><p>'+esc(safe(s.reason))+'</p></div>'+
   '<div class="nx-inspect-stamp">Fecha de referencia: '+(s.stamp?esc(fmtTs(s.stamp)):'No disponible')+'</div>'+
-  '<details open class="nx-inspect-all"><summary>Todos los datos disponibles del registro</summary>'+fields(record)+'</details>'+
+  '<details open class="nx-inspect-all"><summary>Todos los datos disponibles del registro</summary>'+fields(record)+'</details>'+relatedOrders(state,engine,path,record)+
   '<p class="nx-inspect-source">Fuente: lectura de API del motor '+esc(engine.toUpperCase())+
   '. Los campos ausentes se muestran como «No disponible». Abrir esta ficha no ejecuta ninguna operación.</p></div>';
  openModal(body);
