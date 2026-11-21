@@ -36,6 +36,43 @@ async function get(route, {params} = {}){
   }
 }
 
+
+// La lectura de confluencia consulta velas en el backend por par: cacheada 3 min.
+// Nunca ejecutar en bucle a 30 s ni usar esta consulta para enviar órdenes.
+let entryCache=null,entryReadAt=0,entryFlight=null;
+async function readEntryDiagnostics(){
+ const now=Date.now();
+ if(entryCache&&now-entryReadAt<180000)return entryCache;
+ if(entryFlight)return entryFlight;
+ entryFlight=get(ROUTES.idca.entryDiagnostics).then(r=>{
+   entryCache=r;entryReadAt=Date.now();return r;
+ }).finally(()=>{entryFlight=null;});
+ return entryFlight;
+}
+function entryContexts(raw){
+ const pairs=raw?.pairs;
+ if(!pairs||typeof pairs!=='object'||Array.isArray(pairs))return null;
+ return Object.fromEntries(Object.entries(pairs).map(([pair,x])=>{
+   if(!x||typeof x!=='object')return [pair,{pair,unavailable:true}];
+   const tb=x.trailingBuy||{};
+   return [pair,{
+    ...x,pair,regime:x.marketRegime??null,entryScore:num(x.confidenceScore),
+    confidenceGrade:x.confidenceGrade??null,
+    currentPrice:num(x.currentPrice),
+    atrpPct:num(x.atrPct),
+    // La API expresa caída positiva desde referencia y distancia requerida positiva.
+    dipDetectedPct:num(x.drawdownFromReferencePct),
+    requiredDipPct:num(x.requiredDistancePct),
+    reference:x.referenceMethod??null,referencePrice:num(x.referencePrice),
+    reboundSignal:tb.state??null,trailingBuy:tb,
+    entryDecision:x.decisionClass??null,
+    scoreBreakdown:x.familyScores||null,
+    hardBlocked:x.hardBlocked===true,
+    hardBlockers:Array.isArray(x.hardBlockers)?x.hardBlockers:[],
+    generatedAt:raw.generatedAt??x.timestamp??null,
+   }];
+ }));
+}
 const st = s => s==='ok'?'ok':(s==='unreachable'?'unavailable':s);
 const list = v => Array.isArray(v) ? v : (v?.items || v?.cycles || v?.orders || v?.rows || v?.data || []);
 
@@ -43,10 +80,10 @@ export function createApiProvider(){
   return {
     kind:'api',
     async idca(){
-      const [summary, controls, cycles, orders, history, pairs, events] = await Promise.all([
+      const [summary, controls, cycles, orders, history, pairs, events, entry] = await Promise.all([
         get(ROUTES.idca.summary), get(ROUTES.idca.controls),
         get(ROUTES.idca.cycles), get(ROUTES.idca.orders), get(ROUTES.idca.history),
-        get(ROUTES.idca.pairs), get(ROUTES.idca.events),
+        get(ROUTES.idca.pairs), get(ROUTES.idca.events), readEntryDiagnostics(),
       ]);
       const worst = [summary,controls].find(r=>r.state!=='ok');
       const status = wrap(controls.data, normEngineStatus);
@@ -59,7 +96,7 @@ export function createApiProvider(){
       const resourceStates={
         summary:st(summary.state),controls:st(controls.state),
         cycles:st(cycles.state),orders:st(orders.state),
-        history:st(history.state),pairs:st(pairs.state)
+        history:st(history.state),pairs:st(pairs.state),entryDiagnostics:st(entry.state)
       };
       // Un GET secundario fallido es parcial, no «0 ciclos» ni histórico vacío.
       const partial=!worst && [cycles,orders,history,pairs].some(r=>r.state!=='ok');
@@ -68,6 +105,7 @@ export function createApiProvider(){
         resourceStates,
         status,
         summary: wrap(summary.data, normIdcaSummary),
+        pairContexts: wrap(entry.state==='ok'?entryContexts(entry.data):null,x=>x,{ts:Date.now()}),
         cycles: wrap(cycles.state==='ok'?list(cycles.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
         orders: wrap(orders.state==='ok'?list(orders.data).map(normOrder).filter(Boolean):null, x=>x, {ts:Date.now()}),
         history: wrap(history.state==='ok'?list(history.data).map(normIdcaCycle).filter(Boolean):null, x=>x, {ts:Date.now()}),
