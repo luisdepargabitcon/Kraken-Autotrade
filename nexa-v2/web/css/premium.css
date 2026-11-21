@@ -537,3 +537,15 @@ body #screen{min-height:calc(100dvh - 145px)}
  .brand-tx b{font-size:12px}
  #pair-overlay .pin-card.nx-pair-simple{padding:22px 18px}
 }
+
+
+#pair-overlay .nx-pair-code-row{display:grid;grid-template-columns:minmax(0,1fr) 75px;
+  gap:7px;align-items:stretch;margin:0 0 6px}
+#pair-overlay .nx-pair-code-row>.code-inp{width:100%;min-width:0;height:53px;
+  text-align:left;font-family:inherit;font-size:14px;letter-spacing:0;margin:0;
+  border-radius:12px;padding:10px 13px}
+#pair-overlay .nx-pair-code-row>.code-inp::placeholder{font-size:12px;color:#8097b8;letter-spacing:0}
+#pair-overlay .nx-pair-paste{min-width:0;padding:0 10px;border-radius:12px;
+  border:1px solid #35557d;background:#152f4e;color:#bad8ff;font-weight:700;font-size:12px}
+#pair-overlay .nx-pair-paste:hover,#pair-overlay .nx-pair-paste:focus-visible{
+  background:#234b78;color:#fff;border-color:#6192cb}
