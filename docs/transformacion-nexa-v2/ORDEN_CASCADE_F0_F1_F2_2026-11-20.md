@@ -1,7 +1,8 @@
-# ORDEN ÚNICA PARA CASCADE — NEXA V2 DEFINITIVO
-**Revisión 7 · 21-11-2026 · PREVALECE SOBRE REVISIONES 1–6**
+# ORDEN ÚNICA PARA CASCADE — NEXA V2 DEFINITIVO · REDISEÑO PREMIUM + BIOMETRÍA
+**Revisión 8 · 21-11-2026 · PREVALECE SOBRE REVISIONES 1–6**
 **Rama exclusiva:** `feature/nexa-v2-transformacion-20261120` en `luisdepargabitcon/Kraken-Autotrade`.
 **Plan rector:** [PLAN_MAESTRO_2026-11-20.md](PLAN_MAESTRO_2026-11-20.md).
+**Diseño y acceso rev. 8 (OBLIGATORIO):** [REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md](REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md).
 **Control obligatorio de calidad:** [CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md](CHECKLIST_PARIDAD_TOTAL_IDCA_SPOT_GRID_AMA_2026-11-20.md).
 **Issue:** [#17](https://github.com/luisdepargabitcon/Kraken-Autotrade/issues/17).
 
@@ -23,7 +24,7 @@ El usuario **NO QUIERE DEMOS, PROTOTIPOS, VISTAS PREVIAS, PANEL SIMULADO NI APK 
 ## RUTA DE EJECUCIÓN: F0→F6 (ETAPAS INTERNAS, NO ENTREGAS DEMO)
 **F0 Seguridad/preservación.** Verificar rama, `main` y WIP ajeno; leer `AGENTS.md`, bitácoras, auditorías AUD-01/02/03 y análisis P0. No extraer secretos ni tocar servidor real. Registrar riesgos, backups y condiciones no verificables. Detectar riesgos de workflow antes de push.
 
-**F1 Inventario completo.** Auditar código actual, pantallas originales, APIs GET y mutables, contratos, configuración efectiva, movimientos históricos, 4 motores y módulos comunes. Reconciliar `MATRIZ_PARIDAD.csv` para cada campo con origen concreto, permisos, destino en Básico/Pro+web/APK y prueba. `mapeado` NO equivale a `verificado`. Reconstruir checklist C001–C086+ y corregir agrupaciones mal asignadas (p. ej. C041–C046 son GRID; C047–C051 son AMA; nunca usar pruebas de APK/PIN para certificarlos).
+**F1 Inventario completo.** Auditar código actual, pantallas originales, APIs GET y mutables, contratos, configuración efectiva, movimientos históricos, 4 motores y módulos comunes. Reconciliar `MATRIZ_PARIDAD.csv` para cada campo con origen concreto, permisos, destino en Básico/Pro+web/APK y prueba. `mapeado` NO equivale a `verificado`. Reconstruir checklist C001–C102+ y corregir agrupaciones mal asignadas (p. ej. C041–C046 son GRID; C047–C051 son AMA; nunca usar pruebas de APK/PIN para certificarlos).
 
 **F2+F3 Producto definitivo compartido.** Evolucionar el `nexa-v2/` ya creado, sin tirarlo ni crear una maqueta alternativa. Construir arquitectura web/Capacitor Android y read-models adaptados a respuestas reales del repositorio; implementar TODAS las pantallas y controles que existan en origen con seguridad en backend. El frontend no calcula resultados de trading en paralelo a los motores. Comprobar funcionalidad con servidores locales de prueba y pruebas contractuales, pero **sin modo DEMO como producto principal**. Si falta backend/endpoint, implementar en rama una solución segura aislada o dejar bloqueo concreto; no fingir integración real.
 
@@ -45,3 +46,11 @@ Cascade usa y actualiza por sí mismo [Checklist](CHECKLIST_PARIDAD_TOTAL_IDCA_S
 
 ## CRITERIO DE ENTREGA
 Una sola entrega de la **VERSIÓN DEFINITIVA**, con estado preciso: (a) producto web+APK desarrollado y QA local, (b) interfaz realmente integrada/verificada con contratos del código original, (c) conectividad real y URL administrativa segura pendientes de autorización si aún no permitidas. No links DEMO ni pre-releases DEMO como sustitutos. No desplegar ni operar por deducción; identificar permisos necesarios y entregar runbook reversible.
+
+
+## REV. 8 — NUEVA ORDEN EXPRESA DEL PROPIETARIO: UX Y ACCESO
+Leídas CINCO capturas del Pixel 9: pantalla actual rechazada por diseño poco profesional, encabezado oculto por status bar, exceso de tarjetas con «No disponible», tipografía/listas mal organizadas y formulario user/password. **El usuario prohíbe obligarle a escribir nombre de usuario/contraseña**. Debes IMPLEMENTAR el rediseño premium, con referencias de apps de trading actuales (Revolut X, Kraken Pro, Coinbase Advanced) pero creando identidad propia y sin copiar contenidos protegidos. Cada pantalla Básico/Pro debe ser útil y elegante, con toda la información original accesible.
+
+**Acceso obligatorio:** PIN personal elegido por el usuario como alternativa, huella dactilar y reconocimiento facial biométrico nativos cuando estén disponibles. Primer uso con vinculación segura del dispositivo a backend mediante código/QR de un solo uso y clave criptográfica; después entrada por PIN/biometría SIN usuario ni contraseña. Web mediante passkey/WebAuthn, también sin user/password. PIN y biometría locales por sí solos NO sustituyen autenticación/autorización de backend: mantener challenge/respuesta, sesión segura, roles, revocación y confirmación reforzada de órdenes. No implementar un PIN decorativo ni un login oculto con contraseña fija.
+
+**EJECUTAR INTEGRAMENTE** [REDISENO UX REV8](REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md), compilar nueva APK Android y verificarla en Pixel 9/emulador. Probar FACE/HUELLA reales cuando haya dispositivo compatible; nunca marcar funcionando sin evidencia. No reutilizar Release 0.2.0 como si incluyera estas mejoras. Antes de publicar APK, completar checklist C087–C102. Corregir también IDCA wrong-actions, BFF fail-open y otras P0 conocidas; no tocar VPS. Esta revisión prevalece sobre instrucciones que exijan formularios usuario/contraseña.
