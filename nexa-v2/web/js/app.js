@@ -378,7 +378,16 @@ async function refreshVisibleData(forceSession=false){
     render(); // Sin datos ficticios, pero NUNCA exigir código por timeout.
     return;
   }
-  try{await loadData();}catch{
+  try{
+    await loadData();
+    // El servidor puede reiniciarse y olvidar tokens temporales, aunque el móvil
+    // continúe registrado. Si devuelve 401, pedir nuevo challenge automáticamente.
+    const expiredRemotely=Object.values(state.enginesData).some(x=>x.state==='auth_required') ||
+      state.common.portfolio?.state==='auth_required';
+    if(expiredRemotely && state.deviceEnrolled && !state.repairRequired){
+      if(await ensureDeviceSession(true))await loadData(); // máximo un reintento
+    }
+  }catch{
     // El servidor puede estar temporalmente fuera de línea; conserva la identidad.
   }
   render();
