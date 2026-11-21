@@ -61,11 +61,22 @@ function candles(ctx,pair){
  l:n(val(c,'l','low')),c:n(val(c,'c','close')),v:n(val(c,'v','volume'))}))
  .filter(c=>[c.o,c.h,c.l,c.c].every(x=>x!==null)&&c.h>=c.l);
 }
+function sparkline(ctx,pair){
+ const cs=candles(ctx,pair).slice(-32),values=cs.map(x=>x.c);
+ if(values.length<3)return '<span class="nxh-spark-absent">Sin velas verificables</span>';
+ const lo=Math.min(...values),hi=Math.max(...values),range=hi-lo||1,step=168/(values.length-1);
+ const points=values.map((v,i)=>(i*step).toFixed(1)+','+(46-(v-lo)/range*39).toFixed(1)).join(' ');
+ const up=values.at(-1)>=values[0],stroke=up?'#5bd9a6':'#ff8195';
+ return '<svg class="nxh-sparkline" viewBox="0 0 170 51" role="img" aria-label="Evolución real de '+esc(pair)+' en las últimas '+
+   values.length+' velas" preserveAspectRatio="none"><polyline fill="none" stroke="'+stroke+
+   '" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="'+points+'"/></svg>';
+}
 function marketTile(ctx,pair){
  const q=market(ctx,pair),tone=n(q.change)===null?'':q.change<0?'negative':'positive';
  return '<button type="button" data-asset="'+pair+'" class="nxh-market-tile '+tone+'"><span><b>'+pair.slice(0,3)+'</b>'+
  '<small>'+out(q.valid?'API · '+(q.m.provider||'mercado'):'Cotización no verificada')+'</small></span>'+
- '<strong>'+usd(q.price)+'</strong><span class="nxh-market-foot"><b>'+percent(q.change)+'</b><em>Indicadores y operaciones ↗</em></span></button>';
+ '<strong>'+usd(q.price)+'</strong>'+sparkline(ctx,pair)+
+ '<span class="nxh-market-foot"><b>'+percent(q.change)+'</b><em>Indicadores y operaciones ↗</em></span></button>';
 }
 function positionRow(x){
  const tone=n(x.gain)===null?'unknown':n(x.gain)<0?'negative':'positive';
@@ -84,6 +95,7 @@ function engineLinks(ctx){
 export function renderDashboard(ctx){
  const s=collectPositions(ctx),summary=ctx.data?.portfolio?.data?.summary||{};
  const nav=ctx.authenticated&&ctx.data?.portfolio?.state==='ok'?val(summary,'navUsd'):null;
+ const corr=pearson(ctx);
  const events=ctx.data?.activity?.data?.events;
  return '<div class="nxh-root"><header class="nxh-title"><span>NEXA · VISIÓN GLOBAL</span><h1>Tu bot, de un vistazo</h1>'+
  '<p>Mercado, exposición y movimientos de todas tus estrategias.</p></header>'+
@@ -93,7 +105,7 @@ export function renderDashboard(ctx){
  '<div class="nxh-hero-stats">'+metric('Patrimonio',usd(nav))+metric('Motores','4')+
  metric('Estado',ctx.authenticated?'Conectado':'Sin sesión')+'</div></section>'+
  section('MERCADOS','BTC y ETH',go('market','Mercados'))+
- '<div class="nxh-market-grid">'+marketTile(ctx,'BTC/USD')+marketTile(ctx,'ETH/USD')+'</div>'+
+ '<div class="nxh-market-grid">'+marketTile(ctx,'BTC/USD')+marketTile(ctx,'ETH/USD')+'</div>'+  '<div class="nxh-corr-mini"><span>Relación BTC ↔ ETH</span><strong>'+(n(corr.r)===null?'Pendiente':fmtNum(corr.r,{dec:2}))+'</strong><small>'+(corr.count<8?'Sin suficientes velas sincronizadas':corr.count+' intervalos de 15m')+'</small><button data-asset="BTC/USD">Analizar ↗</button></div>'+
  section('OPERATIVA','Posiciones abiertas',go('positions','Todas las posiciones'))+
  '<div class="nxh-position-list">'+(s.entries.length?s.entries.slice(0,3).map(positionRow).join(''):
  '<p class="nxh-empty">Sin posiciones confirmadas en las fuentes recibidas.</p>')+'</div>'+
@@ -221,6 +233,13 @@ export function renderCycleManager(ctx){
  '<button data-manual-buy="'+out(c.id)+'" class="nxh-manage-action">Registrar compra externa ↗</button>'+
  act('idca.closeCycle',params,'Cerrar manualmente')+
  (c.isManualCycle===true?act('idca.deleteCycle',params,'Eliminar ciclo manual'):'')+'</div>')+
- '<p class="nxh-caution">Registrar compra externa NO envía una compra al exchange. Solo salida está disponible para ciclos importados. El servidor puede rechazar acciones aunque aparezcan en la interfaz.</p>'+
+ '<div class="nxh-global-idca"><h2>Control general IDCA</h2><p>El estado global es distinto del estado de este ciclo. Estas acciones afectan a todo IDCA.</p>'+
+ (typeof d.status?.globalTradingPause==='boolean'?
+   act('idca.pauseGlobal',{pause:!d.status.globalTradingPause},d.status.globalTradingPause?'Reanudar entradas IDCA':'Pausar entradas IDCA'):
+   '<span>Estado de pausa global sin verificar</span>')+
+ (Array.isArray(d.status?.assetPairs)?d.status.assetPairs.filter(x=>typeof x.enabled==='boolean').map(x=>
+   act('idca.togglePair',{pair:x.pair,enabled:!x.enabled},(x.enabled?'Desactivar ':'Activar ')+x.pair)).join(''):'')+
+ act('idca.emergencyClose',{},'CIERRE DE EMERGENCIA IDCA')+'</div>'+
+'<p class="nxh-caution">Registrar compra externa NO envía una compra al exchange. Solo salida está disponible para ciclos importados. El servidor puede rechazar acciones aunque aparezcan en la interfaz.</p>'+
  go('engine:idca','Volver a IDCA')+'</div>';
 }
