@@ -57,7 +57,8 @@ test('Mercado cambia de composición, vela gráfica sólo si OHLCV válido',()=>
  const pro=renderMarketPremium({...ready,mode:'pro'});
  assert.match(basic,/nxp-market-price/);
  assert.match(pro,/nxp-market-terminal/);
- assert.match(pro,/data-candle-does-not-exist|class="chart"/);
+ assert.match(pro,/nxp-chart-interactive/);
+ assert.match(pro,/data-candle-tip/);
  assert.match(pro,/RSI 14/);
  assert.match(pro,/data-ui="marketPair:ETH\/USD"/);
 });
