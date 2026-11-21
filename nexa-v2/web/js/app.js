@@ -437,11 +437,14 @@ async function doPair(){
     state.deviceEnrolled=true;
     state.repairRequired=false;
     $('pair-overlay').classList.add('hidden');
-    const s=await obtainSession();
+    let s;
+    try{s=await obtainSession();}catch{s={ok:false};}
     if(s.ok){
       session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,
         roles:s.roles,csrf:s.csrf});
     }
+    // El código se consume durante el alta, no durante la sesión. Incluso si el
+    // primer challenge falla por red, el dispositivo ya está registrado.
     await refreshVisibleData();
     scheduleRefresh();
   }catch(err){
