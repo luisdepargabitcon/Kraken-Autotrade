@@ -9,6 +9,9 @@ import { esc, fmtAge } from './util.js';
 import { clear, h, badge, openModal } from './ui.js';
 import * as S from './screens.js';
 
+// Mark native Android WebView to reserve system status-bar inset reliably.
+if(window.Capacitor?.isNativePlatform?.()) document.documentElement.classList.add('nexa-native');
+
 // ---------- Estado global ----------
 const state = {
   mode: localStorage.getItem('nexa.mode') || 'pro',      // basic | pro  (solo presentación)
@@ -118,13 +121,13 @@ function renderStatusline(){
   const states = Object.values(state.enginesData).map(e=>e.state);
   const bad = states.includes('unavailable')||states.includes('unreachable')||states.includes('error');
   const dotCls = !state.online ? 'err' : (s ? (bad?'warn':'') : 'warn');
-  const authTxt = s ? `sesión ${esc(s.user||'')}` : 'sin sesión';
+  const authTxt = s ? 'Sesión protegida' : 'Sin vincular';
   $('statusline').innerHTML =
     `<span class="dot ${dotCls}"></span>`+
-    `<span>API ${esc(CONFIG.apiBase)}</span>`+
+    `<span>${s?'NEXA conectado':'NEXA · conexión pendiente'}</span>`+
     `<span>·</span><span>${authTxt}</span>`+
     `<span>·</span><span>vista ${state.mode==='basic'?'Básico':'Pro'}</span>`+
-    `<span>·</span><span>${state.online?'en línea':'offline'}</span>`+
+    `<span>·</span><span>${state.online?'red disponible':'sin red'}</span>`+
     (bad?`<span>·</span><span class="warn-tx">datos parciales/no disponibles</span>`:'');
 }
 
