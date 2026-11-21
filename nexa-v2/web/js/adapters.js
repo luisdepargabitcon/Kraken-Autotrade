@@ -275,17 +275,22 @@ export function normAmaMandate(raw){
 
 export function normMarket(raw){
   if(!raw || typeof raw!=='object') return null;
+  // NO descartar los indicadores ni las claves originales del mercado.
+  // change24h (sin unidad explícita) NO equivale necesariamente a porcentaje.
+  const explicitPct=num(pick(raw,'change24hPct','pct24h','changePct24h','percentChange24h'));
   return {
+    ...raw,
     pair: pick(raw,'pair','symbol'),
     price: num(pick(raw,'price','last','lastPrice')),
     bid: num(pick(raw,'bid','bestBid')),
     ask: num(pick(raw,'ask','bestAsk')),
-    change24h: num(pick(raw,'change24h','pct24h','change')),
+    change24h: num(pick(raw,'change24h','change','pct24h')),
+    change24hPct: explicitPct,
     volume: num(pick(raw,'volume','volume24h','vol','vol24h')),
     candles: raw.candles || raw.ohlcv || null,
     indicators: raw.indicators || null,
     provider: pick(raw,'provider','source','exchange'),
-    ts: pick(raw,'ts','timestamp') || Date.now(),
+    ts: pick(raw,'ts','timestamp') || null,
   };
 }
 
