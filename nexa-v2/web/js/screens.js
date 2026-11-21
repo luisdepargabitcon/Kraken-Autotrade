@@ -307,7 +307,7 @@ export function idcaHistory(ctx){
        '<span class="nx-idca-history-badges"><em class="nx-idca-mode '+(mode==='live'?'is-live':'is-sim')+'">'+(mode?esc(mode.toUpperCase()):'MODO SIN VERIFICAR')+'</em>'+
        (imported?'<em>IMPORTADO</em>':'')+(manual?'<em>MANUAL</em>':'')+'</span>'+
        '<small>'+date+' · '+esc(dur)+' · '+idcaPlain(c.buyCount)+' compras</small>'+
-       '<small>'+esc(human(c.closeReason||c.exitType))+'</small></span>'+
+       '<small>'+esc(human(c.closeReason||c.exitType))+'</small>'+ (c.closeReason?'<small class="nx-idca-technical-reason">Código: '+esc(String(c.closeReason))+'</small>':'')+'</span>'+
      '<span class="nx-idca-history-money"><strong>'+amount(value)+'</strong>'+
       (pct?'<b>'+esc(pct)+'</b>':'<small>'+phrase+'</small>')+'</span>'+
      '<span class="nx-idca-history-arrow" aria-hidden="true">›</span></button>'+
