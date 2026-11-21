@@ -204,10 +204,11 @@ function proMarket(ctx){
       <div class="nxp-vertical-stats">${block('Mejor BID',active?money(t.bid):'—')}
       ${block('Mejor ASK',active?money(t.ask):'—')}${block('Spread',active?money(t.spread):'—')}</div>
     </section>
-    <section class="nxp-terminal-panel">${section('DATOS','Origen y frescura')}
+    <section class="nxp-terminal-panel">${section('Fuentes de datos','Origen y frescura')}
       ${block('Proveedor',active?value(m.provider||m.source):'—')}
       ${block('Última lectura',active&&m.ts?esc(fmtAge(m.ts)):'—')}
       ${block('Régimen',active?value(ind.regime):'—')}
+      ${active&&Array.isArray(m.sources||m.externalSources)&&(m.sources||m.externalSources).length?`<div class="nxp-source-list">`+(m.sources||m.externalSources).map(x=>`<div class="nxp-source-row"><span>${esc(x.name||x.id||'fuente')}</span><small>${esc(x.state||x.role||'')}${x.lastOk?' · '+esc(fmtAge(x.lastOk)):''}</small></div>`).join('')+`</div>`:''}
     </section>
     ${!active?offline(ctx,'Precios, velas, indicadores y fuentes'):''}
     <section class="nxp-terminal-panel">${section('CONTEXTO','Aplicación automática')}
@@ -461,7 +462,7 @@ export function renderEnginePremium(ctx){
   const head=engineHeader(ctx,id);
   if(ctx.mode==='basic')return wrap(`${head}<div class="nxp-basic-engine-unlinked">
     <div class="nxp-unlinked-symbol">${ico(id==='grid'?'grid':'chart')}</div>
-    <h2>${ctx.authenticated?'Sin datos verificados del motor':'Este motor aún no está vinculado'}</h2><p>${ctx.authenticated?'El servidor no ha devuelto un estado válido. No se interpreta como apagado, sin ciclos ni LIVE.':'Los ciclos, resultados y el estado real aparecerán tras autorizar el dispositivo. No se considera detenido ni vacío.'}</p>
+    <h2>${ctx.authenticated?'Sin datos verificados del motor':'Este motor aún no está vinculado'}</h2><p>${ctx.authenticated?'El servidor no ha devuelto un estado válido. Nada se asume todavía: ni parado, ni vacío, ni operando.':'Los ciclos, resultados y el estado real aparecerán tras autorizar el dispositivo. Nada se asume todavía.'}</p>
     <button class="nxp-primary" data-app="${ctx.authenticated?'refresh':'pair-device'}">${ctx.authenticated?'Reintentar lectura':'Vincular dispositivo'}</button></div>`,'nxp-mode-basic nxp-engine');
   return wrap(`${head}${engineNav(ctx)}
    <div class="nxp-engine-layout"><div class="nxp-main-column">
@@ -525,7 +526,10 @@ export function renderPortfolioPremium(ctx,legacy){
  return ctx.mode==='basic'?basicPortfolio(ctx):proPortfolio({...ctx,renderPortfolioLegacy:legacy});
 }
 export function renderActivityPremium(ctx,legacy){
- const events=raw(ctx,'activity').events||[],ready=goodCommon(ctx,'activity');
+ const all=raw(ctx,'activity').events||[],ready=goodCommon(ctx,'activity');
+ const f=ctx.ui?.activityFilter||{};
+ const events=all.filter(e=>{ const sev=e.severity||e.level||e.sev;
+   return (!f.sev||f.sev==='all'||sev===f.sev) && (!f.engine||f.engine==='all'||(e.engine||'')===f.engine); });
  if(ctx.mode==='basic')return wrap(`${section('SEGUIMIENTO','Actividad reciente')}
    ${ready?eventList(events,12):offline(ctx,'actividad y alertas del bot')}
    ${link('engines','Ver motores')}</div>`,'nxp-mode-basic nxp-activity');

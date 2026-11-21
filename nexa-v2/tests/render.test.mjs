@@ -49,13 +49,13 @@ test('AMA panel muestra REAL cerrado y readiness', ()=>{
 });
 
 test('Mercado Pro incluye fuentes e indicadores; nunca ceros por ausencia', ()=>{
-  const html = S.renderMarket({mode:'pro', ui:{marketPair:'BTC/USD'}, data:{market:{data:fixtures.DEMO_MARKET}}});
+  const html = S.renderMarket({mode:'pro', authenticated:true, ui:{marketPair:'BTC/USD'}, data:{market:{state:'ok',data:fixtures.DEMO_MARKET}}});
   for(const s of ['Fuentes de datos','RSI','CoinGlass','Whale Alert','No disponible'===undefined?'':''])
     if(s) assert.ok(html.includes(s), `falta "${s}"`);
 });
 
 test('Actividad filtra por severidad', ()=>{
-  const ctx = ctxFor(null,'pro'); ctx.data={activity:{data:fixtures.DEMO_ACTIVITY}};
+  const ctx = ctxFor(null,'pro'); ctx.authenticated=true; ctx.data={activity:{state:'ok',data:{events:fixtures.DEMO_ACTIVITY}}};
   ctx.ui.activityFilter={sev:'err',engine:'all'};
   const html = S.renderActivity(ctx);
   assert.ok(html.includes('Timeout fuente macro'));
@@ -63,7 +63,7 @@ test('Actividad filtra por severidad', ()=>{
 });
 
 test('FISCO es sección restringida sin datos personales', ()=>{
-  const html = S.renderFisco(ctxFor({fisco:{state:'ok',data:fixtures.DEMO_FISCO}},'pro'));
+  const html = S.renderFisco({...ctxFor({fisco:{state:'ok',data:fixtures.DEMO_FISCO}},'pro'),authenticated:true});
   assert.ok(html.includes('restringida'));
   assert.ok(html.includes('Agregados'));
 });

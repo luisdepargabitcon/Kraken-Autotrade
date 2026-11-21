@@ -70,3 +70,8 @@ Formato: ID · fase · gravedad · descripción · causa · reparación · nueva
 | INC-012 | RESUELTA | Rev7 | INC-010 nav inferior 480×800 | `min-height:44px` en `.bottomnav a` + min-height barra | 2026-11-21 |
 | INC-013 | ABIERTA | Entorno | Emulador AOSP ATD API34 inestable en WHPX: arranques que quedan `offline`/crash MMIO; requiere varios reintentos | Receta que funciona: `-accel auto -gpu swiftshader_indirect -memory 1024 -no-snapshot -no-audio`; disco C≥1.6G libre, dataPartition=1400M | 2026-11-21 |
 | INC-014 | ABIERTA | Rev7 | Verificación C-*-PARCIAL contra API real del bot | BLOQUEADA POR AUTORIZACIÓN (backend vivo/VPS) — ver DESPLIEGUE.md | 2026-11-21 |
+
+## INC-014 — Rev11 QA (2026-11-21)
+- Tests 51/51 tras corregir 4 regresiones: texto "detenido/sin ciclos/LIVE" en estado no verificado (premium.js), "Fuentes de datos" en Mercado Pro, ctx authenticated en tests render, filtro severidad en lista premium Actividad.
+- APK 0.4.0 (VC4) compilada, firmada cert R8, SHA-256 `d68025a53764921b62285a091630806ceb541b3e14fc55498c3947c7296d30d7`, 5.68 MB. Instalada emulador API34: setup PIN 6 dígitos + confirmación, overlay de vinculación, nav Motores→IDCA premium, subpestañas conservadas, estados honestos. Screenshot negro (headless). Pixel 9 físico no disponible.
+- Caché Gradle corrupta por disco lleno: borrado `caches/8.14.3` completo y rebuild online OK.
