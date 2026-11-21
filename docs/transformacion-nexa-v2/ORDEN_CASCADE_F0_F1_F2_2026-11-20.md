@@ -111,3 +111,23 @@ El código se ha implementado en la rama; documento ejecutable [FIX_UX_REV13_AJU
 **El propietario rechaza expresamente tener que pedir otro código cada vez que quiera usar la APK.** Se confirma: el código de 10 min es SOLO para alta inicial de un teléfono. Una vez registrado, la clave persistente P-256 en IndexedDB identifica al dispositivo; al desbloquear con PIN/huella la APK obtiene una sesión nueva por challenge sin código. La sesión de servidor dura 30 min, pero la aplicación debe renovarla automáticamente antes de vencer, ante 401 remoto, tras reconexión y al volver a primer plano; jamás solicitar nuevo código por caídas de red o expiración ordinaria. Nuevo código únicamente para dispositivo nuevo, datos de aplicación borrados o revocación explícita.
 
 **Rev14 YA implementada en app.js/premium.js/sw.js**, con 9 tests en `nexa-v2/tests/session-persistence.test.mjs`, ejecutados 9/9 en arnés V8 con dependencias simuladas. Seguir [REV14_VINCULACION_PERMANENTE_SESIONES_AUTOMATICAS_2026-11-21.md](REV14_VINCULACION_PERMANENTE_SESIONES_AUTOMATICAS_2026-11-21.md). Cascade debe ejecutar tests Node, QA de rotación después de 30 min y apagado/reinicio, compilar APK nueva y publicar Release+SHA; conservar credencial del usuario y NO tocar VPS/trading/DB/`main`. La APK 0.5.1 publicada antes de esta corrección no incluye Rev14.
+
+
+## PRIORIDAD BLOQUEANTE INC-019 — PARIDAD IDCA REAL + UX FINANCIERA (21/11/2026)
+
+**NEXA 0.5.4 SIGUE SIN APROBAR:** en capturas del propietario, el IDCA original muestra resultados por ciclo, PnL y %, colores, ganancias/pérdidas, confianza, ATRP, score y rebote, mientras NEXA prioriza nombres técnicos y no consulta todas las fuentes disponibles; el histórico SPOT vacío tampoco demuestra ausencia de operaciones.
+
+**Orden a Cascade:** ejecutar íntegramente [INC019_PARIDAD_IDCA_UX_DATOS_2026-11-21.md](INC019_PARIDAD_IDCA_UX_DATOS_2026-11-21.md). La rama incorpora una primera implementación de fichas de resultado-first, tarjetas de historial IDCA con PnL + porcentaje, estados y motivo resaltados, panel real de diagnóstico de entrada BTC/ETH, consulta paginada de histórico global y rutas GET de BFF explícitamente acotadas, todo **SIN DESPLEGAR**. El histórico global **no se puede etiquetar como solo SPOT** sin evidencias por registro. Mantener cambios en feature branch, no main. La lectura \`/institutional-dca/entry-diagnostics\` se cachea 180s por coste potencial.
+
+**Checklist obligatorio DE CASCADE (NO DEL USUARIO):**
+- [ ] Revisar los cambios de la rama y ejecutar la batería Node completa, incluidos \`idca-first-real-data.test.mjs\`; arreglar fallos reales sin tocar las afirmaciones para forzar PASS.
+- [ ] Obtener datos actuales read-only y comparar, a la misma hora, 36 ciclos y los valores de los screenshots con el IDCA original. No congelar cifras históricas como si fueran LIVE vigentes.
+- [ ] Auditar \`GET /api/trades/closed\`: respuesta, esquema, paginación, total, clasificación de origen, PnL real. Mantener 403/partial informativos hasta tener ruta autorizada y desplegada. No mezclar SPOT/GRID/IDCA.
+- [ ] Auditar \`GET /api/institutional-dca/entry-diagnostics\`, score, grado, ATRP, caída y rebote por par y signs/unidades; controlar coste de petición y frescura.
+- [ ] Verificar que en Básico/Pro IDCA se ven **antes que nada** PnL agregado, ganancias, pérdidas, neutros, insuficientes, resumen por ciclo, % y color; pulsar abre ficha con resumen, timeline, compras/ventas, fees y motivo, datos técnicos plegados.
+- [ ] Revisar de forma análoga SPOT, GRID, AMA, cartera, actividad; conservar profundidad original y no falsificar 0 ni importes de patrimonio.
+- [ ] Probar pantallas Android 360–412dp/Pixel 9 vertical y horizontal, accesibilidad, scroll, back/foco, detalle en un toque, paginación, caché, data freshness.
+- [ ] Antes de publicar una nueva APK, instalarla y comprobar con datos read-only y capturas. Publicación prerelease con SHA y SIN APROBAR hasta aprobación real del propietario.
+- [ ] **NO DESPLEGAR** ni modificar VPS, BFF actualmente operativo, firewalls, motores, DB, transacciones LIVE, FISCO roles, credenciales o \`main\` sin permiso expreso. Documentar bloqueos con el paso exacto de autorización que requieren.
+
+**Importante:** se hicieron comprobaciones de sintaxis y humo de presentación con datos sintéticos en el entorno de integración, **no pruebas completas Node/Pixel 9/VPS**. No declarar terminado un producto que aún no pasa esa QA.
