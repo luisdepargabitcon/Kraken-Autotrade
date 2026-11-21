@@ -112,73 +112,72 @@ export function normEngineStatus(raw){
   };
 }
 
+// Adaptadores no destructivos. Alias canónicos sin perder la información original.
 export function normIdcaSummary(raw){
-  if(!raw || typeof raw!=='object') return null;
-  return {
-    pairs: raw.pairs || raw.assetConfigs || null,
-    mode: pick(raw,'mode','schedulerMode'),
-    capitalAllocated: num(pick(raw,'capitalAllocated','allocatedCapitalUsd','allocatedUsd','allocated','totalCapital')),
-    capitalUsed: num(pick(raw,'capitalUsed','capitalUsedUsd','used','capitalInUse')),
-    capitalFree: num(pick(raw,'capitalFree','capitalFreeUsd','free','available')),
-    realizedPnl: num(pick(raw,'realizedPnl','realizedPnlUsd','pnlRealized','realized')),
-    unrealizedPnl: num(pick(raw,'unrealizedPnl','unrealizedPnlUsd','pnlUnrealized','unrealized')),
-    activeCycles: pick(raw,'activeCyclesCount','activeCycles','liveCyclesCount','openCycles','cycles'),
-    buysToday: num(pick(raw,'buysToday','purchasesToday')),
-    sellsToday: num(pick(raw,'sellsToday','salesToday')),
-    strategyScore: num(pick(raw,'strategyScore','score','entryScore')),
-    trailingActive: pick(raw,'trailingActiveCount','trailingActive','trailing'),
-    smartMode: pick(raw,'smartModeEnabled','smartMode','smart'),
-    ts: Date.now(),
-  };
+ if(!raw||typeof raw!=='object')return null;
+ const allocated=num(pick(raw,'capitalAllocatedUsd','allocatedCapitalUsd','capitalAllocated','allocatedUsd','allocated','totalCapital'));
+ const used=num(pick(raw,'capitalUsedUsd','capitalUsed','used','capitalInUse'));
+ const free=num(pick(raw,'capitalFreeUsd','capitalFree','free','available'));
+ const realized=num(pick(raw,'realizedPnlUsd','realizedPnl','pnlRealized','realized'));
+ const unrealized=num(pick(raw,'unrealizedPnlUsd','unrealizedPnl','pnlUnrealized','unrealized'));
+ const active=num(pick(raw,'activeCyclesCount','activeCycles','liveCyclesCount','openCycles'));
+ return {...raw,pairs:pick(raw,'pairs','assetConfigs'),
+  capitalAllocatedUsd:allocated,allocatedCapitalUsd:allocated,capitalAllocated:allocated,
+  capitalUsedUsd:used,capitalUsed:used,capitalFreeUsd:free,capitalFree:free,
+  realizedPnlUsd:realized,realizedPnl:realized,
+  unrealizedPnlUsd:unrealized,unrealizedPnl:unrealized,
+  activeCyclesCount:active,activeCycles:active,
+  buysToday:num(pick(raw,'buysToday','purchasesToday')),
+  sellsToday:num(pick(raw,'sellsToday','salesToday')),
+  trailingActiveCount:num(pick(raw,'trailingActiveCount','trailingActive','trailing')),
+  smartModeEnabled:pick(raw,'smartModeEnabled','smartMode','smart'),
+  ts:Date.now()};
 }
-
 export function normIdcaCycle(raw){
-  if(!raw || typeof raw!=='object') return null;
-  return {
-    id: pick(raw,'id','cycleId'),
-    pair: pick(raw,'pair','symbol','asset'),
-    mode: pick(raw,'mode'),
-    startedAt: pick(raw,'startedAt','openedAt','createdAt','startTs'),
-    buys: num(pick(raw,'buys','buyCount','numBuys','purchases')),
-    anchor: num(pick(raw,'anchor','cycleAnchor','anchorPrice')),
-    entryBase: num(pick(raw,'entryBase','baseEntry','base')),
-    avgPrice: num(pick(raw,'avgPrice','avgEntryPrice','averagePrice','meanPrice')),
-    qty: num(pick(raw,'qty','totalQuantity','quantity','amount')),
-    capitalUsed: num(pick(raw,'capitalUsed','capitalUsedUsd','capital','invested')),
-    capitalReserved: num(pick(raw,'capitalReservedUsd','capitalReserved')),
-    currentPrice: num(pick(raw,'currentPrice','lastPrice')),
-    marketValue: num(pick(raw,'marketValue','value')),
-    pnlUsd: num(pick(raw,'pnlUsd','unrealizedPnlUsd','realizedPnlUsd','pnl','profitUsd')),
-    pnlPct: num(pick(raw,'pnlPct','unrealizedPnlPct','pnlPercent','profitPct')),
-    pnlNet: num(pick(raw,'pnlNet','realizedPnlUsd','netPnl')),
-    drawdown: num(pick(raw,'drawdown','dd')),
-    tpTarget: num(pick(raw,'tpTarget','tpTargetPrice','targetTp','tp')),
-    tpTargetPct: num(pick(raw,'tpTargetPct')),
-    tpBase: pick(raw,'tpBase','tpRef'),
-    nextEntry: num(pick(raw,'nextEntry','nextBuy','nextDca')),
-    breakEven: pick(raw,'breakEven','be'),
-    trailing: pick(raw,'trailing','trailingPct','trailingStop'),
-    timeStop: pick(raw,'timeStop','timeStopRule'),
-    status: pick(raw,'status','state'),
-  };
+ if(!raw||typeof raw!=='object')return null;
+ const quantity=num(pick(raw,'totalQuantity','quantity','qty','amount'));
+ const invested=num(pick(raw,'capitalUsedUsd','capitalUsed','capital','invested'));
+ const avg=num(pick(raw,'avgEntryPrice','avgPrice','averagePrice','meanPrice'));
+ const count=num(pick(raw,'buyCount','buys','numBuys','purchases'));
+ return {...raw,id:pick(raw,'id','cycleId'),pair:pick(raw,'pair','symbol','asset'),
+  startedAt:pick(raw,'startedAt','openedAt','createdAt','startTs'),
+  closedAt:pick(raw,'closedAt','endedAt','closedTs','exitAt'),
+  totalQuantity:quantity,qty:quantity,buyCount:count,buys:count,
+  capitalUsedUsd:invested,capitalUsed:invested,
+  capitalReservedUsd:num(pick(raw,'capitalReservedUsd','capitalReserved')),
+  avgEntryPrice:avg,avgPrice:avg,
+  cycleAnchorPrice:num(pick(raw,'cycleAnchorPrice','cycleAnchor','anchorPrice','anchor')),
+  basePrice:num(pick(raw,'basePrice','entryBase','baseEntry','base')),
+  currentPrice:num(pick(raw,'currentPrice','lastPrice')),
+  nextBuyPrice:num(pick(raw,'nextBuyPrice','nextEntry','nextBuy','nextDca')),
+  tpTargetPrice:num(pick(raw,'tpTargetPrice','tpTarget','targetTp','tp')),
+  tpTargetPct:num(pick(raw,'tpTargetPct')),
+  unrealizedPnlUsd:num(pick(raw,'unrealizedPnlUsd','unrealizedPnl')),
+  realizedPnlUsd:num(pick(raw,'realizedPnlUsd','netPnl','pnlNet')),
+  realizedPnlPct:num(pick(raw,'realizedPnlPct','realizedPct')),
+  unrealizedPnlPct:num(pick(raw,'unrealizedPnlPct','pnlPct')),
+  closeReason:pick(raw,'closeReason','exitType','reason'),
+  status:pick(raw,'status','state'),
+  breakEven:pick(raw,'breakEven','be'),trailing:pick(raw,'trailing','trailingStop'),
+  timeStop:pick(raw,'timeStop','timeStopRule')};
 }
-
 export function normOrder(raw){
-  if(!raw || typeof raw!=='object') return null;
-  return {
-    id: pick(raw,'id','orderId'),
-    cycleId: pick(raw,'cycleId','cycle'),
-    ts: pick(raw,'ts','timestamp','executedAt','createdAt'),
-    side: pick(raw,'side','type'),
-    type: pick(raw,'orderType','execType','kind'),
-    price: num(pick(raw,'price','avgPrice','fillPrice','avgFillPrice')),
-    qty: num(pick(raw,'qty','quantity','volume','amount')),
-    value: num(pick(raw,'value','netValueUsd','grossValueUsd','notional','cost')),
-    fee: num(pick(raw,'fee','feesUsd','commission')),
-    slippage: num(pick(raw,'slippage','slippageUsd','slippagePct','slip')),
-    reason: pick(raw,'humanReason','reason','triggerReason','motivo','cause','trigger'),
-    result: pick(raw,'result','executionStatus','outcome'),
-  };
+ if(!raw||typeof raw!=='object')return null;
+ const side=pick(raw,'side'),price=num(pick(raw,'price','avgPrice','fillPrice','avgFillPrice'));
+ const quantity=num(pick(raw,'quantity','qty','volume','amount'));
+ const gross=num(pick(raw,'grossValueUsd','valueUsd','value','notional','cost'));
+ const net=num(pick(raw,'netValueUsd'));
+ const fee=num(pick(raw,'feesUsd','feeUsd','fee','commission'));
+ const slipUsd=num(pick(raw,'slippageUsd','slippage'));
+ return {...raw,id:pick(raw,'id','orderId'),cycleId:pick(raw,'cycleId','cycle'),
+   ts:pick(raw,'executedAt','ts','timestamp','createdAt'),
+   side:typeof side==='string'?side.toUpperCase():null,
+   type:pick(raw,'orderType','execType','kind','type'),
+   price,quantity,qty:quantity,valueUsd:gross,grossValueUsd:gross,
+   netValueUsd:net,feeUsd:fee,feesUsd:fee,
+   slippageUsd:slipUsd,slippagePct:num(pick(raw,'slippagePct')),
+   reason:pick(raw,'triggerReason','humanReason','reason','motivo','cause','trigger'),
+   mode:pick(raw,'mode'),status:pick(raw,'executionStatus','status','result','outcome')};
 }
 
 export function normGridCycle(raw){
