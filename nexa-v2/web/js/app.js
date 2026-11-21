@@ -224,7 +224,7 @@ function pinInit(){
   $('pair-paste-btn').addEventListener('click',async()=>{
     try{
       const text=await navigator.clipboard.readText();
-      const code=String(text||'').replace(/[\\s-]/g,'').trim().toUpperCase();
+      const code=String(text||'').replace(/[\s-]/g,'').trim().toUpperCase();
       if(!/^[0-9A-F]{24}$/.test(code)){
         $('pair-err').textContent='El portapapeles no contiene un código válido de 24 caracteres.';
         return;
