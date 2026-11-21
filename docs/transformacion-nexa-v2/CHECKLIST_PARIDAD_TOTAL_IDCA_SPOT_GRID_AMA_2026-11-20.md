@@ -8,7 +8,7 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 
 1. Leer **primero y de forma íntegra** el [PLAN MAESTRO F0–F6](PLAN_MAESTRO_2026-11-20.md) y la [ORDEN OPERATIVA](ORDEN_CASCADE_F0_F1_F2_2026-11-20.md). Ejecutar el plan completo; el checklist **no sustituye** sus entregables, prioridades, dependencias ni restricciones.
 2. En F0 inicializar `docs/transformacion-nexa-v2/seguimiento/ESTADO_FASES.md`, `MATRIZ_PARIDAD.csv` (sin datos financieros personales), `EVIDENCIAS_CHECKLIST.md` y `INCIDENCIAS.md`. Marcar fases F0–F6 como PENDIENTE / EN CURSO / VALIDADA LOCALMENTE / PARCIAL / BLOQUEADA POR AUTORIZACIÓN. Actualizar después de cada cambio relevante.
-3. Los controles enumerados C001–C112 (y extensiones) son **responsabilidad de Cascade**: para cada una registrar en `EVIDENCIAS_CHECKLIST.md` ID, fase, fuente y pantalla de origen, implementación/destino, prueba o reproducción, resultado, archivo/commit/captura si existe y estado: **VERIFICADA / FALLIDA / PENDIENTE / NO APLICA (motivo demostrado) / BLOQUEADA POR AUTORIZACIÓN**.
+3. Los controles enumerados C001–C121 (y extensiones) son **responsabilidad de Cascade**: para cada una registrar en `EVIDENCIAS_CHECKLIST.md` ID, fase, fuente y pantalla de origen, implementación/destino, prueba o reproducción, resultado, archivo/commit/captura si existe y estado: **VERIFICADA / FALLIDA / PENDIENTE / NO APLICA (motivo demostrado) / BLOQUEADA POR AUTORIZACIÓN**.
 4. Solo transformar `- [ ]` en `- [x]` si existe prueba verificable satisfactoria y toda la comprobación se cumplió. No marcar por suposición, por maqueta o por documentación de tercero. Para NO APLICA o BLOQUEADA dejar la casilla sin marcar y referenciar su justificación; la verificación de runtime nunca se sustituye por una prueba de HTML ficticio.
 5. Al finalizar **cada fase**, volver a recorrer los IDs relacionados, identificar faltantes, corregir defectos ordinarios y volver a probar. Registrar el resumen en `ESTADO_FASES.md`: total de controles, verificados, fallidos, pendientes, N/A justificados y bloqueados; porcentaje calculado sobre controles aplicables, sin considerar N/A o bloqueados como tests exitosos.
 6. **Añadir nuevas casillas con nuevos IDs** cuando el inventario de código/pantallas descubra un campo, acción o control que no aparece aquí. No eliminar ninguna comprobación para mejorar el porcentaje de cobertura.
@@ -157,5 +157,17 @@ Fuente: tres capturas de la interfaz IDCA aportadas por el usuario (Panel, Ciclo
 - [ ] **C110** Header superior y navegación inferior sin solapes Android ni desperdicio vertical, safe-area comprobada en Pixel 9 y 360/390/412/480 dp.
 - [ ] **C111** Comparativas de capturas Android 0.3.0 vs nueva versión y web 768/1280/1920, en ambos modos; 0 truncamiento y 0 scroll horizontal del layout global.
 - [ ] **C112** `npm test` incluye `experience.test.mjs`, build Android y QA de navegación y datos aislados documentados con evidencias reales; APK nueva publicada solo tras cumplimiento.
+
+
+## REV. 10 — CRITERIOS DE REFERENCIA REAL Y COMPOSICIÓN PROFESIONAL
+- [ ] **C113** Auditoría visual de Revolut X, Kraken Pro y Coinbase Advanced con fuentes oficiales y traducción documentada a NEXA sin clonar marcas ni recursos.
+- [ ] **C114** Básico Inicio+Mercado+Cartera muestran cartera/resultado/gráfico útil prioritario y motores, sin estructura de terminal Pro ni tablas por defecto.
+- [ ] **C115** Pro Inicio y Motores usan composición tipo terminal con módulos independientes de mercado, posiciones/ciclos, órdenes, riesgos, alertas; NO la pantalla vieja dentro de `<details>` como solución final.
+- [ ] **C116** IDCA Pro visualiza ciclos, precio medio, objetivos TP/BE/trailing, scoring, anclas y operaciones en timeline/fichas visuales; todas las tablas e históricos siguen disponibles.
+- [ ] **C117** Grid Pro representa niveles de precio, rango activo y legado, órdenes BUY→SELL 1:1, capital, maker-only y alertas en un mapa de niveles verificable.
+- [ ] **C118** SPOT Pro y AMA Pro tienen diseño especializado por motor, no la misma matriz de indicadores; dryRun/LIVE y reserved/executed/filled se distinguen correctamente.
+- [ ] **C119** Gráficas de mercado y cartera con datos reales de contrato, periodos/leyendas/interacción, estados missing/stale/error correctos y sin curvas ficticias en producto.
+- [ ] **C120** Capturas lado a lado 0.3.0 vs nueva, Básico vs Pro (evidencia de diferencia estructural inmediata) y QA móvil/web 360–1920 sin tablas desbordadas.
+- [ ] **C121** Verificar conservación completa de cada control/histórico de la interfaz antigua bajo componentes nuevos, acceso PIN/biometría y acción correcta; no aprobar solo por smoke tests/sintaxis.
 
 **Regla final:** no sacrificar datos por estética, no fusionar motores, no degradar trazabilidad y no afirmar éxito sin evidencia.
