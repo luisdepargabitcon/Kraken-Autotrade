@@ -151,3 +151,8 @@
 .nxh-pro-grid .nxh-metric{background:#12283f;border-color:#30577a}
 .nxh-pro-grid .nxh-metric strong{font-size:18px}
 @media(max-width:690px){.nxh-pro-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nxh-pro-grid .nxh-metric strong{font-size:15px}}
+
+.nxh-mode-breakdown{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+.nxh-mode-breakdown span{font-size:10px;font-weight:750;border:1px solid #5079a0;color:#cce4ff;padding:5px 8px;background:#1c4165;border-radius:8px}
+.nxh-mode-breakdown span:first-child{border-color:#348769;color:#77e3b4;background:#17493e}
+.nxh-mode-breakdown span:nth-child(2){border-color:#ad874c;color:#f2d298;background:#514126}
