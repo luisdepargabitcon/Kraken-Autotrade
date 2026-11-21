@@ -27,3 +27,5 @@ El panel definitivo tendrá una URL HTTPS protegida **solo tras autorización de
 - [Rev13: Ajustes permanente en cabecera, 5 pestañas y conexión de un campo](UX_VINCULACION_SIMPLE_REV13_2026-11-21.md) — sustituye la presentación Rev12 de 6 pestañas.
 
 - [Rev13 — Ajustes en cabecera y vinculación minimalista, con checklist Cascade](FIX_UX_REV13_AJUSTES_HEADER_Y_VINCULACION_SIMPLE_2026-11-21.md)
+
+- [Rev14 — Alta única por código y renovación automática de sesiones para uso diario](REV14_VINCULACION_PERMANENTE_SESIONES_AUTOMATICAS_2026-11-21.md)
