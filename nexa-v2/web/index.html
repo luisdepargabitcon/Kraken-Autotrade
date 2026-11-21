@@ -60,7 +60,10 @@
     <h2>Conectar mi bot</h2>
     <p class="pin-note">Pega el código temporal que te facilita Cascade.</p>
     <label class="pair-field-label" for="pair-code">Código de acceso</label>
-    <input id="pair-code" class="inp code-inp" placeholder="Pegar código" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" inputmode="text" maxlength="64" aria-describedby="pair-code-hint">
+    <div class="nx-pair-code-row">
+      <input id="pair-code" class="inp code-inp" placeholder="Código de 24 caracteres" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" inputmode="text" maxlength="64" aria-describedby="pair-code-hint">
+      <button id="pair-paste-btn" type="button" class="nx-pair-paste">Pegar</button>
+    </div>
     <p id="pair-code-hint" class="pair-help">Válido durante 10 minutos y de un solo uso.</p>
     <input id="pair-label" type="hidden" value="Mi móvil">
     <form id="pair-config-form" class="pair-config-form nx-pair-advanced" hidden>
