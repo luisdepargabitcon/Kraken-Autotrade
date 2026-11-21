@@ -114,6 +114,16 @@ export function createApiProvider(){
           history.latency||0,orders.latency||0),
       };
     },
+    async spotTradesPage(offset=0){
+      // Historial paginado bajo el mismo token: cada página GET tiene 100 registros máx.
+      const safe=Number.isSafeInteger(offset)&&offset>=0&&offset<=100000?offset:0;
+      const r=await get('GET /trades/closed?limit=100&offset='+safe);
+      return {
+        state:st(r.state),
+        trades:r.state==='ok'?list(r.data).map(normSpotTrade).filter(Boolean):null,
+        total:r.state==='ok'&&Number.isInteger(r.data?.total)?r.data.total:null,
+      };
+    },
     async spot(){
       // El backend original ofrece historial GLOBAL en /trades/closed.
       // No atribuir toda esa actividad a SPOT sin un identificador de estrategia verificable.
