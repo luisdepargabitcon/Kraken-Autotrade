@@ -109,13 +109,22 @@ export function miniSpark(points, {w=120,hh=34}={}){
 }
 
 // ---------- Modal ----------
+// Conserva el foco en el control que abrió la ficha y limpia listeners al cerrar.
 export function openModal(innerHtml){
   const root=document.getElementById('modal-root');
-  root.innerHTML=`<div class="modal"><button class="close-x" aria-label="Cerrar">✕</button>${innerHtml}</div>`;
+  const previous=document.activeElement;
+  root.innerHTML=`<div class="modal"><button type="button" class="close-x" aria-label="Cerrar ficha">✕</button>${innerHtml}</div>`;
   root.classList.remove('hidden');
-  const close=()=>{root.classList.add('hidden');root.innerHTML='';};
-  root.onclick=e=>{ if(e.target===root||e.target.closest('.close-x')) close(); };
-  document.addEventListener('keydown',function esc(e){ if(e.key==='Escape'){close();document.removeEventListener('keydown',esc);} });
-  root.querySelector('.modal').focus?.();
-  return { close, root };
+  const onKey=e=>{if(e.key==='Escape'&& !root.classList.contains('hidden'))close();};
+  const close=()=>{
+    if(root.classList.contains('hidden'))return;
+    root.classList.add('hidden');root.innerHTML='';
+    root.onclick=null;
+    document.removeEventListener('keydown',onKey);
+    if(previous&&previous.isConnected)previous.focus?.({preventScroll:true});
+  };
+  root.onclick=e=>{if(e.target===root||e.target.closest('.close-x'))close();};
+  document.addEventListener('keydown',onKey);
+  root.querySelector('.close-x')?.focus();
+  return {close,root};
 }
