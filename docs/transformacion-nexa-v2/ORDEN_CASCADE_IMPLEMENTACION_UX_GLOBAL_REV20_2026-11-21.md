@@ -70,3 +70,28 @@ Entregar NEXA como **APK Android instalable** y **panel web equivalente** con ge
 
 ### Texto de arranque para ejecutar de forma autónoma
 «Cascade: ejecuta COMPLETA esta orden sobre la rama indicada; no empieces desde cero ni dejes pasos autorizados a medias. Corre CI y arregla los defectos, revisa API y paridad, integra UX real en web y APK, compila y publica la nueva APK **SIN APROBAR**, con SHA y enlace. Sigue TU CHECKLIST y aporta evidencias. **No toques VPS, main, DB ni trading**. El despliegue web y el gateway de escrituras quedan bloqueados hasta mi autorización expresa».
+
+
+## ADENDA OBLIGATORIA — Paridad de «Importar Posición Abierta» IDCA (21/11/2026)
+
+**Incidencia crítica de cobertura: LA IMPORTACIÓN DE UNA POSICIÓN ABIERTA AÚN NO ESTÁ IMPLEMENTADA EN NEXA.** No confundirla con «Registrar compra externa», que añade una compra a un ciclo ya existente. Implementar en APK **y** web nueva la misma funcionalidad y semántica del original en \`client/src/pages/InstitutionalDca.tsx\`, componente \`ImportPositionModal\` (aprox. líneas 2708–3000), conectándola al contrato autenticado \`POST /institutional-dca/import-position\`, que actualmente no está publicado por el BFF read-only.
+
+Requisitos funcionales innegociables:
+- Un acceso visible y comprensible «Importar posición abierta» dentro de IDCA, separado de «Registrar compra externa» en un ciclo.
+- Modal/bottom sheet responsive con BTC/USD o ETH/USD; selección del exchange mediante \`GET /institutional-dca/exchange-fee-presets\` (no hardcodear el %); cantidad y precio medio; capital invertido calculado como cantidad × precio, editable; comisión estimada por exchange y edición manual %/USD con trazabilidad.
+- Origen \`manual\`, \`normal_bot\`, \`exchange\`, \`external\`, notas y selección \`soloSalida\` (predeterminada ACTIVADA) o gestión completa. **No reconstruir historial preexistente**, ni afirmar que los importes históricos son órdenes ejecutadas desde el bot.
+- \`GET /institutional-dca/importable-status\` para detectar ciclo activo por par; en caso de existencia permitir convivencia solamente según la regla real del original, \`sourceType=manual\`, \`isManualCycle=true\` y confirmación específica \`warningAcknowledged=true\`; bloquear combinaciones inválidas.
+- Pantalla previa antes de mutar: BTC/ETH, exchange, cantidad, precio medio, capital, fees, origen, solo-salida/gestión completa, coexistencia y consecuencias. Confirmar conscientemente que **se activa un nuevo ciclo gestionado por el bot**, por lo que no es una simple anotación visual; controles de escritura protegidos por autorización.
+- Enviar exactamente el payload que valida el servidor: \`pair\`, \`quantity\`, \`avgEntryPrice\`, \`capitalUsedUsd\` opcional, \`sourceType\`, \`soloSalida\`, \`notes\` opcional, \`isManualCycle\`, \`exchangeSource\`, \`estimatedFeePct\`, \`estimatedFeeUsd\`, \`feesOverrideManual\`, \`warningAcknowledged\`. No enviar \`manual-buy\` como sustituto. Referenciar implementación real en \`server/routes/institutionalDca.routes.ts\`.
+- En la versión actual READ-ONLY, mostrar el formulario y previsualización exclusivamente para consulta/QA, con envío efectivo **deshabilitado** y explicación «No autorizado por pasarela». No exponer \`POST\` en la pasarela ni tocar el VPS/trading sin aprobación del propietario. Proponer gateway write seguro independiente con permisos, CSRF, idempotencia, auditoría y confirmación reforzada; activar solo tras autorización expresa.
+- Si existe la configuración y roles adecuados pero el endpoint no está autorizado, mostrar \`403/405\` honestamente; jamás anunciar importación exitosa sin respuesta auténtica.
+
+**Checklist de aceptación de Cascade:**
+- [ ] Formulario de importar posición abierto desde IDCA en Básico y Pro, tanto APK como web, sin mezclar con compra manual dentro de ciclo.
+- [ ] Selección BTC/ETH/exchange y presets de comisión respaldados por API.
+- [ ] Cantidad, precio medio, importe calculado/ajustable y fees vinculados correctamente.
+- [ ] Solo salida activada por defecto; gestión completa diferenciada y avisos de riesgo.
+- [ ] Convivencia de ciclos consultada con GET importable-status y confirmada explícitamente.
+- [ ] Vista previa final y bloqueo del envío sin autorización; endpoint \`POST /import-position\` separado de \`POST /cycles/:id/manual-buy\`.
+- [ ] Tests para ciclo activo/ausente, fees automáticas/manuales, datos inválidos, 403/405, doble confirmación e idempotencia.
+- [ ] QA real contra backend **solo de lectura**, sin crear ciclos ni operar, y compilación de APK posterior.
