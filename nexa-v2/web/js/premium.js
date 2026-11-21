@@ -320,7 +320,7 @@ function idcaPanel(d,mode){
   </section></div>`;
 }
 function gridCards(d,mode){
- const st=d.status||{},l=d.levels||{},cycles=Array.isArray(d.cycles)?d.cycles:[];
+ const st=d.status||{},l=Array.isArray(d.levels)?{levels:d.levels}:d.levels||{},cycles=Array.isArray(d.cycles)?d.cycles:[];
  const levels=Array.isArray(l.levels)?l.levels:[],legacy=Array.isArray(l.previousRanges)?l.previousRanges:[];
  const last=levels.slice().sort((a,b)=>(b.price||0)-(a.price||0)).slice(0,mode==='basic'?5:12);
  const visual=`<div class="nxp-grid-map">
@@ -445,7 +445,7 @@ function proEngine(ctx,id,d){
   </section></aside></div>
   <details class="nxp-audit"><summary>Auditoría integral y controles originales <span>⌄</span></summary>
    ${ctx.renderEngineSub(id,'panel')}</details>`:
-  `<section class="nxp-detailed-page">${section('DATOS COMPLETOS','${esc((ctx.subtabs||[]).find(x=>x.id===sub)?.label||sub)}')}
+  `<section class="nxp-detailed-page">${section('DATOS COMPLETOS',(ctx.subtabs||[]).find(x=>x.id===sub)?.label||sub)}
    ${(id==='idca'&&sub==='cycles')?idcaCycleCards(idcaData(d).cycles,30):
       (id==='grid'&&sub==='levels')?gridCards(d,'pro'):
       (id==='spot'&&sub==='positions')?spotCards(d,'pro'):
