@@ -276,9 +276,9 @@ function cyclePriceTrack(c){
 }
 function idcaCycleCards(cycles,limit=3){
  if(!cycles.length)return `<p class="nxp-panel-empty">Sin información verificada de ciclos abiertos.</p>`;
- return cycles.slice(0,limit).map(c=>{
+ return cycles.slice(0,limit).map((c,i)=>{
   const cp=first(c,'unrealizedPnlUsd','pnlUsd','pnlNet');
-  return `<article class="nxp-cycle-card"><div class="nxp-cycle-top"><div><b>${esc(c.pair||'Par sin identificar')}</b><small>${value(c.id)}</small></div>
+  return `<article class="nxp-cycle-card nx-inspect-clickable" role="button" tabindex="0" data-inspect="idca:cycles:${i}" aria-label="Ver ficha completa del ciclo"><div class="nxp-cycle-top"><div><b>${esc(c.pair||'Par sin identificar')}</b><small>${value(c.id)}</small></div>
    <strong class="${moneyClass(cp)}">${pnl(cp)}</strong></div>
    ${cyclePriceTrack(c)}
    <div class="nxp-cycle-bottom">
@@ -288,9 +288,9 @@ function idcaCycleCards(cycles,limit=3){
    </div></article>`;
  }).join('');
 }
-function eventList(events,limit=6){
+function eventList(events,limit=6,origin=events){
  if(!Array.isArray(events)||!events.length)return `<p class="nxp-panel-empty">Sin eventos confirmados por la API.</p>`;
- return `<div class="nxp-event-list">${events.slice(0,limit).map(e=>`<div class="nxp-event">
+ return `<div class="nxp-event-list">${events.slice(0,limit).map(e=>`<div class="nxp-event nx-inspect-clickable" role="button" tabindex="0" data-inspect="common:events:${origin.indexOf(e)}">
   <span class="nxp-event-mark ${e.severity==='err'?'danger':e.severity==='warn'?'warning':''}"></span>
   <div><strong>${value(e.type||e.engine||'Evento')}</strong><p>${value(e.message||e.msg)}</p></div>
   <small>${e.ts?esc(fmtTs(e.ts)):'—'}</small>
@@ -331,7 +331,7 @@ function gridCards(d,mode){
  const last=levels.slice().sort((a,b)=>(b.price||0)-(a.price||0)).slice(0,mode==='basic'?5:12);
  const visual=`<div class="nxp-grid-map">
     <div class="nxp-grid-scale"><span>Precio</span><span>Acción / estado</span></div>
-    ${last.length?last.map(x=>`<div class="nxp-grid-level ${x.side==='BUY'?'buy':'sell'}">
+    ${last.length?last.map(x=>`<div class="nxp-grid-level nx-inspect-clickable ${x.side==='BUY'?'buy':'sell'}" role="button" tabindex="0" data-inspect="grid:levels.levels:${levels.indexOf(x)}">
       <span>${money(x.price)}</span><i></i><strong>${value(x.side)}</strong><small>${value(first(x,'state','status'))}</small></div>`).join(''):
     `<div class="nxp-grid-placeholder">Los niveles aparecerán aquí con sus precios, lados y objetivos reales.</div>`}
    </div>`;
@@ -345,7 +345,7 @@ function gridCards(d,mode){
   <section class="nxp-terminal-panel">${section('POLÍTICA Y CAPITAL','BUY → SELL · 1:1')}${blocks}
    <p class="nxp-safety-note">Los SELL de rangos anteriores se mantienen separados de entradas nuevas y de HOLD.</p></section>
   <section class="nxp-terminal-panel">${section('CICLOS','En seguimiento')}
-   <div class="nxp-grid-cycles">${open.slice(0,8).map(c=>`<div class="nxp-grid-cycle">
+   <div class="nxp-grid-cycles">${open.slice(0,8).map(c=>`<div class="nxp-grid-cycle nx-inspect-clickable" role="button" tabindex="0" data-inspect="grid:cycles:id=${encodeURIComponent(String(c.id))}">
      <span>${value(c.id)}</span><b>${money(first(c,'buyPrice'))} <i>→</i> ${money(first(c,'sellTargetPrice','sellTarget'))}</b>
      <small>${value(first(c,'status','sellState'))} · ${value(first(c,'rangeVersionId','rangeVersion'))}</small></div>`).join('')||`<p class="nxp-panel-empty">No hay ciclos verificados en la respuesta.</p>`}</div>
    <div class="nxp-inline">Rangos anteriores con SELL: <b>${legacy.length||'0'}</b></div></section></div>`;
@@ -355,7 +355,7 @@ function spotCards(d,mode){
  const dmode=first(st,'mode','executionMode');
  const dd=st.configEffective?.dryRunMode;
  const strategy=value(st.strategy||d.config?.activeStrategy);
- const body=`<div class="nxp-positions">${positions.slice(0,mode==='basic'?3:6).map(p=>`<article class="nxp-position">
+ const body=`<div class="nxp-positions">${positions.slice(0,mode==='basic'?3:6).map(p=>`<article class="nxp-position nx-inspect-clickable" role="button" tabindex="0" data-inspect="spot:positions:${positions.indexOf(p)}">
   <div class="nxp-position-head"><b>${value(p.pair)}</b><strong class="${moneyClass(p.pnlUsd)}">${pnl(p.pnlUsd)}</strong></div>
   ${twoValueGrid([['Entrada media',money(first(p,'avgPrice'))],['Actual',money(p.currentPrice)],
   ['Cantidad',num(p.quantity)?fmtNum(p.quantity,{dec:6}):'—'],['Protecciones',Array.isArray(p.protections)?p.protections.length:'—']])}
@@ -543,12 +543,12 @@ export function renderActivityPremium(ctx,legacy){
  const events=all.filter(e=>{ const sev=e.severity||e.level||e.sev;
    return (!f.sev||f.sev==='all'||sev===f.sev) && (!f.engine||f.engine==='all'||(e.engine||'')===f.engine); });
  if(ctx.mode==='basic')return wrap(`${section('SEGUIMIENTO','Actividad reciente')}
-   ${ready?eventList(events,12):offline(ctx,'actividad y alertas del bot')}
+   ${ready?eventList(events,12,all):offline(ctx,'actividad y alertas del bot')}
    ${link('engines','Ver motores')}</div>`,'nxp-mode-basic nxp-activity');
  return wrap(`<div class="nxp-terminal-title">${section('MONITORIZACIÓN','Registro de actividad')}
    ${chip(ready?'Fuente conectada':'Pendiente',ready?'good':'warn')}</div>
    <div class="nxp-terminal-grid"><div class="nxp-main-column"><section class="nxp-terminal-panel">
-     ${section('EVENTOS','Últimas decisiones')}${ready?eventList(events,40):offline(ctx,'logs, estados y alertas')}
+     ${section('EVENTOS','Últimas decisiones')}${ready?eventList(events,40,all):offline(ctx,'logs, estados y alertas')}
     </section></div><aside class="nxp-side-column"><section class="nxp-terminal-panel">
        ${section('FILTROS','Monitor avanzado')}<p class="nxp-panel-empty">Los filtros completos de severidad y motor están disponibles aquí.</p>
        <div class="nxp-tool-list">${link('engines','Motores')}${link('settings','Ajustes')}</div>
