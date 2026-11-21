@@ -609,5 +609,5 @@ export function renderSettingsPremium(ctx,legacy){
   ${ctx.mode==='pro'&&goodCommon(ctx,'settings')?`<details class="nxp-audit"><summary>Configuración técnica <span>⌄</span></summary>${legacy(ctx)}</details>`:''}
   <p class="nxp-settings-footnote">La vinculación no autoriza compras, ventas ni cambios en el bot.</p>
  </div>`;
- return wrap(`${header}${content}</div>`,ctx.mode==='basic'?'nxp-mode-basic nxp-settings':'nxp-mode-pro nxp-settings');
+ return wrap(`${header}${content}`,ctx.mode==='basic'?'nxp-mode-basic nxp-settings':'nxp-mode-pro nxp-settings');
 }
