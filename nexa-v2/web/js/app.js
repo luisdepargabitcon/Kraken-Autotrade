@@ -36,7 +36,7 @@ const NAV = [
   { id:'fisco',  label:'FISCO',      icon:'M8 3h8v18l-4-3-4 3z' },
   { id:'settings',label:'Ajustes',   icon:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8 4h3M3 12h3m6-9v3m0 12v3M17.7 6.3l2-2M4.3 19.7l2-2m11.4 2 2-2M4.3 4.3l2 2' },
 ];
-const BOTTOM_NAV = ['home','market','engines','portfolio','activity'];
+const BOTTOM_NAV = ['home','market','engines','portfolio','activity','settings'];
 
 // ---------- Router ----------
 function navTarget(){
@@ -220,10 +220,42 @@ function pinInit(){
   $('bio-btn').addEventListener('click', bioUnlock);
   $('pair-btn').addEventListener('click', doPair);
   $('pair-code').addEventListener('keydown', e=>{ if(e.key==='Enter') doPair(); });
+  $('pair-config-toggle').addEventListener('click', ()=>{
+    const form=$('pair-config-form');
+    const open=form.hidden;
+    form.hidden=!open;
+    $('pair-config-toggle').setAttribute('aria-expanded',String(open));
+    if(open){ syncPairServer(); $('pair-api-base').focus(); }
+  });
+  $('pair-config-form').addEventListener('submit', e=>{
+    e.preventDefault();
+    const input=$('pair-api-base');
+    try{
+      setApiBase(input.value.trim());
+      session.clear();
+      syncPairServer();
+      $('pair-err').textContent='Servidor guardado. Ahora introduce un código temporal válido.';
+      $('pair-config-form').hidden=true;
+      $('pair-config-toggle').setAttribute('aria-expanded','false');
+    }catch(err){
+      $('pair-err').textContent=String(err.message||err);
+      input.focus();
+    }
+  });
+  syncPairServer();
   $('pair-skip').addEventListener('click', ()=>{
     $('pair-overlay').classList.add('hidden');
     loadData().then(render);
   });
+}
+function syncPairServer(){
+  $('pair-server-current').textContent=CONFIG.apiBase;
+  $('pair-api-base').value=CONFIG.apiBase;
+}
+function openPairOverlay(){
+  syncPairServer();
+  $('pair-err').textContent='';
+  $('pair-overlay').classList.remove('hidden');
 }
 function pinKey(k){
   if(Date.now()<localLock.lockedUntil()){ $('pin-err').textContent='Demasiados intentos. Espera unos segundos…'; return; }
@@ -291,21 +323,43 @@ async function afterUnlock(){
     // enrolled pero backend no acepta la sesión → reintentar/vincular
     $('pair-err').textContent = `Sesión rechazada (${s.status||s.error}). Comprueba el servidor o re-vincula.`;
   }
-  $('pair-overlay').classList.remove('hidden');
+  openPairOverlay();
 }
 async function doPair(){
-  const code = $('pair-code').value.trim();
-  const label = $('pair-label').value.trim();
-  $('pair-err').textContent='Vinculando…';
-  const r = await redeemPairCode(code, label);
-  if(r.ok){
+  const code=$('pair-code').value.replace(/[\\s-]/g,'').toUpperCase();
+  if(!/^[0-9A-F]{24}$/.test(code)){
+    $('pair-err').textContent='Introduce el código completo de 24 caracteres (0-9, A-F).';
+    $('pair-code').focus();
+    return;
+  }
+  const label=$('pair-label').value.trim()||'Pixel 9';
+  const submit=$('pair-btn');
+  if(submit.disabled)return;
+  submit.disabled=true;
+  $('pair-err').textContent='Conectando con el servidor…';
+  try{
+    const r=await redeemPairCode(code,label);
+    if(!r.ok){
+      $('pair-err').textContent=r.status===0
+        ? 'Servidor inaccesible. Abre ⚙ Ajustes y comprueba la dirección HTTPS.'
+        : `Vinculación rechazada (${r.status||'red'}): ${r.error||'código inválido o caducado'}`;
+      return;
+    }
+    const s=await obtainSession();
+    if(!s.ok){
+      $('pair-err').textContent='Dispositivo registrado, pero la sesión no se pudo abrir. Comprueba el servidor y reintenta.';
+      return;
+    }
+    session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,roles:s.roles,csrf:s.csrf});
     $('pair-overlay').classList.add('hidden');
-    const s = await obtainSession();
-    if(s.ok){ session.set({token:s.token,expiresAt:s.expiresAt,user:s.user,roles:s.roles,csrf:s.csrf}); }
-    await loadData(); render(); scheduleRefresh();
-  }else{
-    $('pair-err').textContent = r.status===0 ? 'Backend inaccesible ('+CONFIG.apiBase+')'
-      : `Vinculación rechazada (${r.status}): ${r.error||'código inválido o caducado'}`;
+    await loadData();
+    render();
+    scheduleRefresh();
+  }catch(err){
+    $('pair-err').textContent='No se ha podido conectar con la API segura. Comprueba la URL y tu conexión.';
+    console.warn('[NEXA] Error en vinculación (sin imprimir código ni credenciales):',err?.name||'network_error');
+  }finally{
+    submit.disabled=false;
   }
 }
 function lockNow(){
@@ -369,7 +423,7 @@ document.addEventListener('click', e=>{
   const misc = e.target.closest('[data-app]');
   if(misc){
     const k = misc.dataset.app;
-    if(k==='pair-device') $('pair-overlay').classList.remove('hidden');
+    if(k==='pair-device') openPairOverlay();
     else if(k==='settings-api') openSettingsApi();
     else if(k==='logout'){ logout(); location.reload(); }
     else if(k==='refresh'){ loadData().then(render); }
