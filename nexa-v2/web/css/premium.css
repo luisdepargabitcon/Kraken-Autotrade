@@ -549,3 +549,38 @@ body #screen{min-height:calc(100dvh - 145px)}
   border:1px solid #35557d;background:#152f4e;color:#bad8ff;font-weight:700;font-size:12px}
 #pair-overlay .nx-pair-paste:hover,#pair-overlay .nx-pair-paste:focus-visible{
   background:#234b78;color:#fff;border-color:#6192cb}
+
+
+/* Rev13 — Ajustes en formato lista, tacto 48px, sin tarjetas gigantes. */
+.nxp-settings-compact{width:100%;max-width:670px}
+.nxp-settings-status{display:grid;grid-template-columns:42px minmax(0,1fr) auto;
+ align-items:center;gap:12px;background:linear-gradient(135deg,#152a45,#0e1b2d);
+ border:1px solid #2e4766;border-radius:18px;padding:16px;margin-bottom:16px}
+.nxp-settings-status-mark{display:grid;place-items:center;width:42px;height:42px;
+ background:#1c446b;border-radius:13px;color:#8ec6ff}
+.nxp-settings-status strong{display:block;font-size:14px}
+.nxp-settings-status span:not(.nxp-chip){display:block;margin-top:5px;
+ font-size:11px;line-height:1.5;color:#a2b6d2}
+.nxp-settings-options{display:flex;flex-direction:column;overflow:hidden;
+ background:#101b2d;border:1px solid #2a415e;border-radius:17px}
+.nxp-settings-option{width:100%;min-height:69px;display:flex;align-items:center;text-align:left;
+ gap:13px;padding:12px 16px;color:#e7f1ff;background:transparent;border:0;
+ border-bottom:1px solid #253a54}
+.nxp-settings-option:last-child{border-bottom:0}
+button.nxp-settings-option:hover,button.nxp-settings-option:focus-visible{background:#1b304c;outline-offset:-3px}
+.nxp-settings-option-icon{display:grid;place-items:center;width:37px;height:37px;
+ border-radius:11px;background:#213b5a;color:#a5caff;flex:none}
+.nxp-settings-option-icon svg{width:19px;height:19px}
+.nxp-settings-option-copy{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+.nxp-settings-option-copy strong{font-size:13px;font-weight:730}
+.nxp-settings-option-copy small{font-size:11px;color:#8ea8c9;line-height:1.35}
+.nxp-settings-option-arrow{font-size:22px;color:#7496bc}
+.nxp-settings-ready svg{width:16px;height:16px;color:#69d0ab}
+.nxp-settings-static{cursor:default}
+.nxp-settings-footnote{font-size:11px;line-height:1.6;color:#7f96b6;margin:15px 3px}
+@media(max-width:420px){
+ .nxp-settings-status{grid-template-columns:38px minmax(0,1fr);padding:13px;gap:10px}
+ .nxp-settings-status .nxp-chip{grid-column:2;justify-self:start}
+ .nxp-settings-status-mark{width:38px;height:38px}
+ .nxp-settings-option{min-height:66px;padding:11px 12px;gap:10px}
+}
