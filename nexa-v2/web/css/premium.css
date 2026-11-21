@@ -423,7 +423,7 @@ body #screen{min-height:calc(100dvh - 145px)}
 }
 
 
-/* Rev12: Vinculación sin bloqueo de Ajustes + sexta sección móvil. */
+/* Rev12 histórico: estilos de compatibilidad; Rev13 utiliza cinco pestañas y Ajustes en cabecera. */
 #pair-overlay .pin-card{
   max-height:calc(100dvh - 40px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));
   overflow-y:auto;overscroll-behavior:contain;text-align:left;
