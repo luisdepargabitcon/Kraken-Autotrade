@@ -397,12 +397,12 @@ export function spotPanel(ctx){
   const sigs = d.signals ?? [];
   const head = card('SPOT — Panel', `
     ${kv([
-      ['Modo', modeBadge(st.mode)],['Motor', badge(st.running?'en marcha':'detenido',st.running?'on':'off')],
+      ['Modo', st.mode==null?NA:modeBadge(st.mode)],['Motor', typeof st.running==='boolean'?badge(st.running?'en marcha':'detenido',st.running?'on':'off'):NA],
       ['Venue', esc(st.venue)],['Fuente datos', esc(st.dataExchange)],
       ['Estrategia', esc(st.strategy)],['Último tick', fmtAge(st.lastTickAt)],
     ])}
     <div class="row"><span class="k">Pares</span><span class="v">${(st.pairs||[]).map(p=>`<span class="chip">${esc(p)}</span>`).join(' ')}</span></div>
-    <div class="row"><span class="k">dryRun efectivo</span><span class="v">${st.configEffective?.dryRunMode?badge('DRY-RUN','sim'):badge('LIVE','real')}<small class="tiny"> ${esc(st.configEffective?.resolvedFrom||'')}</small></span></div>
+    <div class="row"><span class="k">dryRun efectivo</span><span class="v">${typeof st.configEffective?.dryRunMode==='boolean'?(st.configEffective.dryRunMode?badge('DRY-RUN','sim'):badge('LIVE','real')):NA}<small class="tiny"> ${esc(st.configEffective?.resolvedFrom||'')}</small></span></div>
     <div class="tiny warn-tx" style="margin-top:4px">${esc(st.configEffective?.conflict||'')}</div>`);
   const sigTable = card('Señales', table(
     [{label:'Par'},{label:'Score',num:1},{label:'Setup'},{label:'Régimen'},{label:'Estado'},{label:'Vetos'},{label:'Motivo'}],
@@ -428,13 +428,54 @@ export function spotPositions(ctx){
      {label:'Exposición',num:1},{label:'Protecciones'}],rows,{minWidth:780}));
 }
 export function spotHistory(ctx){
-  const rows=(ctx.data.trades||[]).map((t,i)=>[`<button type="button" class="nx-inspect-inline" data-inspect="spot:trades:${i}">${esc(fmtTs(t.ts))} ↗</button>`, `<span class="mono">${esc(t.id)}</span>`,
-    esc(t.pair), `<b class="${t.side==='BUY'?'pos':'neg'}">${esc(t.side)}</b>`, fmtUsd(t.price),
-    fmtQty(t.quantity), fmtUsd(t.feeUsd), fmtPct(t.slippagePct), esc(t.closeReason||'—'),
-    badge(t.mode,'sim'), `<small>${esc(t.reason)}</small>`]);
-  return card('Historial de operaciones SPOT', table(
-    [{label:'Fecha'},{label:'ID'},{label:'Par'},{label:'Lado'},{label:'Precio',num:1},{label:'Cant.',num:1},
-     {label:'Fee',num:1},{label:'Slip%',num:1},{label:'Cierre'},{label:'Modo'},{label:'Motivo'}],rows,{minWidth:820}));
+ // GET /trades/closed retorna histórico GLOBAL del bot. Atribución a SPOT solo
+ // cuando strategy/origin/engine explícitos del backend lo demuestran.
+ const list=Array.isArray(ctx.data.trades)?ctx.data.trades:null;
+ const health=ctx.data.resourceStates?.trades||'unavailable';
+ const total=Number.isInteger(ctx.data.tradeTotal)?ctx.data.tradeTotal:null;
+ if(list===null)return '<section class="nx-idca-historical-empty nx-spot-history-unavailable"><h2>Historial de operaciones</h2>'+
+   '<p>La pasarela no ha entregado el historial global de operaciones ('+esc(health)+'). '+ 
+   'Esto NO significa que el bot no tenga compras ni ventas. El acceso GET /trades/closed debe verificarse y autorizarse en la pasarela de solo lectura.</p></section>';
+ const amount=v=>idcaKnownNum(v)?fmtUsd(v):'—';
+ const result=v=>idcaKnownNum(v)?signedUsd(v):'—';
+ const sells=list.filter(x=>String(x.side).toUpperCase()==='SELL');
+ const buys=list.filter(x=>String(x.side).toUpperCase()==='BUY');
+ const valued=sells.filter(x=>idcaKnownNum(x.realizedPnlUsd));
+ const totalNet=valued.length?valued.reduce((sum,x)=>sum+x.realizedPnlUsd,0):null;
+ const heading='<div class="nx-idca-historical-summary">'+
+   '<div class="nx-idca-history-title"><h2>Historial de operaciones</h2><span>Lectura real del bot</span></div>'+
+   '<div class="nx-idca-history-overview nx-spot-history-overview">'+
+   '<div class="nx-idca-stat"><small>Registros recibidos</small><strong>'+list.length+'</strong></div>'+
+   '<div class="nx-idca-stat nx-idca-stat-won"><small>Compras</small><strong>'+buys.length+'</strong></div>'+
+   '<div class="nx-idca-stat nx-idca-stat-lost"><small>Ventas</small><strong>'+sells.length+'</strong></div>'+
+   '<div class="nx-idca-stat nx-idca-stat-unknown"><small>Ventas sin PnL</small><strong>'+Math.max(0,sells.length-valued.length)+'</strong></div></div>'+
+   '<div class="nx-idca-history-profit '+(totalNet===null?'nx-idca-profit-unknown':totalNet<0?'nx-idca-profit-loss':'nx-idca-profit-gain')+'">'+
+   '<div><span>PnL neto de ventas con dato</span><small>Resumen de registros RECIBIDOS; no implica que todo el historial esté cargado</small></div>'+
+   '<strong>'+result(totalNet)+'</strong></div>'+
+   '<p class="nx-idca-hint">Origen: GET /trades/closed (registro global). No atribuir toda esta actividad a SPOT, GRID o IDCA sin identificar el motor de cada operación.</p>'+
+   (total!==null&&total>list.length?'<p class="nx-idca-hint">Vista parcial: '+list.length+' de '+total+
+   ' registros. Quedan páginas pendientes; no se presenta como total definitivo.</p>':'')+'</div>';
+ const row=(t,i)=>{
+   const side=String(t.side||'').toUpperCase(),sell=side==='SELL',buy=side==='BUY';
+   const profit=sell&&idcaKnownNum(t.realizedPnlUsd)?t.realizedPnlUsd:null;
+   const tone=sell&&profit!==null?(profit>0?'gain':profit<0?'loss':'neutral'):buy?'gain':'unknown';
+   const source=t.strategy||t.origin||'Motor sin verificar';
+   const main=sell&&profit!==null?result(profit):amount(t.valueUsd);
+   const label=sell&&profit!==null?'PnL neto':'Importe registrado (no PnL)';
+   return '<div class="nx-idca-history-row nx-idca-history-'+tone+'">'+
+    '<button class="nx-idca-history-open" type="button" data-inspect="spot:trades:'+i+'">'+
+    '<span class="nx-idca-history-sign" aria-hidden="true">'+(buy?'↓':sell?'↑':'·')+'</span>'+
+    '<span class="nx-idca-history-info"><b>'+idcaPlain(t.pair)+' <small>#'+idcaPlain(t.id)+'</small></b>'+
+       '<span class="nx-idca-history-badges"><em>'+esc(buy?'COMPRA':sell?'VENTA':side||'REGISTRO')+'</em>'+
+         (t.exchange?'<em>'+esc(t.exchange)+'</em>':'')+'</span>'+
+       '<small>'+esc(fmtTs(t.ts))+' · '+esc(source)+'</small>'+
+       '<small>'+esc(t.reason||t.type||'Motivo sin verificar')+'</small></span>'+
+    '<span class="nx-idca-history-money"><strong>'+main+'</strong><small>'+label+'</small></span>'+
+    '<span class="nx-idca-history-arrow" aria-hidden="true">›</span></button></div>';
+ };
+ return '<div class="nx-idca-history nx-spot-history-refined">'+heading+
+   (list.length?'<div class="nx-idca-history-list">'+list.map(row).join('')+'</div>':
+    '<div class="nx-idca-historical-empty"><strong>0 operaciones en esta página</strong><p>El endpoint respondió con una lista vacía; no se ha probado que el historial completo esté vacío.</p></div>')+'</div>';
 }
 export function spotProtections(ctx){
   const rows=(ctx.data.protections||[]).map(p=>[esc(p.type), badge(p.enabled?'ON':'off',p.enabled?'on':'off'),
