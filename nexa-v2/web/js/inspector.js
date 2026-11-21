@@ -265,7 +265,7 @@ export function showRecordInspector(state,ref){
  const performanceLabel=pnlPresent?(f.closed?'Resultado neto del cierre':'Resultado no realizado'):'Resultado sin verificar';
  const valueNum=pnlPresent?f.pnl:null;
  const heroMain=pnlPresent?signedMoney(valueNum):f.cycle?'—':amountOrDash(first(record,'grossValueUsd','valueUsd','executedUsd','capitalUsedUsd'));
- const heroLabel=pnlPresent?performanceLabel:f.cycle?'Resultado no confirmado':'Importe de la operación';
+ const heroLabel=pnlPresent?performanceLabel:f.cycle?'Resultado sin verificar':'Importe de la operación';
  const warn=!pnlPresent&&f.cycle?'<p class="nx-inspect-caution">No hay beneficio o pérdida verificable en esta lectura. No se considera resultado cero ni se suma como ganancia.</p>':'';
  const importFlag=record.isImported===true||record.imported===true;
  const pct=pnlPresent&&num(f.pnlPct)!==null?
