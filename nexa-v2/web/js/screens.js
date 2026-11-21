@@ -9,7 +9,7 @@ import {
   microBar, signed, stateBanner, lineChart, candleChart, miniSpark,
 } from './ui.js';
 import { GRID_DISTINCTION } from './contracts.js';
-import { renderHomePremium, renderMarketPremium, renderEnginePremium, renderPortfolioPremium, renderActivityPremium } from './premium.js';
+import { renderHomePremium, renderMarketPremium, renderEnginePremium, renderPortfolioPremium, renderActivityPremium, renderFiscoPremium, renderSettingsPremium } from './premium.js';
 
 const P = (v, src, ts) => provenance(v, {source:src, ts});
 
@@ -627,7 +627,7 @@ function evRow(e){
 }
 
 // ==================== FISCO ====================
-export function renderFisco(ctx){
+function renderFiscoLegacy(ctx){
   if(ctx.data.fisco?.state!=='ok') return connectionEmpty('Fiscalidad privada',
     'Los informes de FISCO/AEAT requieren vinculación segura y permisos específicos. No se publican datos fiscales en el móvil sin autorización.',
     {icon:'▦',action:'Configurar acceso seguro'});
@@ -647,7 +647,7 @@ export function renderFisco(ctx){
 }
 
 // ==================== AJUSTES ====================
-export function renderSettings(ctx){
+function renderSettingsLegacy(ctx){
   const { mode, data } = ctx;
   const st = data.settings?.data ?? {};
   const groups = {};
@@ -683,3 +683,6 @@ export function renderPortfolio(ctx){ return renderPortfolioPremium(ctx, renderP
 
 // Revisión 11: actividad usa experiencia propia con los filtros originales disponibles en Pro.
 export function renderActivity(ctx){return renderActivityPremium(ctx, renderActivityLegacy);}
+
+export function renderFisco(ctx){ return renderFiscoPremium(ctx, renderFiscoLegacy); }
+export function renderSettings(ctx){ return renderSettingsPremium(ctx, renderSettingsLegacy); }
