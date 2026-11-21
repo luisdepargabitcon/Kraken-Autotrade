@@ -1,5 +1,5 @@
 # ORDEN ÚNICA PARA CASCADE — NEXA V2 DEFINITIVO · REDISEÑO PREMIUM + BIOMETRÍA
-**Revisión 8 · 21-11-2026 · PREVALECE SOBRE REVISIONES 1–6**
+**Revisión 9 · 21-11-2026 · PREVALECE SOBRE REVISIONES 1–6**
 **Rama exclusiva:** `feature/nexa-v2-transformacion-20261120` en `luisdepargabitcon/Kraken-Autotrade`.
 **Plan rector:** [PLAN_MAESTRO_2026-11-20.md](PLAN_MAESTRO_2026-11-20.md).
 **Diseño y acceso rev. 8 (OBLIGATORIO):** [REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md](REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md).
@@ -24,7 +24,7 @@ El usuario **NO QUIERE DEMOS, PROTOTIPOS, VISTAS PREVIAS, PANEL SIMULADO NI APK 
 ## RUTA DE EJECUCIÓN: F0→F6 (ETAPAS INTERNAS, NO ENTREGAS DEMO)
 **F0 Seguridad/preservación.** Verificar rama, `main` y WIP ajeno; leer `AGENTS.md`, bitácoras, auditorías AUD-01/02/03 y análisis P0. No extraer secretos ni tocar servidor real. Registrar riesgos, backups y condiciones no verificables. Detectar riesgos de workflow antes de push.
 
-**F1 Inventario completo.** Auditar código actual, pantallas originales, APIs GET y mutables, contratos, configuración efectiva, movimientos históricos, 4 motores y módulos comunes. Reconciliar `MATRIZ_PARIDAD.csv` para cada campo con origen concreto, permisos, destino en Básico/Pro+web/APK y prueba. `mapeado` NO equivale a `verificado`. Reconstruir checklist C001–C102+ y corregir agrupaciones mal asignadas (p. ej. C041–C046 son GRID; C047–C051 son AMA; nunca usar pruebas de APK/PIN para certificarlos).
+**F1 Inventario completo.** Auditar código actual, pantallas originales, APIs GET y mutables, contratos, configuración efectiva, movimientos históricos, 4 motores y módulos comunes. Reconciliar `MATRIZ_PARIDAD.csv` para cada campo con origen concreto, permisos, destino en Básico/Pro+web/APK y prueba. `mapeado` NO equivale a `verificado`. Reconstruir checklist C001–C112+ y corregir agrupaciones mal asignadas (p. ej. C041–C046 son GRID; C047–C051 son AMA; nunca usar pruebas de APK/PIN para certificarlos).
 
 **F2+F3 Producto definitivo compartido.** Evolucionar el `nexa-v2/` ya creado, sin tirarlo ni crear una maqueta alternativa. Construir arquitectura web/Capacitor Android y read-models adaptados a respuestas reales del repositorio; implementar TODAS las pantallas y controles que existan en origen con seguridad en backend. El frontend no calcula resultados de trading en paralelo a los motores. Comprobar funcionalidad con servidores locales de prueba y pruebas contractuales, pero **sin modo DEMO como producto principal**. Si falta backend/endpoint, implementar en rama una solución segura aislada o dejar bloqueo concreto; no fingir integración real.
 
@@ -54,3 +54,16 @@ Leídas CINCO capturas del Pixel 9: pantalla actual rechazada por diseño poco p
 **Acceso obligatorio:** PIN personal elegido por el usuario como alternativa, huella dactilar y reconocimiento facial biométrico nativos cuando estén disponibles. Primer uso con vinculación segura del dispositivo a backend mediante código/QR de un solo uso y clave criptográfica; después entrada por PIN/biometría SIN usuario ni contraseña. Web mediante passkey/WebAuthn, también sin user/password. PIN y biometría locales por sí solos NO sustituyen autenticación/autorización de backend: mantener challenge/respuesta, sesión segura, roles, revocación y confirmación reforzada de órdenes. No implementar un PIN decorativo ni un login oculto con contraseña fija.
 
 **EJECUTAR INTEGRAMENTE** [REDISENO UX REV8](REDISENO_UX_REV8_PIN_BIOMETRIA_SIN_PASSWORD.md), compilar nueva APK Android y verificarla en Pixel 9/emulador. Probar FACE/HUELLA reales cuando haya dispositivo compatible; nunca marcar funcionando sin evidencia. No reutilizar Release 0.2.0 como si incluyera estas mejoras. Antes de publicar APK, completar checklist C087–C102. Corregir también IDCA wrong-actions, BFF fail-open y otras P0 conocidas; no tocar VPS. Esta revisión prevalece sobre instrucciones que exijan formularios usuario/contraseña.
+
+## REVISIÓN 9 — UX ESTRUCTURAL DE VERDAD (21/11/2026): BLOQUEANTE PARA NUEVA APK
+Las capturas de la APK 0.3.0 muestran que **Básico y Pro siguen teniendo la misma composición de tarjetas y muchos campos vacíos**. El propietario rechaza este resultado. No dar por completo UX con retoques CSS, cambios de color o agrupar más elementos en la misma cuadrícula.
+
+**Se ha incorporado ya código de composición en `nexa-v2/web/js/experience.js`, `screens.js`, `app.js`, CSS y tests.** Cascade debe tomar ESTE código como base y **cerrar la experiencia completa**, no volver a la 0.3.0.
+
+**Objetivo concreto:** Inicio con hero de patrimonio y lista táctil de motores; Mercado con selector y gráfico principal, indicadores por niveles y origen; Motores con cabecera, estado válido, resumen operacional, accesos rápidos a ciclos/órdenes y vista Pro con todos los campos originales; Cartera con patrimonio/PnL y distribución; conexión pendiente en una sola vista con CTA de vinculación, sin 20 «No disponible» repetidos, sin 0 falsos ni «LIVE/STOP/PAUSA» inventados.
+
+**Basic / Pro deben ser dos estructuras reales:** Básico muestra 3–5 KPIs y navegación con detalle accesible; Pro añade diagnóstico, detalle exhaustivo y subpestañas profesionales. No basta con hacer `<details>` de todo si no se verifica la usabilidad en Pixel 9. El nuevo módulo `experience.js` es un **punto de partida**, no la prueba de UX final.
+
+**Obligación de QA visual:** capturas **reales** de inicio, mercado, cartera, IDCA, SPOT, Grid y AMA en Básico y Pro con exactamente los mismos estados/datos, en Android 360/390/412/480 dp, Pixel 9 físico o emulador con framebuffer funcional, y web 768/1280/1920. Comparar lado a lado con 0.3.0, 0 solapes, 0 controles fuera de viewport, 0 espacios desperdiciados injustificados, 0 tabla inutilizable. Capturas de desconectado y de test autenticado aislado con respuestas reales sintéticas de contrato, sin que fixtures se empaqueten en el producto.
+
+**Tests:** ejecutar `npm test` incluyendo `tests/experience.test.mjs` recién añadido; correr pruebas E2E de navegación/gestos/acordeones, verificar transformación a la APK con `npx cap sync android`, comprobar contenidos del APK compilado, instalar y capturar en emulador/Pixel 9. **NO decir que las pruebas se ejecutaron si no es verdad**. Actualizar checklist ampliado a C112, incidencias y matriz. No dar por aprobada una APK nueva sin evidencia visual y funcional. No tocar VPS/DB/trading/main.
